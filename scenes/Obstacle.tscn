@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay/Obstacle.gd" id="1"]
 
@@ -33,6 +33,19 @@ albedo_color = Color(0.4, 0.05, 0.55, 1)
 emission_enabled = true
 emission = Color(0.4, 0.05, 0.55, 1)
 emission_energy_multiplier = 0.3
+
+[sub_resource type="TorusMesh" id="TorusMesh_AirEnemy"]
+inner_radius = 0.25
+outer_radius = 0.6
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_AirEnemy"]
+size = Vector3(1.2, 1.2, 1.0)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_AirEnemy"]
+albedo_color = Color(0.12, 0.85, 0.22, 1)
+emission_enabled = true
+emission = Color(0.15, 1.0, 0.2, 1)
+emission_energy_multiplier = 1.1
 
 [node name="Obstacle" type="Area3D"]
 collision_layer = 4
@@ -69,3 +82,12 @@ surface_material_override/0 = SubResource("StandardMaterial3D_Enemy")
 position = Vector3(0, 1.0, 0)
 disabled = true
 shape = SubResource("CapsuleShape3D_Enemy")
+
+[node name="AirEnemyMesh" type="MeshInstance3D" parent="."]
+visible = false
+mesh = SubResource("TorusMesh_AirEnemy")
+surface_material_override/0 = SubResource("StandardMaterial3D_AirEnemy")
+
+[node name="AirEnemyShape" type="CollisionShape3D" parent="."]
+disabled = true
+shape = SubResource("BoxShape3D_AirEnemy")

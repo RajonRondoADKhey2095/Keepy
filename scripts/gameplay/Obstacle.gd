@@ -4,25 +4,36 @@ class_name Obstacle
 ## Pooled by TrackSegment: this node is created once and only ever
 ## shown/hidden and repositioned, never freed during gameplay.
 ##
-## Three visual/collision variants, all always present as children so
+## Four visual/collision variants, all always present as children so
 ## configure() only ever toggles visibility/disabled -- no swapping of
 ## Mesh resources at runtime, keeping each variant a plain child node
 ## that can later be replaced with a Meshy .glb independently (see
 ## README "Adding Meshy assets later").
-##   DODGE -- full lane height, taller than Keepy's max jump arc: must
-##            be avoided by switching lanes.
-##   JUMP  -- a low log: too tall to run through, but short enough that
-##            a well-timed jump clears it (see Keepy.gd JUMP_VELOCITY /
-##            GRAVITY for the clearance math).
-##   ENEMY -- same full lane-blocking height as DODGE (no jump possible),
-##            but sways between its lane and an adjacent one while the
-##            player approaches, then LOCKS onto its final lane a fixed
-##            TIME BEFORE CONTACT (see ENEMY_REACTION_WINDOW_S) rather
-##            than a fixed time after spawning -- collision is only ever
-##            tested against that settled position, never a mid-sway one,
-##            so it stays fully deterministic and testable.
+##   DODGE     -- full lane height, taller than Keepy's max jump arc:
+##                must be avoided by switching lanes.
+##   JUMP      -- a low log: too tall to run through, but short enough
+##                that a well-timed jump clears it (see Keepy.gd
+##                JUMP_VELOCITY / GRAVITY for the clearance math).
+##   ENEMY     -- same full lane-blocking height as DODGE (no jump
+##                possible), but sways between its lane and an adjacent
+##                one while the player approaches, then LOCKS onto its
+##                final lane a fixed TIME BEFORE CONTACT (see
+##                ENEMY_REACTION_WINDOW_S) rather than a fixed time after
+##                spawning -- collision is only ever tested against that
+##                settled position, never a mid-sway one, so it stays
+##                fully deterministic and testable.
+##   AIR_ENEMY -- sits at the SAME height as the Gland collectible (see
+##                AIR_ENEMY_Y below, derived from the exact same formula
+##                as TrackSegment.GLAND_Y -- never a duplicated literal):
+##                the peak of Keepy's jump arc. Ground-level running
+##                passes safely underneath by construction (its hitbox
+##                never reaches down to Keepy's grounded capsule); a jump
+##                on its lane runs straight into it. The mirror image of
+##                JUMP: JUMP punishes NOT jumping, AIR_ENEMY punishes
+##                jumping. Static (no sway/lock) -- its danger is legible
+##                from its shape/colour alone, not from any motion cue.
 
-enum Type { DODGE, JUMP, ENEMY }
+enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY }
 
 # Time for Keepy's lateral lane lerp (Keepy.gd LANE_SWITCH_SPEED) to reach
 # ~95% of the way to a new lane -- the point a lane switch reads as "done"
@@ -100,6 +111,8 @@ const ENEMY_ALARM_RAMP_WINDOW_S: float = 4.5
 @onready var _jump_shape: CollisionShape3D = $JumpShape
 @onready var _enemy_mesh: MeshInstance3D = $EnemyMesh
 @onready var _enemy_shape: CollisionShape3D = $EnemyShape
+@onready var _air_enemy_mesh: MeshInstance3D = $AirEnemyMesh
+@onready var _air_enemy_shape: CollisionShape3D = $AirEnemyShape
 
 var obstacle_type: Type = Type.DODGE
 
@@ -130,22 +143,38 @@ func _ready() -> void:
 		_enemy_base_emission = _enemy_material.emission
 		_enemy_base_emission_energy = _enemy_material.emission_energy_multiplier
 
+	# AirEnemyMesh/Shape's local Y is set HERE, from TrackSegment.GLAND_Y,
+	# instead of being a second baked position in Obstacle.tscn -- this is
+	# the "same constant/derivation as the Gland" requirement: a runtime
+	# read of the one real source (Keepy.JUMP_PEAK_HEIGHT +
+	# Keepy.CAPSULE_HALF_HEIGHT, see TrackSegment.gd), not a copied
+	# literal that could silently drift from it if Keepy's jump physics
+	# ever changes. Obstacle root itself always stays at y=0 (see
+	# TrackSegment.OBSTACLE_Y) -- only this child's local offset encodes
+	# the height, same pattern DodgeMesh/JumpMesh/EnemyMesh already use.
+	_air_enemy_mesh.position.y = TrackSegment.GLAND_Y
+	_air_enemy_shape.position.y = TrackSegment.GLAND_Y
+
 ## Switches which variant's mesh/collision shape is active. Called by
 ## TrackSegment.populate() every time this pooled obstacle is (re)spawned.
 ## lane_x/alt_lane_x are only meaningful for Type.ENEMY: lane_x is the
 ## final (settled) lane -- the same lane TrackSegment already reserves to
 ## keep noisettes/glands off it -- and alt_lane_x is the adjacent lane it
-## sways from/to before locking. Both are ignored for DODGE/JUMP.
+## sways from/to before locking. Both are ignored for the other types.
 func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void:
 	obstacle_type = type
 	var is_dodge := type == Type.DODGE
+	var is_jump := type == Type.JUMP
 	var is_enemy := type == Type.ENEMY
+	var is_air_enemy := type == Type.AIR_ENEMY
 	_dodge_mesh.visible = is_dodge
 	_dodge_shape.disabled = not is_dodge
-	_jump_mesh.visible = not is_dodge and not is_enemy
-	_jump_shape.disabled = is_dodge or is_enemy
+	_jump_mesh.visible = is_jump
+	_jump_shape.disabled = not is_jump
 	_enemy_mesh.visible = is_enemy
 	_enemy_shape.disabled = not is_enemy
+	_air_enemy_mesh.visible = is_air_enemy
+	_air_enemy_shape.disabled = not is_air_enemy
 
 	_enemy_settling = is_enemy
 	_enemy_phase = 0.0
@@ -222,10 +251,14 @@ func _apply_enemy_alarm(t: float) -> void:
 	_enemy_material.emission = _enemy_base_emission.lerp(ENEMY_ALARM_EMISSION, t)
 	_enemy_material.emission_energy_multiplier = lerpf(_enemy_base_emission_energy, ENEMY_ALARM_EMISSION_ENERGY, t)
 
-## Whether this obstacle Type can never be jumped over -- i.e. whether a
+## Whether jumping on this obstacle's lane is unsafe -- i.e. whether a
 ## Gland must never share its lane/row (see TrackSegment.populate). Only
-## JUMP is timing-clearable; DODGE and ENEMY both require a full lane
-## switch, same as each other.
+## JUMP is safe (in fact REQUIRED) to jump into. DODGE and ENEMY are
+## unsafe because they require a full LANE SWITCH regardless of jump
+## state; AIR_ENEMY is unsafe for the opposite reason (jumping is exactly
+## what makes contact, see Obstacle.gd Type.AIR_ENEMY doc) -- but the
+## Gland exclusion rule cares only about "would jumping into this lane
+## kill Keepy", which is true for all three, so they share this bucket.
 static func blocks_jump(type: Type) -> bool:
 	return type != Type.JUMP
 
