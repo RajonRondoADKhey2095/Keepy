@@ -1,7 +1,7 @@
 extends Node
 ## Autoloaded as "GameState". Single source of truth for the current
-## run: score, distance travelled and forward speed. No other script
-## keeps its own copy of these values.
+## run: score, distance travelled, elapsed run time and forward speed.
+## No other script keeps its own copy of these values.
 
 signal score_changed(new_score: int)
 signal state_changed(new_state: State)
@@ -12,45 +12,73 @@ signal counts_changed(nut_count: int, gland_count: int)
 
 enum State { TITLE, PLAYING, GAME_OVER }
 
-# Speed ramp: was a flat linear climb (BASE_SPEED=8.0, MAX_SPEED=22.0,
-# +0.02 m/s per meter travelled -- 700m to reach MAX_SPEED, imperceptible
-# over a typical run). Replaced with an exponential approach to MAX_SPEED:
-# aggressive in the first 30-40m, then flattening out as it nears the cap
-# (see add_distance). BASE_SPEED/MAX_SPEED bumped up too so the run is
-# faster from the very first frame, not just steeper over time.
-const BASE_SPEED: float = 11.0
-# MORE AGGRESSIVE PROGRESSION (playtest feedback, was MAX_SPEED=27.0):
-# bumped +55% so the run reaches genuinely extreme speed instead of just
-# "brisk". BASE_SPEED unchanged -- only the ceiling and how fast the ramp
-# climbs toward it change, so the run still opens at the same pace.
-const MAX_SPEED: float = 42.0
-# Exponential time-constant in meters: at distance == this value, current
-# speed has closed ~63% of the gap to MAX_SPEED. Smaller = more aggressive
-# early ramp. Was 40.0m; cut to 22.0m (-45%) so the ramp bites noticeably
-# sooner. The curve's shape only depends on distance/SPEED_RAMP_TIME_CONSTANT_M,
-# so this also pulls DARK_MODE_SPEED_THRESHOLD below earlier in absolute
-# distance -- see that constant's comment for the actual numbers.
-const SPEED_RAMP_TIME_CONSTANT_M: float = 22.0
+# =====================================================================
+# SPEED / PACING TUNING KNOBS -- everything needed to re-tune the run's
+# rhythm after a playtest lives in this one block. Nothing below
+# re-derives pacing from anything outside it.
+# =====================================================================
 
-# Fraction of MAX_SPEED at which the screen-wide "dark mode" post-process
-# (see DarkModeEffect.gd) starts fading in. Picked in the 75-85% range
-# asked for -- high enough to be a genuine "you are now running at a
-# dangerous speed" milestone, not the default state, but not pinned to
-# 99%+ either (the exponential ramp above asymptotes, so a threshold too
-# close to MAX_SPEED would take a very long tail to ever cross).
-# Fraction-of-max thresholds on this curve are reached at
-# distance == SPEED_RAMP_TIME_CONSTANT_M * ln((1 - BASE_SPEED/MAX_SPEED) / (1 - fraction))
-# -- with the constants above that puts this threshold at roughly 35m in,
-# i.e. right as SAFE_START_SEGMENTS (TrackManager, 40m) ends and the
-# first obstacles can appear. That is intentional given "plus tot" was
-# the explicit goal for chantier 2 as a whole: the aggressive ramp means
-# even the early game is already fast, so the dark-mode milestone follows
-# suit rather than being held back to a rarely-reached late-run moment.
-const DARK_MODE_SPEED_THRESHOLD: float = MAX_SPEED * 0.82
+## Wall-clock seconds spent at each speed palier before stepping up to
+## the next one. Scales the whole progression uniformly.
+const STAGE_DURATION_S: float = 30.0
+
+## Speed of palier 0, i.e. the pace the very first seconds of a run are
+## played at. Must stay somewhere a player can read an incoming obstacle
+## and react calmly: a track segment is 20m (TrackManager.SEGMENT_LENGTH),
+## so 8 m/s gives 2.5s of reaction per segment.
+const START_SPEED: float = 8.0
+
+## Speed added by each palier step. Applied as a hard step at the palier
+## boundary, never as a curve -- see STAGE_SPEEDS.
+const STAGE_SPEED_STEP: float = 2.0
+
+## Palier index at which the run is qualified as "fast", which is also
+## when the dark-mode milestone triggers.
+##
+## *** MAIN PACING KNOB. *** At 30s per palier, index 3 puts that
+## milestone 90 seconds into a run. Raise it to push dark mode later
+## (rarer, more of an event), lower it to bring it earlier. Nothing else
+## needs touching to move that milestone.
+const FAST_TIER_INDEX: int = 3
+
+## Speed per palier, spelled out rather than computed, so the whole
+## progression is readable (and hand-tunable) at a glance. Built as
+## START_SPEED + n * STAGE_SPEED_STEP; the LAST entry is the cap, held
+## for the rest of the run once reached.
+##
+##   idx  run time window     speed     notes
+##   ---  ------------------  --------  ---------------------------------
+##    0   0s .. 30s            8 m/s    opening pace, calm
+##    1   30s .. 60s          10 m/s
+##    2   60s .. 90s          12 m/s
+##    3   90s .. 120s         14 m/s    FAST_TIER_INDEX -- dark mode on
+##    4   120s .. 150s        16 m/s
+##    5   150s .. 180s        18 m/s
+##    6   180s .. 210s        20 m/s
+##    7   210s .. 240s        22 m/s
+##    8   240s and beyond     24 m/s    cap (held for the rest of the run)
+const STAGE_SPEEDS: Array[float] = [8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0]
+
+# Named aliases kept because other scripts' comments (Obstacle.gd,
+# Keepy.gd) reason in terms of "the BASE_SPEED..MAX_SPEED range".
+const BASE_SPEED: float = START_SPEED
+const MAX_SPEED: float = 24.0 # == last STAGE_SPEEDS entry (const arrays can't be indexed here)
+
+## Speed at or above which the dark-mode post-process applies (see
+## DarkModeEffect.gd). Derived from the palier table rather than picked
+## as a fraction of MAX_SPEED, so it can only ever land exactly on a
+## palier boundary -- i.e. at a known moment in the run (t =
+## FAST_TIER_INDEX * STAGE_DURATION_S), never at whatever time an
+## interpolated curve happened to cross an arbitrary fraction.
+const DARK_MODE_SPEED_THRESHOLD: float = 14.0 # == STAGE_SPEEDS[FAST_TIER_INDEX]
+
+# =====================================================================
 
 var state: State = State.TITLE
 var distance_travelled: float = 0.0
-var current_speed: float = BASE_SPEED
+var run_time_s: float = 0.0
+var current_speed: float = START_SPEED
+var stage_index: int = 0
 
 # Point values for the two collectible types. Gland is worth more than a
 # ground Noisette because it's only reachable with correct jump timing
@@ -78,7 +106,9 @@ var gland_count: int = 0
 
 func start_run() -> void:
 	distance_travelled = 0.0
-	current_speed = BASE_SPEED
+	run_time_s = 0.0
+	current_speed = START_SPEED
+	stage_index = 0
 	distance_score = 0
 	noisette_score = 0
 	gland_score = 0
@@ -94,9 +124,36 @@ func end_run() -> void:
 	state = State.GAME_OVER
 	state_changed.emit(state)
 
+func _process(delta: float) -> void:
+	if state != State.PLAYING:
+		return
+	advance_time(delta)
+
+## Advances the run clock and everything derived from it. Public, and
+## touching nothing but this node's own state, so a headless test can
+## drive a whole run deterministically at a fixed step instead of
+## waiting on the real frame clock.
+func advance_time(delta: float) -> void:
+	run_time_s += delta
+	_update_stage()
+
+## Speed is a step function of ELAPSED TIME, never of distance travelled.
+##
+## It used to be an exponential in distance -- current_speed = MAX -
+## (MAX - BASE) * exp(-distance / 22m) -- which self-accelerated: a
+## higher speed makes distance accrue faster, which raises the speed
+## again. Measured, that collapsed the entire intended ramp into the
+## first ~3 seconds of a run (94% of MAX_SPEED at t=2s). Elapsed time
+## has no such feedback loop: 30 seconds is 30 seconds at any speed.
+func _update_stage() -> void:
+	var new_stage := mini(int(run_time_s / STAGE_DURATION_S), STAGE_SPEEDS.size() - 1)
+	if new_stage == stage_index:
+		return
+	stage_index = new_stage
+	current_speed = STAGE_SPEEDS[stage_index]
+
 func add_distance(delta_distance: float) -> void:
 	distance_travelled += delta_distance
-	current_speed = MAX_SPEED - (MAX_SPEED - BASE_SPEED) * exp(-distance_travelled / SPEED_RAMP_TIME_CONSTANT_M)
 	var new_distance_score := int(distance_travelled)
 	if new_distance_score != distance_score:
 		distance_score = new_distance_score
