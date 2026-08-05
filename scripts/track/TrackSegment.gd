@@ -86,7 +86,7 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, noisette_lane:
 	for lane in LANE_X.size():
 		var slot := _noisette_slots[lane]
 		if lane == noisette_lane and lane != obstacle_lane:
-			slot.position = Vector3(LANE_X[lane], NOISETTE_Y, 0.0)
+			slot.set_spawn_position(Vector3(LANE_X[lane], NOISETTE_Y, 0.0))
 			slot.collected = false
 			slot.visible = true
 			slot.monitoring = true
@@ -95,7 +95,7 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, noisette_lane:
 			_deactivate_noisette(slot)
 
 	if gland_lane != -1 and not (obstacle_blocks_jump and gland_lane == obstacle_lane):
-		_gland.position = Vector3(LANE_X[gland_lane], GLAND_Y, 0.0)
+		_gland.set_spawn_position(Vector3(LANE_X[gland_lane], GLAND_Y, 0.0))
 		_gland.collected = false
 		_gland.visible = true
 		_gland.monitoring = true
