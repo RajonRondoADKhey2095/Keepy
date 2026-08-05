@@ -189,6 +189,21 @@ func _update_stage() -> void:
 	stage_index = new_stage
 	current_speed = STAGE_SPEEDS[stage_index]
 
+## The speed that content spawned RIGHT NOW should be laid out for --
+## i.e. the NEXT palier's speed, not the current one (the table only ever
+## increases, so this is always >= current_speed).
+##
+## Why a look-ahead is needed at all: TrackManager spawns a row roughly
+## 128m in front of the player, which is between 5s (at the cap) and 11s
+## (at the opening speed) of lead time. A row laid out for the speed at
+## spawn time can therefore be RUN THROUGH one palier faster than it was
+## spaced for, silently eating the reaction budget it was supposed to
+## guarantee. One palier of look-ahead is enough and cannot be beaten:
+## the shortest palier is 12s (see STAGE_START_S) and the longest lead
+## time is ~11s, so a row can never outrun more than one boundary.
+func lookahead_speed() -> float:
+	return STAGE_SPEEDS[mini(stage_index + 1, STAGE_SPEEDS.size() - 1)]
+
 ## Dark <-> light alternation, plus the fade between them. Three explicit
 ## phases; the only transitions are INACTIVE -> DARK (once, at
 ## DARK_CYCLE_PERIOD_S) and DARK <-> LIGHT (every DARK_CYCLE_PERIOD_S
