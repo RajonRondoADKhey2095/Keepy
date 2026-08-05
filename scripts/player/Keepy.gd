@@ -34,6 +34,20 @@ const JUMP_PEAK_HEIGHT: float = JUMP_VELOCITY * JUMP_VELOCITY / (2.0 * GRAVITY)
 # Keepy's capsule at the jump's apex -- see TrackSegment.gd GLAND_Y.
 const CAPSULE_HALF_HEIGHT: float = 0.8
 
+# Top height, in world Y, that a well-timed jump clears -- promoted from
+# the JUMP obstacle's own baked 0.7m (see the derivation in the comment
+# block above: a ~0.51s window centered on the jump's peak, comfortably
+# longer than any obstacle's transit window under Keepy) into a single
+# named constant so every jumpable GROUND hazard in the game (the JUMP
+# log, and since the ground-enemy-jump-dodge/mobile-air-enemy-landing
+# work, also Obstacle.Type.ENEMY once settled and a landed AIR_ENEMY)
+# reuses the exact same verified number instead of each guessing its own.
+# JUMP's own BoxMesh/BoxShape in Obstacle.tscn stay baked at the literal
+# 0.7 they were already verified at -- not rewired to read this constant,
+# to avoid touching an already-shipped, already-verified hitbox -- but
+# both values must always match; this constant IS that value's home.
+const JUMPABLE_OBSTACLE_TOP_HEIGHT: float = 0.7
+
 var lane_index: int = 1
 var target_x: float = 0.0
 
@@ -42,6 +56,11 @@ var target_x: float = 0.0
 func _ready() -> void:
 	target_x = LANE_X[lane_index]
 	position.x = target_x
+	# Looked up by group rather than a NodePath: Obstacle.gd (ground ENEMY
+	# lane targeting, see its _decide_late_lock) needs to read Keepy's
+	# current lane at a moment that has nothing to do with either node's
+	# position in the scene tree.
+	add_to_group("player")
 	if swipe_detector:
 		swipe_detector.swiped_left.connect(_on_swipe_left)
 		swipe_detector.swiped_right.connect(_on_swipe_right)
