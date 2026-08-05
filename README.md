@@ -133,10 +133,14 @@ keepy/
   the whole child node) inside the relevant `.tscn` -- none of the
   gameplay scripts touch mesh data, so no logic changes are needed.
 - **Score.** Tracked as `distance_score` (derived from distance
-  travelled, which also ramps the run speed) plus `noisette_score`
-  (collectibles), summed into `GameState.score`. Kept as two separate
-  counters specifically so a noisette pickup can never be silently
-  overwritten by the next distance-based score tick.
+  travelled, which also ramps the run speed) plus `noisette_score` and
+  `gland_score` (collectibles, each worth a different point value),
+  summed into `GameState.score`. Kept as separate counters specifically
+  so a pickup can never be silently overwritten by the next
+  distance-based score tick or by another collectible type. `nut_count`
+  and `gland_count` are a second, independent pair of RAW pickup counts
+  (not point values) used only for the HUD display and the leaderboard
+  submission -- they never feed back into `score`.
 
 ## Adding Meshy assets later
 
@@ -162,7 +166,13 @@ When 3D models are ready:
 - No audio yet (`assets/audio/` is empty).
 - No difficulty-curve tuning pass beyond a linear speed ramp
   (`GameState.SPEED_RAMP_PER_METER`).
-- No persistent high score (in-memory only, resets on relaunch).
+- Persistent local best score (survives relaunch, `user://` via
+  FileAccess/IndexedDB on Web) plus a global top-10 leaderboard
+  (Firestore REST, project `keepy-8df91`, independent from `keepr-529cc`)
+  -- see `scripts/autoload/Leaderboard.gd`. Both degrade gracefully with
+  no network: the local record still works offline, and a failed
+  submission/fetch just leaves the leaderboard section showing
+  "indisponible" instead of blocking the game-over screen.
 - `export_presets.cfg` is committed (Web preset only) so CI can build
   headless -- see "Tester le jeu" above. Add further per-platform
   presets locally as needed; the Web preset should stay in sync with
