@@ -19,11 +19,34 @@ enum State { TITLE, PLAYING, GAME_OVER }
 # (see add_distance). BASE_SPEED/MAX_SPEED bumped up too so the run is
 # faster from the very first frame, not just steeper over time.
 const BASE_SPEED: float = 11.0
-const MAX_SPEED: float = 27.0
+# MORE AGGRESSIVE PROGRESSION (playtest feedback, was MAX_SPEED=27.0):
+# bumped +55% so the run reaches genuinely extreme speed instead of just
+# "brisk". BASE_SPEED unchanged -- only the ceiling and how fast the ramp
+# climbs toward it change, so the run still opens at the same pace.
+const MAX_SPEED: float = 42.0
 # Exponential time-constant in meters: at distance == this value, current
 # speed has closed ~63% of the gap to MAX_SPEED. Smaller = more aggressive
-# early ramp.
-const SPEED_RAMP_TIME_CONSTANT_M: float = 40.0
+# early ramp. Was 40.0m; cut to 22.0m (-45%) so the ramp bites noticeably
+# sooner. The curve's shape only depends on distance/SPEED_RAMP_TIME_CONSTANT_M,
+# so this also pulls DARK_MODE_SPEED_THRESHOLD below earlier in absolute
+# distance -- see that constant's comment for the actual numbers.
+const SPEED_RAMP_TIME_CONSTANT_M: float = 22.0
+
+# Fraction of MAX_SPEED at which the screen-wide "dark mode" post-process
+# (see DarkModeEffect.gd) starts fading in. Picked in the 75-85% range
+# asked for -- high enough to be a genuine "you are now running at a
+# dangerous speed" milestone, not the default state, but not pinned to
+# 99%+ either (the exponential ramp above asymptotes, so a threshold too
+# close to MAX_SPEED would take a very long tail to ever cross).
+# Fraction-of-max thresholds on this curve are reached at
+# distance == SPEED_RAMP_TIME_CONSTANT_M * ln((1 - BASE_SPEED/MAX_SPEED) / (1 - fraction))
+# -- with the constants above that puts this threshold at roughly 35m in,
+# i.e. right as SAFE_START_SEGMENTS (TrackManager, 40m) ends and the
+# first obstacles can appear. That is intentional given "plus tot" was
+# the explicit goal for chantier 2 as a whole: the aggressive ramp means
+# even the early game is already fast, so the dark-mode milestone follows
+# suit rather than being held back to a rarely-reached late-run moment.
+const DARK_MODE_SPEED_THRESHOLD: float = MAX_SPEED * 0.82
 
 var state: State = State.TITLE
 var distance_travelled: float = 0.0

@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/Game.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/Keepy.tscn" id="2"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://scripts/player/SwipeDetector.gd" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/HUD.tscn" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/GameOverScreen.tscn" id="7"]
+[ext_resource type="Script" path="res://scripts/world/DarkModeEffect.gd" id="8"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 1
@@ -22,6 +23,7 @@ script = ExtResource("1")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="World"]
 environment = SubResource("Environment_1")
+script = ExtResource("8")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="World"]
 position = Vector3(0, 6, 0)
