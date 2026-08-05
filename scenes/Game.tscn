@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" path="res://scenes/GameOverScreen.tscn" id="7"]
 [ext_resource type="Script" path="res://scripts/world/DarkModeEffect.gd" id="8"]
 [ext_resource type="Shader" path="res://assets/shaders/screen_invert.gdshader" id="9"]
+[ext_resource type="Script" path="res://scripts/world/EnvironmentDrift.gd" id="10"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 1
@@ -61,6 +62,9 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="EnvironmentDrift" type="Node" parent="."]
+script = ExtResource("10")
 
 [node name="HUD" parent="." instance=ExtResource("6")]
 
