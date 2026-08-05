@@ -18,6 +18,11 @@ class_name TrackManager
 
 const SEGMENT_SCENE: PackedScene = preload("res://scenes/TrackSegment.tscn")
 const SEGMENT_LENGTH: float = 20.0
+# GameState.MAX_LOOKAHEAD_S restates SEGMENT_COUNT * SEGMENT_LENGTH /
+# BASE_SPEED as a literal (not a reference to these two constants) to
+# avoid an autoload taking a compile-time dependency on this plain scene
+# script -- if either of these two ever changes, that constant's comment
+# is where to also update.
 const SEGMENT_COUNT: int = 7
 const RECYCLE_Z: float = 12.0 # segment behind the player past this Z gets recycled
 const SAFE_START_SEGMENTS: int = 2 # no obstacles on the first N segments of a run
