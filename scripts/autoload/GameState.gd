@@ -59,17 +59,6 @@ enum State { TITLE, PLAYING, GAME_OVER }
 const STAGE_START_S: Array[float] = [0.0, 12.0, 24.0, 36.0, 48.0, 60.0, 75.0, 90.0]
 const STAGE_SPEEDS: Array[float] = [12.0, 15.0, 18.0, 20.5, 22.5, 24.0, 25.0, 26.0]
 
-## Seconds a dark <-> light transition takes to fade fully in or out.
-## Never 0: an instant flip is what made an earlier iteration unplayable.
-##
-## Was 1.5s, when a phase lasted 90s and the fade was under 2% of it. At
-## a 20s phase, 1.5s of fade would be 7.5% of every phase spent in a
-## half-applied state, twice per cycle -- the transition would stop
-## reading as an event and start reading as the normal look of the game.
-## 0.8s stays clearly followable by the eye while leaving the phase
-## itself unambiguous.
-const DARK_FADE_DURATION_S: float = 0.8
-
 # Named aliases. START_SPEED/BASE_SPEED == STAGE_SPEEDS[0] and
 # MAX_SPEED == the last STAGE_SPEEDS entry, restated as plain literals
 # because a const array cannot be indexed in a const initialiser. Kept
@@ -106,10 +95,21 @@ const DARK_FIRST_TRIGGER_S: float = 36.0
 ## a time the run cannot reach early by any means.
 const DARK_CYCLE_PERIOD_S: float = 20.0
 
+## Seconds a dark <-> light transition takes to fade fully in or out.
+## Never 0: an instant flip is what made an earlier iteration unplayable.
+##
+## Was 1.5s, when a phase lasted 90s and the fade was under 2% of it. At
+## a 20s phase, 1.5s of fade would be 7.5% of every phase spent in a
+## half-applied state, twice per cycle -- the transition would stop
+## reading as an event and start reading as the normal look of the game.
+## 0.8s stays clearly followable by the eye while leaving the phase
+## itself unambiguous.
+const DARK_FADE_DURATION_S: float = 0.8
+
 # =====================================================================
 
-## Dark-mode cycle phase. INACTIVE until the fast palier is reached, then
-## only ever alternates DARK <-> LIGHT. An explicit state machine (phase +
+## Dark-mode cycle phase. INACTIVE until DARK_FIRST_TRIGGER_S, then only
+## ever alternates DARK <-> LIGHT. An explicit state machine (phase +
 ## the run time that phase started at) rather than a continuous formula
 ## on elapsed time, so a transition in flight can never be recomputed
 ## into a different value by a stray frame.
