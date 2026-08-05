@@ -5,6 +5,10 @@ extends Node
 
 signal score_changed(new_score: int)
 signal state_changed(new_state: State)
+## Fires only on a collectible pickup (never on the per-meter distance
+## tick that also drives score_changed) -- the HUD counters only need to
+## repaint when a count actually moves.
+signal counts_changed(nut_count: int, gland_count: int)
 
 enum State { TITLE, PLAYING, GAME_OVER }
 
@@ -41,6 +45,14 @@ var noisette_score: int = 0
 var gland_score: int = 0
 var score: int = 0
 
+# Raw pickup counts, separate from noisette_score/gland_score above.
+# NOT part of the score computation (gland_score already folds
+# GLAND_VALUE points into `score` -- these two exist purely so the HUD
+# and the leaderboard submission have a "how many of each did I collect"
+# number that isn't pre-multiplied by a point value).
+var nut_count: int = 0
+var gland_count: int = 0
+
 func start_run() -> void:
 	distance_travelled = 0.0
 	current_speed = BASE_SPEED
@@ -48,9 +60,12 @@ func start_run() -> void:
 	noisette_score = 0
 	gland_score = 0
 	score = 0
+	nut_count = 0
+	gland_count = 0
 	state = State.PLAYING
 	state_changed.emit(state)
 	score_changed.emit(score)
+	counts_changed.emit(nut_count, gland_count)
 
 func end_run() -> void:
 	state = State.GAME_OVER
@@ -66,11 +81,15 @@ func add_distance(delta_distance: float) -> void:
 
 func add_noisette() -> void:
 	noisette_score += NOISETTE_VALUE
+	nut_count += 1
 	_recompute_score()
+	counts_changed.emit(nut_count, gland_count)
 
 func add_gland() -> void:
 	gland_score += GLAND_VALUE
+	gland_count += 1
 	_recompute_score()
+	counts_changed.emit(nut_count, gland_count)
 
 func _recompute_score() -> void:
 	score = distance_score + noisette_score + gland_score

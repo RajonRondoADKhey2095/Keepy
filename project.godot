@@ -17,6 +17,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 GameState="*res://scripts/autoload/GameState.gd"
+Leaderboard="*res://scripts/autoload/Leaderboard.gd"
 
 [display]
 

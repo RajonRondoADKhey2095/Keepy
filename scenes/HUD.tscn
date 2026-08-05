@@ -15,10 +15,33 @@ theme_override_constants/margin_top = 60
 theme_override_constants/margin_right = 40
 theme_override_constants/margin_bottom = 40
 
-[node name="ScoreLabel" type="Label" parent="MarginContainer"]
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
 layout_mode = 2
 size_flags_horizontal = 4
 size_flags_vertical = 0
+theme_override_constants/separation = 8
+
+[node name="ScoreLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
 theme_override_font_sizes/font_size = 64
 horizontal_alignment = 1
 text = "0"
+
+[node name="CountsRow" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
+alignment = 1
+theme_override_constants/separation = 24
+
+[node name="NutLabel" type="Label" parent="MarginContainer/VBoxContainer/CountsRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+theme_override_colors/font_color = Color(0.85, 0.7, 0.45, 1)
+text = "Noisettes : 0"
+
+[node name="GlandLabel" type="Label" parent="MarginContainer/VBoxContainer/CountsRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+theme_override_colors/font_color = Color(0.95, 0.8, 0.25, 1)
+text = "Glands : 0"
