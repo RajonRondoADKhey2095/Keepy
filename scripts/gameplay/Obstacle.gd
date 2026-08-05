@@ -15,22 +15,46 @@ class_name Obstacle
 ##            a well-timed jump clears it (see Keepy.gd JUMP_VELOCITY /
 ##            GRAVITY for the clearance math).
 ##   ENEMY -- same full lane-blocking height as DODGE (no jump possible),
-##            but sways between its lane and an adjacent one for a short
-##            real-time window right after it spawns, then LOCKS onto its
-##            final lane (see ENEMY_SETTLE_DURATION_S) well before the
-##            player can possibly reach it -- collision is only ever
+##            but sways between its lane and an adjacent one while the
+##            player approaches, then LOCKS onto its final lane a fixed
+##            TIME BEFORE CONTACT (see ENEMY_REACTION_WINDOW_S) rather
+##            than a fixed time after spawning -- collision is only ever
 ##            tested against that settled position, never a mid-sway one,
 ##            so it stays fully deterministic and testable.
 
 enum Type { DODGE, JUMP, ENEMY }
 
-# How long (real seconds) an ENEMY obstacle keeps swaying before locking
-# onto its final lane. Segments spawn/recycle SEGMENT_COUNT *
-# SEGMENT_LENGTH behind the player (TrackManager) -- even at
-# GameState.MAX_SPEED that's several seconds of travel before the player
-# can reach a freshly (re)spawned obstacle, so this settle window always
-# finishes with a comfortable margin before contact is even possible.
-const ENEMY_SETTLE_DURATION_S: float = 1.4
+# Time for Keepy's lateral lane lerp (Keepy.gd LANE_SWITCH_SPEED) to reach
+# ~95% of the way to a new lane -- the point a lane switch reads as "done"
+# rather than "still sliding". The lerp is an exponential ease
+# (position.x = lerp(x, target, 1 - exp(-LANE_SWITCH_SPEED * delta))), a
+# first-order low-pass with time constant 1/LANE_SWITCH_SPEED; reaching
+# 95% takes ~3 time constants (ln(0.05) ~= -3.0).
+const LANE_SWITCH_TIME_S: float = 3.0 / Keepy.LANE_SWITCH_SPEED
+
+# Extra time budgeted for the player to actually PERCEIVE the now-locked
+# final lane and decide/start the swipe or key press, on top of the lane
+# switch's own travel time above.
+const PERCEPTION_REACTION_S: float = 0.35
+
+# Time-before-contact, in SECONDS, at which an ENEMY obstacle must already
+# be locked onto its final lane: perception+decision time plus the time
+# Keepy's own lane lerp needs to actually get there. Using seconds --
+# converted to a speed-dependent distance every frame in _physics_process
+# via GameState.current_speed -- rather than a fixed world-space distance
+# is what keeps this reaction window roughly constant in real time across
+# the whole GameState.BASE_SPEED..MAX_SPEED ramp; a fixed meters value
+# would give a much shorter reaction window at MAX_SPEED than at
+# BASE_SPEED (same distance covered in less time as speed climbs).
+const ENEMY_REACTION_WINDOW_S: float = LANE_SWITCH_TIME_S + PERCEPTION_REACTION_S
+
+# How much EARLIER than the hard lock above (again in seconds-before-
+# contact) the sway starts easing from full amplitude down to the settled
+# lane, instead of cutting off abruptly mid-swing. Purely cosmetic --
+# ENEMY_REACTION_WINDOW_S itself is already fully locked/static by the
+# time this window ends.
+const ENEMY_EASE_DURATION_S: float = 0.5
+
 const ENEMY_OSCILLATION_HZ: float = 2.2 # sway cycles per second while unsettled
 
 @onready var _dodge_mesh: MeshInstance3D = $DodgeMesh
@@ -81,18 +105,32 @@ func _physics_process(delta: float) -> void:
 		return
 
 	_enemy_elapsed += delta
-	if _enemy_elapsed >= ENEMY_SETTLE_DURATION_S:
+
+	# Keepy sits fixed at Z=0 (see Keepy.gd / TrackManager.gd -- the WORLD
+	# moves toward the static player), so global_position.z IS the
+	# remaining distance to contact: negative while still ahead, 0 at
+	# contact. Dividing by the CURRENT speed (not a fixed distance) turns
+	# that into a time-before-contact that self-adjusts as the run's
+	# speed ramps up -- see ENEMY_REACTION_WINDOW_S above.
+	var distance_to_contact := -global_position.z
+	var time_to_contact := distance_to_contact / GameState.current_speed
+
+	if time_to_contact <= ENEMY_REACTION_WINDOW_S:
 		_enemy_settling = false
 		position.x = _enemy_lane_x
 		return
 
-	# Blend a full-amplitude sine sway (at t=0) toward the fixed final
-	# lane (at t=1) so the motion eases into place instead of cutting off
-	# mid-swing on the final frame.
-	var settle_t := _enemy_elapsed / ENEMY_SETTLE_DURATION_S
 	var wave := 0.5 + 0.5 * sin(_enemy_elapsed * TAU * ENEMY_OSCILLATION_HZ)
 	var wave_x: float = lerp(_enemy_lane_x, _enemy_alt_lane_x, wave)
-	position.x = lerp(wave_x, _enemy_lane_x, settle_t)
+
+	if time_to_contact <= ENEMY_REACTION_WINDOW_S + ENEMY_EASE_DURATION_S:
+		# Blend the full-amplitude sway toward the fixed final lane so the
+		# motion eases into place instead of cutting off mid-swing right
+		# at the hard lock threshold.
+		var ease_t := 1.0 - (time_to_contact - ENEMY_REACTION_WINDOW_S) / ENEMY_EASE_DURATION_S
+		position.x = lerp(wave_x, _enemy_lane_x, ease_t)
+	else:
+		position.x = wave_x
 
 ## Whether this obstacle Type can never be jumped over -- i.e. whether a
 ## Gland must never share its lane/row (see TrackSegment.populate). Only
