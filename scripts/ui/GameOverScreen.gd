@@ -38,6 +38,8 @@ enum _TopFetchStep { NONE, PRECHECK, FINAL }
 @onready var name_entry_container: HBoxContainer = $Root/CenterContainer/VBoxContainer/NameEntryContainer
 @onready var name_input: LineEdit = $Root/CenterContainer/VBoxContainer/NameEntryContainer/NameInput
 @onready var submit_name_button: Button = $Root/CenterContainer/VBoxContainer/NameEntryContainer/SubmitNameButton
+@onready var top_list_label: Label = $Root/CenterContainer/VBoxContainer/TopListLabel
+@onready var top_list_container: VBoxContainer = $Root/CenterContainer/VBoxContainer/TopListContainer
 @onready var retry_button: Button = $Root/CenterContainer/VBoxContainer/RetryButton
 
 var _top_fetch_step: int = _TopFetchStep.NONE
@@ -51,6 +53,7 @@ func _ready() -> void:
 	submit_name_button.pressed.connect(_on_submit_name_pressed)
 	GameState.state_changed.connect(_on_state_changed)
 	Leaderboard.top_scores_fetched.connect(_on_top_scores_fetched)
+	Leaderboard.submit_finished.connect(_on_submit_finished)
 	root.visible = false
 
 func _on_state_changed(new_state: int) -> void:
@@ -69,16 +72,22 @@ func _show_game_over() -> void:
 	record_label.visible = _is_new_record
 
 	name_entry_container.visible = false
+	_set_top_list_status("Chargement du classement...")
 	root.visible = true
 
 	_top_fetch_step = _TopFetchStep.PRECHECK
 	Leaderboard.fetch_top_scores()
 
 func _on_top_scores_fetched(entries: Array, success: bool) -> void:
-	if _top_fetch_step != _TopFetchStep.PRECHECK:
-		return
-	_top_fetch_step = _TopFetchStep.NONE
-	_handle_precheck_result(entries, success)
+	match _top_fetch_step:
+		_TopFetchStep.PRECHECK:
+			_top_fetch_step = _TopFetchStep.NONE
+			_handle_precheck_result(entries, success)
+		_TopFetchStep.FINAL:
+			_top_fetch_step = _TopFetchStep.NONE
+			_render_top_scores(entries, success)
+		_:
+			pass  # stray/late reply (e.g. a fast Rejouer) -- see class doc
 
 func _handle_precheck_result(entries: Array, success: bool) -> void:
 	var qualifies := _is_new_record
@@ -97,6 +106,40 @@ func _on_submit_name_pressed() -> void:
 
 func _begin_submit(player_name: String) -> void:
 	Leaderboard.submit_score(player_name, _pending_score, _pending_nuts, _pending_glands)
+
+## Fires after every submit attempt, success or failure alike -- either
+## way the board may have changed (this run's own submission, or simply
+## time passing), so it's re-fetched for display once more.
+func _on_submit_finished(_success: bool) -> void:
+	_set_top_list_status("Chargement du classement...")
+	_top_fetch_step = _TopFetchStep.FINAL
+	Leaderboard.fetch_top_scores()
+
+func _render_top_scores(entries: Array, success: bool) -> void:
+	_clear_top_list()
+	if not success:
+		_set_top_list_status("Classement indisponible")
+		return
+	if entries.is_empty():
+		_set_top_list_status("Aucun score pour l'instant")
+		return
+	top_list_label.visible = false
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		var row := Label.new()
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		row.add_theme_font_size_override("font_size", 22)
+		row.text = "%d. %s -- %d" % [i + 1, entry.get("name", "?"), int(entry.get("score", 0))]
+		top_list_container.add_child(row)
+
+func _set_top_list_status(text: String) -> void:
+	_clear_top_list()
+	top_list_label.text = text
+	top_list_label.visible = true
+
+func _clear_top_list() -> void:
+	for child in top_list_container.get_children():
+		child.queue_free()
 
 func _on_retry_pressed() -> void:
 	GameState.start_run()
