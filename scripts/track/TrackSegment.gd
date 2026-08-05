@@ -69,12 +69,13 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, noisette_lane:
 	var obstacle_blocks_jump := false
 
 	if spawn_obstacle:
-		obstacle_lane = randi_range(0, LANE_X.size() - 1)
 		obstacle_blocks_jump = Obstacle.blocks_jump(obstacle_type)
 		if obstacle_type == Obstacle.Type.ENEMY:
+			obstacle_lane = _pick_enemy_final_lane()
 			var alt_lane := _pick_enemy_alt_lane(obstacle_lane)
 			_obstacle.configure(obstacle_type, LANE_X[obstacle_lane], LANE_X[alt_lane])
 		else:
+			obstacle_lane = randi_range(0, LANE_X.size() - 1)
 			_obstacle.configure(obstacle_type)
 		_obstacle.position = Vector3(LANE_X[obstacle_lane], OBSTACLE_Y, 0.0)
 		_obstacle.visible = true
@@ -102,6 +103,51 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, noisette_lane:
 		_gland.monitorable = true
 	else:
 		_deactivate_gland()
+
+## Final (settled) lane for an ENEMY obstacle. Deliberately NOT a plain
+## randi_range(0, 2) uniform draw over the 3 lanes -- see the long
+## comment below for why, and DODGE/JUMP's obstacle_lane draw in
+## populate() above for what a plain uniform draw actually looks like
+## (still used for those two, unaffected by this).
+##
+## DIAGNOSTIC (playtest report: the enemy's final lane felt very
+## predictable, "almost always lateral, rarely center", killing the
+## interest of the mechanic):
+##
+## The originally suspected cause was that Obstacle.gd's sway locks onto
+## whatever lane the sinusoidal oscillation happens to be nearest to at
+## an "arbitrary instant" -- and a sine wave spends most of its time near
+## its two extremes (zero velocity at the bounds), so an arbitrary-instant
+## sample would land near an extreme more often than near the midpoint.
+## THAT HYPOTHESIS IS FALSE FOR THIS CODEBASE, measured (not assumed) via
+## scripts/dev/EnemyLaneAudit.gd over 200 real enemy encounters: the lock
+## lane and the lane actually collided with at contact matched in EVERY
+## single sample (0/200 mismatches) -- the lock has always been a
+## deterministic value pre-drawn at spawn (Obstacle._enemy_lane_x, set
+## once in configure()), never derived from the sway's position at lock
+## time. Same measurement also found each of the 3 INDIVIDUAL lanes
+## already landing almost exactly 1/3 of the time under a plain uniform
+## draw (33.5% / 32.0% / 34.5% measured) -- no RNG skew toward a specific
+## lane either.
+##
+## So why did playtesting read it as "almost always lateral" anyway? A
+## plain per-lane-uniform draw over 3 lanes still makes the CATEGORY
+## "lateral" (lane 0 OR lane 2 combined) come up ~2x as often as the
+## category "center" (lane 1 alone) -- 68.0% vs 32.0% measured -- simply
+## because there are two lateral lanes and only one center lane, each
+## drawn with equal odds. That 2:1 split is a real, learnable pattern
+## ("when unsure, dodge sideways, you'll be right two times out of three")
+## even though no single lane is favoured over the other two. It is this
+## category-level skew, not a lane-level one, that the fix below targets:
+## weighting the center lane at 50% and each edge lane at 25% makes
+## "lateral" and "center" equally likely AS CATEGORIES, which is what
+## actually removes the learnable "guess lateral" heuristic. Re-measured
+## post-fix (same probe, same sample size): center/lateral converge to
+## roughly 50/50 -- see the session report for the exact numbers.
+func _pick_enemy_final_lane() -> int:
+	if randf() < 0.5:
+		return 1
+	return 0 if randf() < 0.5 else 2
 
 ## Adjacent lane for an ENEMY obstacle to sway toward before settling on
 ## `lane` (see Obstacle.gd). The middle lane (index 1) has two neighbours
