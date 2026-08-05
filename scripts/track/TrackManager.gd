@@ -27,7 +27,14 @@ const JUMP_OBSTACLE_CHANCE: float = 0.5
 # Chance of a noisette appearing at all in a segment. Only ONE lane is
 # ever picked per segment (see TrackSegment.populate) -- Keepy can only
 # be on one lane at a time, so this is no longer "per lane".
-const NOISETTE_CHANCE_PER_ROW: float = 0.5
+# Was 0.5. The one-noisette-per-row cap (TrackSegment.populate, previous
+# fix) mechanically halved the ceiling on noisettes per row (two lanes
+# could show one each before that cap), and roughly a third of remaining
+# rolls are further dropped when the picked lane collides with the
+# obstacle's lane (obstacle wins, see populate) -- both silently thin out
+# the total count. Bumped to 0.85 to bring the actual per-run pickup
+# density back in line with what it was before the cap.
+const NOISETTE_CHANCE_PER_ROW: float = 0.85
 
 var _segments: Array[TrackSegment] = []
 
