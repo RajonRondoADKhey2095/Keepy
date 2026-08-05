@@ -133,7 +133,7 @@ keepy/
   the whole child node) inside the relevant `.tscn` -- none of the
   gameplay scripts touch mesh data, so no logic changes are needed.
 - **Score.** Tracked as `distance_score` (derived from distance
-  travelled, which also ramps the run speed) plus `noisette_score` and
+  travelled) plus `noisette_score` and
   `gland_score` (collectibles, each worth a different point value),
   summed into `GameState.score`. Kept as separate counters specifically
   so a pickup can never be silently overwritten by the next
@@ -164,8 +164,27 @@ When 3D models are ready:
 ## Known limitations / next steps
 
 - No audio yet (`assets/audio/` is empty).
-- No difficulty-curve tuning pass beyond a linear speed ramp
-  (`GameState.SPEED_RAMP_PER_METER`).
+- **Pacing.** Run speed is a step function of ELAPSED TIME, never of
+  distance travelled (a distance ramp self-accelerates: going faster
+  accrues distance faster, which raises the speed again). The curve is
+  an explicit table of eight (start time, speed) paliers in
+  `GameState.STAGE_START_S` / `STAGE_SPEEDS`, logarithmic in shape --
+  12 m/s at the start, 26 m/s from 90s on, with short paliers and big
+  steps early and longer paliers and small steps late. Obstacle spacing
+  adapts to it: `TrackManager.MIN_OBSTACLE_GAP_S` keeps a fixed amount
+  of REACTION TIME between two hazards, so the track opens up as the run
+  accelerates instead of becoming unreadable. Dark mode is on its own
+  clock (`GameState.DARK_FIRST_TRIGGER_S` = 36s, then swapping every
+  `DARK_CYCLE_PERIOD_S` = 20s). All of it lives in one commented block
+  at the top of `GameState.gd`, plus the spacing block in
+  `TrackManager.gd`.
+- Pacing changes are verified by measurement, not by re-reading the
+  constants: `scripts/dev/PacingAudit.tscn` boots the real game headless
+  and reports palier timings, distance per palier, dark-cycle
+  transitions, the worst reaction budget per palier and the enemy lane
+  lock margin.
+
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/PacingAudit.tscn
 - Persistent local best score (survives relaunch, `user://` via
   FileAccess/IndexedDB on Web) plus a global top-10 leaderboard
   (Firestore REST, project `keepy-8df91`, independent from `keepr-529cc`)
