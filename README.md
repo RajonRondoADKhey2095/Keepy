@@ -10,6 +10,59 @@ meshes -- no external 3D assets are required to run the project.
 - Godot Engine 4.3+ (or newer 4.x), using the Compatibility
   (GL Compatibility) renderer.
 
+## Tester le jeu (boucle web CI)
+
+Ce projet ne se teste pas seulement dans l'editeur : chaque push sur `main`
+declenche un build web automatise, servi ensuite via une URL jouable
+directement dans Safari sur iPhone (ou n'importe quel navigateur).
+
+**La boucle :**
+
+```
+push sur main
+  -> GitHub Actions (.github/workflows/web-build.yml)
+     -> Godot 4.3 headless : import + export-release "Web"
+     -> verification que index.html / .wasm / .pck existent et sont non vides
+     -> upload de build/web en artefact GitHub Actions
+     -> deploiement sur Vercel (build/web + vercel.json, prod)
+  -> URL Vercel mise a jour, jouable immediatement
+```
+
+- Suivre le run : onglet **Actions** du repo GitHub.
+- L'URL de prod (une fois le projet Vercel cree, voir ci-dessous) :
+  **`https://keepy.vercel.app`** (a confirmer/ajuster une fois le premier
+  deploiement reussi -- Vercel peut retenir un nom legerement different si
+  `keepy` est deja pris ailleurs).
+- Ouvrir cette URL dans Safari iOS -> le jeu doit se charger et etre
+  jouable au tap/swipe, sans ecran blanc.
+
+### Mise en place ponctuelle (une seule fois, cote humain)
+
+L'automatisation ne peut pas creer elle-meme le projet Vercel ni les
+secrets GitHub (ce sont des actions qui exigent un compte/jeton humain) :
+
+1. **Creer le projet Vercel** : soit via le dashboard Vercel
+   ("Add New... -> Project", en important sans repo Git connecte -- le
+   contenu est pousse par la CI, pas par l'integration Git de Vercel),
+   soit en local avec `vercel link` depuis ce dossier (choisir/creer le
+   projet `keepy` sous l'equipe `rajonrondoadkhey2095s-projects`).
+2. Recuperer les 3 valeurs :
+   - `VERCEL_TOKEN` : https://vercel.com/account/tokens -> New Token.
+   - `VERCEL_ORG_ID` et `VERCEL_PROJECT_ID` : apres `vercel link`, dans
+     `.vercel/project.json` (`orgId` et `projectId`), ou dans les
+     Project Settings sur vercel.com (section General).
+3. Dans GitHub : **Settings -> Secrets and variables -> Actions -> New
+   repository secret**, ajouter les 3 : `VERCEL_TOKEN`, `VERCEL_ORG_ID`,
+   `VERCEL_PROJECT_ID`.
+4. Relancer le workflow (`Actions` -> `Web build & deploy` -> `Run
+   workflow`), ou pousser un commit sur `main`.
+
+Tant que ces secrets ne sont pas configures, le build Godot et la
+verification des artefacts s'executent et reussissent normalement (et
+l'artefact `keepy-web-build` reste telechargeable depuis le run) -- seule
+la derniere etape (deploy Vercel) echoue explicitement, avec un message
+clair indiquant le secret manquant.
+
 ## Running the game
 
 1. Clone the repo.
@@ -110,5 +163,7 @@ When 3D models are ready:
 - No difficulty-curve tuning pass beyond a linear speed ramp
   (`GameState.SPEED_RAMP_PER_METER`).
 - No persistent high score (in-memory only, resets on relaunch).
-- Export presets (`export_presets.cfg`) are intentionally not
-  committed -- configure per-platform exports locally when needed.
+- `export_presets.cfg` is committed (Web preset only) so CI can build
+  headless -- see "Tester le jeu" above. Add further per-platform
+  presets locally as needed; the Web preset should stay in sync with
+  whatever CI expects.
