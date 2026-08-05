@@ -60,10 +60,15 @@ const STAGE_START_S: Array[float] = [0.0, 12.0, 24.0, 36.0, 48.0, 60.0, 75.0, 90
 const STAGE_SPEEDS: Array[float] = [12.0, 15.0, 18.0, 20.5, 22.5, 24.0, 25.0, 26.0]
 
 ## Seconds a dark <-> light transition takes to fade fully in or out.
-## Never 0: an instant flip is what made the previous iteration
-## unplayable. Short enough to still read as an event, long enough that
-## the eye follows it.
-const DARK_FADE_DURATION_S: float = 1.5
+## Never 0: an instant flip is what made an earlier iteration unplayable.
+##
+## Was 1.5s, when a phase lasted 90s and the fade was under 2% of it. At
+## a 20s phase, 1.5s of fade would be 7.5% of every phase spent in a
+## half-applied state, twice per cycle -- the transition would stop
+## reading as an event and start reading as the normal look of the game.
+## 0.8s stays clearly followable by the eye while leaving the phase
+## itself unambiguous.
+const DARK_FADE_DURATION_S: float = 0.8
 
 # Named aliases. START_SPEED/BASE_SPEED == STAGE_SPEEDS[0] and
 # MAX_SPEED == the last STAGE_SPEEDS entry, restated as plain literals
@@ -74,14 +79,32 @@ const START_SPEED: float = 12.0
 const BASE_SPEED: float = START_SPEED
 const MAX_SPEED: float = 26.0
 
-## Run time at which the dark-mode cycle starts, and also the duration of
-## each dark phase and each light phase.
+## Run time at which the dark-mode cycle FIRST fires. Aligned on the
+## start of palier 3 (see STAGE_START_S) so the run's first visual event
+## lands on a speed step rather than in the middle of one.
+##
+## Was 90s, which was past the end of most runs -- the majority of
+## players never saw dark mode exist at all. 36s puts it inside the
+## window a typical 40-90s run actually occupies, while still leaving
+## the opening half-minute clean so it reads as an escalation and not as
+## the game's default state.
+const DARK_FIRST_TRIGGER_S: float = 36.0
+
+## Length of ONE phase: dark for this long, then light for this long,
+## then dark again, for the rest of the run.
+##
+## DELIBERATELY INDEPENDENT of DARK_FIRST_TRIGGER_S. These used to be a
+## single constant, which meant "when does dark mode start" and "how
+## often does it swap" could not be tuned apart: moving the first
+## trigger earlier also made the cycle churn faster, and vice versa.
+## They answer different design questions and now have one knob each.
+## At the defaults: dark 36-56s, light 56-76s, dark 76-96s, and so on.
 ##
 ## The cycle is driven by the clock, NOT by current_speed: keying a
-## visual state off a speed threshold is what let the previous iteration
+## visual state off a speed threshold is what let an earlier iteration
 ## fire 1.35s into a run when the speed curve misbehaved. The trigger is
-## now a time the run cannot reach early by any means.
-const DARK_CYCLE_PERIOD_S: float = 90.0
+## a time the run cannot reach early by any means.
+const DARK_CYCLE_PERIOD_S: float = 20.0
 
 # =====================================================================
 
@@ -206,16 +229,17 @@ func lookahead_speed() -> float:
 
 ## Dark <-> light alternation, plus the fade between them. Three explicit
 ## phases; the only transitions are INACTIVE -> DARK (once, at
-## DARK_CYCLE_PERIOD_S) and DARK <-> LIGHT (every DARK_CYCLE_PERIOD_S
-## after that). It never reverts to INACTIVE within a run.
+## DARK_FIRST_TRIGGER_S) and DARK <-> LIGHT (every DARK_CYCLE_PERIOD_S
+## after that -- a different constant, see both of them above). It never
+## reverts to INACTIVE within a run.
 func _update_dark_cycle(delta: float) -> void:
 	if dark_phase == DarkPhase.INACTIVE:
-		if run_time_s < DARK_CYCLE_PERIOD_S:
+		if run_time_s < DARK_FIRST_TRIGGER_S:
 			return
 		dark_phase = DarkPhase.DARK
 		# Anchored on the constant, not on run_time_s, so phase
 		# boundaries can't drift by up to a frame on every swap.
-		_dark_phase_started_s = DARK_CYCLE_PERIOD_S
+		_dark_phase_started_s = DARK_FIRST_TRIGGER_S
 	elif run_time_s - _dark_phase_started_s >= DARK_CYCLE_PERIOD_S:
 		dark_phase = DarkPhase.LIGHT if dark_phase == DarkPhase.DARK else DarkPhase.DARK
 		_dark_phase_started_s += DARK_CYCLE_PERIOD_S
