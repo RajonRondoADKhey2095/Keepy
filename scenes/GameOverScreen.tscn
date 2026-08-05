@@ -41,6 +41,14 @@ horizontal_alignment = 1
 theme_override_font_sizes/font_size = 48
 text = "Score : 0"
 
+[node name="RecordLabel" type="Label" parent="Root/CenterContainer/VBoxContainer"]
+visible = false
+layout_mode = 2
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 32
+theme_override_colors/font_color = Color(0.95, 0.8, 0.25, 1)
+text = "Nouveau record !"
+
 [node name="RetryButton" type="Button" parent="Root/CenterContainer/VBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 4
