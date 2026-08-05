@@ -118,6 +118,36 @@ const DARK_CYCLE_PERIOD_S: float = 10.0
 const DARK_FADE_DURATION_S: float = 0.8
 
 # =====================================================================
+# PALETTE VARIETY (difficulty+variety batch) -- see DarkModeEffect.gd /
+# screen_invert.gdshader for how DARK_VARIANTS is actually applied, and
+# EnvironmentDrift.gd for the LIGHT-phase counterpart. Kept here, next to
+# the timing knobs above, because it is state a fresh run must reset and
+# a phase transition must update -- the same ownership rule this file
+## already follows for dark_phase/dark_intensity.
+# =====================================================================
+
+## Candidate tint colours a DARK phase can pick from -- blended on TOP of
+## the already-inverted screen (see the shader for why this can never
+## make anything less distinguishable, only differently coloured). Four
+## distinct hues spanning warm and cool so consecutive dark phases in the
+## same run read as different environments, not a single reskin.
+const DARK_VARIANTS: Array[Color] = [
+	Color(1.0, 0.25, 0.35), # crimson
+	Color(0.30, 0.55, 1.0), # cold blue
+	Color(0.35, 1.0, 0.55), # toxic green
+	Color(1.0, 0.75, 0.20), # amber
+]
+
+## How strongly a DARK_VARIANTS tint blends over the inversion -- read by
+## DarkModeEffect.gd as `tint_amount`, faded in/out by the shader
+## alongside `intensity` (never applied at full strength the instant a
+## phase starts). Modest on purpose: the shader's own comment proves
+## distinctness can never collapse regardless of this value, but keeping
+## it well under 1.0 also keeps the SIZE of every colour difference from
+## shrinking by more than this fraction, staying perceptually strong.
+const DARK_TINT_AMOUNT: float = 0.18
+
+# =====================================================================
 
 ## Dark-mode cycle phase. INACTIVE until DARK_FIRST_TRIGGER_S, then only
 ## ever alternates DARK <-> LIGHT. An explicit state machine (phase +
@@ -138,6 +168,20 @@ var dark_phase: DarkPhase = DarkPhase.INACTIVE
 ## dumb renderer of a state this file owns end to end.
 var dark_intensity: float = 0.0
 var _dark_phase_started_s: float = 0.0
+
+## Index into DARK_VARIANTS the CURRENT (or most recent) DARK phase uses
+## -- read by DarkModeEffect.gd. Re-rolled every time the run transitions
+## INTO Dark (never on Dark -> Light), always to a DIFFERENT index than
+## last time (see _enter_dark_phase) so two consecutive dark phases in
+## the same run are never accidentally identical, and two separate runs
+## (fresh randf() seed each time) don't line up either.
+var dark_variant_index: int = 0
+
+## Per-run random phase for the LIGHT-phase environment drift (see
+## EnvironmentDrift.gd) -- rolled once in start_run() so two runs of the
+## same length still look different, not just a run that happened to be
+## longer than another.
+var light_drift_phase_s: float = 0.0
 
 # Point values for the two collectible types. Gland is worth more than a
 # ground Noisette because it's only reachable with correct jump timing
@@ -171,6 +215,8 @@ func start_run() -> void:
 	dark_phase = DarkPhase.INACTIVE
 	dark_intensity = 0.0
 	_dark_phase_started_s = 0.0
+	dark_variant_index = randi() % DARK_VARIANTS.size()
+	light_drift_phase_s = randf() * 10000.0 # see EnvironmentDrift.gd's use of this as a time offset
 	distance_score = 0
 	noisette_score = 0
 	gland_score = 0
@@ -273,9 +319,13 @@ func _update_dark_cycle(delta: float) -> void:
 		# Anchored on the constant, not on run_time_s, so phase
 		# boundaries can't drift by up to a frame on every swap.
 		_dark_phase_started_s = DARK_FIRST_TRIGGER_S
+		_reroll_dark_variant()
 	elif run_time_s - _dark_phase_started_s >= DARK_CYCLE_PERIOD_S:
+		var entering_dark := dark_phase == DarkPhase.LIGHT
 		dark_phase = DarkPhase.LIGHT if dark_phase == DarkPhase.DARK else DarkPhase.DARK
 		_dark_phase_started_s += DARK_CYCLE_PERIOD_S
+		if entering_dark:
+			_reroll_dark_variant()
 
 	var target := 1.0 if dark_phase == DarkPhase.DARK else 0.0
 	# move_toward, not an exponential lerp: it reaches the target exactly,
@@ -283,6 +333,17 @@ func _update_dark_cycle(delta: float) -> void:
 	# so "fully dark" and "fully back to normal" would never be reached --
 	# the effect would sit permanently at ~97% and never truly clear.
 	dark_intensity = move_toward(dark_intensity, target, delta / DARK_FADE_DURATION_S)
+
+## Picks the NEXT DARK_VARIANTS index, guaranteed different from
+## dark_variant_index's current value -- see that var's own doc for why
+## (two consecutive dark phases must never look identical). Trivial with
+## only 4 variants: draw again on a collision, bounded to a handful of
+## tries so this can never loop meaningfully long.
+func _reroll_dark_variant() -> void:
+	var next := randi() % DARK_VARIANTS.size()
+	while next == dark_variant_index and DARK_VARIANTS.size() > 1:
+		next = randi() % DARK_VARIANTS.size()
+	dark_variant_index = next
 
 func add_distance(delta_distance: float) -> void:
 	distance_travelled += delta_distance
