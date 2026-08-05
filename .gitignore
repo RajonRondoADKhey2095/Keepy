@@ -2,7 +2,8 @@
 .godot/
 .import/
 export.cfg
-export_presets.cfg
+# NOTE: export_presets.cfg is intentionally NOT ignored -- it is committed
+# so GitHub Actions CI can run `godot --export-release` against it.
 
 # Imported translations (automatically generated from CSV files)
 *.translation
@@ -12,6 +13,7 @@ export_presets.cfg
 data_*/
 
 # Exported builds
+/build/
 /builds/
 *.pck
 *.exe
