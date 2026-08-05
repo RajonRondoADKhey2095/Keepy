@@ -1,0 +1,131 @@
+name: Web build & deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: web-build-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned explicitly -- the editor version used to import/export MUST match
+  # the export templates version below, or the export step fails.
+  GODOT_VERSION: "4.3-stable"
+  # Godot's template lookup directory name convention: "<major>.<minor>.<status>"
+  # (patch component omitted when 0), e.g. "4.3-stable" -> "4.3.stable".
+  GODOT_TEMPLATES_DIR: "4.3.stable"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux runtime dependencies for headless Godot
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libgl1 libglu1-mesa libfontconfig1 \
+            libxcursor1 libxinerama1 libxi6 libxrandr2 libxkbcommon0
+
+      - name: Cache Godot editor + export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot-editor
+            ~/.local/share/godot/export_templates/${{ env.GODOT_TEMPLATES_DIR }}
+          key: godot-${{ env.GODOT_VERSION }}-linux-x86_64-v1
+
+      - name: Download Godot editor (headless-capable)
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/godot-editor"
+          curl -fsSL -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d "$HOME/godot-editor"
+          mv "$HOME/godot-editor/Godot_v${GODOT_VERSION}_linux.x86_64" "$HOME/godot-editor/godot4"
+          chmod +x "$HOME/godot-editor/godot4"
+          rm /tmp/godot.zip
+
+      - name: Download Godot export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/share/godot/export_templates"
+          curl -fsSL -o /tmp/templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          mkdir -p /tmp/templates_extracted
+          unzip -q /tmp/templates.tpz -d /tmp/templates_extracted
+          rm -rf "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_DIR}"
+          mv /tmp/templates_extracted/templates \
+            "$HOME/.local/share/godot/export_templates/${GODOT_TEMPLATES_DIR}"
+          rm -rf /tmp/templates.tpz /tmp/templates_extracted
+
+      - name: Add Godot to PATH
+        run: echo "$HOME/godot-editor" >> "$GITHUB_PATH"
+
+      - name: Sanity-check Godot version
+        run: godot4 --version
+
+      - name: Import project resources
+        run: xvfb-run --auto-servernum -- godot4 --headless --path . --import
+
+      - name: Export Web build
+        run: |
+          mkdir -p build/web
+          xvfb-run --auto-servernum -- godot4 --headless --path . --export-release "Web" build/web/index.html
+
+      - name: Verify export output
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in build/web/index.html build/web/index.wasm build/web/index.pck; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Missing or empty required export artifact: $f"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Contents of build/web:"
+            ls -la build/web/ || true
+            exit 1
+          fi
+          echo "Export artifacts verified OK:"
+          ls -la build/web/
+
+      - name: Upload web build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepy-web-build
+          path: build/web
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ] || [ -z "${VERCEL_ORG_ID:-}" ] || [ -z "${VERCEL_PROJECT_ID:-}" ]; then
+            echo "::error::Missing one or more of the VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID repository secrets."
+            echo "The web build itself succeeded and was uploaded as the 'keepy-web-build' artifact."
+            echo "See README.md -> 'Tester le jeu' for how to create the Vercel secrets."
+            exit 1
+          fi
+          npm install --global vercel@latest
+          # vercel.json lives at repo root (task requirement) but we deploy
+          # build/web as the deployment root, so copy it in for the headers
+          # (COOP/COEP, wasm mime type) to actually apply to the served site.
+          cp vercel.json build/web/vercel.json
+          vercel deploy build/web --prod --yes --token="$VERCEL_TOKEN"
