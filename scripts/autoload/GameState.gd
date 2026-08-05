@@ -18,30 +18,46 @@ enum State { TITLE, PLAYING, GAME_OVER }
 # re-derives pacing from anything outside it.
 # =====================================================================
 
-## Wall-clock seconds spent at each speed palier before stepping up to
-## the next one. Scales the whole progression uniformly.
-const STAGE_DURATION_S: float = 30.0
-
-## Speed of palier 0, i.e. the pace the very first seconds of a run are
-## played at. Must stay somewhere a player can read an incoming obstacle
-## and react calmly: a track segment is 20m (TrackManager.SEGMENT_LENGTH),
-## so 8 m/s gives 2.5s of reaction per segment.
-const START_SPEED: float = 8.0
-
-## Speed added by each palier step. Applied as a hard step at the palier
-## boundary, never as a curve -- see STAGE_SPEEDS.
-const STAGE_SPEED_STEP: float = 2.0
-
-## Palier index at which the run is qualified as "fast", which is also
-## when the dark-mode cycle starts AND the length of one dark phase and
-## one light phase (see DARK_CYCLE_PERIOD_S).
+## THE SPEED CURVE, as an explicit table of (palier start time, palier
+## speed) pairs. Deliberately NOT "a constant duration x a constant
+## step" any more -- both the palier LENGTHS and the palier STEPS now
+## vary along the run.
 ##
-## *** MAIN PACING KNOB. *** At 30s per palier, index 3 puts the first
-## dark-mode transition 90 seconds into a run, and makes the cycle swap
-## every 90s after that. Raise it to push dark mode later and make it
-## rarer, lower it to bring it earlier and make it churn faster. Nothing
-## else needs touching to move that milestone.
-const FAST_TIER_INDEX: int = 3
+## Why the old uniform formula (30s per palier, +2 m/s each) was
+## replaced: it was calibrated for 5-6 minute runs, whereas a mobile
+## endless runner is played in 40-90 second bursts. Under it, a typical
+## run ended while still inside palier 0 or 1, i.e. the player never saw
+## the game accelerate at all, and the first notable event (dark mode,
+## 90s) landed after most runs were already over.
+##
+## The shape below is logarithmic rather than linear -- DENSE at the
+## start (short paliers, big steps, so the escalation is legible within
+## the first half-minute) and FLAT at the end (longer paliers, small
+## steps, so the top of the curve still has somewhere to go without
+## turning unreadable). Spelled out row by row rather than computed, so
+## both halves stay hand-tunable at a glance.
+##
+##   idx  run time window    speed      step    palier length
+##   ---  -----------------  ---------  ------  -------------
+##    0   0s .. 12s          12.0 m/s     --      12s
+##    1   12s .. 24s         15.0 m/s   +3.0      12s
+##    2   24s .. 36s         18.0 m/s   +3.0      12s
+##    3   36s .. 48s         20.5 m/s   +2.5      12s   <- dark mode starts
+##    4   48s .. 60s         22.5 m/s   +2.0      12s
+##    5   60s .. 75s         24.0 m/s   +1.5      15s
+##    6   75s .. 90s         25.0 m/s   +1.0      15s
+##    7   90s and beyond     26.0 m/s   +1.0      cap, held to the end
+##
+## The two arrays are INDEX-ALIGNED and must stay the same length:
+## STAGE_START_S[i] is the run time at which STAGE_SPEEDS[i] takes over.
+## STAGE_START_S must start at 0.0 and be strictly increasing. The last
+## STAGE_SPEEDS entry is the cap, held for the rest of the run.
+##
+## Raising the cap is NOT free: TrackManager spaces obstacles out by the
+## time they leave the player (see its MIN_OBSTACLE_GAP_S), so a higher
+## cap automatically thins the track rather than making it unreadable.
+const STAGE_START_S: Array[float] = [0.0, 12.0, 24.0, 36.0, 48.0, 60.0, 75.0, 90.0]
+const STAGE_SPEEDS: Array[float] = [12.0, 15.0, 18.0, 20.5, 22.5, 24.0, 25.0, 26.0]
 
 ## Seconds a dark <-> light transition takes to fade fully in or out.
 ## Never 0: an instant flip is what made the previous iteration
@@ -49,40 +65,23 @@ const FAST_TIER_INDEX: int = 3
 ## the eye follows it.
 const DARK_FADE_DURATION_S: float = 1.5
 
-## Speed per palier, spelled out rather than computed, so the whole
-## progression is readable (and hand-tunable) at a glance. Built as
-## START_SPEED + n * STAGE_SPEED_STEP; the LAST entry is the cap, held
-## for the rest of the run once reached.
-##
-##   idx  run time window     speed     notes
-##   ---  ------------------  --------  ---------------------------------
-##    0   0s .. 30s            8 m/s    opening pace, calm
-##    1   30s .. 60s          10 m/s
-##    2   60s .. 90s          12 m/s
-##    3   90s .. 120s         14 m/s    FAST_TIER_INDEX -- dark mode on
-##    4   120s .. 150s        16 m/s
-##    5   150s .. 180s        18 m/s
-##    6   180s .. 210s        20 m/s
-##    7   210s .. 240s        22 m/s
-##    8   240s and beyond     24 m/s    cap (held for the rest of the run)
-const STAGE_SPEEDS: Array[float] = [8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0]
-
-# Named aliases kept because other scripts' comments (Obstacle.gd,
-# Keepy.gd) reason in terms of "the BASE_SPEED..MAX_SPEED range".
+# Named aliases. START_SPEED/BASE_SPEED == STAGE_SPEEDS[0] and
+# MAX_SPEED == the last STAGE_SPEEDS entry, restated as plain literals
+# because a const array cannot be indexed in a const initialiser. Kept
+# because other scripts' comments (Obstacle.gd, Keepy.gd) reason in
+# terms of "the BASE_SPEED..MAX_SPEED range".
+const START_SPEED: float = 12.0
 const BASE_SPEED: float = START_SPEED
-const MAX_SPEED: float = 24.0 # == last STAGE_SPEEDS entry (const arrays can't be indexed here)
+const MAX_SPEED: float = 26.0
 
 ## Run time at which the dark-mode cycle starts, and also the duration of
-## each dark phase and each light phase -- i.e. the elapsed time at the
-## moment the fast palier is reached, as specced. At the defaults: dark
-## from 90s to 180s, light from 180s to 270s, dark again from 270s, and
-## so on for the rest of the run.
+## each dark phase and each light phase.
 ##
 ## The cycle is driven by the clock, NOT by current_speed: keying a
 ## visual state off a speed threshold is what let the previous iteration
 ## fire 1.35s into a run when the speed curve misbehaved. The trigger is
 ## now a time the run cannot reach early by any means.
-const DARK_CYCLE_PERIOD_S: float = FAST_TIER_INDEX * STAGE_DURATION_S
+const DARK_CYCLE_PERIOD_S: float = 90.0
 
 # =====================================================================
 
@@ -174,9 +173,17 @@ func advance_time(delta: float) -> void:
 ## higher speed makes distance accrue faster, which raises the speed
 ## again. Measured, that collapsed the entire intended ramp into the
 ## first ~3 seconds of a run (94% of MAX_SPEED at t=2s). Elapsed time
-## has no such feedback loop: 30 seconds is 30 seconds at any speed.
+## has no such feedback loop: 12 seconds is 12 seconds at any speed.
+##
+## Walks FORWARD from the palier already reached rather than rescanning
+## the table or dividing by a (no longer existing) uniform palier
+## duration: the run clock only moves forward, so this is O(1) in
+## practice, and the `while` still handles a caller stepping the clock
+## by more than one palier at a time (a headless probe can).
 func _update_stage() -> void:
-	var new_stage := mini(int(run_time_s / STAGE_DURATION_S), STAGE_SPEEDS.size() - 1)
+	var new_stage := stage_index
+	while new_stage + 1 < STAGE_START_S.size() and run_time_s >= STAGE_START_S[new_stage + 1]:
+		new_stage += 1
 	if new_stage == stage_index:
 		return
 	stage_index = new_stage
