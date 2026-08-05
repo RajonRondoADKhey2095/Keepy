@@ -37,6 +37,12 @@ func configure(type: Type) -> void:
 	_jump_mesh.visible = not is_dodge
 	_jump_shape.disabled = is_dodge
 
+## Whether this obstacle Type can never be jumped over -- i.e. whether a
+## Gland must never share its lane/row (see TrackSegment.populate). Only
+## JUMP is timing-clearable; any other variant requires a full lane switch.
+static func blocks_jump(type: Type) -> bool:
+	return type != Type.JUMP
+
 func _on_body_entered(body: Node3D) -> void:
 	if body is Keepy:
 		body.die()

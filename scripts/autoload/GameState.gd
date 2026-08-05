@@ -25,11 +25,20 @@ var state: State = State.TITLE
 var distance_travelled: float = 0.0
 var current_speed: float = BASE_SPEED
 
-# Score is the sum of two independently tracked counters so that a
-# noisette pickup can never be silently overwritten by the next
-# distance-based score tick (see add_distance / add_noisette).
+# Point values for the two collectible types. Gland is worth more than a
+# ground Noisette because it's only reachable with correct jump timing
+# (see Gland.gd / TrackManager GLAND_CHANCE_PER_ROW) -- the score bump is
+# the reward for the extra risk.
+const NOISETTE_VALUE: int = 1
+const GLAND_VALUE: int = 5
+
+# Score is the sum of THREE independently tracked counters so that a
+# collectible pickup can never be silently overwritten by the next
+# distance-based score tick, or by another collectible type's counter
+# (see add_distance / add_noisette / add_gland).
 var distance_score: int = 0
 var noisette_score: int = 0
+var gland_score: int = 0
 var score: int = 0
 
 func start_run() -> void:
@@ -37,6 +46,7 @@ func start_run() -> void:
 	current_speed = BASE_SPEED
 	distance_score = 0
 	noisette_score = 0
+	gland_score = 0
 	score = 0
 	state = State.PLAYING
 	state_changed.emit(state)
@@ -55,9 +65,13 @@ func add_distance(delta_distance: float) -> void:
 		_recompute_score()
 
 func add_noisette() -> void:
-	noisette_score += 1
+	noisette_score += NOISETTE_VALUE
+	_recompute_score()
+
+func add_gland() -> void:
+	gland_score += GLAND_VALUE
 	_recompute_score()
 
 func _recompute_score() -> void:
-	score = distance_score + noisette_score
+	score = distance_score + noisette_score + gland_score
 	score_changed.emit(score)

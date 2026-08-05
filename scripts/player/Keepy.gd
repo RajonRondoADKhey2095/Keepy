@@ -23,6 +23,16 @@ const GRAVITY: float = 26.0
 #   reasonably-timed jump clears it with margin.
 #   DODGE obstacle top = 2.0m: above the 1.56m peak, so it can never be
 #   jumped, only dodged sideways, by construction (not by timing).
+# Same peak-height formula, exposed as a named const rather than left as a
+# comment-only value, so other scripts (TrackSegment's Gland placement)
+# derive their own math from it instead of re-deriving or guessing a
+# height. ~1.56m, see comment block above for the full derivation.
+const JUMP_PEAK_HEIGHT: float = JUMP_VELOCITY * JUMP_VELOCITY / (2.0 * GRAVITY)
+# Matches the CollisionShape3D/MeshInstance3D y-offset baked into
+# Keepy.tscn (capsule height 1.6, centered at 0.8 above the body origin).
+# Combined with JUMP_PEAK_HEIGHT this gives the height of the CENTER of
+# Keepy's capsule at the jump's apex -- see TrackSegment.gd GLAND_Y.
+const CAPSULE_HALF_HEIGHT: float = 0.8
 
 var lane_index: int = 1
 var target_x: float = 0.0

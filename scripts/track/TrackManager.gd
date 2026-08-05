@@ -35,6 +35,10 @@ const JUMP_OBSTACLE_CHANCE: float = 0.5
 # the total count. Bumped to 0.85 to bring the actual per-run pickup
 # density back in line with what it was before the cap.
 const NOISETTE_CHANCE_PER_ROW: float = 0.85
+# Gland is a rarer bonus than the ground noisette (it also requires jump
+# timing to reach, see Gland.gd/TrackSegment.GLAND_Y) -- deliberately kept
+# well below NOISETTE_CHANCE_PER_ROW.
+const GLAND_CHANCE_PER_ROW: float = 0.12
 
 var _segments: Array[TrackSegment] = []
 
@@ -84,4 +88,8 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 	if randf() < NOISETTE_CHANCE_PER_ROW:
 		noisette_lane = randi_range(0, 2)
 
-	segment.populate(spawn_obstacle, obstacle_type, noisette_lane)
+	var gland_lane := -1
+	if randf() < GLAND_CHANCE_PER_ROW:
+		gland_lane = randi_range(0, 2)
+
+	segment.populate(spawn_obstacle, obstacle_type, noisette_lane, gland_lane)
