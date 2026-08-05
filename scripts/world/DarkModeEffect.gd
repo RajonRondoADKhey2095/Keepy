@@ -1,10 +1,14 @@
 extends WorldEnvironment
 class_name DarkModeEffect
-## Fades a desaturated/darkened screen-wide "dark mode" over the run's
-## existing WorldEnvironment as GameState.current_speed climbs past
-## GameState.DARK_MODE_SPEED_THRESHOLD -- a visual palier communicating
-## "you are now running at a genuinely dangerous speed", as a multi-second
-## fade rather than a hard on/off flash.
+## Renders the screen-wide "dark mode" at the intensity GameState
+## currently reports (GameState.dark_intensity, 0..1) -- a repeating
+## dark/light cycle that starts once the run reaches its "fast" palier.
+##
+## This node owns NO timing of its own: when the cycle starts, how long
+## each phase lasts and how fast the fade moves all live in GameState
+## (see its DARK_CYCLE_PERIOD_S / DARK_FADE_DURATION_S). Splitting the
+## fade across both files is how the previous iteration ended up with a
+## visual state nobody could point at a single source for.
 ##
 ## WHY THE EXISTING WorldEnvironment's Adjustments INSTEAD OF A NEW
 ## CanvasLayer/ColorRect + hint_screen_texture SHADER (this is the
@@ -36,18 +40,6 @@ class_name DarkModeEffect
 ## handicap. Desaturate + darken + a contrast bump for edge definition
 ## reads as "ominous" while keeping color relationships (mostly) intact.
 
-# Fraction of GameState.MAX_SPEED at which DARK_MODE_SPEED_THRESHOLD sits
-# lives in GameState.gd (single source of truth for anything speed-
-# related) -- this script only reads GameState.current_speed/MAX_SPEED/
-# DARK_MODE_SPEED_THRESHOLD at runtime, never redeclares them.
-
-# Exponential fade time constant (same pattern as Keepy.gd's lane lerp):
-# ~1/FADE_RATE seconds to close 63% of the gap to the target intensity.
-# Deliberately slow -- a multi-second creep, never a flash, and
-# reversible (see _process): if current_speed ever drops back below the
-# threshold, the same lerp fades the effect back out just as smoothly.
-const FADE_RATE: float = 1.0
-
 const NORMAL_BRIGHTNESS: float = 1.0
 const NORMAL_CONTRAST: float = 1.0
 const NORMAL_SATURATION: float = 1.0
@@ -58,19 +50,13 @@ const DARK_BRIGHTNESS: float = 0.55
 const DARK_CONTRAST: float = 1.25
 const DARK_SATURATION: float = 0.2
 
-var _intensity: float = 0.0
-
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if GameState.state != GameState.State.PLAYING:
+		# A run that ends mid-dark-phase must not leave the effect
+		# burned into the title/game-over screens.
+		_apply(0.0)
 		return
-
-	var target := clampf(
-		(GameState.current_speed - GameState.DARK_MODE_SPEED_THRESHOLD)
-			/ (GameState.MAX_SPEED - GameState.DARK_MODE_SPEED_THRESHOLD),
-		0.0, 1.0
-	)
-	_intensity = lerpf(_intensity, target, 1.0 - exp(-FADE_RATE * delta))
-	_apply(_intensity)
+	_apply(GameState.dark_intensity)
 
 func _apply(intensity: float) -> void:
 	if not environment:
