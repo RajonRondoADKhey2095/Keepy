@@ -9,10 +9,10 @@ class_name TrackSegment
 ## nothing.
 
 const LANE_X: Array[float] = [-2.0, 0.0, 2.0]
-# Obstacle root always sits at ground level (y=0) now: each of its
-# variants (see Obstacle.gd) carries its own vertical offset on its own
-# mesh/shape children, so the segment never needs to know which variant
-# is active to position it.
+# Obstacle root always sits at ground level (y=0) now: each of its three
+# variants (DODGE/JUMP/ENEMY, see Obstacle.gd) carries its own vertical
+# offset on its own mesh/shape children, so the segment never needs to
+# know which variant is active to position it.
 const OBSTACLE_Y: float = 0.0
 const NOISETTE_Y: float = 1.0
 # Height of the Gland collectible: the CENTER of Keepy's capsule at the
@@ -62,8 +62,8 @@ func _ready() -> void:
 ## at different heights, see NOISETTE_Y / GLAND_Y) and CAN share a lane
 ## with a JUMP obstacle (the same jump clears the log and grabs the
 ## bonus). It can NEVER share a lane with an obstacle that blocks jumping
-## (see Obstacle.blocks_jump) -- jumping into that lane to reach the
-## Gland would run Keepy straight into the obstacle.
+## (DODGE or ENEMY, see Obstacle.blocks_jump) -- jumping into that lane to
+## reach the Gland would run Keepy straight into the obstacle.
 func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, noisette_lane: int, gland_lane: int) -> void:
 	var obstacle_lane := -1
 	var obstacle_blocks_jump := false
@@ -71,7 +71,11 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, noisette_lane:
 	if spawn_obstacle:
 		obstacle_lane = randi_range(0, LANE_X.size() - 1)
 		obstacle_blocks_jump = Obstacle.blocks_jump(obstacle_type)
-		_obstacle.configure(obstacle_type)
+		if obstacle_type == Obstacle.Type.ENEMY:
+			var alt_lane := _pick_enemy_alt_lane(obstacle_lane)
+			_obstacle.configure(obstacle_type, LANE_X[obstacle_lane], LANE_X[alt_lane])
+		else:
+			_obstacle.configure(obstacle_type)
 		_obstacle.position = Vector3(LANE_X[obstacle_lane], OBSTACLE_Y, 0.0)
 		_obstacle.visible = true
 		_obstacle.monitoring = true
@@ -98,6 +102,15 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, noisette_lane:
 		_gland.monitorable = true
 	else:
 		_deactivate_gland()
+
+## Adjacent lane for an ENEMY obstacle to sway toward before settling on
+## `lane` (see Obstacle.gd). The middle lane (index 1) has two neighbours
+## and picks between them; either edge lane (0 or 2) only has the middle
+## lane as a neighbour.
+func _pick_enemy_alt_lane(lane: int) -> int:
+	if lane == 1:
+		return 0 if randf() < 0.5 else 2
+	return 1
 
 func _deactivate_obstacle() -> void:
 	_obstacle.visible = false

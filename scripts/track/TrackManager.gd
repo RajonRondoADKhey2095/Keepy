@@ -21,9 +21,14 @@ const SEGMENT_COUNT: int = 7
 const RECYCLE_Z: float = 12.0 # segment behind the player past this Z gets recycled
 const SAFE_START_SEGMENTS: int = 2 # no obstacles on the first N segments of a run
 const OBSTACLE_CHANCE: float = 0.55
-# Chance of a jump-type obstacle vs. a dodge-type one when an obstacle
-# spawns at all (see Obstacle.gd Type). 0.5 = balanced mix of both gestures.
-const JUMP_OBSTACLE_CHANCE: float = 0.5
+# Relative weights for which Obstacle.Type spawns when an obstacle spawns
+# at all. DODGE and JUMP stay the bulk of the spawn table; ENEMY (moving,
+# forces a late reaction) is a rarer additional variant, not a
+# replacement -- see Obstacle.gd Type.ENEMY. Must sum to 1.0.
+const DODGE_TYPE_CHANCE: float = 0.45
+const JUMP_TYPE_CHANCE: float = 0.45
+# ENEMY_TYPE_CHANCE is implicitly 1.0 - DODGE_TYPE_CHANCE - JUMP_TYPE_CHANCE (0.10).
+
 # Chance of a noisette appearing at all in a segment. Only ONE lane is
 # ever picked per segment (see TrackSegment.populate) -- Keepy can only
 # be on one lane at a time, so this is no longer "per lane".
@@ -82,7 +87,7 @@ func _recycle_segment(segment: TrackSegment) -> void:
 ## always eligible for obstacles.
 func _populate_segment(segment: TrackSegment, index: int) -> void:
 	var spawn_obstacle := (index == -1 or index >= SAFE_START_SEGMENTS) and randf() < OBSTACLE_CHANCE
-	var obstacle_type := Obstacle.Type.JUMP if randf() < JUMP_OBSTACLE_CHANCE else Obstacle.Type.DODGE
+	var obstacle_type := _pick_obstacle_type()
 
 	var noisette_lane := -1
 	if randf() < NOISETTE_CHANCE_PER_ROW:
@@ -93,3 +98,13 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 		gland_lane = randi_range(0, 2)
 
 	segment.populate(spawn_obstacle, obstacle_type, noisette_lane, gland_lane)
+
+## Weighted pick among the three Obstacle.Type variants -- see
+## DODGE_TYPE_CHANCE / JUMP_TYPE_CHANCE above for the weights.
+func _pick_obstacle_type() -> Obstacle.Type:
+	var roll := randf()
+	if roll < DODGE_TYPE_CHANCE:
+		return Obstacle.Type.DODGE
+	if roll < DODGE_TYPE_CHANCE + JUMP_TYPE_CHANCE:
+		return Obstacle.Type.JUMP
+	return Obstacle.Type.ENEMY
