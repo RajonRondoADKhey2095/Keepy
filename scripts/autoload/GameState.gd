@@ -8,9 +8,18 @@ signal state_changed(new_state: State)
 
 enum State { TITLE, PLAYING, GAME_OVER }
 
-const BASE_SPEED: float = 8.0
-const MAX_SPEED: float = 22.0
-const SPEED_RAMP_PER_METER: float = 0.02
+# Speed ramp: was a flat linear climb (BASE_SPEED=8.0, MAX_SPEED=22.0,
+# +0.02 m/s per meter travelled -- 700m to reach MAX_SPEED, imperceptible
+# over a typical run). Replaced with an exponential approach to MAX_SPEED:
+# aggressive in the first 30-40m, then flattening out as it nears the cap
+# (see add_distance). BASE_SPEED/MAX_SPEED bumped up too so the run is
+# faster from the very first frame, not just steeper over time.
+const BASE_SPEED: float = 11.0
+const MAX_SPEED: float = 27.0
+# Exponential time-constant in meters: at distance == this value, current
+# speed has closed ~63% of the gap to MAX_SPEED. Smaller = more aggressive
+# early ramp.
+const SPEED_RAMP_TIME_CONSTANT_M: float = 40.0
 
 var state: State = State.TITLE
 var distance_travelled: float = 0.0
@@ -39,7 +48,7 @@ func end_run() -> void:
 
 func add_distance(delta_distance: float) -> void:
 	distance_travelled += delta_distance
-	current_speed = min(MAX_SPEED, BASE_SPEED + distance_travelled * SPEED_RAMP_PER_METER)
+	current_speed = MAX_SPEED - (MAX_SPEED - BASE_SPEED) * exp(-distance_travelled / SPEED_RAMP_TIME_CONSTANT_M)
 	var new_distance_score := int(distance_travelled)
 	if new_distance_score != distance_score:
 		distance_score = new_distance_score
