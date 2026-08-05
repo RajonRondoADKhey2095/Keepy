@@ -7,6 +7,18 @@ class_name TrackSegment
 ## shown/hidden and repositioned by populate() -- never freed and
 ## re-instantiated during gameplay, so recycling a segment allocates
 ## nothing.
+##
+## Every `.monitoring` toggle below goes through set_deferred(), never a
+## direct assignment: Godot blocks (logs an error and no-ops) a direct
+## Area3D.monitoring change made while ANY body_entered/body_exited signal
+## is still being dispatched, and a segment recycle here can land on the
+## exact same physics tick as Keepy colliding with something entirely
+## unrelated elsewhere on the track. Found empirically (not by inspection)
+## via scripts/dev/AirHazardAudit.gd, the first dev probe to run the real
+## game with Keepy's own collision left ENABLED -- every earlier probe
+## neutered it, so this race was never exercised before. `.monitorable`
+## is left as a direct assignment: the engine only documents/blocks this
+## specific restriction for `monitoring`.
 
 const LANE_X: Array[float] = [-2.0, 0.0, 2.0]
 # Obstacle root always sits at ground level (y=0) now: each of its four
@@ -90,7 +102,7 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane:
 			_obstacle.configure(obstacle_type)
 		_obstacle.position = Vector3(LANE_X[obstacle_lane], OBSTACLE_Y, 0.0)
 		_obstacle.visible = true
-		_obstacle.monitoring = true
+		_obstacle.set_deferred("monitoring", true)
 		_obstacle.monitorable = true
 	else:
 		_deactivate_obstacle()
@@ -101,7 +113,7 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane:
 			slot.set_spawn_position(Vector3(LANE_X[lane], NOISETTE_Y, 0.0))
 			slot.collected = false
 			slot.visible = true
-			slot.monitoring = true
+			slot.set_deferred("monitoring", true)
 			slot.monitorable = true
 		else:
 			_deactivate_noisette(slot)
@@ -110,7 +122,7 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane:
 		_gland.set_spawn_position(Vector3(LANE_X[gland_lane], GLAND_Y, 0.0))
 		_gland.collected = false
 		_gland.visible = true
-		_gland.monitoring = true
+		_gland.set_deferred("monitoring", true)
 		_gland.monitorable = true
 	else:
 		_deactivate_gland()
@@ -126,15 +138,15 @@ func _pick_enemy_alt_lane(lane: int) -> int:
 
 func _deactivate_obstacle() -> void:
 	_obstacle.visible = false
-	_obstacle.monitoring = false
+	_obstacle.set_deferred("monitoring", false)
 	_obstacle.monitorable = false
 
 func _deactivate_noisette(slot: Noisette) -> void:
 	slot.visible = false
-	slot.monitoring = false
+	slot.set_deferred("monitoring", false)
 	slot.monitorable = false
 
 func _deactivate_gland() -> void:
 	_gland.visible = false
-	_gland.monitoring = false
+	_gland.set_deferred("monitoring", false)
 	_gland.monitorable = false
