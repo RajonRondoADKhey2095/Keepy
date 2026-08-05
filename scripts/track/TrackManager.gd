@@ -21,7 +21,13 @@ const SEGMENT_COUNT: int = 7
 const RECYCLE_Z: float = 12.0 # segment behind the player past this Z gets recycled
 const SAFE_START_SEGMENTS: int = 2 # no obstacles on the first N segments of a run
 const OBSTACLE_CHANCE: float = 0.55
-const NOISETTE_CHANCE_PER_LANE: float = 0.4
+# Chance of a jump-type obstacle vs. a dodge-type one when an obstacle
+# spawns at all (see Obstacle.gd Type). 0.5 = balanced mix of both gestures.
+const JUMP_OBSTACLE_CHANCE: float = 0.5
+# Chance of a noisette appearing at all in a segment. Only ONE lane is
+# ever picked per segment (see TrackSegment.populate) -- Keepy can only
+# be on one lane at a time, so this is no longer "per lane".
+const NOISETTE_CHANCE_PER_ROW: float = 0.5
 
 var _segments: Array[TrackSegment] = []
 
@@ -65,10 +71,10 @@ func _recycle_segment(segment: TrackSegment) -> void:
 ## always eligible for obstacles.
 func _populate_segment(segment: TrackSegment, index: int) -> void:
 	var spawn_obstacle := (index == -1 or index >= SAFE_START_SEGMENTS) and randf() < OBSTACLE_CHANCE
+	var obstacle_type := Obstacle.Type.JUMP if randf() < JUMP_OBSTACLE_CHANCE else Obstacle.Type.DODGE
 
-	var noisette_lanes: Array[int] = []
-	for lane in 3:
-		if randf() < NOISETTE_CHANCE_PER_LANE:
-			noisette_lanes.append(lane)
+	var noisette_lane := -1
+	if randf() < NOISETTE_CHANCE_PER_ROW:
+		noisette_lane = randi_range(0, 2)
 
-	segment.populate(spawn_obstacle, noisette_lanes)
+	segment.populate(spawn_obstacle, obstacle_type, noisette_lane)
