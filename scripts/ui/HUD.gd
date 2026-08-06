@@ -50,6 +50,26 @@ class_name HUD
 ## Measured per palette rather than asserted -- see
 ## scripts/dev/ComboContrastAudit.gd, which renders the real HUD over the
 ## real game under each palette and samples actual pixels.
+##
+## =====================================================================
+## PURSUER TELEGRAPH -- two cues, because the brief has two halves that one
+## widget cannot both satisfy:
+##
+##   VIGNETTE  read PERIPHERALLY, without looking away from the track. This
+##             is the half that matters in play: the player must always know
+##             roughly how close the thing behind them is while still
+##             watching what is in front.
+##   GAUGE     read DELIBERATELY, when the player chooses to check. Precise
+##             where the vignette is only suggestive.
+##
+## Placed at the BOTTOM of the screen on purpose -- the pursuer is behind
+## the player, and the bottom edge of a forward-facing view is the nearest
+## thing this HUD has to "behind you". The score and combo own the top.
+##
+## The moment the pursuer becomes VISIBLE gets the tier-up pop, not the
+## increment one -- it is the strongest tension beat in the run and it
+## borrows the loudest reaction already validated on this HUD rather than
+## introducing a new one.
 
 # --- INCREMENT pop -------------------------------------------------
 ## Same envelope as Obstacle.MARKER_POP_DURATION_S, and deliberately as
@@ -83,12 +103,37 @@ const WARNING_PULSE_AMPLITUDE: float = 0.18
 const WARNING_COLOR: Color = Color(1.0, 0.45, 0.15, 1)
 const NORMAL_COLOR: Color = Color(1.0, 1.0, 1.0, 1)
 
+# --- PURSUER telegraph ---------------------------------------------
+## Widest the gauge fill ever gets, in pixels -- matches GaugeTrack's own
+## custom_minimum_size in HUD.tscn, less the 3px inset on each side.
+const GAUGE_WIDTH_PX: float = 414.0
+## Proximity at which the gauge switches to the alarm colour. Chosen to line
+## up with the moment the silhouette actually appears, so the colour change
+## and the thing on screen are one event rather than two:
+## 1 - VISIBLE_LEAD / MAX_LEAD.
+const GAUGE_ALARM_PROXIMITY: float = 1.0 - GameState.PURSUER_VISIBLE_LEAD_S / GameState.PURSUER_MAX_LEAD_S
+## Peak opacity the vignette reaches at zero lead. Short of 1.0 on purpose:
+## the screen edges must darken enough to be unmissable without ever
+## obscuring a hazard the player still has to read.
+const VIGNETTE_MAX_ALPHA: float = 0.78
+## Proximity below which the vignette stays fully off. Same value as the
+## gauge's alarm point, so nothing about the pursuer is on screen until the
+## pursuer itself is.
+const VIGNETTE_ONSET_PROXIMITY: float = GAUGE_ALARM_PROXIMITY
+## Colour the gauge fill takes far from / close to the pursuer.
+const GAUGE_SAFE_COLOR: Color = Color(0.95, 0.85, 0.3, 1)
+const GAUGE_ALARM_COLOR: Color = Color(1.0, 0.25, 0.2, 1)
+
 @onready var score_label: Label = $MarginContainer/VBoxContainer/ScoreLabel
 @onready var nut_label: Label = $MarginContainer/VBoxContainer/CountsRow/NutLabel
 @onready var gland_label: Label = $MarginContainer/VBoxContainer/CountsRow/GlandLabel
 @onready var combo_row: HBoxContainer = $MarginContainer/VBoxContainer/ComboRow
 @onready var combo_label: Label = $MarginContainer/VBoxContainer/ComboRow/ComboLabel
 @onready var multiplier_label: Label = $MarginContainer/VBoxContainer/ComboRow/MultiplierLabel
+@onready var pursuer_row: VBoxContainer = $MarginContainer/PursuerRow
+@onready var pursuer_label: Label = $MarginContainer/PursuerRow/PursuerLabel
+@onready var gauge_fill: ColorRect = $MarginContainer/PursuerRow/GaugeTrack/GaugeFill
+@onready var pursuer_vignette: ColorRect = $PursuerVignette
 
 ## Elapsed time in each pop, or < 0.0 when that pop is not playing -- the
 ## same "-1.0 means idle" convention as Obstacle._marker_pop_t.
@@ -109,14 +154,25 @@ var _warning_active: bool = false
 ## is what HUD.tscn authors both labels with.
 var _applied_color: Color = NORMAL_COLOR
 
+## Pop timer for the pursuer row, same "-1.0 means idle" convention as the
+## two combo pops above.
+var _pursuer_pop_t: float = -1.0
+## Last vignette intensity pushed into the shader. Tracked so the uniform is
+## only written when it actually moves -- set_shader_parameter every frame
+## would be avoidable per-frame churn for a value that is zero for most of
+## a run.
+var _applied_vignette: float = -1.0
+
 func _ready() -> void:
 	GameState.score_changed.connect(_on_score_changed)
 	GameState.counts_changed.connect(_on_counts_changed)
 	GameState.combo_changed.connect(_on_combo_changed)
 	GameState.combo_tier_up.connect(_on_combo_tier_up)
+	GameState.pursuer_became_visible.connect(_on_pursuer_became_visible)
 	score_label.text = str(GameState.score)
 	_on_counts_changed(GameState.nut_count, GameState.gland_count)
 	_on_combo_changed(GameState.combo_count, GameState.combo_multiplier)
+	_update_pursuer_telegraph(0.0)
 
 func _on_score_changed(new_score: int) -> void:
 	score_label.text = str(new_score)
@@ -154,11 +210,50 @@ func _on_combo_tier_up(_multiplier: int) -> void:
 	# louder animation.
 	_tier_pop_t = 0.0
 
+## The pursuer coming into view borrows the TIER-UP pop, not the increment
+## one -- see the class doc: it is the loudest beat in the run and deserves
+## the loudest reaction this HUD already has.
+func _on_pursuer_became_visible() -> void:
+	_pursuer_pop_t = 0.0
+
 func _process(delta: float) -> void:
+	# Runs unconditionally, unlike the combo block below: the pursuer gauge
+	# is PERMANENT (the player must always be able to read it), so it can
+	# never be gated on another widget being on screen.
+	_update_pursuer_telegraph(delta)
 	if not combo_row.visible:
 		return
 	_update_warning(delta)
 	_update_pops(delta)
+
+## Drives both pursuer cues from the single normalised proximity GameState
+## exposes, so the vignette, the gauge width and the gauge colour can never
+## disagree about how close the thing is.
+func _update_pursuer_telegraph(delta: float) -> void:
+	var proximity := GameState.pursuer_proximity()
+
+	# Gauge: fill shows REMAINING LEAD, so it drains toward empty as the
+	# pursuer closes -- the direction a player already reads as "running
+	# out" from every other bar in every other game.
+	gauge_fill.size.x = maxf(0.0, (1.0 - proximity) * GAUGE_WIDTH_PX)
+	var alarm_t := 0.0
+	if GAUGE_ALARM_PROXIMITY < 1.0:
+		alarm_t = clampf((proximity - GAUGE_ALARM_PROXIMITY) / (1.0 - GAUGE_ALARM_PROXIMITY), 0.0, 1.0)
+	gauge_fill.color = GAUGE_SAFE_COLOR.lerp(GAUGE_ALARM_COLOR, alarm_t)
+
+	# Vignette: off entirely until the pursuer is actually on screen, then
+	# ramps to VIGNETTE_MAX_ALPHA at zero lead.
+	var vignette := alarm_t * VIGNETTE_MAX_ALPHA
+	if not is_equal_approx(vignette, _applied_vignette):
+		_applied_vignette = vignette
+		var mat: ShaderMaterial = pursuer_vignette.material
+		if mat:
+			mat.set_shader_parameter("intensity", vignette)
+
+	# Pop on first sighting -- same triangular envelope as everything else
+	# on this HUD.
+	_pursuer_pop_t = _advance_pop(_pursuer_pop_t, delta, TIER_POP_DURATION_S)
+	_apply_scale(pursuer_label, _pop_scale(_pursuer_pop_t, TIER_POP_DURATION_S, TIER_POP_PEAK_SCALE))
 
 ## The "about to lapse" alarm -- see the class doc for why this is the
 ## load-bearing part of the feedback rather than a finishing touch.

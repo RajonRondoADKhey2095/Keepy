@@ -72,6 +72,14 @@ func _ready() -> void:
 	# No-op unless `-- --seed=<int>` was passed; the default stays the
 	# exploratory, different-every-time run this probe wants.
 	var seeded := DevSeed.apply()
+	# The PURSUER is a parallel system and is not what this probe measures
+	# -- see GameState.pursuer_enabled for the full reasoning. Short
+	# version: this probe's bot has collision neutered so ONE continuous run
+	# can cover the whole simulated window, and the pursuer kills exactly
+	# that kind of bot, which leaves GameState out of PLAYING and hangs this
+	# probe short of its own completion check. Switching it off is also what
+	# keeps these numbers directly comparable to the pre-pursuer baseline.
+	GameState.pursuer_enabled = false
 	print("=== ANTI-FRUSTRATION AUDIT ===")
 	print("rng                        : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("running %.0fs simulated, checking every physics frame that the player's" % SIM_SECONDS)

@@ -31,8 +31,25 @@ signal combo_tier_up(multiplier: int)
 ## information, for the same reason as above: losing a chain is an event,
 ## not a value.
 signal combo_lost()
+## Fires the first frame the pursuer's lead drops under
+## PURSUER_VISIBLE_LEAD_S -- i.e. the moment it stops being an abstract
+## number and becomes a thing on screen. The single strongest tension beat
+## the run has, so it gets its own signal rather than leaving every
+## listener to diff the lead itself.
+signal pursuer_became_visible()
+## Fires when the lead climbs back OVER the threshold -- the pursuer is
+## driven off. Paired with the above so a listener never has to poll.
+signal pursuer_lost_sight()
+## Fires the frame the lead hits zero, immediately before end_run.
+signal pursuer_caught()
 
 enum State { TITLE, PLAYING, GAME_OVER }
+
+## Why the run ended. Set immediately before end_run() and read by
+## GameOverScreen so being caught from behind does not present as the same
+## event as running into something in front. Nothing about SCORING or the
+## leaderboard payload varies with this -- see end_run().
+enum DeathCause { COLLISION, PURSUER }
 
 # =====================================================================
 # RISK EVENTS -- the whole point of the combo system (playtest: "je trouve
@@ -138,6 +155,88 @@ const COMBO_TIER_SIZE: int = 3
 ## length. x4 keeps a well-played stretch clearly ahead of a safe one (see
 ## scripts/dev/ComboAudit.gd for the measured gap) without that.
 const COMBO_MAX_MULTIPLIER: int = 4
+
+# =====================================================================
+# PURSUER -- a threat that follows the player from BEHIND, whose distance
+# is a function of how the player has been playing rather than of where
+# the track happened to put an obstacle.
+#
+# THE ARCHITECTURAL DECISION, and the reason this block is a set of plain
+# floats rather than a node: the pursuer's distance is stored as an
+# ABSTRACT LEAD, never as a 3D position, for as long as it is not on
+# screen. Two reasons, both structural rather than stylistic:
+#
+#   1. THE WORLD HAS NO BEHIND. This game is world-toward-player: Keepy is
+#      pinned at Z=0 forever and TrackManager scrolls segments past him
+#      (see TrackManager._physics_process). Everything that exists is laid
+#      out AHEAD and moves back; there is no pooling, no recycling and no
+#      spawn logic for anything at positive Z, and a segment that reaches
+#      RECYCLE_Z is destroyed rather than tracked. A permanently-simulated
+#      3D pursuer would need all of that built for it alone.
+#   2. IT WOULD BE SIMULATION NOBODY LOOKS AT. Below the visibility
+#      threshold the pursuer is off screen by construction, so a real node
+#      would be a transform, a physics tick and a draw call spent on
+#      something that cannot be seen, every frame of every run, purely to
+#      hold a number this file can hold in one float.
+#
+# So the lead lives here and evolves by game rules alone. A real node is
+# instantiated (pooled, one instance, see Pursuer.gd) ONLY once the lead
+# drops under PURSUER_VISIBLE_LEAD_S, and it is positioned FROM this
+# number rather than the other way round. The number is the truth; the
+# node is a view of it.
+#
+# UNIT: SECONDS OF LEAD, never metres, and this is what makes the threat
+# behave the same at every palier. The world-space gap is
+# `lead * current_speed`, so the pursuer's closing speed in m/s is
+# proportional to the world speed -- exactly the CHARGER's own
+# closing-speed contract (see Obstacle.CHARGER_SPEED_FACTOR), reached from
+# the other direction. Stored in metres instead, the same lead would buy
+# less and less time as the speed table climbs, and the threat would
+# quietly become unsurvivable at the cap without any constant here
+# changing.
+# =====================================================================
+
+## Lead the player starts a run with, and the ceiling it can be built back
+## up to. The ceiling matters: without it a long stretch of good play would
+## bank an arbitrarily large buffer and the pursuer would stop being a
+## threat for the rest of the run -- the reward for risk has to be staying
+## ahead, not earning permanent immunity.
+const PURSUER_START_LEAD_S: float = 12.0
+const PURSUER_MAX_LEAD_S: float = 15.0
+
+## Lead below which the pursuer becomes a real, visible object (see
+## Pursuer.gd). Deliberately well under the starting lead so that seeing it
+## at all is already an event, not the default state of a run.
+const PURSUER_VISIBLE_LEAD_S: float = 5.0
+
+## Lead lost per second when the player is doing nothing risky --
+## dimensionless (seconds of lead per second of running). At 0.20 a player
+## who takes NO risk at all is caught after PURSUER_START_LEAD_S / 0.20 =
+## 60s, which is the hard floor this system guarantees and the number the
+## anti-frustration argument rests on (see scripts/dev/PursuerAudit.gd,
+## HOSTILE phase, which measures it rather than assuming it).
+const PURSUER_CLOSE_RATE: float = 0.20
+
+## Lead regained per credited risk event -- ANY of the four kinds, reusing
+## GameState.register_risk_event's existing detection wholesale rather than
+## adding a second notion of "the player did something brave".
+##
+## Sized against the rates ComboAudit actually measured: safe play banks
+## ~1.6 events/min (0.027/s, worth 0.04 lead-s/s, well under the 0.20 drain
+## -- caught in ~75s), risky play banks ~16.7 events/min (0.28/s, worth
+## 0.42 lead-s/s, comfortably above the drain -- pegged at the ceiling and
+## never caught). That gap IS the mechanic.
+const PURSUER_RISK_REWARD_S: float = 1.5
+
+## Run time before the pursuer starts closing at all.
+##
+## Not politeness -- a fairness requirement. TrackManager keeps its first
+## SAFE_START_SEGMENTS rows obstacle-free, so for the opening seconds of a
+## run there is nothing to jump, nothing to graze and nothing to dodge
+## late: NO risk event is physically available. Draining the lead across a
+## window where the player cannot possibly refill it would be charging them
+## for the game's own ramp-up.
+const PURSUER_GRACE_S: float = 5.0
 
 # =====================================================================
 # SPEED / PACING TUNING KNOBS -- everything needed to re-tune the run's
@@ -443,6 +542,44 @@ var combo_multiplier: int = 1
 ## risk event and cannot drift by accumulated float error over a long run.
 var combo_expires_at_s: float = 0.0
 
+## Seconds of lead the player currently holds over the pursuer -- see the
+## PURSUER block above for why this is a lead in SECONDS and not a position
+## in metres. Clamped to [0, PURSUER_MAX_LEAD_S] at all times: it never goes
+## negative (zero IS the catch, handled the frame it is reached) and never
+## exceeds the ceiling.
+var pursuer_lead_s: float = PURSUER_START_LEAD_S
+## Whether the pursuer is currently close enough to be a real object on
+## screen. Derived from pursuer_lead_s, but stored so the crossing can be
+## detected exactly once (see _update_pursuer) rather than recomputed by
+## every listener.
+var pursuer_visible: bool = false
+## Why the current run ended -- only meaningful once state == GAME_OVER.
+var death_cause: DeathCause = DeathCause.COLLISION
+
+## DEV-ONLY ESCAPE HATCH. Always true in a real run; nothing in the shipped
+## game ever writes it (the only writers live under scripts/dev/, which the
+## web export excludes).
+##
+## It exists because the pursuer is a PARALLEL system, and the probes that
+## predate it are not measuring it. AntiFrustrationAudit and
+## RushFrustrationAudit both run a lane-roaming bot with collision NEUTERED
+## specifically so one continuous run can cover their whole simulated window
+## without restart churn -- their subject is ground-obstacle spacing, and
+## whether Keepy would have survived is irrelevant to it.
+##
+## The pursuer breaks that assumption outright, and not subtly: it kills a
+## bot that cannot die by collision, at which point GameState leaves
+## PLAYING, both probes early-return on every subsequent frame, and neither
+## ever reaches its own completion check. MEASURED BEFORE WRITING THIS, not
+## predicted -- the first AntiFrustrationAudit run after the pursuer went in
+## printed its header and then hung indefinitely, where the same seed had
+## finished in about ninety seconds an hour earlier.
+##
+## Switching it off in those two probes is also precisely what keeps their
+## numbers comparable to the pre-pursuer baseline: they go on measuring
+## exactly what they were written to measure. PursuerAudit leaves it on.
+var pursuer_enabled: bool = true
+
 func start_run() -> void:
 	distance_travelled = 0.0
 	run_time_s = 0.0
@@ -466,13 +603,26 @@ func start_run() -> void:
 	combo_count = 0
 	combo_multiplier = 1
 	combo_expires_at_s = 0.0
+	pursuer_lead_s = PURSUER_START_LEAD_S
+	pursuer_visible = false
+	death_cause = DeathCause.COLLISION
 	state = State.PLAYING
 	state_changed.emit(state)
 	score_changed.emit(score)
 	counts_changed.emit(nut_count, gland_count)
 	combo_changed.emit(combo_count, combo_multiplier)
 
-func end_run() -> void:
+## `cause` defaults to COLLISION so the pre-existing caller (Keepy.die(),
+## untouched by this batch) keeps its exact previous behaviour without
+## having to know this enum exists.
+##
+## NOTHING SCORE-RELATED BRANCHES ON IT. The score, the four sub-counters,
+## nut_count/gland_count and therefore the entire leaderboard payload are
+## identical whichever way the run ended -- being caught from behind is a
+## different EVENT, not a different kind of run. GameOverScreen reads the
+## cause purely to say the right thing.
+func end_run(cause: DeathCause = DeathCause.COLLISION) -> void:
+	death_cause = cause
 	# Dying drops the chain, like any other way of losing it -- but
 	# SILENTLY (no combo_lost), because the game over screen is already
 	# the feedback for what just happened and a second "you lost your
@@ -498,6 +648,7 @@ func advance_time(delta: float) -> void:
 	_update_stage()
 	_update_dark_cycle(delta)
 	_update_combo()
+	_update_pursuer(delta)
 
 ## Speed is a step function of ELAPSED TIME, never of distance travelled.
 ##
@@ -677,6 +828,18 @@ func register_risk_event(kind: RiskEvent) -> void:
 	if state != State.PLAYING:
 		return
 	risk_event_counts[kind] += 1
+	# Buying back ground on the pursuer, from the SAME event that feeds the
+	# combo -- one detection, two consumers. Every risk kind is worth the
+	# same here on purpose: the combo already grades them by how often each
+	# is reachable, and grading them twice would make the cheapest kind
+	# doubly dominant.
+	#
+	# Gated on the same flag as the drain: a probe that switched the pursuer
+	# off must see the lead frozen, not drifting upward every time its bot
+	# happens to graze something.
+	if pursuer_enabled:
+		pursuer_lead_s = minf(PURSUER_MAX_LEAD_S, pursuer_lead_s + PURSUER_RISK_REWARD_S)
+		_refresh_pursuer_visibility()
 	combo_count += 1
 	combo_expires_at_s = run_time_s + COMBO_TIMEOUT_S
 	var previous_multiplier := combo_multiplier
@@ -699,6 +862,57 @@ func _update_combo() -> void:
 	combo_multiplier = 1
 	combo_changed.emit(combo_count, combo_multiplier)
 	combo_lost.emit()
+
+## THE pursuer rule, run once per frame from advance_time().
+##
+## Drains the lead while the player is not taking risks, and ends the run
+## the moment it reaches zero. It does NOT reward here -- the reward is
+## applied event-driven inside register_risk_event(), because that is
+## where the game already decides what counts as a risk, and having two
+## places that answer that question is how they end up disagreeing.
+func _update_pursuer(delta: float) -> void:
+	if not pursuer_enabled:
+		return # dev probes only -- see the var's own doc
+	if run_time_s < PURSUER_GRACE_S:
+		return # see PURSUER_GRACE_S: no risk is available yet, so no drain
+	pursuer_lead_s = maxf(0.0, pursuer_lead_s - PURSUER_CLOSE_RATE * delta)
+	_refresh_pursuer_visibility()
+	if pursuer_lead_s > 0.0:
+		return
+	# Caught. Signal first, then end the run -- a listener reacting to
+	# pursuer_caught wants to do so while the state is still PLAYING.
+	pursuer_caught.emit()
+	end_run(DeathCause.PURSUER)
+
+## Edge-detects the visibility crossing so the two signals fire exactly
+## once per transition rather than every frame the lead sits on the far
+## side of the threshold.
+func _refresh_pursuer_visibility() -> void:
+	var should_be_visible := pursuer_lead_s <= PURSUER_VISIBLE_LEAD_S
+	if should_be_visible == pursuer_visible:
+		return
+	pursuer_visible = should_be_visible
+	if pursuer_visible:
+		pursuer_became_visible.emit()
+	else:
+		pursuer_lost_sight.emit()
+
+## How close the pursuer is, normalised: 0.0 = at the maximum lead and
+## irrelevant, 1.0 = touching the player. The form every display surface
+## wants (see HUD.gd), so the mapping lives here once instead of in each of
+## them.
+func pursuer_proximity() -> float:
+	return clampf(1.0 - pursuer_lead_s / PURSUER_MAX_LEAD_S, 0.0, 1.0)
+
+## The pursuer's world-space gap behind the player, in metres -- the lead
+## converted through the CURRENT world speed. This is the one place that
+## conversion happens, and it is what makes the pursuer's approach speed
+## proportional to the world's (see the PURSUER block header).
+##
+## Only meaningful while the pursuer is visible; Pursuer.gd is the only
+## caller, and only then.
+func pursuer_gap_m() -> float:
+	return pursuer_lead_s * current_speed
 
 ## Seconds left before the current chain lapses, clamped at 0. Returns 0
 ## when there is no chain at all, so a caller never has to special-case
