@@ -79,6 +79,9 @@ var _enemy_cap_min: float = INF
 var _enemy_cap_count: int = 0
 
 func _ready() -> void:
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# No-op unless `-- --seed=<int>` was passed.
+	var seeded := DevSeed.apply()
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
@@ -91,6 +94,7 @@ func _ready() -> void:
 		_gap_stats.append([0, INF, 0.0])
 
 	print("=== PACING AUDIT ===")
+	print("rng    : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("paliers: %s" % [GameState.STAGE_SPEEDS])
 	print("starts : %s" % [GameState.STAGE_START_S])
 	print("lane switch to %d%%: %.3fs (Obstacle.LANE_SWITCH_TIME_S)"

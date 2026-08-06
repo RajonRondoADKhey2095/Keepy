@@ -68,7 +68,12 @@ var _frames_checked: int = 0
 var _imminent_threat_frames: int = 0
 
 func _ready() -> void:
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# No-op unless `-- --seed=<int>` was passed; the default stays the
+	# exploratory, different-every-time run this probe wants.
+	var seeded := DevSeed.apply()
 	print("=== ANTI-FRUSTRATION AUDIT ===")
+	print("rng                        : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("running %.0fs simulated, checking every physics frame that the player's" % SIM_SECONDS)
 	print("current lane always has a jump escape or a switch escape when threatened")
 	print("")

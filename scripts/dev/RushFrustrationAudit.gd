@@ -45,7 +45,11 @@ var _rush_windows_seen: int = 0
 var _was_rush_active: bool = false
 
 func _ready() -> void:
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# No-op unless `-- --seed=<int>` was passed.
+	var seeded := DevSeed.apply()
 	print("=== RUSH FRUSTRATION AUDIT ===")
+	print("rng: %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("running %.0fs simulated, checking every physics frame WHILE A RUSH IS ACTIVE" % SIM_SECONDS)
 	print("that the player's current lane always has a jump escape or a switch escape")
 	print("")

@@ -47,7 +47,11 @@ var _lane_count_histogram: Array[int] = [0, 0, 0, 0]
 var _max_lanes_seen: int = 0
 
 func _ready() -> void:
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# No-op unless `-- --seed=<int>` was passed.
+	var seeded := DevSeed.apply()
 	print("=== LANE FILL AUDIT (lowest speed palier) ===")
+	print("rng             : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("palier 0 speed  : %.1f m/s" % GameState.STAGE_SPEEDS[0])
 	print("palier 0 window : 0s .. %.1fs (GameState.STAGE_START_S[1])" % GameState.STAGE_START_S[1])
 	print("target resets   : %d" % TARGET_RESETS)
