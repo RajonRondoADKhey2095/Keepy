@@ -63,10 +63,22 @@ var _prev_z: Dictionary = {}
 var _enemy_lock: Dictionary = {} # segment id -> [t_lock, ttc_at_lock, speed]
 var _was_settling: Dictionary = {}
 
+# Last crossing by an obstacle of the ORDINARY stream -- i.e. anything
+# except a CHARGER. Chargers are deliberately skipped by this measurement
+# rather than folded into it: they are not spaced by the row grid at all
+# (see TrackManager's CHARGER SCHEDULING section), so including them
+# would silently redefine what the table below measures and break its
+# comparability with every previously recorded run of this probe. Their
+# own spacing is measured, lane-aware and against their own contract, by
+# scripts/dev/ChargerAudit.gd.
 var _last_pass_t: float = -1.0
 var _last_pass_stage: int = -1
 # Per palier: [count, min_gap_s, sum_gap_s]
 var _gap_stats: Array = []
+# Charger crossings, counted only so this probe's output states plainly
+# that they happened and were excluded, instead of leaving a reader to
+# wonder whether the run contained any.
+var _charger_passes: int = 0
 # Enemy lock measurements: [min_lock_to_contact, count, sum]
 var _enemy_min: float = INF
 var _enemy_count: int = 0
@@ -184,6 +196,14 @@ func _scan_obstacles() -> void:
 		_prev_z[key] = z
 
 func _on_obstacle_passed(key: int, obstacle: Obstacle) -> void:
+	if obstacle.obstacle_type == Obstacle.Type.CHARGER:
+		# Excluded from the gap table, and NOT by updating _last_pass_t
+		# either -- so the gap recorded either side of a charger is the
+		# one between the two ORDINARY obstacles that bracket it, exactly
+		# what this table measured before chargers existed. See
+		# _last_pass_t's own comment.
+		_charger_passes += 1
+		return
 	var stage := GameState.stage_index
 	if _last_pass_t >= 0.0 and _last_pass_stage == stage:
 		# Gap measured between two obstacles that both belong to the same
@@ -222,6 +242,8 @@ func _summary() -> void:
 	print("(gap = measured seconds between two consecutive obstacles reaching")
 	print(" the player; budget = gap minus the %.3fs the lane switch itself" % Obstacle.LANE_SWITCH_TIME_S)
 	print(" takes, i.e. the time left to READ the next obstacle and commit)")
+	print("CHARGER crossings are EXCLUDED here (%d in this run) -- they are not spaced" % _charger_passes)
+	print("by the row grid this table measures; see scripts/dev/ChargerAudit.gd.")
 	print("")
 	print(" idx  speed   samples   min gap   min budget   mean gap")
 	for i in _gap_stats.size():

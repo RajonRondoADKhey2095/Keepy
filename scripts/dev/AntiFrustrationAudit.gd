@@ -150,7 +150,16 @@ func _check_current_lane() -> void:
 
 		if ground_ttc[lane] < 0.0 or ttc < ground_ttc[lane]:
 			ground_ttc[lane] = ttc
-			ground_jumpable[lane] = obstacle.obstacle_type != Obstacle.Type.DODGE
+			# NOT "anything that is not DODGE is jumpable" any more:
+			# CHARGER is also unjumpable (Obstacle.blocks_jump, same
+			# hitbox as DODGE), so the old test would have credited the
+			# player with a jump escape that does not exist and quietly
+			# under-reported violations. AIR_ENEMY is deliberately still
+			# treated as jumpable here -- by this point in the window it
+			# has landed, and the still-airborne case is handled
+			# separately via air_hazards / _jump_lethal_nearby.
+			ground_jumpable[lane] = not (obstacle.obstacle_type == Obstacle.Type.DODGE \
+				or obstacle.obstacle_type == Obstacle.Type.CHARGER)
 
 	var threat_ttc: float = ground_ttc[player_lane]
 	if threat_ttc < 0.0:

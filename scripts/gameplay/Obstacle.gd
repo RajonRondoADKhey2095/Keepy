@@ -103,7 +103,24 @@ class_name Obstacle
 ## small score bonus + a marker "pop" -- see _check_jump_dodge below and
 ## GameState.JUMP_DODGE_BONUS_VALUE.
 
-enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY }
+##   CHARGER   -- the ONLY hazard with a forward speed of its OWN (see
+##                CHARGER_SPEED_FACTOR and the CLOSING SPEED section
+##                below): it does not merely wait to be reached, it
+##                CLOSES on the player, arriving well over twice as fast
+##                as the world scrolls. Straight line down its spawn
+##                lane, start to finish -- it never tracks the player and
+##                never changes lane, so the read is "which lane is it
+##                on, am I on it" and the escape is always a lane switch.
+##                Unjumpable, exactly like DODGE and with a hitbox
+##                identical to DODGE's, so its fairness contract is a
+##                known quantity rather than a newly tuned one.
+##                Telegraphed by a dedicated silhouette (a wedge whose
+##                nose points at the player, unlike every other variant's
+##                symmetrical shape), a colour used nowhere else in the
+##                game, and three speed-line bars trailing behind it that
+##                nothing else has -- see the TELEGRAPH section below.
+
+enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY, CHARGER }
 
 # =====================================================================
 # CLOSING SPEED -- see own_speed_factor / closing_speed() further down.
@@ -126,11 +143,105 @@ enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY }
 # own_speed_factor states it, closing_speed() computes it, and everything
 # that turns a distance into a reaction time goes through that one value.
 #
-# own_speed_factor == 0.0 (every variant in Type today) reproduces the
-# old arithmetic exactly -- verified by re-running the pacing,
-# lane-fill and anti-frustration probes seeded identically before and
-# after this change, see the commit message for both sets of numbers.
+# own_speed_factor == 0.0 (every variant in Type except CHARGER)
+# reproduces the old arithmetic exactly -- verified by re-running the
+# pacing, lane-fill and anti-frustration probes seeded identically
+# before and after that change, see its commit message for both sets of
+# numbers.
 # =====================================================================
+
+# =====================================================================
+# CHARGER TUNING -- the whole knob set for the closing hazard, grouped
+# here next to the pacing constants above rather than scattered through
+# the code that reads them. TrackManager owns the SPAWN-SIDE knobs (how
+# often, how early in a run, how much clear timeline it needs) and reads
+# CHARGER_SPEED_FACTOR from here to size its spacing; this file owns
+# everything about how the thing then behaves and looks.
+#
+# Playtest that asked for it: "c'est mieux mais toujours facile -- j'ai
+# eu un frisson, c'est ca qu'on doit chercher". Diagnosis: nothing in the
+# game closes FASTER than the world, so every arrival is paced by the one
+# speed the player has already internalised, and stays predictable no
+# matter how dense it gets. Tension is a function of closing speed, not
+# of density.
+# =====================================================================
+
+## The charger's own forward speed, as a MULTIPLE of the world speed
+## (see own_speed_factor). Total closing speed is therefore
+## world * (1 + this) = 2.35x the world speed -- the world's own
+## contribution never goes away, it is added to.
+##
+## Expressed as a multiple, never as a m/s value, for the same reason
+## every reaction window in this file is expressed in seconds: a fixed
+## m/s would be a wildly different experience at 12 m/s than at the 26
+## m/s cap, and would have to be re-tuned every time the speed table
+## moves. As a multiple it stays the same RELATIVE threat at every
+## palier, and the reaction window it leaves scales with the ramp
+## instead of collapsing at the top of it (measured per palier by
+## scripts/dev/ChargerAudit.gd).
+const CHARGER_SPEED_FACTOR: float = 1.35
+
+## Global Z past which a charger takes itself out of play. It outruns
+## its own TrackSegment by definition, so it reaches the player long
+## before that segment recycles and would otherwise sit visible far
+## behind the camera for several more seconds -- during which
+## TrackManager's lane-occupancy scan would keep counting its lane as
+## busy (see _active_lane_occupancy) and thin the track for no reason.
+##
+## Restated as a literal rather than read from TrackManager.RECYCLE_Z:
+## Obstacle.gd cannot take a hard reference on TrackManager without
+## re-forming the mutual class dependency documented on
+## _track_manager_ref. Same precedent as GameState.MAX_LOOKAHEAD_S
+## restating TrackManager's segment layout. If RECYCLE_Z moves, this
+## moves with it.
+const CHARGER_DESPAWN_Z: float = 12.0
+
+# ---------------------------------------------------------------------
+# TELEGRAPH -- the player must be able to name a charger as a charger the
+# instant it appears, with no trial and error, and tell it apart from
+# both the ordinary hazards AND the cyan jumpable marker. Three
+# independent, redundant cues, so no single one has to carry it:
+#
+#   SHAPE   -- a wedge whose nose points AT the player (PrismMesh_Charger
+#              in Obstacle.tscn, rotated so its apex leads). Every other
+#              variant is a symmetrical box, capsule or torus with no
+#              facing at all; "it is pointed at me" is readable as a
+#              silhouette, at distance, with no colour information
+#              whatsoever -- which is what makes it survive all six dark
+#              palettes by construction rather than by measurement.
+#   MOTION  -- three speed-line bars trailing BEHIND it, sliding backward
+#              on a loop (_animate_charger_trail). Nothing else in the
+#              game has anything attached behind it, so the cue is
+#              unambiguous even in peripheral vision.
+#   COLOUR  -- hot magenta, UNSHADED. Unshaded for the same reason the
+#              jump marker is (see its own note below): its on-screen
+#              colour is then the same known value every frame instead of
+#              drifting with the light angle, which is what makes its
+#              dark-mode contrast verifiable ahead of time rather than
+#              only observable. Magenta specifically because every other
+#              hue in the game is taken and a NEAR hue would be the whole
+#              problem: DODGE dark red, JUMP brown, ENEMY purple,
+#              AIR_ENEMY green, marker cyan, Noisette/Gland gold -- and
+#              Keepy HERSELF is orange, which is why the obvious "danger
+#              orange" is not available here.
+#
+# The body colour is deliberately CONSTANT (only the trail animates):
+# a pulsing body would make "the charger's contrast against the ground"
+# a range rather than a number, and there would be no single value for
+# scripts/dev/DarkPaletteAudit.gd to certify per palette.
+# ---------------------------------------------------------------------
+
+## How fast the trail bars slide backward through their loop, in loops
+## per second. Fast enough to read as speed rather than as drifting
+## debris; the bars are evenly spaced (Obstacle.tscn) so one loop is one
+## bar's worth of travel and the cycle is seamless.
+const CHARGER_TRAIL_HZ: float = 3.5
+
+## Local Z spacing between two consecutive trail bars -- must match the
+## spacing baked into Obstacle.tscn's ChargerTrail children (-1.6, -2.7,
+## -3.8), since the slide loop below wraps on exactly this distance to
+## stay seamless.
+const CHARGER_TRAIL_SPACING: float = 1.1
 
 # Time for Keepy's lateral lane lerp (Keepy.gd LANE_SWITCH_SPEED) to reach
 # ~95% of the way to a new lane -- the point a lane switch reads as "done"
@@ -279,6 +390,9 @@ const MARKER_POP_PEAK_SCALE: float = 1.9
 @onready var _enemy_shape: CollisionShape3D = $EnemyShape
 @onready var _air_enemy_mesh: MeshInstance3D = $AirEnemyMesh
 @onready var _air_enemy_shape: CollisionShape3D = $AirEnemyShape
+@onready var _charger_mesh: MeshInstance3D = $ChargerMesh
+@onready var _charger_shape: CollisionShape3D = $ChargerShape
+@onready var _charger_trail: Node3D = $ChargerTrail
 @onready var _jump_marker_mesh: MeshInstance3D = $JumpMarkerMesh
 
 ## Fired the instant a successful jump-dodge is detected (see
@@ -334,6 +448,19 @@ var _air_enemy_landing_lane_x: float = 0.0
 ## the top of configure() so a freshly (re)spawned pooled instance never
 ## fires a stale crossing left over from its previous life.
 var _prev_pass_z: float = 0.0
+
+## Trail-slide phase for the CHARGER variant, in local metres, wrapped to
+## [0, CHARGER_TRAIL_SPACING) -- see _animate_charger_trail. Purely
+## cosmetic; reset on every (re)configure so a pooled instance never
+## resumes a previous life's phase.
+var _charger_trail_phase: float = 0.0
+
+## Local Z each ChargerTrail bar sits at in Obstacle.tscn, captured once
+## in _ready() rather than recomputed from an assumed spacing -- the
+## slide below offsets each bar from its OWN authored position, so the
+## scene file stays the single source of truth for the trail's layout.
+## Fixed-size, allocated once, never resized in the game loop.
+var _charger_trail_base_z: Array[float] = []
 
 ## Elapsed time since the marker's "cleared!" pop started, or < 0.0 when
 ## no pop is playing -- see _update_marker_pop. Purely cosmetic local
@@ -416,6 +543,12 @@ func _ready() -> void:
 	_jump_marker_mesh.position.y = Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT + JUMP_MARKER_Y_OFFSET
 	_jump_marker_mesh.scale = Vector3.ONE
 
+	# Authored trail-bar positions, read once so the slide animation can
+	# offset from them instead of assuming a layout -- see
+	# _charger_trail_base_z.
+	for bar in _charger_trail.get_children():
+		_charger_trail_base_z.append((bar as Node3D).position.z)
+
 ## Switches which variant's mesh/collision shape is active. Called by
 ## TrackSegment.populate() every time this pooled obstacle is (re)spawned.
 ## lane_x/alt_lane_x are only meaningful for Type.ENEMY: lane_x is the
@@ -435,6 +568,7 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 	var is_jump := type == Type.JUMP
 	var is_enemy := type == Type.ENEMY
 	var is_air_enemy := type == Type.AIR_ENEMY
+	var is_charger := type == Type.CHARGER
 	_dodge_mesh.visible = is_dodge
 	_dodge_shape.disabled = not is_dodge
 	_jump_mesh.visible = is_jump
@@ -443,6 +577,18 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 	_enemy_shape.disabled = not is_enemy
 	_air_enemy_mesh.visible = is_air_enemy
 	_air_enemy_shape.disabled = not is_air_enemy
+	_charger_mesh.visible = is_charger
+	_charger_shape.disabled = not is_charger
+	_charger_trail.visible = is_charger
+
+	# The ONE place an own speed is ever set -- see own_speed_factor and
+	# CHARGER_SPEED_FACTOR. Everything downstream (this instance's
+	# time_to_contact_s, TrackManager's spacing, every dev probe) reads it
+	# from here rather than special-casing the type again.
+	if is_charger:
+		own_speed_factor = CHARGER_SPEED_FACTOR
+	_charger_trail_phase = 0.0
+	_reset_charger_trail()
 
 	_enemy_settling = is_enemy
 	_enemy_phase = 0.0
@@ -487,6 +633,9 @@ func _physics_process(delta: float) -> void:
 	_check_jump_dodge()
 	_update_marker_pop(delta)
 
+	if obstacle_type == Type.CHARGER:
+		_process_charger(delta)
+		return
 	if obstacle_type == Type.AIR_ENEMY:
 		_process_air_enemy()
 		return
@@ -650,6 +799,76 @@ func closing_speed() -> float:
 func time_to_contact_s() -> float:
 	return -global_position.z / closing_speed()
 
+## The CHARGER's whole per-frame behaviour: close on the player faster
+## than the world does, and take itself out of play once past.
+##
+## This is the ONLY place in the game where a hazard moves itself along
+## Z. It moves its LOCAL z (it is a child of a TrackSegment that
+## TrackManager is already advancing at GameState.current_speed), so what
+## it adds here is exactly its OWN speed and the two compose into
+## closing_speed() -- no double counting, and no special case needed
+## anywhere in TrackManager's movement loop.
+##
+## Deliberately NOT run on a pooled-but-hidden instance (unlike the ENEMY
+## sway and the AIR_ENEMY descent, which tolerate it): those two only
+## animate an offset that populate() overwrites anyway, whereas this one
+## integrates position.z, so an invisible charger left running would
+## drift arbitrarily far and hand a stale global Z to
+## time_to_contact_s() / _check_jump_dodge the moment it came back into
+## play.
+##
+## Straight line, one lane, start to finish -- there is intentionally no
+## player-tracking here, and none of _resolve_late_lock's machinery. The
+## whole read is "which lane is it on", decided at spawn and never
+## revised, so the player can commit to a switch the instant they see it
+## instead of waiting to find out where it will end up.
+func _process_charger(delta: float) -> void:
+	if not visible:
+		return
+	position.z += GameState.current_speed * own_speed_factor * delta
+	if global_position.z > CHARGER_DESPAWN_Z:
+		# Behind the camera and past every gameplay decision it could
+		# still affect -- see CHARGER_DESPAWN_Z. TrackSegment.populate()
+		# resets local Z when this pooled instance is next used, so
+		# nothing here has to undo the travel.
+		visible = false
+		set_deferred("monitoring", false) # deferred: see TrackSegment's class doc
+		monitorable = false
+		return
+	_animate_charger_trail(delta)
+
+## Slides the three speed-line bars backward on a seamless loop -- the
+## MOTION half of the telegraph (see the TELEGRAPH section header).
+##
+## Each bar is offset from its OWN authored position by a shared phase
+## wrapped on the bar spacing, so bar N always steps into the position
+## bar N-1 just left and the loop has no visible seam. A hand-rolled
+## phase driven per physics frame rather than an AnimationPlayer or a
+## Tween, for the same reason every other animation in this file is (see
+## _update_marker_pop): nothing is created or destroyed as a pooled
+## instance is reused over and over.
+func _animate_charger_trail(delta: float) -> void:
+	_charger_trail_phase = fposmod(
+		_charger_trail_phase + CHARGER_TRAIL_HZ * CHARGER_TRAIL_SPACING * delta,
+		CHARGER_TRAIL_SPACING
+	)
+	var bars := _charger_trail.get_children()
+	for i in bars.size():
+		if i >= _charger_trail_base_z.size():
+			break
+		(bars[i] as Node3D).position.z = _charger_trail_base_z[i] - _charger_trail_phase
+
+## Puts every trail bar back on its authored Z. Called from configure()
+## so a pooled instance never re-enters play mid-slide, which would show
+## the bars at an arbitrary offset for the frame before the first
+## _animate_charger_trail tick.
+func _reset_charger_trail() -> void:
+	var bars := _charger_trail.get_children()
+	for i in bars.size():
+		if i >= _charger_trail_base_z.size():
+			break
+		(bars[i] as Node3D).position.z = _charger_trail_base_z[i]
+
 ## Animates the AIR_ENEMY variant's height across its whole approach --
 ## see the Type.AIR_ENEMY doc for the schedule this implements. Runs
 ## every physics frame this instance is configured as AIR_ENEMY,
@@ -773,8 +992,16 @@ func _apply_enemy_alarm(t: float) -> void:
 ## doc) -- a Gland at the SAME row/Z as an AIR_ENEMY would sit at exactly
 ## its airborne hitbox height (GLAND_Y), so reaching it is reaching the
 ## hazard.
+## CHARGER is unsafe for the same reason as DODGE and by the same means:
+## its hitbox is byte-identical to DodgeShape's (BoxShape3D_Charger in
+## Obstacle.tscn, 1.2 x 2.0 x 1.0 at y=1.0), i.e. taller than
+## Keepy.JUMP_PEAK_HEIGHT, so it cannot be jumped by construction rather
+## than by timing. Reusing DODGE's exact hitbox rather than authoring a
+## new one is deliberate: the charger's fairness then rests on an
+## already-verified clearance contract, and only its APPROACH SPEED is
+## new.
 static func blocks_jump(type: Type) -> bool:
-	return type == Type.DODGE or type == Type.AIR_ENEMY
+	return type == Type.DODGE or type == Type.AIR_ENEMY or type == Type.CHARGER
 
 ## Detects the exact moment a JUMP-DODGE happens -- not "the player
 ## jumped", but specifically "the player jumped OVER THIS obstacle,

@@ -127,6 +127,27 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane:
 	else:
 		_deactivate_gland()
 
+## Global Z of this segment's Gland if it is currently live on `lane`,
+## or INF when this segment has no active Gland there.
+##
+## Exists so TrackManager can answer "is a Gland arriving alongside this
+## charger on this lane" against the LIVE track rather than against its
+## per-lane row counters -- see
+## TrackManager._lane_clear_of_glands_for_charger for why a row count
+## cannot express that question for a hazard that overtakes rows. Kept as
+## a narrow accessor (one lane, one number) rather than exposing _gland
+## itself, so segments still never hand out their pooled nodes.
+##
+## `visible` is the ground truth for "in play", the same filter
+## TrackManager._active_obstacle_in applies to obstacles and for the same
+## reason -- a hidden pooled Gland still carries its last position.
+func active_gland_z_on_lane(lane: int) -> float:
+	if not _gland.visible or _gland.collected:
+		return INF
+	if not is_equal_approx(_gland.position.x, LANE_X[lane]):
+		return INF
+	return _gland.global_position.z
+
 ## Adjacent lane for an ENEMY obstacle to sway toward before settling on
 ## `lane` (see Obstacle.gd). The middle lane (index 1) has two neighbours
 ## and picks between them; either edge lane (0 or 2) only has the middle
