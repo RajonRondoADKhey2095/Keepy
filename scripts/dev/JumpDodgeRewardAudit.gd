@@ -1,7 +1,7 @@
 extends Node
 ## Dev-only diagnostic for the jump-dodge reward (chantier 2,
 ## playtest-fixes batch: "meme quand je le fais je ne sens rien" -- see
-## Obstacle.gd _check_jump_dodge / _trigger_jump_dodge_feedback,
+## Obstacle.gd _is_jump_dodge / _trigger_jump_dodge_feedback,
 ## GameState.add_jump_dodge_bonus). Empirically verifies the reward
 ## actually fires on a real timed jump over a real JUMP obstacle, rather
 ## than trusting the detection logic by inspection alone -- same

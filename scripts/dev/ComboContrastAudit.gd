@@ -44,7 +44,9 @@ extends Node
 ##   xvfb-run -a godot4 --rendering-driver opengl3 \
 ##     --path . res://scripts/dev/ComboContrastAudit.tscn
 
-const SETTLE_FRAMES: int = 4
+## Generous on purpose: it must comfortably outlast HUD.POP_DURATION_S so
+## every capture happens with the row at rest, never mid-pop.
+const SETTLE_FRAMES: int = 24
 
 ## WCAG AA large-text threshold. The combo row is rendered at 34-46px,
 ## comfortably "large text" by the standard's own definition (>= 18.66px
@@ -54,6 +56,7 @@ const SETTLE_FRAMES: int = 4
 const CONTRAST_FLOOR: float = 3.0
 
 var _game: Node3D
+var _invert_rect: ColorRect
 var _hud: CanvasLayer
 var _combo_row: Control
 var _combo_label: Label
@@ -70,6 +73,31 @@ func _ready() -> void:
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_hud = _game.get_node("HUD")
+	_invert_rect = _game.get_node("DarkModeEffect/Invert")
+	# THE WORLD IS HELD STILL for the whole measurement, and this probe
+	# takes ownership of the three shader uniforms. Both are correctness
+	# fixes, and this probe needed two wrong attempts to get here:
+	#
+	#   1. Left running normally, the track scrolls, so the "background"
+	#      behind the counter differs in every captured frame and whether a
+	#      capture had yet picked up a palette change came down to frame
+	#      scheduling. Runs disagreed: the same palette read 6.63:1 once
+	#      and 1.87:1 the next time, and a stale capture is indistinguishable
+	#      from a real legibility failure by its numbers alone.
+	#   2. get_tree().paused = true fixed the scrolling and broke everything
+	#      else -- every palette then reported the raw sky colour and a
+	#      1.00:1 fill ratio, i.e. a uniform region with no text and no
+	#      inversion drawn at all. Deterministic and completely wrong, which
+	#      is the more dangerous of the two failure modes.
+	#
+	# So the tree keeps running (rendering stays guaranteed) and the world
+	# is stilled by zeroing the world speed instead -- see _freeze_world.
+	# DarkModeEffect's own _process is switched OFF so it can never write
+	# over the uniforms set here; driving them by hand is exactly what
+	# DarkPaletteAudit.gd does, and for the same reason (that script is a
+	# pure three-line uniform setter, verified by reading it).
+	var dark_effect: CanvasLayer = _game.get_node("DarkModeEffect")
+	dark_effect.set_process(false)
 	_combo_row = _hud.get_node("MarginContainer/VBoxContainer/ComboRow")
 	_combo_label = _hud.get_node("MarginContainer/VBoxContainer/ComboRow/ComboLabel")
 	_multiplier_label = _hud.get_node("MarginContainer/VBoxContainer/ComboRow/MultiplierLabel")
@@ -87,40 +115,63 @@ func _run() -> void:
 ## setting those is exactly equivalent to the run reaching that phase, and
 ## it lets the probe visit all six palettes in a few frames instead of
 ## several minutes of simulated time.
-func _measure_phase(label: String, variant_index: int) -> void:
+## Holds the track still without pausing the tree: TrackManager advances
+## every segment by GameState.current_speed * delta, and a CHARGER adds
+## current_speed * own_speed_factor, so zero there stops all of it. Pinning
+## stage_index at the last palier is what makes it stick -- _update_stage
+## only assigns current_speed when the stage index actually CHANGES, and at
+## the last one it never can again.
+func _freeze_world() -> void:
 	GameState.state = GameState.State.PLAYING
+	GameState.stage_index = GameState.STAGE_SPEEDS.size() - 1
+	GameState.current_speed = 0.0
+
+func _measure_phase(label: String, variant_index: int) -> void:
+	_freeze_world()
+	var material: ShaderMaterial = _invert_rect.material
 	if variant_index < 0:
-		GameState.dark_phase = GameState.DarkPhase.LIGHT
-		GameState.dark_intensity = 0.0
+		_invert_rect.visible = false
 	else:
-		GameState.dark_phase = GameState.DarkPhase.DARK
-		GameState.dark_intensity = 1.0
-		GameState.dark_variant_index = variant_index
+		_invert_rect.visible = true
+		material.set_shader_parameter("intensity", 1.0)
+		material.set_shader_parameter("tint_color", GameState.DARK_VARIANTS[variant_index])
+		material.set_shader_parameter("tint_amount", GameState.DARK_TINT_AMOUNT)
 
 	# Put the row into the state a player actually sees it in: a live combo
-	# high enough to have earned a visible multiplier.
+	# high enough to have earned a visible multiplier, and NOT about to
+	# lapse.
+	#
+	# Driven through GameState + the real signal, never by writing the two
+	# labels directly. Setting the labels by hand left combo_count at 0, so
+	# HUD.combo_time_left_s() returned 0, the HUD correctly concluded the
+	# chain was expiring, and every sample was taken of the AMBER PULSING
+	# warning state instead of the normal one -- measuring a real state,
+	# just not the one the report claimed. The expiry is pushed out on every
+	# phase because GameState's run clock keeps advancing underneath.
 	GameState.combo_count = 7
 	GameState.combo_multiplier = 3
 	GameState.combo_expires_at_s = GameState.run_time_s + GameState.COMBO_TIMEOUT_S
 	GameState.combo_changed.emit(GameState.combo_count, GameState.combo_multiplier)
 
+	GameState.combo_expires_at_s = GameState.run_time_s + GameState.COMBO_TIMEOUT_S
 	await _settle()
+	GameState.combo_expires_at_s = GameState.run_time_s + GameState.COMBO_TIMEOUT_S
 	var rect := Rect2i(
 		Vector2i(_combo_row.global_position), Vector2i(_combo_row.size)
 	)
+	if rect.size.x <= 0 or rect.size.y <= 0:
+		push_error("COMBO CONTRAST AUDIT: the combo row measured %s -- it never got a layout pass, so every sample below would be of empty screen." % rect.size)
+		get_tree().quit(1)
+		return
 	var with_text := _capture()
 	# The SAME region with the row hidden -- the honest background, rather
-	# than an assumed sky colour.
+	# than an assumed sky colour. Identical scene otherwise: the tree is
+	# paused, so nothing but this visibility flag differs between the two
+	# captures.
 	_combo_row.visible = false
 	await _settle()
 	var without_text := _capture()
 	_combo_row.visible = true
-	# Settle AGAIN before returning. Without this the next phase's very
-	# first capture can land on a frame drawn while the row was still
-	# hidden, and every ratio computed from it is then text-versus-itself:
-	# ~1:1, indistinguishable from a genuine legibility failure. That is
-	# exactly how this probe's first run "found" two failing palettes that
-	# were not failing at all.
 	await _settle()
 
 	if with_text == null or without_text == null:

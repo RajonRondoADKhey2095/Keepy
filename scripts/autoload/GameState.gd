@@ -44,9 +44,9 @@ enum State { TITLE, PLAYING, GAME_OVER }
 #
 #   JUMP_DODGE -- clearing a jumpable hazard by jumping over it on its own
 #                 lane. Detected since the playtest-fixes batch by
-#                 Obstacle._check_jump_dodge (which already scored a small
-#                 bonus for it); the combo system reuses that exact
-#                 detection rather than adding a second one.
+#                 Obstacle._check_passage / _is_jump_dodge (which already
+#                 scored a small bonus for it); the combo system reuses
+#                 that exact detection rather than adding a second one.
 #   NEAR_MISS  -- a hazard passed close enough to graze. Derived from the
 #                 CLOSEST LATERAL APPROACH measured over the passage,
 #                 evaluated at the same Z=0 crossing the jump-dodge check
@@ -388,7 +388,7 @@ const GLAND_VALUE: int = 50
 
 ## Points for successfully jumping OVER a jumpable hazard on its own
 ## lane (chantier 2, playtest-fixes batch -- see Obstacle.gd
-## _check_jump_dodge for the detection and JumpMarkerMesh for the
+## _resolve_risk_event for the detection and JumpMarkerMesh for the
 ## permanent "you can jump this" signal this rewards actually acting on).
 ## Deliberately below GLAND_VALUE: a Gland is a risk the player SEEKS OUT
 ## (jump timing for a bonus that costs nothing to skip); a dodge is a

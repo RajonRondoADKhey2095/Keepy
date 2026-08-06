@@ -1201,8 +1201,10 @@ func _check_passage() -> void:
 ##   NEAR_MISS before LATE_DODGE because the two overlap almost completely
 ##     -- getting off a lane late is also what leaves you close to it -- and
 ##     the graze is the STRICTER of the two: it requires still being inside
-##     a 0.5m band as the hazard goes past, where a late dodge only requires
-##     having started the escape inside a time window. Ranked the other way
+##     a narrow lateral band as the hazard goes past, where a late dodge
+##     only requires having started the escape inside a time window (and so
+##     is satisfied by escapes that finish a comfortable ~1.98m clear).
+##     Ranked the other way
 ##     round, LATE_DODGE would swallow essentially every tight escape and
 ##     NEAR_MISS would be dead code that never fires in a real run (checked,
 ##     not assumed: that ordering was written first and the probe run that
