@@ -119,6 +119,70 @@ const OBSTACLE_CHANCE_BASE: float = 0.60
 const OBSTACLE_CHANCE_CAP: float = 0.90
 
 # =====================================================================
+# RUSH EVENTS (playtest-fixes-2 batch) -- OBSTACLE_CHANCE_BASE/_CAP above
+# already ramp with speed, but that is a CONTINUOUS climb: nothing about
+# it reads as a distinct moment the player can point to afterward, just
+# one long escalating grind (playtest: "difficulte diffuse qui ne marque
+# pas"). This layers a TEMPORARY density spike on top of that continuous
+# ramp, independent of which speed palier happens to be active: a brief
+# RUSH (denser than the palier's own baseline) always followed by a brief
+# CALM (sparser than baseline) gives the run distinct PEAKS instead of a
+# flat climb.
+#
+# SAFETY: a rush can only raise the PROBABILITY that an already-ELIGIBLE
+# row spawns an obstacle (the multiplier scales _obstacle_chance()'s
+# output, see that function) -- it NEVER touches MIN_OBSTACLE_GAP_S /
+# _required_gap_rows(), and therefore never touches the reaction time
+# ENEMY_REACTION_WINDOW_S already guarantees either (the gap already
+# accounts for it, see MIN_OBSTACLE_GAP_S's own doc). The probability is
+# also hard-clamped to 1.0 (_obstacle_chance() below), so "every eligible
+# row gets one" -- exactly the ceiling the gap rule already allows on its
+# own -- is the densest a rush can ever get. There is no multiplier value
+# large enough to spawn MORE obstacles than the gap rule permits; clamping
+# the probability IS "plafonner le multiplicateur" the task asks for, it
+# just falls out of the chance formula already being a probability.
+# =====================================================================
+
+## No rush before this much run time has elapsed -- the player's own
+## "taking its bearings" window (task's explicit ask: no rush in the
+## first 15-20s). Independent of LOW_DENSITY_LAST_STAGE_INDEX above on
+## purpose: a rush is keyed to TIME, paliers are keyed to SPEED, and a
+## rush must be able to land at ANY palier once eligible, not just once a
+## particular speed is reached.
+const RUSH_MIN_START_S: float = 18.0
+
+## A RUSH window's duration is drawn uniformly from this range EACH TIME
+## one starts (not a fixed value) -- see the section header for why: no
+## two runs, and no two rushes within the same run, should be
+## memorizable by their timing.
+const RUSH_DURATION_MIN_S: float = 5.0
+const RUSH_DURATION_MAX_S: float = 8.0
+
+## The CALM window that always follows a rush -- same per-occurrence
+## random duration as the rush itself.
+const CALM_DURATION_MIN_S: float = 2.0
+const CALM_DURATION_MAX_S: float = 3.0
+
+## Once a calm window ends, how long the run waits (drawn per-occurrence,
+## same reasoning as above) before the NEXT rush is even eligible to
+## start. Without this, rushes could chain back-to-back into one long
+## "rush" in every way that matters, defeating the point of a rush being
+## a distinct, bounded event with breathing room on either side.
+const RUSH_COOLDOWN_MIN_S: float = 4.0
+const RUSH_COOLDOWN_MAX_S: float = 10.0
+
+## Obstacle-chance multiplier applied for the duration of a RUSH window --
+## a RANGE, drawn once per rush, not a single fixed value (same
+## per-occurrence variation as the durations above).
+const RUSH_CHANCE_MULT_MIN: float = 1.8
+const RUSH_CHANCE_MULT_MAX: float = 2.2
+
+## Obstacle-chance multiplier applied for the duration of a CALM window --
+## deliberately BELOW 1.0 so calm reads as a genuine dip under the
+## palier's own baseline, not just "the rush ended, back to normal".
+const CALM_CHANCE_MULT: float = 0.45
+
+# =====================================================================
 # AIR_ENEMY <-> JUMP / GLAND SEPARATION -- AIR_ENEMY sits at the exact
 # same height as a Gland and shares its lane with whatever JUMP obstacle
 # happens to be nearby, so it is the first hazard whose fairness depends
@@ -265,6 +329,23 @@ var _rows_since_jump_on_lane: Array[int] = [_NO_RECENT_HAZARD, _NO_RECENT_HAZARD
 var _rows_since_air_enemy_on_lane: Array[int] = [_NO_RECENT_HAZARD, _NO_RECENT_HAZARD, _NO_RECENT_HAZARD]
 var _rows_since_gland_on_lane: Array[int] = [_NO_RECENT_HAZARD, _NO_RECENT_HAZARD, _NO_RECENT_HAZARD]
 
+# RUSH EVENTS state -- see the section header above. Defaults here match
+# reset()'s own values: _ready() populates the initial segments BEFORE
+# Game.gd ever calls reset() (see _ready() below), so these must already
+# be sane on first use, not just after a reset.
+enum DensityPhase { NORMAL, RUSH, CALM }
+var _density_phase: DensityPhase = DensityPhase.NORMAL
+## Multiplier _obstacle_chance() applies on top of the palier-derived
+## base chance -- 1.0 outside a rush/calm window, see _enter_rush/_enter_calm.
+var _density_multiplier: float = 1.0
+## Run time (GameState.run_time_s) at which the CURRENT rush or calm
+## window ends -- meaningless while _density_phase == NORMAL.
+var _density_phase_ends_at_s: float = 0.0
+## Run time at or after which the NEXT rush is allowed to start -- also
+## doubles as the "no rush before RUSH_MIN_START_S" guard at the start of
+## a run, since it is initialised to that same constant.
+var _next_rush_eligible_s: float = RUSH_MIN_START_S
+
 func _ready() -> void:
 	# Looked up by group (Obstacle.gd's ground ENEMY late lock, see
 	# _resolve_late_lock / lane_has_conflicting_jump_hazard below) rather
@@ -282,6 +363,8 @@ func _physics_process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAYING:
 		return
 
+	_update_density_phase(GameState.run_time_s)
+
 	var move_amount := GameState.current_speed * delta
 	GameState.add_distance(move_amount)
 
@@ -294,6 +377,10 @@ func _physics_process(delta: float) -> void:
 ## track always looks the same at the starting line.
 func reset() -> void:
 	_rows_to_last_obstacle = SEGMENT_COUNT
+	_density_phase = DensityPhase.NORMAL
+	_density_multiplier = 1.0
+	_density_phase_ends_at_s = 0.0
+	_next_rush_eligible_s = RUSH_MIN_START_S
 	for lane in 3:
 		_rows_since_jump_on_lane[lane] = _NO_RECENT_HAZARD
 		_rows_since_air_enemy_on_lane[lane] = _NO_RECENT_HAZARD
@@ -403,14 +490,62 @@ func _required_air_hazard_separation_rows() -> int:
 	return maxi(1, ceili(AIR_HAZARD_SEPARATION_S * GameState.lookahead_speed() / SEGMENT_LENGTH))
 
 ## Spawn probability for a row that is already far enough from the last
-## obstacle -- see OBSTACLE_CHANCE_BASE / OBSTACLE_CHANCE_CAP.
+## obstacle -- see OBSTACLE_CHANCE_BASE / OBSTACLE_CHANCE_CAP. Scaled by
+## the current RUSH/CALM density multiplier (see the RUSH EVENTS section
+## header) and hard-clamped to [0, 1] -- a probability above 1.0 is
+## meaningless, and clamping it is exactly what keeps a rush from ever
+## spawning MORE than one obstacle per eligible row: the gap rule already
+## caps how often a row is eligible at all (_required_gap_rows,
+## untouched by any of this), so "every eligible row spawns" (chance ==
+## 1.0) is the ceiling, whatever the multiplier's raw value is.
 func _obstacle_chance() -> float:
 	var t := clampf(
 		(GameState.lookahead_speed() - GameState.BASE_SPEED)
 			/ (GameState.MAX_SPEED - GameState.BASE_SPEED),
 		0.0, 1.0
 	)
-	return lerpf(OBSTACLE_CHANCE_BASE, OBSTACLE_CHANCE_CAP, t)
+	var base_chance := lerpf(OBSTACLE_CHANCE_BASE, OBSTACLE_CHANCE_CAP, t)
+	return clampf(base_chance * _density_multiplier, 0.0, 1.0)
+
+## Advances the RUSH -> CALM -> NORMAL(cooldown) -> RUSH cycle -- see the
+## RUSH EVENTS section header. Called once per physics frame while
+## PLAYING (_physics_process), driven by the real run clock
+## (GameState.run_time_s), independent of GameState.stage_index /
+## lookahead_stage_index() on purpose: a rush must be able to land at ANY
+## speed palier once eligible, not just a specific one.
+func _update_density_phase(run_time_s: float) -> void:
+	match _density_phase:
+		DensityPhase.RUSH:
+			if run_time_s >= _density_phase_ends_at_s:
+				_enter_calm(run_time_s)
+		DensityPhase.CALM:
+			if run_time_s >= _density_phase_ends_at_s:
+				_enter_normal(run_time_s)
+		DensityPhase.NORMAL:
+			if run_time_s >= _next_rush_eligible_s:
+				_enter_rush(run_time_s)
+
+func _enter_rush(run_time_s: float) -> void:
+	_density_phase = DensityPhase.RUSH
+	_density_multiplier = randf_range(RUSH_CHANCE_MULT_MIN, RUSH_CHANCE_MULT_MAX)
+	_density_phase_ends_at_s = run_time_s + randf_range(RUSH_DURATION_MIN_S, RUSH_DURATION_MAX_S)
+
+func _enter_calm(run_time_s: float) -> void:
+	_density_phase = DensityPhase.CALM
+	_density_multiplier = CALM_CHANCE_MULT
+	_density_phase_ends_at_s = run_time_s + randf_range(CALM_DURATION_MIN_S, CALM_DURATION_MAX_S)
+
+func _enter_normal(run_time_s: float) -> void:
+	_density_phase = DensityPhase.NORMAL
+	_density_multiplier = 1.0
+	_next_rush_eligible_s = run_time_s + randf_range(RUSH_COOLDOWN_MIN_S, RUSH_COOLDOWN_MAX_S)
+
+## True for the duration of a RUSH window -- read-only accessor for dev
+## probes (scripts/dev/RushFrustrationAudit.gd) that need to isolate
+## measurements to specifically-during-a-rush frames. No gameplay code
+## reads this; TrackManager is the sole owner of the density phase.
+func is_rush_active() -> bool:
+	return _density_phase == DensityPhase.RUSH
 
 ## Weighted pick among the four Obstacle.Type variants -- see
 ## DODGE_TYPE_CHANCE / JUMP_TYPE_CHANCE / ENEMY_TYPE_CHANCE above for the
