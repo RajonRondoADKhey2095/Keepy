@@ -183,6 +183,101 @@ const RUSH_CHANCE_MULT_MAX: float = 2.2
 const CALM_CHANCE_MULT: float = 0.45
 
 # =====================================================================
+# CHARGER SCHEDULING (closing-hazard batch) -- the spawn-side knobs for
+# Obstacle.Type.CHARGER, the one hazard that closes on the player faster
+# than the world scrolls (Obstacle.CHARGER_SPEED_FACTOR owns the speed
+# itself; everything about WHEN and WHERE one may appear lives here).
+#
+# WHY IT NEEDS ITS OWN SCHEDULER RATHER THAN A SLOT IN THE TYPE TABLE:
+# every other type is spaced by the row grid (_required_gap_rows), which
+# works because two obstacles one row apart are always exactly
+# SEGMENT_LENGTH / speed seconds apart -- true only while everything
+# closes at the same speed. A charger arrives 1 / (1 + SPEED_FACTOR) of
+# the way through its own row's schedule, i.e. it OVERTAKES the rows in
+# front of it and lands somewhere in the middle of their timeline. Its
+# row index says nothing about when it arrives, so the row grid cannot
+# space it, and forcing it into the grid anyway would need ~5 clear rows
+# behind it -- which at the cap (spawn chance 0.90, gap 2 rows) happens
+# roughly once in a thousand rows, i.e. the charger would be extinct at
+# exactly the paliers it is meant to be most frequent at.
+#
+# So it is scheduled on ARRIVAL TIME instead (_charger_arrival_fits):
+# scan what is actually on the track, ask each obstacle when IT will
+# reach the player at ITS own closing speed, and only take the row if the
+# charger's own arrival lands in a hole at least MIN_OBSTACLE_GAP_S wide
+# on both sides. That is the same guarantee the row grid encodes, stated
+# directly instead of via a proxy that no longer holds.
+#
+# A charger TAKES the row it lands on (one Obstacle per TrackSegment), so
+# the normal spawn roll is skipped for that row -- but
+# _rows_to_last_obstacle keeps counting up across it, so the next row is
+# as eligible for a normal obstacle as it would have been. The charger
+# adds itself to the track, it does not displace the existing hazards.
+# =====================================================================
+
+## No charger before this much run time has elapsed. Same reasoning and
+## same value as RUSH_MIN_START_S: the opening seconds are the player's
+## bearings-taking window, and the single most aggressive thing in the
+## game has no business landing in it.
+const CHARGER_MIN_START_S: float = 18.0
+
+## Shortest possible time between two chargers, lerped over
+## GameState.BASE_SPEED..MAX_SPEED -- "rare au debut, plus frequent aux
+## paliers hauts", the task's own ask.
+##
+## FREQUENCY IS EXPRESSED AS A COOLDOWN, not as a per-row probability,
+## because a cooldown is the knob whose units match the thing being
+## tuned: "one charger every N seconds" is directly readable here and
+## directly measurable in scripts/dev/ChargerAudit.gd's per-palier "one
+## per" column. A probability ramp would have had to be back-solved
+## through the row rate (itself speed-dependent) AND through the
+## arrival-hole rejection rate to answer the same question.
+##
+## The BASE end is never actually reached: CHARGER_MIN_START_S keeps the
+## first charger out until palier 3 (20.5 m/s) at the earliest, which is
+## already ~60% of the way along this lerp.
+const CHARGER_COOLDOWN_EARLY_S: float = 22.0
+const CHARGER_COOLDOWN_LATE_S: float = 6.0
+
+## Per-row chance of attempting a charger once the cooldown has expired.
+## Not a rarity control (the cooldown above is) -- it only decides how
+## quickly the first eligible row after the cooldown is taken, which
+## keeps chargers from arriving on a metronome the player can count.
+## An attempt can still be refused by the arrival-hole test or by having
+## no legal lane, so the realised rate is always below what this implies;
+## the measured rate is the one in the audit's output.
+const CHARGER_CHANCE_PER_ROW: float = 0.35
+
+## Clear arrival time a charger needs, on both sides, from every other
+## obstacle it could compound with (see _charger_arrival_fits).
+##
+## DELIBERATELY NOT MIN_OBSTACLE_GAP_S, and the difference is not a
+## relaxation of the fairness contract -- it is that contract's two terms
+## costing different amounts here. MIN_OBSTACLE_GAP_S is
+## LANE_SWITCH_TIME_S + OBSTACLE_REACTION_BUDGET_S, where the 0.55s
+## budget pays for READING a hazard that is only now coming into range.
+## A charger has been in full view, unambiguous, unmoving in its lane and
+## trailing speed lines for its ENTIRE approach (measured at 2.1s even at
+## the cap, see the audit) -- the read is long since done by the time it
+## arrives, so paying for it twice would be pricing in a cost the player
+## does not incur.
+##
+## What IS still owed is the switch itself plus a primed reaction, which
+## is exactly Obstacle.ENEMY_REACTION_WINDOW_S -- the same
+## already-verified "minimum defensible margin for a player who has been
+## watching the tell build" that the ground ENEMY's hard lock runs on,
+## reused rather than a new number invented for this hazard. It is also
+## the floor the task itself sets for the charger.
+##
+## Consequence, measured not assumed: at MIN_OBSTACLE_GAP_S on both sides
+## a charger needs a 1.6s hole in a cap-speed timeline whose obstacles
+## arrive ~1.54s apart, so it essentially never fits -- the first
+## measured run produced 9 chargers in 900s, all at the cap, i.e. the
+## hazard was extinct at exactly the paliers it is meant to be most
+## frequent at.
+const CHARGER_ARRIVAL_MARGIN_S: float = Obstacle.ENEMY_REACTION_WINDOW_S
+
+# =====================================================================
 # AIR_ENEMY <-> JUMP / GLAND SEPARATION -- AIR_ENEMY sits at the exact
 # same height as a Gland and shares its lane with whatever JUMP obstacle
 # happens to be nearby, so it is the first hazard whose fairness depends
@@ -346,6 +441,15 @@ var _density_phase_ends_at_s: float = 0.0
 ## a run, since it is initialised to that same constant.
 var _next_rush_eligible_s: float = RUSH_MIN_START_S
 
+## Run time (GameState.run_time_s) the last charger was spawned at, or a
+## value far enough in the "past" that CHARGER_MIN_START_S is the only
+## thing gating the first one. Negative rather than 0.0 on purpose: at
+## 0.0 the cooldown would still be counting down during the first
+## cooldown's worth of a run, which would silently make the real first
+## eligible moment max(CHARGER_MIN_START_S, cooldown) instead of the
+## constant that is supposed to own that decision alone.
+var _last_charger_s: float = -CHARGER_COOLDOWN_EARLY_S
+
 func _ready() -> void:
 	# Looked up by group (Obstacle.gd's ground ENEMY late lock, see
 	# _resolve_late_lock / lane_has_conflicting_jump_hazard below) rather
@@ -365,6 +469,11 @@ func _physics_process(delta: float) -> void:
 
 	_update_density_phase(GameState.run_time_s)
 
+	# THE WORLD's own speed, and the only thing this loop moves. An
+	# element that closes on the player faster than the world does adds
+	# its own displacement on top of this, from its own _physics_process,
+	# never by having this loop treat its segment differently -- see
+	# Obstacle.gd's CLOSING SPEED section header.
 	var move_amount := GameState.current_speed * delta
 	GameState.add_distance(move_amount)
 
@@ -381,6 +490,7 @@ func reset() -> void:
 	_density_multiplier = 1.0
 	_density_phase_ends_at_s = 0.0
 	_next_rush_eligible_s = RUSH_MIN_START_S
+	_last_charger_s = -CHARGER_COOLDOWN_EARLY_S
 	for lane in 3:
 		_rows_since_jump_on_lane[lane] = _NO_RECENT_HAZARD
 		_rows_since_air_enemy_on_lane[lane] = _NO_RECENT_HAZARD
@@ -405,6 +515,18 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 		_rows_since_jump_on_lane[lane] += 1
 		_rows_since_air_enemy_on_lane[lane] += 1
 		_rows_since_gland_on_lane[lane] += 1
+
+	# CHARGER first, and on its own terms -- see the CHARGER SCHEDULING
+	# section header. It is scheduled on ARRIVAL TIME, not on the row
+	# grid, so it neither consults nor advances _rows_to_last_obstacle:
+	# taking this row leaves the normal stream's spacing exactly where it
+	# was, and the next row is as eligible for an ordinary obstacle as it
+	# would have been had this row stayed empty.
+	var charger_lane := _try_charger_lane(segment, index)
+	if charger_lane != -1:
+		_rows_to_last_obstacle += 1
+		_populate_collectibles(segment, true, Obstacle.Type.CHARGER, charger_lane)
+		return
 
 	var eligible := (index == -1 or index >= SAFE_START_SEGMENTS) \
 		and _rows_to_last_obstacle >= _required_gap_rows()
@@ -453,6 +575,15 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 		elif obstacle_type == Obstacle.Type.AIR_ENEMY:
 			_rows_since_air_enemy_on_lane[obstacle_lane] = 0
 
+	_populate_collectibles(segment, spawn_obstacle, obstacle_type, obstacle_lane)
+
+## The collectible half of populating a row, and the single call into
+## TrackSegment.populate() -- shared verbatim by the ordinary spawn path
+## and by the CHARGER path above, so a charger row rolls its noisette and
+## its gland under exactly the same rules (and the same
+## Obstacle.blocks_jump exclusion) as any other hazard's row, rather than
+## through a second copy that could drift.
+func _populate_collectibles(segment: TrackSegment, spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane: int) -> void:
 	var noisette_lane := -1
 	if randf() < NOISETTE_CHANCE_PER_ROW:
 		noisette_lane = randi_range(0, 2)
@@ -471,23 +602,240 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 
 	segment.populate(spawn_obstacle, obstacle_type, obstacle_lane, noisette_lane, gland_lane)
 
-## How many rows must sit between two obstacles at the pace this row is
-## being laid out for. Rounded UP so the gap is never short by a fraction
-## of a row, and floored at 1 so two obstacles can never land on the same
-## row -- which the one-obstacle-per-TrackSegment pool makes impossible
-## anyway, but the floor states it rather than relying on it.
-##
-## Uses GameState.lookahead_speed(), not current_speed: this row is
-## spawned ~128m ahead and will be RUN THROUGH several seconds later,
-## potentially one palier faster (see lookahead_speed's own comment).
-func _required_gap_rows() -> int:
-	return maxi(1, ceili(MIN_OBSTACLE_GAP_S * GameState.lookahead_speed() / SEGMENT_LENGTH))
+# =====================================================================
+# SECONDS -> ROWS, AGAINST A CLOSING SPEED (never against "the speed")
+#
+# Every spacing rule in this file is stated in SECONDS of reaction time
+# and has to be turned into a distance (a number of 20m rows) to be
+# enforced at generation time. That conversion needs a speed, and the
+# right speed is the rate at which the element in question CLOSES on the
+# player -- which used to be the same thing as the world speed for every
+# hazard in the game, and no longer is by definition once an element can
+# carry a forward speed of its own (see Obstacle.gd's CLOSING SPEED
+# section header).
+#
+# So the speed is now an explicit ARGUMENT everywhere rather than an
+# implicit GameState.lookahead_speed() read inside each rule. Callers
+# state which element they are spacing; _row_closing_speed() answers how
+# fast it will be arriving. Passing 0.0 (no own speed) returns
+# lookahead_speed() unchanged -- a multiplication by 1.0 is exact -- so
+# every existing rule keeps its exact previous value.
+# =====================================================================
 
-## Same "seconds converted to rows against lookahead_speed()" pattern as
-## _required_gap_rows() above, sized from AIR_HAZARD_SEPARATION_S instead
-## of MIN_OBSTACLE_GAP_S -- see that constant for the full rationale.
+## The speed at which an element laid out RIGHT NOW, with an own speed of
+## `own_speed_factor` times the world speed, will actually close on the
+## player by the time it gets there.
+##
+## Built on GameState.lookahead_speed(), not current_speed, for the same
+## reason every spacing rule here always has: this row is spawned ~128m
+## ahead and will be RUN THROUGH several seconds later, potentially a
+## palier or more faster (see lookahead_speed's own comment). The own
+## speed multiplies whatever the world speed turns out to be at that
+## point, so an element defined this way stays coherent across the whole
+## ramp instead of being tuned for one palier.
+func _row_closing_speed(own_speed_factor: float) -> float:
+	return GameState.lookahead_speed() * (1.0 + own_speed_factor)
+
+## A reaction-time budget, in seconds, expressed as the number of 20m
+## rows it spans for something arriving at `closing_speed`. Rounded UP so
+## the gap is never short by a fraction of a row, and floored at 1 so two
+## obstacles can never land on the same row -- which the
+## one-obstacle-per-TrackSegment pool makes impossible anyway, but the
+## floor states it rather than relying on it.
+func _rows_for_seconds(seconds: float, closing_speed: float) -> int:
+	return maxi(1, ceili(seconds * closing_speed / SEGMENT_LENGTH))
+
+## How many rows must sit between two obstacles at the pace this row is
+## being laid out for.
+func _required_gap_rows() -> int:
+	return _rows_for_seconds(MIN_OBSTACLE_GAP_S, _row_closing_speed(0.0))
+
+## Same conversion as _required_gap_rows() above, sized from
+## AIR_HAZARD_SEPARATION_S instead of MIN_OBSTACLE_GAP_S -- see that
+## constant for the full rationale.
 func _required_air_hazard_separation_rows() -> int:
-	return maxi(1, ceili(AIR_HAZARD_SEPARATION_S * GameState.lookahead_speed() / SEGMENT_LENGTH))
+	return _rows_for_seconds(AIR_HAZARD_SEPARATION_S, _row_closing_speed(0.0))
+
+# =====================================================================
+# CHARGER SCHEDULING -- implementation. See the section header near
+# CHARGER_MIN_START_S for the design and for why the row grid cannot
+# space this hazard.
+# =====================================================================
+
+## The lane a charger takes on this row, or -1 for "no charger here"
+## (the overwhelmingly common answer). Every gate is ordered
+## cheapest-first, so a row that cannot host one costs a couple of float
+## comparisons and consumes no RNG at all.
+func _try_charger_lane(segment: TrackSegment, index: int) -> int:
+	if index != -1:
+		return -1 # initial fill / reset -- see SAFE_START_SEGMENTS's own reasoning
+	if GameState.run_time_s < CHARGER_MIN_START_S:
+		return -1
+	if GameState.run_time_s - _last_charger_s < _charger_cooldown_s():
+		return -1
+	if randf() >= CHARGER_CHANCE_PER_ROW:
+		return -1
+	var lane := _pick_charger_lane(segment)
+	if lane == -1:
+		return -1
+	_last_charger_s = GameState.run_time_s
+	return lane
+
+## How long after a charger the next one may appear, at the pace this row
+## is being laid out for -- lerped over CHARGER_COOLDOWN_EARLY_S..
+## _LATE_S. Against GameState.lookahead_speed(), not current_speed, for
+## the same "size it for the palier this row will be MET at" reason every
+## other rule in this file uses.
+##
+## Deliberately NOT shortened by _density_multiplier: a rush is a DENSITY
+## event, and letting it also raise the charger rate would stack the
+## game's densest moment onto its fastest-closing one. See
+## _charger_arrival_fits for why that stacking could not break the
+## spacing guarantee even if it happened -- this is a feel decision, not
+## a safety one.
+func _charger_cooldown_s() -> float:
+	var t := clampf(
+		(GameState.lookahead_speed() - GameState.BASE_SPEED)
+			/ (GameState.MAX_SPEED - GameState.BASE_SPEED),
+		0.0, 1.0
+	)
+	return lerpf(CHARGER_COOLDOWN_EARLY_S, CHARGER_COOLDOWN_LATE_S, t)
+
+## Whether a charger placed on `segment`, on `lane`, would reach the
+## player with at least CHARGER_ARRIVAL_MARGIN_S clear on BOTH sides of
+## every obstacle it could compound with -- the same kind of guarantee
+## _required_gap_rows() gives the ordinary stream, enforced directly in
+## arrival time because the row grid cannot express it for something that
+## overtakes rows (see the section header).
+##
+## LANE-AWARE, and not merely as an optimisation. An obstacle arriving
+## close in time only compounds with the charger if the player could
+## still be in the charger's lane after dealing with it:
+##   - a DIFFERENT lane always counts -- dodging into the charger's lane
+##     is exactly the mistake this margin exists to leave time to undo;
+##   - the SAME lane counts only if it is JUMPABLE, because a jump clears
+##     it WITHOUT leaving the lane, and the player would land back in
+##     front of the charger. An unjumpable hazard on the charger's own
+##     lane (DODGE, or another charger) forces the player off that lane
+##     regardless, which is the same thing the charger demands -- there is
+##     nothing left to compound.
+##
+## Both sides of every comparison are on the SAME clock: the candidate's
+## arrival is computed from GameState.current_speed (not
+## lookahead_speed) precisely because Obstacle.time_to_contact_s() is
+## too, and two arrival times are only comparable if they were projected
+## at the same world speed. The ramp is then paid for by INFLATING the
+## required margin instead: an arrival gap measured now at `current`
+## shrinks in proportion as the world accelerates toward `lookahead`, so
+## requiring margin * lookahead/current now is exactly requiring the
+## margin once the run gets there.
+##
+## Only obstacles ALREADY on the track are scanned, and that is
+## sufficient rather than merely convenient. A row populated later sits
+## at the same spawn distance D but starts one row's worth of world
+## travel further back, so the earliest any FUTURE obstacle can arrive is
+## (D + SEGMENT_LENGTH) / v, while this charger arrives at
+## D / (v * (1 + factor)). The difference is
+## (D * factor / (1 + factor) + SEGMENT_LENGTH) / v, which at the cap is
+## ~3.6s -- an order of magnitude past the margin, and it grows rather
+## than shrinks with the speed factor. Future rows can never crowd a
+## charger.
+func _charger_arrival_fits(segment: TrackSegment, lane: int) -> bool:
+	var arrival := _charger_arrival_s(segment)
+	var margin := CHARGER_ARRIVAL_MARGIN_S * GameState.lookahead_speed() / GameState.current_speed
+	var lane_x: float = TrackSegment.LANE_X[lane]
+	for other_segment in _segments:
+		if other_segment == segment:
+			continue
+		var obstacle := _active_obstacle_in(other_segment)
+		if obstacle == null:
+			continue
+		var other_arrival: float = obstacle.time_to_contact_s()
+		if other_arrival <= 0.0:
+			continue # already past the player, cannot crowd anything
+		if absf(other_arrival - arrival) >= margin:
+			continue
+		var same_lane: bool = is_equal_approx(obstacle.position.x, lane_x)
+		if same_lane and Obstacle.blocks_jump(obstacle.obstacle_type):
+			continue # forces the player off this lane anyway -- see the doc above
+		return false
+	return true
+
+## When a charger placed on `segment` right now would reach the player,
+## in seconds, projected at the CURRENT world speed -- the same clock
+## Obstacle.time_to_contact_s() reports on, so the two are comparable.
+## Reads the segment's real Z rather than a nominal spawn distance
+## constant, so it stays correct whatever the recycle happens to place it
+## at.
+func _charger_arrival_s(segment: TrackSegment) -> float:
+	return -segment.position.z / (GameState.current_speed * (1.0 + Obstacle.CHARGER_SPEED_FACTOR))
+
+## Lane for a charger -- a plain uniform draw among the lanes that are
+## all of (a) clear of a Gland it would arrive alongside, (b) leaving the
+## required arrival margin against the live track, and (c) allowed by the
+## progressive lane-fill cap. Returns -1 when no lane qualifies, in which
+## case the caller drops the charger for this row entirely (cancel, never
+## relocate -- the same precedent AIR_ENEMY's own picker and the
+## noisette/gland collision already set), and the cooldown is NOT spent.
+##
+## The arrival test is applied PER CANDIDATE LANE rather than once for
+## the row, because it genuinely differs by lane (see
+## _charger_arrival_fits): a row can be legal on one lane and illegal on
+## another, and testing the row as a whole would throw away the legal
+## ones.
+##
+## No player targeting anywhere in here, by design: the charger commits
+## to its lane at spawn and never revises it, which is what lets the
+## player act on it the instant they see it rather than waiting to learn
+## where it will end up. That is the deliberate difference from ENEMY's
+## late lock and AIR_ENEMY's landing pick, not an omission.
+func _pick_charger_lane(segment: TrackSegment) -> int:
+	var candidates: Array[int] = []
+	for lane in 3:
+		if not _lane_clear_of_glands_for_charger(segment, lane):
+			continue
+		if not _charger_arrival_fits(segment, lane):
+			continue
+		candidates.append(lane)
+	if candidates.is_empty():
+		return -1
+	var capped := _apply_lane_cap(candidates, _active_lane_occupancy(segment), _max_active_lanes_for_row())
+	if capped.is_empty():
+		# Same "safety wins, density gives way" precedent as
+		# _pick_jump_lane -- the Gland and arrival rules above are
+		# fairness rules, the cap is only a looks-full rule.
+		capped = candidates
+	return capped[randi_range(0, capped.size() - 1)]
+
+## Whether a charger on `lane` would arrive far enough from every Gland
+## currently in the air on that lane. A Gland demands a jump to reach; an
+## unjumpable hazard closing on the same lane at nearly the same moment
+## turns that jump into a landing straight into it.
+##
+## Measured in ARRIVAL TIME against the live track, not in rows against
+## _rows_since_gland_on_lane, and the difference is not cosmetic: because
+## the charger overtakes, "rows away" and "seconds away" order things
+## DIFFERENTLY for it. At the cap a Gland 1 row ahead is a comfortable
+## ~2.1s clear of the charger while one 4 rows ahead is only ~0.25s
+## clear -- the danger is a BAND in the middle of the row range, not a
+## threshold at the near end of it, so no single "at least N rows" test
+## can express it. Glands on rows not yet populated are safe for exactly
+## the same reason future obstacles are, see _charger_arrival_fits.
+func _lane_clear_of_glands_for_charger(segment: TrackSegment, lane: int) -> bool:
+	var arrival := _charger_arrival_s(segment)
+	var margin := AIR_HAZARD_SEPARATION_S * GameState.lookahead_speed() / GameState.current_speed
+	for other_segment in _segments:
+		if other_segment == segment:
+			continue
+		var gland_z := other_segment.active_gland_z_on_lane(lane)
+		if is_inf(gland_z):
+			continue
+		var gland_arrival := -gland_z / GameState.current_speed
+		if gland_arrival <= 0.0:
+			continue
+		if absf(gland_arrival - arrival) < margin:
+			return false
+	return true
 
 ## Spawn probability for a row that is already far enough from the last
 ## obstacle -- see OBSTACLE_CHANCE_BASE / OBSTACLE_CHANCE_CAP. Scaled by
@@ -810,6 +1158,11 @@ func lane_has_conflicting_jump_hazard(lane: int, caller_time_to_contact: float, 
 		var punishes_jump: bool = obstacle.obstacle_type == Obstacle.Type.AIR_ENEMY and not obstacle.air_enemy_landed
 		if not (forces_jump or punishes_jump):
 			continue
+		# Both sides of this comparison are computed against their OWN
+		# closing speed (Obstacle.time_to_contact_s), which is what makes
+		# two obstacles with different own speeds comparable at all -- a
+		# raw distance difference, or two times derived from one shared
+		# world speed, would not be.
 		if absf(obstacle.time_to_contact_s() - caller_time_to_contact) < AIR_HAZARD_SEPARATION_S:
 			return true
 	return false

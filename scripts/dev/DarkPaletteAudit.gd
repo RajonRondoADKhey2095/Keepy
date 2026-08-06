@@ -278,6 +278,7 @@ func _measure_one(tint: Color, amount: float, verbose: bool, via_real_effect: bo
 		["JUMP", Obstacle.Type.JUMP],
 		["ENEMY (resting)", Obstacle.Type.ENEMY],
 		["AIR_ENEMY (resting)", Obstacle.Type.AIR_ENEMY],
+		["CHARGER", Obstacle.Type.CHARGER],
 	]
 	for entry in objects:
 		var label: String = entry[0]
@@ -379,13 +380,22 @@ func _run_canonical_pass() -> void:
 	# motion read (CollectibleBase.gd) plus a fixed elevated height
 	# (GLAND_Y) that a flat colour-contrast metric cannot capture at all.
 	# Reported for completeness, never gated.
-	var hazard_labels := ["DODGE (unjumpable)", "JUMP", "ENEMY (resting)", "AIR_ENEMY (resting)"]
+	var hazard_labels := ["DODGE (unjumpable)", "JUMP", "ENEMY (resting)", "AIR_ENEMY (resting)", "CHARGER"]
 	var collectible_labels := ["NOISETTE", "GLAND"]
 	var hazard_worst := _worst_of(record, hazard_labels)
 	var collectible_worst := _worst_of(record, collectible_labels)
 
 	print("")
-	print("hazard worst (DODGE/JUMP/ENEMY/AIR_ENEMY vs ground): %.2f:1" % hazard_worst)
+	print("hazard worst (DODGE/JUMP/ENEMY/AIR_ENEMY/CHARGER vs ground): %.2f:1" % hazard_worst)
+	# Reported on its own line as well as inside the worst-of above: the
+	# CHARGER is the one hazard whose colour was CHOSEN against this
+	# measurement rather than inherited from an already-shipped mesh (see
+	# Obstacle.gd's TELEGRAPH section), so its per-palette numbers are the
+	# ones that decide whether that choice stands. It is also unshaded,
+	# which means -- unlike every lit hazard above -- its value here is a
+	# property of the palette alone and does not drift with the light.
+	print("charger worst (vs ground, across all %d palettes): %.2f:1"
+		% [GameState.DARK_VARIANTS.size(), _worst_of(record, ["CHARGER"])])
 	print("collectible worst (NOISETTE/GLAND vs ground, reported only): %.2f:1" % collectible_worst)
 	print("")
 	print("NOTE: raising DARK_TINT_AMOUNT (0.18 -> 0.55) barely moves either number (measured")

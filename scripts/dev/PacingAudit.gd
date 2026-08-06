@@ -63,10 +63,22 @@ var _prev_z: Dictionary = {}
 var _enemy_lock: Dictionary = {} # segment id -> [t_lock, ttc_at_lock, speed]
 var _was_settling: Dictionary = {}
 
+# Last crossing by an obstacle of the ORDINARY stream -- i.e. anything
+# except a CHARGER. Chargers are deliberately skipped by this measurement
+# rather than folded into it: they are not spaced by the row grid at all
+# (see TrackManager's CHARGER SCHEDULING section), so including them
+# would silently redefine what the table below measures and break its
+# comparability with every previously recorded run of this probe. Their
+# own spacing is measured, lane-aware and against their own contract, by
+# scripts/dev/ChargerAudit.gd.
 var _last_pass_t: float = -1.0
 var _last_pass_stage: int = -1
 # Per palier: [count, min_gap_s, sum_gap_s]
 var _gap_stats: Array = []
+# Charger crossings, counted only so this probe's output states plainly
+# that they happened and were excluded, instead of leaving a reader to
+# wonder whether the run contained any.
+var _charger_passes: int = 0
 # Enemy lock measurements: [min_lock_to_contact, count, sum]
 var _enemy_min: float = INF
 var _enemy_count: int = 0
@@ -79,6 +91,9 @@ var _enemy_cap_min: float = INF
 var _enemy_cap_count: int = 0
 
 func _ready() -> void:
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# No-op unless `-- --seed=<int>` was passed.
+	var seeded := DevSeed.apply()
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
@@ -91,6 +106,7 @@ func _ready() -> void:
 		_gap_stats.append([0, INF, 0.0])
 
 	print("=== PACING AUDIT ===")
+	print("rng    : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("paliers: %s" % [GameState.STAGE_SPEEDS])
 	print("starts : %s" % [GameState.STAGE_START_S])
 	print("lane switch to %d%%: %.3fs (Obstacle.LANE_SWITCH_TIME_S)"
@@ -163,7 +179,14 @@ func _scan_obstacles() -> void:
 		if obstacle.obstacle_type == Obstacle.Type.ENEMY:
 			var settling: bool = obstacle._enemy_settling
 			if _was_settling.get(key, false) and not settling:
-				_enemy_lock[key] = [_t, -z / GameState.current_speed, GameState.current_speed]
+				# Time-to-contact read from the obstacle itself rather
+				# than re-derived as -z/current_speed here: that division
+				# was a private fourth copy of "everything closes at
+				# exactly the world speed", which stopped being true the
+				# moment an obstacle could carry a forward speed of its
+				# own (see Obstacle.closing_speed). Identical value for a
+				# world-speed obstacle, correct for any other.
+				_enemy_lock[key] = [_t, obstacle.time_to_contact_s(), GameState.current_speed]
 			_was_settling[key] = settling
 
 		if _prev_z.has(key):
@@ -173,6 +196,14 @@ func _scan_obstacles() -> void:
 		_prev_z[key] = z
 
 func _on_obstacle_passed(key: int, obstacle: Obstacle) -> void:
+	if obstacle.obstacle_type == Obstacle.Type.CHARGER:
+		# Excluded from the gap table, and NOT by updating _last_pass_t
+		# either -- so the gap recorded either side of a charger is the
+		# one between the two ORDINARY obstacles that bracket it, exactly
+		# what this table measured before chargers existed. See
+		# _last_pass_t's own comment.
+		_charger_passes += 1
+		return
 	var stage := GameState.stage_index
 	if _last_pass_t >= 0.0 and _last_pass_stage == stage:
 		# Gap measured between two obstacles that both belong to the same
@@ -211,6 +242,8 @@ func _summary() -> void:
 	print("(gap = measured seconds between two consecutive obstacles reaching")
 	print(" the player; budget = gap minus the %.3fs the lane switch itself" % Obstacle.LANE_SWITCH_TIME_S)
 	print(" takes, i.e. the time left to READ the next obstacle and commit)")
+	print("CHARGER crossings are EXCLUDED here (%d in this run) -- they are not spaced" % _charger_passes)
+	print("by the row grid this table measures; see scripts/dev/ChargerAudit.gd.")
 	print("")
 	print(" idx  speed   samples   min gap   min budget   mean gap")
 	for i in _gap_stats.size():

@@ -178,13 +178,41 @@ When 3D models are ready:
   `DARK_CYCLE_PERIOD_S` = 20s). All of it lives in one commented block
   at the top of `GameState.gd`, plus the spacing block in
   `TrackManager.gd`.
+- **Closing speed.** Every hazard except one is carried toward the
+  player by the world and by nothing else, so "the world's speed" and
+  "the speed this thing arrives at" used to be the same number. They are
+  not: `Obstacle.own_speed_factor` states an obstacle's own forward
+  speed as a multiple of the world's, `Obstacle.closing_speed()` is the
+  sum, and every distance <-> reaction-time conversion goes through it
+  (`Obstacle.time_to_contact_s`, `TrackManager._row_closing_speed` /
+  `_rows_for_seconds`). It is 0.0 for DODGE/JUMP/ENEMY/AIR_ENEMY, which
+  is exactly the old arithmetic.
+- **The CHARGER** (`Obstacle.Type.CHARGER`) is the one hazard with a
+  speed of its own: it CLOSES on the player at 2.35x the world speed,
+  in a straight line down its spawn lane, never tracking and never
+  changing lane -- the escape is always a lane switch. Because it
+  overtakes rows, the row grid cannot space it; it is scheduled on
+  ARRIVAL TIME instead (`TrackManager._charger_arrival_fits`) against
+  what is really on the track. Frequency ramps with speed via
+  `CHARGER_COOLDOWN_EARLY_S`/`_LATE_S`, never before
+  `CHARGER_MIN_START_S`.
 - Pacing changes are verified by measurement, not by re-reading the
   constants: `scripts/dev/PacingAudit.tscn` boots the real game headless
   and reports palier timings, distance per palier, dark-cycle
   transitions, the worst reaction budget per palier and the enemy lane
-  lock margin.
+  lock margin. `ChargerAudit.tscn` does the same for the charger (real
+  reaction window per palier, spacing measured at the player plane,
+  spawn rate, and how many landed inside a rush window), and
+  `ChargerShapeProbe.tscn` asserts its silhouette is oriented and
+  grounded as designed.
 
       godot4 --headless --fixed-fps 60 --path . res://scripts/dev/PacingAudit.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/ChargerAudit.tscn
+      godot4 --headless --path . res://scripts/dev/ChargerShapeProbe.tscn
+
+  Add `-- --seed=<int>` to any of them for a reproducible run (see
+  `scripts/dev/DevSeed.gd`); without it they stay exploratory, which is
+  what makes a rare violation eventually surface.
 - Persistent local best score (survives relaunch, `user://` via
   FileAccess/IndexedDB on Web) plus a global top-10 leaderboard
   (Firestore REST, project `keepy-8df91`, independent from `keepr-529cc`)
