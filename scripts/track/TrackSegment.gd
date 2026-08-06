@@ -98,6 +98,11 @@ func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane:
 		if obstacle_type == Obstacle.Type.ENEMY:
 			var alt_lane := _pick_enemy_alt_lane(obstacle_lane)
 			_obstacle.configure(obstacle_type, LANE_X[obstacle_lane], LANE_X[alt_lane])
+		elif obstacle_type == Obstacle.Type.STOMPER:
+			# No sway/alt lane -- see Obstacle._process_stomper, it never
+			# needs one. Only the provisional spawn lane is meaningful, and
+			# only until it commits and starts mirroring the player.
+			_obstacle.configure(obstacle_type, LANE_X[obstacle_lane])
 		else:
 			_obstacle.configure(obstacle_type)
 		_obstacle.position = Vector3(LANE_X[obstacle_lane], OBSTACLE_Y, 0.0)

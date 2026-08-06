@@ -119,8 +119,33 @@ class_name Obstacle
 ##                symmetrical shape), a colour used nowhere else in the
 ##                game, and three speed-line bars trailing behind it that
 ##                nothing else has -- see the TELEGRAPH section below.
+##
+##   STOMPER   -- the deliberate INVERSE of CHARGER, closing the last open
+##                loop of the difficulty plan: a ground hazard that jump
+##                alone escapes, and lane switch NEVER does, by
+##                construction rather than by tight timing. Same FAMILY as
+##                ground ENEMY (a provisional spawn lane, then a late
+##                commit at the same ENEMY_REACTION_WINDOW_S threshold ENEMY
+##                itself hard-locks at -- see _process_stomper), but where
+##                ENEMY's late lock FREEZES onto a single decided lane
+##                (leaving a real, if tight, switch escape -- see its own
+##                doc), STOMPER's commit NEVER freezes: from the instant it
+##                commits it mirrors Keepy's own position.x EXACTLY, every
+##                physics frame, for as long as it remains live. Its
+##                lateral separation from the player is therefore
+##                identically 0.0 for the rest of its approach -- not a
+##                narrow timing window that happens to be hard to beat, an
+##                actual zero, so no lane switch of any speed can open a
+##                gap. Jump remains the escape because its hitbox reuses
+##                JUMP's own verified box (Obstacle.tscn StomperShape /
+##                BoxShape3D_Jump, same JUMPABLE_OBSTACLE_TOP_HEIGHT
+##                contract as JUMP/ENEMY/a landed AIR_ENEMY) -- see
+##                blocks_jump/blocks_lane_switch below for the two static
+##                predicates that state this pair of facts as code, not
+##                just as a comment. See TELEGRAPH-STOMPER further down for
+##                its dedicated visual signal.
 
-enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY, CHARGER }
+enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY, CHARGER, STOMPER }
 
 # =====================================================================
 # CLOSING SPEED -- see own_speed_factor / closing_speed() further down.
@@ -488,6 +513,52 @@ const RISK_PROXIMITY_Z: float = 1.0
 ## every re-tune of the speed table.
 const LATE_DODGE_WINDOW_S: float = ENEMY_REACTION_WINDOW_S * 1.3
 
+# =====================================================================
+# STOMPER -- see the Type.STOMPER doc above for the full mechanic. This
+# block owns only its two TUNING knobs (how fast its pulse ramps); the
+# commit THRESHOLD itself is deliberately ENEMY_REACTION_WINDOW_S, reused
+# rather than re-invented, so it telegraphs on the same cadence a player
+# has already learned from the ground ENEMY.
+#
+# TELEGRAPH-STOMPER -- three independent, redundant cues, same discipline
+# as the CHARGER's own TELEGRAPH section above:
+#   SHAPE  -- a squat, wide-based cylinder (StomperMesh, Obstacle.tscn)
+#             tapering slightly toward the top -- every other ground
+#             hazard is either a tall box (DODGE/JUMP), a capsule (ENEMY)
+#             or a forward-pointing wedge (CHARGER); nothing else in the
+#             game reads as a wide, planted "landing pad" silhouette.
+#   MOTION -- a continuous breathing PULSE (scale, see
+#             STOMPER_PULSE_SCALE_AMPLITUDE below) from the moment it
+#             spawns, ramping from a calm to a frantic rate as contact
+#             nears (same escalating-tension shape as ENEMY's own
+#             oscillation ramp) -- and, once committed, the pulse is
+#             joined by the hazard visibly gluing itself to the player's
+#             own lateral position every frame, which is its own
+#             unmistakable "this is now tracking you" tell.
+#   COLOUR -- electric ultramarine blue, UNSHADED (same "known constant
+#             value per palette" reasoning as the CHARGER and the jump
+#             marker -- see their own docs), a hue distinct from every
+#             other gameplay colour already in use (DODGE dark red, JUMP
+#             brown, ENEMY purple, AIR_ENEMY green, marker cyan, CHARGER
+#             magenta, Noisette/Gland gold, Keepy orange).
+#
+# Colour is deliberately CONSTANT (only the pulse animates) for the exact
+# same reason the CHARGER's is: a verifiable, single dark-palette contrast
+# number per palette rather than a moving target -- see
+# scripts/dev/DarkPaletteAudit.gd.
+# =====================================================================
+
+## Pulse frequency range (Hz) the STOMPER's scale breathes at -- calm far
+## away, frantic as its commit instant nears. Purely cosmetic, MOTION only
+## (see TELEGRAPH-STOMPER above): colour never ramps.
+const STOMPER_PULSE_HZ_START: float = 1.4
+const STOMPER_PULSE_HZ_END: float = 5.0
+## How many seconds-before-commit (i.e. before ENEMY_REACTION_WINDOW_S)
+## the pulse-rate ramp spans -- same role as ENEMY_OSCILLATION_RAMP_WINDOW_S.
+const STOMPER_PULSE_RAMP_WINDOW_S: float = 2.5
+## Peak fractional scale swing of the breathing pulse (1.0 +/- this).
+const STOMPER_PULSE_SCALE_AMPLITUDE: float = 0.22
+
 @onready var _dodge_mesh: MeshInstance3D = $DodgeMesh
 @onready var _dodge_shape: CollisionShape3D = $DodgeShape
 @onready var _jump_mesh: MeshInstance3D = $JumpMesh
@@ -500,6 +571,8 @@ const LATE_DODGE_WINDOW_S: float = ENEMY_REACTION_WINDOW_S * 1.3
 @onready var _charger_shape: CollisionShape3D = $ChargerShape
 @onready var _charger_trail: Node3D = $ChargerTrail
 @onready var _jump_marker_mesh: MeshInstance3D = $JumpMarkerMesh
+@onready var _stomper_mesh: MeshInstance3D = $StomperMesh
+@onready var _stomper_shape: CollisionShape3D = $StomperShape
 
 ## Fired the instant a successful jump-dodge is detected (see
 ## _resolve_risk_event) -- purely informational, nothing in this codebase
@@ -573,6 +646,23 @@ var _charger_trail_base_z: Array[float] = []
 ## state, reset on every (re)configure so a pooled instance never enters
 ## a fresh spawn mid-pop from its previous life.
 var _marker_pop_t: float = -1.0
+
+## PROVISIONAL spawn-time lane for a STOMPER, in world X -- see
+## TrackManager._try_stomper_lane. Only meaningful before _stomper_tracking
+## flips true; after that, position.x is overwritten every frame by
+## _process_stomper and this value is never read again until the next
+## configure().
+var _stomper_lane_x: float = 0.0
+## True from the instant a STOMPER commits (time_to_contact crosses
+## ENEMY_REACTION_WINDOW_S) onward -- see _process_stomper. Once true,
+## position.x mirrors the player's own position.x EXACTLY every physics
+## frame for the rest of this instance's life; this is the entire
+## "lane switch cannot escape it" guarantee, not a comment describing one.
+var _stomper_tracking: bool = false
+## Accumulated pulse phase, radians -- see STOMPER_PULSE_HZ_START/_END.
+## Purely cosmetic; reset on every (re)configure so a pooled instance
+## never resumes a previous life's phase.
+var _stomper_pulse_phase: float = 0.0
 
 ## Closest lateral (X) centre-to-centre distance between this obstacle and
 ## Keepy observed so far during the CURRENT passage -- sampled only on the
@@ -692,6 +782,7 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 	var is_enemy := type == Type.ENEMY
 	var is_air_enemy := type == Type.AIR_ENEMY
 	var is_charger := type == Type.CHARGER
+	var is_stomper := type == Type.STOMPER
 	_dodge_mesh.visible = is_dodge
 	_dodge_shape.disabled = not is_dodge
 	_jump_mesh.visible = is_jump
@@ -703,6 +794,8 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 	_charger_mesh.visible = is_charger
 	_charger_shape.disabled = not is_charger
 	_charger_trail.visible = is_charger
+	_stomper_mesh.visible = is_stomper
+	_stomper_shape.disabled = not is_stomper
 
 	# The ONE place an own speed is ever set -- see own_speed_factor and
 	# CHARGER_SPEED_FACTOR. Everything downstream (this instance's
@@ -729,17 +822,25 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 		_air_enemy_shape.position.y = TrackSegment.GLAND_Y
 		_apply_air_enemy_tint(0.0) # reset tint -- this instance may be a pooled reuse
 
+	_stomper_lane_x = lane_x
+	_stomper_tracking = false
+	_stomper_pulse_phase = 0.0
+	_stomper_mesh.scale = Vector3.ONE
+	if is_stomper:
+		position.x = _stomper_lane_x
+
 	# JumpMarkerMesh -- permanent "you can jump this" signal (chantier 2,
 	# playtest-fixes batch), independent of the alarm-tint timeline below
 	# and visible from the moment the obstacle spawns, never just once
 	# danger is imminent (see the class doc for why that distinction is
-	# the whole point). JUMP and ENEMY show it immediately and keep it on
-	# for their entire lifetime (both are ALWAYS jumpable, unlike ENEMY's
-	# separate alarm ramp which is a proximity cue, not a jumpability
-	# cue). AIR_ENEMY starts hidden -- it is NOT jumpable while still
-	# airborne (Obstacle.blocks_jump) -- and is turned on dynamically by
-	# _process_air_enemy() the instant it lands. DODGE never shows it.
-	_jump_marker_mesh.visible = is_jump or is_enemy
+	# the whole point). JUMP, ENEMY and STOMPER show it immediately and
+	# keep it on for their entire lifetime (all three are ALWAYS jumpable,
+	# unlike ENEMY's/STOMPER's own separate alarm/pulse ramps which are
+	# proximity cues, not jumpability cues). AIR_ENEMY starts hidden -- it
+	# is NOT jumpable while still airborne (Obstacle.blocks_jump) -- and is
+	# turned on dynamically by _process_air_enemy() the instant it lands.
+	# DODGE and CHARGER never show it (neither is ever jumpable).
+	_jump_marker_mesh.visible = is_jump or is_enemy or is_stomper
 	_jump_marker_mesh.scale = Vector3.ONE
 	_marker_pop_t = -1.0
 	_prev_pass_z = global_position.z
@@ -763,6 +864,9 @@ func _physics_process(delta: float) -> void:
 		return
 	if obstacle_type == Type.AIR_ENEMY:
 		_process_air_enemy()
+		return
+	if obstacle_type == Type.STOMPER:
+		_process_stomper(delta)
 		return
 	if not _enemy_settling:
 		return
@@ -1105,12 +1209,60 @@ func _apply_enemy_alarm(t: float) -> void:
 	_enemy_material.emission = _enemy_base_emission.lerp(ENEMY_ALARM_EMISSION, t)
 	_enemy_material.emission_energy_multiplier = lerpf(_enemy_base_emission_energy, ENEMY_ALARM_EMISSION_ENERGY, t)
 
+## The STOMPER's whole per-frame behaviour -- see the Type.STOMPER doc and
+## the TELEGRAPH-STOMPER section header for the full contract. Two
+## independent jobs:
+##   1. COMMIT, once, at the exact same time-before-contact ENEMY's own
+##      hard lock uses (ENEMY_REACTION_WINDOW_S) -- then, EVERY frame
+##      afterward, overwrite position.x with the player's own position.x
+##      verbatim. No lerp, no ease, no "closest lane": a real-valued exact
+##      copy, so the lateral gap between this hazard and the player is
+##      identically 0.0 for the remainder of its life, not a small number
+##      that happens to be hard to beat. This one line IS the entire
+##      "lane switch cannot escape a STOMPER" guarantee (blocks_lane_switch
+##      below) -- there is no separate check anywhere that also has to be
+##      correct for the guarantee to hold, because there is nothing left
+##      for a switch to accomplish once this is true: wherever Keepy's
+##      lane lerp takes position.x, this line has already put the STOMPER
+##      there too, on the very same frame.
+##      Before commit it simply sits at its provisional spawn lane
+##      (_stomper_lane_x, set in configure()) -- unlike ENEMY there is no
+##      sway to animate there, only the pulse below.
+##      If no player is in the tree (a headless probe/calibration scene
+##      with no Keepy, e.g. DarkPaletteAudit's private scene) tracking
+##      never has anything to mirror and this hazard simply stays at its
+##      provisional lane -- same "no player -- keep the spawn-drawn lane"
+##      fallback ENEMY's own late lock uses.
+##   2. PULSE -- a breathing scale animation, ramping from calm to frantic
+##      as contact nears (see STOMPER_PULSE_HZ_START/_END), MOTION only,
+##      colour never changes (see TELEGRAPH-STOMPER above for why).
+func _process_stomper(delta: float) -> void:
+	var time_to_contact := time_to_contact_s()
+
+	if not _stomper_tracking and time_to_contact <= ENEMY_REACTION_WINDOW_S:
+		_stomper_tracking = true
+
+	if _stomper_tracking:
+		var player := _current_player_ref()
+		if player != null:
+			position.x = player.position.x
+
+	var ramp_t := clampf(1.0 - (time_to_contact - ENEMY_REACTION_WINDOW_S) / STOMPER_PULSE_RAMP_WINDOW_S, 0.0, 1.0)
+	var pulse_hz := lerpf(STOMPER_PULSE_HZ_START, STOMPER_PULSE_HZ_END, ramp_t)
+	_stomper_pulse_phase += pulse_hz * TAU * delta
+	var scale_mult := 1.0 + STOMPER_PULSE_SCALE_AMPLITUDE * (0.5 + 0.5 * sin(_stomper_pulse_phase))
+	_stomper_mesh.scale = Vector3.ONE * scale_mult
+
 ## Whether jumping on this obstacle's lane is unsafe -- i.e. whether a
 ## Gland must never share its lane/row (see TrackSegment.populate).
 ## JUMP is safe (in fact REQUIRED) to jump into, and ENEMY now is too
 ## (see the Type.ENEMY doc -- its hitbox is jumpable exactly like JUMP's,
 ## so a Gland sharing its lane/row is the same "jump clears the hazard
-## and grabs the bonus" combo already supported for JUMP). DODGE is
+## and grabs the bonus" combo already supported for JUMP). STOMPER is
+## exactly as safe as JUMP/ENEMY for the same reason (same jumpable
+## hitbox contract, see blocks_jump below) -- a Gland at its PROVISIONAL
+## lane is cleared by the same jump that clears the hazard, regardless of
+## where the hazard's tracking later takes it. DODGE is
 ## unsafe because it requires a full LANE SWITCH regardless of jump
 ## state; AIR_ENEMY is unsafe for the OPPOSITE reason while still
 ## airborne (jumping is exactly what makes contact, see the Type.AIR_ENEMY
@@ -1127,6 +1279,20 @@ func _apply_enemy_alarm(t: float) -> void:
 ## new.
 static func blocks_jump(type: Type) -> bool:
 	return type == Type.DODGE or type == Type.AIR_ENEMY or type == Type.CHARGER
+
+## Whether a lane switch can EVER escape this obstacle -- the STOMPER's own
+## contract, and the deliberate INVERSE of blocks_jump above (see the
+## Type.STOMPER doc: CHARGER is blocks_jump==true with switch as the only
+## escape; STOMPER is the mirror image). True for STOMPER alone, and only
+## from the instant it commits (see _process_stomper): from then on its
+## position.x is a live, exact copy of the player's own, so no switch of
+## any speed ever opens a lateral gap. False for every other type, even
+## the ones that force a jump in PRACTICE (JUMP, a settled/locked ENEMY,
+## a landed AIR_ENEMY) -- those still have a genuine switch escape
+## available (the player is simply not standing on it), which is exactly
+## what makes STOMPER different in kind, not just in degree.
+static func blocks_lane_switch(type: Type) -> bool:
+	return type == Type.STOMPER
 
 ## THE one per-frame hook that watches this obstacle go past the player,
 ## and the ONLY place a risk event can originate from a hazard passage.

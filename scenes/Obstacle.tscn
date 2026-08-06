@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=22 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay/Obstacle.gd" id="1"]
 
@@ -74,6 +74,15 @@ radial_segments = 4
 shading_mode = 0
 albedo_color = Color(0.15, 0.95, 1.0, 1)
 
+[sub_resource type="CylinderMesh" id="CylinderMesh_Stomper"]
+top_radius = 0.45
+bottom_radius = 0.75
+height = 0.7
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Stomper"]
+shading_mode = 0
+albedo_color = Color(0.05, 0.2, 0.95, 1)
+
 [node name="Obstacle" type="Area3D"]
 collision_layer = 4
 collision_mask = 2
@@ -109,6 +118,17 @@ surface_material_override/0 = SubResource("StandardMaterial3D_Enemy")
 position = Vector3(0, 0.35, 0)
 disabled = true
 shape = SubResource("CapsuleShape3D_Enemy")
+
+[node name="StomperMesh" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.35, 0)
+visible = false
+mesh = SubResource("CylinderMesh_Stomper")
+surface_material_override/0 = SubResource("StandardMaterial3D_Stomper")
+
+[node name="StomperShape" type="CollisionShape3D" parent="."]
+position = Vector3(0, 0.35, 0)
+disabled = true
+shape = SubResource("BoxShape3D_Jump")
 
 [node name="AirEnemyMesh" type="MeshInstance3D" parent="."]
 visible = false

@@ -196,6 +196,23 @@ When 3D models are ready:
   what is really on the track. Frequency ramps with speed via
   `CHARGER_COOLDOWN_EARLY_S`/`_LATE_S`, never before
   `CHARGER_MIN_START_S`.
+- **The STOMPER** (`Obstacle.Type.STOMPER`) is the deliberate INVERSE of
+  the CHARGER: jump is the only escape, lane switch never is. It stays
+  jumpable (`Obstacle.blocks_jump` excludes it) but, once its late commit
+  resolves at the same `Obstacle.ENEMY_REACTION_WINDOW_S` threshold
+  ground ENEMY hard-locks at, it mirrors the player's own `position.x`
+  exactly every physics frame for the rest of its life
+  (`Obstacle._process_stomper`) -- the lateral gap to the player is
+  therefore identically 0.0, not a tight timing window, which is what
+  `Obstacle.blocks_lane_switch` states as code. Unlike the CHARGER it
+  never overtakes rows, so it is scheduled on the ordinary row grid
+  (`TrackManager._try_stomper_lane`), with its own progressive cooldown
+  (`STOMPER_COOLDOWN_EARLY_S`/`_LATE_S`, never before
+  `STOMPER_MIN_START_S`) mirroring the CHARGER's cadence. A dedicated
+  generation-time exclusion (`_stomper_charger_margin_clear`) keeps it
+  away from a nearby CHARGER in time -- the one hazard exempt from the
+  row grid, and therefore the one that needed new code; DODGE needs none,
+  already spaced from STOMPER by the shared row-grid counter.
 - Pacing changes are verified by measurement, not by re-reading the
   constants: `scripts/dev/PacingAudit.tscn` boots the real game headless
   and reports palier timings, distance per palier, dark-cycle
@@ -209,6 +226,8 @@ When 3D models are ready:
       godot4 --headless --fixed-fps 60 --path . res://scripts/dev/PacingAudit.tscn
       godot4 --headless --fixed-fps 60 --path . res://scripts/dev/ChargerAudit.tscn
       godot4 --headless --path . res://scripts/dev/ChargerShapeProbe.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StomperAudit.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StomperConflictAudit.tscn
 
   Add `-- --seed=<int>` to any of them for a reproducible run (see
   `scripts/dev/DevSeed.gd`); without it they stay exploratory, which is
