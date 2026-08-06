@@ -64,6 +64,21 @@ class_name Obstacle
 ##                own hard lock guarantees. Its LANE never changes (only
 ##                its height does) -- it does not hunt the player the way
 ##                ENEMY does.
+##
+## JUMPABLE MARKER (chantier 2, playtest-fixes batch: "je ne comprends
+## pas que je peux sauter par-dessus, ca ne se voit pas") -- JUMP and
+## ENEMY (once settled or, for a landed AIR_ENEMY, once it lands) carry a
+## small always-visible glowing marker (JumpMarkerMesh, Obstacle.tscn)
+## floating above the hazard, at the SAME height for all three (see
+## JUMP_MARKER_Y_OFFSET). PERMANENT and INDEPENDENT of ENEMY's alarm-tint
+## ramp -- it is shown from the moment a hazard becomes jumpable, not
+## once danger is imminent, precisely so the player can plan a jump from
+## far away instead of reading it only in the last instant. Never shown
+## on DODGE (never jumpable) or on an AIR_ENEMY still airborne (jumping
+## there is what kills you, see Obstacle.blocks_jump). Clearing a
+## jumpable hazard by jumping over it on its exact lane also triggers a
+## small score bonus + a marker "pop" -- see _check_jump_dodge below and
+## GameState.JUMP_DODGE_BONUS_VALUE.
 
 enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY }
 
@@ -161,6 +176,51 @@ const AIR_ENEMY_BOX_HALF_HEIGHT: float = 0.6
 ## sits below y=0 -- harmless, nothing collides with it from underneath.)
 const AIR_ENEMY_LANDED_CENTER_Y: float = Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT - AIR_ENEMY_BOX_HALF_HEIGHT
 
+# =====================================================================
+# JUMPABLE MARKER + DODGE REWARD (playtest-fixes batch, chantier 2) --
+# playtest: "je ne comprends pas que je peux sauter par-dessus, ca ne se
+# voit pas, et meme quand je le fais je ne sens rien". Two DISTINCT
+# problems, two DISTINCT fixes below: legibility (can the player tell
+# THIS hazard is jumpable, from far away, before any danger cue starts)
+# and reward (does clearing one on purpose feel like it mattered).
+# =====================================================================
+
+## Local Y offset of JumpMarkerMesh (Obstacle.tscn) ABOVE
+## Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT -- floating clear of the hazard
+## mesh itself rather than touching it, so it silhouettes as its own
+## shape instead of blending into whatever is under it (JUMP's box,
+## ENEMY's capsule, or a landed AIR_ENEMY's box, all sharing this same
+## top height by construction -- see the const's own doc). ONE offset
+## for all three, which is exactly what makes it read as "the same
+## symbol" across them rather than a per-type coincidence.
+const JUMP_MARKER_Y_OFFSET: float = 0.30
+
+# JumpMarkerMesh's material (Obstacle.tscn, StandardMaterial3D_JumpMarker)
+# is UNSHADED (shading_mode=0) and electric cyan (0.15, 0.95, 1.0):
+# unshaded so its on-screen colour is the SAME known value every frame
+# regardless of DirectionalLight3D angle/ambient -- a lit material's
+# colour drifts with lighting, which would make the dark-mode contrast
+# this marker exists to guarantee unverifiable ahead of time (every
+# OTHER hazard mesh in this file IS lit, and that drift is exactly why
+# their own post-invert colour can only be pinned down by rendering and
+# measuring, never predicted from the albedo alone -- see
+# scripts/dev/DarkPaletteAudit.gd). Cyan specifically because it sits far
+# from every existing gameplay hue (DODGE red, JUMP brown, ENEMY purple,
+# AIR_ENEMY green, Noisette/Gland gold) -- it never reads as "part of the
+# hazard" or "a collectible", only as its own distinct UI-like signal.
+# Measured per-palette result: see GameState.gd's DARK_TINT_AMOUNT
+# comment and the commit message for the numbers.
+
+## How long the marker's "cleared!" pop lasts -- brief and snappy, a
+## flinch-reaction-scale acknowledgement (same design register as
+## PERCEPTION_REACTION_S above), not a lingering celebration that would
+## still be playing by the time the NEXT hazard needs the player's
+## attention.
+const MARKER_POP_DURATION_S: float = 0.35
+## Peak scale multiplier of the pop, reached at the MIDPOINT of
+## MARKER_POP_DURATION_S then eased back to 1.0 -- see _update_marker_pop.
+const MARKER_POP_PEAK_SCALE: float = 1.9
+
 @onready var _dodge_mesh: MeshInstance3D = $DodgeMesh
 @onready var _dodge_shape: CollisionShape3D = $DodgeShape
 @onready var _jump_mesh: MeshInstance3D = $JumpMesh
@@ -169,6 +229,14 @@ const AIR_ENEMY_LANDED_CENTER_Y: float = Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT - AI
 @onready var _enemy_shape: CollisionShape3D = $EnemyShape
 @onready var _air_enemy_mesh: MeshInstance3D = $AirEnemyMesh
 @onready var _air_enemy_shape: CollisionShape3D = $AirEnemyShape
+@onready var _jump_marker_mesh: MeshInstance3D = $JumpMarkerMesh
+
+## Fired the instant a successful jump-dodge is detected (see
+## _check_jump_dodge) -- purely informational, nothing in this codebase
+## currently listens to it (the score bonus and marker pop are applied
+## directly, not via this signal's own handler), kept for dev-probe
+## hooks and any future HUD toast without adding a second detection path.
+signal jump_dodged
 
 var obstacle_type: Type = Type.DODGE
 
@@ -189,6 +257,21 @@ var _enemy_late_lock_resolved: bool = false
 ## airborne, jumping here is lethal" apart from "landed, jumping here is
 ## the intended escape".
 var air_enemy_landed: bool = false
+
+## Global Z read on the PREVIOUS frame this instance was visible -- see
+## _check_jump_dodge. A crossing from negative to >=0 is the exact same
+## instant collision is tested (see time_to_contact_s's own doc: Keepy
+## sits fixed at Z=0), so this is the one moment "did the player clear
+## this on purpose" can be judged. Reset to the instance's OWN spawn Z at
+## the top of configure() so a freshly (re)spawned pooled instance never
+## fires a stale crossing left over from its previous life.
+var _prev_pass_z: float = 0.0
+
+## Elapsed time since the marker's "cleared!" pop started, or < 0.0 when
+## no pop is playing -- see _update_marker_pop. Purely cosmetic local
+## state, reset on every (re)configure so a pooled instance never enters
+## a fresh spawn mid-pop from its previous life.
+var _marker_pop_t: float = -1.0
 
 # Cached group lookups, resolved lazily (first use, not _ready) so
 # scene-tree construction order between Obstacle/Keepy/TrackManager never
@@ -256,6 +339,15 @@ func _ready() -> void:
 	_air_enemy_mesh.position.y = TrackSegment.GLAND_Y
 	_air_enemy_shape.position.y = TrackSegment.GLAND_Y
 
+	# ONE fixed height for JumpMarkerMesh, set once here rather than per
+	# configure()/per-type: JUMP, ENEMY (settled) and a LANDED AIR_ENEMY
+	# all share the exact same JUMPABLE_OBSTACLE_TOP_HEIGHT contract (see
+	# the class doc), so the marker never needs to move vertically --
+	# only its VISIBILITY changes, per type in configure() and, for
+	# AIR_ENEMY specifically, live in _process_air_enemy() as it lands.
+	_jump_marker_mesh.position.y = Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT + JUMP_MARKER_Y_OFFSET
+	_jump_marker_mesh.scale = Vector3.ONE
+
 ## Switches which variant's mesh/collision shape is active. Called by
 ## TrackSegment.populate() every time this pooled obstacle is (re)spawned.
 ## lane_x/alt_lane_x are only meaningful for Type.ENEMY: lane_x is the
@@ -294,9 +386,33 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 		_air_enemy_shape.position.y = TrackSegment.GLAND_Y
 		_apply_air_enemy_tint(0.0) # reset tint -- this instance may be a pooled reuse
 
+	# JumpMarkerMesh -- permanent "you can jump this" signal (chantier 2,
+	# playtest-fixes batch), independent of the alarm-tint timeline below
+	# and visible from the moment the obstacle spawns, never just once
+	# danger is imminent (see the class doc for why that distinction is
+	# the whole point). JUMP and ENEMY show it immediately and keep it on
+	# for their entire lifetime (both are ALWAYS jumpable, unlike ENEMY's
+	# separate alarm ramp which is a proximity cue, not a jumpability
+	# cue). AIR_ENEMY starts hidden -- it is NOT jumpable while still
+	# airborne (Obstacle.blocks_jump) -- and is turned on dynamically by
+	# _process_air_enemy() the instant it lands. DODGE never shows it.
+	_jump_marker_mesh.visible = is_jump or is_enemy
+	_jump_marker_mesh.scale = Vector3.ONE
+	_marker_pop_t = -1.0
+	_prev_pass_z = global_position.z
+
 func _physics_process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAYING:
 		return
+
+	# Both run for EVERY type (DODGE/JUMP included, neither of which
+	# reaches the ENEMY-only sway code below) -- a jump-dodge can happen
+	# on any jumpable type, and a pop that started on a previous frame
+	# must keep animating regardless of which per-type branch this frame
+	# takes.
+	_check_jump_dodge()
+	_update_marker_pop(delta)
+
 	if obstacle_type == Type.AIR_ENEMY:
 		_process_air_enemy()
 		return
@@ -399,11 +515,19 @@ func _safe_redirect_lane(unsafe_lane: int, time_to_contact: float, track_manager
 	return (unsafe_lane + 1) % 3
 
 func _current_player_lane() -> int:
+	var player := _current_player_ref()
+	if player == null:
+		return -1
+	return player.lane_index
+
+## Lazily-cached lookup of the single Keepy instance, shared by
+## _current_player_lane() (lane only) and _check_jump_dodge() (which also
+## needs is_on_floor()) so there is exactly one place that resolves the
+## "player" group into a node.
+func _current_player_ref() -> Keepy:
 	if _player_ref == null:
 		_player_ref = get_tree().get_first_node_in_group("player")
-	if _player_ref == null:
-		return -1
-	return _player_ref.lane_index
+	return _player_ref
 
 func _track_manager() -> Node:
 	if _track_manager_ref == null:
@@ -438,6 +562,12 @@ func _process_air_enemy() -> void:
 	_air_enemy_shape.position.y = center_y
 	air_enemy_landed = t >= 1.0
 	_apply_air_enemy_tint(t)
+	# JumpMarkerMesh follows `air_enemy_landed` every frame (not just on
+	# the transition) -- cheap idempotent assignment, and it means a
+	# pooled instance re-entering this function after a fresh configure()
+	# (which always starts it hidden, see configure()) can never get
+	# stuck showing a marker for a still-airborne AIR_ENEMY.
+	_jump_marker_mesh.visible = air_enemy_landed
 
 ## Lerps the (per-instance, see _ready) AirEnemyMesh material from its
 ## base colors toward ENEMY_ALARM_ALBEDO/_EMISSION/_EMISSION_ENERGY as it
@@ -476,6 +606,75 @@ func _apply_enemy_alarm(t: float) -> void:
 ## hazard.
 static func blocks_jump(type: Type) -> bool:
 	return type == Type.DODGE or type == Type.AIR_ENEMY
+
+## Detects the exact moment a JUMP-DODGE happens -- not "the player
+## jumped", but specifically "the player jumped OVER THIS obstacle,
+## on ITS lane, at the instant it would otherwise have hit them"
+## (playtest: "meme quand je le fais je ne sens rien" -- clearing a
+## hazard on purpose needs to feel different from an idle jump on an
+## empty lane). Collision itself is tested by Godot's own Area3D
+## body_entered (_on_body_entered) at this exact same Z=0 crossing (see
+## time_to_contact_s's own doc) -- this function does not duplicate that
+## test, it only asks "given no collision happened, was this obstacle
+## even relevant to the player right now".
+##
+## `_prev_pass_z` tracks THIS instance's own global Z frame to frame
+## (reset in configure(), see that var's own doc) so the crossing is
+## detected exactly once per spawn, not once per frame it happens to sit
+## past Z=0 (which would otherwise fire every remaining frame the pooled,
+## still-visible-for-one-more-tick instance sits behind the player).
+func _check_jump_dodge() -> void:
+	if not visible:
+		return
+	var z := global_position.z
+	var crossed := _prev_pass_z < 0.0 and z >= 0.0
+	_prev_pass_z = z
+	if not crossed or blocks_jump(obstacle_type):
+		return
+	if obstacle_type == Type.AIR_ENEMY and not air_enemy_landed:
+		return # unreachable given blocks_jump already excludes this, kept explicit for clarity
+	var player := _current_player_ref()
+	if player == null:
+		return
+	if not is_equal_approx(position.x, TrackSegment.LANE_X[player.lane_index]):
+		return # different lane -- this obstacle was never the one the player had to deal with
+	if player.is_on_floor():
+		return # grounded at the crossing instant: either it just walked into a collision (handled elsewhere) or this type never required a jump to begin with
+	jump_dodged.emit()
+	_trigger_jump_dodge_feedback()
+
+## Score bonus + the marker's visual "pop" -- see
+## GameState.JUMP_DODGE_BONUS_VALUE and MARKER_POP_DURATION_S/
+## _PEAK_SCALE for the reasoning behind both numbers. Kept as one
+## function (rather than splitting score from visuals) since they are
+## always triggered by the exact same event and nothing else in this
+## file needs them independently.
+func _trigger_jump_dodge_feedback() -> void:
+	GameState.add_jump_dodge_bonus()
+	_marker_pop_t = 0.0
+
+## Animates the marker's scale pulse started by _trigger_jump_dodge_feedback
+## -- a simple hand-rolled ease (this file's own established convention,
+## see the ENEMY oscillation/alarm-ramp code above: no Tween node, a
+## manual t-based interpolation driven every physics frame) rather than a
+## Tween, so no node is ever created/destroyed by triggering feedback
+## repeatedly across a pooled instance's whole lifetime. Scales UP to
+## MARKER_POP_PEAK_SCALE at the pop's midpoint then eases back to 1.0,
+## using the SAME triangular envelope shape (linear rise, linear fall)
+## the rest of this file favours for its readability rather than a
+## smoother but harder-to-reason-about curve.
+func _update_marker_pop(delta: float) -> void:
+	if _marker_pop_t < 0.0:
+		return
+	_marker_pop_t += delta
+	if _marker_pop_t >= MARKER_POP_DURATION_S:
+		_marker_pop_t = -1.0
+		_jump_marker_mesh.scale = Vector3.ONE
+		return
+	var half := MARKER_POP_DURATION_S * 0.5
+	var t := _marker_pop_t / half if _marker_pop_t < half else 2.0 - _marker_pop_t / half
+	var scale := lerpf(1.0, MARKER_POP_PEAK_SCALE, clampf(t, 0.0, 1.0))
+	_jump_marker_mesh.scale = Vector3.ONE * scale
 
 func _on_body_entered(body: Node3D) -> void:
 	if body is Keepy:

@@ -234,13 +234,27 @@ var dark_variant_index: int = 0
 const NOISETTE_VALUE: int = 1
 const GLAND_VALUE: int = 5
 
-# Score is the sum of THREE independently tracked counters so that a
-# collectible pickup can never be silently overwritten by the next
-# distance-based score tick, or by another collectible type's counter
-# (see add_distance / add_noisette / add_gland).
+## Points for successfully jumping OVER a jumpable hazard on its own
+## lane (chantier 2, playtest-fixes batch -- see Obstacle.gd
+## _check_jump_dodge for the detection and JumpMarkerMesh for the
+## permanent "you can jump this" signal this rewards actually acting on).
+## Deliberately below GLAND_VALUE: a Gland is a risk the player SEEKS OUT
+## (jump timing for a bonus that costs nothing to skip); a dodge is a
+## REACTION to a threat the game placed in the player's way, so it should
+## read as "nice, that mattered" rather than out-earning the collectible
+## the whole jump economy is built around. Kept above a single
+## NOISETTE_VALUE so it still registers as more than background score.
+const JUMP_DODGE_BONUS_VALUE: int = 2
+
+# Score is the sum of FOUR independently tracked counters so that a
+# collectible pickup (or a jump-dodge bonus) can never be silently
+# overwritten by the next distance-based score tick, or by another
+# counter's own update (see add_distance / add_noisette / add_gland /
+# add_jump_dodge_bonus).
 var distance_score: int = 0
 var noisette_score: int = 0
 var gland_score: int = 0
+var jump_dodge_score: int = 0
 var score: int = 0
 
 # Raw pickup counts, separate from noisette_score/gland_score above.
@@ -263,6 +277,7 @@ func start_run() -> void:
 	distance_score = 0
 	noisette_score = 0
 	gland_score = 0
+	jump_dodge_score = 0
 	score = 0
 	nut_count = 0
 	gland_count = 0
@@ -407,6 +422,15 @@ func add_gland() -> void:
 	_recompute_score()
 	counts_changed.emit(nut_count, gland_count)
 
+## Called by Obstacle.gd (_trigger_jump_dodge_feedback) the instant a
+## jump-dodge is detected. No raw-count sibling the way nut_count/
+## gland_count exist for the two collectibles -- nothing currently reads
+## "how many hazards did I jump over" (HUD only shows noisette/gland
+## counts, see HUD.gd), so no counter is added ahead of an actual need.
+func add_jump_dodge_bonus() -> void:
+	jump_dodge_score += JUMP_DODGE_BONUS_VALUE
+	_recompute_score()
+
 func _recompute_score() -> void:
-	score = distance_score + noisette_score + gland_score
+	score = distance_score + noisette_score + gland_score + jump_dodge_score
 	score_changed.emit(score)
