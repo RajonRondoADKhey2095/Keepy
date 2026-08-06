@@ -358,11 +358,21 @@ const MAX_LOOKAHEAD_S: float = 7.0 * 20.0 / START_SPEED
 ## count is the general fix -- correct regardless of how short a future
 ## re-tune makes the paliers, not just today's.
 func lookahead_speed() -> float:
+	return STAGE_SPEEDS[lookahead_stage_index()]
+
+## Same look-ahead as lookahead_speed() above, but returning the STAGE
+## INDEX rather than the speed it maps to -- for callers (TrackManager's
+## progressive lane-fill cap, playtest-fixes-2 batch) that need to reason
+## about WHICH palier a row is being laid out for, not just its raw speed
+## value. Extracted out of lookahead_speed() rather than duplicated, so
+## the two can never drift apart on what "the palier this row is laid out
+## for" means.
+func lookahead_stage_index() -> int:
 	var horizon := run_time_s + MAX_LOOKAHEAD_S
 	var idx := stage_index
 	while idx + 1 < STAGE_START_S.size() and STAGE_START_S[idx + 1] <= horizon:
 		idx += 1
-	return STAGE_SPEEDS[idx]
+	return idx
 
 ## Dark <-> light alternation, plus the fade between them. Three explicit
 ## phases; the only transitions are INACTIVE -> DARK (once, at

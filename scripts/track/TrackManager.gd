@@ -150,6 +150,65 @@ const OBSTACLE_CHANCE_CAP: float = 0.90
 ## across the whole speed ramp instead of shrinking as the run speeds up.
 const AIR_HAZARD_SEPARATION_S: float = OBSTACLE_REACTION_BUDGET_S * 2.0
 
+# =====================================================================
+# PROGRESSIVE LANE FILL (playtest-fixes-2 batch) -- the map was already
+# using close to its full width at the LOWEST speed palier, which capped
+# perceived difficulty early and then made the rest of the ramp feel flat
+# ("il faut la remplir au fur et a mesure" playtest note). MEASURED before
+# this change via scripts/dev/LaneFillAudit.gd (150 resets, ~54k physics
+# frames sampled, all within palier 0 / 12 m/s): 2 DISTINCT lanes already
+# carried an active obstacle SIMULTANEOUSLY 50.9% of the time, and ALL 3
+# lanes 39.5% of the time -- the track already read as "full width" before
+# the run had ramped up at all.
+#
+# The fix caps how many DISTINCT lanes may carry an active obstacle AT THE
+# SAME TIME across the whole pooled track (SEGMENT_COUNT rows, ~140m
+# ahead), tiered by which palier a row is laid out for (GameState.
+# lookahead_stage_index(), same look-ahead every other spacing rule in
+# this file already uses -- a row is spawned well before the player
+# reaches it, so the cap must be sized for the SPEED IT WILL BE MET AT,
+# not the speed at spawn time).
+#
+# Scoped to the DETERMINISTIC, spawn-time lane picks only (DODGE, JUMP,
+# AIR_ENEMY's FLIGHT lane) -- never to ground ENEMY's or AIR_ENEMY's own
+# LATE lock/landing-lane decision (Obstacle._resolve_late_lock /
+# _resolve_air_enemy_landing_lane). Those two are deliberately player-
+# TARGETED at a moment TrackManager cannot predict (see their own docs);
+# forcing them to respect a lane-fill cap picked at spawn time would mean
+# sometimes NOT locking onto the player's actual lane, which would defeat
+# the mechanic outright rather than merely make the track look fuller.
+# They are also, empirically, a small contributor to the measured
+# baseline above: ENEMY only sits on a discrete lane_x once locked (mid-
+# sway, its position is excluded from "occupies a lane" by construction,
+# same exclusion LaneFillAudit.gd applies), and that locked window is a
+# fraction of a second before contact -- the 50.9%/39.5% baseline is
+# overwhelmingly DODGE/JUMP/AIR_ENEMY-in-flight, all long-lived and all
+# in scope here.
+# =====================================================================
+
+## Palier index (0-based into GameState.STAGE_SPEEDS) at or below which a
+## row is generated under the STRICTER cap (MAX_ACTIVE_LANES_EARLY) --
+## covers the first three paliers, 12/15/18 m/s: the run's own "taking
+## its bearings" window (task's explicit ask: "les 2-3 premiers paliers").
+const LOW_DENSITY_LAST_STAGE_INDEX: int = 2
+
+## Maximum DISTINCT lanes allowed to carry an active obstacle at once,
+## for a row laid out at LOW_DENSITY_LAST_STAGE_INDEX or below -- always
+## leaves at least 2 of the 3 lanes clear, so the run visibly has
+## somewhere to escalate TO as it speeds up.
+const MAX_ACTIVE_LANES_EARLY: int = 1
+
+## Maximum DISTINCT lanes allowed to carry an active obstacle at once,
+## for every palier AFTER LOW_DENSITY_LAST_STAGE_INDEX -- held at 2 for
+## the REST of the run, deliberately never raised to 3: "full width
+## blocked" removes the one guaranteed-clear lane a jump-vs-switch choice
+## needs to stay a CHOICE rather than a coin flip on whether an escape
+## exists at all (AntiFrustrationAudit.gd's per-frame guarantee already
+## proves an escape is always there regardless, but standing at "every
+## lane already has something coming" reads as unfair even when it
+## technically isn't). Task's explicit ask: never touch the 3rd lane.
+const MAX_ACTIVE_LANES_LATE: int = 2
+
 # Relative weights for which Obstacle.Type spawns when an obstacle spawns
 # at all. DODGE and JUMP stay the bulk of the spawn table; ENEMY (moving,
 # forces a late reaction) and AIR_ENEMY (punishes a jump, see Obstacle.gd
@@ -270,13 +329,27 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 
 	var obstacle_lane := -1
 	if spawn_obstacle:
+		# Snapshot of which lanes ALREADY carry an active obstacle
+		# elsewhere on the pooled track, and this row's density cap --
+		# see the PROGRESSIVE LANE FILL section header above. Taken once
+		# per row (not per obstacle-type branch): every deterministic
+		# lane pick below shares the exact same snapshot, so two picks
+		# in the same call can never disagree about what "already
+		# occupied" meant at spawn time. `segment` itself is excluded --
+		# its own previous obstacle is about to be overwritten
+		# regardless of what this call decides.
+		var occupied_lanes := _active_lane_occupancy(segment)
+		var lane_cap := _max_active_lanes_for_row()
 		match obstacle_type:
 			Obstacle.Type.ENEMY:
+				# Provisional sway-start lane only -- see the section
+				# header above for why ENEMY's real (late-locked) lane is
+				# deliberately left OUT of the density cap.
 				obstacle_lane = _pick_enemy_final_lane()
 			Obstacle.Type.JUMP:
-				obstacle_lane = _pick_jump_lane()
+				obstacle_lane = _pick_jump_lane(occupied_lanes, lane_cap)
 			Obstacle.Type.AIR_ENEMY:
-				obstacle_lane = _pick_air_enemy_lane()
+				obstacle_lane = _pick_air_enemy_lane(occupied_lanes, lane_cap)
 				if obstacle_lane == -1:
 					# Every lane was too close to a recent JUMP or Gland
 					# (see AIR_HAZARD_SEPARATION_S) -- demote to DODGE
@@ -284,9 +357,9 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 					# row silently. DODGE has no lane restriction of its
 					# own, so this can never cascade into a second demotion.
 					obstacle_type = Obstacle.Type.DODGE
-					obstacle_lane = randi_range(0, 2)
+					obstacle_lane = _pick_dodge_lane(occupied_lanes, lane_cap)
 			_: # DODGE
-				obstacle_lane = randi_range(0, 2)
+				obstacle_lane = _pick_dodge_lane(occupied_lanes, lane_cap)
 
 		if obstacle_type == Obstacle.Type.JUMP:
 			_rows_since_jump_on_lane[obstacle_lane] = 0
@@ -413,15 +486,26 @@ func _pick_enemy_final_lane() -> int:
 ## obstacle TO that would not need the exact same kind of lane check, so
 ## an occasional unlucky JUMP is the accepted edge case rather than
 ## adding a second demotion path.
-func _pick_jump_lane() -> int:
+##
+## `occupied`/`cap`: the progressive lane-fill density cap (see the
+## PROGRESSIVE LANE FILL section header above) is applied ON TOP of the
+## AIR_ENEMY-safety exclusion, never instead of it -- safety always wins.
+## If narrowing by density leaves no candidate (the safety-filtered set
+## and the already-occupied set happen to be disjoint), the density cap
+## is the one that gives way, same "occasional unlucky JUMP is the
+## accepted edge case" precedent as the fallback above.
+func _pick_jump_lane(occupied: Array[bool], cap: int) -> int:
 	var required := _required_air_hazard_separation_rows()
 	var candidates: Array[int] = []
 	for lane in 3:
 		if _rows_since_air_enemy_on_lane[lane] >= required:
 			candidates.append(lane)
 	if candidates.is_empty():
-		return randi_range(0, 2)
-	return candidates[randi_range(0, candidates.size() - 1)]
+		candidates = [0, 1, 2]
+	var capped := _apply_lane_cap(candidates, occupied, cap)
+	if capped.is_empty():
+		return candidates[randi_range(0, candidates.size() - 1)]
+	return capped[randi_range(0, capped.size() - 1)]
 
 ## FLIGHT lane for an AIR_ENEMY obstacle (chantier 3, playtest-fixes
 ## batch: this is no longer necessarily also its LANDING lane, see
@@ -439,7 +523,12 @@ func _pick_jump_lane() -> int:
 ## guards against remain live risks for as long as it's flying here.
 ## Returns -1 if every lane is currently excluded (rare -- caller demotes
 ## to a different obstacle type in that case, see _populate_segment).
-func _pick_air_enemy_lane() -> int:
+##
+## `occupied`/`cap`: same density cap as _pick_jump_lane above, applied
+## on top of the safety exclusion, giving way to it (never returns -1 for
+## a density reason alone -- only the pre-existing safety exclusion can
+## trigger the caller's demotion-to-DODGE path).
+func _pick_air_enemy_lane(occupied: Array[bool], cap: int) -> int:
 	var required := _required_air_hazard_separation_rows()
 	var candidates: Array[int] = []
 	for lane in 3:
@@ -447,7 +536,85 @@ func _pick_air_enemy_lane() -> int:
 			candidates.append(lane)
 	if candidates.is_empty():
 		return -1
-	return candidates[randi_range(0, candidates.size() - 1)]
+	var capped := _apply_lane_cap(candidates, occupied, cap)
+	if capped.is_empty():
+		return candidates[randi_range(0, candidates.size() - 1)]
+	return capped[randi_range(0, capped.size() - 1)]
+
+## Lane for a DODGE obstacle -- DODGE has no lane exclusion of its own
+## (see Obstacle.blocks_jump's own doc: it always leaves a switch escape,
+## never targets the player), so the density cap is the ONLY constraint
+## here. `capped` is guaranteed non-empty: either fewer lanes are
+## occupied than `cap` allows (all 3 candidates stay valid) or the
+## already-occupied set itself is the candidate pool, and that set is
+## non-empty whenever it is being enforced (cap is always >= 1).
+func _pick_dodge_lane(occupied: Array[bool], cap: int) -> int:
+	var capped := _apply_lane_cap([0, 1, 2], occupied, cap)
+	return capped[randi_range(0, capped.size() - 1)]
+
+## Which lanes CURRENTLY carry a live, visible obstacle elsewhere on the
+## pooled track -- the "already occupied" half of the density cap (see
+## the PROGRESSIVE LANE FILL section header above). `exclude_segment` is
+## the row currently being (re)populated: its own previous obstacle is
+## about to be overwritten by this same call regardless of what it decides,
+## so counting it would be double-booking a lane against itself.
+func _active_lane_occupancy(exclude_segment: TrackSegment) -> Array[bool]:
+	var occupied: Array[bool] = [false, false, false]
+	for segment in _segments:
+		if segment == exclude_segment:
+			continue
+		var obstacle := _active_obstacle_in(segment)
+		if obstacle == null:
+			continue
+		var lane := _lane_index_for_x(obstacle.position.x)
+		if lane != -1:
+			occupied[lane] = true
+	return occupied
+
+## This row's density cap -- see MAX_ACTIVE_LANES_EARLY/_LATE and
+## LOW_DENSITY_LAST_STAGE_INDEX above. Uses GameState.lookahead_stage_index(),
+## not GameState.stage_index: same "spaced for the speed it will be MET
+## at, not the speed at spawn time" reasoning as every other look-ahead
+## rule in this file (_required_gap_rows, _obstacle_chance).
+func _max_active_lanes_for_row() -> int:
+	if GameState.lookahead_stage_index() <= LOW_DENSITY_LAST_STAGE_INDEX:
+		return MAX_ACTIVE_LANES_EARLY
+	return MAX_ACTIVE_LANES_LATE
+
+## Narrows `candidates` to respect the density cap against `occupied`
+## (see _active_lane_occupancy): if fewer lanes are already occupied than
+## `cap` allows, every candidate can still open a NEW lane, unchanged; once
+## `cap` is already met, only candidates that REUSE an already-occupied
+## lane remain -- opening a further lane is what the cap forbids. Shared
+## by every deterministic lane picker above so the rule is expressed in
+## exactly one place.
+func _apply_lane_cap(candidates: Array[int], occupied: Array[bool], cap: int) -> Array[int]:
+	var occupied_count := 0
+	for is_occupied in occupied:
+		if is_occupied:
+			occupied_count += 1
+	if occupied_count < cap:
+		return candidates
+	var result: Array[int] = []
+	for lane in candidates:
+		if occupied[lane]:
+			result.append(lane)
+	return result
+
+## Lane index (0/1/2) whose TrackSegment.LANE_X value is closest to `x` --
+## same "closest lane" resolution EnemyLaneAudit.gd/AntiFrustrationAudit.gd/
+## Obstacle._lane_index_for_x already use, needed here so
+## _active_lane_occupancy can turn a raw obstacle.position.x back into a
+## lane index.
+func _lane_index_for_x(x: float) -> int:
+	var best_index := 0
+	var best_dist := INF
+	for i in TrackSegment.LANE_X.size():
+		var d := absf(x - TrackSegment.LANE_X[i])
+		if d < best_dist:
+			best_dist = d
+			best_index = i
+	return best_index
 
 # =====================================================================
 # RUNTIME CROSS-OBSTACLE SAFETY SCAN -- the anti-frustration guarantee
