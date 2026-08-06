@@ -52,18 +52,41 @@ class_name Obstacle
 ##                approach at the SAME height as the Gland collectible
 ##                (AIR_ENEMY_Y below, derived from the exact same formula
 ##                as TrackSegment.GLAND_Y -- never a duplicated literal)
-##                -- ground-level running passes safely underneath, a
-##                jump on its lane runs straight into it, exactly the
-##                original AIR_ENEMY contract -- then DESCENDS over its
-##                final approach and LANDS on its lane, becoming a
-##                jumpable ground hazard (same JUMPABLE_OBSTACLE_TOP_HEIGHT
-##                contract as ENEMY) for the remainder of the approach.
-##                See _process_air_enemy for the exact schedule and why
-##                landing completes a full ENEMY_REACTION_WINDOW_S before
-##                contact -- the same reaction budget the ground ENEMY's
-##                own hard lock guarantees. Its LANE never changes (only
-##                its height does) -- it does not hunt the player the way
-##                ENEMY does.
+##                on its SPAWN (flight) lane -- ground-level running
+##                passes safely underneath, a jump on its CURRENT lane
+##                runs straight into it, exactly the original AIR_ENEMY
+##                contract -- then DESCENDS over its final approach and
+##                LANDS, becoming a jumpable ground hazard (same
+##                JUMPABLE_OBSTACLE_TOP_HEIGHT contract as ENEMY) for the
+##                remainder of the approach. See _process_air_enemy for
+##                the exact schedule and why landing completes a full
+##                ENEMY_REACTION_WINDOW_S before contact -- the same
+##                reaction budget the ground ENEMY's own hard lock
+##                guarantees.
+##                MULTI-LANE LANDING (playtest-fixes batch, chantier 3):
+##                its LANDING lane is no longer always the same as the
+##                lane it spawned/is flying over -- at
+##                AIR_ENEMY_DESCENT_LEAD_S before contact (the SAME
+##                instant its descent visibly begins) it picks a landing
+##                lane the SAME way ground ENEMY's late lock does --
+##                targets Keepy's ACTUAL current lane, redirected via the
+##                SAME TrackManager.lane_has_conflicting_jump_hazard
+##                anti-frustration check and _safe_redirect_lane fallback
+##                if that lane is unsafe (see _resolve_air_enemy_landing_lane)
+##                -- then LERPS its X from the flight lane to the landing
+##                lane over the SAME t as its Y descent, so the lateral
+##                drift and the vertical descent read as one continuous,
+##                early, smoothly-converging telegraph rather than two
+##                separate cues. Both X and Y finish converging at the
+##                exact same instant (ENEMY_REACTION_WINDOW_S before
+##                contact) -- the landing lane is fully committed no
+##                later than ground ENEMY's own hard-lock margin, never
+##                later. A DECIDED-ONCE guard (_air_enemy_lane_decided)
+##                means the target is read from wherever the player
+##                happens to be AT DECISION TIME, then held fixed for the
+##                whole convergence -- exactly the same "committed, not
+##                continuously re-aimed" contract ENEMY's own late lock
+##                uses (see _enemy_late_lock_resolved).
 ##
 ## JUMPABLE MARKER (chantier 2, playtest-fixes batch: "je ne comprends
 ## pas que je peux sauter par-dessus, ca ne se voit pas") -- JUMP and
@@ -258,6 +281,24 @@ var _enemy_late_lock_resolved: bool = false
 ## the intended escape".
 var air_enemy_landed: bool = false
 
+## True once THIS spawn has picked its landing lane (see
+## _resolve_air_enemy_landing_lane) -- guards the decision to a single
+## read of the player's lane per spawn, exactly the same "decide once,
+## then hold" contract as _enemy_late_lock_resolved above (see that
+## var's own doc for why: re-reading every frame would let the target
+## keep sliding under the player instead of committing).
+var _air_enemy_lane_decided: bool = false
+## World-space X of the lane AIR_ENEMY is flying over BEFORE it starts
+## drifting toward its landing lane -- captured from this instance's own
+## `position.x` the moment _resolve_air_enemy_landing_lane runs (which is
+## also the instant convergence starts, so position.x is still exactly
+## the untouched spawn lane at that point). The LERP SOURCE in
+## _process_air_enemy; not meaningful before _air_enemy_lane_decided.
+var _air_enemy_flight_lane_x: float = 0.0
+## World-space X of the CHOSEN landing lane -- the LERP TARGET in
+## _process_air_enemy. Not meaningful before _air_enemy_lane_decided.
+var _air_enemy_landing_lane_x: float = 0.0
+
 ## Global Z read on the PREVIOUS frame this instance was visible -- see
 ## _check_jump_dodge. A crossing from negative to >=0 is the exact same
 ## instant collision is tested (see time_to_contact_s's own doc: Keepy
@@ -381,6 +422,7 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 		_apply_enemy_alarm(0.0) # reset tint -- this instance may be a pooled reuse
 
 	air_enemy_landed = false
+	_air_enemy_lane_decided = false
 	if is_air_enemy:
 		_air_enemy_mesh.position.y = TrackSegment.GLAND_Y
 		_air_enemy_shape.position.y = TrackSegment.GLAND_Y
@@ -506,11 +548,16 @@ func _resolve_late_lock(time_to_contact: float) -> void:
 ## vanishingly rare that is given the spacing rules already in place) --
 ## still strictly better than repeating the exact lane the caller was
 ## specifically told to avoid.
-func _safe_redirect_lane(unsafe_lane: int, time_to_contact: float, track_manager: Node) -> int:
+## `exclude`: forwarded to lane_has_conflicting_jump_hazard unchanged --
+## see that function's own doc. Ground ENEMY's call site never needed
+## this (an ENEMY can never flag itself); AIR_ENEMY's landing-lane
+## resolver (chantier 3) passes itself, for the same reason its own
+## initial check does.
+func _safe_redirect_lane(unsafe_lane: int, time_to_contact: float, track_manager: Node, exclude: Node3D = null) -> int:
 	for lane in 3:
 		if lane == unsafe_lane:
 			continue
-		if not track_manager.lane_has_conflicting_jump_hazard(lane, time_to_contact):
+		if not track_manager.lane_has_conflicting_jump_hazard(lane, time_to_contact, exclude):
 			return lane
 	return (unsafe_lane + 1) % 3
 
@@ -550,6 +597,15 @@ func time_to_contact_s() -> float:
 ## `visible` before treating an obstacle as live).
 func _process_air_enemy() -> void:
 	var time_to_contact := time_to_contact_s()
+
+	# Landing lane decision -- see the class doc's MULTI-LANE LANDING
+	# section. Fires at the SAME instant the descent below starts
+	# (t is still 0.0 this exact frame), so the lateral lerp source
+	# (_air_enemy_flight_lane_x, captured from position.x INSIDE the
+	# resolver) is still the untouched spawn lane -- no visual pop.
+	if not _air_enemy_lane_decided and time_to_contact <= AIR_ENEMY_DESCENT_LEAD_S:
+		_resolve_air_enemy_landing_lane(time_to_contact)
+
 	var t: float
 	if time_to_contact >= AIR_ENEMY_DESCENT_LEAD_S:
 		t = 0.0
@@ -560,6 +616,19 @@ func _process_air_enemy() -> void:
 	var center_y := lerpf(TrackSegment.GLAND_Y, AIR_ENEMY_LANDED_CENTER_Y, t)
 	_air_enemy_mesh.position.y = center_y
 	_air_enemy_shape.position.y = center_y
+	# X convergence uses the EXACT SAME t as the Y descent above -- one
+	# shared progress value, so the lateral drift and the vertical
+	# descent visibly finish together, reading as ONE telegraphed
+	# movement ("it's coming down AND heading for your lane") rather than
+	# two cues a player has to track independently. Guarded on
+	# _air_enemy_lane_decided so position.x is left completely untouched
+	# (still whatever TrackSegment.populate() set it to) for every frame
+	# before the decision fires -- t is 0.0 there anyway (see above), so
+	# this guard is a no-op in practice, but it keeps the source of
+	# truth for "has this AIR_ENEMY started drifting yet" in one place
+	# rather than relying on t's own value coincidentally being 0.0.
+	if _air_enemy_lane_decided:
+		position.x = lerpf(_air_enemy_flight_lane_x, _air_enemy_landing_lane_x, t)
 	air_enemy_landed = t >= 1.0
 	_apply_air_enemy_tint(t)
 	# JumpMarkerMesh follows `air_enemy_landed` every frame (not just on
@@ -568,6 +637,44 @@ func _process_air_enemy() -> void:
 	# (which always starts it hidden, see configure()) can never get
 	# stuck showing a marker for a still-airborne AIR_ENEMY.
 	_jump_marker_mesh.visible = air_enemy_landed
+
+## Picks AIR_ENEMY's landing lane -- see the class doc's MULTI-LANE
+## LANDING section for the full contract. Mirrors
+## Obstacle._resolve_late_lock (ground ENEMY) almost exactly: target
+## Keepy's ACTUAL current lane, redirected via the SAME
+## TrackManager.lane_has_conflicting_jump_hazard check + _safe_redirect_lane
+## fallback if that lane is unsafe (a JUMP or another still-airborne
+## AIR_ENEMY due on the same lane close enough in time -- see that
+## function's own doc, reused verbatim, not reimplemented). Falls back to
+## landing straight down on its own flight lane if no player is in the
+## tree (a headless probe with no Keepy, matching _resolve_late_lock's
+## own "no player -- keep the spawn-drawn lane" fallback).
+func _resolve_air_enemy_landing_lane(time_to_contact: float) -> void:
+	_air_enemy_lane_decided = true
+	_air_enemy_flight_lane_x = position.x
+	var flight_lane := _lane_index_for_x(_air_enemy_flight_lane_x)
+	var player_lane := _current_player_lane()
+	var target_lane := player_lane if player_lane != -1 else flight_lane
+	var track_manager := _track_manager()
+	if track_manager and track_manager.lane_has_conflicting_jump_hazard(target_lane, time_to_contact, self):
+		target_lane = _safe_redirect_lane(target_lane, time_to_contact, track_manager, self)
+	_air_enemy_landing_lane_x = TrackSegment.LANE_X[target_lane]
+
+## Lane index (0/1/2) whose TrackSegment.LANE_X value is closest to `x`.
+## Shared by _resolve_air_enemy_landing_lane's no-player fallback; not
+## needed by ground ENEMY's own late lock, which always has a lane index
+## on hand already (Keepy's own lane_index, or the spawn-drawn
+## _enemy_lane_x compared implicitly through TrackSegment.LANE_X at
+## configure() time).
+func _lane_index_for_x(x: float) -> int:
+	var best_index := 0
+	var best_dist := INF
+	for i in TrackSegment.LANE_X.size():
+		var d := absf(x - TrackSegment.LANE_X[i])
+		if d < best_dist:
+			best_dist = d
+			best_index = i
+	return best_index
 
 ## Lerps the (per-instance, see _ready) AirEnemyMesh material from its
 ## base colors toward ENEMY_ALARM_ALBEDO/_EMISSION/_EMISSION_ENERGY as it

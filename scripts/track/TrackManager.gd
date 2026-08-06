@@ -379,13 +379,22 @@ func _pick_jump_lane() -> int:
 		return randi_range(0, 2)
 	return candidates[randi_range(0, candidates.size() - 1)]
 
-## Lane for an AIR_ENEMY obstacle -- excludes any lane a JUMP obstacle OR
-## a Gland occupied too recently (see AIR_HAZARD_SEPARATION_S): the
-## former would force the player to jump into it, the latter would make
-## grabbing the Gland fatal on a lane the player had no reason to distrust
-## yet. Returns -1 if every lane is currently excluded (rare -- caller
-## demotes to a different obstacle type in that case, see
-## _populate_segment).
+## FLIGHT lane for an AIR_ENEMY obstacle (chantier 3, playtest-fixes
+## batch: this is no longer necessarily also its LANDING lane, see
+## Obstacle.gd's Type.AIR_ENEMY doc + _resolve_air_enemy_landing_lane --
+## that decision is made much later, at runtime, against the player's
+## actual position, and is out of this function's scope entirely) --
+## excludes any lane a JUMP obstacle OR a Gland occupied too recently
+## (see AIR_HAZARD_SEPARATION_S): the former would force the player to
+## jump into it, the latter would make grabbing the Gland fatal on a lane
+## the player had no reason to distrust yet. Still meaningful even though
+## the FINAL landing lane can differ: AIR_ENEMY sits on THIS lane, at
+## Gland height, for most of its approach (see AIR_ENEMY_DESCENT_LEAD_S --
+## the lateral drift toward the landing lane only starts a few seconds
+## before contact), so the same two same-lane conflicts this check
+## guards against remain live risks for as long as it's flying here.
+## Returns -1 if every lane is currently excluded (rare -- caller demotes
+## to a different obstacle type in that case, see _populate_segment).
 func _pick_air_enemy_lane() -> int:
 	var required := _required_air_hazard_separation_rows()
 	var candidates: Array[int] = []
@@ -398,35 +407,56 @@ func _pick_air_enemy_lane() -> int:
 
 # =====================================================================
 # RUNTIME CROSS-OBSTACLE SAFETY SCAN -- the anti-frustration guarantee
-# for the ground ENEMY's late lock (see Obstacle._resolve_late_lock).
+# for the ground ENEMY's late lock (see Obstacle._resolve_late_lock) AND,
+# since the playtest-fixes batch (chantier 3), for AIR_ENEMY's own late
+# LANDING-lane decision (see Obstacle._resolve_air_enemy_landing_lane) --
+# the same function serves both callers unchanged, because they pose the
+# exact same question ("would committing to `lane` right now leave
+# jumping over it lethal or mandatory-but-incompatible").
 #
 # Every other lane-exclusion rule in this file (JUMP vs AIR_ENEMY,
 # AIR_ENEMY vs Gland) is decided at SPAWN time, against the small
 # per-lane recency counters above (_rows_since_*_on_lane) -- cheap, and
 # correct because every OTHER obstacle's lane is already known the
-# instant it spawns. The ground ENEMY's final lane is the one exception:
-# it is not decided until Obstacle._resolve_late_lock runs, seconds after
-# spawn, and it targets whichever lane the PLAYER happens to occupy at
-# that moment -- a value this file cannot know in advance. So the check
-# it needs cannot live in the spawn-time counters either; it has to read
-# the LIVE state of whatever obstacles are actually on the track right
-# now, which is what this scan does.
+# instant it spawns. Ground ENEMY's final lane and (as of chantier 3)
+# AIR_ENEMY's landing lane are the two exceptions: neither is decided
+# until seconds after spawn, and both target whichever lane the PLAYER
+# happens to occupy at that moment -- a value this file cannot know in
+# advance. So the check they need cannot live in the spawn-time counters
+# either; it has to read the LIVE state of whatever obstacles are
+# actually on the track right now, which is what this scan does.
 # =====================================================================
 
-## True if locking the ground ENEMY onto `lane` right now would leave
-## jumping over it lethal or mandatory-but-incompatible: another live
-## obstacle on the SAME lane that either FORCES a jump (JUMP -- the
-## player would need to jump there anyway) or PUNISHES one (an AIR_ENEMY
-## that has not yet landed, see Obstacle.air_enemy_landed) arriving close
-## enough in time (AIR_HAZARD_SEPARATION_S, the same margin that already
-## keeps JUMP and AIR_ENEMY apart from EACH OTHER at spawn) to the
-## caller's own contact that the two hazards' timing could collide.
-## Called from Obstacle.gd, never from within this file.
-func lane_has_conflicting_jump_hazard(lane: int, caller_time_to_contact: float) -> bool:
+## True if committing an obstacle onto `lane` right now (ground ENEMY's
+## late lock, OR AIR_ENEMY's own late landing-lane pick, see the section
+## header above) would leave jumping over it lethal or
+## mandatory-but-incompatible: another live obstacle on the SAME lane
+## that either FORCES a jump (JUMP -- the player would need to jump there
+## anyway) or PUNISHES one (an AIR_ENEMY that has not yet landed, see
+## Obstacle.air_enemy_landed) arriving close enough in time
+## (AIR_HAZARD_SEPARATION_S, the same margin that already keeps JUMP and
+## AIR_ENEMY apart from EACH OTHER at spawn) to the caller's own contact
+## that the two hazards' timing could collide. Called from Obstacle.gd,
+## never from within this file.
+##
+## `exclude`: the CALLING obstacle itself, skipped from the scan.
+## Unnecessary for ground ENEMY's own call (Obstacle.Type.ENEMY never
+## matches `forces_jump`/`punishes_jump` below, so an ENEMY could never
+## flag itself as a conflict regardless), but AIR_ENEMY's late landing-
+## lane pick (chantier 3) calls this on ITSELF while still airborne
+## (`obstacle_type == AIR_ENEMY and not air_enemy_landed` is exactly the
+## `punishes_jump` condition) targeting a lane that, at the moment of the
+## call, is very often still its OWN flight lane -- without excluding
+## itself it would see itself as a same-lane, zero-time-delta "conflict"
+## every time it tries to land on the lane it is already flying over,
+## and be redirected away for no real reason. Optional (defaults to
+## null) rather than required so ground ENEMY's existing call site needs
+## no change.
+func lane_has_conflicting_jump_hazard(lane: int, caller_time_to_contact: float, exclude: Node3D = null) -> bool:
 	var target_x := TrackSegment.LANE_X[lane]
 	for segment in _segments:
 		var obstacle: Node3D = _active_obstacle_in(segment)
-		if obstacle == null:
+		if obstacle == null or obstacle == exclude:
 			continue
 		if not is_equal_approx(obstacle.position.x, target_x):
 			continue
