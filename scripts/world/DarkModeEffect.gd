@@ -60,3 +60,12 @@ func _apply(intensity: float) -> void:
 	var mat: ShaderMaterial = _rect.material
 	if mat:
 		mat.set_shader_parameter("intensity", intensity)
+		# Palette variety (difficulty+variety batch): which of
+		# GameState.DARK_VARIANTS the CURRENT dark phase picked, at a
+		# fixed strength (DARK_TINT_AMOUNT) -- the shader itself
+		# multiplies this by `intensity` every frame, so it fades in/out
+		# in lockstep with the invert rather than needing a second fade
+		# curve computed here. See the shader's own comment for why this
+		# can never reduce legibility below a known, bounded floor.
+		mat.set_shader_parameter("tint_color", GameState.DARK_VARIANTS[GameState.dark_variant_index])
+		mat.set_shader_parameter("tint_amount", GameState.DARK_TINT_AMOUNT)

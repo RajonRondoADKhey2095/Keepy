@@ -37,16 +37,21 @@ enum State { TITLE, PLAYING, GAME_OVER }
 ## turning unreadable). Spelled out row by row rather than computed, so
 ## both halves stay hand-tunable at a glance.
 ##
+## HALVED (difficulty+variety batch, playtest: "too easy, had to lose on
+## purpose") from the durations originally tuned for 40-90s runs -- the
+## SPEEDS are UNCHANGED (same table of steps), only how fast the run
+## climbs through them: the cap now lands around 45s instead of 90s.
+##
 ##   idx  run time window    speed      step    palier length
 ##   ---  -----------------  ---------  ------  -------------
-##    0   0s .. 12s          12.0 m/s     --      12s
-##    1   12s .. 24s         15.0 m/s   +3.0      12s
-##    2   24s .. 36s         18.0 m/s   +3.0      12s
-##    3   36s .. 48s         20.5 m/s   +2.5      12s   <- dark mode starts
-##    4   48s .. 60s         22.5 m/s   +2.0      12s
-##    5   60s .. 75s         24.0 m/s   +1.5      15s
-##    6   75s .. 90s         25.0 m/s   +1.0      15s
-##    7   90s and beyond     26.0 m/s   +1.0      cap, held to the end
+##    0   0s .. 6s           12.0 m/s     --       6s
+##    1   6s .. 12s          15.0 m/s   +3.0       6s
+##    2   12s .. 18s         18.0 m/s   +3.0       6s
+##    3   18s .. 24s         20.5 m/s   +2.5       6s   <- dark mode starts
+##    4   24s .. 30s         22.5 m/s   +2.0       6s
+##    5   30s .. 37.5s       24.0 m/s   +1.5     7.5s
+##    6   37.5s .. 45s       25.0 m/s   +1.0     7.5s
+##    7   45s and beyond     26.0 m/s   +1.0      cap, held to the end
 ##
 ## The two arrays are INDEX-ALIGNED and must stay the same length:
 ## STAGE_START_S[i] is the run time at which STAGE_SPEEDS[i] takes over.
@@ -56,7 +61,7 @@ enum State { TITLE, PLAYING, GAME_OVER }
 ## Raising the cap is NOT free: TrackManager spaces obstacles out by the
 ## time they leave the player (see its MIN_OBSTACLE_GAP_S), so a higher
 ## cap automatically thins the track rather than making it unreadable.
-const STAGE_START_S: Array[float] = [0.0, 12.0, 24.0, 36.0, 48.0, 60.0, 75.0, 90.0]
+const STAGE_START_S: Array[float] = [0.0, 6.0, 12.0, 18.0, 24.0, 30.0, 37.5, 45.0]
 const STAGE_SPEEDS: Array[float] = [12.0, 15.0, 18.0, 20.5, 22.5, 24.0, 25.0, 26.0]
 
 # Named aliases. START_SPEED/BASE_SPEED == STAGE_SPEEDS[0] and
@@ -72,12 +77,13 @@ const MAX_SPEED: float = 26.0
 ## start of palier 3 (see STAGE_START_S) so the run's first visual event
 ## lands on a speed step rather than in the middle of one.
 ##
-## Was 90s, which was past the end of most runs -- the majority of
-## players never saw dark mode exist at all. 36s puts it inside the
-## window a typical 40-90s run actually occupies, while still leaving
-## the opening half-minute clean so it reads as an escalation and not as
-## the game's default state.
-const DARK_FIRST_TRIGGER_S: float = 36.0
+## Was 90s, then 36s once paliers were first tuned for 40-90s runs (past
+## the end of most runs at 90s -- the majority of players never saw dark
+## mode exist at all). HALVED AGAIN to 18s alongside the palier-duration
+## halving above (difficulty+variety batch) so it stays anchored on the
+## SAME palier boundary (palier 3's new start) instead of drifting to a
+## palier it no longer lines up with.
+const DARK_FIRST_TRIGGER_S: float = 18.0
 
 ## Length of ONE phase: dark for this long, then light for this long,
 ## then dark again, for the rest of the run.
@@ -87,13 +93,18 @@ const DARK_FIRST_TRIGGER_S: float = 36.0
 ## often does it swap" could not be tuned apart: moving the first
 ## trigger earlier also made the cycle churn faster, and vice versa.
 ## They answer different design questions and now have one knob each.
-## At the defaults: dark 36-56s, light 56-76s, dark 76-96s, and so on.
+## At the defaults: dark 18-28s, light 28-38s, dark 38-48s, and so on.
+##
+## HALVED alongside DARK_FIRST_TRIGGER_S so the cycle keeps the SAME
+## proportion of the (now twice as fast) run it always had, rather than
+## suddenly spanning twice as large a fraction of a run that halved in
+## length underneath it.
 ##
 ## The cycle is driven by the clock, NOT by current_speed: keying a
 ## visual state off a speed threshold is what let an earlier iteration
 ## fire 1.35s into a run when the speed curve misbehaved. The trigger is
 ## a time the run cannot reach early by any means.
-const DARK_CYCLE_PERIOD_S: float = 20.0
+const DARK_CYCLE_PERIOD_S: float = 10.0
 
 ## Seconds a dark <-> light transition takes to fade fully in or out.
 ## Never 0: an instant flip is what made an earlier iteration unplayable.
@@ -105,6 +116,36 @@ const DARK_CYCLE_PERIOD_S: float = 20.0
 ## 0.8s stays clearly followable by the eye while leaving the phase
 ## itself unambiguous.
 const DARK_FADE_DURATION_S: float = 0.8
+
+# =====================================================================
+# PALETTE VARIETY (difficulty+variety batch) -- see DarkModeEffect.gd /
+# screen_invert.gdshader for how DARK_VARIANTS is actually applied, and
+# EnvironmentDrift.gd for the LIGHT-phase counterpart. Kept here, next to
+# the timing knobs above, because it is state a fresh run must reset and
+# a phase transition must update -- the same ownership rule this file
+## already follows for dark_phase/dark_intensity.
+# =====================================================================
+
+## Candidate tint colours a DARK phase can pick from -- blended on TOP of
+## the already-inverted screen (see the shader for why this can never
+## make anything less distinguishable, only differently coloured). Four
+## distinct hues spanning warm and cool so consecutive dark phases in the
+## same run read as different environments, not a single reskin.
+const DARK_VARIANTS: Array[Color] = [
+	Color(1.0, 0.25, 0.35), # crimson
+	Color(0.30, 0.55, 1.0), # cold blue
+	Color(0.35, 1.0, 0.55), # toxic green
+	Color(1.0, 0.75, 0.20), # amber
+]
+
+## How strongly a DARK_VARIANTS tint blends over the inversion -- read by
+## DarkModeEffect.gd as `tint_amount`, faded in/out by the shader
+## alongside `intensity` (never applied at full strength the instant a
+## phase starts). Modest on purpose: the shader's own comment proves
+## distinctness can never collapse regardless of this value, but keeping
+## it well under 1.0 also keeps the SIZE of every colour difference from
+## shrinking by more than this fraction, staying perceptually strong.
+const DARK_TINT_AMOUNT: float = 0.18
 
 # =====================================================================
 
@@ -127,6 +168,20 @@ var dark_phase: DarkPhase = DarkPhase.INACTIVE
 ## dumb renderer of a state this file owns end to end.
 var dark_intensity: float = 0.0
 var _dark_phase_started_s: float = 0.0
+
+## Index into DARK_VARIANTS the CURRENT (or most recent) DARK phase uses
+## -- read by DarkModeEffect.gd. Re-rolled every time the run transitions
+## INTO Dark (never on Dark -> Light), always to a DIFFERENT index than
+## last time (see _enter_dark_phase) so two consecutive dark phases in
+## the same run are never accidentally identical, and two separate runs
+## (fresh randf() seed each time) don't line up either.
+var dark_variant_index: int = 0
+
+## Per-run random phase for the LIGHT-phase environment drift (see
+## EnvironmentDrift.gd) -- rolled once in start_run() so two runs of the
+## same length still look different, not just a run that happened to be
+## longer than another.
+var light_drift_phase_s: float = 0.0
 
 # Point values for the two collectible types. Gland is worth more than a
 # ground Noisette because it's only reachable with correct jump timing
@@ -160,6 +215,8 @@ func start_run() -> void:
 	dark_phase = DarkPhase.INACTIVE
 	dark_intensity = 0.0
 	_dark_phase_started_s = 0.0
+	dark_variant_index = randi() % DARK_VARIANTS.size()
+	light_drift_phase_s = randf() * 10000.0 # see EnvironmentDrift.gd's use of this as a time offset
 	distance_score = 0
 	noisette_score = 0
 	gland_score = 0
@@ -212,20 +269,42 @@ func _update_stage() -> void:
 	stage_index = new_stage
 	current_speed = STAGE_SPEEDS[stage_index]
 
+## Worst-case time between a row being spawned and the player actually
+## reaching it: TrackManager (SEGMENT_COUNT=7 segments, SEGMENT_LENGTH=
+## 20m each) never spawns a row more than 140m ahead, and lead time is
+## largest at the SLOWEST speed a row can ever be spawned at, START_SPEED
+## (only true near the very start of a run, before the first palier
+## boundary). Restated here as a literal (not a cross-file class-const
+## reference to TrackManager) to avoid GameState -- an autoload, loaded
+## first -- taking a compile-time dependency on a plain scene script's
+## layout; see TrackManager.gd's own comment pointing back at this
+## constant so the two never silently drift apart.
+const MAX_LOOKAHEAD_S: float = 7.0 * 20.0 / START_SPEED
+
 ## The speed that content spawned RIGHT NOW should be laid out for --
-## i.e. the NEXT palier's speed, not the current one (the table only ever
-## increases, so this is always >= current_speed).
+## the speed the run will actually be at once the lead time above has
+## elapsed, not just the next palier's (the table only ever increases,
+## so this is always >= current_speed).
 ##
-## Why a look-ahead is needed at all: TrackManager spawns a row roughly
-## 128m in front of the player, which is between 5s (at the cap) and 11s
-## (at the opening speed) of lead time. A row laid out for the speed at
-## spawn time can therefore be RUN THROUGH one palier faster than it was
+## Why a look-ahead is needed at all: a row laid out for the speed at
+## spawn time can be RUN THROUGH one OR MORE paliers faster than it was
 ## spaced for, silently eating the reaction budget it was supposed to
-## guarantee. One palier of look-ahead is enough and cannot be beaten:
-## the shortest palier is 12s (see STAGE_START_S) and the longest lead
-## time is ~11s, so a row can never outrun more than one boundary.
+## guarantee. This used to hardcode "look exactly one palier ahead",
+## which was safe ONLY as long as every palier was longer than
+## MAX_LOOKAHEAD_S (true at 12s/palier, ~11s worst-case lead time) -- no
+## longer true once paliers were halved (difficulty+variety batch, see
+## STAGE_START_S above): at 6s/palier and the SAME ~11.67s worst-case
+## lead time, a row spawned right before a boundary could now be run
+## through TWO boundaries, not one, and "+1 stage" would silently
+## under-space it. Scanning forward by TIME instead of by a fixed stage
+## count is the general fix -- correct regardless of how short a future
+## re-tune makes the paliers, not just today's.
 func lookahead_speed() -> float:
-	return STAGE_SPEEDS[mini(stage_index + 1, STAGE_SPEEDS.size() - 1)]
+	var horizon := run_time_s + MAX_LOOKAHEAD_S
+	var idx := stage_index
+	while idx + 1 < STAGE_START_S.size() and STAGE_START_S[idx + 1] <= horizon:
+		idx += 1
+	return STAGE_SPEEDS[idx]
 
 ## Dark <-> light alternation, plus the fade between them. Three explicit
 ## phases; the only transitions are INACTIVE -> DARK (once, at
@@ -240,9 +319,13 @@ func _update_dark_cycle(delta: float) -> void:
 		# Anchored on the constant, not on run_time_s, so phase
 		# boundaries can't drift by up to a frame on every swap.
 		_dark_phase_started_s = DARK_FIRST_TRIGGER_S
+		_reroll_dark_variant()
 	elif run_time_s - _dark_phase_started_s >= DARK_CYCLE_PERIOD_S:
+		var entering_dark := dark_phase == DarkPhase.LIGHT
 		dark_phase = DarkPhase.LIGHT if dark_phase == DarkPhase.DARK else DarkPhase.DARK
 		_dark_phase_started_s += DARK_CYCLE_PERIOD_S
+		if entering_dark:
+			_reroll_dark_variant()
 
 	var target := 1.0 if dark_phase == DarkPhase.DARK else 0.0
 	# move_toward, not an exponential lerp: it reaches the target exactly,
@@ -250,6 +333,17 @@ func _update_dark_cycle(delta: float) -> void:
 	# so "fully dark" and "fully back to normal" would never be reached --
 	# the effect would sit permanently at ~97% and never truly clear.
 	dark_intensity = move_toward(dark_intensity, target, delta / DARK_FADE_DURATION_S)
+
+## Picks the NEXT DARK_VARIANTS index, guaranteed different from
+## dark_variant_index's current value -- see that var's own doc for why
+## (two consecutive dark phases must never look identical). Trivial with
+## only 4 variants: draw again on a collision, bounded to a handful of
+## tries so this can never loop meaningfully long.
+func _reroll_dark_variant() -> void:
+	var next := randi() % DARK_VARIANTS.size()
+	while next == dark_variant_index and DARK_VARIANTS.size() > 1:
+		next = randi() % DARK_VARIANTS.size()
+	dark_variant_index = next
 
 func add_distance(delta_distance: float) -> void:
 	distance_travelled += delta_distance

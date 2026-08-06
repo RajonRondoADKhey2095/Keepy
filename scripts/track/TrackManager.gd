@@ -1,4 +1,5 @@
 extends Node3D
+class_name TrackManager
 ## Spawns track segments ahead of the player and recycles them once
 ## they pass behind -- a fixed-size object pool, never queue_free() /
 ## re-instantiate in the running loop.
@@ -17,6 +18,11 @@ extends Node3D
 
 const SEGMENT_SCENE: PackedScene = preload("res://scenes/TrackSegment.tscn")
 const SEGMENT_LENGTH: float = 20.0
+# GameState.MAX_LOOKAHEAD_S restates SEGMENT_COUNT * SEGMENT_LENGTH /
+# BASE_SPEED as a literal (not a reference to these two constants) to
+# avoid an autoload taking a compile-time dependency on this plain scene
+# script -- if either of these two ever changes, that constant's comment
+# is where to also update.
 const SEGMENT_COUNT: int = 7
 const RECYCLE_Z: float = 12.0 # segment behind the player past this Z gets recycled
 const SAFE_START_SEGMENTS: int = 2 # no obstacles on the first N segments of a run
@@ -157,6 +163,11 @@ var _rows_since_air_enemy_on_lane: Array[int] = [_NO_RECENT_HAZARD, _NO_RECENT_H
 var _rows_since_gland_on_lane: Array[int] = [_NO_RECENT_HAZARD, _NO_RECENT_HAZARD, _NO_RECENT_HAZARD]
 
 func _ready() -> void:
+	# Looked up by group (Obstacle.gd's ground ENEMY late lock, see
+	# _resolve_late_lock / lane_has_conflicting_jump_hazard below) rather
+	# than a NodePath -- an Obstacle instance has no fixed relationship to
+	# the TrackManager that pools it in the scene tree.
+	add_to_group("track_manager")
 	for i in SEGMENT_COUNT:
 		var segment: TrackSegment = SEGMENT_SCENE.instantiate()
 		add_child(segment)
@@ -297,11 +308,17 @@ func _pick_obstacle_type() -> Obstacle.Type:
 		return Obstacle.Type.ENEMY
 	return Obstacle.Type.AIR_ENEMY
 
-## Final (settled) lane for an ENEMY obstacle. Deliberately NOT a plain
-## randi_range(0, 2) uniform draw over the 3 lanes -- see the long
-## comment below for why, and DODGE's obstacle_lane draw above for what a
-## plain uniform draw actually looks like (still used for that one,
-## unaffected by this).
+## PROVISIONAL spawn-time lane for an ENEMY obstacle -- where the sway
+## starts, and what TrackSegment.populate reserves against a noisette
+## sharing the same row. No longer the FINAL lane: since the "aujourd'hui
+## il evite implicitement certaines lanes" playtest note (the enemy never
+## actually targeted the player, only ever settled on an RNG draw
+## independent of where they stood), the real final lane is now decided
+## LATE, from Keepy's actual current lane, in Obstacle._resolve_late_lock
+## -- see the Type.ENEMY doc in Obstacle.gd. This function only still
+## exists to seed a plausible-looking starting point for the pre-lock
+## sway; kept weighted (not a plain randi_range(0, 2) uniform draw) for
+## the same reason it always was -- see the long comment below.
 ##
 ## DIAGNOSTIC (playtest report: the enemy's final lane felt very
 ## predictable, "almost always lateral, rarely center", killing the
@@ -378,3 +395,64 @@ func _pick_air_enemy_lane() -> int:
 	if candidates.is_empty():
 		return -1
 	return candidates[randi_range(0, candidates.size() - 1)]
+
+# =====================================================================
+# RUNTIME CROSS-OBSTACLE SAFETY SCAN -- the anti-frustration guarantee
+# for the ground ENEMY's late lock (see Obstacle._resolve_late_lock).
+#
+# Every other lane-exclusion rule in this file (JUMP vs AIR_ENEMY,
+# AIR_ENEMY vs Gland) is decided at SPAWN time, against the small
+# per-lane recency counters above (_rows_since_*_on_lane) -- cheap, and
+# correct because every OTHER obstacle's lane is already known the
+# instant it spawns. The ground ENEMY's final lane is the one exception:
+# it is not decided until Obstacle._resolve_late_lock runs, seconds after
+# spawn, and it targets whichever lane the PLAYER happens to occupy at
+# that moment -- a value this file cannot know in advance. So the check
+# it needs cannot live in the spawn-time counters either; it has to read
+# the LIVE state of whatever obstacles are actually on the track right
+# now, which is what this scan does.
+# =====================================================================
+
+## True if locking the ground ENEMY onto `lane` right now would leave
+## jumping over it lethal or mandatory-but-incompatible: another live
+## obstacle on the SAME lane that either FORCES a jump (JUMP -- the
+## player would need to jump there anyway) or PUNISHES one (an AIR_ENEMY
+## that has not yet landed, see Obstacle.air_enemy_landed) arriving close
+## enough in time (AIR_HAZARD_SEPARATION_S, the same margin that already
+## keeps JUMP and AIR_ENEMY apart from EACH OTHER at spawn) to the
+## caller's own contact that the two hazards' timing could collide.
+## Called from Obstacle.gd, never from within this file.
+func lane_has_conflicting_jump_hazard(lane: int, caller_time_to_contact: float) -> bool:
+	var target_x := TrackSegment.LANE_X[lane]
+	for segment in _segments:
+		var obstacle: Node3D = _active_obstacle_in(segment)
+		if obstacle == null:
+			continue
+		if not is_equal_approx(obstacle.position.x, target_x):
+			continue
+		var forces_jump: bool = obstacle.obstacle_type == Obstacle.Type.JUMP
+		var punishes_jump: bool = obstacle.obstacle_type == Obstacle.Type.AIR_ENEMY and not obstacle.air_enemy_landed
+		if not (forces_jump or punishes_jump):
+			continue
+		if absf(obstacle.time_to_contact_s() - caller_time_to_contact) < AIR_HAZARD_SEPARATION_S:
+			return true
+	return false
+
+## The single live Obstacle in `segment`, or null if this segment has no
+## active hazard right now. Returned as a loosely-typed Node3D rather
+## than Obstacle -- see the matching comment on Obstacle.gd's
+## _track_manager_ref for why a hard mutual class_name dependency between
+## this file and Obstacle.gd cannot be resolved by the resource loader;
+## `is Obstacle` below still works for the type CHECK (class_name is a
+## runtime-checkable global identifier), only the static var/return type
+## is avoided. `visible` (not just `monitoring`, see TrackSegment's own
+## comment on why toggles are deferred) is the ground truth for "is this
+## pooled instance actually in play" -- a hidden instance may still carry
+## a stale obstacle_type from its last real use
+## (TrackSegment._deactivate_obstacle never resets it), so this filter is
+## what keeps that residue out of the safety scan.
+func _active_obstacle_in(segment: TrackSegment) -> Node3D:
+	for child in segment.get_children():
+		if child is Obstacle and child.visible:
+			return child
+	return null
