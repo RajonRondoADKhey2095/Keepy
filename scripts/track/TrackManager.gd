@@ -278,6 +278,53 @@ const CHARGER_CHANCE_PER_ROW: float = 0.35
 const CHARGER_ARRIVAL_MARGIN_S: float = Obstacle.ENEMY_REACTION_WINDOW_S
 
 # =====================================================================
+# STOMPER SCHEDULING -- the spawn-side knobs for Obstacle.Type.STOMPER,
+# the deliberate INVERSE of CHARGER (see its own class doc in Obstacle.gd):
+# jump is the only escape, lane switch never is. Mirrors the CHARGER
+# SCHEDULING section immediately above in SHAPE (own MIN_START gate, own
+# lerped early/late cooldown, own per-row chance once the cooldown has
+# expired -- "rare early, more frequent at high paliers", the task's own
+# ask for this hazard too) but NOT in MECHANISM: unlike CHARGER, STOMPER
+# never overtakes rows (own_speed_factor stays 0.0, see Obstacle.gd), so
+# it does not need arrival-time scheduling to find its OWN spacing --
+# it competes for the ordinary row grid exactly like ENEMY/JUMP/DODGE do
+# (see _try_stomper_lane: it still respects _required_gap_rows() and
+# still advances _rows_to_last_obstacle when it spawns, neither of which
+# CHARGER does). What it DOES need arrival-time scheduling for is
+# something CHARGER never had to worry about with any OTHER hazard: a
+# STOMPER threatens WHATEVER lane the player ends up on (see
+# Obstacle._process_stomper), so "is this obstacle on my lane" cannot be
+# used to decide whether a nearby CHARGER compounds with it -- ANY lane
+# might be the one the player is standing on when both come due. See
+# _stomper_charger_margin_clear for the STOMPER-side half of that
+# exclusion; the CHARGER-side half needs no new code at all, because
+# _charger_arrival_fits ALREADY treats "close in time, any OTHER lane" as
+# a compound by default (its same-lane exemption only ever fires for an
+# UNJUMPABLE hazard, and STOMPER is jumpable) -- a nearby STOMPER already
+# reads to that function exactly like a nearby JUMP obstacle does today.
+# =====================================================================
+
+## No stomper before this much run time has elapsed. Same reasoning and
+## same value as CHARGER_MIN_START_S/RUSH_MIN_START_S: the opening
+## seconds are the player's bearings-taking window.
+const STOMPER_MIN_START_S: float = 18.0
+
+## Shortest possible time between two stompers, lerped over
+## GameState.BASE_SPEED..MAX_SPEED -- same "cooldown, not a per-row
+## probability" reasoning as CHARGER_COOLDOWN_EARLY_S/_LATE_S (see that
+## const's own doc for why a cooldown is the right unit here).
+const STOMPER_COOLDOWN_EARLY_S: float = 26.0
+const STOMPER_COOLDOWN_LATE_S: float = 9.0
+
+## Per-row chance of attempting a stomper once the cooldown has expired --
+## same role as CHARGER_CHANCE_PER_ROW, see that const's own doc. An
+## attempt can still be refused by the row-gap gate, the charger-margin
+## exclusion, or (never, in practice -- see _pick_dodge_lane's own doc) an
+## empty lane pool, so the realised rate is always at or below what this
+## implies.
+const STOMPER_CHANCE_PER_ROW: float = 0.35
+
+# =====================================================================
 # AIR_ENEMY <-> JUMP / GLAND SEPARATION -- AIR_ENEMY sits at the exact
 # same height as a Gland and shares its lane with whatever JUMP obstacle
 # happens to be nearby, so it is the first hazard whose fairness depends
@@ -450,6 +497,10 @@ var _next_rush_eligible_s: float = RUSH_MIN_START_S
 ## constant that is supposed to own that decision alone.
 var _last_charger_s: float = -CHARGER_COOLDOWN_EARLY_S
 
+## Same sentinel reasoning as _last_charger_s above, for STOMPER_MIN_START_S/
+## STOMPER_COOLDOWN_EARLY_S.
+var _last_stomper_s: float = -STOMPER_COOLDOWN_EARLY_S
+
 func _ready() -> void:
 	# Looked up by group (Obstacle.gd's ground ENEMY late lock, see
 	# _resolve_late_lock / lane_has_conflicting_jump_hazard below) rather
@@ -491,6 +542,7 @@ func reset() -> void:
 	_density_phase_ends_at_s = 0.0
 	_next_rush_eligible_s = RUSH_MIN_START_S
 	_last_charger_s = -CHARGER_COOLDOWN_EARLY_S
+	_last_stomper_s = -STOMPER_COOLDOWN_EARLY_S
 	for lane in 3:
 		_rows_since_jump_on_lane[lane] = _NO_RECENT_HAZARD
 		_rows_since_air_enemy_on_lane[lane] = _NO_RECENT_HAZARD
@@ -526,6 +578,20 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 	if charger_lane != -1:
 		_rows_to_last_obstacle += 1
 		_populate_collectibles(segment, true, Obstacle.Type.CHARGER, charger_lane)
+		return
+
+	# STOMPER next, tried BEFORE the normal weighted roll but, unlike
+	# CHARGER above, still on the ordinary row grid -- see the STOMPER
+	# SCHEDULING section header for why it needs its own progressive-
+	# cooldown gate (mirrors CHARGER's cadence) yet still consults AND
+	# advances _rows_to_last_obstacle (does NOT mirror CHARGER's
+	# arrival-time exemption from it): STOMPER never overtakes rows, so it
+	# is subject to the same MIN_OBSTACLE_GAP_S spacing/reaction-budget
+	# guarantee as any other row-based hazard.
+	var stomper_lane := _try_stomper_lane(segment, index)
+	if stomper_lane != -1:
+		_rows_to_last_obstacle = 1
+		_populate_collectibles(segment, true, Obstacle.Type.STOMPER, stomper_lane)
 		return
 
 	var eligible := (index == -1 or index >= SAFE_START_SEGMENTS) \
@@ -834,6 +900,98 @@ func _lane_clear_of_glands_for_charger(segment: TrackSegment, lane: int) -> bool
 		if gland_arrival <= 0.0:
 			continue
 		if absf(gland_arrival - arrival) < margin:
+			return false
+	return true
+
+# =====================================================================
+# STOMPER SCHEDULING -- implementation. See the section header near
+# STOMPER_MIN_START_S for the design.
+# =====================================================================
+
+## The lane a stomper takes on this row (its PROVISIONAL lane -- see
+## Obstacle._process_stomper, it never stays there once it commits), or
+## -1 for "no stomper here". Gates ordered cheapest-first, same discipline
+## as _try_charger_lane.
+func _try_stomper_lane(segment: TrackSegment, index: int) -> int:
+	if not (index == -1 or index >= SAFE_START_SEGMENTS):
+		return -1 # initial fill / reset -- see SAFE_START_SEGMENTS's own reasoning
+	if GameState.run_time_s < STOMPER_MIN_START_S:
+		return -1
+	if GameState.run_time_s - _last_stomper_s < _stomper_cooldown_s():
+		return -1
+	if _rows_to_last_obstacle < _required_gap_rows():
+		return -1 # same row-grid gate every other row-based hazard respects -- unlike CHARGER, see the section header
+	if randf() >= STOMPER_CHANCE_PER_ROW:
+		return -1
+	if not _stomper_charger_margin_clear(segment):
+		return -1
+	_last_stomper_s = GameState.run_time_s
+	# Density-cap-aware, exactly like _pick_dodge_lane -- see the PROGRESSIVE
+	# LANE FILL section header and task 4's explicit ask to fold STOMPER
+	# into the EXISTING cap system rather than exempt it the way ENEMY's
+	# own provisional lane is exempt (see that constant's own doc for why
+	# ENEMY is different: its late lock is unconditionally player-targeted
+	# and forcing it to respect a spawn-time cap would defeat the mechanic;
+	# STOMPER's late commit is ALSO unconditionally player-targeted, but its
+	# PROVISIONAL lane -- the only thing decided at spawn time -- is purely
+	# cosmetic until it commits, so there is no mechanic to defeat by
+	# capping it, and doing so keeps the track's "how full does this look"
+	# reading consistent with every other lane-picked hazard). Reused
+	# verbatim rather than duplicated: same picker, same guarantee (always
+	# returns a valid lane, see its own doc).
+	return _pick_dodge_lane(_active_lane_occupancy(segment), _max_active_lanes_for_row())
+
+## How long after a stomper the next one may appear -- same lerp shape as
+## _charger_cooldown_s, see that function's own doc for why lookahead_speed
+## (not current_speed) is the right speed to size this against.
+func _stomper_cooldown_s() -> float:
+	var t := clampf(
+		(GameState.lookahead_speed() - GameState.BASE_SPEED)
+			/ (GameState.MAX_SPEED - GameState.BASE_SPEED),
+		0.0, 1.0
+	)
+	return lerpf(STOMPER_COOLDOWN_EARLY_S, STOMPER_COOLDOWN_LATE_S, t)
+
+## Whether a stomper placed on `segment` right now would arrive far enough
+## in time from every live CHARGER on the track -- the STOMPER-side half of
+## the STOMPER<->CHARGER exclusion the difficulty plan's vigilance point
+## demands (see Obstacle.gd's Type.STOMPER doc and the STOMPER SCHEDULING
+## section header above for why the CHARGER-side half needs no new code:
+## _charger_arrival_fits already refuses to spawn a charger near ANY
+## nearby obstacle on a DIFFERENT lane, and a STOMPER is jumpable so it
+## never qualifies for that function's narrow same-lane-unjumpable
+## exemption either).
+##
+## Deliberately LANE-AGNOSTIC, unlike _charger_arrival_fits' own per-lane
+## test: a STOMPER's real danger tracks WHATEVER lane the player ends up
+## on (see Obstacle._process_stomper), so a nearby charger arriving close
+## in time is a potential compound regardless of which lane either one is
+## placed on at spawn -- there is no lane this check could safely ignore.
+## By construction, not by verification after the fact: a STOMPER simply
+## never gets scheduled in the first place if a CHARGER already occupies
+## the timing window it would need, exactly the same "excluded at
+## generation" contract every other anti-frustration guarantee in this
+## file uses (see e.g. _pick_jump_lane, _pick_air_enemy_lane).
+##
+## Same arrival-time-at-CURRENT-speed convention as _charger_arrival_fits
+## (comparable to Obstacle.time_to_contact_s(), which is what every live
+## CHARGER's own arrival is read through), and the same
+## inflate-the-margin-by-lookahead/current trick to pay for the ramp
+## instead of the raw gap -- see that function's own doc for the full
+## reasoning, reused verbatim here.
+func _stomper_charger_margin_clear(segment: TrackSegment) -> bool:
+	var arrival := -segment.position.z / GameState.current_speed
+	var margin := CHARGER_ARRIVAL_MARGIN_S * GameState.lookahead_speed() / GameState.current_speed
+	for other_segment in _segments:
+		if other_segment == segment:
+			continue
+		var obstacle := _active_obstacle_in(other_segment)
+		if obstacle == null or obstacle.obstacle_type != Obstacle.Type.CHARGER:
+			continue
+		var other_arrival: float = obstacle.time_to_contact_s()
+		if other_arrival <= 0.0:
+			continue # already past the player, cannot crowd anything
+		if absf(other_arrival - arrival) < margin:
 			return false
 	return true
 
