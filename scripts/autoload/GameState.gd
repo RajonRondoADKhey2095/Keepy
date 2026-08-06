@@ -14,6 +14,23 @@ signal counts_changed(nut_count: int, gland_count: int)
 ## register_risk_event, never through a handler on this signal, so nothing
 ## can silently stop working by failing to connect.
 signal risk_event(kind: RiskEvent)
+## Fires whenever the combo COUNT or MULTIPLIER moves, in either direction
+## -- including the collapse to (0, 1) on timeout or death, so a listener
+## that only ever reacts to this one signal still ends up in the right
+## state. The HUD is driven entirely by it.
+signal combo_changed(count: int, multiplier: int)
+## Fires ONLY on the frame the multiplier steps UP a tier, in addition to
+## combo_changed. A separate signal rather than "diff the multiplier in the
+## handler": crossing a tier deserves a visibly stronger reaction than an
+## ordinary increment (see HUD.gd), and every listener working that out for
+## itself from the previous value is how two surfaces end up disagreeing
+## about what counts as a tier-up.
+signal combo_tier_up(multiplier: int)
+## Fires when a combo the player HAD is lost -- never on a combo that was
+## already zero. Distinct from combo_changed(0, 1) carrying the same
+## information, for the same reason as above: losing a chain is an event,
+## not a value.
+signal combo_lost()
 
 enum State { TITLE, PLAYING, GAME_OVER }
 
@@ -49,6 +66,78 @@ enum State { TITLE, PLAYING, GAME_OVER }
 # =====================================================================
 
 enum RiskEvent { JUMP_DODGE, NEAR_MISS, LATE_DODGE, GLAND }
+
+# =====================================================================
+# COMBO / MULTIPLIER TUNING -- the reward half of the risk system above.
+# Grouped here with the speed/pacing knobs rather than scattered, same as
+# every other tunable in this file.
+#
+# THE DESIGN PROBLEM, stated plainly: after the CHARGER batch the game can
+# finally kill the player ("j'ai perdu avec l'ennemi charger, bon signe"),
+# but it still never has to. A player who changes lane early, never jumps
+# and never reaches for a gland survives essentially forever, and scores
+# almost as well as one who does not -- because the dominant term in the
+# score is distance, which is a function of TIME SURVIVED and of nothing
+# else. Safe play was not just viable, it was optimal.
+#
+# So this block does NOT add a threat. It makes the SCORE care how the
+# distance was covered: the multiplier below applies to collectibles ONLY
+# (see add_noisette/add_gland), so the baseline distance income stays
+# exactly what it was and every point of upside now sits behind a risk.
+# Playing safe stops being punished and starts being merely boring, which
+# is the actual goal -- difficulty the player CHOOSES rather than
+# difficulty imposed on them.
+# =====================================================================
+
+## Seconds without a risk event after which the combo collapses to zero.
+##
+## THE CENTRAL KNOB of the whole system, and the reason it creates pressure
+## at all: the combo is not lost by making a MISTAKE, it is lost by playing
+## it safe for too long. Nothing about dodging an obstacle cleanly resets
+## it -- only the absence of risk does. A player sitting on a full x4 has
+## to keep finding danger to hold it, which is exactly the behaviour this
+## batch exists to provoke.
+##
+## 5.0s sits in the middle of the 4-6s bracket the design called for, and
+## it is not an arbitrary midpoint: TrackManager.MIN_OBSTACLE_GAP_S
+## (~0.80s) times the per-row obstacle chance means hazards arrive every
+## ~1-2s in normal density, so 5s is comfortably long enough that a chain
+## is sustainable through an ordinary stretch of track, and short enough
+## that a CALM window (TrackManager.CALM_DURATION_MIN_S..MAX_S, 2-3s at
+## 0.45x density) genuinely threatens a chain the player is not working to
+## keep alive.
+const COMBO_TIMEOUT_S: float = 5.0
+
+## How long BEFORE the timeout the combo counts as "about to be lost" --
+## read by the HUD (see HUD.gd) to start the warning pulse.
+##
+## This is not polish. A reward that vanishes silently teaches nothing: the
+## player sees a number they had, then a number they do not, with no moment
+## in between where they could have acted. The warning IS the mechanic --
+## it is the instant the game asks "are you going to go find some danger,
+## or let this go", and it is the only part of the loop that can actually
+## push a cautious player toward a hazard they would otherwise avoid.
+##
+## 1.2s: longer than a full lane-switch escape (Obstacle.LANE_SWITCH_TIME_S
+## + a perception budget, ~0.35s) so acting on it is genuinely possible
+## rather than a tease, and short enough that it stays a distinct alarm
+## instead of describing a quarter of the combo's whole lifetime.
+const COMBO_WARNING_S: float = 1.2
+
+## How many risk events each multiplier step costs. Progressive by
+## construction: the Nth step needs the same 3 events as the first, so the
+## curve is linear in events and the player can count it (3 = x2, 6 = x3,
+## 9 = x4) rather than having to feel out an accelerating threshold.
+const COMBO_TIER_SIZE: int = 3
+
+## Ceiling on the multiplier. WITHOUT this the score is unbounded in a way
+## that has nothing to do with skill: an endless runner's run length is
+## open-ended, so any multiplier that keeps climbing eventually makes the
+## last minute of a long run worth more than everything before it combined,
+## and the leaderboard stops ranking players and starts ranking session
+## length. x4 keeps a well-played stretch clearly ahead of a safe one (see
+## scripts/dev/ComboAudit.gd for the measured gap) without that.
+const COMBO_MAX_MULTIPLIER: int = 4
 
 # =====================================================================
 # SPEED / PACING TUNING KNOBS -- everything needed to re-tune the run's
@@ -269,8 +358,33 @@ var dark_variant_index: int = 0
 # ground Noisette because it's only reachable with correct jump timing
 # (see Gland.gd / TrackManager GLAND_CHANCE_PER_ROW) -- the score bump is
 # the reward for the extra risk.
-const NOISETTE_VALUE: int = 1
-const GLAND_VALUE: int = 5
+#
+# RAISED 10x (1 -> 10 and 5 -> 50) BY THE COMBO BATCH, and the ratio
+# between them is deliberately untouched, as is every other design
+# relationship these numbers encode (see JUMP_DODGE_BONUS_VALUE, scaled by
+# the same factor for exactly that reason).
+#
+# WHY, measured rather than assumed: the combo multiplier applies to
+# collectibles and to nothing else (see add_noisette/add_gland for why
+# that restriction is correct). At the ORIGINAL values that made the
+# multiplier almost purely decorative, because collectibles were about 2%
+# of a run's score -- distance pays ~1 point per metre, i.e. 720-1560
+# points per minute across the speed table, against roughly 22 points a
+# minute of pickups. scripts/dev/ComboAudit.gd measured the consequence
+# directly: with a risky bot holding a multiplier 46% of the time and
+# earning an effective x1.90 on every pickup, its score at a MATCHED run
+# duration beat the safe bot's by 5.0%. A 5% edge does not change how
+# anyone plays; the reward existed on paper and nowhere else.
+#
+# Raising the base values is what gives the multiplier something to
+# multiply. It is a change of SCALE, not of format -- score stays a plain
+# int, and every consumer (HUD, local best in user://, the Firestore
+# `score` integerValue) is unaffected in shape. Scores after this batch are
+# NOT comparable with scores from before it, which matters for exactly one
+# thing: existing leaderboard entries now sit lower than equivalent new
+# runs.
+const NOISETTE_VALUE: int = 10
+const GLAND_VALUE: int = 50
 
 ## Points for successfully jumping OVER a jumpable hazard on its own
 ## lane (chantier 2, playtest-fixes batch -- see Obstacle.gd
@@ -282,7 +396,12 @@ const GLAND_VALUE: int = 5
 ## read as "nice, that mattered" rather than out-earning the collectible
 ## the whole jump economy is built around. Kept above a single
 ## NOISETTE_VALUE so it still registers as more than background score.
-const JUMP_DODGE_BONUS_VALUE: int = 2
+##
+## Scaled 10x (2 -> 20) alongside NOISETTE_VALUE/GLAND_VALUE by the combo
+## batch, purely so the two relationships this constant's own doc asserts
+## -- below a Gland, above a Noisette -- keep holding. Leaving it at 2
+## while the other two moved would have silently inverted both.
+const JUMP_DODGE_BONUS_VALUE: int = 20
 
 # Score is the sum of FOUR independently tracked counters so that a
 # collectible pickup (or a jump-dodge bonus) can never be silently
@@ -311,6 +430,19 @@ var gland_count: int = 0
 ## itself does not read it.
 var risk_event_counts: Array[int] = [0, 0, 0, 0]
 
+## Consecutive risk events in the current chain, and the score multiplier
+## it currently buys (always >= 1, always <= COMBO_MAX_MULTIPLIER).
+## combo_multiplier is DERIVED from combo_count by _multiplier_for() and
+## never set independently -- one number is the state, the other is a view
+## of it, so the two can never disagree.
+var combo_count: int = 0
+var combo_multiplier: int = 1
+## Run time at which the current chain lapses. Meaningless while
+## combo_count == 0. An absolute deadline rather than a countdown that is
+## decremented every frame: a deadline is re-armed by one assignment on a
+## risk event and cannot drift by accumulated float error over a long run.
+var combo_expires_at_s: float = 0.0
+
 func start_run() -> void:
 	distance_travelled = 0.0
 	run_time_s = 0.0
@@ -331,12 +463,24 @@ func start_run() -> void:
 	# own doc: a fresh literal would be a new allocation on every retry.
 	for i in risk_event_counts.size():
 		risk_event_counts[i] = 0
+	combo_count = 0
+	combo_multiplier = 1
+	combo_expires_at_s = 0.0
 	state = State.PLAYING
 	state_changed.emit(state)
 	score_changed.emit(score)
 	counts_changed.emit(nut_count, gland_count)
+	combo_changed.emit(combo_count, combo_multiplier)
 
 func end_run() -> void:
+	# Dying drops the chain, like any other way of losing it -- but
+	# SILENTLY (no combo_lost), because the game over screen is already
+	# the feedback for what just happened and a second "you lost your
+	# combo" alarm on top of it would be noise, not information.
+	combo_count = 0
+	combo_multiplier = 1
+	combo_expires_at_s = 0.0
+	combo_changed.emit(combo_count, combo_multiplier)
 	state = State.GAME_OVER
 	state_changed.emit(state)
 
@@ -353,6 +497,7 @@ func advance_time(delta: float) -> void:
 	run_time_s += delta
 	_update_stage()
 	_update_dark_cycle(delta)
+	_update_combo()
 
 ## Speed is a step function of ELAPSED TIME, never of distance travelled.
 ##
@@ -480,17 +625,36 @@ func add_distance(delta_distance: float) -> void:
 		distance_score = new_distance_score
 		_recompute_score()
 
+## THE two places the combo multiplier is actually cashed in, and the only
+## two. It applies to COLLECTIBLES ONLY -- deliberately not to
+## distance_score (which would make the multiplier a reward for surviving,
+## i.e. for the exact safe play this system exists to stop being optimal)
+## and not to jump_dodge_score (a jump-dodge is itself a combo INCREMENT;
+## multiplying it too would compound the same act twice).
+##
+## nut_count/gland_count stay RAW counts and are never multiplied -- they
+## answer "how many did I pick up", which the HUD and the leaderboard
+## submission both need to stay a literal number of objects.
 func add_noisette() -> void:
-	noisette_score += NOISETTE_VALUE
+	noisette_score += NOISETTE_VALUE * combo_multiplier
 	nut_count += 1
 	_recompute_score()
 	counts_changed.emit(nut_count, gland_count)
 
 func add_gland() -> void:
-	gland_score += GLAND_VALUE
+	# Scored at the multiplier in force BEFORE this pickup's own combo
+	# increment below, so a gland never inflates its own value. The order
+	# is the whole reason these two lines are not swapped.
+	gland_score += GLAND_VALUE * combo_multiplier
 	gland_count += 1
 	_recompute_score()
 	counts_changed.emit(nut_count, gland_count)
+	# A gland sits at jump apex (TrackSegment.GLAND_Y) and cannot be
+	# reached without leaving the ground -- an accepted risk by
+	# construction, so reaching one IS a risk event. Registered here
+	# rather than in Gland.gd so every risk kind enters the system through
+	# the same single door (see register_risk_event).
+	register_risk_event(RiskEvent.GLAND)
 
 ## Called by Obstacle.gd (_trigger_jump_dodge_feedback) the instant a
 ## jump-dodge is detected. No raw-count sibling the way nut_count/
@@ -513,7 +677,42 @@ func register_risk_event(kind: RiskEvent) -> void:
 	if state != State.PLAYING:
 		return
 	risk_event_counts[kind] += 1
+	combo_count += 1
+	combo_expires_at_s = run_time_s + COMBO_TIMEOUT_S
+	var previous_multiplier := combo_multiplier
+	combo_multiplier = _multiplier_for(combo_count)
 	risk_event.emit(kind)
+	combo_changed.emit(combo_count, combo_multiplier)
+	if combo_multiplier > previous_multiplier:
+		combo_tier_up.emit(combo_multiplier)
+
+## Collapses the chain once COMBO_TIMEOUT_S has elapsed with no risk event.
+## Driven from advance_time() -- the same clock everything else in this
+## file is derived from -- so a headless probe stepping the run at a fixed
+## delta sees exactly the timing a real run does.
+func _update_combo() -> void:
+	if combo_count == 0:
+		return # nothing to lose; also keeps this a single compare on most frames
+	if run_time_s < combo_expires_at_s:
+		return
+	combo_count = 0
+	combo_multiplier = 1
+	combo_changed.emit(combo_count, combo_multiplier)
+	combo_lost.emit()
+
+## Seconds left before the current chain lapses, clamped at 0. Returns 0
+## when there is no chain at all, so a caller never has to special-case
+## combo_count == 0 before asking (the HUD does not).
+func combo_time_left_s() -> float:
+	if combo_count == 0:
+		return 0.0
+	return maxf(0.0, combo_expires_at_s - run_time_s)
+
+## The multiplier a given chain length buys -- one tier per COMBO_TIER_SIZE
+## events, floored at 1 and capped at COMBO_MAX_MULTIPLIER. Pure, so the
+## whole progression can be read (and re-tuned) as one line.
+func _multiplier_for(count: int) -> int:
+	return clampi(1 + count / COMBO_TIER_SIZE, 1, COMBO_MAX_MULTIPLIER)
 
 func _recompute_score() -> void:
 	score = distance_score + noisette_score + gland_score + jump_dodge_score
