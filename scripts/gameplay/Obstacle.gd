@@ -105,6 +105,33 @@ class_name Obstacle
 
 enum Type { DODGE, JUMP, ENEMY, AIR_ENEMY }
 
+# =====================================================================
+# CLOSING SPEED -- see own_speed_factor / closing_speed() further down.
+#
+# Every hazard shipped so far is carried toward the player by the world
+# and by nothing else (TrackManager moves each TrackSegment at
+# GameState.current_speed; an obstacle is a child of a segment and never
+# touches its own Z). That made "the world's speed" and "the speed this
+# thing is arriving at" the same number everywhere, and the whole pacing
+# system quietly assumed it: this file converted distance to
+# time-before-contact with GameState.current_speed, and TrackManager
+# converted reaction-time budgets to row counts with
+# GameState.lookahead_speed().
+#
+# That assumption is not a property of the game, it is a property of the
+# hazards that happened to exist. An obstacle with a forward speed of its
+# own breaks it by construction -- its real reaction window is set by the
+# CLOSING speed (world + its own), not by the world's. So the assumption
+# is now written down explicitly, per obstacle, instead of being implied:
+# own_speed_factor states it, closing_speed() computes it, and everything
+# that turns a distance into a reaction time goes through that one value.
+#
+# own_speed_factor == 0.0 (every variant in Type today) reproduces the
+# old arithmetic exactly -- verified by re-running the pacing,
+# lane-fill and anti-frustration probes seeded identically before and
+# after this change, see the commit message for both sets of numbers.
+# =====================================================================
+
 # Time for Keepy's lateral lane lerp (Keepy.gd LANE_SWITCH_SPEED) to reach
 # ~95% of the way to a new lane -- the point a lane switch reads as "done"
 # rather than "still sliding". The lerp is an exponential ease
@@ -399,6 +426,11 @@ func _ready() -> void:
 ## before locking. Both are ignored for the other types.
 func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void:
 	obstacle_type = type
+	# Cleared FIRST, before any per-type branch below can set it: a pooled
+	# instance must never inherit the own speed of whatever it was in a
+	# previous life (see own_speed_factor's own doc). Every variant that
+	# exists today leaves it at 0.0.
+	own_speed_factor = 0.0
 	var is_dodge := type == Type.DODGE
 	var is_jump := type == Type.JUMP
 	var is_enemy := type == Type.ENEMY
@@ -581,12 +613,42 @@ func _track_manager() -> Node:
 		_track_manager_ref = get_tree().get_first_node_in_group("track_manager")
 	return _track_manager_ref
 
+## This instance's OWN forward speed, expressed as a MULTIPLE of the
+## world speed (0.0 = "carried by the world and nothing else", which is
+## every variant shipped so far). See the CLOSING SPEED section header
+## for why this exists and what it is allowed to affect.
+##
+## Reset to 0.0 on every configure() -- a pooled instance must never
+## inherit a previous life's own speed.
+var own_speed_factor: float = 0.0
+
+## The speed at which THIS obstacle actually closes on the player: the
+## world's own speed plus whatever this instance adds on top of it.
+##
+## The single answer to "how fast is this thing arriving", and the ONLY
+## value any distance <-> reaction-time conversion about this obstacle
+## may use. GameState.current_speed alone answers a DIFFERENT question --
+## how fast the world scrolls -- and the two stopped being the same
+## number the moment an obstacle was allowed its own speed. For every
+## variant with own_speed_factor == 0.0 this returns exactly
+## GameState.current_speed (a multiplication by 1.0 is exact), so
+## nothing about the pre-existing hazards changes.
+func closing_speed() -> float:
+	return GameState.current_speed * (1.0 + own_speed_factor)
+
 ## Public: this instance's own time-before-contact, in seconds. Exposed
 ## so TrackManager's cross-obstacle safety scan can compare two
 ## independent Obstacle instances' schedules without duplicating this
 ## division (see the class doc on Keepy sitting fixed at Z=0).
+##
+## Divides by closing_speed(), NOT by GameState.current_speed: two
+## obstacles with different own speeds are only comparable if each one's
+## time-to-contact was computed against its own rate of approach. This is
+## the value ENEMY's late lock, AIR_ENEMY's descent schedule,
+## TrackManager.lane_has_conflicting_jump_hazard and every dev probe all
+## read, so fixing it here fixes all of them at once.
 func time_to_contact_s() -> float:
-	return -global_position.z / GameState.current_speed
+	return -global_position.z / closing_speed()
 
 ## Animates the AIR_ENEMY variant's height across its whole approach --
 ## see the Type.AIR_ENEMY doc for the schedule this implements. Runs

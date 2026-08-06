@@ -167,7 +167,14 @@ func _scan_obstacles() -> void:
 		if obstacle.obstacle_type == Obstacle.Type.ENEMY:
 			var settling: bool = obstacle._enemy_settling
 			if _was_settling.get(key, false) and not settling:
-				_enemy_lock[key] = [_t, -z / GameState.current_speed, GameState.current_speed]
+				# Time-to-contact read from the obstacle itself rather
+				# than re-derived as -z/current_speed here: that division
+				# was a private fourth copy of "everything closes at
+				# exactly the world speed", which stopped being true the
+				# moment an obstacle could carry a forward speed of its
+				# own (see Obstacle.closing_speed). Identical value for a
+				# world-speed obstacle, correct for any other.
+				_enemy_lock[key] = [_t, obstacle.time_to_contact_s(), GameState.current_speed]
 			_was_settling[key] = settling
 
 		if _prev_z.has(key):

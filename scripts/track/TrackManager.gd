@@ -365,6 +365,11 @@ func _physics_process(delta: float) -> void:
 
 	_update_density_phase(GameState.run_time_s)
 
+	# THE WORLD's own speed, and the only thing this loop moves. An
+	# element that closes on the player faster than the world does adds
+	# its own displacement on top of this, from its own _physics_process,
+	# never by having this loop treat its segment differently -- see
+	# Obstacle.gd's CLOSING SPEED section header.
 	var move_amount := GameState.current_speed * delta
 	GameState.add_distance(move_amount)
 
@@ -471,23 +476,59 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 
 	segment.populate(spawn_obstacle, obstacle_type, obstacle_lane, noisette_lane, gland_lane)
 
-## How many rows must sit between two obstacles at the pace this row is
-## being laid out for. Rounded UP so the gap is never short by a fraction
-## of a row, and floored at 1 so two obstacles can never land on the same
-## row -- which the one-obstacle-per-TrackSegment pool makes impossible
-## anyway, but the floor states it rather than relying on it.
-##
-## Uses GameState.lookahead_speed(), not current_speed: this row is
-## spawned ~128m ahead and will be RUN THROUGH several seconds later,
-## potentially one palier faster (see lookahead_speed's own comment).
-func _required_gap_rows() -> int:
-	return maxi(1, ceili(MIN_OBSTACLE_GAP_S * GameState.lookahead_speed() / SEGMENT_LENGTH))
+# =====================================================================
+# SECONDS -> ROWS, AGAINST A CLOSING SPEED (never against "the speed")
+#
+# Every spacing rule in this file is stated in SECONDS of reaction time
+# and has to be turned into a distance (a number of 20m rows) to be
+# enforced at generation time. That conversion needs a speed, and the
+# right speed is the rate at which the element in question CLOSES on the
+# player -- which used to be the same thing as the world speed for every
+# hazard in the game, and no longer is by definition once an element can
+# carry a forward speed of its own (see Obstacle.gd's CLOSING SPEED
+# section header).
+#
+# So the speed is now an explicit ARGUMENT everywhere rather than an
+# implicit GameState.lookahead_speed() read inside each rule. Callers
+# state which element they are spacing; _row_closing_speed() answers how
+# fast it will be arriving. Passing 0.0 (no own speed) returns
+# lookahead_speed() unchanged -- a multiplication by 1.0 is exact -- so
+# every existing rule keeps its exact previous value.
+# =====================================================================
 
-## Same "seconds converted to rows against lookahead_speed()" pattern as
-## _required_gap_rows() above, sized from AIR_HAZARD_SEPARATION_S instead
-## of MIN_OBSTACLE_GAP_S -- see that constant for the full rationale.
+## The speed at which an element laid out RIGHT NOW, with an own speed of
+## `own_speed_factor` times the world speed, will actually close on the
+## player by the time it gets there.
+##
+## Built on GameState.lookahead_speed(), not current_speed, for the same
+## reason every spacing rule here always has: this row is spawned ~128m
+## ahead and will be RUN THROUGH several seconds later, potentially a
+## palier or more faster (see lookahead_speed's own comment). The own
+## speed multiplies whatever the world speed turns out to be at that
+## point, so an element defined this way stays coherent across the whole
+## ramp instead of being tuned for one palier.
+func _row_closing_speed(own_speed_factor: float) -> float:
+	return GameState.lookahead_speed() * (1.0 + own_speed_factor)
+
+## A reaction-time budget, in seconds, expressed as the number of 20m
+## rows it spans for something arriving at `closing_speed`. Rounded UP so
+## the gap is never short by a fraction of a row, and floored at 1 so two
+## obstacles can never land on the same row -- which the
+## one-obstacle-per-TrackSegment pool makes impossible anyway, but the
+## floor states it rather than relying on it.
+func _rows_for_seconds(seconds: float, closing_speed: float) -> int:
+	return maxi(1, ceili(seconds * closing_speed / SEGMENT_LENGTH))
+
+## How many rows must sit between two obstacles at the pace this row is
+## being laid out for.
+func _required_gap_rows() -> int:
+	return _rows_for_seconds(MIN_OBSTACLE_GAP_S, _row_closing_speed(0.0))
+
+## Same conversion as _required_gap_rows() above, sized from
+## AIR_HAZARD_SEPARATION_S instead of MIN_OBSTACLE_GAP_S -- see that
+## constant for the full rationale.
 func _required_air_hazard_separation_rows() -> int:
-	return maxi(1, ceili(AIR_HAZARD_SEPARATION_S * GameState.lookahead_speed() / SEGMENT_LENGTH))
+	return _rows_for_seconds(AIR_HAZARD_SEPARATION_S, _row_closing_speed(0.0))
 
 ## Spawn probability for a row that is already far enough from the last
 ## obstacle -- see OBSTACLE_CHANCE_BASE / OBSTACLE_CHANCE_CAP. Scaled by
@@ -810,6 +851,11 @@ func lane_has_conflicting_jump_hazard(lane: int, caller_time_to_contact: float, 
 		var punishes_jump: bool = obstacle.obstacle_type == Obstacle.Type.AIR_ENEMY and not obstacle.air_enemy_landed
 		if not (forces_jump or punishes_jump):
 			continue
+		# Both sides of this comparison are computed against their OWN
+		# closing speed (Obstacle.time_to_contact_s), which is what makes
+		# two obstacles with different own speeds comparable at all -- a
+		# raw distance difference, or two times derived from one shared
+		# world speed, would not be.
 		if absf(obstacle.time_to_contact_s() - caller_time_to_contact) < AIR_HAZARD_SEPARATION_S:
 			return true
 	return false

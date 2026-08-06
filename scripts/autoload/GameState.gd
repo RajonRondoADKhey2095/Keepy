@@ -337,6 +337,16 @@ func _update_stage() -> void:
 ## first -- taking a compile-time dependency on a plain scene script's
 ## layout; see TrackManager.gd's own comment pointing back at this
 ## constant so the two never silently drift apart.
+##
+## WORLD SPEED ONLY, and deliberately so: this is the lead time for
+## content that is carried toward the player by the world and by nothing
+## else. An element with a forward speed of its own covers the same 140m
+## in LESS time, so its real lead time is this divided by (1 + its own
+## speed factor) -- see Obstacle.gd's CLOSING SPEED section header. Since
+## this constant only ever sizes an UPPER bound (how far ahead a spawn
+## decision has to think), the world-speed value stays the correct,
+## conservative one for every element: nothing can ever be met later than
+## this says.
 const MAX_LOOKAHEAD_S: float = 7.0 * 20.0 / START_SPEED
 
 ## The speed that content spawned RIGHT NOW should be laid out for --
