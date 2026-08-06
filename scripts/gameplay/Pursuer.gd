@@ -61,6 +61,19 @@ const NEAR_SCALE: float = 2.2
 ## mid-sway from a previous one.
 var _anim_t: float = 0.0
 
+## BODY IS UNSHADED (shading_mode = 0 in Pursuer.tscn), near-black, for the
+## same reason Obstacle.gd's jump marker is: an unshaded material renders as
+## exactly its albedo every frame regardless of light angle, which is the
+## only way its post-inversion colour is a KNOWN value that can be verified
+## ahead of time rather than merely observed. A lit body drifts with the
+## DirectionalLight and its dark-mode contrast becomes unpredictable.
+##
+## Near-black specifically because the screen invert flips it to near-white,
+## the highest luminance available on the other side of the shader -- which
+## is what maximises separation from the ground in every dark palette. See
+## scripts/dev/PursuerContrastAudit.gd for the measured result and for the
+## structural ceiling this runs into.
+##
 ## Per-instance material, duplicated once in _ready for the same reason
 ## Obstacle.gd duplicates its enemy materials: the scene defines it as a
 ## shared sub-resource, and animating a shared material would bleed into
@@ -70,10 +83,14 @@ var _base_emission_energy: float = 0.0
 
 func _ready() -> void:
 	visible = false
-	var shared := _mesh.get_surface_override_material(0) as StandardMaterial3D
+	# The EYES' material is the animated one, not the body's -- see the
+	# BODY IS UNSHADED note above: an unshaded material ignores emission
+	# entirely, so the closing cue has to live somewhere that is still lit.
+	var shared := _eye_left.get_surface_override_material(0) as StandardMaterial3D
 	if shared:
 		_material = shared.duplicate()
-		_mesh.set_surface_override_material(0, _material)
+		_eye_left.set_surface_override_material(0, _material)
+		_eye_right.set_surface_override_material(0, _material)
 		_base_emission_energy = _material.emission_energy_multiplier
 	GameState.pursuer_became_visible.connect(_on_became_visible)
 
@@ -108,6 +125,7 @@ func _process(delta: float) -> void:
 	# The eyes brighten as it closes. Emission ENERGY rather than albedo, so
 	# the cue is luminance and not hue -- it therefore reads the same under
 	# all six dark palettes and in the light phase, which a colour shift
-	# could not promise (see the shader's per-channel inversion).
+	# could not promise (see the shader's per-channel inversion). Both eyes
+	# share one duplicated material, so this drives them together.
 	if _material:
 		_material.emission_energy_multiplier = lerpf(_base_emission_energy, _base_emission_energy * 3.0, t)
