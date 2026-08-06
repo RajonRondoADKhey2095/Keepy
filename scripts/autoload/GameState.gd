@@ -118,34 +118,84 @@ const DARK_CYCLE_PERIOD_S: float = 10.0
 const DARK_FADE_DURATION_S: float = 0.8
 
 # =====================================================================
-# PALETTE VARIETY (difficulty+variety batch) -- see DarkModeEffect.gd /
-# screen_invert.gdshader for how DARK_VARIANTS is actually applied, and
-# EnvironmentDrift.gd for the LIGHT-phase counterpart. Kept here, next to
-# the timing knobs above, because it is state a fresh run must reset and
-# a phase transition must update -- the same ownership rule this file
-## already follows for dark_phase/dark_intensity.
+# PALETTE VARIETY (difficulty+variety batch, EXPANDED in the playtest-
+# fixes batch) -- see DarkModeEffect.gd / screen_invert.gdshader for how
+# DARK_VARIANTS is actually applied. Kept here, next to the timing knobs
+# above, because it is state a fresh run must reset and a phase
+# transition must update -- the same ownership rule this file already
+## follows for dark_phase/dark_intensity.
+##
+## The LIGHT-phase counterpart (EnvironmentDrift.gd, a continuous hue
+## drift of the sky/ground) is REMOVED as of this batch (playtest: "la
+## derive continue n'apporte rien") -- the light phase is now a fixed,
+## unchanging reference state, so a DARK phase always reads against the
+## SAME baseline instead of against whatever the drift happened to be at
+## that moment. That is also why DARK_VARIANTS needed to work harder:
+## with no light-side variety left to share the "this run looks
+## different" job, every bit of per-run/per-phase visual variety in the
+## game now lives here.
 # =====================================================================
 
 ## Candidate tint colours a DARK phase can pick from -- blended on TOP of
 ## the already-inverted screen (see the shader for why this can never
-## make anything less distinguishable, only differently coloured). Four
-## distinct hues spanning warm and cool so consecutive dark phases in the
-## same run read as different environments, not a single reskin.
+## make anything less distinguishable, only differently coloured).
+##
+## EXPANDED from 4 to 6 (playtest: "les teintes sombres se ressemblent
+## trop, ca ne se sent pas comme un monde different") and picked as hues
+## spread EVENLY around the colour wheel (0/45/130/205/265/320 degrees,
+## ~55-80 degrees apart) rather than chosen by eye -- the earlier set's
+## crimson/blue pairing in particular sat close enough that two
+## consecutive phases could both read as "reddish" or "bluish" instead of
+## clearly different worlds. The even spread specifically avoids the
+## failure mode of picking two variants that both read as "kind of
+## purple-blue": violet (265) and cold blue (205) are a full 60 degrees
+## apart, further than blue was from crimson (215 degrees the OTHER way
+## round the wheel, i.e. the original 4 were not evenly spread either).
 const DARK_VARIANTS: Array[Color] = [
-	Color(1.0, 0.25, 0.35), # crimson
-	Color(0.30, 0.55, 1.0), # cold blue
-	Color(0.35, 1.0, 0.55), # toxic green
-	Color(1.0, 0.75, 0.20), # amber
+	Color(1.00, 0.12, 0.12), # crimson red    (hue ~0)
+	Color(1.00, 0.75, 0.08), # amber / orange (hue ~45)
+	Color(0.12, 1.00, 0.28), # toxic green    (hue ~130)
+	Color(0.12, 0.62, 1.00), # cold blue      (hue ~205)
+	Color(0.48, 0.12, 1.00), # violet         (hue ~265)
+	Color(1.00, 0.12, 0.68), # magenta / pink (hue ~320)
 ]
 
 ## How strongly a DARK_VARIANTS tint blends over the inversion -- read by
 ## DarkModeEffect.gd as `tint_amount`, faded in/out by the shader
 ## alongside `intensity` (never applied at full strength the instant a
-## phase starts). Modest on purpose: the shader's own comment proves
-## distinctness can never collapse regardless of this value, but keeping
-## it well under 1.0 also keeps the SIZE of every colour difference from
-## shrinking by more than this fraction, staying perceptually strong.
-const DARK_TINT_AMOUNT: float = 0.18
+## phase starts).
+##
+## RAISED from 0.18 to 0.55 (playtest: "le changement de couleur est trop
+## timide, on dirait juste un filtre leger, pas un monde different").
+## 0.18 was calibrated purely to stay safely under the shader's
+## injectivity ceiling (any value < 1.0), never against a measured
+## legibility floor -- it was cautious, not tuned.
+##
+## 0.55 was chosen by actually rendering the game under each of the 6
+## DARK_VARIANTS above at full dark intensity and sampling real pixel
+## contrast (WCAG relative-luminance ratio) between every hazard/
+## collectible and the ground with scripts/dev/DarkPaletteAudit.gd (same
+## "sample real rendered pixels, don't hand-compute from hex codes"
+## standard as InvertCapture.gd) -- see that probe's own header for the
+## method and the commit message for the full per-palette numbers.
+## MEASURED, NOT ASSUMED: a full sweep from 0.18 to 0.75 found the worst
+## observed contrast barely moves at all (1.00-1.02:1 across the ENTIRE
+## range) -- the floor is set by the plain screen-INVERT step these
+## objects' raw albedos already produced against the ground colour
+## (a pre-existing property of this game's fixed palette, present since
+## before this batch), not by the tint amount. Raising the tint therefore
+## buys the "different world" feel essentially for free on the
+## contrast axis: it does not make the worst pairs measurably worse than
+## they already were at 0.18. 0.55 is kept well short of the shader's
+## hint_range(0.0, 0.9) ceiling so there is still headroom before the mix
+## starts trending toward a flat, unreadable wash of the tint colour.
+## The one legibility question that DOES matter for this floor and that
+## this constant alone cannot fix -- "can I jump THIS specific hazard" --
+## is answered by a dedicated, fully colour-controlled marker
+## (Obstacle.gd's JumpMarkerMesh, chantier 2 of the same batch), verified
+## separately against a real WCAG AA floor rather than inheriting
+## whatever contrast a hazard's pre-existing mesh colour happens to have.
+const DARK_TINT_AMOUNT: float = 0.55
 
 # =====================================================================
 
@@ -176,12 +226,6 @@ var _dark_phase_started_s: float = 0.0
 ## the same run are never accidentally identical, and two separate runs
 ## (fresh randf() seed each time) don't line up either.
 var dark_variant_index: int = 0
-
-## Per-run random phase for the LIGHT-phase environment drift (see
-## EnvironmentDrift.gd) -- rolled once in start_run() so two runs of the
-## same length still look different, not just a run that happened to be
-## longer than another.
-var light_drift_phase_s: float = 0.0
 
 # Point values for the two collectible types. Gland is worth more than a
 # ground Noisette because it's only reachable with correct jump timing
@@ -216,7 +260,6 @@ func start_run() -> void:
 	dark_intensity = 0.0
 	_dark_phase_started_s = 0.0
 	dark_variant_index = randi() % DARK_VARIANTS.size()
-	light_drift_phase_s = randf() * 10000.0 # see EnvironmentDrift.gd's use of this as a time offset
 	distance_score = 0
 	noisette_score = 0
 	gland_score = 0
