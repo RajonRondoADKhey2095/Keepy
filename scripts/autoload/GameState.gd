@@ -9,8 +9,46 @@ signal state_changed(new_state: State)
 ## tick that also drives score_changed) -- the HUD counters only need to
 ## repaint when a count actually moves.
 signal counts_changed(nut_count: int, gland_count: int)
+## Fires once per credited RISK EVENT (see RiskEvent / register_risk_event).
+## Purely informational -- the combo bookkeeping is applied directly inside
+## register_risk_event, never through a handler on this signal, so nothing
+## can silently stop working by failing to connect.
+signal risk_event(kind: RiskEvent)
 
 enum State { TITLE, PLAYING, GAME_OVER }
+
+# =====================================================================
+# RISK EVENTS -- the whole point of the combo system (playtest: "je trouve
+# le jeu trop facile", diagnosed as "rien ne m'incite a prendre des
+# risques": the player can always change lane early, never jump, and
+# survive indefinitely). These are the four things the game is willing to
+# call a deliberate risk, and they are all things the codebase could
+# ALREADY see happen -- no new collision system, no new detection path:
+#
+#   JUMP_DODGE -- clearing a jumpable hazard by jumping over it on its own
+#                 lane. Detected since the playtest-fixes batch by
+#                 Obstacle._check_jump_dodge (which already scored a small
+#                 bonus for it); the combo system reuses that exact
+#                 detection rather than adding a second one.
+#   NEAR_MISS  -- a hazard passed close enough to graze. Derived from the
+#                 CLOSEST LATERAL APPROACH measured over the passage,
+#                 evaluated at the same Z=0 crossing the jump-dodge check
+#                 already computes -- see Obstacle.NEAR_MISS_MAX_LATERAL_M.
+#   LATE_DODGE -- the player was standing on a hazard's lane and vacated it
+#                 inside the final reaction window (see
+#                 Obstacle.LATE_DODGE_WINDOW_S). The escape CHARGER forces,
+#                 since a charger cannot be jumped.
+#   GLAND      -- collecting the airborne bonus, which is only reachable at
+#                 jump apex and therefore an accepted risk by construction
+#                 (see TrackSegment.GLAND_Y).
+#
+# Ordered by nothing in particular -- the enum's only job is to key the
+# per-kind counters below. Obstacle.gd decides which ONE of the three
+# hazard-passage kinds a given passage was (they are mutually exclusive by
+# construction, see _resolve_risk_event).
+# =====================================================================
+
+enum RiskEvent { JUMP_DODGE, NEAR_MISS, LATE_DODGE, GLAND }
 
 # =====================================================================
 # SPEED / PACING TUNING KNOBS -- everything needed to re-tune the run's
@@ -265,6 +303,14 @@ var score: int = 0
 var nut_count: int = 0
 var gland_count: int = 0
 
+## How many of each RiskEvent kind this run has credited -- index-aligned
+## with the RiskEvent enum. Fixed-size, allocated ONCE here and only ever
+## indexed/reset element by element, never re-created (nothing in the game
+## loop may allocate). Read by scripts/dev/ComboAudit.gd to report the
+## per-minute incrementation rate of safe versus risky play; the game
+## itself does not read it.
+var risk_event_counts: Array[int] = [0, 0, 0, 0]
+
 func start_run() -> void:
 	distance_travelled = 0.0
 	run_time_s = 0.0
@@ -281,6 +327,10 @@ func start_run() -> void:
 	score = 0
 	nut_count = 0
 	gland_count = 0
+	# Element-wise, never `risk_event_counts = [0,0,0,0]` -- see the var's
+	# own doc: a fresh literal would be a new allocation on every retry.
+	for i in risk_event_counts.size():
+		risk_event_counts[i] = 0
 	state = State.PLAYING
 	state_changed.emit(state)
 	score_changed.emit(score)
@@ -450,6 +500,20 @@ func add_gland() -> void:
 func add_jump_dodge_bonus() -> void:
 	jump_dodge_score += JUMP_DODGE_BONUS_VALUE
 	_recompute_score()
+
+## THE one entry point for "the player just did something risky". Called
+## by Obstacle.gd (the three hazard-passage kinds) and by add_gland()
+## below; nothing else may call it, so "what counts as a risk" stays
+## answerable by reading the RiskEvent enum's doc and those two call sites.
+##
+## Silently ignores events outside a live run: a hazard can finish crossing
+## Z=0 on the same physics frame the run ends, and crediting that would
+## show up as a phantom increment on the game over screen.
+func register_risk_event(kind: RiskEvent) -> void:
+	if state != State.PLAYING:
+		return
+	risk_event_counts[kind] += 1
+	risk_event.emit(kind)
 
 func _recompute_score() -> void:
 	score = distance_score + noisette_score + gland_score + jump_dodge_score

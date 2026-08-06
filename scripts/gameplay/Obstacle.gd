@@ -100,7 +100,7 @@ class_name Obstacle
 ## on DODGE (never jumpable) or on an AIR_ENEMY still airborne (jumping
 ## there is what kills you, see Obstacle.blocks_jump). Clearing a
 ## jumpable hazard by jumping over it on its exact lane also triggers a
-## small score bonus + a marker "pop" -- see _check_jump_dodge below and
+## small score bonus + a marker "pop" -- see _resolve_risk_event below and
 ## GameState.JUMP_DODGE_BONUS_VALUE.
 
 ##   CHARGER   -- the ONLY hazard with a forward speed of its OWN (see
@@ -382,6 +382,112 @@ const MARKER_POP_DURATION_S: float = 0.35
 ## MARKER_POP_DURATION_S then eased back to 1.0 -- see _update_marker_pop.
 const MARKER_POP_PEAK_SCALE: float = 1.9
 
+# =====================================================================
+# RISK EVENT TUNING (combo batch) -- the thresholds that decide whether a
+# hazard passing the player counts as a RISK the combo system rewards.
+# See GameState.RiskEvent for what the four kinds mean and why they exist;
+# this block owns only the two NUMBERS the two lateral kinds need.
+#
+# Playtest that asked for it: "je trouve le jeu globalement trop facile" --
+# diagnosed not as "the hazards are too weak" (the CHARGER fixed that:
+# "j'ai perdu, bon signe") but as "nothing rewards me for playing close to
+# them", so safe play is both viable AND optimal. These thresholds are what
+# make the difference between grazing and giving a hazard a wide berth
+# MEASURABLE, and therefore rewardable.
+#
+# EVERYTHING HERE IS DERIVED FROM GEOMETRY ALREADY IN THE GAME, never
+# guessed: the lane pitch (TrackSegment.LANE_X, 2.0m apart), the widest
+# hazard hitbox (1.2m, i.e. half-width 0.6 -- DodgeShape/ChargerShape/
+# AirEnemyShape in Obstacle.tscn) and Keepy's capsule radius (0.5,
+# Keepy.tscn). No new collision shape, no new Area3D, no new signal
+# plumbing: the closest approach is sampled on the frames the existing
+# per-frame passage check already runs.
+# =====================================================================
+
+## Lateral centre-to-centre distance below which Keepy's capsule (radius
+## 0.5) and the WIDEST hazard hitbox (half-width 0.6) overlap, i.e. the
+## distance at which a passage is a COLLISION rather than a graze.
+##
+## The floor under both LATERAL risk kinds (near-miss and late-dodge):
+## a passage whose closest approach was inside this band is not a risk
+## taken, it is a hit, and in a real run the player is already dead. It is
+## checked explicitly anyway rather than left implicit, for two reasons:
+## the dev probes deliberately neuter Keepy's collision layer (see
+## AntiFrustrationAudit.gd), so without it a probe bot could walk straight
+## THROUGH hazards and bank a combo for it -- which would make every safe-
+## versus-risky number this batch reports a lie -- and the narrower hitboxes
+## (ENEMY's capsule is radius 0.3) genuinely do let a body pass at a
+## distance that clears them but not the widest ones, which should read as
+## the same "too close to be a graze" for every type rather than as a
+## per-type lottery.
+##
+## Deliberately NOT applied to JUMP_DODGE: that escape is VERTICAL, so its
+## lateral distance is ~0 by definition (you jump over a hazard by being
+## directly above it) and this floor would reject the one risk kind the
+## game already shipped and already validated.
+const RISK_MIN_SURVIVABLE_LATERAL_M: float = 1.1
+
+## Closest lateral approach at or below which a survivable passage counts
+## as a graze. Sits between the collision floor above (1.1m) and the full
+## lane pitch (2.0m).
+##
+## WHY THIS CANNOT FIRE BY ACCIDENT: a player who is simply STANDING on a
+## lane adjacent to the hazard is 2.0m away, and the lane lerp settles to
+## within a millimetre of that in well under a second (Keepy.gd
+## LANE_SWITCH_SPEED = 12, i.e. 95% in 0.25s). Being inside this band at
+## the closest point of a passage therefore REQUIRES still being visibly
+## mid-slide as the hazard goes by, which in turn requires having started
+## the escape late on purpose. Playing the game the safe way -- switch as
+## soon as you read the lane -- never produces a number under 1.99m.
+##
+## WHY 1.75 AND NOT THE 1.6 THIS BATCH FIRST USED -- measured, and changed
+## because the measurement said so. The band's width in DISTANCE is not the
+## quantity that matters; what the player actually controls is WHEN they
+## start the escape, and the lane lerp converts one into the other. Going
+## from the 1.10m floor to 1.60m takes the lerp ~67ms, so a 0.5m band was a
+## ~67ms window on the input -- and the probe bore that out: over 300s of
+## deliberately risky play, NEAR_MISS fired ONCE while LATE_DODGE fired 34
+## times. A risk kind that rare is not a hard skill, it is dead code. 1.75m
+## widens the input window to ~97ms, which is a real skill window
+## (comparable to a rhythm game's "good" band) while still requiring the
+## escape to begin within ~0.2m of the hazard's own contact window -- a
+## quarter of a second later than even an alert cautious player would move.
+## See scripts/dev/ComboAudit.gd for the safe-versus-risky rates this is
+## tuned against.
+const NEAR_MISS_MAX_LATERAL_M: float = 1.75
+
+## Half-width, in metres of Z, of the window within which the closest
+## lateral approach is sampled -- and therefore the window the collision
+## floor above is judged over.
+##
+## EXACTLY the depth at which contact is geometrically possible: hazard
+## half-depth 0.5 (every hazard hitbox in Obstacle.tscn is 1.0 deep) plus
+## Keepy's capsule radius 0.5. That equality is the whole point and not a
+## coincidence to be tuned away from. Sampling any WIDER breaks the meaning
+## of RISK_MIN_SURVIVABLE_LATERAL_M: at 4m of separation in Z, being 0.8m
+## off the hazard's lane is not a collision and never was, so a wider window
+## would fold "briefly close while still far ahead" into "hit it" and throw
+## away perfectly good grazes. Sampling any NARROWER would start the
+## measurement after the closest moment had already passed. At this width,
+## "the minimum stayed above the floor" means precisely "no collision
+## occurred", which is what the floor is written to assert.
+const RISK_PROXIMITY_Z: float = 1.0
+
+## How late a lane change has to be, in seconds before contact, to count as
+## a LATE_DODGE. Expressed in seconds and derived from the game's own
+## declared reaction budget rather than picked freely: at exactly
+## ENEMY_REACTION_WINDOW_S the game GUARANTEES a lane switch started then
+## still completes in time (that is what the constant means), so 1.3x it is
+## the tightest band that is still reliably survivable -- "you cut it fine",
+## not "you got away with something the game never promised".
+##
+## In seconds, never in metres, for the same reason every other reaction
+## window in this file is: a CHARGER closes at 2.35x the world speed, so a
+## fixed distance would mean a completely different amount of real reaction
+## time for a charger than for everything else, and would drift again on
+## every re-tune of the speed table.
+const LATE_DODGE_WINDOW_S: float = ENEMY_REACTION_WINDOW_S * 1.3
+
 @onready var _dodge_mesh: MeshInstance3D = $DodgeMesh
 @onready var _dodge_shape: CollisionShape3D = $DodgeShape
 @onready var _jump_mesh: MeshInstance3D = $JumpMesh
@@ -396,7 +502,7 @@ const MARKER_POP_PEAK_SCALE: float = 1.9
 @onready var _jump_marker_mesh: MeshInstance3D = $JumpMarkerMesh
 
 ## Fired the instant a successful jump-dodge is detected (see
-## _check_jump_dodge) -- purely informational, nothing in this codebase
+## _resolve_risk_event) -- purely informational, nothing in this codebase
 ## currently listens to it (the score bonus and marker pop are applied
 ## directly, not via this signal's own handler), kept for dev-probe
 ## hooks and any future HUD toast without adding a second detection path.
@@ -441,7 +547,7 @@ var _air_enemy_flight_lane_x: float = 0.0
 var _air_enemy_landing_lane_x: float = 0.0
 
 ## Global Z read on the PREVIOUS frame this instance was visible -- see
-## _check_jump_dodge. A crossing from negative to >=0 is the exact same
+## _check_passage. A crossing from negative to >=0 is the exact same
 ## instant collision is tested (see time_to_contact_s's own doc: Keepy
 ## sits fixed at Z=0), so this is the one moment "did the player clear
 ## this on purpose" can be judged. Reset to the instance's OWN spawn Z at
@@ -467,6 +573,23 @@ var _charger_trail_base_z: Array[float] = []
 ## state, reset on every (re)configure so a pooled instance never enters
 ## a fresh spawn mid-pop from its previous life.
 var _marker_pop_t: float = -1.0
+
+## Closest lateral (X) centre-to-centre distance between this obstacle and
+## Keepy observed so far during the CURRENT passage -- sampled only on the
+## frames this instance is within RISK_PROXIMITY_Z of the player, and read
+## once at the Z=0 crossing to classify the passage (see
+## _resolve_risk_event). INF means "nothing sampled yet this passage".
+##
+## A single float, re-armed to INF at the crossing and in configure(), so a
+## pooled instance never judges one passage using the previous one's
+## numbers -- exactly the contract _prev_pass_z already follows.
+##
+## The MINIMUM over the passage, not the value at the crossing instant: a
+## graze is "how close did it actually get", and the closest point of a
+## passage is not in general the instant the obstacle reaches Z=0 (a player
+## still sliding away is nearest slightly BEFORE it, and at the top of the
+## speed table the whole overlap lasts only a few physics frames).
+var _min_lateral_distance: float = INF
 
 # Cached group lookups, resolved lazily (first use, not _ready) so
 # scene-tree construction order between Obstacle/Keepy/TrackManager never
@@ -620,17 +743,19 @@ func configure(type: Type, lane_x: float = 0.0, alt_lane_x: float = 0.0) -> void
 	_jump_marker_mesh.scale = Vector3.ONE
 	_marker_pop_t = -1.0
 	_prev_pass_z = global_position.z
+	_min_lateral_distance = INF
 
 func _physics_process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAYING:
 		return
 
 	# Both run for EVERY type (DODGE/JUMP included, neither of which
-	# reaches the ENEMY-only sway code below) -- a jump-dodge can happen
-	# on any jumpable type, and a pop that started on a previous frame
-	# must keep animating regardless of which per-type branch this frame
-	# takes.
-	_check_jump_dodge()
+	# reaches the ENEMY-only sway code below) -- a risk event can happen
+	# on any type (a graze or a late dodge applies to the two UNJUMPABLE
+	# ones too, which is exactly when a lane switch is the only escape
+	# there is), and a pop that started on a previous frame must keep
+	# animating regardless of which per-type branch this frame takes.
+	_check_passage()
 	_update_marker_pop(delta)
 
 	if obstacle_type == Type.CHARGER:
@@ -749,7 +874,7 @@ func _current_player_lane() -> int:
 	return player.lane_index
 
 ## Lazily-cached lookup of the single Keepy instance, shared by
-## _current_player_lane() (lane only) and _check_jump_dodge() (which also
+## _current_player_lane() (lane only) and _check_passage() (which also
 ## needs is_on_floor()) so there is exactly one place that resolves the
 ## "player" group into a node.
 func _current_player_ref() -> Keepy:
@@ -814,7 +939,7 @@ func time_to_contact_s() -> float:
 ## animate an offset that populate() overwrites anyway, whereas this one
 ## integrates position.z, so an invisible charger left running would
 ## drift arbitrarily far and hand a stale global Z to
-## time_to_contact_s() / _check_jump_dodge the moment it came back into
+## time_to_contact_s() / _check_passage the moment it came back into
 ## play.
 ##
 ## Straight line, one lane, start to finish -- there is intentionally no
@@ -1003,41 +1128,142 @@ func _apply_enemy_alarm(t: float) -> void:
 static func blocks_jump(type: Type) -> bool:
 	return type == Type.DODGE or type == Type.AIR_ENEMY or type == Type.CHARGER
 
-## Detects the exact moment a JUMP-DODGE happens -- not "the player
-## jumped", but specifically "the player jumped OVER THIS obstacle,
-## on ITS lane, at the instant it would otherwise have hit them"
-## (playtest: "meme quand je le fais je ne sens rien" -- clearing a
-## hazard on purpose needs to feel different from an idle jump on an
-## empty lane). Collision itself is tested by Godot's own Area3D
-## body_entered (_on_body_entered) at this exact same Z=0 crossing (see
-## time_to_contact_s's own doc) -- this function does not duplicate that
-## test, it only asks "given no collision happened, was this obstacle
-## even relevant to the player right now".
+## THE one per-frame hook that watches this obstacle go past the player,
+## and the ONLY place a risk event can originate from a hazard passage.
 ##
-## `_prev_pass_z` tracks THIS instance's own global Z frame to frame
-## (reset in configure(), see that var's own doc) so the crossing is
-## detected exactly once per spawn, not once per frame it happens to sit
-## past Z=0 (which would otherwise fire every remaining frame the pooled,
+## Two jobs, both hanging off state this function already had to keep:
+##   1. SAMPLE the closest lateral approach while the obstacle is within
+##      RISK_PROXIMITY_Z of the player (see _min_lateral_distance for why
+##      the minimum over the passage, and not the value at the crossing
+##      instant, is the honest measure of a graze).
+##   2. DETECT the Z=0 crossing -- the exact instant collision is tested
+##      (see time_to_contact_s's own doc: Keepy sits fixed at Z=0) and
+##      therefore the one moment "what just happened here" can be judged --
+##      and hand the passage to _resolve_risk_event.
+##
+## GREW OUT OF _check_jump_dodge (playtest-fixes batch) rather than being
+## added alongside it: the jump-dodge was already detected at exactly this
+## crossing, with exactly this pooled-instance bookkeeping, so a second
+## detection path watching the same instant would have been two things to
+## keep in sync for no gain. The jump-dodge's own contract is unchanged --
+## it is now the first branch of _resolve_risk_event, still emits
+## `jump_dodged`, still awards GameState.JUMP_DODGE_BONUS_VALUE, still pops
+## the marker, and is still verified end to end by
+## scripts/dev/JumpDodgeRewardAudit.gd.
+##
+## Collision itself is tested by Godot's own Area3D body_entered
+## (_on_body_entered) -- nothing here duplicates that test, it only asks
+## "given no collision ended the run, was this passage a risk taken".
+##
+## `_prev_pass_z` tracks THIS instance's own global Z frame to frame (reset
+## in configure(), see that var's own doc) so the crossing is detected
+## exactly once per spawn, not once per frame it happens to sit past Z=0
+## (which would otherwise fire every remaining frame the pooled,
 ## still-visible-for-one-more-tick instance sits behind the player).
-func _check_jump_dodge() -> void:
+func _check_passage() -> void:
 	if not visible:
 		return
 	var z := global_position.z
+	var player := _current_player_ref()
+	if player != null and absf(z) <= RISK_PROXIMITY_Z:
+		# position.x, not LANE_X[lane_index]: the REAL interpolated X. The
+		# lane index snaps the instant the input lands, seconds before the
+		# body finishes sliding, and it is precisely that slide this whole
+		# measurement is about.
+		_min_lateral_distance = minf(_min_lateral_distance, absf(player.position.x - position.x))
 	var crossed := _prev_pass_z < 0.0 and z >= 0.0
 	_prev_pass_z = z
-	if not crossed or blocks_jump(obstacle_type):
+	if not crossed:
 		return
-	if obstacle_type == Type.AIR_ENEMY and not air_enemy_landed:
-		return # unreachable given blocks_jump already excludes this, kept explicit for clarity
-	var player := _current_player_ref()
+	var closest_lateral := _min_lateral_distance
+	# Re-armed HERE and not only in configure(): a charger despawns and a
+	# segment recycles well after the crossing, so leaving the sample armed
+	# would let a stale minimum survive into the next judgement.
+	_min_lateral_distance = INF
 	if player == null:
 		return
+	_resolve_risk_event(player, closest_lateral)
+
+## Classifies a completed passage as AT MOST ONE risk event -- see
+## GameState.RiskEvent for what the kinds mean.
+##
+## Ranked, and exclusive by construction: a passage credits the FIRST kind
+## it qualifies for and returns. Crediting one passage twice would let a
+## single well-timed lane change count as two combo steps, which is exactly
+## how a reward system stops meaning anything.
+##
+## THE ORDER IS "TIGHTEST CLAIM WINS", and it is load-bearing rather than
+## cosmetic:
+##   JUMP_DODGE first because it is the only VERTICAL escape, so its
+##     lateral distance is ~0 by definition (you clear a hazard by being
+##     directly above it) and every lateral test below would either reject
+##     it or, worse, read it as a collision.
+##   NEAR_MISS before LATE_DODGE because the two overlap almost completely
+##     -- getting off a lane late is also what leaves you close to it -- and
+##     the graze is the STRICTER of the two: it requires still being inside
+##     a 0.5m band as the hazard goes past, where a late dodge only requires
+##     having started the escape inside a time window. Ranked the other way
+##     round, LATE_DODGE would swallow essentially every tight escape and
+##     NEAR_MISS would be dead code that never fires in a real run (checked,
+##     not assumed: that ordering was written first and the probe run that
+##     measures per-kind rates is what exposed it).
+## What each one therefore means to the player is clean: NEAR_MISS is "you
+## were still in the danger zone when it passed", LATE_DODGE is "you got
+## clear in time, but only just".
+func _resolve_risk_event(player: Keepy, closest_lateral: float) -> void:
+	if _is_jump_dodge(player):
+		jump_dodged.emit()
+		_trigger_jump_dodge_feedback()
+		GameState.register_risk_event(GameState.RiskEvent.JUMP_DODGE)
+		return
+	# Both LATERAL kinds share one floor: a passage that got closer than a
+	# body's width is a hit, not a risk taken -- see
+	# RISK_MIN_SURVIVABLE_LATERAL_M for why this is checked explicitly
+	# rather than left to "the player would be dead anyway".
+	if closest_lateral < RISK_MIN_SURVIVABLE_LATERAL_M:
+		return
+	if closest_lateral <= NEAR_MISS_MAX_LATERAL_M:
+		GameState.register_risk_event(GameState.RiskEvent.NEAR_MISS)
+		return
+	if _is_late_dodge(player):
+		GameState.register_risk_event(GameState.RiskEvent.LATE_DODGE)
+
+## The pre-existing jump-dodge test, lifted verbatim out of the old
+## _check_jump_dodge (same four conditions, same order, same reasoning) so
+## the behaviour this batch inherited stays byte-for-byte the thing that
+## was already validated in playtest and is still covered by
+## JumpDodgeRewardAudit.gd.
+func _is_jump_dodge(player: Keepy) -> bool:
+	if blocks_jump(obstacle_type):
+		return false
+	if obstacle_type == Type.AIR_ENEMY and not air_enemy_landed:
+		return false # unreachable given blocks_jump already excludes this, kept explicit for clarity
 	if not is_equal_approx(position.x, TrackSegment.LANE_X[player.lane_index]):
-		return # different lane -- this obstacle was never the one the player had to deal with
+		return false # different lane -- this obstacle was never the one the player had to deal with
 	if player.is_on_floor():
-		return # grounded at the crossing instant: either it just walked into a collision (handled elsewhere) or this type never required a jump to begin with
-	jump_dodged.emit()
-	_trigger_jump_dodge_feedback()
+		return false # grounded at the crossing instant: either it just walked into a collision (handled elsewhere) or this type never required a jump to begin with
+	return true
+
+## Whether the player was STANDING ON this obstacle's lane and got off it
+## inside LATE_DODGE_WINDOW_S of contact -- the escape a CHARGER forces,
+## since a charger cannot be jumped.
+##
+## Reads Keepy's own previous_lane_index/last_lane_change_s (see their doc
+## for why the question cannot be answered from the current lane): by the
+## time a hazard reaches Z=0 the player has long since settled on the
+## destination lane, so nothing about where they ARE still records when, or
+## from where, they left.
+##
+## Uses _lane_index_for_x rather than comparing X floats: a settled ENEMY
+## or a landed AIR_ENEMY arrives at an exact LANE_X, but nearest-lane is
+## robust to any future variant that does not, and the helper already
+## exists in this file.
+func _is_late_dodge(player: Keepy) -> bool:
+	if player.previous_lane_index == player.lane_index:
+		return false # no lane change on record this run
+	if _lane_index_for_x(position.x) != player.previous_lane_index:
+		return false # they left SOME lane, but not the one this hazard is on
+	return GameState.run_time_s - player.last_lane_change_s <= LATE_DODGE_WINDOW_S
 
 ## Score bonus + the marker's visual "pop" -- see
 ## GameState.JUMP_DODGE_BONUS_VALUE and MARKER_POP_DURATION_S/
