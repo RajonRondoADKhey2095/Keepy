@@ -48,8 +48,29 @@ const CAPSULE_HALF_HEIGHT: float = 0.8
 # both values must always match; this constant IS that value's home.
 const JUMPABLE_OBSTACLE_TOP_HEIGHT: float = 0.7
 
+## Sentinel for last_lane_change_s meaning "this run has not changed lane
+## yet" -- a plain large negative rather than -INF so every reader can do
+## ordinary arithmetic on it (run_time_s - this) without ever producing a
+## NaN or an INF. Same spirit as TrackManager._NO_RECENT_HAZARD.
+const NO_LANE_CHANGE_S: float = -1000.0
+
 var lane_index: int = 1
 var target_x: float = 0.0
+
+## The lane this body was on BEFORE the most recent successful lane
+## change, and the run time that change happened at. Written by move_lane()
+## only, and only when the lane actually moved (a swipe into the wall at
+## lane 0/2 is not a lane change and must not look like one).
+##
+## Exists for the risk/combo system (see Obstacle._is_late_dodge): "did the
+## player vacate this hazard's lane, and how late" is a question about the
+## SWITCH, not about where the player ended up, so it cannot be answered
+## from lane_index/position.x alone -- by the time a hazard passes, both
+## have long since settled on the destination lane and carry no trace of
+## when the escape was started. Two plain fields updated at the one place a
+## lane change can originate; nothing polls, nothing allocates.
+var previous_lane_index: int = 1
+var last_lane_change_s: float = NO_LANE_CHANGE_S
 
 @onready var swipe_detector: SwipeDetector = get_node_or_null("../SwipeDetector")
 
@@ -91,11 +112,24 @@ func _handle_keyboard_input() -> void:
 		move_lane(1)
 
 func move_lane(direction: int) -> void:
-	lane_index = clampi(lane_index + direction, 0, LANE_X.size() - 1)
+	var new_index := clampi(lane_index + direction, 0, LANE_X.size() - 1)
+	# Early-out when the clamp ate the move (already on an edge lane).
+	# Behaviourally identical to the previous unconditional assignment --
+	# target_x would have been rewritten to the value it already held --
+	# but it keeps previous_lane_index/last_lane_change_s honest: a swipe
+	# that moved nothing is not an escape and must never be timestamped as
+	# one (see those vars' own doc).
+	if new_index == lane_index:
+		return
+	previous_lane_index = lane_index
+	lane_index = new_index
+	last_lane_change_s = GameState.run_time_s
 	target_x = LANE_X[lane_index]
 
 func reset_lane() -> void:
 	lane_index = 1
+	previous_lane_index = lane_index
+	last_lane_change_s = NO_LANE_CHANGE_S
 	target_x = LANE_X[lane_index]
 	position.x = target_x
 

@@ -45,3 +45,26 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 28
 theme_override_colors/font_color = Color(0.95, 0.8, 0.25, 1)
 text = "Glands : 0"
+
+[node name="ComboRow" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
+alignment = 1
+theme_override_constants/separation = 16
+visible = false
+
+[node name="ComboLabel" type="Label" parent="MarginContainer/VBoxContainer/ComboRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.04, 0.03, 0.06, 1)
+theme_override_constants/outline_size = 10
+text = "COMBO 0"
+
+[node name="MultiplierLabel" type="Label" parent="MarginContainer/VBoxContainer/ComboRow"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 46
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.04, 0.03, 0.06, 1)
+theme_override_constants/outline_size = 12
+text = "x1"
