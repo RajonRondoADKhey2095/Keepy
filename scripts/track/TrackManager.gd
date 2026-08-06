@@ -49,7 +49,19 @@ const SAFE_START_SEGMENTS: int = 2 # no obstacles on the first N segments of a r
 ## ON TOP of the time the lane switch itself then takes. The single knob
 ## for "how fair does the track feel"; raising it thins the track at
 ## speed, lowering it packs it tighter.
-const OBSTACLE_REACTION_BUDGET_S: float = 0.6
+##
+## LOWERED from 0.6 to 0.55 (playtest-fixes batch, chantier 4: "encore
+## un cran de difficulte" + the mid-palier density dip already noted
+## below on OBSTACLE_CHANCE_CAP). This is the ~0.55 the task's own
+## difficulty knob points at, not a number picked in isolation -- see
+## MIN_OBSTACLE_GAP_S for what it actually changes. Re-verified after
+## the change (scripts/dev/PacingAudit.gd) that the worst-case reaction
+## budget stays positive at every palier including the cap -- see that
+## constant's own measured numbers in the commit message for this batch;
+## a reaction budget of 0.55s is still comfortably above the ~0.1s
+## PERCEPTION_REACTION_S floor Obstacle.gd's own ENEMY encounter uses,
+## so this is not pushing the track into "impossible", only "tighter".
+const OBSTACLE_REACTION_BUDGET_S: float = 0.55
 
 ## Minimum time that must therefore separate two consecutive obstacles,
 ## perception budget plus the lane switch's own travel time. Stated in
@@ -63,16 +75,48 @@ const MIN_OBSTACLE_GAP_S: float = Obstacle.LANE_SWITCH_TIME_S + OBSTACLE_REACTIO
 ## GameState.BASE_SPEED..MAX_SPEED.
 ##
 ## It rises with speed to COMPENSATE the enforced gap above, not to add
-## difficulty on top of it: once the minimum gap crosses one row (which
-## it does at 22.5 m/s, where 0.85s of gap needs more than 20m), every
-## other row becomes ineligible and a flat 0.55 chance would leave the
+## difficulty on top of it: once the minimum gap crosses one row, every
+## other row becomes ineligible and a flat low chance would leave the
 ## late game emptier than the early game -- the spacing fix would have
-## quietly made the hard part easier. At the cap, 0.85 on a two-row grid
-## lands the mean gap at ~1.67s against the ~1.43s a flat 0.55 gave at
-## 26 m/s before this change, i.e. roughly the density the track already
-## had, now with a floor under the worst case instead of none.
-const OBSTACLE_CHANCE_BASE: float = 0.55
-const OBSTACLE_CHANCE_CAP: float = 0.85
+## quietly made the hard part easier.
+##
+## RAISED from 0.55/0.85 to 0.60/0.90 alongside OBSTACLE_REACTION_BUDGET_S's
+## drop to 0.55 (chantier 4, "encore un cran de difficulte") -- and the
+## SAME budget drop also NARROWS the mid-ramp density dip this pair
+## exists to compensate for, not just independently of it. MEASURED
+## before/after with scripts/dev/PacingAudit.gd (never hand-derived from
+## the formula alone -- GameState.lookahead_speed() means a row's actual
+## spacing can be laid out for a LATER, faster palier than the one it
+## visually sits in, which makes the raw "gap crosses one row at speed
+## X" arithmetic an unreliable predictor on its own):
+##
+##   palier speed   OLD mean gap (0.6/0.55/0.85)   NEW mean gap (0.55/0.60/0.90)
+##   ------------   -----------------------------   ------------------------------
+##   20.5 m/s        1.300s                          1.628s
+##   22.5 m/s        2.225s  <- the dip                0.889s  <- dip gone
+##   24.0 m/s        1.675s                          0.837s
+##   25.0 m/s        1.606s                          1.604s  <- unchanged, see below
+##   26.0 m/s (cap)  1.724s                          1.648s
+##
+## Paliers 22.5 and 24.0 m/s were sparser than BOTH their neighbours
+## under the old constants (the "dip" -- 22.5 m/s in particular, at
+## 2.225s, was the single sparsest palier in the whole ramp, sparser even
+## than 18.0 m/s at the START of the run). The lower reaction budget
+## shrinks MIN_OBSTACLE_GAP_S enough that these two paliers stay in the
+## cheaper 1-row spacing regime instead of prematurely falling into
+## 2-row spacing, and they are now the DENSEST paliers in the entire
+## ramp (0.889s / 0.837s) rather than the sparsest -- the dip is
+## eliminated, not just narrowed. 25.0 m/s stays unchanged: it was
+## ALREADY being spaced for the cap's speed via lookahead before this
+## batch (its whole 7.5s palier duration sits inside
+## GameState.MAX_LOOKAHEAD_S, ~11.7s, so rows populated anywhere in it
+## are laid out at-or-near 26 m/s regardless of the budget knob), so
+## thinning now genuinely only affects the last two speed steps of the
+## ramp instead of the last three. See the commit message for the full
+## PacingAudit output (min gap / min budget per palier, not just the
+## means above).
+const OBSTACLE_CHANCE_BASE: float = 0.60
+const OBSTACLE_CHANCE_CAP: float = 0.90
 
 # =====================================================================
 # AIR_ENEMY <-> JUMP / GLAND SEPARATION -- AIR_ENEMY sits at the exact
