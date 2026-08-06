@@ -70,6 +70,15 @@ var _stompers_spawned: int = 0
 var _stompers_crossed: int = 0
 var _chargers_crossed: int = 0
 var _dodges_crossed: int = 0
+## STOMPER spawns that happened while TrackManager.is_rush_active() was
+## true -- see the class doc's "cas croise" section: a rush only scales
+## _obstacle_chance()'s output (TrackManager.gd), and STOMPER_CHANCE_PER_ROW
+## is deliberately NOT scaled by it either (same "a rush must never also
+## speed up the one hazard whose margin is a hard exclusion" precedent
+## CHARGER_COOLDOWN_EARLY_S/_LATE_S's own doc already sets) -- but this is
+## measured, not merely argued, exactly like ChargerAudit.gd's own
+## "charger + rush" section does for CHARGER.
+var _stompers_spawned_in_rush: int = 0
 
 func _ready() -> void:
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
@@ -132,6 +141,8 @@ func _scan() -> void:
 		var respawned := not was_visible or (_prev_z.has(key) and z < float(_prev_z[key]))
 		if respawned and obstacle.obstacle_type == Obstacle.Type.STOMPER:
 			_stompers_spawned += 1
+			if _track.is_rush_active():
+				_stompers_spawned_in_rush += 1
 		elif not respawned and _prev_z.has(key) and float(_prev_z[key]) < 0.0 and z >= 0.0:
 			_on_crossed(obstacle)
 		_prev_z[key] = z
@@ -155,6 +166,15 @@ func _summary() -> void:
 	print("  STOMPER crossed  : %d" % _stompers_crossed)
 	print("  CHARGER crossed  : %d" % _chargers_crossed)
 	print("  DODGE crossed    : %d" % _dodges_crossed)
+	print("")
+	print("--- STOMPER + rush (worst case: peak density meets a single-issue-escape obstacle) ---")
+	print("  STOMPER spawned during a rush window: %d / %d" % [_stompers_spawned_in_rush, _stompers_spawned])
+	print("  (STOMPER_CHANCE_PER_ROW is never scaled by the rush density multiplier, same")
+	print("   precedent as CHARGER_COOLDOWN_EARLY_S/_LATE_S -- so a rush cannot raise STOMPER's")
+	print("   own rate, and _stomper_charger_margin_clear does not relax its margin during one")
+	print("   either. The number here is what proves the case was actually EXERCISED rather")
+	print("   than merely argued to be safe -- and RushFrustrationAudit.gd's own 0-violations")
+	print("   result already covers the general escape guarantee specifically during rush.)")
 	print("")
 
 	var violations_charger := _report_pair(Obstacle.Type.STOMPER, Obstacle.Type.CHARGER, TrackManager.CHARGER_ARRIVAL_MARGIN_S, "CHARGER")
