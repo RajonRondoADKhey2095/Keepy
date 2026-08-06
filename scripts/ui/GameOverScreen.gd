@@ -23,6 +23,14 @@ class_name GameOverScreen
 ## harmlessly (see Leaderboard.submit_score), and the game is never
 ## blocked either way.
 ##
+## DEATH CAUSE: the headline distinguishes being caught from behind
+## (GameState.DeathCause.PURSUER) from running into something in front.
+## Presentation ONLY -- the score, the two pickup counts and therefore the
+## whole leaderboard payload below are byte-identical either way, because
+## being caught is a different EVENT, not a different kind of run. Nothing
+## in _show_game_over / _handle_precheck_result / _begin_submit branches on
+## it, and that is deliberate.
+##
 ## Known limitation, accepted as-is: HTTPRequest is single-flight and
 ## GameState.state_changed can fire again (Rejouer) before an in-flight
 ## fetch/submit resolves. An extremely fast retry-before-reply could
@@ -33,6 +41,16 @@ class_name GameOverScreen
 enum _TopFetchStep { NONE, PRECHECK, FINAL }
 
 @onready var root: Control = $Root
+## Headline text per death cause, retargeted onto the EXISTING TitleLabel
+## rather than a second label of its own -- that node already reads
+## "Perdu !", so the COLLISION entry below is its authored value and the
+## default path is unchanged.
+const CAUSE_TEXT := {
+	GameState.DeathCause.COLLISION: "Perdu !",
+	GameState.DeathCause.PURSUER: "Rattrape !",
+}
+
+@onready var title_label: Label = $Root/CenterContainer/VBoxContainer/TitleLabel
 @onready var score_label: Label = $Root/CenterContainer/VBoxContainer/ScoreLabel
 @onready var record_label: Label = $Root/CenterContainer/VBoxContainer/RecordLabel
 @onready var name_entry_container: HBoxContainer = $Root/CenterContainer/VBoxContainer/NameEntryContainer
@@ -66,6 +84,7 @@ func _show_game_over() -> void:
 	_pending_score = GameState.score
 	_pending_nuts = GameState.nut_count
 	_pending_glands = GameState.gland_count
+	title_label.text = CAUSE_TEXT.get(GameState.death_cause, CAUSE_TEXT[GameState.DeathCause.COLLISION])
 	score_label.text = "Score : %d" % _pending_score
 
 	_is_new_record = Leaderboard.record_local_best(_pending_score)
