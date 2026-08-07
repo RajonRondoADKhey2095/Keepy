@@ -19,13 +19,24 @@ extends Node
 ##    CROSS watches for that coincidence over a long run and reports what
 ##    the player is actually left with when it happens.
 ##
-## The bots are lifted from ComboAudit.gd (same SAFE and RISKY logic, same
+## 4. DOES AN AVERAGE PLAYER EVER ACTUALLY SEE IT? SAFE and RISKY are both
+##    deliberately extreme -- reading every hazard perfectly early, or
+##    hunting risk on purpose. A real mid-skill player is neither: they
+##    react to what is in front of them (jumping what can be jumped, the
+##    normal instinct) but do not grind for combo. Phase INTERMEDIATE
+##    exists because a retour joueur ("je ne vois pas la valeur ajoutee")
+##    traced back to exactly this gap -- nothing here had ever measured
+##    what the mechanic looks like from a mid-skill seat, only from its two
+##    extremes.
+##
+## The SAFE and RISKY bots are lifted from ComboAudit.gd (same logic, same
 ## constants, same reasoning) rather than reinvented -- the comparison is
 ## only meaningful if "safe" and "risky" mean here exactly what they meant
 ## when the combo system was measured. Duplicated rather than shared for the
 ## same reason RushFrustrationAudit duplicates AntiFrustrationAudit's check:
 ## each probe reads standalone, and a shared-helper edit can never quietly
-## change what the OTHER one verifies.
+## change what the OTHER one verifies. INTERMEDIATE has no ComboAudit
+## counterpart to lift from -- it is native to this probe.
 ##
 ## Collision is REAL in every phase. A pursuer probe with collision neutered
 ## would be measuring a bot that can only ever die one way, which is exactly
@@ -48,7 +59,16 @@ const RISKY_GRAZE_TARGET_M: float = (Obstacle.RISK_MIN_SURVIVABLE_LATERAL_M + Ob
 const GLAND_CHASE_SAFE_LEAD_S: float = 1.5
 const HALF_AIR_TIME_S: float = Keepy.JUMP_VELOCITY / Keepy.GRAVITY
 
-enum Phase { SAFE, RISKY, HOSTILE, CROSS }
+enum Phase { SAFE, INTERMEDIATE, RISKY, HOSTILE, CROSS }
+
+## Target band for the fraction of time the INTERMEDIATE bot spends with
+## the pursuer visible -- the tuning goal itself (see the batch this file
+## was touched for): rare enough to stay tension rather than wallpaper,
+## common enough that a mid-skill player actually meets the mechanic. The
+## pass check below enforces it the same way every other criterion in this
+## file is enforced -- measured, not asserted by comment alone.
+const INTERMEDIATE_VISIBLE_FRAC_MIN: float = 0.10
+const INTERMEDIATE_VISIBLE_FRAC_MAX: float = 0.25
 
 var _game: Node3D
 var _keepy: Keepy
@@ -110,9 +130,10 @@ func _start_phase(phase: Phase) -> void:
 func _phase_name(phase: Phase) -> String:
 	match phase:
 		Phase.SAFE: return "SAFE bot"
+		Phase.INTERMEDIATE: return "INTERMEDIATE bot (mid-skill, reacts but does not hunt risk)"
 		Phase.RISKY: return "RISKY bot"
 		Phase.HOSTILE: return "HOSTILE (bot takes zero risk events -- the floor)"
-		_: return "CROSS (pursuer + charger + rush pile-up)"
+		_: return "CROSS (pursuer + charger/stomper + rush pile-up)"
 
 func _start_run() -> void:
 	if _game:
@@ -142,6 +163,8 @@ func _drive_bot() -> void:
 	match _phase:
 		Phase.SAFE:
 			_drive_safe_bot()
+		Phase.INTERMEDIATE:
+			_drive_intermediate_bot()
 		Phase.RISKY:
 			_drive_risky_bot()
 		Phase.CROSS:
@@ -166,16 +189,23 @@ func _sample(delta: float) -> void:
 	if _phase == Phase.CROSS:
 		_sample_cross()
 
-## The worst pile-up the game can produce: the pursuer already on screen, a
-## CHARGER inbound (the only hazard that closes faster than the world), and
-## a rush window open (peak obstacle density) -- all at the same instant.
+## The worst pile-up the game can produce: the pursuer already on screen,
+## a rush window open (peak obstacle density), and at least one of the two
+## hazards that can force a move against the pursuer's own demand --
+## CHARGER (closes faster than the world, only escaped by lane switch) or
+## STOMPER (only escaped by jump, see Obstacle.gd's Type.STOMPER doc) --
+## inbound at the same instant. Both are tracked and reported separately
+## (never merged into one "hazard_ttc") because they demand OPPOSITE
+## escapes and a future reader needs to see which one, or both, actually
+## coincided.
 func _sample_cross() -> void:
 	if not GameState.pursuer_visible:
 		return
 	if not _track.is_rush_active():
 		return
-	var charger_ttc := _nearest_charger_ttc()
-	if charger_ttc < 0.0:
+	var charger_ttc := _nearest_hazard_of_type_ttc(Obstacle.Type.CHARGER)
+	var stomper_ttc := _nearest_hazard_of_type_ttc(Obstacle.Type.STOMPER)
+	if charger_ttc < 0.0 and stomper_ttc < 0.0:
 		return
 	_cross_hits += 1
 	_cross_min_lead = minf(_cross_min_lead, GameState.pursuer_lead_s)
@@ -184,16 +214,19 @@ func _sample_cross() -> void:
 	var escapes := _free_lane_count()
 	_cross_worst_escapes = mini(_cross_worst_escapes, escapes)
 	if _cross_examples.size() < 5:
-		_cross_examples.append("t=%.1fs lead=%.2fs charger_ttc=%.2fs free_lanes=%d" % [
-			_run_t, GameState.pursuer_lead_s, charger_ttc, escapes])
+		_cross_examples.append("t=%.1fs lead=%.2fs charger_ttc=%s stomper_ttc=%s free_lanes=%d" % [
+			_run_t, GameState.pursuer_lead_s,
+			("%.2fs" % charger_ttc) if charger_ttc >= 0.0 else "--",
+			("%.2fs" % stomper_ttc) if stomper_ttc >= 0.0 else "--",
+			escapes])
 
-func _nearest_charger_ttc() -> float:
+func _nearest_hazard_of_type_ttc(type: Obstacle.Type) -> float:
 	var best := -1.0
 	for segment in _track.get_children():
 		if not (segment is TrackSegment):
 			continue
 		var obstacle := _active_obstacle_in(segment)
-		if obstacle == null or obstacle.obstacle_type != Obstacle.Type.CHARGER:
+		if obstacle == null or obstacle.obstacle_type != type:
 			continue
 		var ttc: float = obstacle.time_to_contact_s()
 		if ttc <= 0.0:
@@ -259,7 +292,8 @@ func _finish_phase() -> void:
 	_print_phase(_phase_name(_phase), r)
 	_results[_phase] = r
 	match _phase:
-		Phase.SAFE: _start_phase(Phase.RISKY)
+		Phase.SAFE: _start_phase(Phase.INTERMEDIATE)
+		Phase.INTERMEDIATE: _start_phase(Phase.RISKY)
 		Phase.RISKY: _start_phase(Phase.HOSTILE)
 		Phase.HOSTILE: _start_phase(Phase.CROSS)
 		_: _report()
@@ -277,23 +311,29 @@ func _print_phase(label: String, r: Dictionary) -> void:
 
 func _report() -> void:
 	var safe: Dictionary = _results[Phase.SAFE]
+	var mid: Dictionary = _results[Phase.INTERMEDIATE]
 	var risky: Dictionary = _results[Phase.RISKY]
 	var hostile: Dictionary = _results[Phase.HOSTILE]
 
-	print("=== SAFE vs RISKY ===")
-	print("  risk events/min        : safe %.1f    risky %.1f" % [safe["events_per_min"], risky["events_per_min"]])
-	print("  mean lead              : safe %.2fs   risky %.2fs" % [safe["mean_lead"], risky["mean_lead"]])
-	print("  minimum lead           : safe %.2fs   risky %.2fs" % [safe["min_lead"], risky["min_lead"]])
-	print("  time pursuer visible   : safe %.1f%%   risky %.1f%%" % [
-		safe["visible_frac"] * 100.0, risky["visible_frac"] * 100.0])
-	print("  caught by pursuer      : safe %d      risky %d" % [safe["caught"], risky["caught"]])
-	print("  mean survival          : safe %.1fs   risky %.1fs" % [safe["mean_survival"], risky["mean_survival"]])
+	print("=== SAFE vs INTERMEDIATE vs RISKY ===")
+	print("  risk events/min        : safe %.1f    mid %.1f    risky %.1f" % [
+		safe["events_per_min"], mid["events_per_min"], risky["events_per_min"]])
+	print("  mean lead              : safe %.2fs   mid %.2fs   risky %.2fs" % [
+		safe["mean_lead"], mid["mean_lead"], risky["mean_lead"]])
+	print("  minimum lead           : safe %.2fs   mid %.2fs   risky %.2fs" % [
+		safe["min_lead"], mid["min_lead"], risky["min_lead"]])
+	print("  time pursuer visible   : safe %.1f%%   mid %.1f%%   risky %.1f%%" % [
+		safe["visible_frac"] * 100.0, mid["visible_frac"] * 100.0, risky["visible_frac"] * 100.0])
+	print("  caught by pursuer      : safe %d      mid %d      risky %d" % [
+		safe["caught"], mid["caught"], risky["caught"]])
+	print("  mean survival          : safe %.1fs   mid %.1fs   risky %.1fs" % [
+		safe["mean_survival"], mid["mean_survival"], risky["mean_survival"]])
 	print("")
 	print("=== HOSTILE FLOOR (zero risk events available) ===")
 	print("  survived               : %.1fs before being caught" % hostile["mean_survival"])
 	print("  risk events banked     : %d (must be 0 for this to be the true floor)" % hostile["risk_events"])
 	print("")
-	print("=== CROSS: pursuer visible + charger inbound + rush active ===")
+	print("=== CROSS: pursuer visible + charger/stomper inbound + rush active ===")
 	print("  (driven by the SAFE bot -- the risky bot never lets the pursuer")
 	print("   become visible at all, so it cannot produce this conjunction)")
 	print("  coincidences observed  : %d frames" % _cross_hits)
@@ -335,8 +375,18 @@ func _report() -> void:
 		push_error("PURSUER AUDIT FAILED: the pursuer+charger+rush pile-up left 0 free lanes at least once -- a pre-existing escape guarantee has been broken.")
 		get_tree().quit(1)
 		return
-	print("PASSED: safe play gets caught, risky play never does, and the zero-risk")
-	print("        floor is %.0fs." % hostile["mean_survival"])
+	# THE TUNING GOAL ITSELF: a mid-skill player has to actually meet the
+	# mechanic (retour joueur "je ne vois pas la valeur ajoutee" traced to
+	# it never showing up for anyone but the SAFE extreme), without it
+	# becoming permanent wallpaper -- see INTERMEDIATE_VISIBLE_FRAC_MIN/MAX.
+	if mid["visible_frac"] < INTERMEDIATE_VISIBLE_FRAC_MIN or mid["visible_frac"] > INTERMEDIATE_VISIBLE_FRAC_MAX:
+		push_error("PURSUER AUDIT FAILED: the INTERMEDIATE bot saw the pursuer %.1f%% of the time, outside the target band %.0f%%-%.0f%% -- adjust PURSUER_VISIBLE_LEAD_S (and only if that alone cannot reach it, PURSUER_CLOSE_RATE)." % [
+			mid["visible_frac"] * 100.0, INTERMEDIATE_VISIBLE_FRAC_MIN * 100.0, INTERMEDIATE_VISIBLE_FRAC_MAX * 100.0])
+		get_tree().quit(1)
+		return
+	print("PASSED: safe play gets caught, risky play never does, the zero-risk")
+	print("        floor is %.0fs, and a mid-skill player sees the pursuer %.1f%% of the time." % [
+		hostile["mean_survival"], mid["visible_frac"] * 100.0])
 	if _cross_hits > 0:
 		print("        Worst observed pile-up still left %d lane(s) free (%d frames seen)." % [
 			_cross_worst_escapes, _cross_hits])
@@ -354,6 +404,27 @@ func _drive_safe_bot() -> void:
 	var own: float = lane_ttc[_keepy.lane_index]
 	if own < 0.0 or own > SAFE_ESCAPE_LEAD_S:
 		return
+	# TOOLING FIX, not a mechanic change: this bot is lifted verbatim from
+	# ComboAudit.gd, written before Obstacle.Type.STOMPER existed, and it
+	# only ever reacts by switching lanes. A committed STOMPER's
+	# position.x is a live copy of the player's own (Obstacle.gd's
+	# blocks_lane_switch doc) -- no lane switch of any speed opens a gap,
+	# so this bot walked into every STOMPER it met regardless of which
+	# lane it picked. That is a blind spot in the probe, not a risk the
+	# "safe" strategy was choosing to take: without this, PursuerAudit's
+	# SAFE-bot phase measured "how often does an oblivious bot collide
+	# with a hazard it cannot lane-switch away from", which drowned out
+	# the pursuer entirely (mean survival ~26s here vs. the RISKY bot's
+	# ~52s, both to collision, on the pre-fix baseline). The RISKY bot
+	# already handles this correctly (_drive_risky_bot jumps whenever
+	# `not Obstacle.blocks_jump(threat.obstacle_type)`, true for STOMPER)
+	# -- this mirrors that same jump, and only when it is the sole escape
+	# available, not as risk-seeking.
+	var own_obstacle := _nearest_obstacle_on_lane(_keepy.lane_index)
+	if own_obstacle != null and Obstacle.blocks_lane_switch(own_obstacle.obstacle_type):
+		if own <= HALF_AIR_TIME_S and _keepy.is_on_floor():
+			_keepy.velocity.y = Keepy.JUMP_VELOCITY
+		return
 	var best_step := 0
 	var best_ttc := own
 	for step in [-1, 1]:
@@ -366,6 +437,37 @@ func _drive_safe_bot() -> void:
 			best_step = step
 	if best_step != 0:
 		_keepy.move_lane(best_step)
+
+## A mid-skill player: reacts to whatever is directly ahead (the same
+## SAFE_ESCAPE_LEAD_S reaction window as the safe bot -- no faster reflexes
+## assumed), but its DEFAULT escape for a hazard on its own lane is to jump
+## it if jumping clears it at all, which is the ordinary human instinct for
+## "something is right in front of me", not a deliberate reach for a combo.
+## It never leaves its lane to chase a gland (GLAND_CHASE_SAFE_LEAD_S /
+## _reachable_gland_lane, both RISKY-only below) and it never shaves a
+## graze down to RISKY_GRAZE_TARGET_M -- both of those are the RISKY bot's
+## deliberate risk-seeking, and this bot does not seek risk, it only meets
+## whatever risk showing up on its own lane happens to hand it.
+##
+## Lane-switch is therefore the FALLBACK, used only when jumping cannot
+## clear the hazard at all (Obstacle.blocks_jump: DODGE/AIR_ENEMY/CHARGER)
+## or when it is the ONLY escape (Obstacle.blocks_lane_switch: STOMPER,
+## where the jump branch above already fires first since STOMPER is not
+## blocks_jump). That fallback reuses the safe bot's own
+## _safest_adjacent_step() -- same "pick whichever neighbour lane is
+## clearest" logic, no separate notion of a safe lane invented here.
+func _drive_intermediate_bot() -> void:
+	var threat := _nearest_obstacle_on_lane(_keepy.lane_index)
+	if threat == null:
+		return
+	var ttc: float = threat.time_to_contact_s()
+	if ttc <= 0.0 or ttc > SAFE_ESCAPE_LEAD_S:
+		return
+	if not Obstacle.blocks_jump(threat.obstacle_type):
+		if ttc <= HALF_AIR_TIME_S and _keepy.is_on_floor():
+			_keepy.velocity.y = Keepy.JUMP_VELOCITY
+		return
+	_keepy.move_lane(_safest_adjacent_step())
 
 func _drive_risky_bot() -> void:
 	var threat := _nearest_obstacle_on_lane(_keepy.lane_index)
