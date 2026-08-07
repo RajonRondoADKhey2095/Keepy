@@ -123,6 +123,20 @@ func save_name(player_name: String) -> void:
 ## confirmed working (200, and the doc later readable with a real
 ## `createdAt`) against the live project during implementation.
 func submit_score(player_name: String, score: int, nuts: int, glands: int) -> void:
+	if not GameState.submissions_enabled:
+		# See GameState.submissions_enabled's own doc for why this exists:
+		# a dev probe must never write a bot's score onto the real
+		# leaderboard, and must never let the round trip perturb its
+		# deterministic frame timing either. Degrading through the exact
+		# same signal a real network failure already uses -- rather than
+		# skipping the emit -- means GameOverScreen needs no probe-aware
+		# branch of its own: it already treats "submission failed" as a
+		# normal, harmless outcome (see its class doc). call_deferred
+		# keeps this genuinely async (consistent with every other exit
+		# of this function, which all reply on a later frame via the
+		# HTTPRequest signal) without spending an actual round trip on it.
+		submit_finished.emit.call_deferred(false)
+		return
 	var safe_name := player_name.strip_edges().substr(0, NAME_MAX_LEN)
 	if safe_name.is_empty():
 		safe_name = DEFAULT_NAME
@@ -175,6 +189,16 @@ func _on_submit_completed(result: int, response_code: int, _headers: PackedStrin
 ## document (in order); entries with no "document" key are query-plan
 ## metadata only and are skipped.
 func fetch_top_scores() -> void:
+	if not GameState.submissions_enabled:
+		# Reading is covered by the same gate as submitting, and for the
+		# same reason -- see GameState.submissions_enabled's doc. Left
+		# enabled, this alone would still fire twice per bot death
+		# (GameOverScreen's precheck + its post-submit refetch), which is
+		# exactly the traffic volume that made StrikeAudit's two prior
+		# false-green probes (see StrikeAudit.gd's own class doc) run on
+		# an already-unreliable HTTPRequest queue.
+		top_scores_fetched.emit.call_deferred([], false)
+		return
 	var body := {
 		"structuredQuery": {
 			"from": [{ "collectionId": COLLECTION_ID }],
