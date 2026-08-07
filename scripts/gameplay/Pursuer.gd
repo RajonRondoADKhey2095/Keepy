@@ -88,9 +88,47 @@ const BOB_HZ: float = 0.8
 const FAR_SCALE: float = 0.4
 const NEAR_SCALE: float = 0.65
 
+## =====================================================================
+## INTRO SIGHTING -- a brief, forced look at the pursuer at the very start
+## of every run, before the HUD gauge can mean anything to a player who has
+## never seen what it is a gauge OF.
+##
+## Deliberately independent of GameState.pursuer_lead_s /
+## GameState.pursuer_visible: it fires straight off GameState.state_changed
+## -> State.PLAYING, holds a fixed pose (the same FAR_Z/FAR_SCALE the real
+## sighting later uses, so nothing new has to be separately calibrated or
+## re-checked by PursuerFramingAudit) and then shrinks itself away. It
+## never reads or writes pursuer_lead_s, so PURSUER_START_LEAD_S and
+## PURSUER_GRACE_S are exactly as untouched as if this feature did not
+## exist -- the real countdown starts the run at its usual 12.0s, unaware
+## the player was ever shown anything.
+##
+## NON-FATAL AND NON-BLOCKING for the same reason the class doc gives for
+## the real sighting having no collision shape: this node cannot end a run
+## by existing on screen, intro or not, and nothing here pauses input --
+## Keepy reads its own controls regardless of what this node is doing.
+## =====================================================================
+
+## Total length of the intro sighting, in seconds. Short enough that it
+## never reads as a wait: TrackManager's SAFE_START_SEGMENTS keeps the
+## opening rows obstacle-free regardless, so the player already has
+## nothing urgent to react to for longer than this.
+const INTRO_DURATION_S: float = 2.2
+## Fraction of INTRO_DURATION_S spent held at full size before receding.
+## The rest is the recede itself -- a scale ease to zero, never a jump cut,
+## so the establishing shot reads as the same thing withdrawing rather than
+## as a flash.
+const INTRO_HOLD_FRACTION: float = 0.45
+
 @onready var _mesh: MeshInstance3D = $Silhouette
 @onready var _eye_left: MeshInstance3D = $Silhouette/EyeLeft
 @onready var _eye_right: MeshInstance3D = $Silhouette/EyeRight
+
+## Whether the opening sighting is currently playing. While true it owns
+## visibility/position/scale outright; the ordinary lead-driven branch in
+## _process does not run at all (see the guard at its top).
+var _intro_active: bool = false
+var _intro_t: float = 0.0
 
 ## Free-running animation phase. Reset every time the pursuer (re)appears so
 ## a fresh sighting always starts from the same pose rather than picking up
@@ -129,6 +167,7 @@ func _ready() -> void:
 		_eye_right.set_surface_override_material(0, _material)
 		_base_emission_energy = _material.emission_energy_multiplier
 	GameState.pursuer_became_visible.connect(_on_became_visible)
+	GameState.state_changed.connect(_on_state_changed)
 
 ## Fresh sighting: restart the animation so the entrance is always the same
 ## one. Visibility itself is driven every frame in _process (idempotent, and
@@ -136,8 +175,26 @@ func _ready() -> void:
 func _on_became_visible() -> void:
 	_anim_t = 0.0
 
+## Every start_run() emits this with State.PLAYING exactly once (see
+## GameState.start_run) -- the one clean, edge-detected hook for "a run
+## just began" that does not require this node to poll GameState.state
+## itself every frame to notice a restart.
+func _on_state_changed(new_state: int) -> void:
+	if new_state != GameState.State.PLAYING:
+		return
+	_intro_active = true
+	_intro_t = 0.0
+	_anim_t = 0.0
+
 func _process(delta: float) -> void:
-	if GameState.state != GameState.State.PLAYING or not GameState.pursuer_visible:
+	if GameState.state != GameState.State.PLAYING:
+		visible = false
+		_intro_active = false
+		return
+	if _intro_active:
+		_process_intro(delta)
+		return
+	if not GameState.pursuer_visible:
 		visible = false
 		return
 	visible = true
@@ -165,3 +222,33 @@ func _process(delta: float) -> void:
 	# share one duplicated material, so this drives them together.
 	if _material:
 		_material.emission_energy_multiplier = lerpf(_base_emission_energy, _base_emission_energy * 3.0, t)
+
+## The opening sighting. Held pose at FAR_Z/FAR_SCALE -- the exact framing
+## PursuerFramingAudit already measures for the real "just became visible"
+## moment, so this never needs its own occupancy check -- then a pure scale
+## ease to zero. Shrinking can only ever REDUCE how much of the screen a
+## fixed-position mesh covers, so the recede half of this curve is safe by
+## construction once the held pose is: there is no way for it to end up
+## bigger than what it started at.
+func _process_intro(delta: float) -> void:
+	_intro_t += delta
+	if _intro_t >= INTRO_DURATION_S:
+		_intro_active = false
+		visible = false
+		return
+	visible = true
+	_anim_t += delta
+
+	position.z = FAR_Z
+	position.x = sin(_anim_t * TAU * SWAY_HZ) * SWAY_AMPLITUDE_X
+	position.y = BOB_AMPLITUDE_Y * sin(_anim_t * TAU * BOB_HZ)
+
+	var hold_end := INTRO_DURATION_S * INTRO_HOLD_FRACTION
+	var s := FAR_SCALE
+	if _intro_t > hold_end:
+		var recede_t := clampf((_intro_t - hold_end) / (INTRO_DURATION_S - hold_end), 0.0, 1.0)
+		s = lerpf(FAR_SCALE, 0.0, recede_t)
+	scale = Vector3(s, s, s)
+
+	if _material:
+		_material.emission_energy_multiplier = _base_emission_energy
