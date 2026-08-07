@@ -190,6 +190,49 @@ const PIP_SPENT_COLOR: Color = Color(0.10, 0.09, 0.12, 1)
 ## means "act now" everywhere else on this HUD.
 const STRIKE_DANGER_COLOR: Color = WARNING_COLOR
 
+## --- FATAL STRIKE (the capture beat, playtest-fixes batch) ---------
+## Colour + pulse for the strike that actually catches the player, armed by
+## GameState.pursuer_caught (see _on_pursuer_caught below) and held for the
+## rest of GameState.CAPTURE_SEQUENCE_DURATION_S.
+##
+## Playtest finding: a player who took two contacts did not understand the
+## second one was different from the first -- STRIKE_DANGER_COLOR/
+## WARNING_PULSE_* had already been running continuously since strike one
+## (danger := used >= STRIKE_CAPACITY - 1 with STRIKE_CAPACITY == 2 means
+## the amber pulse starts at the FIRST strike and never changes again before
+## the second one ends the run), so the fatal hit looked like "the same
+## warning, still going" rather than "the thing the warning was about, now
+## happening". This state OWNS the row once armed -- it does not fall back
+## to or alternate with the ordinary danger pulse, because by definition the
+## ordinary pulse already had its one chance to be enough.
+##
+## A coral RED (hue 0deg), deliberately a different hue family from
+## STRIKE_DANGER_COLOR's amber (hue ~21deg, also the expiring-combo pulse's
+## colour) rather than a lighter/darker shade of the same one -- this needed
+## to read as its OWN colour, not a variant of one already spoken for.
+## Faster and with a bigger swing than the ordinary danger pulse too.
+##
+## MEASURED, not assumed -- scripts/dev/StrikeFatalContrastAudit.gd, same
+## WCAG-on-real-pixels method as StrikeContrastAudit.gd/ComboContrastAudit.gd
+## -- against the light phase and all 6 dark palettes: PASSES 6 of 7 at the
+## 3.0:1 large-text floor (LIGHT 6.22:1, DARK/0 3.03:1, DARK/1 4.12:1, DARK/2
+## 4.14:1, DARK/3 3.37:1, DARK/5 3.02:1). DARK/4 measures 2.79:1 (fill
+## 2.53:1, outline via the shared near-black StrikeLabel outline 2.75:1) --
+## a genuine, structural shortfall: DARK/4's real background sits in the
+## narrow luminance band where NEITHER a red-hued fill nor the fixed
+## near-black outline clears 3.0:1 at once, and pushing the fill brighter
+## to close that gap (tried up to (1.0, 0.6, 0.4), worst-case 3.18:1) moves
+## its hue to within ~1deg of STRIKE_DANGER_COLOR's amber -- which defeats
+## the whole point of this colour existing. NOT fixed by chasing the number
+## further at the cost of the colour becoming amber-with-training-wheels;
+## accepted the same way this HUD's own class doc already argues no cue here
+## should depend on colour ALONE (see the STRIKES section) -- the pulse
+## (faster, bigger swing than the ordinary danger one) is the redundant cue
+## that survives DARK/4 regardless, being pure scale/motion rather than hue.
+const STRIKE_FATAL_COLOR: Color = Color(1.0, 0.46, 0.46, 1)
+const FATAL_PULSE_HZ: float = 7.0
+const FATAL_PULSE_AMPLITUDE: float = 0.32
+
 @onready var score_label: Label = $MarginContainer/VBoxContainer/ScoreLabel
 @onready var nut_label: Label = $MarginContainer/VBoxContainer/CountsRow/NutLabel
 @onready var gland_label: Label = $MarginContainer/VBoxContainer/CountsRow/GlandLabel
@@ -245,6 +288,26 @@ var _strike_flash_t: float = -1.0
 ## contract _warning_t follows for the combo.
 var _strike_pulse_t: float = 0.0
 var _strike_danger_active: bool = false
+## The strike label's font colour actually pushed to the theme override.
+## Tracked, same reasoning as _applied_color for the combo labels, so the
+## override is only written on a real change -- with three possible states
+## now (normal / danger / fatal) rather than two, a plain bool toggle can no
+## longer tell "did this change" on its own.
+var _applied_strike_color: Color = NORMAL_COLOR
+## Whether the FATAL strike beat is currently playing -- see
+## STRIKE_FATAL_COLOR's own doc. Armed by GameState.pursuer_caught
+## (_on_pursuer_caught below), which fires exactly once per capture whether
+## it came from the lead draining to zero or from the second strike -- see
+## GameState._begin_capture_sequence. Cleared the moment strikes_used next
+## returns to 0 (a fresh start_run(), see _update_strike_display), never by
+## a timer of its own: this HUD does not need to know
+## GameState.CAPTURE_SEQUENCE_DURATION_S to stay in step with it, because
+## the row is either hidden behind GameOverScreen or about to be reset by
+## the next run by the time that duration elapses either way.
+var _fatal_active: bool = false
+## Free-running phase for the fatal pulse, same "restart on entry" contract
+## as _strike_pulse_t/_warning_t.
+var _fatal_pulse_t: float = 0.0
 ## Strike count currently DRAWN. The pips are repainted from
 ## GameState.strikes_used on change rather than driven by the strike_taken /
 ## strike_cleared signals, and that is deliberate: a count is a STATE, and a
@@ -262,6 +325,7 @@ func _ready() -> void:
 	GameState.combo_tier_up.connect(_on_combo_tier_up)
 	GameState.pursuer_became_visible.connect(_on_pursuer_became_visible)
 	GameState.strike_taken.connect(_on_strike_taken)
+	GameState.pursuer_caught.connect(_on_pursuer_caught)
 	score_label.text = str(GameState.score)
 	_on_counts_changed(GameState.nut_count, GameState.gland_count)
 	_on_combo_changed(GameState.combo_count, GameState.combo_multiplier)
@@ -315,6 +379,26 @@ func _on_pursuer_became_visible() -> void:
 func _on_strike_taken(_source_type: int, _strikes_used: int) -> void:
 	_strike_flash_t = 0.0
 
+## Arms the fatal-strike beat -- see STRIKE_FATAL_COLOR's own doc.
+## GameState.pursuer_caught fires for BOTH ways a run can end at the
+## pursuer's hands (the lead draining to zero, or the second strike -- see
+## GameState._begin_capture_sequence), but this beat is scoped to the
+## SECOND, strike-specific one on purpose: it lives on the strike row (the
+## pips and this label), and a lead-drain capture can happen with
+## strikes_used sitting anywhere from 0 to STRIKE_CAPACITY - 1 -- pips still
+## showing slots available. Arming the fatal red there would tell the wrong
+## story ("you took your second hit") about an event that was actually the
+## gauge running out. GameState.strikes_used is already at STRIKE_CAPACITY
+## by the time this signal fires FOR a strike-triggered capture (register_
+## strike increments it before emitting), so that comparison is exactly the
+## discriminator needed, without this HUD having to know WHICH of the two
+## call sites in GameState actually fired.
+func _on_pursuer_caught() -> void:
+	if GameState.strikes_used < GameState.STRIKE_CAPACITY:
+		return
+	_fatal_active = true
+	_fatal_pulse_t = 0.0
+
 func _process(delta: float) -> void:
 	# Both run unconditionally, unlike the combo block below: the pursuer
 	# gauge and the strike pips are PERMANENT (the player must always be able
@@ -359,9 +443,10 @@ func _update_pursuer_telegraph(delta: float) -> void:
 ## The two strike surfaces -- see the STRIKES section of the class doc.
 ##
 ## Everything here is edge-triggered against what is already drawn: the pips
-## repaint only when the count moves, the danger colour only when the state
-## flips. The only per-frame writes are the pulse's scale and the flash's
-## alpha, and both are plain value-type assignments.
+## repaint only when the count moves, the label colour only when the STATE
+## (normal / danger / fatal) actually changes. The only per-frame writes are
+## the pulse's scale and the flash's alpha, and both are plain value-type
+## assignments.
 func _update_strike_display(delta: float) -> void:
 	var used: int = GameState.strikes_used
 	if used != _drawn_strikes:
@@ -370,6 +455,12 @@ func _update_strike_display(delta: float) -> void:
 			# Pips are spent LEFT TO RIGHT: with `used` strikes taken, the
 			# first `used` slots are empty and the rest are still available.
 			pip_fills[i].color = PIP_SPENT_COLOR if i < used else PIP_INTACT_COLOR
+		if used == 0:
+			# The only way this count falls back to 0 is a fresh start_run()
+			# (see GameState.gd) -- clear the one-shot fatal beat along with
+			# it so a NEW run's very first strike can never inherit the
+			# PREVIOUS run's capture-beat colour/pulse.
+			_fatal_active = false
 
 	# One strike from being caught -- the row pulses and the label goes amber.
 	# GameState.STRIKE_CAPACITY - 1 rather than a literal 1, so raising the
@@ -377,14 +468,22 @@ func _update_strike_display(delta: float) -> void:
 	var danger := used >= GameState.STRIKE_CAPACITY - 1
 	if danger and not _strike_danger_active:
 		_strike_pulse_t = 0.0
-	if danger != _strike_danger_active:
-		_strike_danger_active = danger
-		strike_label.add_theme_color_override(
-			"font_color", STRIKE_DANGER_COLOR if danger else NORMAL_COLOR)
+	_strike_danger_active = danger
+
 	var scale := 1.0
-	if danger:
+	if _fatal_active:
+		# THE fatal strike -- see STRIKE_FATAL_COLOR's own doc for why this
+		# does not fall back to the ordinary danger pulse below: it OWNS the
+		# row for the rest of the capture beat.
+		_apply_strike_color(STRIKE_FATAL_COLOR)
+		_fatal_pulse_t += delta
+		scale = 1.0 + FATAL_PULSE_AMPLITUDE * sin(_fatal_pulse_t * TAU * FATAL_PULSE_HZ)
+	elif danger:
+		_apply_strike_color(STRIKE_DANGER_COLOR)
 		_strike_pulse_t += delta
 		scale = 1.0 + WARNING_PULSE_AMPLITUDE * sin(_strike_pulse_t * TAU * WARNING_PULSE_HZ)
+	else:
+		_apply_strike_color(NORMAL_COLOR)
 	# On the ROW, not on the label: the pips are the information, so the pulse
 	# has to move them too -- pulsing only the word would draw the eye to the
 	# one part of the widget that never changes.
@@ -473,3 +572,12 @@ func _reset_visuals() -> void:
 	_apply_color(NORMAL_COLOR)
 	_apply_scale(combo_label, 1.0)
 	_apply_scale(multiplier_label, 1.0)
+
+## Edge-triggered, same discipline as _apply_color above -- see
+## _applied_strike_color for why this needed its own tracked value once a
+## third state (fatal) joined normal/danger.
+func _apply_strike_color(value: Color) -> void:
+	if _applied_strike_color == value:
+		return
+	_applied_strike_color = value
+	strike_label.add_theme_color_override("font_color", value)

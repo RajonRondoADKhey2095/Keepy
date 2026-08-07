@@ -53,7 +53,27 @@ signal strike_taken(source_type: int, strikes_used: int)
 ## listener so far draws them identically.
 signal strike_cleared(strikes_used: int, by_combo: bool)
 
-enum State { TITLE, PLAYING, GAME_OVER }
+## CAPTURED sits BETWEEN PLAYING and GAME_OVER, deliberately -- see
+## CAPTURE_SEQUENCE_DURATION_S below for what it buys.
+##
+## Playtest finding: with only PLAYING and GAME_OVER, the frame that zeroed
+## pursuer_lead_s (or landed the second strike) and the frame that showed
+## "Rattrape !" were THE SAME FRAME. A player who had just taken two hits
+## reported not understanding they had been caught at all -- the pursuer
+## was on screen, but nothing on screen was ever THE reason, because there
+## was no instant left to be one. CAPTURED is that missing instant: a run
+## that reaches it is already over (nothing here can be escaped, no input
+## reads, no score changes), it just is not TOLD yet.
+##
+## Every `state != State.PLAYING` guard already scattered across this
+## codebase (Keepy, Obstacle, TrackManager, DarkModeEffect, Pursuer's own
+## ordinary branch) freezes the instant this state is entered, for free --
+## none of them had to change for this batch, and that is the point of
+## having introduced the enum as a THIRD value rather than a separate bool
+## sitting beside `state`: a second flag would have needed every one of
+## those guards rewritten to check it too, and one missed site would have
+## kept driving the world during what is supposed to be a freeze-frame.
+enum State { TITLE, PLAYING, CAPTURED, GAME_OVER }
 
 ## Why the run ended. Set immediately before end_run() and read by
 ## GameOverScreen so being caught from behind does not present as the same
@@ -68,6 +88,29 @@ enum State { TITLE, PLAYING, GAME_OVER }
 ## of two. COLLISION stays what it always was: running headfirst into
 ## something that kills on contact (see Obstacle.is_fatal).
 enum DeathCause { COLLISION, PURSUER }
+
+## Length of the forced "you were just caught" beat between pursuer_lead_s
+## (or strikes_used) reaching zero and the actual transition to GAME_OVER --
+## see the State.CAPTURED doc above for why that gap needs to exist at all.
+##
+## Two things fill it, and neither reads this constant to know how long it
+## has: Pursuer.gd's capture lunge (closes past its ordinary CAUGHT_Z floor,
+## since the run is already decided and there is nothing left to protect)
+## and HUD.gd's fatal-strike flash. Both are driven from THIS instant's own
+## elapsed time via _capture_sequence_t, so raising or lowering the number
+## here retunes every one of them together rather than needing a second
+## constant kept in sync by hand.
+##
+## 1.1s: short enough that dying twice in a row (a real thing that happens
+## against SAFE/HOSTILE bots, see PursuerAudit.gd) never reads as a wait --
+## TrackManager's SAFE_START_SEGMENTS already keeps a fresh run's opening
+## rows empty regardless, so the player has nothing urgent to react to for
+## longer than this anyway -- and long enough that the lunge itself has room
+## to be seen rather than glimpsed. Task brief's own calibration band is
+## 0.8-1.5s; this sits in the middle rather than at either edge because the
+## same number has to work for a HOSTILE-bot chain of instant recaptures and
+## for the one time a player will ever see it.
+const CAPTURE_SEQUENCE_DURATION_S: float = 1.1
 
 # =====================================================================
 # RISK EVENTS -- the whole point of the combo system (playtest: "je trouve
@@ -763,8 +806,19 @@ var pursuer_lead_s: float = PURSUER_START_LEAD_S
 ## detected exactly once (see _update_pursuer) rather than recomputed by
 ## every listener.
 var pursuer_visible: bool = false
-## Why the current run ended -- only meaningful once state == GAME_OVER.
+## Why the current run ended -- meaningful once state is CAPTURED or
+## GAME_OVER: set at the top of _begin_capture_sequence(), a full
+## CAPTURE_SEQUENCE_DURATION_S before end_run() itself runs, so anything
+## reacting to death_cause during the capture beat (HUD.gd's fatal-strike
+## flash) already sees the right value.
 var death_cause: DeathCause = DeathCause.COLLISION
+
+## Elapsed time in the current capture sequence, while state == CAPTURED --
+## see State.CAPTURED / CAPTURE_SEQUENCE_DURATION_S. Meaningless otherwise;
+## reset on every _begin_capture_sequence() and on every start_run() so a
+## stale value from a previous run's capture can never leak into a fresh
+## one.
+var _capture_sequence_t: float = 0.0
 
 ## Non-fatal contacts taken so far this run, in [0, STRIKE_CAPACITY). Never
 ## reaches STRIKE_CAPACITY as a resting value: the strike that would take it
@@ -849,6 +903,7 @@ func start_run() -> void:
 	pursuer_lead_s = PURSUER_START_LEAD_S
 	pursuer_visible = false
 	death_cause = DeathCause.COLLISION
+	_capture_sequence_t = 0.0
 	strikes_used = 0
 	player_speed_factor = 1.0
 	_strike_slow_t = -1.0
@@ -885,10 +940,38 @@ func end_run(cause: DeathCause = DeathCause.COLLISION) -> void:
 	state = State.GAME_OVER
 	state_changed.emit(state)
 
+## THE one entry point for "the pursuer just caught the player", called from
+## the two places that can decide that (the lead reaching zero in
+## _update_pursuer, the capacity-th strike in register_strike) instead of
+## either one calling end_run() directly. Moves the run to State.CAPTURED
+## rather than straight to GAME_OVER -- see that state's own doc for why --
+## and lets _process's CAPTURED branch below carry it the rest of the way
+## once CAPTURE_SEQUENCE_DURATION_S has actually elapsed.
+##
+## `pursuer_caught` fires HERE, at the true instant of capture, same as it
+## always did -- callers that only care about "the moment it happened"
+## (Pursuer.gd's own state_changed hook does not even need this signal, but
+## HUD.gd's fatal-strike flash does) do not have to know CAPTURED exists at
+## all.
+func _begin_capture_sequence() -> void:
+	death_cause = DeathCause.PURSUER
+	pursuer_caught.emit()
+	_capture_sequence_t = 0.0
+	state = State.CAPTURED
+	state_changed.emit(state)
+
 func _process(delta: float) -> void:
-	if state != State.PLAYING:
-		return
-	advance_time(delta)
+	match state:
+		State.PLAYING:
+			advance_time(delta)
+		State.CAPTURED:
+			# Nothing else runs here -- see State.CAPTURED's doc: nothing
+			# score-related, nothing risk-related and nothing lead-related
+			# is still live once capture has begun, so there is nothing left
+			# to advance except this one clock.
+			_capture_sequence_t += delta
+			if _capture_sequence_t >= CAPTURE_SEQUENCE_DURATION_S:
+				end_run(DeathCause.PURSUER)
 
 ## Advances the run clock and everything derived from it. Public, and
 ## touching nothing but this node's own state, so a headless test can
@@ -1182,13 +1265,14 @@ func register_strike(source_type: int) -> bool:
 	# should not be the only one that lands silently.
 	strike_taken.emit(source_type, strikes_used)
 	if strikes_used >= STRIKE_CAPACITY:
-		# Caught. Same signal and same DeathCause as the lead reaching zero
+		# Caught. Same event and same DeathCause as the lead reaching zero
 		# (see the DeathCause doc): stumbling twice IS being run down, and
 		# telling it as a second kind of death would teach a second rule for
 		# no gain. No stumble is armed -- there is nothing left to recover
-		# from.
-		pursuer_caught.emit()
-		end_run(DeathCause.PURSUER)
+		# from. _begin_capture_sequence() (not end_run() directly) so this
+		# fatal strike gets the same forced "you were just caught" beat the
+		# lead-drain capture does -- see State.CAPTURED's doc.
+		_begin_capture_sequence()
 		return true
 	_strike_slow_t = 0.0
 	player_speed_factor = STRIKE_SLOWDOWN_FACTOR
@@ -1291,10 +1375,11 @@ func _update_pursuer(delta: float) -> void:
 	_refresh_pursuer_visibility()
 	if pursuer_lead_s > 0.0:
 		return
-	# Caught. Signal first, then end the run -- a listener reacting to
-	# pursuer_caught wants to do so while the state is still PLAYING.
-	pursuer_caught.emit()
-	end_run(DeathCause.PURSUER)
+	# Caught. _begin_capture_sequence() fires pursuer_caught while state is
+	# still PLAYING (see that function), same guarantee this comment used to
+	# make about calling end_run() directly -- it just no longer reaches
+	# GAME_OVER on this same frame. See State.CAPTURED's doc for why.
+	_begin_capture_sequence()
 
 ## Edge-detects the visibility crossing so the two signals fire exactly
 ## once per transition rather than every frame the lead sits on the far
