@@ -525,7 +525,16 @@ func _physics_process(delta: float) -> void:
 	# its own displacement on top of this, from its own _physics_process,
 	# never by having this loop treat its segment differently -- see
 	# Obstacle.gd's CLOSING SPEED section header.
-	var move_amount := GameState.current_speed * delta
+	#
+	# scroll_speed(), not current_speed: a stumble slows the PLAYER without
+	# slowing the run (GameState's STRIKES block), and since this game moves
+	# the world instead of the player, "the player is slower" is drawn by the
+	# world arriving more slowly. That is also what makes the lurch visible
+	# and what stops distance being banked at full rate through a penalty --
+	# both fall out of this one line rather than being applied separately.
+	# The SPACING rules below are deliberately left on lookahead_speed(); see
+	# scroll_speed()'s own doc for which question each speed answers.
+	var move_amount := GameState.scroll_speed() * delta
 	GameState.add_distance(move_amount)
 
 	for segment in _segments:

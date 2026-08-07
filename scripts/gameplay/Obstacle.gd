@@ -1011,8 +1011,15 @@ var own_speed_factor: float = 0.0
 ## variant with own_speed_factor == 0.0 this returns exactly
 ## GameState.current_speed (a multiplication by 1.0 is exact), so
 ## nothing about the pre-existing hazards changes.
+## Built on GameState.scroll_speed(), not current_speed: during a stumble the
+## world genuinely arrives more slowly (see GameState's STRIKES block), so a
+## time-to-contact computed from the run's nominal speed would promise the
+## player less time than they actually have and every late commit keyed off
+## it -- ENEMY's lock, STOMPER's, AIR_ENEMY's landing -- would fire early
+## against the real approach. At player_speed_factor == 1.0 scroll_speed()
+## returns current_speed exactly, so nothing outside a stumble moves.
 func closing_speed() -> float:
-	return GameState.current_speed * (1.0 + own_speed_factor)
+	return GameState.scroll_speed() * (1.0 + own_speed_factor)
 
 ## Public: this instance's own time-before-contact, in seconds. Exposed
 ## so TrackManager's cross-obstacle safety scan can compare two
@@ -1054,7 +1061,13 @@ func time_to_contact_s() -> float:
 func _process_charger(delta: float) -> void:
 	if not visible:
 		return
-	position.z += GameState.current_speed * own_speed_factor * delta
+	# scroll_speed(), matching TrackManager's own movement line and
+	# closing_speed() above: a charger's own speed is stated as a MULTIPLE of
+	# the world's, so it has to be a multiple of the speed the world is
+	# actually moving at this frame, not of the run's nominal one. Anything
+	# else would have a charger accelerate relative to the track every time
+	# the player stumbles.
+	position.z += GameState.scroll_speed() * own_speed_factor * delta
 	if global_position.z > CHARGER_DESPAWN_Z:
 		# Behind the camera and past every gameplay decision it could
 		# still affect -- see CHARGER_DESPAWN_Z. TrackSegment.populate()

@@ -340,6 +340,66 @@ const PURSUER_GRACE_S: float = 5.0
 ## unambiguous the first time a player sees it.
 const STRIKE_CAPACITY: int = 2
 
+## Fraction of the run's speed the player keeps during a stumble -- the
+## penalty itself. THE PURSUER DOES NOT SLOW DOWN WITH THEM, which is the
+## whole mechanic: the gap is closed by the DIFFERENCE, so a stumble is
+## paid for in ground lost rather than in an abstract number ticking down.
+## See _update_pursuer, where the deficit (1.0 - player_speed_factor) is
+## added to the drain as a plain physical consequence rather than as a
+## second, separately-tuned punishment.
+##
+## 0.55 is deep enough to be unmistakable from the cockpit (the track
+## visibly lurches) without being a stop -- a full halt would make the
+## following hazard's reaction window meaningless, since everything ahead
+## would hang in place and then rush back at the player on recovery.
+const STRIKE_SLOWDOWN_FACTOR: float = 0.55
+
+## The stumble's two halves, in seconds: flat at STRIKE_SLOWDOWN_FACTOR for
+## the HOLD, then a linear climb back to full speed over the RECOVER. Split
+## in two rather than one eased curve because they mean different things --
+## the hold is the punishment, the recover is the player getting back on
+## their feet -- and a designer re-tuning "how hard" should not have to
+## also re-tune "how long it takes to shake off".
+##
+## Together they cost (1 - 0.55) * 0.7 + (1 - 0.775) * 0.8 ~= 0.5s of lead
+## through the deficit alone, on top of the cap below.
+const STRIKE_SLOWDOWN_HOLD_S: float = 0.7
+const STRIKE_SLOWDOWN_RECOVER_S: float = 0.8
+
+## Lead the pursuer is pulled to on any strike, if it was not already
+## closer -- a CEILING applied to the lead, never a subtraction.
+##
+## THIS IS WHAT MAKES THE PENALTY VISIBLE, and it has to exist as its own
+## rule: the deficit above costs about half a second of lead, which from a
+## full 15s buffer would leave the pursuer exactly as invisible as it was
+## before the player got hit. The brief asks for the pursuer to be on
+## screen DURING a penalty "quel que soit son etat precedent", and only a
+## clamp can promise that regardless of the lead it starts from.
+##
+## STRICTLY BELOW PURSUER_VISIBLE_LEAD_S (10.0), and that inequality is the
+## guarantee -- not the specific value.
+##
+## 4.0 rather than the 7.0 this batch first tried, and the difference is the
+## whole mid-skill half of the design. MEASURED (scripts/dev/StrikeAudit.gd):
+## at 7.0 a stumble left ~28s of runway before the drain alone could finish
+## the job, which a mid-skill player's risk income comfortably out-earns, so
+## the ONLY way that profile could ever be caught was to stumble twice inside
+## TIME_TO_CLEAR_STRIKE_S -- rare enough that the probe measured 0 captures
+## against 9 deaths by fatal hazard, i.e. the redesign had not actually moved
+## where death comes from for the one profile it was written for.
+##
+## At 4.0 a stumble takes most of the buffer, which is what the Temple Run
+## reference this whole block is built on actually does: you clip something,
+## the thing behind you is ON you, and the next twenty seconds decide it. The
+## lead is still fully recoverable -- three risk events buy it back
+## (PURSUER_RISK_REWARD_S) -- so this is a debt, not a sentence.
+##
+## A ceiling and not a subtraction so that two stumbles in a row cannot
+## stack into an instant catch: the second one is the catch already, by
+## STRIKE_CAPACITY, and it should be the strike count that kills rather
+## than an arithmetic coincidence nobody can see coming.
+const STRIKE_PURSUER_LEAD_CAP_S: float = 4.0
+
 ## Contacts inside this window of the last credited one are ignored --
 ## see register_strike.
 ##
@@ -676,6 +736,20 @@ var death_cause: DeathCause = DeathCause.COLLISION
 ## this can be observed at is a state the player is still playing in.
 var strikes_used: int = 0
 
+## Fraction of the run's speed the player is currently making good, 1.0
+## normally and STRIKE_SLOWDOWN_FACTOR during a stumble. THE ONE PLACE the
+## penalty exists -- everything else about it (the ground lost to the
+## pursuer, the score not accrued, the world visibly lurching) is a
+## consequence of this number rather than a separate effect that has to be
+## kept in step with it.
+##
+## Read through scroll_speed(); no caller multiplies by it directly.
+var player_speed_factor: float = 1.0
+
+## Elapsed seconds inside the current stumble, or < 0.0 when there is none --
+## the same "-1.0 means idle" convention as the HUD's and the jump marker's
+## own pop timers.
+var _strike_slow_t: float = -1.0
 ## Run time before which a contact is swallowed (see STRIKE_INVULNERABLE_S).
 var _strike_invulnerable_until_s: float = -1.0
 
@@ -731,6 +805,8 @@ func start_run() -> void:
 	pursuer_visible = false
 	death_cause = DeathCause.COLLISION
 	strikes_used = 0
+	player_speed_factor = 1.0
+	_strike_slow_t = -1.0
 	_strike_invulnerable_until_s = -1.0
 	state = State.PLAYING
 	state_changed.emit(state)
@@ -774,6 +850,12 @@ func advance_time(delta: float) -> void:
 	_update_stage()
 	_update_dark_cycle(delta)
 	_update_combo()
+	# BEFORE _update_pursuer, and that order is load-bearing: the pursuer's
+	# drain reads player_speed_factor, which this call is what sets. The other
+	# way round, every stumble's first frame would be charged at the previous
+	# frame's speed and its last frame charged after recovery -- a small error,
+	# but one that would make the penalty's cost depend on frame timing.
+	_update_strikes(delta)
 	_update_pursuer(delta)
 
 ## Speed is a step function of ELAPSED TIME, never of distance travelled.
@@ -798,6 +880,39 @@ func _update_stage() -> void:
 		return
 	stage_index = new_stage
 	current_speed = STAGE_SPEEDS[stage_index]
+
+## THE SPEED THE WORLD ACTUALLY MOVES AT right now: the run's nominal speed
+## scaled by whatever the player is currently making good (see
+## player_speed_factor / STRIKE_SLOWDOWN_FACTOR).
+##
+## `current_speed` and this are two different questions, and they stopped
+## being the same number the moment a stumble could slow the player without
+## slowing the run -- exactly the split Obstacle.own_speed_factor /
+## closing_speed() already drew from the other direction, and named for the
+## same reason: an implied assumption that turned out to be a property of the
+## content rather than of the game.
+##
+## WHICH ONE A CALLER WANTS:
+##   scroll_speed()    -- anything happening NOW. How far the track moves this
+##                        frame, how much distance is banked for it, and how
+##                        long until a given obstacle reaches the player
+##                        (Obstacle.closing_speed). During a stumble the world
+##                        genuinely arrives more slowly, so every reaction
+##                        window computed from this stays honest instead of
+##                        promising time the player does not have.
+##   current_speed     -- the run's own pace, independent of stumbles: the
+##                        speed table, the palier the player is in.
+##   lookahead_speed() -- anything being LAID OUT for later (TrackManager's
+##                        spacing rules). A stumble is over in ~1.5s, long
+##                        before a row spawned during it is reached, so
+##                        spacing must keep using the run's nominal pace --
+##                        spacing a row for 0.55x speed would leave it
+##                        absurdly tight by the time the player got there.
+##
+## At player_speed_factor == 1.0 this returns current_speed exactly (a
+## multiplication by 1.0 is exact), so nothing outside a stumble changes.
+func scroll_speed() -> float:
+	return current_speed * player_speed_factor
 
 ## Worst-case time between a row being spawned and the player actually
 ## reaching it: TrackManager (SEGMENT_COUNT=7 segments, SEGMENT_LENGTH=
@@ -1012,8 +1127,30 @@ func register_strike(source_type: int) -> bool:
 		pursuer_caught.emit()
 		end_run(DeathCause.PURSUER)
 		return true
+	_strike_slow_t = 0.0
+	player_speed_factor = STRIKE_SLOWDOWN_FACTOR
+	# Gated on the same flag as the drain and the reward, for the same reason:
+	# a probe that switched the pursuer off must see the lead frozen, not
+	# yanked down every time its bot clips something.
+	if pursuer_enabled:
+		pursuer_lead_s = minf(pursuer_lead_s, STRIKE_PURSUER_LEAD_CAP_S)
+		_refresh_pursuer_visibility()
 	return true
 
+## The stumble's own clock. Driven from advance_time() like everything else
+## here, so a headless probe stepping the run at a fixed delta sees exactly
+## the timing a real run does.
+func _update_strikes(delta: float) -> void:
+	if _strike_slow_t >= 0.0:
+		_strike_slow_t += delta
+		if _strike_slow_t >= STRIKE_SLOWDOWN_HOLD_S + STRIKE_SLOWDOWN_RECOVER_S:
+			_strike_slow_t = -1.0
+			player_speed_factor = 1.0
+		elif _strike_slow_t <= STRIKE_SLOWDOWN_HOLD_S:
+			player_speed_factor = STRIKE_SLOWDOWN_FACTOR
+		else:
+			var t := (_strike_slow_t - STRIKE_SLOWDOWN_HOLD_S) / STRIKE_SLOWDOWN_RECOVER_S
+			player_speed_factor = lerpf(STRIKE_SLOWDOWN_FACTOR, 1.0, clampf(t, 0.0, 1.0))
 ## Collapses the chain once COMBO_TIMEOUT_S has elapsed with no risk event.
 ## Driven from advance_time() -- the same clock everything else in this
 ## file is derived from -- so a headless probe stepping the run at a fixed
@@ -1038,9 +1175,27 @@ func _update_combo() -> void:
 func _update_pursuer(delta: float) -> void:
 	if not pursuer_enabled:
 		return # dev probes only -- see the var's own doc
-	if run_time_s < PURSUER_GRACE_S:
-		return # see PURSUER_GRACE_S: no risk is available yet, so no drain
-	pursuer_lead_s = maxf(0.0, pursuer_lead_s - PURSUER_CLOSE_RATE * delta)
+	# TWO independent reasons the gap can close, summed into one drain:
+	#
+	#   the BASELINE (PURSUER_CLOSE_RATE), charged only once the grace window
+	#     is over -- see PURSUER_GRACE_S, no risk is available before then;
+	#   the DEFICIT, charged whenever the player is making good less than the
+	#     run's full speed. It is not a tuned punishment at all, it is
+	#     arithmetic: the pursuer keeps the world's speed, the player keeps
+	#     player_speed_factor of it, so the gap shrinks at exactly the
+	#     difference. In seconds of lead that difference is (1 - factor) per
+	#     second, with no reference to the speed table -- which is what keeps
+	#     a stumble worth the same at 12 m/s and at the 26 m/s cap.
+	#
+	# At factor 1.0 the deficit is exactly 0.0 and this reduces, term for
+	# term, to the arithmetic that shipped before strikes existed -- including
+	# the "no drain at all during grace" early-out, which is now the drain
+	# summing to zero instead of a separate return.
+	var drain := (PURSUER_CLOSE_RATE if run_time_s >= PURSUER_GRACE_S else 0.0) \
+		+ (1.0 - player_speed_factor)
+	if drain <= 0.0:
+		return
+	pursuer_lead_s = maxf(0.0, pursuer_lead_s - drain * delta)
 	_refresh_pursuer_visibility()
 	if pursuer_lead_s > 0.0:
 		return
