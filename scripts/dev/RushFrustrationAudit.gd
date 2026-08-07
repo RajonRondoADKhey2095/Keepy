@@ -44,6 +44,21 @@ var _rush_imminent_threat_frames: int = 0
 var _rush_windows_seen: int = 0
 var _was_rush_active: bool = false
 
+## Frames where a rush and a track-shrink window were BOTH open. Not a
+## failure -- TrackManager refuses to START a rush during a window but
+## deliberately never cuts short one already in flight (see its
+## _update_density_phase), so a bounded overlap is the designed
+## behaviour. Counted so "bounded" is a measurement rather than a claim,
+## and so a future change that let the two stack freely would show up
+## here as a number that stopped being small.
+var _rush_shrink_overlap_frames: int = 0
+
+## Same probe override as AntiFrustrationAudit.PROBE_UNLOCK_SCORE -- see
+## its doc. Without it this probe's 600s run would spend its first ~2
+## minutes below the shipped score gate, and the overlap it now reports
+## would be measured over a shorter window than the run implies.
+const PROBE_UNLOCK_SCORE: int = 600
+
 func _ready() -> void:
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	# No-op unless `-- --seed=<int>` was passed.
@@ -56,6 +71,7 @@ func _ready() -> void:
 	# probe short of its own completion check. Switching it off is also what
 	# keeps these numbers directly comparable to the pre-pursuer baseline.
 	GameState.pursuer_enabled = false
+	GameState.shrink_unlock_score = PROBE_UNLOCK_SCORE
 	print("=== RUSH FRUSTRATION AUDIT ===")
 	print("rng: %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("running %.0fs simulated, checking every physics frame WHILE A RUSH IS ACTIVE" % SIM_SECONDS)
@@ -83,6 +99,8 @@ func _physics_process(delta: float) -> void:
 	_was_rush_active = rush_active
 
 	if rush_active:
+		if GameState.shrink_active():
+			_rush_shrink_overlap_frames += 1
 		_check_current_lane()
 
 	if _t >= SIM_SECONDS:
@@ -91,6 +109,7 @@ func _physics_process(delta: float) -> void:
 		print("distinct rush windows entered    : %d" % _rush_windows_seen)
 		print("physics frames checked (rush only): %d" % _rush_frames_checked)
 		print("frames with imminent threat       : %d" % _rush_imminent_threat_frames)
+		print("frames also inside a shrink window: %d (overlap is bounded, not forbidden)" % _rush_shrink_overlap_frames)
 		print("violations (no escape)            : %d (must be 0)" % _violations)
 		if _violations > 0:
 			push_error("RUSH FRUSTRATION AUDIT FAILED: %d frame(s) during a rush window found the player's current lane with no jump escape and no switch escape available." % _violations)
@@ -159,6 +178,13 @@ func _check_current_lane() -> void:
 	var switch_safe := false
 	for adjacent in [player_lane - 1, player_lane + 1]:
 		if adjacent < 0 or adjacent > 2:
+			continue
+		# Same exclusion, and the same reason, as
+		# AntiFrustrationAudit._check_current_lane -- see that file's class
+		# doc. A lane shut by a track-shrink window is empty because the
+		# game stopped spawning there, so counting it as an escape would
+		# make this probe pass on exactly the runs it exists to catch.
+		if GameState.lane_blocked(adjacent):
 			continue
 		if ground_ttc[adjacent] < 0.0:
 			switch_safe = true

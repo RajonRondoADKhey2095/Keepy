@@ -29,8 +29,34 @@ extends Node
 ##                       close enough (AIR_HAZARD_SEPARATION_S) to
 ##                       collide with the timing a jump over the first
 ##                       threat would need.
-##       SWITCH-SAFE -- at least one ADJACENT lane has no imminent ground
-##                       threat of its own.
+##       SWITCH-SAFE -- at least one ADJACENT lane is OPEN (see below)
+##                       and has no imminent ground threat of its own.
+##
+## THE TEMPORARY TRACK SHRINK, and why this probe had to be extended
+## rather than left to average it in. A shrink window closes one lane
+## (GameState.lane_blocked, see that file's TRACK SHRINK section), which
+## means the game stops spawning anything there. To the switch-safety
+## test above, a lane with nothing in it is the SAFEST escape available
+## -- so an un-extended version of this probe would have looked at the
+## one lane the player provably cannot reach, called it clear, and
+## reported zero violations on a run where they were trapped. It would
+## have gone on passing precisely as the guarantee broke.
+##
+## So the closed lane is excluded from the escapes this probe will
+## credit, and the during-window frames are counted and reported
+## SEPARATELY rather than diluted into a run that is mostly three lanes
+## wide: 0 violations out of 20k frames says nothing if only 400 of them
+## were the case under test.
+##
+## Two further invariants are asserted while a window is open, both of
+## which would be silent bugs rather than visible ones:
+##   - the player is NEVER standing on a closed lane (the mechanic picks
+##     a lane that is not theirs and refuses entry from that frame on,
+##     so this must hold by construction -- checked because "by
+##     construction" is a claim, not a measurement);
+##   - the condemned lane is always an EDGE lane, never the centre --
+##     closing the centre would split the track into two halves a +-1
+##     switch cannot cross.
 ##   - trapped => violation, counted and logged, but the run keeps going
 ##     (a full picture of HOW OFTEN, not just whether, matters more here
 ##     than stopping at the first one).
@@ -67,6 +93,26 @@ var _violations: int = 0
 var _frames_checked: int = 0
 var _imminent_threat_frames: int = 0
 
+# TRACK SHRINK bookkeeping -- see the class doc. Counted separately from
+# the totals above so "0 violations" can be read against how much of the
+# run was actually under test.
+var _shrink_frames_checked: int = 0
+var _shrink_imminent_threat_frames: int = 0
+var _shrink_violations: int = 0
+var _shrink_windows_seen: int = 0
+var _was_shrink_active: bool = false
+var _player_on_closed_lane: int = 0
+var _centre_lane_closed: int = 0
+
+## Lowered so a bot with collision NEUTERED, which never dies and so
+## never restarts, still meets the mechanic early enough in its single
+## continuous run to exercise it many times over -- rather than crossing
+## the shipped SHRINK_UNLOCK_SCORE around the two-minute mark and
+## sampling only the tail of the window. The trigger path itself is the
+## shipped one (see GameState.shrink_unlock_score's own doc: this is an
+## override of the score, not a bypass of the rule).
+const PROBE_UNLOCK_SCORE: int = 600
+
 func _ready() -> void:
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	# No-op unless `-- --seed=<int>` was passed; the default stays the
@@ -80,10 +126,14 @@ func _ready() -> void:
 	# probe short of its own completion check. Switching it off is also what
 	# keeps these numbers directly comparable to the pre-pursuer baseline.
 	GameState.pursuer_enabled = false
+	GameState.shrink_unlock_score = PROBE_UNLOCK_SCORE
 	print("=== ANTI-FRUSTRATION AUDIT ===")
 	print("rng                        : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("running %.0fs simulated, checking every physics frame that the player's" % SIM_SECONDS)
 	print("current lane always has a jump escape or a switch escape when threatened")
+	print("shrink unlock score        : %d (probe override of the shipped %d)" % [
+		PROBE_UNLOCK_SCORE, GameState.SHRINK_UNLOCK_SCORE])
+	print("a lane closed by a shrink window is NEVER counted as a switch escape")
 	print("")
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
@@ -108,11 +158,25 @@ func _physics_process(delta: float) -> void:
 		print("physics frames checked     : %d" % _frames_checked)
 		print("frames with imminent threat: %d" % _imminent_threat_frames)
 		print("violations (no escape)     : %d (must be 0)" % _violations)
+		print("--- during shrink windows (2 lanes) ---")
+		print("shrink windows exercised   : %d" % _shrink_windows_seen)
+		print("frames checked (shrunk)    : %d" % _shrink_frames_checked)
+		print("imminent-threat frames     : %d" % _shrink_imminent_threat_frames)
+		print("violations (shrunk)        : %d (must be 0)" % _shrink_violations)
+		print("player stood on closed lane: %d (must be 0)" % _player_on_closed_lane)
+		print("centre lane closed         : %d (must be 0)" % _centre_lane_closed)
+		if _shrink_windows_seen == 0:
+			push_error("ANTI-FRUSTRATION AUDIT INCONCLUSIVE: no shrink window occurred, so the 2-lane guarantee was never exercised -- every number above describes the 3-lane game only.")
+			get_tree().quit(1)
+		if _player_on_closed_lane > 0 or _centre_lane_closed > 0:
+			push_error("ANTI-FRUSTRATION AUDIT FAILED: %d frame(s) with the player on a closed lane, %d frame(s) with the CENTRE lane closed (which splits the track in two)." % [_player_on_closed_lane, _centre_lane_closed])
+			get_tree().quit(1)
 		if _violations > 0:
 			push_error("ANTI-FRUSTRATION AUDIT FAILED: %d frame(s) found the player's current lane with no jump escape and no switch escape available." % _violations)
 			get_tree().quit(1)
 		else:
-			print("PASSED: every imminent threat left at least one escape available.")
+			print("PASSED: every imminent threat left at least one escape available,")
+			print("        including across %d shrink window(s) where one lane was shut." % _shrink_windows_seen)
 			get_tree().quit(0)
 
 ## Aimless random lane roaming -- see the class doc for why this is
@@ -132,6 +196,20 @@ func _drive_bot() -> void:
 func _check_current_lane() -> void:
 	_frames_checked += 1
 	var player_lane := _keepy.lane_index
+
+	var shrunk := GameState.shrink_active()
+	if shrunk and not _was_shrink_active:
+		_shrink_windows_seen += 1
+	_was_shrink_active = shrunk
+	if shrunk:
+		_shrink_frames_checked += 1
+		# Both of these are supposed to be impossible by construction --
+		# which is exactly why they are measured rather than asserted in a
+		# comment. See the class doc.
+		if GameState.lane_blocked(player_lane):
+			_player_on_closed_lane += 1
+		if GameState.shrink_lane == 1:
+			_centre_lane_closed += 1
 
 	var ground_ttc: Array[float] = [-1.0, -1.0, -1.0] # per-lane nearest imminent ground threat, -1.0 = none
 	var ground_jumpable: Array[bool] = [false, false, false]
@@ -174,11 +252,19 @@ func _check_current_lane() -> void:
 		return # nothing imminent on the player's own lane -- no escape needed
 
 	_imminent_threat_frames += 1
+	if shrunk:
+		_shrink_imminent_threat_frames += 1
 
 	var jump_safe := ground_jumpable[player_lane] and not _jump_lethal_nearby(air_hazards, player_lane, threat_ttc)
 	var switch_safe := false
 	for adjacent in [player_lane - 1, player_lane + 1]:
 		if adjacent < 0 or adjacent > 2:
+			continue
+		# THE line that keeps this probe honest during a shrink window --
+		# see the class doc. A closed lane is empty precisely BECAUSE the
+		# game stopped spawning there, so without this it would read as
+		# the safest escape on the board and mask a genuine trap.
+		if GameState.lane_blocked(adjacent):
 			continue
 		if ground_ttc[adjacent] < 0.0:
 			switch_safe = true
@@ -186,6 +272,8 @@ func _check_current_lane() -> void:
 
 	if not jump_safe and not switch_safe:
 		_violations += 1
+		if shrunk:
+			_shrink_violations += 1
 		push_error("VIOLATION at t=%.2fs: lane %d has an imminent %s (ttc=%.3fs) with no jump escape (jumpable=%s) and no switch escape (lane %d ttc=%s, lane %d ttc=%s)." % [
 			_t, player_lane,
 			("DODGE" if not ground_jumpable[player_lane] else "jumpable hazard"),
