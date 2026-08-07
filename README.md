@@ -232,6 +232,27 @@ When 3D models are ready:
   Add `-- --seed=<int>` to any of them for a reproducible run (see
   `scripts/dev/DevSeed.gd`); without it they stay exploratory, which is
   what makes a rare violation eventually surface.
+- **Per-frame engine cost, measured, not guessed at.** `PerfProbe.tscn`
+  boots the real game headless and times its own real wall-clock cost
+  per physics tick (`Time.get_ticks_usec()` deltas -- `Performance.
+  get_monitor(TIME_PROCESS/TIME_PHYSICS_PROCESS)` was tried first and
+  measured to refresh on a roughly-once-per-second cadence under
+  `--fixed-fps`, not once per frame, so it cannot give per-frame
+  percentiles here), reporting mean/p50/p95/p99/max over a 50s recorded
+  window (after a 5s unrecorded warm-up). Add `-- --seed=<int>
+  --label=<text>` (and optionally `--no-pursuer`, which flips
+  `GameState.pursuer_enabled` off for a comparison run). Compared this
+  way against the last commit before the pursuer/STOMPER/combo/risk-
+  detection batches (`da4388f^`) and against a run where STOMPER/CHARGER
+  never spawn (temporary `TrackManager` chance consts, never committed)
+  and the pursuer is disabled, all three land in the same ~0.24-0.26ms
+  p50 / ~0.40-0.45ms p95 / ~0.47-0.58ms p99 band, well under the 16.7ms
+  frame budget at 60fps -- no measurable per-frame regression from those
+  four batches on native headless Godot. See the batch's own report for
+  the full comparison and the caveat that this is a native measurement
+  of a project that ships as a Web/WASM export.
+
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/PerfProbe.tscn
 - Persistent local best score (survives relaunch, `user://` via
   FileAccess/IndexedDB on Web) plus a global top-10 leaderboard
   (Firestore REST, project `keepy-8df91`, independent from `keepr-529cc`)
