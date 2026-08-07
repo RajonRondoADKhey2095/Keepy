@@ -23,14 +23,40 @@ class_name Pursuer
 ## second viewport or any change to the camera.
 
 ## Z the pursuer sits at when it first becomes visible, i.e. at
-## GameState.PURSUER_VISIBLE_LEAD_S. Kept a metre clear of the camera's own
-## Z (7.0, see CameraFollow.offset) so it enters frame from the far edge
-## rather than materialising on top of the lens.
-const FAR_Z: float = 6.0
-## Z at zero lead -- the player's own position, since that is what being
-## caught means. The two ends of the lerp are therefore both meaningful
-## rather than tuned: "at the camera" and "on top of you".
-const CAUGHT_Z: float = 0.0
+## GameState.PURSUER_VISIBLE_LEAD_S.
+##
+## WAS 6.0 -- only ONE unit clear of the camera's own Z (7.0, see
+## CameraFollow.offset), which is the framing bug this batch exists to fix.
+## The comment that used to justify 6.0 ("enters frame from the far edge")
+## had the geometry backwards: a metre from the LENS is not the far edge of
+## anything, it is nearly on top of it. A perspective camera's apparent
+## size scales with 1/distance, so at FAR_SCALE (1.0) and one unit out, the
+## capsule's own 3.4-unit body already subtends roughly 120 degrees of a
+## 75-degree vertical FOV -- comfortably wider than the screen itself,
+## before NEAR_SCALE ever enters into it. See PursuerFramingAudit.gd for
+## the measured, on-screen confirmation and the occupancy cap this and
+## CAUGHT_Z/FAR_SCALE/NEAR_SCALE below are jointly calibrated against.
+const FAR_Z: float = 3.0
+## Z the pursuer eases toward as the lead drops to zero -- i.e. the closest
+## it is ever allowed to sit behind the player, VISUALLY.
+##
+## WAS 0.0 ("the player's own position, since that is what being caught
+## means"). That reading conflated two different things: capture is an
+## event in GameState (the lead reaching zero), never a distance this node
+## reaches -- Pursuer.gd has no collision shape and cannot itself catch
+## anyone (see the class doc above). Lerping visual Z all the way to 0.0
+## put the capsule's origin exactly on the camera's look-at path with
+## nothing left to divide distance by, which is the second half of the
+## screen-filling bug: this end of the lerp was ALSO too close, just for a
+## different reason (a vanishing denominator rather than a small one).
+##
+## 1.0 is a floor, not a tuned distance: below it the pursuer stops
+## visually closing in at all, even while pursuer_lead_s keeps counting
+## down toward the real capture. The threat past that point reads through
+## the OTHER cues that are still live at zero lead -- the eyes' emission
+## energy peaking, the HUD gauge and strike pips, the vignette -- exactly
+## as the class doc already promised none of this depends on colour alone.
+const CAUGHT_Z: float = 1.0
 
 ## How far the silhouette leans side to side, and how fast. A slow lateral
 ## sway, unsynchronised with anything else on screen, so the shape reads as
@@ -49,8 +75,18 @@ const BOB_HZ: float = 0.8
 ## Scale at the two ends of the approach. It grows as it closes -- the
 ## cheapest and most legible distance cue there is, and one that survives
 ## every palette because it is geometry rather than colour.
-const FAR_SCALE: float = 1.0
-const NEAR_SCALE: float = 2.2
+##
+## WAS 1.0 / 2.2 -- sized for a corridor the old FAR_Z/CAUGHT_Z never
+## actually gave it (see those constants' doc). Against the REAL available
+## depth (camera at Z=7.0, pursuer confined to [CAUGHT_Z, FAR_Z] = a few
+## units of it), 1.0 was already oversized and 2.2 compounded it right
+## where the threat is supposed to read as urgent rather than as a wall.
+## Rescaled so the capsule stays identifiable as an imposing shape without
+## ever eating the track, the obstacles ahead or Keepy -- see
+## PursuerFramingAudit.gd for the measured occupancy this pair holds to
+## (max screen-height fraction, both endpoints and the run in between).
+const FAR_SCALE: float = 0.4
+const NEAR_SCALE: float = 0.65
 
 @onready var _mesh: MeshInstance3D = $Silhouette
 @onready var _eye_left: MeshInstance3D = $Silhouette/EyeLeft
