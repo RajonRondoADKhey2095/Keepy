@@ -89,6 +89,46 @@ const FAR_SCALE: float = 0.4
 const NEAR_SCALE: float = 0.65
 
 ## =====================================================================
+## CAPTURE SEQUENCE -- the missing moment playtest feedback pointed at
+## directly: "le joueur a pris deux contacts puis a ete capture, et n'a pas
+## compris qu'il s'etait fait attraper". The pursuer was on screen right up
+## to the death, and the very next frame was the score screen -- nothing in
+## between was ever the visible REASON. This block is what plays during
+## GameState.State.CAPTURED (see that state's own doc in GameState.gd),
+## between the lead/strikes reaching zero and the actual GAME_OVER: the
+## pursuer alone keeps closing, past its ordinary CAUGHT_Z floor, onto a
+## world every other _physics_process in the game has already frozen (every
+## one of them already early-outs on `state != PLAYING`, which is what
+## makes this free -- nothing else needed to change to hold the track,
+## Keepy and every obstacle perfectly still while this plays).
+##
+## Driven for GameState.CAPTURE_SEQUENCE_DURATION_S, not a separate
+## constant of this file's own: retuning how long a capture reads is a
+## single-number change in GameState, not two constants kept in sync by
+## hand across files.
+## =====================================================================
+
+## How far past CAUGHT_Z the lunge is allowed to close -- the one place in
+## this file that is legal, because by the time this plays the run is
+## already decided and there is nothing left behind the pursuer to protect
+## from the screen-filling bug CAUGHT_Z's own doc describes. Still short of
+## Z=0 (Keepy's own Z, and the camera's look-at path): landing exactly on it
+## would put the mesh's ORIGIN on the lens' axis with nothing left to divide
+## screen-space distance by -- the same vanishing-denominator failure mode,
+## courted on purpose this time only if it were 0.0 instead of a hair short.
+const CAPTURE_Z: float = 0.15
+## Scale the lunge reaches at the end. Past NEAR_SCALE on purpose -- see
+## PursuerFramingAudit.gd's dedicated, UNCAPPED "CAPTURE" sample bucket:
+## filling more of the frame than the ordinary approach is ever allowed to
+## is the entire point of this beat, not an oversight to budget against.
+const CAPTURE_SCALE: float = 1.05
+## Eyes ramp to a THIRD, higher multiplier here, past the one the ordinary
+## closing approach already peaks at (_base_emission_energy * 3.0, see the
+## ordinary branch below) -- the same "luminance, not hue" reasoning as
+## that ramp, pushed one step further for the one moment that is allowed to.
+const CAPTURE_EMISSION_MULTIPLIER: float = 5.0
+
+## =====================================================================
 ## INTRO SIGHTING -- a brief, forced look at the pursuer at the very start
 ## of every run, before the HUD gauge can mean anything to a player who has
 ## never seen what it is a gauge OF.
@@ -129,6 +169,36 @@ const INTRO_HOLD_FRACTION: float = 0.45
 ## _process does not run at all (see the guard at its top).
 var _intro_active: bool = false
 var _intro_t: float = 0.0
+
+## Whether the capture lunge is currently playing -- see the CAPTURE
+## SEQUENCE block above. While true it owns visibility/position/scale
+## outright, same discipline as _intro_active, and is mutually exclusive
+## with it by construction (_on_state_changed only ever sets one of the two,
+## see below) -- PursuerFramingAudit.gd's per-frame sampling relies on that.
+var _capture_active: bool = false
+var _capture_t: float = 0.0
+## Position/scale the lunge starts FROM -- captured once, the instant
+## capture begins, from wherever the ordinary branch (or, for a strike-
+## triggered capture, the strike's own lead cap) last left this node. Never
+## a fixed constant like CAUGHT_Z: the lead is not guaranteed to have
+## reached exactly CAUGHT_Z's own t=1.0 the frame capture starts (a strike
+## caps the lead to STRIKE_PURSUER_LEAD_CAP_S, not to 0.0 directly), so
+## snapping the lunge's start to a fixed pose could pop the mesh backward
+## before lunging it forward again. Lerping from the REAL last pose makes
+## the lunge a continuation of the approach the player was already
+## watching, never a second entrance.
+var _capture_start_z: float = FAR_Z
+var _capture_start_x: float = 0.0
+var _capture_start_y: float = 0.0
+var _capture_start_scale: float = FAR_SCALE
+## Same reasoning as the four above, applied to the eyes: a strike-triggered
+## capture can land at any point along the ordinary branch's emission ramp
+## (it does not have to be mid-lead-drain's own eventual peak), so the lunge
+## has to ease FROM whatever value was actually showing, not from an assumed
+## constant -- otherwise the eyes could pop brighter or dimmer on the very
+## first frame of the lunge, the same class of bug the position/scale
+## snapshot above exists to avoid.
+var _capture_start_emission: float = 0.0
 
 ## Free-running animation phase. Reset every time the pursuer (re)appears so
 ## a fresh sighting always starts from the same pose rather than picking up
@@ -178,15 +248,45 @@ func _on_became_visible() -> void:
 ## Every start_run() emits this with State.PLAYING exactly once (see
 ## GameState.start_run) -- the one clean, edge-detected hook for "a run
 ## just began" that does not require this node to poll GameState.state
-## itself every frame to notice a restart.
+## itself every frame to notice a restart. Also the hook for the OTHER
+## transition this node cares about, State.CAPTURED (see GameState.gd's
+## _begin_capture_sequence) -- both arms are mutually exclusive writes to
+## _intro_active/_capture_active, which is what guarantees _process below
+## never has to choose between the two branches on the same frame.
 func _on_state_changed(new_state: int) -> void:
-	if new_state != GameState.State.PLAYING:
-		return
-	_intro_active = true
-	_intro_t = 0.0
-	_anim_t = 0.0
+	match new_state:
+		GameState.State.PLAYING:
+			_intro_active = true
+			_capture_active = false
+			_intro_t = 0.0
+			_anim_t = 0.0
+		GameState.State.CAPTURED:
+			_intro_active = false
+			_capture_active = true
+			_capture_t = 0.0
+			# Snapshot wherever the ordinary branch (or a strike's own lead
+			# cap) last left this node -- see the vars' own doc for why the
+			# lunge starts FROM this rather than from a fixed pose.
+			_capture_start_z = position.z
+			_capture_start_x = position.x
+			_capture_start_y = position.y
+			_capture_start_scale = scale.x
+			if _material:
+				_capture_start_emission = _material.emission_energy_multiplier
+		_:
+			# TITLE or GAME_OVER: neither special sequence owns this node,
+			# and _process's own top-level guard (state != PLAYING) already
+			# hides it every frame either state is active -- this just makes
+			# sure a run that ends WHILE a sequence was mid-flight cannot
+			# leave either flag stuck true for the next start_run() to
+			# inherit by accident.
+			_intro_active = false
+			_capture_active = false
 
 func _process(delta: float) -> void:
+	if _capture_active:
+		_process_capture(delta)
+		return
 	if GameState.state != GameState.State.PLAYING:
 		visible = false
 		_intro_active = false
@@ -223,6 +323,14 @@ func _process(delta: float) -> void:
 	if _material:
 		_material.emission_energy_multiplier = lerpf(_base_emission_energy, _base_emission_energy * 3.0, t)
 
+## Cubic Hermite smoothstep: 0 at t=0, 1 at t=1, and a derivative of exactly
+## 0 at BOTH ends -- which is what makes the capture lunge below read as one
+## continuous motion into whatever the ordinary lead-driven branch was doing
+## the previous frame, rather than snapping onto a differently-shaped curve
+## the instant capture begins.
+func _smoothstep01(t: float) -> float:
+	return t * t * (3.0 - 2.0 * t)
+
 ## The opening sighting. Held pose at FAR_Z/FAR_SCALE -- the exact framing
 ## PursuerFramingAudit already measures for the real "just became visible"
 ## moment, so this never needs its own occupancy check -- then a pure scale
@@ -252,3 +360,32 @@ func _process_intro(delta: float) -> void:
 
 	if _material:
 		_material.emission_energy_multiplier = _base_emission_energy
+
+## The capture lunge -- see the CAPTURE SEQUENCE block's doc up top. Eases
+## (same _smoothstep01, so the transition INTO this from whatever the
+## ordinary branch was doing the previous frame lands smoothly rather than
+## snapping onto a new curve) from the pose captured at the instant capture
+## began to CAPTURE_Z/CAPTURE_SCALE, over GameState.CAPTURE_SEQUENCE_DURATION_S
+## -- read directly from GameState rather than a duplicate local constant,
+## so the two can never fall out of sync. Sway/bob are NOT continued here:
+## letting the lateral drift die out and the silhouette centre on the player
+## is deliberate -- this is the one moment it stops merely pursuing and
+## actually locks on, and a sequence built entirely of eases-toward-a-point
+## is enough motion on its own without also fighting a live sine wave.
+func _process_capture(delta: float) -> void:
+	_capture_t += delta
+	visible = true
+
+	var t := clampf(_capture_t / GameState.CAPTURE_SEQUENCE_DURATION_S, 0.0, 1.0)
+	var eased := _smoothstep01(t)
+
+	position.z = lerpf(_capture_start_z, CAPTURE_Z, eased)
+	position.x = lerpf(_capture_start_x, 0.0, eased)
+	position.y = lerpf(_capture_start_y, 0.0, eased)
+
+	var s := lerpf(_capture_start_scale, CAPTURE_SCALE, eased)
+	scale = Vector3(s, s, s)
+
+	if _material:
+		_material.emission_energy_multiplier = lerpf(
+			_capture_start_emission, _base_emission_energy * CAPTURE_EMISSION_MULTIPLIER, eased)

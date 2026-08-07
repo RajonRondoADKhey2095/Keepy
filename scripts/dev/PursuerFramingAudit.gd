@@ -23,13 +23,24 @@ extends Node
 ## because they read actual pixel colours. Occupancy here needs only
 ## geometry.
 ##
-## Two populations are sampled and reported separately, because they are
-## produced by two different code paths that must EACH clear the same cap:
+## Three populations are sampled and reported separately, because they are
+## produced by three different code paths and only TWO of them owe the same
+## cap:
 ##
 ##   INTRO   -- Pursuer._process_intro, the opening sighting every run
-##              starts with (see Pursuer.gd's INTRO block).
+##              starts with (see Pursuer.gd's INTRO block). Bound by the cap.
 ##   VISIBLE -- Pursuer._process's ordinary lead-driven branch, whenever
-##              GameState.pursuer_visible is true later in the run.
+##              GameState.pursuer_visible is true later in the run. Bound by
+##              the cap.
+##   CAPTURE -- Pursuer._process_capture, the forced lunge played during
+##              GameState.State.CAPTURED (see that state's own doc). NOT
+##              bound by the cap: the run is already over by the time this
+##              plays, there is nothing left behind the pursuer to protect,
+##              and the whole point of the lunge is to fill more of the
+##              frame than the ordinary approach is ever allowed to. This
+##              population is measured and reported like the other two --
+##              exceeding the cap here is the EXPECTED, correct outcome, not
+##              a regression, so it never fails the run.
 ##
 ## Run it with:
 ##   godot4 --headless --fixed-fps 60 --path . \
@@ -69,9 +80,11 @@ var _phase_t: float = 0.0
 var _runs: int = 0
 
 ## Occupancy samples, kept separately so INTRO and VISIBLE can each be
-## checked against the same cap and reported on their own terms.
+## checked against the same cap and reported on their own terms. CAPTURE is
+## reported the same way but never checked against it -- see the class doc.
 var _intro_samples: Array[Dictionary] = []
 var _visible_samples: Array[Dictionary] = []
+var _capture_samples: Array[Dictionary] = []
 
 func _ready() -> void:
 	var seeded := DevSeed.apply()
@@ -97,23 +110,42 @@ func _start_run() -> void:
 	_run_t = 0.0
 
 func _physics_process(delta: float) -> void:
-	if GameState.state == GameState.State.PLAYING and _run_t < MAX_RUN_S:
+	# CAPTURED kept alive here alongside PLAYING -- and that is new for this
+	# batch -- specifically so the run is not torn down before the capture
+	# lunge (Pursuer._process_capture) has actually played out. Ending the
+	# run the instant PLAYING stops, as this used to, would have sampled
+	# nothing at all from CAPTURE: this probe would have started a fresh run
+	# in the same physics frame the sequence began.
+	var active := GameState.state == GameState.State.PLAYING \
+		or GameState.state == GameState.State.CAPTURED
+	if active and _run_t < MAX_RUN_S:
 		_run_t += delta
 		_phase_t += delta
-		_drive_safe_bot()
+		# Only while actually PLAYING -- there is nothing left to react to
+		# once capture has begun (the world is frozen, see State.CAPTURED's
+		# doc), and driving the bot's lane logic against frozen obstacles
+		# would just be wasted work every frame of every capture.
+		if GameState.state == GameState.State.PLAYING:
+			_drive_safe_bot()
 		_sample()
 		return
 	_end_run()
 
-## Both populations are read off the SAME node every frame -- Pursuer.gd
-## guarantees at most one of _intro_active / the ordinary branch is live at
-## once (see its _process guard), so there is no risk of double-counting a
-## single frame into both buckets.
+## All three populations are read off the SAME node every frame -- Pursuer.gd
+## guarantees at most one of _intro_active / the ordinary branch / the
+## capture lunge is live at once (see its _process guard), so there is no
+## risk of double-counting a single frame into more than one bucket. CAPTURE
+## is checked first: it is driven off GameState.state rather than a Pursuer
+## flag because the lunge does not expose one of its own (Pursuer.gd has no
+## reason to duplicate GameState.state on its own node just so a probe can
+## read it).
 func _sample() -> void:
 	if not _pursuer.visible:
 		return
 	var frac := _occupancy_fraction()
-	if _pursuer._intro_active:
+	if GameState.state == GameState.State.CAPTURED:
+		_capture_samples.append({"t": _run_t, "frac": frac})
+	elif _pursuer._intro_active:
 		_intro_samples.append({"t": _run_t, "frac": frac})
 	elif GameState.pursuer_visible:
 		_visible_samples.append({"lead": GameState.pursuer_lead_s, "frac": frac})
@@ -157,6 +189,13 @@ func _report() -> void:
 	print("")
 	_report_population("VISIBLE", _visible_samples)
 	print("")
+	# CAPTURE is reported exactly like the other two, but on its own,
+	# UNCAPPED terms -- see the class doc: exceeding MAX_OCCUPANCY_FRACTION
+	# here is the expected, correct outcome of the lunge doing its job, not
+	# a regression, so this population never enters the pass/fail decision
+	# below.
+	_report_population("CAPTURE (uncapped by design -- see class doc)", _capture_samples)
+	print("")
 
 	var intro_max := _max_frac(_intro_samples)
 	var visible_max := _max_frac(_visible_samples)
@@ -174,7 +213,13 @@ func _report() -> void:
 		push_error("PURSUER FRAMING AUDIT FAILED: zero VISIBLE samples -- the pursuer was never seen outside its intro, this run proves nothing about the real approach.")
 		get_tree().quit(1)
 		return
-	print("PASSED: both populations stay at or under %.0f%% of screen height." % (MAX_OCCUPANCY_FRACTION * 100.0))
+	if _capture_samples.is_empty():
+		# Informational only -- see the loop above's own comment: with the
+		# SAFE bot dying repeatedly, an empty CAPTURE population across a
+		# whole run would be surprising, but it is not what this audit
+		# exists to guarantee, so it is reported rather than failed.
+		print("NOTE: zero CAPTURE samples -- the lunge was never observed this run.")
+	print("PASSED: INTRO and VISIBLE stay at or under %.0f%% of screen height (CAPTURE is exempt by design)." % (MAX_OCCUPANCY_FRACTION * 100.0))
 	get_tree().quit(0)
 
 func _report_population(label: String, samples: Array[Dictionary]) -> void:
@@ -208,7 +253,11 @@ func _report_population(label: String, samples: Array[Dictionary]) -> void:
 	if worst_sample.has("lead"):
 		print("  max occurred at  : lead=%.2fs" % worst_sample["lead"])
 	elif worst_sample.has("t"):
-		print("  max occurred at  : run_t=%.2fs (intro)" % worst_sample["t"])
+		# "run_t" alone, no "(intro)" suffix -- this {"t", "frac"} shape is
+		# now shared with the CAPTURE bucket too (see _sample), and a
+		# hardcoded "(intro)" here would mislabel a CAPTURE population's own
+		# worst sample.
+		print("  max occurred at  : run_t=%.2fs" % worst_sample["t"])
 
 func _max_frac(samples: Array[Dictionary]) -> float:
 	var m := 0.0

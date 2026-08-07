@@ -323,7 +323,17 @@ func _end_run() -> void:
 		+ GameState.risk_event_counts[2] + GameState.risk_event_counts[3]
 	_cleared_by_time += GameState.strikes_cleared_by_time
 	_cleared_by_combo += GameState.strikes_cleared_by_combo
-	if GameState.state != GameState.State.GAME_OVER:
+	# GameState.state == PLAYING means this run hit _run_t >= MAX_RUN_S while
+	# still alive -- the only way _physics_process below stops driving it
+	# without the run itself having ended. Checked BEFORE death_cause, and
+	# that order now matters where it did not used to: a capture no longer
+	# lands on GAME_OVER the same frame it happens (see GameState.State.
+	# CAPTURED), it spends CAPTURE_SEQUENCE_DURATION_S in CAPTURED first --
+	# still != PLAYING, still != GAME_OVER. The old `state != GAME_OVER`
+	# check read that in-between state as "survived to cap" (state is
+	# neither PLAYING nor GAME_OVER, so the negative check was true), which
+	# would have silently miscounted every pursuer capture as a survival.
+	if GameState.state == GameState.State.PLAYING:
 		_survived_to_cap += 1
 	elif GameState.death_cause == GameState.DeathCause.PURSUER:
 		_caught_by_pursuer += 1
