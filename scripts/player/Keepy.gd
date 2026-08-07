@@ -121,6 +121,22 @@ func move_lane(direction: int) -> void:
 	# one (see those vars' own doc).
 	if new_index == lane_index:
 		return
+	# A temporarily shrunk track (see GameState's TRACK SHRINK section) is
+	# enforced HERE and nowhere else: the barrier carries no collider at
+	# all, so "the lane is closed" means exactly "this one line refuses to
+	# take you there". Nothing about the death model, the strike system or
+	# the pursuer is touched by the mechanic as a result -- a closed lane
+	# is UNAVAILABLE, never LETHAL.
+	#
+	# This can never strand the player, and that rests on the invariant
+	# that only an EDGE lane is ever condemned (see GameState's section
+	# header): the two lanes that remain are always adjacent, so at least
+	# one +-1 step is always still legal from wherever the player stands.
+	# A refused switch is also not a new kind of dead input -- swiping into
+	# the wall at lane 0/2 has always silently no-opped, via the clamp
+	# immediately above.
+	if GameState.lane_blocked(new_index):
+		return
 	previous_lane_index = lane_index
 	lane_index = new_index
 	last_lane_change_s = GameState.run_time_s

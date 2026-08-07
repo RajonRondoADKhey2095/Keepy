@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/Game.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/Keepy.tscn" id="2"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://scripts/world/DarkModeEffect.gd" id="8"]
 [ext_resource type="Shader" path="res://assets/shaders/screen_invert.gdshader" id="9"]
 [ext_resource type="PackedScene" path="res://scenes/Pursuer.tscn" id="10"]
+[ext_resource type="Script" path="res://scripts/world/LaneBarrier.gd" id="11"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 1
@@ -40,6 +41,9 @@ script = ExtResource("5")
 
 [node name="TrackManager" type="Node3D" parent="World"]
 script = ExtResource("3")
+
+[node name="LaneBarrier" type="Node3D" parent="World"]
+script = ExtResource("11")
 
 [node name="Keepy" parent="World" instance=ExtResource("2")]
 position = Vector3(0, 1, 0)

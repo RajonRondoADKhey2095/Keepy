@@ -706,6 +706,110 @@ var _dark_phase_started_s: float = 0.0
 ## (fresh randf() seed each time) don't line up either.
 var dark_variant_index: int = 0
 
+# =====================================================================
+# TEMPORARY TRACK SHRINK -- the late-run mechanic that takes the track
+# from 3 practicable lanes down to 2 for a short, telegraphed window.
+#
+# WHY IT IS A REWARD AND NOT A DIFFICULTY KNOB: it does not exist at all
+# below SHRINK_UNLOCK_SCORE. A player who never gets there never meets
+# it, and a player who does meets it as "the game changed because I got
+# good", not as one more thing stacked on the ramp from the first second.
+# That is the whole reason the gate is on SCORE rather than on run time
+# or on a speed palier -- the two clocks that already drive every other
+# escalation in this game and that a player earns nothing by beating.
+#
+# STATE LIVES HERE, THE TRIGGER DECISION DOES NOT. Four systems have to
+# agree on which lane is currently unavailable -- TrackManager (never
+# spawn there), Keepy (never switch into it), Obstacle (never redirect a
+# late lock into it) and the dev probes (never count it as an escape) --
+# so the state needs exactly one owner, and this file is already that
+# owner for every other run-scoped state machine (see the dark cycle
+# above, same shape: phase + the run time the phase started at).
+#
+# But WHEN a window may open is a question about the LIVE TRACK, not
+# about the clock: it is only safe to close a lane if what is already on
+# the track is compatible with the tighter cap that closing it imposes
+# (see TrackManager._try_begin_shrink for the full argument). This file
+# therefore owns the CLOCK and the eligibility gate (shrink_ready()) and
+# publishes begin_shrink(); TrackManager owns the decision and picks the
+# lane. Same division of labour the charger already uses: the cooldown is
+# a constant here-style knob, the placement is a live-track question.
+#
+# ONLY AN EDGE LANE MAY EVER BE CONDEMNED, and this is a correctness
+# requirement rather than a taste one. Keepy.move_lane steps by +-1
+# (see that function), so lanes 0 and 2 are NOT adjacent to each other:
+# closing the CENTRE lane would cut the track into two disjoint halves
+# and leave a player on lane 0 with no lateral escape whatsoever for the
+# entire window -- the exact opposite of the guarantee this batch has to
+# preserve. Closing an edge lane leaves the remaining pair contiguous
+# (0-1 or 1-2), so a lane switch still connects them.
+# =====================================================================
+
+## Score at or above which a shrink window may open at all. Below it the
+## mechanic does not exist -- no state, no visual, no spawn-rule change.
+const SHRINK_UNLOCK_SCORE: int = 3000
+
+## How long the barrier takes to rise (CLOSING), how long the lane then
+## stays fully shut (HELD), and how long it takes to sink again
+## (OPENING). The lane is unavailable to the player for the SUM of the
+## three, ~6.6s -- inside the 4-8s the mechanic is specified at, with the
+## close and the re-open both progressive rather than instant.
+##
+## CLOSING is sized to be read comfortably at a glance rather than to
+## give the player time to escape the lane: they can never be IN it. The
+## lane is chosen to not be theirs (see TrackManager._condemned_lane_for)
+## and entry is refused from the trigger frame onward (Keepy.move_lane),
+## so "get out before it shuts" is a situation this mechanic cannot
+## produce. The ramp is a telegraph, not an escape budget.
+const SHRINK_CLOSING_S: float = 1.4
+const SHRINK_HELD_S: float = 4.0
+const SHRINK_OPENING_S: float = 1.2
+
+## Gap between the END of one window and the earliest possible START of
+## the next, drawn per-occurrence (same reasoning as the rush/calm
+## durations in TrackManager: nothing about the cadence should be
+## countable). Deliberately long relative to the window itself -- roughly
+## one window per 30-45s of eligible run -- so a shrink stays an EVENT
+## rather than becoming the late game's permanent shape.
+const SHRINK_INTERVAL_MIN_S: float = 24.0
+const SHRINK_INTERVAL_MAX_S: float = 38.0
+
+## shrink_lane's "no lane is condemned" value.
+const SHRINK_NO_LANE: int = -1
+
+enum ShrinkPhase { INACTIVE, CLOSING, HELD, OPENING }
+
+## The current window's phase, the lane it condemned, and how far the
+## barrier has risen (0 = flat/open, 1 = fully closed) -- the last is
+## purely for the visual (see LaneBarrier.gd) and never gates anything:
+## a lane is unavailable for the WHOLE window, at every amount, so no
+## consumer has to pick a threshold and no two consumers can pick
+## different ones.
+var shrink_phase: ShrinkPhase = ShrinkPhase.INACTIVE
+var shrink_lane: int = SHRINK_NO_LANE
+var shrink_amount: float = 0.0
+var _shrink_phase_ends_at_s: float = 0.0
+## Run time at or after which the next window may open. Set to 0.0 at
+## start_run so the FIRST window is gated purely by the score -- crossing
+## SHRINK_UNLOCK_SCORE is itself the event, and making the player then
+## wait out an interval on top of it would blunt exactly that.
+var _next_shrink_eligible_s: float = 0.0
+
+## How many windows this run has opened -- read by the dev probes
+## (ShrinkAudit.gd) so they can report how many were actually exercised
+## rather than inferring it from a phase they happened to sample.
+var shrink_windows_opened: int = 0
+
+## PROBE HOOK, never written by shipped code, and deliberately NOT reset
+## by start_run -- exactly the same contract as pursuer_enabled above.
+## A probe lowers it so a bot that dies well before SHRINK_UNLOCK_SCORE
+## can still exercise the mechanic; a run that leaves it alone gets the
+## shipped gate. Kept as an override of the SCORE rather than a "force
+## on" boolean so a probe still drives the real trigger path (live-track
+## gate included) instead of a second code path that proves nothing about
+## the shipped one.
+var shrink_unlock_score: int = SHRINK_UNLOCK_SCORE
+
 # Point values for the two collectible types. Gland is worth more than a
 # ground Noisette because it's only reachable with correct jump timing
 # (see Gland.gd / TrackManager GLAND_CHANCE_PER_ROW) -- the score bump is
@@ -886,6 +990,14 @@ func start_run() -> void:
 	dark_intensity = 0.0
 	_dark_phase_started_s = 0.0
 	dark_variant_index = randi() % DARK_VARIANTS.size()
+	# shrink_unlock_score is deliberately NOT reset here -- it is a probe
+	# hook, same contract as pursuer_enabled (see its own doc).
+	shrink_phase = ShrinkPhase.INACTIVE
+	shrink_lane = SHRINK_NO_LANE
+	shrink_amount = 0.0
+	_shrink_phase_ends_at_s = 0.0
+	_next_shrink_eligible_s = 0.0
+	shrink_windows_opened = 0
 	distance_score = 0
 	noisette_score = 0
 	gland_score = 0
@@ -981,6 +1093,7 @@ func advance_time(delta: float) -> void:
 	run_time_s += delta
 	_update_stage()
 	_update_dark_cycle(delta)
+	_update_shrink(delta)
 	_update_combo()
 	# BEFORE _update_pursuer, and that order is load-bearing: the pursuer's
 	# drain reads player_speed_factor, which this call is what sets. The other
@@ -1136,6 +1249,85 @@ func _update_dark_cycle(delta: float) -> void:
 ## (two consecutive dark phases must never look identical). Trivial with
 ## only 4 variants: draw again on a collision, bounded to a handful of
 ## tries so this can never loop meaningfully long.
+# =====================================================================
+# TEMPORARY TRACK SHRINK -- implementation. See the section header near
+# SHRINK_UNLOCK_SCORE for the design and for why the TRIGGER decision
+# lives in TrackManager while the STATE lives here.
+# =====================================================================
+
+## Whether a window is open right now, in ANY of its three phases. THE
+## single question every consumer asks, so that "is this lane usable"
+## can never be answered differently in two places by two different
+## thresholds on shrink_amount.
+func shrink_active() -> bool:
+	return shrink_phase != ShrinkPhase.INACTIVE
+
+## Whether `lane` is currently unavailable -- the one predicate the spawn
+## rules, the player's own lane switch, the late-lock redirects and the
+## dev probes all share.
+func lane_blocked(lane: int) -> bool:
+	return shrink_active() and lane == shrink_lane
+
+## Whether the run is currently in a position to OPEN a window: unlocked
+## by score, past the interval since the last one, not already in one,
+## and actually playing. Says nothing about whether the live track can
+## take one -- that is TrackManager's half of the decision.
+func shrink_ready() -> bool:
+	if state != State.PLAYING or shrink_active():
+		return false
+	if score < shrink_unlock_score:
+		return false
+	return run_time_s >= _next_shrink_eligible_s
+
+## Opens a window on `lane`. Called ONLY by TrackManager, and only after
+## it has confirmed both that shrink_ready() holds and that the live
+## track can take the tighter cap -- this function deliberately re-checks
+## neither, so there is exactly one place the whole trigger rule can be
+## read, rather than half of it here and half of it there.
+func begin_shrink(lane: int) -> void:
+	shrink_lane = lane
+	shrink_phase = ShrinkPhase.CLOSING
+	shrink_amount = 0.0
+	_shrink_phase_ends_at_s = run_time_s + SHRINK_CLOSING_S
+	shrink_windows_opened += 1
+
+## Advances CLOSING -> HELD -> OPENING -> INACTIVE and drives
+## shrink_amount along with it. Called once per frame from advance_time,
+## the same place the dark cycle is driven from and for the same reason:
+## a phase machine keyed to the run clock, never to the frame clock.
+func _update_shrink(_delta: float) -> void:
+	match shrink_phase:
+		ShrinkPhase.INACTIVE:
+			return
+		ShrinkPhase.CLOSING:
+			if run_time_s >= _shrink_phase_ends_at_s:
+				shrink_phase = ShrinkPhase.HELD
+				# Anchored on the phase boundary already computed, not on
+				# run_time_s, so a window's total length cannot drift by up
+				# to a frame at every transition -- same reasoning as the
+				# dark cycle's own _dark_phase_started_s.
+				_shrink_phase_ends_at_s += SHRINK_HELD_S
+				shrink_amount = 1.0
+			else:
+				shrink_amount = 1.0 - (_shrink_phase_ends_at_s - run_time_s) / SHRINK_CLOSING_S
+		ShrinkPhase.HELD:
+			shrink_amount = 1.0
+			if run_time_s >= _shrink_phase_ends_at_s:
+				shrink_phase = ShrinkPhase.OPENING
+				_shrink_phase_ends_at_s += SHRINK_OPENING_S
+		ShrinkPhase.OPENING:
+			if run_time_s >= _shrink_phase_ends_at_s:
+				_end_shrink()
+			else:
+				shrink_amount = (_shrink_phase_ends_at_s - run_time_s) / SHRINK_OPENING_S
+	shrink_amount = clampf(shrink_amount, 0.0, 1.0)
+
+func _end_shrink() -> void:
+	shrink_phase = ShrinkPhase.INACTIVE
+	shrink_lane = SHRINK_NO_LANE
+	shrink_amount = 0.0
+	_next_shrink_eligible_s = run_time_s + randf_range(SHRINK_INTERVAL_MIN_S, SHRINK_INTERVAL_MAX_S)
+
 func _reroll_dark_variant() -> void:
 	var next := randi() % DARK_VARIANTS.size()
 	while next == dark_variant_index and DARK_VARIANTS.size() > 1:
