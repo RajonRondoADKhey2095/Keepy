@@ -685,6 +685,59 @@ const DARK_TINT_AMOUNT: float = 0.55
 ## into a different value by a stray frame.
 enum DarkPhase { INACTIVE, DARK, LIGHT }
 
+## Whether a completed run is allowed to talk to the global leaderboard at
+## all -- submitting a score, or even just reading the top 10 (see
+## Leaderboard.submit_score / fetch_top_scores, both of which check this
+## before touching HTTPRequest). True by default: real play always
+## submits, unchanged from before this flag existed.
+##
+## Set to false automatically by _detect_probe_context() below when the
+## running scene is one of the dev probes under scripts/dev/ -- NOT
+## something each probe has to opt into. Two independent problems this
+## fixes, both observed live against the production Firestore project
+## (keepy-8df91) before this flag existed: (1) a probe's bots have no
+## pseudo of their own, so every death that qualified wrote a real row
+## onto the real leaderboard, indistinguishable from a genuine player
+## (see Leaderboard._generate_auto_id -- nothing about a bot's submission
+## looks different from a human's); (2) HTTPRequest is single-flight
+## (GameOverScreen's own class doc already calls this out) and a probe
+## runs dozens of deaths in the time a single real round trip normally
+## takes, so overlapping requests logged "HTTPRequest is processing a
+## request" / stray 409s and, worse, the SAME seed produced a DIFFERENT
+## StrikeAudit report run to run -- network I/O was perturbing the frame
+## timing a supposedly-deterministic seeded simulation depends on.
+##
+## An opt-in-per-probe flag (the DevSeed.apply() pattern used for
+## seeding) was deliberately NOT used here: DevSeed requires every probe
+## to call it, and a future probe that forgets still pollutes prod. This
+## flag needs no such call -- it is correct by construction for every
+## probe today and every probe added later, as long as it keeps living
+## under scripts/dev/ and is invoked the documented way (its own .tscn
+## path passed directly on the command line -- see any *Audit.gd's own
+## "Run it with" doc). scripts/dev/* is excluded from the Web export
+## (export_presets.cfg) regardless, so this detection can never fire in
+## the shipped game even if it somehow matched something it should not.
+var submissions_enabled: bool = true
+
+func _ready() -> void:
+	if _detect_probe_context():
+		submissions_enabled = false
+
+## Godot keeps the FULL argv in OS.get_cmdline_args() -- unlike
+## OS.get_cmdline_user_args() (see DevSeed.gd), which only returns what
+## follows a bare `--` and is therefore blind to the scene path itself.
+## That full argv is what carries the probe's own .tscn path (e.g.
+## `godot4 --headless --path . res://scripts/dev/StrikeAudit.tscn -- ...`),
+## and it is available the instant this runs -- no dependency on the
+## scene tree having been built yet, which matters here because autoloads
+## are ready() BEFORE the main scene is instantiated, i.e. before a probe
+## node exists to inspect directly.
+static func _detect_probe_context() -> bool:
+	for arg in OS.get_cmdline_args():
+		if arg.begins_with("res://scripts/dev/"):
+			return true
+	return false
+
 var state: State = State.TITLE
 var distance_travelled: float = 0.0
 var run_time_s: float = 0.0
