@@ -51,6 +51,19 @@ var _submit_request: HTTPRequest
 var _query_request: HTTPRequest
 
 func _ready() -> void:
+	# Every scripts/dev/*Audit.gd / *Probe.gd probe boots the engine with
+	# `--headless` (see DevSeed.gd's own doc comment for the exact
+	# invocation) -- that is the ONLY way this project ever runs under
+	# the headless DisplayServer; a real player's Web export always runs
+	# inside a browser with a real one. Detecting it here means every
+	# probe is covered automatically and permanently, including any
+	# future one -- no probe file has to remember to opt out itself.
+	# Confirmed live: DisplayServer.get_name() returns "headless" when
+	# launched with `godot4 --headless`, and something else (a real
+	# windowed or Web display server) otherwise.
+	if DisplayServer.get_name() == "headless":
+		network_enabled = false
+
 	_submit_request = HTTPRequest.new()
 	add_child(_submit_request)
 	_submit_request.request_completed.connect(_on_submit_completed)
