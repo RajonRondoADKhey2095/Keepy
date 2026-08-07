@@ -206,26 +206,72 @@ const PURSUER_MAX_LEAD_S: float = 15.0
 
 ## Lead below which the pursuer becomes a real, visible object (see
 ## Pursuer.gd). Deliberately well under the starting lead so that seeing it
-## at all is already an event, not the default state of a run.
-const PURSUER_VISIBLE_LEAD_S: float = 5.0
+## at all is already an event, not the default state of a run -- and, since
+## PURSUER_GRACE_S holds the lead flat at PURSUER_START_LEAD_S for the
+## first 5s of every run, this must also stay STRICTLY BELOW
+## PURSUER_START_LEAD_S (12.0): a threshold at or above it would make the
+## pursuer visible from the opening seconds of literally every run, before
+## any skill differentiation has even happened.
+##
+## WAS 5.0. Raised after a retour joueur ("je ne vois pas la valeur
+## ajoutee") traced to PursuerAudit.gd never having measured a mid-skill
+## player at all -- only the SAFE and RISKY extremes it already had. Its
+## new INTERMEDIATE phase (see that file) showed the gap directly: at 5.0
+## a mid-skill bot's minimum lead over a 300s sample never dropped below
+## ~9.95s, so it saw the pursuer 0.0% of the time -- the mechanic existed
+## and was simply never met by anyone playing at a normal level.
+##
+## Raising this alone tops out well short of the target band even at the
+## structural ceiling (11.9, just under PURSUER_START_LEAD_S: measured
+## 5.2%) -- see PURSUER_CLOSE_RATE below for the second lever this needed.
+## At 10.0 (paired with that change), the INTERMEDIATE bot measures
+## visible 17.6% of the time, RISKY stays at 0.4% (still rare, as
+## designed), and SAFE still gets caught -- see PursuerAudit.gd's
+## INTERMEDIATE_VISIBLE_FRAC_MIN/MAX for the target band this is tuned
+## against and its pass criterion that enforces it going forward.
+const PURSUER_VISIBLE_LEAD_S: float = 10.0
 
 ## Lead lost per second when the player is doing nothing risky --
-## dimensionless (seconds of lead per second of running). At 0.20 a player
-## who takes NO risk at all is caught after PURSUER_START_LEAD_S / 0.20 =
-## 60s, which is the hard floor this system guarantees and the number the
-## anti-frustration argument rests on (see scripts/dev/PursuerAudit.gd,
-## HOSTILE phase, which measures it rather than assuming it).
-const PURSUER_CLOSE_RATE: float = 0.20
+## dimensionless (seconds of lead per second of running). At the ORIGINAL
+## 0.20, a player who takes NO risk at all was caught after
+## PURSUER_START_LEAD_S / 0.20 = 60s, the hard floor this system
+## guarantees (scripts/dev/PursuerAudit.gd's HOSTILE phase measures it
+## rather than assuming it).
+##
+## WAS 0.20. Raised alongside PURSUER_VISIBLE_LEAD_S -- see that constant's
+## doc for the full reasoning (retour joueur -> PursuerAudit.gd's new
+## INTERMEDIATE phase -> the visibility threshold alone could not reach
+## the target band while staying under PURSUER_START_LEAD_S, so this is
+## the second lever the task explicitly allows once the first is not
+## enough). At 0.20 a mid-skill player's risk-event income
+## (~13.5/min * PURSUER_RISK_REWARD_S = 0.34 lead-s/s) so comfortably
+## outpaced the drain that their lead pinned itself against
+## PURSUER_MAX_LEAD_S almost permanently, which is what made the
+## visibility threshold powerless on its own: there was no meaningful
+## variance below the ceiling for any threshold to catch. At 0.25 the same
+## income (0.34/s) still outpaces the drain (net +0.09 lead-s/s, so the
+## lead still recovers and RISKY still never gets caught), but leaves
+## enough headroom that ordinary bad luck now dips a mid-skill run's lead
+## into visible range with the measured 17.6% frequency instead of ~0%.
+## The HOSTILE floor drops from 65.0s to 12.0/0.25 + 5.0 = 53.0s with this
+## change -- comfortably clear of the >=30s minimum the audit still
+## enforces (TrackManager's calm windows top out around 2-3s).
+const PURSUER_CLOSE_RATE: float = 0.25
 
 ## Lead regained per credited risk event -- ANY of the four kinds, reusing
 ## GameState.register_risk_event's existing detection wholesale rather than
 ## adding a second notion of "the player did something brave".
 ##
 ## Sized against the rates ComboAudit actually measured: safe play banks
-## ~1.6 events/min (0.027/s, worth 0.04 lead-s/s, well under the 0.20 drain
-## -- caught in ~75s), risky play banks ~16.7 events/min (0.28/s, worth
-## 0.42 lead-s/s, comfortably above the drain -- pegged at the ceiling and
-## never caught). That gap IS the mechanic.
+## ~1.6 events/min (0.027/s, worth 0.04 lead-s/s, well under the drain
+## whether at its original 0.20 or the current PURSUER_CLOSE_RATE -- still
+## caught either way), risky play banks ~16.7 events/min (0.28/s, worth
+## 0.42 lead-s/s, comfortably above the drain at either value -- pegged at
+## the ceiling and never caught). That gap IS the mechanic; see
+## PURSUER_CLOSE_RATE's own doc for why the visibility-tuning batch raised
+## the drain rather than this constant -- the gap itself did not need to
+## change, only how much headroom the middle of it leaves below the
+## ceiling.
 const PURSUER_RISK_REWARD_S: float = 1.5
 
 ## Run time before the pursuer starts closing at all.
