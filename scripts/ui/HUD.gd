@@ -70,6 +70,48 @@ class_name HUD
 ## increment one -- it is the strongest tension beat in the run and it
 ## borrows the loudest reaction already validated on this HUD rather than
 ## introducing a new one.
+##
+## =====================================================================
+## STRIKES -- two surfaces for the non-fatal contact model (see GameState's
+## STRIKES block), answering two questions that a single widget cannot:
+##
+##   FLASH  "you were just HIT"    -- a full-screen impact, gone in a third
+##                                    of a second. Reflex-scale: it has to
+##                                    land before the player has read
+##                                    anything, because the thing they must
+##                                    understand is that this instant is
+##                                    when they lost ground.
+##   PIPS   "how much is left"     -- a permanent, glanceable count. The
+##                                    player must always know whether they
+##                                    are at full or one hit from being
+##                                    caught, without an event having to
+##                                    remind them.
+##
+## The pips sit directly ABOVE the pursuer gauge, in the same bottom column,
+## because the two are one story: the pips are what the pursuer is counting.
+##
+## LEGIBILITY, same discipline as the combo row above and measured the same
+## way (scripts/dev/StrikeContrastAudit.gd, real pixels under all six dark
+## palettes and the light phase). A pip is THREE nested rectangles, and each
+## one is load-bearing:
+##
+##   a bright outer BORDER -- carries the pip against a dark background;
+##   a near-black inner RING -- carries it against a light one;
+##   the INTERIOR -- bright when the strike is available, near-black when it
+##     is spent. This is the only part that changes.
+##
+## Border and ring together are the same "outlined glyph" trick the combo
+## labels use (white fill, heavy dark outline, one of the two always reads),
+## expressed in geometry instead of type. The two-layer frame is NOT
+## decoration: the first version of this pip had a single dark frame, and the
+## probe measured the SPENT state at 2.20:1 against the violet dark palette
+## -- near-black on dark violet, i.e. a player one hit from death could not
+## see the slot they had lost. Nothing about the design predicted that; the
+## measurement did.
+##
+## The spent/intact distinction is an interior COLOUR change, but it is never
+## the only cue: at one strike from death the whole row pulses, which
+## survives any palette because it is scale.
 
 # --- INCREMENT pop -------------------------------------------------
 ## Same envelope as Obstacle.MARKER_POP_DURATION_S, and deliberately as
@@ -124,6 +166,30 @@ const VIGNETTE_ONSET_PROXIMITY: float = GAUGE_ALARM_PROXIMITY
 const GAUGE_SAFE_COLOR: Color = Color(0.95, 0.85, 0.3, 1)
 const GAUGE_ALARM_COLOR: Color = Color(1.0, 0.25, 0.2, 1)
 
+# --- STRIKE flash + pips -------------------------------------------
+## How long the impact flash lasts. Shorter than every other reaction on this
+## HUD on purpose: it is the instant of the hit, not a state -- the state is
+## the slowdown, which lasts twenty times longer and is felt rather than read.
+## Same triangular envelope as everything else here (see _pop_scale), so it
+## fades in and out rather than cutting.
+const STRIKE_FLASH_DURATION_S: float = 0.30
+## Peak opacity of the flash. Short of opaque by a wide margin: the player is
+## still driving, and a hazard they have to read may already be on screen --
+## this must be impossible to miss without being a blindfold.
+const STRIKE_FLASH_MAX_ALPHA: float = 0.55
+## Colour of a pip's INTERIOR when the strike is still available / already
+## spent. Only the interior changes: the pip's bright outer border and dark
+## inner ring are fixed (see HUD.tscn), which is what makes the pip visible
+## at all against any background -- see the LEGIBILITY note in the class doc.
+## The spent interior sits close to the ring colour, so a used slot reads as
+## an empty socket rather than as a second kind of full one.
+const PIP_INTACT_COLOR: Color = Color(1.0, 1.0, 1.0, 1)
+const PIP_SPENT_COLOR: Color = Color(0.10, 0.09, 0.12, 1)
+## Colour the row's label takes at one strike from being caught -- the same
+## hot amber the expiring combo uses, reused rather than invented: it already
+## means "act now" everywhere else on this HUD.
+const STRIKE_DANGER_COLOR: Color = WARNING_COLOR
+
 @onready var score_label: Label = $MarginContainer/VBoxContainer/ScoreLabel
 @onready var nut_label: Label = $MarginContainer/VBoxContainer/CountsRow/NutLabel
 @onready var gland_label: Label = $MarginContainer/VBoxContainer/CountsRow/GlandLabel
@@ -134,6 +200,15 @@ const GAUGE_ALARM_COLOR: Color = Color(1.0, 0.25, 0.2, 1)
 @onready var pursuer_label: Label = $MarginContainer/PursuerRow/PursuerLabel
 @onready var gauge_fill: ColorRect = $MarginContainer/PursuerRow/GaugeTrack/GaugeFill
 @onready var pursuer_vignette: ColorRect = $PursuerVignette
+@onready var strike_flash: ColorRect = $StrikeFlash
+@onready var strike_row: HBoxContainer = $MarginContainer/PursuerRow/StrikeRow
+@onready var strike_label: Label = $MarginContainer/PursuerRow/StrikeRow/StrikeLabel
+## Fixed-size, resolved once. One entry per STRIKE_CAPACITY slot, in the same
+## order as the scene authors them, so the Nth pip is the Nth strike.
+@onready var pip_fills: Array[ColorRect] = [
+	$MarginContainer/PursuerRow/StrikeRow/Pip0/Ring/Fill,
+	$MarginContainer/PursuerRow/StrikeRow/Pip1/Ring/Fill,
+]
 
 ## Elapsed time in each pop, or < 0.0 when that pop is not playing -- the
 ## same "-1.0 means idle" convention as Obstacle._marker_pop_t.
@@ -163,16 +238,35 @@ var _pursuer_pop_t: float = -1.0
 ## a run.
 var _applied_vignette: float = -1.0
 
+## Impact-flash timer, same "-1.0 means idle" convention as the pops above.
+var _strike_flash_t: float = -1.0
+## Free-running phase for the one-strike-from-death pulse, restarted when that
+## state is ENTERED so its first beat is always a whole one -- exactly the
+## contract _warning_t follows for the combo.
+var _strike_pulse_t: float = 0.0
+var _strike_danger_active: bool = false
+## Strike count currently DRAWN. The pips are repainted from
+## GameState.strikes_used on change rather than driven by the strike_taken /
+## strike_cleared signals, and that is deliberate: a count is a STATE, and a
+## surface rebuilt from the state cannot drift out of step with it -- there is
+## no reset signal to forget to connect, and a run starting fresh repaints on
+## its first frame for free. The signals stay for the EVENTS (the flash, the
+## camera shake), which are the thing a state cannot express.
+## Starts at -1 so the first frame always paints.
+var _drawn_strikes: int = -1
+
 func _ready() -> void:
 	GameState.score_changed.connect(_on_score_changed)
 	GameState.counts_changed.connect(_on_counts_changed)
 	GameState.combo_changed.connect(_on_combo_changed)
 	GameState.combo_tier_up.connect(_on_combo_tier_up)
 	GameState.pursuer_became_visible.connect(_on_pursuer_became_visible)
+	GameState.strike_taken.connect(_on_strike_taken)
 	score_label.text = str(GameState.score)
 	_on_counts_changed(GameState.nut_count, GameState.gland_count)
 	_on_combo_changed(GameState.combo_count, GameState.combo_multiplier)
 	_update_pursuer_telegraph(0.0)
+	_update_strike_display(0.0)
 
 func _on_score_changed(new_score: int) -> void:
 	score_label.text = str(new_score)
@@ -216,11 +310,18 @@ func _on_combo_tier_up(_multiplier: int) -> void:
 func _on_pursuer_became_visible() -> void:
 	_pursuer_pop_t = 0.0
 
+## Arms the impact flash. The pips themselves are NOT repainted here -- see
+## _drawn_strikes for why they are rebuilt from the state instead.
+func _on_strike_taken(_source_type: int, _strikes_used: int) -> void:
+	_strike_flash_t = 0.0
+
 func _process(delta: float) -> void:
-	# Runs unconditionally, unlike the combo block below: the pursuer gauge
-	# is PERMANENT (the player must always be able to read it), so it can
-	# never be gated on another widget being on screen.
+	# Both run unconditionally, unlike the combo block below: the pursuer
+	# gauge and the strike pips are PERMANENT (the player must always be able
+	# to read either), so neither can be gated on another widget being on
+	# screen.
 	_update_pursuer_telegraph(delta)
+	_update_strike_display(delta)
 	if not combo_row.visible:
 		return
 	_update_warning(delta)
@@ -254,6 +355,49 @@ func _update_pursuer_telegraph(delta: float) -> void:
 	# on this HUD.
 	_pursuer_pop_t = _advance_pop(_pursuer_pop_t, delta, TIER_POP_DURATION_S)
 	_apply_scale(pursuer_label, _pop_scale(_pursuer_pop_t, TIER_POP_DURATION_S, TIER_POP_PEAK_SCALE))
+
+## The two strike surfaces -- see the STRIKES section of the class doc.
+##
+## Everything here is edge-triggered against what is already drawn: the pips
+## repaint only when the count moves, the danger colour only when the state
+## flips. The only per-frame writes are the pulse's scale and the flash's
+## alpha, and both are plain value-type assignments.
+func _update_strike_display(delta: float) -> void:
+	var used: int = GameState.strikes_used
+	if used != _drawn_strikes:
+		_drawn_strikes = used
+		for i in pip_fills.size():
+			# Pips are spent LEFT TO RIGHT: with `used` strikes taken, the
+			# first `used` slots are empty and the rest are still available.
+			pip_fills[i].color = PIP_SPENT_COLOR if i < used else PIP_INTACT_COLOR
+
+	# One strike from being caught -- the row pulses and the label goes amber.
+	# GameState.STRIKE_CAPACITY - 1 rather than a literal 1, so raising the
+	# capacity moves the alarm with it instead of leaving it on the wrong slot.
+	var danger := used >= GameState.STRIKE_CAPACITY - 1
+	if danger and not _strike_danger_active:
+		_strike_pulse_t = 0.0
+	if danger != _strike_danger_active:
+		_strike_danger_active = danger
+		strike_label.add_theme_color_override(
+			"font_color", STRIKE_DANGER_COLOR if danger else NORMAL_COLOR)
+	var scale := 1.0
+	if danger:
+		_strike_pulse_t += delta
+		scale = 1.0 + WARNING_PULSE_AMPLITUDE * sin(_strike_pulse_t * TAU * WARNING_PULSE_HZ)
+	# On the ROW, not on the label: the pips are the information, so the pulse
+	# has to move them too -- pulsing only the word would draw the eye to the
+	# one part of the widget that never changes.
+	strike_row.pivot_offset = strike_row.size * 0.5
+	strike_row.scale = Vector2(scale, scale)
+
+	_strike_flash_t = _advance_pop(_strike_flash_t, delta, STRIKE_FLASH_DURATION_S)
+	# _pop_scale returns 1.0 at rest and peaks at its `peak` argument, so
+	# passing (1 + max_alpha) and subtracting 1 turns that same envelope into
+	# an alpha ramp from 0 -- reusing the one shape this HUD animates
+	# everything with rather than writing a second one that could drift from it.
+	strike_flash.color.a = _pop_scale(
+		_strike_flash_t, STRIKE_FLASH_DURATION_S, 1.0 + STRIKE_FLASH_MAX_ALPHA) - 1.0
 
 ## The "about to lapse" alarm -- see the class doc for why this is the
 ## load-bearing part of the feedback rather than a finishing touch.

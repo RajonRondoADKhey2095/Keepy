@@ -1011,8 +1011,15 @@ var own_speed_factor: float = 0.0
 ## variant with own_speed_factor == 0.0 this returns exactly
 ## GameState.current_speed (a multiplication by 1.0 is exact), so
 ## nothing about the pre-existing hazards changes.
+## Built on GameState.scroll_speed(), not current_speed: during a stumble the
+## world genuinely arrives more slowly (see GameState's STRIKES block), so a
+## time-to-contact computed from the run's nominal speed would promise the
+## player less time than they actually have and every late commit keyed off
+## it -- ENEMY's lock, STOMPER's, AIR_ENEMY's landing -- would fire early
+## against the real approach. At player_speed_factor == 1.0 scroll_speed()
+## returns current_speed exactly, so nothing outside a stumble moves.
 func closing_speed() -> float:
-	return GameState.current_speed * (1.0 + own_speed_factor)
+	return GameState.scroll_speed() * (1.0 + own_speed_factor)
 
 ## Public: this instance's own time-before-contact, in seconds. Exposed
 ## so TrackManager's cross-obstacle safety scan can compare two
@@ -1054,7 +1061,13 @@ func time_to_contact_s() -> float:
 func _process_charger(delta: float) -> void:
 	if not visible:
 		return
-	position.z += GameState.current_speed * own_speed_factor * delta
+	# scroll_speed(), matching TrackManager's own movement line and
+	# closing_speed() above: a charger's own speed is stated as a MULTIPLE of
+	# the world's, so it has to be a multiple of the speed the world is
+	# actually moving at this frame, not of the run's nominal one. Anything
+	# else would have a charger accelerate relative to the track every time
+	# the player stumbles.
+	position.z += GameState.scroll_speed() * own_speed_factor * delta
 	if global_position.z > CHARGER_DESPAWN_Z:
 		# Behind the camera and past every gameplay decision it could
 		# still affect -- see CHARGER_DESPAWN_Z. TrackSegment.populate()
@@ -1294,6 +1307,38 @@ static func blocks_jump(type: Type) -> bool:
 static func blocks_lane_switch(type: Type) -> bool:
 	return type == Type.STOMPER
 
+## Whether touching this hazard ENDS THE RUN, as opposed to costing the
+## player ground (see GameState.register_strike and its STRIKES block for the
+## other half). The single source of truth for the death model's split, and
+## the only thing about any of these six types this batch changed.
+##
+## THE LINE IS "DOES IT ACT ON YOU", and it is drawn that way rather than by
+## difficulty because it is what the player can read without being told:
+##
+##   NON-FATAL -- DODGE and JUMP. Both are STATIC: they spawn on a lane, they
+##                sit there, they never move, never track, never commit to
+##                anything. Hitting one is a stumble -- you misread a fixed
+##                obstacle, you lose ground for it. Nothing about either is
+##                otherwise touched: DODGE is still full lane height and
+##                still unjumpable, JUMP is still cleared by a jump, both are
+##                spaced by the same rules.
+##   FATAL     -- CHARGER, STOMPER, ENEMY and AIR_ENEMY. All four ACT: they
+##                close faster than the world, glue themselves to your lane,
+##                sway and then lock onto where you are standing, or descend
+##                onto it. Each one spends seconds telegraphing that it is
+##                coming for you specifically (see their Type docs), and a
+##                hazard that hunted you and won has already earned the run.
+##                Downgrading these would also delete the escapes they exist
+##                to force -- a STOMPER you can walk into for a slowdown is
+##                no longer a hazard that only a jump escapes.
+##
+## Static, and taking the type rather than reading obstacle_type, so a caller
+## that only has a type (a dev probe classifying spawns, TrackManager) can ask
+## without an instance -- the same shape as blocks_jump/blocks_lane_switch
+## directly above, and the reason all three sit together.
+static func is_fatal(type: Type) -> bool:
+	return not (type == Type.DODGE or type == Type.JUMP)
+
 ## THE one per-frame hook that watches this obstacle go past the player,
 ## and the ONLY place a risk event can originate from a hazard passage.
 ##
@@ -1466,6 +1511,18 @@ func _update_marker_pop(delta: float) -> void:
 	var scale := lerpf(1.0, MARKER_POP_PEAK_SCALE, clampf(t, 0.0, 1.0))
 	_jump_marker_mesh.scale = Vector3.ONE * scale
 
+## The ONE place contact is turned into a consequence, and now the one place
+## the death model's split is applied -- see is_fatal above.
+##
+## Area3D fires body_entered ONCE per entry, so a single hazard can only ever
+## report one contact no matter how many frames the player spends inside it.
+## The invulnerability window in GameState.register_strike is therefore not
+## guarding against this instance firing repeatedly -- it guards against two
+## DIFFERENT hazards, close together, taking both strikes in one beat.
 func _on_body_entered(body: Node3D) -> void:
-	if body is Keepy:
+	if not (body is Keepy):
+		return
+	if is_fatal(obstacle_type):
 		body.die()
+		return
+	GameState.register_strike(obstacle_type)
