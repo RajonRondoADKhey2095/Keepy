@@ -1,24 +1,174 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=22 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay/Obstacle.gd" id="1"]
 
-[sub_resource type="BoxMesh" id="BoxMesh_1"]
+[sub_resource type="BoxMesh" id="BoxMesh_Dodge"]
+size = Vector3(1.2, 2.0, 1.0)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_Dodge"]
+size = Vector3(1.2, 2.0, 1.0)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Dodge"]
+albedo_color = Color(0.55, 0.05, 0.05, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_Jump"]
+size = Vector3(1.2, 0.7, 1.0)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_Jump"]
+size = Vector3(1.2, 0.7, 1.0)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Jump"]
+albedo_color = Color(0.45, 0.28, 0.12, 1)
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_Enemy"]
+radius = 0.3
+height = 0.7
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_Enemy"]
+radius = 0.3
+height = 0.7
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Enemy"]
+albedo_color = Color(0.4, 0.05, 0.55, 1)
+emission_enabled = true
+emission = Color(0.4, 0.05, 0.55, 1)
+emission_energy_multiplier = 0.3
+
+[sub_resource type="TorusMesh" id="TorusMesh_AirEnemy"]
+inner_radius = 0.25
+outer_radius = 0.6
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_AirEnemy"]
 size = Vector3(1.2, 1.2, 1.0)
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_1"]
-size = Vector3(1.2, 1.2, 1.0)
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_AirEnemy"]
+albedo_color = Color(0.12, 0.85, 0.22, 1)
+emission_enabled = true
+emission = Color(0.15, 1.0, 0.2, 1)
+emission_energy_multiplier = 1.1
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
-albedo_color = Color(0.85, 0.2, 0.2, 1)
+[sub_resource type="PrismMesh" id="PrismMesh_Charger"]
+size = Vector3(1.5, 2.4, 1.8)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_Charger"]
+size = Vector3(1.2, 2.0, 1.0)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Charger"]
+shading_mode = 0
+albedo_color = Color(1.0, 0.15, 0.62, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_ChargerTrail"]
+size = Vector3(1.1, 0.1, 0.6)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ChargerTrail"]
+shading_mode = 0
+albedo_color = Color(1.0, 0.9, 0.95, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_JumpMarker"]
+top_radius = 0.0
+bottom_radius = 0.17
+height = 0.24
+radial_segments = 4
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_JumpMarker"]
+shading_mode = 0
+albedo_color = Color(0.15, 0.95, 1.0, 1)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_Stomper"]
+top_radius = 0.45
+bottom_radius = 0.75
+height = 0.7
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Stomper"]
+shading_mode = 0
+albedo_color = Color(0.05, 0.2, 0.95, 1)
 
 [node name="Obstacle" type="Area3D"]
 collision_layer = 4
 collision_mask = 2
 script = ExtResource("1")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-mesh = SubResource("BoxMesh_1")
-surface_material_override/0 = SubResource("StandardMaterial3D_1")
+[node name="DodgeMesh" type="MeshInstance3D" parent="."]
+position = Vector3(0, 1.0, 0)
+mesh = SubResource("BoxMesh_Dodge")
+surface_material_override/0 = SubResource("StandardMaterial3D_Dodge")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
-shape = SubResource("BoxShape3D_1")
+[node name="DodgeShape" type="CollisionShape3D" parent="."]
+position = Vector3(0, 1.0, 0)
+shape = SubResource("BoxShape3D_Dodge")
+
+[node name="JumpMesh" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.35, 0)
+visible = false
+mesh = SubResource("BoxMesh_Jump")
+surface_material_override/0 = SubResource("StandardMaterial3D_Jump")
+
+[node name="JumpShape" type="CollisionShape3D" parent="."]
+position = Vector3(0, 0.35, 0)
+disabled = true
+shape = SubResource("BoxShape3D_Jump")
+
+[node name="EnemyMesh" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.35, 0)
+visible = false
+mesh = SubResource("CapsuleMesh_Enemy")
+surface_material_override/0 = SubResource("StandardMaterial3D_Enemy")
+
+[node name="EnemyShape" type="CollisionShape3D" parent="."]
+position = Vector3(0, 0.35, 0)
+disabled = true
+shape = SubResource("CapsuleShape3D_Enemy")
+
+[node name="StomperMesh" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.35, 0)
+visible = false
+mesh = SubResource("CylinderMesh_Stomper")
+surface_material_override/0 = SubResource("StandardMaterial3D_Stomper")
+
+[node name="StomperShape" type="CollisionShape3D" parent="."]
+position = Vector3(0, 0.35, 0)
+disabled = true
+shape = SubResource("BoxShape3D_Jump")
+
+[node name="AirEnemyMesh" type="MeshInstance3D" parent="."]
+visible = false
+mesh = SubResource("TorusMesh_AirEnemy")
+surface_material_override/0 = SubResource("StandardMaterial3D_AirEnemy")
+
+[node name="AirEnemyShape" type="CollisionShape3D" parent="."]
+disabled = true
+shape = SubResource("BoxShape3D_AirEnemy")
+
+[node name="ChargerMesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.9, 0)
+visible = false
+mesh = SubResource("PrismMesh_Charger")
+surface_material_override/0 = SubResource("StandardMaterial3D_Charger")
+
+[node name="ChargerShape" type="CollisionShape3D" parent="."]
+position = Vector3(0, 1.0, 0)
+disabled = true
+shape = SubResource("BoxShape3D_Charger")
+
+[node name="ChargerTrail" type="Node3D" parent="."]
+visible = false
+
+[node name="Bar0" type="MeshInstance3D" parent="ChargerTrail"]
+position = Vector3(0, 1.1, -1.6)
+mesh = SubResource("BoxMesh_ChargerTrail")
+surface_material_override/0 = SubResource("StandardMaterial3D_ChargerTrail")
+
+[node name="Bar1" type="MeshInstance3D" parent="ChargerTrail"]
+position = Vector3(0, 1.1, -2.7)
+mesh = SubResource("BoxMesh_ChargerTrail")
+surface_material_override/0 = SubResource("StandardMaterial3D_ChargerTrail")
+
+[node name="Bar2" type="MeshInstance3D" parent="ChargerTrail"]
+position = Vector3(0, 1.1, -3.8)
+mesh = SubResource("BoxMesh_ChargerTrail")
+surface_material_override/0 = SubResource("StandardMaterial3D_ChargerTrail")
+
+[node name="JumpMarkerMesh" type="MeshInstance3D" parent="."]
+visible = false
+mesh = SubResource("CylinderMesh_JumpMarker")
+surface_material_override/0 = SubResource("StandardMaterial3D_JumpMarker")

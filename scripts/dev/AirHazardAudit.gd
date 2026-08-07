@@ -1,0 +1,249 @@
+extends Node
+## Dev-only diagnostic for the AIR_ENEMY obstacle (see Obstacle.gd
+## Type.AIR_ENEMY): empirically verifies its safety contract instead of
+## trusting the height math alone.
+##
+## REWRITTEN for the mobile/landing AIR_ENEMY (difficulty+variety batch,
+## playtest: "too easy, had to lose on purpose"). The ORIGINAL version of
+## this probe asserted the OPPOSITE of what it asserts now: a jump timed
+## to land Keepy's apex exactly at the moment of contact HAD to be
+## lethal, and a straight-running, never-jumping Keepy HAD to survive
+## forever. Both assertions are now FALSE BY DESIGN, and there is no way
+## to keep them both true simultaneously -- read on for why, since this
+## is the kind of thing a probe rewrite must justify, not just silently
+## flip.
+##
+## Collision in this game is only ever tested in a NARROW window around
+## the instant an obstacle's global Z crosses the player's fixed Z=0
+## (Keepy never moves on Z -- see Keepy.gd / TrackManager.gd). Whatever
+## height state AIR_ENEMY happens to be in AT THAT ONE INSTANT is the
+## ONLY state that can ever matter for a real collision -- there is no
+## meaningful "earlier pass" the way there might be in a game where the
+## player also moves through Z. Obstacle._process_air_enemy schedules
+## landing to complete a full ENEMY_REACTION_WINDOW_S BEFORE that instant
+## (the same reaction budget the ground ENEMY's own hard lock guarantees,
+## per the task's explicit ask) -- which means AIR_ENEMY is ALWAYS
+## already landed by the time the one real collision test happens. A
+## jump timed for that instant therefore ALWAYS lands on an already-
+## grounded, JUMPABLE hazard (same Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT
+## contract as ENEMY/JUMP) -- exactly the opposite of the old contract,
+## where the hazard was airborne and jump-punishing at that same instant.
+## There is no schedule that makes AIR_ENEMY BOTH "always landed with a
+## guaranteed reaction window before contact" (what chantier 3 explicitly
+## asks for: "il se comporte comme un ennemi au sol") AND "still airborne
+## and jump-lethal exactly at contact" (the old contract) -- picking a
+## smaller landing margin only trades one for the other, it cannot buy
+## both. The task's explicit design goal (a mobile hazard that becomes a
+## real, dodgeable ground threat) is the one kept.
+##
+##   PHASE 1 (IGNORING IT IS NOW LETHAL) -- boots the real Game.tscn with
+##   REAL collision. No input is ever injected, so Keepy runs in a
+##   straight line on the center lane and NEVER jumps, NEVER switches --
+##   which means it would ALSO run straight into any DODGE/ENEMY obstacle
+##   that happens to land on that lane, so those (and JUMP, which this
+##   probe also never clears) are neutered on sight, isolating the result
+##   to AIR_ENEMY specifically. Asserts the run DOES eventually end
+##   (GAME_OVER) once a landed AIR_ENEMY reaches the player's lane --
+##   this is the INVERSE of the old assertion, and correctly so: a landed
+##   AIR_ENEMY left un-dodged must be exactly as lethal as a locked-on
+##   ground ENEMY.
+##
+##   PHASE 2 (A WELL-TIMED JUMP CLEARS THE LANDED HAZARD) -- a fresh run
+##   of the same scene, this time watching for the next AIR_ENEMY and
+##   commanding a jump (directly setting Keepy.velocity.y, bypassing the
+##   Input singleton which has nothing to inject from in --headless)
+##   timed to land Keepy's apex exactly as it reaches the player -- the
+##   SAME timing technique the old phase 2 used, kept unchanged, only the
+##   expected OUTCOME is flipped. Asserts the run SURVIVES the pass
+##   (state stays PLAYING) -- proving the jumpable-once-landed contract
+##   is actually reachable and correct, not just "never reached" by
+##   accident of some other obstacle ending the run first.
+##
+## Excluded from the web export (export_presets.cfg excludes
+## scripts/dev/*), never instantiated by a shipped scene.
+##
+## Run it with:
+##   godot4 --headless --fixed-fps 60 --path . res://scripts/dev/AirHazardAudit.tscn
+
+const SIM_TIMEOUT_S: float = 300.0 # safety cap while waiting for the next AIR_ENEMY encounter
+const MIN_ENCOUNTERS_REQUIRED: int = 5 # else the phase's result would not be meaningful
+const SURVIVAL_HOLD_S: float = 1.0 # how long phase 2 must stay PLAYING after the pass to count as a real survival, not a lucky race
+
+var _phase: int = 1
+var _game: Node3D
+var _keepy: Keepy
+var _track: Node3D
+
+var _t: float = 0.0
+var _encounters: int = 0
+
+# Phase 2 state
+var _jump_target_key: int = -1 # segment instance id of the obstacle we're timing the jump against
+var _jump_commanded: bool = false
+var _jump_commanded_t: float = 0.0
+var _survival_check_deadline: float = -1.0
+
+func _ready() -> void:
+	print("=== AIR HAZARD AUDIT ===")
+	print("phase 1: ignoring a landed AIR_ENEMY (never jump, never switch) must eventually be lethal")
+	_start_game()
+
+func _start_game() -> void:
+	if _game:
+		_game.queue_free()
+	_game = load("res://scenes/Game.tscn").instantiate()
+	add_child(_game)
+	_keepy = _game.get_node("World/Keepy")
+	_track = _game.get_node("World/TrackManager")
+	# Collision is INTENTIONALLY left at its real, shipped value here --
+	# see the header. Only the Input-driven jump/lane-switch is absent (no
+	# injected events), which is exactly what phase 1 needs to test.
+	_jump_target_key = -1
+	_jump_commanded = false
+	_survival_check_deadline = -1.0
+
+func _physics_process(delta: float) -> void:
+	if _phase == 1:
+		_run_phase_1(delta)
+	else:
+		_run_phase_2(delta)
+
+func _run_phase_1(delta: float) -> void:
+	_t += delta
+	_scan_air_enemies()
+
+	if GameState.state == GameState.State.GAME_OVER:
+		_encounters += 1
+		if _encounters >= MIN_ENCOUNTERS_REQUIRED:
+			print("PHASE 1 PASSED: died to a landed, un-dodged AIR_ENEMY (%d/%d encounters confirmed lethal)." % [_encounters, MIN_ENCOUNTERS_REQUIRED])
+			print("")
+			print("phase 2: a well-timed jump over a landed AIR_ENEMY must survive")
+			_phase = 2
+			_t = 0.0
+			_encounters = 0
+			_start_game()
+			return
+		print("phase 1: encounter %d/%d confirmed lethal, restarting for another sample" % [_encounters, MIN_ENCOUNTERS_REQUIRED])
+		_t = 0.0
+		_start_game()
+		return
+
+	if _t >= SIM_TIMEOUT_S:
+		push_error("PHASE 1 FAILED: no AIR_ENEMY killed a straight-running, never-jumping Keepy within %.1fs (%d/%d encounters). A landed AIR_ENEMY should be exactly as lethal as a locked-on ground ENEMY when ignored -- this hitbox may not be reaching the grounded capsule." % [SIM_TIMEOUT_S, _encounters, MIN_ENCOUNTERS_REQUIRED])
+		get_tree().quit(1)
+
+func _run_phase_2(delta: float) -> void:
+	_t += delta
+
+	if GameState.state == GameState.State.GAME_OVER:
+		if _jump_commanded:
+			push_error("PHASE 2 FAILED: died %.3fs after a jump timed to clear a landed AIR_ENEMY -- the once-landed hazard should be jumpable exactly like ENEMY/JUMP, this hitbox may still be lethal to a well-timed jump." % [_t - _jump_commanded_t])
+			get_tree().quit(1)
+		else:
+			# Died some other way (e.g. an unrelated obstacle spawned on
+			# the center lane first) -- not a failure of THIS check, just
+			# an inconclusive run. Restart phase 2 fresh rather than
+			# report a false pass or fail.
+			print("phase 2: died before the timed jump (unrelated obstacle) -- retrying")
+			_jump_target_key = -1
+			_jump_commanded = false
+			_survival_check_deadline = -1.0
+			_t = 0.0
+			_start_game()
+		return
+
+	if _jump_commanded and _survival_check_deadline >= 0.0 and _t >= _survival_check_deadline:
+		_encounters += 1
+		print("  survived the timed jump (encounter %d/%d)" % [_encounters, MIN_ENCOUNTERS_REQUIRED])
+		if _encounters >= MIN_ENCOUNTERS_REQUIRED:
+			print("PHASE 2 PASSED: %d/%d timed jumps over a landed AIR_ENEMY all survived -- the landed hazard is safely jumpable, as designed." % [_encounters, MIN_ENCOUNTERS_REQUIRED])
+			get_tree().quit(0)
+			return
+		_jump_target_key = -1
+		_jump_commanded = false
+		_survival_check_deadline = -1.0
+		_t = 0.0
+		_start_game()
+		return
+
+	if _t >= SIM_TIMEOUT_S:
+		push_error("PHASE 2 FAILED: no AIR_ENEMY reached the player within %.1fs, or the timed jump was never armed -- the hitbox may be unreachable." % SIM_TIMEOUT_S)
+		get_tree().quit(1)
+		return
+
+	_scan_air_enemies()
+
+## Scans every live TrackSegment for an obstacle. Non-AIR_ENEMY obstacles
+## are neutered on sight (see the PHASE 1 header comment) so only
+## AIR_ENEMY can ever end the run in either phase -- a death is therefore
+## always attributable to the thing this probe is actually testing. Arms
+## a timed jump the frame a fresh AIR_ENEMY is first seen (locking onto
+## ITS segment id so a later recycle of the same pooled node is never
+## mistaken for the same encounter), then fires the jump when its
+## time-to-contact matches Keepy's own jump arc's half-duration -- long
+## enough in the air that its capsule is guaranteed to still be elevated
+## (well above Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT) when the obstacle's Z
+## reaches the player, exactly as it would need to be to clear a landed
+## ENEMY or JUMP obstacle. Phase 1 never calls into the jump-arming branch
+## (obstacle.obstacle_type != AIR_ENEMY is the only path phase 1's
+## neutering takes; AIR_ENEMY itself is left alone and simply walked
+## into).
+func _scan_air_enemies() -> void:
+	for segment in _track.get_children():
+		if not (segment is TrackSegment):
+			continue
+		var obstacle: Obstacle = null
+		for child in segment.get_children():
+			if child is Obstacle:
+				obstacle = child
+				break
+		if obstacle == null:
+			continue
+		var key := segment.get_instance_id()
+		if not obstacle.visible:
+			# Only drop the target while it was never actually jumped
+			# into -- once a jump HAS been commanded (_jump_commanded),
+			# the obstacle recycling/going invisible shortly after it
+			# passes the player is EXPECTED (contact already happened,
+			# see the class doc on why collision only ever tests once)
+			# and must NOT cancel the pending survival check below: that
+			# check is what actually decides pass/fail, and it needs
+			# _jump_commanded to stay true until its own deadline fires.
+			if _jump_target_key == key and not _jump_commanded:
+				_jump_target_key = -1
+			continue
+		if obstacle.obstacle_type != Obstacle.Type.AIR_ENEMY:
+			# Deferred, not a direct assignment: Godot forbids toggling
+			# Area3D.monitoring from inside an in-flight body_entered/
+			# body_exited signal dispatch, which this scan can race with
+			# on the same physics tick a DIFFERENT obstacle registers a
+			# contact.
+			obstacle.set_deferred("monitoring", false)
+			if _jump_target_key == key and not _jump_commanded:
+				_jump_target_key = -1
+			continue
+
+		if _phase != 2:
+			continue
+
+		var z: float = obstacle.global_position.z
+
+		if _jump_target_key == -1 and not _jump_commanded:
+			_jump_target_key = key
+
+		if _jump_target_key == key and not _jump_commanded:
+			var time_to_contact := -z / GameState.current_speed
+			# Half of Keepy's total air time (2 * JUMP_VELOCITY / GRAVITY)
+			# is the time from liftoff to apex -- jumping this long before
+			# contact lands the apex right on top of the obstacle's
+			# arrival, well above JUMPABLE_OBSTACLE_TOP_HEIGHT.
+			var half_air_time := Keepy.JUMP_VELOCITY / Keepy.GRAVITY
+			if time_to_contact <= half_air_time and _keepy.is_on_floor():
+				_keepy.velocity.y = Keepy.JUMP_VELOCITY
+				_jump_commanded = true
+				_jump_commanded_t = _t
+				# Confirm survival a little after the FULL jump arc (not
+				# just past contact) so a late-arriving second hazard on
+				# the same lane can't be mistaken for this one surviving.
+				_survival_check_deadline = _t + 2.0 * half_air_time + SURVIVAL_HOLD_S
+				print("  jumped at t=%.2fs, time-to-contact was %.3fs (target %.3fs)" % [_t, time_to_contact, half_air_time])

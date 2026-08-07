@@ -11,15 +11,77 @@ const LANE_X: Array[float] = [-2.0, 0.0, 2.0]
 const LANE_SWITCH_SPEED: float = 12.0 # higher = snappier lane lerp
 const JUMP_VELOCITY: float = 9.0
 const GRAVITY: float = 26.0
+# Jump clearance math (kept unchanged, verified against the two Obstacle
+# variants in Obstacle.gd -- see comment there for the actual heights):
+#   peak height = JUMP_VELOCITY^2 / (2*GRAVITY) = 81/52 ~= 1.56m above the
+#   ground -- this is how high Keepy's CAPSULE BOTTOM rises, since
+#   `position.y` (this body's origin) sits at the capsule's floor.
+#   JUMP obstacle top = 0.7m: Keepy's bottom is above 0.7m for a ~0.51s
+#   window centered on the jump's peak, comfortably longer than the
+#   obstacle's transit window under Keepy (2.0m of relative travel /
+#   current_speed, i.e. <=0.18s even at GameState.BASE_SPEED) -- a
+#   reasonably-timed jump clears it with margin.
+#   DODGE obstacle top = 2.0m: above the 1.56m peak, so it can never be
+#   jumped, only dodged sideways, by construction (not by timing).
+# Same peak-height formula, exposed as a named const rather than left as a
+# comment-only value, so other scripts (TrackSegment's Gland placement)
+# derive their own math from it instead of re-deriving or guessing a
+# height. ~1.56m, see comment block above for the full derivation.
+const JUMP_PEAK_HEIGHT: float = JUMP_VELOCITY * JUMP_VELOCITY / (2.0 * GRAVITY)
+# Matches the CollisionShape3D/MeshInstance3D y-offset baked into
+# Keepy.tscn (capsule height 1.6, centered at 0.8 above the body origin).
+# Combined with JUMP_PEAK_HEIGHT this gives the height of the CENTER of
+# Keepy's capsule at the jump's apex -- see TrackSegment.gd GLAND_Y.
+const CAPSULE_HALF_HEIGHT: float = 0.8
+
+# Top height, in world Y, that a well-timed jump clears -- promoted from
+# the JUMP obstacle's own baked 0.7m (see the derivation in the comment
+# block above: a ~0.51s window centered on the jump's peak, comfortably
+# longer than any obstacle's transit window under Keepy) into a single
+# named constant so every jumpable GROUND hazard in the game (the JUMP
+# log, and since the ground-enemy-jump-dodge/mobile-air-enemy-landing
+# work, also Obstacle.Type.ENEMY once settled and a landed AIR_ENEMY)
+# reuses the exact same verified number instead of each guessing its own.
+# JUMP's own BoxMesh/BoxShape in Obstacle.tscn stay baked at the literal
+# 0.7 they were already verified at -- not rewired to read this constant,
+# to avoid touching an already-shipped, already-verified hitbox -- but
+# both values must always match; this constant IS that value's home.
+const JUMPABLE_OBSTACLE_TOP_HEIGHT: float = 0.7
+
+## Sentinel for last_lane_change_s meaning "this run has not changed lane
+## yet" -- a plain large negative rather than -INF so every reader can do
+## ordinary arithmetic on it (run_time_s - this) without ever producing a
+## NaN or an INF. Same spirit as TrackManager._NO_RECENT_HAZARD.
+const NO_LANE_CHANGE_S: float = -1000.0
 
 var lane_index: int = 1
 var target_x: float = 0.0
+
+## The lane this body was on BEFORE the most recent successful lane
+## change, and the run time that change happened at. Written by move_lane()
+## only, and only when the lane actually moved (a swipe into the wall at
+## lane 0/2 is not a lane change and must not look like one).
+##
+## Exists for the risk/combo system (see Obstacle._is_late_dodge): "did the
+## player vacate this hazard's lane, and how late" is a question about the
+## SWITCH, not about where the player ended up, so it cannot be answered
+## from lane_index/position.x alone -- by the time a hazard passes, both
+## have long since settled on the destination lane and carry no trace of
+## when the escape was started. Two plain fields updated at the one place a
+## lane change can originate; nothing polls, nothing allocates.
+var previous_lane_index: int = 1
+var last_lane_change_s: float = NO_LANE_CHANGE_S
 
 @onready var swipe_detector: SwipeDetector = get_node_or_null("../SwipeDetector")
 
 func _ready() -> void:
 	target_x = LANE_X[lane_index]
 	position.x = target_x
+	# Looked up by group rather than a NodePath: Obstacle.gd (ground ENEMY
+	# lane targeting, see its _decide_late_lock) needs to read Keepy's
+	# current lane at a moment that has nothing to do with either node's
+	# position in the scene tree.
+	add_to_group("player")
 	if swipe_detector:
 		swipe_detector.swiped_left.connect(_on_swipe_left)
 		swipe_detector.swiped_right.connect(_on_swipe_right)
@@ -50,11 +112,40 @@ func _handle_keyboard_input() -> void:
 		move_lane(1)
 
 func move_lane(direction: int) -> void:
-	lane_index = clampi(lane_index + direction, 0, LANE_X.size() - 1)
+	var new_index := clampi(lane_index + direction, 0, LANE_X.size() - 1)
+	# Early-out when the clamp ate the move (already on an edge lane).
+	# Behaviourally identical to the previous unconditional assignment --
+	# target_x would have been rewritten to the value it already held --
+	# but it keeps previous_lane_index/last_lane_change_s honest: a swipe
+	# that moved nothing is not an escape and must never be timestamped as
+	# one (see those vars' own doc).
+	if new_index == lane_index:
+		return
+	# A temporarily shrunk track (see GameState's TRACK SHRINK section) is
+	# enforced HERE and nowhere else: the barrier carries no collider at
+	# all, so "the lane is closed" means exactly "this one line refuses to
+	# take you there". Nothing about the death model, the strike system or
+	# the pursuer is touched by the mechanic as a result -- a closed lane
+	# is UNAVAILABLE, never LETHAL.
+	#
+	# This can never strand the player, and that rests on the invariant
+	# that only an EDGE lane is ever condemned (see GameState's section
+	# header): the two lanes that remain are always adjacent, so at least
+	# one +-1 step is always still legal from wherever the player stands.
+	# A refused switch is also not a new kind of dead input -- swiping into
+	# the wall at lane 0/2 has always silently no-opped, via the clamp
+	# immediately above.
+	if GameState.lane_blocked(new_index):
+		return
+	previous_lane_index = lane_index
+	lane_index = new_index
+	last_lane_change_s = GameState.run_time_s
 	target_x = LANE_X[lane_index]
 
 func reset_lane() -> void:
 	lane_index = 1
+	previous_lane_index = lane_index
+	last_lane_change_s = NO_LANE_CHANGE_S
 	target_x = LANE_X[lane_index]
 	position.x = target_x
 
