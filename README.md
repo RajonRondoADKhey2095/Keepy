@@ -213,6 +213,36 @@ When 3D models are ready:
   away from a nearby CHARGER in time -- the one hazard exempt from the
   row grid, and therefore the one that needed new code; DODGE needs none,
   already spaced from STOMPER by the shared row-grid counter.
+- **The death model.** Not every hazard kills. The two STATIC ones
+  (`DODGE`, `JUMP` -- things that spawn on a lane and sit there) are
+  NON-FATAL: contact costs ground instead of ending the run. The four
+  ACTIVE ones (`CHARGER`, `STOMPER`, `ENEMY`, `AIR_ENEMY` -- things that
+  close on you, track your lane or land on it, each with its own
+  multi-cue telegraph) still kill on contact. `Obstacle.is_fatal` is the
+  single source of that split. A non-fatal contact is a STRIKE
+  (`GameState.register_strike`): it slows the player to
+  `STRIKE_SLOWDOWN_FACTOR` of the run's speed for a moment while the
+  pursuer keeps going, so the gap closes by the difference, and it pulls
+  the pursuer's lead down to `STRIKE_PURSUER_LEAD_CAP_S` -- under the
+  visibility threshold, so the thing behind you is always on screen
+  during a penalty. `STRIKE_CAPACITY` strikes and it has you: the second
+  one IS being caught, reported as the same `DeathCause.PURSUER` as the
+  lead draining to zero. A strike comes back after
+  `TIME_TO_CLEAR_STRIKE_S` of clean play, or immediately when the combo
+  chain reaches a multiple of `COMBO_TO_CLEAR_STRIKE` (which is
+  `COMBO_TIER_SIZE`, so it lands on the tier boundaries the combo
+  already teaches). All of it lives in one commented block at the top of
+  `GameState.gd`; the HUD draws it as two pips above the pursuer gauge.
+- **World speed vs player speed.** Because a stumble slows the player
+  without slowing the run, `GameState.current_speed` (the run's pace, what
+  the speed table says) and `GameState.scroll_speed()` (what the player is
+  actually making good) are different questions. Anything happening NOW
+  reads `scroll_speed()` -- how far the track moves this frame, and every
+  obstacle's `closing_speed()`. Anything being LAID OUT for later
+  (TrackManager's spacing) keeps reading `lookahead_speed()`: a stumble is
+  over in ~1.5s, long before a row spawned during one is reached. At full
+  speed `scroll_speed()` returns `current_speed` exactly, so nothing
+  outside a stumble changes.
 - Pacing changes are verified by measurement, not by re-reading the
   constants: `scripts/dev/PacingAudit.tscn` boots the real game headless
   and reports palier timings, distance per palier, dark-cycle
@@ -228,6 +258,21 @@ When 3D models are ready:
       godot4 --headless --path . res://scripts/dev/ChargerShapeProbe.tscn
       godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StomperAudit.tscn
       godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StomperConflictAudit.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StrikeAudit.tscn
+
+  `StrikeAudit` covers the death model: per skill profile, how often a run
+  stumbles and into which hazard type, how long runs last, whether the
+  player is caught or killed outright, and which recovery path gives
+  strikes back. Its bots are PursuerAudit's, plus a per-profile miss
+  chance -- without one they never touch a hazard at all (measured: zero
+  collisions in 300s+ for two of the three), so they could not exercise
+  the mechanic. A CONTROL phase re-asserts that every run.
+
+  The two probes that sample real rendered pixels need a rendering driver
+  rather than pure headless:
+
+      xvfb-run -a godot4 --rendering-driver opengl3 --path . res://scripts/dev/ComboContrastAudit.tscn
+      xvfb-run -a godot4 --rendering-driver opengl3 --path . res://scripts/dev/StrikeContrastAudit.tscn
 
   Add `-- --seed=<int>` to any of them for a reproducible run (see
   `scripts/dev/DevSeed.gd`); without it they stay exploratory, which is
