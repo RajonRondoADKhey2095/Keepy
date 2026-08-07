@@ -412,6 +412,42 @@ const STRIKE_PURSUER_LEAD_CAP_S: float = 4.0
 ## 10s recovery below -- it is a "that was one hit" filter, not a free ride.
 const STRIKE_INVULNERABLE_S: float = 1.2
 
+## Seconds of clean play (no new contact) that give one strike back.
+##
+## STARTED AT 10.0, the genre's own reference point (Temple Run recovers
+## fully in ~8-10s of clean running), then MEASURED rather than kept on
+## faith -- see scripts/dev/StrikeAudit.gd.
+##
+## RAISED TO 14.0, and by the measurement rather than by taste. At 10.0 this
+## path did not merely dominate the combo one below, it made it unreachable:
+## across all three profiles the probe recorded 5 strikes given back by time
+## and 1 by combo, because a mid-skill player banks a risk event every ~5s,
+## so a chain long enough to matter takes longer to build than 10s of simply
+## not being hit. A recovery the player can WORK for has to be able to beat
+## the one they get for free, or it is decoration. 14.0 leaves the passive
+## path clearly present (it is still the one a cautious player lives on) while
+## putting it behind the active one for anyone holding a chain.
+const TIME_TO_CLEAR_STRIKE_S: float = 14.0
+
+## Combo length that gives one strike back immediately -- reusing the
+## EXISTING risk/combo chain (see register_risk_event) rather than counting
+## anything new, so "play well and you get your footing back" is measured
+## by the same events the rest of the game already rewards.
+##
+## Granted every time the chain reaches an exact multiple of this, so a long
+## chain keeps paying rather than paying once -- and bounded anyway by there
+## only ever being at most STRIKE_CAPACITY - 1 strikes outstanding.
+##
+## STARTED AT 5 and LOWERED TO 3 -- again by measurement (see
+## TIME_TO_CLEAR_STRIKE_S for the numbers: at 5, one single strike in a whole
+## audit was ever given back this way). But 3 is not simply "5 minus enough
+## to make it fire": it is COMBO_TIER_SIZE, so this path now lands exactly on
+## the tier boundaries the combo system already teaches. Reaching x2 is what
+## gives your footing back, reaching x3 gives it back again -- one rule the
+## player has already learned, rather than a second threshold to track
+## alongside the multiplier's.
+const COMBO_TO_CLEAR_STRIKE: int = COMBO_TIER_SIZE
+
 # =====================================================================
 # SPEED / PACING TUNING KNOBS -- everything needed to re-tune the run's
 # rhythm after a playtest lives in this one block. Nothing below
@@ -752,7 +788,16 @@ var player_speed_factor: float = 1.0
 var _strike_slow_t: float = -1.0
 ## Run time before which a contact is swallowed (see STRIKE_INVULNERABLE_S).
 var _strike_invulnerable_until_s: float = -1.0
+## Run time the recovery clock is measured from: the last credited strike, or
+## the last strike given back. Meaningless while strikes_used == 0.
+var _strike_clean_since_s: float = 0.0
 
+## Lifetime counters for the run, read by scripts/dev/StrikeAudit.gd to
+## report how the death model actually behaves per skill profile. The game
+## itself does not read them -- same arrangement as risk_event_counts.
+var strikes_taken_total: int = 0
+var strikes_cleared_by_time: int = 0
+var strikes_cleared_by_combo: int = 0
 
 ## DEV-ONLY ESCAPE HATCH. Always true in a real run; nothing in the shipped
 ## game ever writes it (the only writers live under scripts/dev/, which the
@@ -808,6 +853,10 @@ func start_run() -> void:
 	player_speed_factor = 1.0
 	_strike_slow_t = -1.0
 	_strike_invulnerable_until_s = -1.0
+	_strike_clean_since_s = 0.0
+	strikes_taken_total = 0
+	strikes_cleared_by_time = 0
+	strikes_cleared_by_combo = 0
 	state = State.PLAYING
 	state_changed.emit(state)
 	score_changed.emit(score)
@@ -1083,6 +1132,18 @@ func register_risk_event(kind: RiskEvent) -> void:
 		_refresh_pursuer_visibility()
 	combo_count += 1
 	combo_expires_at_s = run_time_s + COMBO_TIMEOUT_S
+	# The ACTIVE half of strike recovery (see COMBO_TO_CLEAR_STRIKE): a chain
+	# long enough buys back the footing a stumble cost. Read off the chain
+	# that already exists rather than counting anything new, and placed here
+	# -- inside the one door every risk event comes through -- so it can never
+	# disagree with the combo about how long the chain is.
+	#
+	# A strike deliberately does NOT break the chain, which is what makes this
+	# reachable at all: a player who has just stumbled is exactly the one who
+	# needs a way back, and resetting their combo on the hit would put the
+	# only active recovery path behind five more events starting from zero.
+	if strikes_used > 0 and combo_count % COMBO_TO_CLEAR_STRIKE == 0:
+		_clear_one_strike(true)
 	var previous_multiplier := combo_multiplier
 	combo_multiplier = _multiplier_for(combo_count)
 	risk_event.emit(kind)
@@ -1113,7 +1174,9 @@ func register_strike(source_type: int) -> bool:
 	if run_time_s < _strike_invulnerable_until_s:
 		return false # see STRIKE_INVULNERABLE_S -- one bad row is one strike
 	strikes_used += 1
+	strikes_taken_total += 1
 	_strike_invulnerable_until_s = run_time_s + STRIKE_INVULNERABLE_S
+	_strike_clean_since_s = run_time_s
 	# Emitted BEFORE the capture branch below, so the flash and the shake are
 	# armed on the frame of the hit whichever strike it was -- the last one
 	# should not be the only one that lands silently.
@@ -1137,9 +1200,16 @@ func register_strike(source_type: int) -> bool:
 		_refresh_pursuer_visibility()
 	return true
 
-## The stumble's own clock. Driven from advance_time() like everything else
-## here, so a headless probe stepping the run at a fixed delta sees exactly
-## the timing a real run does.
+## The stumble's own clock, plus the recovery-by-time rule. Driven from
+## advance_time() like everything else here, so a headless probe stepping the
+## run at a fixed delta sees exactly the timing a real run does.
+##
+## DELIBERATELY NOT a second timer per strike: with STRIKE_CAPACITY == 2
+## there is at most ONE strike outstanding at any time (the second ends the
+## run), so a single "clean since" instant describes the whole state. The
+## loop below is still written to give back one strike at a time rather than
+## all of them, so raising the capacity later changes one constant and not
+## this rule.
 func _update_strikes(delta: float) -> void:
 	if _strike_slow_t >= 0.0:
 		_strike_slow_t += delta
@@ -1151,6 +1221,28 @@ func _update_strikes(delta: float) -> void:
 		else:
 			var t := (_strike_slow_t - STRIKE_SLOWDOWN_HOLD_S) / STRIKE_SLOWDOWN_RECOVER_S
 			player_speed_factor = lerpf(STRIKE_SLOWDOWN_FACTOR, 1.0, clampf(t, 0.0, 1.0))
+	if strikes_used <= 0:
+		return
+	if run_time_s - _strike_clean_since_s < TIME_TO_CLEAR_STRIKE_S:
+		return
+	_clear_one_strike(false)
+
+## Gives one strike back. `by_combo` only selects which counter is credited
+## and what the signal reports -- the effect on the run is identical either
+## way, which is the point: the player has two ways to earn the same thing,
+## one passive and one active.
+func _clear_one_strike(by_combo: bool) -> void:
+	strikes_used -= 1
+	# Re-armed on every clear, not only on a strike, so each strike costs a
+	# full TIME_TO_CLEAR_STRIKE_S of clean play rather than several draining
+	# off the same one.
+	_strike_clean_since_s = run_time_s
+	if by_combo:
+		strikes_cleared_by_combo += 1
+	else:
+		strikes_cleared_by_time += 1
+	strike_cleared.emit(strikes_used, by_combo)
+
 ## Collapses the chain once COMBO_TIMEOUT_S has elapsed with no risk event.
 ## Driven from advance_time() -- the same clock everything else in this
 ## file is derived from -- so a headless probe stepping the run at a fixed
