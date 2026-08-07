@@ -38,10 +38,32 @@ const NAME_MAX_LEN := 12
 const AUTO_ID_CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 const AUTO_ID_LEN := 20
 
+## Gates BOTH network entry points below (submit_score AND
+## fetch_top_scores) -- true by default, so a normal play session behaves
+## exactly as before this flag existed. Set to false to make every call
+## degrade instantly to its existing "offline" signal path (no HTTPRequest
+## ever fires), the very same path already exercised whenever the device
+## has no network -- callers need no new branch to handle this.
+## See _ready() below for where this actually gets flipped off.
+var network_enabled: bool = true
+
 var _submit_request: HTTPRequest
 var _query_request: HTTPRequest
 
 func _ready() -> void:
+	# Every scripts/dev/*Audit.gd / *Probe.gd probe boots the engine with
+	# `--headless` (see DevSeed.gd's own doc comment for the exact
+	# invocation) -- that is the ONLY way this project ever runs under
+	# the headless DisplayServer; a real player's Web export always runs
+	# inside a browser with a real one. Detecting it here means every
+	# probe is covered automatically and permanently, including any
+	# future one -- no probe file has to remember to opt out itself.
+	# Confirmed live: DisplayServer.get_name() returns "headless" when
+	# launched with `godot4 --headless`, and something else (a real
+	# windowed or Web display server) otherwise.
+	if DisplayServer.get_name() == "headless":
+		network_enabled = false
+
 	_submit_request = HTTPRequest.new()
 	add_child(_submit_request)
 	_submit_request.request_completed.connect(_on_submit_completed)
@@ -123,6 +145,9 @@ func save_name(player_name: String) -> void:
 ## confirmed working (200, and the doc later readable with a real
 ## `createdAt`) against the live project during implementation.
 func submit_score(player_name: String, score: int, nuts: int, glands: int) -> void:
+	if not network_enabled:
+		submit_finished.emit(false)
+		return
 	var safe_name := player_name.strip_edges().substr(0, NAME_MAX_LEN)
 	if safe_name.is_empty():
 		safe_name = DEFAULT_NAME
@@ -175,6 +200,9 @@ func _on_submit_completed(result: int, response_code: int, _headers: PackedStrin
 ## document (in order); entries with no "document" key are query-plan
 ## metadata only and are skipped.
 func fetch_top_scores() -> void:
+	if not network_enabled:
+		top_scores_fetched.emit([], false)
+		return
 	var body := {
 		"structuredQuery": {
 			"from": [{ "collectionId": COLLECTION_ID }],
