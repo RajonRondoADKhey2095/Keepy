@@ -34,15 +34,18 @@ batch produit dans ce repo :
    call ou un script qui "print" le contenu.
 2. **Structure fixe**, dans cet ordre : BRANCH, COMMITS, FILES, BUILD,
    DEPLOY, VALIDATION CHECKLIST, NEXT STEPS, DOCS STATUS.
-3. **Pagination en blocs d'~100 lignes si dépassement.** Le contenu n'est
-   JAMAIS compressé pour tenir dans un seul bloc. Si le rapport dépasse
-   ~100 lignes, le découper en plusieurs blocs Markdown successifs
-   (`## Rapport (1/N)`, `(2/N)`, ...), chacun autonome, coupés sur des
-   frontières de section.
+3. **UN SEUL bloc Markdown, toujours — la pagination est INTERDITE, sans
+   exception.** Jamais plusieurs blocs séquentiels (jamais de
+   `## Rapport (1/N)`, `(2/N)`, ...). Si le contenu naturel dépasse
+   ~100 lignes, CONDENSER ou RÉSUMER pour rester dans un seul bloc — la
+   contrainte "un seul bloc" prime sur l'exhaustivité du détail. Le rapport
+   doit rester copiable en un seul tap sur iPhone.
 4. **Vérification avant envoi.** Avant d'envoyer, relire la réponse : si
    elle commence par ``` ``` `` `` ou ``` ```markdown ```, enlever ce
-   wrapper et renvoyer en Markdown natif. Confirmer en une ligne à la fin
-   qu'on a fait cette vérification.
+   wrapper et renvoyer en Markdown natif ; si elle dépasse ~100 lignes ou
+   contient plusieurs blocs séquentiels, condenser jusqu'à tenir dans un
+   seul bloc. Confirmer en une ligne à la fin qu'on a fait cette
+   vérification.
 5. **S'applique à chaque tâche sans exception**, y compris quand on
    redemande une reformulation d'un résultat déjà produit (pas de relance
    de recherche dans ce cas).
