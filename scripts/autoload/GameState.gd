@@ -42,6 +42,16 @@ signal pursuer_became_visible()
 signal pursuer_lost_sight()
 ## Fires the frame the lead hits zero, immediately before end_run.
 signal pursuer_caught()
+## Fires once per CREDITED non-fatal contact (see register_strike) -- never on
+## one swallowed by the invulnerability window, so a listener can treat it as
+## "a strike just happened" without re-deriving that test. Carries the
+## obstacle type as a plain int (see register_strike's own doc for why it is
+## not typed as Obstacle.Type here) and the strike count AFTER this one.
+signal strike_taken(source_type: int, strikes_used: int)
+## Fires when a strike is given back -- by time or by combo, the two paths
+## being distinguished by the argument rather than by two signals, since every
+## listener so far draws them identically.
+signal strike_cleared(strikes_used: int, by_combo: bool)
 
 enum State { TITLE, PLAYING, GAME_OVER }
 
@@ -49,6 +59,14 @@ enum State { TITLE, PLAYING, GAME_OVER }
 ## GameOverScreen so being caught from behind does not present as the same
 ## event as running into something in front. Nothing about SCORING or the
 ## leaderboard payload varies with this -- see end_run().
+##
+## PURSUER now covers BOTH ways of being caught from behind, and that is the
+## point rather than a shortcut: the lead draining to zero, and the second
+## non-fatal contact (see register_strike). They are the same event told two
+## ways -- the pursuer closes because you stumbled, or because you coasted --
+## and a player who is told "rattrape" in both cases learns one rule instead
+## of two. COLLISION stays what it always was: running headfirst into
+## something that kills on contact (see Obstacle.is_fatal).
 enum DeathCause { COLLISION, PURSUER }
 
 # =====================================================================
@@ -283,6 +301,56 @@ const PURSUER_RISK_REWARD_S: float = 1.5
 ## window where the player cannot possibly refill it would be charging them
 ## for the game's own ramp-up.
 const PURSUER_GRACE_S: float = 5.0
+
+# =====================================================================
+# STRIKES -- the death model itself, and the reason this block exists at
+# all. Retour joueur: the pursuer "n'a aucun lien causal visible avec ce
+# que fait le joueur -- plus du bruit parasite qu'autre chose".
+#
+# THE DIAGNOSIS, and it is structural rather than a matter of tuning. Up to
+# here the pursuer closed by the ABSENCE of something: no risk event for a
+# while, so the lead drains. An absence has no instant, no sound and no
+# frame the player can point at, so the thing behind them moved for reasons
+# they could not perceive. Temple Run's monkeys are legible for exactly the
+# opposite reason -- they gain ground because you JUST hit something, right
+# then, visibly. The event is what makes the threat readable, not the rate.
+#
+# So this block gives the pursuer an EVENT to react to, and in doing so
+# moves where death comes from:
+#
+#   BEFORE: every hazard killed on contact. The pursuer was a parallel
+#           timer that a sufficiently active player never met.
+#   AFTER:  the two STATIC hazards (DODGE, JUMP -- things that simply sit
+#           there) no longer kill. They cost you ground, loudly. The
+#           pursuer is what finally kills you, either by draining the lead
+#           or by taking the second stumble. The four ACTIVE hazards
+#           (CHARGER, STOMPER, ENEMY, AIR_ENEMY -- things that move, track
+#           and commit) still kill outright, because a hazard that hunted
+#           you and won has already told its own story.
+#
+# See Obstacle.is_fatal for that split as code. It is a classification, not
+# a behaviour change: nothing about how any of the six hazards moves,
+# telegraphs or is spaced is touched by this block.
+# =====================================================================
+
+## How many non-fatal contacts a run survives. The SECOND one is the catch
+## -- not a third strike then a catch, which would need a third state the
+## HUD has to teach. Two means the indicator has exactly two readings
+## ("clear" and "one more and you are done"), and the second one is
+## unambiguous the first time a player sees it.
+const STRIKE_CAPACITY: int = 2
+
+## Contacts inside this window of the last credited one are ignored --
+## see register_strike.
+##
+## Sized against the track, not chosen: TrackManager.MIN_OBSTACLE_GAP_S
+## keeps ~0.80s of reaction time between two hazards, so anything shorter
+## than that would let an ordinary back-to-back pair take both strikes and
+## end the run in one beat the player never had a frame to answer. 1.2s
+## covers that gap with margin (and the stumble slows the world down, which
+## stretches the real gap further still), while staying far short of the
+## 10s recovery below -- it is a "that was one hit" filter, not a free ride.
+const STRIKE_INVULNERABLE_S: float = 1.2
 
 # =====================================================================
 # SPEED / PACING TUNING KNOBS -- everything needed to re-tune the run's
@@ -602,6 +670,16 @@ var pursuer_visible: bool = false
 ## Why the current run ended -- only meaningful once state == GAME_OVER.
 var death_cause: DeathCause = DeathCause.COLLISION
 
+## Non-fatal contacts taken so far this run, in [0, STRIKE_CAPACITY). Never
+## reaches STRIKE_CAPACITY as a resting value: the strike that would take it
+## there ends the run on the same frame (see register_strike), so every value
+## this can be observed at is a state the player is still playing in.
+var strikes_used: int = 0
+
+## Run time before which a contact is swallowed (see STRIKE_INVULNERABLE_S).
+var _strike_invulnerable_until_s: float = -1.0
+
+
 ## DEV-ONLY ESCAPE HATCH. Always true in a real run; nothing in the shipped
 ## game ever writes it (the only writers live under scripts/dev/, which the
 ## web export excludes).
@@ -652,6 +730,8 @@ func start_run() -> void:
 	pursuer_lead_s = PURSUER_START_LEAD_S
 	pursuer_visible = false
 	death_cause = DeathCause.COLLISION
+	strikes_used = 0
+	_strike_invulnerable_until_s = -1.0
 	state = State.PLAYING
 	state_changed.emit(state)
 	score_changed.emit(score)
@@ -894,6 +974,45 @@ func register_risk_event(kind: RiskEvent) -> void:
 	combo_changed.emit(combo_count, combo_multiplier)
 	if combo_multiplier > previous_multiplier:
 		combo_tier_up.emit(combo_multiplier)
+
+## THE one entry point for "the player just hit something that does not
+## kill" -- called by Obstacle._on_body_entered for the two STATIC hazard
+## types and by nothing else, exactly the way register_risk_event is the one
+## door for the opposite kind of event.
+##
+## `source_type` is a plain int carrying an Obstacle.Type, deliberately NOT
+## typed as one: this file is an autoload, loaded before any scene script,
+## and the codebase already refuses to let it take a compile-time dependency
+## on a plain scene script's contents (see MAX_LOOKAHEAD_S restating
+## TrackManager's layout as a literal for the same reason). Nothing here
+## branches on the value -- it is passed straight through to the
+## strike_taken signal, where only scripts/dev/StrikeAudit.gd reads it, to
+## report WHICH hazard type each profile actually stumbles into.
+##
+## Returns whether the contact was credited, so a caller can tell "ignored,
+## still inside the invulnerability window" from "counted". Nothing in the
+## shipped game uses the return value today; the probe does.
+func register_strike(source_type: int) -> bool:
+	if state != State.PLAYING:
+		return false
+	if run_time_s < _strike_invulnerable_until_s:
+		return false # see STRIKE_INVULNERABLE_S -- one bad row is one strike
+	strikes_used += 1
+	_strike_invulnerable_until_s = run_time_s + STRIKE_INVULNERABLE_S
+	# Emitted BEFORE the capture branch below, so the flash and the shake are
+	# armed on the frame of the hit whichever strike it was -- the last one
+	# should not be the only one that lands silently.
+	strike_taken.emit(source_type, strikes_used)
+	if strikes_used >= STRIKE_CAPACITY:
+		# Caught. Same signal and same DeathCause as the lead reaching zero
+		# (see the DeathCause doc): stumbling twice IS being run down, and
+		# telling it as a second kind of death would teach a second rule for
+		# no gain. No stumble is armed -- there is nothing left to recover
+		# from.
+		pursuer_caught.emit()
+		end_run(DeathCause.PURSUER)
+		return true
+	return true
 
 ## Collapses the chain once COMBO_TIMEOUT_S has elapsed with no risk event.
 ## Driven from advance_time() -- the same clock everything else in this
