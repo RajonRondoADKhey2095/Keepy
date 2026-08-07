@@ -153,12 +153,46 @@ const CAPTURE_EMISSION_MULTIPLIER: float = 5.0
 ## never reads as a wait: TrackManager's SAFE_START_SEGMENTS keeps the
 ## opening rows obstacle-free regardless, so the player already has
 ## nothing urgent to react to for longer than this.
-const INTRO_DURATION_S: float = 2.2
+##
+## WAS 2.2 -- playtest feedback: too short to actually read. Raised so the
+## held beat alone (INTRO_HOLD_FRACTION) is comfortably past a second, on
+## top of the new ease-in/ease-out either side of it.
+const INTRO_DURATION_S: float = 3.0
+## Fraction of INTRO_DURATION_S spent easing IN, from invisible to
+## FAR_SCALE, before the hold.
+##
+## WAS ABSENT. The previous curve had NO ease-in at all: the very first
+## frame after GameState.state_changed -> PLAYING rendered the silhouette at
+## the FULL FAR_SCALE outright -- an instantaneous jump from zero, i.e. an
+## infinite rate of change at t=0 -- immediately followed by the HOLD phase,
+## whose rate of change is flat zero. That join (infinite slope into zero
+## slope) is a real, measurable discontinuity in the motion, not a guess:
+## this sandbox has no display to eyeball a stutter on, but the curve's own
+## derivative can be read directly off the code, and playtest feedback
+## ("pas fluide") is exactly what a discontinuous first derivative reads as.
+## A second, smaller discontinuity sat at the hold-to-recede join for the
+## same reason: the hold's rate of change is 0, but the old recede was a
+## plain linear lerp, whose rate of change at its own start is a constant
+## NEGATIVE value -- a second instantaneous kink.
+##
+## FIX: this ease-in, and _smoothstep01() applied to BOTH this segment and
+## the recede segment below, in _process_intro. Smoothstep's derivative is
+## exactly 0 at both ends of its own [0,1] domain, which is what makes every
+## join in the new curve match the flat, zero-velocity HOLD it borders --
+## ease-in ends at velocity 0 (matches hold's constant 0), recede begins at
+## velocity 0 (matches hold's constant 0 from the other side), and recede
+## ends at velocity 0 too (so the final visible=false cut lands on an
+## already-motionless, already-invisible frame instead of interrupting a
+## still-shrinking one). The whole curve is C1-continuous by construction,
+## not by tuning the numbers until a stutter happens to hide.
+const INTRO_EASE_IN_FRACTION: float = 0.18
 ## Fraction of INTRO_DURATION_S spent held at full size before receding.
-## The rest is the recede itself -- a scale ease to zero, never a jump cut,
-## so the establishing shot reads as the same thing withdrawing rather than
-## as a flash.
-const INTRO_HOLD_FRACTION: float = 0.45
+## The rest is split between the new ease-in above and the eased recede --
+## itself now smoothstepped rather than linear, never a jump cut, so the
+## establishing shot reads as the same thing withdrawing rather than as a
+## flash. See INTRO_EASE_IN_FRACTION's doc for why both transitions needed
+## the same treatment, not just the entrance.
+const INTRO_HOLD_FRACTION: float = 0.32
 
 @onready var _mesh: MeshInstance3D = $Silhouette
 @onready var _eye_left: MeshInstance3D = $Silhouette/EyeLeft
@@ -323,21 +357,30 @@ func _process(delta: float) -> void:
 	if _material:
 		_material.emission_energy_multiplier = lerpf(_base_emission_energy, _base_emission_energy * 3.0, t)
 
-## Cubic Hermite smoothstep: 0 at t=0, 1 at t=1, and a derivative of exactly
-## 0 at BOTH ends -- which is what makes the capture lunge below read as one
-## continuous motion into whatever the ordinary lead-driven branch was doing
-## the previous frame, rather than snapping onto a differently-shaped curve
-## the instant capture begins.
+## Cubic Hermite smoothstep: 0 at t=0, 1 at t=1, and -- the property this
+## whole file's fluidity fix leans on -- a derivative of exactly 0 at BOTH
+## ends. Used everywhere a segment of this file's animation borders a flat
+## HOLD (which also has a constant 0 derivative): matching endpoint slopes
+## is what makes a join read as one continuous motion instead of two motions
+## stitched together. See INTRO_EASE_IN_FRACTION's doc for the discontinuity
+## this replaces.
 func _smoothstep01(t: float) -> float:
 	return t * t * (3.0 - 2.0 * t)
 
-## The opening sighting. Held pose at FAR_Z/FAR_SCALE -- the exact framing
-## PursuerFramingAudit already measures for the real "just became visible"
-## moment, so this never needs its own occupancy check -- then a pure scale
-## ease to zero. Shrinking can only ever REDUCE how much of the screen a
-## fixed-position mesh covers, so the recede half of this curve is safe by
-## construction once the held pose is: there is no way for it to end up
-## bigger than what it started at.
+## The opening sighting: ease IN from invisible to FAR_SCALE, hold at
+## FAR_Z/FAR_SCALE -- the exact framing PursuerFramingAudit already measures
+## for the real "just became visible" moment, so the hold itself never
+## needed its own occupancy check -- then ease OUT to invisible. Every join
+## between these three phases lands at matching (zero) velocity by
+## construction (see _smoothstep01's own doc), which is the fix for the
+## "pas fluide" feedback: the old curve popped to full size on frame one and
+## kinked at the hold-to-recede join, both genuine discontinuities in the
+## motion's derivative, not merely a feeling.
+##
+## Shrinking (and, symmetrically, growing FROM zero) can only ever REDUCE
+## how much of the screen a fixed-position mesh covers relative to the held
+## pose, so neither eased segment needs its own occupancy check: there is no
+## way for either one to end up bigger than the hold it borders.
 func _process_intro(delta: float) -> void:
 	_intro_t += delta
 	if _intro_t >= INTRO_DURATION_S:
@@ -351,11 +394,15 @@ func _process_intro(delta: float) -> void:
 	position.x = sin(_anim_t * TAU * SWAY_HZ) * SWAY_AMPLITUDE_X
 	position.y = BOB_AMPLITUDE_Y * sin(_anim_t * TAU * BOB_HZ)
 
-	var hold_end := INTRO_DURATION_S * INTRO_HOLD_FRACTION
+	var ease_in_end := INTRO_DURATION_S * INTRO_EASE_IN_FRACTION
+	var hold_end := ease_in_end + INTRO_DURATION_S * INTRO_HOLD_FRACTION
 	var s := FAR_SCALE
-	if _intro_t > hold_end:
+	if _intro_t < ease_in_end:
+		var ease_t := clampf(_intro_t / ease_in_end, 0.0, 1.0)
+		s = FAR_SCALE * _smoothstep01(ease_t)
+	elif _intro_t > hold_end:
 		var recede_t := clampf((_intro_t - hold_end) / (INTRO_DURATION_S - hold_end), 0.0, 1.0)
-		s = lerpf(FAR_SCALE, 0.0, recede_t)
+		s = lerpf(FAR_SCALE, 0.0, _smoothstep01(recede_t))
 	scale = Vector3(s, s, s)
 
 	if _material:
