@@ -38,6 +38,15 @@ const NAME_MAX_LEN := 12
 const AUTO_ID_CHARS := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 const AUTO_ID_LEN := 20
 
+## Gates BOTH network entry points below (submit_score AND
+## fetch_top_scores) -- true by default, so a normal play session behaves
+## exactly as before this flag existed. Set to false to make every call
+## degrade instantly to its existing "offline" signal path (no HTTPRequest
+## ever fires), the very same path already exercised whenever the device
+## has no network -- callers need no new branch to handle this.
+## See _ready() below for where this actually gets flipped off.
+var network_enabled: bool = true
+
 var _submit_request: HTTPRequest
 var _query_request: HTTPRequest
 
@@ -123,6 +132,9 @@ func save_name(player_name: String) -> void:
 ## confirmed working (200, and the doc later readable with a real
 ## `createdAt`) against the live project during implementation.
 func submit_score(player_name: String, score: int, nuts: int, glands: int) -> void:
+	if not network_enabled:
+		submit_finished.emit(false)
+		return
 	var safe_name := player_name.strip_edges().substr(0, NAME_MAX_LEN)
 	if safe_name.is_empty():
 		safe_name = DEFAULT_NAME
@@ -175,6 +187,9 @@ func _on_submit_completed(result: int, response_code: int, _headers: PackedStrin
 ## document (in order); entries with no "document" key are query-plan
 ## metadata only and are skipped.
 func fetch_top_scores() -> void:
+	if not network_enabled:
+		top_scores_fetched.emit([], false)
+		return
 	var body := {
 		"structuredQuery": {
 			"from": [{ "collectionId": COLLECTION_ID }],
