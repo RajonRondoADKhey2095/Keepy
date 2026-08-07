@@ -286,6 +286,16 @@ func _drive_safe_bot() -> void:
 		var lane: int = _keepy.lane_index + step
 		if lane < 0 or lane > 2:
 			continue
+		# A lane shut by a track-shrink window is not a destination. A
+		# no-op without the mechanic (lane_blocked is always false then),
+		# so it leaves every pre-shrink measurement byte-identical -- but
+		# without it the bot keeps CHOOSING that lane, because it is empty
+		# and therefore looks like the safest option on the board, has the
+		# move refused by Keepy.move_lane, and stands still in front of
+		# the hazard it meant to escape. That measures the bot's blindness
+		# to a wall it cannot see, not the difficulty of the game.
+		if GameState.lane_blocked(lane):
+			continue
 		var ttc: float = lane_ttc[lane] if lane_ttc[lane] >= 0.0 else INF
 		if ttc > best_ttc:
 			best_ttc = ttc

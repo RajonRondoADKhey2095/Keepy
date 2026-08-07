@@ -431,6 +431,16 @@ func _drive_safe_bot() -> void:
 		var lane: int = _keepy.lane_index + step
 		if lane < 0 or lane > 2:
 			continue
+		# A lane shut by a track-shrink window is not a destination. A
+		# no-op without the mechanic (lane_blocked is always false then),
+		# so it leaves every pre-shrink measurement byte-identical -- but
+		# without it the bot keeps CHOOSING that lane, because it is empty
+		# and therefore looks like the safest option on the board, has the
+		# move refused by Keepy.move_lane, and stands still in front of
+		# the hazard it meant to escape. That measures the bot's blindness
+		# to a wall it cannot see, not the difficulty of the game.
+		if GameState.lane_blocked(lane):
+			continue
 		var ttc: float = lane_ttc[lane] if lane_ttc[lane] >= 0.0 else INF
 		if ttc > best_ttc:
 			best_ttc = ttc
@@ -506,6 +516,16 @@ func _safest_adjacent_step() -> int:
 		var lane: int = _keepy.lane_index + step
 		if lane < 0 or lane > 2:
 			continue
+		# A lane shut by a track-shrink window is not a destination. A
+		# no-op without the mechanic (lane_blocked is always false then),
+		# so it leaves every pre-shrink measurement byte-identical -- but
+		# without it the bot keeps CHOOSING that lane, because it is empty
+		# and therefore looks like the safest option on the board, has the
+		# move refused by Keepy.move_lane, and stands still in front of
+		# the hazard it meant to escape. That measures the bot's blindness
+		# to a wall it cannot see, not the difficulty of the game.
+		if GameState.lane_blocked(lane):
+			continue
 		var ttc: float = lane_ttc[lane] if lane_ttc[lane] >= 0.0 else INF
 		if ttc > best_ttc:
 			best_ttc = ttc
@@ -559,6 +579,14 @@ func _reachable_gland_lane() -> int:
 		if not (segment is TrackSegment):
 			continue
 		for lane in 3:
+			# Same reasoning as the escape picker above: a gland already
+			# on the track when a shrink window opens can sit behind the
+			# barrier, and chasing it is a move Keepy.move_lane refuses --
+			# the bot would stall sideways against the wall. (The spawner
+			# stops PLACING collectibles in a shut lane, so this only ever
+			# catches ones that were already in flight.)
+			if GameState.lane_blocked(lane):
+				continue
 			if lane_ttc[lane] >= 0.0 and lane_ttc[lane] < GLAND_CHASE_SAFE_LEAD_S:
 				continue
 			var z: float = segment.active_gland_z_on_lane(lane)
