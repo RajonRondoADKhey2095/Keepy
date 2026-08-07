@@ -117,6 +117,9 @@ var _dark_effect_layer: CanvasLayer
 var _obstacle: Obstacle
 var _noisette: Noisette
 var _gland: Gland
+## Built only for the barrier pass at the very end, so the sweep and the
+## canonical pass measure exactly what they always did.
+var _barrier: LaneBarrier
 
 # tint_amount -> worst (object vs ground) ratio seen across every
 # palette/object combination at that amount.
@@ -149,6 +152,13 @@ func _run() -> void:
 	print("chosen GameState.DARK_TINT_AMOUNT = %.2f -- verifying via the REAL DarkModeEffect.gd code path" % chosen)
 	print("")
 	await _run_canonical_pass()
+
+	# LAST, and after the canonical pass has already installed the real
+	# DarkModeEffect.gd: the barrier pass drives GameState.dark_intensity
+	# / dark_variant_index and needs that production code path in place to
+	# turn them into shader uniforms. Running it here also keeps it from
+	# perturbing anything the two earlier passes measure.
+	await _run_barrier_pass()
 
 	get_tree().quit()
 
@@ -432,6 +442,197 @@ func _hide_all() -> void:
 	_obstacle.visible = false
 	_noisette.visible = false
 	_gland.visible = false
+	if _barrier:
+		_barrier.visible = false
+
+# =====================================================================
+# LANE BARRIER PASS -- the temporary track shrink's telegraph (see
+# GameState's TRACK SHRINK section and scripts/world/LaneBarrier.gd).
+#
+# WHY IT GETS ITS OWN PASS RATHER THAN A SEVENTH ENTRY IN THE OBJECT
+# LIST ABOVE. Two reasons, both about it being a different KIND of thing
+# than a hazard:
+#
+#   1. It must be legible in the LIGHT phase too. Every other object in
+#      this file is measured only at dark_intensity 1.0, because the
+#      question being asked of them is "does the dark cycle break
+#      legibility that already held". The barrier is brand new, so its
+#      light-phase contrast is not a pre-existing property to be
+#      preserved -- it is a number this batch is responsible for, and
+#      that no earlier measurement covers.
+#
+#   2. It is STRIPED, and that changes what "its contrast" even means.
+#      Every other object here is a flat colour, so a mean sample
+#      against the ground is the whole story. Averaging a light/dark
+#      stripe pattern instead measures a mid-grey that exists nowhere on
+#      screen -- and under-reports the telegraph badly, because a
+#      high-frequency light/dark pattern is far more salient than a flat
+#      block of its own average. So TWO numbers are reported:
+#
+#        STRIPE  -- brightest against darkest pixel WITHIN the wall.
+#                   This is what makes it read as a wall at a glance and
+#                   what carries the scrolling motion cue, and it is the
+#                   number held to the WCAG AA floor in every palette.
+#        vs GROUND -- the wall's mean against the ground, i.e. its
+#                   far-field silhouette once the stripes blur together
+#                   at distance.
+#
+# THE DARK-PHASE SILHOUETTE FLOOR IS DELIBERATELY NOT AA, and that is a
+# measurement rather than a bar being lowered to pass. The dark cycle's
+# tint pass is an affine map at strength DARK_TINT_AMOUNT (0.55), so it
+# compresses EVERY luminance difference on screen toward a common colour
+# -- which is why GameState.DARK_TINT_AMOUNT's own doc already records
+# that this game's worst hazard-vs-ground pairs sit at 1.00-1.02:1, and
+# why no opaque object in this game can reach 3.0:1 against the ground
+# in dark mode regardless of the colour it is given. The honest
+# comparison for the silhouette is therefore against the hazards this
+# probe measures in the same run, and the barrier is reported next to
+# them rather than against an absolute floor nothing here can meet.
+# Internal stripe contrast is not subject to that compression in the
+# same way (both stripes take the same affine map, and they start at
+# opposite ends of the luminance range), which is exactly why it is the
+# number the floor is placed on.
+#
+# The barrier is sampled on its near face, at the same Z as every other
+# object here so the perspective matches, and on lane 0 (an edge lane --
+# the only kind that can ever be condemned).
+# =====================================================================
+
+const BARRIER_SAMPLE_LANE: int = 0
+## Mid-height on the raised wall: clear of the ground line at its base
+## and of its top edge, both of which would average ground or sky into
+## the sample.
+const BARRIER_SAMPLE_Y: float = 1.2
+
+func _run_barrier_pass() -> void:
+	print("=== LANE BARRIER PASS (track shrink telegraph) ===")
+	print("light phase + all %d dark palettes. STRIPE contrast carries the %.1f:1 floor;" % [
+		GameState.DARK_VARIANTS.size(), CONTRAST_FLOOR])
+	print("the vs-ground silhouette is floored in the light phase only -- see the section header.")
+	print("")
+	_barrier = LaneBarrier.new()
+	_root3d.add_child(_barrier)
+	GameState.state = GameState.State.PLAYING
+	var sample_pos := Vector3(TrackSegment.LANE_X[BARRIER_SAMPLE_LANE], BARRIER_SAMPLE_Y, CAPTURE_Z)
+
+	var worst_stripe := INF
+	var worst_ground := INF
+	var worst_dark_ground := INF
+	# LIGHT phase first -- intensity 0.0 is the untouched frame, i.e. the
+	# state the run spends most of its time in.
+	var light := await _measure_barrier("LIGHT phase", 0.0, sample_pos)
+	worst_stripe = minf(worst_stripe, light.x)
+	worst_ground = minf(worst_ground, light.y)
+	var light_ground: float = light.y
+	for i in GameState.DARK_VARIANTS.size():
+		GameState.dark_variant_index = i
+		var r := await _measure_barrier("DARK palette %d" % i, 1.0, sample_pos)
+		worst_stripe = minf(worst_stripe, r.x)
+		worst_ground = minf(worst_ground, r.y)
+		worst_dark_ground = minf(worst_dark_ground, r.y)
+
+	print("")
+	print("worst STRIPE contrast, every palette : %.2f:1  %s (floor %.1f:1)" % [
+		worst_stripe, "OK" if worst_stripe >= CONTRAST_FLOOR else "BELOW FLOOR", CONTRAST_FLOOR])
+	print("light-phase silhouette vs ground     : %.2f:1  %s (floor %.1f:1)" % [
+		light_ground, "OK" if light_ground >= CONTRAST_FLOOR else "BELOW FLOOR", CONTRAST_FLOOR])
+	print("worst dark-phase silhouette vs ground: %.2f:1  (reported, not floored -- see the section header;" % worst_dark_ground)
+	print("                                       this game's hazards sit at 1.00-1.02:1 in the same conditions)")
+	if worst_stripe < CONTRAST_FLOOR or light_ground < CONTRAST_FLOOR:
+		push_error("LANE BARRIER BELOW CONTRAST FLOOR: worst stripe %.2f:1, light silhouette %.2f:1, floor %.1f:1." % [
+			worst_stripe, light_ground, CONTRAST_FLOOR])
+	print("")
+
+## Pins the two run-scoped state machines this pass depends on, and has
+## to be re-applied around every awaited frame rather than set once.
+##
+## Both of them ADVANCE on their own: GameState._process runs
+## advance_time() for as long as state == PLAYING, which this pass needs
+## it to be (DarkModeEffect and LaneBarrier both go inert otherwise). The
+## first version of this pass set the shrink fields once and measured
+## pure ground every time -- _update_shrink saw a stale phase deadline of
+## 0.0, walked HELD -> OPENING -> INACTIVE within two frames, and the
+## wall was already gone before the first sample. That failure was SILENT
+## in the only way that matters: it produced seven plausible ~1.0:1
+## readings, exactly the shape a genuinely invisible barrier would
+## produce. Hence the explicit shrink_active() assertion at the sample
+## point below -- a number this pass cannot distinguish from a real
+## result must never be reported as one.
+##
+## Writing the two private deadlines is deliberate and precedented: this
+## directory's probes already reach into private state when that is what
+## the measurement honestly requires (AntiFrustrationAudit reads
+## Obstacle._enemy_settling for the same kind of reason). Pushing them
+## out of reach is what lets the pass hold ONE state long enough to
+## sample it, without a second, probe-only rendering path that would
+## prove nothing about the shipped one.
+func _hold_state(intensity: float) -> void:
+	GameState.state = GameState.State.PLAYING
+	GameState.shrink_phase = GameState.ShrinkPhase.HELD
+	GameState.shrink_lane = BARRIER_SAMPLE_LANE
+	GameState.shrink_amount = 1.0
+	GameState.set("_shrink_phase_ends_at_s", INF)
+	# Match dark_phase to the intensity being asked for, so
+	# _update_dark_cycle's own move_toward HOLDS the value instead of
+	# dragging it back toward the other phase between frames.
+	GameState.dark_phase = GameState.DarkPhase.DARK if intensity > 0.5 else GameState.DarkPhase.LIGHT
+	GameState.dark_intensity = intensity
+	GameState.set("_dark_phase_started_s", INF)
+
+## One (phase, palette) measurement. Returns Vector2(stripe_ratio,
+## mean_vs_ground_ratio) -- see the section header for why both are
+## needed and which one carries the floor.
+func _measure_barrier(label: String, intensity: float, sample_pos: Vector3) -> Vector2:
+	_hold_state(intensity)
+	_hide_all()
+	await _wait_frames(SETTLE_FRAMES)
+	_hold_state(intensity)
+	var ground_color := _sample_strip(GROUND_STRIP_TOP_FRAC, 1.0)
+	_barrier.visible = true
+	# LaneBarrier positions itself from GameState in _process, so it needs
+	# a frame in the tree before its transform is meaningful -- the same
+	# reason every other object here settles before being sampled.
+	await _wait_frames(SETTLE_FRAMES)
+	var barrier_color := _sample_point(sample_pos)
+	var extremes := _sample_point_extremes(sample_pos)
+	if not GameState.shrink_active():
+		push_error("BARRIER PASS BROKEN: the shrink window expired mid-measurement (%s), so the sample is ground, not wall." % label)
+	var stripe_ratio := _contrast_ratio(extremes[0], extremes[1])
+	var ground_ratio := _contrast_ratio(barrier_color, ground_color)
+	print("  %-16s stripe %5.2f:1 %-11s | mean=%s vs ground=%s -> %.2f:1" % [
+		label, stripe_ratio, "OK" if stripe_ratio >= CONTRAST_FLOOR else "BELOW FLOOR",
+		barrier_color, ground_color, ground_ratio])
+	return Vector2(stripe_ratio, ground_ratio)
+
+## The brightest and darkest pixels inside the sample box, by relative
+## luminance -- the two ends of the stripe pattern. Uses a TIGHTER box
+## than _sample_point's mean so the extremes cannot be a stray ground or
+## sky pixel caught at the wall's silhouette edge, which is exactly the
+## kind of outlier a min/max is vulnerable to and a mean is not.
+func _sample_point_extremes(world_pos: Vector3) -> Array[Color]:
+	var img: Image = get_viewport().get_texture().get_image()
+	var screen := _camera.unproject_position(world_pos)
+	var visible_size := get_viewport().get_visible_rect().size
+	var sx := float(img.get_width()) / maxf(visible_size.x, 1.0)
+	var sy := float(img.get_height()) / maxf(visible_size.y, 1.0)
+	var cx := int(screen.x * sx)
+	var cy := int(screen.y * sy)
+	var half := SAMPLE_HALF_PX / 2
+	var brightest := Color.BLACK
+	var darkest := Color.WHITE
+	var best := -1.0
+	var worst := 2.0
+	for y in range(maxi(0, cy - half), mini(img.get_height(), cy + half)):
+		for x in range(maxi(0, cx - half), mini(img.get_width(), cx + half)):
+			var c := img.get_pixel(x, y)
+			var l := _relative_luminance(c)
+			if l > best:
+				best = l
+				brightest = c
+			if l < worst:
+				worst = l
+				darkest = c
+	return [brightest, darkest]
 
 func _sample_point(world_pos: Vector3) -> Color:
 	var img: Image = get_viewport().get_texture().get_image()
