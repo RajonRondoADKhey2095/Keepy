@@ -157,10 +157,25 @@ func active_gland_z_on_lane(lane: int) -> float:
 ## `lane` (see Obstacle.gd). The middle lane (index 1) has two neighbours
 ## and picks between them; either edge lane (0 or 2) only has the middle
 ## lane as a neighbour.
+##
+## Skips a lane closed by a temporary track shrink (see GameState's TRACK
+## SHRINK section): the sway is a pre-contact animation between the two,
+## and swaying THROUGH the barrier would show the player a hazard
+## apparently occupying a lane the game has just told them is shut. When
+## the only neighbour is closed the enemy simply does not sway -- it
+## holds its own lane, which is what `lane` already means here.
 func _pick_enemy_alt_lane(lane: int) -> int:
 	if lane == 1:
-		return 0 if randf() < 0.5 else 2
-	return 1
+		var low_open := not GameState.lane_blocked(0)
+		var high_open := not GameState.lane_blocked(2)
+		if low_open and high_open:
+			return 0 if randf() < 0.5 else 2
+		if low_open:
+			return 0
+		if high_open:
+			return 2
+		return lane
+	return 1 if not GameState.lane_blocked(1) else lane
 
 func _deactivate_obstacle() -> void:
 	_obstacle.visible = false

@@ -963,13 +963,32 @@ func _resolve_late_lock(time_to_contact: float) -> void:
 ## this (an ENEMY can never flag itself); AIR_ENEMY's landing-lane
 ## resolver (chantier 3) passes itself, for the same reason its own
 ## initial check does.
+##
+## A lane closed by a temporary track shrink (see GameState's TRACK
+## SHRINK section) is never a legal destination, including for the
+## last-resort fallback -- which is why that fallback is no longer a bare
+## `(unsafe_lane + 1) % 3`: the modulo can land squarely on the closed
+## lane, and redirecting a hazard behind the barrier would put it where
+## the player provably is not, quietly cancelling the mechanic these two
+## hazards are supposed to keep working through. The callers never pass
+## a closed lane as `unsafe_lane` in the first place (both target the
+## player's own lane, and the player can never be on a closed one), so
+## there is always at least one legal answer left.
 func _safe_redirect_lane(unsafe_lane: int, time_to_contact: float, track_manager: Node, exclude: Node3D = null) -> int:
+	var fallback := -1
 	for lane in 3:
-		if lane == unsafe_lane:
+		if lane == unsafe_lane or GameState.lane_blocked(lane):
 			continue
+		if fallback == -1:
+			fallback = lane
 		if not track_manager.lane_has_conflicting_jump_hazard(lane, time_to_contact, exclude):
 			return lane
-	return (unsafe_lane + 1) % 3
+	# Every open lane conflicts (see the doc on TrackManager's own check
+	# for how vanishingly rare that is) -- take any open one that is not
+	# the lane we were told to avoid. Only if there is somehow none does
+	# this fall back to the caller's own lane, which is still strictly
+	# better than committing to a lane behind a barrier.
+	return fallback if fallback != -1 else unsafe_lane
 
 func _current_player_lane() -> int:
 	var player := _current_player_ref()

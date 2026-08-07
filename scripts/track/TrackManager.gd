@@ -415,6 +415,31 @@ const MAX_ACTIVE_LANES_EARLY: int = 1
 ## technically isn't). Task's explicit ask: never touch the 3rd lane.
 const MAX_ACTIVE_LANES_LATE: int = 2
 
+## Maximum DISTINCT lanes allowed to carry an active obstacle at once
+## WHILE A SHRINK WINDOW IS OPEN (GameState.shrink_active) -- see that
+## file's TRACK SHRINK section for the mechanic.
+##
+## This constant is the entire anti-frustration story of the mechanic, so
+## it is worth stating why it is 1 and not 2. MAX_ACTIVE_LANES_LATE's own
+## doc justifies 2 by "it always leaves one of the THREE lanes clear".
+## Take a lane away and that same 2 leaves ZERO clear: the cap would go
+## from being the thing that guarantees a lateral escape to being the
+## thing that guarantees there is none, without a single line of it
+## changing. Dropping to 1 restores the property the 2 was standing in
+## for -- at most one of the two practicable lanes is ever taken, so the
+## other one is always open.
+##
+## Note this bounds the SPAWN-TIME picks only, exactly like the two caps
+## above: ground ENEMY's late lock and AIR_ENEMY's landing lane remain
+## deliberately exempt (see the section header). Both of those target the
+## player's OWN lane, and both are jumpable by the time they commit, so
+## the escape they leave is vertical rather than lateral -- which is
+## precisely the kind this mechanic does not take away. Verified, not
+## argued: scripts/dev/AntiFrustrationAudit.gd re-derives the guarantee
+## per frame with the closed lane excluded from the escapes it will
+## credit, and reports the during-window frames separately.
+const MAX_ACTIVE_LANES_SHRUNK: int = 1
+
 # Relative weights for which Obstacle.Type spawns when an obstacle spawns
 # at all. DODGE and JUMP stay the bulk of the spawn table; ENEMY (moving,
 # forces a late reaction) and AIR_ENEMY (punishes a jump, see Obstacle.gd
@@ -501,6 +526,10 @@ var _last_charger_s: float = -CHARGER_COOLDOWN_EARLY_S
 ## STOMPER_COOLDOWN_EARLY_S.
 var _last_stomper_s: float = -STOMPER_COOLDOWN_EARLY_S
 
+## Scratch buffer for _available_lanes() -- allocated once, cleared and
+## refilled per call, never replaced. See that function's own doc.
+var _available_lanes_buf: Array[int] = []
+
 func _ready() -> void:
 	# Looked up by group (Obstacle.gd's ground ENEMY late lock, see
 	# _resolve_late_lock / lane_has_conflicting_jump_hazard below) rather
@@ -519,6 +548,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	_update_density_phase(GameState.run_time_s)
+	_try_begin_shrink()
 
 	# THE WORLD's own speed, and the only thing this loop moves. An
 	# element that closes on the player faster than the world does adds
@@ -659,13 +689,19 @@ func _populate_segment(segment: TrackSegment, index: int) -> void:
 ## Obstacle.blocks_jump exclusion) as any other hazard's row, rather than
 ## through a second copy that could drift.
 func _populate_collectibles(segment: TrackSegment, spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane: int) -> void:
+	# Collectibles draw from the AVAILABLE lanes only, and this matters
+	# more than the hazard rules do rather than less: a hazard in a closed
+	# lane is merely inert, but a noisette or a gland behind the barrier
+	# actively BAITS the player toward a lane they cannot enter, turning
+	# the reward economy against the mechanic's own telegraph.
+	var available := _available_lanes()
 	var noisette_lane := -1
 	if randf() < NOISETTE_CHANCE_PER_ROW:
-		noisette_lane = randi_range(0, 2)
+		noisette_lane = available[randi_range(0, available.size() - 1)]
 
 	var gland_lane := -1
 	if randf() < GLAND_CHANCE_PER_ROW:
-		var candidate := randi_range(0, 2)
+		var candidate: int = available[randi_range(0, available.size() - 1)]
 		if _rows_since_air_enemy_on_lane[candidate] >= _required_air_hazard_separation_rows():
 			gland_lane = candidate
 		# else: too close to a recent AIR_ENEMY on this lane -- skip the
@@ -744,6 +780,42 @@ func _required_air_hazard_separation_rows() -> int:
 func _try_charger_lane(segment: TrackSegment, index: int) -> int:
 	if index != -1:
 		return -1 # initial fill / reset -- see SAFE_START_SEGMENTS's own reasoning
+	# SUSPENDED FOR THE DURATION OF A SHRINK WINDOW -- the STOMPER/CHARGER
+	# arbitration this mechanic forces, and the reason it comes out this
+	# way round rather than the other.
+	#
+	# The two hazards are deliberate inverses (see Obstacle.gd's Type
+	# docs): a CHARGER can ONLY be escaped by a lane switch, a STOMPER can
+	# ONLY be escaped by a jump. A shrink window removes a LANE -- i.e. it
+	# takes away exactly one kind of escape, and it is not the vertical
+	# one. So the two are not symmetrically affected and cannot be
+	# arbitrated symmetrically:
+	#
+	#   STOMPER is untouched, and structurally so rather than by margin.
+	#   Its escape is a jump, and how many lanes exist has no bearing on
+	#   whether Keepy can leave the ground. It does not even consume a
+	#   lateral option to begin with -- _process_stomper mirrors the
+	#   player's own position.x verbatim, so it threatens whichever lane
+	#   they are on and none of the others. It stays.
+	#
+	#   CHARGER is suspended. In 3 lanes it leaves two destinations to
+	#   flee to; in 2 it leaves exactly one, and that one must ALSO be
+	#   clear of everything else at the same instant. The shrunk cap
+	#   (MAX_ACTIVE_LANES_SHRUNK) would normally be what guarantees that,
+	#   but _pick_charger_lane is explicitly allowed to override the cap
+	#   when honouring it would leave no legal lane ("safety wins, density
+	#   gives way", see its own doc) -- so for this one hazard the cap is
+	#   not a guarantee at all, it is a preference. Keeping the charger
+	#   would mean resting the mechanic's whole fairness claim on the one
+	#   rule that is documented to yield.
+	#
+	# The existing STOMPER<->CHARGER mutual exclusion is unaffected:
+	# suspending one side only ever makes _stomper_charger_margin_clear
+	# easier to satisfy, never harder. And a charger already in flight
+	# cannot be caught out by a window opening around it, because
+	# _try_begin_shrink refuses to open one while any charger is live.
+	if GameState.shrink_active():
+		return -1
 	if GameState.run_time_s < CHARGER_MIN_START_S:
 		return -1
 	if GameState.run_time_s - _last_charger_s < _charger_cooldown_s():
@@ -866,7 +938,7 @@ func _charger_arrival_s(segment: TrackSegment) -> float:
 ## late lock and AIR_ENEMY's landing pick, not an omission.
 func _pick_charger_lane(segment: TrackSegment) -> int:
 	var candidates: Array[int] = []
-	for lane in 3:
+	for lane in _available_lanes():
 		if not _lane_clear_of_glands_for_charger(segment, lane):
 			continue
 		if not _charger_arrival_fits(segment, lane):
@@ -1004,6 +1076,122 @@ func _stomper_charger_margin_clear(segment: TrackSegment) -> bool:
 			return false
 	return true
 
+# =====================================================================
+# TEMPORARY TRACK SHRINK -- the TRIGGER half. GameState owns the window's
+# state and its clock (see that file's TRACK SHRINK section); this file
+# owns the decision to open one, because the only remaining question is
+# about the LIVE TRACK and this is the file that can see it.
+#
+# THE TRANSITION PROBLEM THIS SOLVES, which is the whole reason the
+# trigger is not just a timer. Rows are populated ~140m ahead and met
+# several seconds later, so switching the lane cap to
+# MAX_ACTIVE_LANES_SHRUNK does NOT take effect on what is already on the
+# track: for the next few seconds the player still meets rows laid out
+# under the old cap of 2. If those two occupied lanes happen to be the
+# two that stay OPEN, the window would begin with both practicable lanes
+# blocked -- a guaranteed trap, opened by the very mechanic that is
+# supposed to leave an escape.
+#
+# The fix is to only ever open a window from a track state that is
+# already compatible, and the reason that is sufficient rather than
+# merely helpful is that _segments IS the entire track: there is no
+# fourth row waiting off-screen to be revealed, every row that exists is
+# one of the SEGMENT_COUNT pooled ones, and each is populated at the
+# moment it recycles. So if at the trigger instant at most one of the two
+# surviving lanes carries an obstacle, that stays true until those
+# segments recycle -- and every segment that recycles from that instant
+# on is populated under the shrunk cap. The invariant therefore holds
+# continuously across the transition rather than being restored a few
+# seconds into it.
+# =====================================================================
+
+## Opens a shrink window when the run's own clock allows one AND the live
+## track can take it. Cheapest gate first, so the overwhelmingly common
+## answer (no) costs one boolean.
+##
+## No cooldown is spent on a refusal: GameState only re-arms its interval
+## when a window ENDS, so a run that is eligible but momentarily
+## incompatible simply retries next frame and opens as soon as the track
+## clears. Same cancel-rather-than-force precedent as _pick_charger_lane.
+func _try_begin_shrink() -> void:
+	if not GameState.shrink_ready():
+		return
+	# A CHARGER already inbound is disqualifying, for the same reason
+	# CHARGER is suspended outright for the duration of a window (see
+	# _try_charger_lane): its only escape is lateral, and this mechanic
+	# exists to take a lateral option away. Letting a window open on top
+	# of one already in flight would be the one case the suspension
+	# cannot cover, since that charger was scheduled under 3-lane rules.
+	for segment in _segments:
+		var obstacle := _active_obstacle_in(segment)
+		if obstacle != null and obstacle.obstacle_type == Obstacle.Type.CHARGER:
+			return
+	var lane := _condemned_lane_for(_current_player_lane())
+	# The live-track compatibility test -- see the section header. Counted
+	# over the two lanes that would SURVIVE, never over all three: an
+	# obstacle stranded in the lane about to close is unreachable by
+	# construction (the player can neither be there nor go there) and must
+	# not be what vetoes the window.
+	var occupied := _active_lane_occupancy(null)
+	var occupied_survivors := 0
+	for other in 3:
+		if other != lane and occupied[other]:
+			occupied_survivors += 1
+	if occupied_survivors > MAX_ACTIVE_LANES_SHRUNK:
+		return
+	GameState.begin_shrink(lane)
+
+## Which lane a window opening RIGHT NOW would condemn, given where the
+## player is standing.
+##
+## Two rules, both load-bearing. Only an EDGE lane may ever be chosen --
+## closing the centre one would split the track into two halves a +-1
+## lane switch cannot cross (see GameState's TRACK SHRINK section). And
+## it is never the player's own lane, so the mechanic never pushes them
+## out of a lane they chose; combined with Keepy.move_lane refusing to
+## enter a closed lane from the trigger frame onward, that is what makes
+## "the player is on a lane that shuts under them" unreachable rather
+## than merely unlikely.
+##
+## The two rules never conflict: a player on an edge lane leaves exactly
+## one edge lane to condemn, and a player in the centre (or no player at
+## all, in a headless probe) leaves both, drawn evenly.
+func _condemned_lane_for(player_lane: int) -> int:
+	if player_lane == 0:
+		return 2
+	if player_lane == 2:
+		return 0
+	return 0 if randf() < 0.5 else 2
+
+## Keepy's current lane, or 1 (centre) when there is no player in the
+## tree -- a headless probe with no Keepy, matching the same fallback
+## Obstacle._resolve_late_lock uses. Centre is the right no-player answer
+## specifically because it is the one value that leaves _condemned_lane_for
+## free to draw either edge, i.e. it biases nothing.
+func _current_player_lane() -> int:
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null:
+		return 1
+	return player.lane_index
+
+## The lanes a row may currently use -- all three normally, the two
+## survivors while a window is open. Rebuilt into a member array rather
+## than a fresh literal per call: this runs on every populated row, and
+## the pooling contract in this file's own header ("no allocation in the
+## running loop") applies to the spawn path exactly as much as to the
+## scroll path.
+##
+## CALLER CONTRACT, because the buffer is shared: read the result before
+## calling this again. No caller currently holds one across a second
+## call, and none should start -- the second call would clear the array
+## the first caller is still reading.
+func _available_lanes() -> Array[int]:
+	_available_lanes_buf.clear()
+	for lane in 3:
+		if not GameState.lane_blocked(lane):
+			_available_lanes_buf.append(lane)
+	return _available_lanes_buf
+
 ## Spawn probability for a row that is already far enough from the last
 ## obstacle -- see OBSTACLE_CHANCE_BASE / OBSTACLE_CHANCE_CAP. Scaled by
 ## the current RUSH/CALM density multiplier (see the RUSH EVENTS section
@@ -1037,7 +1225,23 @@ func _update_density_phase(run_time_s: float) -> void:
 			if run_time_s >= _density_phase_ends_at_s:
 				_enter_normal(run_time_s)
 		DensityPhase.NORMAL:
-			if run_time_s >= _next_rush_eligible_s:
+			# No NEW rush opens while a shrink window is -- a FEEL
+			# decision, and explicitly not a safety one. Safety is already
+			# covered without it: a rush only scales _obstacle_chance()
+			# and never touches _required_gap_rows() or the lane cap (see
+			# the RUSH EVENTS SAFETY note), so even at chance 1.0 the
+			# shrunk cap still confines every spawn to one of the two open
+			# lanes and leaves the other clear. What this line prevents is
+			# the game's two distinct MARKING events -- "the track just got
+			# denser" and "the track just got narrower" -- landing on top
+			# of each other and reading as one indistinct spike instead of
+			# two things the player can name afterward.
+			#
+			# One-directional on purpose: a rush already in flight when a
+			# window opens is never cut short (that would be a second,
+			# uncued density change), it simply runs out under the shrunk
+			# cap. RushFrustrationAudit measures those overlap frames.
+			if run_time_s >= _next_rush_eligible_s and not GameState.shrink_active():
 				_enter_rush(run_time_s)
 
 func _enter_rush(run_time_s: float) -> void:
@@ -1121,7 +1325,19 @@ func _pick_obstacle_type() -> Obstacle.Type:
 ## actually removes the learnable "guess lateral" heuristic. Re-measured
 ## post-fix (same probe, same sample size): center/lateral converge to
 ## roughly 50/50 -- see the session report for the exact numbers.
+##
+## The 50/25/25 weighting is a THREE-lane construction -- it exists to
+## make "centre" and "lateral" equally likely as CATEGORIES, which is
+## only a meaningful thing to balance while there are two lateral lanes
+## and one centre. While a window is open there is one of each, so the
+## category skew it corrects for does not exist and an even draw over the
+## two survivors is both simpler and exactly right. (This lane is only
+## the provisional sway start in any case; the real one is decided later,
+## from the player's actual position -- see Obstacle._resolve_late_lock.)
 func _pick_enemy_final_lane() -> int:
+	if GameState.shrink_active():
+		var available := _available_lanes()
+		return available[randi_range(0, available.size() - 1)]
 	if randf() < 0.5:
 		return 1
 	return 0 if randf() < 0.5 else 2
@@ -1144,14 +1360,20 @@ func _pick_enemy_final_lane() -> int:
 ## and the already-occupied set happen to be disjoint), the density cap
 ## is the one that gives way, same "occasional unlucky JUMP is the
 ## accepted edge case" precedent as the fallback above.
+##
+## Both the candidate scan and the all-lanes-excluded fallback are over
+## _available_lanes(), never over a literal [0,1,2]: a JUMP obstacle in a
+## closed lane is not merely wasted, it is a hazard the player is being
+## shown and cannot act on.
 func _pick_jump_lane(occupied: Array[bool], cap: int) -> int:
 	var required := _required_air_hazard_separation_rows()
+	var available := _available_lanes()
 	var candidates: Array[int] = []
-	for lane in 3:
+	for lane in available:
 		if _rows_since_air_enemy_on_lane[lane] >= required:
 			candidates.append(lane)
 	if candidates.is_empty():
-		candidates = [0, 1, 2]
+		candidates = available.duplicate()
 	var capped := _apply_lane_cap(candidates, occupied, cap)
 	if capped.is_empty():
 		return candidates[randi_range(0, candidates.size() - 1)]
@@ -1181,7 +1403,7 @@ func _pick_jump_lane(occupied: Array[bool], cap: int) -> int:
 func _pick_air_enemy_lane(occupied: Array[bool], cap: int) -> int:
 	var required := _required_air_hazard_separation_rows()
 	var candidates: Array[int] = []
-	for lane in 3:
+	for lane in _available_lanes():
 		if _rows_since_jump_on_lane[lane] >= required and _rows_since_gland_on_lane[lane] >= required:
 			candidates.append(lane)
 	if candidates.is_empty():
@@ -1199,7 +1421,7 @@ func _pick_air_enemy_lane(occupied: Array[bool], cap: int) -> int:
 ## already-occupied set itself is the candidate pool, and that set is
 ## non-empty whenever it is being enforced (cap is always >= 1).
 func _pick_dodge_lane(occupied: Array[bool], cap: int) -> int:
-	var capped := _apply_lane_cap([0, 1, 2], occupied, cap)
+	var capped := _apply_lane_cap(_available_lanes(), occupied, cap)
 	return capped[randi_range(0, capped.size() - 1)]
 
 ## Which lanes CURRENTLY carry a live, visible obstacle elsewhere on the
@@ -1208,6 +1430,15 @@ func _pick_dodge_lane(occupied: Array[bool], cap: int) -> int:
 ## the row currently being (re)populated: its own previous obstacle is
 ## about to be overwritten by this same call regardless of what it decides,
 ## so counting it would be double-booking a lane against itself.
+## A CLOSED lane is reported as NOT occupied, whatever is standing in it.
+## That is not a rounding of the truth but the only reading that makes
+## the cap mean the same thing in both modes: the cap exists to bound how
+## many lanes THE PLAYER can find blocked, and a lane they cannot enter
+## is not one of those. Counting a hazard stranded behind the barrier
+## would spend the shrunk cap's entire budget of 1 on a lane nobody can
+## reach, and the two lanes that actually matter would then be forced
+## empty for the whole window -- the mechanic would read as the track
+## going quiet at the exact moment it is supposed to feel tightest.
 func _active_lane_occupancy(exclude_segment: TrackSegment) -> Array[bool]:
 	var occupied: Array[bool] = [false, false, false]
 	for segment in _segments:
@@ -1217,7 +1448,7 @@ func _active_lane_occupancy(exclude_segment: TrackSegment) -> Array[bool]:
 		if obstacle == null:
 			continue
 		var lane := _lane_index_for_x(obstacle.position.x)
-		if lane != -1:
+		if lane != -1 and not GameState.lane_blocked(lane):
 			occupied[lane] = true
 	return occupied
 
@@ -1229,6 +1460,15 @@ func _active_lane_occupancy(exclude_segment: TrackSegment) -> Array[bool]:
 func _max_active_lanes_for_row() -> int:
 	if GameState.lookahead_stage_index() <= LOW_DENSITY_LAST_STAGE_INDEX:
 		return MAX_ACTIVE_LANES_EARLY
+	# Checked BEFORE the late cap, not after, so a window always tightens
+	# the track and can never be loosened by the palier it lands on. The
+	# early cap above already equals MAX_ACTIVE_LANES_SHRUNK, so the order
+	# between those two is immaterial -- but a shrink cannot occur that
+	# early anyway (SHRINK_UNLOCK_SCORE is thousands of points past it),
+	# and relying on the two constants happening to be equal would be a
+	# coincidence to maintain rather than a rule to read.
+	if GameState.shrink_active():
+		return MAX_ACTIVE_LANES_SHRUNK
 	return MAX_ACTIVE_LANES_LATE
 
 ## Narrows `candidates` to respect the density cap against `occupied`
