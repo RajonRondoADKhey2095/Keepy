@@ -158,4 +158,12 @@ jobs:
           # keepy-ten.vercel.app instead of the per-deploy URL.
           DEPLOY_URL=$(vercel deploy build/web --yes --token="$VERCEL_TOKEN")
           echo "Staging deployment: $DEPLOY_URL"
-          vercel alias set "$DEPLOY_URL" keepy-staging.vercel.app --token="$VERCEL_TOKEN"
+          # `vercel deploy` resolves VERCEL_ORG_ID/VERCEL_PROJECT_ID from the
+          # environment on its own, but `vercel alias set` does not carry
+          # that same auto-linking -- without an explicit --scope it looks
+          # up the token owner's personal (default) scope instead of the
+          # team the project actually belongs to, and fails with
+          # "Error: User not found." when the token's default scope has no
+          # such user/team. Passing --scope makes it resolve the same team
+          # context that `vercel deploy` already used above.
+          vercel alias set "$DEPLOY_URL" keepy-staging.vercel.app --scope "$VERCEL_ORG_ID" --token="$VERCEL_TOKEN"
