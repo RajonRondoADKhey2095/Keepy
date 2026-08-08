@@ -232,6 +232,38 @@ SAFE   best score 4817  -> REACHES the gate
 
 The probe's answer to its own headline question was wrong for that profile.
 
+### F6 -- AirHazardAudit is non-deterministic under `--seed`. OPEN, not fixed by this batch.
+
+Found while checking the probes this batch did not touch. `AirHazardAudit`
+passes and fails **on the same seed**, on `origin/main` as much as on this
+branch:
+
+| tree | failures / runs, seed 20260806 |
+|---|---|
+| `origin/main` | 1 / 11 |
+| this branch | 2 / 5 |
+
+`git diff origin/main` is **empty** for `AirHazardAudit.gd` and for every
+file it loads (`scripts/gameplay/`, `scripts/player/`, `scripts/track/`,
+`scripts/autoload/`, `scenes/`), so this batch is not the cause and cannot
+be: the inputs are byte-identical and the outputs differ.
+
+Hypothesis, not a diagnosis -- the failing phase arms a jump when
+time-to-contact reaches half of Keepy's air time, and the logs show the
+liftoff frame landing anywhere in 0.330-0.345s against a 0.346s target.
+`--fixed-fps` pins the physics delta but not how many `_process` frames
+precede the first `_physics_process`, nor `call_deferred` ordering at
+startup; a one-frame offset moves the jump inside a clearance window only
+about half a second wide. That would make it a probe-harness race rather
+than a gameplay defect, but it has not been confirmed.
+
+Left open deliberately. It is a real defect of the same family this batch
+is about -- a probe whose verdict is not a function of its inputs -- but
+diagnosing a startup-ordering race is its own session, and guessing at a
+fix at the end of a large batch is how the previous false greens got
+written. Anyone reading a single green from this probe should know it is
+worth about 90%.
+
 ## What this batch changes
 
 F1-F5 are five instances of one failure: a probe cannot tell "I verified
