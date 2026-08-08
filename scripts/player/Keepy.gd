@@ -28,11 +28,18 @@ const GRAVITY: float = 26.0
 # derive their own math from it instead of re-deriving or guessing a
 # height. ~1.56m, see comment block above for the full derivation.
 const JUMP_PEAK_HEIGHT: float = JUMP_VELOCITY * JUMP_VELOCITY / (2.0 * GRAVITY)
-# Matches the CollisionShape3D/MeshInstance3D y-offset baked into
-# Keepy.tscn (capsule height 1.6, centered at 0.8 above the body origin).
-# Combined with JUMP_PEAK_HEIGHT this gives the height of the CENTER of
-# Keepy's capsule at the jump's apex -- see TrackSegment.gd GLAND_Y.
-const CAPSULE_HALF_HEIGHT: float = 0.8
+# Half of the COLLIDER's height -- read from Hitboxes.gd, which is now the
+# single source of that number (it used to be a literal 0.8 here, matching
+# a second literal baked into Keepy.tscn's CapsuleShape3D and a third in
+# its CapsuleMesh). Combined with JUMP_PEAK_HEIGHT this gives the height of
+# the CENTER of Keepy's capsule at the jump's apex -- see TrackSegment.gd
+# GLAND_Y, which is what places the Gland collectible.
+#
+# DERIVED FROM THE COLLIDER, NEVER FROM THE MESH, and that distinction is
+# the point of the graphics-prep batch: a Meshy squirrel will not be a
+# capsule and will not be 1.6m tall in whatever proportions its author
+# chose, but the height a jump reaches has to keep meaning the same thing.
+const CAPSULE_HALF_HEIGHT: float = Hitboxes.KEEPY_Y
 
 # Top height, in world Y, that a well-timed jump clears -- promoted from
 # the JUMP obstacle's own baked 0.7m (see the derivation in the comment
@@ -73,8 +80,10 @@ var previous_lane_index: int = 1
 var last_lane_change_s: float = NO_LANE_CHANGE_S
 
 @onready var swipe_detector: SwipeDetector = get_node_or_null("../SwipeDetector")
+@onready var _collision_shape: CollisionShape3D = $CollisionShape3D
 
 func _ready() -> void:
+	_apply_hitbox()
 	target_x = LANE_X[lane_index]
 	position.x = target_x
 	# Looked up by group rather than a NodePath: Obstacle.gd (ground ENEMY
@@ -86,6 +95,22 @@ func _ready() -> void:
 		swipe_detector.swiped_left.connect(_on_swipe_left)
 		swipe_detector.swiped_right.connect(_on_swipe_right)
 		swipe_detector.swiped_up.connect(_on_swipe_up)
+
+## Writes the player capsule's dimensions from Hitboxes.gd onto the real
+## shape, rather than trusting whatever the .tscn was last saved with.
+##
+## The values written are byte-identical to the ones Keepy.tscn already
+## carried, so this changes nothing about how the game plays today. What it
+## changes is where the number LIVES: after this, the collider is defined by
+## a constant a rebalancing batch has to edit deliberately, and can no
+## longer be moved by someone resizing the visual next to it. See
+## Hitboxes.gd's own header for why that separation is worth a function.
+func _apply_hitbox() -> void:
+	var shape := _collision_shape.shape as CapsuleShape3D
+	if shape:
+		shape.radius = Hitboxes.KEEPY_RADIUS
+		shape.height = Hitboxes.KEEPY_HEIGHT
+	_collision_shape.position.y = Hitboxes.KEEPY_Y
 
 func _physics_process(delta: float) -> void:
 	if GameState.state != GameState.State.PLAYING:

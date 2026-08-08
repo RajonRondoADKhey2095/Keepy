@@ -45,7 +45,10 @@ var _obstacle: Obstacle
 var _noisette_slots: Array[Noisette] = []
 var _gland: Gland
 
+@onready var _collision_shape: CollisionShape3D = $CollisionShape3D
+
 func _ready() -> void:
+	_apply_hitbox()
 	_obstacle = obstacle_scene.instantiate()
 	add_child(_obstacle)
 	_deactivate_obstacle()
@@ -59,6 +62,22 @@ func _ready() -> void:
 	_gland = gland_scene.instantiate()
 	add_child(_gland)
 	_deactivate_gland()
+
+## Writes the ground slab's collider from Hitboxes.gd. Byte-identical to
+## what TrackSegment.tscn already carried, so nothing changes today.
+##
+## Worth doing anyway, and arguably the most load-bearing of the lot: this
+## is the surface is_on_floor() reports, so the entire jump -- and with it
+## every jumpable-hazard clearance window in the game -- rests on it being
+## exactly this thick and exactly this high. When the ground mesh is
+## replaced by a Meshy low-poly tile (a shape with rocks, grass, or an
+## uneven edge), the slab underneath has to keep being a flat 0.4m box
+## whose top face is the y = 0 plane every hazard offset is measured from.
+func _apply_hitbox() -> void:
+	var box := _collision_shape.shape as BoxShape3D
+	if box:
+		box.size = Hitboxes.GROUND_SIZE
+	_collision_shape.position.y = Hitboxes.GROUND_Y
 
 ## spawn_obstacle: whether this segment should have a hazard.
 ## obstacle_type: which Obstacle.Type variant to show when spawn_obstacle

@@ -718,6 +718,7 @@ var _air_enemy_base_emission_energy: float
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
+	_apply_hitboxes()
 	var shared_material := _enemy_mesh.get_surface_override_material(0) as StandardMaterial3D
 	if shared_material:
 		_enemy_material = shared_material.duplicate()
@@ -761,6 +762,47 @@ func _ready() -> void:
 	# _charger_trail_base_z.
 	for bar in _charger_trail.get_children():
 		_charger_trail_base_z.append((bar as Node3D).position.z)
+
+## Writes every hazard hitbox from Hitboxes.gd onto the real shapes.
+##
+## The values are byte-identical to the ones Obstacle.tscn already carried,
+## so nothing about how this game plays changes today. What changes is that
+## the numbers now live somewhere a mesh swap cannot reach -- see
+## Hitboxes.gd's header for why the six fairness contracts written against
+## these dimensions (Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT's clearance window,
+## RISK_MIN_SURVIVABLE_LATERAL_M's "widest hitbox is 1.2m", DODGE standing
+## above JUMP_PEAK_HEIGHT) needed that guarantee before the graphics phase
+## starts replacing every mesh in this scene.
+##
+## AIR_ENEMY's vertical offset is NOT set here: it is TrackSegment.GLAND_Y,
+## a derived value, applied a few lines below and re-applied on every
+## configure() as the hazard descends and lands.
+##
+## Runs once per pooled instance, from _ready(). The shapes are shared
+## sub-resources across the pool, so several instances write the same
+## constants over each other -- idempotent by construction, since every one
+## of them is writing the same number from the same place.
+func _apply_hitboxes() -> void:
+	_apply_box(_dodge_shape, Hitboxes.DODGE_SIZE, Hitboxes.DODGE_Y)
+	_apply_box(_jump_shape, Hitboxes.JUMP_SIZE, Hitboxes.JUMP_Y)
+	_apply_box(_stomper_shape, Hitboxes.STOMPER_SIZE, Hitboxes.STOMPER_Y)
+	_apply_box(_charger_shape, Hitboxes.CHARGER_SIZE, Hitboxes.CHARGER_Y)
+	# Y deliberately left alone: _ready() sets it from TrackSegment.GLAND_Y
+	# immediately after this call, and _process_air_enemy animates it.
+	var air_box := _air_enemy_shape.shape as BoxShape3D
+	if air_box:
+		air_box.size = Hitboxes.AIR_ENEMY_SIZE
+	var enemy_capsule := _enemy_shape.shape as CapsuleShape3D
+	if enemy_capsule:
+		enemy_capsule.radius = Hitboxes.ENEMY_RADIUS
+		enemy_capsule.height = Hitboxes.ENEMY_HEIGHT
+	_enemy_shape.position.y = Hitboxes.ENEMY_Y
+
+func _apply_box(collision_shape: CollisionShape3D, size: Vector3, offset_y: float) -> void:
+	var box := collision_shape.shape as BoxShape3D
+	if box:
+		box.size = size
+	collision_shape.position.y = offset_y
 
 ## Switches which variant's mesh/collision shape is active. Called by
 ## TrackSegment.populate() every time this pooled obstacle is (re)spawned.
