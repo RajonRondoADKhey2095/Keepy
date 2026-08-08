@@ -200,9 +200,19 @@ func _run_phase_2(delta: float) -> void:
 	_t += delta
 
 	if GameState.state == GameState.State.GAME_OVER:
-		if _jump_commanded:
-			push_error("PHASE 2 FAILED: died %.3fs after a jump timed to clear a landed AIR_ENEMY -- the once-landed hazard should be jumpable exactly like ENEMY/JUMP, this hitbox may still be lethal to a well-timed jump." % [_t - _jump_commanded_t])
+		if _jump_commanded and _target_is_at_the_player():
+			push_error("PHASE 2 FAILED: died %.3fs after a jump timed to clear a landed AIR_ENEMY, WITH THAT SAME HAZARD at the player plane -- the once-landed hazard should be jumpable exactly like ENEMY/JUMP, this hitbox may still be lethal to a well-timed jump." % [_t - _jump_commanded_t])
 			get_tree().quit(1)
+		elif _jump_commanded:
+			# Died in the survival hold, but NOT to the hazard under test --
+			# see _target_is_at_the_player. Inconclusive, exactly like a
+			# death before the jump.
+			print("phase 2: died %.3fs after the jump but to a DIFFERENT hazard (the jumped one was already behind) -- retrying" % [_t - _jump_commanded_t])
+			_jump_target_key = -1
+			_jump_commanded = false
+			_survival_check_deadline = -1.0
+			_t = 0.0
+			_start_game()
 		else:
 			# Died some other way (e.g. an unrelated obstacle spawned on
 			# the center lane first) -- not a failure of THIS check, just
@@ -323,3 +333,37 @@ func _scan_air_enemies() -> void:
 				# the same lane can't be mistaken for this one surviving.
 				_survival_check_deadline = _t + 2.0 * half_air_time + SURVIVAL_HOLD_S
 				print("  jumped at t=%.2fs, time-to-contact was %.3fs (target %.3fs)" % [_t, time_to_contact, half_air_time])
+
+
+## Whether the hazard this jump was timed against is ACTUALLY at the player
+## plane right now -- i.e. whether it is a plausible cause of the death
+## being attributed to it.
+##
+## WHY: phase 2 holds for SURVIVAL_HOLD_S after the jump lands, to be sure
+## the survival is real. Keepy spends that hold ON THE GROUND, and this
+## probe deliberately leaves every OTHER AIR_ENEMY alive (it neuters only the
+## other types). A second one arriving inside the hold kills a stationary
+## bot -- which is not a bug, it is what this probe's own earlier phase
+## asserts must happen. Blaming the jumped hazard for that death is a false
+## red, and a seed-dependent one.
+##
+## Measured on this tree before the guard: seeds 1 and 314159 of 20 failed
+## this way. Instrumented on seed 1, the killer's segment key was
+## 105277031797 while the jump target was 104689829729 -- a different,
+## already-cleared hazard, 1.6s after a jump whose own target was behind
+## the player.
+##
+## Keyed on the SEGMENT instance id, the handle _jump_target_key already
+## records, because pooled Obstacle nodes reuse their ids across spawns and
+## only the owning segment identifies the row.
+func _target_is_at_the_player() -> bool:
+	for segment in _track.get_children():
+		if not (segment is TrackSegment):
+			continue
+		if segment.get_instance_id() != _jump_target_key:
+			continue
+		for child in segment.get_children():
+			if not (child is Obstacle) or not child.visible:
+				continue
+			return absf(child.global_position.z) <= Obstacle.RISK_PROXIMITY_Z
+	return false
