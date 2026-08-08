@@ -175,6 +175,12 @@ func _ready() -> void:
 	print("predicted floor   : %.1fs with zero risk events (start / drain + grace)" % (
 		GameState.PURSUER_START_LEAD_S / GameState.PURSUER_CLOSE_RATE + GameState.PURSUER_GRACE_S))
 	print("")
+	# HOSTILE disables the player's collision layer outright and measures
+	# how long the lead takes to drain with zero risk income -- a number
+	# no hazard can touch, over a single ~53s run. Gating it on hazard
+	# coverage would fail this probe for a reason that is not a defect.
+	# See ProbeCoverage.exempt_phase for the bar on doing this.
+	_coverage.exempt_phase(_short_phase_name(Phase.HOSTILE))
 	_start_phase(Phase.SAFE)
 
 func _start_phase(phase: Phase) -> void:

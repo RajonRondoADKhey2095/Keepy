@@ -58,8 +58,8 @@ class_name ProbeCoverage
 ## instances reuse their ids, so a segment recycling under the same key
 ## must not read as a crossing.
 ##
-## THE THRESHOLD IS Z >= -RISK_PROXIMITY_Z, NOT Z >= 0, AND THAT IS NOT A
-## DETAIL. Written the obvious way -- crossing the Z=0 plane -- this ledger
+## THE THRESHOLD IS AHEAD OF THE Z=0 PLANE (see ARRIVAL_Z), NOT ON IT, AND
+## THAT IS NOT A DETAIL. Written the obvious way -- crossing Z=0 -- this ledger
 ## has a blind spot in exactly the place it exists to watch: a hazard that
 ## KILLS the bot ends the run at the instant of contact, so the frame that
 ## would have recorded the crossing never runs, and the most consequential
@@ -69,9 +69,8 @@ class_name ProbeCoverage
 ## exact shape of false green this whole file exists to make impossible,
 ## reproduced inside the guard against it.
 ##
-## Every hazard hitbox is 1.0m deep (Obstacle.RISK_PROXIMITY_Z's own doc),
-## so contact begins around Z = -1.0. Counting from there means the arrival
-## is recorded on a frame that runs whether or not the run survives it.
+## Counting from ARRIVAL_Z instead means the arrival is recorded on a frame
+## that runs whether or not the run survives it.
 ##
 ## Two counters per type, because they answer different questions:
 ##
@@ -151,6 +150,8 @@ static func mechanic_for_type(type: int) -> int:
 # phase name -> { mechanic -> {"presented": int, "answered": int} }
 var _phases: Dictionary = {}
 var _phase: String = ""
+## Phases reported but not gated -- see exempt_phase().
+var _exempt: Array[String] = []
 
 # Crossing detection, keyed by SEGMENT instance id -- see the class doc.
 var _prev_z: Dictionary = {}
@@ -185,6 +186,26 @@ func observe(track: Node, player: Node) -> void:
 		return
 	_observe_obstacles(track, player)
 	_observe_state(track)
+
+## Marks a phase as REPORTED BUT NOT GATED. Its counts still print;
+## verify() skips it.
+##
+## For phases whose claim genuinely does not depend on which hazards
+## turned up, and only those. The case it exists for is PursuerAudit's
+## HOSTILE phase: it disables the player's collision layer outright and
+## measures how long the pursuer's lead takes to drain with zero risk
+## income, over a single ~53s run. Hazards cannot touch that number --
+## they cannot touch the bot at all -- so requiring the run to have
+## produced all six would fail the probe for a reason that is not a
+## defect, which is the mirror image of the bug this whole file exists
+## to prevent and just as dishonest.
+##
+## The bar for using this is that the phase's conclusion is INDEPENDENT of
+## the mechanic, not that the phase is short or that coverage is
+## inconvenient. A phase with collision ON stays gated.
+func exempt_phase(label: String) -> void:
+	if not _exempt.has(label):
+		_exempt.append(label)
 
 ## The run restarted under the same phase -- drop the per-instance crossing
 ## state so a recycled segment cannot read as a crossing, and re-baseline
@@ -309,7 +330,7 @@ func report(required: Array[int]) -> void:
 		for mech in required:
 			line += "  %s %d/%d" % [
 				mechanic_name(mech), count(label, mech, "presented"), count(label, mech, "answered")]
-		print("  %-14s%s" % [label, line])
+		print("  %-14s%s%s" % [label, line, "   (reported, not gated)" if label in _exempt else ""])
 	print("")
 
 ## The gate. Returns a list of human-readable failures, empty when every
@@ -325,6 +346,8 @@ func verify(required: Array[int], min_presented: int = 1, min_answered: int = 0)
 		failures.append("the coverage ledger recorded no phases at all -- observe() was never called, so this run proves nothing about what it exercised")
 		return failures
 	for label in _phases.keys():
+		if label in _exempt:
+			continue
 		for mech in required:
 			var presented := count(label, mech, "presented")
 			var answered := count(label, mech, "answered")
