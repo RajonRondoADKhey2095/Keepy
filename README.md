@@ -126,12 +126,25 @@ keepy/
   three noisette slots (one per lane) that are shown/hidden and
   repositioned rather than freed and recreated.
 - **Primitive placeholders, swap-ready.** Every visual node (Keepy's
-  capsule, obstacles' boxes, noisettes' spheres, track tiles) is a
-  plain `MeshInstance3D` with a built-in Godot `Mesh` resource, sitting
-  as a direct child of its logic node. Swapping in a Meshy-generated
-  `.glb` later is a matter of replacing that one child node's mesh (or
-  the whole child node) inside the relevant `.tscn` -- none of the
-  gameplay scripts touch mesh data, so no logic changes are needed.
+  capsule, obstacles' boxes, noisettes' spheres, track tiles, the
+  pursuer's silhouette) is a `ModelSlot` -- a `MeshInstance3D` subclass
+  carrying a built-in Godot `Mesh`, sitting as a direct child of its
+  logic node. Setting its `model_scene` to an imported `.glb` draws that
+  model instead, as a child of the same node, so every `.visible` /
+  `.scale` / `.position` write the gameplay scripts already make keeps
+  working and no logic changes are needed. 12 independent slots, so one
+  object can be replaced without disturbing the others.
+- **Visuals and hitboxes are separated, and it is enforced.** Every
+  collider dimension lives in `scripts/world/Hitboxes.gd` and is written
+  onto the real shape at `_ready()`; the scenes are not the source of
+  truth for them, and `ModelSlot` has no code path to a
+  `CollisionShape3D`. This exists because every fairness contract in the
+  game is written against a collider (the jump clearance window, DODGE
+  being unjumpable, the risk system's lateral thresholds), and a stray
+  half-metre on one would rebalance all of them while every other probe
+  in `scripts/dev/` kept passing. `AssetContractAudit` asserts the split
+  by installing a substitute model in all 12 slots and re-measuring every
+  collider.
 - **Score.** Tracked as `distance_score` (derived from distance
   travelled) plus `noisette_score` and
   `gland_score` (collectibles, each worth a different point value),
