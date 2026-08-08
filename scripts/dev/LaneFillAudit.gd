@@ -47,6 +47,9 @@ var _lane_count_histogram: Array[int] = [0, 0, 0, 0]
 var _max_lanes_seen: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "LaneFillAudit")
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	# No-op unless `-- --seed=<int>` was passed.
 	var seeded := DevSeed.apply()

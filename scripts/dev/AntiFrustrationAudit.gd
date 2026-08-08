@@ -126,6 +126,9 @@ var _centre_lane_closed: int = 0
 const PROBE_UNLOCK_SCORE: int = 600
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "AntiFrustrationAudit")
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	# No-op unless `-- --seed=<int>` was passed; the default stays the
 	# exploratory, different-every-time run this probe wants.

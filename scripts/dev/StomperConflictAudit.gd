@@ -81,6 +81,9 @@ var _dodges_crossed: int = 0
 var _stompers_spawned_in_rush: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "StomperConflictAudit")
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	var seeded := DevSeed.apply()
 	GameState.pursuer_enabled = false # see AntiFrustrationAudit.gd's own header for why

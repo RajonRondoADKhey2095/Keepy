@@ -259,6 +259,9 @@ var _judged_hazard_id: int = 0
 var _ignoring_hazard: bool = false
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "StrikeAudit")
 	var seeded := DevSeed.apply()
 	print("=== STRIKE AUDIT ===")
 	print("rng                : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))

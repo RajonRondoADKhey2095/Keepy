@@ -164,6 +164,9 @@ var _cross_worst_escapes: int = 99
 var _cross_examples: Array = []
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "PursuerAudit")
 	var seeded := DevSeed.apply()
 	print("=== PURSUER AUDIT ===")
 	print("rng               : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))

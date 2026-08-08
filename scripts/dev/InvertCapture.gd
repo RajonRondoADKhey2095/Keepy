@@ -21,6 +21,9 @@ const SETTLE_FRAMES: int = 20
 var _game: Node = null
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "InvertCapture")
 	_run.call_deferred()
 
 func _run() -> void:
