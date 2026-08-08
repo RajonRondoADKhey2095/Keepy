@@ -319,6 +319,52 @@ explained is the *weakest* axis in dark mode):
 > sweep summary above are the ones this section relies on. Unrelated to
 > this batch, not fixed here.
 
+### 8.1 Background decor (procedural, no asset yet)
+
+`scripts/world/Decor.gd` (`World/Decor` in `Game.tscn`) draws the two
+background hill layers with plain Godot primitives (`CylinderMesh` cones) —
+no `.glb`, no texture, nothing this file's import checklist applies to yet.
+It follows the same colour rule as every other dark-mode-visible surface in
+§8: unshaded, and separated from the ground and from each other by **value**
+(far layer darker than the ground, near layer lighter, both short of the
+sky), never by hue alone.
+
+When a real low-poly mountain/hill asset replaces a layer, it hooks in the
+same way the ground tile itself is already prepared for: swap the
+`CylinderMesh` for a `ModelSlot`-style install point on that layer's pooled
+instances (see `ModelSlot.gd`'s own doc for the pattern), keep the same
+per-layer value separation, and keep `shading_mode = unshaded` unless the
+new asset's own internal contrast is verified to hold under the invert —
+§8's own "put the contrast inside the asset" rule applies here exactly as
+much as it does to a hazard. Budget-wise, a background hill has no
+gameplay-legibility requirement at all (it competes with nothing the player
+must read), so it can be considerably cheaper than the §7 hazard/character
+figures — a few hundred triangles across the whole layer is already visually
+generous for something this far from the camera and this rarely the focus of
+attention.
+
+The ground tile's own per-segment tint variation (`TrackSegment.gd`,
+`_reroll_ground_tint`) is the other half of this batch and needs no asset
+hook at all: it duplicates the ground `ModelSlot`'s material once per pooled
+segment (via `apply_material()`/`slot_material()`, never the slot's `mesh`
+or a direct `surface_material_override`) and re-rolls a small albedo drift
+around the ground's own base colour every time that segment is populated —
+so it keeps working unchanged the day a real ground tile asset is installed
+in that same slot.
+
+**RNG rule for anything added under `Decor.gd` or the ground/curb variation
+it sits next to:** always draw from a dedicated `RandomNumberGenerator`
+instance, never the global `randf()`/`randi()`/`randf_range()` free
+functions. Those draw from Godot's single global RNG stream, which is the
+exact stream `TrackManager`'s own spawn rolls draw from and the one several
+`scripts/dev/*Audit.gd` probes call the global `seed()` against for
+reproducible runs (see e.g. `StrikeAudit.gd`, `DevSeed.seed_value()`). A
+decor draw on that shared stream does not change any probability, but it
+does shift every gameplay roll that comes after it by one step — silently
+turning a purely-visual system into something that changes which hazards a
+seeded run actually spawns. Caught in this same batch (see the commit
+history around `Decor.gd`/`TrackSegment.gd`'s `_tint_rng`) before it shipped.
+
 ## 9. Godot 4.3 import notes
 
 - A `.glb` imports as a **`PackedScene`** whose root is a `Node3D`.
