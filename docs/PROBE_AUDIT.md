@@ -422,6 +422,43 @@ genuinely finishes (see the timing table below). Exit code **2**,
 deliberately not 1: the folder's convention is 0 = contract holds, 1 =
 contract violated, and a timeout is neither.
 
+### F6b / F9 -- the misattributed death, and its sibling. RESOLVED (follow-up).
+
+F6 closed the *seeding* half. Measured afterwards on `main`, **AirHazardAudit
+still failed 2 of 20 seeds** (1 and 314159): seeding made the probe
+reproducible without making it correct, and the reference seed 20260806
+passes only because it is one of the 18 lucky draws. A green baseline resting
+on that is the exact trap this document exists to record.
+
+The residual is a **misattributed death**. Phase 2 holds for
+`SURVIVAL_HOLD_S` after the jump lands; Keepy spends that hold on the ground,
+and the probe deliberately leaves every OTHER `AIR_ENEMY` alive -- it neuters
+only the other types. A second one killing a stationary bot is not a bug: it
+is what **phase 1 of the same probe asserts must happen.** The failure branch
+blamed the hazard the jump had already cleared.
+
+Instrumented on seed 1: killer segment key `105277031797`, jump target
+`104689829729` -- a different, already-passed hazard, 1.6s after liftoff with
+an air time of ~0.69s, i.e. half a second after landing.
+
+`_target_is_at_the_player()` now gates the failure in both probes: a death in
+the hold is a failure only if the hazard under test is at the player plane,
+otherwise the run is inconclusive and retries -- the treatment deaths before
+the jump already had.
+
+**F9** is the same pair of defects in `JumpDodgeRewardAudit`, which borrows
+AirHazardAudit's phase-2 technique wholesale and inherited both gaps with it:
+no `DevSeed.apply()`, and the same blame-anything branch.
+
+| | before | after |
+|---|---|---|
+| AirHazardAudit, 20 seeds | 2 failures | **0** |
+| AirHazardAudit, 20 runs @20260806 | (seeded, already stable) | **1 output, 0 failures** |
+| JumpDodgeRewardAudit, 20 runs @20260806 | **20 distinct outputs** | **1 output, 0 failures** |
+| JumpDodgeRewardAudit, 12 seeds | -- | **0 failures** |
+
+Still no gameplay defect: the game behaved correctly in every case measured.
+
 ## What this batch changes
 
 F1-F5 are five instances of one failure: a probe cannot tell "I verified
