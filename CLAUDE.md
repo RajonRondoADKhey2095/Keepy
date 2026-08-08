@@ -102,3 +102,38 @@ build réellement jouable.
   explicite de Mathieu.** Le flux normal reste : feature branch →
   `staging` (validation device sur `keepy-staging.vercel.app`) → une fois
   validé, PR/merge vers `main` sur demande explicite.
+
+## Incident résolu : `vercel alias set` "Not able to load user (404)" (8 août 2026)
+
+**Symptôme** : le step `Deploy to Vercel [STAGING]` échouait de façon
+identique 5 fois d'affilée sur `vercel alias set ... -T "$VERCEL_ORG_ID"`
+(et ses variantes `--scope <slug>` / `--scope <team_id>` testées avant),
+toujours avec `Not able to load user (404)`, alors que `vercel deploy`
+juste avant réussissait sans problème avec le même token.
+
+**Cause réelle** : le `VERCEL_TOKEN` utilisé était scope **équipe**
+(`keepy`). `vercel deploy` s'appuie sur `VERCEL_ORG_ID`/`VERCEL_PROJECT_ID`
+pour résoudre le contexte projet sans jamais appeler `/user`, donc il
+passait. `vercel alias set`, lui, résout systématiquement l'identité via
+un appel `/user` avant d'agir — quel que soit le flag de scope fourni
+(`--scope` slug, `--scope` team ID, `-T` team ID) — et ce token équipe
+n'avait pas de compte utilisateur associé exploitable par cet appel,
+d'où le 404 constant. Aucune combinaison de flags CLI ne pouvait
+contourner ça : le problème était le *type* de token, pas sa syntaxe
+d'invocation.
+
+**Solution qui a fonctionné** : régénérer un `VERCEL_TOKEN` scope
+**compte personnel** (`rajonrondoadkhey2095's projects`, pas team
+`keepy`) et le mettre à jour dans le secret GitHub — code CI inchangé
+(`-T "$VERCEL_ORG_ID"`). Confirmé sur le run #44 (workflow_dispatch,
+commit `759a371`) : `vercel deploy` → preview OK, puis `vercel alias set`
+→ `Success! https://keepy-staging.vercel.app now points to
+https://keepy-lpisx5c3p-rajonrondoadkhey2095s-projects.vercel.app`.
+Fetch direct de `keepy-staging.vercel.app` confirmé HTTP 200, contenu =
+export web Godot réel (`<title>Keepy</title>`, canvas, `index.js`,
+`GODOT_CONFIG` avec `index.pck`/`index.wasm`), pas une 404 Vercel.
+
+**À retenir pour une session future** : si `vercel alias set` échoue à
+nouveau avec `Not able to load user`, vérifier en priorité le **scope du
+token** (personnel vs équipe) avant de retoucher les flags CLI — c'est
+la variable qui a réellement résolu l'incident, pas `-T` vs `--scope`.
