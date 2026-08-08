@@ -58,7 +58,15 @@ func _ready() -> void:
 	# FIRST statement, before anything that could itself hang -- a
 	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
 	ProbeWatchdog.arm(self, "JumpDodgeRewardAudit")
+	# MUST precede _start_game() -- see DevSeed.gd. Missing here for the
+	# same reason it was missing in AirHazardAudit (finding F6a): --seed is
+	# not ambient, DevSeed.apply() is the only thing that reads it, and this
+	# file borrows AirHazardAudit's phase-2 technique wholesale -- it
+	# inherited the gap along with the technique. Measured on this tree
+	# before the call: 20 runs at one seed produced 20 distinct outputs.
+	var seeded := DevSeed.apply()
 	print("=== JUMP DODGE REWARD AUDIT ===")
+	print("rng    : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("watching for a well-timed jump over a JUMP obstacle on the center lane;")
 	print("asserts survival AND GameState.jump_dodge_score += JUMP_DODGE_BONUS_VALUE (%d)" % GameState.JUMP_DODGE_BONUS_VALUE)
 	_start_game()
@@ -78,9 +86,17 @@ func _physics_process(delta: float) -> void:
 	_t += delta
 
 	if GameState.state == GameState.State.GAME_OVER:
-		if _jump_commanded:
-			push_error("JUMP DODGE REWARD AUDIT FAILED: died %.3fs after a jump timed to clear a JUMP obstacle -- either the jump timing or JUMP's own jumpability regressed." % (_t - _jump_commanded_t))
+		if _jump_commanded and _target_is_at_the_player():
+			push_error("JUMP DODGE REWARD AUDIT FAILED: died %.3fs after a jump timed to clear a JUMP obstacle, WITH THAT SAME OBSTACLE at the player plane -- either the jump timing or JUMP's own jumpability regressed." % (_t - _jump_commanded_t))
 			get_tree().quit(1)
+			return
+		if _jump_commanded:
+			print("  died %.3fs after the jump but to a DIFFERENT hazard (the jumped one was already behind) -- retrying" % (_t - _jump_commanded_t))
+			_jump_target_key = -1
+			_jump_commanded = false
+			_check_deadline = -1.0
+			_t = 0.0
+			_start_game()
 			return
 		# Died some other way (a different obstacle type landed on the
 		# center lane first) -- inconclusive, not a failure of this
@@ -153,3 +169,37 @@ func _scan_for_jump_obstacle() -> void:
 			_jump_commanded_t = _t
 			_check_deadline = _t + 2.0 * half_air_time + SURVIVAL_HOLD_S
 			print("  jumped at t=%.2fs, time-to-contact was %.3fs (target %.3fs)" % [_t, time_to_contact, half_air_time])
+
+
+## Whether the hazard this jump was timed against is ACTUALLY at the player
+## plane right now -- i.e. whether it is a plausible cause of the death
+## being attributed to it.
+##
+## WHY: phase 2 holds for SURVIVAL_HOLD_S after the jump lands, to be sure
+## the survival is real. Keepy spends that hold ON THE GROUND, and this
+## probe deliberately leaves every OTHER JUMP obstacle alive (it neuters only the
+## other types). A second one arriving inside the hold kills a stationary
+## bot -- which is not a bug, it is what this probe's own earlier phase
+## asserts must happen. Blaming the jumped hazard for that death is a false
+## red, and a seed-dependent one.
+##
+## Measured on this tree before the guard: seeds 1 and 314159 of 20 failed
+## this way. Instrumented on seed 1, the killer's segment key was
+## 105277031797 while the jump target was 104689829729 -- a different,
+## already-cleared hazard, 1.6s after a jump whose own target was behind
+## the player.
+##
+## Keyed on the SEGMENT instance id, the handle _jump_target_key already
+## records, because pooled Obstacle nodes reuse their ids across spawns and
+## only the owning segment identifies the row.
+func _target_is_at_the_player() -> bool:
+	for segment in _track.get_children():
+		if not (segment is TrackSegment):
+			continue
+		if segment.get_instance_id() != _jump_target_key:
+			continue
+		for child in segment.get_children():
+			if not (child is Obstacle) or not child.visible:
+				continue
+			return absf(child.global_position.z) <= Obstacle.RISK_PROXIMITY_Z
+	return false
