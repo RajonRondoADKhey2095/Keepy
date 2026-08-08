@@ -46,6 +46,46 @@ var _noisette_slots: Array[Noisette] = []
 var _gland: Gland
 
 @onready var _collision_shape: CollisionShape3D = $CollisionShape3D
+@onready var _ground: ModelSlot = $MeshInstance3D
+
+# =====================================================================
+# GROUND TINT VARIATION (decor batch) -- purely visual, breaks the
+# identical-tile repetition of a 7-segment pool without touching geometry
+# or the collider Hitboxes.gd owns (see _apply_hitbox's own doc for why
+# that shape is load-bearing). Reads as a run of separately-poured
+# pavement slabs rather than one continuous strip -- a deliberate, small
+# per-tile seam, not a rendering artefact.
+#
+# Goes through ModelSlot.apply_material()/slot_material() (never `mesh` or
+# `surface_material_override` directly), the same accessor pair Obstacle.gd
+# and Pursuer.gd already use to tint a pooled instance without bleeding
+# into its siblings -- and the one that keeps working unchanged the day the
+# ground slot gets a real Meshy tile installed (see ModelSlot.gd's own
+# doc): this script never assumes the ground is still the placeholder box.
+# =====================================================================
+
+## Max per-channel drift applied on top of the ground's own base albedo,
+## re-rolled every populate() call (both the initial fill and every
+## recycle) so a segment does not carry the same tint for its whole
+## pooled lifetime. Small enough that the ground still reads as one
+## material family under any of the six dark-mode tints (see
+## docs/MESHY_SPEC.md section 8) -- this is a repetition-breaker, not a
+## second competing hue.
+const _GROUND_TINT_DRIFT: float = 0.05
+
+## Cached once in _ready(): the ground's OWN base material, duplicated so
+## tinting this segment can never bleed into a sibling segment sharing the
+## same StandardMaterial3D resource (same precedent as Obstacle.gd/
+## Pursuer.gd duplicating their shared material at _ready()).
+var _ground_material: StandardMaterial3D
+var _ground_base_color: Color
+
+## OWN RandomNumberGenerator instance, never the global randf()/randf_range()
+## -- see scripts/world/Decor.gd's own doc on _rng for the full reasoning:
+## the global stream is the one TrackManager's spawn rolls draw from and the
+## one dev probes seed for reproducibility (DevSeed.seed_value()), so a
+## decor draw on it would silently shift every gameplay roll after it.
+var _tint_rng := RandomNumberGenerator.new()
 
 func _ready() -> void:
 	_apply_hitbox()
@@ -62,6 +102,64 @@ func _ready() -> void:
 	_gland = gland_scene.instantiate()
 	add_child(_gland)
 	_deactivate_gland()
+
+	var base_material := _ground.slot_material() as StandardMaterial3D
+	_ground_base_color = base_material.albedo_color if base_material else Color.WHITE
+	_ground_material = StandardMaterial3D.new()
+	if base_material:
+		_ground_material.shading_mode = base_material.shading_mode
+	# Base colour up front, not just white-until-first-populate(): a probe
+	# that instantiates a bare TrackSegment without ever calling populate()
+	# (scripts/dev/AssetContractAudit.gd does exactly this) should still see
+	# this segment's real ground colour, not this material's default.
+	_ground_material.albedo_color = _ground_base_color
+	_ground.apply_material(_ground_material)
+	_build_lane_curbs()
+
+## Re-rolls this segment's ground tint around its base colour. Called from
+## populate() -- i.e. once at the initial fill and once per recycle, never
+## per frame.
+func _reroll_ground_tint() -> void:
+	_ground_material.albedo_color = Color(
+		clampf(_ground_base_color.r + _tint_rng.randf_range(-_GROUND_TINT_DRIFT, _GROUND_TINT_DRIFT), 0.0, 1.0),
+		clampf(_ground_base_color.g + _tint_rng.randf_range(-_GROUND_TINT_DRIFT, _GROUND_TINT_DRIFT), 0.0, 1.0),
+		clampf(_ground_base_color.b + _tint_rng.randf_range(-_GROUND_TINT_DRIFT, _GROUND_TINT_DRIFT), 0.0, 1.0),
+	)
+
+## Two thin unshaded stripes marking the boundary between lane 0/1 and
+## lane 1/2 -- "bordures de piste": built ONCE here (static geometry, no
+## collider, never repositioned again -- they are children of this
+## segment's own transform, so they travel and recycle with it for free,
+## exactly like the pooled Obstacle/Noisette/Gland siblings above) rather
+## than as a separate global system, since a curb is a property of a
+## track TILE, not of the world.
+##
+## Unshaded, and clearly separated in VALUE from the ground albedo (not
+## just a saturated hue) for the same docs/MESHY_SPEC.md section 8 reason
+## every other dark-mode-visible decor surface in this batch is: hue does
+## not survive the invert+tint blend, luminance does.
+const _CURB_COLOR: Color = Color(0.90, 0.86, 0.74)
+const _CURB_WIDTH: float = 0.12
+const _CURB_HEIGHT: float = 0.03
+const _CURB_X: Array[float] = [-1.0, 1.0] # midway between LANE_X's three lanes
+
+func _build_lane_curbs() -> void:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = _CURB_COLOR
+	for x in _CURB_X:
+		var strip := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(_CURB_WIDTH, _CURB_HEIGHT, 20.0)
+		strip.mesh = box
+		strip.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		strip.set_surface_override_material(0, material)
+		# Just above the ground's own top face (y = 0, see _apply_hitbox's
+		# doc) to avoid z-fighting with it, and offset by the ground
+		# MeshInstance3D's own local position so it lines up with the
+		# visible slab rather than the StaticBody3D's origin.
+		strip.position = Vector3(x, _ground.position.y + 0.2 + _CURB_HEIGHT * 0.5, 0.0)
+		add_child(strip)
 
 ## Writes the ground slab's collider from Hitboxes.gd. Byte-identical to
 ## what TrackSegment.tscn already carried, so nothing changes today.
@@ -110,6 +208,7 @@ func _apply_hitbox() -> void:
 ## constraint TrackManager enforces before it ever offers a gland_lane
 ## here -- see AIR_HAZARD_SEPARATION_S.)
 func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane: int, noisette_lane: int, gland_lane: int) -> void:
+	_reroll_ground_tint()
 	var obstacle_blocks_jump := false
 
 	if spawn_obstacle:
