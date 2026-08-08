@@ -68,6 +68,18 @@ const MAX_OCCUPANCY_FRACTION: float = 0.30
 const SAFE_ESCAPE_LEAD_S: float = 1.2
 const HALF_AIR_TIME_S: float = Keepy.JUMP_VELOCITY / Keepy.GRAVITY
 
+## Mechanics this run must actually have produced -- every hazard type,
+## plus the pursuer itself, which unlike in PursuerAudit IS required
+## here: a framing probe whose pursuer never appeared has measured
+## nothing at all. See ProbeCoverage.gd.
+const REQUIRED_COVERAGE: Array[int] = [
+	ProbeCoverage.Mechanic.DODGE, ProbeCoverage.Mechanic.JUMP,
+	ProbeCoverage.Mechanic.ENEMY, ProbeCoverage.Mechanic.AIR_ENEMY,
+	ProbeCoverage.Mechanic.CHARGER, ProbeCoverage.Mechanic.STOMPER,
+	ProbeCoverage.Mechanic.PURSUER_VISIBLE,
+]
+
+var _coverage := ProbeCoverage.new()
 var _game: Node3D
 var _keepy: Keepy
 var _track: Node3D
@@ -94,6 +106,7 @@ func _ready() -> void:
 	print("cap                : %.0f%% of screen height, max, both INTRO and VISIBLE" % (MAX_OCCUPANCY_FRACTION * 100.0))
 	print("viewport           : %s (project default -- portrait mobile is the only real target)" % get_viewport().get_visible_rect().size)
 	print("")
+	_coverage.begin_phase("SAFE bot")
 	_start_run()
 
 func _start_run() -> void:
@@ -104,6 +117,7 @@ func _start_run() -> void:
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
 	_track = _game.get_node("World/TrackManager")
+	_coverage.run_restarted()
 	_camera = _game.get_node("World/CameraFollow")
 	_pursuer = _game.get_node("World/Pursuer")
 	_pursuer_mesh = _pursuer.get_node("Silhouette")
@@ -127,6 +141,7 @@ func _physics_process(delta: float) -> void:
 		# would just be wasted work every frame of every capture.
 		if GameState.state == GameState.State.PLAYING:
 			_drive_safe_bot()
+			_coverage.observe(_track, _keepy)
 		_sample()
 		return
 	_end_run()
@@ -191,6 +206,7 @@ func _end_run() -> void:
 
 func _report() -> void:
 	print("runs                : %d, %.1fs simulated total" % [_runs, _phase_t])
+	_coverage.report(REQUIRED_COVERAGE)
 	print("")
 	_report_population("INTRO", _intro_samples)
 	print("")
@@ -207,6 +223,15 @@ func _report() -> void:
 	var intro_max := _max_frac(_intro_samples)
 	var visible_max := _max_frac(_visible_samples)
 	var worst := maxf(intro_max, visible_max)
+	# COVERAGE FIRST -- see ProbeCoverage.gd. A framing cap "respected" over
+	# a run whose bot never met a CHARGER says nothing about the frames a
+	# charger would have been in.
+	var gaps := _coverage.verify(REQUIRED_COVERAGE)
+	if not gaps.is_empty():
+		for gap in gaps:
+			push_error("PURSUER FRAMING AUDIT INCONCLUSIVE: %s." % gap)
+		get_tree().quit(1)
+		return
 	if worst > MAX_OCCUPANCY_FRACTION:
 		push_error("PURSUER FRAMING AUDIT FAILED: max occupancy %.1f%% exceeds the %.0f%% cap." % [
 			worst * 100.0, MAX_OCCUPANCY_FRACTION * 100.0])

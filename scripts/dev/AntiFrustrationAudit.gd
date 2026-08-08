@@ -82,6 +82,18 @@ const SIM_SECONDS: float = 330.0 # >= 5 minutes, per the task's explicit ask
 const BOT_SWITCH_MIN_INTERVAL_S: float = 0.6
 const BOT_SWITCH_MAX_INTERVAL_S: float = 2.4
 
+## Mechanics this run must actually have produced for its verdict to mean
+## anything -- every hazard type, plus the shrink whose 2-lane case this
+## probe exists to cover. See ProbeCoverage.gd: a green on a mechanic that
+## never ran is the failure this whole directory keeps rediscovering.
+const REQUIRED_COVERAGE: Array[int] = [
+	ProbeCoverage.Mechanic.DODGE, ProbeCoverage.Mechanic.JUMP,
+	ProbeCoverage.Mechanic.ENEMY, ProbeCoverage.Mechanic.AIR_ENEMY,
+	ProbeCoverage.Mechanic.CHARGER, ProbeCoverage.Mechanic.STOMPER,
+	ProbeCoverage.Mechanic.SHRINK,
+]
+
+var _coverage := ProbeCoverage.new()
 var _game: Node3D
 var _keepy: Keepy
 var _track: Node3D
@@ -139,6 +151,7 @@ func _ready() -> void:
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
 	_track = _game.get_node("World/TrackManager")
+	_coverage.begin_phase("roaming bot")
 	# Neutered exactly like PacingAudit.gd -- see the header for why this
 	# check's validity does not depend on Keepy surviving.
 	_keepy.collision_layer = 0
@@ -151,8 +164,10 @@ func _physics_process(delta: float) -> void:
 
 	_drive_bot()
 	_check_current_lane()
+	_coverage.observe(_track, _keepy)
 
 	if _t >= SIM_SECONDS:
+		_coverage.report(REQUIRED_COVERAGE)
 		print("--- result ---")
 		print("simulated time            : %.1fs" % _t)
 		print("physics frames checked     : %d" % _frames_checked)
@@ -165,6 +180,16 @@ func _physics_process(delta: float) -> void:
 		print("violations (shrunk)        : %d (must be 0)" % _shrink_violations)
 		print("player stood on closed lane: %d (must be 0)" % _player_on_closed_lane)
 		print("centre lane closed         : %d (must be 0)" % _centre_lane_closed)
+		# COVERAGE FIRST: an escape guarantee "verified" over a run that never
+		# produced a CHARGER, or a STOMPER, says nothing about those. See
+		# ProbeCoverage.gd. This subsumes the shrink-specific check that
+		# used to sit here alone -- SHRINK is one entry in the list now.
+		var gaps := _coverage.verify(REQUIRED_COVERAGE)
+		if not gaps.is_empty():
+			for gap in gaps:
+				push_error("ANTI-FRUSTRATION AUDIT INCONCLUSIVE: %s." % gap)
+			get_tree().quit(1)
+			return
 		if _shrink_windows_seen == 0:
 			push_error("ANTI-FRUSTRATION AUDIT INCONCLUSIVE: no shrink window occurred, so the 2-lane guarantee was never exercised -- every number above describes the 3-lane game only.")
 			get_tree().quit(1)

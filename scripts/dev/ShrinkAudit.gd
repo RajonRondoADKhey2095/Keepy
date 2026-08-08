@@ -72,6 +72,21 @@ const HALF_AIR_TIME_S: float = Keepy.JUMP_VELOCITY / Keepy.GRAVITY
 
 enum Phase { SAFE, INTERMEDIATE, RISKY, BEHAVIOUR }
 
+## Mechanics each phase must actually have produced. Every hazard type,
+## plus the SHRINK this probe is entirely about -- required only of the
+## BEHAVIOUR phase, which is the one that lowers the gate so a window
+## can fire. Phase 1 measures whether real play REACHES the gate, so
+## demanding a window there would be demanding its own answer.
+## See ProbeCoverage.gd.
+const REQUIRED_HAZARDS: Array[int] = [
+	ProbeCoverage.Mechanic.DODGE, ProbeCoverage.Mechanic.JUMP,
+	ProbeCoverage.Mechanic.ENEMY, ProbeCoverage.Mechanic.AIR_ENEMY,
+	ProbeCoverage.Mechanic.CHARGER, ProbeCoverage.Mechanic.STOMPER,
+]
+const REQUIRED_BEHAVIOUR: Array[int] = [ProbeCoverage.Mechanic.SHRINK]
+
+var _coverage := ProbeCoverage.new()
+
 var _game: Node3D
 var _keepy: Keepy
 var _track: Node3D
@@ -138,6 +153,7 @@ func _start_phase(phase: Phase) -> void:
 		# untouched -- the whole point of this phase.
 		GameState.pursuer_enabled = true
 		GameState.shrink_unlock_score = GameState.SHRINK_UNLOCK_SCORE
+	_coverage.begin_phase(_phase_name(phase))
 	_start_run()
 
 func _start_run() -> void:
@@ -148,6 +164,7 @@ func _start_run() -> void:
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
 	_track = _game.get_node("World/TrackManager")
+	_coverage.run_restarted()
 	if _phase == Phase.BEHAVIOUR:
 		_keepy.collision_layer = 0
 		_next_bot_switch_t = _phase_t + randf_range(BOT_SWITCH_MIN_INTERVAL_S, BOT_SWITCH_MAX_INTERVAL_S)
@@ -161,6 +178,7 @@ func _physics_process(delta: float) -> void:
 		_run_t += delta
 		_phase_t += delta
 		_drive_bot()
+		_coverage.observe(_track, _keepy)
 		return
 	_end_reach_run()
 
@@ -212,6 +230,7 @@ func _physics_behaviour(delta: float) -> void:
 	_phase_t += delta
 	_behaviour_frames += 1
 	_drive_roaming_bot()
+	_coverage.observe(_track, _keepy)
 	_sample_window()
 	if _phase_t >= BEHAVIOUR_SECONDS:
 		_report()
@@ -263,6 +282,15 @@ func _charger_live() -> bool:
 			return true
 	return false
 
+## The SHRINK requirement, scoped to the BEHAVIOUR phase only -- see
+## REQUIRED_BEHAVIOUR for why the reachability phases are exempt.
+func _behaviour_coverage_gaps() -> Array[String]:
+	var out: Array[String] = []
+	var label := _phase_name(Phase.BEHAVIOUR)
+	if _coverage.count(label, ProbeCoverage.Mechanic.SHRINK) < 1:
+		out.append("%s never met SHRINK -- the mechanic this probe exists for did not run" % label)
+	return out
+
 func _report() -> void:
 	print("simulated time             : %.1fs" % _phase_t)
 	print("windows opened             : %d" % _windows)
@@ -284,6 +312,17 @@ func _report() -> void:
 
 	var failed := _condemned_was_player_lane > 0 or _condemned_was_centre > 0 \
 		or _player_on_closed_lane_frames > 0 or _charger_during_window_frames > 0
+	# COVERAGE FIRST -- see ProbeCoverage.gd. The hazard requirement is held
+	# against every phase; the SHRINK requirement only against BEHAVIOUR,
+	# which is the phase that lowers the gate so a window can fire at all.
+	_coverage.report(REQUIRED_HAZARDS + REQUIRED_BEHAVIOUR)
+	var gaps := _coverage.verify(REQUIRED_HAZARDS)
+	gaps.append_array(_behaviour_coverage_gaps())
+	if not gaps.is_empty():
+		for gap in gaps:
+			push_error("SHRINK AUDIT INCONCLUSIVE: %s." % gap)
+		get_tree().quit(1)
+		return
 	if _windows == 0:
 		push_error("SHRINK AUDIT INCONCLUSIVE: no window ever opened, so nothing below phase 1 was measured.")
 		get_tree().quit(1)
@@ -350,6 +389,24 @@ func _drive_safe_bot() -> void:
 	var lane_ttc := _nearest_hazard_ttc_per_lane()
 	var own: float = lane_ttc[_keepy.lane_index]
 	if own < 0.0 or own > SAFE_ESCAPE_LEAD_S:
+		return
+	# STOMPER: no lane switch ever escapes it (Obstacle.blocks_lane_switch),
+	# so the only answer is a jump. The INTERMEDIATE and RISKY bots below
+	# already have this for free -- they jump anything blocks_jump does not
+	# exclude, and STOMPER is not excluded -- but this one never jumps at
+	# all, so it needed saying explicitly.
+	#
+	# WITHOUT IT THIS PHASE'S HEADLINE WAS AN ARTIFACT. Phase 1 asks whether
+	# a realistic profile ever reaches the 3000 gate, and reported that SAFE
+	# never does: 15 runs, best score 750. The coverage ledger then showed
+	# SAFE meeting a STOMPER on its own lane in 15 of those 15 runs -- it was
+	# not failing to reach the gate, it was being killed by the first STOMPER
+	# of every single run. Same defect as ComboAudit's SAFE bot, found the
+	# same day, and the reason ProbeCoverage.gd exists.
+	var own_obstacle := _nearest_obstacle_on_lane(_keepy.lane_index)
+	if own_obstacle != null and Obstacle.blocks_lane_switch(own_obstacle.obstacle_type):
+		if own <= HALF_AIR_TIME_S and _keepy.is_on_floor():
+			_keepy.velocity.y = Keepy.JUMP_VELOCITY
 		return
 	var best_step := 0
 	var best_ttc := own

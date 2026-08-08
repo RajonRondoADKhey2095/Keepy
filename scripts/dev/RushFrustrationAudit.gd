@@ -31,6 +31,17 @@ const SIM_SECONDS: float = 600.0
 const BOT_SWITCH_MIN_INTERVAL_S: float = 0.6
 const BOT_SWITCH_MAX_INTERVAL_S: float = 2.4
 
+## Mechanics this run must actually have produced -- every hazard type,
+## plus the RUSH window this probe restricts all its measurements to.
+## See ProbeCoverage.gd.
+const REQUIRED_COVERAGE: Array[int] = [
+	ProbeCoverage.Mechanic.DODGE, ProbeCoverage.Mechanic.JUMP,
+	ProbeCoverage.Mechanic.ENEMY, ProbeCoverage.Mechanic.AIR_ENEMY,
+	ProbeCoverage.Mechanic.CHARGER, ProbeCoverage.Mechanic.STOMPER,
+	ProbeCoverage.Mechanic.RUSH,
+]
+
+var _coverage := ProbeCoverage.new()
 var _game: Node3D
 var _keepy: Keepy
 var _track: Node3D
@@ -81,6 +92,7 @@ func _ready() -> void:
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
 	_track = _game.get_node("World/TrackManager")
+	_coverage.begin_phase("roaming bot")
 	# Same neutering as AntiFrustrationAudit.gd -- see its header for why
 	# this check's validity does not depend on Keepy surviving.
 	_keepy.collision_layer = 0
@@ -92,6 +104,7 @@ func _physics_process(delta: float) -> void:
 	_t += delta
 
 	_drive_bot()
+	_coverage.observe(_track, _keepy)
 
 	var rush_active: bool = _track.is_rush_active()
 	if rush_active and not _was_rush_active:
@@ -111,6 +124,16 @@ func _physics_process(delta: float) -> void:
 		print("frames with imminent threat       : %d" % _rush_imminent_threat_frames)
 		print("frames also inside a shrink window: %d (overlap is bounded, not forbidden)" % _rush_shrink_overlap_frames)
 		print("violations (no escape)            : %d (must be 0)" % _violations)
+		_coverage.report(REQUIRED_COVERAGE)
+		# COVERAGE FIRST -- see ProbeCoverage.gd. "No violations during a
+		# rush window" is worth nothing if no rush window happened, or if
+		# the ones that did contained no CHARGER.
+		var gaps := _coverage.verify(REQUIRED_COVERAGE)
+		if not gaps.is_empty():
+			for gap in gaps:
+				push_error("RUSH FRUSTRATION AUDIT INCONCLUSIVE: %s." % gap)
+			get_tree().quit(1)
+			return
 		if _violations > 0:
 			push_error("RUSH FRUSTRATION AUDIT FAILED: %d frame(s) during a rush window found the player's current lane with no jump escape and no switch escape available." % _violations)
 			get_tree().quit(1)
