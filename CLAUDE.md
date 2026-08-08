@@ -50,6 +50,24 @@ batch produit dans ce repo :
    redemande une reformulation d'un résultat déjà produit (pas de relance
    de recherche dans ce cas).
 
+## État du pipeline assets Meshy
+
+Le pipeline décrit dans `docs/MESHY_SPEC.md` n'est plus au stade de spec :
+deux assets réels sont intégrés et validés selon la méthode qu'il documente
+(§2, §9-11) :
+
+- **Hibou (pursuer)** — `assets/models/keepy_hibou_pursuer.glb`, installé
+  dans `Pursuer/Silhouette` (2026-08-08).
+- **Keepy (hero squirrel)** — `assets/models/keepy_squirrel_hero.glb`,
+  installé dans `Keepy/MeshInstance3D` (2026-08-09).
+
+Voir `docs/MESHY_SPEC.md` §11 (Import log) pour les mesures, décisions et
+résultats de validation de chaque asset. Le prochain asset à intégrer suit
+la même méthode : recon triangle/texture avant import, recompression
+Pillow si besoin, orientation vérifiée par rendu offscreen (jamais copiée
+d'un asset précédent), scale calculé contre le budget §5/§7, checklist
+d'acceptation §10 avant tout push.
+
 ## Déploiement staging (validation avant merge main)
 
 **Depuis le 8 août 2026**, une branche permanente `staging` existe en plus
