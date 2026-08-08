@@ -194,7 +194,21 @@ const INTRO_EASE_IN_FRACTION: float = 0.18
 ## the same treatment, not just the entrance.
 const INTRO_HOLD_FRACTION: float = 0.32
 
-@onready var _mesh: MeshInstance3D = $Silhouette
+# The BODY is a ModelSlot (scripts/world/ModelSlot.gd) -- the swap point a
+# Meshy Hibou .glb drops into. Still a MeshInstance3D, so every write below
+# (visible/position/scale) is unchanged, and the eyes stay parented to it so
+# a new body carries them along.
+#
+# THE EYES ARE DELIBERATELY NOT SLOTS, and should NOT come from the .glb.
+# They are the one part of this node that is ANIMATED rather than drawn: the
+# closing cue is a live emission_energy ramp (1x -> 3x, and 5x during the
+# capture lunge, see _process below), driven per frame off the lead. A pair
+# of baked glowing eyes inside an imported mesh could not be ramped without
+# reaching into the model's own material, which is exactly the coupling
+# ModelSlot exists to avoid. Keeping them engine-side means the Hibou asset
+# can be authored WITHOUT eyes and still gain the full cue -- see
+# docs/MESHY_SPEC.md, where this is stated as a requirement on the asset.
+@onready var _mesh: ModelSlot = $Silhouette
 @onready var _eye_left: MeshInstance3D = $Silhouette/EyeLeft
 @onready var _eye_right: MeshInstance3D = $Silhouette/EyeRight
 

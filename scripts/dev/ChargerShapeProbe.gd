@@ -32,7 +32,23 @@ func _ready() -> void:
 	add_child(obstacle)
 	obstacle.configure(Obstacle.Type.CHARGER)
 
-	var mesh_instance: MeshInstance3D = obstacle.get_node("ChargerMesh")
+	var mesh_instance: ModelSlot = obstacle.get_node("ChargerMesh")
+
+	# This probe inspects the PLACEHOLDER prism's own vertices (see the
+	# width-at-each-end test below), which only exist while the placeholder
+	# is what is drawn. Once a Meshy wedge .glb is installed in this slot,
+	# `mesh` is null and there is nothing here to read -- so say so plainly
+	# instead of crashing on it, and treat it as a failure: the orientation
+	# contract this file guards does not stop mattering when the art
+	# arrives, it just needs re-expressing against the imported geometry.
+	# See docs/MESHY_SPEC.md, which carries that follow-up.
+	if mesh_instance.has_model():
+		push_error("CHARGER SHAPE PROBE: ChargerMesh now carries an imported model. " +
+			"This probe reads the placeholder prism's vertices and must be reworked " +
+			"to assert the same +Z nose contract against the .glb (see docs/MESHY_SPEC.md).")
+		get_tree().quit(1)
+		return
+
 	var aabb := mesh_instance.transform * mesh_instance.mesh.get_aabb()
 	var apex_z := aabb.position.z + aabb.size.z
 	var base_z := aabb.position.z

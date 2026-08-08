@@ -1,6 +1,7 @@
-[gd_scene load_steps=23 format=3]
+[gd_scene load_steps=24 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay/Obstacle.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="2"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_Dodge"]
 size = Vector3(1.2, 2.0, 1.0)
@@ -92,6 +93,7 @@ collision_mask = 2
 script = ExtResource("1")
 
 [node name="DodgeMesh" type="MeshInstance3D" parent="."]
+script = ExtResource("2")
 position = Vector3(0, 1.0, 0)
 mesh = SubResource("BoxMesh_Dodge")
 surface_material_override/0 = SubResource("StandardMaterial3D_Dodge")
@@ -101,6 +103,7 @@ position = Vector3(0, 1.0, 0)
 shape = SubResource("BoxShape3D_Dodge")
 
 [node name="JumpMesh" type="MeshInstance3D" parent="."]
+script = ExtResource("2")
 position = Vector3(0, 0.35, 0)
 visible = false
 mesh = SubResource("BoxMesh_Jump")
@@ -112,6 +115,7 @@ disabled = true
 shape = SubResource("BoxShape3D_Jump")
 
 [node name="EnemyMesh" type="MeshInstance3D" parent="."]
+script = ExtResource("2")
 position = Vector3(0, 0.35, 0)
 visible = false
 mesh = SubResource("CapsuleMesh_Enemy")
@@ -123,6 +127,7 @@ disabled = true
 shape = SubResource("CapsuleShape3D_Enemy")
 
 [node name="StomperMesh" type="MeshInstance3D" parent="."]
+script = ExtResource("2")
 position = Vector3(0, 0.35, 0)
 visible = false
 mesh = SubResource("CylinderMesh_Stomper")
@@ -134,6 +139,7 @@ disabled = true
 shape = SubResource("BoxShape3D_Stomper")
 
 [node name="AirEnemyMesh" type="MeshInstance3D" parent="."]
+script = ExtResource("2")
 visible = false
 mesh = SubResource("TorusMesh_AirEnemy")
 surface_material_override/0 = SubResource("StandardMaterial3D_AirEnemy")
@@ -143,6 +149,7 @@ disabled = true
 shape = SubResource("BoxShape3D_AirEnemy")
 
 [node name="ChargerMesh" type="MeshInstance3D" parent="."]
+script = ExtResource("2")
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.9, 0)
 visible = false
 mesh = SubResource("PrismMesh_Charger")
@@ -172,6 +179,7 @@ mesh = SubResource("BoxMesh_ChargerTrail")
 surface_material_override/0 = SubResource("StandardMaterial3D_ChargerTrail")
 
 [node name="JumpMarkerMesh" type="MeshInstance3D" parent="."]
+script = ExtResource("2")
 visible = false
 mesh = SubResource("CylinderMesh_JumpMarker")
 surface_material_override/0 = SubResource("StandardMaterial3D_JumpMarker")

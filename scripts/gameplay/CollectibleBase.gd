@@ -18,9 +18,12 @@ class_name CollectibleBase
 # _ready(), instead of each .tscn baking its own magic number (previously
 # mismatched: noisette 0.35, gland 0.5).
 #
-# PURELY COSMETIC, and deliberately separated below from the collision
-# radius it used to sit beside: sizing the art and sizing the hitbox are
-# different decisions with different owners.
+# PURELY COSMETIC, and scoped to the placeholder: _apply_placeholder_size()
+# below only writes it when the slot is still drawing a primitive. Once a
+# Meshy .glb is installed through the ModelSlot, this constant stops
+# applying to anything and the model's own dimensions take over -- which is
+# exactly why the collision radius below can no longer live beside it as if
+# the two were the same kind of number.
 const MESH_RADIUS: float = 0.3
 # The pickup radius, re-exported from Hitboxes.gd so existing readers of
 # CollectibleBase.COLLISION_RADIUS keep working. GAMEPLAY, not art:
@@ -38,7 +41,7 @@ var collected: bool = false
 var _base_position: Vector3 = Vector3.ZERO
 var _anim_elapsed: float = 0.0
 
-@onready var _mesh_instance: MeshInstance3D = $MeshInstance3D
+@onready var _mesh_instance: ModelSlot = $MeshInstance3D
 @onready var _collision_shape: CollisionShape3D = $CollisionShape3D
 
 func _ready() -> void:
@@ -60,7 +63,13 @@ func _apply_collision_size() -> void:
 		shape.radius = Hitboxes.COLLECTIBLE_RADIUS
 
 ## COSMETIC. Sizes the primitive sphere the two collectibles ship with.
+##
+## Skipped outright once a model is installed: the placeholder mesh is
+## `null` by then (see ModelSlot._install_model), so there is nothing to
+## resize, and a .glb's own proportions are its author's business.
 func _apply_placeholder_size() -> void:
+	if _mesh_instance.has_model():
+		return
 	var mesh := _mesh_instance.mesh
 	if mesh is SphereMesh:
 		mesh.radius = MESH_RADIUS

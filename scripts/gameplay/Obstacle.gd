@@ -559,19 +559,29 @@ const STOMPER_PULSE_RAMP_WINDOW_S: float = 2.5
 ## Peak fractional scale swing of the breathing pulse (1.0 +/- this).
 const STOMPER_PULSE_SCALE_AMPLITUDE: float = 0.22
 
-@onready var _dodge_mesh: MeshInstance3D = $DodgeMesh
+# Every visual below is a ModelSlot (scripts/world/ModelSlot.gd), not a
+# plain MeshInstance3D: each is an INDEPENDENT swap point, so a Meshy .glb
+# can replace one variant without disturbing the other five. A ModelSlot IS
+# a MeshInstance3D, so every `.visible` / `.scale` / `.position` write in
+# this file keeps working exactly as before -- see that file's header for
+# why the swap point is shaped this way and not as a separate scene.
+#
+# The COLLISION shapes are deliberately NOT slots and never will be: they
+# are gameplay, sized from Hitboxes.gd in _apply_hitboxes() below, and a
+# mesh swap has no path to them.
+@onready var _dodge_mesh: ModelSlot = $DodgeMesh
 @onready var _dodge_shape: CollisionShape3D = $DodgeShape
-@onready var _jump_mesh: MeshInstance3D = $JumpMesh
+@onready var _jump_mesh: ModelSlot = $JumpMesh
 @onready var _jump_shape: CollisionShape3D = $JumpShape
-@onready var _enemy_mesh: MeshInstance3D = $EnemyMesh
+@onready var _enemy_mesh: ModelSlot = $EnemyMesh
 @onready var _enemy_shape: CollisionShape3D = $EnemyShape
-@onready var _air_enemy_mesh: MeshInstance3D = $AirEnemyMesh
+@onready var _air_enemy_mesh: ModelSlot = $AirEnemyMesh
 @onready var _air_enemy_shape: CollisionShape3D = $AirEnemyShape
-@onready var _charger_mesh: MeshInstance3D = $ChargerMesh
+@onready var _charger_mesh: ModelSlot = $ChargerMesh
 @onready var _charger_shape: CollisionShape3D = $ChargerShape
 @onready var _charger_trail: Node3D = $ChargerTrail
-@onready var _jump_marker_mesh: MeshInstance3D = $JumpMarkerMesh
-@onready var _stomper_mesh: MeshInstance3D = $StomperMesh
+@onready var _jump_marker_mesh: ModelSlot = $JumpMarkerMesh
+@onready var _stomper_mesh: ModelSlot = $StomperMesh
 @onready var _stomper_shape: CollisionShape3D = $StomperShape
 
 ## Fired the instant a successful jump-dodge is detected (see
@@ -719,18 +729,18 @@ var _air_enemy_base_emission_energy: float
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	_apply_hitboxes()
-	var shared_material := _enemy_mesh.get_surface_override_material(0) as StandardMaterial3D
+	var shared_material := _enemy_mesh.slot_material() as StandardMaterial3D
 	if shared_material:
 		_enemy_material = shared_material.duplicate()
-		_enemy_mesh.set_surface_override_material(0, _enemy_material)
+		_enemy_mesh.apply_material(_enemy_material)
 		_enemy_base_albedo = _enemy_material.albedo_color
 		_enemy_base_emission = _enemy_material.emission
 		_enemy_base_emission_energy = _enemy_material.emission_energy_multiplier
 
-	var shared_air_material := _air_enemy_mesh.get_surface_override_material(0) as StandardMaterial3D
+	var shared_air_material := _air_enemy_mesh.slot_material() as StandardMaterial3D
 	if shared_air_material:
 		_air_enemy_material = shared_air_material.duplicate()
-		_air_enemy_mesh.set_surface_override_material(0, _air_enemy_material)
+		_air_enemy_mesh.apply_material(_air_enemy_material)
 		_air_enemy_base_albedo = _air_enemy_material.albedo_color
 		_air_enemy_base_emission = _air_enemy_material.emission
 		_air_enemy_base_emission_energy = _air_enemy_material.emission_energy_multiplier
