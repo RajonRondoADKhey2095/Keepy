@@ -126,43 +126,212 @@ keepy/
   three noisette slots (one per lane) that are shown/hidden and
   repositioned rather than freed and recreated.
 - **Primitive placeholders, swap-ready.** Every visual node (Keepy's
-  capsule, obstacles' boxes, noisettes' spheres, track tiles) is a
-  plain `MeshInstance3D` with a built-in Godot `Mesh` resource, sitting
-  as a direct child of its logic node. Swapping in a Meshy-generated
-  `.glb` later is a matter of replacing that one child node's mesh (or
-  the whole child node) inside the relevant `.tscn` -- none of the
-  gameplay scripts touch mesh data, so no logic changes are needed.
+  capsule, obstacles' boxes, noisettes' spheres, track tiles, the
+  pursuer's silhouette) is a `ModelSlot` -- a `MeshInstance3D` subclass
+  carrying a built-in Godot `Mesh`, sitting as a direct child of its
+  logic node. Setting its `model_scene` to an imported `.glb` draws that
+  model instead, as a child of the same node, so every `.visible` /
+  `.scale` / `.position` write the gameplay scripts already make keeps
+  working and no logic changes are needed. 12 independent slots, so one
+  object can be replaced without disturbing the others.
+- **Visuals and hitboxes are separated, and it is enforced.** Every
+  collider dimension lives in `scripts/world/Hitboxes.gd` and is written
+  onto the real shape at `_ready()`; the scenes are not the source of
+  truth for them, and `ModelSlot` has no code path to a
+  `CollisionShape3D`. This exists because every fairness contract in the
+  game is written against a collider (the jump clearance window, DODGE
+  being unjumpable, the risk system's lateral thresholds), and a stray
+  half-metre on one would rebalance all of them while every other probe
+  in `scripts/dev/` kept passing. `AssetContractAudit` asserts the split
+  by installing a substitute model in all 12 slots and re-measuring every
+  collider.
 - **Score.** Tracked as `distance_score` (derived from distance
-  travelled, which also ramps the run speed) plus `noisette_score`
-  (collectibles), summed into `GameState.score`. Kept as two separate
-  counters specifically so a noisette pickup can never be silently
-  overwritten by the next distance-based score tick.
+  travelled) plus `noisette_score` and
+  `gland_score` (collectibles, each worth a different point value),
+  summed into `GameState.score`. Kept as separate counters specifically
+  so a pickup can never be silently overwritten by the next
+  distance-based score tick or by another collectible type. `nut_count`
+  and `gland_count` are a second, independent pair of RAW pickup counts
+  (not point values) used only for the HUD display and the leaderboard
+  submission -- they never feed back into `score`.
 
 ## Adding Meshy assets later
 
-When 3D models are ready:
+Full specification -- dimensions, orientation, triangle budgets, dark-mode
+material constraints and the acceptance checklist -- is in
+[`docs/MESHY_SPEC.md`](docs/MESHY_SPEC.md). The short version:
 
-1. Drop the exported `.glb` file in `assets/models/`, and any
-   accompanying textures in `assets/textures/`.
-2. Naming convention: `keepy_<subject>_<variant>.glb`
-   (e.g. `keepy_player_default.glb`, `keepy_obstacle_rock.glb`,
-   `keepy_noisette_gold.glb`), with matching textures named
-   `keepy_<subject>_<variant>_albedo.png` / `_normal.png` / etc.
-3. In the relevant scene (`Keepy.tscn`, `Obstacle.tscn`,
-   `Noisette.tscn`, `TrackSegment.tscn`), replace the placeholder
-   `MeshInstance3D`'s mesh with the imported model (or swap the whole
-   node for the imported scene, instanced as a child), keeping the
-   collision shape's size roughly matched to the new visual so the
-   gameplay feel doesn't shift.
-4. No script changes should be required -- all gameplay logic reads
-   positions and collisions, never mesh geometry directly.
+1. Drop the exported `.glb` in `assets/models/`, textures in
+   `assets/textures/`. Naming: `keepy_<subject>_<variant>.glb`.
+2. Open the owning scene, select the `ModelSlot` node (they keep their
+   existing names: `MeshInstance3D`, `DodgeMesh`, `Silhouette`, ...) and
+   set its **`Model Scene`** property to the imported `.glb`.
+3. Fix any import rotation or unit scale with the slot's own
+   **`Model Rotation Degrees`** / **`Model Scale`**, not by re-exporting
+   and not by editing the slot's transform (that one is gameplay-driven).
+4. Run the acceptance checklist in the spec.
+
+No script changes are required, and **no collision shape may be touched**:
+hitbox dimensions live in `scripts/world/Hitboxes.gd` and are written onto
+the real shapes at `_ready()`, so a mesh swap has no path to them.
+`scripts/dev/AssetContractAudit.tscn` asserts exactly that by installing a
+substitute model into every slot and re-measuring every collider --
+measured today, 12/12 visuals change and 0/10 colliders move.
+
+      godot4 --headless --path . res://scripts/dev/AssetContractAudit.tscn
 
 ## Known limitations / next steps
 
 - No audio yet (`assets/audio/` is empty).
-- No difficulty-curve tuning pass beyond a linear speed ramp
-  (`GameState.SPEED_RAMP_PER_METER`).
-- No persistent high score (in-memory only, resets on relaunch).
+- **Pacing.** Run speed is a step function of ELAPSED TIME, never of
+  distance travelled (a distance ramp self-accelerates: going faster
+  accrues distance faster, which raises the speed again). The curve is
+  an explicit table of eight (start time, speed) paliers in
+  `GameState.STAGE_START_S` / `STAGE_SPEEDS`, logarithmic in shape --
+  12 m/s at the start, 26 m/s from 90s on, with short paliers and big
+  steps early and longer paliers and small steps late. Obstacle spacing
+  adapts to it: `TrackManager.MIN_OBSTACLE_GAP_S` keeps a fixed amount
+  of REACTION TIME between two hazards, so the track opens up as the run
+  accelerates instead of becoming unreadable. Dark mode is on its own
+  clock (`GameState.DARK_FIRST_TRIGGER_S` = 36s, then swapping every
+  `DARK_CYCLE_PERIOD_S` = 20s). All of it lives in one commented block
+  at the top of `GameState.gd`, plus the spacing block in
+  `TrackManager.gd`.
+- **Closing speed.** Every hazard except one is carried toward the
+  player by the world and by nothing else, so "the world's speed" and
+  "the speed this thing arrives at" used to be the same number. They are
+  not: `Obstacle.own_speed_factor` states an obstacle's own forward
+  speed as a multiple of the world's, `Obstacle.closing_speed()` is the
+  sum, and every distance <-> reaction-time conversion goes through it
+  (`Obstacle.time_to_contact_s`, `TrackManager._row_closing_speed` /
+  `_rows_for_seconds`). It is 0.0 for DODGE/JUMP/ENEMY/AIR_ENEMY, which
+  is exactly the old arithmetic.
+- **The CHARGER** (`Obstacle.Type.CHARGER`) is the one hazard with a
+  speed of its own: it CLOSES on the player at 2.35x the world speed,
+  in a straight line down its spawn lane, never tracking and never
+  changing lane -- the escape is always a lane switch. Because it
+  overtakes rows, the row grid cannot space it; it is scheduled on
+  ARRIVAL TIME instead (`TrackManager._charger_arrival_fits`) against
+  what is really on the track. Frequency ramps with speed via
+  `CHARGER_COOLDOWN_EARLY_S`/`_LATE_S`, never before
+  `CHARGER_MIN_START_S`.
+- **The STOMPER** (`Obstacle.Type.STOMPER`) is the deliberate INVERSE of
+  the CHARGER: jump is the only escape, lane switch never is. It stays
+  jumpable (`Obstacle.blocks_jump` excludes it) but, once its late commit
+  resolves at the same `Obstacle.ENEMY_REACTION_WINDOW_S` threshold
+  ground ENEMY hard-locks at, it mirrors the player's own `position.x`
+  exactly every physics frame for the rest of its life
+  (`Obstacle._process_stomper`) -- the lateral gap to the player is
+  therefore identically 0.0, not a tight timing window, which is what
+  `Obstacle.blocks_lane_switch` states as code. Unlike the CHARGER it
+  never overtakes rows, so it is scheduled on the ordinary row grid
+  (`TrackManager._try_stomper_lane`), with its own progressive cooldown
+  (`STOMPER_COOLDOWN_EARLY_S`/`_LATE_S`, never before
+  `STOMPER_MIN_START_S`) mirroring the CHARGER's cadence. A dedicated
+  generation-time exclusion (`_stomper_charger_margin_clear`) keeps it
+  away from a nearby CHARGER in time -- the one hazard exempt from the
+  row grid, and therefore the one that needed new code; DODGE needs none,
+  already spaced from STOMPER by the shared row-grid counter.
+- **The death model.** Not every hazard kills. The two STATIC ones
+  (`DODGE`, `JUMP` -- things that spawn on a lane and sit there) are
+  NON-FATAL: contact costs ground instead of ending the run. The four
+  ACTIVE ones (`CHARGER`, `STOMPER`, `ENEMY`, `AIR_ENEMY` -- things that
+  close on you, track your lane or land on it, each with its own
+  multi-cue telegraph) still kill on contact. `Obstacle.is_fatal` is the
+  single source of that split. A non-fatal contact is a STRIKE
+  (`GameState.register_strike`): it slows the player to
+  `STRIKE_SLOWDOWN_FACTOR` of the run's speed for a moment while the
+  pursuer keeps going, so the gap closes by the difference, and it pulls
+  the pursuer's lead down to `STRIKE_PURSUER_LEAD_CAP_S` -- under the
+  visibility threshold, so the thing behind you is always on screen
+  during a penalty. `STRIKE_CAPACITY` strikes and it has you: the second
+  one IS being caught, reported as the same `DeathCause.PURSUER` as the
+  lead draining to zero. A strike comes back after
+  `TIME_TO_CLEAR_STRIKE_S` of clean play, or immediately when the combo
+  chain reaches a multiple of `COMBO_TO_CLEAR_STRIKE` (which is
+  `COMBO_TIER_SIZE`, so it lands on the tier boundaries the combo
+  already teaches). All of it lives in one commented block at the top of
+  `GameState.gd`; the HUD draws it as two pips above the pursuer gauge.
+- **World speed vs player speed.** Because a stumble slows the player
+  without slowing the run, `GameState.current_speed` (the run's pace, what
+  the speed table says) and `GameState.scroll_speed()` (what the player is
+  actually making good) are different questions. Anything happening NOW
+  reads `scroll_speed()` -- how far the track moves this frame, and every
+  obstacle's `closing_speed()`. Anything being LAID OUT for later
+  (TrackManager's spacing) keeps reading `lookahead_speed()`: a stumble is
+  over in ~1.5s, long before a row spawned during one is reached. At full
+  speed `scroll_speed()` returns `current_speed` exactly, so nothing
+  outside a stumble changes.
+- Pacing changes are verified by measurement, not by re-reading the
+  constants: `scripts/dev/PacingAudit.tscn` boots the real game headless
+  and reports palier timings, distance per palier, dark-cycle
+  transitions, the worst reaction budget per palier and the enemy lane
+  lock margin. `ChargerAudit.tscn` does the same for the charger (real
+  reaction window per palier, spacing measured at the player plane,
+  spawn rate, and how many landed inside a rush window), and
+  `ChargerShapeProbe.tscn` asserts its silhouette is oriented and
+  grounded as designed.
+
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/PacingAudit.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/ChargerAudit.tscn
+      godot4 --headless --path . res://scripts/dev/ChargerShapeProbe.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StomperAudit.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StomperConflictAudit.tscn
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/StrikeAudit.tscn
+
+  `StrikeAudit` covers the death model: per skill profile, how often a run
+  stumbles and into which hazard type, how long runs last, whether the
+  player is caught or killed outright, and which recovery path gives
+  strikes back. Its bots are PursuerAudit's, plus a per-profile miss
+  chance -- without one they never touch a hazard at all (measured: zero
+  collisions in 300s+ for two of the three), so they could not exercise
+  the mechanic. A CONTROL phase re-asserts that every run.
+
+- **Every bot probe proves it exercised what it claims to verify.**
+  `scripts/dev/ProbeCoverage.gd` is a ledger each bot probe keeps of which
+  mechanics its own bots actually MET -- each hazard type counted when it
+  reaches the player, split into "presented" and "answered on the player's
+  own lane", plus the pursuer, strikes, shrink and rush windows. A probe
+  whose run never produced a CHARGER now reports INCONCLUSIVE instead of
+  green. This exists because five separate false greens had already been
+  found by hand, all of them the same bug: a probe written before a
+  mechanic existed, validating a contract its bots could not exercise.
+  Full audit, with what each probe was and was not able to test:
+  [`docs/PROBE_AUDIT.md`](docs/PROBE_AUDIT.md).
+
+  It is a ledger inside each probe rather than a probe of its own on
+  purpose -- a meta probe would drive its own bots, and so would prove
+  nothing about the bots that actually carry the defect.
+
+  Verified by disabling STOMPER spawning and re-running: all seven bot
+  probes fail INCONCLUSIVE naming STOMPER, where all seven passed before.
+
+- **Probe assertions are orderings and separations, not fitted thresholds.**
+  Absolute bars calibrated on exploratory runs ("the mid-skill bot sees the
+  pursuer 10-25% of the time", "the control bot takes exactly 0 strikes")
+  turned out to describe one sample rather than the mechanic, and failed on
+  most seeds. They are now stated as invariants with measured margins, and
+  the numbers they replaced are still printed, labelled reported-not-gated.
+  Where an ordering is genuinely not supported by measurement -- the pursuer
+  does not grade active play by degree -- the probes say so rather than
+  assert it.
+
+  The two probes that sample real rendered pixels need a rendering driver
+  rather than pure headless:
+
+      xvfb-run -a godot4 --rendering-driver opengl3 --path . res://scripts/dev/ComboContrastAudit.tscn
+      xvfb-run -a godot4 --rendering-driver opengl3 --path . res://scripts/dev/StrikeContrastAudit.tscn
+
+  Add `-- --seed=<int>` to any of them for a reproducible run (see
+  `scripts/dev/DevSeed.gd`); without it they stay exploratory, which is
+  what makes a rare violation eventually surface.
+- Persistent local best score (survives relaunch, `user://` via
+  FileAccess/IndexedDB on Web) plus a global top-10 leaderboard
+  (Firestore REST, project `keepy-8df91`, independent from `keepr-529cc`)
+  -- see `scripts/autoload/Leaderboard.gd`. Both degrade gracefully with
+  no network: the local record still works offline, and a failed
+  submission/fetch just leaves the leaderboard section showing
+  "indisponible" instead of blocking the game-over screen.
 - `export_presets.cfg` is committed (Web preset only) so CI can build
   headless -- see "Tester le jeu" above. Add further per-platform
   presets locally as needed; the Web preset should stay in sync with
