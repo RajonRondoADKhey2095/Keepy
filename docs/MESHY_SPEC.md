@@ -178,6 +178,26 @@ Two things specific to this asset:
   or wing edges. Worth deciding *while* authoring the asset rather than
   after.
 
+  **Still true with the real asset**: the eye spheres are children of
+  `Silhouette`, not of the installed model, so they did not move when the
+  Hibou landed (2026-08-08) and this remains open, unchanged by this batch.
+
+**2026-08-08 -- measured with the real Hibou mesh** (`model_scale = 1.79`,
+`model_rotation_degrees = (0, 180, 0)`), seed 20260806, same driven run as
+the placeholder baseline above:
+
+| Phase | mean | p95 | max |
+|---|---|---|---|
+| INTRO sighting | 15.5% | 23.6% | 23.6% |
+| VISIBLE (closing) | 24.9% | 26.0% | **27.0%** |
+| CAPTURE lunge | 31.8% | 37.0% | 37.1% *(uncapped by design)* |
+
+All three phases read marginally *lower* than the placeholder capsule (the
+owl's actual silhouette is narrower than the capsule it replaced at the
+same 3.4 x 2.2 x 2.1 AABB). INTRO and VISIBLE stay comfortably under the
+30% cap; CAPTURE is exempt by design. `visual_aabb()` reports
+2.198 x 3.400 x 2.098 -- height lands exactly on the 3.4 target.
+
 ## 7. Triangle and payload budget
 
 **Frame target: 50,000 triangles.** Justified rather than picked:
@@ -404,3 +424,121 @@ step, either one:
 
 Orientation (the -Z-facing-back check from §3/§6) was not evaluated --
 that step only applies once the budget step passes, and it did not.
+
+### 2026-08-08 -- Hibou (pursuer), second attempt, ACCEPTED after texture recompression
+
+`assets_source/pursuer/owl_pursuer_decimated.glb` (22.3 MB) superseded the
+581,260-triangle file above. Verified before any Godot import, per §2:
+
+**Triangle budget** -- parsed the glTF JSON chunk directly (`struct`/`json`
+in Python, no Blender/Godot), summed `indices.count / 3` over the mesh's one
+primitive:
+
+    total triangles : 7,070
+    total vertices   : 7,399
+    budget (Hibou)   : 8,000   (Section 7)
+
+Matches Meshy's own claimed figure -- this file, unlike the first attempt,
+really was decimated. **Within budget, by 930 triangles.**
+
+**22.3 MB diagnosis** -- read each of the 4 image bufferViews' PNG `IHDR`
+chunk directly: `Baked_Emit` 4096x4096 (3.0 MB), `normal` 2048x2048 (4.2 MB),
+`Baked_BaseColor` 2048x2048 (5.7 MB), `Baked_MetallicRoughness` 4096x4096
+(8.1 MB) -- all uncompressed PNG. **The 22.3 MB is entirely texture
+payload, not mesh data** (the 4 accessors backing POSITION/NORMAL/
+TEXCOORD_0/indices total 279,188 bytes, i.e. 0.28 MB). Confirms the task
+brief's framing: face budget and file weight are separate defects, and only
+the second one is present here. Against the ~2 MB combined target in §7,
+these four maps needed recompression before import; the triangle count did
+not.
+
+**Recompression, performed in-sandbox** (Pillow, no Blender/Godot needed for
+this step): checked the material's `alphaMode` first -- unset, i.e. glTF
+default OPAQUE, so the RGBA alpha channel present in 3 of the 4 PNGs is
+ignored by any correct renderer and was safe to drop. Resized and
+re-encoded, same UV space (no atlas repacking, so UV correctness is
+preserved by construction, not just by inspection):
+
+| map | before | after | format |
+|---|---|---|---|
+| Baked_BaseColor | 2048x2048 PNG, 5.7 MB | 1024x1024, 239 KB | JPEG q88 |
+| Baked_Emit | 4096x4096 PNG, 3.0 MB | 1024x1024, 65 KB | JPEG q88 |
+| normal | 2048x2048 PNG, 4.2 MB | 512x512, 393 KB | PNG (kept lossless) |
+| Baked_MetallicRoughness | 4096x4096 PNG, 8.1 MB | 512x512, 64 KB | JPEG q90 |
+
+Base colour and emissive kept at 1024 (they carry the readable plumage and
+the closing-cue stripes); normal and metallic/roughness dropped further
+since §7 already notes they "buy very little on unshaded or flat-lit
+low-poly" and this material ended up unshaded anyway (see below). Rebuilt
+the `.glb` binary chunk by hand (same header, same 4 mesh bufferViews
+byte-identical, images re-encoded and re-offset, 4-byte aligned) rather than
+through a round-trip exporter, so no other property could drift. Result:
+**22.3 MB -> 1.01 MB**, verified after rebuild that triangle/vertex counts
+are unchanged (7,070 / 7,399) and all 4 image references still resolve.
+
+**Orientation** -- rendered the rebuilt `.glb` offscreen (Godot headless,
+`--rendering-driver opengl3` under `xvfb-run`, a throwaway probe scene, not
+committed) from both `+Z` and `-Z` looking at the origin. The mesh's
+authored front (face, eyes, beak) points **+Z** in local space, its back
+(feathers, the emissive stripe pattern) points **-Z** -- backwards from
+this project's convention (Pursuer faces -Z, back visible to the +Z-side
+camera, per §3/§6). This is exactly the case §9 already documents ("Meshy
+exports are frequently ... at an arbitrary rotation -- correct it with
+`Model Rotation Degrees`"): fixed with `model_rotation_degrees = (0, 180,
+0)` on the slot rather than a re-export. After the 180 degree correction the
+back -- with the emissive striations converging toward the belly, matching
+the concept art's "seen from behind" brief -- faces the camera side, visually
+confirmed in a second render pass.
+
+**UV mapping** -- visually confirmed in the same offscreen renders (front,
+back, and a `+X` side view): plumage, eyes and beak read as continuous
+surfaces with no stretching, seams or swapped maps after the resolution
+drop. Since the recompression only resamples pixels within the existing UV
+footprint (no atlas repacking), this was expected, and the render is the
+positive confirmation the first attempt's rejection couldn't get to.
+
+**Decision: import**, with the recompressed textures and a 180 degree yaw
+correction at the slot. See §6 and §10 for the installed measurements.
+
+**Validation, same day.** Full local run of Godot 4.3.stable headless (not
+CI-only this time -- the editor and export templates were fetched into the
+sandbox so every probe below ran for real, not by inference from the doc
+baseline):
+
+- `AssetContractAudit`: PASSED. 12/12 visuals swap, 0/10 colliders moved,
+  pursuer still has none.
+- `PursuerFramingAudit`, real mesh, seed 20260806: INTRO 15.5/23.6/23.6%,
+  VISIBLE 24.9/26.0/27.0% (mean/p95/max) -- both under the 30% cap, both
+  marginally lower than the placeholder capsule at the same AABB (§6).
+  CAPTURE is exempt by design.
+- `ChargerShapeProbe`: PASSED (rc=0), unaffected -- this batch never
+  touches the CHARGER slot, so its wedge-orientation assertion has nothing
+  to react to. The "will deliberately fail once a model lands" note in this
+  section is about the CHARGER's *own* future swap, not this one.
+- **Seven gated bot probes, seed 20260806, before/after diff**:
+  `AntiFrustrationAudit`, `ComboAudit`, `PursuerAudit`, `RushFrustrationAudit`,
+  `ShrinkAudit`, `StrikeAudit` -- **byte-identical** stdout, pre-swap vs
+  post-swap. `PursuerFramingAudit` differs **only** in the occupancy
+  percentages above (expected -- that is the one number a visual swap is
+  allowed to move). No other line in any of the seven changed, which is the
+  actual evidence for "visual-only," not just the AssetContractAudit
+  collider check.
+- **`PursuerContrastAudit`** (measures the Hibou's own silhouette, which
+  `DarkPaletteAudit` does not sample -- see its file header): the GLB's
+  default Godot import is a **lit** `StandardMaterial3D`, and that alone
+  regressed this probe: silhouette-vs-ground fell under the 2.5:1 floor on
+  5 of 6 dark palettes (worst 2.29:1), against the placeholder's clean pass
+  (worst 2.72:1) on the identical scene. Root cause matches this probe's
+  own documented math: pure black is the optimal albedo against this
+  invert+tint, and a lit material picking up scene lighting is not pure
+  black in practice. Fixed by adding `KHR_materials_unlit` to the GLB's
+  material (the portable, reimport-safe equivalent of the Import dock's
+  Shading Mode = Unshaded from §9) -- re-measured, all 6 dark palettes and
+  the light phase PASS (worst DARK/2 at 2.53:1). Re-ran the seven-probe
+  byte-identical comparison once more against this final unshaded asset:
+  same result, material shading does not touch gameplay logic.
+- **Web export**: built for real (`--export-release "Web"`, templates
+  4.3-stable). `index.pck` **21.79 MB -> 22.01 MB**, a **+0.22 MB** delta
+  for the asset -- far below the 1.01 MB source `.glb`, because Godot's own
+  VRAM texture compression on export re-encodes the JPEG/PNG maps into a
+  smaller GPU-native format. Not a meaningful hit to mobile load time.
