@@ -64,10 +64,10 @@ class_name ProbeWatchdog
 ## Wall-clock seconds a probe may run before it is declared INCONCLUSIVE.
 ##
 ## DERIVED FROM MEASUREMENT, not picked. Every probe in this folder was
-## timed at seed 20260806 on a headless CI-class machine; the slowest that
-## genuinely finishes is AirEnemyLandingLaneAudit at 84s, and the slowest
-## of the seven gated bot probes is StrikeAudit at 106s. 900s is therefore
-## roughly 8.5x the slowest real runtime -- wide enough that ordinary
+## timed at seed 20260806 on a 4-core headless CI-class machine; the
+## slowest that genuinely finishes is StrikeAudit at 227s, followed by
+## PursuerAudit at 166s and DarkPaletteAudit at 155s. 900s is therefore
+## roughly 4x the slowest real runtime -- wide enough that ordinary
 ## machine-to-machine variance, a debug build or a loaded CI runner cannot
 ## trip it, narrow enough that a genuinely stuck probe is caught in
 ## minutes instead of never.

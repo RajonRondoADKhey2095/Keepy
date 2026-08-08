@@ -49,10 +49,10 @@ hard-coded numeric threshold calibrated on exploratory runs.
 | **PursuerFramingAudit** | The pursuer never eats the screen | 08-07 | -- | ok | ok | ok | ok | ok | absolute (a design cap, legitimately) |
 | **StomperAudit** | Jump is the only escape from a STOMPER | 08-06 | strikes, shrink | n/a (neutered) | ok | n/a | n/a | n/a | invariant |
 | **StomperConflictAudit** | A STOMPER and a jump-blocker never come due together | 08-06 | strikes, shrink | ok | ok | n/a | n/a | n/a | invariant |
-| **ChargerAudit** | The charger's reaction window and spacing hold at every palier | 08-06 | STOMPER, pursuer, strikes, shrink | ok | n/a | n/a | n/a | n/a | invariant |
-| **AirHazardAudit** | A landed AIR_ENEMY is lethal if ignored, safe if jumped | 08-05 | everything after 08-05 | n/a (neutered) | n/a (neutered) | n/a | n/a | n/a | invariant |
-| **AirEnemyLandingLaneAudit** | AIR_ENEMY's landing lane distribution is fair | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | distribution only |
-| **EnemyLaneAudit** | An ENEMY's locked lane and its contact lane agree | 08-05 | everything after 08-05 | n/a | n/a | n/a | n/a | n/a | invariant |
+| **ChargerAudit** | The charger's reaction window and spacing hold at every palier | 08-06 | STOMPER, pursuer, strikes, shrink | ok | ok | **hung (F7)**, off | n/a | n/a | invariant + ledger |
+| **AirHazardAudit** | A landed AIR_ENEMY is lethal if ignored, safe if jumped | 08-05 | everything after 08-05 | n/a (neutered) | n/a (neutered) | n/a | n/a | n/a | invariant + ledger (AIR_ENEMY only) |
+| **AirEnemyLandingLaneAudit** | AIR_ENEMY's landing lane distribution is fair | 08-06 | STOMPER, pursuer, strikes, shrink | ok | ok | **hung (F7)**, off | n/a | n/a | distribution reported + ledger |
+| **EnemyLaneAudit** | An ENEMY's locked lane and its contact lane agree | 08-05 | everything after 08-05 | n/a | n/a | **2% sample (F7)**, off | n/a | n/a | distribution reported |
 | **JumpDodgeRewardAudit** | A timed jump over a JUMP credits the reward exactly once | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | invariant (exact equality) |
 | **LaneFillAudit** | The early game does not use the full track width | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | distribution only |
 | **PacingAudit** | Palier timings, spacing and the enemy lock, measured not re-read | 08-05 | everything after 08-05 | ok | n/a | n/a | n/a | n/a | invariant |
@@ -232,54 +232,195 @@ SAFE   best score 4817  -> REACHES the gate
 
 The probe's answer to its own headline question was wrong for that profile.
 
-### F6 -- AirHazardAudit is non-deterministic under `--seed`. OPEN, not fixed by this batch.
+### F6 -- AirHazardAudit was never seeded at all. RESOLVED.
 
-Found while checking the probes this batch did not touch. `AirHazardAudit`
-passes and fails **on the same seed**, on `origin/main` as much as on this
-branch:
+The finding as originally recorded: `AirHazardAudit` passes and fails **on
+the same seed**, on `origin/main` as much as on the branch -- 1 failure in
+11 runs, then 2 in 5 -- while `git diff origin/main` was **empty** for
+`AirHazardAudit.gd` and for every file it loads.
 
-| tree | failures / runs, seed 20260806 |
-|---|---|
-| `origin/main` | 1 / 11 |
-| this branch | 2 / 5 |
+Every one of those observations was correct. The conclusion drawn from
+them was not, and the reason is a single missing line:
 
-`git diff origin/main` is **empty** for `AirHazardAudit.gd` and for every
-file it loads (`scripts/gameplay/`, `scripts/player/`, `scripts/track/`,
-`scripts/autoload/`, `scenes/`), so this batch is not the cause and cannot
-be: the inputs are byte-identical and the outputs differ.
+**`AirHazardAudit._ready()` never called `DevSeed.apply()`.**
 
-Hypothesis, not a diagnosis -- the failing phase arms a jump when
-time-to-contact reaches half of Keepy's air time, and the logs show the
-liftoff frame landing anywhere in 0.330-0.345s against a 0.346s target.
-`--fixed-fps` pins the physics delta but not how many `_process` frames
-precede the first `_physics_process`, nor `call_deferred` ordering at
-startup; a one-frame offset moves the jump inside a clearance window only
-about half a second wide. That would make it a probe-harness race rather
-than a gameplay defect, but it has not been confirmed.
+`--seed=<int>` is not ambient. `DevSeed.apply()` is the only thing that
+reads the flag and calls `seed()`, no probe gets it for free, and this one
+never called it. So `-- --seed=20260806` was accepted on the command line,
+parsed by nobody, and every invocation drew a fresh RNG stream. The probe
+was exploratory the entire time. A ~10-40% failure rate across runs is not
+a probe whose verdict fails to be a function of its inputs; it is a probe
+sampling a different run each time, which is exactly what an unseeded
+probe is supposed to do.
 
-Left open deliberately. It is a real defect of the same family this batch
-is about -- a probe whose verdict is not a function of its inputs -- but
-diagnosing a startup-ordering race is its own session, and guessing at a
-fix at the end of a large batch is how the previous false greens got
-written. Anyone reading a single green from this probe should know it is
-worth about 90%.
+This also explains the observation that looked most damning. "The inputs
+are byte-identical and the outputs differ" was true and pointed the right
+way -- nothing in the inputs differed **because the seed was never among
+the inputs**.
 
-### F7 -- ChargerAudit and AirEnemyLandingLaneAudit do not finish. OPEN, pre-existing.
+The recorded hypothesis -- a startup-ordering race between `_process` and
+the first `_physics_process`, moving the liftoff frame inside a narrow
+clearance window -- is **not** the cause. It was labelled a hypothesis
+rather than a diagnosis, which is what made it cheap to discard. The
+0.330-0.345s spread of liftoff times it rested on is simply where each
+unseeded run's AIR_ENEMY happened to be.
 
-Neither completed in 15 minutes on this branch, and `ChargerAudit`
-reproduces identically on `origin/main` (no output past its header after a
-4-minute run). Both are untouched by this batch and neither loads anything
-it changed.
+Fixed by adding the missing `DevSeed.apply()`, and the probe now prints
+`seeded N (reproducible)` / `unseeded (exploratory)` like the others, so
+the same mistake is visible in the output instead of silent.
 
-`ChargerAudit` neuters the player's collision layer and only needs 900
-simulated seconds, which every other probe here covers in tens of seconds
--- so it is advancing at roughly real time rather than sprinting, and the
-report only prints at the end, which is why it looks like a hang. Cause not
-investigated: it is pre-existing, outside this batch's scope, and worth its
-own look. Verified pre-existing rather than assumed.
+#### Determinism, measured
 
-The README currently documents both as runnable commands. They are, in the
-sense that they start; they should be expected to take a very long time.
+20 consecutive runs of each tree at seed 20260806, stdout captured and
+compared byte-for-byte. Not "it passed twice" -- the whole output.
+
+| | exit 0 | exit 1 | distinct outputs |
+|---|---|---|---|
+| before (no `DevSeed.apply()`) | 15 / 20 | **5 / 20** | **20 of 20** |
+| after | **20 / 20** | 0 | **1 of 20** |
+
+The right-hand column is the finding. Before the fix **every single run
+produced a different output** -- twenty runs, twenty distinct hashes, at
+what was nominally the same seed. That is not a probe with an
+intermittent race; that is a probe that never read the seed. The 25%
+failure rate is the same sampling variance the original F6 entry recorded
+as 1-in-11 and 2-in-5, now measured at a sample size where it is stable.
+
+After the fix all twenty runs are the same bytes
+(`e3f85c7e025f832e91459dcd0df87f98c57af3672995600bb28a0ede2212586d`).
+
+#### The same defect, elsewhere
+
+`AirEnemyLandingLaneAudit` had it too, and was fixed in the same batch.
+Nine other probes still do not call `DevSeed.apply()`; for most that is
+harmless (they never run a real seeded run -- `AssetContractAudit`,
+`ChargerShapeProbe`, the four contrast probes, `InvertCapture`). Three
+DO drive real runs and still ignore `--seed`: **`StomperAudit`,
+`EnemyLaneAudit`, `JumpDodgeRewardAudit`**, plus `DarkPaletteAudit` and
+`LiveRunProbe`. They are exploratory-only today whether or not a seed is
+passed. Not fixed here -- none of them is in the reference baseline, and
+the point of this entry is that "I passed `--seed`" is not evidence a
+probe honoured it. Check for `DevSeed.apply()` before believing a seed.
+
+### F7 -- The pursuer ends the run these probes depend on. RESOLVED, and it was three probes, not two.
+
+Reproduced on `origin/main` and on the branch: neither `ChargerAudit` nor
+`AirEnemyLandingLaneAudit` produced a single line past its header, at 100%
+CPU, for as long as either was left running.
+
+The recorded guess was that `ChargerAudit` "is advancing at roughly real
+time rather than sprinting". **It is not slow. It is stopped**, and it had
+been since the pursuer landed on 08-06. Measured: it sprints at ~45x real
+time and completes its 900 simulated seconds in 21s of wall clock.
+
+The mechanism, measured with an instrumented copy of the shared structure
+at seed 20260806:
+
+```
+frame    1  sim_t   0.00s  wall 0.2s  state -> PLAYING
+frame 4262  sim_t  71.02s  wall 1.8s  state PLAYING -> CAPTURED   death_cause=PURSUER
+frame 4328  sim_t  71.02s  wall 1.8s  state CAPTURED -> GAME_OVER
+              ... sim_t FROZEN at 71.02s for every frame thereafter
+```
+
+Both probes neuter the player's collision layer so one continuous run can
+cover their whole sample. The pursuer does not go through collision at
+all -- it drains a lead and calls `_begin_capture_sequence()` directly --
+so it kills exactly the kind of bot they depend on. Both then gate
+`_physics_process` on `state == PLAYING` and advance their simulated clock
+**inside that gate**, so the clock stops permanently and the completion
+check written against it (`_t >= SIM_SECONDS`; `_sample_count >=
+TARGET_SAMPLES or _t >= MAX_SIM_SECONDS`) becomes unreachable.
+
+This is the same shape as every other finding in this document: a probe
+written before a mechanic, meeting it, and having no answer. Both were
+written 08-06, before `e0c69dc`/`82f3a4b`.
+
+`GameState.pursuer_enabled` documents this exact failure and exists for
+it -- its own doc says so, having been written after the first
+`AntiFrustrationAudit` hang. Five probes already use it. These two were
+left behind. Fixed by using it in both; neither probe's subject can be
+moved by the pursuer, so no number either reports changes.
+
+| probe | before | after, seed 20260806 |
+|---|---|---|
+| `ChargerAudit` | never terminates | **21s**, 900s simulated, 90 charger crossings |
+| `AirEnemyLandingLaneAudit` | never terminates | **84s**, 200/200 samples, 0 mismatches |
+
+#### The same root cause, with the symptom hidden: EnemyLaneAudit
+
+Found by checking which other probes share the shape. `EnemyLaneAudit`
+(written 08-05) also boots the real game, also neuters collision, also
+never disables the pursuer -- and **does not hang**, which is worse.
+
+It has no `state != PLAYING` early return, so its simulated clock keeps
+advancing after the capture. But the TRACK stops, so no further ENEMY
+ever locks or reaches the player: the sample counter stops dead at ~71
+simulated seconds while the clock runs on to `MAX_SIM_SECONDS`. Measured
+on the pre-fix file, seed 20260806:
+
+```
+simulated time    : 6000.0s
+samples collected : 4         (target 200)
+exit code         : 0
+```
+
+It printed a lane distribution built from **four enemies -- 2% of the
+requested sample** -- and exited 0. It does carry the string "TARGET NOT
+REACHED ... read with caution", but only to a human reading the output;
+every automated caller saw a pass. After the fix: 86s, 200/200 samples,
+0 mismatches.
+
+The hang is the loud symptom of this root cause. This is the quiet one,
+and it is the reason the fix is the pursuer hatch rather than a timeout:
+a timeout would have caught the two that spin and never noticed this one.
+
+#### Three probes that could not fail at all
+
+Fixing the above exposed a defect all three share, which is why they are
+not merely restored but gated. **All three exited 0 unconditionally.**
+`ChargerAudit` computed "BELOW REQUIREMENT" for its reaction window and
+its spacing, printed it, and then `quit(0)` regardless.
+`AirEnemyLandingLaneAudit` and `EnemyLaneAudit` did the same with the one
+condition their own output calls a bug outright ("a non-zero value IS a
+bug"), and with runs that finished under-sampled.
+
+So the check ran, the verdict was computed, and the verdict was discarded.
+That is the false-green family one level up -- not a probe that fails to
+test something, but a probe whose finding reaches a human reader and
+nothing else. Any script or CI job running them saw a pass no matter what
+they found. All three now take their exit code from the numbers they
+print.
+
+### No probe can run forever
+
+`scripts/dev/ProbeWatchdog.gd`, armed as the first statement of every
+probe's `_ready()`.
+
+F7 is the argument for it, and specifically the *shape* of F7 rather than
+its cause. A probe that hangs is indistinguishable from a probe that is
+slow, and that ambiguity is what let two dead probes be documented as
+runnable and "expected to take a very long time" instead of being fixed.
+A probe that gives up and says INCONCLUSIVE is strictly more useful than
+one that occupies a terminal until someone kills it: the first is a
+result, the second is the absence of one.
+
+It measures **wall** clock, not simulated time -- the failure being
+guarded against is precisely a simulated clock that has stopped, and a
+budget denominated in the frozen quantity could never expire. It runs in
+`_process` with `PROCESS_MODE_ALWAYS`, not `_physics_process`, because
+every probe's own `_physics_process` early-returns on `state != PLAYING`
+and a watchdog sharing that method would inherit the same blindness. It
+reads nothing from the probe it guards.
+
+On expiry it prints the GameState it died in, which is what turns "it
+hung" into a diagnosis -- for the two probes above it reads
+`state=GAME_OVER  death_cause=PURSUER`, naming the cause outright.
+
+Budget: 900s, derived rather than picked -- ~4x the slowest probe that
+genuinely finishes (see the timing table below). Exit code **2**,
+deliberately not 1: the folder's convention is 0 = contract holds, 1 =
+contract violated, and a timeout is neither.
 
 ## What this batch changes
 
@@ -335,6 +476,124 @@ active play by degree.**
 Nearly tripling the sample did not resolve the mid-vs-risky pair. Both
 probes now print that explicitly, so a future session does not read the
 absence of the assertion as an oversight and "restore" it.
+
+## The reference baseline, re-measured
+
+Seed 20260806, Godot 4.3-stable headless, `--fixed-fps 60`, 4-core CI-class
+machine. Pixel-sampling probes run under `xvfb-run -a --rendering-driver
+opengl3`; everything else `--headless`. Wall clock, not simulated time.
+
+This table replaces the previous baseline. It is what the Meshy asset
+import should be measured against.
+
+**23 of 25 probes green.** The two that are not are covered below, and
+neither is caused by this batch.
+
+| probe | rc | wall | note |
+|---|---|---|---|
+| ChargerShapeProbe | 0 | 1s | |
+| AssetContractAudit | 0 | 2s | the one that guards the mesh swap |
+| JumpDodgeRewardAudit | 0 | 2s | |
+| PacingAudit | 0 | 2s | measurement, no PASS/FAIL string |
+| AirHazardAudit | 0 | 4s | **F6 fixed** -- seeded, 20/20 byte-identical |
+| PursuerFramingAudit | 0 | 6s | gated bot probe |
+| StomperAudit | 0 | 7s | |
+| AntiFrustrationAudit | 0 | 8s | gated bot probe |
+| InvertCapture | 0 | 11s | diagnostic printer, no verdict |
+| RushFrustrationAudit | 0 | 14s | gated bot probe |
+| LaneFillAudit | 0 | 20s | distribution only |
+| StomperConflictAudit | 0 | 20s | |
+| ChargerAudit | 0 | 24s | **F7 fixed** -- never terminated before |
+| ShrinkAudit | 0 | 52s | gated bot probe |
+| ComboContrastAudit | 0 | 58s | |
+| ComboAudit | 0 | 80s | gated bot probe |
+| StrikeContrastAudit | 0 | 80s | |
+| AirEnemyLandingLaneAudit | 0 | 86s | **F7 fixed** -- never terminated before |
+| EnemyLaneAudit | 0 | 93s | **F7 fixed** -- 4/200 sample before |
+| PursuerContrastAudit | 0 | 96s | |
+| DarkPaletteAudit | 0 | 155s | |
+| PursuerAudit | 0 | 166s | gated bot probe |
+| StrikeAudit | 0 | 227s | gated bot probe; slowest that finishes |
+| **StrikeFatalContrastAudit** | **1** | 60s | **real FAILURE, pre-existing -- see below** |
+| **LiveRunProbe** | **124** | -- | needs `--quit-after`, by design -- see below |
+
+All seven gated bot probes (AntiFrustration, Combo, Pursuer,
+PursuerFraming, RushFrustration, Shrink, Strike) are green
+**simultaneously at one seed**, each with its coverage ledger satisfied.
+That is the baseline the Meshy import should be measured against.
+
+### The two that are not green
+
+**`StrikeFatalContrastAudit` fails, and it is a real finding about the
+game, not about the probe.** Two palettes leave the fatal-strike label
+under the 3.0:1 WCAG floor on BOTH the fill and the outline -- i.e. the
+"you are one hit from dead" label is illegible on those palettes.
+
+Verified pre-existing rather than assumed: the **unmodified file from
+`origin/main` (`1244142`)** was run in a scene of its own and failed the
+same way (3 palettes that run). Nothing in this batch touches the HUD,
+its colours, or the palettes. **Deliberately NOT fixed here** -- it is a
+visual/design defect and belongs in its own batch, where the colour
+choice can be made against the numbers rather than alongside a probe
+refactor.
+
+The 3-vs-2 difference between the two runs is itself informative: this
+probe is one of the nine that never call `DevSeed.apply()`, so both runs
+were exploratory. See the F6 note on that list.
+
+**`LiveRunProbe` does not self-terminate, and that is by design.** Its
+own header documents the invocation as `--quit-after 25400`; it is a
+transition logger with no completion condition, meant to be bounded by
+the caller. The 124 above is the harness cap, from running it without
+that flag. It is not a defect and not an F7 case -- but it is now bounded
+by the watchdog at 900s regardless, where before it was unbounded.
+
+### What the watchdog budget is derived from
+
+900s is ~4x the slowest probe that genuinely finishes (StrikeAudit,
+227s). Wide enough that machine-to-machine variance, a debug build or a
+loaded runner cannot trip it; narrow enough that a stuck probe is caught
+in minutes rather than never.
+
+### How to read an exit code
+
+| code | meaning |
+|---|---|
+| 0 | the contract holds |
+| 1 | the contract is violated, OR the run could not test it (INCONCLUSIVE) |
+| 2 | ProbeWatchdog stopped it -- no verdict was reached |
+
+2 is deliberately not 1. A timeout is the absence of a verdict, not a
+finding, and a caller treating it as a failed assertion would report
+something the probe never said.
+
+### Before running any of this from a fresh checkout
+
+`godot4 --headless --path . --import` must run once. `ProbeWatchdog`
+declares a `class_name` and `.godot/` is gitignored, so without the import
+step every probe fails to compile and hangs producing no output -- which
+is, with some irony, exactly the symptom the watchdog exists to make
+unmistakable. CI already imports before running anything.
+
+## Still open after this batch
+
+- **`StrikeFatalContrastAudit` fails on 2-3 palettes.** A real legibility
+  defect in the shipped HUD, verified pre-existing on `origin/main`,
+  deliberately left for its own batch. It is the only red verdict in the
+  suite.
+- **Nine probes still ignore `--seed`** (no `DevSeed.apply()`):
+  `StomperAudit`, `JumpDodgeRewardAudit`, `DarkPaletteAudit`,
+  `LiveRunProbe`, `AssetContractAudit`, `ChargerShapeProbe`,
+  `ComboContrastAudit`, `StrikeContrastAudit`,
+  `StrikeFatalContrastAudit`, `PursuerContrastAudit`. For most it is
+  harmless (they never run a real seeded run). For the first four it
+  means "I passed `--seed`" is not evidence the run was reproducible --
+  which is precisely how F6 hid. Not fixed here because none is in the
+  reference baseline's gated set.
+- **`LiveRunProbe` has no completion condition** by design and relies on
+  the caller passing `--quit-after`. Now bounded by the watchdog, but it
+  is the one probe whose "green" cannot be obtained by running it the way
+  every other probe here is run.
 
 ## Sample sizes
 
