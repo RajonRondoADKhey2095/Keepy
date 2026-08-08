@@ -73,7 +73,7 @@ var _keepy: Keepy
 var _track: Node3D
 var _camera: Camera3D
 var _pursuer: Pursuer
-var _pursuer_mesh: MeshInstance3D
+var _pursuer_mesh: ModelSlot
 
 var _run_t: float = 0.0
 var _phase_t: float = 0.0
@@ -158,7 +158,14 @@ func _sample() -> void:
 ## 0% of it, and one that overflowed both edges is capped at 100%, not
 ## whatever a naive off-screen projection would compute.
 func _occupancy_fraction() -> float:
-	var aabb := _pursuer_mesh.get_aabb()
+	# visual_aabb() rather than get_aabb(): the silhouette is a ModelSlot
+	# (scripts/world/ModelSlot.gd), so once a Meshy .glb is installed the
+	# node's OWN mesh is null and get_aabb() would report an empty box --
+	# i.e. this probe would silently start reporting 0% occupancy for the
+	# very asset it exists to budget. visual_aabb() measures whatever is
+	# actually drawn, and returns exactly get_aabb() while the placeholder
+	# is still in place, which is why this batch's numbers are unchanged.
+	var aabb := _pursuer_mesh.visual_aabb()
 	var gt := _pursuer_mesh.global_transform
 	var vp_h: float = get_viewport().get_visible_rect().size.y
 	var min_y := INF

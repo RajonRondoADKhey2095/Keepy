@@ -1,0 +1,32 @@
+[gd_scene load_steps=3 format=3]
+
+; Dev-only stand-in for a Meshy .glb, used by AssetContractAudit.gd to
+; prove the ModelSlot swap point works WITHOUT needing a real asset to
+; exist yet -- which is the entire point of the graphics-prep batch: the
+; mechanism has to be verified before Mathieu can open Meshy, not after.
+;
+; Shaped like an imported model, deliberately: the root is a plain Node3D
+; and the geometry hangs off a MeshInstance3D CHILD of it, which is the
+; structure Godot produces when it imports a .glb. A slot that can draw
+; this can draw a real one.
+;
+; Its dimensions (0.77 x 1.23 x 0.31) match NO placeholder in the game --
+; not Keepy's capsule, not any of the six hazards, not a collectible
+; sphere, not the ground slab, not the pursuer's body. That is what makes
+; "the visual AABB changed" a meaningful assertion rather than one that
+; could pass by coincidence, and the offset origin (y = 0.19) additionally
+; proves the slot's own transform is preserved rather than flattened.
+
+[sub_resource type="BoxMesh" id="BoxMesh_Substitute"]
+size = Vector3(0.77, 1.23, 0.31)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Substitute"]
+shading_mode = 0
+albedo_color = Color(0.98, 0.16, 0.84, 1)
+
+[node name="SubstituteModel" type="Node3D"]
+
+[node name="Geometry" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.19, 0)
+mesh = SubResource("BoxMesh_Substitute")
+surface_material_override/0 = SubResource("StandardMaterial3D_Substitute")

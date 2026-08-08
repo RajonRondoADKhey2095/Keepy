@@ -126,12 +126,25 @@ keepy/
   three noisette slots (one per lane) that are shown/hidden and
   repositioned rather than freed and recreated.
 - **Primitive placeholders, swap-ready.** Every visual node (Keepy's
-  capsule, obstacles' boxes, noisettes' spheres, track tiles) is a
-  plain `MeshInstance3D` with a built-in Godot `Mesh` resource, sitting
-  as a direct child of its logic node. Swapping in a Meshy-generated
-  `.glb` later is a matter of replacing that one child node's mesh (or
-  the whole child node) inside the relevant `.tscn` -- none of the
-  gameplay scripts touch mesh data, so no logic changes are needed.
+  capsule, obstacles' boxes, noisettes' spheres, track tiles, the
+  pursuer's silhouette) is a `ModelSlot` -- a `MeshInstance3D` subclass
+  carrying a built-in Godot `Mesh`, sitting as a direct child of its
+  logic node. Setting its `model_scene` to an imported `.glb` draws that
+  model instead, as a child of the same node, so every `.visible` /
+  `.scale` / `.position` write the gameplay scripts already make keeps
+  working and no logic changes are needed. 12 independent slots, so one
+  object can be replaced without disturbing the others.
+- **Visuals and hitboxes are separated, and it is enforced.** Every
+  collider dimension lives in `scripts/world/Hitboxes.gd` and is written
+  onto the real shape at `_ready()`; the scenes are not the source of
+  truth for them, and `ModelSlot` has no code path to a
+  `CollisionShape3D`. This exists because every fairness contract in the
+  game is written against a collider (the jump clearance window, DODGE
+  being unjumpable, the risk system's lateral thresholds), and a stray
+  half-metre on one would rebalance all of them while every other probe
+  in `scripts/dev/` kept passing. `AssetContractAudit` asserts the split
+  by installing a substitute model in all 12 slots and re-measuring every
+  collider.
 - **Score.** Tracked as `distance_score` (derived from distance
   travelled) plus `noisette_score` and
   `gland_score` (collectibles, each worth a different point value),
@@ -144,22 +157,28 @@ keepy/
 
 ## Adding Meshy assets later
 
-When 3D models are ready:
+Full specification -- dimensions, orientation, triangle budgets, dark-mode
+material constraints and the acceptance checklist -- is in
+[`docs/MESHY_SPEC.md`](docs/MESHY_SPEC.md). The short version:
 
-1. Drop the exported `.glb` file in `assets/models/`, and any
-   accompanying textures in `assets/textures/`.
-2. Naming convention: `keepy_<subject>_<variant>.glb`
-   (e.g. `keepy_player_default.glb`, `keepy_obstacle_rock.glb`,
-   `keepy_noisette_gold.glb`), with matching textures named
-   `keepy_<subject>_<variant>_albedo.png` / `_normal.png` / etc.
-3. In the relevant scene (`Keepy.tscn`, `Obstacle.tscn`,
-   `Noisette.tscn`, `TrackSegment.tscn`), replace the placeholder
-   `MeshInstance3D`'s mesh with the imported model (or swap the whole
-   node for the imported scene, instanced as a child), keeping the
-   collision shape's size roughly matched to the new visual so the
-   gameplay feel doesn't shift.
-4. No script changes should be required -- all gameplay logic reads
-   positions and collisions, never mesh geometry directly.
+1. Drop the exported `.glb` in `assets/models/`, textures in
+   `assets/textures/`. Naming: `keepy_<subject>_<variant>.glb`.
+2. Open the owning scene, select the `ModelSlot` node (they keep their
+   existing names: `MeshInstance3D`, `DodgeMesh`, `Silhouette`, ...) and
+   set its **`Model Scene`** property to the imported `.glb`.
+3. Fix any import rotation or unit scale with the slot's own
+   **`Model Rotation Degrees`** / **`Model Scale`**, not by re-exporting
+   and not by editing the slot's transform (that one is gameplay-driven).
+4. Run the acceptance checklist in the spec.
+
+No script changes are required, and **no collision shape may be touched**:
+hitbox dimensions live in `scripts/world/Hitboxes.gd` and are written onto
+the real shapes at `_ready()`, so a mesh swap has no path to them.
+`scripts/dev/AssetContractAudit.tscn` asserts exactly that by installing a
+substitute model into every slot and re-measuring every collider --
+measured today, 12/12 visuals change and 0/10 colliders move.
+
+      godot4 --headless --path . res://scripts/dev/AssetContractAudit.tscn
 
 ## Known limitations / next steps
 

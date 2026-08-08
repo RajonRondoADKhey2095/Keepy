@@ -559,19 +559,29 @@ const STOMPER_PULSE_RAMP_WINDOW_S: float = 2.5
 ## Peak fractional scale swing of the breathing pulse (1.0 +/- this).
 const STOMPER_PULSE_SCALE_AMPLITUDE: float = 0.22
 
-@onready var _dodge_mesh: MeshInstance3D = $DodgeMesh
+# Every visual below is a ModelSlot (scripts/world/ModelSlot.gd), not a
+# plain MeshInstance3D: each is an INDEPENDENT swap point, so a Meshy .glb
+# can replace one variant without disturbing the other five. A ModelSlot IS
+# a MeshInstance3D, so every `.visible` / `.scale` / `.position` write in
+# this file keeps working exactly as before -- see that file's header for
+# why the swap point is shaped this way and not as a separate scene.
+#
+# The COLLISION shapes are deliberately NOT slots and never will be: they
+# are gameplay, sized from Hitboxes.gd in _apply_hitboxes() below, and a
+# mesh swap has no path to them.
+@onready var _dodge_mesh: ModelSlot = $DodgeMesh
 @onready var _dodge_shape: CollisionShape3D = $DodgeShape
-@onready var _jump_mesh: MeshInstance3D = $JumpMesh
+@onready var _jump_mesh: ModelSlot = $JumpMesh
 @onready var _jump_shape: CollisionShape3D = $JumpShape
-@onready var _enemy_mesh: MeshInstance3D = $EnemyMesh
+@onready var _enemy_mesh: ModelSlot = $EnemyMesh
 @onready var _enemy_shape: CollisionShape3D = $EnemyShape
-@onready var _air_enemy_mesh: MeshInstance3D = $AirEnemyMesh
+@onready var _air_enemy_mesh: ModelSlot = $AirEnemyMesh
 @onready var _air_enemy_shape: CollisionShape3D = $AirEnemyShape
-@onready var _charger_mesh: MeshInstance3D = $ChargerMesh
+@onready var _charger_mesh: ModelSlot = $ChargerMesh
 @onready var _charger_shape: CollisionShape3D = $ChargerShape
 @onready var _charger_trail: Node3D = $ChargerTrail
-@onready var _jump_marker_mesh: MeshInstance3D = $JumpMarkerMesh
-@onready var _stomper_mesh: MeshInstance3D = $StomperMesh
+@onready var _jump_marker_mesh: ModelSlot = $JumpMarkerMesh
+@onready var _stomper_mesh: ModelSlot = $StomperMesh
 @onready var _stomper_shape: CollisionShape3D = $StomperShape
 
 ## Fired the instant a successful jump-dodge is detected (see
@@ -718,18 +728,19 @@ var _air_enemy_base_emission_energy: float
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
-	var shared_material := _enemy_mesh.get_surface_override_material(0) as StandardMaterial3D
+	_apply_hitboxes()
+	var shared_material := _enemy_mesh.slot_material() as StandardMaterial3D
 	if shared_material:
 		_enemy_material = shared_material.duplicate()
-		_enemy_mesh.set_surface_override_material(0, _enemy_material)
+		_enemy_mesh.apply_material(_enemy_material)
 		_enemy_base_albedo = _enemy_material.albedo_color
 		_enemy_base_emission = _enemy_material.emission
 		_enemy_base_emission_energy = _enemy_material.emission_energy_multiplier
 
-	var shared_air_material := _air_enemy_mesh.get_surface_override_material(0) as StandardMaterial3D
+	var shared_air_material := _air_enemy_mesh.slot_material() as StandardMaterial3D
 	if shared_air_material:
 		_air_enemy_material = shared_air_material.duplicate()
-		_air_enemy_mesh.set_surface_override_material(0, _air_enemy_material)
+		_air_enemy_mesh.apply_material(_air_enemy_material)
 		_air_enemy_base_albedo = _air_enemy_material.albedo_color
 		_air_enemy_base_emission = _air_enemy_material.emission
 		_air_enemy_base_emission_energy = _air_enemy_material.emission_energy_multiplier
@@ -761,6 +772,47 @@ func _ready() -> void:
 	# _charger_trail_base_z.
 	for bar in _charger_trail.get_children():
 		_charger_trail_base_z.append((bar as Node3D).position.z)
+
+## Writes every hazard hitbox from Hitboxes.gd onto the real shapes.
+##
+## The values are byte-identical to the ones Obstacle.tscn already carried,
+## so nothing about how this game plays changes today. What changes is that
+## the numbers now live somewhere a mesh swap cannot reach -- see
+## Hitboxes.gd's header for why the six fairness contracts written against
+## these dimensions (Keepy.JUMPABLE_OBSTACLE_TOP_HEIGHT's clearance window,
+## RISK_MIN_SURVIVABLE_LATERAL_M's "widest hitbox is 1.2m", DODGE standing
+## above JUMP_PEAK_HEIGHT) needed that guarantee before the graphics phase
+## starts replacing every mesh in this scene.
+##
+## AIR_ENEMY's vertical offset is NOT set here: it is TrackSegment.GLAND_Y,
+## a derived value, applied a few lines below and re-applied on every
+## configure() as the hazard descends and lands.
+##
+## Runs once per pooled instance, from _ready(). The shapes are shared
+## sub-resources across the pool, so several instances write the same
+## constants over each other -- idempotent by construction, since every one
+## of them is writing the same number from the same place.
+func _apply_hitboxes() -> void:
+	_apply_box(_dodge_shape, Hitboxes.DODGE_SIZE, Hitboxes.DODGE_Y)
+	_apply_box(_jump_shape, Hitboxes.JUMP_SIZE, Hitboxes.JUMP_Y)
+	_apply_box(_stomper_shape, Hitboxes.STOMPER_SIZE, Hitboxes.STOMPER_Y)
+	_apply_box(_charger_shape, Hitboxes.CHARGER_SIZE, Hitboxes.CHARGER_Y)
+	# Y deliberately left alone: _ready() sets it from TrackSegment.GLAND_Y
+	# immediately after this call, and _process_air_enemy animates it.
+	var air_box := _air_enemy_shape.shape as BoxShape3D
+	if air_box:
+		air_box.size = Hitboxes.AIR_ENEMY_SIZE
+	var enemy_capsule := _enemy_shape.shape as CapsuleShape3D
+	if enemy_capsule:
+		enemy_capsule.radius = Hitboxes.ENEMY_RADIUS
+		enemy_capsule.height = Hitboxes.ENEMY_HEIGHT
+	_enemy_shape.position.y = Hitboxes.ENEMY_Y
+
+func _apply_box(collision_shape: CollisionShape3D, size: Vector3, offset_y: float) -> void:
+	var box := collision_shape.shape as BoxShape3D
+	if box:
+		box.size = size
+	collision_shape.position.y = offset_y
 
 ## Switches which variant's mesh/collision shape is active. Called by
 ## TrackSegment.populate() every time this pooled obstacle is (re)spawned.

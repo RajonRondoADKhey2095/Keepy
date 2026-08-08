@@ -13,15 +13,24 @@ class_name CollectibleBase
 ## reversed. This is what makes a collectible legible as "take me" versus
 ## an obstacle read as "avoid me" at a glance, independent of colour.
 
-# Shared mesh/collision size for every collectible variant -- the ONE
-# place Noisette and Gland derive their SphereMesh/SphereShape3D radius
-# from in _ready(), instead of each .tscn baking its own magic number
-# (previously mismatched: noisette 0.35, gland 0.5).
+# Radius of the PLACEHOLDER sphere both variants draw today -- the ONE
+# place Noisette and Gland derive their SphereMesh radius from in
+# _ready(), instead of each .tscn baking its own magic number (previously
+# mismatched: noisette 0.35, gland 0.5).
+#
+# PURELY COSMETIC, and scoped to the placeholder: _apply_placeholder_size()
+# below only writes it when the slot is still drawing a primitive. Once a
+# Meshy .glb is installed through the ModelSlot, this constant stops
+# applying to anything and the model's own dimensions take over -- which is
+# exactly why the collision radius below can no longer live beside it as if
+# the two were the same kind of number.
 const MESH_RADIUS: float = 0.3
-# Collision stays slightly more generous than the visible mesh so a
-# pickup at this smaller size never feels precision-frustrating -- a
-# deliberate gameplay margin over the mesh, not a mesh/collider mismatch.
-const COLLISION_RADIUS: float = 0.4
+# The pickup radius, re-exported from Hitboxes.gd so existing readers of
+# CollectibleBase.COLLISION_RADIUS keep working. GAMEPLAY, not art:
+# deliberately MORE generous than the visible mesh so a pickup never feels
+# precision-frustrating. That the two differ is the intended state -- see
+# Hitboxes.COLLECTIBLE_RADIUS, which is now where the number lives.
+const COLLISION_RADIUS: float = Hitboxes.COLLECTIBLE_RADIUS
 
 const ROTATION_SPEED: float = 2.4 # rad/s, continuous spin around Y
 const BOB_AMPLITUDE: float = 0.12 # meters, vertical travel around spawn height
@@ -32,21 +41,39 @@ var collected: bool = false
 var _base_position: Vector3 = Vector3.ZERO
 var _anim_elapsed: float = 0.0
 
-@onready var _mesh_instance: MeshInstance3D = $MeshInstance3D
+@onready var _mesh_instance: ModelSlot = $MeshInstance3D
 @onready var _collision_shape: CollisionShape3D = $CollisionShape3D
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
-	_apply_shared_size()
+	# Two calls, not one, and that split is the point: this used to be a
+	# single _apply_shared_size() that wrote the mesh and the collider in
+	# consecutive lines, which is precisely the coupling the graphics-prep
+	# batch exists to remove. Sizing the art and sizing the hitbox are
+	# different decisions with different owners; a .glb swap changes the
+	# first and must never be able to reach the second.
+	_apply_collision_size()
+	_apply_placeholder_size()
 
-func _apply_shared_size() -> void:
+## GAMEPLAY. The pickup radius, from Hitboxes.gd, written onto the real
+## shape whatever the .tscn last carried and whatever mesh is on screen.
+func _apply_collision_size() -> void:
+	var shape := _collision_shape.shape
+	if shape is SphereShape3D:
+		shape.radius = Hitboxes.COLLECTIBLE_RADIUS
+
+## COSMETIC. Sizes the primitive sphere the two collectibles ship with.
+##
+## Skipped outright once a model is installed: the placeholder mesh is
+## `null` by then (see ModelSlot._install_model), so there is nothing to
+## resize, and a .glb's own proportions are its author's business.
+func _apply_placeholder_size() -> void:
+	if _mesh_instance.has_model():
+		return
 	var mesh := _mesh_instance.mesh
 	if mesh is SphereMesh:
 		mesh.radius = MESH_RADIUS
 		mesh.height = MESH_RADIUS * 2.0
-	var shape := _collision_shape.shape
-	if shape is SphereShape3D:
-		shape.radius = COLLISION_RADIUS
 
 ## Called by TrackSegment.populate() instead of setting `.position`
 ## directly, so the bob animation below has a stable spawn height to bob
