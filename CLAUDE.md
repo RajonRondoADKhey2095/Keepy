@@ -49,3 +49,56 @@ batch produit dans ce repo :
 5. **S'applique à chaque tâche sans exception**, y compris quand on
    redemande une reformulation d'un résultat déjà produit (pas de relance
    de recherche dans ce cas).
+
+## Déploiement staging (validation avant merge main)
+
+**Depuis le 8 août 2026**, une branche permanente `staging` existe en plus
+de `main`. Elle a son propre déploiement Vercel, sur son propre alias
+stable :
+
+- **`https://keepy-staging.vercel.app`** — build jouable de `staging`.
+- `https://keepy-ten.vercel.app` reste la prod, alimentée uniquement par
+  `main`, comportement inchangé.
+
+**Pourquoi** : avant ce chantier, `main` était le seul déclencheur de build
+web CI (`.github/workflows/web-build.yml`), donc aucune feature branch ne
+pouvait être validée visuellement (device/navigateur) sans passer par
+`main`. `staging` sert d'étape intermédiaire — merger une feature branch
+dans `staging` la rend jouable sur `keepy-staging.vercel.app` sans toucher
+à la prod.
+
+**Mécanique** : `.github/workflows/web-build.yml` déclenche désormais sur
+push vers `main` OU `staging`. Le job de build Godot (import + export
+web) est strictement identique dans les deux cas — seule la dernière étape
+diverge, en deux steps distincts et clairement labellisés dans les logs
+Actions (`[PRODUCTION -- main]` / `[STAGING -- staging]`) pour qu'un échec
+de l'un ne soit jamais confondu avec un échec de l'autre :
+- `main` → `vercel deploy build/web --prod` (inchangé, alias prod déjà
+  attaché au projet Vercel).
+- `staging` → `vercel deploy build/web` (déploiement preview, URL
+  jetable) puis `vercel alias set <url> keepy-staging.vercel.app` — pour
+  que l'URL de staging reste stable d'un push à l'autre, exactement comme
+  la prod ne change pas d'URL à chaque déploiement.
+
+**Note recon (8 août 2026)** : le projet Vercel `keepy` a par ailleurs
+l'intégration GitHub native active en parallèle (confirmé via l'API
+Vercel — `source: "git"` sur les déploiements de branche) : elle crée
+automatiquement une preview par branche poussée (alias du type
+`keepy-git-<branche>-....vercel.app`). **Ces previews sont mortes** :
+Vercel n'a aucune notion du build Godot (pas de `package.json`, aucune
+commande de build détectée), donc elles servent le dépôt brut tel quel —
+il n'y a pas d'`index.html` à la racine du repo (généré uniquement sous
+`build/web/` par la CI), donc ces URLs renvoient systématiquement 404.
+Ne pas confondre une de ces URLs `keepy-git-...` avec `keepy-staging.
+vercel.app` : seule cette dernière est pilotée par la CI et sert un
+build réellement jouable.
+
+**Règle d'usage** :
+- **Claude Code peut pousser directement sur `staging`** (créer la
+  branche si besoin, merger des feature branches dedans, push), sans
+  validation préalable de Mathieu — c'est l'environnement de test, une
+  erreur y est peu coûteuse.
+- **Claude Code ne merge/push JAMAIS sur `main` sans validation
+  explicite de Mathieu.** Le flux normal reste : feature branch →
+  `staging` (validation device sur `keepy-staging.vercel.app`) → une fois
+  validé, PR/merge vers `main` sur demande explicite.
