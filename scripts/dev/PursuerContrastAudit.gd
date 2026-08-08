@@ -77,6 +77,9 @@ var _results: Array = []
 var _failures: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "PursuerContrastAudit")
 	print("=== PURSUER TELEGRAPH CONTRAST AUDIT ===")
 	print("metric: WCAG relative-luminance contrast on real sampled pixels")
 	print("floors: gauge %.1f:1 (AA large)   silhouette %.1f:1 (derived ceiling, see source)" % [

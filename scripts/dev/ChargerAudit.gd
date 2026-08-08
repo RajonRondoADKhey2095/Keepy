@@ -49,6 +49,16 @@ const SIM_SECONDS: float = 900.0 # long: chargers are rare by design, and per-pa
 const BOT_SWITCH_MIN_INTERVAL_S: float = 0.6
 const BOT_SWITCH_MAX_INTERVAL_S: float = 2.4
 
+## This probe drives a bot on a real track, so it carries the coverage
+## ledger like every other bot probe here -- see ProbeCoverage.gd. The full
+## hazard set rather than CHARGER alone: a 900s run that failed to produce
+## one of the six did not contain the game, and the spacing numbers below
+## are measured against whatever the run actually laid out, not against
+## chargers in isolation.
+const REQUIRED_COVERAGE: Array[int] = ProbeCoverage.ALL_HAZARDS
+
+var _coverage := ProbeCoverage.new()
+
 var _game: Node3D
 var _keepy: Keepy
 var _track: Node3D
@@ -84,9 +94,34 @@ var _chargers_crossed: int = 0
 var _min_window_overall: float = INF
 var _min_window_stage: int = -1
 
+## The worst COUNTED charger-to-neighbour gap, kept as state so the exit
+## code can be taken from the same number the report prints. INF means no
+## counted neighbour occurred at all, which passes the spacing rule
+## vacuously -- the coverage gate in _verdict() is what stops that from
+## being read as a verified one.
+var _worst_counted_gap: float = INF
+
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "ChargerAudit")
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	var seeded := DevSeed.apply()
+	# The PURSUER is a parallel system and is not what this probe measures --
+	# see GameState.pursuer_enabled for the full reasoning, and
+	# AntiFrustrationAudit.gd for the identical fix applied when the pursuer
+	# landed. This probe was written 08-06, BEFORE the pursuer, and never
+	# received it: its bot has collision neutered so ONE continuous run can
+	# cover SIM_SECONDS, and the pursuer kills exactly that kind of bot.
+	# MEASURED, not predicted: at seed 20260806 the lead reached zero at
+	# simulated t=71.02s, GameState went PLAYING -> CAPTURED -> GAME_OVER,
+	# and because _physics_process advances _t only while PLAYING, the
+	# simulated clock froze at 71.02s and `_t >= SIM_SECONDS` could never be
+	# reached -- the probe then spun at full speed forever, printing nothing
+	# past its header. Nothing the pursuer does can move a charger's spawn
+	# spacing or its reaction window, so switching it off changes no number
+	# this probe reports.
+	GameState.pursuer_enabled = false
 	print("=== CHARGER AUDIT ===")
 	print("rng                     : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("simulated time          : %.0fs" % SIM_SECONDS)
@@ -100,6 +135,7 @@ func _ready() -> void:
 	_keepy = _game.get_node("World/Keepy")
 	_track = _game.get_node("World/TrackManager")
 	_keepy.collision_layer = 0
+	_coverage.begin_phase("roaming bot")
 	_next_bot_switch_t = randf_range(BOT_SWITCH_MIN_INTERVAL_S, BOT_SWITCH_MAX_INTERVAL_S)
 	for i in GameState.STAGE_SPEEDS.size():
 		_stage_stats.append([0, INF, 0.0, 0])
@@ -110,9 +146,10 @@ func _physics_process(delta: float) -> void:
 	_t += delta
 	_drive_bot()
 	_scan()
+	_coverage.observe(_track, _keepy)
 	if _t >= SIM_SECONDS:
 		_summary()
-		get_tree().quit(0)
+		get_tree().quit(_verdict())
 
 func _drive_bot() -> void:
 	if _t < _next_bot_switch_t:
@@ -198,6 +235,7 @@ func _on_crossed(key: int, obstacle: Obstacle) -> void:
 	_spawn_t.erase(key)
 
 func _summary() -> void:
+	_coverage.report(REQUIRED_COVERAGE)
 	print("--- charger spawn rate and reaction window, per palier ---")
 	print("(window = measured seconds from the frame the charger became")
 	print(" visible to the frame it reached the player -- the whole time the")
@@ -257,6 +295,7 @@ func _summary() -> void:
 				worst_exempt = minf(worst_exempt, gap)
 			else:
 				worst_counted = minf(worst_counted, gap)
+	_worst_counted_gap = worst_counted
 	if charger_crossings == 0:
 		print("  no charger reached the player -- nothing measured")
 	else:
@@ -284,6 +323,41 @@ func _summary() -> void:
 	print("")
 	print("--- end: t=%.2fs  palier %d  distance %.1fm ---"
 		% [_t, GameState.stage_index, GameState.distance_travelled])
+
+## The exit code, taken from the numbers _summary() just printed.
+##
+## THIS PROBE USED TO EXIT 0 UNCONDITIONALLY. It printed "BELOW
+## REQUIREMENT" in the body and then quit(0) regardless, so a real spacing
+## or reaction-window violation was reported to a reader and to nothing
+## else -- any script or CI job running it saw a pass. That is the same
+## "green on something never actually checked" family the rest of this
+## folder has been working through, one level up: the check ran, the
+## verdict was computed, and the verdict was discarded.
+##
+## 0 = the contract holds, 1 = it is violated OR the run could not test it.
+func _verdict() -> int:
+	var gaps := _coverage.verify(REQUIRED_COVERAGE)
+	if not gaps.is_empty():
+		for gap in gaps:
+			push_error("CHARGER AUDIT INCONCLUSIVE: %s." % gap)
+		return 1
+	if _chargers_crossed == 0:
+		push_error("CHARGER AUDIT INCONCLUSIVE: no charger ever reached the player, so neither the reaction window nor the spacing was measured -- every number above is absent, not verified.")
+		return 1
+	if _min_window_overall < Obstacle.ENEMY_REACTION_WINDOW_S:
+		push_error("CHARGER AUDIT FAILED: worst measured reaction window %.4fs is below the required %.4fs (palier %d)." % [
+			_min_window_overall, Obstacle.ENEMY_REACTION_WINDOW_S, _min_window_stage])
+		return 1
+	if _worst_counted_gap < TrackManager.CHARGER_ARRIVAL_MARGIN_S:
+		push_error("CHARGER AUDIT FAILED: worst counted gap at the player plane %.4fs is below the required %.4fs." % [
+			_worst_counted_gap, TrackManager.CHARGER_ARRIVAL_MARGIN_S])
+		return 1
+	print("")
+	print("PASSED: %d chargers reached the player; worst reaction window %.4fs >= %.4fs required," % [
+		_chargers_crossed, _min_window_overall, Obstacle.ENEMY_REACTION_WINDOW_S])
+	print("        worst counted spacing %.4fs >= %.4fs required." % [
+		_worst_counted_gap, TrackManager.CHARGER_ARRIVAL_MARGIN_S])
+	return 0
 
 func _lane_index_for_x(x: float) -> int:
 	for lane in TrackSegment.LANE_X.size():

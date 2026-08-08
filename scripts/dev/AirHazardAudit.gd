@@ -69,6 +69,29 @@ const SIM_TIMEOUT_S: float = 300.0 # safety cap while waiting for the next AIR_E
 const MIN_ENCOUNTERS_REQUIRED: int = 5 # else the phase's result would not be meaningful
 const SURVIVAL_HOLD_S: float = 1.0 # how long phase 2 must stay PLAYING after the pass to count as a real survival, not a lucky race
 
+## AIR_ENEMY AND NOTHING ELSE -- and that narrowness is the honest answer
+## here, not a shortcut. See ProbeCoverage.gd for what the ledger is for.
+##
+## Every other hazard is switched off ON SIGHT by _scan_air_enemies
+## (`obstacle.set_deferred("monitoring", false)`), deliberately, so that a
+## death is always attributable to the thing this probe tests. They still
+## spawn and still cross the player plane, so the ledger WOULD happily
+## count them as "presented" -- and that count would be a lie of exactly
+## the kind this file exists to prevent: present on the track, and
+## incapable of affecting anything measured. Requiring them would also
+## fail the probe for a reason that is not a defect, which
+## ProbeCoverage.exempt_phase's own doc names as the mirror-image mistake.
+##
+## What IS worth gating, and what this probe never proved before, is that
+## an AIR_ENEMY actually reached the player in each phase. Phase 1's whole
+## claim is "ignoring one is lethal" and phase 2's is "jumping one is
+## survivable"; if none arrived, both claims are vacuous. Phase 1 already
+## fails on its own timeout, but phase 2 could previously reach its
+## survival deadline without the ledger ever confirming the hazard came.
+const REQUIRED_COVERAGE: Array[int] = [ProbeCoverage.Mechanic.AIR_ENEMY]
+
+var _coverage := ProbeCoverage.new()
+
 var _phase: int = 1
 var _game: Node3D
 var _keepy: Keepy
@@ -84,17 +107,53 @@ var _jump_commanded_t: float = 0.0
 var _survival_check_deadline: float = -1.0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "AirHazardAudit")
+	# Must run BEFORE Game.tscn is instantiated in _start_game() below --
+	# see DevSeed.gd.
+	#
+	# THIS CALL WAS MISSING, and its absence is the whole of finding F6 in
+	# docs/PROBE_AUDIT.md ("AirHazardAudit is non-deterministic under
+	# --seed"). It was not non-deterministic under --seed; it never read
+	# --seed at all. DevSeed.apply() is what consumes the flag, no probe
+	# gets it for free, and this one never called it -- so every invocation
+	# drew a fresh RNG stream and produced a genuinely different run, which
+	# is exactly what an unseeded probe is supposed to do. The recorded
+	# symptom (same seed, ~1 failure in 11 on origin/main, 2 in 5 on the
+	# branch, byte-identical inputs) is sampling variance in a probe that
+	# was exploratory the whole time, and the recorded observation that
+	# `git diff origin/main` was empty for this file and everything it
+	# loads was correct and pointed the right way: nothing in the inputs
+	# differed, because the seed was never among the inputs.
+	#
+	# The hypothesis recorded alongside F6 -- a startup-ordering race
+	# between _process and the first _physics_process moving the liftoff
+	# frame inside a narrow clearance window -- is not what was happening.
+	# It was explicitly labelled a hypothesis rather than a diagnosis; it
+	# is now measured, and it is not the cause. The 0.330-0.345s spread of
+	# liftoff times it rested on is simply where an unseeded run's
+	# AIR_ENEMY happened to be.
+	var seeded := DevSeed.apply()
 	print("=== AIR HAZARD AUDIT ===")
+	print("rng    : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("phase 1: ignoring a landed AIR_ENEMY (never jump, never switch) must eventually be lethal")
+	_coverage.begin_phase("phase 1")
 	_start_game()
 
 func _start_game() -> void:
+	var restarting := _game != null
 	if _game:
 		_game.queue_free()
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
 	_track = _game.get_node("World/TrackManager")
+	# Pooled segments in the NEW game reuse instance ids freely; without
+	# this the ledger could read a fresh segment as a crossing of the old
+	# one. See ProbeCoverage.run_restarted.
+	if restarting:
+		_coverage.run_restarted()
 	# Collision is INTENTIONALLY left at its real, shipped value here --
 	# see the header. Only the Input-driven jump/lane-switch is absent (no
 	# injected events), which is exactly what phase 1 needs to test.
@@ -103,6 +162,10 @@ func _start_game() -> void:
 	_survival_check_deadline = -1.0
 
 func _physics_process(delta: float) -> void:
+	# Before the phase body, which can restart the game or quit outright --
+	# observing a torn-down track would record nothing useful and could read
+	# a recycled segment as a crossing.
+	_coverage.observe(_track, _keepy)
 	if _phase == 1:
 		_run_phase_1(delta)
 	else:
@@ -121,6 +184,7 @@ func _run_phase_1(delta: float) -> void:
 			_phase = 2
 			_t = 0.0
 			_encounters = 0
+			_coverage.begin_phase("phase 2")
 			_start_game()
 			return
 		print("phase 1: encounter %d/%d confirmed lethal, restarting for another sample" % [_encounters, MIN_ENCOUNTERS_REQUIRED])
@@ -157,6 +221,18 @@ func _run_phase_2(delta: float) -> void:
 		print("  survived the timed jump (encounter %d/%d)" % [_encounters, MIN_ENCOUNTERS_REQUIRED])
 		if _encounters >= MIN_ENCOUNTERS_REQUIRED:
 			print("PHASE 2 PASSED: %d/%d timed jumps over a landed AIR_ENEMY all survived -- the landed hazard is safely jumpable, as designed." % [_encounters, MIN_ENCOUNTERS_REQUIRED])
+			print("")
+			_coverage.report(REQUIRED_COVERAGE)
+			# COVERAGE LAST, and it still gates: both phases above are
+			# written entirely around AIR_ENEMY arriving, so a pass that the
+			# ledger cannot corroborate means the two phases agreed about
+			# something neither of them saw.
+			var gaps := _coverage.verify(REQUIRED_COVERAGE)
+			if not gaps.is_empty():
+				for gap in gaps:
+					push_error("AIR HAZARD AUDIT INCONCLUSIVE: %s." % gap)
+				get_tree().quit(1)
+				return
 			get_tree().quit(0)
 			return
 		_jump_target_key = -1

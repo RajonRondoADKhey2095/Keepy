@@ -174,6 +174,9 @@ var _safe_result: Dictionary = {}
 var _risky_result: Dictionary = {}
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "ComboAudit")
 	# Must run BEFORE Game.tscn is instantiated -- see DevSeed.gd. Both
 	# phases re-seed to this SAME value in _start_phase so the two bots meet
 	# the identical spawn stream: without that the comparison would be

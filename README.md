@@ -306,6 +306,23 @@ measured today, 12/12 visuals change and 0/10 colliders move.
   Verified by disabling STOMPER spawning and re-running: all seven bot
   probes fail INCONCLUSIVE naming STOMPER, where all seven passed before.
 
+- **No probe can run forever.** `scripts/dev/ProbeWatchdog.gd` is armed as
+  the first statement of every probe's `_ready()` and stops it after
+  `DEFAULT_BUDGET_S` (900s) of WALL clock, printing INCONCLUSIVE and the
+  GameState it died in. Two probes here genuinely did not terminate --
+  `ChargerAudit` and `AirEnemyLandingLaneAudit`, from the pursuer ending
+  their run and freezing the simulated clock their completion check was
+  written against (both fixed; see `GameState.pursuer_enabled` and
+  [`docs/PROBE_AUDIT.md`](docs/PROBE_AUDIT.md) F7). The watchdog is the
+  guard for the class rather than those two cases: a probe that hangs is
+  indistinguishable from a probe that is slow, which is exactly how those
+  two survived being documented as "expected to take a very long time".
+
+  Exit codes: **0** the contract holds, **1** it is violated or the run
+  could not test it (INCONCLUSIVE), **2** the watchdog stopped it. 2 is
+  deliberately not 1 -- a timeout is the absence of a verdict, not a
+  finding.
+
 - **Probe assertions are orderings and separations, not fitted thresholds.**
   Absolute bars calibrated on exploratory runs ("the mid-skill bot sees the
   pursuer 10-25% of the time", "the control bot takes exactly 0 strikes")

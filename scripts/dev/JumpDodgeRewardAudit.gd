@@ -55,6 +55,9 @@ var _jump_dodge_score_before: int = 0
 var _check_deadline: float = -1.0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "JumpDodgeRewardAudit")
 	print("=== JUMP DODGE REWARD AUDIT ===")
 	print("watching for a well-timed jump over a JUMP obstacle on the center lane;")
 	print("asserts survival AND GameState.jump_dodge_score += JUMP_DODGE_BONUS_VALUE (%d)" % GameState.JUMP_DODGE_BONUS_VALUE)

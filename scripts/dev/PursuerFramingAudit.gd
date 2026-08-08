@@ -99,6 +99,9 @@ var _visible_samples: Array[Dictionary] = []
 var _capture_samples: Array[Dictionary] = []
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "PursuerFramingAudit")
 	var seeded := DevSeed.apply()
 	print("=== PURSUER FRAMING AUDIT ===")
 	print("rng                : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))

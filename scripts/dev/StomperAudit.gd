@@ -76,6 +76,9 @@ var _combo_count_before: int = 0
 var _check_deadline: float = -1.0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "StomperAudit")
 	print("=== STOMPER AUDIT ===")
 	print("phase 1: never jumping (but actively switching lanes) must always be lethal to a STOMPER")
 	_start_game()

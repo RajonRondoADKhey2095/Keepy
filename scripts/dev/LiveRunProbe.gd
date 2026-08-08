@@ -20,6 +20,9 @@ var _last_phase: int = -1
 var _t: float = 0.0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "LiveRunProbe")
 	add_child(load("res://scenes/Game.tscn").instantiate())
 
 func _process(delta: float) -> void:

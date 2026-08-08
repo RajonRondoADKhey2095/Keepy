@@ -28,6 +28,9 @@ extends Node
 ##   godot4 --headless --path . res://scripts/dev/ChargerShapeProbe.tscn
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "ChargerShapeProbe")
 	var obstacle: Obstacle = preload("res://scenes/Obstacle.tscn").instantiate()
 	add_child(obstacle)
 	obstacle.configure(Obstacle.Type.CHARGER)

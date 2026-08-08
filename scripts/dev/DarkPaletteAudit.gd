@@ -133,6 +133,9 @@ var _sweep_worst: Dictionary = {}
 var _missed_samples: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "DarkPaletteAudit")
 	_run.call_deferred()
 
 func _run() -> void:

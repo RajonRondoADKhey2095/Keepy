@@ -45,6 +45,33 @@ var _lock_contact_mismatch: int = 0
 var _sample_count: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "EnemyLaneAudit")
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# This probe never called it, so `-- --seed=<int>` was silently
+	# ignored and every run was exploratory even when a reproducible one
+	# was asked for. Same defect as AirHazardAudit (finding F6).
+	var seeded := DevSeed.apply()
+	# The PURSUER is a parallel system and is not what this probe measures
+	# -- see GameState.pursuer_enabled, and AntiFrustrationAudit.gd for the
+	# identical fix applied when the pursuer landed. Written 08-05, long
+	# before the pursuer, and never given it.
+	#
+	# The failure here was QUIETER than ChargerAudit's and worse for it.
+	# This probe has no `state != PLAYING` early return, so its simulated
+	# clock keeps advancing after the pursuer captures the bot at ~71s --
+	# it does not freeze. But the TRACK stops, so no further ENEMY ever
+	# locks or reaches the player: the sample counter stops dead while the
+	# clock runs on toward MAX_SIM_SECONDS. Measured: killed at a 900s
+	# wall-clock cap without finishing.
+	#
+	# Had it reached MAX_SIM_SECONDS it would have printed a lane
+	# distribution built from only the first ~71 seconds of one run and
+	# exited 0 -- a "measurement" of 3 percent of the requested sample,
+	# reported as a result. The hang is the symptom; the corrupted sample
+	# is the actual defect.
+	GameState.pursuer_enabled = false
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
@@ -55,6 +82,7 @@ func _ready() -> void:
 	_keepy.collision_layer = 0
 
 	print("=== ENEMY LANE AUDIT ===")
+	print("rng           : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("target samples: %d (lock event = _enemy_settling true -> false)" % TARGET_SAMPLES)
 	print("lane x values  : %s (index 0=left, 1=center, 2=right)" % [TrackSegment.LANE_X])
 	print("")
@@ -64,7 +92,30 @@ func _physics_process(delta: float) -> void:
 	_scan_obstacles()
 	if _sample_count >= TARGET_SAMPLES or _t >= MAX_SIM_SECONDS:
 		_summary()
-		get_tree().quit()
+		get_tree().quit(_verdict())
+
+## The exit code, taken from the numbers _summary() just printed.
+##
+## THIS PROBE USED TO EXIT 0 UNCONDITIONALLY, including on a run that hit
+## MAX_SIM_SECONDS having gathered a fraction of TARGET_SAMPLES, and
+## including on the one condition its own output calls a bug ("a non-zero
+## value IS a bug"). Under the pursuer defect fixed above that is exactly
+## the run it would have produced -- so the corrupted sample would have
+## been reported as a pass. The distribution itself stays reported rather
+## than gated (there is no fair-lane threshold to assert, and inventing
+## one is the fitted-bar mistake this folder has been undoing), but
+## under-sampling and lock/contact disagreement are contracts.
+func _verdict() -> int:
+	if _sample_count < TARGET_SAMPLES:
+		push_error("ENEMY LANE AUDIT INCONCLUSIVE: only %d of %d samples gathered before MAX_SIM_SECONDS -- the distribution above is under-sampled, not a measurement." % [
+			_sample_count, TARGET_SAMPLES])
+		return 1
+	if _lock_contact_mismatch > 0:
+		push_error("ENEMY LANE AUDIT FAILED: %d lock/contact mismatch(es) -- the locked lane does not stick, or X keeps moving after _enemy_settling clears." % _lock_contact_mismatch)
+		return 1
+	print("")
+	print("PASSED: %d samples, 0 lock/contact mismatches. Distribution reported, not gated." % _sample_count)
+	return 0
 
 func _scan_obstacles() -> void:
 	for segment in _track.get_children():

@@ -64,6 +64,9 @@ const EPSILON: float = 0.00001
 var _failures: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "AssetContractAudit")
 	print("=== ASSET CONTRACT AUDIT ===")
 	print("purpose : a Meshy .glb may change every visual and no hitbox.")
 	print("")

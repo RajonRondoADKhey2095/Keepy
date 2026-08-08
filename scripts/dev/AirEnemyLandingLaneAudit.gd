@@ -51,6 +51,17 @@ const MAX_SIM_SECONDS: float = 8000.0 # AIR_ENEMY is rarer than ENEMY (implicit 
 const BOT_SWITCH_MIN_INTERVAL_S: float = 0.6 # same cadence as AntiFrustrationAudit's own roaming bot
 const BOT_SWITCH_MAX_INTERVAL_S: float = 2.4
 
+## This probe drives a bot on a real track, so it carries the coverage
+## ledger like every other bot probe here -- see ProbeCoverage.gd. The full
+## hazard set rather than AIR_ENEMY alone: the landing lane is resolved
+## against what else is on the track (the anti-frustration redirect reads
+## TrackManager.lane_has_conflicting_jump_hazard), so a run that never
+## produced the other hazards would be measuring the redirect's easy case
+## only.
+const REQUIRED_COVERAGE: Array[int] = ProbeCoverage.ALL_HAZARDS
+
+var _coverage := ProbeCoverage.new()
+
 var _game: Node3D
 var _keepy: Keepy
 var _track: Node3D
@@ -71,6 +82,30 @@ var _matched_bot_lane_at_decision: int = 0
 var _sample_count: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "AirEnemyLandingLaneAudit")
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# This probe never called it, so `-- --seed=<int>` was silently ignored
+	# and every run was exploratory even when a reproducible one was asked
+	# for. Added so it can sit in the seeded reference baseline alongside
+	# the others.
+	var seeded := DevSeed.apply()
+	# The PURSUER is a parallel system and is not what this probe measures --
+	# see GameState.pursuer_enabled, and AntiFrustrationAudit.gd for the
+	# identical fix applied when the pursuer landed. This probe was written
+	# 08-06, BEFORE the pursuer, and never received it: its bot has collision
+	# neutered so ONE continuous run can gather TARGET_SAMPLES, and the
+	# pursuer kills exactly that kind of bot. MEASURED, not predicted: the
+	# lead reaches zero around simulated t=71s, GameState goes PLAYING ->
+	# CAPTURED -> GAME_OVER, and because _physics_process advances _t only
+	# while PLAYING, the simulated clock freezes there -- neither
+	# `_sample_count >= TARGET_SAMPLES` nor `_t >= MAX_SIM_SECONDS` can ever
+	# be reached, and the probe spins forever printing nothing past its
+	# header. The pursuer cannot move an AIR_ENEMY's landing lane (it does
+	# not touch the track, and the bot's own roaming is what varies the
+	# target), so switching it off changes no number this probe reports.
+	GameState.pursuer_enabled = false
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
@@ -79,9 +114,11 @@ func _ready() -> void:
 	# clears collision so the probe survives contact instead of ending the
 	# run, touching no gameplay source file.
 	_keepy.collision_layer = 0
+	_coverage.begin_phase("roaming bot")
 	_next_bot_switch_t = randf_range(BOT_SWITCH_MIN_INTERVAL_S, BOT_SWITCH_MAX_INTERVAL_S)
 
 	print("=== AIR ENEMY LANDING LANE AUDIT ===")
+	print("rng           : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("target samples: %d (landing event = air_enemy_landed false -> true)" % TARGET_SAMPLES)
 	print("lane x values  : %s (index 0=left, 1=center, 2=right)" % [TrackSegment.LANE_X])
 	print("bot: randomized roaming (same cadence as AntiFrustrationAudit) so the target lane varies")
@@ -93,9 +130,10 @@ func _physics_process(delta: float) -> void:
 	_t += delta
 	_drive_bot()
 	_scan_obstacles()
+	_coverage.observe(_track, _keepy)
 	if _sample_count >= TARGET_SAMPLES or _t >= MAX_SIM_SECONDS:
 		_summary()
-		get_tree().quit()
+		get_tree().quit(_verdict())
 
 func _drive_bot() -> void:
 	if _t < _next_bot_switch_t:
@@ -179,7 +217,39 @@ func _lane_index_for_x(x: float) -> int:
 			best_index = i
 	return best_index
 
+## The exit code, taken from the numbers _summary() just printed.
+##
+## THIS PROBE USED TO EXIT 0 UNCONDITIONALLY -- including on the one
+## condition its own output calls a bug outright ("landing/contact
+## mismatches ... a non-zero value IS a bug"), and including on a run that
+## timed out having gathered a handful of samples. It is a distribution
+## probe, so the distribution itself is reported rather than gated (there
+## is no fair-lane threshold to assert, and inventing one is exactly the
+## fitted-bar mistake the rest of this folder just finished undoing), but
+## the two things it CAN state as contracts now decide the exit code.
+##
+## 0 = the contract holds, 1 = it is violated OR the run could not test it.
+func _verdict() -> int:
+	var gaps := _coverage.verify(REQUIRED_COVERAGE)
+	if not gaps.is_empty():
+		for gap in gaps:
+			push_error("AIR ENEMY LANDING LANE AUDIT INCONCLUSIVE: %s." % gap)
+		return 1
+	if _sample_count < TARGET_SAMPLES:
+		push_error("AIR ENEMY LANDING LANE AUDIT INCONCLUSIVE: only %d of %d samples gathered before MAX_SIM_SECONDS -- the distribution above is under-sampled, not a measurement." % [
+			_sample_count, TARGET_SAMPLES])
+		return 1
+	if _landing_contact_mismatch > 0:
+		push_error("AIR ENEMY LANDING LANE AUDIT FAILED: %d landing/contact mismatch(es) -- the landing lane does not stick, or X keeps moving after air_enemy_landed flips true." % _landing_contact_mismatch)
+		return 1
+	print("")
+	print("PASSED: %d samples, 0 landing/contact mismatches -- every AIR_ENEMY contacted" % _sample_count)
+	print("        on exactly the lane its own state machine committed to. The distribution")
+	print("        above is reported, not gated: see this function's doc.")
+	return 0
+
 func _summary() -> void:
+	_coverage.report(REQUIRED_COVERAGE)
 	print("--- result ---")
 	print("simulated time         : %.1fs" % _t)
 	print("samples collected      : %d%s" % [

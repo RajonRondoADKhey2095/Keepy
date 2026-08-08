@@ -91,6 +91,9 @@ var _enemy_cap_min: float = INF
 var _enemy_cap_count: int = 0
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "PacingAudit")
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	# No-op unless `-- --seed=<int>` was passed.
 	var seeded := DevSeed.apply()
