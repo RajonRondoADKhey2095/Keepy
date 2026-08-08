@@ -42,10 +42,10 @@ hard-coded numeric threshold calibrated on exploratory runs.
 |---|---|---|---|---|---|---|---|---|---|
 | **AntiFrustrationAudit** | Every imminent threat leaves at least one escape, re-derived per physics frame | 08-05 | risk/combo, CHARGER, STOMPER, pursuer, strikes, shrink | ok | partial | n/a | n/a | ok (`e5647ee`) | invariant (0 violations) |
 | **RushFrustrationAudit** | Same guarantee, restricted to rush windows | 08-06 | STOMPER, pursuer, strikes, shrink | ok | partial | n/a | n/a | ok (`e5647ee`) | invariant (0 violations) |
-| **ComboAudit** | Risky play must pay meaningfully better than safe play | 08-06 | STOMPER, pursuer, strikes, shrink | ok | **blind** | n/a | n/a | ok (`084a074`) | **absolute** x4 |
+| **ComboAudit** | Risky play must pay meaningfully better than safe play | 08-06 | STOMPER, pursuer, strikes, shrink | ok | **blind (F1)** | n/a | n/a | ok (`084a074`) | **absolute** x4 |
 | **PursuerAudit** | The pursuer reads how the player plays, and a mid-skill player meets it | 08-06 | strikes, shrink | ok | ok (`d3e489a`) | ok | n/a | ok (`084a074`) | invariant x5 + **absolute** x2 |
 | **StrikeAudit** | What each skill profile actually dies of, under the strike model | 08-07 | shrink | ok | ok | ok | ok | ok (`084a074`) | invariant x6 + **absolute** x2 |
-| **ShrinkAudit** | The shrink is reachable in real play, and is never unfair when it fires | 08-07 | -- | ok | ok | ok | ok | ok | invariant |
+| **ShrinkAudit** | The shrink is reachable in real play, and is never unfair when it fires | 08-07 | -- | ok | **blind, SAFE only (F5)** | ok | ok | ok | invariant |
 | **PursuerFramingAudit** | The pursuer never eats the screen | 08-07 | -- | ok | ok | ok | ok | ok | absolute (a design cap, legitimately) |
 | **StomperAudit** | Jump is the only escape from a STOMPER | 08-06 | strikes, shrink | n/a (neutered) | ok | n/a | n/a | n/a | invariant |
 | **StomperConflictAudit** | A STOMPER and a jump-blocker never come due together | 08-06 | strikes, shrink | ok | ok | n/a | n/a | n/a | invariant |
@@ -205,14 +205,95 @@ byte-identical between runs; only NOISETTE/GLAND move, in the 4th decimal,
 from their own bob animation -- which is exactly what the sample box is
 sized to average out.
 
+### F5 -- ShrinkAudit's SAFE bot has the same blind spot, and it corrupted a published answer
+
+Found by the coverage ledger below, not by reading. `ShrinkAudit._drive_safe_bot`
+carries the identical defect to F1 -- no `blocks_lane_switch` branch, no
+jump at all. `_drive_intermediate_bot` and `_drive_risky_bot` in the same
+file are unaffected: they jump anything `blocks_jump` does not exclude, and
+STOMPER is not excluded, so they get the answer for free. Only the bot that
+never jumps needed it stated.
+
+Phase 1 of that probe asks whether a realistic profile ever reaches the
+`SHRINK_UNLOCK_SCORE` of 3000, and reported:
+
+```
+SAFE   runs 15   best score  750   runs over gate 0 (0%)   -> never reaches it
+```
+
+The ledger then showed `SAFE ... STOMPER 15/15` -- it met a STOMPER on its
+own lane in every one of those 15 runs. It was not failing to reach the
+gate; it was being killed by the first STOMPER of every run. With the jump
+added:
+
+```
+SAFE   best score 4817  -> REACHES the gate
+```
+
+The probe's answer to its own headline question was wrong for that profile.
+
 ## What this batch changes
 
-F1-F4 are four instances of one failure: a probe cannot tell "I verified
+F1-F5 are five instances of one failure: a probe cannot tell "I verified
 this" apart from "I never exercised this". Fixing them one at a time is
-what produced the previous four false greens.
+what produced the previous four false greens, and F5 shows the supply was
+not exhausted.
 
-So beyond the four fixes, this batch adds a **coverage ledger**
+So beyond the fixes, this batch adds a **coverage ledger**
 (`scripts/dev/ProbeCoverage.gd`): every bot-driven probe records which
 mechanics its bots actually met, and **fails if any required mechanic was
 never met**. A green on a mechanic that never ran becomes impossible rather
 than merely unlikely.
+
+### Why the ledger lives inside each probe
+
+The obvious shape -- one `MetaAudit.tscn` driving bots and checking they
+meet everything -- does not work. A meta probe drives ITS OWN bots, so
+passing proves the meta probe's bots are fine and says nothing about
+PursuerAudit's SAFE bot, which is where the defect actually lives.
+ComboAudit is the proof: three sibling probes carried the STOMPER fix and
+would have passed any meta probe, while ComboAudit -- same function name,
+same lineage -- did not, and stayed green. The check has to run on the
+bots it is checking.
+
+### The ledger's own first draft had the bug it exists to catch
+
+Written the obvious way -- count an obstacle crossing `Z = 0` -- it was
+blind to any hazard that **killed** the bot: the run ends at contact, so
+the frame that would record the crossing never runs. The single most
+consequential encounter a bot can have was the one encounter the guard
+could not see. It surfaced as "SAFE never met STOMPER" for a bot that met
+one every run and died to it every time (F5). Arrival is now counted from
+2.0m out -- derived from hitbox depth plus one physics frame at top speed
+-- so it is recorded whether or not the run survives it.
+
+## What is genuinely not true, and is now reported rather than asserted
+
+Two probes independently reached the same conclusion, and it is a finding
+about the game rather than a defect in either:
+
+**The pursuer separates PASSIVE play from ACTIVE play. It does not grade
+active play by degree.**
+
+| statement | holds on | margin |
+|---|---|---|
+| capture share: safe > mid | 8/8 | 36-56 points |
+| capture share: safe > risky | 8/8 | 41-67 points |
+| capture share: mid > risky | **6/8** | fails by 1 and 8 points |
+| mean lead: safe < mid, safe < risky | 8/8 | 5.0-7.2s |
+| mean lead: mid < risky | **4/8** | crosses either way |
+
+Nearly tripling the sample did not resolve the mid-vs-risky pair. Both
+probes now print that explicitly, so a future session does not read the
+absence of the assertion as an oversight and "restore" it.
+
+## Sample sizes
+
+Several criteria were being judged on 1 to 3 runs. `PHASE_SECONDS` raised:
+Combo 300 -> 1500, Pursuer 300 -> 1500, Strike 900 -> 2400 (control
+300 -> 1200). This is not a loosening -- it is giving a statistic
+resolution before judging it, and where the bar was right it stayed
+untouched. ComboAudit's matched-duration criterion is the clean example:
+the 25% target read +22 / +24 / +22 % on three seeds at the old size and
+reads +26 to +37 % on all eight at the new one. The design target holds;
+the bar never moved.

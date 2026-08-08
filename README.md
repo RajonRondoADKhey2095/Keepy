@@ -287,6 +287,35 @@ measured today, 12/12 visuals change and 0/10 colliders move.
   collisions in 300s+ for two of the three), so they could not exercise
   the mechanic. A CONTROL phase re-asserts that every run.
 
+- **Every bot probe proves it exercised what it claims to verify.**
+  `scripts/dev/ProbeCoverage.gd` is a ledger each bot probe keeps of which
+  mechanics its own bots actually MET -- each hazard type counted when it
+  reaches the player, split into "presented" and "answered on the player's
+  own lane", plus the pursuer, strikes, shrink and rush windows. A probe
+  whose run never produced a CHARGER now reports INCONCLUSIVE instead of
+  green. This exists because five separate false greens had already been
+  found by hand, all of them the same bug: a probe written before a
+  mechanic existed, validating a contract its bots could not exercise.
+  Full audit, with what each probe was and was not able to test:
+  [`docs/PROBE_AUDIT.md`](docs/PROBE_AUDIT.md).
+
+  It is a ledger inside each probe rather than a probe of its own on
+  purpose -- a meta probe would drive its own bots, and so would prove
+  nothing about the bots that actually carry the defect.
+
+  Verified by disabling STOMPER spawning and re-running: all seven bot
+  probes fail INCONCLUSIVE naming STOMPER, where all seven passed before.
+
+- **Probe assertions are orderings and separations, not fitted thresholds.**
+  Absolute bars calibrated on exploratory runs ("the mid-skill bot sees the
+  pursuer 10-25% of the time", "the control bot takes exactly 0 strikes")
+  turned out to describe one sample rather than the mechanic, and failed on
+  most seeds. They are now stated as invariants with measured margins, and
+  the numbers they replaced are still printed, labelled reported-not-gated.
+  Where an ordering is genuinely not supported by measurement -- the pursuer
+  does not grade active play by degree -- the probes say so rather than
+  assert it.
+
   The two probes that sample real rendered pixels need a rendering driver
   rather than pure headless:
 
