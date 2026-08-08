@@ -264,6 +264,23 @@ fix at the end of a large batch is how the previous false greens got
 written. Anyone reading a single green from this probe should know it is
 worth about 90%.
 
+### F7 -- ChargerAudit and AirEnemyLandingLaneAudit do not finish. OPEN, pre-existing.
+
+Neither completed in 15 minutes on this branch, and `ChargerAudit`
+reproduces identically on `origin/main` (no output past its header after a
+4-minute run). Both are untouched by this batch and neither loads anything
+it changed.
+
+`ChargerAudit` neuters the player's collision layer and only needs 900
+simulated seconds, which every other probe here covers in tens of seconds
+-- so it is advancing at roughly real time rather than sprinting, and the
+report only prints at the end, which is why it looks like a hang. Cause not
+investigated: it is pre-existing, outside this batch's scope, and worth its
+own look. Verified pre-existing rather than assumed.
+
+The README currently documents both as runnable commands. They are, in the
+sense that they start; they should be expected to take a very long time.
+
 ## What this batch changes
 
 F1-F5 are five instances of one failure: a probe cannot tell "I verified
