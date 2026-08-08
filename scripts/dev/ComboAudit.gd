@@ -15,10 +15,23 @@ extends Node
 ## METHOD -- two bots, each played over the same total simulated budget on
 ## the same seeded track:
 ##   SAFE  -- reads every hazard early and gives it the widest berth
-##            available. Never jumps (so never takes a gland, which sits at
-##            jump apex by construction). This is the "I can survive
-##            forever by playing boring" strategy the playtest complained
-##            about, played deliberately well.
+##            available. Jumps ONLY when a STOMPER leaves it no choice
+##            (Obstacle.blocks_lane_switch), never for value -- so it still
+##            never takes a gland, which sits at jump apex by construction.
+##            This is the "I can survive forever by playing boring"
+##            strategy the playtest complained about, played deliberately
+##            well.
+##
+##            THAT ONE EXCEPTION IS NOT A SOFTENING OF "SAFE", IT IS WHAT
+##            MAKES THE PROFILE MEAN ANYTHING. Without it the bot has no
+##            answer to a STOMPER at all and dies to one: measured on the
+##            baseline, 28.0s mean survival against RISKY's 119.3s, and
+##            zero runs surviving to this probe's own 40s checkpoint -- so
+##            the matched-duration comparison divided by a score of zero
+##            and reported "+38%" as "+124500%". A bot that dies is not
+##            playing safe. See docs/PROBE_AUDIT.md F1, and d3e489a, which
+##            made this same fix to PursuerAudit and had it carried into
+##            StrikeAudit and PursuerFramingAudit but not here.
 ##   RISKY -- seeks risk on purpose: jumps jumpable hazards on its own lane
 ##            with real timing, goes out of its way for glands, and vacates
 ##            a lane an unjumpable hazard owns only at the last moment.
@@ -381,13 +394,36 @@ func _report() -> void:
 
 ## Plays to survive and nothing else: finds the hazard due on its own lane
 ## and leaves EARLY (SAFE_ESCAPE_LEAD_S), for the adjacent lane whose own
-## nearest hazard is furthest away. Never jumps -- which also means it never
-## takes a gland, since a gland sits at jump apex by construction.
+## nearest hazard is furthest away. Jumps only when a STOMPER leaves no
+## other escape (see below) and never for value -- so it still never takes
+## a gland, since a gland sits at jump apex by construction.
 func _drive_safe_bot() -> void:
 	var lane_ttc := _nearest_hazard_ttc_per_lane()
 	var own: float = lane_ttc[_keepy.lane_index]
 	if own < 0.0 or own > SAFE_ESCAPE_LEAD_S:
 		return # nothing to run from yet
+	# STOMPER: a lane switch NEVER escapes it (Obstacle.blocks_lane_switch --
+	# from the instant it commits its x is a live copy of the player's), so
+	# the only answer is a jump, timed the same half-air-time way every
+	# other probe here times one.
+	#
+	# THIS BOT SHIPPED WITHOUT THIS BRANCH AND WAS A FALSE GREEN FOR IT.
+	# ComboAudit predates STOMPER by hours; d3e489a added exactly this fix
+	# to PursuerAudit ("fix SAFE's STOMPER blind spot") and it was carried
+	# into StrikeAudit and PursuerFramingAudit, whose _drive_safe_bot are
+	# otherwise the same function character for character. This one was
+	# missed. Measured on the baseline before the fix: the SAFE bot died at
+	# 28.0s mean, never once reached this probe's own 40s checkpoint, and
+	# the matched-duration comparison divided by that zero and printed
+	# "+124500%" -- while the probe reported PASSED. Its central claim,
+	# that risky play pays better than safe play, was being measured
+	# against a bot that was not playing safe but dying. See
+	# docs/PROBE_AUDIT.md F1.
+	var own_obstacle := _nearest_obstacle_on_lane(_keepy.lane_index)
+	if own_obstacle != null and Obstacle.blocks_lane_switch(own_obstacle.obstacle_type):
+		if own <= HALF_AIR_TIME_S and _keepy.is_on_floor():
+			_keepy.velocity.y = Keepy.JUMP_VELOCITY
+		return
 	var best_step := 0
 	var best_ttc := own
 	for step in [-1, 1]:
