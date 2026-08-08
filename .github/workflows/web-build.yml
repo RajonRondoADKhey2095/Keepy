@@ -163,7 +163,13 @@ jobs:
           # that same auto-linking -- without an explicit --scope it looks
           # up the token owner's personal (default) scope instead of the
           # team the project actually belongs to, and fails with
-          # "Error: User not found." when the token's default scope has no
-          # such user/team. Passing --scope makes it resolve the same team
-          # context that `vercel deploy` already used above.
-          vercel alias set "$DEPLOY_URL" keepy-staging.vercel.app --scope "$VERCEL_ORG_ID" --token="$VERCEL_TOKEN"
+          # "Error: User not found." Passing --scope $VERCEL_ORG_ID (a
+          # team_xxxx ID) was tried and failed three times: Vercel CLI's
+          # --scope expects the team's *slug*, not its ID (see
+          # https://vercel.com/docs/cli/global-options -- "vercel --scope
+          # my-team-slug"; the ID form is only accepted via -T/--team-id).
+          # The team slug for this project's account is
+          # rajonrondoadkhey2095s-projects (confirmed via the Vercel API --
+          # the "keepy" project belongs to that team). "keepy" itself is
+          # the *project* name shown in the dashboard, not the team scope.
+          vercel alias set "$DEPLOY_URL" keepy-staging.vercel.app --scope rajonrondoadkhey2095s-projects --token="$VERCEL_TOKEN"
