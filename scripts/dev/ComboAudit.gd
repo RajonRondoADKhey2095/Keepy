@@ -68,7 +68,7 @@ extends Node
 ## as many runs as it takes (a bot that dies at 20s simply starts another).
 ## Long enough to span many speed paliers, dark cycles and rush windows, so
 ## neither bot is judged on one unlucky slice of track.
-const PHASE_SECONDS: float = 300.0
+const PHASE_SECONDS: float = 1500.0
 ## Safety cap on a single run, so a bot that somehow never dies still ends.
 const MAX_RUN_S: float = 150.0
 
@@ -130,6 +130,17 @@ const GLAND_CHASE_SAFE_LEAD_S: float = 1.5
 ## same technique JumpDodgeRewardAudit.gd and AirHazardAudit.gd both use.
 const HALF_AIR_TIME_S: float = Keepy.JUMP_VELOCITY / Keepy.GRAVITY
 
+## Mechanics each bot must actually have met. See ProbeCoverage.gd --
+## and note that THIS probe is the one that motivated the ledger: its
+## SAFE bot met STOMPER constantly and was killed by it every time,
+## which no criterion here could see.
+const REQUIRED_COVERAGE: Array[int] = [
+	ProbeCoverage.Mechanic.DODGE, ProbeCoverage.Mechanic.JUMP,
+	ProbeCoverage.Mechanic.ENEMY, ProbeCoverage.Mechanic.AIR_ENEMY,
+	ProbeCoverage.Mechanic.CHARGER, ProbeCoverage.Mechanic.STOMPER,
+]
+
+var _coverage := ProbeCoverage.new()
 var _game: Node3D
 var _keepy: Keepy
 var _track: Node3D
@@ -199,6 +210,7 @@ func _start_phase(risky: bool) -> void:
 	for i in _events.size():
 		_events[i] = 0
 	print("--- phase %s: %.0fs of play ---" % ["RISKY" if risky else "SAFE", PHASE_SECONDS])
+	_coverage.begin_phase("RISKY" if risky else "SAFE")
 	_start_run()
 
 func _start_run() -> void:
@@ -212,6 +224,7 @@ func _start_run() -> void:
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
 	_track = _game.get_node("World/TrackManager")
+	_coverage.run_restarted()
 	_run_t = 0.0
 	_checkpoint_taken = false
 
@@ -223,6 +236,7 @@ func _physics_process(delta: float) -> void:
 			_drive_risky_bot()
 		else:
 			_drive_safe_bot()
+		_coverage.observe(_track, _keepy)
 		_sample(delta)
 		if not _checkpoint_taken and _run_t >= CHECKPOINT_S:
 			_checkpoint_taken = true
@@ -341,7 +355,17 @@ func _report() -> void:
 		_safe_result["mean_survival"], _risky_result["mean_survival"]])
 	print("")
 
+	_coverage.report(REQUIRED_COVERAGE)
+
 	# --- pass criteria, in order of how load-bearing they are ---------
+	# COVERAGE FIRST -- see ProbeCoverage.gd, and see this file's own
+	# SAFE bot for why it exists.
+	var gaps := _coverage.verify(REQUIRED_COVERAGE)
+	if not gaps.is_empty():
+		for gap in gaps:
+			push_error("COMBO AUDIT INCONCLUSIVE: %s." % gap)
+		get_tree().quit(1)
+		return
 	#
 	# 1. Safe play must not SUSTAIN a multiplier. Note this is deliberately
 	#    not "safe play must bank zero risk events": a ground ENEMY hunts
