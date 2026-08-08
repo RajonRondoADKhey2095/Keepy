@@ -11,6 +11,7 @@
 [ext_resource type="Shader" path="res://assets/shaders/screen_invert.gdshader" id="9"]
 [ext_resource type="PackedScene" path="res://scenes/Pursuer.tscn" id="10"]
 [ext_resource type="Script" path="res://scripts/world/LaneBarrier.gd" id="11"]
+[ext_resource type="Script" path="res://scripts/world/Decor.gd" id="12"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 1
@@ -18,6 +19,10 @@ background_color = Color(0.55, 0.75, 0.95, 1)
 ambient_light_source = 2
 ambient_light_color = Color(1, 1, 1, 1)
 ambient_light_energy = 0.6
+fog_enabled = true
+fog_light_color = Color(0.55, 0.75, 0.95, 1)
+fog_density = 0.0035
+fog_sky_affect = 0.0
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_1"]
 shader = ExtResource("9")
@@ -44,6 +49,9 @@ script = ExtResource("3")
 
 [node name="LaneBarrier" type="Node3D" parent="World"]
 script = ExtResource("11")
+
+[node name="Decor" type="Node3D" parent="World"]
+script = ExtResource("12")
 
 [node name="Keepy" parent="World" instance=ExtResource("2")]
 position = Vector3(0, 1, 0)
