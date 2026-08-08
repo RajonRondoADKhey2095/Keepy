@@ -158,26 +158,6 @@ jobs:
           # keepy-ten.vercel.app instead of the per-deploy URL.
           DEPLOY_URL=$(vercel deploy build/web --yes --token="$VERCEL_TOKEN")
           echo "Staging deployment: $DEPLOY_URL"
-          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
-
-      - name: "DIAGNOSTIC -- TO REMOVE -- vercel domains inspect"
-        if: github.ref_name == 'staging' || github.ref_name == 'claude/vercel-alias-token-diagnostic-35f25k'
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: |
-          set +e
-          vercel domains inspect keepy-staging.vercel.app --scope rajonrondoadkhey2095s-projects --token="$VERCEL_TOKEN"
-          echo "exit_code=$?"
-          set -e
-
-      - name: "Deploy to Vercel [STAGING -- staging] (alias set)"
-        if: github.ref_name == 'staging'
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          set -euo pipefail
           # `vercel deploy` resolves VERCEL_ORG_ID/VERCEL_PROJECT_ID from the
           # environment on its own, but `vercel alias set` does not carry
           # that same auto-linking -- without an explicit --scope it looks
