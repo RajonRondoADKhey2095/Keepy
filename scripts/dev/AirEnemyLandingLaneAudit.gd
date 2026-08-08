@@ -71,6 +71,27 @@ var _matched_bot_lane_at_decision: int = 0
 var _sample_count: int = 0
 
 func _ready() -> void:
+	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
+	# This probe never called it, so `-- --seed=<int>` was silently ignored
+	# and every run was exploratory even when a reproducible one was asked
+	# for. Added so it can sit in the seeded reference baseline alongside
+	# the others.
+	var seeded := DevSeed.apply()
+	# The PURSUER is a parallel system and is not what this probe measures --
+	# see GameState.pursuer_enabled, and AntiFrustrationAudit.gd for the
+	# identical fix applied when the pursuer landed. This probe was written
+	# 08-06, BEFORE the pursuer, and never received it: its bot has collision
+	# neutered so ONE continuous run can gather TARGET_SAMPLES, and the
+	# pursuer kills exactly that kind of bot. MEASURED, not predicted: the
+	# lead reaches zero around simulated t=71s, GameState goes PLAYING ->
+	# CAPTURED -> GAME_OVER, and because _physics_process advances _t only
+	# while PLAYING, the simulated clock freezes there -- neither
+	# `_sample_count >= TARGET_SAMPLES` nor `_t >= MAX_SIM_SECONDS` can ever
+	# be reached, and the probe spins forever printing nothing past its
+	# header. The pursuer cannot move an AIR_ENEMY's landing lane (it does
+	# not touch the track, and the bot's own roaming is what varies the
+	# target), so switching it off changes no number this probe reports.
+	GameState.pursuer_enabled = false
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_keepy = _game.get_node("World/Keepy")
@@ -82,6 +103,7 @@ func _ready() -> void:
 	_next_bot_switch_t = randf_range(BOT_SWITCH_MIN_INTERVAL_S, BOT_SWITCH_MAX_INTERVAL_S)
 
 	print("=== AIR ENEMY LANDING LANE AUDIT ===")
+	print("rng           : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("target samples: %d (landing event = air_enemy_landed false -> true)" % TARGET_SAMPLES)
 	print("lane x values  : %s (index 0=left, 1=center, 2=right)" % [TrackSegment.LANE_X])
 	print("bot: randomized roaming (same cadence as AntiFrustrationAudit) so the target lane varies")

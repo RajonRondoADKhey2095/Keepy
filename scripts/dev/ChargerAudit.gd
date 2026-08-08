@@ -87,6 +87,21 @@ var _min_window_stage: int = -1
 func _ready() -> void:
 	# Must run BEFORE Game.tscn is instantiated below -- see DevSeed.gd.
 	var seeded := DevSeed.apply()
+	# The PURSUER is a parallel system and is not what this probe measures --
+	# see GameState.pursuer_enabled for the full reasoning, and
+	# AntiFrustrationAudit.gd for the identical fix applied when the pursuer
+	# landed. This probe was written 08-06, BEFORE the pursuer, and never
+	# received it: its bot has collision neutered so ONE continuous run can
+	# cover SIM_SECONDS, and the pursuer kills exactly that kind of bot.
+	# MEASURED, not predicted: at seed 20260806 the lead reached zero at
+	# simulated t=71.02s, GameState went PLAYING -> CAPTURED -> GAME_OVER,
+	# and because _physics_process advances _t only while PLAYING, the
+	# simulated clock froze at 71.02s and `_t >= SIM_SECONDS` could never be
+	# reached -- the probe then spun at full speed forever, printing nothing
+	# past its header. Nothing the pursuer does can move a charger's spawn
+	# spacing or its reaction window, so switching it off changes no number
+	# this probe reports.
+	GameState.pursuer_enabled = false
 	print("=== CHARGER AUDIT ===")
 	print("rng                     : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
 	print("simulated time          : %.0fs" % SIM_SECONDS)
