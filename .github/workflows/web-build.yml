@@ -2,7 +2,7 @@ name: Web build & deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch: {}
 
 concurrency:
@@ -110,7 +110,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Deploy to Vercel
+      - name: Check Vercel secrets and prepare CLI
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -128,4 +128,34 @@ jobs:
           # build/web as the deployment root, so copy it in for the headers
           # (COOP/COEP, wasm mime type) to actually apply to the served site.
           cp vercel.json build/web/vercel.json
+
+      # Two distinct deploy steps (not one branching step) so a failure in
+      # either shows up under its own name in the Actions log/summary --
+      # never ambiguous about whether it was the prod or the staging push
+      # that broke.
+      - name: "Deploy to Vercel [PRODUCTION -- main]"
+        if: github.ref_name == 'main'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
           vercel deploy build/web --prod --yes --token="$VERCEL_TOKEN"
+
+      - name: "Deploy to Vercel [STAGING -- staging]"
+        if: github.ref_name == 'staging'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          # A plain (non---prod) deploy creates a preview deployment on its
+          # own throwaway *.vercel.app URL; `vercel alias set` then points
+          # the stable keepy-staging.vercel.app alias at it, so the staging
+          # URL never changes between pushes -- same rationale as prod using
+          # keepy-ten.vercel.app instead of the per-deploy URL.
+          DEPLOY_URL=$(vercel deploy build/web --yes --token="$VERCEL_TOKEN")
+          echo "Staging deployment: $DEPLOY_URL"
+          vercel alias set "$DEPLOY_URL" keepy-staging.vercel.app --token="$VERCEL_TOKEN"
