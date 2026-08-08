@@ -125,6 +125,13 @@ var _barrier: LaneBarrier
 # palette/object combination at that amount.
 var _sweep_worst: Dictionary = {}
 
+## Samples that could not be taken at all, because the object was not on
+## screen when the pixel was read (see _sample_box). Never zero silently:
+## the verdict fails on it, because a run that missed samples has not
+## measured what it claims to have measured -- whatever the ratios of the
+## samples it DID take happen to say.
+var _missed_samples: int = 0
+
 func _ready() -> void:
 	_run.call_deferred()
 
@@ -160,7 +167,20 @@ func _run() -> void:
 	# perturbing anything the two earlier passes measure.
 	await _run_barrier_pass()
 
-	get_tree().quit()
+	# THE INTEGRITY GATE, and it outranks every contrast number above it.
+	# A missed sample means an object was not on screen when its pixel was
+	# read, so the probe did not measure the thing it is reporting on. Its
+	# ratios may still all clear the floor -- 26 of them did, at up to
+	# 7.01:1, while measuring nothing at all (docs/PROBE_AUDIT.md F4) --
+	# and that is exactly why this is checked separately from them rather
+	# than folded into the contrast verdict.
+	if _missed_samples > 0:
+		push_error("DARK PALETTE AUDIT FAILED: %d sample(s) could not be taken because the object was off screen. Every ratio in this run is suspect -- an unmeasured object is not a passing one." % _missed_samples)
+		get_tree().quit(1)
+		return
+	print("")
+	print("sample integrity  : %d missed samples -- every reported ratio came from a real pixel." % _missed_samples)
+	get_tree().quit(0)
 
 ## Everything a calibration frame needs, matching Game.tscn's own
 ## values verbatim: a WorldEnvironment (sky colour, ambient light), a
@@ -296,9 +316,19 @@ func _measure_one(tint: Color, amount: float, verbose: bool, via_real_effect: bo
 		var type: Obstacle.Type = entry[1]
 		_hide_all()
 		_obstacle.configure(type)
+		# AFTER configure(), never before: configure() is what sets the type
+		# whose _physics_process will move the node, and it may set a pose of
+		# its own that this has to overwrite. See _reset_obstacle_pose.
+		_reset_obstacle_pose()
 		_obstacle.visible = true
 		await _wait_frames(SETTLE_FRAMES)
-		var color := _sample_point(_obstacle.global_position)
+		# Re-pose on the sampling frame too. The settle frames are exactly
+		# when a self-moving type gets to run, so the pose that matters is
+		# the one at the instant the pixel is read, not the one set before
+		# the wait.
+		_reset_obstacle_pose()
+		await _wait_frames(1)
+		var color := _sample_point(_obstacle_sample_point(type))
 		var ratio := _contrast_ratio(color, ground_color)
 		worst = minf(worst, ratio)
 		_record(record, label, ratio)
@@ -329,7 +359,14 @@ func _measure_one(tint: Color, amount: float, verbose: bool, via_real_effect: bo
 		print("")
 	return worst
 
+## A ratio derived from a sample that could not be taken is NAN (see
+## _sample_box) and is deliberately NOT recorded: it must not become the
+## "worst" of a palette, and it must not be averaged into anything either.
+## The run still fails -- on _missed_samples, which is the honest reason --
+## rather than on a number invented to stand in for the missing one.
 func _record(record: Dictionary, label: String, ratio: float) -> void:
+	if is_nan(ratio):
+		return
 	if not record.has(label):
 		record[label] = []
 	record[label].append(ratio)
@@ -444,6 +481,95 @@ func _hide_all() -> void:
 	_gland.visible = false
 	if _barrier:
 		_barrier.visible = false
+
+## Puts the shared obstacle node back exactly where the calibration scene
+## built it, and MUST be called before every single measurement.
+##
+## WHY THIS EXISTS -- the canonical pass sets GameState.state = PLAYING so
+## that the real DarkModeEffect.gd runs, which is the whole point of that
+## pass. The side effect is that Obstacle._physics_process starts running
+## too, and two of the six types MOVE THEMSELVES: Type.CHARGER translates
+## on +Z every visible frame (Obstacle._process_charger -- it is the one
+## hazard with a forward speed of its own), and Type.STOMPER copies the
+## player's x (Obstacle._process_stomper -- there is no player here).
+##
+## There is exactly ONE obstacle node, reused for all six types, and it was
+## positioned once at scene build. So the first CHARGER measurement walked
+## it toward the camera, and nothing ever walked it back: instrumented, the
+## sample point ran y=1254 -> 1575 -> 2657 (below a 1920px frame) -> -6717
+## (behind the camera), and every obstacle sample from that point on was a
+## miss. That is the whole of the 26 (0,0,0) samples this probe used to
+## report -- see docs/PROBE_AUDIT.md F4. It began exactly at CHARGER, never
+## recovered, and never touched NOISETTE/GLAND because those are separate
+## nodes that do not move.
+##
+## Resetting the pose is only half the fix and deliberately so: the other
+## half is _sample_box refusing to score a sample it could not take, so
+## that if any future type finds a new way to leave the frame it fails
+## loudly instead of quietly scoring a high contrast for a black pixel.
+func _reset_obstacle_pose() -> void:
+	_obstacle.position = Vector3(0.0, 0.0, CAPTURE_Z)
+	_obstacle.rotation = Vector3.ZERO
+
+## The ModelSlot that draws each obstacle type, by the node names
+## Obstacle.gd itself binds (see its @onready block). Named explicitly
+## rather than discovered by walking the children because ChargerTrail's
+## bars are also visible meshes, and averaging them into the CHARGER's
+## sample point would measure the trail as much as the wedge -- they are
+## deliberately a different colour, being the other half of the telegraph.
+const MESH_NODE_FOR_TYPE := {
+	Obstacle.Type.DODGE: "DodgeMesh",
+	Obstacle.Type.JUMP: "JumpMesh",
+	Obstacle.Type.ENEMY: "EnemyMesh",
+	Obstacle.Type.AIR_ENEMY: "AirEnemyMesh",
+	Obstacle.Type.CHARGER: "ChargerMesh",
+	Obstacle.Type.STOMPER: "StomperMesh",
+}
+
+## The world-space CENTRE OF THE DRAWN MESH for the configured type -- the
+## point to read a pixel at, and NOT the same thing as the obstacle node's
+## own origin.
+##
+## WHY THIS REPLACED `_obstacle.global_position` -- an obstacle's origin is
+## wherever its gameplay logic needs it, which for a ground-anchored hazard
+## is ON THE GROUND PLANE. The CHARGER wedge is the clear case: it sits ON
+## the ground (ChargerShapeProbe asserts min Y ~= 0), so its origin projects
+## to the very bottom edge of the silhouette and a 14px box around that
+## point is mostly ground. It measured 1.00:1 against the ground -- which is
+## not a contrast failure, it is the probe reading the ground's own colour
+## and comparing it to itself. Every CHARGER number this probe has ever
+## printed came from that, including the ones that were not blacked out.
+##
+## Recursive, and unioning rather than reading `mesh` directly, so it keeps
+## working once a Meshy .glb is installed in the slot: the imported model
+## is added as a CHILD of the slot and the slot's own `mesh` goes null (see
+## ModelSlot.gd), which a direct read would silently return an empty box for.
+func _obstacle_sample_point(type: Obstacle.Type) -> Vector3:
+	var slot := _obstacle.get_node_or_null(NodePath(MESH_NODE_FOR_TYPE[type]))
+	if slot == null:
+		push_error("DARK PALETTE AUDIT: no mesh node '%s' on Obstacle for type %d." % [
+			MESH_NODE_FOR_TYPE[type], type])
+		return _obstacle.global_position
+	var merged := AABB()
+	var any := false
+	for node in _visual_descendants(slot):
+		var box: AABB = node.global_transform * node.get_aabb()
+		if box.size == Vector3.ZERO:
+			continue
+		merged = box if not any else merged.merge(box)
+		any = true
+	if not any:
+		push_error("DARK PALETTE AUDIT: mesh node '%s' draws nothing measurable." % MESH_NODE_FOR_TYPE[type])
+		return _obstacle.global_position
+	return merged.get_center()
+
+func _visual_descendants(node: Node) -> Array[VisualInstance3D]:
+	var found: Array[VisualInstance3D] = []
+	if node is VisualInstance3D and node.visible:
+		found.append(node)
+	for child in node.get_children():
+		found.append_array(_visual_descendants(child))
+	return found
 
 # =====================================================================
 # LANE BARRIER PASS -- the temporary track shrink's telegraph (see
@@ -660,6 +786,22 @@ func _sample_strip(top_frac: float, bottom_frac: float) -> Color:
 	var cx := w / 2
 	return _sample_box(img, cx, (y0 + y1) / 2, mini((y1 - y0) / 2, w / 4))
 
+## Mean colour over a box of pixels, or a HARD FAILURE if the box does not
+## land on the image.
+##
+## THE SENTINEL THIS REPLACES WAS WORSE THAN NO CHECK AT ALL. It used to
+## `return Color.BLACK` when the box fell entirely outside the image, which
+## made "I could not take this sample" indistinguishable from "I measured
+## this object and it is black" -- and the two are not symmetric mistakes.
+## Black against a mid-tone ground is a HIGH contrast ratio, so the failure
+## mode INFLATED the result: the 26 missed samples documented in
+## docs/PROBE_AUDIT.md F4 were recorded at 5.81:1, 7.01:1, 4.38:1 and 3.06:1
+## against a 3.0:1 floor, and every one of them was counted as a comfortable
+## pass on a hazard the probe had never actually looked at.
+##
+## A capture probe's whole job is to report what is on the screen. If it
+## cannot see the thing it was asked about, the only honest answer is to
+## say so and fail -- never to score the sentinel it invented instead.
 func _sample_box(img: Image, cx: int, cy: int, half: int) -> Color:
 	var w := img.get_width()
 	var h := img.get_height()
@@ -672,7 +814,10 @@ func _sample_box(img: Image, cx: int, cy: int, half: int) -> Color:
 			acc += Vector3(c.r, c.g, c.b)
 			samples += 1
 	if samples == 0:
-		return Color.BLACK
+		_missed_samples += 1
+		push_error("DARK PALETTE AUDIT: sample box (%d,%d) half=%d falls entirely outside the %dx%d frame -- the object is not on screen, so this measurement does not exist. Refusing to score it." % [
+			cx, cy, half, w, h])
+		return Color(NAN, NAN, NAN)
 	acc /= float(samples)
 	return Color(acc.x, acc.y, acc.z)
 

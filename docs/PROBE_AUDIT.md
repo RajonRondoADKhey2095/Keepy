@@ -156,10 +156,54 @@ independent defects:
    recorded at 5.81:1, 7.01:1, 4.38:1, 3.06:1 and counted as comfortable
    passes. A sample that could not be taken must never be scored.
 
-Consequence for the record: **every CHARGER and STOMPER contrast number the
-canonical pass has ever reported is void**, along with all six hazards on
-four of the six palettes. The sweep pass is unaffected (it never sets
-`PLAYING`, so nothing moves), as is the barrier pass.
+A third defect surfaced once the first two were fixed and the CHARGER could
+be seen at all: **the sample point was the obstacle node's ORIGIN**, which
+for a ground-anchored hazard is on the ground plane. The CHARGER wedge sits
+ON the ground (`ChargerShapeProbe` asserts min Y ~= 0), so its origin
+projects to the bottom edge of the silhouette and a 14px box around it is
+mostly ground -- it measured `1.00:1`, reading the ground's colour and
+comparing it to itself. Fixed by sampling the world-space centre of the
+type's own `ModelSlot` mesh AABB.
+
+Consequence for the record: of the canonical pass's **36 hazard contrast
+measurements (6 hazards x 6 palettes), 9 were valid**. 26 were off-frame
+misses scored as black, and the CHARGER's one on-frame sample was reading
+the ground. NOISETTE and GLAND (12 samples) were always valid. The sweep
+pass is unaffected (it never sets `PLAYING`, so nothing moves), as is the
+barrier pass.
+
+### Re-measured, after the fix
+
+36/36 hazard samples valid, `0 missed samples`. Worst ratio per object
+across the six shipped palettes:
+
+| object | before | after | note |
+|---|---|---|---|
+| DODGE | 1.99 | **1.95** | 4 of 6 palettes were phantom |
+| JUMP | 1.51 | **1.44** | 4 of 6 phantom |
+| ENEMY | 1.58 | **1.47** | 4 of 6 phantom |
+| AIR_ENEMY | 1.00 | **1.30** | 4 of 6 phantom |
+| CHARGER | 1.00 | **1.61** | 5 of 6 phantom, 6th was ground |
+| STOMPER | 2.46 | **1.94** | 5 of 6 phantom |
+| NOISETTE / GLAND | 1.01 / 1.03 | 1.01 / 1.03 | unchanged, always valid |
+| **hazard worst** | **1.00** | **1.30** | now AIR_ENEMY, was CHARGER-on-ground |
+
+**No design conclusion flips**, and that is worth stating as plainly as the
+defect: the aggregate verdict was "below the 3.0:1 floor" before and is
+"below the 3.0:1 floor" after. The phantom samples all produced HIGH ratios,
+so they could never become the `min()` the verdict is taken over -- they hid
+inside the per-palette table instead.
+
+That table is not decoration. This probe's own header states that the
+CHARGER's and the STOMPER's colours were **chosen against these numbers**
+(both are unshaded meshes with no pre-existing colour to inherit). Those two
+rows were 5-of-6 and 5-of-6 phantom. The colour decisions were made against
+measurements that did not exist.
+
+Run-to-run reproducibility after the fix: all 36 hazard samples are
+byte-identical between runs; only NOISETTE/GLAND move, in the 4th decimal,
+from their own bob animation -- which is exactly what the sample box is
+sized to average out.
 
 ## What this batch changes
 
