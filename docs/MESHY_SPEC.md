@@ -346,3 +346,61 @@ catch a rebalancing.
   with a fixed `-- --seed=<int>`. Their output should be **byte-identical**
   to the pre-swap run at the same seed. If it is not, an asset reached
   something it should not have.
+
+## 11. Import log
+
+Attempts to install a real Meshy asset, and why they did or did not proceed.
+Kept here so the next session does not repeat a measurement that already
+has an answer.
+
+### 2026-08-08 -- Hibou (pursuer), REJECTED at the pre-import check
+
+`assets_source/pursuer/Meshy_AI_Emberwing_Owl_0808114211_texture.glb`
+(26.9 MB) was measured before any Godot import, per §2's "verify before you
+import" rule and this batch's explicit instruction not to skip it.
+
+Parsed the glTF JSON chunk directly (no Blender/Godot in this sandbox;
+`pygltflib`/`trimesh` were not preinstalled and were added ad hoc for this
+check) and summed `indices.count / 3` over the mesh's one primitive:
+
+    total triangles : 581,260
+    total vertices   : 301,606
+    budget (Hibou)   :   8,000   (Section 7)
+
+**581,260 is exactly Meshy's own pre-decimation figure** referenced in this
+batch's task brief -- the file was exported straight off the generator with
+no decimation pass applied at all, not a "decimated but still too heavy"
+asset. It is **72.7x the 8,000-triangle budget** and the 26.9 MB payload
+(vs. the ~2 MB combined target in §7) is the same defect showing up as file
+size instead of triangle count.
+
+**Decision: do not import.** No ModelSlot change, no scene edit, no
+install. §1's contract (visual-only changes) cannot even be evaluated until
+the mesh is inside budget -- an oversized visual is still a visual-only
+change by that contract's letter, but it defeats the frame-budget reasoning
+in §7 that the contract exists to protect, on the one GPU-bound renderer
+(`gl_compatibility`) this project ships on.
+
+**Decimation, checked for feasibility, not performed as a deliverable:**
+this sandbox does not carry Blender, but `pip install trimesh
+fast_simplification` succeeded and `trimesh.Trimesh.simplify_quadric_decimation
+(face_count=6000)` ran on the real file, producing 5,999 triangles in
+about a minute. That confirms an in-budget decimation is mechanically
+possible, but it was not carried through to a committed asset here: quadric
+decimation on a single merged primitive does not guarantee the 4 separate
+JPEG maps (`base_color`, `metallic_roughness`, `normal`, `emissive`) stay
+correctly UV-mapped afterward, and that needs a visual check this sandbox
+cannot do (no renderer, no way to eyeball the result). Recommended next
+step, either one:
+
+- **In Meshy:** re-export requesting the "retopologized / low-poly" output
+  explicitly (§7 already says the raw output is 30k-150k triangles for a
+  single character; this one skipped that stage entirely), target
+  5,000-6,000 triangles for the Hibou.
+- **In Blender:** apply a Decimate modifier (Collapse, ~1% of 581,260 to
+  land near 5,800) on the source file, verify the 4 texture maps still line
+  up in the UV editor before re-export, then drop the result at the same
+  `assets_source/pursuer/` path for the next session to pick up.
+
+Orientation (the -Z-facing-back check from §3/§6) was not evaluated --
+that step only applies once the budget step passes, and it did not.
