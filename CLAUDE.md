@@ -28,10 +28,11 @@ encore active, vérifier avant de coder (`git fetch` + comparer `origin/main`
 Règle permanente, sans exception, pour tout rapport de fin de tâche ou de
 batch produit dans ce repo :
 
-1. **Markdown natif, jamais de wrapper 4-backticks.** Le rapport est écrit
-   directement comme texte de la réponse — jamais entouré d'un bloc de code
-   à 4 backticks (` ``` ` ou ` ```markdown `), et jamais produit via un tool
-   call ou un script qui "print" le contenu.
+1. **Fence à 4 backticks, toujours.** Le rapport de fin de tâche doit
+   toujours être fourni dans un seul bloc de code Markdown enveloppé par un
+   fence à 4 backticks, pour permettre la copie en un tap sur iPhone. Le
+   rapport reste un bloc unique, jamais paginé en plusieurs messages ni
+   plusieurs blocs. Cette règle est permanente, sans exception.
 2. **Structure fixe**, dans cet ordre : BRANCH, COMMITS, FILES, BUILD,
    DEPLOY, VALIDATION CHECKLIST, NEXT STEPS, DOCS STATUS.
 3. **UN SEUL bloc Markdown, toujours — la pagination est INTERDITE, sans
@@ -40,12 +41,11 @@ batch produit dans ce repo :
    ~100 lignes, CONDENSER ou RÉSUMER pour rester dans un seul bloc — la
    contrainte "un seul bloc" prime sur l'exhaustivité du détail. Le rapport
    doit rester copiable en un seul tap sur iPhone.
-4. **Vérification avant envoi.** Avant d'envoyer, relire la réponse : si
-   elle commence par ``` ``` `` `` ou ``` ```markdown ```, enlever ce
-   wrapper et renvoyer en Markdown natif ; si elle dépasse ~100 lignes ou
-   contient plusieurs blocs séquentiels, condenser jusqu'à tenir dans un
-   seul bloc. Confirmer en une ligne à la fin qu'on a fait cette
-   vérification.
+4. **Vérification avant envoi.** Avant d'envoyer, relire la réponse : si le
+   rapport n'est pas enveloppé dans un fence à 4 backticks, ajouter ce
+   wrapper ; si elle dépasse ~100 lignes ou contient plusieurs blocs
+   séquentiels, condenser jusqu'à tenir dans un seul bloc. Confirmer en une
+   ligne à la fin qu'on a fait cette vérification.
 5. **S'applique à chaque tâche sans exception**, y compris quand on
    redemande une reformulation d'un résultat déjà produit (pas de relance
    de recherche dans ce cas).
