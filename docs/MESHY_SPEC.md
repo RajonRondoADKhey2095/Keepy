@@ -404,3 +404,78 @@ step, either one:
 
 Orientation (the -Z-facing-back check from §3/§6) was not evaluated --
 that step only applies once the budget step passes, and it did not.
+
+### 2026-08-08 -- Hibou (pursuer), second attempt, ACCEPTED after texture recompression
+
+`assets_source/pursuer/owl_pursuer_decimated.glb` (22.3 MB) superseded the
+581,260-triangle file above. Verified before any Godot import, per §2:
+
+**Triangle budget** -- parsed the glTF JSON chunk directly (`struct`/`json`
+in Python, no Blender/Godot), summed `indices.count / 3` over the mesh's one
+primitive:
+
+    total triangles : 7,070
+    total vertices   : 7,399
+    budget (Hibou)   : 8,000   (Section 7)
+
+Matches Meshy's own claimed figure -- this file, unlike the first attempt,
+really was decimated. **Within budget, by 930 triangles.**
+
+**22.3 MB diagnosis** -- read each of the 4 image bufferViews' PNG `IHDR`
+chunk directly: `Baked_Emit` 4096x4096 (3.0 MB), `normal` 2048x2048 (4.2 MB),
+`Baked_BaseColor` 2048x2048 (5.7 MB), `Baked_MetallicRoughness` 4096x4096
+(8.1 MB) -- all uncompressed PNG. **The 22.3 MB is entirely texture
+payload, not mesh data** (the 4 accessors backing POSITION/NORMAL/
+TEXCOORD_0/indices total 279,188 bytes, i.e. 0.28 MB). Confirms the task
+brief's framing: face budget and file weight are separate defects, and only
+the second one is present here. Against the ~2 MB combined target in §7,
+these four maps needed recompression before import; the triangle count did
+not.
+
+**Recompression, performed in-sandbox** (Pillow, no Blender/Godot needed for
+this step): checked the material's `alphaMode` first -- unset, i.e. glTF
+default OPAQUE, so the RGBA alpha channel present in 3 of the 4 PNGs is
+ignored by any correct renderer and was safe to drop. Resized and
+re-encoded, same UV space (no atlas repacking, so UV correctness is
+preserved by construction, not just by inspection):
+
+| map | before | after | format |
+|---|---|---|---|
+| Baked_BaseColor | 2048x2048 PNG, 5.7 MB | 1024x1024, 239 KB | JPEG q88 |
+| Baked_Emit | 4096x4096 PNG, 3.0 MB | 1024x1024, 65 KB | JPEG q88 |
+| normal | 2048x2048 PNG, 4.2 MB | 512x512, 393 KB | PNG (kept lossless) |
+| Baked_MetallicRoughness | 4096x4096 PNG, 8.1 MB | 512x512, 64 KB | JPEG q90 |
+
+Base colour and emissive kept at 1024 (they carry the readable plumage and
+the closing-cue stripes); normal and metallic/roughness dropped further
+since §7 already notes they "buy very little on unshaded or flat-lit
+low-poly" and this material ended up unshaded anyway (see below). Rebuilt
+the `.glb` binary chunk by hand (same header, same 4 mesh bufferViews
+byte-identical, images re-encoded and re-offset, 4-byte aligned) rather than
+through a round-trip exporter, so no other property could drift. Result:
+**22.3 MB -> 1.01 MB**, verified after rebuild that triangle/vertex counts
+are unchanged (7,070 / 7,399) and all 4 image references still resolve.
+
+**Orientation** -- rendered the rebuilt `.glb` offscreen (Godot headless,
+`--rendering-driver opengl3` under `xvfb-run`, a throwaway probe scene, not
+committed) from both `+Z` and `-Z` looking at the origin. The mesh's
+authored front (face, eyes, beak) points **+Z** in local space, its back
+(feathers, the emissive stripe pattern) points **-Z** -- backwards from
+this project's convention (Pursuer faces -Z, back visible to the +Z-side
+camera, per §3/§6). This is exactly the case §9 already documents ("Meshy
+exports are frequently ... at an arbitrary rotation -- correct it with
+`Model Rotation Degrees`"): fixed with `model_rotation_degrees = (0, 180,
+0)` on the slot rather than a re-export. After the 180 degree correction the
+back -- with the emissive striations converging toward the belly, matching
+the concept art's "seen from behind" brief -- faces the camera side, visually
+confirmed in a second render pass.
+
+**UV mapping** -- visually confirmed in the same offscreen renders (front,
+back, and a `+X` side view): plumage, eyes and beak read as continuous
+surfaces with no stretching, seams or swapped maps after the resolution
+drop. Since the recompression only resamples pixels within the existing UV
+footprint (no atlas repacking), this was expected, and the render is the
+positive confirmation the first attempt's rejection couldn't get to.
+
+**Decision: import**, with the recompressed textures and a 180 degree yaw
+correction at the slot. See §6 and §10 for the installed measurements.
