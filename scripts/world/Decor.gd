@@ -26,8 +26,11 @@ class_name Decor
 ## TrackSegment would. So each hill scrolls by the same per-frame world
 ## delta as the track, scaled down by its layer's PARALLAX factor
 ## (< 1 == reads as farther away, the standard parallax depth cue), and
-## recycles to the back of its spawn range once it scrolls past the
-## camera -- same recycle-not-destroy shape as TrackManager._recycle_segment.
+## recycles to the back of its spawn range once it scrolls past its own
+## layer's near edge (spawn_z_max) -- same recycle-not-destroy shape as
+## TrackManager._recycle_segment, but recycling against the layer's own
+## band rather than a camera-proximate threshold, so a hill never travels
+## through the readable foreground and always reads at the same distance.
 ##
 ## DARK-MODE CONTRAST (docs/MESHY_SPEC.md section 8): hue does not survive
 ## the invert+tint, luminance does. The two layers are NOT distinguished by
@@ -75,13 +78,6 @@ const _LAYERS: Array[Dictionary] = [
 	},
 ]
 
-## Once a hill's Z crosses this point it is behind/around the camera
-## (CameraFollow sits at z ~= +7, see its own `offset`) and is recycled to
-## the back of its layer's spawn range -- generous on purpose, since a
-## background silhouette popping a few metres early or late is invisible
-## against a flat sky, unlike anything on the readable foreground track.
-const _RECYCLE_Z: float = 40.0
-
 ## One inner array per layer in _LAYERS, same index -- the pool itself.
 var _pools: Array[Array] = []
 
@@ -120,9 +116,18 @@ func _physics_process(delta: float) -> void:
 	for layer_index in _LAYERS.size():
 		var layer: Dictionary = _LAYERS[layer_index]
 		var move_amount: float = world_delta * float(layer["parallax"])
+		# Recycle against THIS layer's own spawn_z_max -- the near edge of its
+		# designated background band -- never a camera-proximate threshold.
+		# A hill that recycles only once it nears the camera would spend its
+		# whole lifecycle crossing the readable foreground first, growing
+		# closer and larger the entire way; recycling at the band's own near
+		# edge keeps every hill inside [spawn_z_min, spawn_z_max] forever, so
+		# its apparent distance never changes no matter how many times it
+		# has recycled or how far the run has gone.
+		var recycle_z: float = layer["spawn_z_max"]
 		for hill in _pools[layer_index]:
 			hill.position.z += move_amount
-			if hill.position.z > _RECYCLE_Z:
+			if hill.position.z > recycle_z:
 				_place_hill(hill, layer, false)
 
 ## Builds one hill's mesh+material once. A low-poly cone (radial_segments =
