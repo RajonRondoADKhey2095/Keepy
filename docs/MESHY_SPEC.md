@@ -786,40 +786,61 @@ offered for the +2.47 MB.
   `StrikeContrastAudit` / `StrikeFatalContrastAudit` / `ComboContrastAudit`
   are HUD-text probes; `DarkPaletteAudit` does sample Keepy, but its
   per-object path carries the documented llvmpipe defect in §8's own note and
-- **KNOWN OPEN DEFECT, not fixed: the strike cues leak one resource at engine
-  shutdown.** This is the first time audio has existed in this project at all,
-  and it is the one thing in this batch that does not come back clean.
-  `StrikeAudit` (the probe that fires these cues most -- its bots stumble by
-  design) ends with `ObjectDB instances leaked at exit` +
-  `1 resources still in use at exit`.
-
-  **Measured, with the sample counts stated** -- because an earlier reading in
-  this same batch called it "deterministic" off two agreeing samples and was
-  wrong:
-
-  | tree | runs | runs showing the leak |
-  |---|---|---|
-  | before (no audio at all) | 4 | **0** |
-  | after (two cues) | 6 | **5** |
-
-  So the audio causes it, and it is *intermittent*, not deterministic.
-  Attempted and **failed** to fix: `_exit_tree()` calling `stop()` on both
-  players (one clean run, then the leak returned); additionally clearing
-  `stream` on both (3 of 3 runs still leaked). Whatever holds the resource is
-  not reachable from this script, and chasing it further was out of proportion
-  to its impact. The `stop()` calls were kept as ordinary teardown hygiene,
-  with the limit stated honestly in `HUD.gd` rather than implied fixed.
-
-  **Why it was judged not to block:** the leak lines land *after* the probe's
-  own `PASSED` verdict, every measurement above them is byte-identical across
-  all six probes, and `scripts/dev/*` is excluded from the shipped build, so
-  no player ever runs the code path that produces it. What it does break is
-  the literal byte-identical stdout comparison this project gates changes on
-  -- which is why it is written down here in full rather than waved through:
-  the next session running that comparison will see StrikeAudit differ by
-  these four lines and needs to know it is this, and not something new.
-- So the unlit switch here is justified by §8's argument
+  cannot be relied on. So the unlit switch here is justified by §8's argument
   (an unshaded surface's post-invert colour is a *known* value) and by the
   offscreen render, **not** by a measured six-palette contrast pass like the
   Hibou got. A Keepy equivalent of `PursuerContrastAudit` is the honest next
   step before anyone treats Keepy's dark-mode legibility as verified.
+
+#### The StrikeAudit four-line diff -- traced, and resolved
+
+The two audio cues made `StrikeAudit` append four lines to its own stdout
+*after* its `PASSED` verdict, breaking the byte-identical comparison this
+project gates asset and UI changes on:
+
+    WARNING: ObjectDB instances leaked at exit
+         at: cleanup (core/object/object.cpp:2284)
+    ERROR: 1 resources still in use at exit
+       at: clear (core/io/resource.cpp:604)
+
+**Root cause**, traced with `--verbose` (which names the survivors) and
+isolated by changing one variable at a time:
+
+| repro | leak |
+|---|---|
+| players exist, `play()` never called | **no** |
+| `AudioStreamPlayer`s removed from the scene | **no** |
+| `play()`, then quit ~10 frames later (0.16s, cue is 0.20s) | **yes** |
+| `play()`, then quit after 2s of real time | **no** |
+
+So it is neither the nodes, the streams, nor the `.wav` import: it is
+**quitting while a playback is still live.** `play()` instantiates an
+`AudioStreamPlaybackWAV` holding a reference to the `AudioStreamWAV`; both are
+still alive at `ObjectDB` cleanup, which is why the count is exactly *one*
+resource. `StrikeAudit`'s last run frequently ends *on* a strike (the fatal
+cue is 0.55s) and then goes `_end_run -> _finish_phase -> _report -> quit()`
+within a frame or two.
+
+**Why it was intermittent (5 runs in 6) at a fixed seed:** playbacks retire on
+the AudioServer's own thread against the **wall clock**, while the probe runs
+under `--fixed-fps 60`, where frames advance by a fixed delta as fast as the
+CPU allows. It is a race the seed does not control. (An earlier note here
+called it deterministic; that was drawn from two agreeing samples and was
+wrong. An earlier note also said the resource was "held somewhere the script
+cannot reach from GDScript" -- also wrong, and superseded by this entry: it is
+reachable, it simply needs real elapsed time before `quit()`.)
+
+**It never reached a measurement, and could not have.** The diff is a pure
+append at EOF -- 5,351 lines identical, 4 added. `HUD.gd` never writes
+`GameState` (every one of its references is a read, a constant, or a signal
+connect); `StrikeAudit` never references the HUD; both are independent
+subscribers to `GameState.strike_taken`. The leaked objects are audio playback
+objects, not gameplay state. And `scripts/dev/*` is excluded from the shipped
+build, so no player ever runs this path.
+
+**Fixed in the probe, not in the game** (`StrikeAudit._settle_audio_before_quit`),
+since nothing in `HUD.gd` was misbehaving. Note it is a **real-time** wait
+(`OS.delay_msec`), not a frame wait: awaiting frames, or a `SceneTreeTimer`,
+is also driven by the fixed delta and can return before the audio thread has
+done anything. Re-measured **byte-identical** to the pre-audio baseline. Any
+future probe that fires audio and quits promptly needs the same treatment.

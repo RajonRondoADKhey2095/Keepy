@@ -631,7 +631,49 @@ func _report() -> void:
 	print("        at %.0f%% of the fallible rate. Strikes come back %d times by time and" % [
 		100.0 * control["strikes_per_min"] / maxf(fallible_floor_rate, 0.0001), total_time])
 	print("        %d by combo." % total_combo)
+	await _settle_audio_before_quit()
 	get_tree().quit(0)
+
+## Lets any in-flight HUD audio cue retire before the engine tears down.
+##
+## WHY THIS PROBE NEEDS IT AND THE OTHERS DO NOT. This is the probe that fires
+## the strike cues most -- its bots stumble by design -- and its last run
+## frequently ends ON a strike, whose fatal cue is 0.55s long. From there it
+## goes _end_run -> _finish_phase -> _report -> quit() in a frame or two. A
+## playback still live at that moment leaves its AudioStreamPlaybackWAV, and
+## the AudioStreamWAV it holds a reference to, alive at ObjectDB cleanup:
+##
+##     WARNING: ObjectDB instances leaked at exit
+##     ERROR: 1 resources still in use at exit
+##
+## Those two lines (four with their `at:` lines) appended themselves to this
+## probe's stdout AFTER its own PASSED verdict, which broke the byte-identical
+## comparison this project gates asset and UI changes on while changing not one
+## measurement above them. Traced with --verbose and isolated three ways: the
+## players merely existing does not do it, and neither does removing them --
+## only calling play() and then quitting before the playback retires.
+##
+## IT IS A REAL-TIME WAIT, NOT A FRAME WAIT, and that distinction is the whole
+## reason this helper is three lines instead of one. Playbacks retire on the
+## AudioServer's own thread against the WALL CLOCK, while this probe runs under
+## --fixed-fps 60, where frames advance by a fixed delta as fast as the CPU
+## allows -- hundreds of them can elapse in a few milliseconds of real time. So
+## awaiting frames, or a SceneTreeTimer (which is also driven by that same fixed
+## delta), can both return long before the audio thread has done anything at
+## all. Only real elapsed time works, which is what OS.delay_msec buys.
+##
+## This is also why the leak was INTERMITTENT (5 runs in 6) at a fixed seed
+## rather than deterministic: it is a race against wall-clock, which the seed
+## does not control. An earlier reading of it as deterministic was drawn from
+## two agreeing samples and was simply wrong.
+##
+## Costs one second, once, after every number this probe reports has already
+## been printed -- it cannot affect a measurement even in principle.
+func _settle_audio_before_quit() -> void:
+	# A frame first, so any stop()/free() already queued this frame is applied
+	# before the wait rather than during it.
+	await get_tree().process_frame
+	OS.delay_msec(1000)
 
 ## Captures as a fraction of that profile's DEATHS -- runs that reached
 ## MAX_RUN_S are excluded from both sides, since a run that never ended did

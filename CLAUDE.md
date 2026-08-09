@@ -85,6 +85,22 @@ Pillow si besoin, orientation vérifiée par rendu offscreen (jamais copiée
 d'un asset précédent), scale calculé contre le budget §5/§7, checklist
 d'acceptation §10 avant tout push.
 
+## Audio : ne coupe pas l'audio de fond (vérifié sur device, 9 août 2026)
+
+Le projet a reçu son **premier audio** le 9 août 2026 (deux cues one-shot sur
+les strikes, `assets/audio/strike_*.wav`, joués depuis `HUD.gd`). Avant ça il
+n'y avait aucun `AudioStreamPlayer`, aucun bus, aucun autoload audio.
+
+**Constat de test manuel, à ne pas re-vérifier :** l'export HTML5/WebGL Godot
+de ce projet **n'interrompt pas et ne baisse pas (`duck`)** l'audio de fond
+d'une autre app ou d'un autre onglet — musique, podcast. Testé à la main sur
+**iOS Safari et Android**, en **prod (`keepy-ten.vercel.app`) et staging**.
+
+**Conséquence pratique : pas besoin d'un toggle de coupure** (« couper le son
+si de la musique joue ailleurs ») pour les futurs travaux SFX/audio. Le Web
+Audio de la page cohabite avec l'audio de fond, c'est le comportement voulu.
+Point acquis, aucune modification de code associée.
+
 ## Déploiement staging (validation avant merge main)
 
 **Depuis le 8 août 2026**, une branche permanente `staging` existe en plus
