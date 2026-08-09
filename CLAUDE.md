@@ -61,6 +61,23 @@ deux assets réels sont intégrés et validés selon la méthode qu'il documente
 - **Keepy (hero squirrel)** — `assets/models/keepy_squirrel_hero.glb`,
   installé dans `Keepy/MeshInstance3D` (2026-08-09).
 
+Les deux matériaux sont **unlit** (`KHR_materials_unlit` posé à la main dans
+le `.glb`, cf §9) — c'est la règle par défaut pour tout asset de ce projet,
+pas une particularité du hibou : §8 explique pourquoi seule une surface
+unshaded a une couleur *connue* après l'inversion du mode sombre.
+
+**Piège payload, mesuré le 9 août 2026 — à connaître avant d'ajouter un
+asset :** `export_presets.cfg` utilise `export_filter="all_resources"`, qui
+embarque **toute** ressource du projet dans le build, qu'une scène la
+référence ou non. Conséquence : les originaux Meshy bruts d'`assets_source/`
+partaient dans le build web — **35,84 Mo de charge morte** téléchargée par
+chaque joueur mobile, mesurée sur un arbre identique en ne changeant que le
+filtre. Corrigé en ajoutant `assets_source/*` à `exclude_filter` (à côté de
+`scripts/dev/*`, qui y était déjà pour la même raison). Le `.pck` est passé
+de 43,35 Mo à 4,23 Mo. Corollaire pour le prochain asset : **désactiver un
+map à l'import ne réduit rien** — un `.ctex` non référencé est packé quand
+même ; pour économiser réellement, il faut retirer le map du `.glb`.
+
 Voir `docs/MESHY_SPEC.md` §11 (Import log) pour les mesures, décisions et
 résultats de validation de chaque asset. Le prochain asset à intégrer suit
 la même méthode : recon triangle/texture avant import, recompression

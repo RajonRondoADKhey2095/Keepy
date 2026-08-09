@@ -190,6 +190,40 @@ const PIP_SPENT_COLOR: Color = Color(0.10, 0.09, 0.12, 1)
 ## means "act now" everywhere else on this HUD.
 const STRIKE_DANGER_COLOR: Color = WARNING_COLOR
 
+## --- STRIKE-1 ENTRY KICK (reinforcement batch) ---------------------
+## A single sharp scale spike on the strike row the instant strike 1 is
+## credited, decaying into the ordinary WARNING_PULSE_* cycle underneath it.
+##
+## WHY IT EXISTS. The amber danger pulse (STRIKE_DANGER_COLOR +
+## WARNING_PULSE_*) is armed the moment the FIRST strike lands and then runs
+## unchanged until the run ends -- see STRIKE_FATAL_COLOR's own doc for the
+## playtest finding that produced it. But its own entry is SOFT: the pulse is
+## `1 + A * sin(t)` restarted at t=0, and sin(0) is exactly 0, so the row
+## begins pulsing from precisely its resting scale and takes a quarter of a
+## 3.5Hz cycle (~71ms) to reach its first peak. Nothing marks the INSTANT the
+## state changed -- the player's first opportunity to notice is a slow swell
+## that looks the same as every later swell.
+##
+## A follow-up capture investigation (staging playtest, score 355) measured
+## the counting itself as correct -- two genuinely distinct contacts, 1.483s
+## apart at the closest, well outside STRIKE_INVULNERABLE_S -- and concluded
+## the gap was PERCEPTUAL: the warning was on screen and did its job poorly
+## at the one moment it most needed to land. This is that moment, given an
+## edge.
+##
+## DELIBERATELY ADDITIVE rather than a replacement: it rides on top of the
+## existing pulse and expires, so the steady-state cue a player reads for the
+## rest of the run is byte-for-byte the one that already shipped. And it is
+## scoped to the DANGER branch only -- the fatal beat owns the row outright
+## when it arms (see _update_strike_display), so this can never blunt the
+## strike-2 cue's own distinctness.
+const STRIKE_KICK_DURATION_S: float = 0.34
+## Peak added scale at the top of the kick. Comfortably past
+## WARNING_PULSE_AMPLITUDE (0.18) so the entry reads as its own event rather
+## than as one unusually strong beat of the cycle, and short of the fatal
+## pulse's own 0.32 swing so the two never trade places in prominence.
+const STRIKE_KICK_PEAK: float = 0.26
+
 ## --- FATAL STRIKE (the capture beat, playtest-fixes batch) ---------
 ## Colour + pulse for the strike that actually catches the player, armed by
 ## GameState.pursuer_caught (see _on_pursuer_caught below) and held for the
@@ -244,6 +278,21 @@ const FATAL_PULSE_AMPLITUDE: float = 0.32
 @onready var gauge_fill: ColorRect = $MarginContainer/PursuerRow/GaugeTrack/GaugeFill
 @onready var pursuer_vignette: ColorRect = $PursuerVignette
 @onready var strike_flash: ColorRect = $StrikeFlash
+## THE PROJECT'S FIRST AUDIO. There was no AudioStreamPlayer, no bus layout
+## and no sound file anywhere in this repo before this batch (assets/audio/
+## held a lone .gitkeep), so there was no existing SFX autoload or pattern to
+## reuse -- these two players are deliberately plain scene nodes on the HUD
+## rather than a new global audio service, because two one-shot cues do not
+## justify one and the HUD is already the node that owns every other strike
+## cue (flash, pips, pulse, colour).
+##
+## Both are fired from _on_strike_taken, i.e. the same signal and the same
+## frame as the visual flash, so sound and picture can never disagree about
+## when a strike landed. Separate players rather than one with a swapped
+## stream: the fatal cue is longer than the warning (0.55s vs 0.20s) and the
+## two must never cut each other off mid-tail.
+@onready var strike_warning_sfx: AudioStreamPlayer = $StrikeWarningSfx
+@onready var strike_fatal_sfx: AudioStreamPlayer = $StrikeFatalSfx
 @onready var strike_row: HBoxContainer = $MarginContainer/PursuerRow/StrikeRow
 @onready var strike_label: Label = $MarginContainer/PursuerRow/StrikeRow/StrikeLabel
 ## Fixed-size, resolved once. One entry per STRIKE_CAPACITY slot, in the same
@@ -283,6 +332,11 @@ var _applied_vignette: float = -1.0
 
 ## Impact-flash timer, same "-1.0 means idle" convention as the pops above.
 var _strike_flash_t: float = -1.0
+## Entry-kick timer for the strike-1 alarm -- see STRIKE_KICK_DURATION_S.
+## Same "-1.0 means idle" convention, and advanced by the same _advance_pop /
+## _pop_scale pair every other one-shot on this HUD uses, so it cannot drift
+## into being a second animation shape of its own.
+var _strike_kick_t: float = -1.0
 ## Free-running phase for the one-strike-from-death pulse, restarted when that
 ## state is ENTERED so its first beat is always a whole one -- exactly the
 ## contract _warning_t follows for the combo.
@@ -374,10 +428,30 @@ func _on_combo_tier_up(_multiplier: int) -> void:
 func _on_pursuer_became_visible() -> void:
 	_pursuer_pop_t = 0.0
 
-## Arms the impact flash. The pips themselves are NOT repainted here -- see
-## _drawn_strikes for why they are rebuilt from the state instead.
-func _on_strike_taken(_source_type: int, _strikes_used: int) -> void:
+## Arms the impact flash, the strike-1 entry kick and the audio cue. The pips
+## themselves are NOT repainted here -- see _drawn_strikes for why they are
+## rebuilt from the state instead.
+##
+## `strikes_used` is the count AFTER this strike (see GameState.register_
+## strike, which increments before emitting), so the capacity comparison
+## below is the same discriminator _on_pursuer_caught already uses: this IS
+## the fatal one exactly when the count has reached STRIKE_CAPACITY.
+##
+## The two branches are the WHOLE of the sound design's separation rule: the
+## warning cue is short and high, the fatal one long and roughly two octaves
+## below it, mirroring in sound the deliberate "different hue family, not a
+## shade of the same one" rule STRIKE_FATAL_COLOR's doc states for colour.
+## Neither is ever played on the other's frame.
+func _on_strike_taken(_source_type: int, strikes_used: int) -> void:
 	_strike_flash_t = 0.0
+	if strikes_used >= GameState.STRIKE_CAPACITY:
+		strike_fatal_sfx.play()
+		return
+	# Non-fatal strike: this is the moment the amber alarm turns on, so it is
+	# the moment that needs marking. Kick and warning cue both scoped here so
+	# neither can fire on the capture frame the fatal branch above owns.
+	_strike_kick_t = 0.0
+	strike_warning_sfx.play()
 
 ## Arms the fatal-strike beat -- see STRIKE_FATAL_COLOR's own doc.
 ## GameState.pursuer_caught fires for BOTH ways a run can end at the
@@ -482,6 +556,12 @@ func _update_strike_display(delta: float) -> void:
 		_apply_strike_color(STRIKE_DANGER_COLOR)
 		_strike_pulse_t += delta
 		scale = 1.0 + WARNING_PULSE_AMPLITUDE * sin(_strike_pulse_t * TAU * WARNING_PULSE_HZ)
+		# The entry kick rides ON TOP of the steady pulse rather than
+		# replacing it -- see STRIKE_KICK_DURATION_S. _pop_scale returns 1.0
+		# at rest, so subtracting 1 turns the shared envelope into a pure
+		# additive spike that vanishes the moment the kick expires, leaving
+		# the already-shipped pulse untouched for the rest of the run.
+		scale += _pop_scale(_strike_kick_t, STRIKE_KICK_DURATION_S, 1.0 + STRIKE_KICK_PEAK) - 1.0
 	else:
 		_apply_strike_color(NORMAL_COLOR)
 	# On the ROW, not on the label: the pips are the information, so the pulse
@@ -490,6 +570,10 @@ func _update_strike_display(delta: float) -> void:
 	strike_row.pivot_offset = strike_row.size * 0.5
 	strike_row.scale = Vector2(scale, scale)
 
+	# Advanced unconditionally, like the flash below it: a kick armed on the
+	# frame a run ended must still expire on its own rather than be left
+	# primed for whatever draws this row next.
+	_strike_kick_t = _advance_pop(_strike_kick_t, delta, STRIKE_KICK_DURATION_S)
 	_strike_flash_t = _advance_pop(_strike_flash_t, delta, STRIKE_FLASH_DURATION_S)
 	# _pop_scale returns 1.0 at rest and peaks at its `peak` argument, so
 	# passing (1 + max_alpha) and subtracting 1 turns that same envelope into

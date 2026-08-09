@@ -735,3 +735,59 @@ web export templates fetched into the sandbox, matching
   Keepy's material shading to §8's dark-mode rules the way the Hibou's
   was) rather than fixed in this batch, since no Keepy-specific contrast
   probe is part of the §10 acceptance checklist this task specified.
+
+**2026-08-09, follow-up in the same day's second batch -- unlit applied, and
+the payload hypothesis above CORRECTED.** The flagged follow-up was carried
+out, and measuring it properly disproved the explanation this entry had just
+offered for the +2.47 MB.
+
+- **`KHR_materials_unlit` applied** to `keepy_squirrel_hero.glb` by the same
+  hand-edit as the Hibou (JSON chunk only, BIN chunk verified byte-identical,
+  so no mesh or image data could drift). Confirmed by loading the imported
+  scene and reading the material back: `shading_mode = 0` (unshaded), and
+  Godot reports `normal_texture = null` / `emission_enabled = false` -- i.e.
+  three of the four maps are discarded at import, exactly as the Hibou's are.
+- **The lit-material explanation for the +2.47 MB was WRONG.** Applying unlit
+  and re-exporting moved `index.pck` from 43,352,656 to **43,387,664 bytes --
+  35 KB *bigger*, not smaller.** The reason the maps were still being paid for
+  is `export_presets.cfg`'s `export_filter="all_resources"`, which packs every
+  resource in the project whether any material references it or not. Import-
+  time discarding never reaches the exporter. The Hibou's own +0.22 MB was
+  therefore never evidence of unlit saving payload either -- the two figures
+  were measured against different-sized project trees and are not comparable.
+- **The real payload defect, found while measuring the above:** the raw Meshy
+  originals in `assets_source/` were being imported and **shipped in the web
+  build**. Measured on one identical tree, changing nothing but the export
+  filter: `index.pck` **43,387,664 bytes with `assets_source/` -> 5,810,208
+  without**, i.e. **35.84 MB of dead payload** that no scene references and
+  that every mobile player was downloading. Fixed by adding `assets_source/*`
+  to `exclude_filter`, alongside the `scripts/dev/*` exclusion that was
+  already there for exactly the same reason (a directory the shipped game
+  never loads from). This dwarfs every asset figure in §7 and is the single
+  biggest payload item this document has recorded.
+- **Unused maps then stripped from the `.glb` itself.** With the material
+  proven unlit, `emissiveTexture` / `normalTexture` / `metallicRoughness
+  Texture` and their images are unreachable, so they were removed from the
+  glTF and their extracted `assets/models/*` siblings deleted: **813,356 ->
+  298,344 bytes**, one image (`Baked_BaseColor`) left. Triangle/vertex counts
+  re-verified unchanged (3,129 / 3,121), and the result re-rendered offscreen
+  against the ground colour to confirm the asset still reads correctly
+  unshaded. Recoverable if the material is ever made lit again: the full
+  4-map original is what `assets_source/hero/` holds.
+- **Net result against the figure this entry originally flagged**, measured
+  with `assets_source/` excluded on BOTH sides so the two are comparable:
+  baseline (`90bfd39`) `index.pck` 3,164,800 bytes, current 4,430,656 --
+  **+1.21 MB for the squirrel plus this batch's two audio cues**, against the
+  **+2.47 MB** flagged above. And the build a player actually downloads fell
+  from 43.35 MB to **4.23 MB**.
+- **Contrast coverage, stated rather than assumed:** there is **no
+  Keepy-specific contrast probe in this project.** `PursuerContrastAudit`
+  measures the pursuer's silhouette only (zero references to Keepy);
+  `StrikeContrastAudit` / `StrikeFatalContrastAudit` / `ComboContrastAudit`
+  are HUD-text probes; `DarkPaletteAudit` does sample Keepy, but its
+  per-object path carries the documented llvmpipe defect in §8's own note and
+  cannot be relied on. So the unlit switch here is justified by §8's argument
+  (an unshaded surface's post-invert colour is a *known* value) and by the
+  offscreen render, **not** by a measured six-palette contrast pass like the
+  Hibou got. A Keepy equivalent of `PursuerContrastAudit` is the honest next
+  step before anyone treats Keepy's dark-mode legibility as verified.
