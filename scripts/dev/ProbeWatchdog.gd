@@ -108,9 +108,30 @@ const DEFAULT_BUDGET_S: float = 900.0
 ## exercised" that ProbeCoverage.gd exists to prevent.
 const EXIT_TIMEOUT: int = 2
 
+## Seconds the run clock must sit unchanged before "frozen" is the honest
+## word for it. Well above any single-frame hitch, well below the budget.
+const CLOCK_STALL_S: float = 5.0
+
 var _label: String = ""
 var _budget_s: float = DEFAULT_BUDGET_S
 var _started_ms: int = 0
+
+## Last observed run clock, and when it last MOVED. Sampled every frame so
+## a timeout can say whether the probe was frozen or merely slow -- the two
+## need opposite next steps, and nothing else in the output separates them.
+var _last_run_time: float = -1.0
+var _last_progress_ms: int = 0
+
+## The GameState autoload, resolved ONCE by path rather than referenced by
+## name. Nothing in this file may name that identifier at compile time:
+## PacingProbe is a `--script` SceneTree where the autoload does not
+## exist, and GDScript resolves the name when the SCRIPT is compiled, not
+## when the line runs. MEASURED -- an earlier revision of this file read
+## `GameState.run_time_s` in _process and PacingProbe died with
+## `Compile Error: Identifier not found: GameState`, cascading through
+## ProbeDeadline into the probe itself. The timeout became the thing that
+## broke the run it was supposed to bound.
+var _gs: Node = null
 
 ## Arms a watchdog on `probe`, which is the probe's own root Node. Call it
 ## as the FIRST statement of _ready(), before anything that could itself
@@ -151,7 +172,15 @@ static func deadline(label: String, budget_s: float = DEFAULT_BUDGET_S) -> Probe
 ## produce the SAME one. A timeout reported two ways is a timeout a caller
 ## can learn to recognise in one form and miss in the other -- and the
 ## whole value of this file is that its output is unmistakable.
-static func report_inconclusive(label: String, elapsed_s: float, budget_s: float) -> void:
+## `stalled_s` is how long the run clock has been FROZEN when the budget
+## ran out, or -1.0 where that could not be observed (the ProbeDeadline
+## path runs in a blocking loop with no frames to sample from).
+##
+## It exists because "it hung" and "it is slow" need OPPOSITE next steps,
+## and the state line alone does not separate them -- which was measured,
+## not guessed. See the two causes named below.
+static func report_inconclusive(label: String, elapsed_s: float, budget_s: float,
+		stalled_s: float = -1.0) -> void:
 	print("")
 	print("%s INCONCLUSIVE: ran %.0fs of wall clock (budget %.0fs) without reaching" % [
 		label, elapsed_s, budget_s])
@@ -161,20 +190,63 @@ static func report_inconclusive(label: String, elapsed_s: float, budget_s: float
 	print("")
 	print("  GameState at the timeout: %s" % _gamestate_line())
 	print("")
+	_print_likely_cause(stalled_s)
+
+## Names the likely cause instead of listing every cause. A timeout that
+## always prints the same paragraph trains the reader to skip it, and the
+## paragraph that was here pointed at the pursuer unconditionally -- which
+## is wrong half the time, in a way that was measured:
+##
+##   ChargerAudit, run with `--fixed-fps 60` placed AFTER the bare `--`,
+##   times out at 900s reporting `state=PLAYING run_time=899.88s`. It was
+##   never stuck. It was 0.12 SIMULATED SECONDS from finishing, pacing at
+##   ~1x real time because everything after `--` is handed to the app as
+##   user args and the engine never saw the flag. The old text sent the
+##   reader after a pursuer that had nothing to do with it.
+static func _print_likely_cause(stalled_s: float) -> void:
+	var state_ok := false
+	var loop := Engine.get_main_loop()
+	if loop is SceneTree:
+		var gs: Node = (loop as SceneTree).root.get_node_or_null("GameState")
+		state_ok = gs != null and _state_name(int(gs.state)) == "PLAYING"
+	if state_ok and stalled_s >= 0.0 and stalled_s < CLOCK_STALL_S:
+		print("  LIKELY CAUSE -- NOT STUCK, JUST SLOW. The run clock was still advancing")
+		print("  when the budget ran out (last moved %.1fs ago), and the state is PLAYING." % stalled_s)
+		print("  A probe that is progressing normally and still runs out of wall clock is")
+		print("  almost always pacing at ~1x REAL time, which means the engine never got")
+		print("  `--fixed-fps 60`. Check the flag ORDER: engine flags go BEFORE the bare")
+		print("  `--`, user args (like `--seed=`) after it. `--fixed-fps` placed after the")
+		print("  `--` is silently handed to the app and ignored:")
+		print("")
+		print("    godot4 --headless --fixed-fps 60 --path . res://scripts/dev/X.tscn -- --seed=N")
+		print("")
+		print("  Re-run it that way before looking for a defect in the probe.")
+		return
 	print("  FIRST THING TO CHECK: a probe that advances its simulated clock only")
 	print("  while state == PLAYING has a clock that stops for good as soon as the run")
 	print("  ends by a path its neutered collision does not control -- the pursuer being")
 	print("  the one that exists today. If the state above is not PLAYING, that is almost")
 	print("  certainly what happened; see GameState.pursuer_enabled.")
+	if stalled_s >= CLOCK_STALL_S:
+		print("")
+		print("  The run clock has been FROZEN for %.0fs, which is that symptom exactly." % stalled_s)
 
 func _ready() -> void:
 	_started_ms = Time.get_ticks_msec()
+	_last_progress_ms = _started_ms
+	_gs = get_node_or_null("/root/GameState")
 
 func _process(_delta: float) -> void:
-	var elapsed := float(Time.get_ticks_msec() - _started_ms) / 1000.0
+	var now := Time.get_ticks_msec()
+	var run_time: float = _gs.run_time_s if _gs != null else -1.0
+	if run_time != _last_run_time:
+		_last_run_time = run_time
+		_last_progress_ms = now
+	var elapsed := float(now - _started_ms) / 1000.0
 	if elapsed < _budget_s:
 		return
-	report_inconclusive(_label, elapsed, _budget_s)
+	report_inconclusive(_label, elapsed, _budget_s,
+		float(now - _last_progress_ms) / 1000.0)
 	get_tree().quit(EXIT_TIMEOUT)
 
 ## GameState is looked up through the main loop rather than referenced as

@@ -125,6 +125,59 @@ identifiée et chiffrée dans §7.2, **volontairement non faite dans le lot
 props** — elle touche la silhouette d'un objet de gameplay et mérite sa
 propre revue device.
 
+## Sondes : aucune ne peut tourner indéfiniment (mesuré, 9 août 2026)
+
+Toute sonde de `scripts/dev/` est bornée par un budget **temps réel** de
+900 s. Au dépassement elle imprime un verdict **INCONCLUSIVE** explicite et
+sort en **code 2** — jamais 0 (faux vert), jamais 1 (un timeout n'est pas
+une violation de contrat, c'est une absence de verdict).
+
+Deux points d'entrée, parce qu'une sonde a deux formes possibles :
+
+| forme | mécanisme | pourquoi |
+|---|---|---|
+| itère des frames | `ProbeWatchdog.arm(self, LABEL)` | `_process` tourne entre les frames |
+| bloque dans un seul appel | `ProbeWatchdog.deadline(LABEL)` + `abort_if_exceeded()` dans la boucle | aucune frame n'existe, la boucle doit demander elle-même |
+
+**`arm()` seul est MUET sur une sonde bloquante** — mesuré : budget 5 s,
+toujours vivante à 25 s. C'était le cas de `DecorParallaxProbe` (2000
+itérations dans `_ready()`) et de `PacingProbe` (`--script`, tout dans
+`_init()`). Les deux sont corrigées.
+
+`ProbeTimeoutAudit.tscn` **rend la garantie non optionnelle** : il échoue
+si une sonde n'arme aucun timeout, ou l'arme après la première instruction
+de `_ready()`. Vérifié rouge avant vert. À lancer après toute modification
+de `scripts/dev/` — il coûte moins d'une seconde.
+
+⚠️ **Piège d'invocation, à connaître avant de conclure qu'une sonde
+plante.** Les flags moteur vont AVANT le `--`, les args applicatifs après :
+
+```
+godot4 --headless --fixed-fps 60 --path . res://scripts/dev/X.tscn -- --seed=20260806
+```
+
+`--fixed-fps` placé après le `--` est ignoré par le moteur, la simulation
+tourne à ~1x le temps réel, et une sonde à 900 s simulés met ~15 minutes —
+en-tête affiché puis plus rien. **Symptôme identique à un blocage, cause
+totalement différente.** Le watchdog le dit maintenant lui-même : si
+l'horloge de run avance encore, il imprime « NOT STUCK, JUST SLOW » et
+rappelle l'ordre des flags.
+
+⚠️ **Correction d'une passation périmée : F6 et F7 sont CLOS, mesurés.**
+Une passation les décrivait comme ouverts/bloquants. C'est faux, et
+`docs/PROBE_AUDIT.md` le documentait déjà comme résolu :
+
+- **F7** — `ChargerAudit` (27 s) et `AirEnemyLandingLaneAudit` (106 s)
+  terminent et passent. Les « ~50 minutes sans finir » se reproduisent
+  uniquement par l'erreur d'ordre de flags ci-dessus.
+- **F6** — `AirHazardAudit` est déterministe : 20 runs à la graine
+  20260806, **20/20 exit 0, un seul stdout, un seul stderr** (flux
+  capturés séparément).
+
+Base de référence re-validée : les 10 sondes gatées sont **identiques au
+bit près** entre `origin/main` et la branche timeout, sur les deux flux.
+Il y a **SEPT** sondes-bot gatées, pas six.
+
 ## Audio : ne coupe pas l'audio de fond (vérifié sur device, 9 août 2026)
 
 Le projet a reçu son **premier audio** le 9 août 2026 (deux cues one-shot sur
