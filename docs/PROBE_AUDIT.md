@@ -62,6 +62,7 @@ hard-coded numeric threshold calibrated on exploratory runs.
 | **DarkPaletteAudit** | Every hazard stays legible against the ground on every palette | 08-06 | STOMPER (`5c2b3fb`), shrink (`ec1836a`) | **broken sampling** | **broken sampling** | n/a | n/a | ok | absolute (a contrast floor, legitimately) |
 | **ComboContrastAudit** / **StrikeContrastAudit** / **StrikeFatalContrastAudit** / **PursuerContrastAudit** | The HUD reads against its real background on every palette | 08-06/07 | -- | n/a | n/a | n/a | n/a | n/a | absolute (a contrast floor, legitimately) |
 | **InvertCapture** / **PacingProbe** / **LiveRunProbe** | Diagnostic printers, no verdict | 08-05 | -- | n/a | n/a | n/a | n/a | n/a | none |
+| **SilhouetteSampleDiag** | Diagnostic printer, no verdict: decomposes what `PursuerContrastAudit`'s silhouette box actually samples, one contributor at a time (see F10) | 08-09 | -- | n/a | n/a | n/a | n/a | n/a | none |
 
 ## Findings
 
@@ -460,6 +461,183 @@ no `DevSeed.apply()`, and the same blame-anything branch.
 
 Still no gameplay defect: the game behaved correctly in every case measured.
 
+### F10 -- PursuerContrastAudit's "ground" stopped being the ground. DIAGNOSED, NOT FIXED.
+
+(F8 was never assigned. This is the next free number.)
+
+`PursuerContrastAudit` logged **2.53:1** on its worst dark palette on
+2026-08-08 and now fails **6 of 6** at **1.85:1**, against a 2.5 floor.
+Nothing about the pursuer changed. **What changed is what the probe
+measures it against.**
+
+Confirmed pre-existing on unmodified `main` (`149c35b`), reproduced four
+times: DARK/2 = **1.84 / 1.85 / 1.85 / 1.87**. The probe's own source is
+**byte-identical** to the 2.53 baseline -- `git diff ce3bec9 149c35b --
+scripts/dev/PursuerContrastAudit.gd` is empty. The entire move is scene-side.
+
+#### When it broke
+
+Probe re-run at each commit along `main`'s path, `--fixed-fps 60`, worst
+palette (DARK/2):
+
+| commit | | DARK/2 | Δ |
+|---|---|---|---|
+| `ce3bec9` | Hibou pursuer installed (the 2.53 baseline) | **2.53** PASS | -- |
+| `6270afc` | background hills **+ fog enabled** | 2.39 FAIL | **-0.14** |
+| `83ef8e0` | **per-tile ground tint** + lane curbs | 2.43 | +0.04 |
+| `2ffc491` / `9dca8fb` / `90bfd39` | hill recycle fix, two merges | 2.40 / 2.39 / 2.45 | flat |
+| `b3e3395` | Keepy squirrel installed (still **lit**) | 2.46 | flat |
+| **`c7b2275`** | **Keepy made unlit**, emit map dropped | **1.84** | **-0.62, 6/6 FAIL** |
+| `33c3d28` / `149c35b` | trackside props, merge | 1.86 / 1.85 | flat |
+
+Two culprits, one small and one dominant. The leading suspect going in --
+the decor batch's ground tint -- is **not** one of them.
+
+#### The stated hypothesis, tested and refuted
+
+`TrackSegment._reroll_ground_tint` really is unseeded (measured, not read
+off the source: the seven live segments roll seven different albedos,
+e.g. `(0.525,0.450,0.327)`, `(0.577,0.419,0.344)`, spread ±0.05 as
+designed). **It does not move this probe.** Forcing every segment back to
+the base albedo mid-run changes DARK/2 by **-0.01** and LIGHT by -0.04,
+and the commit that introduced it moved DARK/2 *up* by 0.04. Against a
+0.68 drop and a 0.03 run-to-run spread, the tint is not the story here.
+
+#### What is, measured per contributor
+
+`scripts/dev/SilhouetteSampleDiag.tscn` (added by this batch; diagnostic
+only, no verdict) re-runs the probe's exact setup with one contributor
+removed at a time:
+
+| removed | DARK/2 | Δ | LIGHT | Δ |
+|---|---|---|---|---|
+| -- (as shipped) | 1.86 | -- | 7.37 | -- |
+| background hills | 1.86 | **0.00** | 7.36 | 0.00 |
+| trackside props | 1.86 | **0.00** | 7.36 | 0.00 |
+| ground tint → base | 1.85 | **-0.01** | 7.36 | -0.04 |
+| fog | 1.99 | **+0.13** | 8.60 | +1.24 |
+| **Keepy** | **2.26** | **+0.40** | **9.73** | **+2.36** |
+| all five | 2.28 | +0.42 | 10.86 | +3.49 |
+
+(Not additive: switching fog off also changes the pursuer's own pixels,
+so the last row is not the sum of the rest.)
+
+#### Real legibility loss, or an unreliable probe? Both -- and separably
+
+**Real, and small: fog.** `6270afc` enabled `fog_density = 0.0035` toward
+the bright sky colour to hide hill recycling. Fog blends the pursuer's
+near-black body toward that colour, measured on the body's own darkest
+pixel: **L 0.0094 → 0.0200** in the light phase. The probe's floor was
+derived on the premise that "pure black is the optimum albedo"; fog means
+the pursuer is no longer rendered as pure black. That is a genuine,
+player-visible loss, worth **~0.13-0.18** ratio points.
+
+**Unreliable, and dominant: the probe is no longer sampling the ground.**
+Measured, not inferred -- the diagnostic projects the silhouette's real
+`visual_aabb()`:
+
+    probe box           : x 450..630   y 1047..1227   (180x180)
+    silhouette on screen: x 387..693   y 1022..1512   (305x490 px)
+
+The 180px box lies **entirely inside** the pursuer's own projected
+bounding box. So when the probe hides the pursuer to obtain "the
+background", what it uncovers is not the ground -- it is **Keepy**, who
+stands directly behind the pursuer at the pinned `TEST_LEAD_S = 1.5`.
+Hiding Keepy moves the background mean from **L 0.4683 to 0.6613** in the
+light phase, and the verdict by **+0.40** on DARK/2.
+
+That is why `c7b2275` -- a commit that **does not touch the pursuer at
+all** -- moved this number more than anything else: making Keepy unlit
+(and dropping its emit map) changed the colour of the surface the probe
+had quietly started calling "the ground".
+
+The probe's header states the reference is "the ground it is seen
+against", and its 2.5 floor is **derived** by sweeping albedos "against
+the measured lit ground colour". Floor and measurement no longer refer to
+the same surface. This is the F1-F5 family again, in a new place: not a
+bot failing to meet a mechanic, but **a threshold and a sample that have
+drifted apart** -- and the drift reports as a legibility failure of the
+one object the player must see coming.
+
+**So: the number is not noise** (0.03 spread against a 0.68 drop, two
+reproducible mechanisms). But most of it is not about the pursuer.
+
+#### A latent second defect in the same function, not the cause today
+
+`_silhouette_rect()` centres on `_pursuer.global_position + (0, 1.7, 0)`
+-- an **unscaled** 1.7m offset -- while `_freeze()` sets the node's scale
+to `lerp(FAR_SCALE, NEAR_SCALE, t)` = 0.613 at this lead. The silhouette's
+own origin is therefore at y≈1.04m, not 1.7m, and the box sits on the
+upper body rather than the centre (box centre y=1137, silhouette bbox
+centre y≈1267). It still lands on the pursuer today only because the model
+is large. At `FAR_SCALE` (0.4) the offset is 2.5x the node's own height
+scale, so the aim drifts with lead. Worth fixing whenever this function is
+next opened.
+
+#### Does the same root cause hit the other contrast probes?
+
+Re-run at both `ce3bec9` and `149c35b`:
+
+| probe | baseline | HEAD | shares the cause? |
+|---|---|---|---|
+| **ComboContrastAudit** | PASS, all 7 | **byte-identical**, PASS | **No.** Its background samples as `(0.55,0.75,0.95)` -- the **sky**. Ground decor cannot reach it. |
+| **StrikeContrastAudit** | PASS (worst 4.79) | PASS (worst 5.21) | **Partly.** Its background *does* move (LIGHT 11.61→13.61) so it is reading a world surface that changed -- but against a 3.0 floor with 2.2+ of margin, no verdict is at risk. |
+| **StrikeFatalContrastAudit** | FAIL DARK/0, DARK/5 | **FAIL DARK/0, DARK/5** | **No -- same two palettes, numbers move ≤0.02.** Its failure is the pre-existing one already recorded below, unrelated to this batch. |
+
+**But `StrikeFatalContrastAudit` does have the unseeded-ground problem --
+just not as the cause of its failure.** Three consecutive runs at HEAD:
+
+| palette | run 1 | run 2 | run 3 | floor |
+|---|---|---|---|---|
+| LIGHT | 6.81 | 6.06 | 6.52 | 3.0 |
+| DARK/0 | 2.87 | 2.86 | **2.98** | 3.0 |
+| DARK/3 | 3.19 | 3.19 | 3.10 | 3.0 |
+| DARK/4 | 3.13 | 3.24 | 3.23 | 3.0 |
+
+Its sampled background colour visibly changes run to run
+(`(0.71,0.56,0.43)` / `(0.70,0.51,0.44)` / `(0.73,0.53,0.48)`), because it
+samples a *fixed* HUD rect at the bottom of the screen against a ground
+whose tint and props are rolled from unseeded RNGs. **DARK/0 came within
+0.02 of flipping FAIL→PASS**, and DARK/3 and DARK/4 sit 0.10-0.24 above
+the floor with a ±0.11 spread. This probe's verdicts are genuinely
+at the mercy of a roll. That is where the ground-tint hypothesis lands
+correctly -- on a different probe than the one it was raised about.
+
+#### Proposed fix -- NOT implemented, three separable decisions
+
+1. **Make the silhouette probe measure what it names.**
+   `scripts/dev/PursuerContrastAudit.gd`, in `_freeze()`: hide
+   `World/Keepy` for the duration of the measurement, exactly as it
+   already hides `_pursuer_row` and `_pursuer` to obtain their
+   backgrounds. One line. The reference becomes the ground the 2.5 floor
+   was actually derived against.
+   *Tradeoff:* pursuer-seen-against-Keepy is a legitimate legibility
+   question, and this stops measuring it. It should get its own check with
+   its own floor rather than be folded silently into this one -- which is
+   what is happening today.
+   *Rejected alternative:* keep Keepy and re-derive the floor. The current
+   floor's derivation is documented and reproducible; "whatever happens to
+   stand behind the pursuer at lead 1.5" is not a stable reference to
+   derive anything against.
+
+2. **Decide about fog.** `scenes/Game.tscn`, `fog_density = 0.0035`. It
+   costs the pursuer ~0.13-0.18 ratio points and breaks the "pure black is
+   optimal" premise the floor rests on. Options: accept it and re-derive
+   the floor with fog in the sweep; reduce the density; or keep it off
+   near objects. The fog exists to hide hill recycling, so this is a design
+   call, not a probe fix.
+
+3. **Seed the decor RNGs -- for `StrikeFatalContrastAudit`'s sake, not the
+   pursuer's.** `TrackSegment._tint_rng` / `_prop_rng` and `Decor._rng`.
+   *Tradeoff:* these were deliberately given their own RNG instances so a
+   decor draw could never perturb the gameplay stream. Seeding them from a
+   `DevSeed`-derived constant **keeps** that property -- separate stream,
+   now deterministic -- so it costs nothing that the current design was
+   protecting. Without it, that probe's verdicts stay a coin-flip near the
+   floor.
+
+None of the three is applied here. This batch is diagnosis only.
+
 ## What this batch changes
 
 F1-F5 are five instances of one failure: a probe cannot tell "I verified
@@ -560,6 +738,12 @@ PursuerFraming, RushFrustration, Shrink, Strike) are green
 **simultaneously at one seed**, each with its coverage ledger satisfied.
 That is the baseline the Meshy import should be measured against.
 
+> **This table is a dated snapshot, not current state.** The
+> `PursuerContrastAudit` row above reads `rc 0`; on `149c35b` it is `rc 1`,
+> failing 6 of 6 dark palettes. It was not the asset imports that changed
+> the pursuer -- see **F10** for the bisect and the cause. Do not read this
+> row as evidence the probe is green today.
+
 ### The two that are not green
 
 **`StrikeFatalContrastAudit` fails, and it is a real finding about the
@@ -613,12 +797,38 @@ step every probe fails to compile and hangs producing no output -- which
 is, with some irony, exactly the symptom the watchdog exists to make
 unmistakable. CI already imports before running anything.
 
+**Flag order matters.** Godot treats the first non-flag argument as the
+scene to run, so every engine flag must come BEFORE `--path` and before the
+scene path -- `--fixed-fps 60` included. The pixel-sampling probes need a
+real GL context, so they take the longer form:
+
+    xvfb-run -a godot4 --rendering-driver opengl3 --fixed-fps 60 \
+      --path . res://scripts/dev/PursuerContrastAudit.tscn
+
+`--fixed-fps 60` is not optional for anything being compared run-to-run:
+this sandbox's headless Godot does not hold a deterministic physics-tick
+count across runs without it (see `docs/MESHY_SPEC.md` §11, where the same
+flag was what made a before/after comparison reproducible).
+
 ## Still open after this batch
 
 - **`StrikeFatalContrastAudit` fails on 2-3 palettes.** A real legibility
   defect in the shipped HUD, verified pre-existing on `origin/main`,
-  deliberately left for its own batch. It is the only red verdict in the
-  suite.
+  deliberately left for its own batch. **No longer the only red verdict in
+  the suite** -- see the next item. Re-confirmed at `149c35b`: it fails on
+  the same two palettes (DARK/0, DARK/5) it failed on at `ce3bec9`, with
+  the numbers moving ≤0.02, so the decor/Keepy batches did not cause or
+  worsen it. What F10 *does* add about it: **its verdicts near the floor
+  are not reproducible** (DARK/0 measured 2.87 / 2.86 / 2.98 on three
+  consecutive runs against a 3.0 floor). Fixing the colours without also
+  seeding the decor RNGs would leave the pass unable to prove itself.
+- **`PursuerContrastAudit` fails on 6 of 6 dark palettes, worst 1.85:1
+  against a 2.5 floor. DIAGNOSED, NOT FIXED -- see F10.** Bisected to two
+  scene-side commits (`6270afc` fog, `c7b2275` Keepy made unlit); the probe's
+  own source is unchanged. Most of the drop is the probe sampling **Keepy**
+  rather than the ground it claims to measure against; a smaller, genuine
+  part is fog washing out the pursuer's black body. Three separable fixes
+  are proposed in F10 and none is applied -- the decision is Mathieu's.
 - **Nine probes still ignore `--seed`** (no `DevSeed.apply()`):
   `StomperAudit`, `JumpDodgeRewardAudit`, `DarkPaletteAudit`,
   `LiveRunProbe`, `AssetContractAudit`, `ChargerShapeProbe`,
