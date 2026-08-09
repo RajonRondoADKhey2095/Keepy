@@ -37,11 +37,35 @@ const SETTLE_FRAMES: int = 24
 ## both of those already apply.
 const CONTRAST_FLOOR: float = 3.0
 
+## Seed for the purely visual decor streams -- background hills, ground
+## tint drift, trackside props (F10, see scripts/world/DecorRng.gd).
+##
+## This probe's "background" is real rendered pixels of the 3D world behind
+## the strike row, so decor IS its reference surface. Unseeded, that surface
+## was different on every invocation and the verdict moved with it: on three
+## runs of byte-identical code DARK/0 read 2.87 / 3.31 / 3.19 against this
+## 3.0 floor -- FAIL, PASS, PASS -- and a fourth run reported a different
+## palette failing altogether. A regression guard whose answer changes when
+## nothing changed is not one.
+##
+## This does NOT seed the global RNG the gameplay rolls draw from. DecorRng
+## hands out separate streams and never touches it, which is precisely the
+## property that lets this be seeded at all.
+##
+## SEEDING THE DECOR WAS NECESSARY AND NOT SUFFICIENT, and that is worth
+## knowing before trusting it: measured after the seed, three runs still
+## disagreed. The dominant term was HUD's own full-screen StrikeFlash, not
+## the decor -- see where it is pinned to rest in _measure_phase below. The
+## decor seed is what makes the remaining background reproducible once that
+## overlay is out of the way.
+const DECOR_SEED: int = 20260806
+
 var _game: Node3D
 var _invert_rect: ColorRect
 var _hud: CanvasLayer
 var _strike_row: Control
 var _strike_label: Label
+var _strike_flash: ColorRect
 
 var _results: Array = []
 var _failures: int = 0
@@ -53,6 +77,11 @@ func _ready() -> void:
 	print("=== STRIKE FATAL-LABEL CONTRAST AUDIT ===")
 	print("metric: WCAG relative-luminance contrast ratio on real sampled pixels")
 	print("floor : %.1f:1 (large text)" % CONTRAST_FLOOR)
+	# BEFORE instantiate(): TrackManager builds its first segments inside
+	# the add_child() below, so a decor seed set afterwards has already
+	# missed them. Printed rather than silent, same reason DevSeed prints.
+	DecorRng.force_seed(DECOR_SEED)
+	print("decor : seeded %d (hills / ground tint / props -- background only)" % DECOR_SEED)
 	print("")
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
@@ -80,6 +109,7 @@ func _ready() -> void:
 	pursuer.visible = false
 	_strike_row = _hud.get_node("MarginContainer/PursuerRow/StrikeRow")
 	_strike_label = _hud.get_node("MarginContainer/PursuerRow/StrikeRow/StrikeLabel")
+	_strike_flash = _hud.get_node("StrikeFlash")
 	call_deferred("_run")
 
 func _run() -> void:
@@ -167,6 +197,25 @@ func _measure_phase(label: String, variant_index: int) -> void:
 		await RenderingServer.frame_post_draw
 	_hud.set_process(false)
 	_strike_row.scale = Vector2.ONE
+	# THE STRIKE FLASH, pinned to rest for the same reason the pulse just
+	# was -- and it was doing far more damage (F10c, docs/PROBE_AUDIT.md).
+	# StrikeFlash is a FULL-SCREEN white ColorRect that HUD ramps to
+	# STRIKE_FLASH_MAX_ALPHA (0.55) over STRIKE_FLASH_DURATION_S (0.30s) on
+	# every strike -- and this probe fires two real ones immediately above.
+	# Two frames later, where HUD's own _process is stopped, the flash is
+	# still near its peak: measured 0.47-0.55 at capture, i.e. this probe's
+	# "background" was up to half a white wash, at an alpha decided by how
+	# fast the machine happened to render two frames. That is what made the
+	# verdict a coin flip even after the decor was seeded -- the whole
+	# screen shifted by ~6/255 between runs, enough to move DARK/4 and
+	# DARK/5 across the floor.
+	#
+	# Zeroed rather than waited out: the flash is a transient impact cue,
+	# while the fatal label persists for the rest of the run, so the state
+	# worth holding the label's colour to is the one it spends its life in.
+	# Same argument as the pulse above -- motion is not what a contrast
+	# floor measures.
+	_strike_flash.color.a = 0.0
 	await _settle()
 	# THE LABEL'S OWN RECT, not the row's. StrikeRow is an HBoxContainer that
 	# also lays out the two pips beside the label -- sampling the whole row's

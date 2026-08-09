@@ -26,6 +26,26 @@ extends Node
 ## gameplay objects: the camera sits close and angled down, so things are
 ## read against the ground beneath them rather than silhouetted on sky.
 ##
+## KEEPY IS HIDDEN FOR THE WHOLE MEASUREMENT, and that is a correction
+## rather than a convenience (F10, docs/PROBE_AUDIT.md). The 180px sample
+## box below sits entirely inside the pursuer's projected bounds, and at
+## the pinned lead Keepy stands directly behind that box -- so hiding only
+## the pursuer to obtain "the ground" uncovered KEEPY, and the probe spent
+## its whole life reporting pursuer-vs-Keepy while printing the column
+## header "silhouette:ground". Measured, the difference is not cosmetic:
+## the sampled background moved #933946 -> #8c2938 in DARK/0 and
+## #eda488 -> #ffc7a6 in the light phase, and the reported ratio moved by
+## up to 0.45 across the dark palettes (2.6 in the light phase) -- enough
+## to carry three of the six back over this file's silhouette floor.
+##
+## WHAT THAT STOPS MEASURING, said plainly rather than dropped: pursuer
+## against KEEPY is a legitimate legibility question in its own right --
+## the pursuer looms directly behind the player, so those two silhouettes
+## genuinely are read against each other. No probe measures it now. It
+## needs its own, with its own reference surface and its own floor; it is
+## not this probe's question, and answering it by accident with the wrong
+## label was the defect.
+##
 ## Run it with:
 ##   xvfb-run -a godot4 --rendering-driver opengl3 \
 ##     --path . res://scripts/dev/PursuerContrastAudit.tscn
@@ -67,9 +87,19 @@ const SILHOUETTE_CONTRAST_FLOOR: float = 2.5
 ## visible band, so the silhouette is on screen at a representative size.
 const TEST_LEAD_S: float = 1.5
 
+## Seed for the purely visual decor streams -- background hills, ground
+## tint drift, trackside props. Pinned rather than left to OS entropy
+## because this probe samples real pixels of exactly that decor as its
+## reference surface: unseeded, its verdict changed run to run with
+## nothing in the game having changed (F10, see DecorRng.gd). This does
+## NOT touch the global RNG the gameplay rolls draw from -- DecorRng hands
+## out separate streams, which is the whole point of it.
+const DECOR_SEED: int = 20260806
+
 var _game: Node3D
 var _invert_rect: ColorRect
 var _pursuer: Node3D
+var _keepy: Node3D
 var _pursuer_row: Control
 var _gauge_fill: ColorRect
 
@@ -84,11 +114,19 @@ func _ready() -> void:
 	print("metric: WCAG relative-luminance contrast on real sampled pixels")
 	print("floors: gauge %.1f:1 (AA large)   silhouette %.1f:1 (derived ceiling, see source)" % [
 		CONTRAST_FLOOR, SILHOUETTE_CONTRAST_FLOOR])
+	# BEFORE instantiate(), not after: the first TrackSegments are built
+	# inside TrackManager._ready(), i.e. during the add_child() below, so a
+	# decor seed set afterwards has already missed them. Printed, not
+	# silent -- a probe's output should never leave the reader guessing
+	# whether it is reproducible (same discipline as DevSeed's).
+	DecorRng.force_seed(DECOR_SEED)
+	print("decor : seeded %d (hills / ground tint / props -- background only)" % DECOR_SEED)
 	print("")
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_invert_rect = _game.get_node("DarkModeEffect/Invert")
 	_pursuer = _game.get_node("World/Pursuer")
+	_keepy = _game.get_node("World/Keepy")
 	var hud: CanvasLayer = _game.get_node("HUD")
 	_pursuer_row = hud.get_node("MarginContainer/PursuerRow")
 	_gauge_fill = hud.get_node("MarginContainer/PursuerRow/GaugeTrack/GaugeFill")
@@ -129,6 +167,13 @@ func _freeze() -> void:
 	# and the real material, at a fixed, unprojectable place.
 	_pursuer.set_process(false)
 	_pursuer.visible = true
+	# KEEPY OUT, for every frame of this measurement -- not just the
+	# background one. See the class doc for what this corrects and what it
+	# stops measuring. Hiding it only for the background capture would swap
+	# one wrong answer for another: the pursuer's own "darkest pixel" is
+	# picked out of the SAME box in the with-everything frame, so Keepy's
+	# body would go on standing in for the pursuer's there.
+	_keepy.visible = false
 	var t: float = clampf(1.0 - TEST_LEAD_S / GameState.PURSUER_VISIBLE_LEAD_S, 0.0, 1.0)
 	_pursuer.position = Vector3(0.0, 0.0, lerpf(Pursuer.FAR_Z, Pursuer.CAUGHT_Z, t))
 	var sc: float = lerpf(Pursuer.FAR_SCALE, Pursuer.NEAR_SCALE, t)

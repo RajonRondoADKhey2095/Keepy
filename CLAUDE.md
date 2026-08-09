@@ -85,6 +85,41 @@ Pillow si besoin, orientation vérifiée par rendu offscreen (jamais copiée
 d'un asset précédent), scale calculé contre le budget §5/§7, checklist
 d'acceptation §10 avant tout push.
 
+## Deux défauts de mesure corrigés (F10, 9 août 2026) — deux décisions de
+## teinte EN ATTENTE de Mathieu, aucune action code en cours
+
+`docs/PROBE_AUDIT.md` (F10a/F10b/F10c) documente deux sondes qui mesuraient
+autre chose que ce qu'annonçait leur en-tête — `PursuerContrastAudit`
+échantillonnait Keepy au lieu du sol, et `StrikeFatalContrastAudit` avait un
+fond irreproductible d'une exécution à l'autre (décor non seedé, puis —
+cause dominante — le flash plein écran des coups gelé à mi-décroissance).
+**Les deux sondes ont été corrigées, re-validées (les 7 sondes bot gated +
+AssetContractAudit + ChargerShapeProbe restent byte-identiques au seed
+20260806), et poussées sur `claude/f10-measurement-defects-srfh8t`.**
+
+**Ce que la correction a mis au jour — deux vrais défauts de lisibilité,
+mesurés proprement, aucun plancher déplacé pour les faire passer :**
+
+- **Pursuer vs sol en `DARK/2` : 2,37:1 contre le plancher 2,5:1.** La
+  couleur du pursuer (déjà `0,02, 0,02, 0,03`, noir pur) n'a **aucune marge
+  restante** — le sweep qui a servi à calibrer le plancher 2,5 place le
+  plafond atteignable en vert à 2,05, en dessous du 2,37 mesuré. Fermer ça
+  exige de bouger soit l'albédo du sol, soit `GameState.DARK_TINT_AMOUNT`
+  (0,55) — les deux affectent le contraste dark-mode de TOUS les objets de
+  gameplay, pas seulement le pursuer. Décrit dans `docs/MESHY_SPEC.md` §8
+  (note dédiée, juste après le tableau de palette).
+- **Label de frappe fatale en `DARK/5` : 2,99:1 contre le plancher 3,0:1.**
+  0,01 sous le seuil, désormais stable d'une exécution à l'autre (avant la
+  correction, le fond mesuré incluait un flash blanc plein écran figé à une
+  opacité aléatoire — la sonde ne mesurait pas encore fiablement le HUD).
+
+**Aucune des deux ne demande de code ni de nouvelle sonde.** Ce sont des
+choix de couleur/teinte réservés à Mathieu — voir `docs/PROBE_AUDIT.md`,
+section « Still open after this batch », pour le détail chiffré complet.
+Une fois la décision prise, il suffit de re-rouler la sonde concernée
+(`PursuerContrastAudit` ou `StrikeFatalContrastAudit`) contre le nouveau
+choix — rien d'autre n'a besoin de changer.
+
 ## Décor procédural : déjà en prod (correction d'une passation périmée)
 
 **Ce fichier ne mentionnait nulle part le décor, ce qui a laissé croire à une
