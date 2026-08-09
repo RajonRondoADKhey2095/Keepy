@@ -59,6 +59,7 @@ hard-coded numeric threshold calibrated on exploratory runs.
 | **AssetContractAudit** | A mesh swap changes every visual and moves no collider | 08-08 | -- | n/a | n/a | n/a | n/a | n/a | invariant (exact equality) |
 | **TrackPropsAudit** | Trackside props stay outside the play area and add no collider; plus the measured frame triangle budget | 08-09 | -- | n/a | n/a | n/a | n/a | n/a | invariant x2 + **absolute** (props' own triangle share); frame total REPORTED, not asserted |
 | **ChargerShapeProbe** | The charger wedge is oriented and grounded as designed | 08-06 | -- | n/a | n/a | n/a | n/a | n/a | invariant |
+| **ProbeTimeoutAudit** | Every probe in this folder is bounded by a wall-clock timeout, including ones not written yet | 08-09 | -- | n/a | n/a | n/a | n/a | n/a | invariant (reads source; instantiates nothing) |
 | **DarkPaletteAudit** | Every hazard stays legible against the ground on every palette | 08-06 | STOMPER (`5c2b3fb`), shrink (`ec1836a`) | **broken sampling** | **broken sampling** | n/a | n/a | ok | absolute (a contrast floor, legitimately) |
 | **ComboContrastAudit** / **StrikeContrastAudit** / **StrikeFatalContrastAudit** / **PursuerContrastAudit** | The HUD reads against its real background on every palette | 08-06/07 | -- | n/a | n/a | n/a | n/a | n/a | absolute (a contrast floor, legitimately) |
 | **InvertCapture** / **PacingProbe** / **LiveRunProbe** | Diagnostic printers, no verdict | 08-05 | -- | n/a | n/a | n/a | n/a | n/a | none |
@@ -348,6 +349,60 @@ moved by the pursuer, so no number either reports changes.
 | `ChargerAudit` | never terminates | **21s**, 900s simulated, 90 charger crossings |
 | `AirEnemyLandingLaneAudit` | never terminates | **84s**, 200/200 samples, 0 mismatches |
 
+#### Re-measured 2026-08-09, and the flag-order trap that impersonates it
+
+F7 was re-run because a later hand-off described these two probes as
+**still** hanging for ~50 minutes and treated F7 as open. **They are
+fixed, and the hand-off was stale.** Measured on the current tree, seed
+20260806, on a box that runs the rest of this table ~1.4x slower than the
+one it was built on:
+
+| probe | rc | wall | verdict |
+|---|---|---|---|
+| `ChargerAudit` | **0** | **27s** | PASSED, 90 chargers, worst window 2.1000s |
+| `AirEnemyLandingLaneAudit` | **0** | **106s** | PASSED, 200/200 samples, 0 mismatches |
+
+Both carry `GameState.pursuer_enabled = false`, both terminate, both pass.
+
+**But the ~50 minutes is real, reproducible, and has nothing to do with
+the probes** — it is an *invocation* error, and this session reproduced it
+by making it:
+
+```
+WRONG   godot4 --headless --path . res://…/ChargerAudit.tscn -- --seed=N --fixed-fps 60
+RIGHT   godot4 --headless --fixed-fps 60 --path . res://…/ChargerAudit.tscn -- --seed=N
+```
+
+Everything after the bare `--` is handed to the *application* as user
+args. `--fixed-fps` placed there is silently ignored by the engine, the
+run paces at **~1x real time**, and a probe with `SIM_SECONDS = 900`
+therefore needs ~15 real minutes. `AirEnemyLandingLaneAudit` allows
+`MAX_SIM_SECONDS = 8000` — over two hours. Header printed, then nothing,
+for as long as you leave it: **the F7 symptom exactly, with no F7 cause.**
+
+What the timeout turns that into, measured — the wrong invocation now
+ends at 901s instead of never:
+
+```
+ChargerAudit INCONCLUSIVE: ran 900s of wall clock (budget 900s) …
+  GameState at the timeout: state=PLAYING  death_cause=COLLISION  run_time=899.88s
+```
+
+`state=PLAYING`, clock at **899.88 of 900 simulated seconds**. It was
+never stuck; it was 0.12 simulated seconds from finishing. That single
+line is the whole difference between "it hangs" and "you ran it wrong".
+
+The watchdog's advice was rewritten because of it. It used to point at
+the pursuer unconditionally, which is wrong in exactly this case. It now
+samples whether the run clock is *advancing* and names the likely cause:
+
+- clock **frozen** (>5s unchanged), state not `PLAYING` → the pursuer
+  hint, unchanged, plus how long the clock has been dead;
+- clock **still advancing**, state `PLAYING` → *not stuck, just slow*,
+  with the flag-order fix above spelled out.
+
+Both branches verified by construction, not by reading.
+
 #### The same root cause, with the symptom hidden: EnemyLaneAudit
 
 Found by checking which other probes share the shape. `EnemyLaneAudit`
@@ -398,6 +453,11 @@ print.
 `scripts/dev/ProbeWatchdog.gd`, armed as the first statement of every
 probe's `_ready()`.
 
+> **Amended 2026-08-09.** That sentence was true of 26 files and false of
+> the folder, and nothing could tell the difference — see "The guarantee
+> was opt-in, and had already failed" below, which closes the gap and
+> makes the claim checkable instead of asserted.
+
 F7 is the argument for it, and specifically the *shape* of F7 rather than
 its cause. A probe that hangs is indistinguishable from a probe that is
 slow, and that ambiguity is what let two dead probes be documented as
@@ -422,6 +482,67 @@ Budget: 900s, derived rather than picked -- ~4x the slowest probe that
 genuinely finishes (see the timing table below). Exit code **2**,
 deliberately not 1: the folder's convention is 0 = contract holds, 1 =
 contract violated, and a timeout is neither.
+
+### The guarantee was opt-in, and had already failed (2026-08-09)
+
+`arm()` is one line every probe has to remember, and "everyone remembers"
+is not a guarantee. It had already failed before anyone looked:
+**`DecorParallaxProbe` armed nothing at all** while the sentence at the
+top of this section said the folder was covered.
+
+Arming it would **not** have fixed it, and that is the more useful half.
+Its 2000 iterations run inside `_ready()`, so the engine never gets a
+frame to run a watchdog node in. Measured rather than argued: a blocking
+probe with `arm()` and a **5s** budget was still running when the shell
+killed it at **25s**. `PacingProbe` is further out still — a `--script`
+`SceneTree` with no scene, no autoload and no frame at all.
+
+So the mechanism gained a second entry point, not a second implementation:
+
+| shape | entry point | bounds it because |
+|---|---|---|
+| iterates frames | `ProbeWatchdog.arm(self, LABEL)` | `_process` runs between frames |
+| blocks in one call | `ProbeWatchdog.deadline(LABEL)`, loop calls `abort_if_exceeded()` | the loop is the only thing running |
+
+Both report through `ProbeWatchdog.report_inconclusive`, so a timeout
+reads identically whichever produced it — a caller must not be able to
+recognise one form and miss the other. Both exit **2**.
+
+**`ProbeTimeoutAudit.tscn` is what keeps this true for probes not written
+yet.** It scans every `.tscn` here and fails if one arms no timeout, or
+arms it after the first statement of `_ready()`; it also checks a
+`--script` probe uses a deadline, that the exemption list has no stale
+entries, and that `ProbeWatchdog`'s local copy of the `GameState` state
+names still matches the real enums. Same reasoning as `ProbeCoverage.gd`:
+the check has to run on the thing it is checking.
+
+Verified **red before green**, because a check never seen fail proves
+nothing: removing `arm()` from `StomperAudit` gives exit 1, and so does
+moving it one line down.
+
+Three defects it found in itself or its own mechanism, all fixed, all
+worth recording because each one is the same species as the findings
+above — a guarantee that reports itself present:
+
+1. It credited **itself** with using `deadline()`, having read the word
+   in its own header. Comments are now stripped before matching.
+2. It still did, from its own **string literals** — the needle it
+   searches for is a literal in its own source. Literal *contents* are
+   now blanked, keeping surrounding code so a real call still matches.
+3. `ProbeDeadline` first exited **137 (SIGKILL)** under `--script`,
+   because `Engine.get_main_loop()` is null inside a `SceneTree`'s own
+   `_init()`. A timeout that reads as a crash defeats the point of
+   `EXIT_TIMEOUT` being 2. A `SceneTree` probe now passes itself.
+
+**Nothing in `ProbeWatchdog` may name the `GameState` autoload at compile
+time.** GDScript resolves the identifier when the script is *compiled*,
+not when the line runs, so a single `GameState.run_time_s` added to
+`_process` killed `PacingProbe` outright with `Compile Error: Identifier
+not found: GameState`, cascading through `ProbeDeadline` into the probe —
+the timeout became the thing that broke the run it was meant to bound.
+The autoload is resolved by path (`/root/GameState`) instead. **The
+`--script` probe is the canary for this class of coupling: run it after
+any edit to these files**, a scene probe will not show the failure.
 
 ### F6b / F9 -- the misattributed death, and its sibling. RESOLVED (follow-up).
 
@@ -459,6 +580,41 @@ no `DevSeed.apply()`, and the same blame-anything branch.
 | JumpDodgeRewardAudit, 12 seeds | -- | **0 failures** |
 
 Still no gameplay defect: the game behaved correctly in every case measured.
+
+#### Re-measured 2026-08-09 — F6 is closed, and stderr was checked too
+
+Re-run because the same stale hand-off that reopened F7 also described
+`AirHazardAudit` as still non-deterministic at a fixed seed ("1 failure in
+11 runs, confirmed pre-existing on main"). That was the state **before**
+the missing `DevSeed.apply()` was found. 20 consecutive runs at seed
+20260806, `--fixed-fps 60`, **stdout and stderr captured to separate
+files** — interleaving them manufactures diffs that are an artifact of
+scheduling rather than of the run:
+
+| | result |
+|---|---|
+| exit codes | **20 / 20 exit 0** |
+| distinct **stdout** | **1** |
+| distinct **stderr** | **1** |
+
+Nothing varies. Both phases pass every run (5/5 lethal when ignored, 5/5
+survived when jumped).
+
+`stderr` is **not empty** — 3675 bytes, 50 lines, and byte-identical
+across all 20. It is 25 repetitions of one Godot engine error:
+
+```
+ERROR: Function blocked during in/out signal. Use set_deferred("monitoring", true/false).
+   at: set_monitoring (scene/3d/physics/area_3d.cpp:379)
+```
+
+That is the engine objecting to collision being toggled from inside a
+collision signal — which is how these probes neuter hazards. It is
+pre-existing, deterministic, and identical on `origin/main`. Noted rather
+than fixed: it is noise on a stream nothing reads, but a future session
+diffing stderr should know it is expected and not a regression. Several
+gated probes carry far more of it (`StrikeAudit` 386 kB, `PursuerAudit`
+303 kB), all byte-identical between `origin/main` and the timeout branch.
 
 ## What this batch changes
 
@@ -529,6 +685,7 @@ neither is caused by this batch.
 
 | probe | rc | wall | note |
 |---|---|---|---|
+| ProbeTimeoutAudit | 0 | <1s | reads source only; guards the timeout guarantee itself |
 | ChargerShapeProbe | 0 | 1s | |
 | AssetContractAudit | 0 | 2s | the one that guards the mesh swap |
 | JumpDodgeRewardAudit | 0 | 2s | |
@@ -559,6 +716,38 @@ All seven gated bot probes (AntiFrustration, Combo, Pursuer,
 PursuerFraming, RushFrustration, Shrink, Strike) are green
 **simultaneously at one seed**, each with its coverage ledger satisfied.
 That is the baseline the Meshy import should be measured against.
+
+> **There are SEVEN gated bot probes, not six.** A later hand-off asked
+> for "the 6 bot probes"; the set has always been the seven named above.
+> If a future instruction says six, it is missing one — check which.
+
+### Re-validated against the timeout, 2026-08-09
+
+The question a timeout has to answer before it can be trusted is whether
+it perturbs the runs that *pass*. Measured the strong way — not run-to-run
+on one tree, but the **same probe on `origin/main` and on the timeout
+branch**, seed 20260806, stdout and stderr to separate files:
+
+| probe | rc | stdout | stderr |
+|---|---|---|---|
+| ChargerShapeProbe | 0 | identical | identical |
+| AssetContractAudit | 0 | identical | identical |
+| PursuerFramingAudit | 0 | identical | identical |
+| AntiFrustrationAudit | 0 | identical | identical |
+| RushFrustrationAudit | 0 | identical | identical |
+| AirHazardAudit | 0 | identical | identical |
+| ShrinkAudit | 0 | identical | identical |
+| ComboAudit | 0 | identical | identical |
+| PursuerAudit | 0 | identical | identical |
+| StrikeAudit | 0 | identical | identical |
+
+**10 / 10 byte-identical on both streams.** `PacingProbe` (the `--script`
+probe, not in the gated set) is byte-identical too. The one file that is
+not is `DecorParallaxProbe`, which differs *on `origin/main` against
+itself* — see the unseeded-probe note under "Still open".
+
+`ProbeTimeoutAudit` itself runs in **&lt;1s**: it reads source text and
+instantiates nothing, so adding it to any gated set costs nothing.
 
 ### The two that are not green
 
@@ -607,6 +796,20 @@ something the probe never said.
 
 ### Before running any of this from a fresh checkout
 
+**Get the flag order right, or you will measure nothing and conclude a
+probe hangs.** Engine flags go BEFORE the bare `--`; user args go after:
+
+```
+godot4 --headless --fixed-fps 60 --path . res://scripts/dev/X.tscn -- --seed=20260806
+        └────── engine ──────┘                                        └── app ──┘
+```
+
+`--fixed-fps` after the `--` is handed to the app and ignored, the run
+paces at ~1x real time, and every long probe looks like the F7 hang. This
+cost a session's first hour before the timeout made it self-diagnosing —
+see the flag-order trap under F7. `--seed=` is the opposite: it is read by
+`DevSeed` from the app args and must come **after** the `--`.
+
 `godot4 --headless --path . --import` must run once. `ProbeWatchdog`
 declares a `class_name` and `.godot/` is gitignored, so without the import
 step every probe fails to compile and hangs producing no output -- which
@@ -628,6 +831,15 @@ unmistakable. CI already imports before running anything.
   means "I passed `--seed`" is not evidence the run was reproducible --
   which is precisely how F6 hid. Not fixed here because none is in the
   reference baseline's gated set.
+  **`DecorParallaxProbe` belongs on that list and was missing from it**
+  (found 2026-08-09). It is not merely unseeded, it is *observably*
+  non-deterministic: three runs of the **unmodified `origin/main`** file
+  give three different values for its reported z ranges
+  (`-360.006622 / -360.009766 / -360.029480`). Its verdict is stable
+  (violations == 0 every run) so it is not a false green, but its numbers
+  must not be diffed between trees — a diff there is variance, not a
+  change. That is exactly how it was nearly misread when the timeout was
+  added to it.
 - **`LiveRunProbe` has no completion condition** by design and relies on
   the caller passing `--quit-after`. Now bounded by the watchdog, but it
   is the one probe whose "green" cannot be obtained by running it the way
