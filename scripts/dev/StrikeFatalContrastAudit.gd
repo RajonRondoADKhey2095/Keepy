@@ -17,14 +17,24 @@ extends Node
 ## fail a design that is in fact readable through its outline.
 ##
 ## THE FATAL STATE IS DRIVEN THROUGH THE REAL DOOR, same discipline
-## StrikeContrastAudit.gd insists on and for the same reason: two real
-## GameState.register_strike() calls put strikes_used at STRIKE_CAPACITY,
-## which is what _begin_capture_sequence() actually gates HUD._fatal_active
-## on (see GameState.gd and HUD.gd's _on_pursuer_caught). Setting
-## HUD._fatal_active by hand would test a state the game can produce, sure,
-## but writing GameState.strikes_used or state directly and skipping the
-## real call sites is exactly the shortcut StrikeContrastAudit.gd's own
-## class doc warns cost it a false pass once already.
+## StrikeContrastAudit.gd insists on and for the same reason:
+## STRIKE_CAPACITY_HALF real GameState.register_strike() calls put
+## strikes_used_half at the capacity, which is what
+## _begin_capture_sequence() actually gates HUD._fatal_active on (see
+## GameState.gd and HUD.gd's _on_pursuer_caught). Setting HUD._fatal_active
+## by hand would test a state the game can produce, sure, but writing
+## GameState.strikes_used_half or state directly and skipping the real call
+## sites is exactly the shortcut StrikeContrastAudit.gd's own class doc
+## warns cost it a false pass once already.
+##
+## THE COUNT OF CALLS IS DERIVED FROM THE CAPACITY, never written as a
+## literal 2. It used to be two hard-coded calls, correct while the capacity
+## was two full strikes and silently wrong the moment the half-strike
+## rebalance made it four half-units -- the probe would have stopped
+## reaching the fatal state at all and failed for a reason that has nothing
+## to do with the contrast it exists to measure. Its own error message below
+## already anticipated exactly this ("either GameState.STRIKE_CAPACITY
+## moved"); deriving the loop is what makes that anticipation unnecessary.
 ##
 ## Run it with:
 ##   xvfb-run -a godot4 --rendering-driver opengl3 \
@@ -127,28 +137,33 @@ func _freeze_world() -> void:
 	GameState.current_speed = 0.0
 	GameState.player_speed_factor = 1.0
 
-## Puts the run at exactly STRIKE_CAPACITY strikes through the real entry
-## point, which is what actually fires GameState.pursuer_caught and, through
-## it, HUD._on_pursuer_caught -- see the class doc for why this is not
-## optional. A fresh start_run() first, same as StrikeContrastAudit's own
-## _set_strikes, so no stumble-slowdown or invulnerability window survives
-## from a previous phase.
+## Puts the run at exactly STRIKE_CAPACITY_HALF half-units through the real
+## entry point, which is what actually fires GameState.pursuer_caught and,
+## through it, HUD._on_pursuer_caught -- see the class doc for why this is
+## not optional. A fresh start_run() first, same as StrikeContrastAudit's
+## own _set_strikes, so no stumble-slowdown or invulnerability window
+## survives from a previous phase.
 ##
 ## register_strike REFUSES a hit taken before STRIKE_INVULNERABLE_S has
 ## elapsed since the last credited one (see GameState.gd) -- calling it
 ## twice back to back with run_time_s untouched in between hits exactly that
 ## guard, silently swallowing the second strike (found by running this
 ## probe for real: the first attempt never armed HUD._fatal_active at all).
-## Nudging run_time_s past the window between the two calls clears it
-## without going through advance_time() -- which would also drain the
-## pursuer lead and advance the combo/dark-cycle clocks this probe has no
-## reason to touch.
+## Nudging run_time_s past the window between calls clears it without going
+## through advance_time() -- which would also drain the pursuer lead and
+## advance the combo/dark-cycle clocks this probe has no reason to touch.
+##
+## DODGE for every call: the type is reported, never branched on
+## (GameState.register_strike's own doc), and every non-fatal type costs the
+## same CONTACT_COST_HALF, so one is as good as another here. It must not be
+## a CHARGER, which would end the run outright and never credit anything.
 func _enter_fatal_state() -> void:
 	GameState.start_run()
 	_freeze_world()
-	GameState.register_strike(Obstacle.Type.DODGE)
-	GameState.run_time_s += GameState.STRIKE_INVULNERABLE_S + 0.01
-	GameState.register_strike(Obstacle.Type.DODGE)
+	for i in GameState.STRIKE_CAPACITY_HALF:
+		if i > 0:
+			GameState.run_time_s += GameState.STRIKE_INVULNERABLE_S + 0.01
+		GameState.register_strike(Obstacle.Type.DODGE)
 	# register_strike's own capacity branch moves state to CAPTURED (see
 	# GameState._begin_capture_sequence) -- re-pin it to PLAYING so the
 	# invert shader/track stay exactly as this probe's other phases left
@@ -174,7 +189,7 @@ func _measure_phase(label: String, variant_index: int) -> void:
 
 	_enter_fatal_state()
 	if not _hud._fatal_active:
-		push_error("STRIKE FATAL CONTRAST AUDIT: two real strikes did not arm HUD._fatal_active -- either GameState.STRIKE_CAPACITY moved, or the capacity branch stopped emitting pursuer_caught. This probe cannot measure a state that was never entered.")
+		push_error("STRIKE FATAL CONTRAST AUDIT: %d real contacts did not arm HUD._fatal_active -- the capacity branch has stopped emitting pursuer_caught, or the invulnerability nudge between calls no longer clears the window. This probe cannot measure a state that was never entered." % GameState.STRIKE_CAPACITY_HALF)
 		get_tree().quit(1)
 		return
 	# ONE settle first, not the full amount -- just enough for HUD._process to

@@ -46,12 +46,13 @@ signal pursuer_caught()
 ## one swallowed by the invulnerability window, so a listener can treat it as
 ## "a strike just happened" without re-deriving that test. Carries the
 ## obstacle type as a plain int (see register_strike's own doc for why it is
-## not typed as Obstacle.Type here) and the strike count AFTER this one.
-signal strike_taken(source_type: int, strikes_used: int)
-## Fires when a strike is given back -- by time or by combo, the two paths
+## not typed as Obstacle.Type here) and the HALF-UNIT total AFTER this one --
+## see STRIKE_CAPACITY_HALF for why the count is denominated in halves.
+signal strike_taken(source_type: int, strikes_used_half: int)
+## Fires when resistance is given back -- by time or by combo, the two paths
 ## being distinguished by the argument rather than by two signals, since every
-## listener so far draws them identically.
-signal strike_cleared(strikes_used: int, by_combo: bool)
+## listener so far draws them identically. Also carries HALF-UNITS.
+signal strike_cleared(strikes_used_half: int, by_combo: bool)
 
 ## CAPTURED sits BETWEEN PLAYING and GAME_OVER, deliberately -- see
 ## CAPTURE_SEQUENCE_DURATION_S below for what it buys.
@@ -81,16 +82,18 @@ enum State { TITLE, PLAYING, CAPTURED, GAME_OVER }
 ## leaderboard payload varies with this -- see end_run().
 ##
 ## PURSUER now covers BOTH ways of being caught from behind, and that is the
-## point rather than a shortcut: the lead draining to zero, and the second
-## non-fatal contact (see register_strike). They are the same event told two
-## ways -- the pursuer closes because you stumbled, or because you coasted --
-## and a player who is told "rattrape" in both cases learns one rule instead
-## of two. COLLISION stays what it always was: running headfirst into
-## something that kills on contact (see Obstacle.is_fatal).
+## point rather than a shortcut: the lead draining to zero, and the
+## capacity-th non-fatal contact (see register_strike). They are the same
+## event told two ways -- the pursuer closes because you stumbled, or
+## because you coasted -- and a player who is told "rattrape" in both cases
+## learns one rule instead of two. COLLISION stays what it always was:
+## running headfirst into something that kills on contact -- which since the
+## half-strike rebalance means the CHARGER and nothing else (see
+## Obstacle.is_fatal). It is now the RARER of the two causes by design.
 enum DeathCause { COLLISION, PURSUER }
 
 ## Length of the forced "you were just caught" beat between pursuer_lead_s
-## (or strikes_used) reaching zero and the actual transition to GAME_OVER --
+## (or strikes_used_half) reaching zero and the actual transition to GAME_OVER --
 ## see the State.CAPTURED doc above for why that gap needs to exist at all.
 ##
 ## Two things fill it, and neither reads this constant to know how long it
@@ -363,25 +366,74 @@ const PURSUER_GRACE_S: float = 5.0
 #
 #   BEFORE: every hazard killed on contact. The pursuer was a parallel
 #           timer that a sufficiently active player never met.
-#   AFTER:  the two STATIC hazards (DODGE, JUMP -- things that simply sit
-#           there) no longer kill. They cost you ground, loudly. The
-#           pursuer is what finally kills you, either by draining the lead
-#           or by taking the second stumble. The four ACTIVE hazards
-#           (CHARGER, STOMPER, ENEMY, AIR_ENEMY -- things that move, track
-#           and commit) still kill outright, because a hazard that hunted
-#           you and won has already told its own story.
+#   THEN:   the two STATIC hazards (DODGE, JUMP) stopped killing and cost
+#           ground instead; the four ACTIVE ones still killed outright.
+#   NOW:    only the CHARGER kills. Everything else costs ground.
 #
-# See Obstacle.is_fatal for that split as code. It is a classification, not
-# a behaviour change: nothing about how any of the six hazards moves,
-# telegraphs or is spaced is touched by this block.
+# WHY THE LINE MOVED AGAIN, and why it landed on exactly one hazard. The
+# previous split was drawn at "does it act on you", which is a real
+# distinction and reads correctly -- but four of the six types were on the
+# fatal side of it, so in practice the run still ended, most of the time, to
+# a single contact with something. The pursuer was written to be what
+# finally kills you, and it could not be: it had to win a race against four
+# instant-death hazards to ever get a turn. StrikeAudit measured exactly
+# that -- the mid-skill profile died 32 times to a fatal hazard against 12
+# captures, i.e. the death model the STRIKES block exists to create was the
+# minority case in its own game.
+#
+# So the fatal side is now ONE hazard, and the one with the strongest claim
+# to it. The CHARGER is the only type with a forward speed of its own (see
+# Obstacle.CHARGER_SPEED_FACTOR): it does not wait to be reached, it closes,
+# and a lane switch is its only escape by construction rather than by
+# timing. Something that hunts you down at more than twice the speed of the
+# world, and catches you anyway, has earned the run outright. Everything
+# else -- static or active, tracking or not -- is now a stumble.
+#
+# THE COST OF A STUMBLE IS HALF OF ONE STRIKE, uniformly, for every one of
+# those five. See STRIKE_CAPACITY_HALF and CONTACT_COST_HALF below for the
+# unit, and Obstacle.is_fatal for the split as code. Nothing about how any
+# of the six hazards MOVES, telegraphs or is spaced is touched by this
+# block -- it is still a classification, not a behaviour change.
 # =====================================================================
 
-## How many non-fatal contacts a run survives. The SECOND one is the catch
-## -- not a third strike then a catch, which would need a third state the
-## HUD has to teach. Two means the indicator has exactly two readings
-## ("clear" and "one more and you are done"), and the second one is
-## unambiguous the first time a player sees it.
-const STRIKE_CAPACITY: int = 2
+## THE RESISTANCE BUDGET, IN HALF-STRIKE UNITS.
+##
+## WHY HALVES, AND WHY AS AN INT. Every non-fatal contact now costs "half a
+## strike", which is a fraction -- and the obvious encoding, a float
+## `strikes_used`, would put fractional arithmetic and `==` comparisons into
+## the one file whose own header calls it the fairness contract. 0.5 is
+## exactly representable, so it would even work; it would work right up
+## until someone adds a third weight that is not a power of two, and then it
+## would fail somewhere quiet. Doubling the unit keeps every comparison an
+## integer one: a contact costs 1, the budget is 4, and there is no
+## arithmetic in this file that can drift.
+##
+## 4 half-units = the equivalent of the two full strikes this model has
+## always had, i.e. the total budget is UNCHANGED and only its granularity
+## moved. That is the most literal reading of "everything else counts for
+## 0.5", and it is deliberately the conservative choice: the fatal-hazard
+## count dropping from four types to one is already a large change in how
+## survivable a run is, and moving the budget at the same time would make
+## the two impossible to tell apart in a playtest.
+##
+## What it costs: the row now has four readings instead of two, so "one more
+## and you are done" is no longer the FIRST thing a player sees after a
+## single contact. HUD.gd carries that with a three-step ladder rather than
+## the old binary -- see its STRIKES section.
+const STRIKE_CAPACITY_HALF: int = 4
+
+## What one non-fatal contact costs, in half-units.
+##
+## UNIFORM across all five non-fatal types, and stated as a named constant
+## rather than a bare `+= 1` so that uniformity is a decision on the record
+## instead of an artefact of the code. There is no longer any type that
+## costs a whole strike: the CHARGER never reaches register_strike at all
+## (Obstacle._on_body_entered ends the run before it), so "fatal" and "costs
+## double" are not two points on one scale -- they are different mechanisms.
+##
+## A future batch wanting per-type weights (a STOMPER costing more than a
+## JUMP, say) changes this into a lookup and nothing else in this file.
+const CONTACT_COST_HALF: int = 1
 
 ## Fraction of the run's speed the player keeps during a stumble -- the
 ## penalty itself. THE PURSUER DOES NOT SLOW DOWN WITH THEM, which is the
@@ -437,25 +489,62 @@ const STRIKE_SLOWDOWN_RECOVER_S: float = 0.8
 ## lead is still fully recoverable -- three risk events buy it back
 ## (PURSUER_RISK_REWARD_S) -- so this is a debt, not a sentence.
 ##
-## A ceiling and not a subtraction so that two stumbles in a row cannot
-## stack into an instant catch: the second one is the catch already, by
-## STRIKE_CAPACITY, and it should be the strike count that kills rather
-## than an arithmetic coincidence nobody can see coming.
+## A ceiling and not a subtraction so that stumbles in a row cannot stack
+## into an instant catch: the capacity-th contact is the catch already, by
+## STRIKE_CAPACITY_HALF, and it should be the resistance count that kills
+## rather than an arithmetic coincidence nobody can see coming.
+##
+## UNCHANGED by the half-strike rebalance, and that is a decision rather
+## than an oversight. This is a CEILING on the lead, so its effect does not
+## compound: four contacts pull the lead to 4.0s four times, exactly as two
+## used to pull it there twice. What it buys is stated above -- the pursuer
+## on screen during every penalty, whatever the lead was before -- and that
+## is if anything MORE load-bearing now: with four contacts available, the
+## pursuer closing in is the main thing standing between a stumbling player
+## and an unbounded run.
 const STRIKE_PURSUER_LEAD_CAP_S: float = 4.0
 
 ## Contacts inside this window of the last credited one are ignored --
 ## see register_strike.
 ##
-## Sized against the track, not chosen: TrackManager.MIN_OBSTACLE_GAP_S
+## Sized against the TRACK, not against the capacity, and that is why the
+## half-strike rebalance left it alone. TrackManager.MIN_OBSTACLE_GAP_S
 ## keeps ~0.80s of reaction time between two hazards, so anything shorter
-## than that would let an ordinary back-to-back pair take both strikes and
-## end the run in one beat the player never had a frame to answer. 1.2s
-## covers that gap with margin (and the stumble slows the world down, which
-## stretches the real gap further still), while staying far short of the
-## 10s recovery below -- it is a "that was one hit" filter, not a free ride.
+## than that would let an ordinary back-to-back pair be counted twice for
+## one beat the player never had a frame to answer. 1.2s covers that gap
+## with margin (and the stumble slows the world down, which stretches the
+## real gap further still), while staying far short of the recovery below --
+## it is a "that was one hit" filter, not a free ride.
+##
+## RE-EXAMINED for the rebalance and deliberately not moved. The number was
+## derived from hazard spacing, and hazard spacing did not change; what
+## changed is the CONSEQUENCE of the window failing. It used to be that two
+## contacts in one beat ended the run outright, so this constant was all
+## that stood between a bad row and an unanswerable death. Now the same
+## failure costs half the budget instead. So the window is doing strictly
+## less damage-control than it used to while its own justification is
+## untouched -- which is an argument for leaving it exactly where it is, not
+## for retuning it against a capacity it was never derived from.
 const STRIKE_INVULNERABLE_S: float = 1.2
 
-## Seconds of clean play (no new contact) that give one strike back.
+## Seconds of clean play (no new contact) that give ONE HALF-UNIT back --
+## i.e. exactly what one contact cost, not a whole strike.
+##
+## THAT SYMMETRY IS THE DECISION, and it is the one the rebalance actually
+## turned on. The alternative -- a recovery that returns a full strike while
+## a contact costs half of one -- would make recovery outpace damage two to
+## one. Combined with COMBO_TO_CLEAR_STRIKE below firing every 3 risk events
+## and a mid-skill player banking one every ~5s (measured, see the note
+## further down), an active player's budget would refill faster than it
+## could be spent and the strike model would stop being able to kill anyone
+## at all. Keeping one-in / one-out preserves the ratio between damage and
+## healing that this model has always had; changing the granularity of the
+## budget should not silently change its economy too.
+##
+## The duration itself is NOT rescaled either: 14.0s still buys back one
+## contact, so a player who takes four now needs four times the clean play
+## to fully recover rather than the same total. That is the intended shape
+## -- more contacts survivable, each one still individually expensive.
 ##
 ## STARTED AT 10.0, the genre's own reference point (Temple Run recovers
 ## fully in ~8-10s of clean running), then MEASURED rather than kept on
@@ -479,7 +568,12 @@ const TIME_TO_CLEAR_STRIKE_S: float = 14.0
 ##
 ## Granted every time the chain reaches an exact multiple of this, so a long
 ## chain keeps paying rather than paying once -- and bounded anyway by there
-## only ever being at most STRIKE_CAPACITY - 1 strikes outstanding.
+## only ever being at most STRIKE_CAPACITY_HALF - 1 half-units outstanding.
+##
+## Gives back ONE HALF-UNIT, the same as the passive path and the same as
+## one contact costs -- see TIME_TO_CLEAR_STRIKE_S for why the rebalance
+## kept recovery at one-in / one-out rather than letting a chain erase two
+## contacts at once.
 ##
 ## STARTED AT 5 and LOWERED TO 3 -- again by measurement (see
 ## TIME_TO_CLEAR_STRIKE_S for the numbers: at 5, one single strike in a whole
@@ -924,11 +1018,20 @@ var death_cause: DeathCause = DeathCause.COLLISION
 ## one.
 var _capture_sequence_t: float = 0.0
 
-## Non-fatal contacts taken so far this run, in [0, STRIKE_CAPACITY). Never
-## reaches STRIKE_CAPACITY as a resting value: the strike that would take it
-## there ends the run on the same frame (see register_strike), so every value
-## this can be observed at is a state the player is still playing in.
-var strikes_used: int = 0
+## Resistance spent so far this run, in HALF-UNITS, in
+## [0, STRIKE_CAPACITY_HALF). Never reaches STRIKE_CAPACITY_HALF as a
+## resting value: the contact that would take it there ends the run on the
+## same frame (see register_strike), so every value this can be observed at
+## is a state the player is still playing in.
+##
+## HALF-UNITS, NOT CONTACTS, even though CONTACT_COST_HALF is 1 today and
+## the two therefore coincide. The name states the unit so that a future
+## per-type weighting cannot silently turn every existing reader into a
+## reader of the wrong quantity -- and renaming this from `strikes_used`
+## rather than redefining it in place is what forced every consumer (HUD,
+## StrikeAudit, the two contrast probes) to be visited by the compiler
+## instead of by hope.
+var strikes_used_half: int = 0
 
 ## Fraction of the run's speed the player is currently making good, 1.0
 ## normally and STRIKE_SLOWDOWN_FACTOR during a stumble. THE ONE PLACE the
@@ -947,7 +1050,7 @@ var _strike_slow_t: float = -1.0
 ## Run time before which a contact is swallowed (see STRIKE_INVULNERABLE_S).
 var _strike_invulnerable_until_s: float = -1.0
 ## Run time the recovery clock is measured from: the last credited strike, or
-## the last strike given back. Meaningless while strikes_used == 0.
+## the last strike given back. Meaningless while strikes_used_half == 0.
 var _strike_clean_since_s: float = 0.0
 
 ## Lifetime counters for the run, read by scripts/dev/StrikeAudit.gd to
@@ -1016,7 +1119,7 @@ func start_run() -> void:
 	pursuer_visible = false
 	death_cause = DeathCause.COLLISION
 	_capture_sequence_t = 0.0
-	strikes_used = 0
+	strikes_used_half = 0
 	player_speed_factor = 1.0
 	_strike_slow_t = -1.0
 	_strike_invulnerable_until_s = -1.0
@@ -1417,8 +1520,8 @@ func register_risk_event(kind: RiskEvent) -> void:
 	# reachable at all: a player who has just stumbled is exactly the one who
 	# needs a way back, and resetting their combo on the hit would put the
 	# only active recovery path behind five more events starting from zero.
-	if strikes_used > 0 and combo_count % COMBO_TO_CLEAR_STRIKE == 0:
-		_clear_one_strike(true)
+	if strikes_used_half > 0 and combo_count % COMBO_TO_CLEAR_STRIKE == 0:
+		_clear_half_strike(true)
 	var previous_multiplier := combo_multiplier
 	combo_multiplier = _multiplier_for(combo_count)
 	risk_event.emit(kind)
@@ -1427,9 +1530,12 @@ func register_risk_event(kind: RiskEvent) -> void:
 		combo_tier_up.emit(combo_multiplier)
 
 ## THE one entry point for "the player just hit something that does not
-## kill" -- called by Obstacle._on_body_entered for the two STATIC hazard
-## types and by nothing else, exactly the way register_risk_event is the one
-## door for the opposite kind of event.
+## kill" -- called by Obstacle._on_body_entered for the FIVE non-CHARGER
+## hazard types and by nothing else, exactly the way register_risk_event is
+## the one door for the opposite kind of event.
+##
+## Credits CONTACT_COST_HALF, uniformly, whichever of the five it was. The
+## `source_type` argument is reported, never branched on -- see below.
 ##
 ## `source_type` is a plain int carrying an Obstacle.Type, deliberately NOT
 ## typed as one: this file is an autoload, loaded before any scene script,
@@ -1448,22 +1554,23 @@ func register_strike(source_type: int) -> bool:
 		return false
 	if run_time_s < _strike_invulnerable_until_s:
 		return false # see STRIKE_INVULNERABLE_S -- one bad row is one strike
-	strikes_used += 1
+	strikes_used_half += CONTACT_COST_HALF
 	strikes_taken_total += 1
 	_strike_invulnerable_until_s = run_time_s + STRIKE_INVULNERABLE_S
 	_strike_clean_since_s = run_time_s
 	# Emitted BEFORE the capture branch below, so the flash and the shake are
 	# armed on the frame of the hit whichever strike it was -- the last one
 	# should not be the only one that lands silently.
-	strike_taken.emit(source_type, strikes_used)
-	if strikes_used >= STRIKE_CAPACITY:
+	strike_taken.emit(source_type, strikes_used_half)
+	if strikes_used_half >= STRIKE_CAPACITY_HALF:
 		# Caught. Same event and same DeathCause as the lead reaching zero
-		# (see the DeathCause doc): stumbling twice IS being run down, and
-		# telling it as a second kind of death would teach a second rule for
-		# no gain. No stumble is armed -- there is nothing left to recover
-		# from. _begin_capture_sequence() (not end_run() directly) so this
-		# fatal strike gets the same forced "you were just caught" beat the
-		# lead-drain capture does -- see State.CAPTURED's doc.
+		# (see the DeathCause doc): stumbling your way through the whole
+		# budget IS being run down, and telling it as a second kind of death
+		# would teach a second rule for no gain. No stumble is armed --
+		# there is nothing left to recover from. _begin_capture_sequence()
+		# (not end_run() directly) so this final contact gets the same
+		# forced "you were just caught" beat the lead-drain capture does --
+		# see State.CAPTURED's doc.
 		_begin_capture_sequence()
 		return true
 	_strike_slow_t = 0.0
@@ -1480,12 +1587,17 @@ func register_strike(source_type: int) -> bool:
 ## advance_time() like everything else here, so a headless probe stepping the
 ## run at a fixed delta sees exactly the timing a real run does.
 ##
-## DELIBERATELY NOT a second timer per strike: with STRIKE_CAPACITY == 2
-## there is at most ONE strike outstanding at any time (the second ends the
-## run), so a single "clean since" instant describes the whole state. The
-## loop below is still written to give back one strike at a time rather than
-## all of them, so raising the capacity later changes one constant and not
-## this rule.
+## DELIBERATELY NOT a timer per outstanding half-unit. One "clean since"
+## instant describes the whole state, and _clear_half_strike re-arms it on
+## every clear, so each half-unit costs a full TIME_TO_CLEAR_STRIKE_S of
+## clean play rather than several draining off the same one.
+##
+## That property is what made raising the capacity from 2 to 4 half-units a
+## one-constant change: this function already gave back ONE unit per
+## expiry, so at four outstanding it simply takes four expiries. It was
+## written that way when the capacity was 2 and only one unit could ever be
+## outstanding -- i.e. when the loop-shaped version was strictly redundant.
+## It is not redundant now.
 func _update_strikes(delta: float) -> void:
 	if _strike_slow_t >= 0.0:
 		_strike_slow_t += delta
@@ -1497,27 +1609,31 @@ func _update_strikes(delta: float) -> void:
 		else:
 			var t := (_strike_slow_t - STRIKE_SLOWDOWN_HOLD_S) / STRIKE_SLOWDOWN_RECOVER_S
 			player_speed_factor = lerpf(STRIKE_SLOWDOWN_FACTOR, 1.0, clampf(t, 0.0, 1.0))
-	if strikes_used <= 0:
+	if strikes_used_half <= 0:
 		return
 	if run_time_s - _strike_clean_since_s < TIME_TO_CLEAR_STRIKE_S:
 		return
-	_clear_one_strike(false)
+	_clear_half_strike(false)
 
-## Gives one strike back. `by_combo` only selects which counter is credited
-## and what the signal reports -- the effect on the run is identical either
-## way, which is the point: the player has two ways to earn the same thing,
-## one passive and one active.
-func _clear_one_strike(by_combo: bool) -> void:
-	strikes_used -= 1
-	# Re-armed on every clear, not only on a strike, so each strike costs a
-	# full TIME_TO_CLEAR_STRIKE_S of clean play rather than several draining
-	# off the same one.
+## Gives back ONE HALF-UNIT -- exactly what one contact cost, never a whole
+## strike. See TIME_TO_CLEAR_STRIKE_S for why the rebalance held recovery to
+## one-in / one-out rather than letting either path erase two contacts.
+##
+## `by_combo` only selects which counter is credited and what the signal
+## reports -- the effect on the run is identical either way, which is the
+## point: the player has two ways to earn the same thing, one passive and
+## one active.
+func _clear_half_strike(by_combo: bool) -> void:
+	strikes_used_half -= CONTACT_COST_HALF
+	# Re-armed on every clear, not only on a contact, so each half-unit costs
+	# a full TIME_TO_CLEAR_STRIKE_S of clean play rather than several
+	# draining off the same one.
 	_strike_clean_since_s = run_time_s
 	if by_combo:
 		strikes_cleared_by_combo += 1
 	else:
 		strikes_cleared_by_time += 1
-	strike_cleared.emit(strikes_used, by_combo)
+	strike_cleared.emit(strikes_used_half, by_combo)
 
 ## Collapses the chain once COMBO_TIMEOUT_S has elapsed with no risk event.
 ## Driven from advance_time() -- the same clock everything else in this

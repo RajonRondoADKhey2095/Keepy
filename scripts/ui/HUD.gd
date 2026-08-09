@@ -87,6 +87,14 @@ class_name HUD
 ##                                    caught, without an event having to
 ##                                    remind them.
 ##
+## FOUR PIPS, NOT TWO, AND THEY COUNT CONTACTS -- see the ALARM LADDER below
+## for the half-strike rebalance this row had to absorb. GameState counts in
+## half-units because that is the arithmetic-safe way to price a contact at
+## "half a strike"; this row does NOT repeat that framing at the player.
+## They take four hits and they are caught, so the row shows four slots and
+## spends one per hit. A half-filled pip would ask a player mid-run to
+## decode a fraction; four pips ask them to count, which they already do.
+##
 ## The pips sit directly ABOVE the pursuer gauge, in the same bottom column,
 ## because the two are one story: the pips are what the pursuer is counting.
 ##
@@ -110,8 +118,49 @@ class_name HUD
 ## measurement did.
 ##
 ## The spent/intact distinction is an interior COLOUR change, but it is never
-## the only cue: at one strike from death the whole row pulses, which
+## the only cue: from halfway through the budget the whole row pulses, which
 ## survives any palette because it is scale.
+##
+## =====================================================================
+## THE ALARM LADDER -- what replaced the binary warning
+##
+## Before the half-strike rebalance the capacity was 2, so `danger := used >=
+## CAPACITY - 1` meant the amber alarm armed on the FIRST contact and never
+## changed again before the second one ended the run. One hit, full alarm:
+## binary, and correct at that capacity.
+##
+## At a capacity of 4 the same expression is still the right one for "one
+## more and you are done" -- it just no longer fires until the third
+## contact, which would leave the first two marked by nothing but a flash
+## that is gone in a third of a second. The middle of the ladder is exactly
+## where a player most needs to feel the budget draining, so it gets its own
+## step:
+##
+##   CLEAR    0-1 contacts   white, still. A single stumble is a stumble.
+##   CAUTION  2 contacts     amber, SLOW shallow pulse. Half the resistance
+##                           is gone. New state, and the reason this is a
+##                           ladder rather than a rename.
+##   DANGER   3 contacts     amber, the ORIGINAL fast deep pulse + the entry
+##                           kick. "One more and you are done", unchanged in
+##                           kind from what shipped -- only its trigger
+##                           moved from contact 1 to contact 3.
+##   FATAL    4 contacts     coral red, fastest and deepest. Owns the row.
+##
+## ESCALATION IS CARRIED BY PULSE RATE, not by inventing a third hue. Hue
+## changes exactly once, at the step that matters most (white -> amber, "you
+## are now in trouble"), and then rate and amplitude climb monotonically
+## across all four steps. That keeps STRIKE_FATAL_COLOR's argument intact --
+## the fatal beat is still its own hue family, not a shade of the warning --
+## while giving the ladder a cue that is pure scale/motion and therefore
+## survives every palette, including the DARK/4 case that colour alone
+## cannot (see STRIKE_FATAL_COLOR's own doc).
+##
+## THE ENTRY KICK STILL FIRES ON EVERY NON-FINAL CONTACT, including the ones
+## below CAUTION where there is no steady pulse to ride on. That is why
+## _update_strike_display applies it OUTSIDE the tier branches: scoping it
+## inside the danger branch, as it was when danger began at contact 1, would
+## silently drop the kick for contacts 1 and 2 -- armed, advanced, expired,
+## never drawn.
 
 # --- INCREMENT pop -------------------------------------------------
 ## Same envelope as Obstacle.MARKER_POP_DURATION_S, and deliberately as
@@ -185,10 +234,36 @@ const STRIKE_FLASH_MAX_ALPHA: float = 0.55
 ## an empty socket rather than as a second kind of full one.
 const PIP_INTACT_COLOR: Color = Color(1.0, 1.0, 1.0, 1)
 const PIP_SPENT_COLOR: Color = Color(0.10, 0.09, 0.12, 1)
-## Colour the row's label takes at one strike from being caught -- the same
+## Colour the row's label takes once the alarm is armed at all -- the same
 ## hot amber the expiring combo uses, reused rather than invented: it already
 ## means "act now" everywhere else on this HUD.
+##
+## Shared by CAUTION and DANGER on purpose. See the ALARM LADDER in the class
+## doc: the two steps are told apart by pulse RATE, not by a second amber.
 const STRIKE_DANGER_COLOR: Color = WARNING_COLOR
+
+## --- CAUTION step (half-strike rebalance) --------------------------
+## The pulse for "half your resistance is gone", i.e. the step that did not
+## exist while the capacity was two contacts.
+##
+## Deliberately BELOW the danger pulse on both axes (3.5 Hz / 0.18) and
+## visibly so: roughly a third the rate and a third the swing. It has to
+## read as a heartbeat the player notices without being told to act NOW --
+## if it competed with the danger step, arriving at contact 3 would mean
+## nothing and the ladder would be back to binary with extra steps.
+##
+## The threshold is derived, not typed: half the budget, so it moves with
+## GameState.STRIKE_CAPACITY_HALF instead of stranding the caution step on
+## the wrong slot the way a literal 2 would.
+const STRIKE_CAUTION_PULSE_HZ: float = 1.2
+const STRIKE_CAUTION_PULSE_AMPLITUDE: float = 0.06
+
+## The steps of the ALARM LADDER, named rather than left as 0/1/2 at the
+## comparison sites -- `tier == TIER_CAUTION` says what it means where
+## `tier == 1` would need the reader to go and look.
+const TIER_CLEAR: int = 0
+const TIER_CAUTION: int = 1
+const TIER_DANGER: int = 2
 
 ## --- STRIKE-1 ENTRY KICK (reinforcement batch) ---------------------
 ## A single sharp scale spike on the strike row the instant strike 1 is
@@ -229,16 +304,26 @@ const STRIKE_KICK_PEAK: float = 0.26
 ## GameState.pursuer_caught (see _on_pursuer_caught below) and held for the
 ## rest of GameState.CAPTURE_SEQUENCE_DURATION_S.
 ##
-## Playtest finding: a player who took two contacts did not understand the
-## second one was different from the first -- STRIKE_DANGER_COLOR/
+## Playtest finding (recorded at the old capacity of 2, and the reason this
+## state exists at all): a player who took two contacts did not understand
+## the second one was different from the first -- STRIKE_DANGER_COLOR/
 ## WARNING_PULSE_* had already been running continuously since strike one
-## (danger := used >= STRIKE_CAPACITY - 1 with STRIKE_CAPACITY == 2 means
-## the amber pulse starts at the FIRST strike and never changes again before
-## the second one ends the run), so the fatal hit looked like "the same
-## warning, still going" rather than "the thing the warning was about, now
+## (`danger := used >= CAPACITY - 1` with a capacity of 2 means the amber
+## pulse starts at the FIRST strike and never changes again before the
+## second one ends the run), so the fatal hit looked like "the same warning,
+## still going" rather than "the thing the warning was about, now
 ## happening". This state OWNS the row once armed -- it does not fall back
 ## to or alternate with the ordinary danger pulse, because by definition the
 ## ordinary pulse already had its one chance to be enough.
+##
+## THE HALF-STRIKE REBALANCE DID NOT MAKE THIS REDUNDANT, and it is worth
+## saying so because the ALARM LADDER above solves a related problem. The
+## ladder fixes "the warning is flat across the whole run"; this fixes "the
+## last hit looks like the warning that preceded it". At capacity 4 the
+## danger step now precedes the fatal one by a single contact rather than
+## running for the whole run, which makes the two ADJACENT -- so the fatal
+## beat needing its own hue and its own rate is, if anything, sharper than
+## it was.
 ##
 ## A coral RED (hue 0deg), deliberately a different hue family from
 ## STRIKE_DANGER_COLOR's amber (hue ~21deg, also the expiring-combo pulse's
@@ -295,11 +380,15 @@ const FATAL_PULSE_AMPLITUDE: float = 0.32
 @onready var strike_fatal_sfx: AudioStreamPlayer = $StrikeFatalSfx
 @onready var strike_row: HBoxContainer = $MarginContainer/PursuerRow/StrikeRow
 @onready var strike_label: Label = $MarginContainer/PursuerRow/StrikeRow/StrikeLabel
-## Fixed-size, resolved once. One entry per STRIKE_CAPACITY slot, in the same
-## order as the scene authors them, so the Nth pip is the Nth strike.
+## Fixed-size, resolved once. One entry per STRIKE_CAPACITY_HALF slot, in the
+## same order as the scene authors them, so the Nth pip is the Nth contact.
+## Went from 2 to 4 with the half-strike rebalance -- the count is asserted
+## against the capacity in _ready() rather than left to agree by luck.
 @onready var pip_fills: Array[ColorRect] = [
 	$MarginContainer/PursuerRow/StrikeRow/Pip0/Ring/Fill,
 	$MarginContainer/PursuerRow/StrikeRow/Pip1/Ring/Fill,
+	$MarginContainer/PursuerRow/StrikeRow/Pip2/Ring/Fill,
+	$MarginContainer/PursuerRow/StrikeRow/Pip3/Ring/Fill,
 ]
 
 ## Elapsed time in each pop, or < 0.0 when that pop is not playing -- the
@@ -337,11 +426,17 @@ var _strike_flash_t: float = -1.0
 ## _pop_scale pair every other one-shot on this HUD uses, so it cannot drift
 ## into being a second animation shape of its own.
 var _strike_kick_t: float = -1.0
-## Free-running phase for the one-strike-from-death pulse, restarted when that
-## state is ENTERED so its first beat is always a whole one -- exactly the
-## contract _warning_t follows for the combo.
+## Free-running phase for the alarm pulse, restarted when a STEP of the
+## ladder is entered so its first beat is always a whole one -- exactly the
+## contract _warning_t follows for the combo. Restarting on every step
+## change, not only on arming, matters now that there are two pulsing steps:
+## stepping CAUTION -> DANGER swaps the rate, and picking the faster beat up
+## mid-cycle would blunt the one transition the ladder most needs to land.
 var _strike_pulse_t: float = 0.0
-var _strike_danger_active: bool = false
+## Which step of the ALARM LADDER is currently drawn (see the class doc):
+## 0 clear, 1 caution, 2 danger. Replaced a plain `_strike_danger_active`
+## bool, which could not tell the two pulsing steps apart.
+var _strike_tier: int = 0
 ## The strike label's font colour actually pushed to the theme override.
 ## Tracked, same reasoning as _applied_color for the combo labels, so the
 ## override is only written on a real change -- with three possible states
@@ -351,8 +446,9 @@ var _applied_strike_color: Color = NORMAL_COLOR
 ## Whether the FATAL strike beat is currently playing -- see
 ## STRIKE_FATAL_COLOR's own doc. Armed by GameState.pursuer_caught
 ## (_on_pursuer_caught below), which fires exactly once per capture whether
-## it came from the lead draining to zero or from the second strike -- see
-## GameState._begin_capture_sequence. Cleared the moment strikes_used next
+## it came from the lead draining to zero or from the capacity-th contact --
+## see GameState._begin_capture_sequence. Cleared the moment
+## strikes_used_half next
 ## returns to 0 (a fresh start_run(), see _update_strike_display), never by
 ## a timer of its own: this HUD does not need to know
 ## GameState.CAPTURE_SEQUENCE_DURATION_S to stay in step with it, because
@@ -362,15 +458,15 @@ var _fatal_active: bool = false
 ## Free-running phase for the fatal pulse, same "restart on entry" contract
 ## as _strike_pulse_t/_warning_t.
 var _fatal_pulse_t: float = 0.0
-## Strike count currently DRAWN. The pips are repainted from
-## GameState.strikes_used on change rather than driven by the strike_taken /
+## Half-unit count currently DRAWN. The pips are repainted from
+## GameState.strikes_used_half on change rather than driven by the strike_taken /
 ## strike_cleared signals, and that is deliberate: a count is a STATE, and a
 ## surface rebuilt from the state cannot drift out of step with it -- there is
 ## no reset signal to forget to connect, and a run starting fresh repaints on
 ## its first frame for free. The signals stay for the EVENTS (the flash, the
 ## camera shake), which are the thing a state cannot express.
 ## Starts at -1 so the first frame always paints.
-var _drawn_strikes: int = -1
+var _drawn_half: int = -1
 
 func _ready() -> void:
 	GameState.score_changed.connect(_on_score_changed)
@@ -380,6 +476,15 @@ func _ready() -> void:
 	GameState.pursuer_became_visible.connect(_on_pursuer_became_visible)
 	GameState.strike_taken.connect(_on_strike_taken)
 	GameState.pursuer_caught.connect(_on_pursuer_caught)
+	# The scene authors the pips; GameState owns the capacity. Nothing makes
+	# the two agree, so say so loudly here rather than silently drawing a row
+	# that cannot represent the state -- too few pips and the last contacts
+	# are invisible, too many and the player is shown resistance they do not
+	# have. Costs one comparison at startup and would have caught this
+	# batch's own scene edit had it been forgotten.
+	if pip_fills.size() != GameState.STRIKE_CAPACITY_HALF:
+		push_error("HUD: %d pips authored in HUD.tscn against a capacity of %d half-units -- the strike row cannot draw the real state." % [
+			pip_fills.size(), GameState.STRIKE_CAPACITY_HALF])
 	score_label.text = str(GameState.score)
 	_on_counts_changed(GameState.nut_count, GameState.gland_count)
 	_on_combo_changed(GameState.combo_count, GameState.combo_multiplier)
@@ -463,47 +568,59 @@ func _exit_tree() -> void:
 	strike_warning_sfx.stop()
 	strike_fatal_sfx.stop()
 
-## Arms the impact flash, the strike-1 entry kick and the audio cue. The pips
-## themselves are NOT repainted here -- see _drawn_strikes for why they are
+## Arms the impact flash, the entry kick and the audio cue. The pips
+## themselves are NOT repainted here -- see _drawn_half for why they are
 ## rebuilt from the state instead.
 ##
-## `strikes_used` is the count AFTER this strike (see GameState.register_
-## strike, which increments before emitting), so the capacity comparison
-## below is the same discriminator _on_pursuer_caught already uses: this IS
-## the fatal one exactly when the count has reached STRIKE_CAPACITY.
+## `strikes_used_half` is the count AFTER this contact (see
+## GameState.register_strike, which increments before emitting), so the
+## capacity comparison below is the same discriminator _on_pursuer_caught
+## already uses: this IS the fatal one exactly when the count has reached
+## STRIKE_CAPACITY_HALF.
 ##
 ## The two branches are the WHOLE of the sound design's separation rule: the
 ## warning cue is short and high, the fatal one long and roughly two octaves
 ## below it, mirroring in sound the deliberate "different hue family, not a
 ## shade of the same one" rule STRIKE_FATAL_COLOR's doc states for colour.
 ## Neither is ever played on the other's frame.
-func _on_strike_taken(_source_type: int, strikes_used: int) -> void:
+##
+## THE WARNING CUE FIRES ON EVERY NON-FINAL CONTACT, which at capacity 4
+## means up to three times a run rather than the old once. It is NOT graded
+## per step of the ALARM LADDER: that would need cues this project does not
+## have (there are exactly two .wav files, see the audio note above), and
+## inventing a pitch ramp in code would put the sound design somewhere no
+## one would look for it. The escalation the player hears is the FREQUENCY
+## of this cue; the escalation they see is the ladder. Flagged for the
+## device review as the most likely thing to want a third asset later.
+func _on_strike_taken(_source_type: int, strikes_used_half: int) -> void:
 	_strike_flash_t = 0.0
-	if strikes_used >= GameState.STRIKE_CAPACITY:
+	if strikes_used_half >= GameState.STRIKE_CAPACITY_HALF:
 		strike_fatal_sfx.play()
 		return
-	# Non-fatal strike: this is the moment the amber alarm turns on, so it is
-	# the moment that needs marking. Kick and warning cue both scoped here so
-	# neither can fire on the capture frame the fatal branch above owns.
+	# A contact that was not the last one. Kick and warning cue both scoped
+	# here so neither can fire on the capture frame the fatal branch owns.
+	# The kick is DRAWN outside the ladder's branches (see
+	# _update_strike_display) precisely so it still shows at the lower steps,
+	# where there is no steady pulse for it to ride on.
 	_strike_kick_t = 0.0
 	strike_warning_sfx.play()
 
 ## Arms the fatal-strike beat -- see STRIKE_FATAL_COLOR's own doc.
 ## GameState.pursuer_caught fires for BOTH ways a run can end at the
-## pursuer's hands (the lead draining to zero, or the second strike -- see
-## GameState._begin_capture_sequence), but this beat is scoped to the
-## SECOND, strike-specific one on purpose: it lives on the strike row (the
-## pips and this label), and a lead-drain capture can happen with
-## strikes_used sitting anywhere from 0 to STRIKE_CAPACITY - 1 -- pips still
+## pursuer's hands (the lead draining to zero, or the capacity-th contact --
+## see GameState._begin_capture_sequence), but this beat is scoped to the
+## contact-driven one on purpose: it lives on the strike row (the pips and
+## this label), and a lead-drain capture can happen with strikes_used_half
+## sitting anywhere from 0 to STRIKE_CAPACITY_HALF - 1 -- pips still
 ## showing slots available. Arming the fatal red there would tell the wrong
-## story ("you took your second hit") about an event that was actually the
-## gauge running out. GameState.strikes_used is already at STRIKE_CAPACITY
+## story ("you ran out of resistance") about an event that was actually the
+## gauge running out. GameState.strikes_used_half is already at STRIKE_CAPACITY
 ## by the time this signal fires FOR a strike-triggered capture (register_
 ## strike increments it before emitting), so that comparison is exactly the
 ## discriminator needed, without this HUD having to know WHICH of the two
 ## call sites in GameState actually fired.
 func _on_pursuer_caught() -> void:
-	if GameState.strikes_used < GameState.STRIKE_CAPACITY:
+	if GameState.strikes_used_half < GameState.STRIKE_CAPACITY_HALF:
 		return
 	_fatal_active = true
 	_fatal_pulse_t = 0.0
@@ -549,56 +666,79 @@ func _update_pursuer_telegraph(delta: float) -> void:
 	_pursuer_pop_t = _advance_pop(_pursuer_pop_t, delta, TIER_POP_DURATION_S)
 	_apply_scale(pursuer_label, _pop_scale(_pursuer_pop_t, TIER_POP_DURATION_S, TIER_POP_PEAK_SCALE))
 
-## The two strike surfaces -- see the STRIKES section of the class doc.
+## The two strike surfaces -- see the STRIKES section of the class doc, and
+## the ALARM LADDER section for the three-step warning this drives.
 ##
 ## Everything here is edge-triggered against what is already drawn: the pips
 ## repaint only when the count moves, the label colour only when the STATE
-## (normal / danger / fatal) actually changes. The only per-frame writes are
-## the pulse's scale and the flash's alpha, and both are plain value-type
-## assignments.
+## (normal / caution / danger / fatal) actually changes. The only per-frame
+## writes are the pulse's scale and the flash's alpha, and both are plain
+## value-type assignments.
 func _update_strike_display(delta: float) -> void:
-	var used: int = GameState.strikes_used
-	if used != _drawn_strikes:
-		_drawn_strikes = used
+	var used: int = GameState.strikes_used_half
+	if used != _drawn_half:
+		_drawn_half = used
 		for i in pip_fills.size():
-			# Pips are spent LEFT TO RIGHT: with `used` strikes taken, the
+			# Pips are spent LEFT TO RIGHT: with `used` half-units spent, the
 			# first `used` slots are empty and the rest are still available.
 			pip_fills[i].color = PIP_SPENT_COLOR if i < used else PIP_INTACT_COLOR
 		if used == 0:
 			# The only way this count falls back to 0 is a fresh start_run()
 			# (see GameState.gd) -- clear the one-shot fatal beat along with
-			# it so a NEW run's very first strike can never inherit the
+			# it so a NEW run's very first contact can never inherit the
 			# PREVIOUS run's capture-beat colour/pulse.
 			_fatal_active = false
 
-	# One strike from being caught -- the row pulses and the label goes amber.
-	# GameState.STRIKE_CAPACITY - 1 rather than a literal 1, so raising the
-	# capacity moves the alarm with it instead of leaving it on the wrong slot.
-	var danger := used >= GameState.STRIKE_CAPACITY - 1
-	if danger and not _strike_danger_active:
+	# THE LADDER. Both thresholds are DERIVED from the capacity, never typed
+	# as literals, so changing STRIKE_CAPACITY_HALF moves both steps with it
+	# instead of stranding one on the wrong slot -- which is exactly what a
+	# literal `>= 1` would have done to this row when the capacity went from
+	# 2 to 4.
+	var tier := TIER_CLEAR
+	if used >= GameState.STRIKE_CAPACITY_HALF - 1:
+		tier = TIER_DANGER
+	elif used >= GameState.STRIKE_CAPACITY_HALF / 2:
+		tier = TIER_CAUTION
+	# Restart the phase on ANY step change, not only on arming: stepping
+	# CAUTION -> DANGER swaps the pulse rate, and picking the faster beat up
+	# mid-cycle would blunt the one transition the ladder most needs to land.
+	if tier != _strike_tier:
 		_strike_pulse_t = 0.0
-	_strike_danger_active = danger
+	_strike_tier = tier
 
 	var scale := 1.0
 	if _fatal_active:
-		# THE fatal strike -- see STRIKE_FATAL_COLOR's own doc for why this
-		# does not fall back to the ordinary danger pulse below: it OWNS the
-		# row for the rest of the capture beat.
+		# THE final contact -- see STRIKE_FATAL_COLOR's own doc for why this
+		# does not fall back to the ladder below: it OWNS the row for the
+		# rest of the capture beat, kick included.
 		_apply_strike_color(STRIKE_FATAL_COLOR)
 		_fatal_pulse_t += delta
 		scale = 1.0 + FATAL_PULSE_AMPLITUDE * sin(_fatal_pulse_t * TAU * FATAL_PULSE_HZ)
-	elif danger:
-		_apply_strike_color(STRIKE_DANGER_COLOR)
-		_strike_pulse_t += delta
-		scale = 1.0 + WARNING_PULSE_AMPLITUDE * sin(_strike_pulse_t * TAU * WARNING_PULSE_HZ)
-		# The entry kick rides ON TOP of the steady pulse rather than
-		# replacing it -- see STRIKE_KICK_DURATION_S. _pop_scale returns 1.0
-		# at rest, so subtracting 1 turns the shared envelope into a pure
-		# additive spike that vanishes the moment the kick expires, leaving
-		# the already-shipped pulse untouched for the rest of the run.
-		scale += _pop_scale(_strike_kick_t, STRIKE_KICK_DURATION_S, 1.0 + STRIKE_KICK_PEAK) - 1.0
 	else:
-		_apply_strike_color(NORMAL_COLOR)
+		if tier == TIER_DANGER:
+			_apply_strike_color(STRIKE_DANGER_COLOR)
+			_strike_pulse_t += delta
+			scale = 1.0 + WARNING_PULSE_AMPLITUDE * sin(_strike_pulse_t * TAU * WARNING_PULSE_HZ)
+		elif tier == TIER_CAUTION:
+			# Same amber, a third the rate and a third the swing -- see
+			# STRIKE_CAUTION_PULSE_HZ for why the step is told apart by rate
+			# rather than by a second colour.
+			_apply_strike_color(STRIKE_DANGER_COLOR)
+			_strike_pulse_t += delta
+			scale = 1.0 + STRIKE_CAUTION_PULSE_AMPLITUDE * sin(_strike_pulse_t * TAU * STRIKE_CAUTION_PULSE_HZ)
+		else:
+			_apply_strike_color(NORMAL_COLOR)
+		# The entry kick rides ON TOP of whatever steady pulse this step has,
+		# INCLUDING none -- which is why it sits outside the branches above
+		# rather than inside the danger one where it used to live. At the old
+		# capacity of 2 the two were the same thing (every non-fatal contact
+		# armed the danger step on the same frame); at capacity 4 the first
+		# two contacts land at TIER_CLEAR, and leaving the kick in the danger
+		# branch would arm, advance and expire it without ever drawing it.
+		# _pop_scale returns 1.0 at rest, so subtracting 1 turns the shared
+		# envelope into a pure additive spike that vanishes when the kick
+		# expires, leaving the steady pulse untouched for the rest of the run.
+		scale += _pop_scale(_strike_kick_t, STRIKE_KICK_DURATION_S, 1.0 + STRIKE_KICK_PEAK) - 1.0
 	# On the ROW, not on the label: the pips are the information, so the pulse
 	# has to move them too -- pulsing only the word would draw the eye to the
 	# one part of the widget that never changes.

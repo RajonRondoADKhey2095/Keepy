@@ -33,7 +33,7 @@ extends Node
 ##                first version of this probe did.
 ##
 ## THE SPENT STATE IS DRIVEN THROUGH GameState.register_strike(), never by
-## writing strikes_used by hand, and that is a correction rather than a
+## writing strikes_used_half by hand, and that is a correction rather than a
 ## preference. Writing the field directly leaves _strike_clean_since_s where
 ## it was, so _update_strikes saw a strike that had already been "clean" for
 ## longer than TIME_TO_CLEAR_STRIKE_S and handed it straight back on the next
