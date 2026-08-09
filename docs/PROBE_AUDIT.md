@@ -460,6 +460,212 @@ no `DevSeed.apply()`, and the same blame-anything branch.
 
 Still no gameplay defect: the game behaved correctly in every case measured.
 
+### F10 -- pixel probes measuring something other than their column header. RESOLVED.
+
+Same family as F1-F5 one level down: the probe ran, the number printed, and
+the number was not of the quantity the header named. Two defects were
+diagnosed going in (a, b); a third (c) was found by measuring whether the
+fix for (b) had actually worked, and turned out to dominate it.
+
+Both probes were **red before and after** this work. Nothing here made a
+failing thing pass, and no floor was moved. What changed is that the
+numbers now describe the game.
+
+#### F10a -- PursuerContrastAudit was measuring Keepy, not the ground
+
+`_silhouette_rect()` unprojects a 180px box around the pursuer, and the
+background for it is obtained by hiding the pursuer and re-capturing. That
+box lies **entirely inside the pursuer's projected bounds**, and at the
+pinned lead **Keepy stands directly behind it**. Hiding the pursuer did not
+uncover the ground. It uncovered the player. The probe reported
+pursuer-vs-Keepy under the header `silhouette:ground`, in every palette,
+for its whole life.
+
+Measured on the same frame, hiding Keepy or not -- not reasoned about:
+
+| palette | bg, Keepy in box | bg, ground | ratio, Keepy | ratio, ground |
+|---|---|---|---|---|
+| LIGHT | `#eda488` | `#ffc7a6` | 7.39 | 9.98 |
+| DARK/0 | `#933946` | `#8c2938` | 2.44 | 2.87 |
+| DARK/1 | `#939140` | `#8c8232` | 2.08 | 2.49 |
+| DARK/2 | `#18b55c` | `#11a54f` | 1.85 | 2.20 |
+| DARK/3 | `#187fc1` | `#1170b3` | 2.03 | 2.48 |
+| DARK/4 | `#4a39c1` | `#4329b3` | 2.32 | 2.77 |
+| DARK/5 | `#933994` | `#8c2987` | 2.34 | 2.75 |
+
+Fixed by hiding `World/Keepy` in `_freeze()` -- for the **whole**
+measurement, not just the background capture. Hiding it only for the
+background swaps one wrong answer for another: the pursuer's own "darkest
+pixel" is picked from the same box in the with-everything frame, so Keepy's
+body would go on standing in for the pursuer's there.
+
+**This also explains a stale green in this document.** The 2026-08-08 Hibou
+entry in `docs/MESHY_SPEC.md` §11 records this probe passing all six dark
+palettes, worst `DARK/2` at 2.53:1, and the baseline table below still
+carries `rc 0` from that measurement. Both were readings of
+pursuer-vs-**placeholder-Keepy**. The Keepy squirrel landed the next day
+(§11, 2026-08-09), the reference surface changed underneath the probe, and
+on `origin/main` today the *unfixed* probe fails **all six** dark palettes
+(worst 1.85:1). That batch had no reason to suspect it -- its own §11 entry
+states, correctly as to the source, that `PursuerContrastAudit` has "zero
+references to Keepy". It had zero references and was sampling its pixels.
+
+#### The re-derived verdict, and it is not a pass
+
+With the reference surface corrected, the pursuer silhouette against the
+**ground**, decor pinned (see F10b), floor 2.5:1 as shipped:
+
+| palette | silhouette:ground | verdict |
+|---|---|---|
+| LIGHT | 11.02 | PASS |
+| DARK/0 | 2.98 | PASS |
+| DARK/1 | 2.66 | PASS |
+| DARK/2 | **2.37** | **FAIL** |
+| DARK/3 | 2.69 | PASS |
+| DARK/4 | 2.94 | PASS |
+| DARK/5 | 2.87 | PASS |
+
+**`DARK/2` (green) fails, and the floor was not moved to make it pass.**
+Three things about it are worth stating rather than filing as a number:
+
+1. **The 2.5 floor's own derivation is now suspect.** Its source comment
+   justifies 2.5 as "below the 2.65 worst case actually measured" -- but
+   that 2.65 was measured against Keepy. The true worst case against the
+   ground is 2.20 unseeded / 2.37 pinned. The floor was calibrated on the
+   contaminated reading.
+2. **On the same comment's own sweep, `DARK/2` cannot be fixed by
+   re-colouring the pursuer.** It puts green's ceiling -- the best contrast
+   *any* unshaded albedo can reach against that ground through the
+   invert+tint -- at 2.05. The measured 2.37 is already above that ceiling
+   (the emissive eyes are not an unshaded albedo), so the sweep is not a
+   hard bound either; but nothing about the pursuer's own colour has 0.13
+   of headroom to give. If `DARK/2` is to clear 2.5, the ground albedo or
+   `DARK_TINT_AMOUNT` is what has to move.
+3. **Deliberately not fixed here.** It is a visual/design decision, and it
+   belongs in the batch that can make the colour choice against these
+   numbers -- exactly the treatment `StrikeFatalContrastAudit`'s failure
+   already gets below.
+
+#### What this stops measuring, recorded rather than dropped
+
+**Pursuer against Keepy is now measured by nothing.** It is a real
+legibility question -- the pursuer looms directly behind the player, so the
+two silhouettes genuinely are read against each other, and the numbers in
+the first table above are low (1.85 at worst). Losing it is a real loss,
+not a cleanup: it needs its own probe, with its own reference surface and
+its own floor. What was wrong was answering it by accident under the wrong
+label. This is the second entry asking for a Keepy-specific contrast probe;
+§11's Keepy entry is the first.
+
+#### The latent `_silhouette_rect()` offset: real, and it does not move these numbers
+
+`_silhouette_rect()` centres its box on `global_position + (0, 1.7, 0)`,
+using the `Silhouette` child's **local** y while the node carries
+`scale 0.6125` -- so the true centre is at `1.7 * 0.6125 = 1.04`. Measured,
+that is a **119px** vertical error on a 180px box (centre unprojects to
+y=1124 vs y=1244); the two boxes overlap by only a third of their height.
+
+It is left alone, as instructed, and confirmed harmless to the post-fix
+verdict -- both boxes were sampled in the same frame:
+
+| palette | ratio, assumed box | ratio, true-centre box |
+|---|---|---|
+| LIGHT | 9.98 | 9.99 |
+| DARK/0 | 2.87 | 2.88 |
+| DARK/1 | 2.49 | 2.48 |
+| DARK/2 | 2.20 | 2.18 |
+| DARK/3 | 2.48 | 2.46 |
+| DARK/4 | 2.77 | 2.78 |
+| DARK/5 | 2.75 | 2.76 |
+
+Worst difference 0.02, no verdict changes. **But note why it is harmless:**
+once Keepy is hidden the box sees near-uniform ground, so where the box
+sits stops mattering. Against the *contaminated* background the same offset
+moved the ratio by up to 0.29 (DARK/3, 2.03 vs 2.32), because box placement
+decided how much of Keepy got sampled. The fix masks this defect rather
+than repairing it -- anything that re-introduces structure into the sampled
+region will make it matter again.
+
+#### F10b -- decor was unseeded, so contrast verdicts were coin flips
+
+`TrackSegment._tint_rng`, `TrackSegment._prop_rng` and `Decor._rng` took
+their state from OS entropy at construction. The pixel probes sample real
+rendered pixels of exactly that decor as their reference surface, so their
+verdicts moved run to run with nothing in the game having changed.
+
+`StrikeFatalContrastAudit`, three runs of byte-identical code, `DARK/0`
+against its 3.0 floor: **2.87 / 3.31 / 3.19 -- FAIL, PASS, PASS.** A
+fourth, earlier run reported `DARK/5` failing, which none of these three
+do. The probe was not measuring the HUD; it was measuring the HUD plus a
+dice roll.
+
+Seeded via `scripts/world/DecorRng.gd`, a factory the three streams now
+take their RNG from. Two properties it has to hold at once:
+
+- **The streams stay separate from the global RNG.** That separation is the
+  reason those three RNGs were created as instances in the first place --
+  a decor draw on the global stream shifts every gameplay roll after it,
+  silently, with no probability having changed. `DecorRng` never calls
+  global `seed()`/`randf()`; it hands out `RandomNumberGenerator` instances
+  and either `randomize()`s them or assigns `.seed`. **Verified, not
+  asserted: all seven gated bot probes are byte-identical before and after,
+  at seed 20260806.** If they had moved, the isolation would be broken and
+  that would matter more than this fix.
+- **Seeding is opt-in and probe-driven, not a new default.** The shipped
+  game never calls `force_seed()`, so its decor is entropy-driven exactly
+  as before -- no loss of visual variety between sessions. It is
+  deliberately *not* wired to DevSeed's `--seed=` flag: `scripts/dev/` is
+  excluded from the export, so shipped code cannot reference `DevSeed` at
+  all, and a probe reproducible only when the caller remembers a flag is
+  the precise failure mode F6 was.
+
+`PursuerContrastAudit` is fixed outright by this: **three runs,
+byte-identical stdout**, the gauge column included -- it previously swung
+8.73-9.60 in the light phase alone.
+
+`StrikeFatalContrastAudit` was **not**, and that is the useful part.
+
+#### F10c -- the decor was not the main thing wrong with StrikeFatalContrastAudit
+
+Seeded, re-run three times, it still disagreed with itself: one failing
+palette, then two, then none. The measurement said the residual was not
+random at all. Three hypotheses were tested and **discarded on evidence**
+rather than reasoned about -- the pursuer vignette (varies in the 4th
+decimal), the camera shake the probe's own two strikes arm (trauma already
+0 at capture), and the invert shader's uniforms (identical). Dumping the
+background frames and differencing them localised it: **99% of pixels
+differed, by a near-constant offset** -- a whole-screen wash, not a scene
+change.
+
+It is `HUD/StrikeFlash`: a **full-screen white ColorRect** that HUD ramps
+to `STRIKE_FLASH_MAX_ALPHA` (0.55) over `STRIKE_FLASH_DURATION_S` (0.30s)
+on every strike -- and this probe fires **two real strikes** immediately
+before it captures. Two frames later, where it stops HUD's `_process`, the
+flash is still near peak. Measured at capture: **alpha 0.47-0.55, decided
+by how fast the machine rendered two frames.**
+
+So the probe's "background" was up to **half a white wash at an
+uncontrolled opacity**, and had been since it was written. The decor was a
+real contributor but a second-order one.
+
+Pinned to rest for the capture -- the same treatment, and the same
+argument, this probe already applies to the fatal pulse: the flash is a
+transient impact cue, the fatal label persists for the rest of the run, and
+a contrast floor measures colour, not motion.
+
+**Result: the verdict is now identical on every run.** Three runs, all
+seven phases, same PASS/FAIL. Residual numeric jitter is <= 0.01 in the six
+dark phases and <= 0.17 in the light phase (6.02-6.19, against a 3.0 floor
+-- no verdict is anywhere near it). The light-phase residual is not chased
+here; it is recorded rather than rounded away.
+
+**The failing set changed, and it must not be read as a fix.** It moved
+from "DARK/0, DARK/4 or DARK/5, depending on the run" to a stable **DARK/5
+at 2.99:1** -- 0.01 under the floor. Nothing about the HUD's colours was
+touched. The old numbers were measurements of a white overlay; the new ones
+are measurements of the game. The failure is still open and still belongs
+to its own batch.
+
 ## What this batch changes
 
 F1-F5 are five instances of one failure: a probe cannot tell "I verified
@@ -527,6 +733,13 @@ import should be measured against.
 **23 of 25 probes green.** The two that are not are covered below, and
 neither is caused by this batch.
 
+> **Superseded in part by F10 (see Findings).** `PursuerContrastAudit`'s
+> `rc 0` in this table was measured against the wrong surface and against
+> the placeholder Keepy; corrected, it is red. The count is **22 of 25**.
+> `StrikeFatalContrastAudit` was already red here, but its numbers -- and
+> which palettes they blamed -- were not reproducible. Both rows are
+> annotated below.
+
 | probe | rc | wall | note |
 |---|---|---|---|
 | ChargerShapeProbe | 0 | 1s | |
@@ -548,11 +761,11 @@ neither is caused by this batch.
 | StrikeContrastAudit | 0 | 80s | |
 | AirEnemyLandingLaneAudit | 0 | 86s | **F7 fixed** -- never terminated before |
 | EnemyLaneAudit | 0 | 93s | **F7 fixed** -- 4/200 sample before |
-| PursuerContrastAudit | 0 | 96s | |
+| PursuerContrastAudit | **1** | 96s | **stale green -- see F10a.** `rc 0` here was pursuer-vs-placeholder-Keepy; corrected, `DARK/2` fails |
 | DarkPaletteAudit | 0 | 155s | |
 | PursuerAudit | 0 | 166s | gated bot probe |
 | StrikeAudit | 0 | 227s | gated bot probe; slowest that finishes |
-| **StrikeFatalContrastAudit** | **1** | 60s | **real FAILURE, pre-existing -- see below** |
+| **StrikeFatalContrastAudit** | **1** | 60s | **real FAILURE, pre-existing -- see below.** Since F10c the failure is *reproducible*: stable `DARK/5` at 2.99:1 |
 | **LiveRunProbe** | **124** | -- | needs `--quit-after`, by design -- see below |
 
 All seven gated bot probes (AntiFrustration, Combo, Pursuer,
@@ -578,6 +791,15 @@ refactor.
 The 3-vs-2 difference between the two runs is itself informative: this
 probe is one of the nine that never call `DevSeed.apply()`, so both runs
 were exploratory. See the F6 note on that list.
+
+> **F10 corrects the paragraph above, and the count above it.** The
+> run-to-run difference was NOT the unseeded global stream -- that stream
+> feeds gameplay rolls, and this probe's world is frozen. It was HUD's
+> full-screen `StrikeFlash`, frozen mid-decay at an alpha set by machine
+> speed (0.47-0.55), with unseeded decor as a smaller second term. Both
+> are fixed in F10b/F10c, and the failure is now a stable **one** palette:
+> `DARK/5` at 2.99:1. Being pre-existing and a design question, it is
+> still deliberately not fixed.
 
 **`LiveRunProbe` does not self-terminate, and that is by design.** Its
 own header documents the invocation as `--quit-after 25400`; it is a
@@ -615,10 +837,30 @@ unmistakable. CI already imports before running anything.
 
 ## Still open after this batch
 
-- **`StrikeFatalContrastAudit` fails on 2-3 palettes.** A real legibility
-  defect in the shipped HUD, verified pre-existing on `origin/main`,
-  deliberately left for its own batch. It is the only red verdict in the
-  suite.
+- **`StrikeFatalContrastAudit` fails on `DARK/5`, at 2.99:1.** A real
+  legibility defect in the shipped HUD, verified pre-existing on
+  `origin/main`, deliberately left for its own batch. Since F10c it is a
+  *reproducible* failure -- same palette, same number, every run -- where
+  before it named 0, 1 or 2 palettes depending on the run. ("2-3 palettes,
+  the only red verdict in the suite" was this entry's earlier wording; both
+  halves were wrong, see F10.)
+- **`PursuerContrastAudit` fails on `DARK/2`, at 2.37:1** against its own
+  2.5 silhouette floor -- the pursuer is genuinely hard to read against
+  green-tinted ground. Newly *visible*, not newly true: the probe was
+  measuring Keepy until F10a. Left open deliberately -- the floor was not
+  moved to make it pass, and F10a records why the pursuer's own colour has
+  no headroom to give.
+- **Nothing measures the pursuer against Keepy.** F10a stopped this being
+  measured by accident under the wrong label; it has not been replaced. The
+  numbers that existed (1.85:1 at worst) are low enough that this wants a
+  probe of its own, alongside the Keepy-vs-ground probe `docs/MESHY_SPEC.md`
+  §11 already asks for.
+- **The other pixel probes still take their background unseeded.**
+  `ComboContrastAudit`, `StrikeContrastAudit`, `DarkPaletteAudit` and
+  `InvertCapture` all sample the 3D world without calling
+  `DecorRng.force_seed()`, so they carry F10b's exposure. None was measured
+  for it here. The fix is the one line the two probes in this batch now
+  carry.
 - **Nine probes still ignore `--seed`** (no `DevSeed.apply()`):
   `StomperAudit`, `JumpDodgeRewardAudit`, `DarkPaletteAudit`,
   `LiveRunProbe`, `AssetContractAudit`, `ChargerShapeProbe`,
@@ -627,7 +869,10 @@ unmistakable. CI already imports before running anything.
   harmless (they never run a real seeded run). For the first four it
   means "I passed `--seed`" is not evidence the run was reproducible --
   which is precisely how F6 hid. Not fixed here because none is in the
-  reference baseline's gated set.
+  reference baseline's gated set. (F10b does not change this: the two
+  contrast probes it touches seed their **decor** streams from their own
+  `DECOR_SEED` const, deliberately not from `--seed` -- see `DecorRng.gd`
+  for why. They still ignore `--seed` for the global stream.)
 - **`LiveRunProbe` has no completion condition** by design and relies on
   the caller passing `--quit-after`. Now bounded by the watchdog, but it
   is the one probe whose "green" cannot be obtained by running it the way
