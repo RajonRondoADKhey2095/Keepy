@@ -8,6 +8,16 @@ extends Node
 ## toward the camera/track regardless of how many times a hill recycles.
 
 func _ready() -> void:
+	# FIRST statement, before anything that could itself hang -- a
+	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
+	ProbeWatchdog.arm(self, "DECOR PARALLAX PROBE")
+	# ...and a deadline as well, because arm() alone would be armed and
+	# MUTE here: the loop below never yields a frame, so the watchdog node
+	# never gets a _process call to fire in. This probe is the reason
+	# ProbeDeadline exists -- it was the one probe in the folder with no
+	# timeout at all, and arming it the obvious way would have looked like
+	# a fix without being one. See ProbeDeadline.gd's header.
+	var deadline := ProbeWatchdog.deadline("DECOR PARALLAX PROBE")
 	GameState.start_run()
 	var decor := Decor.new()
 	add_child(decor)
@@ -16,6 +26,8 @@ func _ready() -> void:
 	var min_seen := {}
 	var max_seen := {}
 	for frame in 2000:
+		if deadline.abort_if_exceeded():
+			return
 		# Sweep through the speed stages so the probe also covers the
 		# faster-recycling regime late in a run, not just START_SPEED.
 		GameState.current_speed = 8.0 + float(frame) * 0.05
