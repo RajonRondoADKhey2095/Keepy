@@ -213,6 +213,8 @@ same 3.4 x 2.2 x 2.1 AABB). INTRO and VISIBLE stay comfortably under the
   barrier.
 - Gameplay is physics-tied at 60fps, so the headroom is not optional.
 
+### 7.1 The budget as authored (a target, not a measurement)
+
 | Asset | Max triangles | Live at once | Frame cost |
 |---|---|---|---|
 | Keepy | 6,000 | 1 | 6,000 |
@@ -223,7 +225,55 @@ same 3.4 x 2.2 x 2.1 AABB). INTRO and VISIBLE stay comfortably under the
 | Markers, trail bars | primitives | ~5 | negligible |
 | | | **total** | **~32,200** |
 
-That leaves ~35% headroom against the 50k target.
+**This table is the budget, i.e. what each asset is ALLOWED. It is not, and
+never was, a measurement of what the game draws** — it was written before
+the hibou and the squirrel were installed and before any decor existed. Do
+not quote its ~32,200 as the current cost; see 7.2.
+
+### 7.2 What the frame actually draws — measured 2026-08-09
+
+`scripts/dev/TrackPropsAudit.tscn` phase 1 counts every visible
+`MeshInstance3D` in a live 60s run, per physics frame, and keeps the WORST
+frame. Re-run it after any batch that adds geometry rather than trusting
+the numbers below:
+
+    godot4 --headless --fixed-fps 60 --path . \
+      res://scripts/dev/TrackPropsAudit.tscn
+
+| Family | Budgeted (7.1) | Measured, worst frame | |
+|---|---|---|---|
+| collectibles | 4,200 | **25,344 – 29,568** | **OVER by ~6x** |
+| pursuer | 8,000 | **15,518** | **OVER by ~2x** |
+| hazards | 8,400 | 7,068 – 8,372 | within |
+| keepy | 6,000 | 3,129 | within |
+| track slab + curbs | 5,600 | 252 | within |
+| decor hills | — | 165 | new since 7.1 |
+| trackside props | — | 511 – 584 | new, see 8.2 |
+| | | **52,780 – 56,284 total** | **OVER the 50,000 target** |
+
+The ranges are real: the peak depends on how many pooled objects happen to
+be visible together, and the decor generators are unseeded, so consecutive
+runs differ. Every run measured so far exceeded the target.
+
+**Two findings, both pre-existing, neither caused by the decor work.**
+Measured directly, not by subtraction — with trackside props disabled the
+frame still peaks at **52,780**, already 2,780 over.
+
+1. **Collectibles are the whole problem: ~4,096 triangles each.**
+   `Noisette.tscn` and `Gland.tscn` carry a `SphereMesh` left at Godot's
+   default tessellation (`radial_segments` 64, `rings` 32) for a ball
+   0.3 m across that renders a few dozen pixels wide. 7.1 budgets 300.
+   Dropping to 16 x 8 gives 256 triangles — on the budget line, and at
+   that on-screen size visually indistinguishable — which alone would take
+   the frame to roughly **28,000, i.e. ~44% headroom**. Deliberately NOT
+   done in the props batch: it changes the silhouette of a gameplay object
+   and belongs in a batch whose device review is looking at collectibles.
+2. **The hibou `.glb` is 15,518 triangles against a 8,000 cap.** A real
+   asset overrunning its own spec, which is exactly what §11's pre-import
+   check exists to catch and did not.
+
+Neither is a rendering fault today — the game runs — but the 50,000 target
+was justified above rather than picked, and the frame is over it.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
@@ -364,6 +414,109 @@ does shift every gameplay roll that comes after it by one step — silently
 turning a purely-visual system into something that changes which hazards a
 seeded run actually spawns. Caught in this same batch (see the commit
 history around `Decor.gd`/`TrackSegment.gd`'s `_tint_rng`) before it shipped.
+
+### 8.2 Trackside props (procedural, no asset yet)
+
+`TrackSegment.gd` (`_build_trackside_props` / `_place_trackside_props`)
+draws low-poly trees and rocks standing on the ground plane just outside
+the track. Like the hills of 8.1 and the lane curbs beside them, these are
+plain Godot primitives — a tapered `CylinderMesh` trunk under a 5-sided
+cone canopy for a tree, one 6x3 `SphereMesh` squashed and yawed for a rock
+— with no `.glb` and no texture, so this file's import checklist does not
+apply to them yet.
+
+**They belong to a TILE, not to the world**, which is why they are built
+and pooled by `TrackSegment` rather than added to `Decor.gd`. A hill needs
+its own pool because it scrolls at its own parallax rate and belongs to no
+segment; a prop standing on this slab's shoulder travels and recycles with
+that slab for free, exactly like the pooled Obstacle/Noisette/Gland
+siblings. Built once in `_ready()`, then only ever shown, hidden and
+repositioned by `populate()` — nothing is allocated during a run.
+
+**The keep-out is the load-bearing constraint.** The ground slab is
+`Hitboxes.GROUND_SIZE.x` = 6 m wide with lanes at ±2 m, and everything
+inside it is the readable play area. So the rule is written against a
+prop's **silhouette edge**, never its centre: a trunk centred at
+|x| = 3.2 satisfies "outside the slab" while its 0.9 m canopy still hangs
+a third of a metre over a lane the player is reading a hazard in. Every
+placement adds `_PROP_KEEPOUT_X` (slab half-width + 0.4 m margin) **and
+the prop's own half-width** before it adds any random spread, so the
+clearance is arithmetic rather than a tuning value that happens to be big
+enough. For a yawed, z-stretched rock the half-width used is its longest
+semi-axis, which bounds the silhouette at every rotation.
+`scripts/dev/TrackPropsAudit.tscn` phase 2 rolls 4,000 `populate()` calls
+and measures the closest approach off the real mesh AABBs — measured, not
+re-derived from the placement formula, which would only ever agree with
+itself. Worst observed: **3.244 m against a 3.000 m slab.**
+
+**Colour.** Same rule as everything else here: unshaded, separated by
+**value**, never hue. What changed relative to 8.1 is *what they are seen
+against*. There is no ground mesh beyond |x| = 3, so the backdrop for a
+trackside prop is the sky and the two hill layers — the brightest surfaces
+in the scene — and not the ground. That puts the whole prop family in the
+scene's darkest band. Contrast ratios (WCAG, sRGB-linearised, computed on
+the raw albedos; §8's affine argument means dark-mode preserves the
+ordering at 45% strength):
+
+| | albedo | vs ground | vs curb | vs far hill | vs near hill | vs sky |
+|---|---|---|---|---|---|---|
+| tree canopy | `0.14, 0.20, 0.15` | 2.76 | 9.67 | **1.63** | 4.80 | 6.90 |
+| tree trunk | `0.13, 0.10, 0.07` | 3.57 | 12.52 | **2.11** | 6.21 | 8.94 |
+| rock | `0.18, 0.19, 0.20` | 2.73 | 9.57 | **1.61** | 4.75 | 6.83 |
+
+The far hills (`0.28, 0.32, 0.30`) are the binding constraint at
+1.61–1.63:1, which lands inside the 1.56–1.92:1 band §8 already measured
+for the lane barrier — a deliberately high-contrast object — against the
+ground. **There is no better answer available in this scene:** sweeping
+target luminance across the whole range, the best achievable worst-case
+against ground/curb/both hills is 2.57:1 at pure black and falls off
+monotonically from there, because the far hills are themselves dark. Going
+brighter to escape them collides with the ground or the near hills
+instead.
+
+Two honest limitations, neither fixed:
+
+- **The trunk sits at 1.18:1 against the pursuer's near-black body.**
+  Accepted rather than resolved: escaping it means brightening into the
+  far-hill collision above. The separation is carried by silhouette and
+  position instead — §8's own "silhouette is the most reliable cue there
+  is" — a 0.1 m trunk flanking the track against a 2.2 x 3.4 m owl
+  centred behind the player.
+- **Internal light/dark structure is weak** (canopy vs trunk 1.29:1),
+  well short of the 3:1 §8 asks for. That rule is written for *hazards*,
+  which the player must read under time pressure; 8.1 already establishes
+  that background decor "competes with nothing the player must read", and
+  the hills themselves carry a single flat colour each.
+
+**Cost:** 511–584 triangles at the worst measured frame, ~1% of the
+50,000 target (§7.2), across at most four props per tile. Tessellation is
+set once at build time, never per placement — a primitive left at Godot's
+default is ~4,000 triangles for one boulder, and
+`TrackPropsAudit.PROPS_TRIANGLE_BUDGET` exists mainly to catch exactly
+that mistake.
+
+**Zero gameplay coupling**, and the props need a stronger claim here than
+the hills do because they live *inside* a `StaticBody3D`: a
+`MeshInstance3D` child contributes nothing to that body's shape set, only
+a `CollisionShape3D` does, and none is created. `TrackPropsAudit` phase 3
+asserts the segment still carries exactly one shape (the slab) rather than
+leaving that as prose. They also never touch `GameState` — not even the
+one-way reads `Decor.gd` and `LaneBarrier.gd` make — and they are
+invisible to everything that walks a segment's children, since
+`TrackManager` and the bot probes all filter on `child is Obstacle` and
+`AssetContractAudit` collects only `ModelSlot` and `CollisionShape3D`
+nodes.
+
+The **RNG rule from 8.1 applies unchanged**, and props use their own
+`_prop_rng`, separate from `_tint_rng` so that retuning one can never
+re-sequence the other.
+
+When a real low-poly tree or rock asset replaces these, it hooks in the
+way 8.1 describes for the hills: a `ModelSlot`-style install point on the
+pooled instances, same value separation, `shading_mode = unshaded` unless
+the asset's own internal contrast is verified under the invert — and the
+keep-out arithmetic must then be fed the **asset's** measured half-width,
+not the primitive's, or the guarantee above quietly stops holding.
 
 ## 9. Godot 4.3 import notes
 

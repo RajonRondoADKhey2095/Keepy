@@ -180,6 +180,21 @@ measured today, 12/12 visuals change and 0/10 colliders move.
 
       godot4 --headless --path . res://scripts/dev/AssetContractAudit.tscn
 
+**The frame triangle budget is measured, not assumed.**
+`scripts/dev/TrackPropsAudit.tscn` counts every visible mesh instance in a
+live 60s run, per frame, and reports the worst one broken down by family --
+plus the two invariants the trackside decor props have to hold (they never
+overlap the 6m play area, and they add no collider to the segment body they
+are children of). Re-run it after any batch that adds geometry.
+
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/TrackPropsAudit.tscn
+
+It currently reports the frame **over** the 50,000 target, for two reasons
+that predate the decor work and are quantified in `docs/MESHY_SPEC.md`
+§7.2: collectibles draw ~4,096 triangles each against a 300 budget (a
+`SphereMesh` left at Godot's default tessellation), and the hibou `.glb` is
+15,518 against a 8,000 cap.
+
 ## Known limitations / next steps
 
 - No audio yet (`assets/audio/` is empty).

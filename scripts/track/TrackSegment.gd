@@ -8,6 +8,14 @@ class_name TrackSegment
 ## re-instantiated during gameplay, so recycling a segment allocates
 ## nothing.
 ##
+## It also owns this tile's purely visual decor, on that same
+## build-once-then-only-reposition contract: the two lane curbs
+## (_build_lane_curbs, static), the per-segment ground tint
+## (_reroll_ground_tint, re-rolled per populate) and the trackside props
+## (_build_trackside_props / _place_trackside_props, re-rolled per
+## populate). None of the three has a collider or touches GameState; see
+## each section's own doc.
+##
 ## Every `.monitoring` toggle below goes through set_deferred(), never a
 ## direct assignment: Godot blocks (logs an error and no-ops) a direct
 ## Area3D.monitoring change made while ANY body_entered/body_exited signal
@@ -87,6 +95,21 @@ var _ground_base_color: Color
 ## decor draw on it would silently shift every gameplay roll after it.
 var _tint_rng := RandomNumberGenerator.new()
 
+## Top face of this segment's ground slab, in the segment's OWN local
+## space -- the y = 0 plane every hazard offset in Hitboxes.gd is measured
+## from, expressed where a child of this node can actually use it.
+##
+## Derived from the slab's own half-thickness rather than written as a
+## literal: the ground MeshInstance3D sits at -GROUND_SIZE.y * 0.5 so its
+## TOP lands on the plane (see _apply_hitbox), and anything standing on
+## that plane has to move with it if the slab is ever re-dimensioned. Two
+## call sites (the lane curbs and the trackside props below), one
+## expression -- a decor surface that quietly floated or sank because a
+## second copy of "+ 0.2" was missed is exactly the class of drift this
+## avoids.
+func _ground_top_y() -> float:
+	return _ground.position.y + Hitboxes.GROUND_SIZE.y * 0.5
+
 func _ready() -> void:
 	_apply_hitbox()
 	_obstacle = obstacle_scene.instantiate()
@@ -115,6 +138,7 @@ func _ready() -> void:
 	_ground_material.albedo_color = _ground_base_color
 	_ground.apply_material(_ground_material)
 	_build_lane_curbs()
+	_build_trackside_props()
 
 ## Re-rolls this segment's ground tint around its base colour. Called from
 ## populate() -- i.e. once at the initial fill and once per recycle, never
@@ -158,8 +182,322 @@ func _build_lane_curbs() -> void:
 		# doc) to avoid z-fighting with it, and offset by the ground
 		# MeshInstance3D's own local position so it lines up with the
 		# visible slab rather than the StaticBody3D's origin.
-		strip.position = Vector3(x, _ground.position.y + 0.2 + _CURB_HEIGHT * 0.5, 0.0)
+		strip.position = Vector3(x, _ground_top_y() + _CURB_HEIGHT * 0.5, 0.0)
 		add_child(strip)
+
+# =====================================================================
+# TRACKSIDE PROPS (decor batch, second pass) -- low-poly trees and rocks
+# standing on the ground plane just OUTSIDE the track, so the run reads as
+# passing THROUGH somewhere rather than along an endless bare strip.
+#
+# Same lifecycle as _build_lane_curbs() above, and for the same reason: a
+# prop is a property of a track TILE, not of the world. Built once in
+# _ready(), then only ever shown/hidden and repositioned by populate() --
+# so a prop travels and recycles with its segment for free, exactly like
+# the pooled Obstacle/Noisette/Gland siblings, and nothing is allocated
+# during a run. This is deliberately NOT a second Decor.gd-style global
+# layer: Decor's hills need their own pool because they scroll at their
+# own parallax rate and belong to no tile, which is the opposite of what
+# a prop standing on this slab's shoulder is.
+#
+# ZERO GAMEPLAY COUPLING, BY CONSTRUCTION -- the same guarantee Decor.gd
+# states for the hills, and it holds here for stronger reasons because
+# these live INSIDE a physics body:
+#   * no collider. A MeshInstance3D child of a StaticBody3D contributes
+#     nothing to that body's shape set; only a CollisionShape3D does, and
+#     not one is created below. The slab Keepy stands on is still exactly
+#     the one _apply_hitbox() writes from Hitboxes.GROUND_SIZE.
+#   * no GameState access at all -- not even the one-way reads Decor.gd
+#     and LaneBarrier.gd make. Props are placed from populate()'s own call
+#     and never look at run state.
+#   * never read by Hitboxes.gd or ModelSlot.gd, and invisible to every
+#     consumer that walks a segment's children: TrackManager and the dev
+#     probes all filter on `child is Obstacle`, and AssetContractAudit
+#     collects only ModelSlot and CollisionShape3D nodes. A plain
+#     MeshInstance3D matches none of those.
+# scripts/dev/TrackPropsAudit.gd asserts the collider half of that rather
+# than leaving it as this paragraph, and the six gated bot probes prove
+# the rest by returning byte-identical output with props live.
+#
+# THE KEEP-OUT IS THE LOAD-BEARING PART. The ground slab is 6m wide
+# (Hitboxes.GROUND_SIZE.x) with lanes at -2/0/+2, and the readable play
+# area is everything inside it. A prop must never overlap it, so the
+# constraint is written against the prop's own SILHOUETTE EDGE, not its
+# centre: a trunk placed at |x| = 3.2 satisfies "centre outside the slab"
+# while its 0.9m canopy still hangs a third of a metre over the lane the
+# player is reading. Every placement below therefore starts from
+# _PROP_KEEPOUT_X and adds the prop's own half-width before it adds any
+# random spread, so the nearest edge is at |x| >= _PROP_KEEPOUT_X by
+# arithmetic rather than by a tuning value that happens to be big enough.
+#
+# DARK-MODE VALUE (docs/MESHY_SPEC.md section 8): unshaded, and separated
+# from everything by VALUE, never hue -- see section 8.2 for the measured
+# contrast table these three albedos were chosen from.
+# =====================================================================
+
+## Clear margin between the edge of the ground slab and the nearest point
+## of any prop. Small on purpose: the props should read as lining the
+## track, not as a distant treeline.
+const _PROP_CLEARANCE_M: float = 0.4
+
+## No part of any prop may be closer to the track centre than this.
+## Derived from the slab's own width so it cannot drift out of agreement
+## with the surface it is a margin around -- a hand-written 3.4 would
+## silently start overlapping the day GROUND_SIZE.x changed.
+const _PROP_KEEPOUT_X: float = Hitboxes.GROUND_SIZE.x * 0.5 + _PROP_CLEARANCE_M
+
+## How far beyond the keep-out a prop may be pushed, on top of its own
+## half-width. Wide enough that a row of props never lines up into a
+## corridor wall.
+const _PROP_X_SPREAD: float = 4.2
+
+## Prop positions per side of the track. TWO rather than one so a side can
+## come up empty, single OR clustered: with a single slot every populated
+## tile would show exactly one prop per side, which is the "one prop per
+## 20m like clockwork" rhythm this system exists to avoid.
+const _PROP_SLOTS_PER_SIDE: int = 2
+
+## Chance that a given slot shows anything at all, rolled fresh per
+## populate(). Below 0.5 on purpose: combined with two slots a side, it
+## makes empty stretches and small clumps both common, and the pair
+## (nothing this tile, three props the next) is what breaks the metronome.
+const _PROP_PRESENCE_CHANCE: float = 0.45
+
+## Split between the two prop kinds when a slot is populated.
+const _PROP_TREE_CHANCE: float = 0.6
+
+## How far along the tile a prop may sit, either side of its centre. Just
+## inside the 20m tile's own half-length, so a prop never straddles the
+## seam between two segments -- where it would be visibly cut in half the
+## moment one of the two recycled.
+const _PROP_Z_HALF_RANGE: float = 9.0
+
+## Trees: a tapered trunk under a low-facet cone canopy, two primitives.
+const _TREE_TRUNK_RADIUS: Vector2 = Vector2(0.09, 0.15)
+const _TREE_TRUNK_HEIGHT: Vector2 = Vector2(0.8, 1.5)
+const _TREE_CANOPY_RADIUS: Vector2 = Vector2(0.55, 0.95)
+const _TREE_CANOPY_HEIGHT: Vector2 = Vector2(1.5, 2.6)
+## Sides on both cylinders. Five reads as a low-poly silhouette from the
+## camera's distance and costs a handful of triangles.
+const _TREE_SIDES: int = 5
+## Fraction of the canopy's height that overlaps the top of the trunk, so
+## the two primitives never show a gap between them at a low camera angle.
+const _TREE_CANOPY_SINK: float = 0.12
+
+## Rocks: one squashed low-facet sphere, randomly yawed and stretched
+## along z so no two read as the same boulder.
+const _ROCK_RADIUS: Vector2 = Vector2(0.30, 0.62)
+## Height as a fraction of the diameter -- always under 1.0, i.e. always
+## flatter than a ball.
+const _ROCK_FLATNESS: Vector2 = Vector2(0.55, 0.9)
+const _ROCK_Z_STRETCH: Vector2 = Vector2(0.7, 1.25)
+const _ROCK_SIDES: int = 6
+const _ROCK_RINGS: int = 3
+## Fraction of the rock's half-height left above the ground plane, so it
+## sits bedded IN the ground rather than balanced on it.
+const _ROCK_SINK: float = 0.82
+
+## See docs/MESHY_SPEC.md section 8.2 for the measured contrast table.
+## All three sit in the scene's darkest band, well below the far hills
+## (the darkest thing they are ever seen against), because the backdrop
+## for anything beyond the slab edge is sky and hillside -- the two
+## BRIGHTEST surfaces in the scene -- not the ground.
+const _TREE_CANOPY_COLOR: Color = Color(0.14, 0.20, 0.15)
+const _TREE_TRUNK_COLOR: Color = Color(0.13, 0.10, 0.07)
+const _ROCK_COLOR: Color = Color(0.18, 0.19, 0.20)
+
+## One entry per prop slot: the three mesh instances it can draw (a tree
+## is trunk + canopy, a rock is one mesh) and which side of the track it
+## belongs to. All three exist for every slot from _ready() onward and are
+## only ever toggled, so switching a slot from tree to rock allocates
+## nothing.
+var _prop_slots: Array[Dictionary] = []
+
+## OWN RandomNumberGenerator, for the same reason _tint_rng and Decor's
+## _rng have one: the global randf() stream is the one TrackManager's
+## spawn rolls draw from and the one dev probes seed for reproducible
+## runs, so drawing decor from it would shift every gameplay roll after
+## it -- a purely visual system silently deciding which hazards a seeded
+## run spawns. Separate from _tint_rng rather than shared so that
+## retuning one of the two can never re-sequence the other.
+var _prop_rng := RandomNumberGenerator.new()
+
+func _build_trackside_props() -> void:
+	var canopy_material := _unshaded(_TREE_CANOPY_COLOR)
+	var trunk_material := _unshaded(_TREE_TRUNK_COLOR)
+	var rock_material := _unshaded(_ROCK_COLOR)
+
+	for side in [-1.0, 1.0]:
+		for i in _PROP_SLOTS_PER_SIDE:
+			# Named rather than left to Godot's @MeshInstance3D@NN
+			# auto-names: scripts/dev/TrackPropsAudit.gd attributes every
+			# triangle in the frame to a family, and a segment's plain
+			# mesh children (slab, curbs, props) are otherwise
+			# indistinguishable from each other by anything but a guess at
+			# their mesh type.
+			var label := "%s%d" % ["L" if side < 0.0 else "R", i]
+
+			# Tessellation is set HERE, not per roll: it never varies, and
+			# a primitive left at its Godot default would sit on a 64x32
+			# vertex buffer (~4,000 triangles for a boulder) from _ready()
+			# until its first placement -- paid for whether or not that
+			# slot ever draws.
+			var trunk_mesh := CylinderMesh.new()
+			trunk_mesh.radial_segments = _TREE_SIDES
+			trunk_mesh.rings = 0
+			# Both caps are hidden in every case -- the bottom by the
+			# ground, the top by the canopy sunk over it -- so neither is
+			# worth drawing.
+			trunk_mesh.cap_top = false
+			trunk_mesh.cap_bottom = false
+			var trunk := _build_prop_mesh(trunk_mesh, trunk_material, "PropTrunk" + label)
+
+			# A cone: the cheapest primitive that reads as foliage, same
+			# choice and same reasoning as Decor.gd's hills.
+			var canopy_mesh := CylinderMesh.new()
+			canopy_mesh.top_radius = 0.0
+			canopy_mesh.radial_segments = _TREE_SIDES
+			canopy_mesh.rings = 0
+			# The underside IS visible: the camera sits above the track
+			# looking forward and down, so a capless cone would show
+			# hollow from behind.
+			canopy_mesh.cap_bottom = true
+			var canopy := _build_prop_mesh(canopy_mesh, canopy_material, "PropCanopy" + label)
+
+			var rock_mesh := SphereMesh.new()
+			rock_mesh.radial_segments = _ROCK_SIDES
+			rock_mesh.rings = _ROCK_RINGS
+			var rock := _build_prop_mesh(rock_mesh, rock_material, "PropRock" + label)
+			_prop_slots.append({
+				"side": side,
+				"trunk": trunk,
+				"canopy": canopy,
+				"rock": rock,
+			})
+	_hide_all_props()
+
+## One prop mesh instance, added to this segment and hidden. `cast_shadow`
+## is off for the same reason Decor.gd switches it off on the hills and
+## _build_lane_curbs does on the curbs: this is decor sitting outside the
+## readable play area, and it has no business adding to the one
+## DirectionalLight3D's shadow pass.
+func _build_prop_mesh(mesh: PrimitiveMesh, material: StandardMaterial3D, node_name: String) -> MeshInstance3D:
+	var instance := MeshInstance3D.new()
+	instance.name = node_name
+	instance.mesh = mesh
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	instance.set_surface_override_material(0, material)
+	instance.visible = false
+	add_child(instance)
+	return instance
+
+func _unshaded(color: Color) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = color
+	return material
+
+func _hide_all_props() -> void:
+	for slot in _prop_slots:
+		slot["trunk"].visible = false
+		slot["canopy"].visible = false
+		slot["rock"].visible = false
+
+## Re-rolls every prop slot: present or not, tree or rock, and where.
+## Called from populate(), i.e. once at the initial fill and once per
+## recycle -- never per frame.
+func _place_trackside_props() -> void:
+	for slot in _prop_slots:
+		var side: float = slot["side"]
+		var show_prop := _prop_rng.randf() < _PROP_PRESENCE_CHANCE
+		var show_tree := show_prop and _prop_rng.randf() < _PROP_TREE_CHANCE
+		slot["trunk"].visible = show_tree
+		slot["canopy"].visible = show_tree
+		slot["rock"].visible = show_prop and not show_tree
+		if not show_prop:
+			continue
+		var z := _prop_rng.randf_range(-_PROP_Z_HALF_RANGE, _PROP_Z_HALF_RANGE)
+		if show_tree:
+			_place_tree(slot, side, z)
+		else:
+			_place_rock(slot, side, z)
+
+func _place_tree(slot: Dictionary, side: float, z: float) -> void:
+	var trunk_radius := _prop_rng.randf_range(_TREE_TRUNK_RADIUS.x, _TREE_TRUNK_RADIUS.y)
+	var trunk_height := _prop_rng.randf_range(_TREE_TRUNK_HEIGHT.x, _TREE_TRUNK_HEIGHT.y)
+	var canopy_radius := _prop_rng.randf_range(_TREE_CANOPY_RADIUS.x, _TREE_CANOPY_RADIUS.y)
+	var canopy_height := _prop_rng.randf_range(_TREE_CANOPY_HEIGHT.x, _TREE_CANOPY_HEIGHT.y)
+
+	var trunk_mesh := slot["trunk"].mesh as CylinderMesh
+	trunk_mesh.top_radius = trunk_radius * 0.75
+	trunk_mesh.bottom_radius = trunk_radius
+	trunk_mesh.height = trunk_height
+
+	var canopy_mesh := slot["canopy"].mesh as CylinderMesh
+	canopy_mesh.bottom_radius = canopy_radius
+	canopy_mesh.height = canopy_height
+
+	# The canopy is the widest part of a tree, so it is the canopy's radius
+	# -- not the trunk's -- that the keep-out has to clear.
+	var x := _prop_x(side, canopy_radius)
+	var ground_y := _ground_top_y()
+	slot["trunk"].position = Vector3(x, ground_y + trunk_height * 0.5, z)
+	slot["canopy"].position = Vector3(
+		x,
+		ground_y + trunk_height + canopy_height * (0.5 - _TREE_CANOPY_SINK),
+		z,
+	)
+
+func _place_rock(slot: Dictionary, side: float, z: float) -> void:
+	var radius := _prop_rng.randf_range(_ROCK_RADIUS.x, _ROCK_RADIUS.y)
+	var flatness := _prop_rng.randf_range(_ROCK_FLATNESS.x, _ROCK_FLATNESS.y)
+	var z_stretch := _prop_rng.randf_range(_ROCK_Z_STRETCH.x, _ROCK_Z_STRETCH.y)
+
+	var rock: MeshInstance3D = slot["rock"]
+	var mesh := rock.mesh as SphereMesh
+	mesh.radius = radius
+	mesh.height = radius * 2.0 * flatness
+
+	# Stretched along z and spun on its own axis, so six facets and one
+	# mesh still never produce two boulders that read as copies.
+	rock.scale = Vector3(1.0, 1.0, z_stretch)
+	rock.rotation = Vector3(0.0, _prop_rng.randf_range(0.0, TAU), 0.0)
+
+	# A yawed ellipse can present at most its LONGEST semi-axis sideways,
+	# whatever the angle -- so clearing that bounds the silhouette for
+	# every rotation, without the keep-out having to know the yaw.
+	var half_width := radius * maxf(1.0, z_stretch)
+	var half_height := radius * flatness
+	rock.position = Vector3(_prop_x(side, half_width), _ground_top_y() + half_height * _ROCK_SINK, z)
+
+## X for a prop whose silhouette reaches `half_width` either side of its
+## own centre. The keep-out and the half-width are both added BEFORE the
+## random spread, which is what makes "no part of a prop is ever closer to
+## the centre line than _PROP_KEEPOUT_X" arithmetic rather than a hope
+## about how the ranges above happen to be tuned.
+func _prop_x(side: float, half_width: float) -> float:
+	return side * (_PROP_KEEPOUT_X + half_width + _prop_rng.randf_range(0.0, _PROP_X_SPREAD))
+
+## Distance from the track centre line to the nearest point of any prop
+## currently drawn by this segment, or INF when it is showing none.
+##
+## MEASURED off the real mesh AABBs rather than recomputed from _prop_x's
+## arithmetic: a check that re-derived the placement formula would agree
+## with itself no matter how wrong the formula was. Kept as a narrow
+## accessor (one number) rather than exposing the prop nodes, same shape
+## and same reason as active_gland_z_on_lane above. Read only by
+## scripts/dev/TrackPropsAudit.gd.
+func nearest_prop_edge_x() -> float:
+	var nearest := INF
+	for slot in _prop_slots:
+		for key in ["trunk", "canopy", "rock"]:
+			var instance: MeshInstance3D = slot[key]
+			if not instance.visible:
+				continue
+			var box: AABB = instance.transform * instance.get_aabb()
+			var near_edge := minf(absf(box.position.x), absf(box.position.x + box.size.x))
+			nearest = minf(nearest, near_edge)
+	return nearest
 
 ## Writes the ground slab's collider from Hitboxes.gd. Byte-identical to
 ## what TrackSegment.tscn already carried, so nothing changes today.
@@ -209,6 +547,7 @@ func _apply_hitbox() -> void:
 ## here -- see AIR_HAZARD_SEPARATION_S.)
 func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane: int, noisette_lane: int, gland_lane: int) -> void:
 	_reroll_ground_tint()
+	_place_trackside_props()
 	var obstacle_blocks_jump := false
 
 	if spawn_obstacle:
