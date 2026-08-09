@@ -786,20 +786,38 @@ offered for the +2.47 MB.
   `StrikeContrastAudit` / `StrikeFatalContrastAudit` / `ComboContrastAudit`
   are HUD-text probes; `DarkPaletteAudit` does sample Keepy, but its
   per-object path carries the documented llvmpipe defect in §8's own note and
-- **One real defect the byte-identical gate caught**, worth recording because
-  it is the first time this project's audio has interacted with the probes:
-  the two new HUD strike cues left **"1 resources still in use at exit"** on
-  `StrikeAudit` -- deterministically, byte-reproducible across runs. Cause:
-  every probe instantiates and `queue_free()`s `Game.tscn` dozens to hundreds
-  of times, so a HUD whose `AudioStreamPlayer` is still mid-playback when the
-  node goes leaves its stream referenced at shutdown, and `StrikeAudit` is
-  the probe that fires these cues most (its bots stumble by design). The
-  probe's own measurements and `PASSED` verdict were identical either way --
-  the lines land *after* the verdict -- so nothing about gameplay was
-  affected, but it broke the byte-identical comparison itself. Fixed with an
-  `_exit_tree()` on `HUD.gd` that stops both players; re-measured
-  byte-identical to the pre-change baseline. Any future audio added to a
-  node that a probe tears down repeatedly needs the same treatment.
+- **KNOWN OPEN DEFECT, not fixed: the strike cues leak one resource at engine
+  shutdown.** This is the first time audio has existed in this project at all,
+  and it is the one thing in this batch that does not come back clean.
+  `StrikeAudit` (the probe that fires these cues most -- its bots stumble by
+  design) ends with `ObjectDB instances leaked at exit` +
+  `1 resources still in use at exit`.
+
+  **Measured, with the sample counts stated** -- because an earlier reading in
+  this same batch called it "deterministic" off two agreeing samples and was
+  wrong:
+
+  | tree | runs | runs showing the leak |
+  |---|---|---|
+  | before (no audio at all) | 4 | **0** |
+  | after (two cues) | 6 | **5** |
+
+  So the audio causes it, and it is *intermittent*, not deterministic.
+  Attempted and **failed** to fix: `_exit_tree()` calling `stop()` on both
+  players (one clean run, then the leak returned); additionally clearing
+  `stream` on both (3 of 3 runs still leaked). Whatever holds the resource is
+  not reachable from this script, and chasing it further was out of proportion
+  to its impact. The `stop()` calls were kept as ordinary teardown hygiene,
+  with the limit stated honestly in `HUD.gd` rather than implied fixed.
+
+  **Why it was judged not to block:** the leak lines land *after* the probe's
+  own `PASSED` verdict, every measurement above them is byte-identical across
+  all six probes, and `scripts/dev/*` is excluded from the shipped build, so
+  no player ever runs the code path that produces it. What it does break is
+  the literal byte-identical stdout comparison this project gates changes on
+  -- which is why it is written down here in full rather than waved through:
+  the next session running that comparison will see StrikeAudit differ by
+  these four lines and needs to know it is this, and not something new.
 - So the unlit switch here is justified by §8's argument
   (an unshaded surface's post-invert colour is a *known* value) and by the
   offscreen render, **not** by a measured six-palette contrast pass like the

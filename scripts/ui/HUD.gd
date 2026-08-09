@@ -443,6 +443,22 @@ func _on_pursuer_became_visible() -> void:
 ## was identical either way, the lines land after its PASSED), but it broke
 ## the byte-identical comparison this project gates asset and UI changes on,
 ## which is a check worth more than the two lines it costs to keep clean.
+## Ordinary teardown hygiene: every probe in scripts/dev/ instantiates and
+## queue_free()s Game.tscn dozens to hundreds of times, so these players are
+## torn down constantly and should not be left mid-playback when they go.
+##
+## HONEST LIMIT, measured rather than claimed: this does NOT fully release the
+## audio resource at engine shutdown. With these two cues present, StrikeAudit
+## ends with "1 resources still in use at exit" on 5 of 6 observed runs; the
+## no-audio baseline shows it on 0 of 4. Neither `stop()` alone nor
+## additionally clearing `stream` removed it (3 of 3 runs still showed it), so
+## what survives is held somewhere this script cannot reach from GDScript.
+##
+## It changes no measurement and no verdict -- the lines land after the
+## probe's own PASSED, every number above them is byte-identical, and
+## scripts/dev/* is excluded from the shipped build entirely, so nothing here
+## reaches a player. It is recorded as a known, open cosmetic defect rather
+## than papered over. See docs/MESHY_SPEC.md §11.
 func _exit_tree() -> void:
 	strike_warning_sfx.stop()
 	strike_fatal_sfx.stop()
