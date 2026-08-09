@@ -588,3 +588,150 @@ baseline):
   for the asset -- far below the 1.01 MB source `.glb`, because Godot's own
   VRAM texture compression on export re-encodes the JPEG/PNG maps into a
   smaller GPU-native format. Not a meaningful hit to mobile load time.
+
+### 2026-08-09 -- Keepy (hero squirrel), ACCEPTED
+
+`assets_source/hero/Meshy_AI_Kawaii_Squirrel_with__0808231658_texture.glb`
+(22.8 MB). Verified before any Godot import, per §2, independently of the
+recon numbers carried into this batch's brief (parsed the glTF JSON chunk
+directly, `indices.count / 3` on the mesh's one primitive):
+
+    total triangles : 3,129
+    total vertices   : 3,121
+    budget (Keepy)   : 6,000   (Section 7)
+
+Matches the brief's numbers exactly. **Within budget, by 2,871 triangles**
+-- no decimation needed, unlike either Hibou attempt.
+
+**22.8 MB diagnosis** -- read each of the 4 image bufferViews' PNG `IHDR`
+chunk directly: `Baked_Emit` 4096x4096, `normal` 2048x2048,
+`Baked_BaseColor` 2048x2048, `Baked_MetallicRoughness` 4096x4096, all
+uncompressed PNG -- the same defect shape as both Hibou attempts, texture
+payload only. **Material `alphaMode`** -- absent from the glTF material,
+i.e. glTF default `OPAQUE` (checked directly rather than assumed from the
+Hibou precedent, per this batch's instruction): safe to drop the RGBA
+alpha channel present in 3 of the 4 PNGs.
+
+**Recompression, performed in-sandbox** (Pillow, same method as Hibou's
+second attempt -- hand-rebuilt `.glb` binary chunk, mesh bufferViews
+byte-identical, images re-encoded and re-offset, 4-byte aligned):
+
+| map | before | after | format |
+|---|---|---|---|
+| Baked_BaseColor | 2048x2048 PNG | 1024x1024, 178 KB | JPEG q88 |
+| Baked_Emit | 4096x4096 PNG | 1024x1024, 114 KB | JPEG q88 |
+| normal | 2048x2048 PNG | 512x512, 352 KB | PNG (kept lossless) |
+| Baked_MetallicRoughness | 4096x4096 PNG | 512x512, 48 KB | JPEG q90 |
+
+Result: **22.8 MB -> 813 KB** (combined with the separately-extracted
+texture files Godot's importer writes alongside the `.glb`, ~1.5 MB on
+disk total -- still comfortably under the §7 ~2 MB target). Verified after
+rebuild that triangle/vertex counts are unchanged (3,129 / 3,121) and all
+4 image references still resolve.
+
+**Orientation -- measured, not copied from the Hibou.** Rendered the
+rebuilt `.glb` offscreen (Godot headless, `--rendering-driver opengl3`
+under `xvfb-run`, a throwaway probe scene, not committed) from `+Z`,
+`-Z`, `+X` and top. From the `+Z` camera position (matching the game
+camera, which sits at +Z looking toward -Z) the mesh's authored front --
+face, eyes, the "K" chest badge -- is what's visible; the `-Z` view shows
+the back (tail, back of head). That is backwards from the project's
+contract (§3: Keepy faces -Z, back visible to the camera), so the fix is
+`model_rotation_degrees = (0, 180, 0)` -- numerically identical to the
+Hibou's correction, but arrived at independently by rendering this mesh,
+not assumed from precedent.
+
+**Scale and origin.** `POSITION` accessor bounds: X [-0.6164, 0.6129], Y
+[-0.6291, 0.6283], Z [-0.9488, 0.9485] -- a nearly-symmetric Y range
+(within 0.06%), confirming the brief's prediction that the raw mesh's
+origin sits at the model's vertical *centre* (a seated "kawaii" pose,
+tail curled up and out along Z), not at the feet. `model_scale` is
+computed from the Y span against the §5 height target:
+
+    model_scale = 1.6 / (0.6283 - (-0.6291)) = 1.6 / 1.2574 = 1.2725
+
+No slot-level translation was added, and none was needed: `Keepy/
+MeshInstance3D`'s own position, `(0, 0.8, 0)`, was already set (for the
+capsule placeholder) to exactly half of the 1.6 target height. Because
+the squirrel mesh's local origin is itself within 0.06% of its own
+vertical centre, installing it at that same slot position -- with only
+`model_scale` applied, no other change -- lands its feet at **world
+y = -0.00046** and its head at **y = 1.5995**, both within half a
+millimetre of the intended 0/1.6 bounds. Confirmed by
+`AssetContractAudit`'s own measurement post-install (below): visual Y
+span reports exactly `1.600`. Had the origin *not* been this close to
+centred, no fix would have been available under this project's rule (art
+corrections live only in `model_scale`/`model_rotation_degrees`, and the
+slot's own transform is off-limits) -- this would have needed flagging as
+a known issue the way the Hibou's eye-placement was, rather than forcing
+a translation the slot has no property for. That did not turn out to be
+necessary here.
+
+X and Z do depart from the placeholder's 1.0 x 1.0 footprint at this
+scale -- measured (`AssetContractAudit`) at **1.564 wide x 2.414 deep**,
+driven mostly by the curled tail sweeping along Z. Per §1's own
+corollary ("the visual does not have to match the hitbox") and the
+existing CHARGER/Hibou precedent for visual overhang beyond the
+collider, this was accepted rather than treated as a defect: the
+collider stays the unchanged 0.5 m-radius capsule, and 1.564 m of visual
+width is still under the ~1.9 m lane-bleed threshold in §4.
+
+**Installed**: `assets/models/keepy_squirrel_hero.glb` (+ the 4
+Godot-extracted textures + `.import` files, same layout as the Hibou),
+wired into `scenes/Keepy.tscn`'s `Keepy/MeshInstance3D` (the existing
+`ModelSlot`, no new node) with `model_scale = 1.2725`,
+`model_rotation_degrees = (0, 180, 0)`.
+
+**Validation**, same day, Godot 4.3.stable headless (editor + `4.3-stable`
+web export templates fetched into the sandbox, matching
+`.github/workflows/web-build.yml`'s pinned version):
+
+- `AssetContractAudit`: PASSED. `keepy/MeshInstance3D` visual now measures
+  `1.564 x 1.600 x 2.414`, `node_y` unchanged at `+0.800`. 0/10 colliders
+  moved; `keepy/CollisionShape3D` still `Capsule(r=0.5, h=1.6)` at
+  `offset_y +0.800`.
+- `ChargerShapeProbe`: PASSED (rc=0), unaffected -- this batch never
+  touches the CHARGER slot.
+- **Six gated bot probes, seed 20260806, before/after diff**:
+  `AntiFrustrationAudit`, `ComboAudit`, `PursuerAudit`,
+  `RushFrustrationAudit`, `ShrinkAudit`, `StrikeAudit` -- **byte-identical**
+  stdout, pre-swap vs post-swap, confirming the swap changed no gameplay
+  roll.
+
+  **Reproducibility pitfall found and fixed while doing this check, worth
+  recording**: the first comparison attempt, run without `--fixed-fps 60`,
+  came back DIFFERING on all six probes -- not just before-vs-after, but
+  (verified separately) **the identical tree run twice in a row against
+  itself**, same code, same seed, zero concurrent load. That proved the
+  divergence was environmental, not caused by this asset: this sandbox's
+  headless Godot does not hold a deterministic physics-tick count across
+  runs unless `--fixed-fps 60` pins the simulation to wall-clock-independent
+  steps. Two consecutive same-tree runs with `--fixed-fps 60` came back
+  byte-identical; the real before/after comparison was then redone under
+  the same flag and is the PASSED result recorded above. (A second,
+  unrelated mistake during this same check: an earlier before-batch process
+  was killed by targeting only its `AntiFrustrationAudit` child rather than
+  its whole process group, leaving the parent script alive for ~25 minutes
+  writing *after*-tree results into the *before* log directory,
+  overwriting two of the six logs with contaminated content. Caught by
+  inspecting `ps` output and `/proc/<pid>/cwd` rather than trusting the
+  script's own name; both stray trees were killed and the batch re-run
+  clean before drawing any conclusion.) Neither issue was caused by, or
+  reveals anything about, the squirrel asset itself -- both are recorded
+  here so a future session does not have to rediscover them.
+- **Web export**: built for real (`--export-release "Web"`, templates
+  4.3-stable), before/after via a throwaway worktree at the pre-swap
+  commit. `index.pck` **40,767,408 -> 43,352,656 bytes**, a **+2.47 MB**
+  delta for the asset. Notably larger than the Hibou's own +0.22 MB --
+  the likely reason, not confirmed further because it is outside this
+  batch's checklist: the Hibou's material was later switched to
+  `KHR_materials_unlit` (see its §11 entry, `PursuerContrastAudit` fix),
+  which appears to make its normal/metallic-roughness maps unreferenced
+  and let the exporter drop them; Keepy's material imports as the default
+  **lit** `StandardMaterial3D` per §9, so all 4 recompressed maps are
+  VRAM-compressed and packed into the `.pck`. Still a small fraction of
+  the ~35 MB `.wasm` already shipped, and well within what §7 calls "not
+  the bottleneck" -- flagged here as a possible follow-up (matching
+  Keepy's material shading to §8's dark-mode rules the way the Hibou's
+  was) rather than fixed in this batch, since no Keepy-specific contrast
+  probe is part of the §10 acceptance checklist this task specified.
