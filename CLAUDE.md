@@ -113,6 +113,17 @@ mesurés proprement, aucun plancher déplacé pour les faire passer :**
   correction, le fond mesuré incluait un flash blanc plein écran figé à une
   opacité aléatoire — la sonde ne mesurait pas encore fiablement le HUD).
 
+  ⚠️ **Depuis le merge half-strike (9 août 2026), cette sonde lit 3,00:1 et
+  PASSE — ce n'est PAS une correction, c'est un faux vert (F11).** Aucune
+  couleur n'a bougé : l'échelle de pips passe de 2 à 4, le `StrikeRow`
+  (`HBoxContainer`) s'élargit, donc le label se DÉPLACE de quelques pixels
+  et la sonde échantillonne un autre morceau du monde 3D derrière lui.
+  Vérifié en re-jouant la sonde sur `staging` pré-merge sur la même machine :
+  2,99:1, exactement le chiffre documenté. **La décision de teinte reste
+  entièrement ouverte et reste celle de Mathieu** — un défaut qui passe à
+  3,00:1 grâce à deux pixels de mise en page n'a aucune marge. Détail chiffré
+  et tableau des fonds mesurés : `docs/PROBE_AUDIT.md`, F11.
+
 **Aucune des deux ne demande de code ni de nouvelle sonde.** Ce sont des
 choix de couleur/teinte réservés à Mathieu — voir `docs/PROBE_AUDIT.md`,
 section « Still open after this batch », pour le détail chiffré complet.

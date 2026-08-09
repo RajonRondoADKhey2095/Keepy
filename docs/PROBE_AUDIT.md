@@ -1033,14 +1033,14 @@ Two secondary effects worth knowing before reading any future run:
   `MAX_RUN_S` where none did before. Every share above is computed on fewer
   deaths than the pre-rebalance figures it is compared with.
 
-### The four that are not green
+### The three that are not green
 
-Post-merge count, so it does not drift again: `PursuerContrastAudit`
-(F10a, `DARK/2` at 2.37:1), `StrikeFatalContrastAudit` (pre-existing,
-`DARK/5` at 2.99:1 since F10c), `StrikeAudit` (the half-strike rebalance,
-above) and `LiveRunProbe` (by design). The first and third are covered in
-the sections above and under "Still open"; the prose below covers the
-other two.
+Post-merge count, measured on the merge itself rather than carried over:
+`PursuerContrastAudit` (F10a, `DARK/2` at 2.37:1), `StrikeAudit` (the
+half-strike rebalance, above) and `LiveRunProbe` (by design).
+**`StrikeFatalContrastAudit` is no longer among them, and that is not a
+fix -- see F11.** The prose below is written from before that flip; F11
+corrects it.
 
 **`StrikeFatalContrastAudit` fails, and it is a real finding about the
 game, not about the probe.** Two palettes leave the fatal-strike label
@@ -1117,12 +1117,66 @@ step every probe fails to compile and hangs producing no output -- which
 is, with some irony, exactly the symptom the watchdog exists to make
 unmistakable. CI already imports before running anything.
 
+### F11 -- the 4-pip ladder moved the fatal label, and StrikeFatalContrastAudit went green without anyone changing a colour
+
+Measured while merging `claude/half-strike-rebalance` into `staging`, and
+recorded because the alternative was reporting a false green.
+
+On the merge, `StrikeFatalContrastAudit` **passes**: `DARK/5` reads
+**3.00:1** against its 3.0 floor, where the same probe on `staging`
+immediately before the merge reads the documented **2.99:1** and fails.
+
+Attributed, not assumed. The pre-merge tree was re-run on the same machine,
+same seed, same flags, and reproduced 2.99:1 exactly -- so the flip is
+caused by the merge, not by this machine. What moved:
+
+| palette | background, pre-merge | background, post-merge |
+|---|---|---|
+| LIGHT | (0.69, 0.51, 0.47) | (0.69, 0.50, 0.46) |
+| DARK/2 | (0.19, 0.51, 0.32) | (0.20, 0.50, 0.32) |
+| DARK/5 | (0.48, 0.23, 0.46) | (0.48, 0.22, 0.45) |
+
+**The label's own fill is byte-identical in both** -- `(1.00, 0.46, 0.46)`
+on every dark palette. The *background* shifted, slightly, on all seven.
+
+The mechanism is the half-strike HUD, not the half-strike death model.
+`StrikeRow` is an `HBoxContainer`, and the rebalance grows its ladder from
+two pips to four (`Pip0..Pip3` in `HUD.tscn`, one per half-unit of
+`STRIKE_CAPACITY_HALF`). Two more pips widen the row, so the label sitting
+beside them **moves** -- and this probe samples the label's own rect
+deliberately, for the reason written at that line. A sample box a few
+pixels along lands on a different patch of the rendered world, and DARK/5's
+ratio crossed the floor by 0.01.
+
+So the green is a **coincidence of layout**, not a legibility fix. Nobody
+chose a colour; the defect F10c made reproducible is still there, now
+resting exactly ON the floor instead of 0.01 under it. Reading this run as
+"the fatal-label defect is resolved" would be the same false green this
+whole document exists to catch, arrived at from a new direction.
+
+Two consequences worth stating:
+
+- **The design call is still Mathieu's and still open.** A defect that
+  passes at 3.00:1 by two pixels of layout has no margin at all.
+- **This probe's verdict is sensitive to HUD layout, not only to colour.**
+  That is a real limit of sampling the label's rect against the live 3D
+  world: any future change to the strike row can move the number without
+  touching a palette. Worth knowing before the next HUD edit is read as a
+  contrast regression -- or a contrast fix.
+
+Not fixed here. Nothing about the merge is wrong, and neither probe nor
+palette was touched to produce it.
+
 ## Still open after this batch
 
 - **AWAITING A DESIGN CALL FROM MATHIEU, not a probe or code task -- two
   items, both measured to the point where a colour/tint decision is the
   only thing left:**
-  - **`StrikeFatalContrastAudit` fails on `DARK/5`, at 2.99:1.** A real
+  - **`StrikeFatalContrastAudit` reads `DARK/5` at 3.00:1 since the
+    half-strike merge, and PASSES by 0.00 -- see F11 before treating that
+    as resolved.** It was 2.99:1 and failing immediately before the merge;
+    what changed is the 4-pip ladder moving the label, not a colour. The
+    design call below stands unchanged. A real
     legibility defect in the shipped HUD, verified pre-existing on
     `origin/main`. Since F10c it is a *reproducible* failure -- same
     palette, same number, every run -- where before it named 0, 1 or 2
