@@ -428,6 +428,25 @@ func _on_combo_tier_up(_multiplier: int) -> void:
 func _on_pursuer_became_visible() -> void:
 	_pursuer_pop_t = 0.0
 
+## Stops both cues before this HUD leaves the tree.
+##
+## NOT housekeeping for its own sake -- it is load-bearing for the dev probes.
+## Every probe in scripts/dev/ runs dozens to hundreds of runs by
+## instantiating Game.tscn and queue_free()ing it, so a HUD is torn down over
+## and over, and a player still mid-playback when its node goes leaves its
+## stream referenced by the audio server. Measured: without this, StrikeAudit
+## (the probe that deliberately stumbles its bots the most, and therefore
+## fires these cues the most) ended every run with "1 resources still in use
+## at exit" -- deterministically, byte-for-byte reproducible across runs.
+##
+## That warning changed no measurement and no verdict (the probe's own output
+## was identical either way, the lines land after its PASSED), but it broke
+## the byte-identical comparison this project gates asset and UI changes on,
+## which is a check worth more than the two lines it costs to keep clean.
+func _exit_tree() -> void:
+	strike_warning_sfx.stop()
+	strike_fatal_sfx.stop()
+
 ## Arms the impact flash, the strike-1 entry kick and the audio cue. The pips
 ## themselves are NOT repainted here -- see _drawn_strikes for why they are
 ## rebuilt from the state instead.

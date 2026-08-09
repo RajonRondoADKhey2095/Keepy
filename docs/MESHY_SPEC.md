@@ -786,7 +786,21 @@ offered for the +2.47 MB.
   `StrikeContrastAudit` / `StrikeFatalContrastAudit` / `ComboContrastAudit`
   are HUD-text probes; `DarkPaletteAudit` does sample Keepy, but its
   per-object path carries the documented llvmpipe defect in §8's own note and
-  cannot be relied on. So the unlit switch here is justified by §8's argument
+- **One real defect the byte-identical gate caught**, worth recording because
+  it is the first time this project's audio has interacted with the probes:
+  the two new HUD strike cues left **"1 resources still in use at exit"** on
+  `StrikeAudit` -- deterministically, byte-reproducible across runs. Cause:
+  every probe instantiates and `queue_free()`s `Game.tscn` dozens to hundreds
+  of times, so a HUD whose `AudioStreamPlayer` is still mid-playback when the
+  node goes leaves its stream referenced at shutdown, and `StrikeAudit` is
+  the probe that fires these cues most (its bots stumble by design). The
+  probe's own measurements and `PASSED` verdict were identical either way --
+  the lines land *after* the verdict -- so nothing about gameplay was
+  affected, but it broke the byte-identical comparison itself. Fixed with an
+  `_exit_tree()` on `HUD.gd` that stops both players; re-measured
+  byte-identical to the pre-change baseline. Any future audio added to a
+  node that a probe tears down repeatedly needs the same treatment.
+- So the unlit switch here is justified by §8's argument
   (an unshaded surface's post-invert colour is a *known* value) and by the
   offscreen render, **not** by a measured six-palette contrast pass like the
   Hibou got. A Keepy equivalent of `PursuerContrastAudit` is the honest next
