@@ -29,6 +29,7 @@ been written with it in mind.
 | STRIKES -- DODGE/JUMP become NON-FATAL | 2026-08-07 | `c0ed19e`, `96d40f3`, `6bc4464` |
 | TRACK SHRINK (a lane can be shut) | 2026-08-07 | `d40fc61`, `c96a308` |
 | ModelSlot / Hitboxes split | 2026-08-08 | `5856737`, `ab2d247` |
+| HALF-STRIKES -- only CHARGER stays fatal, capacity 4 half-units | 2026-08-09 | `claude/half-strike-rebalance` |
 
 ## The table
 
@@ -56,6 +57,7 @@ hard-coded numeric threshold calibrated on exploratory runs.
 | **JumpDodgeRewardAudit** | A timed jump over a JUMP credits the reward exactly once | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | invariant (exact equality) |
 | **LaneFillAudit** | The early game does not use the full track width | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | distribution only |
 | **PacingAudit** | Palier timings, spacing and the enemy lock, measured not re-read | 08-05 | everything after 08-05 | ok | n/a | n/a | n/a | n/a | invariant |
+| **DeathModelAudit** | CHARGER alone ends a run, in one contact; every other type costs exactly one half-unit and catches on the capacity-th | 08-09 | -- | ok | ok | n/a | ok | n/a | invariant (exact equality, per type) |
 | **AssetContractAudit** | A mesh swap changes every visual and moves no collider | 08-08 | -- | n/a | n/a | n/a | n/a | n/a | invariant (exact equality) |
 | **TrackPropsAudit** | Trackside props stay outside the play area and add no collider; plus the measured frame triangle budget | 08-09 | -- | n/a | n/a | n/a | n/a | n/a | invariant x2 + **absolute** (props' own triangle share); frame total REPORTED, not asserted |
 | **ChargerShapeProbe** | The charger wedge is oriented and grounded as designed | 08-06 | -- | n/a | n/a | n/a | n/a | n/a | invariant |
@@ -525,11 +527,20 @@ This table replaces the previous baseline. It is what the Meshy asset
 import should be measured against.
 
 **23 of 25 probes green.** The two that are not are covered below, and
-neither is caused by this batch.
+neither is caused by the batch this table was written for.
+
+**⚠️ SUPERSEDED IN PART BY THE HALF-STRIKE REBALANCE (2026-08-09).** The
+table below is still the reference for every probe the rebalance does not
+touch, but `StrikeAudit` is now RED at this seed and that is a finding about
+the game, not a regression in the probe -- see "The three that are not
+green" below. `DeathModelAudit` is new. Re-measured figures for the
+rebalance are in that section rather than rewritten into this table, so the
+pre-rebalance baseline stays readable.
 
 | probe | rc | wall | note |
 |---|---|---|---|
 | ChargerShapeProbe | 0 | 1s | |
+| DeathModelAudit | 0 | 1s | **new 08-09** -- asserts the death-model contract directly, no bot, no RNG |
 | AssetContractAudit | 0 | 2s | the one that guards the mesh swap |
 | JumpDodgeRewardAudit | 0 | 2s | |
 | PacingAudit | 0 | 2s | measurement, no PASS/FAIL string |
@@ -560,7 +571,53 @@ PursuerFraming, RushFrustration, Shrink, Strike) are green
 **simultaneously at one seed**, each with its coverage ledger satisfied.
 That is the baseline the Meshy import should be measured against.
 
-### The two that are not green
+**No longer true of `StrikeAudit` since the half-strike rebalance** (the
+other six still are, re-measured at the same seed) -- see the rebalance
+section above. Its coverage ledger is still satisfied; it is a criterion
+that fails, not a run that could not test one.
+
+### The half-strike rebalance, measured (2026-08-09)
+
+Same seed, same flags, `claude/half-strike-rebalance` vs its base. Only the
+CHARGER stays fatal; every other type costs one half-unit of a 4-half-unit
+budget. **Six of the seven gated probes stay green** (AntiFrustration, Rush,
+Shrink, Combo, Pursuer, plus AssetContract); `StrikeAudit` turns red.
+
+| profile | capture share | mean survival | deaths cap/fatal | runs |
+|---|---|---|---|---|
+| SAFE | 66% -> **100%** | 85.9 -> **107.9s** | 19/10 -> **23/0** | 29 -> 23 |
+| INTERMEDIATE | 27% -> **92%** | 54.5 -> **157.8s** | 12/32 -> **12/1** | 44 -> 16 |
+| RISKY | 25% -> **0%** | 74.2 -> **194.6s** | 8/24 -> **0/10** | 33 -> 13 |
+
+Three consequences, none of them a probe defect:
+
+1. **The death model inverted, as intended.** Mid-skill play died 73% to
+   hazards before and dies 92% to the pursuer now. That is the thing
+   GameState's STRIKES block exists to produce.
+2. **`StrikeAudit`'s safe-vs-mid criterion fails**, 8 points against a
+   required 20. Both profiles now die of the same thing, so "what kills you
+   changes once you stop playing passively" no longer holds between them --
+   it only holds once play is RISKY. **The bar was deliberately not
+   lowered**; the reasoning and the levers are written at the assertion
+   itself in `StrikeAudit.gd`.
+3. **Running out of resistance is currently not a real death.** Across all
+   three profiles, **0 of 35 captures landed on the capacity-th contact** --
+   every one was a lead drain. The capacity still matters (each contact caps
+   the pursuer's lead) but the counter itself never runs out.
+
+Two secondary effects worth knowing before reading any future run:
+
+- **Mean survival roughly tripled for the mid profile** (54.5 -> 157.8s),
+  which puts it well outside the 40-90s burst
+  `GameState.STAGE_START_S` and `StrikeAudit.MID_MISS_CHANCE` are both tuned
+  against. `MID_MISS_CHANCE` was calibrated on that window and has NOT been
+  re-tuned here.
+- **Sample sizes fell by half to two thirds** (44 -> 16 mid runs in the same
+  simulated budget) because runs last longer, and 3 of 16 mid runs now hit
+  `MAX_RUN_S` where none did before. Every share above is computed on fewer
+  deaths than the pre-rebalance figures it is compared with.
+
+### The three that are not green
 
 **`StrikeFatalContrastAudit` fails, and it is a real finding about the
 game, not about the probe.** Two palettes leave the fatal-strike label
@@ -615,10 +672,19 @@ unmistakable. CI already imports before running anything.
 
 ## Still open after this batch
 
-- **`StrikeFatalContrastAudit` fails on 2-3 palettes.** A real legibility
-  defect in the shipped HUD, verified pre-existing on `origin/main`,
-  deliberately left for its own batch. It is the only red verdict in the
-  suite.
+- **`StrikeAudit`'s safe-vs-mid capture-share criterion fails since the
+  half-strike rebalance** (8 points against a required 20). A design
+  question about the game, not a probe defect, and deliberately left red
+  rather than papered over by moving the bar -- full numbers and the
+  candidate levers are in the rebalance section above and at the assertion
+  in `StrikeAudit.gd`. **Needs a device playtest before anyone decides
+  which way to resolve it.**
+- **`StrikeFatalContrastAudit` fails on 1-3 palettes** (1 at the run
+  recorded here, DARK/4 at 2.84:1). A real legibility defect in the shipped
+  HUD, verified pre-existing on `origin/main`, deliberately left for its own
+  batch. Unaffected by the rebalance: it still reaches the fatal state on
+  all 7 palettes, now via a capacity-derived loop rather than two hard-coded
+  `register_strike` calls.
 - **Nine probes still ignore `--seed`** (no `DevSeed.apply()`):
   `StomperAudit`, `JumpDodgeRewardAudit`, `DarkPaletteAudit`,
   `LiveRunProbe`, `AssetContractAudit`, `ChargerShapeProbe`,

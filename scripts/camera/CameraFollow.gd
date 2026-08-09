@@ -59,7 +59,7 @@ func _ready() -> void:
 
 ## Full trauma on every strike, including the one that ends the run: the last
 ## hit is the one that most deserves to be felt.
-func _on_strike_taken(_source_type: int, _strikes_used: int) -> void:
+func _on_strike_taken(_source_type: int, _strikes_used_half: int) -> void:
 	_trauma = 1.0
 	_shake_t = 0.0
 

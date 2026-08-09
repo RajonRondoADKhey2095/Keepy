@@ -125,6 +125,69 @@ identifiée et chiffrée dans §7.2, **volontairement non faite dans le lot
 props** — elle touche la silhouette d'un objet de gameplay et mérite sa
 propre revue device.
 
+## Modèle de mort : seul le CHARGER tue (rebalance demi-strike, 9 août 2026)
+
+Branche `claude/half-strike-rebalance`. **Le plus gros changement de gameplay
+depuis le split DODGE/JUMP d'origine** — à ne pas traiter comme un lot visuel.
+
+**Avant** : 4 des 6 hazards tuaient au contact (CHARGER, STOMPER, ENEMY,
+AIR_ENEMY), les 2 statiques coûtaient 1 strike sur 2.
+**Maintenant** : **CHARGER seul** tue. Les 5 autres coûtent **0,5 strike**,
+uniformément.
+
+**Pourquoi** — mesuré, pas supposé : `StrikeAudit` montrait le profil
+mid-skill mourant **32 fois sur hazard fatal contre 12 captures**. Le modèle
+de mort que tout le bloc STRIKES de `GameState.gd` existe pour créer était
+donc minoritaire dans son propre jeu : le poursuivant devait gagner une
+course contre 4 morts instantanées avant d'avoir son tour. Le CHARGER garde
+le statut fatal parce qu'il est le seul à avoir une vitesse propre
+(`CHARGER_SPEED_FACTOR`) — il te chasse, il te rattrape, il a gagné la run.
+
+**Unité interne : des DEMI-UNITÉS entières, pas un float.**
+`strikes_used_half` / `STRIKE_CAPACITY_HALF` (= 4) / `CONTACT_COST_HALF`
+(= 1). Un `float strikes_used` à 0.5 marcherait — jusqu'au jour où quelqu'un
+ajoute un poids qui n'est pas une puissance de deux, et ça casserait en
+silence dans le fichier que sa propre en-tête appelle « le contrat
+d'équité ». Budget total INCHANGÉ (l'équivalent de 2 strikes pleins) : seule
+la granularité bouge.
+
+**Récupération : 1 demi-unité, jamais 1 strike plein**, par les deux chemins
+(temps et combo). Décision explicite : sinon la récup rattraperait les dégâts
+2 pour 1, et avec `COMBO_TO_CLEAR_STRIKE = 3` un joueur actif deviendrait
+immortel côté strikes.
+
+**HUD : 4 pastilles (pas 2 demi-remplies) + échelle d'alarme à 3 crans.**
+`GameState` compte en demi-unités parce que c'est l'arithmétique sûre ; le
+HUD, lui, parle en CONTACTS au joueur — 4 coups, 4 pastilles. L'ancien
+`danger := used >= CAPACITY - 1` était binaire et correct à capacité 2 ; à
+capacité 4 il ne s'allumerait qu'au 3e contact, laissant les deux premiers
+sans marqueur persistant. D'où : clair (0-1) → **caution** (2, ambre, pulse
+lent/faible) → **danger** (3, ambre, pulse rapide d'origine + kick) → fatal
+(4, corail, le plus rapide). **L'escalade passe par le RYTHME**, une seule
+bascule de teinte — ça préserve l'argument de `STRIKE_FATAL_COLOR` (le beat
+fatal garde sa famille de teinte propre) et ça survit à DARK/4, que la
+couleur seule ne passe pas.
+
+⚠️ **Piège corrigé au passage, à ne pas réintroduire** : le kick d'entrée
+était DESSINÉ dans la branche `danger`. À capacité 2 c'était équivalent (tout
+contact non-fatal armait `danger` la même frame) ; à capacité 4 les contacts
+1 et 2 sont sous le seuil, donc le kick aurait été armé, avancé, expiré —
+et jamais dessiné. Il est maintenant appliqué HORS des branches de l'échelle.
+
+**Sonde dédiée : `scripts/dev/DeathModelAudit.tscn`** (nouvelle). Elle
+n'utilise **aucun bot et aucun RNG** — elle instancie Keepy et Obstacle
+seuls, émet le vrai signal `body_entered`, et assère le CONTRAT :
+classification sur `Type.values()` (un 7e type ne peut pas passer non
+classé), CHARGER = 1 coup, et pour **chacun** des 5 autres : survie à 3
+contacts, capture au 4e, en `PURSUER` et non `COLLISION`. Motif : un bot ne
+rencontre un hazard que **par chance** — c'est exactement la famille de faux
+verts que `ProbeCoverage.gd` documente. Byte-identique d'un run à l'autre.
+
+**Ne PAS considérer les 6 sondes byte-identiques comme une preuve ici** :
+c'est le bar des lots purement visuels. Le gameplay de 3 types change, donc
+`StrikeAudit` DOIT bouger — voir `docs/PROBE_AUDIT.md` pour les nouveaux
+chiffres et les seuils re-calibrés.
+
 ## Audio : ne coupe pas l'audio de fond (vérifié sur device, 9 août 2026)
 
 Le projet a reçu son **premier audio** le 9 août 2026 (deux cues one-shot sur
