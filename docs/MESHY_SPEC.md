@@ -243,7 +243,7 @@ the numbers below:
 | Family | Budgeted (7.1) | Measured, worst frame | |
 |---|---|---|---|
 | collectibles | 4,200 | **25,344 – 29,568** | **OVER by ~6x** |
-| pursuer | 8,000 | **15,518** | **OVER by ~2x** |
+| pursuer | 8,000 | **15,518** | **OVER by ~2x** *(cause misattributed — see 7.3)* |
 | hazards | 8,400 | 7,068 – 8,372 | within |
 | keepy | 6,000 | 3,129 | within |
 | track slab + curbs | 5,600 | 252 | within |
@@ -268,12 +268,78 @@ frame still peaks at **52,780**, already 2,780 over.
    the frame to roughly **28,000, i.e. ~44% headroom**. Deliberately NOT
    done in the props batch: it changes the silhouette of a gameplay object
    and belongs in a batch whose device review is looking at collectibles.
-2. **The hibou `.glb` is 15,518 triangles against a 8,000 cap.** A real
-   asset overrunning its own spec, which is exactly what §11's pre-import
-   check exists to catch and did not.
+2. **The `pursuer` FAMILY is 15,518 triangles against a 8,000 cap.**
+   ~~A real asset overrunning its own spec, which is exactly what §11's
+   pre-import check exists to catch and did not.~~ **That second sentence
+   was wrong — the `.glb` is not the overrun. See 7.3.**
 
 Neither is a rendering fault today — the game runs — but the 50,000 target
 was justified above rather than picked, and the frame is over it.
+
+### 7.3 The "15,518-triangle hibou" was a misattribution — measured 2026-08-09
+
+The row above compares a *family* total against an *asset* budget line, and
+the prose under it named the wrong culprit. Re-measured directly, parsing
+the glTF JSON chunk (`indices.count / 3`, the same method §11 uses on every
+asset before import) and cross-checked against what Godot actually builds:
+
+| what | triangles |
+|---|---|
+| `assets/models/keepy_hibou_pursuer.glb` (one mesh, one primitive) | **7,070** |
+| `Silhouette/EyeLeft` — `SphereMesh` at Godot's default 64 x 32 | **4,224** |
+| `Silhouette/EyeRight` — same sub-resource | **4,224** |
+| `Silhouette`'s own `CapsuleMesh` placeholder | 0 *(cleared by `ModelSlot`)* |
+| | **15,518** |
+
+7,070 + 4,224 + 4,224 = 15,518 **exactly**, which is the whole of the figure
+7.2 recorded. So:
+
+- **The Hibou asset was never over budget.** 7,070 against a cap of 8,000 —
+  within it by 930, exactly as §11's own pre-import check measured it on the
+  day it landed. That check did not fail; nothing read its result afterwards.
+- **The overrun was two placeholder eye spheres**, 8,448 triangles, i.e.
+  **54.4%** of the family — the same default-tessellation defect finding 1
+  identifies in the collectibles, on a different object. Under 7.1 they fall
+  in the "markers, trail bars — primitives — negligible" line.
+- **Decimating the `.glb` could not have fixed it.** At *zero* triangles the
+  family would still be 8,448, over the 8,000 cap. Any batch that had gone
+  ahead and decimated the owl would have degraded the one silhouette the
+  player must read, and still missed the target.
+
+**Fixed** by setting the shared `SphereMesh_Eye` sub-resource to 16 x 8
+(**288** triangles, not the 256 finding 1 estimates — see the correction
+below): family **15,518 -> 7,646**, under the 8,000 cap by 354, and a flat
+**-7,872 triangles in every frame**, since pursuer geometry is fixed and
+measured identical in all 11 runs.
+
+**The eyes were costing that and drawing nothing.** Rendering the real
+`Pursuer.tscn` offscreen at all three poses `PursuerFramingAudit` uses
+(`FAR_Z` 3.0 / `CAUGHT_Z` 1.0 / `CAPTURE_Z` 0.15, game camera at
+`(0, 4.2, 7)` pitched -20°), before vs after, the images are **pixel-identical
+— zero changed pixels at every gameplay pose.** The spheres sit inside the
+owl's own eye sockets on its **-Z face**, which §6 already documents as the
+side pointing *away* from the camera, so they are fully depth-occluded by
+the head. They are only visible at all from a camera placed in front of the
+owl's face, where the tessellation drop changes 0.30% of pixels (confined to
+a bounding box around the two discs, which still read as circles). Nothing
+in the game ever puts a camera there.
+
+**Two measured corrections to 7.2's own numbers**, both understated there:
+
+- A default `SphereMesh` is **4,224** triangles, not "~4,096" — so the
+  collectibles' worst frame is 4,224 x N, and finding 1's estimate of the
+  saving is correspondingly low.
+- **16 x 8 gives 288** triangles, not 256. Godot's `SphereMesh` builds
+  `2 x radial_segments x (rings + 1)`.
+
+**Collectibles remain untouched and remain the dominant cost**, deliberately:
+finding 1's own reasoning still applies — that change alters the silhouette
+of a *visible* gameplay object and belongs in a batch whose device review is
+looking at collectibles. This batch's review is looking at the pursuer, which
+is why the eye spheres were in scope and the noisettes were not. Measured over
+11 unseeded runs after the fix, the worst frame is **57,402** (collectibles
+25,344 – 38,016), still **7,402 over** the 50,000 target. The frame is not
+under budget yet; only the pursuer is.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
@@ -741,6 +807,63 @@ baseline):
   for the asset -- far below the 1.01 MB source `.glb`, because Godot's own
   VRAM texture compression on export re-encodes the JPEG/PNG maps into a
   smaller GPU-native format. Not a meaningful hit to mobile load time.
+
+**2026-08-09 -- re-measured under a "decimate the owl" brief; the asset was
+never the problem, and was NOT decimated.** The brief carried §7.2's figure
+forward as "the hibou renders 15,518 triangles against its 8,000 cap" and
+asked for an in-sandbox decimation. Re-measuring first -- which the brief
+itself asked for -- refuted the premise before any mesh was touched:
+
+- **The `.glb` is 7,070 triangles**, unchanged since this entry recorded it
+  above, and **930 inside its 8,000 cap**. Parsed from the glTF JSON chunk
+  (`indices.count / 3`) and independently confirmed against what Godot
+  builds at runtime (`Mesh.get_faces().size() / 3` on the imported
+  `ArrayMesh`): both say 7,070.
+- **The other 8,448 came from `EyeLeft`/`EyeRight`**, two `SphereMesh`
+  placeholders left at Godot's default 64 x 32 tessellation, 4,224 each.
+  7,070 + 4,224 + 4,224 = 15,518, matching §7.2's figure to the triangle.
+- **The requested remedy could not have reached the stated goal.** Even a
+  zero-triangle owl leaves the family at 8,448, still over 8,000. So the
+  decimation was **not performed**: it would have traded away the pursuer's
+  gameplay-readable silhouette -- the thing the brief itself said matters
+  most -- for a target it could not hit.
+
+**Done instead:** `SphereMesh_Eye` (one shared sub-resource, so one edit
+covers both eyes) set to `radial_segments = 16`, `rings = 8`. Family
+**15,518 -> 7,646**. Full detail, including why this is invisible in
+gameplay, in **§7.3**.
+
+**Validation** (Godot 4.3.stable headless, editor + `4.3-stable` templates
+fetched into the sandbox, `--fixed-fps 60` before `--path` and before `--`
+per this section's own reproducibility note):
+
+- **Seven gated bot probes, seed 20260806, before/after: byte-identical**,
+  all seven, including `PursuerFramingAudit` -- which for the *asset* swap
+  above legitimately moved (occupancy is the one number a visual swap may
+  change). Here it does not move at all: the eye spheres are children of
+  `Silhouette`, not of the installed model, so they never entered
+  `visual_aabb()` and the §6 occupancy table is unaffected.
+- `AssetContractAudit`: PASSED, 12/12 visuals swap, **0/10 colliders moved**,
+  pursuer still has none. `ChargerShapeProbe`: PASSED (rc=0), untouched.
+- **Offscreen renders, before vs after, at all three gameplay poses:
+  pixel-identical (zero changed pixels).** See §7.3.
+- **Web export**: `index.pck` **4,410,432 -> 4,410,448 bytes, +16 bytes** --
+  two integers in a scene sub-resource. Both sides built from a throwaway
+  worktree at `origin/main` vs the current tree, same templates.
+- **`PursuerContrastAudit`: FAILS, and already failed on unmodified
+  `origin/main`** -- 6/6 dark palettes under the 2.5:1 silhouette floor
+  (worst DARK/2 **1.86:1**), against the **2.53:1 PASS** this entry records
+  above. Measured three times on clean `main` before any edit, three times
+  after; the two sets are indistinguishable (DARK/2 1.86/1.86/1.84 before,
+  1.85/1.84/1.84 after), so **this batch neither caused nor fixed it**.
+  It is a **pre-existing regression, open and unexplained**, introduced
+  somewhere between the hibou landing and today. Prime suspect, not
+  confirmed: the decor batch's per-segment ground tint drift
+  (`TrackSegment._reroll_ground_tint`, §8.1) changes the very surface this
+  probe measures the silhouette *against*, and it is unseeded -- consistent
+  with the run-to-run wobble seen in the light-phase numbers
+  (7.37/7.40/7.28:1). Worth someone's next batch; it is the pursuer's
+  dark-mode legibility, which is exactly what §8 exists to protect.
 
 ### 2026-08-09 -- Keepy (hero squirrel), ACCEPTED
 

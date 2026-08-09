@@ -119,11 +119,36 @@ budget triangles : `docs/MESHY_SPEC.md` §8.2. Sonde dédiée :
 re-mesure du 9 août 2026 (§7.2) montre la frame **au-dessus** de la cible de
 50 000 — ~52 800 props désactivés, donc antérieurement au lot props et sans
 rapport avec lui. Cause dominante : les collectibles (`Noisette.tscn` /
-`Gland.tscn`) dessinent ~4 096 triangles chacun (`SphereMesh` laissé à la
+`Gland.tscn`) dessinent **4 224** triangles chacun (`SphereMesh` laissé à la
 tessellation par défaut de Godot) là où §7 en budgétait 300. Correction
-identifiée et chiffrée dans §7.2, **volontairement non faite dans le lot
-props** — elle touche la silhouette d'un objet de gameplay et mérite sa
-propre revue device.
+identifiée et chiffrée dans §7.2, **volontairement non faite** — elle touche
+la silhouette d'un objet de gameplay **visible** et mérite sa propre revue
+device. Ils restent le poste dominant : pire frame mesurée sur 11 runs après
+le lot hibou ci-dessous, **57 402**, toujours 7 402 au-dessus de la cible.
+
+⚠️ **« Le hibou pèse 15 518 triangles » est FAUX — corrigé le 9 août 2026
+(§7.3). Ne pas repartir de ce chiffre.** Le `.glb` en pèse **7 070**, soit
+930 SOUS son plafond de 8 000 ; il n'a jamais été hors budget et **n'a pas
+été décimé**. Les 8 448 restants venaient de **deux sphères d'yeux
+placeholder** (`SphereMesh` par défaut, 4 224 chacune) enfants de
+`Silhouette` — 7 070 + 4 224 + 4 224 = 15 518, exactement le chiffre de §7.2,
+qui comparait un total de *famille* à un budget d'*asset*. Décimer le hibou
+ne pouvait pas atteindre la cible : même à zéro triangle la famille restait
+à 8 448. Corrigé en passant `SphereMesh_Eye` à 16 x 8 : famille **15 518 ->
+7 646**, soit **−7 872 triangles à chaque frame**. Les yeux sont sur la face
+**-Z** (côté opposé à la caméra, cf. §6) et donc entièrement occultés : les
+rendus offscreen avant/après aux trois poses de jeu sont **pixel-identiques**.
+Les sept sondes gatées sont **byte-identiques**, 0 collider déplacé, `.pck`
++16 octets.
+
+⚠️ **`PursuerContrastAudit` ÉCHOUE, et échouait déjà sur `origin/main`
+intact** (6/6 palettes sombres sous le plancher 2,5:1, pire 1,86:1, contre
+2,53:1 PASS enregistré au lot hibou du 8 août). Mesuré 3 fois avant / 3 fois
+après le lot du 9 août : identique, donc **ni causé ni corrigé par lui**.
+Régression pré-existante **ouverte**, suspect principal non confirmé : la
+dérive de teinte du sol par segment (`_reroll_ground_tint`, §8.1), non
+seedée, qui change précisément la surface contre laquelle la sonde mesure la
+silhouette. C'est la lisibilité en mode sombre du poursuivant — à traiter.
 
 ## Sondes : aucune ne peut tourner indéfiniment (mesuré, 9 août 2026)
 
