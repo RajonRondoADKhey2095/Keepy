@@ -57,6 +57,7 @@ hard-coded numeric threshold calibrated on exploratory runs.
 | **LaneFillAudit** | The early game does not use the full track width | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | distribution only |
 | **PacingAudit** | Palier timings, spacing and the enemy lock, measured not re-read | 08-05 | everything after 08-05 | ok | n/a | n/a | n/a | n/a | invariant |
 | **AssetContractAudit** | A mesh swap changes every visual and moves no collider | 08-08 | -- | n/a | n/a | n/a | n/a | n/a | invariant (exact equality) |
+| **TrackPropsAudit** | Trackside props stay outside the play area and add no collider; plus the measured frame triangle budget | 08-09 | -- | n/a | n/a | n/a | n/a | n/a | invariant x2 + **absolute** (props' own triangle share); frame total REPORTED, not asserted |
 | **ChargerShapeProbe** | The charger wedge is oriented and grounded as designed | 08-06 | -- | n/a | n/a | n/a | n/a | n/a | invariant |
 | **DarkPaletteAudit** | Every hazard stays legible against the ground on every palette | 08-06 | STOMPER (`5c2b3fb`), shrink (`ec1836a`) | **broken sampling** | **broken sampling** | n/a | n/a | ok | absolute (a contrast floor, legitimately) |
 | **ComboContrastAudit** / **StrikeContrastAudit** / **StrikeFatalContrastAudit** / **PursuerContrastAudit** | The HUD reads against its real background on every palette | 08-06/07 | -- | n/a | n/a | n/a | n/a | n/a | absolute (a contrast floor, legitimately) |

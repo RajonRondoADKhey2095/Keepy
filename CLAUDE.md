@@ -85,6 +85,46 @@ Pillow si besoin, orientation vérifiée par rendu offscreen (jamais copiée
 d'un asset précédent), scale calculé contre le budget §5/§7, checklist
 d'acceptation §10 avant tout push.
 
+## Décor procédural : déjà en prod (correction d'une passation périmée)
+
+**Ce fichier ne mentionnait nulle part le décor, ce qui a laissé croire à une
+session ultérieure que le lot décor restait à faire. Il était déjà mergé sur
+`main` avant elle.** Vérifié sur `origin/main` (pas déduit d'un récit) : le
+lot complet est en place et déployé —
+
+- **Collines de fond** — `scripts/world/Decor.gd`, nœud `World/Decor` dans
+  `Game.tscn`, deux couches parallaxe à pool fixe (`6270afc`, recyclage
+  corrigé par `2ffc491`).
+- **Bordures de voie + variation de teinte du sol** — `TrackSegment.gd`,
+  `_build_lane_curbs()` et `_reroll_ground_tint()` (`83ef8e0`).
+
+Les trois sont arrivés en prod par le merge `9dca8fb` (« merge: bring
+procedural decor environment to prod »).
+
+**Depuis le 9 août 2026, un quatrième élément s'y ajoute : les props de bord
+de piste** (arbres et rochers low-poly), branche `claude/trackside-props`.
+Même cycle de vie que les bordures — construits une fois dans `_ready()` de
+`TrackSegment`, seulement montrés/cachés et repositionnés par `populate()`,
+recyclés avec leur tuile. **Pas** une seconde couche à la `Decor.gd` : un
+prop appartient à une TUILE, une colline n'appartient à rien.
+
+Règle qui vaut pour tout ajout de décor futur, et qui est la seule chose
+réellement contraignante ici : **aucun prop ne doit empiéter sur la dalle de
+6 m** (`Hitboxes.GROUND_SIZE.x`) — la contrainte porte sur le bord de la
+SILHOUETTE, pas sur le centre du prop. Détail, table de contraste mesurée et
+budget triangles : `docs/MESHY_SPEC.md` §8.2. Sonde dédiée :
+`scripts/dev/TrackPropsAudit.tscn`.
+
+⚠️ **Budget triangles §7 : le tableau d'origine n'était PAS une mesure.** La
+re-mesure du 9 août 2026 (§7.2) montre la frame **au-dessus** de la cible de
+50 000 — ~52 800 props désactivés, donc antérieurement au lot props et sans
+rapport avec lui. Cause dominante : les collectibles (`Noisette.tscn` /
+`Gland.tscn`) dessinent ~4 096 triangles chacun (`SphereMesh` laissé à la
+tessellation par défaut de Godot) là où §7 en budgétait 300. Correction
+identifiée et chiffrée dans §7.2, **volontairement non faite dans le lot
+props** — elle touche la silhouette d'un objet de gameplay et mérite sa
+propre revue device.
+
 ## Audio : ne coupe pas l'audio de fond (vérifié sur device, 9 août 2026)
 
 Le projet a reçu son **premier audio** le 9 août 2026 (deux cues one-shot sur
