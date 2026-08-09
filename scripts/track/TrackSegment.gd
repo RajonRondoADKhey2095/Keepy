@@ -265,8 +265,18 @@ const _PROP_SLOTS_PER_SIDE: int = 2
 ## (nothing this tile, three props the next) is what breaks the metronome.
 const _PROP_PRESENCE_CHANCE: float = 0.45
 
-## Split between the two prop kinds when a slot is populated.
-const _PROP_TREE_CHANCE: float = 0.6
+## Which KIND a populated slot draws, as cumulative weights over
+## _PROP_KINDS below. Weighted rather than uniform, and rolled per slot
+## rather than per tile, so a tile is a mixed handful rather than a row of
+## the same shape -- the "every tile shows the same catalogue in the same
+## order" reading this replaced a single tree/rock coin flip to avoid.
+##
+## The organic four carry most of the weight because they are what a
+## roadside mostly is; the two man-made kinds are deliberately rare, so a
+## bench or a sign reads as a punctuation mark rather than as street
+## furniture lining the whole run.
+const _PROP_KINDS: Array[String] = ["tree", "rock", "bush", "stump", "bench", "sign"]
+const _PROP_KIND_WEIGHTS: Array[float] = [0.32, 0.20, 0.18, 0.14, 0.09, 0.07]
 
 ## How far along the tile a prop may sit, either side of its centre. Just
 ## inside the 20m tile's own half-length, so a prop never straddles the
@@ -299,6 +309,63 @@ const _ROCK_RINGS: int = 3
 ## sits bedded IN the ground rather than balanced on it.
 const _ROCK_SINK: float = 0.82
 
+## Bench: a seat and a backrest slab on two short legs, four boxes and
+## cylinders. Long axis along Z (parallel to the track), because a bench
+## beside a path faces the path -- which also means its X extent is the
+## seat DEPTH, the small dimension, so it crowds the keep-out least.
+const _BENCH_LENGTH: Vector2 = Vector2(1.10, 1.70)   # along z
+const _BENCH_DEPTH: Vector2 = Vector2(0.34, 0.46)    # along x
+const _BENCH_SEAT_H: float = 0.07
+const _BENCH_SEAT_Y: Vector2 = Vector2(0.36, 0.50)
+const _BENCH_BACK_H: Vector2 = Vector2(0.30, 0.46)
+const _BENCH_BACK_T: float = 0.06                     # backrest thickness, along x
+const _BENCH_LEG_R: float = 0.045
+const _BENCH_LEG_SIDES: int = 5
+## Leg inset from each end of the seat, as a fraction of the seat length.
+const _BENCH_LEG_INSET: float = 0.18
+
+## Sign: a post under a blank rectangular board. NO text and no texture --
+## the board is a silhouette, nothing on it is ever meant to be read, so
+## there is no legibility claim to defend at any camera distance.
+const _SIGN_POST_R: float = 0.05
+const _SIGN_POST_SIDES: int = 5
+const _SIGN_POST_H: Vector2 = Vector2(1.05, 1.55)
+const _SIGN_BOARD_W: Vector2 = Vector2(0.52, 0.78)   # along x when unyawed
+const _SIGN_BOARD_H: Vector2 = Vector2(0.34, 0.52)
+const _SIGN_BOARD_T: float = 0.05
+## How far the board's centre sits below the top of the post.
+const _SIGN_BOARD_DROP: float = 0.10
+
+## Stump: a short wide cylinder capped by a squashed dome. Deliberately
+## WIDER than the tree trunk it might otherwise be mistaken for and far
+## shorter -- a stump that reads as "a broken tree" is the one silhouette
+## this kind exists to avoid, so the proportions are pushed apart rather
+## than scaled down from the trunk's.
+const _STUMP_RADIUS: Vector2 = Vector2(0.26, 0.44)
+const _STUMP_HEIGHT: Vector2 = Vector2(0.22, 0.42)
+const _STUMP_SIDES: int = 6
+## Dome height as a fraction of the stump's radius -- low, so the top
+## reads as a slightly rounded cut face, never as a ball on a post.
+const _STUMP_DOME_RISE: Vector2 = Vector2(0.16, 0.30)
+const _STUMP_DOME_RINGS: int = 2
+
+## Bush: a cluster of three squashed low-facet spheres, each offset from
+## the cluster centre. Rounder and shorter than a rock, and unlike the
+## rock it is never a single mass -- the lumpy outline is what separates
+## the two at the distance they are seen from.
+const _BUSH_BLOBS: int = 3
+const _BUSH_RADIUS: Vector2 = Vector2(0.20, 0.36)
+const _BUSH_FLATNESS: Vector2 = Vector2(0.62, 0.95)
+const _BUSH_SIDES: int = 6
+const _BUSH_RINGS: int = 2
+## How far a blob may sit from the cluster centre, as a fraction of its
+## own radius. Under 1.0 so the blobs always overlap into one clump
+## rather than reading as three separate pebbles.
+const _BUSH_SPREAD: float = 0.75
+## Fraction of a blob's half-height left above the ground, same bedding
+## idea as _ROCK_SINK.
+const _BUSH_SINK: float = 0.78
+
 ## See docs/MESHY_SPEC.md section 8.2 for the measured contrast table.
 ## All three sit in the scene's darkest band, well below the far hills
 ## (the darkest thing they are ever seen against), because the backdrop
@@ -307,6 +374,45 @@ const _ROCK_SINK: float = 0.82
 const _TREE_CANOPY_COLOR: Color = Color(0.14, 0.20, 0.15)
 const _TREE_TRUNK_COLOR: Color = Color(0.13, 0.10, 0.07)
 const _ROCK_COLOR: Color = Color(0.18, 0.19, 0.20)
+
+## The four kinds added in the second props pass. Their luminances were
+## picked by SWEEPING the scene's occupied luminance line, not by eye --
+## see 8.2's extended table for the full measured grid and for the two
+## limitations it records. In short: the dark band that gives the best
+## contrast against the backdrop (sky and hills) already held all three
+## kinds above, so these four are spread UP the line instead. That buys
+## clean separation between the six kinds (worst pair 1.48:1, better than
+## the 1.29:1 the canopy/trunk pair already ships with) and costs some
+## backdrop contrast on the two mid-value kinds, which is the trade 8.2
+## already makes explicit rather than a new compromise.
+const _BUSH_COLOR: Color = Color(0.11, 0.16, 0.12)
+const _STUMP_COLOR: Color = Color(0.32, 0.24, 0.15)
+const _BENCH_COLOR: Color = Color(0.45, 0.36, 0.26)
+const _SIGN_COLOR: Color = Color(0.50, 0.48, 0.42)
+
+## Every mesh key a slot carries, in one place. _hide_all_props() and
+## nearest_prop_edge_x() both walk this rather than each repeating a
+## literal list -- the keep-out probe measures whatever this array names,
+## so a kind added here cannot be silently left out of the check that
+## keeps props off the play area.
+const _PROP_MESH_KEYS: Array[String] = [
+	"trunk", "canopy", "rock",
+	"bench_seat", "bench_back", "bench_leg_a", "bench_leg_b",
+	"sign_post", "sign_board",
+	"stump_body", "stump_dome",
+	"bush_a", "bush_b", "bush_c",
+]
+
+## Which mesh keys each kind switches on. Kept beside _PROP_KINDS so the
+## two cannot drift.
+const _PROP_KIND_MESHES: Dictionary = {
+	"tree": ["trunk", "canopy"],
+	"rock": ["rock"],
+	"bench": ["bench_seat", "bench_back", "bench_leg_a", "bench_leg_b"],
+	"sign": ["sign_post", "sign_board"],
+	"stump": ["stump_body", "stump_dome"],
+	"bush": ["bush_a", "bush_b", "bush_c"],
+}
 
 ## One entry per prop slot: the three mesh instances it can draw (a tree
 ## is trunk + canopy, a rock is one mesh) and which side of the track it
@@ -326,9 +432,17 @@ var _prop_slots: Array[Dictionary] = []
 var _prop_rng := DecorRng.make()
 
 func _build_trackside_props() -> void:
+	# One material per colour, shared by every slot and every part of a
+	# kind: a bench's seat, back and both legs are one object to the eye,
+	# so they are one albedo, and sharing the resource keeps the material
+	# count flat as kinds are added.
 	var canopy_material := _unshaded(_TREE_CANOPY_COLOR)
 	var trunk_material := _unshaded(_TREE_TRUNK_COLOR)
 	var rock_material := _unshaded(_ROCK_COLOR)
+	var bench_material := _unshaded(_BENCH_COLOR)
+	var sign_material := _unshaded(_SIGN_COLOR)
+	var stump_material := _unshaded(_STUMP_COLOR)
+	var bush_material := _unshaded(_BUSH_COLOR)
 
 	for side in [-1.0, 1.0]:
 		for i in _PROP_SLOTS_PER_SIDE:
@@ -371,13 +485,77 @@ func _build_trackside_props() -> void:
 			rock_mesh.radial_segments = _ROCK_SIDES
 			rock_mesh.rings = _ROCK_RINGS
 			var rock := _build_prop_mesh(rock_mesh, rock_material, "PropRock" + label)
+
+			# --- bench: two boxes on two capless cylinders ---
+			var seat := _build_prop_mesh(BoxMesh.new(), bench_material, "PropBenchSeat" + label)
+			var back := _build_prop_mesh(BoxMesh.new(), bench_material, "PropBenchBack" + label)
+			# Legs: both caps hidden, the bottom by the ground and the top
+			# by the seat sitting on them -- same reasoning as the trunk's.
+			var leg_a := _build_prop_mesh(
+				_capless_cylinder(_BENCH_LEG_R, _BENCH_LEG_SIDES), bench_material, "PropBenchLegA" + label)
+			var leg_b := _build_prop_mesh(
+				_capless_cylinder(_BENCH_LEG_R, _BENCH_LEG_SIDES), bench_material, "PropBenchLegB" + label)
+
+			# --- sign: capless post under a blank board ---
+			var post := _build_prop_mesh(
+				_capless_cylinder(_SIGN_POST_R, _SIGN_POST_SIDES), sign_material, "PropSignPost" + label)
+			var board := _build_prop_mesh(BoxMesh.new(), sign_material, "PropSignBoard" + label)
+
+			# --- stump: short wide cylinder, domed ---
+			# Top cap off: the dome covers it. Bottom cap off: the ground does.
+			var stump_mesh := CylinderMesh.new()
+			stump_mesh.radial_segments = _STUMP_SIDES
+			stump_mesh.rings = 0
+			stump_mesh.cap_top = false
+			stump_mesh.cap_bottom = false
+			var stump_body := _build_prop_mesh(stump_mesh, stump_material, "PropStumpBody" + label)
+			var dome_mesh := SphereMesh.new()
+			dome_mesh.radial_segments = _STUMP_SIDES
+			dome_mesh.rings = _STUMP_DOME_RINGS
+			var stump_dome := _build_prop_mesh(dome_mesh, stump_material, "PropStumpDome" + label)
+
+			# --- bush: a clump of squashed spheres ---
+			var blobs: Array[MeshInstance3D] = []
+			for b in _BUSH_BLOBS:
+				var blob_mesh := SphereMesh.new()
+				blob_mesh.radial_segments = _BUSH_SIDES
+				blob_mesh.rings = _BUSH_RINGS
+				blobs.append(_build_prop_mesh(
+					blob_mesh, bush_material, "PropBushBlob%d%s" % [b, label]))
+
 			_prop_slots.append({
 				"side": side,
 				"trunk": trunk,
 				"canopy": canopy,
 				"rock": rock,
+				"bench_seat": seat,
+				"bench_back": back,
+				"bench_leg_a": leg_a,
+				"bench_leg_b": leg_b,
+				"sign_post": post,
+				"sign_board": board,
+				"stump_body": stump_body,
+				"stump_dome": stump_dome,
+				"bush_a": blobs[0],
+				"bush_b": blobs[1],
+				"bush_c": blobs[2],
 			})
 	_hide_all_props()
+
+## A cylinder with both caps off, at a fixed radius. Height is written per
+## placement; radius never varies for the parts that use this, so it is set
+## once here for the same reason tessellation is -- a mesh left at Godot's
+## default sits on a 64-segment buffer from _ready() onward whether or not
+## its slot ever draws.
+func _capless_cylinder(radius: float, sides: int) -> CylinderMesh:
+	var mesh := CylinderMesh.new()
+	mesh.radial_segments = sides
+	mesh.rings = 0
+	mesh.cap_top = false
+	mesh.cap_bottom = false
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	return mesh
 
 ## One prop mesh instance, added to this segment and hidden. `cast_shadow`
 ## is off for the same reason Decor.gd switches it off on the hills and
@@ -402,9 +580,22 @@ func _unshaded(color: Color) -> StandardMaterial3D:
 
 func _hide_all_props() -> void:
 	for slot in _prop_slots:
-		slot["trunk"].visible = false
-		slot["canopy"].visible = false
-		slot["rock"].visible = false
+		for key in _PROP_MESH_KEYS:
+			slot[key].visible = false
+
+## Picks a kind for a populated slot from _PROP_KIND_WEIGHTS. Exactly ONE
+## draw whatever the outcome, so adding a kind never changes how many
+## numbers a placement consumes -- which is what lets the weights be
+## retuned without re-sequencing the rest of a segment's decor.
+func _roll_prop_kind() -> String:
+	var roll := _prop_rng.randf()
+	var cumulative := 0.0
+	for i in _PROP_KINDS.size():
+		cumulative += _PROP_KIND_WEIGHTS[i]
+		if roll < cumulative:
+			return _PROP_KINDS[i]
+	# Float error only; the weights sum to 1.
+	return _PROP_KINDS[_PROP_KINDS.size() - 1]
 
 ## Re-rolls every prop slot: present or not, tree or rock, and where.
 ## Called from populate(), i.e. once at the initial fill and once per
@@ -413,17 +604,24 @@ func _place_trackside_props() -> void:
 	for slot in _prop_slots:
 		var side: float = slot["side"]
 		var show_prop := _prop_rng.randf() < _PROP_PRESENCE_CHANCE
-		var show_tree := show_prop and _prop_rng.randf() < _PROP_TREE_CHANCE
-		slot["trunk"].visible = show_tree
-		slot["canopy"].visible = show_tree
-		slot["rock"].visible = show_prop and not show_tree
+		# Hide everything first, then switch on only the chosen kind's
+		# meshes. Clearing unconditionally is what makes a slot that was a
+		# bench last tile and is a bush this one leave nothing behind.
+		for key in _PROP_MESH_KEYS:
+			slot[key].visible = false
 		if not show_prop:
 			continue
+		var kind := _roll_prop_kind()
+		for key in _PROP_KIND_MESHES[kind]:
+			slot[key].visible = true
 		var z := _prop_rng.randf_range(-_PROP_Z_HALF_RANGE, _PROP_Z_HALF_RANGE)
-		if show_tree:
-			_place_tree(slot, side, z)
-		else:
-			_place_rock(slot, side, z)
+		match kind:
+			"tree": _place_tree(slot, side, z)
+			"rock": _place_rock(slot, side, z)
+			"bench": _place_bench(slot, side, z)
+			"sign": _place_sign(slot, side, z)
+			"stump": _place_stump(slot, side, z)
+			"bush": _place_bush(slot, side, z)
 
 func _place_tree(slot: Dictionary, side: float, z: float) -> void:
 	var trunk_radius := _prop_rng.randf_range(_TREE_TRUNK_RADIUS.x, _TREE_TRUNK_RADIUS.y)
@@ -473,6 +671,157 @@ func _place_rock(slot: Dictionary, side: float, z: float) -> void:
 	var half_height := radius * flatness
 	rock.position = Vector3(_prop_x(side, half_width), _ground_top_y() + half_height * _ROCK_SINK, z)
 
+## The two man-made kinds get a SMALL yaw rather than the rock's free spin:
+## a bench or a sign beside a path reads as aligned with it, and a fully
+## random one reads as dropped there. Small enough that the exact rotated
+## half-width below stays tight instead of degenerating to the bounding
+## circle a free spin would force.
+const _PROP_YAW_MAX: float = 0.21 # radians, ~12 degrees
+
+## Half the X extent of a box of `depth` (x) by `length` (z) yawed by
+## `yaw`. Exact, not a bound with slack: this is the number the keep-out
+## is built from, so it has to be the real silhouette edge at the rotation
+## actually used -- the same discipline the rock's longest-semi-axis
+## follows.
+func _yawed_half_x(depth: float, length: float, yaw: float) -> float:
+	return depth * 0.5 * absf(cos(yaw)) + length * 0.5 * absf(sin(yaw))
+
+## A part's offset from its prop's centre, yawed about Y with it.
+func _yawed_offset(offset: Vector3, yaw: float) -> Vector3:
+	var c := cos(yaw)
+	var s := sin(yaw)
+	return Vector3(offset.x * c + offset.z * s, offset.y, -offset.x * s + offset.z * c)
+
+func _place_bench(slot: Dictionary, side: float, z: float) -> void:
+	var length := _prop_rng.randf_range(_BENCH_LENGTH.x, _BENCH_LENGTH.y)
+	var depth := _prop_rng.randf_range(_BENCH_DEPTH.x, _BENCH_DEPTH.y)
+	var seat_y := _prop_rng.randf_range(_BENCH_SEAT_Y.x, _BENCH_SEAT_Y.y)
+	var back_h := _prop_rng.randf_range(_BENCH_BACK_H.x, _BENCH_BACK_H.y)
+	var yaw := _prop_rng.randf_range(-_PROP_YAW_MAX, _PROP_YAW_MAX)
+
+	var seat: MeshInstance3D = slot["bench_seat"]
+	var back: MeshInstance3D = slot["bench_back"]
+	var leg_a: MeshInstance3D = slot["bench_leg_a"]
+	var leg_b: MeshInstance3D = slot["bench_leg_b"]
+
+	(seat.mesh as BoxMesh).size = Vector3(depth, _BENCH_SEAT_H, length)
+	(back.mesh as BoxMesh).size = Vector3(_BENCH_BACK_T, back_h, length)
+	var leg_h := maxf(0.05, seat_y - _BENCH_SEAT_H * 0.5)
+	(leg_a.mesh as CylinderMesh).height = leg_h
+	(leg_b.mesh as CylinderMesh).height = leg_h
+
+	# The seat is the widest part in x, so it -- not the backrest, which is
+	# thinner and sits inside the seat's footprint -- sets the keep-out.
+	var half_x := _yawed_half_x(depth, length, yaw)
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var centre := Vector3(x, ground_y, z)
+
+	# Backrest on the far side from the track, so the bench faces it.
+	var back_off := side * (depth * 0.5 - _BENCH_BACK_T * 0.5)
+	var leg_z := length * (0.5 - _BENCH_LEG_INSET)
+	_put(seat, centre, Vector3(0.0, seat_y, 0.0), yaw)
+	_put(back, centre, Vector3(back_off, seat_y + _BENCH_SEAT_H * 0.5 + back_h * 0.5, 0.0), yaw)
+	_put(leg_a, centre, Vector3(0.0, leg_h * 0.5, leg_z), yaw)
+	_put(leg_b, centre, Vector3(0.0, leg_h * 0.5, -leg_z), yaw)
+
+func _place_sign(slot: Dictionary, side: float, z: float) -> void:
+	var post_h := _prop_rng.randf_range(_SIGN_POST_H.x, _SIGN_POST_H.y)
+	var board_w := _prop_rng.randf_range(_SIGN_BOARD_W.x, _SIGN_BOARD_W.y)
+	var board_h := _prop_rng.randf_range(_SIGN_BOARD_H.x, _SIGN_BOARD_H.y)
+	var yaw := _prop_rng.randf_range(-_PROP_YAW_MAX, _PROP_YAW_MAX)
+
+	var post: MeshInstance3D = slot["sign_post"]
+	var board: MeshInstance3D = slot["sign_board"]
+	(post.mesh as CylinderMesh).height = post_h
+	# Blank board. No texture, no albedo variation, nothing to read -- the
+	# board is a shape, and that is the whole of what it is.
+	(board.mesh as BoxMesh).size = Vector3(board_w, board_h, _SIGN_BOARD_T)
+
+	# Unyawed the board's width lies along x, so it is the wide part here;
+	# the post is thinner than the board at every rotation this uses.
+	var half_x := _yawed_half_x(board_w, _SIGN_BOARD_T, yaw)
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var centre := Vector3(x, ground_y, z)
+	_put(post, centre, Vector3(0.0, post_h * 0.5, 0.0), yaw)
+	_put(board, centre, Vector3(0.0, post_h - _SIGN_BOARD_DROP - board_h * 0.5, 0.0), yaw)
+
+func _place_stump(slot: Dictionary, side: float, z: float) -> void:
+	var radius := _prop_rng.randf_range(_STUMP_RADIUS.x, _STUMP_RADIUS.y)
+	var height := _prop_rng.randf_range(_STUMP_HEIGHT.x, _STUMP_HEIGHT.y)
+	var rise := _prop_rng.randf_range(_STUMP_DOME_RISE.x, _STUMP_DOME_RISE.y)
+
+	var body: MeshInstance3D = slot["stump_body"]
+	var dome: MeshInstance3D = slot["stump_dome"]
+	var body_mesh := body.mesh as CylinderMesh
+	body_mesh.top_radius = radius
+	body_mesh.bottom_radius = radius * 1.08 # a hint of flare at the base
+	body_mesh.height = height
+
+	# A squashed sphere whose equator matches the cylinder's top, so the
+	# join is hidden and the top reads as a rounded cut face.
+	var dome_mesh := dome.mesh as SphereMesh
+	dome_mesh.radius = radius
+	dome_mesh.height = radius * rise * 2.0
+
+	# The flared base is the widest point, and the dome never exceeds the
+	# cylinder's own radius.
+	var half_x := radius * 1.08
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var yaw := _prop_rng.randf_range(0.0, TAU)
+	body.rotation = Vector3(0.0, yaw, 0.0)
+	dome.rotation = Vector3(0.0, yaw, 0.0)
+	body.position = Vector3(x, ground_y + height * 0.5, z)
+	dome.position = Vector3(x, ground_y + height, z)
+
+func _place_bush(slot: Dictionary, side: float, z: float) -> void:
+	# Roll every blob FIRST, so the cluster's true half-width is known
+	# before the keep-out places it -- the same order the tree uses, where
+	# the canopy is rolled before _prop_x is asked for a clearance.
+	var radii: Array[float] = []
+	var half_heights: Array[float] = []
+	var offsets: Array[Vector3] = []
+	var half_x := 0.0
+	for i in _BUSH_BLOBS:
+		var r := _prop_rng.randf_range(_BUSH_RADIUS.x, _BUSH_RADIUS.y)
+		var flatness := _prop_rng.randf_range(_BUSH_FLATNESS.x, _BUSH_FLATNESS.y)
+		var angle := _prop_rng.randf_range(0.0, TAU)
+		var reach := _prop_rng.randf_range(0.0, r * _BUSH_SPREAD)
+		radii.append(r)
+		half_heights.append(r * flatness)
+		offsets.append(Vector3(cos(angle) * reach, 0.0, sin(angle) * reach))
+		# The cluster's silhouette edge is the furthest blob's own edge,
+		# not the cluster centre -- so the offset is added to the radius
+		# BEFORE the keep-out sees it, exactly as the tree adds its canopy
+		# radius rather than its trunk's.
+		half_x = maxf(half_x, absf(offsets[i].x) + r)
+
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var keys := ["bush_a", "bush_b", "bush_c"]
+	for i in _BUSH_BLOBS:
+		var blob: MeshInstance3D = slot[keys[i]]
+		var mesh := blob.mesh as SphereMesh
+		mesh.radius = radii[i]
+		mesh.height = half_heights[i] * 2.0
+		# Bedded into the ground on the same convention as the rock:
+		# _BUSH_SINK of the half-height stays above the plane.
+		blob.position = Vector3(
+			x + offsets[i].x,
+			ground_y + half_heights[i] * _BUSH_SINK,
+			z + offsets[i].z,
+		)
+		blob.rotation = Vector3.ZERO
+
+## Places one part of a multi-part prop: its offset from the prop's centre,
+## yawed with the prop, plus the part's own matching rotation.
+func _put(instance: MeshInstance3D, centre: Vector3, offset: Vector3, yaw: float) -> void:
+	instance.position = centre + _yawed_offset(offset, yaw)
+	instance.rotation = Vector3(0.0, yaw, 0.0)
+	instance.scale = Vector3.ONE
+
 ## X for a prop whose silhouette reaches `half_width` either side of its
 ## own centre. The keep-out and the half-width are both added BEFORE the
 ## random spread, which is what makes "no part of a prop is ever closer to
@@ -493,7 +842,7 @@ func _prop_x(side: float, half_width: float) -> float:
 func nearest_prop_edge_x() -> float:
 	var nearest := INF
 	for slot in _prop_slots:
-		for key in ["trunk", "canopy", "rock"]:
+		for key in _PROP_MESH_KEYS:
 			var instance: MeshInstance3D = slot[key]
 			if not instance.visible:
 				continue

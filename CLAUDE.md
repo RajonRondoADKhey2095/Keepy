@@ -154,12 +154,46 @@ Même cycle de vie que les bordures — construits une fois dans `_ready()` de
 recyclés avec leur tuile. **Pas** une seconde couche à la `Decor.gd` : un
 prop appartient à une TUILE, une colline n'appartient à rien.
 
+**Second passage, 9 août 2026 (branche `claude/trackside-decor-props-n1rdzj`) :
+quatre types de plus — banc, panneau, souche, buisson.** Même système, aucun
+nouveau : construits une fois dans `_ready()`, montrés/cachés et repositionnés
+par `populate()`, recyclés avec leur tuile. **Aucun nouveau flux `DecorRng`** —
+`_prop_rng` est réutilisé, parce qu'en prendre un nouveau re-numéroterait tous
+les flux créés après lui et déplacerait le fond que les sondes de contraste F10
+mesurent. Le type tiré est désormais un **tirage pondéré sur six** (arbre 0,32 /
+rocher 0,20 / buisson 0,18 / souche 0,14 / banc 0,09 / panneau 0,07) et non plus
+un pile-ou-face arbre/rocher, donc une tuile est un mélange et non le même
+catalogue dans le même ordre. Le panneau est **vierge par construction** : pas de
+texture, pas de texte — une silhouette, rien à lire.
+
+Coût mesuré (`get_faces()/3`, comme `TrackPropsAudit`) : arbre 25, rocher 48,
+buisson **108**, souche 48, banc 44, panneau 22 triangles. Famille props au pire
+frame : **871 tri sur 8 runs**, soit 58 % du plafond de 1 500 que la sonde
+impose.
+
 Règle qui vaut pour tout ajout de décor futur, et qui est la seule chose
 réellement contraignante ici : **aucun prop ne doit empiéter sur la dalle de
 6 m** (`Hitboxes.GROUND_SIZE.x`) — la contrainte porte sur le bord de la
-SILHOUETTE, pas sur le centre du prop. Détail, table de contraste mesurée et
-budget triangles : `docs/MESHY_SPEC.md` §8.2. Sonde dédiée :
+SILHOUETTE, pas sur le centre du prop. Les deux types « fabriqués » (banc,
+panneau) prennent un petit lacet (±0,21 rad) et leur demi-largeur est l'extension
+tournée EXACTE, pas le cercle englobant ; le buisson ajoute le décalage de son
+lobe le plus éloigné au rayon de ce lobe. `nearest_prop_edge_x()` parcourt
+désormais une liste unique `_PROP_MESH_KEYS` au lieu d'un littéral, pour qu'un
+type ajouté plus tard ne puisse pas être oublié du contrôle. Détail, table de
+contraste mesurée et budget triangles : `docs/MESHY_SPEC.md` §8.2. Sonde dédiée :
 `scripts/dev/TrackPropsAudit.tscn`.
+
+⚠️ **`TrackPropsAudit` ne seede RIEN — `--seed=20260806` y est inerte**
+(vérifié : ni `DevSeed.apply()` ni `DecorRng.force_seed()` dans la sonde). Son
+total de frame est donc un échantillon d'un run NON seedé : le même binaire a
+mesuré 44 943 puis 53 858 sur deux invocations consécutives, sans qu'aucune
+ligne ne change. **Un run isolé de cette sonde n'est pas un chiffre de budget** —
+c'est ce qui explique que le 57 402 noté plus haut et les chiffres ci-dessous ne
+soient pas comparables un à un. Même famille de défaut que F10 côté sondes de
+contraste ; noté et non corrigé ici, parce que seeder cette sonde changerait le
+sens de tous les chiffres de frame déjà consignés et mérite son propre lot. Les
+phases keep-out et collider ne sont PAS concernées (elles jugent sur 4 000
+tirages, pas sur une frame échantillonnée).
 
 ⚠️ **Budget triangles §7 : le tableau d'origine n'était PAS une mesure.** La
 re-mesure du 9 août 2026 (§7.2) montre la frame **au-dessus** de la cible de
@@ -171,6 +205,16 @@ identifiée et chiffrée dans §7.2, **volontairement non faite** — elle touch
 la silhouette d'un objet de gameplay **visible** et mérite sa propre revue
 device. Ils restent le poste dominant : pire frame mesurée sur 11 runs après
 le lot hibou ci-dessous, **57 402**, toujours 7 402 au-dessus de la cible.
+
+**Re-mesure du 9 août 2026 (lot banc/panneau/souche/buisson), 8 runs de chaque
+côté, pire frame gardée par run** — à lire avec l'avertissement « sonde non
+seedée » ci-dessus, donc en PLAGES et jamais en chiffre unique : avant
+44 943–**53 858**, après 41 423–**61 947**. La marge contre la cible de 50 000
+est **négative, et l'était déjà avant ce lot** (53 858 sur l'arbre intact). Le
+poste dominant reste les collectibles : 21 120–33 792 selon les runs, contre 300
+budgétés au §7.1. Les props, eux, coûtent 377–871 tri, soit 1 à 1,7 % de la
+frame — ils ne sont pas le problème et n'expliquent pas l'écart entre les deux
+plages, qui est du bruit de collectibles/hazards.
 
 ⚠️ **« Le hibou pèse 15 518 triangles » est FAUX — corrigé le 9 août 2026
 (§7.3). Ne pas repartir de ce chiffre.** Le `.glb` en pèse **7 070**, soit
