@@ -116,14 +116,32 @@ budget triangles : `docs/MESHY_SPEC.md` §8.2. Sonde dédiée :
 `scripts/dev/TrackPropsAudit.tscn`.
 
 ⚠️ **Budget triangles §7 : le tableau d'origine n'était PAS une mesure.** La
-re-mesure du 9 août 2026 (§7.2) montre la frame **au-dessus** de la cible de
-50 000 — ~52 800 props désactivés, donc antérieurement au lot props et sans
-rapport avec lui. Cause dominante : les collectibles (`Noisette.tscn` /
-`Gland.tscn`) dessinent ~4 096 triangles chacun (`SphereMesh` laissé à la
-tessellation par défaut de Godot) là où §7 en budgétait 300. Correction
-identifiée et chiffrée dans §7.2, **volontairement non faite dans le lot
-props** — elle touche la silhouette d'un objet de gameplay et mérite sa
-propre revue device.
+re-mesure du 9 août 2026 (§7.2) montrait la frame **au-dessus** de la cible
+de 50 000 — ~52 800 props désactivés, donc antérieurement au lot props et
+sans rapport avec lui. Cause dominante : les collectibles (`Noisette.tscn` /
+`Gland.tscn`) dessinaient 4 224 triangles chacun (`SphereMesh` laissé à la
+tessellation par défaut de Godot) là où §7 en budgétait 300.
+
+**CORRIGÉ le 9 août 2026, branche `claude/collectible-tessellation`** :
+`radial_segments = 16`, `rings = 8` sur les deux sphères → **288 triangles
+chacune** (sous le budget de 300). Frame mesurée sur 5 runs :
+**30 550 – 33 592**, soit 33–39 % de marge, contre 52 642 – 65 896 avant.
+`TrackPropsAudit` passe d'un constat de dépassement à `OK`.
+
+Trois points à retenir de cette mesure, chacun contre-intuitif :
+1. **`SphereMesh` de Godot fait `radial × (rings + 1) × 2`**, pas
+   `radial × rings`. D'où 4 224 et 288, pas 4 096 et 256 — les deux
+   chiffres de la doc d'origine étaient de l'arithmétique, pas une mesure.
+2. **`TrackPropsAudit` n'est PAS seedée** : un run unique n'est pas une
+   mesure, toujours en faire plusieurs et citer une fourchette.
+3. **On ne prédit pas le nouveau pic en soustrayant** : l'ancien pire frame
+   était *choisi par* les collectibles ; une fois celles-ci bon marché, le
+   pire frame est un autre frame, choisi par la densité de hazards.
+   L'estimation « ~28 000 » de §7.2 venait d'une soustraction ; le réel est
+   ~31 000. Re-lancer la sonde, ne pas calculer.
+
+Reste ouvert : **le hibou à 15 518 triangles** contre un cap de 8 000, qui
+devient après cette correction le premier poste de la frame (~47 %).
 
 ## Audio : ne coupe pas l'audio de fond (vérifié sur device, 9 août 2026)
 

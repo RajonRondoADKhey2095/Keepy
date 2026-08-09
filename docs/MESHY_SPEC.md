@@ -240,40 +240,79 @@ the numbers below:
     godot4 --headless --fixed-fps 60 --path . \
       res://scripts/dev/TrackPropsAudit.tscn
 
+**THE PROBE IS UNSEEDED, so one run is not a measurement.** It never calls
+`DevSeed.apply()`, and the peak depends on how many pooled objects happen to
+be visible together. Every figure below is the range over **five consecutive
+runs**. Quote a range; a single number from this probe is a sample.
+
+#### Before the collectible fix
+
 | Family | Budgeted (7.1) | Measured, worst frame | |
 |---|---|---|---|
-| collectibles | 4,200 | **25,344 – 29,568** | **OVER by ~6x** |
+| collectibles | 4,200 | **25,344 – 38,016** | **OVER by ~6-9x** |
 | pursuer | 8,000 | **15,518** | **OVER by ~2x** |
-| hazards | 8,400 | 7,068 – 8,372 | within |
+| hazards | 8,400 | 148 – 15,888 | see note |
 | keepy | 6,000 | 3,129 | within |
 | track slab + curbs | 5,600 | 252 | within |
 | decor hills | — | 165 | new since 7.1 |
-| trackside props | — | 511 – 584 | new, see 8.2 |
-| | | **52,780 – 56,284 total** | **OVER the 50,000 target** |
+| trackside props | — | 367 – 561 | new, see 8.2 |
+| | | **52,642 – 65,896 total** | **OVER the 50,000 target, 5 runs of 5** |
 
-The ranges are real: the peak depends on how many pooled objects happen to
-be visible together, and the decor generators are unseeded, so consecutive
-runs differ. Every run measured so far exceeded the target.
+An earlier pass recorded 25,344–29,568 for collectibles and 52,780–56,284
+for the total. **Same tree** — verified with `git diff 33c3d28 149c35b --
+scenes/ scripts/ assets/`, which is empty — so the wider, higher range here
+is sample size against an unseeded generator, not a change in the game. The
+first pass understated the peak; its conclusion was unchanged.
 
 **Two findings, both pre-existing, neither caused by the decor work.**
 Measured directly, not by subtraction — with trackside props disabled the
 frame still peaks at **52,780**, already 2,780 over.
 
-1. **Collectibles are the whole problem: ~4,096 triangles each.**
-   `Noisette.tscn` and `Gland.tscn` carry a `SphereMesh` left at Godot's
-   default tessellation (`radial_segments` 64, `rings` 32) for a ball
-   0.3 m across that renders a few dozen pixels wide. 7.1 budgets 300.
-   Dropping to 16 x 8 gives 256 triangles — on the budget line, and at
-   that on-screen size visually indistinguishable — which alone would take
-   the frame to roughly **28,000, i.e. ~44% headroom**. Deliberately NOT
-   done in the props batch: it changes the silhouette of a gameplay object
-   and belongs in a batch whose device review is looking at collectibles.
+1. **Collectibles were the whole problem: 4,224 triangles each.** ~~FIXED,
+   see below.~~ `Noisette.tscn` and `Gland.tscn` carried a `SphereMesh` left
+   at Godot's default tessellation (`radial_segments` 64, `rings` 32) for a
+   ball 0.3 m across that renders a few dozen pixels wide. 7.1 budgets 300.
 2. **The hibou `.glb` is 15,518 triangles against a 8,000 cap.** A real
    asset overrunning its own spec, which is exactly what §11's pre-import
-   check exists to catch and did not.
+   check exists to catch and did not. STILL OPEN, and now the single
+   largest item in the frame at ~47% of it.
 
-Neither is a rendering fault today — the game runs — but the 50,000 target
-was justified above rather than picked, and the frame is over it.
+#### After the collectible fix — measured 2026-08-09, same five-run method
+
+`radial_segments = 16`, `rings = 8` on both collectible spheres.
+
+| Family | Budgeted (7.1) | Measured, worst frame | |
+|---|---|---|---|
+| collectibles | 4,200 | **1,152 – 2,016** | within, ~20x cheaper |
+| pursuer | 8,000 | 15,518 | still OVER, unchanged |
+| hazards | 8,400 | 9,172 – 12,456 | see note |
+| keepy | 6,000 | 3,129 | within |
+| track slab + curbs | 5,600 | 252 | within |
+| decor hills | — | 165 | |
+| trackside props | — | 290 – 607 | see 8.2 |
+| | | **30,550 – 33,592 total** | **UNDER the target, 5 runs of 5** |
+
+`TrackPropsAudit` now reports **32.8% – 38.9% headroom** instead of an
+overrun, and its whole-frame finding flips from a reported failure to `OK`.
+
+**Two things this measurement teaches that the estimate above it did not.**
+
+- **A per-collectible sphere is 4,224 triangles, not 4,096, and 16x8 gives
+  288, not 256.** Godot's `SphereMesh` builds `radial x (rings + 1) x 2`,
+  not `radial x rings x 2` — it emits one extra ring of quads. Both figures
+  were arithmetic, not measurement; the real ones come from
+  `mesh.get_faces().size() / 3`, the same call `TrackPropsAudit` uses. 288
+  is still inside 7.1's 300 budget, which is what matters.
+- **The predicted "~28,000" was not reachable by subtraction, and the real
+  answer is ~31,000.** The old worst frame was *selected by* the
+  collectibles — in the run above it held 33,792 of collectibles against
+  148 of hazards. Once collectibles stop dominating, the worst frame is a
+  different frame, chosen by hazard density instead (9,172–12,456, where
+  the old peak frames often caught almost no hazards at all). That is why
+  the `hazards` row moves UP between the two tables while nothing about
+  hazards changed: it is not the same frame being compared. **Subtracting a
+  family's cost from a peak total does not predict the new peak** — re-run
+  the probe.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,

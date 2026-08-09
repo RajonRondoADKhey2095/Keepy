@@ -6,6 +6,8 @@
 [sub_resource type="SphereMesh" id="SphereMesh_Gland"]
 radius = 0.3
 height = 0.6
+radial_segments = 16
+rings = 8
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_Gland"]
 radius = 0.4
