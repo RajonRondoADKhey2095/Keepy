@@ -89,10 +89,14 @@ var _pools: Array[Array] = []
 ## from. A decor draw on the global stream would shift every gameplay roll
 ## that comes after it by one step -- silent, and exactly the kind of
 ## "decor influencing spawn" the brief rules out, even though no
-## probability anywhere would have changed. An unseeded RandomNumberGenerator
-## seeds itself from OS entropy at construction, so this is exactly as
-## random as the global functions were, just off their shared stream.
-var _rng := RandomNumberGenerator.new()
+## probability anywhere would have changed.
+##
+## Handed out by DecorRng rather than constructed here (F10): unforced it is
+## still an OS-entropy stream, byte-identical to what this line did before,
+## and a probe that needs a fixed background can pin it without any of this
+## file knowing. Read DecorRng.gd for why that separation is the property
+## that must survive, and why seeding must not cost it.
+var _rng := DecorRng.make()
 
 func _ready() -> void:
 	for layer in _LAYERS:

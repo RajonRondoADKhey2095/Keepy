@@ -93,7 +93,9 @@ var _ground_base_color: Color
 ## the global stream is the one TrackManager's spawn rolls draw from and the
 ## one dev probes seed for reproducibility (DevSeed.seed_value()), so a
 ## decor draw on it would silently shift every gameplay roll after it.
-var _tint_rng := RandomNumberGenerator.new()
+## Handed out by DecorRng (F10) so a probe can pin the background it
+## measures against; unforced, still an OS-entropy stream as before.
+var _tint_rng := DecorRng.make()
 
 ## Top face of this segment's ground slab, in the segment's OWN local
 ## space -- the y = 0 plane every hazard offset in Hitboxes.gd is measured
@@ -319,8 +321,9 @@ var _prop_slots: Array[Dictionary] = []
 ## runs, so drawing decor from it would shift every gameplay roll after
 ## it -- a purely visual system silently deciding which hazards a seeded
 ## run spawns. Separate from _tint_rng rather than shared so that
-## retuning one of the two can never re-sequence the other.
-var _prop_rng := RandomNumberGenerator.new()
+## retuning one of the two can never re-sequence the other -- DecorRng
+## hands each its own stream, so that stays true when seeded (F10).
+var _prop_rng := DecorRng.make()
 
 func _build_trackside_props() -> void:
 	var canopy_material := _unshaded(_TREE_CANOPY_COLOR)
