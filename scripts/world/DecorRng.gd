@@ -72,13 +72,6 @@ static func force_seed(base: int) -> void:
 	_forced_seed = base
 	_streams_handed_out = 0
 
-## The forced base seed, or 0 if none. Split out so a probe can PRINT the
-## value it ran with -- a probe's output should never leave the reader
-## guessing whether they are looking at a reproducible or an exploratory
-## run.
-static func forced_seed() -> int:
-	return _forced_seed
-
 ## A fresh stream: reproducible if force_seed() was called, OS entropy
 ## otherwise.
 static func make() -> RandomNumberGenerator:

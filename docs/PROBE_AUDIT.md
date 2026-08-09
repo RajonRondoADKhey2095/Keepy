@@ -609,8 +609,9 @@ take their RNG from. Two properties it has to hold at once:
   global `seed()`/`randf()`; it hands out `RandomNumberGenerator` instances
   and either `randomize()`s them or assigns `.seed`. **Verified, not
   asserted: all seven gated bot probes are byte-identical before and after,
-  at seed 20260806.** If they had moved, the isolation would be broken and
-  that would matter more than this fix.
+  at seed 20260806** -- plus `AssetContractAudit` and `ChargerShapeProbe`,
+  and confirmed twice, on two independent cycles. If they had moved, the
+  isolation would be broken and that would matter more than this fix.
 - **Seeding is opt-in and probe-driven, not a new default.** The shipped
   game never calls `force_seed()`, so its decor is entropy-driven exactly
   as before -- no loss of visual variety between sessions. It is
@@ -619,9 +620,20 @@ take their RNG from. Two properties it has to hold at once:
   all, and a probe reproducible only when the caller remembers a flag is
   the precise failure mode F6 was.
 
-`PursuerContrastAudit` is fixed outright by this: **three runs,
-byte-identical stdout**, the gauge column included -- it previously swung
+`PursuerContrastAudit` is fixed outright by this: **three runs, identical
+reported table**, the gauge column included -- it previously swung
 8.73-9.60 in the light phase alone.
+
+> **One caveat on every "byte-identical" claim in this document, found
+> while checking this one.** Godot intermittently emits
+> `Function blocked during in/out signal ... set_monitoring` on stderr --
+> the pre-existing `Area3D.monitoring` race `TrackSegment.gd`'s class doc
+> already describes. It depends on machine timing, not on code: across
+> four validation cycles here it appeared in 1 of 9 runs of one probe and
+> 0 of 3 of another, on **both** sides of the change. A raw `diff` of two
+> runs of unmodified code can therefore differ by that line alone. The
+> comparisons below filter it, which is the honest comparison -- not
+> filtering it would report a code change that did not happen.
 
 `StrikeFatalContrastAudit` was **not**, and that is the useful part.
 
