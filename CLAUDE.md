@@ -356,6 +356,70 @@ c'est le bar des lots purement visuels. Le gameplay de 3 types change, donc
 `StrikeAudit` DOIT bouger — voir `docs/PROBE_AUDIT.md` pour les nouveaux
 chiffres et les seuils re-calibrés.
 
+### Capacité RÉSISTANCE : 4 → 2 contacts (9 août 2026, F13) — NON validée device
+
+Choix explicite de Mathieu, contre la piste #1 que `StrikeAudit` nomme dans
+son propre source (elle proposait 4 → 3). **`STRIKE_CAPACITY_HALF = 2`** :
+le CHARGER tue toujours en un coup, les 5 autres types coûtent toujours
+1 demi-unité chacun — seule la capture passe du 4e au **2e** contact.
+Chiffres complets : `docs/PROBE_AUDIT.md` §F13.
+
+**Ce que ça corrige, et c'est un changement de NATURE :** à capacité 4 le
+budget de résistance était **décoratif** — **0 capture sur 35** tombait sur
+le contact de capacité, toutes étaient des drains de lead. À capacité 2 il
+décide **30 captures sur 58**. La mécanique que tout le bloc STRIKES existe
+pour créer tire enfin.
+
+**Ce que ça ne corrige PAS, et le bar n'a pas été bougé :** l'écart de part
+de captures passe de **8 → 15 points**, il en faut **20**. `StrikeAudit`
+reste ROUGE, pour une raison désormais différente (« un joueur passif et un
+joueur moyen meurent encore trop souvent de la même chose », plus « la
+résistance ne tue jamais personne »). Baisser le seuil serait exactement le
+faux-vert que `ProbeCoverage.gd` documente cinq fois.
+
+**Deux effets à mesurer sur device avant tout merge :**
+- **survie mid-skill quasi divisée par deux** (157,8s → 78,2s) — c'est un
+  jeu nettement plus dur, pas un ajustement marginal ;
+- **le profil RISKY devient rattrapable** (0 % → 41 % de ses morts) ; à
+  capacité 4 il était structurellement immunisé contre le poursuivant.
+
+⚠️ **HUD : l'échelle d'alarme à 3 crans DÉGÉNÈRE en binaire, et c'est
+correct.** Les deux seuils sont DÉRIVÉS de la capacité (`CAPACITY - 1` et
+`CAPACITY / 2`) : à 2 ils valent tous les deux 1, DANGER est testé en
+premier, donc CAUTION devient **inatteignable** — par arithmétique, pas par
+une édition. À deux contacts il n'existe pas d'état « à moitié entamé » qui
+ne soit pas aussi « encore un et c'est fini ». Les constantes CAUTION sont
+CONSERVÉES : remonter la capacité à 3+ ressuscite le cran avec son
+calibrage. `HUD.tscn` perd Pip2/Pip3 (assertion `_ready()` capacité vs
+nombre de pastilles — elle `push_error`, elle ne devine pas).
+
+⚠️ **F11 SE REPRODUIT, EN SENS INVERSE — `StrikeFatalContrastAudit` passe de
+PASS à FAIL sans qu'aucune couleur ne bouge.** `DARK/5` : 3,01:1 → **2,99:1**.
+Retirer 2 pastilles rétrécit le `StrikeRow` de `2 × (34 + 12) = 92 px`, donc
+le label centré se **décale de 46 px à droite** et échantillonne un autre
+morceau du monde 3D. **2,99:1 EST le chiffre vrai** — celui que F10c avait
+rendu reproductible et que F11 documente sur `staging` avant le merge
+half-strike. Ce n'est donc pas une régression introduite ici : c'est le
+défaut pré-existant qui redevient visible maintenant que la coïncidence de
+mise en page à 4 pastilles qui le masquait a disparu. Le PASS à 3,00/3,01
+était le faux vert. **Décision de teinte toujours ouverte, toujours celle de
+Mathieu.** Deuxième fois que le nombre de pastilles déplace ce verdict :
+traiter cette sonde comme sensible à la MISE EN PAGE du strike row, pas
+seulement à la couleur.
+
+**Sondes non byte-identiques mais VERTES** : `ShrinkAudit` et `ComboAudit`
+bougent (bots morts à 2 contacts → plus de runs, plus courts, dans le même
+budget de phase). Aucun critère ne bascule. Le lot half-strike laissait 6/7
+sondes gatées byte-identiques ; celui-ci en laisse 4.
+
+**Défaut de sonde révélé au passage** : `DeathModelAudit` posait sa phase 5
+avec **deux `_contact()` en dur** — juste à capacité 4, mais à capacité 2 ces
+deux contacts SONT la capture. La branche combo échouait correctement
+(`register_risk_event` sort sur `state != PLAYING`) pendant que la branche
+temps PASSAIT quand même (`_update_strikes` ne teste pas l'état). Corrigé
+dans la SONDE (`STRIKE_CAPACITY_HALF - 1` contacts), pas dans le jeu : rien
+en production n'appelle `advance_time()` hors PLAYING.
+
 ## « Le poursuivant ne recule jamais » — DIAGNOSTIQUÉ, non corrigé (F12)
 
 Retour playtest sur `staging`. **Mesuré, pas supposé** — sonde dédiée

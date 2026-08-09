@@ -227,6 +227,29 @@ func _phase_invulnerability() -> void:
 ## returned a FULL strike while a contact cost half of one, recovery would
 ## outpace damage two to one, and with COMBO_TO_CLEAR_STRIKE at 3 an active
 ## player's strike budget would effectively never deplete.
+## Leaves the run with resistance spent and STILL PLAYING -- one contact short
+## of capture, whatever the capacity is.
+##
+## DERIVED, and it has to be. This used to be two literal _contact() calls,
+## which was correct at a capacity of 4 (2 spent of 4, run alive) and became
+## wrong the moment the capacity dropped to 2: the same two contacts ARE the
+## capture, so the run was already over before either recovery path was
+## exercised. The time leg still passed -- _update_strikes does not test the
+## state, so the clock kept giving resistance back to a run that had already
+## ended -- while the combo leg correctly reported nothing, because
+## register_risk_event early-outs on `state != PLAYING`. A setup that ends
+## the run cannot test recovery, and a probe that half-passes while doing so
+## is worse than one that fails outright.
+##
+## Not a game defect, and deliberately not "fixed" in GameState: nothing
+## shipped calls advance_time() outside PLAYING (see Game.gd), so the
+## asymmetry is reachable only by a probe driving the clock by hand.
+func _spend_short_of_capture() -> void:
+	for i in GameState.STRIKE_CAPACITY_HALF - 1:
+		if i > 0:
+			_skip_invulnerability()
+		_contact(Obstacle.Type.DODGE)
+
 func _phase_recovery() -> void:
 	print("--- PHASE 5: each recovery path gives back exactly 1 half-unit ---")
 
@@ -234,9 +257,7 @@ func _phase_recovery() -> void:
 	# one leg uses it rather than writing run_time_s -- the clock IS the
 	# thing under test here.
 	GameState.start_run()
-	_contact(Obstacle.Type.DODGE)
-	_skip_invulnerability()
-	_contact(Obstacle.Type.DODGE)
+	_spend_short_of_capture()
 	var before_time: int = GameState.strikes_used_half
 	var waited := 0.0
 	while GameState.strikes_used_half == before_time and waited < RECOVERY_WAIT_CAP_S:
@@ -252,9 +273,7 @@ func _phase_recovery() -> void:
 
 	# BY COMBO, through the same door the game uses.
 	GameState.start_run()
-	_contact(Obstacle.Type.DODGE)
-	_skip_invulnerability()
-	_contact(Obstacle.Type.DODGE)
+	_spend_short_of_capture()
 	var before_combo: int = GameState.strikes_used_half
 	for i in GameState.COMBO_TO_CLEAR_STRIKE:
 		GameState.register_risk_event(GameState.RiskEvent.NEAR_MISS)

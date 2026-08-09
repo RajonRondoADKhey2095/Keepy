@@ -1288,6 +1288,157 @@ half:
 Each changes how the game feels and belongs behind a device playtest, which
 is why this batch measures and reports rather than picks one.
 
+### F13 -- resistance capacity 4 -> 2, measured. Resistance becomes a real death again; the discrimination gap improves but still fails
+
+Mathieu's call, taken against `StrikeAudit`'s own suggestion. That probe
+names `STRIKE_CAPACITY_HALF` as candidate lever #1 in its source, at 4 -> 3;
+2 is what was chosen. Same seed (20260806), same flags, `--fixed-fps 60`
+before `--path`.
+
+#### What the change was for, and whether it worked
+
+The bar `StrikeAudit` gates on is `safe_share - mid_share >= 20` points.
+It has been red since the half-strike rebalance.
+
+| | capacity 4 | capacity 2 |
+|---|---|---|
+| SAFE | 23 runs, 107.9s, **23** captures (0 on last contact), 0 fatal | 23 runs, 107.9s, **23** captures (0 on last contact), 0 fatal |
+| INTERMEDIATE | 16 runs, 157.8s, 12 captures (**0** on last contact), 1 fatal | 33 runs, **78.2s**, 28 captures (**23** on last contact), 5 fatal |
+| RISKY | 13 runs, 194.6s, 0 captures, 10 fatal | 19 runs, **127.3s**, 7 captures (**7** on last contact), 10 fatal |
+| capture share | safe 100% / mid 92% / risky 0% | safe 100% / mid **85%** / risky **41%** |
+| **safe - mid gap** | **8 pts (need 20) -- FAIL** | **15 pts (need 20) -- still FAIL** |
+| safe - risky gap | 100 pts | 59 pts |
+| captures landing on the capacity-th contact, all profiles | **0 of 35** | **30 of 58** |
+
+Read the last row first, because it is the one that changed in kind rather
+than in degree. At capacity 4 the resistance budget was **decorative**: not
+one capture in the whole audit was caused by running out of it -- every
+single one was a lead drain, which is what made the constant the probe's own
+first-named lever. At capacity 2 it decides **30 of 58 captures**. The
+mechanism the whole STRIKES block exists to create now actually fires.
+
+**The gated criterion still fails, and the bar was not moved.** 8 -> 15
+points is real movement in the intended direction and it is not enough; 20
+is the bar. Lowering it here would be the false-green pattern this document
+has five documented instances of. `StrikeAudit` stays red, for a reason that
+is now different from the one it was red for: not "resistance never kills
+anyone" but "a passive and a mid-skill player still die of the same thing
+too often".
+
+Two other findings worth stating plainly, because they are what a device
+playtest most needs to know:
+
+- **Mid-skill survival roughly halved**, 157.8s -> 78.2s. This is a
+  substantially harder game for the profile it was tuned for, not a
+  marginal adjustment.
+- **RISKY can now be caught at all** (0% -> 41% of its deaths). At capacity
+  4 that profile was structurally immune to the pursuer.
+
+Both recovery paths stay reachable and neither dominates -- 20 clears by
+time against 17 by combo for the mid bot, 5 against 29 for the risky one
+(the same shape as at capacity 4, at lower absolute counts because runs are
+shorter).
+
+#### A probe defect the change exposed: DeathModelAudit's recovery setup
+
+`DeathModelAudit` phase 5 set its recovery test up with **two hard-coded
+`_contact()` calls**. Correct at capacity 4 (2 spent of 4, run alive) and
+silently wrong at capacity 2, where those same two contacts **are** the
+capture. First run after the change:
+
+```
+  OK    time gave back 1 half-unit after 14.0s (2 -> 1)
+  FAIL  a 3-event chain gave back 1 half-unit (2 -> 2)
+```
+
+Note the shape of that failure -- it is the interesting part. The combo leg
+correctly reported nothing, because `register_risk_event` early-outs on
+`state != PLAYING`. The **time leg passed anyway**, because
+`_update_strikes` does not test the state, so the clock kept handing
+resistance back to a run that had already ended. A setup that ends the run
+cannot test recovery, and one that half-passes while doing so is worse than
+one that fails outright.
+
+Fixed in the probe, not in the game: the setup now spends
+`STRIKE_CAPACITY_HALF - 1` contacts, so it is one short of capture at any
+capacity. **Nothing shipped calls `advance_time()` outside PLAYING** (see
+`Game.gd`), so the asymmetry is reachable only by a probe driving the clock
+by hand and is not a defect in `GameState`.
+
+#### F11 again, in the other direction, and this time the FAIL is the true reading
+
+`StrikeFatalContrastAudit` **flips from PASS to FAIL** on this change, and
+**no colour moved**: the label fill is byte-identical `(1.00, 0.46, 0.46)`
+on every dark palette, before and after.
+
+| palette | background, 4 pips | background, 2 pips |
+|---|---|---|
+| LIGHT | (0.69, 0.50, 0.46) | (0.69, 0.51, 0.47) |
+| DARK/2 | (0.20, 0.50, 0.32) | (0.19, 0.51, 0.32) |
+| DARK/3 | (0.23, 0.39, 0.55) | (0.22, 0.40, 0.57) |
+| DARK/5 | (0.48, 0.22, 0.45) | (0.48, 0.23, 0.46) |
+
+`DARK/5`: **3.01:1 PASS -> 2.99:1 FAIL**. The mechanism is exactly F11's,
+run backwards. `StrikeRow` is an `HBoxContainer` with `alignment = 1` inside
+a `SHRINK_CENTER` parent; each pip is 34px wide with 12px separation, so
+dropping Pip2 and Pip3 narrows the row by `2 * (34 + 12) = 92px` and the
+label beside them **shifts 46px right**. This probe samples the label's own
+rect against the live 3D world, so 46px lands it on a different patch of
+ground and all seven backgrounds move.
+
+**2.99:1 is the number F10c made reproducible and F11 recorded as the true
+reading on `staging` before the half-strike merge.** So this is not a new
+regression introduced here -- it is the pre-existing fatal-label defect
+becoming visible again now that the four-pip layout coincidence that masked
+it is gone. The 3.00/3.01 PASS was the false green; this FAIL is the honest
+number. The design call remains Mathieu's and remains open, exactly as F11
+left it.
+
+This is the second time a pip-count change has moved this verdict without
+anyone touching a palette. Treat `StrikeFatalContrastAudit` as **sensitive
+to strike-row layout, not only to colour** -- that is now measured twice, in
+both directions, and should be assumed for any future HUD edit.
+
+#### Everything else
+
+| probe | rc before | rc after | stdout |
+|---|---|---|---|
+| PursuerFramingAudit | 0 | 0 | identical |
+| AntiFrustrationAudit | 0 | 0 | identical |
+| RushFrustrationAudit | 0 | 0 | identical |
+| PursuerAudit | 0 | 0 | identical |
+| AssetContractAudit | 0 | 0 | identical |
+| ChargerShapeProbe | 0 | 0 | identical |
+| ShrinkAudit | 0 | 0 | **differs, still green** |
+| ComboAudit | 0 | 0 | **differs, still green** |
+| DeathModelAudit | 0 | 0 | differs (capacity, and the fix above) |
+| StrikeAudit | 1 | 1 | differs -- the point of the batch |
+| PursuerContrastAudit | 1 | 1 | contrast table **byte-identical** |
+| StrikeFatalContrastAudit | **0** | **1** | see F11 above |
+
+`ShrinkAudit` and `ComboAudit` are green but **no longer byte-identical**,
+and that is expected rather than alarming: their bots now die at 2 contacts
+instead of 4, so a fixed phase budget contains more, shorter runs. ShrinkAudit's
+RISKY phase goes 3 runs -> 4; ComboAudit's goes 11 runs at 141.6s -> 12 at
+130.9s, with the effective multiplier drifting x2.29 -> x2.12. No criterion
+moves. Worth recording because the half-strike rebalance left six of seven
+gated probes byte-identical, and this change leaves four.
+
+`PursuerContrastAudit` fails identically before and after (`DARK/2` at
+2.37:1) -- the pre-existing regression `CLAUDE.md` already tracks, untouched
+by this batch. Its measured table is byte-identical; the only textual
+difference between the two runs is a transient engine warning about
+`Area3D` monitoring.
+
+> **Method note.** The first `PursuerContrastAudit` baseline collected for
+> this batch was **discarded as contaminated** and re-run from a clean
+> `git worktree` at `origin/staging`. A `pkill -f run_probes.sh` matched its
+> own wrapper shell and died before its `rm` ran, leaving an orphaned probe
+> interleaving output into the file. The contamination was obvious
+> (an `INCONCLUSIVE` watchdog block sitting above a complete verdict table),
+> but it is recorded because a *less* obvious instance of the same accident
+> would read as a real measurement.
+
 ## Still open after this batch
 
 - **AWAITING A DESIGN CALL FROM MATHIEU, not a probe or code task -- two
