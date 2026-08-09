@@ -601,6 +601,153 @@ the asset's own internal contrast is verified under the invert — and the
 keep-out arithmetic must then be fed the **asset's** measured half-width,
 not the primitive's, or the guarantee above quietly stops holding.
 
+#### Second pass — bench, sign, stump, bush (2026-08-09)
+
+Four more kinds, same system: built once in `_ready()`, shown/hidden and
+repositioned by `populate()`, recycled with the tile. No new pool, no new
+`DecorRng` stream — `_prop_rng` is reused, because taking a new stream
+would re-number every stream created after it and move the background the
+F10 contrast probes measure against (see `DecorRng.gd`'s own note).
+
+Which kind a populated slot draws is now a **weighted roll over six**
+rather than a tree/rock coin flip, so a tile is a mixed handful instead of
+the same catalogue in the same order. Exactly one draw picks the kind
+whatever the outcome, so the weights can be retuned without re-sequencing
+the rest of a segment's decor.
+
+| kind | primitives | triangles | weight |
+|---|---|---|---|
+| tree | tapered trunk + 5-sided cone | 25 | 0.32 |
+| rock | one 6x3 squashed sphere | 48 | 0.20 |
+| bush | three 6x2 squashed spheres, offset into a clump | **108** | 0.18 |
+| stump | 6-sided cylinder + squashed dome | 48 | 0.14 |
+| bench | 2 boxes + 2 capless cylinders | 44 | 0.09 |
+| sign | capless post + **blank** box board | 22 | 0.07 |
+
+Counted with `mesh.get_faces().size() / 3`, the same call
+`TrackPropsAudit` uses, so these are directly comparable with its
+per-family table. Tessellation is fixed at build time and never varies
+with the size rolls, so each figure is exact rather than a worst case.
+
+**The sign board is blank by construction** — no texture, no text, no
+second albedo. It is a silhouette and nothing on it is ever meant to be
+read, so there is no legibility claim to defend at any camera distance.
+
+**Keep-out: unchanged in kind, extended to the new shapes.** Every
+placement still adds `_PROP_KEEPOUT_X` **and the prop's own half-width**
+before any random spread. What each kind contributes as that half-width:
+
+- **bench / sign** take a small yaw (±0.21 rad) rather than the rock's
+  free spin, so their half-width is the *exact* rotated extent,
+  `depth/2·|cos θ| + length/2·|sin θ|`, not the bounding circle a free
+  spin would force. A bench is 1.1–1.7 m long; bounding-circling it would
+  have pushed it ~0.4 m further out for nothing.
+- **stump** uses its flared base radius, the widest point; the dome never
+  exceeds the cylinder's own radius.
+- **bush** adds its furthest blob's offset to that blob's radius — the
+  cluster's silhouette edge, not the cluster centre. Same shape of
+  argument as the tree adding its *canopy* radius rather than its trunk's.
+
+`TrackPropsAudit` phase 2 measures this off the real mesh AABBs over
+4,000 `populate()` calls, and `nearest_prop_edge_x()` now walks a single
+`_PROP_MESH_KEYS` list rather than a literal — so a kind added later
+cannot be silently left out of the check that keeps props off the play
+area. Green on 8 consecutive runs with the new kinds live.
+
+**Colour — swept, not eyeballed, and the sweep found a real limit.**
+Method as above (sRGB-linearised relative luminance, WCAG ratio on raw
+albedos). The scene's occupied luminance line, sorted:
+
+| surface | L |
+|---|---|
+| tree trunk | 0.0109 |
+| tree canopy | 0.0288 |
+| rock | 0.0297 |
+| far hill | 0.0786 |
+| ground | 0.1674 |
+| near hill | 0.3282 |
+| sky | 0.4939 |
+| curb | 0.7122 |
+
+Sweeping target luminance, the best achievable worst-case against the
+five environment surfaces **and** the three existing prop families at
+once is **1.32:1**, at L≈0.236. That is the finding, not a shortfall in
+the search: the dark band that gives the best backdrop contrast — which
+is why all three original props live in it — is already full, so
+separating four *more* families from those three and from the backdrop
+pulls in opposite directions. The four largest usable gaps in the line
+give only 1.23–1.27:1 to their own edges.
+
+Chosen accordingly, spread **up** the line rather than crowded into the
+dark band:
+
+| | albedo | L | vs ground | vs curb | vs far hill | vs near hill | vs sky | vs canopy | vs trunk | vs rock |
+|---|---|---|---|---|---|---|---|---|---|---|
+| bush | `0.11, 0.16, 0.12` | 0.0192 | 3.14 | 11.02 | 1.86 | 5.47 | 7.86 | 1.14 | **1.14** | 1.15 |
+| stump | `0.32, 0.24, 0.15` | 0.0528 | 2.12 | 7.42 | **1.25** | 3.68 | 5.29 | 1.30 | 1.69 | 1.29 |
+| bench | `0.45, 0.36, 0.26` | 0.1164 | 1.31 | 4.58 | **1.29** | 2.27 | 3.27 | 2.11 | 2.73 | 2.09 |
+| sign | `0.50, 0.48, 0.42` | 0.1963 | 1.13 | 3.09 | 1.92 | **1.54** | 2.21 | 3.13 | 4.05 | 3.09 |
+
+Mutual separation of the six kinds is 1.48:1 at worst (bench/sign) —
+**better than the 1.29:1 the canopy/trunk pair already ships with**, so
+the family is internally more legible than before, not less.
+
+Two limitations, stated rather than tuned away, in the same spirit as the
+two above:
+
+- **The bush sits at 1.14:1 against the tree trunk and canopy.** No
+  luminance in that sub-band does better: the trunk↔canopy gap is
+  0.0109–0.0288 wide and its own midpoint is only 1.13:1 from either
+  edge. It is also the case where value separation matters least — a bush
+  *is* foliage, sharing the canopy's value is correct scene logic, and
+  the silhouettes (a low three-lobed clump against a tall cone, or
+  against a 0.1 m vertical trunk) are what separate them. §8's "silhouette
+  is the most reliable cue there is", the same argument the trunk already
+  leans on at 1.18:1 against the pursuer.
+- **Bench and stump dip to 1.29 / 1.25:1 against the far hills**, below
+  the 1.61:1 floor the original three hold. That is the price of the
+  spread: they buy 2.09–2.73:1 against every existing prop, which is what
+  stops a bench reading as a boulder. Going darker to fix the hill
+  contrast would collapse them back onto the rock.
+
+**Cost and the frame it is spent against — re-measured 2026-08-09**, on
+the tree that already carries the eye-sphere fix of 7.3. Eight runs of
+`TrackPropsAudit` before and after, worst frame kept per run:
+
+| | props family | frame total |
+|---|---|---|
+| before (six-kind system absent) | 344 – 582 | 44,943 – **53,858** |
+| after | 377 – **871** | 41,423 – **61,947** |
+
+The props' own share is what this batch controls, and it stays well
+inside the 1,500 `PROPS_TRIANGLE_BUDGET` the probe enforces — 871 at
+worst, 58% of it. Against the 50,000 frame target there is **no positive
+headroom and there was none before this batch**: the worst frame measured
+on the untouched tree is already 3,858 over. The dominant contributor is
+unchanged and out of scope here — collectibles ranged 21,120–33,792
+across these runs, against the 300 §7.1 budgets for them (finding 1 of
+7.2, still not done).
+
+> ⚠️ **`TrackPropsAudit` does not seed anything, so `--seed=20260806` is
+> inert for it.** It calls neither `DevSeed.apply()` nor
+> `DecorRng.force_seed()` — checked, not assumed. Its frame total is
+> therefore a sample from an *unseeded* run: the same binary measured
+> 44,943 and 53,858 on consecutive invocations with nothing changed.
+> **Any single run of it is not a budget figure**, which is why the table
+> above reports ranges over eight, and why the 57,402 recorded earlier
+> and the numbers here cannot be compared one-to-one. This is the same
+> class of defect F10 fixed for the contrast probes (`docs/PROBE_AUDIT.md`);
+> it is recorded here rather than fixed because seeding this probe would
+> change what every previously recorded frame figure means, and that
+> deserves its own batch. The keep-out and collider phases are unaffected
+> — they assert over 4,000 rolls, not over one sampled frame.
+
+**Zero gameplay coupling holds unchanged**, and was re-verified rather
+than argued: all seven gated bot probes plus `AssetContractAudit` and
+`ChargerShapeProbe` byte-identical before and after at seed 20260806,
+0 colliders moved. The new kinds add `MeshInstance3D` children only —
+still no `CollisionShape3D` anywhere under a segment beyond the slab's.
+
 ## 9. Godot 4.3 import notes
 
 - A `.glb` imports as a **`PackedScene`** whose root is a `Node3D`.
