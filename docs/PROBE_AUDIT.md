@@ -544,7 +544,9 @@ Three things about it are worth stating rather than filing as a number:
 3. **Deliberately not fixed here.** It is a visual/design decision, and it
    belongs in the batch that can make the colour choice against these
    numbers -- exactly the treatment `StrikeFatalContrastAudit`'s failure
-   already gets below.
+   already gets below. Tracked in "Still open after this batch" as
+   awaiting Mathieu's call; see also `docs/MESHY_SPEC.md` §8's note on the
+   same finding.
 
 #### What this stops measuring, recorded rather than dropped
 
@@ -811,7 +813,8 @@ were exploratory. See the F6 note on that list.
 > speed (0.47-0.55), with unseeded decor as a smaller second term. Both
 > are fixed in F10b/F10c, and the failure is now a stable **one** palette:
 > `DARK/5` at 2.99:1. Being pre-existing and a design question, it is
-> still deliberately not fixed.
+> still deliberately not fixed -- see "Still open after this batch" for
+> the pending design call.
 
 **`LiveRunProbe` does not self-terminate, and that is by design.** Its
 own header documents the invocation as `--quit-after 25400`; it is a
@@ -849,19 +852,32 @@ unmistakable. CI already imports before running anything.
 
 ## Still open after this batch
 
-- **`StrikeFatalContrastAudit` fails on `DARK/5`, at 2.99:1.** A real
-  legibility defect in the shipped HUD, verified pre-existing on
-  `origin/main`, deliberately left for its own batch. Since F10c it is a
-  *reproducible* failure -- same palette, same number, every run -- where
-  before it named 0, 1 or 2 palettes depending on the run. ("2-3 palettes,
-  the only red verdict in the suite" was this entry's earlier wording; both
-  halves were wrong, see F10.)
-- **`PursuerContrastAudit` fails on `DARK/2`, at 2.37:1** against its own
-  2.5 silhouette floor -- the pursuer is genuinely hard to read against
-  green-tinted ground. Newly *visible*, not newly true: the probe was
-  measuring Keepy until F10a. Left open deliberately -- the floor was not
-  moved to make it pass, and F10a records why the pursuer's own colour has
-  no headroom to give.
+- **AWAITING A DESIGN CALL FROM MATHIEU, not a probe or code task -- two
+  items, both measured to the point where a colour/tint decision is the
+  only thing left:**
+  - **`StrikeFatalContrastAudit` fails on `DARK/5`, at 2.99:1.** A real
+    legibility defect in the shipped HUD, verified pre-existing on
+    `origin/main`. Since F10c it is a *reproducible* failure -- same
+    palette, same number, every run -- where before it named 0, 1 or 2
+    palettes depending on the run. ("2-3 palettes, the only red verdict in
+    the suite" was this entry's earlier wording; both halves were wrong,
+    see F10.) 0.01 under the floor: whatever Mathieu decides for the
+    fatal-strike label's colour, re-run this probe against it, nothing
+    else.
+  - **`PursuerContrastAudit` fails on `DARK/2`, at 2.37:1** against its own
+    2.5 silhouette floor -- the pursuer is genuinely hard to read against
+    green-tinted ground. Newly *visible*, not newly true: the probe was
+    measuring Keepy until F10a. The pursuer's own albedo has no headroom
+    left to give (see F10a's re-derived verdict) -- closing this means
+    Mathieu choosing between moving the ground albedo or
+    `GameState.DARK_TINT_AMOUNT`, both of which affect every other
+    gameplay object's dark-mode contrast, not just the pursuer's. Not a
+    change either probe or this document can make unilaterally.
+  - **Neither floor was moved, and neither should be**, by anyone, to make
+    these numbers read green -- the whole point of F10 was making these
+    two probes describe the game accurately enough that a real
+    illegibility, once found, stays visible instead of being remeasured
+    away.
 - **Nothing measures the pursuer against Keepy.** F10a stopped this being
   measured by accident under the wrong label; it has not been replaced. The
   numbers that existed (1.85:1 at worst) are low enough that this wants a

@@ -369,6 +369,23 @@ explained is the *weakest* axis in dark mode):
 > sweep summary above are the ones this section relies on. Unrelated to
 > this batch, not fixed here.
 
+> **Open design item, awaiting Mathieu's call -- pursuer body vs `DARK/2`
+> ground (2026-08-09, `docs/PROBE_AUDIT.md` F10a).** Measured against the
+> correct reference surface (the ground, not Keepy -- the probe used to
+> sample the wrong thing, see F10a), `Pursuer body`'s `0.02, 0.02, 0.03`
+> reads **2.37:1** against `DARK/2`'s ground, under this project's own
+> 2.5:1 silhouette floor. This table's palette already sits at pure black,
+> which the sweep behind the 2.5 floor puts at the *optimum* achievable
+> value against this ground on this tint -- there is no darker or lighter
+> unshaded albedo that reads better here, and the sweep's own ceiling for
+> green (2.05) is already below the measured 2.37, so re-picking the
+> pursuer's colour cannot close this gap. The two variables that can:
+> **the ground's own albedo** (`0.55, 0.42, 0.32` above) or
+> **`GameState.DARK_TINT_AMOUNT`** (0.55) -- both of which move every
+> other object's dark-mode contrast on this table, not only the pursuer's.
+> That is a project-wide colour call, not a per-asset one, and it is left
+> for Mathieu to make. No code or probe change is pending on this note.
+
 ### 8.1 Background decor (procedural, no asset yet)
 
 `scripts/world/Decor.gd` (`World/Decor` in `Game.tscn`) draws the two
