@@ -1167,6 +1167,127 @@ Two consequences worth stating:
 Not fixed here. Nothing about the merge is wrong, and neither probe nor
 palette was touched to produce it.
 
+### F12 -- "le poursuivant ne recule jamais". Measured: it does, but nothing the player can see says so
+
+Playtest report from `staging`: the pursuer never backs off, even when the
+player strings combos. Diagnosed rather than tuned -- the fix is Mathieu's
+call, and the point of this entry is that the report turns out to describe
+**two different defects**, with different answers, that a single "make the
+reward bigger" change would address only one of.
+
+New probe: `scripts/dev/PursuerPushbackAudit.tscn`. It reports and does not
+gate -- both phases are descriptions of current behaviour, not contracts.
+It deliberately uses **no bot**: a bot meets a risk event by chance, so its
+event rate is an outcome of the seed and the track. The question here is
+"hold the cadence fixed and watch the lead", so the cadence has to be the
+input. `StrikeAudit`'s profiles cannot hold it fixed and are the wrong
+instrument for this one question.
+
+**The verdict, stated plainly: (b), with a milder form of (a) underneath it.
+NOT (c).** The visual tracks `pursuer_lead_s` correctly, every frame.
+
+#### The visual DOES recede -- and carries almost no information while doing it
+
+`Pursuer._process` recomputes both `position.z` and `scale` from the live
+lead every frame, so there is no stale-view bug. Measured screen occupancy
+(the same AABB unprojection `PursuerFramingAudit` budgets against):
+
+| lead | pos.z | scale | screen occupancy |
+|---|---|---|---|
+| 10.0s (threshold) | 3.00 | 0.400 | **19.93%** |
+| 8.0s | 2.60 | 0.450 | 23.88% |
+| 6.0s | 2.20 | 0.500 | 24.49% |
+| 4.0s (a stumble's cap) | 1.80 | 0.550 | 25.01% |
+| 2.0s | 1.40 | 0.600 | 25.44% |
+| 0.0s (capture) | 1.00 | 0.650 | **25.82%** |
+
+Two things this table says that the constants alone do not:
+
+- **The cue is badly distributed.** Across the stretch a pushing player
+  actually traverses -- lead 4 (where a stumble drops them) up to lead 8 --
+  occupancy moves 25.01% -> 23.88%. That is **1.1 percentage points of
+  screen height, -4.5% relative**, spread over the 40-75s the same probe
+  measures that push taking (below). Nearly the whole of the visible band's
+  dynamic range sits in the last two seconds of lead, 8 -> 10.
+- **The end of it is a hard cut.** At lead > 10 the ordinary branch runs
+  `visible = false`: **19.93% -> 0% in one frame**, no fade and no recede.
+  The intro sighting has a smoothstepped exit (`INTRO_EASE_IN_FRACTION`'s
+  own doc argues at length for why); the real sight-loss has none.
+
+`GameState.pursuer_lost_sight` -- the signal the PURSUER block's own doc
+calls the pair to `pursuer_became_visible`, "so a listener never has to
+poll" -- **has zero listeners**. It is declared, it is emitted, and nothing
+in the game connects to it. `Pursuer.gd` and `HUD.gd` both connect only to
+`pursuer_became_visible`. So the single moment the mechanic exists to
+deliver has no cue of any kind attached to it: no fade, no sound, no HUD
+beat. The player is told the pursuer arrived and never told it left.
+
+#### The push-off DOES happen -- on a timescale far longer than perception
+
+Scenario: one stumble (lead clamped to `STRIKE_PURSUER_LEAD_CAP_S` = 4.0s),
+then a steady risk-event cadence with **no further contacts** -- the most
+favourable case a real player could have. Rates are ones this repo has
+already measured, plus one above anything measured here so a negative
+result could not be dismissed as "he was playing better than the bots":
+
+| events/min | source | net lead/event | time to 1st push-off | crossings / 300s | visible % |
+|---|---|---|---|---|---|
+| 1.6 | ComboAudit SAFE | +0.000s | **never** (caught) | 0 | 100.0% |
+| 13.5 | PursuerAudit INTERMEDIATE | +0.164s | **75.6s** | 4 | 27.6% |
+| 16.7 | ComboAudit RISKY | +0.133s | **39.5s** | 3 | 14.4% |
+| 24.0 | above anything measured | +0.092s | **20.0s** | 2 | 6.8% |
+
+So `pursuer_lost_sight` is **not dead code** -- it fires 2-4 times per 300s
+at mid-to-high cadence. But from a stumble, a mid-skill player must sustain
+clean, risk-taking play for **more than a minute** before the silhouette
+leaves, and the safe player never gets there at all.
+
+Put the two halves together and the report is exactly right as an
+experience, while being wrong as a mechanism: over those 75 seconds the
+only feedback available is ~1 percentage point of screen height. Nothing
+marks progress, so there is no way to learn that the combos are working --
+and then the payoff, when it lands, is an object disappearing without a
+sound. Cause and effect are more than a minute apart with nothing in
+between, which is the same legibility failure the STRIKES block's own
+header diagnoses for the pre-strike pursuer ("an absence has no instant, no
+sound and no frame the player can point at").
+
+Note the counter-intuitive column: **higher cadence gives FEWER crossings.**
+That is not noise -- a faster push crosses out of sight sooner and then
+pins against `PURSUER_MAX_LEAD_S`, so it makes fewer round trips. The
+falling `net lead/event` at high cadence is the same ceiling: marginal
+events at 15.0s buy nothing.
+
+#### Proposed, NOT implemented -- Mathieu's call
+
+Ordered by how directly each addresses what was measured, rather than by
+size. The first is the only one that addresses (b), which is the dominant
+half:
+
+1. **Give the sight-loss moment a cue at all.** `pursuer_lost_sight` already
+   fires at exactly the right instant and already has no listeners, so this
+   costs no new state and no new detection -- a receding fade (the intro's
+   `_smoothstep01` exit is already written and argued for) instead of
+   `visible = false`, and/or a HUD beat. This is the cheapest change on the
+   list and the one that turns an invisible payoff into an event.
+2. **Redistribute the visual band.** Most of the occupancy range currently
+   sits in lead 8-10, i.e. the two seconds a pushing player crosses last and
+   fastest. Widening `FAR_Z`/`CAUGHT_Z` (or making `t` non-linear in the
+   lead) would put more of the cue where the player actually spends the
+   push. Note the geometry trap before touching these: `CAUGHT_Z` (1.0) is
+   *further from the camera* (7.94) than `FAR_Z` (3.0) is (6.56) -- closing
+   in moves the owl AWAY from the lens, and only the scale ramp makes it
+   grow. The two constants fight each other by construction.
+3. **Shorten the time constant** -- raise `PURSUER_RISK_REWARD_S`, or raise
+   `STRIKE_PURSUER_LEAD_CAP_S` so a stumble does not drop the player a full
+   6.0s below the threshold. This is the "(a)" lever. It is listed last on
+   purpose: it makes the push shorter without making it any more legible,
+   and `STRIKE_PURSUER_LEAD_CAP_S`'s own doc argues hard for 4.0 against the
+   7.0 an earlier batch tried.
+
+Each changes how the game feels and belongs behind a device playtest, which
+is why this batch measures and reports rather than picks one.
+
 ## Still open after this batch
 
 - **AWAITING A DESIGN CALL FROM MATHIEU, not a probe or code task -- two

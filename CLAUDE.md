@@ -356,6 +356,46 @@ c'est le bar des lots purement visuels. Le gameplay de 3 types change, donc
 `StrikeAudit` DOIT bouger — voir `docs/PROBE_AUDIT.md` pour les nouveaux
 chiffres et les seuils re-calibrés.
 
+## « Le poursuivant ne recule jamais » — DIAGNOSTIQUÉ, non corrigé (F12)
+
+Retour playtest sur `staging`. **Mesuré, pas supposé** — sonde dédiée
+`scripts/dev/PursuerPushbackAudit.tscn` (elle RAPPORTE, elle ne gate pas),
+détail chiffré complet dans `docs/PROBE_AUDIT.md` §F12. Le rapport décrit
+en réalité **deux défauts distincts**, et un seul « augmenter la
+récompense » n'en corrigerait qu'un.
+
+**Verdict : (b) — le recul existe mais n'est visible que comme une
+disparition binaire — plus une forme atténuée de (a). PAS (c) :** le visuel
+suit correctement `pursuer_lead_s`, chaque frame, sans bug.
+
+- **Le recul EST rendu, mais ne porte quasi aucune information.** Sur la
+  portion qu'un joueur traverse réellement en poussant (lead 4 → 8),
+  l'occupation écran passe de 25,01 % à 23,88 % : **1,1 point de hauteur
+  d'écran**, étalé sur les 40-75 s que la poussée prend. Presque toute la
+  dynamique de la bande vit dans les deux dernières secondes de lead (8→10).
+- **La fin est une coupe franche** : `19,93 % → 0 %` en UNE frame
+  (`visible = false`), sans fondu — alors que l'intro, elle, a une sortie
+  lissée. Et **`pursuer_lost_sight` n'a AUCUN abonné** : le signal est
+  déclaré, émis, et personne ne s'y connecte. Le seul instant que la
+  mécanique existe pour livrer n'a donc aucun cue — ni fondu, ni son, ni
+  HUD.
+- **La poussée fonctionne, mais trop lentement pour être perçue.** Après un
+  seul contact (lead ramené à 4,0 s), sans autre contact : profil
+  INTERMEDIATE (13,5 évts/min) → **75,6 s** de jeu propre avant que le hibou
+  quitte l'écran ; RISKY (16,7) → 39,5 s ; profil sûr (1,6) → **jamais**, il
+  se fait rattraper. Cause et effet séparés de plus d'une minute, avec rien
+  entre les deux.
+
+**Trois pistes proposées, AUCUNE implémentée — c'est la décision de
+Mathieu** (§F12 pour l'argumentaire) : (1) donner un cue à
+`pursuer_lost_sight`, qui tire déjà au bon instant et n'écoute personne —
+la moins chère et la seule qui traite (b) ; (2) redistribuer la bande
+visuelle (piège de géométrie à connaître : `CAUGHT_Z` est PLUS LOIN de la
+caméra que `FAR_Z`, seul le ramp de scale fait grossir le hibou) ;
+(3) raccourcir la constante de temps (`PURSUER_RISK_REWARD_S` ou
+`STRIKE_PURSUER_LEAD_CAP_S`) — listée en dernier : elle raccourcit la
+poussée sans la rendre plus lisible.
+
 ## Audio : ne coupe pas l'audio de fond (vérifié sur device, 9 août 2026)
 
 Le projet a reçu son **premier audio** le 9 août 2026 (deux cues one-shot sur
