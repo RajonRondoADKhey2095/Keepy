@@ -315,6 +315,29 @@ l'ère des meshes importés (~2 500 garde la logique du 3×) ; ou récupérer le
 **16 896 tri des collectibles** (§7.2), de loin le plus gros gain, mais qui
 touche la silhouette d'un objet de gameplay visible.
 
+### Merge en production (10 août 2026, autorisation explicite de Mathieu)
+
+`staging` (762e83f) → `main`, commit de merge `7d0c791`, après validation
+device (2 captures iPhone). Re-vérifié APRÈS le merge, pas supposé porté :
+`AssetContractAudit` rejoué sur le commit de merge lui-même (12/12 visuels,
+0/10 colliders déplacés). CI verte, déploiement PRODUCTION effectué,
+déploiement STAGING correctement skippé (push sur `main`). **Fingerprint
+vérifié sur le site LIVE** (`keepy-ten.vercel.app`, pas de Deployment
+Protection contrairement à staging) : `GODOT_CONFIG.fileSizes.index.pck`
+embarqué = **4 736 144**, identique au chiffre du propre log CI de ce run.
+
+⚠️ **Découverte au passage : `index.pck` n'est PAS stable en taille d'un
+export a l'autre du MÊME commit** (3 exports locaux consécutifs :
+4 736 128 / 4 761 392 / 4 761 376 ; CI donne un 4e chiffre, 4 736 144).
+`index.wasm`/`index.js` restent identiques au md5 sur tous les runs — la
+variance vient de la passe de compression VRAM de Godot sur les textures
+des AUTRES assets (hibou/écureuil), pas de ces deux props (sans texture).
+**Conséquence** : ne plus jamais utiliser la taille de `index.pck` seule
+comme preuve de déterminisme — s'appuyer sur l'identité wasm/js + la sonde
+gated byte-identique + le chiffre RÉELLEMENT servi par CI/le site, jamais
+sur la comparaison entre deux exports locaux distincts. Détail complet :
+`docs/MESHY_SPEC.md` §11.
+
 ## Deux défauts de mesure corrigés (F10, 9 août 2026) — deux décisions de
 ## teinte EN ATTENTE de Mathieu, aucune action code en cours
 
