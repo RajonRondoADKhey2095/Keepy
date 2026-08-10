@@ -284,17 +284,44 @@ const _PROP_KIND_WEIGHTS: Array[float] = [0.32, 0.20, 0.18, 0.14, 0.09, 0.07]
 ## moment one of the two recycled.
 const _PROP_Z_HALF_RANGE: float = 9.0
 
-## Trees: a tapered trunk under a low-facet cone canopy, two primitives.
-const _TREE_TRUNK_RADIUS: Vector2 = Vector2(0.09, 0.15)
-const _TREE_TRUNK_HEIGHT: Vector2 = Vector2(0.8, 1.5)
-const _TREE_CANOPY_RADIUS: Vector2 = Vector2(0.55, 0.95)
-const _TREE_CANOPY_HEIGHT: Vector2 = Vector2(1.5, 2.6)
-## Sides on both cylinders. Five reads as a low-poly silhouette from the
-## camera's distance and costs a handful of triangles.
-const _TREE_SIDES: int = 5
-## Fraction of the canopy's height that overlaps the top of the trunk, so
-## the two primitives never show a gap between them at a low camera angle.
-const _TREE_CANOPY_SINK: float = 0.12
+## Trees and stumps: ONE imported mesh each, not primitives.
+##
+## These are the first two trackside props drawn from a .glb rather than
+## built out of CylinderMesh/SphereMesh. They are NOT ModelSlot installs
+## (docs/MESHY_SPEC.md section 2): a slot addresses one fixed node by name,
+## and these are a recycled pool of interchangeable instances with no
+## gameplay code pointing at any of them -- the same reason Decor.gd's
+## billboards sit outside that path. See section 11's entry for this batch
+## for the measurements, and 8.3 for why they carry no texture.
+##
+## The mesh is loaded ONCE and shared by every instance in every segment
+## (_shared_model below). Nothing writes to it, unlike the primitives
+## around it whose radius/height are rewritten per placement -- a .glb is
+## resized by scaling its MeshInstance3D, so the resource itself is
+## immutable and safe to share.
+const _BARE_TREE_MODEL_PATH: String = "res://assets/models/keepy_bare_tree_prop.glb"
+const _STUMP_MODEL_PATH: String = "res://assets/models/keepy_stump_prop.glb"
+
+## Height in metres, floor to crown. Deliberately the SAME span the
+## trunk+canopy pair covered before the swap (0.8-1.5 of trunk under a
+## 1.5-2.6 canopy sunk 12% into it, i.e. ~2.1-3.8m), so the change is a
+## silhouette change and not also a size change -- the keep-out, the
+## parallax read and 8.2's backdrop contrast all depend on how much of the
+## frame a prop fills, and moving two variables at once would leave no way
+## to attribute whatever the device review sees.
+const _BARE_TREE_HEIGHT: Vector2 = Vector2(2.1, 3.8)
+
+## Likewise for the stump: the cylinder+dome pair stood 0.29-0.55m tall.
+const _STUMP_MODEL_HEIGHT: Vector2 = Vector2(0.30, 0.55)
+
+## One mesh drawn 4+ times on screen at once reads as a row of clones
+## unless something breaks it up, and unlike a primitive we cannot re-roll
+## its proportions -- so the two levers left are how stout it is (girth,
+## applied to x and z against the height) and how much it is squashed
+## along one horizontal axis (z_stretch). Combined with the free yaw below
+## that is enough that no two instances present the same outline.
+const _MODEL_PROP_GIRTH: Vector2 = Vector2(0.85, 1.15)
+const _MODEL_PROP_Z_STRETCH: Vector2 = Vector2(0.85, 1.20)
 
 ## Rocks: one squashed low-facet sphere, randomly yawed and stretched
 ## along z so no two read as the same boulder.
@@ -336,18 +363,11 @@ const _SIGN_BOARD_T: float = 0.05
 ## How far the board's centre sits below the top of the post.
 const _SIGN_BOARD_DROP: float = 0.10
 
-## Stump: a short wide cylinder capped by a squashed dome. Deliberately
-## WIDER than the tree trunk it might otherwise be mistaken for and far
-## shorter -- a stump that reads as "a broken tree" is the one silhouette
-## this kind exists to avoid, so the proportions are pushed apart rather
-## than scaled down from the trunk's.
-const _STUMP_RADIUS: Vector2 = Vector2(0.26, 0.44)
-const _STUMP_HEIGHT: Vector2 = Vector2(0.22, 0.42)
-const _STUMP_SIDES: int = 6
-## Dome height as a fraction of the stump's radius -- low, so the top
-## reads as a slightly rounded cut face, never as a ball on a post.
-const _STUMP_DOME_RISE: Vector2 = Vector2(0.16, 0.30)
-const _STUMP_DOME_RINGS: int = 2
+## Stump: see _STUMP_MODEL_PATH / _STUMP_MODEL_HEIGHT above. The
+## cylinder+dome pair it replaced existed to avoid reading as "a broken
+## tree"; the imported mesh keeps that separation for a better reason --
+## it has the flared roots and the cut face a stump actually has, which is
+## what the recon judged it on (section 11).
 
 ## Bush: a cluster of three squashed low-facet spheres, each offset from
 ## the cluster centre. Rounder and shorter than a rock, and unlike the
@@ -371,7 +391,14 @@ const _BUSH_SINK: float = 0.78
 ## (the darkest thing they are ever seen against), because the backdrop
 ## for anything beyond the slab edge is sky and hillside -- the two
 ## BRIGHTEST surfaces in the scene -- not the ground.
-const _TREE_CANOPY_COLOR: Color = Color(0.14, 0.20, 0.15)
+## _TREE_TRUNK_COLOR is now the WHOLE tree, not a trunk under a canopy:
+## the imported mesh is a bare winter tree, so there is no foliage to give
+## a second albedo to and _TREE_CANOPY_COLOR (0.14, 0.20, 0.15) is gone
+## with the cone that carried it. That REMOVES a value from 8.2's swept
+## set without adding one, so no pair in its table needs re-measuring --
+## and it retires the worst pair the table shipped with (canopy-vs-trunk
+## at 1.29:1, two values on the same object that were the hardest of the
+## six to tell apart).
 const _TREE_TRUNK_COLOR: Color = Color(0.13, 0.10, 0.07)
 const _ROCK_COLOR: Color = Color(0.18, 0.19, 0.20)
 
@@ -396,21 +423,21 @@ const _SIGN_COLOR: Color = Color(0.50, 0.48, 0.42)
 ## so a kind added here cannot be silently left out of the check that
 ## keeps props off the play area.
 const _PROP_MESH_KEYS: Array[String] = [
-	"trunk", "canopy", "rock",
+	"tree_model", "rock",
 	"bench_seat", "bench_back", "bench_leg_a", "bench_leg_b",
 	"sign_post", "sign_board",
-	"stump_body", "stump_dome",
+	"stump_model",
 	"bush_a", "bush_b", "bush_c",
 ]
 
 ## Which mesh keys each kind switches on. Kept beside _PROP_KINDS so the
 ## two cannot drift.
 const _PROP_KIND_MESHES: Dictionary = {
-	"tree": ["trunk", "canopy"],
+	"tree": ["tree_model"],
 	"rock": ["rock"],
 	"bench": ["bench_seat", "bench_back", "bench_leg_a", "bench_leg_b"],
 	"sign": ["sign_post", "sign_board"],
-	"stump": ["stump_body", "stump_dome"],
+	"stump": ["stump_model"],
 	"bush": ["bush_a", "bush_b", "bush_c"],
 }
 
@@ -436,7 +463,6 @@ func _build_trackside_props() -> void:
 	# kind: a bench's seat, back and both legs are one object to the eye,
 	# so they are one albedo, and sharing the resource keeps the material
 	# count flat as kinds are added.
-	var canopy_material := _unshaded(_TREE_CANOPY_COLOR)
 	var trunk_material := _unshaded(_TREE_TRUNK_COLOR)
 	var rock_material := _unshaded(_ROCK_COLOR)
 	var bench_material := _unshaded(_BENCH_COLOR)
@@ -459,27 +485,16 @@ func _build_trackside_props() -> void:
 			# vertex buffer (~4,000 triangles for a boulder) from _ready()
 			# until its first placement -- paid for whether or not that
 			# slot ever draws.
-			var trunk_mesh := CylinderMesh.new()
-			trunk_mesh.radial_segments = _TREE_SIDES
-			trunk_mesh.rings = 0
-			# Both caps are hidden in every case -- the bottom by the
-			# ground, the top by the canopy sunk over it -- so neither is
-			# worth drawing.
-			trunk_mesh.cap_top = false
-			trunk_mesh.cap_bottom = false
-			var trunk := _build_prop_mesh(trunk_mesh, trunk_material, "PropTrunk" + label)
-
-			# A cone: the cheapest primitive that reads as foliage, same
-			# choice and same reasoning as Decor.gd's hills.
-			var canopy_mesh := CylinderMesh.new()
-			canopy_mesh.top_radius = 0.0
-			canopy_mesh.radial_segments = _TREE_SIDES
-			canopy_mesh.rings = 0
-			# The underside IS visible: the camera sits above the track
-			# looking forward and down, so a capless cone would show
-			# hollow from behind.
-			canopy_mesh.cap_bottom = true
-			var canopy := _build_prop_mesh(canopy_mesh, canopy_material, "PropCanopy" + label)
+			# The tree is an imported mesh, so there is no tessellation to
+			# set and nothing to size here: every instance points at the
+			# same shared resource and is resized by its own scale at
+			# placement. The albedo still comes from the GDScript constant
+			# rather than the .glb's own baseColorFactor -- the two agree
+			# (the decimator bakes this exact value in), but 8.2's swept
+			# palette has to have ONE home, and a binary is the wrong place
+			# for a number a contrast sweep is allowed to retune.
+			var tree_model := _build_prop_mesh(
+				_shared_model(_BARE_TREE_MODEL_PATH), trunk_material, "PropTree" + label)
 
 			var rock_mesh := SphereMesh.new()
 			rock_mesh.radial_segments = _ROCK_SIDES
@@ -501,18 +516,9 @@ func _build_trackside_props() -> void:
 				_capless_cylinder(_SIGN_POST_R, _SIGN_POST_SIDES), sign_material, "PropSignPost" + label)
 			var board := _build_prop_mesh(BoxMesh.new(), sign_material, "PropSignBoard" + label)
 
-			# --- stump: short wide cylinder, domed ---
-			# Top cap off: the dome covers it. Bottom cap off: the ground does.
-			var stump_mesh := CylinderMesh.new()
-			stump_mesh.radial_segments = _STUMP_SIDES
-			stump_mesh.rings = 0
-			stump_mesh.cap_top = false
-			stump_mesh.cap_bottom = false
-			var stump_body := _build_prop_mesh(stump_mesh, stump_material, "PropStumpBody" + label)
-			var dome_mesh := SphereMesh.new()
-			dome_mesh.radial_segments = _STUMP_SIDES
-			dome_mesh.rings = _STUMP_DOME_RINGS
-			var stump_dome := _build_prop_mesh(dome_mesh, stump_material, "PropStumpDome" + label)
+			# --- stump: imported mesh, same treatment as the tree ---
+			var stump_model := _build_prop_mesh(
+				_shared_model(_STUMP_MODEL_PATH), stump_material, "PropStump" + label)
 
 			# --- bush: a clump of squashed spheres ---
 			var blobs: Array[MeshInstance3D] = []
@@ -525,8 +531,7 @@ func _build_trackside_props() -> void:
 
 			_prop_slots.append({
 				"side": side,
-				"trunk": trunk,
-				"canopy": canopy,
+				"tree_model": tree_model,
 				"rock": rock,
 				"bench_seat": seat,
 				"bench_back": back,
@@ -534,8 +539,7 @@ func _build_trackside_props() -> void:
 				"bench_leg_b": leg_b,
 				"sign_post": post,
 				"sign_board": board,
-				"stump_body": stump_body,
-				"stump_dome": stump_dome,
+				"stump_model": stump_model,
 				"bush_a": blobs[0],
 				"bush_b": blobs[1],
 				"bush_c": blobs[2],
@@ -562,7 +566,13 @@ func _capless_cylinder(radius: float, sides: int) -> CylinderMesh:
 ## _build_lane_curbs does on the curbs: this is decor sitting outside the
 ## readable play area, and it has no business adding to the one
 ## DirectionalLight3D's shadow pass.
-func _build_prop_mesh(mesh: PrimitiveMesh, material: StandardMaterial3D, node_name: String) -> MeshInstance3D:
+## Takes `Mesh`, not `PrimitiveMesh`: since this batch two kinds draw an
+## imported ArrayMesh instead of a generated primitive. Widening the
+## parameter rather than adding a near-identical second builder keeps ONE
+## place that decides a prop's shadow setting and starting visibility --
+## the two properties a prop added later is most likely to be given
+## wrongly by copying the wrong sibling.
+func _build_prop_mesh(mesh: Mesh, material: StandardMaterial3D, node_name: String) -> MeshInstance3D:
 	var instance := MeshInstance3D.new()
 	instance.name = node_name
 	instance.mesh = mesh
@@ -577,6 +587,65 @@ func _unshaded(color: Color) -> StandardMaterial3D:
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.albedo_color = color
 	return material
+
+## Cache of imported prop meshes, keyed by path. STATIC, so the segment
+## pool's dozen instances and both of a segment's sides all point at ONE
+## Mesh per subject instead of one per MeshInstance3D. Safe only because
+## nothing ever writes to these -- an imported mesh is resized by scaling
+## its instance, unlike the primitives beside it whose radius and height
+## are rewritten on every placement.
+static var _model_cache: Dictionary = {}
+
+## The mesh inside a .glb, or null if it has none.
+##
+## Read off the imported PackedScene's SceneState rather than by
+## instantiating it: the mesh is a property value in the packed data, so
+## no node has to be built to reach it and none has to be freed
+## afterwards. Instantiating worked too, but freeing a MeshInstance3D
+## under the headless dummy renderer emits `Parameter "m" is null` on
+## stderr -- harmless in itself, but this project compares probe output
+## BYTE FOR BYTE, so a line of engine noise on a path every probe walks is
+## a real cost. It also keeps the no-allocation claim literal.
+##
+## Runs from _ready(), never per frame: the first segment built pays the
+## load, every segment after it is a dictionary hit.
+##
+## Assumes the model's own glTF node transform is identity, which is true
+## by construction for anything scripts/dev/decimate_decor.py emits and was
+## verified on both of this batch's assets. A model from another pipeline
+## carrying a node-level rotation or offset would need it folded in here --
+## the scale and ground contact in _place_model are measured from the mesh
+## AABB alone.
+static func _shared_model(path: String) -> Mesh:
+	if _model_cache.has(path):
+		return _model_cache[path]
+	var mesh: Mesh = null
+	var scene := load(path) as PackedScene
+	if scene == null:
+		# Loud, not silent: a missing prop model is a build/export defect
+		# (see MESHY_SPEC 7's export_filter note), and a prop that quietly
+		# draws nothing looks exactly like a tile that rolled empty.
+		push_error("TrackSegment: could not load prop model %s" % path)
+	else:
+		mesh = _packed_mesh(scene)
+		if mesh == null:
+			push_error("TrackSegment: no MeshInstance3D mesh inside %s" % path)
+	_model_cache[path] = mesh
+	return mesh
+
+## First MeshInstance3D's `mesh` property in a packed scene, without
+## instantiating it.
+static func _packed_mesh(scene: PackedScene) -> Mesh:
+	var state := scene.get_state()
+	for node in state.get_node_count():
+		if state.get_node_type(node) != "MeshInstance3D":
+			continue
+		for property in state.get_node_property_count(node):
+			if state.get_node_property_name(node, property) == "mesh":
+				var value: Mesh = state.get_node_property_value(node, property)
+				if value != null:
+					return value
+	return null
 
 func _hide_all_props() -> void:
 	for slot in _prop_slots:
@@ -623,31 +692,71 @@ func _place_trackside_props() -> void:
 			"stump": _place_stump(slot, side, z)
 			"bush": _place_bush(slot, side, z)
 
+## Places one imported-mesh prop: scaled to a rolled height, freely yawed,
+## its own base sitting on the ground, and pushed out past the keep-out by
+## its own silhouette.
+##
+## DRAWS EXACTLY FIVE VALUES FROM _prop_rng, ON EVERY PATH, and that count
+## is load-bearing rather than incidental. Both placements it replaced
+## drew five as well (the tree: trunk radius, trunk height, canopy radius,
+## canopy height, then _prop_x's spread; the stump: radius, height, dome
+## rise, spread, yaw). Keeping the count identical means the decor stream
+## is consumed exactly as before, so EVERY OTHER prop in the run -- every
+## rock, bench, sign and bush, and every tree and stump's position and
+## size -- lands precisely where it did before this swap. That is what
+## makes this batch a change of two silhouettes rather than a reshuffle of
+## the whole roadside, and it is what lets the F10/F11 contrast probes'
+## backgrounds be reasoned about at all (see MESHY_SPEC 11).
+##
+## The two levers the four pre-spread draws feed are described on
+## _MODEL_PROP_GIRTH: with one shared mesh per kind, proportion and yaw
+## are all that stop four instances on screen reading as four copies.
+func _place_model(instance: MeshInstance3D, side: float, z: float, height_range: Vector2) -> void:
+	var height := _prop_rng.randf_range(height_range.x, height_range.y)
+	var girth := _prop_rng.randf_range(_MODEL_PROP_GIRTH.x, _MODEL_PROP_GIRTH.y)
+	var z_stretch := _prop_rng.randf_range(_MODEL_PROP_Z_STRETCH.x, _MODEL_PROP_Z_STRETCH.y)
+	var yaw := _prop_rng.randf_range(0.0, TAU)
+
+	# Mesh-local and unscaled, and -- unlike every primitive beside it --
+	# NOT centred on the origin: a .glb keeps whatever origin it was
+	# authored around, so both the keep-out and the ground contact below
+	# work from the box's real corners rather than from half-sizes.
+	var box := instance.get_aabb()
+	var usable := box.size.y > 0.0
+	var scale_y := (height / box.size.y) if usable else 0.0
+	var scale_x := scale_y * girth
+	var scale_z := scale_y * girth * z_stretch
+
+	# Yaw is free, so the keep-out has to clear the widest silhouette the
+	# prop can EVER present, at any angle: the bounding circle about the
+	# instance's own origin, taken over the scaled box's four horizontal
+	# corners. Same bound and same reasoning as the rock's longest
+	# semi-axis -- an exact per-angle extent (_yawed_half_x) is only worth
+	# computing for the two kinds whose yaw is small enough to keep it
+	# tight.
+	var half_width := 0.0
+	for cx in [box.position.x, box.position.x + box.size.x]:
+		for cz in [box.position.z, box.position.z + box.size.z]:
+			half_width = maxf(half_width, Vector2(cx * scale_x, cz * scale_z).length())
+
+	# Called unconditionally, and this is the fifth draw. A model that
+	# failed to load must not consume a different number of values from
+	# the others, or one missing file would re-sequence the decor for
+	# every prop placed after it.
+	var x := _prop_x(side, half_width)
+	if not usable:
+		# _shared_model has already pushed the error; draw nothing rather
+		# than park an empty instance at an arbitrary spot.
+		instance.visible = false
+		return
+
+	instance.scale = Vector3(scale_x, scale_y, scale_z)
+	instance.rotation = Vector3(0.0, yaw, 0.0)
+	# The mesh's own BASE meets the ground, not its origin.
+	instance.position = Vector3(x, _ground_top_y() - box.position.y * scale_y, z)
+
 func _place_tree(slot: Dictionary, side: float, z: float) -> void:
-	var trunk_radius := _prop_rng.randf_range(_TREE_TRUNK_RADIUS.x, _TREE_TRUNK_RADIUS.y)
-	var trunk_height := _prop_rng.randf_range(_TREE_TRUNK_HEIGHT.x, _TREE_TRUNK_HEIGHT.y)
-	var canopy_radius := _prop_rng.randf_range(_TREE_CANOPY_RADIUS.x, _TREE_CANOPY_RADIUS.y)
-	var canopy_height := _prop_rng.randf_range(_TREE_CANOPY_HEIGHT.x, _TREE_CANOPY_HEIGHT.y)
-
-	var trunk_mesh := slot["trunk"].mesh as CylinderMesh
-	trunk_mesh.top_radius = trunk_radius * 0.75
-	trunk_mesh.bottom_radius = trunk_radius
-	trunk_mesh.height = trunk_height
-
-	var canopy_mesh := slot["canopy"].mesh as CylinderMesh
-	canopy_mesh.bottom_radius = canopy_radius
-	canopy_mesh.height = canopy_height
-
-	# The canopy is the widest part of a tree, so it is the canopy's radius
-	# -- not the trunk's -- that the keep-out has to clear.
-	var x := _prop_x(side, canopy_radius)
-	var ground_y := _ground_top_y()
-	slot["trunk"].position = Vector3(x, ground_y + trunk_height * 0.5, z)
-	slot["canopy"].position = Vector3(
-		x,
-		ground_y + trunk_height + canopy_height * (0.5 - _TREE_CANOPY_SINK),
-		z,
-	)
+	_place_model(slot["tree_model"], side, z, _BARE_TREE_HEIGHT)
 
 func _place_rock(slot: Dictionary, side: float, z: float) -> void:
 	var radius := _prop_rng.randf_range(_ROCK_RADIUS.x, _ROCK_RADIUS.y)
@@ -748,33 +857,7 @@ func _place_sign(slot: Dictionary, side: float, z: float) -> void:
 	_put(board, centre, Vector3(0.0, post_h - _SIGN_BOARD_DROP - board_h * 0.5, 0.0), yaw)
 
 func _place_stump(slot: Dictionary, side: float, z: float) -> void:
-	var radius := _prop_rng.randf_range(_STUMP_RADIUS.x, _STUMP_RADIUS.y)
-	var height := _prop_rng.randf_range(_STUMP_HEIGHT.x, _STUMP_HEIGHT.y)
-	var rise := _prop_rng.randf_range(_STUMP_DOME_RISE.x, _STUMP_DOME_RISE.y)
-
-	var body: MeshInstance3D = slot["stump_body"]
-	var dome: MeshInstance3D = slot["stump_dome"]
-	var body_mesh := body.mesh as CylinderMesh
-	body_mesh.top_radius = radius
-	body_mesh.bottom_radius = radius * 1.08 # a hint of flare at the base
-	body_mesh.height = height
-
-	# A squashed sphere whose equator matches the cylinder's top, so the
-	# join is hidden and the top reads as a rounded cut face.
-	var dome_mesh := dome.mesh as SphereMesh
-	dome_mesh.radius = radius
-	dome_mesh.height = radius * rise * 2.0
-
-	# The flared base is the widest point, and the dome never exceeds the
-	# cylinder's own radius.
-	var half_x := radius * 1.08
-	var x := _prop_x(side, half_x)
-	var ground_y := _ground_top_y()
-	var yaw := _prop_rng.randf_range(0.0, TAU)
-	body.rotation = Vector3(0.0, yaw, 0.0)
-	dome.rotation = Vector3(0.0, yaw, 0.0)
-	body.position = Vector3(x, ground_y + height * 0.5, z)
-	dome.position = Vector3(x, ground_y + height, z)
+	_place_model(slot["stump_model"], side, z, _STUMP_MODEL_HEIGHT)
 
 func _place_bush(slot: Dictionary, side: float, z: float) -> void:
 	# Roll every blob FIRST, so the cluster's true half-width is known
