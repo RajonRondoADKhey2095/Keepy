@@ -498,15 +498,29 @@ turning a purely-visual system into something that changes which hazards a
 seeded run actually spawns. Caught in this same batch (see the commit
 history around `Decor.gd`/`TrackSegment.gd`'s `_tint_rng`) before it shipped.
 
-### 8.2 Trackside props (procedural, no asset yet)
+### 8.2 Trackside props (four procedural, two imported since 2026-08-10)
 
 `TrackSegment.gd` (`_build_trackside_props` / `_place_trackside_props`)
-draws low-poly trees and rocks standing on the ground plane just outside
-the track. Like the hills of 8.1 and the lane curbs beside them, these are
-plain Godot primitives — a tapered `CylinderMesh` trunk under a 5-sided
-cone canopy for a tree, one 6x3 `SphereMesh` squashed and yawed for a rock
-— with no `.glb` and no texture, so this file's import checklist does not
-apply to them yet.
+draws low-poly props standing on the ground plane just outside the track.
+
+**Four of the six kinds are still plain Godot primitives** — one 6x3
+`SphereMesh` squashed and yawed for a rock, boxes on capless cylinders for
+the bench and sign, three squashed spheres for the bush — with no `.glb`
+and no texture, so this file's import checklist does not apply to them.
+
+**Two are imported meshes as of 2026-08-10**: `tree` (a bare winter tree)
+and `stump` each draw one 150-triangle `.glb` from `assets/models/`. They
+are **not** `ModelSlot` installs and §2's procedure does not describe them
+— see 8.3. Their albedos are unchanged, and are still the swept values in
+the table below: the mesh changed, the palette did not.
+
+> **The `tree` kind lost its second albedo.** It was a trunk under a
+> canopy, i.e. two values on one object; the bare tree is all branches, so
+> `_TREE_CANOPY_COLOR` (0.14, 0.20, 0.15) is gone with the cone that
+> carried it and `_TREE_TRUNK_COLOR` is now the whole prop. That REMOVES a
+> value from the swept set without adding one, so no pair below needs
+> re-measuring — and it retires the worst pair the table shipped with, the
+> canopy-vs-trunk 1.29:1 that was the hardest of the six to tell apart.
 
 **They belong to a TILE, not to the world**, which is why they are built
 and pooled by `TrackSegment` rather than added to `Decor.gd`. A hill needs
@@ -747,6 +761,53 @@ than argued: all seven gated bot probes plus `AssetContractAudit` and
 `ChargerShapeProbe` byte-identical before and after at seed 20260806,
 0 colliders moved. The new kinds add `MeshInstance3D` children only —
 still no `CollisionShape3D` anywhere under a segment beyond the slab's.
+
+### 8.3 Imported decor props are flat, untextured and unlit — by decision
+
+The two imported props of 8.2 carry **no texture at all**: no base colour
+map, no normal, no metallic-roughness. Their material is a single flat
+albedo with `KHR_materials_unlit`. Three reasons, in the order they bind.
+
+**1. Payload.** The five distinct Meshy decor sources import to **64.91 MB
+of `.ctex`** against a whole shipped `.pck` of **4.23 MB** — a 15x
+increase, on a game whose payload lesson (§7, 2026-08-09) was learned by
+finding 35.84 MB of dead weight and cutting it. The single worst offender
+was a 4096x4096 metallic-roughness map on every asset, which is also the
+least useful one here. Dropped, the two installed props cost **+13,120
+bytes of `.pck` between them**, measured.
+
+**2. Unlit has no use for most of those maps anyway.** §8's rule is
+unshaded, because only an unshaded surface has a *known* colour once the
+dark-mode inversion runs. Metallic and roughness do nothing on an unlit
+material, and a normal map does nothing without a light to perturb.
+
+**3. The decimator cannot carry UVs.** Welding the separate shells is what
+lets a quadric decimator reach these targets at all (see §11), and it does
+not preserve UVs, so a texture could not survive the trip at any triangle
+count. Keeping the texture would mean not decimating, which reason 1
+forbids. This is also exactly why the leafy tree was **not** installed:
+its character *is* its leaf colour, so the pipeline destroys the thing
+worth having, and the result reads worse than the 25-triangle cone it
+would have replaced.
+
+> **`KHR_materials_unlit` IS ADDED BY US, NOT CARRIED OVER.** Not one of
+> the five Meshy sources declares it — `extensionsUsed` is absent from all
+> of them, and all are PBR with baseColor + metallicRoughness + normal.
+> `scripts/dev/decimate_decor.py` writes the extension into every file it
+> emits. Do not read a `.glb` in `assets/models/` as evidence of what
+> Meshy produced.
+
+> **`baseColorFactor` is LINEAR; the palette in `TrackSegment.gd` is
+> sRGB.** Godot's `StandardMaterial3D.albedo_color` is an sRGB colour and
+> 8.2's sweep was run against `_unshaded(Color(...))` materials carrying
+> those numbers, so the decimator converts before baking. Writing the sRGB
+> value straight in — which the first version of the script did — made
+> Godot read `_TREE_TRUNK_COLOR`'s 0.13 back as **0.396**, far brighter
+> than the swept value. It never reached the screen, because
+> `_build_prop_mesh` overrides the surface material with the GDScript
+> colour, but that made the override the only thing holding the palette
+> rather than a second line of defence. Both now agree, verified by
+> reading the material back after import.
 
 ## 9. Godot 4.3 import notes
 
@@ -1404,3 +1465,179 @@ mandate to decide: dropping textures as the decor art direction; whether
 contrast probes measure); and whether a roadside mixing `.glb` stumps with
 procedural rocks, benches and signs is acceptable while the latter three have
 no supplied asset.
+
+### 2026-08-10 -- bare tree and stump, INSTALLED (the recon's two viable subjects)
+
+Acts on the three decisions the recon above left open, all taken by Mathieu:
+install **only** `bare_tree` and `stump`; drop textures as the decor art
+direction; and make `bare_tree` a **REPLACEMENT for the `tree` kind**, not a
+seventh kind. The leafy tree and the bush are still not installed, for the
+reasons the recon measured.
+
+**What was produced.** `scripts/dev/decimate_decor.py 150`, on those two
+subjects only:
+
+| subject | source | welded | installed | file | installed as |
+|---|---|---|---|---|---|
+| bare tree | 4,486 tri, 18.14 MB PNG | 4,455 | **146 tri** | 3.9 KB | `assets/models/keepy_bare_tree_prop.glb` |
+| stump | 4,130 tri, 14.37 MB PNG | 3,889 | **150 tri** | 3.7 KB | `assets/models/keepy_stump_prop.glb` |
+
+**Two defects in the decimator, found by verifying its output rather than
+reading it.** Both are fixed in this batch:
+
+- **JSON chunk padded with `0x00`.** glTF 2.0 requires the JSON chunk to be
+  padded with **spaces**, and only the BIN chunk with zeros, because the
+  padding is part of the text handed to the parser. Validity therefore
+  depended on JSON length modulo 4: `stump` happened to land aligned and
+  parsed, `bare_tree` did not and raised `Extra data`.
+- **`baseColorFactor` written in sRGB.** It is a **LINEAR** field. See the
+  second callout in 8.3 for what this did and why the surface override hid
+  it.
+
+**Orientation -- measured on these meshes, not taken from the recon.** The
+bounding box alone cannot settle it for the bare tree, which is near-cubic
+(1.352 x 1.333 x 1.540 after decimation). Sliced the vertices into ten bands
+along each axis and measured the cross-sectional spread of each band:
+
+    bare_tree, along Y : 0.22 0.00 0.00 0.77 1.55 1.98 1.90 1.42 0.89 0.24
+    stump,     along Y : 2.71 1.77 1.91 1.62 1.21 1.31 0.00 0.00 0.00 1.61
+
+A thin stem at the bottom opening into a wide crown and tapering at the tips
+is a tree standing on Y; neither X nor Z shows a stem. The stump is widest at
+its base (flared roots) and closes on a cut face. **Both are Y-up with the
+base at -Y**, so no `model_rotation_degrees` is needed -- which is what the
+recon said, now independently confirmed.
+
+#### Not a ModelSlot install, and section 2 does not describe it
+
+A `ModelSlot` addresses ONE fixed node by name. These are a recycled pool of
+interchangeable instances that no gameplay code points at, so there is no
+node to address -- the same reason `Decor.gd`'s billboards sit outside that
+path. §2 stays written for slots; this is the second deviation from it, and
+the first for a `.glb`.
+
+The mesh is loaded **once** and shared by every instance in every segment,
+read off the imported `PackedScene`'s `SceneState` so **no node is ever
+instantiated or freed**. Instantiating worked too, but freeing a
+`MeshInstance3D` under the headless dummy renderer prints `Parameter "m" is
+null` on stderr -- harmless in itself, and fatal to a project that compares
+probe output byte for byte. Pooling is unchanged: instances are built in
+`_ready()` and thereafter only toggled, repositioned and scaled, and a `.glb`
+is resized by scaling its instance rather than by rewriting the mesh, so the
+shared resource is never mutated.
+
+**Keep-out is measured, not assumed.** Yaw is free, so the clearance uses the
+bounding circle about the instance origin over the scaled AABB's four
+horizontal corners -- the same bound, and the same reasoning, as the rock's
+longest semi-axis. An imported AABB is **not** centred on its origin the way
+a primitive's is, so the ground contact subtracts the box's own minimum Y
+rather than half its height. `TrackPropsAudit`'s keep-out phase asserts the
+result over 4,000 rolls and passes.
+
+#### The mix is untouched, and that was verified rather than argued
+
+`_PROP_KINDS` and `_PROP_KIND_WEIGHTS` are **byte-identical** to
+`origin/main`. Beyond that, `_place_model` draws **exactly the five values
+from `_prop_rng`** that both placements it replaced drew (the tree: trunk
+radius, trunk height, canopy radius, canopy height, spread; the stump:
+radius, height, dome rise, spread, yaw) -- on **every** path, including the
+one where the model fails to load, so a missing file cannot re-sequence the
+decor either.
+
+Verified with the decor streams seeded (`DecorRng.force_seed`), by dumping
+every prop whose node name exists on both trees and diffing:
+
+> **All five visible rocks, benches, signs and bush blobs land at a
+> BYTE-IDENTICAL segment-local position, scale and rotation** against
+> `origin/main`.
+
+(The first attempt compared *global* positions and showed all five differing
+in Z by the same constant ~3.8698 while X, scale and rotation matched
+exactly. That is world scroll at the sampling instant, not a decor
+difference -- a stream divergence perturbs X, scale and rotation
+independently and cannot produce one shared offset across props in different
+tiles. Re-measured in segment-local space, which is what `_place_*` actually
+writes, the diff is empty.)
+
+So the change is: two silhouettes, at the same tiles, the same Z, the same
+side, the same count. Only their X shifts, by the difference between the new
+bounding circle and the old canopy radius.
+
+#### Triangle budget -- the frame is fine, the props' own sub-budget is not
+
+Per-kind, from `TracksidePropCensus` (3,600 frames):
+
+| kind | tri/instance | mean on screen | mean tri | max tri |
+|---|---|---|---|---|
+| tree | **146** (was 25) | 5.03 | 734.3 | 876 |
+| stump | **150** (was 48) | 2.79 | 418.2 | 450 |
+| bush | 108 | 1.28 | 138.2 | 324 |
+| rock | 48 | 1.43 | 68.7 | 192 |
+| bench | 44 | 1.10 | 48.3 | 132 |
+| sign | 22 | 0.93 | 20.5 | 22 |
+| | | **12.56 props** | **1,428.2** | |
+
+`TrackPropsAudit` worst frame, five runs each side. **This probe is NOT
+seeded** (`--seed=` is inert in it), so single runs are not budget figures
+and only ranges mean anything:
+
+| | props, worst frame | frame total |
+|---|---|---|
+| `origin/main` | 459 - 868 | 45,567 - 56,570 |
+| this branch | 908 - 1,926 | 46,825 - 58,143 |
+
+- **Frame total: not meaningfully moved.** The props add ~700-1,000
+  triangles; run-to-run noise on this probe is ~±6,000. The two ranges
+  overlap, and **both straddle the 50,000 target** -- the baseline reaches
+  56,570 on its own. That the frame is already over target is pre-existing
+  and dominated by the collectibles (§7.2), not by this batch.
+- **Props: 1,500 budget exceeded on 2 of 5 runs (worst 1,926).**
+
+**The props budget was NOT raised to make this pass**, and `TrackPropsAudit`
+is left FAILING on the runs where it exceeds. Moving a threshold to fit a
+measurement is the faux-vert this repo has recorded five times. What the
+number means is worth stating, though, because the probe's own header says
+it: 1,500 was *"sized about 3x the measured peak"* of the all-primitives era,
+and its stated purpose is *"to catch the mistake that actually happens here
+-- a primitive left at Godot's default tessellation, which is ~4,000
+triangles for a single boulder"*. It is a **defect detector calibrated to
+primitives**, and the same header explains that the whole-frame total is
+deliberately *reported* rather than asserted because that is the number the
+budget is really about.
+
+**Three ways out, none of them taken here -- this is Mathieu's call:**
+
+1. **Re-decimate the two to ~100 tri.** Mean props would fall to ~1,060 and
+   the worst frame under 1,500. Cost: the 150-tri LOD is the one the recon
+   judged by rendering and the one that was approved; 100 was rendered but
+   never judged for these two subjects. A quality decision, not a tuning one.
+2. **Re-scope the props budget to the imported-mesh era** (~2,500 keeps the
+   3x-of-peak logic and still catches a 4,000-triangle default-tessellation
+   boulder on the first draw). Defensible on the probe's own stated purpose,
+   but it is a threshold move and must be argued as one, in its own batch.
+3. **Reclaim the collectibles' 16,896 triangles** (§7.2 — two `SphereMesh`
+   at Godot's default tessellation, 4,224 each, against 300 budgeted). By far
+   the largest win available and it would put the *frame* comfortably under
+   target, but it changes the silhouette of a visible gameplay object and
+   already carries its own device-review requirement.
+
+#### Validation
+
+Godot 4.3.stable headless, editor and `4.3-stable` templates fetched into the
+sandbox, `--fixed-fps 60` before `--path` and before `--` per §11's
+reproducibility note.
+
+- **`AssetContractAudit`: PASSED.** 12/12 visuals swap, **0/10 colliders
+  moved**, pursuer still has none.
+- **`DecorStabilityAudit`: PASSED.** 5 recycle events, **0 while clearly
+  visible** — the billboard lot has not regressed.
+- **`TrackPropsAudit`** keep-out and collider phases: PASSED. Exactly one
+  shape on the segment body (the slab). Budget phase as above.
+- **`TracksidePropCensus`** needed fixing before it could report at all: it
+  keys kinds to prop node-name prefixes, and the renamed nodes made it report
+  both kinds at **zero instances with a `-1-0` per-instance cost**. That is
+  how a stale prefix there fails — quietly, and looking like a measurement.
+- **Web export**: clean, exit 0. `index.pck` **4,723,040 -> 4,736,160 bytes,
+  +13,120** for both assets, built from a throwaway worktree at `origin/main`
+  against the current tree with identical templates. `index.wasm` md5
+  identical.

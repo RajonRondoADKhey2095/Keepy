@@ -60,6 +60,12 @@ deux assets réels sont intégrés et validés selon la méthode qu'il documente
   dans `Pursuer/Silhouette` (2026-08-08).
 - **Keepy (hero squirrel)** — `assets/models/keepy_squirrel_hero.glb`,
   installé dans `Keepy/MeshInstance3D` (2026-08-09).
+- **Arbre mort + souche (props de bord de piste)** —
+  `assets/models/keepy_bare_tree_prop.glb` et `keepy_stump_prop.glb`
+  (2026-08-10). Les deux premiers `.glb` **hors `ModelSlot`** : ce sont des
+  pools d'instances recyclées dans `TrackSegment.gd`, pas des nœuds fixes.
+  Décimés à 150 tri, plats, sans texture, unlit. Voir la section « Suite »
+  du batch décor plus bas.
 
 **Décor de fond : premiers assets 2D (billboards), pas des `.glb` (2026-08-10).**
 `scripts/world/Decor.gd` rendait ses deux couches de collines en `CylinderMesh`
@@ -242,6 +248,51 @@ artistique du décor ; faire de l'arbre mort un remplaçant de `tree` ou un
 le fond que les sondes de contraste F10/F11 mesurent) ; et accepter un
 bord de piste mêlant souches `.glb` et rochers/bancs/panneaux procéduraux,
 ces trois derniers n'ayant **aucun asset fourni**.
+
+### Suite : les deux sujets viables sont INSTALLÉS (10 août 2026)
+
+Branche `claude/meshy-bare-tree-stump-pnkuqm`. Les trois choix ci-dessus
+ont été tranchés par Mathieu — textures abandonnées, `bare_tree` **remplace**
+le type `tree` (pas de 7ᵉ type), mixage `.glb`/procédural assumé. L'arbre
+feuillu et le buisson **ne sont toujours pas installés**, pour les raisons
+mesurées plus haut. Chiffres complets : `docs/MESHY_SPEC.md` §8.3 et §11.
+
+- **146 et 150 triangles**, 3,9 Ko et 3,7 Ko, `.pck` **+13 120 octets** au
+  total — contre les 64,91 Mo de `.ctex` qu'auraient coûté les sources
+  texturées. C'est le gain de la décision « pas de texture ».
+- **`KHR_materials_unlit` est AJOUTÉ PAR NOUS**, pas hérité : aucune des
+  5 sources Meshy ne le déclare (`extensionsUsed` absent partout). Ne pas
+  lire un `.glb` d'`assets/models/` comme une preuve de ce que Meshy produit.
+- **Pas un `ModelSlot`** (2ᵉ dérogation à §2, après les billboards de
+  `Decor.gd`) : un slot adresse UN nœud fixe par son nom, un prop est un
+  pool d'instances interchangeables. Le mesh est lu via le `SceneState` du
+  `PackedScene` importé — **aucun nœud n'est jamais instancié ni libéré**,
+  parce que libérer un `MeshInstance3D` en headless imprime `Parameter "m"
+  is null` sur stderr, et ce repo compare les sorties de sondes octet par
+  octet.
+- **`_PROP_KIND_WEIGHTS` est intouché**, et `_place_model` consomme
+  **exactement les 5 tirages** de `_prop_rng` que consommaient les deux
+  placements remplacés, sur **tous** les chemins. Vérifié, pas argumenté :
+  décor seedé, tous les rocher/banc/panneau/buisson visibles atterrissent à
+  une position locale, une échelle et une rotation **identiques au bit près**
+  face à `origin/main`.
+
+⚠️ **Le budget propre aux props est DÉPASSÉ, et le seuil n'a PAS été bougé.**
+`TrackPropsAudit` échoue sur 2 runs sur 5 (props 908–1 926 contre un plafond
+de 1 500 ; baseline 459–868). **La frame, elle, n'est pas affectée de façon
+mesurable** : 46 825–58 143 contre 45 567–56 570 sur `origin/main` — les deux
+plages se chevauchent, les deux dépassent déjà la cible de 50 000, et le bruit
+run-à-run (±6 000, sonde non seedée) écrase les ~700–1 000 tri ajoutés. Le
+1 500 est, de l'aveu de l'en-tête de la sonde, « ~3× le pic mesuré » de
+l'époque tout-primitives et sert à **attraper une primitive laissée à la
+tessellation par défaut** (~4 000 tri pour un rocher) — un détecteur de
+défaut, pas un plafond de perf ; la sonde *rapporte* volontairement le total
+de frame au lieu de l'asserter. **Trois sorties possibles, aucune prise ici,
+c'est la décision de Mathieu** : re-décimer à ~100 tri (mais le LOD 150 est
+celui qui a été jugé au rendu et approuvé) ; re-calibrer le budget props à
+l'ère des meshes importés (~2 500 garde la logique du 3×) ; ou récupérer les
+**16 896 tri des collectibles** (§7.2), de loin le plus gros gain, mais qui
+touche la silhouette d'un objet de gameplay visible.
 
 ## Deux défauts de mesure corrigés (F10, 9 août 2026) — deux décisions de
 ## teinte EN ATTENTE de Mathieu, aucune action code en cours
