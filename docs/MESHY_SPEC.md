@@ -1577,7 +1577,7 @@ Per-kind, from `TracksidePropCensus` (3,600 frames):
 | sign | 22 | 0.93 | 20.5 | 22 |
 | | | **12.56 props** | **1,428.2** | |
 
-`TrackPropsAudit` worst frame, five runs each side. **This probe is NOT
+`TrackPropsAudit` worst frame, **six runs each side**. **This probe is NOT
 seeded** (`--seed=` is inert in it), so single runs are not budget figures
 and only ranges mean anything:
 
@@ -1591,7 +1591,8 @@ and only ranges mean anything:
   overlap, and **both straddle the 50,000 target** -- the baseline reaches
   56,570 on its own. That the frame is already over target is pre-existing
   and dominated by the collectibles (§7.2), not by this batch.
-- **Props: 1,500 budget exceeded on 2 of 5 runs (worst 1,926).**
+- **Props: 1,500 budget exceeded on 2 of 6 runs (worst 1,926).** The six:
+  908 / 1,348 / **1,532** / **1,926** / 1,392 / 1,380.
 
 **The props budget was NOT raised to make this pass**, and `TrackPropsAudit`
 is left FAILING on the runs where it exceeds. Moving a threshold to fit a

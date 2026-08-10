@@ -278,8 +278,8 @@ mesurées plus haut. Chiffres complets : `docs/MESHY_SPEC.md` §8.3 et §11.
   face à `origin/main`.
 
 ⚠️ **Le budget propre aux props est DÉPASSÉ, et le seuil n'a PAS été bougé.**
-`TrackPropsAudit` échoue sur 2 runs sur 5 (props 908–1 926 contre un plafond
-de 1 500 ; baseline 459–868). **La frame, elle, n'est pas affectée de façon
+`TrackPropsAudit` échoue sur **2 runs sur 6** (props 908–1 926 contre un
+plafond de 1 500 ; baseline 459–868 sur 6 runs aussi). **La frame, elle, n'est pas affectée de façon
 mesurable** : 46 825–58 143 contre 45 567–56 570 sur `origin/main` — les deux
 plages se chevauchent, les deux dépassent déjà la cible de 50 000, et le bruit
 run-à-run (±6 000, sonde non seedée) écrase les ~700–1 000 tri ajoutés. Le
