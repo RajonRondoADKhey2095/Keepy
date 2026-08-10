@@ -1640,6 +1640,21 @@ reproducibility note.
   how a stale prefix there fails — quietly, and looking like a measurement.
 - **`ProbeTimeoutAudit`: PASSED** (32 probe scenes bounded) — required after
   touching anything under `scripts/dev/`.
+- **All NINE gated probes, seed 20260806, `origin/main` vs this branch:
+  BYTE-IDENTICAL stdout and same exit code** — `AntiFrustrationAudit`,
+  `ComboAudit`, `PursuerAudit`, `RushFrustrationAudit`, `ShrinkAudit`,
+  `StrikeAudit`, `PursuerFramingAudit`, `ChargerShapeProbe`,
+  `DeathModelAudit`. Eight PASS; `StrikeAudit` exits 1 on **both** trees,
+  which is the pre-existing F13 red (capture-share gap 15 points against the
+  20 required) and not something this batch moved. Expected for
+  a decor-only change, and worth having as evidence rather than inference:
+  the decor streams are separate `RandomNumberGenerator`s from the global one
+  the gameplay rolls draw on, and this batch adds no `DecorRng.make()` call,
+  so stream numbering could not shift. `PursuerFramingAudit` is included and
+  does not move — unlike the hibou swap, which legitimately changed its
+  occupancy figures, nothing here is inside the pursuer's `visual_aabb()`.
+- **`index.wasm` md5 identical** between the two trees, as it must be for a
+  change that touches no engine feature.
 - **Scale does not compound across recycles.** `_place_model` computes
   `scale_y` as `height / instance.get_aabb().size.y`, which is only correct
   if `get_aabb()` excludes the node's own scale — otherwise every
@@ -1652,8 +1667,18 @@ reproducibility note.
   no compounding.
 - **Web export**: clean, exit 0. `index.pck` **4,723,040 -> 4,736,160 bytes,
   +13,120** for both assets, built from a throwaway worktree at `origin/main`
-  against the current tree with identical templates. `index.wasm` md5
-  identical.
+  against the current tree with identical templates.
+- **Deployed to staging and fingerprinted.** CI run `31411751966` on
+  `staging` (`9247dda`) is green — export step clean, the production step
+  correctly **skipped**, the staging step successful, and
+  `keepy-staging.vercel.app` re-aliased to
+  `keepy-8qh59xph4-rajonrondoadkhey2095s-projects.vercel.app`. The CI's own
+  "Verify export output" step reports `index.pck` **4,736,160**, `index.js`
+  **331,495**, `index.wasm` **35,376,909** — byte-for-byte the sizes of the
+  local export above, so the artefact serving staging is the one that was
+  measured here. (The staging alias itself cannot be fetched from a sandbox:
+  it is behind Vercel Deployment Protection and answers 302 to
+  `vercel.com/sso-api`, so the CI log is the authoritative fingerprint.)
 
 **`PursuerContrastAudit` and `StrikeFatalContrastAudit` (F10/F11) are
 INCONCLUSIVE in this sandbox** — both hit the `ProbeWatchdog`'s 900s
