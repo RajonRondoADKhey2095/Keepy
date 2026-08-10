@@ -1680,6 +1680,58 @@ reproducibility note.
   it is behind Vercel Deployment Protection and answers 302 to
   `vercel.com/sso-api`, so the CI log is the authoritative fingerprint.)
 
+**`index.pck` is NOT byte-size-stable across repeat exports of the identical
+tree — found while re-verifying this batch after a container restart, worth
+knowing before ever using pck size as a determinism check again.** Three
+back-to-back local `--export-release "Web"` runs against the exact same
+commit produced three different `index.pck` sizes (4,736,128 / 4,761,392 /
+4,761,376 bytes, a ~25 KB band), while `index.wasm` and `index.js` were
+**byte-for-byte identical (matching md5) on every run**. CI's own build of
+the SAME commit reported a fourth value, `4,736,144`. The two new assets
+carry no texture, so none of this variance can come from them — it is
+Godot's VRAM texture compression pass (mentioned earlier in this section,
+"re-encodes the JPEG/PNG maps into a smaller GPU-native format") acting on
+the OTHER textured assets in the project (hibou, squirrel), and that
+encoder is not bit-for-bit deterministic run to run. **Consequence for any
+future verification**: `index.pck` byte count is not a valid identity
+check by itself. `index.wasm`/`index.js` identity (proves no engine/script
+change), the gated-probe byte-identical sweep (proves no gameplay change),
+and CI's OWN reported size for the build actually served (proves the
+artefact matches what was measured, not that repeat exports agree with
+each other) are what this batch relied on instead — and that is what
+should be relied on again.
+
+### 2026-08-10, later the same day -- merged to production, explicit authorisation
+
+Mathieu authorised the `staging` -> `main` merge after device validation on
+`keepy-staging.vercel.app` (two iPhone captures: bare trees and stumps
+legible at play speed; dark-mode/fog not exercised by those captures, but
+the general render was judged good). `staging` was confirmed at exactly the
+expected head (`762e83f`, nothing newer had landed) before merging.
+
+Merge commit `7d0c791` on `main`. Re-validated post-merge rather than
+assumed carried over: `AssetContractAudit` re-run on the merge commit
+itself (12/12 visuals, 0/10 colliders moved) to catch a merge that silently
+resolved wrong, which a clean `--no-ff` of a fast-forward-able history
+would not by itself rule out.
+
+CI run `31416689552` on `main`: green, `[PRODUCTION -- main]` deployed,
+`[STAGING -- staging]` correctly skipped (push was to `main`, not
+`staging`). `▲ Aliased https://keepy-ten.vercel.app` in the deploy log.
+**Fingerprint verified against the LIVE site, not just the CI log this
+time** — `keepy-ten.vercel.app` has no Deployment Protection (unlike
+staging), so it was fetched directly: its embedded `GODOT_CONFIG.fileSizes
+.index.pck` reads **4,736,144**, matching CI's own "Verify export output"
+step for this exact run to the byte, with an `etag`/`last-modified` dated
+~24s after the deploy log's own timestamp. Two independent readings of the
+same deployed artefact agree; see the non-determinism note above for why
+this specific number does NOT need to match any of this session's earlier
+local exports.
+
+Known and accepted before this merge, not reopened by it — the props
+sub-budget overage and the F10/F11 sandbox-inconclusive result both
+carried forward unchanged, per Mathieu's explicit brief for this merge.
+
 **`PursuerContrastAudit` and `StrikeFatalContrastAudit` (F10/F11) are
 INCONCLUSIVE in this sandbox** — both hit the `ProbeWatchdog`'s 900s
 wall-clock budget and exit 2 without reaching their completion check. Same
