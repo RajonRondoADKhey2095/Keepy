@@ -33,6 +33,24 @@ class_name Decor
 ## travels through the readable foreground and always reads at the same
 ## distance.
 ##
+## RECYCLE FADE (10 August 2026, decor stability fix -- see
+## scripts/dev/DecorStabilityAudit.gd, which found and closes this):
+## `spawn_z_max` keeps an instance out of the readable FOREGROUND, but it is
+## still 200-550 world units in front of the camera for all three layers --
+## comfortably inside the camera's own ~107-degree horizontal FOV at those
+## distances, which dwarfs any layer's x_range. So the teleport back to
+## `spawn_z_min` was happening in full view: an instance growing toward its
+## largest apparent size, then snapping to its smallest at the far edge, in
+## a single frame, at a fixed screen position, once per recycle, for all 13
+## instances at staggered phases -- which is what a whole run of that reads
+## as continuous shape/size instability, on top of (and unaddressed by) the
+## x_range spawn-spread fix from the previous lot (acf060c). Fixed by fading
+## `modulate.a` to 0 over the last `_FADE_FRACTION` of the band before the
+## recycle edge, and back to 1 over the first `_FADE_FRACTION` after
+## respawning at the far edge (`_fade_alpha`, applied every physics tick
+## after the recycle check) -- the teleport itself still happens on the same
+## frame it always did, it now simply happens while alpha is already 0.
+##
 ## ASSET SWAP (docs/MESHY_SPEC.md section 8.1, "no asset yet" at the time it
 ## was written): the two hill layers, plus a new farther-back mountain
 ## layer, were originally plain Godot primitives (unshaded CylinderMesh
@@ -107,6 +125,18 @@ class_name Decor
 const _MOUNTAIN_TEXTURE: Texture2D = preload("res://assets/textures/decor/mountain.png")
 const _HILL_FAR_TEXTURE: Texture2D = preload("res://assets/textures/decor/hill_far.png")
 const _HILL_NEAR_TEXTURE: Texture2D = preload("res://assets/textures/decor/hill_near.png")
+
+## Fraction of a layer's own band (spawn_z_max - spawn_z_min) spent fading
+## in/out at each edge -- see the class doc's "RECYCLE FADE" section. A
+## FRACTION of the band, not a fixed world distance: the three layers' bands
+## are different widths (130m near, 160m far/mountain), and a fixed margin
+## would eat a wildly different share of each one's own journey. 0.12 was
+## chosen to comfortably clear a single frame's worth of motion at every
+## speed this game reaches (STAGE_SPEEDS tops out at 26 m/s; even the near
+## layer's own parallax x max speed only covers a few centimetres per
+## frame, so 12% of a 130m band is hundreds of frames of headroom) while
+## still leaving the large majority of each band at full opacity.
+const _FADE_FRACTION: float = 0.12
 
 const _LAYERS: Array[Dictionary] = [
 	{
@@ -219,6 +249,11 @@ func _ready() -> void:
 			var hill := _build_hill(layer)
 			add_child(hill)
 			_place_hill(hill, layer, true)
+			# Set immediately, not left at Sprite3D's default (opaque) until
+			# the first PLAYING physics tick -- the initial spread is uniform
+			# across the WHOLE band (see _place_hill), so some instances can
+			# land inside a fade zone from the very first frame.
+			hill.modulate.a = _fade_alpha(hill.position.z, layer)
 			pool.append(hill)
 		_pools.append(pool)
 
@@ -247,6 +282,29 @@ func _physics_process(delta: float) -> void:
 			hill.position.z += move_amount
 			if hill.position.z > recycle_z:
 				_place_hill(hill, layer, false)
+			# AFTER the recycle check, using whichever z is current -- on the
+			# frame a hill teleports back to spawn_z_min this evaluates the
+			# NEW position, giving alpha 0 immediately, not a one-frame flash
+			# of the fade-out value computed against the old one. See the
+			# class doc "RECYCLE FADE".
+			hill.modulate.a = _fade_alpha(hill.position.z, layer)
+
+## Alpha for an instance at world-Z `z` within `layer`'s own band -- 0 at
+## and beyond both edges, 1 across the whole middle majority, ramping
+## linearly over `_FADE_FRACTION` of the band at each end. See the class
+## doc "RECYCLE FADE": this is what keeps the hard teleport at spawn_z_max
+## invisible instead of a mid-frustum pop, and gives a symmetrical fade-in
+## after a respawn at spawn_z_min so an instance does not simply blink into
+## existence there either.
+func _fade_alpha(z: float, layer: Dictionary) -> float:
+	var lo: float = layer["spawn_z_min"]
+	var hi: float = layer["spawn_z_max"]
+	var margin: float = (hi - lo) * _FADE_FRACTION
+	if margin <= 0.0:
+		return 1.0
+	var fade_in: float = clampf((z - lo) / margin, 0.0, 1.0)
+	var fade_out: float = clampf((hi - z) / margin, 0.0, 1.0)
+	return minf(fade_in, fade_out)
 
 ## Builds one instance's Sprite3D once. Billboard cutout, not a mesh -- see
 ## the class doc for why this replaced the cone/ModelSlot approach.
