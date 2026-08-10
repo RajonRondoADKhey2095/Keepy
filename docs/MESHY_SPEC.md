@@ -1284,3 +1284,123 @@ since nothing in `HUD.gd` was misbehaving. Note it is a **real-time** wait
 is also driven by the fixed delta and can return before the audio thread has
 done anything. Re-measured **byte-identical** to the pre-audio baseline. Any
 future probe that fires audio and quits promptly needs the same treatment.
+
+### 2026-08-10 -- Trackside decor batch, NOT INSTALLED (measured, not assumed)
+
+Six `.glb` were committed **directly to `main`** (`0502fb8`, "decor") without a
+branch or a PR -- the same binary-transfer exception already recorded for the
+Emberwing Owl. See CLAUDE.md for the exception itself; this entry is about what
+the files turned out to be.
+
+**The brief described seven files and six subjects (deciduous tree, conifer,
+rock, stump, bush, bench). None of those three counts is what arrived.**
+Measured, not read off the filenames:
+
+| file | md5 | tri | verts | PNG maps |
+|---|---|---|---|---|
+| `..._Low_Poly_Tree_0810131748_texture.glb` | `befb3ee0` | 5,230 | 5,798 | 3 (14.60 MB) |
+| `..._Winter_s_Reach_0810130613_texture.glb` | `2d260e82` | 4,486 | 6,635 | 3 (18.14 MB) |
+| `..._Low_Poly_Tree_Stump_0810131232_texture.glb` | `69f8c267` | 4,130 | 3,650 | 3 (14.37 MB) |
+| `..._Green_Cluster_0810130244_texture.glb` | `b811fdb8` | 4,945 | 4,112 | 3 (11.90 MB) |
+| `..._Green_Cluster_0810132223_generate.glb` | `442af52e` | 4,950 | 7,372 | 0 (0.25 MB) |
+| `..._Winter_s_Reach_..._texture - Copie.glb` | `2d260e82` | -- | -- | byte-identical duplicate |
+
+So: **six files, five distinct payloads, four distinct subjects.** `- Copie` is
+the same bytes as its sibling (identical md5), and `..._generate` is an
+untextured variant of the Green Cluster.
+
+**Subjects verified by offscreen render, never by filename** (§3's rule). The
+renders also settle the orientation question: all four are Y-up with the
+trunk/base at -Y, i.e. correct as authored, no `model_rotation_degrees` needed.
+
+* `Low_Poly_Tree` -- a leafy deciduous tree. Matches "arbre feuillu".
+* `Winter_s_Reach` -- **a bare, leafless winter tree, NOT a conifer.** Its
+  bounding box (1.86 x 1.54 x 1.91) is roughly cubic, which is already the
+  wrong shape for a conifer; the render confirms it.
+* `Low_Poly_Tree_Stump` -- a stump with flared roots. Matches "souche".
+* `Green_Cluster` -- a clump of foliage blobs. Matches "buisson".
+
+**There is no rock and no bench.** The procedural `rock` and `bench` kinds
+(and `sign`) have no supplied replacement, so this batch could never have been
+the wholesale swap the brief describes.
+
+#### Why none of them was installed
+
+Three independent blockers, each measured.
+
+**1. Triangles.** `TrackPropsAudit` on the untouched tree: frame **48,376 tri
+against the 50,000 target -- 1,624 of headroom**, with the props family at
+**781**. Per-kind census (`TracksidePropCensus`, new in this batch) puts
+**12.6 props on screen at once** in steady state, distributed by
+`_PROP_KIND_WEIGHTS`. Replacing the three kinds that *do* have a subject, at
+the decimator's unaided floor (tree 603, stump 423, bush 256 tri):
+
+| kind | instances | now | as .glb | delta |
+|---|---|---|---|---|
+| tree | 4.03 | 25 tri | 603 tri | +2,329 |
+| bush | 2.27 | 108 tri | 256 tri | +336 |
+| stump | 1.76 | 48 tri | 423 tri | +660 |
+
+Props go **781 -> ~3,945 tri (2.6x their 1,500 budget)** and the frame to
+**~51,540, over target**. Worst-frame extrapolation from the observed per-kind
+maxima reaches ~7,217 tri of props and ~54,800 in frame.
+
+The obvious answer -- reclaim budget from the collectibles, which draw 29,568
+tri of the 48,376 (§7.2) -- is **deliberately not taken here**: that fix
+changes the silhouette of a visible gameplay object and is already recorded as
+needing its own device review.
+
+**2. Payload.** The five distinct `.glb` import to **64.91 MB of `.ctex`**
+against a whole shipped `.pck` of **4.23 MB** -- a 15x increase, on a game
+whose payload lesson (§7, 2026-08-09) was learned by finding 35.84 MB of dead
+weight and cutting it. The single worst offender is a **4096x4096
+metallic-roughness map** on every asset, which is the *least* useful map here:
+these props are unshaded, and metallic/roughness has no effect on an unlit
+material.
+
+**3. Materials.** **Not one of the five declares `KHR_materials_unlit`**
+(`extensionsUsed` is absent entirely). All are PBR with baseColor +
+metallicRoughness + normal, and `doubleSided`. §8's rule is unlit, and §8.2's
+contrast table for these six prop kinds was swept against flat unshaded
+albedos -- a textured PBR prop is not a drop-in for a value that was chosen by
+measurement.
+
+#### What decimation can and cannot rescue
+
+`scripts/dev/decimate_decor.py` (added this batch) welds then decimates, and
+emits a flat unlit texture-free `.glb` carrying the kind's existing §8.2
+albedo. **Welding is the load-bearing step**: Meshy builds these as heaps of
+separate closed shells, and a quadric decimator cannot collapse across shells,
+so the leafy tree floors at 603 tri at any ratio. Rounding positions to
+0.6% of the longest bbox edge merges the shells and lets every subject reach
+any target.
+
+Rendered at 100 / 150 / 250 tri and read off the images, not predicted:
+
+| subject | at ~150 tri | verdict |
+|---|---|---|
+| bare tree | branch structure still legible | **best of the four** -- a silhouette the game does not currently have |
+| stump | flared roots survive | **better than** the shipping cylinder+dome |
+| bush | lumpy mass, reads as a bush | comparable to the shipping 3-blob clump |
+| leafy tree | **a featureless blob, trunk nearly gone** | **worse than** the 25-tri cone it would replace |
+
+The leafy tree fails for a structural reason, not a tuning one: its character
+is the trunk/canopy separation and the leaf colour, and the pipeline destroys
+both -- welding merges the canopy blobs, and decimation **cannot carry UVs**,
+so the texture cannot come along at any triangle count. Keeping the texture
+would mean not decimating, which is blocker 1.
+
+**Consequently: `bare_tree` and `stump` are installable at ~150 tri and fit the
+budget (props ~891 tri mean, frame ~48,486); `tree` and `bush` are not worth
+installing** -- one is worse than what it replaces, the other is a lateral move
+for +40 tri an instance.
+
+#### Left for a decision, not guessed at
+
+Installing the two viable subjects still commits three things this batch had no
+mandate to decide: dropping textures as the decor art direction; whether
+`bare_tree` replaces `tree` or becomes a seventh kind (which changes the mix
+`_PROP_KIND_WEIGHTS` produces, and therefore the decor background the F10/F11
+contrast probes measure); and whether a roadside mixing `.glb` stumps with
+procedural rocks, benches and signs is acceptable while the latter three have
+no supplied asset.

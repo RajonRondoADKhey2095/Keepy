@@ -166,6 +166,83 @@ Pillow si besoin, orientation vérifiée par rendu offscreen (jamais copiée
 d'un asset précédent), scale calculé contre le budget §5/§7, checklist
 d'acceptation §10 avant tout push.
 
+### Exception actée : Mathieu commite les `.glb` bruts DIRECTEMENT sur `main`
+
+Un `.glb` sorti de Meshy est un binaire de 12 à 27 Mo qui ne peut pas
+transiter par une session agentique — le sandbox n'a aucun moyen de le
+recevoir. Mathieu le pousse donc lui-même, depuis l'interface web GitHub,
+sans branche ni PR. **C'est une exception explicite et permanente à la
+règle « jamais de push direct sur `main` », et elle est bornée aux
+binaires d'asset bruts sous `assets_source/`** : elle ne couvre aucun
+fichier de code, de scène ou de configuration.
+
+Elle est utilisée depuis le début du pipeline, mais n'avait jamais été
+écrite ici — les trois commits qui ont amené le hibou et l'écureuil
+(`9fe13b8`, `d007512`, `9a22dab`) sont déjà sur `main` sous cette forme,
+et le batch décor du 10 août 2026 (`0502fb8`, message « decor », 6
+fichiers) suit le même chemin. Ce paragraphe régularise l'usage plutôt
+qu'il n'en crée un.
+
+Ce que l'exception implique, et qui n'est pas négociable :
+
+* **Un `.glb` sur `main` n'est PAS un asset validé.** Il est déposé, pas
+  intégré. Rien ne le référence tant qu'une session ne l'a pas mesuré et
+  installé — et `export_filter="all_resources"` fait que le seul fait de
+  le déposer l'embarquerait dans le build si `assets_source/*` n'était
+  pas dans `exclude_filter` (voir le piège payload ci-dessus).
+* **Le contenu réel est à MESURER, jamais à lire dans le nom de
+  fichier.** Le batch décor est arrivé décrit comme « 7 fichiers, 6
+  sujets (arbre feuillu, conifère, rocher, souche, buisson, banc) » ;
+  la mesure donne **6 fichiers, 5 payloads distincts, 4 sujets** — un
+  doublon byte-identique, aucun rocher, aucun banc, et le « conifère »
+  est en réalité un arbre mort sans feuilles (vérifié au rendu, §11).
+  Le décompte annoncé et le décompte réel n'ont coïncidé sur aucun des
+  trois axes.
+* **Le travail d'intégration, lui, reste sur une branche**, avec la
+  règle standard `staging` → validation device → `main`.
+
+### Batch décor du 10 août 2026 : mesuré, NON installé — 2 sujets sur 4 sont viables
+
+Aucun des `.glb` décor n'est installé, et ce n'est pas un travail laissé
+à moitié : trois blocages indépendants ont été mesurés, chiffres complets
+dans `docs/MESHY_SPEC.md` §11. **Ne pas relancer la mesure, elle a une
+réponse.**
+
+* **Triangles** — la frame est à **48 376 tri contre la cible de 50 000**,
+  soit 1 624 de marge, dont **781 pour les props**. Le census par type
+  (`TracksidePropCensus`, ajouté par ce batch) mesure **12,6 props à
+  l'écran** en régime permanent. Remplacer les 3 types qui ont un sujet,
+  au plancher du décimateur, met les props à **~3 945 tri (2,6× leur
+  budget de 1 500)** et la frame à **~51 540, au-dessus de la cible**.
+* **Payload** — les 5 `.glb` distincts importent **64,91 Mo de `.ctex`**
+  contre un `.pck` livré de **4,23 Mo**. Le pire contributeur est une
+  map metallic-roughness **4096×4096** par asset, soit précisément la map
+  qui n'a aucun effet sur un matériau unlit.
+* **Matériaux** — **aucun des 5 ne déclare `KHR_materials_unlit`**. Tous
+  sont PBR (baseColor + metallicRoughness + normal). §8 impose l'unlit, et
+  la table de contraste §8.2 des 6 types de props a été balayée contre des
+  albédos plats mesurés.
+
+Ce que la décimation sauve, jugé **sur rendu, pas sur prédiction**
+(`scripts/dev/decimate_decor.py`, soudure puis décimation, sortie plate
+unlit sans texture) : **l'arbre mort et la souche passent à ~150 tri en
+restant lisibles** — le premier apporte même une silhouette que le jeu
+n'a pas ; **le buisson est un match nul** ; **l'arbre feuillu devient un
+blob informe, moins lisible que le cône de 25 tri qu'il remplacerait.**
+Ce dernier échoue pour une raison structurelle : son caractère tient au
+couple tronc/houppier et à la couleur des feuilles, or la soudure fusionne
+le houppier et **la décimation ne peut pas transporter les UV** — donc
+aucune texture ne survit, à aucun budget de triangles.
+
+Installer les deux sujets viables tiendrait le budget (**props ~891 tri,
+frame ~48 486**) mais engage trois choix qui appartiennent à Mathieu, et
+qu'aucune mesure ne tranche : abandonner les textures comme direction
+artistique du décor ; faire de l'arbre mort un remplaçant de `tree` ou un
+7ᵉ type (ce qui change le mélange produit par `_PROP_KIND_WEIGHTS`, donc
+le fond que les sondes de contraste F10/F11 mesurent) ; et accepter un
+bord de piste mêlant souches `.glb` et rochers/bancs/panneaux procéduraux,
+ces trois derniers n'ayant **aucun asset fourni**.
+
 ## Deux défauts de mesure corrigés (F10, 9 août 2026) — deux décisions de
 ## teinte EN ATTENTE de Mathieu, aucune action code en cours
 
