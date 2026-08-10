@@ -1,7 +1,10 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/HUD.gd" id="1"]
 [ext_resource type="Shader" path="res://assets/shaders/pursuer_vignette.gdshader" id="2"]
+[ext_resource type="AudioStream" path="res://assets/audio/strike_warning.wav" id="3"]
+[ext_resource type="AudioStream" path="res://assets/audio/strike_fatal.wav" id="4"]
+[ext_resource type="AudioStream" path="res://assets/audio/pursuer_lost.wav" id="5"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_Vignette"]
 shader = ExtResource("2")
@@ -22,6 +25,18 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 color = Color(1, 1, 1, 1)
+
+[node name="StrikeWarningSfx" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("3")
+volume_db = -4.0
+
+[node name="StrikeFatalSfx" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("4")
+volume_db = -2.0
+
+[node name="PursuerLostSfx" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("5")
+volume_db = -6.0
 
 [node name="StrikeFlash" type="ColorRect" parent="."]
 anchors_preset = 15

@@ -100,11 +100,18 @@ const HALF_AIR_TIME_S: float = Keepy.JUMP_VELOCITY / Keepy.GRAVITY
 ## scale below is what stops this probe from quietly asserting the game's
 ## loudest cues do not work.
 ##
-## LISTED EXPLICITLY rather than derived from Obstacle.is_fatal, even though
-## the two sets coincide today. They coincide because the game chose to
-## telegraph its active hazards, not by definition -- and a probe that keyed
-## its player model off the very classification it is testing would be
-## marking its own homework.
+## LISTED EXPLICITLY rather than derived from Obstacle.is_fatal, because the
+## two are different questions -- "does the game shout about it" and "does it
+## kill you" -- and a probe that keyed its player model off the very
+## classification it is testing would be marking its own homework.
+##
+## THE TWO SETS USED TO COINCIDE, AND NO LONGER DO. This doc previously read
+## "even though the two sets coincide today"; the half-strike rebalance made
+## CHARGER the only fatal type while all four of these stayed loudly
+## telegraphed, so the list and is_fatal have now genuinely parted company.
+## Nothing here needed changing when that happened, which is the whole point
+## of having written it out by hand -- recorded because the anticipation paid
+## off, not because the constant moved.
 const TELEGRAPHED_TYPES: Array[int] = [
 	Obstacle.Type.ENEMY, Obstacle.Type.AIR_ENEMY,
 	Obstacle.Type.CHARGER, Obstacle.Type.STOMPER,
@@ -265,8 +272,10 @@ func _ready() -> void:
 	var seeded := DevSeed.apply()
 	print("=== STRIKE AUDIT ===")
 	print("rng                : %s" % ("seeded %d (reproducible)" % DevSeed.seed_value() if seeded else "unseeded (exploratory)"))
-	print("capacity           : %d strikes (the %dnd is the catch)" % [
-		GameState.STRIKE_CAPACITY, GameState.STRIKE_CAPACITY])
+	print("capacity           : %d half-units = %d contacts (the %dth is the catch)" % [
+		GameState.STRIKE_CAPACITY_HALF, GameState.STRIKE_CAPACITY_HALF / GameState.CONTACT_COST_HALF,
+		GameState.STRIKE_CAPACITY_HALF / GameState.CONTACT_COST_HALF])
+	print("fatal types        : %s" % _fatal_type_names())
 	print("penalty            : x%.2f speed for %.1fs, then %.1fs back to full" % [
 		GameState.STRIKE_SLOWDOWN_FACTOR, GameState.STRIKE_SLOWDOWN_HOLD_S,
 		GameState.STRIKE_SLOWDOWN_RECOVER_S])
@@ -281,6 +290,13 @@ func _ready() -> void:
 	print("")
 	GameState.strike_taken.connect(_on_strike_taken)
 	_start_phase(Phase.CONTROL)
+
+func _fatal_type_names() -> String:
+	var names := PackedStringArray()
+	for t in Obstacle.Type.values():
+		if Obstacle.is_fatal(t):
+			names.append(_type_name(t))
+	return "none" if names.is_empty() else ", ".join(names)
 
 func _non_fatal_type_names() -> String:
 	var names := PackedStringArray()
@@ -437,7 +453,7 @@ func _print_phase(label: String, r: Dictionary) -> void:
 	print("    strikes                : %d = %.1f/min  [%s]" % [
 		r["strikes"], r["strikes_per_min"], _by_type_line(r["by_type"])])
 	print("    strikes given back     : %d by time, %d by combo" % [r["cleared_time"], r["cleared_combo"]])
-	print("    deaths by CAPTURE      : %d (of which %d on the 2nd strike, %d by lead drain)" % [
+	print("    deaths by CAPTURE      : %d (of which %d on the last contact, %d by lead drain)" % [
 		r["caught"], r["captured_on_strike"], r["caught"] - r["captured_on_strike"]])
 	print("    deaths by FATAL hazard : %d" % r["collided"])
 	print("    risk events            : %d = %.1f/min" % [r["risk_events"], r["events_per_min"]])
@@ -472,8 +488,9 @@ func _report() -> void:
 		var r: Dictionary = _results[phase]
 		print("  %-14s strikes %3d  [%s]" % [
 			_short_name(phase), r["strikes"], _by_type_line(r["by_type"])])
-	print("  %-14s strikes %3d  <- the infallible bot, must be 0" % [
+	print("  %-14s strikes %3d  <- the infallible bot; held to a SHARE of the" % [
 		"CONTROL", control["strikes"]])
+	print("                                  fallible rate, not to zero (see CONTROL_MAX_RATE_SHARE)")
 	print("")
 	print("=== SAFE vs INTERMEDIATE vs RISKY ===")
 	print("  strikes/min            : safe %.1f    mid %.1f    risky %.1f" % [
@@ -549,6 +566,18 @@ func _report() -> void:
 		# criterion that rests on the profile the brief's own targets rest on.
 		if phase != Phase.INTERMEDIATE:
 			continue
+		# STILL DODGE AND JUMP ONLY, though there are now five non-fatal types
+		# rather than two, and that is a bar left where the evidence puts it
+		# rather than an oversight. At seed 20260806 the mid bot met all five
+		# (DODGE 25, JUMP 29, ENEMY 10, AIR_ENEMY 3, STOMPER 11), so requiring
+		# all five would have passed here -- but AIR_ENEMY at 3 is exactly the
+		# kind of thin count that reads 0 on another seed, and this file's own
+		# history is of criteria calibrated on one or two samples and then
+		# found to be noise (see MIN_CAPTURE_SHARE_MARGIN and the F2/F3
+		# findings in docs/PROBE_AUDIT.md). DODGE and JUMP remain the two the
+		# player MUST meet -- one forces a lane switch, the other a jump -- and
+		# the per-type breakdown above reports all five regardless. Raise this
+		# to five only with multi-seed evidence that the thin ones hold.
 		for t in [Obstacle.Type.DODGE, Obstacle.Type.JUMP]:
 			if r["by_type"][t] <= 0:
 				push_error("STRIKE AUDIT FAILED: the %s bot never took a strike from a %s -- it is not exercising that half of the non-fatal classification." % [_short_name(phase), _type_name(t)])
@@ -596,12 +625,62 @@ func _report() -> void:
 	# separates passive play from active play, and does not grade active play
 	# by degree. Asserting the three-way ordering claims a gradient the game
 	# does not have, and would fail on 2 seeds in 8 for saying so.
+	#
+	# =================================================================
+	# THIS CRITERION IS RED SINCE THE HALF-STRIKE REBALANCE, AND THE BAR WAS
+	# DELIBERATELY NOT MOVED. Do not "fix" it by lowering
+	# MIN_CAPTURE_SHARE_MARGIN -- that is precisely the false-green pattern
+	# this folder has five documented instances of (see ProbeCoverage.gd).
+	#
+	# Measured at seed 20260806, before -> after the rebalance:
+	#
+	#            capture share      mean survival      deaths (cap/fatal)
+	#   SAFE        66% -> 100%      85.9 -> 107.9s      19/10 -> 23/0
+	#   MID         27% ->  92%      54.5 -> 157.8s      12/32 -> 12/1
+	#   RISKY       25% ->   0%      74.2 -> 194.6s       8/24 ->  0/10
+	#
+	#   safe - mid   39 pts -> 8 pts   (needs 20) <- THIS is what fails
+	#   safe - risky 41 pts -> 100 pts (needs 20) <- passes by more than ever
+	#
+	# WHAT IT MEANS, stated as a question about the GAME rather than about
+	# this probe. With only the CHARGER able to kill outright, a passive bot
+	# and a mid-skill bot now die of the SAME thing (the pursuer) in almost
+	# the same proportion, so "what kills you" no longer changes when a
+	# player merely starts reacting to what is in front of them. It only
+	# changes once they play RISKY -- that profile is now the only one that
+	# dies to hazards at all, and the safe-vs-risky separation is
+	# correspondingly enormous.
+	#
+	# Whether that is acceptable is a DESIGN decision, not a probe decision:
+	# the brief this criterion encodes ("simply reacting must already change
+	# what kills you") may still be wanted, in which case the rebalance needs
+	# a lever moved -- candidates, in rough order of directness:
+	#   - STRIKE_CAPACITY_HALF 4 -> 3, so running out of resistance becomes a
+	#     reachable death again (it currently is not: 0 of 35 captures across
+	#     all three profiles landed on the capacity-th contact, every one was
+	#     a lead drain);
+	#   - recovery slowed, so a mid bot cannot bank 32 combo clears in a
+	#     phase;
+	#   - one more type returned to fatal (STOMPER is the obvious candidate:
+	#     it is the only other type with no escape but a jump).
+	# Each of those changes how the game FEELS and belongs behind a device
+	# playtest, which is why this batch measures and reports rather than
+	# picks one.
+	# =================================================================
 	if safe_share - mid_share < MIN_CAPTURE_SHARE_MARGIN:
 		push_error("STRIKE AUDIT FAILED: captures are %.0f%% of the mid-skill bot's deaths against %.0f%% of the passive bot's, a gap of %.0f points (need %.0f) -- simply reacting to what is in front of you must already change what kills you, or the pursuer is not tracking how the player plays." % [
 			mid_share * 100.0, safe_share * 100.0,
 			(safe_share - mid_share) * 100.0, MIN_CAPTURE_SHARE_MARGIN * 100.0])
 		get_tree().quit(1)
 		return
+	# NOW A THIN CRITERION, and flagged as such rather than left to surprise a
+	# future session. With CHARGER the only fatal type, the mid bot's fatal
+	# deaths fell from 32 to 1 at seed 20260806 -- it still meets both ways of
+	# losing, but by a single run. A seed where the mid bot never eats a
+	# CHARGER would report INCONCLUSIVE here, and that would be a true
+	# statement about a game in which mid-skill play essentially cannot die to
+	# a hazard any more, not a flaky probe. Left as an equality-to-zero bar on
+	# purpose: weakening it would hide exactly that.
 	if mid["caught"] <= 0 or mid["collided"] <= 0:
 		push_error("STRIKE AUDIT FAILED: the INTERMEDIATE bot died %d time(s) by capture and %d by fatal hazard -- a mid-skill player must meet BOTH ways of losing, and %s is currently the only one that ever happens." % [
 			mid["caught"], mid["collided"],
@@ -622,7 +701,7 @@ func _report() -> void:
 		push_error("STRIKE AUDIT FAILED: no strike was ever given back by combo across any profile -- that recovery path is dead code at COMBO_TO_CLEAR_STRIKE = %d." % GameState.COMBO_TO_CLEAR_STRIKE)
 		get_tree().quit(1)
 		return
-	print("PASSED: every profile stumbles into both non-fatal types and no fatal one,")
+	print("PASSED: every profile stumbles into DODGE and JUMP and into no fatal type,")
 	print("        passive play is run down (%.0f%% of its deaths are captures, against" % (safe_share * 100.0))
 	print("        %.0f%% mid and %.0f%% risky), the mid-skill profile meets both ways of" % [
 		mid_share * 100.0, risky_share * 100.0])
@@ -631,7 +710,49 @@ func _report() -> void:
 	print("        at %.0f%% of the fallible rate. Strikes come back %d times by time and" % [
 		100.0 * control["strikes_per_min"] / maxf(fallible_floor_rate, 0.0001), total_time])
 	print("        %d by combo." % total_combo)
+	await _settle_audio_before_quit()
 	get_tree().quit(0)
+
+## Lets any in-flight HUD audio cue retire before the engine tears down.
+##
+## WHY THIS PROBE NEEDS IT AND THE OTHERS DO NOT. This is the probe that fires
+## the strike cues most -- its bots stumble by design -- and its last run
+## frequently ends ON a strike, whose fatal cue is 0.55s long. From there it
+## goes _end_run -> _finish_phase -> _report -> quit() in a frame or two. A
+## playback still live at that moment leaves its AudioStreamPlaybackWAV, and
+## the AudioStreamWAV it holds a reference to, alive at ObjectDB cleanup:
+##
+##     WARNING: ObjectDB instances leaked at exit
+##     ERROR: 1 resources still in use at exit
+##
+## Those two lines (four with their `at:` lines) appended themselves to this
+## probe's stdout AFTER its own PASSED verdict, which broke the byte-identical
+## comparison this project gates asset and UI changes on while changing not one
+## measurement above them. Traced with --verbose and isolated three ways: the
+## players merely existing does not do it, and neither does removing them --
+## only calling play() and then quitting before the playback retires.
+##
+## IT IS A REAL-TIME WAIT, NOT A FRAME WAIT, and that distinction is the whole
+## reason this helper is three lines instead of one. Playbacks retire on the
+## AudioServer's own thread against the WALL CLOCK, while this probe runs under
+## --fixed-fps 60, where frames advance by a fixed delta as fast as the CPU
+## allows -- hundreds of them can elapse in a few milliseconds of real time. So
+## awaiting frames, or a SceneTreeTimer (which is also driven by that same fixed
+## delta), can both return long before the audio thread has done anything at
+## all. Only real elapsed time works, which is what OS.delay_msec buys.
+##
+## This is also why the leak was INTERMITTENT (5 runs in 6) at a fixed seed
+## rather than deterministic: it is a race against wall-clock, which the seed
+## does not control. An earlier reading of it as deterministic was drawn from
+## two agreeing samples and was simply wrong.
+##
+## Costs one second, once, after every number this probe reports has already
+## been printed -- it cannot affect a measurement even in principle.
+func _settle_audio_before_quit() -> void:
+	# A frame first, so any stop()/free() already queued this frame is applied
+	# before the wait rather than during it.
+	await get_tree().process_frame
+	OS.delay_msec(1000)
 
 ## Captures as a fraction of that profile's DEATHS -- runs that reached
 ## MAX_RUN_S are excluded from both sides, since a run that never ended did

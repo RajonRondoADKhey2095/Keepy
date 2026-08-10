@@ -17,14 +17,24 @@ extends Node
 ## fail a design that is in fact readable through its outline.
 ##
 ## THE FATAL STATE IS DRIVEN THROUGH THE REAL DOOR, same discipline
-## StrikeContrastAudit.gd insists on and for the same reason: two real
-## GameState.register_strike() calls put strikes_used at STRIKE_CAPACITY,
-## which is what _begin_capture_sequence() actually gates HUD._fatal_active
-## on (see GameState.gd and HUD.gd's _on_pursuer_caught). Setting
-## HUD._fatal_active by hand would test a state the game can produce, sure,
-## but writing GameState.strikes_used or state directly and skipping the
-## real call sites is exactly the shortcut StrikeContrastAudit.gd's own
-## class doc warns cost it a false pass once already.
+## StrikeContrastAudit.gd insists on and for the same reason:
+## STRIKE_CAPACITY_HALF real GameState.register_strike() calls put
+## strikes_used_half at the capacity, which is what
+## _begin_capture_sequence() actually gates HUD._fatal_active on (see
+## GameState.gd and HUD.gd's _on_pursuer_caught). Setting HUD._fatal_active
+## by hand would test a state the game can produce, sure, but writing
+## GameState.strikes_used_half or state directly and skipping the real call
+## sites is exactly the shortcut StrikeContrastAudit.gd's own class doc
+## warns cost it a false pass once already.
+##
+## THE COUNT OF CALLS IS DERIVED FROM THE CAPACITY, never written as a
+## literal 2. It used to be two hard-coded calls, correct while the capacity
+## was two full strikes and silently wrong the moment the half-strike
+## rebalance made it four half-units -- the probe would have stopped
+## reaching the fatal state at all and failed for a reason that has nothing
+## to do with the contrast it exists to measure. Its own error message below
+## already anticipated exactly this ("either GameState.STRIKE_CAPACITY
+## moved"); deriving the loop is what makes that anticipation unnecessary.
 ##
 ## Run it with:
 ##   xvfb-run -a godot4 --rendering-driver opengl3 \
@@ -37,11 +47,35 @@ const SETTLE_FRAMES: int = 24
 ## both of those already apply.
 const CONTRAST_FLOOR: float = 3.0
 
+## Seed for the purely visual decor streams -- background hills, ground
+## tint drift, trackside props (F10, see scripts/world/DecorRng.gd).
+##
+## This probe's "background" is real rendered pixels of the 3D world behind
+## the strike row, so decor IS its reference surface. Unseeded, that surface
+## was different on every invocation and the verdict moved with it: on three
+## runs of byte-identical code DARK/0 read 2.87 / 3.31 / 3.19 against this
+## 3.0 floor -- FAIL, PASS, PASS -- and a fourth run reported a different
+## palette failing altogether. A regression guard whose answer changes when
+## nothing changed is not one.
+##
+## This does NOT seed the global RNG the gameplay rolls draw from. DecorRng
+## hands out separate streams and never touches it, which is precisely the
+## property that lets this be seeded at all.
+##
+## SEEDING THE DECOR WAS NECESSARY AND NOT SUFFICIENT, and that is worth
+## knowing before trusting it: measured after the seed, three runs still
+## disagreed. The dominant term was HUD's own full-screen StrikeFlash, not
+## the decor -- see where it is pinned to rest in _measure_phase below. The
+## decor seed is what makes the remaining background reproducible once that
+## overlay is out of the way.
+const DECOR_SEED: int = 20260806
+
 var _game: Node3D
 var _invert_rect: ColorRect
 var _hud: CanvasLayer
 var _strike_row: Control
 var _strike_label: Label
+var _strike_flash: ColorRect
 
 var _results: Array = []
 var _failures: int = 0
@@ -53,6 +87,11 @@ func _ready() -> void:
 	print("=== STRIKE FATAL-LABEL CONTRAST AUDIT ===")
 	print("metric: WCAG relative-luminance contrast ratio on real sampled pixels")
 	print("floor : %.1f:1 (large text)" % CONTRAST_FLOOR)
+	# BEFORE instantiate(): TrackManager builds its first segments inside
+	# the add_child() below, so a decor seed set afterwards has already
+	# missed them. Printed rather than silent, same reason DevSeed prints.
+	DecorRng.force_seed(DECOR_SEED)
+	print("decor : seeded %d (hills / ground tint / props -- background only)" % DECOR_SEED)
 	print("")
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
@@ -80,6 +119,7 @@ func _ready() -> void:
 	pursuer.visible = false
 	_strike_row = _hud.get_node("MarginContainer/PursuerRow/StrikeRow")
 	_strike_label = _hud.get_node("MarginContainer/PursuerRow/StrikeRow/StrikeLabel")
+	_strike_flash = _hud.get_node("StrikeFlash")
 	call_deferred("_run")
 
 func _run() -> void:
@@ -97,28 +137,33 @@ func _freeze_world() -> void:
 	GameState.current_speed = 0.0
 	GameState.player_speed_factor = 1.0
 
-## Puts the run at exactly STRIKE_CAPACITY strikes through the real entry
-## point, which is what actually fires GameState.pursuer_caught and, through
-## it, HUD._on_pursuer_caught -- see the class doc for why this is not
-## optional. A fresh start_run() first, same as StrikeContrastAudit's own
-## _set_strikes, so no stumble-slowdown or invulnerability window survives
-## from a previous phase.
+## Puts the run at exactly STRIKE_CAPACITY_HALF half-units through the real
+## entry point, which is what actually fires GameState.pursuer_caught and,
+## through it, HUD._on_pursuer_caught -- see the class doc for why this is
+## not optional. A fresh start_run() first, same as StrikeContrastAudit's
+## own _set_strikes, so no stumble-slowdown or invulnerability window
+## survives from a previous phase.
 ##
 ## register_strike REFUSES a hit taken before STRIKE_INVULNERABLE_S has
 ## elapsed since the last credited one (see GameState.gd) -- calling it
 ## twice back to back with run_time_s untouched in between hits exactly that
 ## guard, silently swallowing the second strike (found by running this
 ## probe for real: the first attempt never armed HUD._fatal_active at all).
-## Nudging run_time_s past the window between the two calls clears it
-## without going through advance_time() -- which would also drain the
-## pursuer lead and advance the combo/dark-cycle clocks this probe has no
-## reason to touch.
+## Nudging run_time_s past the window between calls clears it without going
+## through advance_time() -- which would also drain the pursuer lead and
+## advance the combo/dark-cycle clocks this probe has no reason to touch.
+##
+## DODGE for every call: the type is reported, never branched on
+## (GameState.register_strike's own doc), and every non-fatal type costs the
+## same CONTACT_COST_HALF, so one is as good as another here. It must not be
+## a CHARGER, which would end the run outright and never credit anything.
 func _enter_fatal_state() -> void:
 	GameState.start_run()
 	_freeze_world()
-	GameState.register_strike(Obstacle.Type.DODGE)
-	GameState.run_time_s += GameState.STRIKE_INVULNERABLE_S + 0.01
-	GameState.register_strike(Obstacle.Type.DODGE)
+	for i in GameState.STRIKE_CAPACITY_HALF:
+		if i > 0:
+			GameState.run_time_s += GameState.STRIKE_INVULNERABLE_S + 0.01
+		GameState.register_strike(Obstacle.Type.DODGE)
 	# register_strike's own capacity branch moves state to CAPTURED (see
 	# GameState._begin_capture_sequence) -- re-pin it to PLAYING so the
 	# invert shader/track stay exactly as this probe's other phases left
@@ -144,7 +189,7 @@ func _measure_phase(label: String, variant_index: int) -> void:
 
 	_enter_fatal_state()
 	if not _hud._fatal_active:
-		push_error("STRIKE FATAL CONTRAST AUDIT: two real strikes did not arm HUD._fatal_active -- either GameState.STRIKE_CAPACITY moved, or the capacity branch stopped emitting pursuer_caught. This probe cannot measure a state that was never entered.")
+		push_error("STRIKE FATAL CONTRAST AUDIT: %d real contacts did not arm HUD._fatal_active -- the capacity branch has stopped emitting pursuer_caught, or the invulnerability nudge between calls no longer clears the window. This probe cannot measure a state that was never entered." % GameState.STRIKE_CAPACITY_HALF)
 		get_tree().quit(1)
 		return
 	# ONE settle first, not the full amount -- just enough for HUD._process to
@@ -167,6 +212,25 @@ func _measure_phase(label: String, variant_index: int) -> void:
 		await RenderingServer.frame_post_draw
 	_hud.set_process(false)
 	_strike_row.scale = Vector2.ONE
+	# THE STRIKE FLASH, pinned to rest for the same reason the pulse just
+	# was -- and it was doing far more damage (F10c, docs/PROBE_AUDIT.md).
+	# StrikeFlash is a FULL-SCREEN white ColorRect that HUD ramps to
+	# STRIKE_FLASH_MAX_ALPHA (0.55) over STRIKE_FLASH_DURATION_S (0.30s) on
+	# every strike -- and this probe fires two real ones immediately above.
+	# Two frames later, where HUD's own _process is stopped, the flash is
+	# still near its peak: measured 0.47-0.55 at capture, i.e. this probe's
+	# "background" was up to half a white wash, at an alpha decided by how
+	# fast the machine happened to render two frames. That is what made the
+	# verdict a coin flip even after the decor was seeded -- the whole
+	# screen shifted by ~6/255 between runs, enough to move DARK/4 and
+	# DARK/5 across the floor.
+	#
+	# Zeroed rather than waited out: the flash is a transient impact cue,
+	# while the fatal label persists for the rest of the run, so the state
+	# worth holding the label's colour to is the one it spends its life in.
+	# Same argument as the pulse above -- motion is not what a contrast
+	# floor measures.
+	_strike_flash.color.a = 0.0
 	await _settle()
 	# THE LABEL'S OWN RECT, not the row's. StrikeRow is an HBoxContainer that
 	# also lays out the two pips beside the label -- sampling the whole row's

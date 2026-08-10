@@ -8,6 +8,26 @@ export.cfg
 # Imported translations (automatically generated from CSV files)
 *.translation
 
+# Raw Meshy originals: track the .glb that was downloaded, and NOTHING that
+# Godot derives from it on first import -- the .import sidecars, and the
+# textures it extracts out of the .glb as loose _Baked_*.png / _normal.png
+# files. Those appear the moment anyone runs `godot --headless --import`,
+# are reproducible from the .glb, and are ~36 MB of PNG for the two assets
+# imported today.
+#
+# Scoped to assets_source/ on purpose: `assets/**/*.import` IS tracked and
+# must stay so (it carries the per-asset import settings CI exports
+# against). A blanket *.import rule would block the next real asset.
+#
+# Worth knowing when adding a file here: export_presets.cfg uses
+# export_filter="all_resources", which packs every resource in the project
+# whether or not a scene references it, which is why assets_source/* sits
+# in its exclude_filter -- see CLAUDE.md. Anything committed here that
+# escaped that filter would ship to every mobile player as dead payload.
+assets_source/**
+!assets_source/**/
+!assets_source/**/*.glb
+
 # Mono-specific ignores
 .mono/
 data_*/

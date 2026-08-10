@@ -180,6 +180,21 @@ measured today, 12/12 visuals change and 0/10 colliders move.
 
       godot4 --headless --path . res://scripts/dev/AssetContractAudit.tscn
 
+**The frame triangle budget is measured, not assumed.**
+`scripts/dev/TrackPropsAudit.tscn` counts every visible mesh instance in a
+live 60s run, per frame, and reports the worst one broken down by family --
+plus the two invariants the trackside decor props have to hold (they never
+overlap the 6m play area, and they add no collider to the segment body they
+are children of). Re-run it after any batch that adds geometry.
+
+      godot4 --headless --fixed-fps 60 --path . res://scripts/dev/TrackPropsAudit.tscn
+
+It currently reports the frame **over** the 50,000 target, for two reasons
+that predate the decor work and are quantified in `docs/MESHY_SPEC.md`
+§7.2: collectibles draw ~4,096 triangles each against a 300 budget (a
+`SphereMesh` left at Godot's default tessellation), and the hibou `.glb` is
+15,518 against a 8,000 cap.
+
 ## Known limitations / next steps
 
 - No audio yet (`assets/audio/` is empty).
@@ -232,26 +247,43 @@ measured today, 12/12 visuals change and 0/10 colliders move.
   away from a nearby CHARGER in time -- the one hazard exempt from the
   row grid, and therefore the one that needed new code; DODGE needs none,
   already spaced from STOMPER by the shared row-grid counter.
-- **The death model.** Not every hazard kills. The two STATIC ones
-  (`DODGE`, `JUMP` -- things that spawn on a lane and sit there) are
-  NON-FATAL: contact costs ground instead of ending the run. The four
-  ACTIVE ones (`CHARGER`, `STOMPER`, `ENEMY`, `AIR_ENEMY` -- things that
-  close on you, track your lane or land on it, each with its own
-  multi-cue telegraph) still kill on contact. `Obstacle.is_fatal` is the
-  single source of that split. A non-fatal contact is a STRIKE
-  (`GameState.register_strike`): it slows the player to
-  `STRIKE_SLOWDOWN_FACTOR` of the run's speed for a moment while the
-  pursuer keeps going, so the gap closes by the difference, and it pulls
-  the pursuer's lead down to `STRIKE_PURSUER_LEAD_CAP_S` -- under the
-  visibility threshold, so the thing behind you is always on screen
-  during a penalty. `STRIKE_CAPACITY` strikes and it has you: the second
-  one IS being caught, reported as the same `DeathCause.PURSUER` as the
-  lead draining to zero. A strike comes back after
-  `TIME_TO_CLEAR_STRIKE_S` of clean play, or immediately when the combo
-  chain reaches a multiple of `COMBO_TO_CLEAR_STRIKE` (which is
-  `COMBO_TIER_SIZE`, so it lands on the tier boundaries the combo
-  already teaches). All of it lives in one commented block at the top of
-  `GameState.gd`; the HUD draws it as two pips above the pursuer gauge.
+- **The death model.** **Only the `CHARGER` kills on contact.** It is the
+  one hazard with a forward speed of its own -- it does not wait to be
+  reached, it closes at over twice the speed of the world, and a lane
+  switch is its only escape by construction. Something that hunts you
+  down and catches you anyway has earned the run. Every other hazard
+  (`DODGE`, `JUMP`, `ENEMY`, `AIR_ENEMY`, `STOMPER`) is NON-FATAL:
+  contact costs ground instead of ending the run. `Obstacle.is_fatal` is
+  the single source of that split.
+
+  A non-fatal contact is a STRIKE (`GameState.register_strike`) worth
+  **half a strike**, uniformly, whichever of the five it was: it slows the
+  player to `STRIKE_SLOWDOWN_FACTOR` of the run's speed for a moment while
+  the pursuer keeps going, so the gap closes by the difference, and it
+  pulls the pursuer's lead down to `STRIKE_PURSUER_LEAD_CAP_S` -- under the
+  visibility threshold, so the thing behind you is always on screen during
+  a penalty. **Four contacts and it has you**: the fourth IS being caught,
+  reported as the same `DeathCause.PURSUER` as the lead draining to zero.
+
+  Internally the budget is counted in HALF-UNITS as an int
+  (`strikes_used_half` against `STRIKE_CAPACITY_HALF` = 4, each contact
+  costing `CONTACT_COST_HALF` = 1) rather than as a float `1.5` -- pricing
+  a contact at "half a strike" with float arithmetic would put `==`
+  comparisons on fractions into the file whose own header calls it the
+  fairness contract. Total budget is unchanged from the two full strikes
+  this model has always had; only its granularity moved.
+
+  Half a unit comes back after `TIME_TO_CLEAR_STRIKE_S` of clean play, or
+  immediately when the combo chain reaches a multiple of
+  `COMBO_TO_CLEAR_STRIKE` (which is `COMBO_TIER_SIZE`, so it lands on the
+  tier boundaries the combo already teaches) -- one in, one out, never a
+  whole strike for a single recovery. All of it lives in one commented
+  block at the top of `GameState.gd`; the HUD draws it as **four pips**
+  above the pursuer gauge, with a three-step alarm ladder (clear ->
+  caution at half spent -> danger at one-from-caught) escalating by pulse
+  rate, then the fatal beat in its own hue. `scripts/dev/DeathModelAudit.gd`
+  asserts the whole contract directly, hazard type by hazard type, without
+  relying on a bot happening to meet each one.
 - **World speed vs player speed.** Because a stumble slows the player
   without slowing the run, `GameState.current_speed` (the run's pace, what
   the speed table says) and `GameState.scroll_speed()` (what the player is

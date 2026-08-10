@@ -1,6 +1,8 @@
 extends Area3D
 class_name Obstacle
-## A hazard on one lane. Colliding with Keepy ends the run.
+## A hazard on one lane. Colliding with Keepy ends the run if it is a
+## CHARGER, and costs half a strike otherwise -- see is_fatal below for the
+## split and GameState's STRIKES block for what a strike buys.
 ## Pooled by TrackSegment: this node is created once and only ever
 ## shown/hidden and repositioned, never freed during gameplay.
 ##
@@ -98,7 +100,10 @@ class_name Obstacle
 ## once danger is imminent, precisely so the player can plan a jump from
 ## far away instead of reading it only in the last instant. Never shown
 ## on DODGE (never jumpable) or on an AIR_ENEMY still airborne (jumping
-## there is what kills you, see Obstacle.blocks_jump). Clearing a
+## there is exactly what makes contact, see Obstacle.blocks_jump -- since
+## the half-strike rebalance that costs half a strike rather than the run,
+## but it is still the wrong move and still the reason no marker invites
+## it). Clearing a
 ## jumpable hazard by jumping over it on its exact lane also triggers a
 ## small score bonus + a marker "pop" -- see _resolve_risk_event below and
 ## GameState.JUMP_DODGE_BONUS_VALUE.
@@ -1379,36 +1384,52 @@ static func blocks_lane_switch(type: Type) -> bool:
 	return type == Type.STOMPER
 
 ## Whether touching this hazard ENDS THE RUN, as opposed to costing the
-## player ground (see GameState.register_strike and its STRIKES block for the
-## other half). The single source of truth for the death model's split, and
-## the only thing about any of these six types this batch changed.
+## player half a strike (see GameState.register_strike and its STRIKES block
+## for the other half). The single source of truth for the death model's
+## split.
 ##
-## THE LINE IS "DOES IT ACT ON YOU", and it is drawn that way rather than by
-## difficulty because it is what the player can read without being told:
+## THE CHARGER, AND NOTHING ELSE.
 ##
-##   NON-FATAL -- DODGE and JUMP. Both are STATIC: they spawn on a lane, they
-##                sit there, they never move, never track, never commit to
-##                anything. Hitting one is a stumble -- you misread a fixed
-##                obstacle, you lose ground for it. Nothing about either is
-##                otherwise touched: DODGE is still full lane height and
-##                still unjumpable, JUMP is still cleared by a jump, both are
-##                spaced by the same rules.
-##   FATAL     -- CHARGER, STOMPER, ENEMY and AIR_ENEMY. All four ACT: they
-##                close faster than the world, glue themselves to your lane,
-##                sway and then lock onto where you are standing, or descend
-##                onto it. Each one spends seconds telegraphing that it is
-##                coming for you specifically (see their Type docs), and a
-##                hazard that hunted you and won has already earned the run.
-##                Downgrading these would also delete the escapes they exist
-##                to force -- a STOMPER you can walk into for a slowdown is
-##                no longer a hazard that only a jump escapes.
+## The line used to be "does it act on you", which put four of the six types
+## on the fatal side. That distinction is real and reads correctly, but it
+## left the pursuer -- the thing this whole death model exists to make the
+## killer -- having to win a race against four instant-death hazards before
+## it ever got a turn. It usually lost: StrikeAudit measured the mid-skill
+## profile dying 32 times to a fatal hazard against 12 captures. See
+## GameState's STRIKES block for that argument in full.
+##
+##   FATAL     -- CHARGER alone. It is the only type with a forward speed of
+##                its OWN (see CHARGER_SPEED_FACTOR): it does not wait to be
+##                reached, it CLOSES, arriving at over twice the speed of
+##                the world, and a lane switch is its only escape by
+##                CONSTRUCTION rather than by timing (its hitbox is
+##                byte-identical to DODGE's, taller than JUMP_PEAK_HEIGHT).
+##                Something that hunts you down and catches you anyway has
+##                earned the run outright.
+##   NON-FATAL -- the other five, each costing GameState.CONTACT_COST_HALF.
+##                DODGE and JUMP sit there and are misread; ENEMY,
+##                AIR_ENEMY and STOMPER track, commit and land on you, and
+##                are now stumbles too.
+##
+## WHAT DOWNGRADING THE THREE ACTIVE ONES DOES *NOT* DO, since the previous
+## version of this doc argued it would: it does not delete the escapes they
+## exist to force. A STOMPER is still escapable ONLY by a jump
+## (blocks_lane_switch above is unchanged), an AIR_ENEMY still cannot be
+## jumped while airborne, an ENEMY still locks onto the lane you are
+## standing in. What changed is the PRICE of failing those escapes, not
+## whether they exist -- and the price is still steep, because every contact
+## also yanks the pursuer's lead down to STRIKE_PURSUER_LEAD_CAP_S.
 ##
 ## Static, and taking the type rather than reading obstacle_type, so a caller
 ## that only has a type (a dev probe classifying spawns, TrackManager) can ask
 ## without an instance -- the same shape as blocks_jump/blocks_lane_switch
 ## directly above, and the reason all three sit together.
+##
+## Verified directly rather than only through bot outcomes:
+## scripts/dev/DeathModelAudit.gd enumerates Type.values() against this
+## function, so a SEVENTH type added later cannot arrive unclassified.
 static func is_fatal(type: Type) -> bool:
-	return not (type == Type.DODGE or type == Type.JUMP)
+	return type == Type.CHARGER
 
 ## THE one per-frame hook that watches this obstacle go past the player,
 ## and the ONLY place a risk event can originate from a hazard passage.
@@ -1582,14 +1603,19 @@ func _update_marker_pop(delta: float) -> void:
 	var scale := lerpf(1.0, MARKER_POP_PEAK_SCALE, clampf(t, 0.0, 1.0))
 	_jump_marker_mesh.scale = Vector3.ONE * scale
 
-## The ONE place contact is turned into a consequence, and now the one place
-## the death model's split is applied -- see is_fatal above.
+## The ONE place contact is turned into a consequence, and the one place the
+## death model's split is applied -- see is_fatal above.
 ##
 ## Area3D fires body_entered ONCE per entry, so a single hazard can only ever
 ## report one contact no matter how many frames the player spends inside it.
 ## The invulnerability window in GameState.register_strike is therefore not
 ## guarding against this instance firing repeatedly -- it guards against two
-## DIFFERENT hazards, close together, taking both strikes in one beat.
+## DIFFERENT hazards, close together, being counted twice for one beat.
+##
+## Note the ORDER: is_fatal is asked FIRST, so a CHARGER never reaches
+## register_strike at all. That is why "fatal" and "costs more" are not two
+## points on one scale -- a CHARGER has no strike cost, it has no strike
+## interaction whatsoever, and DeathModelAudit asserts exactly that.
 func _on_body_entered(body: Node3D) -> void:
 	if not (body is Keepy):
 		return

@@ -29,6 +29,7 @@ been written with it in mind.
 | STRIKES -- DODGE/JUMP become NON-FATAL | 2026-08-07 | `c0ed19e`, `96d40f3`, `6bc4464` |
 | TRACK SHRINK (a lane can be shut) | 2026-08-07 | `d40fc61`, `c96a308` |
 | ModelSlot / Hitboxes split | 2026-08-08 | `5856737`, `ab2d247` |
+| HALF-STRIKES -- only CHARGER stays fatal, capacity 4 half-units | 2026-08-09 | `claude/half-strike-rebalance` |
 
 ## The table
 
@@ -56,8 +57,11 @@ hard-coded numeric threshold calibrated on exploratory runs.
 | **JumpDodgeRewardAudit** | A timed jump over a JUMP credits the reward exactly once | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | invariant (exact equality) |
 | **LaneFillAudit** | The early game does not use the full track width | 08-06 | STOMPER, pursuer, strikes, shrink | n/a | n/a | n/a | n/a | n/a | distribution only |
 | **PacingAudit** | Palier timings, spacing and the enemy lock, measured not re-read | 08-05 | everything after 08-05 | ok | n/a | n/a | n/a | n/a | invariant |
+| **DeathModelAudit** | CHARGER alone ends a run, in one contact; every other type costs exactly one half-unit and catches on the capacity-th | 08-09 | -- | ok | ok | n/a | ok | n/a | invariant (exact equality, per type) |
 | **AssetContractAudit** | A mesh swap changes every visual and moves no collider | 08-08 | -- | n/a | n/a | n/a | n/a | n/a | invariant (exact equality) |
+| **TrackPropsAudit** | Trackside props stay outside the play area and add no collider; plus the measured frame triangle budget | 08-09 | -- | n/a | n/a | n/a | n/a | n/a | invariant x2 + **absolute** (props' own triangle share); frame total REPORTED, not asserted |
 | **ChargerShapeProbe** | The charger wedge is oriented and grounded as designed | 08-06 | -- | n/a | n/a | n/a | n/a | n/a | invariant |
+| **ProbeTimeoutAudit** | Every probe in this folder is bounded by a wall-clock timeout, including ones not written yet | 08-09 | -- | n/a | n/a | n/a | n/a | n/a | invariant (reads source; instantiates nothing) |
 | **DarkPaletteAudit** | Every hazard stays legible against the ground on every palette | 08-06 | STOMPER (`5c2b3fb`), shrink (`ec1836a`) | **broken sampling** | **broken sampling** | n/a | n/a | ok | absolute (a contrast floor, legitimately) |
 | **ComboContrastAudit** / **StrikeContrastAudit** / **StrikeFatalContrastAudit** / **PursuerContrastAudit** | The HUD reads against its real background on every palette | 08-06/07 | -- | n/a | n/a | n/a | n/a | n/a | absolute (a contrast floor, legitimately) |
 | **InvertCapture** / **PacingProbe** / **LiveRunProbe** | Diagnostic printers, no verdict | 08-05 | -- | n/a | n/a | n/a | n/a | n/a | none |
@@ -347,6 +351,60 @@ moved by the pursuer, so no number either reports changes.
 | `ChargerAudit` | never terminates | **21s**, 900s simulated, 90 charger crossings |
 | `AirEnemyLandingLaneAudit` | never terminates | **84s**, 200/200 samples, 0 mismatches |
 
+#### Re-measured 2026-08-09, and the flag-order trap that impersonates it
+
+F7 was re-run because a later hand-off described these two probes as
+**still** hanging for ~50 minutes and treated F7 as open. **They are
+fixed, and the hand-off was stale.** Measured on the current tree, seed
+20260806, on a box that runs the rest of this table ~1.4x slower than the
+one it was built on:
+
+| probe | rc | wall | verdict |
+|---|---|---|---|
+| `ChargerAudit` | **0** | **27s** | PASSED, 90 chargers, worst window 2.1000s |
+| `AirEnemyLandingLaneAudit` | **0** | **106s** | PASSED, 200/200 samples, 0 mismatches |
+
+Both carry `GameState.pursuer_enabled = false`, both terminate, both pass.
+
+**But the ~50 minutes is real, reproducible, and has nothing to do with
+the probes** — it is an *invocation* error, and this session reproduced it
+by making it:
+
+```
+WRONG   godot4 --headless --path . res://…/ChargerAudit.tscn -- --seed=N --fixed-fps 60
+RIGHT   godot4 --headless --fixed-fps 60 --path . res://…/ChargerAudit.tscn -- --seed=N
+```
+
+Everything after the bare `--` is handed to the *application* as user
+args. `--fixed-fps` placed there is silently ignored by the engine, the
+run paces at **~1x real time**, and a probe with `SIM_SECONDS = 900`
+therefore needs ~15 real minutes. `AirEnemyLandingLaneAudit` allows
+`MAX_SIM_SECONDS = 8000` — over two hours. Header printed, then nothing,
+for as long as you leave it: **the F7 symptom exactly, with no F7 cause.**
+
+What the timeout turns that into, measured — the wrong invocation now
+ends at 901s instead of never:
+
+```
+ChargerAudit INCONCLUSIVE: ran 900s of wall clock (budget 900s) …
+  GameState at the timeout: state=PLAYING  death_cause=COLLISION  run_time=899.88s
+```
+
+`state=PLAYING`, clock at **899.88 of 900 simulated seconds**. It was
+never stuck; it was 0.12 simulated seconds from finishing. That single
+line is the whole difference between "it hangs" and "you ran it wrong".
+
+The watchdog's advice was rewritten because of it. It used to point at
+the pursuer unconditionally, which is wrong in exactly this case. It now
+samples whether the run clock is *advancing* and names the likely cause:
+
+- clock **frozen** (>5s unchanged), state not `PLAYING` → the pursuer
+  hint, unchanged, plus how long the clock has been dead;
+- clock **still advancing**, state `PLAYING` → *not stuck, just slow*,
+  with the flag-order fix above spelled out.
+
+Both branches verified by construction, not by reading.
+
 #### The same root cause, with the symptom hidden: EnemyLaneAudit
 
 Found by checking which other probes share the shape. `EnemyLaneAudit`
@@ -397,6 +455,11 @@ print.
 `scripts/dev/ProbeWatchdog.gd`, armed as the first statement of every
 probe's `_ready()`.
 
+> **Amended 2026-08-09.** That sentence was true of 26 files and false of
+> the folder, and nothing could tell the difference — see "The guarantee
+> was opt-in, and had already failed" below, which closes the gap and
+> makes the claim checkable instead of asserted.
+
 F7 is the argument for it, and specifically the *shape* of F7 rather than
 its cause. A probe that hangs is indistinguishable from a probe that is
 slow, and that ambiguity is what let two dead probes be documented as
@@ -421,6 +484,67 @@ Budget: 900s, derived rather than picked -- ~4x the slowest probe that
 genuinely finishes (see the timing table below). Exit code **2**,
 deliberately not 1: the folder's convention is 0 = contract holds, 1 =
 contract violated, and a timeout is neither.
+
+### The guarantee was opt-in, and had already failed (2026-08-09)
+
+`arm()` is one line every probe has to remember, and "everyone remembers"
+is not a guarantee. It had already failed before anyone looked:
+**`DecorParallaxProbe` armed nothing at all** while the sentence at the
+top of this section said the folder was covered.
+
+Arming it would **not** have fixed it, and that is the more useful half.
+Its 2000 iterations run inside `_ready()`, so the engine never gets a
+frame to run a watchdog node in. Measured rather than argued: a blocking
+probe with `arm()` and a **5s** budget was still running when the shell
+killed it at **25s**. `PacingProbe` is further out still — a `--script`
+`SceneTree` with no scene, no autoload and no frame at all.
+
+So the mechanism gained a second entry point, not a second implementation:
+
+| shape | entry point | bounds it because |
+|---|---|---|
+| iterates frames | `ProbeWatchdog.arm(self, LABEL)` | `_process` runs between frames |
+| blocks in one call | `ProbeWatchdog.deadline(LABEL)`, loop calls `abort_if_exceeded()` | the loop is the only thing running |
+
+Both report through `ProbeWatchdog.report_inconclusive`, so a timeout
+reads identically whichever produced it — a caller must not be able to
+recognise one form and miss the other. Both exit **2**.
+
+**`ProbeTimeoutAudit.tscn` is what keeps this true for probes not written
+yet.** It scans every `.tscn` here and fails if one arms no timeout, or
+arms it after the first statement of `_ready()`; it also checks a
+`--script` probe uses a deadline, that the exemption list has no stale
+entries, and that `ProbeWatchdog`'s local copy of the `GameState` state
+names still matches the real enums. Same reasoning as `ProbeCoverage.gd`:
+the check has to run on the thing it is checking.
+
+Verified **red before green**, because a check never seen fail proves
+nothing: removing `arm()` from `StomperAudit` gives exit 1, and so does
+moving it one line down.
+
+Three defects it found in itself or its own mechanism, all fixed, all
+worth recording because each one is the same species as the findings
+above — a guarantee that reports itself present:
+
+1. It credited **itself** with using `deadline()`, having read the word
+   in its own header. Comments are now stripped before matching.
+2. It still did, from its own **string literals** — the needle it
+   searches for is a literal in its own source. Literal *contents* are
+   now blanked, keeping surrounding code so a real call still matches.
+3. `ProbeDeadline` first exited **137 (SIGKILL)** under `--script`,
+   because `Engine.get_main_loop()` is null inside a `SceneTree`'s own
+   `_init()`. A timeout that reads as a crash defeats the point of
+   `EXIT_TIMEOUT` being 2. A `SceneTree` probe now passes itself.
+
+**Nothing in `ProbeWatchdog` may name the `GameState` autoload at compile
+time.** GDScript resolves the identifier when the script is *compiled*,
+not when the line runs, so a single `GameState.run_time_s` added to
+`_process` killed `PacingProbe` outright with `Compile Error: Identifier
+not found: GameState`, cascading through `ProbeDeadline` into the probe —
+the timeout became the thing that broke the run it was meant to bound.
+The autoload is resolved by path (`/root/GameState`) instead. **The
+`--script` probe is the canary for this class of coupling: run it after
+any edit to these files**, a scene probe will not show the failure.
 
 ### F6b / F9 -- the misattributed death, and its sibling. RESOLVED (follow-up).
 
@@ -458,6 +582,261 @@ no `DevSeed.apply()`, and the same blame-anything branch.
 | JumpDodgeRewardAudit, 12 seeds | -- | **0 failures** |
 
 Still no gameplay defect: the game behaved correctly in every case measured.
+
+#### Re-measured 2026-08-09 — F6 is closed, and stderr was checked too
+
+Re-run because the same stale hand-off that reopened F7 also described
+`AirHazardAudit` as still non-deterministic at a fixed seed ("1 failure in
+11 runs, confirmed pre-existing on main"). That was the state **before**
+the missing `DevSeed.apply()` was found. 20 consecutive runs at seed
+20260806, `--fixed-fps 60`, **stdout and stderr captured to separate
+files** — interleaving them manufactures diffs that are an artifact of
+scheduling rather than of the run:
+
+| | result |
+|---|---|
+| exit codes | **20 / 20 exit 0** |
+| distinct **stdout** | **1** |
+| distinct **stderr** | **1** |
+
+Nothing varies. Both phases pass every run (5/5 lethal when ignored, 5/5
+survived when jumped).
+
+`stderr` is **not empty** — 3675 bytes, 50 lines, and byte-identical
+across all 20. It is 25 repetitions of one Godot engine error:
+
+```
+ERROR: Function blocked during in/out signal. Use set_deferred("monitoring", true/false).
+   at: set_monitoring (scene/3d/physics/area_3d.cpp:379)
+```
+
+That is the engine objecting to collision being toggled from inside a
+collision signal — which is how these probes neuter hazards. It is
+pre-existing, deterministic, and identical on `origin/main`. Noted rather
+than fixed: it is noise on a stream nothing reads, but a future session
+diffing stderr should know it is expected and not a regression. Several
+gated probes carry far more of it (`StrikeAudit` 386 kB, `PursuerAudit`
+303 kB), all byte-identical between `origin/main` and the timeout branch.
+
+### F10 -- pixel probes measuring something other than their column header. RESOLVED.
+
+Same family as F1-F5 one level down: the probe ran, the number printed, and
+the number was not of the quantity the header named. Two defects were
+diagnosed going in (a, b); a third (c) was found by measuring whether the
+fix for (b) had actually worked, and turned out to dominate it.
+
+Both probes were **red before and after** this work. Nothing here made a
+failing thing pass, and no floor was moved. What changed is that the
+numbers now describe the game.
+
+#### F10a -- PursuerContrastAudit was measuring Keepy, not the ground
+
+`_silhouette_rect()` unprojects a 180px box around the pursuer, and the
+background for it is obtained by hiding the pursuer and re-capturing. That
+box lies **entirely inside the pursuer's projected bounds**, and at the
+pinned lead **Keepy stands directly behind it**. Hiding the pursuer did not
+uncover the ground. It uncovered the player. The probe reported
+pursuer-vs-Keepy under the header `silhouette:ground`, in every palette,
+for its whole life.
+
+Measured on the same frame, hiding Keepy or not -- not reasoned about:
+
+| palette | bg, Keepy in box | bg, ground | ratio, Keepy | ratio, ground |
+|---|---|---|---|---|
+| LIGHT | `#eda488` | `#ffc7a6` | 7.39 | 9.98 |
+| DARK/0 | `#933946` | `#8c2938` | 2.44 | 2.87 |
+| DARK/1 | `#939140` | `#8c8232` | 2.08 | 2.49 |
+| DARK/2 | `#18b55c` | `#11a54f` | 1.85 | 2.20 |
+| DARK/3 | `#187fc1` | `#1170b3` | 2.03 | 2.48 |
+| DARK/4 | `#4a39c1` | `#4329b3` | 2.32 | 2.77 |
+| DARK/5 | `#933994` | `#8c2987` | 2.34 | 2.75 |
+
+Fixed by hiding `World/Keepy` in `_freeze()` -- for the **whole**
+measurement, not just the background capture. Hiding it only for the
+background swaps one wrong answer for another: the pursuer's own "darkest
+pixel" is picked from the same box in the with-everything frame, so Keepy's
+body would go on standing in for the pursuer's there.
+
+**This also explains a stale green in this document.** The 2026-08-08 Hibou
+entry in `docs/MESHY_SPEC.md` §11 records this probe passing all six dark
+palettes, worst `DARK/2` at 2.53:1, and the baseline table below still
+carries `rc 0` from that measurement. Both were readings of
+pursuer-vs-**placeholder-Keepy**. The Keepy squirrel landed the next day
+(§11, 2026-08-09), the reference surface changed underneath the probe, and
+on `origin/main` today the *unfixed* probe fails **all six** dark palettes
+(worst 1.85:1). That batch had no reason to suspect it -- its own §11 entry
+states, correctly as to the source, that `PursuerContrastAudit` has "zero
+references to Keepy". It had zero references and was sampling its pixels.
+
+#### The re-derived verdict, and it is not a pass
+
+With the reference surface corrected, the pursuer silhouette against the
+**ground**, decor pinned (see F10b), floor 2.5:1 as shipped:
+
+| palette | silhouette:ground | verdict |
+|---|---|---|
+| LIGHT | 11.02 | PASS |
+| DARK/0 | 2.98 | PASS |
+| DARK/1 | 2.66 | PASS |
+| DARK/2 | **2.37** | **FAIL** |
+| DARK/3 | 2.69 | PASS |
+| DARK/4 | 2.94 | PASS |
+| DARK/5 | 2.87 | PASS |
+
+**`DARK/2` (green) fails, and the floor was not moved to make it pass.**
+Three things about it are worth stating rather than filing as a number:
+
+1. **The 2.5 floor's own derivation is now suspect.** Its source comment
+   justifies 2.5 as "below the 2.65 worst case actually measured" -- but
+   that 2.65 was measured against Keepy. The true worst case against the
+   ground is 2.20 unseeded / 2.37 pinned. The floor was calibrated on the
+   contaminated reading.
+2. **On the same comment's own sweep, `DARK/2` cannot be fixed by
+   re-colouring the pursuer.** It puts green's ceiling -- the best contrast
+   *any* unshaded albedo can reach against that ground through the
+   invert+tint -- at 2.05. The measured 2.37 is already above that ceiling
+   (the emissive eyes are not an unshaded albedo), so the sweep is not a
+   hard bound either; but nothing about the pursuer's own colour has 0.13
+   of headroom to give. If `DARK/2` is to clear 2.5, the ground albedo or
+   `DARK_TINT_AMOUNT` is what has to move.
+3. **Deliberately not fixed here.** It is a visual/design decision, and it
+   belongs in the batch that can make the colour choice against these
+   numbers -- exactly the treatment `StrikeFatalContrastAudit`'s failure
+   already gets below. Tracked in "Still open after this batch" as
+   awaiting Mathieu's call; see also `docs/MESHY_SPEC.md` §8's note on the
+   same finding.
+
+#### What this stops measuring, recorded rather than dropped
+
+**Pursuer against Keepy is now measured by nothing.** It is a real
+legibility question -- the pursuer looms directly behind the player, so the
+two silhouettes genuinely are read against each other, and the numbers in
+the first table above are low (1.85 at worst). Losing it is a real loss,
+not a cleanup: it needs its own probe, with its own reference surface and
+its own floor. What was wrong was answering it by accident under the wrong
+label. This is the second entry asking for a Keepy-specific contrast probe;
+§11's Keepy entry is the first.
+
+#### The latent `_silhouette_rect()` offset: real, and it does not move these numbers
+
+`_silhouette_rect()` centres its box on `global_position + (0, 1.7, 0)`,
+using the `Silhouette` child's **local** y while the node carries
+`scale 0.6125` -- so the true centre is at `1.7 * 0.6125 = 1.04`. Measured,
+that is a **119px** vertical error on a 180px box (centre unprojects to
+y=1124 vs y=1244); the two boxes overlap by only a third of their height.
+
+It is left alone, as instructed, and confirmed harmless to the post-fix
+verdict -- both boxes were sampled in the same frame:
+
+| palette | ratio, assumed box | ratio, true-centre box |
+|---|---|---|
+| LIGHT | 9.98 | 9.99 |
+| DARK/0 | 2.87 | 2.88 |
+| DARK/1 | 2.49 | 2.48 |
+| DARK/2 | 2.20 | 2.18 |
+| DARK/3 | 2.48 | 2.46 |
+| DARK/4 | 2.77 | 2.78 |
+| DARK/5 | 2.75 | 2.76 |
+
+Worst difference 0.02, no verdict changes. **But note why it is harmless:**
+once Keepy is hidden the box sees near-uniform ground, so where the box
+sits stops mattering. Against the *contaminated* background the same offset
+moved the ratio by up to 0.29 (DARK/3, 2.03 vs 2.32), because box placement
+decided how much of Keepy got sampled. The fix masks this defect rather
+than repairing it -- anything that re-introduces structure into the sampled
+region will make it matter again.
+
+#### F10b -- decor was unseeded, so contrast verdicts were coin flips
+
+`TrackSegment._tint_rng`, `TrackSegment._prop_rng` and `Decor._rng` took
+their state from OS entropy at construction. The pixel probes sample real
+rendered pixels of exactly that decor as their reference surface, so their
+verdicts moved run to run with nothing in the game having changed.
+
+`StrikeFatalContrastAudit`, three runs of byte-identical code, `DARK/0`
+against its 3.0 floor: **2.87 / 3.31 / 3.19 -- FAIL, PASS, PASS.** A
+fourth, earlier run reported `DARK/5` failing, which none of these three
+do. The probe was not measuring the HUD; it was measuring the HUD plus a
+dice roll.
+
+Seeded via `scripts/world/DecorRng.gd`, a factory the three streams now
+take their RNG from. Two properties it has to hold at once:
+
+- **The streams stay separate from the global RNG.** That separation is the
+  reason those three RNGs were created as instances in the first place --
+  a decor draw on the global stream shifts every gameplay roll after it,
+  silently, with no probability having changed. `DecorRng` never calls
+  global `seed()`/`randf()`; it hands out `RandomNumberGenerator` instances
+  and either `randomize()`s them or assigns `.seed`. **Verified, not
+  asserted: all seven gated bot probes are byte-identical before and after,
+  at seed 20260806** -- plus `AssetContractAudit` and `ChargerShapeProbe`,
+  and confirmed twice, on two independent cycles. If they had moved, the
+  isolation would be broken and that would matter more than this fix.
+- **Seeding is opt-in and probe-driven, not a new default.** The shipped
+  game never calls `force_seed()`, so its decor is entropy-driven exactly
+  as before -- no loss of visual variety between sessions. It is
+  deliberately *not* wired to DevSeed's `--seed=` flag: `scripts/dev/` is
+  excluded from the export, so shipped code cannot reference `DevSeed` at
+  all, and a probe reproducible only when the caller remembers a flag is
+  the precise failure mode F6 was.
+
+`PursuerContrastAudit` is fixed outright by this: **three runs, identical
+reported table**, the gauge column included -- it previously swung
+8.73-9.60 in the light phase alone.
+
+> **One caveat on every "byte-identical" claim in this document, found
+> while checking this one.** Godot intermittently emits
+> `Function blocked during in/out signal ... set_monitoring` on stderr --
+> the pre-existing `Area3D.monitoring` race `TrackSegment.gd`'s class doc
+> already describes. It depends on machine timing, not on code: across
+> four validation cycles here it appeared in 1 of 9 runs of one probe and
+> 0 of 3 of another, on **both** sides of the change. A raw `diff` of two
+> runs of unmodified code can therefore differ by that line alone. The
+> comparisons below filter it, which is the honest comparison -- not
+> filtering it would report a code change that did not happen.
+
+`StrikeFatalContrastAudit` was **not**, and that is the useful part.
+
+#### F10c -- the decor was not the main thing wrong with StrikeFatalContrastAudit
+
+Seeded, re-run three times, it still disagreed with itself: one failing
+palette, then two, then none. The measurement said the residual was not
+random at all. Three hypotheses were tested and **discarded on evidence**
+rather than reasoned about -- the pursuer vignette (varies in the 4th
+decimal), the camera shake the probe's own two strikes arm (trauma already
+0 at capture), and the invert shader's uniforms (identical). Dumping the
+background frames and differencing them localised it: **99% of pixels
+differed, by a near-constant offset** -- a whole-screen wash, not a scene
+change.
+
+It is `HUD/StrikeFlash`: a **full-screen white ColorRect** that HUD ramps
+to `STRIKE_FLASH_MAX_ALPHA` (0.55) over `STRIKE_FLASH_DURATION_S` (0.30s)
+on every strike -- and this probe fires **two real strikes** immediately
+before it captures. Two frames later, where it stops HUD's `_process`, the
+flash is still near peak. Measured at capture: **alpha 0.47-0.55, decided
+by how fast the machine rendered two frames.**
+
+So the probe's "background" was up to **half a white wash at an
+uncontrolled opacity**, and had been since it was written. The decor was a
+real contributor but a second-order one.
+
+Pinned to rest for the capture -- the same treatment, and the same
+argument, this probe already applies to the fatal pulse: the flash is a
+transient impact cue, the fatal label persists for the rest of the run, and
+a contrast floor measures colour, not motion.
+
+**Result: the verdict is now identical on every run.** Three runs, all
+seven phases, same PASS/FAIL. Residual numeric jitter is <= 0.01 in the six
+dark phases and <= 0.17 in the light phase (6.02-6.19, against a 3.0 floor
+-- no verdict is anywhere near it). The light-phase residual is not chased
+here; it is recorded rather than rounded away.
+
+**The failing set changed, and it must not be read as a fix.** It moved
+from "DARK/0, DARK/4 or DARK/5, depending on the run" to a stable **DARK/5
+at 2.99:1** -- 0.01 under the floor. Nothing about the HUD's colours was
+touched. The old numbers were measurements of a white overlay; the new ones
+are measurements of the game. The failure is still open and still belongs
+to its own batch.
 
 ## What this batch changes
 
@@ -524,11 +903,28 @@ This table replaces the previous baseline. It is what the Meshy asset
 import should be measured against.
 
 **23 of 25 probes green.** The two that are not are covered below, and
-neither is caused by this batch.
+neither is caused by the batch this table was written for.
+
+**⚠️ SUPERSEDED IN PART BY THE HALF-STRIKE REBALANCE (2026-08-09).** The
+table below is still the reference for every probe the rebalance does not
+touch, but `StrikeAudit` is now RED at this seed and that is a finding about
+the game, not a regression in the probe -- see "The three that are not
+green" below. `DeathModelAudit` is new. Re-measured figures for the
+rebalance are in that section rather than rewritten into this table, so the
+pre-rebalance baseline stays readable.
+
+> **Superseded in part by F10 (see Findings).** `PursuerContrastAudit`'s
+> `rc 0` in this table was measured against the wrong surface and against
+> the placeholder Keepy; corrected, it is red. The count is **22 of 25**.
+> `StrikeFatalContrastAudit` was already red here, but its numbers -- and
+> which palettes they blamed -- were not reproducible. Both rows are
+> annotated below.
 
 | probe | rc | wall | note |
 |---|---|---|---|
+| ProbeTimeoutAudit | 0 | <1s | reads source only; guards the timeout guarantee itself |
 | ChargerShapeProbe | 0 | 1s | |
+| DeathModelAudit | 0 | 1s | **new 08-09** -- asserts the death-model contract directly, no bot, no RNG |
 | AssetContractAudit | 0 | 2s | the one that guards the mesh swap |
 | JumpDodgeRewardAudit | 0 | 2s | |
 | PacingAudit | 0 | 2s | measurement, no PASS/FAIL string |
@@ -547,11 +943,11 @@ neither is caused by this batch.
 | StrikeContrastAudit | 0 | 80s | |
 | AirEnemyLandingLaneAudit | 0 | 86s | **F7 fixed** -- never terminated before |
 | EnemyLaneAudit | 0 | 93s | **F7 fixed** -- 4/200 sample before |
-| PursuerContrastAudit | 0 | 96s | |
+| PursuerContrastAudit | **1** | 96s | **stale green -- see F10a.** `rc 0` here was pursuer-vs-placeholder-Keepy; corrected, `DARK/2` fails |
 | DarkPaletteAudit | 0 | 155s | |
 | PursuerAudit | 0 | 166s | gated bot probe |
 | StrikeAudit | 0 | 227s | gated bot probe; slowest that finishes |
-| **StrikeFatalContrastAudit** | **1** | 60s | **real FAILURE, pre-existing -- see below** |
+| **StrikeFatalContrastAudit** | **1** | 60s | **real FAILURE, pre-existing -- see below.** Since F10c the failure is *reproducible*: stable `DARK/5` at 2.99:1 |
 | **LiveRunProbe** | **124** | -- | needs `--quit-after`, by design -- see below |
 
 All seven gated bot probes (AntiFrustration, Combo, Pursuer,
@@ -559,7 +955,92 @@ PursuerFraming, RushFrustration, Shrink, Strike) are green
 **simultaneously at one seed**, each with its coverage ledger satisfied.
 That is the baseline the Meshy import should be measured against.
 
-### The two that are not green
+> **There are SEVEN gated bot probes, not six.** A later hand-off asked
+> for "the 6 bot probes"; the set has always been the seven named above.
+> If a future instruction says six, it is missing one — check which.
+
+**No longer true of `StrikeAudit` since the half-strike rebalance** (the
+other six still are, re-measured at the same seed) -- see the rebalance
+section above. Its coverage ledger is still satisfied; it is a criterion
+that fails, not a run that could not test one.
+
+### Re-validated against the timeout, 2026-08-09
+
+The question a timeout has to answer before it can be trusted is whether
+it perturbs the runs that *pass*. Measured the strong way — not run-to-run
+on one tree, but the **same probe on `origin/main` and on the timeout
+branch**, seed 20260806, stdout and stderr to separate files:
+
+| probe | rc | stdout | stderr |
+|---|---|---|---|
+| ChargerShapeProbe | 0 | identical | identical |
+| AssetContractAudit | 0 | identical | identical |
+| PursuerFramingAudit | 0 | identical | identical |
+| AntiFrustrationAudit | 0 | identical | identical |
+| RushFrustrationAudit | 0 | identical | identical |
+| AirHazardAudit | 0 | identical | identical |
+| ShrinkAudit | 0 | identical | identical |
+| ComboAudit | 0 | identical | identical |
+| PursuerAudit | 0 | identical | identical |
+| StrikeAudit | 0 | identical | identical |
+
+**10 / 10 byte-identical on both streams.** `PacingProbe` (the `--script`
+probe, not in the gated set) is byte-identical too. The one file that is
+not is `DecorParallaxProbe`, which differs *on `origin/main` against
+itself* — see the unseeded-probe note under "Still open".
+
+`ProbeTimeoutAudit` itself runs in **&lt;1s**: it reads source text and
+instantiates nothing, so adding it to any gated set costs nothing.
+
+### The half-strike rebalance, measured (2026-08-09)
+
+Same seed, same flags, `claude/half-strike-rebalance` vs its base. Only the
+CHARGER stays fatal; every other type costs one half-unit of a 4-half-unit
+budget. **Six of the seven gated probes stay green** (AntiFrustration, Rush,
+Shrink, Combo, Pursuer, plus AssetContract); `StrikeAudit` turns red.
+
+| profile | capture share | mean survival | deaths cap/fatal | runs |
+|---|---|---|---|---|
+| SAFE | 66% -> **100%** | 85.9 -> **107.9s** | 19/10 -> **23/0** | 29 -> 23 |
+| INTERMEDIATE | 27% -> **92%** | 54.5 -> **157.8s** | 12/32 -> **12/1** | 44 -> 16 |
+| RISKY | 25% -> **0%** | 74.2 -> **194.6s** | 8/24 -> **0/10** | 33 -> 13 |
+
+Three consequences, none of them a probe defect:
+
+1. **The death model inverted, as intended.** Mid-skill play died 73% to
+   hazards before and dies 92% to the pursuer now. That is the thing
+   GameState's STRIKES block exists to produce.
+2. **`StrikeAudit`'s safe-vs-mid criterion fails**, 8 points against a
+   required 20. Both profiles now die of the same thing, so "what kills you
+   changes once you stop playing passively" no longer holds between them --
+   it only holds once play is RISKY. **The bar was deliberately not
+   lowered**; the reasoning and the levers are written at the assertion
+   itself in `StrikeAudit.gd`.
+3. **Running out of resistance is currently not a real death.** Across all
+   three profiles, **0 of 35 captures landed on the capacity-th contact** --
+   every one was a lead drain. The capacity still matters (each contact caps
+   the pursuer's lead) but the counter itself never runs out.
+
+Two secondary effects worth knowing before reading any future run:
+
+- **Mean survival roughly tripled for the mid profile** (54.5 -> 157.8s),
+  which puts it well outside the 40-90s burst
+  `GameState.STAGE_START_S` and `StrikeAudit.MID_MISS_CHANCE` are both tuned
+  against. `MID_MISS_CHANCE` was calibrated on that window and has NOT been
+  re-tuned here.
+- **Sample sizes fell by half to two thirds** (44 -> 16 mid runs in the same
+  simulated budget) because runs last longer, and 3 of 16 mid runs now hit
+  `MAX_RUN_S` where none did before. Every share above is computed on fewer
+  deaths than the pre-rebalance figures it is compared with.
+
+### The three that are not green
+
+Post-merge count, measured on the merge itself rather than carried over:
+`PursuerContrastAudit` (F10a, `DARK/2` at 2.37:1), `StrikeAudit` (the
+half-strike rebalance, above) and `LiveRunProbe` (by design).
+**`StrikeFatalContrastAudit` is no longer among them, and that is not a
+fix -- see F11.** The prose below is written from before that flip; F11
+corrects it.
 
 **`StrikeFatalContrastAudit` fails, and it is a real finding about the
 game, not about the probe.** Two palettes leave the fatal-strike label
@@ -577,6 +1058,16 @@ refactor.
 The 3-vs-2 difference between the two runs is itself informative: this
 probe is one of the nine that never call `DevSeed.apply()`, so both runs
 were exploratory. See the F6 note on that list.
+
+> **F10 corrects the paragraph above, and the count above it.** The
+> run-to-run difference was NOT the unseeded global stream -- that stream
+> feeds gameplay rolls, and this probe's world is frozen. It was HUD's
+> full-screen `StrikeFlash`, frozen mid-decay at an alpha set by machine
+> speed (0.47-0.55), with unseeded decor as a smaller second term. Both
+> are fixed in F10b/F10c, and the failure is now a stable **one** palette:
+> `DARK/5` at 2.99:1. Being pre-existing and a design question, it is
+> still deliberately not fixed -- see "Still open after this batch" for
+> the pending design call.
 
 **`LiveRunProbe` does not self-terminate, and that is by design.** Its
 own header documents the invocation as `--quit-after 25400`; it is a
@@ -606,18 +1097,563 @@ something the probe never said.
 
 ### Before running any of this from a fresh checkout
 
+**Get the flag order right, or you will measure nothing and conclude a
+probe hangs.** Engine flags go BEFORE the bare `--`; user args go after:
+
+```
+godot4 --headless --fixed-fps 60 --path . res://scripts/dev/X.tscn -- --seed=20260806
+        └────── engine ──────┘                                        └── app ──┘
+```
+
+`--fixed-fps` after the `--` is handed to the app and ignored, the run
+paces at ~1x real time, and every long probe looks like the F7 hang. This
+cost a session's first hour before the timeout made it self-diagnosing —
+see the flag-order trap under F7. `--seed=` is the opposite: it is read by
+`DevSeed` from the app args and must come **after** the `--`.
+
 `godot4 --headless --path . --import` must run once. `ProbeWatchdog`
 declares a `class_name` and `.godot/` is gitignored, so without the import
 step every probe fails to compile and hangs producing no output -- which
 is, with some irony, exactly the symptom the watchdog exists to make
 unmistakable. CI already imports before running anything.
 
+### F11 -- the 4-pip ladder moved the fatal label, and StrikeFatalContrastAudit went green without anyone changing a colour
+
+Measured while merging `claude/half-strike-rebalance` into `staging`, and
+recorded because the alternative was reporting a false green.
+
+On the merge, `StrikeFatalContrastAudit` **passes**: `DARK/5` reads
+**3.00:1** against its 3.0 floor, where the same probe on `staging`
+immediately before the merge reads the documented **2.99:1** and fails.
+
+Attributed, not assumed. The pre-merge tree was re-run on the same machine,
+same seed, same flags, and reproduced 2.99:1 exactly -- so the flip is
+caused by the merge, not by this machine. What moved:
+
+| palette | background, pre-merge | background, post-merge |
+|---|---|---|
+| LIGHT | (0.69, 0.51, 0.47) | (0.69, 0.50, 0.46) |
+| DARK/2 | (0.19, 0.51, 0.32) | (0.20, 0.50, 0.32) |
+| DARK/5 | (0.48, 0.23, 0.46) | (0.48, 0.22, 0.45) |
+
+**The label's own fill is byte-identical in both** -- `(1.00, 0.46, 0.46)`
+on every dark palette. The *background* shifted, slightly, on all seven.
+
+The mechanism is the half-strike HUD, not the half-strike death model.
+`StrikeRow` is an `HBoxContainer`, and the rebalance grows its ladder from
+two pips to four (`Pip0..Pip3` in `HUD.tscn`, one per half-unit of
+`STRIKE_CAPACITY_HALF`). Two more pips widen the row, so the label sitting
+beside them **moves** -- and this probe samples the label's own rect
+deliberately, for the reason written at that line. A sample box a few
+pixels along lands on a different patch of the rendered world, and DARK/5's
+ratio crossed the floor by 0.01.
+
+So the green is a **coincidence of layout**, not a legibility fix. Nobody
+chose a colour; the defect F10c made reproducible is still there, now
+resting exactly ON the floor instead of 0.01 under it. Reading this run as
+"the fatal-label defect is resolved" would be the same false green this
+whole document exists to catch, arrived at from a new direction.
+
+Two consequences worth stating:
+
+- **The design call is still Mathieu's and still open.** A defect that
+  passes at 3.00:1 by two pixels of layout has no margin at all.
+- **This probe's verdict is sensitive to HUD layout, not only to colour.**
+  That is a real limit of sampling the label's rect against the live 3D
+  world: any future change to the strike row can move the number without
+  touching a palette. Worth knowing before the next HUD edit is read as a
+  contrast regression -- or a contrast fix.
+
+Not fixed here. Nothing about the merge is wrong, and neither probe nor
+palette was touched to produce it.
+
+### F12 -- "le poursuivant ne recule jamais". Measured: it does, but nothing the player can see says so
+
+Playtest report from `staging`: the pursuer never backs off, even when the
+player strings combos. Diagnosed rather than tuned -- the fix is Mathieu's
+call, and the point of this entry is that the report turns out to describe
+**two different defects**, with different answers, that a single "make the
+reward bigger" change would address only one of.
+
+New probe: `scripts/dev/PursuerPushbackAudit.tscn`. It reports and does not
+gate -- both phases are descriptions of current behaviour, not contracts.
+It deliberately uses **no bot**: a bot meets a risk event by chance, so its
+event rate is an outcome of the seed and the track. The question here is
+"hold the cadence fixed and watch the lead", so the cadence has to be the
+input. `StrikeAudit`'s profiles cannot hold it fixed and are the wrong
+instrument for this one question.
+
+**The verdict, stated plainly: (b), with a milder form of (a) underneath it.
+NOT (c).** The visual tracks `pursuer_lead_s` correctly, every frame.
+
+#### The visual DOES recede -- and carries almost no information while doing it
+
+`Pursuer._process` recomputes both `position.z` and `scale` from the live
+lead every frame, so there is no stale-view bug. Measured screen occupancy
+(the same AABB unprojection `PursuerFramingAudit` budgets against):
+
+| lead | pos.z | scale | screen occupancy |
+|---|---|---|---|
+| 10.0s (threshold) | 3.00 | 0.400 | **19.93%** |
+| 8.0s | 2.60 | 0.450 | 23.88% |
+| 6.0s | 2.20 | 0.500 | 24.49% |
+| 4.0s (a stumble's cap) | 1.80 | 0.550 | 25.01% |
+| 2.0s | 1.40 | 0.600 | 25.44% |
+| 0.0s (capture) | 1.00 | 0.650 | **25.82%** |
+
+Two things this table says that the constants alone do not:
+
+- **The cue is badly distributed.** Across the stretch a pushing player
+  actually traverses -- lead 4 (where a stumble drops them) up to lead 8 --
+  occupancy moves 25.01% -> 23.88%. That is **1.1 percentage points of
+  screen height, -4.5% relative**, spread over the 40-75s the same probe
+  measures that push taking (below). Nearly the whole of the visible band's
+  dynamic range sits in the last two seconds of lead, 8 -> 10.
+- **The end of it is a hard cut.** At lead > 10 the ordinary branch runs
+  `visible = false`: **19.93% -> 0% in one frame**, no fade and no recede.
+  The intro sighting has a smoothstepped exit (`INTRO_EASE_IN_FRACTION`'s
+  own doc argues at length for why); the real sight-loss has none.
+
+`GameState.pursuer_lost_sight` -- the signal the PURSUER block's own doc
+calls the pair to `pursuer_became_visible`, "so a listener never has to
+poll" -- **has zero listeners**. It is declared, it is emitted, and nothing
+in the game connects to it. `Pursuer.gd` and `HUD.gd` both connect only to
+`pursuer_became_visible`. So the single moment the mechanic exists to
+deliver has no cue of any kind attached to it: no fade, no sound, no HUD
+beat. The player is told the pursuer arrived and never told it left.
+
+#### The push-off DOES happen -- on a timescale far longer than perception
+
+Scenario: one stumble (lead clamped to `STRIKE_PURSUER_LEAD_CAP_S` = 4.0s),
+then a steady risk-event cadence with **no further contacts** -- the most
+favourable case a real player could have. Rates are ones this repo has
+already measured, plus one above anything measured here so a negative
+result could not be dismissed as "he was playing better than the bots":
+
+| events/min | source | net lead/event | time to 1st push-off | crossings / 300s | visible % |
+|---|---|---|---|---|---|
+| 1.6 | ComboAudit SAFE | +0.000s | **never** (caught) | 0 | 100.0% |
+| 13.5 | PursuerAudit INTERMEDIATE | +0.164s | **75.6s** | 4 | 27.6% |
+| 16.7 | ComboAudit RISKY | +0.133s | **39.5s** | 3 | 14.4% |
+| 24.0 | above anything measured | +0.092s | **20.0s** | 2 | 6.8% |
+
+So `pursuer_lost_sight` is **not dead code** -- it fires 2-4 times per 300s
+at mid-to-high cadence. But from a stumble, a mid-skill player must sustain
+clean, risk-taking play for **more than a minute** before the silhouette
+leaves, and the safe player never gets there at all.
+
+Put the two halves together and the report is exactly right as an
+experience, while being wrong as a mechanism: over those 75 seconds the
+only feedback available is ~1 percentage point of screen height. Nothing
+marks progress, so there is no way to learn that the combos are working --
+and then the payoff, when it lands, is an object disappearing without a
+sound. Cause and effect are more than a minute apart with nothing in
+between, which is the same legibility failure the STRIKES block's own
+header diagnoses for the pre-strike pursuer ("an absence has no instant, no
+sound and no frame the player can point at").
+
+Note the counter-intuitive column: **higher cadence gives FEWER crossings.**
+That is not noise -- a faster push crosses out of sight sooner and then
+pins against `PURSUER_MAX_LEAD_S`, so it makes fewer round trips. The
+falling `net lead/event` at high cadence is the same ceiling: marginal
+events at 15.0s buy nothing.
+
+#### Proposed, NOT implemented -- Mathieu's call
+
+> **UPDATE (2026-08-10): option 1 is IMPLEMENTED -- see F14 below.** Options
+> 2 and 3 remain untouched and remain Mathieu's call; so do the reward and
+> drain constants, the `FAR_Z`/`CAUGHT_Z` band, and `STRIKE_CAPACITY_HALF`.
+> Everything measured in the two phases above still stands unchanged: F14
+> re-ran PHASE CADENCE and it is byte-identical, so the *timescale* half of
+> this finding -- 75.6s of clean mid-skill play to earn one push-off -- is
+> exactly as reported here. The cue does not make the push shorter. It makes
+> the moment it finally lands into an event.
+
+Ordered by how directly each addresses what was measured, rather than by
+size. The first is the only one that addresses (b), which is the dominant
+half:
+
+1. **Give the sight-loss moment a cue at all.** `pursuer_lost_sight` already
+   fires at exactly the right instant and already has no listeners, so this
+   costs no new state and no new detection -- a receding fade (the intro's
+   `_smoothstep01` exit is already written and argued for) instead of
+   `visible = false`, and/or a HUD beat. This is the cheapest change on the
+   list and the one that turns an invisible payoff into an event.
+2. **Redistribute the visual band.** Most of the occupancy range currently
+   sits in lead 8-10, i.e. the two seconds a pushing player crosses last and
+   fastest. Widening `FAR_Z`/`CAUGHT_Z` (or making `t` non-linear in the
+   lead) would put more of the cue where the player actually spends the
+   push. Note the geometry trap before touching these: `CAUGHT_Z` (1.0) is
+   *further from the camera* (7.94) than `FAR_Z` (3.0) is (6.56) -- closing
+   in moves the owl AWAY from the lens, and only the scale ramp makes it
+   grow. The two constants fight each other by construction.
+3. **Shorten the time constant** -- raise `PURSUER_RISK_REWARD_S`, or raise
+   `STRIKE_PURSUER_LEAD_CAP_S` so a stumble does not drop the player a full
+   6.0s below the threshold. This is the "(a)" lever. It is listed last on
+   purpose: it makes the push shorter without making it any more legible,
+   and `STRIKE_PURSUER_LEAD_CAP_S`'s own doc argues hard for 4.0 against the
+   7.0 an earlier batch tried.
+
+Each changes how the game feels and belongs behind a device playtest, which
+is why this batch measures and reports rather than picks one.
+
+### F13 -- resistance capacity 4 -> 2, measured. Resistance becomes a real death again; the discrimination gap improves but still fails
+
+Mathieu's call, taken against `StrikeAudit`'s own suggestion. That probe
+names `STRIKE_CAPACITY_HALF` as candidate lever #1 in its source, at 4 -> 3;
+2 is what was chosen. Same seed (20260806), same flags, `--fixed-fps 60`
+before `--path`.
+
+#### What the change was for, and whether it worked
+
+The bar `StrikeAudit` gates on is `safe_share - mid_share >= 20` points.
+It has been red since the half-strike rebalance.
+
+| | capacity 4 | capacity 2 |
+|---|---|---|
+| SAFE | 23 runs, 107.9s, **23** captures (0 on last contact), 0 fatal | 23 runs, 107.9s, **23** captures (0 on last contact), 0 fatal |
+| INTERMEDIATE | 16 runs, 157.8s, 12 captures (**0** on last contact), 1 fatal | 33 runs, **78.2s**, 28 captures (**23** on last contact), 5 fatal |
+| RISKY | 13 runs, 194.6s, 0 captures, 10 fatal | 19 runs, **127.3s**, 7 captures (**7** on last contact), 10 fatal |
+| capture share | safe 100% / mid 92% / risky 0% | safe 100% / mid **85%** / risky **41%** |
+| **safe - mid gap** | **8 pts (need 20) -- FAIL** | **15 pts (need 20) -- still FAIL** |
+| safe - risky gap | 100 pts | 59 pts |
+| captures landing on the capacity-th contact, all profiles | **0 of 35** | **30 of 58** |
+
+Read the last row first, because it is the one that changed in kind rather
+than in degree. At capacity 4 the resistance budget was **decorative**: not
+one capture in the whole audit was caused by running out of it -- every
+single one was a lead drain, which is what made the constant the probe's own
+first-named lever. At capacity 2 it decides **30 of 58 captures**. The
+mechanism the whole STRIKES block exists to create now actually fires.
+
+**The gated criterion still fails, and the bar was not moved.** 8 -> 15
+points is real movement in the intended direction and it is not enough; 20
+is the bar. Lowering it here would be the false-green pattern this document
+has five documented instances of. `StrikeAudit` stays red, for a reason that
+is now different from the one it was red for: not "resistance never kills
+anyone" but "a passive and a mid-skill player still die of the same thing
+too often".
+
+Two other findings worth stating plainly, because they are what a device
+playtest most needs to know:
+
+- **Mid-skill survival roughly halved**, 157.8s -> 78.2s. This is a
+  substantially harder game for the profile it was tuned for, not a
+  marginal adjustment.
+- **RISKY can now be caught at all** (0% -> 41% of its deaths). At capacity
+  4 that profile was structurally immune to the pursuer.
+
+Both recovery paths stay reachable and neither dominates -- 20 clears by
+time against 17 by combo for the mid bot, 5 against 29 for the risky one
+(the same shape as at capacity 4, at lower absolute counts because runs are
+shorter).
+
+#### A probe defect the change exposed: DeathModelAudit's recovery setup
+
+`DeathModelAudit` phase 5 set its recovery test up with **two hard-coded
+`_contact()` calls**. Correct at capacity 4 (2 spent of 4, run alive) and
+silently wrong at capacity 2, where those same two contacts **are** the
+capture. First run after the change:
+
+```
+  OK    time gave back 1 half-unit after 14.0s (2 -> 1)
+  FAIL  a 3-event chain gave back 1 half-unit (2 -> 2)
+```
+
+Note the shape of that failure -- it is the interesting part. The combo leg
+correctly reported nothing, because `register_risk_event` early-outs on
+`state != PLAYING`. The **time leg passed anyway**, because
+`_update_strikes` does not test the state, so the clock kept handing
+resistance back to a run that had already ended. A setup that ends the run
+cannot test recovery, and one that half-passes while doing so is worse than
+one that fails outright.
+
+Fixed in the probe, not in the game: the setup now spends
+`STRIKE_CAPACITY_HALF - 1` contacts, so it is one short of capture at any
+capacity. **Nothing shipped calls `advance_time()` outside PLAYING** (see
+`Game.gd`), so the asymmetry is reachable only by a probe driving the clock
+by hand and is not a defect in `GameState`.
+
+#### F11 again, in the other direction, and this time the FAIL is the true reading
+
+`StrikeFatalContrastAudit` **flips from PASS to FAIL** on this change, and
+**no colour moved**: the label fill is byte-identical `(1.00, 0.46, 0.46)`
+on every dark palette, before and after.
+
+| palette | background, 4 pips | background, 2 pips |
+|---|---|---|
+| LIGHT | (0.69, 0.50, 0.46) | (0.69, 0.51, 0.47) |
+| DARK/2 | (0.20, 0.50, 0.32) | (0.19, 0.51, 0.32) |
+| DARK/3 | (0.23, 0.39, 0.55) | (0.22, 0.40, 0.57) |
+| DARK/5 | (0.48, 0.22, 0.45) | (0.48, 0.23, 0.46) |
+
+`DARK/5`: **3.01:1 PASS -> 2.99:1 FAIL**. The mechanism is exactly F11's,
+run backwards. `StrikeRow` is an `HBoxContainer` with `alignment = 1` inside
+a `SHRINK_CENTER` parent; each pip is 34px wide with 12px separation, so
+dropping Pip2 and Pip3 narrows the row by `2 * (34 + 12) = 92px` and the
+label beside them **shifts 46px right**. This probe samples the label's own
+rect against the live 3D world, so 46px lands it on a different patch of
+ground and all seven backgrounds move.
+
+**2.99:1 is the number F10c made reproducible and F11 recorded as the true
+reading on `staging` before the half-strike merge.** So this is not a new
+regression introduced here -- it is the pre-existing fatal-label defect
+becoming visible again now that the four-pip layout coincidence that masked
+it is gone. The 3.00/3.01 PASS was the false green; this FAIL is the honest
+number. The design call remains Mathieu's and remains open, exactly as F11
+left it.
+
+This is the second time a pip-count change has moved this verdict without
+anyone touching a palette. Treat `StrikeFatalContrastAudit` as **sensitive
+to strike-row layout, not only to colour** -- that is now measured twice, in
+both directions, and should be assumed for any future HUD edit.
+
+#### Everything else
+
+| probe | rc before | rc after | stdout |
+|---|---|---|---|
+| PursuerFramingAudit | 0 | 0 | identical |
+| AntiFrustrationAudit | 0 | 0 | identical |
+| RushFrustrationAudit | 0 | 0 | identical |
+| PursuerAudit | 0 | 0 | identical |
+| AssetContractAudit | 0 | 0 | identical |
+| ChargerShapeProbe | 0 | 0 | identical |
+| ShrinkAudit | 0 | 0 | **differs, still green** |
+| ComboAudit | 0 | 0 | **differs, still green** |
+| DeathModelAudit | 0 | 0 | differs (capacity, and the fix above) |
+| StrikeAudit | 1 | 1 | differs -- the point of the batch |
+| PursuerContrastAudit | 1 | 1 | contrast table **byte-identical** |
+| StrikeFatalContrastAudit | **0** | **1** | see F11 above |
+
+`ShrinkAudit` and `ComboAudit` are green but **no longer byte-identical**,
+and that is expected rather than alarming: their bots now die at 2 contacts
+instead of 4, so a fixed phase budget contains more, shorter runs. ShrinkAudit's
+RISKY phase goes 3 runs -> 4; ComboAudit's goes 11 runs at 141.6s -> 12 at
+130.9s, with the effective multiplier drifting x2.29 -> x2.12. No criterion
+moves. Worth recording because the half-strike rebalance left six of seven
+gated probes byte-identical, and this change leaves four.
+
+`PursuerContrastAudit` fails identically before and after (`DARK/2` at
+2.37:1) -- the pre-existing regression `CLAUDE.md` already tracks, untouched
+by this batch. Its measured table is byte-identical; the only textual
+difference between the two runs is a transient engine warning about
+`Area3D` monitoring.
+
+> **Method note.** The first `PursuerContrastAudit` baseline collected for
+> this batch was **discarded as contaminated** and re-run from a clean
+> `git worktree` at `origin/staging`. A `pkill -f run_probes.sh` matched its
+> own wrapper shell and died before its `rm` ran, leaving an orphaned probe
+> interleaving output into the file. The contamination was obvious
+> (an `INCONCLUSIVE` watchdog block sitting above a complete verdict table),
+> but it is recorded because a *less* obvious instance of the same accident
+> would read as a real measurement.
+
+### F14 -- the sight-loss moment has a cue. F12 option 1, implemented and measured
+
+`GameState.pursuer_lost_sight` now has a listener. That sentence is the
+whole of the change: the signal, its edge detection, the reward and drain
+constants, the visible band and `STRIKE_CAPACITY_HALF` are all untouched --
+F12's other two options and F13's capacity are explicitly out of this batch.
+
+**What the player gets, at the instant the lead crosses back above
+`PURSUER_VISIBLE_LEAD_S`:**
+
+- **A sound that is not a strike cue.** `assets/audio/pursuer_lost.wav`,
+  the project's third .wav, played from a third `AudioStreamPlayer` on the
+  HUD -- same pattern as the two strike cues, no new audio service. It is
+  separated from them by CHARACTER, not by volume, which is the only
+  separation that survives a phone speaker: both strike cues are hard-attack
+  percussive decays (measured on the committed files: ~712 Hz decaying over
+  0.20 s; ~275 -> ~117 Hz over 0.55 s). This one is a **soft-attack pair of
+  RISING sine notes** -- A4 then E5 a fifth above it, 0.62 s, faint octave
+  shimmer, no transient at all. 22050 Hz mono 16-bit like its siblings,
+  peaked at 0.62 of full scale where they sit at 0.72, played at -6 dB
+  against their -4/-2. A cue that resolves upward out of a soft attack
+  cannot be mistaken for an impact, which is the point: the player must
+  never hear this and check their pips.
+- **A release on the pursuer telegraph.** `PursuerLabel` and `GaugeFill`
+  dim to alpha 0.22 over 0.198 s and ease back to full over the remaining
+  0.702 s. Fast down, slow back -- the asymmetry is what makes it read as a
+  release rather than a blink. Not zero alpha: the gauge is permanent
+  information and has to stay readable mid-beat. And deliberately not the
+  arrival reaction reversed -- arrival is a scale POP on the same label, so
+  the two are different properties moving in opposite directions.
+
+#### The F11 check, done explicitly, and what could not be measured here
+
+F11 has now flipped `StrikeFatalContrastAudit`'s verdict **twice** without
+anyone touching a colour, both times because a strike-row layout change
+moved the sampled label a few pixels. So "it is only audio and a fade" is
+not an argument, and was not used as one.
+
+**Structurally, this batch cannot move a HUD pixel.** The audio player is a
+non-`Control` node on the `CanvasLayer` root -- no layout, no draw order,
+and the `Control` siblings after it keep their exact relative order. The
+visual beat is applied through `modulate`, a colour multiply that cannot
+resize or reposition anything. No node was added to `PursuerRow`, which is
+the container whose height the strike row's position depends on.
+
+**Measured, not just argued.** A throwaway probe instantiated `Game.tscn`
+on each tree and printed the screen rects of every node in the pursuer
+column. **Byte-identical before and after**, including the one that matters:
+
+```
+StrikeRow/StrikeLabel   pos=(430.0000, 1722.0000)  size=(128.0000, 66.0000)
+PursuerRow              pos=(330.0000, 1722.0000)  size=(420.0000, 158.0000)
+GaugeTrack              pos=(330.0000, 1862.0000)  size=(420.0000,  18.0000)
+```
+
+That is a direct measurement of the exact quantity F11 blames -- where the
+sampled pixels are -- and it did not move.
+
+> ⚠️ **`StrikeFatalContrastAudit` and `PursuerContrastAudit` themselves are
+> INCONCLUSIVE in the sandbox this batch was developed in, BEFORE the change
+> as well as after, and no contrast number below is claimed.** Both hit the
+> 900 s `ProbeWatchdog` budget and exit 2. This is an environment limit, not
+> a probe defect and not a regression: re-run alone on a completely idle
+> machine, `StrikeFatalContrastAudit` burned **15 m 0.5 s real / 15 m 3.4 s
+> user** -- CPU-bound the entire time -- against the ~60 s this document
+> records for it elsewhere. The sandbox has no GPU and renders through
+> `llvmpipe` under `xvfb`; these are the only two probes here that capture
+> real frames in bulk, and they are the only two that fail this way. Both
+> trees produce the same INCONCLUSIVE, so no verdict flip is being hidden
+> by the gap -- but the 2.99:1 `DARK/5` reading is **neither confirmed nor
+> refuted here**, and the tint decision it belongs to is unchanged and still
+> Mathieu's. Note the watchdog's own hint is a red herring for these two
+> ("the run clock has been FROZEN"): they freeze it on purpose
+> (`_freeze_world` sets `current_speed = 0.0`), so that symptom is their
+> normal state and not the cause.
+
+#### Everything else, measured at seed 20260806, `--fixed-fps 60`
+
+**11 / 11 byte-identical on BOTH streams, same exit code**, before and after:
+
+| probe | rc | stdout | stderr |
+|---|---|---|---|
+| AntiFrustrationAudit | 0 | identical | identical |
+| ComboAudit | 0 | identical | identical |
+| PursuerAudit | 0 | identical | identical |
+| PursuerFramingAudit | 0 | identical | identical |
+| RushFrustrationAudit | 0 | identical | identical |
+| ShrinkAudit | 0 | identical | identical |
+| **StrikeAudit** | **1** | identical | identical |
+| AssetContractAudit | 0 | identical | identical |
+| ChargerShapeProbe | 0 | identical | identical |
+| DeathModelAudit | 0 | identical | identical |
+| ProbeTimeoutAudit | 0 | identical | identical |
+
+`StrikeAudit` reproduces F13's capacity-2 numbers exactly -- **safe 100 % /
+mid 85 % / risky 41 %, a 15-point gap against the 20 required**, still red,
+mean survival 107.9 / 78.2 / 127.3 s. That is the result this batch wanted:
+a cue that does not touch the death model must not move the death model, and
+a byte-for-byte match is a stronger statement of that than a matching
+verdict would be. **The bar was not touched.** `StrikeAudit` stays red for
+exactly the reason F13 gives.
+
+#### Verifying the cue fires -- and fires ONCE
+
+`PursuerPushbackAudit` gains a third phase, **PHASE CUE**, and with it the
+probe stops being purely descriptive: PHASE VISUAL and PHASE CADENCE still
+report and assert nothing, PHASE CUE **gates**. The defect it guards is
+silent by nature -- a lost connection makes no error and looks like nothing
+-- which is exactly the kind that needs a probe rather than a reviewer.
+
+It drives the real `GameState` and the real `HUD.tscn`, never a stub, and
+checks three separate claims, three crossings deep (one crossing would pass
+a one-shot latch that then never fires again):
+
+```
+  OK    HUD connected to pursuer_lost_sight exactly once (found 1)
+  OK    crossing 1: sighting cleared the release beat (cancel-on-resight)
+  OK    crossing 1: lost_sight fired exactly once (1)
+  OK    crossing 1: HUD armed its release beat
+    (audio) pursuer_lost_sfx.playing = true, stream = pursuer_lost.wav
+  OK    crossing 1: still exactly once after 10s above the threshold (1)
+  OK    crossing 1: the hold really stayed out of sight (lead 12.50s)
+  ... crossings 2 and 3 identical ...
+  3 crossings driven, 3 lost_sight emissions, 3 sightings.
+```
+
+The **hold** is the load-bearing line. After each crossing the lead is
+topped up to `PURSUER_MAX_LEAD_S` and 10 s of run time is advanced; at
+`PURSUER_CLOSE_RATE` that lands at 12.50 s, comfortably clear of the 10.0
+threshold, and the emission count stays at one. A per-frame threshold test
+instead of an edge-detected signal would report ~600 there. Connection count
+is read off `pursuer_lost_sight.get_connections()` rather than
+`is_connected()`, because `is_connected()` answers "at least one" and the
+failure worth catching is "two" -- `connect()` does not complain about a
+duplicate, and a duplicate would double every future cue.
+
+The audio line is **reported, never gated**: headless Godot runs the dummy
+audio driver, and making a verdict depend on how that driver reports
+playback would be gating on the test rig instead of on the game.
+
+**One defect this phase found in itself, fixed here.** Its first run
+appended `ObjectDB instances leaked at exit` / `1 resources still in use at
+exit` to its own output, after its verdict -- the exact failure
+`StrikeAudit._settle_audio_before_quit` documents, now that this probe also
+fires a cue and then quits promptly. Same fix, and for the same reason it
+has to be a REAL-TIME wait rather than a frame wait: playbacks retire on the
+AudioServer's wall clock while the probe runs under `--fixed-fps`. `stderr`
+is empty again.
+
 ## Still open after this batch
 
-- **`StrikeFatalContrastAudit` fails on 2-3 palettes.** A real legibility
-  defect in the shipped HUD, verified pre-existing on `origin/main`,
-  deliberately left for its own batch. It is the only red verdict in the
-  suite.
+- **AWAITING A DESIGN CALL FROM MATHIEU, not a probe or code task -- two
+  items, both measured to the point where a colour/tint decision is the
+  only thing left:**
+  - **`StrikeFatalContrastAudit` reads `DARK/5` at 3.00:1 since the
+    half-strike merge, and PASSES by 0.00 -- see F11 before treating that
+    as resolved.** It was 2.99:1 and failing immediately before the merge;
+    what changed is the 4-pip ladder moving the label, not a colour. The
+    design call below stands unchanged. A real
+    legibility defect in the shipped HUD, verified pre-existing on
+    `origin/main`. Since F10c it is a *reproducible* failure -- same
+    palette, same number, every run -- where before it named 0, 1 or 2
+    palettes depending on the run. ("2-3 palettes, the only red verdict in
+    the suite" was this entry's earlier wording; both halves were wrong,
+    see F10.) 0.01 under the floor: whatever Mathieu decides for the
+    fatal-strike label's colour, re-run this probe against it, nothing
+    else.
+    **Unaffected by the half-strike rebalance**: the probe still reaches
+    the fatal state on all 7 palettes, now via a capacity-derived loop
+    rather than two hard-coded `register_strike` calls. (The rebalance
+    branch recorded "1-3 palettes, DARK/4 at 2.84:1" here; that was
+    measured before F10c pinned the StrikeFlash, i.e. on the
+    irreproducible background F10c fixed. The DARK/5 figure above
+    supersedes it.)
+  - **`PursuerContrastAudit` fails on `DARK/2`, at 2.37:1** against its own
+    2.5 silhouette floor -- the pursuer is genuinely hard to read against
+    green-tinted ground. Newly *visible*, not newly true: the probe was
+    measuring Keepy until F10a. The pursuer's own albedo has no headroom
+    left to give (see F10a's re-derived verdict) -- closing this means
+    Mathieu choosing between moving the ground albedo or
+    `GameState.DARK_TINT_AMOUNT`, both of which affect every other
+    gameplay object's dark-mode contrast, not just the pursuer's. Not a
+    change either probe or this document can make unilaterally.
+  - **Neither floor was moved, and neither should be**, by anyone, to make
+    these numbers read green -- the whole point of F10 was making these
+    two probes describe the game accurately enough that a real
+    illegibility, once found, stays visible instead of being remeasured
+    away.
+- **Nothing measures the pursuer against Keepy.** F10a stopped this being
+  measured by accident under the wrong label; it has not been replaced. The
+  numbers that existed (1.85:1 at worst) are low enough that this wants a
+  probe of its own, alongside the Keepy-vs-ground probe `docs/MESHY_SPEC.md`
+  §11 already asks for.
+- **The other pixel probes still take their background unseeded.**
+  `ComboContrastAudit`, `StrikeContrastAudit`, `DarkPaletteAudit` and
+  `InvertCapture` all sample the 3D world without calling
+  `DecorRng.force_seed()`, so they carry F10b's exposure. None was measured
+  for it here. The fix is the one line the two probes in this batch now
+  carry.
+- **`StrikeAudit`'s safe-vs-mid capture-share criterion fails since the
+  half-strike rebalance** (8 points against a required 20). A design
+  question about the game, not a probe defect, and deliberately left red
+  rather than papered over by moving the bar -- full numbers and the
+  candidate levers are in the rebalance section above and at the assertion
+  in `StrikeAudit.gd`. **Needs a device playtest before anyone decides
+  which way to resolve it.**
 - **Nine probes still ignore `--seed`** (no `DevSeed.apply()`):
   `StomperAudit`, `JumpDodgeRewardAudit`, `DarkPaletteAudit`,
   `LiveRunProbe`, `AssetContractAudit`, `ChargerShapeProbe`,
@@ -626,7 +1662,19 @@ unmistakable. CI already imports before running anything.
   harmless (they never run a real seeded run). For the first four it
   means "I passed `--seed`" is not evidence the run was reproducible --
   which is precisely how F6 hid. Not fixed here because none is in the
-  reference baseline's gated set.
+  reference baseline's gated set. (F10b does not change this: the two
+  contrast probes it touches seed their **decor** streams from their own
+  `DECOR_SEED` const, deliberately not from `--seed` -- see `DecorRng.gd`
+  for why. They still ignore `--seed` for the global stream.)
+  **`DecorParallaxProbe` belongs on that list and was missing from it**
+  (found 2026-08-09). It is not merely unseeded, it is *observably*
+  non-deterministic: three runs of the **unmodified `origin/main`** file
+  give three different values for its reported z ranges
+  (`-360.006622 / -360.009766 / -360.029480`). Its verdict is stable
+  (violations == 0 every run) so it is not a false green, but its numbers
+  must not be diffed between trees — a diff there is variance, not a
+  change. That is exactly how it was nearly misread when the timeout was
+  added to it.
 - **`LiveRunProbe` has no completion condition** by design and relies on
   the caller passing `--quit-after`. Now bounded by the watchdog, but it
   is the one probe whose "green" cannot be obtained by running it the way

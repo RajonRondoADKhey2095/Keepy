@@ -213,6 +213,8 @@ same 3.4 x 2.2 x 2.1 AABB). INTRO and VISIBLE stay comfortably under the
   barrier.
 - Gameplay is physics-tied at 60fps, so the headroom is not optional.
 
+### 7.1 The budget as authored (a target, not a measurement)
+
 | Asset | Max triangles | Live at once | Frame cost |
 |---|---|---|---|
 | Keepy | 6,000 | 1 | 6,000 |
@@ -223,7 +225,121 @@ same 3.4 x 2.2 x 2.1 AABB). INTRO and VISIBLE stay comfortably under the
 | Markers, trail bars | primitives | ~5 | negligible |
 | | | **total** | **~32,200** |
 
-That leaves ~35% headroom against the 50k target.
+**This table is the budget, i.e. what each asset is ALLOWED. It is not, and
+never was, a measurement of what the game draws** — it was written before
+the hibou and the squirrel were installed and before any decor existed. Do
+not quote its ~32,200 as the current cost; see 7.2.
+
+### 7.2 What the frame actually draws — measured 2026-08-09
+
+`scripts/dev/TrackPropsAudit.tscn` phase 1 counts every visible
+`MeshInstance3D` in a live 60s run, per physics frame, and keeps the WORST
+frame. Re-run it after any batch that adds geometry rather than trusting
+the numbers below:
+
+    godot4 --headless --fixed-fps 60 --path . \
+      res://scripts/dev/TrackPropsAudit.tscn
+
+| Family | Budgeted (7.1) | Measured, worst frame | |
+|---|---|---|---|
+| collectibles | 4,200 | **25,344 – 29,568** | **OVER by ~6x** |
+| pursuer | 8,000 | **15,518** | **OVER by ~2x** *(cause misattributed — see 7.3)* |
+| hazards | 8,400 | 7,068 – 8,372 | within |
+| keepy | 6,000 | 3,129 | within |
+| track slab + curbs | 5,600 | 252 | within |
+| decor hills | — | 165 | new since 7.1 |
+| trackside props | — | 511 – 584 | new, see 8.2 |
+| | | **52,780 – 56,284 total** | **OVER the 50,000 target** |
+
+The ranges are real: the peak depends on how many pooled objects happen to
+be visible together, and the decor generators are unseeded, so consecutive
+runs differ. Every run measured so far exceeded the target.
+
+**Two findings, both pre-existing, neither caused by the decor work.**
+Measured directly, not by subtraction — with trackside props disabled the
+frame still peaks at **52,780**, already 2,780 over.
+
+1. **Collectibles are the whole problem: ~4,096 triangles each.**
+   `Noisette.tscn` and `Gland.tscn` carry a `SphereMesh` left at Godot's
+   default tessellation (`radial_segments` 64, `rings` 32) for a ball
+   0.3 m across that renders a few dozen pixels wide. 7.1 budgets 300.
+   Dropping to 16 x 8 gives 256 triangles — on the budget line, and at
+   that on-screen size visually indistinguishable — which alone would take
+   the frame to roughly **28,000, i.e. ~44% headroom**. Deliberately NOT
+   done in the props batch: it changes the silhouette of a gameplay object
+   and belongs in a batch whose device review is looking at collectibles.
+2. **The `pursuer` FAMILY is 15,518 triangles against a 8,000 cap.**
+   ~~A real asset overrunning its own spec, which is exactly what §11's
+   pre-import check exists to catch and did not.~~ **That second sentence
+   was wrong — the `.glb` is not the overrun. See 7.3.**
+
+Neither is a rendering fault today — the game runs — but the 50,000 target
+was justified above rather than picked, and the frame is over it.
+
+### 7.3 The "15,518-triangle hibou" was a misattribution — measured 2026-08-09
+
+The row above compares a *family* total against an *asset* budget line, and
+the prose under it named the wrong culprit. Re-measured directly, parsing
+the glTF JSON chunk (`indices.count / 3`, the same method §11 uses on every
+asset before import) and cross-checked against what Godot actually builds:
+
+| what | triangles |
+|---|---|
+| `assets/models/keepy_hibou_pursuer.glb` (one mesh, one primitive) | **7,070** |
+| `Silhouette/EyeLeft` — `SphereMesh` at Godot's default 64 x 32 | **4,224** |
+| `Silhouette/EyeRight` — same sub-resource | **4,224** |
+| `Silhouette`'s own `CapsuleMesh` placeholder | 0 *(cleared by `ModelSlot`)* |
+| | **15,518** |
+
+7,070 + 4,224 + 4,224 = 15,518 **exactly**, which is the whole of the figure
+7.2 recorded. So:
+
+- **The Hibou asset was never over budget.** 7,070 against a cap of 8,000 —
+  within it by 930, exactly as §11's own pre-import check measured it on the
+  day it landed. That check did not fail; nothing read its result afterwards.
+- **The overrun was two placeholder eye spheres**, 8,448 triangles, i.e.
+  **54.4%** of the family — the same default-tessellation defect finding 1
+  identifies in the collectibles, on a different object. Under 7.1 they fall
+  in the "markers, trail bars — primitives — negligible" line.
+- **Decimating the `.glb` could not have fixed it.** At *zero* triangles the
+  family would still be 8,448, over the 8,000 cap. Any batch that had gone
+  ahead and decimated the owl would have degraded the one silhouette the
+  player must read, and still missed the target.
+
+**Fixed** by setting the shared `SphereMesh_Eye` sub-resource to 16 x 8
+(**288** triangles, not the 256 finding 1 estimates — see the correction
+below): family **15,518 -> 7,646**, under the 8,000 cap by 354, and a flat
+**-7,872 triangles in every frame**, since pursuer geometry is fixed and
+measured identical in all 11 runs.
+
+**The eyes were costing that and drawing nothing.** Rendering the real
+`Pursuer.tscn` offscreen at all three poses `PursuerFramingAudit` uses
+(`FAR_Z` 3.0 / `CAUGHT_Z` 1.0 / `CAPTURE_Z` 0.15, game camera at
+`(0, 4.2, 7)` pitched -20°), before vs after, the images are **pixel-identical
+— zero changed pixels at every gameplay pose.** The spheres sit inside the
+owl's own eye sockets on its **-Z face**, which §6 already documents as the
+side pointing *away* from the camera, so they are fully depth-occluded by
+the head. They are only visible at all from a camera placed in front of the
+owl's face, where the tessellation drop changes 0.30% of pixels (confined to
+a bounding box around the two discs, which still read as circles). Nothing
+in the game ever puts a camera there.
+
+**Two measured corrections to 7.2's own numbers**, both understated there:
+
+- A default `SphereMesh` is **4,224** triangles, not "~4,096" — so the
+  collectibles' worst frame is 4,224 x N, and finding 1's estimate of the
+  saving is correspondingly low.
+- **16 x 8 gives 288** triangles, not 256. Godot's `SphereMesh` builds
+  `2 x radial_segments x (rings + 1)`.
+
+**Collectibles remain untouched and remain the dominant cost**, deliberately:
+finding 1's own reasoning still applies — that change alters the silhouette
+of a *visible* gameplay object and belongs in a batch whose device review is
+looking at collectibles. This batch's review is looking at the pursuer, which
+is why the eye spheres were in scope and the noisettes were not. Measured over
+11 unseeded runs after the fix, the worst frame is **57,402** (collectibles
+25,344 – 38,016), still **7,402 over** the 50,000 target. The frame is not
+under budget yet; only the pursuer is.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
@@ -319,6 +435,23 @@ explained is the *weakest* axis in dark mode):
 > sweep summary above are the ones this section relies on. Unrelated to
 > this batch, not fixed here.
 
+> **Open design item, awaiting Mathieu's call -- pursuer body vs `DARK/2`
+> ground (2026-08-09, `docs/PROBE_AUDIT.md` F10a).** Measured against the
+> correct reference surface (the ground, not Keepy -- the probe used to
+> sample the wrong thing, see F10a), `Pursuer body`'s `0.02, 0.02, 0.03`
+> reads **2.37:1** against `DARK/2`'s ground, under this project's own
+> 2.5:1 silhouette floor. This table's palette already sits at pure black,
+> which the sweep behind the 2.5 floor puts at the *optimum* achievable
+> value against this ground on this tint -- there is no darker or lighter
+> unshaded albedo that reads better here, and the sweep's own ceiling for
+> green (2.05) is already below the measured 2.37, so re-picking the
+> pursuer's colour cannot close this gap. The two variables that can:
+> **the ground's own albedo** (`0.55, 0.42, 0.32` above) or
+> **`GameState.DARK_TINT_AMOUNT`** (0.55) -- both of which move every
+> other object's dark-mode contrast on this table, not only the pursuer's.
+> That is a project-wide colour call, not a per-asset one, and it is left
+> for Mathieu to make. No code or probe change is pending on this note.
+
 ### 8.1 Background decor (procedural, no asset yet)
 
 `scripts/world/Decor.gd` (`World/Decor` in `Game.tscn`) draws the two
@@ -364,6 +497,256 @@ does shift every gameplay roll that comes after it by one step — silently
 turning a purely-visual system into something that changes which hazards a
 seeded run actually spawns. Caught in this same batch (see the commit
 history around `Decor.gd`/`TrackSegment.gd`'s `_tint_rng`) before it shipped.
+
+### 8.2 Trackside props (procedural, no asset yet)
+
+`TrackSegment.gd` (`_build_trackside_props` / `_place_trackside_props`)
+draws low-poly trees and rocks standing on the ground plane just outside
+the track. Like the hills of 8.1 and the lane curbs beside them, these are
+plain Godot primitives — a tapered `CylinderMesh` trunk under a 5-sided
+cone canopy for a tree, one 6x3 `SphereMesh` squashed and yawed for a rock
+— with no `.glb` and no texture, so this file's import checklist does not
+apply to them yet.
+
+**They belong to a TILE, not to the world**, which is why they are built
+and pooled by `TrackSegment` rather than added to `Decor.gd`. A hill needs
+its own pool because it scrolls at its own parallax rate and belongs to no
+segment; a prop standing on this slab's shoulder travels and recycles with
+that slab for free, exactly like the pooled Obstacle/Noisette/Gland
+siblings. Built once in `_ready()`, then only ever shown, hidden and
+repositioned by `populate()` — nothing is allocated during a run.
+
+**The keep-out is the load-bearing constraint.** The ground slab is
+`Hitboxes.GROUND_SIZE.x` = 6 m wide with lanes at ±2 m, and everything
+inside it is the readable play area. So the rule is written against a
+prop's **silhouette edge**, never its centre: a trunk centred at
+|x| = 3.2 satisfies "outside the slab" while its 0.9 m canopy still hangs
+a third of a metre over a lane the player is reading a hazard in. Every
+placement adds `_PROP_KEEPOUT_X` (slab half-width + 0.4 m margin) **and
+the prop's own half-width** before it adds any random spread, so the
+clearance is arithmetic rather than a tuning value that happens to be big
+enough. For a yawed, z-stretched rock the half-width used is its longest
+semi-axis, which bounds the silhouette at every rotation.
+`scripts/dev/TrackPropsAudit.tscn` phase 2 rolls 4,000 `populate()` calls
+and measures the closest approach off the real mesh AABBs — measured, not
+re-derived from the placement formula, which would only ever agree with
+itself. Worst observed: **3.244 m against a 3.000 m slab.**
+
+**Colour.** Same rule as everything else here: unshaded, separated by
+**value**, never hue. What changed relative to 8.1 is *what they are seen
+against*. There is no ground mesh beyond |x| = 3, so the backdrop for a
+trackside prop is the sky and the two hill layers — the brightest surfaces
+in the scene — and not the ground. That puts the whole prop family in the
+scene's darkest band. Contrast ratios (WCAG, sRGB-linearised, computed on
+the raw albedos; §8's affine argument means dark-mode preserves the
+ordering at 45% strength):
+
+| | albedo | vs ground | vs curb | vs far hill | vs near hill | vs sky |
+|---|---|---|---|---|---|---|
+| tree canopy | `0.14, 0.20, 0.15` | 2.76 | 9.67 | **1.63** | 4.80 | 6.90 |
+| tree trunk | `0.13, 0.10, 0.07` | 3.57 | 12.52 | **2.11** | 6.21 | 8.94 |
+| rock | `0.18, 0.19, 0.20` | 2.73 | 9.57 | **1.61** | 4.75 | 6.83 |
+
+The far hills (`0.28, 0.32, 0.30`) are the binding constraint at
+1.61–1.63:1, which lands inside the 1.56–1.92:1 band §8 already measured
+for the lane barrier — a deliberately high-contrast object — against the
+ground. **There is no better answer available in this scene:** sweeping
+target luminance across the whole range, the best achievable worst-case
+against ground/curb/both hills is 2.57:1 at pure black and falls off
+monotonically from there, because the far hills are themselves dark. Going
+brighter to escape them collides with the ground or the near hills
+instead.
+
+Two honest limitations, neither fixed:
+
+- **The trunk sits at 1.18:1 against the pursuer's near-black body.**
+  Accepted rather than resolved: escaping it means brightening into the
+  far-hill collision above. The separation is carried by silhouette and
+  position instead — §8's own "silhouette is the most reliable cue there
+  is" — a 0.1 m trunk flanking the track against a 2.2 x 3.4 m owl
+  centred behind the player.
+- **Internal light/dark structure is weak** (canopy vs trunk 1.29:1),
+  well short of the 3:1 §8 asks for. That rule is written for *hazards*,
+  which the player must read under time pressure; 8.1 already establishes
+  that background decor "competes with nothing the player must read", and
+  the hills themselves carry a single flat colour each.
+
+**Cost:** 511–584 triangles at the worst measured frame, ~1% of the
+50,000 target (§7.2), across at most four props per tile. Tessellation is
+set once at build time, never per placement — a primitive left at Godot's
+default is ~4,000 triangles for one boulder, and
+`TrackPropsAudit.PROPS_TRIANGLE_BUDGET` exists mainly to catch exactly
+that mistake.
+
+**Zero gameplay coupling**, and the props need a stronger claim here than
+the hills do because they live *inside* a `StaticBody3D`: a
+`MeshInstance3D` child contributes nothing to that body's shape set, only
+a `CollisionShape3D` does, and none is created. `TrackPropsAudit` phase 3
+asserts the segment still carries exactly one shape (the slab) rather than
+leaving that as prose. They also never touch `GameState` — not even the
+one-way reads `Decor.gd` and `LaneBarrier.gd` make — and they are
+invisible to everything that walks a segment's children, since
+`TrackManager` and the bot probes all filter on `child is Obstacle` and
+`AssetContractAudit` collects only `ModelSlot` and `CollisionShape3D`
+nodes.
+
+The **RNG rule from 8.1 applies unchanged**, and props use their own
+`_prop_rng`, separate from `_tint_rng` so that retuning one can never
+re-sequence the other.
+
+When a real low-poly tree or rock asset replaces these, it hooks in the
+way 8.1 describes for the hills: a `ModelSlot`-style install point on the
+pooled instances, same value separation, `shading_mode = unshaded` unless
+the asset's own internal contrast is verified under the invert — and the
+keep-out arithmetic must then be fed the **asset's** measured half-width,
+not the primitive's, or the guarantee above quietly stops holding.
+
+#### Second pass — bench, sign, stump, bush (2026-08-09)
+
+Four more kinds, same system: built once in `_ready()`, shown/hidden and
+repositioned by `populate()`, recycled with the tile. No new pool, no new
+`DecorRng` stream — `_prop_rng` is reused, because taking a new stream
+would re-number every stream created after it and move the background the
+F10 contrast probes measure against (see `DecorRng.gd`'s own note).
+
+Which kind a populated slot draws is now a **weighted roll over six**
+rather than a tree/rock coin flip, so a tile is a mixed handful instead of
+the same catalogue in the same order. Exactly one draw picks the kind
+whatever the outcome, so the weights can be retuned without re-sequencing
+the rest of a segment's decor.
+
+| kind | primitives | triangles | weight |
+|---|---|---|---|
+| tree | tapered trunk + 5-sided cone | 25 | 0.32 |
+| rock | one 6x3 squashed sphere | 48 | 0.20 |
+| bush | three 6x2 squashed spheres, offset into a clump | **108** | 0.18 |
+| stump | 6-sided cylinder + squashed dome | 48 | 0.14 |
+| bench | 2 boxes + 2 capless cylinders | 44 | 0.09 |
+| sign | capless post + **blank** box board | 22 | 0.07 |
+
+Counted with `mesh.get_faces().size() / 3`, the same call
+`TrackPropsAudit` uses, so these are directly comparable with its
+per-family table. Tessellation is fixed at build time and never varies
+with the size rolls, so each figure is exact rather than a worst case.
+
+**The sign board is blank by construction** — no texture, no text, no
+second albedo. It is a silhouette and nothing on it is ever meant to be
+read, so there is no legibility claim to defend at any camera distance.
+
+**Keep-out: unchanged in kind, extended to the new shapes.** Every
+placement still adds `_PROP_KEEPOUT_X` **and the prop's own half-width**
+before any random spread. What each kind contributes as that half-width:
+
+- **bench / sign** take a small yaw (±0.21 rad) rather than the rock's
+  free spin, so their half-width is the *exact* rotated extent,
+  `depth/2·|cos θ| + length/2·|sin θ|`, not the bounding circle a free
+  spin would force. A bench is 1.1–1.7 m long; bounding-circling it would
+  have pushed it ~0.4 m further out for nothing.
+- **stump** uses its flared base radius, the widest point; the dome never
+  exceeds the cylinder's own radius.
+- **bush** adds its furthest blob's offset to that blob's radius — the
+  cluster's silhouette edge, not the cluster centre. Same shape of
+  argument as the tree adding its *canopy* radius rather than its trunk's.
+
+`TrackPropsAudit` phase 2 measures this off the real mesh AABBs over
+4,000 `populate()` calls, and `nearest_prop_edge_x()` now walks a single
+`_PROP_MESH_KEYS` list rather than a literal — so a kind added later
+cannot be silently left out of the check that keeps props off the play
+area. Green on 8 consecutive runs with the new kinds live.
+
+**Colour — swept, not eyeballed, and the sweep found a real limit.**
+Method as above (sRGB-linearised relative luminance, WCAG ratio on raw
+albedos). The scene's occupied luminance line, sorted:
+
+| surface | L |
+|---|---|
+| tree trunk | 0.0109 |
+| tree canopy | 0.0288 |
+| rock | 0.0297 |
+| far hill | 0.0786 |
+| ground | 0.1674 |
+| near hill | 0.3282 |
+| sky | 0.4939 |
+| curb | 0.7122 |
+
+Sweeping target luminance, the best achievable worst-case against the
+five environment surfaces **and** the three existing prop families at
+once is **1.32:1**, at L≈0.236. That is the finding, not a shortfall in
+the search: the dark band that gives the best backdrop contrast — which
+is why all three original props live in it — is already full, so
+separating four *more* families from those three and from the backdrop
+pulls in opposite directions. The four largest usable gaps in the line
+give only 1.23–1.27:1 to their own edges.
+
+Chosen accordingly, spread **up** the line rather than crowded into the
+dark band:
+
+| | albedo | L | vs ground | vs curb | vs far hill | vs near hill | vs sky | vs canopy | vs trunk | vs rock |
+|---|---|---|---|---|---|---|---|---|---|---|
+| bush | `0.11, 0.16, 0.12` | 0.0192 | 3.14 | 11.02 | 1.86 | 5.47 | 7.86 | 1.14 | **1.14** | 1.15 |
+| stump | `0.32, 0.24, 0.15` | 0.0528 | 2.12 | 7.42 | **1.25** | 3.68 | 5.29 | 1.30 | 1.69 | 1.29 |
+| bench | `0.45, 0.36, 0.26` | 0.1164 | 1.31 | 4.58 | **1.29** | 2.27 | 3.27 | 2.11 | 2.73 | 2.09 |
+| sign | `0.50, 0.48, 0.42` | 0.1963 | 1.13 | 3.09 | 1.92 | **1.54** | 2.21 | 3.13 | 4.05 | 3.09 |
+
+Mutual separation of the six kinds is 1.48:1 at worst (bench/sign) —
+**better than the 1.29:1 the canopy/trunk pair already ships with**, so
+the family is internally more legible than before, not less.
+
+Two limitations, stated rather than tuned away, in the same spirit as the
+two above:
+
+- **The bush sits at 1.14:1 against the tree trunk and canopy.** No
+  luminance in that sub-band does better: the trunk↔canopy gap is
+  0.0109–0.0288 wide and its own midpoint is only 1.13:1 from either
+  edge. It is also the case where value separation matters least — a bush
+  *is* foliage, sharing the canopy's value is correct scene logic, and
+  the silhouettes (a low three-lobed clump against a tall cone, or
+  against a 0.1 m vertical trunk) are what separate them. §8's "silhouette
+  is the most reliable cue there is", the same argument the trunk already
+  leans on at 1.18:1 against the pursuer.
+- **Bench and stump dip to 1.29 / 1.25:1 against the far hills**, below
+  the 1.61:1 floor the original three hold. That is the price of the
+  spread: they buy 2.09–2.73:1 against every existing prop, which is what
+  stops a bench reading as a boulder. Going darker to fix the hill
+  contrast would collapse them back onto the rock.
+
+**Cost and the frame it is spent against — re-measured 2026-08-09**, on
+the tree that already carries the eye-sphere fix of 7.3. Eight runs of
+`TrackPropsAudit` before and after, worst frame kept per run:
+
+| | props family | frame total |
+|---|---|---|
+| before (six-kind system absent) | 344 – 582 | 44,943 – **53,858** |
+| after | 377 – **871** | 41,423 – **61,947** |
+
+The props' own share is what this batch controls, and it stays well
+inside the 1,500 `PROPS_TRIANGLE_BUDGET` the probe enforces — 871 at
+worst, 58% of it. Against the 50,000 frame target there is **no positive
+headroom and there was none before this batch**: the worst frame measured
+on the untouched tree is already 3,858 over. The dominant contributor is
+unchanged and out of scope here — collectibles ranged 21,120–33,792
+across these runs, against the 300 §7.1 budgets for them (finding 1 of
+7.2, still not done).
+
+> ⚠️ **`TrackPropsAudit` does not seed anything, so `--seed=20260806` is
+> inert for it.** It calls neither `DevSeed.apply()` nor
+> `DecorRng.force_seed()` — checked, not assumed. Its frame total is
+> therefore a sample from an *unseeded* run: the same binary measured
+> 44,943 and 53,858 on consecutive invocations with nothing changed.
+> **Any single run of it is not a budget figure**, which is why the table
+> above reports ranges over eight, and why the 57,402 recorded earlier
+> and the numbers here cannot be compared one-to-one. This is the same
+> class of defect F10 fixed for the contrast probes (`docs/PROBE_AUDIT.md`);
+> it is recorded here rather than fixed because seeding this probe would
+> change what every previously recorded frame figure means, and that
+> deserves its own batch. The keep-out and collider phases are unaffected
+> — they assert over 4,000 rolls, not over one sampled frame.
+
+**Zero gameplay coupling holds unchanged**, and was re-verified rather
+than argued: all seven gated bot probes plus `AssetContractAudit` and
+`ChargerShapeProbe` byte-identical before and after at seed 20260806,
+0 colliders moved. The new kinds add `MeshInstance3D` children only —
+still no `CollisionShape3D` anywhere under a segment beyond the slab's.
 
 ## 9. Godot 4.3 import notes
 
@@ -588,3 +971,316 @@ baseline):
   for the asset -- far below the 1.01 MB source `.glb`, because Godot's own
   VRAM texture compression on export re-encodes the JPEG/PNG maps into a
   smaller GPU-native format. Not a meaningful hit to mobile load time.
+
+**2026-08-09 -- re-measured under a "decimate the owl" brief; the asset was
+never the problem, and was NOT decimated.** The brief carried §7.2's figure
+forward as "the hibou renders 15,518 triangles against its 8,000 cap" and
+asked for an in-sandbox decimation. Re-measuring first -- which the brief
+itself asked for -- refuted the premise before any mesh was touched:
+
+- **The `.glb` is 7,070 triangles**, unchanged since this entry recorded it
+  above, and **930 inside its 8,000 cap**. Parsed from the glTF JSON chunk
+  (`indices.count / 3`) and independently confirmed against what Godot
+  builds at runtime (`Mesh.get_faces().size() / 3` on the imported
+  `ArrayMesh`): both say 7,070.
+- **The other 8,448 came from `EyeLeft`/`EyeRight`**, two `SphereMesh`
+  placeholders left at Godot's default 64 x 32 tessellation, 4,224 each.
+  7,070 + 4,224 + 4,224 = 15,518, matching §7.2's figure to the triangle.
+- **The requested remedy could not have reached the stated goal.** Even a
+  zero-triangle owl leaves the family at 8,448, still over 8,000. So the
+  decimation was **not performed**: it would have traded away the pursuer's
+  gameplay-readable silhouette -- the thing the brief itself said matters
+  most -- for a target it could not hit.
+
+**Done instead:** `SphereMesh_Eye` (one shared sub-resource, so one edit
+covers both eyes) set to `radial_segments = 16`, `rings = 8`. Family
+**15,518 -> 7,646**. Full detail, including why this is invisible in
+gameplay, in **§7.3**.
+
+**Validation** (Godot 4.3.stable headless, editor + `4.3-stable` templates
+fetched into the sandbox, `--fixed-fps 60` before `--path` and before `--`
+per this section's own reproducibility note):
+
+- **Seven gated bot probes, seed 20260806, before/after: byte-identical**,
+  all seven, including `PursuerFramingAudit` -- which for the *asset* swap
+  above legitimately moved (occupancy is the one number a visual swap may
+  change). Here it does not move at all: the eye spheres are children of
+  `Silhouette`, not of the installed model, so they never entered
+  `visual_aabb()` and the §6 occupancy table is unaffected.
+- `AssetContractAudit`: PASSED, 12/12 visuals swap, **0/10 colliders moved**,
+  pursuer still has none. `ChargerShapeProbe`: PASSED (rc=0), untouched.
+- **Offscreen renders, before vs after, at all three gameplay poses:
+  pixel-identical (zero changed pixels).** See §7.3.
+- **Web export**: `index.pck` **4,410,432 -> 4,410,448 bytes, +16 bytes** --
+  two integers in a scene sub-resource. Both sides built from a throwaway
+  worktree at `origin/main` vs the current tree, same templates.
+- **`PursuerContrastAudit`: FAILS, and already failed on unmodified
+  `origin/main`** -- 6/6 dark palettes under the 2.5:1 silhouette floor
+  (worst DARK/2 **1.86:1**), against the **2.53:1 PASS** this entry records
+  above. Measured three times on clean `main` before any edit, three times
+  after; the two sets are indistinguishable (DARK/2 1.86/1.86/1.84 before,
+  1.85/1.84/1.84 after), so **this batch neither caused nor fixed it**.
+  It is a **pre-existing regression, open and unexplained**, introduced
+  somewhere between the hibou landing and today. Prime suspect, not
+  confirmed: the decor batch's per-segment ground tint drift
+  (`TrackSegment._reroll_ground_tint`, §8.1) changes the very surface this
+  probe measures the silhouette *against*, and it is unseeded -- consistent
+  with the run-to-run wobble seen in the light-phase numbers
+  (7.37/7.40/7.28:1). Worth someone's next batch; it is the pursuer's
+  dark-mode legibility, which is exactly what §8 exists to protect.
+
+### 2026-08-09 -- Keepy (hero squirrel), ACCEPTED
+
+`assets_source/hero/Meshy_AI_Kawaii_Squirrel_with__0808231658_texture.glb`
+(22.8 MB). Verified before any Godot import, per §2, independently of the
+recon numbers carried into this batch's brief (parsed the glTF JSON chunk
+directly, `indices.count / 3` on the mesh's one primitive):
+
+    total triangles : 3,129
+    total vertices   : 3,121
+    budget (Keepy)   : 6,000   (Section 7)
+
+Matches the brief's numbers exactly. **Within budget, by 2,871 triangles**
+-- no decimation needed, unlike either Hibou attempt.
+
+**22.8 MB diagnosis** -- read each of the 4 image bufferViews' PNG `IHDR`
+chunk directly: `Baked_Emit` 4096x4096, `normal` 2048x2048,
+`Baked_BaseColor` 2048x2048, `Baked_MetallicRoughness` 4096x4096, all
+uncompressed PNG -- the same defect shape as both Hibou attempts, texture
+payload only. **Material `alphaMode`** -- absent from the glTF material,
+i.e. glTF default `OPAQUE` (checked directly rather than assumed from the
+Hibou precedent, per this batch's instruction): safe to drop the RGBA
+alpha channel present in 3 of the 4 PNGs.
+
+**Recompression, performed in-sandbox** (Pillow, same method as Hibou's
+second attempt -- hand-rebuilt `.glb` binary chunk, mesh bufferViews
+byte-identical, images re-encoded and re-offset, 4-byte aligned):
+
+| map | before | after | format |
+|---|---|---|---|
+| Baked_BaseColor | 2048x2048 PNG | 1024x1024, 178 KB | JPEG q88 |
+| Baked_Emit | 4096x4096 PNG | 1024x1024, 114 KB | JPEG q88 |
+| normal | 2048x2048 PNG | 512x512, 352 KB | PNG (kept lossless) |
+| Baked_MetallicRoughness | 4096x4096 PNG | 512x512, 48 KB | JPEG q90 |
+
+Result: **22.8 MB -> 813 KB** (combined with the separately-extracted
+texture files Godot's importer writes alongside the `.glb`, ~1.5 MB on
+disk total -- still comfortably under the §7 ~2 MB target). Verified after
+rebuild that triangle/vertex counts are unchanged (3,129 / 3,121) and all
+4 image references still resolve.
+
+**Orientation -- measured, not copied from the Hibou.** Rendered the
+rebuilt `.glb` offscreen (Godot headless, `--rendering-driver opengl3`
+under `xvfb-run`, a throwaway probe scene, not committed) from `+Z`,
+`-Z`, `+X` and top. From the `+Z` camera position (matching the game
+camera, which sits at +Z looking toward -Z) the mesh's authored front --
+face, eyes, the "K" chest badge -- is what's visible; the `-Z` view shows
+the back (tail, back of head). That is backwards from the project's
+contract (§3: Keepy faces -Z, back visible to the camera), so the fix is
+`model_rotation_degrees = (0, 180, 0)` -- numerically identical to the
+Hibou's correction, but arrived at independently by rendering this mesh,
+not assumed from precedent.
+
+**Scale and origin.** `POSITION` accessor bounds: X [-0.6164, 0.6129], Y
+[-0.6291, 0.6283], Z [-0.9488, 0.9485] -- a nearly-symmetric Y range
+(within 0.06%), confirming the brief's prediction that the raw mesh's
+origin sits at the model's vertical *centre* (a seated "kawaii" pose,
+tail curled up and out along Z), not at the feet. `model_scale` is
+computed from the Y span against the §5 height target:
+
+    model_scale = 1.6 / (0.6283 - (-0.6291)) = 1.6 / 1.2574 = 1.2725
+
+No slot-level translation was added, and none was needed: `Keepy/
+MeshInstance3D`'s own position, `(0, 0.8, 0)`, was already set (for the
+capsule placeholder) to exactly half of the 1.6 target height. Because
+the squirrel mesh's local origin is itself within 0.06% of its own
+vertical centre, installing it at that same slot position -- with only
+`model_scale` applied, no other change -- lands its feet at **world
+y = -0.00046** and its head at **y = 1.5995**, both within half a
+millimetre of the intended 0/1.6 bounds. Confirmed by
+`AssetContractAudit`'s own measurement post-install (below): visual Y
+span reports exactly `1.600`. Had the origin *not* been this close to
+centred, no fix would have been available under this project's rule (art
+corrections live only in `model_scale`/`model_rotation_degrees`, and the
+slot's own transform is off-limits) -- this would have needed flagging as
+a known issue the way the Hibou's eye-placement was, rather than forcing
+a translation the slot has no property for. That did not turn out to be
+necessary here.
+
+X and Z do depart from the placeholder's 1.0 x 1.0 footprint at this
+scale -- measured (`AssetContractAudit`) at **1.564 wide x 2.414 deep**,
+driven mostly by the curled tail sweeping along Z. Per §1's own
+corollary ("the visual does not have to match the hitbox") and the
+existing CHARGER/Hibou precedent for visual overhang beyond the
+collider, this was accepted rather than treated as a defect: the
+collider stays the unchanged 0.5 m-radius capsule, and 1.564 m of visual
+width is still under the ~1.9 m lane-bleed threshold in §4.
+
+**Installed**: `assets/models/keepy_squirrel_hero.glb` (+ the 4
+Godot-extracted textures + `.import` files, same layout as the Hibou),
+wired into `scenes/Keepy.tscn`'s `Keepy/MeshInstance3D` (the existing
+`ModelSlot`, no new node) with `model_scale = 1.2725`,
+`model_rotation_degrees = (0, 180, 0)`.
+
+**Validation**, same day, Godot 4.3.stable headless (editor + `4.3-stable`
+web export templates fetched into the sandbox, matching
+`.github/workflows/web-build.yml`'s pinned version):
+
+- `AssetContractAudit`: PASSED. `keepy/MeshInstance3D` visual now measures
+  `1.564 x 1.600 x 2.414`, `node_y` unchanged at `+0.800`. 0/10 colliders
+  moved; `keepy/CollisionShape3D` still `Capsule(r=0.5, h=1.6)` at
+  `offset_y +0.800`.
+- `ChargerShapeProbe`: PASSED (rc=0), unaffected -- this batch never
+  touches the CHARGER slot.
+- **Six gated bot probes, seed 20260806, before/after diff**:
+  `AntiFrustrationAudit`, `ComboAudit`, `PursuerAudit`,
+  `RushFrustrationAudit`, `ShrinkAudit`, `StrikeAudit` -- **byte-identical**
+  stdout, pre-swap vs post-swap, confirming the swap changed no gameplay
+  roll.
+
+  **Reproducibility pitfall found and fixed while doing this check, worth
+  recording**: the first comparison attempt, run without `--fixed-fps 60`,
+  came back DIFFERING on all six probes -- not just before-vs-after, but
+  (verified separately) **the identical tree run twice in a row against
+  itself**, same code, same seed, zero concurrent load. That proved the
+  divergence was environmental, not caused by this asset: this sandbox's
+  headless Godot does not hold a deterministic physics-tick count across
+  runs unless `--fixed-fps 60` pins the simulation to wall-clock-independent
+  steps. Two consecutive same-tree runs with `--fixed-fps 60` came back
+  byte-identical; the real before/after comparison was then redone under
+  the same flag and is the PASSED result recorded above. (A second,
+  unrelated mistake during this same check: an earlier before-batch process
+  was killed by targeting only its `AntiFrustrationAudit` child rather than
+  its whole process group, leaving the parent script alive for ~25 minutes
+  writing *after*-tree results into the *before* log directory,
+  overwriting two of the six logs with contaminated content. Caught by
+  inspecting `ps` output and `/proc/<pid>/cwd` rather than trusting the
+  script's own name; both stray trees were killed and the batch re-run
+  clean before drawing any conclusion.) Neither issue was caused by, or
+  reveals anything about, the squirrel asset itself -- both are recorded
+  here so a future session does not have to rediscover them.
+- **Web export**: built for real (`--export-release "Web"`, templates
+  4.3-stable), before/after via a throwaway worktree at the pre-swap
+  commit. `index.pck` **40,767,408 -> 43,352,656 bytes**, a **+2.47 MB**
+  delta for the asset. Notably larger than the Hibou's own +0.22 MB --
+  the likely reason, not confirmed further because it is outside this
+  batch's checklist: the Hibou's material was later switched to
+  `KHR_materials_unlit` (see its §11 entry, `PursuerContrastAudit` fix),
+  which appears to make its normal/metallic-roughness maps unreferenced
+  and let the exporter drop them; Keepy's material imports as the default
+  **lit** `StandardMaterial3D` per §9, so all 4 recompressed maps are
+  VRAM-compressed and packed into the `.pck`. Still a small fraction of
+  the ~35 MB `.wasm` already shipped, and well within what §7 calls "not
+  the bottleneck" -- flagged here as a possible follow-up (matching
+  Keepy's material shading to §8's dark-mode rules the way the Hibou's
+  was) rather than fixed in this batch, since no Keepy-specific contrast
+  probe is part of the §10 acceptance checklist this task specified.
+
+**2026-08-09, follow-up in the same day's second batch -- unlit applied, and
+the payload hypothesis above CORRECTED.** The flagged follow-up was carried
+out, and measuring it properly disproved the explanation this entry had just
+offered for the +2.47 MB.
+
+- **`KHR_materials_unlit` applied** to `keepy_squirrel_hero.glb` by the same
+  hand-edit as the Hibou (JSON chunk only, BIN chunk verified byte-identical,
+  so no mesh or image data could drift). Confirmed by loading the imported
+  scene and reading the material back: `shading_mode = 0` (unshaded), and
+  Godot reports `normal_texture = null` / `emission_enabled = false` -- i.e.
+  three of the four maps are discarded at import, exactly as the Hibou's are.
+- **The lit-material explanation for the +2.47 MB was WRONG.** Applying unlit
+  and re-exporting moved `index.pck` from 43,352,656 to **43,387,664 bytes --
+  35 KB *bigger*, not smaller.** The reason the maps were still being paid for
+  is `export_presets.cfg`'s `export_filter="all_resources"`, which packs every
+  resource in the project whether any material references it or not. Import-
+  time discarding never reaches the exporter. The Hibou's own +0.22 MB was
+  therefore never evidence of unlit saving payload either -- the two figures
+  were measured against different-sized project trees and are not comparable.
+- **The real payload defect, found while measuring the above:** the raw Meshy
+  originals in `assets_source/` were being imported and **shipped in the web
+  build**. Measured on one identical tree, changing nothing but the export
+  filter: `index.pck` **43,387,664 bytes with `assets_source/` -> 5,810,208
+  without**, i.e. **35.84 MB of dead payload** that no scene references and
+  that every mobile player was downloading. Fixed by adding `assets_source/*`
+  to `exclude_filter`, alongside the `scripts/dev/*` exclusion that was
+  already there for exactly the same reason (a directory the shipped game
+  never loads from). This dwarfs every asset figure in §7 and is the single
+  biggest payload item this document has recorded.
+- **Unused maps then stripped from the `.glb` itself.** With the material
+  proven unlit, `emissiveTexture` / `normalTexture` / `metallicRoughness
+  Texture` and their images are unreachable, so they were removed from the
+  glTF and their extracted `assets/models/*` siblings deleted: **813,356 ->
+  298,344 bytes**, one image (`Baked_BaseColor`) left. Triangle/vertex counts
+  re-verified unchanged (3,129 / 3,121), and the result re-rendered offscreen
+  against the ground colour to confirm the asset still reads correctly
+  unshaded. Recoverable if the material is ever made lit again: the full
+  4-map original is what `assets_source/hero/` holds.
+- **Net result against the figure this entry originally flagged**, measured
+  with `assets_source/` excluded on BOTH sides so the two are comparable:
+  baseline (`90bfd39`) `index.pck` 3,164,800 bytes, current 4,430,656 --
+  **+1.21 MB for the squirrel plus this batch's two audio cues**, against the
+  **+2.47 MB** flagged above. And the build a player actually downloads fell
+  from 43.35 MB to **4.23 MB**.
+- **Contrast coverage, stated rather than assumed:** there is **no
+  Keepy-specific contrast probe in this project.** `PursuerContrastAudit`
+  measures the pursuer's silhouette only (zero references to Keepy);
+  `StrikeContrastAudit` / `StrikeFatalContrastAudit` / `ComboContrastAudit`
+  are HUD-text probes; `DarkPaletteAudit` does sample Keepy, but its
+  per-object path carries the documented llvmpipe defect in §8's own note and
+  cannot be relied on. So the unlit switch here is justified by §8's argument
+  (an unshaded surface's post-invert colour is a *known* value) and by the
+  offscreen render, **not** by a measured six-palette contrast pass like the
+  Hibou got. A Keepy equivalent of `PursuerContrastAudit` is the honest next
+  step before anyone treats Keepy's dark-mode legibility as verified.
+
+#### The StrikeAudit four-line diff -- traced, and resolved
+
+The two audio cues made `StrikeAudit` append four lines to its own stdout
+*after* its `PASSED` verdict, breaking the byte-identical comparison this
+project gates asset and UI changes on:
+
+    WARNING: ObjectDB instances leaked at exit
+         at: cleanup (core/object/object.cpp:2284)
+    ERROR: 1 resources still in use at exit
+       at: clear (core/io/resource.cpp:604)
+
+**Root cause**, traced with `--verbose` (which names the survivors) and
+isolated by changing one variable at a time:
+
+| repro | leak |
+|---|---|
+| players exist, `play()` never called | **no** |
+| `AudioStreamPlayer`s removed from the scene | **no** |
+| `play()`, then quit ~10 frames later (0.16s, cue is 0.20s) | **yes** |
+| `play()`, then quit after 2s of real time | **no** |
+
+So it is neither the nodes, the streams, nor the `.wav` import: it is
+**quitting while a playback is still live.** `play()` instantiates an
+`AudioStreamPlaybackWAV` holding a reference to the `AudioStreamWAV`; both are
+still alive at `ObjectDB` cleanup, which is why the count is exactly *one*
+resource. `StrikeAudit`'s last run frequently ends *on* a strike (the fatal
+cue is 0.55s) and then goes `_end_run -> _finish_phase -> _report -> quit()`
+within a frame or two.
+
+**Why it was intermittent (5 runs in 6) at a fixed seed:** playbacks retire on
+the AudioServer's own thread against the **wall clock**, while the probe runs
+under `--fixed-fps 60`, where frames advance by a fixed delta as fast as the
+CPU allows. It is a race the seed does not control. (An earlier note here
+called it deterministic; that was drawn from two agreeing samples and was
+wrong. An earlier note also said the resource was "held somewhere the script
+cannot reach from GDScript" -- also wrong, and superseded by this entry: it is
+reachable, it simply needs real elapsed time before `quit()`.)
+
+**It never reached a measurement, and could not have.** The diff is a pure
+append at EOF -- 5,351 lines identical, 4 added. `HUD.gd` never writes
+`GameState` (every one of its references is a read, a constant, or a signal
+connect); `StrikeAudit` never references the HUD; both are independent
+subscribers to `GameState.strike_taken`. The leaked objects are audio playback
+objects, not gameplay state. And `scripts/dev/*` is excluded from the shipped
+build, so no player ever runs this path.
+
+**Fixed in the probe, not in the game** (`StrikeAudit._settle_audio_before_quit`),
+since nothing in `HUD.gd` was misbehaving. Note it is a **real-time** wait
+(`OS.delay_msec`), not a frame wait: awaiting frames, or a `SceneTreeTimer`,
+is also driven by the fixed delta and can return before the audio thread has
+done anything. Re-measured **byte-identical** to the pre-audio baseline. Any
+future probe that fires audio and quits promptly needs the same treatment.

@@ -18,6 +18,13 @@ const SIM_SECONDS: float = 420.0
 const GameStateScript := preload("res://scripts/autoload/GameState.gd")
 
 func _init() -> void:
+	# This probe is a `--script` SceneTree: it REPLACES the main loop, so
+	# there is no scene to arm a ProbeWatchdog node on and no autoload for
+	# one to read -- and the whole run happens here in _init(), before any
+	# frame exists for a _process watchdog to fire in even if there were.
+	# The deadline is therefore the only shape of timeout available, and
+	# the loop below has to ask it. See ProbeDeadline.gd's header.
+	var deadline := ProbeWatchdog.deadline("PACING PROBE")
 	var gs := GameStateScript.new()
 
 	gs.start_run()
@@ -30,6 +37,15 @@ func _init() -> void:
 
 	print("=== speed paliers (time-based) ===")
 	for i in steps:
+		if deadline.exceeded():
+			# gs is freed before aborting: this loop owns a manually
+			# allocated GameState, and a quit that leaks it would make the
+			# timeout path noisier than the hang it replaces.
+			gs.free()
+			# `self` is passed because Engine.get_main_loop() is still
+			# null inside a SceneTree's own _init() -- see ProbeDeadline.
+			deadline.abort(self)
+			return
 		gs.advance_time(STEP)
 		t += STEP
 

@@ -8,6 +8,14 @@ class_name TrackSegment
 ## re-instantiated during gameplay, so recycling a segment allocates
 ## nothing.
 ##
+## It also owns this tile's purely visual decor, on that same
+## build-once-then-only-reposition contract: the two lane curbs
+## (_build_lane_curbs, static), the per-segment ground tint
+## (_reroll_ground_tint, re-rolled per populate) and the trackside props
+## (_build_trackside_props / _place_trackside_props, re-rolled per
+## populate). None of the three has a collider or touches GameState; see
+## each section's own doc.
+##
 ## Every `.monitoring` toggle below goes through set_deferred(), never a
 ## direct assignment: Godot blocks (logs an error and no-ops) a direct
 ## Area3D.monitoring change made while ANY body_entered/body_exited signal
@@ -85,7 +93,24 @@ var _ground_base_color: Color
 ## the global stream is the one TrackManager's spawn rolls draw from and the
 ## one dev probes seed for reproducibility (DevSeed.seed_value()), so a
 ## decor draw on it would silently shift every gameplay roll after it.
-var _tint_rng := RandomNumberGenerator.new()
+## Handed out by DecorRng (F10) so a probe can pin the background it
+## measures against; unforced, still an OS-entropy stream as before.
+var _tint_rng := DecorRng.make()
+
+## Top face of this segment's ground slab, in the segment's OWN local
+## space -- the y = 0 plane every hazard offset in Hitboxes.gd is measured
+## from, expressed where a child of this node can actually use it.
+##
+## Derived from the slab's own half-thickness rather than written as a
+## literal: the ground MeshInstance3D sits at -GROUND_SIZE.y * 0.5 so its
+## TOP lands on the plane (see _apply_hitbox), and anything standing on
+## that plane has to move with it if the slab is ever re-dimensioned. Two
+## call sites (the lane curbs and the trackside props below), one
+## expression -- a decor surface that quietly floated or sank because a
+## second copy of "+ 0.2" was missed is exactly the class of drift this
+## avoids.
+func _ground_top_y() -> float:
+	return _ground.position.y + Hitboxes.GROUND_SIZE.y * 0.5
 
 func _ready() -> void:
 	_apply_hitbox()
@@ -115,6 +140,7 @@ func _ready() -> void:
 	_ground_material.albedo_color = _ground_base_color
 	_ground.apply_material(_ground_material)
 	_build_lane_curbs()
+	_build_trackside_props()
 
 ## Re-rolls this segment's ground tint around its base colour. Called from
 ## populate() -- i.e. once at the initial fill and once per recycle, never
@@ -158,8 +184,672 @@ func _build_lane_curbs() -> void:
 		# doc) to avoid z-fighting with it, and offset by the ground
 		# MeshInstance3D's own local position so it lines up with the
 		# visible slab rather than the StaticBody3D's origin.
-		strip.position = Vector3(x, _ground.position.y + 0.2 + _CURB_HEIGHT * 0.5, 0.0)
+		strip.position = Vector3(x, _ground_top_y() + _CURB_HEIGHT * 0.5, 0.0)
 		add_child(strip)
+
+# =====================================================================
+# TRACKSIDE PROPS (decor batch, second pass) -- low-poly trees and rocks
+# standing on the ground plane just OUTSIDE the track, so the run reads as
+# passing THROUGH somewhere rather than along an endless bare strip.
+#
+# Same lifecycle as _build_lane_curbs() above, and for the same reason: a
+# prop is a property of a track TILE, not of the world. Built once in
+# _ready(), then only ever shown/hidden and repositioned by populate() --
+# so a prop travels and recycles with its segment for free, exactly like
+# the pooled Obstacle/Noisette/Gland siblings, and nothing is allocated
+# during a run. This is deliberately NOT a second Decor.gd-style global
+# layer: Decor's hills need their own pool because they scroll at their
+# own parallax rate and belong to no tile, which is the opposite of what
+# a prop standing on this slab's shoulder is.
+#
+# ZERO GAMEPLAY COUPLING, BY CONSTRUCTION -- the same guarantee Decor.gd
+# states for the hills, and it holds here for stronger reasons because
+# these live INSIDE a physics body:
+#   * no collider. A MeshInstance3D child of a StaticBody3D contributes
+#     nothing to that body's shape set; only a CollisionShape3D does, and
+#     not one is created below. The slab Keepy stands on is still exactly
+#     the one _apply_hitbox() writes from Hitboxes.GROUND_SIZE.
+#   * no GameState access at all -- not even the one-way reads Decor.gd
+#     and LaneBarrier.gd make. Props are placed from populate()'s own call
+#     and never look at run state.
+#   * never read by Hitboxes.gd or ModelSlot.gd, and invisible to every
+#     consumer that walks a segment's children: TrackManager and the dev
+#     probes all filter on `child is Obstacle`, and AssetContractAudit
+#     collects only ModelSlot and CollisionShape3D nodes. A plain
+#     MeshInstance3D matches none of those.
+# scripts/dev/TrackPropsAudit.gd asserts the collider half of that rather
+# than leaving it as this paragraph, and the six gated bot probes prove
+# the rest by returning byte-identical output with props live.
+#
+# THE KEEP-OUT IS THE LOAD-BEARING PART. The ground slab is 6m wide
+# (Hitboxes.GROUND_SIZE.x) with lanes at -2/0/+2, and the readable play
+# area is everything inside it. A prop must never overlap it, so the
+# constraint is written against the prop's own SILHOUETTE EDGE, not its
+# centre: a trunk placed at |x| = 3.2 satisfies "centre outside the slab"
+# while its 0.9m canopy still hangs a third of a metre over the lane the
+# player is reading. Every placement below therefore starts from
+# _PROP_KEEPOUT_X and adds the prop's own half-width before it adds any
+# random spread, so the nearest edge is at |x| >= _PROP_KEEPOUT_X by
+# arithmetic rather than by a tuning value that happens to be big enough.
+#
+# DARK-MODE VALUE (docs/MESHY_SPEC.md section 8): unshaded, and separated
+# from everything by VALUE, never hue -- see section 8.2 for the measured
+# contrast table these three albedos were chosen from.
+# =====================================================================
+
+## Clear margin between the edge of the ground slab and the nearest point
+## of any prop. Small on purpose: the props should read as lining the
+## track, not as a distant treeline.
+const _PROP_CLEARANCE_M: float = 0.4
+
+## No part of any prop may be closer to the track centre than this.
+## Derived from the slab's own width so it cannot drift out of agreement
+## with the surface it is a margin around -- a hand-written 3.4 would
+## silently start overlapping the day GROUND_SIZE.x changed.
+const _PROP_KEEPOUT_X: float = Hitboxes.GROUND_SIZE.x * 0.5 + _PROP_CLEARANCE_M
+
+## How far beyond the keep-out a prop may be pushed, on top of its own
+## half-width. Wide enough that a row of props never lines up into a
+## corridor wall.
+const _PROP_X_SPREAD: float = 4.2
+
+## Prop positions per side of the track. TWO rather than one so a side can
+## come up empty, single OR clustered: with a single slot every populated
+## tile would show exactly one prop per side, which is the "one prop per
+## 20m like clockwork" rhythm this system exists to avoid.
+const _PROP_SLOTS_PER_SIDE: int = 2
+
+## Chance that a given slot shows anything at all, rolled fresh per
+## populate(). Below 0.5 on purpose: combined with two slots a side, it
+## makes empty stretches and small clumps both common, and the pair
+## (nothing this tile, three props the next) is what breaks the metronome.
+const _PROP_PRESENCE_CHANCE: float = 0.45
+
+## Which KIND a populated slot draws, as cumulative weights over
+## _PROP_KINDS below. Weighted rather than uniform, and rolled per slot
+## rather than per tile, so a tile is a mixed handful rather than a row of
+## the same shape -- the "every tile shows the same catalogue in the same
+## order" reading this replaced a single tree/rock coin flip to avoid.
+##
+## The organic four carry most of the weight because they are what a
+## roadside mostly is; the two man-made kinds are deliberately rare, so a
+## bench or a sign reads as a punctuation mark rather than as street
+## furniture lining the whole run.
+const _PROP_KINDS: Array[String] = ["tree", "rock", "bush", "stump", "bench", "sign"]
+const _PROP_KIND_WEIGHTS: Array[float] = [0.32, 0.20, 0.18, 0.14, 0.09, 0.07]
+
+## How far along the tile a prop may sit, either side of its centre. Just
+## inside the 20m tile's own half-length, so a prop never straddles the
+## seam between two segments -- where it would be visibly cut in half the
+## moment one of the two recycled.
+const _PROP_Z_HALF_RANGE: float = 9.0
+
+## Trees: a tapered trunk under a low-facet cone canopy, two primitives.
+const _TREE_TRUNK_RADIUS: Vector2 = Vector2(0.09, 0.15)
+const _TREE_TRUNK_HEIGHT: Vector2 = Vector2(0.8, 1.5)
+const _TREE_CANOPY_RADIUS: Vector2 = Vector2(0.55, 0.95)
+const _TREE_CANOPY_HEIGHT: Vector2 = Vector2(1.5, 2.6)
+## Sides on both cylinders. Five reads as a low-poly silhouette from the
+## camera's distance and costs a handful of triangles.
+const _TREE_SIDES: int = 5
+## Fraction of the canopy's height that overlaps the top of the trunk, so
+## the two primitives never show a gap between them at a low camera angle.
+const _TREE_CANOPY_SINK: float = 0.12
+
+## Rocks: one squashed low-facet sphere, randomly yawed and stretched
+## along z so no two read as the same boulder.
+const _ROCK_RADIUS: Vector2 = Vector2(0.30, 0.62)
+## Height as a fraction of the diameter -- always under 1.0, i.e. always
+## flatter than a ball.
+const _ROCK_FLATNESS: Vector2 = Vector2(0.55, 0.9)
+const _ROCK_Z_STRETCH: Vector2 = Vector2(0.7, 1.25)
+const _ROCK_SIDES: int = 6
+const _ROCK_RINGS: int = 3
+## Fraction of the rock's half-height left above the ground plane, so it
+## sits bedded IN the ground rather than balanced on it.
+const _ROCK_SINK: float = 0.82
+
+## Bench: a seat and a backrest slab on two short legs, four boxes and
+## cylinders. Long axis along Z (parallel to the track), because a bench
+## beside a path faces the path -- which also means its X extent is the
+## seat DEPTH, the small dimension, so it crowds the keep-out least.
+const _BENCH_LENGTH: Vector2 = Vector2(1.10, 1.70)   # along z
+const _BENCH_DEPTH: Vector2 = Vector2(0.34, 0.46)    # along x
+const _BENCH_SEAT_H: float = 0.07
+const _BENCH_SEAT_Y: Vector2 = Vector2(0.36, 0.50)
+const _BENCH_BACK_H: Vector2 = Vector2(0.30, 0.46)
+const _BENCH_BACK_T: float = 0.06                     # backrest thickness, along x
+const _BENCH_LEG_R: float = 0.045
+const _BENCH_LEG_SIDES: int = 5
+## Leg inset from each end of the seat, as a fraction of the seat length.
+const _BENCH_LEG_INSET: float = 0.18
+
+## Sign: a post under a blank rectangular board. NO text and no texture --
+## the board is a silhouette, nothing on it is ever meant to be read, so
+## there is no legibility claim to defend at any camera distance.
+const _SIGN_POST_R: float = 0.05
+const _SIGN_POST_SIDES: int = 5
+const _SIGN_POST_H: Vector2 = Vector2(1.05, 1.55)
+const _SIGN_BOARD_W: Vector2 = Vector2(0.52, 0.78)   # along x when unyawed
+const _SIGN_BOARD_H: Vector2 = Vector2(0.34, 0.52)
+const _SIGN_BOARD_T: float = 0.05
+## How far the board's centre sits below the top of the post.
+const _SIGN_BOARD_DROP: float = 0.10
+
+## Stump: a short wide cylinder capped by a squashed dome. Deliberately
+## WIDER than the tree trunk it might otherwise be mistaken for and far
+## shorter -- a stump that reads as "a broken tree" is the one silhouette
+## this kind exists to avoid, so the proportions are pushed apart rather
+## than scaled down from the trunk's.
+const _STUMP_RADIUS: Vector2 = Vector2(0.26, 0.44)
+const _STUMP_HEIGHT: Vector2 = Vector2(0.22, 0.42)
+const _STUMP_SIDES: int = 6
+## Dome height as a fraction of the stump's radius -- low, so the top
+## reads as a slightly rounded cut face, never as a ball on a post.
+const _STUMP_DOME_RISE: Vector2 = Vector2(0.16, 0.30)
+const _STUMP_DOME_RINGS: int = 2
+
+## Bush: a cluster of three squashed low-facet spheres, each offset from
+## the cluster centre. Rounder and shorter than a rock, and unlike the
+## rock it is never a single mass -- the lumpy outline is what separates
+## the two at the distance they are seen from.
+const _BUSH_BLOBS: int = 3
+const _BUSH_RADIUS: Vector2 = Vector2(0.20, 0.36)
+const _BUSH_FLATNESS: Vector2 = Vector2(0.62, 0.95)
+const _BUSH_SIDES: int = 6
+const _BUSH_RINGS: int = 2
+## How far a blob may sit from the cluster centre, as a fraction of its
+## own radius. Under 1.0 so the blobs always overlap into one clump
+## rather than reading as three separate pebbles.
+const _BUSH_SPREAD: float = 0.75
+## Fraction of a blob's half-height left above the ground, same bedding
+## idea as _ROCK_SINK.
+const _BUSH_SINK: float = 0.78
+
+## See docs/MESHY_SPEC.md section 8.2 for the measured contrast table.
+## All three sit in the scene's darkest band, well below the far hills
+## (the darkest thing they are ever seen against), because the backdrop
+## for anything beyond the slab edge is sky and hillside -- the two
+## BRIGHTEST surfaces in the scene -- not the ground.
+const _TREE_CANOPY_COLOR: Color = Color(0.14, 0.20, 0.15)
+const _TREE_TRUNK_COLOR: Color = Color(0.13, 0.10, 0.07)
+const _ROCK_COLOR: Color = Color(0.18, 0.19, 0.20)
+
+## The four kinds added in the second props pass. Their luminances were
+## picked by SWEEPING the scene's occupied luminance line, not by eye --
+## see 8.2's extended table for the full measured grid and for the two
+## limitations it records. In short: the dark band that gives the best
+## contrast against the backdrop (sky and hills) already held all three
+## kinds above, so these four are spread UP the line instead. That buys
+## clean separation between the six kinds (worst pair 1.48:1, better than
+## the 1.29:1 the canopy/trunk pair already ships with) and costs some
+## backdrop contrast on the two mid-value kinds, which is the trade 8.2
+## already makes explicit rather than a new compromise.
+const _BUSH_COLOR: Color = Color(0.11, 0.16, 0.12)
+const _STUMP_COLOR: Color = Color(0.32, 0.24, 0.15)
+const _BENCH_COLOR: Color = Color(0.45, 0.36, 0.26)
+const _SIGN_COLOR: Color = Color(0.50, 0.48, 0.42)
+
+## Every mesh key a slot carries, in one place. _hide_all_props() and
+## nearest_prop_edge_x() both walk this rather than each repeating a
+## literal list -- the keep-out probe measures whatever this array names,
+## so a kind added here cannot be silently left out of the check that
+## keeps props off the play area.
+const _PROP_MESH_KEYS: Array[String] = [
+	"trunk", "canopy", "rock",
+	"bench_seat", "bench_back", "bench_leg_a", "bench_leg_b",
+	"sign_post", "sign_board",
+	"stump_body", "stump_dome",
+	"bush_a", "bush_b", "bush_c",
+]
+
+## Which mesh keys each kind switches on. Kept beside _PROP_KINDS so the
+## two cannot drift.
+const _PROP_KIND_MESHES: Dictionary = {
+	"tree": ["trunk", "canopy"],
+	"rock": ["rock"],
+	"bench": ["bench_seat", "bench_back", "bench_leg_a", "bench_leg_b"],
+	"sign": ["sign_post", "sign_board"],
+	"stump": ["stump_body", "stump_dome"],
+	"bush": ["bush_a", "bush_b", "bush_c"],
+}
+
+## One entry per prop slot: the three mesh instances it can draw (a tree
+## is trunk + canopy, a rock is one mesh) and which side of the track it
+## belongs to. All three exist for every slot from _ready() onward and are
+## only ever toggled, so switching a slot from tree to rock allocates
+## nothing.
+var _prop_slots: Array[Dictionary] = []
+
+## OWN RandomNumberGenerator, for the same reason _tint_rng and Decor's
+## _rng have one: the global randf() stream is the one TrackManager's
+## spawn rolls draw from and the one dev probes seed for reproducible
+## runs, so drawing decor from it would shift every gameplay roll after
+## it -- a purely visual system silently deciding which hazards a seeded
+## run spawns. Separate from _tint_rng rather than shared so that
+## retuning one of the two can never re-sequence the other -- DecorRng
+## hands each its own stream, so that stays true when seeded (F10).
+var _prop_rng := DecorRng.make()
+
+func _build_trackside_props() -> void:
+	# One material per colour, shared by every slot and every part of a
+	# kind: a bench's seat, back and both legs are one object to the eye,
+	# so they are one albedo, and sharing the resource keeps the material
+	# count flat as kinds are added.
+	var canopy_material := _unshaded(_TREE_CANOPY_COLOR)
+	var trunk_material := _unshaded(_TREE_TRUNK_COLOR)
+	var rock_material := _unshaded(_ROCK_COLOR)
+	var bench_material := _unshaded(_BENCH_COLOR)
+	var sign_material := _unshaded(_SIGN_COLOR)
+	var stump_material := _unshaded(_STUMP_COLOR)
+	var bush_material := _unshaded(_BUSH_COLOR)
+
+	for side in [-1.0, 1.0]:
+		for i in _PROP_SLOTS_PER_SIDE:
+			# Named rather than left to Godot's @MeshInstance3D@NN
+			# auto-names: scripts/dev/TrackPropsAudit.gd attributes every
+			# triangle in the frame to a family, and a segment's plain
+			# mesh children (slab, curbs, props) are otherwise
+			# indistinguishable from each other by anything but a guess at
+			# their mesh type.
+			var label := "%s%d" % ["L" if side < 0.0 else "R", i]
+
+			# Tessellation is set HERE, not per roll: it never varies, and
+			# a primitive left at its Godot default would sit on a 64x32
+			# vertex buffer (~4,000 triangles for a boulder) from _ready()
+			# until its first placement -- paid for whether or not that
+			# slot ever draws.
+			var trunk_mesh := CylinderMesh.new()
+			trunk_mesh.radial_segments = _TREE_SIDES
+			trunk_mesh.rings = 0
+			# Both caps are hidden in every case -- the bottom by the
+			# ground, the top by the canopy sunk over it -- so neither is
+			# worth drawing.
+			trunk_mesh.cap_top = false
+			trunk_mesh.cap_bottom = false
+			var trunk := _build_prop_mesh(trunk_mesh, trunk_material, "PropTrunk" + label)
+
+			# A cone: the cheapest primitive that reads as foliage, same
+			# choice and same reasoning as Decor.gd's hills.
+			var canopy_mesh := CylinderMesh.new()
+			canopy_mesh.top_radius = 0.0
+			canopy_mesh.radial_segments = _TREE_SIDES
+			canopy_mesh.rings = 0
+			# The underside IS visible: the camera sits above the track
+			# looking forward and down, so a capless cone would show
+			# hollow from behind.
+			canopy_mesh.cap_bottom = true
+			var canopy := _build_prop_mesh(canopy_mesh, canopy_material, "PropCanopy" + label)
+
+			var rock_mesh := SphereMesh.new()
+			rock_mesh.radial_segments = _ROCK_SIDES
+			rock_mesh.rings = _ROCK_RINGS
+			var rock := _build_prop_mesh(rock_mesh, rock_material, "PropRock" + label)
+
+			# --- bench: two boxes on two capless cylinders ---
+			var seat := _build_prop_mesh(BoxMesh.new(), bench_material, "PropBenchSeat" + label)
+			var back := _build_prop_mesh(BoxMesh.new(), bench_material, "PropBenchBack" + label)
+			# Legs: both caps hidden, the bottom by the ground and the top
+			# by the seat sitting on them -- same reasoning as the trunk's.
+			var leg_a := _build_prop_mesh(
+				_capless_cylinder(_BENCH_LEG_R, _BENCH_LEG_SIDES), bench_material, "PropBenchLegA" + label)
+			var leg_b := _build_prop_mesh(
+				_capless_cylinder(_BENCH_LEG_R, _BENCH_LEG_SIDES), bench_material, "PropBenchLegB" + label)
+
+			# --- sign: capless post under a blank board ---
+			var post := _build_prop_mesh(
+				_capless_cylinder(_SIGN_POST_R, _SIGN_POST_SIDES), sign_material, "PropSignPost" + label)
+			var board := _build_prop_mesh(BoxMesh.new(), sign_material, "PropSignBoard" + label)
+
+			# --- stump: short wide cylinder, domed ---
+			# Top cap off: the dome covers it. Bottom cap off: the ground does.
+			var stump_mesh := CylinderMesh.new()
+			stump_mesh.radial_segments = _STUMP_SIDES
+			stump_mesh.rings = 0
+			stump_mesh.cap_top = false
+			stump_mesh.cap_bottom = false
+			var stump_body := _build_prop_mesh(stump_mesh, stump_material, "PropStumpBody" + label)
+			var dome_mesh := SphereMesh.new()
+			dome_mesh.radial_segments = _STUMP_SIDES
+			dome_mesh.rings = _STUMP_DOME_RINGS
+			var stump_dome := _build_prop_mesh(dome_mesh, stump_material, "PropStumpDome" + label)
+
+			# --- bush: a clump of squashed spheres ---
+			var blobs: Array[MeshInstance3D] = []
+			for b in _BUSH_BLOBS:
+				var blob_mesh := SphereMesh.new()
+				blob_mesh.radial_segments = _BUSH_SIDES
+				blob_mesh.rings = _BUSH_RINGS
+				blobs.append(_build_prop_mesh(
+					blob_mesh, bush_material, "PropBushBlob%d%s" % [b, label]))
+
+			_prop_slots.append({
+				"side": side,
+				"trunk": trunk,
+				"canopy": canopy,
+				"rock": rock,
+				"bench_seat": seat,
+				"bench_back": back,
+				"bench_leg_a": leg_a,
+				"bench_leg_b": leg_b,
+				"sign_post": post,
+				"sign_board": board,
+				"stump_body": stump_body,
+				"stump_dome": stump_dome,
+				"bush_a": blobs[0],
+				"bush_b": blobs[1],
+				"bush_c": blobs[2],
+			})
+	_hide_all_props()
+
+## A cylinder with both caps off, at a fixed radius. Height is written per
+## placement; radius never varies for the parts that use this, so it is set
+## once here for the same reason tessellation is -- a mesh left at Godot's
+## default sits on a 64-segment buffer from _ready() onward whether or not
+## its slot ever draws.
+func _capless_cylinder(radius: float, sides: int) -> CylinderMesh:
+	var mesh := CylinderMesh.new()
+	mesh.radial_segments = sides
+	mesh.rings = 0
+	mesh.cap_top = false
+	mesh.cap_bottom = false
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	return mesh
+
+## One prop mesh instance, added to this segment and hidden. `cast_shadow`
+## is off for the same reason Decor.gd switches it off on the hills and
+## _build_lane_curbs does on the curbs: this is decor sitting outside the
+## readable play area, and it has no business adding to the one
+## DirectionalLight3D's shadow pass.
+func _build_prop_mesh(mesh: PrimitiveMesh, material: StandardMaterial3D, node_name: String) -> MeshInstance3D:
+	var instance := MeshInstance3D.new()
+	instance.name = node_name
+	instance.mesh = mesh
+	instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	instance.set_surface_override_material(0, material)
+	instance.visible = false
+	add_child(instance)
+	return instance
+
+func _unshaded(color: Color) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = color
+	return material
+
+func _hide_all_props() -> void:
+	for slot in _prop_slots:
+		for key in _PROP_MESH_KEYS:
+			slot[key].visible = false
+
+## Picks a kind for a populated slot from _PROP_KIND_WEIGHTS. Exactly ONE
+## draw whatever the outcome, so adding a kind never changes how many
+## numbers a placement consumes -- which is what lets the weights be
+## retuned without re-sequencing the rest of a segment's decor.
+func _roll_prop_kind() -> String:
+	var roll := _prop_rng.randf()
+	var cumulative := 0.0
+	for i in _PROP_KINDS.size():
+		cumulative += _PROP_KIND_WEIGHTS[i]
+		if roll < cumulative:
+			return _PROP_KINDS[i]
+	# Float error only; the weights sum to 1.
+	return _PROP_KINDS[_PROP_KINDS.size() - 1]
+
+## Re-rolls every prop slot: present or not, tree or rock, and where.
+## Called from populate(), i.e. once at the initial fill and once per
+## recycle -- never per frame.
+func _place_trackside_props() -> void:
+	for slot in _prop_slots:
+		var side: float = slot["side"]
+		var show_prop := _prop_rng.randf() < _PROP_PRESENCE_CHANCE
+		# Hide everything first, then switch on only the chosen kind's
+		# meshes. Clearing unconditionally is what makes a slot that was a
+		# bench last tile and is a bush this one leave nothing behind.
+		for key in _PROP_MESH_KEYS:
+			slot[key].visible = false
+		if not show_prop:
+			continue
+		var kind := _roll_prop_kind()
+		for key in _PROP_KIND_MESHES[kind]:
+			slot[key].visible = true
+		var z := _prop_rng.randf_range(-_PROP_Z_HALF_RANGE, _PROP_Z_HALF_RANGE)
+		match kind:
+			"tree": _place_tree(slot, side, z)
+			"rock": _place_rock(slot, side, z)
+			"bench": _place_bench(slot, side, z)
+			"sign": _place_sign(slot, side, z)
+			"stump": _place_stump(slot, side, z)
+			"bush": _place_bush(slot, side, z)
+
+func _place_tree(slot: Dictionary, side: float, z: float) -> void:
+	var trunk_radius := _prop_rng.randf_range(_TREE_TRUNK_RADIUS.x, _TREE_TRUNK_RADIUS.y)
+	var trunk_height := _prop_rng.randf_range(_TREE_TRUNK_HEIGHT.x, _TREE_TRUNK_HEIGHT.y)
+	var canopy_radius := _prop_rng.randf_range(_TREE_CANOPY_RADIUS.x, _TREE_CANOPY_RADIUS.y)
+	var canopy_height := _prop_rng.randf_range(_TREE_CANOPY_HEIGHT.x, _TREE_CANOPY_HEIGHT.y)
+
+	var trunk_mesh := slot["trunk"].mesh as CylinderMesh
+	trunk_mesh.top_radius = trunk_radius * 0.75
+	trunk_mesh.bottom_radius = trunk_radius
+	trunk_mesh.height = trunk_height
+
+	var canopy_mesh := slot["canopy"].mesh as CylinderMesh
+	canopy_mesh.bottom_radius = canopy_radius
+	canopy_mesh.height = canopy_height
+
+	# The canopy is the widest part of a tree, so it is the canopy's radius
+	# -- not the trunk's -- that the keep-out has to clear.
+	var x := _prop_x(side, canopy_radius)
+	var ground_y := _ground_top_y()
+	slot["trunk"].position = Vector3(x, ground_y + trunk_height * 0.5, z)
+	slot["canopy"].position = Vector3(
+		x,
+		ground_y + trunk_height + canopy_height * (0.5 - _TREE_CANOPY_SINK),
+		z,
+	)
+
+func _place_rock(slot: Dictionary, side: float, z: float) -> void:
+	var radius := _prop_rng.randf_range(_ROCK_RADIUS.x, _ROCK_RADIUS.y)
+	var flatness := _prop_rng.randf_range(_ROCK_FLATNESS.x, _ROCK_FLATNESS.y)
+	var z_stretch := _prop_rng.randf_range(_ROCK_Z_STRETCH.x, _ROCK_Z_STRETCH.y)
+
+	var rock: MeshInstance3D = slot["rock"]
+	var mesh := rock.mesh as SphereMesh
+	mesh.radius = radius
+	mesh.height = radius * 2.0 * flatness
+
+	# Stretched along z and spun on its own axis, so six facets and one
+	# mesh still never produce two boulders that read as copies.
+	rock.scale = Vector3(1.0, 1.0, z_stretch)
+	rock.rotation = Vector3(0.0, _prop_rng.randf_range(0.0, TAU), 0.0)
+
+	# A yawed ellipse can present at most its LONGEST semi-axis sideways,
+	# whatever the angle -- so clearing that bounds the silhouette for
+	# every rotation, without the keep-out having to know the yaw.
+	var half_width := radius * maxf(1.0, z_stretch)
+	var half_height := radius * flatness
+	rock.position = Vector3(_prop_x(side, half_width), _ground_top_y() + half_height * _ROCK_SINK, z)
+
+## The two man-made kinds get a SMALL yaw rather than the rock's free spin:
+## a bench or a sign beside a path reads as aligned with it, and a fully
+## random one reads as dropped there. Small enough that the exact rotated
+## half-width below stays tight instead of degenerating to the bounding
+## circle a free spin would force.
+const _PROP_YAW_MAX: float = 0.21 # radians, ~12 degrees
+
+## Half the X extent of a box of `depth` (x) by `length` (z) yawed by
+## `yaw`. Exact, not a bound with slack: this is the number the keep-out
+## is built from, so it has to be the real silhouette edge at the rotation
+## actually used -- the same discipline the rock's longest-semi-axis
+## follows.
+func _yawed_half_x(depth: float, length: float, yaw: float) -> float:
+	return depth * 0.5 * absf(cos(yaw)) + length * 0.5 * absf(sin(yaw))
+
+## A part's offset from its prop's centre, yawed about Y with it.
+func _yawed_offset(offset: Vector3, yaw: float) -> Vector3:
+	var c := cos(yaw)
+	var s := sin(yaw)
+	return Vector3(offset.x * c + offset.z * s, offset.y, -offset.x * s + offset.z * c)
+
+func _place_bench(slot: Dictionary, side: float, z: float) -> void:
+	var length := _prop_rng.randf_range(_BENCH_LENGTH.x, _BENCH_LENGTH.y)
+	var depth := _prop_rng.randf_range(_BENCH_DEPTH.x, _BENCH_DEPTH.y)
+	var seat_y := _prop_rng.randf_range(_BENCH_SEAT_Y.x, _BENCH_SEAT_Y.y)
+	var back_h := _prop_rng.randf_range(_BENCH_BACK_H.x, _BENCH_BACK_H.y)
+	var yaw := _prop_rng.randf_range(-_PROP_YAW_MAX, _PROP_YAW_MAX)
+
+	var seat: MeshInstance3D = slot["bench_seat"]
+	var back: MeshInstance3D = slot["bench_back"]
+	var leg_a: MeshInstance3D = slot["bench_leg_a"]
+	var leg_b: MeshInstance3D = slot["bench_leg_b"]
+
+	(seat.mesh as BoxMesh).size = Vector3(depth, _BENCH_SEAT_H, length)
+	(back.mesh as BoxMesh).size = Vector3(_BENCH_BACK_T, back_h, length)
+	var leg_h := maxf(0.05, seat_y - _BENCH_SEAT_H * 0.5)
+	(leg_a.mesh as CylinderMesh).height = leg_h
+	(leg_b.mesh as CylinderMesh).height = leg_h
+
+	# The seat is the widest part in x, so it -- not the backrest, which is
+	# thinner and sits inside the seat's footprint -- sets the keep-out.
+	var half_x := _yawed_half_x(depth, length, yaw)
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var centre := Vector3(x, ground_y, z)
+
+	# Backrest on the far side from the track, so the bench faces it.
+	var back_off := side * (depth * 0.5 - _BENCH_BACK_T * 0.5)
+	var leg_z := length * (0.5 - _BENCH_LEG_INSET)
+	_put(seat, centre, Vector3(0.0, seat_y, 0.0), yaw)
+	_put(back, centre, Vector3(back_off, seat_y + _BENCH_SEAT_H * 0.5 + back_h * 0.5, 0.0), yaw)
+	_put(leg_a, centre, Vector3(0.0, leg_h * 0.5, leg_z), yaw)
+	_put(leg_b, centre, Vector3(0.0, leg_h * 0.5, -leg_z), yaw)
+
+func _place_sign(slot: Dictionary, side: float, z: float) -> void:
+	var post_h := _prop_rng.randf_range(_SIGN_POST_H.x, _SIGN_POST_H.y)
+	var board_w := _prop_rng.randf_range(_SIGN_BOARD_W.x, _SIGN_BOARD_W.y)
+	var board_h := _prop_rng.randf_range(_SIGN_BOARD_H.x, _SIGN_BOARD_H.y)
+	var yaw := _prop_rng.randf_range(-_PROP_YAW_MAX, _PROP_YAW_MAX)
+
+	var post: MeshInstance3D = slot["sign_post"]
+	var board: MeshInstance3D = slot["sign_board"]
+	(post.mesh as CylinderMesh).height = post_h
+	# Blank board. No texture, no albedo variation, nothing to read -- the
+	# board is a shape, and that is the whole of what it is.
+	(board.mesh as BoxMesh).size = Vector3(board_w, board_h, _SIGN_BOARD_T)
+
+	# Unyawed the board's width lies along x, so it is the wide part here;
+	# the post is thinner than the board at every rotation this uses.
+	var half_x := _yawed_half_x(board_w, _SIGN_BOARD_T, yaw)
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var centre := Vector3(x, ground_y, z)
+	_put(post, centre, Vector3(0.0, post_h * 0.5, 0.0), yaw)
+	_put(board, centre, Vector3(0.0, post_h - _SIGN_BOARD_DROP - board_h * 0.5, 0.0), yaw)
+
+func _place_stump(slot: Dictionary, side: float, z: float) -> void:
+	var radius := _prop_rng.randf_range(_STUMP_RADIUS.x, _STUMP_RADIUS.y)
+	var height := _prop_rng.randf_range(_STUMP_HEIGHT.x, _STUMP_HEIGHT.y)
+	var rise := _prop_rng.randf_range(_STUMP_DOME_RISE.x, _STUMP_DOME_RISE.y)
+
+	var body: MeshInstance3D = slot["stump_body"]
+	var dome: MeshInstance3D = slot["stump_dome"]
+	var body_mesh := body.mesh as CylinderMesh
+	body_mesh.top_radius = radius
+	body_mesh.bottom_radius = radius * 1.08 # a hint of flare at the base
+	body_mesh.height = height
+
+	# A squashed sphere whose equator matches the cylinder's top, so the
+	# join is hidden and the top reads as a rounded cut face.
+	var dome_mesh := dome.mesh as SphereMesh
+	dome_mesh.radius = radius
+	dome_mesh.height = radius * rise * 2.0
+
+	# The flared base is the widest point, and the dome never exceeds the
+	# cylinder's own radius.
+	var half_x := radius * 1.08
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var yaw := _prop_rng.randf_range(0.0, TAU)
+	body.rotation = Vector3(0.0, yaw, 0.0)
+	dome.rotation = Vector3(0.0, yaw, 0.0)
+	body.position = Vector3(x, ground_y + height * 0.5, z)
+	dome.position = Vector3(x, ground_y + height, z)
+
+func _place_bush(slot: Dictionary, side: float, z: float) -> void:
+	# Roll every blob FIRST, so the cluster's true half-width is known
+	# before the keep-out places it -- the same order the tree uses, where
+	# the canopy is rolled before _prop_x is asked for a clearance.
+	var radii: Array[float] = []
+	var half_heights: Array[float] = []
+	var offsets: Array[Vector3] = []
+	var half_x := 0.0
+	for i in _BUSH_BLOBS:
+		var r := _prop_rng.randf_range(_BUSH_RADIUS.x, _BUSH_RADIUS.y)
+		var flatness := _prop_rng.randf_range(_BUSH_FLATNESS.x, _BUSH_FLATNESS.y)
+		var angle := _prop_rng.randf_range(0.0, TAU)
+		var reach := _prop_rng.randf_range(0.0, r * _BUSH_SPREAD)
+		radii.append(r)
+		half_heights.append(r * flatness)
+		offsets.append(Vector3(cos(angle) * reach, 0.0, sin(angle) * reach))
+		# The cluster's silhouette edge is the furthest blob's own edge,
+		# not the cluster centre -- so the offset is added to the radius
+		# BEFORE the keep-out sees it, exactly as the tree adds its canopy
+		# radius rather than its trunk's.
+		half_x = maxf(half_x, absf(offsets[i].x) + r)
+
+	var x := _prop_x(side, half_x)
+	var ground_y := _ground_top_y()
+	var keys := ["bush_a", "bush_b", "bush_c"]
+	for i in _BUSH_BLOBS:
+		var blob: MeshInstance3D = slot[keys[i]]
+		var mesh := blob.mesh as SphereMesh
+		mesh.radius = radii[i]
+		mesh.height = half_heights[i] * 2.0
+		# Bedded into the ground on the same convention as the rock:
+		# _BUSH_SINK of the half-height stays above the plane.
+		blob.position = Vector3(
+			x + offsets[i].x,
+			ground_y + half_heights[i] * _BUSH_SINK,
+			z + offsets[i].z,
+		)
+		blob.rotation = Vector3.ZERO
+
+## Places one part of a multi-part prop: its offset from the prop's centre,
+## yawed with the prop, plus the part's own matching rotation.
+func _put(instance: MeshInstance3D, centre: Vector3, offset: Vector3, yaw: float) -> void:
+	instance.position = centre + _yawed_offset(offset, yaw)
+	instance.rotation = Vector3(0.0, yaw, 0.0)
+	instance.scale = Vector3.ONE
+
+## X for a prop whose silhouette reaches `half_width` either side of its
+## own centre. The keep-out and the half-width are both added BEFORE the
+## random spread, which is what makes "no part of a prop is ever closer to
+## the centre line than _PROP_KEEPOUT_X" arithmetic rather than a hope
+## about how the ranges above happen to be tuned.
+func _prop_x(side: float, half_width: float) -> float:
+	return side * (_PROP_KEEPOUT_X + half_width + _prop_rng.randf_range(0.0, _PROP_X_SPREAD))
+
+## Distance from the track centre line to the nearest point of any prop
+## currently drawn by this segment, or INF when it is showing none.
+##
+## MEASURED off the real mesh AABBs rather than recomputed from _prop_x's
+## arithmetic: a check that re-derived the placement formula would agree
+## with itself no matter how wrong the formula was. Kept as a narrow
+## accessor (one number) rather than exposing the prop nodes, same shape
+## and same reason as active_gland_z_on_lane above. Read only by
+## scripts/dev/TrackPropsAudit.gd.
+func nearest_prop_edge_x() -> float:
+	var nearest := INF
+	for slot in _prop_slots:
+		for key in _PROP_MESH_KEYS:
+			var instance: MeshInstance3D = slot[key]
+			if not instance.visible:
+				continue
+			var box: AABB = instance.transform * instance.get_aabb()
+			var near_edge := minf(absf(box.position.x), absf(box.position.x + box.size.x))
+			nearest = minf(nearest, near_edge)
+	return nearest
 
 ## Writes the ground slab's collider from Hitboxes.gd. Byte-identical to
 ## what TrackSegment.tscn already carried, so nothing changes today.
@@ -209,6 +899,7 @@ func _apply_hitbox() -> void:
 ## here -- see AIR_HAZARD_SEPARATION_S.)
 func populate(spawn_obstacle: bool, obstacle_type: Obstacle.Type, obstacle_lane: int, noisette_lane: int, gland_lane: int) -> void:
 	_reroll_ground_tint()
+	_place_trackside_props()
 	var obstacle_blocks_jump := false
 
 	if spawn_obstacle:

@@ -1,7 +1,8 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/player/Keepy.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="2"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_squirrel_hero.glb" id="3"]
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_1"]
 radius = 0.5
@@ -24,6 +25,9 @@ position = Vector3(0, 0.8, 0)
 script = ExtResource("2")
 mesh = SubResource("CapsuleMesh_1")
 surface_material_override/0 = SubResource("StandardMaterial3D_1")
+model_scene = ExtResource("3")
+model_scale = 1.2725
+model_rotation_degrees = Vector3(0, 180, 0)
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 position = Vector3(0, 0.8, 0)
