@@ -338,6 +338,94 @@ gated byte-identique + le chiffre RÉELLEMENT servi par CI/le site, jamais
 sur la comparaison entre deux exports locaux distincts. Détail complet :
 `docs/MESHY_SPEC.md` §11.
 
+## Brouillard de profondeur : horizon dissous, zone de jeu exemptée (10 août 2026)
+
+Branche `claude/keepy-depth-fog-rckkyn`, mergée `staging`. S'appuie sur
+`scripts/world/NightSky.gd` (« swamp-toned night sky/fog », commits
+`2eb6a69`/`b4eceb1`, mergé `staging` le 10 août 2026) qui n'avait **jamais
+eu sa propre entrée ici** — ce paragraphe couvre les deux, NightSky.gd en
+bref (contexte nécessaire) et le brouillard de profondeur en détail.
+
+**NightSky.gd, en bref** : fait fondre `Environment.background_color` et
+`fog_light_color` vers une palette marécage-nocturne selon
+`GameState.dark_intensity`, en écrivant le **pré-image** de la cible
+(1 − teinte visée), parce que `DarkModeEffect.gd` inverse ensuite TOUTE la
+frame rendue (même technique que `GameState.DARK_VARIANTS`). Remet les
+couleurs jour dès que `state != PLAYING`. C'est la SEULE chose que ce
+fichier possède.
+
+**Le brouillard de profondeur est un système DIFFÉRENT** : bascule
+`Environment.fog_mode` d'Exponentiel vers **Depth** (`fog_mode = 1`), ce
+qui active `fog_depth_begin`/`fog_depth_end`/`fog_depth_curve` — vérifié
+sur le SOURCE du renderer réellement utilisé pour l'export web
+(`drivers/gles3/shaders/scene.glsl`, tag `4.3-stable`, GL Compatibility) et
+non supposé : `fog_z = smoothstep(fog_depth_begin, fog_depth_end,
+distance) ; fog_amount = pow(fog_z, fog_depth_curve) * fog_density`. Sous
+`fog_depth_begin`, `fog_amount` est **exactement zéro** — pas « faible »,
+zéro, une garantie prouvable depuis le `.tscn` seul, vraie dès la première
+frame, indépendamment de la correction de tout script.
+
+**Marge mesurée, pas devinée.** `TrackManager.gd` pool `SEGMENT_COUNT=7`
+segments de `SEGMENT_LENGTH=20m` (voir sa propre classe doc — le monde se
+déplace vers le joueur statique, jamais l'inverse), donc le pire cas est un
+obstacle à Z=-120. `CameraFollow.gd` reste à Z=+7 fixe (le shake passe par
+`h_offset`/`v_offset`, jamais `position` — voir son propre header). Distance
+caméra-obstacle pire cas : `sqrt(4.2² + 127²) ≈ 127,07m`. Le poursuivant
+(`Pursuer.gd`) reste bien plus près, confiné à `[CAUGHT_Z, FAR_Z] = [1.0,
+3.0]`. `fog_depth_begin = 150.0` (Game.tscn) laisse ~23m de marge
+au-delà du pire cas réel — aucun hazard, collectible ou le pursuer lui-même
+ne peut jamais être fogué. `fog_depth_end = 550.0` étale le dégradé sur les
+trois couches de `Decor.gd` (`hill_near` Z -210..-340, `hill_far` Z
+-360..-520, `mountain` Z -540..-700, voir la section Meshy plus haut) pour
+un dégradé progressif plutôt qu'un cutoff plat.
+
+**Intensité (densité), pas position, varie avec `dark_intensity`** —
+nouveau `scripts/world/DepthFog.gd`, même découpe que NightSky.gd/
+DarkModeEffect.gd (trois scripts, trois jeux de propriétés disjoints, une
+seule horloge partagée) : fait fondre `Environment.fog_density` (0.45 jour
+→ 0.92 nuit pleine) en lisant la valeur jour DANS LA SCÈNE à `_ready()`
+(jamais codée en dur), remet la valeur jour dès `state != PLAYING`. **Ne
+touche JAMAIS** `fog_depth_begin`/`_end`/`_curve` : ces trois valeurs
+restent des CONSTANTES écrites une fois dans le `.tscn` — la garantie
+« zéro brouillard en zone de jeu » ne doit jamais dépendre d'un lerp
+runtime correctement exécuté, seulement d'un fait lisible dans le fichier.
+**Vit sur son propre Node**, sibling de `WorldEnvironment` sous `World` —
+un nœud Godot ne porte qu'un seul script, et NightSky.gd possède déjà
+`WorldEnvironment` ; même schéma que le `CanvasLayer` séparé de
+`DarkModeEffect.gd`.
+
+⚠️ **Piège Godot capturé par une sonde runtime, pas supposé** : écrire
+`fog_mode` a un EFFET DE BORD qui remet `fog_density` à `1.0`,
+indépendamment de ce que le fichier `.tscn` déclare juste avant. Vérifié en
+isolant sur un `Environment.new()` nu (`e.fog_density=0.45; e.fog_mode=1`
+→ `e.fog_density` lit `1.0`). Les propriétés `.tscn` s'appliquent dans
+l'ORDRE du texte : `fog_density` doit être écrit APRÈS `fog_mode` (et
+`fog_depth_*`), sinon la valeur jour saisie dans l'éditeur ne survit
+jamais au chargement de la scène. Fait le tour : à retenir pour tout futur
+réglage de `fog_mode`/`fog_density` dans ce projet ou un autre.
+
+**Validation** : `AssetContractAudit` et `ChargerAudit` byte-identiques à
+la baseline (colliders/fenêtres de réaction inchangés — le brouillard est
+un pur pass de rendu, aucune position ni collider touché).
+`TrackPropsAudit` ne dépend PAS de la visibilité rendue : son recensement
+lit `is_visible_in_tree()` (un booléen de scène), jamais un pixel — le
+brouillard ne pose jamais `visible=false`, et tout prop de bord de piste
+vit de toute façon dans la zone garantie sans brouillard (< 127m). Sa
+variance PASS/FAIL run-à-run observée pendant cette session (3 runs :
+PASS/FAIL/PASS, totaux 57315/46087/46151) est le défaut d'échantillonnage
+non-seedé DÉJÀ documenté plus haut (« `TrackPropsAudit` ne seede RIEN »),
+confirmée pré-existante et sans rapport avec ce lot. Sonde runtime jetable
+(non committée) : `NightSky.gd` et `DepthFog.gd` n'entrent jamais en
+conflit d'écriture (vérifié empiriquement, pas seulement lu dans le code),
+et les deux reviennent bien à leur baseline jour dès `state != PLAYING`.
+Import headless + export Web headless : exit 0, aucune erreur/warning,
+`DepthFog.gdc` bien empaqueté.
+
+**NON FAIT dans ce lot, ordre de priorité validé par Mathieu pour la
+suite** : (1) accents lumineux, (2) mousse sur les arbres, (3) eau
+réfléchissante (perf à valider avant celle-ci — c'est la plus coûteuse des
+trois, aucune mesure de coût n'existe encore).
+
 ## Deux défauts de mesure corrigés (F10, 9 août 2026) — deux décisions de
 ## teinte EN ATTENTE de Mathieu, aucune action code en cours
 
