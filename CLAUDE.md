@@ -61,6 +61,39 @@ deux assets réels sont intégrés et validés selon la méthode qu'il documente
 - **Keepy (hero squirrel)** — `assets/models/keepy_squirrel_hero.glb`,
   installé dans `Keepy/MeshInstance3D` (2026-08-09).
 
+**Décor de fond : premiers assets 2D (billboards), pas des `.glb` (2026-08-10).**
+`scripts/world/Decor.gd` rendait ses deux couches de collines en `CylinderMesh`
+procédural (§8.1 les documentait comme « no asset yet »). Les trois assets
+`assets_source/decor/{mountain,hill_near,hill_far}.png` (uploadés via GitHub
+web, PNG fond blanc non transparent) ont été détourés/recadrés/recompressés en
+Pillow (flood-fill depuis les bords, pas un seuil plat — le fond n'est pas
+`(255,255,255)` pur, et un seuil plat aurait troué le point culminant enneigé
+de la montagne, resté à l'intérieur de la même bande de bruit que le fond) et
+installés dans `assets/textures/decor/`. Rendu en `Sprite3D` (billboard
+`BILLBOARD_FIXED_Y`), pas en `ModelSlot` : ces couches n'ont pas de nœud fixe
+adressé par du code gameplay, seulement un pool d'instances interchangeables,
+et la source est un cutout plat, pas un maillage — §2/§9-11 restent écrits
+pour l'installation d'un `.glb` sur un `ModelSlot`, ce premier asset 2D en
+dévie délibérément (voir le commentaire de classe de `Decor.gd`).
+Troisième couche ajoutée (mountain, la plus lointaine) — trois couches au
+total désormais. Coût triangle mesuré EN BAISSE malgré l'ajout d'une couche :
+165 tri/frame pour les deux cônes (`get_faces()` sur les mêmes paramètres
+`CylinderMesh`) contre 26 tri/frame pour les trois couches Sprite3D (un
+Sprite3D est toujours exactement un quad, 13 instances × 2 tri).
+**Piège de diagnostic rencontré et à connaître pour un futur billboard** : le
+fog existant de `WorldEnvironment` (`fog_density=0.0035`, inchangé) est assez
+fort aux distances de ces couches pour dominer presque entièrement leur
+couleur rendue — un échantillon de pixel en jeu a mesuré une couleur quasi
+identique pour les trois couches malgré trois textures sources différentes,
+ce qui, au premier regard sur une capture offscreen, ressemblait à des
+collines manquantes/occultées. Ce n'en était pas — positions à l'écran et
+échantillon de pixel confirmés avant de conclure : c'est le même traitement
+atmosphérique déjà appliqué à toute géométrie opaque lointaine de la scène,
+aux mêmes bandes Z que les anciens cônes. Non corrigé (couper le fog sur ces
+seules couches les ferait lire comme des découpes plates au milieu d'une
+scène qui s'estompe correctement) — juste mesuré et documenté, dans le
+commentaire de classe de `Decor.gd` et ici.
+
 Les deux matériaux sont **unlit** (`KHR_materials_unlit` posé à la main dans
 le `.glb`, cf §9) — c'est la règle par défaut pour tout asset de ce projet,
 pas une particularité du hibou : §8 explique pourquoi seule une surface
