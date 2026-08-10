@@ -135,12 +135,33 @@ const _LAYERS: Array[Dictionary] = [
 		# Far hill layer: same band/parallax/count the procedural cones used
 		# (docs/MESHY_SPEC.md section 8.1 called this "darker than the
 		# ground... sitting IN SHADOW"), now the desaturated hill cutout.
+		#
+		# x_range WIDENED 34 -> 62 (10 August 2026, decor stability fix):
+		# `x_range: 34.0` was carried over unchanged from the old
+		# CylinderMesh cones, whose radius scaled independently of height.
+		# hill_far.png is a WIDE, low-profile cutout (512x166px, ~3.08:1
+		# aspect) -- Sprite3D.pixel_size scales both axes uniformly (see
+		# _place_hill), so a single instance at this layer's own max height
+		# (22) renders ~68m wide, WIDER than the old x_range's whole 68m
+		# spread. That is exactly the "individual instances wider than the
+		# whole spawn range" defect the mountain layer's own comment above
+		# describes catching and fixing on ITS first pass -- it was never
+		# re-checked here after the billboard swap replaced independently-
+		# scaled cones with an aspect-locked cutout. MEASURED (offscreen
+		# capture + per-instance pixel sampling, throwaway probe, not
+		# committed): with the old x_range, hill_far's 5 instances plus
+		# hill_near's 5 overlapped into one indistinguishable mass covering
+		# nearly the same screen region as the mountain layer -- the
+		# "single green blob, unstable shape" reported on staging. 62 brings
+		# the max-width/spread ratio to ~0.55, the same "occasional
+		# landmark, real gaps" territory the mountain layer already targets,
+		# without touching height_range (art-directed scale, left alone).
 		"texture": _HILL_FAR_TEXTURE,
 		"count": 5,
 		"parallax": 0.15,
 		"spawn_z_min": -520.0,
 		"spawn_z_max": -360.0,
-		"x_range": 34.0,
+		"x_range": 62.0,
 		"height_range": Vector2(14.0, 22.0),
 		"render_priority": -1,
 	},
@@ -150,12 +171,22 @@ const _LAYERS: Array[Dictionary] = [
 		# atmospheric-perspective cue for this pair of layers in daylight;
 		# `shaded = false` on both (see class doc) is what keeps the pair
 		# still legible against each other after the dark-mode invert.
+		#
+		# x_range WIDENED 26 -> 74 (10 August 2026, decor stability fix):
+		# same defect as hill_far above, worse here -- hill_near.png is
+		# 512x203px (~2.52:1 aspect) at a TALLER height_range (up to 34), so
+		# a single instance could render ~86m wide against the old
+		# x_range's 52m spread: one instance alone was wider than its
+		# entire band. 74 brings max-width/spread to ~0.58. Left this
+		# layer's height_range untouched for the same reason as above --
+		# this is a spawn-spread fix, not a rescale of how big a near hill
+		# is allowed to look.
 		"texture": _HILL_NEAR_TEXTURE,
 		"count": 5,
 		"parallax": 0.35,
 		"spawn_z_min": -340.0,
 		"spawn_z_max": -210.0,
-		"x_range": 26.0,
+		"x_range": 74.0,
 		"height_range": Vector2(22.0, 34.0),
 		"render_priority": 0,
 	},
