@@ -87,13 +87,20 @@ class_name HUD
 ##                                    caught, without an event having to
 ##                                    remind them.
 ##
-## FOUR PIPS, NOT TWO, AND THEY COUNT CONTACTS -- see the ALARM LADDER below
-## for the half-strike rebalance this row had to absorb. GameState counts in
-## half-units because that is the arithmetic-safe way to price a contact at
-## "half a strike"; this row does NOT repeat that framing at the player.
-## They take four hits and they are caught, so the row shows four slots and
-## spends one per hit. A half-filled pip would ask a player mid-run to
-## decode a fraction; four pips ask them to count, which they already do.
+## ONE PIP PER CONTACT, AND THE COUNT FOLLOWS THE CAPACITY. GameState counts
+## in half-units because that is the arithmetic-safe way to price a contact
+## at "half a strike"; this row does NOT repeat that framing at the player.
+## They take GameState.STRIKE_CAPACITY_HALF hits and they are caught, so the
+## row shows that many slots and spends one per hit. A half-filled pip would
+## ask a player mid-run to decode a fraction; whole pips ask them to count,
+## which they already do.
+##
+## The row went 2 -> 4 with the half-strike rebalance and 4 -> 2 with the
+## capacity change, and BOTH times the scene had to move with the constant:
+## `pip_fills` is an explicit list of `Pip0..PipN` node paths, checked against
+## the capacity in _ready(). That check is the only thing standing between a
+## future capacity edit and a row that silently shows the wrong number of
+## slots -- it push_errors rather than letting the two agree by luck.
 ##
 ## The pips sit directly ABOVE the pursuer gauge, in the same bottom column,
 ## because the two are one story: the pips are what the pursuer is counting.
@@ -129,21 +136,38 @@ class_name HUD
 ## changed again before the second one ended the run. One hit, full alarm:
 ## binary, and correct at that capacity.
 ##
-## At a capacity of 4 the same expression is still the right one for "one
-## more and you are done" -- it just no longer fires until the third
-## contact, which would leave the first two marked by nothing but a flash
-## that is gone in a third of a second. The middle of the ladder is exactly
-## where a player most needs to feel the budget draining, so it gets its own
-## step:
+## At a capacity of 4 the same expression was still the right one for "one
+## more and you are done" -- it just did not fire until the third contact,
+## which would leave the first two marked by nothing but a flash that is
+## gone in a third of a second. The middle of a 4-wide ladder is exactly
+## where a player most needs to feel the budget draining, so it got its own
+## step.
+##
+## ⚠️ AT THE CURRENT CAPACITY OF 2 THE LADDER HAS COLLAPSED BACK TO THE
+## BINARY, and that is arithmetic rather than an edit: both thresholds are
+## derived from the capacity, `CAPACITY - 1` and `CAPACITY / 2` are both 1,
+## and DANGER is tested first, so CAUTION is unreachable. What actually runs
+## today is:
+##
+##   CLEAR    0 contacts     white, still.
+##   DANGER   1 contact      amber, the ORIGINAL fast deep pulse + the entry
+##                           kick. "One more and you are done" -- true again
+##                           on the very first contact, as it was before the
+##                           rebalance.
+##   FATAL    2 contacts     coral red, fastest and deepest. Owns the row.
+##
+## That is CORRECT here, not a defect to route around: with two contacts of
+## budget there is no "half spent" state that is not also "one more and you
+## are done", and giving the first contact the softer of two pulses would
+## understate it. The three-step form below is what the ladder becomes again
+## the moment the capacity returns to 3 or more -- the constants are kept for
+## exactly that reason (see STRIKE_CAUTION_PULSE_HZ). For the record, the
+## shape it was tuned to at capacity 4:
 ##
 ##   CLEAR    0-1 contacts   white, still. A single stumble is a stumble.
 ##   CAUTION  2 contacts     amber, SLOW shallow pulse. Half the resistance
-##                           is gone. New state, and the reason this is a
-##                           ladder rather than a rename.
-##   DANGER   3 contacts     amber, the ORIGINAL fast deep pulse + the entry
-##                           kick. "One more and you are done", unchanged in
-##                           kind from what shipped -- only its trigger
-##                           moved from contact 1 to contact 3.
+##                           is gone.
+##   DANGER   3 contacts     amber, the ORIGINAL fast deep pulse + kick.
 ##   FATAL    4 contacts     coral red, fastest and deepest. Owns the row.
 ##
 ## ESCALATION IS CARRIED BY PULSE RATE, not by inventing a third hue. Hue
@@ -215,6 +239,45 @@ const VIGNETTE_ONSET_PROXIMITY: float = GAUGE_ALARM_PROXIMITY
 const GAUGE_SAFE_COLOR: Color = Color(0.95, 0.85, 0.3, 1)
 const GAUGE_ALARM_COLOR: Color = Color(1.0, 0.25, 0.2, 1)
 
+# --- PURSUER sight-loss release ------------------------------------
+## THE "YOU GOT AWAY" BEAT. GameState.pursuer_lost_sight fires at exactly
+## the right instant and, until this batch, had no listener anywhere in the
+## game -- the one moment the whole resistance mechanic pays out arrived
+## with no sound, no fade and no HUD reaction (docs/PROBE_AUDIT.md F12
+## measured the silhouette going 19.93% of screen height -> 0% in a single
+## frame, after a push a mid-skill player needs ~75s of clean play to earn).
+##
+## Deliberately NOT the arrival reaction played backwards. Arrival is a
+## scale POP on the label -- the loudest thing this HUD does, because a
+## threat appeared. This is a DIM on the same telegraph: it lets go.
+## Different property, opposite direction, so the two cannot be confused
+## even in peripheral vision.
+##
+## LAYOUT-FREE BY CONSTRUCTION, and that is a requirement rather than a
+## convenience: this row sits directly under the strike row, whose label is
+## what StrikeFatalContrastAudit samples, and that probe has already had its
+## verdict flipped TWICE by pip-count changes that moved the label a few
+## pixels (docs/PROBE_AUDIT.md F11). The beat is applied through `modulate`
+## -- a colour multiply, which cannot resize or reposition anything -- and
+## the cue's audio player is a non-Control sibling on the CanvasLayer root.
+## Nothing here can move a pixel the probe samples.
+##
+## How long the beat lasts. Longer than any strike cue on this HUD (0.30s
+## flash, 0.20s/0.55s audio) on purpose: those punctuate an INSTANT the
+## player is punished at, this marks the release of a pressure that has been
+## on screen for tens of seconds, and a beat that short would read as one
+## more hit.
+const PURSUER_RELEASE_DURATION_S: float = 0.90
+## Fraction of the beat spent falling. Fast down, slow back: that asymmetry
+## is what makes it read as a release rather than a blink -- the telegraph
+## drops at the instant the pursuer does, then settles.
+const PURSUER_RELEASE_DIP_FRACTION: float = 0.22
+## How far the telegraph dims at the bottom of the dip. NOT zero: the gauge
+## is PERMANENT information (see the class doc -- the player must always be
+## able to read it), so this is the alarm letting go, not the display going
+## away.
+const PURSUER_RELEASE_MIN_ALPHA: float = 0.22
+
 # --- STRIKE flash + pips -------------------------------------------
 ## How long the impact flash lasts. Shorter than every other reaction on this
 ## HUD on purpose: it is the instant of the hit, not a state -- the state is
@@ -245,6 +308,28 @@ const STRIKE_DANGER_COLOR: Color = WARNING_COLOR
 ## --- CAUTION step (half-strike rebalance) --------------------------
 ## The pulse for "half your resistance is gone", i.e. the step that did not
 ## exist while the capacity was two contacts.
+##
+## ⚠️ CURRENTLY UNREACHABLE, BY ARITHMETIC RATHER THAN BY AN EDIT, and left
+## in place on purpose. Both ladder thresholds are DERIVED from the capacity
+## (see _update_strike_display): DANGER at `used >= CAPACITY - 1`, CAUTION at
+## `used >= CAPACITY / 2`. At the current STRIKE_CAPACITY_HALF of 2 those are
+## both `used >= 1`, and DANGER is tested first, so the `elif` below it can
+## never be taken. The ladder is therefore CLEAR (0 contacts) -> DANGER (1)
+## -> fatal (2) -- exactly the binary this step was written to replace when
+## the capacity was 4.
+##
+## THAT IS THE CORRECT BEHAVIOUR AT THIS CAPACITY, not a bug to route
+## around. With two contacts of budget there is no "half spent" state that
+## is not also "one more and you are done": the first contact IS the last
+## warning, and giving it the softer of two pulses would understate it. The
+## derivation is what produces that collapse automatically -- a literal
+## threshold would have stranded CAUTION on a slot that no longer means what
+## it meant.
+##
+## Kept rather than deleted because the constants below are the record of
+## what a three-step ladder was tuned to, and raising the capacity back to 3
+## or more revives the step with its calibration intact. Deleting them would
+## make that a re-tune instead of a one-line change.
 ##
 ## Deliberately BELOW the danger pulse on both axes (3.5 Hz / 0.18) and
 ## visibly so: roughly a third the rate and a third the swing. It has to
@@ -319,11 +404,12 @@ const STRIKE_KICK_PEAK: float = 0.26
 ## THE HALF-STRIKE REBALANCE DID NOT MAKE THIS REDUNDANT, and it is worth
 ## saying so because the ALARM LADDER above solves a related problem. The
 ## ladder fixes "the warning is flat across the whole run"; this fixes "the
-## last hit looks like the warning that preceded it". At capacity 4 the
-## danger step now precedes the fatal one by a single contact rather than
-## running for the whole run, which makes the two ADJACENT -- so the fatal
-## beat needing its own hue and its own rate is, if anything, sharper than
-## it was.
+## last hit looks like the warning that preceded it". The danger step always
+## precedes the fatal one by a single contact -- at capacity 4 because the
+## ladder placed it there, at the current capacity of 2 because there is only
+## one non-fatal contact to place it on. Either way the two are ADJACENT, so
+## the fatal beat needing its own hue and its own rate is, if anything,
+## sharper than it was.
 ##
 ## A coral RED (hue 0deg), deliberately a different hue family from
 ## STRIKE_DANGER_COLOR's amber (hue ~21deg, also the expiring-combo pulse's
@@ -378,17 +464,32 @@ const FATAL_PULSE_AMPLITUDE: float = 0.32
 ## two must never cut each other off mid-tail.
 @onready var strike_warning_sfx: AudioStreamPlayer = $StrikeWarningSfx
 @onready var strike_fatal_sfx: AudioStreamPlayer = $StrikeFatalSfx
+## The third cue, and the first one that is not a punishment. Same pattern
+## as the two above -- a plain scene node on the HUD, one file in
+## assets/audio/, no new audio service -- because the reason those two are
+## not a global SFX autoload has not changed.
+##
+## SEPARATED FROM THE STRIKE CUES BY CHARACTER, not by volume. Both strike
+## cues are hard-attack percussive decays (measured: ~712Hz falling away
+## over 0.20s, ~275Hz -> ~117Hz over 0.55s). This one is a soft-attack pair
+## of RISING sine notes, A4 -> E5 a fifth above it, 0.62s, with a faint
+## octave shimmer and no transient at all: 22050Hz mono 16-bit like its
+## siblings, peaked at 0.62 of full scale where they sit at 0.72, and played
+## quieter still (-6dB against -4/-2). A cue that resolves upward out of a
+## soft attack cannot be mistaken for an impact, which is the whole point --
+## the player must never hear this and check their pips.
+@onready var pursuer_lost_sfx: AudioStreamPlayer = $PursuerLostSfx
 @onready var strike_row: HBoxContainer = $MarginContainer/PursuerRow/StrikeRow
 @onready var strike_label: Label = $MarginContainer/PursuerRow/StrikeRow/StrikeLabel
 ## Fixed-size, resolved once. One entry per STRIKE_CAPACITY_HALF slot, in the
 ## same order as the scene authors them, so the Nth pip is the Nth contact.
-## Went from 2 to 4 with the half-strike rebalance -- the count is asserted
-## against the capacity in _ready() rather than left to agree by luck.
+## Went from 2 to 4 with the half-strike rebalance and BACK TO 2 with the
+## capacity change -- the count is asserted against the capacity in _ready()
+## rather than left to agree by luck, which is what makes this array and
+## HUD.tscn's Pip0..PipN impossible to leave out of step silently.
 @onready var pip_fills: Array[ColorRect] = [
 	$MarginContainer/PursuerRow/StrikeRow/Pip0/Ring/Fill,
 	$MarginContainer/PursuerRow/StrikeRow/Pip1/Ring/Fill,
-	$MarginContainer/PursuerRow/StrikeRow/Pip2/Ring/Fill,
-	$MarginContainer/PursuerRow/StrikeRow/Pip3/Ring/Fill,
 ]
 
 ## Elapsed time in each pop, or < 0.0 when that pop is not playing -- the
@@ -467,6 +568,14 @@ var _fatal_pulse_t: float = 0.0
 ## camera shake), which are the thing a state cannot express.
 ## Starts at -1 so the first frame always paints.
 var _drawn_half: int = -1
+## Phase of the sight-loss release beat, -1.0 when nothing is armed -- the
+## same "-1 means idle" contract every pop on this HUD uses, so it advances
+## through the same _advance_pop.
+var _pursuer_release_t: float = -1.0
+## Last alpha written to the telegraph. Edge-triggered for the same reason
+## _applied_vignette is: the idle case is every frame of a normal run, and
+## it should cost a comparison rather than two property writes.
+var _applied_release_alpha: float = 1.0
 
 func _ready() -> void:
 	GameState.score_changed.connect(_on_score_changed)
@@ -474,6 +583,7 @@ func _ready() -> void:
 	GameState.combo_changed.connect(_on_combo_changed)
 	GameState.combo_tier_up.connect(_on_combo_tier_up)
 	GameState.pursuer_became_visible.connect(_on_pursuer_became_visible)
+	GameState.pursuer_lost_sight.connect(_on_pursuer_lost_sight)
 	GameState.strike_taken.connect(_on_strike_taken)
 	GameState.pursuer_caught.connect(_on_pursuer_caught)
 	# The scene authors the pips; GameState owns the capacity. Nothing makes
@@ -532,8 +642,28 @@ func _on_combo_tier_up(_multiplier: int) -> void:
 ## the loudest reaction this HUD already has.
 func _on_pursuer_became_visible() -> void:
 	_pursuer_pop_t = 0.0
+	# A sighting landing INSIDE the release beat cancels it outright rather
+	# than letting the two overlap. The threat is back; a telegraph still
+	# fading out under the arrival pop would be saying both things at once.
+	# It takes a crossing in each direction inside 0.9s to reach this, so it
+	# is rare -- and rare is exactly when a contradiction goes unnoticed.
+	_pursuer_release_t = -1.0
 
-## Stops both cues before this HUD leaves the tree.
+## The pursuer being driven off -- see PURSUER_RELEASE_DURATION_S's block
+## for why this exists and why it is a dim rather than a pop.
+##
+## Fires once per CROSSING, never once per frame above the threshold:
+## GameState._refresh_pursuer_visibility edge-detects against its own
+## pursuer_visible flag and emits only on the transition. This handler adds
+## no threshold test of its own precisely so there is one place that decides
+## what "lost sight" means. Verified end to end by PursuerPushbackAudit's
+## PHASE CUE, which holds the lead above the threshold for ten seconds and
+## asserts the count stays at one.
+func _on_pursuer_lost_sight() -> void:
+	_pursuer_release_t = 0.0
+	pursuer_lost_sfx.play()
+
+## Stops all three cues before this HUD leaves the tree.
 ##
 ## NOT housekeeping for its own sake -- it is load-bearing for the dev probes.
 ## Every probe in scripts/dev/ runs dozens to hundreds of runs by
@@ -567,6 +697,7 @@ func _on_pursuer_became_visible() -> void:
 func _exit_tree() -> void:
 	strike_warning_sfx.stop()
 	strike_fatal_sfx.stop()
+	pursuer_lost_sfx.stop()
 
 ## Arms the impact flash, the entry kick and the audio cue. The pips
 ## themselves are NOT repainted here -- see _drawn_half for why they are
@@ -584,8 +715,9 @@ func _exit_tree() -> void:
 ## shade of the same one" rule STRIKE_FATAL_COLOR's doc states for colour.
 ## Neither is ever played on the other's frame.
 ##
-## THE WARNING CUE FIRES ON EVERY NON-FINAL CONTACT, which at capacity 4
-## means up to three times a run rather than the old once. It is NOT graded
+## THE WARNING CUE FIRES ON EVERY NON-FINAL CONTACT -- up to three times a
+## run at capacity 4, and back to exactly once at the current capacity of 2,
+## which is the count this pair of cues was originally written for. It is NOT graded
 ## per step of the ALARM LADDER: that would need cues this project does not
 ## have (there are exactly two .wav files, see the audio note above), and
 ## inventing a pitch ramp in code would put the sound design somewhere no
@@ -666,6 +798,17 @@ func _update_pursuer_telegraph(delta: float) -> void:
 	_pursuer_pop_t = _advance_pop(_pursuer_pop_t, delta, TIER_POP_DURATION_S)
 	_apply_scale(pursuer_label, _pop_scale(_pursuer_pop_t, TIER_POP_DURATION_S, TIER_POP_PEAK_SCALE))
 
+	# Release beat on sight-loss -- see _on_pursuer_lost_sight. Applied to
+	# the two nodes that ARE the pursuer telegraph, through `modulate` only:
+	# see PURSUER_RELEASE_DURATION_S's block for why nothing here is allowed
+	# to touch size or position.
+	_pursuer_release_t = _advance_pop(_pursuer_release_t, delta, PURSUER_RELEASE_DURATION_S)
+	var release_alpha := _release_alpha(_pursuer_release_t)
+	if not is_equal_approx(release_alpha, _applied_release_alpha):
+		_applied_release_alpha = release_alpha
+		pursuer_label.modulate.a = release_alpha
+		gauge_fill.modulate.a = release_alpha
+
 ## The two strike surfaces -- see the STRIKES section of the class doc, and
 ## the ALARM LADDER section for the three-step warning this drives.
 ##
@@ -730,11 +873,14 @@ func _update_strike_display(delta: float) -> void:
 			_apply_strike_color(NORMAL_COLOR)
 		# The entry kick rides ON TOP of whatever steady pulse this step has,
 		# INCLUDING none -- which is why it sits outside the branches above
-		# rather than inside the danger one where it used to live. At the old
-		# capacity of 2 the two were the same thing (every non-fatal contact
-		# armed the danger step on the same frame); at capacity 4 the first
-		# two contacts land at TIER_CLEAR, and leaving the kick in the danger
+		# rather than inside the danger one where it used to live. At a
+		# capacity of 2 the two are the same thing (the one non-fatal contact
+		# arms the danger step on the same frame), so this placement is
+		# currently equivalent to the old one; at capacity 4 the first two
+		# contacts land at TIER_CLEAR, and leaving the kick in the danger
 		# branch would arm, advance and expire it without ever drawing it.
+		# Kept outside the branches regardless: the correct placement must not
+		# depend on which capacity happens to be configured.
 		# _pop_scale returns 1.0 at rest, so subtracting 1 turns the shared
 		# envelope into a pure additive spike that vanishes when the kick
 		# expires, leaving the steady pulse untouched for the rest of the run.
@@ -791,6 +937,24 @@ func _update_pops(delta: float) -> void:
 
 	_apply_scale(combo_label, combo_scale)
 	_apply_scale(multiplier_label, multiplier_scale)
+
+## Alpha for the sight-loss beat: a fast linear fall to
+## PURSUER_RELEASE_MIN_ALPHA, then a slow smoothstepped return to full.
+## Returns 1.0 for the idle sentinel (t < 0), so the resting state is the
+## same expression as the active one and there is no separate "off" branch
+## that could be forgotten -- the beat expiring through _advance_pop lands
+## back on exactly the alpha the HUD had before it.
+func _release_alpha(t: float) -> float:
+	if t < 0.0:
+		return 1.0
+	var dip := PURSUER_RELEASE_DURATION_S * PURSUER_RELEASE_DIP_FRACTION
+	if t < dip:
+		return lerpf(1.0, PURSUER_RELEASE_MIN_ALPHA, t / dip)
+	# Eased, not linear, on the way back: the return is by far the longer
+	# half, and a straight ramp there reads as a UI element fading in rather
+	# than as something settling after a release.
+	var back := (t - dip) / (PURSUER_RELEASE_DURATION_S - dip)
+	return lerpf(PURSUER_RELEASE_MIN_ALPHA, 1.0, back * back * (3.0 - 2.0 * back))
 
 func _advance_pop(t: float, delta: float, duration: float) -> float:
 	if t < 0.0:

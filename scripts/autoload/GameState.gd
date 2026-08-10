@@ -408,19 +408,41 @@ const PURSUER_GRACE_S: float = 5.0
 ## integer one: a contact costs 1, the budget is 4, and there is no
 ## arithmetic in this file that can drift.
 ##
-## 4 half-units = the equivalent of the two full strikes this model has
-## always had, i.e. the total budget is UNCHANGED and only its granularity
-## moved. That is the most literal reading of "everything else counts for
-## 0.5", and it is deliberately the conservative choice: the fatal-hazard
-## count dropping from four types to one is already a large change in how
-## survivable a run is, and moving the budget at the same time would make
-## the two impossible to tell apart in a playtest.
+## WAS 4 -- "the equivalent of the two full strikes this model has always
+## had", chosen so the rebalance moved the granularity of the budget without
+## moving its size, precisely so a playtest could tell the two apart. It
+## did, and this is the answer it produced.
 ##
-## What it costs: the row now has four readings instead of two, so "one more
-## and you are done" is no longer the FIRST thing a player sees after a
-## single contact. HUD.gd carries that with a three-step ladder rather than
-## the old binary -- see its STRIKES section.
-const STRIKE_CAPACITY_HALF: int = 4
+## LOWERED TO 2, BY MEASUREMENT AND THEN BY DECISION. StrikeAudit named this
+## constant as candidate lever #1 in its own source, on a number rather than
+## a hunch: at 4, **0 of 35 captures across all three skill profiles landed
+## on the capacity-th contact** -- every single one was a lead drain. A
+## resistance budget that no bot has ever actually run out of is not a
+## budget, it is a decoration, and the capture-share gap the probe gates on
+## collapsed from 39 points to 8 (needing 20) at the same time. The lever
+## the probe suggested was 3; Mathieu chose 2. That is the call this
+## constant now records.
+##
+## 2 half-units = 2 contacts, since CONTACT_COST_HALF is 1. The CHARGER is
+## untouched and still ends a run outright (see Obstacle.is_fatal); every
+## other type still costs exactly one half-unit. What moved is only where
+## the run ends: on the SECOND such contact rather than the fourth.
+##
+## THE HALF-UNIT ENCODING IS KEPT, and that is deliberate rather than
+## leftover. At a capacity of 2 with a cost of 1 the halves and the contacts
+## coincide exactly, so a `float strikes_used` would work again -- and would
+## re-introduce the fractional arithmetic this unit was created to keep out
+## of the fairness contract the moment anyone adds a per-type weight. The
+## encoding costs nothing and the invariant it protects is unchanged.
+##
+## What it costs, and it is the mirror of what 4 bought: the row is back to
+## two readings, so "one more and you are done" is once again the FIRST
+## thing a player sees after a single contact. HUD.gd's three-step alarm
+## ladder degenerates accordingly -- its CAUTION step becomes unreachable at
+## this capacity, by arithmetic rather than by an edit. See HUD.gd's own
+## STRIKES section, where that is stated and argued rather than left to be
+## discovered.
+const STRIKE_CAPACITY_HALF: int = 2
 
 ## What one non-fatal contact costs, in half-units.
 ##
@@ -494,14 +516,22 @@ const STRIKE_SLOWDOWN_RECOVER_S: float = 0.8
 ## STRIKE_CAPACITY_HALF, and it should be the resistance count that kills
 ## rather than an arithmetic coincidence nobody can see coming.
 ##
-## UNCHANGED by the half-strike rebalance, and that is a decision rather
-## than an oversight. This is a CEILING on the lead, so its effect does not
-## compound: four contacts pull the lead to 4.0s four times, exactly as two
-## used to pull it there twice. What it buys is stated above -- the pursuer
-## on screen during every penalty, whatever the lead was before -- and that
-## is if anything MORE load-bearing now: with four contacts available, the
-## pursuer closing in is the main thing standing between a stumbling player
-## and an unbounded run.
+## UNCHANGED by the half-strike rebalance and UNCHANGED again by the drop to
+## a capacity of 2, and both times that is a decision rather than an
+## oversight. This is a CEILING on the lead, so its effect does not compound
+## with the number of contacts available: N contacts pull the lead to 4.0s N
+## times, whatever N is. What it buys is stated above -- the pursuer on
+## screen during every penalty, whatever the lead was before.
+##
+## Worth stating what the capacity change does to its WEIGHT, though, since
+## the two interact. At capacity 4 the clamp was the main thing standing
+## between a stumbling player and an unbounded run, because running out of
+## resistance essentially never happened (0 of 35 captures landed on the
+## capacity-th contact -- see STRIKE_CAPACITY_HALF). At capacity 2 the
+## resistance count can actually finish a run, so the clamp is no longer
+## carrying that job alone. It is kept at 4.0 anyway: its own argument (the
+## pursuer must be ON SCREEN during a penalty, from any prior lead) is about
+## legibility and does not depend on the capacity at all.
 const STRIKE_PURSUER_LEAD_CAP_S: float = 4.0
 
 ## Contacts inside this window of the last credited one are ignored --
@@ -545,6 +575,32 @@ const STRIKE_INVULNERABLE_S: float = 1.2
 ## contact, so a player who takes four now needs four times the clean play
 ## to fully recover rather than the same total. That is the intended shape
 ## -- more contacts survivable, each one still individually expensive.
+##
+## NOT RESCALED AGAIN when the capacity dropped from 4 to 2, and that needs
+## saying because the PROPORTION moved sharply even though nothing here did.
+## One recovered half-unit is now **50% of the whole budget** where it was
+## 25%. The question that raises -- does recovery now swing too hard? -- has
+## a two-part answer, and only the first part is about proportion:
+##
+##   IN ABSOLUTE TERMS NOTHING CHANGED. Recovery is one half-unit per 14.0s
+##   of clean play, or one per COMBO_TO_CLEAR_STRIKE risk events (~13.3s
+##   apart at the 13.5 events/min a mid-skill player banks -- so the two
+##   paths stay near parity, which is what the 10.0 -> 14.0 raise was for).
+##   The rate at which resistance comes back is untouched.
+##
+##   WHAT ACTUALLY GOT HARDER IS SURVIVING A BURST. Ruin means taking
+##   STRIKE_CAPACITY_HALF contacts inside one recovery window, and that
+##   window did not move while the count halved. The floor on a death by
+##   resistance is now 2 * STRIKE_INVULNERABLE_S = 2.4s rather than 4.8s,
+##   and a cluster of two bad rows can end a run where it used to cost half
+##   a budget.
+##
+## So the bigger proportional swing is real but it is not an economy
+## problem: it is the same absolute recovery measured against a smaller
+## budget. The economy argument this constant's own header makes -- that
+## recovery must not outpace damage two to one -- is untouched, because the
+## one-in / one-out ratio it protects is a ratio between a contact and a
+## clear, neither of which moved.
 ##
 ## STARTED AT 10.0, the genre's own reference point (Temple Run recovers
 ## fully in ~8-10s of clean running), then MEASURED rather than kept on
