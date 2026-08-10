@@ -426,6 +426,130 @@ suite** : (1) accents lumineux, (2) mousse sur les arbres, (3) eau
 réfléchissante (perf à valider avant celle-ci — c'est la plus coûteuse des
 trois, aucune mesure de coût n'existe encore).
 
+## ⚠️ Brouillard de profondeur INVISIBLE sur device — cause RÉELLE identifiée,
+## PAS un problème de réglage (10 août 2026, diagnostic)
+
+Retour terrain sur `staging` (Samsung Chrome) : le brouillard décrit
+ci-dessus ne se voit pas. **Aucune des deux hypothèses de diagnostic
+initiales n'est la cause, et les deux ont été formellement écartées par
+mesure — pas supposées fausses.** Root cause réelle : **`fog_mode = Depth`
+ne produit strictement AUCUN effet visuel dans le renderer réellement
+utilisé par ce projet (`gl_compatibility`, cf. `project.godot`), quelle que
+soit la géométrie ou la distance.** C'est un défaut/une limite du moteur à
+cette version, pas une erreur de valeur dans `Game.tscn`.
+
+**Méthode** : binaire `godot4 4.3-stable` officiel téléchargé, projet
+importé headless (`--headless --editor --quit-after 2`), rendu réel sous
+`Xvfb` + Mesa `llvmpipe` (`--rendering-driver opengl3`, PAS `--headless`
+tout court — ce dernier force le driver `dummy`, sans framebuffer lisible,
+piège rencontré et contourné en premier). Capture `Viewport.get_texture().
+get_image()` + lecture de pixels réels, jamais une lecture de code seule.
+
+**Hypothèse 1 (fog_depth_begin=150 > distance de rendu réelle) — ÉCARTÉE,
+mais sa moitié gameplay était déjà correcte, par construction.** Vérifié
+indépendamment (pas recopié depuis le commentaire de `DepthFog.gd`) :
+`TrackManager.SEGMENT_COUNT=7` × `SEGMENT_LENGTH=20.0` place le pire
+obstacle à Z=-120, caméra fixe à Z=+7 → pire distance gameplay
+`sqrt(4.2²+127²)≈127,07m`, sous `fog_depth_begin=150` : confirmé, c'est
+voulu, aucun hazard n'est jamais foggé. **Mais la question posée portait
+sur l'horizon/décor, pas le gameplay** : `Decor.gd` place ses trois couches
+à des bandes bien AU-DELÀ de 150m (`hill_near` 217–347m, `hill_far`
+367–527m, `mountain` 547–707m, lu directement dans `_LAYERS`) — largement
+dans la zone où le brouillard DEVRAIT s'appliquer. L'hypothèse telle que
+formulée (« la géométrie ne dépasse jamais ~127-140m ») est donc fausse
+pour le décor : ce n'est pas la cause de l'invisibilité rapportée.
+
+**Hypothèse 2 (billboards 2D sans profondeur réelle / fog_sky_affect) —
+ÉCARTÉE.** Les trois couches sont des `Sprite3D` positionnés en 3D réelle
+(billboard `BILLBOARD_FIXED_Y`, mais avec une position/profondeur de
+fragment authentique dans le depth buffer — pas un panorama de Sky). Et
+`fog_sky_affect=0.0` ne gouverne QUE le fond plat (`background_mode=1`,
+`BG_COLOR`), jamais la géométrie du décor, qui a sa propre distance réelle.
+Aucun des deux mécanismes ne peut expliquer l'absence d'effet sur le
+décor.
+
+**Cause réelle, mesurée par 3 méthodes indépendantes et concordantes** :
+
+1. **Sonde synthétique isolée** (`WorldEnvironment` + `Camera3D` +
+   `Sprite3D` construits en code, texture réelle `hill_near.png`, exactement
+   les réglages de `Game.tscn`) : rendu à 9 distances de 100 à 700m,
+   `fog_enabled` basculé ON/OFF, TOUT LE RESTE identique. **Couleur
+   pixel-exacte identique à chaque distance, ON == OFF, aucune exception.**
+2. **Même sonde, matériau OPAQUE et SHADÉ** (`BoxMesh` + `StandardMaterial3D`
+   `SHADING_MODE_PER_PIXEL`, `TRANSPARENCY_DISABLED` — pour écarter l'idée
+   que seul le matériau unshaded/transparent du Sprite3D serait concerné) :
+   **même résultat, ON == OFF, zéro effet**, aux mêmes 5 distances.
+   **Le même test avec `fog_mode=Exponential` (densité 0.0035, l'ancienne
+   valeur) sur CES DEUX matériaux montre un effet fort et net** (canal rouge
+   du fond de brouillard nettement présent, ~0,60 contre ~0,06 sans
+   brouillard) : le renderer sait donc appliquer du brouillard — seul le
+   MODE Depth ne produit rien.
+3. **Scène réelle `Game.tscn`** (pas un stand-in synthétique), capture plein
+   cadre AVANT/APRÈS bascule de `fog_enabled` (gameplay figé à `TITLE` pour
+   ne rien faire défiler entre les deux captures) : diff pixel par pixel
+   sur les DEUX images → écart nul sur TOUTE surface intérieure (montagne,
+   piste, Keepy), écart mesurable UNIQUEMENT sur les contours des objets
+   (bruit d'anticrénelage du rasterizer logiciel entre deux rendus
+   séparés, pas un blend de couleur). Aucune zone pleine ne change de
+   teinte — la preuve visuelle la plus directe qu'aucun brouillard de zone
+   n'est appliqué nulle part dans le cadre réel.
+
+**Lecture du shader source réel (pas supposée)** : `drivers/gles3/shaders/
+scene.glsl`, tag `4.3-stable` — la branche Depth (`fog_z = smoothstep(...)`)
+est gouvernée par une macro de compilation `#ifdef USE_DEPTH_FOG`, posée
+côté C++ (`rasterizer_scene_gles3.cpp`) via une specialization constant
+quand `environment_get_fog_mode(...) == ENV_FOG_MODE_DEPTH` — donc en
+théorie correctement câblée au mode choisi. La mesure montre pourtant un
+effet nul en pratique : le point de rupture exact entre ce câblage C++ et
+le résultat GPU nul n'a **pas** été isolé plus loin (pas nécessaire pour le
+diagnostic — la mesure du symptôme suffit à trancher la cause). Cohérent
+avec des défauts *connus* de `fog_mode=Depth` propres au renderer
+Compatibility/OpenGL, distincts du Forward+/Mobile (recherché, pas juste
+supposé : issues godotengine/godot #97875 « Depth fog renders incorrectly »
+et #92019 « Fog Sky Affect Not Working », toutes deux scopées Compatibility
+uniquement) — sans qu'aucune des deux ne corresponde exactement à ce
+symptôme précis (effet nul, pas un artefact visuel). Piste non retenue par
+manque de temps utile au diagnostic : confirmer par un rapport amont sur le
+tracker officiel si personne ne l'a déjà fait pour Godot 4.3 stable
+spécifiquement.
+
+**⚠️ Piste NON retenue comme un correctif sûr, et pourquoi** : remettre
+`fog_mode=Exponential` à l'ancienne densité (0.0035, celle encore active
+sur `main`) N'EST PAS un simple retour en arrière anodin. Un sondage rapide
+sur la scène réelle (`Game.tscn`, gameplay figé) a montré un brouillard
+BEAUCOUP plus fort qu'attendu par le calcul (`1-exp(-density*distance)`) —
+y compris à ~8m de la caméra (Keepy quasi totalement fondu vers la couleur
+de brouillard). **Ce résultat n'a pas été confirmé assez proprement pour
+être tenu pour acquis** (le calage de `GameState.state` sur une scène qui
+s'auto-démarre — `Game.gd._ready()` appelle `GameState.start_run()` sans
+écran-titre — laisse une fenêtre de course où quelques frames de vrai
+gameplay peuvent s'écouler avant que l'état ne soit figé, un facteur non
+éliminé dans ce sondage) : donné ici comme AVERTISSEMENT à vérifier avant
+d'agir, pas comme un chiffre fiable. **Aucun fix n'a été appliqué à ce
+diagnostic** — la bascule Exponentiel/densité recalibrée exigerait de
+re-mesurer proprement (process isolé, un seul réglage par run, comme fait
+pour le test décisif ci-dessus) avant d'être proposée comme correctif, et
+surtout de re-décider comment respecter la garantie « zéro brouillard en
+zone de jeu » que le mode Depth apportait par construction (Exponentiel
+n'a pas de plancher de distance — impossible d'obtenir un cutoff dur avec
+lui seul).
+
+**Sondes jetables, non committées** : toutes les scènes/scripts de mesure
+(`scripts/dev/_tmp_*`, `FogDiagnosticProbe*`) ont été supprimés après
+capture des résultats ci-dessus — aucun ajout permanent au dépôt pour ce
+diagnostic.
+
+**Aucun patch appliqué.** Diagnostic seul, comme demandé — la vraie cause
+n'a rien à voir avec les deux hypothèses de départ, et le fix évident
+(revenir à Exponentiel) n'est pas trivial une fois qu'on regarde son
+propre effet de bord potentiel. Décision de la suite à prendre avec
+Mathieu : (a) retenter Exponentiel avec une densité et une validation
+propres, en acceptant l'absence de plancher dur ; (b) écrire un brouillard
+CUSTOM par shader sur les seuls matériaux de `Decor.gd` (indépendant
+d'`Environment.fog_*`, donc insensible à ce défaut moteur, mais garde le
+plancher dur voulu) ; (c) ouvrir un rapport amont Godot et attendre un
+correctif engine avant de rouvrir ce chantier.
+
 ## Deux défauts de mesure corrigés (F10, 9 août 2026) — deux décisions de
 ## teinte EN ATTENTE de Mathieu, aucune action code en cours
 
