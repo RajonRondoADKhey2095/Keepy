@@ -59,11 +59,18 @@ const FRAMES: int = 3600
 ## TrackSegment's own _PROP_KIND_MESHES rather than restated by hand
 ## where possible; the prefixes are what the scene actually names its
 ## instances (see _build_trackside_props).
+##
+## `tree` and `stump` each name ONE node since they became imported meshes
+## (MESHY_SPEC 11, this batch): the trunk+canopy and body+dome pairs are
+## gone. A stale prefix here does not fail loudly -- it reports the kind at
+## zero instances and a nonsense per-instance cost, which is exactly what
+## this table did on the first run after the swap, so it is worth checking
+## against _build_trackside_props whenever a prop node is renamed.
 const KIND_PREFIXES: Dictionary = {
-	"tree":  ["PropTrunk", "PropCanopy"],
+	"tree":  ["PropTree"],
 	"rock":  ["PropRock"],
 	"bush":  ["PropBushBlob"],
-	"stump": ["PropStumpBody", "PropStumpDome"],
+	"stump": ["PropStump"],
 	"bench": ["PropBenchSeat", "PropBenchBack", "PropBenchLeg"],
 	"sign":  ["PropSignPost", "PropSignBoard"],
 }
@@ -72,10 +79,10 @@ const KIND_PREFIXES: Dictionary = {
 ## blobs are counted as one bush rather than three props. Chosen as the
 ## part every instance of that kind has exactly one of.
 const KIND_ANCHOR: Dictionary = {
-	"tree":  "PropCanopy",
+	"tree":  "PropTree",
 	"rock":  "PropRock",
 	"bush":  "PropBushBlob0",
-	"stump": "PropStumpBody",
+	"stump": "PropStump",
 	"bench": "PropBenchSeat",
 	"sign":  "PropSignPost",
 }
