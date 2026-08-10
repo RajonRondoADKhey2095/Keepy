@@ -94,6 +94,54 @@ seules couches les ferait lire comme des découpes plates au milieu d'une
 scène qui s'estompe correctement) — juste mesuré et documenté, dans le
 commentaire de classe de `Decor.gd` et ici.
 
+**Deux défauts distincts d'instabilité visuelle sur ce billboard, corrigés
+séparément le 10 août 2026 — ni l'un ni l'autre n'avait de trace ici avant
+ce paragraphe.** Le retour terrain sur `staging` (« une masse verte instable
+au lieu de trois couches distinctes ») avait en réalité deux causes
+indépendantes, mesurées puis fermées l'une après l'autre :
+
+- **Fusion au spawn (`acf060c`)** — `x_range` de `hill_far`/`hill_near`
+  était resté celui des anciens cônes `CylinderMesh` (rayon indépendant de
+  la hauteur), jamais re-vérifié après le passage aux cutouts Sprite3D dont
+  `pixel_size` scale largeur ET hauteur ensemble. Une seule instance de
+  `hill_near` à sa hauteur max pouvait rendre ~86 m de large contre un
+  spawn de 52 m — plus large que sa propre bande. Élargi 34→62
+  (`hill_far`) et 26→74 (`hill_near`), ramenant le ratio
+  largeur-max/étalement à ~0,55-0,58, la même zone que la couche montagne
+  avait déjà visée sur SA propre première passe.
+- **Recyclage visible en plein champ (ce lot, `scripts/dev/DecorStabilityAudit.gd`)**
+  — le fix ci-dessus n'a rien changé au fait que chaque instance se
+  téléporte de `spawn_z_max` (bord proche, taille apparente maximale) vers
+  `spawn_z_min` (bord loin, taille minimale) en une seule frame. Ce bord
+  proche reste 200 à 550 unités devant la caméra sur les trois couches —
+  largement à l'intérieur de son FOV horizontal (~107°) à ces distances,
+  qui dépasse de loin le `x_range` de n'importe quelle couche. Le recyclage
+  se produisait donc en PLEIN CHAMP, pas hors-écran : un pop continu, une
+  fois par recyclage, sur les 13 instances à des phases décalées — un
+  second défaut, non touché par le fix `x_range`, et c'est précisément ce
+  que Mathieu continuait de voir après ce fix. **Mesuré, pas supposé** :
+  sonde dédiée `DecorStabilityAudit.tscn`, PHASE A (900 frames organiques,
+  15 s) + PHASE B (franchissement forcé par couche) — **5/5 recyclages
+  observés visibles avant fix (alpha 1.0), 0/5 après**. Corrigé en
+  fondant `Sprite3D.modulate.a` à 0 sur les derniers 12 % de la bande de
+  chaque couche avant le bord de recyclage, et de 0 à 1 sur les premiers
+  12 % après — le téléport a toujours lieu à la même frame, désormais à
+  alpha déjà nul. `DecorParallaxProbe` (bornes de bande) et
+  `AssetContractAudit` restent verts, aucun changement de `spawn_z_min`/
+  `spawn_z_max`/`x_range`/`height_range`.
+  ⚠️ **`DecorStabilityAudit` est une sonde BLOQUANTE** (`ProbeWatchdog.arm()`
+  ET `deadline()`, comme `DecorParallaxProbe`) — elle pilote
+  `Decor._physics_process`/`CameraFollow._process`/`GameState.advance_time`
+  directement plutôt que d'attendre des frames réellement rendues
+  (`await RenderingServer.frame_post_draw`), parce qu'une première version
+  qui attendait des frames rendues n'avait toujours rien affiché après le
+  budget de 900 s dans ce sandbox (rendu logiciel llvmpipe/Mesa sous xvfb,
+  CPU à 100 % en continu — genuinement encore en cours, pas bloquée, puis
+  tuée par le timeout) alors que cette sonde ne lit jamais un pixel
+  (`unproject_position` est un calcul de transform pur). À charge pour tout
+  futur probe décor de mesurer via transform plutôt que via capture d'image
+  réelle si le budget temps compte.
+
 Les deux matériaux sont **unlit** (`KHR_materials_unlit` posé à la main dans
 le `.glb`, cf §9) — c'est la règle par défaut pour tout asset de ce projet,
 pas une particularité du hibou : §8 explique pourquoi seule une surface
