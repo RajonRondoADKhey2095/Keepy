@@ -27,6 +27,31 @@ extends Node
 ## under test with an oscillation that is present at every lead.
 ##
 ## =====================================================================
+## PHASE CUE -- does the sight-loss cue fire, and exactly once per crossing?
+##
+## THE ONE GATING PHASE IN THIS PROBE. The other two describe behaviour and
+## assert nothing; this one asserts a contract, because the defect it guards
+## is the one this probe was written to find: F12 measured that
+## GameState.pursuer_lost_sight had ZERO listeners, so the payoff moment
+## arrived with no cue at all. A regression back to that state is silent by
+## nature -- nothing errors, nothing looks wrong, the sound simply stops
+## existing -- which is exactly the kind of defect that needs a probe rather
+## than a reviewer.
+##
+## It checks three separate things, because "the cue works" is three claims:
+##   1. the real HUD is CONNECTED, exactly once (a second connect would
+##      double every future cue, and connect() does not complain);
+##   2. one crossing arms the beat EXACTLY once -- the count must not climb
+##      while the lead sits above the threshold, which is the difference
+##      between an edge-detected signal and a per-frame test;
+##   3. a re-sighting inside the beat CANCELS it, so the telegraph cannot be
+##      fading out while the arrival pop plays over it.
+##
+## Driven through the real GameState and the real HUD.tscn, never a stub:
+## the thing under test is a signal connection between two shipped nodes,
+## and a stub of either would be testing this probe's own copy of them.
+##
+## =====================================================================
 ## PHASE CADENCE -- does pursuer_lost_sight ever fire in real play?
 ##
 ## The lead is pushed back by GameState.register_risk_event
@@ -99,6 +124,10 @@ var _keepy: Node3D = null
 var _lost_sight_count: int = 0
 var _became_visible_count: int = 0
 
+## Set by PHASE CUE. The probe's exit code -- the other two phases report
+## and cannot fail, so this is the only thing that decides it.
+var _cue_failures: int = 0
+
 func _ready() -> void:
 	# FIRST statement, before anything that could itself hang -- a
 	# watchdog armed after the hang is no watchdog. See ProbeWatchdog.gd.
@@ -114,9 +143,14 @@ func _ready() -> void:
 
 	_phase_visual()
 	_phase_cadence()
+	await _phase_cue()
 	print("")
-	print("This probe reports; it does not gate. Both phases are descriptions of")
-	print("current behaviour, not contracts -- see the class doc.")
+	print("PHASE VISUAL and PHASE CADENCE report; they do not gate -- both are")
+	print("descriptions of current behaviour, not contracts. PHASE CUE gates.")
+	if _cue_failures > 0:
+		push_error("PURSUER PUSHBACK AUDIT FAILED: %d cue check(s) failed -- the sight-loss moment is the one payoff the pushback mechanic has, and it is back to being silent." % _cue_failures)
+		get_tree().quit(1)
+		return
 	get_tree().quit(0)
 
 # =====================================================================
@@ -285,6 +319,132 @@ func _run_cadence(events_per_min: float) -> Dictionary:
 		"net_per_event": net_sum / maxf(float(events), 1.0),
 		"first_lost_sight_s": first_lost_sight_s,
 	}
+
+# =====================================================================
+# PHASE CUE
+# =====================================================================
+
+## Seconds to hold the lead ABOVE the threshold after a crossing before
+## re-checking the count. At PURSUER_CLOSE_RATE the lead drains 0.25s per
+## second, so from the MAX_LEAD cap (15.0) ten seconds lands at 12.5 -- well
+## clear of the 10.0 threshold, i.e. the hold really is a hold and not an
+## accidental second crossing.
+const CUE_HOLD_S: float = 10.0
+
+## How many crossings to drive. One would prove the cue fires; three prove
+## it re-arms, which is the case a one-shot latch would pass the first test
+## and fail forever after.
+const CUE_CROSSINGS: int = 3
+
+func _phase_cue() -> void:
+	print("--- PHASE CUE: does the sight-loss cue fire, once per crossing? ---")
+	_game = load("res://scenes/Game.tscn").instantiate()
+	add_child(_game)
+	var hud: CanvasLayer = _game.get_node("HUD")
+
+	# 1. CONNECTED, EXACTLY ONCE. Counted off the signal's own connection
+	# list rather than is_connected(), because is_connected() answers "at
+	# least one" and the failure worth catching here is "two".
+	var hud_conns := 0
+	for c in GameState.pursuer_lost_sight.get_connections():
+		var callable: Callable = c["callable"]
+		if callable.get_object() == hud:
+			hud_conns += 1
+	_check(hud_conns == 1, "HUD connected to pursuer_lost_sight exactly once (found %d)" % hud_conns)
+
+	# 2. ONCE PER CROSSING. No frames are processed inside this loop -- the
+	# whole phase drives GameState directly -- so the HUD's release phase
+	# stays exactly where its handler left it, which is what makes "armed"
+	# observable as a value rather than as a moment.
+	GameState.start_run()
+	_lost_sight_count = 0
+	_became_visible_count = 0
+	if not GameState.pursuer_lost_sight.is_connected(_on_lost_sight):
+		GameState.pursuer_lost_sight.connect(_on_lost_sight)
+	if not GameState.pursuer_became_visible.is_connected(_on_became_visible):
+		GameState.pursuer_became_visible.connect(_on_became_visible)
+
+	for crossing in CUE_CROSSINGS:
+		# Drain in until the pursuer is on screen. start_run leaves the lead
+		# at PURSUER_START_LEAD_S (12.0), i.e. already out of sight, so the
+		# first pass has to come IN before it can go back out.
+		var guard := 0
+		while not GameState.pursuer_visible and guard < 200000:
+			GameState.advance_time(STEP_S)
+			guard += 1
+		var lost_before := _lost_sight_count
+		_check(hud.get("_pursuer_release_t") < 0.0,
+			"crossing %d: sighting cleared the release beat (cancel-on-resight)" % (crossing + 1))
+
+		# Push back out with risk events only -- the real entry point, so the
+		# reward and the cap are the shipped ones and not a copy of them.
+		guard = 0
+		while GameState.pursuer_visible and guard < 100000:
+			GameState.register_risk_event(GameState.RiskEvent.NEAR_MISS)
+			guard += 1
+		_check(_lost_sight_count == lost_before + 1,
+			"crossing %d: lost_sight fired exactly once (%d)" % [crossing + 1, _lost_sight_count - lost_before])
+		_check(hud.get("_pursuer_release_t") == 0.0,
+			"crossing %d: HUD armed its release beat" % (crossing + 1))
+		if crossing == 0:
+			# Reported, never gated: headless Godot runs the dummy audio
+			# driver, and making a verdict depend on how that driver reports
+			# playback would be gating on the test rig instead of the game.
+			print("    (audio) pursuer_lost_sfx.playing = %s, stream = %s" % [
+				hud.get("pursuer_lost_sfx").playing,
+				hud.get("pursuer_lost_sfx").stream.resource_path.get_file()])
+
+		# Top the lead up to the cap, then HOLD above the threshold. This is
+		# the check that separates an edge-detected signal from a per-frame
+		# threshold test: a per-frame test fires ~600 more times here.
+		guard = 0
+		while GameState.pursuer_lead_s < GameState.PURSUER_MAX_LEAD_S and guard < 100000:
+			GameState.register_risk_event(GameState.RiskEvent.NEAR_MISS)
+			guard += 1
+		var held := 0.0
+		while held < CUE_HOLD_S:
+			GameState.advance_time(STEP_S)
+			held += STEP_S
+		_check(_lost_sight_count == lost_before + 1,
+			"crossing %d: still exactly once after %.0fs above the threshold (%d)" % [
+				crossing + 1, CUE_HOLD_S, _lost_sight_count - lost_before])
+		_check(not GameState.pursuer_visible,
+			"crossing %d: the hold really stayed out of sight (lead %.2fs)" % [
+				crossing + 1, GameState.pursuer_lead_s])
+
+	print("")
+	print("  %d crossings driven, %d lost_sight emissions, %d sightings." % [
+		CUE_CROSSINGS, _lost_sight_count, _became_visible_count])
+	print("")
+	_game.process_mode = Node.PROCESS_MODE_DISABLED
+	remove_child(_game)
+	_game.free()
+	_game = null
+	await _settle_audio_before_quit()
+
+## Lets the sight-loss cue this phase fires retire before the engine tears
+## down. Lifted verbatim in intent from StrikeAudit._settle_audio_before_quit
+## -- see that helper's own doc for the full trace. The short version, and
+## the reason it is a REAL-TIME wait rather than a frame wait: playbacks
+## retire on the AudioServer's wall-clock thread, while this probe runs under
+## --fixed-fps 60 where hundreds of frames can pass in a few milliseconds of
+## real time. Without it this probe appends
+##     WARNING: ObjectDB instances leaked at exit
+##     ERROR: 1 resources still in use at exit
+## to its own output AFTER its verdict -- measured on the first run of this
+## phase, and it breaks the byte-identical comparison this project gates UI
+## changes on while changing nothing above it.
+func _settle_audio_before_quit() -> void:
+	await get_tree().process_frame
+	OS.delay_msec(1000)
+
+## OK/FAIL on one line each, in the same shape the other gating probes in
+## this folder print, so a failing line is greppable rather than inferred
+## from a summary count.
+func _check(ok: bool, label: String) -> void:
+	print("  %s  %s" % ["OK  " if ok else "FAIL", label])
+	if not ok:
+		_cue_failures += 1
 
 func _on_lost_sight() -> void:
 	_lost_sight_count += 1

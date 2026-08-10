@@ -1260,6 +1260,15 @@ events at 15.0s buy nothing.
 
 #### Proposed, NOT implemented -- Mathieu's call
 
+> **UPDATE (2026-08-10): option 1 is IMPLEMENTED -- see F14 below.** Options
+> 2 and 3 remain untouched and remain Mathieu's call; so do the reward and
+> drain constants, the `FAR_Z`/`CAUGHT_Z` band, and `STRIKE_CAPACITY_HALF`.
+> Everything measured in the two phases above still stands unchanged: F14
+> re-ran PHASE CADENCE and it is byte-identical, so the *timescale* half of
+> this finding -- 75.6s of clean mid-skill play to earn one push-off -- is
+> exactly as reported here. The cue does not make the push shorter. It makes
+> the moment it finally lands into an event.
+
 Ordered by how directly each addresses what was measured, rather than by
 size. The first is the only one that addresses (b), which is the dominant
 half:
@@ -1438,6 +1447,155 @@ difference between the two runs is a transient engine warning about
 > (an `INCONCLUSIVE` watchdog block sitting above a complete verdict table),
 > but it is recorded because a *less* obvious instance of the same accident
 > would read as a real measurement.
+
+### F14 -- the sight-loss moment has a cue. F12 option 1, implemented and measured
+
+`GameState.pursuer_lost_sight` now has a listener. That sentence is the
+whole of the change: the signal, its edge detection, the reward and drain
+constants, the visible band and `STRIKE_CAPACITY_HALF` are all untouched --
+F12's other two options and F13's capacity are explicitly out of this batch.
+
+**What the player gets, at the instant the lead crosses back above
+`PURSUER_VISIBLE_LEAD_S`:**
+
+- **A sound that is not a strike cue.** `assets/audio/pursuer_lost.wav`,
+  the project's third .wav, played from a third `AudioStreamPlayer` on the
+  HUD -- same pattern as the two strike cues, no new audio service. It is
+  separated from them by CHARACTER, not by volume, which is the only
+  separation that survives a phone speaker: both strike cues are hard-attack
+  percussive decays (measured on the committed files: ~712 Hz decaying over
+  0.20 s; ~275 -> ~117 Hz over 0.55 s). This one is a **soft-attack pair of
+  RISING sine notes** -- A4 then E5 a fifth above it, 0.62 s, faint octave
+  shimmer, no transient at all. 22050 Hz mono 16-bit like its siblings,
+  peaked at 0.62 of full scale where they sit at 0.72, played at -6 dB
+  against their -4/-2. A cue that resolves upward out of a soft attack
+  cannot be mistaken for an impact, which is the point: the player must
+  never hear this and check their pips.
+- **A release on the pursuer telegraph.** `PursuerLabel` and `GaugeFill`
+  dim to alpha 0.22 over 0.198 s and ease back to full over the remaining
+  0.702 s. Fast down, slow back -- the asymmetry is what makes it read as a
+  release rather than a blink. Not zero alpha: the gauge is permanent
+  information and has to stay readable mid-beat. And deliberately not the
+  arrival reaction reversed -- arrival is a scale POP on the same label, so
+  the two are different properties moving in opposite directions.
+
+#### The F11 check, done explicitly, and what could not be measured here
+
+F11 has now flipped `StrikeFatalContrastAudit`'s verdict **twice** without
+anyone touching a colour, both times because a strike-row layout change
+moved the sampled label a few pixels. So "it is only audio and a fade" is
+not an argument, and was not used as one.
+
+**Structurally, this batch cannot move a HUD pixel.** The audio player is a
+non-`Control` node on the `CanvasLayer` root -- no layout, no draw order,
+and the `Control` siblings after it keep their exact relative order. The
+visual beat is applied through `modulate`, a colour multiply that cannot
+resize or reposition anything. No node was added to `PursuerRow`, which is
+the container whose height the strike row's position depends on.
+
+**Measured, not just argued.** A throwaway probe instantiated `Game.tscn`
+on each tree and printed the screen rects of every node in the pursuer
+column. **Byte-identical before and after**, including the one that matters:
+
+```
+StrikeRow/StrikeLabel   pos=(430.0000, 1722.0000)  size=(128.0000, 66.0000)
+PursuerRow              pos=(330.0000, 1722.0000)  size=(420.0000, 158.0000)
+GaugeTrack              pos=(330.0000, 1862.0000)  size=(420.0000,  18.0000)
+```
+
+That is a direct measurement of the exact quantity F11 blames -- where the
+sampled pixels are -- and it did not move.
+
+> ⚠️ **`StrikeFatalContrastAudit` and `PursuerContrastAudit` themselves are
+> INCONCLUSIVE in the sandbox this batch was developed in, BEFORE the change
+> as well as after, and no contrast number below is claimed.** Both hit the
+> 900 s `ProbeWatchdog` budget and exit 2. This is an environment limit, not
+> a probe defect and not a regression: re-run alone on a completely idle
+> machine, `StrikeFatalContrastAudit` burned **15 m 0.5 s real / 15 m 3.4 s
+> user** -- CPU-bound the entire time -- against the ~60 s this document
+> records for it elsewhere. The sandbox has no GPU and renders through
+> `llvmpipe` under `xvfb`; these are the only two probes here that capture
+> real frames in bulk, and they are the only two that fail this way. Both
+> trees produce the same INCONCLUSIVE, so no verdict flip is being hidden
+> by the gap -- but the 2.99:1 `DARK/5` reading is **neither confirmed nor
+> refuted here**, and the tint decision it belongs to is unchanged and still
+> Mathieu's. Note the watchdog's own hint is a red herring for these two
+> ("the run clock has been FROZEN"): they freeze it on purpose
+> (`_freeze_world` sets `current_speed = 0.0`), so that symptom is their
+> normal state and not the cause.
+
+#### Everything else, measured at seed 20260806, `--fixed-fps 60`
+
+**11 / 11 byte-identical on BOTH streams, same exit code**, before and after:
+
+| probe | rc | stdout | stderr |
+|---|---|---|---|
+| AntiFrustrationAudit | 0 | identical | identical |
+| ComboAudit | 0 | identical | identical |
+| PursuerAudit | 0 | identical | identical |
+| PursuerFramingAudit | 0 | identical | identical |
+| RushFrustrationAudit | 0 | identical | identical |
+| ShrinkAudit | 0 | identical | identical |
+| **StrikeAudit** | **1** | identical | identical |
+| AssetContractAudit | 0 | identical | identical |
+| ChargerShapeProbe | 0 | identical | identical |
+| DeathModelAudit | 0 | identical | identical |
+| ProbeTimeoutAudit | 0 | identical | identical |
+
+`StrikeAudit` reproduces F13's capacity-2 numbers exactly -- **safe 100 % /
+mid 85 % / risky 41 %, a 15-point gap against the 20 required**, still red,
+mean survival 107.9 / 78.2 / 127.3 s. That is the result this batch wanted:
+a cue that does not touch the death model must not move the death model, and
+a byte-for-byte match is a stronger statement of that than a matching
+verdict would be. **The bar was not touched.** `StrikeAudit` stays red for
+exactly the reason F13 gives.
+
+#### Verifying the cue fires -- and fires ONCE
+
+`PursuerPushbackAudit` gains a third phase, **PHASE CUE**, and with it the
+probe stops being purely descriptive: PHASE VISUAL and PHASE CADENCE still
+report and assert nothing, PHASE CUE **gates**. The defect it guards is
+silent by nature -- a lost connection makes no error and looks like nothing
+-- which is exactly the kind that needs a probe rather than a reviewer.
+
+It drives the real `GameState` and the real `HUD.tscn`, never a stub, and
+checks three separate claims, three crossings deep (one crossing would pass
+a one-shot latch that then never fires again):
+
+```
+  OK    HUD connected to pursuer_lost_sight exactly once (found 1)
+  OK    crossing 1: sighting cleared the release beat (cancel-on-resight)
+  OK    crossing 1: lost_sight fired exactly once (1)
+  OK    crossing 1: HUD armed its release beat
+    (audio) pursuer_lost_sfx.playing = true, stream = pursuer_lost.wav
+  OK    crossing 1: still exactly once after 10s above the threshold (1)
+  OK    crossing 1: the hold really stayed out of sight (lead 12.50s)
+  ... crossings 2 and 3 identical ...
+  3 crossings driven, 3 lost_sight emissions, 3 sightings.
+```
+
+The **hold** is the load-bearing line. After each crossing the lead is
+topped up to `PURSUER_MAX_LEAD_S` and 10 s of run time is advanced; at
+`PURSUER_CLOSE_RATE` that lands at 12.50 s, comfortably clear of the 10.0
+threshold, and the emission count stays at one. A per-frame threshold test
+instead of an edge-detected signal would report ~600 there. Connection count
+is read off `pursuer_lost_sight.get_connections()` rather than
+`is_connected()`, because `is_connected()` answers "at least one" and the
+failure worth catching is "two" -- `connect()` does not complain about a
+duplicate, and a duplicate would double every future cue.
+
+The audio line is **reported, never gated**: headless Godot runs the dummy
+audio driver, and making a verdict depend on how that driver reports
+playback would be gating on the test rig instead of on the game.
+
+**One defect this phase found in itself, fixed here.** Its first run
+appended `ObjectDB instances leaked at exit` / `1 resources still in use at
+exit` to its own output, after its verdict -- the exact failure
+`StrikeAudit._settle_audio_before_quit` documents, now that this probe also
+fires a cue and then quits promptly. Same fix, and for the same reason it
+has to be a REAL-TIME wait rather than a frame wait: playbacks retire on the
+AudioServer's wall clock while the probe runs under `--fixed-fps`. `stderr`
+is empty again.
 
 ## Still open after this batch
 

@@ -420,7 +420,103 @@ temps PASSAIT quand même (`_update_strikes` ne teste pas l'état). Corrigé
 dans la SONDE (`STRIKE_CAPACITY_HALF - 1` contacts), pas dans le jeu : rien
 en production n'appelle `advance_time()` hors PLAYING.
 
-## « Le poursuivant ne recule jamais » — DIAGNOSTIQUÉ, non corrigé (F12)
+## « Le poursuivant ne recule jamais » — le moment de largage a enfin un cue (F14)
+
+**Piste 1 de F12 LIVRÉE le 10 août 2026 ; les pistes 2 et 3 restent
+intactes et restent la décision de Mathieu.** `GameState.pursuer_lost_sight`
+avait zéro abonné — le signal était déclaré, émis, et personne ne s'y
+connectait. Il en a un maintenant : `HUD.gd`. C'est tout le changement.
+
+**Rien d'autre n'a bougé, et c'est délibéré** : `pursuer_became_visible`,
+`PURSUER_RISK_REWARD_S`, `PURSUER_CLOSE_RATE`, la bande visuelle
+`FAR_Z`/`CAUGHT_Z` et `STRIKE_CAPACITY_HALF` sont **hors périmètre**. La
+poussée reste aussi longue qu'avant — PHASE CADENCE re-jouée **byte-identique**,
+donc les 75,6 s de jeu propre qu'un profil mid-skill doit tenir pour chasser
+le hibou sont exactement celles de F12. Ce lot ne raccourcit pas l'attente,
+il transforme son aboutissement en événement.
+
+Deux cues, au même instant :
+
+- **Un son qui n'est PAS un cue de strike** — `assets/audio/pursuer_lost.wav`,
+  troisième `.wav` du projet, joué par un troisième `AudioStreamPlayer` du
+  HUD (même patron que les deux autres, aucun service audio nouveau). La
+  séparation est de **CARACTÈRE**, pas de volume — la seule qui survive à un
+  haut-parleur de téléphone. Les deux cues de strike sont des percussions à
+  attaque dure qui décroissent (mesuré sur les fichiers commités : ~712 Hz
+  sur 0,20 s ; ~275 → ~117 Hz sur 0,55 s). Celui-ci est une paire de notes
+  sinus **MONTANTES** à attaque douce — A4 puis E5 une quinte au-dessus,
+  0,62 s, léger scintillement d'octave, **aucun transitoire**. Même format
+  (22050 Hz mono 16 bits), crête à 0,62 de la pleine échelle contre 0,72, et
+  joué à −6 dB contre −4/−2. Un cue qui résout vers le haut depuis une
+  attaque douce ne peut pas être pris pour un impact : le joueur ne doit
+  jamais l'entendre et aller vérifier ses pastilles.
+- **Un relâchement du télégraphe** — `PursuerLabel` et `GaugeFill` tombent à
+  alpha 0,22 en 0,198 s puis remontent en douceur sur les 0,702 s restantes.
+  Descente rapide, remontée lente : c'est cette asymétrie qui le fait lire
+  comme un relâchement et non comme un clignotement. **Pas alpha zéro** — la
+  jauge est une information PERMANENTE et doit rester lisible pendant le
+  beat. Et volontairement **pas** la réaction d'arrivée jouée à l'envers :
+  l'arrivée est un POP d'échelle sur le même label, donc les deux sont des
+  propriétés différentes qui vont en sens opposés. Une nouvelle apparition
+  pendant le beat l'ANNULE (le hibou est revenu ; un télégraphe encore en
+  train de s'éteindre sous le pop d'arrivée dirait les deux choses à la fois).
+
+⚠️ **F11 vérifié explicitement, et pas par un raisonnement.** Cette sonde a
+déjà vu son verdict basculer **deux fois** sans qu'aucune couleur ne bouge,
+juste parce qu'un changement de mise en page du strike row a déplacé le label
+de quelques pixels. « Ce n'est que de l'audio et un fondu » n'est donc pas un
+argument. Structurellement le lot ne PEUT pas déplacer un pixel de HUD : le
+lecteur audio est un nœud **non-`Control`** à la racine du `CanvasLayer`
+(aucune mise en page, aucun ordre de dessin), le beat visuel passe par
+`modulate` (une multiplication de couleur, incapable de redimensionner ou
+repositionner), et **aucun nœud n'a été ajouté à `PursuerRow`**. Et c'est
+**mesuré** : une sonde jetable a imprimé les rects écran de toute la colonne
+poursuivant sur les deux arbres — **byte-identiques**, `StrikeLabel` compris
+(`pos=(430, 1722) size=(128, 66)`).
+
+⚠️ **Mais `StrikeFatalContrastAudit` et `PursuerContrastAudit` n'ont PAS pu
+tourner dans le sandbox de ce lot — ni avant ni après.** Les deux atteignent
+le budget de 900 s du `ProbeWatchdog` et sortent en code 2. **Limite
+d'environnement, pas défaut de sonde ni régression** : relancée SEULE sur une
+machine oisive, `StrikeFatalContrastAudit` consomme **15 m 0,5 s réelles /
+15 m 3,4 s CPU** — occupée à 100 % du début à la fin — contre les ~60 s que
+`docs/PROBE_AUDIT.md` lui attribue ailleurs. Le sandbox n'a pas de GPU et rend
+via `llvmpipe` sous `xvfb` ; ce sont les deux seules sondes ici qui capturent
+des frames réelles en masse, et les deux seules à échouer ainsi. Les deux
+arbres donnent le même INCONCLUSIVE, donc aucun basculement n'est masqué —
+mais **le 2,99:1 de `DARK/5` n'est ici ni confirmé ni infirmé**, et la
+décision de teinte reste ouverte et reste celle de Mathieu. Piège de lecture :
+l'indice du watchdog (« the run clock has been FROZEN ») est un faux ami pour
+ces deux sondes — elles gèlent l'horloge exprès (`_freeze_world` met
+`current_speed = 0.0`), c'est leur état normal, pas la cause.
+
+**Sondes : 11/11 byte-identiques sur les DEUX flux**, même code de sortie,
+graine 20260806, `--fixed-fps 60` (7 sondes bot gatées + AssetContract +
+ChargerShape + DeathModel + ProbeTimeout). `StrikeAudit` reproduit
+exactement les chiffres capacité-2 de F13 — **safe 100 % / mid 85 % /
+risky 41 %, écart 15 points contre 20 requis, toujours ROUGE**. C'est le
+résultat recherché : un cue qui ne touche pas au modèle de mort ne doit pas
+le déplacer, et l'identité au bit près le dit plus fort qu'un simple verdict
+identique. **Aucun seuil n'a été bougé.**
+
+**`PursuerPushbackAudit` gagne une PHASE CUE, et devient partiellement
+gatante** — PHASE VISUAL et PHASE CADENCE continuent de décrire sans rien
+asserter, PHASE CUE **gate**. Motif : le défaut qu'elle garde (le signal
+reperd son abonné) est silencieux par nature — aucune erreur, rien qui ait
+l'air cassé, le son cesse simplement d'exister. Elle pilote le vrai
+`GameState` et le vrai `HUD.tscn`, jamais un stub, et vérifie sur **trois**
+traversées : connecté **exactement une fois** (lu sur
+`get_connections()`, pas `is_connected()` — celui-ci répond « au moins une »
+alors que le défaut à attraper est « deux »), **une seule** émission par
+traversée, tenue **10 s au-dessus du seuil** sans nouvelle émission (un test
+par frame en rapporterait ~600), et annulation du beat à la ré-apparition.
+17/17 OK. La ligne audio est **rapportée, jamais gatée** : en headless Godot
+tourne le pilote audio factice, et gater dessus serait gater sur le banc
+d'essai plutôt que sur le jeu.
+
+Détail chiffré complet : `docs/PROBE_AUDIT.md` §F14.
+
+## « Le poursuivant ne recule jamais » — le diagnostic d'origine (F12)
 
 Retour playtest sur `staging`. **Mesuré, pas supposé** — sonde dédiée
 `scripts/dev/PursuerPushbackAudit.tscn` (elle RAPPORTE, elle ne gate pas),
@@ -450,10 +546,11 @@ suit correctement `pursuer_lead_s`, chaque frame, sans bug.
   se fait rattraper. Cause et effet séparés de plus d'une minute, avec rien
   entre les deux.
 
-**Trois pistes proposées, AUCUNE implémentée — c'est la décision de
-Mathieu** (§F12 pour l'argumentaire) : (1) donner un cue à
-`pursuer_lost_sight`, qui tire déjà au bon instant et n'écoute personne —
-la moins chère et la seule qui traite (b) ; (2) redistribuer la bande
+**Trois pistes proposées. La (1) est LIVRÉE (voir F14 ci-dessus) ; les (2)
+et (3) restent la décision de Mathieu** (§F12 pour l'argumentaire) :
+(1) ~~donner un cue à `pursuer_lost_sight`, qui tire déjà au bon instant et
+n'écoute personne~~ **FAIT le 10 août 2026** — la moins chère et la seule qui
+traite (b) ; (2) redistribuer la bande
 visuelle (piège de géométrie à connaître : `CAUGHT_Z` est PLUS LOIN de la
 caméra que `FAR_Z`, seul le ramp de scale fait grossir le hibou) ;
 (3) raccourcir la constante de temps (`PURSUER_RISK_REWARD_S` ou
@@ -465,6 +562,22 @@ poussée sans la rendre plus lisible.
 Le projet a reçu son **premier audio** le 9 août 2026 (deux cues one-shot sur
 les strikes, `assets/audio/strike_*.wav`, joués depuis `HUD.gd`). Avant ça il
 n'y avait aucun `AudioStreamPlayer`, aucun bus, aucun autoload audio.
+
+**Depuis le 10 août 2026 il y en a TROIS** : `pursuer_lost.wav` s'ajoute
+(cue de largage du poursuivant, F14 ci-dessus). Toujours **aucun service
+audio global** — trois nœuds `AudioStreamPlayer` posés sur le HUD, trois
+fichiers dans `assets/audio/`, générés hors ligne et commités tels quels. La
+raison pour laquelle deux cues ne justifiaient pas un autoload vaut encore à
+trois ; si un quatrième arrive, c'est le moment de re-poser la question, pas
+avant. **Règle acquise pour tout cue futur : la distinction se fait par le
+CARACTÈRE** (forme d'attaque, sens de la hauteur), pas par le volume — c'est
+la seule qui survive à un haut-parleur de téléphone, et c'est ce qui sépare
+le cue de largage (attaque douce, notes montantes) des deux cues de coup
+(attaque dure, décroissance). **Toute sonde qui joue un cue puis quitte doit
+appeler un `_settle_audio_before_quit`** (attente en temps RÉEL, jamais en
+frames) : sans ça elle s'ajoute à elle-même `ObjectDB instances leaked at
+exit` après son propre verdict et casse la comparaison byte-identique —
+constaté à nouveau sur `PursuerPushbackAudit` au premier run de sa PHASE CUE.
 
 **Constat de test manuel, à ne pas re-vérifier :** l'export HTML5/WebGL Godot
 de ce projet **n'interrompt pas et ne baisse pas (`duck`)** l'audio de fond

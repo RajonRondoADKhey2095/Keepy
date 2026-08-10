@@ -239,6 +239,45 @@ const VIGNETTE_ONSET_PROXIMITY: float = GAUGE_ALARM_PROXIMITY
 const GAUGE_SAFE_COLOR: Color = Color(0.95, 0.85, 0.3, 1)
 const GAUGE_ALARM_COLOR: Color = Color(1.0, 0.25, 0.2, 1)
 
+# --- PURSUER sight-loss release ------------------------------------
+## THE "YOU GOT AWAY" BEAT. GameState.pursuer_lost_sight fires at exactly
+## the right instant and, until this batch, had no listener anywhere in the
+## game -- the one moment the whole resistance mechanic pays out arrived
+## with no sound, no fade and no HUD reaction (docs/PROBE_AUDIT.md F12
+## measured the silhouette going 19.93% of screen height -> 0% in a single
+## frame, after a push a mid-skill player needs ~75s of clean play to earn).
+##
+## Deliberately NOT the arrival reaction played backwards. Arrival is a
+## scale POP on the label -- the loudest thing this HUD does, because a
+## threat appeared. This is a DIM on the same telegraph: it lets go.
+## Different property, opposite direction, so the two cannot be confused
+## even in peripheral vision.
+##
+## LAYOUT-FREE BY CONSTRUCTION, and that is a requirement rather than a
+## convenience: this row sits directly under the strike row, whose label is
+## what StrikeFatalContrastAudit samples, and that probe has already had its
+## verdict flipped TWICE by pip-count changes that moved the label a few
+## pixels (docs/PROBE_AUDIT.md F11). The beat is applied through `modulate`
+## -- a colour multiply, which cannot resize or reposition anything -- and
+## the cue's audio player is a non-Control sibling on the CanvasLayer root.
+## Nothing here can move a pixel the probe samples.
+##
+## How long the beat lasts. Longer than any strike cue on this HUD (0.30s
+## flash, 0.20s/0.55s audio) on purpose: those punctuate an INSTANT the
+## player is punished at, this marks the release of a pressure that has been
+## on screen for tens of seconds, and a beat that short would read as one
+## more hit.
+const PURSUER_RELEASE_DURATION_S: float = 0.90
+## Fraction of the beat spent falling. Fast down, slow back: that asymmetry
+## is what makes it read as a release rather than a blink -- the telegraph
+## drops at the instant the pursuer does, then settles.
+const PURSUER_RELEASE_DIP_FRACTION: float = 0.22
+## How far the telegraph dims at the bottom of the dip. NOT zero: the gauge
+## is PERMANENT information (see the class doc -- the player must always be
+## able to read it), so this is the alarm letting go, not the display going
+## away.
+const PURSUER_RELEASE_MIN_ALPHA: float = 0.22
+
 # --- STRIKE flash + pips -------------------------------------------
 ## How long the impact flash lasts. Shorter than every other reaction on this
 ## HUD on purpose: it is the instant of the hit, not a state -- the state is
@@ -425,6 +464,21 @@ const FATAL_PULSE_AMPLITUDE: float = 0.32
 ## two must never cut each other off mid-tail.
 @onready var strike_warning_sfx: AudioStreamPlayer = $StrikeWarningSfx
 @onready var strike_fatal_sfx: AudioStreamPlayer = $StrikeFatalSfx
+## The third cue, and the first one that is not a punishment. Same pattern
+## as the two above -- a plain scene node on the HUD, one file in
+## assets/audio/, no new audio service -- because the reason those two are
+## not a global SFX autoload has not changed.
+##
+## SEPARATED FROM THE STRIKE CUES BY CHARACTER, not by volume. Both strike
+## cues are hard-attack percussive decays (measured: ~712Hz falling away
+## over 0.20s, ~275Hz -> ~117Hz over 0.55s). This one is a soft-attack pair
+## of RISING sine notes, A4 -> E5 a fifth above it, 0.62s, with a faint
+## octave shimmer and no transient at all: 22050Hz mono 16-bit like its
+## siblings, peaked at 0.62 of full scale where they sit at 0.72, and played
+## quieter still (-6dB against -4/-2). A cue that resolves upward out of a
+## soft attack cannot be mistaken for an impact, which is the whole point --
+## the player must never hear this and check their pips.
+@onready var pursuer_lost_sfx: AudioStreamPlayer = $PursuerLostSfx
 @onready var strike_row: HBoxContainer = $MarginContainer/PursuerRow/StrikeRow
 @onready var strike_label: Label = $MarginContainer/PursuerRow/StrikeRow/StrikeLabel
 ## Fixed-size, resolved once. One entry per STRIKE_CAPACITY_HALF slot, in the
@@ -514,6 +568,14 @@ var _fatal_pulse_t: float = 0.0
 ## camera shake), which are the thing a state cannot express.
 ## Starts at -1 so the first frame always paints.
 var _drawn_half: int = -1
+## Phase of the sight-loss release beat, -1.0 when nothing is armed -- the
+## same "-1 means idle" contract every pop on this HUD uses, so it advances
+## through the same _advance_pop.
+var _pursuer_release_t: float = -1.0
+## Last alpha written to the telegraph. Edge-triggered for the same reason
+## _applied_vignette is: the idle case is every frame of a normal run, and
+## it should cost a comparison rather than two property writes.
+var _applied_release_alpha: float = 1.0
 
 func _ready() -> void:
 	GameState.score_changed.connect(_on_score_changed)
@@ -521,6 +583,7 @@ func _ready() -> void:
 	GameState.combo_changed.connect(_on_combo_changed)
 	GameState.combo_tier_up.connect(_on_combo_tier_up)
 	GameState.pursuer_became_visible.connect(_on_pursuer_became_visible)
+	GameState.pursuer_lost_sight.connect(_on_pursuer_lost_sight)
 	GameState.strike_taken.connect(_on_strike_taken)
 	GameState.pursuer_caught.connect(_on_pursuer_caught)
 	# The scene authors the pips; GameState owns the capacity. Nothing makes
@@ -579,8 +642,28 @@ func _on_combo_tier_up(_multiplier: int) -> void:
 ## the loudest reaction this HUD already has.
 func _on_pursuer_became_visible() -> void:
 	_pursuer_pop_t = 0.0
+	# A sighting landing INSIDE the release beat cancels it outright rather
+	# than letting the two overlap. The threat is back; a telegraph still
+	# fading out under the arrival pop would be saying both things at once.
+	# It takes a crossing in each direction inside 0.9s to reach this, so it
+	# is rare -- and rare is exactly when a contradiction goes unnoticed.
+	_pursuer_release_t = -1.0
 
-## Stops both cues before this HUD leaves the tree.
+## The pursuer being driven off -- see PURSUER_RELEASE_DURATION_S's block
+## for why this exists and why it is a dim rather than a pop.
+##
+## Fires once per CROSSING, never once per frame above the threshold:
+## GameState._refresh_pursuer_visibility edge-detects against its own
+## pursuer_visible flag and emits only on the transition. This handler adds
+## no threshold test of its own precisely so there is one place that decides
+## what "lost sight" means. Verified end to end by PursuerPushbackAudit's
+## PHASE CUE, which holds the lead above the threshold for ten seconds and
+## asserts the count stays at one.
+func _on_pursuer_lost_sight() -> void:
+	_pursuer_release_t = 0.0
+	pursuer_lost_sfx.play()
+
+## Stops all three cues before this HUD leaves the tree.
 ##
 ## NOT housekeeping for its own sake -- it is load-bearing for the dev probes.
 ## Every probe in scripts/dev/ runs dozens to hundreds of runs by
@@ -614,6 +697,7 @@ func _on_pursuer_became_visible() -> void:
 func _exit_tree() -> void:
 	strike_warning_sfx.stop()
 	strike_fatal_sfx.stop()
+	pursuer_lost_sfx.stop()
 
 ## Arms the impact flash, the entry kick and the audio cue. The pips
 ## themselves are NOT repainted here -- see _drawn_half for why they are
@@ -713,6 +797,17 @@ func _update_pursuer_telegraph(delta: float) -> void:
 	# on this HUD.
 	_pursuer_pop_t = _advance_pop(_pursuer_pop_t, delta, TIER_POP_DURATION_S)
 	_apply_scale(pursuer_label, _pop_scale(_pursuer_pop_t, TIER_POP_DURATION_S, TIER_POP_PEAK_SCALE))
+
+	# Release beat on sight-loss -- see _on_pursuer_lost_sight. Applied to
+	# the two nodes that ARE the pursuer telegraph, through `modulate` only:
+	# see PURSUER_RELEASE_DURATION_S's block for why nothing here is allowed
+	# to touch size or position.
+	_pursuer_release_t = _advance_pop(_pursuer_release_t, delta, PURSUER_RELEASE_DURATION_S)
+	var release_alpha := _release_alpha(_pursuer_release_t)
+	if not is_equal_approx(release_alpha, _applied_release_alpha):
+		_applied_release_alpha = release_alpha
+		pursuer_label.modulate.a = release_alpha
+		gauge_fill.modulate.a = release_alpha
 
 ## The two strike surfaces -- see the STRIKES section of the class doc, and
 ## the ALARM LADDER section for the three-step warning this drives.
@@ -842,6 +937,24 @@ func _update_pops(delta: float) -> void:
 
 	_apply_scale(combo_label, combo_scale)
 	_apply_scale(multiplier_label, multiplier_scale)
+
+## Alpha for the sight-loss beat: a fast linear fall to
+## PURSUER_RELEASE_MIN_ALPHA, then a slow smoothstepped return to full.
+## Returns 1.0 for the idle sentinel (t < 0), so the resting state is the
+## same expression as the active one and there is no separate "off" branch
+## that could be forgotten -- the beat expiring through _advance_pop lands
+## back on exactly the alpha the HUD had before it.
+func _release_alpha(t: float) -> float:
+	if t < 0.0:
+		return 1.0
+	var dip := PURSUER_RELEASE_DURATION_S * PURSUER_RELEASE_DIP_FRACTION
+	if t < dip:
+		return lerpf(1.0, PURSUER_RELEASE_MIN_ALPHA, t / dip)
+	# Eased, not linear, on the way back: the return is by far the longer
+	# half, and a straight ramp there reads as a UI element fading in rather
+	# than as something settling after a release.
+	var back := (t - dip) / (PURSUER_RELEASE_DURATION_S - dip)
+	return lerpf(PURSUER_RELEASE_MIN_ALPHA, 1.0, back * back * (3.0 - 2.0 * back))
 
 func _advance_pop(t: float, delta: float, duration: float) -> float:
 	if t < 0.0:
