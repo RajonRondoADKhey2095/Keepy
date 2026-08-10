@@ -1638,7 +1638,57 @@ reproducibility note.
   keys kinds to prop node-name prefixes, and the renamed nodes made it report
   both kinds at **zero instances with a `-1-0` per-instance cost**. That is
   how a stale prefix there fails — quietly, and looking like a measurement.
+- **`ProbeTimeoutAudit`: PASSED** (32 probe scenes bounded) — required after
+  touching anything under `scripts/dev/`.
+- **Scale does not compound across recycles.** `_place_model` computes
+  `scale_y` as `height / instance.get_aabb().size.y`, which is only correct
+  if `get_aabb()` excludes the node's own scale — otherwise every
+  re-placement would divide by an already-scaled box and props would grow
+  without bound. `nearest_prop_edge_x()` implies local (it multiplies by the
+  transform afterwards), but implication is not measurement. Measured
+  directly, no game scene involved: `get_aabb().size` reads
+  `(1.352013, 1.333252, 1.540203)` at node scale 1.0, **3.0 and 7.0 alike**,
+  and `transform * get_aabb()` at scale 7 gives exactly 7x that. Local, so
+  no compounding.
 - **Web export**: clean, exit 0. `index.pck` **4,723,040 -> 4,736,160 bytes,
   +13,120** for both assets, built from a throwaway worktree at `origin/main`
   against the current tree with identical templates. `index.wasm` md5
   identical.
+
+**`PursuerContrastAudit` and `StrikeFatalContrastAudit` (F10/F11) are
+INCONCLUSIVE in this sandbox** — both hit the `ProbeWatchdog`'s 900s
+wall-clock budget and exit 2 without reaching their completion check. Same
+limitation the F14 lot recorded one day earlier in the same environment
+(no GPU, `llvmpipe` under `xvfb`; these two are the only probes here that
+capture rendered frames in bulk). Not a defect and not a regression:
+`PursuerContrastAudit` reached **51,171s of simulated time in 900s of wall
+clock**, i.e. ~57x real time, which is proof `--fixed-fps 60` was honoured
+and that the probe was progressing, not stuck. Its own timeout hint about
+flag order is generic boilerplate and does not apply — the flags were in
+the documented order.
+
+**Why the mix argument still leaves F11 open, stated rather than assumed:**
+
+- **F10 is not reachable by this batch.** It measures the pursuer's
+  silhouette against the **ground**. The pursuer is untouched; the ground's
+  tint comes from `_tint_rng`, a *different* `DecorRng` stream, and this
+  batch adds no `DecorRng.make()` call, so stream numbering — and therefore
+  `_tint_rng`'s seed and sequence — is unchanged. Props cannot reach the
+  sampled surface either: the keep-out puts every prop's silhouette edge at
+  `|x| >= 3.4` against a 6m slab, asserted over 4,000 rolls by
+  `TrackPropsAudit`, which passes. Note also that F10 was **already failing
+  on untouched `origin/main`** (6/6 dark palettes, worst 1.86:1), so a red
+  result from it is not attributable to this batch in either direction.
+- **F11 is narrowed but NOT ruled out, and it would be dishonest to claim
+  otherwise.** It samples the fatal-strike label against **the 3D world
+  behind it**, and two prop kinds changed silhouette and shifted slightly in
+  X. What bounds it: no prop changed tile, Z, side or count, and X moved
+  only by the difference between the new bounding circle and the old canopy
+  radius. What does *not* bound it: nothing in the geometry proves no tree
+  or stump ever lands behind that label. The failure mode that flipped F11's
+  verdict **twice before** — a HUD layout shift moving the label onto a
+  different patch of world — is structurally impossible here, since no HUD
+  node is touched; the 3D-background channel is a narrower one, but it is
+  real. **Measure it on a machine that can finish the probe before reading
+  anything into a verdict**, and note that the DARK/5 tint decision was
+  already open and is Mathieu's.

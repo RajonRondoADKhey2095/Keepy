@@ -277,6 +277,27 @@ mesurées plus haut. Chiffres complets : `docs/MESHY_SPEC.md` §8.3 et §11.
   une position locale, une échelle et une rotation **identiques au bit près**
   face à `origin/main`.
 
+⚠️ **F10/F11 : INCONCLUSIVE dans ce sandbox, comme au lot F14 la veille.** Les
+deux sondes atteignent le budget 900 s du `ProbeWatchdog` et sortent en code 2.
+**Pas un défaut, pas une régression** : `PursuerContrastAudit` a simulé
+**51 171 s en 900 s de temps réel** (~57×), donc `--fixed-fps 60` était bien
+honoré et la sonde progressait — l'indice « flag order » de son propre message
+de timeout est du boilerplate générique et ne s'applique pas ici. Ce que
+l'argument « mix inchangé » couvre et ne couvre pas : **F10 est hors d'atteinte**
+(elle mesure la silhouette du poursuivant contre le SOL ; la teinte du sol vient
+de `_tint_rng`, un flux `DecorRng` distinct dont la numérotation est inchangée
+puisque aucun `DecorRng.make()` n'est ajouté ; et le keep-out interdit à tout
+prop de toucher la dalle, assertion passée sur 4 000 tirages) — **et elle
+échouait déjà sur `origin/main` intact**, donc un rouge ne lui est imputable
+dans aucun sens. **F11 est RESTREINTE mais PAS écartée** : elle échantillonne le
+monde 3D derrière le label, et deux types de props changent de silhouette et se
+décalent un peu en X. Le mode de défaillance qui a fait basculer son verdict
+**deux fois** (un décalage de mise en page HUD déplaçant le label) est
+structurellement impossible ici — aucun nœud de HUD n'est touché — mais le canal
+« fond 3D » existe. **À mesurer sur une machine capable de terminer la sonde
+avant d'en tirer quoi que ce soit** ; la décision de teinte DARK/5 était déjà
+ouverte et reste celle de Mathieu.
+
 ⚠️ **Le budget propre aux props est DÉPASSÉ, et le seuil n'a PAS été bougé.**
 `TrackPropsAudit` échoue sur **2 runs sur 6** (props 908–1 926 contre un
 plafond de 1 500 ; baseline 459–868 sur 6 runs aussi). **La frame, elle, n'est pas affectée de façon
