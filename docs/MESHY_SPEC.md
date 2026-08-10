@@ -1640,10 +1640,13 @@ reproducibility note.
   how a stale prefix there fails — quietly, and looking like a measurement.
 - **`ProbeTimeoutAudit`: PASSED** (32 probe scenes bounded) — required after
   touching anything under `scripts/dev/`.
-- **Gated probes, seed 20260806, `origin/main` vs this branch:
-  BYTE-IDENTICAL stdout**, all PASSED — `AntiFrustrationAudit`, `ComboAudit`,
-  `PursuerAudit`, `RushFrustrationAudit`, `ShrinkAudit`,
-  `PursuerFramingAudit`, `ChargerShapeProbe`, `DeathModelAudit`. Expected for
+- **All NINE gated probes, seed 20260806, `origin/main` vs this branch:
+  BYTE-IDENTICAL stdout and same exit code** — `AntiFrustrationAudit`,
+  `ComboAudit`, `PursuerAudit`, `RushFrustrationAudit`, `ShrinkAudit`,
+  `StrikeAudit`, `PursuerFramingAudit`, `ChargerShapeProbe`,
+  `DeathModelAudit`. Eight PASS; `StrikeAudit` exits 1 on **both** trees,
+  which is the pre-existing F13 red (capture-share gap 15 points against the
+  20 required) and not something this batch moved. Expected for
   a decor-only change, and worth having as evidence rather than inference:
   the decor streams are separate `RandomNumberGenerator`s from the global one
   the gameplay rolls draw on, and this batch adds no `DecorRng.make()` call,
