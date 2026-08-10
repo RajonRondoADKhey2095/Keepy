@@ -70,12 +70,33 @@ MODELS = {
 ## textures. Those values were chosen by the contrast sweep in MESHY_SPEC 8.2
 ## against the dark-mode inversion and are the contract; a sampled average
 ## would quietly replace a measured decision with an arithmetic one.
+## These are the values as GDScript writes them, i.e. sRGB: Godot's
+## StandardMaterial3D.albedo_color is an sRGB colour, and 8.2's sweep was run
+## against _unshaded(Color(...)) materials carrying exactly these numbers.
 COLORS = {
     "tree": (0.14, 0.20, 0.15),       # _TREE_CANOPY_COLOR
     "bare_tree": (0.13, 0.10, 0.07),  # _TREE_TRUNK_COLOR
     "stump": (0.32, 0.24, 0.15),      # _STUMP_COLOR
     "bush": (0.11, 0.16, 0.12),       # _BUSH_COLOR
 }
+
+
+def srgb_to_linear(c):
+    """glTF baseColorFactor is LINEAR; the table above is sRGB.
+
+    Writing an sRGB value straight into baseColorFactor was the first version
+    of this script's behaviour, and it made every asset render far brighter
+    than the palette it was supposed to carry -- measured after import, Godot
+    read _TREE_TRUNK_COLOR's 0.13 back as 0.396, which is 0.13 converted the
+    other way. It did not show in-game only because TrackSegment overrides the
+    surface material with the GDScript colour, so the baked one is never drawn.
+    Converting here means the .glb is right ON ITS OWN, and the override is
+    belt-and-braces rather than the only thing standing between the palette and
+    the screen.
+    """
+    return tuple(
+        v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in c
+    )
 
 ## Fraction of the longest bounding-box edge that counts as "the same point"
 ## when welding. 0.006 was picked as the smallest value that still merges the
@@ -143,8 +164,15 @@ def write_glb(path, verts, faces, color):
     faces = np.ascontiguousarray(faces, dtype=np.uint32)
     vertex_bytes, index_bytes = verts.tobytes(), faces.tobytes()
 
-    def pad(buf):
-        return buf + b"\x00" * ((4 - len(buf) % 4) % 4)
+    # glTF 2.0 requires each chunk to be 4-byte aligned, and requires the two
+    # chunk types to be padded with DIFFERENT bytes: the BIN chunk with zeros,
+    # the JSON chunk with spaces (0x20), because the padding is part of the
+    # JSON text a reader hands to its parser. Padding JSON with NULs produces a
+    # file that is valid or not depending on whether its JSON length happens to
+    # be a multiple of 4 -- stump landed aligned and parsed, bare_tree did not
+    # and its trailing "\x00\x00" made json.loads raise "Extra data".
+    def pad(buf, fill=b"\x00"):
+        return buf + fill * ((4 - len(buf) % 4) % 4)
 
     padded_vertices = pad(vertex_bytes)
     blob = padded_vertices + pad(index_bytes)
@@ -190,7 +218,7 @@ def write_glb(path, verts, faces, color):
             {"bufferView": 1, "componentType": 5125, "count": faces.size, "type": "SCALAR"},
         ],
     }
-    json_chunk = pad(json.dumps(gltf, separators=(",", ":")).encode())
+    json_chunk = pad(json.dumps(gltf, separators=(",", ":")).encode(), b" ")
     total = 12 + 8 + len(json_chunk) + 8 + len(blob)
     with open(path, "wb") as handle:
         handle.write(struct.pack("<III", 0x46546C67, 2, total))
@@ -214,7 +242,7 @@ def main(targets):
             ratio = max(0.0, min(0.999, 1.0 - target / len(welded_faces)))
             out_verts, out_faces = fast_simplification.simplify(welded_verts, welded_faces, ratio)
             out_path = os.path.join(OUT_DIR, "%s_%d.glb" % (kind, target))
-            write_glb(out_path, out_verts, out_faces, COLORS[kind])
+            write_glb(out_path, out_verts, out_faces, srgb_to_linear(COLORS[kind]))
             print(
                 "             %4d target -> %4d tri  %6.1f KB  %s"
                 % (target, len(out_faces), os.path.getsize(out_path) / 1024.0, out_path)
