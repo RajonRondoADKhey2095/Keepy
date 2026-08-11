@@ -673,6 +673,160 @@ payload tenu (0 entrée `assets_source` importée dans le pack).
 rat/ENEMY, sanglier/CHARGER, tronc debout/DODGE), le sous-remplissage de
 hitbox et le sur-remplissage en profondeur — **jugement device**.
 
+## TROISIÈME HAZARD MESHY INSTALLÉ : le tronc debout (DODGE) — 11 août 2026
+
+Branche `claude/dodge-hazard-processing-69i3nj`, partie de `staging`
+(`290fa30`, donc **posée sur le STOMPER encore en attente de validation
+device**). `assets/models/keepy_dodge_trunk.glb` sur `Obstacle/DodgeMesh` —
+**150 triangles, 3,7 Ko, plat, unlit, sans texture**. Chiffres complets :
+`docs/MESHY_SPEC.md` §7.4 et §11.
+
+**Identifié PAR MESURE, puis confirmé au rendu** : `Crimson_Hollow_Trunk`
+est le **seul sujet restant dont l'axe dominant est Y** (1,031 × **1,901** ×
+0,992) ; les quatre autres sont longs en X ou en Z. Un DODGE est un mur
+pleine hauteur qu'on CONTOURNE, donc « il est debout » n'est pas un détail,
+c'est toute la classification. Rendu sur 4 vues avant décimation : tronc
+creux debout, cassé net en haut, moignons de branches bas sur le fût,
+section en anneau vue de dessus. **Il n'a pas de face et il est quasi
+symétrique de révolution autour de Y** — contrairement au crapaud, il n'y
+avait donc aucune question d'orientation à trancher : `model_rotation_
+degrees` reste à zéro **parce qu'il n'y a rien à orienter**, pas parce que
+la réponse du crapaud a été recopiée.
+
+### ⚠️ LE PREMIER LOT QUI DOIT CHANGER UNE COULEUR GATÉE — et le chiffre le prouve
+
+**DODGE était le SEUL des quatre hazards gatés encore LIT** (pas de
+`shading_mode = 0`, seul de sa famille). Son 3,19:1 mesuré était donc le
+ratio d'un albédo **multiplié par l'ambiante de la scène**, pas de l'albédo
+lui-même. §8 impose l'unlit à un asset importé, ce qui SUPPRIME cette
+multiplication — donc reporter la couleur telle quelle, ce que les deux
+assets précédents pouvaient faire sans risque, **n'aurait PAS tenu le
+ratio ici** :
+
+| albédo | ombrage | rendu | vs sol |
+|---|---|---|---|
+| `(0,30, 0,025, 0,025)` | LIT (baseline) | `(0,2157, 0,0588, 0,0157)` | **3,19:1** |
+| `(0,30, 0,025, 0,025)` | unlit, reporté tel quel | `(0,2954, 0,0289, 0,0263)` *(prédit)* | **2,945:1 — SOUS LE PLANCHER** |
+| **`(0,21, 0,0175, 0,0175)`** | **unlit, livré** | **`(0,2039, 0,0197, 0,0000)`** | **3,37:1** |
+
+Le solve tient la **teinte rouge DODGE EXACTEMENT** (12:1:1 — seule la
+valeur bouge, jamais le ton), contre la luminance du sol mesurée par la
+sonde elle-même et une fraction de fog de 0,0238 relevée sur le **STOMPER
+déjà unlit** (le seul asset de la scène dont la correspondance
+albédo→rendu ne demande aucun modèle d'éclairage). Le modèle reproduit la
+baseline à 0,005 point de ratio près (3,194 prédit contre 3,19 mesuré) —
+c'est ce qui lui a donné le droit de PRÉDIRE l'échec ci-dessus au lieu de
+le découvrir.
+
+### C'est un VRAI changement de couleur, PAS l'artefact de fenêtre du JUMP
+
+Le rondin JUMP était passé de 3,28 à 3,02 pour une raison de MESURE (54 px
+de sol dans la fenêtre). Ici c'est l'inverse, et c'est vérifié par
+histogramme sur les DEUX arbres (sonde instrumentée puis revertée) :
+
+| arbre | contenu de la fenêtre | valeur dominante | ratio |
+|---|---|---|---|
+| baseline (`origin/staging`, boîte LIT) | **196 px, 0 px de sol** | `(55,15,4)` | 3,19:1 |
+| ce lot (tronc unlit) | **196 px, 0 px de sol** | `(52,5,0)` | 3,37:1 |
+
+**Les deux fenêtres sont à 100 % des pixels d'objet, aux deux bouts de la
+respiration.** Aucune des deux mesures n'est contaminée, donc l'écart entre
+elles EST la couleur de l'objet. La signature est sans ambiguïté : le
+**canal vert s'effondre de 15 à 5** pendant que le rouge bouge à peine —
+exactement ce que produit la suppression d'une multiplication par une
+ambiante `(0,42, 0,5, 0,35)`, à dominante verte, sur un albédo dont le vert
+propre est quasi nul.
+
+⚠️ **Un détail observé et délibérément NON expliqué plutôt qu'expliqué à
+tort** : le bleu livré lit **exactement 0** là où l'albédo et le fog
+prédisent ~5/255, alors que le vert, à valeur d'albédo identique, lit bien
+le 5 prédit. Aucun tonemapper n'est configuré (`scenes/Game.tscn` n'a pas
+de clé `tonemap_*`), ce n'est donc pas ça. Laissé en observation ouverte
+parce que le poursuivre ne change rien : un cran 8 bits de bleu sur une
+silhouette quasi noire déplace le ratio de **moins de 0,01**, et la pureté
+de la fenêtre ci-dessus prouve déjà que la mesure porte sur l'objet.
+
+### Contraste : le plus serré des quatre devient le deuxième plus large
+
+| hazard | avant | après | marge sur le plancher 3,0 |
+|---|---|---|---|
+| **DODGE** | **3,19:1** | **3,37:1** | **+0,37** *(était +0,19, le plus serré)* |
+| JUMP | 3,02:1 | 3,02:1 | +0,02 |
+| CHARGER | 3,20:1 | 3,20:1 | +0,20 |
+| STOMPER | 3,41:1 | 3,41:1 | +0,41 |
+
+Le chiffre gaté est le **pire des deux bouts** : 3,39 shallow / **3,37
+deep**. DODGE passe du plus serré au deuxième plus large ; le plus serré
+est désormais CHARGER (+0,20). Les trois autres lignes sont
+**bit-identiques** à la baseline, comme elles doivent l'être.
+
+### Échelle : la règle du rondin JUMP appliquée telle quelle, PAS une dérogation
+
+`model_scale = 1,18793` cale le X du visuel sur le **1,200 exact** du
+collider — demi-largeur **0,600, identique au bit près à la boîte
+placeholder**, donc la présence latérale ne bouge pas d'un millimètre.
+Contrairement au STOMPER, c'est ici §4 appliqué sans exception : **un DODGE
+existe pour être esquivé LATÉRALEMENT**, donc la largeur est l'axe qui
+décide si une esquive légale se lit comme légale.
+
+L'alternative écartée mérite d'être consignée parce qu'elle paraît meilleure
+sur le papier : caler sur Y (s=1,052) donnerait la hauteur exacte de la
+hitbox, mais laisserait le visuel à 1,085 dans une hitbox de 1,200 — soit
+**la hitbox plus large que le tronc de 0,058 par côté**, c'est-à-dire le
+joueur qui dégage le tronc à l'écran et meurt sur du vide. C'est le sens
+PUNITIF de la même erreur, sur la mécanique exacte qui donne son nom au
+hazard.
+
+**Résidus signalés, pas maquillés** : le tronc dépasse de **0,253 au-dessus**
+de la hitbox et est **0,111 plus profond** en Z. Les deux vont dans le sens
+indulgent. Le dépassement en hauteur ne peut pas faire passer un saut légal
+pour illégal **puisqu'il n'existe aucun saut légal par-dessus un DODGE**
+(injumpable par construction, hitbox 2,0 contre un pic de saut à 1,558), et
+le sur-remplissage en profondeur ne fait que laisser le joueur frôler le
+bord visuel sans être touché — même sens que les 0,345 acceptés du crapaud.
+**À juger sur device.**
+
+`model_offset = (0, 0,13542, 0)` pose le tronc au sol : le mesh est centré
+sur son propre origine, donc au `y = +1,00` du slot il s'enfonçait de 0,135.
+
+**Le matériau placeholder a été changé AUSSI, volontairement** :
+`StandardMaterial3D_Dodge` passe `shading_mode = 0` avec le même nouvel
+albédo. C'est désormais le chemin de FALLBACK uniquement (le `.glb` dessine
+son propre matériau unlit) — mais le laisser LIT aurait fait diverger le
+placeholder et l'asset livré **sur l'axe même que ce lot change**, c'est-à-dire
+le piège « fixture qui diverge du réel » que `AlarmRampAudit` existe pour
+fermer. Le réintroduire dans le repo qui le documente serait indéfendable.
+
+**Triangles** : `DodgeMesh` 12 → **150**, +138 par instance vivante. C'est
+l'une des trois variantes dont §7.4 prédisait qu'un import COÛTERAIT (les
+deux boîtes à 12 tri et le prisme à 8), face aux −620 du STOMPER et aux
+−2 256 / −2 896 qui attendent encore sur ENEMY et AIR_ENEMY. Famille
+un-de-chaque **7 870 → 8 008**, toujours sous la ligne de 8 400.
+
+**Colliders intouchés** : `DodgeShape` toujours `Box(1.2, 2.0, 1.0)` @
++1,00. Sondes : `AssetContractAudit` (12/12 visuels, 0 collider déplacé),
+`DarkPaletteAudit`, `AlarmRampAudit`, `ProbeTimeoutAudit`,
+`DeathModelAudit`, `ChargerShapeProbe`, `PursuerFramingAudit` (37,1 % max,
+CAPTURE exempt par conception) — **toutes exit 0**. Import + export Web
+**exit 0**. Piège payload tenu (**0** ressource `assets_source` importée
+dans le pack).
+
+⚠️ **`PursuerFramingAudit` doit se lancer EN HEADLESS ici** : sous
+`xvfb-run` + `llvmpipe` elle dépasse 10 min sans finir, alors qu'en headless
+elle rend son verdict en quelques secondes. Elle ne lit aucun pixel
+(`unproject_position` est un calcul de transform pur), donc elle n'a rien à
+faire sous xvfb — même famille que la leçon déjà consignée sur
+`DecorStabilityAudit`. À ne pas confondre avec les sondes qui, elles, DOIVENT
+tourner sous xvfb parce qu'elles échantillonnent des pixels
+(`DarkPaletteAudit`).
+
+**Reste ouvert** : trois sujets non installés (libellule/AIR_ENEMY,
+rat/ENEMY, sanglier/CHARGER) ; le dépassement en hauteur et le
+sur-remplissage en profondeur ; et **le rouge plus sombre** — aucune sonde
+ne dit qu'une couleur est JUSTE, seulement qu'elle passe le plancher.
+Est-ce que DODGE se lit encore comme ROUGE et pas comme NOIR sur un écran
+de téléphone à vitesse réelle, c'est la décision de Mathieu.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
