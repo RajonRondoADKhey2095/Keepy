@@ -7,7 +7,7 @@ extends Node
 ## measures gameplay objects under the same six palettes: it measures 3D
 ## objects that the invert shader passes over. The HUD does not sit in that
 ## pipeline at all. HUD is a CanvasLayer at the default layer 1;
-## DarkModeEffect is a CanvasLayer at layer 0 (see Game.tscn), and its
+## SwampAtmosphere drives the WorldEnvironment only (see Game.tscn), and its
 ## ColorRect samples hint_screen_texture, which contains only what was
 ## drawn BENEATH it. So the HUD's own pixels are never inverted and never
 ## tinted -- its colours are literally the same values in every phase.
@@ -62,8 +62,7 @@ const SETTLE_FRAMES: int = 24
 const CONTRAST_FLOOR: float = 3.0
 
 var _game: Node3D
-var _grade_rect: ColorRect
-var _dark_effect: CanvasLayer
+var _atmosphere: Node
 var _hud: CanvasLayer
 var _combo_row: Control
 var _combo_label: Label
@@ -83,7 +82,6 @@ func _ready() -> void:
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_hud = _game.get_node("HUD")
-	_grade_rect = _game.get_node("DarkModeEffect/Grade")
 	# THE WORLD IS HELD STILL for the whole measurement, and this probe
 	# takes ownership of the three shader uniforms. Both are correctness
 	# fixes, and this probe needed two wrong attempts to get here:
@@ -102,14 +100,14 @@ func _ready() -> void:
 	#
 	# So the tree keeps running (rendering stays guaranteed) and the world
 	# is stilled by zeroing the world speed instead -- see _freeze_world.
-	# DarkModeEffect's own _process is switched OFF so it can never write
+	# SwampAtmosphere's own _process is switched OFF so it can never write
 	# over the uniforms set here; driving them by hand is exactly what
 	# DarkPaletteAudit.gd does, and for the same reason (that script is a
 	# pure three-line uniform setter, verified by reading it).
-	_dark_effect = _game.get_node("DarkModeEffect")
+	_atmosphere = _game.get_node("SwampAtmosphere")
 	# _process off so GameState cannot overwrite the pinned intensity every
 	# frame; the probe then calls _apply() itself -- see _measure below.
-	_dark_effect.set_process(false)
+	_atmosphere.set_process(false)
 	_combo_row = _hud.get_node("MarginContainer/VBoxContainer/ComboRow")
 	_combo_label = _hud.get_node("MarginContainer/VBoxContainer/ComboRow/ComboLabel")
 	_multiplier_label = _hud.get_node("MarginContainer/VBoxContainer/ComboRow/MultiplierLabel")
@@ -121,8 +119,8 @@ func _run() -> void:
 	_report()
 
 ## Drives the dark-mode state directly on GameState rather than waiting for
-## the run clock to reach each phase naturally: DarkModeEffect.gd is a pure
-## reader of dark_intensity (verified by reading it), so
+## the run clock to reach each phase naturally: SwampAtmosphere.gd is a pure
+## reader of mist_intensity (verified by reading it), so
 ## setting those is exactly equivalent to the run reaching that phase, and
 ## it lets the probe visit all six palettes in a few frames instead of
 ## several minutes of simulated time.
@@ -139,7 +137,7 @@ func _freeze_world() -> void:
 
 func _measure_phase(label: String, dark: bool) -> void:
 	_freeze_world()
-	# Drive the REAL DarkModeEffect._apply() rather than writing the
+	# Drive the REAL SwampAtmosphere._apply() rather than writing the
 	# shader uniforms by hand. Since the swamp refonte the dark look is
 	# TWO things -- the screen grade AND the sky/haze colours written
 	# into the WorldEnvironment -- and poking only the shader would
@@ -147,7 +145,7 @@ func _measure_phase(label: String, dark: bool) -> void:
 	# not a state the game can ever be in. Going through the real entry
 	# point is the same discipline this probe already applies to
 	# GameState.register_strike() and friends.
-	_dark_effect._apply(1.0 if dark else 0.0)
+	_atmosphere._apply(1.0 if dark else 0.0)
 
 	# Put the row into the state a player actually sees it in: a live combo
 	# high enough to have earned a visible multiplier, and NOT about to

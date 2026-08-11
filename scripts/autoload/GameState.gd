@@ -67,7 +67,7 @@ signal strike_cleared(strikes_used_half: int, by_combo: bool)
 ## reads, no score changes), it just is not TOLD yet.
 ##
 ## Every `state != State.PLAYING` guard already scattered across this
-## codebase (Keepy, Obstacle, TrackManager, DarkModeEffect, Pursuer's own
+## codebase (Keepy, Obstacle, TrackManager, SwampAtmosphere, Pursuer's own
 ## ordinary branch) freezes the instant this state is entered, for free --
 ## none of them had to change for this batch, and that is the point of
 ## having introduced the enum as a THIRD value rather than a separate bool
@@ -656,7 +656,7 @@ const COMBO_TO_CLEAR_STRIKE: int = COMBO_TIER_SIZE
 ## replaced: it was calibrated for 5-6 minute runs, whereas a mobile
 ## endless runner is played in 40-90 second bursts. Under it, a typical
 ## run ended while still inside palier 0 or 1, i.e. the player never saw
-## the game accelerate at all, and the first notable event (dark mode,
+## the game accelerate at all, and the first notable event (the mist breath,
 ## 90s) landed after most runs were already over.
 ##
 ## The shape below is logarithmic rather than linear -- DENSE at the
@@ -676,7 +676,7 @@ const COMBO_TO_CLEAR_STRIKE: int = COMBO_TIER_SIZE
 ##    0   0s .. 6s           12.0 m/s     --       6s
 ##    1   6s .. 12s          15.0 m/s   +3.0       6s
 ##    2   12s .. 18s         18.0 m/s   +3.0       6s
-##    3   18s .. 24s         20.5 m/s   +2.5       6s   <- dark mode starts
+##    3   18s .. 24s         20.5 m/s   +2.5       6s   <- mist breath starts
 ##    4   24s .. 30s         22.5 m/s   +2.0       6s
 ##    5   30s .. 37.5s       24.0 m/s   +1.5     7.5s
 ##    6   37.5s .. 45s       25.0 m/s   +1.0     7.5s
@@ -702,7 +702,7 @@ const START_SPEED: float = 12.0
 const BASE_SPEED: float = START_SPEED
 const MAX_SPEED: float = 26.0
 
-## Run time at which the dark-mode cycle FIRST fires. Aligned on the
+## Run time at which the mist breath FIRST starts. Aligned on the
 ## start of palier 3 (see STAGE_START_S) so the run's first visual event
 ## lands on a speed step rather than in the middle of one.
 ##
@@ -712,19 +712,19 @@ const MAX_SPEED: float = 26.0
 ## halving above (difficulty+variety batch) so it stays anchored on the
 ## SAME palier boundary (palier 3's new start) instead of drifting to a
 ## palier it no longer lines up with.
-const DARK_FIRST_TRIGGER_S: float = 18.0
+const MIST_FIRST_TRIGGER_S: float = 18.0
 
 ## Length of ONE phase: dark for this long, then light for this long,
 ## then dark again, for the rest of the run.
 ##
-## DELIBERATELY INDEPENDENT of DARK_FIRST_TRIGGER_S. These used to be a
-## single constant, which meant "when does dark mode start" and "how
+## DELIBERATELY INDEPENDENT of MIST_FIRST_TRIGGER_S. These used to be a
+## single constant, which meant "when does the mist start" and "how
 ## often does it swap" could not be tuned apart: moving the first
 ## trigger earlier also made the cycle churn faster, and vice versa.
 ## They answer different design questions and now have one knob each.
 ## At the defaults: dark 18-28s, light 28-38s, dark 38-48s, and so on.
 ##
-## HALVED alongside DARK_FIRST_TRIGGER_S so the cycle keeps the SAME
+## HALVED alongside MIST_FIRST_TRIGGER_S so the cycle keeps the SAME
 ## proportion of the (now twice as fast) run it always had, rather than
 ## suddenly spanning twice as large a fraction of a run that halved in
 ## length underneath it.
@@ -733,9 +733,9 @@ const DARK_FIRST_TRIGGER_S: float = 18.0
 ## visual state off a speed threshold is what let an earlier iteration
 ## fire 1.35s into a run when the speed curve misbehaved. The trigger is
 ## a time the run cannot reach early by any means.
-const DARK_CYCLE_PERIOD_S: float = 10.0
+const MIST_CYCLE_PERIOD_S: float = 10.0
 
-## Seconds a dark <-> light transition takes to fade fully in or out.
+## Seconds a deep <-> shallow transition takes to fade fully in or out.
 ## Never 0: an instant flip is what made an earlier iteration unplayable.
 ##
 ## Was 1.5s, when a phase lasted 90s and the fade was under 2% of it. At
@@ -744,138 +744,128 @@ const DARK_CYCLE_PERIOD_S: float = 10.0
 ## reading as an event and start reading as the normal look of the game.
 ## 0.8s stays clearly followable by the eye while leaving the phase
 ## itself unambiguous.
-const DARK_FADE_DURATION_S: float = 0.8
+const MIST_FADE_DURATION_S: float = 0.8
 
 # =====================================================================
-# SWAMP NIGHT PALETTE (dark mode swamp refonte) -- see DarkModeEffect.gd
-# and assets/shaders/swamp_grade.gdshader for how it is applied. Kept
-# here, next to the timing knobs above, because this file already owns
-# every other piece of dark-cycle state a fresh run must reset.
+# SWAMP ATMOSPHERE -- the PERMANENT art direction, and the mist breath
+# that moves inside it. Applied by scripts/world/SwampAtmosphere.gd.
 #
-# WHAT THIS REPLACES, AND WHY IT WAS TORN OUT RATHER THAN TUNED:
-# until this refonte the dark phase was a full-screen per-channel
-# INVERSION with one of six saturated hues (DARK_VARIANTS) blended over
-# it at DARK_TINT_AMOUNT = 0.55. Both are gone. Three separate problems,
-# none of which was reachable by adjusting the numbers:
+# =====================================================================
+# WHAT CHANGED, AND WHY THE SCREEN GRADE IS GONE
 #
-#   1. NO COLOUR COULD BE AIMED AT. To land a chosen colour on screen a
-#      surface had to be authored as its PRE-IMAGE (1.0 - target), and
-#      then the tint pass moved it again by 55% of a hue picked at
-#      random. scripts/world/NightSky.gd computed that pre-image
-#      correctly, documented the trap in its own header, and still could
-#      not hit its target, because most of the final pixel was never its
-#      to control. Two of the six hues carried the entire frame back to
-#      blue -- the exact thing the swamp was asked to stop being, and
-#      what a device playtest kept reporting after two attempts.
+# Until this batch the swamp was a PHASE: a full-screen luminance-keyed
+# grade (assets/shaders/swamp_grade.gdshader, deleted) faded in at
+# MIST_FIRST_TRIGGER_S over a scene authored in daylight blue and pastel.
+# The swamp is now the game's ONLY look -- authored directly into the
+# materials, the environment and the decor, visible on the first frame of
+# the first run, with no shader between the value written and the value
+# seen.
 #
-#   2. THE INVERT REVERSED LUMINANCE ORDER, which is what put the
-#      pursuer permanently under its legibility floor: a near-black
-#      silhouette (albedo 0.02) came out near-WHITE, read against a
-#      ground that had gone light blue. Measured across all six hues the
-#      best case was 1.86:1 against a 2.5:1 floor -- not a tuning miss, a
-#      structural consequence of inverting.
+# The grade was not merely made redundant, it was actively in the way.
+# Two measured reasons, both from DarkPaletteAudit on the tree this batch
+# started from (baseline kept in the batch report):
 #
-#   3. SIX RADICALLY DIFFERENT HUES WERE THE OPPOSITE OF AN IDENTITY.
-#      They existed to make runs feel varied; the cost was that the game
-#      had no single night look at all.
+#   1. IT DESTROYED HUE BY CONSTRUCTION, so the six hazards a player must
+#      tell apart at a glance all landed on the SAME olive, separated
+#      only by value: DODGE (0.19,0.25,0.16), STOMPER (0.17,0.22,0.15),
+#      CHARGER (0.24,0.30,0.19), ENEMY (0.26,0.33,0.21), JUMP
+#      (0.28,0.34,0.22), AIR_ENEMY (0.31,0.37,0.24). A red barrier, a
+#      hot-pink charger and a blue stomper are the same colour under it.
+#      That is inherent to a luminance-keyed ramp, not a tuning miss --
+#      the shader's own header stated it -- and it is what pinned the
+#      worst hazard-vs-ground pair at 1.46:1 against a 3.0 reference,
+#      with a swept best case of 1.70:1 (see the knee sweep the deleted
+#      constants carried). Authoring colour directly removes that ceiling
+#      because hue survives to the screen.
 #
-# WHAT REPLACES IT: one ramp, four stops, keyed on each pixel's
-# luminance. The colours below ARE the colours that reach the player --
-# no pre-image, no second pass, nothing to mentally invert when picking
-# a value. A future session changes the night by editing these four hex
-# values and nothing else.
+#   2. IT COST A FULL-SCREEN PASS FOR AS LONG AS IT WAS ON. The shader
+#      sampled hint_screen_texture, which on the Compatibility renderer
+#      this project pins forces a copy of the whole framebuffer plus a
+#      full-screen fragment pass. That was paid for roughly half of a run
+#      past the 18s trigger; making the swamp permanent would have made
+#      it every frame of every run, on mobile web, to reach a look that
+#      constants reach for free. Direct authoring costs nothing per
+#      frame.
+#
+# WHAT SURVIVES FROM THE GRADE ERA: the palette's HUES (the marecage
+# brief's near-black green base through dirty desaturated olive) and the
+# rule that made it work -- the value written is the value seen. That
+# rule is now literally true rather than shader-enforced: nothing
+# post-processes the frame at all.
+#
+# =====================================================================
+# WHERE THE REST OF THE PALETTE LIVES
+#
+# This file owns the ATMOSPHERE only -- the two colours and one density
+# it drives at runtime. Every other swamp colour is owned by whatever
+# draws it, because a second copy here would be a value nobody renders
+# from and everybody could let drift:
+#
+#   ground slab, hazards, collectibles  scenes/*.tscn albedos
+#   lane curbs, trackside props         scripts/track/TrackSegment.gd
+#   background hill billboards          scripts/world/Decor.gd (_LAYERS tint)
+#   sky / haze / fog density            HERE + scenes/Game.tscn
+#
+# The full measured table -- every surface, its rendered colour and its
+# contrast against what it is read on -- is docs/MESHY_SPEC.md section 8.
 
-## The swamp-night ramp, darkest to brightest. A rendered pixel is placed
-## along this ramp by its luminance and comes out the corresponding
-## colour at full dark intensity.
+## The two atmosphere colours at the SHALLOW end of the mist breath.
 ##
-## HUES are the marecage-nocturne brief: a near-black green base, dirty
-## desaturated olive through the midtones, warmed toward muddy brown
-## rather than toward a fresh or saturated green.
-##
-## THE TOP STOP IS DELIBERATELY MUCH BRIGHTER THAN THE BRIEF'S PALETTE,
-## and this is the one place the requested colours were not taken as
-## given. The brief's three colours (#141B12 / #3A4A30 / #444F35) span
-## relative luminance 0.0098 to 0.0708. The widest contrast ratio
-## obtainable ANYWHERE inside that band is 2.02:1 -- below this project's
-## 2.5:1 silhouette floor and its 3.0:1 label floor, before a single
-## pixel is rendered. Grading the whole frame into it would have failed
-## every contrast probe by construction, with no tuning available to
-## rescue it. The three dark stops keep the brief's hues; SWAMP_HIGH
-## extends the ramp upward so bright gameplay surfaces (curbs, the
-## pursuer's eyes, collectibles) keep somewhere bright to land. It is
-## desaturated and olive, so it reads as pale sickly swamp light rather
-## than as a colour from a different palette.
-const SWAMP_SHADOW: Color = Color(0.078, 0.106, 0.071) # #141B12 -- brief's base
-const SWAMP_LOW: Color = Color(0.227, 0.290, 0.188)    # #3A4A30 -- brief's fog low
-const SWAMP_MID: Color = Color(0.361, 0.416, 0.267)    # #5C6A44 -- olive, warmed
-const SWAMP_HIGH: Color = Color(0.725, 0.745, 0.529)   # #B9BE87 -- pale sickly olive
+## These are duplicated in scenes/Game.tscn's Environment on purpose, and
+## the .tscn is the one that renders: SwampAtmosphere.gd READS the scene's
+## values at _ready() as its baseline and never writes them at intensity
+## 0. That keeps the very first frame of a run correct whether or not that
+## script exists, which is the property the previous iteration got right
+## and is worth keeping. These constants exist so a probe can state the
+## expected baseline without parsing a scene file.
+const SWAMP_SKY: Color = Color(0.055, 0.078, 0.051)  # #0E140D near-black swamp green
+const SWAMP_HAZE: Color = Color(0.180, 0.216, 0.149) # #2E3726 dirty green haze
 
-## Where SWAMP_LOW and SWAMP_MID sit along the source-luminance axis.
-## SWAMP_SHADOW is pinned at 0.0 and SWAMP_HIGH at 1.0, so these two
-## knees are the only positional freedom the ramp has.
+## The DEEP end of the mist breath -- where the sky and haze sit at
+## mist_intensity 1.0.
 ##
-## PLACED AGAINST A MEASURED FRAME, not against albedos. This scene is
-## bright and evenly lit: SwampGradeCapture reads a whole-frame mean luma
-## of 0.75 in the light phase, and the flat sky that fills most of it
-## computes to 0.72 from Game.tscn's own background_color. At the other
-## end the pursuer's unlit silhouette sits near 0.02. So the content this
-## ramp has to separate is bunched in the upper half of the axis with a
-## near-black outlier below it.
-##
-## Knees at 0.34 and 0.72 put both interior stops inside that busy band
-## rather than below it, which is what keeps the midtones spread over two
-## ramp segments instead of collapsing onto one stop. Straightforward
-## consequence worth stating: a scene lit differently would want
-## different knees, so these are tied to THIS game's lighting, not
-## general-purpose values.
-##
-## MOVING knee_mid TO CHASE HAZARD CONTRAST DOES NOT WORK -- swept, so the
-## next session does not have to repeat it. DarkPaletteAudit measures the
-## worst hazard-vs-ground pair at 1.46:1 here, and the obvious idea is to
-## steepen the ramp where hazards and ground sit (source luma 0.26-0.57
-## against the ground's 0.76). Recovering each object's source luminance
-## from its measured post-grade colour and re-running the ramp gives:
-##
-##   knee_mid   0.45   0.55   0.62   0.72(shipped)   0.80
-##   worst      1.48   1.64   1.70   1.46            1.22
-##
-## The best reachable value is 1.70:1, against a 3.0 reference. The gain
-## is not available because the limit is not positional: these hazards
-## differ from the ground mainly in HUE, and a luminance-keyed grade
-## discards hue by construction (see swamp_grade.gdshader). Trading a
-## configuration whose two GATED floors pass with margin for +0.24 on an
-## ungated number that still fails is a bad trade, so the knees stay put.
-## Raising hazard legibility in the dark phase is a real open question
-## and it belongs to the hazards' own albedos, not to this ramp.
-const SWAMP_KNEE_LOW: float = 0.34
-const SWAMP_KNEE_MID: float = 0.72
+## DELIBERATELY CLOSE to the shallow pair. This is the whole point of the
+## breath and the one thing that must not drift: the swamp is ONE
+## identity, and the cycle is a marsh exhaling, not a second look. Both
+## ends are the same hue family, a little over half a stop apart in
+## value. If a future session finds itself picking a DEEP colour that
+## reads as a different place, the answer is no -- that is the phase
+## system this batch removed, growing back.
+const SWAMP_SKY_DEEP: Color = Color(0.031, 0.047, 0.031)  # #080C08
+const SWAMP_HAZE_DEEP: Color = Color(0.122, 0.153, 0.102) # #1F271A
 
-## The flat colours the sky and the distance haze fade toward as the dark
-## phase comes in -- written DIRECTLY into the WorldEnvironment by
-## DarkModeEffect.gd, which is the whole difference from the deleted
-## NightSky.gd: with no inversion downstream, the value written is the
-## value seen.
+## Fog density at each end of the breath. The shallow value is the one
+## scenes/Game.tscn ships and has carried since the depth-fog batch;
+## the deep value thickens the mist by half.
 ##
-## WHY THE ENVIRONMENT IS DRIVEN AT ALL, when the screen grade already
-## covers every pixel: the grade is keyed on luminance, and the daytime
-## sky is BRIGHT (framebuffer luma ~0.72), so left alone it would grade
-## to a midtone olive -- a pale swamp sky, when the brief asks for a
-## near-black one. Darkening it at the source drops it to the bottom of
-## the ramp, which is where a night sky belongs. The haze colour follows
-## it so distant decor (Decor.gd's three billboard layers converge toward
-## fog_light_color) sinks with the sky instead of floating in front of it.
-const SWAMP_SKY: Color = Color(0.055, 0.078, 0.051)
-const SWAMP_HAZE: Color = Color(0.180, 0.216, 0.149)
+## WHY DENSITY AND NOT JUST COLOUR: fog is what actually sells "mist
+## rolling through", and it is also the SAFEST thing in this scene to
+## animate. fog_sky_affect is 0.0, so the sky is untouched, and the
+## gameplay zone sits within a few metres of the camera where fog at
+## these densities contributes almost nothing -- measured and documented
+## when depth fog landed. So the breath moves the BACKDROP and cannot
+## reach the contrast of anything the player has to react to. Every
+## gameplay contrast figure in section 8 therefore holds at both ends of
+## the breath by construction, not by re-measuring luck (it is
+## re-measured anyway -- see the batch report).
+const SWAMP_FOG_DENSITY: float = 0.0035
+const SWAMP_FOG_DENSITY_DEEP: float = 0.0052
 
 # =====================================================================
 
-## Dark-mode cycle phase. INACTIVE until DARK_FIRST_TRIGGER_S, then only
-## ever alternates DARK <-> LIGHT. An explicit state machine (phase +
-## the run time that phase started at) rather than a continuous formula
-## on elapsed time, so a transition in flight can never be recomputed
-## into a different value by a stray frame.
-enum DarkPhase { INACTIVE, DARK, LIGHT }
+## Mist-breath phase. INACTIVE until MIST_FIRST_TRIGGER_S, then only ever
+## alternates DEEP <-> SHALLOW. An explicit state machine (phase + the run
+## time that phase started at) rather than a continuous formula on elapsed
+## time, so a transition in flight can never be recomputed into a
+## different value by a stray frame.
+##
+## THIS IS NOT A DARK MODE, and the names say so since the permanent-swamp
+## batch. It used to be: the phase faded a whole second visual identity in
+## and out over a daylight scene. The game is now the swamp all the time,
+## and both ends of this cycle are the same place -- see the SWAMP
+## ATMOSPHERE block above for the two colour pairs, which are deliberately
+## close together, and for the rule that they must stay that way.
+enum MistPhase { INACTIVE, DEEP, SHALLOW }
 
 var state: State = State.TITLE
 var distance_travelled: float = 0.0
@@ -883,12 +873,14 @@ var run_time_s: float = 0.0
 var current_speed: float = START_SPEED
 var stage_index: int = 0
 
-var dark_phase: DarkPhase = DarkPhase.INACTIVE
-## 0.0 = untouched, 1.0 = fully dark. Read by DarkModeEffect.gd. The fade
-## lives here rather than in the visual layer so the effect node stays a
-## dumb renderer of a state this file owns end to end.
-var dark_intensity: float = 0.0
-var _dark_phase_started_s: float = 0.0
+var mist_phase: MistPhase = MistPhase.INACTIVE
+## 0.0 = the shallow end of the breath (what the scene ships as, and what
+## the first seconds of every run show), 1.0 = the deep end. Read by
+## scripts/world/SwampAtmosphere.gd. The fade lives here rather than in the
+## visual layer so that node stays a dumb renderer of a state this file
+## owns end to end.
+var mist_intensity: float = 0.0
+var _mist_phase_started_s: float = 0.0
 
 # NOTE FOR ANYONE COMPARING SEEDED PROBE OUTPUT ACROSS THE SWAMP
 # REFONTE: a `dark_variant_index` used to live here, re-rolled from the
@@ -1196,9 +1188,9 @@ func start_run() -> void:
 	run_time_s = 0.0
 	current_speed = START_SPEED
 	stage_index = 0
-	dark_phase = DarkPhase.INACTIVE
-	dark_intensity = 0.0
-	_dark_phase_started_s = 0.0
+	mist_phase = MistPhase.INACTIVE
+	mist_intensity = 0.0
+	_mist_phase_started_s = 0.0
 	# shrink_unlock_score is deliberately NOT reset here -- it is a probe
 	# hook, same contract as pursuer_enabled (see its own doc).
 	shrink_phase = ShrinkPhase.INACTIVE
@@ -1301,7 +1293,7 @@ func _process(delta: float) -> void:
 func advance_time(delta: float) -> void:
 	run_time_s += delta
 	_update_stage()
-	_update_dark_cycle(delta)
+	_update_mist_cycle(delta)
 	_update_shrink(delta)
 	_update_combo()
 	# BEFORE _update_pursuer, and that order is load-bearing: the pursuer's
@@ -1425,29 +1417,29 @@ func lookahead_stage_index() -> int:
 		idx += 1
 	return idx
 
-## Dark <-> light alternation, plus the fade between them. Three explicit
-## phases; the only transitions are INACTIVE -> DARK (once, at
-## DARK_FIRST_TRIGGER_S) and DARK <-> LIGHT (every DARK_CYCLE_PERIOD_S
+## Deep <-> shallow mist alternation, plus the fade between them. Three
+## explicit phases; the only transitions are INACTIVE -> DEEP (once, at
+## MIST_FIRST_TRIGGER_S) and DEEP <-> SHALLOW (every MIST_CYCLE_PERIOD_S
 ## after that -- a different constant, see both of them above). It never
 ## reverts to INACTIVE within a run.
-func _update_dark_cycle(delta: float) -> void:
-	if dark_phase == DarkPhase.INACTIVE:
-		if run_time_s < DARK_FIRST_TRIGGER_S:
+func _update_mist_cycle(delta: float) -> void:
+	if mist_phase == MistPhase.INACTIVE:
+		if run_time_s < MIST_FIRST_TRIGGER_S:
 			return
-		dark_phase = DarkPhase.DARK
+		mist_phase = MistPhase.DEEP
 		# Anchored on the constant, not on run_time_s, so phase
 		# boundaries can't drift by up to a frame on every swap.
-		_dark_phase_started_s = DARK_FIRST_TRIGGER_S
-	elif run_time_s - _dark_phase_started_s >= DARK_CYCLE_PERIOD_S:
-		dark_phase = DarkPhase.LIGHT if dark_phase == DarkPhase.DARK else DarkPhase.DARK
-		_dark_phase_started_s += DARK_CYCLE_PERIOD_S
+		_mist_phase_started_s = MIST_FIRST_TRIGGER_S
+	elif run_time_s - _mist_phase_started_s >= MIST_CYCLE_PERIOD_S:
+		mist_phase = MistPhase.SHALLOW if mist_phase == MistPhase.DEEP else MistPhase.DEEP
+		_mist_phase_started_s += MIST_CYCLE_PERIOD_S
 
-	var target := 1.0 if dark_phase == DarkPhase.DARK else 0.0
+	var target := 1.0 if mist_phase == MistPhase.DEEP else 0.0
 	# move_toward, not an exponential lerp: it reaches the target exactly,
-	# in exactly DARK_FADE_DURATION_S. An exponential lerp only asymptotes,
-	# so "fully dark" and "fully back to normal" would never be reached --
+	# in exactly MIST_FADE_DURATION_S. An exponential lerp only asymptotes,
+	# so "fully deep" and "fully back to shallow" would never be reached --
 	# the effect would sit permanently at ~97% and never truly clear.
-	dark_intensity = move_toward(dark_intensity, target, delta / DARK_FADE_DURATION_S)
+	mist_intensity = move_toward(mist_intensity, target, delta / MIST_FADE_DURATION_S)
 
 # =====================================================================
 # TEMPORARY TRACK SHRINK -- implementation. See the section header near
@@ -1505,7 +1497,7 @@ func _update_shrink(_delta: float) -> void:
 				# Anchored on the phase boundary already computed, not on
 				# run_time_s, so a window's total length cannot drift by up
 				# to a frame at every transition -- same reasoning as the
-				# dark cycle's own _dark_phase_started_s.
+				# dark cycle's own _mist_phase_started_s.
 				_shrink_phase_ends_at_s += SHRINK_HELD_S
 				shrink_amount = 1.0
 			else:

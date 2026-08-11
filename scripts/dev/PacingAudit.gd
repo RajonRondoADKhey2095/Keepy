@@ -1,6 +1,6 @@
 extends Node
 ## Dev-only end-to-end pacing AUDIT. Boots the real Game.tscn (real
-## TrackManager, real pooled obstacles, real DarkModeEffect) and measures
+## TrackManager, real pooled obstacles, real SwampAtmosphere) and measures
 ## -- rather than re-reads -- everything the pacing depends on:
 ##
 ##   1. the speed palier sequence, with the distance actually covered in
@@ -143,16 +143,16 @@ func _report_stage() -> void:
 		% [_t, GameState.stage_index, GameState.current_speed, GameState.distance_travelled])
 
 func _report_dark() -> void:
-	if GameState.dark_phase == _last_phase:
+	if GameState.mist_phase == _last_phase:
 		return
 	var held := _t - _phase_started_t
-	var label: String = ["INACTIVE", "DARK", "LIGHT"][GameState.dark_phase]
+	var label: String = ["INACTIVE", "DARK", "LIGHT"][GameState.mist_phase]
 	if _last_phase >= 0:
 		print("t=%7.2fs  DARK -> %-8s (previous phase held %6.2fs, intensity %.2f)"
-			% [_t, label, held, GameState.dark_intensity])
+			% [_t, label, held, GameState.mist_intensity])
 	else:
-		print("t=%7.2fs  DARK -> %-8s (intensity %.2f)" % [_t, label, GameState.dark_intensity])
-	_last_phase = GameState.dark_phase
+		print("t=%7.2fs  DARK -> %-8s (intensity %.2f)" % [_t, label, GameState.mist_intensity])
+	_last_phase = GameState.mist_phase
 	_phase_started_t = _t
 
 ## Walks every live TrackSegment, finds the pooled Obstacle it owns, and

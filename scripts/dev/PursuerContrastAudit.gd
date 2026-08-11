@@ -9,7 +9,7 @@ extends Node
 ##
 ## WHAT IS MEASURED, and why it is two different questions:
 ##
-##   GAUGE (HUD, CanvasLayer layer 1) -- above DarkModeEffect's layer, so
+##   GAUGE (HUD, CanvasLayer layer 1) -- nothing draws below it any more, so
 ##     the grade shader never touches it and its own colours are the same
 ##     in every phase. Only its BACKGROUND swings. Same situation as the
 ##     combo row, same white-fill-inside-dark-outline treatment, judged on
@@ -103,8 +103,7 @@ const TEST_LEAD_S: float = 1.5
 const DECOR_SEED: int = 20260806
 
 var _game: Node3D
-var _grade_rect: ColorRect
-var _dark_effect: CanvasLayer
+var _atmosphere: Node
 var _pursuer: Node3D
 var _keepy: Node3D
 var _pursuer_row: Control
@@ -131,17 +130,16 @@ func _ready() -> void:
 	print("")
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
-	_grade_rect = _game.get_node("DarkModeEffect/Grade")
 	_pursuer = _game.get_node("World/Pursuer")
 	_keepy = _game.get_node("World/Keepy")
 	var hud: CanvasLayer = _game.get_node("HUD")
 	_pursuer_row = hud.get_node("MarginContainer/PursuerRow")
 	_gauge_fill = hud.get_node("MarginContainer/PursuerRow/GaugeTrack/GaugeFill")
 	# This probe pins the effect itself -- see _measure.
-	_dark_effect = _game.get_node("DarkModeEffect")
+	_atmosphere = _game.get_node("SwampAtmosphere")
 	# _process off so GameState cannot overwrite the pinned intensity every
 	# frame; the probe then calls _apply() itself -- see _measure below.
-	_dark_effect.set_process(false)
+	_atmosphere.set_process(false)
 	call_deferred("_run")
 
 func _run() -> void:
@@ -189,7 +187,7 @@ func _freeze() -> void:
 
 func _measure(label: String, dark: bool) -> void:
 	_freeze()
-	# Drive the REAL DarkModeEffect._apply() rather than writing the
+	# Drive the REAL SwampAtmosphere._apply() rather than writing the
 	# shader uniforms by hand. Since the swamp refonte the dark look is
 	# TWO things -- the screen grade AND the sky/haze colours written
 	# into the WorldEnvironment -- and poking only the shader would
@@ -197,7 +195,7 @@ func _measure(label: String, dark: bool) -> void:
 	# not a state the game can ever be in. Going through the real entry
 	# point is the same discipline this probe already applies to
 	# GameState.register_strike() and friends.
-	_dark_effect._apply(1.0 if dark else 0.0)
+	_atmosphere._apply(1.0 if dark else 0.0)
 
 	await _settle()
 	var gauge_rect := Rect2i(Vector2i(_pursuer_row.global_position), Vector2i(_pursuer_row.size))
