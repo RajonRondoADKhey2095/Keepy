@@ -15,14 +15,15 @@ render_mode unshaded, cull_disabled, shadows_disabled;
 // signal, reused here rather than a second approach invented for a second
 // must-always-be-readable cue.
 //
-// The dark cycle still inverts and tints the frame on top of this (see
-// screen_invert.gdshader). That pass is injective for any tint_amount
-// below 1.0, so it cannot COLLAPSE the contrast -- but it does move it,
-// and by an amount no hand calculation predicts reliably. Hence the two
-// colours below are picked at the extremes of the luminance range (near
-// white against near black) rather than anywhere in the middle: a pair
-// that far apart survives both the plain frame and the inverted one,
-// which is what scripts/dev/DarkPaletteAudit.gd measures per palette.
+// The dark cycle still grades the frame into the swamp palette on top of
+// this (see swamp_grade.gdshader). That pass is keyed on LUMINANCE and is
+// NOT injective -- two colours of equal luminance and different hue do
+// collapse together -- which makes the choice below matter MORE than it
+// did under the old invert+tint, not less. The two colours are picked at
+// the extremes of the luminance range (near white against near black)
+// rather than anywhere in the middle, and a luminance-keyed grade is
+// monotone, so a pair that far apart stays far apart through it. That is
+// what scripts/dev/DarkPaletteAudit.gd measures, in both phases.
 //
 // Deliberately trivial maths -- one fract, one step, one mix, no loops,
 // no derivatives, no texture reads -- to stay well inside

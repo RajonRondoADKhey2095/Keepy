@@ -71,7 +71,8 @@ const CONTRAST_FLOOR: float = 3.0
 const DECOR_SEED: int = 20260806
 
 var _game: Node3D
-var _invert_rect: ColorRect
+var _grade_rect: ColorRect
+var _dark_effect: CanvasLayer
 var _hud: CanvasLayer
 var _strike_row: Control
 var _strike_label: Label
@@ -96,9 +97,11 @@ func _ready() -> void:
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_hud = _game.get_node("HUD")
-	_invert_rect = _game.get_node("DarkModeEffect/Invert")
-	var dark_effect: CanvasLayer = _game.get_node("DarkModeEffect")
-	dark_effect.set_process(false)
+	_grade_rect = _game.get_node("DarkModeEffect/Grade")
+	_dark_effect = _game.get_node("DarkModeEffect")
+	# _process off so GameState cannot overwrite the pinned intensity every
+	# frame; the probe then calls _apply() itself -- see _measure below.
+	_dark_effect.set_process(false)
 	# THE PURSUER, muted outright -- and this probe needed a real run to find
 	# out why it had to be. _freeze_world() below re-pins GameState.state to
 	# PLAYING by direct assignment (same technique ComboContrastAudit/
@@ -123,9 +126,8 @@ func _ready() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	await _measure_phase("LIGHT", -1)
-	for variant_index in GameState.DARK_VARIANTS.size():
-		await _measure_phase("DARK/%d" % variant_index, variant_index)
+	await _measure_phase("LIGHT", false)
+	await _measure_phase("DARK", true)
 	_report()
 
 ## Same "hold the world still without pausing the tree" technique as
@@ -171,21 +173,22 @@ func _enter_fatal_state() -> void:
 	# signal already emitted above and is untouched by this.
 	_freeze_world()
 
-func _measure_phase(label: String, variant_index: int) -> void:
+func _measure_phase(label: String, dark: bool) -> void:
 	# Re-armed at the top of every phase: the previous phase's capture step
 	# below disables this on purpose (see there) to pin the pulse at rest,
 	# and without turning it back on here the pip repaint / fatal colour for
 	# THIS phase would never apply either.
 	_hud.set_process(true)
 	_freeze_world()
-	var material: ShaderMaterial = _invert_rect.material
-	if variant_index < 0:
-		_invert_rect.visible = false
-	else:
-		_invert_rect.visible = true
-		material.set_shader_parameter("intensity", 1.0)
-		material.set_shader_parameter("tint_color", GameState.DARK_VARIANTS[variant_index])
-		material.set_shader_parameter("tint_amount", GameState.DARK_TINT_AMOUNT)
+	# Drive the REAL DarkModeEffect._apply() rather than writing the
+	# shader uniforms by hand. Since the swamp refonte the dark look is
+	# TWO things -- the screen grade AND the sky/haze colours written
+	# into the WorldEnvironment -- and poking only the shader would
+	# measure a swamp-graded world under a DAYTIME BLUE sky, which is
+	# not a state the game can ever be in. Going through the real entry
+	# point is the same discipline this probe already applies to
+	# GameState.register_strike() and friends.
+	_dark_effect._apply(1.0 if dark else 0.0)
 
 	_enter_fatal_state()
 	if not _hud._fatal_active:
@@ -339,7 +342,7 @@ func _contrast(a: Color, b: Color) -> float:
 	return (lighter + 0.05) / (darker + 0.05)
 
 func _report() -> void:
-	print("palette      background(rgb)      fill(rgb)            fill:bg   outline:bg   effective   verdict")
+	print("phase        background(rgb)      fill(rgb)            fill:bg   outline:bg   effective   verdict")
 	print("-----------  -------------------  -------------------  --------  -----------  ----------  -------")
 	for r in _results:
 		var bg: Color = r["background"]
@@ -352,9 +355,9 @@ func _report() -> void:
 		])
 	print("")
 	if _failures > 0:
-		push_error("STRIKE FATAL-LABEL CONTRAST AUDIT FAILED: %d palette(s) left the fatal-strike label under the %.1f:1 floor on BOTH the fill and the outline." % [_failures, CONTRAST_FLOOR])
+		push_error("STRIKE FATAL-LABEL CONTRAST AUDIT FAILED: %d case(s) left the fatal-strike label under the %.1f:1 floor on BOTH the fill and the outline." % [_failures, CONTRAST_FLOOR])
 		get_tree().quit(1)
 		return
 	print("PASSED: the fatal-strike label clears %.1f:1 against its real background in the" % CONTRAST_FLOOR)
-	print("        light phase and in all %d dark palettes." % GameState.DARK_VARIANTS.size())
+	print("        light phase and in the swamp-night dark phase.")
 	get_tree().quit(0)

@@ -15,11 +15,17 @@ extends Node
 ## THAT IS NOT THE SAME AS "the HUD is legible", which is the trap this
 ## probe exists to avoid falling into: what changes underneath the text is
 ## the BACKGROUND, and it changes a great deal. The light phase puts pale
-## sky behind the counter; a dark phase puts an inverted, heavily tinted
-## version of that same sky there (GameState.DARK_TINT_AMOUNT is 0.55, and
-## the six DARK_VARIANTS hues are spread right around the wheel). Fixed
-## foreground over a swinging background is exactly the situation where a
-## single colour choice quietly fails on some subset of palettes.
+## sky behind the counter; a dark phase puts a swamp-graded version of that
+## same world there, with the sky itself driven down to near-black (see
+## GameState.SWAMP_RAMP / SWAMP_SKY). Fixed foreground over a swinging
+## background is exactly the situation where a single colour choice quietly
+## fails in one phase and not the other.
+##
+## SINCE THE SWAMP REFONTE THERE IS ONE DARK CASE, NOT SIX. The old
+## six-hue DARK_VARIANTS sweep is gone with the tint pass that consumed it;
+## the night is a single identity now, so "some subset of palettes" has
+## collapsed to "the dark phase". The sweep shape is kept (LIGHT then DARK)
+## because the light/dark split is still where a fixed HUD colour can fail.
 ##
 ## WHICH IS WHY THE FEEDBACK DOES NOT REST ON COLOUR AT ALL -- the combo
 ## reactions are SCALE changes and the multiplier is spelled as text (see
@@ -56,7 +62,8 @@ const SETTLE_FRAMES: int = 24
 const CONTRAST_FLOOR: float = 3.0
 
 var _game: Node3D
-var _invert_rect: ColorRect
+var _grade_rect: ColorRect
+var _dark_effect: CanvasLayer
 var _hud: CanvasLayer
 var _combo_row: Control
 var _combo_label: Label
@@ -76,7 +83,7 @@ func _ready() -> void:
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_hud = _game.get_node("HUD")
-	_invert_rect = _game.get_node("DarkModeEffect/Invert")
+	_grade_rect = _game.get_node("DarkModeEffect/Grade")
 	# THE WORLD IS HELD STILL for the whole measurement, and this probe
 	# takes ownership of the three shader uniforms. Both are correctness
 	# fixes, and this probe needed two wrong attempts to get here:
@@ -99,22 +106,23 @@ func _ready() -> void:
 	# over the uniforms set here; driving them by hand is exactly what
 	# DarkPaletteAudit.gd does, and for the same reason (that script is a
 	# pure three-line uniform setter, verified by reading it).
-	var dark_effect: CanvasLayer = _game.get_node("DarkModeEffect")
-	dark_effect.set_process(false)
+	_dark_effect = _game.get_node("DarkModeEffect")
+	# _process off so GameState cannot overwrite the pinned intensity every
+	# frame; the probe then calls _apply() itself -- see _measure below.
+	_dark_effect.set_process(false)
 	_combo_row = _hud.get_node("MarginContainer/VBoxContainer/ComboRow")
 	_combo_label = _hud.get_node("MarginContainer/VBoxContainer/ComboRow/ComboLabel")
 	_multiplier_label = _hud.get_node("MarginContainer/VBoxContainer/ComboRow/MultiplierLabel")
 	call_deferred("_run")
 
 func _run() -> void:
-	await _measure_phase("LIGHT", -1)
-	for variant_index in GameState.DARK_VARIANTS.size():
-		await _measure_phase("DARK/%d" % variant_index, variant_index)
+	await _measure_phase("LIGHT", false)
+	await _measure_phase("DARK", true)
 	_report()
 
 ## Drives the dark-mode state directly on GameState rather than waiting for
 ## the run clock to reach each phase naturally: DarkModeEffect.gd is a pure
-## reader of dark_intensity/dark_variant_index (verified by reading it), so
+## reader of dark_intensity (verified by reading it), so
 ## setting those is exactly equivalent to the run reaching that phase, and
 ## it lets the probe visit all six palettes in a few frames instead of
 ## several minutes of simulated time.
@@ -129,16 +137,17 @@ func _freeze_world() -> void:
 	GameState.stage_index = GameState.STAGE_SPEEDS.size() - 1
 	GameState.current_speed = 0.0
 
-func _measure_phase(label: String, variant_index: int) -> void:
+func _measure_phase(label: String, dark: bool) -> void:
 	_freeze_world()
-	var material: ShaderMaterial = _invert_rect.material
-	if variant_index < 0:
-		_invert_rect.visible = false
-	else:
-		_invert_rect.visible = true
-		material.set_shader_parameter("intensity", 1.0)
-		material.set_shader_parameter("tint_color", GameState.DARK_VARIANTS[variant_index])
-		material.set_shader_parameter("tint_amount", GameState.DARK_TINT_AMOUNT)
+	# Drive the REAL DarkModeEffect._apply() rather than writing the
+	# shader uniforms by hand. Since the swamp refonte the dark look is
+	# TWO things -- the screen grade AND the sky/haze colours written
+	# into the WorldEnvironment -- and poking only the shader would
+	# measure a swamp-graded world under a DAYTIME BLUE sky, which is
+	# not a state the game can ever be in. Going through the real entry
+	# point is the same discipline this probe already applies to
+	# GameState.register_strike() and friends.
+	_dark_effect._apply(1.0 if dark else 0.0)
 
 	# Put the row into the state a player actually sees it in: a live combo
 	# high enough to have earned a visible multiplier, and NOT about to
@@ -267,7 +276,7 @@ func _contrast(a: Color, b: Color) -> float:
 	return (lighter + 0.05) / (darker + 0.05)
 
 func _report() -> void:
-	print("palette      background(rgb)      fill:bg   outline:bg   effective   verdict")
+	print("phase        background(rgb)      fill:bg   outline:bg   effective   verdict")
 	print("-----------  -------------------  --------  -----------  ----------  -------")
 	for r in _results:
 		var bg: Color = r["background"]
@@ -278,9 +287,9 @@ func _report() -> void:
 		])
 	print("")
 	if _failures > 0:
-		push_error("COMBO HUD CONTRAST AUDIT FAILED: %d palette(s) left the combo row under the %.1f:1 floor on BOTH the fill and the outline." % [_failures, CONTRAST_FLOOR])
+		push_error("COMBO HUD CONTRAST AUDIT FAILED: %d case(s) left the combo row under the %.1f:1 floor on BOTH the fill and the outline." % [_failures, CONTRAST_FLOOR])
 		get_tree().quit(1)
 		return
 	print("PASSED: the combo row clears %.1f:1 against its real background in the light" % CONTRAST_FLOOR)
-	print("        phase and in all %d dark palettes." % GameState.DARK_VARIANTS.size())
+	print("        phase and in the swamp-night dark phase.")
 	get_tree().quit(0)

@@ -393,14 +393,16 @@ const JUMP_MARKER_Y_OFFSET: float = 0.30
 # colour drifts with lighting, which would make the dark-mode contrast
 # this marker exists to guarantee unverifiable ahead of time (every
 # OTHER hazard mesh in this file IS lit, and that drift is exactly why
-# their own post-invert colour can only be pinned down by rendering and
+# their own post-grade colour can only be pinned down by rendering and
 # measuring, never predicted from the albedo alone -- see
 # scripts/dev/DarkPaletteAudit.gd). Cyan specifically because it sits far
 # from every existing gameplay hue (DODGE red, JUMP brown, ENEMY purple,
 # AIR_ENEMY green, Noisette/Gland gold) -- it never reads as "part of the
 # hazard" or "a collectible", only as its own distinct UI-like signal.
-# Measured per-palette result: see GameState.gd's DARK_TINT_AMOUNT
-# comment and the commit message for the numbers.
+# Measured result: see scripts/dev/DarkPaletteAudit.gd's own output --
+# it is the probe that measures this marker against the ground in the
+# dark phase. (This used to point at GameState.DARK_TINT_AMOUNT, a
+# constant the swamp refonte deleted along with the tint pass it drove.)
 
 ## How long the marker's "cleared!" pop lasts -- brief and snappy, a
 ## flinch-reaction-scale acknowledgement (same design register as
