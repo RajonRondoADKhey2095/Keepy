@@ -463,6 +463,58 @@ JETÉS reste le même — garder tout le mécanisme mort pour protéger un
 hash. **Le bon critère pour ce lot est « même VERDICT », pas « mêmes
 octets ».**
 
+### Build, export et ce qui reste ouvert
+
+Import headless + **export Web release : exit 0**, aucune erreur GDScript.
+`index.pck` = **4 741 280 octets** (à lire avec l'avertissement déjà
+consigné plus haut : la taille du `.pck` n'est PAS stable d'un export à
+l'autre du même commit, ne jamais s'en servir seule comme preuve de
+déterminisme). Vérifié dans le pack : `swamp_grade` présent (3 occurrences),
+`screen_invert` **absent** (0).
+
+⚠️ **Les templates d'export n'étaient pas installés dans ce sandbox** —
+`--export-release` échouait sur `web_nothreads_{debug,release}.zip`
+manquants, ce qui ressemble à une erreur de projet et n'en est pas.
+`godot4` lui-même n'y était pas non plus. Les deux s'installent depuis les
+releases GitHub (éditeur ~50 Mo, templates ~1 Go) ; la CI fait déjà
+exactement ça et les met en cache. À savoir avant de conclure qu'un export
+est cassé.
+
+**RESTE À VALIDER SUR DEVICE** (rien de tout ça n'est mesurable ici) :
+l'ambiance elle-même — est-ce que ça se lit comme un marécage nocturne sur
+un écran de téléphone, et est-ce que le ciel n'est plus perçu comme bleu.
+C'est le seul juge du lot : toutes les sondes ci-dessus disent que la nuit
+est verte, plus sombre, et que les contrastes gatés passent — aucune ne
+dit que c'est BEAU.
+
+### Sondes gatées : 11/12 VERTES, la 12e était déjà rouge (mesuré)
+
+`AntiFrustrationAudit`, `ComboAudit`, `PursuerAudit`, `RushFrustrationAudit`,
+`ShrinkAudit`, `PursuerFramingAudit`, `AssetContractAudit`,
+`ChargerShapeProbe`, `DeathModelAudit`, `ProbeTimeoutAudit`,
+`ChargerAudit` — **PASS**, graine 20260806, `--fixed-fps 60`.
+
+`StrikeAudit` **ÉCHOUE, et échouait déjà** (dette connue : écart de part
+de captures 15 points contre 20 requis). Son écart bouge à 12 sur ce lot,
+ce qui est attendu — le flux RNG global est décalé (voir plus haut), donc
+les bots tirent une AUTRE séquence de hazards. **Vérifié plutôt
+qu'argumenté**, 3 graines de chaque côté, même machine, worktree séparé
+pour la baseline :
+
+| graine | `origin/staging` | marécage |
+|---|---|---|
+| 20260806 | **15** | 12 |
+| 31415926 | 13 | **15** |
+| 27182818 | **4** | 12 |
+
+La plage baseline (**4-15**) est PLUS LARGE que celle du lot (**12-15**),
+et la contient. Le 15 -> 12 de la graine documentée est donc du bruit
+d'échantillonnage, pas une régression : sur la graine 27182818 la
+baseline descend à 4. Les deux côtés échouent sur les 3 graines, toujours
+pour la même raison (écart < 20). **Aucun seuil n'a été touché**, et la
+baseline reproduit exactement le 15 documenté à la graine 20260806 — ce
+qui valide la comparaison avant d'en tirer quoi que ce soit.
+
 ### Sondes réécrites (6) — pièges rencontrés, à connaître
 
 `InvertCapture` → **`SwampGradeCapture`** (renommée, pas patchée : un
