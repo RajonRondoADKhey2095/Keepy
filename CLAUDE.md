@@ -350,6 +350,107 @@ gated byte-identique + le chiffre RÉELLEMENT servi par CI/le site, jamais
 sur la comparaison entre deux exports locaux distincts. Détail complet :
 `docs/MESHY_SPEC.md` §11.
 
+## Rampe d'alarme ENEMY/AIR_ENEMY : le télégraphe serait mort en silence au premier `.glb` (11 août 2026)
+
+Branche `claude/meshy-enemies-alarm-jump-zekdwc`. **Défaut LATENT réparé
+AVANT l'arrivée des hazards Meshy** — il ne se déclenchait pas encore
+(aucun `.glb` n'est installé sur `EnemyMesh`/`AirEnemyMesh`), il se serait
+déclenché au premier install, sans erreur ni sonde rouge.
+
+**Le mécanisme, mesuré et pas déduit.** Un matériau atteint une surface par
+DEUX chemins, et lequel dépend de QUI a écrit le mesh : un *auteur de
+scène* écrit un `surface_material_override/0` (tous les placeholders du
+projet) ; un *importeur* écrit sur la SURFACE DU MESH — l'importeur glTF
+de Godot ne pose **jamais** d'override. `ModelSlot.slot_material()` ne
+lisait que l'override, donc renvoyait `null` pour tout asset réel, et le
+null-guard de l'appelant l'avalait. Vérifié sur un asset livré
+(`assets/models/keepy_stump_prop.glb`) :
+`get_surface_override_material(0)` = `null`,
+`mesh.surface_get_material(0)` = un vrai `StandardMaterial3D`.
+
+Conséquence : `Obstacle._ready()` laissait `_enemy_material` à `null`,
+`_apply_enemy_alarm` sortait sur son guard à chaque frame, et le rouge
+d'approche — le seul signal qui dit au joueur qu'un hazard va se verrouiller
+sur sa voie — devenait un **no-op silencieux**.
+
+**Preuve AVANT / APRÈS, même sonde, aucun seuil déplacé**
+(`scripts/dev/AlarmRampAudit.tscn`, nouvelle) :
+
+| | PHASE A (placeholder) | PHASE B (modèle installé) |
+|---|---|---|
+| avant fix | 4/4 OK | **2 FAIL** — l'albédo ne quitte jamais `rgb(0.98,0.16,0.84)`, exit 1 |
+| après fix | 4/4 OK | **4/4 OK**, exit 0 |
+
+⚠️ **Pourquoi AUCUNE sonde ne l'avait attrapé, et c'est le vrai
+enseignement.** `AssetContractAudit` installe pourtant un stand-in sur
+CHAQUE slot — mais `SubstituteModel.tscn` portait un `surface_material_
+override/0` : il imitait un modèle importé par sa STRUCTURE DE NŒUDS et pas
+du tout par sa LIAISON DE MATÉRIAU, c'est-à-dire précisément l'axe sur
+lequel vit le défaut. Le stand-in est corrigé (liaison sur le mesh, comme un
+vrai `.glb`), donc cette sonde exerce désormais le chemin qui cassait.
+**Règle générale : un fixture de test qui diverge du réel sur UN axe ne
+protège pas de cet axe — et cette divergence-là est invisible tant que
+personne ne la nomme.**
+
+**Confirmation indépendante sur des assets RÉELS** : `AssetContractAudit`
+reste vert (12/12 visuels, 0 collider déplacé) et son SEUL changement de
+sortie est que les deux slots qui portent vraiment un `.glb` —
+`keepy/MeshInstance3D` (écureuil) et `pursuer/Silhouette` (hibou) —
+rapportent enfin leur matériau au lieu de `-`. Ces deux `-` étaient le
+défaut déjà visible dans la baseline, sans que personne ne l'ait lu comme
+tel.
+
+**Non touché, vérifié** : `DarkPaletteAudit` inchangé (ENEMY 1,50/1,52 —
+AIR_ENEMY 1,08/1,09, exactement la baseline), parce qu'aucun `.glb` n'est
+sur ces slots et qu'ils prennent donc toujours la branche override.
+`ProbeTimeoutAudit` : 33 sondes, toutes armées.
+
+⚠️ **Résidu ASSUMÉ, documenté au point d'appel plutôt que caché : sur un
+matériau importé UNLIT, la moitié ÉMISSION de la rampe est inerte.** Les
+deux appliers bougent albédo ET émission ; §8/§9 imposent l'unlit à tout
+asset, et une surface unshaded ignore l'émission. Sur un `.glb` le
+télégraphe est donc porté par l'ALBÉDO seul — c'est réel, et c'est pourquoi
+la sonde gate l'albédo. **Corollaire : un cue d'ÉMISSION ne peut pas vivre
+sur le slot du tout** — c'est exactement pourquoi les yeux du poursuivant
+sont des nœuds engine-side et pas une partie du `.glb` (`Pursuer.gd`, « THE
+EYES ARE DELIBERATELY NOT SLOTS »). Les deux patrons ne se contredisent
+pas : cue émission → nœud séparé lit ; cue albédo → matériau du slot.
+
+### Correction §7.2 : le « within » de la ligne hazards était la MÊME erreur que §7.3
+
+Mesuré (`get_faces()/3`), budget §7.1 = **1 200 tri par hazard** :
+`ChargerMesh` 8 / `DodgeMesh` 12 / `JumpMesh` 12 / `JumpMarkerMesh` 44 /
+`StomperMesh` 768 — mais **`EnemyMesh` 3 456 (2,88x)** et **`AirEnemyMesh`
+4 096 (3,41x)**. Le total famille tenait dans les 8 400 uniquement parce que
+4 variantes sur 6 sont des primitives à ~10 triangles : un ENEMY + un
+AIR_ENEMY font à eux seuls **7 552**, soit 90 % de la ligne famille. Cause
+racine identique au constat 1 (collectibles) : une primitive laissée à la
+tessellation par défaut de Godot. Détail et tableau : `docs/MESHY_SPEC.md`
+§7.4.
+
+⚠️ **Conséquence pour le batch hazards à venir, et elle INVERSE l'attente
+habituelle** : remplacer ENEMY et AIR_ENEMY par des assets sous leur cap de
+1 200 est une **BAISSE** de triangles (−2 256 et −2 896 par instance), pas
+une hausse. Ce sont JUMP/DODGE (boîtes 12 tri) et CHARGER (prisme 8 tri) où
+un import coûte. Budgéter chaque asset contre le **per-asset** §7.1, jamais
+contre la ligne famille.
+
+### PHASE 2 (install JUMP) : NON FAITE — asset source absent, rien à mesurer
+
+**`assets_source/hazards/` n'existe ni en local ni sur `origin/main`**
+(vérifié par `git ls-tree -r origin/main`, pas supposé : les deux seules
+correspondances « hazard » du dépôt sont `scripts/dev/AirHazardAudit.*`).
+Les 6 `.glb` annoncés (tronc moussu, crapaud, souche dressée, rat,
+libellule, sanglier) n'ont pas été poussés. Conformément à l'exception
+actée, c'est Mathieu qui les dépose depuis l'interface web GitHub, sur
+`main`, sous `assets_source/hazards/`.
+
+Rien n'a été deviné à leur place : ni orientation, ni scale, ni coût
+triangle, ni albédo. **Ce qui est prêt pour la prochaine session** : le
+défaut de rampe est fermé et gaté, §7.4 donne le budget par asset et le
+sens réel du gain, §2.1 donne le piège de liaison de matériau, et §10
+inclut désormais `AlarmRampAudit` dans la checklist d'acceptation.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`

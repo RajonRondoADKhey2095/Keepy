@@ -58,6 +58,50 @@ Nothing else changes. The placeholder node stays, so every `.visible`,
 `.scale` and `.position` write in the gameplay code keeps working, and
 pooling is untouched: the model installs once, at load, never per frame.
 
+### 2.1 If the slot's material is ANIMATED, check it after installing
+
+A material reaches a surface by one of two routes, and which one is used is
+decided by who authored the mesh:
+
+- **surface override** — what a *scene* author writes. Every placeholder in
+  this project (`surface_material_override/0` in `Obstacle.tscn`,
+  `TrackSegment.tscn`, ...).
+- **mesh surface** — what an *importer* writes. Godot's glTF importer binds
+  a `.glb`'s material here and **never sets an override**.
+
+`ModelSlot.slot_material()` used to read only the override, so it returned
+`null` for every real asset — and the callers' own null-guards swallowed it.
+**Fixed 2026-08-11**; it now falls back to the mesh-bound material, override
+still first. Measured on `assets/models/keepy_stump_prop.glb`:
+`get_surface_override_material(0)` is `null`,
+`mesh.surface_get_material(0)` is a real `StandardMaterial3D`.
+
+What it cost while it was broken: `Obstacle._ready()` would have gone on
+getting `null` for `EnemyMesh`, so `_apply_enemy_alarm` returned on its
+guard every frame and the ENEMY/AIR_ENEMY approach telegraph became a
+**silent no-op** — no error, no crash, and no red probe, because
+`SubstituteModel.tscn` carried an override and so could not reproduce the
+one axis that mattered. It binds on the mesh now.
+
+**The slots this applies to are the ones whose owning script ANIMATES the
+material**, not every slot: `Obstacle/EnemyMesh` and `Obstacle/AirEnemyMesh`
+(the alarm ramp) and `TrackSegment/MeshInstance3D` (the per-segment ground
+tint). Installing a `.glb` on any of them means running
+`scripts/dev/AlarmRampAudit.tscn` afterwards — it asserts the ramp reaches
+every drawn surface, resets for the next pooled spawn, and stays
+per-instance.
+
+Two things to expect on an imported asset, neither of them a bug:
+
+- **Emission is inert on an unlit material**, and §8/§9 make every asset
+  here unlit. Both appliers move albedo *and* emission; on a `.glb` only the
+  albedo half lands. That is why the probe gates albedo.
+- **An EMISSION cue therefore cannot live on the slot at all.** The
+  pursuer's closing cue is the worked example: its eyes are deliberately
+  engine-side `MeshInstance3D` children of the slot, not part of the asset,
+  precisely so an unlit imported body cannot take the cue away (`Pursuer.gd`,
+  "THE EYES ARE DELIBERATELY NOT SLOTS").
+
 ## 3. Orientation
 
 **Measured, not assumed** — `ChargerShapeProbe` asserts this against the
@@ -244,7 +288,7 @@ the numbers below:
 |---|---|---|---|
 | collectibles | 4,200 | **25,344 – 29,568** | **OVER by ~6x** |
 | pursuer | 8,000 | **15,518** | **OVER by ~2x** *(cause misattributed — see 7.3)* |
-| hazards | 8,400 | 7,068 – 8,372 | within |
+| hazards | 8,400 | 7,068 – 8,372 | ~~within~~ *(misattributed — see 7.4)* |
 | keepy | 6,000 | 3,129 | within |
 | track slab + curbs | 5,600 | 252 | within |
 | decor hills | — | 165 | new since 7.1 |
@@ -340,6 +384,50 @@ is why the eye spheres were in scope and the noisettes were not. Measured over
 11 unseeded runs after the fix, the worst frame is **57,402** (collectibles
 25,344 – 38,016), still **7,402 over** the 50,000 target. The frame is not
 under budget yet; only the pursuer is.
+
+### 7.4 The hazards row's "within" was the same misattribution — measured 2026-08-11
+
+7.2 marks the `hazards` family **within** budget. That verdict is an
+artefact of the live MIX, not evidence that the hazard assets are inside
+their budget — and it hides two variants that are well outside it. Same
+class of error as 7.3: a *family* number standing in for *asset* numbers.
+
+Measured per variant, `get_faces()/3` on `Obstacle.tscn`'s own meshes, the
+same method `TrackPropsAudit` uses. 7.1 budgets **1,200 triangles per
+hazard**:
+
+| Variant | Triangles | Against the 1,200 unit budget |
+|---|---|---|
+| ChargerMesh (`PrismMesh`) | 8 | 0.01x |
+| DodgeMesh (`BoxMesh`) | 12 | 0.01x |
+| JumpMesh (`BoxMesh`) | 12 | 0.01x |
+| JumpMarkerMesh (`CylinderMesh`) | 44 | 0.04x |
+| StomperMesh (`CylinderMesh`) | 768 | 0.64x |
+| **EnemyMesh** (`CapsuleMesh`) | **3,456** | **2.88x — OVER** |
+| **AirEnemyMesh** (`TorusMesh`) | **4,096** | **3.41x — OVER** |
+
+Why the family total still measured "within": the 8,400 line is 7 x 1,200,
+and four of the six variants are near-zero primitives, so a typical live
+mix is dominated by 8–12 triangle boxes. Two objects alone —
+one ENEMY plus one AIR_ENEMY — already draw **7,552**, i.e. 90% of the
+family line. Seven live hazards all of the expensive kind would draw
+**28,672**, 3.4x that line. (Whether the spawner can actually produce that
+mix is not asserted here; the point is that the measured 7,068–8,372 range
+describes a *sample of mixes*, not a bound.)
+
+Root cause is the one finding 1 already named for the collectibles:
+**a primitive left at Godot's default tessellation**. `CapsuleMesh` and
+`TorusMesh` default to 64 radial segments for shapes that render a few
+dozen pixels across, exactly as `SphereMesh` does on
+`Noisette.tscn`/`Gland.tscn`.
+
+**Consequence for the incoming hazard `.glb` batch, and it inverts the
+usual expectation:** replacing the ENEMY and AIR_ENEMY placeholders with
+assets at or under their 1,200 cap is a triangle **reduction**, not an
+addition — up to −2,256 and −2,896 per live instance. The two variants
+where an import *adds* cost are the ones whose placeholder is a 12-triangle
+box (JUMP, DODGE) and the 8-triangle prism (CHARGER). Budget each import
+against 7.1's **per-asset** 1,200, never against the family row.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
@@ -876,16 +964,23 @@ would have replaced.
 
 ## 10. Acceptance checklist
 
-Run all four after installing any asset. The first two are the ones that
+Run all five after installing any asset. The first two are the ones that
 catch a rebalancing.
 
     godot4 --headless --path . res://scripts/dev/AssetContractAudit.tscn
     godot4 --headless --fixed-fps 60 --path . res://scripts/dev/PursuerFramingAudit.tscn
     godot4 --headless --path . res://scripts/dev/ChargerShapeProbe.tscn
+    godot4 --headless --path . res://scripts/dev/AlarmRampAudit.tscn
     godot4 --headless --path . --export-release "Web" build/web/index.html
 
 - **`AssetContractAudit`** must stay green: every collider still matches
   `Hitboxes.gd`, and the pursuer still has none.
+- **`AlarmRampAudit`** must stay green whenever the asset lands on a slot
+  whose material is ANIMATED — `Obstacle/EnemyMesh`,
+  `Obstacle/AirEnemyMesh`, `TrackSegment/MeshInstance3D`. See §2.1: an
+  imported material binds differently from a placeholder one, and the
+  failure mode is a telegraph that silently stops rather than anything
+  that looks broken. Cheap enough to run on every install regardless.
 - **`PursuerFramingAudit`** must stay under 30% — this is the Hibou's size
   gate (§6).
 - **`ChargerShapeProbe`** will **deliberately fail** once a model is
