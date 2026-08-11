@@ -589,6 +589,90 @@ gaspillage est réel et silencieux, et rien dans l'outillage ne l'a signalé.
 Seul un `git fetch` avant merge l'a révélé. **Faire ce fetch AU DÉBUT, pas à
 la fin.**
 
+## SECOND HAZARD MESHY INSTALLÉ : le crapaud (STOMPER) — 11 août 2026
+
+Branche `claude/stomper-asset-processing-usqg79`, partie de `main`/`staging`
+alignés (`f4b3190`). `assets/models/keepy_stomper_toad.glb` sur
+`Obstacle/StomperMesh` — **148 triangles, 3,7 Ko, plat, unlit, sans
+texture**, portant le bleu glacier existant de STOMPER. Chiffres complets :
+`docs/MESHY_SPEC.md` §7.4 et §11.
+
+**Identifié PAR RENDU, pas par son nom** — et cette fois le nom était juste,
+ce qui ne change rien à la méthode : les cinq fichiers restants ont été
+rendus sur trois axes. C'est le **seul sujet accroupi** du lot (1,898 ×
+**0,703** × 1,672) ; les quatre autres sont debout. Mapping complet établi
+au passage : libellule → AIR_ENEMY, rat → ENEMY, sanglier → CHARGER, tronc
+debout → DODGE. **Orientation vérifiée, pas héritée du rondin** : rendu
+depuis +Z et depuis −Z, la face (bouche + yeux) est côté +Z, donc côté
+joueur → `model_rotation_degrees` reste à zéro.
+
+⚠️ **LE RATIO 2,1:1 N'A JAMAIS PU ÊTRE EN DANGER, et c'est une propriété,
+pas de la chance : `model_scale` est un flottant UNIFORME, donc le rapport
+largeur/hauteur est INVARIANT par changement d'échelle.** L'asset le fixe à
+**2,692:1** — plus TRAPU que le cylindre placeholder (2,143:1) — à
+n'importe quelle échelle. La lisibilité « on enjambe, ce n'est pas un mur »
+est préservée et légèrement renforcée. Ce que l'échelle décide réellement,
+c'est la TAILLE ABSOLUE.
+
+**Échelle 0,79510 = largeur calée sur la base du placeholder (1,50), PAS
+sur le collider — dérogation ASSUMÉE à la règle du rondin JUMP.** Cette
+règle (§4 : un visuel plus large que sa hitbox fait passer une esquive
+légale pour illégale) existe pour une esquive latérale — **or un STOMPER
+n'en a pas** : il se colle à la voie du joueur par conception
+(`blocks_lane_switch`). L'appliquer mécaniquement aurait rétréci de 20 % en
+largeur et 36 % en hauteur un télégraphe que `TELEGRAPH-STOMPER` qualifie
+de porteur, et aurait **aggravé le seul axe qui contraint vraiment** ici :
+le dégagement VERTICAL, puisqu'on saute par-dessus. Deux propriétés
+mesurées sur la scène construite que l'autre option n'a pas : largeur au
+repos **1,500 = exactement la base du placeholder** et au pic de pulse
+**1,830 = exactement le pic du placeholder** (présence latérale inchangée),
+et au pic il atteint **0,680 contre la hitbox de 0,700** là où le
+placeholder DÉBORDE à 0,854.
+
+**Résidus signalés, pas maquillés** : 0,143 de hitbox au-dessus du crapaud
+visible, et un visuel 0,345 plus profond que la hitbox (sens indulgent pour
+un obstacle qu'on saute). Bavure de voie vérifiée : demi-largeur 0,915 au
+pic contre un bord de Keepy voisin à 1,500. **À juger sur device.** Le pic
+de pulse enfonce le crapaud de 0,077 sous le sol — **le placeholder fait
+exactement pareil** (la pulse scale le SLOT, les deux meshes ont le même
+bas en local), donc aucun artefact nouveau.
+
+⚠️ **`DarkPaletteAudit` lit 3,43 → 3,41 sur UNE ligne, et le chiffre GATÉ
+n'a pas bougé du tout.** Même famille que le 3,28 → 3,02 du rondin, et
+vérifié de la même façon plutôt que supposé identique. Diff complet contre
+`f4b3190` en worktree séparé : **exactement une ligne diffère**, la mesure
+STOMPER en brume profonde. Histogramme de la vraie fenêtre d'échantillon
+(sonde instrumentée puis revertée) : **196 px de STOMPER dans les DEUX
+arbres, ZÉRO pixel de sol**, valeur dominante **identique au bit près** au
+placeholder — contrairement au cas JUMP qui avait 54 px de sol. 86 px sur
+196 sont un cran 8 bits plus bas en G/B : surface courbe unlit à
+profondeur légèrement différente sous le fog exponentiel, pas un changement
+de couleur (matériau confirmé sur la scène construite : `UNSHADED
+albedo=(0,6200, 0,8600, 1,0000)`, aller-retour exact de
+`StandardMaterial3D_Stomper`). **Le nombre que la sonde gate est le pire
+des deux bouts de la respiration : 3,41:1 avant ET après**, 0,41 au-dessus
+du plancher, toujours la plus large marge des quatre hazards gatés.
+
+**Budget triangles : c'est une BAISSE, la première du lot hazards.** Le
+placeholder STOMPER n'était pas une boîte à 12 tri mais un `CylinderMesh` à
+**768** — la seule primitive de la famille qui coûtait déjà cher. 768 → 148
+= **−620 par instance vivante**, famille un-de-chaque **8 490 → 7 870**.
+L'inversion annoncée en §7.4 pour ENEMY/AIR_ENEMY vaut donc aussi, en plus
+doux, pour STOMPER : **trois variantes sur six sont moins chères en art
+importé qu'en primitive Godot**. Seuls DODGE et CHARGER coûteront vraiment.
+
+**Colliders intouchés** : `StomperShape` toujours `Box(1.2, 0.7, 1.0)` @
++0,350. Sondes : `AssetContractAudit` (12/12 visuels, 0 collider déplacé),
+`DarkPaletteAudit`, `AlarmRampAudit`, `ProbeTimeoutAudit` (33 sondes
+armées), `DeathModelAudit`, `ChargerShapeProbe`, `PursuerFramingAudit`
+(26,9 % max) — **toutes exit 0**. Import + export Web **exit 0**. Les
+sondes gameplay seedées sont **byte-identiques** à la baseline. Piège
+payload tenu (0 entrée `assets_source` importée dans le pack).
+
+**Reste ouvert** : quatre sujets non installés (libellule/AIR_ENEMY,
+rat/ENEMY, sanglier/CHARGER, tronc debout/DODGE), le sous-remplissage de
+hitbox et le sur-remplissage en profondeur — **jugement device**.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
