@@ -818,8 +818,20 @@ const MIST_FADE_DURATION_S: float = 0.8
 ## script exists, which is the property the previous iteration got right
 ## and is worth keeping. These constants exist so a probe can state the
 ## expected baseline without parsing a scene file.
-const SWAMP_SKY: Color = Color(0.055, 0.078, 0.051)  # #0E140D near-black swamp green
-const SWAMP_HAZE: Color = Color(0.180, 0.216, 0.149) # #2E3726 dirty green haze
+##
+## SATURATION PASS (11 August 2026, device feedback): the values this batch
+## replaced read as near-black on a phone, not as green -- hue survived the
+## grade removal but saturation did not (SWAMP_SKY was S=0.35 at V=0.08, a
+## value low enough that the eye reads grey before it reads a hue). Both
+## colours keep their hue family (~105 deg, matching the rest of the swamp
+## palette below) and move to S~0.56-0.62 with a modest V bump on top --
+## still dark (V stays under 0.13), but no longer dark enough to bury the
+## saturation gain. Value could not move further than this without risking
+## the ground's own contrast floors against CHARGER/JUMP/STOMPER -- see the
+## `_reroll_ground_tint` doc in scripts/track/TrackSegment.gd for that
+## constraint and the two rendered-vs-raw measurements that pinned it.
+const SWAMP_SKY: Color = Color(0.062, 0.115, 0.044)  # #0F1D0B dark saturated swamp green
+const SWAMP_HAZE: Color = Color(0.151, 0.260, 0.114) # #26421D saturated green haze
 
 ## The DEEP end of the mist breath -- where the sky and haze sit at
 ## mist_intensity 1.0.
@@ -831,8 +843,8 @@ const SWAMP_HAZE: Color = Color(0.180, 0.216, 0.149) # #2E3726 dirty green haze
 ## value. If a future session finds itself picking a DEEP colour that
 ## reads as a different place, the answer is no -- that is the phase
 ## system this batch removed, growing back.
-const SWAMP_SKY_DEEP: Color = Color(0.031, 0.047, 0.031)  # #080C08
-const SWAMP_HAZE_DEEP: Color = Color(0.122, 0.153, 0.102) # #1F271A
+const SWAMP_SKY_DEEP: Color = Color(0.035, 0.068, 0.024)  # #091106
+const SWAMP_HAZE_DEEP: Color = Color(0.107, 0.190, 0.080) # #1B3014
 
 ## Fog density at each end of the breath. The shallow value is the one
 ## scenes/Game.tscn ships and has carried since the depth-fog batch;
