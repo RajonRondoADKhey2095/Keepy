@@ -189,10 +189,59 @@ func has_model() -> bool:
 ## without bleeding into its siblings (see their own comments for why).
 ## That duplication needs a handle on whatever is actually being drawn,
 ## which stops being `self` the moment a model is installed.
+##
+## =====================================================================
+## TWO BINDINGS, BECAUSE GODOT HAS TWO -- and this used to read only one
+##
+## A material reaches a surface by one of two routes, and which one is
+## used is decided by WHO AUTHORED THE MESH, not by anything this project
+## controls:
+##
+##   surface OVERRIDE  -- written by a SCENE author. Every placeholder in
+##                        this project is bound this way
+##                        (`surface_material_override/0` in Obstacle.tscn,
+##                        TrackSegment.tscn, ...).
+##   MESH surface      -- written by an IMPORTER. Godot's glTF importer
+##                        binds a .glb's material here and never sets an
+##                        override.
+##
+## This function used to return ONLY the override. That is correct for
+## every placeholder and WRONG for every real asset -- and it fails in the
+## worst available way, by returning null rather than by erroring, so the
+## caller's own null-guard swallows it. Measured on a shipped asset rather
+## than assumed (assets/models/keepy_stump_prop.glb):
+## get_surface_override_material(0) -> null, mesh.surface_get_material(0)
+## -> a real StandardMaterial3D.
+##
+## What that cost, before this was fixed: Obstacle._ready() got null for
+## EnemyMesh the moment a .glb landed on it, so _enemy_material stayed
+## null and _apply_enemy_alarm returned on its guard every frame. The
+## ENEMY approach telegraph -- the escalating red that tells a player a
+## hazard is about to commit to their lane -- became a silent no-op. No
+## error, no crash, and no red probe: AssetContractAudit's stand-in
+## carried an override, so it was shaped like an imported model
+## everywhere EXCEPT the axis that mattered. Both halves are closed now:
+## the stand-in binds on the mesh (SubstituteModel.tscn) and
+## scripts/dev/AlarmRampAudit.gd gates the ramp end to end.
+##
+## Order is deliberate: the override is checked FIRST, so the
+## no-model path returns exactly what it returned before, byte for byte.
+## The fallback can only ever fire where this used to return null.
+##
+## `material_override` (the whole-object one) is deliberately NOT
+## consulted, which is why this is not simply get_active_material(): that
+## property is not how anything here binds a material, and honouring it
+## would silently widen what a "slot material" means.
 func slot_material() -> Material:
 	if _drawn.is_empty():
 		return null
-	return _drawn[0].get_surface_override_material(0)
+	var mesh_instance := _drawn[0]
+	var override := mesh_instance.get_surface_override_material(0)
+	if override:
+		return override
+	if mesh_instance.mesh and mesh_instance.mesh.get_surface_count() > 0:
+		return mesh_instance.mesh.surface_get_material(0)
+	return null
 
 ## Applies `material` as the surface-0 override on everything this slot
 ## draws.

@@ -736,6 +736,33 @@ var _air_enemy_base_emission_energy: float
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	_apply_hitboxes()
+	# ModelSlot.slot_material() resolves BOTH ways a material can reach a
+	# surface -- the scene author's surface override AND the mesh-bound one
+	# an importer writes. That distinction is not academic: it used to
+	# return only the override, so the two ramps below silently became
+	# no-ops the moment a .glb replaced either placeholder, and nothing
+	# failed. See that function's header for the measurement, and
+	# scripts/dev/AlarmRampAudit.gd for the probe that now gates it.
+	#
+	# TWO LIMITS OF THIS CUE ON AN IMPORTED ASSET, worth knowing before
+	# blaming the ramp for looking weaker than it does on the placeholders:
+	#
+	#   EMISSION IS INERT ON AN UNLIT MATERIAL. Both appliers move albedo
+	#   AND emission; the placeholders here are lit with emission_enabled,
+	#   so both halves land. Every imported asset in this project is unlit
+	#   by house rule (docs/MESHY_SPEC.md §8/§9), and an unshaded material
+	#   ignores emission entirely -- the same fact that pushed the
+	#   pursuer's closing cue onto its own lit eye nodes (Pursuer.gd). So
+	#   on a .glb the telegraph is carried by the ALBEDO alone. That is
+	#   still a real cue, and the whole reason the albedo ramp is asserted
+	#   rather than the emission one.
+	#
+	#   THE CAST IS PART OF THE CONTRACT. Godot's glTF importer produces
+	#   StandardMaterial3D -- measured on a shipped asset, not assumed -- so
+	#   this holds today. An asset that somehow imported as a different
+	#   BaseMaterial3D subclass would fail this cast and land back on the
+	#   exact silent null this fix removed. It would not go unnoticed now:
+	#   AlarmRampAudit reads what the RENDERER uses, so it would go red.
 	var shared_material := _enemy_mesh.slot_material() as StandardMaterial3D
 	if shared_material:
 		_enemy_material = shared_material.duplicate()
