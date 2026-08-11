@@ -4,6 +4,7 @@
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="2"]
 [ext_resource type="PackedScene" uid="uid://c2f7v5slxknqs" path="res://assets/models/keepy_jump_log.glb" id="3"]
 [ext_resource type="PackedScene" uid="uid://c43xb6ua6en3f" path="res://assets/models/keepy_stomper_toad.glb" id="4"]
+[ext_resource type="PackedScene" uid="uid://dgs4683xlxohy" path="res://assets/models/keepy_dodge_trunk.glb" id="5"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_Dodge"]
 size = Vector3(1.2, 2.0, 1.0)
@@ -12,7 +13,8 @@ size = Vector3(1.2, 2.0, 1.0)
 size = Vector3(1.2, 2.0, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Dodge"]
-albedo_color = Color(0.3, 0.025, 0.025, 1)
+shading_mode = 0
+albedo_color = Color(0.21, 0.0175, 0.0175, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_Jump"]
 size = Vector3(1.2, 0.7, 1.0)
@@ -100,6 +102,9 @@ script = ExtResource("2")
 position = Vector3(0, 1.0, 0)
 mesh = SubResource("BoxMesh_Dodge")
 surface_material_override/0 = SubResource("StandardMaterial3D_Dodge")
+model_scene = ExtResource("5")
+model_scale = 1.18793
+model_offset = Vector3(0, 0.13542, 0)
 
 [node name="DodgeShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 1.0, 0)
