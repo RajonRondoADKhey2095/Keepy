@@ -747,84 +747,126 @@ const DARK_CYCLE_PERIOD_S: float = 10.0
 const DARK_FADE_DURATION_S: float = 0.8
 
 # =====================================================================
-# PALETTE VARIETY (difficulty+variety batch, EXPANDED in the playtest-
-# fixes batch) -- see DarkModeEffect.gd / screen_invert.gdshader for how
-# DARK_VARIANTS is actually applied. Kept here, next to the timing knobs
-# above, because it is state a fresh run must reset and a phase
-# transition must update -- the same ownership rule this file already
-## follows for dark_phase/dark_intensity.
-##
-## The LIGHT-phase counterpart (EnvironmentDrift.gd, a continuous hue
-## drift of the sky/ground) is REMOVED as of this batch (playtest: "la
-## derive continue n'apporte rien") -- the light phase is now a fixed,
-## unchanging reference state, so a DARK phase always reads against the
-## SAME baseline instead of against whatever the drift happened to be at
-## that moment. That is also why DARK_VARIANTS needed to work harder:
-## with no light-side variety left to share the "this run looks
-## different" job, every bit of per-run/per-phase visual variety in the
-## game now lives here.
-# =====================================================================
+# SWAMP NIGHT PALETTE (dark mode swamp refonte) -- see DarkModeEffect.gd
+# and assets/shaders/swamp_grade.gdshader for how it is applied. Kept
+# here, next to the timing knobs above, because this file already owns
+# every other piece of dark-cycle state a fresh run must reset.
+#
+# WHAT THIS REPLACES, AND WHY IT WAS TORN OUT RATHER THAN TUNED:
+# until this refonte the dark phase was a full-screen per-channel
+# INVERSION with one of six saturated hues (DARK_VARIANTS) blended over
+# it at DARK_TINT_AMOUNT = 0.55. Both are gone. Three separate problems,
+# none of which was reachable by adjusting the numbers:
+#
+#   1. NO COLOUR COULD BE AIMED AT. To land a chosen colour on screen a
+#      surface had to be authored as its PRE-IMAGE (1.0 - target), and
+#      then the tint pass moved it again by 55% of a hue picked at
+#      random. scripts/world/NightSky.gd computed that pre-image
+#      correctly, documented the trap in its own header, and still could
+#      not hit its target, because most of the final pixel was never its
+#      to control. Two of the six hues carried the entire frame back to
+#      blue -- the exact thing the swamp was asked to stop being, and
+#      what a device playtest kept reporting after two attempts.
+#
+#   2. THE INVERT REVERSED LUMINANCE ORDER, which is what put the
+#      pursuer permanently under its legibility floor: a near-black
+#      silhouette (albedo 0.02) came out near-WHITE, read against a
+#      ground that had gone light blue. Measured across all six hues the
+#      best case was 1.86:1 against a 2.5:1 floor -- not a tuning miss, a
+#      structural consequence of inverting.
+#
+#   3. SIX RADICALLY DIFFERENT HUES WERE THE OPPOSITE OF AN IDENTITY.
+#      They existed to make runs feel varied; the cost was that the game
+#      had no single night look at all.
+#
+# WHAT REPLACES IT: one ramp, four stops, keyed on each pixel's
+# luminance. The colours below ARE the colours that reach the player --
+# no pre-image, no second pass, nothing to mentally invert when picking
+# a value. A future session changes the night by editing these four hex
+# values and nothing else.
 
-## Candidate tint colours a DARK phase can pick from -- blended on TOP of
-## the already-inverted screen (see the shader for why this can never
-## make anything less distinguishable, only differently coloured).
+## The swamp-night ramp, darkest to brightest. A rendered pixel is placed
+## along this ramp by its luminance and comes out the corresponding
+## colour at full dark intensity.
 ##
-## EXPANDED from 4 to 6 (playtest: "les teintes sombres se ressemblent
-## trop, ca ne se sent pas comme un monde different") and picked as hues
-## spread EVENLY around the colour wheel (0/45/130/205/265/320 degrees,
-## ~55-80 degrees apart) rather than chosen by eye -- the earlier set's
-## crimson/blue pairing in particular sat close enough that two
-## consecutive phases could both read as "reddish" or "bluish" instead of
-## clearly different worlds. The even spread specifically avoids the
-## failure mode of picking two variants that both read as "kind of
-## purple-blue": violet (265) and cold blue (205) are a full 60 degrees
-## apart, further than blue was from crimson (215 degrees the OTHER way
-## round the wheel, i.e. the original 4 were not evenly spread either).
-const DARK_VARIANTS: Array[Color] = [
-	Color(1.00, 0.12, 0.12), # crimson red    (hue ~0)
-	Color(1.00, 0.75, 0.08), # amber / orange (hue ~45)
-	Color(0.12, 1.00, 0.28), # toxic green    (hue ~130)
-	Color(0.12, 0.62, 1.00), # cold blue      (hue ~205)
-	Color(0.48, 0.12, 1.00), # violet         (hue ~265)
-	Color(1.00, 0.12, 0.68), # magenta / pink (hue ~320)
-]
+## HUES are the marecage-nocturne brief: a near-black green base, dirty
+## desaturated olive through the midtones, warmed toward muddy brown
+## rather than toward a fresh or saturated green.
+##
+## THE TOP STOP IS DELIBERATELY MUCH BRIGHTER THAN THE BRIEF'S PALETTE,
+## and this is the one place the requested colours were not taken as
+## given. The brief's three colours (#141B12 / #3A4A30 / #444F35) span
+## relative luminance 0.0098 to 0.0708. The widest contrast ratio
+## obtainable ANYWHERE inside that band is 2.02:1 -- below this project's
+## 2.5:1 silhouette floor and its 3.0:1 label floor, before a single
+## pixel is rendered. Grading the whole frame into it would have failed
+## every contrast probe by construction, with no tuning available to
+## rescue it. The three dark stops keep the brief's hues; SWAMP_HIGH
+## extends the ramp upward so bright gameplay surfaces (curbs, the
+## pursuer's eyes, collectibles) keep somewhere bright to land. It is
+## desaturated and olive, so it reads as pale sickly swamp light rather
+## than as a colour from a different palette.
+const SWAMP_SHADOW: Color = Color(0.078, 0.106, 0.071) # #141B12 -- brief's base
+const SWAMP_LOW: Color = Color(0.227, 0.290, 0.188)    # #3A4A30 -- brief's fog low
+const SWAMP_MID: Color = Color(0.361, 0.416, 0.267)    # #5C6A44 -- olive, warmed
+const SWAMP_HIGH: Color = Color(0.725, 0.745, 0.529)   # #B9BE87 -- pale sickly olive
 
-## How strongly a DARK_VARIANTS tint blends over the inversion -- read by
-## DarkModeEffect.gd as `tint_amount`, faded in/out by the shader
-## alongside `intensity` (never applied at full strength the instant a
-## phase starts).
+## Where SWAMP_LOW and SWAMP_MID sit along the source-luminance axis.
+## SWAMP_SHADOW is pinned at 0.0 and SWAMP_HIGH at 1.0, so these two
+## knees are the only positional freedom the ramp has.
 ##
-## RAISED from 0.18 to 0.55 (playtest: "le changement de couleur est trop
-## timide, on dirait juste un filtre leger, pas un monde different").
-## 0.18 was calibrated purely to stay safely under the shader's
-## injectivity ceiling (any value < 1.0), never against a measured
-## legibility floor -- it was cautious, not tuned.
+## PLACED AGAINST A MEASURED FRAME, not against albedos. This scene is
+## bright and evenly lit: SwampGradeCapture reads a whole-frame mean luma
+## of 0.75 in the light phase, and the flat sky that fills most of it
+## computes to 0.72 from Game.tscn's own background_color. At the other
+## end the pursuer's unlit silhouette sits near 0.02. So the content this
+## ramp has to separate is bunched in the upper half of the axis with a
+## near-black outlier below it.
 ##
-## 0.55 was chosen by actually rendering the game under each of the 6
-## DARK_VARIANTS above at full dark intensity and sampling real pixel
-## contrast (WCAG relative-luminance ratio) between every hazard/
-## collectible and the ground with scripts/dev/DarkPaletteAudit.gd (same
-## "sample real rendered pixels, don't hand-compute from hex codes"
-## standard as InvertCapture.gd) -- see that probe's own header for the
-## method and the commit message for the full per-palette numbers.
-## MEASURED, NOT ASSUMED: a full sweep from 0.18 to 0.75 found the worst
-## observed contrast barely moves at all (1.00-1.02:1 across the ENTIRE
-## range) -- the floor is set by the plain screen-INVERT step these
-## objects' raw albedos already produced against the ground colour
-## (a pre-existing property of this game's fixed palette, present since
-## before this batch), not by the tint amount. Raising the tint therefore
-## buys the "different world" feel essentially for free on the
-## contrast axis: it does not make the worst pairs measurably worse than
-## they already were at 0.18. 0.55 is kept well short of the shader's
-## hint_range(0.0, 0.9) ceiling so there is still headroom before the mix
-## starts trending toward a flat, unreadable wash of the tint colour.
-## The one legibility question that DOES matter for this floor and that
-## this constant alone cannot fix -- "can I jump THIS specific hazard" --
-## is answered by a dedicated, fully colour-controlled marker
-## (Obstacle.gd's JumpMarkerMesh, chantier 2 of the same batch), verified
-## separately against a real WCAG AA floor rather than inheriting
-## whatever contrast a hazard's pre-existing mesh colour happens to have.
-const DARK_TINT_AMOUNT: float = 0.55
+## Knees at 0.34 and 0.72 put both interior stops inside that busy band
+## rather than below it, which is what keeps the midtones spread over two
+## ramp segments instead of collapsing onto one stop. Straightforward
+## consequence worth stating: a scene lit differently would want
+## different knees, so these are tied to THIS game's lighting, not
+## general-purpose values.
+##
+## MOVING knee_mid TO CHASE HAZARD CONTRAST DOES NOT WORK -- swept, so the
+## next session does not have to repeat it. DarkPaletteAudit measures the
+## worst hazard-vs-ground pair at 1.46:1 here, and the obvious idea is to
+## steepen the ramp where hazards and ground sit (source luma 0.26-0.57
+## against the ground's 0.76). Recovering each object's source luminance
+## from its measured post-grade colour and re-running the ramp gives:
+##
+##   knee_mid   0.45   0.55   0.62   0.72(shipped)   0.80
+##   worst      1.48   1.64   1.70   1.46            1.22
+##
+## The best reachable value is 1.70:1, against a 3.0 reference. The gain
+## is not available because the limit is not positional: these hazards
+## differ from the ground mainly in HUE, and a luminance-keyed grade
+## discards hue by construction (see swamp_grade.gdshader). Trading a
+## configuration whose two GATED floors pass with margin for +0.24 on an
+## ungated number that still fails is a bad trade, so the knees stay put.
+## Raising hazard legibility in the dark phase is a real open question
+## and it belongs to the hazards' own albedos, not to this ramp.
+const SWAMP_KNEE_LOW: float = 0.34
+const SWAMP_KNEE_MID: float = 0.72
+
+## The flat colours the sky and the distance haze fade toward as the dark
+## phase comes in -- written DIRECTLY into the WorldEnvironment by
+## DarkModeEffect.gd, which is the whole difference from the deleted
+## NightSky.gd: with no inversion downstream, the value written is the
+## value seen.
+##
+## WHY THE ENVIRONMENT IS DRIVEN AT ALL, when the screen grade already
+## covers every pixel: the grade is keyed on luminance, and the daytime
+## sky is BRIGHT (framebuffer luma ~0.72), so left alone it would grade
+## to a midtone olive -- a pale swamp sky, when the brief asks for a
+## near-black one. Darkening it at the source drops it to the bottom of
+## the ramp, which is where a night sky belongs. The haze colour follows
+## it so distant decor (Decor.gd's three billboard layers converge toward
+## fog_light_color) sinks with the sky instead of floating in front of it.
+const SWAMP_SKY: Color = Color(0.055, 0.078, 0.051)
+const SWAMP_HAZE: Color = Color(0.180, 0.216, 0.149)
 
 # =====================================================================
 
@@ -848,13 +890,22 @@ var dark_phase: DarkPhase = DarkPhase.INACTIVE
 var dark_intensity: float = 0.0
 var _dark_phase_started_s: float = 0.0
 
-## Index into DARK_VARIANTS the CURRENT (or most recent) DARK phase uses
-## -- read by DarkModeEffect.gd. Re-rolled every time the run transitions
-## INTO Dark (never on Dark -> Light), always to a DIFFERENT index than
-## last time (see _enter_dark_phase) so two consecutive dark phases in
-## the same run are never accidentally identical, and two separate runs
-## (fresh randf() seed each time) don't line up either.
-var dark_variant_index: int = 0
+# NOTE FOR ANYONE COMPARING SEEDED PROBE OUTPUT ACROSS THE SWAMP
+# REFONTE: a `dark_variant_index` used to live here, re-rolled from the
+# GLOBAL RNG on every transition into a dark phase. The swamp night is a
+# single identity with nothing left to pick, so both the field and its
+# _reroll_dark_variant() helper are gone -- and with them one randi()
+# call at every run reset plus one-or-more per dark phase.
+#
+# That necessarily SHIFTS THE GLOBAL RNG STREAM, so the seeded bot probes
+# cannot be byte-identical across this change, however purely visual it
+# is. This is called out here rather than left to be discovered as a
+# mystery diff: the right check for this lot is that every gated probe
+# still reaches the same VERDICT, not that it prints the same bytes.
+# Preserving the stream was considered and rejected -- it would have
+# required keeping a six-entry array and its collision-redraw loop purely
+# so the number of discarded random draws stayed the same, i.e. keeping
+# the whole dead mechanism to protect a hash.
 
 # =====================================================================
 # TEMPORARY TRACK SHRINK -- the late-run mechanic that takes the track
@@ -1148,7 +1199,6 @@ func start_run() -> void:
 	dark_phase = DarkPhase.INACTIVE
 	dark_intensity = 0.0
 	_dark_phase_started_s = 0.0
-	dark_variant_index = randi() % DARK_VARIANTS.size()
 	# shrink_unlock_score is deliberately NOT reset here -- it is a probe
 	# hook, same contract as pursuer_enabled (see its own doc).
 	shrink_phase = ShrinkPhase.INACTIVE
@@ -1388,13 +1438,9 @@ func _update_dark_cycle(delta: float) -> void:
 		# Anchored on the constant, not on run_time_s, so phase
 		# boundaries can't drift by up to a frame on every swap.
 		_dark_phase_started_s = DARK_FIRST_TRIGGER_S
-		_reroll_dark_variant()
 	elif run_time_s - _dark_phase_started_s >= DARK_CYCLE_PERIOD_S:
-		var entering_dark := dark_phase == DarkPhase.LIGHT
 		dark_phase = DarkPhase.LIGHT if dark_phase == DarkPhase.DARK else DarkPhase.DARK
 		_dark_phase_started_s += DARK_CYCLE_PERIOD_S
-		if entering_dark:
-			_reroll_dark_variant()
 
 	var target := 1.0 if dark_phase == DarkPhase.DARK else 0.0
 	# move_toward, not an exponential lerp: it reaches the target exactly,
@@ -1403,11 +1449,6 @@ func _update_dark_cycle(delta: float) -> void:
 	# the effect would sit permanently at ~97% and never truly clear.
 	dark_intensity = move_toward(dark_intensity, target, delta / DARK_FADE_DURATION_S)
 
-## Picks the NEXT DARK_VARIANTS index, guaranteed different from
-## dark_variant_index's current value -- see that var's own doc for why
-## (two consecutive dark phases must never look identical). Trivial with
-## only 4 variants: draw again on a collision, bounded to a handful of
-## tries so this can never loop meaningfully long.
 # =====================================================================
 # TEMPORARY TRACK SHRINK -- implementation. See the section header near
 # SHRINK_UNLOCK_SCORE for the design and for why the TRIGGER decision
@@ -1486,12 +1527,6 @@ func _end_shrink() -> void:
 	shrink_lane = SHRINK_NO_LANE
 	shrink_amount = 0.0
 	_next_shrink_eligible_s = run_time_s + randf_range(SHRINK_INTERVAL_MIN_S, SHRINK_INTERVAL_MAX_S)
-
-func _reroll_dark_variant() -> void:
-	var next := randi() % DARK_VARIANTS.size()
-	while next == dark_variant_index and DARK_VARIANTS.size() > 1:
-		next = randi() % DARK_VARIANTS.size()
-	dark_variant_index = next
 
 func add_distance(delta_distance: float) -> void:
 	distance_travelled += delta_distance

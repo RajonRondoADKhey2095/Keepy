@@ -1,58 +1,59 @@
 extends Node
-## Capture probe for the EXPANDED dark-mode palette (chantier 1,
-## playtest-fixes batch: "les teintes sombres se ressemblent trop" ->
-## DARK_VARIANTS grown 4 -> 6, and DARK_TINT_AMOUNT raised well above the
-## original timid 0.18, see GameState.gd). NOT part of the shipped game
+## Capture probe for the SWAMP-NIGHT dark palette: does each hazard and
+## collectible still read against the ground once the dark phase grades
+## the whole frame into the swamp ramp. NOT part of the shipped game
 ## (scripts/dev/* is excluded from the web export, nothing shipped
 ## instantiates it).
 ##
-## WHY A NEW PROBE INSTEAD OF REUSING InvertCapture.gd: InvertCapture only
-## asserts the SHADER inverts (mean-frame colour sums to ~1 per channel).
-## That says nothing about a SPECIFIC obstacle/collectible colour staying
-## legible against the ground once BOTH the invert AND a strong tint are
-## applied together, across SIX different tint colours -- exactly the
-## question DarkModeEffect.gd's own doc defers to "back your final number
-## with real measurement, not vibes". This probe is that measurement,
-## kept as a reproducible tool rather than a one-off.
+## WHAT THIS FILE USED TO BE, AND WHY IT SHRANK. It was written to
+## CALIBRATE GameState.DARK_TINT_AMOUNT: a SWEEP pass rendered every
+## object at eight candidate tint strengths against six hues (48
+## combinations) to pick a defensible value, then a CANONICAL pass
+## re-derived the shipped number through the real DarkModeEffect.gd to
+## prove the shortcut and the production path agreed.
 ##
-## METHOD -- same "sample real rendered pixels, don't hand-compute from
-## hex codes" standard as InvertCapture.gd, but per-OBJECT rather than
-## whole-frame: a minimal calibration scene (own WorldEnvironment,
-## DirectionalLight3D and Camera3D, all copied verbatim from Game.tscn so
-## lighting/perspective match the shipped game exactly) plus the REAL
-## Obstacle.tscn / Noisette.tscn / Gland.tscn scenes, shown ONE AT A TIME
-## so each capture is unambiguous about which object it measured. The
-## real Game.tscn is deliberately NOT reused here (unlike InvertCapture):
-## its TrackManager keeps spawning/recycling obstacles in the background
-## for as long as the scene runs, and this probe needs a few hundred
-## sequential captures (see the SWEEP below) over many seconds of
-## simulated time -- long enough for real track content to drift into
-## the very screen region a capture is sampling and contaminate it. A
-## private, controlled scene removes that variable entirely while still
+## The swamp refonte deleted the invert, the six hues and the tint
+## strength outright. So the sweep is gone -- not trimmed, gone: it
+## measured a constant that no longer exists, and keeping it would have
+## meant 48 renders in service of a question nobody can ask any more.
+## With no probe-only shortcut left there is also nothing for a canonical
+## pass to be canonical AGAINST, so the two passes collapse into one that
+## drives production code directly.
+##
+## WHAT SURVIVED, and why it is the part worth keeping: the per-object
+## measurement itself. "Can the player tell this hazard from the ground
+## in the dark phase" is a question about gameplay legibility, not about
+## any particular shader, and it outlived the pipeline it was first asked
+## of. It is also the ONLY probe covering hazards and collectibles --
+## PursuerContrastAudit covers the pursuer, the three HUD probes cover
+## the HUD, and nothing else looks at what the player is dodging.
+##
+## METHOD -- "sample real rendered pixels, don't hand-compute from hex
+## codes", per-OBJECT rather than whole-frame: a minimal calibration
+## scene (own WorldEnvironment, DirectionalLight3D and Camera3D, all
+## copied verbatim from Game.tscn so lighting/perspective match the
+## shipped game exactly) plus the REAL Obstacle.tscn / Noisette.tscn /
+## Gland.tscn scenes, shown ONE AT A TIME so each capture is unambiguous
+## about which object it measured. The real Game.tscn is deliberately NOT
+## reused: its TrackManager keeps spawning and recycling obstacles for as
+## long as the scene runs, long enough for real track content to drift
+## into the very screen region a capture is sampling and contaminate it.
+## A private, controlled scene removes that variable entirely while still
 ## exercising the exact same materials and the exact same
-## screen_invert.gdshader the shipped game runs.
+## swamp_grade.gdshader the shipped game runs.
+##
+## ONE THING THE PRIVATE SCENE NOW HAS TO GET RIGHT that it did not
+## before: the dark look is no longer only a shader. DarkModeEffect.gd
+## also writes the sky and haze colours into the WorldEnvironment, so
+## this probe points it at the WorldEnvironment it builds itself (see
+## _build_calibration_scene). Miss that and the probe would measure a
+## swamp-graded world under a daytime blue sky -- a state the game cannot
+## be in, reported as if it were.
 ##
 ## Camera pose mirrors CameraFollow's own steady-state (Keepy fixed at
 ## (0,1,0), offset (0,4.2,7), look_ahead (0,1,-4) -- see
 ## scripts/camera/CameraFollow.gd) so the measured lighting/angle matches
 ## what a real run actually shows, not an arbitrary calibration angle.
-##
-## TWO PASSES:
-##   1. SWEEP -- the shader's three uniforms (intensity/tint_color/
-##      tint_amount) are driven DIRECTLY (DarkModeEffect.gd's own script
-##      is NOT attached here) across a range of candidate tint_amount
-##      values, all 6 palettes, all 6 gameplay objects -- this is how
-##      GameState.DARK_TINT_AMOUNT's actual shipped value was picked
-##      (see GameState.gd's own comment on that constant for the result).
-##      DarkModeEffect.gd itself is a 3-line uniform setter (verified by
-##      reading it); driving the same three uniforms by hand here is
-##      equivalent, and lets the sweep explore values the shipped
-##      constant never takes.
-##   2. CANONICAL -- a second pass that DOES attach the real
-##      DarkModeEffect.gd script and reads GameState.DARK_TINT_AMOUNT /
-##      DARK_VARIANTS as shipped, to confirm the sweep's chosen value
-##      reproduces the same numbers through the actual code path a real
-##      run uses, not just through the probe's own uniform-setting code.
 ##
 ## CONTRAST METRIC: WCAG 2.x relative-luminance contrast ratio, computed
 ## on the ACTUAL POST-SHADER pixel colour sampled from the rendered
@@ -93,21 +94,17 @@ const SAMPLE_HALF_PX: int = 14
 const GROUND_STRIP_TOP_FRAC: float = 0.92 # bottom 8% of the frame: always clear ground, nearest the camera
 const SKY_STRIP_BOTTOM_FRAC: float = 0.08 # top 8% of the frame: always clear sky
 
-# Candidate tint_amount values for the sweep -- brackets the original
-# 0.18 (kept as the low end for reference) up through the shader's
-# hint_range(0.0, 0.9) ceiling, dense enough in the middle (where the
-# actual tradeoff lives) to pick a defensible final value instead of
-# interpolating between two widely spaced guesses.
-const SWEEP_AMOUNTS: Array[float] = [0.18, 0.30, 0.40, 0.45, 0.50, 0.55, 0.65, 0.75]
-
 # WCAG AA large-text threshold (3.0:1) used as the legibility floor --
 # not the stricter 4.5:1 body-text threshold: these are small, fast-
 # moving game objects read at a glance against a scrolling background,
-# not static paragraph text. The shader's own injectivity proof (see
-# screen_invert.gdshader) already guarantees nothing collapses to
-# literal indistinguishability for any amount < 1.0; this is the
-# "stays comfortably readable" floor asked for on top of that
-# guarantee, and it is a real, citable number rather than a vibe.
+# not static paragraph text. It used to sit on top of the old shader's
+# injectivity proof, which guaranteed nothing collapsed to
+# "stays comfortably readable" floor, and it is a real, citable number
+# rather than a vibe. NOTE: the old shader's injectivity proof used to
+# back this up -- the swamp grade explicitly does NOT preserve
+# injectivity (equal-luminance hues collapse; see swamp_grade.gdshader),
+# so this floor is now the ONLY thing standing between an object and its
+# ground, which makes measuring it matter more than it did before.
 const CONTRAST_FLOOR: float = 3.0
 
 var _root3d: Node3D
@@ -123,7 +120,6 @@ var _barrier: LaneBarrier
 
 # tint_amount -> worst (object vs ground) ratio seen across every
 # palette/object combination at that amount.
-var _sweep_worst: Dictionary = {}
 
 ## Samples that could not be taken at all, because the object was not on
 ## screen when the pixel was read (see _sample_box). Never zero silently:
@@ -142,32 +138,23 @@ func _run() -> void:
 	_build_calibration_scene()
 	await _wait_frames(SETTLE_FRAMES)
 
-	print("=== DARK PALETTE AUDIT ===")
-	print("palettes swept    : %d (GameState.DARK_VARIANTS)" % GameState.DARK_VARIANTS.size())
-	print("candidate amounts : %s" % [SWEEP_AMOUNTS])
+	print("=== DARK PALETTE AUDIT (swamp night) ===")
+	print("dark states       : 1 (one swamp identity -- the six-hue sweep is gone)")
 	print("contrast floor    : %.1f:1 (WCAG AA large-text)" % CONTRAST_FLOOR)
 	print("")
-
-	for amount in SWEEP_AMOUNTS:
-		await _sweep_amount(amount)
-
-	print("=== SWEEP SUMMARY (worst object-vs-ground ratio at each candidate amount) ===")
-	for amount in SWEEP_AMOUNTS:
-		var worst: float = _sweep_worst[amount]
-		var verdict := "OK" if worst >= CONTRAST_FLOOR else "BELOW FLOOR"
-		print("  tint_amount=%.2f  worst=%.2f:1  %s" % [amount, worst, verdict])
-
-	var chosen := GameState.DARK_TINT_AMOUNT
-	print("")
-	print("chosen GameState.DARK_TINT_AMOUNT = %.2f -- verifying via the REAL DarkModeEffect.gd code path" % chosen)
-	print("")
+	# THE tint_amount SWEEP IS GONE, and its absence is the point rather
+	# than an omission: it existed to CALIBRATE GameState.DARK_TINT_AMOUNT
+	# by rendering every object at eight candidate strengths against six
+	# hues. There is no tint pass and no strength to calibrate any more, so
+	# a sweep would be forty-eight measurements of a constant that does not
+	# exist. What it was really reporting -- object-vs-ground contrast under
+	# the shipped dark state -- is exactly what the pass below measures,
+	# through production code rather than through a probe-only shortcut.
 	await _run_canonical_pass()
 
-	# LAST, and after the canonical pass has already installed the real
-	# DarkModeEffect.gd: the barrier pass drives GameState.dark_intensity
-	# / dark_variant_index and needs that production code path in place to
-	# turn them into shader uniforms. Running it here also keeps it from
-	# perturbing anything the two earlier passes measure.
+	# LAST: the barrier pass drives GameState.dark_intensity through the
+	# same production code path, and running it here keeps it from
+	# perturbing anything the pass above measures.
 	await _run_barrier_pass()
 
 	# THE INTEGRITY GATE, and it outranks every contrast number above it.
@@ -188,12 +175,12 @@ func _run() -> void:
 ## Everything a calibration frame needs, matching Game.tscn's own
 ## values verbatim: a WorldEnvironment (sky colour, ambient light), a
 ## DirectionalLight3D (identical transform), a ground slab (identical
-## material to TrackSegment.tscn's), the screen_invert shader (uniforms
-## driven directly by this probe during the sweep, see class doc), and
-## one instance each of the three real hazard/collectible scenes this
-## probe toggles between.
+## material to TrackSegment.tscn's), the real DarkModeEffect.gd driving
+## the swamp_grade shader, and one instance each of the three real
+## hazard/collectible scenes this probe toggles between.
 func _build_calibration_scene() -> void:
 	_root3d = Node3D.new()
+	_root3d.name = "Root3D"
 	add_child(_root3d)
 
 	var env := Environment.new()
@@ -203,6 +190,7 @@ func _build_calibration_scene() -> void:
 	env.ambient_light_color = Color(1, 1, 1)
 	env.ambient_light_energy = 0.6
 	var world_env := WorldEnvironment.new()
+	world_env.name = "WorldEnvironment"
 	world_env.environment = env
 	_root3d.add_child(world_env)
 
@@ -232,15 +220,28 @@ func _build_calibration_scene() -> void:
 	_camera.look_at(Vector3(0, 2, -4), Vector3.UP)
 	_camera.current = true
 
+	# The REAL DarkModeEffect.gd, attached BEFORE the layer enters the
+	# tree so @onready resolves through the normal _ready() path -- the
+	# same order a loaded .tscn gives it in the shipped game. Since the
+	# swamp refonte there is no second, uniform-poking code path to keep
+	# separate from this one: the tint-amount sweep that needed it is
+	# gone, so every measurement in this file now goes through production
+	# code, which is what the old canonical pass existed to prove.
 	_dark_effect_layer = CanvasLayer.new()
 	_dark_effect_layer.layer = 0
+	_dark_effect_layer.set_script(load("res://scripts/world/DarkModeEffect.gd"))
+	# This probe builds its own scene rather than loading Game.tscn, so
+	# the effect's default path to the WorldEnvironment does not resolve
+	# here -- it is pointed at the one built above instead. Set BEFORE
+	# add_child, because _ready() reads it.
+	_dark_effect_layer.set("world_environment_path", NodePath("../Root3D/WorldEnvironment"))
 	var rect := ColorRect.new()
-	rect.name = "Invert" # DarkModeEffect.gd's @onready expects this exact child name (used by the canonical pass)
+	rect.name = "Grade"
 	rect.anchor_right = 1.0
 	rect.anchor_bottom = 1.0
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_shader_mat = ShaderMaterial.new()
-	_shader_mat.shader = load("res://assets/shaders/screen_invert.gdshader")
+	_shader_mat.shader = load("res://assets/shaders/swamp_grade.gdshader")
 	rect.material = _shader_mat
 	_dark_effect_layer.add_child(rect)
 	add_child(_dark_effect_layer)
@@ -260,48 +261,22 @@ func _build_calibration_scene() -> void:
 	_gland.set_spawn_position(Vector3(0.0, Keepy.JUMP_PEAK_HEIGHT + Keepy.CAPSULE_HALF_HEIGHT, CAPTURE_Z))
 	_gland.visible = false
 
-## Sets the shader's three uniforms directly -- mirrors exactly what
-## DarkModeEffect._apply() does (intensity, tint_color, tint_amount),
-## see that function's own comments. Used during the sweep so this probe
-## can explore tint_amount values the shipped GameState constant never
-## takes; the canonical pass below re-derives the same numbers through
-## the real script instead.
-func _set_effect(intensity: float, tint_color: Color, tint_amount: float) -> void:
-	_shader_mat.set_shader_parameter("intensity", intensity)
-	_shader_mat.set_shader_parameter("tint_color", tint_color)
-	_shader_mat.set_shader_parameter("tint_amount", tint_amount)
-
-func _sweep_amount(amount: float) -> void:
-	var worst: float = INF
-	for i in GameState.DARK_VARIANTS.size():
-		var tint: Color = GameState.DARK_VARIANTS[i]
-		var palette_worst := await _measure_one(tint, amount, false)
-		worst = minf(worst, palette_worst)
-	_sweep_worst[amount] = worst
-
-## Measures every object at a given (tint, tint_amount) and returns the
-## worst object-vs-ground ratio seen. `verbose` prints the full
-## per-object breakdown (used only by the canonical pass, to keep the
-## sweep's own output to one line per candidate amount).
+## Measures every object against the ground in whatever dark state the
+## caller has already driven GameState into, and returns the worst
+## object-vs-ground ratio seen. `verbose` prints the full per-object
+## breakdown.
 ##
-## `via_real_effect`: when true, skips the direct _set_effect() uniform
-## poke -- the caller has already driven GameState.dark_intensity /
-## dark_variant_index, and the REAL DarkModeEffect.gd script (attached
-## for the canonical pass, see _run_canonical_pass) applies the uniforms
-## itself every frame through its own _process/_apply, exactly as it
-## would in the shipped game. This is what makes the canonical pass an
-## actual verification of the production code path instead of a second
-## copy of the sweep's own shortcut.
-func _measure_one(tint: Color, amount: float, verbose: bool, via_real_effect: bool = false, record: Dictionary = {}) -> float:
-	if not via_real_effect:
-		_set_effect(1.0, tint, amount)
+## The caller sets GameState.dark_intensity and the REAL DarkModeEffect.gd
+## applies it every frame through its own _process/_apply, exactly as in
+## the shipped game -- there is no probe-only shortcut path any more.
+func _measure_one(verbose: bool, record: Dictionary = {}) -> float:
 	_hide_all()
 	await _wait_frames(SETTLE_FRAMES)
 	var ground_color := _sample_strip(GROUND_STRIP_TOP_FRAC, 1.0)
 	var sky_color := _sample_strip(0.0, SKY_STRIP_BOTTOM_FRAC)
 
 	if verbose:
-		print("--- tint=%s  amount=%.2f ---" % [tint, amount])
+		print("--- swamp night (dark_intensity=%.2f) ---" % GameState.dark_intensity)
 		print("  ground (post-shader) = %s" % ground_color)
 		print("  sky    (post-shader) = %s" % sky_color)
 
@@ -374,45 +349,20 @@ func _record(record: Dictionary, label: String, ratio: float) -> void:
 		record[label] = []
 	record[label].append(ratio)
 
-## Second pass: attaches the REAL DarkModeEffect.gd script (removing the
-## sweep's direct uniform control) and drives it exactly the way a real
-## run does -- GameState.dark_intensity / dark_variant_index -- to prove
-## the shipped constant reproduces the sweep's numbers through the
-## actual production code path, not just through this probe's own
-## _set_effect helper.
+## Measures every hazard and collectible against the ground in the
+## shipped dark state, driving the REAL DarkModeEffect.gd exactly the way
+## a run does -- by setting GameState.dark_intensity and letting the
+## effect's own _process turn it into shader uniforms and sky colours.
 func _run_canonical_pass() -> void:
-	print("=== CANONICAL PASS (via real DarkModeEffect.gd + GameState.DARK_TINT_AMOUNT) ===")
-	# Rather than set_script() on the sweep's already-in-tree CanvasLayer
-	# (whether @onready re-runs on an already-parented node is not
-	# something to assume, per this repo's own "measure, don't assume"
-	# standard) -- remove it and build a FRESH CanvasLayer with the real
-	# script attached BEFORE it ever enters the tree, exactly the order
-	# a loaded .tscn gives DarkModeEffect.gd in the shipped game, so
-	# @onready var _rect resolves through the normal _ready() path.
-	_dark_effect_layer.queue_free()
-	_dark_effect_layer = CanvasLayer.new()
-	_dark_effect_layer.layer = 0
-	_dark_effect_layer.set_script(load("res://scripts/world/DarkModeEffect.gd"))
-	var rect := ColorRect.new()
-	rect.name = "Invert"
-	rect.anchor_right = 1.0
-	rect.anchor_bottom = 1.0
-	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_shader_mat = ShaderMaterial.new()
-	_shader_mat.shader = load("res://assets/shaders/screen_invert.gdshader")
-	rect.material = _shader_mat
-	_dark_effect_layer.add_child(rect)
-	add_child(_dark_effect_layer)
-	await _wait_frames(2)
-
+	print("=== DARK STATE (via real DarkModeEffect.gd) ===")
+	# The effect layer was already built with the real script attached
+	# (see _build_calibration_scene) -- nothing to swap in here any more.
 	GameState.state = GameState.State.PLAYING
 
 	var record: Dictionary = {}
-	for i in GameState.DARK_VARIANTS.size():
-		GameState.dark_variant_index = i
-		GameState.dark_intensity = 1.0
-		await _wait_frames(SETTLE_FRAMES)
-		await _measure_one(GameState.DARK_VARIANTS[i], GameState.DARK_TINT_AMOUNT, true, true, record)
+	GameState.dark_intensity = 1.0
+	await _wait_frames(SETTLE_FRAMES)
+	await _measure_one(true, record)
 
 	# Two DIFFERENT legibility questions, reported separately rather than
 	# folded into one pass/fail number -- conflating them would either
@@ -441,24 +391,22 @@ func _run_canonical_pass() -> void:
 	# Reported on its own line as well as inside the worst-of above: the
 	# CHARGER is the one hazard whose colour was CHOSEN against this
 	# measurement rather than inherited from an already-shipped mesh (see
-	# Obstacle.gd's TELEGRAPH section), so its per-palette numbers are the
-	# ones that decide whether that choice stands. It is also unshaded,
-	# which means -- unlike every lit hazard above -- its value here is a
-	# property of the palette alone and does not drift with the light.
-	print("charger worst (vs ground, across all %d palettes): %.2f:1"
-		% [GameState.DARK_VARIANTS.size(), _worst_of(record, ["CHARGER"])])
+	# Obstacle.gd's TELEGRAPH section), so this number is the one that
+	# decides whether that choice stands. It is also unshaded, which means
+	# -- unlike every lit hazard above -- its value here is a property of
+	# the palette alone and does not drift with the light.
+	print("charger worst (vs ground): %.2f:1" % _worst_of(record, ["CHARGER"]))
 	# STOMPER is the SECOND hazard whose colour was chosen against this
 	# measurement (same reasoning as CHARGER's own line above -- also
 	# unshaded, also a fresh mesh with no pre-existing colour to inherit).
-	print("stomper worst (vs ground, across all %d palettes): %.2f:1"
-		% [GameState.DARK_VARIANTS.size(), _worst_of(record, ["STOMPER (resting)"])])
+	print("stomper worst (vs ground): %.2f:1" % _worst_of(record, ["STOMPER (resting)"]))
 	print("collectible worst (NOISETTE/GLAND vs ground, reported only): %.2f:1" % collectible_worst)
 	print("")
-	print("NOTE: raising DARK_TINT_AMOUNT (0.18 -> 0.55) barely moves either number (measured")
-	print("in the SWEEP above: worst stayed 1.00-1.02:1 across the ENTIRE 0.18-0.75 range) --")
-	print("this floor is set by the plain screen INVERT step these objects' raw albedos already")
-	print("produced against the ground colour, not by the tint. It is a pre-existing property of")
-	print("this game's palette, not something this batch's tint change introduces or worsens.")
+	print("NOTE: under the OLD invert+tint pipeline these pairs sat at 1.00-1.02:1 and no")
+	print("choice of colour could move them -- the inversion, not the tint, set that ceiling")
+	print("(measured across the whole 0.18-0.75 tint range before the swamp refonte removed")
+	print("both passes). The numbers above are the swamp grade's, and they are the first ones")
+	print("in this game's history that a colour choice can actually influence.")
 	print("The critical gameplay question this floor does NOT answer on its own -- \"can I jump")
 	print("this hazard\" -- is answered by the dedicated JumpMarker (Obstacle.gd, chantier 2),")
 	print("verified separately below against a real AA floor, because its colour is fully")
@@ -606,17 +554,17 @@ func _visual_descendants(node: Node) -> Array[VisualInstance3D]:
 #                   far-field silhouette once the stripes blur together
 #                   at distance.
 #
-# THE DARK-PHASE SILHOUETTE FLOOR IS DELIBERATELY NOT AA, and that is a
-# measurement rather than a bar being lowered to pass. The dark cycle's
-# tint pass is an affine map at strength DARK_TINT_AMOUNT (0.55), so it
-# compresses EVERY luminance difference on screen toward a common colour
-# -- which is why GameState.DARK_TINT_AMOUNT's own doc already records
-# that this game's worst hazard-vs-ground pairs sit at 1.00-1.02:1, and
-# why no opaque object in this game can reach 3.0:1 against the ground
-# in dark mode regardless of the colour it is given. The honest
-# comparison for the silhouette is therefore against the hazards this
-# probe measures in the same run, and the barrier is reported next to
-# them rather than against an absolute floor nothing here can meet.
+# THE DARK-PHASE SILHOUETTE FLOOR IS DELIBERATELY NOT AA. Under the old
+# invert+tint pipeline this was forced: the tint was an affine map at
+# strength 0.55 that compressed EVERY luminance difference on screen
+# toward one colour, so no opaque object could reach 3.0:1 against the
+# ground in dark mode whatever colour it was given (worst pairs measured
+# 1.00-1.02:1). THE SWAMP GRADE LIFTS THAT CEILING -- it is monotone in
+# luminance rather than compressive -- so the reason this stays
+# unfloored is now weaker than it was. It is left reported-not-gated in
+# this lot on purpose: turning a descriptive number into a gate belongs
+# in a change that is ABOUT the barrier, with its own before/after, not
+# smuggled into the one that made the gate reachable.
 # Internal stripe contrast is not subject to that compression in the
 # same way (both stripes take the same affine map, and they start at
 # opposite ends of the luminance range), which is exactly why it is the
@@ -635,8 +583,7 @@ const BARRIER_SAMPLE_Y: float = 1.2
 
 func _run_barrier_pass() -> void:
 	print("=== LANE BARRIER PASS (track shrink telegraph) ===")
-	print("light phase + all %d dark palettes. STRIPE contrast carries the %.1f:1 floor;" % [
-		GameState.DARK_VARIANTS.size(), CONTRAST_FLOOR])
+	print("light phase + swamp-night dark phase. STRIPE contrast carries the %.1f:1 floor;" % CONTRAST_FLOOR)
 	print("the vs-ground silhouette is floored in the light phase only -- see the section header.")
 	print("")
 	_barrier = LaneBarrier.new()
@@ -653,20 +600,18 @@ func _run_barrier_pass() -> void:
 	worst_stripe = minf(worst_stripe, light.x)
 	worst_ground = minf(worst_ground, light.y)
 	var light_ground: float = light.y
-	for i in GameState.DARK_VARIANTS.size():
-		GameState.dark_variant_index = i
-		var r := await _measure_barrier("DARK palette %d" % i, 1.0, sample_pos)
-		worst_stripe = minf(worst_stripe, r.x)
-		worst_ground = minf(worst_ground, r.y)
-		worst_dark_ground = minf(worst_dark_ground, r.y)
+	var r := await _measure_barrier("DARK (swamp night)", 1.0, sample_pos)
+	worst_stripe = minf(worst_stripe, r.x)
+	worst_ground = minf(worst_ground, r.y)
+	worst_dark_ground = minf(worst_dark_ground, r.y)
 
 	print("")
-	print("worst STRIPE contrast, every palette : %.2f:1  %s (floor %.1f:1)" % [
+	print("worst STRIPE contrast, both phases   : %.2f:1  %s (floor %.1f:1)" % [
 		worst_stripe, "OK" if worst_stripe >= CONTRAST_FLOOR else "BELOW FLOOR", CONTRAST_FLOOR])
 	print("light-phase silhouette vs ground     : %.2f:1  %s (floor %.1f:1)" % [
 		light_ground, "OK" if light_ground >= CONTRAST_FLOOR else "BELOW FLOOR", CONTRAST_FLOOR])
 	print("worst dark-phase silhouette vs ground: %.2f:1  (reported, not floored -- see the section header;" % worst_dark_ground)
-	print("                                       this game's hazards sit at 1.00-1.02:1 in the same conditions)")
+	print("                                       compare against the hazard numbers measured above)")
 	if worst_stripe < CONTRAST_FLOOR or light_ground < CONTRAST_FLOOR:
 		push_error("LANE BARRIER BELOW CONTRAST FLOOR: worst stripe %.2f:1, light silhouette %.2f:1, floor %.1f:1." % [
 			worst_stripe, light_ground, CONTRAST_FLOOR])
