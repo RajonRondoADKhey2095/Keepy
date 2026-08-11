@@ -30,7 +30,7 @@ func _init() -> void:
 	gs.start_run()
 
 	var last_stage := -1
-	var last_dark_phase := -1
+	var last_mist_phase := -1
 	var last_intensity_bucket := -1
 	var t := 0.0
 	var steps := int(SIM_SECONDS / STEP)
@@ -55,14 +55,14 @@ func _init() -> void:
 
 		# Dark cycle reporting only exists once the cycle feature lands;
 		# guard so this probe also runs against the speed-only step.
-		if "dark_phase" in gs:
-			if gs.dark_phase != last_dark_phase:
-				last_dark_phase = gs.dark_phase
-				print("  t=%7.2fs  DARK PHASE -> %s" % [t, _phase_name(gs.dark_phase)])
-			var bucket := int(gs.dark_intensity * 10.0)
+		if "mist_phase" in gs:
+			if gs.mist_phase != last_mist_phase:
+				last_mist_phase = gs.mist_phase
+				print("  t=%7.2fs  DARK PHASE -> %s" % [t, _phase_name(gs.mist_phase)])
+			var bucket := int(gs.mist_intensity * 10.0)
 			if bucket != last_intensity_bucket:
 				last_intensity_bucket = bucket
-				print("      t=%7.2fs  intensity %.2f" % [t, gs.dark_intensity])
+				print("      t=%7.2fs  intensity %.2f" % [t, gs.mist_intensity])
 
 	print("=== end: t=%.1fs  speed %.1f m/s  distance-independent ===" % [t, gs.current_speed])
 	gs.free()

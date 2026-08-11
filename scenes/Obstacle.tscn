@@ -10,7 +10,7 @@ size = Vector3(1.2, 2.0, 1.0)
 size = Vector3(1.2, 2.0, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Dodge"]
-albedo_color = Color(0.55, 0.05, 0.05, 1)
+albedo_color = Color(0.3, 0.025, 0.025, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_Jump"]
 size = Vector3(1.2, 0.7, 1.0)
@@ -19,7 +19,8 @@ size = Vector3(1.2, 0.7, 1.0)
 size = Vector3(1.2, 0.7, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Jump"]
-albedo_color = Color(0.45, 0.28, 0.12, 1)
+shading_mode = 0
+albedo_color = Color(1, 0.78, 0.28, 1)
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_Enemy"]
 radius = 0.3
@@ -30,9 +31,9 @@ radius = 0.3
 height = 0.7
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Enemy"]
-albedo_color = Color(0.4, 0.05, 0.55, 1)
+albedo_color = Color(0.52, 0.08, 0.72, 1)
 emission_enabled = true
-emission = Color(0.4, 0.05, 0.55, 1)
+emission = Color(0.52, 0.08, 0.72, 1)
 emission_energy_multiplier = 0.3
 
 [sub_resource type="TorusMesh" id="TorusMesh_AirEnemy"]
@@ -56,7 +57,7 @@ size = Vector3(1.2, 2.0, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Charger"]
 shading_mode = 0
-albedo_color = Color(1.0, 0.15, 0.62, 1)
+albedo_color = Color(1, 0.72, 0.88, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ChargerTrail"]
 size = Vector3(1.1, 0.1, 0.6)
@@ -85,7 +86,7 @@ size = Vector3(1.2, 0.7, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Stomper"]
 shading_mode = 0
-albedo_color = Color(0.05, 0.2, 0.95, 1)
+albedo_color = Color(0.62, 0.86, 1, 1)
 
 [node name="Obstacle" type="Area3D"]
 collision_layer = 4

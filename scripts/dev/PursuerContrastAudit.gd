@@ -1,6 +1,6 @@
 extends Node
-## Capture probe for the PURSUER telegraph's legibility, per dark palette
-## and in the light phase. Same question, same metric and the same hard-won
+## Capture probe for the PURSUER telegraph's legibility, in the light phase
+## and in the swamp-night dark phase. Same question, same metric and the same hard-won
 ## method as ComboContrastAudit.gd -- read that file's header first, it
 ## documents the three ways this kind of probe silently lies and how each is
 ## avoided (a scrolling background making captures frame-dependent, pausing
@@ -9,17 +9,17 @@ extends Node
 ##
 ## WHAT IS MEASURED, and why it is two different questions:
 ##
-##   GAUGE (HUD, CanvasLayer layer 1) -- above DarkModeEffect's layer, so
-##     the invert shader never touches it and its own colours are the same
+##   GAUGE (HUD, CanvasLayer layer 1) -- nothing draws below it any more, so
+##     the grade shader never touches it and its own colours are the same
 ##     in every phase. Only its BACKGROUND swings. Same situation as the
 ##     combo row, same white-fill-inside-dark-outline treatment, judged on
 ##     the better of fill-vs-background and outline-vs-background because
 ##     that is what an outlined glyph presents to the eye.
 ##
-##   SILHOUETTE (3D, below the effect layer) -- genuinely IS inverted and
-##     tinted along with the rest of the world, so unlike the gauge its
-##     on-screen colour is different in all seven cases. This is the half
-##     that actually needed checking rather than reasoning about.
+##   SILHOUETTE (3D, below the effect layer) -- genuinely IS swamp-graded
+##     along with the rest of the world, so unlike the gauge its on-screen
+##     colour differs between the two cases. This is the half that actually
+##     needed checking rather than reasoning about.
 ##
 ## The silhouette is compared against the ground it is seen against, which
 ## is what DarkPaletteAudit.gd established as the right reference for
@@ -35,8 +35,10 @@ extends Node
 ## header "silhouette:ground". Measured, the difference is not cosmetic:
 ## the sampled background moved #933946 -> #8c2938 in DARK/0 and
 ## #eda488 -> #ffc7a6 in the light phase, and the reported ratio moved by
-## up to 0.45 across the dark palettes (2.6 in the light phase) -- enough
-## to carry three of the six back over this file's silhouette floor.
+## up to 0.45 across the then-six dark palettes (2.6 in the light phase) --
+## enough to carry three of them back over this file's silhouette floor.
+## (Those palettes are gone since the swamp refonte; the correction and the
+## reason for it are not.)
 ##
 ## WHAT THAT STOPS MEASURING, said plainly rather than dropped: pursuer
 ## against KEEPY is a legitimate legibility question in its own right --
@@ -57,30 +59,34 @@ const SETTLE_FRAMES: int = 24
 ## text.
 const CONTRAST_FLOOR: float = 3.0
 
-## SEPARATE, LOWER FLOOR FOR THE 3D SILHOUETTE -- and this is a derived
-## limit, not a threshold relaxed until the red went green.
+## SEPARATE, LOWER FLOOR FOR THE 3D SILHOUETTE.
 ##
-## AA-large (3.0:1) is NOT ACHIEVABLE by any 3D object against this game's
-## ground while GameState.DARK_TINT_AMOUNT is 0.55. Sweeping every possible
-## unshaded albedo from pure black to pure white, against the measured lit
-## ground colour, through the real invert-then-tint the shader performs, the
-## best contrast any object can reach is:
+## ITS ORIGINAL JUSTIFICATION IS DEAD, AND THE VALUE IS KEPT ANYWAY --
+## which is worth stating plainly rather than quietly leaving a number in
+## place. 2.5 used to be a DERIVED ceiling: under the old invert-then-tint
+## pipeline, AA-large (3.0:1) was unreachable by ANY 3D object against
+## this game's ground. Sweeping every unshaded albedo from black to white
+## through the real shader, the best any object could reach was
 ##
 ##   crimson 2.83   amber 2.32   green 2.05   blue 2.29   violet 2.71   magenta 2.70
 ##
-## and pure black is the optimum in all six -- which is exactly what
-## Pursuer.tscn ships. This is the same structural fact GameState's own
-## DARK_TINT_AMOUNT comment already records for gameplay objects generally:
-## the floor is set by the invert step against this fixed palette, not by
-## the tint strength, and not by any choice left open here.
+## with pure black optimal in all six -- exactly what Pursuer.tscn ships.
+## The floor was set by the inversion against a fixed palette, not by any
+## choice left open to a designer.
 ##
-## So the silhouette is held to 2.5 -- comfortably above the 2.05 worst case
-## the maths allows, and below the 2.65 worst case actually measured, which
-## keeps this a genuine regression guard rather than a rubber stamp. The
-## HUD gauge stays on the real 3.0 floor and clears it everywhere, and it
-## is the load-bearing cue: the silhouette is the third of three redundant
-## signals (vignette, gauge, silhouette), only one of which depends on
-## colour at all.
+## THE SWAMP GRADE REMOVES THAT CEILING ENTIRELY. The grade is monotone in
+## luminance, so the pursuer's near-black silhouette now stays near-black
+## instead of being flipped to near-white, and the ceiling that forced 2.5
+## no longer exists -- the measured margin is comfortably wider than it
+## ever was under the invert.
+##
+## THE FLOOR IS DELIBERATELY NOT RAISED TO 3.0 IN THE SAME CHANGE THAT
+## MADE 3.0 REACHABLE. Tightening a contract at the same moment as the
+## rewrite that satisfies it means a later regression gets attributed to
+## the tightening rather than to itself, and it makes this lot's
+## before/after incomparable on its own terms. 2.5 stays as the guard;
+## raising it is a separate, deliberate decision with its own before/after,
+## and the headroom to make it is recorded in this lot's numbers.
 const SILHOUETTE_CONTRAST_FLOOR: float = 2.5
 
 ## Lead the probe pins the pursuer at -- close enough to be well inside the
@@ -97,7 +103,7 @@ const TEST_LEAD_S: float = 1.5
 const DECOR_SEED: int = 20260806
 
 var _game: Node3D
-var _invert_rect: ColorRect
+var _atmosphere: Node
 var _pursuer: Node3D
 var _keepy: Node3D
 var _pursuer_row: Control
@@ -112,7 +118,7 @@ func _ready() -> void:
 	ProbeWatchdog.arm(self, "PursuerContrastAudit")
 	print("=== PURSUER TELEGRAPH CONTRAST AUDIT ===")
 	print("metric: WCAG relative-luminance contrast on real sampled pixels")
-	print("floors: gauge %.1f:1 (AA large)   silhouette %.1f:1 (derived ceiling, see source)" % [
+	print("floors: gauge %.1f:1 (AA large)   silhouette %.1f:1 (see source)" % [
 		CONTRAST_FLOOR, SILHOUETTE_CONTRAST_FLOOR])
 	# BEFORE instantiate(), not after: the first TrackSegments are built
 	# inside TrackManager._ready(), i.e. during the add_child() below, so a
@@ -124,21 +130,21 @@ func _ready() -> void:
 	print("")
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
-	_invert_rect = _game.get_node("DarkModeEffect/Invert")
 	_pursuer = _game.get_node("World/Pursuer")
 	_keepy = _game.get_node("World/Keepy")
 	var hud: CanvasLayer = _game.get_node("HUD")
 	_pursuer_row = hud.get_node("MarginContainer/PursuerRow")
 	_gauge_fill = hud.get_node("MarginContainer/PursuerRow/GaugeTrack/GaugeFill")
-	# This probe owns the three shader uniforms -- see ComboContrastAudit.
-	var dark_effect: CanvasLayer = _game.get_node("DarkModeEffect")
-	dark_effect.set_process(false)
+	# This probe pins the effect itself -- see _measure.
+	_atmosphere = _game.get_node("SwampAtmosphere")
+	# _process off so GameState cannot overwrite the pinned intensity every
+	# frame; the probe then calls _apply() itself -- see _measure below.
+	_atmosphere.set_process(false)
 	call_deferred("_run")
 
 func _run() -> void:
-	await _measure("LIGHT", -1)
-	for i in GameState.DARK_VARIANTS.size():
-		await _measure("DARK/%d" % i, i)
+	await _measure("LIGHT", false)
+	await _measure("DARK", true)
 	_report()
 
 ## Holds the track still without pausing the tree (pausing stops rendering
@@ -179,16 +185,17 @@ func _freeze() -> void:
 	var sc: float = lerpf(Pursuer.FAR_SCALE, Pursuer.NEAR_SCALE, t)
 	_pursuer.scale = Vector3(sc, sc, sc)
 
-func _measure(label: String, variant_index: int) -> void:
+func _measure(label: String, dark: bool) -> void:
 	_freeze()
-	var material: ShaderMaterial = _invert_rect.material
-	if variant_index < 0:
-		_invert_rect.visible = false
-	else:
-		_invert_rect.visible = true
-		material.set_shader_parameter("intensity", 1.0)
-		material.set_shader_parameter("tint_color", GameState.DARK_VARIANTS[variant_index])
-		material.set_shader_parameter("tint_amount", GameState.DARK_TINT_AMOUNT)
+	# Drive the REAL SwampAtmosphere._apply() rather than writing the
+	# shader uniforms by hand. Since the swamp refonte the dark look is
+	# TWO things -- the screen grade AND the sky/haze colours written
+	# into the WorldEnvironment -- and poking only the shader would
+	# measure a swamp-graded world under a DAYTIME BLUE sky, which is
+	# not a state the game can ever be in. Going through the real entry
+	# point is the same discipline this probe already applies to
+	# GameState.register_strike() and friends.
+	_atmosphere._apply(1.0 if dark else 0.0)
 
 	await _settle()
 	var gauge_rect := Rect2i(Vector2i(_pursuer_row.global_position), Vector2i(_pursuer_row.size))
@@ -314,18 +321,18 @@ func _contrast(a: Color, b: Color) -> float:
 	return (maxf(la, lb) + 0.05) / (minf(la, lb) + 0.05)
 
 func _report() -> void:
-	print("palette      gauge:bg    silhouette:ground   verdict")
+	print("phase        gauge:bg    silhouette:ground   verdict")
 	print("-----------  ----------  ------------------  -------")
 	for r in _results:
 		print("%-11s  %7.2f:1   %15.2f:1   %s" % [
 			r["label"], r["gauge"], r["pursuer"], ("PASS" if r["ok"] else "FAIL")])
 	print("")
 	if _failures > 0:
-		push_error("PURSUER CONTRAST AUDIT FAILED: %d palette(s) under floor (gauge %.1f:1 / silhouette %.1f:1)." % [
+		push_error("PURSUER CONTRAST AUDIT FAILED: %d case(s) under floor (gauge %.1f:1 / silhouette %.1f:1)." % [
 			_failures, CONTRAST_FLOOR, SILHOUETTE_CONTRAST_FLOOR])
 		get_tree().quit(1)
 		return
 	print("PASSED: gauge clears %.1f:1 and silhouette clears %.1f:1 in the light phase" % [
 		CONTRAST_FLOOR, SILHOUETTE_CONTRAST_FLOOR])
-	print("        and in all %d dark palettes." % GameState.DARK_VARIANTS.size())
+	print("        and in the swamp-night dark phase.")
 	get_tree().quit(0)

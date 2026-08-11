@@ -8,7 +8,7 @@ class_name LaneBarrier
 ## OWNS NO TIMING AND NO RULES. Which lane is shut, and how far through
 ## the window we are, both live in GameState (shrink_lane /
 ## shrink_amount); this node is a dumb renderer of that state, exactly
-## the split DarkModeEffect.gd already uses for the dark cycle. Nothing
+## the split SwampAtmosphere.gd already uses for the mist breath. Nothing
 ## here decides anything a probe would need to re-derive.
 ##
 ## IT HAS NO COLLIDER, ON PURPOSE. The lane is made unavailable by
@@ -80,7 +80,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if GameState.state != GameState.State.PLAYING or not GameState.shrink_active():
 		# A run that ends mid-window must not leave a wall standing on the
-		# game over screen -- same reasoning as DarkModeEffect's own
+		# game over screen -- same reasoning as SwampAtmosphere's own
 		# not-PLAYING branch.
 		visible = false
 		return

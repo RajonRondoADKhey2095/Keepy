@@ -353,105 +353,147 @@ Prefer **one 512x512 or 1024x1024 albedo atlas per character** over
 several maps; normal/roughness maps buy very little on unshaded or
 flat-lit low-poly.
 
-## 8. Materials and dark mode — the constraint that decides legibility
+## 8. Materials and the permanent swamp — the constraint that decides legibility
 
-Every ~20 seconds the game inverts the entire rendered frame and blends it
-55% toward one of six saturated tints. At full dark, per pixel:
+**This whole section was rewritten on 2026-08-11, when the swamp became the
+game's permanent look.** Two pipelines have been deleted since it was first
+written, and everything either of them implied about colour is void:
 
-    final = (1 - rendered) * 0.45  +  tint * 0.55
+- the **invert + six-hue tint** (`final = (1-rendered)*0.45 + tint*0.55`),
+  deleted by the swamp refonte;
+- the **luminance-keyed screen grade** that replaced it, deleted by the
+  permanent-swamp batch.
 
-Two consequences follow from that formula directly, and they are the whole
-of the colour guidance:
+There is **no post-process on the frame at all any more**. The value written
+into a material is the value that reaches the player, full stop. If you are
+reading an older note anywhere in this repo that tells you to author a
+colour as the *pre-image* of something, or warns that hue will not survive,
+it is describing machinery that no longer exists.
 
-1. **Hue separation collapses.** Every colour on screen is dragged 55% of
-   the way toward *the same* saturated hue. Two objects that differed only
-   in hue end up nearly the same colour.
-2. **Value (luminance) separation survives, at exactly 45% strength.** The
-   map is affine with slope -0.45 per channel, so any two colours'
-   per-channel difference is preserved — scaled to 45% of what it was, and
-   *inverted* (the lighter one becomes the darker one).
+### The look
 
-Measured confirmation, from the lane barrier (a bright striped wall) across
-all six palettes:
+**Updated 11 August 2026, saturation pass** (device feedback: the values
+below this table originally shipped read as near-black on a phone, not as
+green — see the dated addendum after the measured table below for the full
+before/after and why value could not simply be raised instead).
 
-| | measured range |
+| | |
 |---|---|
-| Barrier **vs ground** (silhouette contrast) | **1.56:1 – 1.92:1** |
-| Barrier's **own internal stripes** | **3.18:1 – 4.07:1** |
+| Sky / background | `0.062, 0.115, 0.044` — dark, saturated swamp green |
+| Distance haze (`fog_light_color`) | `0.151, 0.260, 0.114` |
+| Ambient light | `0.42, 0.50, 0.35` @ energy 0.75 |
+| Directional light | `0.66, 0.74, 0.52` @ energy 0.9 |
+| Ground slab (albedo) | `0.24, 0.46, 0.17` — saturated green, hue clearly dominant over red |
 
-And from the tint sweep: the worst object-vs-ground contrast sits at
-**1.00:1 – 1.03:1 across the entire tint range 0.18 → 0.75**. The floor is
-set by the raw albedos against the ground colour — *not* by the tint
-amount. Turning the tint down would not fix it.
+The track is the **brightest large surface in the frame** and everything
+else sinks away from it: that is what makes it read as a path through a bog
+rather than a strip in a void. `scripts/world/SwampAtmosphere.gd` breathes
+the sky, haze and fog density between this baseline and a slightly deeper
+pair (`GameState.SWAMP_*_DEEP`); the breath is confined to the backdrop and
+never touches a gameplay surface.
 
-**So, concretely:**
+### What actually decides legibility now
 
-- **Do not rely on colour to separate an asset from the ground.** It does
-  not survive, and no tint setting makes it survive.
-- **Put the contrast INSIDE the asset.** Internal light/dark contrast
-  holds 3.18–4.07:1 through every palette, while silhouette-vs-ground
-  falls to 1.56:1. Strong value structure — a pale belly against a dark
-  back, banded markings, a light rim — is what stays readable.
-- **Silhouette is the most reliable cue there is**, because it is geometry
-  and survives every palette unchanged. Give each hazard a shape readable
-  in pure black at a glance.
-- **Avoid mid-luminance albedos near the ground's** `rgb(0.55, 0.42, 0.32)`.
-  Go clearly lighter or clearly darker.
-- **Use `shading_mode = unshaded`** for anything whose dark-mode appearance
-  must be predictable. An unshaded surface renders as exactly its albedo
-  regardless of light angle, which is the only way its post-inversion
-  colour is a *known* value. The CHARGER, STOMPER, jump marker and pursuer
-  body all already do this.
-- **Emission inverts too.** A bright emissive surface becomes dark after
-  the invert. Do not use a glow as a "always bright" cue.
+The ground renders at **relative luminance 0.150** (was 0.153 before the
+11 August saturation pass — held deliberately close, see the addendum
+below). That single number sets what is reachable, and it is worth stating
+as arithmetic rather than as advice, because it is not obvious:
 
-Current placeholder palette, for reference (do not reuse these hues
-blindly — they were chosen to be mutually distinct, which §8 just
-explained is the *weakest* axis in dark mode):
+- to clear **3.0:1 by being brighter**, a surface needs relative luminance
+  **≥ 0.549** — a genuinely bright colour, not merely a light one;
+- to clear it **by being darker**, it needs **≤ 0.017** — near black.
 
-| Object | shading | albedo |
-|---|---|---|
-| Keepy | lit | `0.92, 0.55, 0.20` |
-| DODGE | lit | `0.55, 0.05, 0.05` |
-| JUMP | lit | `0.45, 0.28, 0.12` |
-| ENEMY | lit + emissive | `0.40, 0.05, 0.55` |
-| AIR_ENEMY | lit + emissive | `0.12, 0.85, 0.22` |
-| CHARGER | **unshaded** | `1.00, 0.15, 0.62` |
-| STOMPER | **unshaded** | `0.05, 0.20, 0.95` |
-| Jump marker | **unshaded** | `0.15, 0.95, 1.00` |
-| Noisette | lit | `0.95, 0.78, 0.15` |
-| Gland | lit + emissive | `1.00, 0.72, 0.15` |
-| Pursuer body | **unshaded** | `0.02, 0.02, 0.03` |
-| Ground | lit | `0.55, 0.42, 0.32` |
+Anything landing between those two is *below the floor no matter what hue it
+is*. So the rule is no longer "put contrast inside the asset" (that was the
+invert's rule, when value was the only surviving channel). It is:
 
-> **Note on a known probe defect.** `DarkPaletteAudit`'s per-object
-> sampling path currently reports `(0,0,0)` for 26 of its samples under
-> software rendering (llvmpipe). Those values are **impossible shader
-> outputs** — at full dark with the green tint, `final.r >= 0.12 * 0.55 =
-> 0.066`, so a true zero cannot occur — and the probe's *barrier* pass,
-> which samples through a different code path, returns correct non-zero
-> values for the very same palettes. The per-object numbers from that path
-> should not be trusted until it is fixed; the barrier numbers and the
-> sweep summary above are the ones this section relies on. Unrelated to
-> this batch, not fixed here.
+> **Every gameplay surface must be decisively brighter or decisively darker
+> than the track. Mid-value is the one place nothing can be rescued from.**
 
-> **Open design item, awaiting Mathieu's call -- pursuer body vs `DARK/2`
-> ground (2026-08-09, `docs/PROBE_AUDIT.md` F10a).** Measured against the
-> correct reference surface (the ground, not Keepy -- the probe used to
-> sample the wrong thing, see F10a), `Pursuer body`'s `0.02, 0.02, 0.03`
-> reads **2.37:1** against `DARK/2`'s ground, under this project's own
-> 2.5:1 silhouette floor. This table's palette already sits at pure black,
-> which the sweep behind the 2.5 floor puts at the *optimum* achievable
-> value against this ground on this tint -- there is no darker or lighter
-> unshaded albedo that reads better here, and the sweep's own ceiling for
-> green (2.05) is already below the measured 2.37, so re-picking the
-> pursuer's colour cannot close this gap. The two variables that can:
-> **the ground's own albedo** (`0.55, 0.42, 0.32` above) or
-> **`GameState.DARK_TINT_AMOUNT`** (0.55) -- both of which move every
-> other object's dark-mode contrast on this table, not only the pursuer's.
-> That is a project-wide colour call, not a per-asset one, and it is left
-> for Mathieu to make. No code or probe change is pending on this note.
+Hue now survives to the screen, and it is doing real work again — a red
+barrier, an amber ledge and a pink charger are three different colours to
+the player for the first time in this project's history. But hue contributes
+**nothing** to the WCAG ratio the probes report, so it can never be the
+argument for a surface that sits at the track's own value.
 
+### Measured, `DarkPaletteAudit`, both ends of the mist breath
+
+Contrast is WCAG relative-luminance ratio on real sampled pixels, against
+the ground (the load-bearing comparison — the camera is close and angled
+down, so gameplay objects are read against the track, not the sky).
+
+| Object | shading | albedo | vs ground |
+|---|---|---|---|
+| DODGE | lit | `0.30, 0.025, 0.025` | **3.19:1** (was 3.28:1) |
+| JUMP | **unshaded** | `1.00, 0.78, 0.28` | **3.28:1** (was 3.23:1) |
+| STOMPER | **unshaded** | `0.62, 0.86, 1.00` | **3.41:1** (was 3.36:1) |
+| CHARGER | **unshaded** | `1.00, 0.72, 0.88` | **3.20:1** (was 3.15:1) |
+| ENEMY | lit + emissive | `0.52, 0.08, 0.72` | 1.50:1 — alarm tint, see below |
+| AIR_ENEMY | lit + emissive | `0.12, 0.85, 0.22` | 1.08:1 — alarm tint, see below |
+| Noisette | lit | `0.95, 0.78, 0.15` | 2.37:1 (reported, never gated) |
+| Gland | lit + emissive | `1.00, 0.72, 0.15` | 4.54:1 (reported, never gated) |
+
+DODGE, JUMP and STOMPER were re-authored by the permanent-swamp batch and
+all three cleared the floor as a result — 1.72 → 3.28, 1.39 → 3.23 and
+1.14 → 3.36. JUMP was switched to **unshaded** at the same time, for the
+reason this section already gives below: an unshaded surface renders as
+exactly its albedo, which is the only way its measured value is a *known*
+number rather than a product of the light hitting it.
+
+> **SATURATION PASS, 11 August 2026 (device feedback: the swamp read as
+> black, not green).** The "vs ground" column above is the CURRENT
+> measurement, after the ground albedo, sky, haze, curbs and decor tints
+> all moved to higher saturation and a unified ~105 deg hue (see "The
+> look" table above). Ground albedo moved `0.42, 0.44, 0.24` (raw H=66,
+> S=0.46, V=0.44) → `0.24, 0.46, 0.17` (raw H=105.5, S=0.63, V=0.46);
+> **rendered** ground (what `DarkPaletteAudit` actually samples, after
+> this scene's ambient/directional light) moved H=76.7/S=0.68/L=0.153 →
+> H=103.1/S=0.81/L=0.150 — the ambient light (`0.42, 0.5, 0.35`) pulls
+> saturation and hue further than the raw albedo alone would suggest,
+> which is why the final value was reached by re-measuring with the real
+> probe rather than by picking a number on paper: a first attempt at
+> `0.25, 0.47, 0.18` rendered at L=0.158, close enough to the CHARGER
+> ceiling above to drop it to 3.08:1. Held ground luminance deliberately
+> close to its old value (0.150 vs 0.153) for the same reason the
+> arithmetic two sections up exists — the four hazard floors this table
+> exists to protect. Sky/haze moved the same direction: `SWAMP_SKY` raw
+> S=0.35/V=0.08 → S=0.62/V=0.115 (the low V was why the title screen and
+> the opening seconds of a run read as grey-black rather than green —
+> `SwampIdentityAudit`'s TITLE SCREEN sample went from mean saturation
+> 0.295 to 0.582 as a direct result). `PursuerContrastAudit` silhouette
+> moved 4.13/4.06 → 4.05/3.99 (floor 2.5:1, still comfortable).
+
+> **ENEMY and AIR_ENEMY are measured in their ALARM tint, not at rest,**
+> and the probe's own `(resting)` labels are wrong about this. At the
+> capture distance the alarm ramp (`Obstacle.ENEMY_ALARM_ALBEDO`,
+> `0.95, 0.08, 0.12`) has fully taken over the material, so what those two
+> rows measure is the red telegraph, not the base albedo — changing the
+> base colour barely moves them. That red is luminance-poor against the
+> track regardless of its hue, which is why both sit low. Raising them means retuning the
+> **telegraph**, not the art: a gameplay-legibility decision, left for
+> Mathieu. The mislabelling is pre-existing and is called out here rather
+> than silently corrected, because the numbers under it are real.
+
+> **The CHARGER is the case where hue and luminance genuinely disagree.**
+> Its shipped hot magenta (`1.00, 0.15, 0.62`) measured **1.45:1** — not a
+> tuning miss but a property of magenta, which has no green channel and so
+> cannot be luminance-bright at any saturation. It is the only *fatal*
+> hazard, so it is also the one that must never be missed. The batch raised
+> it to a pale hot pink to clear the floor by value while keeping the hue
+> identity. The accessibility argument is the one that decided it: for a
+> deuteranope, magenta against olive is precisely the confusable pair, and
+> luminance is all that is left.
+
+**Still true, and still the strongest advice here:**
+
+- **Silhouette is the most reliable cue there is** — it is geometry, and no
+  palette change touches it. Give each hazard a shape readable in pure
+  black at a glance.
+- **Use `shading_mode = unshaded`** for anything whose appearance must be
+  predictable. CHARGER, STOMPER, JUMP, the jump marker, the lane curbs, the
+  trackside props and the pursuer body all do.
+- **Emission is no longer inverted** (nothing inverts), so a glow is once
+  again a dependable "always bright" cue.
 ### 8.1 Background decor (procedural, no asset yet)
 
 `scripts/world/Decor.gd` (`World/Decor` in `Game.tscn`) draws the two
@@ -498,15 +540,29 @@ turning a purely-visual system into something that changes which hazards a
 seeded run actually spawns. Caught in this same batch (see the commit
 history around `Decor.gd`/`TrackSegment.gd`'s `_tint_rng`) before it shipped.
 
-### 8.2 Trackside props (procedural, no asset yet)
+### 8.2 Trackside props (four procedural, two imported since 2026-08-10)
 
 `TrackSegment.gd` (`_build_trackside_props` / `_place_trackside_props`)
-draws low-poly trees and rocks standing on the ground plane just outside
-the track. Like the hills of 8.1 and the lane curbs beside them, these are
-plain Godot primitives — a tapered `CylinderMesh` trunk under a 5-sided
-cone canopy for a tree, one 6x3 `SphereMesh` squashed and yawed for a rock
-— with no `.glb` and no texture, so this file's import checklist does not
-apply to them yet.
+draws low-poly props standing on the ground plane just outside the track.
+
+**Four of the six kinds are still plain Godot primitives** — one 6x3
+`SphereMesh` squashed and yawed for a rock, boxes on capless cylinders for
+the bench and sign, three squashed spheres for the bush — with no `.glb`
+and no texture, so this file's import checklist does not apply to them.
+
+**Two are imported meshes as of 2026-08-10**: `tree` (a bare winter tree)
+and `stump` each draw one 150-triangle `.glb` from `assets/models/`. They
+are **not** `ModelSlot` installs and §2's procedure does not describe them
+— see 8.3. Their albedos are unchanged, and are still the swept values in
+the table below: the mesh changed, the palette did not.
+
+> **The `tree` kind lost its second albedo.** It was a trunk under a
+> canopy, i.e. two values on one object; the bare tree is all branches, so
+> `_TREE_CANOPY_COLOR` (0.14, 0.20, 0.15) is gone with the cone that
+> carried it and `_TREE_TRUNK_COLOR` is now the whole prop. That REMOVES a
+> value from the swept set without adding one, so no pair below needs
+> re-measuring — and it retires the worst pair the table shipped with, the
+> canopy-vs-trunk 1.29:1 that was the hardest of the six to tell apart.
 
 **They belong to a TILE, not to the world**, which is why they are built
 and pooled by `TrackSegment` rather than added to `Decor.gd`. A hill needs
@@ -747,6 +803,53 @@ than argued: all seven gated bot probes plus `AssetContractAudit` and
 `ChargerShapeProbe` byte-identical before and after at seed 20260806,
 0 colliders moved. The new kinds add `MeshInstance3D` children only —
 still no `CollisionShape3D` anywhere under a segment beyond the slab's.
+
+### 8.3 Imported decor props are flat, untextured and unlit — by decision
+
+The two imported props of 8.2 carry **no texture at all**: no base colour
+map, no normal, no metallic-roughness. Their material is a single flat
+albedo with `KHR_materials_unlit`. Three reasons, in the order they bind.
+
+**1. Payload.** The five distinct Meshy decor sources import to **64.91 MB
+of `.ctex`** against a whole shipped `.pck` of **4.23 MB** — a 15x
+increase, on a game whose payload lesson (§7, 2026-08-09) was learned by
+finding 35.84 MB of dead weight and cutting it. The single worst offender
+was a 4096x4096 metallic-roughness map on every asset, which is also the
+least useful one here. Dropped, the two installed props cost **+13,120
+bytes of `.pck` between them**, measured.
+
+**2. Unlit has no use for most of those maps anyway.** §8's rule is
+unshaded, because only an unshaded surface has a *known* colour once the
+dark-mode inversion runs. Metallic and roughness do nothing on an unlit
+material, and a normal map does nothing without a light to perturb.
+
+**3. The decimator cannot carry UVs.** Welding the separate shells is what
+lets a quadric decimator reach these targets at all (see §11), and it does
+not preserve UVs, so a texture could not survive the trip at any triangle
+count. Keeping the texture would mean not decimating, which reason 1
+forbids. This is also exactly why the leafy tree was **not** installed:
+its character *is* its leaf colour, so the pipeline destroys the thing
+worth having, and the result reads worse than the 25-triangle cone it
+would have replaced.
+
+> **`KHR_materials_unlit` IS ADDED BY US, NOT CARRIED OVER.** Not one of
+> the five Meshy sources declares it — `extensionsUsed` is absent from all
+> of them, and all are PBR with baseColor + metallicRoughness + normal.
+> `scripts/dev/decimate_decor.py` writes the extension into every file it
+> emits. Do not read a `.glb` in `assets/models/` as evidence of what
+> Meshy produced.
+
+> **`baseColorFactor` is LINEAR; the palette in `TrackSegment.gd` is
+> sRGB.** Godot's `StandardMaterial3D.albedo_color` is an sRGB colour and
+> 8.2's sweep was run against `_unshaded(Color(...))` materials carrying
+> those numbers, so the decimator converts before baking. Writing the sRGB
+> value straight in — which the first version of the script did — made
+> Godot read `_TREE_TRUNK_COLOR`'s 0.13 back as **0.396**, far brighter
+> than the swept value. It never reached the screen, because
+> `_build_prop_mesh` overrides the surface material with the GDScript
+> colour, but that made the override the only thing holding the palette
+> rather than a second line of defence. Both now agree, verified by
+> reading the material back after import.
 
 ## 9. Godot 4.3 import notes
 
@@ -1284,3 +1387,427 @@ since nothing in `HUD.gd` was misbehaving. Note it is a **real-time** wait
 is also driven by the fixed delta and can return before the audio thread has
 done anything. Re-measured **byte-identical** to the pre-audio baseline. Any
 future probe that fires audio and quits promptly needs the same treatment.
+
+### 2026-08-10 -- Trackside decor batch, NOT INSTALLED (measured, not assumed)
+
+Six `.glb` were committed **directly to `main`** (`0502fb8`, "decor") without a
+branch or a PR -- the same binary-transfer exception already recorded for the
+Emberwing Owl. See CLAUDE.md for the exception itself; this entry is about what
+the files turned out to be.
+
+**The brief described seven files and six subjects (deciduous tree, conifer,
+rock, stump, bush, bench). None of those three counts is what arrived.**
+Measured, not read off the filenames:
+
+| file | md5 | tri | verts | PNG maps |
+|---|---|---|---|---|
+| `..._Low_Poly_Tree_0810131748_texture.glb` | `befb3ee0` | 5,230 | 5,798 | 3 (14.60 MB) |
+| `..._Winter_s_Reach_0810130613_texture.glb` | `2d260e82` | 4,486 | 6,635 | 3 (18.14 MB) |
+| `..._Low_Poly_Tree_Stump_0810131232_texture.glb` | `69f8c267` | 4,130 | 3,650 | 3 (14.37 MB) |
+| `..._Green_Cluster_0810130244_texture.glb` | `b811fdb8` | 4,945 | 4,112 | 3 (11.90 MB) |
+| `..._Green_Cluster_0810132223_generate.glb` | `442af52e` | 4,950 | 7,372 | 0 (0.25 MB) |
+| `..._Winter_s_Reach_..._texture - Copie.glb` | `2d260e82` | -- | -- | byte-identical duplicate |
+
+So: **six files, five distinct payloads, four distinct subjects.** `- Copie` is
+the same bytes as its sibling (identical md5), and `..._generate` is an
+untextured variant of the Green Cluster.
+
+**Subjects verified by offscreen render, never by filename** (§3's rule). The
+renders also settle the orientation question: all four are Y-up with the
+trunk/base at -Y, i.e. correct as authored, no `model_rotation_degrees` needed.
+
+* `Low_Poly_Tree` -- a leafy deciduous tree. Matches "arbre feuillu".
+* `Winter_s_Reach` -- **a bare, leafless winter tree, NOT a conifer.** Its
+  bounding box (1.86 x 1.54 x 1.91) is roughly cubic, which is already the
+  wrong shape for a conifer; the render confirms it.
+* `Low_Poly_Tree_Stump` -- a stump with flared roots. Matches "souche".
+* `Green_Cluster` -- a clump of foliage blobs. Matches "buisson".
+
+**There is no rock and no bench.** The procedural `rock` and `bench` kinds
+(and `sign`) have no supplied replacement, so this batch could never have been
+the wholesale swap the brief describes.
+
+#### Why none of them was installed
+
+Three independent blockers, each measured.
+
+**1. Triangles.** `TrackPropsAudit` on the untouched tree: frame **48,376 tri
+against the 50,000 target -- 1,624 of headroom**, with the props family at
+**781**. Per-kind census (`TracksidePropCensus`, new in this batch) puts
+**12.6 props on screen at once** in steady state, distributed by
+`_PROP_KIND_WEIGHTS`. Replacing the three kinds that *do* have a subject, at
+the decimator's unaided floor (tree 603, stump 423, bush 256 tri):
+
+| kind | instances | now | as .glb | delta |
+|---|---|---|---|---|
+| tree | 4.03 | 25 tri | 603 tri | +2,329 |
+| bush | 2.27 | 108 tri | 256 tri | +336 |
+| stump | 1.76 | 48 tri | 423 tri | +660 |
+
+Props go **781 -> ~3,945 tri (2.6x their 1,500 budget)** and the frame to
+**~51,540, over target**. Worst-frame extrapolation from the observed per-kind
+maxima reaches ~7,217 tri of props and ~54,800 in frame.
+
+The obvious answer -- reclaim budget from the collectibles, which draw 29,568
+tri of the 48,376 (§7.2) -- is **deliberately not taken here**: that fix
+changes the silhouette of a visible gameplay object and is already recorded as
+needing its own device review.
+
+**2. Payload.** The five distinct `.glb` import to **64.91 MB of `.ctex`**
+against a whole shipped `.pck` of **4.23 MB** -- a 15x increase, on a game
+whose payload lesson (§7, 2026-08-09) was learned by finding 35.84 MB of dead
+weight and cutting it. The single worst offender is a **4096x4096
+metallic-roughness map** on every asset, which is the *least* useful map here:
+these props are unshaded, and metallic/roughness has no effect on an unlit
+material.
+
+**3. Materials.** **Not one of the five declares `KHR_materials_unlit`**
+(`extensionsUsed` is absent entirely). All are PBR with baseColor +
+metallicRoughness + normal, and `doubleSided`. §8's rule is unlit, and §8.2's
+contrast table for these six prop kinds was swept against flat unshaded
+albedos -- a textured PBR prop is not a drop-in for a value that was chosen by
+measurement.
+
+#### What decimation can and cannot rescue
+
+`scripts/dev/decimate_decor.py` (added this batch) welds then decimates, and
+emits a flat unlit texture-free `.glb` carrying the kind's existing §8.2
+albedo. **Welding is the load-bearing step**: Meshy builds these as heaps of
+separate closed shells, and a quadric decimator cannot collapse across shells,
+so the leafy tree floors at 603 tri at any ratio. Rounding positions to
+0.6% of the longest bbox edge merges the shells and lets every subject reach
+any target.
+
+Rendered at 100 / 150 / 250 tri and read off the images, not predicted:
+
+| subject | at ~150 tri | verdict |
+|---|---|---|
+| bare tree | branch structure still legible | **best of the four** -- a silhouette the game does not currently have |
+| stump | flared roots survive | **better than** the shipping cylinder+dome |
+| bush | lumpy mass, reads as a bush | comparable to the shipping 3-blob clump |
+| leafy tree | **a featureless blob, trunk nearly gone** | **worse than** the 25-tri cone it would replace |
+
+The leafy tree fails for a structural reason, not a tuning one: its character
+is the trunk/canopy separation and the leaf colour, and the pipeline destroys
+both -- welding merges the canopy blobs, and decimation **cannot carry UVs**,
+so the texture cannot come along at any triangle count. Keeping the texture
+would mean not decimating, which is blocker 1.
+
+**Consequently: `bare_tree` and `stump` are installable at ~150 tri and fit the
+budget (props ~891 tri mean, frame ~48,486); `tree` and `bush` are not worth
+installing** -- one is worse than what it replaces, the other is a lateral move
+for +40 tri an instance.
+
+#### Left for a decision, not guessed at
+
+Installing the two viable subjects still commits three things this batch had no
+mandate to decide: dropping textures as the decor art direction; whether
+`bare_tree` replaces `tree` or becomes a seventh kind (which changes the mix
+`_PROP_KIND_WEIGHTS` produces, and therefore the decor background the F10/F11
+contrast probes measure); and whether a roadside mixing `.glb` stumps with
+procedural rocks, benches and signs is acceptable while the latter three have
+no supplied asset.
+
+### 2026-08-10 -- bare tree and stump, INSTALLED (the recon's two viable subjects)
+
+Acts on the three decisions the recon above left open, all taken by Mathieu:
+install **only** `bare_tree` and `stump`; drop textures as the decor art
+direction; and make `bare_tree` a **REPLACEMENT for the `tree` kind**, not a
+seventh kind. The leafy tree and the bush are still not installed, for the
+reasons the recon measured.
+
+**What was produced.** `scripts/dev/decimate_decor.py 150`, on those two
+subjects only:
+
+| subject | source | welded | installed | file | installed as |
+|---|---|---|---|---|---|
+| bare tree | 4,486 tri, 18.14 MB PNG | 4,455 | **146 tri** | 3.9 KB | `assets/models/keepy_bare_tree_prop.glb` |
+| stump | 4,130 tri, 14.37 MB PNG | 3,889 | **150 tri** | 3.7 KB | `assets/models/keepy_stump_prop.glb` |
+
+**Two defects in the decimator, found by verifying its output rather than
+reading it.** Both are fixed in this batch:
+
+- **JSON chunk padded with `0x00`.** glTF 2.0 requires the JSON chunk to be
+  padded with **spaces**, and only the BIN chunk with zeros, because the
+  padding is part of the text handed to the parser. Validity therefore
+  depended on JSON length modulo 4: `stump` happened to land aligned and
+  parsed, `bare_tree` did not and raised `Extra data`.
+- **`baseColorFactor` written in sRGB.** It is a **LINEAR** field. See the
+  second callout in 8.3 for what this did and why the surface override hid
+  it.
+
+**Orientation -- measured on these meshes, not taken from the recon.** The
+bounding box alone cannot settle it for the bare tree, which is near-cubic
+(1.352 x 1.333 x 1.540 after decimation). Sliced the vertices into ten bands
+along each axis and measured the cross-sectional spread of each band:
+
+    bare_tree, along Y : 0.22 0.00 0.00 0.77 1.55 1.98 1.90 1.42 0.89 0.24
+    stump,     along Y : 2.71 1.77 1.91 1.62 1.21 1.31 0.00 0.00 0.00 1.61
+
+A thin stem at the bottom opening into a wide crown and tapering at the tips
+is a tree standing on Y; neither X nor Z shows a stem. The stump is widest at
+its base (flared roots) and closes on a cut face. **Both are Y-up with the
+base at -Y**, so no `model_rotation_degrees` is needed -- which is what the
+recon said, now independently confirmed.
+
+#### Not a ModelSlot install, and section 2 does not describe it
+
+A `ModelSlot` addresses ONE fixed node by name. These are a recycled pool of
+interchangeable instances that no gameplay code points at, so there is no
+node to address -- the same reason `Decor.gd`'s billboards sit outside that
+path. §2 stays written for slots; this is the second deviation from it, and
+the first for a `.glb`.
+
+The mesh is loaded **once** and shared by every instance in every segment,
+read off the imported `PackedScene`'s `SceneState` so **no node is ever
+instantiated or freed**. Instantiating worked too, but freeing a
+`MeshInstance3D` under the headless dummy renderer prints `Parameter "m" is
+null` on stderr -- harmless in itself, and fatal to a project that compares
+probe output byte for byte. Pooling is unchanged: instances are built in
+`_ready()` and thereafter only toggled, repositioned and scaled, and a `.glb`
+is resized by scaling its instance rather than by rewriting the mesh, so the
+shared resource is never mutated.
+
+**Keep-out is measured, not assumed.** Yaw is free, so the clearance uses the
+bounding circle about the instance origin over the scaled AABB's four
+horizontal corners -- the same bound, and the same reasoning, as the rock's
+longest semi-axis. An imported AABB is **not** centred on its origin the way
+a primitive's is, so the ground contact subtracts the box's own minimum Y
+rather than half its height. `TrackPropsAudit`'s keep-out phase asserts the
+result over 4,000 rolls and passes.
+
+#### The mix is untouched, and that was verified rather than argued
+
+`_PROP_KINDS` and `_PROP_KIND_WEIGHTS` are **byte-identical** to
+`origin/main`. Beyond that, `_place_model` draws **exactly the five values
+from `_prop_rng`** that both placements it replaced drew (the tree: trunk
+radius, trunk height, canopy radius, canopy height, spread; the stump:
+radius, height, dome rise, spread, yaw) -- on **every** path, including the
+one where the model fails to load, so a missing file cannot re-sequence the
+decor either.
+
+Verified with the decor streams seeded (`DecorRng.force_seed`), by dumping
+every prop whose node name exists on both trees and diffing:
+
+> **All five visible rocks, benches, signs and bush blobs land at a
+> BYTE-IDENTICAL segment-local position, scale and rotation** against
+> `origin/main`.
+
+(The first attempt compared *global* positions and showed all five differing
+in Z by the same constant ~3.8698 while X, scale and rotation matched
+exactly. That is world scroll at the sampling instant, not a decor
+difference -- a stream divergence perturbs X, scale and rotation
+independently and cannot produce one shared offset across props in different
+tiles. Re-measured in segment-local space, which is what `_place_*` actually
+writes, the diff is empty.)
+
+So the change is: two silhouettes, at the same tiles, the same Z, the same
+side, the same count. Only their X shifts, by the difference between the new
+bounding circle and the old canopy radius.
+
+#### Triangle budget -- the frame is fine, the props' own sub-budget is not
+
+Per-kind, from `TracksidePropCensus` (3,600 frames):
+
+| kind | tri/instance | mean on screen | mean tri | max tri |
+|---|---|---|---|---|
+| tree | **146** (was 25) | 5.03 | 734.3 | 876 |
+| stump | **150** (was 48) | 2.79 | 418.2 | 450 |
+| bush | 108 | 1.28 | 138.2 | 324 |
+| rock | 48 | 1.43 | 68.7 | 192 |
+| bench | 44 | 1.10 | 48.3 | 132 |
+| sign | 22 | 0.93 | 20.5 | 22 |
+| | | **12.56 props** | **1,428.2** | |
+
+`TrackPropsAudit` worst frame, **six runs each side**. **This probe is NOT
+seeded** (`--seed=` is inert in it), so single runs are not budget figures
+and only ranges mean anything:
+
+| | props, worst frame | frame total |
+|---|---|---|
+| `origin/main` | 459 - 868 | 45,567 - 56,570 |
+| this branch | 908 - 1,926 | 46,825 - 58,143 |
+
+- **Frame total: not meaningfully moved.** The props add ~700-1,000
+  triangles; run-to-run noise on this probe is ~±6,000. The two ranges
+  overlap, and **both straddle the 50,000 target** -- the baseline reaches
+  56,570 on its own. That the frame is already over target is pre-existing
+  and dominated by the collectibles (§7.2), not by this batch.
+- **Props: 1,500 budget exceeded on 2 of 6 runs (worst 1,926).** The six:
+  908 / 1,348 / **1,532** / **1,926** / 1,392 / 1,380.
+
+**The props budget was NOT raised to make this pass**, and `TrackPropsAudit`
+is left FAILING on the runs where it exceeds. Moving a threshold to fit a
+measurement is the faux-vert this repo has recorded five times. What the
+number means is worth stating, though, because the probe's own header says
+it: 1,500 was *"sized about 3x the measured peak"* of the all-primitives era,
+and its stated purpose is *"to catch the mistake that actually happens here
+-- a primitive left at Godot's default tessellation, which is ~4,000
+triangles for a single boulder"*. It is a **defect detector calibrated to
+primitives**, and the same header explains that the whole-frame total is
+deliberately *reported* rather than asserted because that is the number the
+budget is really about.
+
+**Three ways out, none of them taken here -- this is Mathieu's call:**
+
+1. **Re-decimate the two to ~100 tri.** Mean props would fall to ~1,060 and
+   the worst frame under 1,500. Cost: the 150-tri LOD is the one the recon
+   judged by rendering and the one that was approved; 100 was rendered but
+   never judged for these two subjects. A quality decision, not a tuning one.
+2. **Re-scope the props budget to the imported-mesh era** (~2,500 keeps the
+   3x-of-peak logic and still catches a 4,000-triangle default-tessellation
+   boulder on the first draw). Defensible on the probe's own stated purpose,
+   but it is a threshold move and must be argued as one, in its own batch.
+3. **Reclaim the collectibles' 16,896 triangles** (§7.2 — two `SphereMesh`
+   at Godot's default tessellation, 4,224 each, against 300 budgeted). By far
+   the largest win available and it would put the *frame* comfortably under
+   target, but it changes the silhouette of a visible gameplay object and
+   already carries its own device-review requirement.
+
+#### Validation
+
+Godot 4.3.stable headless, editor and `4.3-stable` templates fetched into the
+sandbox, `--fixed-fps 60` before `--path` and before `--` per §11's
+reproducibility note.
+
+- **`AssetContractAudit`: PASSED.** 12/12 visuals swap, **0/10 colliders
+  moved**, pursuer still has none.
+- **`DecorStabilityAudit`: PASSED.** 5 recycle events, **0 while clearly
+  visible** — the billboard lot has not regressed.
+- **`TrackPropsAudit`** keep-out and collider phases: PASSED. Exactly one
+  shape on the segment body (the slab). Budget phase as above.
+- **`TracksidePropCensus`** needed fixing before it could report at all: it
+  keys kinds to prop node-name prefixes, and the renamed nodes made it report
+  both kinds at **zero instances with a `-1-0` per-instance cost**. That is
+  how a stale prefix there fails — quietly, and looking like a measurement.
+- **`ProbeTimeoutAudit`: PASSED** (32 probe scenes bounded) — required after
+  touching anything under `scripts/dev/`.
+- **All NINE gated probes, seed 20260806, `origin/main` vs this branch:
+  BYTE-IDENTICAL stdout and same exit code** — `AntiFrustrationAudit`,
+  `ComboAudit`, `PursuerAudit`, `RushFrustrationAudit`, `ShrinkAudit`,
+  `StrikeAudit`, `PursuerFramingAudit`, `ChargerShapeProbe`,
+  `DeathModelAudit`. Eight PASS; `StrikeAudit` exits 1 on **both** trees,
+  which is the pre-existing F13 red (capture-share gap 15 points against the
+  20 required) and not something this batch moved. Expected for
+  a decor-only change, and worth having as evidence rather than inference:
+  the decor streams are separate `RandomNumberGenerator`s from the global one
+  the gameplay rolls draw on, and this batch adds no `DecorRng.make()` call,
+  so stream numbering could not shift. `PursuerFramingAudit` is included and
+  does not move — unlike the hibou swap, which legitimately changed its
+  occupancy figures, nothing here is inside the pursuer's `visual_aabb()`.
+- **`index.wasm` md5 identical** between the two trees, as it must be for a
+  change that touches no engine feature.
+- **Scale does not compound across recycles.** `_place_model` computes
+  `scale_y` as `height / instance.get_aabb().size.y`, which is only correct
+  if `get_aabb()` excludes the node's own scale — otherwise every
+  re-placement would divide by an already-scaled box and props would grow
+  without bound. `nearest_prop_edge_x()` implies local (it multiplies by the
+  transform afterwards), but implication is not measurement. Measured
+  directly, no game scene involved: `get_aabb().size` reads
+  `(1.352013, 1.333252, 1.540203)` at node scale 1.0, **3.0 and 7.0 alike**,
+  and `transform * get_aabb()` at scale 7 gives exactly 7x that. Local, so
+  no compounding.
+- **Web export**: clean, exit 0. `index.pck` **4,723,040 -> 4,736,160 bytes,
+  +13,120** for both assets, built from a throwaway worktree at `origin/main`
+  against the current tree with identical templates.
+- **Deployed to staging and fingerprinted.** CI run `31411751966` on
+  `staging` (`9247dda`) is green — export step clean, the production step
+  correctly **skipped**, the staging step successful, and
+  `keepy-staging.vercel.app` re-aliased to
+  `keepy-8qh59xph4-rajonrondoadkhey2095s-projects.vercel.app`. The CI's own
+  "Verify export output" step reports `index.pck` **4,736,160**, `index.js`
+  **331,495**, `index.wasm` **35,376,909** — byte-for-byte the sizes of the
+  local export above, so the artefact serving staging is the one that was
+  measured here. (The staging alias itself cannot be fetched from a sandbox:
+  it is behind Vercel Deployment Protection and answers 302 to
+  `vercel.com/sso-api`, so the CI log is the authoritative fingerprint.)
+
+**`index.pck` is NOT byte-size-stable across repeat exports of the identical
+tree — found while re-verifying this batch after a container restart, worth
+knowing before ever using pck size as a determinism check again.** Three
+back-to-back local `--export-release "Web"` runs against the exact same
+commit produced three different `index.pck` sizes (4,736,128 / 4,761,392 /
+4,761,376 bytes, a ~25 KB band), while `index.wasm` and `index.js` were
+**byte-for-byte identical (matching md5) on every run**. CI's own build of
+the SAME commit reported a fourth value, `4,736,144`. The two new assets
+carry no texture, so none of this variance can come from them — it is
+Godot's VRAM texture compression pass (mentioned earlier in this section,
+"re-encodes the JPEG/PNG maps into a smaller GPU-native format") acting on
+the OTHER textured assets in the project (hibou, squirrel), and that
+encoder is not bit-for-bit deterministic run to run. **Consequence for any
+future verification**: `index.pck` byte count is not a valid identity
+check by itself. `index.wasm`/`index.js` identity (proves no engine/script
+change), the gated-probe byte-identical sweep (proves no gameplay change),
+and CI's OWN reported size for the build actually served (proves the
+artefact matches what was measured, not that repeat exports agree with
+each other) are what this batch relied on instead — and that is what
+should be relied on again.
+
+### 2026-08-10, later the same day -- merged to production, explicit authorisation
+
+Mathieu authorised the `staging` -> `main` merge after device validation on
+`keepy-staging.vercel.app` (two iPhone captures: bare trees and stumps
+legible at play speed; dark-mode/fog not exercised by those captures, but
+the general render was judged good). `staging` was confirmed at exactly the
+expected head (`762e83f`, nothing newer had landed) before merging.
+
+Merge commit `7d0c791` on `main`. Re-validated post-merge rather than
+assumed carried over: `AssetContractAudit` re-run on the merge commit
+itself (12/12 visuals, 0/10 colliders moved) to catch a merge that silently
+resolved wrong, which a clean `--no-ff` of a fast-forward-able history
+would not by itself rule out.
+
+CI run `31416689552` on `main`: green, `[PRODUCTION -- main]` deployed,
+`[STAGING -- staging]` correctly skipped (push was to `main`, not
+`staging`). `▲ Aliased https://keepy-ten.vercel.app` in the deploy log.
+**Fingerprint verified against the LIVE site, not just the CI log this
+time** — `keepy-ten.vercel.app` has no Deployment Protection (unlike
+staging), so it was fetched directly: its embedded `GODOT_CONFIG.fileSizes
+.index.pck` reads **4,736,144**, matching CI's own "Verify export output"
+step for this exact run to the byte, with an `etag`/`last-modified` dated
+~24s after the deploy log's own timestamp. Two independent readings of the
+same deployed artefact agree; see the non-determinism note above for why
+this specific number does NOT need to match any of this session's earlier
+local exports.
+
+Known and accepted before this merge, not reopened by it — the props
+sub-budget overage and the F10/F11 sandbox-inconclusive result both
+carried forward unchanged, per Mathieu's explicit brief for this merge.
+
+**`PursuerContrastAudit` and `StrikeFatalContrastAudit` (F10/F11) are
+INCONCLUSIVE in this sandbox** — both hit the `ProbeWatchdog`'s 900s
+wall-clock budget and exit 2 without reaching their completion check. Same
+limitation the F14 lot recorded one day earlier in the same environment
+(no GPU, `llvmpipe` under `xvfb`; these two are the only probes here that
+capture rendered frames in bulk). Not a defect and not a regression:
+`PursuerContrastAudit` reached **51,171s of simulated time in 900s of wall
+clock**, i.e. ~57x real time, which is proof `--fixed-fps 60` was honoured
+and that the probe was progressing, not stuck. Its own timeout hint about
+flag order is generic boilerplate and does not apply — the flags were in
+the documented order.
+
+**Why the mix argument still leaves F11 open, stated rather than assumed:**
+
+- **F10 is not reachable by this batch.** It measures the pursuer's
+  silhouette against the **ground**. The pursuer is untouched; the ground's
+  tint comes from `_tint_rng`, a *different* `DecorRng` stream, and this
+  batch adds no `DecorRng.make()` call, so stream numbering — and therefore
+  `_tint_rng`'s seed and sequence — is unchanged. Props cannot reach the
+  sampled surface either: the keep-out puts every prop's silhouette edge at
+  `|x| >= 3.4` against a 6m slab, asserted over 4,000 rolls by
+  `TrackPropsAudit`, which passes. Note also that F10 was **already failing
+  on untouched `origin/main`** (6/6 dark palettes, worst 1.86:1), so a red
+  result from it is not attributable to this batch in either direction.
+- **F11 is narrowed but NOT ruled out, and it would be dishonest to claim
+  otherwise.** It samples the fatal-strike label against **the 3D world
+  behind it**, and two prop kinds changed silhouette and shifted slightly in
+  X. What bounds it: no prop changed tile, Z, side or count, and X moved
+  only by the difference between the new bounding circle and the old canopy
+  radius. What does *not* bound it: nothing in the geometry proves no tree
+  or stump ever lands behind that label. The failure mode that flipped F11's
+  verdict **twice before** — a HUD layout shift moving the label onto a
+  different patch of world — is structurally impossible here, since no HUD
+  node is touched; the 3D-background channel is a narrower one, but it is
+  real. **Measure it on a machine that can finish the probe before reading
+  anything into a verdict**, and note that the DARK/5 tint decision was
+  already open and is Mathieu's.
