@@ -114,6 +114,36 @@ class_name ModelSlot
 		if _model_root:
 			_model_root.rotation_degrees = model_rotation_degrees
 
+## Translation, in SLOT-local units, applied to the installed model.
+## Third of the same family as model_scale and model_rotation_degrees: an
+## art correction made HERE, in the scene, rather than by re-exporting the
+## asset or by moving a node the gameplay code addresses.
+##
+## Exists because a .glb's origin is wherever its author left it, which is
+## rarely where the placeholder's centre was. The first case was the JUMP
+## log: its own origin sits at its middle, so at the slot's authored
+## y = +0.35 the log hovered 18.5cm above the ground instead of resting
+## on it.
+##
+## WHY NOT JUST MOVE THE SLOT NODE, which would have been a smaller diff:
+## because that breaks the state this whole file promises to leave alone.
+## Lower JumpMesh to y = 0.165 and the log sits correctly, but the
+## PLACEHOLDER -- a 0.7-tall box centred on the node -- would then span
+## y = -0.185 to 0.515, i.e. sunk through the ground. "Leave model_scene
+## null and this file does nothing at all" would stop being true, and it
+## would stop being true silently, in the fallback state nobody looks at.
+## Correcting the model rather than the slot keeps the placeholder valid.
+##
+## Set on the model child's own `position`, so it is NOT multiplied by
+## model_scale -- these are slot-space units, and the number here is the
+## distance the model actually moves in the scene, whatever scale it is
+## drawn at.
+@export var model_offset: Vector3 = Vector3.ZERO:
+	set(value):
+		model_offset = value
+		if _model_root:
+			_model_root.position = model_offset
+
 ## The instantiated model's root, or null while the placeholder is in
 ## use. Held so a re-install can free the previous one (editor use, via
 ## the setters above) rather than stacking models on top of each other.
@@ -157,6 +187,7 @@ func _install_model() -> void:
 	_model_root = root
 	_model_root.scale = Vector3.ONE * model_scale
 	_model_root.rotation_degrees = model_rotation_degrees
+	_model_root.position = model_offset
 	add_child(_model_root)
 
 	# The placeholder's geometry stops drawing, but the NODE stays: its
@@ -189,10 +220,59 @@ func has_model() -> bool:
 ## without bleeding into its siblings (see their own comments for why).
 ## That duplication needs a handle on whatever is actually being drawn,
 ## which stops being `self` the moment a model is installed.
+##
+## =====================================================================
+## TWO BINDINGS, BECAUSE GODOT HAS TWO -- and this used to read only one
+##
+## A material reaches a surface by one of two routes, and which one is
+## used is decided by WHO AUTHORED THE MESH, not by anything this project
+## controls:
+##
+##   surface OVERRIDE  -- written by a SCENE author. Every placeholder in
+##                        this project is bound this way
+##                        (`surface_material_override/0` in Obstacle.tscn,
+##                        TrackSegment.tscn, ...).
+##   MESH surface      -- written by an IMPORTER. Godot's glTF importer
+##                        binds a .glb's material here and never sets an
+##                        override.
+##
+## This function used to return ONLY the override. That is correct for
+## every placeholder and WRONG for every real asset -- and it fails in the
+## worst available way, by returning null rather than by erroring, so the
+## caller's own null-guard swallows it. Measured on a shipped asset rather
+## than assumed (assets/models/keepy_stump_prop.glb):
+## get_surface_override_material(0) -> null, mesh.surface_get_material(0)
+## -> a real StandardMaterial3D.
+##
+## What that cost, before this was fixed: Obstacle._ready() got null for
+## EnemyMesh the moment a .glb landed on it, so _enemy_material stayed
+## null and _apply_enemy_alarm returned on its guard every frame. The
+## ENEMY approach telegraph -- the escalating red that tells a player a
+## hazard is about to commit to their lane -- became a silent no-op. No
+## error, no crash, and no red probe: AssetContractAudit's stand-in
+## carried an override, so it was shaped like an imported model
+## everywhere EXCEPT the axis that mattered. Both halves are closed now:
+## the stand-in binds on the mesh (SubstituteModel.tscn) and
+## scripts/dev/AlarmRampAudit.gd gates the ramp end to end.
+##
+## Order is deliberate: the override is checked FIRST, so the
+## no-model path returns exactly what it returned before, byte for byte.
+## The fallback can only ever fire where this used to return null.
+##
+## `material_override` (the whole-object one) is deliberately NOT
+## consulted, which is why this is not simply get_active_material(): that
+## property is not how anything here binds a material, and honouring it
+## would silently widen what a "slot material" means.
 func slot_material() -> Material:
 	if _drawn.is_empty():
 		return null
-	return _drawn[0].get_surface_override_material(0)
+	var mesh_instance := _drawn[0]
+	var override := mesh_instance.get_surface_override_material(0)
+	if override:
+		return override
+	if mesh_instance.mesh and mesh_instance.mesh.get_surface_count() > 0:
+		return mesh_instance.mesh.surface_get_material(0)
+	return null
 
 ## Applies `material` as the surface-0 override on everything this slot
 ## draws.

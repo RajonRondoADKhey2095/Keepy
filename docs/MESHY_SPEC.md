@@ -58,6 +58,50 @@ Nothing else changes. The placeholder node stays, so every `.visible`,
 `.scale` and `.position` write in the gameplay code keeps working, and
 pooling is untouched: the model installs once, at load, never per frame.
 
+### 2.1 If the slot's material is ANIMATED, check it after installing
+
+A material reaches a surface by one of two routes, and which one is used is
+decided by who authored the mesh:
+
+- **surface override** — what a *scene* author writes. Every placeholder in
+  this project (`surface_material_override/0` in `Obstacle.tscn`,
+  `TrackSegment.tscn`, ...).
+- **mesh surface** — what an *importer* writes. Godot's glTF importer binds
+  a `.glb`'s material here and **never sets an override**.
+
+`ModelSlot.slot_material()` used to read only the override, so it returned
+`null` for every real asset — and the callers' own null-guards swallowed it.
+**Fixed 2026-08-11**; it now falls back to the mesh-bound material, override
+still first. Measured on `assets/models/keepy_stump_prop.glb`:
+`get_surface_override_material(0)` is `null`,
+`mesh.surface_get_material(0)` is a real `StandardMaterial3D`.
+
+What it cost while it was broken: `Obstacle._ready()` would have gone on
+getting `null` for `EnemyMesh`, so `_apply_enemy_alarm` returned on its
+guard every frame and the ENEMY/AIR_ENEMY approach telegraph became a
+**silent no-op** — no error, no crash, and no red probe, because
+`SubstituteModel.tscn` carried an override and so could not reproduce the
+one axis that mattered. It binds on the mesh now.
+
+**The slots this applies to are the ones whose owning script ANIMATES the
+material**, not every slot: `Obstacle/EnemyMesh` and `Obstacle/AirEnemyMesh`
+(the alarm ramp) and `TrackSegment/MeshInstance3D` (the per-segment ground
+tint). Installing a `.glb` on any of them means running
+`scripts/dev/AlarmRampAudit.tscn` afterwards — it asserts the ramp reaches
+every drawn surface, resets for the next pooled spawn, and stays
+per-instance.
+
+Two things to expect on an imported asset, neither of them a bug:
+
+- **Emission is inert on an unlit material**, and §8/§9 make every asset
+  here unlit. Both appliers move albedo *and* emission; on a `.glb` only the
+  albedo half lands. That is why the probe gates albedo.
+- **An EMISSION cue therefore cannot live on the slot at all.** The
+  pursuer's closing cue is the worked example: its eyes are deliberately
+  engine-side `MeshInstance3D` children of the slot, not part of the asset,
+  precisely so an unlit imported body cannot take the cue away (`Pursuer.gd`,
+  "THE EYES ARE DELIBERATELY NOT SLOTS").
+
 ## 3. Orientation
 
 **Measured, not assumed** — `ChargerShapeProbe` asserts this against the
@@ -244,7 +288,7 @@ the numbers below:
 |---|---|---|---|
 | collectibles | 4,200 | **25,344 – 29,568** | **OVER by ~6x** |
 | pursuer | 8,000 | **15,518** | **OVER by ~2x** *(cause misattributed — see 7.3)* |
-| hazards | 8,400 | 7,068 – 8,372 | within |
+| hazards | 8,400 | 7,068 – 8,372 | ~~within~~ *(misattributed — see 7.4)* |
 | keepy | 6,000 | 3,129 | within |
 | track slab + curbs | 5,600 | 252 | within |
 | decor hills | — | 165 | new since 7.1 |
@@ -340,6 +384,60 @@ is why the eye spheres were in scope and the noisettes were not. Measured over
 11 unseeded runs after the fix, the worst frame is **57,402** (collectibles
 25,344 – 38,016), still **7,402 over** the 50,000 target. The frame is not
 under budget yet; only the pursuer is.
+
+### 7.4 The hazards row's "within" was the same misattribution — measured 2026-08-11
+
+7.2 marks the `hazards` family **within** budget. That verdict is an
+artefact of the live MIX, not evidence that the hazard assets are inside
+their budget — and it hides two variants that are well outside it. Same
+class of error as 7.3: a *family* number standing in for *asset* numbers.
+
+Measured per variant, `get_faces()/3` on `Obstacle.tscn`'s own meshes, the
+same method `TrackPropsAudit` uses. 7.1 budgets **1,200 triangles per
+hazard**:
+
+| Variant | Triangles | Against the 1,200 unit budget |
+|---|---|---|
+| ChargerMesh (`PrismMesh`) | 8 | 0.01x |
+| DodgeMesh (`BoxMesh`) | 12 | 0.01x |
+| JumpMesh (**`keepy_jump_log.glb`**, was a `BoxMesh` at 12) | **150** | **0.12x** |
+| JumpMarkerMesh (`CylinderMesh`) | 44 | 0.04x |
+| StomperMesh (`CylinderMesh`) | 768 | 0.64x |
+| **EnemyMesh** (`CapsuleMesh`) | **3,456** | **2.88x — OVER** |
+| **AirEnemyMesh** (`TorusMesh`) | **4,096** | **3.41x — OVER** |
+
+Why the family total still measured "within": the 8,400 line is 7 x 1,200,
+and four of the six variants are near-zero primitives, so a typical live
+mix is dominated by 8–12 triangle boxes. Two objects alone —
+one ENEMY plus one AIR_ENEMY — already draw **7,552**, i.e. 90% of the
+family line. Seven live hazards all of the expensive kind would draw
+**28,672**, 3.4x that line. (Whether the spawner can actually produce that
+mix is not asserted here; the point is that the measured 7,068–8,372 range
+describes a *sample of mixes*, not a bound.)
+
+Root cause is the one finding 1 already named for the collectibles:
+**a primitive left at Godot's default tessellation**. `CapsuleMesh` and
+`TorusMesh` default to 64 radial segments for shapes that render a few
+dozen pixels across, exactly as `SphereMesh` does on
+`Noisette.tscn`/`Gland.tscn`.
+
+**Consequence for the incoming hazard `.glb` batch, and it inverts the
+usual expectation:** replacing the ENEMY and AIR_ENEMY placeholders with
+assets at or under their 1,200 cap is a triangle **reduction**, not an
+addition — up to −2,256 and −2,896 per live instance. The two variants
+where an import *adds* cost are the ones whose placeholder is a 12-triangle
+box (JUMP, DODGE) and the 8-triangle prism (CHARGER). Budget each import
+against 7.1's **per-asset** 1,200, never against the family row.
+
+**Confirmed by the first hazard import, same day.** JUMP was one of the
+predicted three, and it added exactly as expected: **12 → 150 per instance
+(+138)**, 0.12x its unit budget, one-of-each family total 8,352 → 8,490.
+Nothing else moved. It also confirms why `TrackPropsAudit`'s family number
+is not a budget figure: three runs each side of the install gave **before
+4,188 / 7,732 / 8,260, after 7,996 / 11,496 / 11,930** — a spread the log
+cannot produce, since one extra AIR_ENEMY on screen is **+4,096 by itself**.
+The probe is unseeded; the per-variant table above is the deterministic
+number.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
@@ -876,16 +974,23 @@ would have replaced.
 
 ## 10. Acceptance checklist
 
-Run all four after installing any asset. The first two are the ones that
+Run all five after installing any asset. The first two are the ones that
 catch a rebalancing.
 
     godot4 --headless --path . res://scripts/dev/AssetContractAudit.tscn
     godot4 --headless --fixed-fps 60 --path . res://scripts/dev/PursuerFramingAudit.tscn
     godot4 --headless --path . res://scripts/dev/ChargerShapeProbe.tscn
+    godot4 --headless --path . res://scripts/dev/AlarmRampAudit.tscn
     godot4 --headless --path . --export-release "Web" build/web/index.html
 
 - **`AssetContractAudit`** must stay green: every collider still matches
   `Hitboxes.gd`, and the pursuer still has none.
+- **`AlarmRampAudit`** must stay green whenever the asset lands on a slot
+  whose material is ANIMATED — `Obstacle/EnemyMesh`,
+  `Obstacle/AirEnemyMesh`, `TrackSegment/MeshInstance3D`. See §2.1: an
+  imported material binds differently from a placeholder one, and the
+  failure mode is a telegraph that silently stops rather than anything
+  that looks broken. Cheap enough to run on every install regardless.
 - **`PursuerFramingAudit`** must stay under 30% — this is the Hibou's size
   gate (§6).
 - **`ChargerShapeProbe`** will **deliberately fail** once a model is
@@ -1811,3 +1916,142 @@ the documented order.
   real. **Measure it on a machine that can finish the probe before reading
   anything into a verdict**, and note that the DARK/5 tint decision was
   already open and is Mathieu's.
+
+### 2026-08-11 — JUMP (mossy log), INSTALLED — the first hazard asset
+
+`assets/models/keepy_jump_log.glb`, on `Obstacle/JumpMesh`. **150 triangles,
+3.7 KB, flat, unlit, untextured**, carrying the authored JUMP amber. Lands on
+top of the same day's alarm-ramp repair (see the entry above), which had to
+come first: any `.glb` on a hazard slot was silently deleting the ENEMY
+telegraph before it.
+
+**Which file it is was measured, not read off the name.** The batch shipped
+two trunk/log subjects and the brief named neither unambiguously:
+
+| file | bbox | verdict |
+|---|---|---|
+| `Meshy_AI_Low_Poly_Log_…` | 1.901 x **0.534** x 0.608 | long in X, flat in Y → **lies down → JUMP** |
+| `Meshy_AI_Crimson_Hollow_Trunk_…` | 1.031 x **1.901** x 0.992 | long in Y → **stands up → DODGE**, not this |
+
+Confirmed by rendering from three axes: round cross-section on the side view,
+**moss on the +Y face** from above, axis already across the track.
+`model_rotation_degrees` stays zero — a log lying across the lane has no
+meaningful "front", so §3's +Z rule is satisfied by "long axis across X, moss
+up", which is what was actually checked.
+
+**Two of the batch's stated premises were wrong**, both measured before any
+code was written:
+
+| claim | measured |
+|---|---|
+| "capped at 1,200 triangles" | the six arrive at **4,000–5,258**; this one 4,555 (3.8x its budget) |
+| implied ready to install | **none of the six declares `KHR_materials_unlit`**; all PBR, each with a 4096x4096 metallic-roughness map — the one map an unlit material cannot use |
+
+Third batch running where the announced description and the measurement
+disagree. Measure first, always.
+
+**`scripts/dev/decimate_hazard.py`** closes both. It **imports**
+`decimate_decor.py`'s glTF pipeline rather than copying it — one reader, one
+writer, one hard-won chunk-padding rule (JSON padded with spaces, BIN with
+zeros). `decimate_decor.py` is deliberately **not** renamed: §11's decor entry
+references it by name and its name is still true of what it does.
+
+**Losing the texture costs a hazard nothing it was allowed to keep.** For a
+decor prop that was an art-direction decision; here it is a *requirement*. §8
+gates hazard albedo against the ground at 3.0:1 and nothing post-processes the
+frame, so a textured, lit, Meshy-authored log could not have a known contrast
+ratio at all. Flat + unlit is the only state a hazard is permitted in — which
+is why the leafy decor tree remains uninstallable while this one is not merely
+installable but *improved* by the same operation.
+
+**LOD 150 chosen ON RENDER**, not prediction. Its outline is indistinguishable
+from 800's, and for an unlit flat asset triangles buy **silhouette only** —
+there is no shading to reveal interior geometry, so anything past the outline's
+needs is pure frame cost. Drawn material verified `UNSHADED
+albedo=(1.0000, 0.7800, 0.2800)`, an exact round-trip of `Obstacle.tscn`'s
+`StandardMaterial3D_Jump` through sRGB→linear→sRGB.
+
+**Scale 0.63483 fits X to the collider's 1.20 exactly**, and that is a fairness
+choice, not an aesthetic one: §4 warns that a visual wider than its hitbox makes
+a legal dodge look illegal. The asset is far more slender than the box it
+replaces, so at that scale it **under-fills the hitbox** — 0.331 vs 0.700 in Y,
+0.379 vs 1.000 in Z. **No uniform scale can fix this**: filling Y needs s=1.343,
+which puts X at 2.538, past the ~1.9 lane-bleed threshold *and* twice the hitbox
+width. Reported rather than papered over. Consequence to judge on device: ~0.37 m
+of hitbox sits above the visible log and ~0.31 m ahead of it. The Y gap is
+heavily mitigated by the jump arc clearing 1.558 m; the Z gap means a contact can
+register slightly before the log looks reached.
+
+**`ModelSlot.model_offset` is new**, third of the same family as `model_scale`
+and `model_rotation_degrees`. The log's own origin is its middle, so at the
+slot's authored `y = +0.35` it hovered 18.5 cm. Moving the **slot** instead
+would have been the smaller diff and would have silently broken the fallback: a
+0.7-tall placeholder box centred on a lowered node sinks through the ground, so
+"leave `model_scene` null and this file does nothing at all" would stop being
+true in the state nobody looks at.
+
+**Colliders untouched** — `JumpShape` still `Box(1.2, 0.7, 1.0)` at +0.350,
+`AssetContractAudit` 12/12 visuals swapped, 0 colliders moved. That probe's
+PHASE 1 table now marks **`[glb]` vs `[-- ]`** per row: its header said
+"placeholder meshes", which stopped being true for the first time here, and a
+table that cannot distinguish an installed asset from the primitive it replaced
+is exactly the quietly-wrong output `scripts/dev/` exists to prevent. It
+immediately makes visible that **three** slots now carry assets: Keepy,
+`JumpMesh`, and the pursuer's `Silhouette`.
+
+#### ⚠️ `DarkPaletteAudit` reads JUMP 3.28 → 3.02:1, and the colour did NOT change
+
+Still above the 3.0 floor, but the margin looks collapsed. **It is a measurement
+artifact, proved rather than argued**, and the contrast contract is intact.
+
+The pixel histogram of the probe's own 29x29 sample window:
+
+    783 px  (251,196,70)   <- pure amber, byte-identical to the placeholder's
+     54 px  (54,125,26)    <- ground
+      4 px  near-ground
+
+Solving `observed = (1-f)·jump + f·ground` independently per channel gives
+**f = 0.0704 (R), 0.0686 (G), 0.0680 (B)** — three channels agreeing on a single
+blend fraction with the ground, which a colour change cannot produce. **The log
+renders at exactly the authored amber**; the sample is 93% log, 7% ground.
+
+Cause: the log's silhouette is far thinner than the box's, so the fixed-size
+window centred on the object's **AABB centre** now clips its lower edge. Note
+that the AABB's projected size (**149.8 x 59.0 px**) *overstates* the silhouette
+at the centre column, because an angled camera makes a thin box's screen extent
+span top-back to bottom-front corner.
+
+**This is an F10-family probe defect and is left for its own batch.** A
+shape-aware clamp was written, **measured not to bind** (the window already fits
+inside 59 px, so it changed nothing), and **reverted rather than kept as a fix
+that fixes nothing**. Tuning the inset constant until this one asset's number
+came out right would be exactly the false-green `ProbeCoverage.gd` documents five
+times. Every other hazard and both collectibles are byte-identical, since the
+defect only reaches objects thinner than the window.
+
+#### Validation
+
+`AssetContractAudit`, `AlarmRampAudit`, `ProbeTimeoutAudit`, `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` — all **exit 0**. `DarkPaletteAudit`
+exit 0.
+
+Import + `--export-release "Web"` both **exit 0**.
+
+**The payload trap held**: the 166 MB of raw sources in
+`assets_source/ennemis/` did **not** ship — **0** imported ennemis entries in
+the pack, only uid-cache path strings, exactly as the decor batch already
+leaves.
+
+#### Still open, and deliberately not decided here
+
+- **The four remaining subjects** — toad (STOMPER), dragonfly (AIR_ENEMY),
+  beaver (ENEMY), boar (CHARGER) — measured and rendered, **not installed**. The
+  upright trunk is DODGE's, also not installed. Each needs the same decimation
+  pass and its own scale/offset judgement against §4. Note §7.4's inversion:
+  ENEMY and AIR_ENEMY imports should *reduce* triangles, not add.
+- **The hitbox under-fill above.** Device call: does the log read as something
+  to jump, and does the invisible hitbox above and ahead of it ever feel unfair?
+- **The alarm telegraph on an imported asset is carried by ALBEDO alone**, since
+  emission is inert on an unshaded material (see the alarm-ramp entry above).
+  Nothing to judge yet — no ENEMY/AIR_ENEMY asset is installed, and the
+  placeholders still get the full albedo+emission ramp. Revisit when one is.
