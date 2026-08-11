@@ -138,6 +138,16 @@ const _HILL_NEAR_TEXTURE: Texture2D = preload("res://assets/textures/decor/hill_
 ## still leaving the large majority of each band at full opacity.
 const _FADE_FRACTION: float = 0.12
 
+## SATURATION PASS (11 August 2026): the three `tint` values below moved to
+## higher saturation and a unified ~105-112 deg hue, matching the rest of
+## the swamp palette (ground, curbs, sky/haze). Per the FOG comment above,
+## the fog crushes most of a tint's own saturation at these z-bands anyway
+## -- the bigger lever for how green these layers actually read is
+## `GameState.SWAMP_HAZE`/`fog_light_color`, moved the same direction in
+## the same batch, not this array. The relative ordering across the three
+## (mountain most desaturated/brightest, near hill darkest/most saturated)
+## is unchanged -- see the class doc's FOG paragraph for why that ordering
+## is what preserves the near/far/mountain depth read.
 const _LAYERS: Array[Dictionary] = [
 	{
 		# Mountain layer: the farthest-back band, behind both hill layers.
@@ -153,7 +163,7 @@ const _LAYERS: Array[Dictionary] = [
 		# capture probe (same method as MESHY_SPEC.md section 11), not by
 		# inspection.
 		"texture": _MOUNTAIN_TEXTURE,
-		"tint": Color(0.30, 0.36, 0.28),
+		"tint": Color(0.274, 0.370, 0.244),
 		"count": 3,
 		"parallax": 0.08,
 		"spawn_z_min": -700.0,
@@ -188,7 +198,7 @@ const _LAYERS: Array[Dictionary] = [
 		# landmark, real gaps" territory the mountain layer already targets,
 		# without touching height_range (art-directed scale, left alone).
 		"texture": _HILL_FAR_TEXTURE,
-		"tint": Color(0.26, 0.33, 0.24),
+		"tint": Color(0.233, 0.340, 0.204),
 		"count": 5,
 		"parallax": 0.15,
 		"spawn_z_min": -520.0,
@@ -214,7 +224,7 @@ const _LAYERS: Array[Dictionary] = [
 		# this is a spawn-spread fix, not a rescale of how big a near hill
 		# is allowed to look.
 		"texture": _HILL_NEAR_TEXTURE,
-		"tint": Color(0.20, 0.27, 0.19),
+		"tint": Color(0.177, 0.280, 0.151),
 		"count": 5,
 		"parallax": 0.35,
 		"spawn_z_min": -340.0,

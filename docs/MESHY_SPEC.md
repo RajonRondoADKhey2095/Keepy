@@ -372,13 +372,18 @@ it is describing machinery that no longer exists.
 
 ### The look
 
+**Updated 11 August 2026, saturation pass** (device feedback: the values
+below this table originally shipped read as near-black on a phone, not as
+green — see the dated addendum after the measured table below for the full
+before/after and why value could not simply be raised instead).
+
 | | |
 |---|---|
-| Sky / background | `0.055, 0.078, 0.051` — near-black swamp green |
-| Distance haze (`fog_light_color`) | `0.180, 0.216, 0.149` |
+| Sky / background | `0.062, 0.115, 0.044` — dark, saturated swamp green |
+| Distance haze (`fog_light_color`) | `0.151, 0.260, 0.114` |
 | Ambient light | `0.42, 0.50, 0.35` @ energy 0.75 |
 | Directional light | `0.66, 0.74, 0.52` @ energy 0.9 |
-| Ground slab (albedo) | `0.42, 0.44, 0.24` — desaturated muddy olive |
+| Ground slab (albedo) | `0.24, 0.46, 0.17` — saturated green, hue clearly dominant over red |
 
 The track is the **brightest large surface in the frame** and everything
 else sinks away from it: that is what makes it read as a path through a bog
@@ -389,13 +394,14 @@ never touches a gameplay surface.
 
 ### What actually decides legibility now
 
-The ground renders at **relative luminance 0.153**. That single number sets
-what is reachable, and it is worth stating as arithmetic rather than as
-advice, because it is not obvious:
+The ground renders at **relative luminance 0.150** (was 0.153 before the
+11 August saturation pass — held deliberately close, see the addendum
+below). That single number sets what is reachable, and it is worth stating
+as arithmetic rather than as advice, because it is not obvious:
 
 - to clear **3.0:1 by being brighter**, a surface needs relative luminance
-  **≥ 0.559** — a genuinely bright colour, not merely a light one;
-- to clear it **by being darker**, it needs **≤ 0.018** — near black.
+  **≥ 0.549** — a genuinely bright colour, not merely a light one;
+- to clear it **by being darker**, it needs **≤ 0.017** — near black.
 
 Anything landing between those two is *below the floor no matter what hue it
 is*. So the rule is no longer "put contrast inside the asset" (that was the
@@ -418,14 +424,14 @@ down, so gameplay objects are read against the track, not the sky).
 
 | Object | shading | albedo | vs ground |
 |---|---|---|---|
-| DODGE | lit | `0.30, 0.025, 0.025` | **3.28:1** |
-| JUMP | **unshaded** | `1.00, 0.78, 0.28` | **3.23:1** |
-| STOMPER | **unshaded** | `0.62, 0.86, 1.00` | **3.36:1** |
-| CHARGER | **unshaded** | `1.00, 0.72, 0.88` | **3.15:1** |
-| ENEMY | lit + emissive | `0.52, 0.08, 0.72` | 1.47:1 — alarm tint, see below |
-| AIR_ENEMY | lit + emissive | `0.12, 0.85, 0.22` | 1.14:1 — alarm tint, see below |
-| Noisette | lit | `0.95, 0.78, 0.15` | 2.35:1 (reported, never gated) |
-| Gland | lit + emissive | `1.00, 0.72, 0.15` | 4.47:1 (reported, never gated) |
+| DODGE | lit | `0.30, 0.025, 0.025` | **3.19:1** (was 3.28:1) |
+| JUMP | **unshaded** | `1.00, 0.78, 0.28` | **3.28:1** (was 3.23:1) |
+| STOMPER | **unshaded** | `0.62, 0.86, 1.00` | **3.41:1** (was 3.36:1) |
+| CHARGER | **unshaded** | `1.00, 0.72, 0.88` | **3.20:1** (was 3.15:1) |
+| ENEMY | lit + emissive | `0.52, 0.08, 0.72` | 1.50:1 — alarm tint, see below |
+| AIR_ENEMY | lit + emissive | `0.12, 0.85, 0.22` | 1.08:1 — alarm tint, see below |
+| Noisette | lit | `0.95, 0.78, 0.15` | 2.37:1 (reported, never gated) |
+| Gland | lit + emissive | `1.00, 0.72, 0.15` | 4.54:1 (reported, never gated) |
 
 DODGE, JUMP and STOMPER were re-authored by the permanent-swamp batch and
 all three cleared the floor as a result — 1.72 → 3.28, 1.39 → 3.23 and
@@ -434,13 +440,36 @@ reason this section already gives below: an unshaded surface renders as
 exactly its albedo, which is the only way its measured value is a *known*
 number rather than a product of the light hitting it.
 
+> **SATURATION PASS, 11 August 2026 (device feedback: the swamp read as
+> black, not green).** The "vs ground" column above is the CURRENT
+> measurement, after the ground albedo, sky, haze, curbs and decor tints
+> all moved to higher saturation and a unified ~105 deg hue (see "The
+> look" table above). Ground albedo moved `0.42, 0.44, 0.24` (raw H=66,
+> S=0.46, V=0.44) → `0.24, 0.46, 0.17` (raw H=105.5, S=0.63, V=0.46);
+> **rendered** ground (what `DarkPaletteAudit` actually samples, after
+> this scene's ambient/directional light) moved H=76.7/S=0.68/L=0.153 →
+> H=103.1/S=0.81/L=0.150 — the ambient light (`0.42, 0.5, 0.35`) pulls
+> saturation and hue further than the raw albedo alone would suggest,
+> which is why the final value was reached by re-measuring with the real
+> probe rather than by picking a number on paper: a first attempt at
+> `0.25, 0.47, 0.18` rendered at L=0.158, close enough to the CHARGER
+> ceiling above to drop it to 3.08:1. Held ground luminance deliberately
+> close to its old value (0.150 vs 0.153) for the same reason the
+> arithmetic two sections up exists — the four hazard floors this table
+> exists to protect. Sky/haze moved the same direction: `SWAMP_SKY` raw
+> S=0.35/V=0.08 → S=0.62/V=0.115 (the low V was why the title screen and
+> the opening seconds of a run read as grey-black rather than green —
+> `SwampIdentityAudit`'s TITLE SCREEN sample went from mean saturation
+> 0.295 to 0.582 as a direct result). `PursuerContrastAudit` silhouette
+> moved 4.13/4.06 → 4.05/3.99 (floor 2.5:1, still comfortable).
+
 > **ENEMY and AIR_ENEMY are measured in their ALARM tint, not at rest,**
 > and the probe's own `(resting)` labels are wrong about this. At the
 > capture distance the alarm ramp (`Obstacle.ENEMY_ALARM_ALBEDO`,
 > `0.95, 0.08, 0.12`) has fully taken over the material, so what those two
 > rows measure is the red telegraph, not the base albedo — changing the
-> base colour barely moves them. That red is luminance-poor against an
-> olive track, which is why both sit low. Raising them means retuning the
+> base colour barely moves them. That red is luminance-poor against the
+> track regardless of its hue, which is why both sit low. Raising them means retuning the
 > **telegraph**, not the art: a gameplay-legibility decision, left for
 > Mathieu. The mislabelling is pre-existing and is called out here rather
 > than silently corrected, because the numbers under it are real.

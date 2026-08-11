@@ -145,6 +145,26 @@ func _ready() -> void:
 ## Re-rolls this segment's ground tint around its base colour. Called from
 ## populate() -- i.e. once at the initial fill and once per recycle, never
 ## per frame.
+##
+## BASE COLOUR SATURATION PASS (11 August 2026, device feedback): the base
+## albedo this drifts around moved from `Color(0.42, 0.44, 0.24)` (raw
+## H=66, yellow-olive, R and G nearly equal) to `Color(0.24, 0.46, 0.17)`
+## in scenes/TrackSegment.tscn (raw H=105.5, S=0.63) -- green clearly
+## dominant over red. RENDERED colour (what DarkPaletteAudit samples,
+## after ambient/directional light) moved from H=76.7/S=0.68 to
+## H=103.1/S=0.81: this scene's ambient light (Color(0.42,0.5,0.35)) pulls
+## saturation and hue further than the raw albedo alone predicts, so the
+## final value was reached by RE-MEASURING with the real probe, not by
+## picking a raw colour on paper and trusting it. Relative luminance
+## (rendered) went 0.153 -> 0.150, deliberately close: docs/MESHY_SPEC.md
+## section 8 pins the DODGE/JUMP/STOMPER/CHARGER hazard-vs-ground floors to
+## a narrow rendered-luminance band (~0.137-0.160, derived from those four
+## hazards' own rendered colours) -- moving hue and saturation costs
+## nothing there, moving value much would not. A first attempt at
+## `Color(0.25, 0.47, 0.18)` rendered at L=0.158, too close to the
+## CHARGER ceiling (contrast dropped to 3.08:1); this is the corrected
+## value. `_GROUND_TINT_DRIFT` is untouched, so the per-segment variance is
+## the same fraction of a now-more-saturated base.
 func _reroll_ground_tint() -> void:
 	_ground_material.albedo_color = Color(
 		clampf(_ground_base_color.r + _tint_rng.randf_range(-_GROUND_TINT_DRIFT, _GROUND_TINT_DRIFT), 0.0, 1.0),
@@ -172,7 +192,13 @@ func _reroll_ground_tint() -> void:
 ## it edges, so the three lanes stay legible against a track that is itself
 ## now the brightest LARGE surface. See docs/MESHY_SPEC.md section 8 for
 ## the measured pair.
-const _CURB_COLOR: Color = Color(0.72, 0.74, 0.52)
+##
+## SATURATION PASS (11 August 2026): moved from a pale olive (H=66, S=0.30)
+## to the same ~105 deg hue family as the rest of the swamp palette, at a
+## lower saturation than the ground (S=0.50 vs the ground's ~0.62) so it
+## still reads as the brightest, calmest surface rather than competing with
+## the track for saturation -- value is still what carries the lane read.
+const _CURB_COLOR: Color = Color(0.475, 0.760, 0.380)
 const _CURB_WIDTH: float = 0.12
 const _CURB_HEIGHT: float = 0.03
 const _CURB_X: Array[float] = [-1.0, 1.0] # midway between LANE_X's three lanes

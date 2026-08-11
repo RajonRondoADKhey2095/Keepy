@@ -434,6 +434,15 @@ l'asset » (qui était la règle de l'inversion).
 | NOISETTE | 2,35 | 2,35 | rapporté, jamais gaté |
 | GLAND | 4,47 | 4,47 | rapporté, jamais gaté |
 
+⚠️ **La colonne « après » ci-dessus est celle du lot ART DIRECTION
+(albédos hazards + suppression du grade), PAS la valeur actuelle.** La
+saturation pass du même jour (section « AJUSTEMENT SATURATION » plus bas)
+a aussi changé l'albédo du SOL, ce qui déplace ces quatre ratios une
+seconde fois sans toucher aux albédos hazards eux-mêmes : DODGE 3,28→3,19,
+JUMP 3,23→3,28, STOMPER 3,36→3,41, CHARGER 3,15→3,20 — tous restent au-dessus
+de 3,0:1, avec plus de marge sur CHARGER qu'avant. Chiffres et HSV complets
+dans cette section.
+
 ⚠️ **`ENEMY` et `AIR_ENEMY` sont mesurés dans leur teinte d'ALARME, pas au
 repos, et les libellés `(resting)` de la sonde sont FAUX là-dessus.** À la
 distance de capture la rampe d'alarme (`Obstacle.ENEMY_ALARM_ALBEDO`,
@@ -463,6 +472,10 @@ sol ou `DARK_TINT_AMOUNT` » — est SANS OBJET** : les deux variables qu'elle
 nommait n'existent plus sous cette forme, et le chiffre est passé de 2,37 à
 4,06 sans qu'on touche à l'albédo du poursuivant.
 
+⚠️ **MàJ 11 août 2026, saturation pass (même jour) : 4,05:1 / 3,99:1 —
+toujours PASS, marge confortable contre le plancher 2,5:1.** Voir la
+section « AJUSTEMENT SATURATION » plus bas.
+
 ### `SwampIdentityAudit` — nouvelle sonde GATÉE, remplace `SwampGradeCapture`
 
 `SwampGradeCapture` mesurait quatre propriétés du grade ; le grade
@@ -482,7 +495,16 @@ assertions chacun (vert dominant / saturé / sombre) :
 | RUN DEEP MIST (mist 1,00) | `0.231, 0.262, 0.105` | 0,244 | 0,60 |
 | GAME OVER | `0.245, 0.281, 0.117` | 0,261 | 0,58 |
 
-`SWAMP_IDENTITY_VERIFIED=yes`. **L'écran-titre est chargé pour de vrai**
+`SWAMP_IDENTITY_VERIFIED=yes`.
+
+⚠️ **MàJ 11 août 2026, saturation pass (même jour) : ces cinq lignes sont
+DÉPASSÉES.** Retour device le jour même : « lit comme du noir légèrement
+teinté, pas comme du vert ». Nouvelles valeurs et diagnostic (saturation,
+pas luminosité) dans la section « AJUSTEMENT SATURATION » plus bas — la
+ligne TITLE SCREEN, la plus basse en saturation ici (0,30), est celle qui
+bouge le plus (0,58 après).
+
+**L'écran-titre est chargé pour de vrai**
 (`TitleScreen.tscn` est une scène séparée que `Game.tscn` ne contient pas) :
 c'est l'endroit le plus probable pour que le look diurne survive sans être
 vu — première chose que voit le joueur, dernière que regarde une sonde 3D.
@@ -536,6 +558,152 @@ restent lisibles à vitesse réelle** — `JUMP` en ambre vif et `GLAND` en
 jaune sont désormais deux objets brillants et chauds, distingués par la
 FORME (boîte basse large vs sphère qui flotte et tourne) et non plus par la
 couleur. C'est le risque de ce lot, et il n'est pas mesurable ici.
+
+## AJUSTEMENT SATURATION PALETTE MARÉCAGE (11 août 2026, retour device)
+
+Branche `claude/keepy-swamp-palette-saturation-ajuzus`, partie de `staging`
+(`1a6bce9`, la même base que la « DIRECTION ARTISTIQUE PERMANENTE »
+ci-dessus). **Retour device le jour même du lot précédent** : « le rendu lit
+comme du NOIR légèrement teinté, pas comme du vert — un peu trop sombre en
+plus ». Ce lot NE touche à aucune géométrie, collider, RNG de gameplay ou
+timing — uniquement des couleurs, sur les surfaces que Mathieu a listées :
+ciel, brume, sol/piste, curbs, tint des trois couches de décor.
+
+### Diagnostic vérifié AVANT tout changement de code, pas supposé
+
+Hypothèse du retour device : ce n'est pas un problème de LUMINOSITÉ mais de
+SATURATION — à luma 0,10-0,26 avec une saturation faible, l'œil lit du gris
+avant de lire une teinte. Mesuré en HSV sur les valeurs livrées par le lot
+précédent :
+
+| surface | H (raw) | S (raw) | V (raw) |
+|---|---|---|---|
+| `SWAMP_SKY` | 111° | 0,35 | 0,08 |
+| `SWAMP_HAZE` | 92° | 0,31 | 0,22 |
+| Sol/piste (albédo) | **66°** | 0,46 | 0,44 |
+| Curbs | 66° | 0,30 | 0,74 |
+
+Le sol était le pire cas : H=66° place sa teinte pile entre jaune (60°) et
+vert (120°), avec R=0,42 quasi égal à G=0,44 (ratio R/G=0,95) — c'est un
+olive jaunâtre, pas un vert, exactement le diagnostic du retour device. Le
+ciel et la brume avaient déjà une teinte verte correcte (92-111°) mais une
+saturation et une valeur trop basses pour porter cette teinte à l'écran —
+`SWAMP_SKY` à V=0,08 est la ligne la plus sombre et la moins saturée de
+toute la palette, et c'est très probablement ce que l'écran-titre et les
+18 premières secondes de chaque run montrent en premier.
+
+### Ajustement — saturation d'abord, teinte vers le vert franc, luminosité en dernier
+
+Tenu dans cet ordre, comme demandé : la saturation est montée nettement
+partout, la teinte a été recentrée sur ~105° (la même famille que les
+autres verts déjà en place dans le jeu — arbre mort, rocher, buisson,
+collines), et la luminosité n'a bougé que là où l'espace le permettait
+(voir la contrainte hazards ci-dessous, qui a directement limité de
+combien le sol pouvait remonter en valeur).
+
+| constante | avant (raw) | après (raw) | H | S | V |
+|---|---|---|---|---|---|
+| `GameState.SWAMP_SKY` | `0.055,0.078,0.051` | `0.062,0.115,0.044` | 105° | 0,62 | 0,12 |
+| `GameState.SWAMP_HAZE` | `0.180,0.216,0.149` | `0.151,0.260,0.114` | 105° | 0,56 | 0,26 |
+| `GameState.SWAMP_SKY_DEEP` | `0.031,0.047,0.031` | `0.035,0.068,0.024` | 105° | 0,64 | 0,07 |
+| `GameState.SWAMP_HAZE_DEEP` | `0.122,0.153,0.102` | `0.107,0.190,0.080` | 105° | 0,58 | 0,19 |
+| Sol/piste (`TrackSegment.tscn`) | `0.42,0.44,0.24` | `0.24,0.46,0.17` | 105,5° | 0,63 | 0,46 |
+| Curbs (`_CURB_COLOR`) | `0.72,0.74,0.52` | `0.475,0.760,0.380` | 105° | 0,50 | 0,76 |
+| Décor mountain (`Decor.gd`) | `0.30,0.36,0.28` | `0.274,0.370,0.244` | 106° | 0,34 | 0,37 |
+| Décor hill_far | `0.26,0.33,0.24` | `0.233,0.340,0.204` | 107° | 0,40 | 0,34 |
+| Décor hill_near | `0.20,0.27,0.19` | `0.177,0.280,0.151` | 108° | 0,46 | 0,28 |
+
+`scenes/Game.tscn` (le `WorldEnvironment` qui rend RÉELLEMENT, dupliqué à
+dessein — voir `SwampAtmosphere.gd`) et `scenes/TitleScreen.tscn` /
+`scenes/GameOverScreen.tscn` (deux `ColorRect` autonomes, jamais raccordés
+à `GameState`) ont été mis à jour dans le même lot, avec les mêmes valeurs
+que `SWAMP_SKY`/`SWAMP_SKY_DEEP` pour rester dans la même famille de
+couleur plutôt que d'inventer une quatrième teinte. Les albédos des 6
+hazards, du poursuivant, des collectibles et des props de bord de piste
+(arbre mort, rocher, buisson, souche, banc, panneau) sont **intouchés** —
+hors du périmètre demandé.
+
+⚠️ **Le rendu final diverge sensiblement du calcul HSV brut, et c'est
+mesuré, pas négligé.** L'`ambient_light_color` de la scène (`0.42,0.5,
+0.35`) multiplie l'albédo par canal : sur l'ancien sol peu saturé l'écart
+raw→rendu était faible (~1 %), mais sur un albédo plus saturé l'écart
+devient net. Sol RENDU (ce que `DarkPaletteAudit` échantillonne
+réellement) : H=76,7°/S=0,68/luminance 0,153 (avant) → H=103,1°/S=0,81/
+luminance 0,150 (après) — la saturation rendue dépasse même la saturation
+brute. **Un premier essai à `Color(0.25, 0.47, 0.18)` a été corrigé après
+mesure** : il rendait à luminance 0,158, trop proche du plafond CHARGER
+(voir plus bas), et faisait tomber son contraste à 3,08:1. La valeur
+retenue (`0.24, 0.46, 0.17`) a été trouvée par deux itérations de
+mesure réelle (sonde rejouée à chaque fois), pas par un calcul sur
+papier — voir le commentaire dédié dans `TrackSegment.gd` pour le détail
+des trois points de mesure.
+
+### Contraintes non négociables — toutes vérifiées par sonde réelle, pas par calcul
+
+**`DarkPaletteAudit`** (pire des deux bouts de la respiration) :
+
+| hazard | avant ce lot | après | plancher |
+|---|---|---|---|
+| DODGE | 3,28:1 | **3,19:1** | 3,0:1 ✅ |
+| JUMP | 3,23:1 | **3,28:1** | 3,0:1 ✅ |
+| STOMPER | 3,36:1 | **3,41:1** | 3,0:1 ✅ |
+| CHARGER | 3,15:1 | **3,20:1** | 3,0:1 ✅ |
+
+Les quatre restent au-dessus du plancher, avec une marge sur CHARGER
+(l'ancien pire cas, 0,15 de marge) désormais MEILLEURE qu'avant (0,20).
+ENEMY/AIR_ENEMY (mesurés dans leur teinte d'alarme, pas au repos — voir la
+section « DIRECTION ARTISTIQUE PERMANENTE » plus haut) bougent un peu
+(1,47→1,50, 1,14→1,08) mais restent non gatés, comme avant.
+
+**`PursuerContrastAudit`** : silhouette 4,13:1/4,06:1 → **4,05:1/3,99:1**,
+gauge 5,60:1/5,64:1 → 5,90:1/5,95:1. Planchers 2,5:1 et 3,0:1 tous les deux
+larges. PASS.
+
+**`SwampIdentityAudit`** (mesure de dominance verte — devait MONTER, pas
+descendre) :
+
+| état | sat avant | sat après | luma avant | luma après |
+|---|---|---|---|---|
+| WORLD AT TITLE | 0,58 | **0,72** | 0,257 | 0,277 |
+| TITLE SCREEN | 0,30 | **0,58** | 0,102 | 0,106 |
+| RUN OPENING | 0,58 | **0,72** | 0,258 | 0,277 |
+| RUN DEEP MIST | 0,60 | **0,73** | 0,240 | 0,254 |
+| GAME OVER | 0,58 | **0,72** | 0,258 | 0,277 |
+
+Dominance verte (rapport G/R, hors mesure de la sonde mais calculé sur ses
+propres échantillons) : ~1,25 avant → ~1,84 après sur les quatre états
+monde, et 1,32 → 1,69 sur TITLE SCREEN. `SWAMP_IDENTITY_VERIFIED=yes` sur
+les deux mesures. Luma
+monte legèrement partout (le « un peu trop sombre » du retour device),
+sans jamais approcher le plafond 0,42 (marge restante ~0,14-0,17). C'est la
+ligne TITLE SCREEN — la pire avant ce lot, celle citée en premier par le
+retour device puisque c'est le tout premier écran — qui progresse le plus
+(quasiment doublée).
+
+**`AssetContractAudit`** : 12/12 visuels swappés, 0/10 colliders déplacés
+— inchangé, attendu (aucune géométrie touchée). **`ProbeTimeoutAudit`** :
+32 sondes, toutes armées. Les deux PASS.
+
+### Build et export — les deux exit 0
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce lot
+(téléchargés depuis les releases GitHub officielles, comme le fait la CI).
+`godot4 --headless --path . --import` : exit 0, aucune erreur GDScript ni
+de scène. `godot4 --headless --path . --export-release "Web"
+build/web/index.html` : exit 0, `index.html`/`index.wasm`/`index.pck`
+tous non vides (35,4 Mo / 4,73 Mo). `build/` n'est pas versionné
+(`.gitignore`).
+
+### Ce qui reste ouvert — décision Mathieu, pas mesurable ici
+
+Comme pour le lot précédent, **aucune sonde ne dit que c'est beau**, seulement
+que c'est vert, saturé, sombre et que les planchers de contraste tiennent.
+Ce qui reste à juger sur téléphone : est-ce que le marécage se lit
+maintenant comme VERT au premier coup d'œil (l'objectif explicite du
+retour device) tout en restant sombre et oppressant, et si un 3e tour de
+calibrage est nécessaire, les tableaux HSV ci-dessus donnent un point de
+départ chiffré plutôt qu'un réglage à l'aveugle.
+
 ## Mode sombre : REFONTE MARÉCAGE — l'inversion est supprimée (11 août 2026)
 
 > ⚠️ **SECTION HISTORIQUE, DÉPASSÉE PAR LE LOT « DIRECTION ARTISTIQUE
