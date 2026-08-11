@@ -70,8 +70,23 @@ OUT_DIR = "/tmp/lod"
 ## DODGE subject, not this one. Two files whose names both say "trunk/log"
 ## are separated here by measurement, which is the rule MESHY_SPEC section 11
 ## already learned the hard way on the decor batch.
+##
+## The STOMPER toad was picked the same way, and the measurement is what makes
+## it the STOMPER rather than any other hazard: 1.898 x 0.703 x 1.672, i.e.
+## WIDE across the track and only 0.70 tall. Obstacle.gd's TELEGRAPH-STOMPER
+## says the silhouette must read as a squat, planted landing pad rather than a
+## wall -- the placeholder cylinder does it at 1.50 base / 0.70 height, a
+## 2.14:1 width-to-height ratio, and this mesh arrives at 2.70:1 unscaled. It
+## is the only crouching subject in the batch; the other four stand up.
+##
+## Its face already points +Z, which is the player's side (segments spawn at
+## -Z and travel toward the camera at +Z), so like the JUMP log it needs no
+## model_rotation_degrees. Verified by rendering it from +Z and from -Z and
+## looking at which end carries the mouth line and the eye bumps -- not by
+## assuming Meshy's convention holds across a batch.
 MODELS = {
     "jump_log": "Meshy_AI_Low_Poly_Log_0811080727_texture.glb",
+    "stomper_toad": "Meshy_AI_Geometric_Toad_0811080929_texture.glb",
 }
 
 ## Lifted verbatim from Obstacle.tscn's StandardMaterial3D_Jump, NOT sampled
@@ -80,8 +95,15 @@ MODELS = {
 ## decision with an arithmetic one, and would move a number this project gates.
 ## sRGB, as GDScript writes it -- srgb_to_linear handles the conversion glTF's
 ## baseColorFactor requires (see decimate_decor.py for why that matters).
+##
+## The STOMPER's blue is the widest-margin gate of the four DarkPaletteAudit
+## asserts (3.41:1 against a 3.0 floor after the 2026-08-11 saturation pass),
+## so it is carried over UNCHANGED rather than improved: there is nothing to
+## win above the floor, and any new value would move a number this project
+## gates in exchange for nothing.
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
+    "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
 }
 
 
