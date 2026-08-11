@@ -114,6 +114,36 @@ class_name ModelSlot
 		if _model_root:
 			_model_root.rotation_degrees = model_rotation_degrees
 
+## Translation, in SLOT-local units, applied to the installed model.
+## Third of the same family as model_scale and model_rotation_degrees: an
+## art correction made HERE, in the scene, rather than by re-exporting the
+## asset or by moving a node the gameplay code addresses.
+##
+## Exists because a .glb's origin is wherever its author left it, which is
+## rarely where the placeholder's centre was. The first case was the JUMP
+## log: its own origin sits at its middle, so at the slot's authored
+## y = +0.35 the log hovered 18.5cm above the ground instead of resting
+## on it.
+##
+## WHY NOT JUST MOVE THE SLOT NODE, which would have been a smaller diff:
+## because that breaks the state this whole file promises to leave alone.
+## Lower JumpMesh to y = 0.165 and the log sits correctly, but the
+## PLACEHOLDER -- a 0.7-tall box centred on the node -- would then span
+## y = -0.185 to 0.515, i.e. sunk through the ground. "Leave model_scene
+## null and this file does nothing at all" would stop being true, and it
+## would stop being true silently, in the fallback state nobody looks at.
+## Correcting the model rather than the slot keeps the placeholder valid.
+##
+## Set on the model child's own `position`, so it is NOT multiplied by
+## model_scale -- these are slot-space units, and the number here is the
+## distance the model actually moves in the scene, whatever scale it is
+## drawn at.
+@export var model_offset: Vector3 = Vector3.ZERO:
+	set(value):
+		model_offset = value
+		if _model_root:
+			_model_root.position = model_offset
+
 ## The instantiated model's root, or null while the placeholder is in
 ## use. Held so a re-install can free the previous one (editor use, via
 ## the setters above) rather than stacking models on top of each other.
@@ -157,6 +187,7 @@ func _install_model() -> void:
 	_model_root = root
 	_model_root.scale = Vector3.ONE * model_scale
 	_model_root.rotation_degrees = model_rotation_degrees
+	_model_root.position = model_offset
 	add_child(_model_root)
 
 	# The placeholder's geometry stops drawing, but the NODE stays: its

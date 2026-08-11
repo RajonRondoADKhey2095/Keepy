@@ -214,17 +214,27 @@ func _describe_material(material: Material) -> String:
 # =====================================================================
 
 func _print_table(data: Dictionary) -> void:
-	print("--- PHASE 1: measured geometry (placeholder meshes) ---")
+	print("--- PHASE 1: measured geometry (as shipped) ---")
 	print("VISUALS -- what a .glb replaces. size = mesh AABB in slot space,")
 	print("           node_y = the slot's own height above its object's origin.")
+	print("           [glb] = a real asset is installed here; [-- ] = still the placeholder.")
+	print("           A [glb] row's material is the one bound to the imported MESH, which")
+	print("           is where Godot's glTF importer puts it -- see ModelSlot.slot_material().")
 	var keys := data.keys()
 	keys.sort()
 	for key in keys:
 		var row: Dictionary = data[key]
 		if row["kind"] != "visual":
 			continue
-		print("  %-34s size %6.3f x %6.3f x %6.3f  node_y %+.3f  %s" % [
-			key, row["size"].x, row["size"].y, row["size"].z, row["node_y"], row["material"]])
+		# Printed rather than merely collected: this header used to say
+		# "placeholder meshes", which stopped being true for every row the
+		# moment the first hazard asset was installed. A table that cannot
+		# distinguish an installed .glb from the primitive it replaced is
+		# exactly the kind of quietly-wrong output this folder exists to
+		# prevent.
+		var marker := "[glb]" if row["has_model"] else "[-- ]"
+		print("  %-34s %s size %6.3f x %6.3f x %6.3f  node_y %+.3f  %s" % [
+			key, marker, row["size"].x, row["size"].y, row["size"].z, row["node_y"], row["material"]])
 	print("")
 	print("COLLIDERS -- what a .glb must NEVER change. Sizes are FULL extents.")
 	for key in keys:

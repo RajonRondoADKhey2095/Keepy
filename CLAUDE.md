@@ -451,6 +451,116 @@ défaut de rampe est fermé et gaté, §7.4 donne le budget par asset et le
 sens réel du gain, §2.1 donne le piège de liaison de matériau, et §10
 inclut désormais `AlarmRampAudit` dans la checklist d'acceptation.
 
+⚠️ **PÉRIMÉ ~2 h plus tard, et le CHEMIN ANNONCÉ ÉTAIT FAUX.** Les 6 `.glb`
+ont été poussés sur `main` (`51aa01d`, 08:26 UTC) **sous
+`assets_source/ennemis/`, PAS `assets_source/hazards/`** — chercher au
+chemin annoncé ci-dessus ne trouve rien. Phase 2 est faite : voir la
+section suivante.
+
+## PREMIER HAZARD MESHY INSTALLÉ : le tronc moussu (JUMP) — 11 août 2026
+
+Branche `claude/meshy-enemies-alarm-jump-etaz9i`, **posée sur le fix de
+rampe ci-dessus** (session concurrente, voir l'avertissement en fin de
+section). Chiffres complets : `docs/MESHY_SPEC.md` §7.4 et §11.
+
+`assets/models/keepy_jump_log.glb` sur `Obstacle/JumpMesh` — **150
+triangles, 3,7 Ko, plat, unlit, sans texture**, portant l'ambre autorisé de
+JUMP.
+
+⚠️ **Le fichier a été identifié PAR MESURE, jamais par son nom.** Le lot
+contenait DEUX sujets tronc/rondin : `Low_Poly_Log` (1,901 x **0,534** x
+0,608 → couché → **JUMP**) et `Crimson_Hollow_Trunk` (1,031 x **1,901** x
+0,992 → debout → **DODGE**). Confirmé par rendu 3 axes : section ronde de
+profil, **mousse sur la face +Y**, axe déjà en travers de la piste, donc
+`model_rotation_degrees` reste à zéro.
+
+⚠️ **DEUX prémisses du brief étaient FAUSSES, mesurées d'entrée** : les six
+assets arrivent à **4 000–5 258 tri** (pas « cap 1 200 ») et **aucun** ne
+déclare `KHR_materials_unlit` (tous PBR + une map metallic-roughness
+4096x4096, la seule map qu'un matériau unlit ne peut pas utiliser).
+Troisième lot d'affilée où l'annoncé et le mesuré divergent.
+
+`scripts/dev/decimate_hazard.py` (nouveau) **importe** le pipeline glTF de
+`decimate_decor.py` au lieu de le copier. **Perdre la texture ne coûte RIEN
+à un hazard** : §8 gate son albédo et plus rien ne post-traite la frame,
+donc un rondin texturé et éclairé n'aurait AUCUN ratio de contraste connu.
+Plat + unlit est le seul état permis — c'est pourquoi l'arbre feuillu décor
+reste ininstallable alors que celui-ci est *amélioré* par la même opération.
+
+**LOD 150 choisi AU RENDU** : contour indiscernable de celui à 800, et sur
+un asset unlit plat les triangles n'achètent que la **silhouette** (aucun
+ombrage ne révèle la géométrie interne). Matériau dessiné vérifié
+`UNSHADED albedo=(1.0000, 0.7800, 0.2800)`, aller-retour exact de
+`StandardMaterial3D_Jump`.
+
+⚠️ **Échelle 0,63483 = X calé sur le collider (1,20), par ÉQUITÉ** (§4 : un
+visuel plus large que sa hitbox fait passer une esquive légale pour
+illégale). L'asset est bien plus élancé que la boîte : il **sous-remplit**
+la hitbox en Y (0,331 vs 0,700) et Z (0,379 vs 1,000). **Aucune échelle
+uniforme ne corrige ça** (remplir Y demande s=1,343 → X=2,538, au-delà du
+seuil de bavure de voie). Signalé, pas maquillé : ~0,37 m de hitbox
+au-dessus du rondin visible et ~0,31 m devant lui. **À juger sur device.**
+
+**`ModelSlot.model_offset` est nouveau** (3e de la famille avec
+`model_scale`/`model_rotation_degrees`). Bouger le SLOT aurait été un diff
+plus petit et aurait cassé le fallback en silence : une boîte de 0,7 centrée
+sur un nœud abaissé s'enfonce dans le sol.
+
+⚠️ **`DarkPaletteAudit` lit JUMP 3,28 → 3,02:1 ET LA COULEUR N'A PAS
+CHANGÉ.** Artefact de mesure, **prouvé** : l'histogramme de la fenêtre
+d'échantillon donne **783 px de (251,196,70) — identique au bit près au
+placeholder — + 54 px de SOL**. Résoudre `observé = (1-f)·jump + f·sol` par
+canal donne **f = 0,0704 / 0,0686 / 0,0680** : trois canaux d'accord sur une
+seule fraction de mélange, ce qu'un changement de couleur ne peut pas
+produire. La silhouette du rondin est plus fine que celle de la boîte, donc
+la fenêtre fixe centrée sur le **centre de l'AABB** mord son bord inférieur.
+**Défaut de sonde famille F10, laissé à son propre lot** : un clamp
+adaptatif a été écrit, **mesuré comme non contraignant** (l'AABB projette
+149,8 x 59,0 px) et **retiré plutôt que gardé comme un fix qui ne corrige
+rien**. Régler la constante jusqu'à ce que le chiffre sorte juste serait
+exactement le faux-vert que `ProbeCoverage.gd` documente cinq fois.
+
+**Colliders intouchés** : `JumpShape` toujours `Box(1.2, 0.7, 1.0)` à
++0,350, `AssetContractAudit` 12/12 visuels, 0 collider déplacé. Sa table
+PHASE 1 marque désormais **`[glb]` vs `[-- ]`** par ligne — son en-tête
+disait « placeholder meshes », ce qui a cessé d'être vrai ici pour la
+première fois. On voit maintenant que **trois** slots portent un asset :
+Keepy, `JumpMesh`, et le `Silhouette` du poursuivant.
+
+**Le piège payload a tenu** : les 166 Mo de sources brutes
+d'`assets_source/ennemis/` ne partent PAS dans le build (0 entrée importée
+dans le pack, seulement des chaînes de chemin du uid-cache).
+
+**Reste ouvert** : les 4 autres sujets (crapaud/STOMPER, libellule/AIR_ENEMY,
+castor/ENEMY, sanglier/CHARGER) + le tronc debout (DODGE) sont mesurés et
+rendus mais **non installés** ; le sous-remplissage de hitbox ; le défaut de
+sonde F10 ; et le fait que **sur un asset importé la rampe d'alarme est
+portée par l'ALBÉDO seul** (l'émission est inerte sur un matériau unlit) —
+rien à juger tant qu'aucun asset ENEMY/AIR_ENEMY n'est installé.
+
+### ⚠️ INCIDENT : DEUX SESSIONS AGENTIQUES CONCURRENTES, le même jour
+
+**La règle n°1 de ce fichier a été enfreinte à nouveau** (précédent du
+6 août 2026). Deux sessions ont reçu le même brief : l'une a livré le fix de
+rampe et l'a mergé sur `staging` à 06:22 UTC ; l'autre (celle-ci) a refait
+le MÊME fix indépendamment, ~3 h plus tard, puis a découvert la collision au
+`git fetch` avant tout merge.
+
+**Résolu comme le précédent le prescrit** : la seconde session a comparé les
+deux versions et **abandonné son doublon** plutôt que de forcer par-dessus.
+Le fix incumbent est conservé ; seule la Phase 2 (unique, non dupliquée) a
+été rebasée sur `staging`. Les deux fixes différaient sur un point réel —
+le fallback de `slot_material()` : matériau du MESH importé (retenu) contre
+matériau AUTORISÉ du slot (abandonné). Choix arbitré explicitement par
+Mathieu.
+
+**Ce que ça confirme du danger** : les deux sessions ont produit des mesures
+**identiques** là où elles se recouvraient (ENEMY 3 456 / 2,88x, AIR_ENEMY
+4 096 / 3,41x, §7.4 écrite deux fois avec les mêmes chiffres) — donc le
+gaspillage est réel et silencieux, et rien dans l'outillage ne l'a signalé.
+Seul un `git fetch` avant merge l'a révélé. **Faire ce fetch AU DÉBUT, pas à
+la fin.**
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
