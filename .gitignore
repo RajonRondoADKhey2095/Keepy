@@ -42,6 +42,11 @@ data_*/
 *.ipa
 *.zip
 
+# Python bytecode. scripts/dev/decimate_hazard.py imports decimate_decor.py
+# rather than copying its glTF writer, so running it leaves a __pycache__
+# beside them.
+__pycache__/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

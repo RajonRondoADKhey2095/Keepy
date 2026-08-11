@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Weld + decimate a raw Meshy HAZARD .glb down to a frame-budget LOD.
+
+WHY THIS EXISTS AS A SIBLING OF decimate_decor.py
+-------------------------------------------------
+Same mechanism, different family and different colour contract, so the whole
+pipeline is IMPORTED from decimate_decor.py rather than copied: geometry(),
+weld(), write_glb() and srgb_to_linear() all come from there. Only the source
+directory, the subject table and the palette live here. A second copy of the
+glTF reader would drift from the first the moment either is fixed, and the
+padding rule inside write_glb (JSON padded with spaces, BIN with zeros) is
+exactly the kind of hard-won detail that must not exist twice.
+
+decimate_decor.py is deliberately NOT renamed to something family-neutral: it
+is referenced by name from docs/MESHY_SPEC.md section 11's decor entry, and
+that entry describes a batch that has already shipped. Its name is still true
+of what it does.
+
+WHY A HAZARD NEEDS THIS EVEN MORE THAN A DECOR PROP
+---------------------------------------------------
+Two independent reasons, both measured rather than inherited:
+
+1. TRIANGLES. The six hazard .glb committed 2026-08-11 arrive at 4,000-5,258
+   triangles each. MESHY_SPEC 7.1 budgets 1,200 per hazard, and 7.2 already
+   measures the frame OVER its 50,000 target before any of them is installed.
+   The brief for this batch described the assets as capped at 1,200 triangles;
+   they are not, and this script is what closes that gap.
+
+2. COLOUR, WHICH IS NOT OPTIONAL HERE. A decor prop losing its texture was an
+   art-direction decision. A hazard losing its texture is a REQUIREMENT:
+   MESHY_SPEC section 8 gates each hazard's albedo against the ground at a
+   3.0:1 floor, DarkPaletteAudit asserts it, and nothing post-processes the
+   frame any more, so the colour a .glb carries is literally the colour that
+   ships. A textured, lit, Meshy-authored mossy log cannot have a known
+   contrast ratio. Flat + unlit is the only state in which it can.
+
+   The pleasant consequence is that the usual cost of decimation -- losing the
+   UVs, and with them the texture -- costs a hazard NOTHING it was allowed to
+   keep. This is the opposite of the leafy decor tree, whose character WAS its
+   leaf texture and which is therefore still not installable at any budget.
+
+USAGE
+-----
+    python3 scripts/dev/decimate_hazard.py [target_triangles ...]
+
+Writes /tmp/lod/<kind>_<target>.glb. Nothing is installed automatically:
+picking a LOD is a visual decision and installing one is a budget decision,
+both of which belong to a human looking at a render.
+
+Requires: numpy, fast-simplification (pip install fast-simplification).
+Excluded from the web export, like everything else under scripts/dev/.
+"""
+import os
+import sys
+
+import numpy as np
+import fast_simplification
+
+from decimate_decor import geometry, weld, write_glb, srgb_to_linear, WELD_FRACTION
+
+SRC = "assets_source/ennemis"
+OUT_DIR = "/tmp/lod"
+
+## Subject -> filename, established by RENDERING each .glb from three axes,
+## never by reading its name. The batch's own brief called this one a "mossy
+## trunk" and the file is called "Low_Poly_Log"; what settles it is that the
+## mesh is 1.901 x 0.534 x 0.608 -- long in X, flat in Y -- i.e. a log LYING
+## DOWN across the track, with the moss on its +Y face. The other trunk in the
+## batch (Crimson_Hollow_Trunk, 1.031 x 1.901 x 0.992) stands UP and is the
+## DODGE subject, not this one. Two files whose names both say "trunk/log"
+## are separated here by measurement, which is the rule MESHY_SPEC section 11
+## already learned the hard way on the decor batch.
+MODELS = {
+    "jump_log": "Meshy_AI_Low_Poly_Log_0811080727_texture.glb",
+}
+
+## Lifted verbatim from Obstacle.tscn's StandardMaterial3D_Jump, NOT sampled
+## off the Meshy texture. That value is the one DarkPaletteAudit measures at
+## 3.28:1 against the ground; sampling the bark would silently replace a gated
+## decision with an arithmetic one, and would move a number this project gates.
+## sRGB, as GDScript writes it -- srgb_to_linear handles the conversion glTF's
+## baseColorFactor requires (see decimate_decor.py for why that matters).
+COLORS = {
+    "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
+}
+
+
+def main(targets):
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for kind, filename in MODELS.items():
+        verts, faces = geometry(os.path.join(SRC, filename))
+        extent = float(np.ptp(verts, axis=0).max())
+        welded_verts, welded_faces = weld(verts, faces, extent * WELD_FRACTION)
+        size = np.ptp(verts, axis=0)
+        print(
+            "%-10s source %5d tri -> welded %5d tri   bbox %.3f x %.3f x %.3f"
+            % (kind, len(faces), len(welded_faces), size[0], size[1], size[2])
+        )
+        for target in targets:
+            ratio = max(0.0, min(0.999, 1.0 - target / len(welded_faces)))
+            out_verts, out_faces = fast_simplification.simplify(welded_verts, welded_faces, ratio)
+            out_path = os.path.join(OUT_DIR, "%s_%d.glb" % (kind, target))
+            write_glb(out_path, out_verts, out_faces, srgb_to_linear(COLORS[kind]))
+            out_size = np.ptp(out_verts, axis=0)
+            print(
+                "             %4d target -> %4d tri  %6.1f KB  bbox %.3f x %.3f x %.3f"
+                % (
+                    target,
+                    len(out_faces),
+                    os.path.getsize(out_path) / 1024.0,
+                    out_size[0],
+                    out_size[1],
+                    out_size[2],
+                )
+            )
+
+
+if __name__ == "__main__":
+    main([int(a) for a in sys.argv[1:]] or [150, 250, 400, 800])
