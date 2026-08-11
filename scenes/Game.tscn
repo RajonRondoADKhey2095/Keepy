@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/Game.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/Keepy.tscn" id="2"]
@@ -7,26 +7,21 @@
 [ext_resource type="Script" path="res://scripts/player/SwipeDetector.gd" id="5"]
 [ext_resource type="PackedScene" path="res://scenes/HUD.tscn" id="6"]
 [ext_resource type="PackedScene" path="res://scenes/GameOverScreen.tscn" id="7"]
-[ext_resource type="Script" path="res://scripts/world/DarkModeEffect.gd" id="8"]
-[ext_resource type="Shader" path="res://assets/shaders/swamp_grade.gdshader" id="9"]
+[ext_resource type="Script" path="res://scripts/world/SwampAtmosphere.gd" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/Pursuer.tscn" id="10"]
 [ext_resource type="Script" path="res://scripts/world/LaneBarrier.gd" id="11"]
 [ext_resource type="Script" path="res://scripts/world/Decor.gd" id="12"]
 
 [sub_resource type="Environment" id="Environment_1"]
 background_mode = 1
-background_color = Color(0.55, 0.75, 0.95, 1)
+background_color = Color(0.055, 0.078, 0.051, 1)
 ambient_light_source = 2
-ambient_light_color = Color(1, 1, 1, 1)
-ambient_light_energy = 0.6
+ambient_light_color = Color(0.42, 0.5, 0.35, 1)
+ambient_light_energy = 0.75
 fog_enabled = true
-fog_light_color = Color(0.55, 0.75, 0.95, 1)
+fog_light_color = Color(0.18, 0.216, 0.149, 1)
 fog_density = 0.0035
 fog_sky_affect = 0.0
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_1"]
-shader = ExtResource("9")
-shader_parameter/intensity = 0.0
 
 [node name="Game" type="Node3D"]
 script = ExtResource("1")
@@ -39,6 +34,8 @@ environment = SubResource("Environment_1")
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="World"]
 position = Vector3(0, 6, 0)
 rotation_degrees = Vector3(-55, -30, 0)
+light_color = Color(0.66, 0.74, 0.52, 1)
+light_energy = 0.9
 shadow_enabled = true
 
 [node name="SwipeDetector" type="Node" parent="World"]
@@ -64,18 +61,8 @@ rotation_degrees = Vector3(-20, 0, 0)
 current = true
 script = ExtResource("4")
 
-[node name="DarkModeEffect" type="CanvasLayer" parent="."]
-layer = 0
+[node name="SwampAtmosphere" type="Node" parent="."]
 script = ExtResource("8")
-
-[node name="Grade" type="ColorRect" parent="DarkModeEffect"]
-material = SubResource("ShaderMaterial_1")
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
 
 [node name="HUD" parent="." instance=ExtResource("6")]
 

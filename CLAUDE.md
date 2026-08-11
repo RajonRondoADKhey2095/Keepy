@@ -152,12 +152,18 @@ Les deux matériaux sont **unlit** (`KHR_materials_unlit` posé à la main dans
 le `.glb`, cf §9) — c'est la règle par défaut pour tout asset de ce projet,
 pas une particularité du hibou : §8 explique pourquoi seule une surface
 unshaded a une couleur *connue* après le traitement du mode sombre.
-⚠️ **Depuis la refonte marécage (11 août 2026) cette règle a une raison de
-PLUS, et plus contraignante** : le mode sombre est un grade plein écran
-indexé sur la luminance, donc c'est un pass ÉCRAN qui atteint ces assets —
-précisément parce qu'unlit veut dire qu'aucune lumière ne les atteindra
-jamais. Ne pas « remplacer le grade par de l'éclairage » : sur ces assets
-l'éclairage est sans effet, par construction.
+⚠️ **CORRIGÉ le 11 août 2026 (DA permanente) — le paragraphe qui tenait
+cette place disait « le mode sombre est un grade plein écran, donc c'est un
+pass ÉCRAN qui atteint ces assets ». C'EST FAUX depuis le même jour : le
+grade est supprimé, plus rien ne post-traite la frame.** La conséquence
+pour un asset unlit est l'INVERSE de ce qui était écrit : **rien
+n'atteindra jamais sa couleur** — ni lumière (il est unlit), ni pass écran
+(il n'y en a plus). La couleur qu'un `.glb` porte est donc littéralement
+celle qui s'affiche, pour toujours. Un asset importé avec une teinte
+diurne restera diurne au milieu du marécage, et aucun réglage de scène ne
+le rattrapera : il faut le corriger À LA SOURCE, ou lui appliquer un
+matériau depuis le code (ce que `TrackSegment.gd` fait déjà pour l'arbre
+mort et la souche, cf. `_unshaded()`).
 
 **Piège payload, mesuré le 9 août 2026 — à connaître avant d'ajouter un
 asset :** `export_presets.cfg` utilise `export_filter="all_resources"`, qui
@@ -344,7 +350,199 @@ gated byte-identique + le chiffre RÉELLEMENT servi par CI/le site, jamais
 sur la comparaison entre deux exports locaux distincts. Détail complet :
 `docs/MESHY_SPEC.md` §11.
 
+## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
+
+Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
+(`0e633fa`). **Changement de direction artistique global, validé
+explicitement par Mathieu.** Le lot précédent avait fabriqué une ambiance
+marécage nocturne et la faisait apparaître au bout de 18 s par-dessus une
+scène diurne. Ce lot supprime la scène diurne : **le marécage EST le jeu,
+dès la première frame de la première run.**
+
+**Le ciel bleu (`0.55, 0.75, 0.95`) et la piste pastel (`0.55, 0.42, 0.32`)
+n'existent plus dans aucun état du jeu**, écran-titre compris — c'est
+mesuré et *gaté*, pas affirmé (voir `SwampIdentityAudit` plus bas).
+
+### Le grade plein écran est SUPPRIMÉ — deux raisons mesurées, pas une préférence
+
+`assets/shaders/swamp_grade.gdshader` et le `ColorRect` qui le portait sont
+supprimés. `scripts/world/DarkModeEffect.gd` devient
+`scripts/world/SwampAtmosphere.gd`, un simple `Node` qui n'écrit plus que
+trois propriétés d'`Environment`. Rien ne post-traite la frame désormais :
+**la couleur écrite EST la couleur vue**, littéralement, sans shader entre
+les deux.
+
+1. **Il détruisait la teinte par construction.** Mesuré sur l'arbre de
+   départ (`DarkPaletteAudit`, baseline conservée) : les six hazards que le
+   joueur doit distinguer d'un coup d'œil rendaient tous le MÊME olive, à
+   la valeur près — DODGE `(0.19,0.25,0.16)`, STOMPER `(0.17,0.22,0.15)`,
+   CHARGER `(0.24,0.30,0.19)`, ENEMY `(0.26,0.33,0.21)`, JUMP
+   `(0.28,0.34,0.22)`, AIR_ENEMY `(0.31,0.37,0.24)`. Une barrière rouge, un
+   charger rose vif et un stomper bleu étaient la même couleur. C'est
+   inhérent à une rampe indexée sur la luminance (l'en-tête du shader le
+   disait), et c'est ce qui plafonnait la pire paire hazard-vs-sol à
+   **1,46:1** avec un meilleur cas balayé de 1,70:1.
+2. **Il coûtait une passe plein écran tant qu'il était allumé.** Le shader
+   échantillonnait `hint_screen_texture`, ce qui force sur le renderer
+   Compatibility une copie du framebuffer entier plus une passe fragment
+   plein écran. Le rendre permanent, c'était payer ça à chaque frame de
+   chaque run, sur mobile web, pour un rendu que des constantes atteignent
+   gratuitement.
+
+### Le cycle survit, mais comme RESPIRATION — plus jamais comme identité
+
+Le brief laissait le choix entre neutraliser le cycle et le garder en
+variation subtile. **Gardé**, parce que c'était le moins cher : le
+supprimer imposait d'arracher la machine à états de `GameState` et de
+réécrire toutes les sondes qui mesurent ses deux bouts, alors que changer
+ce qu'il PILOTE est un diff plus petit.
+
+Le vocabulaire suit le sens (précédent maison : `InvertCapture` →
+`SwampGradeCapture`, renommée parce qu'un nom qui ment est un piège) :
+`dark_intensity` → **`mist_intensity`**, `DarkPhase{DARK,LIGHT}` →
+**`MistPhase{DEEP,SHALLOW}`**, `DARK_*` → `MIST_*`, `_update_dark_cycle` →
+`_update_mist_cycle`. ~100 occurrences, 12 fichiers, vérifié par `grep`
+résiduel vide + sondes rejouées.
+
+⚠️ **La respiration ne touche QUE le fond**, et c'est ce qui la rend
+acceptable là où un grade permanent ne l'était pas : elle bouge
+`background_color`, `fog_light_color` et `fog_density`. `fog_sky_affect`
+vaut 0.0 et la zone de jeu est à quelques mètres de la caméra, où le
+brouillard à ces densités n'apporte presque rien. **Aucun contraste
+gameplay ne peut donc bouger avec elle** — et c'est vérifié, pas supposé :
+`DarkPaletteAudit` mesure désormais les DEUX bouts et les deux colonnes
+sont identiques à ±0,02.
+
+### Contrastes : 4 hazards sur 6 passent 3,0:1, contre 0 sur 6 avant
+
+⚠️ **Arithmétique à connaître avant de retoucher une couleur.** Le sol rend
+à **luminance relative 0,153**. Contre lui, franchir 3,0:1 exige d'être
+soit **≥ 0,559** (nettement brillant), soit **≤ 0,018** (quasi noir).
+**Tout ce qui atterrit entre les deux est sous le plancher, quelle que soit
+sa teinte** — la teinte survit maintenant, mais elle ne compte pour RIEN
+dans le ratio WCAG. C'est la règle qui remplace « mets le contraste dans
+l'asset » (qui était la règle de l'inversion).
+
+| objet | avant ce lot | après | ce qui a changé |
+|---|---|---|---|
+| DODGE | 1,72 | **3,28** | rouge moyen → silhouette quasi noire |
+| JUMP | 1,39 | **3,23** | brun → ambre vif, passé **unshaded** |
+| STOMPER | 1,14 | **3,36** | bleu profond → bleu glacier pâle |
+| CHARGER | 1,45 | **3,15** | magenta → rose vif pâle |
+| ENEMY | 1,47 | 1,47 | inchangé — voir ci-dessous |
+| AIR_ENEMY | 1,14 | 1,14 | inchangé — voir ci-dessous |
+| NOISETTE | 2,35 | 2,35 | rapporté, jamais gaté |
+| GLAND | 4,47 | 4,47 | rapporté, jamais gaté |
+
+⚠️ **`ENEMY` et `AIR_ENEMY` sont mesurés dans leur teinte d'ALARME, pas au
+repos, et les libellés `(resting)` de la sonde sont FAUX là-dessus.** À la
+distance de capture la rampe d'alarme (`Obstacle.ENEMY_ALARM_ALBEDO`,
+`0.95,0.08,0.12`) a entièrement repris la main sur le matériau : ces deux
+lignes mesurent le télégraphe rouge, pas l'albédo de base, et changer la
+couleur de base ne les bouge quasiment pas. Ce rouge est pauvre en
+luminance contre un sol olive. **Les remonter, c'est retoucher le
+TÉLÉGRAPHE, pas l'art — décision gameplay, elle appartient à Mathieu.** Le
+mauvais libellé est pré-existant ; signalé plutôt que corrigé en douce,
+parce que les chiffres en dessous sont réels.
+
+⚠️ **Le CHARGER est le cas où teinte et luminance se contredisent.** Son
+magenta `(1.00,0.15,0.62)` mesurait 1,45:1 — pas un raté de réglage mais
+une propriété du magenta, qui n'a pas de canal vert et ne peut donc pas
+être lumineux. C'est le SEUL hazard fatal. L'argument qui a tranché est
+l'accessibilité : pour un deutéranope, magenta contre olive est exactement
+la paire confusable, et il ne reste que la luminance.
+
+### Ce que ce lot FERME au passage
+
+**`PursuerContrastAudit` PASSE** — silhouette **4,13:1** (shallow) et
+**4,06:1** (deep) contre un plancher de 2,5:1. Cette sonde échouait sur
+`origin/main` intact (6/6 palettes sombres sous le plancher, pire 1,86:1),
+puis était INCONCLUSIVE en sandbox. **La décision de teinte ouverte depuis
+le 9 août — « pursuer vs sol en DARK/2 à 2,37:1, il faut bouger l'albédo du
+sol ou `DARK_TINT_AMOUNT` » — est SANS OBJET** : les deux variables qu'elle
+nommait n'existent plus sous cette forme, et le chiffre est passé de 2,37 à
+4,06 sans qu'on touche à l'albédo du poursuivant.
+
+### `SwampIdentityAudit` — nouvelle sonde GATÉE, remplace `SwampGradeCapture`
+
+`SwampGradeCapture` mesurait quatre propriétés du grade ; le grade
+n'existant plus, ses quatre questions expirent d'un coup — exactement comme
+son propre en-tête racontait `InvertCapture` expirant un cran plus tôt.
+Remplacée, pas rafistolée.
+
+Elle asserte le critère d'acceptation réel du brief : **aucun état du jeu ne
+rend une frame bleue ou pastel**. Cinq états échantillonnés, trois
+assertions chacun (vert dominant / saturé / sombre) :
+
+| état | rgb moyen | luma | sat |
+|---|---|---|---|
+| WORLD AT TITLE | `0.245, 0.281, 0.117` | 0,261 | 0,58 |
+| **TITLE SCREEN** | `0.084, 0.110, 0.078` | 0,102 | 0,30 |
+| RUN OPENING (mist 0,00) | `0.245, 0.281, 0.117` | 0,261 | 0,58 |
+| RUN DEEP MIST (mist 1,00) | `0.231, 0.262, 0.105` | 0,244 | 0,60 |
+| GAME OVER | `0.245, 0.281, 0.117` | 0,261 | 0,58 |
+
+`SWAMP_IDENTITY_VERIFIED=yes`. **L'écran-titre est chargé pour de vrai**
+(`TitleScreen.tscn` est une scène séparée que `Game.tscn` ne contient pas) :
+c'est l'endroit le plus probable pour que le look diurne survive sans être
+vu — première chose que voit le joueur, dernière que regarde une sonde 3D.
+
+### Deux pièges de sonde rencontrés — à connaître
+
+⚠️ **`--headless` FORCE le driver de rendu DUMMY et écrase
+`--rendering-driver opengl3`, en silence.** `get_image()` rend alors une
+surface vide : tous les échantillons lisent `(0,0,0)`, tous les ratios
+calculent 1,00:1, **et la sonde SORT EN 0**. Faux vert complet, rencontré
+pour de vrai sur la première mesure de ce lot. Même famille que le piège
+d'ordre des flags déjà documenté, sur un autre flag. Toute sonde qui lit
+des pixels se lance **sans `--headless`**, sous `xvfb-run`.
+
+⚠️ **Une sonde dont le SCRIPT ne PARSE pas ne tombe pas vite : elle traîne
+jusqu'au timeout.** Une erreur de parse GDScript empêche la scène de se
+charger, donc `ProbeWatchdog.arm()` n'est **jamais atteint** — il n'y a pas
+de watchdog du tout, et le process tourne à vide (15 min observées ici).
+`ProbeTimeoutAudit` garantit qu'une sonde ARME un timeout, pas qu'elle
+COMPILE. Parade adoptée : un `--headless --quit-after 2` sur la scène de la
+sonde avant tout run long, qui fait apparaître `Parse Error` en quelques
+secondes.
+
+### `DarkPaletteAudit` : la scène de calibration est LUE, plus copiée
+
+La sonde tenait des copies à la main des couleurs des scènes livrées
+(`GROUND_ALBEDO`, `SKY_COLOR`, plus l'ambiante et la lumière reconstruites
+en dur), avec un commentaire affirmant que copier « depuis la sous-ressource
+exacte » protégeait de la dérive. **C'est l'inverse, et ce lot l'a pris sur
+le fait** : après le changement de palette, la sonde a rendu sa propre scène
+diurne et rapporté un sol pastel et un ciel BLEU, à pleine confiance, run
+vert et code de sortie 0, contre un build où ni l'un ni l'autre n'existait.
+Elle lit désormais l'`Environment`, la `DirectionalLight3D` et le matériau
+du sol dans les `.tscn` livrés via `PackedScene.get_state()` (même astuce
+que `TrackSegment._shared_model`). Plus aucune copie.
+
+### Ce qui n'a PAS bougé
+
+Géométries, colliders, spawn logic, gameplay, timings du cycle
+(`MIST_FIRST_TRIGGER_S` 18 s, `MIST_CYCLE_PERIOD_S` 10 s,
+`MIST_FADE_DURATION_S` 0,8 s), `_PROP_KIND_WEIGHTS`, les flux `DecorRng`,
+l'albédo du poursuivant, les textures des billboards (re-teintées par
+`modulate`, pas ré-exportées).
+
+### RESTE À VALIDER SUR DEVICE — le seul juge
+
+Aucune sonde ne dit que c'est BEAU. Ce qui doit être regardé sur téléphone :
+est-ce que ça se lit comme un marécage, est-ce que la piste guide l'œil
+sans éclairer la scène, et surtout **est-ce que les 4 hazards re-coloriés
+restent lisibles à vitesse réelle** — `JUMP` en ambre vif et `GLAND` en
+jaune sont désormais deux objets brillants et chauds, distingués par la
+FORME (boîte basse large vs sphère qui flotte et tourne) et non plus par la
+couleur. C'est le risque de ce lot, et il n'est pas mesurable ici.
 ## Mode sombre : REFONTE MARÉCAGE — l'inversion est supprimée (11 août 2026)
+
+> ⚠️ **SECTION HISTORIQUE, DÉPASSÉE PAR LE LOT « DIRECTION ARTISTIQUE
+> PERMANENTE » CI-DESSUS (même jour).** Elle décrit le marécage comme une
+> PHASE rendue par un grade plein écran. Les deux ont disparu : il n'y a
+> plus ni phase sombre ni shader de grade. Conservée pour les mesures et
+> les pièges qu'elle porte, pas comme description du jeu actuel.
 
 Branche `claude/dark-mode-swamp-refactor-8eoo0q`. **Refonte destructive
 assumée, validée explicitement par Mathieu.** Remplace d'un bloc

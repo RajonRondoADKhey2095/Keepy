@@ -353,105 +353,118 @@ Prefer **one 512x512 or 1024x1024 albedo atlas per character** over
 several maps; normal/roughness maps buy very little on unshaded or
 flat-lit low-poly.
 
-## 8. Materials and dark mode — the constraint that decides legibility
+## 8. Materials and the permanent swamp — the constraint that decides legibility
 
-Every ~20 seconds the game inverts the entire rendered frame and blends it
-55% toward one of six saturated tints. At full dark, per pixel:
+**This whole section was rewritten on 2026-08-11, when the swamp became the
+game's permanent look.** Two pipelines have been deleted since it was first
+written, and everything either of them implied about colour is void:
 
-    final = (1 - rendered) * 0.45  +  tint * 0.55
+- the **invert + six-hue tint** (`final = (1-rendered)*0.45 + tint*0.55`),
+  deleted by the swamp refonte;
+- the **luminance-keyed screen grade** that replaced it, deleted by the
+  permanent-swamp batch.
 
-Two consequences follow from that formula directly, and they are the whole
-of the colour guidance:
+There is **no post-process on the frame at all any more**. The value written
+into a material is the value that reaches the player, full stop. If you are
+reading an older note anywhere in this repo that tells you to author a
+colour as the *pre-image* of something, or warns that hue will not survive,
+it is describing machinery that no longer exists.
 
-1. **Hue separation collapses.** Every colour on screen is dragged 55% of
-   the way toward *the same* saturated hue. Two objects that differed only
-   in hue end up nearly the same colour.
-2. **Value (luminance) separation survives, at exactly 45% strength.** The
-   map is affine with slope -0.45 per channel, so any two colours'
-   per-channel difference is preserved — scaled to 45% of what it was, and
-   *inverted* (the lighter one becomes the darker one).
+### The look
 
-Measured confirmation, from the lane barrier (a bright striped wall) across
-all six palettes:
-
-| | measured range |
+| | |
 |---|---|
-| Barrier **vs ground** (silhouette contrast) | **1.56:1 – 1.92:1** |
-| Barrier's **own internal stripes** | **3.18:1 – 4.07:1** |
+| Sky / background | `0.055, 0.078, 0.051` — near-black swamp green |
+| Distance haze (`fog_light_color`) | `0.180, 0.216, 0.149` |
+| Ambient light | `0.42, 0.50, 0.35` @ energy 0.75 |
+| Directional light | `0.66, 0.74, 0.52` @ energy 0.9 |
+| Ground slab (albedo) | `0.42, 0.44, 0.24` — desaturated muddy olive |
 
-And from the tint sweep: the worst object-vs-ground contrast sits at
-**1.00:1 – 1.03:1 across the entire tint range 0.18 → 0.75**. The floor is
-set by the raw albedos against the ground colour — *not* by the tint
-amount. Turning the tint down would not fix it.
+The track is the **brightest large surface in the frame** and everything
+else sinks away from it: that is what makes it read as a path through a bog
+rather than a strip in a void. `scripts/world/SwampAtmosphere.gd` breathes
+the sky, haze and fog density between this baseline and a slightly deeper
+pair (`GameState.SWAMP_*_DEEP`); the breath is confined to the backdrop and
+never touches a gameplay surface.
 
-**So, concretely:**
+### What actually decides legibility now
 
-- **Do not rely on colour to separate an asset from the ground.** It does
-  not survive, and no tint setting makes it survive.
-- **Put the contrast INSIDE the asset.** Internal light/dark contrast
-  holds 3.18–4.07:1 through every palette, while silhouette-vs-ground
-  falls to 1.56:1. Strong value structure — a pale belly against a dark
-  back, banded markings, a light rim — is what stays readable.
-- **Silhouette is the most reliable cue there is**, because it is geometry
-  and survives every palette unchanged. Give each hazard a shape readable
-  in pure black at a glance.
-- **Avoid mid-luminance albedos near the ground's** `rgb(0.55, 0.42, 0.32)`.
-  Go clearly lighter or clearly darker.
-- **Use `shading_mode = unshaded`** for anything whose dark-mode appearance
-  must be predictable. An unshaded surface renders as exactly its albedo
-  regardless of light angle, which is the only way its post-inversion
-  colour is a *known* value. The CHARGER, STOMPER, jump marker and pursuer
-  body all already do this.
-- **Emission inverts too.** A bright emissive surface becomes dark after
-  the invert. Do not use a glow as a "always bright" cue.
+The ground renders at **relative luminance 0.153**. That single number sets
+what is reachable, and it is worth stating as arithmetic rather than as
+advice, because it is not obvious:
 
-Current placeholder palette, for reference (do not reuse these hues
-blindly — they were chosen to be mutually distinct, which §8 just
-explained is the *weakest* axis in dark mode):
+- to clear **3.0:1 by being brighter**, a surface needs relative luminance
+  **≥ 0.559** — a genuinely bright colour, not merely a light one;
+- to clear it **by being darker**, it needs **≤ 0.018** — near black.
 
-| Object | shading | albedo |
-|---|---|---|
-| Keepy | lit | `0.92, 0.55, 0.20` |
-| DODGE | lit | `0.55, 0.05, 0.05` |
-| JUMP | lit | `0.45, 0.28, 0.12` |
-| ENEMY | lit + emissive | `0.40, 0.05, 0.55` |
-| AIR_ENEMY | lit + emissive | `0.12, 0.85, 0.22` |
-| CHARGER | **unshaded** | `1.00, 0.15, 0.62` |
-| STOMPER | **unshaded** | `0.05, 0.20, 0.95` |
-| Jump marker | **unshaded** | `0.15, 0.95, 1.00` |
-| Noisette | lit | `0.95, 0.78, 0.15` |
-| Gland | lit + emissive | `1.00, 0.72, 0.15` |
-| Pursuer body | **unshaded** | `0.02, 0.02, 0.03` |
-| Ground | lit | `0.55, 0.42, 0.32` |
+Anything landing between those two is *below the floor no matter what hue it
+is*. So the rule is no longer "put contrast inside the asset" (that was the
+invert's rule, when value was the only surviving channel). It is:
 
-> **Note on a known probe defect.** `DarkPaletteAudit`'s per-object
-> sampling path currently reports `(0,0,0)` for 26 of its samples under
-> software rendering (llvmpipe). Those values are **impossible shader
-> outputs** — at full dark with the green tint, `final.r >= 0.12 * 0.55 =
-> 0.066`, so a true zero cannot occur — and the probe's *barrier* pass,
-> which samples through a different code path, returns correct non-zero
-> values for the very same palettes. The per-object numbers from that path
-> should not be trusted until it is fixed; the barrier numbers and the
-> sweep summary above are the ones this section relies on. Unrelated to
-> this batch, not fixed here.
+> **Every gameplay surface must be decisively brighter or decisively darker
+> than the track. Mid-value is the one place nothing can be rescued from.**
 
-> **Open design item, awaiting Mathieu's call -- pursuer body vs `DARK/2`
-> ground (2026-08-09, `docs/PROBE_AUDIT.md` F10a).** Measured against the
-> correct reference surface (the ground, not Keepy -- the probe used to
-> sample the wrong thing, see F10a), `Pursuer body`'s `0.02, 0.02, 0.03`
-> reads **2.37:1** against `DARK/2`'s ground, under this project's own
-> 2.5:1 silhouette floor. This table's palette already sits at pure black,
-> which the sweep behind the 2.5 floor puts at the *optimum* achievable
-> value against this ground on this tint -- there is no darker or lighter
-> unshaded albedo that reads better here, and the sweep's own ceiling for
-> green (2.05) is already below the measured 2.37, so re-picking the
-> pursuer's colour cannot close this gap. The two variables that can:
-> **the ground's own albedo** (`0.55, 0.42, 0.32` above) or
-> **`GameState.DARK_TINT_AMOUNT`** (0.55) -- both of which move every
-> other object's dark-mode contrast on this table, not only the pursuer's.
-> That is a project-wide colour call, not a per-asset one, and it is left
-> for Mathieu to make. No code or probe change is pending on this note.
+Hue now survives to the screen, and it is doing real work again — a red
+barrier, an amber ledge and a pink charger are three different colours to
+the player for the first time in this project's history. But hue contributes
+**nothing** to the WCAG ratio the probes report, so it can never be the
+argument for a surface that sits at the track's own value.
 
+### Measured, `DarkPaletteAudit`, both ends of the mist breath
+
+Contrast is WCAG relative-luminance ratio on real sampled pixels, against
+the ground (the load-bearing comparison — the camera is close and angled
+down, so gameplay objects are read against the track, not the sky).
+
+| Object | shading | albedo | vs ground |
+|---|---|---|---|
+| DODGE | lit | `0.30, 0.025, 0.025` | **3.28:1** |
+| JUMP | **unshaded** | `1.00, 0.78, 0.28` | **3.23:1** |
+| STOMPER | **unshaded** | `0.62, 0.86, 1.00` | **3.36:1** |
+| CHARGER | **unshaded** | `1.00, 0.72, 0.88` | **3.15:1** |
+| ENEMY | lit + emissive | `0.52, 0.08, 0.72` | 1.47:1 — alarm tint, see below |
+| AIR_ENEMY | lit + emissive | `0.12, 0.85, 0.22` | 1.14:1 — alarm tint, see below |
+| Noisette | lit | `0.95, 0.78, 0.15` | 2.35:1 (reported, never gated) |
+| Gland | lit + emissive | `1.00, 0.72, 0.15` | 4.47:1 (reported, never gated) |
+
+DODGE, JUMP and STOMPER were re-authored by the permanent-swamp batch and
+all three cleared the floor as a result — 1.72 → 3.28, 1.39 → 3.23 and
+1.14 → 3.36. JUMP was switched to **unshaded** at the same time, for the
+reason this section already gives below: an unshaded surface renders as
+exactly its albedo, which is the only way its measured value is a *known*
+number rather than a product of the light hitting it.
+
+> **ENEMY and AIR_ENEMY are measured in their ALARM tint, not at rest,**
+> and the probe's own `(resting)` labels are wrong about this. At the
+> capture distance the alarm ramp (`Obstacle.ENEMY_ALARM_ALBEDO`,
+> `0.95, 0.08, 0.12`) has fully taken over the material, so what those two
+> rows measure is the red telegraph, not the base albedo — changing the
+> base colour barely moves them. That red is luminance-poor against an
+> olive track, which is why both sit low. Raising them means retuning the
+> **telegraph**, not the art: a gameplay-legibility decision, left for
+> Mathieu. The mislabelling is pre-existing and is called out here rather
+> than silently corrected, because the numbers under it are real.
+
+> **The CHARGER is the case where hue and luminance genuinely disagree.**
+> Its shipped hot magenta (`1.00, 0.15, 0.62`) measured **1.45:1** — not a
+> tuning miss but a property of magenta, which has no green channel and so
+> cannot be luminance-bright at any saturation. It is the only *fatal*
+> hazard, so it is also the one that must never be missed. The batch raised
+> it to a pale hot pink to clear the floor by value while keeping the hue
+> identity. The accessibility argument is the one that decided it: for a
+> deuteranope, magenta against olive is precisely the confusable pair, and
+> luminance is all that is left.
+
+**Still true, and still the strongest advice here:**
+
+- **Silhouette is the most reliable cue there is** — it is geometry, and no
+  palette change touches it. Give each hazard a shape readable in pure
+  black at a glance.
+- **Use `shading_mode = unshaded`** for anything whose appearance must be
+  predictable. CHARGER, STOMPER, JUMP, the jump marker, the lane curbs, the
+  trackside props and the pursuer body all do.
+- **Emission is no longer inverted** (nothing inverts), so a glow is once
+  again a dependable "always bright" cue.
 ### 8.1 Background decor (procedural, no asset yet)
 
 `scripts/world/Decor.gd` (`World/Decor` in `Game.tscn`) draws the two

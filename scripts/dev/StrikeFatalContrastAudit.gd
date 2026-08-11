@@ -71,8 +71,7 @@ const CONTRAST_FLOOR: float = 3.0
 const DECOR_SEED: int = 20260806
 
 var _game: Node3D
-var _grade_rect: ColorRect
-var _dark_effect: CanvasLayer
+var _atmosphere: Node
 var _hud: CanvasLayer
 var _strike_row: Control
 var _strike_label: Label
@@ -97,11 +96,10 @@ func _ready() -> void:
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_hud = _game.get_node("HUD")
-	_grade_rect = _game.get_node("DarkModeEffect/Grade")
-	_dark_effect = _game.get_node("DarkModeEffect")
+	_atmosphere = _game.get_node("SwampAtmosphere")
 	# _process off so GameState cannot overwrite the pinned intensity every
 	# frame; the probe then calls _apply() itself -- see _measure below.
-	_dark_effect.set_process(false)
+	_atmosphere.set_process(false)
 	# THE PURSUER, muted outright -- and this probe needed a real run to find
 	# out why it had to be. _freeze_world() below re-pins GameState.state to
 	# PLAYING by direct assignment (same technique ComboContrastAudit/
@@ -180,7 +178,7 @@ func _measure_phase(label: String, dark: bool) -> void:
 	# THIS phase would never apply either.
 	_hud.set_process(true)
 	_freeze_world()
-	# Drive the REAL DarkModeEffect._apply() rather than writing the
+	# Drive the REAL SwampAtmosphere._apply() rather than writing the
 	# shader uniforms by hand. Since the swamp refonte the dark look is
 	# TWO things -- the screen grade AND the sky/haze colours written
 	# into the WorldEnvironment -- and poking only the shader would
@@ -188,7 +186,7 @@ func _measure_phase(label: String, dark: bool) -> void:
 	# not a state the game can ever be in. Going through the real entry
 	# point is the same discipline this probe already applies to
 	# GameState.register_strike() and friends.
-	_dark_effect._apply(1.0 if dark else 0.0)
+	_atmosphere._apply(1.0 if dark else 0.0)
 
 	_enter_fatal_state()
 	if not _hud._fatal_active:

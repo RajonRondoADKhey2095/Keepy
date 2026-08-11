@@ -66,8 +66,7 @@ const SETTLE_FRAMES: int = 24
 const CONTRAST_FLOOR: float = 3.0
 
 var _game: Node3D
-var _grade_rect: ColorRect
-var _dark_effect: CanvasLayer
+var _atmosphere: Node
 var _hud: CanvasLayer
 var _strike_row: Control
 var _pip0: ColorRect
@@ -87,16 +86,15 @@ func _ready() -> void:
 	_game = load("res://scenes/Game.tscn").instantiate()
 	add_child(_game)
 	_hud = _game.get_node("HUD")
-	_grade_rect = _game.get_node("DarkModeEffect/Grade")
 	# Same two corrections ComboContrastAudit.gd documents at length: the
 	# world is held still by zeroing the speed (never by pausing the tree,
 	# which stops the rendering the whole probe depends on), and
-	# DarkModeEffect's own _process is switched off so it cannot write over
+	# SwampAtmosphere's own _process is switched off so it cannot write over
 	# the uniforms this probe sets by hand.
-	_dark_effect = _game.get_node("DarkModeEffect")
+	_atmosphere = _game.get_node("SwampAtmosphere")
 	# _process off so GameState cannot overwrite the pinned intensity every
 	# frame; the probe then calls _apply() itself -- see _measure below.
-	_dark_effect.set_process(false)
+	_atmosphere.set_process(false)
 	_strike_row = _hud.get_node("MarginContainer/PursuerRow/StrikeRow")
 	_pip0 = _hud.get_node("MarginContainer/PursuerRow/StrikeRow/Pip0")
 	_pip0_interior = _hud.get_node("MarginContainer/PursuerRow/StrikeRow/Pip0/Ring/Fill")
@@ -118,7 +116,7 @@ func _freeze_world() -> void:
 
 func _measure_phase(label: String, dark: bool) -> void:
 	_freeze_world()
-	# Drive the REAL DarkModeEffect._apply() rather than writing the
+	# Drive the REAL SwampAtmosphere._apply() rather than writing the
 	# shader uniforms by hand. Since the swamp refonte the dark look is
 	# TWO things -- the screen grade AND the sky/haze colours written
 	# into the WorldEnvironment -- and poking only the shader would
@@ -126,7 +124,7 @@ func _measure_phase(label: String, dark: bool) -> void:
 	# not a state the game can ever be in. Going through the real entry
 	# point is the same discipline this probe already applies to
 	# GameState.register_strike() and friends.
-	_dark_effect._apply(1.0 if dark else 0.0)
+	_atmosphere._apply(1.0 if dark else 0.0)
 
 	# Pip 0 INTACT: no strikes taken.
 	_set_strikes(0)

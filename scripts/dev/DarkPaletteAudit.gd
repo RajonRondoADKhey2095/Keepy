@@ -1,7 +1,7 @@
 extends Node
-## Capture probe for the SWAMP-NIGHT dark palette: does each hazard and
-## collectible still read against the ground once the dark phase grades
-## the whole frame into the swamp ramp. NOT part of the shipped game
+## Capture probe for the PERMANENT SWAMP palette: does each hazard and
+## collectible read against the ground, at both ends of the mist breath.
+## NOT part of the shipped game
 ## (scripts/dev/* is excluded from the web export, nothing shipped
 ## instantiates it).
 ##
@@ -9,7 +9,7 @@ extends Node
 ## CALIBRATE GameState.DARK_TINT_AMOUNT: a SWEEP pass rendered every
 ## object at eight candidate tint strengths against six hues (48
 ## combinations) to pick a defensible value, then a CANONICAL pass
-## re-derived the shipped number through the real DarkModeEffect.gd to
+## re-derived the shipped number through the real dark-mode node to
 ## prove the shortcut and the production path agreed.
 ##
 ## The swamp refonte deleted the invert, the six hues and the tint
@@ -30,25 +30,25 @@ extends Node
 ##
 ## METHOD -- "sample real rendered pixels, don't hand-compute from hex
 ## codes", per-OBJECT rather than whole-frame: a minimal calibration
-## scene (own WorldEnvironment, DirectionalLight3D and Camera3D, all
-## copied verbatim from Game.tscn so lighting/perspective match the
-## shipped game exactly) plus the REAL Obstacle.tscn / Noisette.tscn /
+## scene (own WorldEnvironment, DirectionalLight3D and Camera3D, the first
+## two READ OUT OF Game.tscn at run time so lighting matches the shipped
+## game exactly) plus the REAL Obstacle.tscn / Noisette.tscn /
 ## Gland.tscn scenes, shown ONE AT A TIME so each capture is unambiguous
 ## about which object it measured. The real Game.tscn is deliberately NOT
 ## reused: its TrackManager keeps spawning and recycling obstacles for as
 ## long as the scene runs, long enough for real track content to drift
 ## into the very screen region a capture is sampling and contaminate it.
 ## A private, controlled scene removes that variable entirely while still
-## exercising the exact same materials and the exact same
-## swamp_grade.gdshader the shipped game runs.
+## exercising the exact same materials and the exact same environment the
+## shipped game renders with -- both read straight out of the .tscn files,
+## never copied (see the block below).
 ##
-## ONE THING THE PRIVATE SCENE NOW HAS TO GET RIGHT that it did not
-## before: the dark look is no longer only a shader. DarkModeEffect.gd
-## also writes the sky and haze colours into the WorldEnvironment, so
-## this probe points it at the WorldEnvironment it builds itself (see
-## _build_calibration_scene). Miss that and the probe would measure a
-## swamp-graded world under a daytime blue sky -- a state the game cannot
-## be in, reported as if it were.
+## ONE THING THE PRIVATE SCENE HAS TO GET RIGHT: the look is not a shader
+## at all any more. SwampAtmosphere.gd writes the sky, haze and fog density
+## into the WorldEnvironment, so this probe points it at the
+## WorldEnvironment it builds itself (see _build_calibration_scene). Miss
+## that and the breath would never move, and both ends would be reported as
+## the same state without anyone noticing.
 ##
 ## Camera pose mirrors CameraFollow's own steady-state (Keepy fixed at
 ## (0,1,0), offset (0,4.2,7), look_ahead (0,1,-4) -- see
@@ -56,7 +56,7 @@ extends Node
 ## what a real run actually shows, not an arbitrary calibration angle.
 ##
 ## CONTRAST METRIC: WCAG 2.x relative-luminance contrast ratio, computed
-## on the ACTUAL POST-SHADER pixel colour sampled from the rendered
+## on the ACTUAL pixel colour sampled from the rendered
 ## frame (sRGB -> linear -> luminance, standard formula) -- comparable
 ## across palettes since it is the same metric a web accessibility audit
 ## would use, and it is exactly "how different do these two colours
@@ -70,18 +70,47 @@ extends Node
 ## load-bearing for the same reason).
 ##
 ## Run it with:
-##   xvfb-run -a godot4 --rendering-driver opengl3 \
-##     --quit-after 4000 res://scripts/dev/DarkPaletteAudit.tscn
+##   xvfb-run -a godot4 --rendering-driver opengl3 --fixed-fps 60 \
+##     --path . res://scripts/dev/DarkPaletteAudit.tscn
+##
+## ⚠️ NEVER add --headless: it forces the DUMMY rendering driver and
+## silently overrides --rendering-driver, so every sample reads (0,0,0),
+## every ratio computes 1.00:1 and the probe STILL EXITS 0. That faux vert
+## was hit for real while writing the permanent-swamp batch.
 
 const SETTLE_FRAMES: int = 3
 const CAPTURE_Z: float = -2.2 # close enough to the camera to fill a legible chunk of frame
 
-# Real gameplay albedos -- copied from the exact sub-resource each
-# shipped scene defines (never retyped/guessed), so a future change to
-# any of these materials is what invalidates this probe's numbers, not
-# drift between two independently maintained copies of the same colour.
-const GROUND_ALBEDO := Color(0.55, 0.42, 0.32, 1) # TrackSegment.tscn StandardMaterial3D_1
-const SKY_COLOR := Color(0.55, 0.75, 0.95, 1) # Game.tscn Environment_1.background_color
+# =====================================================================
+# THE CALIBRATION SCENE IS READ FROM THE SHIPPED SCENES, NOT COPIED
+#
+# This block used to hold hand-copied constants:
+#
+#   const GROUND_ALBEDO := Color(0.55, 0.42, 0.32, 1)  # TrackSegment.tscn
+#   const SKY_COLOR     := Color(0.55, 0.75, 0.95, 1)  # Game.tscn
+#
+# with a comment arguing that copying "from the exact sub-resource, never
+# retyped or guessed" protected against drift. IT DID THE OPPOSITE, and
+# the permanent-swamp batch caught it doing so: that batch changed the
+# sky, the ground, the ambient colour and the directional light in the
+# shipped scenes, and this probe went on rendering its own private
+# daylight-blue scene and reporting the numbers as the game's. It printed
+# a pastel ground and a blue sky, at full confidence, with a green run and
+# exit code 0, against a build where neither existed any more.
+#
+# A copy of a value is not protected by knowing where it came from. So
+# nothing is copied now: the Environment, the DirectionalLight3D and the
+# ground material are all READ OUT OF THE SHIPPED .tscn FILES at run time,
+# via PackedScene.get_state() -- the same SceneState-reading trick
+# TrackSegment.gd already uses to pull prop meshes out of a .glb without
+# instantiating it.
+#
+# Read rather than instantiated, deliberately: instantiating Game.tscn
+# would start TrackManager spawning and recycling real obstacles for as
+# long as the probe runs, which is precisely the contamination the private
+# scene exists to avoid (see this file's METHOD note above).
+const GAME_SCENE_PATH := "res://scenes/Game.tscn"
+const TRACK_SEGMENT_SCENE_PATH := "res://scenes/TrackSegment.tscn"
 
 # Sample box half-size, in pixels, around each object's unprojected
 # screen position. Generous enough to average out the collectibles'
@@ -100,17 +129,23 @@ const SKY_STRIP_BOTTOM_FRAC: float = 0.08 # top 8% of the frame: always clear sk
 # not static paragraph text. It used to sit on top of the old shader's
 # injectivity proof, which guaranteed nothing collapsed to
 # "stays comfortably readable" floor, and it is a real, citable number
-# rather than a vibe. NOTE: the old shader's injectivity proof used to
-# back this up -- the swamp grade explicitly does NOT preserve
-# injectivity (equal-luminance hues collapse; see swamp_grade.gdshader),
-# so this floor is now the ONLY thing standing between an object and its
-# ground, which makes measuring it matter more than it did before.
+# rather than a vibe. NOTE ON WHAT IT DOES AND DOES NOT CAPTURE, since the
+# permanent-swamp batch deleted the screen grade: hue now survives all the
+# way to the pixel, but a WCAG ratio is computed on LUMINANCE alone and so
+# scores none of it. Two objects of equal luminance and opposite hue --
+# obviously different to a player -- score 1.00:1 here. The floor is
+# therefore a conservative statement about legibility, not a complete one,
+# and the right response to a surface that fails it is to move its VALUE,
+# never to argue that its hue makes up the difference.
 const CONTRAST_FLOOR: float = 3.0
 
 var _root3d: Node3D
 var _camera: Camera3D
-var _shader_mat: ShaderMaterial
-var _dark_effect_layer: CanvasLayer
+var _atmosphere: Node
+## Which end of the mist breath the pass currently being printed measured.
+## Set by _run_canonical_pass before each pass; only ever read for output,
+## never for a decision.
+var _phase_label: String = ""
 var _obstacle: Obstacle
 var _noisette: Noisette
 var _gland: Gland
@@ -152,7 +187,7 @@ func _run() -> void:
 	# through production code rather than through a probe-only shortcut.
 	await _run_canonical_pass()
 
-	# LAST: the barrier pass drives GameState.dark_intensity through the
+	# LAST: the barrier pass drives GameState.mist_intensity through the
 	# same production code path, and running it here keeps it from
 	# perturbing anything the pass above measures.
 	await _run_barrier_pass()
@@ -175,38 +210,33 @@ func _run() -> void:
 ## Everything a calibration frame needs, matching Game.tscn's own
 ## values verbatim: a WorldEnvironment (sky colour, ambient light), a
 ## DirectionalLight3D (identical transform), a ground slab (identical
-## material to TrackSegment.tscn's), the real DarkModeEffect.gd driving
-## the swamp_grade shader, and one instance each of the three real
+## material to TrackSegment.tscn's), the real SwampAtmosphere.gd driving
+## the environment, and one instance each of the three real
 ## hazard/collectible scenes this probe toggles between.
 func _build_calibration_scene() -> void:
 	_root3d = Node3D.new()
 	_root3d.name = "Root3D"
 	add_child(_root3d)
 
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = SKY_COLOR
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(1, 1, 1)
-	env.ambient_light_energy = 0.6
+	# DUPLICATED, not used in place: a sub-resource read out of a
+	# PackedScene is the very object the shipped scene will hand its own
+	# instances, and SwampAtmosphere writes to it every frame. Mutating the
+	# shared copy would leak this probe's state into anything else loading
+	# Game.tscn in the same process.
+	var env: Environment = _scene_environment(GAME_SCENE_PATH).duplicate()
 	var world_env := WorldEnvironment.new()
 	world_env.name = "WorldEnvironment"
 	world_env.environment = env
 	_root3d.add_child(world_env)
 
-	var light := DirectionalLight3D.new()
-	light.position = Vector3(0, 6, 0)
-	light.rotation_degrees = Vector3(-55, -30, 0)
-	light.shadow_enabled = true
+	var light := _scene_directional_light(GAME_SCENE_PATH)
 	_root3d.add_child(light)
 
 	var ground_mesh := MeshInstance3D.new()
 	var box := BoxMesh.new()
 	box.size = Vector3(6, 0.4, 40)
-	var ground_mat := StandardMaterial3D.new()
-	ground_mat.albedo_color = GROUND_ALBEDO
 	ground_mesh.mesh = box
-	ground_mesh.set_surface_override_material(0, ground_mat)
+	ground_mesh.set_surface_override_material(0, _scene_ground_material(TRACK_SEGMENT_SCENE_PATH))
 	ground_mesh.position = Vector3(0, -0.2, -10)
 	_root3d.add_child(ground_mesh)
 
@@ -220,31 +250,25 @@ func _build_calibration_scene() -> void:
 	_camera.look_at(Vector3(0, 2, -4), Vector3.UP)
 	_camera.current = true
 
-	# The REAL DarkModeEffect.gd, attached BEFORE the layer enters the
-	# tree so @onready resolves through the normal _ready() path -- the
-	# same order a loaded .tscn gives it in the shipped game. Since the
-	# swamp refonte there is no second, uniform-poking code path to keep
-	# separate from this one: the tint-amount sweep that needed it is
-	# gone, so every measurement in this file now goes through production
-	# code, which is what the old canonical pass existed to prove.
-	_dark_effect_layer = CanvasLayer.new()
-	_dark_effect_layer.layer = 0
-	_dark_effect_layer.set_script(load("res://scripts/world/DarkModeEffect.gd"))
-	# This probe builds its own scene rather than loading Game.tscn, so
-	# the effect's default path to the WorldEnvironment does not resolve
-	# here -- it is pointed at the one built above instead. Set BEFORE
-	# add_child, because _ready() reads it.
-	_dark_effect_layer.set("world_environment_path", NodePath("../Root3D/WorldEnvironment"))
-	var rect := ColorRect.new()
-	rect.name = "Grade"
-	rect.anchor_right = 1.0
-	rect.anchor_bottom = 1.0
-	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_shader_mat = ShaderMaterial.new()
-	_shader_mat.shader = load("res://assets/shaders/swamp_grade.gdshader")
-	rect.material = _shader_mat
-	_dark_effect_layer.add_child(rect)
-	add_child(_dark_effect_layer)
+	# The REAL SwampAtmosphere.gd, attached BEFORE the node enters the
+	# tree so its _ready() runs through the normal path -- the same order a
+	# loaded .tscn gives it in the shipped game. Every measurement in this
+	# file goes through production code; there is no probe-only shortcut
+	# left to keep honest against.
+	#
+	# A plain Node with no child, where this used to build a CanvasLayer
+	# carrying a ColorRect and a shader: the permanent-swamp batch deleted
+	# the screen grade, so there is no full-screen pass to reproduce. What
+	# is left to drive is the ATMOSPHERE, and that is exactly what the
+	# shipped node drives.
+	_atmosphere = Node.new()
+	_atmosphere.set_script(load("res://scripts/world/SwampAtmosphere.gd"))
+	# This probe builds its own scene rather than loading Game.tscn, so the
+	# node's default path to the WorldEnvironment does not resolve here --
+	# it is pointed at the one built above instead. Set BEFORE add_child,
+	# because _ready() reads it.
+	_atmosphere.set("world_environment_path", NodePath("../Root3D/WorldEnvironment"))
+	add_child(_atmosphere)
 
 	_obstacle = preload("res://scenes/Obstacle.tscn").instantiate()
 	_root3d.add_child(_obstacle)
@@ -266,7 +290,7 @@ func _build_calibration_scene() -> void:
 ## object-vs-ground ratio seen. `verbose` prints the full per-object
 ## breakdown.
 ##
-## The caller sets GameState.dark_intensity and the REAL DarkModeEffect.gd
+## The caller sets GameState.mist_intensity and the REAL SwampAtmosphere.gd
 ## applies it every frame through its own _process/_apply, exactly as in
 ## the shipped game -- there is no probe-only shortcut path any more.
 func _measure_one(verbose: bool, record: Dictionary = {}) -> float:
@@ -276,9 +300,9 @@ func _measure_one(verbose: bool, record: Dictionary = {}) -> float:
 	var sky_color := _sample_strip(0.0, SKY_STRIP_BOTTOM_FRAC)
 
 	if verbose:
-		print("--- swamp night (dark_intensity=%.2f) ---" % GameState.dark_intensity)
-		print("  ground (post-shader) = %s" % ground_color)
-		print("  sky    (post-shader) = %s" % sky_color)
+		print("--- %s ---" % _phase_label)
+		print("  ground (as rendered) = %s" % ground_color)
+		print("  sky    (as rendered) = %s" % sky_color)
 
 	var worst := INF
 	var objects := [
@@ -311,7 +335,7 @@ func _measure_one(verbose: bool, record: Dictionary = {}) -> float:
 		worst = minf(worst, ratio)
 		_record(record, label, ratio)
 		if verbose:
-			print("  %-20s post-shader=%s  vs ground=%.2f:1  vs sky=%.2f:1" % [label, color, ratio, _contrast_ratio(color, sky_color)])
+			print("  %-20s rendered=%s  vs ground=%.2f:1  vs sky=%.2f:1" % [label, color, ratio, _contrast_ratio(color, sky_color)])
 
 	_hide_all()
 	_noisette.visible = true
@@ -321,7 +345,7 @@ func _measure_one(verbose: bool, record: Dictionary = {}) -> float:
 	worst = minf(worst, noisette_ratio)
 	_record(record, "NOISETTE", noisette_ratio)
 	if verbose:
-		print("  %-20s post-shader=%s  vs ground=%.2f:1  vs sky=%.2f:1" % ["NOISETTE", noisette_color, noisette_ratio, _contrast_ratio(noisette_color, sky_color)])
+		print("  %-20s rendered=%s  vs ground=%.2f:1  vs sky=%.2f:1" % ["NOISETTE", noisette_color, noisette_ratio, _contrast_ratio(noisette_color, sky_color)])
 
 	_hide_all()
 	_gland.visible = true
@@ -331,7 +355,7 @@ func _measure_one(verbose: bool, record: Dictionary = {}) -> float:
 	worst = minf(worst, gland_ratio)
 	_record(record, "GLAND", gland_ratio)
 	if verbose:
-		print("  %-20s post-shader=%s  vs ground=%.2f:1  vs sky=%.2f:1" % ["GLAND", gland_color, gland_ratio, _contrast_ratio(gland_color, sky_color)])
+		print("  %-20s rendered=%s  vs ground=%.2f:1  vs sky=%.2f:1" % ["GLAND", gland_color, gland_ratio, _contrast_ratio(gland_color, sky_color)])
 
 	if verbose:
 		print("")
@@ -349,20 +373,41 @@ func _record(record: Dictionary, label: String, ratio: float) -> void:
 		record[label] = []
 	record[label].append(ratio)
 
-## Measures every hazard and collectible against the ground in the
-## shipped dark state, driving the REAL DarkModeEffect.gd exactly the way
-## a run does -- by setting GameState.dark_intensity and letting the
-## effect's own _process turn it into shader uniforms and sky colours.
+## Measures every hazard and collectible against the ground at BOTH ends of
+## the mist breath, driving the REAL SwampAtmosphere.gd exactly the way a
+## run does -- by setting GameState.mist_intensity and letting that node's
+## own _process turn it into environment colours.
+##
+## BOTH ENDS, where this used to measure one dark state: since the
+## permanent-swamp batch there is no "dark phase" to single out. The swamp
+## is the whole game, and the breath moves within it, so SHALLOW (what
+## every run opens on) and DEEP (what it settles into) are both shipped
+## states and a floor has to hold in both. The worst of the two is what
+## gets reported, so a regression in either end cannot hide behind the
+## other.
+##
+## The two are expected to read almost identically here, and that is the
+## POINT rather than a weakness of the test: the breath is deliberately
+## confined to sky, haze and fog density, none of which reaches the
+## gameplay zone (see GameState's SWAMP ATMOSPHERE block). A pair of
+## numbers that ever drifted apart would mean something had started
+## driving the breath into the play area, which is exactly the regression
+## worth catching.
 func _run_canonical_pass() -> void:
-	print("=== DARK STATE (via real DarkModeEffect.gd) ===")
-	# The effect layer was already built with the real script attached
+	print("=== SWAMP (via real SwampAtmosphere.gd, both ends of the breath) ===")
+	# The atmosphere node was already built with the real script attached
 	# (see _build_calibration_scene) -- nothing to swap in here any more.
 	GameState.state = GameState.State.PLAYING
 
 	var record: Dictionary = {}
-	GameState.dark_intensity = 1.0
-	await _wait_frames(SETTLE_FRAMES)
-	await _measure_one(true, record)
+	for phase in [
+		{"label": "SHALLOW (mist_intensity=0.00)", "intensity": 0.0},
+		{"label": "DEEP (mist_intensity=1.00)", "intensity": 1.0},
+	]:
+		_phase_label = String(phase["label"])
+		GameState.mist_intensity = float(phase["intensity"])
+		await _wait_frames(SETTLE_FRAMES)
+		await _measure_one(true, record)
 
 	# Two DIFFERENT legibility questions, reported separately rather than
 	# folded into one pass/fail number -- conflating them would either
@@ -437,7 +482,7 @@ func _hide_all() -> void:
 ## built it, and MUST be called before every single measurement.
 ##
 ## WHY THIS EXISTS -- the canonical pass sets GameState.state = PLAYING so
-## that the real DarkModeEffect.gd runs, which is the whole point of that
+## that the real SwampAtmosphere.gd runs, which is the whole point of that
 ## pass. The side effect is that Obstacle._physics_process starts running
 ## too, and two of the six types MOVE THEMSELVES: Type.CHARGER translates
 ## on +Z every visible frame (Obstacle._process_charger -- it is the one
@@ -531,7 +576,7 @@ func _visual_descendants(node: Node) -> Array[VisualInstance3D]:
 # than a hazard:
 #
 #   1. It must be legible in the LIGHT phase too. Every other object in
-#      this file is measured only at dark_intensity 1.0, because the
+#      this file is measured only at mist_intensity 1.0, because the
 #      question being asked of them is "does the dark cycle break
 #      legibility that already held". The barrier is brand new, so its
 #      light-phase contrast is not a pre-existing property to be
@@ -622,7 +667,7 @@ func _run_barrier_pass() -> void:
 ##
 ## Both of them ADVANCE on their own: GameState._process runs
 ## advance_time() for as long as state == PLAYING, which this pass needs
-## it to be (DarkModeEffect and LaneBarrier both go inert otherwise). The
+## it to be (SwampAtmosphere and LaneBarrier both go inert otherwise). The
 ## first version of this pass set the shrink fields once and measured
 ## pure ground every time -- _update_shrink saw a stale phase deadline of
 ## 0.0, walked HELD -> OPENING -> INACTIVE within two frames, and the
@@ -646,12 +691,12 @@ func _hold_state(intensity: float) -> void:
 	GameState.shrink_lane = BARRIER_SAMPLE_LANE
 	GameState.shrink_amount = 1.0
 	GameState.set("_shrink_phase_ends_at_s", INF)
-	# Match dark_phase to the intensity being asked for, so
-	# _update_dark_cycle's own move_toward HOLDS the value instead of
+	# Match mist_phase to the intensity being asked for, so
+	# _update_mist_cycle's own move_toward HOLDS the value instead of
 	# dragging it back toward the other phase between frames.
-	GameState.dark_phase = GameState.DarkPhase.DARK if intensity > 0.5 else GameState.DarkPhase.LIGHT
-	GameState.dark_intensity = intensity
-	GameState.set("_dark_phase_started_s", INF)
+	GameState.mist_phase = GameState.MistPhase.DEEP if intensity > 0.5 else GameState.MistPhase.SHALLOW
+	GameState.mist_intensity = intensity
+	GameState.set("_mist_phase_started_s", INF)
 
 ## One (phase, palette) measurement. Returns Vector2(stripe_ratio,
 ## mean_vs_ground_ratio) -- see the section header for why both are
@@ -791,3 +836,62 @@ func _linearize(channel: float) -> float:
 func _wait_frames(count: int) -> void:
 	for i in count:
 		await get_tree().process_frame
+
+# =====================================================================
+# SHIPPED-SCENE READERS
+#
+# Each one walks a PackedScene's SceneState and returns the real resource
+# the game renders with, so this probe cannot drift from the shipped look.
+# They push_error and fall back rather than returning null: a probe that
+# crashes tells you less than one that says exactly which node it could
+# not find in which scene.
+
+## The first node in `scene_path` carrying an `environment` property.
+func _scene_environment(scene_path: String) -> Environment:
+	var packed: PackedScene = load(scene_path)
+	var value: Variant = _scene_property(packed, "environment")
+	var env := value as Environment
+	if env == null:
+		push_error("DarkPaletteAudit: no WorldEnvironment.environment found in %s" % scene_path)
+		return Environment.new()
+	return env
+
+## A DirectionalLight3D rebuilt from the one `scene_path` ships -- every
+## property that scene sets on it, so the probe is lit exactly as the game
+## is. Properties the scene leaves at their default are left at their
+## default here too, which is what "same light" means.
+func _scene_directional_light(scene_path: String) -> DirectionalLight3D:
+	var packed: PackedScene = load(scene_path)
+	var state := packed.get_state()
+	var light := DirectionalLight3D.new()
+	for i in state.get_node_count():
+		if state.get_node_type(i) != &"DirectionalLight3D":
+			continue
+		for j in state.get_node_property_count(i):
+			light.set(state.get_node_property_name(i, j), state.get_node_property_value(i, j))
+		return light
+	push_error("DarkPaletteAudit: no DirectionalLight3D found in %s" % scene_path)
+	return light
+
+## The ground slab's material as `scene_path` ships it. Duplicated because
+## TrackSegment.gd duplicates it too before tinting -- this probe measures
+## the BASE colour, without the per-segment tint drift
+## (_GROUND_TINT_DRIFT), which is a repetition-breaker rather than part of
+## the palette.
+func _scene_ground_material(scene_path: String) -> StandardMaterial3D:
+	var packed: PackedScene = load(scene_path)
+	var value: Variant = _scene_property(packed, "surface_material_override/0")
+	var mat := value as StandardMaterial3D
+	if mat == null:
+		push_error("DarkPaletteAudit: no ground surface_material_override/0 found in %s" % scene_path)
+		return StandardMaterial3D.new()
+	return mat.duplicate()
+
+## First value of `property_name` found anywhere in `packed`, or null.
+func _scene_property(packed: PackedScene, property_name: String) -> Variant:
+	var state := packed.get_state()
+	for i in state.get_node_count():
+		for j in state.get_node_property_count(i):
+			if String(state.get_node_property_name(i, j)) == property_name:
+				return state.get_node_property_value(i, j)
+	return null

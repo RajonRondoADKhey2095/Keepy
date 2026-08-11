@@ -1,6 +1,6 @@
 extends Node
 ## End-to-end pacing probe: runs the REAL Game.tscn (real TrackManager,
-## real obstacles, real DarkModeEffect node) and logs the palier and
+## real obstacles, real SwampAtmosphere node) and logs the palier and
 ## dark-cycle transitions as they actually happen in the running game,
 ## rather than driving GameState in isolation like PacingProbe.gd.
 ##
@@ -32,8 +32,8 @@ func _process(delta: float) -> void:
 		print("t=%8.2fs  stage %d  speed %5.1f m/s  dist %7.1fm  score %d"
 			% [_t, GameState.stage_index, GameState.current_speed,
 			   GameState.distance_travelled, GameState.score])
-	if GameState.dark_phase != _last_phase:
-		_last_phase = GameState.dark_phase
+	if GameState.mist_phase != _last_phase:
+		_last_phase = GameState.mist_phase
 		print("t=%8.2fs  DARK PHASE -> %s  (intensity %.2f, state %d)"
-			% [_t, ["INACTIVE", "DARK", "LIGHT"][GameState.dark_phase],
-			   GameState.dark_intensity, GameState.state])
+			% [_t, ["INACTIVE", "DARK", "LIGHT"][GameState.mist_phase],
+			   GameState.mist_intensity, GameState.state])

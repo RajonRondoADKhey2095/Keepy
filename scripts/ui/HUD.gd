@@ -35,7 +35,8 @@ class_name HUD
 ##
 ## =====================================================================
 ## LEGIBILITY -- this HUD is a CanvasLayer at the default layer 1, while
-## DarkModeEffect sits at layer 0 (see Game.tscn). Canvas layers draw in
+## The HUD is the only CanvasLayer in Game.tscn since the swamp grade was
+## deleted; it sits at layer 1. Canvas layers draw in
 ## layer order and the invert shader samples the screen texture BENEATH
 ## it, so the HUD's own colours are never inverted and never tinted: they
 ## are the same values in the light phase and in all six dark palettes.
