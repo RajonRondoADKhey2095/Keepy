@@ -15,14 +15,20 @@ render_mode unshaded, cull_disabled, shadows_disabled;
 // signal, reused here rather than a second approach invented for a second
 // must-always-be-readable cue.
 //
-// The dark cycle still inverts and tints the frame on top of this (see
-// screen_invert.gdshader). That pass is injective for any tint_amount
-// below 1.0, so it cannot COLLAPSE the contrast -- but it does move it,
-// and by an amount no hand calculation predicts reliably. Hence the two
-// colours below are picked at the extremes of the luminance range (near
-// white against near black) rather than anywhere in the middle: a pair
-// that far apart survives both the plain frame and the inverted one,
-// which is what scripts/dev/DarkPaletteAudit.gd measures per palette.
+// NOTHING POST-PROCESSES THE FRAME any more: the permanent-swamp batch
+// deleted the screen grade, which itself had replaced the invert+tint. So
+// the two colours below are literally the two colours that reach the
+// player, with nothing in between to plan around.
+//
+// They are still picked at the EXTREMES of the luminance range (near white
+// against near black) rather than anywhere in the middle, and that choice
+// outlived both of the pipelines it was originally reasoned about -- for a
+// reason that is now arithmetic rather than shader-dependent: against a
+// track at relative luminance 0.153, clearing a 3.0:1 floor requires being
+// either above 0.559 or below 0.018 (see docs/MESHY_SPEC.md section 8).
+// Mid-luminance is unrecoverable whatever the hue. That is what
+// scripts/dev/DarkPaletteAudit.gd measures, at both ends of the mist
+// breath.
 //
 // Deliberately trivial maths -- one fract, one step, one mix, no loops,
 // no derivatives, no texture reads -- to stay well inside

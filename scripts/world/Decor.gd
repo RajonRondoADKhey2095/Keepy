@@ -6,7 +6,7 @@ class_name Decor
 ## ZERO GAMEPLAY COUPLING, BY CONSTRUCTION. This node has no collider, is
 ## never read by Hitboxes.gd/ModelSlot.gd, and nothing here ever touches
 ## GameState beyond READING scroll_speed()/run state -- the same one-way
-## read DarkModeEffect.gd and LaneBarrier.gd already do. A probe that
+## read SwampAtmosphere.gd and LaneBarrier.gd already do. A probe that
 ## deletes this whole node would not change one line of measured gameplay
 ## behaviour.
 ##
@@ -138,6 +138,16 @@ const _HILL_NEAR_TEXTURE: Texture2D = preload("res://assets/textures/decor/hill_
 ## still leaving the large majority of each band at full opacity.
 const _FADE_FRACTION: float = 0.12
 
+## SATURATION PASS (11 August 2026): the three `tint` values below moved to
+## higher saturation and a unified ~105-112 deg hue, matching the rest of
+## the swamp palette (ground, curbs, sky/haze). Per the FOG comment above,
+## the fog crushes most of a tint's own saturation at these z-bands anyway
+## -- the bigger lever for how green these layers actually read is
+## `GameState.SWAMP_HAZE`/`fog_light_color`, moved the same direction in
+## the same batch, not this array. The relative ordering across the three
+## (mountain most desaturated/brightest, near hill darkest/most saturated)
+## is unchanged -- see the class doc's FOG paragraph for why that ordering
+## is what preserves the near/far/mountain depth read.
 const _LAYERS: Array[Dictionary] = [
 	{
 		# Mountain layer: the farthest-back band, behind both hill layers.
@@ -153,6 +163,7 @@ const _LAYERS: Array[Dictionary] = [
 		# capture probe (same method as MESHY_SPEC.md section 11), not by
 		# inspection.
 		"texture": _MOUNTAIN_TEXTURE,
+		"tint": Color(0.274, 0.370, 0.244),
 		"count": 3,
 		"parallax": 0.08,
 		"spawn_z_min": -700.0,
@@ -187,6 +198,7 @@ const _LAYERS: Array[Dictionary] = [
 		# landmark, real gaps" territory the mountain layer already targets,
 		# without touching height_range (art-directed scale, left alone).
 		"texture": _HILL_FAR_TEXTURE,
+		"tint": Color(0.233, 0.340, 0.204),
 		"count": 5,
 		"parallax": 0.15,
 		"spawn_z_min": -520.0,
@@ -212,6 +224,7 @@ const _LAYERS: Array[Dictionary] = [
 		# this is a spawn-spread fix, not a rescale of how big a near hill
 		# is allowed to look.
 		"texture": _HILL_NEAR_TEXTURE,
+		"tint": Color(0.177, 0.280, 0.151),
 		"count": 5,
 		"parallax": 0.35,
 		"spawn_z_min": -340.0,
@@ -264,7 +277,7 @@ func _physics_process(delta: float) -> void:
 	# scales it down by its own parallax factor. Reading scroll_speed()
 	# directly here (rather than being handed a value) matches how every
 	# other purely-visual world node in this project already stays in sync
-	# with the track -- see DarkModeEffect.gd / LaneBarrier.gd.
+	# with the track -- see SwampAtmosphere.gd / LaneBarrier.gd.
 	var world_delta := GameState.scroll_speed() * delta
 	for layer_index in _LAYERS.size():
 		var layer: Dictionary = _LAYERS[layer_index]
@@ -325,6 +338,26 @@ func _fade_alpha(z: float, layer: Dictionary) -> float:
 func _build_hill(layer: Dictionary) -> Sprite3D:
 	var sprite := Sprite3D.new()
 	sprite.texture = layer["texture"]
+	# Swamp tint, multiplied into the source cutout. The three textures were
+	# authored as daylight-green hills; the permanent-swamp batch sinks them
+	# into the marsh here rather than by re-exporting the PNGs, because
+	# `modulate` is a multiply on an unshaded Sprite3D and therefore does
+	# EXACTLY what a darker, greener source image would do -- for free, and
+	# reversibly.
+	#
+	# WRITTEN ONCE, AT BUILD, AND ONLY THE RGB: _fade_alpha assigns
+	# `modulate.a` every physics tick for the recycle fade, and assigning a
+	# single component leaves the other three alone. Setting the whole
+	# `modulate` per frame instead would silently overwrite this tint.
+	#
+	# NEARER LAYERS ARE DARKER, which is the opposite of what "atmospheric
+	# perspective" sounds like until you remember what fog does here: the
+	# measured note above records that fog dominates these layers' rendered
+	# colour and drags them toward fog_light_color, which is LIGHTER than
+	# these tints. The farther a layer is, the more of that lift it gets, so
+	# tinting the near layer darkest is what keeps the near/far/mountain
+	# depth ordering reading correctly once the fog has had its say.
+	sprite.modulate = layer["tint"]
 	sprite.shaded = false
 	sprite.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	sprite.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

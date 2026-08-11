@@ -145,6 +145,26 @@ func _ready() -> void:
 ## Re-rolls this segment's ground tint around its base colour. Called from
 ## populate() -- i.e. once at the initial fill and once per recycle, never
 ## per frame.
+##
+## BASE COLOUR SATURATION PASS (11 August 2026, device feedback): the base
+## albedo this drifts around moved from `Color(0.42, 0.44, 0.24)` (raw
+## H=66, yellow-olive, R and G nearly equal) to `Color(0.24, 0.46, 0.17)`
+## in scenes/TrackSegment.tscn (raw H=105.5, S=0.63) -- green clearly
+## dominant over red. RENDERED colour (what DarkPaletteAudit samples,
+## after ambient/directional light) moved from H=76.7/S=0.68 to
+## H=103.1/S=0.81: this scene's ambient light (Color(0.42,0.5,0.35)) pulls
+## saturation and hue further than the raw albedo alone predicts, so the
+## final value was reached by RE-MEASURING with the real probe, not by
+## picking a raw colour on paper and trusting it. Relative luminance
+## (rendered) went 0.153 -> 0.150, deliberately close: docs/MESHY_SPEC.md
+## section 8 pins the DODGE/JUMP/STOMPER/CHARGER hazard-vs-ground floors to
+## a narrow rendered-luminance band (~0.137-0.160, derived from those four
+## hazards' own rendered colours) -- moving hue and saturation costs
+## nothing there, moving value much would not. A first attempt at
+## `Color(0.25, 0.47, 0.18)` rendered at L=0.158, too close to the
+## CHARGER ceiling (contrast dropped to 3.08:1); this is the corrected
+## value. `_GROUND_TINT_DRIFT` is untouched, so the per-segment variance is
+## the same fraction of a now-more-saturated base.
 func _reroll_ground_tint() -> void:
 	_ground_material.albedo_color = Color(
 		clampf(_ground_base_color.r + _tint_rng.randf_range(-_GROUND_TINT_DRIFT, _GROUND_TINT_DRIFT), 0.0, 1.0),
@@ -161,10 +181,24 @@ func _reroll_ground_tint() -> void:
 ## track TILE, not of the world.
 ##
 ## Unshaded, and clearly separated in VALUE from the ground albedo (not
-## just a saturated hue) for the same docs/MESHY_SPEC.md section 8 reason
-## every other dark-mode-visible decor surface in this batch is: hue does
-## not survive the invert+tint blend, luminance does.
-const _CURB_COLOR: Color = Color(0.90, 0.86, 0.74)
+## just a saturated hue): the curbs are a LANE-READING aid, so they have
+## to survive being glanced at, and value is what carries shape reading at
+## a glance. That rule outlived the reason it was first written down (the
+## deleted invert+tint blend destroyed hue), and it is why this stayed the
+## brightest surface in the scene when the permanent-swamp batch moved it
+## from cream to pale sickly olive.
+##
+## The brightest thing on screen, deliberately -- brighter than the ground
+## it edges, so the three lanes stay legible against a track that is itself
+## now the brightest LARGE surface. See docs/MESHY_SPEC.md section 8 for
+## the measured pair.
+##
+## SATURATION PASS (11 August 2026): moved from a pale olive (H=66, S=0.30)
+## to the same ~105 deg hue family as the rest of the swamp palette, at a
+## lower saturation than the ground (S=0.50 vs the ground's ~0.62) so it
+## still reads as the brightest, calmest surface rather than competing with
+## the track for saturation -- value is still what carries the lane read.
+const _CURB_COLOR: Color = Color(0.475, 0.760, 0.380)
 const _CURB_WIDTH: float = 0.12
 const _CURB_HEIGHT: float = 0.03
 const _CURB_X: Array[float] = [-1.0, 1.0] # midway between LANE_X's three lanes
@@ -387,10 +421,16 @@ const _BUSH_SPREAD: float = 0.75
 const _BUSH_SINK: float = 0.78
 
 ## See docs/MESHY_SPEC.md section 8.2 for the measured contrast table.
-## All three sit in the scene's darkest band, well below the far hills
-## (the darkest thing they are ever seen against), because the backdrop
-## for anything beyond the slab edge is sky and hillside -- the two
-## BRIGHTEST surfaces in the scene -- not the ground.
+##
+## RE-HUED, NOT RE-ORDERED, by the permanent-swamp batch. The six values
+## below keep the VALUE LADDER 8.2 swept -- same order, same rough
+## spacing, so no pair in its table changes rank -- and move the hue into
+## the swamp: near-black greens at the bottom, muddy olive at the top,
+## nothing warm or saturated left. What that ladder was FOR is unchanged
+## too: these are read against sky and haze, not against the track, and
+## the backdrop is no longer the two BRIGHTEST surfaces in the scene but
+## the two darkest, so the ladder now buys separation between the six
+## kinds rather than against the sky behind them.
 ## _TREE_TRUNK_COLOR is now the WHOLE tree, not a trunk under a canopy:
 ## the imported mesh is a bare winter tree, so there is no foliage to give
 ## a second albedo to and _TREE_CANOPY_COLOR (0.14, 0.20, 0.15) is gone
@@ -399,8 +439,8 @@ const _BUSH_SINK: float = 0.78
 ## and it retires the worst pair the table shipped with (canopy-vs-trunk
 ## at 1.29:1, two values on the same object that were the hardest of the
 ## six to tell apart).
-const _TREE_TRUNK_COLOR: Color = Color(0.13, 0.10, 0.07)
-const _ROCK_COLOR: Color = Color(0.18, 0.19, 0.20)
+const _TREE_TRUNK_COLOR: Color = Color(0.070, 0.095, 0.070)
+const _ROCK_COLOR: Color = Color(0.140, 0.160, 0.135)
 
 ## The four kinds added in the second props pass. Their luminances were
 ## picked by SWEEPING the scene's occupied luminance line, not by eye --
@@ -412,10 +452,10 @@ const _ROCK_COLOR: Color = Color(0.18, 0.19, 0.20)
 ## the 1.29:1 the canopy/trunk pair already ships with) and costs some
 ## backdrop contrast on the two mid-value kinds, which is the trade 8.2
 ## already makes explicit rather than a new compromise.
-const _BUSH_COLOR: Color = Color(0.11, 0.16, 0.12)
-const _STUMP_COLOR: Color = Color(0.32, 0.24, 0.15)
-const _BENCH_COLOR: Color = Color(0.45, 0.36, 0.26)
-const _SIGN_COLOR: Color = Color(0.50, 0.48, 0.42)
+const _BUSH_COLOR: Color = Color(0.105, 0.150, 0.100)
+const _STUMP_COLOR: Color = Color(0.200, 0.205, 0.140)
+const _BENCH_COLOR: Color = Color(0.275, 0.285, 0.195)
+const _SIGN_COLOR: Color = Color(0.340, 0.350, 0.255)
 
 ## Every mesh key a slot carries, in one place. _hide_all_props() and
 ## nearest_prop_edge_x() both walk this rather than each repeating a

@@ -13,7 +13,7 @@ shader_type canvas_item;
 // inside gl_compatibility on mobile Safari, which is the renderer this
 // project targets.
 //
-// This draws in the HUD's CanvasLayer, ABOVE DarkModeEffect's own layer,
+// This draws in the HUD's CanvasLayer, the only canvas layer in the scene,
 // so it is never itself inverted or tinted by the dark cycle -- its colour
 // is the same known value in every palette. That is why the tint can be a
 // fixed hostile red rather than something derived per palette.
