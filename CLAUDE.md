@@ -538,6 +538,34 @@ sonde F10 ; et le fait que **sur un asset importé la rampe d'alarme est
 portée par l'ALBÉDO seul** (l'émission est inerte sur un matériau unlit) —
 rien à juger tant qu'aucun asset ENEMY/AIR_ENEMY n'est installé.
 
+### Merge en production (11 août 2026, autorisation explicite de Mathieu)
+
+`staging` (729e907) → `main`, commit de merge **`de7933e`**, après validation
+device : le rondin se lit bien comme « à sauter », et le sous-remplissage de
+hitbox (~0,37 m au-dessus, ~0,31 m devant) a été **jugé juste à l'usage**.
+
+⚠️ **Ce n'était PAS un fast-forward** : `main` était en avance de 2 commits
+sur `staging` (le push des `.glb` bruts par Mathieu, `51aa01d` + `3f04b89`,
+jamais passés par `staging`). Vrai merge `--no-ff`, aucun conflit.
+**Conséquence utile** : le seul écart `main` ↔ `staging` est ces 6 sources
+brutes sous `assets_source/ennemis/`, exclues du build par `exclude_filter` —
+donc **ce qui est livré en prod est exactement l'arbre validé sur staging**.
+
+Re-vérifié APRÈS le merge, sur le commit de merge lui-même (pas supposé
+porté) : **7 sondes exit 0** — `AssetContractAudit` (12/12 visuels, 0
+collider déplacé, `JumpShape` toujours `Box(1.2, 0.7, 1.0)` @ +0,350),
+`DarkPaletteAudit` (4 hazards gatés au-dessus de 3,0 ; 0 échantillon
+manqué), `AlarmRampAudit`, `ProbeTimeoutAudit`, `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit`. Import + export Web exit 0.
+
+CI run **#87** verte, déploiement PRODUCTION effectué, STAGING correctement
+skippé. **Fingerprint vérifié sur le site LIVE** (`keepy-ten.vercel.app`,
+HTTP 200, `x-vercel-cache: MISS`) : `GODOT_CONFIG.fileSizes` =
+`index.pck 4 742 256` / `index.wasm 35 376 909`, `last-modified
+11 Aug 2026 10:00:22 GMT`. **`index.wasm` est IDENTIQUE à l'export local**
+au octet près — c'est lui la preuve d'identité, pas le `.pck` (rappel :
+sa taille n'est pas stable d'un export à l'autre du même commit).
+
 ### ⚠️ INCIDENT : DEUX SESSIONS AGENTIQUES CONCURRENTES, le même jour
 
 **La règle n°1 de ce fichier a été enfreinte à nouveau** (précédent du
