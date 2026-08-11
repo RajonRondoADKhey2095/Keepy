@@ -10,6 +10,23 @@
 ; structure Godot produces when it imports a .glb. A slot that can draw
 ; this can draw a real one.
 ;
+; ITS MATERIAL IS BOUND TO THE MESH, NOT AS A SURFACE OVERRIDE, and that is
+; load-bearing rather than incidental. This file used to carry a
+; `surface_material_override/0`, which made it shaped like an imported
+; model in its NODE STRUCTURE while being nothing like one in its MATERIAL
+; BINDING -- and a surface override is exactly the thing an imported .glb
+; never has. Measured on assets/models/keepy_stump_prop.glb:
+; get_surface_override_material(0) is null, mesh.surface_get_material(0)
+; is the real StandardMaterial3D.
+;
+; That gap is not a detail of this fixture, it is the reason a real defect
+; shipped unnoticed: ModelSlot.slot_material() read only the override, so
+; it returned null for every real model, and Obstacle's enemy alarm ramp
+; silently became a no-op the moment a .glb landed on its slot. The
+; stand-in could not reproduce it, so no probe could catch it. Binding
+; here the way Godot's importer binds means AssetContractAudit now
+; exercises the path that actually broke.
+;
 ; Its dimensions (0.77 x 1.23 x 0.31) match NO placeholder in the game --
 ; not Keepy's capsule, not any of the six hazards, not a collectible
 ; sphere, not the ground slab, not the pursuer's body. That is what makes
@@ -17,16 +34,16 @@
 ; could pass by coincidence, and the offset origin (y = 0.19) additionally
 ; proves the slot's own transform is preserved rather than flattened.
 
-[sub_resource type="BoxMesh" id="BoxMesh_Substitute"]
-size = Vector3(0.77, 1.23, 0.31)
-
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Substitute"]
 shading_mode = 0
 albedo_color = Color(0.98, 0.16, 0.84, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_Substitute"]
+material = SubResource("StandardMaterial3D_Substitute")
+size = Vector3(0.77, 1.23, 0.31)
 
 [node name="SubstituteModel" type="Node3D"]
 
 [node name="Geometry" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.19, 0)
 mesh = SubResource("BoxMesh_Substitute")
-surface_material_override/0 = SubResource("StandardMaterial3D_Substitute")
