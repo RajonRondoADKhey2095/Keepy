@@ -2307,15 +2307,35 @@ Ne pas confondre une de ces URLs `keepy-git-...` avec `keepy-staging.
 vercel.app` : seule cette dernière est pilotée par la CI et sert un
 build réellement jouable.
 
-**Règle d'usage** :
-- **Claude Code peut pousser directement sur `staging`** (créer la
-  branche si besoin, merger des feature branches dedans, push), sans
-  validation préalable de Mathieu — c'est l'environnement de test, une
-  erreur y est peu coûteuse.
-- **Claude Code ne merge/push JAMAIS sur `main` sans validation
-  explicite de Mathieu.** Le flux normal reste : feature branch →
-  `staging` (validation device sur `keepy-staging.vercel.app`) → une fois
-  validé, PR/merge vers `main` sur demande explicite.
+**Règle d'usage — DEUX PALIERS, et un seul des deux est gaté** :
+
+- **Palier 1 — feature branch → `staging` : AUTOMATIQUE PAR DÉFAUT, aucune
+  autorisation à demander.** Dès qu'un lot est techniquement valide (build
+  et export headless verts, sondes gatées vertes), la session merge sur
+  `staging` et pousse, **sans attendre ni solliciter la permission de
+  Mathieu**. `staging` est un bac à sable : son unique fonction est de
+  rendre un lot jouable sur `keepy-staging.vercel.app`, une erreur y est
+  peu coûteuse et se corrige par un commit de plus.
+  **Le seul gate de ce palier est TECHNIQUE, jamais humain** — un lot dont
+  le build casse ou dont une sonde gatée rougit ne part pas sur `staging`,
+  et c'est le seul motif recevable pour ne pas merger.
+- **Palier 2 — `staging` → `main` : GATÉ, sans exception.** Seule une
+  autorisation explicite de Mathieu, donnée **après validation device sur
+  `keepy-staging.vercel.app`**, fait passer du code sur `main` — un push
+  sur `main` est une mise en production immédiate. Les deux règles de
+  l'incident du 29 juillet 2026 (jamais de push direct sur `main`, jamais
+  de fast-forward depuis `staging`) restent intégralement en vigueur ici.
+
+⚠️ **CLARIFICATION D'UNE AMBIGUÏTÉ RÉELLE (12 août 2026), pas un changement
+de politique.** L'intention d'origine de ce paragraphe a toujours été
+« staging se merge librement », mais sa formulation (« peut pousser… sans
+validation préalable ») décrivait une PERMISSION plutôt qu'un DÉFAUT — et
+une session récente l'a lue comme « il est autorisé de demander », donc a
+attendu un feu vert explicite avant de merger un lot pourtant vert. Le
+texte ci-dessus lève l'ambiguïté : sur `staging`, merger n'est pas une
+option offerte à la session, c'est **l'étape terminale normale d'un lot
+valide**. Demander la permission pour ce palier est un défaut de process,
+au même titre que merger sur `main` sans l'avoir demandée.
 
 ## Incident résolu : `vercel alias set` "Not able to load user (404)" (8 août 2026)
 
