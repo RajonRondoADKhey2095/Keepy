@@ -827,6 +827,95 @@ ne dit qu'une couleur est JUSTE, seulement qu'elle passe le plancher.
 Est-ce que DODGE se lit encore comme ROUGE et pas comme NOIR sur un écran
 de téléphone à vitesse réelle, c'est la décision de Mathieu.
 
+### Merge en production (12 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`fdf8d95`) → `main`, commit de merge **`1b9c5a8`**, après
+validation device des DEUX hazards d'un coup : le crapaud se lit bien comme
+« à sauter », le tronc debout comme « à contourner », et **la question
+laissée ouverte par le lot DODGE est tranchée — le rouge plus sombre reste
+lu comme ROUGE, pas comme NOIR**, à vitesse réelle. Les débords de hitbox
+des deux assets ont été jugés non gênants à l'usage.
+
+⚠️ **Ce n'était PAS un fast-forward alors qu'il aurait pu l'être.**
+`git merge-base --is-ancestor origin/main origin/staging` était vrai
+(`staging..main` VIDE : main n'avait rien que staging n'avait pas, à la
+différence du merge JUMP de la veille où les `.glb` bruts de Mathieu le
+faisaient diverger). Merge `--no-ff` quand même, aucun conflit — comme les
+deux merges de prod précédents de ce repo (`7d0c791`, `de7933e`) : un
+fast-forward ne laisse aucun point de décision lisible dans l'historique et
+masque ce qui part réellement en prod.
+**Conséquence utile** : l'arbre du commit de merge est **byte-identique à
+celui de `fdf8d95`** (`git diff HEAD origin/staging` vide) — ce qui est
+livré en prod est donc littéralement l'arbre validé sur device, pas une
+recomposition.
+
+**Rejoué SUR LE COMMIT DE MERGE lui-même, pas supposé porté — 7 sondes
+exit 0** : `AssetContractAudit` (12/12 visuels, **0/10 colliders déplacés**,
+`DodgeShape` toujours `Box(1.2, 2.0, 1.0)` @ +1,000 et `StomperShape`
+toujours `Box(1.2, 0.7, 1.0)` @ +0,350), `DarkPaletteAudit`,
+`AlarmRampAudit` (4/4 PHASE A, 4/4 PHASE B, PHASE C OK),
+`ProbeTimeoutAudit` (33 sondes, toutes armées), `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` (INTRO max 23,6 % / VISIBLE max
+27,0 %, cap 30 %). Import + export Web **exit 0**.
+
+**La table PHASE 1 d'`AssetContractAudit` montre désormais CINQ slots
+`[glb]`** — Keepy, `pursuer/Silhouette`, `JumpMesh`, et les deux de ce lot,
+`DodgeMesh` et `StomperMesh`. Sept slots restent au placeholder.
+
+⚠️ **Trois lignes d'erreur apparaissent sur stderr pendant ces sondes et
+AUCUNE n'est imputable à ce lot — vérifié contre un worktree sur `f4b3190`
+(main pré-merge, import propre), pas argumenté.** À connaître, parce que les
+trois ont l'air alarmantes et qu'une future session les prendra sinon pour
+une régression de son propre lot :
+- `DeathModelAudit` → `Parameter "m" is null` (dummy driver, à la libération
+  des nœuds, APRÈS son verdict) — stdout **ET** stderr byte-identiques à la
+  baseline.
+- `PursuerFramingAudit` → 104 lignes `Function blocked during in/out signal`
+  (`set_monitoring`) — stdout **ET** stderr byte-identiques à la baseline,
+  aux 104 lignes près.
+- `DarkPaletteAudit` → `ERROR: LANE BARRIER BELOW CONTRAST FLOOR`
+  (silhouette 1,16:1) — présent à l'identique sur la baseline, et la sonde
+  sort quand même en 0 : c'est un report, pas un gate (le gate de la barrière
+  est la STRIPE, 17,36:1).
+
+**Le diff `DarkPaletteAudit` base → merge fait EXACTEMENT 3 lignes**, toutes
+les trois attribuables aux deux assets installés, tout le reste byte-identique :
+DODGE **3,20 → 3,39** (shallow) et **3,19 → 3,37** (deep) — le nouvel albédo
+unshaded ÉLARGIT sa marge, il ne la consomme pas ; STOMPER **3,43 → 3,41**
+(deep), 0,02 de dérive de silhouette dans la fenêtre d'échantillon. Les
+quatre hazards gatés tiennent le plancher 3,0:1 (DODGE 3,37 / JUMP 3,02 /
+CHARGER 3,20 / STOMPER 3,41), 0 échantillon manqué. `JUMP` reste à son 3,02
+d'artefact de fenêtre déjà documenté au lot précédent, inchangé ici.
+ENEMY 1,52 / AIR_ENEMY 1,09 : toujours mesurés dans leur teinte d'ALARME et
+toujours non gatés, comme avant.
+
+CI run **#92** verte (3 min 12 s), déploiement PRODUCTION effectué, STAGING
+correctement skippé (push sur `main`). **Fingerprint vérifié sur le site
+LIVE** (`keepy-ten.vercel.app`, HTTP 200, `x-vercel-cache: MISS`) :
+`GODOT_CONFIG.fileSizes` = `index.pck 4 755 136` / `index.wasm 35 376 909`,
+`last-modified 12 Aug 2026 06:42:10 GMT`.
+
+⚠️ **Le `.pck` servi (4 755 136) DIFFÈRE de l'export local (4 755 072) de 64
+octets, sur le MÊME commit — et c'est la confirmation attendue, pas une
+alerte.** C'est exactement l'instabilité déjà consignée au merge du 10 août
+(passe de compression VRAM de Godot sur les textures des autres assets).
+**`index.wasm` est identique à l'octet près entre l'export local et la
+prod** — c'est LUI la preuve d'identité, et le `.pck` ne doit jamais servir
+seul de preuve de déterminisme.
+
+**Piège payload re-vérifié sur le pack exporté** : les **407 Mo**
+d'`assets_source/` (dont les 6 sources brutes des hazards) ne partent pas
+dans le build — `.pck` à 4,75 Mo, et les seules occurrences
+`res://assets_source/...` dedans sont des chaînes de chemin du uid-cache, pas
+des ressources importées. `exclude_filter` tient.
+
+**Reste ouvert, inchangé par ce merge** : les trois derniers sujets non
+installés (libellule/AIR_ENEMY, rat/ENEMY, sanglier/CHARGER) ; les débords
+de hitbox des trois assets installés, désormais jugés acceptables mais
+toujours réels ; et le fait que **sur un asset importé la rampe d'alarme est
+portée par l'ALBÉDO seul** — rien à juger tant qu'aucun asset ENEMY/AIR_ENEMY
+n'est installé.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
