@@ -1172,6 +1172,172 @@ sanglier/CHARGER) ; les 0,228 de hitbox au-dessus du rat (**jugement device,
 et c'est une question de SAUT**) ; et le rouge alarmé à 1,20:1 — pas une
 régression que ce lot puisse corriger sans retoucher un télégraphe partagé.
 
+## CINQUIÈME HAZARD MESHY INSTALLÉ : la libellule (AIR_ENEMY) — 12 août 2026
+
+Branche `claude/air-enemy-dragonfly-decimation-67g5x8`, partie de `staging`
+(`cfcc78b`, donc **posée sur le rat ENEMY**).
+`assets/models/keepy_air_enemy_dragonfly.glb` sur `Obstacle/AirEnemyMesh` —
+**998 triangles, 17,7 Ko, plat, unlit, sans texture**. **Premier asset du
+projet dont le LOD est choisi sur un critère AUTRE que le compte de
+triangles.** Chiffres complets : `docs/MESHY_SPEC.md` §7.4 et §11.
+
+### ⚠️ LA PRÉMISSE DU BRIEF EST FAUSSE, ET ÇA REND LE RÉSULTAT PLUS FORT
+
+Le brief prévenait : « le visuel actuel est un TORUS PERCÉ, le nouveau modèle
+DOIT rester ajouré ». **La contrainte est juste ; la référence qu'elle nomme
+ne l'est pas.** Mesuré en rastérisant la projection du torus le long de l'axe
+caméra : **0,00 % d'aire ouverte enclose, zéro région enclose.** Un
+`TorusMesh` Godot a son trou sur l'axe Y, la caméra le voit **par la
+tranche**, et tout rayon traversant la silhouette rencontre le tube quelque
+part. Le placeholder est percé en **TOPOLOGIE** et plein en **SILHOUETTE**.
+
+La libellule ne PRÉSERVE donc pas une ouverture que le hazard avait : elle en
+**INTRODUIT une qu'il n'a jamais eue**. Le risque que le brief pointait était
+réel, mais dans l'autre sens — il n'y avait rien à perdre, seulement quelque
+chose à ne pas réussir à gagner.
+
+### LOD 1000 et NON 150 — la mesure a donné tort à la réponse habituelle
+
+L'ouverture est **notée directement**, pas déduite du compte de triangles :
+on rastérise la silhouette telle que le joueur la voit, on remplit le fond
+depuis le bord, et ce qui reste est le fond **enclos par** le maillage.
+
+| LOD | aire ouverte | morceaux pleins | plus gros morceau |
+|---|---|---|---|
+| **150** *(la valeur des 4 autres)* | **0,85 %** | **14** | 78,3 % |
+| 300 | 3,17 % | 25 | 87,5 % |
+| 800 | 20,64 % | 23 | 98,1 % |
+| **1000** *(retenu)* | **27,61 %** | **16** | **99,6 %** |
+| 1200 | 28,53 % | 9 | 99,8 % |
+| source (4 000) | 30,57 % | 3 | 99,9 % |
+
+⚠️ **À 150 la membrane de l'aile ne se referme pas, elle SE DÉSINTÈGRE** —
+c'est pourquoi le chiffre d'ouverture *baisse* au lieu de monter : les vides
+cessent d'être **enclos** parce que l'aile autour a disparu. La silhouette
+éclate en 14 morceaux et se lit comme des débris flottants. **La colonne
+« morceaux pleins » est ce qui distingue « refermé » de « tombé en
+morceaux »** — deux échecs opposés qu'un taux d'ouverture seul ne sait pas
+séparer, et c'est précisément le piège que le brief demandait de vérifier.
+
+1000 est le genou (1200 achète 0,9 point de plus pour 200 triangles) **et
+tient sous le plafond §7.1 de 1 200 par hazard** : l'ajouré n'a donc rien
+coûté qu'il ait fallu acheter au budget.
+
+**Jugé à la TAILLE ÉCRAN RÉELLE, pas à la résolution de rendu** : FOV
+vertical 75° sur un viewport 1080x1920 donne 1251/d px par mètre, soit ~120 px
+à 20 m et ~340 px au plus près. Re-noté là : LOD 1000 tient 10,9 %
+d'ouverture à 120 px et 27,6 % à 246 px, contre 3,0 % et 0,9 % pour LOD 150.
+
+### Triangles : le plus gros gain par instance du projet
+
+Le placeholder est un `TorusMesh` laissé à la tessellation par défaut de
+Godot (64x32) = **4 096 triangles**, la plus grosse primitive de toute la
+scène. L'install fait **−3 098 par instance vivante**, et la famille
+un-de-chaque tombe **4 700 → 1 602** (mesuré des deux côtés en worktree
+séparé, pas déduit). §7.4 prévoyait −3 946 : cet écart de 848 est **acheté
+délibérément**, parce que le −3 946 supposait un LOD ~150 que ce sujet ne
+peut pas utiliser.
+
+### ⚠️ LE TÉLÉGRAPHE S'ÉLARGIT — mesuré avant/après, pas déduit par analogie
+
+AIR_ENEMY est le SEUL hazard **LIT *et* émissif à énergie 1,1** (ENEMY est à
+0,3). Passer unlit supprime une multiplication **ET** un terme additif, donc
+l'albédo livré n'a rien à voir avec ce que le joueur voit. Sonde jetable
+construite sur la scène/caméra/échantillonnage de `DarkPaletteAudit`, jouée
+sur `origin/staging` en worktree séparé puis après l'install :
+
+| | avant (torus, LIT+émissif) | après (libellule, unlit) |
+|---|---|---|
+| slot | `[-- ]` | `[glb]` |
+| repos, dominante | `rgb(0,2442, 1,0000, 0,3188)` — lum **0,7315** | `rgb(0,2353, 0,9882, 0,3059)` — lum **0,7113** |
+| alarme, dominante | `rgb(1,0000, 0,2654, 0,1281)` — lum **0,2546** | `rgb(0,9373, 0,0784, 0,1098)` — lum **0,1893** |
+| **télégraphe repos↔alarme** | **2,57:1** | **3,18:1** |
+
+**Le cue est PLUS LARGE après l'install** — l'inverse du risque annoncé.
+Perdre l'émission assombrit l'**alarme** bien plus (0,2546 → 0,1893) que le
+**repos** (0,7315 → 0,7113), parce que l'albédo de repos a été **résolu pour
+reproduire la couleur RENDUE** au lieu d'être reporté brut. Reporté brut,
+`(0,12, 0,85, 0,22)` aurait rendu vers 0,50 : un tiers de la luminosité de
+repos perdu, et le cue rétréci avec.
+
+**Deux recoupements indépendants** en sont tombés : l'alarme dominante lit
+**0,1893** contre le 0,187 que le lot ENEMY avait dérivé pour l'alarme unlit,
+et alarme-vs-sol calcule **1,20:1** contre le « à 1,20:1 près » qu'il avait
+mesuré. Autre session, autre sonde, mêmes chiffres.
+
+⚠️ **Le SENS de la rampe s'INVERSE par rapport à ENEMY, et c'est correct.**
+ENEMY devait être ASSOMBRI pour que son alarme s'ÉCLAIRCISSE en rouge (un
+rongeur sombre siégeait près de la luminance de l'alarme). AIR_ENEMY repose à
+0,71 contre une alarme à 0,19 : sa rampe est un large **assombrissement** plus
+un virage de teinte de ~107°, les deux canaux d'accord, dans la seule
+direction disponible.
+
+### ⚠️ Un artefact d'échantillonnage que CET asset crée, et comment il a été séparé
+
+La moyenne sur la fenêtre de 14 px de `DarkPaletteAudit` **n'est pas** la
+couleur de cet objet, et c'est le premier hazard pour lequel c'est vrai : le
+torus est plein en projection (fenêtre à 100 % d'objet), tandis qu'un treillis
+d'ailes préservé **laisse passer le fond** et tire la moyenne vers lui —
+**61 % de la fenêtre est de l'objet** après l'install. Même famille que la
+contamination de fenêtre du rondin JUMP (3,28 → 3,02), mécanisme opposé.
+
+Séparé par **histogramme**, pas par argument : c'est la valeur dominante qui
+montre que la couleur de repos n'a quasiment pas bougé (0,7315 → 0,7113,
+2,8 %) alors que la moyenne semble chuter bien plus. La ligne AIR_ENEMY de
+`DarkPaletteAudit` bouge **1,08/1,09 → 1,32/1,32** pour la même raison —
+non gatée, et elle monte.
+
+**Diff `DarkPaletteAudit` base → lot : EXACTEMENT 3 lignes**, toutes les trois
+AIR_ENEMY (les deux bouts de la respiration + le « pire hazard » qui passe de
+1,08 à 1,20, ENEMY devenant le pire). Tout le reste byte-identique.
+
+### Échelle : la règle §4, méritée deux fois
+
+`model_scale = 0,63173` cale X sur les **1,200** exacts du collider.
+AIR_ENEMY la mérite doublement : il s'esquive **en changeant de voie**, et une
+fois **posé il devient sautable** — un visuel plus large que sa hitbox ferait
+donc passer une esquive légale pour illégale.
+
+Il reproduit la présence latérale du placeholder **au millimètre** (1,20000
+contre 1,2), **améliore** le remplissage vertical (0,350 du torus → 0,606), et
+**supprime** les 0,2 de débord en Z du torus au-delà de la hitbox de 1,0 :
+l'install est plus proche de sa propre hitbox sur **les trois axes** que la
+primitive qu'il remplace.
+
+⚠️ **Aucun `model_offset`** — premier hazard qui n'en a pas besoin. Le mesh
+arrive centré sur sa propre origine à **1,7 mm près une fois mis à l'échelle**
+(mesuré, pas supposé). Un collider centré sur le slot veut un visuel centré
+sur le slot, et écrire 1,7 mm de bruit de mesure dans la scène prétendrait
+une précision qui n'existe pas. Les quatre autres sont ancrés au SOL ;
+celui-ci est ancré au CENTRE parce que sa hitbox l'est.
+
+**Colliders intouchés** : `AirEnemyShape` toujours `Box(1.2, 1.2, 1.0)` @
++2,358. Sondes, **toutes exit 0** : `AlarmRampAudit` (**PHASE D lit désormais
+`[glb]` pour AIR_ENEMY** et gate la rampe sur l'asset livré — atteint
+`rgb(0.95, 0.08, 0.12)`, revient à `rgb(0.24, 1.00, 0.31)`),
+`AssetContractAudit` (12/12 visuels, **0/10 colliders déplacés**),
+`DarkPaletteAudit` (0 échantillon manqué, 4 hazards gatés au-dessus de 3,0),
+`ProbeTimeoutAudit` (**33 sondes**, retour exact à la baseline après retrait
+des sondes jetables), `DeathModelAudit`, `ChargerShapeProbe`,
+`PursuerFramingAudit`. Import + export Web **exit 0**.
+
+**Piège payload tenu** : **0** ressource `assets_source` importée dans le pack
+contre **407 Mo** de sources brutes. `index.pck` 4 791 552 / `index.wasm`
+35 376 909 (identique aux lots précédents — c'est LUI la preuve d'identité).
+
+**SIX slots portent désormais un asset** : Keepy, `pursuer/Silhouette`,
+`JumpMesh`, `DodgeMesh`, `StomperMesh`, `AirEnemyMesh`.
+
+**Reste ouvert** : **le sanglier/CHARGER est le DERNIER sujet non installé**,
+et le seul où un import ajoutera vraiment des triangles (son placeholder est
+un prisme à 8 tri) ; **le vert de repos est désormais porté par l'albédo
+seul** — il reproduit la couleur rendue à 2,8 % de luminance près, mais
+aucune mesure ne dit qu'un vert plat se lit comme un vert lumineux en
+mouvement sur un téléphone ; et **0,594 de hitbox au-dessus et en dessous de
+la libellule visible** (l'arc de saut est fixe et calé sur le haut de la
+hitbox, donc aucun saut légal n'est en danger — reste à juger si le volume
+létal se lit plus gros qu'il n'en a l'air). **Jugement device.**
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
