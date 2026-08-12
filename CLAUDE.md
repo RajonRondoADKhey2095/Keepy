@@ -1321,9 +1321,18 @@ celui-ci est ancré au CENTRE parce que sa hitbox l'est.
 des sondes jetables), `DeathModelAudit`, `ChargerShapeProbe`,
 `PursuerFramingAudit`. Import + export Web **exit 0**.
 
+**Sondes gameplay seedées : BYTE-IDENTIQUES à `origin/staging`** sur les DEUX
+flux (graine 20260806, worktree séparé) — `ChargerAudit`, `ShrinkAudit`,
+`ComboAudit`. C'est le bar attendu d'un lot purement visuel : ce lot ne
+touche ni logique, ni RNG, ni collider, et l'identité au bit près le dit plus
+fort qu'un simple verdict identique.
+
 **Piège payload tenu** : **0** ressource `assets_source` importée dans le pack
 contre **407 Mo** de sources brutes. `index.pck` 4 791 552 / `index.wasm`
 35 376 909 (identique aux lots précédents — c'est LUI la preuve d'identité).
+Le `.glb` livré déclare `KHR_materials_unlit` (used ET required) et porte
+**0 image, 0 texture, 0 sampler**, attribut `POSITION` seul — toute map est
+supprimée par construction, pas par réglage d'import.
 
 **SIX slots portent désormais un asset** : Keepy, `pursuer/Silhouette`,
 `JumpMesh`, `DodgeMesh`, `StomperMesh`, `AirEnemyMesh`.
