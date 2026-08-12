@@ -47,6 +47,35 @@ extends Node
 ##              but an imported .glb's material is a shared imported
 ##              RESOURCE, so every pooled instance would otherwise animate
 ##              the same object.
+##   PHASE D -- AS SHIPPED. The same two assertions again, on Obstacle.tscn
+##              exactly as authored, with no fixture of any kind.
+##
+## =====================================================================
+## WHY PHASE D EXISTS ON TOP OF PHASE B, WHICH ALREADY "COVERS THE .glb CASE"
+##
+## Because PHASE B does not measure a .glb. It measures
+## SubstituteModel.tscn, a stand-in built to LOOK like one -- and this
+## whole file exists because a fixture that matched reality on every axis
+## but one hid a real defect for as long as it was the only thing looked
+## at. Repeating that shape at one remove ("the stand-in binds like a real
+## asset, so a real asset must behave like the stand-in") would be the same
+## mistake wearing the fix's clothes.
+##
+## What PHASE D adds that no fixture can: the real asset's real material,
+## produced by Godot's own glTF importer from the real bytes on disk. Every
+## step between the .glb and the drawn albedo is exercised -- import
+## settings, the importer's choice of material class (the cast in
+## Obstacle._ready() is only true while that class stays StandardMaterial3D),
+## the binding route, and the duplicate-per-instance. The first hazard to
+## land on one of these two slots was the rat, and PHASE D is what makes
+## "the telegraph still works on it" a measurement instead of an inference.
+##
+## PHASE A had to change with it. It used to get the placeholder for free,
+## because no enemy slot carried a model; the moment one did, "placeholder
+## meshes (no model installed)" would have quietly become a second reading
+## of the shipped asset under a label saying otherwise. It now CLEARS
+## model_scene explicitly, so the fallback path is still covered and the
+## label is true by construction rather than by luck.
 ##
 ## =====================================================================
 ## WHY IT CALLS THE APPLIER RATHER THAN DRIVING AN APPROACH
@@ -72,6 +101,14 @@ const OBSTACLE: PackedScene = preload("res://scenes/Obstacle.tscn")
 ## absorb float formatting, not to soften a real drift.
 const EPSILON: float = 0.001
 
+## Which of the three states an Obstacle is built in. Named rather than a
+## bool: "with_model true/false" could not express the difference between
+## "a fixture standing in for an asset" and "whatever actually ships", and
+## that difference is the entire point of PHASE D.
+const FIXTURE_NONE: int = 0        # model_scene cleared -- the fallback path
+const FIXTURE_SUBSTITUTE: int = 1  # SubstituteModel.tscn -- .glb-shaped stand-in
+const FIXTURE_SHIPPED: int = 2     # Obstacle.tscn untouched -- the real thing
+
 var _failures: int = 0
 
 func _ready() -> void:
@@ -83,6 +120,7 @@ func _ready() -> void:
 	_phase_a_placeholder()
 	_phase_b_installed_model()
 	_phase_c_instance_isolation()
+	_phase_d_as_shipped()
 	_report()
 
 # =====================================================================
@@ -90,15 +128,30 @@ func _ready() -> void:
 # =====================================================================
 
 func _phase_a_placeholder() -> void:
-	print("--- PHASE A: placeholder meshes (no model installed) ---")
-	_assert_ramp(false, Obstacle.Type.ENEMY, "EnemyMesh")
-	_assert_ramp(false, Obstacle.Type.AIR_ENEMY, "AirEnemyMesh")
+	print("--- PHASE A: placeholder meshes (model_scene cleared on every slot) ---")
+	_assert_ramp(FIXTURE_NONE, Obstacle.Type.ENEMY, "EnemyMesh")
+	_assert_ramp(FIXTURE_NONE, Obstacle.Type.AIR_ENEMY, "AirEnemyMesh")
 	print("")
 
 func _phase_b_installed_model() -> void:
 	print("--- PHASE B: SubstituteModel.tscn installed (binds like a real .glb) ---")
-	_assert_ramp(true, Obstacle.Type.ENEMY, "EnemyMesh")
-	_assert_ramp(true, Obstacle.Type.AIR_ENEMY, "AirEnemyMesh")
+	_assert_ramp(FIXTURE_SUBSTITUTE, Obstacle.Type.ENEMY, "EnemyMesh")
+	_assert_ramp(FIXTURE_SUBSTITUTE, Obstacle.Type.AIR_ENEMY, "AirEnemyMesh")
+	print("")
+
+## The only phase whose result says anything about what a player will see:
+## no stand-in, no cleared slot, just Obstacle.tscn as it ships.
+##
+## It prints [glb] / [-- ] per slot rather than asserting that either one is
+## installed. Which slots carry an asset is an art-pipeline fact that changes
+## batch to batch; that the telegraph reaches whatever IS there is the
+## contract, and it has to hold in both states. The marker is what stops this
+## phase from silently degrading into a second copy of PHASE A on the day a
+## slot's model_scene is cleared.
+func _phase_d_as_shipped() -> void:
+	print("--- PHASE D: Obstacle.tscn AS SHIPPED (real assets, no fixture) ---")
+	_assert_ramp(FIXTURE_SHIPPED, Obstacle.Type.ENEMY, "EnemyMesh")
+	_assert_ramp(FIXTURE_SHIPPED, Obstacle.Type.AIR_ENEMY, "AirEnemyMesh")
 	print("")
 
 ## One variant, one binding: base -> full alarm -> back to base, checked on
@@ -106,12 +159,12 @@ func _phase_b_installed_model() -> void:
 ## the real contract: a .glb body split across several mesh instances must
 ## tint as one object (see ModelSlot.apply_material), and checking only
 ## surface 0 would pass a model that lit its torso and left its tail behind.
-func _assert_ramp(with_model: bool, type: int, slot_name: String) -> void:
-	var obstacle := _make_obstacle(with_model)
+func _assert_ramp(fixture: int, type: int, slot_name: String) -> void:
+	var obstacle := _make_obstacle(fixture)
 	var slot := obstacle.get_node(slot_name) as ModelSlot
 	obstacle.configure(type, 0.0, 0.0)
 
-	var label := "%s %s" % [_type_name(type), "with .glb" if with_model else "placeholder"]
+	var label := "%s %s" % [_type_name(type), _fixture_label(fixture, slot)]
 	var surfaces := _drawn_materials(slot)
 	if surfaces.is_empty():
 		_fail("%s: the slot draws NO readable material at all" % label)
@@ -148,8 +201,8 @@ func _assert_ramp(with_model: bool, type: int, slot_name: String) -> void:
 
 func _phase_c_instance_isolation() -> void:
 	print("--- PHASE C: one alarmed instance must not tint another ---")
-	var first := _make_obstacle(true)
-	var second := _make_obstacle(true)
+	var first := _make_obstacle(FIXTURE_SUBSTITUTE)
+	var second := _make_obstacle(FIXTURE_SUBSTITUTE)
 	first.configure(Obstacle.Type.ENEMY, 0.0, 0.0)
 	second.configure(Obstacle.Type.ENEMY, 0.0, 0.0)
 
@@ -172,18 +225,23 @@ func _phase_c_instance_isolation() -> void:
 # HELPERS
 # =====================================================================
 
-## A ready Obstacle, with the stand-in model installed on every slot when
-## asked. `model_scene` is authored BEFORE add_child on purpose: ModelSlot
-## installs in its own _ready(), and a child's _ready() runs before its
-## parent's, so this is the only ordering under which Obstacle._ready()
-## sees the model rather than the placeholder -- the same ordering
-## AssetContractAudit relies on, and the same one the shipped scenes get
-## for free by carrying model_scene in the .tscn.
-func _make_obstacle(with_model: bool) -> Obstacle:
+## A ready Obstacle in one of the three fixture states.
+##
+## `model_scene` is written BEFORE add_child on purpose: ModelSlot installs in
+## its own _ready(), and a child's _ready() runs before its parent's, so this
+## is the only ordering under which Obstacle._ready() sees the state this
+## function asked for -- the same ordering AssetContractAudit relies on, and
+## the same one the shipped scenes get for free by carrying model_scene in the
+## .tscn.
+##
+## FIXTURE_NONE writes null rather than doing nothing. Doing nothing was
+## correct only while no enemy slot shipped an asset; it would now hand back
+## the shipped rat under a label that says "placeholder".
+func _make_obstacle(fixture: int) -> Obstacle:
 	var obstacle: Obstacle = OBSTACLE.instantiate()
-	if with_model:
+	if fixture != FIXTURE_SHIPPED:
 		for slot in _find_slots(obstacle):
-			slot.model_scene = SUBSTITUTE
+			slot.model_scene = SUBSTITUTE if fixture == FIXTURE_SUBSTITUTE else null
 	add_child(obstacle)
 	# Nothing here drives a run, but an Obstacle left processing would
 	# still tick its own passage check against a world that does not exist.
@@ -254,6 +312,17 @@ func _report() -> void:
 	print("        AND with an imported model, resets for the next pooled spawn, and")
 	print("        stays per-instance.")
 	get_tree().quit(0)
+
+## What state this measurement was taken in, said in the output rather than
+## left to the phase header -- a line copied out of a log has to carry its own
+## meaning. In the shipped state the marker is READ OFF THE SLOT
+## (`has_model()`), never assumed from the phase, so the day an asset is added
+## to or removed from a slot the log says so on its own.
+func _fixture_label(fixture: int, slot: ModelSlot) -> String:
+	match fixture:
+		FIXTURE_NONE: return "placeholder"
+		FIXTURE_SUBSTITUTE: return "with stand-in"
+		_: return "as shipped [glb]" if slot.has_model() else "as shipped [-- ]"
 
 func _type_name(type: int) -> String:
 	match type:
