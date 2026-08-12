@@ -66,7 +66,7 @@ size = Vector3(1.2, 2.0, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Charger"]
 shading_mode = 0
-albedo_color = Color(1, 0.72, 0.88, 1)
+albedo_color = Color(0.96, 0.76, 0.8, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ChargerTrail"]
 size = Vector3(1.1, 0.1, 0.6)
