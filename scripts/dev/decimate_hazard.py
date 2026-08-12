@@ -70,8 +70,39 @@ OUT_DIR = "/tmp/lod"
 ## DODGE subject, not this one. Two files whose names both say "trunk/log"
 ## are separated here by measurement, which is the rule MESHY_SPEC section 11
 ## already learned the hard way on the decor batch.
+##
+## The STOMPER toad was picked the same way, and the measurement is what makes
+## it the STOMPER rather than any other hazard: 1.898 x 0.703 x 1.672, i.e.
+## WIDE across the track and only 0.70 tall. Obstacle.gd's TELEGRAPH-STOMPER
+## says the silhouette must read as a squat, planted landing pad rather than a
+## wall -- the placeholder cylinder does it at 1.50 base / 0.70 height, a
+## 2.14:1 width-to-height ratio, and this mesh arrives at 2.70:1 unscaled. It
+## is the only crouching subject in the batch; the other four stand up.
+##
+## Its face already points +Z, which is the player's side (segments spawn at
+## -Z and travel toward the camera at +Z), so like the JUMP log it needs no
+## model_rotation_degrees. Verified by rendering it from +Z and from -Z and
+## looking at which end carries the mouth line and the eye bumps -- not by
+## assuming Meshy's convention holds across a batch.
+##
+## The DODGE trunk closes the pair the JUMP entry above opened, and the
+## measurement that separates them is the same one: Crimson_Hollow_Trunk is
+## 1.031 x 1.901 x 0.992, i.e. the ONLY remaining subject whose dominant axis
+## is Y. The other four are long in X or Z (dragonfly 1.901 x 0.960 x 0.170,
+## toad 1.898 x 0.703 x 1.672, beaver 1.299 x 1.050 x 1.899, boar 0.831 x
+## 1.128 x 1.903). A DODGE is a full-lane-height wall you go AROUND, so
+## "stands up" is not a nice-to-have here, it is the whole classification.
+##
+## Rendered from four views before decimating: an upright hollow trunk, broken
+## off at the top, with small branch stubs low on the shaft and a ring-shaped
+## cross-section from above. It has no face and is very nearly rotationally
+## symmetric about Y, so unlike the toad there is no "which way does it look"
+## question to answer -- model_rotation_degrees stays at zero because there is
+## no orientation to get wrong, not because the toad's answer was reused.
 MODELS = {
     "jump_log": "Meshy_AI_Low_Poly_Log_0811080727_texture.glb",
+    "stomper_toad": "Meshy_AI_Geometric_Toad_0811080929_texture.glb",
+    "dodge_trunk": "Meshy_AI_Crimson_Hollow_Trunk_0811081732_texture.glb",
 }
 
 ## Lifted verbatim from Obstacle.tscn's StandardMaterial3D_Jump, NOT sampled
@@ -80,8 +111,27 @@ MODELS = {
 ## decision with an arithmetic one, and would move a number this project gates.
 ## sRGB, as GDScript writes it -- srgb_to_linear handles the conversion glTF's
 ## baseColorFactor requires (see decimate_decor.py for why that matters).
+##
+## The STOMPER's blue is the widest-margin gate of the four DarkPaletteAudit
+## asserts (3.41:1 against a 3.0 floor after the 2026-08-11 saturation pass),
+## so it is carried over UNCHANGED rather than improved: there is nothing to
+## win above the floor, and any new value would move a number this project
+## gates in exchange for nothing.
+## DODGE IS THE ONE ENTRY HERE THAT IS *NOT* A VERBATIM CARRY-OVER, AND THE
+## REASON IS STRUCTURAL RATHER THAN AESTHETIC. Every other gated hazard was
+## already unshaded when its asset arrived, so lifting its albedo unchanged
+## reproduced its measured ratio exactly. DODGE is the only one of the four
+## still LIT (StandardMaterial3D_Dodge carries no shading_mode = 0), so its
+## 3.19:1 is the ratio of an albedo MULTIPLIED BY THE SCENE'S AMBIENT, not of
+## the albedo itself. Section 8 requires an imported asset to be unlit, which
+## removes that multiplication -- so carrying (0.30, 0.025, 0.025) across
+## unchanged would NOT hold the ratio, it would change what the number means.
+## Measured rather than argued: see MESHY_SPEC section 11 for the two-point
+## measurement this value was solved from.
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
+    "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
+    "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
 }
 
 

@@ -399,10 +399,10 @@ hazard**:
 | Variant | Triangles | Against the 1,200 unit budget |
 |---|---|---|
 | ChargerMesh (`PrismMesh`) | 8 | 0.01x |
-| DodgeMesh (`BoxMesh`) | 12 | 0.01x |
+| DodgeMesh (**`keepy_dodge_trunk.glb`**, was a `BoxMesh` at 12) | **150** | **0.13x** |
 | JumpMesh (**`keepy_jump_log.glb`**, was a `BoxMesh` at 12) | **150** | **0.12x** |
 | JumpMarkerMesh (`CylinderMesh`) | 44 | 0.04x |
-| StomperMesh (`CylinderMesh`) | 768 | 0.64x |
+| StomperMesh (**`keepy_stomper_toad.glb`**, was a `CylinderMesh` at 768) | **148** | **0.12x** |
 | **EnemyMesh** (`CapsuleMesh`) | **3,456** | **2.88x — OVER** |
 | **AirEnemyMesh** (`TorusMesh`) | **4,096** | **3.41x — OVER** |
 
@@ -438,6 +438,17 @@ is not a budget figure: three runs each side of the install gave **before
 cannot produce, since one extra AIR_ENEMY on screen is **+4,096 by itself**.
 The probe is unseeded; the per-variant table above is the deterministic
 number.
+
+**The second hazard import goes the other way, and it is the first one
+that does.** STOMPER's placeholder was not a 12-triangle box but a
+`CylinderMesh` at **768** — the one primitive in the family already
+carrying real tessellation cost. Replacing it with a 148-triangle asset is
+therefore a **reduction of 620 per live instance**, and the one-of-each
+family total falls **8,490 → 7,870**. The inversion the paragraph above
+predicts for ENEMY and AIR_ENEMY turns out to apply, in a milder form, to
+STOMPER as well: three of the six variants are cheaper as imported art
+than as Godot primitives. Only DODGE and CHARGER remain cases where an
+import genuinely adds.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
@@ -2055,3 +2066,305 @@ leaves.
   emission is inert on an unshaded material (see the alarm-ramp entry above).
   Nothing to judge yet — no ENEMY/AIR_ENEMY asset is installed, and the
   placeholders still get the full albedo+emission ramp. Revisit when one is.
+
+### 2026-08-11, later the same day — STOMPER (toad), INSTALLED
+
+`assets/models/keepy_stomper_toad.glb` on `Obstacle/StomperMesh` — **148
+triangles, 3.7 KB, flat, unlit, untextured**, carrying STOMPER's existing
+ice-blue. Second hazard asset, same pipeline as the JUMP log.
+
+#### Identified by rendering, not by name — and the name would have been right
+
+`Meshy_AI_Geometric_Toad` *is* the toad, but that was established the way
+§11 has had to establish everything in this batch: all five remaining files
+rendered from three axes. The batch has already produced one genuinely
+ambiguous pair (`Low_Poly_Log` vs `Crimson_Hollow_Trunk`, both "trunk"),
+so a name that happens to be accurate is still not evidence.
+
+The measurement is also what makes it the STOMPER rather than any other
+hazard. It is the **only crouching subject** in the batch:
+
+| file | bbox (X × Y × Z) | posture | hazard |
+|---|---|---|---|
+| **Geometric_Toad** | **1.898 × 0.703 × 1.672** | **crouched, splayed limbs** | **STOMPER** |
+| Emerald_Geometric_Dra (dragonfly) | 1.901 × 0.960 × 0.170 | flat, wings spread | AIR_ENEMY |
+| Low_Poly_Beaver (reads as a rat) | 1.299 × 1.050 × 1.899 | quadruped, long curled tail | ENEMY |
+| Shadowtusk (boar) | 0.831 × 1.128 × 1.903 | quadruped, tusks, standing | CHARGER |
+| Crimson_Hollow_Trunk | 1.031 × 1.901 × 0.992 | upright | DODGE |
+
+**Orientation needed no correction, and that was verified rather than
+inherited from the JUMP log.** Rendered from +Z and from −Z: the +Z view
+carries the mouth line and the eye bumps, the −Z view is the smooth rump.
+Segments spawn at −Z and travel toward the camera at +Z, so the toad
+already faces the player at `model_rotation_degrees = 0`.
+
+#### Scale: deliberately NOT the JUMP rule, and the ratio was never at risk
+
+**The width-to-height ratio is scale-INVARIANT**, because `model_scale` is
+a single uniform float. The brief's concern — that matching the collider
+might break the 2.1:1 contract — cannot occur: the asset fixes the ratio at
+**2.692:1**, *squatter* than the placeholder cylinder's 2.143:1, at every
+possible scale. The "hop over me, I am not a wall" read is preserved and
+slightly strengthened. What the scale actually decides is absolute size.
+
+Uniform scale can match X, Y or Z — not all three. The toad is intrinsically
+flatter than the box (0.371 as tall as wide, against the hitbox's 0.583).
+Both candidates, measured:
+
+| | scale | rest (X×Y×Z) | at pulse peak ×1.22 | invisible hitbox above |
+|---|---|---|---|---|
+| A: width → collider 1.20 | 0.63608 | 1.200 × 0.446 × 1.076 | 1.464 × 0.544 × 1.313 | 0.254 |
+| **B: width → placeholder base 1.50** | **0.79510** | **1.500 × 0.557 × 1.345** | **1.830 × 0.680 × 1.641** | **0.143** |
+
+**B was chosen.** The JUMP log took A because §4 says a visual wider than
+its hitbox makes a legal sidestep look illegal — but **a STOMPER has no
+sidestep to misread**: it glues itself to the player's lane by design
+(`blocks_lane_switch`, `_process_stomper`). Applying that rule mechanically
+here would shrink a telegraph `TELEGRAPH-STOMPER` calls load-bearing by 20%
+in width and 36% in height, and would make the one axis that *does* bind —
+vertical clearance, since the hazard is jumped — measurably worse.
+
+Two properties of B that A does not have, both measured on the built scene:
+its rest width **1.500 is exactly the placeholder's base diameter** and its
+peak width **1.830 is exactly the placeholder's peak**, so lateral on-screen
+presence is unchanged; and at peak it reaches **0.680 against the 0.700
+hitbox**, where the placeholder *overshoots* to 0.854.
+
+**Residuals, stated rather than smoothed over:** 0.143 of hitbox sits above
+the visible toad, and the visual is 0.345 deeper than the hitbox (0.17 at
+each end). Depth over-fill is the forgiving direction for a jumped hazard —
+it looks like it needs more clearance than it does. Lane bleed was checked,
+not assumed: at peak the toad's half-width is 0.915 against an adjacent-lane
+Keepy edge at 1.500. **Device call, as with the JUMP log.**
+
+**The pulse sinks the toad 0.077 below the ground plane at peak — and the
+placeholder does exactly the same.** `_process_stomper` scales the SLOT, and
+both meshes bottom out at the same slot-local −0.35, so the dip is
+identical. Not a new artefact.
+
+#### ⚠️ `DarkPaletteAudit` reads 3.43 → 3.41 on one line, and the gated number did not move at all
+
+Same family as the JUMP log's 3.28 → 3.02, and checked the same way rather
+than assumed to be the same thing. Full-output diff against `f4b3190` in a
+separate worktree: **exactly one line differs in the entire probe**, the
+deep-mist STOMPER sample.
+
+Histogram of the real sample window, taken by instrumenting the probe
+itself (reverted afterwards):
+
+| phase | baseline (cylinder) | after (toad) |
+|---|---|---|
+| shallow | 196 px, **all** `(156,216,251)` → 3.41:1 | 196 px, **all** `(156,216,251)` → 3.41:1 |
+| deep | 196 px, **all** `(155,215,250)` → 3.43:1 | 110 px `(155,215,250)` + 43 `(155,214,249)` + 43 `(155,214,250)` → 3.41:1 |
+
+**This is NOT the JUMP artefact.** That one had 54 px of *ground* bleeding
+into a window centred on a thinner silhouette. Here the window is **100%
+stomper pixels in both trees, zero ground pixels**, and the dominant value
+is **bit-identical to the placeholder's**. 86 of 196 sampled pixels sit one
+8-bit step lower in G and/or B — a curved unlit surface at slightly
+different depth under the scene's exponential fog, not a colour change. The
+material was independently confirmed on the built scene as `UNSHADED
+albedo=(0.6200, 0.8600, 1.0000)`, an exact round-trip of
+`StandardMaterial3D_Stomper`.
+
+**And the number the probe gates is the worst across both mist ends, which
+is 3.41:1 before and after** — unchanged, 0.41 above the 3.0 floor, still
+the widest margin of the four gated hazards. Only the better of the two
+ends moved. The sample centre shifted 9 px down (the toad's AABB centre is
+lower than the cylinder's), which is the whole mechanism.
+
+#### Validation
+
+`AssetContractAudit` (12/12 visuals, **0 colliders moved**, `StomperShape`
+still `Box(1.2, 0.7, 1.0)` @ +0.350), `DarkPaletteAudit`, `AlarmRampAudit`,
+`ProbeTimeoutAudit` (33 probes armed), `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` (26.9% max, under the 30% gate)
+— all **exit 0**. Import and `--export-release "Web"` both **exit 0**.
+
+`AssetContractAudit`'s PHASE 1 table now shows **four** slots carrying a
+real asset — Keepy, `JumpMesh`, `StomperMesh`, `pursuer/Silhouette`:
+`obstacle/StomperMesh [glb] size 1.500 × 0.557 × 1.345 node_y +0.350
+unshaded rgb(0.62, 0.86, 1.00)`.
+
+**The payload trap held**: **0** imported `assets_source` entries in the
+pack, only uid-cache path strings. `index.pck` 4,749,024 — which is *not*
+offered as proof of anything, per the stability caveat recorded above.
+
+#### Still open
+
+- **Four subjects remain uninstalled** — dragonfly (AIR_ENEMY), rat (ENEMY),
+  boar (CHARGER), upright trunk (DODGE). §7.4's inversion still applies, and
+  is now confirmed on a second variant.
+- **The hitbox under-fill and the depth over-fill.** Device call: does the
+  toad read as something to hop, and does the pulse still read as a threat
+  ramp at its new proportions?
+
+### 2026-08-11, third of the day — DODGE (upright trunk), INSTALLED
+
+`assets/models/keepy_dodge_trunk.glb` on `Obstacle/DodgeMesh` — **150
+triangles, 3.7 KB, flat, unlit, untextured**. Third hazard asset, same
+pipeline as the JUMP log and the STOMPER toad, but the **first one that had
+to change a gated colour**, and the reason is structural rather than
+aesthetic.
+
+#### Identified by measurement, then confirmed at the render
+
+`Crimson_Hollow_Trunk` is the **only remaining subject whose dominant axis
+is Y** (1.031 × 1.901 × 0.992). The other four are long in X or Z — see the
+STOMPER entry's posture table above, which this closes. A DODGE is a
+full-lane-height wall the player goes *around*, so "stands up" is not a
+nice-to-have, it is the entire classification.
+
+Rendered from four views before decimating (side +X, front +Z, back −Z, top
++Y): an upright hollow trunk, broken off at the top, small branch stubs low
+on the shaft, ring-shaped cross-section from above. **It has no face and is
+very nearly rotationally symmetric about Y**, so unlike the toad there was
+no "which way does it look" question to answer — `model_rotation_degrees`
+stays at zero because there is no orientation to get wrong, not because the
+toad's answer was reused.
+
+Source profile matches the rest of the batch and still contradicts the
+original brief: **4,314 triangles**, PBR with three maps, **no
+`KHR_materials_unlit`**.
+
+#### The albedo HAD to change, and the number says so
+
+**DODGE was the only one of the four gated hazards still LIT** —
+`StandardMaterial3D_Dodge` carried no `shading_mode = 0`, alone among
+JUMP/STOMPER/CHARGER. Its measured 3.19:1 was therefore the ratio of an
+albedo **multiplied by the scene ambient**, not of the albedo itself.
+Section 8 requires an imported asset to be unlit, which removes that
+multiplication — so carrying the colour across verbatim, the thing the two
+previous assets could safely do, **would not have held the ratio here**:
+
+| albedo | shading | rendered | vs ground |
+|---|---|---|---|
+| `(0.30, 0.025, 0.025)` | LIT (baseline) | `(0.2157, 0.0588, 0.0157)` | **3.19:1** |
+| `(0.30, 0.025, 0.025)` | unlit, carried across | `(0.2954, 0.0289, 0.0263)` *(predicted)* | **2.945:1 — UNDER THE FLOOR** |
+| **`(0.21, 0.0175, 0.0175)`** | **unlit, shipped** | **`(0.2039, 0.0197, 0.0000)`** | **3.37:1** |
+
+The solve held the DODGE red hue **exactly** (12:1:1, so only the value
+moves, never the tint), against the probe's own measured ground luminance
+and a fog fraction of 0.0238 taken off the **already-unlit STOMPER** — the
+one asset in the scene whose albedo→rendered mapping needs no lighting
+model at all. The model reproduces the baseline to within 0.005 of a ratio
+point (predicted 3.194 against the probe's 3.19), which is what earned it
+the right to predict the failure above rather than discover it.
+
+#### This is a REAL colour change, not the JUMP window artefact — histogram
+
+The JUMP log moved 3.28 → 3.02 for a *measurement* reason (54 px of ground
+bleeding into a window centred on a thinner silhouette). DODGE moves in the
+opposite direction and for the opposite reason. Probe instrumented, run on
+**both trees**, then reverted:
+
+| tree | window contents | dominant value | ratio |
+|---|---|---|---|
+| baseline (`origin/staging`, LIT box) | **196 px, 0 ground** | `(55,15,4)` | 3.19:1 |
+| this lot (unlit trunk) | **196 px, 0 ground** | `(52,5,0)` | 3.37:1 |
+
+**Both windows are 100% object pixels at both mist ends.** Neither
+measurement is contaminated, so the difference between them is the object's
+colour and nothing else. The signature is unmistakable: the **green channel
+collapses 15 → 5** while red barely moves, which is exactly what removing a
+multiplication by an ambient of `(0.42, 0.5, 0.35)` — green-dominant — does
+to an albedo whose own green is near zero.
+
+⚠️ One observed detail deliberately **not** explained rather than explained
+away: the shipped blue channel reads **exactly 0** where the albedo and the
+fog both predict ~5/255, while green at the identical albedo value reads the
+predicted 5. No tonemapper is configured (`scenes/Game.tscn` has no
+`tonemap_*` key), so that is not the cause. It is left as an open
+observation because chasing it changes nothing: one 8-bit step of blue on a
+near-black silhouette moves the ratio by **less than 0.01**, and the window
+purity above already proves the measurement is of the object.
+
+#### Contrast: the tightest margin of the four becomes the second-widest
+
+| hazard | before | after | margin over the 3.0 floor |
+|---|---|---|---|
+| **DODGE** | **3.19:1** | **3.37:1** | **+0.37** *(was +0.19, the tightest)* |
+| JUMP | 3.02:1 | 3.02:1 | +0.02 |
+| CHARGER | 3.20:1 | 3.20:1 | +0.20 |
+| STOMPER | 3.41:1 | 3.41:1 | +0.41 |
+
+The gated number is the **worst across both mist ends**: 3.39 shallow /
+**3.37 deep**. DODGE was the tightest of the four gated hazards and is now
+second only to STOMPER; the tightest is CHARGER at +0.20. The three other
+rows are **bit-identical** to baseline, as they must be — nothing else was
+touched.
+
+#### Scale: the JUMP rule applied straight, not a derogation
+
+`model_scale = 1.18793` puts the visual's X on the collider's **1.200
+exactly** — half-width **0.600, byte-identical to the placeholder box**, so
+lateral presence does not move at all. Unlike the STOMPER, this is §4's
+fairness rule applied without exception: **a DODGE exists to be dodged
+sideways**, so width is the axis that decides whether a legal dodge reads as
+legal.
+
+The rejected alternative is recorded because it looks better on paper:
+
+| | scale | rest (X×Y×Z) | X vs hitbox 1.200 |
+|---|---|---|---|
+| **A: width → collider 1.20** | **1.18793** | **1.200 × 2.253 × 1.111** | **±0.000** |
+| B: height → hitbox 2.00 | 1.05210 | 1.085 × 2.000 × 1.044 | **−0.115 — hitbox WIDER than the trunk** |
+
+B matches the hitbox height, but leaves the hitbox 0.058 wider *per side*
+than the visual: the player clears the trunk on screen and dies to empty
+air. That is the punishing direction of the same error, on the exact
+mechanic the hazard is named after. A was chosen.
+
+**Residues, reported rather than hidden**: the trunk stands **0.253 above**
+the hitbox top and is **0.111 deeper** than it in Z. Both are the forgiving
+direction. The overhang cannot make a legal jump look illegal **because
+there is no legal jump over a DODGE** — unjumpable by construction, hitbox
+2.0 against a 1.558 jump peak — and the depth over-fill only lets the player
+brush the visual edge without being hit, the same sense as the STOMPER's
+accepted 0.345.
+
+`model_offset = (0, 0.13542, 0)` rests the trunk on the ground: the mesh is
+centred on its own origin, so at the slot's authored `y = +1.00` it would
+sink 0.135 below the floor.
+
+#### The placeholder material was changed too, on purpose
+
+`StandardMaterial3D_Dodge` goes `shading_mode = 0` and takes the same new
+albedo. It is now the **fallback path only** — the `.glb` draws its own
+unlit material — but leaving it lit would have made the placeholder and the
+shipped asset differ **on the very axis this lot changes**. That is the
+fixture-diverges-from-the-real trap `AlarmRampAudit` exists to close, and
+reintroducing it in the same repo that documents it would be indefensible.
+
+#### Triangles
+
+`DodgeMesh` 12 → **150**, +138 per live instance. This is one of the three
+variants §7.4 predicted would *cost* triangles on import (the two 12-triangle
+boxes and the 8-triangle prism), against STOMPER's −620 and the −2,256 /
+−2,896 still waiting on ENEMY and AIR_ENEMY. Family one-of-each **7,870 →
+8,008**, still under the 8,400 line.
+
+#### Validation
+
+`AssetContractAudit` (12/12 visuals, **0 colliders moved**, `DodgeShape`
+still `Box(1.2, 2.0, 1.0)` @ +1.00), `DarkPaletteAudit`, `AlarmRampAudit`,
+`ProbeTimeoutAudit`, `DeathModelAudit`, `ChargerShapeProbe`,
+`PursuerFramingAudit` (37.1% max, CAPTURE exempt by design) — all **exit
+0**. Import and `--export-release "Web"` both **exit 0**.
+
+**The payload trap held**: **0** imported `assets_source` resources in the
+pack (58 bare uid-cache path strings, no derived `.scn`/`.ctex`).
+`index.pck` 4,755,104 — again *not* offered as proof of anything, per the
+stability caveat recorded above.
+
+#### Still open
+
+- **Three subjects remain uninstalled** — dragonfly (AIR_ENEMY), rat
+  (ENEMY), boar (CHARGER). §7.4's inversion is still unexercised on the two
+  variants where it pays most.
+- **The overhang and the depth over-fill.** Device call: does the trunk read
+  as a wall to go *around* rather than something to jump, and does the
+  invisible 0.25 of hitbox below its top ever feel wrong?
+- **The darker red.** No probe says a colour is *right*. DODGE is now a
+  darker silhouette than it was; whether it still reads as red rather than
+  black on a phone screen at speed is Mathieu's call, not a measurement.
