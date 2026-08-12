@@ -889,19 +889,65 @@ d'artefact de fenêtre déjà documenté au lot précédent, inchangé ici.
 ENEMY 1,52 / AIR_ENEMY 1,09 : toujours mesurés dans leur teinte d'ALARME et
 toujours non gatés, comme avant.
 
-CI run **#92** verte (3 min 12 s), déploiement PRODUCTION effectué, STAGING
-correctement skippé (push sur `main`). **Fingerprint vérifié sur le site
-LIVE** (`keepy-ten.vercel.app`, HTTP 200, `x-vercel-cache: MISS`) :
-`GODOT_CONFIG.fileSizes` = `index.pck 4 755 136` / `index.wasm 35 376 909`,
-`last-modified 12 Aug 2026 06:42:10 GMT`.
+CI run **#92** verte (3 min 12 s) puis **#93** verte (2 min 59 s, le commit
+de doc), déploiement PRODUCTION effectué, STAGING correctement skippé (push
+sur `main`) dans les deux cas. **Fingerprint vérifié sur le site LIVE**
+(`keepy-ten.vercel.app`, HTTP 200, `x-vercel-cache: MISS`) :
+`GODOT_CONFIG.fileSizes` = `index.pck 4 755 120` / `index.wasm 35 376 909`,
+`last-modified 12 Aug 2026 06:46:43 GMT`.
 
-⚠️ **Le `.pck` servi (4 755 136) DIFFÈRE de l'export local (4 755 072) de 64
-octets, sur le MÊME commit — et c'est la confirmation attendue, pas une
-alerte.** C'est exactement l'instabilité déjà consignée au merge du 10 août
-(passe de compression VRAM de Godot sur les textures des autres assets).
-**`index.wasm` est identique à l'octet près entre l'export local et la
-prod** — c'est LUI la preuve d'identité, et le `.pck` ne doit jamais servir
-seul de preuve de déterminisme.
+⚠️ **Le `.pck` a pris TROIS valeurs différentes pour le MÊME contenu de jeu
+en une heure — 4 755 072 (export local), 4 755 136 (run #92), 4 755 120
+(run #93) — et c'est la confirmation de l'instabilité déjà consignée le
+10 août, pas une alerte.** Le contenu de jeu est pourtant identique entre
+#92 et #93 (le commit de doc ne touche que `CLAUDE.md`, qui n'est pas une
+ressource Godot et n'entre donc pas dans le pack). **`index.wasm` vaut
+35 376 909 sur les trois** — c'est LUI la preuve d'identité, et le `.pck`
+ne doit jamais servir seul de preuve de déterminisme.
+
+### ⚠️ DEUX déploiements se disputent la PROD à chaque push sur `main` — ~3 min de 404
+
+**Découvert en vérifiant le fingerprint de ce merge, et ce n'est PAS un
+défaut introduit par ce lot : le comportement est identique sur les deux
+pushes du 11 août.** Le projet Vercel `keepy` a l'intégration GitHub NATIVE
+active EN PLUS du déploiement CI, et les deux ciblent `production` :
+
+| source | reconnaissable à | ce qu'elle sert | délai après push |
+|---|---|---|---|
+| **native Vercel** | `meta.branchAlias` présent | le **dépôt BRUT** — pas d'`index.html` à la racine → **404** | quelques secondes |
+| **CI** (`vercel deploy build/web --prod`) | `meta.gitRootDirectory = build/web` | le vrai export Godot | ~3 min |
+
+Chronologie mesurée sur les déploiements réels, pas déduite :
+
+```
+11 Aug 09:55:56  de7933e  NATIVE -> 404
+11 Aug 09:59:10  de7933e  CI     -> OK
+11 Aug 10:01:38  f4b3190  NATIVE -> 404
+11 Aug 10:04:59  f4b3190  CI     -> OK
+12 Aug 06:38:50  1b9c5a8  NATIVE -> 404
+12 Aug 06:41:54  1b9c5a8  CI     -> OK   (fingerprint lu ici, 200)
+12 Aug 06:43:05  23aaa20  NATIVE -> 404  (prod EN 404 pendant ~3 min)
+12 Aug 06:46:06  23aaa20  CI     -> OK   (prod guérie)
+```
+
+**Conséquences, dans l'ordre d'importance :**
+1. **Chaque push sur `main` met la prod en 404 pendant ~3 minutes.** Ça se
+   répare tout seul quand la CI dépose son build, donc personne ne l'a
+   jamais vu — mais c'est réel, et un merge de prod en fait DEUX (le merge
+   puis le commit de doc), soit deux fenêtres.
+2. **Si la CI échoue APRÈS que le natif ait déposé, la prod RESTE en 404**
+   jusqu'au push suivant. C'est le vrai danger, et rien ne l'alerte.
+3. **Ne jamais lire un fingerprint sans regarder l'heure du dernier
+   déploiement.** Un 404 sur `keepy-ten.vercel.app` dans les minutes qui
+   suivent un push ne veut PAS dire que le build est cassé — c'est très
+   probablement la fenêtre ci-dessus. Vérifier `meta.gitRootDirectory` du
+   déploiement production courant avant de conclure quoi que ce soit.
+
+**Non corrigé, décision de Mathieu** : désactiver l'intégration GitHub native
+du projet Vercel (Settings → Git) supprimerait la fenêtre entièrement, et la
+CI est déjà le seul chemin qui produit un build jouable. À faire en Console
+Vercel, aucune session agentique ne peut le faire. En attendant, la seule
+parade est de savoir que la fenêtre existe.
 
 **Piège payload re-vérifié sur le pack exporté** : les **407 Mo**
 d'`assets_source/` (dont les 6 sources brutes des hazards) ne partent pas
