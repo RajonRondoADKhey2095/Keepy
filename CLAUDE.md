@@ -1665,6 +1665,89 @@ confirmé sur device ; et le fait que **de face le sanglier est une masse, pas u
 point**, donc le cue de FORME est porté par la crinière et les pattes qui
 cassent le contour, pas par un rétrécissement visible.
 
+## LE SANGLIER (CHARGER) CHANGE DE TEINTE : rose vif → rose-brun poussiéreux (12 août 2026)
+
+Branche `claude/charger-recolor-meshy-docs-3svnzy`, partie de `main`
+(`6959f53`). **Ce n'est PAS un install** : le sanglier est en place depuis le
+matin même — géométrie, LOD 560, échelle 1,82584, rotation (−90, 0, 0), offset
+et collider `ChargerShape` **intouchés**. Seul `baseColorFactor` bouge, plus le
+placeholder qui le double. Chiffres complets : `docs/MESHY_SPEC.md` §8.4 et §11.
+
+`rgb(1,00, 0,72, 0,88)` → **`rgb(0,96, 0,76, 0,80)`**. Teinte rendue
+**325,4° → 348,2°**, luminance rendue **0,590 → 0,604**.
+
+**Le chiffre gaté MONTE : 3,21 → 3,27 (shallow) / 3,21 → 3,28 (deep).** Diff
+`DarkPaletteAudit` contre `origin/main` : **exactement trois lignes, toutes
+CHARGER**, stderr **byte-identique**. Les cinq autres hazards et les deux
+collectibles sont **byte-identiques**. Marge sur le plancher 3,0 : **+0,21 →
++0,27** — rien de gaté n'a été dépensé.
+
+**Vérifié PAR HISTOGRAMME, pas par estimation** (sonde instrumentée sur les
+DEUX arbres, puis revertée) : **196 px sur 196 d'OBJET des deux côtés, zéro
+sol, zéro ciel**, aux deux bouts de la respiration. La signature est un vrai
+changement de couleur, pas un cran 8 bits : **R −10, G +10, B −21** d'un coup.
+C'est la preuve façon DODGE, pas l'artefact de fenêtre du rondin JUMP.
+`AssetContractAudit` imprime `unshaded rgb(0.96, 0.76, 0.80)` sur la ligne
+`[glb]` — la valeur porte bien sur le matériau qui DESSINE (la surface du mesh
+importé), pas seulement sur une constante inutilisée (piège §2.1).
+
+⚠️ **Le vrai gate de ce lot n'était PAS le sol, mais les autres objets
+sombres** — CHARGER est dans la bande CLAIRE, le rat et DODGE dans la SOMBRE :
+vs rat au repos **10,50/10,46 → 10,71/10,68**, vs tronc DODGE **10,88/10,82 →
+11,11/11,05**. Les deux s'améliorent. **Le vrai coût est ailleurs et n'est pas
+maquillé** : l'écart de TEINTE avec l'ambre JUMP — le seul autre objet clair,
+donc le seul que le WCAG ne sait pas séparer — **passe de 78,4° à 55,5°**. Il
+reste confortable, mais il a été divisé par ~1,4 sur ce seul changement : c'est
+le nombre à surveiller si CHARGER est encore réchauffé un jour.
+
+⚠️ **Le `.glb` est repassé PAR le pipeline, losslessness prouvée D'ABORD**
+(réécriture avec l'ANCIENNE couleur → match byte-à-byte contre l'asset livré),
+donc la seule différence possible est `baseColorFactor` — chunk BIN
+byte-identique (9 948 o, 269 verts, 560 tri), `KHR_materials_unlit` préservé.
+**Piège trouvé au passage** : le nom de nœud d'un `.glb` vient du NOM DE
+FICHIER de sortie, donc la preuve ne matche que si la réécriture se fait sous
+le nom du pipeline (`charger_boar_560.glb`), pas sous le nom installé — une
+première tentative différait de 4 octets et avait l'air d'une régression de
+géométrie.
+
+### Trois faits mesurés sur la palette, consignés en §8.4 — coûteux à re-dériver
+
+Chacun ferme une direction qui paraît raisonnable sur le papier :
+
+1. **Le sol coupe la palette en DEUX BANDES.** Rendu `(0,2033, 0,4824,
+   0,0941)`, luminance **0,150** : franchir 3,0:1 exige **L ≥ 0,549** ou
+   **L ≤ 0,0165**. **Aucun ton MOYEN ne passe, à aucune teinte.** Côté sombre
+   le plafond en V dépend fortement de la saturation — **0,136** en gris
+   neutre, **0,166** à la teinte/saturation du rat (d'où le « V ≈ 0,17 » utile
+   pour le registre fourrure), **0,289** au rouge saturé de DODGE.
+2. **Le WCAG ne score AUCUNE séparation À L'INTÉRIEUR d'une bande** — seule la
+   teinte y travaille, et aucune sonde du repo ne la mesure. CHARGER↔JUMP
+   1,08:1, CHARGER↔STOMPER 1,04:1, DODGE↔rat 1,04:1. **Direction ÉCARTÉE,
+   mesurée avant de l'être** (passe de recon) : un CHARGER brun-noir — ce à
+   quoi ressemble un vrai sanglier — mesure **1,03–1,09:1 contre le rat** et
+   **1,01–1,13:1 contre DODGE**. Il franchirait le plancher sol et serait
+   indiscernable des deux autres hazards sombres, sur le seul hazard dont la
+   méprise termine la run. Le hazard fatal DOIT rester dans la bande claire.
+3. **L'albédo de REPOS d'ENEMY n'est jamais vu à une taille lisible.** La
+   rampe a quitté la famille brune dès `alarm_t = 0,10`, soit **4,40 s avant
+   contact** — **52,8 m (11 px de haut)** à `START_SPEED` 12 et **114,4 m
+   (5 px)** à `MAX_SPEED` 26. Deux recolorisations correctes du rat n'ont donc
+   rien changé à ce que voit le joueur, pour une raison structurelle et non
+   chromatique. **Ne PAS relancer une 3ᵉ recolorisation de repos en croyant
+   corriger un « rat rouge »** : le rouge, c'est le télégraphe qui fonctionne.
+
+**Dérive de doc corrigée au passage** : `Obstacle.gd` décrivait encore le repos
+d'ENEMY comme « Obstacle.tscn's default purple » — faux depuis la
+recolorisation brun-gris, et de toute façon la fonction lit la base sur le
+matériau (`_enemy_base_albedo`), jamais une couleur littérale. Commentaire
+seul, aucun changement de comportement.
+
+**Reste ouvert** : est-ce qu'un rose-brun poussiéreux se lit mieux qu'un rose
+vif à vitesse réelle sur un téléphone — aucune sonde ne répond, c'est tout
+l'objet du lot ; les 56° de teinte avec JUMP ; et tout ce que l'install
+laissait ouvert (museau de 1,787 m, barres de trail, masse de face) est
+**inchangé**, ce lot n'a bougé qu'une couleur.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
