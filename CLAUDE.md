@@ -827,6 +827,351 @@ ne dit qu'une couleur est JUSTE, seulement qu'elle passe le plancher.
 Est-ce que DODGE se lit encore comme ROUGE et pas comme NOIR sur un écran
 de téléphone à vitesse réelle, c'est la décision de Mathieu.
 
+### Merge en production (12 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`fdf8d95`) → `main`, commit de merge **`1b9c5a8`**, après
+validation device des DEUX hazards d'un coup : le crapaud se lit bien comme
+« à sauter », le tronc debout comme « à contourner », et **la question
+laissée ouverte par le lot DODGE est tranchée — le rouge plus sombre reste
+lu comme ROUGE, pas comme NOIR**, à vitesse réelle. Les débords de hitbox
+des deux assets ont été jugés non gênants à l'usage.
+
+⚠️ **Ce n'était PAS un fast-forward alors qu'il aurait pu l'être.**
+`git merge-base --is-ancestor origin/main origin/staging` était vrai
+(`staging..main` VIDE : main n'avait rien que staging n'avait pas, à la
+différence du merge JUMP de la veille où les `.glb` bruts de Mathieu le
+faisaient diverger). Merge `--no-ff` quand même, aucun conflit — comme les
+deux merges de prod précédents de ce repo (`7d0c791`, `de7933e`) : un
+fast-forward ne laisse aucun point de décision lisible dans l'historique et
+masque ce qui part réellement en prod.
+**Conséquence utile** : l'arbre du commit de merge est **byte-identique à
+celui de `fdf8d95`** (`git diff HEAD origin/staging` vide) — ce qui est
+livré en prod est donc littéralement l'arbre validé sur device, pas une
+recomposition.
+
+**Rejoué SUR LE COMMIT DE MERGE lui-même, pas supposé porté — 7 sondes
+exit 0** : `AssetContractAudit` (12/12 visuels, **0/10 colliders déplacés**,
+`DodgeShape` toujours `Box(1.2, 2.0, 1.0)` @ +1,000 et `StomperShape`
+toujours `Box(1.2, 0.7, 1.0)` @ +0,350), `DarkPaletteAudit`,
+`AlarmRampAudit` (4/4 PHASE A, 4/4 PHASE B, PHASE C OK),
+`ProbeTimeoutAudit` (33 sondes, toutes armées), `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` (INTRO max 23,6 % / VISIBLE max
+27,0 %, cap 30 %). Import + export Web **exit 0**.
+
+**La table PHASE 1 d'`AssetContractAudit` montre désormais CINQ slots
+`[glb]`** — Keepy, `pursuer/Silhouette`, `JumpMesh`, et les deux de ce lot,
+`DodgeMesh` et `StomperMesh`. Sept slots restent au placeholder.
+
+⚠️ **Trois lignes d'erreur apparaissent sur stderr pendant ces sondes et
+AUCUNE n'est imputable à ce lot — vérifié contre un worktree sur `f4b3190`
+(main pré-merge, import propre), pas argumenté.** À connaître, parce que les
+trois ont l'air alarmantes et qu'une future session les prendra sinon pour
+une régression de son propre lot :
+- `DeathModelAudit` → `Parameter "m" is null` (dummy driver, à la libération
+  des nœuds, APRÈS son verdict) — stdout **ET** stderr byte-identiques à la
+  baseline.
+- `PursuerFramingAudit` → 104 lignes `Function blocked during in/out signal`
+  (`set_monitoring`) — stdout **ET** stderr byte-identiques à la baseline,
+  aux 104 lignes près.
+- `DarkPaletteAudit` → `ERROR: LANE BARRIER BELOW CONTRAST FLOOR`
+  (silhouette 1,16:1) — présent à l'identique sur la baseline, et la sonde
+  sort quand même en 0 : c'est un report, pas un gate (le gate de la barrière
+  est la STRIPE, 17,36:1).
+
+**Le diff `DarkPaletteAudit` base → merge fait EXACTEMENT 3 lignes**, toutes
+les trois attribuables aux deux assets installés, tout le reste byte-identique :
+DODGE **3,20 → 3,39** (shallow) et **3,19 → 3,37** (deep) — le nouvel albédo
+unshaded ÉLARGIT sa marge, il ne la consomme pas ; STOMPER **3,43 → 3,41**
+(deep), 0,02 de dérive de silhouette dans la fenêtre d'échantillon. Les
+quatre hazards gatés tiennent le plancher 3,0:1 (DODGE 3,37 / JUMP 3,02 /
+CHARGER 3,20 / STOMPER 3,41), 0 échantillon manqué. `JUMP` reste à son 3,02
+d'artefact de fenêtre déjà documenté au lot précédent, inchangé ici.
+ENEMY 1,52 / AIR_ENEMY 1,09 : toujours mesurés dans leur teinte d'ALARME et
+toujours non gatés, comme avant.
+
+CI run **#92** verte (3 min 12 s) puis **#93** verte (2 min 59 s, le commit
+de doc), déploiement PRODUCTION effectué, STAGING correctement skippé (push
+sur `main`) dans les deux cas. **Fingerprint vérifié sur le site LIVE**
+(`keepy-ten.vercel.app`, HTTP 200, `x-vercel-cache: MISS`) :
+`GODOT_CONFIG.fileSizes` = `index.pck 4 755 120` / `index.wasm 35 376 909`,
+`last-modified 12 Aug 2026 06:46:43 GMT`.
+
+⚠️ **Le `.pck` a pris TROIS valeurs différentes pour le MÊME contenu de jeu
+en une heure — 4 755 072 (export local), 4 755 136 (run #92), 4 755 120
+(run #93) — et c'est la confirmation de l'instabilité déjà consignée le
+10 août, pas une alerte.** Le contenu de jeu est pourtant identique entre
+#92 et #93 (le commit de doc ne touche que `CLAUDE.md`, qui n'est pas une
+ressource Godot et n'entre donc pas dans le pack). **`index.wasm` vaut
+35 376 909 sur les trois** — c'est LUI la preuve d'identité, et le `.pck`
+ne doit jamais servir seul de preuve de déterminisme.
+
+### ⚠️ DEUX déploiements se disputent la PROD à chaque push sur `main` — ~3 min de 404
+
+**Découvert en vérifiant le fingerprint de ce merge, et ce n'est PAS un
+défaut introduit par ce lot : le comportement est identique sur les deux
+pushes du 11 août.** Le projet Vercel `keepy` a l'intégration GitHub NATIVE
+active EN PLUS du déploiement CI, et les deux ciblent `production` :
+
+| source | reconnaissable à | ce qu'elle sert | délai après push |
+|---|---|---|---|
+| **native Vercel** | `meta.branchAlias` présent | le **dépôt BRUT** — pas d'`index.html` à la racine → **404** | quelques secondes |
+| **CI** (`vercel deploy build/web --prod`) | `meta.gitRootDirectory = build/web` | le vrai export Godot | ~3 min |
+
+Chronologie mesurée sur les déploiements réels, pas déduite :
+
+```
+11 Aug 09:55:56  de7933e  NATIVE -> 404
+11 Aug 09:59:10  de7933e  CI     -> OK
+11 Aug 10:01:38  f4b3190  NATIVE -> 404
+11 Aug 10:04:59  f4b3190  CI     -> OK
+12 Aug 06:38:50  1b9c5a8  NATIVE -> 404
+12 Aug 06:41:54  1b9c5a8  CI     -> OK   (fingerprint lu ici, 200)
+12 Aug 06:43:05  23aaa20  NATIVE -> 404  (prod EN 404 pendant ~3 min)
+12 Aug 06:46:06  23aaa20  CI     -> OK   (prod guérie)
+```
+
+**Conséquences, dans l'ordre d'importance :**
+1. **Chaque push sur `main` met la prod en 404 pendant ~3 minutes.** Ça se
+   répare tout seul quand la CI dépose son build, donc personne ne l'a
+   jamais vu — mais c'est réel, et un merge de prod en fait DEUX (le merge
+   puis le commit de doc), soit deux fenêtres.
+2. **Si la CI échoue APRÈS que le natif ait déposé, la prod RESTE en 404**
+   jusqu'au push suivant. C'est le vrai danger, et rien ne l'alerte.
+3. **Ne jamais lire un fingerprint sans regarder l'heure du dernier
+   déploiement.** Un 404 sur `keepy-ten.vercel.app` dans les minutes qui
+   suivent un push ne veut PAS dire que le build est cassé — c'est très
+   probablement la fenêtre ci-dessus. Vérifier `meta.gitRootDirectory` du
+   déploiement production courant avant de conclure quoi que ce soit.
+
+**Non corrigé, décision de Mathieu** : désactiver l'intégration GitHub native
+du projet Vercel (Settings → Git) supprimerait la fenêtre entièrement, et la
+CI est déjà le seul chemin qui produit un build jouable. À faire en Console
+Vercel, aucune session agentique ne peut le faire. En attendant, la seule
+parade est de savoir que la fenêtre existe.
+
+**Piège payload re-vérifié sur le pack exporté** : les **407 Mo**
+d'`assets_source/` (dont les 6 sources brutes des hazards) ne partent pas
+dans le build — `.pck` à 4,75 Mo, et les seules occurrences
+`res://assets_source/...` dedans sont des chaînes de chemin du uid-cache, pas
+des ressources importées. `exclude_filter` tient.
+
+**Reste ouvert, inchangé par ce merge** : les trois derniers sujets non
+installés (libellule/AIR_ENEMY, rat/ENEMY, sanglier/CHARGER) ; les débords
+de hitbox des trois assets installés, désormais jugés acceptables mais
+toujours réels ; et le fait que **sur un asset importé la rampe d'alarme est
+portée par l'ALBÉDO seul** — rien à juger tant qu'aucun asset ENEMY/AIR_ENEMY
+n'est installé.
+
+## QUATRIÈME HAZARD MESHY INSTALLÉ : le rat (ENEMY) — 12 août 2026
+
+Branche `claude/enemy-rat-asset-pipeline-c8b5lg`, partie de `main` =
+`staging` (`037cb26`). `assets/models/keepy_enemy_rat.glb` sur
+`Obstacle/EnemyMesh` — **148 triangles, 3,7 Ko, plat, unlit, sans texture**.
+**Premier asset à atterrir sur un slot dont le matériau est ANIMÉ par le
+gameplay** (§2.1) : la rampe d'alarme d'approche. Chiffres complets :
+`docs/MESHY_SPEC.md` §7.4 et §11.
+
+**Le nom dit castor, le rendu dit RAT.** Quatrième fichier du lot dont le nom
+ne survit pas à un rendu — et le premier où le nom ne se contente pas d'être
+vague, il **nomme le mauvais animal** : museau pointu, petites oreilles
+rondes, et une queue **fine, longue et courbe** là où un castor a une palette
+plate. L'attribution ne repose pas que sur la ressemblance : les trois sujets
+restants ont été rendus dans la même passe, donc elle tient aussi par
+élimination (`Shadowtusk` = sanglier à défenses, `Emerald_Geometric_Dra` =
+insecte dont la bbox 1,901 × 0,960 × **0,170** est presque entièrement de
+l'aile). **Un seul rongeur dans le lot : ENEMY n'avait qu'un candidat.**
+
+**Orientation MESURÉE, pas héritée du crapaud** : rendu depuis +Z on voit
+museau, yeux, oreilles et pattes avant ; depuis −Z uniquement la croupe et la
+queue qui s'échappe. Le rat fait donc déjà face au joueur →
+`model_rotation_degrees` reste à zéro.
+
+### ⚠️ PERDRE L'ÉMISSION EST UN VRAI CHANGEMENT — et il RENFORCE le télégraphe
+
+`_apply_enemy_alarm` bouge **albédo ET émission** (énergie 0,3 →
+`ENEMY_ALARM_EMISSION_ENERGY` 1,5). Une surface unshaded ignore totalement
+l'émission : sur cet asset le cue perd un canal et **l'albédo le porte seul**.
+Ce n'est pas une note de bas de page — c'est ce qui FIXE LA DIRECTION de la
+couleur de base :
+
+- `ENEMY_ALARM_ALBEDO` `(0,95, 0,08, 0,12)` rend en unlit à **luminance
+  0,187**, le sol rend à **0,150** : les deux sont à **1,20:1** l'un de
+  l'autre. **L'alarme ne peut donc PAS se lire contre le sol.**
+- Elle ne peut se lire que contre la couleur AU REPOS, qui doit donc être
+  loin de 0,187. **Une seule direction marche** : en dessous, l'alarme
+  ÉCLAIRCIT. Au-dessus (un violet pâle au-delà de 0,55) la rampe serait un
+  ASSOMBRISSEMENT — ce n'est pas à ça que ressemble une alarme.
+
+**Valeur seulement, teinte tenue EXACTEMENT** au violet livré `0,52 : 0,08 :
+0,72` — même discipline que DODGE, et le violet est l'identité de type
+d'ENEMY. **0,35× → `(0,182, 0,028, 0,252)`**, choisi comme l'assombrissement
+le **PLUS FAIBLE** qui franchit le plancher §8 avec une vraie marge, pas le
+plus profond qui le franchit tout court : chaque cran plus bas achète une
+marge que personne n'a demandée et dépense de la lisibilité de teinte sur une
+silhouette de 0,6 m.
+
+### Mesuré aux deux bouts, sonde instrumentée puis revertée
+
+`DarkPaletteAudit` échantillonne ENEMY à `CAPTURE_Z`, assez près pour que la
+rampe soit **entièrement saturée** — son libellé `(resting)` est faux depuis
+toujours (déjà documenté). Une instrumentation temporaire a tenu la rampe à
+t=0 et t=1 et échantillonné les deux, sur l'arbre baseline ET sur celui-ci :
+
+| | repos vs sol | **alarmé** vs sol | TÉLÉGRAPHE (repos ↔ alarmé) |
+|---|---|---|---|
+| avant — placeholder, LIT + émissif | 1,57 / 1,57 | **1,50 / 1,52** | 2,35 / 2,38 |
+| après — rat `.glb`, UNLIT | **3,27 / 3,23** | **1,20 / 1,20** | **3,92 / 3,87** |
+
+Trois lectures, une seule est une perte :
+
+- **Le télégraphe lui-même se RENFORCE : 2,35 → 3,92.** Perdre la moitié
+  émission n'a pas affaibli le cue ; l'albédo avait plus de place que
+  l'émission n'en utilisait, et le choix de la couleur de base est ce qui l'a
+  achetée. C'est le chiffre qui communique réellement « le danger monte ».
+- **La lisibilité au REPOS plus que double : 1,57 → 3,27**, franchissant le
+  plancher 3,0 **pour la première fois dans l'histoire d'ENEMY**. Un violet
+  éclairé sur un sol olive était quasi invisible au repos.
+- **Le rouge alarmé contre le sol BAISSE : 1,50/1,52 → 1,20/1,20.** Cause
+  **mesurée, pas devinée** : avec l'émission à 1,5 le placeholder pousse le
+  canal rouge à **saturer** — la baseline imprime littéralement
+  `rendered=(1, 0.2485, 0.1142)`. L'unlit supprime cette surcharge, donc le
+  rouge d'alarme rend à sa propre valeur d'albédo, plus sombre et donc plus
+  proche de la luminance du sol.
+
+⚠️ **NON corrigé, délibérément.** La couleur alarmée est
+`ENEMY_ALARM_ALBEDO`, une constante de télégraphe **PARTAGÉE avec
+AIR_ENEMY**. La bouger, c'est retoucher le télégraphe et pas l'art, sur deux
+hazards dont un n'a pas encore d'asset — §8 parque déjà ça comme la décision
+de Mathieu. À dire clairement : **cette paire n'a JAMAIS été lisible contre
+le sol** (1,50 était aussi loin sous le plancher 3,0 que 1,20 l'est), et
+c'est exactement pourquoi elle est **non gatée**. Ce qui change, c'est que
+l'état au repos est désormais le lisible et que l'alarme est un changement
+**à partir de lui** — c'est comme ça qu'un cue d'escalade est censé marcher.
+
+### Échelle : §4 appliqué tel quel, et une CAPSULE n'est pas une BOÎTE
+
+`model_scale = 0,46266` cale X sur les **0,600** du collider — la règle du
+rondin JUMP, sans dérogation, pour la même mécanique : **un ENEMY s'esquive
+en changeant de voie**, donc un visuel plus large que sa hitbox ferait passer
+une esquive légale pour illégale. Caler sur Y (s = 0,68639) mettrait le
+visuel **0,290 plus large** que la capsule : cette erreur dans son sens
+punitif.
+
+**Le RATIO est invariant par échelle**, comme pour le crapaud — **1,272:1
+avant et après** — parce que `model_scale` est un flottant uniforme. Mais
+c'est une propriété de l'ÉCHELLE, pas du COLLIDER, et **la capsule ajoute une
+contrainte qu'une boîte n'a pas** :
+
+> Une boîte a la même demi-largeur à toutes les hauteurs. Celle d'une capsule
+> **s'annule aux deux bouts** — rayon plein seulement sur `y = 0,30 .. 0,40` —
+> et un quadrupède au ras du sol est le plus large exactement là où la
+> capsule est la plus étroite.
+
+Mesuré par bande de hauteur : le visuel sort de **0,063 à 0,178** hors de la
+capsule sur les 0,15 m du bas (pattes et queue, là où la capsule se termine
+en pointe). Sur l'ENSEMBLE de la silhouette, non : demi-largeur maximale du
+visuel **0,304** contre **0,300** pour la capsule — **quatre millimètres** —
+et une esquive latérale se décide sur la section la plus large, pas sur la
+bande au sol. Un rendu du rat superposé à la capsule placeholder depuis la
+même caméra le confirme : le corps est bien à l'intérieur, seules les pattes
+et la queue franchissent le bord bas.
+
+`model_offset = (0, −0,10231, 0)` pose le bas du visuel à **y = 0,0000** pile.
+
+**Résidus signalés, pas maquillés :**
+- **0,228 de hitbox AU-DESSUS du rat visible** (visuel 0,472 contre hitbox
+  0,700). Indulgent latéralement mais **DÉFAVORABLE POUR LE SAUT** : un ENEMY
+  est sautable, donc un saut qui dégage visuellement le rat peut quand même
+  accrocher. Atténué par construction et pas par espoir — le `JumpMarkerMesh`
+  cyan flotte à `JUMPABLE_OBSTACLE_TOP_HEIGHT`, donc la vraie hauteur de
+  dégagement est déjà dessinée, indépendamment du mesh. Plus petit que les
+  0,37 du rondin JUMP, jugés justes à l'usage.
+- **0,254 de visuel au-delà de la hitbox en Z.** Indulgent : on peut frôler
+  le museau ou la queue sans être touché. Même sens que les 0,345 acceptés du
+  crapaud.
+
+**À juger sur device**, et spécifiquement comme une question de SAUT.
+
+### Le matériau placeholder bouge AUSSI, volontairement
+
+`StandardMaterial3D_Enemy` prend `shading_mode = 0` et le même nouvel albédo.
+Le laisser éclairé et émissif ferait **diverger le fallback de l'asset livré
+sur l'axe même que ce lot change** — c'est-à-dire reconstruire, dans le slot
+qui l'a justement exposé, le piège « fixture qui diverge du réel » que
+`AlarmRampAudit` existe pour fermer. Ça aligne aussi ENEMY sur les quatre
+placeholders hazards déjà unshaded ; AIR_ENEMY reste éclairé, aucun asset
+n'ayant atterri dessus.
+
+### `AlarmRampAudit` gate désormais l'ASSET RÉEL (PHASE D)
+
+**Le vrai point de ce lot.** Le fix de rampe du 11 août était prouvé contre
+`SubstituteModel.tscn` — un fixture **construit pour ressembler** à un
+`.glb`. Lui faire dire ce que fait un asset réel reproduirait, à un cran de
+distance, exactement l'erreur qui a rendu le fix nécessaire.
+
+**PHASE D rejoue les deux mêmes assertions sur `Obstacle.tscn` tel qu'il est
+livré**, sans aucun fixture : vrais octets, vrai importeur, vraie classe de
+matériau (le cast `StandardMaterial3D` d'`Obstacle._ready()` échoue en
+silence si elle change un jour), vraie liaison, vrai duplicate par instance.
+
+```
+--- PHASE D: Obstacle.tscn AS SHIPPED (real assets, no fixture) ---
+  OK   ENEMY as shipped [glb]: all 1 drawn surface(s) reach rgb(0.95, 0.08, 0.12)
+  OK   ENEMY as shipped [glb]: resets to its own base rgb(0.18, 0.03, 0.25)
+  OK   AIR_ENEMY as shipped [-- ]: ... base rgb(0.12, 0.85, 0.22)
+```
+
+Le marqueur `[glb]` / `[-- ]` est **lu sur le slot**, jamais déduit de la
+phase : le jour où un asset est ajouté ou retiré, le log le dit au lieu de
+dégénérer en silence en une seconde copie de PHASE A.
+
+⚠️ **PHASE A a dû changer avec.** Elle obtenait le placeholder gratuitement
+tant qu'aucun slot ennemi ne portait d'asset ; dès qu'un en porte un, « no
+model installed » devenait une seconde lecture du rat livré sous un libellé
+qui dit le contraire. Elle **efface désormais `model_scene` explicitement**.
+
+### Triangles : la BAISSE prédite par §7.4, dépassée de 1 052
+
+`EnemyMesh` **3 456 → 148**, soit **−3 308 par instance vivante**. §7.4
+prédisait −2 256 : les deux chiffres ne se contredisent pas et l'ancien
+n'était pas faux — **−2 256 est le gain contre le cap unitaire de 1 200**
+(3 456 − 1 200), donc le maximum qu'un asset *au* cap pourrait rendre.
+L'asset arrive à 148, un huitième du cap : la prédiction était un
+**plancher sur le gain, pas une estimation**. Lu pareil, le −2 896
+d'AIR_ENEMY est aussi un plancher : décimé au même LOD ~150, il rendrait
+**−3 946**.
+
+Famille un-de-chaque, hazards seuls : **8 008 → 4 700**. `AirEnemyMesh` à
+4 096 pèse maintenant **87 % de toute la famille** et reste la plus grosse
+primitive laissée à la tessellation par défaut de toute la scène.
+
+### Validation
+
+`AlarmRampAudit` (**12/12 OK**, PHASE D comprise), `AssetContractAudit`
+(12/12 visuels, **0/10 colliders déplacés**, `EnemyShape` toujours
+`Capsule(r 0,300, h 0,700)` @ +0,350), `DarkPaletteAudit` (0 échantillon
+manqué), `ProbeTimeoutAudit` (33 sondes, toutes armées), `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` (INTRO 23,6 % / VISIBLE 27,0 %) —
+**toutes exit 0**. Import + export Web **exit 0**.
+
+**Les diffs contre la baseline sont exactement aussi petits qu'ils doivent
+l'être** (worktree séparé sur `origin/main`, comparé et pas supposé) :
+`AssetContractAudit` **une seule ligne** (la ligne ENEMY) ; `DarkPaletteAudit`
+**deux lignes** (ENEMY aux deux bouts) — DODGE 3,39/3,37, JUMP 3,04/3,02,
+CHARGER 3,20/3,21, STOMPER 3,41/3,41 **byte-identiques** ; les quatre autres
+sondes **byte-identiques sur les deux flux**.
+
+**Piège payload tenu** : **0** ressource `assets_source` importée dans le
+pack (58 chaînes de chemin du uid-cache, aucun `.scn`/`.ctex` dérivé) contre
+**407 Mo** de sources brutes sur disque. `index.pck` 4 761 792 / `index.wasm`
+35 376 909 — le `.pck` n'est **pas** offert comme preuve, cf. l'instabilité
+déjà consignée.
+
+**Reste ouvert** : deux sujets non installés (libellule/AIR_ENEMY,
+sanglier/CHARGER) ; les 0,228 de hitbox au-dessus du rat (**jugement device,
+et c'est une question de SAUT**) ; et le rouge alarmé à 1,20:1 — pas une
+régression que ce lot puisse corriger sans retoucher un télégraphe partagé.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`

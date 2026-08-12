@@ -99,10 +99,27 @@ OUT_DIR = "/tmp/lod"
 ## symmetric about Y, so unlike the toad there is no "which way does it look"
 ## question to answer -- model_rotation_degrees stays at zero because there is
 ## no orientation to get wrong, not because the toad's answer was reused.
+##
+## THE ENEMY IS THE FOURTH FILE IN THIS BATCH WHOSE NAME IS WRONG, and this
+## time the name is not merely vague, it names the wrong animal. The file is
+## called "Low_Poly_Beaver"; rendered from four axes it is a RAT -- pointed
+## snout, small round ears, and a long thin curved tail, where a beaver's tail
+## is a flat paddle. The three remaining subjects were rendered together so the
+## assignment could be made by elimination as well as by likeness: Shadowtusk
+## is a tusked, maned boar (CHARGER) and Emerald_Geometric_Dra is an insect
+## whose 1.901 x 0.960 x 0.170 bbox is almost entirely wing (AIR_ENEMY). Only
+## one rodent exists in the batch, so ENEMY has exactly one candidate.
+##
+## Facing was measured, not inherited from the toad: rendered from +Z the
+## snout, eyes, ears and front paws are all visible; from -Z there is only the
+## rump with the tail sweeping away. Segments spawn at -Z and travel toward the
+## camera at +Z, so the rat already faces the player and
+## model_rotation_degrees stays at zero.
 MODELS = {
     "jump_log": "Meshy_AI_Low_Poly_Log_0811080727_texture.glb",
     "stomper_toad": "Meshy_AI_Geometric_Toad_0811080929_texture.glb",
     "dodge_trunk": "Meshy_AI_Crimson_Hollow_Trunk_0811081732_texture.glb",
+    "enemy_rat": "Meshy_AI_Low_Poly_Beaver_0811082534_texture.glb",
 }
 
 ## Lifted verbatim from Obstacle.tscn's StandardMaterial3D_Jump, NOT sampled
@@ -128,10 +145,36 @@ MODELS = {
 ## unchanged would NOT hold the ratio, it would change what the number means.
 ## Measured rather than argued: see MESHY_SPEC section 11 for the two-point
 ## measurement this value was solved from.
+## ENEMY IS THE SECOND NON-CARRY-OVER, AND FOR A HARDER REASON THAN DODGE'S.
+## DODGE was merely LIT, so unlighting it only removed a multiplication. ENEMY
+## is lit AND EMISSIVE, and its emission is not decoration -- it is half of the
+## approach telegraph: _apply_enemy_alarm ramps albedo AND emission (from
+## energy 0.3 up to ENEMY_ALARM_EMISSION_ENERGY = 1.5). An unshaded material
+## ignores emission entirely, so on this asset the telegraph loses a channel
+## and the ALBEDO has to carry the whole cue on its own.
+##
+## That is what fixes the direction of this value. ENEMY_ALARM_ALBEDO
+## (0.95, 0.08, 0.12) renders unlit at relative luminance 0.187, and the ground
+## renders at 0.150 -- the two are within 1.20:1 of each other. So the alarm can
+## only be read against the RESTING colour, and the resting colour has to sit
+## far from 0.187. Only one of the two directions works: below it, a dark rat
+## that BRIGHTENS into red; above it (a pale purple over luminance 0.55) the
+## ramp would be a DARKENING, which is not what an alarm looks like.
+##
+## Value only, tone held exactly at the shipped 0.52 : 0.08 : 0.72 purple --
+## same discipline as DODGE, and purple is ENEMY's type identity against every
+## other gameplay hue (Obstacle.gd's TELEGRAPH section). 0.35x is the SHALLOWEST
+## darkening that clears the section 8 floor with real margin rather than the
+## deepest that clears it at all: every further step down buys margin nobody
+## asked for and spends hue legibility on a 0.6m silhouette. Predicted from the
+## two-point fog model calibrated on the STOMPER (the only already-unlit hazard,
+## hence the only one needing no lighting model) and then MEASURED -- see
+## MESHY_SPEC section 11.
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
+    "enemy_rat": (0.182, 0.028, 0.252),  # 0.35x of (0.52, 0.08, 0.72), see above
 }
 
 
