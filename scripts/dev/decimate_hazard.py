@@ -128,12 +128,36 @@ OUT_DIR = "/tmp/lod"
 ## already presents its full 1.901 x 0.960 spread to the player with no
 ## rotation at all. model_rotation_degrees stays at zero because the asset
 ## arrives face-on, not because the previous four answers were reused.
+##
+## THE BOAR IS THE LAST SUBJECT, AND THE ONLY ONE WHOSE NAME WAS NEVER IN
+## DOUBT -- Shadowtusk is a tusked, maned boar, and CHARGER is the only hazard
+## left. Its bbox is 0.831 x 1.128 x 1.903, i.e. dominant in Z: long
+## nose-to-tail, which is what a hazard that travels AT the player along the
+## track wants to be. Rendered from six axes before anything else was decided:
+## from +Z the snout, eyes, ears, tusks and front legs are all present; from -Z
+## there is only the rump and the tail. The mesh therefore already faces the
+## player, and stands upright with +Y up.
+##
+## THAT DOES NOT MEAN model_rotation_degrees IS ZERO HERE, AND THIS IS THE ONE
+## PLACE IN THE BATCH WHERE IT IS NOT -- for a reason that has nothing to do
+## with the asset. ChargerMesh is the ONLY slot in Obstacle.tscn carrying a
+## rotated transform: Transform3D(1,0,0, 0,0,-1, 0,1,0, 0,0.9,0), a quarter turn
+## about X that exists so the PLACEHOLDER PrismMesh's apex leads (the prism
+## narrows toward its own +Y, and the slot turns that into world +Z). An
+## installed model is a CHILD of the slot, so it inherits that quarter turn: a
+## boar that is correct in its own space would be drawn standing on its nose.
+## model_rotation_degrees = (-90, 0, 0) cancels it exactly, leaving the net
+## rotation identity. The slot's own transform is deliberately NOT changed --
+## ModelSlot.gd's model_offset note already carries the general form of that
+## argument: correcting the slot instead of the model silently breaks the
+## placeholder, which is the state nobody looks at.
 MODELS = {
     "jump_log": "Meshy_AI_Low_Poly_Log_0811080727_texture.glb",
     "stomper_toad": "Meshy_AI_Geometric_Toad_0811080929_texture.glb",
     "dodge_trunk": "Meshy_AI_Crimson_Hollow_Trunk_0811081732_texture.glb",
     "enemy_rat": "Meshy_AI_Low_Poly_Beaver_0811082534_texture.glb",
     "air_enemy_dragonfly": "Meshy_AI_Emerald_Geometric_Dra_0811081710_texture.glb",
+    "charger_boar": "Meshy_AI_Shadowtusk_0811082449_texture.glb",
 }
 
 ## Lifted verbatim from Obstacle.tscn's StandardMaterial3D_Jump, NOT sampled
@@ -238,12 +262,32 @@ MODELS = {
 ## unlit, so its ramp is a large DARKENING plus a ~117 degree hue swing --
 ## the two channels agree, and the cue is wider after the install than
 ## before it (measured: 2.59:1 before, see MESHY_SPEC section 11).
+## CHARGER GOES BACK TO BEING A VERBATIM CARRY-OVER, and the reason is the same
+## structural one that made DODGE, ENEMY and AIR_ENEMY exceptions -- read the
+## other way round. Those three had to be re-solved because their placeholders
+## were LIT (DODGE), lit and emissive at energy 0.3 (ENEMY), or lit and emissive
+## at energy 1.1 (AIR_ENEMY), so their authored albedo was not what the player
+## saw and going unlit changed the render. StandardMaterial3D_Charger already
+## carries shading_mode = 0 and no emission at all, exactly like JUMP and
+## STOMPER: there is no multiplication and no additive term to lose, so the
+## value below renders to the same pixels it renders to today.
+##
+## That matters more here than anywhere else in the batch. CHARGER is the only
+## FATAL hazard, and at 3.20:1 it holds the NARROWEST margin of the four gated
+## contrasts (DODGE 3.37, JUMP 3.02 -- itself a documented window artefact,
+## STOMPER 3.41). Re-solving a colour that is already correct would move a
+## number this project gates, on the one hazard where being wrong ends the run,
+## in exchange for nothing -- the STOMPER's argument, and it applies with more
+## force here. The hue is also not free to move even if the ratio were: the
+## TELEGRAPH block in Obstacle.gd picks magenta precisely because every other
+## hue in the game is taken, and names the five it would collide with.
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
     "enemy_rat": (0.135, 0.102, 0.076),  # warm dark brown-grey at the purple's luminance, see above
     "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
+    "charger_boar": (1.0, 0.72, 0.88),  # Obstacle.tscn StandardMaterial3D_Charger, verbatim
 }
 
 

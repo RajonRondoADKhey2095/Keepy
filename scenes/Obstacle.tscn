@@ -1,4 +1,4 @@
-[gd_scene load_steps=27 format=3]
+[gd_scene load_steps=28 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay/Obstacle.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="2"]
@@ -7,6 +7,7 @@
 [ext_resource type="PackedScene" uid="uid://dgs4683xlxohy" path="res://assets/models/keepy_dodge_trunk.glb" id="5"]
 [ext_resource type="PackedScene" uid="uid://bjig84rlk0g5o" path="res://assets/models/keepy_enemy_rat.glb" id="6"]
 [ext_resource type="PackedScene" uid="uid://byog4flgb7vnd" path="res://assets/models/keepy_air_enemy_dragonfly.glb" id="7"]
+[ext_resource type="PackedScene" uid="uid://fhe2nblf5v5b" path="res://assets/models/keepy_charger_boar.glb" id="8"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_Dodge"]
 size = Vector3(1.2, 2.0, 1.0)
@@ -177,6 +178,10 @@ transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.9, 0)
 visible = false
 mesh = SubResource("PrismMesh_Charger")
 surface_material_override/0 = SubResource("StandardMaterial3D_Charger")
+model_scene = ExtResource("8")
+model_scale = 1.82584
+model_rotation_degrees = Vector3(-90, 0, 0)
+model_offset = Vector3(-0.01547, 0.53393, -0.12699)
 
 [node name="ChargerShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 1.0, 0)

@@ -1337,9 +1337,11 @@ supprimée par construction, pas par réglage d'import.
 **SIX slots portent désormais un asset** : Keepy, `pursuer/Silhouette`,
 `JumpMesh`, `DodgeMesh`, `StomperMesh`, `AirEnemyMesh`.
 
-**Reste ouvert** : **le sanglier/CHARGER est le DERNIER sujet non installé**,
-et le seul où un import ajoutera vraiment des triangles (son placeholder est
-un prisme à 8 tri) ; **le vert de repos est désormais porté par l'albédo
+**Reste ouvert** : ~~**le sanglier/CHARGER est le DERNIER sujet non
+installé**, et le seul où un import ajoutera vraiment des triangles (son
+placeholder est un prisme à 8 tri)~~ — **CLOS le 12 août 2026**, installé à
+LOD 560 pour **+552 tri**, la prédiction retombant juste (voir la section
+sanglier/CHARGER) ; **le vert de repos est désormais porté par l'albédo
 seul** — il reproduit la couleur rendue à 2,8 % de luminance près, mais
 aucune mesure ne dit qu'un vert plat se lit comme un vert lumineux en
 mouvement sur un téléphone ; et **0,594 de hitbox au-dessus et en dessous de
@@ -1452,7 +1454,216 @@ lignes** (la couleur de base ENEMY sur le chemin placeholder et sur le chemin
 comme un débris, à vitesse réelle sur un téléphone — aucune sonde ne répond, et
 c'est tout l'objet du lot ; les 27° de teinte avec DODGE (mesurés et argumentés
 par la saturation et la silhouette, mais seul un œil à vitesse réelle tranche) ;
-l'aplat ; et **le sanglier/CHARGER, toujours le dernier sujet non installé**.
+l'aplat ; et ~~**le sanglier/CHARGER, toujours le dernier sujet non
+installé**~~ — **CLOS le 12 août 2026**, voir la section sanglier/CHARGER.
+
+## SIXIÈME ET DERNIER HAZARD MESHY INSTALLÉ : le sanglier (CHARGER) — 12 août 2026
+
+Branche `claude/charger-hazard-decimation-9j7aeq`, partie de `main` = `staging`
+(`756b943`). `assets/models/keepy_charger_boar.glb` sur `Obstacle/ChargerMesh` —
+**560 triangles, 10,7 Ko, plat, unlit, sans texture**, portant le rose existant
+de CHARGER **verbatim**. **Le lot hazards est terminé : les six variantes
+portent désormais un asset.** Chiffres complets : `docs/MESHY_SPEC.md` §7.4 et §11.
+
+C'est l'install la plus contrainte des six, et les trois raisons se cumulent :
+CHARGER est le **seul hazard FATAL**, il détenait la **marge de contraste gatée
+la plus fine** (3,20:1), et son télégraphe le plus fort est une **forme pointée
+vers le joueur** — le seul cue qui survit à toute palette par construction.
+
+**Identifié au rendu ; le nom était juste, ce qui ne change rien à la méthode.**
+Rendu sur six axes d'abord : depuis **+Z** museau, yeux, oreilles, défenses et
+pattes avant ; depuis **−Z** uniquement la croupe et la queue. Bbox **0,831 ×
+1,128 × 1,903**, dominante en Z. Les deux prémisses habituelles retombent
+justes, mesurées : source à **4 848 tri** (pas le cap 1 200) et **aucun
+`KHR_materials_unlit`**.
+
+### ⚠️ `model_rotation_degrees` N'EST PAS à zéro ici — et l'asset n'y est pour rien
+
+Les cinq autres l'ont laissé à zéro. Celui-ci ne peut pas, **parce que
+`ChargerMesh` est le SEUL slot d'`Obstacle.tscn` à porter un transform tourné** :
+`Transform3D(1,0,0, 0,0,-1, 0,1,0, 0,0.9,0)`, un quart de tour autour de X qui
+existe pour que l'apex du PRISME placeholder mène. Un modèle installé est un
+**enfant** du slot et en hérite : un sanglier correct dans son propre espace
+serait dessiné **debout sur son museau**. `model_rotation_degrees = (-90, 0, 0)`
+l'annule exactement.
+
+Le transform du slot n'est **pas** touché : corriger le slot plutôt que le
+modèle casse le placeholder, et le casse dans l'état que personne ne regarde
+(l'argument que `ModelSlot.gd` porte déjà pour `model_offset`).
+
+⚠️ **Corollaire pour tout futur slot tourné** : `model_offset` est en unités
+SLOT-locales, donc ses axes sont tournés eux aussi — local +Y = monde +Z, local
++Z = monde −Y. Le `Vector3(-0.01547, 0.53393, -0.12699)` livré se lit « 1,5 cm à
+gauche, 53 cm vers l'avant, 12,7 cm vers le bas » **seulement après** ce mapping.
+
+### LOD 560, et le critère n'est ni les triangles ni l'œil
+
+La lecture d'un sanglier tient à une **tête basse et pointée distincte de la
+masse des épaules**, et la décimation mange les extrémités qui la portent.
+Demi-largeur maximale par bande de Z contre la source : le **museau** garde
+**74 % à LOD 150**, 83 % à 300, **95 % à 380** ; la **crinière** — ce qui casse
+le HAUT du contour vu de face — ne revient qu'à **560**. 560 est le plus petit
+LOD dont **toute la moitié avant** égale celle du LOD 800 (**98,3 %, identique
+jusqu'à 800**) : c'est la règle du lot JUMP (« indiscernable de 800 ») appliquée
+honnêtement à un sujet où elle tombe ailleurs. **47 % du cap §7.1 de 1 200.**
+
+⚠️ **À retenir, parce que ça change ce qu'un LOD achète ici : vu DE FACE, à tous
+les LOD testés, la silhouette plate du sanglier est une MASSE, pas un coin
+pointu.** Le museau est écrasé sur le corps par l'axe même qui en fait un
+charger. Ce que les triangles achètent, ce sont les ruptures de contour
+(crinière, pattes, défenses) — d'où le fait que c'est la CRINIÈRE, pas le
+museau, qui a fixé le nombre.
+
+### Échelle : la présence latérale du placeholder, tenue exactement
+
+`model_scale = 1,82584` cale X sur **1,5000**, la largeur du placeholder — **pas**
+sur le collider (1,2). C'est le visuel généreux que `Hitboxes.gd` défend
+lui-même comme « la preuve la plus claire du projet qu'une silhouette et une
+hitbox ont le droit de différer ». Caler ici rend la présence latérale
+**identique au bit près à ce qui est livré aujourd'hui** : ce lot change la
+FORME, pas l'EMPREINTE, et ne peut donc déplacer aucun jugement d'esquive de voie.
+
+`model_offset` **recentre aussi le mesh en X** : il arrive **15,5 mm
+décentré** — neuf fois les 1,7 mm que le lot libellule avait à juste titre
+écartés comme du bruit de mesure — et sur un hazard fatal esquivé
+latéralement, un visuel décentré est une **asymétrie gauche/droite**, pas un
+détail cosmétique.
+
+Extents mondiaux sur la scène construite : **X 1,5000, Y 0,0000–2,0787,
+Z −1,2000–2,2870.**
+
+⚠️ **`AssetContractAudit` imprime `1.500 x 3.487 x 2.079` pour cette ligne, et
+ce n'est PAS une contradiction** : il rapporte l'AABB en espace SLOT, qui sur ce
+seul slot est tourné. Son Y est le Z monde. Aucun sanglier de 3,5 m de haut
+n'existe.
+
+**Résidus signalés, pas maquillés** : le corps fait **3,487 m de profondeur**
+contre une hitbox de 1,0, donc le museau arrive **1,787 m devant la face létale**
+— sens INDULGENT (la hitbox arrive après le museau), et l'enveloppe visuelle du
+charger couvrait déjà 5,3 m de piste à cause de ses barres. **2,0787 m de haut
+contre une hitbox de 2,0** (+0,079) : sans effet sur un hazard injumpable, même
+argument que les 0,253 du DODGE. Il dépasse le pic de saut de **0,521 m** contre
+0,242 pour le placeholder.
+
+### ⚠️ LES BARRES DE TRAIL ÉTAIENT VISIBLES À 0 % AVANT CET INSTALL
+
+Le tiers MOTION du télégraphe — trois barres que `Obstacle.gd` qualifie
+d'« unambiguous even in peripheral vision » — est **entièrement occulté par le
+prisme placeholder depuis la caméra de jeu**, et c'est cet install qui l'a
+révélé. Mesuré en rastérisant le charger assemblé depuis la caméra que
+`CameraFollow` produit RÉELLEMENT (elle lerp vers `target + (0,4.2,7)` puis
+`look_at` `target + (0,1,-4)` chaque frame, donc le −20° écrit dans `Game.tscn`
+est écrasé et le vrai pitch est **−16,2°**) :
+
+| z obstacle | placeholder (même voie) | sanglier | placeholder (voie adjacente) | sanglier |
+|---|---|---|---|---|
+| −16 | **0 %** | 16 % | **0 %** | 26 % |
+| −8 | **0 %** | 34 % | **0 %** | 49 % |
+| −3 | **0 %** | 67 % | 2 % | 72 % |
+
+Le prisme fait 1,8 m de haut et pleine largeur à sa face arrière ; les barres
+sont à y = 1,1 à seulement 0,4 m derrière, donc depuis une caméra à 4,2 m tout
+rayon vers une barre est bloqué. La croupe plus basse et plus étroite du
+sanglier les laisse passer pour la première fois. ⚠️ **NON confirmé sur device**
+— c'est un rendu composite dont la géométrie coïncide avec les chiffres de
+`ChargerShapeProbe` sur la scène construite, pas une capture du jeu.
+
+La queue est posée sur **z = −1,200**, le plan arrière du placeholder, donc le
+jeu de 0,100 m avec la barre la plus proche est préservé **exactement**.
+
+### Couleur : report VERBATIM, et c'est tout l'argument
+
+`StandardMaterial3D_Charger` porte déjà `shading_mode = 0` et **aucune
+émission**, exactement comme JUMP et STOMPER. DODGE, ENEMY et AIR_ENEMY ont dû
+être re-résolus parce que passer unlit supprimait une multiplication (et pour
+deux d'entre eux un terme additif) — **rien de tout ça ne s'applique ici**. Re-
+résoudre une couleur déjà juste déplacerait un nombre gaté sur le seul hazard
+où se tromper termine la run, en échange de rien.
+
+**Diff `DarkPaletteAudit` contre `origin/main` : EXACTEMENT trois lignes, toutes
+CHARGER, et la marge MONTE.**
+
+| | baseline | ce lot |
+|---|---|---|
+| CHARGER shallow | **3,20:1** | **3,21:1** |
+| CHARGER deep | **3,21:1** | **3,21:1** |
+
+**Marge au-dessus du plancher 3,0 : +0,20 → +0,21. Rien n'a été dépensé.**
+DODGE 3,39/3,37, JUMP 3,04/3,02, ENEMY 1,20/1,20, AIR_ENEMY 1,32/1,32,
+STOMPER 3,41/3,41 **byte-identiques**. 0 échantillon manqué.
+
+**Vérifié PAR HISTOGRAMME, pas supposé** — ce chantier a produit à la fois un
+artefact de fenêtre (JUMP 3,28 → 3,02) et un vrai changement de couleur (DODGE),
+indiscernables du seul ratio. Sonde instrumentée sur les DEUX arbres puis
+revertée : **196 px sur 196 d'OBJET des deux côtés, zéro sol, zéro ciel** — donc
+aucune des deux mesures n'est contaminée. L'écart est **un cran 8 bits** (bleu
+221→222 en shallow ; rouge 250→251 sur 25 px en deep), sur une surface courbe
+unlit à profondeur légèrement différente sous le fog exponentiel : la signature
+du lot STOMPER, pas un changement de couleur. L'albédo est prouvé inchangé
+indépendamment — `AssetContractAudit` imprime `unshaded rgb(1.00, 0.72, 0.88)`
+des DEUX côtés.
+
+### `ChargerShapeProbe` réécrite — AVANT l'install, pas après
+
+Elle lisait `mesh_instance.mesh` et assertait qu'un `PrismMesh` se rétrécit vers
++Z : un contrat sur une PRIMITIVE, pas sur le CHARGER, écrit pour échouer
+bruyamment au premier `.glb`. Réécrite d'abord, donc l'échec attendu n'a jamais
+eu à être chassé. Elle asserte désormais le même contrat sur **ce que le slot
+dessine**, en deux phases (placeholder / tel que livré) : le devant plus étroit
+que l'arrière — **asserté contre la QUEUE et non contre une constante**, parce
+qu'un modèle monté à l'envers est le défaut qu'elle garde ; un vrai
+rétrécissement (plafond 85 %) ; posé au sol ; au-dessus du pic de saut ; et
+**les barres derrière lui ET non avalées par lui** (nouveau, parce que le
+placeholder était un mètre moins profond que n'importe quel corps importé).
+
+⚠️ **Propriété de `ModelSlot` trouvée EN ÉCHOUANT, à connaître avant de copier
+l'astuce d'`AlarmRampAudit`** : effacer `model_scene` sur un slot vivant **ne
+restaure PAS le placeholder**. `_install_model()` met `mesh = null` à l'install
+et la branche sans modèle ne le remet jamais — le slot ne dessine alors **plus
+aucune géométrie**. `AlarmRampAudit` n'est pas touchée parce que les overrides
+de matériau survivent à ce chemin ; les vertices non. PHASE A efface donc
+`model_scene` **avant** l'entrée dans l'arbre, ce qui est aussi le test le plus
+honnête. Vérifiée verte sur l'arbre PRÉ-install d'abord, reproduisant les
+chiffres de l'ancienne sonde exactement.
+
+### Triangles : la seule VRAIE hausse du lot, comme §7.4 le prédisait
+
+`ChargerMesh` **8 → 560**, soit **+552 par instance vivante** — la plus grosse
+hausse unitaire du projet, sur la seule variante qui n'avait nulle part où
+descendre. Famille un-de-chaque, hazards seuls : **1 602 → 2 154** (**1 646 →
+2 198** avec `JumpMarkerMesh`), mesuré des DEUX côtés. Sur les six installs le
+bilan reste **une BAISSE nette de 6 198** par un-de-chaque.
+
+### Validation
+
+`ChargerShapeProbe` (2 phases), `AssetContractAudit` (**12/12 visuels, 0/10
+colliders déplacés**, `ChargerShape` toujours `Box(1.2, 2.0, 1.0)` @ +1,000),
+`DarkPaletteAudit`, `AlarmRampAudit` (12/12), `ProbeTimeoutAudit` (**33 sondes**,
+retour exact à la baseline après retrait de la sonde jetable de census),
+`DeathModelAudit`, `PursuerFramingAudit` (37,1 % max, CAPTURE exempt) — **toutes
+exit 0**. Diffs contre `origin/main` : `AssetContractAudit` **une seule ligne**,
+`DarkPaletteAudit` **trois** ; `AlarmRampAudit`, `ProbeTimeoutAudit`,
+`DeathModelAudit`, `PursuerFramingAudit` **byte-identiques sur les deux flux**.
+**Sondes gameplay seedées byte-identiques sur les deux flux** (`ChargerAudit`,
+`ShrinkAudit`, `ComboAudit`, graine 20260806, worktree séparé). Import + export
+Web **exit 0**, `index.wasm` **35 376 909**. Piège payload tenu (**0** ressource
+`assets_source` importée contre 407 Mo sur disque). Le `.glb` déclare
+`KHR_materials_unlit` (used ET required), **0 image, 0 texture, 0 sampler**,
+attribut `POSITION` seul.
+
+**HUIT slots portent désormais un asset** : Keepy, `pursuer/Silhouette`, et les
+six meshes de hazard.
+
+**Reste ouvert — jugement device, et il pèse plus lourd ici que sur les cinq
+autres** : aucune sonde ne dit qu'un sanglier se lit comme un sanglier qui
+CHARGE, à vitesse réelle sur un téléphone, et c'est le seul hazard où être
+illisible termine la run au lieu de coûter un demi-strike. Plus : les **1,787 m
+de museau devant la face létale** (argumentés indulgents, mais seul l'œil
+tranche) ; le fait que les **barres de trail deviennent visibles pour la
+première fois** — ça devrait être mieux, ce n'était pas demandé, et ce n'est pas
+confirmé sur device ; et le fait que **de face le sanglier est une masse, pas un
+point**, donc le cue de FORME est porté par la crinière et les pattes qui
+cassent le contour, pas par un rétrécissement visible.
 
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
