@@ -2816,3 +2816,143 @@ diverge from the shipped asset on the axis this batch changes.
   fixed and tuned to clear the hitbox top, so no legal jump is at risk, but
   whether the airborne hazard's lethal volume reads as larger than it looks
   is a device call.
+
+### 2026-08-12, third of the day — ENEMY (rat), RECOLOURED to a brown-grey
+
+Not an install: the rat has been on `Obstacle/EnemyMesh` since earlier the
+same day and its geometry, scale, offset and collider are untouched here.
+**Only `baseColorFactor` moves**, plus the placeholder that shadows it.
+
+#### Why
+
+Device feedback on the shipped purple `(0.182, 0.028, 0.252)`: at real speed
+it reads as **RED**, not as an animal. That is worse than a merely
+unattractive colour — it puts the RESTING state inside the ALARM's own colour
+family, and the alarm is the only other state this material has. The
+replacement is a warm dark brown-grey, the natural fur register the reference
+render was pointing at.
+
+#### The one edit that could not move the telegraph
+
+The direction argument that fixed this value in the first place says nothing
+about hue. It is entirely a statement about where the resting **luminance**
+sits relative to the alarm's 0.187: below it, so the ramp is a BRIGHTENING.
+Hold luminance, and the telegraph is preserved by construction rather than by
+luck.
+
+| | authored sRGB | H | S | V | authored rel. luminance |
+|---|---|---|---|---|---|
+| before | `(0.182, 0.028, 0.252)` | 280° | 0.89 | 0.25 | 0.011186 |
+| **after** | **`(0.135, 0.102, 0.076)`** | **26.4°** | **0.44** | **0.135** | **0.011344** |
+
++1.4% of luminance. Rendered, the fog pulls hue and chroma **UP** rather than
+washing them out: H 26.4° → 35.3°, S 0.44 → 0.52.
+
+#### Measured, both ends of the breath, ramp pinned, probe then reverted
+
+`DarkPaletteAudit`'s `ENEMY (resting)` row is mislabelled — at `CAPTURE_Z` the
+ramp has fully saturated, so that row measures `ENEMY_ALARM_ALBEDO` and is
+**structurally incapable of seeing this change**. A throwaway probe built on
+that audit's scene, camera and sampling box pinned the ramp at t=0 and t=1
+with the obstacle's own `_physics_process` disabled, on the baseline tree and
+on this one:
+
+| | resting rendered | resting vs ground | **telegraph (rest ↔ alarm)** |
+|---|---|---|---|
+| before (purple) | `(0.1765, 0.0353, 0.2471)` L 0.0111 | 3.27 / 3.23 | **3.92 / 3.87** |
+| **after (brown-grey)** | **`(0.1294, 0.1020, 0.0627)`** L 0.0110 | **3.27 / 3.26** | **3.92 / 3.90** |
+
+The telegraph is held exactly at the shallow end and **improves 0.03 at the
+deep end**. The alarm rendered `(0.9373, 0.0784, 0.1098)` on both trees, to the
+bit — as it must, `ENEMY_ALARM_ALBEDO` being untouched and shared with
+AIR_ENEMY.
+
+**The window is 784 px of ONE distinct colour, before and after, at both
+ends** — `(45,9,63)` then `(33,26,16)`. Neither measurement is contaminated,
+so the difference between the two runs IS the object's colour. This is the
+DODGE proof, not the JUMP log's window artefact.
+
+#### Confusion checked against EVERY on-track object, not the two named
+
+The brief named STOMPER's ice blue and the trackside props. Both were checked,
+and so was every other hazard — a check that only looks where it is told to
+look would have missed the pair that actually matters.
+
+| against | contrast | hue delta (before → after) |
+|---|---|---|
+| STOMPER (ice blue) | 11.17:1 | 77.9° → **166.8°** (improves sharply) |
+| **DODGE (dark red)** | **1.04:1** | 88° → **27.2°** (closest pair in the scene) |
+| JUMP (amber) | 9.94:1 | → 8.5° (separated by value, 10:1) |
+| CHARGER (pink) | 10.49:1 | → 69.1° |
+| decor stump / bench / sign | 1.35 / 1.84 / 2.38 | 147-150° → **31-34°** |
+| decor trunk / rock / bush | 1.05 / 1.15 / 1.09 | 166-173° → **71-79°** |
+
+**Two of these are real costs and are not dressed up.** Against DODGE and
+against the olive props the hue separation NARROWS. What each one rests on
+instead:
+
+- **DODGE** renders `(52,7,0)` at saturation **1.00**; the rat renders
+  `(33,26,16)` at **0.52** — a 3.7× gap in the green channel, and a
+  pure-hue near-black against a muted brown. Beyond colour: a 2m unjumpable
+  upright trunk is not a 0.6m ground quadruped.
+- **The props sit off the track slab by keep-out** and are never adjacent to a
+  hazard. The rat also holds the **highest dark-object contrast against the
+  track** of anything measured here — 3.27:1 against the stump's 2.42, the
+  bench's 1.78, the sign's 1.38.
+- **Neither matters inside the reaction window.** `ENEMY_ALARM_RAMP_WINDOW_S`
+  is 4.5s, so by the time a player must act the rat is `(239,20,28)` and 11:1
+  clear of every object in the table. The resting colour's job is identity at
+  distance, not the danger read.
+
+The chosen hue sits deliberately between the two collisions: rendered 35.3°,
+which is 27.2° from DODGE and 31.4° from the nearest prop. Pushing it toward
+either buys separation from one by spending it on the other.
+
+#### The glb went THROUGH the pipeline, and that was proven before use
+
+Geometry read back out of the shipped file and rewritten by
+`decimate_decor.write_glb` — **not hand-patched**. Proven lossless first by
+rewriting with the OLD colour and confirming a byte-for-byte match against the
+shipped asset, so the only possible difference in the new file is the colour.
+Verified after: **BIN chunk byte-identical** (2,688 bytes, 76 verts, 148 tri),
+`KHR_materials_unlit` preserved, JSON identical apart from `baseColorFactor`.
+
+#### It is FLAT, not per-facet — a real gap against the reference
+
+The reference render varies tone between facets. This does not, and cannot
+cheaply:
+
+- the decimator **cannot carry UVs** (already documented for the decor leafy
+  tree), so no texture survives at any triangle budget;
+- vertex colours would **multiply with the alarm ramp's albedo write**,
+  turning the one signal that has to read instantly into a mottled red;
+- every contrast number in this project is computed on a single flat albedo —
+  per-facet variation would make "the rat's colour" a distribution rather than
+  a number.
+
+#### Validation
+
+`DarkPaletteAudit` **byte-identical on stdout AND stderr** — the predicted
+result, and the strongest possible confirmation that the alarm-tinted row was
+what it was always measuring. Four gated hazards unmoved (DODGE 3.39/3.37,
+JUMP 3.04/3.02, CHARGER 3.20/3.21, STOMPER 3.41/3.41), 0 missed samples.
+
+`AlarmRampAudit` **12/12 OK, exit 0, diff of exactly two lines** — the ENEMY
+base colour on the placeholder path and on the shipped-glb path, which is the
+whole change. stderr identical.
+
+`AssetContractAudit`, `ProbeTimeoutAudit`, `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` — all exit 0. Import and Web export
+exit 0; `index.wasm` 35,376,909 as on every previous batch. Payload trap
+holds: 0 `assets_source` resources imported into the pack.
+
+#### Still open
+
+- **Does a dark brown-grey read as an ANIMAL rather than as debris** at real
+  speed on a phone? No probe answers that; it is the whole point of the batch
+  and it is a device call.
+- **DODGE at 27° of hue** — measured, argued from saturation and silhouette,
+  but only an eye at speed can say whether "dark red wall" and "brown rodent"
+  ever get confused in the fraction of a second before the ramp fires.
+- **The flat finish**, above.
+- **CHARGER (boar) remains the last uninstalled subject.**

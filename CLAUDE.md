@@ -1347,6 +1347,113 @@ la libellule visible** (l'arc de saut est fixe et calé sur le haut de la
 hitbox, donc aucun saut légal n'est en danger — reste à juger si le volume
 létal se lit plus gros qu'il n'en a l'air). **Jugement device.**
 
+## LE RAT (ENEMY) CHANGE DE TEINTE : violet → brun-gris naturel (12 août 2026)
+
+Branche `claude/enemy-rat-color-fix-w0kyew`, partie de `staging` (`68ffba0`).
+**Ce n'est PAS un install** : le rat est en place depuis le matin même, sa
+géométrie, son échelle, son offset et son collider sont **intouchés**. Seul
+`baseColorFactor` bouge, plus le placeholder qui le double. Chiffres complets :
+`docs/MESHY_SPEC.md` §11.
+
+**Retour device** : le violet livré `(0,182, 0,028, 0,252)` se lit **ROUGE** à
+vitesse réelle, pas comme un animal. C'est pire qu'une couleur simplement
+laide — ça met l'état AU REPOS dans la famille de teinte de l'ALARME, alors que
+l'alarme est le seul autre état que ce matériau possède. Remplacé par
+**`(0,135, 0,102, 0,076)`** — brun-gris chaud, H 26,4° / S 0,44 / V 0,135 en
+brut, H 35,3° / S 0,52 **rendu** (le fog tire la teinte et le chroma vers le
+HAUT ici, il ne les délave pas).
+
+### ⚠️ SEULE LA TEINTE BOUGE — et c'est CE choix qui protège le télégraphe
+
+L'argument de direction qui avait fixé cette valeur au départ **ne dit rien de
+la teinte** : il porte entièrement sur la position de la LUMINANCE au repos par
+rapport aux 0,187 de l'alarme (en dessous, pour que la rampe soit un
+ÉCLAIRCISSEMENT). Tenir la luminance, c'est donc préserver le cue **par
+construction et pas par chance** — luminance brute 0,011186 → 0,011344, +1,4 %.
+
+Mesuré aux deux bouts de la respiration, rampe **épinglée à t=0 et t=1** avec le
+`_physics_process` de l'obstacle coupé (sonde jetable bâtie sur la scène, la
+caméra et la fenêtre d'échantillon de `DarkPaletteAudit`, puis revertée) :
+
+| | repos rendu | repos vs sol | **télégraphe (repos ↔ alarme)** |
+|---|---|---|---|
+| avant (violet) | `(0,1765, 0,0353, 0,2471)` | 3,27 / 3,23 | **3,92 / 3,87** |
+| **après (brun-gris)** | **`(0,1294, 0,1020, 0,0627)`** | **3,27 / 3,26** | **3,92 / 3,90** |
+
+Le télégraphe est tenu **exactement** au bout clair et **gagne 0,03** au bout
+profond. **Fenêtre à 784 px d'UNE seule couleur distincte, avant comme après,
+aux deux bouts** — aucune des deux mesures n'est contaminée, donc l'écart entre
+elles EST la couleur de l'objet (preuve façon DODGE, pas l'artefact de fenêtre
+du rondin JUMP).
+
+### Confusion vérifiée contre TOUS les objets de piste, pas les deux annoncés
+
+| contre | contraste | Δteinte (avant → après) |
+|---|---|---|
+| STOMPER (bleu glacier) | 11,17:1 | 77,9° → **166,8°** *(s'améliore nettement)* |
+| **DODGE (rouge sombre)** | **1,04:1** | 88° → **27,2°** *(la paire la plus proche)* |
+| JUMP (ambre) | 9,94:1 | → 8,5° *(séparé en VALEUR, 10:1)* |
+| CHARGER (rose) | 10,49:1 | → 69,1° |
+| décor souche / banc / panneau | 1,35 / 1,84 / 2,38 | 147-150° → **31-34°** |
+| décor arbre / rocher / buisson | 1,05 / 1,15 / 1,09 | 166-173° → **71-79°** |
+
+⚠️ **DEUX de ces lignes sont de vrais COÛTS, et ne sont pas maquillées** : face
+à DODGE et aux props olive, la séparation de teinte RÉTRÉCIT. Ce sur quoi
+chacune repose à la place :
+- **DODGE** rend `(52,7,0)` à saturation **1,00** ; le rat rend `(33,26,16)` à
+  **0,52** — 3,7× d'écart sur le canal vert, une teinte pure quasi-noire contre
+  un brun mat. Et un tronc debout injumpable de 2 m n'est pas un quadrupède au
+  ras du sol de 0,6 m.
+- **Les props sont hors de la dalle** (keep-out), jamais adjacents à un hazard.
+  Le rat tient d'ailleurs le **meilleur contraste d'objet sombre contre la
+  piste** de tout ce qui est mesuré ici — 3,27:1 contre 2,42 (souche), 1,78
+  (banc), 1,38 (panneau).
+- **Aucune des deux ne compte dans la fenêtre de réaction** :
+  `ENEMY_ALARM_RAMP_WINDOW_S` vaut 4,5 s, donc au moment où le joueur doit agir
+  le rat est `(239,20,28)` et à 11:1 de tout le tableau. Le rôle de la couleur
+  au repos est l'IDENTITÉ À DISTANCE, pas la lecture du danger.
+
+La teinte retenue est **délibérément à mi-chemin des deux collisions** (rendue
+35,3° : 27,2° de DODGE, 31,4° du prop le plus proche) — la pousser vers l'un
+achète de la marge en la dépensant sur l'autre.
+
+**`ENEMY_ALARM_ALBEDO` est INTOUCHÉE** — partagée avec AIR_ENEMY, la bouger
+serait une retouche de télégraphe sur deux hazards, pas une retouche d'art sur
+un. Le placeholder `StandardMaterial3D_Enemy` suit le `.glb`, comme à
+l'install : le laisser sur l'ancien violet ferait diverger le fallback de
+l'asset livré **sur l'axe même que ce lot change**.
+
+**Le `.glb` est repassé PAR le pipeline, pas patché à la main** — géométrie
+relue du fichier livré et réécrite par `decimate_decor.write_glb`. Prouvé sans
+perte **d'abord** : réécriture avec l'ANCIENNE couleur et comparaison
+byte-à-byte réussie contre l'asset livré, donc la seule différence possible
+dans le nouveau fichier est `baseColorFactor`. Vérifié après : **chunk BIN
+byte-identique** (2 688 o, 76 verts, 148 tri), `KHR_materials_unlit` préservé.
+
+⚠️ **C'est un APLAT, pas une variation entre facettes — vrai écart avec le
+rendu de référence, signalé et non contourné.** Le décimateur **ne peut pas
+transporter les UV** (déjà consigné pour l'arbre feuillu décor) ; et des
+couleurs par sommet **MULTIPLIERAIENT** avec l'écriture d'albédo de la rampe
+d'alarme, transformant en rouge marbré le seul signal qui doit se lire
+instantanément. Tous les chiffres de contraste du projet sont par ailleurs
+calculés sur un albédo plat unique.
+
+**Validation** : `DarkPaletteAudit` **byte-identique stdout ET stderr** — le
+résultat PRÉDIT, et la confirmation la plus forte que sa ligne `ENEMY
+(resting)` mesurait bien l'alarme depuis toujours (4 hazards gatés inchangés :
+DODGE 3,39/3,37, JUMP 3,04/3,02, CHARGER 3,20/3,21, STOMPER 3,41/3,41, 0
+échantillon manqué). `AlarmRampAudit` **12/12 OK, diff de exactement DEUX
+lignes** (la couleur de base ENEMY sur le chemin placeholder et sur le chemin
+`.glb`), stderr identique. `AssetContractAudit`, `ProbeTimeoutAudit`,
+`DeathModelAudit`, `ChargerShapeProbe`, `PursuerFramingAudit` : exit 0. Import
++ export Web exit 0, `index.wasm` 35 376 909. Piège payload tenu.
+
+**Reste ouvert** : est-ce qu'un brun-gris sombre se lit comme un ANIMAL et pas
+comme un débris, à vitesse réelle sur un téléphone — aucune sonde ne répond, et
+c'est tout l'objet du lot ; les 27° de teinte avec DODGE (mesurés et argumentés
+par la saturation et la silhouette, mais seul un œil à vitesse réelle tranche) ;
+l'aplat ; et **le sanglier/CHARGER, toujours le dernier sujet non installé**.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
