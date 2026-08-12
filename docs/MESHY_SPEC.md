@@ -490,6 +490,38 @@ at Godot's default tessellation. CHARGER is the last variant whose
 placeholder is a bare primitive (a 8-triangle prism), and it is the only
 one where an import will genuinely add.
 
+**CHARGER lands 2026-08-12 and is the only import in the batch that adds
+a real cost — as this section predicted three times over.**
+`keepy_charger_boar.glb` draws **560** triangles against the placeholder
+prism's 8: **+552 per live instance**, the largest single-instance
+*increase* in the project, on the only variant that had nowhere to fall
+from. One-of-each family total, hazards only: **1,602 → 2,154** (**1,646
+→ 2,198** counting `JumpMarkerMesh`). Measured on both sides with the same
+throwaway census, not deduced from the delta.
+
+**560 rather than the ~150 four of the six ship at, and the criterion is
+not triangle count.** A boar's read is a lowered, pointed head that has to
+stay distinct from the shoulder mass; decimation eats the extremities that
+carry it. Sampling maximum half-width per Z band against the source, the
+snout band retains **74% at LOD 150, 78% at 220, 83% at 300, and 95% at
+380**; the **mane crest**, which is what breaks the top of the head-on
+outline, only returns at **560**. 560 is the smallest LOD whose entire
+front half matches LOD 800's profile (**98.3%, identical through 800**) —
+i.e. the JUMP entry's own rule, *indistinguishable from 800*, applied to a
+subject on which it lands somewhere else entirely. Whole-mesh bounding box
+tells the same story from another angle: X recovers from **−17.4% at LOD
+150** to −2.0% only above 520.
+
+Still **47% of 7.1's 1,200-per-hazard cap**, so as with the dragonfly the
+legibility was not paid for out of the budget. The family line keeps
+6,246 of headroom against 8,400.
+
+**With CHARGER in, every hazard variant now carries an imported asset**,
+and the running total of the six installs is a **net reduction**: the
+family went 8,352 before the first import to 2,154 after the last, i.e.
+**−6,198 per one-of-each**, despite two of the six (DODGE +138, CHARGER
++552) adding. The section's inverted expectation held for four of six.
+
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
 or decimate in Blender before importing — Godot does not decimate on
@@ -2955,4 +2987,264 @@ holds: 0 `assets_source` resources imported into the pack.
   but only an eye at speed can say whether "dark red wall" and "brown rodent"
   ever get confused in the fraction of a second before the ramp fires.
 - **The flat finish**, above.
-- **CHARGER (boar) remains the last uninstalled subject.**
+- ~~**CHARGER (boar) remains the last uninstalled subject.**~~ **CLOSED the
+  same day** — installed at LOD 560, see the entry below. No subject of the
+  batch remains uninstalled.
+
+### 2026-08-12, fourth of the day — CHARGER (boar), INSTALLED — the last subject
+
+Branch `claude/charger-hazard-decimation-9j7aeq`, off `main` = `staging`
+(`756b943`). `assets/models/keepy_charger_boar.glb` on `Obstacle/ChargerMesh`
+— **560 triangles, 10.7 KB, flat, unlit, untextured**, carrying CHARGER's
+existing pink verbatim. Sixth and final asset of the hazard batch; every
+variant now carries one.
+
+This is the most constrained install of the six, for three reasons that
+compound: CHARGER is the **only fatal hazard** (one contact ends the run, see
+the half-strike rebalance), it held the **narrowest gated contrast margin**
+of the four at 3.20:1, and its telegraph's strongest cue is a **shape that
+points at the player** — the one cue that survives every palette by
+construction rather than by measurement.
+
+#### Identified by render; the name happened to be right
+
+`Shadowtusk` is a tusked, maned boar and CHARGER was the only hazard left, so
+unlike the "beaver" that turned out to be a rat this file's name survived
+contact with a render. The method did not change: rendered from six axes
+first. From **+Z** the snout, eyes, ears, tusks and front legs are all
+present; from **−Z** only the rump and the tail sweeping away. Bbox
+**0.831 × 1.128 × 1.903**, dominant in Z — long nose-to-tail, which is what a
+hazard travelling *at* the player along the track wants to be.
+
+Both of the batch's recurring premises held again, measured on entry: the
+source is **4,848 triangles** (not the 1,200 cap the original brief claimed)
+and declares **no `KHR_materials_unlit`** — PBR with three textures, like all
+six.
+
+#### ⚠️ `model_rotation_degrees` is NOT zero here, and the asset is not why
+
+The other five installs left it at zero. This one cannot, and the reason has
+nothing to do with the boar: **`ChargerMesh` is the only slot in
+`Obstacle.tscn` carrying a rotated transform**,
+`Transform3D(1,0,0, 0,0,-1, 0,1,0, 0,0.9,0)` — a quarter turn about X that
+exists so the PLACEHOLDER prism's apex leads (a `PrismMesh` narrows toward its
+own +Y; the slot turns that into world +Z). An installed model is a **child**
+of the slot and inherits it, so a boar that is correct in its own space would
+be drawn standing on its nose, its up-axis pointing at the player.
+
+`model_rotation_degrees = (-90, 0, 0)` cancels it exactly, leaving the net
+rotation identity. The slot's own transform is deliberately left alone:
+`ModelSlot.gd`'s `model_offset` note already carries the general form of the
+argument — correcting the slot rather than the model breaks the placeholder,
+and breaks it in the state nobody looks at.
+
+**Corollary for any future slot:** `model_offset` is expressed in SLOT-local
+units, so on this slot its axes are rotated too. Local +Y is world +Z and
+local +Z is world −Y. The shipped `Vector3(-0.01547, 0.53393, -0.12699)`
+reads as "1.5 cm left, 53 cm forward, 12.7 cm down" only after that mapping.
+
+#### LOD 560, and the criterion is neither triangles nor eyeballs
+
+Full reasoning and the per-band table are in 7.4. In short: a boar's read is
+a lowered pointed head distinct from the shoulder mass, and decimation eats
+the extremities that carry it. The **snout band** holds 74% of its true
+half-width at LOD 150 and 95% at 380; the **mane crest** — the feature that
+breaks the top of the head-on outline — only returns at **560**, which is the
+smallest LOD whose whole front half matches LOD 800's (98.3%, identical
+through 800).
+
+⚠️ **A finding worth carrying forward, because it reframes what a LOD buys on
+this hazard: head-on, at every LOD tested, the boar's flat silhouette is a
+MASS, not a pointed wedge.** The snout is foreshortened onto the body by the
+very axis that makes it a charger. Rasterising the outline at true on-screen
+size (75° vertical FOV on 1080×1920 gives 1251/d px per metre; ~150 px tall at
+17 m, ~270 px at 10 m) shows the LODs differing only at the crest, the legs
+and the tusk notches. What triangles buy here is those outline breaks, not a
+point — which is precisely why the crest, not the snout, set the number.
+
+#### Scale: the placeholder's lateral presence, held exactly
+
+`model_scale = 1.82584` pins X to **1.5000**, the placeholder's own width —
+*not* to the collider's 1.2. That is the deliberate generous visual
+`Hitboxes.gd` defends in its own comment as "the single clearest existing
+proof in this project that a hazard's silhouette and its hitbox are already
+allowed to differ". Pinning here makes lateral presence **bit-identical to
+what ships today**, so this batch cannot move any lane-dodge judgement: it
+changes the shape, not the footprint.
+
+`model_offset` also **centres the mesh in X**. It arrives 15.5 mm off-centre
+— nine times the 1.7 mm the dragonfly install rightly dismissed as
+measurement noise — and on a fatal, laterally-dodged hazard an off-centre
+visual is a left/right dodge asymmetry rather than a cosmetic one.
+
+Resulting world extents, off the built scene: **X 1.5000, Y 0.0000–2.0787,
+Z −1.2000–2.2870.**
+
+⚠️ **`AssetContractAudit` prints this row as `1.500 x 3.487 x 2.079`, and that
+is not a contradiction: it reports the AABB in SLOT space, which on this one
+slot is rotated.** Its Y is world Z. Nothing else in the project reports a
+3.5 m-tall boar.
+
+**Residuals, stated rather than dressed up:**
+
+- **The body is 3.487 m deep against a 1.0 m hitbox**, so the nose reaches
+  **1.787 m ahead of the lethal front face**. Forgiving, not punitive: the
+  hitbox arrives *after* the nose visually does, and the charger's own visual
+  envelope already spanned 5.3 m of track because of its trail bars — the rear
+  is unchanged and only the nose extends further.
+- **2.0787 m tall against a 2.0 m hitbox** (+0.079). Harmless on an unjumpable
+  hazard: there is no legal jump for an over-tall visual to make look illegal,
+  the same argument DODGE's 0.253 m overshoot rests on. It clears the jump peak
+  by **0.521 m** where the placeholder cleared it by 0.242 m.
+
+#### ⚠️ The trail bars were 0% visible before this install
+
+The MOTION third of the telegraph — three speed-line bars that `Obstacle.gd`
+calls "unambiguous even in peripheral vision" — is **entirely occluded by the
+placeholder wedge from the game camera**, and this install is what revealed
+it. Measured by rasterising the assembled charger from the camera
+`CameraFollow` actually produces (it lerps to `target + (0,4.2,7)` then
+`look_at`s `target + (0,1,-4)` every frame, so `Game.tscn`'s authored −20° is
+overwritten and the real pitch is **−16.2°**):
+
+| obstacle z | placeholder, same lane | boar, same lane | placeholder, adjacent lane | boar, adjacent lane |
+|---|---|---|---|---|
+| −16 | **0%** | 16% | **0%** | 26% |
+| −12 | **0%** | 22% | **0%** | 35% |
+| −8 | **0%** | 34% | **0%** | 49% |
+| −5 | **0%** | 52% | 2% | 64% |
+| −3 | **0%** | 67% | 2% | 72% |
+
+The wedge is 1.8 m tall and full-width at its rear face; the bars sit at
+y = 1.1 just 0.4 m behind it, so from a camera 4.2 m up every ray to a bar is
+blocked. The boar's narrower, lower rump lets them through for the first
+time. **Not confirmed on device** — this is a composite render whose geometry
+agrees with `ChargerShapeProbe`'s numbers off the built scene, not a
+screenshot of the game.
+
+The body's tail is placed on **z = −1.200**, the placeholder's own rear plane,
+so the 0.100 m gap to the nearest bar is preserved exactly rather than merely
+kept positive.
+
+#### Colour: a verbatim carry-over, and that is the point
+
+`StandardMaterial3D_Charger` already carries `shading_mode = 0` and **no
+emission**, exactly like JUMP and STOMPER. DODGE, ENEMY and AIR_ENEMY each had
+to be re-solved because going unlit removed a multiplication (and, for two of
+them, an additive emission term) — none of that applies here, so the shipped
+`(1.0, 0.72, 0.88)` renders to the same pixels it already renders to.
+Re-solving a correct colour would move a gated number on the one hazard where
+being wrong ends the run, in exchange for nothing. The hue is not free either:
+`Obstacle.gd`'s TELEGRAPH block picks magenta precisely because every other hue
+in the game is taken, and names the five it would collide with.
+
+**`DarkPaletteAudit` diff against `origin/main`: exactly three lines, all
+CHARGER, and the margin goes UP.**
+
+| | baseline | this batch |
+|---|---|---|
+| CHARGER shallow | `rgb(0.9882, 0.7098, 0.8667)` — **3.20:1** | `rgb(0.9882, 0.7098, 0.8706)` — **3.21:1** |
+| CHARGER deep | `rgb(0.9804, 0.7059, 0.8627)` — **3.21:1** | `rgb(0.9809, 0.7059, 0.8627)` — **3.21:1** |
+
+Gated margin above the 3.0 floor: **+0.20 → +0.21. Nothing was spent.**
+DODGE 3.39/3.37, JUMP 3.04/3.02, ENEMY 1.20/1.20, AIR_ENEMY 1.32/1.32,
+STOMPER 3.41/3.41 are **byte-identical**, as they must be. 0 missed samples.
+
+**Verified by histogram rather than assumed**, because this batch has produced
+both a window artefact (JUMP, 3.28 → 3.02) and a real colour change (DODGE)
+that look alike from the ratio alone. Sample window instrumented on both trees,
+then reverted:
+
+| tree | window contents | dominant value |
+|---|---|---|
+| baseline (prism), shallow / deep | **196 px, 1 distinct colour** | `(252,181,221)` / `(250,180,220)` |
+| this batch (boar), shallow / deep | **196 px, 2 distinct** | `(252,181,222)` ×195 / `(250,180,220)` ×171 |
+
+**Both windows are 196/196 object pixels — zero ground, zero sky, on both
+sides**, so neither measurement is contaminated and the difference between
+them is real. It is **one 8-bit step** (blue 221→222 shallow; red 250→251 on
+25 px of 196 deep), on a curved unlit surface sitting at slightly different
+depth under the exponential fog — the STOMPER install's signature exactly, not
+a colour change. The authored albedo is independently provable: the
+placeholder row and the imported-mesh row of `AssetContractAudit` both print
+`unshaded rgb(1.00, 0.72, 0.88)`.
+
+#### `ChargerShapeProbe` rewritten — before the install, not after
+
+The probe read `mesh_instance.mesh` and asserted that a `PrismMesh` narrows
+toward +Z. That is a contract about a primitive, not about the CHARGER: it was
+written to fail loudly the moment a `.glb` landed here, deferring the rework.
+Rewritten first, so the expected failure never had to be chased.
+
+It now asserts the same contract off **whatever the slot draws**, in two
+phases (placeholder / as-shipped), reading vertices through
+`ModelSlot.get_transform_to_slot()`:
+
+- the front of the body is narrower than the rear — **asserted against the
+  tail rather than a constant**, because a model installed back-to-front is
+  the failure this guards and nothing else in the project would notice it
+  (source boar reads 0.72; reversed it would read ~1.0);
+- it genuinely tapers (ceiling 85% of its widest);
+- it sits on the ground and stands above the jump peak;
+- **the trail bars are behind it AND not swallowed by it** — new, and new
+  because the placeholder was a metre shallower than any imported body.
+
+⚠️ **A `ModelSlot` property this found by failing, worth knowing before
+copying `AlarmRampAudit`'s trick:** clearing `model_scene` on a live slot does
+**not** restore the placeholder. `_install_model()` sets `mesh = null` when it
+installs and the null-model branch never puts it back, so the slot ends up
+drawing **no geometry at all**. `AlarmRampAudit` is unaffected because material
+overrides survive that path; vertices do not. PHASE A therefore clears
+`model_scene` **before** the node enters the tree, which is also the more
+honest test — it exercises the path that would really ship.
+
+Verified on the pre-install tree first, reproducing the old probe's numbers
+exactly (X 1.500, Y 0.000–1.800, Z −1.200–1.200), then green on both phases
+after.
+
+#### Validation
+
+`ChargerShapeProbe` (both phases), `AssetContractAudit` (**12/12 visuals, 0/10
+colliders moved**, `ChargerShape` still `Box(1.2, 2.0, 1.0)` @ +1.000),
+`DarkPaletteAudit` (0 missed samples, 4 gated hazards above 3.0),
+`AlarmRampAudit` (12/12), `ProbeTimeoutAudit` (**33 probes**, back to baseline
+after the throwaway census was removed), `DeathModelAudit`,
+`PursuerFramingAudit` (37.1% max, CAPTURE exempt by design) — **all exit 0**.
+
+Diffs against `origin/main` are exactly as small as they should be:
+`AssetContractAudit` **one line** (the ChargerMesh row, `[-- ]` → `[glb]`),
+`DarkPaletteAudit` **three lines** (above); `AlarmRampAudit`,
+`ProbeTimeoutAudit`, `DeathModelAudit` and `PursuerFramingAudit`
+**byte-identical on both streams**.
+
+**Seeded gameplay probes byte-identical on both streams** (seed 20260806,
+separate worktree): `ChargerAudit`, `ShrinkAudit`, `ComboAudit`. That is the
+bar for a purely visual batch, and it says more than a matching verdict would.
+
+Import and Web export **exit 0**. `index.wasm` **35,376,909**, identical to
+every previous batch — that is the identity proof, not the `.pck` (4,810,896
+here; its size is not stable across exports of the same commit). Payload trap
+holds: **0** `assets_source` resources imported into the pack against **407 MB**
+of raw sources on disk. The shipped `.glb` declares `KHR_materials_unlit`
+(used *and* required), carries **0 images, 0 textures, 0 samplers** and a
+`POSITION`-only attribute set.
+
+**EIGHT slots now carry an asset**: Keepy, `pursuer/Silhouette`, and all six
+hazard meshes.
+
+#### Still open
+
+- **Device judgement, and it is worth more here than on the other five.** No
+  probe says a boar reads as a charging boar at speed on a phone, and this is
+  the only hazard where being unreadable ends the run rather than costing half
+  a strike.
+- **The 1.787 m nose overhang** ahead of the lethal front face — argued as
+  forgiving above, but only an eye at real speed can say whether "it is on me"
+  and "it has hit me" separate cleanly.
+- **The trail bars becoming visible for the first time** is a change to a
+  telegraph that has never actually been seen. It should be better; it has not
+  been confirmed on device, and it was not asked for.
+- **Head-on the boar is a mass, not a point** — the shape cue that
+  `Obstacle.gd` credits with surviving every palette is carried by the crest
+  and legs breaking the outline, not by a visible taper. Whether that still
+  reads as "aimed at me" is exactly what a device pass has to answer.
