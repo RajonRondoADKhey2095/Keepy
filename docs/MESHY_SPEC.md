@@ -467,6 +467,29 @@ excluded from the 8,400 line). `AirEnemyMesh` at 4,096 is now **87% of
 the entire hazard family**, and the single largest remaining primitive
 left at Godot's default tessellation anywhere in this scene.
 
+**AIR_ENEMY lands 2026-08-12 at −3,098, and it is the one case where the
+floor above OVERSHOOTS the result — because the forecast assumed a LOD
+this subject cannot use.** `keepy_air_enemy_dragonfly.glb` draws **998**
+triangles against the placeholder torus's 4,096. The −3,946 predicted
+just above is what a ~150-triangle LOD would have returned, and 150 is
+exactly what this asset had to refuse: a dragonfly's silhouette is a
+pierced wing lattice, decimation closes fine holes before it touches
+bulk, and at 150 the wing membrane does not merely close but
+disintegrates (see 11, 2026-08-12). The gap between −3,946 and −3,098 is
+therefore **848 triangles bought deliberately**, and it buys the only
+property that distinguishes this hazard's silhouette from a bar.
+
+It remains the largest single-instance saving in the project — larger
+than ENEMY's −3,308 relative to nothing else changing — and 998 still
+sits **under 7.1's 1,200-per-hazard cap**, so the openness was not paid
+for out of the budget at all.
+
+One-of-each family total, hazards only: **4,700 → 1,602**. The 8,400
+line now has 6,798 of headroom against it, and no hazard variant is left
+at Godot's default tessellation. CHARGER is the last variant whose
+placeholder is a bare primitive (a 8-triangle prism), and it is the only
+one where an import will genuinely add.
+
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
 or decimate in Blender before importing — Godot does not decimate on
@@ -2611,3 +2634,185 @@ anything on its own.
   retuning a shared gameplay telegraph. Whether the escalation reads at speed
   on a phone — now carried by albedo alone — is Mathieu's call, not a
   measurement.
+
+### 2026-08-12, second of the day — AIR_ENEMY (dragonfly), INSTALLED
+
+Fifth Meshy hazard, and the first whose LOD was chosen by a criterion other
+than triangle count. `assets/models/keepy_air_enemy_dragonfly.glb` on
+`Obstacle/AirEnemyMesh` — **998 triangles, 17.7 KB, flat, unlit,
+untextured**.
+
+#### Identification: the one file whose name was never the question
+
+`Meshy_AI_Emerald_Geometric_Dra_*` measures **1.901 x 0.960 x 0.170**. Eleven
+times wider than it is thick, it is a flat spread-winged insect regardless of
+what it is called, and AIR_ENEMY is the only flying hazard in the game — so
+unlike the log/trunk pair and the "beaver" that was a rat, there was no
+ambiguity to resolve. The three-axis render was run anyway, and confirms:
+four wings spread along X, body along Y head-up, and a pierced wing lattice.
+
+Its **thin axis is Z**, which is the axis the camera looks down, so the mesh
+presents its full 1.901 x 0.960 spread to the player with no rotation at all.
+`model_rotation_degrees` stays at zero because the asset arrives face-on —
+not because the previous four answers were reused.
+
+#### The premise this batch was given is false, and that makes the result stronger
+
+The brief warned that the placeholder is a *pierced torus* and that the
+replacement must stay open or the player stops understanding what to avoid.
+The constraint is right. The baseline it names is not.
+
+**Measured, by rasterising the torus's own projection along the camera axis:
+0.00% enclosed open area, zero enclosed regions.** A Godot `TorusMesh` has its
+hole on the Y axis; the camera sees it edge-on, and every ray through the
+silhouette hits tube somewhere. The placeholder is pierced in **topology** and
+solid in **silhouette**.
+
+So the dragonfly does not preserve an openness the hazard had. It **introduces
+one the hazard never had**, and the risk of losing it in decimation was real
+in a way the brief did not anticipate — because there was nothing to lose,
+only something to fail to gain.
+
+#### LOD 1000, not the 150 the other four use
+
+Openness was scored directly: rasterise each candidate's player-facing
+silhouette, flood-fill the background from the border, and measure what is
+left — background **enclosed by** the mesh. Triangle count says nothing about
+this.
+
+| LOD | open area | solid pieces | largest piece |
+|---|---|---|---|
+| 150 | **0.85%** | **14** | 78.3% |
+| 250 | 4.64% | 20 | 82.6% |
+| 300 | 3.17% | 25 | 87.5% |
+| 400 | 5.64% | 15 | 96.2% |
+| 800 | 20.64% | 23 | 98.1% |
+| **1000** | **27.61%** | **16** | **99.6%** |
+| 1200 | 28.53% | 9 | 99.8% |
+| source (4,000) | 30.57% | 3 | 99.9% |
+
+**At 150 the wing membrane does not close, it disintegrates** — which is why
+the openness number goes *down* rather than up: the gaps stop being enclosed
+because the wing around them is gone. The silhouette breaks into 14 pieces
+and reads as floating debris. Every other hazard in this project ships at
+~150; this is the first subject for which that answer is measurably wrong,
+and the fragmentation column is what distinguishes "closed up" from "fell
+apart" — two opposite failures a hole-fraction alone cannot tell apart.
+
+1000 is the knee: 1200 buys 0.9 further points for 200 triangles. It is also
+**under 7.1's 1,200-per-hazard cap**, so the lattice costs nothing that had to
+be bought from the budget.
+
+**Judged at real on-screen size, not at render resolution.** 75° vertical FOV
+over a 1080x1920 viewport gives 1251/d px per metre, so the 1.9 m span is
+~120 px at 20 m and ~340 px at closest approach. Re-scored there, LOD 1000
+holds 10.9% openness at 120 px and 27.6% at 246 px, against LOD 150's 3.0%
+and 0.9%.
+
+#### Triangles: the largest single-instance saving in the project
+
+The placeholder is a `TorusMesh` left at Godot's default 64x32 tessellation —
+**4,096 triangles**, the largest primitive anywhere in the scene. The install
+is **−3,098 per live instance**, and hazard family one-of-each falls
+**4,700 → 1,602** (see 7.4, which records why the earlier −3,946 forecast
+overshoots: it assumed a ~150 LOD this subject cannot use).
+
+#### The telegraph: measured before and after, not reasoned by analogy
+
+AIR_ENEMY is the only hazard that was **LIT *and* emissive at energy 1.1**
+(ENEMY's emission energy is 0.3). Going unlit deletes a multiplication *and*
+an additive term, so the shipped albedo is nowhere near what the player sees.
+Measured with a throwaway probe built on `DarkPaletteAudit`'s scene, camera
+and sampling, on `origin/staging` in a separate worktree and again after the
+install:
+
+| | before (torus, LIT + emissive) | after (dragonfly, unlit) |
+|---|---|---|
+| slot | `[-- ]` | `[glb]` |
+| resting, dominant | `rgb(0.2442, 1.0000, 0.3188)` — lum **0.7315** | `rgb(0.2353, 0.9882, 0.3059)` — lum **0.7113** |
+| alarmed, dominant | `rgb(1.0000, 0.2654, 0.1281)` — lum **0.2546** | `rgb(0.9373, 0.0784, 0.1098)` — lum **0.1893** |
+| **telegraph rest↔alarm** | **2.57:1** | **3.18:1** |
+| hue swing | 116.5° | 106.9° |
+
+**The cue is WIDER after the install, not narrower** — the outcome the brief
+treated as the risk. Losing the emission boost darkens the *alarm* far more
+(0.2546 → 0.1893) than it darkens the *rest* (0.7315 → 0.7113), because the
+resting albedo was solved to reproduce the rendered resting colour rather than
+carried over raw. Carried over raw, `(0.12, 0.85, 0.22)` would have rendered
+near luminance 0.50 — a third of the resting brightness gone, and the cue
+narrowed with it.
+
+Two independent cross-checks fell out of this and are worth recording: the
+alarmed dominant lands at luminance **0.1893** against the 0.187 the ENEMY
+batch derived for the unlit alarm, and alarm-vs-ground computes **1.20:1**
+against the "within 1.20:1" that batch measured. Different session, different
+probe, same numbers.
+
+**The ramp direction INVERTS relative to ENEMY, and that is correct.** ENEMY
+had to be *darkened* so its alarm could brighten into red, because a dark
+rodent sat near the alarm's own luminance. AIR_ENEMY rests at 0.71 against an
+alarm at 0.19, so its ramp is a large **darkening** plus a ~107° hue swing —
+both channels agreeing, in the one direction available.
+
+#### A sampling artefact this asset creates, and how it was told apart
+
+The mean over `DarkPaletteAudit`'s 14 px sample box is **not** this object's
+colour, and it is the first hazard for which that is true. The torus is solid
+in projection, so its box was 100% object pixels; a preserved wing lattice
+lets the background through and drags the mean toward it — **61% of the box is
+object** after the install. Same family as the JUMP log's 3.28 → 3.02 window
+contamination, opposite mechanism.
+
+Told apart by histogram rather than argued: the dominant value is reported
+alongside the mean above, and it is the dominant that shows the resting colour
+barely moved (0.7315 → 0.7113, 2.8%) while the mean appears to fall much
+further. `DarkPaletteAudit`'s own AIR_ENEMY line moves **1.08/1.09 → 1.32/1.32**
+for the same reason — it is not gated, and it moves *up*.
+
+#### Scale and fit
+
+`model_scale = 0.63173` pins X to the collider's **1.200** width. Section 4
+again, and AIR_ENEMY earns it twice: it is escaped by switching lanes, and
+once landed it is jumpable, so a visual wider than its hitbox would make a
+legal dodge read as illegal.
+
+It reproduces the placeholder's lateral presence **to the millimetre**
+(1.20000 against 1.2), **improves** the vertical fill from the torus's 0.350
+to 0.606, and **removes** the torus's 0.2 of Z overhang past the 1.0 hitbox —
+the install is closer to its own hitbox on all three axes than the primitive
+it replaces.
+
+**No `model_offset`.** The mesh arrives centred on its own origin within
+**1.7 mm scaled**, measured rather than assumed. A collider centred on the
+slot wants a visual centred on the slot, and writing 1.7 mm of measurement
+noise into the scene would claim more precision than exists. This is the
+first hazard needing no offset at all — the other four are floor-anchored,
+this one is centre-anchored because its hitbox is.
+
+#### Probes
+
+`AlarmRampAudit` **PHASE D now reads `[glb]` for AIR_ENEMY** and gates the
+ramp on the shipped asset: it reaches `rgb(0.95, 0.08, 0.12)` and resets to
+`rgb(0.24, 1.00, 0.31)`, the imported material's own colour. 12/12 OK.
+`AssetContractAudit` 12/12 visuals, **0/10 colliders moved**, `AirEnemyShape`
+still `Box(1.20000, 1.20000, 1.00000)` at `+2.358`. `DarkPaletteAudit` exit 0,
+**0 missed samples**, four gated hazards still above 3.0:1.
+
+**Six slots now carry an asset** — Keepy, `pursuer/Silhouette`, `JumpMesh`,
+`DodgeMesh`, `StomperMesh`, `AirEnemyMesh`. The placeholder material moved
+with the asset (`shading_mode = 0`, same new albedo) so the fallback cannot
+diverge from the shipped asset on the axis this batch changes.
+
+#### Still open
+
+- **CHARGER (boar) is the last uninstalled subject**, and the only variant
+  where an import will genuinely add triangles — its placeholder is an
+  8-triangle prism.
+- **The resting green is now carried by albedo alone.** It reproduces the
+  rendered colour to within 2.8% of luminance, but nothing measured here says
+  a flat green reads the same as a glowing one in motion on a phone. Device
+  call.
+- **0.594 of hitbox above and below the visible dragonfly.** The jump arc is
+  fixed and tuned to clear the hitbox top, so no legal jump is at risk, but
+  whether the airborne hazard's lethal volume reads as larger than it looks
+  is a device call.

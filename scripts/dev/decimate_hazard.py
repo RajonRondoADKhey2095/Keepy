@@ -115,11 +115,25 @@ OUT_DIR = "/tmp/lod"
 ## rump with the tail sweeping away. Segments spawn at -Z and travel toward the
 ## camera at +Z, so the rat already faces the player and
 ## model_rotation_degrees stays at zero.
+##
+## THE DRAGONFLY IS THE ONLY SUBJECT IN THIS BATCH WHOSE NAME WAS ALREADY
+## RIGHT, and it is also the only one where the name was never the question.
+## Emerald_Geometric_Dra measures 1.901 x 0.960 x 0.170 -- 11x wider than it
+## is thick -- so it is a flat spread-winged insect however it is labelled,
+## and AIR_ENEMY is the only flying hazard. Rendered from three axes to
+## confirm rather than to identify: four wings spread along X, body along Y
+## head-up, and a pierced wing lattice.
+##
+## Its thin axis is Z, which is the axis the camera looks down, so the mesh
+## already presents its full 1.901 x 0.960 spread to the player with no
+## rotation at all. model_rotation_degrees stays at zero because the asset
+## arrives face-on, not because the previous four answers were reused.
 MODELS = {
     "jump_log": "Meshy_AI_Low_Poly_Log_0811080727_texture.glb",
     "stomper_toad": "Meshy_AI_Geometric_Toad_0811080929_texture.glb",
     "dodge_trunk": "Meshy_AI_Crimson_Hollow_Trunk_0811081732_texture.glb",
     "enemy_rat": "Meshy_AI_Low_Poly_Beaver_0811082534_texture.glb",
+    "air_enemy_dragonfly": "Meshy_AI_Emerald_Geometric_Dra_0811081710_texture.glb",
 }
 
 ## Lifted verbatim from Obstacle.tscn's StandardMaterial3D_Jump, NOT sampled
@@ -170,11 +184,38 @@ MODELS = {
 ## two-point fog model calibrated on the STOMPER (the only already-unlit hazard,
 ## hence the only one needing no lighting model) and then MEASURED -- see
 ## MESHY_SPEC section 11.
+## AIR_ENEMY IS THE THIRD NON-CARRY-OVER, AND THE ONLY ONE WHERE THE SHIPPED
+## ALBEDO IS NOT EVEN CLOSE TO WHAT THE PLAYER SEES. DODGE lost a
+## multiplication when it went unlit; ENEMY lost an emission channel worth
+## energy 0.3. AIR_ENEMY is the only hazard that is LIT *and* emissive at
+## energy 1.1, so it loses both terms at once, and the additive one dominates.
+##
+## Measured, not modelled (AirEnemyTelegraphProbe, a throwaway probe built on
+## DarkPaletteAudit's scene and sampling): the resting torus renders
+## rgb(0.2414, 1.0000, 0.3139) on screen -- GREEN CLIPPED AT 1.0 -- from an
+## authored albedo of (0.12, 0.85, 0.22). Its rendered luminance is 0.731.
+## Carried across unchanged, that albedo would render unlit at ~0.50: the
+## install would visibly DARKEN a hazard nobody asked to darken, and would
+## narrow the telegraph in the process.
+##
+## So the value is solved against the RENDERED resting colour rather than the
+## authored one -- the DODGE discipline applied to a two-term problem. Hue is
+## held: green is AIR_ENEMY's type identity in Obstacle.gd's TELEGRAPH table,
+## and only its value moves, to the place the player is already looking at.
+##
+## The direction of the ramp INVERTS relative to ENEMY, and that is correct
+## rather than an oversight. ENEMY had to be darkened so its alarm could
+## BRIGHTEN into red, because a dark rodent sat near the alarm's own
+## luminance. AIR_ENEMY rests at 0.731 against an alarm that renders 0.187
+## unlit, so its ramp is a large DARKENING plus a ~117 degree hue swing --
+## the two channels agree, and the cue is wider after the install than
+## before it (measured: 2.59:1 before, see MESHY_SPEC section 11).
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
     "enemy_rat": (0.182, 0.028, 0.252),  # 0.35x of (0.52, 0.08, 0.72), see above
+    "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
 }
 
 
