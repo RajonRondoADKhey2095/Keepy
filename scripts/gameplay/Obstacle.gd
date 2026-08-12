@@ -1321,20 +1321,28 @@ func _apply_air_enemy_tint(t: float) -> void:
 ## colors toward ENEMY_ALARM_ALBEDO/_EMISSION/_EMISSION_ENERGY. t=0 is the
 ## resting color, t=1 is fully alarmed.
 ##
-## t=0 IS NO LONGER "Obstacle.tscn's default purple", which is what this line
-## used to say. The rat was recoloured to a warm brown-grey on 2026-08-12 and
-## the purple is gone from both the .glb and the placeholder -- and the base
-## is read off the material at _ready() anyway (_enemy_base_albedo), so naming
-## a literal colour here was always describing a value this function does not
-## consult. Whatever the slot ships with is the resting colour.
+## t=0 IS NOT A LITERAL COLOUR NAMED HERE, and this line has now been wrong
+## twice for the same reason -- it said "Obstacle.tscn's default purple", then
+## "a warm brown-grey", and the rat was recoloured again (to a pale pink) on
+## 2026-08-12. The base is read off the MATERIAL at _ready()
+## (_enemy_base_albedo), so any colour named here describes a value this
+## function does not consult. Whatever the slot ships with is the resting
+## colour; do not write a third one down.
 ##
-## ⚠️ Two things about this ramp that are NOT visible from these three lines,
-## both measured and both in MESHY_SPEC section 8.4: the EMISSION half is
-## inert on an imported (unlit) material, so the cue is carried by albedo
-## alone; and the resting colour is never on screen at a size where its hue
-## can be read -- the ramp has left the resting family 4.4 s before contact,
-## which is 53 m out at START_SPEED and 114 m at MAX_SPEED, an 11 px and a
-## 5 px silhouette respectively.
+## ⚠️ Three things about this ramp that are NOT visible from these lines, all
+## measured, all in MESHY_SPEC sections 8.4-8.5:
+##   * the EMISSION half is inert on an imported (unlit) material, so the cue
+##     is carried by ALBEDO alone;
+##   * the resting colour is never on screen at a size where its hue can be
+##     read -- the ramp has left the resting family 4.4 s before contact,
+##     which is 53 m out at START_SPEED and 114 m at MAX_SPEED, an 11 px and a
+##     5 px silhouette respectively;
+##   * THE RAMP'S DIRECTION IS NOT FIXED, and it inverted on 2026-08-12. It
+##     used to BRIGHTEN (dark rat, L 0.011, toward an alarm at L 0.189); the
+##     pale-pink rat rests at L 0.788, so it now DARKENS -- the same shape
+##     AIR_ENEMY has always had. Nothing here encodes a direction, and nothing
+##     should: both are just a lerp toward ENEMY_ALARM_ALBEDO. Measured width
+##     3.50:1 (was 3.92:1).
 func _apply_enemy_alarm(t: float) -> void:
 	if not _enemy_material:
 		return
