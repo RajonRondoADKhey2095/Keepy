@@ -608,7 +608,7 @@ down, so gameplay objects are read against the track, not the sky).
 | DODGE | lit | `0.30, 0.025, 0.025` | **3.19:1** (was 3.28:1) |
 | JUMP | **unshaded** | `1.00, 0.78, 0.28` | **3.28:1** (was 3.23:1) |
 | STOMPER | **unshaded** | `0.62, 0.86, 1.00` | **3.41:1** (was 3.36:1) |
-| CHARGER | **unshaded** | `1.00, 0.72, 0.88` | **3.20:1** (was 3.15:1) |
+| CHARGER | **unshaded** | `0.96, 0.76, 0.80` | **3.27:1** (was 3.21:1, then 3.15:1) |
 | ENEMY | lit + emissive | `0.52, 0.08, 0.72` | 1.50:1 — alarm tint, see below |
 | AIR_ENEMY | lit + emissive | `0.12, 0.85, 0.22` | 1.08:1 — alarm tint, see below |
 | Noisette | lit | `0.95, 0.78, 0.15` | 2.37:1 (reported, never gated) |
@@ -654,6 +654,13 @@ number rather than a product of the light hitting it.
 > **telegraph**, not the art: a gameplay-legibility decision, left for
 > Mathieu. The mislabelling is pre-existing and is called out here rather
 > than silently corrected, because the numbers under it are real.
+
+> **The CHARGER albedo moved again on 2026-08-12**, from the hot pink
+> `1.00, 0.72, 0.88` to a dusty pink-brown `0.96, 0.76, 0.80` — a purely
+> artistic change, not a contrast fix. It did not spend the margin: the gated
+> ratio went **3.21 → 3.27** (shallow) and **3.21 → 3.28** (deep). Why the
+> hue could not travel further than it did, and why the "obvious" brown-black
+> boar is ruled out, is §8.4 below.
 
 > **The CHARGER is the case where hue and luminance genuinely disagree.**
 > Its shipped hot magenta (`1.00, 0.15, 0.62`) measured **1.45:1** — not a
@@ -1031,6 +1038,96 @@ would have replaced.
 > colour, but that made the override the only thing holding the palette
 > rather than a second line of defence. Both now agree, verified by
 > reading the material back after import.
+
+### 8.4 Three measured facts about this palette that are expensive to re-derive
+
+Measured 2026-08-12, during the CHARGER recolour, with an instrumented
+`DarkPaletteAudit` (histogram of the real sample window, reverted after the
+run). They are recorded here because each one took a full probe cycle to
+establish and each one closes off a direction that looks reasonable on paper.
+
+#### (1) The ground cuts the palette into TWO BANDS, and nothing lives between
+
+The ground renders `rgb(0.2033, 0.4824, 0.0941)` shallow and
+`rgb(0.2000, 0.4784, 0.0936)` deep — **relative luminance 0.150 / 0.147**.
+Against that, a 3.0:1 ratio is reachable only from outside a wide dead zone:
+
+| | shallow | deep |
+|---|---|---|
+| bright enough | **L ≥ 0.549** | L ≥ 0.541 |
+| dark enough | **L ≤ 0.0165** | L ≤ 0.0156 |
+
+**No mid-tone clears the floor at any hue whatsoever.** This restates §8's
+arithmetic with the current measured ground, and the practical consequence is
+the part worth keeping: on the DARK side the ceiling is far lower than it
+looks in HSV, because V and luminance are not the same axis. Measured by
+solving for the V at which each hue crosses L = 0.0165:
+
+| hue / saturation | V ceiling |
+|---|---|
+| neutral grey (S = 0) | **0.136** |
+| the rat's warm brown (H 35°, S 0.52) | **0.166** |
+| DODGE's fully saturated red (H 8°, S 1.0) | **0.289** |
+
+So "V ≈ 0.17" is the right rule of thumb *for the natural-fur register* and
+badly wrong as a general one — a saturated hue buys headroom because its two
+weak channels drag its luminance down, and a desaturated one has almost none.
+Sanity check on shipped assets: DODGE sits at V 0.204 / L 0.0088, the rat at
+V 0.129 / L 0.0110, both comfortably inside.
+
+#### (2) WCAG scores ZERO separation inside a band — only hue separates there
+
+The floor is a statement about object-vs-GROUND. It says nothing about
+object-vs-object, and inside a band the ratio collapses to ~1:1 by
+construction. Measured, rendered, shallow / deep:
+
+| object | band | rendered hue | L |
+|---|---|---|---|
+| DODGE | dark | 8.1° / 5.8° | 0.0088 / 0.0084 |
+| ENEMY rat, resting | dark | 35.3° / 33.8° | 0.0110 / 0.0104 |
+| JUMP | bright | 43.8° / 43.6° | 0.5563 / 0.5446 |
+| CHARGER *(after the recolour)* | bright | 348.2° / 348.0° | 0.6036 / 0.5952 |
+| STOMPER | bright | 202.1° / 202.3° | 0.6314 / 0.6223 |
+
+Intra-band ratios measured: CHARGER↔JUMP **1.08:1**, CHARGER↔STOMPER
+**1.04:1**, DODGE↔rat **1.04:1**. Three pairs a player tells apart instantly,
+scored as identical. **Hue is the only channel doing that work, and no probe
+in this repo measures it** — which is why the CHARGER recolour was gated on a
+hue delta by hand rather than on any existing assertion.
+
+⚠️ **The direction this rules out, and it was measured before being
+discarded** (recon pass, not reproduced by the recolour batch itself): a
+CHARGER moved into the *dark* band — a brown-black boar, which is what a real
+boar looks like — measures **1.03–1.09:1 against the resting rat** and
+**1.01–1.13:1 against DODGE**. It would clear the 3.0:1 ground floor and be
+indistinguishable from the two other dark hazards, on the one hazard where
+being misread ends the run. The fatal hazard has to stay in the **bright**
+band, and that is a constraint on its art, not a preference.
+
+#### (3) ENEMY's RESTING albedo is never seen at a legible size
+
+Two correct recolours of the rat have now been shipped and neither changed
+what a player sees, for a structural reason rather than a colour one. From
+`Obstacle.gd`'s own constants — `ENEMY_REACTION_WINDOW_S` =
+`LANE_SWITCH_TIME_S + PERCEPTION_REACTION_S` = 0.35 s,
+`ENEMY_ALARM_RAMP_WINDOW_S` = 4.5 s — the alarm ramp has already left the
+brown family at **alarm_t = 0.10**, which happens at **4.40 s before
+contact**:
+
+| speed | distance at alarm_t = 0.10 | rat on screen |
+|---|---|---|
+| `START_SPEED` 12 | **52.8 m** | **11 px** tall |
+| `MAX_SPEED` 26 | **114.4 m** | **5 px** tall |
+
+(1080x1920 viewport, Camera3D at Godot's default 75° vertical FOV — no `fov`
+key exists in `Game.tscn` — so 1251/d px per metre; the rat's drawn height is
+0.472 m, per `AssetContractAudit`.)
+
+**An 11-pixel silhouette has no colour a player can name**, and by the time it
+is big enough to have one it is already red. **Do not launch a third resting
+recolour to fix a "red rat"** — the red is the telegraph working, and the
+resting albedo's only real job is identity at distance, which is a
+value/silhouette question rather than a hue one.
 
 ## 9. Godot 4.3 import notes
 
@@ -3248,3 +3345,116 @@ hazard meshes.
   `Obstacle.gd` credits with surviving every palette is carried by the crest
   and legs breaking the outline, not by a visible taper. Whether that still
   reads as "aimed at me" is exactly what a device pass has to answer.
+
+### 2026-08-12, fifth of the day — CHARGER recoloured: hot pink -> dusty pink-brown
+
+Branch `claude/charger-recolor-meshy-docs-3svnzy`, off `main` (`6959f53`).
+**Not an install.** The boar has been on `Obstacle/ChargerMesh` since earlier
+the same day; its geometry, LOD, scale (1.82584), rotation (-90, 0, 0),
+offset and `ChargerShape` collider are **untouched**. Only `baseColorFactor`
+moves, plus the placeholder that shadows it.
+
+`rgb(1.00, 0.72, 0.88)` -> **`rgb(0.96, 0.76, 0.80)`**. Rendered hue moves
+**325.4° -> 348.2°**, rendered relative luminance **0.590 -> 0.604**.
+
+#### The value went UP, so nothing gated was spent
+
+**`DarkPaletteAudit` diff against `origin/main`: EXACTLY THREE LINES, all
+CHARGER, and the margin widens.** stderr **byte-identical**.
+
+| | baseline | this batch |
+|---|---|---|
+| CHARGER shallow | 3.21:1 | **3.27:1** |
+| CHARGER deep | 3.21:1 | **3.28:1** |
+| worst-of-both (the gated number) | 3.21:1 | **3.27:1** |
+
+Margin over the 3.0 floor: **+0.21 -> +0.27**. DODGE 3.39/3.37, JUMP
+3.04/3.02, STOMPER 3.41/3.41, ENEMY 1.20/1.20, AIR_ENEMY 1.32/1.32,
+NOISETTE 2.39/2.37, GLAND 4.54/4.56 — all **byte-identical**. 0 missed samples.
+
+#### VERIFIED BY HISTOGRAM, because on this project the ratio alone cannot tell you why it moved
+
+This chantier has produced both a window artefact (JUMP 3.28 -> 3.02, the
+sample box biting ground) and a real colour change (DODGE), and the two are
+indistinguishable from a ratio. Instrumented probe on BOTH trees, reverted
+after the run:
+
+| tree | window contents | dominant value |
+|---|---|---|
+| baseline shallow | **196/196 object px**, 0 ground, 0 sky | `(252,181,222)` x195 |
+| this batch shallow | **196/196 object px**, 0 ground, 0 sky | `(242,191,201)` x196 |
+| baseline deep | **196/196 object px** | `(250,180,220)` x171 |
+| this batch deep | **196/196 object px** | `(240,190,200)` x196 |
+
+Neither measurement is contaminated, so the difference between them IS the
+object's colour. The signature is unambiguous and not an 8-bit drift: R **-10**,
+G **+10**, B **-21**, in one step. The DODGE proof, not the JUMP artefact.
+
+Independently: `AssetContractAudit` prints `unshaded rgb(0.96, 0.76, 0.80)` on
+the `obstacle/ChargerMesh` `[glb]` row — i.e. the value landed on **the
+material that actually draws**, the imported mesh surface, not merely on a
+placeholder constant nothing reads (the §2.1 binding trap).
+
+#### The real gate here was never the ground — it was the other dark objects
+
+CHARGER sits in the BRIGHT band and the two objects it could be confused with
+sit in the DARK one, so the ground floor is not what constrains this colour.
+Measured, rendered, shallow / deep:
+
+| against | before | after |
+|---|---|---|
+| ENEMY rat, resting | 10.50 / 10.46 | **10.71 / 10.68** |
+| DODGE trunk | 10.88 / 10.82 | **11.11 / 11.05** |
+| JUMP amber — hue delta | 78.4° / 77.8° | **55.5° / 55.6°** |
+
+Both value separations **improve**. The hue gap against JUMP — the only other
+bright object, hence the only one WCAG cannot separate — **narrows by 23° and
+is the real cost of this change**, from 78° to 56°. It is not dressed up: 56°
+is comfortable but it is the number to watch if CHARGER is ever warmed further.
+Against STOMPER the hue gap moves the other way, 123° -> 146°.
+
+Why the hue could not simply keep going, and why the brown-black boar that a
+device eye might ask for is ruled out: **§8.4**, written by this batch.
+
+#### The .glb went back THROUGH the pipeline, and losslessness was proven first
+
+Geometry read out of the shipped file and rewritten by
+`decimate_decor.write_glb`. Proven by rewriting with the **OLD** colour and
+getting a **byte-for-byte match** (md5 `c52559ad…`, 10,952 bytes) against the
+shipped asset — so the only possible difference in the new file is
+`baseColorFactor`. Verified after: **BIN chunk byte-identical** (9,948 bytes,
+269 verts, 560 tri), `KHR_materials_unlit` used AND required, 0 images /
+0 textures / 0 samplers, `POSITION`-only, and the JSON identical apart from
+that one array.
+
+⚠️ **The node name inside a `.glb` comes from the OUTPUT FILENAME**
+(`write_glb` derives it from the basename), so the proof only matches when the
+rewrite is done under the pipeline's own name — `charger_boar_560.glb`, not
+the installed `keepy_charger_boar.glb`. A first attempt differed by exactly
+those 4 bytes and looked like a geometry regression. Worth knowing before the
+next recolour.
+
+The placeholder `StandardMaterial3D_Charger` moves with it, as on every
+previous recolour: leaving the fallback on the old pink would make it diverge
+from the shipped asset **on the very axis this batch changes** — the
+"fixture that differs from the real thing" trap `AlarmRampAudit` exists to close.
+
+#### Validation
+
+`DarkPaletteAudit`, `AssetContractAudit` (12/12 visuals, **0/10 colliders
+moved**, `ChargerShape` still `Box(1.2, 2.0, 1.0)` @ +1.000), `ChargerShapeProbe`
+(both phases; nose 72% of widest, min Y 0.000, 0.521 m above the jump peak,
+bars behind and clear by 0.100 m), `AlarmRampAudit`, `ProbeTimeoutAudit`
+(**33 probes**, exact return to baseline after the throwaway instrumentation
+was reverted), `DeathModelAudit`, `PursuerFramingAudit` — **all exit 0**.
+
+#### Still open
+
+- **Device judgement, and it is the whole point of the batch.** No probe says
+  a dusty pink-brown reads better than a hot pink on a phone at speed, and
+  CHARGER is the only hazard where being misread ends the run.
+- **The 56° hue gap against JUMP.** Measured and comfortable, but it is now
+  the tightest same-band pair in the scene and it halved on this one change.
+- Everything left open by the install itself — the 1.787 m nose overhang, the
+  trail bars becoming visible, the head-on mass — is **unchanged**: this batch
+  moved a colour and nothing else.

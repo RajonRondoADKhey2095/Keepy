@@ -281,13 +281,35 @@ MODELS = {
 ## force here. The hue is also not free to move even if the ratio were: the
 ## TELEGRAPH block in Obstacle.gd picks magenta precisely because every other
 ## hue in the game is taken, and names the five it would collide with.
+##
+## THE COLOUR HAS SINCE MOVED ANYWAY, AND THE PARAGRAPH ABOVE IS STILL TRUE --
+## it is an argument about SHADING, not about art. Nothing had to be re-solved
+## for the unlit switch, because there was no multiplication and no additive
+## term to lose; what changed is a separate, purely artistic decision to take
+## the boar off the hot pink and onto a dusty pink-brown, (0.96, 0.76, 0.80).
+##
+## Being free to move it is not the same as being free to move it far, and the
+## two constraints that bound it are the ones the paragraph above names:
+##   * VALUE. The ground renders at relative luminance 0.150, so clearing the
+##     3.0:1 floor from above needs >= 0.549 (MESHY_SPEC section 8). The new
+##     colour renders at 0.604 against the old 0.590 -- it does not spend the
+##     margin, it widens it slightly, 3.21:1 -> 3.28:1. Anything in the dusty
+##     register that dropped toward mid-value would fail outright, whatever
+##     its hue, and that is what makes this a narrow corridor rather than a
+##     free choice.
+##   * HUE. Rendered hue moves 325.4 deg -> 348.2 deg, i.e. toward red, which
+##     is where DODGE and the rat live -- but both of those are near-black, so
+##     the pair is separated by VALUE and comfortably: 11.1:1 against DODGE and
+##     10.7:1 against the resting rat, both measured, both up from the shipped
+##     10.9 / 10.5. The hue that could actually collide is JUMP's amber (43.6
+##     deg), the only other bright object, and the gap there is 55.5 deg.
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
     "enemy_rat": (0.135, 0.102, 0.076),  # warm dark brown-grey at the purple's luminance, see above
     "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
-    "charger_boar": (1.0, 0.72, 0.88),  # Obstacle.tscn StandardMaterial3D_Charger, verbatim
+    "charger_boar": (0.96, 0.76, 0.80),  # dusty pink-brown, RECOLOURED from the shipped pink, see above
 }
 
 

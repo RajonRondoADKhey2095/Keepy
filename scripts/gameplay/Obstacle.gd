@@ -1319,7 +1319,22 @@ func _apply_air_enemy_tint(t: float) -> void:
 
 ## Lerps the (per-instance, see _ready) EnemyMesh material from its base
 ## colors toward ENEMY_ALARM_ALBEDO/_EMISSION/_EMISSION_ENERGY. t=0 is the
-## resting color (Obstacle.tscn's default purple), t=1 is fully alarmed.
+## resting color, t=1 is fully alarmed.
+##
+## t=0 IS NO LONGER "Obstacle.tscn's default purple", which is what this line
+## used to say. The rat was recoloured to a warm brown-grey on 2026-08-12 and
+## the purple is gone from both the .glb and the placeholder -- and the base
+## is read off the material at _ready() anyway (_enemy_base_albedo), so naming
+## a literal colour here was always describing a value this function does not
+## consult. Whatever the slot ships with is the resting colour.
+##
+## ⚠️ Two things about this ramp that are NOT visible from these three lines,
+## both measured and both in MESHY_SPEC section 8.4: the EMISSION half is
+## inert on an imported (unlit) material, so the cue is carried by albedo
+## alone; and the resting colour is never on screen at a size where its hue
+## can be read -- the ramp has left the resting family 4.4 s before contact,
+## which is 53 m out at START_SPEED and 114 m at MAX_SPEED, an 11 px and a
+## 5 px silhouette respectively.
 func _apply_enemy_alarm(t: float) -> void:
 	if not _enemy_material:
 		return
