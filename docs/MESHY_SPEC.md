@@ -1084,16 +1084,22 @@ construction. Measured, rendered, shallow / deep:
 | object | band | rendered hue | L |
 |---|---|---|---|
 | DODGE | dark | 8.1° / 5.8° | 0.0088 / 0.0084 |
-| ENEMY rat, resting | dark | 35.3° / 33.8° | 0.0110 / 0.0104 |
+| ~~ENEMY rat, resting~~ *(moved — see 8.5)* | ~~dark~~ | ~~35.3° / 33.8°~~ | ~~0.0110 / 0.0104~~ |
 | JUMP | bright | 43.8° / 43.6° | 0.5563 / 0.5446 |
 | CHARGER *(after the recolour)* | bright | 348.2° / 348.0° | 0.6036 / 0.5952 |
 | STOMPER | bright | 202.1° / 202.3° | 0.6314 / 0.6223 |
+| **ENEMY rat, resting** *(pale-pink recolour, 12 Aug)* | **bright** | **348.0° / 345.0°** | **0.7875 / 0.7744** |
 
 Intra-band ratios measured: CHARGER↔JUMP **1.08:1**, CHARGER↔STOMPER
 **1.04:1**, DODGE↔rat **1.04:1**. Three pairs a player tells apart instantly,
 scored as identical. **Hue is the only channel doing that work, and no probe
 in this repo measures it** — which is why the CHARGER recolour was gated on a
 hue delta by hand rather than on any existing assertion.
+
+⚠️ **The DODGE↔rat row above is HISTORICAL as of 12 August 2026** — the rat
+left the dark band. **The dark band now holds DODGE alone**, and the bright
+band holds four. §8.5 has the new numbers; this table is kept because its
+*arithmetic* is what predicted them.
 
 ⚠️ **The direction this rules out, and it was measured before being
 discarded** (recon pass, not reproduced by the recolour batch itself): a
@@ -1128,6 +1134,90 @@ is big enough to have one it is already red. **Do not launch a third resting
 recolour to fix a "red rat"** — the red is the telegraph working, and the
 resting albedo's only real job is identity at distance, which is a
 value/silhouette question rather than a hue one.
+
+⚠️ **A THIRD resting recolour shipped anyway on 12 August 2026, and this
+paragraph was not overruled — it was honoured.** It is not a "red rat" fix:
+the arithmetic above still holds unchanged, and the batch that shipped it says
+so in its own commit message. It is an identity-at-rest change, i.e. the one
+job §8.4(3) leaves the resting albedo. See §8.5.
+
+### 8.5 The rat crosses the band line (12 August 2026) — one collision traded for another
+
+The ENEMY rat goes from a dark warm brown to a **pale desaturated pink**
+(sheet candidate 03, sRGB `(0.9608, 0.8980, 0.9137)`). It is the first object
+in the project to change BAND, so §8.4's whole table re-sorts around it.
+
+Measured with a throwaway probe built on `DarkPaletteAudit`'s own scene,
+camera and pose logic, but with a **5px half-box and a histogram DOMINANT**
+instead of a 14px mean — this chantier has produced both a window-contamination
+artefact (JUMP 3.28 → 3.02) and a real colour change (DODGE), and a mean cannot
+tell them apart. The rat's window is **100/100 px of ONE distinct colour at
+both ends of the breath, before and after**, so neither reading is contaminated
+and the difference between them IS the object.
+
+**The probe reproduces three already-documented numbers before any new one is
+trusted**: resting-vs-ground 3.27:1, DODGE↔rat 1.04:1 at 27.2°, and the
+telegraph at 3.92:1 — all §8.4/§11 values, hit exactly.
+
+Rows are **shallow-end** except `vs ground`, which gives shallow / deep. The
+deep end tracks it throughout (rat↔CHARGER 1.27:1 at 3.2°, telegraph 3.50:1)
+and never changes a conclusion.
+
+| | BEFORE (brown) | AFTER (pale pink) |
+|---|---|---|
+| rendered | `(0.1294, 0.1020, 0.0627)` | `(0.9451, 0.8863, 0.8980)` |
+| L / band | 0.0110 — **dark** | **0.7875 — bright** |
+| hue / saturation | 35.3° / **0.52** | 348.0° / **0.062** |
+| **vs ground** | 3.27 / 3.26 | **4.20 / 4.19** |
+| vs DODGE | **1.04:1**, 27.2° | **14.24:1**, 20.1° |
+| vs CHARGER | 10.79:1, 46.1° | **1.27:1, 1.2°** |
+| vs JUMP | 10.73:1, 6.5° | 1.28:1, 53.8° |
+| vs STOMPER | 11.17:1, 166.8° | 1.23:1, 145.9° |
+| telegraph rest↔alarm | **3.92:1**, 37.5° | **3.50:1**, 9.8° |
+
+**(a) The ground floor was never the risk.** 4.20:1 is the widest margin of
+any hazard in the game — the four gated ones sit at 3.02–3.41. A bright object
+clears §8.4(1) easily; that gate had no chance of biting.
+
+**(b) THE REAL COST: the rat and the CHARGER are now the same colour, by every
+measure this project has.** 1.27:1 apart in luminance, **1.2° apart in hue**
+(3.2° deep). §8.4(2) says WCAG scores nothing inside a band and hue is the only
+channel left — here both are gone at once. The reason is structural rather than
+bad luck: **the sheet is a CHARGER sheet**, every candidate on it is the boar's
+own pink walked toward grey along a fixed hue, which is why candidates 01/02/03
+all print the same "hue vs JUMP: 55.8 deg".
+
+This is a **swap, not an improvement**: the rat↔DODGE collision §8.4(2) recorded
+(1.04:1 at 27.2°) is genuinely resolved — 14.24:1 — and a rat↔CHARGER collision
+is created in its place. **The trade is not symmetric, and that is the thing to
+weigh**: DODGE is a static wall that costs half a strike, CHARGER is the only
+hazard that ENDS THE RUN. §8.4(2) already refused to let the fatal hazard share
+a band+hue with the rat once — it is the direction it explicitly ruled out for
+the boar — and this arrives at the same place from the other side.
+
+What still separates the pair, measured rather than hoped: **saturation, 0.062
+vs 0.207** (the rat is essentially off-white, the boar is visibly pink) and
+**silhouette** — a 0.6 m quadruped at ground level against a 2.08 m boar that
+is 3.5 m deep and trails three bars. Neither is a colour argument, and neither
+is measured by any probe.
+
+**(c) The telegraph survives, narrows, and INVERTS.** 3.92 → **3.50:1**. The
+direction argument that fixed both previous rat colours — rest BELOW the alarm's
+0.187 so the ramp BRIGHTENS — is broken by a colour that rests at 0.7875, so the
+ramp is now a large **DARKENING**. That is not a defect: it is exactly the shape
+AIR_ENEMY already has (rest 0.71 against the same alarm). ⚠️ But note the hue
+delta collapses too, **37.5° → 9.8°**: the resting colour now sits in the
+ALARM's own hue family, which is the very thing the brown recolour was made to
+fix for the purple. It is survivable *here* only because value does the work
+this time (a pale pink and a dark red are not confusable the way two dark reds
+were) — the cue is carried by a **single channel** now, where it used to have
+two.
+
+**(d) `DarkPaletteAudit` is BYTE-IDENTICAL across this change, on both streams.**
+Predicted, then confirmed. It is the strongest evidence yet for §8.4(3) and for
+the long-standing note that its `ENEMY (resting)` row is mislabelled: the
+resting colour moved from near-black to near-white, and the audit did not move
+by one digit, because at `CAPTURE_Z` it has only ever measured the alarm.
 
 ## 9. Godot 4.3 import notes
 

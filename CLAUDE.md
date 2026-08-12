@@ -1748,6 +1748,111 @@ l'objet du lot ; les 56° de teinte avec JUMP ; et tout ce que l'install
 laissait ouvert (museau de 1,787 m, barres de trail, masse de face) est
 **inchangé**, ce lot n'a bougé qu'une couleur.
 
+## LE RAT (ENEMY) CHANGE DE BANDE : brun-gris → rose pâle désaturé (12 août 2026)
+
+Branche `claude/recolor-enemy-rat-rwmcft`, partie de `staging` (`4383601`).
+**Ce n'est PAS un install**, et c'est la **TROISIÈME** recolorisation de repos du
+rat : géométrie, LOD 148 tri, échelle 0,46266, offset et collider `EnemyShape`
+**intouchés**. Seul `baseColorFactor` bouge, plus le placeholder qui le double.
+Chiffres complets : `docs/MESHY_SPEC.md` **§8.5** (nouvelle) et §8.4.
+
+`rgb(0,135, 0,102, 0,076)` → **`rgb(0,9608, 0,8980, 0,9137)`** — candidat **03**
+de `docs/color-sheets/charger_colour_sheet.png`, choisi par Mathieu.
+
+⚠️ **Valeur extraite DEUX FOIS, pas lue une fois** : l'annotation imprimée dit
+`raw rgb(245, 229, 233)` et un histogramme de pixels de la vignette 03 rend
+`(245, 229, 233)` à **97,7 % de dominance**. Contrôle croisé de la méthode : la
+vignette 01 rend `(245, 194, 204)`, soit exactement le `(0,96, 0,76, 0,80)` du
+CHARGER livré. sRGB 8-bit / 255 à 4 décimales round-trip vers `(245, 229, 233)`
+exactement.
+
+### ⚠️ LE PREMIER OBJET DU PROJET À CHANGER DE BANDE — et c'est un ÉCHANGE, pas un gain
+
+Luminance rendue **0,0110 → 0,7875**. §8.4(1) coupe la palette en deux bandes
+autour du sol (0,150) ; le rat **quitte la bande SOMBRE** (où il était avec
+DODGE) et **rejoint la bande CLAIRE** (JUMP, STOMPER, CHARGER), qui passe à
+quatre. **La bande sombre ne contient plus que DODGE.**
+
+| | AVANT (brun) | APRÈS (rose pâle) |
+|---|---|---|
+| **vs sol** | 3,27 / 3,26 | **4,20 / 4,19** *(la plus large marge du jeu)* |
+| vs DODGE | **1,04:1**, 27,2° | **14,24:1**, 20,1° ✅ |
+| **vs CHARGER** | 10,79:1, 46,1° | **1,27:1, 1,2°** 🔴 |
+| vs JUMP | 10,73:1, 6,5° | 1,28:1, 53,8° |
+| vs STOMPER | 11,17:1, 166,8° | 1,23:1, 145,9° |
+| télégraphe repos↔alarme | **3,92:1**, 37,5° | **3,50:1**, 9,8° |
+
+**Le plancher sol n'a jamais été le risque** (seuil d'arrêt 3,05 ; mesuré 4,19).
+**Le vrai coût est le CHARGER** : 1,27:1 de luminance et **1,2° de teinte** (3,2°
+en brume profonde) — les DEUX canaux que §8.4(2) identifie comme les seuls
+disponibles disparaissent d'un coup. Cause structurelle, pas malchance : **la
+planche est une planche CHARGER**, tous ses candidats sont le rose du sanglier
+désaturé le long d'une teinte FIXE (d'où le « hue vs JUMP: 55.8 deg » identique
+sur 01/02/03).
+
+⚠️ **L'échange n'est PAS symétrique, et c'est ça qu'il faut peser** : la
+collision rat↔DODGE que §8.4(2) documentait est réellement résolue (1,04 →
+14,24:1), mais DODGE est un mur statique à un demi-strike, **CHARGER est le seul
+hazard qui TERMINE LA RUN**. §8.4(2) avait déjà REFUSÉ cette direction pour le
+sanglier (« le hazard fatal DOIT rester dans la bande claire » et non partager
+bande+teinte avec le rat) — on y arrive ici par l'autre bout.
+Ce qui sépare encore la paire, **mesuré** : la **saturation, 0,062 contre 0,207**
+(le rat est quasi blanc cassé, le sanglier est visiblement rose) et la
+**silhouette** (quadrupède de 0,6 m au ras du sol contre un sanglier de 2,08 m,
+3,5 m de profondeur, trois barres derrière). Aucun des deux n'est un argument de
+couleur, aucun des deux n'est mesuré par une sonde.
+
+**Le télégraphe survit, se resserre, et S'INVERSE** : 3,92 → **3,50:1**.
+L'argument de direction qui avait fixé les DEUX couleurs précédentes (reposer
+SOUS les 0,187 de l'alarme pour que la rampe ÉCLAIRCISSE) est cassé par une
+couleur qui repose à 0,7875 — la rampe **ASSOMBRIT** désormais, exactement la
+forme qu'AIR_ENEMY a toujours eue. ⚠️ Mais l'écart de teinte s'effondre aussi
+(**37,5° → 9,8°**) : le repos est maintenant dans la famille de teinte de
+l'ALARME, ce que la recolorisation brune avait justement corrigé pour le violet.
+Ça tient **ici** parce que la VALEUR fait le travail (un rose pâle et un rouge
+sombre ne se confondent pas comme deux rouges sombres) — mais le cue est porté
+par **un seul canal** là où il en avait deux.
+
+### ⚠️ CE LOT NE CHANGE PAS CE QUE MATHIEU VOIT À DISTANCE DE DÉCISION
+
+À dire avant le test device, pour que le résultat ne surprenne pas : §8.4(3)
+reste **entièrement valable et n'est pas contredit**. La rampe a quitté la
+famille de repos **4,40 s avant contact**, soit un rat de **11 px** à
+`START_SPEED` et **5 px** à `MAX_SPEED`. Ce lot est un changement d'**identité au
+repos**, PAS un correctif de « rat rouge en jeu » — le rouge est le télégraphe
+qui fonctionne. Ce qu'il faut regarder sur device est donc la lisibilité **à
+distance** et la **confusion avec le sanglier**, pas la couleur au moment d'agir.
+
+**`DarkPaletteAudit` est BYTE-IDENTIQUE sur les DEUX flux** — résultat PRÉDIT
+puis confirmé, et la preuve la plus forte à ce jour que sa ligne
+`ENEMY (resting)` mesure l'alarme : la couleur de repos passe de quasi-noir à
+quasi-blanc et la sonde ne bouge pas d'un chiffre. Les 4 hazards gatés sont
+inchangés (DODGE 3,39/3,37, JUMP 3,04/3,02, CHARGER 3,27/3,28, STOMPER
+3,41/3,41), 0 échantillon manqué.
+
+**Losslessness prouvée D'ABORD** (réécriture avec l'ANCIENNE couleur →
+`b647cf00c5bec773227a6aebb5b95cfc`, **byte-identique** à l'asset livré), donc la
+seule différence possible est `baseColorFactor` — chunk BIN byte-identique
+(2 688 o, 76 verts, 148 tri), JSON identique par ailleurs, `KHR_materials_unlit`
+préservé, 0 image / 0 texture / 0 sampler. **Le piège du nom de nœud déjà
+consigné au lot CHARGER s'est reproduit** : la preuve ne matche que si la
+réécriture se fait sous le nom du pipeline (`enemy_rat_150.glb`) — une première
+tentative différait de 4 octets sur le seul nom de nœud.
+
+**Mesure faite avec une sonde jetable** (bâtie sur la scène/caméra/pose de
+`DarkPaletteAudit`, supprimée avant merge — `ProbeTimeoutAudit` revient à **33**),
+avec **boîte 5px et histogramme DOMINANT** au lieu du mean 14px : ce chantier a
+produit un artefact de fenêtre (JUMP 3,28→3,02) ET un vrai changement de couleur
+(DODGE), qu'un mean ne sait pas séparer. Fenêtre du rat : **100/100 px d'UNE
+couleur, avant comme après, aux deux bouts**. La sonde **reproduit d'abord trois
+chiffres déjà documentés** (3,27:1 vs sol, 1,04:1 @ 27,2° vs DODGE, 3,92:1 de
+télégraphe) avant qu'on lui fasse confiance sur les nouveaux.
+
+**Reste ouvert** : la collision rat↔CHARGER — mesurée, argumentée par la
+saturation et la silhouette, mais **seul un œil à vitesse réelle tranche**, et
+c'est la paire dont la méprise coûte le plus cher ; le fait que le repos soit
+dans la famille de teinte de l'alarme ; et le télégraphe à un seul canal.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
@@ -2947,3 +3052,31 @@ export web Godot réel (`<title>Keepy</title>`, canvas, `index.js`,
 nouveau avec `Not able to load user`, vérifier en priorité le **scope du
 token** (personnel vs équipe) avant de retoucher les flags CLI — c'est
 la variable qui a réellement résolu l'incident, pas `-T` vs `--scope`.
+
+## ⚠️ L'API GitHub Actions sert des états d'étape PÉRIMÉS — lire `completed_at`, jamais l'état brut
+
+**Règle permanente, identifiée plusieurs fois avant d'être enfin écrite ici
+(12 août 2026).** Un poll de l'API GitHub Actions peut rendre `status:
+"in_progress"` sur une étape — voire sur un job entier — **plusieurs dizaines
+de minutes après que le job soit réellement terminé**. Ce n'est pas un job
+bloqué, c'est une lecture périmée : le champ `status` d'une réponse d'API
+n'est pas une observation en temps réel.
+
+**Le seul champ digne de foi est `completed_at`** (et son frère `conclusion`).
+S'il est renseigné, l'étape EST finie, quoi que dise `status`. S'il est `null`
+ET que `started_at` est vieux de plusieurs minutes, alors seulement la
+question « est-ce bloqué ? » se pose.
+
+**Pourquoi ça compte ici et pas seulement en théorie** : ce repo a une CI de
+~3 minutes qui déploie en production, et un merge de prod en déclenche deux
+(le merge puis le commit de doc). Conclure « le job est bloqué » sur un
+`status` périmé mène à exactement les deux mauvaises réactions : relancer un
+workflow qui tourne déjà (donc deux déploiements concurrents sur la même
+cible), ou déclarer un lot en échec alors qu'il est vert. C'est la même
+famille d'erreur que la fenêtre de 404 documentée plus haut — **ne jamais
+lire un état de CI ou de déploiement sans regarder son horodatage**.
+
+Corollaire pratique : pour attendre une CI, poller `completed_at`/`conclusion`
+dans une boucle qui sort sur l'un des DEUX terminaux (`success` ET `failure`),
+jamais une boucle qui n'attend que le succès — le silence d'un poll ne
+distingue pas « toujours en cours » de « échoué ».

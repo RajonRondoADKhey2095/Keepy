@@ -236,6 +236,46 @@ MODELS = {
 ## write -- turning the one signal that has to read instantly into a mottled
 ## red. Every contrast number in this project is also computed on a single flat
 ## albedo; per-facet variation would make "the rat's colour" a distribution.
+##
+## THE RAT IS NOW A PALE DESATURATED PINK, AND THAT MOVES IT ACROSS THE GROUND'S
+## DIVIDING LINE -- read MESHY_SPEC sections 8.4 AND 8.5 before touching this
+## value, because every argument written above it was made about a DARK rat and
+## three of them expire here.
+##
+## The value is candidate "03" off docs/color-sheets/charger_colour_sheet.png,
+## chosen by Mathieu. It is a CHARGER sheet: every candidate on it is the boar's
+## own pink walked toward grey along a FIXED hue, which is why 01/02/03 all print
+## the same "hue vs JUMP: 55.8 deg". Read two independent ways before use -- the
+## printed annotation says raw rgb(245, 229, 233) and a pixel histogram of the 03
+## swatch returns (245, 229, 233) at 97.7% dominance. sRGB 8-bit / 255 to 4 dp is
+## (0.9608, 0.8980, 0.9137), which round-trips back to (245, 229, 233) exactly.
+##
+##   * BAND. Rendered luminance goes 0.0110 -> ~0.79. Section 8.4(1) says the
+##     ground at 0.150 splits the palette in two and NOTHING clears 3.0:1 from
+##     between; the rat leaves the DARK band (with DODGE) and joins the BRIGHT
+##     one (JUMP, STOMPER, CHARGER), which becomes FOUR-strong. It clears the
+##     ground floor with the widest margin of any hazard -- that gate was never
+##     the risk here.
+##   * HUE, AND THIS IS THE REAL COST. Section 8.4(2): inside a band WCAG scores
+##     ~1:1 and hue is the only channel left. This colour is the CHARGER's own
+##     hue, so the pair the player must never confuse -- the only FATAL hazard
+##     and a half-strike rodent -- ends up hue-adjacent in the same band. It is
+##     measured, reported in full rather than smoothed over, and it is why the
+##     lot below carries a warning instead of a clean bill.
+##   * WHAT IT DOES *NOT* CHANGE, and this is the third time it needs saying:
+##     section 8.4(3) shows the alarm ramp has left the resting family 4.40 s
+##     before contact, i.e. with the rat 5-11 px tall. This is an identity-at-
+##     rest edit, NOT a fix for "the rat looks red" -- the red is the telegraph
+##     working, and no resting colour can change what is seen at the decision
+##     distance.
+##
+## LUMINANCE IS NO LONGER HELD, AND THE TELEGRAPH INVERTS BECAUSE OF IT. The
+## direction argument that fixed the purple and survived the brown -- rest BELOW
+## the alarm's 0.187 so the ramp BRIGHTENS -- is broken by this value, which
+## rests far ABOVE it. The ramp is now a large DARKENING plus a hue swing, which
+## is exactly the shape AIR_ENEMY already has (it rests at 0.71 against the same
+## alarm). So the cue is not lost, it changes sign -- measured 3.92:1 -> 3.50:1,
+## section 8.5. That inversion is a consequence of the colour, not a decision.
 ## AIR_ENEMY IS THE THIRD NON-CARRY-OVER, AND THE ONLY ONE WHERE THE SHIPPED
 ## ALBEDO IS NOT EVEN CLOSE TO WHAT THE PLAYER SEES. DODGE lost a
 ## multiplication when it went unlit; ENEMY lost an emission channel worth
@@ -307,7 +347,7 @@ COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
-    "enemy_rat": (0.135, 0.102, 0.076),  # warm dark brown-grey at the purple's luminance, see above
+    "enemy_rat": (0.9608, 0.8980, 0.9137),  # pale desaturated pink, sheet candidate 03, see above
     "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
     "charger_boar": (0.96, 0.76, 0.80),  # dusty pink-brown, RECOLOURED from the shipped pink, see above
 }
