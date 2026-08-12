@@ -1,10 +1,12 @@
-[gd_scene load_steps=26 format=3]
+[gd_scene load_steps=27 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay/Obstacle.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="2"]
 [ext_resource type="PackedScene" uid="uid://c2f7v5slxknqs" path="res://assets/models/keepy_jump_log.glb" id="3"]
 [ext_resource type="PackedScene" uid="uid://c43xb6ua6en3f" path="res://assets/models/keepy_stomper_toad.glb" id="4"]
 [ext_resource type="PackedScene" uid="uid://dgs4683xlxohy" path="res://assets/models/keepy_dodge_trunk.glb" id="5"]
+[ext_resource type="PackedScene" uid="uid://bjig84rlk0g5o" path="res://assets/models/keepy_enemy_rat.glb" id="6"]
+[ext_resource type="PackedScene" uid="uid://byog4flgb7vnd" path="res://assets/models/keepy_air_enemy_dragonfly.glb" id="7"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_Dodge"]
 size = Vector3(1.2, 2.0, 1.0)
@@ -35,9 +37,10 @@ radius = 0.3
 height = 0.7
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Enemy"]
-albedo_color = Color(0.52, 0.08, 0.72, 1)
+shading_mode = 0
+albedo_color = Color(0.135, 0.102, 0.076, 1)
 emission_enabled = true
-emission = Color(0.52, 0.08, 0.72, 1)
+emission = Color(0.135, 0.102, 0.076, 1)
 emission_energy_multiplier = 0.3
 
 [sub_resource type="TorusMesh" id="TorusMesh_AirEnemy"]
@@ -48,9 +51,10 @@ outer_radius = 0.6
 size = Vector3(1.2, 1.2, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_AirEnemy"]
-albedo_color = Color(0.12, 0.85, 0.22, 1)
+shading_mode = 0
+albedo_color = Color(0.24, 1.0, 0.31, 1)
 emission_enabled = true
-emission = Color(0.15, 1.0, 0.2, 1)
+emission = Color(0.24, 1.0, 0.31, 1)
 emission_energy_multiplier = 1.1
 
 [sub_resource type="PrismMesh" id="PrismMesh_Charger"]
@@ -131,6 +135,9 @@ position = Vector3(0, 0.35, 0)
 visible = false
 mesh = SubResource("CapsuleMesh_Enemy")
 surface_material_override/0 = SubResource("StandardMaterial3D_Enemy")
+model_scene = ExtResource("6")
+model_scale = 0.46266
+model_offset = Vector3(0, -0.10231, 0)
 
 [node name="EnemyShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 0.35, 0)
@@ -157,6 +164,8 @@ script = ExtResource("2")
 visible = false
 mesh = SubResource("TorusMesh_AirEnemy")
 surface_material_override/0 = SubResource("StandardMaterial3D_AirEnemy")
+model_scene = ExtResource("7")
+model_scale = 0.63173
 
 [node name="AirEnemyShape" type="CollisionShape3D" parent="."]
 disabled = true

@@ -403,7 +403,7 @@ hazard**:
 | JumpMesh (**`keepy_jump_log.glb`**, was a `BoxMesh` at 12) | **150** | **0.12x** |
 | JumpMarkerMesh (`CylinderMesh`) | 44 | 0.04x |
 | StomperMesh (**`keepy_stomper_toad.glb`**, was a `CylinderMesh` at 768) | **148** | **0.12x** |
-| **EnemyMesh** (`CapsuleMesh`) | **3,456** | **2.88x — OVER** |
+| EnemyMesh (**`keepy_enemy_rat.glb`**, was a `CapsuleMesh` at 3,456) | **148** | **0.12x** |
 | **AirEnemyMesh** (`TorusMesh`) | **4,096** | **3.41x — OVER** |
 
 Why the family total still measured "within": the 8,400 line is 7 x 1,200,
@@ -449,6 +449,46 @@ predicts for ENEMY and AIR_ENEMY turns out to apply, in a milder form, to
 STOMPER as well: three of the six variants are cheaper as imported art
 than as Godot primitives. Only DODGE and CHARGER remain cases where an
 import genuinely adds.
+
+**ENEMY, the prediction's own headline case, lands 2026-08-11 — and beats
+it by 1,052.** `keepy_enemy_rat.glb` draws **148** triangles against the
+placeholder's 3,456, i.e. **−3,308 per live instance**, not the −2,256
+this section forecast. The two numbers are not in conflict and the older
+one was not wrong: **−2,256 is the saving against the 1,200 unit cap**
+(3,456 − 1,200), which is the most an asset *at* its cap could return. The
+asset came in at 148, an eighth of that cap, so the forecast was a **floor
+on the gain rather than an estimate of it**. Read the same way, AIR_ENEMY's
+−2,896 is also a floor: an asset decimated to the same ~150 LOD the four
+shipped hazards use would return **−3,946**.
+
+One-of-each family total, hazards only: **8,008 → 4,700** (**8,052 →
+4,744** counting `JumpMarkerMesh`, which is not a hazard variant and is
+excluded from the 8,400 line). `AirEnemyMesh` at 4,096 is now **87% of
+the entire hazard family**, and the single largest remaining primitive
+left at Godot's default tessellation anywhere in this scene.
+
+**AIR_ENEMY lands 2026-08-12 at −3,098, and it is the one case where the
+floor above OVERSHOOTS the result — because the forecast assumed a LOD
+this subject cannot use.** `keepy_air_enemy_dragonfly.glb` draws **998**
+triangles against the placeholder torus's 4,096. The −3,946 predicted
+just above is what a ~150-triangle LOD would have returned, and 150 is
+exactly what this asset had to refuse: a dragonfly's silhouette is a
+pierced wing lattice, decimation closes fine holes before it touches
+bulk, and at 150 the wing membrane does not merely close but
+disintegrates (see 11, 2026-08-12). The gap between −3,946 and −3,098 is
+therefore **848 triangles bought deliberately**, and it buys the only
+property that distinguishes this hazard's silhouette from a bar.
+
+It remains the largest single-instance saving in the project — larger
+than ENEMY's −3,308 relative to nothing else changing — and 998 still
+sits **under 7.1's 1,200-per-hazard cap**, so the openness was not paid
+for out of the budget at all.
+
+One-of-each family total, hazards only: **4,700 → 1,602**. The 8,400
+line now has 6,798 of headroom against it, and no hazard variant is left
+at Godot's default tessellation. CHARGER is the last variant whose
+placeholder is a bare primitive (a 8-triangle prism), and it is the only
+one where an import will genuinely add.
 
 Meshy's raw output routinely lands at 30k–150k triangles for a single
 character. **Ask for a retopologised / low-poly output at these numbers**,
@@ -2368,3 +2408,551 @@ stability caveat recorded above.
 - **The darker red.** No probe says a colour is *right*. DODGE is now a
   darker silhouette than it was; whether it still reads as red rather than
   black on a phone screen at speed is Mathieu's call, not a measurement.
+
+### 2026-08-12 — ENEMY (rat), INSTALLED — the telegraph's first real asset
+
+`assets/models/keepy_enemy_rat.glb` on `Obstacle/EnemyMesh` — **148
+triangles, 3.7 KB, flat, unlit, untextured**. Fourth hazard asset, same
+pipeline as the three before it, and the first to land on a slot whose
+material is **animated by gameplay** (§2.1): the ENEMY approach telegraph.
+
+#### The name says beaver, the render says rat
+
+Fourth file in this batch whose name does not survive a render — and the
+first where the name is not merely vague but **names the wrong animal**.
+`Meshy_AI_Low_Poly_Beaver_...` rendered from four axes is a **rat**:
+pointed snout, small round ears, and a long thin curved tail. A beaver's
+tail is a flat paddle; nothing on this mesh is.
+
+The assignment does not rest on likeness alone. All three remaining
+subjects were rendered in the same pass so it also holds by elimination:
+
+| file | bbox | render | slot |
+|---|---|---|---|
+| `Low_Poly_Beaver` | 1.299 × 1.050 × 1.899 | rodent, thin curved tail | **ENEMY** |
+| `Shadowtusk` | 0.831 × 1.128 × 1.903 | tusked, maned boar | CHARGER |
+| `Emerald_Geometric_Dra` | 1.901 × 0.960 × 0.170 | insect, almost all wing | AIR_ENEMY |
+
+Only one rodent exists in the batch, so ENEMY had exactly one candidate.
+
+**Facing measured, not inherited from the toad.** Rendered from +Z: snout,
+eyes, ears and front paws. From −Z: the rump only, with the tail sweeping
+away. Segments spawn at −Z and travel toward the camera at +Z, so the rat
+already faces the player and `model_rotation_degrees` stays at **zero**.
+
+Source profile matches the rest of the batch: **4,800 triangles**, PBR with
+three maps, **no `KHR_materials_unlit`**. LOD chosen at the render, on
+**silhouettes rather than shaded views** — an unlit flat surface draws no
+internal shading, so triangles buy outline and nothing else. At 100 the ear
+is gone and the snout blunts; at 150 the snout, ear notch and tail all
+survive; 250 and 800 add rounding and no new readable feature. At playing
+size 150 and 800 are indistinguishable.
+
+#### Losing emission is a REAL change to the telegraph, and it made it stronger
+
+`_apply_enemy_alarm` ramps **albedo and emission** (energy 0.3 →
+`ENEMY_ALARM_EMISSION_ENERGY` 1.5). An unshaded material ignores emission
+entirely, so on this asset the cue loses a channel and the **albedo carries
+it alone**. That is not a caveat to note and move past — it fixes the
+direction of the base colour:
+
+- `ENEMY_ALARM_ALBEDO` `(0.95, 0.08, 0.12)` renders unlit at relative
+  luminance **0.187**; the ground renders at **0.150**. The two are within
+  **1.20:1**, so the alarm cannot be read against the ground at all.
+- It can only be read against the **resting** colour, which therefore has
+  to sit far from 0.187. Only one direction works: **below** it, and the
+  alarm brightens. Above it (a pale purple past luminance 0.55) the ramp
+  would be a **darkening**, which is not what an alarm looks like.
+
+Value only, tone held exactly at the shipped `0.52 : 0.08 : 0.72` purple —
+same discipline as DODGE, and purple is ENEMY's type identity against every
+other gameplay hue. **0.35× → `(0.182, 0.028, 0.252)`**, chosen as the
+*shallowest* darkening that clears the §8 floor with real margin rather
+than the deepest that clears it at all: further steps down buy margin
+nobody asked for and spend hue legibility on a 0.6 m silhouette.
+
+Predicted first, from a two-point fog model calibrated on the **STOMPER**
+(the only already-unlit hazard, hence the only one whose albedo→rendered
+mapping needs no lighting model), then **measured**. The model reproduced
+DODGE's shipped 3.39/3.37 to within 0.02 before being trusted to predict
+anything.
+
+#### Measured, both ends of the breath, instrumented probe then reverted
+
+`DarkPaletteAudit` samples ENEMY at `CAPTURE_Z`, close enough that the ramp
+has **fully saturated** — its `ENEMY (resting)` label has always been false
+and this entry does not repeat it. A temporary instrumentation held the ramp
+at t=0 and t=1 and sampled both, on the baseline tree and on this one:
+
+| | rest vs ground | **alarmed** vs ground | telegraph (rest ↔ alarmed) |
+|---|---|---|---|
+| before — placeholder, LIT + emissive | 1.57 / 1.57 | **1.50 / 1.52** | 2.35 / 2.38 |
+| after — rat `.glb`, UNLIT | **3.27 / 3.23** | **1.20 / 1.20** | **3.92 / 3.87** |
+
+Three readings, and only one of them is a loss:
+
+- **The telegraph itself got stronger: 2.35 → 3.92.** Losing the emission
+  half did not weaken the cue; the albedo had more room than emission was
+  using, and the base colour is what bought it. This is the number that
+  actually communicates "danger rising", and it is the one this batch was
+  free to move.
+- **Resting legibility more than doubles: 1.57 → 3.27**, clearing the 3.0
+  floor for the first time in ENEMY's history. A lit purple against an olive
+  ground was very nearly invisible at rest.
+- **The alarmed red vs the ground drops: 1.50/1.52 → 1.20/1.20.** Cause,
+  measured not guessed: with emission at energy 1.5 the placeholder drives
+  the red channel to **clip** — the baseline print is literally
+  `rendered=(1, 0.2485, 0.1142)`. Unlit removes that overdrive, so the alarm
+  red renders at its own albedo value, which is dimmer and therefore closer
+  to the ground's luminance.
+
+**Not fixed here, and deliberately.** The alarmed colour is
+`ENEMY_ALARM_ALBEDO`, a gameplay telegraph constant **shared with
+AIR_ENEMY**. Moving it retunes the telegraph rather than the art, on two
+hazards, one of which has no asset yet — §8's own note already parks that
+as Mathieu's call. Worth stating plainly: this pair was **never** legible
+against the ground (1.50 was as far below the 3.0 floor as 1.20 is), and it
+is **ungated** for exactly that reason. What changed is that the resting
+state is now the legible one and the alarm is a change *from* it, which is
+how an escalating cue is supposed to work.
+
+#### Scale: §4 applied as written, and a capsule is not a box
+
+`model_scale = 0.46266` pins X to the collider's **0.600** width — the JUMP
+log's rule, unmodified, for the same mechanic: an ENEMY is escaped by
+**switching lanes**, so a visual wider than its hitbox would make a legal
+dodge read as illegal. Pinning Y instead (s = 0.68639) would put the visual
+**0.290 wider** than the capsule: that error in its punishing direction.
+
+The **ratio is invariant under scale**, as it was for the toad — 1.272:1
+before and after — because `model_scale` is a uniform float. That property
+is about the *scale*, though, not about the *collider*, and the capsule
+adds a constraint a box does not:
+
+> A box has the same half-width at every height. A capsule's **collapses to
+> nothing at both ends** — full radius only over `y = 0.30 .. 0.40` — and a
+> ground-hugging quadruped is widest exactly where the capsule is narrowest.
+
+Measured per height band, the visual sits **0.063 to 0.178 outside** the
+capsule over the bottom 0.15 m (paws and tail, where the capsule is a
+tapering tip). Over the whole silhouette it does not: the visual's widest
+half-width is **0.304** against the capsule's **0.300** — four millimetres —
+and a lane dodge is decided by the widest section, not by the ground band. A
+render of the rat overlaid on the placeholder capsule from the same camera
+confirms it: the body sits well inside the envelope, only paws and tail
+cross the lower edge.
+
+`model_offset = (0, −0.10231, 0)` lands the visual's bottom at world
+**y = 0.0000** exactly.
+
+**Residuals, flagged rather than dressed up:**
+
+- **0.228 of hitbox above the visible rat** (visual 0.472 tall, hitbox
+  0.700). Forgiving in the *lateral* sense but **adverse for the jump**: an
+  ENEMY is jumpable, so a jump that visually clears the rat can still clip.
+  Mitigated by construction rather than by hope — the cyan `JumpMarkerMesh`
+  floats at `JUMPABLE_OBSTACLE_TOP_HEIGHT`, so the honest clearance height
+  is already drawn, independent of the mesh. Smaller than the JUMP log's own
+  0.37, which was judged fine on device.
+- **0.254 of visual beyond the hitbox in Z.** Forgiving: the player can graze
+  the nose or tail without being hit. Same sense as the toad's accepted 0.345.
+
+#### The placeholder material moved too, on purpose
+
+`StandardMaterial3D_Enemy` gains `shading_mode = 0` and the same new albedo.
+Leaving it lit and emissive would make the **fallback diverge from the
+shipped asset on the exact axis this batch changes** — which is the
+fixture-versus-reality gap `AlarmRampAudit` exists to close, rebuilt inside
+the very slot that first exposed it. It also aligns ENEMY with the four
+hazard placeholders already unshaded; AIR_ENEMY stays lit because no asset
+has landed on it.
+
+#### `AlarmRampAudit` now gates the REAL asset (PHASE D)
+
+The whole point of this batch. The ramp fix shipped on 2026-08-11 was proved
+against `SubstituteModel.tscn` — a fixture built to *look* like a `.glb`.
+Trusting it to speak for a real asset would repeat, at one remove, the exact
+mistake that made the fix necessary. **PHASE D runs the same two assertions
+on `Obstacle.tscn` as authored**, with no fixture: real bytes, real importer,
+real material class (the `StandardMaterial3D` cast in `Obstacle._ready()`
+fails silently if that ever changes), real binding route, real per-instance
+duplicate.
+
+```
+--- PHASE D: Obstacle.tscn AS SHIPPED (real assets, no fixture) ---
+  OK   ENEMY as shipped [glb]: all 1 drawn surface(s) reach rgb(0.95, 0.08, 0.12)
+  OK   ENEMY as shipped [glb]: resets to its own base rgb(0.18, 0.03, 0.25)
+  OK   AIR_ENEMY as shipped [-- ]: all 1 drawn surface(s) reach rgb(0.95, 0.08, 0.12)
+  OK   AIR_ENEMY as shipped [-- ]: resets to its own base rgb(0.12, 0.85, 0.22)
+```
+
+The `[glb]` / `[-- ]` marker is **read off the slot**, never assumed from the
+phase, so the day a slot's asset is added or removed the log says so instead
+of quietly degrading into a second copy of PHASE A.
+
+**PHASE A had to change with it.** It got the placeholder for free only while
+no enemy slot shipped an asset; the moment one did, "no model installed"
+would have become a second reading of the shipped rat under a label saying
+otherwise. It now clears `model_scene` explicitly.
+
+#### Validation
+
+`AlarmRampAudit` (**12/12 OK**, PHASE D included), `AssetContractAudit`
+(12/12 visuals, **0 colliders moved**, `EnemyShape` still `Capsule(r 0.300,
+h 0.700)` @ +0.350), `DarkPaletteAudit` (0 missed samples),
+`ProbeTimeoutAudit` (33 probe scenes, all armed), `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` (INTRO 23.6% / VISIBLE 27.0% /
+CAPTURE 37.1%, exempt by design) — all **exit 0**. Import and
+`--export-release "Web"` both **exit 0**.
+
+**Diffs against the baseline tree are exactly as small as they should be**,
+compared in a separate worktree on `origin/main` rather than assumed:
+
+- `AssetContractAudit`: **one line**, the ENEMY row —
+  `[-- ] 0.600 × 0.700 × 0.600 lit rgb(0.52, 0.08, 0.72) +emissive` →
+  `[glb] 0.600 × 0.472 × 0.854 unshaded rgb(0.18, 0.03, 0.25)`.
+- `DarkPaletteAudit`: **two lines**, the ENEMY row at each end of the breath.
+  DODGE 3.39/3.37, JUMP 3.04/3.02, CHARGER 3.20/3.21, STOMPER 3.41/3.41 and
+  every barrier/marker line are **byte-identical**.
+- `ProbeTimeoutAudit`, `DeathModelAudit`, `ChargerShapeProbe`,
+  `PursuerFramingAudit`: **byte-identical on both streams**.
+
+**The payload trap held**: **0** imported `assets_source` resources in the
+pack — 58 bare uid-cache path strings, no derived `.scn`/`.ctex`, against
+**407 MB** of raw sources on disk. `index.pck` 4,761,792; `index.wasm`
+35,376,909 (md5 `af4a8fc2925d992348eb30deeeb54360`). Per the stability
+caveat recorded above, the `.pck` figure is **not** offered as proof of
+anything on its own.
+
+#### Still open
+
+- **Two subjects remain uninstalled** — dragonfly (AIR_ENEMY), boar
+  (CHARGER). AIR_ENEMY is now, alone, 87% of the hazard family's triangles.
+- **The 0.228 of hitbox above the rat.** Device call, and specifically a
+  *jump* call: does a jump that visually clears the rat ever feel stolen?
+- **The alarmed red at 1.20:1.** Not a regression this batch can fix without
+  retuning a shared gameplay telegraph. Whether the escalation reads at speed
+  on a phone — now carried by albedo alone — is Mathieu's call, not a
+  measurement.
+
+### 2026-08-12, second of the day — AIR_ENEMY (dragonfly), INSTALLED
+
+Fifth Meshy hazard, and the first whose LOD was chosen by a criterion other
+than triangle count. `assets/models/keepy_air_enemy_dragonfly.glb` on
+`Obstacle/AirEnemyMesh` — **998 triangles, 17.7 KB, flat, unlit,
+untextured**.
+
+#### Identification: the one file whose name was never the question
+
+`Meshy_AI_Emerald_Geometric_Dra_*` measures **1.901 x 0.960 x 0.170**. Eleven
+times wider than it is thick, it is a flat spread-winged insect regardless of
+what it is called, and AIR_ENEMY is the only flying hazard in the game — so
+unlike the log/trunk pair and the "beaver" that was a rat, there was no
+ambiguity to resolve. The three-axis render was run anyway, and confirms:
+four wings spread along X, body along Y head-up, and a pierced wing lattice.
+
+Its **thin axis is Z**, which is the axis the camera looks down, so the mesh
+presents its full 1.901 x 0.960 spread to the player with no rotation at all.
+`model_rotation_degrees` stays at zero because the asset arrives face-on —
+not because the previous four answers were reused.
+
+#### The premise this batch was given is false, and that makes the result stronger
+
+The brief warned that the placeholder is a *pierced torus* and that the
+replacement must stay open or the player stops understanding what to avoid.
+The constraint is right. The baseline it names is not.
+
+**Measured, by rasterising the torus's own projection along the camera axis:
+0.00% enclosed open area, zero enclosed regions.** A Godot `TorusMesh` has its
+hole on the Y axis; the camera sees it edge-on, and every ray through the
+silhouette hits tube somewhere. The placeholder is pierced in **topology** and
+solid in **silhouette**.
+
+So the dragonfly does not preserve an openness the hazard had. It **introduces
+one the hazard never had**, and the risk of losing it in decimation was real
+in a way the brief did not anticipate — because there was nothing to lose,
+only something to fail to gain.
+
+#### LOD 1000, not the 150 the other four use
+
+Openness was scored directly: rasterise each candidate's player-facing
+silhouette, flood-fill the background from the border, and measure what is
+left — background **enclosed by** the mesh. Triangle count says nothing about
+this.
+
+| LOD | open area | solid pieces | largest piece |
+|---|---|---|---|
+| 150 | **0.85%** | **14** | 78.3% |
+| 250 | 4.64% | 20 | 82.6% |
+| 300 | 3.17% | 25 | 87.5% |
+| 400 | 5.64% | 15 | 96.2% |
+| 800 | 20.64% | 23 | 98.1% |
+| **1000** | **27.61%** | **16** | **99.6%** |
+| 1200 | 28.53% | 9 | 99.8% |
+| source (4,000) | 30.57% | 3 | 99.9% |
+
+**At 150 the wing membrane does not close, it disintegrates** — which is why
+the openness number goes *down* rather than up: the gaps stop being enclosed
+because the wing around them is gone. The silhouette breaks into 14 pieces
+and reads as floating debris. Every other hazard in this project ships at
+~150; this is the first subject for which that answer is measurably wrong,
+and the fragmentation column is what distinguishes "closed up" from "fell
+apart" — two opposite failures a hole-fraction alone cannot tell apart.
+
+1000 is the knee: 1200 buys 0.9 further points for 200 triangles. It is also
+**under 7.1's 1,200-per-hazard cap**, so the lattice costs nothing that had to
+be bought from the budget.
+
+**Judged at real on-screen size, not at render resolution.** 75° vertical FOV
+over a 1080x1920 viewport gives 1251/d px per metre, so the 1.9 m span is
+~120 px at 20 m and ~340 px at closest approach. Re-scored there, LOD 1000
+holds 10.9% openness at 120 px and 27.6% at 246 px, against LOD 150's 3.0%
+and 0.9%.
+
+#### Triangles: the largest single-instance saving in the project
+
+The placeholder is a `TorusMesh` left at Godot's default 64x32 tessellation —
+**4,096 triangles**, the largest primitive anywhere in the scene. The install
+is **−3,098 per live instance**, and hazard family one-of-each falls
+**4,700 → 1,602** (see 7.4, which records why the earlier −3,946 forecast
+overshoots: it assumed a ~150 LOD this subject cannot use).
+
+#### The telegraph: measured before and after, not reasoned by analogy
+
+AIR_ENEMY is the only hazard that was **LIT *and* emissive at energy 1.1**
+(ENEMY's emission energy is 0.3). Going unlit deletes a multiplication *and*
+an additive term, so the shipped albedo is nowhere near what the player sees.
+Measured with a throwaway probe built on `DarkPaletteAudit`'s scene, camera
+and sampling, on `origin/staging` in a separate worktree and again after the
+install:
+
+| | before (torus, LIT + emissive) | after (dragonfly, unlit) |
+|---|---|---|
+| slot | `[-- ]` | `[glb]` |
+| resting, dominant | `rgb(0.2442, 1.0000, 0.3188)` — lum **0.7315** | `rgb(0.2353, 0.9882, 0.3059)` — lum **0.7113** |
+| alarmed, dominant | `rgb(1.0000, 0.2654, 0.1281)` — lum **0.2546** | `rgb(0.9373, 0.0784, 0.1098)` — lum **0.1893** |
+| **telegraph rest↔alarm** | **2.57:1** | **3.18:1** |
+| hue swing | 116.5° | 106.9° |
+
+**The cue is WIDER after the install, not narrower** — the outcome the brief
+treated as the risk. Losing the emission boost darkens the *alarm* far more
+(0.2546 → 0.1893) than it darkens the *rest* (0.7315 → 0.7113), because the
+resting albedo was solved to reproduce the rendered resting colour rather than
+carried over raw. Carried over raw, `(0.12, 0.85, 0.22)` would have rendered
+near luminance 0.50 — a third of the resting brightness gone, and the cue
+narrowed with it.
+
+Two independent cross-checks fell out of this and are worth recording: the
+alarmed dominant lands at luminance **0.1893** against the 0.187 the ENEMY
+batch derived for the unlit alarm, and alarm-vs-ground computes **1.20:1**
+against the "within 1.20:1" that batch measured. Different session, different
+probe, same numbers.
+
+**The ramp direction INVERTS relative to ENEMY, and that is correct.** ENEMY
+had to be *darkened* so its alarm could brighten into red, because a dark
+rodent sat near the alarm's own luminance. AIR_ENEMY rests at 0.71 against an
+alarm at 0.19, so its ramp is a large **darkening** plus a ~107° hue swing —
+both channels agreeing, in the one direction available.
+
+#### A sampling artefact this asset creates, and how it was told apart
+
+The mean over `DarkPaletteAudit`'s 14 px sample box is **not** this object's
+colour, and it is the first hazard for which that is true. The torus is solid
+in projection, so its box was 100% object pixels; a preserved wing lattice
+lets the background through and drags the mean toward it — **61% of the box is
+object** after the install. Same family as the JUMP log's 3.28 → 3.02 window
+contamination, opposite mechanism.
+
+Told apart by histogram rather than argued: the dominant value is reported
+alongside the mean above, and it is the dominant that shows the resting colour
+barely moved (0.7315 → 0.7113, 2.8%) while the mean appears to fall much
+further. `DarkPaletteAudit`'s own AIR_ENEMY line moves **1.08/1.09 → 1.32/1.32**
+for the same reason — it is not gated, and it moves *up*.
+
+#### Scale and fit
+
+`model_scale = 0.63173` pins X to the collider's **1.200** width. Section 4
+again, and AIR_ENEMY earns it twice: it is escaped by switching lanes, and
+once landed it is jumpable, so a visual wider than its hitbox would make a
+legal dodge read as illegal.
+
+It reproduces the placeholder's lateral presence **to the millimetre**
+(1.20000 against 1.2), **improves** the vertical fill from the torus's 0.350
+to 0.606, and **removes** the torus's 0.2 of Z overhang past the 1.0 hitbox —
+the install is closer to its own hitbox on all three axes than the primitive
+it replaces.
+
+**No `model_offset`.** The mesh arrives centred on its own origin within
+**1.7 mm scaled**, measured rather than assumed. A collider centred on the
+slot wants a visual centred on the slot, and writing 1.7 mm of measurement
+noise into the scene would claim more precision than exists. This is the
+first hazard needing no offset at all — the other four are floor-anchored,
+this one is centre-anchored because its hitbox is.
+
+#### Probes
+
+`AlarmRampAudit` **PHASE D now reads `[glb]` for AIR_ENEMY** and gates the
+ramp on the shipped asset: it reaches `rgb(0.95, 0.08, 0.12)` and resets to
+`rgb(0.24, 1.00, 0.31)`, the imported material's own colour. 12/12 OK.
+`AssetContractAudit` 12/12 visuals, **0/10 colliders moved**, `AirEnemyShape`
+still `Box(1.20000, 1.20000, 1.00000)` at `+2.358`. `DarkPaletteAudit` exit 0,
+**0 missed samples**, four gated hazards still above 3.0:1.
+
+**Six slots now carry an asset** — Keepy, `pursuer/Silhouette`, `JumpMesh`,
+`DodgeMesh`, `StomperMesh`, `AirEnemyMesh`. The placeholder material moved
+with the asset (`shading_mode = 0`, same new albedo) so the fallback cannot
+diverge from the shipped asset on the axis this batch changes.
+
+#### Still open
+
+- **CHARGER (boar) is the last uninstalled subject**, and the only variant
+  where an import will genuinely add triangles — its placeholder is an
+  8-triangle prism.
+- **The resting green is now carried by albedo alone.** It reproduces the
+  rendered colour to within 2.8% of luminance, but nothing measured here says
+  a flat green reads the same as a glowing one in motion on a phone. Device
+  call.
+- **0.594 of hitbox above and below the visible dragonfly.** The jump arc is
+  fixed and tuned to clear the hitbox top, so no legal jump is at risk, but
+  whether the airborne hazard's lethal volume reads as larger than it looks
+  is a device call.
+
+### 2026-08-12, third of the day — ENEMY (rat), RECOLOURED to a brown-grey
+
+Not an install: the rat has been on `Obstacle/EnemyMesh` since earlier the
+same day and its geometry, scale, offset and collider are untouched here.
+**Only `baseColorFactor` moves**, plus the placeholder that shadows it.
+
+#### Why
+
+Device feedback on the shipped purple `(0.182, 0.028, 0.252)`: at real speed
+it reads as **RED**, not as an animal. That is worse than a merely
+unattractive colour — it puts the RESTING state inside the ALARM's own colour
+family, and the alarm is the only other state this material has. The
+replacement is a warm dark brown-grey, the natural fur register the reference
+render was pointing at.
+
+#### The one edit that could not move the telegraph
+
+The direction argument that fixed this value in the first place says nothing
+about hue. It is entirely a statement about where the resting **luminance**
+sits relative to the alarm's 0.187: below it, so the ramp is a BRIGHTENING.
+Hold luminance, and the telegraph is preserved by construction rather than by
+luck.
+
+| | authored sRGB | H | S | V | authored rel. luminance |
+|---|---|---|---|---|---|
+| before | `(0.182, 0.028, 0.252)` | 280° | 0.89 | 0.25 | 0.011186 |
+| **after** | **`(0.135, 0.102, 0.076)`** | **26.4°** | **0.44** | **0.135** | **0.011344** |
+
++1.4% of luminance. Rendered, the fog pulls hue and chroma **UP** rather than
+washing them out: H 26.4° → 35.3°, S 0.44 → 0.52.
+
+#### Measured, both ends of the breath, ramp pinned, probe then reverted
+
+`DarkPaletteAudit`'s `ENEMY (resting)` row is mislabelled — at `CAPTURE_Z` the
+ramp has fully saturated, so that row measures `ENEMY_ALARM_ALBEDO` and is
+**structurally incapable of seeing this change**. A throwaway probe built on
+that audit's scene, camera and sampling box pinned the ramp at t=0 and t=1
+with the obstacle's own `_physics_process` disabled, on the baseline tree and
+on this one:
+
+| | resting rendered | resting vs ground | **telegraph (rest ↔ alarm)** |
+|---|---|---|---|
+| before (purple) | `(0.1765, 0.0353, 0.2471)` L 0.0111 | 3.27 / 3.23 | **3.92 / 3.87** |
+| **after (brown-grey)** | **`(0.1294, 0.1020, 0.0627)`** L 0.0110 | **3.27 / 3.26** | **3.92 / 3.90** |
+
+The telegraph is held exactly at the shallow end and **improves 0.03 at the
+deep end**. The alarm rendered `(0.9373, 0.0784, 0.1098)` on both trees, to the
+bit — as it must, `ENEMY_ALARM_ALBEDO` being untouched and shared with
+AIR_ENEMY.
+
+**The window is 784 px of ONE distinct colour, before and after, at both
+ends** — `(45,9,63)` then `(33,26,16)`. Neither measurement is contaminated,
+so the difference between the two runs IS the object's colour. This is the
+DODGE proof, not the JUMP log's window artefact.
+
+#### Confusion checked against EVERY on-track object, not the two named
+
+The brief named STOMPER's ice blue and the trackside props. Both were checked,
+and so was every other hazard — a check that only looks where it is told to
+look would have missed the pair that actually matters.
+
+| against | contrast | hue delta (before → after) |
+|---|---|---|
+| STOMPER (ice blue) | 11.17:1 | 77.9° → **166.8°** (improves sharply) |
+| **DODGE (dark red)** | **1.04:1** | 88° → **27.2°** (closest pair in the scene) |
+| JUMP (amber) | 9.94:1 | → 8.5° (separated by value, 10:1) |
+| CHARGER (pink) | 10.49:1 | → 69.1° |
+| decor stump / bench / sign | 1.35 / 1.84 / 2.38 | 147-150° → **31-34°** |
+| decor trunk / rock / bush | 1.05 / 1.15 / 1.09 | 166-173° → **71-79°** |
+
+**Two of these are real costs and are not dressed up.** Against DODGE and
+against the olive props the hue separation NARROWS. What each one rests on
+instead:
+
+- **DODGE** renders `(52,7,0)` at saturation **1.00**; the rat renders
+  `(33,26,16)` at **0.52** — a 3.7× gap in the green channel, and a
+  pure-hue near-black against a muted brown. Beyond colour: a 2m unjumpable
+  upright trunk is not a 0.6m ground quadruped.
+- **The props sit off the track slab by keep-out** and are never adjacent to a
+  hazard. The rat also holds the **highest dark-object contrast against the
+  track** of anything measured here — 3.27:1 against the stump's 2.42, the
+  bench's 1.78, the sign's 1.38.
+- **Neither matters inside the reaction window.** `ENEMY_ALARM_RAMP_WINDOW_S`
+  is 4.5s, so by the time a player must act the rat is `(239,20,28)` and 11:1
+  clear of every object in the table. The resting colour's job is identity at
+  distance, not the danger read.
+
+The chosen hue sits deliberately between the two collisions: rendered 35.3°,
+which is 27.2° from DODGE and 31.4° from the nearest prop. Pushing it toward
+either buys separation from one by spending it on the other.
+
+#### The glb went THROUGH the pipeline, and that was proven before use
+
+Geometry read back out of the shipped file and rewritten by
+`decimate_decor.write_glb` — **not hand-patched**. Proven lossless first by
+rewriting with the OLD colour and confirming a byte-for-byte match against the
+shipped asset, so the only possible difference in the new file is the colour.
+Verified after: **BIN chunk byte-identical** (2,688 bytes, 76 verts, 148 tri),
+`KHR_materials_unlit` preserved, JSON identical apart from `baseColorFactor`.
+
+#### It is FLAT, not per-facet — a real gap against the reference
+
+The reference render varies tone between facets. This does not, and cannot
+cheaply:
+
+- the decimator **cannot carry UVs** (already documented for the decor leafy
+  tree), so no texture survives at any triangle budget;
+- vertex colours would **multiply with the alarm ramp's albedo write**,
+  turning the one signal that has to read instantly into a mottled red;
+- every contrast number in this project is computed on a single flat albedo —
+  per-facet variation would make "the rat's colour" a distribution rather than
+  a number.
+
+#### Validation
+
+`DarkPaletteAudit` **byte-identical on stdout AND stderr** — the predicted
+result, and the strongest possible confirmation that the alarm-tinted row was
+what it was always measuring. Four gated hazards unmoved (DODGE 3.39/3.37,
+JUMP 3.04/3.02, CHARGER 3.20/3.21, STOMPER 3.41/3.41), 0 missed samples.
+
+`AlarmRampAudit` **12/12 OK, exit 0, diff of exactly two lines** — the ENEMY
+base colour on the placeholder path and on the shipped-glb path, which is the
+whole change. stderr identical.
+
+`AssetContractAudit`, `ProbeTimeoutAudit`, `DeathModelAudit`,
+`ChargerShapeProbe`, `PursuerFramingAudit` — all exit 0. Import and Web export
+exit 0; `index.wasm` 35,376,909 as on every previous batch. Payload trap
+holds: 0 `assets_source` resources imported into the pack.
+
+#### Still open
+
+- **Does a dark brown-grey read as an ANIMAL rather than as debris** at real
+  speed on a phone? No probe answers that; it is the whole point of the batch
+  and it is a device call.
+- **DODGE at 27° of hue** — measured, argued from saturation and silhouette,
+  but only an eye at speed can say whether "dark red wall" and "brown rodent"
+  ever get confused in the fraction of a second before the ramp fires.
+- **The flat finish**, above.
+- **CHARGER (boar) remains the last uninstalled subject.**

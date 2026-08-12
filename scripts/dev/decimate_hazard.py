@@ -99,10 +99,41 @@ OUT_DIR = "/tmp/lod"
 ## symmetric about Y, so unlike the toad there is no "which way does it look"
 ## question to answer -- model_rotation_degrees stays at zero because there is
 ## no orientation to get wrong, not because the toad's answer was reused.
+##
+## THE ENEMY IS THE FOURTH FILE IN THIS BATCH WHOSE NAME IS WRONG, and this
+## time the name is not merely vague, it names the wrong animal. The file is
+## called "Low_Poly_Beaver"; rendered from four axes it is a RAT -- pointed
+## snout, small round ears, and a long thin curved tail, where a beaver's tail
+## is a flat paddle. The three remaining subjects were rendered together so the
+## assignment could be made by elimination as well as by likeness: Shadowtusk
+## is a tusked, maned boar (CHARGER) and Emerald_Geometric_Dra is an insect
+## whose 1.901 x 0.960 x 0.170 bbox is almost entirely wing (AIR_ENEMY). Only
+## one rodent exists in the batch, so ENEMY has exactly one candidate.
+##
+## Facing was measured, not inherited from the toad: rendered from +Z the
+## snout, eyes, ears and front paws are all visible; from -Z there is only the
+## rump with the tail sweeping away. Segments spawn at -Z and travel toward the
+## camera at +Z, so the rat already faces the player and
+## model_rotation_degrees stays at zero.
+##
+## THE DRAGONFLY IS THE ONLY SUBJECT IN THIS BATCH WHOSE NAME WAS ALREADY
+## RIGHT, and it is also the only one where the name was never the question.
+## Emerald_Geometric_Dra measures 1.901 x 0.960 x 0.170 -- 11x wider than it
+## is thick -- so it is a flat spread-winged insect however it is labelled,
+## and AIR_ENEMY is the only flying hazard. Rendered from three axes to
+## confirm rather than to identify: four wings spread along X, body along Y
+## head-up, and a pierced wing lattice.
+##
+## Its thin axis is Z, which is the axis the camera looks down, so the mesh
+## already presents its full 1.901 x 0.960 spread to the player with no
+## rotation at all. model_rotation_degrees stays at zero because the asset
+## arrives face-on, not because the previous four answers were reused.
 MODELS = {
     "jump_log": "Meshy_AI_Low_Poly_Log_0811080727_texture.glb",
     "stomper_toad": "Meshy_AI_Geometric_Toad_0811080929_texture.glb",
     "dodge_trunk": "Meshy_AI_Crimson_Hollow_Trunk_0811081732_texture.glb",
+    "enemy_rat": "Meshy_AI_Low_Poly_Beaver_0811082534_texture.glb",
+    "air_enemy_dragonfly": "Meshy_AI_Emerald_Geometric_Dra_0811081710_texture.glb",
 }
 
 ## Lifted verbatim from Obstacle.tscn's StandardMaterial3D_Jump, NOT sampled
@@ -128,10 +159,91 @@ MODELS = {
 ## unchanged would NOT hold the ratio, it would change what the number means.
 ## Measured rather than argued: see MESHY_SPEC section 11 for the two-point
 ## measurement this value was solved from.
+## ENEMY IS THE SECOND NON-CARRY-OVER, AND FOR A HARDER REASON THAN DODGE'S.
+## DODGE was merely LIT, so unlighting it only removed a multiplication. ENEMY
+## is lit AND EMISSIVE, and its emission is not decoration -- it is half of the
+## approach telegraph: _apply_enemy_alarm ramps albedo AND emission (from
+## energy 0.3 up to ENEMY_ALARM_EMISSION_ENERGY = 1.5). An unshaded material
+## ignores emission entirely, so on this asset the telegraph loses a channel
+## and the ALBEDO has to carry the whole cue on its own.
+##
+## That is what fixes the direction of this value. ENEMY_ALARM_ALBEDO
+## (0.95, 0.08, 0.12) renders unlit at relative luminance 0.187, and the ground
+## renders at 0.150 -- the two are within 1.20:1 of each other. So the alarm can
+## only be read against the RESTING colour, and the resting colour has to sit
+## far from 0.187. Only one of the two directions works: below it, a dark rat
+## that BRIGHTENS into red; above it (a pale purple over luminance 0.55) the
+## ramp would be a DARKENING, which is not what an alarm looks like.
+##
+## The install held tone exactly at the shipped 0.52 : 0.08 : 0.72 purple and
+## moved value only, at 0.35x -- the DODGE discipline, and purple was ENEMY's
+## type identity in Obstacle.gd's TELEGRAPH table.
+##
+## THE HUE IS NOW BROWN-GREY, AND ONLY THE HUE MOVED. Device feedback on the
+## shipped purple: at real speed it reads as RED rather than as an animal, which
+## puts it in the alarm's own colour family -- the one thing a resting colour
+## must not do when the alarm is the only other state. The replacement is a warm
+## dark brown-grey, the natural fur register.
+##
+## LUMINANCE IS HELD TO THE PURPLE'S, DELIBERATELY, because the direction
+## argument above does not care about hue at all -- it is entirely a statement
+## about where the resting luminance has to sit relative to 0.187. Authored
+## relative luminance goes 0.01119 (purple) -> 0.01134 (brown), a 1.4% move, so
+## the telegraph is preserved by construction rather than by luck: MEASURED
+## 3.92:1 -> 3.90:1 shallow and 3.87:1 -> 3.85:1 deep, and resting-vs-ground
+## 3.27:1 -> 3.26:1. Changing hue at constant luminance is the ONLY edit here
+## that could not have moved those numbers, which is why it was chosen.
+##
+## HUE 26.4 deg, SATURATION 0.44 -- both bounded from two sides, not picked:
+##   * S must stay well clear of 0 or the rat reads as neutral grey and sinks
+##     into the trackside props (rock S=0.22, stump/bench/sign S=0.28-0.35).
+##   * H must stay clear of STOMPER's ice blue (202 deg -- 176 deg away, near
+##     the maximum possible separation) AND of DODGE's near-black red (H~6 deg,
+##     S=1.0). DODGE is the close one at ~21 deg of hue, and the separation it
+##     rests on is SATURATION (1.0 vs 0.44) plus silhouette (a 2m upright trunk
+##     against a 0.6m quadruped), not hue -- measured, see MESHY_SPEC section 11.
+##   * Pushing H toward the props' olive (67 deg) to escape DODGE trades one
+##     collision for another; 26 deg sits between them.
+##
+## IT IS A FLAT COLOUR, NOT A PER-FACET VARIATION, and that is a real gap
+## against the reference render rather than an oversight. Two reasons, both
+## structural: the decimator cannot carry UVs (already documented for the decor
+## leafy tree), and vertex colours would MULTIPLY with the alarm ramp's albedo
+## write -- turning the one signal that has to read instantly into a mottled
+## red. Every contrast number in this project is also computed on a single flat
+## albedo; per-facet variation would make "the rat's colour" a distribution.
+## AIR_ENEMY IS THE THIRD NON-CARRY-OVER, AND THE ONLY ONE WHERE THE SHIPPED
+## ALBEDO IS NOT EVEN CLOSE TO WHAT THE PLAYER SEES. DODGE lost a
+## multiplication when it went unlit; ENEMY lost an emission channel worth
+## energy 0.3. AIR_ENEMY is the only hazard that is LIT *and* emissive at
+## energy 1.1, so it loses both terms at once, and the additive one dominates.
+##
+## Measured, not modelled (AirEnemyTelegraphProbe, a throwaway probe built on
+## DarkPaletteAudit's scene and sampling): the resting torus renders
+## rgb(0.2414, 1.0000, 0.3139) on screen -- GREEN CLIPPED AT 1.0 -- from an
+## authored albedo of (0.12, 0.85, 0.22). Its rendered luminance is 0.731.
+## Carried across unchanged, that albedo would render unlit at ~0.50: the
+## install would visibly DARKEN a hazard nobody asked to darken, and would
+## narrow the telegraph in the process.
+##
+## So the value is solved against the RENDERED resting colour rather than the
+## authored one -- the DODGE discipline applied to a two-term problem. Hue is
+## held: green is AIR_ENEMY's type identity in Obstacle.gd's TELEGRAPH table,
+## and only its value moves, to the place the player is already looking at.
+##
+## The direction of the ramp INVERTS relative to ENEMY, and that is correct
+## rather than an oversight. ENEMY had to be darkened so its alarm could
+## BRIGHTEN into red, because a dark rodent sat near the alarm's own
+## luminance. AIR_ENEMY rests at 0.731 against an alarm that renders 0.187
+## unlit, so its ramp is a large DARKENING plus a ~117 degree hue swing --
+## the two channels agree, and the cue is wider after the install than
+## before it (measured: 2.59:1 before, see MESHY_SPEC section 11).
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
+    "enemy_rat": (0.135, 0.102, 0.076),  # warm dark brown-grey at the purple's luminance, see above
+    "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
 }
 
 
