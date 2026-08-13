@@ -555,13 +555,13 @@ func _fmt_dist(d) -> String:
 	return "%.3f" % d if absf(float(d)) < 10.0 else "%.1f" % d
 
 func _hue_distance_to(rec: Dictionary, ref_label: String):
-	var ref := _find_ref(ref_label)
+	var ref = _find_ref(ref_label)
 	if ref == null or String(rec.label) == ref_label:
 		return null
 	return _hue_distance(rec.hue, ref.hue)
 
 func _lum_distance_to(rec: Dictionary, ref_label: String):
-	var ref := _find_ref(ref_label)
+	var ref = _find_ref(ref_label)
 	if ref == null or String(rec.label) == ref_label:
 		return null
 	return absf(float(rec.lum) - float(ref.lum))
@@ -569,7 +569,7 @@ func _lum_distance_to(rec: Dictionary, ref_label: String):
 ## Reference hazard rows are keyed by their bare Type name (e.g.
 ## "CHARGER") in _results -- this looks that up regardless of what a
 ## candidate's own label is.
-func _find_ref(ref_label: String):
+func _find_ref(ref_label: String) -> Variant:
 	if _results.has(ref_label):
 		return _results[ref_label]
 	return null
