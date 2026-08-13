@@ -1971,6 +1971,91 @@ D1/D2/D3 de la même planche restent non installés (B1 est le seul mesuré
 séparé des 4 hazards à une saturation réelle). Détail chiffré complet :
 `docs/MESHY_SPEC.md` §8.6 et §11.
 
+## DOUBLE RECOLORISATION : CHARGER marron foncé + ENEMY gris-blanc — risque CHARGER-vs-DODGE accepté explicitement (13 août 2026)
+
+Branche `claude/keepy-charger-enemy-recolor-uaau91`, partie de `staging`
+(`9524f7b`). **Décision explicite de Mathieu, prise en connaissance du
+risque documenté par §8.4(2) de MESHY_SPEC.md** (« un CHARGER dans la
+bande sombre serait indiscernable de DODGE ») : CHARGER quitte la bande
+CLAIRE pour la première fois de son histoire, et ENEMY change de teinte
+(8e recolorisation de repos) pour rester séparé de lui. Détail chiffré
+complet, tableaux et discipline de mesure : `docs/MESHY_SPEC.md` §8.7.
+
+**CHARGER** `rgb(0.96, 0.76, 0.80)` (rose poussiéreux) → **`rgb(0.1156,
+0.0936, 0.1200)`** (brun-violet foncé) — candidat **D3** de
+`ChargerEarthtoneAxisSheet.gd` (`scripts/dev/`, branche
+`claude/charger-earthtone-axis-2vkhd5`), choisi PAR MESURE parmi 3
+candidats sombres + le fallback rgb(0.13,0.093,0.070) de la session :
+**D3 est le seul qui franchit le plancher de fiabilité de teinte à 45°
+contre DODGE** (75,8° — D1 échoue à 7,5°, D2 à 23,1°, le fallback à
+15,4°), et il a le meilleur contraste sol mesuré des quatre (3,34:1, ex
+æquo avec le fallback).
+
+**ENEMY** `rgb(0.7348, 0.88, 0.6864)` (kaki pâle) → **`rgb(0.9200,
+0.9039, 0.8924)`** (blanc-gris chaud) — candidat **G1** de
+`EnemyGreyAxisSheet.gd` (`scripts/dev/`, branche
+`claude/enemy-grey-axis-staging-yjc8nk`), le meilleur des deux candidats
+« near-white » de la planche (4,10:1 contre 3,87:1 pour G2). Ce candidat
+avait été écarté à l'origine pour collision avec le CHARGER ROSE — sans
+objet ici puisque CHARGER change de famille de teinte dans le même lot ;
+re-mesuré contre le NOUVEAU CHARGER (sonde jetable, supprimée avant
+commit), la collision est résolue à 13,7:1 au lieu d'être créée.
+
+**GATES MESURÉS (worst des deux bouts de la respiration, sonde jetable +
+`DarkPaletteAudit` officielle) :**
+
+| paire | worst | statut |
+|---|---|---|
+| CHARGER vs sol (`DarkPaletteAudit`) | **3,34:1** | ✅ plancher dur 3,0 |
+| ENEMY vs sol (resting, settling forcé off) | **4,103:1** | ✅ plancher dur 3,0 |
+| **CHARGER vs DODGE** | **1,008:1** | ⚠️ **RISQUE ACCEPTÉ — quasi-collision WCAG confirmée, comme §8.4(2) le prédisait** |
+| CHARGER vs ENEMY | 13,714:1 | collision résolue |
+| CHARGER vs JUMP | 10,094:1 | — |
+| CHARGER vs STOMPER | 11,414:1 | — |
+| ENEMY vs JUMP | 1,358:1 | informatif, non gaté |
+| ENEMY vs STOMPER | 1,202:1 | informatif, non gaté |
+
+**Le risque CHARGER-vs-DODGE N'EST PAS caché** : c'est le pire chiffre
+pairwise jamais publié sur un hazard gaté de ce projet, et il est
+délibérément publié tel quel plutôt qu'enjolivé. Ce que ça n'a PAS
+touché : silhouettes, LOD (CHARGER reste à 560 tri, ENEMY à 148),
+colliders (`ChargerShape`/`EnemyShape` inchangés, `AssetContractAudit`
+0/10 déplacés), rampe d'alarme ENEMY (`ENEMY_ALARM_ALBEDO` intouchée,
+row DarkPaletteAudit "ENEMY (resting)" byte-identique — elle mesure
+l'alarme, pas le repos). Séparation résiduelle entre CHARGER et DODGE :
+saturation et silhouette (mur statique 2m vs sanglier 2,08m qui CHARGE,
+3,5m de profondeur, barres de trail) — aucune sonde ne les mesure.
+
+**Losslessness prouvée D'ABORD sur les DEUX assets** : `decimate_hazard.py`
+a d'abord régénéré les couleurs SHIPPÉES, match byte-à-byte confirmé
+(enemy_rat md5 `cea7db16...`, charger_boar md5 `c5bd4d05...`) avant tout
+edit de `COLORS[]`. Chunks BIN byte-identiques après regénération avec
+les nouvelles couleurs, `KHR_materials_unlit` préservé sur les deux,
+aucune géométrie/échelle/rotation/offset/collider touché.
+
+**Validation, diffée contre `origin/staging` en worktree séparé** :
+`AssetContractAudit` (12/12 visuels, 0/10 colliders déplacés, diff
+EXACTEMENT 2 lignes) ; `DarkPaletteAudit` (diff EXACTEMENT 3 lignes,
+toutes CHARGER) ; `AlarmRampAudit` (12/12 OK, diff EXACTEMENT 2 lignes,
+ENEMY reset-target) ; `DeathModelAudit` et `ChargerShapeProbe`
+(byte-identiques) ; `ProbeTimeoutAudit` (33 sondes armées). Import +
+export Web **exit 0**, `index.wasm` **35 376 909** octets — fingerprint
+identique à tous les lots visuels précédents. Piège payload re-vérifié
+sur le `.pck` exporté (4 810 880 octets) : aucun contenu `assets_source/`
+réellement packé.
+
+**Placeholders `StandardMaterial3D_Charger`/`StandardMaterial3D_Enemy`
+mis à jour aussi**, même discipline que chaque lot précédent (chemin de
+fallback uniquement une fois le `.glb` installé, mais laissé divergent ce
+serait reconstruire le piège qu'`AlarmRampAudit` existe pour fermer).
+
+**Reste ouvert** : jugement device sur les deux nouvelles couleurs
+(un brun-violet foncé se lit-il encore comme un sanglier menaçant ; un
+blanc-gris se lit-il comme un rat ou comme une forme pâle) ; et surtout
+si le risque CHARGER-vs-DODGE accepté (1,008:1) produit une vraie
+confusion en jeu à vitesse réelle — c'est la question que ce lot pose à
+Mathieu, pas celle qu'il tranche.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`

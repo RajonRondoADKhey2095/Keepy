@@ -386,9 +386,42 @@ COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
-    "enemy_rat": (0.7348, 0.88, 0.6864),  # pale kaki/sage, earthtone-axis candidate B1, see above
+    # ENEMY, seventh recolour of the resting rat (2026-08-13, dark-brown-CHARGER
+    # session). Candidate G1 "very light, warm-neutral near-white" from
+    # EnemyGreyAxisSheet.gd (scripts/dev/, branch
+    # claude/enemy-grey-axis-staging-yjc8nk), entered as HSV H=25.0 S=0.03
+    # V=0.92 (Color.from_hsv(25.0/360.0, 0.03, 0.92, 1.0)), converted here the
+    # same way rather than re-derived by eye: RGB = (0.9200, 0.9039, 0.8924).
+    # Measured (that sheet, re-run in this session): worst-of-both-ends vs
+    # ground 4.10:1, the better of the sheet's two near-white candidates
+    # (G2 cool-neutral: 3.87:1). CHARGER changes FAMILY in the same session
+    # (bright pink -> dark brown-violet, see charger_boar below), so this
+    # candidate's own docstring warning ("collided with CHARGER ROSE") no
+    # longer applies to the CHARGER that ships alongside it -- see
+    # MESHY_SPEC.md 8.7 for the pairwise numbers re-measured against the new
+    # CHARGER, not the old one.
+    "enemy_rat": (0.9200, 0.9039, 0.8924),
     "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
-    "charger_boar": (0.96, 0.76, 0.80),  # dusty pink-brown, RECOLOURED from the shipped pink, see above
+    # CHARGER, second recolour (2026-08-13), and the FIRST hazard to change
+    # LUMINANCE BAND on purpose rather than by accident -- MESHY_SPEC 8.4(2)
+    # had explicitly RULED OUT a dark CHARGER (WCAG collapses to ~1:1 against
+    # DODGE and the rat once both are near-black), a constraint this session's
+    # own brief accepted as a KNOWN, EXPLICITLY ASSUMED risk rather than a
+    # blocker. Candidate D3 "Brun-violet profond" from
+    # ChargerEarthtoneAxisSheet.gd (scripts/dev/, branch
+    # claude/charger-earthtone-axis-2vkhd5), entered as HSV H=290.0 S=0.22
+    # V=0.12 (Color.from_hsv(290.0/360.0, 0.22, 0.12, 1.0)): RGB =
+    # (0.1156, 0.0936, 0.1200). Chosen over the sheet's other two dark
+    # candidates (D1 brun-vert, D2 terre d'ombre) by MEASURED ground contrast
+    # AND hue separation: D3 clears the sheet's own 45deg hue-reliability
+    # floor against DODGE at 75.8deg (D1 fails at 7.5deg, D2 fails at 23.1deg)
+    # -- D3 is the only dark candidate that is not itself unsafe by the
+    # sheet's own criteria. worst-of-both-ends vs ground: 3.34:1. Pairwise vs
+    # DODGE (its dark band-mate): 1.009:1 -- WCAG scores ~1:1 as MESHY_SPEC
+    # 8.4(2) always said it would for two near-black objects; this is the
+    # accepted risk, not a surprise. See MESHY_SPEC.md 8.7 for the full gate
+    # table.
+    "charger_boar": (0.1156, 0.0936, 0.1200),
 }
 
 
