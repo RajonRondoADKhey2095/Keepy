@@ -39,9 +39,9 @@ height = 0.7
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Enemy"]
 shading_mode = 0
-albedo_color = Color(0.9608, 0.898, 0.9137, 1)
+albedo_color = Color(0.92, 0.9039, 0.8924, 1)
 emission_enabled = true
-emission = Color(0.9608, 0.898, 0.9137, 1)
+emission = Color(0.92, 0.9039, 0.8924, 1)
 emission_energy_multiplier = 0.3
 
 [sub_resource type="TorusMesh" id="TorusMesh_AirEnemy"]
@@ -66,7 +66,7 @@ size = Vector3(1.2, 2.0, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Charger"]
 shading_mode = 0
-albedo_color = Color(0.96, 0.76, 0.8, 1)
+albedo_color = Color(0.1156, 0.0936, 0.12, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ChargerTrail"]
 size = Vector3(1.1, 0.1, 0.6)
