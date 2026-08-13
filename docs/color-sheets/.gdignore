@@ -1,0 +1,15 @@
+Godot skips this whole directory: nothing here is a game resource.
+
+WHY THIS FILE EXISTS -- MEASURED, NOT PRECAUTIONARY. export_presets.cfg
+uses export_filter="all_resources", which packs EVERY resource in the
+project whether or not a scene references it (see CLAUDE.md, "Piege
+payload"). Its exclude_filter covers scripts/dev/* and assets_source/*
+but NOT docs/*. So a .png dropped here is imported as a texture and its
+derived .ctex ships to every mobile player as dead payload: measured at
+414 862 bytes for a single colour sheet, against a ~4.75 MB .pck.
+
+A .gdignore is the narrowest fix available: the engine never scans this
+directory, so no .import sidecar and no .ctex are ever produced, and
+nothing about the game, the scenes or the export preset changes. Do NOT
+"clean this up" -- deleting it silently re-adds every sheet in here to
+the download of every player.
