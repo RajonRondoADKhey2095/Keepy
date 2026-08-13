@@ -109,7 +109,9 @@ const MIN_OBSTACLE_GAP_S: float = Obstacle.LANE_SWITCH_TIME_S + OBSTACLE_REACTIO
 ## eliminated, not just narrowed. 25.0 m/s stays unchanged: it was
 ## ALREADY being spaced for the cap's speed via lookahead before this
 ## batch (its whole 7.5s palier duration sits inside
-## GameState.MAX_LOOKAHEAD_S, ~11.7s, so rows populated anywhere in it
+## GameState.MAX_LOOKAHEAD_S (~11.7s when that table was measured; 7.29s
+## since the x1.6 speed pass -- 140m of geometry crossed faster), so rows
+## populated anywhere in it
 ## are laid out at-or-near 26 m/s regardless of the budget knob), so
 ## thinning now genuinely only affects the last two speed steps of the
 ## ramp instead of the last three. See the commit message for the full
