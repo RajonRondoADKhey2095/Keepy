@@ -3403,3 +3403,20 @@ Corollaire pratique : pour attendre une CI, poller `completed_at`/`conclusion`
 dans une boucle qui sort sur l'un des DEUX terminaux (`success` ET `failure`),
 jamais une boucle qui n'attend que le succès — le silence d'un poll ne
 distingue pas « toujours en cours » de « échoué ».
+
+**Observation du 13 août 2026 (lot découplage ENEMY/AIR_ENEMY), reproduite en
+direct : le run #105 a terminé à 14:59:10 (`conclusion: success`), et TROIS
+polls successifs après cette heure ont continué de renvoyer `in_progress`,
+avec une réponse byte-identique à chaque fois** — y compris l'étape « Import
+project resources » figée à `in_progress` alors qu'elle s'était terminée à
+14:58:38. C'est exactement le mode de panne décrit ci-dessus, observé sans
+ambiguïté plutôt que déduit.
+
+⚠️ **Ce qui a débloqué la lecture : passer `workflow_jobs_filter:
+{"filter": "latest"}` à `list_workflow_jobs`.** L'appel SANS ce paramètre
+servait le cache périmé ; l'appel AVEC a rendu l'état réel et complet
+immédiatement. **Corrélation observée UNE fois, pas une causalité prouvée** —
+le temps qui passe et l'expiration naturelle du cache sont une explication
+concurrente qui n'a pas été écartée. À essayer en premier quand un poll semble
+figé, avant de conclure quoi que ce soit sur l'état du job ; ça ne coûte rien
+et, si ça ne suffit pas, la règle `completed_at` reste seule juge.
