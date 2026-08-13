@@ -2056,6 +2056,126 @@ si le risque CHARGER-vs-DODGE accepté (1,008:1) produit une vraie
 confusion en jeu à vitesse réelle — c'est la question que ce lot pose à
 Mathieu, pas celle qu'il tranche.
 
+## DÉCOUPLAGE DE `ENEMY_ALARM_ALBEDO` : le rat n'a PLUS de télégraphe de couleur, la libellule devient vert clair (13 août 2026)
+
+Branche `claude/decouple-enemy-air-enemy-colors-mddn8z`, partie de `staging`
+(`b549585`). **Ni un install, ni une recolorisation de repos** : c'est le
+premier lot à changer ce que la rampe d'alarme d'un hazard VISE. Aucune
+géométrie, LOD, échelle, offset, rotation ni collider touché ; aucun `.glb`
+réécrit. Détail chiffré complet : `docs/MESHY_SPEC.md` **§8.8**.
+
+### ⚠️ DÉCISION DE DESIGN ASSUMÉE, PAS UN DÉFAUT
+
+**Le rat (ENEMY) n'a plus AUCUN signal de couleur pendant sa rampe
+d'alarme.** Décision explicite de Mathieu, prise en connaissance du coût :
+les autres cues — **timing** (rampe de fréquence d'oscillation), **position**
+(verrouillage de voie à `ENEMY_REACTION_WINDOW_S`) et **silhouette** —
+restent le seul télégraphe. La couleur ne fait plus partie de la liste.
+
+`ENEMY_ALARM_ALBEDO` `(0,95, 0,08, 0,12)` était **une constante unique
+servant DEUX appliers**. Leur TIMING n'a jamais été partagé (AIR_ENEMY suit
+sa descente sur 3,5 s, ENEMY son approche sur 4,5 s) — seule la COULEUR
+l'était, et seulement parce qu'une constante faisait deux métiers. Deux
+décisions indépendantes lui sont désormais demandées, donc elle est scindée :
+
+| constante | valeur | effet |
+|---|---|---|
+| `ENEMY_ALARM_ALBEDO` | `(0,9200, 0,9039, 0,8924)` | **égale au repos du rat** → le lerp d'albédo est une identité |
+| `AIR_ENEMY_ALARM_ALBEDO` | `(0,62, 0,92, 0,60)` | vert clair, remplace le rouge partagé |
+
+**Prouvé sur des PIXELS, pas sur des constantes** (sonde jetable, revertée) :
+rat à l'écran, rampe épinglée à t=0 puis t=1, frames entières comparées —
+**0 pixel différent sur 2 073 600, pire écart de canal 0,000000**. La valeur
+n'est pas non plus un littéral recopié qui pourrait dériver : le
+`baseColorFactor` du `.glb` décode **exactement** à ce triplet sRGB (delta
+**0,00e+00** en précision flottante complète), et le placeholder porte la même
+valeur — l'identité tient donc sur le chemin importé ET sur le fallback.
+
+**L'arithmétique de la rampe est délibérément LAISSÉE EN MARCHE** plutôt que
+court-circuitée : `alarm_t` est toujours calculé et passé à chaque frame, donc
+la décision vit dans une seule constante et la re-pointer ramène le télégraphe
+sans aucun flot de contrôle à restaurer. **Vérifié avant de s'y fier** : les
+seuls lecteurs de `ENEMY_ALARM_ALBEDO` dans tout le repo sont cet applier et
+`AlarmRampAudit` — aucun système VFX/SFX/gameplay ne consomme la couleur ni
+n'attend un changement visible.
+
+⚠️ **La paire ÉMISSION reste partagée, et c'est sûr UNIQUEMENT parce que
+toutes les surfaces concernées sont unlit** — mesuré : les deux placeholders
+portent `shading_mode = 0` et les deux assets livrés déclarent
+`KHR_materials_unlit`. **Le piège, nommé là où on trébucherait** : réactiver
+l'ombrage sur le placeholder ENEMY ressuscite la rampe d'émission rouge — sur
+le chemin de fallback seulement, celui que personne ne regarde.
+
+### AIR_ENEMY : le plancher 3,0 est tenu sur l'OBJET, pas sur la moyenne de boîte
+
+Trois candidats balayés ; **L3 écarté pour échec au plancher (2,98:1)**. L2
+retenu pour la plus large marge sol et la meilleure distance de teinte à JUMP.
+
+⚠️ **C'est le hazard où la moyenne 14 px N'EST PAS sa couleur**, et l'écart
+dépasse tous les lots précédents : la décimation a délibérément préservé le
+treillis d'ailes, donc le fond passe au travers — **131/196 = 67 % de pixels
+d'objet** dans la scène même de `DarkPaletteAudit`. Les deux chiffres sont
+publiés, pas le plus flatteur :
+
+| | brume claire | brume profonde |
+|---|---|---|
+| **couleur d'objet** (histogramme dominant) | **3,58:1** | **3,57:1** ✅ plancher 3,0 |
+| moyenne de boîte 14 px (ce que la sonde imprime) | 2,13:1 | 2,12:1 |
+
+L'ancien rouge partagé mesurait **1,24:1** par la même méthode : c'est un gros
+gain de lisibilité de silhouette, pas un échange. `DarkPaletteAudit` ne GATE
+pas le contraste hazard (il le rapporte, et sort en 0) — son 2,12 imprimé
+n'est donc pas un rouge, c'est une statistique contaminée, et un futur lecteur
+la verra. Séparation voisine : CHARGER 11,04:1, DODGE 10,88:1, JUMP dH 75,7°,
+STOMPER dH 85,5°, ENEMY dH 97,0° (teinte peu fiable contre un quasi-gris — le
+vrai séparateur est la **saturation, 0,34 contre 0,03**).
+
+**ENEMY vs sol : 4,12 / 4,10:1**, exactement la valeur documentée, sur une
+fenêtre **non contaminée** (196/196 px, une seule couleur distincte) —
+non-régression mesurée. Ce qui bouge, c'est seulement que la ligne mesure
+désormais le blanc-gris au lieu du rouge : elle a toujours échantillonné
+l'alarme saturée, ce qui est précisément pourquoi la faire taire la déplace.
+
+### `AlarmRampAudit` réécrite AVANT le déplacement de la constante
+
+Son `_assert_ramp` s'ouvrait sur une garde qui **échouait quand base == la
+couleur d'alarme** — juste pour l'ancien contrat, rouge garanti sous le
+nouveau. Réécrite d'abord, comme `ChargerShapeProbe` avant le sanglier.
+Trois points non cosmétiques : **ENEMY est asserté SILENCIEUX positivement**,
+mais la couleur seule ne distinguerait plus un silence voulu de la rampe MORTE
+que ce fichier existe pour attraper — donc le chemin silencieux asserte aussi
+que **le handle de matériau est non-null** (le défaut d'origine, dans la seule
+forme qui survit) et que **la constante égale toujours le repos livré** ;
+**PHASE B garde le contrat VIVANT pour les deux types** (la base du stand-in
+est son magenta de debug, donc la rampe ENEMY y bouge — c'est ce qui permet
+encore de prouver la liaison) ; **PHASE C passe sur AIR_ENEMY** (elle isolait
+sur ENEMY : dès que cette rampe est une identité, « alarmer une instance n'a
+pas teinté l'autre » devient vrai gratuitement et la phase ne peut plus jamais
+échouer). Preuve que les nouveaux tests tirent : le premier run de la
+réécriture est parti **rouge sur exactement les deux assertions ENEMY** de la
+phase dont la base n'est pas celle du rat. **16/16 OK** après scoping.
+
+### Validation
+
+Diffé contre `origin/staging` en worktree séparé. `DarkPaletteAudit` —
+**exactement 5 lignes** : ENEMY et AIR_ENEMY aux deux bouts, plus l'agrégat
+dérivé `hazard worst`. **DODGE 3,39/3,37, JUMP 3,04/3,02, CHARGER 3,37/3,34,
+STOMPER 3,41/3,41, NOISETTE et GLAND byte-identiques**, 0 échantillon manqué.
+`AssetContractAudit` **byte-identique** (12/12 visuels, **0/10 colliders
+déplacés**). `ProbeTimeoutAudit` (**33 sondes**, retour à la baseline après
+retrait de la sonde jetable), `DeathModelAudit`, `ChargerShapeProbe` — exit 0.
+Import + export Web **exit 0**, `index.wasm` **35 376 909** / md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b`. Piège payload tenu (0 ressource
+`assets_source` packée).
+
+### Reste ouvert — jugement device
+
+Aucune sonde ne dit qu'une libellule vert clair se lit comme telle à vitesse
+réelle sur un téléphone, ni que le rat reste lisible comme **menace** une fois
+la couleur retirée de son télégraphe — c'est tout l'objet du lot. Les cues
+restants du rat sont le mouvement et la forme, rien d'autre.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`

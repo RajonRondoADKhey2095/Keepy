@@ -338,10 +338,88 @@ const ENEMY_OSCILLATION_RAMP_WINDOW_S: float = 2.5
 # distinct from the lock itself: the player should be able to read
 # "this is getting dangerous" well before it commits to a lane, not just
 # see a binary swaying/frozen state change.
-const ENEMY_ALARM_ALBEDO: Color = Color(0.95, 0.08, 0.12, 1)
+#
+# =====================================================================
+# ONE CONSTANT PER TYPE -- THESE USED TO BE A SINGLE SHARED VALUE
+#
+# ENEMY and AIR_ENEMY both lerp toward "the alarm colour", and until
+# 2026-08-13 that was literally the same red for both, on the stated
+# reasoning that "grounded and dangerous" should read as one visual
+# language. The two ramps were never coupled in TIME (AIR_ENEMY is driven
+# by its descent over AIR_ENEMY_DESCENT_LEAD_S, ENEMY by its own approach
+# over ENEMY_ALARM_RAMP_WINDOW_S) -- only in COLOUR, and only because one
+# constant was doing two jobs.
+#
+# Splitting them is what lets the two types be decided independently, which
+# is now required: the rat is deliberately silent (below) and the dragonfly
+# is deliberately green. Neither decision is expressible while one constant
+# serves both.
+#
+# ⚠️ THE EMISSION PAIR BELOW IS STILL SHARED, AND THAT IS SAFE ONLY
+# BECAUSE EVERY SURFACE INVOLVED IS UNLIT -- measured, not assumed: both
+# placeholders in Obstacle.tscn carry shading_mode = 0, and both shipped
+# assets (keepy_enemy_rat.glb, keepy_air_enemy_dragonfly.glb) declare
+# KHR_materials_unlit. An unshaded material ignores emission entirely, so
+# these two constants currently change nothing a player can see, on either
+# type, on either path. THE TRAP: re-enable shading on the ENEMY
+# placeholder and the red emission ramp below resurrects a telegraph this
+# lot deliberately removed -- it would show up on the fallback path only,
+# which is the path nobody looks at. Split these too before doing that.
 const ENEMY_ALARM_EMISSION: Color = Color(1.0, 0.12, 0.05, 1)
 const ENEMY_ALARM_EMISSION_ENERGY: float = 1.5
 const ENEMY_ALARM_RAMP_WINDOW_S: float = 4.5
+
+## ENEMY's alarm albedo -- DELIBERATELY EQUAL TO THE RAT'S RESTING COLOUR,
+## which makes the albedo half of its ramp a mathematical identity.
+##
+## THIS IS A DESIGN DECISION, NOT A DEAD CONSTANT. Mathieu's call, taken
+## explicitly and with the cost named: the rat keeps ONE colour for its
+## whole approach, and gives up its colour telegraph entirely. What still
+## telegraphs an ENEMY is everything else it does -- the oscillation
+## frequency ramp (ENEMY_OSCILLATION_HZ_*), the hard lane lock at
+## ENEMY_REACTION_WINDOW_S, its position and its silhouette. Colour is not
+## on that list any more, on purpose.
+##
+## The value is not a hand-copied literal that could drift from the asset:
+## keepy_enemy_rat.glb's baseColorFactor decodes to exactly this sRGB
+## triple (measured to full float precision, delta 0.00e+00), and
+## StandardMaterial3D_Enemy in Obstacle.tscn is authored to the same value,
+## so the identity holds on BOTH the imported and the fallback path. If the
+## rat is ever recoloured again, THIS CONSTANT MOVES WITH IT -- otherwise
+## the ramp silently becomes a real colour change toward a stale colour,
+## which is the one failure mode this arrangement can produce.
+## scripts/dev/AlarmRampAudit.gd asserts the identity so that cannot land
+## unnoticed.
+const ENEMY_ALARM_ALBEDO: Color = Color(0.92, 0.9039, 0.8924, 1)
+
+## AIR_ENEMY's alarm albedo -- a light green, replacing the shared red.
+##
+## The dragonfly rests at a vivid neon green (its .glb decodes to sRGB
+## 0.24/1.00/0.31) and used to ramp to red as it descended, so the colour a
+## player actually reads at contact range was RED, not green: the descent
+## is complete well before the hazard fills a legible part of the frame.
+## Ramping to a light green instead keeps the type green at BOTH ends of
+## its ramp, and the ramp itself survives as a desaturate-and-soften rather
+## than a hue flip.
+##
+## MEASURED, on the rendered pixel and by histogram rather than by the
+## sample box's mean -- the distinction matters here more than anywhere
+## else in this file, because the decimation deliberately preserved the
+## wing lattice and the background shows through it: a 14px box around this
+## hazard is only ~67% object pixels (131/196 measured), so its MEAN is a
+## blend with whatever is behind it and understates the object by more than
+## a full point of contrast. Against the ground (rendered 0.2645/0.4706/
+## 0.2134, L 0.1491):
+##
+##   object colour (histogram dominant, rgb 157/232/153) : 3.62:1  <- the object
+##   14px box mean                                       : 2.53:1  <- 1/3 ground
+##
+## The old red measured 1.24:1 by the same object-colour method, so this is
+## a large improvement in silhouette legibility, not a trade for hue.
+## Neighbour separation, same capture: CHARGER 11.04:1, JUMP dH 75.7 deg,
+## STOMPER dH 85.5 deg, ENEMY dH 92 deg (hue unreliable against a near-grey
+## -- the real separator there is saturation, 0.35 against 0.03).
+const AIR_ENEMY_ALARM_ALBEDO: Color = Color(0.62, 0.92, 0.60, 1)
 
 # =====================================================================
 # AIR_ENEMY DESCENT/LANDING -- see the Type.AIR_ENEMY doc above.
@@ -1305,15 +1383,18 @@ func _lane_index_for_x(x: float) -> int:
 	return best_index
 
 ## Lerps the (per-instance, see _ready) AirEnemyMesh material from its
-## base colors toward ENEMY_ALARM_ALBEDO/_EMISSION/_EMISSION_ENERGY as it
-## descends -- reuses the ground ENEMY's own alarm palette (t=0 resting,
-## t=1 fully landed/alarmed) so "grounded and dangerous" reads as the
-## same visual language across both hazard types, rather than the player
-## having to learn a second color code.
+## base colors toward AIR_ENEMY_ALARM_ALBEDO (t=0 resting, t=1 fully
+## landed/alarmed).
+##
+## It used to lerp toward the GROUND enemy's alarm colour, on the reasoning
+## that "grounded and dangerous" should read as one visual language across
+## both hazard types. That shared constant is gone (see the ONE CONSTANT PER
+## TYPE note above): the two types are now coloured independently, and this
+## one ramps vivid green -> light green rather than green -> red.
 func _apply_air_enemy_tint(t: float) -> void:
 	if not _air_enemy_material:
 		return
-	_air_enemy_material.albedo_color = _air_enemy_base_albedo.lerp(ENEMY_ALARM_ALBEDO, t)
+	_air_enemy_material.albedo_color = _air_enemy_base_albedo.lerp(AIR_ENEMY_ALARM_ALBEDO, t)
 	_air_enemy_material.emission = _air_enemy_base_emission.lerp(ENEMY_ALARM_EMISSION, t)
 	_air_enemy_material.emission_energy_multiplier = lerpf(_air_enemy_base_emission_energy, ENEMY_ALARM_EMISSION_ENERGY, t)
 
@@ -1321,28 +1402,39 @@ func _apply_air_enemy_tint(t: float) -> void:
 ## colors toward ENEMY_ALARM_ALBEDO/_EMISSION/_EMISSION_ENERGY. t=0 is the
 ## resting color, t=1 is fully alarmed.
 ##
+## ⚠️ AS OF 2026-08-13 THIS FUNCTION NO LONGER CHANGES THE RAT'S COLOUR, BY
+## DESIGN. ENEMY_ALARM_ALBEDO is set equal to the rat's resting colour, so
+## the albedo lerp is an identity at every t, and the emission lerp is inert
+## on an unlit material (see that constant's note for the measurement of
+## both). The rat is one colour for its whole approach. Mathieu's explicit
+## call, cost accepted: ENEMY gives up its colour telegraph, and keeps the
+## oscillation ramp, the lane lock, its position and its silhouette.
+##
+## THE ARITHMETIC IS DELIBERATELY LEFT RUNNING rather than short-circuited.
+## `alarm_t` is computed and passed every frame regardless (see
+## _process_enemy), so this stays the one place the decision is expressed --
+## re-pointing ENEMY_ALARM_ALBEDO at a different colour is all it takes to
+## bring the telegraph back, with no control flow to restore. A guard here
+## would also silently strand any future non-colour consumer of the ramp.
+##
 ## t=0 IS NOT A LITERAL COLOUR NAMED HERE, and this line has now been wrong
 ## twice for the same reason -- it said "Obstacle.tscn's default purple", then
 ## "a warm brown-grey", and the rat was recoloured again (to a pale pink) on
-## 2026-08-12. The base is read off the MATERIAL at _ready()
-## (_enemy_base_albedo), so any colour named here describes a value this
-## function does not consult. Whatever the slot ships with is the resting
-## colour; do not write a third one down.
+## 2026-08-12, then to a near-white on 2026-08-12. The base is read off the
+## MATERIAL at _ready() (_enemy_base_albedo), so any colour named here
+## describes a value this function does not consult. Whatever the slot ships
+## with is the resting colour; do not write a third one down.
 ##
-## ⚠️ Three things about this ramp that are NOT visible from these lines, all
-## measured, all in MESHY_SPEC sections 8.4-8.5:
+## ⚠️ Two things about this ramp that are NOT visible from these lines, both
+## measured, both in MESHY_SPEC sections 8.4-8.6:
 ##   * the EMISSION half is inert on an imported (unlit) material, so the cue
-##     is carried by ALBEDO alone;
+##     was carried by ALBEDO alone even before this lot silenced it;
 ##   * the resting colour is never on screen at a size where its hue can be
-##     read -- the ramp has left the resting family 4.4 s before contact,
+##     read -- the ramp used to leave the resting family 4.4 s before contact,
 ##     which is 53 m out at START_SPEED and 114 m at MAX_SPEED, an 11 px and a
-##     5 px silhouette respectively;
-##   * THE RAMP'S DIRECTION IS NOT FIXED, and it inverted on 2026-08-12. It
-##     used to BRIGHTEN (dark rat, L 0.011, toward an alarm at L 0.189); the
-##     pale-pink rat rests at L 0.788, so it now DARKENS -- the same shape
-##     AIR_ENEMY has always had. Nothing here encodes a direction, and nothing
-##     should: both are just a lerp toward ENEMY_ALARM_ALBEDO. Measured width
-##     3.50:1 (was 3.92:1).
+##     5 px silhouette respectively. That is part of why losing this cue costs
+##     less than it sounds: the colour it ramped AWAY from was never legible.
+##     Measured width is now 1.00:1 (was 3.50:1, and 3.92:1 before that).
 func _apply_enemy_alarm(t: float) -> void:
 	if not _enemy_material:
 		return

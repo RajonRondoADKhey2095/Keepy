@@ -1467,6 +1467,156 @@ whether a dark brown-violet sanglier still reads as a distinct, fatal
 threat rather than as a shadow, at real speed, on a phone. That is the
 one judgement this section explicitly defers to Mathieu.
 
+### 8.8 `ENEMY_ALARM_ALBEDO` is split in two, and the rat's colour telegraph is switched off on purpose (13 August 2026)
+
+Branch `claude/decouple-enemy-air-enemy-colors-mddn8z`, off `staging`
+(`b549585`). **Not a recolour of a resting albedo, and not an install** —
+this is the first lot to change what a hazard's alarm ramp AIMS AT. No
+geometry, LOD, scale, offset, rotation or collider is touched on either
+hazard, and neither `.glb` is rewritten.
+
+Until now `ENEMY_ALARM_ALBEDO` `(0.95, 0.08, 0.12)` was a **single constant
+serving two appliers** — `_apply_enemy_alarm` (rat) and
+`_apply_air_enemy_tint` (dragonfly). Their TIMING was never shared
+(AIR_ENEMY rides its descent over `AIR_ENEMY_DESCENT_LEAD_S` 3.5 s, ENEMY
+its approach over `ENEMY_ALARM_RAMP_WINDOW_S` 4.5 s) — only their COLOUR
+was, and only because one constant was doing two jobs. Two independent
+decisions are now required of it, so it is split:
+
+| constant | value | effect |
+|---|---|---|
+| `ENEMY_ALARM_ALBEDO` | `(0.9200, 0.9039, 0.8924)` | **equals the rat's resting colour** → the albedo lerp is an identity |
+| `AIR_ENEMY_ALARM_ALBEDO` | `(0.62, 0.92, 0.60)` | light green, replacing the shared red |
+
+#### The rat's silence is a DESIGN DECISION with a named cost
+
+Mathieu's explicit call, cost accepted in advance: **ENEMY gives up its
+colour telegraph entirely.** What still telegraphs a ground ENEMY is the
+oscillation-frequency ramp (`ENEMY_OSCILLATION_HZ_*`), the hard lane lock at
+`ENEMY_REACTION_WINDOW_S`, its position and its silhouette. Colour is no
+longer on that list.
+
+**The ramp arithmetic is deliberately left running** rather than
+short-circuited: `alarm_t` is still computed and passed every frame, so the
+decision lives in one constant and re-pointing it brings the telegraph back
+with no control flow to restore. Verified before relying on it — the only
+readers of `ENEMY_ALARM_ALBEDO` anywhere in the repo are that applier and
+`AlarmRampAudit`; no VFX, SFX or gameplay system consumes the colour or
+expects a visible change. (`HUD.gd` has an `alarm_t` local, for the pursuer
+gauge — unrelated name collision.)
+
+**Proved on PIXELS, not on constants** (throwaway probe, reverted): the rat
+held on screen at capture range, ramp pinned to t=0 and then t=1, whole
+frames compared — **0 differing pixels out of 2 073 600, worst channel delta
+0.000000**. The value is also not a hand-copied literal that can drift:
+`keepy_enemy_rat.glb`'s `baseColorFactor` decodes to exactly this sRGB triple
+(**delta 0.00e+00** at full float precision) and `StandardMaterial3D_Enemy`
+is authored to the same value, so the identity holds on the imported AND the
+fallback path.
+
+⚠️ **The EMISSION pair stays shared, and that is safe only because every
+surface involved is unlit** — measured, not assumed: both placeholders carry
+`shading_mode = 0` and both shipped assets declare `KHR_materials_unlit`, so
+`ENEMY_ALARM_EMISSION`/`_ENERGY` currently change nothing visible on either
+type on either path. **The trap, named where someone would trip it**: re-enable
+shading on the ENEMY placeholder and the red emission ramp resurrects a
+telegraph this lot removed — on the fallback path only, i.e. the one nobody
+looks at.
+
+#### AIR_ENEMY: light green, and the 3.0 floor is met on the OBJECT, not the box mean
+
+Three candidates swept and measured; **L3 was dropped for failing the floor
+(2.98:1)**. L2 was taken for the widest ground margin and the best hue
+distance from JUMP among the passing pair.
+
+⚠️ **This hazard is the one where the 14 px box mean is NOT its colour**, and
+the gap is larger than any previous lot's. The decimation deliberately
+preserved the wing lattice (§11, dragonfly install), so background shows
+through it: measured in `DarkPaletteAudit`'s own scene, the box is
+**131/196 = 67 % object pixels**. Both numbers are published rather than the
+flattering one:
+
+| | shallow mist | deep mist |
+|---|---|---|
+| **object colour** (histogram dominant) | **3.58:1** | **3.57:1** ✅ floor 3.0 |
+| 14 px box mean (what the probe prints) | 2.13:1 | 2.12:1 |
+
+The old shared red measured **1.24:1** by the same object-colour method, so
+this is a large gain in silhouette legibility, not a trade. `DarkPaletteAudit`
+does not gate hazard contrast (it reports it, and exits 0 — the only gate
+there is sample integrity and the barrier stripe), so its printed 2.12 is not
+a red; it is a contaminated statistic, and a future reader will see it.
+
+Neighbour separation, same capture, object colours throughout: CHARGER
+**11.04:1**, DODGE **10.88:1**, JUMP **dH 75.7°**, STOMPER **dH 85.5°**,
+ENEMY **dH 97.0°**. The last three sit at ~1.05–1.15:1 in luminance — all
+four are bright-band objects, so §8.4(2) applies and hue is doing the work.
+Against the near-white rat, hue is unreliable (S 0.03) and the real separator
+is **saturation, 0.34 against 0.03**.
+
+#### ENEMY vs ground is unchanged, and that is a measured non-regression
+
+`DarkPaletteAudit` reports **4.12 / 4.10:1**, hitting the documented figure
+exactly, from a fully uncontaminated window (**196/196 px, one distinct
+colour**). What moved is only that the row now measures the near-white
+instead of the red — the row has always sampled the alarm-saturated colour,
+which is precisely why silencing the ramp changes it.
+
+#### Validation
+
+Diffed against `origin/staging` in a separate worktree. `DarkPaletteAudit` —
+**exactly 5 lines differ**: ENEMY and AIR_ENEMY at both breath ends, plus the
+derived `hazard worst` aggregate (a min over the set, so it moves when a
+member does). **DODGE 3.39/3.37, JUMP 3.04/3.02, CHARGER 3.37/3.34, STOMPER
+3.41/3.41, NOISETTE and GLAND — byte-identical.** 0 missed samples.
+`AssetContractAudit` — **byte-identical**, 12/12 visuals, **0/10 colliders
+moved**. `AlarmRampAudit` **16/16 OK** (rewritten, below). `ProbeTimeoutAudit`
+(**33 probes**, back to baseline after the throwaway was removed),
+`DeathModelAudit`, `ChargerShapeProbe` — exit 0. Import + export Web **exit
+0**, `index.wasm` **35 376 909** bytes and md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b`. Payload trap re-checked: **0** resources
+from `assets_source/` packed.
+
+#### `AlarmRampAudit` was rewritten BEFORE the constant moved
+
+Its `_assert_ramp` opened with a guard that **failed when base == the alarm
+colour** ("this phase could not tell a working ramp from a dead one"). Right
+for the old contract, a guaranteed red under the new one. Rewritten first,
+like `ChargerShapeProbe` before the boar — the expected failure never had to
+be chased. Three things it now does that are not cosmetic:
+
+- **ENEMY is asserted SILENT, positively** — but colour alone would no longer
+  distinguish a deliberately silent ramp from the DEAD one this file exists
+  to catch (the `slot_material()` null). So the silent path also asserts the
+  **material handle is non-null** (the original defect, in the one form that
+  survives) and that **the constant still equals the shipped resting colour**
+  (recolour the rat without moving it and the ramp quietly comes back to life
+  aimed at a stale colour — the single failure mode this arrangement can
+  produce).
+- **PHASE B keeps the LIVE contract for both types.** The stand-in's base is
+  its own debug magenta, not the rat's colour, so ENEMY's ramp does move
+  there — which is what lets the wiring phase still prove a `.glb`-shaped
+  binding resolved for a type that is silent in production.
+- **PHASE C moved to AIR_ENEMY.** It isolated on ENEMY; the moment that ramp
+  became an identity, "alarming one instance left the other unchanged" was
+  true for free and the phase could never fail whatever the material sharing
+  did. It also now asserts the driven instance actually moved, so the phase
+  cannot go vacuous again silently.
+
+Evidence the new checks fire rather than pass by construction: the first run
+of the rewrite went **red on exactly the two ENEMY assertions** in the phase
+whose base colour is not the rat's.
+
+#### Still open
+
+No probe says a light-green dragonfly reads as one at real speed on a phone,
+and none says the rat is still legible as a *threat* once colour is out of
+its telegraph — **that is the whole point of the lot, and it is device
+judgement**. The rat's remaining cues are motion and shape only. Everything
+§8.4(3) says about the ramp dominating the real decision window is unchanged
+and, for ENEMY, now moot: there is nothing left for it to dominate.
+
 ## 9. Godot 4.3 import notes
 
 - A `.glb` imports as a **`PackedScene`** whose root is a `Node3D`.

@@ -31,16 +31,53 @@ extends Node
 ## ramp actually moves the colour a player would see.
 ##
 ## =====================================================================
+## THE TWO TYPES ARE NOW ASSERTED DIFFERENTLY -- READ THIS BEFORE EDITING
+##
+## Until 2026-08-13 both types lerped toward ONE shared constant and this
+## file asserted one contract twice. They no longer do: ENEMY's alarm
+## albedo is deliberately EQUAL to the rat's resting colour, so its colour
+## telegraph is intentionally silent (Mathieu's explicit call -- see
+## Obstacle.ENEMY_ALARM_ALBEDO). AIR_ENEMY still ramps, now to its own
+## light green.
+##
+## That broke this file in a way worth naming, because it is the exact
+## trap this repo keeps re-learning: _assert_ramp opened with a guard that
+## FAILED when base == the alarm colour ("this phase could not tell a
+## working ramp from a dead one"). That guard was right for the old
+## contract and became a guaranteed red under the new one. It was rewritten
+## BEFORE the constant moved, the same way ChargerShapeProbe was rewritten
+## before the boar landed -- not chased afterwards.
+##
+## ⚠️ AND THE GUARD'S POINT STILL STANDS. On ENEMY, a DEAD ramp (the
+## slot_material() null this file exists to catch) and a DELIBERATELY
+## SILENT one are now indistinguishable by colour -- which is precisely
+## why colour is no longer the only thing checked on that type. The
+## silent-ENEMY assertion pairs a colour check with a WIRING check: the
+## material handle Obstacle._ready() obtained must be non-null. That is
+## the original defect, restated in the one form that survives the type
+## having no colour left to move. Delete that half and this file stops
+## covering the bug it was written for.
+##
+## =====================================================================
 ## WHAT IT ASSERTS
 ##
-##   PHASE A -- placeholder meshes. The ramp moves every drawn surface's
-##              albedo to ENEMY_ALARM_ALBEDO at t=1, and back to the
-##              variant's own base colour at t=0 (a pooled Obstacle is
-##              re-configured, never re-created, so the reset is as
-##              load-bearing as the ramp).
-##   PHASE B -- the SAME two assertions with a .glb-shaped model installed
-##              on the slot. This is the phase that was red before the
-##              accessor was fixed, and it is the reason this file exists.
+##   PHASE A -- placeholder meshes.
+##              AIR_ENEMY: the ramp moves every drawn surface's albedo to
+##              AIR_ENEMY_ALARM_ALBEDO at t=1, and back to the variant's own
+##              base colour at t=0 (a pooled Obstacle is re-configured,
+##              never re-created, so the reset is as load-bearing as the
+##              ramp).
+##              ENEMY: the handle exists, the constant still matches the
+##              shipped resting colour, and the drawn albedo does not move
+##              between t=0 and t=1.
+##   PHASE B -- the SAME assertions with a .glb-shaped model installed on
+##              the slot. This is the phase that was red before the accessor
+##              was fixed, and it is the reason this file exists. BOTH types
+##              take the live-ramp contract here: the stand-in's base is its
+##              own debug magenta, not the rat's colour, so ENEMY's ramp
+##              does move against it -- which is what makes this phase still
+##              able to prove the binding resolved for a type that is silent
+##              in production.
 ##   PHASE C -- per-instance isolation. Alarming one obstacle must not
 ##              tint another. This matters MORE with a model than without:
 ##              a placeholder's material is a sub-resource of one scene,
@@ -154,12 +191,42 @@ func _phase_d_as_shipped() -> void:
 	_assert_ramp(FIXTURE_SHIPPED, Obstacle.Type.AIR_ENEMY, "AirEnemyMesh")
 	print("")
 
-## One variant, one binding: base -> full alarm -> back to base, checked on
-## EVERY surface the slot draws rather than on the first one. "Every" is
-## the real contract: a .glb body split across several mesh instances must
-## tint as one object (see ModelSlot.apply_material), and checking only
-## surface 0 would pass a model that lit its torso and left its tail behind.
+## The alarm colour each type ramps toward. One constant per type since
+## 2026-08-13 -- reading the wrong one here would let a type pass against
+## its neighbour's target, which is exactly the coupling that was removed.
+func _alarm_target(type: int) -> Color:
+	return Obstacle.AIR_ENEMY_ALARM_ALBEDO if type == Obstacle.Type.AIR_ENEMY \
+		else Obstacle.ENEMY_ALARM_ALBEDO
+
+## Routes each type to the contract it actually has. Kept as one entry point
+## so every phase covers both types without each phase having to know which
+## of them currently telegraphs in colour -- that is a product decision, and
+## it has already flipped once.
+##
+## ⚠️ ENEMY IS SILENT ONLY WHERE THE BASE COLOUR IS THE RAT'S. On
+## FIXTURE_SUBSTITUTE the base is the stand-in's debug magenta, which has
+## nothing to do with the shipped asset -- so the ramp there DOES move, and
+## asserting silence would be asserting a property of the fixture instead of
+## a property of the game. It takes the LIVE contract there, and that is a
+## gain rather than a concession: PHASE B is the wiring test, and a type
+## whose colour cannot move in production has nowhere else left to prove
+## through COLOUR MOVEMENT that a .glb-shaped binding resolved at all.
+## PHASE A and PHASE D, where the base really is the rat's colour (the
+## placeholder is authored to it and the .glb decodes to it exactly), assert
+## the silence that ships.
 func _assert_ramp(fixture: int, type: int, slot_name: String) -> void:
+	if type == Obstacle.Type.ENEMY and fixture != FIXTURE_SUBSTITUTE:
+		_assert_silent_ramp(fixture, type, slot_name)
+	else:
+		_assert_live_ramp(fixture, type, slot_name)
+
+## A type that DOES telegraph in colour: base -> full alarm -> back to base,
+## checked on EVERY surface the slot draws rather than on the first one.
+## "Every" is the real contract: a .glb body split across several mesh
+## instances must tint as one object (see ModelSlot.apply_material), and
+## checking only surface 0 would pass a model that lit its torso and left
+## its tail behind.
+func _assert_live_ramp(fixture: int, type: int, slot_name: String) -> void:
 	var obstacle := _make_obstacle(fixture)
 	var slot := obstacle.get_node(slot_name) as ModelSlot
 	obstacle.configure(type, 0.0, 0.0)
@@ -171,8 +238,9 @@ func _assert_ramp(fixture: int, type: int, slot_name: String) -> void:
 		obstacle.queue_free()
 		return
 
+	var target := _alarm_target(type)
 	var base: Color = surfaces[0].albedo_color
-	if _same(base, Obstacle.ENEMY_ALARM_ALBEDO):
+	if _same(base, target):
 		_fail("%s: base colour already IS the alarm colour -- this phase could not"
 			% label + " tell a working ramp from a dead one")
 		obstacle.queue_free()
@@ -182,10 +250,10 @@ func _assert_ramp(fixture: int, type: int, slot_name: String) -> void:
 	var alarmed := _drawn_materials(slot)
 	var all_alarmed := true
 	for material in alarmed:
-		if not _same(material.albedo_color, Obstacle.ENEMY_ALARM_ALBEDO):
+		if not _same(material.albedo_color, target):
 			all_alarmed = false
 	_check(all_alarmed, "%s: all %d drawn surface(s) reach the alarm colour %s"
-		% [label, alarmed.size(), _rgb(Obstacle.ENEMY_ALARM_ALBEDO)],
+		% [label, alarmed.size(), _rgb(target)],
 		"got %s" % _rgb(alarmed[0].albedo_color))
 
 	_apply(obstacle, type, 0.0)
@@ -199,17 +267,89 @@ func _assert_ramp(fixture: int, type: int, slot_name: String) -> void:
 
 	obstacle.queue_free()
 
+## A type whose colour telegraph is DELIBERATELY silent (ENEMY, since
+## 2026-08-13). Three checks, and each one covers something the other two
+## cannot:
+##
+##   1. THE HANDLE EXISTS. This is the original defect of this whole file
+##      (slot_material() returning null once a .glb landed), and on a type
+##      with no colour left to move it is the ONLY way that defect is still
+##      visible. Without it, silencing ENEMY would have silently deleted
+##      this probe's coverage of its own reason for existing.
+##   2. THE CONSTANT STILL MATCHES THE SHIPPED RESTING COLOUR. The silence
+##      is not a property of the code -- it is the coincidence that
+##      ENEMY_ALARM_ALBEDO equals whatever the slot ships with. Recolour the
+##      rat without moving the constant and the ramp quietly comes back to
+##      life, aimed at a stale colour. That is the one failure mode this
+##      arrangement can produce, and this is the check that catches it.
+##   3. THE DRAWN ALBEDO DOES NOT MOVE between t=0 and t=1, on every drawn
+##      surface -- the decision itself, asserted on what the renderer uses
+##      rather than inferred from (2).
+func _assert_silent_ramp(fixture: int, type: int, slot_name: String) -> void:
+	var obstacle := _make_obstacle(fixture)
+	var slot := obstacle.get_node(slot_name) as ModelSlot
+	obstacle.configure(type, 0.0, 0.0)
+
+	var label := "%s %s" % [_type_name(type), _fixture_label(fixture, slot)]
+	var surfaces := _drawn_materials(slot)
+	if surfaces.is_empty():
+		_fail("%s: the slot draws NO readable material at all" % label)
+		obstacle.queue_free()
+		return
+
+	_check(obstacle.get("_enemy_material") != null,
+		"%s: the applier's material handle was obtained (wiring intact)" % label,
+		"_enemy_material is null -- slot_material() failed to resolve the binding,"
+			+ " which a silent type can no longer show through its colour")
+
+	var base: Color = surfaces[0].albedo_color
+	_check(_same(base, Obstacle.ENEMY_ALARM_ALBEDO),
+		"%s: alarm constant still equals the shipped resting colour %s" % [label, _rgb(base)],
+		"base is %s but ENEMY_ALARM_ALBEDO is %s -- the rat was recoloured without"
+			% [_rgb(base), _rgb(Obstacle.ENEMY_ALARM_ALBEDO)]
+			+ " moving the constant, so the telegraph is live again toward a stale colour")
+
+	_apply(obstacle, type, 1.0)
+	var alarmed := _drawn_materials(slot)
+	var all_still := true
+	for material in alarmed:
+		if not _same(material.albedo_color, base):
+			all_still = false
+	_check(all_still,
+		"%s: all %d drawn surface(s) stay at %s at full alarm (silent by design)"
+			% [label, alarmed.size(), _rgb(base)],
+		"moved to %s" % _rgb(alarmed[0].albedo_color))
+
+	obstacle.queue_free()
+
+## ⚠️ THIS PHASE RUNS ON AIR_ENEMY, AND SWITCHING IT THERE WAS NOT
+## COSMETIC. It used to use ENEMY. The moment ENEMY's ramp became a
+## deliberate identity, "alarming one instance left the other unchanged"
+## became true for free on that type -- the first instance does not change
+## either, so nothing could bleed and the check could never fail whatever
+## the material sharing did. A green phase measuring nothing is worse than
+## no phase, because it reads as coverage. AIR_ENEMY still moves its
+## albedo, so the assertion still has something to detect.
 func _phase_c_instance_isolation() -> void:
-	print("--- PHASE C: one alarmed instance must not tint another ---")
+	print("--- PHASE C: one alarmed instance must not tint another (AIR_ENEMY: the type that still moves) ---")
 	var first := _make_obstacle(FIXTURE_SUBSTITUTE)
 	var second := _make_obstacle(FIXTURE_SUBSTITUTE)
-	first.configure(Obstacle.Type.ENEMY, 0.0, 0.0)
-	second.configure(Obstacle.Type.ENEMY, 0.0, 0.0)
+	first.configure(Obstacle.Type.AIR_ENEMY, 0.0, 0.0)
+	second.configure(Obstacle.Type.AIR_ENEMY, 0.0, 0.0)
 
-	var second_slot := second.get_node("EnemyMesh") as ModelSlot
+	var second_slot := second.get_node("AirEnemyMesh") as ModelSlot
 	var before: Color = _drawn_materials(second_slot)[0].albedo_color
 
-	_apply(first, Obstacle.Type.ENEMY, 1.0)
+	_apply(first, Obstacle.Type.AIR_ENEMY, 1.0)
+
+	# Guards the guard: if the driven instance did not move either, this
+	# phase proved nothing and must say so rather than print a pass.
+	var first_slot := first.get_node("AirEnemyMesh") as ModelSlot
+	var driven: Color = _drawn_materials(first_slot)[0].albedo_color
+	_check(not _same(driven, before),
+		"the driven instance actually moved to %s (so this phase can detect a bleed)" % _rgb(driven),
+		"the driven instance stayed at %s -- nothing was exercised, this phase is vacuous"
+			% _rgb(driven))
 
 	var after: Color = _drawn_materials(second_slot)[0].albedo_color
 	_check(_same(before, after),
