@@ -236,6 +236,46 @@ MODELS = {
 ## write -- turning the one signal that has to read instantly into a mottled
 ## red. Every contrast number in this project is also computed on a single flat
 ## albedo; per-facet variation would make "the rat's colour" a distribution.
+##
+## THE RAT IS NOW A PALE DESATURATED PINK, AND THAT MOVES IT ACROSS THE GROUND'S
+## DIVIDING LINE -- read MESHY_SPEC sections 8.4 AND 8.5 before touching this
+## value, because every argument written above it was made about a DARK rat and
+## three of them expire here.
+##
+## The value is candidate "03" off docs/color-sheets/charger_colour_sheet.png,
+## chosen by Mathieu. It is a CHARGER sheet: every candidate on it is the boar's
+## own pink walked toward grey along a FIXED hue, which is why 01/02/03 all print
+## the same "hue vs JUMP: 55.8 deg". Read two independent ways before use -- the
+## printed annotation says raw rgb(245, 229, 233) and a pixel histogram of the 03
+## swatch returns (245, 229, 233) at 97.7% dominance. sRGB 8-bit / 255 to 4 dp is
+## (0.9608, 0.8980, 0.9137), which round-trips back to (245, 229, 233) exactly.
+##
+##   * BAND. Rendered luminance goes 0.0110 -> ~0.79. Section 8.4(1) says the
+##     ground at 0.150 splits the palette in two and NOTHING clears 3.0:1 from
+##     between; the rat leaves the DARK band (with DODGE) and joins the BRIGHT
+##     one (JUMP, STOMPER, CHARGER), which becomes FOUR-strong. It clears the
+##     ground floor with the widest margin of any hazard -- that gate was never
+##     the risk here.
+##   * HUE, AND THIS IS THE REAL COST. Section 8.4(2): inside a band WCAG scores
+##     ~1:1 and hue is the only channel left. This colour is the CHARGER's own
+##     hue, so the pair the player must never confuse -- the only FATAL hazard
+##     and a half-strike rodent -- ends up hue-adjacent in the same band. It is
+##     measured, reported in full rather than smoothed over, and it is why the
+##     lot below carries a warning instead of a clean bill.
+##   * WHAT IT DOES *NOT* CHANGE, and this is the third time it needs saying:
+##     section 8.4(3) shows the alarm ramp has left the resting family 4.40 s
+##     before contact, i.e. with the rat 5-11 px tall. This is an identity-at-
+##     rest edit, NOT a fix for "the rat looks red" -- the red is the telegraph
+##     working, and no resting colour can change what is seen at the decision
+##     distance.
+##
+## LUMINANCE IS NO LONGER HELD, AND THE TELEGRAPH INVERTS BECAUSE OF IT. The
+## direction argument that fixed the purple and survived the brown -- rest BELOW
+## the alarm's 0.187 so the ramp BRIGHTENS -- is broken by this value, which
+## rests far ABOVE it. The ramp is now a large DARKENING plus a hue swing, which
+## is exactly the shape AIR_ENEMY already has (it rests at 0.71 against the same
+## alarm). So the cue is not lost, it changes sign -- measured 3.92:1 -> 3.50:1,
+## section 8.5. That inversion is a consequence of the colour, not a decision.
 ## AIR_ENEMY IS THE THIRD NON-CARRY-OVER, AND THE ONLY ONE WHERE THE SHIPPED
 ## ALBEDO IS NOT EVEN CLOSE TO WHAT THE PLAYER SEES. DODGE lost a
 ## multiplication when it went unlit; ENEMY lost an emission channel worth
@@ -281,13 +321,107 @@ MODELS = {
 ## force here. The hue is also not free to move even if the ratio were: the
 ## TELEGRAPH block in Obstacle.gd picks magenta precisely because every other
 ## hue in the game is taken, and names the five it would collide with.
+##
+## THE COLOUR HAS SINCE MOVED ANYWAY, AND THE PARAGRAPH ABOVE IS STILL TRUE --
+## it is an argument about SHADING, not about art. Nothing had to be re-solved
+## for the unlit switch, because there was no multiplication and no additive
+## term to lose; what changed is a separate, purely artistic decision to take
+## the boar off the hot pink and onto a dusty pink-brown, (0.96, 0.76, 0.80).
+##
+## Being free to move it is not the same as being free to move it far, and the
+## two constraints that bound it are the ones the paragraph above names:
+##   * VALUE. The ground renders at relative luminance 0.150, so clearing the
+##     3.0:1 floor from above needs >= 0.549 (MESHY_SPEC section 8). The new
+##     colour renders at 0.604 against the old 0.590 -- it does not spend the
+##     margin, it widens it slightly, 3.21:1 -> 3.28:1. Anything in the dusty
+##     register that dropped toward mid-value would fail outright, whatever
+##     its hue, and that is what makes this a narrow corridor rather than a
+##     free choice.
+##   * HUE. Rendered hue moves 325.4 deg -> 348.2 deg, i.e. toward red, which
+##     is where DODGE and the rat live -- but both of those are near-black, so
+##     the pair is separated by VALUE and comfortably: 11.1:1 against DODGE and
+##     10.7:1 against the resting rat, both measured, both up from the shipped
+##     10.9 / 10.5. The hue that could actually collide is JUMP's amber (43.6
+##     deg), the only other bright object, and the gap there is 55.5 deg.
+## THE RAT LEAVES CHARGER'S OWN HUE, AND THIS IS THE FIFTH RECOLOUR OF ITS
+## RESTING STATE -- the fourth (pale pink, immediately above) was the sheet's
+## own CHARGER candidate walked toward grey, so it inherited CHARGER's hue by
+## construction and collided with it (1.27:1, 1.2 deg -- see MESHY_SPEC 8.5).
+## The replacement comes from an INDEPENDENT recon that never touches
+## CHARGER's palette: EnemyEarthtoneAxisSheet.gd
+## (scripts/dev/, branch claude/enemy-earthtone-axis-qnlzo5), which explores
+## the BRIGHT band (the only one open, per 8.4(1)) at a REAL saturation
+## (S ~ 0.15-0.25) rather than the near-neutral grey the previous axis had
+## already closed.
+##
+## Candidate B1 -- "Kaki pale (olive-vert)" -- entered as HSV
+## H=105.0 deg, S=0.22, V=0.88 (Color.from_hsv(105.0/360.0, 0.22, 0.88, 1.0)
+## in the sheet script, never a hand-typed RGB literal). Converted here the
+## same way, not re-derived by eye: RGB = (0.7348, 0.88, 0.6864). This is the
+## INPUT value fed to albedo_color, not the sheet's RENDERED-measurement
+## columns (H=105.0 deg S=0.219 chroma8=48.0 Lrel=0.63671, 3.49:1 vs ground) --
+## the two differ because the sheet's Lrel/contrast are read off the actual
+## screen pixel (AA, box-sampling), while the .glb's baseColorFactor has to
+## carry the value the material was actually given.
+##
+##   * BAND. Stays BRIGHT (with JUMP, STOMPER, CHARGER) -- the sheet measured
+##     3.49:1 against the 3.05 safe-margin floor, well clear.
+##   * HUE, the axis the previous two rat colours both failed on. Separation
+##     from all four gated hazards, measured on the sheet's own reference
+##     rows rather than assumed: dHue(CHARGER)=117.0, dHue(JUMP)=61.4,
+##     dHue(STOMPER)=97.3, dHue(DODGE)=99.2 -- every one clears the 45 deg
+##     reliability floor with margin, and the CHARGER pair specifically (the
+##     one collision that mattered) goes from 1.2 deg to 117.0.
+##   * WHAT THIS BUYS AND WHAT IT DOES NOT. B1 is measurably separated from
+##     CHARGER on BOTH WCAG channels the sheet checks (hue and, inside the
+##     bright band, the direct pairwise ratio) rather than on saturation
+##     alone, which is what made the pink candidate fragile. It reads as a
+##     pale sage/olive-green, not a dark earth tone -- the bright band forces
+##     high V (see the sheet's own header: clearing the ground floor from
+##     above needs Lrel >= ~0.549, which pushes every bright candidate toward
+##     pastel). No sonde measures whether that still reads as "a rat" instead
+##     of "a pale green shape" at real speed; that is a device judgement, not
+##     a gate this value can pass on its own.
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
-    "enemy_rat": (0.135, 0.102, 0.076),  # warm dark brown-grey at the purple's luminance, see above
+    # ENEMY, seventh recolour of the resting rat (2026-08-13, dark-brown-CHARGER
+    # session). Candidate G1 "very light, warm-neutral near-white" from
+    # EnemyGreyAxisSheet.gd (scripts/dev/, branch
+    # claude/enemy-grey-axis-staging-yjc8nk), entered as HSV H=25.0 S=0.03
+    # V=0.92 (Color.from_hsv(25.0/360.0, 0.03, 0.92, 1.0)), converted here the
+    # same way rather than re-derived by eye: RGB = (0.9200, 0.9039, 0.8924).
+    # Measured (that sheet, re-run in this session): worst-of-both-ends vs
+    # ground 4.10:1, the better of the sheet's two near-white candidates
+    # (G2 cool-neutral: 3.87:1). CHARGER changes FAMILY in the same session
+    # (bright pink -> dark brown-violet, see charger_boar below), so this
+    # candidate's own docstring warning ("collided with CHARGER ROSE") no
+    # longer applies to the CHARGER that ships alongside it -- see
+    # MESHY_SPEC.md 8.7 for the pairwise numbers re-measured against the new
+    # CHARGER, not the old one.
+    "enemy_rat": (0.9200, 0.9039, 0.8924),
     "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
-    "charger_boar": (1.0, 0.72, 0.88),  # Obstacle.tscn StandardMaterial3D_Charger, verbatim
+    # CHARGER, second recolour (2026-08-13), and the FIRST hazard to change
+    # LUMINANCE BAND on purpose rather than by accident -- MESHY_SPEC 8.4(2)
+    # had explicitly RULED OUT a dark CHARGER (WCAG collapses to ~1:1 against
+    # DODGE and the rat once both are near-black), a constraint this session's
+    # own brief accepted as a KNOWN, EXPLICITLY ASSUMED risk rather than a
+    # blocker. Candidate D3 "Brun-violet profond" from
+    # ChargerEarthtoneAxisSheet.gd (scripts/dev/, branch
+    # claude/charger-earthtone-axis-2vkhd5), entered as HSV H=290.0 S=0.22
+    # V=0.12 (Color.from_hsv(290.0/360.0, 0.22, 0.12, 1.0)): RGB =
+    # (0.1156, 0.0936, 0.1200). Chosen over the sheet's other two dark
+    # candidates (D1 brun-vert, D2 terre d'ombre) by MEASURED ground contrast
+    # AND hue separation: D3 clears the sheet's own 45deg hue-reliability
+    # floor against DODGE at 75.8deg (D1 fails at 7.5deg, D2 fails at 23.1deg)
+    # -- D3 is the only dark candidate that is not itself unsafe by the
+    # sheet's own criteria. worst-of-both-ends vs ground: 3.34:1. Pairwise vs
+    # DODGE (its dark band-mate): 1.009:1 -- WCAG scores ~1:1 as MESHY_SPEC
+    # 8.4(2) always said it would for two near-black objects; this is the
+    # accepted risk, not a surprise. See MESHY_SPEC.md 8.7 for the full gate
+    # table.
+    "charger_boar": (0.1156, 0.0936, 0.1200),
 }
 
 

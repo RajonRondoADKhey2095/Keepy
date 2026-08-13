@@ -1665,6 +1665,517 @@ confirmé sur device ; et le fait que **de face le sanglier est une masse, pas u
 point**, donc le cue de FORME est porté par la crinière et les pattes qui
 cassent le contour, pas par un rétrécissement visible.
 
+## LE SANGLIER (CHARGER) CHANGE DE TEINTE : rose vif → rose-brun poussiéreux (12 août 2026)
+
+Branche `claude/charger-recolor-meshy-docs-3svnzy`, partie de `main`
+(`6959f53`). **Ce n'est PAS un install** : le sanglier est en place depuis le
+matin même — géométrie, LOD 560, échelle 1,82584, rotation (−90, 0, 0), offset
+et collider `ChargerShape` **intouchés**. Seul `baseColorFactor` bouge, plus le
+placeholder qui le double. Chiffres complets : `docs/MESHY_SPEC.md` §8.4 et §11.
+
+`rgb(1,00, 0,72, 0,88)` → **`rgb(0,96, 0,76, 0,80)`**. Teinte rendue
+**325,4° → 348,2°**, luminance rendue **0,590 → 0,604**.
+
+**Le chiffre gaté MONTE : 3,21 → 3,27 (shallow) / 3,21 → 3,28 (deep).** Diff
+`DarkPaletteAudit` contre `origin/main` : **exactement trois lignes, toutes
+CHARGER**, stderr **byte-identique**. Les cinq autres hazards et les deux
+collectibles sont **byte-identiques**. Marge sur le plancher 3,0 : **+0,21 →
++0,27** — rien de gaté n'a été dépensé.
+
+**Vérifié PAR HISTOGRAMME, pas par estimation** (sonde instrumentée sur les
+DEUX arbres, puis revertée) : **196 px sur 196 d'OBJET des deux côtés, zéro
+sol, zéro ciel**, aux deux bouts de la respiration. La signature est un vrai
+changement de couleur, pas un cran 8 bits : **R −10, G +10, B −21** d'un coup.
+C'est la preuve façon DODGE, pas l'artefact de fenêtre du rondin JUMP.
+`AssetContractAudit` imprime `unshaded rgb(0.96, 0.76, 0.80)` sur la ligne
+`[glb]` — la valeur porte bien sur le matériau qui DESSINE (la surface du mesh
+importé), pas seulement sur une constante inutilisée (piège §2.1).
+
+⚠️ **Le vrai gate de ce lot n'était PAS le sol, mais les autres objets
+sombres** — CHARGER est dans la bande CLAIRE, le rat et DODGE dans la SOMBRE :
+vs rat au repos **10,50/10,46 → 10,71/10,68**, vs tronc DODGE **10,88/10,82 →
+11,11/11,05**. Les deux s'améliorent. **Le vrai coût est ailleurs et n'est pas
+maquillé** : l'écart de TEINTE avec l'ambre JUMP — le seul autre objet clair,
+donc le seul que le WCAG ne sait pas séparer — **passe de 78,4° à 55,5°**. Il
+reste confortable, mais il a été divisé par ~1,4 sur ce seul changement : c'est
+le nombre à surveiller si CHARGER est encore réchauffé un jour.
+
+⚠️ **Le `.glb` est repassé PAR le pipeline, losslessness prouvée D'ABORD**
+(réécriture avec l'ANCIENNE couleur → match byte-à-byte contre l'asset livré),
+donc la seule différence possible est `baseColorFactor` — chunk BIN
+byte-identique (9 948 o, 269 verts, 560 tri), `KHR_materials_unlit` préservé.
+**Piège trouvé au passage** : le nom de nœud d'un `.glb` vient du NOM DE
+FICHIER de sortie, donc la preuve ne matche que si la réécriture se fait sous
+le nom du pipeline (`charger_boar_560.glb`), pas sous le nom installé — une
+première tentative différait de 4 octets et avait l'air d'une régression de
+géométrie.
+
+### Trois faits mesurés sur la palette, consignés en §8.4 — coûteux à re-dériver
+
+Chacun ferme une direction qui paraît raisonnable sur le papier :
+
+1. **Le sol coupe la palette en DEUX BANDES.** Rendu `(0,2033, 0,4824,
+   0,0941)`, luminance **0,150** : franchir 3,0:1 exige **L ≥ 0,549** ou
+   **L ≤ 0,0165**. **Aucun ton MOYEN ne passe, à aucune teinte.** Côté sombre
+   le plafond en V dépend fortement de la saturation — **0,136** en gris
+   neutre, **0,166** à la teinte/saturation du rat (d'où le « V ≈ 0,17 » utile
+   pour le registre fourrure), **0,289** au rouge saturé de DODGE.
+2. **Le WCAG ne score AUCUNE séparation À L'INTÉRIEUR d'une bande** — seule la
+   teinte y travaille, et aucune sonde du repo ne la mesure. CHARGER↔JUMP
+   1,08:1, CHARGER↔STOMPER 1,04:1, DODGE↔rat 1,04:1. **Direction ÉCARTÉE,
+   mesurée avant de l'être** (passe de recon) : un CHARGER brun-noir — ce à
+   quoi ressemble un vrai sanglier — mesure **1,03–1,09:1 contre le rat** et
+   **1,01–1,13:1 contre DODGE**. Il franchirait le plancher sol et serait
+   indiscernable des deux autres hazards sombres, sur le seul hazard dont la
+   méprise termine la run. Le hazard fatal DOIT rester dans la bande claire.
+3. **L'albédo de REPOS d'ENEMY n'est jamais vu à une taille lisible.** La
+   rampe a quitté la famille brune dès `alarm_t = 0,10`, soit **4,40 s avant
+   contact** — **52,8 m (11 px de haut)** à `START_SPEED` 12 et **114,4 m
+   (5 px)** à `MAX_SPEED` 26. Deux recolorisations correctes du rat n'ont donc
+   rien changé à ce que voit le joueur, pour une raison structurelle et non
+   chromatique. **Ne PAS relancer une 3ᵉ recolorisation de repos en croyant
+   corriger un « rat rouge »** : le rouge, c'est le télégraphe qui fonctionne.
+
+**Dérive de doc corrigée au passage** : `Obstacle.gd` décrivait encore le repos
+d'ENEMY comme « Obstacle.tscn's default purple » — faux depuis la
+recolorisation brun-gris, et de toute façon la fonction lit la base sur le
+matériau (`_enemy_base_albedo`), jamais une couleur littérale. Commentaire
+seul, aucun changement de comportement.
+
+**Reste ouvert** : est-ce qu'un rose-brun poussiéreux se lit mieux qu'un rose
+vif à vitesse réelle sur un téléphone — aucune sonde ne répond, c'est tout
+l'objet du lot ; les 56° de teinte avec JUMP ; et tout ce que l'install
+laissait ouvert (museau de 1,787 m, barres de trail, masse de face) est
+**inchangé**, ce lot n'a bougé qu'une couleur.
+
+## LE RAT (ENEMY) CHANGE DE BANDE : brun-gris → rose pâle désaturé (12 août 2026)
+
+Branche `claude/recolor-enemy-rat-rwmcft`, partie de `staging` (`4383601`).
+**Ce n'est PAS un install**, et c'est la **TROISIÈME** recolorisation de repos du
+rat : géométrie, LOD 148 tri, échelle 0,46266, offset et collider `EnemyShape`
+**intouchés**. Seul `baseColorFactor` bouge, plus le placeholder qui le double.
+Chiffres complets : `docs/MESHY_SPEC.md` **§8.5** (nouvelle) et §8.4.
+
+`rgb(0,135, 0,102, 0,076)` → **`rgb(0,9608, 0,8980, 0,9137)`** — candidat **03**
+de `docs/color-sheets/charger_colour_sheet.png`, choisi par Mathieu.
+
+⚠️ **Valeur extraite DEUX FOIS, pas lue une fois** : l'annotation imprimée dit
+`raw rgb(245, 229, 233)` et un histogramme de pixels de la vignette 03 rend
+`(245, 229, 233)` à **97,7 % de dominance**. Contrôle croisé de la méthode : la
+vignette 01 rend `(245, 194, 204)`, soit exactement le `(0,96, 0,76, 0,80)` du
+CHARGER livré. sRGB 8-bit / 255 à 4 décimales round-trip vers `(245, 229, 233)`
+exactement.
+
+### ⚠️ LE PREMIER OBJET DU PROJET À CHANGER DE BANDE — et c'est un ÉCHANGE, pas un gain
+
+Luminance rendue **0,0110 → 0,7875**. §8.4(1) coupe la palette en deux bandes
+autour du sol (0,150) ; le rat **quitte la bande SOMBRE** (où il était avec
+DODGE) et **rejoint la bande CLAIRE** (JUMP, STOMPER, CHARGER), qui passe à
+quatre. **La bande sombre ne contient plus que DODGE.**
+
+| | AVANT (brun) | APRÈS (rose pâle) |
+|---|---|---|
+| **vs sol** | 3,27 / 3,26 | **4,20 / 4,19** *(la plus large marge du jeu)* |
+| vs DODGE | **1,04:1**, 27,2° | **14,24:1**, 20,1° ✅ |
+| **vs CHARGER** | 10,79:1, 46,1° | **1,27:1, 1,2°** 🔴 |
+| vs JUMP | 10,73:1, 6,5° | 1,28:1, 53,8° |
+| vs STOMPER | 11,17:1, 166,8° | 1,23:1, 145,9° |
+| télégraphe repos↔alarme | **3,92:1**, 37,5° | **3,50:1**, 9,8° |
+
+**Le plancher sol n'a jamais été le risque** (seuil d'arrêt 3,05 ; mesuré 4,19).
+**Le vrai coût est le CHARGER** : 1,27:1 de luminance et **1,2° de teinte** (3,2°
+en brume profonde) — les DEUX canaux que §8.4(2) identifie comme les seuls
+disponibles disparaissent d'un coup. Cause structurelle, pas malchance : **la
+planche est une planche CHARGER**, tous ses candidats sont le rose du sanglier
+désaturé le long d'une teinte FIXE (d'où le « hue vs JUMP: 55.8 deg » identique
+sur 01/02/03).
+
+⚠️ **L'échange n'est PAS symétrique, et c'est ça qu'il faut peser** : la
+collision rat↔DODGE que §8.4(2) documentait est réellement résolue (1,04 →
+14,24:1), mais DODGE est un mur statique à un demi-strike, **CHARGER est le seul
+hazard qui TERMINE LA RUN**. §8.4(2) avait déjà REFUSÉ cette direction pour le
+sanglier (« le hazard fatal DOIT rester dans la bande claire » et non partager
+bande+teinte avec le rat) — on y arrive ici par l'autre bout.
+Ce qui sépare encore la paire, **mesuré** : la **saturation, 0,062 contre 0,207**
+(le rat est quasi blanc cassé, le sanglier est visiblement rose) et la
+**silhouette** (quadrupède de 0,6 m au ras du sol contre un sanglier de 2,08 m,
+3,5 m de profondeur, trois barres derrière). Aucun des deux n'est un argument de
+couleur, aucun des deux n'est mesuré par une sonde.
+
+**Le télégraphe survit, se resserre, et S'INVERSE** : 3,92 → **3,50:1**.
+L'argument de direction qui avait fixé les DEUX couleurs précédentes (reposer
+SOUS les 0,187 de l'alarme pour que la rampe ÉCLAIRCISSE) est cassé par une
+couleur qui repose à 0,7875 — la rampe **ASSOMBRIT** désormais, exactement la
+forme qu'AIR_ENEMY a toujours eue. ⚠️ Mais l'écart de teinte s'effondre aussi
+(**37,5° → 9,8°**) : le repos est maintenant dans la famille de teinte de
+l'ALARME, ce que la recolorisation brune avait justement corrigé pour le violet.
+Ça tient **ici** parce que la VALEUR fait le travail (un rose pâle et un rouge
+sombre ne se confondent pas comme deux rouges sombres) — mais le cue est porté
+par **un seul canal** là où il en avait deux.
+
+### ⚠️ CE LOT NE CHANGE PAS CE QUE MATHIEU VOIT À DISTANCE DE DÉCISION
+
+À dire avant le test device, pour que le résultat ne surprenne pas : §8.4(3)
+reste **entièrement valable et n'est pas contredit**. La rampe a quitté la
+famille de repos **4,40 s avant contact**, soit un rat de **11 px** à
+`START_SPEED` et **5 px** à `MAX_SPEED`. Ce lot est un changement d'**identité au
+repos**, PAS un correctif de « rat rouge en jeu » — le rouge est le télégraphe
+qui fonctionne. Ce qu'il faut regarder sur device est donc la lisibilité **à
+distance** et la **confusion avec le sanglier**, pas la couleur au moment d'agir.
+
+**`DarkPaletteAudit` est BYTE-IDENTIQUE sur les DEUX flux** — résultat PRÉDIT
+puis confirmé, et la preuve la plus forte à ce jour que sa ligne
+`ENEMY (resting)` mesure l'alarme : la couleur de repos passe de quasi-noir à
+quasi-blanc et la sonde ne bouge pas d'un chiffre. Les 4 hazards gatés sont
+inchangés (DODGE 3,39/3,37, JUMP 3,04/3,02, CHARGER 3,27/3,28, STOMPER
+3,41/3,41), 0 échantillon manqué.
+
+**Losslessness prouvée D'ABORD** (réécriture avec l'ANCIENNE couleur →
+`b647cf00c5bec773227a6aebb5b95cfc`, **byte-identique** à l'asset livré), donc la
+seule différence possible est `baseColorFactor` — chunk BIN byte-identique
+(2 688 o, 76 verts, 148 tri), JSON identique par ailleurs, `KHR_materials_unlit`
+préservé, 0 image / 0 texture / 0 sampler. **Le piège du nom de nœud déjà
+consigné au lot CHARGER s'est reproduit** : la preuve ne matche que si la
+réécriture se fait sous le nom du pipeline (`enemy_rat_150.glb`) — une première
+tentative différait de 4 octets sur le seul nom de nœud.
+
+**Mesure faite avec une sonde jetable** (bâtie sur la scène/caméra/pose de
+`DarkPaletteAudit`, supprimée avant merge — `ProbeTimeoutAudit` revient à **33**),
+avec **boîte 5px et histogramme DOMINANT** au lieu du mean 14px : ce chantier a
+produit un artefact de fenêtre (JUMP 3,28→3,02) ET un vrai changement de couleur
+(DODGE), qu'un mean ne sait pas séparer. Fenêtre du rat : **100/100 px d'UNE
+couleur, avant comme après, aux deux bouts**. La sonde **reproduit d'abord trois
+chiffres déjà documentés** (3,27:1 vs sol, 1,04:1 @ 27,2° vs DODGE, 3,92:1 de
+télégraphe) avant qu'on lui fasse confiance sur les nouveaux.
+
+**Reste ouvert** : la collision rat↔CHARGER — mesurée, argumentée par la
+saturation et la silhouette, mais **seul un œil à vitesse réelle tranche**, et
+c'est la paire dont la méprise coûte le plus cher ; le fait que le repos soit
+dans la famille de teinte de l'alarme ; et le télégraphe à un seul canal.
+
+## LE RAT (ENEMY) QUITTE LA TEINTE DE CHARGER — recolorisation N°6, plus un piège payload fermé (13 août 2026)
+
+Branche `claude/rat-recolor-payload-trap-pakaoh`, partie de `staging`
+(`72729f9`). **Ce n'est PAS un install** : géométrie, LOD 148 tri, échelle
+0,46266, offset et collider `EnemyShape` **intouchés**. Seul `baseColorFactor`
+bouge, plus le placeholder qui le double. Deuxième changement du même lot,
+indépendant : fermeture d'un piège payload trouvé en recon sur une AUTRE
+branche mais jamais porté sur `staging` — voir plus bas.
+
+`rgb(0,9608, 0,8980, 0,9137)` (rose pâle désaturé, §8.5 de MESHY_SPEC.md) →
+**`rgb(0,7348, 0,88, 0,6864)`** — candidat **B1 « Kaki pâle »** de
+`EnemyEarthtoneAxisSheet.gd` (`scripts/dev/`, branche
+`claude/enemy-earthtone-axis-qnlzo5`, commit `07bddfe`), une recon
+**indépendante** qui ne touche jamais la palette de CHARGER — contrairement
+au rose, qui était le candidat 03 de la PROPRE planche du sanglier et
+héritait donc sa teinte exacte (d'où sa collision 1,2° avec lui).
+
+### La valeur installée est la valeur SAISIE (HSV), pas la valeur rendue-mesurée
+
+La planche entre le candidat en HSV — `H=105,0 S=0,22 V=0,88`
+(`Color.from_hsv(105.0/360.0, 0.22, 0.88, 1.0)` dans le script, jamais un
+littéral RGB tapé à la main). C'est cette valeur SAISIE, convertie une seule
+fois de façon déterministe (`colorsys`/algorithme HSV standard, round-trip
+vérifié), qui a été installée. Les colonnes RENDUES de la planche (`H=105,0°
+S=0,219 chroma8=48,0 Lrel=0,63671`, `3,49:1` vs sol) sont une MESURE — pixel
+réel après AA/box-sampling — pas une seconde source pour la valeur à écrire
+dans le `.glb`.
+
+### Gates remesurés sur l'asset RÉELLEMENT installé
+
+`EnemyEarthtoneAxisSheet.tscn` a été rejoué (temporairement, jamais commité,
+supprimé avant tout commit) sur cet arbre APRÈS l'installation — sa ligne
+« ENEMY shipped » ne lit JAMAIS un override, uniquement le matériau réel du
+`.glb` livré. Elle **reproduit EXACTEMENT les chiffres de la planche de
+recon** : `hue=105,0 sat=0,219 chroma8=48,0 lum=0,63671`, `worst=3,49:1`,
+`dHue vs CHARGER/JUMP/STOMPER/DODGE = 117,0 / 61,4 / 97,3 / 99,2 deg` (plancher
+45°), `contraste PAIRE vs CHARGER = 1,064:1`. Les quatre hazards de
+référence, mesurés sur ce même arbre plutôt que lus dans la doc, retombent
+aussi exactement sur les valeurs déjà connues : DODGE 3,39/3,37, JUMP
+3,04/3,02, STOMPER 3,41/3,41, CHARGER 3,27/3,28.
+
+- **vs sol : 3,49:1 (pire des deux bouts)** — largement au-dessus du seuil
+  d'arrêt 3,05. Reste dans la bande CLAIRE, aucun changement de bande cette
+  fois, seulement de teinte à l'intérieur.
+- **vs les 4 hazards gatés : dHue >= 45° partout, minimum 61,4° (JUMP).** La
+  collision qui motivait ce lot (rat↔CHARGER, 1,2° au §8.5) est fermée avec
+  la PLUS GRANDE marge des quatre : 117,0°. Le contraste WCAG PAIRE contre
+  CHARGER reste ~1:1 (1,064:1) — normal à l'intérieur d'une bande (§8.4(2)
+  de MESHY_SPEC.md) : la séparation est portée par la teinte seule, même
+  discipline que toutes les autres paires intra-bande déjà livrées.
+- **Ce que le lot NE change PAS** : la rampe d'alarme quitte la famille de
+  repos 4,40 s avant contact (11 px à `START_SPEED`, 5 px à `MAX_SPEED`),
+  donc aucune recolorisation de repos ne change ce que voit le joueur au
+  moment de décider. `DarkPaletteAudit` le confirme : sa ligne `ENEMY
+  (resting)` (en réalité l'alarme saturée à `CAPTURE_Z`) est
+  **BYTE-IDENTIQUE** avant/après (même md5 sur les deux flux stdout) —
+  `ENEMY_ALARM_ALBEDO` n'a jamais bougé.
+
+### Losslessness prouvée D'ABORD, comme à chaque recolorisation précédente
+
+`decimate_hazard.py` (target=150) a d'abord régénéré le rose SHIPPÉ, match
+byte-à-byte contre l'asset installé (md5 `45ec1b62b12bccfcfabf442ff552bca7`,
+3700 octets, 76 verts / 148 tri) — donc la seule différence possible dans le
+nouveau fichier est `baseColorFactor`. Vérifié après : chunk BIN
+byte-identique (2688 octets, 76 verts, 148 tri), JSON identique à
+l'exception de `baseColorFactor`, `KHR_materials_unlit` préservé.
+
+### Validation
+
+`AssetContractAudit` (12/12 visuels, **0/10 colliders déplacés**,
+`EnemyShape` toujours `Capsule(r=0,3, h=0,7)` @ +0,350) et `AlarmRampAudit`
+(PHASE D : reset vers `rgb(0.73, 0.88, 0.69)`, alarme toujours `rgb(0.95,
+0.08, 0.12)`) — **diff EXACTEMENT UNE LIGNE chacune** contre `origin/staging`
+en worktree séparé, la ligne ENEMY. `ProbeTimeoutAudit` (33 sondes),
+`DeathModelAudit`, `ChargerShapeProbe`, `DarkPaletteAudit` — **byte-identiques
+sur les deux flux**. Import + export Web **exit 0**, `index.wasm`
+**35 376 909** octets — identique au fingerprint déjà consigné pour tous les
+lots précédents qui ne touchent pas au code moteur.
+
+### Piège payload fermé : `docs/*` manquait à l'`exclude_filter`
+
+Trouvé en recon sur `claude/enemy-earthtone-axis-qnlzo5` (contournement
+local par `.gdignore` sous `docs/color-sheets/`, jamais porté sur
+`staging`) : `export_presets.cfg` utilise `export_filter="all_resources"`,
+dont l'`exclude_filter` couvrait `scripts/dev/*` et `assets_source/*` mais
+pas `docs/*`. Toute image déposée sous `docs/color-sheets/` (exactement ce
+qu'écrit une sonde de recon comme `EnemyEarthtoneAxisSheet.gd`) serait donc
+importée comme texture et embarquée dans le build — mesuré par la session
+qui a trouvé le trou à **414 862 octets** de `.ctex` pour une seule planche.
+
+**Corrigé au niveau du preset** (`docs/*` ajouté à l'`exclude_filter`),
+permanent et pas au coup par coup par `.gdignore` par branche — couvre tout
+contenu futur déposé n'importe où sous `docs/`, pas seulement
+`docs/color-sheets/`.
+
+**Vérifié par un test réel, pas par la seule lecture du filtre** : un PNG de
+57 546 octets déposé sous `docs/color-sheets/` reçoit bien un `.import`/
+`.ctex` LOCAL au réimport (`exclude_filter` d'export ne contrôle jamais
+l'import éditeur, seulement le paquet exporté), mais le log d'export ne
+contient **aucune** ligne `Storing File` pour `res://docs/…`, et le `.pck`
+ne grossit que de **112 octets** (une chaîne de chemin dans le uid-cache —
+même artefact déjà documenté pour `assets_source/*`) contre les ~57 Ko
+qu'aurait coûté le fichier réellement packé. Fichier de test retiré avant
+tout commit.
+
+### Reste ouvert
+
+Aucune sonde ne dit qu'un kaki pâle se lit comme « un rat » plutôt que
+comme une forme verte pâle à vitesse réelle sur téléphone — **jugement
+device**, et c'est tout l'objet de ce lot. À dire clairement avant le
+retour device, comme pour chaque recolorisation précédente : ce lot ne
+change PAS ce que Mathieu perçoit à distance de décision — la rampe
+d'alarme domine toujours la fenêtre de lecture réelle (4,40 s avant
+contact) — c'est un changement d'IDENTITÉ AU REPOS. Les candidats B2/B3/
+D1/D2/D3 de la même planche restent non installés (B1 est le seul mesuré
+séparé des 4 hazards à une saturation réelle). Détail chiffré complet :
+`docs/MESHY_SPEC.md` §8.6 et §11.
+
+## DOUBLE RECOLORISATION : CHARGER marron foncé + ENEMY gris-blanc — risque CHARGER-vs-DODGE accepté explicitement (13 août 2026)
+
+Branche `claude/keepy-charger-enemy-recolor-uaau91`, partie de `staging`
+(`9524f7b`). **Décision explicite de Mathieu, prise en connaissance du
+risque documenté par §8.4(2) de MESHY_SPEC.md** (« un CHARGER dans la
+bande sombre serait indiscernable de DODGE ») : CHARGER quitte la bande
+CLAIRE pour la première fois de son histoire, et ENEMY change de teinte
+(8e recolorisation de repos) pour rester séparé de lui. Détail chiffré
+complet, tableaux et discipline de mesure : `docs/MESHY_SPEC.md` §8.7.
+
+**CHARGER** `rgb(0.96, 0.76, 0.80)` (rose poussiéreux) → **`rgb(0.1156,
+0.0936, 0.1200)`** (brun-violet foncé) — candidat **D3** de
+`ChargerEarthtoneAxisSheet.gd` (`scripts/dev/`, branche
+`claude/charger-earthtone-axis-2vkhd5`), choisi PAR MESURE parmi 3
+candidats sombres + le fallback rgb(0.13,0.093,0.070) de la session :
+**D3 est le seul qui franchit le plancher de fiabilité de teinte à 45°
+contre DODGE** (75,8° — D1 échoue à 7,5°, D2 à 23,1°, le fallback à
+15,4°), et il a le meilleur contraste sol mesuré des quatre (3,34:1, ex
+æquo avec le fallback).
+
+**ENEMY** `rgb(0.7348, 0.88, 0.6864)` (kaki pâle) → **`rgb(0.9200,
+0.9039, 0.8924)`** (blanc-gris chaud) — candidat **G1** de
+`EnemyGreyAxisSheet.gd` (`scripts/dev/`, branche
+`claude/enemy-grey-axis-staging-yjc8nk`), le meilleur des deux candidats
+« near-white » de la planche (4,10:1 contre 3,87:1 pour G2). Ce candidat
+avait été écarté à l'origine pour collision avec le CHARGER ROSE — sans
+objet ici puisque CHARGER change de famille de teinte dans le même lot ;
+re-mesuré contre le NOUVEAU CHARGER (sonde jetable, supprimée avant
+commit), la collision est résolue à 13,7:1 au lieu d'être créée.
+
+**GATES MESURÉS (worst des deux bouts de la respiration, sonde jetable +
+`DarkPaletteAudit` officielle) :**
+
+| paire | worst | statut |
+|---|---|---|
+| CHARGER vs sol (`DarkPaletteAudit`) | **3,34:1** | ✅ plancher dur 3,0 |
+| ENEMY vs sol (resting, settling forcé off) | **4,103:1** | ✅ plancher dur 3,0 |
+| **CHARGER vs DODGE** | **1,008:1** | ⚠️ **RISQUE ACCEPTÉ — quasi-collision WCAG confirmée, comme §8.4(2) le prédisait** |
+| CHARGER vs ENEMY | 13,714:1 | collision résolue |
+| CHARGER vs JUMP | 10,094:1 | — |
+| CHARGER vs STOMPER | 11,414:1 | — |
+| ENEMY vs JUMP | 1,358:1 | informatif, non gaté |
+| ENEMY vs STOMPER | 1,202:1 | informatif, non gaté |
+
+**Le risque CHARGER-vs-DODGE N'EST PAS caché** : c'est le pire chiffre
+pairwise jamais publié sur un hazard gaté de ce projet, et il est
+délibérément publié tel quel plutôt qu'enjolivé. Ce que ça n'a PAS
+touché : silhouettes, LOD (CHARGER reste à 560 tri, ENEMY à 148),
+colliders (`ChargerShape`/`EnemyShape` inchangés, `AssetContractAudit`
+0/10 déplacés), rampe d'alarme ENEMY (`ENEMY_ALARM_ALBEDO` intouchée,
+row DarkPaletteAudit "ENEMY (resting)" byte-identique — elle mesure
+l'alarme, pas le repos). Séparation résiduelle entre CHARGER et DODGE :
+saturation et silhouette (mur statique 2m vs sanglier 2,08m qui CHARGE,
+3,5m de profondeur, barres de trail) — aucune sonde ne les mesure.
+
+**Losslessness prouvée D'ABORD sur les DEUX assets** : `decimate_hazard.py`
+a d'abord régénéré les couleurs SHIPPÉES, match byte-à-byte confirmé
+(enemy_rat md5 `cea7db16...`, charger_boar md5 `c5bd4d05...`) avant tout
+edit de `COLORS[]`. Chunks BIN byte-identiques après regénération avec
+les nouvelles couleurs, `KHR_materials_unlit` préservé sur les deux,
+aucune géométrie/échelle/rotation/offset/collider touché.
+
+**Validation, diffée contre `origin/staging` en worktree séparé** :
+`AssetContractAudit` (12/12 visuels, 0/10 colliders déplacés, diff
+EXACTEMENT 2 lignes) ; `DarkPaletteAudit` (diff EXACTEMENT 3 lignes,
+toutes CHARGER) ; `AlarmRampAudit` (12/12 OK, diff EXACTEMENT 2 lignes,
+ENEMY reset-target) ; `DeathModelAudit` et `ChargerShapeProbe`
+(byte-identiques) ; `ProbeTimeoutAudit` (33 sondes armées). Import +
+export Web **exit 0**, `index.wasm` **35 376 909** octets — fingerprint
+identique à tous les lots visuels précédents. Piège payload re-vérifié
+sur le `.pck` exporté (4 810 880 octets) : aucun contenu `assets_source/`
+réellement packé.
+
+**Placeholders `StandardMaterial3D_Charger`/`StandardMaterial3D_Enemy`
+mis à jour aussi**, même discipline que chaque lot précédent (chemin de
+fallback uniquement une fois le `.glb` installé, mais laissé divergent ce
+serait reconstruire le piège qu'`AlarmRampAudit` existe pour fermer).
+
+**Reste ouvert** : jugement device sur les deux nouvelles couleurs
+(un brun-violet foncé se lit-il encore comme un sanglier menaçant ; un
+blanc-gris se lit-il comme un rat ou comme une forme pâle) ; et surtout
+si le risque CHARGER-vs-DODGE accepté (1,008:1) produit une vraie
+confusion en jeu à vitesse réelle — c'est la question que ce lot pose à
+Mathieu, pas celle qu'il tranche.
+
+## DÉCOUPLAGE DE `ENEMY_ALARM_ALBEDO` : le rat n'a PLUS de télégraphe de couleur, la libellule devient vert clair (13 août 2026)
+
+Branche `claude/decouple-enemy-air-enemy-colors-mddn8z`, partie de `staging`
+(`b549585`). **Ni un install, ni une recolorisation de repos** : c'est le
+premier lot à changer ce que la rampe d'alarme d'un hazard VISE. Aucune
+géométrie, LOD, échelle, offset, rotation ni collider touché ; aucun `.glb`
+réécrit. Détail chiffré complet : `docs/MESHY_SPEC.md` **§8.8**.
+
+### ⚠️ DÉCISION DE DESIGN ASSUMÉE, PAS UN DÉFAUT
+
+**Le rat (ENEMY) n'a plus AUCUN signal de couleur pendant sa rampe
+d'alarme.** Décision explicite de Mathieu, prise en connaissance du coût :
+les autres cues — **timing** (rampe de fréquence d'oscillation), **position**
+(verrouillage de voie à `ENEMY_REACTION_WINDOW_S`) et **silhouette** —
+restent le seul télégraphe. La couleur ne fait plus partie de la liste.
+
+`ENEMY_ALARM_ALBEDO` `(0,95, 0,08, 0,12)` était **une constante unique
+servant DEUX appliers**. Leur TIMING n'a jamais été partagé (AIR_ENEMY suit
+sa descente sur 3,5 s, ENEMY son approche sur 4,5 s) — seule la COULEUR
+l'était, et seulement parce qu'une constante faisait deux métiers. Deux
+décisions indépendantes lui sont désormais demandées, donc elle est scindée :
+
+| constante | valeur | effet |
+|---|---|---|
+| `ENEMY_ALARM_ALBEDO` | `(0,9200, 0,9039, 0,8924)` | **égale au repos du rat** → le lerp d'albédo est une identité |
+| `AIR_ENEMY_ALARM_ALBEDO` | `(0,62, 0,92, 0,60)` | vert clair, remplace le rouge partagé |
+
+**Prouvé sur des PIXELS, pas sur des constantes** (sonde jetable, revertée) :
+rat à l'écran, rampe épinglée à t=0 puis t=1, frames entières comparées —
+**0 pixel différent sur 2 073 600, pire écart de canal 0,000000**. La valeur
+n'est pas non plus un littéral recopié qui pourrait dériver : le
+`baseColorFactor` du `.glb` décode **exactement** à ce triplet sRGB (delta
+**0,00e+00** en précision flottante complète), et le placeholder porte la même
+valeur — l'identité tient donc sur le chemin importé ET sur le fallback.
+
+**L'arithmétique de la rampe est délibérément LAISSÉE EN MARCHE** plutôt que
+court-circuitée : `alarm_t` est toujours calculé et passé à chaque frame, donc
+la décision vit dans une seule constante et la re-pointer ramène le télégraphe
+sans aucun flot de contrôle à restaurer. **Vérifié avant de s'y fier** : les
+seuls lecteurs de `ENEMY_ALARM_ALBEDO` dans tout le repo sont cet applier et
+`AlarmRampAudit` — aucun système VFX/SFX/gameplay ne consomme la couleur ni
+n'attend un changement visible.
+
+⚠️ **La paire ÉMISSION reste partagée, et c'est sûr UNIQUEMENT parce que
+toutes les surfaces concernées sont unlit** — mesuré : les deux placeholders
+portent `shading_mode = 0` et les deux assets livrés déclarent
+`KHR_materials_unlit`. **Le piège, nommé là où on trébucherait** : réactiver
+l'ombrage sur le placeholder ENEMY ressuscite la rampe d'émission rouge — sur
+le chemin de fallback seulement, celui que personne ne regarde.
+
+### AIR_ENEMY : le plancher 3,0 est tenu sur l'OBJET, pas sur la moyenne de boîte
+
+Trois candidats balayés ; **L3 écarté pour échec au plancher (2,98:1)**. L2
+retenu pour la plus large marge sol et la meilleure distance de teinte à JUMP.
+
+⚠️ **C'est le hazard où la moyenne 14 px N'EST PAS sa couleur**, et l'écart
+dépasse tous les lots précédents : la décimation a délibérément préservé le
+treillis d'ailes, donc le fond passe au travers — **131/196 = 67 % de pixels
+d'objet** dans la scène même de `DarkPaletteAudit`. Les deux chiffres sont
+publiés, pas le plus flatteur :
+
+| | brume claire | brume profonde |
+|---|---|---|
+| **couleur d'objet** (histogramme dominant) | **3,58:1** | **3,57:1** ✅ plancher 3,0 |
+| moyenne de boîte 14 px (ce que la sonde imprime) | 2,13:1 | 2,12:1 |
+
+L'ancien rouge partagé mesurait **1,24:1** par la même méthode : c'est un gros
+gain de lisibilité de silhouette, pas un échange. `DarkPaletteAudit` ne GATE
+pas le contraste hazard (il le rapporte, et sort en 0) — son 2,12 imprimé
+n'est donc pas un rouge, c'est une statistique contaminée, et un futur lecteur
+la verra. Séparation voisine : CHARGER 11,04:1, DODGE 10,88:1, JUMP dH 75,7°,
+STOMPER dH 85,5°, ENEMY dH 97,0° (teinte peu fiable contre un quasi-gris — le
+vrai séparateur est la **saturation, 0,34 contre 0,03**).
+
+**ENEMY vs sol : 4,12 / 4,10:1**, exactement la valeur documentée, sur une
+fenêtre **non contaminée** (196/196 px, une seule couleur distincte) —
+non-régression mesurée. Ce qui bouge, c'est seulement que la ligne mesure
+désormais le blanc-gris au lieu du rouge : elle a toujours échantillonné
+l'alarme saturée, ce qui est précisément pourquoi la faire taire la déplace.
+
+### `AlarmRampAudit` réécrite AVANT le déplacement de la constante
+
+Son `_assert_ramp` s'ouvrait sur une garde qui **échouait quand base == la
+couleur d'alarme** — juste pour l'ancien contrat, rouge garanti sous le
+nouveau. Réécrite d'abord, comme `ChargerShapeProbe` avant le sanglier.
+Trois points non cosmétiques : **ENEMY est asserté SILENCIEUX positivement**,
+mais la couleur seule ne distinguerait plus un silence voulu de la rampe MORTE
+que ce fichier existe pour attraper — donc le chemin silencieux asserte aussi
+que **le handle de matériau est non-null** (le défaut d'origine, dans la seule
+forme qui survit) et que **la constante égale toujours le repos livré** ;
+**PHASE B garde le contrat VIVANT pour les deux types** (la base du stand-in
+est son magenta de debug, donc la rampe ENEMY y bouge — c'est ce qui permet
+encore de prouver la liaison) ; **PHASE C passe sur AIR_ENEMY** (elle isolait
+sur ENEMY : dès que cette rampe est une identité, « alarmer une instance n'a
+pas teinté l'autre » devient vrai gratuitement et la phase ne peut plus jamais
+échouer). Preuve que les nouveaux tests tirent : le premier run de la
+réécriture est parti **rouge sur exactement les deux assertions ENEMY** de la
+phase dont la base n'est pas celle du rat. **16/16 OK** après scoping.
+
+### Validation
+
+Diffé contre `origin/staging` en worktree séparé. `DarkPaletteAudit` —
+**exactement 5 lignes** : ENEMY et AIR_ENEMY aux deux bouts, plus l'agrégat
+dérivé `hazard worst`. **DODGE 3,39/3,37, JUMP 3,04/3,02, CHARGER 3,37/3,34,
+STOMPER 3,41/3,41, NOISETTE et GLAND byte-identiques**, 0 échantillon manqué.
+`AssetContractAudit` **byte-identique** (12/12 visuels, **0/10 colliders
+déplacés**). `ProbeTimeoutAudit` (**33 sondes**, retour à la baseline après
+retrait de la sonde jetable), `DeathModelAudit`, `ChargerShapeProbe` — exit 0.
+Import + export Web **exit 0**, `index.wasm` **35 376 909** / md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b`. Piège payload tenu (0 ressource
+`assets_source` packée).
+
+### Reste ouvert — jugement device
+
+Aucune sonde ne dit qu'une libellule vert clair se lit comme telle à vitesse
+réelle sur un téléphone, ni que le rat reste lisible comme **menace** une fois
+la couleur retirée de son télégraphe — c'est tout l'objet du lot. Les cues
+restants du rat sont le mouvement et la forme, rien d'autre.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
@@ -2864,3 +3375,48 @@ export web Godot réel (`<title>Keepy</title>`, canvas, `index.js`,
 nouveau avec `Not able to load user`, vérifier en priorité le **scope du
 token** (personnel vs équipe) avant de retoucher les flags CLI — c'est
 la variable qui a réellement résolu l'incident, pas `-T` vs `--scope`.
+
+## ⚠️ L'API GitHub Actions sert des états d'étape PÉRIMÉS — lire `completed_at`, jamais l'état brut
+
+**Règle permanente, identifiée plusieurs fois avant d'être enfin écrite ici
+(12 août 2026).** Un poll de l'API GitHub Actions peut rendre `status:
+"in_progress"` sur une étape — voire sur un job entier — **plusieurs dizaines
+de minutes après que le job soit réellement terminé**. Ce n'est pas un job
+bloqué, c'est une lecture périmée : le champ `status` d'une réponse d'API
+n'est pas une observation en temps réel.
+
+**Le seul champ digne de foi est `completed_at`** (et son frère `conclusion`).
+S'il est renseigné, l'étape EST finie, quoi que dise `status`. S'il est `null`
+ET que `started_at` est vieux de plusieurs minutes, alors seulement la
+question « est-ce bloqué ? » se pose.
+
+**Pourquoi ça compte ici et pas seulement en théorie** : ce repo a une CI de
+~3 minutes qui déploie en production, et un merge de prod en déclenche deux
+(le merge puis le commit de doc). Conclure « le job est bloqué » sur un
+`status` périmé mène à exactement les deux mauvaises réactions : relancer un
+workflow qui tourne déjà (donc deux déploiements concurrents sur la même
+cible), ou déclarer un lot en échec alors qu'il est vert. C'est la même
+famille d'erreur que la fenêtre de 404 documentée plus haut — **ne jamais
+lire un état de CI ou de déploiement sans regarder son horodatage**.
+
+Corollaire pratique : pour attendre une CI, poller `completed_at`/`conclusion`
+dans une boucle qui sort sur l'un des DEUX terminaux (`success` ET `failure`),
+jamais une boucle qui n'attend que le succès — le silence d'un poll ne
+distingue pas « toujours en cours » de « échoué ».
+
+**Observation du 13 août 2026 (lot découplage ENEMY/AIR_ENEMY), reproduite en
+direct : le run #105 a terminé à 14:59:10 (`conclusion: success`), et TROIS
+polls successifs après cette heure ont continué de renvoyer `in_progress`,
+avec une réponse byte-identique à chaque fois** — y compris l'étape « Import
+project resources » figée à `in_progress` alors qu'elle s'était terminée à
+14:58:38. C'est exactement le mode de panne décrit ci-dessus, observé sans
+ambiguïté plutôt que déduit.
+
+⚠️ **Ce qui a débloqué la lecture : passer `workflow_jobs_filter:
+{"filter": "latest"}` à `list_workflow_jobs`.** L'appel SANS ce paramètre
+servait le cache périmé ; l'appel AVEC a rendu l'état réel et complet
+immédiatement. **Corrélation observée UNE fois, pas une causalité prouvée** —
+le temps qui passe et l'expiration naturelle du cache sont une explication
+concurrente qui n'a pas été écartée. À essayer en premier quand un poll semble
+figé, avant de conclure quoi que ce soit sur l'état du job ; ça ne coûte rien
+et, si ça ne suffit pas, la règle `completed_at` reste seule juge.
