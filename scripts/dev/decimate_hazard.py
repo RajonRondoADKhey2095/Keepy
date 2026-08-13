@@ -343,11 +343,50 @@ MODELS = {
 ##     10.7:1 against the resting rat, both measured, both up from the shipped
 ##     10.9 / 10.5. The hue that could actually collide is JUMP's amber (43.6
 ##     deg), the only other bright object, and the gap there is 55.5 deg.
+## THE RAT LEAVES CHARGER'S OWN HUE, AND THIS IS THE FIFTH RECOLOUR OF ITS
+## RESTING STATE -- the fourth (pale pink, immediately above) was the sheet's
+## own CHARGER candidate walked toward grey, so it inherited CHARGER's hue by
+## construction and collided with it (1.27:1, 1.2 deg -- see MESHY_SPEC 8.5).
+## The replacement comes from an INDEPENDENT recon that never touches
+## CHARGER's palette: EnemyEarthtoneAxisSheet.gd
+## (scripts/dev/, branch claude/enemy-earthtone-axis-qnlzo5), which explores
+## the BRIGHT band (the only one open, per 8.4(1)) at a REAL saturation
+## (S ~ 0.15-0.25) rather than the near-neutral grey the previous axis had
+## already closed.
+##
+## Candidate B1 -- "Kaki pale (olive-vert)" -- entered as HSV
+## H=105.0 deg, S=0.22, V=0.88 (Color.from_hsv(105.0/360.0, 0.22, 0.88, 1.0)
+## in the sheet script, never a hand-typed RGB literal). Converted here the
+## same way, not re-derived by eye: RGB = (0.7348, 0.88, 0.6864). This is the
+## INPUT value fed to albedo_color, not the sheet's RENDERED-measurement
+## columns (H=105.0 deg S=0.219 chroma8=48.0 Lrel=0.63671, 3.49:1 vs ground) --
+## the two differ because the sheet's Lrel/contrast are read off the actual
+## screen pixel (AA, box-sampling), while the .glb's baseColorFactor has to
+## carry the value the material was actually given.
+##
+##   * BAND. Stays BRIGHT (with JUMP, STOMPER, CHARGER) -- the sheet measured
+##     3.49:1 against the 3.05 safe-margin floor, well clear.
+##   * HUE, the axis the previous two rat colours both failed on. Separation
+##     from all four gated hazards, measured on the sheet's own reference
+##     rows rather than assumed: dHue(CHARGER)=117.0, dHue(JUMP)=61.4,
+##     dHue(STOMPER)=97.3, dHue(DODGE)=99.2 -- every one clears the 45 deg
+##     reliability floor with margin, and the CHARGER pair specifically (the
+##     one collision that mattered) goes from 1.2 deg to 117.0.
+##   * WHAT THIS BUYS AND WHAT IT DOES NOT. B1 is measurably separated from
+##     CHARGER on BOTH WCAG channels the sheet checks (hue and, inside the
+##     bright band, the direct pairwise ratio) rather than on saturation
+##     alone, which is what made the pink candidate fragile. It reads as a
+##     pale sage/olive-green, not a dark earth tone -- the bright band forces
+##     high V (see the sheet's own header: clearing the ground floor from
+##     above needs Lrel >= ~0.549, which pushes every bright candidate toward
+##     pastel). No sonde measures whether that still reads as "a rat" instead
+##     of "a pale green shape" at real speed; that is a device judgement, not
+##     a gate this value can pass on its own.
 COLORS = {
     "jump_log": (1.0, 0.78, 0.28),  # Obstacle.tscn StandardMaterial3D_Jump
     "stomper_toad": (0.62, 0.86, 1.0),  # Obstacle.tscn StandardMaterial3D_Stomper
     "dodge_trunk": (0.21, 0.0175, 0.0175),  # DARKENED from (0.30, 0.025, 0.025), see above
-    "enemy_rat": (0.9608, 0.8980, 0.9137),  # pale desaturated pink, sheet candidate 03, see above
+    "enemy_rat": (0.7348, 0.88, 0.6864),  # pale kaki/sage, earthtone-axis candidate B1, see above
     "air_enemy_dragonfly": (0.24, 1.0, 0.31),  # the RENDERED resting green, see above
     "charger_boar": (0.96, 0.76, 0.80),  # dusty pink-brown, RECOLOURED from the shipped pink, see above
 }

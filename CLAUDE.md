@@ -1853,6 +1853,124 @@ saturation et la silhouette, mais **seul un œil à vitesse réelle tranche**, e
 c'est la paire dont la méprise coûte le plus cher ; le fait que le repos soit
 dans la famille de teinte de l'alarme ; et le télégraphe à un seul canal.
 
+## LE RAT (ENEMY) QUITTE LA TEINTE DE CHARGER — recolorisation N°6, plus un piège payload fermé (13 août 2026)
+
+Branche `claude/rat-recolor-payload-trap-pakaoh`, partie de `staging`
+(`72729f9`). **Ce n'est PAS un install** : géométrie, LOD 148 tri, échelle
+0,46266, offset et collider `EnemyShape` **intouchés**. Seul `baseColorFactor`
+bouge, plus le placeholder qui le double. Deuxième changement du même lot,
+indépendant : fermeture d'un piège payload trouvé en recon sur une AUTRE
+branche mais jamais porté sur `staging` — voir plus bas.
+
+`rgb(0,9608, 0,8980, 0,9137)` (rose pâle désaturé, §8.5 de MESHY_SPEC.md) →
+**`rgb(0,7348, 0,88, 0,6864)`** — candidat **B1 « Kaki pâle »** de
+`EnemyEarthtoneAxisSheet.gd` (`scripts/dev/`, branche
+`claude/enemy-earthtone-axis-qnlzo5`, commit `07bddfe`), une recon
+**indépendante** qui ne touche jamais la palette de CHARGER — contrairement
+au rose, qui était le candidat 03 de la PROPRE planche du sanglier et
+héritait donc sa teinte exacte (d'où sa collision 1,2° avec lui).
+
+### La valeur installée est la valeur SAISIE (HSV), pas la valeur rendue-mesurée
+
+La planche entre le candidat en HSV — `H=105,0 S=0,22 V=0,88`
+(`Color.from_hsv(105.0/360.0, 0.22, 0.88, 1.0)` dans le script, jamais un
+littéral RGB tapé à la main). C'est cette valeur SAISIE, convertie une seule
+fois de façon déterministe (`colorsys`/algorithme HSV standard, round-trip
+vérifié), qui a été installée. Les colonnes RENDUES de la planche (`H=105,0°
+S=0,219 chroma8=48,0 Lrel=0,63671`, `3,49:1` vs sol) sont une MESURE — pixel
+réel après AA/box-sampling — pas une seconde source pour la valeur à écrire
+dans le `.glb`.
+
+### Gates remesurés sur l'asset RÉELLEMENT installé
+
+`EnemyEarthtoneAxisSheet.tscn` a été rejoué (temporairement, jamais commité,
+supprimé avant tout commit) sur cet arbre APRÈS l'installation — sa ligne
+« ENEMY shipped » ne lit JAMAIS un override, uniquement le matériau réel du
+`.glb` livré. Elle **reproduit EXACTEMENT les chiffres de la planche de
+recon** : `hue=105,0 sat=0,219 chroma8=48,0 lum=0,63671`, `worst=3,49:1`,
+`dHue vs CHARGER/JUMP/STOMPER/DODGE = 117,0 / 61,4 / 97,3 / 99,2 deg` (plancher
+45°), `contraste PAIRE vs CHARGER = 1,064:1`. Les quatre hazards de
+référence, mesurés sur ce même arbre plutôt que lus dans la doc, retombent
+aussi exactement sur les valeurs déjà connues : DODGE 3,39/3,37, JUMP
+3,04/3,02, STOMPER 3,41/3,41, CHARGER 3,27/3,28.
+
+- **vs sol : 3,49:1 (pire des deux bouts)** — largement au-dessus du seuil
+  d'arrêt 3,05. Reste dans la bande CLAIRE, aucun changement de bande cette
+  fois, seulement de teinte à l'intérieur.
+- **vs les 4 hazards gatés : dHue >= 45° partout, minimum 61,4° (JUMP).** La
+  collision qui motivait ce lot (rat↔CHARGER, 1,2° au §8.5) est fermée avec
+  la PLUS GRANDE marge des quatre : 117,0°. Le contraste WCAG PAIRE contre
+  CHARGER reste ~1:1 (1,064:1) — normal à l'intérieur d'une bande (§8.4(2)
+  de MESHY_SPEC.md) : la séparation est portée par la teinte seule, même
+  discipline que toutes les autres paires intra-bande déjà livrées.
+- **Ce que le lot NE change PAS** : la rampe d'alarme quitte la famille de
+  repos 4,40 s avant contact (11 px à `START_SPEED`, 5 px à `MAX_SPEED`),
+  donc aucune recolorisation de repos ne change ce que voit le joueur au
+  moment de décider. `DarkPaletteAudit` le confirme : sa ligne `ENEMY
+  (resting)` (en réalité l'alarme saturée à `CAPTURE_Z`) est
+  **BYTE-IDENTIQUE** avant/après (même md5 sur les deux flux stdout) —
+  `ENEMY_ALARM_ALBEDO` n'a jamais bougé.
+
+### Losslessness prouvée D'ABORD, comme à chaque recolorisation précédente
+
+`decimate_hazard.py` (target=150) a d'abord régénéré le rose SHIPPÉ, match
+byte-à-byte contre l'asset installé (md5 `45ec1b62b12bccfcfabf442ff552bca7`,
+3700 octets, 76 verts / 148 tri) — donc la seule différence possible dans le
+nouveau fichier est `baseColorFactor`. Vérifié après : chunk BIN
+byte-identique (2688 octets, 76 verts, 148 tri), JSON identique à
+l'exception de `baseColorFactor`, `KHR_materials_unlit` préservé.
+
+### Validation
+
+`AssetContractAudit` (12/12 visuels, **0/10 colliders déplacés**,
+`EnemyShape` toujours `Capsule(r=0,3, h=0,7)` @ +0,350) et `AlarmRampAudit`
+(PHASE D : reset vers `rgb(0.73, 0.88, 0.69)`, alarme toujours `rgb(0.95,
+0.08, 0.12)`) — **diff EXACTEMENT UNE LIGNE chacune** contre `origin/staging`
+en worktree séparé, la ligne ENEMY. `ProbeTimeoutAudit` (33 sondes),
+`DeathModelAudit`, `ChargerShapeProbe`, `DarkPaletteAudit` — **byte-identiques
+sur les deux flux**. Import + export Web **exit 0**, `index.wasm`
+**35 376 909** octets — identique au fingerprint déjà consigné pour tous les
+lots précédents qui ne touchent pas au code moteur.
+
+### Piège payload fermé : `docs/*` manquait à l'`exclude_filter`
+
+Trouvé en recon sur `claude/enemy-earthtone-axis-qnlzo5` (contournement
+local par `.gdignore` sous `docs/color-sheets/`, jamais porté sur
+`staging`) : `export_presets.cfg` utilise `export_filter="all_resources"`,
+dont l'`exclude_filter` couvrait `scripts/dev/*` et `assets_source/*` mais
+pas `docs/*`. Toute image déposée sous `docs/color-sheets/` (exactement ce
+qu'écrit une sonde de recon comme `EnemyEarthtoneAxisSheet.gd`) serait donc
+importée comme texture et embarquée dans le build — mesuré par la session
+qui a trouvé le trou à **414 862 octets** de `.ctex` pour une seule planche.
+
+**Corrigé au niveau du preset** (`docs/*` ajouté à l'`exclude_filter`),
+permanent et pas au coup par coup par `.gdignore` par branche — couvre tout
+contenu futur déposé n'importe où sous `docs/`, pas seulement
+`docs/color-sheets/`.
+
+**Vérifié par un test réel, pas par la seule lecture du filtre** : un PNG de
+57 546 octets déposé sous `docs/color-sheets/` reçoit bien un `.import`/
+`.ctex` LOCAL au réimport (`exclude_filter` d'export ne contrôle jamais
+l'import éditeur, seulement le paquet exporté), mais le log d'export ne
+contient **aucune** ligne `Storing File` pour `res://docs/…`, et le `.pck`
+ne grossit que de **112 octets** (une chaîne de chemin dans le uid-cache —
+même artefact déjà documenté pour `assets_source/*`) contre les ~57 Ko
+qu'aurait coûté le fichier réellement packé. Fichier de test retiré avant
+tout commit.
+
+### Reste ouvert
+
+Aucune sonde ne dit qu'un kaki pâle se lit comme « un rat » plutôt que
+comme une forme verte pâle à vitesse réelle sur téléphone — **jugement
+device**, et c'est tout l'objet de ce lot. À dire clairement avant le
+retour device, comme pour chaque recolorisation précédente : ce lot ne
+change PAS ce que Mathieu perçoit à distance de décision — la rampe
+d'alarme domine toujours la fenêtre de lecture réelle (4,40 s avant
+contact) — c'est un changement d'IDENTITÉ AU REPOS. Les candidats B2/B3/
+D1/D2/D3 de la même planche restent non installés (B1 est le seul mesuré
+séparé des 4 hazards à une saturation réelle). Détail chiffré complet :
+`docs/MESHY_SPEC.md` §8.6 et §11.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`

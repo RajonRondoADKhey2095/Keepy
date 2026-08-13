@@ -1219,6 +1219,102 @@ the long-standing note that its `ENEMY (resting)` row is mislabelled: the
 resting colour moved from near-black to near-white, and the audit did not move
 by one digit, because at `CAPTURE_Z` it has only ever measured the alarm.
 
+### 8.6 The rat leaves CHARGER's hue entirely (13 August 2026) — a sixth recolour, from an independent recon
+
+The rat moves off the pale desaturated pink of §8.5 and onto a **pale
+kaki/sage**, RGB `(0.7348, 0.88, 0.6864)`. Unlike §8.5's pink — which was
+CHARGER's own sheet candidate 03 walked toward grey, so it inherited
+CHARGER's exact hue and collided with it (1.27:1, 1.2°) — this value comes
+from an INDEPENDENT recon that never touches CHARGER's palette:
+`EnemyEarthtoneAxisSheet.gd` (`scripts/dev/`, branch
+`claude/enemy-earthtone-axis-qnlzo5`, commit `07bddfe`), which explores the
+bright band at a real saturation (S ~ 0.15–0.25) rather than the
+near-neutral grey a prior axis had already closed.
+
+**Candidate B1 — "Kaki pâle (olive-vert)"** — entered as HSV `H=105.0,
+S=0.22, V=0.88` (`Color.from_hsv(105.0/360.0, 0.22, 0.88, 1.0)` in the sheet
+script, never a hand-typed RGB literal). That INPUT is what was installed,
+converted once and deterministically: `(0.7348, 0.88, 0.6864)`. This is
+distinct from the sheet's rendered-measurement columns (`H=105.0°, S=0.219,
+chroma8=48.0, Lrel=0.63671`, `3.49:1` vs ground) — those read the actual
+screen pixel after AA/box-sampling; they are not a second source of truth
+for the value a `.glb` should carry.
+
+| | BEFORE (pale pink, §8.5) | AFTER (pale kaki, B1) |
+|---|---|---|
+| installed albedo (sRGB) | `(0.9608, 0.8980, 0.9137)` | `(0.7348, 0.88, 0.6864)` |
+| rendered hue / sat / chroma8 | 348.0° / 0.062 / — | **105.0° / 0.219 / 48.0** |
+| Lrel | 0.7875 | **0.63671** |
+| vs ground (worst of both ends) | 4.20 / 4.19 | **3.50 / 3.49** |
+| vs CHARGER — hue / pair contrast | **1.2°, 1.27:1 apart** | **117.0°, 1.064:1** |
+| vs JUMP — hue | 53.8° | **61.4°** (the closest of the four) |
+| vs STOMPER — hue | 145.9° | **97.3°** |
+| vs DODGE — hue | 20.1° | **99.2°** |
+
+Re-measured on the ACTUALLY INSTALLED `.glb`, not just the recon sheet's
+prediction: `EnemyEarthtoneAxisSheet.tscn`, replayed on this tree (its
+"shipped" row never takes an override — it reads whatever the real
+`_enemy_material` carries), reproduces the sheet's own numbers exactly
+(3.49:1 worst, dHue min 61.4°), and its four reference-hazard rows —
+measured live rather than trusted from docs — land on the same values §8.4
+and the CHARGER-recolour entry already recorded: DODGE 3.39/3.37, JUMP
+3.04/3.02, STOMPER 3.41/3.41, CHARGER 3.27/3.28.
+
+**(a) Ground floor.** 3.49:1 clears the 3.05 safe-margin stop line with
+0.44 of margin, staying in the BRIGHT band alongside JUMP/STOMPER/CHARGER —
+no band change this time, only a hue move within it.
+
+**(b) THE FIX: hue separation from all four gated hazards, not just
+CHARGER.** §8.4(2)/§8.5(b) established that WCAG scores ~1:1 *inside* a
+band and hue is the only channel left — pink's 1.2° collision with CHARGER
+was exactly that failure. B1 clears the sheet's own 45° reliability floor
+against **all four** hazards at once, and the CHARGER pair — the one that
+motivated this recolour — goes from the *closest* collision to the
+*widest* separation of the four (117.0°). The pairwise WCAG contrast
+against CHARGER stays ~1:1 (1.064:1), exactly as §8.4(2) says it must
+inside a band: the separation here is carried by hue alone, same
+discipline as every other in-band pair already shipped.
+
+**(c) What this does not change.** §8.4(3) still holds without
+qualification — the alarm ramp leaves the resting family 4.40 s before
+contact (11 px tall at `START_SPEED`, 5 px at `MAX_SPEED`), so no resting
+recolour changes what a player sees at the moment a strike is decided.
+`DarkPaletteAudit`'s `ENEMY (resting)` row is unaffected: byte-identical on
+both streams (same md5), because at `CAPTURE_Z` it has only ever measured
+`ENEMY_ALARM_ALBEDO`, which this batch does not touch. `AlarmRampAudit`
+PHASE D confirms the reset target moved to `rgb(0.73, 0.88, 0.69)` and the
+alarm colour did not.
+
+**(d) What this trades away, signalled rather than hidden.** B1 sits in
+the bright band, which forces high V to clear the ground floor from above
+(§8.4(1)) — it reads as a pale sage/olive-green shape, not a dark earth
+tone, despite the "earthtone" name of its recon axis. No probe measures
+whether that still reads as "a rat" versus "a pale green shape" at real
+speed on a phone; that is a device judgement, same as every prior recolour
+of this material.
+
+**(e) Losslessness, proved first, same discipline as every prior
+recolour.** `decimate_hazard.py` (target=150) regenerated the SHIPPED pink
+`.glb` first and it matched the installed file byte-for-byte (md5
+`45ec1b62b12bccfcfabf442ff552bca7`, 76 verts / 148 tri / 3700 bytes) —
+only then was `COLORS["enemy_rat"]` edited and regenerated. The new file's
+BIN chunk is byte-identical to the old one (2688 bytes, 76 verts, 148 tri);
+the JSON differs only in `baseColorFactor`; `KHR_materials_unlit`,
+geometry, scale, offset and the `EnemyShape` collider are all untouched
+(`AssetContractAudit`: 0/10 colliders moved).
+
+**Validation**: `AssetContractAudit` and `AlarmRampAudit` diff EXACTLY ONE
+LINE EACH against `origin/staging` in a separate worktree (the ENEMY row);
+`ProbeTimeoutAudit`, `DeathModelAudit`, `ChargerShapeProbe` and
+`DarkPaletteAudit` are byte-identical on both streams. Import + export Web
+**exit 0**, `index.wasm` **35,376,909** bytes — the same fingerprint every
+prior visual-only batch has produced.
+
+**Still open**: same device judgement as (d) above; the sheet's other five
+candidates (B2, B3, D1, D2, D3) remain unused — B1 is the only one measured
+clear of all four gated hazards at a real saturation. See §11 for the
+payload-filter fix that shipped alongside this recolour.
+
 ## 9. Godot 4.3 import notes
 
 - A `.glb` imports as a **`PackedScene`** whose root is a `Node3D`.
@@ -3548,3 +3644,72 @@ was reverted), `DeathModelAudit`, `PursuerFramingAudit` — **all exit 0**.
 - Everything left open by the install itself — the 1.787 m nose overhang, the
   trail bars becoming visible, the head-on mass — is **unchanged**: this batch
   moved a colour and nothing else.
+
+### 2026-08-13 — ENEMY (rat) RECOLOURED a sixth time, plus an unrelated payload-filter fix found in recon
+
+Branch `claude/rat-recolor-payload-trap-pakaoh`, off `staging` (`72729f9`).
+**Not an install.** Geometry, LOD (148 tri), scale (0.46266), offset and
+`EnemyShape` collider are untouched; only `baseColorFactor` moves, plus the
+placeholder that shadows it. Full measurement and argument: §8.6.
+
+`rgb(0.9608, 0.8980, 0.9137)` (pale pink, §8.5) -> **`rgb(0.7348, 0.88,
+0.6864)`** — candidate B1 "Kaki pâle" from `EnemyEarthtoneAxisSheet.gd`
+(branch `claude/enemy-earthtone-axis-qnlzo5`, commit `07bddfe`), an
+independent recon axis that never touches CHARGER's own palette. Installed
+value is the sheet's INPUT HSV converted once (`Color.from_hsv(105.0/360.0,
+0.22, 0.88, 1.0)`), not its post-render measurement columns.
+
+Re-measured on the shipped `.glb` itself (the recon sheet replayed against
+this tree, "shipped" row reads the real material, no override): worst-of-
+both-ends vs ground **3.49:1** (stop line 3.05), hue separation from all
+four gated hazards **117.0° / 61.4° / 97.3° / 99.2°** (CHARGER / JUMP /
+STOMPER / DODGE, floor 45°) — the CHARGER collision that motivated this
+recolour (1.2° at §8.5) is now the *widest* of the four gaps, not the
+narrowest. `AssetContractAudit` and `AlarmRampAudit` diff exactly one line
+each against `origin/staging` (the ENEMY row); `DarkPaletteAudit`,
+`ProbeTimeoutAudit`, `DeathModelAudit` and `ChargerShapeProbe` are
+byte-identical, because `ENEMY_ALARM_ALBEDO` and every other hazard's
+material are untouched.
+
+Losslessness proved first: `decimate_hazard.py` (target=150) regenerated
+the shipped pink `.glb` and matched it byte-for-byte (md5
+`45ec1b62b12bccfcfabf442ff552bca7`) before `COLORS["enemy_rat"]` was
+edited. New BIN chunk byte-identical to the old one (2688 bytes, 76 verts,
+148 tri); JSON differs only in `baseColorFactor`.
+
+Import + export Web **exit 0**, `index.wasm` **35,376,909** bytes — the
+same fingerprint every prior visual-only batch has produced.
+
+#### Payload trap closed: `docs/*` was missing from `exclude_filter`
+
+Found in recon on `claude/enemy-earthtone-axis-qnlzo5` (worked around
+locally with a `.gdignore` under `docs/color-sheets/`, never carried onto
+`staging`): `export_presets.cfg`'s `export_filter="all_resources"` packs
+every project resource whether or not a scene references it, and its
+`exclude_filter` covered `scripts/dev/*` and `assets_source/*` but not
+`docs/*`. Any image dropped under `docs/color-sheets/` — exactly what a
+recon probe like `EnemyEarthtoneAxisSheet.gd` writes — would be imported as
+a texture and shipped as dead payload; the branch that found this measured
+**414,862 bytes** of `.ctex` for a single colour sheet.
+
+**Fixed at the preset level** (`docs/*` added to `exclude_filter`),
+permanent rather than a per-branch `.gdignore` — covers any future file
+dropped anywhere under `docs/`, not just `docs/color-sheets/`.
+
+**Verified by a real test, not by reading the filter alone**: a 57,546-byte
+PNG dropped under `docs/color-sheets/` DOES get a local `.import`/`.ctex`
+sidecar on re-import (`exclude_filter` governs the exported PACK, never the
+editor's own import step), but the export log's `Storing File` lines
+contain zero entries for `res://docs/…`, and the `.pck` grows by only
+**112 bytes** (a uid-cache path string — the same artefact already
+documented for `assets_source/*`), not the ~57 KB the file itself would
+cost if actually packed. Test file removed before commit.
+
+#### Still open
+
+- Same device judgement as §8.6(d): whether a pale kaki reads as "a rat" at
+  real speed, not just "a pale green shape".
+- The sheet's five other candidates (B2, B3, D1, D2, D3) remain unused.
+- The §11 entry for the 12 August pink recolour (documented in §8.5, never
+  logged here) stays missing — a pre-existing doc gap, out of scope for
+  this batch.
