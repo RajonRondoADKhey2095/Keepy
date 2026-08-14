@@ -2284,6 +2284,184 @@ exit 0) — **3 sondes exit 0** : `SwampIdentityAudit` (4/4 états OK,
 sur la branche feature), `AssetContractAudit` (12/12 visuels, 0/10
 colliders déplacés), `ProbeTimeoutAudit` (33 sondes armées).
 
+## ICÔNE D'APPLICATION + PWA MINIMALE : écran d'accueil iOS/Android (14 août 2026)
+
+Branche `claude/keepy-pwa-icon-hosebg`, partie de `staging` (`3b8e7d2`).
+**Décision explicite de Mathieu : activer la PWA (option b), version
+MINIMALE — le seul but est une icône/nom corrects à l'installation, pas
+une stratégie offline élaborée.** `progressive_web_app/offline_page` reste
+vide et aucun service worker applicatif custom n'est ajouté par-dessus
+celui que Godot génère lui-même : ce projet n'a structurellement AUCUN
+service worker applicatif à ce jour (voir la section PWA du CLAUDE.md
+Keepr, même constat de fond), et ce lot ne change pas cet état — il active
+simplement le générateur PWA natif de l'exporteur HTML5 de Godot
+(`godot.service.worker.js`/`godot.offline.html`, présents dans le template
+d'export officiel, jamais custom).
+
+**Source** : `assets/textures/ui/1786650683166.jpg`, branche d'upload
+`https/github.com/RajonRondoADKhey2095/Keepy/upload/main/assets/textures/ui`
+(commit `c302396`), **confirmée par Mathieu**. 3100×2992 px, JPEG,
+3 829 262 octets — c'est la MÊME illustration déjà installée en prod comme
+`assets/textures/ui/title_cover.png` (voir la section « ÉCRAN-TITRE »
+juste au-dessus, 14 août 2026), donc l'icône réutilise l'identité visuelle
+déjà validée sur device pour la couverture de l'écran-titre, pas un nouvel
+artwork.
+
+**Crop retenu, MESURÉ avant d'être choisi, pas un centre géométrique
+aveugle** — box `(54, 0, 3046, 2992)`, carré 2992×2992. Ratio source
+1,036 (3100×2992) : la dimension qui contraint est la hauteur (2992),
+donc AUCUN rognage vertical n'a lieu, seuls 108 px sont à retirer en
+largeur (54 de chaque côté pour un crop centré). Avant de centrer, les
+deux bords ont été inspectés à pleine résolution pour vérifier qu'aucun
+sujet n'y est coupé : l'oreille de l'écureuil (bord gauche) démarre à
+~127 px du bord, la pointe de l'aile du hibou (bord droit) s'arrête à
+~48 px du bord — les deux largement au-delà de la zone de 54 px retirée,
+donc un crop CENTRÉ est à la fois le choix le plus simple et celui qui ne
+mord sur aucun des deux sujets. Aucune autre position n'a été jugée
+meilleure : le sujet (écureuil + hibou) occupe déjà quasiment toute la
+largeur de l'image bord à bord, donc la marge de 108 px ne permettait de
+toute façon aucun repositionnement significatif.
+
+**Tailles dérivées** (Lanczos depuis le carré source, PNG RGB standard —
+PAS de `pngquant`/palette sur le master avant redimensionnement, pour ne
+pas cumuler deux passes lossy avec le WebP d'import ci-dessous ; même
+convention que `title_cover.png`, jamais quantifié à la source) :
+- **`icon.png`** (racine du projet, 512×512) — sert à LA FOIS
+  `config/icon` (icône projet/éditeur ET source du favicon HTML5, via
+  `html/export_icon=true`, déjà activé) ET
+  `progressive_web_app/icon_512x512` — un seul fichier, une seule
+  ressource importée, pour ne pas payer deux fois le même contenu.
+- **`assets/textures/ui/pwa_icon_180.png`** (180×180) — apple-touch-icon /
+  PWA 180×180, c'est ce qu'iOS lit pour « Sur l'écran d'accueil ».
+- **`assets/textures/ui/pwa_icon_144.png`** (144×144) — PWA 144×144.
+
+**`config/icon` accepte bien un PNG en Godot 4.3, vérifié sur le vrai code
+du moteur et pas supposé** — `EditorExportPlatformWeb` (extrait via
+`godot4 --doctool`, classe `EditorExportPlatformWeb` dans
+`platform/web/doc_classes/`) type le champ comme `CompressedTexture2D`
+générique, sans contrainte de format ; `icon.svg` (l'ancien placeholder)
+fonctionnait déjà de la même façon. L'ancien `icon.svg` + son
+`.import` sont **supprimés** (pas de dette : entièrement superseded, zéro
+référence restante, cohérent avec la convention du projet de ne jamais
+garder de fichier mort — voir la règle Keepr sur les « vieux docs sticker
+pollués »).
+
+**⚠️ PIÈGE PAYLOAD DÉCOUVERT ET MESURÉ, PAS SUPPOSÉ — `config/icon`
+EMBARQUE SON FICHIER SOURCE BRUT EN PLUS DE SON `.ctex` IMPORTÉ, et
+c'est SPÉCIFIQUE à `config/icon`, pas un comportement général
+d'`export_filter="all_resources"`.** Confirmé en grep-ant le log
+`savepack` d'un export réel : `res://icon.png` (le PNG brut) apparaît
+comme une ligne `Storing File` DISTINCTE, en plus de
+`res://.godot/imported/icon.png-....ctex` — alors qu'un contrôle croisé
+sur `title_cover.png` et sur les deux `pwa_icon_*.png` montre que SEUL
+leur `.ctex` (et le petit `.import` texte qui l'accompagne) est packé,
+jamais leur PNG source. Cause probable : la génération du favicon HTML5 à
+l'export lit l'image du projet icon directement depuis son fichier
+source (pas via le pipeline `CompressedTexture2D` normal), donc
+l'exporteur embarque le fichier brut pour pouvoir le redécoder. **Levier
+de poids identifié en conséquence : compresser le FICHIER SOURCE
+`icon.png` lui-même compte ici, contrairement aux autres textures du
+projet où seul le `.ctex` importé pèse.** `icon.png` est donc passé par
+`pngquant --quality=70-95` (417 417 → **132 919 octets**, −68 %,
+vérifié SANS artefact visible à l'œil sur un rendu upscalé 3× du 144×144
+dérivé) avant d'être commité — les deux `pwa_icon_*.png` n'ont PAS reçu
+ce traitement (inutile, leur PNG source n'est jamais dupliqué dans le
+`.pck`).
+
+**Import Godot en compression LOSSY (WebP q=0.7), même convention que
+`title_cover.png`** — `compress/mode=1` posé à la main dans les trois
+`.import` générés (le défaut Godot est `mode=0`, Lossless). Mesuré
+après réimport :
+
+| fichier | PNG source (repo) | `.ctex` importé (WebP q0.7) |
+|---|---|---|
+| `icon.png` | 132 919 o (pngquant) | 37 356 o |
+| `pwa_icon_180.png` | 69 160 o | 9 918 o |
+| `pwa_icon_144.png` | 46 386 o | 7 020 o |
+
+**Configuration** (`export_presets.cfg`, preset Web) :
+`progressive_web_app/enabled=true` ; `display=1` (Standalone — déjà posé
+avant activation, valeur retrouvée en extrayant la chaîne d'enum
+`Fullscreen,Standalone,Minimal UI,Browser` du binaire `godot4` via
+`strings`, aucune doc XML ne liste les valeurs d'un enum d'export
+plugin) ; `orientation` passe de `0` (Any) à `2` (Portrait, chaîne
+`Any,Landscape,Portrait`), cohérent avec le viewport 1080×1920 de
+`project.godot` ; `background_color=Color(0.062, 0.115, 0.044, 1)` —
+reprend `GameState.SWAMP_SKY` telle quelle (même teinte que l'écran-titre
+et l'écran game-over depuis le lot « DIRECTION ARTISTIQUE PERMANENTE »),
+pour que le splash PWA ne jure pas avec l'identité marécage permanente du
+jeu.
+
+**Validation, export headless réel — pas une lecture de config.**
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce
+lot (mêmes releases GitHub que la CI). Import + export Web : **exit 0**,
+aucune erreur GDScript/parse. `index.manifest.json` généré et vérifié
+octet pour octet :
+```
+{"background_color":"#101d0b","display":"standalone","icons":[
+{"sizes":"144x144","src":"index.144x144.png","type":"image/png"},
+{"sizes":"180x180","src":"index.180x180.png","type":"image/png"},
+{"sizes":"512x512","src":"index.512x512.png","type":"image/png"}],
+"name":"Keepy","orientation":"portrait","start_url":"./index.html"}
+```
+`#101d0b` = arrondi hex exact de `Color(0.062, 0.115, 0.044)` (confirmé
+par calcul, pas approximatif). `index.html` porte les trois balises
+attendues :
+```
+<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<link rel="manifest" href="index.manifest.json">
+```
+`index.apple-touch-icon.png` (180×180) et `index.icon.png` (512×512)
+inspectés visuellement après export : identiques au rendu attendu, aucun
+artefact de compression visible malgré le double passage lossy
+(pngquant sur la source + WebP à l'import, puis re-décodage/ré-encodage
+PNG par l'exporteur lui-même pour le favicon).
+
+**⚠️ Piège de mesure rencontré et corrigé pendant cette session, à
+connaître pour toute future mesure de `.pck` locale (hors CI) : ne
+JAMAIS relancer `--import` sans avoir d'abord supprimé `build/`.**
+`export_filter="all_resources"` scanne tout `res://`, `build/` compris —
+un second export sans nettoyage préalable fait réimporter les PNG
+fraîchement écrits par le PREMIER export (`build/web/index.icon.png` etc.)
+comme de NOUVELLES ressources du projet, qui se retrouvent alors
+elles-mêmes packées dans le `.pck` suivant (contamination auto-entretenue,
+observée : +564 Ko sur un second export non nettoyé). `.gitignore` exclut
+déjà `/build/` du dépôt donc ce risque n'existe QUE localement en dehors
+d'un checkout propre (la CI part toujours d'un checkout frais, jamais
+exposée) — mais toute session qui exporte plusieurs fois de suite en local
+doit faire `rm -rf build/` (et idéalement `.godot/` pour repartir d'un
+cache d'import propre) entre deux exports avant de comparer des tailles de
+`.pck`.
+
+**`.pck` : 4 930 656 → 5 118 976 octets (+188 320, +3,82 %)** — mesuré sur
+un export unique, propre (`.godot/` et `build/` supprimés puis reconstruits
+en une seule passe), comme l'exige la mise en garde permanente sur
+l'instabilité du `.pck` entre deux exports (section PWA/Meshy). `index.wasm`
+**inchangé** (35 376 909 octets, identique à toutes les mesures précédentes
+de ce fichier) — confirme qu'aucun code moteur n'a été touché, uniquement
+des assets + de la config d'export. Le delta se décompose intégralement :
+~133 Ko (copie brute dupliquée de `icon.png`, voir le piège payload
+ci-dessus) + ~54 Ko (les trois `.ctex` WebP-lossy combinés) ≈ 187 Ko,
+cohérent avec les 188 320 octets mesurés à quelques centaines d'octets
+près (bruit de compression normal sur les autres textures du projet, déjà
+documenté).
+
+**Déployé sur `staging`** (palier 1, automatique — voir la règle de
+déploiement) : `keepy-staging.vercel.app`.
+
+**RESTE OUVERT — jugement device, rien de mesurable ici** : le rendu
+final sur un VRAI écran d'accueil iOS (Safari → Partager → Sur l'écran
+d'accueil) et Android (Chrome → Ajouter à l'écran d'accueil), en
+particulier (a) que l'icône installée affiche bien l'illustration
+écureuil/hibou et pas un reste de cache d'un ancien favicon/PWA (aucune
+PWA n'existait avant ce lot, donc aucun cache à purger côté navigateur,
+mais à vérifier quand même) ; (b) que le mode Standalone (sans barre
+d'adresse) et l'orientation Portrait se comportent comme attendu au
+lancement depuis l'icône installée. Aucune sonde de ce projet ne couvre
+le rendu PWA/HTML — c'est structurellement hors de portée d'un test
+headless Godot.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
