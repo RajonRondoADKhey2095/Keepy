@@ -58,6 +58,14 @@ const CAUSE_TEXT := {
 @onready var submit_name_button: Button = $Root/CenterContainer/VBoxContainer/NameEntryContainer/SubmitNameButton
 @onready var top_list_label: Label = $Root/CenterContainer/VBoxContainer/TopListLabel
 @onready var top_list_container: VBoxContainer = $Root/CenterContainer/VBoxContainer/TopListContainer
+## Shown under the top list whenever a network round trip (submission or
+## fetch) came back failed -- discreet (see its styling in the .tscn), and
+## never blocks Rejouer: it is a plain Label with no effect on
+## RetryButton's own click handling, it just occupies its own row above it.
+## Text is authored on the node itself (GameOverScreen.tscn), matching
+## RecordLabel/TopListLabel's own pattern -- the script only ever flips
+## .visible, never .text, on this one.
+@onready var sync_status_label: Label = $Root/CenterContainer/VBoxContainer/SyncStatusLabel
 @onready var retry_button: Button = $Root/CenterContainer/VBoxContainer/RetryButton
 
 var _top_fetch_step: int = _TopFetchStep.NONE
@@ -91,6 +99,7 @@ func _show_game_over() -> void:
 	record_label.visible = _is_new_record
 
 	name_entry_container.visible = false
+	sync_status_label.visible = false
 	_set_top_list_status("Chargement du classement...")
 	root.visible = true
 
@@ -115,6 +124,12 @@ func _handle_precheck_result(entries: Array, success: bool) -> void:
 	if qualifies:
 		name_input.text = Leaderboard.get_saved_name()
 		name_entry_container.visible = true
+		# TopListLabel was left on "Chargement du classement..." by
+		# _show_game_over -- with the precheck now resolved and the name
+		# prompt up, that text describes a fetch that already finished,
+		# not what the player needs to do next.
+		_set_top_list_status("Entre ton pseudo pour valider ton score")
+		name_input.grab_focus()
 	else:
 		_begin_submit(Leaderboard.get_saved_name())
 
@@ -129,12 +144,23 @@ func _begin_submit(player_name: String) -> void:
 ## Fires after every submit attempt, success or failure alike -- either
 ## way the board may have changed (this run's own submission, or simply
 ## time passing), so it's re-fetched for display once more.
-func _on_submit_finished(_success: bool) -> void:
+func _on_submit_finished(success: bool) -> void:
+	# success=false here means the score never reached Firestore (offline,
+	# request error, precondition failure...) despite network_enabled
+	# being true -- there is otherwise no visible sign of that, since the
+	# final fetch below can very well succeed on its own and render an
+	# unrelated (stale, this run absent) top list right after.
+	sync_status_label.visible = not success
 	_set_top_list_status("Chargement du classement...")
 	_top_fetch_step = _TopFetchStep.FINAL
 	Leaderboard.fetch_top_scores()
 
 func _render_top_scores(entries: Array, success: bool) -> void:
+	if not success:
+		# The submit itself may well have succeeded; this is the FOLLOW-UP
+		# fetch failing. Surfaced too, alongside the submit outcome above
+		# (never overwritten to a false "all good" once either has failed).
+		sync_status_label.visible = true
 	_clear_top_list()
 	if not success:
 		_set_top_list_status("Classement indisponible")
