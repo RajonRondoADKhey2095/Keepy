@@ -2256,6 +2256,34 @@ coup, aucune ne touchant la scène modifiée : `ProbeTimeoutAudit`
 (**33 sondes armées**), `AssetContractAudit` (**12/12 visuels, 0/10
 colliders déplacés**) — toutes exit 0.
 
+### Merge en production (14 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`3b8e7d2`) → `main`, commit de merge **`9e4b09a`**, après
+validation device : positionnement du panneau confirmé, bouton « Jouer »
+testé et fonctionnel, hors zone home indicator. Couvre les deux commits du
+lot — couverture graphique + repositionnement du panneau off the owl.
+
+Merge `--no-ff` (aucun conflit) : `main` était strictement en retard sur
+`staging` (`main..staging` vide dans l'autre sens), l'arbre du commit de
+merge est byte-identique à `origin/staging` (`git diff HEAD origin/staging`
+vide) — ce qui part en prod est donc littéralement l'arbre validé sur
+device, pas une recomposition.
+
+CI run **#112** verte (3 min 32 s), déploiement PRODUCTION effectué,
+STAGING correctement skippé (push sur `main`). **Fingerprint vérifié sur
+le site LIVE** (`keepy-ten.vercel.app`, HTTP 200, `x-vercel-cache: MISS`) :
+`GODOT_CONFIG.fileSizes` = `index.pck 4 930 656` / `index.wasm
+35 376 909` — les deux identiques au chiffre du propre log CI de ce run
+(`ls -la build/web/`), et le log CI porte lui-même `▲ Aliased
+https://keepy-ten.vercel.app` sur ce déploiement précis.
+
+**Rejoué SUR LE COMMIT DE MERGE lui-même, pas supposé porté** (éditeur
+Godot 4.3-stable installé dans ce sandbox pour ce lot, import headless
+exit 0) — **3 sondes exit 0** : `SwampIdentityAudit` (4/4 états OK,
+`SWAMP_IDENTITY_VERIFIED=yes` — chiffres identiques à ceux déjà mesurés
+sur la branche feature), `AssetContractAudit` (12/12 visuels, 0/10
+colliders déplacés), `ProbeTimeoutAudit` (33 sondes armées).
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
