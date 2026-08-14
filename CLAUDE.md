@@ -2462,6 +2462,82 @@ lancement depuis l'icône installée. Aucune sonde de ce projet ne couvre
 le rendu PWA/HTML — c'est structurellement hors de portée d'un test
 headless Godot.
 
+### Merge en production (14 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`0ded3b6`) → `main`, commit de merge **`e13d916`**, après
+validation device iOS confirmée : icône installée correcte (illustration
+écureuil/hibou), nom « Keepy », lancement en mode standalone (sans barre
+d'adresse) vérifié après suppression de l'ancien raccourci d'écran
+d'accueil (piège de cache iOS déjà documenté ailleurs dans ce fichier).
+
+**PAS un fast-forward, et un conflit RÉEL sur `CLAUDE.md`** — contrairement
+aux merges de prod précédents de ce lot (rondin JUMP excepté) : entre le
+point de départ de la branche icône (`3b8e7d2`) et ce merge, `main` avait
+déjà reçu EN PARALLÈLE le merge de l'écran-titre + panneau (`9e4b09a` +
+`0edda7a`), sur la MÊME section de doc. Résolu par **concaténation simple**
+(les deux sections documentent des changements disjoints — écran-titre
+d'un côté, icône PWA de l'autre — aucune ligne de contenu réellement en
+conflit, seulement leur point d'insertion commun) ; **tous les fichiers
+hors `CLAUDE.md` sont restés sans conflit et byte-identiques à
+`origin/staging`** (`git diff HEAD origin/staging -- . ':!CLAUDE.md'`
+vide, vérifié avant le commit du merge).
+
+**CI run `#115` (id `31806771806`) verte (3 min 34 s)** — étape
+`Deploy to Vercel [PRODUCTION -- main]` réussie, `[STAGING -- staging]`
+correctement `skipped` (push sur `main`). Sortie de build vérifiée dans le
+log CI (`Verify export output`) :
+
+```
+index.pck               5118864
+index.wasm              35376909
+index.manifest.json         325
+index.apple-touch-icon.png  69347
+index.icon.png          355419
+```
+
+**Fingerprint LIVE re-vérifié sur `keepy-ten.vercel.app`** (fetch direct
+post-déploiement, `x-vercel-cache: MISS` sur les trois requêtes — donc pas
+une réponse de cache stale) :
+- `index.html` → `GODOT_CONFIG.fileSizes` = `{"index.pck":5118864,
+  "index.wasm":35376909}`, **identique au bit près** au log CI. Les trois
+  balises attendues présentes : `<link id="-gd-engine-icon" ...
+  href="index.icon.png">`, `<link rel="apple-touch-icon"
+  href="index.apple-touch-icon.png">`, `<link rel="manifest"
+  href="index.manifest.json">`.
+- `index.manifest.json` → `content-length: 325`, contenu **identique au
+  bit près** à celui validé sur staging (`background_color:"#101d0b"`,
+  `display:"standalone"`, 3 icônes 144/180/512, `name:"Keepy"`,
+  `orientation:"portrait"`).
+- `index.apple-touch-icon.png` → HTTP 200, `content-length: 69347`,
+  identique au chiffre du log CI.
+
+**Aucune sonde gameplay rejouée pour cause de non-applicabilité, pas
+d'omission** : `git diff` sur le périmètre exact de ce merge
+(`0edda7a..e13d916`) montre **zéro fichier touché sous `scripts/` ou
+`scenes/`** — le lot ne modifie que `icon.png`/`pwa_icon_{144,180}.png`
+(+ leurs `.import`), `icon.svg` (supprimé), `export_presets.cfg` et 1 ligne
+de `project.godot` (`config/icon`). Aucune sonde de `scripts/dev/` ne peut
+détecter une régression sur un fichier qu'elle ne mesure pas. La seule
+validation structurelle pertinente — que l'import + l'export headless
+chargent et empaquettent l'intégralité des scènes/ressources sans erreur —
+**a déjà eu lieu et réussi** : c'est exactement ce que fait le job CI
+(`Import project resources` + `Export Web build`, tous deux `exit 0` sur
+ce commit précis). **Toolchain Godot indisponible dans CE sandbox pour
+rejouer quoi que ce soit localement** — ni éditeur ni templates installés,
+et le téléchargement échoue en timeout sur
+`release-assets.githubusercontent.com` (même famille de blocage réseau
+déjà documentée pour `productionresultssa*.blob.core.windows.net`) : la
+validation locale par sonde headless, faite pour d'autres lots dans
+d'autres sessions, n'était structurellement pas possible ici — la
+validation CI + fingerprint live ci-dessus en tient lieu.
+
+**Note de cohérence, pas une contradiction** : la section « ICÔNE
+D'APPLICATION + PWA MINIMALE » ci-dessus dit encore « **Déployé sur
+`staging`** ». Volontairement non réécrite après ce merge — c'était l'état
+au moment où ce lot a été écrit, et le réécrire ferait perdre la trace de
+la séquence réelle (palier 1 avant palier 2). Ce paragraphe-ci est la
+mise à jour d'état ; les deux se lisent ensemble.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
