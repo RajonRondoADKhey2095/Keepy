@@ -3,7 +3,7 @@ extends Control
 ## independently loadable (Game.tscn does its own reset via
 ## GameState.start_run() in its _ready()).
 
-@onready var play_button: Button = $CenterContainer/VBoxContainer/PlayButton
+@onready var play_button: Button = $CenterContainer/TitlePanel/VBoxContainer/PlayButton
 
 func _ready() -> void:
 	play_button.pressed.connect(_on_play_pressed)

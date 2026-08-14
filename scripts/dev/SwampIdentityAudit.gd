@@ -47,6 +47,16 @@ extends Node
 ##   RUN DEEP MIST  PLAYING at mist_intensity 1 -- the other end of the breath
 ##   GAME OVER      the run-ended screen, over a live world
 ##
+## ⚠️ scenes/TitleScreen.tscn ITSELF IS NOT ONE OF THE FOUR, DELIBERATELY --
+## see CLAUDE.md, "Écran-titre : couverture graphique dédiée, hors périmètre
+## SwampIdentityAudit". A dedicated cover illustration was installed there
+## (14 août 2026): it is not swamp-green by design, so asserting green
+## dominance / saturation / darkness against it would be gating the wrong
+## thing on purpose. "WORLD AT TITLE" below still covers the 3D world
+## rendered BEHIND the title screen at GameState.State.TITLE, which is the
+## surface this probe's brief actually concerns -- only the standalone
+## TitleScreen.tscn overlay is out of scope now.
+##
 ## and in each one, three assertions on the mean frame colour:
 ##
 ##   1. GREEN DOMINANT. g > r and g > b. This is the one that catches a
@@ -115,18 +125,11 @@ func _run() -> void:
 	await _freeze_and_settle()
 	_record("WORLD AT TITLE")
 
-	# The REAL TitleScreen.tscn, over the world, because it is a separate
-	# scene that Game.tscn does not contain -- so nothing above covers it.
-	# It shipped a light-blue ColorRect background until this batch, which
-	# makes it the single most likely place for the daylight look to
-	# survive unnoticed: it is the first thing a player sees and the last
-	# thing any 3D-oriented probe looks at.
-	var title: Node = load("res://scenes/TitleScreen.tscn").instantiate()
-	add_child(title)
-	await _wait_frames(SETTLE_FRAMES)
-	_record("TITLE SCREEN")
-	title.queue_free()
-	await _wait_frames(2)
+	# scenes/TitleScreen.tscn is intentionally NOT sampled here -- it now
+	# carries a dedicated cover illustration (14 août 2026) rather than the
+	# swamp palette, an explicit exception documented in CLAUDE.md. Sampling
+	# it against MAX_MEAN_LUMA / MIN_MEAN_SATURATION would fail a screen
+	# that was never meant to look like the rest of the game.
 
 	await _settle_playing_at(0.0)
 	_record("RUN OPENING (mist 0.00)")
