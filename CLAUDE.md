@@ -2176,6 +2176,86 @@ réelle sur un téléphone, ni que le rat reste lisible comme **menace** une foi
 la couleur retirée de son télégraphe — c'est tout l'objet du lot. Les cues
 restants du rat sont le mouvement et la forme, rien d'autre.
 
+## ÉCRAN-TITRE : COUVERTURE GRAPHIQUE DÉDIÉE — hors périmètre `SwampIdentityAudit` (14 août 2026)
+
+Branche `claude/title-cover-image-aj30y0`, partie de `main` (`ae8a3d5`).
+`scenes/TitleScreen.tscn` porte désormais une illustration plein écran
+(`assets/textures/ui/title_cover.png`, 720×1280, ratio 9:16 — exactement
+celui du viewport 1080×1920, aucun rognage) au lieu de son simple
+`ColorRect` uni `SWAMP_SKY`. Le `ColorRect` reste en dessous comme fond
+de secours pendant le chargement de la texture, il n'est pas retiré.
+
+**Import en compression LOSSY (WebP q=0.7), pas lossless** — seule texture
+du projet dans ce cas, écart mesuré et pas supposé : `.ctex` **117 462
+octets** en lossy contre **976 862** en lossless (mode par défaut de
+l'import Godot), pour une source de 2 143 989 octets. Le rendu composite
+(texture décodée + capture réelle de l'écran-titre sous `xvfb-run`
+`--rendering-driver opengl3`) ne montre aucun artefact visible à l'écran —
+c'est une illustration peinte plein cadre, pas une texture UI à arêtes
+nettes où la perte WebP se verrait. Toutes les autres textures du projet
+(billboards décor, bakes de matériaux `.glb`) restent en lossless : aucune
+n'est un fond photographique de cette taille, donc aucune n'avait ce
+compromis à faire. `.pck` : 4 810 928 → 4 930 608 octets (+119 680,
+**+2,49 %**) — mesuré avant/après dans la même session/toolchain, seule
+comparaison valable (voir la mise en garde permanente sur l'instabilité du
+`.pck` entre deux exports, section PWA/Meshy plus haut).
+
+**⚠️ EXCEPTION VOULUE ET EXPLICITE, ACTÉE CE JOUR — `SwampIdentityAudit`
+ne sample PLUS `scenes/TitleScreen.tscn`.** Cette sonde gate « aucun état
+du jeu ne doit rendre une frame bleue ou pastel » (voir la section
+« DIRECTION ARTISTIQUE PERMANENTE » plus bas) ; elle échantillonnait un
+état `TITLE SCREEN` en plus des quatre états du monde 3D. Une couverture
+graphique dédiée n'a, par construction, aucune raison d'être dominée par
+le vert du marécage — lui appliquer les mêmes planchers de saturation/
+luminance/dominance verte gaterait la mauvaise chose. L'assertion
+`TITLE SCREEN` est retirée du fichier ; les quatre autres (`WORLD AT
+TITLE`, `RUN OPENING`, `RUN DEEP MIST`, `GAME OVER`) sont inchangées et
+continuent de couvrir le monde 3D rendu **derrière** l'écran-titre à
+`GameState.State.TITLE` — c'est ce périmètre-là, pas l'overlay
+`TitleScreen.tscn` lui-même, que le reste du jeu doit rester marécage.
+Rejoué après le retrait : **4/4 états `OK`, `SWAMP_IDENTITY_VERIFIED=yes`,
+exit 0.**
+
+**Ne pas réinstaller cette assertion en pensant réparer un oubli** — une
+future session qui verrait `SwampIdentityAudit.gd` ne couvrir que 4 états
+sur un total historique de 5 ne doit pas y voir une régression : c'est le
+retrait délibéré documenté ici, pas un test manquant.
+
+**Restructuration de scène nécessaire pour la lisibilité, script mis à
+jour en conséquence.** Titre/sous-titre/bouton (`TitleLabel`,
+`SubtitleLabel`, `PlayButton`) sont désormais regroupés dans un nouveau
+`PanelContainer` (`CenterContainer/TitlePanel`), doté d'un `StyleBoxFlat`
+semi-opaque (scrim brun, coins arrondis) — sans ce fond, le texte blanc
+par défaut se serait retrouvé directement sur la scène la plus chargée de
+l'illustration (le `VBoxContainer`, centré par le `CenterContainer`, tombe
+exactement sur la confrontation hibou/écureuil au milieu de l'image, pas
+sur le bandeau-titre peint en haut — vérifié par rendu, pas supposé).
+`PlayButton` reçoit en plus ses propres `StyleBoxFlat` `normal`/`hover`/
+`pressed`/`focus` (brun/ambre, cohérent avec le badge en bois peint dans
+l'image elle-même), demandés explicitement pour garantir sa lisibilité
+indépendamment du scrim. Conséquence mécanique : le chemin du nœud dans
+`TitleScreen.gd` passe de `$CenterContainer/VBoxContainer/PlayButton` à
+`$CenterContainer/TitlePanel/VBoxContainer/PlayButton` — aucun texte, aucune
+police, aucune position relative des labels n'est touchée, seule la
+hiérarchie qui les enveloppe change.
+
+**Redondance signalée, non tranchée — décision produit, pas technique.**
+L'image source porte elle-même un bandeau-titre peint (« KEEPY CHASED / A
+Keepy Memorial Quest Mini-Game ») en haut de cadre, distinct dans l'espace
+du `TitleLabel`/`SubtitleLabel` du moteur (« Keepy » / « Cours, saute,
+ramasse des noisettes ») qui, lui, est centré verticalement par le
+`CenterContainer` — **aucune collision de pixels entre les deux**, mais
+une redondance de contenu (deux titres, deux registres de texte, à deux
+endroits de l'écran). Non tranché ici : ni le bandeau peint ni le texte
+moteur n'ont été retirés ou repositionnés — à arbitrer par Mathieu au vu
+du rendu capturé.
+
+Validation : import + export headless **exit 0**, `index.wasm` **35 376
+909** octets (inchangé, aucun code moteur touché). Sondes rejouées après
+coup, aucune ne touchant la scène modifiée : `ProbeTimeoutAudit`
+(**33 sondes armées**), `AssetContractAudit` (**12/12 visuels, 0/10
+colliders déplacés**) — toutes exit 0.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
