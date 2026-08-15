@@ -2646,6 +2646,54 @@ demandé à l'origine n'a pas pu être fait (device réel requis, hors de porté
 du sandbox) ; les candidats (a)/(b)/(c) ci-dessus ne sont pas départagés — le
 diagnostic ajouté est fait pour ça, au prochain test device.
 
+### ⚠️ CAUSE RÉELLE TROUVÉE PAR LE DIAGNOSTIC : `accept_gzip` — fix appliqué, PAS ENCORE validé device (14-15 août 2026)
+
+Branche `claude/leaderboard-gzip-fix-3s6bag`, partie de `staging` (`4296086`,
+donc **posée sur le diagnostic ci-dessus**). Le diagnostic temporaire a
+tranché en un test device : `result=8`
+(`HTTPRequest.RESULT_BODY_DECOMPRESS_FAILED`), `code=200` — **sur les deux
+surfaces testées** (PWA installée ET onglet Chrome normal), donc (a)/(b) sont
+écartés d'un coup : ce n'est ni une restriction réseau per-app Android, ni un
+service worker figé sur un ancien cache — les deux auraient dû produire une
+signature différente entre PWA et onglet, or les deux donnent le même couple.
+
+**Cause probable, documentée par plusieurs issues Godot spécifiques à
+l'export Web (pas encore confirmée par un 3e round device — voir plus bas)** :
+`HTTPRequest.accept_gzip` vaut `true` par défaut, ce qui déclenche une
+tentative de décompression du corps de réponse. Sur l'export Web, fetch/XHR
+livre déjà à JS des octets entièrement décodés — il n'y a jamais de payload
+gzip brut à déballer — mais l'entête `Content-Encoding: gzip` de Firestore
+reste visible côté Godot, d'où la tentative de décompression sur du JSON
+déjà en clair, qui échoue net avec `code=200` (la réponse HTTP a bien
+réussi, c'est le décodage applicatif qui la jette).
+
+**Fix appliqué** : `_submit_request.accept_gzip = false` et
+`_query_request.accept_gzip = false`, posés juste après la création des deux
+`HTTPRequest` dans `Leaderboard._ready()`, avant `add_child`. Deux lignes,
+aucun autre fichier touché. Le diagnostic temporaire (`diag` sur les
+signaux, affichage sous `SyncStatusLabel`) **est conservé tel quel** — pas
+retiré avant validation device de ce fix, conformément à la consigne de
+session : s'il ne suffit pas, le prochain couple `result`/`code` doit
+remonter sans qu'on ait à le réinstrumenter.
+
+**Build/export validés dans ce sandbox, au même niveau que la CI** :
+éditeur + templates Godot 4.3-stable téléchargés (releases GitHub
+officielles). Import headless **exit 0**, export Web release **exit 0**
+(`godot4 --headless --path . --export-release "Web" build/web/index.html`,
+aucune erreur GDScript/parse), les six fichiers du build produits et
+non vides (`index.wasm` 35 376 909 octets — inchangé, cohérent avec un
+diff limité à 2 lignes de GDScript sans code moteur touché). **Aucun test
+sur device réel** — c'est précisément ce qu'attend la consigne de session
+avant tout merge vers `main`.
+
+**Mergé sur `staging`** (commit `f475b3f`, palier 1, automatique — build et
+export headless verts). **`main` INTOUCHÉ, aucune exception** : la consigne
+de session est explicite — rien à merger sur `main` tant que Mathieu n'a
+pas confirmé sur device (PWA installée + onglet Chrome, comme pour le
+diagnostic) que le classement synchronise enfin. Si le couple `result`/
+`code` change au prochain test (au lieu de disparaître), ce sera un nouveau
+signal à traiter, pas une confirmation de cette hypothèse.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
