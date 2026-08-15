@@ -2538,6 +2538,114 @@ au moment où ce lot a été écrit, et le réécrire ferait perdre la trace de
 la séquence réelle (palier 1 avant palier 2). Ce paragraphe-ci est la
 mise à jour d'état ; les deux se lisent ensemble.
 
+## CLASSEMENT PWA : l'hypothèse service worker est INFIRMÉE par la source réellement déployée — diagnostic ajouté, PAS encore validé device (14-15 août 2026)
+
+Branche `claude/pwa-leaderboard-sync-issue-rvejp5`, partie de `staging`
+(`230b6e7`). Suite au lot clavier virtuel (`a5211d3`, même jour) : test
+device confirme le clavier réparé, mais le classement échoue
+systématiquement — « Classement indisponible » + « Score non synchronisé
+(hors ligne ?) » — malgré un wifi actif, en PWA installée (icône écran
+d'accueil) sur Android/staging. Facteur nouveau depuis le diagnostic clavier :
+`progressive_web_app/enabled` est passé à `true` le 14 août (lot icône
+d'application), donc un service worker Godot est désormais enregistré en PWA.
+Hypothèse de départ à vérifier : ce SW intercepterait les `fetch()`
+cross-origin vers `firestore.googleapis.com` et les dégraderait en réponses
+opaques.
+
+⚠️ **HYPOTHÈSE VÉRIFIÉE ET INFIRMÉE — pas sur le template, sur les octets
+RÉELLEMENT servis par `keepy-staging.vercel.app`.** `index.service.worker.js`
+a été récupéré tel que déployé (MCP Vercel `web_fetch_vercel_url` — seul
+canal HTTP disponible depuis ce sandbox pour ce domaine : `curl` direct et un
+Chromium Playwright local sont tous les deux bloqués en 403 par la politique
+d'egress du sandbox, `keepy-staging.vercel.app` n'y étant pas autorisé).
+Constaté : `ENSURE_CROSSORIGIN_ISOLATION_HEADERS = false`, exactement la
+valeur posée par `export_presets.cfg`. Avec ce réglage, le handler `fetch` du
+template Godot (comparé octet pour octet à la source réelle
+`misc/dist/html/service-worker.js` du tag `4.3-stable`, celui utilisé par la
+CI) n'appelle `event.respondWith()` QUE si `isNavigate` ou `isCachable` — et
+`isCachable` ne peut STRUCTURELLEMENT jamais être vrai pour une requête
+cross-origin comme celles de `Leaderboard.gd` : son premier terme (`local`,
+le chemin résolu depuis le referrer) ne matche que les fichiers de
+`CACHED_FILES`/`CACHABLE_FILES` (index.html/js/wasm/pck/...) ; son second
+terme (`base === referrer && base.endsWith(CACHED_FILES[0])`) exige à la fois
+que `base` se termine par `/` (1er conjonct) ET par la chaîne `"index.html"`
+(2e conjonct, `CACHED_FILES[0]`) — CONTRADICTOIRE avec lui-même, donc jamais
+vrai, quel que soit l'URL de démarrage réel (`/` ou `/index.html` via le
+`start_url` du manifeste). **Conséquence : pour toute requête vers
+`firestore.googleapis.com`, le SW n'appelle jamais `respondWith()` —
+passthrough complet, exactement comme en l'absence de service worker.** Ce
+n'est pas une lecture optimiste : c'est une propriété structurelle de la
+fonction `isCachable`, vérifiée sur les octets exacts servis en prod, pas sur
+une hypothèse de lecture du template.
+
+**Côté serveur, tout répond correctement, testé EN DIRECT avec la clé et les
+endpoints réels du jeu** (GET `/documents/scores`, POST `:runQuery` avec le
+body exact de `fetch_top_scores()`, préflight OPTIONS + POST sur `:commit` —
+aucune écriture réelle faite, seul le préflight a été exercé) : 200 partout,
+CORS reflète correctement `https://keepy-staging.vercel.app`
+(`access-control-allow-origin` + `access-control-allow-credentials: true`),
+et les documents déjà présents dans `scores` confirment que la collection
+reçoit déjà des écritures réelles. La clé API, les règles Firestore et le
+CORS du projet `keepy-8df91` ne sont donc PAS la cause.
+
+**Vercel pose `Cross-Origin-Embedder-Policy: require-corp` +
+`Cross-Origin-Opener-Policy: same-origin` sur TOUTES les routes**
+(`vercel.json`, indépendant du SW et de `ENSURE_CROSSORIGIN_ISOLATION_HEADERS`)
+— vérifié inoffensif ici : COEP `require-corp` ne bloque que les réponses
+OPAQUES (mode `no-cors`) ; une requête `fetch()` cross-origin en mode `cors`
+(le défaut, celui qu'utilise forcément `HTTPRequest` pour pouvoir lire le
+corps de la réponse) qui reçoit un `Access-Control-Allow-Origin` valide —
+confirmé ci-dessus — n'est jamais considérée opaque et n'est donc jamais
+bloquée par COEP.
+
+**Ce que ça change pour la suite de l'enquête** : le test « PWA installée vs
+onglet Chrome normal » envisagé à l'origine visait à isoler un mécanisme qui,
+sur la base de cette analyse, n'a structurellement aucune prise sur ces
+requêtes — le refaire tel quel n'apprendrait probablement rien de plus.
+Candidats restants, NON tranchés, à privilégier au prochain test device :
+(a) permission réseau Android PER-APP sur le WebAPK installé (certains OEM —
+Samsung/Xiaomi notamment — restreignent par défaut les données mobile/wifi
+d'une app tout juste installée, séparément de Chrome lui-même — la PWA n'a
+qu'un jour d'existence au moment du test) ; (b) un service worker resté sur
+un `CACHE_VERSION` antérieur au lot clavier/sync (le cycle de vie SW ne
+prend le contrôle qu'après fermeture complète de tous les clients de
+l'ancien SW — un simple retour au premier plan peut ne pas y suffire) ;
+(c) une panne réseau/DNS ponctuelle du device au moment du test précis, sans
+rapport avec la PWA. Rien ne permet de trancher entre ces trois depuis ce
+sandbox (aucun accès à un device Android réel).
+
+**Diagnostic AJOUTÉ pour trancher au prochain test, TEMPORAIRE, à retirer une
+fois la cause confirmée** — `Leaderboard.gd` : les signaux
+`submit_finished`/`top_scores_fetched` portent désormais un 3e paramètre
+`diag` (`"result=<HTTPRequest.Result> code=<HTTP status>"`, vide en succès) ;
+`GameOverScreen.gd` l'affiche en l'AJOUTANT au texte déjà autorisé de
+`SyncStatusLabel` (jamais en l'écrasant — le texte de la `.tscn` reste la
+source de vérité, capturé une fois dans `_sync_status_base_text`). Un
+`result` non-nul avec `code=0` pointera vers (a)/(c) ci-dessus (la requête
+n'a jamais atteint le serveur) ; un `result=0` avec un `code` HTTP réel
+(4xx/5xx) pointera ailleurs (proxy réseau, restriction spécifique à la
+requête plutôt qu'à la connectivité). Retrait prévu : arrêter d'appeler
+`_update_sync_status_text()` (ou toujours poser
+`sync_status_label.text = _sync_status_base_text`), sans toucher au noeud
+`.tscn`.
+
+**Build validé au même niveau que la CI, dans ce sandbox** — éditeur +
+templates Godot 4.3-stable installés pour ce lot (releases GitHub
+officielles, réseau disponible cette fois). Import + export Web headless
+**exit 0**, `index.wasm` inchangé (aucun code moteur touché), les deux `.gd`
+modifiés compilent (`Leaderboard.gdc`/`GameOverScreen.gdc` bien produits dans
+le `.pck`) et le boot headless de `GameOverScreen.tscn`
+(`--quit-after 2`) ne lève aucune erreur. **Aucun test sur device réel** —
+ni Android, ni iPhone, accessibles depuis ce sandbox : c'est précisément ce
+que ce diagnostic vise à rendre inutile au prochain passage humain.
+
+**Rien poussé au-delà de la branche feature**
+(`claude/pwa-leaderboard-sync-issue-rvejp5`), conformément à la consigne de
+session : ni `staging` ni `main`. Reste ouvert : le test A/B PWA/onglet
+demandé à l'origine n'a pas pu être fait (device réel requis, hors de portée
+du sandbox) ; les candidats (a)/(b)/(c) ci-dessus ne sont pas départagés — le
+diagnostic ajouté est fait pour ça, au prochain test device.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`

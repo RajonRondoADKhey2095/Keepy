@@ -62,9 +62,16 @@ const CAUSE_TEXT := {
 ## fetch) came back failed -- discreet (see its styling in the .tscn), and
 ## never blocks Rejouer: it is a plain Label with no effect on
 ## RetryButton's own click handling, it just occupies its own row above it.
-## Text is authored on the node itself (GameOverScreen.tscn), matching
-## RecordLabel/TopListLabel's own pattern -- the script only ever flips
-## .visible, never .text, on this one.
+## Base text is authored on the node itself (GameOverScreen.tscn), matching
+## RecordLabel/TopListLabel's own pattern.
+## ⚠️ TEMPORARY (14-15 aout 2026, enquete sync PWA/leaderboard) : le script
+## APPEND desormais un diagnostic brut (`Leaderboard.submit_finished`/
+## `top_scores_fetched`'s new `diag` param) a ce texte de base via
+## `_update_sync_status_text()` -- l'authored .tscn text reste la source de
+## verite (capturee UNE fois dans `_sync_status_base_text` ci-dessous), donc
+## retirer le diagnostic une fois la cause confirmee revient a arreter
+## d'appeler `_update_sync_status_text()` (ou a la faire toujours mettre
+## `sync_status_label.text = _sync_status_base_text`), sans toucher au noeud.
 @onready var sync_status_label: Label = $Root/CenterContainer/VBoxContainer/SyncStatusLabel
 @onready var retry_button: Button = $Root/CenterContainer/VBoxContainer/RetryButton
 
@@ -73,6 +80,9 @@ var _is_new_record: bool = false
 var _pending_score: int = 0
 var _pending_nuts: int = 0
 var _pending_glands: int = 0
+var _sync_status_base_text: String = ""
+var _submit_diag: String = ""
+var _final_fetch_diag: String = ""
 
 func _ready() -> void:
 	retry_button.pressed.connect(_on_retry_pressed)
@@ -80,6 +90,7 @@ func _ready() -> void:
 	GameState.state_changed.connect(_on_state_changed)
 	Leaderboard.top_scores_fetched.connect(_on_top_scores_fetched)
 	Leaderboard.submit_finished.connect(_on_submit_finished)
+	_sync_status_base_text = sync_status_label.text
 	root.visible = false
 
 func _on_state_changed(new_state: int) -> void:
@@ -100,20 +111,22 @@ func _show_game_over() -> void:
 
 	name_entry_container.visible = false
 	sync_status_label.visible = false
+	_submit_diag = ""
+	_final_fetch_diag = ""
 	_set_top_list_status("Chargement du classement...")
 	root.visible = true
 
 	_top_fetch_step = _TopFetchStep.PRECHECK
 	Leaderboard.fetch_top_scores()
 
-func _on_top_scores_fetched(entries: Array, success: bool) -> void:
+func _on_top_scores_fetched(entries: Array, success: bool, diag: String) -> void:
 	match _top_fetch_step:
 		_TopFetchStep.PRECHECK:
 			_top_fetch_step = _TopFetchStep.NONE
 			_handle_precheck_result(entries, success)
 		_TopFetchStep.FINAL:
 			_top_fetch_step = _TopFetchStep.NONE
-			_render_top_scores(entries, success)
+			_render_top_scores(entries, success, diag)
 		_:
 			pass  # stray/late reply (e.g. a fast Rejouer) -- see class doc
 
@@ -144,23 +157,27 @@ func _begin_submit(player_name: String) -> void:
 ## Fires after every submit attempt, success or failure alike -- either
 ## way the board may have changed (this run's own submission, or simply
 ## time passing), so it's re-fetched for display once more.
-func _on_submit_finished(success: bool) -> void:
+func _on_submit_finished(success: bool, diag: String) -> void:
 	# success=false here means the score never reached Firestore (offline,
 	# request error, precondition failure...) despite network_enabled
 	# being true -- there is otherwise no visible sign of that, since the
 	# final fetch below can very well succeed on its own and render an
 	# unrelated (stale, this run absent) top list right after.
+	_submit_diag = diag
 	sync_status_label.visible = not success
+	_update_sync_status_text()
 	_set_top_list_status("Chargement du classement...")
 	_top_fetch_step = _TopFetchStep.FINAL
 	Leaderboard.fetch_top_scores()
 
-func _render_top_scores(entries: Array, success: bool) -> void:
+func _render_top_scores(entries: Array, success: bool, diag: String) -> void:
 	if not success:
 		# The submit itself may well have succeeded; this is the FOLLOW-UP
 		# fetch failing. Surfaced too, alongside the submit outcome above
 		# (never overwritten to a false "all good" once either has failed).
+		_final_fetch_diag = diag
 		sync_status_label.visible = true
+		_update_sync_status_text()
 	_clear_top_list()
 	if not success:
 		_set_top_list_status("Classement indisponible")
@@ -185,6 +202,19 @@ func _set_top_list_status(text: String) -> void:
 func _clear_top_list() -> void:
 	for child in top_list_container.get_children():
 		child.queue_free()
+
+## ⚠️ TEMPORARY, see the doc comment on `sync_status_label` above. Rebuilds
+## the label's text from its authored base plus whichever of the two
+## failure diagnostics are non-empty -- both can be non-empty at once (a
+## submit AND its follow-up fetch can each fail independently), so both
+## are shown rather than the second silently overwriting the first.
+func _update_sync_status_text() -> void:
+	var parts: Array = [_sync_status_base_text]
+	if not _submit_diag.is_empty():
+		parts.append("envoi: " + _submit_diag)
+	if not _final_fetch_diag.is_empty():
+		parts.append("classement: " + _final_fetch_diag)
+	sync_status_label.text = " / ".join(parts)
 
 func _on_retry_pressed() -> void:
 	GameState.start_run()
