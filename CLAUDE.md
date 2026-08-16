@@ -2538,6 +2538,23 @@ au moment où ce lot a été écrit, et le réécrire ferait perdre la trace de
 la séquence réelle (palier 1 avant palier 2). Ce paragraphe-ci est la
 mise à jour d'état ; les deux se lisent ensemble.
 
+## CLASSEMENT PWA : RÉSOLU, validé device des deux côtés (PWA + onglet Chrome) — 16 août 2026
+
+⚠️ **CLÔTURE.** Le fix `accept_gzip = false` documenté ci-dessous (section
+« CAUSE RÉELLE TROUVÉE PAR LE DIAGNOSTIC ») est confirmé sur device : le
+classement synchronise à nouveau, en PWA installée ET en onglet Chrome
+normal. Le diagnostic temporaire (`diag` sur `submit_finished`/
+`top_scores_fetched`, affiché sous `SyncStatusLabel`) est **retiré** —
+`Leaderboard.gd` et `GameOverScreen.gd` sont revenus, octet pour octet,
+à leur état d'avant l'enquête (`a5211d3`), le fix `accept_gzip` étant la
+seule différence qui subsiste. `SyncStatusLabel` réaffiche son texte fixe
+autorisé, « Score non synchronisé (hors ligne ?) », sans plus jamais lui
+concaténer `result=<...> code=<...>`. Branche
+`claude/accept-gzip-valide-device-sr1tko`, partie de `staging` (`016ada3`).
+Merge `staging` → `main` autorisé par Mathieu à la suite de cette
+validation — voir la section « CLASSEMENT PWA : merge en production »
+plus bas pour les détails du merge et le fingerprint CI/prod.
+
 ## CLASSEMENT PWA : l'hypothèse service worker est INFIRMÉE par la source réellement déployée — diagnostic ajouté, PAS encore validé device (14-15 août 2026)
 
 Branche `claude/pwa-leaderboard-sync-issue-rvejp5`, partie de `staging`
@@ -2646,7 +2663,7 @@ demandé à l'origine n'a pas pu être fait (device réel requis, hors de porté
 du sandbox) ; les candidats (a)/(b)/(c) ci-dessus ne sont pas départagés — le
 diagnostic ajouté est fait pour ça, au prochain test device.
 
-### ⚠️ CAUSE RÉELLE TROUVÉE PAR LE DIAGNOSTIC : `accept_gzip` — fix appliqué, PAS ENCORE validé device (14-15 août 2026)
+### ⚠️ CAUSE RÉELLE TROUVÉE PAR LE DIAGNOSTIC : `accept_gzip` — fix appliqué et VALIDÉ device (14-16 août 2026)
 
 Branche `claude/leaderboard-gzip-fix-3s6bag`, partie de `staging` (`4296086`,
 donc **posée sur le diagnostic ci-dessus**). Le diagnostic temporaire a
@@ -2693,6 +2710,27 @@ pas confirmé sur device (PWA installée + onglet Chrome, comme pour le
 diagnostic) que le classement synchronise enfin. Si le couple `result`/
 `code` change au prochain test (au lieu de disparaître), ce sera un nouveau
 signal à traiter, pas une confirmation de cette hypothèse.
+
+### VALIDÉ device, diagnostic retiré (16 août 2026)
+
+Test device confirmé sur les deux surfaces (PWA installée + onglet Chrome
+normal) : le classement se charge, une soumission de score aboutit, plus
+aucune trace de « Classement indisponible » ni de `result=<...> code=<...>`
+à l'écran. Le fix `accept_gzip = false` est la cause réelle, confirmée, pas
+seulement probable.
+
+Branche `claude/accept-gzip-valide-device-sr1tko`, partie de `staging`
+(`016ada3`). Le diagnostic temporaire est retiré dans ce lot : le 3e
+paramètre `diag` disparaît des signaux `submit_finished`/
+`top_scores_fetched` de `Leaderboard.gd`, `GameOverScreen.gd` cesse
+d'appeler `_update_sync_status_text()` (la fonction elle-même est retirée,
+avec `_sync_status_base_text`/`_submit_diag`/`_final_fetch_diag`) et
+`SyncStatusLabel` réaffiche uniquement son texte fixe autorisé sur le
+`.tscn`. **Diffé contre `a5211d3`** (dernier commit avant le début de
+l'enquête PWA) : les deux fichiers sont revenus octet pour octet à cet
+état, à l'exception des deux lignes `accept_gzip = false` dans
+`Leaderboard._ready()`, qui restent — c'est le seul changement net que
+cette enquête laisse dans le code.
 
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 

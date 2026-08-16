@@ -17,19 +17,11 @@ extends Node
 ## spec's int64 mapping, to avoid precision loss -- `str(int)` handles
 ## that), `timestampValue` for RFC3339 UTC instants.
 
-## `diag` is "" on success, and a short machine-readable string on failure
-## -- "result=<HTTPRequest.Result> code=<HTTP status>" (see `_diag_string`
-## below). TEMPORARY diagnostic addition (14-15 aout 2026, PWA/leaderboard
-## sync investigation) meant to be surfaced on-screen by GameOverScreen
-## when a real device can't be attached to a debugger -- drop the param
-## (and the two call sites appending it in GameOverScreen.gd) once the
-## root cause is confirmed and fixed.
-signal submit_finished(success: bool, diag: String)
+signal submit_finished(success: bool)
 ## `entries` is an Array of {"name": String, "score": int} sorted
 ## score-descending (already the order Firestore returned), capped at 10.
-## Always emitted, even on failure (with an empty array). `diag` -- see
-## `submit_finished` above.
-signal top_scores_fetched(entries: Array, success: bool, diag: String)
+## Always emitted, even on failure (with an empty array).
+signal top_scores_fetched(entries: Array, success: bool)
 
 const PROJECT_ID := "keepy-8df91"
 const API_KEY := "AIzaSyD7Kxu14Ukuj5l8_0SkUpjWwTu5_na2J3A"
@@ -166,7 +158,7 @@ func save_name(player_name: String) -> void:
 ## `createdAt`) against the live project during implementation.
 func submit_score(player_name: String, score: int, nuts: int, glands: int) -> void:
 	if not network_enabled:
-		submit_finished.emit(false, "network_enabled=false")
+		submit_finished.emit(false)
 		return
 	var safe_name := player_name.strip_edges().substr(0, NAME_MAX_LEN)
 	if safe_name.is_empty():
@@ -200,14 +192,14 @@ func submit_score(player_name: String, score: int, nuts: int, glands: int) -> vo
 	var err := _submit_request.request(url, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
 	if err != OK:
 		push_warning("Leaderboard: submit_score request() failed to start (err=%d)" % err)
-		submit_finished.emit(false, "start_err=%d" % err)
+		submit_finished.emit(false)
 
 func _on_submit_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
 		push_warning("Leaderboard: score submission failed (result=%d, code=%d, body=%s)" % [result, response_code, body.get_string_from_utf8()])
-		submit_finished.emit(false, _diag_string(result, response_code))
+		submit_finished.emit(false)
 		return
-	submit_finished.emit(true, "")
+	submit_finished.emit(true)
 
 
 # ---------------------------------------------------------------------
@@ -221,7 +213,7 @@ func _on_submit_completed(result: int, response_code: int, _headers: PackedStrin
 ## metadata only and are skipped.
 func fetch_top_scores() -> void:
 	if not network_enabled:
-		top_scores_fetched.emit([], false, "network_enabled=false")
+		top_scores_fetched.emit([], false)
 		return
 	var body := {
 		"structuredQuery": {
@@ -235,17 +227,17 @@ func fetch_top_scores() -> void:
 	var err := _query_request.request(url, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
 	if err != OK:
 		push_warning("Leaderboard: fetch_top_scores request() failed to start (err=%d)" % err)
-		top_scores_fetched.emit([], false, "start_err=%d" % err)
+		top_scores_fetched.emit([], false)
 
 func _on_query_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
 		push_warning("Leaderboard: fetch_top_scores failed (result=%d, code=%d, body=%s)" % [result, response_code, body.get_string_from_utf8()])
-		top_scores_fetched.emit([], false, _diag_string(result, response_code))
+		top_scores_fetched.emit([], false)
 		return
 	var parsed = JSON.parse_string(body.get_string_from_utf8())
 	if typeof(parsed) != TYPE_ARRAY:
 		push_warning("Leaderboard: fetch_top_scores got a non-array response, ignoring")
-		top_scores_fetched.emit([], false, _diag_string(result, response_code) + " non_array_body")
+		top_scores_fetched.emit([], false)
 		return
 	var entries: Array = []
 	for row in parsed:
@@ -260,23 +252,12 @@ func _on_query_completed(result: int, response_code: int, _headers: PackedString
 			"name": str(name_field.get("stringValue", "?")),
 			"score": score_str.to_int() if score_str.is_valid_int() else 0,
 		})
-	top_scores_fetched.emit(entries, true, "")
+	top_scores_fetched.emit(entries, true)
 
 
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
-
-## TEMPORARY diagnostic helper (see `submit_finished`'s doc comment) --
-## `result` is one of HTTPRequest's `Result` enum values (0 = SUCCESS;
-## non-zero means the request never got a real HTTP response at all --
-## DNS/connect/TLS/timeout failures live here, look up the exact value
-## against Godot's HTTPRequest.Result docs). `response_code` is the raw
-## HTTP status Firestore returned (0 when `result` never reached that
-## point). Both are surfaced as-is, no interpretation -- interpreting
-## them is the point of the investigation this exists for.
-func _diag_string(result: int, response_code: int) -> String:
-	return "result=%d code=%d" % [result, response_code]
 
 ## Client-generated document id in the same alphabet Firestore's own
 ## auto-ids use (not cryptographically required to match exactly, just
