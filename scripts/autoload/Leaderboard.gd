@@ -65,10 +65,22 @@ func _ready() -> void:
 		network_enabled = false
 
 	_submit_request = HTTPRequest.new()
+	# `accept_gzip` defaults to true, which makes HTTPRequest try to
+	# decompress the response body itself. On the Web export, fetch/XHR
+	# already hands JS fully-decoded bytes -- there is never a raw gzip
+	# payload to unwrap -- yet Firestore's `Content-Encoding: gzip`
+	# response header is still visible to Godot, so it attempts a
+	# decompression pass on plaintext JSON and fails outright. Confirmed
+	# device (PWA + plain Chrome tab, both): every sync attempt returned
+	# result=8 (HTTPRequest.RESULT_BODY_DECOMPRESS_FAILED) with code=200
+	# -- a successful HTTP response Godot then threw away decoding it.
+	_submit_request.accept_gzip = false
 	add_child(_submit_request)
 	_submit_request.request_completed.connect(_on_submit_completed)
 
 	_query_request = HTTPRequest.new()
+	# Same fix, same reason -- see the comment on _submit_request above.
+	_query_request.accept_gzip = false
 	add_child(_query_request)
 	_query_request.request_completed.connect(_on_query_completed)
 
