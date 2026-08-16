@@ -2732,6 +2732,41 @@ l'enquête PWA) : les deux fichiers sont revenus octet pour octet à cet
 `Leaderboard._ready()`, qui restent — c'est le seul changement net que
 cette enquête laisse dans le code.
 
+### CLASSEMENT PWA : merge en production (16 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`016ada3`) → `main`, commit de merge **`1407bd9`**, après
+validation device des deux surfaces (PWA installée + onglet Chrome). Merge
+`--no-ff` (aucun conflit) : `main` était strictement en retard sur
+`staging` (`main..staging` vide dans l'autre sens, comme sur les merges de
+prod précédents de ce repo), l'arbre du commit de merge est **byte-identique
+à `claude/accept-gzip-valide-device-sr1tko`** (`git diff HEAD
+claude/accept-gzip-valide-device-sr1tko` vide) — ce qui part en prod est
+donc littéralement l'arbre validé, pas une recomposition.
+
+**Build/export validés dans ce sandbox avant le merge, éditeur + templates
+Godot 4.3-stable installés pour ce lot** (releases GitHub officielles,
+réseau disponible cette fois) : import headless **exit 0**, export Web
+release **exit 0**, `Leaderboard.gdc`/`GameOverScreen.gdc` compilés sans
+erreur dans le `.pck`. `index.wasm` **35 376 909 octets** — identique au
+fingerprint déjà consigné pour tous les lots qui ne touchent pas le code
+moteur, cohérent avec un diff limité à deux fichiers GDScript + doc.
+
+CI run **#121** (id `31927993066`) verte (3 min 49 s) — `Deploy to Vercel
+[PRODUCTION -- main]` réussie, `[STAGING -- staging]` correctement
+`skipped` (push sur `main`). **Fingerprint vérifié sur le site LIVE**
+(`keepy-ten.vercel.app`, via `mcp__Vercel__web_fetch_vercel_url` — accès
+direct bloqué par la politique d'egress du sandbox sur ce domaine, comme
+documenté ailleurs dans ce fichier ; HTTP 200, `x-vercel-cache: MISS`,
+`last-modified` collé à l'heure de fin de la CI) : `GODOT_CONFIG.fileSizes`
+= `index.pck 5 119 296` / `index.wasm 35 376 909`. `index.wasm` **identique
+au bit près** à l'export local — c'est lui la preuve d'identité, pas le
+`.pck` (rappel permanent déjà consigné : sa taille n'est pas stable d'un
+export à l'autre du même commit).
+
+**Reste ouvert : aucun.** Le classement PWA est validé device sur les deux
+surfaces demandées, le diagnostic est retiré, `main` sert le fix en
+production. Section close.
+
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
 Branche `claude/swamp-permanent-art-direction-vw2pev`, partie de `staging`
