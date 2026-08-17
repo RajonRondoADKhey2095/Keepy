@@ -135,9 +135,10 @@ body {
 		-->
 		<script>
 window.keepyAuth = {
-	// 'loading' until the SDK has loaded AND any pending redirect has been
-	// resolved. Auth.gd must not draw a signed-out UI before that, or a user
-	// coming back from Google would see the login screen flash first.
+	// 'loading' until the SDK has loaded AND the first auth state has been
+	// restored from persistence. Auth.gd must not draw a signed-out UI before
+	// that, or a returning user whose session is still loading would see the
+	// login screen flash first.
 	status: 'loading',
 	ready: false,
 	uid: '',
