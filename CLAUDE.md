@@ -4835,3 +4835,172 @@ point de blocage. Le bug `status` intermédiaire non affiché (ci-dessus)
 reste ouvert, pour discussion avec Mathieu avant tout patch. Merge sur
 `staging` : palier 1, automatique (build/export/sondes verts) ; `main`
 reste gaté par Mathieu, sans changement à cette règle.
+
+## GOOGLE SIGN-IN RÉPARÉ : le proxy `/__/auth/*` était CORRECT, c'est COOP/COEP qui bloquait l'iframe d'auth (17 août 2026)
+
+Branche `claude/firebase-auth-iframe-proxy-17h5vm`, partie de `staging`
+(`6bb80a2`). **L'instrumentation du lot précédent (`4480691`) a payé dès son
+premier test device** : elle a localisé le blocage à une seule transition, et
+c'est cette mesure — pas une hypothèse — qui a orienté tout ce lot.
+
+**Mesure device (iPhone Safari, Wi-Fi, staging)** : dernier checkpoint atteint
+`listener-registered (0,5 s)`, checkpoint **jamais** atteint
+`first-auth-state-received`, puis `bridge-timeout` à 12 s. Le SDK Firebase
+charge et s'initialise en 0,5 s — **réseau, DNS, Wi-Fi et gstatic sont donc
+éliminés par la mesure**, pas par argument. `onAuthStateChanged` est bien
+enregistré mais son premier callback n'est jamais émis, même avec `user=null`.
+
+### ⚠️ LE PROXY N'EST PAS CASSÉ — mesuré sur les réponses SERVIES, pas lu dans la config
+
+L'hypothèse de départ (le proxy `/__/auth/*` ne restituerait pas ce que le SDK
+attend) est **INFIRMÉE**. Les trois routes ont été récupérées telles que
+`keepy-staging.vercel.app` les sert réellement (via
+`mcp__Vercel__web_fetch_vercel_url` — l'egress direct de ce sandbox est bloqué
+en 403 CONNECT sur `*.vercel.app`, `*.firebaseapp.com` ET `gstatic.com`, donc
+aucune comparaison directe avec l'origine Firebase n'était possible) :
+
+| route | statut | Content-Type | COOP/COEP servis |
+|---|---|---|---|
+| `/__/auth/iframe` | **200** | `text/html; charset=utf-8` | **aucun** |
+| `/__/auth/iframe.js` | **200** (296 Ko, 94 Ko gzip) | `text/javascript; charset=utf-8` | **aucun** |
+| `/__/auth/handler` | **200** | `text/html; charset=utf-8` | **aucun** |
+| `/index.html` (le PARENT) | 200 | `text/html` | **COEP `require-corp` + COOP `same-origin`** |
+
+Les corps sont ceux de Firebase (`fireauth.iframe.AuthRelay.initialize()`,
+`vary: x-fh-requested-host` — la requête atteint bien Firebase Hosting), et les
+chemins **relatifs** (`iframe.js`, `handler.js`) se résolvent correctement sous
+`/__/auth/` à travers le rewrite. **Le lookahead négatif de `vercel.json`
+fonctionne exactement comme prévu** : COOP/COEP sont bien absents des routes
+d'auth — vérifié sur la réponse servie, ce que la tâche demandait explicitement.
+
+### La cause : l'exclusion est EXACTEMENT À L'ENVERS
+
+Sous `Cross-Origin-Embedder-Policy: require-corp`, **un document imbriqué doit
+LUI-MÊME déclarer un COEP compatible ou le navigateur refuse de l'intégrer** —
+et, contrairement à CORP, **être same-origin n'exempte de rien**. Retirer COEP
+de `/__/auth/*` est donc précisément ce qui faisait refuser au parent
+l'intégration de l'iframe que Firebase ouvre au démarrage. Firebase attend cette
+iframe avant de résoudre l'état d'auth : d'où un premier `onAuthStateChanged`
+jamais émis. **C'est tout le bug**, et il correspond exactement à la mesure.
+
+**REPRODUIT EN CHROMIUM** (Playwright local — le seul navigateur atteignable
+depuis ce sandbox), avec les **en-têtes exacts** mesurés ci-dessus et les
+**octets exacts** du corps de `/__/auth/iframe`, sur une iframe **same-origin**
+qui doit charger puis `postMessage` vers son parent — le mécanisme même de
+l'AuthRelay :
+
+| variante | relay reçu par le parent | verdict |
+|---|---|---|
+| **A — staging tel que déployé** (parent COEP, iframe sans COEP) | **NONE** | **BLOQUÉE** |
+| B — ajouter COEP sur `/__/auth/*` | `RELAY-INITIALIZED` | passe |
+| **C — CE FIX : plus de COOP/COEP du tout** | `RELAY-INITIALIZED` | passe |
+
+⚠️ **`iframe.onload` SE DÉCLENCHE QUAND MÊME dans le cas bloqué** (mesuré) —
+aucune exception, aucune erreur console, rien qui ait l'air cassé. C'est
+exactement pourquoi la panne était totalement silencieuse, et pourquoi
+`onload` est inutilisable comme signal de santé.
+
+### Arbitrage explicite : (a2) supprimer COOP/COEP, PAS (a1) les ajouter à `/__/auth/*`
+
+Les deux options débloquent l'embed (variantes B et C ci-dessus, mesurées).
+
+**(a1) — ajouter COEP sur `/__/auth/*` : ÉCARTÉE.** Elle place l'iframe de
+Firebase sous `require-corp`, or cette iframe tire **`apis.google.com`**
+(mesuré : 3 références dans le `iframe.js` réellement proxifié), un script
+classique cross-origin qui exigerait alors un en-tête CORP que **nous ne
+contrôlons pas et que ce sandbox ne peut pas tester** (egress Google bloqué).
+C'est échanger un bug mesuré contre un bug non mesurable — et un aller-retour
+device de plus si Google ne l'envoie pas.
+
+**(a2) — supprimer COOP/COEP : RETENUE.** Sans COEP sur le parent, **le contrôle
+sur document imbriqué ne s'exécute plus du tout** : l'iframe d'auth s'intègre
+quels que soient les en-têtes de Firebase, et les sous-ressources de Firebase ne
+sont plus contraintes. On supprime la CLASSE de panne, pas une instance.
+
+⚠️ **La prémisse qui avait introduit ces en-têtes est FAUSSE pour ce build.**
+Commit `55df42c` : « SharedArrayBuffer (required by the Godot 4 web runtime)
+needs cross-origin isolation ». Or l'export est la variante **nothreads** —
+`index.html` **servi en production** porte `GODOT_THREADS_ENABLED = false` et
+`ensureCrossOriginIsolationHeaders: false`, `export_presets.cfg` n'a aucun
+`variant/thread_support`, et **le dépôt ne contient aucune occurrence de
+`SharedArrayBuffer` ni de `crossOriginIsolated`**. Rien ici n'a jamais eu
+besoin d'isolation cross-origin. Quatrième fois dans ce dépôt qu'une prémisse
+annoncée ne survit pas à la mesure.
+
+**Ne PAS réintroduire COOP/COEP** : ça re-casse le sign-in, silencieusement.
+`vercel.json` étant du JSON strict (aucun commentaire possible), tout
+l'argumentaire vit dans le commentaire de bloc de `web/html_shell.html`.
+
+**(b) — revenir à `authDomain = keepy-8df91.firebaseapp.com` : ÉCARTÉE**, et pas
+seulement par préférence : ce chemin est **déjà mesuré en échec sur Safari iOS**
+(ITP, deux tests device le 17 août). Il n'aurait été acceptable qu'accompagné
+d'une alternative au cross-origin — domaine custom Firebase Hosting ou
+sous-domaine dédié — qui exige DNS, certificat et console Firebase, donc du
+travail manuel de Mathieu hors de portée d'une session. Inutile de payer ça
+quand (a2) est un fix mesuré et contenu.
+
+### Instrumentation CONSERVÉE et ÉTENDUE (tâches 4 et 5)
+
+Les six checkpoints existants sont **intacts** — ils viennent de prouver leur
+valeur, les retirer maintenant serait absurde. S'y ajoute un **watchdog de
+stall + sonde d'embed** qui nomme ce point précis à l'écran la prochaine fois :
+
+```
+first-auth-state-stalled -> auth-iframe-embed-ok
+                          | auth-iframe-embed-blocked
+                          | auth-iframe-probe-skipped-cross-origin
+                          | auth-iframe-probe-failed
+```
+
+⚠️ **Elle ne tourne QUE si le boot a déjà stallé** (6 s), jamais sur le chemin
+sain : la sonde intègre une seconde copie de l'iframe relay, ce qui coûte un
+fetch de 296 Ko et une frame vivante — un diagnostic qui taxe le cas qui marche
+est un diagnostic qu'on finit par retirer. Plafond 3 s, verdict à ~9 s, donc
+**à l'intérieur** des 12 s de `BRIDGE_TIMEOUT_S` d'`Auth.gd` au lieu de courir
+contre.
+
+⚠️ **La méthode de détection est MESURÉE, pas supposée** : `onload` se
+déclenchant dans les deux cas, la sonde lit `contentWindow.location.href` —
+`SecurityError` quand COEP a bloqué, URL de la frame quand elle a chargé (le
+proxy la rend same-origin). **La fonction réellement livrée a été extraite
+verbatim de `html_shell.html` et exercée en Chromium** : verdict `BLOCKED` sur
+la config telle que déployée, `OK` sur celle de ce fix, et **0 frame résiduelle**
+dans les deux cas (elle se nettoie).
+
+⚠️ Sur un host inconnu (previews), `authDomain` reste cross-origin, donc la
+lecture ci-dessus lèverait `SecurityError` **pour une raison parfaitement
+légitime**. La sonde refuse alors de répondre
+(`auth-iframe-probe-skipped-cross-origin`) plutôt que de rapporter un faux
+blocage — une sonde qui ment là où personne ne peut la contredire est
+exactement le piège « fixture qui diverge du réel » que ce dépôt documente.
+
+Strictement additive : elle n'appelle que `publishStage()`, donc elle ne peut
+toucher ni `status`, ni `error`, ni `ready`, ni le comportement du jeu. **Aucun
+changement côté Godot** — `Auth.gd` et `LoginScreen.gd` sont intouchés, les
+nouveaux checkpoints passent par le canal `stage` existant.
+
+### Validation
+
+Import headless **exit 0**, export Web release **exit 0**. `index.wasm`
+**35 376 909 octets** — identique au fingerprint consigné pour tout lot qui ne
+touche pas le code moteur (cohérent : ce lot ne change que du HTML/JS de
+coquille et un fichier de config de déploiement).
+
+Sondes rejouées, **toutes exit 0** : `ProbeTimeoutAudit` (**33 sondes, toutes
+armées**), `AssetContractAudit` (**12/12 visuels, 0/10 colliders déplacés**),
+`DeathModelAudit`, `ChargerShapeProbe`. **Non-applicabilité vérifiée plutôt que
+supposée** : aucune sonde de `scripts/dev/` ne rend de HTML ni n'évalue de JS de
+coquille, et `Auth.gd` sort de sa `_ready()` avant toute ligne utile dès que
+`OS.has_feature("web")` est faux — systématique sous `--headless`.
+
+### Reste ouvert — jugement device, c'est le seul juge
+
+Aucune sonde de ce dépôt ne rend de pixels iOS ni ne peut exécuter le vrai SDK
+Firebase : la reproduction Chromium prouve le **mécanisme** et le **fix**, pas
+que Safari se comporte à l'identique (Safari est plus strict, pas moins, sur
+COEP comme sur ITP). Ce qui reste à confirmer sur device : que le sign-in
+Google aboutit enfin sur `keepy-staging.vercel.app`, en onglet Safari **et** en
+PWA installée. Si un `bridge-timeout` survient encore, l'écran doit désormais
+afficher `first-auth-state-stalled` suivi d'un verdict d'embed — et un
+`auth-iframe-embed-ok` serait l'information la plus intéressante possible : il
+dirait que l'iframe s'intègre et que le blocage est ailleurs.

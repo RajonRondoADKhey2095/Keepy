@@ -132,9 +132,45 @@ body {
 		/__/auth/* to https://keepy-8df91.firebaseapp.com/__/auth/*, so once
 		`authDomain` below is set to THIS app's own hostname, the browser never
 		leaves this origin during sign-in except for the unavoidable, and
-		purely top-level, navigation to accounts.google.com itself (a
-		top-level navigation of the redirect/consent flow, not a subresource
-		fetch -- COEP require-corp on this origin has no say over it).
+		purely top-level, navigation to accounts.google.com itself.
+
+		COOP/COEP ARE GONE FROM vercel.json, AND THAT IS WHAT MAKES THE PROXY
+		ACTUALLY WORK (17 aout 2026, third pass). The proxy above was correct
+		from the start -- measured on the served responses, not read off the
+		config: /__/auth/iframe, /__/auth/iframe.js (296 KB of real Firebase
+		code) and /__/auth/handler all returned 200 with the right
+		Content-Type, and the negative-lookahead rule really did keep COOP/COEP
+		off those routes. The bug was that the exclusion is exactly BACKWARDS.
+
+		Under `Cross-Origin-Embedder-Policy: require-corp`, a nested document
+		must ITSELF assert a compatible COEP or the browser refuses to embed
+		it, and -- unlike CORP -- being same-origin does NOT exempt it. So
+		stripping COEP from /__/auth/* is precisely what made the parent refuse
+		to embed the auth iframe Firebase opens at startup. Reproduced in
+		Chromium against the exact staging headers and the exact staging iframe
+		bytes: the frame is blocked, no relay message ever reaches the parent,
+		and `iframe.onload` STILL FIRES -- which is why it failed in total
+		silence, with no error anywhere. Firebase waits on that frame before
+		resolving auth state, so onAuthStateChanged never fired its first
+		callback, even with user=null. That is the whole bug.
+
+		Two ways out, and we take the second. Adding COEP to /__/auth/* does
+		unblock the embed (also reproduced) -- but it then puts Firebase's own
+		iframe under require-corp, and that iframe pulls apis.google.com
+		(measured: 3 references in the proxied iframe.js), a cross-origin
+		classic script that would need a CORP header we neither control nor
+		can test from here. That trades a measured bug for an unmeasurable one.
+
+		Removing COOP/COEP outright removes the whole class instead: with no
+		COEP on this page, the nested-document check never runs at all, so the
+		auth iframe embeds whatever headers Firebase sends it, and Firebase's
+		subresources are unconstrained. The premise that put those headers in
+		(commit 55df42c, "SharedArrayBuffer ... needs cross-origin isolation")
+		is simply false for THIS build: the export is the nothreads variant --
+		the deployed index.html carries GODOT_THREADS_ENABLED = false and
+		ensureCrossOriginIsolationHeaders: false, and the repo contains no
+		SharedArrayBuffer reference at all. Nothing here ever needed isolation.
+		Keep it that way: re-adding COOP/COEP re-breaks sign-in.
 
 		REDIRECT, NOT POPUP, now that the origin is unified (17 aout 2026,
 		second pass). The popup failure mode above was never really about
@@ -227,10 +263,9 @@ window.keepySignInWithGoogle = function () {
 		</script>
 		<script type="module">
 // Dynamic import() rather than a static `import ... from` on purpose: a
-// static import that fails (CDN down, wrong version pin, or the COEP
-// require-corp header on this origin rejecting the fetch) aborts the whole
-// module before any handler of ours can run, leaving the login button dead
-// with nothing to show for it. Wrapped in try/catch, the same failure
+// static import that fails (CDN down, or a wrong version pin) aborts the
+// whole module before any handler of ours can run, leaving the login button
+// dead with nothing to show for it. Wrapped in try/catch, the same failure
 // becomes a reportable state that reaches the screen.
 (async function () {
 	// The one fragile literal in this file: if this version does not exist on
@@ -270,6 +305,15 @@ window.keepySignInWithGoogle = function () {
 	// Mac. Ordered stage list, so the log alone tells the whole story:
 	//   sdk-import-started -> sdk-import-done -> app-initialized ->
 	//   auth-obtained -> listener-registered -> first-auth-state-received
+	// A healthy boot ends on first-auth-state-received. If it does not, the
+	// stall watchdog further down appends one of:
+	//   first-auth-state-stalled -> auth-iframe-embed-ok
+	//                             | auth-iframe-embed-blocked
+	//                             | auth-iframe-probe-skipped-cross-origin
+	//                             | auth-iframe-probe-failed
+	// so the screen names the cause instead of only the symptom. Reaching
+	// 'stalled' followed by 'embed-ok' would be the interesting one: it would
+	// mean the iframe embeds fine and the stall is somewhere else entirely.
 	function publishStage(stage) {
 		const now = Date.now();
 		console.log('[keepyAuth] stage=' + stage + ' at=' + now +
@@ -407,6 +451,104 @@ window.keepySignInWithGoogle = function () {
 		});
 	});
 	publishStage('listener-registered');
+
+	// STALL WATCHDOG + AUTH-IFRAME EMBED PROBE (17 aout 2026, third pass).
+	//
+	// The previous pass ended with the screen reading 'listener-registered'
+	// and nothing after it, then Auth.gd's generic 12 s 'bridge-timeout'. That
+	// localised the failure to "the first onAuthStateChanged never fired" but
+	// could not say WHY, and the why cost a full device round-trip to find:
+	// the auth iframe was being blocked by COEP (see the block comment at the
+	// top of this file). This makes that exact point self-reporting.
+	//
+	// Deliberately runs ONLY when the boot has already stalled, never on the
+	// healthy path: the probe embeds a second copy of Firebase's relay iframe,
+	// which costs a 296 KB script fetch and a live frame, and a diagnostic
+	// that taxes the working case is a diagnostic that gets removed later.
+	// Fires at 6 s, capped at 3 s, so a verdict lands ~9 s in -- comfortably
+	// inside Auth.gd's 12 s BRIDGE_TIMEOUT_S rather than racing it.
+	//
+	// Strictly additive, like every other checkpoint here: it only ever calls
+	// publishStage(), so it cannot change `status`, `error` or `ready`, and
+	// cannot alter what the game does. It only makes the screen say more.
+	const STALL_PROBE_AFTER_MS = 6000;
+	const PROBE_LOAD_CAP_MS = 3000;
+
+	// Detection method, measured in Chromium against the real staging headers
+	// rather than assumed: when COEP blocks a nested document, `onload` STILL
+	// FIRES (so onload is worthless as a signal), but the frame is left on an
+	// opaque error document -- reading contentWindow.location.href throws
+	// SecurityError and contentDocument is null. A frame that genuinely loaded
+	// returns its own URL from the same read, because the /__/auth/* proxy
+	// makes it same-origin with us.
+	function probeAuthIframeEmbed() {
+		return new Promise(function (resolve) {
+			let frame = null;
+			let settled = false;
+			function finish(ok, detail) {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				try {
+					if (frame && frame.parentNode) {
+						frame.parentNode.removeChild(frame);
+					}
+				} catch (e) {
+					// Leaving the probe frame behind is not worth throwing over.
+				}
+				resolve({ ok: ok, detail: detail });
+			}
+			try {
+				frame = document.createElement('iframe');
+				frame.setAttribute('aria-hidden', 'true');
+				frame.style.display = 'none';
+				frame.src = '/__/auth/iframe';
+				frame.onload = function () {
+					try {
+						const href = frame.contentWindow.location.href;
+						finish(true, 'embedded, frame URL readable: ' + String(href).slice(0, 80));
+					} catch (e) {
+						finish(false, 'frame loaded but its document is opaque (' +
+							(e && e.name ? e.name : String(e)) + ') -- blocked before it could run');
+					}
+				};
+				frame.onerror = function () {
+					finish(false, 'iframe onerror');
+				};
+				document.body.appendChild(frame);
+				window.setTimeout(function () {
+					finish(false, 'no onload within ' + PROBE_LOAD_CAP_MS + 'ms');
+				}, PROBE_LOAD_CAP_MS);
+			} catch (e) {
+				finish(false, 'probe threw: ' + (e && e.message ? e.message : String(e)));
+			}
+		});
+	}
+
+	window.setTimeout(function () {
+		if (firstAuthStateSeen) {
+			return;
+		}
+		publishStage('first-auth-state-stalled');
+		// On an unknown host authDomain stays cross-origin (see
+		// resolveAuthDomain above), so the same-origin read below would throw
+		// SecurityError for a perfectly legitimate reason. Reporting that as a
+		// blocked embed would be a probe that lies precisely where nobody can
+		// check it, so it declines to answer instead.
+		if (resolvedAuthDomain.fallback) {
+			publishStage('auth-iframe-probe-skipped-cross-origin');
+			return;
+		}
+		probeAuthIframeEmbed().then(function (r) {
+			console.log('[keepyAuth] auth-iframe embed probe: ' + (r.ok ? 'OK' : 'BLOCKED') +
+				' -- ' + r.detail);
+			publishStage(r.ok ? 'auth-iframe-embed-ok' : 'auth-iframe-embed-blocked');
+		}).catch(function (e) {
+			console.error('keepyAuth: embed probe failed', e);
+			publishStage('auth-iframe-probe-failed');
+		});
+	}, STALL_PROBE_AFTER_MS);
 
 	const wasPending = readPending();
 	try {
