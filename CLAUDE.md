@@ -4011,3 +4011,264 @@ le temps qui passe et l'expiration naturelle du cache sont une explication
 concurrente qui n'a pas été écartée. À essayer en premier quand un poll semble
 figé, avant de conclure quoi que ce soit sur l'état du job ; ça ne coûte rien
 et, si ça ne suffit pas, la règle `completed_at` reste seule juge.
+
+## BANDE BLANCHE SOUS LE BOUTON « JOUER » (iOS Safari / PWA, safe-area) — coquille HTML custom ajoutée (17 août 2026)
+
+Branche `claude/keepy-safe-area-fix-obp7bm`, partie de `staging` (`016ada3`).
+Fix CSS/HTML scopé sur la coquille d'export web, aucune scène ni logique de
+jeu touchée — `TitleScreen.tscn` et son `TextureRect` sont intouchés, comme
+demandé.
+
+**Recon d'abord, pas de patch à l'aveugle.** `export_presets.cfg` n'a jamais
+référencé de `html_shell` custom (`html/custom_html_shell=""`,
+`html/head_include=""`) : l'export utilisait le template PAR DÉFAUT de
+Godot, invisible dans ce repo — impossible à corriger sans en fournir un.
+Le template `misc/dist/html/full-size.html` du tag `4.3-stable` (même
+version que la CI, `GODOT_VERSION="4.3-stable"`) a été récupéré depuis la
+source officielle et lu octet pour octet avant toute modification : meta
+viewport SANS `viewport-fit=cover`, `body { background-color: black }`.
+
+**Cause du défaut, pas seulement le symptôme.** Sans `viewport-fit=cover`,
+Safari iOS ne fait jamais s'étendre le viewport de layout jusque sous
+l'encoche/l'indicateur d'accueil — cette bande reste HORS du DOM de la
+page, donc la couleur de fond du `body` (même correcte) ne peut jamais
+l'atteindre : c'est le blanc par défaut du navigateur qui s'y affiche,
+quel que soit le réglage CSS. C'est un défaut de VIEWPORT, pas de couleur
+— corriger seulement la couleur sans `viewport-fit=cover` n'aurait rien
+changé.
+
+**Fix, `web/html_shell.html` (nouveau)** : copie du template par défaut de
+Godot 4.3, avec deux changements seulement —
+- `<meta name="viewport" ...>` gagne `viewport-fit=cover`, pour que le
+  layout s'étende réellement sous la safe-area ;
+- le fond (`body`, `html`/`body` en 100%×100%, `#status`) passe de
+  `black`/`#242424` à **`#101d0b`** — la même teinte `SWAMP_SKY` déjà
+  utilisée par `progressive_web_app/background_color` dans ce même fichier
+  (`Color(0.062, 0.115, 0.044, 1)`, arrondi déjà vérifié ailleurs dans ce
+  document). Toute zone hors safe-area se peint donc dans l'identité
+  marécage plutôt qu'en noir générique, et sans divergence avec le
+  splash PWA.
+
+Rien d'autre n'a bougé (structure `#status`/`#status-splash`/script de
+boot, taille/police, logique de `Engine.startGame`) — un diff minimal
+contre la source officielle, vérifié ligne à ligne avant commit.
+
+`export_presets.cfg` : `html/custom_html_shell="res://web/html_shell.html"`,
+et `web/*` ajouté à `exclude_filter` par précaution — **vérifié plutôt que
+supposé nécessaire** : le log `savepack` d'un export réel ne contient
+**aucune** ligne `Storing File` pour `res://web/…`, donc Godot ne
+considère jamais un `.html` comme une ressource « all_resources » à
+packer (contrairement au piège déjà documenté pour `config/icon`, qui
+embarque son PNG source pour une raison différente — la génération du
+favicon). L'exclusion est donc une ceinture-et-bretelles délibérée, pas
+une correction d'un défaut mesuré.
+
+**Validation, éditeur + templates Godot 4.3-stable installés dans ce
+sandbox** (releases GitHub officielles, mêmes que la CI) : import headless
+**exit 0**, export Web release sous `xvfb-run` **exit 0**, aucune
+erreur/warning dans le log. `index.html` généré vérifié octet pour octet :
+`viewport-fit=cover` présent, `#101d0b` sur les trois règles de fond
+attendues (`html,body`, `body`, `#status`). `index.manifest.json`
+inchangé (`background_color:"#101d0b"`, déjà cohérent). `index.wasm`
+**35 376 909 octets** — identique au fingerprint déjà consigné pour tout
+lot qui ne touche pas le code moteur, cohérent avec un diff limité à un
+fichier HTML + config d'export. `index.pck` **5 119 312 octets**, dans la
+plage déjà documentée pour ce commit de base (l'avertissement permanent
+sur l'instabilité du `.pck` entre deux exports s'applique, ne pas s'en
+servir seul comme preuve).
+
+**Reste ouvert — jugement device, rien de mesurable ici** : Mathieu doit
+confirmer sur iPhone Safari (onglet normal ET PWA installée) que la bande
+blanche a disparu sous le bouton « Jouer » — c'est le seul juge, aucune
+sonde de ce repo ne rend de pixels iOS réels. Merge sur `staging`
+automatique dès que la CI est verte (palier 1) ; `main` reste gaté par
+Mathieu après validation device (palier 2).
+
+## ÉCRAN-TITRE : LE MOT « KEEPY » DEVIENT UN LOGO IMAGE (17 août 2026)
+
+Branche `claude/keepy-title-logo-texture-yk6tqd`, partie de `main`
+(`aa108fc`, après le merge de la PR #3 « Add files via upload » qui a
+déposé `assets_source/ui/keepy_title_logo.png`, 704×395, exception du
+push web direct déjà actée dans ce fichier). `TitleLabel` (un `Label`
+texte, police 96) est remplacé par `TitleLogo` (`TextureRect`), même
+emplacement dans `CenterContainer/TitlePanel/VBoxContainer`, entre le
+scrim et le sous-titre/bouton « Jouer » — les deux **intouchés**, comme
+le `CoverImage` et le scrim.
+
+**Le fichier a été mesuré avant d'être installé, pas supposé sain** :
+RGBA, déjà découpé sur fond transparent (`getbbox()` = `(6,20,696,375)`
+sur un canevas 704×395 — marge négligeable, pas de recadrage fait), rendu
+composite vérifié visuellement : un panneau en bois peint « Keepy » avec
+lianes, cohérent avec le badge en bois déjà peint dans `title_cover.png`
+et avec le style `PlayButton` (bordure ambre/brun) posé au lot écran-titre
+du 14 août.
+
+**Installé sous `assets/textures/ui/keepy_title_logo.png`, import
+LOSSLESS (`compress/mode=0`)** — pas le mode lossy de `title_cover.png`,
+qui était une exception motivée par une texture plein écran de 2,1 Mo ;
+celle-ci (418 124 octets source, `.ctex` 312 840 octets) suit la
+convention par défaut du projet, comme les billboards de `Decor.gd` et
+les icônes PWA.
+
+**Dimensionnement** : `custom_minimum_size = Vector2(280, 120)`,
+`expand_mode = 1` (IGNORE_SIZE, pour que la taille native 704×395 ne
+force pas la mise en page), `stretch_mode = 5` (KEEP_ASPECT_CENTERED).
+Le ratio source (1,782:1) est plus large que la boîte (2,33:1), donc la
+hauteur est l'axe contraignant : logo affiché à 214×120, occupant un
+volume comparable à l'ancien `Label` (police 96, ~1-2 lignes). Choisi
+pour rester dans l'enveloppe déjà occupée par le texte, pas par un calcul
+de collision avec `PlayButton` (360 px de large, jamais serré par le
+logo).
+
+**Filtre de texture** : aucun override posé sur le nœud — le projet n'a
+aucune entrée `rendering/textures/canvas_textures/default_texture_filter`
+dans `project.godot`, donc le défaut moteur (linéaire) s'applique, comme
+pour tous les autres `TextureRect` de la scène. Pas de pixelisation
+attendue sur un artwork peint, non pixel-art.
+
+**Validation, éditeur + templates Godot 4.3-stable installés dans ce
+sandbox** (releases GitHub officielles) : import headless **exit 0**,
+export Web release **exit 0**, aucune erreur ni sur `TitleScreen.tscn`
+seul (`--quit-after 2`) ni sur l'export complet. **Rendu réel capturé**
+sous `xvfb-run --rendering-driver opengl3` (sonde jetable
+`TitleLogoCapture.tscn`, supprimée avant commit) : le logo s'affiche
+net, centré, non déformé, au-dessus du sous-titre et du bouton « Jouer »
+— confirmé à l'œil, pas seulement calculé. Piège payload re-vérifié :
+`res://assets_source` n'apparaît dans aucune ligne `Storing File` du log
+`savepack`. `index.wasm` **35 376 909 octets**, inchangé (aucun code
+moteur touché) ; `index.pck` **5 432 848 → 5 432 816 octets** selon
+l'export (local vs CI), écart cohérent avec l'instabilité de taille déjà
+documentée pour ce fichier, jamais utilisé seul comme preuve.
+
+⚠️ **Merge sur `staging` fait avec un commit d'un autre lot déjà dessus**
+(`78b2c0c`, la coquille HTML `viewport-fit=cover` du jour même, section
+juste au-dessus) — merge `--no-ff` sans conflit (aucun fichier en commun),
+re-validé (import + export + boot) sur l'arbre fusionné avant push, pas
+seulement sur la branche feature seule.
+
+⚠️ **Nettoyage de routine bloqué, signalé plutôt que silencieux** :
+`RajonRondoADKhey2095-patch-3` (la branche mergée par la PR #3) n'a pas pu
+être supprimée — `git push origin --delete` échoue systématiquement en
+HTTP 403 depuis ce sandbox (retenté deux fois), alors que le push normal
+sur cette même session fonctionne sans problème. Cause probable : la
+suppression de ref est bloquée par la politique du proxy git de ce
+sandbox, indépendamment des droits GitHub réels. Aucun outil MCP GitHub
+disponible ne couvre la suppression de branche. À faire manuellement par
+Mathieu (ou une session avec un accès différent) si le nettoyage est
+souhaité — la branche mergée ne gêne rien fonctionnellement, elle reste
+juste affichée dans la liste des branches.
+
+**Merge staging fait, `main` non touché** — palier 2 gaté par Mathieu
+après validation device (le logo se lit-il bien à distance et à
+l'échelle réelle du panneau, sur `keepy-staging.vercel.app`).
+
+**Reste ouvert** : jugement device (lisibilité du logo à la taille
+réelle, cohérence avec le sous-titre et le bouton juste en dessous) ; et
+la redondance déjà notée au lot du 14 août (bandeau peint « KEEPY CHASED »
+en haut de `title_cover.png` vs ce nouveau logo « Keepy » en bas) reste
+non tranchée — elle passe maintenant de « deux registres de texte » à
+« deux logos image du même mot », ce qui ne change pas la question posée
+à Mathieu mais vaut la peine d'être noté au prochain retour device.
+
+## LOGO DU TITRE AGRANDI : retour device « trop petit/timide » — 356x200, PAS le 420-460 initialement visé (17 août 2026)
+
+Branche `claude/keepy-logo-resize-o55ll9`, redémarrée sur `staging`
+(`bdb1539`) — la branche n'avait aucun commit propre, elle pointait
+encore sur `main` (le lot logo vit sur `staging`, pas encore sur `main`).
+Retour device sur le lot ci-dessus : `TitleLogo` (`custom_minimum_size
+= Vector2(280, 120)`) se lit trop petit/timide face au bandeau peint
+« KEEPY CHASED » de l'image de couverture. Seul `scenes/TitleScreen.tscn`
+touché — une ligne, aucun script, aucun autre nœud.
+
+### ⚠️ La fourchette suggérée (420x236 à 460x258) DÉBORDE de l'écran — mesuré, pas supposé
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce
+lot (releases GitHub officielles). Sonde jetable (jamais committée,
+supprimée avant tout commit) instanciant `TitleScreen.tscn` en headless,
+forçant `custom_minimum_size` de `TitleLogo` à chaque candidat, et lisant
+les rects `global` réels après 30 frames de stabilisation.
+
+**Cause du désaccord avec l'estimation du brief : la police par défaut du
+projet (aucun thème custom, `project.godot` n'a aucune clé `theme/font`)
+rend `SubtitleLabel` avec `font.get_height(32) = 96px`** (ascent 64 +
+descent 32) — pas les ~44px qu'un texte à interligne standard aurait
+laissé supposer. `PlayButton` rend aussi 138px de haut (padding de thème
+par défaut autour de son `font_size=44`) contre son `custom_minimum_size`
+de 110. Aucun des deux n'est nouveau ni causé par ce lot — c'est l'état
+déjà shippé, juste jamais mesuré avant.
+
+**Formule mesurée** (régime où le panneau dépasse la hauteur nominale du
+`CenterContainer`, ce qui est déjà le cas au-delà de `logo_h ≈ 144` —
+`CenterContainer` clampe alors sa propre taille sur celle du contenu,
+son bord HAUT restant épinglé à `0.68 * 1920 = 1305.6px`) :
+
+```
+panel_bottom(y) = 1305.6 + 370 + logo_h
+```
+
+où 370 = marges du panel (56) + logo(gap 40) + SubtitleLabel réel (96) +
+gap(40) + PlayButton réel (138). Vérifié à quatre tailles (356x200,
+364x204, 420x236, 460x258, 500x281, 440x247) — la formule reproduit
+chaque bord mesuré à 0,0px près. Résultat pour la fourchette du brief :
+
+| taille visée | marge restante avant le bas de l'écran (1920px) |
+|---|---|
+| 420x236 (bas de fourchette) | **+8,4px** — quasiment collé au bord |
+| 440x247 | **−2,6px** — déjà hors écran |
+| 460x258 (haut de fourchette) | **−13,6px** — déjà hors écran |
+
+`window/stretch/aspect="keep"` (`project.godot`) empêche un rognage dur
+(letterbox, pas de crop) — mais rien ne garantit que la zone au-delà de
+1920px reste visible sous la coquille `viewport-fit=cover` déjà posée
+pour iOS (safe-area, section PWA plus haut) : dépasser, même sans
+crash, revient à parier sur une marge dont ce lot n'a aucune preuve.
+
+### Taille retenue : 356x200 (ratio 704:395 exact, marge 44,4px)
+
+Recherchée par la même sonde à l'envers : `logo_h` maximal pour une marge
+cible ~40-50px. **356x200** donne une marge mesurée de **44,4px** —
+confortablement au-dessus des ~34px habituellement réservés à la home
+indicator iOS, tout en restant un agrandissement réel : le rendu
+effectif de l'ancienne boîte (280x120, ratio 2,33:1, ne matchait PAS le
+ratio source 1,78:1) était contraint par la HAUTEUR sous
+`KEEP_ASPECT_CENTERED` — 214x120 réellement affiché, pas 280x120. Le
+logo visible passe donc de **214x120 à 356x200**, soit **+66,4% en
+largeur ET en hauteur** (la boîte matche maintenant exactement le ratio
+source, donc plus aucun espace perdu par lettrboxing interne).
+
+**Option 1 retenue (taille fixe), pas Option 2** — mesuré comme sans
+objet plutôt qu'écarté par défaut : `SubtitleLabel` (554px de large,
+mesuré via `Font.get_string_size()`, pas de wrap) est déjà plus large
+que n'importe quel logo dans la fourchette envisagée, donc c'est LUI
+qui fixe la largeur du panel (626px), pas le logo — `size_flags_
+horizontal = SIZE_EXPAND_FILL` sur `TitleLogo` n'aurait rien élargi de
+plus. Le projet n'a par ailleurs qu'une seule résolution de design fixe
+(`window/stretch/mode="canvas_items"`, viewport 1080x1920) : l'argument
+« plus robuste si le scrim doit s'adapter à d'autres largeurs » du brief
+ne s'applique à aucun cas réel de ce projet aujourd'hui.
+
+**Build/export validés dans ce sandbox** : import headless **exit 0**,
+export Web release **exit 0**, `index.wasm` **35 376 909 octets** —
+identique au fingerprint déjà consigné pour tout lot qui ne touche pas
+le code moteur (cohérent : une seule valeur `Vector2` a changé).
+`SwampIdentityAudit` (4/4 états OK, `SWAMP_IDENTITY_VERIFIED=yes`,
+lancée SANS `--headless` sous `xvfb-run` — la combiner avec `--headless`
+force le driver DUMMY et lit des pixels null, piège déjà consigné plus
+haut, reproduit puis évité ici), `AssetContractAudit` (12/12 visuels,
+0/10 colliders déplacés), `ProbeTimeoutAudit` (33 sondes armées) —
+**toutes exit 0**. Aucune sonde de `scripts/dev/` ne couvre
+`TitleScreen.tscn` en dehors des trois lignes de doc de
+`SwampIdentityAudit` expliquant pourquoi elle ne l'échantillonne plus
+(section ÉCRAN-TITRE, 14 août) — non-applicabilité vérifiée, pas
+supposée.
+
+**Mergé sur `staging`** (palier 1, automatique), `main` non touché
+(palier 2 gaté par Mathieu après validation device).
+
+**Reste ouvert — jugement device, rien de mesurable de plus ici** : la
+taille 356x200 est un compromis mesuré (marge écran vs impact visuel),
+pas une certitude esthétique — si Mathieu le trouve encore trop petit
+sur son téléphone, la marge restante (44,4px) donne ~44px de budget
+supplémentaire avant de retoucher la marge de sécurité elle-même
+(actuellement fixée par convention, pas par une contrainte matérielle
+mesurée dans ce sandbox).

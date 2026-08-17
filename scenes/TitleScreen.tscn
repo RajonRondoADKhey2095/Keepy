@@ -1,7 +1,8 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/TitleScreen.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://d37dx1txkxnir" path="res://assets/textures/ui/title_cover.png" id="2_cover"]
+[ext_resource type="Texture2D" path="res://assets/textures/ui/keepy_title_logo.png" id="3_logo"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_scrim"]
 bg_color = Color(0.086, 0.055, 0.031, 0.72)
@@ -76,11 +77,13 @@ layout_mode = 2
 theme_override_constants/separation = 40
 alignment = 1
 
-[node name="TitleLabel" type="Label" parent="CenterContainer/TitlePanel/VBoxContainer"]
+[node name="TitleLogo" type="TextureRect" parent="CenterContainer/TitlePanel/VBoxContainer"]
 layout_mode = 2
-horizontal_alignment = 1
-theme_override_font_sizes/font_size = 96
-text = "Keepy"
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(356, 200)
+texture = ExtResource("3_logo")
+expand_mode = 1
+stretch_mode = 5
 
 [node name="SubtitleLabel" type="Label" parent="CenterContainer/TitlePanel/VBoxContainer"]
 layout_mode = 2
