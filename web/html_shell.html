@@ -99,6 +99,229 @@ body {
 			<div id="status-notice"></div>
 		</div>
 
+		<!--
+		Firebase Auth bridge (17 aout 2026). Lives in the export shell, not in
+		GDScript, because the Google consent screen must be driven by the
+		BROWSER: it is a full-page navigation (signInWithRedirect), which the
+		WebGL canvas cannot perform. Leaderboard.gd talks to Firestore over
+		plain REST precisely because no browser UI is involved there -- Auth is
+		the one case where a JS bridge is unavoidable.
+
+		Contract with scripts/autoload/Auth.gd (keep both sides in sync):
+		  window.keepyAuth            -- plain state object, always present
+		  window.keepyAuthSnapshot()  -- returns that state as a JSON string
+		  window.keepySignInWithGoogle() -- starts the redirect
+		  window.keepyAuthNotify      -- optional; Auth.gd installs a
+		                                 JavaScriptBridge callback here and we
+		                                 call it with the snapshot on change.
+		Same robustness contract as Leaderboard.gd: never throw into the game,
+		always leave a machine-readable reason behind in `error`.
+		-->
+		<script>
+window.keepyAuth = {
+	// 'loading' until the SDK has loaded AND any pending redirect has been
+	// resolved. Auth.gd must not draw a signed-out UI before that, or a user
+	// coming back from Google would see the login screen flash first.
+	status: 'loading',
+	ready: false,
+	uid: '',
+	email: '',
+	idToken: '',
+	error: '',
+	detail: '',
+};
+window.keepyAuthSnapshot = function () {
+	try {
+		return JSON.stringify(window.keepyAuth);
+	} catch (e) {
+		return '';
+	}
+};
+// Defined up front so a tap that lands before the module finishes evaluating
+// gets a defined function instead of a TypeError. The module overwrites it.
+// Auth.gd also gates its button on `ready`, so this is the second line of
+// defence, not the first.
+window.keepySignInWithGoogle = function () {
+	window.keepyAuth.error = 'not-ready';
+	window.keepyAuth.detail = 'Firebase SDK still loading';
+	return false;
+};
+		</script>
+		<script type="module">
+// Dynamic import() rather than a static `import ... from` on purpose: a
+// static import that fails (CDN down, wrong version pin, or the COEP
+// require-corp header on this origin rejecting the fetch) aborts the whole
+// module before any handler of ours can run, leaving the login button dead
+// with nothing to show for it. Wrapped in try/catch, the same failure
+// becomes a reportable state that reaches the screen.
+(async function () {
+	// The one fragile literal in this file: if this version does not exist on
+	// gstatic the imports 404 and the screen reports 'sdk-load-failed' with
+	// the URL in `detail` -- diagnosable in one look instead of a mystery.
+	const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
+	// Set just before navigating away, read on the way back. sessionStorage
+	// survives a same-tab redirect, so "we asked for a redirect and came back
+	// with nothing" is detectable -- that pair is the exact signature of the
+	// third-party storage partitioning failure documented in the report.
+	const PENDING_KEY = 'keepy.auth.redirect.pending';
+
+	function publish(patch) {
+		Object.assign(window.keepyAuth, patch);
+		try {
+			if (typeof window.keepyAuthNotify === 'function') {
+				window.keepyAuthNotify(window.keepyAuthSnapshot());
+			}
+		} catch (e) {
+			// A broken listener on the Godot side must never break auth.
+			console.error('keepyAuth: notify failed', e);
+		}
+	}
+
+	function readPending() {
+		try {
+			return window.sessionStorage.getItem(PENDING_KEY) === '1';
+		} catch (e) {
+			return false; // private mode / storage disabled
+		}
+	}
+
+	function writePending(value) {
+		try {
+			if (value) {
+				window.sessionStorage.setItem(PENDING_KEY, '1');
+			} else {
+				window.sessionStorage.removeItem(PENDING_KEY);
+			}
+		} catch (e) {
+			// Non-fatal: we lose the diagnostic, not the sign-in.
+		}
+	}
+
+	let appMod;
+	let authMod;
+	try {
+		appMod = await import(SDK + '/firebase-app.js');
+		authMod = await import(SDK + '/firebase-auth.js');
+	} catch (e) {
+		publish({
+			status: 'error',
+			ready: true,
+			error: 'sdk-load-failed',
+			detail: SDK + ' -- ' + (e && e.message ? e.message : String(e)),
+		});
+		return;
+	}
+
+	let auth;
+	try {
+		const app = appMod.initializeApp({
+			apiKey: 'AIzaSyD7Kxu14Ukuj5l8_0SkUpjWwTu5_na2J3A',
+			authDomain: 'keepy-8df91.firebaseapp.com',
+			projectId: 'keepy-8df91',
+			storageBucket: 'keepy-8df91.firebasestorage.app',
+			messagingSenderId: '687812903507',
+			appId: '1:687812903507:web:bafee2cf8cc7c66043bca6',
+			measurementId: 'G-T2NNP9JKDV',
+		});
+		auth = authMod.getAuth(app);
+	} catch (e) {
+		publish({
+			status: 'error',
+			ready: true,
+			error: 'init-failed',
+			detail: e && e.message ? e.message : String(e),
+		});
+		return;
+	}
+
+	// Persistence is deliberately left at the SDK default
+	// (browserLocalPersistence on the web): the session already survives a
+	// reload and a relaunch, and adding our own storage layer on top would be
+	// a second source of truth for the same fact.
+	authMod.onAuthStateChanged(auth, function (user) {
+		if (!user) {
+			publish({
+				status: window.keepyAuth.ready ? 'signed_out' : window.keepyAuth.status,
+				uid: '',
+				email: '',
+				idToken: '',
+			});
+			return;
+		}
+		publish({ status: 'signed_in', uid: user.uid, email: user.email || '' });
+		// Async and deliberately not awaited by the state publish above: the
+		// UI must be able to leave the login screen the moment we know WHO the
+		// user is, not once a token round-trip finishes. getIdToken() refreshes
+		// on demand, so a consumer that appears later still gets a valid one.
+		user.getIdToken().then(function (token) {
+			publish({ idToken: token });
+		}).catch(function (e) {
+			console.error('keepyAuth: getIdToken failed', e);
+		});
+	});
+
+	const wasPending = readPending();
+	try {
+		const cred = await authMod.getRedirectResult(auth);
+		if (wasPending) {
+			writePending(false);
+			if (!cred && !auth.currentUser) {
+				// We navigated to Google and came back with no credential and
+				// no user. See the report: on this deployment the app origin
+				// (*.vercel.app) is never the authDomain (firebaseapp.com), so
+				// this is where third-party storage partitioning shows up.
+				publish({
+					status: 'error',
+					error: 'redirect-lost',
+					detail: 'redirect returned no credential (storage partitioning?)',
+				});
+			}
+		}
+	} catch (e) {
+		writePending(false);
+		publish({
+			status: 'error',
+			error: 'redirect-failed',
+			detail: (e && e.code ? e.code : '') + ' ' + (e && e.message ? e.message : String(e)),
+		});
+	}
+
+	window.keepySignInWithGoogle = function () {
+		try {
+			const provider = new authMod.GoogleAuthProvider();
+			writePending(true);
+			publish({ status: 'redirecting', error: '', detail: '' });
+			authMod.signInWithRedirect(auth, provider).catch(function (e) {
+				writePending(false);
+				publish({
+					status: 'error',
+					error: 'redirect-start-failed',
+					detail: (e && e.code ? e.code : '') + ' ' + (e && e.message ? e.message : String(e)),
+				});
+			});
+			return true;
+		} catch (e) {
+			writePending(false);
+			publish({
+				status: 'error',
+				error: 'redirect-start-failed',
+				detail: e && e.message ? e.message : String(e),
+			});
+			return false;
+		}
+	};
+
+	// Flip `ready` LAST: everything above can still change the status, and a
+	// screen that reacted to an intermediate value would flash the wrong UI.
+	publish({
+		ready: true,
+		status: window.keepyAuth.status === 'loading'
+			? (auth.currentUser ? 'signed_in' : 'signed_out')
+			: window.keepyAuth.status,
+	});
+}());
+		</script>
+
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
