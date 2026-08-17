@@ -4011,3 +4011,75 @@ le temps qui passe et l'expiration naturelle du cache sont une explication
 concurrente qui n'a pas été écartée. À essayer en premier quand un poll semble
 figé, avant de conclure quoi que ce soit sur l'état du job ; ça ne coûte rien
 et, si ça ne suffit pas, la règle `completed_at` reste seule juge.
+
+## BANDE BLANCHE SOUS LE BOUTON « JOUER » (iOS Safari / PWA, safe-area) — coquille HTML custom ajoutée (17 août 2026)
+
+Branche `claude/keepy-safe-area-fix-obp7bm`, partie de `staging` (`016ada3`).
+Fix CSS/HTML scopé sur la coquille d'export web, aucune scène ni logique de
+jeu touchée — `TitleScreen.tscn` et son `TextureRect` sont intouchés, comme
+demandé.
+
+**Recon d'abord, pas de patch à l'aveugle.** `export_presets.cfg` n'a jamais
+référencé de `html_shell` custom (`html/custom_html_shell=""`,
+`html/head_include=""`) : l'export utilisait le template PAR DÉFAUT de
+Godot, invisible dans ce repo — impossible à corriger sans en fournir un.
+Le template `misc/dist/html/full-size.html` du tag `4.3-stable` (même
+version que la CI, `GODOT_VERSION="4.3-stable"`) a été récupéré depuis la
+source officielle et lu octet pour octet avant toute modification : meta
+viewport SANS `viewport-fit=cover`, `body { background-color: black }`.
+
+**Cause du défaut, pas seulement le symptôme.** Sans `viewport-fit=cover`,
+Safari iOS ne fait jamais s'étendre le viewport de layout jusque sous
+l'encoche/l'indicateur d'accueil — cette bande reste HORS du DOM de la
+page, donc la couleur de fond du `body` (même correcte) ne peut jamais
+l'atteindre : c'est le blanc par défaut du navigateur qui s'y affiche,
+quel que soit le réglage CSS. C'est un défaut de VIEWPORT, pas de couleur
+— corriger seulement la couleur sans `viewport-fit=cover` n'aurait rien
+changé.
+
+**Fix, `web/html_shell.html` (nouveau)** : copie du template par défaut de
+Godot 4.3, avec deux changements seulement —
+- `<meta name="viewport" ...>` gagne `viewport-fit=cover`, pour que le
+  layout s'étende réellement sous la safe-area ;
+- le fond (`body`, `html`/`body` en 100%×100%, `#status`) passe de
+  `black`/`#242424` à **`#101d0b`** — la même teinte `SWAMP_SKY` déjà
+  utilisée par `progressive_web_app/background_color` dans ce même fichier
+  (`Color(0.062, 0.115, 0.044, 1)`, arrondi déjà vérifié ailleurs dans ce
+  document). Toute zone hors safe-area se peint donc dans l'identité
+  marécage plutôt qu'en noir générique, et sans divergence avec le
+  splash PWA.
+
+Rien d'autre n'a bougé (structure `#status`/`#status-splash`/script de
+boot, taille/police, logique de `Engine.startGame`) — un diff minimal
+contre la source officielle, vérifié ligne à ligne avant commit.
+
+`export_presets.cfg` : `html/custom_html_shell="res://web/html_shell.html"`,
+et `web/*` ajouté à `exclude_filter` par précaution — **vérifié plutôt que
+supposé nécessaire** : le log `savepack` d'un export réel ne contient
+**aucune** ligne `Storing File` pour `res://web/…`, donc Godot ne
+considère jamais un `.html` comme une ressource « all_resources » à
+packer (contrairement au piège déjà documenté pour `config/icon`, qui
+embarque son PNG source pour une raison différente — la génération du
+favicon). L'exclusion est donc une ceinture-et-bretelles délibérée, pas
+une correction d'un défaut mesuré.
+
+**Validation, éditeur + templates Godot 4.3-stable installés dans ce
+sandbox** (releases GitHub officielles, mêmes que la CI) : import headless
+**exit 0**, export Web release sous `xvfb-run` **exit 0**, aucune
+erreur/warning dans le log. `index.html` généré vérifié octet pour octet :
+`viewport-fit=cover` présent, `#101d0b` sur les trois règles de fond
+attendues (`html,body`, `body`, `#status`). `index.manifest.json`
+inchangé (`background_color:"#101d0b"`, déjà cohérent). `index.wasm`
+**35 376 909 octets** — identique au fingerprint déjà consigné pour tout
+lot qui ne touche pas le code moteur, cohérent avec un diff limité à un
+fichier HTML + config d'export. `index.pck` **5 119 312 octets**, dans la
+plage déjà documentée pour ce commit de base (l'avertissement permanent
+sur l'instabilité du `.pck` entre deux exports s'applique, ne pas s'en
+servir seul comme preuve).
+
+**Reste ouvert — jugement device, rien de mesurable ici** : Mathieu doit
+confirmer sur iPhone Safari (onglet normal ET PWA installée) que la bande
+blanche a disparu sous le bouton « Jouer » — c'est le seul juge, aucune
+sonde de ce repo ne rend de pixels iOS réels. Merge sur `staging`
+automatique dès que la CI est verte (palier 1) ; `main` reste gaté par
+Mathieu après validation device (palier 2).
