@@ -34,6 +34,11 @@ const NEUTRAL_CODES := ["popup-cancelled"]
 @onready var status_label: Label = $CenterContainer/TitlePanel/VBoxContainer/StatusLabel
 @onready var sign_in_button: Button = $CenterContainer/TitlePanel/VBoxContainer/SignInButton
 @onready var offline_button: Button = $CenterContainer/TitlePanel/VBoxContainer/OfflineButton
+## Diagnostic-only (17 aout 2026): mirrors Auth.get_debug_stage(), so a
+## non-reproducible timeout can be localised without devtools -- see
+## Auth.gd's auth_debug_stage_changed for what feeds this. Never read by
+## any auth decision here, purely displayed.
+@onready var debug_stage_label: Label = $CenterContainer/TitlePanel/VBoxContainer/DebugStageLabel
 
 ## Guards against a double scene change: auth_state_changed can legitimately
 ## fire again (poll backstop, token refresh) between change_scene_to_file()
@@ -45,6 +50,8 @@ func _ready() -> void:
 	offline_button.pressed.connect(_go_to_title)
 	Auth.auth_state_changed.connect(_on_auth_state_changed)
 	Auth.auth_error.connect(_on_auth_error)
+	Auth.auth_debug_stage_changed.connect(_on_auth_debug_stage_changed)
+	_refresh_debug_stage_label()
 
 	if not OS.has_feature("web"):
 		# Editor / desktop only: there is no JavaScriptBridge to sign in
@@ -70,6 +77,24 @@ func _on_auth_state_changed(signed_in: bool) -> void:
 		_go_to_title()
 		return
 	_refresh_from_auth()
+
+## Diagnostic-only (see debug_stage_label above): repaints the discreet
+## "etape: ..." line under the button every time Auth reports a new
+## checkpoint. Never disabled or hidden while waiting -- that is the whole
+## point, since a bridge-timeout means the browser side stopped talking, not
+## that this scene did anything wrong.
+func _on_auth_debug_stage_changed(stage: String, elapsed_s: float) -> void:
+	debug_stage_label.text = "etape: %s (%.1fs)" % [stage, elapsed_s]
+
+## Picks up a checkpoint that already arrived before this scene connected
+## the signal above -- same defensive pattern as _refresh_from_auth() for
+## Auth.is_signed_in().
+func _refresh_debug_stage_label() -> void:
+	var stage := Auth.get_debug_stage()
+	if stage.is_empty():
+		debug_stage_label.text = ""
+		return
+	debug_stage_label.text = "etape: %s (%.1fs)" % [stage, Auth.get_debug_stage_elapsed_s()]
 
 func _on_auth_error(code: String, detail: String) -> void:
 	# Every failure the browser side can report is surfaced verbatim rather

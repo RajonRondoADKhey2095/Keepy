@@ -4729,3 +4729,109 @@ deux tests précédents. Aucune sonde de ce dépôt ne rend de pixels iOS réels
 ni ne peut suivre une redirection cross-origin réelle vers
 `accounts.google.com` — c'est structurellement hors de portée d'un test
 headless Godot.
+
+## GOOGLE SIGN-IN : INSTRUMENTATION DE DIAGNOSTIC — aucun fix, objectif
+## localiser le prochain `bridge-timeout` sans devtools (17 août 2026)
+
+Branche `claude/google-signin-timeout-debug-5vg5pq`, redémarrée sur
+`origin/staging` (`7582b70`) — la branche n'avait aucun commit propre,
+elle pointait encore sur un vieux commit `main` antérieur au gate
+Google Sign-In (aucun `Auth.gd` sur cet arbre). **Diagnostic pur, comme
+demandé : aucune ligne de logique d'auth n'est changée.** Le flow
+timeout (bridge-timeout à 12 s) de façon non reproductible, sur Safari
+iOS et Chrome Android, sans accès devtools pour Mathieu (iPhone-only) —
+objectif de ce lot : rendre chaque étape du chargement visible à l'écran,
+pour que le prochain timeout dise EXACTEMENT où ça a coincé.
+
+**Six checkpoints ajoutés dans `web/html_shell.html`**, chacun publié via
+le canal existant (`publish()` → `window.keepyAuthNotify` →
+`Auth._on_js_auth_event`), jamais un nouveau canal :
+`sdk-import-started` → `sdk-import-done` → `app-initialized` →
+`auth-obtained` → `listener-registered` → `first-auth-state-received`
+(ce dernier au tout premier `onAuthStateChanged`, même `user=null` —
+gardé par une fermeture `firstAuthStateSeen`, pas par un champ sur
+`window.keepyAuth`, pour ne pas alourdir chaque snapshot JSON d'un
+booléen qu'Auth.gd n'a pas besoin de lire). Chaque checkpoint publie
+`{ stage, stageAt }` (`Date.now()`) ; `window.keepyAuth.bootAt` est posé
+UNE fois, à la toute première ligne du fichier (avant même la
+déclaration de l'objet), pour qu'`Auth.gd` calcule un écart en secondes
+sans posséder sa propre horloge. Chaque checkpoint passe aussi par
+`console.log('[keepyAuth] stage=... elapsedMs=...')`, pour le jour où
+Mathieu peut brancher un Mac — mais c'est le canal secondaire : le canal
+écran (ci-dessous) est celui qui compte pour son setup réel.
+
+**`scripts/autoload/Auth.gd`** : nouveau signal diagnostic-only
+`auth_debug_stage_changed(stage, elapsed_s)`, émis depuis
+`_apply_snapshot()` à chaque nouveau `stage` reçu (comparaison sur
+`stage` + `stageAt`, pas seulement `stage`, pour ne pas rater un second
+passage sur le même checkpoint) ; deux nouveaux getters
+`get_debug_stage()` / `get_debug_stage_elapsed_s()`. **Aucune branche
+existante n'est touchée** — `_debug_stage`/`_debug_stage_at`/
+`_debug_boot_at` sont des variables neuves, lues nulle part ailleurs
+dans ce fichier, donc rien dans le comportement de `sign_in()`, du
+timeout 12 s ou de `_apply_snapshot()` pour `status`/`error`/`uid` n'a
+changé de chemin.
+
+**`scenes/LoginScreen.tscn` / `scripts/ui/LoginScreen.gd`** : un nouveau
+`Label` discret (`DebugStageLabel`, taille 16, `modulate` alpha 0.55)
+sous `OfflineButton`, dernier enfant du même `VBoxContainer` que
+`StatusLabel`/`SignInButton` — aucun nœud existant déplacé ni retouché.
+Affiche `"etape: <stage> (<elapsed>s)"`, mis à jour par
+`_on_auth_debug_stage_changed()` sur le nouveau signal, avec le même
+patron défensif que `_refresh_from_auth()` (`_refresh_debug_stage_label()`
+lit l'état déjà connu au cas où un checkpoint serait arrivé avant que
+cette scène ne connecte le signal). Si le bridge se bloque à nouveau,
+ce label reste figé sur le dernier stage atteint — exactement le
+symptôme que Mathieu doit pouvoir lire et rapporter.
+
+### Bug réel repéré en lisant le code, PAS corrigé — pour discussion
+
+Consigne de session explicite : ne pas patcher à l'aveugle une deuxième
+fois. `LoginScreen.gd._refresh_from_auth()` affiche
+`"Connexion en cours..."` tant que `Auth.is_ready()` est faux, mais rien
+n'y montre le champ `status` intermédiaire que le shell publie AVANT
+`ready` (`'redirecting'` au clic sur connexion, ou le `status` restauré
+au retour d'un redirect). Un joueur dont le retour de Google prend
+plusieurs secondes voit un texte figé identique du premier instant au
+`bridge-timeout` (ou au succès), avec le nouveau `DebugStageLabel` comme
+seule source de mouvement à l'écran. Cette instrumentation le couvre déjà
+partiellement (les 6 checkpoints tournent bien avant le retour de
+Google), mais le `status` lui-même n'est pas un des 6 checkpoints
+demandés — signalé, pas traité ici.
+
+### Validation
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce
+lot (releases GitHub officielles, réseau disponible). Les deux blocs
+`<script>` de `web/html_shell.html` extraits et vérifiés avec
+`node --check` (syntaxe seule, aucun DOM/Firebase réel en headless) :
+**les deux OK**. Import headless **exit 0**, export Web release **exit
+0** — `index.wasm` **35 376 909 octets**, identique au fingerprint déjà
+consigné pour tout lot qui ne touche pas le code moteur (cohérent : deux
+fichiers `.gd`, un `.tscn`, un `.html` d'export shell, aucun changement
+à `project.godot` ni aux autoloads enregistrés). Vérifié dans
+`build/web/index.html` exporté : les six identifiants de checkpoint et
+`bootAt` sont bien présents dans le bundle livré, pas seulement dans la
+source.
+
+`res://scenes/LoginScreen.tscn` bootée seule en headless
+(`--quit-after 2`) : **exit 0**, aucune erreur de parse ni de nœud
+manquant (branche hors-web, celle que tout probe emprunte). `Auth.gd`
+tourne dans chaque sonde en tant qu'autoload, mais sa `_ready()` sort
+avant toute ligne utile dès que `OS.has_feature("web")` est faux
+(systématique sous `--headless`) — les nouvelles variables/signal ne
+sont donc jamais exercés par un probe, par construction, pas par chance.
+`ProbeTimeoutAudit` (**33 sondes, toutes armées**, chiffre inchangé),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders déplacés**),
+`DeathModelAudit` (CHARGER seul fatal, capture au 2ᵉ contact pour les 5
+autres types — inchangé) — **toutes exit 0**.
+
+### Reste ouvert
+
+Aucune sonde de ce dépôt ne peut déclencher un `bridge-timeout` réel ni
+lire un écran iPhone — cette instrumentation attend le prochain timeout
+en conditions réelles pour prouver qu'elle localise effectivement le
+point de blocage. Le bug `status` intermédiaire non affiché (ci-dessus)
+reste ouvert, pour discussion avec Mathieu avant tout patch. Merge sur
+`staging` : palier 1, automatique (build/export/sondes verts) ; `main`
+reste gaté par Mathieu, sans changement à cette règle.

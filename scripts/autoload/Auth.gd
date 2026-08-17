@@ -61,6 +61,15 @@ signal auth_state_changed(signed_in: bool)
 ## disabled its button on press and this is what re-enables it.
 ## LoginScreen.gd owns that distinction -- see its NEUTRAL_CODES.
 signal auth_error(code: String, detail: String)
+## Diagnostic-only signal (17 aout 2026): emitted every time web/html_shell.html
+## reports having reached a new checkpoint in the SDK load / init / listener
+## sequence ('sdk-import-started', 'sdk-import-done', 'app-initialized',
+## 'auth-obtained', 'listener-registered', 'first-auth-state-received').
+## Added to localise a non-reproducible 'bridge-timeout' with no devtools
+## access -- if it happens again, whatever stage LoginScreen.gd last painted
+## on screen is exactly where it got stuck. Purely additive: nothing in this
+## file branches on `stage`, it only flows through to the UI.
+signal auth_debug_stage_changed(stage: String, elapsed_s: float)
 
 ## The bridge publishes its state through this global; the shell defines
 ## it in a plain <script> BEFORE the module that fills it, so it is always
@@ -94,6 +103,13 @@ var _status := "loading"
 var _error := ""
 var _error_detail := ""
 var _elapsed := 0.0
+## Diagnostic-only mirror of window.keepyAuth's `stage` / `stageAt` /
+## `bootAt` (see html_shell.html). `_debug_stage_at`/`_debug_boot_at` are JS
+## Date.now() milliseconds, kept as-is rather than converted, so the elapsed
+## calculation below matches exactly what the browser published.
+var _debug_stage := ""
+var _debug_stage_at := 0.0
+var _debug_boot_at := 0.0
 ## MUST be held in a member: JavaScriptBridge.create_callback() returns a
 ## reference-counted object, and letting it go out of scope frees the
 ## callback while JS still holds the name -- the call then throws on the
@@ -176,6 +192,18 @@ func get_error_code() -> String:
 func get_error_detail() -> String:
 	return _error_detail
 
+## Diagnostic-only (see auth_debug_stage_changed above). Empty string until
+## the shell has reported its first checkpoint.
+func get_debug_stage() -> String:
+	return _debug_stage
+
+## Diagnostic-only. Seconds between the shell's own boot instant and the
+## last checkpoint it reported; 0.0 until at least one has arrived.
+func get_debug_stage_elapsed_s() -> float:
+	if _debug_boot_at <= 0.0 or _debug_stage_at <= 0.0:
+		return 0.0
+	return (_debug_stage_at - _debug_boot_at) / 1000.0
+
 ## Starts the Google sign-in redirect (a full-page navigation away from the
 ## game). No-op off-web, and a no-op with a reported error if the bridge has
 ## not loaded -- never a crash.
@@ -236,6 +264,15 @@ func _apply_snapshot(raw: String) -> void:
 	var new_detail := str(data.get("detail", ""))
 	var new_ready := bool(data.get("ready", false))
 	var new_signed_in := new_status == "signed_in" and not new_uid.is_empty()
+	var new_debug_stage := str(data.get("stage", ""))
+	var new_debug_stage_at := float(data.get("stageAt", 0))
+	var new_debug_boot_at := float(data.get("bootAt", 0))
+
+	if not new_debug_stage.is_empty() and (new_debug_stage != _debug_stage or new_debug_stage_at != _debug_stage_at):
+		_debug_stage = new_debug_stage
+		_debug_stage_at = new_debug_stage_at
+		_debug_boot_at = new_debug_boot_at
+		auth_debug_stage_changed.emit(_debug_stage, get_debug_stage_elapsed_s())
 
 	_uid = new_uid
 	_id_token = new_token
