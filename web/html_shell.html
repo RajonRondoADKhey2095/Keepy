@@ -102,15 +102,31 @@ body {
 		<!--
 		Firebase Auth bridge (17 aout 2026). Lives in the export shell, not in
 		GDScript, because the Google consent screen must be driven by the
-		BROWSER: it is a full-page navigation (signInWithRedirect), which the
-		WebGL canvas cannot perform. Leaderboard.gd talks to Firestore over
-		plain REST precisely because no browser UI is involved there -- Auth is
-		the one case where a JS bridge is unavoidable.
+		BROWSER: it is browser UI the WebGL canvas cannot draw. Leaderboard.gd
+		talks to Firestore over plain REST precisely because no browser UI is
+		involved there -- Auth is the one case where a JS bridge is unavoidable.
+
+		POPUP, NOT REDIRECT (17 aout 2026, after a device test on staging).
+		signInWithRedirect never came back on Safari iOS: the tap left for
+		keepy-8df91.firebaseapp.com, hung there on a blank page, and the return
+		to keepy-staging.vercel.app resolved to nothing until Auth.gd's 12 s
+		bridge timeout fired. Cause: the redirect flow parks its pending state
+		on the authDomain origin, which is NOT the origin of this app, and ITP
+		storage partitioning on Safari gives that origin a different storage
+		partition when it is loaded as a third party -- so the state written on
+		the way out is not the state read on the way back. signInWithPopup does
+		not need any cross-origin state to survive a navigation: the popup posts
+		its result back to THIS window, in THIS JS session, and the promise
+		resolves in place. That is also why there is no longer any
+		sessionStorage "pending redirect" bookkeeping here -- it had nothing
+		left to detect. It does require Cross-Origin-Opener-Policy to be
+		same-origin-allow-popups (vercel.json), or the popup and this window
+		cannot reach each other at all.
 
 		Contract with scripts/autoload/Auth.gd (keep both sides in sync):
 		  window.keepyAuth            -- plain state object, always present
 		  window.keepyAuthSnapshot()  -- returns that state as a JSON string
-		  window.keepySignInWithGoogle() -- starts the redirect
+		  window.keepySignInWithGoogle() -- opens the Google popup
 		  window.keepyAuthNotify      -- optional; Auth.gd installs a
 		                                 JavaScriptBridge callback here and we
 		                                 call it with the snapshot on change.
@@ -159,11 +175,6 @@ window.keepySignInWithGoogle = function () {
 	// gstatic the imports 404 and the screen reports 'sdk-load-failed' with
 	// the URL in `detail` -- diagnosable in one look instead of a mystery.
 	const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
-	// Set just before navigating away, read on the way back. sessionStorage
-	// survives a same-tab redirect, so "we asked for a redirect and came back
-	// with nothing" is detectable -- that pair is the exact signature of the
-	// third-party storage partitioning failure documented in the report.
-	const PENDING_KEY = 'keepy.auth.redirect.pending';
 
 	function publish(patch) {
 		Object.assign(window.keepyAuth, patch);
@@ -174,26 +185,6 @@ window.keepySignInWithGoogle = function () {
 		} catch (e) {
 			// A broken listener on the Godot side must never break auth.
 			console.error('keepyAuth: notify failed', e);
-		}
-	}
-
-	function readPending() {
-		try {
-			return window.sessionStorage.getItem(PENDING_KEY) === '1';
-		} catch (e) {
-			return false; // private mode / storage disabled
-		}
-	}
-
-	function writePending(value) {
-		try {
-			if (value) {
-				window.sessionStorage.setItem(PENDING_KEY, '1');
-			} else {
-				window.sessionStorage.removeItem(PENDING_KEY);
-			}
-		} catch (e) {
-			// Non-fatal: we lose the diagnostic, not the sign-in.
 		}
 	}
 
@@ -234,11 +225,31 @@ window.keepySignInWithGoogle = function () {
 		return;
 	}
 
+	// Resolves on the FIRST onAuthStateChanged callback, which the SDK fires
+	// exactly once persistence has been restored, signed in or not. `ready` is
+	// not flipped until it settles.
+	//
+	// This replaces a guarantee the removed getRedirectResult() used to give
+	// as a SIDE EFFECT rather than on purpose: awaiting it also awaited the
+	// SDK's own initialisation, so `auth.currentUser` was already populated by
+	// the time `ready` went out. Flipping `ready` without that wait would
+	// publish 'signed_out' to a returning player whose session is merely still
+	// loading -- the login screen would flash before onAuthStateChanged
+	// corrected it, which is precisely what the comments on `status` below
+	// forbid. If the callback never comes at all, nothing here reports and
+	// Auth.gd's BRIDGE_TIMEOUT_S surfaces it -- that unbounded-wait backstop is
+	// what it exists for.
+	let resolveFirstState;
+	const firstState = new Promise(function (resolve) {
+		resolveFirstState = resolve;
+	});
+
 	// Persistence is deliberately left at the SDK default
 	// (browserLocalPersistence on the web): the session already survives a
 	// reload and a relaunch, and adding our own storage layer on top would be
 	// a second source of truth for the same fact.
 	authMod.onAuthStateChanged(auth, function (user) {
+		resolveFirstState();
 		if (!user) {
 			publish({
 				status: window.keepyAuth.ready ? 'signed_out' : window.keepyAuth.status,
@@ -260,56 +271,65 @@ window.keepySignInWithGoogle = function () {
 		});
 	});
 
-	const wasPending = readPending();
-	try {
-		const cred = await authMod.getRedirectResult(auth);
-		if (wasPending) {
-			writePending(false);
-			if (!cred && !auth.currentUser) {
-				// We navigated to Google and came back with no credential and
-				// no user. See the report: on this deployment the app origin
-				// (*.vercel.app) is never the authDomain (firebaseapp.com), so
-				// this is where third-party storage partitioning shows up.
-				publish({
-					status: 'error',
-					error: 'redirect-lost',
-					detail: 'redirect returned no credential (storage partitioning?)',
-				});
-			}
-		}
-	} catch (e) {
-		writePending(false);
-		publish({
-			status: 'error',
-			error: 'redirect-failed',
-			detail: (e && e.code ? e.code : '') + ' ' + (e && e.message ? e.message : String(e)),
-		});
-	}
-
 	window.keepySignInWithGoogle = function () {
 		try {
 			const provider = new authMod.GoogleAuthProvider();
-			writePending(true);
-			publish({ status: 'redirecting', error: '', detail: '' });
-			authMod.signInWithRedirect(auth, provider).catch(function (e) {
-				writePending(false);
+			// Clearing `error` here is load-bearing, not tidiness: Auth.gd only
+			// re-emits auth_error when the code CHANGES, so without this reset
+			// a second identical outcome (two cancelled popups in a row) would
+			// be swallowed and the login button, disabled on press, would never
+			// be re-enabled.
+			publish({ status: 'authenticating', error: '', detail: '' });
+			authMod.signInWithPopup(auth, provider).catch(function (e) {
+				const code = e && e.code ? e.code : '';
+				const message = e && e.message ? e.message : String(e);
+				if (code === 'auth/popup-blocked') {
+					publish({
+						status: 'error',
+						error: 'popup-blocked',
+						detail: code + ' ' + message,
+					});
+					return;
+				}
+				if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+					// NOT a failure: the player closed the window, or tapped
+					// again and superseded their own first attempt. It still
+					// has to travel as an error CODE, because the button was
+					// disabled on press and this is the only channel that
+					// re-enables it -- LoginScreen.gd knows this one is neutral
+					// and renders it as the plain invitation, with no detail.
+					// Status returns to what it was before the attempt rather
+					// than to a literal, so a signed-in user who somehow lands
+					// here is not published as signed out.
+					publish({
+						status: window.keepyAuth.uid ? 'signed_in' : 'signed_out',
+						error: 'popup-cancelled',
+						detail: code,
+					});
+					return;
+				}
 				publish({
 					status: 'error',
-					error: 'redirect-start-failed',
-					detail: (e && e.code ? e.code : '') + ' ' + (e && e.message ? e.message : String(e)),
+					error: 'popup-start-failed',
+					detail: code + ' ' + message,
 				});
 			});
+			// Success is deliberately not handled here: onAuthStateChanged
+			// above is the single source of truth for uid/idToken, and
+			// publishing them from the popup resolution too would be a second
+			// writer for the same fact.
 			return true;
 		} catch (e) {
-			writePending(false);
 			publish({
 				status: 'error',
-				error: 'redirect-start-failed',
+				error: 'popup-start-failed',
 				detail: e && e.message ? e.message : String(e),
 			});
 			return false;
 		}
 	};
+
+	await firstState;
 
 	// Flip `ready` LAST: everything above can still change the status, and a
 	// screen that reacted to an intermediate value would flash the wrong UI.
