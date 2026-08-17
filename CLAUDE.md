@@ -28,11 +28,17 @@ encore active, vérifier avant de coder (`git fetch` + comparer `origin/main`
 Règle permanente, sans exception, pour tout rapport de fin de tâche ou de
 batch produit dans ce repo :
 
-1. **Fence à 4 backticks, toujours.** Le rapport de fin de tâche doit
-   toujours être fourni dans un seul bloc de code Markdown enveloppé par un
-   fence à 4 backticks, pour permettre la copie en un tap sur iPhone. Le
-   rapport reste un bloc unique, jamais paginé en plusieurs messages ni
-   plusieurs blocs. Cette règle est permanente, sans exception.
+1. **Fence à 4 backticks, toujours — jamais de Markdown brut.** Le rapport
+   de fin de tâche ou de batch doit toujours être fourni ENVELOPPÉ dans un
+   fence à 4 backticks (jamais du Markdown rendu directement dans la
+   réponse), pour permettre la copie en un tap sur iPhone. Le rapport reste
+   un bloc unique, jamais paginé en plusieurs messages ni plusieurs blocs.
+   Cette règle est permanente, sans exception, et ne connaît **aucune
+   distinction avec la convention Keepr** sur ce point — même exigence des
+   deux côtés. (Corrigé le 17 août 2026 : une formulation antérieure avait
+   pu se lire à l'envers — comme si un bloc Markdown simple, non enveloppé,
+   suffisait. Ce n'a jamais été l'intention ; ce paragraphe la clarifie sans
+   ambiguïté possible.)
 2. **Structure fixe**, dans cet ordre : BRANCH, COMMITS, FILES, BUILD,
    DEPLOY, VALIDATION CHECKLIST, NEXT STEPS, DOCS STATUS.
 3. **UN SEUL bloc Markdown, toujours — la pagination est INTERDITE, sans
@@ -4011,6 +4017,31 @@ le temps qui passe et l'expiration naturelle du cache sont une explication
 concurrente qui n'a pas été écartée. À essayer en premier quand un poll semble
 figé, avant de conclure quoi que ce soit sur l'état du job ; ça ne coûte rien
 et, si ça ne suffit pas, la règle `completed_at` reste seule juge.
+
+## ⚠️ L'API VERCEL AUSSI SERT DES RÉPONSES PÉRIMÉES SUR LE STATUT D'UN DÉPLOIEMENT — même famille que GitHub Actions ci-dessus (17 août 2026)
+
+**Pas seulement le dashboard web : l'API Vercel elle-même.** Un poll fait
+juste après qu'un run CI se soit terminé (`conclusion: success`, déploiement
+déjà en place) a rendu un statut « encore en cours » pendant **~25 minutes**
+de plus, alors que le déploiement était déjà terminé et servait déjà le
+trafic. Même mode de panne que la section GitHub Actions juste au-dessus :
+un champ de statut d'API n'est pas une observation en temps réel, c'est une
+lecture potentiellement mise en cache en amont.
+
+**Conséquence pratique, identique à la règle GitHub Actions** : **un seul
+poll à `status`/état « completed » ne suffit PAS comme preuve de fraîcheur**,
+et **un seul appel API ne suffit pas non plus** — l'API peut être aussi
+périmée que le dashboard qu'elle est censée remplacer. Avant de conclure
+qu'un déploiement est fini, en échec, ou encore en cours à partir d'un appel
+Vercel, recouper avec un second signal indépendant (un nouvel appel après un
+délai, ou une preuve côté site réellement servi — fingerprint
+`GODOT_CONFIG.fileSizes`, `x-vercel-cache`, horodatage `last-modified` —
+comme déjà pratiqué ailleurs dans ce fichier pour vérifier un fingerprint de
+prod). Ne jamais traiter un unique `status=completed` (ou son équivalent
+Vercel) comme une preuve suffisante à lui seul — le corollaire GitHub Actions
+ci-dessus (« ne jamais lire un état de CI ou de déploiement sans regarder son
+horodatage ») s'applique donc aussi aux réponses de l'API Vercel, pas
+seulement à celles de GitHub Actions.
 
 ## BANDE BLANCHE SOUS LE BOUTON « JOUER » (iOS Safari / PWA, safe-area) — coquille HTML custom ajoutée (17 août 2026)
 
