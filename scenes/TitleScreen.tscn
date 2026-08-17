@@ -80,7 +80,7 @@ alignment = 1
 [node name="TitleLogo" type="TextureRect" parent="CenterContainer/TitlePanel/VBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 4
-custom_minimum_size = Vector2(280, 120)
+custom_minimum_size = Vector2(356, 200)
 texture = ExtResource("3_logo")
 expand_mode = 1
 stretch_mode = 5
