@@ -4169,3 +4169,106 @@ en haut de `title_cover.png` vs ce nouveau logo « Keepy » en bas) reste
 non tranchée — elle passe maintenant de « deux registres de texte » à
 « deux logos image du même mot », ce qui ne change pas la question posée
 à Mathieu mais vaut la peine d'être noté au prochain retour device.
+
+## LOGO DU TITRE AGRANDI : retour device « trop petit/timide » — 356x200, PAS le 420-460 initialement visé (17 août 2026)
+
+Branche `claude/keepy-logo-resize-o55ll9`, redémarrée sur `staging`
+(`bdb1539`) — la branche n'avait aucun commit propre, elle pointait
+encore sur `main` (le lot logo vit sur `staging`, pas encore sur `main`).
+Retour device sur le lot ci-dessus : `TitleLogo` (`custom_minimum_size
+= Vector2(280, 120)`) se lit trop petit/timide face au bandeau peint
+« KEEPY CHASED » de l'image de couverture. Seul `scenes/TitleScreen.tscn`
+touché — une ligne, aucun script, aucun autre nœud.
+
+### ⚠️ La fourchette suggérée (420x236 à 460x258) DÉBORDE de l'écran — mesuré, pas supposé
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce
+lot (releases GitHub officielles). Sonde jetable (jamais committée,
+supprimée avant tout commit) instanciant `TitleScreen.tscn` en headless,
+forçant `custom_minimum_size` de `TitleLogo` à chaque candidat, et lisant
+les rects `global` réels après 30 frames de stabilisation.
+
+**Cause du désaccord avec l'estimation du brief : la police par défaut du
+projet (aucun thème custom, `project.godot` n'a aucune clé `theme/font`)
+rend `SubtitleLabel` avec `font.get_height(32) = 96px`** (ascent 64 +
+descent 32) — pas les ~44px qu'un texte à interligne standard aurait
+laissé supposer. `PlayButton` rend aussi 138px de haut (padding de thème
+par défaut autour de son `font_size=44`) contre son `custom_minimum_size`
+de 110. Aucun des deux n'est nouveau ni causé par ce lot — c'est l'état
+déjà shippé, juste jamais mesuré avant.
+
+**Formule mesurée** (régime où le panneau dépasse la hauteur nominale du
+`CenterContainer`, ce qui est déjà le cas au-delà de `logo_h ≈ 144` —
+`CenterContainer` clampe alors sa propre taille sur celle du contenu,
+son bord HAUT restant épinglé à `0.68 * 1920 = 1305.6px`) :
+
+```
+panel_bottom(y) = 1305.6 + 370 + logo_h
+```
+
+où 370 = marges du panel (56) + logo(gap 40) + SubtitleLabel réel (96) +
+gap(40) + PlayButton réel (138). Vérifié à quatre tailles (356x200,
+364x204, 420x236, 460x258, 500x281, 440x247) — la formule reproduit
+chaque bord mesuré à 0,0px près. Résultat pour la fourchette du brief :
+
+| taille visée | marge restante avant le bas de l'écran (1920px) |
+|---|---|
+| 420x236 (bas de fourchette) | **+8,4px** — quasiment collé au bord |
+| 440x247 | **−2,6px** — déjà hors écran |
+| 460x258 (haut de fourchette) | **−13,6px** — déjà hors écran |
+
+`window/stretch/aspect="keep"` (`project.godot`) empêche un rognage dur
+(letterbox, pas de crop) — mais rien ne garantit que la zone au-delà de
+1920px reste visible sous la coquille `viewport-fit=cover` déjà posée
+pour iOS (safe-area, section PWA plus haut) : dépasser, même sans
+crash, revient à parier sur une marge dont ce lot n'a aucune preuve.
+
+### Taille retenue : 356x200 (ratio 704:395 exact, marge 44,4px)
+
+Recherchée par la même sonde à l'envers : `logo_h` maximal pour une marge
+cible ~40-50px. **356x200** donne une marge mesurée de **44,4px** —
+confortablement au-dessus des ~34px habituellement réservés à la home
+indicator iOS, tout en restant un agrandissement réel : le rendu
+effectif de l'ancienne boîte (280x120, ratio 2,33:1, ne matchait PAS le
+ratio source 1,78:1) était contraint par la HAUTEUR sous
+`KEEP_ASPECT_CENTERED` — 214x120 réellement affiché, pas 280x120. Le
+logo visible passe donc de **214x120 à 356x200**, soit **+66,4% en
+largeur ET en hauteur** (la boîte matche maintenant exactement le ratio
+source, donc plus aucun espace perdu par lettrboxing interne).
+
+**Option 1 retenue (taille fixe), pas Option 2** — mesuré comme sans
+objet plutôt qu'écarté par défaut : `SubtitleLabel` (554px de large,
+mesuré via `Font.get_string_size()`, pas de wrap) est déjà plus large
+que n'importe quel logo dans la fourchette envisagée, donc c'est LUI
+qui fixe la largeur du panel (626px), pas le logo — `size_flags_
+horizontal = SIZE_EXPAND_FILL` sur `TitleLogo` n'aurait rien élargi de
+plus. Le projet n'a par ailleurs qu'une seule résolution de design fixe
+(`window/stretch/mode="canvas_items"`, viewport 1080x1920) : l'argument
+« plus robuste si le scrim doit s'adapter à d'autres largeurs » du brief
+ne s'applique à aucun cas réel de ce projet aujourd'hui.
+
+**Build/export validés dans ce sandbox** : import headless **exit 0**,
+export Web release **exit 0**, `index.wasm` **35 376 909 octets** —
+identique au fingerprint déjà consigné pour tout lot qui ne touche pas
+le code moteur (cohérent : une seule valeur `Vector2` a changé).
+`SwampIdentityAudit` (4/4 états OK, `SWAMP_IDENTITY_VERIFIED=yes`,
+lancée SANS `--headless` sous `xvfb-run` — la combiner avec `--headless`
+force le driver DUMMY et lit des pixels null, piège déjà consigné plus
+haut, reproduit puis évité ici), `AssetContractAudit` (12/12 visuels,
+0/10 colliders déplacés), `ProbeTimeoutAudit` (33 sondes armées) —
+**toutes exit 0**. Aucune sonde de `scripts/dev/` ne couvre
+`TitleScreen.tscn` en dehors des trois lignes de doc de
+`SwampIdentityAudit` expliquant pourquoi elle ne l'échantillonne plus
+(section ÉCRAN-TITRE, 14 août) — non-applicabilité vérifiée, pas
+supposée.
+
+**Mergé sur `staging`** (palier 1, automatique), `main` non touché
+(palier 2 gaté par Mathieu après validation device).
+
+**Reste ouvert — jugement device, rien de mesurable de plus ici** : la
+taille 356x200 est un compromis mesuré (marge écran vs impact visuel),
+pas une certitude esthétique — si Mathieu le trouve encore trop petit
+sur son téléphone, la marge restante (44,4px) donne ~44px de budget
+supplémentaire avant de retoucher la marge de sécurité elle-même
+(actuellement fixée par convention, pas par une contrainte matérielle
+mesurée dans ce sandbox).
