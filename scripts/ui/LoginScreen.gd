@@ -19,6 +19,17 @@ const TITLE_SCENE := "res://scenes/TitleScreen.tscn"
 ## read. Bounded here rather than by shrinking the panel further: the untruncated
 ## string is still in the browser console for anyone debugging with one attached.
 const DETAIL_MAX_CHARS := 120
+## The one string a signed-out player is meant to read. Held in a constant
+## because two paths render it -- the plain signed-out state, and the neutral
+## codes below -- and they must not drift apart.
+const SIGNED_OUT_PROMPT := "Connecte-toi pour jouer."
+## Codes that travel through auth_error but do NOT report a failure. A popup
+## the player closed, or a second tap that superseded their own first attempt,
+## is not something to show in the language of breakage. They still have to
+## arrive as codes rather than silently: _on_sign_in_pressed() disables the
+## button, and auth_error is the only channel that re-enables it -- staying
+## quiet would leave a dead button under a stale "Connexion a Google...".
+const NEUTRAL_CODES := ["popup-cancelled"]
 
 @onready var status_label: Label = $CenterContainer/TitlePanel/VBoxContainer/StatusLabel
 @onready var sign_in_button: Button = $CenterContainer/TitlePanel/VBoxContainer/SignInButton
@@ -66,6 +77,11 @@ func _on_auth_error(code: String, detail: String) -> void:
 	# phone with no console, which is exactly the situation that made the
 	# leaderboard gzip bug take three rounds to pin down.
 	sign_in_button.disabled = false
+	if code in NEUTRAL_CODES:
+		# No parenthesised detail: 'auth/popup-closed-by-user' under a line
+		# telling the player nothing is wrong reads as a contradiction.
+		status_label.text = _message_for(code)
+		return
 	status_label.text = "%s\n(%s)" % [_message_for(code), _short(detail)]
 
 func _refresh_from_auth() -> void:
@@ -75,13 +91,13 @@ func _refresh_from_auth() -> void:
 		return
 	sign_in_button.disabled = false
 	var code := Auth.get_error_code()
-	if code.is_empty():
-		status_label.text = "Connecte-toi pour jouer."
+	if code.is_empty() or code in NEUTRAL_CODES:
+		status_label.text = SIGNED_OUT_PROMPT
 	else:
 		status_label.text = "%s\n(%s)" % [_message_for(code), _short(Auth.get_error_detail())]
 
 func _on_sign_in_pressed() -> void:
-	status_label.text = "Redirection vers Google..."
+	status_label.text = "Connexion a Google..."
 	sign_in_button.disabled = true
 	Auth.sign_in()
 
@@ -96,12 +112,25 @@ func _short(detail: String) -> String:
 		return detail
 	return detail.substr(0, DETAIL_MAX_CHARS - 1) + "\u2026"
 
+## The redirect-* codes cannot be emitted by the current shell any more -- the
+## popup migration deleted every path that produced them -- and they are kept
+## anyway. A player whose browser or service worker is still serving a cached
+## build of the old shell is exactly the person most in need of a readable
+## message, and dropping the arms would hand them the "_" fallback instead.
+## They cost three lines; the leaderboard gzip round showed what a stale cached
+## build costs when the code that meets it has forgotten it existed.
 func _message_for(code: String) -> String:
 	match code:
 		"sdk-load-failed":
 			return "Impossible de charger Firebase."
 		"init-failed":
 			return "Firebase n'a pas pu demarrer."
+		"popup-blocked":
+			return "Ton navigateur bloque les popups. Autorise les popups pour ce site et reessaie."
+		"popup-cancelled":
+			return SIGNED_OUT_PROMPT
+		"popup-start-failed":
+			return "La connexion Google a echoue."
 		"redirect-lost":
 			return "Google n'a rien renvoye au retour. Reessaie."
 		"redirect-failed", "redirect-start-failed":

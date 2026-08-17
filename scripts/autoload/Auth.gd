@@ -6,11 +6,13 @@ extends Node
 ##
 ## Leaderboard.gd talks to Firestore over the plain REST API with no
 ## Firebase SDK at all, because nothing there needs browser UI. Auth is
-## the opposite case: the Google consent screen is a full-page navigation
-## the browser has to perform itself, so it can never happen inside the
-## WebGL canvas. The Firebase JS SDK therefore lives in the export shell
-## (web/html_shell.html) and this file is only the wire between it and
-## GDScript.
+## the opposite case: the Google consent screen is browser UI the browser
+## has to draw itself -- since 17 aout 2026 in a popup window -- so it can
+## never happen inside the WebGL canvas. The Firebase JS SDK therefore
+## lives in the export shell (web/html_shell.html) and this file is only
+## the wire between it and GDScript. The shell's own header explains why
+## the popup replaced signInWithRedirect; nothing in THIS file changed
+## with it, which is the point of the snapshot contract below.
 ##
 ## What IS shared with Leaderboard.gd is the robustness contract, and it
 ## is the part that matters: no entry point here can crash or block the
@@ -39,15 +41,21 @@ extends Node
 ## there.
 
 ## Emitted on every transition, and once on startup as soon as the browser
-## side has resolved (SDK loaded AND any pending redirect settled). Never
-## emitted before that: a listener that drew a signed-out screen on the
-## way back from Google would flash the login page at a user who is
-## already authenticated.
+## side has resolved (SDK loaded AND the first auth state restored from
+## persistence). Never emitted before that: a listener that drew a
+## signed-out screen while a stored session was still loading would flash
+## the login page at a user who is already authenticated.
 signal auth_state_changed(signed_in: bool)
-## Emitted when the browser side reports a machine-readable failure.
-## `code` is one of the values written by web/html_shell.html
-## ('sdk-load-failed', 'init-failed', 'redirect-lost', 'redirect-failed',
-## 'redirect-start-failed'), or 'bridge-timeout' from this file.
+## Emitted when the browser side reports a machine-readable outcome worth
+## surfacing. `code` is one of the values written by web/html_shell.html
+## ('sdk-load-failed', 'init-failed', 'popup-blocked', 'popup-cancelled',
+## 'popup-start-failed'), or 'bridge-timeout' / 'not-ready' / 'unsupported'
+## from this file.
+##
+## NOT every code is a failure: 'popup-cancelled' means the player closed
+## the Google window, and it travels here only because the login screen
+## disabled its button on press and this is what re-enables it.
+## LoginScreen.gd owns that distinction -- see its NEUTRAL_CODES.
 signal auth_error(code: String, detail: String)
 
 ## The bridge publishes its state through this global; the shell defines
@@ -164,8 +172,12 @@ func get_error_code() -> String:
 func get_error_detail() -> String:
 	return _error_detail
 
-## Starts the Google redirect. No-op off-web, and a no-op with a reported
-## error if the bridge has not loaded -- never a crash.
+## Opens the Google sign-in popup. No-op off-web, and a no-op with a
+## reported error if the bridge has not loaded -- never a crash.
+##
+## Returning 1 means the popup was ASKED FOR, not that it opened: the
+## browser can still refuse it, and that arrives later as a
+## 'popup-blocked' snapshot rather than through this call.
 func sign_in() -> void:
 	if not _available:
 		auth_error.emit("unsupported", "sign-in is only available in the web build")
