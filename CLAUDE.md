@@ -2538,6 +2538,23 @@ au moment où ce lot a été écrit, et le réécrire ferait perdre la trace de
 la séquence réelle (palier 1 avant palier 2). Ce paragraphe-ci est la
 mise à jour d'état ; les deux se lisent ensemble.
 
+## CLASSEMENT PWA : RÉSOLU, validé device des deux côtés (PWA + onglet Chrome) — 16 août 2026
+
+⚠️ **CLÔTURE.** Le fix `accept_gzip = false` documenté ci-dessous (section
+« CAUSE RÉELLE TROUVÉE PAR LE DIAGNOSTIC ») est confirmé sur device : le
+classement synchronise à nouveau, en PWA installée ET en onglet Chrome
+normal. Le diagnostic temporaire (`diag` sur `submit_finished`/
+`top_scores_fetched`, affiché sous `SyncStatusLabel`) est **retiré** —
+`Leaderboard.gd` et `GameOverScreen.gd` sont revenus, octet pour octet,
+à leur état d'avant l'enquête (`a5211d3`), le fix `accept_gzip` étant la
+seule différence qui subsiste. `SyncStatusLabel` réaffiche son texte fixe
+autorisé, « Score non synchronisé (hors ligne ?) », sans plus jamais lui
+concaténer `result=<...> code=<...>`. Branche
+`claude/accept-gzip-valide-device-sr1tko`, partie de `staging` (`016ada3`).
+Merge `staging` → `main` autorisé par Mathieu à la suite de cette
+validation — voir la section « CLASSEMENT PWA : merge en production »
+plus bas pour les détails du merge et le fingerprint CI/prod.
+
 ## CLASSEMENT PWA : l'hypothèse service worker est INFIRMÉE par la source réellement déployée — diagnostic ajouté, PAS encore validé device (14-15 août 2026)
 
 Branche `claude/pwa-leaderboard-sync-issue-rvejp5`, partie de `staging`
@@ -2646,7 +2663,7 @@ demandé à l'origine n'a pas pu être fait (device réel requis, hors de porté
 du sandbox) ; les candidats (a)/(b)/(c) ci-dessus ne sont pas départagés — le
 diagnostic ajouté est fait pour ça, au prochain test device.
 
-### ⚠️ CAUSE RÉELLE TROUVÉE PAR LE DIAGNOSTIC : `accept_gzip` — fix appliqué, PAS ENCORE validé device (14-15 août 2026)
+### ⚠️ CAUSE RÉELLE TROUVÉE PAR LE DIAGNOSTIC : `accept_gzip` — fix appliqué et VALIDÉ device (14-16 août 2026)
 
 Branche `claude/leaderboard-gzip-fix-3s6bag`, partie de `staging` (`4296086`,
 donc **posée sur le diagnostic ci-dessus**). Le diagnostic temporaire a
@@ -2693,6 +2710,62 @@ pas confirmé sur device (PWA installée + onglet Chrome, comme pour le
 diagnostic) que le classement synchronise enfin. Si le couple `result`/
 `code` change au prochain test (au lieu de disparaître), ce sera un nouveau
 signal à traiter, pas une confirmation de cette hypothèse.
+
+### VALIDÉ device, diagnostic retiré (16 août 2026)
+
+Test device confirmé sur les deux surfaces (PWA installée + onglet Chrome
+normal) : le classement se charge, une soumission de score aboutit, plus
+aucune trace de « Classement indisponible » ni de `result=<...> code=<...>`
+à l'écran. Le fix `accept_gzip = false` est la cause réelle, confirmée, pas
+seulement probable.
+
+Branche `claude/accept-gzip-valide-device-sr1tko`, partie de `staging`
+(`016ada3`). Le diagnostic temporaire est retiré dans ce lot : le 3e
+paramètre `diag` disparaît des signaux `submit_finished`/
+`top_scores_fetched` de `Leaderboard.gd`, `GameOverScreen.gd` cesse
+d'appeler `_update_sync_status_text()` (la fonction elle-même est retirée,
+avec `_sync_status_base_text`/`_submit_diag`/`_final_fetch_diag`) et
+`SyncStatusLabel` réaffiche uniquement son texte fixe autorisé sur le
+`.tscn`. **Diffé contre `a5211d3`** (dernier commit avant le début de
+l'enquête PWA) : les deux fichiers sont revenus octet pour octet à cet
+état, à l'exception des deux lignes `accept_gzip = false` dans
+`Leaderboard._ready()`, qui restent — c'est le seul changement net que
+cette enquête laisse dans le code.
+
+### CLASSEMENT PWA : merge en production (16 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`016ada3`) → `main`, commit de merge **`1407bd9`**, après
+validation device des deux surfaces (PWA installée + onglet Chrome). Merge
+`--no-ff` (aucun conflit) : `main` était strictement en retard sur
+`staging` (`main..staging` vide dans l'autre sens, comme sur les merges de
+prod précédents de ce repo), l'arbre du commit de merge est **byte-identique
+à `claude/accept-gzip-valide-device-sr1tko`** (`git diff HEAD
+claude/accept-gzip-valide-device-sr1tko` vide) — ce qui part en prod est
+donc littéralement l'arbre validé, pas une recomposition.
+
+**Build/export validés dans ce sandbox avant le merge, éditeur + templates
+Godot 4.3-stable installés pour ce lot** (releases GitHub officielles,
+réseau disponible cette fois) : import headless **exit 0**, export Web
+release **exit 0**, `Leaderboard.gdc`/`GameOverScreen.gdc` compilés sans
+erreur dans le `.pck`. `index.wasm` **35 376 909 octets** — identique au
+fingerprint déjà consigné pour tous les lots qui ne touchent pas le code
+moteur, cohérent avec un diff limité à deux fichiers GDScript + doc.
+
+CI run **#121** (id `31927993066`) verte (3 min 49 s) — `Deploy to Vercel
+[PRODUCTION -- main]` réussie, `[STAGING -- staging]` correctement
+`skipped` (push sur `main`). **Fingerprint vérifié sur le site LIVE**
+(`keepy-ten.vercel.app`, via `mcp__Vercel__web_fetch_vercel_url` — accès
+direct bloqué par la politique d'egress du sandbox sur ce domaine, comme
+documenté ailleurs dans ce fichier ; HTTP 200, `x-vercel-cache: MISS`,
+`last-modified` collé à l'heure de fin de la CI) : `GODOT_CONFIG.fileSizes`
+= `index.pck 5 119 296` / `index.wasm 35 376 909`. `index.wasm` **identique
+au bit près** à l'export local — c'est lui la preuve d'identité, pas le
+`.pck` (rappel permanent déjà consigné : sa taille n'est pas stable d'un
+export à l'autre du même commit).
+
+**Reste ouvert : aucun.** Le classement PWA est validé device sur les deux
+surfaces demandées, le diagnostic est retiré, `main` sert le fix en
+production. Section close.
 
 ## DIRECTION ARTISTIQUE PERMANENTE : le marécage n'est plus une phase (11 août 2026)
 
@@ -3938,3 +4011,75 @@ le temps qui passe et l'expiration naturelle du cache sont une explication
 concurrente qui n'a pas été écartée. À essayer en premier quand un poll semble
 figé, avant de conclure quoi que ce soit sur l'état du job ; ça ne coûte rien
 et, si ça ne suffit pas, la règle `completed_at` reste seule juge.
+
+## BANDE BLANCHE SOUS LE BOUTON « JOUER » (iOS Safari / PWA, safe-area) — coquille HTML custom ajoutée (17 août 2026)
+
+Branche `claude/keepy-safe-area-fix-obp7bm`, partie de `staging` (`016ada3`).
+Fix CSS/HTML scopé sur la coquille d'export web, aucune scène ni logique de
+jeu touchée — `TitleScreen.tscn` et son `TextureRect` sont intouchés, comme
+demandé.
+
+**Recon d'abord, pas de patch à l'aveugle.** `export_presets.cfg` n'a jamais
+référencé de `html_shell` custom (`html/custom_html_shell=""`,
+`html/head_include=""`) : l'export utilisait le template PAR DÉFAUT de
+Godot, invisible dans ce repo — impossible à corriger sans en fournir un.
+Le template `misc/dist/html/full-size.html` du tag `4.3-stable` (même
+version que la CI, `GODOT_VERSION="4.3-stable"`) a été récupéré depuis la
+source officielle et lu octet pour octet avant toute modification : meta
+viewport SANS `viewport-fit=cover`, `body { background-color: black }`.
+
+**Cause du défaut, pas seulement le symptôme.** Sans `viewport-fit=cover`,
+Safari iOS ne fait jamais s'étendre le viewport de layout jusque sous
+l'encoche/l'indicateur d'accueil — cette bande reste HORS du DOM de la
+page, donc la couleur de fond du `body` (même correcte) ne peut jamais
+l'atteindre : c'est le blanc par défaut du navigateur qui s'y affiche,
+quel que soit le réglage CSS. C'est un défaut de VIEWPORT, pas de couleur
+— corriger seulement la couleur sans `viewport-fit=cover` n'aurait rien
+changé.
+
+**Fix, `web/html_shell.html` (nouveau)** : copie du template par défaut de
+Godot 4.3, avec deux changements seulement —
+- `<meta name="viewport" ...>` gagne `viewport-fit=cover`, pour que le
+  layout s'étende réellement sous la safe-area ;
+- le fond (`body`, `html`/`body` en 100%×100%, `#status`) passe de
+  `black`/`#242424` à **`#101d0b`** — la même teinte `SWAMP_SKY` déjà
+  utilisée par `progressive_web_app/background_color` dans ce même fichier
+  (`Color(0.062, 0.115, 0.044, 1)`, arrondi déjà vérifié ailleurs dans ce
+  document). Toute zone hors safe-area se peint donc dans l'identité
+  marécage plutôt qu'en noir générique, et sans divergence avec le
+  splash PWA.
+
+Rien d'autre n'a bougé (structure `#status`/`#status-splash`/script de
+boot, taille/police, logique de `Engine.startGame`) — un diff minimal
+contre la source officielle, vérifié ligne à ligne avant commit.
+
+`export_presets.cfg` : `html/custom_html_shell="res://web/html_shell.html"`,
+et `web/*` ajouté à `exclude_filter` par précaution — **vérifié plutôt que
+supposé nécessaire** : le log `savepack` d'un export réel ne contient
+**aucune** ligne `Storing File` pour `res://web/…`, donc Godot ne
+considère jamais un `.html` comme une ressource « all_resources » à
+packer (contrairement au piège déjà documenté pour `config/icon`, qui
+embarque son PNG source pour une raison différente — la génération du
+favicon). L'exclusion est donc une ceinture-et-bretelles délibérée, pas
+une correction d'un défaut mesuré.
+
+**Validation, éditeur + templates Godot 4.3-stable installés dans ce
+sandbox** (releases GitHub officielles, mêmes que la CI) : import headless
+**exit 0**, export Web release sous `xvfb-run` **exit 0**, aucune
+erreur/warning dans le log. `index.html` généré vérifié octet pour octet :
+`viewport-fit=cover` présent, `#101d0b` sur les trois règles de fond
+attendues (`html,body`, `body`, `#status`). `index.manifest.json`
+inchangé (`background_color:"#101d0b"`, déjà cohérent). `index.wasm`
+**35 376 909 octets** — identique au fingerprint déjà consigné pour tout
+lot qui ne touche pas le code moteur, cohérent avec un diff limité à un
+fichier HTML + config d'export. `index.pck` **5 119 312 octets**, dans la
+plage déjà documentée pour ce commit de base (l'avertissement permanent
+sur l'instabilité du `.pck` entre deux exports s'applique, ne pas s'en
+servir seul comme preuve).
+
+**Reste ouvert — jugement device, rien de mesurable ici** : Mathieu doit
+confirmer sur iPhone Safari (onglet normal ET PWA installée) que la bande
+blanche a disparu sous le bouton « Jouer » — c'est le seul juge, aucune
+sonde de ce repo ne rend de pixels iOS réels. Merge sur `staging`
+automatique dès que la CI est verte (palier 1) ; `main` reste gaté par
+Mathieu après validation device (palier 2).
