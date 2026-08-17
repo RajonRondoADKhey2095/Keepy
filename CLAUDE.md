@@ -4479,3 +4479,253 @@ connexion aboutit-elle et le jeu se lance-t-il ; (c) fermer le popup à la
 main laisse-t-il bien un bouton réactivé et le message d'invitation, sans
 message d'échec rouge. Aucune sonde de ce dépôt ne rend de pixels iOS réels
 — c'est structurellement hors de portée d'un test headless Godot.
+
+## GOOGLE SIGN-IN : LE POPUP A ÉCHOUÉ AUSSI — proxy `/__/auth/*` pour unifier l'origine, retour au redirect (17 août 2026)
+
+Branche `claude/firebase-auth-cross-origin-fix-oiffyd`, partie de `staging`
+(`ffabe64`). Le popup du lot précédent a été testé sur device et a échoué
+**pour une raison différente du redirect, mais avec la MÊME cause racine**.
+Ce lot ne retente pas un troisième mode d'auth : il corrige l'origine.
+
+### Les deux échecs mesurés sur device (ne pas re-tester, ne pas re-questionner)
+
+- **`signInWithRedirect`** (lot du matin) : page blanche bloquée sur
+  `keepy-8df91.firebaseapp.com`, jamais de retour, timeout 12 s côté
+  `Auth.gd`. Cause déjà documentée ci-dessus : l'état de redirection en
+  attente est gardé sur l'authDomain, une origine tierce pour Safari ITP,
+  qui lui donne une partition de stockage différente de celle de l'app.
+- **`signInWithPopup`** (lot suivant, ce jour) : le popup s'ouvre — l'incertitude
+  d'activation utilisateur documentée plus haut n'était **pas** le problème
+  — la mire Google s'affiche, l'authentification se fait. Mais sur iOS le
+  popup s'ouvre comme un **nouvel onglet** ; le joueur revient manuellement
+  à l'app, et le `postMessage` par lequel le SDK doit livrer son résultat
+  **n'atteint jamais l'opener**. Bouton grisé indéfiniment, aucune session
+  écrite.
+
+**Cause commune aux deux, et c'est ce que ce lot corrige** : `authDomain`
+(`keepy-8df91.firebaseapp.com`) est une origine différente de celle de l'app
+(`*.vercel.app`). Que le SDK gare son état dans une navigation cross-origin
+(redirect) ou dans une fenêtre cross-origin qui doit reposter vers l'opener
+(popup), Safari coupe la même relation à chaque fois. Aucun réglage de
+paramètre ne l'aurait résolu sur l'un ou l'autre flow — il fallait supprimer
+le cross-origin lui-même.
+
+### 1. Proxy `/__/auth/*` — `vercel.json`
+
+Approche vérifiée dans la documentation officielle avant implémentation
+(Google Cloud Identity Platform, « Showing a custom domain during sign
+in » / « How to customize auth handler » ; recoupé par l'issue
+firebase-js-sdk #7824 et plusieurs implémentations de référence nginx/Vercel)
+plutôt que prise sur parole : la manière documentée de servir le handler
+Firebase Auth depuis l'origine de l'app est un reverse proxy transparent sur
+`/__/auth/*`, `authDomain` étant ensuite pointé sur le domaine propre de
+l'app. Firebase lui-même sert cette arborescence en statique sous
+l'authDomain par défaut ; la proxifier ne change rien à son contenu, elle
+change seulement quelle origine le NAVIGATEUR croit avoir jamais quittée.
+
+```json
+"rewrites": [
+  { "source": "/__/auth/:path*", "destination": "https://keepy-8df91.firebaseapp.com/__/auth/:path*" }
+]
+```
+
+**Conflit réel identifié et corrigé, pas ignoré** : la règle `headers`
+site-wide (`"source": "/(.*)"`) posait déjà `Cross-Origin-Embedder-Policy:
+require-corp` sur TOUTE réponse, `/__/auth/*` compris — les règles
+`headers` de Vercel matchent sur le chemin de la requête ORIGINALE,
+indépendamment des `rewrites`. Appliquer COEP `require-corp` à une page
+`/__/auth/handler` que Firebase sert (potentiellement chargée de
+sous-ressources gstatic non maîtrisées par ce dépôt) risque de la casser en
+silence si l'une de ces sous-ressources n'annonce pas
+`Cross-Origin-Resource-Policy`. Corrigé en excluant `/__/auth/*` de cette
+règle par lookahead négatif groupé (syntaxe confirmée dans la doc Vercel
+elle-même, `error-list` : un lookahead négatif nu est rejeté, il doit être
+enveloppé dans un groupe) :
+
+```json
+"source": "/((?!__/auth/).*)"
+```
+
+`Cross-Origin-Opener-Policy` **revient à `same-origin`** (elle était passée
+à `same-origin-allow-popups` pour le popup, désormais retiré — voir §4) :
+plus aucun `window.open` n'est émis par ce dépôt, donc plus aucune raison de
+sacrifier `crossOriginIsolated`. La règle `.wasm` (`Content-Type`) est
+**intouchée**, et continue de s'appliquer normalement puisque aucun `.wasm`
+ne vit sous `/__/auth/`.
+
+**Conflit avec le service worker PWA : vérifié, pas de conflit.** Déjà établi
+dans ce fichier (section CLASSEMENT PWA, 14-15 août) sur les octets
+RÉELLEMENT servis par `keepy-staging.vercel.app` : le handler `fetch` du
+service worker généré par Godot n'appelle `event.respondWith()` que pour une
+navigation ou un fichier de `CACHED_FILES`/`CACHABLE_FILES` (index.html/js/
+wasm/pck…) — `isCachable` ne peut structurellement jamais être vrai pour une
+requête vers `/__/auth/*`, donc c'est un passthrough complet, identique à
+l'absence de service worker. Ce lot ne réinstrumente pas cette vérification
+(déjà faite et documentée), il en confirme la portée : `/__/auth/*` n'est
+dans aucune des deux listes.
+
+### 2. `authDomain` dynamique — `web/html_shell.html`
+
+`resolveAuthDomain()` (nouvelle) : si `window.location.hostname` est
+`keepy-ten.vercel.app` ou `keepy-staging.vercel.app` (les deux seuls
+domaines où le proxy ci-dessus est réellement déployé), `authDomain` devient
+**ce hostname lui-même** — le navigateur ne quitte alors plus jamais son
+origine pendant la connexion, hormis la navigation top-level inévitable vers
+`accounts.google.com`, qui n'est pas soumise à COEP (COEP ne gouverne que
+les sous-ressources d'un document, pas une navigation top-level d'onglet/
+fenêtre).
+
+**Fallback explicite pour tout hostname inconnu** (déploiements preview
+Vercel à URL aléatoire par commit) : `authDomain` reste
+`keepy-8df91.firebaseapp.com`, l'ancien comportement cross-origin — **pas
+pour que ça marche** (voir §3), mais pour ne jamais faire croire à un proxy
+qui n'a pas été déployé pour cet hôte. Un diagnostic est publié dans
+`window.keepyAuth` (`authDomainFallback: true`,
+`authDomainFallbackDetail: '...'`) dès la résolution, avant tout tentative
+de connexion — visible via `keepyAuthSnapshot()` sans attendre un échec.
+**Décision assumée** : ce diagnostic est publié comme un champ d'état, pas
+comme un `error` — publier un `error` à ce stade déclencherait
+`auth_error` sur `Auth.gd` avant même que le joueur ait tapé le bouton, sur
+un hostname où la connexion n'a en réalité pas encore été tentée et pourrait
+en théorie réussir hors Safari. `Auth._apply_snapshot()` ignore les clés
+qu'elle ne connaît pas — inerte côté GDScript, aucun changement de contrat
+nécessaire côté `Auth.gd` pour ce lot.
+
+### 3. Conséquence sur les domaines Authorized — ce qui se passe sur une preview URL
+
+**Chaque domaine qui sert l'app doit être dans Authorized domains Firebase**
+— indépendamment du proxy : c'est une vérification Firebase séparée, faite
+sur l'origine de la requête, qui rejette avec `auth/unauthorized-domain`
+n'importe quel domaine absent de la liste, quel que soit `authDomain`.
+`keepy-ten.vercel.app` et `keepy-staging.vercel.app` y sont déjà.
+
+**Sur une URL de preview Vercel (`keepy-git-*.vercel.app`, un hostname
+aléatoire par commit) : le sign-in échouera, et c'est structurel, pas un
+bug de ce lot.** Deux raisons qui s'additionnent : (a) `resolveAuthDomain()`
+retombe sur l'ancien `authDomain` cross-origin, donc le défaut ITP/popup
+d'origine se reproduit tel quel sur Safari ; (b) même si l'origine était
+unifiée, une URL de preview ne peut de toute façon **jamais** être ajoutée
+aux Authorized domains — son hostname change à chaque commit, la liste
+Firebase n'accepte que des hostnames fixes. Le joueur y verra un
+`popup-start-failed`/`redirect-start-failed` avec `auth/unauthorized-domain`
+dans le détail (le catch existant le capture déjà, aucun code nouveau requis
+pour ça). **À savoir avant de tester une preview URL et de croire à une
+régression : c'est l'état attendu, pas une casse.**
+
+### 4. Popup ou redirect une fois l'origine unifiée : REDIRECT retenu, popup retiré
+
+**Choix tranché en faveur du redirect**, comme suggéré. Justification propre
+à ce dépôt, pas seulement la recommandation générale mobile :
+
+L'échec du popup documenté en §… ci-dessus n'était **pas** de la même nature
+que celui du redirect — il ne s'agissait pas de storage partitioning à
+l'aller-retour mais du comportement propre de Safari iOS qui transforme un
+popup en nouvel onglet, combiné à un retour manuel du joueur qui semble
+casser la référence `window.opener`/le canal `postMessage`. **Unifier
+l'origine ferme le problème du redirect avec certitude** (l'état en attente
+n'a plus de frontière de partition tierce à traverser), mais ne ferme le
+problème du popup qu'**avec incertitude** — rien ne garantit que la
+gestion d'onglet de Safari et la survie de `window.opener` à travers un
+changement d'app en arrière-plan se comportent différemment une fois
+popup et opener same-origin. Le redirect, lui, n'a structurellement **aucun**
+onglet à gérer et **aucun** `postMessage` à perdre : c'est une navigation
+de page pleine, le geste mobile le plus élémentaire et le mieux éprouvé — y
+compris par Safari iOS lui-même sur d'innombrables flows « Continuer avec
+Google » ailleurs sur le web.
+
+**Restauré dans `web/html_shell.html`** (retiré au lot popup, remis à
+l'identique fonctionnel, `authDomain` dynamique en plus) :
+`getRedirectResult(auth)` appelé au chargement, `PENDING_KEY`
+(`keepy.auth.redirect.pending`) + `readPending()`/`writePending()` en
+`sessionStorage` pour détecter un redirect qui revient sans rien (partait
+avec `wasPending=true`, revient sans `cred` ni `auth.currentUser` →
+`redirect-lost`), `keepySignInWithGoogle()` appelle `signInWithRedirect`
+au lieu de `signInWithPopup`. **Rien du flow popup ne reste en JS actif** :
+`signInWithPopup` n'apparaît plus une seule fois dans le fichier, vérifié
+sur le `index.html` généré par l'export.
+
+Le remplacement de la promesse `firstState`/`resolveFirstState`
+(introduite au lot popup pour flipper `ready` seulement après le premier
+`onAuthStateChanged`, en remplacement de la garantie que
+`getRedirectResult()` donnait déjà par effet de bord) **par le
+`getRedirectResult()` original** n'est pas une régression : c'est
+précisément la garantie que ce mécanisme de remplacement existait pour
+recréer, désormais inutile puisque sa cause est restaurée. Garder les deux
+aurait été une redondance, pas une robustesse en plus.
+
+`scripts/autoload/Auth.gd` et `scripts/ui/LoginScreen.gd` : **aucun
+changement de comportement**, seulement des commentaires mis à jour
+(le bloc d'en-tête d'`Auth.gd`, la docstring de `sign_in()`, la liste des
+codes possibles sur `auth_error`, le commentaire au-dessus de
+`_message_for()`). **Les codes `popup-*` sont CONSERVÉS** dans
+`LoginScreen._message_for()`, au même titre que `redirect-*` l'était resté
+au lot popup : un navigateur ou service worker servant encore un shell en
+cache du lot popup est exactement celui qui a besoin d'un message lisible.
+`NEUTRAL_CODES` (`popup-cancelled`) est inchangé pour la même raison — le
+redirect n'a pas d'équivalent « annulé proprement » à ajouter : un joueur
+qui fait demi-tour pendant un redirect ne déclenche aucun événement côté
+app tant qu'il ne revient pas dessus, exactement comme dans l'implémentation
+d'origine avant le lot popup.
+
+### 5. Cache-Control sur `index.html`
+
+`vercel.json`, deux nouvelles règles `headers` (`"/"` et `"/index.html"`,
+les deux nécessaires puisque le site est servi à la racine et qu'un lecteur
+peut viser l'un ou l'autre) : `Cache-Control: no-cache, must-revalidate`.
+**`.wasm`/`.pck` non touchés** — leurs noms de fichier ne changent pas d'un
+build à l'autre (`index.wasm`/`index.pck`, pas de hash de contenu dans le
+nom), donc les laisser cachables reste correct ; c'est `index.html` qui
+référence leur taille exacte via `GODOT_CONFIG` et doit toujours être la
+version fraîche. **Motif mesuré, pas préventif** : la porte d'auth
+(lot du 17 août) est restée invisible **deux fois** sur `staging` tant qu'un
+cache-bust manuel (`?v=2`) n'était pas forcé à la main — deux sessions de
+test device faussées par un `index.html` mis en cache par le navigateur/CDN
+avant même que la question de l'auth ne se pose.
+
+### Validation
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce lot
+(releases GitHub officielles). Import headless **exit 0**, export Web
+release **exit 0** (`xvfb-run`), boot de `res://scenes/LoginScreen.tscn`
+(`--quit-after 2`) **exit 0**, aucune erreur de parse sur les deux `.gd`
+modifiés. `index.wasm` **35 376 909 octets**, identique au fingerprint
+consigné pour tout lot ne touchant pas le code moteur — cohérent, ce lot ne
+touche que des commentaires GDScript et des fichiers hors ressources Godot
+(`vercel.json`, `web/html_shell.html`). `vercel.json` validé comme JSON
+strict avant commit. `index.html` généré vérifié : **0** occurrence de
+`signInWithPopup`, `getRedirectResult`/`resolveAuthDomain`/
+`KNOWN_AUTH_HOSTS`/`signInWithRedirect` bien présents en code.
+
+**4 sondes rejouées sur cette branche, toutes exit 0** : `ProbeTimeoutAudit`
+(**33 sondes armées**, chiffre inchangé), `AssetContractAudit` (12/12
+visuels, **0/10 colliders déplacés**), `DeathModelAudit` (CHARGER seul
+fatal, les 5 autres types 1 demi-unité, capture au 2ᵉ contact — inchangé),
+`ChargerShapeProbe`. **Structurellement, ce lot ne peut pas déplacer un flux
+RNG seedé** : `Auth.gd` tourne dans chaque sonde en tant qu'autoload, mais
+son `_ready()` sort avant toute ligne utile dès que `OS.has_feature("web")`
+est faux (systématique sous `--headless`) — rien de ce lot n'est dans le
+chemin que les sondes exécutent, et le diff des trois fichiers `.gd`/`.tscn`
+touchés par ce lot au global est nul (`LoginScreen.gd`/`Auth.gd` uniquement,
+tous deux hors du chemin de chargement `run/main_scene` des sondes).
+`ComboAudit`/`ShrinkAudit` n'ont pas pu être rejouées jusqu'au bout dans ce
+sandbox avant l'envoi de ce rapport (CPU partagée avec l'export/les autres
+sondes, chacune de l'ordre de plusieurs minutes) — attendu byte-identique
+par le même argument structurel, pas mesuré ici ; à vérifier si un doute
+subsiste.
+
+### Reste ouvert — jugement device, seul juge
+
+Le test sur iPhone Safari (onglet normal **et** PWA installée si possible)
+doit confirmer, dans cet ordre : (a) le tap sur « Se connecter » redirige
+bien vers un `/__/auth/...` sous `keepy-staging.vercel.app` — c'est la
+preuve visuelle la plus directe que le proxy est actif (l'URL affichée par
+Safari ne doit **jamais** montrer `firebaseapp.com`) ; (b) le retour après
+consentement Google atterrit bien sur l'app avec une session écrite, sans
+passer par le timeout de 12 s ; (c) qu'un rechargement à froid de
+`keepy-staging.vercel.app` (pas juste un retour d'onglet) serve bien la
+version fraîche du gate — c'est ce que le fix Cache-Control du §5 doit
+garantir, et c'était justement invisible sans cache-bust manuel lors des
+deux tests précédents. Aucune sonde de ce dépôt ne rend de pixels iOS réels
+ni ne peut suivre une redirection cross-origin réelle vers
+`accounts.google.com` — c'est structurellement hors de portée d'un test
+headless Godot.

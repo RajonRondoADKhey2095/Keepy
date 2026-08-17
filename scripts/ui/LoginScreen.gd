@@ -112,13 +112,15 @@ func _short(detail: String) -> String:
 		return detail
 	return detail.substr(0, DETAIL_MAX_CHARS - 1) + "\u2026"
 
-## The redirect-* codes cannot be emitted by the current shell any more -- the
-## popup migration deleted every path that produced them -- and they are kept
-## anyway. A player whose browser or service worker is still serving a cached
-## build of the old shell is exactly the person most in need of a readable
-## message, and dropping the arms would hand them the "_" fallback instead.
-## They cost three lines; the leaderboard gzip round showed what a stale cached
-## build costs when the code that meets it has forgotten it existed.
+## Both the redirect-* and popup-* codes are kept here regardless of which
+## flow web/html_shell.html currently emits (redirect, as of the /__/auth/*
+## proxy lot -- it was popup for one lot before that, and redirect before
+## that). A player whose browser or service worker is still serving a cached
+## build of an older shell is exactly the person most in need of a readable
+## message, and dropping either set of arms would hand them the "_" fallback
+## instead. They cost a handful of lines each; the leaderboard gzip round
+## showed what a stale cached build costs when the code that meets it has
+## forgotten it existed.
 func _message_for(code: String) -> String:
 	match code:
 		"sdk-load-failed":
