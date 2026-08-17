@@ -4083,3 +4083,89 @@ blanche a disparu sous le bouton « Jouer » — c'est le seul juge, aucune
 sonde de ce repo ne rend de pixels iOS réels. Merge sur `staging`
 automatique dès que la CI est verte (palier 1) ; `main` reste gaté par
 Mathieu après validation device (palier 2).
+
+## ÉCRAN-TITRE : LE MOT « KEEPY » DEVIENT UN LOGO IMAGE (17 août 2026)
+
+Branche `claude/keepy-title-logo-texture-yk6tqd`, partie de `main`
+(`aa108fc`, après le merge de la PR #3 « Add files via upload » qui a
+déposé `assets_source/ui/keepy_title_logo.png`, 704×395, exception du
+push web direct déjà actée dans ce fichier). `TitleLabel` (un `Label`
+texte, police 96) est remplacé par `TitleLogo` (`TextureRect`), même
+emplacement dans `CenterContainer/TitlePanel/VBoxContainer`, entre le
+scrim et le sous-titre/bouton « Jouer » — les deux **intouchés**, comme
+le `CoverImage` et le scrim.
+
+**Le fichier a été mesuré avant d'être installé, pas supposé sain** :
+RGBA, déjà découpé sur fond transparent (`getbbox()` = `(6,20,696,375)`
+sur un canevas 704×395 — marge négligeable, pas de recadrage fait), rendu
+composite vérifié visuellement : un panneau en bois peint « Keepy » avec
+lianes, cohérent avec le badge en bois déjà peint dans `title_cover.png`
+et avec le style `PlayButton` (bordure ambre/brun) posé au lot écran-titre
+du 14 août.
+
+**Installé sous `assets/textures/ui/keepy_title_logo.png`, import
+LOSSLESS (`compress/mode=0`)** — pas le mode lossy de `title_cover.png`,
+qui était une exception motivée par une texture plein écran de 2,1 Mo ;
+celle-ci (418 124 octets source, `.ctex` 312 840 octets) suit la
+convention par défaut du projet, comme les billboards de `Decor.gd` et
+les icônes PWA.
+
+**Dimensionnement** : `custom_minimum_size = Vector2(280, 120)`,
+`expand_mode = 1` (IGNORE_SIZE, pour que la taille native 704×395 ne
+force pas la mise en page), `stretch_mode = 5` (KEEP_ASPECT_CENTERED).
+Le ratio source (1,782:1) est plus large que la boîte (2,33:1), donc la
+hauteur est l'axe contraignant : logo affiché à 214×120, occupant un
+volume comparable à l'ancien `Label` (police 96, ~1-2 lignes). Choisi
+pour rester dans l'enveloppe déjà occupée par le texte, pas par un calcul
+de collision avec `PlayButton` (360 px de large, jamais serré par le
+logo).
+
+**Filtre de texture** : aucun override posé sur le nœud — le projet n'a
+aucune entrée `rendering/textures/canvas_textures/default_texture_filter`
+dans `project.godot`, donc le défaut moteur (linéaire) s'applique, comme
+pour tous les autres `TextureRect` de la scène. Pas de pixelisation
+attendue sur un artwork peint, non pixel-art.
+
+**Validation, éditeur + templates Godot 4.3-stable installés dans ce
+sandbox** (releases GitHub officielles) : import headless **exit 0**,
+export Web release **exit 0**, aucune erreur ni sur `TitleScreen.tscn`
+seul (`--quit-after 2`) ni sur l'export complet. **Rendu réel capturé**
+sous `xvfb-run --rendering-driver opengl3` (sonde jetable
+`TitleLogoCapture.tscn`, supprimée avant commit) : le logo s'affiche
+net, centré, non déformé, au-dessus du sous-titre et du bouton « Jouer »
+— confirmé à l'œil, pas seulement calculé. Piège payload re-vérifié :
+`res://assets_source` n'apparaît dans aucune ligne `Storing File` du log
+`savepack`. `index.wasm` **35 376 909 octets**, inchangé (aucun code
+moteur touché) ; `index.pck` **5 432 848 → 5 432 816 octets** selon
+l'export (local vs CI), écart cohérent avec l'instabilité de taille déjà
+documentée pour ce fichier, jamais utilisé seul comme preuve.
+
+⚠️ **Merge sur `staging` fait avec un commit d'un autre lot déjà dessus**
+(`78b2c0c`, la coquille HTML `viewport-fit=cover` du jour même, section
+juste au-dessus) — merge `--no-ff` sans conflit (aucun fichier en commun),
+re-validé (import + export + boot) sur l'arbre fusionné avant push, pas
+seulement sur la branche feature seule.
+
+⚠️ **Nettoyage de routine bloqué, signalé plutôt que silencieux** :
+`RajonRondoADKhey2095-patch-3` (la branche mergée par la PR #3) n'a pas pu
+être supprimée — `git push origin --delete` échoue systématiquement en
+HTTP 403 depuis ce sandbox (retenté deux fois), alors que le push normal
+sur cette même session fonctionne sans problème. Cause probable : la
+suppression de ref est bloquée par la politique du proxy git de ce
+sandbox, indépendamment des droits GitHub réels. Aucun outil MCP GitHub
+disponible ne couvre la suppression de branche. À faire manuellement par
+Mathieu (ou une session avec un accès différent) si le nettoyage est
+souhaité — la branche mergée ne gêne rien fonctionnellement, elle reste
+juste affichée dans la liste des branches.
+
+**Merge staging fait, `main` non touché** — palier 2 gaté par Mathieu
+après validation device (le logo se lit-il bien à distance et à
+l'échelle réelle du panneau, sur `keepy-staging.vercel.app`).
+
+**Reste ouvert** : jugement device (lisibilité du logo à la taille
+réelle, cohérence avec le sous-titre et le bouton juste en dessous) ; et
+la redondance déjà notée au lot du 14 août (bandeau peint « KEEPY CHASED »
+en haut de `title_cover.png` vs ce nouveau logo « Keepy » en bas) reste
+non tranchée — elle passe maintenant de « deux registres de texte » à
+« deux logos image du même mot », ce qui ne change pas la question posée
+à Mathieu mais vaut la peine d'être noté au prochain retour device.
