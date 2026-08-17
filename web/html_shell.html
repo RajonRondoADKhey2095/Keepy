@@ -172,8 +172,19 @@ body {
 		                                 call it with the snapshot on change.
 		Same robustness contract as Leaderboard.gd: never throw into the game,
 		always leave a machine-readable reason behind in `error`.
+
+		DIAGNOSTIC-ONLY FIELDS (17 aout 2026), added to localise a
+		non-reproducible 'bridge-timeout' with no devtools access (iPhone
+		only): `stage` / `stageAt` / `bootAt`. `stage` is the last checkpoint
+		this file reached (see STAGE below for the full list); `stageAt` is
+		the Date.now() at which it was reached; `bootAt` is the Date.now()
+		captured on the very first line below, so Auth.gd can compute an
+		elapsed-seconds figure without owning its own clock. Purely additive:
+		nothing here reads these fields back to change behaviour, they only
+		flow outward for the login screen to display.
 		-->
 		<script>
+const __KEEPY_AUTH_BOOT_AT = Date.now();
 window.keepyAuth = {
 	// 'loading' until the SDK has loaded AND any pending redirect has been
 	// resolved. Auth.gd must not draw a signed-out UI before that, or a user
@@ -190,6 +201,12 @@ window.keepyAuth = {
 	// the historical cross-origin authDomain was used instead of the proxy.
 	authDomainFallback: false,
 	authDomainFallbackDetail: '',
+	// Diagnostic only (see the block comment above): the last checkpoint
+	// reached, when it was reached, and the reference instant to measure it
+	// from.
+	stage: 'boot',
+	stageAt: __KEEPY_AUTH_BOOT_AT,
+	bootAt: __KEEPY_AUTH_BOOT_AT,
 };
 window.keepyAuthSnapshot = function () {
 	try {
@@ -244,6 +261,20 @@ window.keepySignInWithGoogle = function () {
 			// A broken listener on the Godot side must never break auth.
 			console.error('keepyAuth: notify failed', e);
 		}
+	}
+
+	// Diagnostic-only checkpoint publisher (17 aout 2026, see the block
+	// comment above this script). Never gates or branches on anything --
+	// it only records "we got this far" through the existing `publish()`
+	// channel, plus a console.log for the rare case someone can attach a
+	// Mac. Ordered stage list, so the log alone tells the whole story:
+	//   sdk-import-started -> sdk-import-done -> app-initialized ->
+	//   auth-obtained -> listener-registered -> first-auth-state-received
+	function publishStage(stage) {
+		const now = Date.now();
+		console.log('[keepyAuth] stage=' + stage + ' at=' + now +
+			' elapsedMs=' + (now - window.keepyAuth.bootAt));
+		publish({ stage: stage, stageAt: now });
 	}
 
 	function readPending() {
@@ -302,9 +333,11 @@ window.keepySignInWithGoogle = function () {
 
 	let appMod;
 	let authMod;
+	publishStage('sdk-import-started');
 	try {
 		appMod = await import(SDK + '/firebase-app.js');
 		authMod = await import(SDK + '/firebase-auth.js');
+		publishStage('sdk-import-done');
 	} catch (e) {
 		publish({
 			status: 'error',
@@ -326,7 +359,9 @@ window.keepySignInWithGoogle = function () {
 			appId: '1:687812903507:web:bafee2cf8cc7c66043bca6',
 			measurementId: 'G-T2NNP9JKDV',
 		});
+		publishStage('app-initialized');
 		auth = authMod.getAuth(app);
+		publishStage('auth-obtained');
 	} catch (e) {
 		publish({
 			status: 'error',
@@ -341,7 +376,16 @@ window.keepySignInWithGoogle = function () {
 	// (browserLocalPersistence on the web): the session already survives a
 	// reload and a relaunch, and adding our own storage layer on top would be
 	// a second source of truth for the same fact.
+	// Diagnostic only (see publishStage above): fires once, on whichever
+	// call to the listener below happens first -- signed in, signed out, or
+	// null-user restore. Declared here rather than inside the listener so it
+	// survives across every subsequent invocation without re-publishing.
+	let firstAuthStateSeen = false;
 	authMod.onAuthStateChanged(auth, function (user) {
+		if (!firstAuthStateSeen) {
+			firstAuthStateSeen = true;
+			publishStage('first-auth-state-received');
+		}
 		if (!user) {
 			publish({
 				status: window.keepyAuth.ready ? 'signed_out' : window.keepyAuth.status,
@@ -362,6 +406,7 @@ window.keepySignInWithGoogle = function () {
 			console.error('keepyAuth: getIdToken failed', e);
 		});
 	});
+	publishStage('listener-registered');
 
 	const wasPending = readPending();
 	try {
