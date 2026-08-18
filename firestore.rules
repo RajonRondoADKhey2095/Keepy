@@ -66,5 +66,197 @@ service cloud.firestore {
 
       allow update, delete: if false;
     }
+
+    // =================================================================
+    // KEEPY QUIZZ -- quizzes/{quizId} et sa sous-collection questions.
+    //
+    // Porte le brouillon de docs/QUIZZ_SPEC.md section 4. Les rules
+    // /scores ci-dessus sont INTOUCHEES par ce lot : meme service, meme
+    // `match /databases/{database}/documents`, blocs `match` distincts.
+    //
+    // Le triplet d'auth est LITTERALEMENT celui de /scores -- hasOnly /
+    // hasAll(['uid']) / uid == request.auth.uid -- pour qu'un relecteur
+    // voie le meme motif aux deux endroits et pas deux variantes a
+    // comparer (QUIZZ_SPEC.md 1, "Nom du champ proprietaire").
+    //
+    // LIMITES ACCEPTEES, pas des defauts a corriger ici (QUIZZ_SPEC.md 5) :
+    //   - le NOMBRE de questions par quiz n'est pas gatable : les rules
+    //     ne savent pas compter les documents d'une sous-collection. Le
+    //     plafond de 50 est client-side, et `questionCount` sur le doc
+    //     parent est borne mais JAMAIS verifie contre la realite -- c'est
+    //     une valeur d'affichage, pas une source de verite ;
+    //   - pas de suppression en cascade : supprimer un quiz ne supprime
+    //     pas ses questions. Les orphelines restent en base, lisibles par
+    //     leur seul proprietaire. Cout de stockage, pas de fuite ;
+    //   - `order` n'est ni unique ni contigu : une regle ne voit jamais
+    //     les autres documents. Le tri d'affichage doit etre fait sur
+    //     (order, questionId), jamais sur order seul.
+    // =================================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Proprietaire du document DEJA EN BASE (read / update / delete).
+    function ownsExisting() {
+      return signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Proprietaire du document ENTRANT (create / update).
+    function ownsIncoming() {
+      return signedIn() && request.resource.data.uid == request.auth.uid;
+    }
+
+    match /quizzes/{quizId} {
+
+      // `questionCount` est le SEUL champ optionnel du schema, d'ou la
+      // forme "absent OU valide" -- une comparaison directe sur un champ
+      // absent est une erreur d'evaluation, pas un false propre.
+      function validCount() {
+        return !request.resource.data.keys().hasAny(['questionCount'])
+          || (request.resource.data.questionCount is int
+              && request.resource.data.questionCount >= 0
+              && request.resource.data.questionCount <= 50);
+      }
+
+      // Owner-only, SANS aucune condition sur `visibility`. Deliberement :
+      // une regle de lecture qui consulterait deja ce champ serait une
+      // porte a moitie ouverte (QUIZZ_SPEC.md 2.3).
+      //
+      // Vaut pour `get` ET pour `list`. Consequence cote client : Firestore
+      // n'execute que les requetes qu'il peut PROUVER conformes, donc un
+      // :runQuery de liste DOIT porter un fieldFilter `uid EQUAL <mon uid>`.
+      // Une liste non filtree est refusee, pas vide.
+      allow read: if ownsExisting();
+
+      allow create: if ownsIncoming()
+        && request.resource.data.keys().hasOnly(
+             ['uid','title','visibility','questionCount','createdAt','updatedAt'])
+        && request.resource.data.keys().hasAll(
+             ['uid','title','visibility','createdAt','updatedAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 60
+        // SEULE la valeur 'private' est acceptee. Ce n'est pas un etat
+        // d'attente : c'est la decision actee par Mathieu le 18 aout 2026
+        // (QUIZZ_SPEC.md 2.3). Elargir le partage demande DEUX edits
+        // distincts de ce fichier -- elargir les valeurs acceptees ici,
+        // PUIS elargir la regle de lecture ci-dessus -- donc deux passages
+        // par le gate `main`, et la question de la triche structurelle
+        // tranchee avant le premier des deux.
+        && request.resource.data.visibility == 'private'
+        && validCount()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      // La difference de fond avec /scores : ici `update` existe, donc il
+      // faut dire explicitement ce qui NE PEUT PAS bouger. Sans les deux
+      // lignes d'immuabilite, un proprietaire pourrait reassigner son quiz
+      // a un autre uid, ou antidater sa creation.
+      allow update: if ownsExisting()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.keys().hasOnly(
+             ['uid','title','visibility','questionCount','createdAt','updatedAt'])
+        && request.resource.data.keys().hasAll(
+             ['uid','title','visibility','createdAt','updatedAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 60
+        && request.resource.data.visibility == 'private'
+        && validCount()
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if ownsExisting();
+
+      match /questions/{questionId} {
+
+        // `uid` est DENORMALISE sur chaque question : ownsExisting() lit
+        // donc le uid de la QUESTION, jamais celui du quiz parent. C'est
+        // voulu -- un get() du parent serait une lecture facturee a chaque
+        // evaluation (plafond 10 par requete) et ferait dependre l'ecriture
+        // d'une question de la lisibilite du quiz (QUIZZ_SPEC.md 1).
+
+        function choiceValid(c) {
+          return c is string && c.size() >= 1 && c.size() <= 120;
+        }
+
+        function mcq4Valid() {
+          return request.resource.data.keys().hasOnly(
+                   ['uid','type','prompt','order','createdAt','updatedAt',
+                    'choice0','choice1','choice2','choice3','answerIndex'])
+            && request.resource.data.keys().hasAll(
+                 ['choice0','choice1','choice2','choice3','answerIndex'])
+            && choiceValid(request.resource.data.choice0)
+            && choiceValid(request.resource.data.choice1)
+            && choiceValid(request.resource.data.choice2)
+            && choiceValid(request.resource.data.choice3)
+            && request.resource.data.answerIndex is int
+            && request.resource.data.answerIndex >= 0
+            && request.resource.data.answerIndex <= 3;
+        }
+
+        function trueFalseValid() {
+          return request.resource.data.keys().hasOnly(
+                   ['uid','type','prompt','order','createdAt','updatedAt',
+                    'answerBool'])
+            && request.resource.data.keys().hasAll(['answerBool'])
+            && request.resource.data.answerBool is bool;
+        }
+
+        function freeValid() {
+          return request.resource.data.keys().hasOnly(
+                   ['uid','type','prompt','order','createdAt','updatedAt',
+                    'answerText'])
+            && request.resource.data.keys().hasAll(['answerText'])
+            && request.resource.data.answerText is string
+            && request.resource.data.answerText.size() >= 1
+            && request.resource.data.answerText.size() <= 120;
+        }
+
+        // C'est CE bloc qui rend `type` contraignant plutot que decoratif :
+        // chaque branche ferme son PROPRE jeu de cles, donc un 'mcq4' ne
+        // peut pas transporter answerBool, ni un 'truefalse' un answerIndex.
+        // C'est aussi le seul porteur de hasOnly sur cette sous-collection --
+        // commonValid() ne fait que hasAll, et les deux allow l'exigent.
+        function typeShapeValid() {
+          return (request.resource.data.type == 'mcq4' && mcq4Valid())
+            || (request.resource.data.type == 'truefalse' && trueFalseValid())
+            || (request.resource.data.type == 'free' && freeValid());
+        }
+
+        function commonValid() {
+          return request.resource.data.keys().hasAll(
+                   ['uid','type','prompt','order','createdAt','updatedAt'])
+            && request.resource.data.type in ['mcq4','truefalse','free']
+            && request.resource.data.prompt is string
+            && request.resource.data.prompt.size() >= 1
+            && request.resource.data.prompt.size() <= 200
+            && request.resource.data.order is int
+            && request.resource.data.order >= 0
+            && request.resource.data.order <= 199
+            && request.resource.data.updatedAt == request.time;
+        }
+
+        allow read: if ownsExisting();
+
+        allow create: if ownsIncoming()
+          && commonValid()
+          && request.resource.data.createdAt == request.time
+          && typeShapeValid();
+
+        // Trois immuables ici contre deux sur le quiz : `type` s'ajoute,
+        // parce qu'un changement de type en place ferait cohabiter un
+        // ancien jeu de champs avec un nouveau discriminant.
+        allow update: if ownsExisting()
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.type == resource.data.type
+          && request.resource.data.createdAt == resource.data.createdAt
+          && commonValid()
+          && typeShapeValid();
+
+        allow delete: if ownsExisting();
+      }
+    }
   }
 }

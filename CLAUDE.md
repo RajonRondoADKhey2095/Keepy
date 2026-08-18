@@ -5990,3 +5990,168 @@ rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) ; la dette
 de doc de `README.md` (il dit encore que le projet démarre sur
 `TitleScreen.tscn`) ; la redondance de titres de l'écran-titre ; et la
 fenêtre de 404 à chaque push sur `main`.
+
+## RULES KEEPY QUIZZ PORTÉES DANS `firestore.rules` — écrites, PAS encore déployées (18 août 2026)
+
+Branche `claude/keepy-quiz-firestore-rules-r1crb3`, partie de `main`
+(`7fcada5`). **Deux fichiers : `firestore.rules` et ce document.** Aucun
+`.gd`, aucune scène, aucun `.glb`, aucune config d'export — `git diff
+--stat` contre `origin/main` ne rapporte rien d'autre. Le brouillon du §4
+de `docs/QUIZZ_SPEC.md` est porté tel quel dans le fichier réel ; le
+brouillon lui-même n'est pas modifié.
+
+### ⚠️ CE LOT N'A RIEN DÉPLOYÉ — la version LIVE reste celle du 18 août 10:32:59 UTC
+
+**Le ruleset en vigueur sur `keepy-8df91` est toujours celui publié par le
+run #2 de `firestore-rules.yml` (id `32127251623`)** : durcissement auth de
+`scores`, sans une ligne de Quizz. C'est mécanique et pas une prudence
+particulière — le workflow est `on.push.branches: [main]` +
+`paths: ['firestore.rules']`, or ce lot part sur `staging`.
+
+⚠️ **Précision qui corrige une formulation courante : un push sur
+`staging` ne déclenche RIEN.** Le déclenchement automatique est bien le
+comportement voulu et déjà éprouvé (run #1 tentative 4 et run #2, tous deux
+verts), mais il est attaché au **merge sur `main`**, pas au palier 1. Le
+jour où Mathieu autorise ce merge, le job partira **tout seul**, sans
+action manuelle, et publiera ce fichier sur le projet **global** — donc sur
+la production de Keepy Chased en même temps que sur staging. C'est
+exactement pourquoi ce lot s'arrête à `staging` : les rules n'ont pas de
+palier 1 disponible, le gate humain est le seul qui existe.
+
+Mode de défaillance sûr, déjà mesuré dans le log du lot précédent :
+`compiled successfully` précède **strictement** `released rules`, donc une
+erreur de syntaxe échoue le job **sans publier** et laisse les rules live
+intactes.
+
+### Ce qui est ajouté — purement ADDITIF, mesuré et pas plaidé
+
+`git diff --numstat origin/main -- firestore.rules` rend **`192  0`** :
+192 lignes ajoutées, **zéro retirée**. C'est la preuve la plus forte que
+les rules `scores` ne sont pas touchées, et elle est doublée d'un `cmp` :
+le bloc `match /scores/{scoreId}` (47 lignes) et l'en-tête du fichier
+(40 lignes) sont **byte-identiques** à `origin/main`.
+
+| bloc | read | create | update | delete |
+|---|---|---|---|---|
+| `scores/{scoreId}` | signed-in | validé | **interdit** | **interdit** |
+| `quizzes/{quizId}` | owner-only | validé | validé | owner-only |
+| `quizzes/{quizId}/questions/{questionId}` | owner-only | validé | validé | owner-only |
+
+Le triplet d'auth est **littéralement** celui de `scores` (`hasOnly` /
+`hasAll(['uid'])` / `uid == request.auth.uid`), pour qu'un relecteur voie
+le même motif aux deux endroits et non deux variantes à comparer.
+
+⚠️ **Un seul écart avec le brouillon du §4, et il est syntaxique, pas
+sémantique : les `function` sont HISSÉES au-dessus de leur premier
+appel.** Le brouillon déclarait `validCount()` après les `allow` qui
+l'utilisent, et `typeShapeValid()` avant ses propres callees. Rien ne
+garantit hors ligne que le compilateur de rules hisse les déclarations, et
+un `Function is undefined` coûterait un aller-retour complet par le gate
+`main` pour un défaut de mise en page. Vérifié par script sur le fichier
+livré : **0 violation déclare-avant-usage**, et **les 10 fonctions sont
+réellement utilisées** (aucune déclaration morte).
+
+### Vérification `hasOnly` — auditée par script, pas relue à l'œil
+
+Fermeture transitive des appels de fonctions calculée sur le fichier
+livré, pour chaque `allow` :
+
+| `allow` | `hasOnly` | `hasAll` | auth | `visibility == 'private'` |
+|---|---|---|---|---|
+| quizzes `create` | ✅ | ✅ | ✅ | ✅ |
+| quizzes `update` | ✅ | ✅ | ✅ | ✅ |
+| questions `create` | ✅ *(via `typeShapeValid`)* | ✅ | ✅ | s.o. |
+| questions `update` | ✅ *(via `typeShapeValid`)* | ✅ | ✅ | s.o. |
+| tous les `read` / `delete` | s.o. — aucune donnée entrante | — | ✅ | s.o. |
+
+**Aucun chemin d'écriture ne peut faire entrer un champ hors schéma.** Sur
+les questions, le porteur du `hasOnly` est `typeShapeValid()` et non
+`commonValid()` : chaque branche de type ferme son **propre** jeu de clés,
+donc un `mcq4` ne peut pas transporter `answerBool` ni un `truefalse` un
+`answerIndex`. C'est ce qui rend `type` contraignant plutôt que décoratif —
+et les deux `allow` exigent `typeShapeValid()`, donc il n'existe pas de
+chemin qui n'aurait que `commonValid()`.
+
+**`visibility` ne peut jamais valoir autre chose que `'private'` à la
+création** : la valeur est comparée par égalité stricte, ET le champ est
+dans le `hasAll`, donc il ne peut pas non plus être omis. Même paire sur
+`update` — un quiz créé privé ne peut pas être élargi par une mise à jour.
+
+### Comment un élargissement futur de `visibility` se ferait — DEUX edits distincts
+
+C'est la propriété qui a fait retenir « le champ existe, la valeur
+`'public'` n'existe pas » plutôt que « pas de champ du tout » ou
+« accepter `'public'` tout de suite » (`docs/QUIZZ_SPEC.md` §2.3, décision
+actée par Mathieu le 18 août 2026 — **une décision, pas un état
+d'attente**). Ouvrir le partage demanderait :
+
+1. **Édit n°1 — élargir l'ÉCRITURE** : remplacer
+   `visibility == 'private'` par une appartenance à un ensemble, dans les
+   deux `allow` (`create` **et** `update`) du bloc `quizzes`.
+2. **Édit n°2 — élargir la LECTURE** : la règle de lecture actuelle est
+   `allow read: if ownsExisting();`, owner-only **sans mentionner
+   `visibility` du tout**. C'est délibéré : une règle qui consulterait déjà
+   ce champ serait une porte à moitié ouverte, et l'édit n°1 seul
+   l'ouvrirait rétroactivement sur tout document marqué entre-temps.
+
+**Deux edits = deux passages par le gate `main`**, donc deux revues. Et
+⚠️ **la question de la triche structurelle doit être tranchée AVANT le
+premier des deux** : les bonnes réponses vivent dans le document que le
+joueur doit lire, les rules ne savent pas masquer un champ à l'intérieur
+d'un document (c'est tout ou rien), et ce projet n'a **aucun composant
+serveur** pour arbitrer — Keepy parle à Firestore en REST direct. Ce n'est
+pas un détail d'implémentation à régler plus tard.
+
+### Limites ACCEPTÉES, reportées dans le fichier lui-même — pas des bugs à corriger
+
+Recopiées en tête du bloc Quizz de `firestore.rules` pour qu'un relecteur
+du seul fichier de rules les ait sous les yeux (`docs/QUIZZ_SPEC.md` §5) :
+le **nombre de questions par quiz n'est pas gatable** (les rules ne savent
+pas compter les documents d'une sous-collection — le plafond de 50 est
+client-side, et `questionCount` est borné mais **jamais** confronté à la
+réalité) ; **pas de suppression en cascade** (les questions orphelines
+restent en base, lisibles par leur seul propriétaire — coût de stockage,
+pas de fuite) ; **`order` n'est ni unique ni contigu** (trier sur
+`(order, questionId)`, jamais sur `order` seul).
+
+### Validation
+
+⚠️ **Il n'existe pas de compilateur de rules hors ligne** — la compilation
+est un service (`firebaserules.googleapis.com`) et la clé de compte de
+service vit dans le secret GitHub, jamais dans un sandbox. La première
+vraie vérification syntaxique aura donc lieu au déploiement, avec le mode
+de défaillance sûr rappelé plus haut. Ce qui a pu être vérifié ici l'a été
+**par script sur le fichier livré**, pas par relecture : accolades
+équilibrées (21/21, profondeur finale 0, jamais négative), **ASCII pur**,
+**LF seul**, aucune tabulation, aucun espace en fin de ligne, newline
+finale unique — la même liste de contrôles que les deux lots rules
+précédents.
+
+**Aucune sonde rejouée, et c'est une non-applicabilité assumée, pas une
+omission déguisée en preuve** : ce lot ne touche **aucune** ressource
+Godot, donc rien de ce que l'export empaquette ne change, et aucune sonde
+de `scripts/dev/` ne lit un fichier de rules ni ne parle à Firestore —
+elles ne peuvent pas valider ce lot. **Aucun Godot n'est de toute façon
+installé dans ce sandbox** (ni éditeur ni templates). Piège payload sans
+objet et déjà mesuré au lot précédent : `firestore.rules` n'est pas une
+ressource Godot (0 occurrence dans le `.pck`), et `CLAUDE.md` non plus.
+
+### Reste ouvert
+
+1. **Le déploiement lui-même** — merge `staging` → `main`, gaté par
+   Mathieu, et c'est ce merge qui déclenchera le job. Rien de ce lot n'est
+   en vigueur avant.
+2. **La première compilation réelle** de ce bloc, qui n'a jamais eu lieu
+   (voir ci-dessus).
+3. **Aucun client n'existe encore** : `Quizz.gd`, les écrans du §7 et le
+   branchement du bouton grisé du hub restent à écrire. Ces rules décrivent
+   un contrat que rien n'exerce pour l'instant — et `docs/QUIZZ_SPEC.md` §8
+   porte déjà les pièges REST à connaître avant de l'écrire (deux
+   `updateTransforms` à la création, `updateMask` excluant `uid`/
+   `createdAt` à la mise à jour, `fieldFilter uid EQUAL` **obligatoire**
+   sur toute liste, index composite `uid ASC` + `updatedAt DESC`, un seul
+   `HTTPRequest` en vol à la fois, et le bearer **exigé** — un appel sans
+   token est un 403 garanti, à ne pas dépenser en aller-retour).
+4. Le rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) —
+   inchangé, et **Quizz y sera plus exposé que Chased**, qui n'écrit
+   qu'une fois en fin de run.
