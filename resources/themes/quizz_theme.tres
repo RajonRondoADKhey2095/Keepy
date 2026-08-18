@@ -1,0 +1,182 @@
+[gd_resource type="Theme" load_steps=13 format=3]
+
+[ext_resource type="FontFile" path="res://assets/fonts/quizz/Fredoka-Variable.ttf" id="1_fredoka"]
+[ext_resource type="FontFile" path="res://assets/fonts/quizz/Quicksand-Variable.ttf" id="2_quicksand"]
+
+[sub_resource type="FontVariation" id="FontVariation_fredoka_semibold"]
+base_font = ExtResource("1_fredoka")
+variation_opentype = {"wght": 600.0}
+
+[sub_resource type="FontVariation" id="FontVariation_fredoka_bold"]
+base_font = ExtResource("1_fredoka")
+variation_opentype = {"wght": 700.0}
+
+[sub_resource type="FontVariation" id="FontVariation_quicksand_regular"]
+base_font = ExtResource("2_quicksand")
+variation_opentype = {"wght": 400.0}
+
+[sub_resource type="FontVariation" id="FontVariation_quicksand_semibold"]
+base_font = ExtResource("2_quicksand")
+variation_opentype = {"wght": 600.0}
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 20.0
+content_margin_right = 24.0
+content_margin_bottom = 20.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.14)
+shadow_size = 14
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_info_panel"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 18.0
+content_margin_right = 24.0
+content_margin_bottom = 18.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.14)
+shadow_size = 14
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_normal"]
+bg_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.22)
+shadow_size = 10
+shadow_offset = Vector2(0, 3)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_hover"]
+bg_color = Color(1.0, 0.6118, 0.451, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.28)
+shadow_size = 12
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_pressed"]
+bg_color = Color(0.898, 0.4471, 0.2745, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_disabled"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_field_normal"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 8.0
+content_margin_right = 22.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_field_focus"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 8.0
+content_margin_right = 22.0
+content_margin_bottom = 8.0
+
+[resource]
+default_font = SubResource("FontVariation_quicksand_regular")
+default_font_size = 22
+
+Button/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_hover_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_pressed_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_focus_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_disabled_color = Color(0.2902, 0.2157, 0.1569, 0.55)
+Button/fonts/font = SubResource("FontVariation_fredoka_semibold")
+Button/font_sizes/font_size = 24
+Button/styles/normal = SubResource("StyleBoxFlat_button_normal")
+Button/styles/hover = SubResource("StyleBoxFlat_button_hover")
+Button/styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+Button/styles/focus = SubResource("StyleBoxFlat_button_hover")
+Button/styles/disabled = SubResource("StyleBoxFlat_button_disabled")
+
+Label/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+Label/fonts/font = SubResource("FontVariation_quicksand_regular")
+Label/font_sizes/font_size = 20
+
+LineEdit/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+LineEdit/colors/font_placeholder_color = Color(0.2902, 0.2157, 0.1569, 0.45)
+LineEdit/colors/font_selected_color = Color(0.2902, 0.2157, 0.1569, 1)
+LineEdit/colors/caret_color = Color(0.2902, 0.2157, 0.1569, 1)
+LineEdit/colors/selection_color = Color(1.0, 0.8627, 0.7686, 0.8)
+LineEdit/fonts/font = SubResource("FontVariation_quicksand_regular")
+LineEdit/font_sizes/font_size = 22
+LineEdit/styles/normal = SubResource("StyleBoxFlat_field_normal")
+LineEdit/styles/focus = SubResource("StyleBoxFlat_field_focus")
+LineEdit/styles/read_only = SubResource("StyleBoxFlat_field_normal")
+
+PanelContainer/styles/panel = SubResource("StyleBoxFlat_panel")
+
+TitleLabel/base_type = &"Label"
+TitleLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+TitleLabel/fonts/font = SubResource("FontVariation_fredoka_bold")
+TitleLabel/font_sizes/font_size = 32
+
+CardTitleLabel/base_type = &"Label"
+CardTitleLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+CardTitleLabel/fonts/font = SubResource("FontVariation_fredoka_semibold")
+CardTitleLabel/font_sizes/font_size = 26
+
+MutedLabel/base_type = &"Label"
+MutedLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 0.62)
+MutedLabel/fonts/font = SubResource("FontVariation_quicksand_regular")
+MutedLabel/font_sizes/font_size = 18
+
+InfoPanel/base_type = &"PanelContainer"
+InfoPanel/styles/panel = SubResource("StyleBoxFlat_info_panel")
