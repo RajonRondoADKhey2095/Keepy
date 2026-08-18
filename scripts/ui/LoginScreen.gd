@@ -1,17 +1,25 @@
 extends Control
 ## Boot screen since the Google Sign-In gate (17 aout 2026): run/main_scene
-## points here, and TitleScreen.tscn is only reachable once Auth reports a
-## signed-in user. TitleScreen itself is unchanged and still loads
-## standalone, so nothing about the existing boot path had to move.
+## points here, and the rest of the game is only reachable once Auth reports
+## a signed-in user.
+##
+## Since 18 aout 2026 the landing point is Hub.tscn, the "Keepy's Memorial
+## Quest" umbrella, and no longer TitleScreen.tscn directly -- Chased is now
+## one sub-game among the ones the hub lists. Only that destination moved:
+## the signed-in / signed-out decision below is untouched, and
+## TitleScreen.tscn is itself unchanged and still loads standalone.
 ##
 ## Session persistence is entirely the Firebase SDK's (browserLocalPersistence
 ## by default), so a returning player never sees this screen: Auth resolves
-## to signed-in during the loading state and _go_to_title() fires without the
+## to signed-in during the loading state and _go_to_hub() fires without the
 ## button ever being enabled. That is why the button starts DISABLED in the
 ## scene rather than enabled-and-then-hidden -- there is no frame in which a
 ## signed-in user can see a live "Se connecter" button.
 
-const TITLE_SCENE := "res://scenes/TitleScreen.tscn"
+## The repo's single hard-coded post-login destination -- verified by grep
+## rather than assumed: no other script navigates anywhere once Auth reports
+## a session, so moving the landing point is this one constant.
+const HUB_SCENE := "res://scenes/Hub.tscn"
 ## `detail` can carry two full URLs (a failed dynamic import reports both the
 ## base and the module it could not fetch), which measured at 4 wrapped lines
 ## and pushed the panel to 26 px from the screen bottom -- inside the iOS
@@ -47,7 +55,7 @@ var _leaving := false
 
 func _ready() -> void:
 	sign_in_button.pressed.connect(_on_sign_in_pressed)
-	offline_button.pressed.connect(_go_to_title)
+	offline_button.pressed.connect(_go_to_hub)
 	Auth.auth_state_changed.connect(_on_auth_state_changed)
 	Auth.auth_error.connect(_on_auth_error)
 	Auth.auth_debug_stage_changed.connect(_on_auth_debug_stage_changed)
@@ -68,13 +76,13 @@ func _ready() -> void:
 	# The state may already be resolved: Auth reads a snapshot in its own
 	# _ready(), and autoloads are ready before this scene is.
 	if Auth.is_signed_in():
-		_go_to_title()
+		_go_to_hub()
 		return
 	_refresh_from_auth()
 
 func _on_auth_state_changed(signed_in: bool) -> void:
 	if signed_in:
-		_go_to_title()
+		_go_to_hub()
 		return
 	_refresh_from_auth()
 
@@ -126,11 +134,11 @@ func _on_sign_in_pressed() -> void:
 	sign_in_button.disabled = true
 	Auth.sign_in()
 
-func _go_to_title() -> void:
+func _go_to_hub() -> void:
 	if _leaving:
 		return
 	_leaving = true
-	get_tree().change_scene_to_file(TITLE_SCENE)
+	get_tree().change_scene_to_file(HUB_SCENE)
 
 func _short(detail: String) -> String:
 	if detail.length() <= DETAIL_MAX_CHARS:

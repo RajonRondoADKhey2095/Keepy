@@ -1,0 +1,157 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/Hub.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://d37dx1txkxnir" path="res://assets/textures/ui/title_cover.png" id="2_cover"]
+[ext_resource type="Texture2D" path="res://assets/textures/ui/keepy_title_logo.png" id="3_logo"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_scrim"]
+bg_color = Color(0.086, 0.055, 0.031, 0.72)
+corner_radius_top_left = 24
+corner_radius_top_right = 24
+corner_radius_bottom_left = 24
+corner_radius_bottom_right = 24
+content_margin_left = 36.0
+content_margin_top = 28.0
+content_margin_right = 36.0
+content_margin_bottom = 28.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_normal"]
+bg_color = Color(0.145, 0.09, 0.05, 0.95)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.87, 0.63, 0.24, 1)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_left = 18
+corner_radius_bottom_right = 18
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_hover"]
+bg_color = Color(0.205, 0.13, 0.07, 0.97)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.95, 0.72, 0.32, 1)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_left = 18
+corner_radius_bottom_right = 18
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_disabled"]
+bg_color = Color(0.105, 0.095, 0.082, 0.9)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.42, 0.39, 0.33, 1)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_left = 18
+corner_radius_bottom_right = 18
+
+[node name="Hub" type="Control"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.062, 0.115, 0.044, 1)
+
+[node name="CoverImage" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = ExtResource("2_cover")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="CenterContainer" type="CenterContainer" parent="."]
+layout_mode = 1
+anchor_top = 0.52
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_bottom = -100.0
+
+[node name="HubPanel" type="PanelContainer" parent="CenterContainer"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_scrim")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/HubPanel"]
+layout_mode = 2
+theme_override_constants/separation = 32
+alignment = 1
+
+[node name="TitleLogo" type="TextureRect" parent="CenterContainer/HubPanel/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(267, 150)
+texture = ExtResource("3_logo")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="QuestLabel" type="Label" parent="CenterContainer/HubPanel/VBoxContainer"]
+layout_mode = 2
+custom_minimum_size = Vector2(560, 0)
+horizontal_alignment = 1
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 26
+text = "Keepy's Memorial Quest"
+
+[node name="ChasedCard" type="VBoxContainer" parent="CenterContainer/HubPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="ChasedButton" type="Button" parent="CenterContainer/HubPanel/VBoxContainer/ChasedCard"]
+layout_mode = 2
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(520, 110)
+theme_override_font_sizes/font_size = 36
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Keepy Chased"
+
+[node name="ChasedCaption" type="Label" parent="CenterContainer/HubPanel/VBoxContainer/ChasedCard"]
+layout_mode = 2
+custom_minimum_size = Vector2(560, 0)
+modulate = Color(1, 1, 1, 0.78)
+horizontal_alignment = 1
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 22
+text = "Cours, saute, ramasse des noisettes"
+
+[node name="QuizzCard" type="VBoxContainer" parent="CenterContainer/HubPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="QuizzButton" type="Button" parent="CenterContainer/HubPanel/VBoxContainer/QuizzCard"]
+layout_mode = 2
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(520, 110)
+disabled = true
+theme_override_font_sizes/font_size = 36
+theme_override_colors/font_disabled_color = Color(0.62, 0.59, 0.52, 1)
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_disabled")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_disabled")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_disabled")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_disabled")
+theme_override_styles/disabled = SubResource("StyleBoxFlat_button_disabled")
+text = "Keepy Quizz"
+
+[node name="QuizzCaption" type="Label" parent="CenterContainer/HubPanel/VBoxContainer/QuizzCard"]
+layout_mode = 2
+custom_minimum_size = Vector2(560, 0)
+modulate = Color(1, 1, 1, 0.72)
+horizontal_alignment = 1
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 22
+text = "Bientot disponible"
