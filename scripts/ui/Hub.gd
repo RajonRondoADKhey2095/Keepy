@@ -26,6 +26,10 @@ func _ready() -> void:
 	# way back out of Quizz passes through today, so resetting here covers
 	# a future second "back" button for free -- see SafeArea.gd's header.
 	SafeArea.set_default()
+	# Canvas fills the screen here: this is a UI screen, so the 9:16 letterbox
+	# Chased is tuned at would only be black bars. Game.tscn asks for KEEP back
+	# in its own _ready() -- see SafeArea.gd's canvas-aspect block.
+	SafeArea.fill_screen()
 	chased_button.pressed.connect(_on_chased_pressed)
 	quizz_button.pressed.connect(_on_quizz_pressed)
 
