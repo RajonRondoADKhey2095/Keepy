@@ -51,6 +51,10 @@ func _ready() -> void:
 	# header for why this is a call from the screen rather than a scene
 	# change watcher.
 	SafeArea.set_cream()
+	# Canvas fills the screen here: this is a UI screen, so the 9:16 letterbox
+	# Chased is tuned at would only be black bars. Game.tscn asks for KEEP back
+	# in its own _ready() -- see SafeArea.gd's canvas-aspect block.
+	SafeArea.fill_screen()
 	_row_style = _build_row_style()
 	back_button.pressed.connect(_on_back_pressed)
 	create_button.pressed.connect(_on_create_pressed)

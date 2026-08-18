@@ -54,6 +54,10 @@ const NEUTRAL_CODES := ["popup-cancelled"]
 var _leaving := false
 
 func _ready() -> void:
+	# Canvas fills the screen here: this is a UI screen, so the 9:16 letterbox
+	# Chased is tuned at would only be black bars. Game.tscn asks for KEEP back
+	# in its own _ready() -- see SafeArea.gd's canvas-aspect block.
+	SafeArea.fill_screen()
 	sign_in_button.pressed.connect(_on_sign_in_pressed)
 	offline_button.pressed.connect(_go_to_hub)
 	Auth.auth_state_changed.connect(_on_auth_state_changed)

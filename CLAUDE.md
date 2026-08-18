@@ -6993,3 +6993,173 @@ précédent).
 `main` n'est **pas** touché : palier 1 seulement (merge automatique sur
 `staging`, build/export/sondes verts) ; palier 2 reste gaté par Mathieu après
 validation device.
+
+## BANDES NOIRES SUR TOUS LES ÉCRANS : c'était le LETTERBOX GODOT, pas la safe-area HTML (18 août 2026)
+
+Branche `claude/godot-letterbox-ui-screens-oq6rzf`, redémarrée sur
+`origin/staging` (`3312a3c`) — elle pointait encore sur `main`, sans commit
+propre. **Six fichiers, tous du code, aucune scène, aucun collider, aucune
+constante de gameplay, aucun `.glb`, `project.godot` INTOUCHÉ.**
+
+⚠️ **Ce n'était PAS le fix safe-area du 17 août, qui fonctionne** — vérifié
+device : la bande de status bar est bien crème sur Quizz et `#101d0b` sur
+Hub. C'était le **letterboxing de Godot**, dessiné **À L'INTÉRIEUR du
+canvas**, que ni CSS ni JS ne peut atteindre.
+
+**Mesuré sur capture device 1170x2532** : 141px de couleur de page (correct),
+puis **155px de NOIR**, 2080px de contenu, **156px de NOIR**. Et
+`1170 * 1920/1080 = 2080` exactement. `project.godot` déclare un viewport
+1080x1920 avec `window/stretch/aspect="keep"` sur un écran ~19.5:9.
+**Reproduit ici avec les chiffres du moteur** : `visible_rect` reste
+1080x1920 et le transform final prend un `origin.y` de **226** — soit
+`(2532 − 2080) / 2`. Sur device le canvas est plus court que la fenêtre des
+141px de safe-area, d'où 155/156 là-bas et 226 dans une fenêtre nue : même
+mécanisme, deux hauteurs de canvas.
+
+### Bascule au RUNTIME, `project.godot` jamais touché — et c'est la contrainte, pas un détail
+
+Passer `window/stretch/aspect` à `"expand"` globalement corrigerait les
+écrans UI **et rééquilibrerait Chased en silence** : le viewport passerait de
+1920 à **2337** de haut sur ce même device (mesuré, pas estimé — le brief
+tablait sur ~2207), soit **~417px de monde visible en plus devant Keepy**,
+donc des obstacles qui entrent dans le cadre plus tôt, donc le budget de
+réaction autour duquel le jeu est calibré (`OBSTACLE_REACTION_BUDGET_S`) qui
+bouge sans qu'une ligne de gameplay ne change.
+
+Donc : les écrans UI demandent **EXPAND**, le jeu redemande **KEEP**.
+`project.godot` garde `"keep"` par défaut, ce qui veut dire que **chaque
+sonde de `scripts/dev/` et chaque scène que personne n'a touchée héritent du
+cadrage auquel Chased est réglé** — la valeur sûre est celle qu'on obtient en
+ne faisant rien.
+
+**Ça vit dans `SafeArea.gd`** plutôt que dans un second autoload : même
+responsabilité (« à quoi ressemblent les bords de l'écran sur ce device »), et
+un écran qui a besoin de l'un a presque toujours besoin de l'autre. Deux
+fonctions, `fill_screen()` (UI) et `keep_game_framing()` (jeu).
+
+⚠️ **Aucune garde `OS.has_feature("web")` sur ces deux-là**, contrairement aux
+fonctions de couleur juste au-dessus : `content_scale_aspect` est une
+propriété du moteur, pas un appel `JavaScriptBridge`. La garde web existe
+parce que `JavaScriptBridge` n'existe pas hors web ; ici il n'y a rien à
+garder, et garder ferait diverger l'éditeur et les rendus offscreen du build
+livré — la seule divergence qui cacherait ce défaut à tout test capable de
+l'attraper.
+
+**`Game._ready()` redemande KEEP DÉFENSIVEMENT**, pas parce que l'écran
+précédent aurait oublié : une sonde qui boote `Game.tscn` directement, ou un
+futur point d'entrée qui saute le hub, doit obtenir le cadrage réglé aussi.
+
+### Le mécanisme a été VÉRIFIÉ AU RUNTIME avant qu'on s'y fie
+
+Godot 4.3, gl_compatibility, X11 1170x2532 : `content_scale_aspect` prend
+effet **à la frame suivante sans recréer la fenêtre**, et le remettre
+reproduit `visible_rect`, `origin` **et** `scale` **exactement**. C'est cet
+aller-retour qui fait de `keep_game_framing()` une vraie restauration et pas
+un espoir.
+
+| | `visible_rect` | `final_transform.origin` |
+|---|---|---|
+| KEEP (défaut projet) | 1080x1920 | **(0, 226)** — le letterbox |
+| EXPAND | **1080x2337** | (0, 0) |
+| retour KEEP | 1080x1920 | (0, 226) |
+
+### Non-régression Chased : PROUVÉE, pas plaidée
+
+Sonde jetable (jamais commitée, supprimée avant le commit) bootant
+`Game.tscn`, caméra épinglée à une pose fixe pour que le lerp ne fasse pas
+varier la mesure, lisant le viewport réel, la **matrice de projection complète
+de la caméra** et **9 points du monde unprojetés** (centres de voie à la
+distance de réaction, plan du sol, hauteur de tête de Keepy). Jouée à
+**1170x2532** sur cette branche ET sur `origin/staging` en worktree séparé :
+
+**22 lignes, BYTE-IDENTIQUES.** `content_scale_aspect = 1` (KEEP),
+`visible_rect` 1080x1920, `origin (0, 226)`, `proj[0..3]` identiques,
+9 unprojections identiques au dernier chiffre. Le jeu est donc **toujours
+letterboxé**, exactement comme avant — c'est le résultat voulu.
+
+### Côté UI : preuve POSITIVE, pas seulement « le jeu n'a pas bougé »
+
+Seconde sonde jetable, sous `xvfb` (pas `--headless` — piège déjà documenté :
+il force le driver DUMMY et lit des pixels nuls). Elle remet **KEEP avant
+chaque écran**, sinon un écran qui oublierait de demander aurait l'air correct
+en héritant de l'EXPAND du précédent.
+
+| écran | aspect atteint | `visible_rect` | letterbox | contrôles dans le viewport | lignes noires haut/bas |
+|---|---|---|---|---|---|
+| LoginScreen | **4 = EXPAND** | 1080x2337 | **(0,0)** | 2/2 | **0 / 0** |
+| Hub | **4 = EXPAND** | 1080x2337 | **(0,0)** | 2/2 | **0 / 0** |
+| TitleScreen | **4 = EXPAND** | 1080x2337 | **(0,0)** | 1/1 | **0 / 0** |
+| QuizzHomeScreen | **4 = EXPAND** | 1080x2337 | **(0,0)** | 5/5 | **0 / 0** |
+
+**0 échec, exit 0.** Les pixels extrêmes portent du contenu réel, pas du noir
+— vert marécage en haut sur les trois écrans monde, crème
+`(1, 0.9725, 0.9451)` en haut ET en bas sur Quizz, exactement sa couleur de
+thème. Rendus offscreen 1170x2532 confirmés **à l'œil** en plus du compte de
+lignes noires.
+
+⚠️ **Aucun étirement de fond** : les `CoverImage` sont en
+`stretch_mode = 6` (KEEP_ASPECT_COVERED), donc un viewport plus haut **rogne**
+latéralement au lieu de déformer — vérifié au rendu, les deux sujets
+(écureuil/hibou) restent entiers.
+
+### Sondes : 7 byte-identiques, et la 8ᵉ n'est pas déterministe
+
+Diffées contre `origin/staging` en worktree séparé (import vérifié complet
+des deux côtés : **24 `.scn`** chacun, le piège du faux rouge par import
+tronqué est contrôlé, pas supposé), graine 20260806, `--fixed-fps 60` :
+`ProbeTimeoutAudit` (**33 sondes**), `AssetContractAudit` (**12/12 visuels,
+0/10 colliders déplacés**), `DeathModelAudit`, `ChargerShapeProbe`,
+`AlarmRampAudit`, `ComboAudit`, `ShrinkAudit` — **BYTE-IDENTIQUES sur les
+DEUX flux, exit 0 des deux côtés**.
+
+⚠️ **`SwampIdentityAudit` DIFFÈRE, et ce n'est PAS une régression — la sonde
+n'est pas déterministe.** Vérifié plutôt que supposé : **deux runs
+consécutifs sur le MÊME arbre divergent autant que base vs branche**, et
+`grep` confirme qu'elle **n'appelle ni `DevSeed.apply()` ni
+`DecorRng.force_seed()`** — `--seed=20260806` y est **inerte**. Ce qu'elle
+échantillonne est la dérive de teinte du sol (`_tint_rng := DecorRng.make()`,
+`TrackSegment.gd`), non seedée et déjà documentée comme telle. Canal rouge de
+`WORLD AT TITLE` sur 3 runs de chaque côté :
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| baseline | 0,1526 | 0,1663 | 0,1771 |
+| branche | 0,1690 | 0,1503 | 0,1809 |
+
+**Les deux plages se chevauchent et chaque valeur d'un côté tombe à
+l'intérieur de celle de l'autre.** Le critère réel pour une sonde non seedée
+est son VERDICT : **6/6 runs `SWAMP_IDENTITY_VERIFIED=yes`, 4/4 états OK des
+deux côtés.** Même famille de défaut que `TrackPropsAudit`, déjà consignée
+plus haut ; **aucun seuil n'a été bougé.**
+
+### Build
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox (releases
+GitHub officielles). Import headless **exit 0** ; boot headless des cinq
+scènes concernées (`LoginScreen`, `Hub`, `TitleScreen`, `QuizzHomeScreen`,
+`Game`, `--quit-after 2`) **exit 0, 0 erreur GDScript** ; export Web release
+**exit 0, 0 erreur**. `index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** — **identique sur les DEUX arbres**,
+donc c'est bien lui la preuve d'identité. `.pck` baseline **5 667 712** →
+branche **5 668 192** (**+480 octets**, cohérent avec six éditions GDScript ;
+offert en corroboration seulement, l'instabilité permanente du `.pck`
+s'applique). Piège payload tenu : **0** ligne `Storing File` pour
+`res://assets_source`, `res://docs`, `res://web`, `firebase.json` **ni
+`res://build`**.
+
+⚠️ **Piège d'outillage rencontré** : `godot4 --export-release` **ne crée pas**
+le dossier de destination et échoue en `Target folder does not exist` — un
+`rm -rf build` avant export (celui que la doc impose pour éviter
+l'auto-contamination) doit donc être suivi d'un `mkdir -p build/web`.
+
+### Reste ouvert — jugement device, seul juge
+
+1. **La disparition réelle des bandes** sur iPhone Safari (onglet **et** PWA
+   installée) sur les quatre écrans : aucune sonde de ce dépôt ne rend de
+   pixels iOS, les rendus ci-dessus sont du llvmpipe sous xvfb.
+2. **Le rognage latéral des couvertures** en 19.5:9 : mesuré comme non
+   déformant et les sujets entiers, mais le cadrage exact est un jugement.
+3. **Les panneaux descendent proportionnellement** dans un viewport plus haut
+   (les `CenterContainer` ont un `anchor_top` fractionnel) — mesuré comme
+   entièrement dans le viewport, marge en bas plus grande qu'avant, mais la
+   composition à l'échelle réelle d'un téléphone reste à valider.
