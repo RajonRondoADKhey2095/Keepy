@@ -5144,3 +5144,206 @@ l'identite au bit pres le dit plus fort qu'un simple verdict identique.
 3. Jugement device sur `keepy-staging.vercel.app` : le classement se charge
    toujours, et une soumission aboutit toujours, avec un utilisateur
    Google reellement connecte.
+
+## FIRESTORE RULES VERSIONNÉES + DÉPLOIEMENT AUTOMATIQUE — la Console n'est plus la source de vérité (18 août 2026)
+
+Branche `claude/firestore-rules-automation-337tsq`, partie de `staging`
+(`ec81387`). **Lot infra** : aucun fichier de JEU touché — ni scène, ni
+`.gd`, ni `.glb`, ni `project.godot`. En particulier
+`scripts/autoload/Leaderboard.gd` est **intouché**, comme demandé, et
+`git diff` contre `origin/staging` ne rapporte **aucun** chemin sous
+`scenes/`, `scripts/` ou `assets/`.
+
+⚠️ **Une exception au « pur » : `export_presets.cfg` A été modifié** —
+une ligne d'`exclude_filter`, pour fermer un piège payload que ce lot
+introduisait lui-même (voir la section « Piège payload » plus bas). Ce
+n'est pas du code moteur et ça ne change aucune scène, mais c'est un
+fichier de plus que ce que le brief laissait attendre, donc dit ici
+plutôt que passé sous silence.
+
+### `firestore.rules` EST désormais la source de vérité, plus la Console
+
+Trois fichiers nouveaux à la racine :
+
+| fichier | contenu |
+|---|---|
+| `firestore.rules` | le ruleset, **reproduit à l'octet près** depuis ce qui est déployé en prod |
+| `firebase.json` | `{ "firestore": { "rules": "firestore.rules" } }` |
+| `.firebaserc` | `{ "projects": { "default": "keepy-8df91" } }` |
+
+⚠️ **Avant ce lot, les rules n'existaient QUE dans la Console Firebase** —
+collées à la main, sans historique, sans revue, sans diff possible. Un
+`git ls-tree -r origin/main` ne trouvait aucun fichier `firebase`/
+`firestore` dans le dépôt. À partir de maintenant : **le fichier gagne**.
+Toute édition faite directement en Console sera **écrasée silencieusement**
+au prochain push sur `main` touchant `firestore.rules`. Ne plus éditer en
+Console.
+
+**Le contenu versionné a été vérifié caractère pour caractère, pas
+supposé** : le fichier a été comparé (`diff` + `cmp`) à une re-saisie
+indépendante du bloc collé par Mathieu — **byte-identique**. Vérifié aussi :
+pur ASCII (aucun caractère non-ASCII), **LF seul** (aucun CR/CRLF), aucun
+espace ni tabulation en fin de ligne, aucune tabulation nulle part, 16
+lignes, une seule newline finale. Le premier déploiement automatique
+re-publie donc exactement le ruleset déjà en place — **un no-op
+sémantique**.
+
+⚠️ **Limite honnête de cette vérification, à ne pas surinterpréter** : elle
+prouve que le fichier == le bloc collé, **pas** que le bloc collé == ce qui
+tourne réellement sur `keepy-8df91`. La clé de compte de service vit dans le
+secret GitHub, jamais dans le sandbox — aucune session agentique ne peut
+lire les rules live pour les confronter. Si le bloc collé avait dérivé du
+déployé, le premier run corrigerait cet écart au lieu d'être un no-op, et
+c'est le log du job (qui `cat` le fichier avant de déployer) qui le dirait.
+
+**Cohérence recoupée avec le code, pas seulement avec le brief** :
+`Leaderboard.gd` déclare `PROJECT_ID := "keepy-8df91"` (donc `.firebaserc`
+pointe bien le projet du jeu) et écrit exactement les champs `name`, `score`,
+`nuts`, `glands`, plus `uid` quand un utilisateur est signé, plus `createdAt`
+via `setToServerValue: "REQUEST_TIME"` — soit précisément les six clés du
+`hasOnly([...])` du ruleset versionné. `hasOnly` autorisant un sous-ensemble,
+un document sans `uid` (joueur non signé) reste accepté, comme aujourd'hui.
+
+### Le trigger : `main` UNIQUEMENT + path filter — il PROLONGE le palier 2, il ne le contourne pas
+
+`.github/workflows/firestore-rules.yml` (nouveau) :
+
+```yaml
+on:
+  push:
+    branches: [main]
+    paths: ['firestore.rules']
+```
+
+**Pourquoi `main` seul, et pourquoi ce n'est pas un contournement du
+gate.** Les Firestore rules sont **GLOBALES au projet `keepy-8df91`** :
+`staging` et la prod évaluent le MÊME ruleset, il n'existe aucune copie par
+environnement (c'est le fait autour duquel tout l'en-tête de
+`Leaderboard.gd` est écrit). Un déploiement de rules n'a donc **aucun
+palier 1 disponible** — déployer depuis `staging` SERAIT déployer en prod,
+en ayant l'air d'une preview. Le palier 2 (autorisation explicite de
+Mathieu, après validation device, avant tout merge sur `main`) est par
+conséquent **le seul gate qui existe** pour les rules. Lier le trigger à
+`main` met les rules DERRIÈRE ce gate au lieu de passer à côté.
+
+**Pas de `workflow_dispatch`, délibérément** : il permettrait un run manuel
+depuis n'importe quelle ref et n'importe quel état de fichier — exactement
+les deux choses que le trigger existe pour empêcher. Un run échoué se
+relance depuis l'UI Actions sans ça.
+
+**Pas de `cancel-in-progress` sur la `concurrency`** (contrairement à
+`web-build.yml`) : un build web annulé ne laisse qu'un artefact à jeter, un
+déploiement de rules annulé a publié ou pas — un push suivant doit faire la
+queue derrière, pas le tuer.
+
+### ⚠️ C'est un FICHIER DE WORKFLOW SÉPARÉ, pas un job dans `web-build.yml` — contrainte structurelle, pas préférence
+
+Le brief demandait un nouveau JOB dans le workflow existant, gaté par
+`paths: ['firestore.rules']`. **Les deux sont incompatibles dans GitHub
+Actions** : `on.push.paths` est un filtre de **WORKFLOW**, il n'a aucun
+équivalent au niveau job. Poser ce filtre sur `web-build.yml` aurait gaté le
+job build/export/deploy Web sur `firestore.rules` — donc plus aucun
+déploiement web sauf si les rules changent — ce que le brief interdit
+explicitement.
+
+Les contournements possibles à l'intérieur de `web-build.yml` étaient tous
+pires : un `if:` de job plus un `git diff` de la plage poussée (fragile sur
+force-push, premier push et commits de merge, et le workflow tourne quand
+même), ou une action tierce de paths-filter (une dépendance de chaîne
+d'approvisionnement de plus pour ce qu'Actions fait nativement). Le job
+aurait de plus hérité du `cancel-in-progress: true` de `web-build.yml`.
+
+Le filtre est donc gardé **exactement tel que spécifié** — natif, sans
+action, sans heuristique de diff — dans le seul endroit où cette syntaxe
+peut vouloir dire ce qu'elle doit vouloir dire. **`web-build.yml` est
+byte-intouché par ce lot** (`git diff` vide sur ce fichier).
+
+### Authentification : le secret déjà en place, aucun nouveau secret
+
+Secret GitHub utilisé — **nom exact : `FIREBASE_SERVICE_ACCOUNT_KEEPY`**
+(JSON complet d'un compte de service capable de déployer les rules de
+`keepy-8df91`). Il existait déjà, ce lot n'en crée aucun.
+
+Chaîne : `google-github-actions/auth@v2` avec `credentials_json: ${{
+secrets.FIREBASE_SERVICE_ACCOUNT_KEEPY }}` écrit la clé dans un fichier
+temporaire et exporte `GOOGLE_APPLICATION_CREDENTIALS` ; `firebase-tools`
+(installé par `npm install -g firebase-tools`) le lit tout seul — **ni
+`firebase login`, ni `FIREBASE_TOKEN`**. Puis `firebase deploy --only
+firestore:rules --project keepy-8df91 --non-interactive`.
+
+Une étape de garde vérifie la présence du secret et échoue avec un message
+actionnable, même forme que le `Check Vercel secrets` de `web-build.yml` —
+plutôt qu'une erreur d'auth opaque au fond d'un CLI. Une étape `cat
+firestore.rules` précède le déploiement : le log du job porte donc
+littéralement le ruleset publié, à son SHA.
+
+### Comment changer les rules à l'avenir
+
+1. Éditer `firestore.rules` sur une branche feature.
+2. Merger sur `staging` comme d'habitude (palier 1, automatique) — **le job
+   ne se déclenche PAS**, le trigger est scopé `main`. C'est voulu : rien ne
+   part sur le projet live tant que le gate humain n'est pas passé.
+3. Autorisation explicite de Mathieu, puis merge sur `main` (palier 2).
+4. Le job fait le reste. Rien à faire en Console.
+
+⚠️ **La contrainte d'ORDRE du durcissement auth reste ENTIÈREMENT valable,
+seul son MÉCANISME change.** La section « CLASSEMENT CABLE SUR L'AUTH
+GOOGLE » (18 août 2026) décrit le durcissement (`request.auth != null` et
+`request.resource.data.uid == request.auth.uid`) comme une action
+**manuelle en Console, après le merge sur `main`** du client qui envoie
+token et uid. Ce lot ne change pas d'un iota la séquence — durcir avant que
+la PROD serve ce client la casserait à l'instant du changement de rules
+(`PERMISSION_DENIED` sur toute soumission). Il change seulement l'outil :
+le durcissement devient **une édition de `firestore.rules` + un merge sur
+`main`**, et non plus un collage en Console. Le point 2 du « Reste ouvert »
+de cette section-là se lit désormais ainsi.
+
+### Piège payload : les trois fichiers racine et l'export Godot
+
+`export_presets.cfg` utilise `export_filter="all_resources"` (piège déjà
+documenté deux fois dans ce fichier), donc tout nouveau fichier racine
+mérite une mesure et non une supposition. **Bien lui en a pris : le piège
+s'est déclenché.**
+
+⚠️ **`firebase.json` PARTAIT dans le build — mesuré sur un export réel,
+pas prédit.** Le log `savepack` du premier export imprimait `savepack:
+step 89: Storing File: res://firebase.json`, et un `grep` sur le `.pck`
+retrouvait le contenu littéral du fichier. Cause : **Godot importe `.json`
+comme une ressource**. L'argument rassurant qui aurait pu être tenu sans
+mesurer — « `vercel.json` est à la racine depuis des mois sans
+conséquence » — était en fait le contraire d'une preuve : `vercel.json`
+**fuite exactement de la même façon**, ligne `Storing File` comprise, et
+personne ne l'avait vu.
+
+**Corrigé au niveau du preset** (`firebase.json` ajouté à
+`exclude_filter`, à côté de `scripts/dev/*`, `assets_source/*`, `docs/*`
+et `web/*`), puis **re-mesuré sur un export propre** (`build/` supprimé
+d'abord — l'auto-contamination déjà documentée) : `Storing File` passe de
+**130 à 129** entrées, `.pck` de **5 445 376 à 5 445 280** octets, et
+`firestore.rules` / `firebase.json` / `firebaserc` retournent **0
+occurrence** dans le pack. `index.wasm` reste à **35 376 909** — le
+fingerprint déjà consigné pour tout lot qui ne touche pas le code moteur.
+
+**Les deux autres fichiers sont mesurés comme NON packés**, et n'ont donc
+rien reçu : `firestore.rules` (extension inconnue de Godot — l'unique
+occurrence de cette chaîne dans le premier `.pck` était la *valeur JSON*
+à l'intérieur de `firebase.json`, vérifiée par lecture des octets
+alentour, pas le fichier) et `.firebaserc` (fichier caché). Rien n'a été
+ajouté « au cas où » : seul le défaut mesuré est fermé.
+
+⚠️ **`vercel.json` est laissé tel quel, délibérément** — il préexiste à ce
+lot, il ne pèse que 368 octets, et la CI le copie depuis la racine du
+dépôt (`cp vercel.json build/web/vercel.json`), jamais depuis le pack.
+Le signaler ici plutôt que le corriger en douce : c'est le même défaut,
+il appartient à un autre lot.
+
+### Reste ouvert
+
+1. **Le premier run réel**, qui n'aura lieu qu'au merge sur `main` — le
+   trigger étant scopé `main`, **ce lot ne déclenche rien en partant sur
+   `staging`**. C'est à ce run-là qu'on verra si le compte de service a
+   bien la permission `firebaserules.releases.create` : le brief l'affirme,
+   aucune session ne peut le vérifier sans la clé.
+2. Le durcissement auth lui-même (point 2 de la section du 18 août), qui
+   reste la décision et le calendrier de Mathieu — désormais faisable par
+   fichier plutôt qu'en Console.
