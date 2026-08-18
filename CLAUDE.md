@@ -28,11 +28,17 @@ encore active, vérifier avant de coder (`git fetch` + comparer `origin/main`
 Règle permanente, sans exception, pour tout rapport de fin de tâche ou de
 batch produit dans ce repo :
 
-1. **Fence à 4 backticks, toujours.** Le rapport de fin de tâche doit
-   toujours être fourni dans un seul bloc de code Markdown enveloppé par un
-   fence à 4 backticks, pour permettre la copie en un tap sur iPhone. Le
-   rapport reste un bloc unique, jamais paginé en plusieurs messages ni
-   plusieurs blocs. Cette règle est permanente, sans exception.
+1. **Fence à 4 backticks, toujours — jamais de Markdown brut.** Le rapport
+   de fin de tâche ou de batch doit toujours être fourni ENVELOPPÉ dans un
+   fence à 4 backticks (jamais du Markdown rendu directement dans la
+   réponse), pour permettre la copie en un tap sur iPhone. Le rapport reste
+   un bloc unique, jamais paginé en plusieurs messages ni plusieurs blocs.
+   Cette règle est permanente, sans exception, et ne connaît **aucune
+   distinction avec la convention Keepr** sur ce point — même exigence des
+   deux côtés. (Corrigé le 17 août 2026 : une formulation antérieure avait
+   pu se lire à l'envers — comme si un bloc Markdown simple, non enveloppé,
+   suffisait. Ce n'a jamais été l'intention ; ce paragraphe la clarifie sans
+   ambiguïté possible.)
 2. **Structure fixe**, dans cet ordre : BRANCH, COMMITS, FILES, BUILD,
    DEPLOY, VALIDATION CHECKLIST, NEXT STEPS, DOCS STATUS.
 3. **UN SEUL bloc Markdown, toujours — la pagination est INTERDITE, sans
@@ -4012,6 +4018,31 @@ concurrente qui n'a pas été écartée. À essayer en premier quand un poll sem
 figé, avant de conclure quoi que ce soit sur l'état du job ; ça ne coûte rien
 et, si ça ne suffit pas, la règle `completed_at` reste seule juge.
 
+## ⚠️ L'API VERCEL AUSSI SERT DES RÉPONSES PÉRIMÉES SUR LE STATUT D'UN DÉPLOIEMENT — même famille que GitHub Actions ci-dessus (17 août 2026)
+
+**Pas seulement le dashboard web : l'API Vercel elle-même.** Un poll fait
+juste après qu'un run CI se soit terminé (`conclusion: success`, déploiement
+déjà en place) a rendu un statut « encore en cours » pendant **~25 minutes**
+de plus, alors que le déploiement était déjà terminé et servait déjà le
+trafic. Même mode de panne que la section GitHub Actions juste au-dessus :
+un champ de statut d'API n'est pas une observation en temps réel, c'est une
+lecture potentiellement mise en cache en amont.
+
+**Conséquence pratique, identique à la règle GitHub Actions** : **un seul
+poll à `status`/état « completed » ne suffit PAS comme preuve de fraîcheur**,
+et **un seul appel API ne suffit pas non plus** — l'API peut être aussi
+périmée que le dashboard qu'elle est censée remplacer. Avant de conclure
+qu'un déploiement est fini, en échec, ou encore en cours à partir d'un appel
+Vercel, recouper avec un second signal indépendant (un nouvel appel après un
+délai, ou une preuve côté site réellement servi — fingerprint
+`GODOT_CONFIG.fileSizes`, `x-vercel-cache`, horodatage `last-modified` —
+comme déjà pratiqué ailleurs dans ce fichier pour vérifier un fingerprint de
+prod). Ne jamais traiter un unique `status=completed` (ou son équivalent
+Vercel) comme une preuve suffisante à lui seul — le corollaire GitHub Actions
+ci-dessus (« ne jamais lire un état de CI ou de déploiement sans regarder son
+horodatage ») s'applique donc aussi aux réponses de l'API Vercel, pas
+seulement à celles de GitHub Actions.
+
 ## BANDE BLANCHE SOUS LE BOUTON « JOUER » (iOS Safari / PWA, safe-area) — coquille HTML custom ajoutée (17 août 2026)
 
 Branche `claude/keepy-safe-area-fix-obp7bm`, partie de `staging` (`016ada3`).
@@ -4272,3 +4303,1047 @@ sur son téléphone, la marge restante (44,4px) donne ~44px de budget
 supplémentaire avant de retoucher la marge de sécurité elle-même
 (actuellement fixée par convention, pas par une contrainte matérielle
 mesurée dans ce sandbox).
+
+## GOOGLE SIGN-IN : `signInWithRedirect` → `signInWithPopup` — le redirect ne revenait JAMAIS sur Safari iOS (17 août 2026)
+
+Branche `claude/google-signin-popup-migration-hdslwn`, partie de `staging`
+(`e844824`). **Première section auth de ce fichier** : le lot qui a posé la
+porte Google Sign-In (`aa66ab0`, le matin même) n'a documenté son
+raisonnement que dans son message de commit — ce paragraphe régularise, il
+ne remplace rien.
+
+⚠️ **Ce n'est PAS un réglage, c'est un changement de FLOW** : le redirect
+ne pouvait structurellement pas fonctionner sur ce déploiement, et aucune
+valeur de paramètre ne l'aurait sauvé.
+
+### Le défaut, confirmé sur device (screenshots à l'appui, ne pas re-questionner)
+
+Chaîne observée sur `keepy-staging.vercel.app`, Safari iOS, wifi actif :
+bouton tapé → page blanche bloquée sur `keepy-8df91.firebaseapp.com`,
+chargement infini → retour sur l'app → « Connexion en cours... » → au bout
+de **12 s** (`BRIDGE_TIMEOUT_S` d'`Auth.gd`) → « Le module de connexion ne
+répond pas ». Le round-trip ne se termine jamais.
+
+**Cause : storage partitioning ITP.** Le flow redirect gare son état en
+attente sur l'**authDomain** (`keepy-8df91.firebaseapp.com`), qui n'est PAS
+l'origine de l'app (`*.vercel.app`). Safari donne à cette origine une
+partition de stockage différente quand elle est chargée en tierce partie :
+l'état écrit à l'aller n'est pas celui relu au retour. Deux origines
+distinctes qui ne partagent pas l'état de redirection en attente — le
+`getRedirectResult()` du retour ne trouve donc rien, pour toujours.
+
+**Pourquoi le popup n'a pas ce problème** : il n'a AUCUN état cross-origin
+à faire survivre à une navigation. Le popup reposte son résultat vers
+**cette** fenêtre, dans **la même** session JS, et la promesse se résout sur
+place. C'est aussi pourquoi tout le mécanisme `sessionStorage` de détection
+de redirect perdu (`PENDING_KEY` / `readPending()` / `writePending()`) est
+**retiré et pas neutralisé** : il n'avait plus rien à détecter.
+
+### `Cross-Origin-Opener-Policy: same-origin` → `same-origin-allow-popups`
+
+`vercel.json`, règle site-wide `/(.*)`. **Indispensable** : sous
+`same-origin`, le navigateur coupe le lien `window.opener` entre le popup et
+la fenêtre principale, donc le `postMessage` par lequel le SDK Firebase
+rend son résultat n'arrive jamais — le popup s'ouvrirait et ne servirait à
+rien. `Cross-Origin-Embedder-Policy: require-corp` et la règle `.wasm` sont
+**intouchés**.
+
+⚠️ **La formulation courante « `same-origin-allow-popups` coexiste avec
+`crossOriginIsolated` » est FAUSSE, et c'est vérifié plutôt qu'accepté :**
+l'isolation cross-origin exige COOP **`same-origin`** + COEP
+`require-corp`. Passer à `same-origin-allow-popups` fait donc tomber
+`crossOriginIsolated` à `false`, et avec lui `SharedArrayBuffer`.
+
+**C'est sans conséquence ICI, et c'est mesuré sur le build réel, pas
+supposé** : l'export web de ce projet est un build **nothreads** —
+`GODOT_THREADS_ENABLED = false` et `"ensureCrossOriginIsolationHeaders":
+false` lus dans l'`index.html` généré par l'export de ce lot (cohérent avec
+les templates `web_nothreads_{debug,release}.zip` déjà documentés plus
+haut). Aucun `SharedArrayBuffer` n'est demandé, donc l'isolation
+cross-origin ne servait rien à ce jeu. **Corollaire pour plus tard : le
+jour où quelqu'un active le support threads dans le preset Web, ce COOP
+devient bloquant** — les deux réglages sont incompatibles et il faudra
+trancher entre threads et popup OAuth.
+
+### Codes d'erreur : trois nouveaux, les anciens CONSERVÉS
+
+Le contrat de robustesse existant est étendu, jamais cassé : aucun chemin ne
+crashe, chaque chemin finit en signal, chaque code a un message français
+associé dans `LoginScreen._message_for()`.
+
+| code | origine | traitement écran |
+|---|---|---|
+| `popup-blocked` | `auth/popup-blocked` | « Ton navigateur bloque les popups… » |
+| `popup-cancelled` | `auth/popup-closed-by-user`, `auth/cancelled-popup-request` | **neutre** : « Connecte-toi pour jouer. », sans détail |
+| `popup-start-failed` | tout autre code | « La connexion Google a échoué. » |
+
+⚠️ **`popup-cancelled` voyage par `auth_error` alors que ce n'est PAS une
+erreur, et ce n'est pas un compromis paresseux — c'est obligatoire :**
+`_on_sign_in_pressed()` **désactive** le bouton, et `auth_error` est le seul
+canal qui le réactive. Publier « silencieusement » (l'autre option offerte)
+laisserait un bouton mort sous un « Connexion à Google... » figé, pour un
+joueur qui a simplement fermé le popup. La distinction failure/neutre est
+donc portée par `LoginScreen.NEUTRAL_CODES`, qui rend le message
+d'invitation **sans le détail entre parenthèses** — `auth/popup-closed-by-
+user` sous une ligne disant que tout va bien se lit comme une contradiction.
+
+⚠️ **Le `publish({error: '', detail: ''})` avant chaque tentative est
+PORTEUR, pas de la coquetterie** : `Auth._apply_snapshot()` ne ré-émet
+`auth_error` que si le code **change**. Sans ce reset, deux popups annulés
+d'affilée produiraient deux fois le même code, le second serait avalé, et le
+bouton resterait désactivé pour de bon.
+
+**Les codes `redirect-lost` / `redirect-failed` / `redirect-start-failed`
+sont GARDÉS dans le `match`** bien qu'aucun chemin du shell actuel ne puisse
+plus les émettre. Un joueur dont le navigateur ou le service worker sert
+encore un build en cache de l'ancienne coquille est exactement celui qui a
+le plus besoin d'un message lisible ; les retirer lui servirait le fallback
+générique « Connexion impossible. ». Trois lignes, contre la leçon déjà
+payée au lot gzip du classement.
+
+### Régression de flash évitée — un effet de bord du `getRedirectResult()` supprimé
+
+`await getRedirectResult(auth)` attendait aussi, **par effet de bord**,
+l'initialisation du SDK : `auth.currentUser` était donc déjà peuplé quand
+`ready` basculait. Le retirer sans rien mettre à la place aurait publié
+`signed_out` + `ready` à un joueur dont la session persistée était encore en
+cours de restauration — donc **un flash de l'écran de login** à chaque
+retour, exactement ce que les commentaires du shell interdisent. Remplacé
+par une promesse résolue au **premier** `onAuthStateChanged` (que le SDK tire
+toujours une fois, connecté ou non), attendue avant de basculer `ready`. Si
+ce callback n'arrive jamais, rien ne rapporte et le `BRIDGE_TIMEOUT_S` de 12 s
+d'`Auth.gd` le remonte — c'est précisément le rôle de ce garde-fou.
+
+`onAuthStateChanged` **reste la source de vérité unique** pour `uid`/`idToken` :
+la résolution du popup ne publie rien en cas de succès, pour ne pas créer un
+second écrivain sur le même fait.
+
+### ⚠️ RISQUE CONNU, NON CORRIGÉ ICI — Safari et l'activation utilisateur
+
+**Ce point ne peut être tranché que par le test device qui suit.** Safari
+est le navigateur le plus strict sur l'ouverture d'un popup : historiquement
+il exigeait un `window.open` **dans la même pile d'appel** que le geste
+utilisateur réel.
+
+**La chaîne de ce jeu n'est PAS synchrone dans ce sens, et c'est vérifié sur
+le build exporté, pas supposé** : les listeners DOM de Godot sont
+`touchend`/`mouseup`, `project.godot` ne pose aucun
+`input_devices/buffering/agile_event_flushing` (donc défaut = événements
+bufferisés, vidés une fois par frame), et la boucle moteur tourne sous
+`requestAnimationFrame`. Le signal `pressed` du bouton — donc
+`Auth.sign_in()`, donc `JavaScriptBridge.eval()`, donc le `window.open` du
+SDK — s'exécute dans une **tâche rAF distincte** du handler DOM d'origine.
+
+Le popup dépend donc de la **transient user activation** (fenêtre temporelle
+de ~5 s après un geste, honorée par Chrome/Firefox) et non d'une même pile
+d'appel. **Ce qui est incertain est le comportement réel de Safari iOS dans
+cette fenêtre** — pas la mécanique côté Godot, qui est établie ci-dessus.
+
+**Aucun contournement n'a été tenté**, délibérément : intercaler un
+`window.open('about:blank')` posé plus tôt puis re-ciblé, ou déplacer le
+déclenchement dans un listener DOM en amont du moteur, sont deux
+changements structurels qu'il serait absurde d'engager avant de savoir si le
+défaut existe. Si Safari refuse, il le dira **proprement** : c'est
+exactement le chemin `auth/popup-blocked` → `popup-blocked` → message
+français explicite, et non un nouveau blocage silencieux de 12 s.
+
+### Validation
+
+Import headless **exit 0**, export Web release **exit 0**, boot de
+`LoginScreen.tscn` (`--quit-after 3`) **exit 0** — aucune erreur de parse.
+`index.wasm` **35 376 909 octets**, identique au fingerprint consigné pour
+tout lot ne touchant pas le code moteur. `index.html` généré vérifié :
+`signInWithPopup` présent **en code** (les seules occurrences restantes de
+`signInWithRedirect` et `getRedirectResult` sont dans des commentaires),
+**0** occurrence de `PENDING_KEY` / `readPending` / `writePending` /
+`redirect-lost` / `redirect-start-failed`, et `viewport-fit=cover` +
+`#101d0b` toujours en place (le fix safe-area du même jour n'est pas abîmé).
+
+**Sondes : 6 rejouées, TOUTES byte-identiques sur les deux flux** contre
+`origin/staging` en worktree séparé, même graine 20260806, `--fixed-fps 60` —
+`ProbeTimeoutAudit` (**33 sondes armées**), `AssetContractAudit` (12/12
+visuels, **0/10 colliders déplacés**), `DeathModelAudit`,
+`ChargerShapeProbe`, `ComboAudit`, `ShrinkAudit`. C'est le résultat attendu
+et il est **mesuré, pas argumenté** : `Auth.gd` est un autoload, donc il
+tourne dans CHAQUE sonde — mais ce lot n'y change que des commentaires, et
+`LoginScreen.gd` n'est chargé par aucune sonde (elles lancent leur propre
+`.tscn` et ne passent jamais par `run/main_scene`). L'identité au bit près
+le dit plus fort qu'un simple verdict identique.
+
+### Reste ouvert — jugement device, seul juge
+
+Le test sur iPhone Safari (onglet normal **et** PWA installée) doit répondre
+à trois questions, dans cet ordre : (a) le popup s'ouvre-t-il **du tout**
+— c'est l'incertitude d'activation utilisateur ci-dessus ; (b) si oui, la
+connexion aboutit-elle et le jeu se lance-t-il ; (c) fermer le popup à la
+main laisse-t-il bien un bouton réactivé et le message d'invitation, sans
+message d'échec rouge. Aucune sonde de ce dépôt ne rend de pixels iOS réels
+— c'est structurellement hors de portée d'un test headless Godot.
+
+## GOOGLE SIGN-IN : LE POPUP A ÉCHOUÉ AUSSI — proxy `/__/auth/*` pour unifier l'origine, retour au redirect (17 août 2026)
+
+Branche `claude/firebase-auth-cross-origin-fix-oiffyd`, partie de `staging`
+(`ffabe64`). Le popup du lot précédent a été testé sur device et a échoué
+**pour une raison différente du redirect, mais avec la MÊME cause racine**.
+Ce lot ne retente pas un troisième mode d'auth : il corrige l'origine.
+
+### Les deux échecs mesurés sur device (ne pas re-tester, ne pas re-questionner)
+
+- **`signInWithRedirect`** (lot du matin) : page blanche bloquée sur
+  `keepy-8df91.firebaseapp.com`, jamais de retour, timeout 12 s côté
+  `Auth.gd`. Cause déjà documentée ci-dessus : l'état de redirection en
+  attente est gardé sur l'authDomain, une origine tierce pour Safari ITP,
+  qui lui donne une partition de stockage différente de celle de l'app.
+- **`signInWithPopup`** (lot suivant, ce jour) : le popup s'ouvre — l'incertitude
+  d'activation utilisateur documentée plus haut n'était **pas** le problème
+  — la mire Google s'affiche, l'authentification se fait. Mais sur iOS le
+  popup s'ouvre comme un **nouvel onglet** ; le joueur revient manuellement
+  à l'app, et le `postMessage` par lequel le SDK doit livrer son résultat
+  **n'atteint jamais l'opener**. Bouton grisé indéfiniment, aucune session
+  écrite.
+
+**Cause commune aux deux, et c'est ce que ce lot corrige** : `authDomain`
+(`keepy-8df91.firebaseapp.com`) est une origine différente de celle de l'app
+(`*.vercel.app`). Que le SDK gare son état dans une navigation cross-origin
+(redirect) ou dans une fenêtre cross-origin qui doit reposter vers l'opener
+(popup), Safari coupe la même relation à chaque fois. Aucun réglage de
+paramètre ne l'aurait résolu sur l'un ou l'autre flow — il fallait supprimer
+le cross-origin lui-même.
+
+### 1. Proxy `/__/auth/*` — `vercel.json`
+
+Approche vérifiée dans la documentation officielle avant implémentation
+(Google Cloud Identity Platform, « Showing a custom domain during sign
+in » / « How to customize auth handler » ; recoupé par l'issue
+firebase-js-sdk #7824 et plusieurs implémentations de référence nginx/Vercel)
+plutôt que prise sur parole : la manière documentée de servir le handler
+Firebase Auth depuis l'origine de l'app est un reverse proxy transparent sur
+`/__/auth/*`, `authDomain` étant ensuite pointé sur le domaine propre de
+l'app. Firebase lui-même sert cette arborescence en statique sous
+l'authDomain par défaut ; la proxifier ne change rien à son contenu, elle
+change seulement quelle origine le NAVIGATEUR croit avoir jamais quittée.
+
+```json
+"rewrites": [
+  { "source": "/__/auth/:path*", "destination": "https://keepy-8df91.firebaseapp.com/__/auth/:path*" }
+]
+```
+
+**Conflit réel identifié et corrigé, pas ignoré** : la règle `headers`
+site-wide (`"source": "/(.*)"`) posait déjà `Cross-Origin-Embedder-Policy:
+require-corp` sur TOUTE réponse, `/__/auth/*` compris — les règles
+`headers` de Vercel matchent sur le chemin de la requête ORIGINALE,
+indépendamment des `rewrites`. Appliquer COEP `require-corp` à une page
+`/__/auth/handler` que Firebase sert (potentiellement chargée de
+sous-ressources gstatic non maîtrisées par ce dépôt) risque de la casser en
+silence si l'une de ces sous-ressources n'annonce pas
+`Cross-Origin-Resource-Policy`. Corrigé en excluant `/__/auth/*` de cette
+règle par lookahead négatif groupé (syntaxe confirmée dans la doc Vercel
+elle-même, `error-list` : un lookahead négatif nu est rejeté, il doit être
+enveloppé dans un groupe) :
+
+```json
+"source": "/((?!__/auth/).*)"
+```
+
+`Cross-Origin-Opener-Policy` **revient à `same-origin`** (elle était passée
+à `same-origin-allow-popups` pour le popup, désormais retiré — voir §4) :
+plus aucun `window.open` n'est émis par ce dépôt, donc plus aucune raison de
+sacrifier `crossOriginIsolated`. La règle `.wasm` (`Content-Type`) est
+**intouchée**, et continue de s'appliquer normalement puisque aucun `.wasm`
+ne vit sous `/__/auth/`.
+
+**Conflit avec le service worker PWA : vérifié, pas de conflit.** Déjà établi
+dans ce fichier (section CLASSEMENT PWA, 14-15 août) sur les octets
+RÉELLEMENT servis par `keepy-staging.vercel.app` : le handler `fetch` du
+service worker généré par Godot n'appelle `event.respondWith()` que pour une
+navigation ou un fichier de `CACHED_FILES`/`CACHABLE_FILES` (index.html/js/
+wasm/pck…) — `isCachable` ne peut structurellement jamais être vrai pour une
+requête vers `/__/auth/*`, donc c'est un passthrough complet, identique à
+l'absence de service worker. Ce lot ne réinstrumente pas cette vérification
+(déjà faite et documentée), il en confirme la portée : `/__/auth/*` n'est
+dans aucune des deux listes.
+
+### 2. `authDomain` dynamique — `web/html_shell.html`
+
+`resolveAuthDomain()` (nouvelle) : si `window.location.hostname` est
+`keepy-ten.vercel.app` ou `keepy-staging.vercel.app` (les deux seuls
+domaines où le proxy ci-dessus est réellement déployé), `authDomain` devient
+**ce hostname lui-même** — le navigateur ne quitte alors plus jamais son
+origine pendant la connexion, hormis la navigation top-level inévitable vers
+`accounts.google.com`, qui n'est pas soumise à COEP (COEP ne gouverne que
+les sous-ressources d'un document, pas une navigation top-level d'onglet/
+fenêtre).
+
+**Fallback explicite pour tout hostname inconnu** (déploiements preview
+Vercel à URL aléatoire par commit) : `authDomain` reste
+`keepy-8df91.firebaseapp.com`, l'ancien comportement cross-origin — **pas
+pour que ça marche** (voir §3), mais pour ne jamais faire croire à un proxy
+qui n'a pas été déployé pour cet hôte. Un diagnostic est publié dans
+`window.keepyAuth` (`authDomainFallback: true`,
+`authDomainFallbackDetail: '...'`) dès la résolution, avant tout tentative
+de connexion — visible via `keepyAuthSnapshot()` sans attendre un échec.
+**Décision assumée** : ce diagnostic est publié comme un champ d'état, pas
+comme un `error` — publier un `error` à ce stade déclencherait
+`auth_error` sur `Auth.gd` avant même que le joueur ait tapé le bouton, sur
+un hostname où la connexion n'a en réalité pas encore été tentée et pourrait
+en théorie réussir hors Safari. `Auth._apply_snapshot()` ignore les clés
+qu'elle ne connaît pas — inerte côté GDScript, aucun changement de contrat
+nécessaire côté `Auth.gd` pour ce lot.
+
+### 3. Conséquence sur les domaines Authorized — ce qui se passe sur une preview URL
+
+**Chaque domaine qui sert l'app doit être dans Authorized domains Firebase**
+— indépendamment du proxy : c'est une vérification Firebase séparée, faite
+sur l'origine de la requête, qui rejette avec `auth/unauthorized-domain`
+n'importe quel domaine absent de la liste, quel que soit `authDomain`.
+`keepy-ten.vercel.app` et `keepy-staging.vercel.app` y sont déjà.
+
+**Sur une URL de preview Vercel (`keepy-git-*.vercel.app`, un hostname
+aléatoire par commit) : le sign-in échouera, et c'est structurel, pas un
+bug de ce lot.** Deux raisons qui s'additionnent : (a) `resolveAuthDomain()`
+retombe sur l'ancien `authDomain` cross-origin, donc le défaut ITP/popup
+d'origine se reproduit tel quel sur Safari ; (b) même si l'origine était
+unifiée, une URL de preview ne peut de toute façon **jamais** être ajoutée
+aux Authorized domains — son hostname change à chaque commit, la liste
+Firebase n'accepte que des hostnames fixes. Le joueur y verra un
+`popup-start-failed`/`redirect-start-failed` avec `auth/unauthorized-domain`
+dans le détail (le catch existant le capture déjà, aucun code nouveau requis
+pour ça). **À savoir avant de tester une preview URL et de croire à une
+régression : c'est l'état attendu, pas une casse.**
+
+### 4. Popup ou redirect une fois l'origine unifiée : REDIRECT retenu, popup retiré
+
+**Choix tranché en faveur du redirect**, comme suggéré. Justification propre
+à ce dépôt, pas seulement la recommandation générale mobile :
+
+L'échec du popup documenté en §… ci-dessus n'était **pas** de la même nature
+que celui du redirect — il ne s'agissait pas de storage partitioning à
+l'aller-retour mais du comportement propre de Safari iOS qui transforme un
+popup en nouvel onglet, combiné à un retour manuel du joueur qui semble
+casser la référence `window.opener`/le canal `postMessage`. **Unifier
+l'origine ferme le problème du redirect avec certitude** (l'état en attente
+n'a plus de frontière de partition tierce à traverser), mais ne ferme le
+problème du popup qu'**avec incertitude** — rien ne garantit que la
+gestion d'onglet de Safari et la survie de `window.opener` à travers un
+changement d'app en arrière-plan se comportent différemment une fois
+popup et opener same-origin. Le redirect, lui, n'a structurellement **aucun**
+onglet à gérer et **aucun** `postMessage` à perdre : c'est une navigation
+de page pleine, le geste mobile le plus élémentaire et le mieux éprouvé — y
+compris par Safari iOS lui-même sur d'innombrables flows « Continuer avec
+Google » ailleurs sur le web.
+
+**Restauré dans `web/html_shell.html`** (retiré au lot popup, remis à
+l'identique fonctionnel, `authDomain` dynamique en plus) :
+`getRedirectResult(auth)` appelé au chargement, `PENDING_KEY`
+(`keepy.auth.redirect.pending`) + `readPending()`/`writePending()` en
+`sessionStorage` pour détecter un redirect qui revient sans rien (partait
+avec `wasPending=true`, revient sans `cred` ni `auth.currentUser` →
+`redirect-lost`), `keepySignInWithGoogle()` appelle `signInWithRedirect`
+au lieu de `signInWithPopup`. **Rien du flow popup ne reste en JS actif** :
+`signInWithPopup` n'apparaît plus une seule fois dans le fichier, vérifié
+sur le `index.html` généré par l'export.
+
+Le remplacement de la promesse `firstState`/`resolveFirstState`
+(introduite au lot popup pour flipper `ready` seulement après le premier
+`onAuthStateChanged`, en remplacement de la garantie que
+`getRedirectResult()` donnait déjà par effet de bord) **par le
+`getRedirectResult()` original** n'est pas une régression : c'est
+précisément la garantie que ce mécanisme de remplacement existait pour
+recréer, désormais inutile puisque sa cause est restaurée. Garder les deux
+aurait été une redondance, pas une robustesse en plus.
+
+`scripts/autoload/Auth.gd` et `scripts/ui/LoginScreen.gd` : **aucun
+changement de comportement**, seulement des commentaires mis à jour
+(le bloc d'en-tête d'`Auth.gd`, la docstring de `sign_in()`, la liste des
+codes possibles sur `auth_error`, le commentaire au-dessus de
+`_message_for()`). **Les codes `popup-*` sont CONSERVÉS** dans
+`LoginScreen._message_for()`, au même titre que `redirect-*` l'était resté
+au lot popup : un navigateur ou service worker servant encore un shell en
+cache du lot popup est exactement celui qui a besoin d'un message lisible.
+`NEUTRAL_CODES` (`popup-cancelled`) est inchangé pour la même raison — le
+redirect n'a pas d'équivalent « annulé proprement » à ajouter : un joueur
+qui fait demi-tour pendant un redirect ne déclenche aucun événement côté
+app tant qu'il ne revient pas dessus, exactement comme dans l'implémentation
+d'origine avant le lot popup.
+
+### 5. Cache-Control sur `index.html`
+
+`vercel.json`, deux nouvelles règles `headers` (`"/"` et `"/index.html"`,
+les deux nécessaires puisque le site est servi à la racine et qu'un lecteur
+peut viser l'un ou l'autre) : `Cache-Control: no-cache, must-revalidate`.
+**`.wasm`/`.pck` non touchés** — leurs noms de fichier ne changent pas d'un
+build à l'autre (`index.wasm`/`index.pck`, pas de hash de contenu dans le
+nom), donc les laisser cachables reste correct ; c'est `index.html` qui
+référence leur taille exacte via `GODOT_CONFIG` et doit toujours être la
+version fraîche. **Motif mesuré, pas préventif** : la porte d'auth
+(lot du 17 août) est restée invisible **deux fois** sur `staging` tant qu'un
+cache-bust manuel (`?v=2`) n'était pas forcé à la main — deux sessions de
+test device faussées par un `index.html` mis en cache par le navigateur/CDN
+avant même que la question de l'auth ne se pose.
+
+### Validation
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce lot
+(releases GitHub officielles). Import headless **exit 0**, export Web
+release **exit 0** (`xvfb-run`), boot de `res://scenes/LoginScreen.tscn`
+(`--quit-after 2`) **exit 0**, aucune erreur de parse sur les deux `.gd`
+modifiés. `index.wasm` **35 376 909 octets**, identique au fingerprint
+consigné pour tout lot ne touchant pas le code moteur — cohérent, ce lot ne
+touche que des commentaires GDScript et des fichiers hors ressources Godot
+(`vercel.json`, `web/html_shell.html`). `vercel.json` validé comme JSON
+strict avant commit. `index.html` généré vérifié : **0** occurrence de
+`signInWithPopup`, `getRedirectResult`/`resolveAuthDomain`/
+`KNOWN_AUTH_HOSTS`/`signInWithRedirect` bien présents en code.
+
+**4 sondes rejouées sur cette branche, toutes exit 0** : `ProbeTimeoutAudit`
+(**33 sondes armées**, chiffre inchangé), `AssetContractAudit` (12/12
+visuels, **0/10 colliders déplacés**), `DeathModelAudit` (CHARGER seul
+fatal, les 5 autres types 1 demi-unité, capture au 2ᵉ contact — inchangé),
+`ChargerShapeProbe`. **Structurellement, ce lot ne peut pas déplacer un flux
+RNG seedé** : `Auth.gd` tourne dans chaque sonde en tant qu'autoload, mais
+son `_ready()` sort avant toute ligne utile dès que `OS.has_feature("web")`
+est faux (systématique sous `--headless`) — rien de ce lot n'est dans le
+chemin que les sondes exécutent, et le diff des trois fichiers `.gd`/`.tscn`
+touchés par ce lot au global est nul (`LoginScreen.gd`/`Auth.gd` uniquement,
+tous deux hors du chemin de chargement `run/main_scene` des sondes).
+`ComboAudit`/`ShrinkAudit` n'ont pas pu être rejouées jusqu'au bout dans ce
+sandbox avant l'envoi de ce rapport (CPU partagée avec l'export/les autres
+sondes, chacune de l'ordre de plusieurs minutes) — attendu byte-identique
+par le même argument structurel, pas mesuré ici ; à vérifier si un doute
+subsiste.
+
+### Reste ouvert — jugement device, seul juge
+
+Le test sur iPhone Safari (onglet normal **et** PWA installée si possible)
+doit confirmer, dans cet ordre : (a) le tap sur « Se connecter » redirige
+bien vers un `/__/auth/...` sous `keepy-staging.vercel.app` — c'est la
+preuve visuelle la plus directe que le proxy est actif (l'URL affichée par
+Safari ne doit **jamais** montrer `firebaseapp.com`) ; (b) le retour après
+consentement Google atterrit bien sur l'app avec une session écrite, sans
+passer par le timeout de 12 s ; (c) qu'un rechargement à froid de
+`keepy-staging.vercel.app` (pas juste un retour d'onglet) serve bien la
+version fraîche du gate — c'est ce que le fix Cache-Control du §5 doit
+garantir, et c'était justement invisible sans cache-bust manuel lors des
+deux tests précédents. Aucune sonde de ce dépôt ne rend de pixels iOS réels
+ni ne peut suivre une redirection cross-origin réelle vers
+`accounts.google.com` — c'est structurellement hors de portée d'un test
+headless Godot.
+
+## GOOGLE SIGN-IN : INSTRUMENTATION DE DIAGNOSTIC — aucun fix, objectif
+## localiser le prochain `bridge-timeout` sans devtools (17 août 2026)
+
+Branche `claude/google-signin-timeout-debug-5vg5pq`, redémarrée sur
+`origin/staging` (`7582b70`) — la branche n'avait aucun commit propre,
+elle pointait encore sur un vieux commit `main` antérieur au gate
+Google Sign-In (aucun `Auth.gd` sur cet arbre). **Diagnostic pur, comme
+demandé : aucune ligne de logique d'auth n'est changée.** Le flow
+timeout (bridge-timeout à 12 s) de façon non reproductible, sur Safari
+iOS et Chrome Android, sans accès devtools pour Mathieu (iPhone-only) —
+objectif de ce lot : rendre chaque étape du chargement visible à l'écran,
+pour que le prochain timeout dise EXACTEMENT où ça a coincé.
+
+**Six checkpoints ajoutés dans `web/html_shell.html`**, chacun publié via
+le canal existant (`publish()` → `window.keepyAuthNotify` →
+`Auth._on_js_auth_event`), jamais un nouveau canal :
+`sdk-import-started` → `sdk-import-done` → `app-initialized` →
+`auth-obtained` → `listener-registered` → `first-auth-state-received`
+(ce dernier au tout premier `onAuthStateChanged`, même `user=null` —
+gardé par une fermeture `firstAuthStateSeen`, pas par un champ sur
+`window.keepyAuth`, pour ne pas alourdir chaque snapshot JSON d'un
+booléen qu'Auth.gd n'a pas besoin de lire). Chaque checkpoint publie
+`{ stage, stageAt }` (`Date.now()`) ; `window.keepyAuth.bootAt` est posé
+UNE fois, à la toute première ligne du fichier (avant même la
+déclaration de l'objet), pour qu'`Auth.gd` calcule un écart en secondes
+sans posséder sa propre horloge. Chaque checkpoint passe aussi par
+`console.log('[keepyAuth] stage=... elapsedMs=...')`, pour le jour où
+Mathieu peut brancher un Mac — mais c'est le canal secondaire : le canal
+écran (ci-dessous) est celui qui compte pour son setup réel.
+
+**`scripts/autoload/Auth.gd`** : nouveau signal diagnostic-only
+`auth_debug_stage_changed(stage, elapsed_s)`, émis depuis
+`_apply_snapshot()` à chaque nouveau `stage` reçu (comparaison sur
+`stage` + `stageAt`, pas seulement `stage`, pour ne pas rater un second
+passage sur le même checkpoint) ; deux nouveaux getters
+`get_debug_stage()` / `get_debug_stage_elapsed_s()`. **Aucune branche
+existante n'est touchée** — `_debug_stage`/`_debug_stage_at`/
+`_debug_boot_at` sont des variables neuves, lues nulle part ailleurs
+dans ce fichier, donc rien dans le comportement de `sign_in()`, du
+timeout 12 s ou de `_apply_snapshot()` pour `status`/`error`/`uid` n'a
+changé de chemin.
+
+**`scenes/LoginScreen.tscn` / `scripts/ui/LoginScreen.gd`** : un nouveau
+`Label` discret (`DebugStageLabel`, taille 16, `modulate` alpha 0.55)
+sous `OfflineButton`, dernier enfant du même `VBoxContainer` que
+`StatusLabel`/`SignInButton` — aucun nœud existant déplacé ni retouché.
+Affiche `"etape: <stage> (<elapsed>s)"`, mis à jour par
+`_on_auth_debug_stage_changed()` sur le nouveau signal, avec le même
+patron défensif que `_refresh_from_auth()` (`_refresh_debug_stage_label()`
+lit l'état déjà connu au cas où un checkpoint serait arrivé avant que
+cette scène ne connecte le signal). Si le bridge se bloque à nouveau,
+ce label reste figé sur le dernier stage atteint — exactement le
+symptôme que Mathieu doit pouvoir lire et rapporter.
+
+### Bug réel repéré en lisant le code, PAS corrigé — pour discussion
+
+Consigne de session explicite : ne pas patcher à l'aveugle une deuxième
+fois. `LoginScreen.gd._refresh_from_auth()` affiche
+`"Connexion en cours..."` tant que `Auth.is_ready()` est faux, mais rien
+n'y montre le champ `status` intermédiaire que le shell publie AVANT
+`ready` (`'redirecting'` au clic sur connexion, ou le `status` restauré
+au retour d'un redirect). Un joueur dont le retour de Google prend
+plusieurs secondes voit un texte figé identique du premier instant au
+`bridge-timeout` (ou au succès), avec le nouveau `DebugStageLabel` comme
+seule source de mouvement à l'écran. Cette instrumentation le couvre déjà
+partiellement (les 6 checkpoints tournent bien avant le retour de
+Google), mais le `status` lui-même n'est pas un des 6 checkpoints
+demandés — signalé, pas traité ici.
+
+### Validation
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce
+lot (releases GitHub officielles, réseau disponible). Les deux blocs
+`<script>` de `web/html_shell.html` extraits et vérifiés avec
+`node --check` (syntaxe seule, aucun DOM/Firebase réel en headless) :
+**les deux OK**. Import headless **exit 0**, export Web release **exit
+0** — `index.wasm` **35 376 909 octets**, identique au fingerprint déjà
+consigné pour tout lot qui ne touche pas le code moteur (cohérent : deux
+fichiers `.gd`, un `.tscn`, un `.html` d'export shell, aucun changement
+à `project.godot` ni aux autoloads enregistrés). Vérifié dans
+`build/web/index.html` exporté : les six identifiants de checkpoint et
+`bootAt` sont bien présents dans le bundle livré, pas seulement dans la
+source.
+
+`res://scenes/LoginScreen.tscn` bootée seule en headless
+(`--quit-after 2`) : **exit 0**, aucune erreur de parse ni de nœud
+manquant (branche hors-web, celle que tout probe emprunte). `Auth.gd`
+tourne dans chaque sonde en tant qu'autoload, mais sa `_ready()` sort
+avant toute ligne utile dès que `OS.has_feature("web")` est faux
+(systématique sous `--headless`) — les nouvelles variables/signal ne
+sont donc jamais exercés par un probe, par construction, pas par chance.
+`ProbeTimeoutAudit` (**33 sondes, toutes armées**, chiffre inchangé),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders déplacés**),
+`DeathModelAudit` (CHARGER seul fatal, capture au 2ᵉ contact pour les 5
+autres types — inchangé) — **toutes exit 0**.
+
+### Reste ouvert
+
+Aucune sonde de ce dépôt ne peut déclencher un `bridge-timeout` réel ni
+lire un écran iPhone — cette instrumentation attend le prochain timeout
+en conditions réelles pour prouver qu'elle localise effectivement le
+point de blocage. Le bug `status` intermédiaire non affiché (ci-dessus)
+reste ouvert, pour discussion avec Mathieu avant tout patch. Merge sur
+`staging` : palier 1, automatique (build/export/sondes verts) ; `main`
+reste gaté par Mathieu, sans changement à cette règle.
+
+## GOOGLE SIGN-IN RÉPARÉ : le proxy `/__/auth/*` était CORRECT, c'est COOP/COEP qui bloquait l'iframe d'auth (17 août 2026)
+
+Branche `claude/firebase-auth-iframe-proxy-17h5vm`, partie de `staging`
+(`6bb80a2`). **L'instrumentation du lot précédent (`4480691`) a payé dès son
+premier test device** : elle a localisé le blocage à une seule transition, et
+c'est cette mesure — pas une hypothèse — qui a orienté tout ce lot.
+
+**Mesure device (iPhone Safari, Wi-Fi, staging)** : dernier checkpoint atteint
+`listener-registered (0,5 s)`, checkpoint **jamais** atteint
+`first-auth-state-received`, puis `bridge-timeout` à 12 s. Le SDK Firebase
+charge et s'initialise en 0,5 s — **réseau, DNS, Wi-Fi et gstatic sont donc
+éliminés par la mesure**, pas par argument. `onAuthStateChanged` est bien
+enregistré mais son premier callback n'est jamais émis, même avec `user=null`.
+
+### ⚠️ LE PROXY N'EST PAS CASSÉ — mesuré sur les réponses SERVIES, pas lu dans la config
+
+L'hypothèse de départ (le proxy `/__/auth/*` ne restituerait pas ce que le SDK
+attend) est **INFIRMÉE**. Les trois routes ont été récupérées telles que
+`keepy-staging.vercel.app` les sert réellement (via
+`mcp__Vercel__web_fetch_vercel_url` — l'egress direct de ce sandbox est bloqué
+en 403 CONNECT sur `*.vercel.app`, `*.firebaseapp.com` ET `gstatic.com`, donc
+aucune comparaison directe avec l'origine Firebase n'était possible) :
+
+| route | statut | Content-Type | COOP/COEP servis |
+|---|---|---|---|
+| `/__/auth/iframe` | **200** | `text/html; charset=utf-8` | **aucun** |
+| `/__/auth/iframe.js` | **200** (296 Ko, 94 Ko gzip) | `text/javascript; charset=utf-8` | **aucun** |
+| `/__/auth/handler` | **200** | `text/html; charset=utf-8` | **aucun** |
+| `/index.html` (le PARENT) | 200 | `text/html` | **COEP `require-corp` + COOP `same-origin`** |
+
+Les corps sont ceux de Firebase (`fireauth.iframe.AuthRelay.initialize()`,
+`vary: x-fh-requested-host` — la requête atteint bien Firebase Hosting), et les
+chemins **relatifs** (`iframe.js`, `handler.js`) se résolvent correctement sous
+`/__/auth/` à travers le rewrite. **Le lookahead négatif de `vercel.json`
+fonctionne exactement comme prévu** : COOP/COEP sont bien absents des routes
+d'auth — vérifié sur la réponse servie, ce que la tâche demandait explicitement.
+
+### La cause : l'exclusion est EXACTEMENT À L'ENVERS
+
+Sous `Cross-Origin-Embedder-Policy: require-corp`, **un document imbriqué doit
+LUI-MÊME déclarer un COEP compatible ou le navigateur refuse de l'intégrer** —
+et, contrairement à CORP, **être same-origin n'exempte de rien**. Retirer COEP
+de `/__/auth/*` est donc précisément ce qui faisait refuser au parent
+l'intégration de l'iframe que Firebase ouvre au démarrage. Firebase attend cette
+iframe avant de résoudre l'état d'auth : d'où un premier `onAuthStateChanged`
+jamais émis. **C'est tout le bug**, et il correspond exactement à la mesure.
+
+**REPRODUIT EN CHROMIUM** (Playwright local — le seul navigateur atteignable
+depuis ce sandbox), avec les **en-têtes exacts** mesurés ci-dessus et les
+**octets exacts** du corps de `/__/auth/iframe`, sur une iframe **same-origin**
+qui doit charger puis `postMessage` vers son parent — le mécanisme même de
+l'AuthRelay :
+
+| variante | relay reçu par le parent | verdict |
+|---|---|---|
+| **A — staging tel que déployé** (parent COEP, iframe sans COEP) | **NONE** | **BLOQUÉE** |
+| B — ajouter COEP sur `/__/auth/*` | `RELAY-INITIALIZED` | passe |
+| **C — CE FIX : plus de COOP/COEP du tout** | `RELAY-INITIALIZED` | passe |
+
+⚠️ **`iframe.onload` SE DÉCLENCHE QUAND MÊME dans le cas bloqué** (mesuré) —
+aucune exception, aucune erreur console, rien qui ait l'air cassé. C'est
+exactement pourquoi la panne était totalement silencieuse, et pourquoi
+`onload` est inutilisable comme signal de santé.
+
+### Arbitrage explicite : (a2) supprimer COOP/COEP, PAS (a1) les ajouter à `/__/auth/*`
+
+Les deux options débloquent l'embed (variantes B et C ci-dessus, mesurées).
+
+**(a1) — ajouter COEP sur `/__/auth/*` : ÉCARTÉE.** Elle place l'iframe de
+Firebase sous `require-corp`, or cette iframe tire **`apis.google.com`**
+(mesuré : 3 références dans le `iframe.js` réellement proxifié), un script
+classique cross-origin qui exigerait alors un en-tête CORP que **nous ne
+contrôlons pas et que ce sandbox ne peut pas tester** (egress Google bloqué).
+C'est échanger un bug mesuré contre un bug non mesurable — et un aller-retour
+device de plus si Google ne l'envoie pas.
+
+**(a2) — supprimer COOP/COEP : RETENUE.** Sans COEP sur le parent, **le contrôle
+sur document imbriqué ne s'exécute plus du tout** : l'iframe d'auth s'intègre
+quels que soient les en-têtes de Firebase, et les sous-ressources de Firebase ne
+sont plus contraintes. On supprime la CLASSE de panne, pas une instance.
+
+⚠️ **La prémisse qui avait introduit ces en-têtes est FAUSSE pour ce build.**
+Commit `55df42c` : « SharedArrayBuffer (required by the Godot 4 web runtime)
+needs cross-origin isolation ». Or l'export est la variante **nothreads** —
+`index.html` **servi en production** porte `GODOT_THREADS_ENABLED = false` et
+`ensureCrossOriginIsolationHeaders: false`, `export_presets.cfg` n'a aucun
+`variant/thread_support`, et **le dépôt ne contient aucune occurrence de
+`SharedArrayBuffer` ni de `crossOriginIsolated`**. Rien ici n'a jamais eu
+besoin d'isolation cross-origin. Quatrième fois dans ce dépôt qu'une prémisse
+annoncée ne survit pas à la mesure.
+
+**Ne PAS réintroduire COOP/COEP** : ça re-casse le sign-in, silencieusement.
+`vercel.json` étant du JSON strict (aucun commentaire possible), tout
+l'argumentaire vit dans le commentaire de bloc de `web/html_shell.html`.
+
+**(b) — revenir à `authDomain = keepy-8df91.firebaseapp.com` : ÉCARTÉE**, et pas
+seulement par préférence : ce chemin est **déjà mesuré en échec sur Safari iOS**
+(ITP, deux tests device le 17 août). Il n'aurait été acceptable qu'accompagné
+d'une alternative au cross-origin — domaine custom Firebase Hosting ou
+sous-domaine dédié — qui exige DNS, certificat et console Firebase, donc du
+travail manuel de Mathieu hors de portée d'une session. Inutile de payer ça
+quand (a2) est un fix mesuré et contenu.
+
+### Instrumentation CONSERVÉE et ÉTENDUE (tâches 4 et 5)
+
+Les six checkpoints existants sont **intacts** — ils viennent de prouver leur
+valeur, les retirer maintenant serait absurde. S'y ajoute un **watchdog de
+stall + sonde d'embed** qui nomme ce point précis à l'écran la prochaine fois :
+
+```
+first-auth-state-stalled -> auth-iframe-embed-ok
+                          | auth-iframe-embed-blocked
+                          | auth-iframe-probe-skipped-cross-origin
+                          | auth-iframe-probe-failed
+```
+
+⚠️ **Elle ne tourne QUE si le boot a déjà stallé** (6 s), jamais sur le chemin
+sain : la sonde intègre une seconde copie de l'iframe relay, ce qui coûte un
+fetch de 296 Ko et une frame vivante — un diagnostic qui taxe le cas qui marche
+est un diagnostic qu'on finit par retirer. Plafond 3 s, verdict à ~9 s, donc
+**à l'intérieur** des 12 s de `BRIDGE_TIMEOUT_S` d'`Auth.gd` au lieu de courir
+contre.
+
+⚠️ **La méthode de détection est MESURÉE, pas supposée** : `onload` se
+déclenchant dans les deux cas, la sonde lit `contentWindow.location.href` —
+`SecurityError` quand COEP a bloqué, URL de la frame quand elle a chargé (le
+proxy la rend same-origin). **La fonction réellement livrée a été extraite
+verbatim de `html_shell.html` et exercée en Chromium** : verdict `BLOCKED` sur
+la config telle que déployée, `OK` sur celle de ce fix, et **0 frame résiduelle**
+dans les deux cas (elle se nettoie).
+
+⚠️ Sur un host inconnu (previews), `authDomain` reste cross-origin, donc la
+lecture ci-dessus lèverait `SecurityError` **pour une raison parfaitement
+légitime**. La sonde refuse alors de répondre
+(`auth-iframe-probe-skipped-cross-origin`) plutôt que de rapporter un faux
+blocage — une sonde qui ment là où personne ne peut la contredire est
+exactement le piège « fixture qui diverge du réel » que ce dépôt documente.
+
+Strictement additive : elle n'appelle que `publishStage()`, donc elle ne peut
+toucher ni `status`, ni `error`, ni `ready`, ni le comportement du jeu. **Aucun
+changement côté Godot** — `Auth.gd` et `LoginScreen.gd` sont intouchés, les
+nouveaux checkpoints passent par le canal `stage` existant.
+
+### Validation
+
+Import headless **exit 0**, export Web release **exit 0**. `index.wasm`
+**35 376 909 octets** — identique au fingerprint consigné pour tout lot qui ne
+touche pas le code moteur (cohérent : ce lot ne change que du HTML/JS de
+coquille et un fichier de config de déploiement).
+
+Sondes rejouées, **toutes exit 0** : `ProbeTimeoutAudit` (**33 sondes, toutes
+armées**), `AssetContractAudit` (**12/12 visuels, 0/10 colliders déplacés**),
+`DeathModelAudit`, `ChargerShapeProbe`. **Non-applicabilité vérifiée plutôt que
+supposée** : aucune sonde de `scripts/dev/` ne rend de HTML ni n'évalue de JS de
+coquille, et `Auth.gd` sort de sa `_ready()` avant toute ligne utile dès que
+`OS.has_feature("web")` est faux — systématique sous `--headless`.
+
+### Reste ouvert — jugement device, c'est le seul juge
+
+Aucune sonde de ce dépôt ne rend de pixels iOS ni ne peut exécuter le vrai SDK
+Firebase : la reproduction Chromium prouve le **mécanisme** et le **fix**, pas
+que Safari se comporte à l'identique (Safari est plus strict, pas moins, sur
+COEP comme sur ITP). Ce qui reste à confirmer sur device : que le sign-in
+Google aboutit enfin sur `keepy-staging.vercel.app`, en onglet Safari **et** en
+PWA installée. Si un `bridge-timeout` survient encore, l'écran doit désormais
+afficher `first-auth-state-stalled` suivi d'un verdict d'embed — et un
+`auth-iframe-embed-ok` serait l'information la plus intéressante possible : il
+dirait que l'iframe s'intègre et que le blocage est ailleurs.
+
+## CLASSEMENT CABLE SUR L'AUTH GOOGLE : token + uid ENVOYES, jamais EXIGES — le durcissement des rules est une action MANUELLE post-merge-main (18 aout 2026)
+
+Branche `claude/leaderboard-google-auth-d0yxwu`, partie de `staging`
+(`d01618d`, le lot qui a rendu le sign-in Google fonctionnel sur device).
+**Un seul fichier de code touché** : `scripts/autoload/Leaderboard.gd`.
+Aucune scene, aucun collider, aucune constante de gameplay, aucun `.glb`.
+
+`submit_score()` et `fetch_top_scores()` attachent desormais
+`Authorization: Bearer <idToken>` (via `Auth.get_id_token()`), et
+`submit_score()` ecrit en plus un champ `uid` (`stringValue`,
+`Auth.get_current_uid()`) dans le document Firestore.
+
+### ⚠️ L'ORDRE EST LA CONTRAINTE, PAS LE CODE — les rules sont GLOBALES au projet
+
+**Les Firestore rules de `keepy-8df91` sont uniques pour tout le projet :
+`staging` et la prod evaluent le MEME ruleset, il n'existe aucune copie par
+environnement.** C'est ce qui interdit de durcir les rules dans cette
+session, et ce qui dicte la seule sequence sure :
+
+1. ce lot part sur `staging` (fait) ;
+2. validation device, puis merge sur `main` (gate Mathieu, palier 2) ;
+3. **SEULEMENT ENSUITE**, durcissement manuel des rules en Console Firebase.
+
+Durcir avant l'etape 2 casserait la PROD a l'instant du changement de
+rules : la prod servirait encore un client qui n'envoie ni token ni uid, et
+toute soumission de score deviendrait `PERMISSION_DENIED`. Aucune session
+agentique ne peut editer les rules (pas d'acces Console) — c'est une action
+**manuelle**, et elle appartient a Mathieu.
+
+**Ce que le durcissement devra exiger, une fois `main` a jour** :
+`request.auth != null` et `request.resource.data.uid == request.auth.uid`,
+en gardant les deux contraintes deja deployees (`name.size() <= 12`,
+`createdAt == request.time`).
+
+### « Envoye quand disponible », jamais « requis » — mesure des 4 etats
+
+Le code ne DEPEND jamais de l'auth : signe out, il part exactement comme
+avant ce lot (meme URL, meme corps sans `uid`, memes signaux, aucun nouveau
+chemin d'erreur). Deux helpers separes, et cette separation est
+volontaire : **Auth publie l'uid AVANT le token** (cf. le doc de
+`Auth.get_id_token()`), donc les deux questions ne peuvent pas partager une
+seule reponse. Un `is_signed_in()` seul laisserait passer un bearer VIDE,
+que Google rejette en 401 la ou ne rien envoyer du tout est encore accepte
+par les rules d'aujourd'hui.
+
+Mesure sur les VRAIS autoloads (sonde jetable, jamais commitee, supprimee
+avant le commit — `ProbeTimeoutAudit` revient a **33 sondes**) :
+
+| etat Auth | `_request_headers()` | `_current_uid()` |
+|---|---|---|
+| signe out (etat reel headless) | `Content-Type` seul | `''` → champ omis |
+| signe in, token pas encore arrive | `Content-Type` seul | `UID_...` → champ ecrit |
+| signe in, token present | `Content-Type` + `Authorization: Bearer ...` | `UID_...` |
+| session reperdue (token laisse rassis expres) | `Content-Type` seul | `''` |
+
+La ligne signe-out rend **exactement** la liste d'en-tetes d'avant ce lot —
+c'est la non-regression du chemin non authentifie, mesuree et pas plaidee.
+
+⚠️ **Etat transitoire a connaitre AVANT le durcissement** : ligne 2 du
+tableau — uid ecrit, pas encore de bearer. Inoffensif sous les rules
+actuelles ; sous les rules durcies ce serait un `PERMISSION_DENIED`. La
+fenetre est etroite (Auth publie le token juste apres l'uid, et l'ecran de
+game over arrive bien plus tard que le gate de login), mais elle existe :
+si une soumission echoue rarement apres le durcissement, c'est le premier
+suspect, pas le reseau.
+
+### Le court-circuit headless reste PRIORITAIRE sur tout le reste — verifie
+
+`if not network_enabled: emit(...); return` reste la **premiere**
+instruction des deux points d'entree, donc une sonde ne touche jamais
+`Auth`, ne construit jamais d'en-tete, ne lit jamais de token. Mesure
+(meme sonde jetable) : `DisplayServer.get_name() = headless`,
+`network_enabled = false`, `Auth.is_signed_in() = false`,
+`submit_finished` et `top_scores_fetched` emis **exactement une fois
+chacun** avec `success = false`. `Auth.gd` se garde par ailleurs
+independamment sur `OS.has_feature("web")` — deux gardes distinctes, pour
+deux questions distinctes (cf. son en-tete).
+
+### ⚠️ NON VERIFIE, ET C'EST LE RISQUE PRINCIPAL DE CE LOT : les rules
+### actuelles acceptent-elles un champ `uid` EN PLUS ?
+
+Si la regle deployee contraint le jeu de champs (`hasOnly([...])`), ajouter
+`uid` la ferait echouer **sous les rules ACTUELLES**, c'est-a-dire
+exactement la casse que la contrainte d'ordre ci-dessus existe pour eviter.
+**Ce point n'a pas pu etre mesure dans cette session** : la politique du
+sandbox bloque tout appel vers l'endpoint d'ECRITURE `:commit` de Firestore
+(la lecture `:runQuery` passe, elle, et a confirme la forme des documents
+existants : `name`/`score`/`nuts`/`glands`/`createdAt`, **aucun `uid`** a ce
+jour).
+
+**Recette de verification ZERO-ECRITURE, a rejouer par une session qui en a
+le droit** (ou par Mathieu) — elle n'ecrit jamais rien parce que la
+precondition ne peut pas etre satisfaite :
+
+envoyer un `:commit` avec `"currentDocument": {"exists": true}` sur un
+doc id frais (donc inexistant), en trois variantes —
+(A) corps actuel sans `uid`, (B) corps a nom de 13 caracteres (rejet
+`PERMISSION_DENIED` deja documente plus haut dans ce fichier, donc temoin
+qui prouve que les rules sont bien evaluees), (C) corps avec `uid`.
+Lecture : **400 `FAILED_PRECONDITION` = les rules ont ACCEPTE** (et rien
+n'a ete ecrit) ; **403 `PERMISSION_DENIED` = les rules ont REFUSE**. Le
+temoin (B) doit sortir 403, sinon le test est non concluant et il faut une
+autre approche.
+
+**En attendant, le vrai filet est le palier `staging`** : une soumission de
+score sur `keepy-staging.vercel.app` qui apparait bien dans le top 10
+repond a la question en une manipulation, et c'est precisement pourquoi ce
+lot ne va pas plus loin que `staging`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, memes que la CI). Import headless **exit 0**, export Web
+release **exit 0**, `Leaderboard.gdc` et `Auth.gdc` tous deux compiles dans
+le `.pck`. `index.wasm` **35 376 909 octets** — identique au fingerprint
+deja consigne pour tout lot qui ne touche pas le code moteur ; `index.pck`
+5 445 248 octets (export unique et propre, `build/` supprime avant — a lire
+avec la mise en garde permanente sur l'instabilite du `.pck`). Piege payload
+tenu (**0** ligne `Storing File: res://assets_source`).
+
+**HUIT sondes rejouees, chacune diffee contre `origin/staging` en worktree
+separe : les HUIT sont BYTE-IDENTIQUES sur les DEUX flux (stdout ET
+stderr), exit 0 des deux cotes** — `ProbeTimeoutAudit` (33 sondes),
+`AssetContractAudit` (12/12 visuels, 0/10 colliders deplaces),
+`DeathModelAudit`, `ChargerShapeProbe`, `AlarmRampAudit` (12/12), plus les
+trois sondes gameplay seedees `ComboAudit`, `ShrinkAudit`, `ChargerAudit`
+(graine 20260806, `--fixed-fps 60`). C'est le bar attendu : le
+court-circuit headless fait de ce lot un no-op complet sous sonde, et
+l'identite au bit pres le dit plus fort qu'un simple verdict identique.
+
+### Reste ouvert
+
+1. **La question `hasOnly` ci-dessus** — le seul vrai risque, non mesure
+   ici, mais tranche par une soumission de score sur staging.
+2. **Le durcissement des rules lui-meme** : action MANUELLE, en Console
+   Firebase, **apres** le merge sur `main`, jamais avant.
+3. Jugement device sur `keepy-staging.vercel.app` : le classement se charge
+   toujours, et une soumission aboutit toujours, avec un utilisateur
+   Google reellement connecte.
+
+## FIRESTORE RULES VERSIONNÉES + DÉPLOIEMENT AUTOMATIQUE — la Console n'est plus la source de vérité (18 août 2026)
+
+Branche `claude/firestore-rules-automation-337tsq`, partie de `staging`
+(`ec81387`). **Lot infra** : aucun fichier de JEU touché — ni scène, ni
+`.gd`, ni `.glb`, ni `project.godot`. En particulier
+`scripts/autoload/Leaderboard.gd` est **intouché**, comme demandé, et
+`git diff` contre `origin/staging` ne rapporte **aucun** chemin sous
+`scenes/`, `scripts/` ou `assets/`.
+
+⚠️ **Une exception au « pur » : `export_presets.cfg` A été modifié** —
+une ligne d'`exclude_filter`, pour fermer un piège payload que ce lot
+introduisait lui-même (voir la section « Piège payload » plus bas). Ce
+n'est pas du code moteur et ça ne change aucune scène, mais c'est un
+fichier de plus que ce que le brief laissait attendre, donc dit ici
+plutôt que passé sous silence.
+
+### `firestore.rules` EST désormais la source de vérité, plus la Console
+
+Trois fichiers nouveaux à la racine :
+
+| fichier | contenu |
+|---|---|
+| `firestore.rules` | le ruleset, **reproduit à l'octet près** depuis ce qui est déployé en prod |
+| `firebase.json` | `{ "firestore": { "rules": "firestore.rules" } }` |
+| `.firebaserc` | `{ "projects": { "default": "keepy-8df91" } }` |
+
+⚠️ **Avant ce lot, les rules n'existaient QUE dans la Console Firebase** —
+collées à la main, sans historique, sans revue, sans diff possible. Un
+`git ls-tree -r origin/main` ne trouvait aucun fichier `firebase`/
+`firestore` dans le dépôt. À partir de maintenant : **le fichier gagne**.
+Toute édition faite directement en Console sera **écrasée silencieusement**
+au prochain push sur `main` touchant `firestore.rules`. Ne plus éditer en
+Console.
+
+**Le contenu versionné a été vérifié caractère pour caractère, pas
+supposé** : le fichier a été comparé (`diff` + `cmp`) à une re-saisie
+indépendante du bloc collé par Mathieu — **byte-identique**. Vérifié aussi :
+pur ASCII (aucun caractère non-ASCII), **LF seul** (aucun CR/CRLF), aucun
+espace ni tabulation en fin de ligne, aucune tabulation nulle part, 16
+lignes, une seule newline finale. Le premier déploiement automatique
+re-publie donc exactement le ruleset déjà en place — **un no-op
+sémantique**.
+
+⚠️ **Limite honnête de cette vérification, à ne pas surinterpréter** : elle
+prouve que le fichier == le bloc collé, **pas** que le bloc collé == ce qui
+tourne réellement sur `keepy-8df91`. La clé de compte de service vit dans le
+secret GitHub, jamais dans le sandbox — aucune session agentique ne peut
+lire les rules live pour les confronter. Si le bloc collé avait dérivé du
+déployé, le premier run corrigerait cet écart au lieu d'être un no-op, et
+c'est le log du job (qui `cat` le fichier avant de déployer) qui le dirait.
+
+**Cohérence recoupée avec le code, pas seulement avec le brief** :
+`Leaderboard.gd` déclare `PROJECT_ID := "keepy-8df91"` (donc `.firebaserc`
+pointe bien le projet du jeu) et écrit exactement les champs `name`, `score`,
+`nuts`, `glands`, plus `uid` quand un utilisateur est signé, plus `createdAt`
+via `setToServerValue: "REQUEST_TIME"` — soit précisément les six clés du
+`hasOnly([...])` du ruleset versionné. `hasOnly` autorisant un sous-ensemble,
+un document sans `uid` (joueur non signé) reste accepté, comme aujourd'hui.
+
+### Le trigger : `main` UNIQUEMENT + path filter — il PROLONGE le palier 2, il ne le contourne pas
+
+`.github/workflows/firestore-rules.yml` (nouveau) :
+
+```yaml
+on:
+  push:
+    branches: [main]
+    paths: ['firestore.rules']
+```
+
+**Pourquoi `main` seul, et pourquoi ce n'est pas un contournement du
+gate.** Les Firestore rules sont **GLOBALES au projet `keepy-8df91`** :
+`staging` et la prod évaluent le MÊME ruleset, il n'existe aucune copie par
+environnement (c'est le fait autour duquel tout l'en-tête de
+`Leaderboard.gd` est écrit). Un déploiement de rules n'a donc **aucun
+palier 1 disponible** — déployer depuis `staging` SERAIT déployer en prod,
+en ayant l'air d'une preview. Le palier 2 (autorisation explicite de
+Mathieu, après validation device, avant tout merge sur `main`) est par
+conséquent **le seul gate qui existe** pour les rules. Lier le trigger à
+`main` met les rules DERRIÈRE ce gate au lieu de passer à côté.
+
+**Pas de `workflow_dispatch`, délibérément** : il permettrait un run manuel
+depuis n'importe quelle ref et n'importe quel état de fichier — exactement
+les deux choses que le trigger existe pour empêcher. Un run échoué se
+relance depuis l'UI Actions sans ça.
+
+**Pas de `cancel-in-progress` sur la `concurrency`** (contrairement à
+`web-build.yml`) : un build web annulé ne laisse qu'un artefact à jeter, un
+déploiement de rules annulé a publié ou pas — un push suivant doit faire la
+queue derrière, pas le tuer.
+
+### ⚠️ C'est un FICHIER DE WORKFLOW SÉPARÉ, pas un job dans `web-build.yml` — contrainte structurelle, pas préférence
+
+Le brief demandait un nouveau JOB dans le workflow existant, gaté par
+`paths: ['firestore.rules']`. **Les deux sont incompatibles dans GitHub
+Actions** : `on.push.paths` est un filtre de **WORKFLOW**, il n'a aucun
+équivalent au niveau job. Poser ce filtre sur `web-build.yml` aurait gaté le
+job build/export/deploy Web sur `firestore.rules` — donc plus aucun
+déploiement web sauf si les rules changent — ce que le brief interdit
+explicitement.
+
+Les contournements possibles à l'intérieur de `web-build.yml` étaient tous
+pires : un `if:` de job plus un `git diff` de la plage poussée (fragile sur
+force-push, premier push et commits de merge, et le workflow tourne quand
+même), ou une action tierce de paths-filter (une dépendance de chaîne
+d'approvisionnement de plus pour ce qu'Actions fait nativement). Le job
+aurait de plus hérité du `cancel-in-progress: true` de `web-build.yml`.
+
+Le filtre est donc gardé **exactement tel que spécifié** — natif, sans
+action, sans heuristique de diff — dans le seul endroit où cette syntaxe
+peut vouloir dire ce qu'elle doit vouloir dire. **`web-build.yml` est
+byte-intouché par ce lot** (`git diff` vide sur ce fichier).
+
+### Authentification : le secret déjà en place, aucun nouveau secret
+
+Secret GitHub utilisé — **nom exact : `FIREBASE_SERVICE_ACCOUNT_KEEPY`**
+(JSON complet d'un compte de service capable de déployer les rules de
+`keepy-8df91`). Il existait déjà, ce lot n'en crée aucun.
+
+Chaîne : `google-github-actions/auth@v2` avec `credentials_json: ${{
+secrets.FIREBASE_SERVICE_ACCOUNT_KEEPY }}` écrit la clé dans un fichier
+temporaire et exporte `GOOGLE_APPLICATION_CREDENTIALS` ; `firebase-tools`
+(installé par `npm install -g firebase-tools`) le lit tout seul — **ni
+`firebase login`, ni `FIREBASE_TOKEN`**. Puis `firebase deploy --only
+firestore:rules --project keepy-8df91 --non-interactive`.
+
+Une étape de garde vérifie la présence du secret et échoue avec un message
+actionnable, même forme que le `Check Vercel secrets` de `web-build.yml` —
+plutôt qu'une erreur d'auth opaque au fond d'un CLI. Une étape `cat
+firestore.rules` précède le déploiement : le log du job porte donc
+littéralement le ruleset publié, à son SHA.
+
+### Comment changer les rules à l'avenir
+
+1. Éditer `firestore.rules` sur une branche feature.
+2. Merger sur `staging` comme d'habitude (palier 1, automatique) — **le job
+   ne se déclenche PAS**, le trigger est scopé `main`. C'est voulu : rien ne
+   part sur le projet live tant que le gate humain n'est pas passé.
+3. Autorisation explicite de Mathieu, puis merge sur `main` (palier 2).
+4. Le job fait le reste. Rien à faire en Console.
+
+⚠️ **La contrainte d'ORDRE du durcissement auth reste ENTIÈREMENT valable,
+seul son MÉCANISME change.** La section « CLASSEMENT CABLE SUR L'AUTH
+GOOGLE » (18 août 2026) décrit le durcissement (`request.auth != null` et
+`request.resource.data.uid == request.auth.uid`) comme une action
+**manuelle en Console, après le merge sur `main`** du client qui envoie
+token et uid. Ce lot ne change pas d'un iota la séquence — durcir avant que
+la PROD serve ce client la casserait à l'instant du changement de rules
+(`PERMISSION_DENIED` sur toute soumission). Il change seulement l'outil :
+le durcissement devient **une édition de `firestore.rules` + un merge sur
+`main`**, et non plus un collage en Console. Le point 2 du « Reste ouvert »
+de cette section-là se lit désormais ainsi.
+
+### Piège payload : les trois fichiers racine et l'export Godot
+
+`export_presets.cfg` utilise `export_filter="all_resources"` (piège déjà
+documenté deux fois dans ce fichier), donc tout nouveau fichier racine
+mérite une mesure et non une supposition. **Bien lui en a pris : le piège
+s'est déclenché.**
+
+⚠️ **`firebase.json` PARTAIT dans le build — mesuré sur un export réel,
+pas prédit.** Le log `savepack` du premier export imprimait `savepack:
+step 89: Storing File: res://firebase.json`, et un `grep` sur le `.pck`
+retrouvait le contenu littéral du fichier. Cause : **Godot importe `.json`
+comme une ressource**. L'argument rassurant qui aurait pu être tenu sans
+mesurer — « `vercel.json` est à la racine depuis des mois sans
+conséquence » — était en fait le contraire d'une preuve : `vercel.json`
+**fuite exactement de la même façon**, ligne `Storing File` comprise, et
+personne ne l'avait vu.
+
+**Corrigé au niveau du preset** (`firebase.json` ajouté à
+`exclude_filter`, à côté de `scripts/dev/*`, `assets_source/*`, `docs/*`
+et `web/*`), puis **re-mesuré sur un export propre** (`build/` supprimé
+d'abord — l'auto-contamination déjà documentée) : `Storing File` passe de
+**130 à 129** entrées, `.pck` de **5 445 376 à 5 445 280** octets, et
+`firestore.rules` / `firebase.json` / `firebaserc` retournent **0
+occurrence** dans le pack. `index.wasm` reste à **35 376 909** — le
+fingerprint déjà consigné pour tout lot qui ne touche pas le code moteur.
+
+**Les deux autres fichiers sont mesurés comme NON packés**, et n'ont donc
+rien reçu : `firestore.rules` (extension inconnue de Godot — l'unique
+occurrence de cette chaîne dans le premier `.pck` était la *valeur JSON*
+à l'intérieur de `firebase.json`, vérifiée par lecture des octets
+alentour, pas le fichier) et `.firebaserc` (fichier caché). Rien n'a été
+ajouté « au cas où » : seul le défaut mesuré est fermé.
+
+⚠️ **`vercel.json` est laissé tel quel, délibérément** — il préexiste à ce
+lot, il ne pèse que 368 octets, et la CI le copie depuis la racine du
+dépôt (`cp vercel.json build/web/vercel.json`), jamais depuis le pack.
+Le signaler ici plutôt que le corriger en douce : c'est le même défaut,
+il appartient à un autre lot.
+
+### Reste ouvert
+
+1. **Le premier run réel**, qui n'aura lieu qu'au merge sur `main` — le
+   trigger étant scopé `main`, **ce lot ne déclenche rien en partant sur
+   `staging`**. C'est à ce run-là qu'on verra si le compte de service a
+   bien la permission `firebaserules.releases.create` : le brief l'affirme,
+   aucune session ne peut le vérifier sans la clé.
+2. Le durcissement auth lui-même (point 2 de la section du 18 août), qui
+   reste la décision et le calendrier de Mathieu — désormais faisable par
+   fichier plutôt qu'en Console.

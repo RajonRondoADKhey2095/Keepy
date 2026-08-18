@@ -99,6 +99,519 @@ body {
 			<div id="status-notice"></div>
 		</div>
 
+		<!--
+		Firebase Auth bridge. Lives in the export shell, not in GDScript,
+		because the Google consent screen must be driven by the BROWSER: it is
+		browser UI the WebGL canvas cannot draw. Leaderboard.gd talks to
+		Firestore over plain REST precisely because no browser UI is involved
+		there -- Auth is the one case where a JS bridge is unavoidable.
+
+		CROSS-ORIGIN authDomain WAS THE ROOT CAUSE OF BOTH FLOWS FAILING (17
+		aout 2026, two device tests on staging, same day). Both were tried,
+		both failed, and both failed for the SAME underlying reason:
+
+		  - signInWithRedirect: the tap left for keepy-8df91.firebaseapp.com,
+		    hung there on a blank page, and the return to
+		    keepy-staging.vercel.app resolved to nothing until Auth.gd's 12 s
+		    bridge timeout fired. The redirect flow parks its pending state on
+		    the authDomain origin; ITP gives that origin a different storage
+		    partition when it is loaded as a third party, so the state written
+		    on the way out is not the state read on the way back.
+		  - signInWithPopup (tried next): the popup DID open and the consent
+		    screen DID complete -- user activation was never the problem. But
+		    on iOS Safari a window.open() popup renders as a new TAB, the
+		    player returns to the app tab manually, and the postMessage the
+		    popup sends to window.opener never arrives. Cause is the same
+		    family as the redirect failure: the popup's own storage/session
+		    context lives on a different origin than the opener, and Safari
+		    does not keep that relationship reliable across a manual tab
+		    switch.
+
+		Neither flow can be fixed by tuning parameters on either side; the fix
+		is to remove the cross-origin hop entirely. vercel.json now rewrites
+		/__/auth/* to https://keepy-8df91.firebaseapp.com/__/auth/*, so once
+		`authDomain` below is set to THIS app's own hostname, the browser never
+		leaves this origin during sign-in except for the unavoidable, and
+		purely top-level, navigation to accounts.google.com itself.
+
+		COOP/COEP ARE GONE FROM vercel.json, AND THAT IS WHAT MAKES THE PROXY
+		ACTUALLY WORK (17 aout 2026, third pass). The proxy above was correct
+		from the start -- measured on the served responses, not read off the
+		config: /__/auth/iframe, /__/auth/iframe.js (296 KB of real Firebase
+		code) and /__/auth/handler all returned 200 with the right
+		Content-Type, and the negative-lookahead rule really did keep COOP/COEP
+		off those routes. The bug was that the exclusion is exactly BACKWARDS.
+
+		Under `Cross-Origin-Embedder-Policy: require-corp`, a nested document
+		must ITSELF assert a compatible COEP or the browser refuses to embed
+		it, and -- unlike CORP -- being same-origin does NOT exempt it. So
+		stripping COEP from /__/auth/* is precisely what made the parent refuse
+		to embed the auth iframe Firebase opens at startup. Reproduced in
+		Chromium against the exact staging headers and the exact staging iframe
+		bytes: the frame is blocked, no relay message ever reaches the parent,
+		and `iframe.onload` STILL FIRES -- which is why it failed in total
+		silence, with no error anywhere. Firebase waits on that frame before
+		resolving auth state, so onAuthStateChanged never fired its first
+		callback, even with user=null. That is the whole bug.
+
+		Two ways out, and we take the second. Adding COEP to /__/auth/* does
+		unblock the embed (also reproduced) -- but it then puts Firebase's own
+		iframe under require-corp, and that iframe pulls apis.google.com
+		(measured: 3 references in the proxied iframe.js), a cross-origin
+		classic script that would need a CORP header we neither control nor
+		can test from here. That trades a measured bug for an unmeasurable one.
+
+		Removing COOP/COEP outright removes the whole class instead: with no
+		COEP on this page, the nested-document check never runs at all, so the
+		auth iframe embeds whatever headers Firebase sends it, and Firebase's
+		subresources are unconstrained. The premise that put those headers in
+		(commit 55df42c, "SharedArrayBuffer ... needs cross-origin isolation")
+		is simply false for THIS build: the export is the nothreads variant --
+		the deployed index.html carries GODOT_THREADS_ENABLED = false and
+		ensureCrossOriginIsolationHeaders: false, and the repo contains no
+		SharedArrayBuffer reference at all. Nothing here ever needed isolation.
+		Keep it that way: re-adding COOP/COEP re-breaks sign-in.
+
+		REDIRECT, NOT POPUP, now that the origin is unified (17 aout 2026,
+		second pass). The popup failure mode above was never really about
+		cross-origin storage in the way the redirect failure was -- it was
+		Safari's popup-becomes-a-tab UI behaviour plus manual backgrounding,
+		which unifying the origin does not by itself guarantee fixes (the
+		postMessage channel still depends on the tab staying live and the
+		opener reference surviving Safari's own tab lifecycle management).
+		signInWithRedirect has no such dependency: there is no second
+		window/tab to manage and no postMessage to lose, only an ordinary
+		full-page navigation away and back -- the browser's most basic and
+		best-tested primitive, and the one every iOS Safari user already
+		understands from every other "continue with Google" flow on mobile
+		web. With the ITP storage-partition failure closed by the proxy, this
+		is the safer default for mobile. See PENDING_KEY below for how a lost
+		redirect is told apart from one that never started.
+
+		PREVIEW DEPLOYMENTS (keepy-git-*.vercel.app, one random hostname per
+		commit) are NOT expected to sign in successfully, on purpose: Firebase
+		Authorized domains can only list fixed hostnames, so a preview's
+		hostname can never be added there, and Firebase rejects the origin
+		with auth/unauthorized-domain regardless of what `authDomain` says.
+		resolveAuthDomain() below falls back to the historical
+		keepy-8df91.firebaseapp.com value on any hostname it does not
+		recognise -- not because that fixes preview auth (it does not), but so
+		this file never guesses a proxy path that was never deployed for that
+		host. See resolveAuthDomain() for the diagnostic this publishes.
+
+		Contract with scripts/autoload/Auth.gd (keep both sides in sync):
+		  window.keepyAuth            -- plain state object, always present
+		  window.keepyAuthSnapshot()  -- returns that state as a JSON string
+		  window.keepySignInWithGoogle() -- starts the redirect
+		  window.keepyAuthNotify      -- optional; Auth.gd installs a
+		                                 JavaScriptBridge callback here and we
+		                                 call it with the snapshot on change.
+		Same robustness contract as Leaderboard.gd: never throw into the game,
+		always leave a machine-readable reason behind in `error`.
+
+		DIAGNOSTIC-ONLY FIELDS (17 aout 2026), added to localise a
+		non-reproducible 'bridge-timeout' with no devtools access (iPhone
+		only): `stage` / `stageAt` / `bootAt`. `stage` is the last checkpoint
+		this file reached (see STAGE below for the full list); `stageAt` is
+		the Date.now() at which it was reached; `bootAt` is the Date.now()
+		captured on the very first line below, so Auth.gd can compute an
+		elapsed-seconds figure without owning its own clock. Purely additive:
+		nothing here reads these fields back to change behaviour, they only
+		flow outward for the login screen to display.
+		-->
+		<script>
+const __KEEPY_AUTH_BOOT_AT = Date.now();
+window.keepyAuth = {
+	// 'loading' until the SDK has loaded AND any pending redirect has been
+	// resolved. Auth.gd must not draw a signed-out UI before that, or a user
+	// coming back from Google would see the login screen flash first.
+	status: 'loading',
+	ready: false,
+	uid: '',
+	email: '',
+	idToken: '',
+	error: '',
+	detail: '',
+	// Diagnostic only, never drives the login screen (see resolveAuthDomain()
+	// below): true when this hostname is not one of the known deployments and
+	// the historical cross-origin authDomain was used instead of the proxy.
+	authDomainFallback: false,
+	authDomainFallbackDetail: '',
+	// Diagnostic only (see the block comment above): the last checkpoint
+	// reached, when it was reached, and the reference instant to measure it
+	// from.
+	stage: 'boot',
+	stageAt: __KEEPY_AUTH_BOOT_AT,
+	bootAt: __KEEPY_AUTH_BOOT_AT,
+};
+window.keepyAuthSnapshot = function () {
+	try {
+		return JSON.stringify(window.keepyAuth);
+	} catch (e) {
+		return '';
+	}
+};
+// Defined up front so a tap that lands before the module finishes evaluating
+// gets a defined function instead of a TypeError. The module overwrites it.
+// Auth.gd also gates its button on `ready`, so this is the second line of
+// defence, not the first.
+window.keepySignInWithGoogle = function () {
+	window.keepyAuth.error = 'not-ready';
+	window.keepyAuth.detail = 'Firebase SDK still loading';
+	return false;
+};
+		</script>
+		<script type="module">
+// Dynamic import() rather than a static `import ... from` on purpose: a
+// static import that fails (CDN down, or a wrong version pin) aborts the
+// whole module before any handler of ours can run, leaving the login button
+// dead with nothing to show for it. Wrapped in try/catch, the same failure
+// becomes a reportable state that reaches the screen.
+(async function () {
+	// The one fragile literal in this file: if this version does not exist on
+	// gstatic the imports 404 and the screen reports 'sdk-load-failed' with
+	// the URL in `detail` -- diagnosable in one look instead of a mystery.
+	const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
+	// Set just before navigating away, read on the way back. sessionStorage
+	// survives a same-tab redirect, so "we asked for a redirect and came back
+	// with nothing" is detectable -- that pair is the exact signature of a
+	// lost redirect (see the block comment above for the ITP failure this
+	// used to catch; the proxy closes that specific hole, but the detection
+	// stays as the backstop for whatever else can eat a redirect in transit).
+	const PENDING_KEY = 'keepy.auth.redirect.pending';
+	// Hostnames vercel.json's /__/auth/* rewrite is actually deployed to.
+	// Every domain that serves this app needs BOTH this entry AND a matching
+	// entry in Firebase's Authorized domains list -- the two are independent
+	// checks and either one missing breaks sign-in on that host.
+	const KNOWN_AUTH_HOSTS = ['keepy-ten.vercel.app', 'keepy-staging.vercel.app'];
+	const DEFAULT_AUTH_DOMAIN = 'keepy-8df91.firebaseapp.com';
+
+	function publish(patch) {
+		Object.assign(window.keepyAuth, patch);
+		try {
+			if (typeof window.keepyAuthNotify === 'function') {
+				window.keepyAuthNotify(window.keepyAuthSnapshot());
+			}
+		} catch (e) {
+			// A broken listener on the Godot side must never break auth.
+			console.error('keepyAuth: notify failed', e);
+		}
+	}
+
+	// Diagnostic-only checkpoint publisher (17 aout 2026, see the block
+	// comment above this script). Never gates or branches on anything --
+	// it only records "we got this far" through the existing `publish()`
+	// channel, plus a console.log for the rare case someone can attach a
+	// Mac. Ordered stage list, so the log alone tells the whole story:
+	//   sdk-import-started -> sdk-import-done -> app-initialized ->
+	//   auth-obtained -> listener-registered -> first-auth-state-received
+	// A healthy boot ends on first-auth-state-received. If it does not, the
+	// stall watchdog further down appends one of:
+	//   first-auth-state-stalled -> auth-iframe-embed-ok
+	//                             | auth-iframe-embed-blocked
+	//                             | auth-iframe-probe-skipped-cross-origin
+	//                             | auth-iframe-probe-failed
+	// so the screen names the cause instead of only the symptom. Reaching
+	// 'stalled' followed by 'embed-ok' would be the interesting one: it would
+	// mean the iframe embeds fine and the stall is somewhere else entirely.
+	function publishStage(stage) {
+		const now = Date.now();
+		console.log('[keepyAuth] stage=' + stage + ' at=' + now +
+			' elapsedMs=' + (now - window.keepyAuth.bootAt));
+		publish({ stage: stage, stageAt: now });
+	}
+
+	function readPending() {
+		try {
+			return window.sessionStorage.getItem(PENDING_KEY) === '1';
+		} catch (e) {
+			return false; // private mode / storage disabled
+		}
+	}
+
+	function writePending(value) {
+		try {
+			if (value) {
+				window.sessionStorage.setItem(PENDING_KEY, '1');
+			} else {
+				window.sessionStorage.removeItem(PENDING_KEY);
+			}
+		} catch (e) {
+			// Non-fatal: we lose the diagnostic, not the sign-in.
+		}
+	}
+
+	// authDomain must be THIS app's own hostname for the /__/auth/* proxy to
+	// do anything -- pointing it at keepy-8df91.firebaseapp.com on a host that
+	// rewrite is not deployed to would silently recreate the cross-origin bug
+	// this whole file exists to close. Unknown hosts (previews) fall back to
+	// the historical value instead of guessing: see the block comment above.
+	function resolveAuthDomain() {
+		const host = window.location.hostname;
+		if (KNOWN_AUTH_HOSTS.indexOf(host) !== -1) {
+			return { domain: host, fallback: false, detail: '' };
+		}
+		return {
+			domain: DEFAULT_AUTH_DOMAIN,
+			fallback: true,
+			detail: 'hostname "' + host + '" is not in KNOWN_AUTH_HOSTS -- no /__/auth/* proxy ' +
+				'is deployed for it, so authDomain falls back to ' + DEFAULT_AUTH_DOMAIN +
+				'. Google Sign-In will likely fail here with auth/unauthorized-domain (preview ' +
+				'deployments are never in Firebase Authorized domains, by design -- see CLAUDE.md).',
+		};
+	}
+
+	const resolvedAuthDomain = resolveAuthDomain();
+	if (resolvedAuthDomain.fallback) {
+		// Published up front as a diagnostic, not as an `error`: a preview
+		// build must still boot normally (Leaderboard.gd does not need this),
+		// and nothing has actually failed yet at this point. Visible from the
+		// very first snapshot in window.keepyAuth / keepyAuthSnapshot() for
+		// whoever is debugging a preview URL, instead of a silent mismatch
+		// that only shows up later as an unexplained sign-in failure.
+		publish({
+			authDomainFallback: true,
+			authDomainFallbackDetail: resolvedAuthDomain.detail,
+		});
+	}
+
+	let appMod;
+	let authMod;
+	publishStage('sdk-import-started');
+	try {
+		appMod = await import(SDK + '/firebase-app.js');
+		authMod = await import(SDK + '/firebase-auth.js');
+		publishStage('sdk-import-done');
+	} catch (e) {
+		publish({
+			status: 'error',
+			ready: true,
+			error: 'sdk-load-failed',
+			detail: SDK + ' -- ' + (e && e.message ? e.message : String(e)),
+		});
+		return;
+	}
+
+	let auth;
+	try {
+		const app = appMod.initializeApp({
+			apiKey: 'AIzaSyD7Kxu14Ukuj5l8_0SkUpjWwTu5_na2J3A',
+			authDomain: resolvedAuthDomain.domain,
+			projectId: 'keepy-8df91',
+			storageBucket: 'keepy-8df91.firebasestorage.app',
+			messagingSenderId: '687812903507',
+			appId: '1:687812903507:web:bafee2cf8cc7c66043bca6',
+			measurementId: 'G-T2NNP9JKDV',
+		});
+		publishStage('app-initialized');
+		auth = authMod.getAuth(app);
+		publishStage('auth-obtained');
+	} catch (e) {
+		publish({
+			status: 'error',
+			ready: true,
+			error: 'init-failed',
+			detail: e && e.message ? e.message : String(e),
+		});
+		return;
+	}
+
+	// Persistence is deliberately left at the SDK default
+	// (browserLocalPersistence on the web): the session already survives a
+	// reload and a relaunch, and adding our own storage layer on top would be
+	// a second source of truth for the same fact.
+	// Diagnostic only (see publishStage above): fires once, on whichever
+	// call to the listener below happens first -- signed in, signed out, or
+	// null-user restore. Declared here rather than inside the listener so it
+	// survives across every subsequent invocation without re-publishing.
+	let firstAuthStateSeen = false;
+	authMod.onAuthStateChanged(auth, function (user) {
+		if (!firstAuthStateSeen) {
+			firstAuthStateSeen = true;
+			publishStage('first-auth-state-received');
+		}
+		if (!user) {
+			publish({
+				status: window.keepyAuth.ready ? 'signed_out' : window.keepyAuth.status,
+				uid: '',
+				email: '',
+				idToken: '',
+			});
+			return;
+		}
+		publish({ status: 'signed_in', uid: user.uid, email: user.email || '' });
+		// Async and deliberately not awaited by the state publish above: the
+		// UI must be able to leave the login screen the moment we know WHO the
+		// user is, not once a token round-trip finishes. getIdToken() refreshes
+		// on demand, so a consumer that appears later still gets a valid one.
+		user.getIdToken().then(function (token) {
+			publish({ idToken: token });
+		}).catch(function (e) {
+			console.error('keepyAuth: getIdToken failed', e);
+		});
+	});
+	publishStage('listener-registered');
+
+	// STALL WATCHDOG + AUTH-IFRAME EMBED PROBE (17 aout 2026, third pass).
+	//
+	// The previous pass ended with the screen reading 'listener-registered'
+	// and nothing after it, then Auth.gd's generic 12 s 'bridge-timeout'. That
+	// localised the failure to "the first onAuthStateChanged never fired" but
+	// could not say WHY, and the why cost a full device round-trip to find:
+	// the auth iframe was being blocked by COEP (see the block comment at the
+	// top of this file). This makes that exact point self-reporting.
+	//
+	// Deliberately runs ONLY when the boot has already stalled, never on the
+	// healthy path: the probe embeds a second copy of Firebase's relay iframe,
+	// which costs a 296 KB script fetch and a live frame, and a diagnostic
+	// that taxes the working case is a diagnostic that gets removed later.
+	// Fires at 6 s, capped at 3 s, so a verdict lands ~9 s in -- comfortably
+	// inside Auth.gd's 12 s BRIDGE_TIMEOUT_S rather than racing it.
+	//
+	// Strictly additive, like every other checkpoint here: it only ever calls
+	// publishStage(), so it cannot change `status`, `error` or `ready`, and
+	// cannot alter what the game does. It only makes the screen say more.
+	const STALL_PROBE_AFTER_MS = 6000;
+	const PROBE_LOAD_CAP_MS = 3000;
+
+	// Detection method, measured in Chromium against the real staging headers
+	// rather than assumed: when COEP blocks a nested document, `onload` STILL
+	// FIRES (so onload is worthless as a signal), but the frame is left on an
+	// opaque error document -- reading contentWindow.location.href throws
+	// SecurityError and contentDocument is null. A frame that genuinely loaded
+	// returns its own URL from the same read, because the /__/auth/* proxy
+	// makes it same-origin with us.
+	function probeAuthIframeEmbed() {
+		return new Promise(function (resolve) {
+			let frame = null;
+			let settled = false;
+			function finish(ok, detail) {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				try {
+					if (frame && frame.parentNode) {
+						frame.parentNode.removeChild(frame);
+					}
+				} catch (e) {
+					// Leaving the probe frame behind is not worth throwing over.
+				}
+				resolve({ ok: ok, detail: detail });
+			}
+			try {
+				frame = document.createElement('iframe');
+				frame.setAttribute('aria-hidden', 'true');
+				frame.style.display = 'none';
+				frame.src = '/__/auth/iframe';
+				frame.onload = function () {
+					try {
+						const href = frame.contentWindow.location.href;
+						finish(true, 'embedded, frame URL readable: ' + String(href).slice(0, 80));
+					} catch (e) {
+						finish(false, 'frame loaded but its document is opaque (' +
+							(e && e.name ? e.name : String(e)) + ') -- blocked before it could run');
+					}
+				};
+				frame.onerror = function () {
+					finish(false, 'iframe onerror');
+				};
+				document.body.appendChild(frame);
+				window.setTimeout(function () {
+					finish(false, 'no onload within ' + PROBE_LOAD_CAP_MS + 'ms');
+				}, PROBE_LOAD_CAP_MS);
+			} catch (e) {
+				finish(false, 'probe threw: ' + (e && e.message ? e.message : String(e)));
+			}
+		});
+	}
+
+	window.setTimeout(function () {
+		if (firstAuthStateSeen) {
+			return;
+		}
+		publishStage('first-auth-state-stalled');
+		// On an unknown host authDomain stays cross-origin (see
+		// resolveAuthDomain above), so the same-origin read below would throw
+		// SecurityError for a perfectly legitimate reason. Reporting that as a
+		// blocked embed would be a probe that lies precisely where nobody can
+		// check it, so it declines to answer instead.
+		if (resolvedAuthDomain.fallback) {
+			publishStage('auth-iframe-probe-skipped-cross-origin');
+			return;
+		}
+		probeAuthIframeEmbed().then(function (r) {
+			console.log('[keepyAuth] auth-iframe embed probe: ' + (r.ok ? 'OK' : 'BLOCKED') +
+				' -- ' + r.detail);
+			publishStage(r.ok ? 'auth-iframe-embed-ok' : 'auth-iframe-embed-blocked');
+		}).catch(function (e) {
+			console.error('keepyAuth: embed probe failed', e);
+			publishStage('auth-iframe-probe-failed');
+		});
+	}, STALL_PROBE_AFTER_MS);
+
+	const wasPending = readPending();
+	try {
+		const cred = await authMod.getRedirectResult(auth);
+		if (wasPending) {
+			writePending(false);
+			if (!cred && !auth.currentUser) {
+				// We navigated to Google and came back with no credential and
+				// no user. With the proxy in place this should no longer be
+				// the ITP storage-partition signature it used to be -- if it
+				// still fires, `detail` is the first thing to check.
+				publish({
+					status: 'error',
+					error: 'redirect-lost',
+					detail: 'redirect returned no credential (storage partitioning?)',
+				});
+			}
+		}
+	} catch (e) {
+		writePending(false);
+		publish({
+			status: 'error',
+			error: 'redirect-failed',
+			detail: (e && e.code ? e.code : '') + ' ' + (e && e.message ? e.message : String(e)),
+		});
+	}
+
+	window.keepySignInWithGoogle = function () {
+		try {
+			const provider = new authMod.GoogleAuthProvider();
+			writePending(true);
+			publish({ status: 'redirecting', error: '', detail: '' });
+			authMod.signInWithRedirect(auth, provider).catch(function (e) {
+				writePending(false);
+				publish({
+					status: 'error',
+					error: 'redirect-start-failed',
+					detail: (e && e.code ? e.code : '') + ' ' + (e && e.message ? e.message : String(e)),
+				});
+			});
+			return true;
+		} catch (e) {
+			writePending(false);
+			publish({
+				status: 'error',
+				error: 'redirect-start-failed',
+				detail: e && e.message ? e.message : String(e),
+			});
+			return false;
+		}
+	};
+
+	// Flip `ready` LAST: everything above can still change the status, and a
+	// screen that reacted to an intermediate value would flash the wrong UI.
+	publish({
+		ready: true,
+		status: window.keepyAuth.status === 'loading'
+			? (auth.currentUser ? 'signed_in' : 'signed_out')
+			: window.keepyAuth.status,
+	});
+}());
+		</script>
+
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
