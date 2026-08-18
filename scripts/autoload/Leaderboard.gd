@@ -16,6 +16,28 @@ extends Node
 ## `integerValue` for whole numbers (sent as a JSON STRING per the REST
 ## spec's int64 mapping, to avoid precision loss -- `str(int)` handles
 ## that), `timestampValue` for RFC3339 UTC instants.
+##
+## =====================================================================
+## AUTHENTICATION: SENT WHEN AVAILABLE, NEVER REQUIRED (18 aout 2026)
+##
+## Both network entry points below attach `Authorization: Bearer <idToken>`
+## from Auth.gd when a user is signed in, and submit_score additionally
+## writes the signed-in `uid` into the document. Neither is a precondition:
+## when Auth reports signed-out (desktop editor, a stale shell whose bridge
+## never resolved, a session that expired between the gate and the game
+## over screen) the request goes out exactly as it did before this existed
+## -- same URL, same body minus `uid`, same signals, no new error path.
+##
+## That "never required" half is deliberate and ORDER-CRITICAL, not
+## defensive habit. The Firestore rules of keepy-8df91 are GLOBAL to the
+## project: staging and production evaluate the very same ruleset, there is
+## no per-environment copy. The rules deployed today still allow
+## unauthenticated writes, so this code has to keep working under them --
+## it ships first, reaches `main`, and only THEN can the rules be hardened
+## to demand `request.auth != null` and `uid == request.auth.uid`. Doing it
+## the other way round would break the production build the moment the
+## rules changed, since prod would still be running a client that sends
+## neither. See CLAUDE.md for the post-merge manual step.
 
 signal submit_finished(success: bool)
 ## `entries` is an Array of {"name": String, "score": int} sorted
@@ -164,17 +186,25 @@ func submit_score(player_name: String, score: int, nuts: int, glands: int) -> vo
 	if safe_name.is_empty():
 		safe_name = DEFAULT_NAME
 	var doc_id := _generate_auto_id()
+	var fields := {
+		"name": { "stringValue": safe_name },
+		"score": { "integerValue": str(score) },
+		"nuts": { "integerValue": str(nuts) },
+		"glands": { "integerValue": str(glands) },
+	}
+	# Written whenever it is known, omitted entirely otherwise -- an empty
+	# `uid` string would be a WORSE record than no field at all, and the
+	# future rule will be written as "uid == request.auth.uid", which an
+	# empty string fails just as loudly as a missing key.
+	var uid := _current_uid()
+	if not uid.is_empty():
+		fields["uid"] = { "stringValue": uid }
 	var body := {
 		"writes": [
 			{
 				"update": {
 					"name": "projects/%s/databases/(default)/documents/%s/%s" % [PROJECT_ID, COLLECTION_ID, doc_id],
-					"fields": {
-						"name": { "stringValue": safe_name },
-						"score": { "integerValue": str(score) },
-						"nuts": { "integerValue": str(nuts) },
-						"glands": { "integerValue": str(glands) },
-					},
+					"fields": fields,
 				},
 				"updateTransforms": [
 					{ "fieldPath": "createdAt", "setToServerValue": "REQUEST_TIME" },
@@ -188,8 +218,7 @@ func submit_score(player_name: String, score: int, nuts: int, glands: int) -> vo
 		],
 	}
 	var url := "%s:commit?key=%s" % [DOCUMENTS_URL, API_KEY]
-	var headers := ["Content-Type: application/json"]
-	var err := _submit_request.request(url, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
+	var err := _submit_request.request(url, _request_headers(), HTTPClient.METHOD_POST, JSON.stringify(body))
 	if err != OK:
 		push_warning("Leaderboard: submit_score request() failed to start (err=%d)" % err)
 		submit_finished.emit(false)
@@ -223,8 +252,7 @@ func fetch_top_scores() -> void:
 		},
 	}
 	var url := "%s:runQuery?key=%s" % [DOCUMENTS_URL, API_KEY]
-	var headers := ["Content-Type: application/json"]
-	var err := _query_request.request(url, headers, HTTPClient.METHOD_POST, JSON.stringify(body))
+	var err := _query_request.request(url, _request_headers(), HTTPClient.METHOD_POST, JSON.stringify(body))
 	if err != OK:
 		push_warning("Leaderboard: fetch_top_scores request() failed to start (err=%d)" % err)
 		top_scores_fetched.emit([], false)
@@ -258,6 +286,31 @@ func _on_query_completed(result: int, response_code: int, _headers: PackedString
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
+
+## Headers for both entry points. `Authorization` is appended only when
+## Auth.gd has BOTH a signed-in user and a token string for it -- Auth
+## publishes the uid before the token (see its get_id_token doc), so a
+## signed-in check alone would let an empty bearer through, which Google
+## rejects with 401 where sending nothing at all is accepted by the rules
+## deployed today.
+func _request_headers() -> PackedStringArray:
+	var headers := PackedStringArray(["Content-Type: application/json"])
+	if not Auth.is_signed_in():
+		return headers
+	var token := Auth.get_id_token()
+	if token.is_empty():
+		return headers
+	headers.append("Authorization: Bearer %s" % token)
+	return headers
+
+## Empty string when signed out -- callers omit the field rather than
+## write a blank one. Split out from _request_headers() on purpose: the
+## uid and the token become available at different instants, so the two
+## questions cannot share one answer.
+func _current_uid() -> String:
+	if not Auth.is_signed_in():
+		return ""
+	return Auth.get_current_uid()
 
 ## Client-generated document id in the same alphabet Firestore's own
 ## auto-ids use (not cryptographically required to match exactly, just

@@ -5004,3 +5004,143 @@ PWA installée. Si un `bridge-timeout` survient encore, l'écran doit désormais
 afficher `first-auth-state-stalled` suivi d'un verdict d'embed — et un
 `auth-iframe-embed-ok` serait l'information la plus intéressante possible : il
 dirait que l'iframe s'intègre et que le blocage est ailleurs.
+
+## CLASSEMENT CABLE SUR L'AUTH GOOGLE : token + uid ENVOYES, jamais EXIGES — le durcissement des rules est une action MANUELLE post-merge-main (18 aout 2026)
+
+Branche `claude/leaderboard-google-auth-d0yxwu`, partie de `staging`
+(`d01618d`, le lot qui a rendu le sign-in Google fonctionnel sur device).
+**Un seul fichier de code touché** : `scripts/autoload/Leaderboard.gd`.
+Aucune scene, aucun collider, aucune constante de gameplay, aucun `.glb`.
+
+`submit_score()` et `fetch_top_scores()` attachent desormais
+`Authorization: Bearer <idToken>` (via `Auth.get_id_token()`), et
+`submit_score()` ecrit en plus un champ `uid` (`stringValue`,
+`Auth.get_current_uid()`) dans le document Firestore.
+
+### ⚠️ L'ORDRE EST LA CONTRAINTE, PAS LE CODE — les rules sont GLOBALES au projet
+
+**Les Firestore rules de `keepy-8df91` sont uniques pour tout le projet :
+`staging` et la prod evaluent le MEME ruleset, il n'existe aucune copie par
+environnement.** C'est ce qui interdit de durcir les rules dans cette
+session, et ce qui dicte la seule sequence sure :
+
+1. ce lot part sur `staging` (fait) ;
+2. validation device, puis merge sur `main` (gate Mathieu, palier 2) ;
+3. **SEULEMENT ENSUITE**, durcissement manuel des rules en Console Firebase.
+
+Durcir avant l'etape 2 casserait la PROD a l'instant du changement de
+rules : la prod servirait encore un client qui n'envoie ni token ni uid, et
+toute soumission de score deviendrait `PERMISSION_DENIED`. Aucune session
+agentique ne peut editer les rules (pas d'acces Console) — c'est une action
+**manuelle**, et elle appartient a Mathieu.
+
+**Ce que le durcissement devra exiger, une fois `main` a jour** :
+`request.auth != null` et `request.resource.data.uid == request.auth.uid`,
+en gardant les deux contraintes deja deployees (`name.size() <= 12`,
+`createdAt == request.time`).
+
+### « Envoye quand disponible », jamais « requis » — mesure des 4 etats
+
+Le code ne DEPEND jamais de l'auth : signe out, il part exactement comme
+avant ce lot (meme URL, meme corps sans `uid`, memes signaux, aucun nouveau
+chemin d'erreur). Deux helpers separes, et cette separation est
+volontaire : **Auth publie l'uid AVANT le token** (cf. le doc de
+`Auth.get_id_token()`), donc les deux questions ne peuvent pas partager une
+seule reponse. Un `is_signed_in()` seul laisserait passer un bearer VIDE,
+que Google rejette en 401 la ou ne rien envoyer du tout est encore accepte
+par les rules d'aujourd'hui.
+
+Mesure sur les VRAIS autoloads (sonde jetable, jamais commitee, supprimee
+avant le commit — `ProbeTimeoutAudit` revient a **33 sondes**) :
+
+| etat Auth | `_request_headers()` | `_current_uid()` |
+|---|---|---|
+| signe out (etat reel headless) | `Content-Type` seul | `''` → champ omis |
+| signe in, token pas encore arrive | `Content-Type` seul | `UID_...` → champ ecrit |
+| signe in, token present | `Content-Type` + `Authorization: Bearer ...` | `UID_...` |
+| session reperdue (token laisse rassis expres) | `Content-Type` seul | `''` |
+
+La ligne signe-out rend **exactement** la liste d'en-tetes d'avant ce lot —
+c'est la non-regression du chemin non authentifie, mesuree et pas plaidee.
+
+⚠️ **Etat transitoire a connaitre AVANT le durcissement** : ligne 2 du
+tableau — uid ecrit, pas encore de bearer. Inoffensif sous les rules
+actuelles ; sous les rules durcies ce serait un `PERMISSION_DENIED`. La
+fenetre est etroite (Auth publie le token juste apres l'uid, et l'ecran de
+game over arrive bien plus tard que le gate de login), mais elle existe :
+si une soumission echoue rarement apres le durcissement, c'est le premier
+suspect, pas le reseau.
+
+### Le court-circuit headless reste PRIORITAIRE sur tout le reste — verifie
+
+`if not network_enabled: emit(...); return` reste la **premiere**
+instruction des deux points d'entree, donc une sonde ne touche jamais
+`Auth`, ne construit jamais d'en-tete, ne lit jamais de token. Mesure
+(meme sonde jetable) : `DisplayServer.get_name() = headless`,
+`network_enabled = false`, `Auth.is_signed_in() = false`,
+`submit_finished` et `top_scores_fetched` emis **exactement une fois
+chacun** avec `success = false`. `Auth.gd` se garde par ailleurs
+independamment sur `OS.has_feature("web")` — deux gardes distinctes, pour
+deux questions distinctes (cf. son en-tete).
+
+### ⚠️ NON VERIFIE, ET C'EST LE RISQUE PRINCIPAL DE CE LOT : les rules
+### actuelles acceptent-elles un champ `uid` EN PLUS ?
+
+Si la regle deployee contraint le jeu de champs (`hasOnly([...])`), ajouter
+`uid` la ferait echouer **sous les rules ACTUELLES**, c'est-a-dire
+exactement la casse que la contrainte d'ordre ci-dessus existe pour eviter.
+**Ce point n'a pas pu etre mesure dans cette session** : la politique du
+sandbox bloque tout appel vers l'endpoint d'ECRITURE `:commit` de Firestore
+(la lecture `:runQuery` passe, elle, et a confirme la forme des documents
+existants : `name`/`score`/`nuts`/`glands`/`createdAt`, **aucun `uid`** a ce
+jour).
+
+**Recette de verification ZERO-ECRITURE, a rejouer par une session qui en a
+le droit** (ou par Mathieu) — elle n'ecrit jamais rien parce que la
+precondition ne peut pas etre satisfaite :
+
+envoyer un `:commit` avec `"currentDocument": {"exists": true}` sur un
+doc id frais (donc inexistant), en trois variantes —
+(A) corps actuel sans `uid`, (B) corps a nom de 13 caracteres (rejet
+`PERMISSION_DENIED` deja documente plus haut dans ce fichier, donc temoin
+qui prouve que les rules sont bien evaluees), (C) corps avec `uid`.
+Lecture : **400 `FAILED_PRECONDITION` = les rules ont ACCEPTE** (et rien
+n'a ete ecrit) ; **403 `PERMISSION_DENIED` = les rules ont REFUSE**. Le
+temoin (B) doit sortir 403, sinon le test est non concluant et il faut une
+autre approche.
+
+**En attendant, le vrai filet est le palier `staging`** : une soumission de
+score sur `keepy-staging.vercel.app` qui apparait bien dans le top 10
+repond a la question en une manipulation, et c'est precisement pourquoi ce
+lot ne va pas plus loin que `staging`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, memes que la CI). Import headless **exit 0**, export Web
+release **exit 0**, `Leaderboard.gdc` et `Auth.gdc` tous deux compiles dans
+le `.pck`. `index.wasm` **35 376 909 octets** — identique au fingerprint
+deja consigne pour tout lot qui ne touche pas le code moteur ; `index.pck`
+5 445 248 octets (export unique et propre, `build/` supprime avant — a lire
+avec la mise en garde permanente sur l'instabilite du `.pck`). Piege payload
+tenu (**0** ligne `Storing File: res://assets_source`).
+
+**HUIT sondes rejouees, chacune diffee contre `origin/staging` en worktree
+separe : les HUIT sont BYTE-IDENTIQUES sur les DEUX flux (stdout ET
+stderr), exit 0 des deux cotes** — `ProbeTimeoutAudit` (33 sondes),
+`AssetContractAudit` (12/12 visuels, 0/10 colliders deplaces),
+`DeathModelAudit`, `ChargerShapeProbe`, `AlarmRampAudit` (12/12), plus les
+trois sondes gameplay seedees `ComboAudit`, `ShrinkAudit`, `ChargerAudit`
+(graine 20260806, `--fixed-fps 60`). C'est le bar attendu : le
+court-circuit headless fait de ce lot un no-op complet sous sonde, et
+l'identite au bit pres le dit plus fort qu'un simple verdict identique.
+
+### Reste ouvert
+
+1. **La question `hasOnly` ci-dessus** — le seul vrai risque, non mesure
+   ici, mais tranche par une soumission de score sur staging.
+2. **Le durcissement des rules lui-meme** : action MANUELLE, en Console
+   Firebase, **apres** le merge sur `main`, jamais avant.
+3. Jugement device sur `keepy-staging.vercel.app` : le classement se charge
+   toujours, et une soumission aboutit toujours, avec un utilisateur
+   Google reellement connecte.
