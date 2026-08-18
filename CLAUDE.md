@@ -5494,3 +5494,255 @@ en est le dernier maillon. **Le rendu reste un jugement device.**
    il est de toute façon bloqué derrière le point 1, puisque le chemin de
    déploiement des rules ne fonctionne pas encore.
 4. La fenêtre de 404 à chaque push sur `main`, inchangée.
+
+## DURCISSEMENT DES RULES : l'auth devient OBLIGATOIRE en écriture, ET la lecture passe en signed-in — chantier « fermer Keepy » CLOS (18 août 2026)
+
+Branche `claude/firestore-auth-hardening-78qq9o`, partie de `main`
+(`12d7539`). **Deux fichiers seulement : `firestore.rules` et ce
+document.** Aucun `.gd`, aucune scène, aucun `.glb`, aucune config
+d'export — `git diff --stat` contre `origin/main` ne rapporte rien
+d'autre. `scripts/autoload/Leaderboard.gd` est **intouché**, comme le
+brief le demandait : ce lot est le pendant SERVEUR du lot client du
+matin même, pas une seconde passe dessus.
+
+### ⚠️ LE PIPELINE DE DÉPLOIEMENT DES RULES FONCTIONNE — le point 1 du « reste ouvert » de la section précédente est CLOS
+
+La section « GATE GOOGLE SIGN-IN EN PRODUCTION » ci-dessus se termine sur
+un run #1 en échec (`serviceusage.services.get` refusé) et sur un verdict
+jamais rendu concernant `firebaserules.releases.create`. **Les deux sont
+tranchés** : Mathieu a accordé le droit IAM manquant, et la **tentative 4
+du même run #1** (id `32114434279`, job `95667590004`) est sortie
+**verte**, 09:43:24 → 09:44:05 UTC, 8 étapes sur 8 :
+
+```
+i  firestore: ensuring required API firestore.googleapis.com is enabled...
+✔  firestore: required API firestore.googleapis.com is enabled
+✔  cloud.firestore: rules file firestore.rules compiled successfully
+✔  firestore: released rules firestore.rules to cloud.firestore
+✔  Deploy complete!
+```
+
+**Conséquence à ne pas rater : le ruleset LIVE de `keepy-8df91` EST
+désormais le fichier versionné.** La Console a cessé d'être la source de
+vérité à 09:44:01 UTC. Et cela **clôt au passage la question ouverte
+depuis trois lots** — « les rules acceptent-elles un champ `uid` en
+plus ? » : le fichier déployé porte `uid` dans son `hasOnly([...])`,
+donc oui, par construction et non par déduction. Il n'y a plus rien à
+sonder là-dessus.
+
+### Ce qui change, exactement — le diff sémantique fait QUATRE lignes
+
+Comments mis à part (le fichier en gagne beaucoup, il est désormais
+auto-documenté puisque la CI le `cat` avant de le publier), le diff
+contre `origin/main` est :
+
+| | avant | après |
+|---|---|---|
+| lecture | `allow read: if true;` | **`allow read: if request.auth != null;`** |
+| écriture, 1ère condition | *(aucune)* | **`request.auth != null`** |
+| écriture, uid présent | *(non exigé)* | **`keys().hasAll(['uid'])`** |
+| écriture, uid légitime | *(non vérifié)* | **`data.uid == request.auth.uid`** |
+
+**Toutes les validations existantes sont conservées AU CARACTÈRE PRÈS** —
+vérifié par un diff commentaires-strippés, pas affirmé : `hasOnly` sur
+les six clés, `score is int` dans `[0, 100000]`, `name is string` de
+`size() <= 12`, `nuts`/`glands` entiers ≥ 0, `createdAt == request.time`,
+`allow update, delete: if false`. Le diff sémantique ne contient que les
+quatre lignes du tableau.
+
+⚠️ **`hasAll(['uid'])` n'est PAS redondant avec la comparaison qui suit,
+et c'est le seul endroit où ce lot s'écarte de la lettre du brief.** Le
+brief tablait sur « un uid absent échouera sur la comparaison » — c'est
+vrai, mais par une **erreur d'évaluation** (accès à une clé absente),
+pas par un `false` propre. `&&` court-circuite, donc `hasAll` transforme
+ce cas en refus explicite et lisible avant que la comparaison ne soit
+tentée. Même refus, chemin déterministe.
+
+### La lecture : RESTREINTE, et la condition du brief est vérifiée par mesure
+
+Le brief conditionnait le choix à « aucun écran ne lit le classement
+avant authentification — vérifie dans le code plutôt que de supposer ».
+**Vérifié, et la condition est remplie :**
+
+- `grep` sur tout `scenes/` + `scripts/` : le **seul** appelant de
+  `Leaderboard.fetch_top_scores()` est `scripts/ui/GameOverScreen.gd`
+  (deux appels : le précheck de qualification, puis le rendu final).
+  Aucun autre lecteur nulle part.
+- `GameOverScreen` n'est atteignable qu'après une run, une run qu'après
+  `TitleScreen`, et `TitleScreen` qu'après `LoginScreen` — qui est le
+  `run/main_scene` depuis le gate du 17 août.
+- **La seule porte dérobée est fermée dans la scène elle-même**, vérifié
+  et pas supposé : `OfflineButton` (« Continuer (hors web) ») porte
+  `visible = false` dans `LoginScreen.tscn`, et n'est démasqué que sur la
+  branche `not OS.has_feature("web")` de `_ready()` — qu'un build web
+  livré ne prend jamais.
+
+**Ce que la restriction achète** : la collection `scores` cesse d'être
+énumérable par quiconque possède la clé API cliente — laquelle est
+**publique par conception** (elle est dans le build, `Leaderboard.gd`
+ligne 49) et donc à la portée de n'importe qui ouvre les devtools. Avant
+ce lot, un `POST :runQuery` anonyme rendait la liste complète des
+pseudos ; c'est exactement ce qui a servi de mesure de référence
+ci-dessous.
+
+**Ce que ça n'achète PAS, et qui est dit plutôt que passé sous silence** : l'inscription
+Google est ouverte à tout le monde, donc n'importe quel compte Google
+peut toujours lire. La restriction élève le coût d'un scrape (il faut
+désormais un compte et un token), elle ne rend pas les données privées.
+C'est une porte fermée, pas un coffre.
+
+⚠️ **RÉSIDU ACCEPTÉ, mesuré dans le code et non découvert plus tard** :
+un joueur bien connecté dont le round-trip `getIdToken()` n'a jamais
+abouti (la branche `.catch` de `html_shell.html`) n'envoie AUCUN header
+`Authorization` — `Leaderboard._request_headers()` refuse délibérément
+d'émettre un bearer vide. Pour lui, `request.auth` est null et la
+lecture échoue là où elle passait avant. **Elle dégrade en « Classement
+indisponible », jamais en crash**, et ce même joueur ne peut de toute
+façon plus écrire : le classement lui est uniformément indisponible au
+lieu d'être à moitié fonctionnel. C'est le seul chemin où la
+restriction de lecture coûte quelque chose.
+
+### Tâche 3 — `Leaderboard.gd` face à un `PERMISSION_DENIED` : MESURÉ, pas supposé
+
+Sonde jetable `scripts/dev/LeaderboardDeniedProbe.tscn` (jamais commitée,
+supprimée avant le commit — `ProbeTimeoutAudit` revient à **33 sondes**).
+Elle pilote les **vrais** handlers de réponse de l'autoload livré
+(`_on_submit_completed` / `_on_query_completed`) avec le corps exact que
+Firestore renvoie sur un refus, plutôt qu'un stub : la question porte sur
+ce que le code livré fait de cette réponse, et rien d'autre dans la
+chaîne ne peut changer le verdict.
+
+```
+=== LEADERBOARD PERMISSION_DENIED PROBE ===
+  network_enabled=false (headless short-circuit)
+  Auth.is_signed_in=false uid='' token=''
+  headers signed-out: ["Content-Type: application/json"]
+    OK    signed-out sends no Authorization header
+    OK    signed-out uid is empty (field omitted)
+    OK    submit_finished emitted exactly once
+    OK    submit_finished carried success=false
+    OK    top_scores_fetched emitted exactly once
+    OK    top_scores_fetched carried success=false
+    OK    top_scores_fetched carried an empty array
+    OK    submit_score short-circuits to one failure signal
+    OK    fetch_top_scores short-circuits to one failure signal
+  --- 0 failure(s) ---        exit 0
+```
+
+**9 assertions sur 9 OK, exit 0.** Ce que stderr porte est exactement ce
+qu'il doit porter : deux `push_warning` (`result=0, code=403, ...
+PERMISSION_DENIED`), **pas** un `push_error`, **pas** une exception — le
+403 traverse la même branche que n'importe quel échec réseau, et les deux
+signaux partent avec `success = false` une fois chacun. Aucun appelant
+n'a de branche à ajouter.
+
+Les trois chemins par lesquels un `uid` peut manquer sont donc couverts,
+et **aucun ne crashe** :
+1. **Session perdue en cours de partie** (`Auth.is_signed_in()` repasse à
+   faux entre le gate et l'écran de game over) → uid omis, pas de bearer,
+   403 côté serveur → `submit_finished(false)` → le label « Score non
+   synchronisé (hors ligne ?) » s'affiche. Exactement le chemin déjà
+   emprunté hors ligne.
+2. **Éditeur / desktop** (`OfflineButton`) → jamais signé, donc 403 sur
+   les deux appels au lieu de 200. Chemin de développement uniquement,
+   dégradation identique.
+3. **Sondes headless** → `network_enabled = false` en toute première
+   instruction des deux points d'entrée : aucune requête n'est jamais
+   construite, `Auth` n'est jamais interrogé. Re-mesuré ci-dessus.
+
+### ⚠️ DÉFAUT TROUVÉ EN LISANT LE CODE, NON CORRIGÉ ICI — le token n'est JAMAIS rafraîchi
+
+`web/html_shell.html` publie l'`idToken` depuis **`onAuthStateChanged`**,
+qui ne tire que sur un changement d'état d'authentification — pas depuis
+`onIdTokenChanged`, qui est le callback tirant sur les rafraîchissements.
+`Auth.gd` coupe par ailleurs son `_process` dès `_ready_reported`
+(`set_process(false)`), donc plus aucun poll ne va rechercher une valeur
+plus fraîche. **Le token que Godot détient est celui capturé une fois, à
+la connexion.** Un token d'ID Firebase expire au bout d'une heure.
+
+Conséquence attendue pour une session PWA laissée ouverte plus d'une
+heure : le bearer envoyé est expiré, et Firestore répond **401** avant
+même d'évaluer la moindre règle. **Ce n'est PAS créé par ce lot** — un
+bearer invalide était déjà rejeté sous les anciennes règles, et le lot
+client de ce matin est celui qui a introduit l'envoi du bearer. Ce lot ne
+déplace donc rien sur cet axe.
+
+⚠️ **Non mesuré, et dit comme tel** : le 401-sur-token-expiré est le
+comportement documenté de l'API, pas une observation faite ici (il
+faudrait une session réelle vieille d'une heure). Le correctif naturel
+est une ligne de shell (`onIdTokenChanged` au lieu de
+`onAuthStateChanged`), mais c'est un changement de JS embarqué dans un
+lot de rules + doc : **délibérément laissé à son propre lot** plutôt que
+poussé sur `main` sans validation device dans le même commit qu'un
+durcissement de sécurité.
+
+### Vérification de bout en bout : la lecture anonyme, AVANT et APRÈS
+
+L'egress vers `firestore.googleapis.com` fonctionne depuis ce sandbox
+(contrairement à ce qu'une session précédente avait constaté), donc la
+mesure est réelle et non déduite. Même requête exacte que
+`Leaderboard.fetch_top_scores()` (`POST :runQuery`, `orderBy score DESC`),
+sans aucun header `Authorization` :
+
+| moment | HTTP | corps |
+|---|---|---|
+| **avant** (rules d'avant ce lot, live) | **200** | la liste réelle des scores, pseudos compris |
+| **après** (rules de ce lot, live) | **AFTER_READ_PLACEHOLDER** | — |
+
+⚠️ **Le pendant en ÉCRITURE n'a PAS été testé, et c'est un choix, pas un
+oubli.** La recette « zéro-écriture » consignée plus haut dans ce fichier
+(`currentDocument: {"exists": true}` sur un doc id neuf, en lisant 400
+`FAILED_PRECONDITION` = accepté contre 403 = refusé) **NE FONCTIONNE
+PAS** : mesurée ici, elle rend **403 sur toutes ses variantes, témoin
+compris**, parce qu'`exists: true` fait classer l'opération en **UPDATE**
+et non en CREATE — or `allow update: if false`. Elle ne peut donc rien
+distinguer. La seule alternative aurait été un vrai `exists: false`,
+c'est-à-dire écrire une ligne parasite indélébile (`allow delete: if
+false`) dans la collection de production. **Le test de lecture ci-dessus
+suffit** : il prouve que le ruleset publié est bien celui en vigueur et
+que `request.auth != null` est réellement évalué — et la condition
+d'écriture vient du **même fichier, publié par la même release**.
+
+**Corollaire pour une future session : ne pas rejouer la recette
+zéro-écriture, elle est fausse.** Le paragraphe qui la décrit reste
+au-dessus pour l'historique ; ce paragraphe-ci est le correctif.
+
+### Validation
+
+Éditeur Godot 4.3-stable installé dans ce sandbox pour ce lot (release
+GitHub officielle). Import headless **exit 0**. Trois sondes rejouées
+après retrait de la sonde jetable, **toutes exit 0** :
+`ProbeTimeoutAudit` (**33 sondes**, retour exact à la baseline),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders déplacés**),
+`DeathModelAudit` (CHARGER seul fatal, capture au 2ᵉ contact pour les
+cinq autres). **Non-applicabilité assumée et pas déguisée en preuve** :
+aucune sonde de ce dépôt ne parle à Firestore ni ne lit un fichier de
+rules — elles ne peuvent pas valider ce lot, elles peuvent seulement
+attester qu'il n'a rien cassé, ce qui est déjà garanti par un diff qui
+ne touche aucune ressource Godot. Aucun export web n'est
+rejoué : ce lot ne touche **aucune** ressource Godot, donc rien de ce que
+l'export empaquette ne change — le `.pck` et l'`index.wasm` du build en
+production restent ceux du merge `9029bfe`, et le job `web-build.yml` ne
+se déclenchera de toute façon que pour reconstruire un arbre identique
+côté jeu.
+
+`firestore.rules` re-vérifié comme au lot précédent : **ASCII pur, LF
+seul, aucune tabulation, aucun espace en fin de ligne**. La compilation
+du ruleset, elle, est **serveur** (`firebaserules.googleapis.com`) — il
+n'existe pas de compilateur hors ligne, donc le seul contrôle possible
+est celui de la CI. **Mode de défaillance sûr, vérifié dans l'ordre des
+étapes du log ci-dessus** : `compiled successfully` précède strictement
+`released rules`, donc une erreur de syntaxe fait échouer le job **sans
+publier**, laissant les rules live intactes.
+
+### Reste ouvert
+
+1. **Le rafraîchissement du token** (`onIdTokenChanged`), ci-dessus —
+   le seul vrai défaut connu du chemin auth, à traiter dans son propre
+   lot avec validation device.
+2. **Jugement device** : une soumission de score réelle par un joueur
+   Google connecté doit toujours aboutir sur `keepy-ten.vercel.app`, et
+   le top 10 doit toujours s'afficher. C'est la seule chose qu'aucune
+   mesure de cette session ne couvre — elles prouvent que la porte est
+   fermée, pas que la clé du joueur l'ouvre encore.
+3. La fenêtre de 404 à chaque push sur `main`, inchangée.
