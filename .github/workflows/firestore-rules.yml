@@ -1,0 +1,113 @@
+name: Firestore rules deploy
+
+# =====================================================================
+# WHY THIS IS A SEPARATE WORKFLOW FILE AND NOT A JOB IN web-build.yml
+#
+# The brief asked for a new JOB inside the existing workflow, gated by
+# `paths: ['firestore.rules']`. Those two are structurally incompatible
+# in GitHub Actions: `on.push.paths` is a WORKFLOW-level filter, there is
+# no job-level equivalent. Putting that filter on web-build.yml would
+# have gated the Godot build/export/deploy job on firestore.rules too --
+# i.e. no web deploy unless the rules file changed -- which the brief
+# explicitly forbids ("ne touche pas au job de build/export/deploy Web
+# actuel").
+#
+# The alternatives inside web-build.yml were worse:
+#   - a job-level `if:` plus a git-diff of the pushed range, to emulate
+#     the filter by hand: fragile on force-push, first-push and merge
+#     commits, and it still spins up the whole workflow run;
+#   - a third-party paths-filter action: a new supply-chain dependency
+#     for something Actions already does natively.
+# It also inherits web-build.yml's `cancel-in-progress: true` concurrency
+# group, which could cancel a rules deploy mid-flight.
+#
+# So the filter is kept EXACTLY as specified -- `paths: ['firestore.rules']`,
+# native, no action, no diff heuristic -- and it lives in its own file,
+# which is the only place that syntax can mean what it is meant to mean.
+# web-build.yml is byte-untouched by this lot.
+#
+# WHY main-ONLY, AND WHY THAT IS NOT A BYPASS OF THE STAGING GATE
+#
+# Firestore rules are GLOBAL to the keepy-8df91 project: staging and
+# production evaluate the very same ruleset, there is no per-environment
+# copy (see the header of scripts/autoload/Leaderboard.gd, which is
+# written around exactly that fact). A rules deploy therefore has no
+# "staging first" tier available to it -- deploying from `staging` would
+# BE deploying to production, while looking like a preview.
+#
+# Palier 2 of the deployment rule in CLAUDE.md (Mathieu's explicit
+# authorisation, after device validation, before anything reaches `main`)
+# is consequently the only gate that exists for rules. Binding this
+# trigger to `main` puts the rules behind that gate instead of around it:
+# a rules change reaches the live project through the same human
+# authorisation that every production change already goes through.
+# =====================================================================
+
+on:
+  push:
+    branches: [main]
+    paths: ['firestore.rules']
+
+# Deliberately no `workflow_dispatch`: it would allow a manual run from
+# any ref and any file state, which is precisely the two things the
+# trigger above exists to prevent. A failed run can still be re-run from
+# the Actions UI without it.
+
+concurrency:
+  # No `cancel-in-progress` -- unlike a web build, a half-cancelled rules
+  # deploy has no artifact to throw away; it either published or it did
+  # not, and a later push must queue behind it rather than kill it.
+  group: firestore-rules-deploy
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-firestore-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Same shape as web-build.yml's "Check Vercel secrets" step: fail
+      # loudly with an actionable message rather than let the deploy fail
+      # deep inside a CLI with an opaque auth error.
+      - name: Check Firebase service account secret
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEEPY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEEPY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_KEEPY:-}" ]; then
+            echo "::error::Missing repository secret FIREBASE_SERVICE_ACCOUNT_KEEPY."
+            echo "It must contain the full service account JSON key for the keepy-8df91 Firebase project."
+            exit 1
+          fi
+          echo "Secret present."
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEEPY }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools
+
+      - name: Show resolved rules file
+        run: |
+          set -euo pipefail
+          echo "--- firestore.rules as checked out at ${GITHUB_SHA} ---"
+          cat firestore.rules
+
+      - name: Deploy Firestore rules
+        # google-github-actions/auth@v2 writes the service account key to a
+        # temp file and exports GOOGLE_APPLICATION_CREDENTIALS; firebase-tools
+        # picks that up on its own, so no `firebase login` / FIREBASE_TOKEN.
+        run: |
+          set -euo pipefail
+          firebase deploy --only firestore:rules --project keepy-8df91 --non-interactive
