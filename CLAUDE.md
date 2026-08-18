@@ -5687,7 +5687,14 @@ sans aucun header `Authorization` :
 | moment | HTTP | corps |
 |---|---|---|
 | **avant** (rules d'avant ce lot, live) | **200** | la liste réelle des scores, pseudos compris |
-| **après** (rules de ce lot, live) | **AFTER_READ_PLACEHOLDER** | — |
+| **après** (rules de ce lot, live) | **403** | `{"error":{"code":403,"message":"Missing or insufficient permissions.","status":"PERMISSION_DENIED"}}` |
+
+**La chronologie est serrée au point d'être une preuve de causalité, pas
+une corrélation** : le job a imprimé `released rules` à **10:32:59,77
+UTC**, et la même requête anonyme, rejouée en boucle toutes les 15 s
+depuis avant le push, est passée de **200 à 10:32:45** à **403 à
+10:33:01** — deux secondes après la publication. Rien d'autre n'a touché
+ce projet dans cet intervalle.
 
 ⚠️ **Le pendant en ÉCRITURE n'a PAS été testé, et c'est un choix, pas un
 oubli.** La recette « zéro-écriture » consignée plus haut dans ce fichier
@@ -5734,6 +5741,38 @@ est celui de la CI. **Mode de défaillance sûr, vérifié dans l'ordre des
 étapes du log ci-dessus** : `compiled successfully` précède strictement
 `released rules`, donc une erreur de syntaxe fait échouer le job **sans
 publier**, laissant les rules live intactes.
+
+### Le déploiement automatique déclenché PAR ce merge : run #2, VERT
+
+`staging` (`e51278b`) → `main`, commit de merge **`8b70b24`**, `--no-ff`,
+aucun conflit. `main` était **strictement en retard** (`staging..main`
+vide dans l'autre sens) et l'arbre du commit de merge est
+**byte-identique** à celui de `staging` et de la branche feature — même
+hash d'arbre `3035ee1c...` sur les trois, vérifié avant le push.
+
+Le push a déclenché `firestore-rules.yml` **tout seul**, comme prévu :
+run **#2** (id `32127251623`, job `95680442384`), **tentative 1**,
+10:32:26 → 10:33:02 UTC, **36 secondes**, `conclusion: success`, **8
+étapes sur 8**.
+
+```
+i  firestore: ensuring required API firestore.googleapis.com is enabled...
+✔  firestore: required API firestore.googleapis.com is enabled
+✔  cloud.firestore: rules file firestore.rules compiled successfully
+i  firestore: uploading rules firestore.rules...
+✔  firestore: released rules firestore.rules to cloud.firestore   [10:32:59,77]
+✔  Deploy complete!
+```
+
+**Le ruleset durci est en vigueur sur `keepy-8df91` depuis 10:32:59 UTC**,
+et c'est vérifié sur le service lui-même (tableau ci-dessus), pas
+seulement dans un log de CI.
+
+⚠️ **Le même push déclenche AUSSI `web-build.yml`**, qui reconstruit et
+redéploie la prod — donc **une fenêtre de 404 d'environ 3 minutes**, la
+même que celle documentée plus haut. Le build est pourtant identique côté
+jeu (aucune ressource Godot dans le diff) : c'est le prix fixe d'un push
+sur `main`, pas une conséquence de ce lot.
 
 ### Reste ouvert
 
