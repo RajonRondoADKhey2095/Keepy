@@ -5344,6 +5344,153 @@ il appartient à un autre lot.
    `staging`**. C'est à ce run-là qu'on verra si le compte de service a
    bien la permission `firebaserules.releases.create` : le brief l'affirme,
    aucune session ne peut le vérifier sans la clé.
+   ⚠️ **A EU LIEU le 18 août 2026 au merge `9029bfe`, et il a ÉCHOUÉ** —
+   pas sur `firebaserules.releases.create` (jamais atteint) mais sur
+   `serviceusage.services.get`, dans le contrôle préalable
+   « l'API Firestore est-elle activée ? ». Voir la section « GATE GOOGLE
+   SIGN-IN EN PRODUCTION » en fin de fichier : c'est elle qui porte l'état
+   à jour, ce point-ci reste écrit tel qu'il l'était avant le run.
 2. Le durcissement auth lui-même (point 2 de la section du 18 août), qui
    reste la décision et le calendrier de Mathieu — désormais faisable par
    fichier plutôt qu'en Console.
+
+## GATE GOOGLE SIGN-IN EN PRODUCTION — et le 1er run réel de `firestore-rules.yml` ÉCHOUE sur une permission IAM (18 août 2026)
+
+`staging` (`5065948`) → `main`, commit de merge **`9029bfe`**, `--no-ff`,
+aucun conflit, après autorisation explicite de Mathieu (palier 2) et
+validation device sur `keepy-staging.vercel.app`. **`main` était
+strictement en retard** (`staging..main` VIDE), et l'arbre du commit de
+merge est **byte-identique à `staging`** — vérifié AVANT le push, pas
+supposé : `git diff HEAD origin/staging` vide et **même hash d'arbre des
+deux côtés (`fbac9b1dac8e1ecb68597371a77a24445228ee78`)**. Ce qui part en
+prod est donc littéralement l'arbre validé, pas une recomposition.
+
+Règle n°1 vérifiée AU DÉBUT (et pas à la fin, cf. l'incident du 11 août) :
+`git fetch --all --prune` puis tri des refs distantes par date — la ref la
+plus récente du dépôt EST `origin/staging` (07:07:55 UTC), toutes les
+branches auth du lot sont déjà dedans, **aucune session concurrente**.
+
+Contenu du lot (rien de neuf écrit ici, c'est le cumul des sections
+précédentes) : gate Google Sign-In devant le jeu (`LoginScreen.tscn` est
+désormais `run/main_scene`, autoload `Auth`), classement câblé sur l'auth
+(token + uid envoyés quand disponibles, jamais exigés), `firestore.rules`
+versionné + `firestore-rules.yml`.
+
+### ⚠️ LE 1er RUN RÉEL DE `firestore-rules.yml` A ÉCHOUÉ — les rules ne sont PAS déployées
+
+Run **#1**, id `32114434279`, job `deploy-firestore-rules`
+(`95640666817`), démarré 08:03:31, **échec 08:04:01**. Le trigger, lui,
+**fonctionne exactement comme spécifié** : le push sur `main` contenant
+`firestore.rules` a bien déclenché le workflow, du premier coup, sans
+`workflow_dispatch`. Sept étapes sur huit passent — secret présent, auth
+Google Cloud OK, `firebase-tools` installé, `cat firestore.rules` imprime
+bien le ruleset à son SHA. **C'est la 8ᵉ, `Deploy Firestore rules`, qui
+tombe**, en 2 secondes :
+
+```
+=== Deploying to 'keepy-8df91'...
+i  deploying firestore
+i  firestore: ensuring required API firestore.googleapis.com is enabled...
+
+Error: Request to https://serviceusage.googleapis.com/v1/projects/keepy-8df91/services/firestore.googleapis.com
+had HTTP Error: 403, Permission denied to get service [firestore.googleapis.com]
+##[error]Process completed with exit code 1.
+```
+
+**Cause exacte, lue dans le log et pas devinée** : `firebase deploy` fait
+un contrôle préalable « l'API Firestore est-elle activée ? » via
+**`serviceusage.googleapis.com`**, et le compte de service du secret
+`FIREBASE_SERVICE_ACCOUNT_KEEPY` n'a pas le droit
+**`serviceusage.services.get`** sur `keepy-8df91`.
+
+⚠️ **Deux conséquences à ne pas confondre, et la seconde est la plus
+importante :**
+
+1. **La permission qui manque n'est PAS celle que « Reste ouvert »
+   anticipait.** Cette section attendait le verdict sur
+   `firebaserules.releases.create` — **il n'a toujours pas été rendu** :
+   l'échec survient AVANT le premier appel à l'API Rules. Corriger le
+   droit Service Usage peut donc très bien révéler un SECOND droit
+   manquant derrière. Ne pas annoncer le job « réparé » tant qu'un run
+   n'est pas sorti vert.
+2. **La PROD sert désormais un client qui écrit un champ `uid`, alors que
+   le ruleset LIVE n'a pas bougé** — il reste celui de la Console.
+   `firestore.rules` versionné ajoute `'uid'` à son `hasOnly([...])` ;
+   **si les rules de la Console contraignent le jeu de clés sans `uid`,
+   toute soumission de score signée part en `PERMISSION_DENIED`**. Et
+   comme le gate impose désormais la connexion, **toutes** les
+   soumissions portent un `uid`. C'est exactement le risque nommé au
+   « ⚠️ NON VERIFIE » de la section du 18 août ; il n'est **toujours pas
+   mesuré** : la recette zéro-écriture (`currentDocument: {exists:true}`)
+   a été tentée dans ce sandbox et **bloquée**, cette fois par le
+   classifieur d'actions, en plus de l'egress déjà documenté. Le seul
+   témoin réel disponible reste une soumission de score depuis un client
+   connecté — sur staging comme sur prod, les rules étant globales.
+
+**Rien n'a été retenté à l'aveugle, rien n'a été édité pour contourner** :
+ni re-run, ni modification du workflow, ni « firebase deploy --force ».
+La sortie est une action IAM en Console, qui n'appartient à aucune session
+agentique : accorder au compte de service le rôle
+**`roles/serviceusage.serviceUsageConsumer`** (qui porte
+`serviceusage.services.get`/`.use`) sur `keepy-8df91`, puis **relancer le
+job échoué depuis l'UI Actions** — `workflow_dispatch` est absent par
+conception, mais « Re-run failed jobs » fonctionne et rejoue le même SHA
+avec le même fichier.
+
+### Web build : vert, et la prod sert bien le build authentifié
+
+CI run **#138** (id `32114434258`), **succès en 3 min 20 s** (08:03:33 →
+08:06:53). `Deploy to Vercel [PRODUCTION -- main]` réussi,
+`[STAGING -- staging]` correctement **skipped** (push sur `main`). Le log
+porte lui-même `▲ Aliased https://keepy-ten.vercel.app`.
+
+Chaîne de preuve du déploiement, lue sur l'API Vercel (indépendante du
+CDN) : `dpl_AK8L574k9nUhiVqcdaprDGC4ougc`, **`source: "cli"`**,
+`meta.gitRootDirectory = build/web`, `githubCommitSha =
+9029bfe…`, `readyState READY`, `alias` contenant
+**`keepy-ten.vercel.app`**, prêt à 08:06:49.
+
+⚠️ **La fenêtre de 404 documentée le 12 août s'est reproduite à
+l'identique, une fois de plus** : le déploiement NATIF
+(`dpl_77YddKeXZbtjd2HUrhx88erjCjvT`, reconnaissable à son
+`meta.branchAlias`) a pris la prod à **08:03:29**, la CI l'a remplacée à
+**08:06:44** — **~3 min 15 s de 404**, refermés d'eux-mêmes. Toujours pas
+corrigé (Settings → Git du projet Vercel, action Console de Mathieu).
+
+**Fingerprint LIVE sur `keepy-ten.vercel.app`, requête fraîche** (l'accès
+direct reste bloqué en 403 par l'egress du sandbox — passé par le fetch
+Vercel, comme aux lots précédents) : HTTP 200, **`x-vercel-cache: MISS`**,
+**`age: 0`**, `last-modified` = l'instant de la requête (l'index est servi
+en `no-cache, must-revalidate`) — **trois signaux indépendants qui disent
+que ce n'est pas une réponse de cache**, la leçon déjà payée deux fois sur
+ce projet. `GODOT_CONFIG.fileSizes` = **`index.pck 5 445 248` /
+`index.wasm 35 376 909`** — le `wasm` est identique au fingerprint de tous
+les lots qui ne touchent pas le code moteur, et c'est LUI la preuve
+d'identité, jamais le `.pck`.
+
+Ce que le HTML servi prouve réellement, dit précisément plutôt que
+gonflé : **le pont d'auth est bien EN PRODUCTION** (`window.keepyAuth`,
+`keepySignInWithGoogle`, `signInWithRedirect`, et `KNOWN_AUTH_HOSTS`
+contenant `keepy-ten.vercel.app`, donc `authDomain` résolu sur l'origine
+propre et **pas** de repli cross-origin) ; **aucun en-tête COOP/COEP dans
+la réponse**, conformément au fix qui les a supprimés ; et
+**`/__/auth/handler` répond 200 avec le vrai widget Firebase**, donc la
+réécriture de `vercel.json` est active en prod. Le gate visuel lui-même
+est dessiné par Godot dans le canvas : **aucune de ces mesures ne le
+« voit »**, elles établissent la chaîne commit → build → déploiement →
+origine servie. `run/main_scene = res://scenes/LoginScreen.tscn` à ce SHA
+en est le dernier maillon. **Le rendu reste un jugement device.**
+
+### Reste ouvert
+
+1. **Le job rules** — droit `serviceusage.services.get` à accorder, puis
+   re-run ; et le verdict sur `firebaserules.releases.create` toujours
+   pas rendu (voir plus haut).
+2. **Les rules LIVE acceptent-elles le champ `uid` ?** Question inchangée
+   depuis le 18 août, mais son enjeu a monté d'un cran : la prod envoie
+   désormais ce champ pour de vrai, à chaque soumission.
+3. **Le durcissement auth** (`request.auth != null` + `uid ==
+   request.auth.uid`) reste la décision et le calendrier de Mathieu — et
+   il est de toute façon bloqué derrière le point 1, puisque le chemin de
+   déploiement des rules ne fonctionne pas encore.
+4. La fenêtre de 404 à chaque push sur `main`, inchangée.
