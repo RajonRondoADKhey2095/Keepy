@@ -1,15 +1,69 @@
 rules_version = '2';
+
+// =====================================================================
+// Keepy -- Firestore security rules. THIS FILE IS THE SOURCE OF TRUTH.
+//
+// Deployed automatically by .github/workflows/firestore-rules.yml on any
+// push to `main` that touches it. Anything edited directly in the
+// Firebase Console is overwritten silently by the next such push -- do
+// not edit there.
+//
+// The ruleset is GLOBAL to the keepy-8df91 project: staging and
+// production evaluate this very same file, there is no per-environment
+// copy. That is exactly why the hardening below could only land once the
+// client that sends an auth token and a uid had itself reached `main`
+// (18 aout 2026, merge 9029bfe). Doing it in the other order would have
+// broken production the instant the rules changed, since prod would
+// still have been running a client that sent neither.
+// =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
     match /scores/{scoreId} {
-      allow read: if true;
-      allow create: if request.resource.data.keys().hasOnly(['name','score','nuts','glands','createdAt','uid'])
+
+      // READ IS SIGNED-IN ONLY (18 aout 2026) -- decided on a measurement,
+      // not on a guess. The only reader of this collection in the entire
+      // project is GameOverScreen (Leaderboard.fetch_top_scores); grep
+      // finds no other caller. GameOverScreen is reachable only after a
+      // run, a run only through TitleScreen, and TitleScreen only through
+      // LoginScreen, which loads it solely for a signed-in user: its
+      // "Continuer (hors web)" escape hatch is `visible = false` in
+      // LoginScreen.tscn and is un-hidden on the `not OS.has_feature("web")`
+      // branch alone, which a shipped web build never takes. So no screen
+      // ever shows the leaderboard before authentication, and closing the
+      // read costs a real player nothing while removing a trivially
+      // scriptable dump of every stored pseudo by anyone holding the
+      // client API key (which is public by design, it ships in the build).
+      //
+      // Known, accepted residue: a player who IS signed in but whose
+      // getIdToken() round-trip never landed sends no Authorization header
+      // (Leaderboard._request_headers refuses to send an empty bearer), so
+      // request.auth is null and this read now fails where it used to
+      // succeed. It degrades to "Classement indisponible", never a crash,
+      // and that same player cannot write either -- so the leaderboard is
+      // uniformly unavailable to them instead of half-working.
+      allow read: if request.auth != null;
+
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['name','score','nuts','glands','createdAt','uid'])
+        // uid is DE FACTO mandatory from here on. hasOnly only caps the key
+        // set, so hasAll is what actually demands the field -- and it turns
+        // a missing uid into a clean false rather than an evaluation error.
+        // The equality is the point of the pair: it stops a signed-in client
+        // from filing a run under somebody else's uid, which authentication
+        // alone would still have allowed.
+        && request.resource.data.keys().hasAll(['uid'])
+        && request.resource.data.uid == request.auth.uid
+        // Everything below is unchanged from the ruleset deployed before
+        // this hardening -- same bounds, same types, same server-time
+        // requirement on createdAt (only :commit with setToServerValue
+        // REQUEST_TIME can satisfy it; see Leaderboard.submit_score).
         && request.resource.data.score is int
         && request.resource.data.score >= 0 && request.resource.data.score <= 100000
         && request.resource.data.name is string && request.resource.data.name.size() <= 12
         && request.resource.data.nuts is int && request.resource.data.nuts >= 0
         && request.resource.data.glands is int && request.resource.data.glands >= 0
         && request.resource.data.createdAt == request.time;
+
       allow update, delete: if false;
     }
   }
