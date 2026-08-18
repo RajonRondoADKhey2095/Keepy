@@ -5785,3 +5785,98 @@ sur `main`, pas une conséquence de ce lot.
    mesure de cette session ne couvre — elles prouvent que la porte est
    fermée, pas que la clé du joueur l'ouvre encore.
 3. La fenêtre de 404 à chaque push sur `main`, inchangée.
+
+
+## ÉCRAN HUB « KEEPY'S MEMORIAL QUEST » : la redirection post-connexion ne mène plus à Keepy Chased directement (18 août 2026)
+
+Branche `claude/keepy-memorial-quest-hub-o3hcb6`. **Préparation Quizz, pas
+un changement de gameplay** : aucune scène de jeu, aucun collider, aucune
+constante, aucun `.glb`, aucun autoload touché. Deux fichiers créés
+(`scenes/Hub.tscn`, `scripts/ui/Hub.gd`), **une seule destination
+déplacée** dans `scripts/ui/LoginScreen.gd`.
+
+```
+run/main_scene = res://scenes/LoginScreen.tscn     (inchangé)
+        │  session Google valide
+        ▼
+res://scenes/Hub.tscn                              <-- NOUVEAU
+        ├── « Keepy Chased » -> res://scenes/TitleScreen.tscn   (inchangé)
+        └── « Keepy Quizz »  -> DÉSACTIVÉ, « Bientot disponible »
+```
+
+⚠️ **`scenes/TitleScreen.tscn` est BYTE-INTOUCHÉ**, vérifié et pas
+affirmé (`git diff` vide sur ce fichier) — y compris son script. C'était
+la contrainte explicite du lot : Chased reste exactement le jeu validé en
+production, et il reste chargeable seul. Un second bouton posé sur
+`TitleScreen` aurait fait lire Quizz comme un MODE de Chased plutôt que
+comme un sous-jeu frère, et n'aurait laissé aucune place à un troisième.
+
+**Le seul point d'arrivée post-connexion codé en dur du dépôt était
+`LoginScreen.gd`**, et c'est **mesuré par `grep`, pas supposé** : les
+seules autres occurrences de `TitleScreen` sont la scène elle-même, trois
+commentaires (`SwampIdentityAudit.gd`, qui n'échantillonne PAS cet écran
+depuis le 14 août et charge `Game.tscn`), un commentaire de
+`firestore.rules`, et `README.md`. `TITLE_SCENE` devient donc `HUB_SCENE`,
+`_go_to_title()` devient `_go_to_hub()`, et **toute la décision
+signed-in / signed-out, le garde `_leaving`, les codes d'erreur et le
+chemin hors-web sont intouchés**.
+
+⚠️ **Dette de doc PRÉ-EXISTANTE, signalée et NON corrigée ici** :
+`README.md` dit encore que le projet démarre sur `scenes/TitleScreen.tscn`
+— faux depuis le gate Google Sign-In du 17 août, donc antérieur à ce lot
+et sans rapport avec lui. Laissé à son propre lot plutôt que corrigé en
+douce dans un commit atomique qui ne parle pas de ça.
+
+**Le bouton Quizz est inerte, et l'inertie est GATÉE plutôt que
+stylistique.** `QuizzButton` porte `disabled = true` dans la scène, **rien
+n'est connecté à son signal `pressed`**, et `Hub._ready()` `push_error` si
+ce `disabled` disparaît. Motif : un bouton ré-activé sans être connecté
+serait un contrôle MORT — silencieux, indiscernable à l'œil d'un bouton
+« bientôt » simplement grisé. Même discipline que l'assertion nombre de
+pastilles de `HUD.gd` (elle `push_error`, elle ne devine pas). Retirer
+cette assertion fait partie du branchement du vrai gameplay, pas d'un lot
+séparé.
+
+**Trois décisions de Mathieu verrouillées dans `docs/QUIZZ_SPEC.md`** (le
+document de conception Quizz, écrit le matin même avec ces trois points
+OUVERTS — §10.1, §10.2, volet partage de §10.5) : hub séparé (livré,
+chemins de branchement exacts au nouveau **§7.1**) ; écran de jeu Quizz en
+**hôte unique + panneaux par format** ; `visibility` **`'private'` et rien
+d'autre, décision actée et pas un état d'attente**. Les paragraphes
+concernés sont amendés sur place et barrés, pas supprimés — une session
+future doit voir la décision, pas un blanc.
+
+⚠️ **Ce lot est posé sur `claude/quizz-schema-design-u1wixk`**, la branche
+docs-only qui apporte `docs/QUIZZ_SPEC.md` (un seul commit, `6f16d8d`, sur
+la même base `6d57fd4`) et qui n'était **pas encore mergée sur `staging`**
+au moment de partir. Sans elle, la tâche « mets à jour QUIZZ_SPEC.md »
+n'avait pas de fichier. Fast-forward, **aucun fichier en commun avec ce
+lot**, donc zéro conflit — mais le merge `staging` de ce lot emporte ce
+commit de doc avec lui, et c'est dit ici plutôt que découvert dans un
+`git log`.
+
+**Validation** : import headless **exit 0** ; boot headless de
+`res://scenes/Hub.tscn` seule (`--quit-after 2`) **exit 0**, aucune erreur
+de parse ni de nœud manquant (les chemins `@onready` sont donc réels, pas
+plausibles) ; export Web release **exit 0**. Mise en page **mesurée** par
+sonde jetable (jamais commitée) sur la scène instanciée, pas estimée —
+voir le rapport de lot pour les rects réels et la marge restante en bas
+d'écran.
+
+**Sondes : aucune n'est concernée, et c'est VÉRIFIÉ, pas supposé** —
+`grep` sur `scripts/dev/` : **aucune sonde ne charge `LoginScreen.tscn`
+ni `Hub.tscn`**, et aucun `.tscn` de sonde ne les embarque. La seule
+mention de `LoginScreen` du dépôt hors `scripts/ui/` est
+`run/main_scene` dans `project.godot`, que les sondes contournent par
+construction (chacune lance sa propre scène). `SwampIdentityAudit` charge
+`Game.tscn` et ne cite `TitleScreen` que dans des commentaires expliquant
+pourquoi elle ne l'échantillonne plus. Rejouées quand même :
+`ProbeTimeoutAudit` (33 sondes armées), `AssetContractAudit` (12/12
+visuels, 0/10 colliders déplacés), `DeathModelAudit`, `ChargerShapeProbe`.
+
+**Reste ouvert — jugement device, seul juge** : que la connexion Google
+mène bien au hub sur `keepy-staging.vercel.app`, que « Keepy Chased »
+lance la run exactement comme avant, et que le bouton Quizz grisé se lise
+comme « bientôt » et non comme « cassé ». **`main` n'est PAS touché par ce
+lot** : il déplace le flux de connexion validé en production, donc le
+palier 2 est gaté par Mathieu après test device explicite sur staging.
