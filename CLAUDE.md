@@ -6301,6 +6301,223 @@ précis.
 3. **Le classement de Chased**, pour un joueur Google réellement connecté :
    argumenté inchangé et mesuré inchangé sur le canal anonyme, mais non
    testé sur le canal authentifié — voir l'avertissement ci-dessus.
-4. Le rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) et la
-   fenêtre de ~3 min de 404 à chaque push sur `main` : **inchangés**, et
+4. ~~Le rafraîchissement du token (`onIdTokenChanged`, jamais rebranché)~~
+   — **CLOS le 18 août 2026**, voir la section suivante — et la
+   fenêtre de ~3 min de 404 à chaque push sur `main` : **inchangée**, et
    toujours hors périmètre de ce lot.
+
+
+## RAFRAÎCHISSEMENT DU TOKEN FIREBASE : défaut CLOS — `onIdTokenChanged` remplace `onAuthStateChanged` (18 août 2026)
+
+Branche `claude/firebase-token-refresh-ipkaym`, partie de `main`
+(`afed994`). **Ferme le défaut connu ouvert depuis le lot de durcissement
+des rules du 18 août** (« ⚠️ DÉFAUT TROUVÉ EN LISANT LE CODE, NON CORRIGÉ
+ICI — le token n'est JAMAIS rafraîchi »), listé « reste ouvert » dans les
+trois lots suivants sans être traité. **Prérequis à `Quizz.gd`**, qui y
+sera bien plus exposé que `Leaderboard.gd` : Chased n'écrit qu'une fois par
+run de 40-90 s, Quizz écrira de façon répétée et étalée dans le temps.
+
+**Trois fichiers : `web/html_shell.html`, `scripts/autoload/Auth.gd`, ce
+document.** `scripts/autoload/Leaderboard.gd` est **byte-intouché**
+(`git diff` vide) — c'était la contrainte du lot, et elle tient sans effort
+pour une raison structurelle expliquée plus bas. Aucune scène, aucun
+collider, aucune constante de gameplay, aucun `.glb`, aucune config
+d'export.
+
+### Le mécanisme du défaut, et pourquoi il était silencieux
+
+Un token d'ID Firebase **expire au bout d'une heure**. Le SDK le renouvelle
+tout seul bien avant, mais le shell n'écoutait que **`onAuthStateChanged`**,
+qui ne tire **que** sur connexion et déconnexion — **jamais** sur un
+renouvellement. Le `idToken` publié dans `window.keepyAuth` restait donc la
+chaîne capturée une fois à la connexion, pour toute la session.
+
+⚠️ **Ce que l'ancienne formulation du défaut disait d'`Auth.gd` était
+imprécis, et c'est vérifié dans le code plutôt que repris tel quel.** Le
+`set_process(false)` posé après `ready` **ne coupait PAS la réception** :
+il ne coupait que le **poll de secours**. Le callback push
+(`window.keepyAuthNotify`, installé dans `_ready()` et jamais retiré)
+restait vivant, et `_apply_snapshot()` écrase bien `_id_token` à chaque
+snapshot reçu. **Le défaut était donc à 100 % côté shell** — rien n'était
+jamais republié, donc il n'y avait rien à pousser. Corriger le seul
+`onAuthStateChanged` suffit à fermer le défaut ; le volet `Auth.gd`
+ci-dessous ferme un trou distinct.
+
+Silencieux parce que le chemin d'échec est **le même que celui d'être hors
+ligne** : `Leaderboard.gd` prend un `push_warning`, émet
+`submit_finished(false)`, et l'écran affiche « Score non synchronisé (hors
+ligne ?) ». Un joueur dont la session dure plus d'une heure voyait donc un
+message de réseau pour une cause d'authentification.
+
+### Le fix — `onIdTokenChanged` est un SUPERSET, pas une alternative
+
+Les deux listeners ne sont pas deux options à arbitrer :
+`onIdTokenChanged` tire **exactement là où `onAuthStateChanged` tire**
+(une fois au démarrage avec l'utilisateur restauré ou `null`, puis à chaque
+connexion/déconnexion) **PLUS** à chaque renouvellement de token.
+**Remplacé, pas ajouté à côté** : enregistrer les deux publierait le même
+payload deux fois à chaque connexion et déconnexion, soit un second écrivain
+pour un fait qui a déjà un propriétaire — le contraire de la discipline que
+tout ce fichier applique par ailleurs.
+
+⚠️ **Piège fermé explicitement dans le commentaire, parce qu'il est
+séduisant : `getIdToken(true)` À L'INTÉRIEUR de ce listener est une boucle
+infinie.** Un refresh forcé produit un nouveau token, ce qui refait tirer ce
+même listener, ce qui reforce un refresh — contre les serveurs de Google. Le
+`getIdToken()` **non forcé** déjà en place est le bon appel : sur un
+callback de renouvellement, le token que le SDK vient de mettre en cache
+**EST** le nouveau.
+
+**Les noms de checkpoints de diagnostic sont volontairement INCHANGÉS**
+(`first-auth-state-received` en particulier, toujours posé par
+`firstAuthStateSeen` sur le premier appel du nouveau listener). Ils sont
+cités dans `Auth.gd`, dans le label écran de `LoginScreen.gd` et dans ce
+document comme l'état sain de fin de boot ; les renommer les aurait
+invalidés partout sans le dire. Le watchdog de stall (qui teste
+`firstAuthStateSeen`) et la sonde d'embed d'iframe sont donc **intacts et
+toujours fonctionnels**.
+
+### AJOUT au-delà du périmètre littéral : le backstop `visibilitychange`
+
+Dit plutôt que glissé : ce lot ajoute une chose que la liste de tâches ne
+demandait pas nommément, parce qu'elle relève du même défaut.
+
+Le renouvellement proactif du SDK est **un timer**, et un timer dans un
+onglet en arrière-plan — **une PWA installée que le joueur a quittée est le
+cas ORDINAIRE sur mobile, pas le cas exotique** — est throttlé ou suspendu
+par le navigateur. Il peut donc tirer en retard, laissant une fenêtre où le
+token publié est déjà expiré au retour du joueur.
+
+Un handler `visibilitychange` appelle `user.getIdToken()` **sans
+`forceRefresh`** quand la page redevient visible. C'est exactement le bon
+appel : la méthode rend le token en cache **tel quel** s'il n'expire pas
+dans les cinq minutes, et ne renouvelle que sinon. Donc **no-op sur chaque
+changement d'onglet ordinaire, vrai renouvellement seulement quand il
+serait sinon trop tard**. Il **ne publie rien lui-même** — un
+renouvellement fait tirer `onIdTokenChanged`, qui reste l'unique écrivain
+d'`idToken`. Enveloppé dans un `try/catch` : perdre ce backstop coûte de la
+fraîcheur après un long arrière-plan, jamais la connexion.
+
+### `Auth.gd` — le poll de secours ne s'arrête plus, il RALENTIT ×60
+
+`POLL_INTERVAL_READY_S := 30.0` (nouveau) remplace le `set_process(false)`
+sur le chemin sain. **L'argument d'origine reste vrai et n'est pas
+contredit** : un `JavaScriptBridge.eval` à 2 Hz n'a rien à faire dans le
+budget de frame d'un runner à 60 fps. Il ne dit rien de **1/30 Hz**, qui est
+ce qui est posé ici — **600× moins cher** que le poll de démarrage.
+
+Ce qui a changé, c'est ce que ce backstop protège. Avant, il n'y avait rien
+à rattraper après `ready` : l'état était capturé une fois et fini, et le
+seul événement manquable aurait été une déconnexion que rien dans ce jeu ne
+déclenche. Maintenant que le shell republie à chaque renouvellement, **un
+push perdu après `ready` coûte un bearer périmé de façon permanente** — soit
+exactement le défaut que ce lot ferme. Et un push perdu est **silencieux par
+conception** : le `publish()` du shell avale un listener qui lève
+(« un Godot cassé ne doit jamais casser l'auth »). Un backstop qui s'arrête
+avant que la chose qu'il couvre ne commence à arriver n'est pas un backstop.
+
+⚠️ **Le chemin `bridge-timeout` garde EXACTEMENT son comportement d'avant
+(`set_process(false)`), et c'est délibéré.** Le confier au backstop lent
+aurait fait relire le snapshot du bloc `<script>` pré-module — celui qui
+porte `error: 'not-ready'` — dont le code aurait **écrasé `bridge-timeout` à
+l'écran** et perdu le seul diagnostic que ce chemin existe pour produire.
+Deux états « ready » distincts (annoncé par le pont / conclu par timeout),
+deux traitements.
+
+`get_id_token()` gagne un contrat explicite dans sa doc : **c'est le token
+COURANT, pas celui capturé à la connexion**, et un appelant doit le lire au
+moment où il en a besoin plutôt que de mettre le résultat en cache.
+
+### Tâche 3 — `Leaderboard.gd` : rien à changer, et c'est structurel
+
+**Vérifié dans le code, pas supposé** : `_request_headers()` est appelé
+**en ligne dans l'appel `request()` lui-même**, aux deux points d'entrée
+(`submit_score` ligne 221, `fetch_top_scores` ligne 255), jamais une fois
+dans `_ready()`. Il relit donc `Auth.get_id_token()` à chaque requête et
+récupère le token frais **sans une ligne de changement**. Le
+court-circuit headless (`if not network_enabled` en toute première
+instruction des deux points d'entrée) est également intact : une sonde ne
+touche jamais `Auth`.
+
+### Tâche 4 — sondes headless : intactes, et c'est structurel aussi
+
+`Auth.gd` tourne en autoload dans **chaque** sonde, mais son `_ready()`
+prend la branche `if not OS.has_feature("web")` — systématiquement vraie
+sous `--headless` — qui appelle `set_process(false)` et `return` avant
+toute ligne utile. `_process()` n'est donc **jamais** exécuté sous sonde, et
+le nouveau `POLL_INTERVAL_READY_S` **jamais atteint**.
+`web/html_shell.html` n'est ni une ressource Godot ni chargé par quoi que
+ce soit en headless. **Aucune sonde ne peut voir ce lot**, par construction
+et pas par chance. Rejouées quand même, résultats plus bas.
+
+### Validation
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox (releases
+GitHub officielles, mêmes que la CI).
+
+⚠️ **Piège d'outillage rencontré, à connaître** : le premier téléchargement
+de `Godot_v4.3-stable_export_templates.tpz` s'est terminé **sans erreur
+curl** à **318 289 257 octets** contre les **1 073 228 327** annoncés par le
+`Content-Length` — une troncature silencieuse, qui se manifeste plus loin
+par un `End-of-central-directory signature not found` d'`unzip` ressemblant
+à une archive corrompue en amont. **Toujours vérifier la taille contre le
+`Content-Length` avant de conclure que la release est cassée**, et reprendre
+avec `curl -C -`.
+
+Les deux blocs `<script>` du shell extraits et vérifiés avec `node --check`
+(syntaxe seule, aucun DOM ni SDK réel en headless) : **les deux OK**.
+
+Import headless **exit 0**, export Web release **exit 0**. `index.wasm`
+**35 376 909 octets**, md5 **`af4a8fc2925d992348eb30deeeb54360`** — identique
+au fingerprint déjà consigné pour tout lot qui ne touche pas le code moteur ;
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`**, également identique.
+`index.pck` 5 451 104 octets (export unique et propre, `build/` et `.godot/`
+supprimés d'abord — à lire avec la mise en garde permanente sur son
+instabilité, jamais offert comme preuve). `index.manifest.json` inchangé.
+**Piège payload tenu** : **0** ligne `Storing File` pour `res://assets_source`,
+`res://docs`, `res://web` ou `firebase.json`.
+
+**Vérifié dans le bundle EXPORTÉ, pas seulement dans la source** :
+`authMod.onAuthStateChanged` **0 occurrence** (les 5 mentions restantes de
+`onAuthStateChanged` sont toutes des commentaires, dont deux volontairement
+laissées au passé — elles racontent le bug COEP du 17 août, où le listener
+S'APPELAIT bien ainsi) ; `onIdTokenChanged` 5, `visibilitychange` 1,
+`first-auth-state-received` 3. `viewport-fit=cover` et `#101d0b` toujours en
+place — le fix safe-area du 17 août n'est pas abîmé.
+
+**QUATRE sondes rejouées et diffées contre `origin/main` en worktree séparé :
+les QUATRE sont BYTE-IDENTIQUES sur les DEUX flux (stdout ET stderr), exit 0
+des deux côtés** — `ProbeTimeoutAudit` (**33 sondes armées**),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders déplacés**),
+`DeathModelAudit`, `ChargerShapeProbe`. C'est le bar attendu, et l'identité au
+bit près le dit plus fort qu'un simple verdict identique.
+
+⚠️ **Second piège d'outillage, celui-ci capable de fabriquer un FAUX ROUGE — à
+connaître avant d'accuser son propre lot.** Le premier run de comparaison a
+donné 3 sondes sur 4 « DIFFERS », dont `AssetContractAudit` annonçant
+`[-- ]` là où le lot lit `[glb]` : de quoi croire à une régression d'assets.
+Ce n'en était pas une — l'import du worktree de baseline avait été coupé avant
+la fin (**5 puis 21 `.scn` importés sur 24**), donc les `.glb` manquaient et la
+baseline mesurait des placeholders. Le `stderr` le disait (`Cannot open file
+'res://.godot/imported/*.glb-*.scn'`) et le `stdout` seul ne le disait pas.
+**Compter les `.scn` de `.godot/imported/` des deux côtés avant de comparer
+quoi que ce soit** : un import Godot complet de ce projet prend plusieurs
+minutes dans ce sandbox et ne signale pas lui-même qu'il a été interrompu.
+
+### Reste ouvert — jugement device, seul juge
+
+Aucune sonde de ce dépôt ne rend de pixels iOS, n'exécute le SDK Firebase,
+ni ne peut faire passer une heure à une session réelle. Ce qui reste à
+confirmer, et ce qui ne peut l'être que sur device :
+
+1. **Le cas nominal ne régresse pas** : connexion Google sur
+   `keepy-staging.vercel.app`, arrivée au hub, une run de Chased, et le
+   score qui se synchronise comme avant. C'est le risque principal du lot —
+   le listener remplacé est celui dont dépend tout le boot.
+2. **Le cas que le lot corrige** : une session laissée ouverte **plus
+   d'une heure** (idéalement en PWA installée, mise en arrière-plan puis
+   reprise), puis une soumission de score qui aboutit toujours. Avant ce
+   lot elle échouait en « Score non synchronisé ».
+3. Le backstop `visibilitychange` n'a **aucune preuve mesurée** ici : il
+   repose sur le contrat documenté de `getIdToken()` (« rend le cache sauf
+   à moins de cinq minutes de l'expiration »), pas sur une observation.
