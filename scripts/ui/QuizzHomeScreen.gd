@@ -156,13 +156,12 @@ func _build_row(quiz: Dictionary) -> Control:
 
 	var title_label := Label.new()
 	title_label.text = String(quiz.get("title", ""))
-	title_label.add_theme_font_size_override("font_size", 26)
+	title_label.theme_type_variation = &"CardTitleLabel"
 	box.add_child(title_label)
 
 	var date_label := Label.new()
 	date_label.text = "Modifie le %s" % _format_timestamp(String(quiz.get("updatedAt", "")))
-	date_label.modulate = Color(1, 1, 1, 0.68)
-	date_label.add_theme_font_size_override("font_size", 18)
+	date_label.theme_type_variation = &"MutedLabel"
 	box.add_child(date_label)
 
 	return panel
@@ -196,20 +195,24 @@ func _format_timestamp(raw: String) -> String:
 ## created at runtime, one per quiz, and sharing a single StyleBoxFlat
 ## instance across all of them costs nothing (Godot resources are safe to
 ## reuse read-only across nodes) versus allocating one per row.
+##
+## Matches resources/themes/quizz_theme.tres's PanelContainer card style
+## (white, 24px corner radius, soft orange-tinted shadow) rather than
+## duplicating the theme's own StyleBoxFlat_panel: a quiz row is visually a
+## smaller card, not a new shape in the Quizz identity, so it borrows the
+## exact same recipe at a tighter radius and margin.
 func _build_row_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.145, 0.09, 0.05, 0.85)
-	style.border_width_left = 2
-	style.border_width_top = 2
-	style.border_width_right = 2
-	style.border_width_bottom = 2
-	style.border_color = Color(0.62, 0.45, 0.2, 1)
-	style.corner_radius_top_left = 12
-	style.corner_radius_top_right = 12
-	style.corner_radius_bottom_left = 12
-	style.corner_radius_bottom_right = 12
+	style.bg_color = Color(1, 1, 1, 1)
+	style.corner_radius_top_left = 20
+	style.corner_radius_top_right = 20
+	style.corner_radius_bottom_left = 20
+	style.corner_radius_bottom_right = 20
 	style.content_margin_left = 20.0
 	style.content_margin_top = 14.0
 	style.content_margin_right = 20.0
 	style.content_margin_bottom = 14.0
+	style.shadow_color = Color(1.0, 0.5412, 0.3569, 0.12)
+	style.shadow_size = 10
+	style.shadow_offset = Vector2(0, 3)
 	return style
