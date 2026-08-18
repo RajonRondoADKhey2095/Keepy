@@ -96,8 +96,14 @@ func _set_busy(busy: bool, label: String) -> void:
 	_busy = busy
 	create_button.disabled = busy
 	title_edit.editable = not busy
+	# Always write status_label.text, not just while busy: the bug this
+	# fixes was exactly that the busy==false, label=="" call (both
+	# _on_quiz_created and _on_quizzes_fetched pass this on success) used
+	# to be a no-op, leaving LOADING_LABEL/CREATING_LABEL on screen forever
+	# after the response that was supposed to replace it had already
+	# arrived.
+	status_label.text = label
 	if busy:
-		status_label.text = label
 		index_help_panel.visible = false
 
 ## Splits the "expected first-run gap" from every other failure, exactly as
