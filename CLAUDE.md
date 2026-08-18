@@ -5993,6 +5993,14 @@ fenêtre de 404 à chaque push sur `main`.
 
 ## RULES KEEPY QUIZZ PORTÉES DANS `firestore.rules` — écrites, PAS encore déployées (18 août 2026)
 
+> ⚠️ **CLÔTURE — DÉPLOYÉES EN PRODUCTION le 18 août 2026 à 12:52:52 UTC**
+> (run **#3** de `firestore-rules.yml`, id `32139090001`, merge `e73c796`).
+> Le « PAS encore déployées » du titre et le §« CE LOT N'A RIEN DÉPLOYÉ »
+> ci-dessous décrivent l'état de ce lot **au moment où il a été écrit** ;
+> ils ne sont pas réécrits, pour ne pas perdre la trace de la séquence
+> réelle (palier 1 puis palier 2). La section « Merge en production » en
+> fin de section porte l'état à jour.
+
 Branche `claude/keepy-quiz-firestore-rules-r1crb3`, partie de `main`
 (`7fcada5`). **Deux fichiers : `firestore.rules` et ce document.** Aucun
 `.gd`, aucune scène, aucun `.glb`, aucune config d'export — `git diff
@@ -6155,3 +6163,144 @@ ressource Godot (0 occurrence dans le `.pck`), et `CLAUDE.md` non plus.
 4. Le rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) —
    inchangé, et **Quizz y sera plus exposé que Chased**, qui n'écrit
    qu'une fois en fin de run.
+
+### Merge en production (18 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`54eb498`) → `main`, commit de merge **`e73c796`**, `--no-ff`,
+aucun conflit. **Ce merge est le premier à publier des rules Quizz sur
+`keepy-8df91`** — le projet est GLOBAL, donc ce ruleset est celui
+qu'évaluent staging ET la prod de Keepy Chased.
+
+Règle n°1 vérifiée **AU DÉBUT** (leçon de l'incident du 11 août) :
+`git fetch --all --prune` puis tri de toutes les refs distantes par date de
+commit — la plus récente du dépôt EST `origin/staging` (12:37:18 UTC),
+immédiatement suivie de `claude/keepy-quiz-firestore-rules-r1crb3`
+(12:36:59), les deux appartenant à ce lot. **Aucune session concurrente.**
+
+`main` était **strictement en retard** (`staging..main` VIDE) et l'arbre du
+commit de merge est **byte-identique à `staging`**, vérifié AVANT le push :
+`git diff HEAD origin/staging` vide **et même hash d'arbre des deux côtés
+(`65685e1d1b9d0c2cd2b65273b85b9d0411a3fbd9`)**, `firestore.rules` au même
+md5 (`13baa15cb3ee7d7696431408f6ccaaaf`).
+
+#### ⚠️ RÉSULTAT DU JOB RULES — run #3, VERT, et le mode de défaillance sûr a tenu
+
+Run **#3** (id `32139090001`, job `95717216243`), **tentative 1**,
+12:51:41 → 12:52:55 UTC, **71 s**, `conclusion: success`, **8 étapes sur 8**
+— aucun des deux échecs IAM du run #1 ne s'est reproduit
+(`serviceusage.services.get` passe, et **`firebaserules.releases.create` rend
+enfin son verdict : il passe aussi**).
+
+**L'ordre exigé par la tâche est vérifié à l'horodatage, pas supposé** — la
+compilation précède STRICTEMENT la publication, donc une erreur de syntaxe
+aurait fait échouer le job **sans rien publier**, laissant les rules live
+intactes :
+
+```
+12:52:50.94  ✔  firestore: required API firestore.googleapis.com is enabled
+12:52:51.83  i  cloud.firestore: checking firestore.rules for compilation errors...
+12:52:52.25  ✔  cloud.firestore: rules file firestore.rules compiled successfully
+12:52:52.44  i  firestore: uploading rules firestore.rules...
+12:52:52.89  ✔  firestore: released rules firestore.rules to cloud.firestore
+12:52:52.89  ✔  Deploy complete!
+```
+
+**C'était la PREMIÈRE compilation réelle du bloc Quizz** (point 2 du « Reste
+ouvert » ci-dessus) : il n'existe pas de compilateur de rules hors ligne, la
+compilation est un service. Elle passe du premier coup — les 21 accolades
+équilibrées et l'hygiène ASCII/LF vérifiées par script sur la branche
+n'avaient jamais prouvé que la SYNTAXE Firestore était bonne, seulement
+qu'elle était plausible. Elle l'est.
+
+**L'étape `Show resolved rules file` imprime le fichier ENTIER au SHA
+`e73c7962…`**, donc le log porte littéralement ce qui a été publié — le bloc
+`/scores` y figure verbatim, `allow read: if request.auth != null;` et les
+huit lignes de validation de `create` comprises.
+
+⚠️ **Piège de lecture de ce log, à connaître avant de crier à la corruption :
+GitHub masque `{` et `}` en `***`** (le secret `FIREBASE_SERVICE_ACCOUNT_KEEPY`
+est un JSON dont les accolades sont des lignes de secret à part entière, donc
+Actions les censure partout dans le log). `function signedIn() ***` est
+`function signedIn() {`. Le log est donc **inutilisable pour une comparaison
+byte-à-byte**, et parfaitement lisible pour tout le reste.
+
+#### Le bloc `/scores` n'a pas bougé — le vrai risque de ce merge
+
+C'était le risque implicite, pas « est-ce que les nouvelles rules
+marchent ». Trois preuves indépendantes, dans l'ordre de force :
+
+1. **Byte-identité en amont, mesurée avant le merge** : les **68 premières
+   lignes** de `firestore.rules` (en-tête + bloc `/scores` complet jusqu'à
+   son accolade fermante) sont **byte-identiques** entre `origin/main` et
+   `origin/staging` (`cmp` silencieux). Le diff est purement additif : il
+   commence à la ligne 66, **après** `allow update, delete: if false;`.
+2. **Release atomique d'un fichier unique** : `firebase deploy --only
+   firestore:rules` publie LE fichier, il ne fusionne pas des blocs. Un
+   `/scores` inchangé dans le fichier est donc un `/scores` inchangé en
+   vigueur — c'est structurel, pas une inférence.
+3. **Mesure côté service, avant ET après le déploiement** — la requête
+   `:runQuery` **exactement** celle de `Leaderboard.fetch_top_scores()`
+   (`orderBy score DESC, limit 10`), sans header `Authorization` :
+
+   | | avant (12:50 UTC) | après (12:54 UTC) |
+   |---|---|---|
+   | `/scores` `:runQuery` anonyme | **403 PERMISSION_DENIED** | **403 PERMISSION_DENIED** |
+   | `/quizzes` `:runQuery` anonyme | 403 | 403 |
+
+   Les corps de réponse sont **byte-identiques** avant/après (`cmp`
+   silencieux sur les deux collections). Un `GET /documents/scores` anonyme
+   rend 403 lui aussi.
+
+⚠️ **Ce que cette mesure ne prouve PAS, dit plutôt que gonflé** : un 403
+anonyme est le comportement ATTENDU depuis le durcissement du 18 août
+10:32:59 — il montre que le gate de lecture est toujours évalué de la même
+façon, **pas** qu'un joueur Google réellement connecté peut encore lire et
+écrire. **Aucune requête AUTHENTIFIÉE n'a pu être émise depuis ce sandbox** :
+il n'y a pas d'idToken Google disponible, et la sonde qui aurait pu en
+fabriquer un (création d'un compte anonyme via `identitytoolkit
+accounts:signUp`) **a été refusée par le classifieur d'actions** — refus
+respecté, aucun contournement tenté. Le seul témoin réel reste une
+soumission de score par un vrai joueur connecté. **Jugement device.**
+
+#### Web build : vert, et la prod sert bien cet arbre
+
+CI **web-build run #148** (id `32139090008`, tentative 1), **succès en
+3 min 18 s** (12:51:45 → 12:55:03). `Deploy to Vercel [PRODUCTION -- main]`
+**succès**, `[STAGING -- staging]` correctement **skipped**. Le log porte
+lui-même `▲ Aliased https://keepy-ten.vercel.app`. **Aucun changement Godot
+n'était attendu** (le diff ne contient que `firestore.rules` et `CLAUDE.md`,
+dont aucun n'est une ressource Godot) et c'est confirmé côté sortie.
+
+**Fingerprint vérifié sur le site LIVE**, requête fraîche via le fetch Vercel
+(l'egress direct de ce sandbox reste bloqué en 403 CONNECT sur ce domaine) :
+HTTP **200**, **`x-vercel-cache: MISS`**, **`age: 0`**, `last-modified` collé
+à l'instant de la requête — trois signaux indépendants qui disent que ce
+n'est pas une réponse de cache. `GODOT_CONFIG.fileSizes` = **`index.pck
+5 451 056` / `index.wasm 35 376 909`**. Le `wasm` est **identique au bit
+près** au fingerprint consigné pour tous les lots qui ne touchent pas le code
+moteur — et c'est LUI la preuve d'identité, jamais le `.pck`.
+
+**Aucune sonde rejouée, non-applicabilité assumée et pas une omission** : ce
+lot ne touche **aucune** ressource Godot, aucune sonde de `scripts/dev/` ne
+lit un fichier de rules ni ne parle à Firestore, et aucun Godot n'est
+installé dans ce sandbox. La seule validation structurelle pertinente —
+import + export headless de l'intégralité des scènes sans erreur — **a eu
+lieu et réussi** : c'est exactement ce que fait le job CI sur ce commit
+précis.
+
+#### Reste ouvert après ce merge
+
+1. **Aucun client n'exerce encore ces rules** — point 3 ci-dessus,
+   **inchangé** : `Quizz.gd`, les écrans du §7 et le branchement du bouton
+   grisé du hub restent à écrire. Le contrat est en vigueur, rien ne
+   l'appelle.
+2. **La première écriture réelle** (create d'un quiz, create d'une question)
+   n'a jamais été tentée contre le service — ni ici (egress d'écriture et
+   classifieur), ni ailleurs. Les pièges REST du §8 de `docs/QUIZZ_SPEC.md`
+   sont donc toujours de la théorie.
+3. **Le classement de Chased**, pour un joueur Google réellement connecté :
+   argumenté inchangé et mesuré inchangé sur le canal anonyme, mais non
+   testé sur le canal authentifié — voir l'avertissement ci-dessus.
+4. Le rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) et la
+   fenêtre de ~3 min de 404 à chaque push sur `main` : **inchangés**, et
+   toujours hors périmètre de ce lot.
