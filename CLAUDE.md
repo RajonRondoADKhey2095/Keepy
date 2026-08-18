@@ -6504,6 +6504,44 @@ baseline mesurait des placeholders. Le `stderr` le disait (`Cannot open file
 quoi que ce soit** : un import Godot complet de ce projet prend plusieurs
 minutes dans ce sandbox et ne signale pas lui-même qu'il a été interrompu.
 
+### Déployé sur `staging` (palier 1, automatique)
+
+`staging` `e1f97fc`, CI run **#150** (id `32150981048`) **verte en
+5 min 11 s** — `Deploy to Vercel [STAGING -- staging]` **succès**,
+`[PRODUCTION -- main]` correctement **skipped**. `main` **non touché**
+(palier 2, gaté par Mathieu après validation device).
+
+**Fingerprint vérifié sur le site LIVE** (`keepy-staging.vercel.app`, via
+`mcp__Vercel__web_fetch_vercel_url` — l'egress direct de ce sandbox reste
+bloqué en 403 CONNECT sur ce domaine, re-testé et pas supposé) : HTTP 200,
+`x-vercel-cache: MISS`, `age: 0`, `last-modified` collé à l'instant de la
+requête (l'index est servi en `no-cache, must-revalidate`) — trois signaux
+indépendants qui disent que ce n'est pas une réponse de cache.
+`GODOT_CONFIG.fileSizes` = `index.pck 5 451 120` / **`index.wasm
+35 376 909`**, ce dernier identique au bit près à l'export local.
+
+⚠️ **Le fix est vérifié DANS LES OCTETS SERVIS, pas seulement dans le
+commit** : le shell livré porte bien `authMod.onIdTokenChanged(auth, ...)`
+et le handler `visibilitychange`. **Un AVANT/APRÈS réel a été capturé au
+passage**, parce que la même URL avait été lue trop tôt : à 14:55 elle
+servait encore `authMod.onAuthStateChanged` (build précédent), à 14:58 elle
+sert `onIdTokenChanged`.
+
+⚠️ **Discriminateur bon marché trouvé et à réutiliser** : `index.pck` n'est
+pas stable d'un export à l'autre et `index.wasm` ne bouge jamais sur un lot
+sans code moteur — **aucun des deux ne dit quel build est aliasé**. Le
+`CACHE_VERSION` d'`index.service.worker.js` (~5 Ko) est un **epoch de
+l'instant d'export** : `1787056834` = 12:40:34 UTC (run #147, l'ancien) puis
+`1787064920` = 14:55:20 UTC (run #150, celui-ci). Un fichier minuscule qui
+date le build servi, là où l'index complet coûte ~30 Ko à relire.
+
+⚠️ **L'API GitHub Actions a de nouveau servi des réponses PÉRIMÉES**, comme
+la section dédiée le documente : trois polls successifs ont rendu une
+réponse **byte-identique** figée sur `updated_at: 14:52:21`, `filter:
+"latest"` compris, pendant que le job avançait réellement. Ce qui a tranché
+n'est pas un poll de plus mais le **second signal indépendant** — le
+`CACHE_VERSION` servi par le site. Ne jamais conclure d'un seul appel.
+
 ### Reste ouvert — jugement device, seul juge
 
 Aucune sonde de ce dépôt ne rend de pixels iOS, n'exécute le SDK Firebase,
