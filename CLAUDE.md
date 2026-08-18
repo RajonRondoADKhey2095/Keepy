@@ -5880,3 +5880,278 @@ lance la run exactement comme avant, et que le bouton Quizz grisé se lise
 comme « bientôt » et non comme « cassé ». **`main` n'est PAS touché par ce
 lot** : il déplace le flux de connexion validé en production, donc le
 palier 2 est gaté par Mathieu après test device explicite sur staging.
+
+### Merge en production (18 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`7b54201`) → `main`, commit de merge **`6dd4bd5`**, `--no-ff`,
+aucun conflit, après validation device sur `keepy-staging.vercel.app` :
+connexion → hub affiché correctement, « Keepy Chased » lance la run
+normalement, « Keepy Quizz » visible et grisé « Bientot disponible », sans
+erreur ni état cassé. **Le hub est EN PRODUCTION** — le flux de connexion
+livré aux joueurs est désormais `LoginScreen` → `Hub` → `TitleScreen`, et
+non plus `LoginScreen` → `TitleScreen`.
+
+**Règle n°1 vérifiée AU DÉBUT, pas à la fin** (leçon de l'incident du
+11 août) : `git fetch --all --prune` puis tri de toutes les refs distantes
+par date de commit — la plus récente du dépôt EST `origin/staging`
+(11:22:58 UTC), immédiatement suivie de la branche du lot hub
+(`claude/keepy-memorial-quest-hub-o3hcb6`, 11:22:40). **Aucune session
+concurrente.**
+
+**`main` était strictement en retard** (`staging..main` VIDE) et l'arbre du
+commit de merge est **byte-identique à `staging`**, vérifié AVANT le push
+et pas supposé : `git diff HEAD origin/staging` vide **et même hash d'arbre
+des deux côtés (`fba9a254faae6fec76aa62794d839fbed7d97f01`)**. Ce qui part
+en prod est donc littéralement l'arbre validé sur device. Merge `--no-ff`
+quand même, comme tous les merges de prod de ce dépôt — un fast-forward ne
+laisse aucun point de décision lisible dans l'historique.
+
+⚠️ **`firestore-rules.yml` NE S'EST PAS DÉCLENCHÉ, et c'est vérifié sur le
+workflow lui-même, pas déduit du diff.** Deux mesures indépendantes :
+1. `git diff --name-only origin/main origin/staging` rend **5 fichiers**
+   (`CLAUDE.md`, `docs/QUIZZ_SPEC.md`, `scenes/Hub.tscn`,
+   `scripts/ui/Hub.gd`, `scripts/ui/LoginScreen.gd`) — **`firestore.rules`
+   n'y est pas**, et le trigger de ce workflow est
+   `paths: ['firestore.rules']`.
+2. La liste des runs de `firestore-rules.yml` rend **`total_count: 2`** —
+   le run **#1** (`9029bfe`, tentative 4) et le run **#2** (`8b70b24`),
+   tous deux d'hier/ce matin. **Aucun run sur `6dd4bd5`.**
+Le ruleset live de `keepy-8df91` est donc inchangé : c'est toujours celui
+publié par le run #2 à 10:32:59 UTC. **Rien de ce lot ne touche à l'auth
+Firestore.**
+
+CI **web-build run #145** (id `32133921735`, tentative 1) **verte en
+3 min 29 s** (11:52:45 → 11:56:14 UTC) — `Deploy to Vercel
+[PRODUCTION -- main]` **succès**, `[STAGING -- staging]` correctement
+**skipped** (push sur `main`). Le log porte lui-même `▲ Aliased
+https://keepy-ten.vercel.app`.
+
+**Fingerprint vérifié sur le site LIVE, requête fraîche** (`keepy-ten.
+vercel.app`, via le fetch Vercel — l'egress direct de ce sandbox reste
+bloqué en 403 CONNECT sur ce domaine, re-testé et pas supposé) :
+**HTTP 200**, **`x-vercel-cache: MISS`**, **`age: 0`**, `last-modified`
+collé à l'instant de la requête (l'index est servi en `no-cache,
+must-revalidate`) — trois signaux indépendants qui disent que ce n'est pas
+une réponse de cache, comme l'exige la leçon déjà payée deux fois ici.
+`GODOT_CONFIG.fileSizes` = **`index.pck 5 451 008` / `index.wasm
+35 376 909`**. Le `wasm` est **identique au bit près** au fingerprint
+consigné pour tous les lots qui ne touchent pas le code moteur — et c'est
+LUI la preuve d'identité, jamais le `.pck`.
+
+**Chaîne de preuve du déploiement, lue sur l'API Vercel** (indépendante du
+CDN) : le déploiement production courant est
+`dpl_4YsvDd8W1YsZ62Zh6kDVFAkqkdkR`, `state: READY`, `target: production`,
+`meta.gitRootDirectory = build/web` (**donc la CI, pas le natif**),
+`githubCommitSha = 6dd4bd58…`, `githubCommitMessage = "merge: Keepy's
+Memorial Quest hub to production"`.
+
+⚠️ **Ce que ces mesures prouvent, dit précisément plutôt que gonflé** :
+elles établissent la chaîne **commit → build → déploiement → origine
+réellement servie**. **Le hub lui-même est dessiné par Godot dans le
+canvas** — aucune de ces mesures ne le « voit », exactement comme au merge
+du gate Google Sign-In. Corroboration seulement, pas preuve : le `.pck`
+passe de **5 445 248** (dernier chiffre prod connu) à **5 451 008**
+(**+5 760 octets**), cohérent avec l'ajout de `Hub.tscn` + `Hub.gd` — mais
+la taille du `.pck` n'est **pas** stable d'un export à l'autre du même
+commit (avertissement permanent déjà consigné), donc elle n'est offerte ni
+comme preuve d'identité ni comme preuve de contenu. Le hub était validé
+sur device sur `staging`, et l'arbre servi en prod est byte-identique à
+celui-là.
+
+⚠️ **La fenêtre de ~3 min de 404 s'est reproduite à l'identique — attendue,
+pas un signal d'alarme.** Mesurée sur les deux déploiements réels de ce
+push, et non déduite : le déploiement **NATIF** Vercel
+(`dpl_28Ad4h57j1Xw6WxsqN6kcLTtAXzb`, reconnaissable à son
+`meta.branchAlias = keepy-git-main-…`) a pris la prod à **11:52:45**, la
+**CI** l'a remplacée à **11:56:03** — **~3 min 18 s** pendant lesquelles la
+prod servait le dépôt BRUT (pas d'`index.html` à la racine → 404). Ça se
+répare tout seul et personne ne le voit, mais c'est réel : voir la section
+« DEUX déploiements se disputent la PROD » pour le détail et le fait que
+seul un réglage en Console Vercel (Settings → Git) l'éliminerait. **Ne
+jamais lire un fingerprint sans regarder l'heure du dernier déploiement.**
+
+**Aucune sonde rejouée localement, pour cause de non-applicabilité ET
+d'outillage absent — dit plutôt que déguisé en preuve.** Le lot hub avait
+déjà **vérifié par `grep`, pas supposé**, qu'aucune sonde de
+`scripts/dev/` ne charge `LoginScreen.tscn` ni `Hub.tscn` (chacune lance sa
+propre scène et contourne `run/main_scene` par construction), et il avait
+rejoué `ProbeTimeoutAudit` / `AssetContractAudit` / `DeathModelAudit` /
+`ChargerShapeProbe` verts sur l'arbre exact qui est mergé ici. **Aucun
+Godot n'est installé dans CE sandbox** (ni éditeur ni templates), donc
+aucune sonde ne pouvait y tourner de toute façon. La seule validation
+structurelle pertinente — que l'import + l'export headless chargent et
+empaquettent l'intégralité des scènes sans erreur — **a eu lieu et
+réussi** : c'est exactement ce que fait le job CI (`Import project
+resources` + `Export Web build`, tous deux verts sur ce commit précis).
+
+**Reste ouvert** : rien sur le hub lui-même — il est validé device et en
+production. Le reste est inchangé et appartient à d'autres lots : le
+rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) ; la dette
+de doc de `README.md` (il dit encore que le projet démarre sur
+`TitleScreen.tscn`) ; la redondance de titres de l'écran-titre ; et la
+fenêtre de 404 à chaque push sur `main`.
+
+## RULES KEEPY QUIZZ PORTÉES DANS `firestore.rules` — écrites, PAS encore déployées (18 août 2026)
+
+Branche `claude/keepy-quiz-firestore-rules-r1crb3`, partie de `main`
+(`7fcada5`). **Deux fichiers : `firestore.rules` et ce document.** Aucun
+`.gd`, aucune scène, aucun `.glb`, aucune config d'export — `git diff
+--stat` contre `origin/main` ne rapporte rien d'autre. Le brouillon du §4
+de `docs/QUIZZ_SPEC.md` est porté tel quel dans le fichier réel ; le
+brouillon lui-même n'est pas modifié.
+
+### ⚠️ CE LOT N'A RIEN DÉPLOYÉ — la version LIVE reste celle du 18 août 10:32:59 UTC
+
+**Le ruleset en vigueur sur `keepy-8df91` est toujours celui publié par le
+run #2 de `firestore-rules.yml` (id `32127251623`)** : durcissement auth de
+`scores`, sans une ligne de Quizz. C'est mécanique et pas une prudence
+particulière — le workflow est `on.push.branches: [main]` +
+`paths: ['firestore.rules']`, or ce lot part sur `staging`.
+
+⚠️ **Précision qui corrige une formulation courante : un push sur
+`staging` ne déclenche RIEN.** Le déclenchement automatique est bien le
+comportement voulu et déjà éprouvé (run #1 tentative 4 et run #2, tous deux
+verts), mais il est attaché au **merge sur `main`**, pas au palier 1. Le
+jour où Mathieu autorise ce merge, le job partira **tout seul**, sans
+action manuelle, et publiera ce fichier sur le projet **global** — donc sur
+la production de Keepy Chased en même temps que sur staging. C'est
+exactement pourquoi ce lot s'arrête à `staging` : les rules n'ont pas de
+palier 1 disponible, le gate humain est le seul qui existe.
+
+Mode de défaillance sûr, déjà mesuré dans le log du lot précédent :
+`compiled successfully` précède **strictement** `released rules`, donc une
+erreur de syntaxe échoue le job **sans publier** et laisse les rules live
+intactes.
+
+### Ce qui est ajouté — purement ADDITIF, mesuré et pas plaidé
+
+`git diff --numstat origin/main -- firestore.rules` rend **`192  0`** :
+192 lignes ajoutées, **zéro retirée**. C'est la preuve la plus forte que
+les rules `scores` ne sont pas touchées, et elle est doublée d'un `cmp` :
+le bloc `match /scores/{scoreId}` (47 lignes) et l'en-tête du fichier
+(40 lignes) sont **byte-identiques** à `origin/main`.
+
+| bloc | read | create | update | delete |
+|---|---|---|---|---|
+| `scores/{scoreId}` | signed-in | validé | **interdit** | **interdit** |
+| `quizzes/{quizId}` | owner-only | validé | validé | owner-only |
+| `quizzes/{quizId}/questions/{questionId}` | owner-only | validé | validé | owner-only |
+
+Le triplet d'auth est **littéralement** celui de `scores` (`hasOnly` /
+`hasAll(['uid'])` / `uid == request.auth.uid`), pour qu'un relecteur voie
+le même motif aux deux endroits et non deux variantes à comparer.
+
+⚠️ **Un seul écart avec le brouillon du §4, et il est syntaxique, pas
+sémantique : les `function` sont HISSÉES au-dessus de leur premier
+appel.** Le brouillon déclarait `validCount()` après les `allow` qui
+l'utilisent, et `typeShapeValid()` avant ses propres callees. Rien ne
+garantit hors ligne que le compilateur de rules hisse les déclarations, et
+un `Function is undefined` coûterait un aller-retour complet par le gate
+`main` pour un défaut de mise en page. Vérifié par script sur le fichier
+livré : **0 violation déclare-avant-usage**, et **les 10 fonctions sont
+réellement utilisées** (aucune déclaration morte).
+
+### Vérification `hasOnly` — auditée par script, pas relue à l'œil
+
+Fermeture transitive des appels de fonctions calculée sur le fichier
+livré, pour chaque `allow` :
+
+| `allow` | `hasOnly` | `hasAll` | auth | `visibility == 'private'` |
+|---|---|---|---|---|
+| quizzes `create` | ✅ | ✅ | ✅ | ✅ |
+| quizzes `update` | ✅ | ✅ | ✅ | ✅ |
+| questions `create` | ✅ *(via `typeShapeValid`)* | ✅ | ✅ | s.o. |
+| questions `update` | ✅ *(via `typeShapeValid`)* | ✅ | ✅ | s.o. |
+| tous les `read` / `delete` | s.o. — aucune donnée entrante | — | ✅ | s.o. |
+
+**Aucun chemin d'écriture ne peut faire entrer un champ hors schéma.** Sur
+les questions, le porteur du `hasOnly` est `typeShapeValid()` et non
+`commonValid()` : chaque branche de type ferme son **propre** jeu de clés,
+donc un `mcq4` ne peut pas transporter `answerBool` ni un `truefalse` un
+`answerIndex`. C'est ce qui rend `type` contraignant plutôt que décoratif —
+et les deux `allow` exigent `typeShapeValid()`, donc il n'existe pas de
+chemin qui n'aurait que `commonValid()`.
+
+**`visibility` ne peut jamais valoir autre chose que `'private'` à la
+création** : la valeur est comparée par égalité stricte, ET le champ est
+dans le `hasAll`, donc il ne peut pas non plus être omis. Même paire sur
+`update` — un quiz créé privé ne peut pas être élargi par une mise à jour.
+
+### Comment un élargissement futur de `visibility` se ferait — DEUX edits distincts
+
+C'est la propriété qui a fait retenir « le champ existe, la valeur
+`'public'` n'existe pas » plutôt que « pas de champ du tout » ou
+« accepter `'public'` tout de suite » (`docs/QUIZZ_SPEC.md` §2.3, décision
+actée par Mathieu le 18 août 2026 — **une décision, pas un état
+d'attente**). Ouvrir le partage demanderait :
+
+1. **Édit n°1 — élargir l'ÉCRITURE** : remplacer
+   `visibility == 'private'` par une appartenance à un ensemble, dans les
+   deux `allow` (`create` **et** `update`) du bloc `quizzes`.
+2. **Édit n°2 — élargir la LECTURE** : la règle de lecture actuelle est
+   `allow read: if ownsExisting();`, owner-only **sans mentionner
+   `visibility` du tout**. C'est délibéré : une règle qui consulterait déjà
+   ce champ serait une porte à moitié ouverte, et l'édit n°1 seul
+   l'ouvrirait rétroactivement sur tout document marqué entre-temps.
+
+**Deux edits = deux passages par le gate `main`**, donc deux revues. Et
+⚠️ **la question de la triche structurelle doit être tranchée AVANT le
+premier des deux** : les bonnes réponses vivent dans le document que le
+joueur doit lire, les rules ne savent pas masquer un champ à l'intérieur
+d'un document (c'est tout ou rien), et ce projet n'a **aucun composant
+serveur** pour arbitrer — Keepy parle à Firestore en REST direct. Ce n'est
+pas un détail d'implémentation à régler plus tard.
+
+### Limites ACCEPTÉES, reportées dans le fichier lui-même — pas des bugs à corriger
+
+Recopiées en tête du bloc Quizz de `firestore.rules` pour qu'un relecteur
+du seul fichier de rules les ait sous les yeux (`docs/QUIZZ_SPEC.md` §5) :
+le **nombre de questions par quiz n'est pas gatable** (les rules ne savent
+pas compter les documents d'une sous-collection — le plafond de 50 est
+client-side, et `questionCount` est borné mais **jamais** confronté à la
+réalité) ; **pas de suppression en cascade** (les questions orphelines
+restent en base, lisibles par leur seul propriétaire — coût de stockage,
+pas de fuite) ; **`order` n'est ni unique ni contigu** (trier sur
+`(order, questionId)`, jamais sur `order` seul).
+
+### Validation
+
+⚠️ **Il n'existe pas de compilateur de rules hors ligne** — la compilation
+est un service (`firebaserules.googleapis.com`) et la clé de compte de
+service vit dans le secret GitHub, jamais dans un sandbox. La première
+vraie vérification syntaxique aura donc lieu au déploiement, avec le mode
+de défaillance sûr rappelé plus haut. Ce qui a pu être vérifié ici l'a été
+**par script sur le fichier livré**, pas par relecture : accolades
+équilibrées (21/21, profondeur finale 0, jamais négative), **ASCII pur**,
+**LF seul**, aucune tabulation, aucun espace en fin de ligne, newline
+finale unique — la même liste de contrôles que les deux lots rules
+précédents.
+
+**Aucune sonde rejouée, et c'est une non-applicabilité assumée, pas une
+omission déguisée en preuve** : ce lot ne touche **aucune** ressource
+Godot, donc rien de ce que l'export empaquette ne change, et aucune sonde
+de `scripts/dev/` ne lit un fichier de rules ni ne parle à Firestore —
+elles ne peuvent pas valider ce lot. **Aucun Godot n'est de toute façon
+installé dans ce sandbox** (ni éditeur ni templates). Piège payload sans
+objet et déjà mesuré au lot précédent : `firestore.rules` n'est pas une
+ressource Godot (0 occurrence dans le `.pck`), et `CLAUDE.md` non plus.
+
+### Reste ouvert
+
+1. **Le déploiement lui-même** — merge `staging` → `main`, gaté par
+   Mathieu, et c'est ce merge qui déclenchera le job. Rien de ce lot n'est
+   en vigueur avant.
+2. **La première compilation réelle** de ce bloc, qui n'a jamais eu lieu
+   (voir ci-dessus).
+3. **Aucun client n'existe encore** : `Quizz.gd`, les écrans du §7 et le
+   branchement du bouton grisé du hub restent à écrire. Ces rules décrivent
+   un contrat que rien n'exerce pour l'instant — et `docs/QUIZZ_SPEC.md` §8
+   porte déjà les pièges REST à connaître avant de l'écrire (deux
+   `updateTransforms` à la création, `updateMask` excluant `uid`/
+   `createdAt` à la mise à jour, `fieldFilter uid EQUAL` **obligatoire**
+   sur toute liste, index composite `uid ASC` + `updatedAt DESC`, un seul
+   `HTTPRequest` en vol à la fois, et le bearer **exigé** — un appel sans
+   token est un 403 garanti, à ne pas dépenser en aller-retour).
+4. Le rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) —
+   inchangé, et **Quizz y sera plus exposé que Chased**, qui n'écrit
+   qu'une fois en fin de run.
