@@ -420,12 +420,38 @@ window.keepySignInWithGoogle = function () {
 	// (browserLocalPersistence on the web): the session already survives a
 	// reload and a relaunch, and adding our own storage layer on top would be
 	// a second source of truth for the same fact.
+
+	// onIdTokenChanged AND NOT onAuthStateChanged (18 aout 2026 -- the token
+	// refresh fix). The two listeners are NOT alternatives with different
+	// trade-offs: onIdTokenChanged is a strict SUPERSET. Both fire once on
+	// startup with the restored user (or null), and both fire on every
+	// sign-in and sign-out; onIdTokenChanged additionally fires every time
+	// the SDK renews the ID token, which onAuthStateChanged never does.
+	//
+	// That gap was the whole defect this batch closes. A Firebase ID token
+	// expires after one hour. The SDK renews it on its own well before that,
+	// but with only onAuthStateChanged registered nothing here ever heard
+	// about the new value, so `idToken` in the snapshot stayed the one string
+	// captured at sign-in for the rest of the session. Leaderboard.gd sends
+	// that string as a bearer on every Firestore call, so an hour into a
+	// session every write became a silent 401 -- silent because the failure
+	// path is the same warning-and-carry-on path as being offline.
+	//
+	// Both listeners registered together would have worked too and is what a
+	// cautious reading suggests, but it publishes the identical payload twice
+	// for every sign-in and sign-out, which is a second writer for a fact that
+	// already has an owner. The superset alone is enough.
+	//
 	// Diagnostic only (see publishStage above): fires once, on whichever
 	// call to the listener below happens first -- signed in, signed out, or
 	// null-user restore. Declared here rather than inside the listener so it
-	// survives across every subsequent invocation without re-publishing.
+	// survives across every subsequent invocation without re-publishing. The
+	// stage name is deliberately unchanged across the listener swap: it is
+	// quoted in Auth.gd, in LoginScreen.gd's on-screen label and in CLAUDE.md
+	// as the healthy end state of a boot, and renaming it would invalidate
+	// every one of those without telling anybody.
 	let firstAuthStateSeen = false;
-	authMod.onAuthStateChanged(auth, function (user) {
+	authMod.onIdTokenChanged(auth, function (user) {
 		if (!firstAuthStateSeen) {
 			firstAuthStateSeen = true;
 			publishStage('first-auth-state-received');
@@ -444,6 +470,12 @@ window.keepySignInWithGoogle = function () {
 		// UI must be able to leave the login screen the moment we know WHO the
 		// user is, not once a token round-trip finishes. getIdToken() refreshes
 		// on demand, so a consumer that appears later still gets a valid one.
+		//
+		// NOT getIdToken(true): a forced refresh inside this listener would
+		// mint a new token, which fires this same listener again, which forces
+		// another refresh -- an infinite loop against Google's servers. The
+		// plain call returns the token the SDK has just cached, which on a
+		// refresh callback IS the new one.
 		user.getIdToken().then(function (token) {
 			publish({ idToken: token });
 		}).catch(function (e) {
@@ -451,6 +483,37 @@ window.keepySignInWithGoogle = function () {
 		});
 	});
 	publishStage('listener-registered');
+
+	// BACKGROUNDED-TAB BACKSTOP, same batch. The SDK's proactive renewal is a
+	// timer, and a timer in a backgrounded tab -- an installed PWA the player
+	// switched away from is the ordinary case on mobile, not the exotic one --
+	// is throttled or suspended by the browser. It can therefore fire late,
+	// leaving a window in which the published token has already expired.
+	//
+	// getIdToken() WITHOUT forceRefresh is exactly the right call: it returns
+	// the cached token untouched unless it has expired or is within five
+	// minutes of expiring, in which case it renews. So this is a no-op on
+	// every ordinary tab switch and a real renewal only when it would
+	// otherwise be too late. It publishes NOTHING itself -- a renewal fires
+	// onIdTokenChanged above, which is still the single writer of `idToken`.
+	try {
+		window.document.addEventListener('visibilitychange', function () {
+			if (window.document.visibilityState !== 'visible') {
+				return;
+			}
+			const current = auth.currentUser;
+			if (!current) {
+				return;
+			}
+			current.getIdToken().catch(function (e) {
+				console.error('keepyAuth: visibility refresh failed', e);
+			});
+		});
+	} catch (e) {
+		// Losing this backstop costs freshness after a long background, never
+		// the sign-in itself: the listener above remains the primary path.
+		console.error('keepyAuth: visibility listener failed', e);
+	}
 
 	// STALL WATCHDOG + AUTH-IFRAME EMBED PROBE (17 aout 2026, third pass).
 	//

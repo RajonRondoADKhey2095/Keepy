@@ -87,12 +87,26 @@ const BRIDGE_TIMEOUT_S := 12.0
 ## Polling backstop, and ONLY a backstop: the shell pushes every change
 ## into `keepyAuthNotify`, so this exists purely to close the startup
 ## window between this node registering its callback and the shell's own
-## listeners firing. It stops for good once the bridge reports `ready` --
-## see _process(). Leaving a twice-a-second JavaScriptBridge.eval running
-## for the rest of the session would put browser round-trips inside the
-## frame budget of a 60 fps runner, to watch for a sign-out that nothing
-## in this game can currently trigger.
+## listeners firing.
 const POLL_INTERVAL_S := 0.5
+## The SAME backstop once the bridge has reported `ready`, 60x slower.
+##
+## Until 18 aout 2026 this node left the frame loop entirely at that point
+## (`set_process(false)`), on the argument that a twice-a-second
+## JavaScriptBridge.eval has no business inside the frame budget of a 60 fps
+## runner. That argument is still right about 2 Hz and says nothing about
+## 1/30 Hz, which is what this is: one browser round-trip every thirty
+## seconds, 600x cheaper than the startup poll and far below anything a
+## frame can notice.
+##
+## It is here because the state this node holds is no longer captured once
+## and finished. The shell now republishes on every ID token renewal (see
+## its onIdTokenChanged block), so a push lost after `ready` no longer costs
+## a sign-out notification nothing in this game can trigger -- it costs a
+## permanently stale bearer token, which is exactly the defect this batch
+## exists to close. A backstop that stops before the thing it backs up
+## starts happening is not a backstop.
+const POLL_INTERVAL_READY_S := 30.0
 
 var _available := false
 var _ready_reported := false
@@ -138,9 +152,17 @@ func _process(delta: float) -> void:
 	if not _available:
 		return
 	if _ready_reported:
-		# Startup window closed: the push callback owns every further
-		# transition, so take this node out of the frame loop entirely.
-		set_process(false)
+		# Startup window closed. The push callback still owns every
+		# transition and fires the instant one happens; this only re-reads
+		# the snapshot on a slow cadence so a push that was never delivered
+		# cannot leave a stale token in place for ever. `publish()` on the
+		# shell side swallows a throwing listener on purpose -- a broken
+		# Godot side must not break auth -- which means a dead push path is
+		# silent by design, and silence is precisely what needs a backstop.
+		_poll_accum += delta
+		if _poll_accum >= POLL_INTERVAL_READY_S:
+			_poll_accum = 0.0
+			_read_snapshot()
 		return
 	_elapsed += delta
 	if _elapsed >= BRIDGE_TIMEOUT_S:
@@ -150,6 +172,11 @@ func _process(delta: float) -> void:
 		_error_detail = "no response from the Firebase bridge after %.0fs" % BRIDGE_TIMEOUT_S
 		auth_error.emit(_error, _error_detail)
 		auth_state_changed.emit(false)
+		# Terminal, and deliberately NOT handed to the slow backstop above:
+		# the bridge never answered, so re-reading its snapshot would only
+		# find the pre-module stub, whose own 'not-ready' error would
+		# overwrite 'bridge-timeout' on screen and lose the one diagnostic
+		# this path exists to produce.
 		set_process(false)
 		return
 	_poll_accum += delta
@@ -168,9 +195,18 @@ func _process(delta: float) -> void:
 func is_signed_in() -> bool:
 	return _signed_in
 
-## Empty string when signed out, off-web, or while the token is still
-## being fetched (the uid is published before the token, so a caller can
-## already know WHO is signed in while this is still empty).
+## The CURRENT ID token, not the one captured at sign-in. Empty string when
+## signed out, off-web, or while the token is still being fetched (the uid
+## is published before the token, so a caller can already know WHO is signed
+## in while this is still empty).
+##
+## Callers must read this at the moment they need it and never cache the
+## result: a Firebase ID token lasts one hour, the shell renews it and
+## republishes through onIdTokenChanged, and this member is overwritten by
+## every snapshot that arrives. Leaderboard.gd already does the right thing
+## by construction -- it builds its headers inside each request rather than
+## once in _ready() -- and Quizz will be far more exposed to the difference,
+## since it writes repeatedly across a session instead of once per run.
 func get_id_token() -> String:
 	return _id_token
 
