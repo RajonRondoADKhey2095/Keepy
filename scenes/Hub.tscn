@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/Hub.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://d37dx1txkxnir" path="res://assets/textures/ui/title_cover.png" id="2_cover"]
@@ -34,18 +34,6 @@ border_width_top = 3
 border_width_right = 3
 border_width_bottom = 3
 border_color = Color(0.95, 0.72, 0.32, 1)
-corner_radius_top_left = 18
-corner_radius_top_right = 18
-corner_radius_bottom_left = 18
-corner_radius_bottom_right = 18
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_disabled"]
-bg_color = Color(0.105, 0.095, 0.082, 0.9)
-border_width_left = 3
-border_width_top = 3
-border_width_right = 3
-border_width_bottom = 3
-border_color = Color(0.42, 0.39, 0.33, 1)
 corner_radius_top_left = 18
 corner_radius_top_right = 18
 corner_radius_bottom_left = 18
@@ -137,14 +125,11 @@ theme_override_constants/separation = 12
 layout_mode = 2
 size_flags_horizontal = 4
 custom_minimum_size = Vector2(520, 110)
-disabled = true
 theme_override_font_sizes/font_size = 36
-theme_override_colors/font_disabled_color = Color(0.62, 0.59, 0.52, 1)
-theme_override_styles/normal = SubResource("StyleBoxFlat_button_disabled")
-theme_override_styles/hover = SubResource("StyleBoxFlat_button_disabled")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_button_disabled")
-theme_override_styles/focus = SubResource("StyleBoxFlat_button_disabled")
-theme_override_styles/disabled = SubResource("StyleBoxFlat_button_disabled")
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
 text = "Keepy Quizz"
 
 [node name="QuizzCaption" type="Label" parent="CenterContainer/HubPanel/VBoxContainer/QuizzCard"]
@@ -154,4 +139,4 @@ modulate = Color(1, 1, 1, 0.72)
 horizontal_alignment = 1
 autowrap_mode = 3
 theme_override_font_sizes/font_size = 22
-text = "Bientot disponible"
+text = "Cree et gere tes questionnaires"
