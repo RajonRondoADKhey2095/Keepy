@@ -6840,3 +6840,156 @@ théorie tant qu'un écran ne les exerce pas pour de vrai :
 - **Le §10.3 reste ouvert** (correction de la réponse libre : comparaison
   exacte après normalisation ? variantes acceptées ?) et il faudra le trancher
   avant d'écrire l'écran de jeu du format `free`, pas pendant.
+
+## `QuizzHomeScreen.tscn` : PREMIER ÉCRAN RÉEL exercant `Quizz.gd` — créer + lister, rien d'autre (18 août 2026)
+
+Branche `claude/quiz-home-screen-t8dt2w`, redémarrée sur `origin/staging`
+(`6c72dbc`) — la branche pointait encore sur `main`, sans `Quizz.gd`. Trois
+fichiers touchés : `scenes/QuizzHomeScreen.tscn` + `scripts/ui/
+QuizzHomeScreen.gd` (nouveaux), `scenes/Hub.tscn` + `scripts/ui/Hub.gd`
+(bouton Quizz activé). **Périmètre volontairement étroit, comme demandé** :
+créer un quiz par titre, lister les siens. Pas d'édition de questions, pas de
+jeu — juste de quoi prouver que la fondation `Quizz.gd` marche contre
+Firestore, chose que la section précédente de ce fichier note explicitement
+n'avoir **jamais** été exercée en conditions réelles.
+
+### Un seul écran, pas les quatre du §7 de `docs/QUIZZ_SPEC.md`
+
+Le tableau du §7 prévoit `QuizzMenuScreen` / `QuizzListScreen` / `QuizzEditorScreen`
+/ `QuestionEditorScreen` séparés. Ce lot en livre UN, `QuizzHomeScreen.tscn`,
+qui fait le travail de `QuizzMenuScreen` + `QuizzListScreen` réunis — création
+et liste sur le même écran, un champ + un bouton au-dessus d'une liste. C'est
+un écart assumé au tableau, pas une relecture de la décision d'hôte
+unique/panneaux par format du §10.2 (qui concerne l'écran de JEU, pas
+l'authoring) : le brief de ce lot demandait explicitement « juste de quoi
+valider que la fondation Quizz.gd fonctionne », et un écran de moins à router
+pour une validation de fondation est le bon niveau d'effort. `QuizzMenuScreen`/
+`QuizzListScreen` restent des noms disponibles pour une session future qui
+voudrait les séparer une fois l'édition de questions justifiant un vrai menu.
+
+Chemin de navigation, remplace la ligne « DESACTIVE » du §7.1 :
+
+```
+res://scenes/Hub.tscn
+        └── "Keepy Quizz" -> res://scenes/QuizzHomeScreen.tscn   <-- NOUVEAU
+                └── "<" (BackButton) -> res://scenes/Hub.tscn
+```
+
+### Le bouton Quizz du hub est ACTIF — la garde `push_error` est retirée
+
+Exactement les trois étapes que le §7.1 avait préparées : `disabled = true`
+retiré de `QuizzButton` dans `Hub.tscn` (il reprend le style bouton actif de
+`ChasedButton`, `StyleBoxFlat_button_disabled` devenu inutilisé est supprimé
+du fichier — `load_steps` ajusté de 8 à 7) ; `QuizzCaption` passe de
+« Bientot disponible » à « Cree et gere tes questionnaires » ; `Hub._ready()`
+connecte `quizz_button.pressed` vers `change_scene_to_file(QUIZZ_SCENE)`, sur
+le modèle exact de `_on_chased_pressed()`. **La garde `push_error` qui
+existait pour qu'un bouton réactivé sans être connecté ne parte pas en
+production comme un contrôle mort est retirée** — elle n'a plus lieu d'être
+puisque le bouton est désormais réellement connecté, exactement comme sa
+propre doc l'annonçait.
+
+### Comportement attendu au tout premier lancement : index Firestore manquant
+
+`Quizz.list_own_quizzes()` documente déjà, dans son propre commentaire, que la
+requête `uid EQUAL` + `orderBy updatedAt DESC` a besoin d'un index composite
+qui n'a jamais été créé (aucune écriture réelle n'a encore eu lieu contre
+`quizzes`), et que Firestore répond alors `400 FAILED_PRECONDITION` avec un
+message portant une URL Console toute prête, transmise **verbatim** sur
+l'argument `error` du signal `quizzes_fetched`. **Ce lot est le premier code
+qui affiche cette réponse au joueur plutôt que de la traiter comme une panne
+générique.**
+
+`_show_error()` détecte ce cas précis (`error.contains("FAILED_PRECONDITION")`
+ET une sous-chaîne `https://` présente), extrait tout ce qui suit le premier
+`https://` (l'URL Firestore ne contient pas d'espace, elle est déjà encodée —
+rien à chercher comme délimiteur de fin), et affiche un panneau dédié (fond
+ambre, distinct visuellement du message d'échec générique) avec l'URL posée
+dans un `LineEdit` non-éditable (`editable = false`, pour ne jamais déclencher
+le clavier virtuel mobile au tap — piège déjà documenté ailleurs dans ce
+fichier pour le clavier iOS) plus un bouton « Copier le lien »
+(`DisplayServer.clipboard_set()`). **Toute autre erreur** — hors ligne,
+`auth-required`, un vrai refus serveur — reste un message d'échec standard,
+même registre que `LoginScreen._message_for()` : le texte générique plus le
+détail brut entre parenthèses, jamais masqué.
+
+⚠️ **Ce chemin n'a PAS pu être exercé contre le vrai service Firestore depuis
+ce sandbox** — aucun idToken Google n'y est disponible (même limite déjà
+consignée pour les lots rules précédents), donc ni la création d'un quiz ni
+le premier `list_own_quizzes()` réel n'ont pu être tentés ici. La détection
+d'erreur et l'extraction d'URL sont vérifiées par une sonde jetable (ci-dessous)
+qui rejoue le message Firestore EXACT documenté par `Quizz.gd`
+(`"result=0 code=400 FAILED_PRECONDITION: ... You can create it here:
+https://console.firebase.google.com/v1/r/project/keepy-8df91/firestore/
+indexes?create_composite=..."`), pas contre une vraie réponse capturée en
+direct. **Jugement device pour la première création réelle**, qui devra
+suivre ce lien une fois, comme prévu depuis l'écriture de `Quizz.gd`.
+
+### État de chargement, cohérent avec `LoginScreen`/`Hub`
+
+`_set_busy()` désactive le bouton Créer et le champ de titre pendant un appel
+en vol, et bascule le texte de statut entre « Chargement... » / « Creation... »
+— même registre texte-only que `LoginScreen._refresh_from_auth()`, pas de
+spinner ni d'overlay supplémentaire. Une création réussie vide le champ de
+titre puis **relance une vraie liste** plutôt que d'insérer une ligne devinée
+localement : l'ordre et la date affichés viennent toujours du serveur, jamais
+d'une hypothèse faite ici — la même discipline que `Quizz.gd` applique déjà à
+ses propres réponses.
+
+### Formatage de date : `updatedAt` (RFC3339) → `JJ/MM/AAAA HH:MM`
+
+`Time.get_datetime_dict_from_datetime_string()` ne comprend que les secondes
+entières ; la fraction de seconde et le `Z` final du timestamp Firestore sont
+retirés avant l'appel. **Mesuré, pas supposé** : une chaîne imparsable ne
+renvoie pas un dictionnaire vide mais un dictionnaire à zéro partout — c'est
+donc `year == 0` qui sert de détecteur d'échec plutôt qu'un test
+`is_empty()`, avec la chaîne brute affichée en repli plutôt qu'un
+« 00/00/0000 » absurde sur le seul champ qu'un joueur ne peut pas
+interpréter lui-même.
+
+### Sondes headless : aucune affectée, vérifié par grep et par exécution
+
+`grep` sur `scripts/dev/` : **aucune sonde ne référence `QuizzHomeScreen.tscn`,
+`Hub.tscn` ni `LoginScreen.tscn`** — chacune lance sa propre scène et
+contourne `run/main_scene` par construction, même constat déjà fait aux deux
+lots hub/token précédents. `ProbeTimeoutAudit` (**33 sondes, toutes armées**),
+`AssetContractAudit` (12/12 visuels, 0/10 colliders déplacés), `DeathModelAudit`
+(CHARGER seul fatal, capture au 2ᵉ contact), `ChargerShapeProbe` — **rejouées
+dans ce sandbox, toutes exit 0**, aucune ligne stderr nouvelle hors celle déjà
+documentée (`Parameter "m" is null` sur `DeathModelAudit`, pré-existante).
+
+Une sonde jetable (`scripts/dev/QuizzHomeScreenProbe.tscn`, jamais commitée,
+supprimée avant ce commit) a instancié l'écran réel et appelé ses handlers
+avec des payloads synthétiques : détection FAILED_PRECONDITION + extraction
+d'URL, non-déclenchement du panneau index sur une erreur non liée, peuplement
+de la liste (2 lignes, dates formatées), état vide, et vidage du champ de
+titre après une création réussie — **toutes les assertions passent**.
+
+### Validation build
+
+Éditeur + templates Godot 4.3-stable installés dans ce sandbox pour ce lot
+(releases GitHub officielles). Import headless **exit 0**, export Web release
+**exit 0**, aucune ligne d'erreur dans les deux logs. `index.wasm`
+**35 376 909 octets** — identique au fingerprint déjà consigné pour tout lot
+qui ne touche pas le code moteur, cohérent : ce lot n'ajoute que deux scènes
+UI et modifie deux fichiers UI existants, aucun script `autoload` ni
+`project.godot` (au-delà de l'autoload `Quizz` déjà enregistré par le lot
+précédent).
+
+### Reste ouvert — jugement device, seul juge
+
+1. **La toute première création réelle** sur `keepy-staging.vercel.app` :
+   doit produire soit un quiz qui apparaît dans la liste (si l'index existe
+   déjà), soit le panneau d'index avec un lien qui, une fois ouvert et
+   confirmé en Console, débloque la liste au rafraîchissement suivant. Aucune
+   des deux branches n'a pu être vue tourner contre le vrai service depuis ce
+   sandbox.
+2. Lisibilité de l'écran à l'échelle réelle d'un téléphone (le panneau
+   d'index, en particulier — jamais vu rendu ailleurs que dans une sonde
+   headless).
+3. Tout le reste du §7 (édition de questions, jeu) reste à écrire, inchangé
+   par ce lot.
+
+`main` n'est **pas** touché : palier 1 seulement (merge automatique sur
+`staging`, build/export/sondes verts) ; palier 2 reste gaté par Mathieu après
+validation device.
