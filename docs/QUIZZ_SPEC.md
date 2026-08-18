@@ -11,6 +11,26 @@ Quest », à côté de Keepy Chased. Il partage le projet Firebase
 `keepy-8df91`, l'autoload `Auth` et le gate Google Sign-In déjà en
 production depuis le 18 août 2026.
 
+> **MISE À JOUR DU 18 AOÛT 2026 — trois décisions de Mathieu sont ACTÉES,
+> et l'ombrelle EXISTE.** Ce document a été écrit avec trois points
+> ouverts (§10.1, §10.2 et le volet visibilité de §10.5) ; les trois sont
+> tranchés, et ce ne sont plus des propositions :
+>
+> 1. **Point d'accroche : un écran hub séparé**, `scenes/Hub.tscn`, pas un
+>    second bouton sur `TitleScreen`. **Il est livré** (lot
+>    « Keepy's Memorial Quest hub », 18 août 2026) — voir §7.1 pour le
+>    chemin de nœud exact auquel brancher le vrai gameplay.
+> 2. **Écran de jeu Quizz : hôte unique + panneaux par format**, pas un
+>    écran par format. L'écart argumenté au §7 devient la forme retenue.
+> 3. **`visibility` reste `'private'` et rien d'autre**, sans échéance de
+>    révision. Ce n'est plus « en attendant », c'est la décision — §2.3
+>    n'a donc rien à changer, seulement à cesser de se lire comme
+>    provisoire.
+>
+> Les paragraphes concernés sont amendés sur place ci-dessous plutôt que
+> réécrits : l'argumentaire qui a mené à ces choix garde sa valeur, c'est
+> son statut (« proposé » → « acté ») qui change.
+
 ---
 
 ## 0. Ce qui a été LU avant de proposer quoi que ce soit
@@ -223,6 +243,15 @@ c'est la plus stricte qui est retenue :
   marqués par erreur, sans qu'aucun changement de ce jour-là ne le dise ;
 - ✅ **mettre le champ et n'accepter QUE `'private'`** — c'est ce qui est
   proposé.
+
+⚠️ **ACTÉ par Mathieu le 18 août 2026 : ce troisième choix EST la
+décision, et pas un état d'attente.** Keepy Quizz reste privé / non
+partagé, sans échéance de révision — donc rien à changer ici, seulement à
+ne plus lire ce paragraphe comme provisoire. Un lot futur qui voudrait
+ouvrir le partage ne « lèverait » pas une restriction temporaire : il
+rouvrirait une décision, avec les deux modifications de `firestore.rules`
+ci-dessous ET la question de triche structurelle ci-dessous, toutes deux
+intactes.
 
 **Conséquence voulue : ouvrir la lecture publique demandera DEUX
 modifications de `firestore.rules`** (élargir les valeurs acceptées en
@@ -564,17 +593,62 @@ questionnaire mélange les trois formats à l'intérieur d'une **même
 partie** : trois `change_scene_to_file()` par question, avec l'état de la
 partie à faire survivre à chaque transition. Le découpage par format
 reste réel (`QuizzAnswerMcq4/TrueFalse/Free`), il vit juste un cran plus
-bas. **À arbitrer par Mathieu** si le découpage en trois écrans pleins
-est voulu pour une autre raison.
+bas.
 
-⚠️ **Où Quizz s'accroche n'est PAS tranché ici.** Aujourd'hui
-`TitleScreen.gd` fait `change_scene_to_file("res://scenes/Game.tscn")`
-sur un bouton unique : il n'existe aucun sélecteur de mode. Deux options,
-et c'est une décision produit — soit `TitleScreen` gagne un second bouton
-« Quizz », soit un écran d'ombrelle « Keepy's Memorial Quest » s'insère
-entre `LoginScreen` et les deux sous-jeux. La seconde vieillit mieux si
-un troisième sous-jeu arrive ; la première ne touche presque rien.
-**Aucune des deux n'est implémentée ni présumée par ce document.**
+✅ **ARBITRÉ par Mathieu le 18 août 2026 : hôte unique + panneaux par
+format, c'est-à-dire la proposition ci-dessus.** L'écart avec le brief
+d'origine est donc fermé, et la ligne `QuizzPlayScreen.tscn` du tableau
+est la forme retenue, pas une suggestion. Un lot Quizz futur n'a plus à
+re-poser la question.
+
+✅ **Où Quizz s'accroche EST tranché, et le point d'accroche est LIVRÉ**
+— voir §7.1 juste en dessous. Le paragraphe d'origine posait deux options
+(second bouton sur `TitleScreen`, ou écran d'ombrelle entre `LoginScreen`
+et les sous-jeux) ; Mathieu a retenu la seconde, pour la raison qui y
+était déjà donnée — elle vieillit mieux si un troisième sous-jeu arrive.
+
+### 7.1 Le point d'accroche RÉEL — `scenes/Hub.tscn` (livré le 18 août 2026)
+
+Chemins exacts, à lire sur l'arbre plutôt qu'à deviner. Le flux de
+démarrage est désormais :
+
+```
+run/main_scene = res://scenes/LoginScreen.tscn
+        │  (session Google valide)
+        ▼
+res://scenes/Hub.tscn        <-- l'ombrelle "Keepy's Memorial Quest"
+        ├── "Keepy Chased" -> res://scenes/TitleScreen.tscn  (inchangé)
+        └── "Keepy Quizz"  -> DESACTIVE, "Bientot disponible"
+```
+
+| ce qu'il faut | où |
+|---|---|
+| la scène hub | `scenes/Hub.tscn` |
+| son script | `scripts/ui/Hub.gd` |
+| **le bouton à activer** | nœud `CenterContainer/HubPanel/VBoxContainer/QuizzCard/QuizzButton`, exposé par `Hub.gd` sous `quizz_button` |
+| le libellé d'attente à retirer | nœud frère `.../QuizzCard/QuizzCaption`, texte `"Bientot disponible"` |
+| le modèle à copier | `Hub._on_chased_pressed()` — une ligne, `change_scene_to_file()` |
+
+**Ce qu'une session Quizz future a exactement à faire pour brancher le
+gameplay**, et rien de plus :
+
+1. retirer `disabled = true` de `QuizzButton` dans `scenes/Hub.tscn` ;
+2. remplacer le texte de `QuizzCaption` (ou masquer le nœud) ;
+3. connecter `quizz_button.pressed` dans `Hub._ready()` vers un
+   `change_scene_to_file("res://scenes/QuizzMenuScreen.tscn")`, sur le
+   modèle exact de `chased_button` juste au-dessus.
+
+⚠️ **`Hub.gd` `push_error` si `QuizzButton` n'est plus `disabled`.** C'est
+volontaire et ce n'est pas un obstacle : l'assertion existe pour qu'un
+bouton ré-activé sans être connecté ne parte pas en production comme un
+contrôle mort. La supprimer fait partie de l'étape 3 ci-dessus — pas
+avant, pas séparément.
+
+⚠️ **`scenes/TitleScreen.tscn` n'est PAS le point d'accroche et ne doit
+pas le devenir.** Il est l'écran de démarrage propre à Keepy Chased (son
+logo, son sous-titre, son « Jouer ») et il est resté **byte-intouché** par
+le lot hub. Ajouter Quizz là ferait lire le second sous-jeu comme un mode
+du premier.
 
 ---
 
@@ -643,12 +717,19 @@ des rules ci-dessus.
 
 ## 10. Questions ouvertes pour Mathieu
 
-1. **Point d'accroche de Quizz** : second bouton sur `TitleScreen`, ou
-   écran d'ombrelle « Keepy's Memorial Quest » entre `LoginScreen` et les
-   deux sous-jeux ? (§7)
-2. **Un écran de jeu par format, ou un hôte + trois panneaux ?** La
-   proposition retient le second, le brief demandait le premier — l'écart
-   est argumenté au §7, pas escamoté.
+⚠️ **Les points 1, 2 et le volet « partage » du point 5 sont CLOS depuis
+le 18 août 2026 — ne pas les rouvrir, ne pas les re-proposer.** Ils sont
+conservés ici avec leur réponse plutôt que supprimés, pour qu'une session
+future voie la décision et pas un blanc.
+
+1. ~~**Point d'accroche de Quizz**~~ → **TRANCHÉ : écran d'ombrelle
+   séparé.** `scenes/Hub.tscn` est livré, `LoginScreen` y redirige, et
+   `TitleScreen` est resté intouché. Chemins et procédure de branchement
+   au **§7.1**.
+2. ~~**Un écran de jeu par format, ou un hôte + trois panneaux ?**~~ →
+   **TRANCHÉ : hôte unique + panneaux par format**, soit la proposition
+   du §7. Le brief d'origine demandait l'inverse ; l'écart est fermé en
+   faveur de l'hôte unique.
 3. **Correction de la réponse libre** : comparaison exacte après
    normalisation (minuscules, espaces réduits, accents retirés) ? Une
    seule bonne réponse, ou faut-il prévoir des variantes acceptées ? La
@@ -661,7 +742,11 @@ des rules ci-dessus.
    Elles se durcissent facilement plus tard, elles s'assouplissent
    difficilement (un plafond relâché ne rend pas lisible ce qui a été
    saisi entre-temps).
-5. **Partage / lecture publique** : hors périmètre aujourd'hui, mais la
-   note du §2.3 sur la triche structurelle (les réponses sont dans le
-   document que le joueur doit lire, et il n'y a aucun composant serveur
-   pour arbitrer) doit être tranchée **avant** et pas pendant.
+5. **Partage / lecture publique** → **le volet « pour l'instant » est
+   TRANCHÉ : Quizz reste privé / non partagé**, `visibility` n'accepte
+   que `'private'`, et c'est une décision actée et non un état d'attente
+   (§2.3). Ce qui reste ouvert est uniquement ce qu'il faudrait résoudre
+   **si** Mathieu décidait un jour d'ouvrir : la note du §2.3 sur la
+   triche structurelle (les réponses vivent dans le document que le
+   joueur doit lire, et ce projet n'a aucun composant serveur pour
+   arbitrer) devrait être tranchée **avant** ce jour-là, pas pendant.
