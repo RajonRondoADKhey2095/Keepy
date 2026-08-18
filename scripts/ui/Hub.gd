@@ -22,6 +22,10 @@ const QUIZZ_SCENE := "res://scenes/QuizzHomeScreen.tscn"
 @onready var quizz_button: Button = $CenterContainer/HubPanel/VBoxContainer/QuizzCard/QuizzButton
 
 func _ready() -> void:
+	# Defensive reset, not a per-exit-path fix: this is the one screen every
+	# way back out of Quizz passes through today, so resetting here covers
+	# a future second "back" button for free -- see SafeArea.gd's header.
+	SafeArea.set_default()
 	chased_button.pressed.connect(_on_chased_pressed)
 	quizz_button.pressed.connect(_on_quizz_pressed)
 
