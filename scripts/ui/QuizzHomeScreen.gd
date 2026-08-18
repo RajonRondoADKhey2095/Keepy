@@ -46,6 +46,11 @@ var _row_style: StyleBoxFlat
 var _busy := false
 
 func _ready() -> void:
+	# Safe-area strip above/below the canvas is cream here, not the swamp
+	# default the export shell paints statically -- see SafeArea.gd's own
+	# header for why this is a call from the screen rather than a scene
+	# change watcher.
+	SafeArea.set_cream()
 	_row_style = _build_row_style()
 	back_button.pressed.connect(_on_back_pressed)
 	create_button.pressed.connect(_on_create_pressed)

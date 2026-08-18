@@ -20,6 +20,7 @@ GameState="*res://scripts/autoload/GameState.gd"
 Leaderboard="*res://scripts/autoload/Leaderboard.gd"
 Auth="*res://scripts/autoload/Auth.gd"
 Quizz="*res://scripts/autoload/Quizz.gd"
+SafeArea="*res://scripts/autoload/SafeArea.gd"
 
 [display]
 
