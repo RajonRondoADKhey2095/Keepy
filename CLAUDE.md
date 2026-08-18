@@ -5880,3 +5880,113 @@ lance la run exactement comme avant, et que le bouton Quizz grisé se lise
 comme « bientôt » et non comme « cassé ». **`main` n'est PAS touché par ce
 lot** : il déplace le flux de connexion validé en production, donc le
 palier 2 est gaté par Mathieu après test device explicite sur staging.
+
+### Merge en production (18 août 2026, autorisation explicite de Mathieu)
+
+`staging` (`7b54201`) → `main`, commit de merge **`6dd4bd5`**, `--no-ff`,
+aucun conflit, après validation device sur `keepy-staging.vercel.app` :
+connexion → hub affiché correctement, « Keepy Chased » lance la run
+normalement, « Keepy Quizz » visible et grisé « Bientot disponible », sans
+erreur ni état cassé. **Le hub est EN PRODUCTION** — le flux de connexion
+livré aux joueurs est désormais `LoginScreen` → `Hub` → `TitleScreen`, et
+non plus `LoginScreen` → `TitleScreen`.
+
+**Règle n°1 vérifiée AU DÉBUT, pas à la fin** (leçon de l'incident du
+11 août) : `git fetch --all --prune` puis tri de toutes les refs distantes
+par date de commit — la plus récente du dépôt EST `origin/staging`
+(11:22:58 UTC), immédiatement suivie de la branche du lot hub
+(`claude/keepy-memorial-quest-hub-o3hcb6`, 11:22:40). **Aucune session
+concurrente.**
+
+**`main` était strictement en retard** (`staging..main` VIDE) et l'arbre du
+commit de merge est **byte-identique à `staging`**, vérifié AVANT le push
+et pas supposé : `git diff HEAD origin/staging` vide **et même hash d'arbre
+des deux côtés (`fba9a254faae6fec76aa62794d839fbed7d97f01`)**. Ce qui part
+en prod est donc littéralement l'arbre validé sur device. Merge `--no-ff`
+quand même, comme tous les merges de prod de ce dépôt — un fast-forward ne
+laisse aucun point de décision lisible dans l'historique.
+
+⚠️ **`firestore-rules.yml` NE S'EST PAS DÉCLENCHÉ, et c'est vérifié sur le
+workflow lui-même, pas déduit du diff.** Deux mesures indépendantes :
+1. `git diff --name-only origin/main origin/staging` rend **5 fichiers**
+   (`CLAUDE.md`, `docs/QUIZZ_SPEC.md`, `scenes/Hub.tscn`,
+   `scripts/ui/Hub.gd`, `scripts/ui/LoginScreen.gd`) — **`firestore.rules`
+   n'y est pas**, et le trigger de ce workflow est
+   `paths: ['firestore.rules']`.
+2. La liste des runs de `firestore-rules.yml` rend **`total_count: 2`** —
+   le run **#1** (`9029bfe`, tentative 4) et le run **#2** (`8b70b24`),
+   tous deux d'hier/ce matin. **Aucun run sur `6dd4bd5`.**
+Le ruleset live de `keepy-8df91` est donc inchangé : c'est toujours celui
+publié par le run #2 à 10:32:59 UTC. **Rien de ce lot ne touche à l'auth
+Firestore.**
+
+CI **web-build run #145** (id `32133921735`, tentative 1) **verte en
+3 min 29 s** (11:52:45 → 11:56:14 UTC) — `Deploy to Vercel
+[PRODUCTION -- main]` **succès**, `[STAGING -- staging]` correctement
+**skipped** (push sur `main`). Le log porte lui-même `▲ Aliased
+https://keepy-ten.vercel.app`.
+
+**Fingerprint vérifié sur le site LIVE, requête fraîche** (`keepy-ten.
+vercel.app`, via le fetch Vercel — l'egress direct de ce sandbox reste
+bloqué en 403 CONNECT sur ce domaine, re-testé et pas supposé) :
+**HTTP 200**, **`x-vercel-cache: MISS`**, **`age: 0`**, `last-modified`
+collé à l'instant de la requête (l'index est servi en `no-cache,
+must-revalidate`) — trois signaux indépendants qui disent que ce n'est pas
+une réponse de cache, comme l'exige la leçon déjà payée deux fois ici.
+`GODOT_CONFIG.fileSizes` = **`index.pck 5 451 008` / `index.wasm
+35 376 909`**. Le `wasm` est **identique au bit près** au fingerprint
+consigné pour tous les lots qui ne touchent pas le code moteur — et c'est
+LUI la preuve d'identité, jamais le `.pck`.
+
+**Chaîne de preuve du déploiement, lue sur l'API Vercel** (indépendante du
+CDN) : le déploiement production courant est
+`dpl_4YsvDd8W1YsZ62Zh6kDVFAkqkdkR`, `state: READY`, `target: production`,
+`meta.gitRootDirectory = build/web` (**donc la CI, pas le natif**),
+`githubCommitSha = 6dd4bd58…`, `githubCommitMessage = "merge: Keepy's
+Memorial Quest hub to production"`.
+
+⚠️ **Ce que ces mesures prouvent, dit précisément plutôt que gonflé** :
+elles établissent la chaîne **commit → build → déploiement → origine
+réellement servie**. **Le hub lui-même est dessiné par Godot dans le
+canvas** — aucune de ces mesures ne le « voit », exactement comme au merge
+du gate Google Sign-In. Corroboration seulement, pas preuve : le `.pck`
+passe de **5 445 248** (dernier chiffre prod connu) à **5 451 008**
+(**+5 760 octets**), cohérent avec l'ajout de `Hub.tscn` + `Hub.gd` — mais
+la taille du `.pck` n'est **pas** stable d'un export à l'autre du même
+commit (avertissement permanent déjà consigné), donc elle n'est offerte ni
+comme preuve d'identité ni comme preuve de contenu. Le hub était validé
+sur device sur `staging`, et l'arbre servi en prod est byte-identique à
+celui-là.
+
+⚠️ **La fenêtre de ~3 min de 404 s'est reproduite à l'identique — attendue,
+pas un signal d'alarme.** Mesurée sur les deux déploiements réels de ce
+push, et non déduite : le déploiement **NATIF** Vercel
+(`dpl_28Ad4h57j1Xw6WxsqN6kcLTtAXzb`, reconnaissable à son
+`meta.branchAlias = keepy-git-main-…`) a pris la prod à **11:52:45**, la
+**CI** l'a remplacée à **11:56:03** — **~3 min 18 s** pendant lesquelles la
+prod servait le dépôt BRUT (pas d'`index.html` à la racine → 404). Ça se
+répare tout seul et personne ne le voit, mais c'est réel : voir la section
+« DEUX déploiements se disputent la PROD » pour le détail et le fait que
+seul un réglage en Console Vercel (Settings → Git) l'éliminerait. **Ne
+jamais lire un fingerprint sans regarder l'heure du dernier déploiement.**
+
+**Aucune sonde rejouée localement, pour cause de non-applicabilité ET
+d'outillage absent — dit plutôt que déguisé en preuve.** Le lot hub avait
+déjà **vérifié par `grep`, pas supposé**, qu'aucune sonde de
+`scripts/dev/` ne charge `LoginScreen.tscn` ni `Hub.tscn` (chacune lance sa
+propre scène et contourne `run/main_scene` par construction), et il avait
+rejoué `ProbeTimeoutAudit` / `AssetContractAudit` / `DeathModelAudit` /
+`ChargerShapeProbe` verts sur l'arbre exact qui est mergé ici. **Aucun
+Godot n'est installé dans CE sandbox** (ni éditeur ni templates), donc
+aucune sonde ne pouvait y tourner de toute façon. La seule validation
+structurelle pertinente — que l'import + l'export headless chargent et
+empaquettent l'intégralité des scènes sans erreur — **a eu lieu et
+réussi** : c'est exactement ce que fait le job CI (`Import project
+resources` + `Export Web build`, tous deux verts sur ce commit précis).
+
+**Reste ouvert** : rien sur le hub lui-même — il est validé device et en
+production. Le reste est inchangé et appartient à d'autres lots : le
+rafraîchissement du token (`onIdTokenChanged`, jamais rebranché) ; la dette
+de doc de `README.md` (il dit encore que le projet démarre sur
+`TitleScreen.tscn`) ; la redondance de titres de l'écran-titre ; et la
+fenêtre de 404 à chaque push sur `main`.
