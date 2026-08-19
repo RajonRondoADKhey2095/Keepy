@@ -1,4 +1,4 @@
-[gd_resource type="Theme" load_steps=13 format=3]
+[gd_resource type="Theme" load_steps=18 format=3]
 
 [ext_resource type="FontFile" path="res://assets/fonts/quizz/Fredoka-Variable.ttf" id="1_fredoka"]
 [ext_resource type="FontFile" path="res://assets/fonts/quizz/Quicksand-Variable.ttf" id="2_quicksand"]
@@ -49,10 +49,10 @@ shadow_offset = Vector2(0, 4)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_normal"]
 bg_color = Color(1.0, 0.5412, 0.3569, 1)
-corner_radius_top_left = 28
-corner_radius_top_right = 28
-corner_radius_bottom_right = 28
-corner_radius_bottom_left = 28
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
 content_margin_left = 24.0
 content_margin_top = 8.0
 content_margin_right = 24.0
@@ -63,10 +63,10 @@ shadow_offset = Vector2(0, 3)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_hover"]
 bg_color = Color(1.0, 0.6118, 0.451, 1)
-corner_radius_top_left = 28
-corner_radius_top_right = 28
-corner_radius_bottom_right = 28
-corner_radius_bottom_left = 28
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
 content_margin_left = 24.0
 content_margin_top = 8.0
 content_margin_right = 24.0
@@ -77,10 +77,10 @@ shadow_offset = Vector2(0, 4)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_pressed"]
 bg_color = Color(0.898, 0.4471, 0.2745, 1)
-corner_radius_top_left = 28
-corner_radius_top_right = 28
-corner_radius_bottom_right = 28
-corner_radius_bottom_left = 28
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
 content_margin_left = 24.0
 content_margin_top = 8.0
 content_margin_right = 24.0
@@ -88,10 +88,10 @@ content_margin_bottom = 8.0
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_disabled"]
 bg_color = Color(1.0, 0.8627, 0.7686, 1)
-corner_radius_top_left = 28
-corner_radius_top_right = 28
-corner_radius_bottom_right = 28
-corner_radius_bottom_left = 28
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
 content_margin_left = 24.0
 content_margin_top = 8.0
 content_margin_right = 24.0
@@ -128,6 +128,68 @@ content_margin_left = 22.0
 content_margin_top = 8.0
 content_margin_right = 22.0
 content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_search_panel"]
+bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 42
+corner_radius_top_right = 42
+corner_radius_bottom_right = 42
+corner_radius_bottom_left = 42
+content_margin_left = 10.0
+content_margin_top = 10.0
+content_margin_right = 10.0
+content_margin_bottom = 10.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.16)
+shadow_size = 18
+shadow_offset = Vector2(0, 5)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_search_field"]
+draw_center = false
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 14.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_search_field_focus"]
+draw_center = false
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 14.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_row_panel"]
+bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 22
+corner_radius_top_right = 22
+corner_radius_bottom_right = 22
+corner_radius_bottom_left = 22
+content_margin_left = 20.0
+content_margin_top = 20.0
+content_margin_right = 22.0
+content_margin_bottom = 20.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.13)
+shadow_size = 12
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_accent_bar"]
+bg_color = Color(0.9098, 0.5647, 0.498, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
 
 [resource]
 default_font = SubResource("FontVariation_quicksand_regular")
@@ -180,3 +242,17 @@ MutedLabel/font_sizes/font_size = 18
 
 InfoPanel/base_type = &"PanelContainer"
 InfoPanel/styles/panel = SubResource("StyleBoxFlat_info_panel")
+
+SearchPanel/base_type = &"PanelContainer"
+SearchPanel/styles/panel = SubResource("StyleBoxFlat_search_panel")
+
+SearchField/base_type = &"LineEdit"
+SearchField/styles/normal = SubResource("StyleBoxFlat_search_field")
+SearchField/styles/focus = SubResource("StyleBoxFlat_search_field_focus")
+SearchField/styles/read_only = SubResource("StyleBoxFlat_search_field")
+
+QuizRowPanel/base_type = &"PanelContainer"
+QuizRowPanel/styles/panel = SubResource("StyleBoxFlat_row_panel")
+
+AccentBar/base_type = &"Panel"
+AccentBar/styles/panel = SubResource("StyleBoxFlat_accent_bar")

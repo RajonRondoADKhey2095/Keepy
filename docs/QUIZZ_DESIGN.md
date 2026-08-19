@@ -27,7 +27,8 @@ style) rather than working around it locally -- that is exactly how
 
 | token | hex | usage |
 |---|---|---|
-| Orange principal | `#FF8A5B` | primary buttons, accents, shadow tint |
+| Orange principal | `#FF8A5B` | primary buttons, action, shadow tint |
+| **Corail Keepr** | **`#E8907F`** | **accent non-actionnable : rule de carte, soulignement de titre** |
 | Peche pastel | `#FFDCC4` | field borders, info/warning panels, muted fills |
 | Fond creme | `#FFF8F1` | screen background |
 | Blanc | `#FFFFFF` | cards, input fields |
@@ -42,6 +43,11 @@ style) rather than working around it locally -- that is exactly how
 | Texte on Peche pastel | 8.72:1 | pass (AA/AAA) |
 | **Texte on Orange principal** | **4.84:1** | **pass (AA normal text)** |
 | Blanc on Orange principal | 2.32:1 | **fails AA (needs 4.5:1)** |
+| Texte on Corail Keepr | 4.67:1 | pass (AA normal text) |
+| Blanc on Corail Keepr | 2.41:1 | **fails AA** -- meme verdict que sur l'orange |
+| Corail on Blanc (accent non-texte) | 2.41:1 | voir la note corail plus bas |
+| Corail on Fond creme (accent non-texte) | 2.29:1 | voir la note corail plus bas |
+| **Corail vs Orange principal** | **1.04:1** | **luminances quasi identiques -- voir la note corail** |
 
 **Deviation from the original brief, measured and therefore taken:** the
 brief's default instruction was white text on the orange button. Measured,
@@ -87,30 +93,43 @@ static font files for what a single variable font already contains.
   soft, low-opacity orange-tinted shadow (`shadow_color` alpha 0.14,
   `shadow_size` 14, `shadow_offset` `(0, 4)`) stands in for the
   border-heavy look Chased/Hub use.
-- **Buttons**: pill-shaped, 28px corner radius against the 64px button
+- **Buttons**: pill-shaped, **32px** corner radius against the 64px button
   height this screen actually uses (`corner_radius = height / 2`, per the
   brief) -- orange fill, dark text, a tighter shadow on `normal` that grows
-  slightly on `hover` to read as lift.
+  slightly on `hover` to read as lift. ⚠️ **Corrige le 19 aout 2026** : ce
+  paragraphe annoncait `height / 2` mais 28 etait livre. 32 le rend vrai --
+  voir la section reskin en fin de fichier.
 - **Text fields**: pill-shaped (28px radius), white fill, 2px peach border
   at rest, 2px orange border on focus -- no heavy border weight anywhere in
   the system, matching the "soft shadows over skeuomorphic borders" rule.
-- **Quiz-row cards** (`QuizzHomeScreen._build_row_style()`, built at runtime
-  since rows are dynamic): the same white-card-plus-shadow recipe as
-  `StyleBoxFlat_panel`, at a tighter 20px radius/margin -- a list row is a
-  smaller card in this system, not a different shape.
+  ⚠️ **Depuis le 19 aout 2026 ceci decrit le style de BASE `LineEdit`
+  seulement** (encore porte par `IndexUrlEdit`). Le champ de creation utilise
+  la variation `SearchField`, sans fond ni bordure au repos parce qu'il vit
+  DANS une barre -- voir la section reskin.
+- **Quiz-row cards** (variation `QuizRowPanel`): the same white-card-plus-
+  shadow recipe as `StyleBoxFlat_panel`, at a tighter 22px radius -- a list
+  row is a smaller card in this system, not a different shape. ⚠️ **Depuis le
+  19 aout 2026 c'est une variation du THEME, plus un `StyleBoxFlat` construit
+  a la main dans `_build_row_style()`** (cette fonction n'existe plus).
+- **Accent corail** (variation `AccentBar`) : une pill corail de 6px, la
+  meme pour la rule verticale d'une carte et pour le soulignement horizontal
+  du titre. Jamais actionnable -- voir la section reskin pour la mesure qui
+  l'impose.
 
 ## Where it's applied today
 
 `scenes/QuizzHomeScreen.tscn` is the only Quizz screen that exists as of
 this lot. Its root `Control` carries `theme = quizz_theme.tres`; every
 `Button`/`Label`/`LineEdit`/`PanelContainer` node either takes the theme's
-base style directly or opts into one of the four type variations
-(`TitleLabel`, `CardTitleLabel`, `MutedLabel`, `InfoPanel`) defined in the
-theme resource. The screen's `Background` `ColorRect` is set to the cream
+base style directly or opts into one of the **eight** type variations
+(`TitleLabel`, `CardTitleLabel`, `MutedLabel`, `InfoPanel`, plus
+`SearchPanel`, `SearchField`, `QuizRowPanel`, `AccentBar` added by the
+19 August 2026 reskin) defined in the theme resource. The screen's `Background` `ColorRect` is set to the cream
 token directly (a `ColorRect` fill isn't themeable). No hand-authored
-StyleBoxFlat remains in the `.tscn` file itself; the one StyleBoxFlat built
-in GDScript (`_build_row_style()`, for dynamically-created quiz rows) uses
-the same tokens and is documented above rather than treated as an exception.
+StyleBoxFlat remains in the `.tscn` file **nor in GDScript** -- the last one
+(`_build_row_style()`, for dynamically-created quiz rows) became the
+`QuizRowPanel` variation on 19 August 2026, so the "extend the theme" rule at
+the top of this file now holds with no exception anywhere in the Quizz scope.
 
 ## Validation
 
@@ -132,3 +151,175 @@ affected by it. Rejouees quand meme, toutes exit 0 : `ProbeTimeoutAudit`
 script, collider, .glb) n'est touchee par ce lot -- seuls
 `resources/themes/quizz_theme.tres`, `assets/fonts/quizz/*`,
 `scenes/QuizzHomeScreen.tscn` et `scripts/ui/QuizzHomeScreen.gd` changent.
+
+---
+
+## Reskin "dashboard" du 19 aout 2026
+
+Branche `claude/quizz-home-screen-reskin-0ea4ab`, partie de `staging`.
+**Reskin du contenu EXISTANT de `QuizzHomeScreen.tscn`, pas un nouvel
+ecran.** La maquette de reference (fournie par Mathieu en description, elle
+n'existe pas comme fichier dans ce depot) montre aussi des categories, un
+avatar, un compteur de points et une nav du bas : **rien de tout cela n'est
+ajoute** -- ces quatre elements sont structurellement absents du modele de
+donnees (`docs/QUIZZ_SPEC.md`), donc les livrer serait inventer un produit,
+pas reskin celui-ci. Ce qui est repris de la maquette est son LANGAGE :
+cartes elevees, ombres douces, barre de recherche, hierarchie lisible.
+
+`Chased`, `Hub`, `LoginScreen`, `TitleScreen` : **aucun fichier touche**. Le
+fix safe-area/letterbox (`SafeArea.gd`) : **intouche**. `Quizz.gd` : **intouche**.
+
+### Le corail est un accent, jamais une action -- et c'est une MESURE qui l'impose
+
+`#E8907F` entre dans le systeme comme **quatrieme couleur**, et son role est
+borne par deux chiffres mesures, pas par un gout :
+
+1. **Corail vs Orange principal = 1,04:1.** Les deux couleurs ont une
+   luminance quasi identique ; elles ne different que par la teinte et la
+   saturation. **Consequence directe : le corail ne peut pas porter une
+   action.** Un bouton corail pose sur le meme ecran qu'un bouton orange ne
+   se lirait pas comme "un autre bouton", il se lirait comme le meme bouton
+   mal teinte -- et pour un daltonien deutan, comme le meme bouton tout
+   court. C'est exactement pourquoi **le bouton retour reste ORANGE** : le
+   brief autorisait a le passer en corail, la mesure dit que ca n'achete
+   aucune distinction et coute la coherence. Juge aussi au rendu offscreen
+   avant d'etre tranche, comme le brief le demandait.
+2. **Corail vs Blanc = 2,41:1**, sous le plancher 3,0:1 de WCAG SC 1.4.11
+   pour un composant d'interface. **C'est assume, et c'est correct ici** :
+   1.4.11 gate les elements qui IDENTIFIENT un controle ou son etat. La rule
+   corail d'une carte et le soulignement du titre ne portent aucune
+   information -- retires, l'ecran reste integralement utilisable et rien
+   n'est ambigu. Point de comparaison utile plutot qu'une affirmation :
+   **l'orange du bouton principal deja livre mesure 2,32:1 contre le blanc**,
+   donc le corail est *legerement plus present* que la couleur la plus
+   visible du systeme actuel. Il n'est pas timide, il est non-signalant.
+3. **Texte `#4A3728` sur corail = 4,67:1**, AA texte normal. Le corail est
+   donc utilisable comme fond de bouton **le jour ou il n'y a pas d'orange a
+   cote** -- ce n'est pas le cas de cet ecran. Note pour un futur ecran
+   Quizz : ce chiffre existe deja, ne pas le re-mesurer.
+
+### Ce qui change, ecran par ecran
+
+- **Barre de creation -> barre de recherche.** Le defaut du rendu precedent
+  etait un blanc sur blanc : une carte blanche contenant un champ blanc
+  borde de peche, donc deux surfaces pour un seul geste. La carte devient la
+  BARRE (`SearchPanel` : pill radius 42, padding 10, ombre plus marquee --
+  `shadow_size` 18 / alpha 0,16, c'est l'interaction principale de l'ecran)
+  et le champ devient invisible dedans (`SearchField` : `draw_center = false`,
+  aucune bordure au repos). Le bouton "Creer" est desormais **encastre a
+  l'interieur** de la barre plutot que pose a cote. Un seul objet, un seul
+  geste.
+- **Focus du champ : le delta est PLUS FORT qu'avant, pas plus faible.**
+  Le repos passe de "bordure peche 2px" a "aucune bordure" ; le focus reste
+  la bordure orange 2px deja livree. Le changement percu passe donc de
+  `1,29:1 -> 2,32:1` (peche->orange, deux bordures qui se ressemblent) a
+  `rien -> 2,32:1`. **Verifie au rendu, pas deduit** : capture dediee de
+  l'etat focus, l'anneau orange est sans ambiguite sur le champ nu.
+- **Rangee de quiz : rule corail a gauche + respiration.** Marges verticales
+  internes 14 -> 20, radius 20 -> 22, ombre 10/0,12 -> 12/0,13, separation
+  entre rangees 12 -> 14, separation titre/date 4 -> 6.
+  ⚠️ **La rule est une BARRE et pas le bloc de couleur plein que la maquette
+  met a cet endroit** : ce depot n'a aucun jeu d'icones pour des rangees de
+  quiz, et un bloc plein se lirait comme un emplacement qui attend un asset
+  jamais livre. Une rule se lit comme finie. Aucun asset n'est genere dans ce
+  lot. Elle est calee sur la HAUTEUR DU TEXTE (`SIZE_FILL`), pas sur celle de
+  la carte -- mesure au rendu : **66 px physiques de haut pour 6 de large**,
+  soit ~60 % de la hauteur de carte, alignee au bloc titre/date.
+- **Titre : soulignement corail** (`HeaderUnderline`, 112x6, `AccentBar`).
+  `HeaderLabel` gagne un `VBoxContainer` parent (`HeaderCol`) pour que la
+  rule puisse se poser dessous ; **aucune propriete du label lui-meme ne
+  change**, et `BackButton` reste au meme chemin de noeud (les `@onready` de
+  `QuizzHomeScreen.gd` ne bougent pas).
+- **Rayon des boutons 28 -> 32.** Ce document affirmait deja
+  `corner_radius = height / 2` pour les boutons de 64 px de cet ecran, mais
+  28 etait livre -- l'affirmation etait fausse. 32 la rend vraie : le
+  `BackButton` 64x64 devient un vrai **cercle** (idiome de la maquette), le
+  bouton "Creer" une pill pleine. Godot clampe le rayon a la moitie du plus
+  petit cote, donc le `CopyUrlButton` (56 de haut) reste une pill a son
+  propre 28 au lieu de se deformer.
+
+### `_build_row_style()` n'existe plus -- la regle de ce document est appliquee
+
+La carte de rangee etait le seul `StyleBoxFlat` encore ecrit a la main, dans
+`QuizzHomeScreen.gd`. Ce document la documentait comme une exception
+acceptee. Elle devient **`QuizRowPanel`**, une variation de type du theme,
+et la rule devient **`AccentBar`** -- donc `_build_row()` ne construit plus
+aucun style, il pose deux `theme_type_variation`. **Il ne reste plus un seul
+`StyleBoxFlat` hand-roll dans tout le perimetre Quizz**, ce que la regle en
+tete de ce fichier demandait sans que l'ecran l'ait encore atteint.
+
+`AccentBar` sert **a la fois** la rule verticale des cartes et le
+soulignement horizontal du titre : une seule variation, un seul token
+corail, plutot que deux styles jumeaux qui pourraient deriver.
+
+⚠️ **Ce qui change dans `QuizzHomeScreen.gd` est strictement de la
+PRESENTATION** : `_build_row()` (structure des noeuds d'une rangee) et la
+suppression de `_build_row_style()`/`_row_style`. **Aucun chemin CRUD,
+signal, busy-state ou erreur n'est touche** -- `_on_create_pressed`,
+`_on_quiz_created`, `_on_quizzes_fetched`, `_set_busy`, `_show_error`,
+`_extract_index_url`, `_format_timestamp` sont byte-identiques.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, memes que la CI). Import headless **exit 0**, export Web
+release **exit 0**.
+
+**Rendu offscreen REEL au ratio device** (`xvfb-run --rendering-driver
+opengl3`, **1170x2532**, pas 9:16 -- la lecon deja consignee dans
+`CLAUDE.md`). Sonde de capture jetable, **jamais commitee, supprimee avant le
+commit** : `ProbeTimeoutAudit` revient a **33 sondes**, sa baseline exacte.
+Le viewport mesure **1080x2337** pour une image de **1170x2532**, ce qui
+confirme au passage que `SafeArea.fill_screen()` (`CONTENT_SCALE_ASPECT_
+EXPAND`) fait bien son travail : la largeur de design 1080 est tenue, c'est
+la hauteur qui s'etend. Deux passes capturees : etat nominal (3 rangees
+injectees) **et** etat focus + busy -- ce dernier parce que `_ready()`
+appelle `_refresh_list()`, donc **l'etat desactive est le tout premier que
+voit n'importe quel joueur**, jamais un cas limite.
+
+⚠️ **Signale, non corrige, et PRE-EXISTANT** : le bouton "Creer" desactive
+est peche sur panneau blanc, soit **1,29:1** -- tres doux. Ce n'est pas une
+regression de ce lot (l'ancien panneau etait blanc lui aussi, meme paire),
+et son libelle sombre reste lisible ; verifie au rendu de l'etat busy. A
+traiter dans un lot qui aurait le droit de bouger la couleur `disabled`.
+
+**Sondes : 4 rejouees, les QUATRE byte-identiques sur les DEUX flux**
+(stdout ET stderr) contre `origin/staging`, graine 20260806, `--fixed-fps 60`
+-- `ProbeTimeoutAudit` (33 sondes armees), `AssetContractAudit` (12/12
+visuels, 0/10 colliders deplaces), `DeathModelAudit`, `ChargerShapeProbe`.
+Non-applicabilite **verifiee et pas supposee** : `grep -rl "Quizz\|quizz_theme"
+scripts/dev/` ne rend rien, aucune sonde ne charge cet ecran ni ce theme.
+Blast radius du theme verifie de la meme facon : `quizz_theme.tres` n'est
+reference que par `scenes/QuizzHomeScreen.tscn` (l'autre occurrence, dans
+`SafeArea.gd`, est un commentaire), donc le rayon 28->32 ne peut atteindre
+aucun autre ecran.
+
+**Fingerprint compare a l'existant, meme session et meme toolchain** (la
+seule comparaison valable, cf. la mise en garde permanente sur l'instabilite
+du `.pck`) : baseline exportee depuis l'arbre `origin/staging` propre, puis
+l'arbre de ce lot.
+
+| | baseline `staging` | ce lot |
+|---|---|---|
+| `index.wasm` | 35 376 909 | **35 376 909** (md5 `af4a8fc2...`, **identique**) |
+| `index.js` | md5 `4e08904b...` | **identique** |
+| `index.pck` | 5 669 744 | 5 671 184 (**+1 440 o**) |
+
+`index.wasm` et `index.js` **md5-identiques** : aucun code moteur touche,
+et c'est EUX la preuve d'identite, jamais le `.pck`. Les +1 440 octets sont
+coherents avec 5 `StyleBoxFlat` et 4 variations de type ajoutes au theme.
+Piege payload tenu : **0** ligne `Storing File: res://assets_source`.
+
+### Reste ouvert -- jugement device, seul juge
+
+Aucune sonde ne dit que c'est BEAU. Ce qui doit etre regarde sur telephone :
+(a) la barre de recherche se lit-elle bien comme UN objet et le bouton
+"Creer" comme encastre dedans, et non comme un bouton qui deborde ; (b) la
+rule corail se lit-elle comme un accent volontaire ou comme un residu
+graphique a cette taille ; (c) le bouton retour circulaire orange ne
+concurrence-t-il pas visuellement le "Creer" orange sur le meme ecran --
+c'est la seule chose que la mesure `1,04:1` ne tranche PAS, puisqu'elle
+compare corail et orange, pas orange et orange. Et la redondance de fond
+deja notee ailleurs reste entiere : cet ecran n'a toujours ni categories, ni
+points, ni avatar, ni nav du bas -- **volontairement**, ils sont hors du
+modele de donnees.

@@ -32,12 +32,6 @@ const MISSING_INDEX_MARKER := "FAILED_PRECONDITION"
 @onready var quiz_list: VBoxContainer = $Margin/VBox/Scroll/QuizList
 @onready var empty_label: Label = $Margin/VBox/EmptyLabel
 
-## Style for each quiz row, built once in _ready() rather than duplicated
-## per row -- same idea as the scrim/button StyleBoxFlat resources baked
-## into Hub.tscn and LoginScreen.tscn, just assembled in code because rows
-## are created at runtime and have no scene of their own.
-var _row_style: StyleBoxFlat
-
 ## True while a create or list call is in flight, so a second tap cannot
 ## queue a second request on top of one already running -- Quizz.gd itself
 ## queues rather than drops, but a screen that can double-fire on every tap
@@ -55,7 +49,6 @@ func _ready() -> void:
 	# Chased is tuned at would only be black bars. Game.tscn asks for KEEP back
 	# in its own _ready() -- see SafeArea.gd's canvas-aspect block.
 	SafeArea.fill_screen()
-	_row_style = _build_row_style()
 	back_button.pressed.connect(_on_back_pressed)
 	create_button.pressed.connect(_on_create_pressed)
 	title_edit.text_submitted.connect(func(_text: String) -> void: _on_create_pressed())
@@ -156,12 +149,32 @@ func _populate_list(quizzes: Array) -> void:
 	for quiz in quizzes:
 		quiz_list.add_child(_build_row(quiz))
 
+## Presentation only -- no CRUD, signal or error path runs through here.
+##
+## Shape: [coral accent rule] [title / date column]. The rule is the screen's
+## one piece of colour that is not orange, and it is deliberately a BAR and
+## not the filled icon block the reference mockup puts in this slot: this
+## project has no icon set for quiz rows, so a solid block would read as a
+## slot waiting for an asset that never arrives. A rule reads as finished.
 func _build_row(quiz: Dictionary) -> Control:
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _row_style)
+	panel.theme_type_variation = &"QuizRowPanel"
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	panel.add_child(row)
+
+	var accent := Panel.new()
+	accent.theme_type_variation = &"AccentBar"
+	accent.custom_minimum_size = Vector2(6, 0)
+	# FILL, not EXPAND: the rule stretches to whatever height the text column
+	# ends up at instead of claiming horizontal space away from it.
+	accent.size_flags_vertical = Control.SIZE_FILL
+	row.add_child(accent)
+
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 4)
-	panel.add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 6)
+	row.add_child(box)
 
 	var title_label := Label.new()
 	title_label.text = String(quiz.get("title", ""))
@@ -199,29 +212,3 @@ func _format_timestamp(raw: String) -> String:
 		int(parts.get("day", 0)), int(parts.get("month", 0)), int(parts.get("year", 0)),
 		int(parts.get("hour", 0)), int(parts.get("minute", 0)),
 	]
-
-## Built once in _ready() rather than as a scene sub-resource: rows are
-## created at runtime, one per quiz, and sharing a single StyleBoxFlat
-## instance across all of them costs nothing (Godot resources are safe to
-## reuse read-only across nodes) versus allocating one per row.
-##
-## Matches resources/themes/quizz_theme.tres's PanelContainer card style
-## (white, 24px corner radius, soft orange-tinted shadow) rather than
-## duplicating the theme's own StyleBoxFlat_panel: a quiz row is visually a
-## smaller card, not a new shape in the Quizz identity, so it borrows the
-## exact same recipe at a tighter radius and margin.
-func _build_row_style() -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(1, 1, 1, 1)
-	style.corner_radius_top_left = 20
-	style.corner_radius_top_right = 20
-	style.corner_radius_bottom_left = 20
-	style.corner_radius_bottom_right = 20
-	style.content_margin_left = 20.0
-	style.content_margin_top = 14.0
-	style.content_margin_right = 20.0
-	style.content_margin_bottom = 14.0
-	style.shadow_color = Color(1.0, 0.5412, 0.3569, 0.12)
-	style.shadow_size = 10
-	style.shadow_offset = Vector2(0, 3)
-	return style
