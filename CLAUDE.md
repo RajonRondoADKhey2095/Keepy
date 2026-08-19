@@ -3554,6 +3554,56 @@ totalement différente.** Le watchdog le dit maintenant lui-même : si
 l'horloge de run avance encore, il imprime « NOT STUCK, JUST SLOW » et
 rappelle l'ordre des flags.
 
+⚠️ **SECOND piège du même genre, et celui-là ne concerne PAS la sonde mais la
+BOUCLE QUI L'ATTEND : un `pgrep -f` peut s'attendre LUI-MÊME, indéfiniment.**
+Mesuré le 19 août 2026 : **onze** boucles de poll ont survécu à leur travail de
+**1 h 44**, avec **zéro** process `godot4` vivant. `pgrep -f` compare au
+`/proc/*/cmdline` complet et n'exclut **que son propre PID**, jamais le shell
+qui l'a lancé — donc
+
+```
+while pgrep -f "path . --import" >/dev/null; do sleep 10; done
+```
+
+matche sa PROPRE ligne `bash -c ... while pgrep -f "path . --import" ...` : la
+condition ne peut jamais devenir fausse. **La panne est silencieuse et
+ressemble exactement à du travail encore en cours**, c'est ce qui la rend
+coûteuse — aucune sortie, aucune erreur, juste une tâche « En cours » pour
+toujours.
+
+Test de contrôle isolé, même machine, motif présent uniquement dans le script
+appelé (donc hors de la ligne de commande de l'appelant) :
+
+| boucle | résultat |
+|---|---|
+| `while pgrep -f "SENTINEL"` | **exit 124 (timeout)** — boucle infinie |
+| `while pgrep -f "[S]ENTINEL"` | **exit 0** — détecte correctement l'absence |
+
+⚠️ **Le crochet est nécessaire et NON suffisant, mesuré aussi** : `[S]ENTINEL`
+est une regex qui matche le texte `SENTINEL`, et la ligne du poller contient
+`[S]ENTINEL` **avec** les crochets, que cette regex ne matche pas — donc il
+ferme le cas « je me matche moi-même ». Il ne fait **rien** contre un shell
+ANCÊTRE dont la ligne de commande porte le texte nu, ce qui sous l'outil Bash
+agentique est le cas COURANT (plusieurs commandes partagent un même `bash -c`).
+Première tentative de correctif prise en flagrant délit là-dessus : motif
+crocheté, aucun process réel, et pourtant exit 124 — parce que la ligne
+précédente de la même commande contenait le motif nu.
+
+**Parade, `scripts/dev/wait_for_probe.sh`** (nouveau, hors build : `scripts/dev/*`
+est déjà dans `exclude_filter`). Deux modes, et le premier est le bon par
+défaut :
+
+```
+scripts/dev/wait_for_probe.sh --pid 12345 [poll_s]       # aucun matching de texte
+scripts/dev/wait_for_probe.sh '[C]hargerAudit.tscn' [s]  # crochet EXIGÉ, sinon exit 2
+```
+
+Le mode motif refuse un motif non crocheté (exit 2, avec la réécriture à faire
+dans le message) **et** retire de la correspondance tous les PID ancêtres en
+remontant `/proc/<pid>/stat`. Auto-testé sur 4 cas : refus du motif nu ;
+sortie immédiate malgré un ancêtre contaminé ; attente réelle de 6 s d'un vrai
+process ; mode `--pid` sur 5 s. **Ne plus écrire de `while pgrep` inline.**
+
 ⚠️ **Correction d'une passation périmée : F6 et F7 sont CLOS, mesurés.**
 Une passation les décrivait comme ouverts/bloquants. C'est faux, et
 `docs/PROBE_AUDIT.md` le documentait déjà comme résolu :
