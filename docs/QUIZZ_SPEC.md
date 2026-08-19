@@ -516,6 +516,16 @@ Quatre limites réelles, nommées ici plutôt que découvertes plus tard.
 4. **Le texte n'est pas validé au-delà du type et de la longueur.** Un
    `prompt` peut être « aaaa ». C'est hors de portée des rules et ce
    n'est pas un problème de sécurité.
+5. **`quizzes.categoryId` n'est PAS vérifié comme référence** (ajouté le
+   19 août 2026, voir §11). Les rules valident son TYPE et sa LONGUEUR,
+   jamais le fait que la catégorie existe ni qu'elle appartienne au même
+   `uid`. Elles le pourraient — `get(/databases/$(database)/documents/
+   categories/$(...)).data.uid` — et c'est **délibérément écarté** au §11.
+   Conséquence concrète : un `categoryId` peut « pendre » (la catégorie a
+   été supprimée), et c'est **l'état normal après toute suppression de
+   catégorie**, pas une anomalie. La résolution se fait à l'affichage —
+   un id qui ne correspond à aucune catégorie lue retombe dans « Sans
+   catégorie » — donc rien n'est jamais perdu ni affiché en erreur.
 
 ---
 
@@ -750,3 +760,180 @@ future voie la décision et pas un blanc.
    triche structurelle (les réponses vivent dans le document que le
    joueur doit lire, et ce projet n'a aucun composant serveur pour
    arbitrer) devrait être tranchée **avant** ce jour-là, pas pendant.
+
+
+---
+
+## 11. Catégories (19 août 2026) — `categories/{categoryId}`
+
+Lot `claude/keepy-categories-filtering-0mnv5s`, parti de `staging`.
+**Ajout, pas réécriture** : les §1 à §10 ci-dessus restent valables mot
+pour mot, y compris la décision `visibility = 'private'` du §2.3, que ce
+lot ne touche ni ne mentionne dans ses rules.
+
+### 11.1 Schéma
+
+Collection **top-level**, au même niveau que `quizzes`, **pas** une
+sous-collection de celle-ci.
+
+| champ | type | contraintes | rôle |
+|---|---|---|---|
+| `uid` | string | `== request.auth.uid`, immuable | propriétaire |
+| `name` | string | 1..30 caractères | libellé du chip |
+| `createdAt` | timestamp | `== request.time` à la création | — |
+
+Aucun autre champ. `hasOnly` refuse tout le reste.
+
+**Pourquoi top-level et pas `quizzes/{quizId}/categories/…`** : une
+catégorie appartient à l'UTILISATEUR et sert PLUSIEURS quiz. La nicher
+sous un quiz dirait l'inverse (une catégorie par quiz), et « lister
+toutes mes catégories » deviendrait un `collectionGroup` — c'est-à-dire
+une requête que la règle owner-only ne saurait plus prouver conforme sans
+un index de plus. Le raisonnement est le symétrique exact de celui du §1
+pour les questions : là-bas la sous-collection gagne parce qu'une question
+appartient à UN quiz ; ici elle perd pour la raison inverse.
+
+**Pas de champ `visibility`, et ce n'est pas un oubli.** Une catégorie est
+toujours privée : il n'y a aucune décision de partage à trancher à son
+sujet. Un champ dont une seule valeur est acceptable existe sur `quizzes`
+parce que la question y est ouverte (§2.3) ; ici elle ne l'est pas, donc
+le champ n'existe pas — `hasOnly` le refuserait.
+
+**Pas de champ `updatedAt` non plus** : rien ne peut modifier une
+catégorie (voir §11.3), donc un champ « dernière modification » ne
+pourrait jamais valoir autre chose que `createdAt`.
+
+### 11.2 `quizzes.categoryId` — optionnel, et NON vérifié comme référence
+
+| champ | type | contraintes |
+|---|---|---|
+| `categoryId` | string (**optionnel**) | absent, OU 1..64 caractères |
+
+Ajouté aux deux `hasOnly` du bloc `quizzes` — **create ET update**.
+⚠️ **L'oublier sur `update` aurait cassé `update_quiz()` pour tout quiz
+catégorisé** : la règle d'immuabilité compare le document RÉSULTANT, et
+un champ conservé hors `updateMask` fait partie de ce résultat ; un
+`hasOnly` qui ne le nomme pas l'aurait donc refusé alors même que le
+client ne l'envoie pas.
+
+64 et non 20 : le plafond ne doit pas épouser la longueur de l'auto-id du
+générateur courant, sinon changer le générateur demanderait un passage par
+le gate `main`.
+
+#### La décision `get()`-en-rule : ÉCARTÉE, et pour trois raisons
+
+Les rules PEUVENT valider une référence croisée —
+`get(/databases/$(database)/documents/categories/$(request.resource.data.categoryId)).data.uid == request.auth.uid`.
+C'est écarté :
+
+1. **Coût.** Un `get()` est une **lecture facturée à chaque évaluation**,
+   plafonnée à 10 par requête simple, sur le chemin le plus chaud de
+   l'écriture d'un quiz. C'est exactement l'argument qui a fait
+   **dénormaliser `uid` sur les questions au §1** — l'appliquer ici est
+   une cohérence, pas une nouveauté.
+2. **Couplage.** Elle ferait dépendre l'écriture d'un quiz de la
+   LISIBILITÉ d'un autre document : supprimer une catégorie rendrait
+   soudain **non modifiable** chaque quiz qui la citait. Le mode de
+   défaillance serait un `PERMISSION_DENIED` sur une opération sans
+   rapport apparent avec la suppression.
+3. **Fragilité.** `get()` d'un document absent rend `null`, et lire
+   `.data` dessus est une **erreur d'évaluation**, pas un `false` propre —
+   il faudrait donc systématiquement le doubler d'un `exists()`.
+
+**Ce qu'un `categoryId` invalide peut faire au pire** : ranger un quiz du
+propriétaire dans un tiroir à lui qui n'existe pas. Aucune donnée d'autrui
+n'est atteignable par ce champ — **il ne sert jamais de clé de lecture**,
+la liste des quiz est filtrée sur `uid` et rien d'autre. C'est donc une
+contrainte d'**intégrité**, pas de **sécurité**.
+
+**Validation retenue : client-side, sur deux niveaux.**
+`Quizz.create_quiz()` valide la FORME (longueur), et l'écran ne peut
+proposer qu'un id qu'il vient lui-même de lister — c'est lui le vrai gate
+d'intégrité. Un id pendant est **résolu à l'affichage** :
+`QuizzHomeScreen._resolved_category_id()` retombe sur « Sans catégorie »
+pour tout id qui ne correspond à aucune catégorie lue. Rien n'est jamais
+perdu, rien n'est jamais affiché en erreur.
+
+### 11.3 Rules — `allow update: if false`, et ce que ça coûte
+
+`read` / `create` / `delete` sont owner-only, avec le triplet d'auth
+littéral de `scores` et de `quizzes`. **`update` est refusé.**
+
+Motif : le client de ce lot (`create_category` / `list_own_categories` /
+`delete_category`) n'écrit jamais de mise à jour, et ouvrir `update`
+déploierait une surface que rien n'exerce.
+
+⚠️ **Coût réel, assumé et pas caché** : **renommer une catégorie est
+impossible**. Corriger une faute de frappe demande de supprimer puis
+recréer, ce qui mint un id **NEUF** — tous les quiz qui pointaient sur
+l'ancien se retrouvent avec un `categoryId` pendant (§11.2 : ils
+retombent dans « Sans catégorie », jamais en erreur). C'est la même
+famille de limite que l'absence de cascade au §5.2.
+
+**Rouvrir demande DEUX choses à la fois** : la règle devient le même bloc
+que `update` sur `quizzes` (ownsExisting + `uid`/`createdAt` immuables +
+`name` valide + `hasOnly`/`hasAll`), **et** une méthode
+`update_category()` côté `Quizz.gd`. Une seule des deux ne sert à rien.
+C'est le premier candidat d'un lot de suite.
+
+**Pas de cascade non plus, et il n'y a rien où cascader** : les quiz ne
+sont pas les enfants d'une catégorie, ils se contentent d'en nommer une.
+Supprimer une catégorie ne réécrit aucun quiz — l'alternative (lister
+tous les quiz, en réécrire N) est une boucle best-effort qui peut échouer
+à mi-chemin et laisser la collection dans un état pire qu'un id périmé.
+
+### 11.4 Index composites : AUCUN nouvel index n'est requis
+
+⚠️ **C'est une contrainte de conception, pas une constatation** : les deux
+requêtes de ce lot ont été écrites POUR ne pas en demander.
+
+| requête | forme | index |
+|---|---|---|
+| `list_own_quizzes()` | `uid EQUAL` + `orderBy updatedAt DESC` | **inchangée** — l'index `uid ASC` + `updatedAt DESC` déjà créé en Console |
+| `list_own_categories()` | `uid EQUAL`, **aucun `orderBy`** | **aucun** — servie par l'index single-field automatique sur `uid` |
+
+Un filtre d'égalité combiné à un `orderBy` sur un **autre** champ n'est
+pas couvert par les index à champ unique (c'est ce qui a imposé l'index
+de `list_own_quizzes`, §8). Un filtre d'égalité **seul** l'est. C'est
+pourquoi `list_own_categories()` **ne trie pas côté serveur** : le tri
+alphabétique se fait dans `_dispatch`, sur `(name minuscule, id)`.
+Corollaire pour une session future : **ajouter un `orderBy` à cette
+requête n'est pas un changement gratuit** — c'est une création d'index
+manuelle en Console.
+
+**Le filtrage par catégorie ne passe PAS par le serveur non plus.**
+Ajouter un `fieldFilter categoryId` à la requête de liste combinerait une
+**seconde** égalité avec l'`orderBy` existant et demanderait un
+**troisième** index composite (`uid ASC` + `categoryId ASC` +
+`updatedAt DESC`), toujours à créer à la main. L'écran filtre donc le
+tableau qu'il a déjà en main. Ce qu'on y gagne en plus : le changement de
+chip est **instantané**, sans aller-retour réseau.
+
+⚠️ **Ce choix a une borne, et elle est nommée plutôt que découverte plus
+tard** : `list_own_quizzes()` ne pagine pas, donc le filtrage client
+suppose que tous les quiz d'un utilisateur tiennent dans une réponse. Le
+jour où une pagination devient nécessaire, le filtrage devra redescendre
+côté serveur — et c'est **ce jour-là** qu'il faudra créer le troisième
+index, pas avant.
+
+### 11.5 API `Quizz.gd`
+
+```
+create_category(name)            -> category_created(success, category_id, error)
+list_own_categories()            -> categories_fetched(success, categories, error)
+delete_category(category_id)     -> category_deleted(success, category_id, error)
+create_quiz(title, category_id = "")   # retrocompatible, parametre optionnel
+```
+
+Mêmes conventions que le reste du fichier, sans exception : `success` en
+premier et `error` en dernier, un signal émis **exactement une fois** par
+appel quoi qu'il arrive, court-circuit headless en toute première
+instruction, auth exigée même en lecture, une seule `HTTPRequest` en vol
+et une file FIFO. `create_quiz` **omet** `categoryId` plutôt que
+d'envoyer `""` — les rules bornent le champ à 1..64 **quand il est
+présent**, donc une chaîne vide serait un refus.
+
+Il n'y a **pas** d'`update_category()` (§11.3), et **rien n'appelle
+encore `delete_category()`** : l'écran ne l'expose pas, parce que
+supprimer un tiroir fait silencieusement pendre chaque quiz qui le
+nommait et mérite une confirmation que ce lot ne construit pas.
