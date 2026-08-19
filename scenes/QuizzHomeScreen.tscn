@@ -1,7 +1,9 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/QuizzHomeScreen.gd" id="1"]
 [ext_resource type="Theme" path="res://resources/themes/quizz_theme.tres" id="2"]
+[ext_resource type="GradientTexture2D" path="res://resources/gradients/quizz_shine_cta.tres" id="3"]
+[ext_resource type="GradientTexture2D" path="res://resources/gradients/quizz_shine_card.tres" id="4"]
 
 [node name="QuizzHomeScreen" type="Control"]
 anchors_preset = 15
@@ -64,11 +66,24 @@ theme_type_variation = &"AccentBar"
 layout_mode = 2
 theme_type_variation = &"SearchPanel"
 
-[node name="CreateRow" type="HBoxContainer" parent="Margin/VBox/CreatePanel"]
+[node name="CreateShine" type="TextureRect" parent="Margin/VBox/CreatePanel"]
+layout_mode = 2
+mouse_filter = 2
+expand_mode = 1
+texture = ExtResource("4")
+
+[node name="CreatePad" type="MarginContainer" parent="Margin/VBox/CreatePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="CreateRow" type="HBoxContainer" parent="Margin/VBox/CreatePanel/CreatePad"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="TitleEdit" type="LineEdit" parent="Margin/VBox/CreatePanel/CreateRow"]
+[node name="TitleEdit" type="LineEdit" parent="Margin/VBox/CreatePanel/CreatePad/CreateRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 64)
@@ -78,9 +93,42 @@ max_length = 60
 
 [node name="CreateButton" type="Button" parent="Margin/VBox"]
 layout_mode = 2
-custom_minimum_size = Vector2(0, 76)
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(672, 200)
 theme_type_variation = &"CtaButton"
+
+[node name="Shine" type="TextureRect" parent="Margin/VBox/CreateButton"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+expand_mode = 1
+texture = ExtResource("3")
+
+[node name="CtaText" type="VBoxContainer" parent="Margin/VBox/CreateButton"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+alignment = 1
+theme_override_constants/separation = 10
+
+[node name="CtaTitle" type="Label" parent="Margin/VBox/CreateButton/CtaText"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+theme_type_variation = &"CtaTitleLabel"
 text = "Creer ton quizz"
+
+[node name="CtaSubtitle" type="Label" parent="Margin/VBox/CreateButton/CtaText"]
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+autowrap_mode = 3
+theme_type_variation = &"CtaSubLabel"
+text = "Cree tes propres questionnaires"
 
 [node name="CreateHintLabel" type="Label" parent="Margin/VBox"]
 layout_mode = 2
@@ -129,11 +177,24 @@ text = "Copier le lien"
 layout_mode = 2
 theme_type_variation = &"SearchPanel"
 
-[node name="CategoryRow" type="HBoxContainer" parent="Margin/VBox/CategoryPanel"]
+[node name="CategoryShine" type="TextureRect" parent="Margin/VBox/CategoryPanel"]
+layout_mode = 2
+mouse_filter = 2
+expand_mode = 1
+texture = ExtResource("4")
+
+[node name="CategoryPad" type="MarginContainer" parent="Margin/VBox/CategoryPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="CategoryRow" type="HBoxContainer" parent="Margin/VBox/CategoryPanel/CategoryPad"]
 layout_mode = 2
 theme_override_constants/separation = 10
 
-[node name="CategoryEdit" type="LineEdit" parent="Margin/VBox/CategoryPanel/CategoryRow"]
+[node name="CategoryEdit" type="LineEdit" parent="Margin/VBox/CategoryPanel/CategoryPad/CategoryRow"]
 layout_mode = 2
 size_flags_horizontal = 3
 custom_minimum_size = Vector2(0, 60)
@@ -141,7 +202,7 @@ theme_type_variation = &"SearchField"
 placeholder_text = "Nouvelle categorie"
 max_length = 30
 
-[node name="AddCategoryButton" type="Button" parent="Margin/VBox/CategoryPanel/CategoryRow"]
+[node name="AddCategoryButton" type="Button" parent="Margin/VBox/CategoryPanel/CategoryPad/CategoryRow"]
 layout_mode = 2
 custom_minimum_size = Vector2(140, 60)
 theme_override_font_sizes/font_size = 22

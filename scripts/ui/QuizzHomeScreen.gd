@@ -48,12 +48,26 @@ const FILTER_NONE_LABEL := "Sans categorie"
 ## expected first-run index gap.
 const MISSING_INDEX_MARKER := "FAILED_PRECONDITION"
 
+## Shared with scenes/QuizzHomeScreen.tscn (the two search bars use the same
+## resource). Preloaded rather than rebuilt per row: a Gradient plus a
+## GradientTexture2D per list row would be N allocations for one identical
+## image.
+const CARD_SHINE := preload("res://resources/gradients/quizz_shine_card.tres")
+
 @onready var back_button: Button = $Margin/VBox/HeaderRow/BackButton
-@onready var title_edit: LineEdit = $Margin/VBox/CreatePanel/CreateRow/TitleEdit
-## Left the search bar on 19 aout 2026 and became a full-width CTA row of
-## its own -- same node, same signal, same handler, only its place in the
-## tree and its styling changed. See docs/QUIZZ_DESIGN.md.
+@onready var title_edit: LineEdit = $Margin/VBox/CreatePanel/CreatePad/CreateRow/TitleEdit
+## Left the search bar on 19 aout 2026, and later the same day stopped
+## being full-width too: it is a CENTRED BLOCK of 672x200 now, because at
+## 1008x76 it read as a bar rather than as a call to action. Same node,
+## same signal, same handler throughout -- only its place in the tree, its
+## size and its styling have ever changed. See docs/QUIZZ_DESIGN.md.
 @onready var create_button: Button = $Margin/VBox/CreateButton
+## The CTA's two text levels live in child Labels now, not in Button.text,
+## so the theme's `font_disabled_color` no longer reaches them: without
+## this handle a busy CTA would keep fully-dark text over its peach
+## disabled fill and read as still pressable. Purely presentational -- it
+## is dimmed alongside the `disabled` flag _set_busy() already sets.
+@onready var cta_text: VBoxContainer = $Margin/VBox/CreateButton/CtaText
 @onready var create_hint_label: Label = $Margin/VBox/CreateHintLabel
 @onready var status_label: Label = $Margin/VBox/StatusLabel
 @onready var index_help_panel: PanelContainer = $Margin/VBox/IndexHelpPanel
@@ -62,8 +76,8 @@ const MISSING_INDEX_MARKER := "FAILED_PRECONDITION"
 @onready var scroll: ScrollContainer = $Margin/VBox/Scroll
 @onready var quiz_list: VBoxContainer = $Margin/VBox/Scroll/QuizList
 @onready var empty_label: Label = $Margin/VBox/EmptyLabel
-@onready var category_edit: LineEdit = $Margin/VBox/CategoryPanel/CategoryRow/CategoryEdit
-@onready var add_category_button: Button = $Margin/VBox/CategoryPanel/CategoryRow/AddCategoryButton
+@onready var category_edit: LineEdit = $Margin/VBox/CategoryPanel/CategoryPad/CategoryRow/CategoryEdit
+@onready var add_category_button: Button = $Margin/VBox/CategoryPanel/CategoryPad/CategoryRow/AddCategoryButton
 @onready var chip_row: HBoxContainer = $Margin/VBox/ChipScroll/ChipRow
 
 ## True while a create or list call is in flight, so a second tap cannot
@@ -169,6 +183,7 @@ func _on_quizzes_fetched(success: bool, quizzes: Array, error: String) -> void:
 func _set_busy(busy: bool, label: String) -> void:
 	_busy = busy
 	create_button.disabled = busy
+	cta_text.modulate = Color(1, 1, 1, 0.55 if busy else 1.0)
 	title_edit.editable = not busy
 	add_category_button.disabled = busy
 	category_edit.editable = not busy
@@ -243,9 +258,32 @@ func _populate_list(quizzes: Array) -> void:
 func _build_row(quiz: Dictionary) -> Control:
 	var panel := PanelContainer.new()
 	panel.theme_type_variation = &"QuizRowPanel"
+	# Matter, not decoration: the same sheen the CTA and the two search bars
+	# carry, so a row reads as the same material rather than as a flat
+	# rectangle sitting next to shiny ones. Added FIRST so it draws under
+	# the text. It needs no corner mask: the gradient is RADIAL from the
+	# bottom edge midpoint, so its alpha is already down to ~4% by the time
+	# it reaches a corner -- the shape of the sheen does the masking. Both
+	# masks tried before it failed, and why is in docs/QUIZZ_DESIGN.md,
+	# "Matiere".
+	var shine := TextureRect.new()
+	shine.texture = CARD_SHINE
+	shine.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	shine.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(shine)
+	# Padding lives here, not in the stylebox: a PanelContainer insets EVERY
+	# child by its content margin, which would have inset the sheen too and
+	# stopped it short of the card edge with a hard line (measured on the
+	# first render of this lot).
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_left", 26)
+	pad.add_theme_constant_override("margin_top", 24)
+	pad.add_theme_constant_override("margin_right", 28)
+	pad.add_theme_constant_override("margin_bottom", 24)
+	panel.add_child(pad)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
-	panel.add_child(row)
+	pad.add_child(row)
 
 	var accent := Panel.new()
 	accent.theme_type_variation = &"AccentBar"
