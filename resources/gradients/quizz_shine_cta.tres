@@ -1,0 +1,29 @@
+[gd_resource type="GradientTexture2D" load_steps=2 format=3]
+
+; Reflet "shiny" du CTA Quizz. StyleBoxFlat ne sait PAS faire de degrade
+; (bg_color est un aplat), donc la matiere passe forcement par une seconde
+; couche superposee. Aucun fichier image : GradientTexture2D est generee
+; par le moteur.
+;
+; Remplissage RADIAL centre sur le MILIEU DU BORD HAUT, et ce n'est pas un
+; gout : un degrade LINEAIRE plein cadre a son alpha maximal exactement la
+; ou vivent les coins arrondis du bloc, donc il debordait en "oreilles"
+; carrees claires (mesure au rendu, pas suppose). Un radial de rayon 0,55
+; retombe a ~4 % d'alpha avant d'atteindre le moindre coin -- la forme du
+; reflet resout le masquage au lieu de le demander a un masque.
+;
+; Les deux masques essayes avant celui-ci sont documentes dans
+; docs/QUIZZ_DESIGN.md : clip_children masque correctement sous
+; gl_compatibility mais decoupe l'ombre du bloc au rectangle englobant.
+
+[sub_resource type="Gradient" id="Gradient_cta"]
+offsets = PackedFloat32Array(0, 1)
+colors = PackedColorArray(1, 1, 1, 0.58, 1, 1, 1, 0)
+
+[resource]
+gradient = SubResource("Gradient_cta")
+width = 256
+height = 256
+fill = 1
+fill_from = Vector2(0.5, 0)
+fill_to = Vector2(0.5, 0.55)

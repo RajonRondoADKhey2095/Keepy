@@ -475,3 +475,124 @@ elle ne dit pas ce qu'il SIGNIFIE pour un oeil ; (c) **la redondance
 section)** -- deux noms pour la meme chose a 200px d'ecart, releve ici
 plutot que tranche : le brief demandait explicitement les deux, et
 choisir lequel supprimer est une decision produit, pas technique.
+
+## Matiere : le reflet "shiny", les proportions de bloc, et pourquoi StyleBoxFlat ne suffit pas (19 aout 2026)
+
+Branche `claude/quizz-home-cta-redesign-6f3a3g`, partie de `staging`.
+Retour device sur le CTA livre le matin meme : **ce n'est pas la palette
+qui etait rejetee, c'est la FORME**. Mesure sur capture : le bouton
+« Creer ton quizz » faisait **~90px de haut sur ~1000px de large**
+(ratio ~1:11) et touchait les deux bords de l'ecran -- il se lisait comme
+une **barre**, pas comme un bloc. Les deux lots precedents avaient livre
+« coins larges + ombre douce » : insuffisant, parce que la PROPORTION et
+la MATIERE manquaient, et aucune des deux ne s'obtient en elargissant un
+rayon de coin.
+
+### La regle de proportion, pour tout futur bloc d'action Quizz
+
+| propriete | valeur | pourquoi |
+|---|---|---|
+| largeur | **60-70 % de la largeur disponible**, bloc CENTRE | un bloc qui touche les deux bords se lit comme une barre de systeme, quelle que soit sa hauteur |
+| ratio largeur/hauteur | **entre 1:2 et 1:4** | 1:11 est une barre ; la carte de reference du brief est proche de 1:2 |
+| deux niveaux de texte | libelle Fredoka bold + sous-titre Quicksand semibold | c'est le second niveau qui fait qu'un bloc est un bloc et pas un bouton grandi |
+| rayon de coin | ~1/4 a 1/5 de la hauteur (**44px pour 200px**) | `height / 2` est une PILL ; un bloc garde un coin lisible comme un coin |
+
+Livre : **672 x 200 unites de design**, soit **728 x 217 px** rendus a
+1170x2532, **ratio 1:3,36**, marges laterales **221px des deux cotes**
+(centre au pixel), **62,2 %** de la largeur d'ecran. Le libelle est
+« Creer ton quizz » / « Cree tes propres questionnaires ».
+
+⚠️ **Le CTA n'est plus un `Button` a `text`** : ses deux niveaux vivent
+dans des `Label` enfants (`CtaTitleLabel` / `CtaSubLabel`), parce qu'un
+`Button` n'a qu'une typographie. Consequence non evidente et **corrigee
+plutot que decouverte sur device** : `font_disabled_color` ne les atteint
+plus, donc un CTA occupe serait reste plein contraste sur son fond peche
+desactive et se serait lu comme encore pressable. `_set_busy()` attenue
+donc explicitement `CtaText.modulate` -- purement presentationnel, a cote
+du `disabled` qu'il posait deja.
+
+### Le reflet : GradientTexture2D superpose, et pourquoi il n'y a pas d'alternative
+
+**`StyleBoxFlat` ne sait PAS faire de degrade** : `bg_color` est un aplat,
+il n'existe aucune propriete de rampe. La matiere passe donc
+obligatoirement par une **seconde couche** superposee au remplissage :
+un `TextureRect` portant une **`GradientTexture2D`**, ressource **generee
+par le moteur** -- aucun fichier image produit, aucun asset externe, la
+contrainte « pas de nouvel asset » de ce chantier reste tenue.
+
+Deux ressources partagees, dans `resources/gradients/` :
+
+| ressource | couleur | sens | consommateurs |
+|---|---|---|---|
+| `quizz_shine_cta.tres` | blanc, alpha **0,58 -> 0** | depuis le **milieu du bord HAUT** | le CTA |
+| `quizz_shine_card.tres` | peche `#FFDCC4`, alpha **0,62 -> 0** | depuis le **milieu du bord BAS** | cartes de la liste, les deux barres |
+
+⚠️ **Le sens s'inverse sur les surfaces blanches, et c'est une contrainte,
+pas un gout : du blanc semi-transparent sur du blanc est invisible par
+construction.** C'est donc la peche pastel -- token deja au catalogue,
+**aucune couleur nouvelle** -- qui monte par le bas. La lecture a l'oeil
+reste la meme des deux cotes (« clair en haut, chaud en bas ») et reste
+mesurable au pixel.
+
+### ⚠️ VERIFIE SOUS `gl_compatibility`, PAS SUPPOSE -- et les deux premieres tentatives de masquage ont ECHOUE
+
+Ce depot a un precedent de fonctionnalite de rendu silencieusement inerte
+dans ce renderer, donc rien n'a ete pris pour acquis. Sonde de recon
+jetable, `xvfb-run --rendering-driver opengl3` :
+
+1. **`GradientTexture2D` rend correctement sous `gl_compatibility`** --
+   delta vertical mesure 0,42 sur un bloc orange temoin. Aucun blocage.
+2. **Le masquage des coins, lui, a demande trois essais**, et le brief
+   avait raison de le nommer « a verifier au rendu, pas a supposer » :
+
+| tentative | resultat mesure |
+|---|---|
+| degrade LINEAIRE plein cadre, sans masque | **ECHEC** : l'alpha est maximal exactement la ou vivent les coins arrondis -> **« oreilles » carrees claires** visibles hors du bloc (et, sur les cartes, un epaulement peche carre sous chaque coin bas) |
+| `clip_children = CLIP_CHILDREN_AND_DRAW` | **masque correctement** (coin releve a `rgb(255,247,240)`, la creme exacte) **mais decoupe l'ombre du bloc au rectangle englobant** -> halo rectangulaire pale autour du CTA. Inutilisable tel quel |
+| **degrade RADIAL centre sur le milieu du bord** | **RETENU** : l'alpha retombe a ~4 % avant d'atteindre le moindre coin. **La forme du reflet resout le masquage au lieu de le demander a un masque** |
+
+**Regle pour tout futur reflet Quizz : `fill = 1` (RADIAL),
+`fill_from` sur le milieu du bord d'ou vient la lumiere, `fill_to` a
+0,55.** Pas de `clip_children`, pas de shader, pas de masque genere.
+Un rayon de 0,55 laisse au coin le plus proche une distance normalisee de
+0,5, soit ~91 % du rayon, donc un alpha residuel de l'ordre de 4 % --
+invisible sur creme, et surtout **independant du rayon de coin choisi**,
+ce qui rend la recette reutilisable sans re-mesurer a chaque bloc.
+
+⚠️ **Une contrainte de structure va avec, et elle a coute un rendu pour
+etre trouvee : un `PanelContainer` insete TOUS ses enfants de son
+`content_margin`, y compris le reflet.** Le degrade s'arretait donc a
+16-26px du bord avec une ligne franche. Le padding est desormais porte par
+un `MarginContainer` a l'interieur du panneau (`CreatePad`, `CategoryPad`,
+et le `pad` construit par `_build_row()`), et les `StyleBoxFlat`
+`row_panel` / `search_panel` n'ont plus **aucun** `content_margin`. Tout
+futur panneau Quizz qui veut une matiere doit suivre ce patron.
+
+### Ombres renforcees, padding elargi
+
+| stylebox | avant | apres |
+|---|---|---|
+| CTA (`cta_*`) | rayon 38, ombre 18 / alpha 0,30 / offset (0,6), padding 28/14 | **rayon 44, ombre 28 / alpha 0,42 / offset (0,12), padding 34/26** |
+| carte de rangee (`row_panel`) | rayon 22, ombre 12 / alpha 0,13 / offset (0,4), padding 20-22 | **rayon 26, ombre 20 / alpha 0,20 / offset (0,7), padding 24-28 (via MarginContainer)** |
+| barres (`search_panel`) | ombre 18 / alpha 0,16 / offset (0,5), padding 10 | **ombre 26 / alpha 0,24 / offset (0,8), padding 16 (via MarginContainer)** |
+
+### Contraste RE-MESURE sur les pixels rendus, au point le PLUS CLAIR
+
+Le reflet eclaircit le fond, donc le contraste texte/fond **change dans sa
+zone** -- il a ete mesure la, pas seulement au centre :
+
+| surface | fond rendu | texte `#4A3728` |
+|---|---|---|
+| CTA, point le plus clair du reflet | `rgb(255,204,183)` | **7,80:1** |
+| CTA, bas du bloc (orange nu) | `rgb(255,138,91)` | **4,84:1** -- la valeur deja documentee, inchangee |
+| carte / barre, haut (blanc nu) | `rgb(255,255,255)` | **11,24:1** |
+| carte / barre, bas (peche montante) | `rgb(255,237,224)` | **9,88:1** |
+
+**Le reflet ne peut qu'AMELIORER le contraste sur le CTA** (il eclaircit
+un fond deja clair sous un texte sombre) et le degrade au pire de 11,24 a
+9,88 sur les surfaces blanches -- tres au-dessus du plancher AA de 4,5:1
+dans les quatre cas. Aucun plancher n'a ete deplace.
+
+⚠️ **Signale, non corrige, PRE-EXISTANT** : le fond `disabled` reste peche
+sur blanc (1,29:1 pour la bordure). Ce lot ne bouge pas la couleur
+`disabled`, il se contente d'attenuer le TEXTE du CTA avec elle.
