@@ -7157,9 +7157,160 @@ l'auto-contamination) doit donc être suivi d'un `mkdir -p build/web`.
 1. **La disparition réelle des bandes** sur iPhone Safari (onglet **et** PWA
    installée) sur les quatre écrans : aucune sonde de ce dépôt ne rend de
    pixels iOS, les rendus ci-dessus sont du llvmpipe sous xvfb.
-2. **Le rognage latéral des couvertures** en 19.5:9 : mesuré comme non
-   déformant et les sujets entiers, mais le cadrage exact est un jugement.
+2. ~~**Le rognage latéral des couvertures** en 19.5:9 : mesuré comme non
+   déformant et les sujets entiers, mais le cadrage exact est un jugement.~~
+   ⚠️ **CORRIGÉ ET CLOS le 19 août 2026 — « les sujets entiers » était FAUX** :
+   ce rognage coupait la pancarte peinte « PLAYER: KEEPY / STATUS: CHASED »,
+   dont le premier pixel passait de x=29 à **x=0** sur device (IMG_1888 vs
+   IMG_1894). Voir la section « LA PANCARTE PEINTE ÉTAIT ROGNÉE PAR LE FIX
+   LETTERBOX » en fin de fichier. Ce point est le seul des trois à avoir été
+   mesuré faux plutôt que simplement laissé au jugement.
 3. **Les panneaux descendent proportionnellement** dans un viewport plus haut
    (les `CenterContainer` ont un `anchor_top` fractionnel) — mesuré comme
    entièrement dans le viewport, marge en bas plus grande qu'avant, mais la
    composition à l'échelle réelle d'un téléphone reste à valider.
+
+## LA PANCARTE PEINTE ETAIT ROGNEE PAR LE FIX LETTERBOX -- le crop de la couverture s'ancre desormais sur le CONTENU (19 aout 2026)
+
+Branche `claude/pancarte-clipping-expand-x07ws4`, partie de `staging`
+(`37e00fc`, donc **posee sur le lot letterbox du 18 aout**). Suite directe de
+ce lot : `SafeArea.fill_screen()` a bien tue les bandes noires, et a rogne au
+passage la pancarte « PLAYER: KEEPY / STATUS: CHASED » peinte dans le fond
+foret. Un fichier nouveau (`scripts/ui/CoverArt.gd`), trois scenes recablees,
+un commentaire de `SafeArea.gd` remis a jour. **Aucune scene de jeu, aucun
+collider, aucune constante de gameplay, aucun `.glb`, aucun `.png` touche.**
+
+### La cause, mesuree et pas deduite
+
+L'art (`assets/textures/ui/title_cover.png`) fait **720x1280, soit 9:16
+exactement**, et porte DEUX elements d'UI **peints** en haut : la pancarte a
+gauche et le bandeau « KEEPY CHASED » au centre. Ce sont des pixels de fond,
+pas des `Control` : rien dans l'arbre de scene ne les garde a l'ecran.
+
+Tant que le canvas etait 9:16 lui aussi, `STRETCH_KEEP_ASPECT_COVERED` n'avait
+**rien** a rogner. EXPAND fait passer le canvas a **1080x2337** sur un
+1170x2532, donc COVERED se met a mettre l'art a l'echelle par la HAUTEUR et
+rogne **117 px de canvas de CHAQUE cote**. La pancarte commence a **17 px du
+bord gauche de la source** (31 px de canvas une fois mise a l'echelle) : elle
+perd sa marge, et davantage.
+
+⚠️ **Le defaut est dans `TextureRect`, pas dans un reglage oublie :
+`STRETCH_KEEP_ASPECT_COVERED` CENTRE toujours sa region source** (Godot 4.3
+calcule `region.position` comme la moitie du debordement) et **n'expose aucune
+propriete d'alignement**. Aucune valeur de `stretch_mode` ne corrige donc ca.
+Elargir le rect avec un offset statique ne marche pas non plus : le
+debordement necessaire depend de la HAUTEUR du canvas, donc toute constante
+qui cadre bien sur un 19.5:9 **rogne le haut de la pancarte sur un 16:9**.
+
+### Ce que la sonde de mesure vaut : elle reproduit les DEUX chiffres device
+
+Sonde jetable (jamais commitee, supprimee avant le commit -- `ProbeTimeoutAudit`
+revient a **33 sondes**) : rendu offscreen sous `xvfb-run --rendering-driver
+opengl3`, **sans `--headless`** (il force le driver DUMMY et tout lit noir,
+faux-vert deja consigne), fenetre **1170x2532**, le vrai ratio device. Scan
+identique au diagnostic device : premier pixel « chaud » (`luminance>70` et
+`r>g+15`, bois/creme contre feuillage) depuis `x=0`, ligne par ligne.
+
+| canvas | sonde ici | photo device |
+|---|---|---|
+| KEEP (avant fix letterbox) | **28** | **29** (IMG_1888) |
+| EXPAND (apres fix letterbox) | **0** | **0** (IMG_1894) |
+
+Un pixel d'ecart sur le premier, zero sur le second : le banc d'essai mesure
+bien la meme chose que la photo, et c'est ce qui lui donne le droit de servir
+de verdict sur les autres ecrans.
+
+### Perimetre : TROIS ecrans, pas un -- verifie par rendu, pas par lecture
+
+`grep` sur `title_cover` : exactement `Hub.tscn`, `TitleScreen.tscn`,
+`LoginScreen.tscn`, chacun avec le meme noeud `CoverImage` (full-rect,
+`expand_mode=1`, `stretch_mode=6`). Les trois ont ete **rendus** plutot que
+deduits : **les trois mesurent 0** avant fix, **34** apres. `QuizzHomeScreen`
+(fond `ColorRect` creme) et `GameOverScreen` (`ColorRect` translucide sur le
+jeu) n'ont aucune couverture peinte -- hors sujet, confirme par le meme grep.
+
+### La regle retenue, et pourquoi PAS l'option « sortir la pancarte du fond »
+
+`scripts/ui/CoverArt.gd` : mise a l'echelle pour couvrir **exactement comme
+avant**, puis la fenetre source est placee pour que la portee **PROTEGEE** --
+tout ce qui est dessine plutot que decor -- soit centree dedans, clampee pour
+que l'art ne cesse jamais de couvrir le canvas. Zone protegee mesuree dans les
+pixels de l'art : **pancarte x 17..222**, **bandeau + feuilles x 237..519** --
+donc le contenu concu est les **72 % gauche** de l'art, le reste est du
+feuillage.
+
+⚠️ **Le VERTICAL est laisse EXACTEMENT comme COVERED l'avait (centre).** Sur
+tout canvas portrait l'echelle est pilotee par la hauteur, donc il n'y a
+aucun rognage vertical et le choix est sans objet ; le changer deplacerait
+quelque chose que ce lot n'a pas mesure.
+
+⚠️ **L'option 2 du brief (recreer la pancarte en `Control` separe) a ete
+ECARTEE SUR UNE MESURE, pas par preference** : la pancarte PEINTE reste dans
+le fond, et une fois le fond rogne elle glisse de **117 px de canvas a gauche**
+d'un overlay epingle a marge fixe -- il resterait une bande visible de bord de
+pancarte peinte a cote de la propre. La retirer de l'art voudrait dire
+**repeindre le feuillage derriere**, sur une illustration peinte.
+
+### Ce que la mesure donne apres fix
+
+| ecran | avant (EXPAND) | apres (EXPAND) | KEEP 9:16 |
+|---|---|---|---|
+| `Hub.tscn` | **0** | **34** | 28, inchange |
+| `TitleScreen.tscn` | **0** | **34** | -- |
+| `LoginScreen.tscn` | **0** | **34** | -- |
+
+**Le rendu 9:16 est BYTE-IDENTIQUE avant/apres** (md5 `4cfc5d78...` des deux
+cotes, capture complete 1170x2080) : la regle degenere en « aucun rognage » la
+ou il n'y avait deja rien a rogner, ce n'est pas un argument, c'est le meme
+fichier PNG. Cote droit : le bandeau garde **188 px** de marge apres fix.
+
+**Balayage de robustesse, 4 ratios rendus** (1080x1920, 1170x2532, 1080x2640,
+1600x900) : pancarte visible partout (**26 / 34 / 22 / 195**) et **aucune
+colonne de fond `ColorRect` non couverte** a gauche ni a droite -- le clamp
+tient, y compris sur un 9:22 plus extreme que n'importe quel telephone et sur
+une fenetre desktop plus large que haute.
+
+### L'assertion est prouvee ROUGE avant d'etre verte
+
+`CoverArt._ready()` **asserte** `stretch_mode`/`expand_mode` au lieu de les
+forcer en silence : la scene reste la source de verite sur la facon dont ce
+noeud dessine, et une scene qui contredit son script est le piege « fixture
+qui diverge du reel » qu'`AlarmRampAudit` existe pour fermer. Verifie en
+remettant `stretch_mode = 6` dans `Hub.tscn` : `ERROR: CoverArt: stretch_mode
+must be STRETCH_SCALE`, puis reverte.
+
+### Validation
+
+Import headless **exit 0**. Boot headless des trois scenes modifiees
+(`--quit-after 2`) **exit 0**, aucun `push_error` de `CoverArt`.
+`ProbeTimeoutAudit` (**33 sondes armees**, retour exact a la baseline apres
+retrait de la sonde jetable), `AssetContractAudit` (**12/12 visuels, 0/10
+colliders deplaces**), `DeathModelAudit`, `ChargerShapeProbe`,
+`PursuerFramingAudit` (**37,1 % max**, la valeur deja consignee -- c'est la
+reconfirmation « Chased non touche » demandee), plus les sondes gameplay
+seedees `ComboAudit`/`ShrinkAudit`/`ChargerAudit` (graine 20260806) --
+**toutes byte-identiques a `origin/staging`** sur les DEUX flux, en worktree
+separe. C'est le bar attendu : aucune sonde ne charge un ecran d'UI, et le
+seul fichier de ce lot qu'un probe touche (`SafeArea.gd`) ne recoit qu'un
+commentaire.
+
+### Dette de doc fermee au passage
+
+`SafeArea.fill_screen()` documentait encore « their cover art is
+KEEP_ASPECT_COVERED, so a taller viewport re-lays-out and re-crops rather than
+stretching anything » -- vrai la veille, faux depuis ce lot, et surtout
+**cette phrase decrivait comme inoffensif exactement le mecanisme qui cassait**.
+Remplacee par le constat mesure, avec la consigne pour la suite : **tout NOUVEL
+ecran qui appelle `fill_screen()` ET peint quelque chose pres d'un bord de son
+fond a besoin du meme script** -- le canvas 9:16 qui rendait le crop centre
+inoffensif n'existe plus.
+
+### Reste ouvert -- jugement device, seul juge
+
+Aucune sonde ne dit que la marge de **34 px** se lit bien a l'oeil sur un vrai
+iPhone : le chiffre est mesure, l'equilibre visuel ne l'est pas. A confirmer
+sur `keepy-staging.vercel.app`, sur les TROIS ecrans (login, hub, titre), en
+onglet Safari **et** en PWA installee. Non touche par ce lot et toujours
+ouvert : la redondance entre le bandeau peint « KEEPY CHASED » et le logo
+`TitleLogo` du moteur, deja signalee au lot ecran-titre du 14 aout -- elle
+devient plus visible maintenant que les deux tiennent l'ecran en entier.

@@ -1,8 +1,9 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/TitleScreen.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://d37dx1txkxnir" path="res://assets/textures/ui/title_cover.png" id="2_cover"]
 [ext_resource type="Texture2D" path="res://assets/textures/ui/keepy_title_logo.png" id="3_logo"]
+[ext_resource type="Script" path="res://scripts/ui/CoverArt.gd" id="4_cover_art"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_scrim"]
 bg_color = Color(0.086, 0.055, 0.031, 0.72)
@@ -54,12 +55,11 @@ color = Color(0.062, 0.115, 0.044, 1)
 
 [node name="CoverImage" type="TextureRect" parent="."]
 layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
+anchors_preset = 0
 texture = ExtResource("2_cover")
 expand_mode = 1
-stretch_mode = 6
+stretch_mode = 0
+script = ExtResource("4_cover_art")
 
 [node name="CenterContainer" type="CenterContainer" parent="."]
 layout_mode = 1

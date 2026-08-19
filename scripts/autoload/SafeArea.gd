@@ -134,9 +134,19 @@ func _set_color(hex: String) -> void:
 
 ## Lets the canvas fill the whole screen, killing the black bars. Called
 ## from the _ready() of every UI screen (LoginScreen, Hub, TitleScreen,
-## QuizzHomeScreen). Their roots are full-rect Controls and their cover
-## art is KEEP_ASPECT_COVERED, so a taller viewport re-lays-out and
-## re-crops rather than stretching anything.
+## QuizzHomeScreen). Their roots are full-rect Controls, so a taller
+## viewport re-lays-out rather than stretching anything.
+##
+## The three forest screens re-CROP their cover art as well, and that crop
+## is what this call moves: their CoverImage used to be
+## KEEP_ASPECT_COVERED, whose source region is always centred, so the extra
+## side crop a taller canvas asks for ate the painted "PLAYER: KEEPY"
+## signboard at the left edge (measured on device: its first pixel went
+## from x=29 to x=0). They carry scripts/ui/CoverArt.gd since, which places
+## that crop around the art's designed content instead of its geometric
+## centre -- see that file's header. Any NEW screen that both calls this
+## and paints something near an edge of its background needs the same
+## script; the 9:16 canvas that made the centred crop harmless is gone.
 func fill_screen() -> void:
 	_set_aspect(Window.CONTENT_SCALE_ASPECT_EXPAND)
 
