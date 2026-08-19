@@ -48,6 +48,10 @@ style) rather than working around it locally -- that is exactly how
 | Corail on Blanc (accent non-texte) | 2.41:1 | voir la note corail plus bas |
 | Corail on Fond creme (accent non-texte) | 2.29:1 | voir la note corail plus bas |
 | **Corail vs Orange principal** | **1.04:1** | **luminances quasi identiques -- voir la note corail** |
+| **Texte on Orange (chip selectionne)** | **4.84:1** | pass (AA) -- meme paire que le bouton |
+| **Anneau texte `#4A3728` vs Fond creme** | **10.68:1** | pass 1.4.11 -- c'est LUI l'indicateur d'etat du chip |
+| **Anneau texte `#4A3728` vs Orange (remplissage du chip)** | **4.84:1** | pass 1.4.11 |
+| Orange vs Blanc, *comme seul* indicateur d'etat | 2.32:1 | **echoue 1.4.11** -- voir la section chips |
 
 **Deviation from the original brief, measured and therefore taken:** the
 brief's default instruction was white text on the orange button. Measured,
@@ -323,3 +327,151 @@ compare corail et orange, pas orange et orange. Et la redondance de fond
 deja notee ailleurs reste entiere : cet ecran n'a toujours ni categories, ni
 points, ni avatar, ni nav du bas -- **volontairement**, ils sont hors du
 modele de donnees.
+
+
+## Categories, chips et CTA -- lot du 19 aout 2026
+
+Branche `claude/keepy-categories-filtering-0mnv5s`, partie de `staging`.
+**Trois patterns visuels nouveaux** (`CtaButton`, `Chip`, `ChipSelected`)
+plus une variation de titre (`SectionLabel`), tous ajoutes au theme
+existant -- **aucun `StyleBoxFlat` ecrit a la main**, ni dans le `.tscn`
+ni en GDScript, donc la regle en tete de ce document tient toujours sans
+exception. Le theme passe de **8 a 12 variations de type**.
+
+`Chased`, `Hub`, `LoginScreen`, `TitleScreen` : **aucun fichier touche**.
+
+### L'etat SELECTIONNE d'un chip est porte par un ANNEAU SOMBRE, pas par le remplissage orange
+
+C'est le seul vrai arbitrage visuel du lot, et il est tranche par une
+mesure, pas par un gout. Un chip selectionne doit etre distinguable d'un
+chip au repos, et WCAG SC 1.4.11 demande **3,0:1** a l'information qui
+identifie l'etat d'un composant.
+
+La solution evidente -- remplir le chip selectionne en orange et laisser
+les autres en blanc -- **echoue** : orange `#FF8A5B` contre blanc mesure
+**2,32:1**, et contre le fond creme **2,21:1**. Aucune des deux ne
+franchit 3,0. C'est le meme plafond que la note corail deja consignee
+plus haut : dans cette palette, orange et corail sont des couleurs
+**claires**, elles ne peuvent pas porter un ecart de luminance.
+
+Le chip selectionne porte donc **en plus** une bordure de 2px en
+`#4A3728` -- la couleur de texte du systeme, deja presente partout. C'est
+elle l'indicateur d'etat, et elle passe des deux cotes a la fois :
+
+| frontiere | ratio mesure | seuil 1.4.11 |
+|---|---|---|
+| anneau `#4A3728` vs fond creme (a l'exterieur) | **10,68:1** | pass |
+| anneau `#4A3728` vs remplissage orange (a l'interieur) | **4,84:1** | pass |
+| *(pour comparaison)* remplissage orange vs chip blanc | 2,32:1 | **echoue** |
+
+⚠️ **Mesure faite sur les PIXELS REELLEMENT RENDUS, pas sur les constantes
+du theme** : le rendu offscreen 1170x2532 a ete echantillonne le long de
+la ligne du chip selectionne, et l'anneau y rend exactement `(74, 55, 40)`
+-- `#4A3728` au bit pres, aucune derive d'anti-aliasing sur la partie
+droite du trait. Les ratios ci-dessus sont calcules sur cette valeur lue,
+pas sur celle ecrite dans le `.tres`.
+
+Le repos garde la bordure peche 2px du langage de champ deja etabli
+(peche vs creme = **1,22:1**, tres doux) -- c'est volontaire : ce qui doit
+sauter aux yeux est **quel** chip est actif, pas le fait qu'il existe
+cinq chips.
+
+⚠️ **Ecart assume avec la regle « soft shadows over skeuomorphic
+borders »** : un anneau sombre est le seul trait franc du systeme Quizz.
+Il est a la meme epaisseur (2px) que l'anneau de focus orange des champs
+deja livre, il ne concerne qu'un composant de 56px de haut, et il est
+**impose par une mesure** -- exactement le motif que ce document invoque
+deja pour avoir choisi du texte sombre sur bouton orange contre l'avis du
+brief d'origine.
+
+### Le CTA sort de la barre de recherche -- et ca REVIENT sur une decision du 19 aout au matin
+
+Le reskin « dashboard » du meme jour avait **encastre** le bouton « Creer »
+a l'interieur de la barre, argument a l'appui : « un seul objet, un seul
+geste ». Ce lot l'en **ressort** et en fait une pill orange pleine largeur
+sous la barre (`CtaButton` : radius 38 pour 76px de haut, donc
+`height / 2` exactement, ombre 18 / alpha 0,30, Fredoka bold 30).
+
+**Les deux decisions ne se contredisent pas, la demande a change** : le
+bouton encastre s'appelait « Creer » et faisait 150px de large. Il devient
+« **Creer ton quizz** », un libelle qui ne rentre pas dans une barre de
+1008px sans ecraser le champ de titre -- et surtout un libelle qu'on
+n'ecrit pas sur un bouton de soumission de formulaire. Le brief de ce lot
+demande explicitement qu'il cesse de se lire comme tel. Un CTA pleine
+largeur est ce que ca veut dire.
+
+⚠️ Ce que ca **ne** change pas : c'est le **meme noeud**, le meme signal,
+le meme `_on_create_pressed()`. Aucune logique de creation n'est dupliquee
+-- seuls sa place dans l'arbre (`Margin/VBox/CreateButton` au lieu de
+`Margin/VBox/CreatePanel/CreateRow/CreateButton`) et sa variation de theme
+changent. Le champ de titre + le bouton restent le mecanisme reel de
+creation, comme le brief l'exige.
+
+Un `CreateHintLabel` (variation `MutedLabel`) sous le CTA dit ou le
+prochain quizz sera range (« Nouveau quizz range dans : Histoire »).
+Sans lui, le lien entre le chip selectionne et `create_quiz()` serait
+invisible : il faudrait creer un quizz pour le decouvrir.
+
+### Le reste, sans surprise
+
+- **Barre « nouvelle categorie »** : `SearchPanel` + `SearchField`
+  **identiques** a la barre de titre de quizz -- meme variation, meme
+  radius, meme ombre. Le brief demandait « style identique au champ titre
+  de quizz », et le respecter litteralement evite d'inventer un cinquieme
+  objet. Son bouton « Ajouter » reste le bouton orange de BASE (140x60) :
+  la hierarchie entre lui et le CTA se fait par la **taille** et le
+  **libelle**, jamais par la couleur -- le corail ne peut pas porter une
+  action (1,04:1 contre l'orange, deja mesure et deja consigne).
+- **`SectionLabel`** : Fredoka semibold 26, entre le `TitleLabel` de
+  l'ecran (bold 32) et le `CardTitleLabel` d'une rangee (semibold 26 mais
+  dans une carte blanche). Porte le « Mes quizz » au-dessus de la liste.
+- **Rangee de chips** : `ScrollContainer` horizontal, `horizontal_scroll_
+  mode = 3` (SHOW_NEVER). ⚠️ **Corrige au rendu, pas prevu** : le premier
+  jet etait en SHOW_ALWAYS et posait une barre de defilement grise pleine
+  largeur sous les chips -- le seul element gris de tout l'ecran. Le drag
+  tactile fonctionne toujours sans elle.
+- **Aucun asset genere.** Pas d'icone par categorie : coherent avec la
+  regle deja etablie pour la rule corail des rangees (ce depot n'a aucun
+  jeu d'icones, et un emplacement vide se lit comme un asset qui n'arrive
+  jamais).
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, memes que la CI). Import headless **exit 0**, export
+Web release **exit 0**, boot headless de `QuizzHomeScreen.tscn`
+(`--quit-after 3`) **exit 0** -- son unique sortie est le
+`push_warning("categories unavailable (network-disabled)")` attendu, la
+degradation propre du court-circuit headless de `Quizz.gd`.
+
+**Rendu offscreen REEL au ratio device** (`xvfb-run --rendering-driver
+opengl3`, **1170x2532**), sonde de capture jetable **jamais commitee,
+supprimee avant le commit**. Quatre etats captures, pas un :
+- **nominal** (3 categories, 5 quizz dont un sans categorie et un a
+  `categoryId` PENDANT) -- le chip « Sans categorie (2) » compte bien les
+  deux, ce qui prouve au rendu la resolution decrite au
+  `QUIZZ_SPEC.md` 11.2 ;
+- **filtre sur une categorie** -- liste reduite a 1, chip selectionne
+  lisible, hint passe a « range dans : Histoire » ;
+- **filtre « Sans categorie »** ;
+- **busy**, parce que `_ready()` lance un chargement : c'est le **tout
+  premier** etat que voit n'importe quel joueur, jamais un cas limite.
+
+⚠️ **Signale, non corrige, PRE-EXISTANT et deja consigne au lot
+precedent** : les boutons desactives sont peche sur blanc (**1,29:1**).
+Le CTA desactive herite du meme defaut, en plus grand. Ce n'est pas une
+regression de ce lot ; il appartient a un lot qui aurait le droit de
+bouger la couleur `disabled`.
+
+### Reste ouvert -- jugement device, seul juge
+
+Aucune sonde ne dit que c'est BEAU. Ce qui doit etre regarde sur
+telephone : (a) le CTA pleine largeur ecrase-t-il la barre de titre
+juste au-dessus, ou la hierarchie se lit-elle bien dans l'autre sens ;
+(b) l'anneau sombre du chip actif se lit-il comme « selectionne » ou
+comme « en erreur » a taille reelle -- la mesure dit qu'il est VISIBLE,
+elle ne dit pas ce qu'il SIGNIFIE pour un oeil ; (c) **la redondance
+« Mes questionnaires » (titre d'ecran) / « Mes quizz » (titre de
+section)** -- deux noms pour la meme chose a 200px d'ecart, releve ici
+plutot que tranche : le brief demandait explicitement les deux, et
+choisir lequel supprimer est une decision produit, pas technique.

@@ -119,6 +119,41 @@ service cloud.firestore {
               && request.resource.data.questionCount <= 50);
       }
 
+      // Second champ optionnel du schema (19 aout 2026), meme forme
+      // "absent OU valide" que validCount() et pour la meme raison.
+      //
+      // !! LE SERVEUR NE VERIFIE PAS QUE LA CATEGORIE EXISTE, ni qu'elle
+      // appartient au meme uid. Il le POURRAIT --
+      // `get(/databases/$(database)/documents/categories/$(...)).data.uid`
+      // -- et c'est ECARTE, pour les trois raisons deja invoquees au
+      // QUIZZ_SPEC.md 1 quand la denormalisation de `uid` sur les
+      // questions a evite ce meme get() :
+      //   1. un get() est une LECTURE FACTUREE a chaque evaluation, sur
+      //      le chemin le plus chaud de l'ecriture d'un quiz ;
+      //   2. il ferait dependre l'ecriture d'un quiz de la LISIBILITE
+      //      d'un autre document -- une categorie supprimee rendrait
+      //      soudain non modifiable chaque quiz qui la citait ;
+      //   3. `get()` d'un document absent rend null, et lire `.data`
+      //      dessus est une ERREUR D'EVALUATION, pas un false propre --
+      //      donc il faudrait de toute facon le doubler d'un exists().
+      // Ce qu'un `categoryId` invalide peut faire au pire : ranger un
+      // quiz du proprietaire dans un tiroir a lui qui n'existe pas.
+      // Aucune donnee d'autrui n'est atteignable par ce champ -- il ne
+      // sert JAMAIS de cle de lecture, la liste des quiz est filtree sur
+      // `uid` et rien d'autre. C'est donc une contrainte d'integrite,
+      // pas de securite : elle est validee CLIENT-SIDE (Quizz.gd) et
+      // documentee comme telle (QUIZZ_SPEC.md 5.5).
+      //
+      // 64 et non 20 : le plafond ne doit pas epouser la longueur de
+      // l'auto-id du generateur courant, sinon changer le generateur
+      // demanderait un passage par le gate `main`.
+      function validCategoryId() {
+        return !request.resource.data.keys().hasAny(['categoryId'])
+          || (request.resource.data.categoryId is string
+              && request.resource.data.categoryId.size() >= 1
+              && request.resource.data.categoryId.size() <= 64);
+      }
+
       // Owner-only, SANS aucune condition sur `visibility`. Deliberement :
       // une regle de lecture qui consulterait deja ce champ serait une
       // porte a moitie ouverte (QUIZZ_SPEC.md 2.3).
@@ -131,7 +166,7 @@ service cloud.firestore {
 
       allow create: if ownsIncoming()
         && request.resource.data.keys().hasOnly(
-             ['uid','title','visibility','questionCount','createdAt','updatedAt'])
+             ['uid','title','visibility','questionCount','categoryId','createdAt','updatedAt'])
         && request.resource.data.keys().hasAll(
              ['uid','title','visibility','createdAt','updatedAt'])
         && request.resource.data.title is string
@@ -146,6 +181,7 @@ service cloud.firestore {
         // tranchee avant le premier des deux.
         && request.resource.data.visibility == 'private'
         && validCount()
+        && validCategoryId()
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
@@ -157,7 +193,7 @@ service cloud.firestore {
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.keys().hasOnly(
-             ['uid','title','visibility','questionCount','createdAt','updatedAt'])
+             ['uid','title','visibility','questionCount','categoryId','createdAt','updatedAt'])
         && request.resource.data.keys().hasAll(
              ['uid','title','visibility','createdAt','updatedAt'])
         && request.resource.data.title is string
@@ -165,6 +201,7 @@ service cloud.firestore {
         && request.resource.data.title.size() <= 60
         && request.resource.data.visibility == 'private'
         && validCount()
+        && validCategoryId()
         && request.resource.data.updatedAt == request.time;
 
       allow delete: if ownsExisting();
@@ -257,6 +294,67 @@ service cloud.firestore {
 
         allow delete: if ownsExisting();
       }
+    }
+
+    // =================================================================
+    // KEEPY QUIZZ -- categories/{categoryId} (19 aout 2026).
+    //
+    // Collection TOP-LEVEL, au meme niveau que `quizzes`, PAS une
+    // sous-collection de celle-ci. Une categorie est un rangement qui
+    // appartient a l'UTILISATEUR et sert PLUSIEURS quiz : la nicher sous
+    // un quiz dirait l'inverse (une categorie par quiz), et lister
+    // "toutes mes categories" demanderait alors un collectionGroup --
+    // c'est-a-dire une requete que la regle owner-only ci-dessous ne
+    // saurait plus prouver conforme sans un index de plus.
+    //
+    // Meme triplet d'auth que /scores et /quizzes -- hasOnly /
+    // hasAll(['uid']) / uid == request.auth.uid. Aucune variante.
+    //
+    // PAS de champ `visibility` ici, et ce n'est pas un oubli : une
+    // categorie est TOUJOURS privee, il n'y a aucune decision de partage
+    // a trancher a son sujet. Un champ dont une seule valeur est
+    // acceptable existe sur /quizzes parce que la question du partage y
+    // est ouverte (QUIZZ_SPEC.md 2.3) ; ici elle ne l'est pas, donc le
+    // champ n'existe pas -- `hasOnly` le refuserait.
+    // =================================================================
+    match /categories/{categoryId} {
+
+      // Owner-only, `get` ET `list` -- meme consequence cliente que sur
+      // /quizzes : un :runQuery de liste DOIT porter un fieldFilter
+      // `uid EQUAL <mon uid>`, sinon il est REFUSE, pas vide.
+      allow read: if ownsExisting();
+
+      allow create: if ownsIncoming()
+        && request.resource.data.keys().hasOnly(['uid','name','createdAt'])
+        && request.resource.data.keys().hasAll(['uid','name','createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.createdAt == request.time;
+
+      // PAS d'`updatedAt` sur ce schema, contrairement a /quizzes : rien
+      // ne peut modifier une categorie (voir juste en dessous), donc un
+      // champ "derniere modification" ne pourrait jamais valoir autre
+      // chose que `createdAt`. Un champ qui ne peut pas varier est du
+      // bruit, pas une donnee.
+
+      // RENOMMER EST IMPOSSIBLE, et c'est explicite plutot que subi.
+      // Le client de ce lot (Quizz.gd : create / list / delete) n'ecrit
+      // jamais de mise a jour, donc ouvrir `update` deploierait une
+      // surface que rien n'exerce. Cout assume et reel : corriger une
+      // faute de frappe demande de supprimer puis recreer, ce qui donne
+      // un id NEUF -- tous les quiz qui pointaient sur l'ancien se
+      // retrouvent avec un `categoryId` pendant (meme famille que
+      // l'absence de cascade, QUIZZ_SPEC.md 5.2 ; cote client ils
+      // retombent dans "Sans categorie", jamais en erreur).
+      // Rouvrir demande DEUX choses, pas une : cette ligne devient le
+      // meme bloc que `update` sur /quizzes (ownsExisting + uid et
+      // createdAt immuables + name valide + hasOnly/hasAll), ET une
+      // methode `update_category()` cote Quizz.gd. Une seule des deux ne
+      // sert a rien.
+      allow update: if false;
+
+      allow delete: if ownsExisting();
     }
   }
 }

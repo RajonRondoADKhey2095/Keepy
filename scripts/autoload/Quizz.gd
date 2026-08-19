@@ -1,8 +1,9 @@
 extends Node
 ## Autoloaded as "Quizz". Authoring CRUD for Keepy Quizz against the
-## `quizzes/{quizId}` collection and its `questions/{questionId}`
-## sub-collection of the Firebase project keepy-8df91, over the Firestore
-## REST API directly (no Firebase SDK), exactly like Leaderboard.gd.
+## `quizzes/{quizId}` collection, its `questions/{questionId}`
+## sub-collection, and the top-level `categories/{categoryId}` collection
+## of the Firebase project keepy-8df91, over the Firestore REST API
+## directly (no Firebase SDK), exactly like Leaderboard.gd.
 ##
 ## FIRST REAL CLIENT of the Quizz rules deployed to production on
 ## 18 aout 2026 (run #3 of firestore-rules.yml). Until this file existed
@@ -15,7 +16,8 @@ extends Node
 ## SCOPE -- what this file is NOT
 ##
 ## Authoring only: create / read / update / delete the SIGNED-IN USER'S
-## OWN quizzes and questions. There is no play loop here, no scoring, no
+## OWN quizzes, questions and categories -- the last of these has no
+## update at all, by rule (see delete_category). There is no play loop here, no scoring, no
 ## screen, and nothing in scenes/. The Quizz button of scenes/Hub.tscn is
 ## still `disabled = true` and still connected to nothing -- Hub.tscn and
 ## Hub.gd are untouched by the batch that added this file. See CLAUDE.md
@@ -85,8 +87,8 @@ extends Node
 ##
 ## An HTTPRequest node serves one request at a time (ERR_BUSY otherwise).
 ## Leaderboard.gd gets away with one node per endpoint because it has
-## exactly two; this file has eight operations across two collections, so
-## a node per entry point would be eight idle nodes and would still not
+## exactly two; this file has eleven operations across three collections,
+## so a node per entry point would be eleven idle nodes and would still not
 ## serialise two creates in a row. Instead: a single node, a FIFO queue,
 ## and a single in-flight slot. Nothing is ever dropped silently -- a
 ## call made while another is in flight is queued and dispatched when the
@@ -118,6 +120,17 @@ signal question_deleted(success: bool, quiz_id: String, question_id: String, err
 ## the sort note on QUESTION_ORDER_MAX. Always emitted, empty on failure.
 signal questions_fetched(success: bool, quiz_id: String, questions: Array, error: String)
 
+## Categories (19 aout 2026). Same argument order as everything above.
+## There is deliberately NO `category_updated`: the deployed rules answer
+## `allow update: if false` on this collection, so a rename is a refusal,
+## not a feature waiting for a client. See the comment on delete_category.
+signal category_created(success: bool, category_id: String, error: String)
+signal category_deleted(success: bool, category_id: String, error: String)
+## `categories` is an Array of Dictionaries sorted by (lowercased name, id)
+## -- see the sort note on list_own_categories(). Always emitted, empty on
+## failure.
+signal categories_fetched(success: bool, categories: Array, error: String)
+
 ## Project id and API key are READ FROM Leaderboard.gd rather than copied.
 ## They identify the same Firebase project, and two literal copies of an
 ## API key is a rotation hazard whose failure mode is a silent 403 in
@@ -126,6 +139,10 @@ signal questions_fetched(success: bool, quiz_id: String, questions: Array, error
 ## singleton at call time.
 const QUIZZES_COLLECTION := "quizzes"
 const QUESTIONS_COLLECTION := "questions"
+## TOP-LEVEL, sibling of `quizzes`, not a sub-collection of it -- a
+## category belongs to the USER and is shared by several quizzes. See the
+## header comment of its `match` block in firestore.rules.
+const CATEGORIES_COLLECTION := "categories"
 
 ## Client-side mirrors of the deployed rules. Checking them here does not
 ## make the server checks redundant -- the server remains the authority --
@@ -133,6 +150,12 @@ const QUESTIONS_COLLECTION := "questions"
 ## reason a UI can actually show.
 const TITLE_MIN_LEN := 1
 const TITLE_MAX_LEN := 60
+const CATEGORY_NAME_MIN_LEN := 1
+const CATEGORY_NAME_MAX_LEN := 30
+## Mirrors the rules' own bound on `quizzes.categoryId`, which is 64 and
+## not 20 on purpose: neither side should encode the current auto-id
+## length, or changing the generator would need a rules deploy.
+const CATEGORY_ID_MAX_LEN := 64
 const PROMPT_MIN_LEN := 1
 const PROMPT_MAX_LEN := 200
 const CHOICE_MIN_LEN := 1
@@ -209,11 +232,33 @@ func _ready() -> void:
 ## create-or-update branch. It stays a DISPLAY value -- the rules cannot
 ## count sub-collection documents, so nothing ever reconciles it with
 ## reality (docs/QUIZZ_SPEC.md section 5).
-func create_quiz(title: String) -> void:
+##
+## `category_id` is OPTIONAL and defaults to "" -- every call written
+## before 19 aout 2026 keeps compiling and keeps producing exactly the
+## same document, with no `categoryId` field at all.
+##
+## Only its SHAPE is checked here. That the category exists and belongs
+## to the same user is NOT verified, by neither this file nor the rules:
+## the rules could do it with a get(), and that is deliberately declined
+## for the three reasons spelled out on validCategoryId() in
+## firestore.rules (billed read on the hot path, a deleted category
+## silently freezing every quiz that cited it, and get()-of-absent being
+## an evaluation error rather than a clean false). The real integrity
+## gate is the UI, which can only ever pass an id it just listed. A
+## dangling id is not a security hole -- `categoryId` is never a read key,
+## the quiz list is filtered on `uid` and nothing else -- it just files a
+## quiz in a drawer of its own owner that no longer exists, and the
+## screen shows those as uncategorised (docs/QUIZZ_SPEC.md section 5).
+func create_quiz(title: String, category_id: String = "") -> void:
 	var safe_title := title.strip_edges()
 	var invalid := _validate_title(safe_title)
 	if not invalid.is_empty():
 		quiz_created.emit(false, "", invalid)
+		return
+	var safe_category := category_id.strip_edges()
+	var invalid_category := _validate_category_id(safe_category)
+	if not invalid_category.is_empty():
+		quiz_created.emit(false, "", invalid_category)
 		return
 	var gate := _gate()
 	if not gate.is_empty():
@@ -226,6 +271,11 @@ func create_quiz(title: String) -> void:
 		"visibility": { "stringValue": VISIBILITY_PRIVATE },
 		"questionCount": { "integerValue": "0" },
 	}
+	# OMITTED, not written as "" -- the rules bound categoryId at 1..64
+	# when present, so an empty string would be a refusal, and a field
+	# that exists-but-means-nothing is worse than an absent one anyway.
+	if not safe_category.is_empty():
+		fields["categoryId"] = { "stringValue": safe_category }
 	var body := {
 		"writes": [
 			{
@@ -372,6 +422,138 @@ func list_own_quizzes() -> void:
 		"body": JSON.stringify(body),
 		"quiz_id": "",
 		"question_id": "",
+	})
+
+
+# ---------------------------------------------------------------------
+# Public API -- categories
+# ---------------------------------------------------------------------
+
+## Creates a category owned by the signed-in user and emits
+## `category_created` exactly once, handing back the client-generated id
+## so the caller can select it immediately without a list round trip --
+## same shape as create_quiz.
+##
+## No `updatedAt`: nothing can modify a category (the rules answer
+## `allow update: if false`), so a "last modified" field could never hold
+## anything but `createdAt`.
+func create_category(name: String) -> void:
+	var safe_name := name.strip_edges()
+	var invalid := _validate_category_name(safe_name)
+	if not invalid.is_empty():
+		category_created.emit(false, "", invalid)
+		return
+	var gate := _gate()
+	if not gate.is_empty():
+		category_created.emit(false, "", gate)
+		return
+	var category_id := _generate_auto_id()
+	var body := {
+		"writes": [
+			{
+				"update": {
+					"name": _category_path(category_id),
+					"fields": {
+						"uid": { "stringValue": _uid() },
+						"name": { "stringValue": safe_name },
+					},
+				},
+				"updateTransforms": [
+					{ "fieldPath": "createdAt", "setToServerValue": "REQUEST_TIME" },
+				],
+				"currentDocument": { "exists": false },
+			},
+		],
+	}
+	_enqueue({
+		"kind": "category_create",
+		"url": _commit_url(),
+		"method": HTTPClient.METHOD_POST,
+		"body": JSON.stringify(body),
+		"quiz_id": "",
+		"question_id": "",
+		"category_id": category_id,
+	})
+
+## Deletes a category. NOT a cascade, and there is nothing to cascade
+## INTO: quizzes are not children of a category, they merely name one.
+## Every quiz whose `categoryId` was this one keeps that id and becomes a
+## dangling reference -- deliberately, because the alternative (list every
+## quiz, rewrite each one) is an N-write best-effort loop that can fail
+## halfway and leave the collection in a worse state than one stale id.
+## A dangling id is harmless by construction: it is never a read key, and
+## a screen resolves it against the categories it actually fetched, so an
+## unresolvable one reads as "no category" rather than as an error.
+##
+## There is no `update_category()`, and that is a rules-level fact, not an
+## omission here: the deployed `allow update: if false` would refuse the
+## write. Renaming therefore means delete + create, which mints a NEW id
+## and dangles every quiz that cited the old one. Re-opening it takes both
+## halves at once -- the rule and the method -- see firestore.rules.
+func delete_category(category_id: String) -> void:
+	if category_id.is_empty():
+		category_deleted.emit(false, category_id, "invalid-category-id")
+		return
+	var gate := _gate()
+	if not gate.is_empty():
+		category_deleted.emit(false, category_id, gate)
+		return
+	var body := {
+		"writes": [
+			{
+				"delete": _category_path(category_id),
+				"currentDocument": { "exists": true },
+			},
+		],
+	}
+	_enqueue({
+		"kind": "category_delete",
+		"url": _commit_url(),
+		"method": HTTPClient.METHOD_POST,
+		"body": JSON.stringify(body),
+		"quiz_id": "",
+		"question_id": "",
+		"category_id": category_id,
+	})
+
+## Lists the signed-in user's own categories.
+##
+## The `uid EQUAL` filter is mandatory for the same reason as in
+## list_own_quizzes(): the read rule is owner-only, and Firestore refuses
+## a query it cannot prove conforming rather than returning a subset.
+##
+## NO `orderBy`, and that is the whole point -- it is what keeps this
+## query servable by the AUTOMATIC single-field index on `uid` and out of
+## the composite-index Console dance list_own_quizzes() has to warn about.
+## An equality filter combined with an orderBy on a DIFFERENT field is
+## what needs a composite index; an equality filter alone does not. So
+## this call cannot answer 400 FAILED_PRECONDITION, and adding a sort
+## here later is not a free change -- it is a manual index creation.
+##
+## Ordering is therefore done in _dispatch, on (lowercased name, id):
+## alphabetical because a drawer list is scanned by eye and not by
+## recency, case-insensitive so "Histoire" and "histoire" sit together,
+## and tie-broken on the document id so two categories of the same name
+## keep a stable order between two fetches.
+func list_own_categories() -> void:
+	var gate := _gate()
+	if not gate.is_empty():
+		categories_fetched.emit(false, [], gate)
+		return
+	var body := {
+		"structuredQuery": {
+			"from": [{ "collectionId": CATEGORIES_COLLECTION }],
+			"where": _own_uid_filter(),
+		},
+	}
+	_enqueue({
+		"kind": "categories_list",
+		"url": _run_query_url(""),
+		"method": HTTPClient.METHOD_POST,
+		"body": JSON.stringify(body),
+		"quiz_id": "",
+		"question_id": "",
+		"category_id": "",
 	})
 
 
@@ -638,6 +820,21 @@ func _dispatch(op: Dictionary, result: int, response_code: int, body: PackedByte
 			question_updated.emit(true, op["quiz_id"], op["question_id"], "")
 		"question_delete":
 			question_deleted.emit(true, op["quiz_id"], op["question_id"], "")
+		"category_create":
+			category_created.emit(true, op["category_id"], "")
+		"category_delete":
+			category_deleted.emit(true, op["category_id"], "")
+		"categories_list":
+			var category_rows = _parse_query_rows(body)
+			if category_rows == null:
+				_fail(op, ERR_BAD_RESPONSE)
+				return
+			var categories: Array = []
+			for document in category_rows:
+				categories.append(_decode_category(document))
+			# Sorted HERE and not by the query -- see list_own_categories().
+			categories.sort_custom(_compare_categories)
+			categories_fetched.emit(true, categories, "")
 		"quizzes_list":
 			var quiz_rows = _parse_query_rows(body)
 			if quiz_rows == null:
@@ -671,6 +868,17 @@ func _compare_questions(a: Dictionary, b: Dictionary) -> bool:
 		return a["order"] < b["order"]
 	return String(a["id"]) < String(b["id"])
 
+## (lowercased name, id). The id tie-break is not decoration: two
+## categories may legitimately carry the same name -- the rules cannot see
+## sibling documents, exactly as for `order` on questions -- and without
+## it two fetches could hand back two different orders for the same data.
+func _compare_categories(a: Dictionary, b: Dictionary) -> bool:
+	var name_a := String(a["name"]).to_lower()
+	var name_b := String(b["name"]).to_lower()
+	if name_a != name_b:
+		return name_a < name_b
+	return String(a["id"]) < String(b["id"])
+
 ## Single place where a failed operation turns into its signal, so every
 ## entry point is guaranteed to emit exactly once whatever went wrong and
 ## wherever it went wrong.
@@ -692,6 +900,12 @@ func _fail(op: Dictionary, error: String) -> void:
 			question_deleted.emit(false, op["quiz_id"], op["question_id"], error)
 		"questions_list":
 			questions_fetched.emit(false, op["quiz_id"], [], error)
+		"category_create":
+			category_created.emit(false, op["category_id"], error)
+		"category_delete":
+			category_deleted.emit(false, op["category_id"], error)
+		"categories_list":
+			categories_fetched.emit(false, [], error)
 		_:
 			push_warning("Quizz: cannot report failure of unknown kind '%s'" % op["kind"])
 
@@ -730,6 +944,20 @@ func _uid() -> String:
 func _validate_title(title: String) -> String:
 	if title.length() < TITLE_MIN_LEN or title.length() > TITLE_MAX_LEN:
 		return "invalid-title"
+	return ""
+
+func _validate_category_name(name: String) -> String:
+	if name.length() < CATEGORY_NAME_MIN_LEN or name.length() > CATEGORY_NAME_MAX_LEN:
+		return "invalid-category-name"
+	return ""
+
+## "" is VALID and means "no category" -- the field is then omitted from
+## the document entirely (see create_quiz). Only a non-empty id that could
+## never satisfy the rules is refused, so a caller never spends a round
+## trip on a guaranteed 403.
+func _validate_category_id(category_id: String) -> String:
+	if category_id.length() > CATEGORY_ID_MAX_LEN:
+		return "invalid-category-id"
 	return ""
 
 ## Returns {"ok": bool, "error": String, "fields": Dictionary}. `fields`
@@ -801,6 +1029,9 @@ func _quiz_path(quiz_id: String) -> String:
 func _question_path(quiz_id: String, question_id: String) -> String:
 	return "%s/%s/%s" % [_quiz_path(quiz_id), QUESTIONS_COLLECTION, question_id]
 
+func _category_path(category_id: String) -> String:
+	return "projects/%s/databases/(default)/documents/%s/%s" % [Leaderboard.PROJECT_ID, CATEGORIES_COLLECTION, category_id]
+
 ## The owner filter every list query must carry -- see list_own_quizzes.
 func _own_uid_filter() -> Dictionary:
 	return {
@@ -866,8 +1097,24 @@ func _decode_quiz(document: Dictionary) -> Dictionary:
 		"title": _decode_string(fields, "title"),
 		"visibility": _decode_string(fields, "visibility"),
 		"questionCount": _decode_int(fields, "questionCount"),
+		# "" when the field is absent, which is what an uncategorised quiz
+		# looks like on the wire -- the same value create_quiz() accepts to
+		# mean "no category", so a round trip needs no special case.
+		"categoryId": _decode_string(fields, "categoryId"),
 		"createdAt": _decode_string(fields, "createdAt", "timestampValue"),
 		"updatedAt": _decode_string(fields, "updatedAt", "timestampValue"),
+	}
+
+## Same convention as _decode_quiz. `createdAt` is decoded even though no
+## screen sorts on it today -- it is a real field of the document, and a
+## decoder that silently drops one is how a future caller learns it does
+## not exist.
+func _decode_category(document: Dictionary) -> Dictionary:
+	var fields: Dictionary = document.get("fields", {})
+	return {
+		"id": _document_id(document),
+		"name": _decode_string(fields, "name"),
+		"createdAt": _decode_string(fields, "createdAt", "timestampValue"),
 	}
 
 ## Same convention as _decode_quiz. Only the keys the document's own
