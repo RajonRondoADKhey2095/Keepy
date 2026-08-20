@@ -7784,3 +7784,191 @@ Sondes : `BattleContractProbe` **36/36 et byte-identique au lot 1**,
    duel.
 4. **Toujours aucun son, aucun asset 3D, aucune particule, aucune
    persistance** -- hors perimetre, inchange depuis le lot 1.
+
+## KEEPY BATTLE LOT 3 : REGLAGE DE DIFFICULTE — 74 % -> 55 % de victoires, deux nombres dans un seul `.tres` (20 aout 2026)
+
+Branche `claude/keepy-battle-lot3-tuning-3j5x3j`, partie de `staging`
+(`903ea2f`). **Un seul fichier de jeu touche : `resources/battle/dummy.tres`,
+deux valeurs.** Aucune ligne de code de gameplay, aucune scene, aucun
+collider, aucun `.glb`. Retour device du lot 2 : le combat est lisible
+(Mathieu voit venir l'attaque et a le temps de repondre) mais **beaucoup
+trop facile**.
+
+```
+ai_aggression  0.55 -> 0.70     l'adversaire attaque plus souvent
+attack_damage  11   -> 13       et chaque erreur coute plus cher :
+                                5 coups propres pour un K.O. -> 4
+```
+
+### ⚠️ LE PIEGE DU LOT 1 EST RE-PROUVE, PAS SUPPOSE
+
+Une mesure ou le brain ne tourne que d'un cote mesure un **sac de frappe**.
+Verifie explicitement avant de croire le moindre chiffre, sur les memes
+graines :
+
+| cablage | victoires Keepy | actions/combat gauche | droite |
+|---|---|---|---|
+| un seul brain | **0/40 = 0 %** | **0,0** | 9,2 |
+| **MIRROIR (les deux pilotes)** | **31/40 = 78 %** | **13,1** | 12,4 |
+
+⚠️ **`BattleArena` ne fait tourner un brain QUE sur l'adversaire**
+(`_brain.setup(opponent, ...)`) : les champs `ai_*` de **`keepy.tres` sont
+MORTS dans le jeu livre** et ne servent que de joueur-etalon a la sonde.
+**Les regler deplacerait l'etalon, pas le jeu** — `keepy.tres` est donc
+intouche, et doit le rester.
+
+⚠️ **Le chiffre du lot 1 (« ~78 %, 16,1 s ») est du BRUIT D'ECHANTILLONNAGE
+a 40 combats.** Reproduit ici a l'identique (31/40, 16,11 s) puis remesure
+a 150 combats sur deux bases de graines : **73,7 % (221/300)**. A n=40,
+l'ecart-type binomial est de ~8 points. **Ne jamais conclure d'un seul
+lot de 40.**
+
+### AXE A — DEFENSE de l'adversaire (`ai_defense_rate`), 40 combats/point
+
+| valeur | victoires Keepy | moyenne | min | max |
+|---|---|---|---|---|
+| 0,00 | 85 % | 11,7 s | 5,7 | 18,8 |
+| 0,20 | 88 % | 13,1 s | 6,9 | 19,7 |
+| 0,40 | 82 % | 14,5 s | 8,0 | 25,2 |
+| **0,60 (livre)** | **78 %** | **16,1 s** | 8,0 | 32,9 |
+| 0,80 | 60 % | 18,4 s | 8,2 | 32,9 |
+| 1,00 | 45 % | **19,2 s** | 8,2 | 33,5 |
+
+**L'axe A ALLONGE les rounds** exactement comme le lot 1 l'annoncait, et
+c'est ce qui le disqualifie comme levier principal : le seul point qui
+atteint la cible de victoires (0,80 -> 60 %) coute **18,4 s de moyenne**,
+au bord du plafond de 20 s. **Non utilise, meme en appoint** — mesure a
+l'appui : `def 0,70` en plus du reglage retenu ne gagne que 5 points de
+difficulte pour +0,6 s (50,0 % / 14,5 s contre 55,0 % / 13,9 s).
+
+### AXE B — AGRESSIVITE de l'adversaire, 40 combats/point
+
+| `ai_reaction_delay_s` | victoires | moyenne | | `ai_aggression` | victoires | moyenne |
+|---|---|---|---|---|---|---|
+| 0,36 (livre) | 78 % | 16,1 s | | 0,55 (livre) | 78 % | 16,1 s |
+| 0,30 | 60 % | 17,2 s | | 0,65 | 62 % | 15,8 s |
+| 0,24 | 25 % | 16,3 s | | 0,75 | 52 % | 14,9 s |
+| 0,18 | 30 % | 13,7 s | | 0,85 | 42 % | 14,9 s |
+| 0,12 | 15 % | 12,3 s | | 0,95 | 35 % | 13,4 s |
+| 0,06 | 8 % | 10,5 s | | | | |
+
+⚠️ **`ai_reaction_delay_s` est une FALAISE, pas une pente** : 78 % a 0,36,
+60 % a 0,30, **25 % a 0,24**. Toute la plage jouable tient dans 6
+centiemes de seconde, et la non-monotonie 0,24 -> 0,18 (25 % -> 30 %)
+montre que le bruit domine deja. **Levier ecarte : increglable finement.**
+`ai_reaction_jitter_s` a le meme defaut (0,30 -> 78 %, 0,06 -> 38 %).
+
+| `attack_damage` | victoires | moyenne | | `attack_recovery_s` | victoires | moyenne |
+|---|---|---|---|---|---|---|
+| 11 (livre) | 78 % | 16,1 s | | 0,42 (livre) | 78 % | 16,1 s |
+| 13 | 70 % | 15,5 s | | 0,38 | 75 % | 16,2 s |
+| 15 | 60 % | 14,7 s | | 0,34 | 78 % | 15,5 s |
+| 17 | 55 % | 13,6 s | | 0,30 | 72 % | **INTERDIT** |
+| 19 | 52 % | 13,4 s | | | | |
+
+⚠️ **`attack_recovery_s` est REFUSE deux fois** : c'est un **levier nul**
+(78 % a 0,42 comme a 0,34), et `BattleReadabilityProbe` PHASE F gate
+`BattleHUD.FLASH_S` (450 ms) sous le plus court
+`attack_active_s + attack_recovery_s` des deux profils. **Plancher dur a
+0,33 s** — en dessous, le verdict « TOUCHE » survit a l'action qui l'a
+produit et la sonde passe au rouge. La marge est de 30 ms et le profil
+contraignant est **Keepy** (480 ms), pas l'adversaire (540 ms).
+
+### ⚠️ `attack_windup_s` : REFUSE, et la mesure dit pourquoi
+
+Reste a **0,30 (Keepy) / 0,31 (adversaire)**, la valeur validee sur device
+au lot 2. Le raccourcir est le seul levier qui **defait le lot 2** : il
+achete de la difficulte en rendant le telegraphe illisible au pouce. La
+direction est confirmee par la mesure — monter le windup de l'adversaire a
+**0,34 rend le combat PLUS FACILE (88 %)**, donc le descendre le durcit,
+et c'est exactement pour cette raison qu'on n'y touche pas.
+
+### ⚠️ `attack_damage` n'est PAS l'escalier arithmetique qu'il parait — mesure, pas deduit
+
+Avec `max_hp = 50` et un chip de `ceil(dmg x 0,25)`, le nombre de coups
+propres pour un K.O. est un escalier a trois marches : **11-12 -> 5 coups**,
+**13-16 -> 4 coups**, **17-20 -> 3 coups**. L'arithmetique predit donc que
+13 et 16 sont indiscernables. **C'est FAUX, et la mesure l'a attrape avant
+qu'on l'ecrive comme un fait** : `dmg 13` donne **55,0 %** et `dmg 16`
+**46,3 %** (300 combats chacun, meme marche de l'escalier). Le chip
+s'accumule ENTRE les coups propres, donc `3 propres + 1 chip` tue a 16
+(48+4=52) et pas a 13 (39+4=43). L'escalier gouverne le cas pur, pas le
+cas mixte.
+
+### CONFIGURATION RETENUE — 300 combats, deux bases de graines
+
+Les combinaisons **se multiplient** : tous les candidats empiles au premier
+jet ont depasse la cible (le plus doux deja a 25 %). La cible s'atteint avec
+des mouvements **doux**, pas cumules.
+
+| config | base 20260820 | base 31415926 | **poolee (300)** | moyenne |
+|---|---|---|---|---|
+| lot 2 livre (temoin) | 71 % | 77 % | **73,7 %** | 16,2 s |
+| dmg13 seul | 64 % | 67 % | 65,3 % | 15,2 s |
+| **aggr 0,70 seul** *(un cran PLUS FACILE)* | 60 % | 67 % | **63,7 %** | **15,0 s** |
+| aggr 0,75 seul | 54 % | 59 % | 56,7 % | 14,7 s |
+| aggr 0,65 + dmg13 | 52 % | 59 % | 55,7 % | 14,2 s |
+| **aggr 0,70 + dmg13 — LIVRE** | **53 %** | **57 %** | **55,0 %** | **13,9 s** |
+| **aggr 0,75 + dmg13** *(un cran PLUS DUR)* | 48 % | 50 % | **49,0 %** | **13,5 s** |
+| aggr 0,70 + dmg13 + def 0,70 | 50 % | 50 % | 50,0 % | 14,5 s |
+
+**Livre : `ai_aggression = 0.7`, `attack_damage = 13` — 55,0 %, moyenne
+13,9 s, max 23,5 s.** Au centre de la cible 50-60 %, largement dans les
+12-20 s, et **l'ordre des candidats est stable sur les deux bases** : la
+valeur n'est pas ajustee a une graine.
+
+**LES DEUX VOISINS SONT DES EDITIONS D'UN SEUL CHAMP, deja mesurees** —
+Mathieu ajuste apres son test device sans relancer de sweep :
+
+* **un cran plus facile** : `attack_damage` **13 -> 11** => 63,7 %, 15,0 s
+* **un cran plus dur** : `ai_aggression` **0.7 -> 0.75** => 49,0 %, 13,5 s
+
+### Validation
+
+`BattleContractProbe` **36 checks, 0 failure, exit 0** (sa PHASE F rapporte
+desormais **22/40 = 55 %, moyenne 13,85 s, max 23,53 s** — elle reproduit
+au chiffre pres la prediction du sweep pour cette config a cette base, ce
+qui valide que le banc d'essai jetable et la sonde livree mesuraient bien
+la meme chose). `BattleReadabilityProbe` **29 checks, 0 failure, exit 0**,
+**stderr BYTE-IDENTIQUE**. `ProbeTimeoutAudit` **exit 0, 35 sondes**
+(retour exact a la baseline apres retrait des sondes jetables). Import
+headless **exit 0**, export Web release **exit 0**, `index.wasm`
+**35 376 909 octets** — le fingerprint deja consigne pour tout lot qui ne
+touche pas le code moteur. Piege payload tenu (**0** ligne `Storing File`
+pour `assets_source`/`docs`/`web`).
+
+⚠️ **LE BYTE-IDENTIQUE BOUGE, et c'est la consequence ATTRIBUEE du reglage,
+pas une regression.** Le diff stdout de `BattleReadabilityProbe` fait
+**exactement 3 lignes**, toutes le meme fait (le combat de la PHASE B dure
+666 -> 371 ticks, trace 9238 -> 5192 caracteres) ; **la PHASE F, celle qui
+gate FLASH_S, est byte-identique** puisque ni `attack_active_s` ni
+`attack_recovery_s` n'ont bouge. Attribue champ par champ plutot
+qu'affirme (sonde jetable, supprimee avant commit) :
+
+| variante | ticks | **coups propres encaisses** |
+|---|---|---|
+| baseline lot 2 (dmg11, aggr 0,55) | 666 | **5** |
+| **damage seul** (dmg13) | 582 | **4** — la marche 5 -> 4 |
+| **agressivite seule** (aggr 0,70) | 462 | **5** — memes coups, plus tot |
+| livre lot 3 | 371 | **4** — les deux se composent |
+
+Chaque champ deplace exactement la quantite qu'il doit deplacer, les deux
+se composent, et la ligne baseline **reproduit 666 ticks / 9238 caracteres
+au caractere pres** — ce qui valide le banc d'attribution lui-meme. Rien
+n'est inexplique.
+
+### Reste ouvert
+
+1. **Jugement device, seul juge** : aucune sonde ne dit qu'un combat a 55 %
+   est AGREABLE. Et le chiffre est un **proxy** — c'est un profil pilote
+   par l'IA qui joue le role du joueur, pas Mathieu au pouce. Un humain qui
+   lit le telegraphe fera mieux que l'etalon ; un humain distrait fera pire.
+   Les deux voisins ci-dessus existent pour ca.
+2. **Asymetrie assumee** : l'adversaire tue en **4** coups propres, Keepy en
+   **5** (son `attack_damage` de 12 est intouche). C'est le sens voulu d'un
+   durcissement, mais c'est reel et non maquille.
+3. **Le plancher de difficulte atteignable par `.tres` seul est ~45 %** :
+   meme `ai_defense_rate = 1,0` ne descend qu'a 45 %, et les leviers qui
+   vont plus bas sont soit interdits (windup), soit increglables (delay).
+   Un adversaire nettement plus dur demanderait du CODE — un brain qui lit
+   les habitudes du joueur — et donc son propre lot.
