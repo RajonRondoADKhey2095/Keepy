@@ -60,6 +60,12 @@ const HUB_SCENE := "res://scenes/Hub.tscn"
 
 @onready var player: Fighter = $World/PlayerFighter
 @onready var opponent: Fighter = $World/OpponentFighter
+## The two view layers, addressed by path exactly like the fighters above
+## and for the same reason: the scene IS the wiring. They are touched at
+## ONE moment only -- the end of a round, below -- and never during a
+## tick, so nothing here can make an animation an input to the fight.
+@onready var player_view: FighterView = $World/PlayerFighter/View
+@onready var opponent_view: FighterView = $World/OpponentFighter/View
 @onready var hud: BattleHUD = $BattleHUD
 
 var _rng := RandomNumberGenerator.new()
@@ -162,8 +168,20 @@ func _on_player_ko() -> void:
 func _on_opponent_ko() -> void:
 	_end_round(true)
 
+## Stops the clock and hands the round to the HUD.
+##
+## The two settle() calls are the visual consequence of that first line.
+## `_running = false` happens on the KO TICK, which is the tick the winner
+## entered its ACTIVE window -- its FSM never emits another transition, so
+## without this its view would hold the winning lunge for as long as the
+## result panel is up (600x440 on a 1080x1920 screen: it covers neither
+## fighter). settle() returns a fighter that is still standing to rest and
+## deliberately leaves a KO'd one lying down, since the topple IS the
+## result being shown.
 func _end_round(player_won: bool) -> void:
 	_running = false
+	player_view.settle()
+	opponent_view.settle()
 	hud.show_result(player_won)
 
 func _on_quit() -> void:
