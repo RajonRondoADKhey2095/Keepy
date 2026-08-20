@@ -937,3 +937,112 @@ Il n'y a **pas** d'`update_category()` (§11.3), et **rien n'appelle
 encore `delete_category()`** : l'écran ne l'expose pas, parce que
 supprimer un tiroir fait silencieusement pendre chaque quiz qui le
 nommait et mérite une confirmation que ce lot ne construit pas.
+
+## 12. Le parcours d'authoring complet — trois écrans livrés (20 août 2026)
+
+Branche `claude/quizz-creation-editor-o5t3en`. Premier lot où le contrat
+de `Quizz.gd` est exercé de bout en bout par de vrais écrans : création
+d'un quizz, puis ajout de questions des trois formats. La liste d'écrans
+du §7 reste la référence pour le futur écran de JEU ; ce paragraphe
+documente les écrans d'AUTHORING réellement livrés, qui s'y substituent
+pour cette moitié du produit (`QuizzListScreen`/`QuizzEditorScreen`/
+`QuestionEditorScreen` du tableau §7 ne seront pas créés sous ces noms).
+
+```
+Hub ── "Keepy Quizz" ──> QuizzHomeScreen        (accueil : CTA + liste)
+        │  CTA "Creer ton quizz"                      │ tap sur une carte
+        ▼                                             ▼
+QuizzCreateScreen ── create_quiz OK ──> QuizzQuestionsScreen
+(titre + categorie optionnelle,          (liste des questions +
+ creation de categorie sur place)         ajout, 3 formats)
+```
+
+- **À la validation de l'écran de création, on enchaîne DIRECTEMENT sur
+  l'éditeur du quizz fraîchement créé** — jamais retour à l'accueil : le
+  joueur vient de créer un quizz vide, la suite évidente est d'y mettre
+  des questions. L'id vient du signal `quiz_created` (généré client-side
+  par `Quizz.gd` précisément pour éviter ce round-trip de liste).
+- **L'annulation est le bouton retour** : rien n'est persisté avant la
+  validation, quitter EST annuler.
+
+### 12.1 Architecture retenue : scènes séparées ENTRE écrans, panneaux PAR FORMAT dans l'éditeur
+
+Le critère « et dans 6 mois ? » donne une réponse en deux moitiés, chacune
+alignée sur une décision déjà actée :
+
+- **Trois SCÈNES séparées** (`QuizzHomeScreen` / `QuizzCreateScreen` /
+  `QuizzQuestionsScreen`) : ce sont trois destinations de navigation à
+  cycles de vie distincts, et la convention du dépôt (une scène par écran,
+  `change_scene_to_file()`) est celle que `LoginScreen → Hub →
+  TitleScreen` suit déjà. Un hôte unique à trois panneaux d'écran aurait
+  réinventé une pile de navigation dans un nœud, pour aucun chrome
+  partagé (les trois écrans n'ont en commun que le header).
+- **À L'INTÉRIEUR de l'éditeur, les trois formats de question sont des
+  PANNEAUX d'une même scène** (`Mcq4Panel`/`TrueFalsePanel`/`FreePanel`
+  bascule par chips) — exactement la forme que le §7 a déjà arbitrée pour
+  le futur écran de jeu (« hôte unique + panneaux par format »), pour la
+  même raison : le chrome (énoncé, compteur, bouton, liste au-dessus) est
+  commun aux trois formats, et on change de format par QUESTION, pas par
+  session. Cohérence avec §7, pas écart.
+
+### 12.2 Comment l'id du quizz traverse la navigation
+
+`change_scene_to_file()` ne transporte aucun argument. L'éditeur expose
+donc un `static func open(tree, quiz_id, quiz_title)` qui gare les deux
+valeurs dans des `static var` relues par `_ready()` de la nouvelle
+instance — les statics d'un script survivent au changement de scène par
+construction, et chaque `open()` les réécrit, donc aucun état ne fuit
+d'une visite à l'autre. Un boot DIRECT de la scène (sonde, F6) les trouve
+vides et dégrade : message à l'écran, formulaire désactivé, retour
+fonctionnel.
+
+### 12.3 Ce que l'éditeur garantit côté UI avant tout envoi
+
+- **Bornes** : `max_length` sur chaque champ (titre 60, énoncé 200, choix
+  et réponse 120, catégorie 30) + compteur vivant sur l'énoncé + messages
+  inline pour les vides et les réponses non choisies — le joueur ne
+  découvre jamais une limite par un rejet serveur.
+- **`order`** : `max(order existants) + 1`, jamais un repart de 0 et
+  jamais `list.size()` — les orders ne sont ni uniques ni contigus (§5),
+  seul max+1 garantit de trier la nouvelle question après toutes les
+  autres. Plafonds vérifiés inline : 50 questions (§5), order ≤ 199.
+- **Séquencement** : `_busy` reste vrai de l'appui sur « Ajouter la
+  question » jusqu'à la fin du create ET du refresh de liste qui le suit
+  — deux ajouts ne peuvent pas se chevaucher, la file FIFO de `Quizz.gd`
+  n'est jamais contournée. La liste est re-fetchée du serveur plutôt que
+  patchée localement : ce que le joueur voit est toujours ce qui est
+  stocké.
+- **`questionCount` n'est PAS maintenu** par l'éditeur (pas
+  d'`update_quiz` après chaque ajout) : c'est une valeur d'affichage que
+  rien ne réconcilie de toute façon (§5), et le maintenir doublerait
+  chaque ajout d'un second write dont l'échec après un create réussi
+  serait ininterprétable pour le joueur. À re-poser le jour où un écran
+  AFFICHE ce compteur.
+
+### 12.4 Catégories : dégradation attendue en staging, jamais un blocage
+
+Les rules `categories` (§11) ne sont pas déployées (main ne les contient
+pas ; elles partiront au prochain push `main`). Sur staging, tout appel
+catégorie répond donc 403 — **c'est l'état attendu, pas un bug**. L'écran
+de création dégrade : hint plein contraste « Categories indisponibles pour
+l'instant — ton quizz sera cree sans categorie », chips et barre de
+création de catégorie masquées (des contrôles qui ne peuvent que 403
+liraient comme cassés, pas comme optionnels), et la validation du quizz
+reste entièrement fonctionnelle sans catégorie. Le jour où les rules
+partent en prod, le même écran sert le chemin nominal sans changement.
+
+### 12.5 Le test fonctionnel « bout en bout » et sa limite MESURÉE
+
+Le pipeline réel a été poussé jusqu'au mur d'authentification depuis le
+sandbox : `Quizz.gd` réel (`network_enabled` forcé, Auth stubbé avec un
+bearer invalide), vraies requêtes HTTP vers `keepy-8df91` — les SIX
+opérations (create quiz, create question ×3 formats, list questions, list
+quizzes) traversent la file FIFO et reviennent en **401 UNAUTHENTICATED,
+jamais 400** : corps REST bien formés jusqu'à la couche d'auth Google.
+Le passage COMPLET exige un idToken Google, et aucun ne peut être frappé
+hors navigateur : le provider anonyme répond `ADMIN_ONLY_OPERATION` et
+l'email/password `OPERATION_NOT_ALLOWED` (mesurés tous les deux le
+20 août 2026) — Google OAuth interactif est le seul provider du projet.
+Le test des trois formats avec écriture réelle est donc un test DEVICE
+sur `keepy-staging.vercel.app`, et c'est exactement ce que le palier 1
+existe pour permettre.
