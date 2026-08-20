@@ -7982,32 +7982,45 @@ n'est inexplique.
 https://keepy-crpgv8n8c-rajonrondoadkhey2095s-projects.vercel.app`.
 `main` **non touche** (palier 2, gate Mathieu).
 
-⚠️ **LA VERIFICATION SUR LE SERVICE N'A PAS PU ETRE FAITE DEPUIS CE SANDBOX,
-et c'est dit plutot que remplace par le log CI.** La regle permanente de ce
-fichier est de ne jamais prendre un log CI pour une preuve de ce qui est
-reellement servi ; ici les DEUX canaux qui permettaient de la respecter sont
-absents :
+⚠️ **LA VERIFICATION SUR LE SERVICE A FINALEMENT ETE FAITE — mais en
+DEUXIEME temps, et le premier temps merite d'etre garde.** Au moment du
+deploiement, les DEUX canaux qui permettent de respecter la regle « jamais le
+log CI seul » etaient absents : egress direct bloque (`keepy-staging.vercel.app`,
+l'URL de preview et meme `vercel.com` rendent tous `000`, CONNECT refuse par le
+proxy — teste, pas suppose) et aucun outil MCP Vercel charge dans la session.
+Le trou a donc ete consigne comme tel plutot que comble par le log. Un canal
+Vercel est apparu plus tard dans la meme session, et la verification a ete
+faite pour de vrai :
 
-* **egress direct bloque** — `keepy-staging.vercel.app`, l'URL de preview et
-  meme `vercel.com` rendent tous `000` (CONNECT refuse par le proxy), teste
-  et pas suppose ;
-* **aucun outil MCP Vercel n'est charge dans cette session** —
-  `mcp__Vercel__web_fetch_vercel_url`, le contournement utilise par les lots
-  precedents, n'existe pas ici (`ToolSearch` sur `+vercel` ne rend rien), et
-  `WebFetch` tombe sur le meme blocage d'egress.
+| mesure | valeur servie |
+|---|---|
+| `CACHE_VERSION` (`index.service.worker.js`) | **`1787255094`** = **19:44:54 UTC** |
+| `GODOT_CONFIG.fileSizes.index.wasm` | **35 376 909** |
+| `index.pck` | 5 749 152 |
+| fraicheur | `x-vercel-cache: MISS`, `age: 0` sur les DEUX requetes |
 
-Ce qui est donc etabli : la chaine **commit -> build -> deploiement ->
-alias**, par le log. Ce qui ne l'est PAS : que l'alias sert bien ces octets a
-un navigateur. **Verification en une ligne, a faire par Mathieu (ou une
-session avec un canal Vercel)** — le `CACHE_VERSION` du service worker est un
+**Le `CACHE_VERSION` tombe A L'INTERIEUR de l'etape `Export Web build` du run
+#169** (19:44:50 -> 19:44:55) : l'alias sert donc bien ce build, et il a
+largement AVANCE par rapport au run #167 (lot 2, export ~19:04). Le reglage
+est en ligne sur staging. `index.wasm` est identique au fingerprint permanent
+de tout lot qui ne touche pas le code moteur — coherent avec un diff de deux
+nombres dans un `.tres`.
+
+⚠️ **L'alias pointe sur le run #169 (le commit de doc), pas sur le #168
+(le merge du reglage).** Sans consequence : `CLAUDE.md` n'est pas une ressource
+Godot, donc le contenu de JEU des deux builds est identique. Mais un futur
+lecteur qui chercherait le `CACHE_VERSION` du #168 ne le trouverait pas, et ce
+n'est pas une anomalie.
+
+Rappel de methode, valable pour tout futur lot : le `CACHE_VERSION` est un
 epoch pose a l'export, donc c'est le discriminateur le moins cher pour savoir
-quel build est aliase (leçon deja consignee au lot token du 18 aout) :
+quel build est reellement aliase (leçon deja consignee au lot token du
+18 aout). En une ligne, quand l'egress le permet :
 
 ```
 curl -s https://keepy-staging.vercel.app/index.service.worker.js | grep CACHE_VERSION
 ```
 
-Il doit avoir AVANCE par rapport au build precedent (run #167). Un
-`CACHE_VERSION` inchange voudrait dire que l'alias n'a pas bascule, malgre le
-`Success!` du log — exactement le cas que la regle « jamais le log seul »
+Un `CACHE_VERSION` inchange voudrait dire que l'alias n'a pas bascule, malgre
+le `Success!` du log — exactement le cas que la regle « jamais le log seul »
 existe pour attraper.
