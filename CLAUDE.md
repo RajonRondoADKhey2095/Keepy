@@ -7364,3 +7364,663 @@ onglet Safari **et** en PWA installee. Non touche par ce lot et toujours
 ouvert : la redondance entre le bandeau peint « KEEPY CHASED » et le logo
 `TitleLogo` du moteur, deja signalee au lot ecran-titre du 14 aout -- elle
 devient plus visible maintenant que les deux tiennent l'ecran en entier.
+
+## KEEPY BATTLE, LOT 1 : squelette jouable d'un duel 1v1, ZERO asset 3D (20 aout 2026)
+
+Branche `claude/keepy-battle-lot-1-1yys5r`, partie de `staging` (`8272dfa`,
+ou `main` et `staging` etaient alignes). **Troisieme mini-jeu du hub**, apres
+Chased et Quizz. Aucun fichier de Chased ni de Quizz touche : le seul fichier
+existant modifie est le Hub (plus sa `.tscn`), qui gagne une troisieme carte.
+
+**Le but de ce lot est de valider le FEEL et l'EQUILIBRAGE AVANT de depenser
+un credit Meshy** : deux capsules placeholder, rien d'autre. Les assets 3D,
+les animations, les sons, la persistance Firestore, la progression, plusieurs
+adversaires et les effets visuels sont HORS PERIMETRE et non faits.
+
+### Le contrat "et dans 6 mois ?" : un adversaire = UN .tres + UN .glb, ZERO ligne de code
+
+C'est la contrainte structurante du lot, pas un objectif de style.
+
+* **`FighterProfile`** (`scripts/battle/FighterProfile.gd`, une `Resource`)
+  porte **tout** ce qui differe entre deux combattants : hp, timings
+  windup/active/recovery par action, degats, ratio de garde, duree de
+  stagger, les cinq parametres d'IA, et le `.glb` futur avec ses trois
+  corrections `ModelSlot` (`model_scale`, `model_rotation_degrees`,
+  `model_offset`) plus la couleur du placeholder.
+* **`Fighter.gd` et `FighterBrain.gd` sont GENERIQUES** : aucun `match
+  species`, aucune sous-classe par animal, nulle part. Deux profils livres,
+  `resources/battle/keepy.tres` et `dummy.tres` ; ils ne different que par
+  des nombres.
+* **Le `match` de `FighterProfile.timing_for()` est le SEUL endroit du depot
+  qui associe une action a ses nombres**, et il pointe vers des CHAMPS, pas
+  vers des valeurs. Une quatrieme action toucherait cette fonction et les
+  exports au-dessus, rien d'autre.
+
+### UNE seule FSM, partagee joueur et IA -- ce n'est pas une preference de style
+
+Etats : `IDLE / WINDUP / ACTIVE / RECOVERY / STAGGER / KO`. Il n'y a pas de
+"fighter joueur" et pas de "fighter IA" : il y a un `Fighter`, et quelque
+chose qui appelle `request_action()` dessus. Le tap humain (les trois zones
+du HUD) et le selecteur d'intention (`FighterBrain`) entrent par **la meme
+fonction** et sont indiscernables ensuite.
+
+⚠️ **La raison est un mode de panne, pas de l'elegance** : une IA qui fait
+tourner son propre systeme avec ses propres timings est une IA qu'on peut
+equilibrer contre des regles que le joueur ne joue pas, et la divergence
+reste invisible jusqu'a ce que quelqu'un la mesure -- exactement le defaut
+`SubstituteModel.tscn` deja consigne dans ce fichier. **PHASE E de la sonde
+pointe le brain sur le fighter du JOUEUR et exige un vrai combat**, donc la
+reciprocite est exercee et pas affirmee.
+
+### Determinisme : ticks fixes accumules, RNG seede explicitement
+
+`BattleArena` avance les deux fighters ET le brain par pas entiers de
+`TICK_S = 1/60`, sortis d'un accumulateur -- jamais le `delta` brut de la
+frame. Sur telephone le temps de frame est ce que le navigateur veut bien
+donner, et une FSM avancee par ce delta a des frontieres de phase qui
+tombent sur des frames differentes d'un run a l'autre : deux combats
+identiques divergent, et « est-ce que cet enchainement est vraiment
+imparable ou est-ce que j'ai eu une frame longue » devient sans reponse.
+
+⚠️ **`_physics_process` donnerait aussi un pas fixe et a ete ECARTE** : il
+lie le rythme du combat a un reglage projet qui appartient a Chased, donc un
+changement la-bas re-equilibrerait ce jeu en silence.
+
+**Aucun `randi()` global nulle part dans `scripts/battle/`** : un seul
+`RandomNumberGenerator`, seede `base_seed + numero de round`.
+
+⚠️ **`BattleArena` parse `--seed=` EN LIGNE au lieu d'appeler
+`DevSeed.seed_value()`, qui fait exactement ca -- piege trouve en ecrivant
+le lot, pas apres coup.** `export_presets.cfg` porte `scripts/dev/*` dans
+son `exclude_filter`, donc `DevSeed` **n'est pas dans le pack livre**. Une
+reference `class_name` depuis un script livre resout dans l'editeur ET en
+headless, puis echoue **uniquement dans le build web** -- le seul endroit
+que personne ne peut verifier. Verifie sur le `.pck` exporte : les deux
+seules occurrences de `DevSeed` y sont dans le cache de classes globales
+(qui liste deja d'autres classes `dev` sur `main` aujourd'hui), aucune
+depuis `scripts/battle/`.
+
+### Resolution des coups : du timing pur, aucune hitbox 3D
+
+Un coup se resout UNE fois, au premier tick de la fenetre `ACTIVE` de
+l'attaquant, contre l'etat du defenseur a cet instant :
+
+| defenseur | resultat |
+|---|---|
+| `GUARD` en `ACTIVE` | **BLOQUE** : degats x `guard_damage_ratio` (0,25), **pas de stagger** |
+| `DODGE` en `ACTIVE` | **ESQUIVE** : zero degat |
+| tout le reste, **y compris `ATTACK` en `ACTIVE`** | **TOUCHE** : degats pleins + stagger |
+
+La derniere ligne est la regle qui empeche les deux combattants de simplement
+marteler l'attaque : **les frames actives d'une attaque ne defendent pas**,
+donc celui qui s'engage en second encaisse l'echange. Le stagger (0,55 s) est
+plus long que n'importe quelle recovery : etre touche DOIT etre pire que
+rater.
+
+La resolution vit dans `BattleArena`, **une seule fois** : un `Fighter`
+annonce `strike_activated` et ne sait rien de qui est en face. Aucun des deux
+ne detient de reference vers l'autre.
+
+### Controles : TAP UNIQUEMENT, trois zones fixes, aucun geste
+
+Trois boutons larges en bas d'ecran, rien d'autre. **Pas de swipe**, pour
+deux raisons independantes : Chased possede deja le swipe comme geste de
+changement de voie, donc le meme mouvement voudrait dire deux choses dans une
+seule app ; et un swipe horizontal sur iOS Safari est en concurrence avec la
+navigation arriere du navigateur, ce qu'une page ne gagne pas de facon fiable.
+
+⚠️ **Les boutons restent ACTIFS pendant un engagement** au lieu de se griser :
+`Fighter` bufferise un tap anticipe pendant `INPUT_BUFFER_S` (0,16 s) et le
+rejoue au retour a `IDLE`, donc un tap « trop tot » est un input reel qui
+fonctionne. Le griser jetterait une pression que le jeu allait honorer, et
+ferait clignoter le panneau plusieurs fois par seconde.
+
+`INPUT_BUFFER_S` est une constante de JEU et **deliberement pas un export par
+profil** : c'est une propriete des controles, identique pour tout le monde ;
+laisser deux combattants ne pas etre d'accord dessus serait deux jeux.
+
+### Le point d'echange lot 3 est deja ecrit
+
+Chaque fighter porte un noeud `Body` de type **`ModelSlot`**
+(`scripts/world/ModelSlot.gd`), exactement comme `$Silhouette` de
+`Pursuer.tscn`. Installer un `.glb` au lot 3 = poser `model_scene` (+ les
+trois corrections) **dans le `.tres`**. Aucun noeud n'est ajoute, deplace,
+renomme ni supprime, donc rien dans `Fighter.gd`, `BattleArena.gd` ou le HUD
+n'a a etre re-pointe. `Fighter._apply_profile_art()` est le hand-off complet
+et il est deja la.
+
+⚠️ **Le tint du placeholder et l'install du `.glb` passent par le MEME chemin
+de code** (`ModelSlot.apply_material()`, qui atteint les surfaces du modele
+installe une fois qu'il existe) : un futur `.glb` herite du traitement
+couleur du profil au lieu d'avoir besoin d'une seconde branche que personne
+n'exerce. Materiaux **unshaded**, comme toute surface de ce projet.
+
+### `SafeArea.fill_screen()` ici, `keep_game_framing()` chez Chased
+
+Battle appelle `fill_screen()` comme les ecrans d'UI. Contrairement a
+`Game.tscn` -- qui redemande `KEEP` parce que le budget de reaction de Chased
+est cale sur un cadrage 9:16 -- Battle n'a **aucun monde defilant et aucun
+budget lie a la distance** : les deux combattants sont a des marques fixes,
+donc un viewport plus haut montre plus de ciel vide et ne change rien de
+jouable.
+
+⚠️ **La camera est en `keep_aspect = KEEP_WIDTH` (0), et c'est OBLIGATOIRE
+ici, pas cosmetique.** En `KEEP_HEIGHT` (le defaut), le viewport plus haut
+que produit `fill_screen()` **retrecit l'etendue horizontale** et les deux
+combattants sortaient du cadre par les cotes. **Mesure sur la scene
+construite, aux deux ratios** : etendue horizontale **identique** a 1080x1920
+et 1170x2532 (x 95..985 des deux cotes), combattants degages de la barre du
+haut ET de la rangee de boutons. Panneau du Hub a trois cartes : les trois
+boutons a l'ecran, marge basse **128 px** en 9:16 et **228 px** sur device.
+
+### La sonde a trouve un defaut REEL de mesure -- dans la sonde, pas dans le jeu
+
+`scripts/dev/BattleContractProbe.tscn` (nouvelle, **36 checks, 0 echec**)
+gate l'ordre et la duree des phases, la matrice de resolution complete, le
+buffer d'input, et le determinisme. Elle pilote les **scripts livres**,
+jamais un stub.
+
+⚠️ **PHASE F a d'abord rapporte « le profil Keepy perd 40 fois sur 40 », et
+ce chiffre ne mesurait PAS un desequilibre.** Elle ne faisait tourner un
+brain que du cote adversaire -- fidele a l'arene reelle, ou l'autre cote est
+un humain -- donc le fighter Keepy **ne faisait rien du tout** : un sac de
+frappe immobile perd. Un chiffre profil-contre-profil demande les deux cotes
+joues (`mirrored`). **Un balayage jetable a ete ecrit pour trancher plutot
+que de raisonner** : a profils symetriques le resultat est ~30/60 (equilibre),
+et une reaction ou un windup plus rapides **GAGNENT** (54/60, 53/60) --
+l'inverse de l'hypothese de depart, qui etait que s'engager en premier
+punissait. La sonde a ete corrigee, le balayage supprime avant commit.
+
+⚠️ **Deuxieme correction dans la sonde, meme famille** : l'assertion de duree
+par phase comparait a `ceil(secondes / tick)` et ignorait le report
+d'overshoot que `Fighter.advance()` fait DELIBEREMENT d'une phase a la
+suivante. Sans ce report chaque phase arrondirait vers le HAUT et une action
+a trois phases durerait jusqu'a trois ticks de trop, differemment selon le
+combattant. **L'assertion exacte porte donc sur le TOTAL** (47 ticks pour
+47 nominaux) et laisse **un tick** de jeu par phase, borne parce que le
+report est reapplique a chaque transition et ne s'accumule jamais.
+
+### Equilibrage mesure, pas ressenti -- et volontairement NON gate
+
+Trois iterations, chacune remesurees sur 40 combats seedes :
+
+| | hp | resultat |
+|---|---|---|
+| depart | 100 | rounds **30,1 s** de moyenne -- trop long pour du mobile |
+| apres reduction hp + resserrage du profil adverse | 60 | 39/40, **walkover** |
+| **livre** | **50** | **31/40 (~78 %), moyenne 16,1 s** (min 8,0 / max 32,9) |
+
+**PHASE F rapporte et n'asserte RIEN**, deliberement : ce qu'est un combat
+juste est un jugement device, et un nombre gate ici serait un nombre regle
+jusqu'a ce qu'il passe au vert -- le faux-vert que `ProbeCoverage.gd`
+documente cinq fois. Retoucher l'equilibrage est une edition de `.tres`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles ; taille confirmee contre le `Content-Length`, le piege de
+troncature silencieuse deja consigne). Import headless **exit 0**, export Web
+release **exit 0**, boot headless de `Battle.tscn` / `BattleHUD.tscn` /
+`BattleFighter.tscn` / `Hub.tscn` (`--quit-after 2`) **tous exit 0**, aucune
+erreur de parse. `index.wasm` **35 376 909 octets** -- identique au
+fingerprint deja consigne pour tout lot qui ne touche pas le code moteur.
+`index.pck` 5 740 640 octets (export unique et propre, `build/` supprime
+avant -- a lire avec la mise en garde permanente sur son instabilite).
+
+Sondes : `BattleContractProbe` (**36/36**), `ProbeTimeoutAudit` (**34 sondes
+scenes**, la nouvelle comprise, toutes armees -- 33 avant ce lot),
+`AssetContractAudit` (12/12 visuels, **0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**. Piege payload
+tenu : **0** ligne `Storing File` pour `res://scripts/dev`, `res://assets_source`,
+`res://docs` ou `res://web`.
+
+### Dette et reste ouvert
+
+1. **Jugement device, et c'est tout l'objet du lot** : est-ce que le duel se
+   lit et se joue bien au pouce sur un telephone -- lisibilite des trois
+   zones, longueur des rounds, et surtout **si le windup de l'adversaire est
+   assez telegraphie pour etre lu**. Aucune sonde ne le dit.
+2. **DETTE ASSUMEE : les combattants ne bougent pas.** Le retour d'etat est
+   porte **entierement par le HUD** (libelle d'etat par combattant + verdict
+   du coup) ; les capsules sont statiques. Les effets visuels sont hors
+   perimetre de ce lot, mais c'est le manque le plus probable a remonter du
+   test device -- un `WINDUP` sans mouvement se lit mal a vitesse reelle. Le
+   correctif naturel (une amorce de fente sur `WINDUP`/`ACTIVE`) appartient
+   au lot animation, pas a une rustine ici.
+3. **Un seul adversaire**, `dummy.tres`, nomme « Sparring ». Le second est un
+   `.tres` de plus ; il n'y a pas d'ecran de selection, et il n'y en avait pas
+   dans le perimetre.
+4. **Aucune persistance** : ni score, ni progression, ni Firestore. Un round
+   perdu ou gagne ne laisse aucune trace.
+5. **`ai_defense_rate` est le vrai bouton de difficulte**, plus que les
+   degats : le balayage montre la duree moyenne d'un round passer de 25 s a
+   44 s quand il va de 0,0 a 0,8, a profils par ailleurs identiques.
+
+## KEEPY BATTLE, LOT 2 : rendre le combat LISIBLE, toujours ZERO asset 3D (20 aout 2026)
+
+Branche `claude/keepy-battle-readability-erclyi`, partie de `staging`
+(`06c94f1`). Ferme la **dette 2 du lot 1** (« les combattants ne bougent
+pas »), qui etait le blocage numero un remonte du test device. Toujours
+aucun asset 3D : ce lot anime les capsules placeholder, et c'est
+deliberement l'ordre choisi -- prouver qu'un duel de ce type se lit au
+pouce AVANT de depenser un credit Meshy.
+
+### Ce que la mesure a dit, et pourquoi les deux hypotheses de depart etaient a cote
+
+Le brief posait deux hypotheses a departager par instrumentation. Aucune
+des deux n'etait la bonne, et c'est le resultat le plus utile du lot.
+Mesure headless sur les scripts LIVRES, avant d'ecrire une ligne :
+
+| hypothese | verdict |
+|---|---|
+| **H1** le HUD ne s'abonne pas a `WINDUP` | **FAUX**. Il s'y abonne, et il l'affiche : sequence `Attaque - Prepare` -> `Attaque - Actif` -> `Attaque - Recupere` -> `Pret`, avec **19 ticks = 317 ms** passes sur « Prepare ». Le libelle n'a jamais ete desynchronise. |
+| **H2** le `WINDUP` est trop court pour etre lu | **FAUX tel quel**. 317 ms n'est pas un telegraphe court -- c'est un telegraphe **invisible** : rien sur les combattants ne bougeait a aucun moment de l'attaque. |
+
+**Le defaut n'a jamais ete « le HUD est en retard ». Il etait que les
+combattants etaient muets**, et qu'un libelle de 26 px en haut de l'ecran
+ne sera jamais un telegraphe quand le regard est sur deux capsules au
+milieu. C'est la conclusion qui a dicte tout le lot.
+
+Les deux captures device s'expliquent alors exactement, et par des causes
+DIFFERENTES l'une de l'autre :
+
+* **« Sparring : TOUCHE » affiche pendant que Sparring dit « Pret »** :
+  `FLASH_S` valait **700 ms**, alors qu'un attaquant reste engage
+  `active + recovery` = **480 ms** (Keepy) / **540 ms** (Sparring) apres
+  la resolution de son coup. Le verdict **survivait a l'action qui l'avait
+  produit de 160 ms**. Ni l'un ni l'autre des deux affichages n'etait faux
+  -- le verdict est un rapport RETARDE, le libelle d'etat un rapport
+  INSTANTANE -- mais ensemble ils se contredisent et le joueur n'a aucun
+  moyen de savoir lequel croire.
+* **« Attaque - Actif » a l'ecran de KO** : un coup se resout dans le
+  PREMIER tick `ACTIVE` de l'attaquant, donc le perdant tombe a 0 hp sur
+  ce tick-la et `BattleArena` arrete l'horloge immediatement. La FSM du
+  vainqueur est **reellement figee en `ACTIVE`** et n'en sortira jamais.
+  Le libelle disait la verite sur une simulation arretee.
+
+### Le telegraphe vit sur le combattant, dans `FighterView.gd`
+
+Un noeud `View` par combattant, enfant direct du `Fighter` dans
+`BattleFighter.tscn`. **Strictement en LECTURE SEULE sur la FSM** : il
+n'appelle jamais `request_action()` ni `advance()`, n'ecrit aucun champ, et
+ne lit un etat que pour choisir quelle animation jouer.
+
+| etat | ce que le joueur voit |
+|---|---|
+| `IDLE` | respiration lente (bob 4,5 cm), pour qu'un ecran au repos ne soit jamais mort |
+| `WINDUP` (attaque) | **recul progressif + teinte qui monte vers le rouge, sur TOUTE la duree de la phase** |
+| `WINDUP` (garde/esquive) | meme amorce, 3x plus discrete, **et aucune teinte** |
+| `ACTIVE` attaque | fente nette vers l'adversaire (60 ms) |
+| `ACTIVE` garde | encaissement bas et large (`scale.y` 0,86) |
+| `ACTIVE` esquive | glissade en arriere + inclinaison |
+| `RECOVERY` | retour au neutre sur la duree REELLE de la phase, donc **toujours plus lent que la fente** |
+| `STAGGER` | recul profond puis oscillation amortie |
+| `KO` | bascule a -82 deg, corps pose au sol |
+| impact | flash **sur le combattant TOUCHE** : blanc si `HIT`, bleu froid si `BLOCKED`, **rien si `DODGED`** |
+
+⚠️ **La couleur ne veut dire QU'UNE chose : danger entrant.** Seul un
+`WINDUP` d'ATTAQUE monte vers `ALERT_COLOR`, et **progressivement**, avec
+un `EASE_IN` -- l'intensite EST l'horloge que le defenseur lit. Garde et
+esquive se distinguent par la SILHOUETTE, jamais par la teinte. Un
+telegraphe qui partage son canal avec deux actions inoffensives est un
+telegraphe qu'il faut decoder au lieu de le voir.
+
+### Pourquoi ca anime `$Body` (le `ModelSlot`) et jamais la geometrie de la capsule
+
+Chaque tween ecrit `position` / `rotation_degrees` / `scale` **sur le
+`ModelSlot`**, et la teinte passe par `ModelSlot.apply_material()`. C'est
+le contrat deja etabli du projet (`Obstacle.gd` anime deja un slot de
+cette facon), et c'est ce qui rend le **lot 4 gratuit** : un `.glb`
+installe dans le slot est un ENFANT du noeud que ces tweens deplacent,
+donc il herite de toutes les animations sans une ligne a changer.
+
+La teinte est le seul point qui demandait du soin a travers ce swap, et il
+est traite : `_ensure_material()` **DUPLIQUE** ce que le slot dessine avant
+d'y toucher (l'importeur glTF lie UN materiau partage sur le mesh -- le
+mutter tinterait toutes les instances du `.glb` a la fois), et n'ecrit que
+`albedo_color`, qui **MULTIPLIE** une texture d'albedo au lieu de la
+remplacer. Un modele texture garde sa texture et rougit quand meme.
+
+### Le determinisme, prouve deux fois plutot qu'affirme
+
+**`BattleContractProbe` est BYTE-IDENTIQUE au lot 1**, meme md5 de sortie
+complete (`8138c3b3e7b2493cab0f2a26c354efd4`), 36/36, avec les vues
+attachees et vivantes.
+
+⚠️ **Il n'y a PAS de bypass headless dans `FighterView`**, et c'est
+delibere : sauter la couche d'animation sur une sonde headless voudrait
+dire que la sonde n'exerce jamais le fichier dont toute la promesse est
+qu'il ne peut pas modifier un combat -- la branche qui a le plus besoin
+d'etre prouvee serait la seule ou aucune sonde n'entre. La sonde tourne
+avec les tweens vivants et doit quand meme sortir la meme trace.
+
+`BattleReadabilityProbe` (**29/29**, nouvelle) ajoute ce que la sonde de
+contrat ne peut pas voir :
+
+* **PHASE A** : le `+Z` local des deux combattants pointe bien vers
+  l'adversaire, **lu dans `Battle.tscn` via `SceneState`** (dot = 1,000
+  des deux cotes) et non suppose -- une rotation retournee dans la scene
+  ferait partir toutes les fentes a l'envers sans que rien n'echoue. Elle
+  verifie aussi que **deux fentes simultanees (0,60) ne peuvent pas
+  s'interpenetrer** (1,10 entre les surfaces).
+* **PHASE B** : le MEME combat, meme seed, joue une fois sans frame entre
+  les ticks et une fois **avec une vraie frame entre chaque tick** (donc
+  tous les tweens avancent pour de bon) -> **trace byte-identique, 666
+  ticks des deux cotes**. C'est la preuve que le temps moteur ne fuit pas
+  dans la FSM.
+* **PHASE C** : le recul passe de 0,011 a 0,110 entre 27 % et 80 % du
+  windup, et la teinte de `g=0,630` a `g=0,395` -- la lisibilite CROIT,
+  elle ne claque pas.
+* **PHASE D** : attaque `+0,300`, esquive `-0,280`, garde `x0,86` en
+  hauteur -- trois silhouettes distinctes.
+* **PHASE E** : 25 actions avortees coup sur coup laissent **3 tweens
+  vivants**, pas 75 ; et un KO en pleine fente gagne sur la fente.
+* **PHASE F** : les deux contradictions du HUD, en assertions.
+
+### Les deux corrections HUD, chacune adossee a un chiffre
+
+* **`FLASH_S` 0,70 -> 0,45 s.** Sous les deux durees d'engagement mesurees
+  (480 / 540 ms), donc un verdict ne peut plus survivre a l'action qui l'a
+  cause, quel que soit le combattant. ⚠️ **C'est une constante de
+  PRESENTATION du HUD, pas un timing de combat** : aucune valeur
+  windup/active/recovery/stagger d'aucun `.tres` n'est touchee par ce lot.
+* **`show_result()` remplace les deux libelles d'etat** par « Vainqueur »
+  et « K.O. ». Une fois le round fini, un affichage de phase EN COURS
+  sous-entend un combat qui tourne encore ; la seule chose honnete que ces
+  deux lignes peuvent dire est comment ca s'est termine. Elles repartent en
+  affichage de phase au round suivant, `Fighter.reset()` emettant `IDLE`
+  avant `show_fight()`.
+
+### `settle()` : une consequence visuelle du gel de la simulation
+
+`_running = false` tombe sur le tick du KO, c'est-a-dire le tick ou le
+VAINQUEUR est entre en `ACTIVE`. Sa FSM n'emettra plus jamais de
+transition, donc sans intervention sa vue tiendrait la fente gagnante,
+indefiniment, a cote du panneau de resultat -- qui fait **600x440 sur un
+ecran 1080x1920 et ne couvre aucun des deux combattants**. `BattleArena`
+appelle donc `settle()` sur les deux vues a la fin du round : elle ramene
+au repos un combattant debout et **laisse volontairement au sol celui qui
+est K.O.**, sa chute ETANT le resultat qu'on montre.
+
+### Une seule addition a `Fighter.gd`, en lecture seule
+
+`phase_duration()` (+ `_phase_total`) : la longueur PLEINE de la phase
+courante. Purement additif, aucun branchement dessus, aucun changement de
+comportement -- la sonde de contrat byte-identique le prouve. Elle existe
+pour que la vue anime un windup sur **exactement** sa duree sans
+re-deriver le `match` action -> timings de `FighterProfile`, qui doit
+rester le seul du depot.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox. Import
+headless **exit 0**, export Web release **exit 0**, boot headless de
+`Battle.tscn` **0 erreur**. `index.wasm` **35 376 909 octets** -- identique
+au fingerprint deja consigne (aucun code moteur touche). Piege payload
+tenu : **0** ligne `Storing File` pour `res://scripts/dev` ;
+`scripts/battle/FighterView.gdc` bien present dans le `.pck`.
+
+Sondes : `BattleContractProbe` **36/36 et byte-identique au lot 1**,
+`BattleReadabilityProbe` **29/29**.
+
+### Dette et reste ouvert
+
+1. **Le jugement device reste entier, et c'est le point du lot.** Aucune
+   sonde ne dit que 317 ms de windup suffisent A L'OEIL une fois le
+   telegraphe visible. **Chiffre mesure a garder sous la main pour le lot
+   3 : `attack_windup_s` = 0,30 (Keepy) / 0,31 (Sparring), soit 19 ticks.
+   Si le test device dit que c'est encore trop serre, la valeur a essayer
+   est 0,40-0,45 s** -- mais **le tuning n'est PAS fait ici**, deliberement :
+   calibrer a l'aveugle contre un telegraphe qu'on ne voyait pas n'aurait
+   rien mesure.
+2. **La teinte suppose un `StandardMaterial3D`.** Un futur asset a
+   `ShaderMaterial` perdrait la rampe rouge (et seulement elle : tout le
+   telegraphe de transformation continue de se lire). `_tint_to()` devient
+   un no-op silencieux dans ce cas, par construction.
+3. **Les tweens tournent en temps MOTEUR, la FSM en pas fixes.** Les deux
+   peuvent deriver d'une frame, et c'est autorise **precisement parce que**
+   rien ne traverse de la vue vers la FSM. Ne jamais brancher un retour de
+   la vue vers le combat, c'est ce qui ferait du framerate une entree du
+   duel.
+4. **Toujours aucun son, aucun asset 3D, aucune particule, aucune
+   persistance** -- hors perimetre, inchange depuis le lot 1.
+
+## KEEPY BATTLE LOT 3 : REGLAGE DE DIFFICULTE — 74 % -> 55 % de victoires, deux nombres dans un seul `.tres` (20 aout 2026)
+
+Branche `claude/keepy-battle-lot3-tuning-3j5x3j`, partie de `staging`
+(`903ea2f`). **Un seul fichier de jeu touche : `resources/battle/dummy.tres`,
+deux valeurs.** Aucune ligne de code de gameplay, aucune scene, aucun
+collider, aucun `.glb`. Retour device du lot 2 : le combat est lisible
+(Mathieu voit venir l'attaque et a le temps de repondre) mais **beaucoup
+trop facile**.
+
+```
+ai_aggression  0.55 -> 0.70     l'adversaire attaque plus souvent
+attack_damage  11   -> 13       et chaque erreur coute plus cher :
+                                5 coups propres pour un K.O. -> 4
+```
+
+### ⚠️ LE PIEGE DU LOT 1 EST RE-PROUVE, PAS SUPPOSE
+
+Une mesure ou le brain ne tourne que d'un cote mesure un **sac de frappe**.
+Verifie explicitement avant de croire le moindre chiffre, sur les memes
+graines :
+
+| cablage | victoires Keepy | actions/combat gauche | droite |
+|---|---|---|---|
+| un seul brain | **0/40 = 0 %** | **0,0** | 9,2 |
+| **MIRROIR (les deux pilotes)** | **31/40 = 78 %** | **13,1** | 12,4 |
+
+⚠️ **`BattleArena` ne fait tourner un brain QUE sur l'adversaire**
+(`_brain.setup(opponent, ...)`) : les champs `ai_*` de **`keepy.tres` sont
+MORTS dans le jeu livre** et ne servent que de joueur-etalon a la sonde.
+**Les regler deplacerait l'etalon, pas le jeu** — `keepy.tres` est donc
+intouche, et doit le rester.
+
+⚠️ **Le chiffre du lot 1 (« ~78 %, 16,1 s ») est du BRUIT D'ECHANTILLONNAGE
+a 40 combats.** Reproduit ici a l'identique (31/40, 16,11 s) puis remesure
+a 150 combats sur deux bases de graines : **73,7 % (221/300)**. A n=40,
+l'ecart-type binomial est de ~8 points. **Ne jamais conclure d'un seul
+lot de 40.**
+
+### AXE A — DEFENSE de l'adversaire (`ai_defense_rate`), 40 combats/point
+
+| valeur | victoires Keepy | moyenne | min | max |
+|---|---|---|---|---|
+| 0,00 | 85 % | 11,7 s | 5,7 | 18,8 |
+| 0,20 | 88 % | 13,1 s | 6,9 | 19,7 |
+| 0,40 | 82 % | 14,5 s | 8,0 | 25,2 |
+| **0,60 (livre)** | **78 %** | **16,1 s** | 8,0 | 32,9 |
+| 0,80 | 60 % | 18,4 s | 8,2 | 32,9 |
+| 1,00 | 45 % | **19,2 s** | 8,2 | 33,5 |
+
+**L'axe A ALLONGE les rounds** exactement comme le lot 1 l'annoncait, et
+c'est ce qui le disqualifie comme levier principal : le seul point qui
+atteint la cible de victoires (0,80 -> 60 %) coute **18,4 s de moyenne**,
+au bord du plafond de 20 s. **Non utilise, meme en appoint** — mesure a
+l'appui : `def 0,70` en plus du reglage retenu ne gagne que 5 points de
+difficulte pour +0,6 s (50,0 % / 14,5 s contre 55,0 % / 13,9 s).
+
+### AXE B — AGRESSIVITE de l'adversaire, 40 combats/point
+
+| `ai_reaction_delay_s` | victoires | moyenne | | `ai_aggression` | victoires | moyenne |
+|---|---|---|---|---|---|---|
+| 0,36 (livre) | 78 % | 16,1 s | | 0,55 (livre) | 78 % | 16,1 s |
+| 0,30 | 60 % | 17,2 s | | 0,65 | 62 % | 15,8 s |
+| 0,24 | 25 % | 16,3 s | | 0,75 | 52 % | 14,9 s |
+| 0,18 | 30 % | 13,7 s | | 0,85 | 42 % | 14,9 s |
+| 0,12 | 15 % | 12,3 s | | 0,95 | 35 % | 13,4 s |
+| 0,06 | 8 % | 10,5 s | | | | |
+
+⚠️ **`ai_reaction_delay_s` est une FALAISE, pas une pente** : 78 % a 0,36,
+60 % a 0,30, **25 % a 0,24**. Toute la plage jouable tient dans 6
+centiemes de seconde, et la non-monotonie 0,24 -> 0,18 (25 % -> 30 %)
+montre que le bruit domine deja. **Levier ecarte : increglable finement.**
+`ai_reaction_jitter_s` a le meme defaut (0,30 -> 78 %, 0,06 -> 38 %).
+
+| `attack_damage` | victoires | moyenne | | `attack_recovery_s` | victoires | moyenne |
+|---|---|---|---|---|---|---|
+| 11 (livre) | 78 % | 16,1 s | | 0,42 (livre) | 78 % | 16,1 s |
+| 13 | 70 % | 15,5 s | | 0,38 | 75 % | 16,2 s |
+| 15 | 60 % | 14,7 s | | 0,34 | 78 % | 15,5 s |
+| 17 | 55 % | 13,6 s | | 0,30 | 72 % | **INTERDIT** |
+| 19 | 52 % | 13,4 s | | | | |
+
+⚠️ **`attack_recovery_s` est REFUSE deux fois** : c'est un **levier nul**
+(78 % a 0,42 comme a 0,34), et `BattleReadabilityProbe` PHASE F gate
+`BattleHUD.FLASH_S` (450 ms) sous le plus court
+`attack_active_s + attack_recovery_s` des deux profils. **Plancher dur a
+0,33 s** — en dessous, le verdict « TOUCHE » survit a l'action qui l'a
+produit et la sonde passe au rouge. La marge est de 30 ms et le profil
+contraignant est **Keepy** (480 ms), pas l'adversaire (540 ms).
+
+### ⚠️ `attack_windup_s` : REFUSE, et la mesure dit pourquoi
+
+Reste a **0,30 (Keepy) / 0,31 (adversaire)**, la valeur validee sur device
+au lot 2. Le raccourcir est le seul levier qui **defait le lot 2** : il
+achete de la difficulte en rendant le telegraphe illisible au pouce. La
+direction est confirmee par la mesure — monter le windup de l'adversaire a
+**0,34 rend le combat PLUS FACILE (88 %)**, donc le descendre le durcit,
+et c'est exactement pour cette raison qu'on n'y touche pas.
+
+### ⚠️ `attack_damage` n'est PAS l'escalier arithmetique qu'il parait — mesure, pas deduit
+
+Avec `max_hp = 50` et un chip de `ceil(dmg x 0,25)`, le nombre de coups
+propres pour un K.O. est un escalier a trois marches : **11-12 -> 5 coups**,
+**13-16 -> 4 coups**, **17-20 -> 3 coups**. L'arithmetique predit donc que
+13 et 16 sont indiscernables. **C'est FAUX, et la mesure l'a attrape avant
+qu'on l'ecrive comme un fait** : `dmg 13` donne **55,0 %** et `dmg 16`
+**46,3 %** (300 combats chacun, meme marche de l'escalier). Le chip
+s'accumule ENTRE les coups propres, donc `3 propres + 1 chip` tue a 16
+(48+4=52) et pas a 13 (39+4=43). L'escalier gouverne le cas pur, pas le
+cas mixte.
+
+### CONFIGURATION RETENUE — 300 combats, deux bases de graines
+
+Les combinaisons **se multiplient** : tous les candidats empiles au premier
+jet ont depasse la cible (le plus doux deja a 25 %). La cible s'atteint avec
+des mouvements **doux**, pas cumules.
+
+| config | base 20260820 | base 31415926 | **poolee (300)** | moyenne |
+|---|---|---|---|---|
+| lot 2 livre (temoin) | 71 % | 77 % | **73,7 %** | 16,2 s |
+| dmg13 seul | 64 % | 67 % | 65,3 % | 15,2 s |
+| **aggr 0,70 seul** *(un cran PLUS FACILE)* | 60 % | 67 % | **63,7 %** | **15,0 s** |
+| aggr 0,75 seul | 54 % | 59 % | 56,7 % | 14,7 s |
+| aggr 0,65 + dmg13 | 52 % | 59 % | 55,7 % | 14,2 s |
+| **aggr 0,70 + dmg13 — LIVRE** | **53 %** | **57 %** | **55,0 %** | **13,9 s** |
+| **aggr 0,75 + dmg13** *(un cran PLUS DUR)* | 48 % | 50 % | **49,0 %** | **13,5 s** |
+| aggr 0,70 + dmg13 + def 0,70 | 50 % | 50 % | 50,0 % | 14,5 s |
+
+**Livre : `ai_aggression = 0.7`, `attack_damage = 13` — 55,0 %, moyenne
+13,9 s, max 23,5 s.** Au centre de la cible 50-60 %, largement dans les
+12-20 s, et **l'ordre des candidats est stable sur les deux bases** : la
+valeur n'est pas ajustee a une graine.
+
+**LES DEUX VOISINS SONT DES EDITIONS D'UN SEUL CHAMP, deja mesurees** —
+Mathieu ajuste apres son test device sans relancer de sweep :
+
+* **un cran plus facile** : `attack_damage` **13 -> 11** => 63,7 %, 15,0 s
+* **un cran plus dur** : `ai_aggression` **0.7 -> 0.75** => 49,0 %, 13,5 s
+
+### Validation
+
+`BattleContractProbe` **36 checks, 0 failure, exit 0** (sa PHASE F rapporte
+desormais **22/40 = 55 %, moyenne 13,85 s, max 23,53 s** — elle reproduit
+au chiffre pres la prediction du sweep pour cette config a cette base, ce
+qui valide que le banc d'essai jetable et la sonde livree mesuraient bien
+la meme chose). `BattleReadabilityProbe` **29 checks, 0 failure, exit 0**,
+**stderr BYTE-IDENTIQUE**. `ProbeTimeoutAudit` **exit 0, 35 sondes**
+(retour exact a la baseline apres retrait des sondes jetables). Import
+headless **exit 0**, export Web release **exit 0**, `index.wasm`
+**35 376 909 octets** — le fingerprint deja consigne pour tout lot qui ne
+touche pas le code moteur. Piege payload tenu (**0** ligne `Storing File`
+pour `assets_source`/`docs`/`web`).
+
+⚠️ **LE BYTE-IDENTIQUE BOUGE, et c'est la consequence ATTRIBUEE du reglage,
+pas une regression.** Le diff stdout de `BattleReadabilityProbe` fait
+**exactement 3 lignes**, toutes le meme fait (le combat de la PHASE B dure
+666 -> 371 ticks, trace 9238 -> 5192 caracteres) ; **la PHASE F, celle qui
+gate FLASH_S, est byte-identique** puisque ni `attack_active_s` ni
+`attack_recovery_s` n'ont bouge. Attribue champ par champ plutot
+qu'affirme (sonde jetable, supprimee avant commit) :
+
+| variante | ticks | **coups propres encaisses** |
+|---|---|---|
+| baseline lot 2 (dmg11, aggr 0,55) | 666 | **5** |
+| **damage seul** (dmg13) | 582 | **4** — la marche 5 -> 4 |
+| **agressivite seule** (aggr 0,70) | 462 | **5** — memes coups, plus tot |
+| livre lot 3 | 371 | **4** — les deux se composent |
+
+Chaque champ deplace exactement la quantite qu'il doit deplacer, les deux
+se composent, et la ligne baseline **reproduit 666 ticks / 9238 caracteres
+au caractere pres** — ce qui valide le banc d'attribution lui-meme. Rien
+n'est inexplique.
+
+### Reste ouvert
+
+1. **Jugement device, seul juge** : aucune sonde ne dit qu'un combat a 55 %
+   est AGREABLE. Et le chiffre est un **proxy** — c'est un profil pilote
+   par l'IA qui joue le role du joueur, pas Mathieu au pouce. Un humain qui
+   lit le telegraphe fera mieux que l'etalon ; un humain distrait fera pire.
+   Les deux voisins ci-dessus existent pour ca.
+2. **Asymetrie assumee** : l'adversaire tue en **4** coups propres, Keepy en
+   **5** (son `attack_damage` de 12 est intouche). C'est le sens voulu d'un
+   durcissement, mais c'est reel et non maquille.
+3. **Le plancher de difficulte atteignable par `.tres` seul est ~45 %** :
+   meme `ai_defense_rate = 1,0` ne descend qu'a 45 %, et les leviers qui
+   vont plus bas sont soit interdits (windup), soit increglables (delay).
+   Un adversaire nettement plus dur demanderait du CODE — un brain qui lit
+   les habitudes du joueur — et donc son propre lot.
+
+### Deploiement staging du lot 3 (palier 1, automatique)
+
+`staging` `064e148`, CI run **#168** (id `32409539500`) **verte en 3 min 22 s**
+— `Deploy to Vercel [STAGING -- staging]` **succes**,
+`[PRODUCTION -- main]` correctement **skipped**. Alias confirme dans le log :
+`Success! https://keepy-staging.vercel.app now points to
+https://keepy-crpgv8n8c-rajonrondoadkhey2095s-projects.vercel.app`.
+`main` **non touche** (palier 2, gate Mathieu).
+
+⚠️ **LA VERIFICATION SUR LE SERVICE A FINALEMENT ETE FAITE — mais en
+DEUXIEME temps, et le premier temps merite d'etre garde.** Au moment du
+deploiement, les DEUX canaux qui permettent de respecter la regle « jamais le
+log CI seul » etaient absents : egress direct bloque (`keepy-staging.vercel.app`,
+l'URL de preview et meme `vercel.com` rendent tous `000`, CONNECT refuse par le
+proxy — teste, pas suppose) et aucun outil MCP Vercel charge dans la session.
+Le trou a donc ete consigne comme tel plutot que comble par le log. Un canal
+Vercel est apparu plus tard dans la meme session, et la verification a ete
+faite pour de vrai :
+
+| mesure | valeur servie |
+|---|---|
+| `CACHE_VERSION` (`index.service.worker.js`) | **`1787255094`** = **19:44:54 UTC** |
+| `GODOT_CONFIG.fileSizes.index.wasm` | **35 376 909** |
+| `index.pck` | 5 749 152 |
+| fraicheur | `x-vercel-cache: MISS`, `age: 0` sur les DEUX requetes |
+
+**Le `CACHE_VERSION` tombe A L'INTERIEUR de l'etape `Export Web build` du run
+#169** (19:44:50 -> 19:44:55) : l'alias sert donc bien ce build, et il a
+largement AVANCE par rapport au run #167 (lot 2, export ~19:04). Le reglage
+est en ligne sur staging. `index.wasm` est identique au fingerprint permanent
+de tout lot qui ne touche pas le code moteur — coherent avec un diff de deux
+nombres dans un `.tres`.
+
+⚠️ **L'alias pointe sur le run #169 (le commit de doc), pas sur le #168
+(le merge du reglage).** Sans consequence : `CLAUDE.md` n'est pas une ressource
+Godot, donc le contenu de JEU des deux builds est identique. Mais un futur
+lecteur qui chercherait le `CACHE_VERSION` du #168 ne le trouverait pas, et ce
+n'est pas une anomalie.
+
+Rappel de methode, valable pour tout futur lot : le `CACHE_VERSION` est un
+epoch pose a l'export, donc c'est le discriminateur le moins cher pour savoir
+quel build est reellement aliase (leçon deja consignee au lot token du
+18 aout). En une ligne, quand l'egress le permet :
+
+```
+curl -s https://keepy-staging.vercel.app/index.service.worker.js | grep CACHE_VERSION
+```
+
+Un `CACHE_VERSION` inchange voudrait dire que l'alias n'a pas bascule, malgre
+le `Success!` du log — exactement le cas que la regle « jamais le log seul »
+existe pour attraper.
