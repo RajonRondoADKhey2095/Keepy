@@ -7972,3 +7972,42 @@ n'est inexplique.
    vont plus bas sont soit interdits (windup), soit increglables (delay).
    Un adversaire nettement plus dur demanderait du CODE — un brain qui lit
    les habitudes du joueur — et donc son propre lot.
+
+### Deploiement staging du lot 3 (palier 1, automatique)
+
+`staging` `064e148`, CI run **#168** (id `32409539500`) **verte en 3 min 22 s**
+— `Deploy to Vercel [STAGING -- staging]` **succes**,
+`[PRODUCTION -- main]` correctement **skipped**. Alias confirme dans le log :
+`Success! https://keepy-staging.vercel.app now points to
+https://keepy-crpgv8n8c-rajonrondoadkhey2095s-projects.vercel.app`.
+`main` **non touche** (palier 2, gate Mathieu).
+
+⚠️ **LA VERIFICATION SUR LE SERVICE N'A PAS PU ETRE FAITE DEPUIS CE SANDBOX,
+et c'est dit plutot que remplace par le log CI.** La regle permanente de ce
+fichier est de ne jamais prendre un log CI pour une preuve de ce qui est
+reellement servi ; ici les DEUX canaux qui permettaient de la respecter sont
+absents :
+
+* **egress direct bloque** — `keepy-staging.vercel.app`, l'URL de preview et
+  meme `vercel.com` rendent tous `000` (CONNECT refuse par le proxy), teste
+  et pas suppose ;
+* **aucun outil MCP Vercel n'est charge dans cette session** —
+  `mcp__Vercel__web_fetch_vercel_url`, le contournement utilise par les lots
+  precedents, n'existe pas ici (`ToolSearch` sur `+vercel` ne rend rien), et
+  `WebFetch` tombe sur le meme blocage d'egress.
+
+Ce qui est donc etabli : la chaine **commit -> build -> deploiement ->
+alias**, par le log. Ce qui ne l'est PAS : que l'alias sert bien ces octets a
+un navigateur. **Verification en une ligne, a faire par Mathieu (ou une
+session avec un canal Vercel)** — le `CACHE_VERSION` du service worker est un
+epoch pose a l'export, donc c'est le discriminateur le moins cher pour savoir
+quel build est aliase (leçon deja consignee au lot token du 18 aout) :
+
+```
+curl -s https://keepy-staging.vercel.app/index.service.worker.js | grep CACHE_VERSION
+```
+
+Il doit avoir AVANCE par rapport au build precedent (run #167). Un
+`CACHE_VERSION` inchange voudrait dire que l'alias n'a pas bascule, malgre le
+`Success!` du log — exactement le cas que la regle « jamais le log seul »
+existe pour attraper.
