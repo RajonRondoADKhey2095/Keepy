@@ -74,13 +74,13 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_scrim")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/HubPanel"]
 layout_mode = 2
-theme_override_constants/separation = 32
+theme_override_constants/separation = 24
 alignment = 1
 
 [node name="TitleLogo" type="TextureRect" parent="CenterContainer/HubPanel/VBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 4
-custom_minimum_size = Vector2(267, 150)
+custom_minimum_size = Vector2(214, 120)
 texture = ExtResource("3_logo")
 expand_mode = 1
 stretch_mode = 5
@@ -140,3 +140,27 @@ horizontal_alignment = 1
 autowrap_mode = 3
 theme_override_font_sizes/font_size = 22
 text = "Cree et gere tes questionnaires"
+
+[node name="BattleCard" type="VBoxContainer" parent="CenterContainer/HubPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="BattleButton" type="Button" parent="CenterContainer/HubPanel/VBoxContainer/BattleCard"]
+layout_mode = 2
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(520, 110)
+theme_override_font_sizes/font_size = 36
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Keepy Battle"
+
+[node name="BattleCaption" type="Label" parent="CenterContainer/HubPanel/VBoxContainer/BattleCard"]
+layout_mode = 2
+custom_minimum_size = Vector2(560, 0)
+modulate = Color(1, 1, 1, 0.72)
+horizontal_alignment = 1
+autowrap_mode = 3
+theme_override_font_sizes/font_size = 22
+text = "Affronte un adversaire au corps a corps"

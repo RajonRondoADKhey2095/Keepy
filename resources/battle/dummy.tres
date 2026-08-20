@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="FighterProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/battle/FighterProfile.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+display_name = "Sparring"
+max_hp = 50
+attack_windup_s = 0.31
+attack_active_s = 0.12
+attack_recovery_s = 0.42
+attack_damage = 11
+guard_windup_s = 0.08
+guard_active_s = 0.40
+guard_recovery_s = 0.24
+guard_damage_ratio = 0.25
+dodge_windup_s = 0.06
+dodge_active_s = 0.18
+dodge_recovery_s = 0.36
+stagger_duration_s = 0.55
+ai_reaction_delay_s = 0.36
+ai_reaction_jitter_s = 0.30
+ai_aggression = 0.55
+ai_defense_rate = 0.6
+ai_guard_bias = 0.6
+model_scene = null
+model_scale = 1.0
+model_rotation_degrees = Vector3(0, 0, 0)
+model_offset = Vector3(0, 0, 0)
+placeholder_color = Color(0.55, 0.72, 0.88, 1)

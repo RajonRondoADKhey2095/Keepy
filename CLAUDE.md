@@ -7364,3 +7364,234 @@ onglet Safari **et** en PWA installee. Non touche par ce lot et toujours
 ouvert : la redondance entre le bandeau peint « KEEPY CHASED » et le logo
 `TitleLogo` du moteur, deja signalee au lot ecran-titre du 14 aout -- elle
 devient plus visible maintenant que les deux tiennent l'ecran en entier.
+
+## KEEPY BATTLE, LOT 1 : squelette jouable d'un duel 1v1, ZERO asset 3D (20 aout 2026)
+
+Branche `claude/keepy-battle-lot-1-1yys5r`, partie de `staging` (`8272dfa`,
+ou `main` et `staging` etaient alignes). **Troisieme mini-jeu du hub**, apres
+Chased et Quizz. Aucun fichier de Chased ni de Quizz touche : le seul fichier
+existant modifie est le Hub (plus sa `.tscn`), qui gagne une troisieme carte.
+
+**Le but de ce lot est de valider le FEEL et l'EQUILIBRAGE AVANT de depenser
+un credit Meshy** : deux capsules placeholder, rien d'autre. Les assets 3D,
+les animations, les sons, la persistance Firestore, la progression, plusieurs
+adversaires et les effets visuels sont HORS PERIMETRE et non faits.
+
+### Le contrat "et dans 6 mois ?" : un adversaire = UN .tres + UN .glb, ZERO ligne de code
+
+C'est la contrainte structurante du lot, pas un objectif de style.
+
+* **`FighterProfile`** (`scripts/battle/FighterProfile.gd`, une `Resource`)
+  porte **tout** ce qui differe entre deux combattants : hp, timings
+  windup/active/recovery par action, degats, ratio de garde, duree de
+  stagger, les cinq parametres d'IA, et le `.glb` futur avec ses trois
+  corrections `ModelSlot` (`model_scale`, `model_rotation_degrees`,
+  `model_offset`) plus la couleur du placeholder.
+* **`Fighter.gd` et `FighterBrain.gd` sont GENERIQUES** : aucun `match
+  species`, aucune sous-classe par animal, nulle part. Deux profils livres,
+  `resources/battle/keepy.tres` et `dummy.tres` ; ils ne different que par
+  des nombres.
+* **Le `match` de `FighterProfile.timing_for()` est le SEUL endroit du depot
+  qui associe une action a ses nombres**, et il pointe vers des CHAMPS, pas
+  vers des valeurs. Une quatrieme action toucherait cette fonction et les
+  exports au-dessus, rien d'autre.
+
+### UNE seule FSM, partagee joueur et IA -- ce n'est pas une preference de style
+
+Etats : `IDLE / WINDUP / ACTIVE / RECOVERY / STAGGER / KO`. Il n'y a pas de
+"fighter joueur" et pas de "fighter IA" : il y a un `Fighter`, et quelque
+chose qui appelle `request_action()` dessus. Le tap humain (les trois zones
+du HUD) et le selecteur d'intention (`FighterBrain`) entrent par **la meme
+fonction** et sont indiscernables ensuite.
+
+⚠️ **La raison est un mode de panne, pas de l'elegance** : une IA qui fait
+tourner son propre systeme avec ses propres timings est une IA qu'on peut
+equilibrer contre des regles que le joueur ne joue pas, et la divergence
+reste invisible jusqu'a ce que quelqu'un la mesure -- exactement le defaut
+`SubstituteModel.tscn` deja consigne dans ce fichier. **PHASE E de la sonde
+pointe le brain sur le fighter du JOUEUR et exige un vrai combat**, donc la
+reciprocite est exercee et pas affirmee.
+
+### Determinisme : ticks fixes accumules, RNG seede explicitement
+
+`BattleArena` avance les deux fighters ET le brain par pas entiers de
+`TICK_S = 1/60`, sortis d'un accumulateur -- jamais le `delta` brut de la
+frame. Sur telephone le temps de frame est ce que le navigateur veut bien
+donner, et une FSM avancee par ce delta a des frontieres de phase qui
+tombent sur des frames differentes d'un run a l'autre : deux combats
+identiques divergent, et « est-ce que cet enchainement est vraiment
+imparable ou est-ce que j'ai eu une frame longue » devient sans reponse.
+
+⚠️ **`_physics_process` donnerait aussi un pas fixe et a ete ECARTE** : il
+lie le rythme du combat a un reglage projet qui appartient a Chased, donc un
+changement la-bas re-equilibrerait ce jeu en silence.
+
+**Aucun `randi()` global nulle part dans `scripts/battle/`** : un seul
+`RandomNumberGenerator`, seede `base_seed + numero de round`.
+
+⚠️ **`BattleArena` parse `--seed=` EN LIGNE au lieu d'appeler
+`DevSeed.seed_value()`, qui fait exactement ca -- piege trouve en ecrivant
+le lot, pas apres coup.** `export_presets.cfg` porte `scripts/dev/*` dans
+son `exclude_filter`, donc `DevSeed` **n'est pas dans le pack livre**. Une
+reference `class_name` depuis un script livre resout dans l'editeur ET en
+headless, puis echoue **uniquement dans le build web** -- le seul endroit
+que personne ne peut verifier. Verifie sur le `.pck` exporte : les deux
+seules occurrences de `DevSeed` y sont dans le cache de classes globales
+(qui liste deja d'autres classes `dev` sur `main` aujourd'hui), aucune
+depuis `scripts/battle/`.
+
+### Resolution des coups : du timing pur, aucune hitbox 3D
+
+Un coup se resout UNE fois, au premier tick de la fenetre `ACTIVE` de
+l'attaquant, contre l'etat du defenseur a cet instant :
+
+| defenseur | resultat |
+|---|---|
+| `GUARD` en `ACTIVE` | **BLOQUE** : degats x `guard_damage_ratio` (0,25), **pas de stagger** |
+| `DODGE` en `ACTIVE` | **ESQUIVE** : zero degat |
+| tout le reste, **y compris `ATTACK` en `ACTIVE`** | **TOUCHE** : degats pleins + stagger |
+
+La derniere ligne est la regle qui empeche les deux combattants de simplement
+marteler l'attaque : **les frames actives d'une attaque ne defendent pas**,
+donc celui qui s'engage en second encaisse l'echange. Le stagger (0,55 s) est
+plus long que n'importe quelle recovery : etre touche DOIT etre pire que
+rater.
+
+La resolution vit dans `BattleArena`, **une seule fois** : un `Fighter`
+annonce `strike_activated` et ne sait rien de qui est en face. Aucun des deux
+ne detient de reference vers l'autre.
+
+### Controles : TAP UNIQUEMENT, trois zones fixes, aucun geste
+
+Trois boutons larges en bas d'ecran, rien d'autre. **Pas de swipe**, pour
+deux raisons independantes : Chased possede deja le swipe comme geste de
+changement de voie, donc le meme mouvement voudrait dire deux choses dans une
+seule app ; et un swipe horizontal sur iOS Safari est en concurrence avec la
+navigation arriere du navigateur, ce qu'une page ne gagne pas de facon fiable.
+
+⚠️ **Les boutons restent ACTIFS pendant un engagement** au lieu de se griser :
+`Fighter` bufferise un tap anticipe pendant `INPUT_BUFFER_S` (0,16 s) et le
+rejoue au retour a `IDLE`, donc un tap « trop tot » est un input reel qui
+fonctionne. Le griser jetterait une pression que le jeu allait honorer, et
+ferait clignoter le panneau plusieurs fois par seconde.
+
+`INPUT_BUFFER_S` est une constante de JEU et **deliberement pas un export par
+profil** : c'est une propriete des controles, identique pour tout le monde ;
+laisser deux combattants ne pas etre d'accord dessus serait deux jeux.
+
+### Le point d'echange lot 3 est deja ecrit
+
+Chaque fighter porte un noeud `Body` de type **`ModelSlot`**
+(`scripts/world/ModelSlot.gd`), exactement comme `$Silhouette` de
+`Pursuer.tscn`. Installer un `.glb` au lot 3 = poser `model_scene` (+ les
+trois corrections) **dans le `.tres`**. Aucun noeud n'est ajoute, deplace,
+renomme ni supprime, donc rien dans `Fighter.gd`, `BattleArena.gd` ou le HUD
+n'a a etre re-pointe. `Fighter._apply_profile_art()` est le hand-off complet
+et il est deja la.
+
+⚠️ **Le tint du placeholder et l'install du `.glb` passent par le MEME chemin
+de code** (`ModelSlot.apply_material()`, qui atteint les surfaces du modele
+installe une fois qu'il existe) : un futur `.glb` herite du traitement
+couleur du profil au lieu d'avoir besoin d'une seconde branche que personne
+n'exerce. Materiaux **unshaded**, comme toute surface de ce projet.
+
+### `SafeArea.fill_screen()` ici, `keep_game_framing()` chez Chased
+
+Battle appelle `fill_screen()` comme les ecrans d'UI. Contrairement a
+`Game.tscn` -- qui redemande `KEEP` parce que le budget de reaction de Chased
+est cale sur un cadrage 9:16 -- Battle n'a **aucun monde defilant et aucun
+budget lie a la distance** : les deux combattants sont a des marques fixes,
+donc un viewport plus haut montre plus de ciel vide et ne change rien de
+jouable.
+
+⚠️ **La camera est en `keep_aspect = KEEP_WIDTH` (0), et c'est OBLIGATOIRE
+ici, pas cosmetique.** En `KEEP_HEIGHT` (le defaut), le viewport plus haut
+que produit `fill_screen()` **retrecit l'etendue horizontale** et les deux
+combattants sortaient du cadre par les cotes. **Mesure sur la scene
+construite, aux deux ratios** : etendue horizontale **identique** a 1080x1920
+et 1170x2532 (x 95..985 des deux cotes), combattants degages de la barre du
+haut ET de la rangee de boutons. Panneau du Hub a trois cartes : les trois
+boutons a l'ecran, marge basse **128 px** en 9:16 et **228 px** sur device.
+
+### La sonde a trouve un defaut REEL de mesure -- dans la sonde, pas dans le jeu
+
+`scripts/dev/BattleContractProbe.tscn` (nouvelle, **36 checks, 0 echec**)
+gate l'ordre et la duree des phases, la matrice de resolution complete, le
+buffer d'input, et le determinisme. Elle pilote les **scripts livres**,
+jamais un stub.
+
+⚠️ **PHASE F a d'abord rapporte « le profil Keepy perd 40 fois sur 40 », et
+ce chiffre ne mesurait PAS un desequilibre.** Elle ne faisait tourner un
+brain que du cote adversaire -- fidele a l'arene reelle, ou l'autre cote est
+un humain -- donc le fighter Keepy **ne faisait rien du tout** : un sac de
+frappe immobile perd. Un chiffre profil-contre-profil demande les deux cotes
+joues (`mirrored`). **Un balayage jetable a ete ecrit pour trancher plutot
+que de raisonner** : a profils symetriques le resultat est ~30/60 (equilibre),
+et une reaction ou un windup plus rapides **GAGNENT** (54/60, 53/60) --
+l'inverse de l'hypothese de depart, qui etait que s'engager en premier
+punissait. La sonde a ete corrigee, le balayage supprime avant commit.
+
+⚠️ **Deuxieme correction dans la sonde, meme famille** : l'assertion de duree
+par phase comparait a `ceil(secondes / tick)` et ignorait le report
+d'overshoot que `Fighter.advance()` fait DELIBEREMENT d'une phase a la
+suivante. Sans ce report chaque phase arrondirait vers le HAUT et une action
+a trois phases durerait jusqu'a trois ticks de trop, differemment selon le
+combattant. **L'assertion exacte porte donc sur le TOTAL** (47 ticks pour
+47 nominaux) et laisse **un tick** de jeu par phase, borne parce que le
+report est reapplique a chaque transition et ne s'accumule jamais.
+
+### Equilibrage mesure, pas ressenti -- et volontairement NON gate
+
+Trois iterations, chacune remesurees sur 40 combats seedes :
+
+| | hp | resultat |
+|---|---|---|
+| depart | 100 | rounds **30,1 s** de moyenne -- trop long pour du mobile |
+| apres reduction hp + resserrage du profil adverse | 60 | 39/40, **walkover** |
+| **livre** | **50** | **31/40 (~78 %), moyenne 16,1 s** (min 8,0 / max 32,9) |
+
+**PHASE F rapporte et n'asserte RIEN**, deliberement : ce qu'est un combat
+juste est un jugement device, et un nombre gate ici serait un nombre regle
+jusqu'a ce qu'il passe au vert -- le faux-vert que `ProbeCoverage.gd`
+documente cinq fois. Retoucher l'equilibrage est une edition de `.tres`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles ; taille confirmee contre le `Content-Length`, le piege de
+troncature silencieuse deja consigne). Import headless **exit 0**, export Web
+release **exit 0**, boot headless de `Battle.tscn` / `BattleHUD.tscn` /
+`BattleFighter.tscn` / `Hub.tscn` (`--quit-after 2`) **tous exit 0**, aucune
+erreur de parse. `index.wasm` **35 376 909 octets** -- identique au
+fingerprint deja consigne pour tout lot qui ne touche pas le code moteur.
+`index.pck` 5 740 640 octets (export unique et propre, `build/` supprime
+avant -- a lire avec la mise en garde permanente sur son instabilite).
+
+Sondes : `BattleContractProbe` (**36/36**), `ProbeTimeoutAudit` (**34 sondes
+scenes**, la nouvelle comprise, toutes armees -- 33 avant ce lot),
+`AssetContractAudit` (12/12 visuels, **0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**. Piege payload
+tenu : **0** ligne `Storing File` pour `res://scripts/dev`, `res://assets_source`,
+`res://docs` ou `res://web`.
+
+### Dette et reste ouvert
+
+1. **Jugement device, et c'est tout l'objet du lot** : est-ce que le duel se
+   lit et se joue bien au pouce sur un telephone -- lisibilite des trois
+   zones, longueur des rounds, et surtout **si le windup de l'adversaire est
+   assez telegraphie pour etre lu**. Aucune sonde ne le dit.
+2. **DETTE ASSUMEE : les combattants ne bougent pas.** Le retour d'etat est
+   porte **entierement par le HUD** (libelle d'etat par combattant + verdict
+   du coup) ; les capsules sont statiques. Les effets visuels sont hors
+   perimetre de ce lot, mais c'est le manque le plus probable a remonter du
+   test device -- un `WINDUP` sans mouvement se lit mal a vitesse reelle. Le
+   correctif naturel (une amorce de fente sur `WINDUP`/`ACTIVE`) appartient
+   au lot animation, pas a une rustine ici.
+3. **Un seul adversaire**, `dummy.tres`, nomme « Sparring ». Le second est un
+   `.tres` de plus ; il n'y a pas d'ecran de selection, et il n'y en avait pas
+   dans le perimetre.
+4. **Aucune persistance** : ni score, ni progression, ni Firestore. Un round
+   perdu ou gagne ne laisse aucune trace.
+5. **`ai_defense_rate` est le vrai bouton de difficulte**, plus que les
+   degats : le balayage montre la duree moyenne d'un round passer de 25 s a
+   44 s quand il va de 0,0 a 0,8, a profils par ailleurs identiques.
