@@ -7595,3 +7595,192 @@ tenu : **0** ligne `Storing File` pour `res://scripts/dev`, `res://assets_source
 5. **`ai_defense_rate` est le vrai bouton de difficulte**, plus que les
    degats : le balayage montre la duree moyenne d'un round passer de 25 s a
    44 s quand il va de 0,0 a 0,8, a profils par ailleurs identiques.
+
+## KEEPY BATTLE, LOT 2 : rendre le combat LISIBLE, toujours ZERO asset 3D (20 aout 2026)
+
+Branche `claude/keepy-battle-readability-erclyi`, partie de `staging`
+(`06c94f1`). Ferme la **dette 2 du lot 1** (« les combattants ne bougent
+pas »), qui etait le blocage numero un remonte du test device. Toujours
+aucun asset 3D : ce lot anime les capsules placeholder, et c'est
+deliberement l'ordre choisi -- prouver qu'un duel de ce type se lit au
+pouce AVANT de depenser un credit Meshy.
+
+### Ce que la mesure a dit, et pourquoi les deux hypotheses de depart etaient a cote
+
+Le brief posait deux hypotheses a departager par instrumentation. Aucune
+des deux n'etait la bonne, et c'est le resultat le plus utile du lot.
+Mesure headless sur les scripts LIVRES, avant d'ecrire une ligne :
+
+| hypothese | verdict |
+|---|---|
+| **H1** le HUD ne s'abonne pas a `WINDUP` | **FAUX**. Il s'y abonne, et il l'affiche : sequence `Attaque - Prepare` -> `Attaque - Actif` -> `Attaque - Recupere` -> `Pret`, avec **19 ticks = 317 ms** passes sur « Prepare ». Le libelle n'a jamais ete desynchronise. |
+| **H2** le `WINDUP` est trop court pour etre lu | **FAUX tel quel**. 317 ms n'est pas un telegraphe court -- c'est un telegraphe **invisible** : rien sur les combattants ne bougeait a aucun moment de l'attaque. |
+
+**Le defaut n'a jamais ete « le HUD est en retard ». Il etait que les
+combattants etaient muets**, et qu'un libelle de 26 px en haut de l'ecran
+ne sera jamais un telegraphe quand le regard est sur deux capsules au
+milieu. C'est la conclusion qui a dicte tout le lot.
+
+Les deux captures device s'expliquent alors exactement, et par des causes
+DIFFERENTES l'une de l'autre :
+
+* **« Sparring : TOUCHE » affiche pendant que Sparring dit « Pret »** :
+  `FLASH_S` valait **700 ms**, alors qu'un attaquant reste engage
+  `active + recovery` = **480 ms** (Keepy) / **540 ms** (Sparring) apres
+  la resolution de son coup. Le verdict **survivait a l'action qui l'avait
+  produit de 160 ms**. Ni l'un ni l'autre des deux affichages n'etait faux
+  -- le verdict est un rapport RETARDE, le libelle d'etat un rapport
+  INSTANTANE -- mais ensemble ils se contredisent et le joueur n'a aucun
+  moyen de savoir lequel croire.
+* **« Attaque - Actif » a l'ecran de KO** : un coup se resout dans le
+  PREMIER tick `ACTIVE` de l'attaquant, donc le perdant tombe a 0 hp sur
+  ce tick-la et `BattleArena` arrete l'horloge immediatement. La FSM du
+  vainqueur est **reellement figee en `ACTIVE`** et n'en sortira jamais.
+  Le libelle disait la verite sur une simulation arretee.
+
+### Le telegraphe vit sur le combattant, dans `FighterView.gd`
+
+Un noeud `View` par combattant, enfant direct du `Fighter` dans
+`BattleFighter.tscn`. **Strictement en LECTURE SEULE sur la FSM** : il
+n'appelle jamais `request_action()` ni `advance()`, n'ecrit aucun champ, et
+ne lit un etat que pour choisir quelle animation jouer.
+
+| etat | ce que le joueur voit |
+|---|---|
+| `IDLE` | respiration lente (bob 4,5 cm), pour qu'un ecran au repos ne soit jamais mort |
+| `WINDUP` (attaque) | **recul progressif + teinte qui monte vers le rouge, sur TOUTE la duree de la phase** |
+| `WINDUP` (garde/esquive) | meme amorce, 3x plus discrete, **et aucune teinte** |
+| `ACTIVE` attaque | fente nette vers l'adversaire (60 ms) |
+| `ACTIVE` garde | encaissement bas et large (`scale.y` 0,86) |
+| `ACTIVE` esquive | glissade en arriere + inclinaison |
+| `RECOVERY` | retour au neutre sur la duree REELLE de la phase, donc **toujours plus lent que la fente** |
+| `STAGGER` | recul profond puis oscillation amortie |
+| `KO` | bascule a -82 deg, corps pose au sol |
+| impact | flash **sur le combattant TOUCHE** : blanc si `HIT`, bleu froid si `BLOCKED`, **rien si `DODGED`** |
+
+⚠️ **La couleur ne veut dire QU'UNE chose : danger entrant.** Seul un
+`WINDUP` d'ATTAQUE monte vers `ALERT_COLOR`, et **progressivement**, avec
+un `EASE_IN` -- l'intensite EST l'horloge que le defenseur lit. Garde et
+esquive se distinguent par la SILHOUETTE, jamais par la teinte. Un
+telegraphe qui partage son canal avec deux actions inoffensives est un
+telegraphe qu'il faut decoder au lieu de le voir.
+
+### Pourquoi ca anime `$Body` (le `ModelSlot`) et jamais la geometrie de la capsule
+
+Chaque tween ecrit `position` / `rotation_degrees` / `scale` **sur le
+`ModelSlot`**, et la teinte passe par `ModelSlot.apply_material()`. C'est
+le contrat deja etabli du projet (`Obstacle.gd` anime deja un slot de
+cette facon), et c'est ce qui rend le **lot 4 gratuit** : un `.glb`
+installe dans le slot est un ENFANT du noeud que ces tweens deplacent,
+donc il herite de toutes les animations sans une ligne a changer.
+
+La teinte est le seul point qui demandait du soin a travers ce swap, et il
+est traite : `_ensure_material()` **DUPLIQUE** ce que le slot dessine avant
+d'y toucher (l'importeur glTF lie UN materiau partage sur le mesh -- le
+mutter tinterait toutes les instances du `.glb` a la fois), et n'ecrit que
+`albedo_color`, qui **MULTIPLIE** une texture d'albedo au lieu de la
+remplacer. Un modele texture garde sa texture et rougit quand meme.
+
+### Le determinisme, prouve deux fois plutot qu'affirme
+
+**`BattleContractProbe` est BYTE-IDENTIQUE au lot 1**, meme md5 de sortie
+complete (`8138c3b3e7b2493cab0f2a26c354efd4`), 36/36, avec les vues
+attachees et vivantes.
+
+⚠️ **Il n'y a PAS de bypass headless dans `FighterView`**, et c'est
+delibere : sauter la couche d'animation sur une sonde headless voudrait
+dire que la sonde n'exerce jamais le fichier dont toute la promesse est
+qu'il ne peut pas modifier un combat -- la branche qui a le plus besoin
+d'etre prouvee serait la seule ou aucune sonde n'entre. La sonde tourne
+avec les tweens vivants et doit quand meme sortir la meme trace.
+
+`BattleReadabilityProbe` (**29/29**, nouvelle) ajoute ce que la sonde de
+contrat ne peut pas voir :
+
+* **PHASE A** : le `+Z` local des deux combattants pointe bien vers
+  l'adversaire, **lu dans `Battle.tscn` via `SceneState`** (dot = 1,000
+  des deux cotes) et non suppose -- une rotation retournee dans la scene
+  ferait partir toutes les fentes a l'envers sans que rien n'echoue. Elle
+  verifie aussi que **deux fentes simultanees (0,60) ne peuvent pas
+  s'interpenetrer** (1,10 entre les surfaces).
+* **PHASE B** : le MEME combat, meme seed, joue une fois sans frame entre
+  les ticks et une fois **avec une vraie frame entre chaque tick** (donc
+  tous les tweens avancent pour de bon) -> **trace byte-identique, 666
+  ticks des deux cotes**. C'est la preuve que le temps moteur ne fuit pas
+  dans la FSM.
+* **PHASE C** : le recul passe de 0,011 a 0,110 entre 27 % et 80 % du
+  windup, et la teinte de `g=0,630` a `g=0,395` -- la lisibilite CROIT,
+  elle ne claque pas.
+* **PHASE D** : attaque `+0,300`, esquive `-0,280`, garde `x0,86` en
+  hauteur -- trois silhouettes distinctes.
+* **PHASE E** : 25 actions avortees coup sur coup laissent **3 tweens
+  vivants**, pas 75 ; et un KO en pleine fente gagne sur la fente.
+* **PHASE F** : les deux contradictions du HUD, en assertions.
+
+### Les deux corrections HUD, chacune adossee a un chiffre
+
+* **`FLASH_S` 0,70 -> 0,45 s.** Sous les deux durees d'engagement mesurees
+  (480 / 540 ms), donc un verdict ne peut plus survivre a l'action qui l'a
+  cause, quel que soit le combattant. ⚠️ **C'est une constante de
+  PRESENTATION du HUD, pas un timing de combat** : aucune valeur
+  windup/active/recovery/stagger d'aucun `.tres` n'est touchee par ce lot.
+* **`show_result()` remplace les deux libelles d'etat** par « Vainqueur »
+  et « K.O. ». Une fois le round fini, un affichage de phase EN COURS
+  sous-entend un combat qui tourne encore ; la seule chose honnete que ces
+  deux lignes peuvent dire est comment ca s'est termine. Elles repartent en
+  affichage de phase au round suivant, `Fighter.reset()` emettant `IDLE`
+  avant `show_fight()`.
+
+### `settle()` : une consequence visuelle du gel de la simulation
+
+`_running = false` tombe sur le tick du KO, c'est-a-dire le tick ou le
+VAINQUEUR est entre en `ACTIVE`. Sa FSM n'emettra plus jamais de
+transition, donc sans intervention sa vue tiendrait la fente gagnante,
+indefiniment, a cote du panneau de resultat -- qui fait **600x440 sur un
+ecran 1080x1920 et ne couvre aucun des deux combattants**. `BattleArena`
+appelle donc `settle()` sur les deux vues a la fin du round : elle ramene
+au repos un combattant debout et **laisse volontairement au sol celui qui
+est K.O.**, sa chute ETANT le resultat qu'on montre.
+
+### Une seule addition a `Fighter.gd`, en lecture seule
+
+`phase_duration()` (+ `_phase_total`) : la longueur PLEINE de la phase
+courante. Purement additif, aucun branchement dessus, aucun changement de
+comportement -- la sonde de contrat byte-identique le prouve. Elle existe
+pour que la vue anime un windup sur **exactement** sa duree sans
+re-deriver le `match` action -> timings de `FighterProfile`, qui doit
+rester le seul du depot.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox. Import
+headless **exit 0**, export Web release **exit 0**, boot headless de
+`Battle.tscn` **0 erreur**. `index.wasm` **35 376 909 octets** -- identique
+au fingerprint deja consigne (aucun code moteur touche). Piege payload
+tenu : **0** ligne `Storing File` pour `res://scripts/dev` ;
+`scripts/battle/FighterView.gdc` bien present dans le `.pck`.
+
+Sondes : `BattleContractProbe` **36/36 et byte-identique au lot 1**,
+`BattleReadabilityProbe` **29/29**.
+
+### Dette et reste ouvert
+
+1. **Le jugement device reste entier, et c'est le point du lot.** Aucune
+   sonde ne dit que 317 ms de windup suffisent A L'OEIL une fois le
+   telegraphe visible. **Chiffre mesure a garder sous la main pour le lot
+   3 : `attack_windup_s` = 0,30 (Keepy) / 0,31 (Sparring), soit 19 ticks.
+   Si le test device dit que c'est encore trop serre, la valeur a essayer
+   est 0,40-0,45 s** -- mais **le tuning n'est PAS fait ici**, deliberement :
+   calibrer a l'aveugle contre un telegraphe qu'on ne voyait pas n'aurait
+   rien mesure.
+2. **La teinte suppose un `StandardMaterial3D`.** Un futur asset a
+   `ShaderMaterial` perdrait la rampe rouge (et seulement elle : tout le
+   telegraphe de transformation continue de se lire). `_tint_to()` devient
+   un no-op silencieux dans ce cas, par construction.
+3. **Les tweens tournent en temps MOTEUR, la FSM en pas fixes.** Les deux
+   peuvent deriver d'une frame, et c'est autorise **precisement parce que**
+   rien ne traverse de la vue vers la FSM. Ne jamais brancher un retour de
+   la vue vers le combat, c'est ce qui ferait du framerate une entree du
+   duel.
+4. **Toujours aucun son, aucun asset 3D, aucune particule, aucune
+   persistance** -- hors perimetre, inchange depuis le lot 1.

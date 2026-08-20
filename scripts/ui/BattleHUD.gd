@@ -39,9 +39,35 @@ signal action_requested(action: BattleTypes.Action)
 signal rematch_requested()
 signal quit_requested()
 
-## How long a strike verdict stays up. Long enough to read, short enough
-## that a fast exchange does not queue verdicts behind each other.
-const FLASH_S := 0.7
+## How long a strike verdict stays up.
+##
+## =====================================================================
+## WHY 0.45 AND NOT THE 0.70 THIS SHIPPED WITH
+##
+## 0.70 was longer than the action that produced the verdict, and that
+## is what a device capture caught: "Sparring : TOUCHE" still on screen
+## while the same fighter's state line already read "Pret". Neither
+## readout was wrong -- the verdict is a LAGGING report of something that
+## happened, the state line is an INSTANTANEOUS report of now -- but
+## shown together they contradict each other, and the player has no way
+## to know which one to believe.
+##
+## Measured headless on the shipped profiles rather than estimated: after
+## its strike resolves, an attacker stays committed for active +
+## recovery, i.e. 480 ms (Keepy) and 540 ms (Sparring). At 700 ms the
+## verdict outlived the shorter of those by 160 ms -- exactly the window
+## the capture was taken in. 0.45 sits under BOTH, so a verdict can no
+## longer survive the action it describes, whichever fighter threw it.
+##
+## This is a HUD presentation constant, not a combat timing: no windup,
+## active, recovery or stagger value in any .tres is touched by this lot.
+## Those stay for the tuning pass, on device, with a telegraph finally
+## visible to tune against.
+##
+## It is also no longer the only carrier: FighterView flashes the fighter
+## that was actually hit, at the moment of impact, in the middle of the
+## screen. The line below is now confirmation of something already seen.
+const FLASH_S := 0.45
 
 @onready var player_name_label: Label = $Root/TopBar/PlayerBlock/NameRow/NameLabel
 @onready var player_hp_bar: ProgressBar = $Root/TopBar/PlayerBlock/HpBar
@@ -96,11 +122,31 @@ func show_fight() -> void:
 	_flash_left = 0.0
 	_set_controls_visible(true)
 
+## End of round.
+##
+## The two state lines are REPLACED here rather than left to whatever the
+## FSM last emitted, and that is a fix for a second thing the device
+## captures caught: at the KO screen the winner's line read
+## "Attaque - Actif".
+##
+## It was not stale and it was not a HUD bug. A strike resolves inside
+## the attacker's first ACTIVE tick, so the loser hits 0 hp on that very
+## tick and BattleArena stops the clock immediately -- the winner's FSM
+## is genuinely frozen in ACTIVE and will never leave it. The label was
+## telling the truth about a simulation that had stopped.
+##
+## Which is exactly why it cannot stay: a live-phase readout implies a
+## fight still running. Once the round is over the only honest thing
+## those two lines can say is how it ended, so they say that. They go
+## back to reporting phases on the next round, when Fighter.reset()
+## emits IDLE ahead of show_fight().
 func show_result(player_won: bool) -> void:
 	result_label.text = "Victoire !" if player_won else "Defaite"
 	result_panel.visible = true
 	flash_label.text = ""
 	_flash_left = 0.0
+	player_state_label.text = "Vainqueur" if player_won else "K.O."
+	opponent_state_label.text = "K.O." if player_won else "Vainqueur"
 	_set_controls_visible(false)
 
 ## Verdict of one resolved strike. `by_player` says who threw it, so the
