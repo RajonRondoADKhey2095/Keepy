@@ -1,4 +1,4 @@
-[gd_resource type="Theme" load_steps=29 format=3]
+[gd_resource type="Theme" load_steps=30 format=3]
 
 [ext_resource type="FontFile" path="res://assets/fonts/quizz/Fredoka-Variable.ttf" id="1_fredoka"]
 [ext_resource type="FontFile" path="res://assets/fonts/quizz/Quicksand-Variable.ttf" id="2_quicksand"]
@@ -168,6 +168,16 @@ content_margin_bottom = 8.0
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_row_panel"]
 bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.20)
+shadow_size = 20
+shadow_offset = Vector2(0, 7)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_row_pressed"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
 corner_radius_top_left = 26
 corner_radius_top_right = 26
 corner_radius_bottom_right = 26
@@ -402,6 +412,13 @@ SearchField/styles/read_only = SubResource("StyleBoxFlat_search_field")
 
 QuizRowPanel/base_type = &"PanelContainer"
 QuizRowPanel/styles/panel = SubResource("StyleBoxFlat_row_panel")
+
+QuizRowButton/base_type = &"Button"
+QuizRowButton/styles/normal = SubResource("StyleBoxFlat_row_panel")
+QuizRowButton/styles/hover = SubResource("StyleBoxFlat_row_panel")
+QuizRowButton/styles/pressed = SubResource("StyleBoxFlat_row_pressed")
+QuizRowButton/styles/focus = SubResource("StyleBoxFlat_row_panel")
+QuizRowButton/styles/disabled = SubResource("StyleBoxFlat_row_panel")
 
 AccentBar/base_type = &"Panel"
 AccentBar/styles/panel = SubResource("StyleBoxFlat_accent_bar")
