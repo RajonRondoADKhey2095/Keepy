@@ -596,3 +596,87 @@ dans les quatre cas. Aucun plancher n'a ete deplace.
 ⚠️ **Signale, non corrige, PRE-EXISTANT** : le fond `disabled` reste peche
 sur blanc (1,29:1 pour la bordure). Ce lot ne bouge pas la couleur
 `disabled`, il se contente d'attenuer le TEXTE du CTA avec elle.
+
+## Remise a la cible de l'accueil + parcours de creation complet (20 aout 2026)
+
+Branche `claude/quizz-creation-editor-o5t3en`, partie de `staging`.
+Les lots precedents avaient procede par ajouts successifs sans jamais
+specifier l'ecran cible : l'accueil portait SEPT familles d'elements la ou
+la cible en veut DEUX (le CTA et la liste). Ce lot remet l'accueil a la
+cible et construit le parcours complet de creation (ecran de creation,
+editeur de questions).
+
+### REGLE PERMANENTE : l'accueil ne porte que le CTA et la liste
+
+`QuizzHomeScreen.tscn` contient exactement QUATRE familles d'elements
+visibles : le titre d'ecran ("Mes Quizz" + soulignement corail), le bouton
+retour, le bloc CTA "Creer ton quizz" (forme et matiere du lot du 19 aout
+CONSERVEES telles quelles -- bloc centre 672x200, reflet radial, ombre
+marquee : cette forme est validee device), et la liste des quizz. TOUT
+ajout d'element a cet ecran est une deviation de la cible et doit etre
+argumente contre cette regle, pas empile dessus. Le `StatusLabel` (texte
+vide au repos), l'`IndexHelpPanel` (visible uniquement sur le 400
+FAILED_PRECONDITION documente du tout premier lancement) et l'`EmptyLabel`
+(visible uniquement quand la liste est vide) ne sont pas des elements de
+plus : ils sont invisibles a l'etat nominal.
+
+Ce qui a ETE RETIRE de l'accueil par ce lot -- ne pas le "restaurer" :
+le champ "Titre du questionnaire" et son bouton "Creer", le hint de
+rangement, le champ "Nouvelle categorie" et son bouton "Ajouter", le label
+"Categories indisponibles", le titre "Mes questionnaires", le label de
+section "Mes quizz", et les chips de filtre. La creation et les categories
+vivent desormais sur `QuizzCreateScreen` ; le filtrage par categorie n'a
+plus d'ecran (a re-poser le jour ou la liste devient longue, comme une
+decision produit, pas comme un retour de l'ancien accueil).
+
+Le mot "questionnaire" a disparu de toute l'UI Quizz : le terme est
+"quizz" partout. (La caption du Hub -- "Cree et gere tes questionnaires"
+-- est HORS de ce perimetre : le Hub est contractuellement intouchable par
+ce lot, l'occurrence est signalee au rapport plutot que corrigee en
+douce.)
+
+### Les trois ecrans du parcours
+
+| ecran | scene | contenu |
+|---|---|---|
+| accueil | `QuizzHomeScreen.tscn` | titre, retour, CTA, liste ; tap sur une carte -> editeur |
+| creation | `QuizzCreateScreen.tscn` | champ titre (obligatoire), categorie optionnelle (chips + creation sur place), "Creer le quizz" ; a la validation -> editeur du quizz frais |
+| editeur | `QuizzQuestionsScreen.tscn` | titre du quizz en tete, liste des questions, formulaire d'ajout a TROIS panneaux de format (QCM / Vrai ou faux / Reponse libre) |
+
+L'annulation de la creation est le bouton retour : rien n'est persiste
+avant "Creer le quizz", donc quitter EST annuler -- pas de bouton
+"Annuler" a garder en phase avec le retour.
+
+### `QuizRowButton` -- une carte de liste devient pressable (13e variation)
+
+Une rangee de quizz ouvre l'editeur, donc elle devient un `Button`. La
+variation `QuizRowButton` reutilise le stylebox `row_panel` EXISTANT pour
+`normal`/`hover`/`focus`/`disabled` et un nouveau `StyleBoxFlat_row_
+pressed` (remplissage peche `#FFDCC4`, token deja au catalogue -- aucune
+couleur nouvelle) pour le retour visuel du tap. Consequence structurelle
+consignee dans `_build_row()` : un Button ne se dimensionne pas sur ses
+enfants comme un PanelContainer, donc la rangee porte une hauteur minimale
+explicite (128) et son contenu s'ancre au rect complet -- le meme patron
+que le CTA. Les rangees de QUESTIONS de l'editeur, elles, restent des
+`PanelContainer` : rien ne s'ouvre en les tapant dans ce lot, et un
+control pressable qui ne fait rien est exactement le "controle mort" que
+l'assertion du Hub existait pour interdire.
+
+### Contraste, RE-MESURE sur les pixels rendus (1170x2532, opengl3)
+
+| paire (nouvelle surface de ce lot) | ratio mesure | verdict |
+|---|---|---|
+| texte sur orange ("Ajouter la question", "Creer le quizz", CTA) | 4,84:1 | AA |
+| texte sur blanc (cartes, champs du formulaire) | 11,24:1 | AA/AAA |
+| texte sur creme (titres de section) | 10,68:1 | AA/AAA |
+| anneau du chip selectionne (formats, reponses, categories) | 4,84:1 vs orange / 10,68:1 vs creme | 1.4.11 |
+| hint "Categories indisponibles..." (ecran creation, degrade) | **8,63:1** | AA/AAA |
+
+Le hint de degradation avait d'abord ete pose en `MutedLabel` (3,27:1
+mesure au rendu) : il porte une vraie information (pourquoi les chips
+manquent), donc il est passe en Label plein contraste AVANT livraison
+plutot que consigne comme dette. ⚠️ **Pre-existant, signale, non touche** :
+la variation `MutedLabel` elle-meme (dates des cartes, badges "Question N
+-- format") mesure 3,50:1 sur blanc -- le meme token alpha 0,62 que les
+lots precedents livrent deja ; le bouger est une decision de palette qui
+depasse ce lot.
