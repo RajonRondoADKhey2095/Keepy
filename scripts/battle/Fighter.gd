@@ -84,6 +84,16 @@ var current_action: BattleTypes.Action = BattleTypes.Action.NONE
 ## than compared against an absolute clock, so no accumulated wall-time
 ## value can drift between the two fighters.
 var _phase_left: float = 0.0
+## The FULL length the current phase was given, kept alongside the one
+## that decays. Exists so a listener reacting to `state_changed` can ask
+## how long the phase it just heard about lasts -- FighterView animates a
+## windup over exactly its own duration -- WITHOUT re-deriving it from
+## the profile and growing a second copy of the action -> timing map.
+##
+## Read-only to the outside, through phase_duration(). Nothing in this
+## file branches on it: it is a report of a decision already made, never
+## an input to one.
+var _phase_total: float = 0.0
 var _buffered_action: BattleTypes.Action = BattleTypes.Action.NONE
 var _buffer_left: float = 0.0
 ## True once this fighter's current ATTACK has already resolved, so a
@@ -105,6 +115,7 @@ func reset() -> void:
 	state = BattleTypes.State.IDLE
 	current_action = BattleTypes.Action.NONE
 	_phase_left = 0.0
+	_phase_total = 0.0
 	_buffered_action = BattleTypes.Action.NONE
 	_buffer_left = 0.0
 	_strike_spent = false
@@ -199,6 +210,16 @@ func is_threatening() -> bool:
 	return current_action == BattleTypes.Action.ATTACK \
 		and (state == BattleTypes.State.WINDUP or state == BattleTypes.State.ACTIVE)
 
+## Full length, in seconds, of the phase this fighter is currently in --
+## 0.0 in IDLE and KO, which hold no phase. Valid to read from a
+## `state_changed` handler, which is the only place it is used today.
+##
+## Presentation-only by design: it lets the view layer run an animation
+## for exactly as long as the phase it depicts, instead of guessing a
+## duration that would then drift from the FSM every time a .tres moves.
+func phase_duration() -> float:
+	return _phase_total
+
 func _begin_action(action: BattleTypes.Action) -> void:
 	current_action = action
 	_strike_spent = false
@@ -228,6 +249,7 @@ func _advance_phase() -> void:
 			current_action = BattleTypes.Action.NONE
 			state = BattleTypes.State.IDLE
 			_phase_left = 0.0
+			_phase_total = 0.0
 			state_changed.emit(state, current_action)
 			_consume_buffer()
 		_:
@@ -241,6 +263,7 @@ func _set_phase(next_state: BattleTypes.State) -> void:
 		BattleTypes.State.ACTIVE: _phase_left = timing.y
 		BattleTypes.State.RECOVERY: _phase_left = timing.z
 		_: _phase_left = 0.0
+	_phase_total = _phase_left
 	state_changed.emit(state, current_action)
 
 func _enter_stagger() -> void:
@@ -250,6 +273,7 @@ func _enter_stagger() -> void:
 	_buffer_left = 0.0
 	state = BattleTypes.State.STAGGER
 	_phase_left = _stagger_duration()
+	_phase_total = _phase_left
 	state_changed.emit(state, current_action)
 
 func _apply_damage(amount: int) -> void:
@@ -260,6 +284,7 @@ func _apply_damage(amount: int) -> void:
 	current_action = BattleTypes.Action.NONE
 	state = BattleTypes.State.KO
 	_phase_left = 0.0
+	_phase_total = 0.0
 	state_changed.emit(state, current_action)
 	knocked_out.emit()
 
