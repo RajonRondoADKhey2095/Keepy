@@ -9100,3 +9100,29 @@ toujours par `$Body`/`ModelSlot`, les modeles 3D du lot 6 sont intouches.
    device, c'est le premier chiffre a regarder.
 4. Le brief precisait « si ca s'avere trop facile, on complexifiera plus tard »
    -- rien n'a donc ete ajoute par precaution.
+
+### Deploiement staging du lot 7 (palier 1, automatique)
+
+`staging` **`f572270`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `35c2c90b` des deux cotes, verifie AVANT le push).
+CI run **#182** (id `32497515657`) **verte en 3 min 23 s** (15:25:31 ->
+15:28:54 UTC) -- `Deploy to Vercel [STAGING -- staging]` succes,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche** (palier 2,
+gate Mathieu apres validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** (`keepy-staging.vercel.app`, via
+`mcp__Vercel__web_fetch_vercel_url` -- l'egress direct du sandbox reste refuse
+sur ce domaine) : `index.service.worker.js` sert
+**`CACHE_VERSION = '1787326102|4201998'` = 15:28:22 UTC**, donc **a l'interieur
+de la fenetre du run #182**, contre `1787321354` = 14:09:14 (run #181, lot 6).
+`x-vercel-cache: MISS`, `age: 0`, `last-modified` colle a l'instant de la
+requete -- trois signaux independants qui disent que ce n'est pas une reponse de
+cache. L'alias sert bien ce build.
+
+⚠️ **Ce qui est verifie et ce qui ne l'est pas, dit precisement** : le
+`CACHE_VERSION` prouve **quel build est aliase**. Le fingerprint `index.wasm`
+(**35 376 909** octets, md5 `af4a8fc2925d992348eb30deeeb54360`) est celui de
+l'export LOCAL de cette session, pas relu sur le service -- l'`index.html`
+servi n'a pas ete refetche pour l'extraire. Les deux ensemble etablissent la
+chaine commit -> build -> deploiement ; la barre elle-meme est dessinee par
+Godot dans le canvas et **aucune de ces mesures ne la voit**. Jugement device.
