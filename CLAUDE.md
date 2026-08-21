@@ -8526,3 +8526,122 @@ DANS LES DEUX SENS : lu trop tot il valait encore `1787304120` (lot 4), ce
 qui a confirme que le job tournait REELLEMENT au lieu d'etre un cache
 perime, puis il est passe a `1787307631`. Un second signal independant
 distingue les deux cas ; un poll de plus ne l'aurait pas fait.
+
+## KEEPY BATTLE : PREMIERE ECRITURE FIRESTORE — un compteur cumule anonyme, un write par combat fini (21 aout 2026)
+
+Branche `claude/keepy-battle-stats-d8b7p2`, partie de `main` = `staging`
+(`13cda8d`, meme arbre des deux cotes). **Battle n'ecrivait rien nulle part
+depuis le lot 1** ; ce lot ouvre `battleStats/global`, un document UNIQUE,
+CUMULE et ANONYME (aucun `uid`, aucun historique par combat), incremente a
+la fin de chaque combat. Schema valide par Mathieu : `gamesPlayed`, `wins`,
+`losses`, plus `attacks`/`dodges`/`blocks` en `{attempted, hit, missed}`, plus
+`updatedAt` serveur.
+
+### Recon : la troisieme reponse est celle qui a change le travail
+
+1. **Auth** — `request.auth != null` partout dans le ruleset deploye
+   (`82c07ff`), et c'est **Google Sign-In et RIEN D'AUTRE** : `grep` ne trouve
+   aucun `signInAnonymously` dans le depot, `web/html_shell.html` n'utilise que
+   `signInWithRedirect(auth, new GoogleAuthProvider())`.
+2. **Fin de combat** — `BattleArena._end_round(player_won)`, point unique.
+3. ⚠️ **AUCUN compteur n'existait.** Rien dans `scripts/battle/` ne
+   trackait quoi que ce soit — `grep -i "stat|counter|tally|attempts"` ne rend
+   que des faux positifs (`state_changed`). Tous les compteurs sont neufs.
+4. **`battleStats`** — aucun bloc dans `firestore.rules`.
+
+### L'invariant est VERIFIE, pas deduit du FSM
+
+`hit + missed <= attempted`, par groupe. C'est une **inegalite** et jamais une
+egalite : `attempted` compte des ENGAGEMENTS, `hit`/`missed` des RESOLUTIONS —
+une attaque interrompue avant sa fenetre active, une garde ou une esquive qui
+n'affronte aucun coup, sont engagees et jamais resolues. L'ecart est donc une
+donnee (des engagements jamais testes), pas du mou.
+
+Le FSM livre ne peut pas le casser aujourd'hui, **et c'est un argument sur du
+code que `BattleTally` ne possede pas**. `repair()` verifie donc sur les vrais
+chiffres, avant encodage, et **REMONTE `attempted`** au lieu de baisser les
+resolutions : une resolution est un fait observe, un engagement manquant ne
+peut etre qu'un trou de comptabilite. Chaque reparation est un `push_warning`.
+
+### ⚠️ LA FORME DU WRITE EST LE VRAI RISQUE — `updateMask` present ET vide
+
+Un `:commit`, un write : `update` avec le NOM du document seul (aucun
+`fields`), `updateMask: {fieldPaths: []}`, et 12 `increment` + `updatedAt` en
+`REQUEST_TIME`. C'est la forme que les SDK officiels emettent pour
+`set(increment(), {merge:true})`.
+
+**Si le masque disparait, Firestore ECRASE le document entier avant que les
+transforms ne tournent** — c'est-a-dire une remise a zero des totaux partages,
+la seule panne de ce lot qui detruit de la donnee au lieu d'en perdre une.
+`BattleStatsProbe` PHASE D lit donc ces octets litteralement.
+
+**Les zeros voyagent aussi, et c'est porteur** : un `increment` sur un champ
+absent le cree a partir de 0, donc envoyer `losses: 0` apres une victoire est
+ce qui fait que le TOUT PREMIER write produit la forme complete que le
+`hasAll()` des rules exige. Aucune branche create-vs-update cote client : un
+read-then-write courrait contre tous les autres joueurs.
+
+### Rules : purement additives, et la monotonie sert DEUX fois
+
+`git diff --numstat` : **152 lignes ajoutees, 0 retiree** ; les 358 premieres
+lignes (`/scores` + `/quizzes` + `/categories`) sont **byte-identiques** a
+`origin/main` (`cmp` silencieux). Lecture signed-in comme `/scores` ; pas de
+triplet owner-only puisqu'il n'y a **pas de proprietaire** ; jeu de cles exact,
+entiers non negatifs, `updatedAt == request.time`, `allow delete: if false`, et
+une **monotonie** qui refuse toute ecriture faisant baisser un compteur.
+
+⚠️ **La monotonie est aussi le filet sous la forme du write** : masque
+perdu -> les valeurs resultantes seraient les seuls deltas du combat courant,
+donc INFERIEURES au stocke -> ecriture refusee au lieu de totaux remis a zero.
+
+⚠️ **LIMITE ACCEPTEE PAR MATHIEU** : un document unique partage incremente
+cote client ne peut pas etre rendu etanche par des rules — la cle d'API est
+publique (elle est dans le build). Les rules reduisent la surface, elles ne la
+ferment pas. Chiffres d'affichage, rien de sensible.
+
+### ⚠️ DEUX PREMISSES DU BRIEF SONT FAUSSES, mesurees
+
+- **`firestore-rules.yml` n'a PAS de `workflow_dispatch`** — c'est explicite
+  dans son propre commentaire (« Deliberately no workflow_dispatch »). Le SEUL
+  chemin vers le projet live est un push sur `main` touchant `firestore.rules`.
+  **Il n'existe donc aucun moyen de tester une ecriture battleStats sur staging
+  avant la prod.**
+- **Consequence directe : sur `staging`, AUCUNE ecriture battleStats ne peut
+  reussir.** Pas de regle deployee -> deny par defaut -> 403 -> `push_warning`,
+  et rien d'autre. C'est le mode de panne prevu, pas une regression.
+
+### Validation
+
+`BattleStatsProbe` (nouvelle, **85/85, exit 0**) : regles de comptage une par
+une, invariant force puis repare, jeu de cles complet, octets du write, gate
+headless (**reseau teste AVANT auth** — un probe ne touche jamais `Auth`), et
+**PHASE F un vrai combat a travers `Battle.tscn` livre** (986 ticks, tally
+coherent, **exactement UNE tentative d'ecriture**, aucune reparation
+necessaire). Import et export Web **exit 0**, `index.wasm` **35 376 909** /
+md5 `af4a8fc2925d992348eb30deeeb54360`. `ProbeTimeoutAudit` **38 scenes** (37
+avant). Piege payload tenu.
+
+**SEPT sondes BYTE-IDENTIQUES sur les DEUX flux contre `origin/main`** en
+worktree separe (imports verifies complets des deux cotes, 24 `.scn`) :
+`BattleContractProbe`, `BattleFeintProbe`, `BattleReadabilityProbe`,
+`BattleDefenseProbe`, `AssetContractAudit`, `DeathModelAudit`,
+`ChargerShapeProbe`.
+
+⚠️ **`BattleFeintProbe` ECHOUE 5/27 — et elle echoue DEJA sur
+`origin/main`, a l'octet pres.** Rouge PRE-EXISTANT, non attribuable a ce lot
+et non touche par lui. Cause : `LATENCIES` y vaut toujours
+`[0.12, 0.18, 0.24]` alors que la section « lot 5 » de ce fichier annonce
+`[0.30, 0.38, 0.45]` — **ce changement n'a jamais atteint `main`**. A traiter
+dans son propre lot.
+
+### Reste ouvert
+
+1. **Rien n'a jamais atteint Firestore.** Aucun idToken Google dans ce sandbox,
+   donc la forme du write est prouvee contre les rules ECRITES, **pas contre le
+   service**. En particulier, ni le comportement d'un `updateMask` vide ni le
+   fait que `request.resource.data` porte les valeurs POST-increment ne sont
+   verifies en ligne — le second est le meme mecanisme qui fait deja marcher
+   `createdAt == request.time` sur `/scores`, le premier ne l'est pas.
+2. **Le deploiement des rules est gate `main`** (point ci-dessus), donc la
+   premiere ecriture reelle sera une ecriture de PRODUCTION.
+3. **Keepy-Analytics n'est pas touche** — session distincte, apres celle-ci.
