@@ -8818,3 +8818,32 @@ vaut toujours `[0.12, 0.18, 0.24]` alors que la section lot 5 annonce
 4. **Aucun son, aucune particule, aucune animation squelettale, aucun second
    adversaire, aucune progression** : hors perimetre, inchange depuis le
    lot 1. Le point de bascule reste `$Body`/`ModelSlot`.
+
+### Deploiement staging du lot 6 (palier 1, automatique)
+
+`staging` `ca22981` (merge `--no-ff`, arbre **byte-identique** a la branche
+feature — meme hash d'arbre des deux cotes, verifie avant le push). CI run
+**#180** (id `32490331721`) **verte** (14:06:20 -> 14:09:43 UTC) — `Deploy to
+Vercel [STAGING -- staging]` **succes** a 14:09:41, `[PRODUCTION -- main]`
+correctement **skipped**. `main` **non touche** (palier 2, gate Mathieu apres
+validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** (`keepy-staging.vercel.app`,
+via `mcp__Vercel__web_fetch_vercel_url` — l'egress direct du sandbox reste
+refuse sur ce domaine) : `CACHE_VERSION` du `index.service.worker.js` servi =
+**`1787321354` = 14:09:14 UTC**, donc **a l'interieur de l'etape `Export Web
+build` du run #180** (14:09:10 -> 14:09:15), contre `1787314110` = 12:08:30
+(run #178) juste avant. `x-vercel-cache: MISS`, `age: 0`.
+
+⚠️ **CORRECTION UTILE a la note « l'API GitHub Actions sert des etats
+perimes » : `workflow_jobs_filter: {"filter": "latest"}` N'EST PAS le
+remede.** Cette section-la consigne une observation UNIQUE ou passer
+`"latest"` avait debloque la lecture. Ici c'est l'inverse, mesure : **trois
+appels successifs avec `"latest"` ont rendu une reponse byte-identique figee
+sur `Import project resources / in_progress`**, et c'est l'appel avec
+`{"filter": "all"}` qui a rendu l'etat reel et complet. Les deux observations
+ensemble disent la meme chose : **le parametre n'est pas la cause et n'est pas
+la cure — seul un SECOND SIGNAL INDEPENDANT tranche.** Ici, comme au lot 3,
+c'est le `CACHE_VERSION` reellement servi qui a repondu, et il a repondu dans
+les deux sens (d'abord « toujours l'ancien build », donc le job tournait
+vraiment ; puis le nouveau).
