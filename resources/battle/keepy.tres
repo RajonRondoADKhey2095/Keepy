@@ -1,6 +1,7 @@
-[gd_resource type="Resource" script_class="FighterProfile" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="FighterProfile" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/FighterProfile.gd" id="1"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_squirrel_hero.glb" id="2"]
 
 [resource]
 script = ExtResource("1")
@@ -25,8 +26,8 @@ ai_reaction_jitter_s = 0.25
 ai_aggression = 0.55
 ai_defense_rate = 0.6
 ai_guard_bias = 0.65
-model_scene = null
-model_scale = 1.0
+model_scene = ExtResource("2")
+model_scale = 1.07368
 model_rotation_degrees = Vector3(0, 0, 0)
-model_offset = Vector3(0, 0, 0)
+model_offset = Vector3(0, -0.2246, 0)
 placeholder_color = Color(0.9, 0.66, 0.3, 1)
