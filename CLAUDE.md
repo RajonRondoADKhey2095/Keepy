@@ -9126,3 +9126,87 @@ l'export LOCAL de cette session, pas relu sur le service -- l'`index.html`
 servi n'a pas ete refetche pour l'extraire. Les deux ensemble etablissent la
 chaine commit -> build -> deploiement ; la barre elle-meme est dessinee par
 Godot dans le canvas et **aucune de ces mesures ne la voit**. Jugement device.
+
+### ⚠️ TROISIEME INCIDENT DE SESSIONS CONCURRENTES -- le lot 7 a ete brieffe DEUX fois (21 aout 2026)
+
+**La regle n°1 de ce fichier a ete enfreinte une troisieme fois** (precedents
+du 6 et du 11 aout 2026). Deux sessions ont recu le meme brief lot 7. La
+premiere (`claude/keepy-lot7-gameplay-98dj9f`) a livre, merge sur `staging`
+(`f572270`) et deploye a 15:28 UTC. La seconde
+(`claude/keepy-lot7-gameplay-dle7il`) a demarre a 17:32 UTC.
+
+**Resolu comme les deux precedents le prescrivent, et moins cher** : le
+`git fetch --all --prune` a ete fait AVANT d'ecrire une ligne -- la lecon
+explicite de l'incident du 11 aout (« faire ce fetch AU DEBUT, pas a la
+fin »). La seconde session n'a donc produit AUCUN doublon a abandonner : elle
+a constate que `origin/staging` portait deja le lot, et s'est convertie en
+AUDIT INDEPENDANT au lieu de le refaire. Cout du doublon : zero ligne de code,
+contre ~3 h de travail duplique au 11 aout.
+
+⚠️ **Rien dans l'outillage n'a signale la collision, une troisieme fois.** Le
+seul indice etait la presence de `origin/claude/keepy-lot7-gameplay-98dj9f`
+dans `git branch -r`, avec un arbre identique a `origin/staging`. **Comparer
+les arbres (`git rev-parse <ref>^{tree}`) plutot que les noms de branche est ce
+qui a tranche en une commande.**
+
+#### Ce que l'audit independant a verifie -- rejoue, pas relu
+
+Editeur Godot 4.3-stable installe dans ce second sandbox, import headless
+complet (**24 `.scn`**, le piege du faux-rouge par import tronque controle et
+non suppose). Sondes rejouees sur l'arbre `origin/staging` lui-meme :
+
+| sonde | resultat | revendique par le lot |
+|---|---|---|
+| `BattleContractProbe` | **33/33, exit 0** | 33/33 |
+| `BattleReadabilityProbe` | **62/62, exit 0** | 62/62 |
+| `BattleDefenseProbe` | **21/21, exit 0** | 21/21 |
+| `BattleStatsProbe` | **83/83, exit 0** | 83/83 |
+| `ProbeTimeoutAudit` | **37 sondes**, toutes armees | 37 |
+| `AssetContractAudit` | 12/12 visuels, **0/10 colliders deplaces** | idem |
+| `DeathModelAudit` / `ChargerShapeProbe` | exit 0 | idem |
+
+**Les chiffres d'equilibrage se reproduisent a l'unite pres** sur une autre
+machine : martelage **35/300 = 11,7 %** (moyenne 10,5 s), esquive seule
+**0/300**, lecture-de-la-barre + contre **296/300 = 98,7 %** (moyenne 24,2 s).
+**L'objectif du brief -- le martelage n'est plus dominant -- est donc confirme
+par une mesure independante**, pas seulement par celle qui l'a produit.
+
+**Determinisme re-prouve APRES refonte** : `BattleContractProbe` jouee deux
+fois a la graine 20260806 dans ce sandbox est **byte-identique sur les DEUX
+flux** (stdout md5 `bd015b777aa42ce310dd35cba95512f3`, stderr identique).
+**Contrat central de la barre re-mesure** : ecart
+`|progression - ecoule/total|` **0,000000** sur tout le remplissage, barre
+pleine a **0,9815** au dernier tick de charge, coup parti au tick 54 sur 54.
+
+**Suppressions verifiees par grep plutot que par lecture** : `Action` ne
+contient plus que `NONE / ATTACK / DODGE`, **zero code actif** contenant
+`GUARD`/`FEINT`/`feint_*`/`guard_*`/`ai_feint_rate` hors commentaires
+historiques, `BattleFeintProbe.{gd,tscn}` absente, et **aucune reference de
+`scripts/battle/` vers `scripts/dev/`**. `BattleTally.GROUP_BLOCKS` est bien
+conserve fige a zero, et c'est **correct** : `firestore.rules` deploye exige
+`blocks` via `hasAll(statKeys())` (ligne 414), donc un write sans le groupe
+serait refuse en silence. L'ordre « rules d'abord, client ensuite » consigne
+par le lot tient.
+
+**Aucun defaut trouve. Rien n'a ete corrige parce qu'il n'y avait rien a
+corriger.**
+
+#### ⚠️ Une seule nuance : le `CACHE_VERSION` consigne n'est PAS celui servi
+
+Le lot cite `1787326102` = 15:28:22 UTC (run **#182**, le merge). Le service
+sert **`1787326751` = 15:39:11 UTC**, soit le run **#183** -- le commit de doc
+`20962d5`, qui a redeploye staging derriere lui. **Ni une erreur ni une
+regression** : les deux builds ont un contenu de jeu identique (`CLAUDE.md`
+n'est pas une ressource Godot), et l'epoch servi est POSTERIEUR au lot, donc
+l'alias sert bien la refonte. C'est le meme schema deja consigne aux lots 3 et
+5 (« l'alias pointe sur le run du commit de doc »). Dit ici pour qu'un futur
+lecteur ne cherche pas l'epoch du #182 sur le service et n'en conclue pas qu'un
+mauvais build est en ligne. Verifie a la re-lecture : `x-vercel-cache: HIT`,
+`age: 1515` -- une reponse de cache CDN, donc **pas** les trois signaux de
+fraicheur habituels ; c'est le `CACHE_VERSION` lui-meme, posterieur au lot, qui
+porte la preuve ici, pas les en-tetes.
+
+**Reste ouvert : inchange par cet audit.** Les quatre points du lot 7 restent
+exactement ce qu'ils sont -- et le premier (la barre se lit-elle comme une
+horloge a vitesse reelle sur un telephone) reste **hors de portee de toute
+sonde de ce depot**. Aucune mesure de cette session ne le touche.
