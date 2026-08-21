@@ -9502,3 +9502,41 @@ d'abord, client ensuite** -- et les rules ne se deploient que sur `main`.
    contact -- a surveiller si Mathieu retrouve « trop dur ».
 5. Toujours aucun son, aucune particule, aucun second adversaire, aucune
    progression, aucun brain adaptatif : hors perimetre, inchange.
+
+### Deploiement staging du lot 8 (palier 1, automatique)
+
+`staging` **`22f3b42`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `3a0ff0e7` des deux cotes, verifie
+AVANT le push). CI run **#185** (id `32515598018`) **verte en 3 min 31 s**
+(18:52:59 -> 18:56:30 UTC) -- `Deploy to Vercel [STAGING -- staging]`
+succes, `[PRODUCTION -- main]` correctement **skipped**. **`main` NON
+touche** (palier 2, gate Mathieu apres validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** (`keepy-staging.vercel.app`,
+via `mcp__Vercel__web_fetch_vercel_url` -- l'egress direct du sandbox reste
+refuse sur ce domaine) : `index.service.worker.js` sert
+**`CACHE_VERSION = '1787338553|4187371'` = 18:55:53 UTC**, donc **a
+l'interieur de la fenetre du run #185**, contre `1787334325` = 17:45:25
+(run #184) juste avant. `x-vercel-cache: MISS`, `age: 0`, `last-modified`
+colle a l'instant de la requete -- trois signaux independants de fraicheur.
+L'alias sert bien ce build.
+
+⚠️ **L'API GitHub Actions a de nouveau servi des reponses PERIMEES** (deux
+appels `list_workflow_jobs` **byte-identiques**, figes sur « Import project
+resources / in_progress », `filter: "latest"` compris). **C'est le
+`CACHE_VERSION` servi qui a tranche, dans les DEUX sens** : lu trop tot il
+valait encore celui du run #184, ce qui confirmait que le job tournait
+REELLEMENT au lieu d'etre un cache perime, puis il est passe a
+`1787338553`. Un poll de plus ne l'aurait pas fait -- la regle « second
+signal independant » deja consignee tient une fois de plus.
+
+⚠️ **Piege de mesure rencontre pendant la validation, et il aurait produit
+un FAUX ROUGE.** Les deux sondes gameplay seedees `ComboAudit`/
+`ShrinkAudit` sont sorties **DIFFERENTES** au premier essai. Ce n'etait pas
+une regression : **le run de la branche avait ete TUE en cours** (1009
+octets contre 2670, coupe en plein « phase RISKY »), parce qu'il partageait
+la machine avec l'export et les autres sondes. Rejouees proprement l'une
+apres l'autre, elles sont **byte-identiques sur les DEUX flux** (2670 et
+2149 octets des deux cotes). **Comparer les TAILLES avant de comparer les
+contenus** : meme famille que le faux-rouge par import tronque deja
+consigne, et une sortie tronquee ne se signale pas elle-meme.
