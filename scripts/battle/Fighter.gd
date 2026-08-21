@@ -55,7 +55,20 @@ signal action_started(action: BattleTypes.Action)
 ## Emitted once per resolved strike against this fighter, whatever the
 ## outcome -- BLOCKED and DODGED are reported too, because "my guard
 ## worked" is exactly the feedback this lot needs to be readable.
-signal hit_taken(damage: int, outcome: BattleTypes.Outcome)
+##
+## `attempted` is the defensive action this fighter was COMMITTED TO when
+## the blow landed, or NONE if it was not defending at all. It carries
+## the one distinction lot 5 exists to make visible: a clean HIT with
+## `attempted == GUARD` is a guard that was MISTIMED, and it must not
+## look to the player like a guard that was never pressed.
+##
+## It is a signal argument and not something a listener reads back off
+## `current_action`, even though that would work today: this signal is
+## emitted BEFORE _enter_stagger() clears the action, so the read-back
+## is correct only for as long as nobody reorders those two lines -- and
+## the failure would be silent, in the exact channel this lot adds to
+## stop failures being silent.
+signal hit_taken(damage: int, outcome: BattleTypes.Outcome, attempted: BattleTypes.Action)
 ## Emitted the tick this fighter's ATTACK enters its ACTIVE window.
 ## BattleArena listens and resolves it against the opponent: the strike
 ## rule lives in ONE place rather than in each fighter's view of the
@@ -173,9 +186,16 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.MISSED
 
+	# Captured BEFORE anything below can clear it, so a mistimed defence
+	# is still nameable at the moment it fails. NONE unless this fighter
+	# had actually committed to guarding or dodging: an attack caught
+	# mid-swing was not a failed defence, it was a trade lost, and
+	# telling the player otherwise would teach the wrong lesson.
+	var attempted := last_defence()
+
 	var defending := state == BattleTypes.State.ACTIVE
 	if defending and current_action == BattleTypes.Action.DODGE:
-		hit_taken.emit(0, BattleTypes.Outcome.DODGED)
+		hit_taken.emit(0, BattleTypes.Outcome.DODGED, attempted)
 		return BattleTypes.Outcome.DODGED
 
 	if defending and current_action == BattleTypes.Action.GUARD:
@@ -185,7 +205,7 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 		var chip := int(ceil(float(damage) * _guard_ratio()))
 		_apply_damage(chip)
 		if state != BattleTypes.State.KO:
-			hit_taken.emit(chip, BattleTypes.Outcome.BLOCKED)
+			hit_taken.emit(chip, BattleTypes.Outcome.BLOCKED, attempted)
 		return BattleTypes.Outcome.BLOCKED
 
 	# Everything else is a clean hit, INCLUDING being mid-attack: active
@@ -194,9 +214,22 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 	_apply_damage(damage)
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.HIT
-	hit_taken.emit(damage, BattleTypes.Outcome.HIT)
+	hit_taken.emit(damage, BattleTypes.Outcome.HIT, attempted)
 	_enter_stagger()
 	return BattleTypes.Outcome.HIT
+
+## The defensive action this fighter is committed to RIGHT NOW -- in any
+## phase of it, windup and recovery included -- or NONE.
+##
+## Deliberately not "is the defence active": the whole point of lot 5's
+## feedback is that a guard which is still winding up, or has already
+## dropped into recovery, is a guard the player DID press and mistimed.
+## Those are the two cases that used to be indistinguishable from having
+## pressed nothing.
+func last_defence() -> BattleTypes.Action:
+	if current_action == BattleTypes.Action.GUARD or current_action == BattleTypes.Action.DODGE:
+		return current_action
+	return BattleTypes.Action.NONE
 
 func is_alive() -> bool:
 	return state != BattleTypes.State.KO
