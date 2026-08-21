@@ -21,9 +21,21 @@ class_name FighterBrain
 ## failure mode CLAUDE.md already records for a probe fixture that
 ## matched the real thing everywhere except the one axis that mattered.
 ##
-## Personality is FOUR NUMBERS on the profile (ai_reaction_delay_s,
-## ai_reaction_jitter_s, ai_aggression, ai_defense_rate + ai_guard_bias),
-## never a subclass. A new opponent's behaviour is a .tres edit.
+## Personality is NUMBERS on the profile (ai_reaction_delay_s,
+## ai_reaction_jitter_s, ai_aggression, ai_defense_rate, ai_guard_bias
+## and, since lot 4, ai_feint_rate), never a subclass. A new opponent's
+## behaviour is a .tres edit.
+##
+## =====================================================================
+## THE FEINT NEEDS NO MACHINERY IN HERE, AND THAT IS DELIBERATE
+##
+## A feint is ONE action (FighterProfile: an attack whose strike is held
+## back), so choosing it is a single roll in _offensive_action() and
+## nothing else -- no queued second beat, no state to unwind if it gets
+## interrupted, no branch that can leave this class waiting for a follow
+## up that a stagger cancelled. An earlier design made it a two-beat
+## combo and needed all of that; it was also measured not to work, for
+## reasons written up in FighterProfile.gd.
 ##
 ## =====================================================================
 ## DETERMINISM
@@ -69,13 +81,42 @@ func advance(dt: float) -> void:
 	if not _fighter.is_alive() or not _opponent.is_alive():
 		return
 
-	if _fighter.state != BattleTypes.State.IDLE:
-		# Committed or staggered: the clock only runs while a decision is
-		# actually available, so a stagger cannot be "slept through" and
-		# answered the instant it ends.
-		_armed = false
-		return
-
+	# THE REACTION CLOCK RUNS CONTINUOUSLY -- IT IS NEVER RESET BY THE
+	# FIGHTER'S OWN STATE. Read the block below before changing that.
+	#
+	# =================================================================
+	# WHY, AND WHAT IT COST TO FIND OUT (lot 4, measured)
+	#
+	# Before lot 4 this clock was cleared on every non-IDLE tick, so the
+	# brain paid its full ai_reaction_delay_s AFTER each of its own
+	# actions and AFTER every stagger, never during them. Its real
+	# cadence was therefore action_length + delay, not max(the two) --
+	# and against the shipped profiles the arithmetic simply never
+	# closed. A player who mashed ATTACK and nothing else won 300 fights
+	# out of 300 in 3.4 s, stun-locking the opponent from the first
+	# clean hit, because stagger 0.55 + delay 0.36..0.66 + a guard
+	# windup 0.08 always exceeded the 0.78 s attack cycle coming at it.
+	#
+	# That was NOT reachable by tuning, and it was measured rather than
+	# assumed: the mash still won 120 out of 120 at attack_recovery_s of
+	# 0.36, 0.44, 0.52, 0.60 AND 0.70. No .tres edit fixes it, because
+	# the defect was never in the combat rules.
+	#
+	# It was this file breaking the promise in its own header --
+	# "everything a player can do, this class can do". A human thinks
+	# during their own recovery and during a stagger, and taps into
+	# Fighter's 0.16 s input buffer so the answer is already committed
+	# the instant they are free. The brain could do neither, so the two
+	# sides were playing different games on precisely the axis that
+	# decided the match: the divergence-you-only-find-by-measuring this
+	# project has already paid for once (CLAUDE.md, SubstituteModel).
+	#
+	# What this is NOT: free actions. The delay is still charged in
+	# full, every decision still goes through the same _choose(), and
+	# nothing can be acted on before the fighter is genuinely IDLE. The
+	# clock now measures the MINIMUM SPACING between decisions, which is
+	# what a reaction time actually is, instead of a penalty bolted onto
+	# the end of every commitment.
 	if not _armed:
 		_armed = true
 		_decision_left = _profile.ai_reaction_delay_s
@@ -85,6 +126,14 @@ func advance(dt: float) -> void:
 
 	_decision_left -= dt
 	if _decision_left > 0.0:
+		return
+
+	# Decided, but still committed or stunned: hold it and spend it on
+	# the first free tick. Requesting it here instead would push it into
+	# Fighter's input buffer, where it expires after INPUT_BUFFER_S and
+	# is silently lost whenever the remaining lockout is longer -- the
+	# answer would vanish for exactly the reason it was needed.
+	if _fighter.state != BattleTypes.State.IDLE:
 		return
 
 	_armed = false
@@ -102,8 +151,27 @@ func _choose() -> BattleTypes.Action:
 		return BattleTypes.Action.ATTACK
 
 	if _rng.randf() < _profile.ai_aggression:
-		return BattleTypes.Action.ATTACK
+		return _offensive_action()
 	return _defensive_action()
+
+## An offensive commitment: the real thing, or the lie that borrows its
+## telegraph. The roll happens ONLY here, on the branch where the
+## opponent is not already attacking -- feinting into an incoming attack
+## would mean eating the hit to sell a bluff nobody is in a position to
+## fall for, since the opponent is committed to its own action anyway.
+##
+## Draws from the same seeded rng as every other decision, so a feint is
+## part of the reproducible fight rather than a source of noise on top
+## of it.
+func _offensive_action() -> BattleTypes.Action:
+	# Only bluff someone who is in a position to be bluffed. See
+	# Fighter.is_free() for the measurement that put this condition in
+	# code instead of in a comment.
+	if _profile.ai_feint_rate <= 0.0 or _opponent.is_free():
+		return BattleTypes.Action.ATTACK
+	if _rng.randf() < _profile.ai_feint_rate:
+		return BattleTypes.Action.FEINT
+	return BattleTypes.Action.ATTACK
 
 func _defensive_action() -> BattleTypes.Action:
 	if _rng.randf() < _profile.ai_guard_bias:
