@@ -226,7 +226,9 @@ func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> 
 			_rest(0.16)
 			_start_idle_bob()
 		BattleTypes.State.WINDUP:
-			_windup(action, phase)
+			# telegraph_duration(), NOT phase: a feint's windup is longer
+			# than the pose that depicts it, on purpose. See Fighter.
+			_windup(action, maxf(_fighter.telegraph_duration(), MIN_POSE_S))
 		BattleTypes.State.ACTIVE:
 			_active(action, phase)
 		BattleTypes.State.RECOVERY:
@@ -266,8 +268,20 @@ func _windup(action: BattleTypes.Action, phase: float) -> void:
 	_stop_idle_bob()
 	_kill(_pose_tween)
 	_pose_tween = create_tween().set_parallel(true)
-	var lean := WINDUP_LEAN_DEG if action == BattleTypes.Action.ATTACK else WINDUP_LEAN_DEG * 0.4
-	var reach := -WINDUP_RECOIL if action == BattleTypes.Action.ATTACK else -WINDUP_RECOIL * 0.35
+	# A FEINT takes this branch identically to an ATTACK -- same lean,
+	# same recoil, same red ramp -- and `phase` is already the same
+	# number, because FighterProfile.timing_for() hands a feint the
+	# attack's own attack_windup_s field rather than a copy of it.
+	# The two telegraphs are therefore not "similar": they are the same
+	# animation, run for the same duration, from the same source value.
+	#
+	# This is the ONE place a tell would have been cheapest to introduce
+	# and hardest to notice, so it is also the one BattleFeintProbe
+	# gates hardest: it plays both and compares the resulting transforms
+	# tick by tick.
+	var attack_like := BattleTypes.is_attack_like(action)
+	var lean := WINDUP_LEAN_DEG if attack_like else WINDUP_LEAN_DEG * 0.4
+	var reach := -WINDUP_RECOIL if attack_like else -WINDUP_RECOIL * 0.35
 	_pose_tween.tween_property(_slot, "position", _offset(reach, 0.0), phase) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	_pose_tween.tween_property(_slot, "rotation_degrees", _lean(lean, 0.0), phase) \
@@ -275,9 +289,14 @@ func _windup(action: BattleTypes.Action, phase: float) -> void:
 	_pose_tween.tween_property(_slot, "scale", _base_scale * WINDUP_SCALE, phase) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
-	if action != BattleTypes.Action.ATTACK:
+	if not attack_like:
 		_tint_to(_base_color, phase * 0.5)
 		return
+	# Colour still means exactly ONE thing, and lot 4 does not widen it:
+	# "an attack telegraph is running". That a telegraph can now turn out
+	# to have been a lie is a property of the fight, not a second meaning
+	# bolted onto the channel -- the ramp says the same sentence it said
+	# in lot 2, it is just no longer always true.
 	_tint_to(ALERT_COLOR, phase, Tween.EASE_IN)
 
 ## The effect window. Attack snaps forward; guard and dodge get their own

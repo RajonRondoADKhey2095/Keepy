@@ -36,11 +36,17 @@ enum State {
 ## The three tap zones, and the three things a fighter can commit to.
 ## NONE is the resting action carried while IDLE/STAGGER/KO, so
 ## `current_action` is never a null-ish special case to guard against.
+## FEINT is the opponent-only fourth commitment (lot 4). It is NOT a
+## fourth tap zone: BattleHUD emits three actions and only three, so a
+## human never requests it. It exists so an attack telegraph can turn out
+## to have been a lie -- see Fighter._advance_phase(), which routes it
+## WINDUP -> RECOVERY with no effect window at all.
 enum Action {
 	NONE,
 	ATTACK,
 	GUARD,
 	DODGE,
+	FEINT,
 }
 
 ## What one strike resolution produced, reported to the HUD so a player
@@ -51,6 +57,16 @@ enum Outcome {
 	DODGED,   ## Defender was in DODGE's active window: no damage at all.
 	MISSED,   ## Defender was already KO -- resolution is a no-op.
 }
+
+## The two commitments that open on an attack telegraph. Defined ONCE
+## here, in the vocabulary every layer already speaks, so "what looks
+## like an attack" has a single answer that the FSM (Fighter.
+## is_threatening) and the view layer (FighterView._windup) both defer
+## to. Two separate `== ATTACK or == FEINT` tests would be two things
+## that can be updated one at a time -- and the one left behind would be
+## a channel that quietly tells a feint apart.
+static func is_attack_like(action: Action) -> bool:
+	return action == Action.ATTACK or action == Action.FEINT
 
 ## Human-readable state, for the HUD only. Kept next to the enum it
 ## describes so a new state cannot be added without this going stale in
@@ -65,9 +81,27 @@ static func state_label(state: State) -> String:
 		State.KO: return "K.O."
 	return "?"
 
+## Human-readable action, for the HUD only.
+##
+## =====================================================================
+## FEINT DELIBERATELY REPORTS ITSELF AS "Attaque", AND THAT IS THE WHOLE
+## POINT -- DO NOT "FIX" THIS
+##
+## BattleHUD prints this string live, next to the opponent's state, while
+## the windup is still running. A label reading "Feinte" would give the
+## answer away before the player has even looked at the fighter, which
+## would make the entire lot-4 mechanic worthless: the feint has to be
+## INDISTINGUISHABLE from an attack for exactly as long as an attack's
+## windup lasts. Every other channel is held to the same rule --
+## Fighter.is_threatening() answers true for both, and FighterView plays
+## the identical telegraph -- and BattleFeintProbe gates all three.
+##
+## The reveal is the ABSENCE of the strike at the end of the windup, and
+## it arrives at that moment and not one millisecond earlier.
 static func action_label(action: Action) -> String:
 	match action:
 		Action.ATTACK: return "Attaque"
+		Action.FEINT: return "Attaque"
 		Action.GUARD: return "Garde"
 		Action.DODGE: return "Esquive"
 		Action.NONE: return ""
