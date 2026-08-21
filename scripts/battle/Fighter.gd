@@ -55,7 +55,20 @@ signal action_started(action: BattleTypes.Action)
 ## Emitted once per resolved strike against this fighter, whatever the
 ## outcome -- BLOCKED and DODGED are reported too, because "my guard
 ## worked" is exactly the feedback this lot needs to be readable.
-signal hit_taken(damage: int, outcome: BattleTypes.Outcome)
+##
+## `attempted` is the defensive action this fighter was COMMITTED TO when
+## the blow landed, or NONE if it was not defending at all. It carries
+## the one distinction lot 5 exists to make visible: a clean HIT with
+## `attempted == GUARD` is a guard that was MISTIMED, and it must not
+## look to the player like a guard that was never pressed.
+##
+## It is a signal argument and not something a listener reads back off
+## `current_action`, even though that would work today: this signal is
+## emitted BEFORE _enter_stagger() clears the action, so the read-back
+## is correct only for as long as nobody reorders those two lines -- and
+## the failure would be silent, in the exact channel this lot adds to
+## stop failures being silent.
+signal hit_taken(damage: int, outcome: BattleTypes.Outcome, attempted: BattleTypes.Action)
 ## Emitted the tick this fighter's ATTACK enters its ACTIVE window.
 ## BattleArena listens and resolves it against the opponent: the strike
 ## rule lives in ONE place rather than in each fighter's view of the
@@ -173,9 +186,16 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.MISSED
 
+	# Captured BEFORE anything below can clear it, so a mistimed defence
+	# is still nameable at the moment it fails. NONE unless this fighter
+	# had actually committed to guarding or dodging: an attack caught
+	# mid-swing was not a failed defence, it was a trade lost, and
+	# telling the player otherwise would teach the wrong lesson.
+	var attempted := last_defence()
+
 	var defending := state == BattleTypes.State.ACTIVE
 	if defending and current_action == BattleTypes.Action.DODGE:
-		hit_taken.emit(0, BattleTypes.Outcome.DODGED)
+		hit_taken.emit(0, BattleTypes.Outcome.DODGED, attempted)
 		return BattleTypes.Outcome.DODGED
 
 	if defending and current_action == BattleTypes.Action.GUARD:
@@ -185,7 +205,7 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 		var chip := int(ceil(float(damage) * _guard_ratio()))
 		_apply_damage(chip)
 		if state != BattleTypes.State.KO:
-			hit_taken.emit(chip, BattleTypes.Outcome.BLOCKED)
+			hit_taken.emit(chip, BattleTypes.Outcome.BLOCKED, attempted)
 		return BattleTypes.Outcome.BLOCKED
 
 	# Everything else is a clean hit, INCLUDING being mid-attack: active
@@ -194,20 +214,66 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 	_apply_damage(damage)
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.HIT
-	hit_taken.emit(damage, BattleTypes.Outcome.HIT)
+	hit_taken.emit(damage, BattleTypes.Outcome.HIT, attempted)
 	_enter_stagger()
 	return BattleTypes.Outcome.HIT
+
+## The defensive action this fighter is committed to RIGHT NOW -- in any
+## phase of it, windup and recovery included -- or NONE.
+##
+## Deliberately not "is the defence active": the whole point of lot 5's
+## feedback is that a guard which is still winding up, or has already
+## dropped into recovery, is a guard the player DID press and mistimed.
+## Those are the two cases that used to be indistinguishable from having
+## pressed nothing.
+func last_defence() -> BattleTypes.Action:
+	if current_action == BattleTypes.Action.GUARD or current_action == BattleTypes.Action.DODGE:
+		return current_action
+	return BattleTypes.Action.NONE
 
 func is_alive() -> bool:
 	return state != BattleTypes.State.KO
 
+## True while this fighter is free to commit to something right now --
+## the second, and last, thing FighterBrain may "see" about its opponent.
+##
+## FighterBrain uses it INVERTED: it bluffs an opponent who is NOT free.
+## That reads backwards until you look at the clock. A feint holds its
+## strike, so it stands wound up and fully vulnerable for attack_windup_s
+## plus the hold -- long enough that an opponent who is free when it
+## starts can simply hit first, which is not a mind game, it is a turn
+## given away. An opponent who is COMMITTED cannot do that, and will come
+## free partway through the telegraph: exactly in time to read it, answer
+## it, and be caught by a blow that arrives after their answer has
+## expired. Bluffing during someone's recovery is what a real fighter
+## does, and here it is also the only window in which a feint survives
+## long enough to land.
+##
+## Measured, at three player reaction latencies: with the condition the
+## right way round a purely reflex-dodging player goes from winning 100%
+## of fights to 52%. With it the wrong way round -- bluffing only free
+## opponents -- the feint never fires against that player at all and the
+## figure does not move a single point.
+func is_free() -> bool:
+	return state == BattleTypes.State.IDLE
+
 ## True while this fighter is telegraphing or landing an attack -- the
-## only thing FighterBrain is allowed to "see" about its opponent. Kept
-## as a named question rather than letting the brain read `state` and
-## `current_action` directly, so what the AI perceives is one explicit,
-## reviewable surface instead of the whole FSM.
+## first of the two things FighterBrain is allowed to "see" about its
+## opponent. Kept as a named question rather than letting the brain read
+## `state` and `current_action` directly, so what the AI perceives is one
+## explicit, reviewable surface instead of the whole FSM.
+##
+## A FEINT ANSWERS TRUE HERE, and it has to. This is an observer's whole
+## view of an incoming attack, so if a feint were excluded, any brain
+## would see straight through it -- and a brain is exactly what stands in
+## for the player when this lot's balance is measured. A measurement
+## taken against an opponent that cannot be fooled is not a measurement
+## of the mechanic, it is a measurement of its absence.
+##
+## The reveal is downstream and identical for a brain and for a human:
+## the blow does not come when the telegraph said it would.
 func is_threatening() -> bool:
-	return current_action == BattleTypes.Action.ATTACK \
+	return BattleTypes.is_attack_like(current_action) \
 		and (state == BattleTypes.State.WINDUP or state == BattleTypes.State.ACTIVE)
 
 ## Full length, in seconds, of the phase this fighter is currently in --
@@ -218,6 +284,24 @@ func is_threatening() -> bool:
 ## for exactly as long as the phase it depicts, instead of guessing a
 ## duration that would then drift from the FSM every time a .tres moves.
 func phase_duration() -> float:
+	return _phase_total
+
+## How long the TELEGRAPH of the current phase should be shown for, which
+## is not always how long the phase lasts.
+##
+## They differ for exactly one action. A feint's windup is
+## attack_windup_s PLUS its hold, but the anticipation pose has to reach
+## its peak on the same beat a real attack's does, or the slower ramp
+## would be a tell -- and a tell during the windup is the one thing this
+## mechanic cannot survive. So the view plays the telegraph over this
+## number and then holds the pose for whatever is left, which is exactly
+## what a held blow looks like: wound up, waiting.
+##
+## Presentation-only, like phase_duration(). Nothing in this file
+## branches on it.
+func telegraph_duration() -> float:
+	if state == BattleTypes.State.WINDUP and BattleTypes.is_attack_like(current_action) and profile != null:
+		return minf(profile.attack_windup_s, _phase_total)
 	return _phase_total
 
 func _begin_action(action: BattleTypes.Action) -> void:
@@ -240,7 +324,11 @@ func _advance_phase() -> void:
 	match state:
 		BattleTypes.State.WINDUP:
 			_set_phase(BattleTypes.State.ACTIVE)
-			if current_action == BattleTypes.Action.ATTACK and not _strike_spent:
+			# is_attack_like, so a FEINT strikes exactly as an ATTACK
+			# does. A feint is not a blow withheld -- it is a blow that
+			# arrives LATE, and that lateness is already baked into the
+			# windup it just finished (FighterProfile.timing_for).
+			if BattleTypes.is_attack_like(current_action) and not _strike_spent:
 				_strike_spent = true
 				strike_activated.emit()
 		BattleTypes.State.ACTIVE:

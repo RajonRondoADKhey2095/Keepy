@@ -114,13 +114,61 @@ const ALERT_COLOR := Color(1.0, 0.28, 0.16)
 ## it, so the frame the strike leaves is distinguishable from the frame
 ## before it.
 const STRIKE_COLOR := Color(1.0, 0.66, 0.36)
-## Impact, on the fighter TAKING it. White for a clean hit, cold for a
-## block -- "my guard worked" is exactly the feedback this lot owes the
-## player.
+## Impact, on the fighter TAKING it. FOUR outcomes, four looks -- lot 5.
+##
+## =====================================================================
+## THIS IS A DIFFERENT COLOUR CHANNEL FROM THE TELEGRAPH, AND THE LOT-2
+## RULE IS INTACT
+##
+## Lot 2's rule is that the sustained RAMP toward ALERT_COLOR during a
+## windup means one thing and one thing only: an attack is coming at
+## you. That rule is untouched -- _windup() is still the only place a
+## colour is held over time, and it still ramps for attacks alone.
+##
+## These are IMPACT flashes: momentary, fired on contact, on the fighter
+## that was hit. That channel already carried two meanings before this
+## lot (white / cold blue). Lot 5 adds the two it was missing, because
+## the device report was precisely that the player cannot tell a
+## mistimed defence from a defence that never happened -- and an option
+## a player cannot learn the timing of is a dead option (the Chased
+## lesson, already in CLAUDE.md).
+##
+## BREAK_FLASH_COLOR is violet on purpose: it must not be read as the
+## telegraph's red, and it must not be read as the neutral white of
+## "you were just standing there". It says "you DID press it, and you
+## were early or late".
 const HIT_FLASH_COLOR := Color(1.0, 1.0, 1.0)
 const BLOCK_FLASH_COLOR := Color(0.70, 0.88, 1.0)
+const DODGE_FLASH_COLOR := Color(0.62, 1.0, 0.92)
+const BREAK_FLASH_COLOR := Color(0.86, 0.26, 1.0)
 const FLASH_IN_S := 0.05
 const FLASH_OUT_S := 0.24
+## A broken defence holds its flash longer than a plain hit. The player
+## has to have time to notice that this was a DIFFERENT failure from
+## simply standing still.
+const BREAK_OUT_S := 0.40
+## A successful evade is the one outcome with no contact at all, so it
+## gets the shortest, brightest flash of the four -- a snap, not a bruise.
+const DODGE_OUT_S := 0.16
+
+## Shape, not just colour, for the two defensive verdicts. Colour alone
+## is the channel most likely to be lost to a small screen, a bright
+## room, or colour-blindness, and these are exactly the two events the
+## player has to learn a timing from.
+##
+## A guard that HELD compresses further under the blow: it absorbed it.
+## A guard or dodge that BROKE flares outward and rolls: the shape falls
+## apart. The two are opposite motions on purpose.
+const ABSORB_SQUASH := 0.90
+const ABSORB_S := 0.09
+const BREAK_FLARE := 1.14
+const BREAK_ROLL_DEG := 14.0
+const BREAK_S := 0.07
+## The extra slip an evade adds on top of the pose it is already in --
+## small, because the dodge pose is doing the reading; this only says
+## "and it worked".
+const EVADE_SLIP := -0.10
+const EVADE_S := 0.08
 
 ## Floor under any tween duration read from a profile, so a phase that is
 ## nominally a couple of ticks long still produces a movement a human eye
@@ -226,7 +274,9 @@ func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> 
 			_rest(0.16)
 			_start_idle_bob()
 		BattleTypes.State.WINDUP:
-			_windup(action, phase)
+			# telegraph_duration(), NOT phase: a feint's windup is longer
+			# than the pose that depicts it, on purpose. See Fighter.
+			_windup(action, maxf(_fighter.telegraph_duration(), MIN_POSE_S))
 		BattleTypes.State.ACTIVE:
 			_active(action, phase)
 		BattleTypes.State.RECOVERY:
@@ -236,25 +286,85 @@ func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> 
 		BattleTypes.State.KO:
 			_knock_out()
 
-## The impact flash, on the fighter that just TOOK the strike. Tint only:
-## the recoil belongs to STAGGER, which Fighter emits right after this,
-## and doubling it here would make a blocked hit shove a fighter that by
-## rule does not budge.
-func _on_hit_taken(_damage: int, outcome: BattleTypes.Outcome) -> void:
+## The verdict of one strike, on the fighter that just took it. FOUR
+## distinct readings, which is the whole of lot 5's task C:
+##
+##   guard held    cold blue  + the brace compresses further (absorbed)
+##   dodge worked  bright aqua + an extra slip             (clean miss)
+##   defence broke violet     + the pose flares and rolls  (MISTIMED)
+##   caught cold   white      + nothing                    (no input)
+##
+## The fourth versus the third is the pair that matters. Before this lot
+## they were the same white flash, so a guard pressed 80 ms too late was
+## visually identical to never having pressed anything -- which is
+## exactly what "you have no confidence that it works" describes.
+##
+## The recoil of a clean hit still belongs to STAGGER, which Fighter
+## emits immediately after this; the break flare below is deliberately
+## shorter than that transition so it reads as the guard shattering
+## FIRST and the body being thrown afterwards, not as two shoves.
+func _on_hit_taken(_damage: int, outcome: BattleTypes.Outcome, attempted: BattleTypes.Action) -> void:
 	if not _enabled:
 		return
-	# A dodge is the absence of contact. Flashing it would light up the
-	# one outcome where nothing touched the fighter at all.
-	if outcome == BattleTypes.Outcome.DODGED or outcome == BattleTypes.Outcome.MISSED:
+	if outcome == BattleTypes.Outcome.MISSED:
 		return
+	match outcome:
+		BattleTypes.Outcome.DODGED:
+			_flash(DODGE_FLASH_COLOR, DODGE_OUT_S)
+			_evade_accent()
+		BattleTypes.Outcome.BLOCKED:
+			_flash(BLOCK_FLASH_COLOR, FLASH_OUT_S)
+			_absorb_accent()
+		_:
+			# A clean hit. Whether it is a FAILURE or merely a hit
+			# depends entirely on whether the player asked for a defence
+			# -- which is why Fighter hands that fact over explicitly.
+			if attempted == BattleTypes.Action.NONE:
+				_flash(HIT_FLASH_COLOR, FLASH_OUT_S)
+				return
+			_flash(BREAK_FLASH_COLOR, BREAK_OUT_S)
+			_break_accent()
+
+func _flash(colour: Color, out_s: float) -> void:
 	_ensure_material()
 	if _material == null:
 		return
-	var flash := HIT_FLASH_COLOR if outcome == BattleTypes.Outcome.HIT else BLOCK_FLASH_COLOR
 	_kill(_tint_tween)
 	_tint_tween = create_tween()
-	_tint_tween.tween_property(_material, "albedo_color", flash, FLASH_IN_S)
-	_tint_tween.tween_property(_material, "albedo_color", _base_color, FLASH_OUT_S)
+	_tint_tween.tween_property(_material, "albedo_color", colour, FLASH_IN_S)
+	_tint_tween.tween_property(_material, "albedo_color", _base_color, out_s)
+
+## The guard held: it compresses further into the blow. Scale only, from
+## wherever the brace already is, so it reads as absorbing rather than as
+## a second pose being started.
+func _absorb_accent() -> void:
+	_kill(_pose_tween)
+	var squashed := Vector3(_slot.scale.x, _base_scale.y * GUARD_CROUCH * ABSORB_SQUASH, _slot.scale.z)
+	_pose_tween = create_tween()
+	_pose_tween.tween_property(_slot, "scale", squashed, ABSORB_S) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_pose_tween.tween_property(_slot, "scale", _slot.scale, ABSORB_S * 1.6) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+## The evade worked: a little more distance, fast. Positive, and clearly
+## not an impact -- nothing touched this fighter.
+func _evade_accent() -> void:
+	_kill(_pose_tween)
+	_pose_tween = create_tween()
+	_pose_tween.tween_property(_slot, "position", _slot.position + _offset(EVADE_SLIP, 0.0) - _base_position, EVADE_S) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+## The defence BROKE. Opposite motion to _absorb_accent(): the shape
+## flares outward and rolls instead of compressing, so the two verdicts
+## are told apart by silhouette and not only by hue. STAGGER follows
+## immediately and takes the pose over from here.
+func _break_accent() -> void:
+	_kill(_pose_tween)
+	_pose_tween = create_tween().set_parallel(true)
+	_pose_tween.tween_property(_slot, "scale", _base_scale * BREAK_FLARE, BREAK_S) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_pose_tween.tween_property(_slot, "rotation_degrees", _lean(0.0, BREAK_ROLL_DEG), BREAK_S) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 # ------------------------------------------------------------ poses
 
@@ -266,8 +376,20 @@ func _windup(action: BattleTypes.Action, phase: float) -> void:
 	_stop_idle_bob()
 	_kill(_pose_tween)
 	_pose_tween = create_tween().set_parallel(true)
-	var lean := WINDUP_LEAN_DEG if action == BattleTypes.Action.ATTACK else WINDUP_LEAN_DEG * 0.4
-	var reach := -WINDUP_RECOIL if action == BattleTypes.Action.ATTACK else -WINDUP_RECOIL * 0.35
+	# A FEINT takes this branch identically to an ATTACK -- same lean,
+	# same recoil, same red ramp -- and `phase` is already the same
+	# number, because FighterProfile.timing_for() hands a feint the
+	# attack's own attack_windup_s field rather than a copy of it.
+	# The two telegraphs are therefore not "similar": they are the same
+	# animation, run for the same duration, from the same source value.
+	#
+	# This is the ONE place a tell would have been cheapest to introduce
+	# and hardest to notice, so it is also the one BattleFeintProbe
+	# gates hardest: it plays both and compares the resulting transforms
+	# tick by tick.
+	var attack_like := BattleTypes.is_attack_like(action)
+	var lean := WINDUP_LEAN_DEG if attack_like else WINDUP_LEAN_DEG * 0.4
+	var reach := -WINDUP_RECOIL if attack_like else -WINDUP_RECOIL * 0.35
 	_pose_tween.tween_property(_slot, "position", _offset(reach, 0.0), phase) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	_pose_tween.tween_property(_slot, "rotation_degrees", _lean(lean, 0.0), phase) \
@@ -275,9 +397,14 @@ func _windup(action: BattleTypes.Action, phase: float) -> void:
 	_pose_tween.tween_property(_slot, "scale", _base_scale * WINDUP_SCALE, phase) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
-	if action != BattleTypes.Action.ATTACK:
+	if not attack_like:
 		_tint_to(_base_color, phase * 0.5)
 		return
+	# Colour still means exactly ONE thing, and lot 4 does not widen it:
+	# "an attack telegraph is running". That a telegraph can now turn out
+	# to have been a lie is a property of the fight, not a second meaning
+	# bolted onto the channel -- the ramp says the same sentence it said
+	# in lot 2, it is just no longer always true.
 	_tint_to(ALERT_COLOR, phase, Tween.EASE_IN)
 
 ## The effect window. Attack snaps forward; guard and dodge get their own

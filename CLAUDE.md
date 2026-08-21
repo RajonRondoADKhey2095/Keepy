@@ -8024,3 +8024,505 @@ curl -s https://keepy-staging.vercel.app/index.service.worker.js | grep CACHE_VE
 Un `CACHE_VERSION` inchange voudrait dire que l'alias n'a pas bascule, malgre
 le `Success!` du log — exactement le cas que la regle « jamais le log seul »
 existe pour attraper.
+
+## KEEPY BATTLE LOT 4 : LA FEINTE -- et le vrai defaut dominant n'etait pas l'esquive (21 aout 2026)
+
+Branche `claude/keepy-lot4-feint-2my13e`, partie de `main` (`9b7f338`, ou
+`main` et `staging` ont le MEME arbre `34db3682`). Retour device du lot 3 :
+« j'esquive facilement ses coups » -- l'esquive est une reponse universelle
+sans risque. Diagnostic du brief : une option domine, donc les deux autres
+sont mortes.
+
+**Le brief avait raison sur le symptome et se trompait de coupable.** La
+mesure a trouve DEUX strategies dominantes, et la pire n'etait pas l'esquive.
+
+### ⚠️ DEFAUT N°1, LE PLUS GROS, ET PERSONNE NE L'AVAIT VU : un joueur qui
+### MARTELE ATTAQUE gagnait 300 combats sur 300, en 3,4 s
+
+Trouve a la premiere passe de mesure du lot, sur le code LIVRE en production
+la veille. Un joueur qui tape ATTAQUE et rien d'autre **stun-locke**
+l'adversaire des le premier coup propre : stagger 0,55 + delai de reaction
+0,36..0,66 + windup de garde 0,08 = **0,99 a 1,29 s** avant que la moindre
+defense soit levee, contre un cycle d'attaque de **0,78 s**. L'arithmetique
+ne se referme jamais.
+
+⚠️ **Aucun reglage ne l'atteignait, et c'est mesure et non suppose** : le
+martelage gagne encore **120 sur 120** a `attack_recovery_s` de 0,36 / 0,44 /
+0,52 / 0,60 **ET** 0,70. Le defaut n'a jamais ete dans les regles de combat.
+
+**Il etait dans `FighterBrain.gd`, qui trahissait la promesse de son propre
+en-tete** (« tout ce qu'un joueur peut faire, cette classe peut le faire ») :
+l'horloge de reaction etait remise a zero a chaque tick ou le combattant
+n'etait pas IDLE, donc le brain payait son delai APRES chacune de ses
+actions et APRES chaque stagger, jamais PENDANT. Sa cadence reelle etait
+`duree_action + delai` au lieu de `max(les deux)`. Un humain, lui, reflechit
+pendant sa recuperation et pendant qu'il est sonne, et tape dans le buffer
+d'entree de 0,16 s pour que sa reponse soit deja engagee a l'instant ou il
+est libre. **Les deux cotes jouaient a deux jeux differents sur l'axe exact
+qui decidait le match** -- la divergence qu'on ne trouve qu'en mesurant, deja
+payee une fois par ce depot (`SubstituteModel.tscn`).
+
+Corrige : l'horloge tourne EN CONTINU. Le delai est toujours facture en
+entier, la decision passe toujours par le meme `_choose()`, et rien ne peut
+etre joue avant que le combattant soit reellement IDLE -- une decision echue
+pendant un lockout est TENUE (la passer a `request_action` la mettrait dans
+le buffer de 0,16 s, ou elle expirerait en silence si le stagger dure plus
+longtemps : elle disparaitrait pour la raison exacte qui la rendait
+necessaire). **Le martelage passe de 100 % a 50 %.**
+
+⚠️ **Effet de bord assume et signale : `ai_reaction_delay_s` change de sens.**
+Il mesurait « le delai apres chaque action » ; il mesure desormais
+« l'espacement MINIMUM entre deux decisions ». En dessous de la duree d'une
+action il ne contraint plus rien -- mesure inerte de 0,16 a 0,36 -- et il ne
+redevient un cadran de difficulte qu'a partir de ~0,70, ou le stun-lock
+reapparait (martelage 100 % a delai 0,70 et 0,90). Les cadrans utiles sont
+desormais `ai_aggression`, `ai_defense_rate` et `ai_feint_rate`.
+
+### DEFAUT N°2, celui du brief : un joueur qui repond a CHAQUE telegraphe est INVINCIBLE
+
+Mesure avec une politique honnete (latence de reaction humaine, **un seul
+tap par lecture**, attaque uniquement quand elle est reellement libre) :
+**100,0 % de victoires sur 300 combats**, a 0,12 / 0,18 / 0,24 s de latence.
+Diagnostic instrumente : sur 207 attaques de l'adversaire, **0 touche
+proprement** et 57 sont esquivees -- les 150 autres sont interrompues. Le
+retour de Mathieu est donc litteralement exact, et pire qu'il ne le disait.
+
+⚠️ **Piege de mesure rencontre TROIS fois, a connaitre avant d'ecrire une
+politique de joueur** : une politique qui appelle `request_action` a chaque
+tick n'est pas un joueur, c'est un surhomme. Le buffer d'entree de 0,16 s
+est rafraichi chaque tick, donc elle enchaine les esquives sans jamais etre
+verrouillee et **aucun `dodge_recovery_s`, de 0,32 a 0,72, ne change quoi que
+ce soit**. Trois tableaux entiers ont ete produits, lus et jetes avant que la
+cause soit trouvee. Une politique de joueur doit taper UNE fois par lecture,
+et n'attaquer que depuis IDLE.
+
+### LA FEINTE LIVREE N'EST PAS CELLE DU BRIEF -- la version litterale a ete construite, mesuree, abandonnee
+
+Le brief decrivait : « un WINDUP puis N'ATTAQUE PAS, enchaine sur une
+recuperation », suivi d'une vraie attaque. **Construit, mesure, jete.** Il ne
+peut pas fonctionner dans cette FSM, pour une raison d'arithmetique et non de
+reglage : **toutes les attaques du jeu portent le meme telegraphe
+`attack_windup_s`**, donc le deuxieme temps est exactement aussi lisible que
+le premier. Un joueur qui a esquive le mensonge est sorti de sa recuperation
+et esquive de nouveau bien avant que le contre arrive. Mesure : un joueur a
+esquive-reflexe passait de **85,7 % a 96,3 %** de victoires quand la feinte
+etait activee -- **chaque feinte etait une attaque que l'IA ne portait pas**.
+Monter `dodge_recovery_s` de 0,32 a 0,72 n'a rien change, aux trois latences.
+
+**Livre a la place : la feinte est une attaque qui RETIENT son coup.** UNE
+seule action, jamais deux. Le windup tourne sa duree normale, le coup ne
+vient pas, le combattant reste arme pendant `feint_hold_s`, et le coup tombe
+apres. Le defenseur a donc toujours exactement une fenetre de lecture, au
+moment habituel ; ce qu'il ne peut pas savoir, c'est QUAND le coup arrive.
+
+**L'asymetrie garde/esquive tombe toute seule des nombres, sans aucune regle
+speciale** : la fenetre active de l'esquive est etroite et expire pendant le
+hold, celle de la garde est plus de deux fois plus large et ne l'est pas.
+Bande mesuree, `hold` x latence joueur, part des feintes qui touchent :
+
+| hold | 0,12 s | 0,18 s | 0,24 s |
+|---|---|---|---|
+| 0,10-0,18 | esq 98-100 % / gar 0 % | **esq 0 %** | **esq 0 %** |
+| **0,22 - 0,34** | **esq 100 % / gar 0 %** | **esq 100 % / gar 0 %** | **esq 100 % / gar 0 %** |
+| 0,40 | esq 100 % / **gar 100 %** | esq 100 % / **gar 100 %** | esq 100 % / gar 0 % |
+
+**Livre : `feint_hold_s = 0.28`, le centre de la bande.** En dessous de 0,22
+un reflex d'esquive couvre encore le coup ; a 0,40 la garde est tombee aussi
+et la feinte devient un coup inconditionnel.
+
+### ⚠️ LE CONDITIONNEMENT DE LA FEINTE EST A L'ENVERS DE L'INTUITION -- c'est LE resultat du lot
+
+`FighterBrain` ne feinte **QUE** contre un adversaire qui n'est **PAS** libre.
+Ca se lit a l'envers jusqu'a ce qu'on regarde l'horloge : un coup retenu
+reste vulnerable pendant `attack_windup_s` + le hold, donc un adversaire
+LIBRE frappe simplement le premier -- ce n'est pas un jeu d'esprit, c'est un
+tour offert. Un adversaire ENGAGE ne peut pas, et se libere en cours de
+telegraphe : juste a temps pour le lire, y repondre, et se faire prendre par
+un coup qui arrive apres l'expiration de sa reponse.
+
+| condition | joueur esquive-reflexe |
+|---|---|
+| feinte desactivee | **100,0 %** |
+| bluffer un adversaire LIBRE (l'intuition) | **100,0 %** -- la feinte ne part JAMAIS |
+| **bluffer un adversaire ENGAGE (livre)** | **52,0 %** a taux 0,85 / **93,3 %** a 0,35 |
+
+Sans aucun conditionnement, la feinte est desastreuse contre un marteleur :
+**32 feintes sur 43 interrompues en plein windup, 1 seule touche**, et le
+marteleur passe de 51,7 % a 90,7 %. Le conditionnement rend la mecanique
+auto-regulee, **sans aucune memoire des habitudes du joueur** (hors perimetre
+et non fait).
+
+### ⚠️ CE QUE LE LOT N'ATTEINT PAS, dit sans maquillage
+
+L'objectif « une strategie mono-touche doit PERDRE » **n'est PAS atteint**.
+Ce qui est atteint, c'est « aucune ne domine » : les trois options passent
+d'un ecart de **50 points** a **9,3 points**.
+
+| strategie pure (n=150) | lot 3 | ce lot |
+|---|---|---|
+| marteler ATTAQUE | **100 % en 3,4 s** | **90,0 %** |
+| repondre par ESQUIVE | *(non mesure)* | **93,3 %** |
+| repondre par GARDE | *(non mesure)* | **99,3 %** |
+| spam garde seule / esquive seule | 0 % | 0 % *(elles n'infligent aucun degat -- 0 % par arithmetique, pas par equilibrage)* |
+
+**Les trois gagnent encore trop souvent, et la cause est mesuree** : l'IA est
+interrompue avant de finir ses engagements (150 attaques interrompues sur
+207). Ce n'est PAS un echec de la feinte -- PHASE C de la sonde prouve que
+chaque feinte prise isolement touche exactement comme prevu, aux trois
+latences. C'est que l'IA n'arrive pas assez souvent a en placer une.
+
+⚠️ **Resultat de theorie des jeux a connaitre avant de relancer un tuning** :
+contre un adversaire dont le melange est FIXE, il existe toujours une reponse
+pure au moins aussi bonne que n'importe quel melange. « Aucune mono-touche ne
+gagne » est donc **inatteignable** avec un `ai_feint_rate` constant ; le seul
+objectif atteignable est d'EGALISER les trois, ce que fait le triplet livre
+(`feint 0.35`, `def 0.80`, `hold 0.28`). Aller plus loin demande un adversaire
+qui adapte son melange -- explicitement hors perimetre de ce lot.
+
+**Trois sorties possibles pour le lot suivant, aucune prise ici** : de
+l'armure ou des i-frames pendant le hold (regle de combat nouvelle, donc son
+propre lot et sa propre passe device) ; un second coup RAPIDE apres la feinte
+(nouveau timing, donc nouveau telegraphe a valider) ; ou un adversaire qui lit
+la frequence de reponse du joueur.
+
+### `BattleFeintProbe` : 27 checks, et PHASE A est celle qui compte
+
+Une feinte echoue d'une facon qu'aucune assertion de combat ne voit : donnez-
+lui une milliseconde de windup en moins, un degre de lean en moins, une chaine
+de HUD differente, et **toutes les autres sondes restent vertes pendant que la
+mecanique ne vaut plus rien**. PHASE A compare donc une attaque et une feinte
+**tick par tick** sur les quatre canaux qu'un joueur possede : le libelle
+imprime par le HUD, `is_threatening()`, `telegraph_duration()`, et **les
+transforms que `FighterView` ecrit reellement sur le `ModelSlot`**. 19 ticks,
+identiques sur les quatre.
+
+⚠️ **`BattleTypes.action_label(FEINT)` rend `"Attaque"`, et ce n'est PAS un
+bug a corriger.** Le HUD imprime cette chaine EN DIRECT, a cote de l'etat de
+l'adversaire, pendant que le windup tourne. Un libelle « Feinte » donnerait la
+reponse avant meme que le joueur ait regarde le combattant. Gate par PHASE A.
+
+⚠️ **`Fighter.is_threatening()` rend VRAI pour une feinte, et c'est
+obligatoire.** C'est toute la vue d'un observateur sur une attaque entrante :
+l'en exclure ferait voir a travers le mensonge par n'importe quel brain -- or
+un brain est exactement ce qui tient le role du joueur quand on mesure. Une
+mesure prise contre un adversaire qu'on ne peut pas tromper n'est pas une
+mesure de la mecanique, c'est une mesure de son absence.
+
+PHASE B (le coup est en retard d'exactement le hold, 16 ticks, et
+`strike_activated` part une fois), PHASE C (**le controle d'abord** : une
+attaque simple repondue par une esquive est bien ESQUIVEE, sinon les lignes
+suivantes mesureraient une mauvaise esquive et non une bonne feinte -- puis
+esquive TOUCHEE et garde BLOQUEE aux trois latences), PHASE D (le
+conditionnement dans son sens contre-intuitif), PHASE E (**exige que le combat
+trace contienne reellement des feintes** avant d'asserter quoi que ce soit sur
+son determinisme), PHASE F (`keepy.tres` porte `ai_feint_rate = 0.00` --
+`BattleHUD` n'emet que trois actions, un humain n'a pas de bouton feinte, et
+une IA qui tient son role ne doit pas disposer d'une option qu'il n'a pas).
+
+### Validation
+
+`BattleFeintProbe` **27/27**, `BattleContractProbe` **36/36**,
+`BattleReadabilityProbe` **29/29**, `ProbeTimeoutAudit` **36 sondes scenes**
+(35 + la nouvelle), toutes armees -- **toutes exit 0**. Import headless
+**exit 0**, export Web release **exit 0**. `index.wasm` **35 376 909 octets**,
+md5 **`af4a8fc2925d992348eb30deeeb54360`** -- identique au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+5 750 224 (export unique et propre, `build/` supprime avant -- a lire avec la
+mise en garde permanente sur son instabilite). Piege payload tenu : **0** ligne
+`Storing File` pour `scripts/dev`, `assets_source`, `docs` ou `web`, et
+`BattleFeintProbe` **absent du pack**.
+
+⚠️ **`BattleContractProbe` n'est PAS byte-identique au lot 3, et ce serait
+anormal qu'elle le soit** : ce lot change le gameplay de l'IA. Sa PHASE F
+rapporte desormais **20/40 (50,0 %), moyenne 9,27 s** contre 22/40 (55 %) et
+13,85 s au lot 3 -- l'adversaire agit pendant ses propres lockouts, donc les
+combats sont plus courts. Les 36 assertions passent, aucun seuil n'a ete
+touche. `BattleReadabilityProbe` reste verte : ce lot ne touche ni la vue ni
+le HUD, et l'unique changement de `FighterView` est de lire
+`telegraph_duration()` au lieu de `phase_duration()` sur le seul WINDUP.
+
+**Point de bascule Meshy intact** : rien n'est ajoute, deplace ou renomme dans
+l'arbre de scene, tout passe toujours par `$Body` / `ModelSlot`. **Aucune
+reference depuis `scripts/battle/` vers `scripts/dev/`** (piege deja consigne :
+`scripts/dev/*` est exclu du pack, donc une reference `class_name` casse
+UNIQUEMENT dans le build web).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **La feinte se lit-elle comme une feinte ?** Aucune sonde ne dit qu'un
+   combattant qui reste arme un quart de seconde de plus se lit comme « il
+   retient son coup » plutot que comme un bug d'animation. C'est tout l'objet
+   du lot : le telegraphe est desormais une information AMBIGUE, et personne
+   ne sait encore si l'ambiguite se percoit au pouce.
+2. **La difficulte globale reste trop faible contre un joueur qui repond a
+   chaque telegraphe** (chiffres ci-dessus). Mesure, argumentee, non corrigee.
+3. `ai_reaction_delay_s` a change de sens et n'est plus le cadran de
+   difficulte qu'il etait.
+
+### Deploiement staging du lot 4 (palier 1, automatique)
+
+`staging` `0fadccf` (merge `--no-ff`, arbre **byte-identique** a la branche
+feature, verifie avant le push : meme hash d'arbre des deux cotes). CI run
+**#172** (id `32466399904`) **verte en 3 min 57 s** (09:07:43 -> 09:11:40 UTC)
+-- `Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement skippe. **`main` NON touche** (palier 2, gate Mathieu apres
+validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** : l'egress direct vers
+`keepy-staging.vercel.app` est refuse par le proxy du sandbox (`http=000`,
+re-teste et pas suppose), donc via `mcp__Vercel__web_fetch_vercel_url`.
+`index.service.worker.js` sert **`CACHE_VERSION = '1787303471|4112654'`** =
+**09:11:11 UTC**, c'est-a-dire A L'INTERIEUR de la fenetre du run #172 --
+l'alias sert donc bien ce build et pas le precedent (lot 3 : `1787255094`,
+19:44:54 la veille). `x-vercel-cache: MISS`, `age: 0`, `last-modified` colle
+a l'instant de la requete : trois signaux independants qui disent que ce
+n'est pas une reponse de cache.
+
+⚠️ **Note de format, sans consequence** : le `CACHE_VERSION` porte desormais
+un suffixe `|4112654` que les lots precedents n'avaient pas. Seule la partie
+avant le `|` est l'epoch d'export ; c'est elle le discriminateur, et elle a
+bien avance.
+
+
+## KEEPY BATTLE, LOT 5 : LA DEFENSE ETAIT INJOUABLE -- la fenetre entiere
+## tombait AVANT la portee d'un humain (21 aout 2026)
+
+Branche `claude/lot5-defense-viability-exfk3w`, partie de `staging`
+(`a61df49`, le lot 4 feinte). Retour device de Mathieu : « j'ai
+l'impression que ma garde n'a pas tenu assez longtemps pour encaisser le
+coup », et « garder ou esquiver n'a pas de sens, les degats sont enormes
+et on n'a pas confiance que ca marche -- si on veut gagner on attaque,
+point. »
+
+Les sondes du lot 4 disaient l'INVERSE (garde 99,3 %, esquive 93,3 %).
+**Les deux etaient vraies, elles mesuraient deux joueurs differents, et
+un seul des deux existe.** Aucun chiffre du lot 4 n'a ete defendu.
+
+### ⚠️ LE DEFAUT : `BattleFeintProbe` repondait au telegraphe en 0,12-0,24 s
+
+Aucun humain ne produit ca a travers un ecran tactile et un navigateur.
+Le temps de reaction visuel simple plafonne vers 0,25 s en laboratoire ;
+un telephone ajoute l'echantillonnage du digitiseur et le dispatch
+d'evenement du navigateur par-dessus. **La bande honnete est 0,30-0,45 s**
+(`BattleDefenseProbe.HUMAN_FAST/TYPICAL/LATE`).
+
+Et le nombre qui decide reellement si defendre est une option --
+**DE COMBIEN LE TAP PEUT-IL ETRE EN RETARD** -- n'etait rapporte nulle
+part. C'est tout l'objet de la nouvelle sonde.
+
+### Chronogramme AVANT, mesure sur les FSM livrees (pas calcule a la main)
+
+Attaquant Sparring, defenseur Keepy, ticks depuis la premiere frame du
+telegraphe :
+
+| | couverture reelle du tap |
+|---|---|
+| garde vs attaque simple | **0..217 ms** |
+| garde vs attaque ET feinte | **67..217 ms** |
+| esquive vs attaque simple | **33..233 ms** |
+| esquive vs feinte | 317..517 ms |
+
+**La bande humaine entiere (300-450 ms) tombe HORS de chacune de ces
+fenetres.** La defense n'etait pas faible, elle etait **hors de portee** :
+a 300 ms -- le tap le plus rapide qu'un humain produise -- la garde ne
+couvre PAS l'attaque simple, et l'esquive ne couvre NI l'une NI l'autre.
+
+⚠️ **Le ressenti device etait juste, le mecanisme non.** « La garde n'a pas
+tenu assez longtemps » decrit un symptome reel dont la cause est
+**« la garde arrive trop tard »**, pas « elle expire trop tot » -- la
+contrainte qui mordait etait la borne HAUTE du tap, pas la largeur de la
+fenetre. Pire, le tap arrivant pendant le stagger etait mange par le
+buffer de 0,16 s (stagger 0,55 s) : le bouton ne faisait litteralement
+rien. D'ou « on n'a pas confiance que ca marche ».
+
+### PHASE D : le joueur imparfait -- ce que le banc du lot 4 ne pouvait pas voir
+
+Trois strategies caricaturales, tap = latence + gaussienne(0, 90 ms),
+n=300 par cellule (jamais n=40 : la lecon du lot 3, ecart-type ~8 points).
+Les DEUX cotes sont pilotes (le brain reel sur l'adversaire, la politique
+sur le joueur) -- le piege « 1 brain = sac de frappe » a deja ete
+rencontre deux fois.
+
+| politique | AVANT (300/380/450 ms) | APRES |
+|---|---|---|
+| **martelage** | **261 / 261 / 261** sur 300 | **239 / 239 / 239** |
+| garde | 203 / 183 / 136 | **300 / 300 / 299** |
+| esquive | 199 / 204 / 176 | **262 / 296 / 298** |
+| mixte | 218 / 178 / 160 | **295 / 300 / 299** |
+
+**AVANT : le marteleur gagne 87 % A TOUTES LES LATENCES** (il ne lit
+rien, donc la latence ne le concerne pas) et **toute defense fait pire,
+et de pire en pire a mesure que le tap tarde**. C'est exactement le
+rapport device, en chiffres.
+
+**APRES : defendre bat marteler a chaque latence.** C'est le critere de
+viabilite du lot, et il est atteint.
+
+### Les TROIS leviers, dans l'ordre ou il a fallu les tirer
+
+**A. Le telegraphe : 0,31 -> 0,58 s.** Il n'y a pas d'alternative, et
+c'est une inegalite, pas un gout :
+
+```
+attack_windup_s  >=  latence humaine + guard_windup_s du defenseur
+```
+
+Une garde devient active a `latence + guard_windup_s`. Un telegraphe plus
+court qu'un temps de reaction humain ne peut pas etre repondu, seulement
+DEVINE. Ni une garde plus large ni des degats moindres n'y changent quoi
+que ce soit. Startup de garde descendu a 0,03-0,04 pour rendre ce budget.
+
+⚠️ **B. ELARGIR LA GARDE NE SUFFIT PAS -- et seul le fait de le mesurer
+l'a montre.** Avec les fenetres corrigees mais le reste intact, le
+marteleur est passe a **300/300** : *meilleur* qu'avant le fix. La garde
+marchait parfaitement et perdait quand meme.
+
+```
+lockout restant du defenseur + son attack_windup_s
+    >=  attack_active_s + attack_recovery_s + attack_windup_s de l'attaquant
+```
+
+Quand cette inegalite tient, le contre n'arrive JAMAIS : l'attaquant est
+deja derriere son telegraphe suivant. Bloquer devient une facon plus
+lente de perdre, et ne jamais s'arreter d'attaquer est le jeu correct.
+Le lot 2 avait allonge le telegraphe, le lot 5 bien davantage -- les deux
+ont grossi le membre gauche, personne n'a grossi le droit.
+**`attack_recovery_s` 0,34-0,42 -> 0,52-0,54**, stagger 0,45 -> **0,60**
+pour rester pire qu'un coup dans le vide. Gate : `PHASE C2`.
+
+**C. La punition : 12-13 -> 8 degats.** 24-26 % de la barre de vie par
+erreur (4-5 coups pour un K.O.) rend une defense incertaine irrationnelle
+quels que soient les fenetres. Desormais **16 %, 7 coups**, et 25 coups
+bloques.
+
+### Chronogramme APRES
+
+| | couverture du tap |
+|---|---|
+| garde vs attaque simple | **33..533 ms** |
+| **garde vs attaque ET feinte** | **233..533 ms** |
+| esquive vs attaque simple | **283..517 ms** |
+| esquive vs feinte | 483..717 ms |
+
+⚠️ **La feinte est CONSERVEE comme lecture difficile, pas supprimee** (choix
+explicite du brief). La garde la couvre depuis n'importe quel tap de la
+bande humaine -- c'est ce qui en fait l'option sure, celle qu'un joueur
+peut prendre AVANT de savoir lire une feinte. L'esquive ne la couvre qu'a
+partir de 483 ms, donc **une esquive reflexe reste punie**.
+`feint_hold_s` 0,28 -> 0,20 pour tenir dans la garde elargie.
+`BattleDefenseProbe` PHASE B asserte cet echec : **la seule assertion du
+depot qui veut que quelque chose NE marche PAS**.
+
+### Feedback : quatre issues, quatre verdicts (tache C)
+
+Avant, une garde tapee 80 ms trop tard produisait **le meme flash blanc et
+le meme mot « TOUCHE »** que ne rien presser du tout. Un joueur sans signal
+d'erreur ne peut pas apprendre un timing, et une option qu'on n'apprend
+pas est une option morte (lecon Chased, deja consignee).
+
+`Fighter.hit_taken` porte desormais l'action defensive engagee. **Argument
+de signal et pas relecture de `current_action`** : ca marcherait
+aujourd'hui uniquement parce que l'emit precede `_enter_stagger()` -- une
+dependance silencieuse, dans le canal meme que ce lot ajoute pour que les
+echecs cessent d'etre silencieux.
+
+| issue | couleur | forme |
+|---|---|---|
+| garde tenue | bleu froid | la garde se comprime davantage (absorbe) |
+| esquive reussie | aqua vif | un glissement supplementaire |
+| **defense BRISEE** | **violet** | la pose s'evase et roule |
+| pris a froid | blanc | rien |
+
+Forme **en plus** de la couleur : la couleur est le canal le plus
+facilement perdu sur un petit ecran ou en plein soleil, et ce sont
+justement les deux evenements dont il faut apprendre un timing. Absorber
+et briser sont des mouvements **opposes**, volontairement.
+
+⚠️ **La regle du lot 2 est INTACTE** : la rampe soutenue vers `ALERT_COLOR`
+pendant un windup veut toujours dire une seule chose, une attaque
+entrante. Ce sont des flashs d'IMPACT, momentanes, un canal qui portait
+deja deux sens ; ce lot ajoute les deux qui manquaient, dans une teinte
+qui n'est ni le rouge du telegraphe ni le blanc neutre.
+
+HUD : **« GARDE BRISEE » / « ESQUIVE RATEE »** au lieu d'un « TOUCHE » nu.
+
+### `ai_reaction_delay_s` de l'adversaire etait PERIME
+
+0,36 +- 0,30 -> **0,26 +- 0,18**. Ses chiffres etaient cales sur un
+telegraphe de 0,30 s : face a 0,56 s il ne pouvait plus lire a temps
+(delai + guard_windup devait tenir sous le windup adverse, et la moitie de
+ses tirages depassaient). Trouve par sweep, pas suppose.
+
+### Validation
+
+`BattleDefenseProbe` (**34 checks, 0 failure**, nouvelle, armee --
+`ProbeTimeoutAudit` passe a **37 scenes**), `BattleContractProbe`
+(**36/36**), `BattleFeintProbe` (**27/27**), `BattleReadabilityProbe`
+(**29/29**), `AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`
+-- **toutes exit 0**. Boot headless de `Battle.tscn` / `BattleHUD.tscn` /
+`BattleFighter.tscn` / `Hub.tscn` : exit 0, **0 erreur GDScript**. Import
++ export Web release **exit 0**, `index.wasm` **35 376 909** octets / md5
+`af4a8fc2925d992348eb30deeeb54360` -- le fingerprint deja consigne pour
+tout lot qui ne touche pas le code moteur. Piege payload tenu (**0** ligne
+`Storing File` pour `scripts/dev`, `assets_source`, `docs`, `web`,
+`build`).
+
+⚠️ **`BattleFeintProbe.LATENCIES` est passe de `[0.12, 0.18, 0.24]` a
+`[0.30, 0.38, 0.45]`.** Ce n'est pas un assouplissement : ce sont les
+valeurs qui ont produit le faux vert. Elle reste **27/27** a la bande
+reelle, donc la feinte survit aux fenetres elargies. **Si un futur lot
+trouve cette bande genante, le geste honnete est de changer le `.tres`,
+pas la bande -- la bande est un fait sur les gens, pas un parametre.**
+
+⚠️ **Non-applicabilite VERIFIEE par grep, pas supposee** : aucune des
+sondes non-Battle ne reference `Battle`, `Fighter` ni `resources/battle`,
+et le diff de ce lot ne sort pas de `scripts/battle/`, `scripts/ui/
+BattleHUD.gd`, `scripts/dev/Battle*` et `resources/battle/*.tres`.
+
+### Reste ouvert
+
+1. **Jugement device, et c'est tout l'objet du lot** : est-ce qu'un
+   telegraphe de 0,58 s se lit comme lent/lourd plutot que lisible, et
+   est-ce que les quatre verdicts se distinguent A L'OEIL sur un
+   telephone. Le plus important est **GARDE BRISEE** : le joueur doit
+   comprendre qu'il a mal time, pas que le bouton n'a rien fait.
+   Aucune sonde ne repond a ca.
+2. ⚠️ **La difficulte globale a BAISSE, et le levier qui la recupererait
+   est hors perimetre.** Un joueur qui repond a chaque telegraphe gagne
+   desormais 100 %. Ce qui manque a l'adversaire est de **punir une
+   recovery d'attaque** : apres avoir bloque, il est lui-meme verrouille
+   trop longtemps pour contre-attaquer. C'est un changement de BRAIN
+   (explicitement hors perimetre de ce lot), pas un reglage `.tres` --
+   **mesure** : raccourcir sa garde pour le liberer plus souvent le rend
+   PIRE (marteleur 79 % -> 100 %), et les quatre reglages `ai_*` balayes
+   ne descendent pas le marteleur sous 79 %.
+3. **Les rounds s'allongent** : 6,1 s (marteleur, avant) -> 14,8 s ;
+   defense ~20-21 s. Inherent -- un combat ou les deux cotes defendent
+   EST plus long -- mais au-dessus de la cible 12-20 s du lot 3.
+4. Toujours aucun asset 3D, aucun son, aucune persistance : la bascule
+   Meshy passe toujours par `$Body` / `ModelSlot`, intouchee.
+
+### Deploiement staging du lot 5 (palier 1, automatique)
+
+`staging` `92a0f8f`, CI run **#174** (id `32471971573`) **verte en
+3 min 18 s** (10:17:41 -> 10:20:59 UTC) -- `Deploy to Vercel
+[STAGING -- staging]` succes, `[PRODUCTION -- main]` correctement
+**skipped**. `main` **non touche** (palier 2, gate Mathieu apres
+validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** (`keepy-staging.vercel.app`,
+via `mcp__Vercel__web_fetch_vercel_url` -- l'egress direct du sandbox reste
+refuse en 403 CONNECT sur ce domaine) : `CACHE_VERSION` du
+`index.service.worker.js` servi = **`1787307631` = 10:20:31 UTC**, donc
+**dans la fenetre du run #174**, contre `1787304120` = 09:22:00 (run #173,
+lot 4) juste avant. `x-vercel-cache: MISS`, `age: 0`. L'alias sert bien ce
+build.
+
+⚠️ **L'API GitHub Actions a de nouveau servi des reponses PERIMEES**
+pendant ce deploiement -- deux appels `list_workflow_jobs` byte-identiques,
+figes sur `Import project resources / in_progress`, `filter: "latest"`
+compris. **Le `CACHE_VERSION` servi est ce qui a tranche**, et il a tranche
+DANS LES DEUX SENS : lu trop tot il valait encore `1787304120` (lot 4), ce
+qui a confirme que le job tournait REELLEMENT au lieu d'etre un cache
+perime, puis il est passe a `1787307631`. Un second signal independant
+distingue les deux cas ; un poll de plus ne l'aurait pas fait.

@@ -154,13 +154,20 @@ func _on_player_action(action: BattleTypes.Action) -> void:
 		return
 	player.request_action(action)
 
+## `last_defence()` is read BEFORE the strike resolves, because resolving
+## it is what clears the action: a broken guard has already become a
+## stagger with no action at all by the time receive_strike() returns.
+## Same fact the defender's own view gets on `hit_taken`, taken from the
+## same place one line earlier.
 func _on_player_strike() -> void:
+	var attempted := opponent.last_defence()
 	var outcome := opponent.receive_strike(_damage_of(player))
-	hud.report_strike(true, outcome)
+	hud.report_strike(true, outcome, attempted)
 
 func _on_opponent_strike() -> void:
+	var attempted := player.last_defence()
 	var outcome := player.receive_strike(_damage_of(opponent))
-	hud.report_strike(false, outcome)
+	hud.report_strike(false, outcome, attempted)
 
 func _on_player_ko() -> void:
 	_end_round(false)
