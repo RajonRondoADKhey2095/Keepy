@@ -41,6 +41,7 @@ func _ready() -> void:
 	print("=== BATTLE CONTRACT PROBE ===")
 	print("tick=%.6fs  profiles: %s vs %s" % [TICK_S, KeepyProfile.display_name, DummyProfile.display_name])
 	_phase_a_fsm()
+	_phase_a2_instant()
 	_phase_b_resolution()
 	_phase_c_buffer()
 	_phase_d_determinism()
@@ -51,29 +52,35 @@ func _ready() -> void:
 
 # ---------------------------------------------------------------- PHASE A
 
+## Run on the OPPONENT's profile, not the player's, and that swapped at
+## lot 8: the player's attack now has a zero-length wind-up, which is the
+## DEGENERATE case, not the general one. Asserting phase durations against
+## a profile whose first phase is 0 s would leave the ordinary
+## windup -> active -> recovery sequence untested by anything.
+## _phase_a2_instant() below covers the zero case explicitly.
 func _phase_a_fsm() -> void:
-	print("\n--- PHASE A: FSM phase order and durations ---")
-	var f := _make(KeepyProfile)
+	print("\n--- PHASE A: FSM phase order and durations (telegraphed attack) ---")
+	var f := _make(DummyProfile)
 	var strikes := [0]
 	f.strike_activated.connect(func() -> void: strikes[0] += 1)
 
 	_expect(f.state == BattleTypes.State.IDLE, "starts IDLE")
-	_expect(f.hp == KeepyProfile.max_hp, "starts at full hp")
+	_expect(f.hp == DummyProfile.max_hp, "starts at full hp")
 
 	f.request_action(BattleTypes.Action.ATTACK)
 	_expect(f.state == BattleTypes.State.WINDUP, "ATTACK enters WINDUP immediately")
 	_expect(strikes[0] == 0, "no strike during WINDUP")
 
 	var windup_ticks := _ticks_until(f, BattleTypes.State.ACTIVE, 600)
-	_expect_ticks(windup_ticks, KeepyProfile.attack_windup_s, "WINDUP lasts attack_windup_s")
+	_expect_ticks(windup_ticks, DummyProfile.attack_windup_s, "WINDUP lasts attack_windup_s")
 	_expect(strikes[0] == 1, "strike fires exactly once, on the first ACTIVE tick")
 
 	var active_ticks := _ticks_until(f, BattleTypes.State.RECOVERY, 600)
-	_expect_ticks(active_ticks, KeepyProfile.attack_active_s, "ACTIVE lasts attack_active_s")
+	_expect_ticks(active_ticks, DummyProfile.attack_active_s, "ACTIVE lasts attack_active_s")
 	_expect(strikes[0] == 1, "strike does NOT repeat across a multi-tick ACTIVE window")
 
 	var recovery_ticks := _ticks_until(f, BattleTypes.State.IDLE, 600)
-	_expect_ticks(recovery_ticks, KeepyProfile.attack_recovery_s, "RECOVERY lasts attack_recovery_s")
+	_expect_ticks(recovery_ticks, DummyProfile.attack_recovery_s, "RECOVERY lasts attack_recovery_s")
 
 	# The TOTAL is the number that must be exact, and this is the assertion
 	# that matters: Fighter.advance() carries each phase's overshoot into
@@ -83,7 +90,7 @@ func _phase_a_fsm() -> void:
 	# and a three-phase action would run up to three ticks long, differently
 	# per fighter depending on how their timings divide by the tick.
 	var total := windup_ticks + active_ticks + recovery_ticks
-	var nominal := KeepyProfile.attack_windup_s + KeepyProfile.attack_active_s + KeepyProfile.attack_recovery_s
+	var nominal := DummyProfile.attack_windup_s + DummyProfile.attack_active_s + DummyProfile.attack_recovery_s
 	_expect_ticks(total, nominal, "the WHOLE attack lasts the sum of its phases (overshoot carried, not dropped)")
 
 	# An action is refused mid-commitment: only IDLE accepts one directly.
@@ -91,6 +98,40 @@ func _phase_a_fsm() -> void:
 	_expect(f.current_action == BattleTypes.Action.DODGE, "DODGE accepted from IDLE")
 	f.request_action(BattleTypes.Action.ATTACK)
 	_expect(f.current_action == BattleTypes.Action.DODGE, "a second action cannot interrupt a commitment")
+	f.free()
+
+# --------------------------------------------------------------- PHASE A2
+
+## THE INSTANT ATTACK, lot 8's decision B: the tap IS the blow.
+##
+## Gated rather than trusted to the .tres, because "instant" is a claim
+## about the FSM and not about a number: a zero-length wind-up still has
+## to pass THROUGH the WINDUP state on its way to ACTIVE, and the whole
+## point is that it spends no time there. One tick is the floor the
+## fixed-step loop imposes on anything; more than that and the player is
+## being asked to predict their own attack.
+func _phase_a2_instant() -> void:
+	print("\n--- PHASE A2: the player's attack is instant (GATED) ---")
+	_expect(is_zero_approx(KeepyProfile.attack_windup_s),
+		"the player's profile carries a zero wind-up")
+	var f := _make(KeepyProfile)
+	var strikes := [0]
+	f.strike_activated.connect(func() -> void: strikes[0] += 1)
+	f.request_action(BattleTypes.Action.ATTACK)
+	_expect(not f.is_charging(),
+		"a zero-length wind-up is NOT reported as charging -- no bar, nothing to aim a dodge at")
+	_expect(is_zero_approx(f.charge_progress()), "and its charge_progress() stays 0")
+	var to_strike := _ticks_until(f, BattleTypes.State.ACTIVE, 60)
+	print("  ticks from tap to strike: %d (%.0f ms)" % [to_strike, to_strike * TICK_S * 1000.0])
+	_expect(to_strike == 1, "the blow resolves on the very next tick")
+	_expect(strikes[0] == 1, "exactly one strike")
+	# The cost, and the only one: an instant attack that were also free to
+	# throw would make mashing the whole game.
+	var recovery := _ticks_until(f, BattleTypes.State.IDLE, 600)
+	print("  ticks locked out after the tap: %d (%.0f ms)" % [recovery, recovery * TICK_S * 1000.0])
+	_expect_ticks(recovery, KeepyProfile.attack_active_s + KeepyProfile.attack_recovery_s,
+		"and costs active + recovery of exposure")
+	_expect(KeepyProfile.attack_recovery_s > 0.0, "an instant attack is never free")
 	f.free()
 
 # ---------------------------------------------------------------- PHASE B
@@ -101,21 +142,42 @@ func _phase_b_resolution() -> void:
 
 	var dodged := _make(KeepyProfile)
 	_hold_in_active(dodged, BattleTypes.Action.DODGE)
-	_expect(dodged.receive_strike(damage) == BattleTypes.Outcome.DODGED, "DODGE active -> DODGED")
+	_expect(dodged.receive_strike(damage, true) == BattleTypes.Outcome.DODGED, "DODGE active -> DODGED")
 	_expect(dodged.hp == KeepyProfile.max_hp, "DODGED costs nothing at all")
+	_expect(dodged.is_riposte_ready(), "and it EARNS a riposte -- lot 8's whole reward")
 	dodged.free()
 
 	var idle := _make(KeepyProfile)
-	_expect(idle.receive_strike(damage) == BattleTypes.Outcome.HIT, "IDLE -> HIT")
+	_expect(idle.receive_strike(damage, true) == BattleTypes.Outcome.HIT, "IDLE -> HIT")
 	_expect(idle.hp == KeepyProfile.max_hp - damage, "HIT costs full damage")
-	_expect(idle.state == BattleTypes.State.STAGGER, "HIT staggers")
+	_expect(idle.state == BattleTypes.State.STAGGER, "a RIPOSTE hit staggers")
 	idle.free()
+
+	# LOT 8's structural anti-mash rule, and the reason it is a gate and
+	# not a comment: with it inverted, a player mashing an instant attack
+	# faster than the opponent's wind-up stun-locks it and wins 300 fights
+	# out of 300. It is the single boolean that makes an unavoidable
+	# attack something a fight can survive.
+	var chipped := _make(KeepyProfile)
+	_expect(chipped.receive_strike(damage, false) == BattleTypes.Outcome.HIT, "a BLIND hit still lands")
+	_expect(chipped.hp == KeepyProfile.max_hp - damage, "and still costs its damage")
+	_expect(chipped.state != BattleTypes.State.STAGGER, "a BLIND hit does NOT stagger")
+	chipped.free()
+
+	var uncancelled := _make(KeepyProfile)
+	uncancelled.request_action(BattleTypes.Action.ATTACK)
+	_advance(uncancelled, 1)
+	var before_state := uncancelled.state
+	uncancelled.receive_strike(1, false)
+	_expect(uncancelled.state == before_state and uncancelled.current_action == BattleTypes.Action.ATTACK,
+		"a BLIND hit does NOT cancel the action it lands on")
+	uncancelled.free()
 
 	# The rule that stops both fighters from just mashing attack.
 	var attacker := _make(KeepyProfile)
 	_hold_in_active(attacker, BattleTypes.Action.ATTACK)
-	_expect(attacker.receive_strike(damage) == BattleTypes.Outcome.HIT, "ACTIVE attack frames do NOT defend")
-	_expect(attacker.state == BattleTypes.State.STAGGER, "a traded hit cancels the attack in progress")
+	_expect(attacker.receive_strike(damage, true) == BattleTypes.Outcome.HIT, "ACTIVE attack frames do NOT defend")
+	_expect(attacker.state == BattleTypes.State.STAGGER, "a traded riposte cancels the attack in progress")
 	attacker.free()
 
 	# The dodge's startup is NOT part of its window. This is the half of
@@ -123,20 +185,21 @@ func _phase_b_resolution() -> void:
 	# nameable failure and not a button that did nothing.
 	var windup := _make(KeepyProfile)
 	windup.request_action(BattleTypes.Action.DODGE)
-	_expect(windup.receive_strike(damage) == BattleTypes.Outcome.HIT, "DODGE in WINDUP is NOT yet evading")
+	_expect(windup.receive_strike(damage, true) == BattleTypes.Outcome.HIT, "DODGE in WINDUP is NOT yet evading")
+	_expect(not windup.is_riposte_ready(), "a dodge that covered nothing earns nothing")
 	windup.free()
 
 	var recovering := _make(KeepyProfile)
 	_hold_in_recovery(recovering, BattleTypes.Action.DODGE)
-	_expect(recovering.receive_strike(damage) == BattleTypes.Outcome.HIT, "DODGE in RECOVERY is punishable")
+	_expect(recovering.receive_strike(damage, true) == BattleTypes.Outcome.HIT, "DODGE in RECOVERY is punishable")
 	recovering.free()
 
 	var dying := _make(KeepyProfile)
 	var kos := [0]
 	dying.knocked_out.connect(func() -> void: kos[0] += 1)
-	dying.receive_strike(KeepyProfile.max_hp)
+	dying.receive_strike(KeepyProfile.max_hp, true)
 	_expect(dying.state == BattleTypes.State.KO and kos[0] == 1, "lethal damage KOs once")
-	_expect(dying.receive_strike(damage) == BattleTypes.Outcome.MISSED, "a KO fighter cannot be hit again")
+	_expect(dying.receive_strike(damage, true) == BattleTypes.Outcome.MISSED, "a KO fighter cannot be hit again")
 	dying.free()
 
 # ---------------------------------------------------------------- PHASE C
@@ -256,8 +319,15 @@ func _run_fight(fight_seed: int, tick_cap: int, mirrored: bool = false) -> Fight
 	if mirrored:
 		brain_b.setup(left, right, left.profile, rng)
 
-	left.strike_activated.connect(func() -> void: right.receive_strike(left.profile.attack_damage))
-	right.strike_activated.connect(func() -> void: left.receive_strike(right.profile.attack_damage))
+	# Priced through FighterProfile.damage_for() and staggering on the same
+	# boolean BattleArena uses, so this loop cannot quietly play a cheaper
+	# game than the shipped one.
+	left.strike_activated.connect(func() -> void:
+		var rip := left.attack_is_riposte()
+		right.receive_strike(left.profile.damage_for(rip), rip))
+	right.strike_activated.connect(func() -> void:
+		var rip := right.attack_is_riposte()
+		left.receive_strike(right.profile.damage_for(rip), rip))
 
 	var parts := PackedStringArray()
 	while result.ticks < tick_cap and left.is_alive() and right.is_alive():

@@ -225,6 +225,12 @@ const BREAK_S := 0.07
 const EVADE_SLIP := -0.10
 const EVADE_S := 0.08
 
+## Held while a riposte is owed -- see _on_riposte_changed(). Deliberately
+## a dimmer aqua than DODGE_FLASH_COLOR: a flash is an event and may shout,
+## a hold sits on screen for over a second and must not.
+const RIPOSTE_HOLD_COLOR := Color(0.45, 0.92, 0.86)
+const RIPOSTE_FADE_S := 0.10
+
 ## The engine-side charge bar (Body/Charge). Placed from the slot's
 ## MEASURED visual AABB, never from a per-profile number, so a future
 ## .glb of any height gets it in the right place with no .tres field to
@@ -359,6 +365,7 @@ func _ready() -> void:
 	set_process(true)
 	_fighter.state_changed.connect(_on_state_changed)
 	_fighter.hit_taken.connect(_on_hit_taken)
+	_fighter.riposte_changed.connect(_on_riposte_changed)
 
 ## The ONE per-frame read in this file, and the only reason it exists:
 ## the charge bar has to be the FSM's phase clock rather than an
@@ -395,6 +402,14 @@ func _process(_delta: float) -> void:
 ## Presentation only: it paints a band and nothing else. Called once per
 ## round, never during a tick.
 func set_dodge_window(lo: float, hi: float) -> void:
+	# A negative bound is BattleArena saying "this fighter has no wind-up
+	# to draw a band on" -- an instant attacker. Kept as a negative rather
+	# than clamped into range, so _apply_dodge_window() hides the band
+	# instead of drawing a zero-width sliver at the left edge.
+	if lo < 0.0 or hi < 0.0:
+		_dodge_window = Vector2(-1.0, -1.0)
+		_apply_dodge_window()
+		return
 	_dodge_window = Vector2(clampf(lo, 0.0, 1.0), clampf(hi, 0.0, 1.0))
 	_apply_dodge_window()
 
@@ -413,6 +428,8 @@ func _exit_tree() -> void:
 		_fighter.state_changed.disconnect(_on_state_changed)
 	if _fighter.hit_taken.is_connected(_on_hit_taken):
 		_fighter.hit_taken.disconnect(_on_hit_taken)
+	if _fighter.riposte_changed.is_connected(_on_riposte_changed):
+		_fighter.riposte_changed.disconnect(_on_riposte_changed)
 
 ## Returns a still-standing fighter to rest. Called by BattleArena when a
 ## round ends, and it exists because of a real consequence of freezing the
@@ -449,7 +466,14 @@ func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> 
 	# there and then faded, rather than snapped away: the frame that
 	# teaches the player "this is where the tap belonged" is the frame
 	# where the fill met the end of the track.
-	if state == BattleTypes.State.WINDUP and action == BattleTypes.Action.ATTACK:
+	#
+	# `is_charging()` and not `state == WINDUP`: a fighter whose wind-up is
+	# zero passes through WINDUP for a single tick on its way to ACTIVE,
+	# and raising a bar for one frame would flash a countdown for an attack
+	# that has already been thrown. The instant attacker simply has no bar,
+	# and that follows from its timings rather than from a flag.
+	if state == BattleTypes.State.WINDUP and action == BattleTypes.Action.ATTACK \
+			and _fighter.is_charging():
 		_charge_on()
 	elif state == BattleTypes.State.ACTIVE and action == BattleTypes.Action.ATTACK:
 		_charge_release()
@@ -508,6 +532,40 @@ func _on_hit_taken(_damage: int, outcome: BattleTypes.Outcome, attempted: Battle
 			_flash(BREAK_FLASH_COLOR, BREAK_OUT_S)
 			_break_accent()
 
+## THE REWARD, SHOWN. A successful dodge already flashes aqua for a
+## fraction of a second; this HOLDS that colour for exactly as long as the
+## riposte is spendable, so "you are owed a heavy hit" is a state the
+## player can see rather than a fact they have to remember.
+##
+## Same aqua family as DODGE_FLASH_COLOR and the bar's evade band: the
+## mark that says "tap here", the flash that says "that worked" and the
+## hold that says "now cash it" are one colour telling one story. The red
+## ramp still means exactly one thing -- an attack is coming -- and it
+## lives on the OPPONENT, never on the fighter wearing this.
+##
+## Driven by a signal rather than polled per frame: the hold has to end on
+## the same tick the window does, and the only object that knows that tick
+## is the FSM.
+func _on_riposte_changed(ready: bool) -> void:
+	if not _enabled:
+		return
+	_ensure_material()
+	if _material == null:
+		return
+	_kill(_tint_tween)
+	_tint_tween = create_tween()
+	_tint_tween.tween_property(_material, "albedo_color", _rest_color(), RIPOSTE_FADE_S)
+
+## What this fighter's colour SETTLES to once a flash is over. Not
+## `_base_color`: a riposte is owed for over a second, and the evade flash
+## that earns it fires immediately after `riposte_changed`, so a flash
+## resting on the base colour would wipe the hold the same frame it went
+## up -- the cue would exist and never be seen.
+func _rest_color() -> Color:
+	if _fighter != null and _fighter.is_riposte_ready():
+		return RIPOSTE_HOLD_COLOR
+	return _base_color
+
 func _flash(colour: Color, out_s: float) -> void:
 	_ensure_material()
 	if _material == null:
@@ -515,7 +573,7 @@ func _flash(colour: Color, out_s: float) -> void:
 	_kill(_tint_tween)
 	_tint_tween = create_tween()
 	_tint_tween.tween_property(_material, "albedo_color", colour, FLASH_IN_S)
-	_tint_tween.tween_property(_material, "albedo_color", _base_color, out_s)
+	_tint_tween.tween_property(_material, "albedo_color", _rest_color(), out_s)
 
 ## The evade worked: a little more distance, fast. Positive, and clearly
 ## not an impact -- nothing touched this fighter.
@@ -558,7 +616,7 @@ func _windup(action: BattleTypes.Action, phase: float) -> void:
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
 	if not attacking:
-		_tint_to(_base_color, phase * 0.5)
+		_tint_to(_rest_color(), phase * 0.5)
 		return
 	# Colour means exactly ONE thing: "an attack telegraph is running".
 	# The bar above the head says the rest -- how far through it is, to
@@ -596,7 +654,7 @@ func _slip(phase: float) -> void:
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_pose_tween.tween_property(_slot, "scale", _base_scale, minf(phase, 0.10)) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	_tint_to(_base_color, 0.10)
+	_tint_to(_rest_color(), 0.10)
 
 ## The return, and it is SLOWER than the lunge by construction: it runs
 ## for the recovery phase's own length, which every profile sets far above
@@ -612,7 +670,7 @@ func _recover(phase: float) -> void:
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	_pose_tween.tween_property(_slot, "scale", _base_scale, phase) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-	_tint_to(_base_color, minf(phase, 0.25))
+	_tint_to(_rest_color(), minf(phase, 0.25))
 
 ## Hit clean: shoved back, then a short wobble that decays. Deliberately
 ## does NOT touch the tint -- Fighter emits hit_taken BEFORE this state,
@@ -652,7 +710,7 @@ func _rest(duration: float) -> void:
 	_pose_tween.tween_property(_slot, "position", _base_position, duration).set_trans(Tween.TRANS_SINE)
 	_pose_tween.tween_property(_slot, "rotation_degrees", _base_rotation, duration).set_trans(Tween.TRANS_SINE)
 	_pose_tween.tween_property(_slot, "scale", _base_scale, duration).set_trans(Tween.TRANS_SINE)
-	_tint_to(_base_color, duration)
+	_tint_to(_rest_color(), duration)
 
 # ------------------------------------------------------------ idle bob
 

@@ -53,6 +53,27 @@ class_name FighterBrain
 ## that cannot do what a person does. That is the SubstituteModel failure
 ## again, one lot after the last one.
 ##
+## =====================================================================
+## LOT 8: AGAINST AN INSTANT ATTACKER THERE IS NOTHING LEFT TO READ
+##
+## The player's attack now has a zero-length wind-up, so `is_charging()`
+## is never true for them, so the `_dodge_aim` path below is UNREACHABLE
+## against the shipped player. Nothing replaces it: an instant blow has
+## no telegraph, and no amount of AI would make one appear. The brain
+## therefore falls back to a blind dodge -- a guess -- which is exactly
+## what a person facing an unreactable attack has, and precisely why
+## keepy.tres prices that attack as a chip rather than a blow.
+##
+## Measured rather than assumed: with the bar gone from the player, a
+## mashing player wins 11% instead of the 294-out-of-300 that a blind
+## brain conceded at lot 7. The difference is not smarter AI, it is that
+## an ordinary hit no longer cancels the telegraph it lands on, so the
+## opponent's blow completes and the trade is real.
+##
+## The path is KEPT, not deleted: it is the brain's behaviour against any
+## telegraphed opponent, which is what it faces the moment BattleArena's
+## wiring is mirrored -- BattleContractProbe PHASE E does exactly that.
+##
 ## So the brain reads it, WITH HUMAN-LIKE ERROR: it draws a target bar
 ## fraction once per telegraph (ai_dodge_aim, spread by ai_dodge_slop)
 ## and taps when the fill crosses it. What it still cannot do is anything
@@ -206,6 +227,14 @@ func advance(dt: float) -> void:
 ## which is what keeps ai_defense_rate an honest difficulty dial rather
 ## than a switch between blind and omniscient.
 func _choose() -> BattleTypes.Action:
+	# A riposte is owed: spend it. Read off THIS fighter's own state, which
+	# is the same thing the player is shown, so the AI plays the loop the
+	# game teaches rather than a private one. Placed first because an
+	# unspent riposte expires -- hesitating with one in hand is strictly
+	# worse than any other choice available on this tick.
+	if _fighter.is_riposte_ready():
+		return BattleTypes.Action.ATTACK
+
 	if _opponent.is_threatening():
 		if _rng.randf() < _profile.ai_defense_rate:
 			return BattleTypes.Action.DODGE

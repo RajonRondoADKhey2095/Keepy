@@ -6,11 +6,13 @@
 [resource]
 script = ExtResource("1")
 display_name = "Sparring"
-max_hp = 42
+max_hp = 64
 attack_windup_s = 0.9
 attack_active_s = 0.12
-attack_recovery_s = 0.62
-attack_damage = 14
+attack_recovery_s = 0.95
+riposte_damage = 16
+riposte_window_s = 1.2
+attack_damage = 12
 dodge_windup_s = 0.05
 dodge_active_s = 0.4
 dodge_recovery_s = 0.36

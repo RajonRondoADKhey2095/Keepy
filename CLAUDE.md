@@ -9210,3 +9210,295 @@ porte la preuve ici, pas les en-tetes.
 exactement ce qu'ils sont -- et le premier (la barre se lit-elle comme une
 horloge a vitesse reelle sur un telephone) reste **hors de portee de toute
 sonde de ce depot**. Aucune mesure de cette session ne le touche.
+
+## KEEPY BATTLE, LOT 8 : L'ESQUIVE RAPPORTE ENFIN -- attaque INSTANTANEE cote joueur, et une RIPOSTE (21 aout 2026)
+
+Branche `claude/lot-8-esquive-rapporte-prq4b5`, partie de `staging`
+(`e00d0a5`). **Premier retour device positif en sept lots** : « Oui
+j'esquive effectivement » -- le mecanisme de la barre du lot 7 FONCTIONNE.
+Suivi de « mais je fais que perdre » : le joueur esquive bien et ne place
+jamais de coup.
+
+### PHASE 0 -- le chronogramme, et la cause n'etait PAS celle qu'on croyait
+
+Le lot 7 avait deja signale deux fois son propre point faible : **+13 ms
+d'avance apres une esquive reussie**, au pire tap de la bande dessinee.
+Reproduit ici au tick pres (modele du FSM livre, avec le report d'overshoot) :
+
+| tap (tick de la barre, sur 54) | defenseur libre | attaquant libre | avance |
+|---|---|---|---|
+| 28 (bord bas reel) | 76 | 99 | **+383 ms** |
+| 49 (bord haut DESSINE) | 97 | 99 | **+33 ms** |
+| 51 (bord haut reel) | 99 | 99 | **0 ms** |
+
+⚠️ **Mais l'avance n'a jamais ete le vrai defaut, et c'est le resultat
+central de la recon.** Meme a +383 ms, le contre du joueur etait
+lui-meme **une attaque telegraphiee de 0,90 s avec sa bande d'esquive
+dessinee**, que l'adversaire lit exactement comme le joueur lit la
+sienne. Mesure sur les profils livres :
+
+> `ai_dodge_aim 0,70 +- ai_dodge_slop 0,14` donne une plage de tirage
+> **0,56..0,84**, entierement **a l'interieur** de la bande d'esquive
+> reelle **0,519..0,944**. Quand l'adversaire decide d'esquiver, il
+> reussit **~100 %** du temps.
+
+Avec `ai_defense_rate = 0,70`, **~70 % des attaques du joueur etaient
+esquivees d'office**, chacune coutant 1,64 s d'exposition. Le joueur
+survivait et ne marquait pas : la phrase exacte du retour device.
+
+⚠️ **Le banc du lot 7 ne pouvait pas voir ca, et c'est mesure et non
+suppose.** Sa politique « lecture de la barre + contre » tapait son
+contre **le tick meme ou elle redevenait libre** -- une machine, pas une
+personne. Le meme banc, avec une latence humaine de 380 ms sur le contre,
+donne **65,7 %** au lieu de 98,7 %, et des combats de **43 s** au lieu de
+24,2 s. Ce seul terme manquant est tout l'ecart entre le rapport de sonde
+et le retour device.
+
+*(Banc Python jetable, jamais commite. Il n'a ete cru qu'apres avoir
+**reproduit les trois chiffres publies du lot 7** : martelage 10,7 % /
+10,3 s contre 11,7 % / 10,5 s, esquive seule 0 %, lecture+contre a
+latence nulle 99,0 % / 23,6 s contre 98,7 % / 24,2 s.)*
+
+### PHASE 1 -- l'attaque instantanee, et la barre RETIREE cote joueur
+
+`keepy.tres` : **`attack_windup_s = 0.0`**. Le tap EST le coup : la frappe
+se resout **au tick suivant (17 ms)**, gate par `BattleContractProbe`
+PHASE A2.
+
+**La barre disparait cote joueur par CONSEQUENCE, pas par un drapeau.**
+`Fighter.is_charging()` exige desormais `_phase_total > 0.0`, et
+`FighterView` s'y branche : un wind-up de longueur nulle traverse bien
+l'etat WINDUP pendant un tick, et sans cette condition il aurait leve une
+barre pleine pendant une frame -- et offert a l'IA une fraction a viser
+sur une attaque par construction irreactable. Gate sur la scene livree :
+**« an instant attack never raises a bar, not even for one frame »**, plus
+l'absence de bande d'esquive (`is_visible_in_tree()`, pas le drapeau
+local : la question est « est-ce dessine », pas « ce noeud est-il coche »).
+
+⚠️ **Erreur de conception du lot 7 actee** : la barre avait ete posee des
+DEUX cotes en croyant aider. Elle imposait en realite un timing au joueur
+sur ses PROPRES coups -- or un coup qu'on decide n'est pas un coup qu'on lit.
+
+⚠️ **CE QUI REMPLACE LA LECTURE DE LA BARRE PAR L'IA : RIEN, et c'est
+mesure, pas compense.** Le chemin `_dodge_aim` de `FighterBrain` devient
+**inatteignable** contre le joueur livre. L'IA retombe sur une esquive
+aveugle -- une supposition -- ce qui est exactement ce dont dispose une
+personne face a une attaque irreactable, et precisement pourquoi
+`keepy.tres` price cette attaque en **chip (5)** et non en coup plein. Le
+chemin est **CONSERVE et non supprime** : c'est le comportement du cerveau
+face a tout adversaire telegraphie, ce qu'il rencontre des que le cablage
+est mirroite (`BattleContractProbe` PHASE E le fait).
+**Aucun reglage `ai_*` n'a ete durci** -- la consigne etait de mesurer
+d'abord, et la mesure dit que ce n'etait pas necessaire.
+
+### ⚠️ LA REGLE QUI REND TOUT LE RESTE POSSIBLE : un coup ORDINAIRE ne stagger plus
+
+Sans elle, une attaque instantanee et annulante repetee plus vite que le
+wind-up adverse est un **stun-lock**. **Mesure, pas deduit : martelage
+300/300 (100 %) avec le stagger sur les coups ordinaires, 8 % sans.**
+
+| | degats | stagger | annule le wind-up en cours |
+|---|---|---|---|
+| attaque **ordinaire** | `attack_damage` | **non** | **non** |
+| **RIPOSTE** | `riposte_damage` | oui | oui |
+
+Un telegraphe se termine donc **meme sous le feu** : marteler echange des
+degats contre chaque coup que l'adversaire porte, au lieu de l'empecher
+de jouer. Gate en trois assertions distinctes dans `BattleContractProbe`
+PHASE B, dont **« a BLIND hit does NOT cancel the action it lands on »**.
+
+### PHASE 2 -- LA RIPOSTE, coeur du lot
+
+Une esquive qui couvre reellement un coup arme une riposte pour
+`riposte_window_s`. **La fenetre ne se consomme QUE pendant les ticks
+IDLE.** C'est le point qui decide si le mecanisme existe : l'esquive qui
+gagne la riposte verrouille aussi son proprietaire pour la fin de son
+propre cycle, et une fenetre comptee depuis l'instant de l'esquive serait
+deja largement depensee avant que le joueur puisse bouger. Mesure sur le
+FSM livre : **1200 ms encore ouverts au moment ou l'esquiveur redevient
+libre**.
+
+Latchee **au tap** (`_begin_action`), pas a la resolution : la recompense
+appartient au moment ou le joueur decide. Une esquive = **une** riposte
+(gate). Un stagger ou un KO la perdent.
+
+**La fenetre de punition passe de 13 ms a 343 ms**, et le gate change de
+nature -- il ne compare plus a zero mais **a un humain** :
+
+| | lot 7 | lot 8 |
+|---|---|---|
+| avance deterministe au pire tap | **13 ms** | **343 ms** *(gate >= 300 ms, tap rapide)* |
+| + temps de reflexion minimal adverse | -- | **643 ms** *(gate >= 450 ms, tap lent)* |
+
+Le second est un **plancher dur** : `ai_reaction_jitter_s` n'est jamais
+que additionne. C'est `attack_recovery_s` de l'adversaire (0,62 -> 0,95)
+qui paie cette fenetre, et rien d'autre ne le peut -- l'inegalite est
+ecrite au champ dans `FighterProfile.gd`.
+
+⚠️ **`dodge_recovery_s` reste a 0,36, et ce n'est pas de l'immobilisme :
+en dessous, le SPAM D'ESQUIVE devient dominant.** Mesure (n=300) :
+dodge_rec 0,36 -> spam **0 %** ; 0,30 -> **100 %** ; 0,28 -> 97,7 % ;
+0,24 -> 75,3 %. La couverture d'un spammeur est `da/(dw+da+dr)`, donc
+raccourcir le cout de l'esquive le fait esquiver par accident. **La
+fenetre de punition a donc ete achetee entierement du cote de
+l'attaquant.**
+
+**Attaquer SANS avoir esquive reste libre, et coute.** Le chip est
+`attack_damage = 5` contre `riposte_damage = 14` (2,8x), sans stagger, et
+il expose pendant `attack_active_s + attack_recovery_s` = **833 ms**
+mesures. `PHASE C2` gate que la riposte coute **strictement plus** sur les
+deux axes.
+
+⚠️ **PHASE C2 A ETE RESCOPEE, et l'ancienne inegalite est PUBLIEE EN
+ECHEC plutot que contournee.** Jusqu'au lot 7 elle assertait
+`stagger_duration_s > toute recovery` -- juste tant que TOUT coup propre
+staggerait, puisque le tempo etait alors le cout entier d'etre touche. Ce
+n'est plus le cas. La satisfaire imposerait de monter les staggers
+au-dessus des 950 ms de recovery de l'adversaire, et **c'est mesure : le
+spam d'esquive passe alors de 0 % a 100 %** (une riposte chanceuse
+verrouille assez longtemps pour placer la suivante). Chiffre publie, gate
+remplace par l'invariant qui compte reellement.
+
+### La riposte est VISIBLE, et ca n'etait pas optionnel
+
+`FighterView` **tient** l'aqua `RIPOSTE_HOLD_COLOR` tant que la riposte
+est depensable -- meme famille que le flash d'esquive reussie et que la
+bande d'esquive de la barre : la marque qui dit « tape ici », le flash qui
+dit « ca a marche » et le maintien qui dit « encaisse maintenant » sont
+une seule couleur racontant une seule histoire. Le rouge continue de ne
+vouloir dire qu'une chose, et il vit sur l'ADVERSAIRE.
+
+⚠️ **Piege rencontre et ferme** : le flash d'esquive se rejoue vers
+`_base_color`, donc il effacait le maintien **la frame meme ou il se
+levait** (`riposte_changed` est emis AVANT `hit_taken`). Toutes les
+detentes « retour au neutre » passent desormais par `_rest_color()`, qui
+rend le maintien quand une riposte est due. Le cue existait et n'aurait
+jamais ete vu.
+
+### PHASE 3 -- equilibrage, n=300, les DEUX cotes pilotes
+
+Politiques caricaturales, **chaque tap payant une reaction humaine de
+300-450 ms tiree par tap** (le terme que le lot 7 n'avait pas) :
+
+| politique | lot 7 | **lot 8** | duree moyenne |
+|---|---|---|---|
+| martelage d'ATTAQUE | 11,7 % | **8,0 %** | 8,7 s |
+| esquive seule | 0 % | **0 %** *(par arithmetique : zero degat)* | 60,0 s |
+| esquive-panique (tap des que la barre apparait) | -- | **0,0 %** | 8,6 s |
+| **lecture de la bande + riposte** | 98,7 % | **100,0 %** | **12,9 s** |
+| **la meme, JOUEUR IMPARFAIT** (3 lectures sur 4, gigue 140 ms) | -- | **80,0 %** | **14,7 s** |
+
+**Les trois objectifs du brief sont atteints** : le martelage n'est pas
+dominant, esquive+contre est de loin la meilleure strategie, et la marge
+d'erreur existe -- **la ligne 100 % est une machine** (elle lit chaque
+barre et ne se trompe jamais), la ligne a 80 % est ce que la meme
+strategie vaut quand les lectures cessent d'etre gratuites.
+
+**Les durees rentrent dans la cible 12-20 s** (12,9 / 14,7 s de moyenne,
+max 18-20 s) contre **24,2 s de moyenne et des combats au plafond de 60 s**
+au lot 7 -- l'attaque instantanee raccourcit bien, comme le brief le
+prevoyait.
+
+⚠️ **`attack_recovery_s` du JOUEUR = 0,72, choisi au CENTRE D'UN PLATEAU
+et surtout pas au bord.** Le lot 7 avait deja documente des pics de
+resonance sur ce champ ; il y en a un ici aussi, et **plus net** :
+
+| `attack_recovery_s` joueur | 0,56 | 0,58 | 0,60 | **0,62** | 0,66 | 0,70 | 0,74 | 0,78 |
+|---|---|---|---|---|---|---|---|---|
+| spam d'esquive (base A / base B) | 100/100 | 100/100 | 100/100 | **0/0** | 0/0 | 0/0 | 0/0 | 0/0 |
+
+Falaise **deterministe** (identique sur les deux bases de graines) entre
+0,60 et 0,62. Se poser sur 0,62 serait se poser sur le bord ; **0,72** est
+au milieu du plateau 0,62-0,90, avec le martelage a 0-4 % sur toute sa
+longueur.
+
+**Damage adverse 14/18 -> 12/16** : a 10/14 le spam d'esquive revient
+(23 % base A, 31 % base B -- instable), a 14/18 le martelage tombe a 0 %.
+12/16 est stable sur les deux bases. `max_hp` adverse 42 -> **64** pour la
+duree.
+
+### Determinisme
+
+Prouve **APRES** le changement de gameplay, comme l'exige la consigne :
+`BattleContractProbe` PHASE D joue le meme combat deux fois a la graine
+20260820 et compare une trace par tick -- **byte-identique (7929 car.)**,
+et **differente** a une autre graine (une trace toujours identique
+passerait aussi si le combat etait gele). `BattleReadabilityProbe` PHASE B
+rejoue le meme combat avec de vraies frames entre les ticks : **trace
+byte-identique, 582 ticks des deux cotes** -- le temps moteur ne fuit
+toujours pas dans le FSM. Aucun `randi()` global dans `scripts/battle/`.
+
+### Une source de verite pour le prix d'un coup
+
+`FighterProfile.damage_for(riposte)` est **le seul endroit** qui choisit
+entre les deux nombres. `BattleArena` price avec, et **toutes** les sondes
+resolvent avec -- donc un fixture ne peut pas pricer une riposte comme un
+chip et rester vert. C'est la divergence, sur l'axe exact que ce lot
+change, que ce depot a deja payee une fois (`SubstituteModel.tscn`).
+Double-verrouille par **`BattleDefenseProbe` PHASE R2**, qui resout un
+chip ET une riposte a travers **`Battle.tscn` lui-meme** -- vraie scene,
+vrai `BattleArena`, vrai cablage : **5 dmg sans stagger, 14 dmg avec**.
+
+### Deux defauts de SONDE trouves en chemin, corriges dans la sonde
+
+1. **`BattleContractProbe` PHASE A et `BattleReadabilityProbe` PHASE C
+   mesuraient le telegraphe sur le profil du JOUEUR** -- devenu le cas
+   DEGENERE. Elles auraient asserte qu'un wind-up de 0 s dure 0 s et que
+   rien n'a bouge pendant, ce qui est vrai et vide de sens. Bascculees sur
+   le profil ADVERSE, qui est aussi le bon choix semantique : un
+   telegraphe est une chose que le DEFENSEUR lit, donc il n'existe que sur
+   le combattant d'en face. PHASE A2 couvre le cas zero explicitement.
+2. **`BattleStatsProbe` PHASE F : un caricature `ticks % 3` silencieusement
+   fragile.** Le joueur n'y est sollicite que quand il est libre, donc le
+   choix dependait de la longueur du verrouillage **modulo 3** -- et
+   l'attaque instantanee l'a mis a exactement 51 ticks. Le caricature
+   attaquait et n'esquivait plus jamais : la sonde qui existe pour voir
+   tous les compteurs en perdait la moitie. Remplace par une **bascule sur
+   chaque action acceptee**, qui ne peut pas entrer en resonance avec un
+   timing.
+
+### Validation
+
+`BattleContractProbe` **46/46**, `BattleDefenseProbe` **36/36**,
+`BattleReadabilityProbe` **65/65**, `BattleStatsProbe` **83/83**,
+`ProbeTimeoutAudit` **37 sondes scenes, toutes armees**,
+`AssetContractAudit` (12/12 visuels, **0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**.
+Import headless **exit 0**, export Web release **exit 0**, `index.wasm`
+**35 376 909** octets / md5 `af4a8fc2925d992348eb30deeeb54360` et
+`index.js` md5 `4e08904b1b7107858246af44b602067b` -- identiques au
+fingerprint deja consigne pour tout lot qui ne touche pas le code moteur.
+Piege payload tenu : **0** ligne `Storing File` pour `scripts/dev`,
+`assets_source`, `docs`, `web`, `build` ou `firebase.json`.
+
+**Lot 6 intact** : rien d'ajoute, deplace ou renomme dans l'arbre de
+scene, tout passe toujours par `$Body`/`ModelSlot`, les modeles 3D sont
+intouches, et la barre de l'adversaire garde son contrat et ses ratios de
+contraste (remplissage 12,91:1 vs ciel, 4,10:1 vs sol, bande d'esquive
+14,9:1 / 4,73:1). **Vue toujours strictement en lecture seule sur le
+FSM. Aucune reference de `scripts/battle/` vers `scripts/dev/`.**
+
+⚠️ **`BattleTally.GROUP_BLOCKS` reste FIGE A ZERO**, verifie sur un vrai
+combat par `BattleStatsProbe`. Les rules Firestore deployees exigent la
+cle via `hasAll(statKeys())` : un write sans elle serait refuse **en
+silence**. L'ordre reste obligatoire le jour ou on le retire -- **rules
+d'abord, client ensuite** -- et les rules ne se deploient que sur `main`.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que l'esquive se SENT enfin payante ?** C'est tout l'objet du
+   lot, et aucune sonde ne le dit. Ce qui est mesure, c'est que la fenetre
+   existe (343 ms deterministes, 643 ms garantis) et que la riposte fait
+   2,8x le chip en staggerant ; ce qui ne l'est pas, c'est qu'un joueur la
+   voie et la prenne.
+2. **Le maintien aqua se lit-il comme « tu as un coup en reserve »** ou
+   comme une simple lueur ? C'est le seul canal qui annonce la recompense.
+3. **L'attaque instantanee se sent-elle reactive ou brutale ?** Elle est
+   irreactable pour l'adversaire par construction ; a 833 ms de
+   verrouillage apres chaque tap, elle peut aussi se sentir lourde.
+4. **L'esquive-panique perd 100 % des combats.** Argumente (la bande est
+   DESSINEE, et « ESQUIVE RATEE » plus le flash violet disent au joueur
+   qu'il a tape trop tot), mais c'est une lecon severe pour un premier
+   contact -- a surveiller si Mathieu retrouve « trop dur ».
+5. Toujours aucun son, aucune particule, aucun second adversaire, aucune
+   progression, aucun brain adaptatif : hors perimetre, inchange.
