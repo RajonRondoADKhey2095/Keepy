@@ -22,6 +22,8 @@ extends Node
 ##   PHASE D  attack, guard and dodge do not look alike
 ##   PHASE E  an interrupted animation is replaced, never stacked
 ##   PHASE F  the two HUD contradictions the captures showed
+##   PHASE G  the attack marker: legible against BOTH backgrounds, and
+##            shown for attacks and nothing else (lot 6)
 ##
 ## PHASE B is the one that earns the file. Everything else here could be
 ## satisfied by an animation layer that also, quietly, changed the fight.
@@ -52,6 +54,7 @@ func _ready() -> void:
 	await _phase_d_silhouettes()
 	await _phase_e_interrupt()
 	_phase_f_hud()
+	await _phase_g_marker()
 	print("--- %d check(s), %d failure(s) ---" % [_checks, _failures])
 	get_tree().quit(1 if _failures > 0 else 0)
 
@@ -100,10 +103,21 @@ func _phase_a_facing() -> void:
 		_expect(alignment > 0.99, "%s's local +Z points at its opponent" % node_name)
 
 	# The gap matters too: a lunge that reaches further than the space
-	# between two capsules would put them inside each other.
+	# between two fighters would put them inside each other.
+	#
+	# This used to subtract a hard-coded 0.45 -- the capsule radius
+	# written in BattleFighter.tscn. That number stopped being the answer
+	# the moment lot 6 installed real models: the squirrel is 2.04 deep
+	# because of its tail, so its reach toward the opponent is more than
+	# twice the capsule's. Measuring it instead means this assertion keeps
+	# meaning what it says for whatever .glb a future profile carries,
+	# which is the whole point of the one-.tres-one-.glb contract.
 	var gap: float = (marks["OpponentFighter"]["position"] as Vector3).distance_to(marks["PlayerFighter"]["position"] as Vector3)
-	var surface_gap := gap - 2.0 * 0.45  # capsule radius, BattleFighter.tscn
+	var reach_player := _forward_reach(KeepyProfile)
+	var reach_opponent := _forward_reach(DummyProfile)
+	var surface_gap := gap - reach_player - reach_opponent
 	var both_lunge := 2.0 * FighterView.LUNGE_REACH
+	print("  forward reach: player %.3f, opponent %.3f (from each slot's measured visual AABB)" % [reach_player, reach_opponent])
 	print("  centres %.2f apart, %.2f between surfaces, both lunging closes %.2f" % [gap, surface_gap, both_lunge])
 	_expect(both_lunge < surface_gap, "two simultaneous lunges cannot interpenetrate")
 
@@ -321,6 +335,158 @@ func _run_fight(fight_seed: int, tick_cap: int, animate: bool) -> FightResult:
 	left.free()
 	right.free()
 	return result
+
+# ---------------------------------------------------------------- PHASE G
+
+## The engine-side attack marker, added at lot 6 because the tint alone
+## stopped being able to carry the telegraph once real .glb art landed.
+## Measured on the shipped Battle scene, rest vs fully-alarmed, averaged
+## over the fighter's own pixels: the player's squirrel is BETTER off than
+## the capsule it replaced (2.21:1 against 1.63:1 in luminance), but the
+## opponent's owl loses the channel that carried most of the old cue --
+## its hue swing falls from 159.6 degrees to 10.2, because a blue capsule
+## turning red is a near-complementary flip and a brown owl turning red is
+## barely a hue change at all. The opponent is the fighter a player
+## actually reads. Full table in FighterView's header.
+##
+## What this phase gates is the property that makes the marker worth
+## having: its legibility is a fact about GEOMETRY AND COLOURS THIS
+## PROJECT OWNS, so it cannot be weakened by a future asset the way the
+## tint was. Two prisms, bright core inside a near-black outline, and the
+## assertion is that at least one of the two clears 3.0:1 against each of
+## the two things it can be drawn over -- the dark sky above the arena and
+## the lit ground below it. Neither colour has to beat both; between them
+## they must leave no background that swallows the marker.
+##
+## And it gates the lot-2 rule the marker could most easily have broken:
+## it is shown for an attack telegraph and for nothing else. A marker over
+## a guard would make the colour channel mean two things again.
+const CONTRAST_FLOOR := 3.0
+
+func _phase_g_marker() -> void:
+	print("\n--- PHASE G: the attack marker is asset-independent and attack-only ---")
+	var arena := BattleScene.instantiate()
+	add_child(arena)
+	await get_tree().process_frame
+	# The arena starts a real round the moment it enters the tree, and its
+	# brain drives the opponent every frame. Leaving it running would mean
+	# this phase measured a fighter it does not control -- the first
+	# version of it did, and read a marker raised by the AI's own attack
+	# as one raised by the guard this loop had just asked for.
+	arena.set_process(false)
+	arena.set_physics_process(false)
+	var world := arena.get_node("World") as Node3D
+	var env := (world.get_node("WorldEnvironment") as WorldEnvironment).environment
+	var ground_material := (world.get_node("Ground") as MeshInstance3D).get_surface_override_material(0) as StandardMaterial3D
+	var sky: Color = env.background_color
+	var ground: Color = ground_material.albedo_color
+
+	var fighter := world.get_node("OpponentFighter") as Fighter
+	var slot := fighter.get_node("Body") as ModelSlot
+	var alert := slot.get_node_or_null("Alert") as Node3D
+	_expect(alert != null, "the fighter scene carries a Body/Alert marker")
+	if alert == null:
+		arena.queue_free()
+		return
+
+	var core := _marker_colour(alert, "Core")
+	var outline := _marker_colour(alert, "Outline")
+	print("  marker core %s, outline %s" % [core, outline])
+	print("  drawn over sky %s and ground %s" % [sky, ground])
+	for backdrop in [["sky", sky], ["ground", ground]]:
+		var name: String = backdrop[0]
+		var behind: Color = backdrop[1]
+		var best := maxf(_contrast(core, behind), _contrast(outline, behind))
+		print("    vs %-6s : core %.2f:1, outline %.2f:1, best %.2f:1" % [
+			name, _contrast(core, behind), _contrast(outline, behind), best])
+		_expect(best >= CONTRAST_FLOOR, "the marker clears %.1f:1 against the %s" % [CONTRAST_FLOOR, name])
+
+	# Attack-only, driven through the real FSM rather than by calling the
+	# view's helpers: the question is what a PLAYER sees during each
+	# action, and only the state machine decides that.
+	var view := fighter.get_node("View") as FighterView
+	var cases := {"ATTACK": BattleTypes.Action.ATTACK, "FEINT": BattleTypes.Action.FEINT,
+		"GUARD": BattleTypes.Action.GUARD, "DODGE": BattleTypes.Action.DODGE}
+	for tag in cases:
+		var action: BattleTypes.Action = cases[tag]
+		# Back to a PROVEN-clean marker first. Without this the loop would
+		# be reading the previous case's marker still retracting -- the
+		# fade is deliberately not instant -- and a guard would look like
+		# it had raised one. Asserting the clean state instead of merely
+		# waiting for it also gates the other half of the contract: the
+		# marker really does come back down.
+		fighter.reset()
+		await _wait(FighterView.ALERT_OFF_S + 0.06)
+		_expect(not alert.visible, "%s: precondition, the marker is down before the action" % tag)
+		fighter.request_action(action)
+		fighter.advance(TICK_S)
+		await _wait(0.05)
+		var shown: bool = alert.visible and alert.scale.x > 0.01
+		var want := BattleTypes.is_attack_like(action)
+		print("    %-6s windup -> marker %s (want %s)" % [
+			tag, "SHOWN" if shown else "hidden", "SHOWN" if want else "hidden"])
+		_expect(shown == want, "%s %s the marker" % [tag, "raises" if want else "does not raise"])
+
+	# It has to grow, for the same reason the tint ramps: the size IS the
+	# clock. A marker that appears at full size says "an attack" and not
+	# "an attack, this soon".
+	fighter.reset()
+	await _wait(0.05)
+	fighter.request_action(BattleTypes.Action.ATTACK)
+	fighter.advance(TICK_S)
+	await _wait(0.02)
+	var early: float = alert.scale.x
+	await _wait(fighter.telegraph_duration() * 0.7)
+	var late: float = alert.scale.x
+	print("    marker scale %.3f early -> %.3f late" % [early, late])
+	_expect(late > early + 0.1, "the marker GROWS over the telegraph rather than popping")
+
+	# Placed from what the slot really draws, not from a per-profile
+	# number -- so it is above the head of a 1.70 m owl and of a 1.35 m
+	# squirrel with nothing in either .tres saying so.
+	var head: float = slot.visual_aabb().end.y
+	print("    slot head at local y %.3f, marker at %.3f" % [head, alert.position.y])
+	_expect(alert.position.y > head, "the marker sits clear of the fighter it belongs to")
+	if view != null:
+		view.settle()
+	arena.queue_free()
+	await get_tree().process_frame
+
+func _marker_colour(alert: Node3D, child: String) -> Color:
+	var mesh := alert.get_node_or_null(child) as MeshInstance3D
+	if mesh == null:
+		return Color.MAGENTA
+	var material := mesh.get_surface_override_material(0) as StandardMaterial3D
+	return material.albedo_color if material else Color.MAGENTA
+
+## WCAG relative luminance, the same maths every contrast probe in this
+## project uses -- so a number printed here is comparable to one printed
+## by DarkPaletteAudit rather than merely similar-looking.
+func _relative_luminance(colour: Color) -> float:
+	var channels := [colour.r, colour.g, colour.b]
+	var linear: Array[float] = []
+	for c in channels:
+		var v: float = c
+		linear.append(v / 12.92 if v <= 0.04045 else pow((v + 0.055) / 1.055, 2.4))
+	return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+func _contrast(a: Color, b: Color) -> float:
+	var la := _relative_luminance(a)
+	var lb := _relative_luminance(b)
+	return (maxf(la, lb) + 0.05) / (minf(la, lb) + 0.05)
+
+## The distance a fighter's drawn silhouette reaches toward its opponent,
+## measured off a real instance of its own profile rather than assumed
+## from the placeholder.
+func _forward_reach(profile: FighterProfile) -> float:
+	var fighter := _make(profile)
+	var slot := fighter.get_node("Body") as ModelSlot
+	var box := slot.visual_aabb()
+	var reach := -INF
+	for corner in 8:
+		reach = maxf(reach, box.get_endpoint(corner).z)
+	fighter.free()
+	return reach
 
 func _make(profile: FighterProfile) -> Fighter:
 	var fighter := FighterScene.instantiate() as Fighter

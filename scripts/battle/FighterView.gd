@@ -70,6 +70,54 @@ class_name FighterView
 ## told apart by SHAPE (brace, lean-back), never by tint. A telegraph
 ## that shares its channel with two harmless actions is a telegraph that
 ## has to be decoded rather than seen.
+##
+## =====================================================================
+## THE TINT ALONE CANNOT CARRY IT ANY MORE -- MEASURED AT LOT 6
+##
+## The paragraph above was written when both fighters were flat unlit
+## capsules, where `albedo_color` IS the colour on screen and a ramp to
+## ALERT_COLOR lands on ALERT_COLOR exactly. On an imported .glb the same
+## write MULTIPLIES a baseColor texture instead, and how much of the ramp
+## survives is then a property of the ASSET, not of this file.
+##
+## Measured on the shipped Battle scene, rest vs fully-alarmed, averaged
+## in linear light over the fighter's OWN pixels (mask taken by rendering
+## the same frame with the slot hidden, so no colour classification and no
+## silhouette edge can contaminate it):
+##
+##   fighter                          luminance   hue swing   sat swing
+##   capsule Keepy    (lots 2-5)        1.63:1       26.9 deg    +0.18
+##   capsule Sparring (lots 2-5)        1.61:1      159.6 deg    +0.47
+##   Keepy squirrel .glb                2.21:1       11.4 deg    +0.53
+##   Sparring owl .glb                  1.57:1       10.2 deg    +0.52
+##
+## The player's squirrel comes out AHEAD -- a warm cream body times red
+## is a bigger luminance drop than the orange capsule managed. The
+## opponent does not. Its luminance and saturation swings survive; what
+## collapses is HUE, from 159.6 degrees to 10.2. The blue capsule turning
+## red was a near-complementary flip, the single loudest thing about the
+## old telegraph. A brown owl turning red is barely a hue change at all,
+## because red times brown is brown.
+##
+## The opponent is the fighter a player actually reads, so lot 6 would
+## otherwise have shipped a quieter warning than the one five lots were
+## spent making legible.
+##
+## So the cue no longer lives only on the asset's material. `Body/Alert`
+## is an engine-side marker -- geometry and colours this project owns,
+## above the fighter's head, hidden except during an attack telegraph.
+## That is the project's established answer to exactly this problem: the
+## pursuer's eyes in Chased are engine-side nodes and not part of the
+## .glb, for the same reason (see CLAUDE.md, "cue emission -> separate
+## node; cue albedo -> slot material"). The tint ramp is KEPT -- it still
+## reads on a light model, and two channels beat one -- but nothing now
+## depends on it alone.
+##
+## The marker is two prisms, bright core inside a near-black outline, so
+## one of the two always clears 3.0:1 whether it is drawn against the
+## dark sky or against the lit ground. BattleReadabilityProbe PHASE G
+## gates that, and gates that the marker never shows for a guard or a
+## dodge -- colour still means exactly one thing.
 
 ## Breathing. Small on purpose -- it exists so an idle screen is never
 ## dead, not so it competes with the telegraph.
@@ -170,6 +218,21 @@ const BREAK_S := 0.07
 const EVADE_SLIP := -0.10
 const EVADE_S := 0.08
 
+## The engine-side attack marker (Body/Alert). Sized and placed from the
+## slot's MEASURED visual AABB, never from a per-profile number, so a
+## future .glb of any height gets it in the right place with no .tres
+## field to remember -- the "one .tres and one .glb, zero lines of code"
+## contract has to survive this file too.
+const ALERT_GAP := 0.22
+## It starts visible but small rather than at nothing: a marker that pops
+## in from zero reads as an event, and the event has not happened yet.
+## Growth over the windup is the clock, same as the tint.
+const ALERT_MIN_SCALE := 0.28
+const ALERT_MAX_SCALE := 1.0
+## Off is a short fade, not a cut -- the warning ending is not itself
+## information, so it must not draw the eye away from the strike.
+const ALERT_OFF_S := 0.09
+
 ## Floor under any tween duration read from a profile, so a phase that is
 ## nominally a couple of ticks long still produces a movement a human eye
 ## can catch rather than a teleport.
@@ -195,6 +258,14 @@ var _base_scale := Vector3.ONE
 var _material: StandardMaterial3D = null
 var _material_resolved := false
 var _base_color := Color.WHITE
+
+## The attack marker and its own tween. Resolved lazily for the same
+## reason the material is: at this node's _ready() the slot still carries
+## the placeholder, so its visual AABB -- which decides where the marker
+## sits -- is not the one the fighter will actually be drawn with.
+var _alert: Node3D = null
+var _alert_resolved := false
+var _alert_tween: Tween = null
 
 ## Three tweens, never one. Pose and tint are killed independently
 ## because a state change must be able to re-pose a fighter WITHOUT
@@ -235,9 +306,11 @@ func _exit_tree() -> void:
 	_kill(_pose_tween)
 	_kill(_tint_tween)
 	_kill(_idle_tween)
+	_kill(_alert_tween)
 	_pose_tween = null
 	_tint_tween = null
 	_idle_tween = null
+	_alert_tween = null
 	if _fighter == null:
 		return
 	if _fighter.state_changed.is_connected(_on_state_changed):
@@ -259,6 +332,7 @@ func settle() -> void:
 		return
 	if _fighter.state == BattleTypes.State.KO:
 		return
+	_alert_off()
 	_rest(0.28)
 
 func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> void:
@@ -269,6 +343,15 @@ func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> 
 	# copy of the action -> timing map, and it stays true if a phase is
 	# ever shortened by the overshoot Fighter.advance() carries.
 	var phase := maxf(_fighter.phase_duration(), MIN_POSE_S)
+	# The marker is driven from HERE and nowhere else. Every other pose
+	# helper would otherwise need its own _alert_off(), and the one that
+	# got forgotten would leave a warning hanging over a fighter that is
+	# no longer threatening anything -- the exact failure the marker
+	# exists to prevent, wearing the opposite sign.
+	if state == BattleTypes.State.WINDUP and BattleTypes.is_attack_like(action):
+		_alert_on(maxf(_fighter.telegraph_duration(), MIN_POSE_S))
+	else:
+		_alert_off()
 	match state:
 		BattleTypes.State.IDLE:
 			_rest(0.16)
@@ -580,6 +663,79 @@ func _ensure_material() -> void:
 	_material = current.duplicate() as StandardMaterial3D
 	_base_color = _material.albedo_color
 	_slot.apply_material(_material)
+
+## Shows the attack marker and grows it over the telegraph's own length,
+## with the same EASE_IN the tint ramp uses -- the two channels have to be
+## the SAME clock, or a player would learn to read whichever one happens
+## to lead.
+##
+## A feint gets telegraph_duration() here exactly like a plain attack
+## does, so the marker finishes growing at the usual moment and then
+## simply stays up through the hold. It cannot leak the lie: it is driven
+## from the same number Fighter hands the tint.
+func _alert_on(duration: float) -> void:
+	_ensure_alert()
+	if _alert == null:
+		return
+	_kill(_alert_tween)
+	_alert.visible = true
+	_alert.scale = Vector3.ONE * ALERT_MIN_SCALE
+	_alert_tween = create_tween()
+	_alert_tween.tween_property(_alert, "scale", Vector3.ONE * ALERT_MAX_SCALE, duration) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+
+func _alert_off() -> void:
+	if not _alert_resolved:
+		# Never resolved means never shown -- nothing to take down, and
+		# resolving here would force the AABB read on the first IDLE
+		# transition, before the model is necessarily installed.
+		return
+	if _alert == null:
+		return
+	_kill(_alert_tween)
+	if not _alert.visible:
+		return
+	_alert_tween = create_tween()
+	_alert_tween.tween_property(_alert, "scale", Vector3.ZERO, ALERT_OFF_S) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_alert_tween.tween_callback(func() -> void: _alert.visible = false)
+
+## Finds the marker and puts it just clear of whatever the slot actually
+## draws -- measured, so it lands correctly above a 1.35 m squirrel and a
+## 1.70 m owl without either profile carrying a height field.
+##
+## Lazy for the same reason _ensure_material() is: children _ready()
+## before their parent, so at this node's _ready() the fighter has not run
+## _apply_profile_art() and visual_aabb() would still be reporting the
+## capsule.
+func _ensure_alert() -> void:
+	if _alert_resolved:
+		return
+	_alert_resolved = true
+	if _slot == null:
+		return
+	_alert = _slot.get_node_or_null("Alert") as Node3D
+	if _alert == null:
+		# A fighter scene without the marker still animates in full; only
+		# the second telegraph channel is missing. Loud, because that is
+		# a scene that has drifted from this file.
+		push_warning("FighterView: no Body/Alert marker, attack telegraph is tint-only.")
+		return
+	_alert.position.y = _slot.visual_aabb().end.y + ALERT_GAP
+	# Cancel the fighter's yaw so the marker's flat face points at the
+	# camera instead of at the opposite wall. The fighters are turned a
+	# quarter-turn to face each other, and a child of the slot inherits
+	# that -- the first version of this rendered the prism EDGE ON and
+	# read as a 6 cm splinter rather than as a warning. Read off the
+	# slot's own basis rather than hard-coding +-90, so it stays correct
+	# if the arena is ever re-laid-out.
+	#
+	# Once, at resolve time, and not per frame: the pose tweens lean the
+	# body by at most 8 degrees, which tilts the marker slightly with the
+	# fighter, and that reads as part of the same motion.
+	_alert.rotation.y = -_slot.global_basis.get_euler().y
+	_alert.visible = false
+	_alert.scale = Vector3.ZERO
 
 func _kill(tween: Tween) -> void:
 	if tween != null and tween.is_valid():

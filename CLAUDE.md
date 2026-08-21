@@ -8645,3 +8645,176 @@ dans son propre lot.
 2. **Le deploiement des rules est gate `main`** (point ci-dessus), donc la
    premiere ecriture reelle sera une ecriture de PRODUCTION.
 3. **Keepy-Analytics n'est pas touche** — session distincte, apres celle-ci.
+
+## KEEPY BATTLE, LOT 6 : LES CAPSULES DEVIENNENT DES MODELES — zero asset genere, zero credit Meshy (21 aout 2026)
+
+Branche `claude/keepy-lot6-3d-models-t6sctv`, partie de `main` = `staging`
+(`924d81f`, meme arbre). **Decision de cadrage de Mathieu : on n'attend pas
+Meshy.** Les deux combattants portent desormais un `.glb` que le depot
+possede deja, et **toute l'animation reste procedurale** (les tweens du lot
+2 sur `$Body`/`ModelSlot`). Les modeles sont statiques, animes par code,
+exactement comme les capsules. Chiffres complets : `docs/MESHY_SPEC.md`
+**§12** (nouvelle).
+
+| combattant | asset | tri | echelle | rotation | offset |
+|---|---|---|---|---|---|
+| `PlayerFighter/Body` (Keepy) | `keepy_squirrel_hero.glb` | 3 129 | 1,07368 | `(0,0,0)` | `(0, -0,2246, 0)` |
+| `OpponentFighter/Body` (Sparring) | `keepy_hibou_pursuer.glb` | 7 070 | 0,895095 | `(0,0,0)` | `(0, -0,0489, 0)` |
+
+### Inventaire : il EXISTE un modele de Keepy, et l'adversaire s'imposait
+
+`assets/models/` contient **10 `.glb`, tous unlit, tous deja packes** : les
+6 hazards + 2 props decor (148-560 tri, plats, sans texture), plus
+**l'ecureuil hero** (3 129 tri, 1 texture baked) et **le hibou poursuivant**
+(7 070 tri, 4 textures). Les huit petits sont des sujets **couches ou
+accroupis** ; **le hibou est le SEUL modele debout du depot** (bbox
+dominante en Y, 1,228 x **1,899** x 1,172) et l'ecureuil est le seul hero.
+Le choix ne se discutait donc pas beaucoup — et il est narrativement juste :
+dans Chased le hibou POURSUIT Keepy, dans Battle Keepy lui fait face.
+
+### ⚠️ REUTILISER UN `.glb` DEJA LIVRE COUTE ZERO PAYLOAD — donc NE PAS le decimer
+
+`export_filter="all_resources"` packe une ressource **une fois**. Verifie
+sur le log `savepack`, pas argumente : chacune des 7 ressources derivees
+(les 2 `.scn` + leurs 5 `.ctex`) apparait dans **exactement UNE** ligne
+`Storing File`. Mesure sur deux exports propres dans la meme session :
+`.pck` **5 759 040 -> 5 761 376 (+2 336, +0,04 %)**, soit les deux `.tres`,
+les deux scenes et le `FighterView.gdc` grossi — **pas un octet d'art**.
+`index.wasm` **identique des deux cotes** (35 376 909, md5
+`af4a8fc2925d992348eb30deeeb54360`).
+
+⚠️ **Corollaire qui INVERSE l'instinct habituel : passer un de ces modeles
+par `decimate_hazard.py` aurait GROSSI le build.** Une copie decimee est un
+fichier de plus, donc le pack porterait l'original (pour Chased) ET la
+reduction (pour Battle). Le decimateur sert a ramener un asset NEUF sous
+budget ; c'est le mauvais outil pour un asset deja livre et deja dans son
+budget (§7.1 : 6 000 et 8 000). Battle dessine **~10 200 tri** au total
+contre une cible de 50 000, sans piste, sans hazard, sans collectible : il
+n'y avait rien a acheter.
+
+### Orientation : `(0,0,0)`, et le zero est MESURE
+
+Chased monte ces deux memes modeles a `(0, 180, 0)`. Battle les monte a
+zero, et ce n'est ni une contradiction ni une copie : rendu de chaque `.glb`
+depuis `+Z`, `-Z`, `+X` et le dessus. **Ecureuil vu de +Z : le visage, les
+yeux, le badge « K ». Hibou vu de +Z : la face et les anneaux d'yeux
+lumineux.** Les deux ont donc leur face en **model +Z**. Chased a besoin de
+180 parce que §3 fait regarder ses slots vers **-Z** (on les voit de dos) ;
+un combattant Battle regarde **son adversaire**, le long de son propre `+Z`.
+
+⚠️ **C'est la PROFONDEUR de l'ecureuil, pas sa hauteur, qui dimensionne
+l'arene.** Pose assise, queue enroulee le long de Z : 1,229 x 1,257 x
+**1,897**. De profil, ce 1,897 est presente **sur l'axe qui separe les deux
+combattants**. Portee avant mesuree sur la scene construite : **1,018**
+(ecureuil) contre **0,524** (hibou). Separation **2,00 -> 2,70**, camera
+reculee (z 5 -> 7,1 ; pitch -10,2 -> -13,5 ; **`fov` intouche a 40**). Les
+deux combattants sont assertes **entiers dans le cadre en 1080x1920 ET
+1170x2532**, et leurs pieds touchent le sol au dixieme de millimetre.
+
+### ⚠️ LE VRAI RISQUE DU LOT S'EST REALISE : le telegraphe de l'adversaire perd sa TEINTE
+
+Mesure sur la scene livree, repos contre alarme pleine, moyenne **en
+lumiere lineaire sur les pixels PROPRES de chaque combattant** (masque
+obtenu en re-rendant la meme frame slot masque) :
+
+| combattant | luminance | ecart de teinte | ecart de saturation |
+|---|---|---|---|
+| capsule Keepy (lots 2-5, validee device) | 1,63:1 | 26,9° | +0,18 |
+| capsule Sparring (lots 2-5, validee device) | 1,61:1 | **159,6°** | +0,47 |
+| **ecureuil `.glb`** | **2,21:1** | 11,4° | +0,53 |
+| **hibou `.glb`** | **1,57:1** | **10,2°** | +0,52 |
+
+**L'ecureuil du joueur y GAGNE** (un corps creme multiplie par du rouge
+chute plus qu'une capsule orange). **L'adversaire non** : luminance et
+saturation tiennent, mais la **teinte s'effondre de 159,6° a 10,2°** — une
+capsule bleue qui vire au rouge est un basculement quasi complementaire, un
+hibou brun qui vire au rouge n'est presque pas un changement de teinte. Et
+c'est l'adversaire que le joueur lit.
+
+⚠️ **Une PREMIERE mesure du meme phenomene a lu 1,18:1 et etait FAUSSE — la
+methode, pas l'arbre.** Elle prenait un dominant d'histogramme sur une
+fenetre 11x11, la methode des recolorisations hazards du §11, qui marche
+la-bas parce qu'un hazard plat unlit remplit sa fenetre d'une seule
+couleur. Sur un modele texture cette fenetre contenait **95 couleurs
+distinctes sur 121 pixels**, donc aucun dominant. **Toute mesure de
+contraste future contre un asset importe texture doit MASQUER l'objet, pas
+echantillonner une boite.**
+
+### La reponse : un cue engine-side, exactement le patron deja etabli
+
+§2.1 et §8 disent deja qu'un cue d'**EMISSION** ne peut pas vivre sur un
+slot (d'ou les yeux du poursuivant, noeuds engine-side et pas partie du
+`.glb`). Ce lot trouve l'autre moitie de la meme regle, plus vicieuse parce
+qu'elle echoue **par degres** au lieu d'echouer en silence : **un cue
+d'ALBEDO survit mecaniquement au swap, mais ce qu'un joueur en voit devient
+une propriete de l'asset.**
+
+`BattleFighter.tscn` gagne donc **`Body/Alert`** : deux prismes, un coeur
+vif dans un contour quasi noir, au-dessus de la tete, cache sauf pendant un
+telegraphe d'attaque. Ses couleurs appartiennent au projet, donc sa
+lisibilite est un fait sur le MOTEUR et non sur le `.glb` qu'un futur profil
+portera. **La rampe de teinte est CONSERVEE a cote** : elle lit encore sur
+un modele clair, et plus rien ne depend d'elle seule.
+
+⚠️ **Le marqueur est enfant du slot, donc il HERITE du lacet du
+combattant.** La premiere version s'est rendue **de profil** et se lisait
+comme une echarde de 6 cm. Il est place depuis `visual_aabb().end.y` et
+de-lace depuis `global_basis`, les deux mesures prises a la resolution —
+**aucun champ par profil**, donc le contrat « un `.tres` + un `.glb`, zero
+ligne de code » survit aussi a ce fichier.
+
+### `BattleReadabilityProbe` : PHASE G nouvelle, PHASE A remesuree
+
+**42 checks, 0 echec, exit 0.** PHASE G gate que le marqueur franchit
+**3,0:1 contre les DEUX fonds** possibles (coeur **5,14:1** sur le ciel,
+contour **3,67:1** sur le sol — aucune des deux couleurs ne bat les deux,
+mais ensemble aucun fond ne l'avale), qu'il **grandit** au lieu d'apparaitre
+(0,282 -> 0,713), qu'il est au-dessus du corps, et que **garde et esquive ne
+le levent jamais** — la couleur veut toujours dire exactement une chose.
+
+PHASE A cesse de soustraire un **rayon de capsule 0,45 code en dur** : ce
+nombre a cesse d'etre la reponse des que de vrais modeles sont arrives. Elle
+lit desormais la portee reelle de chaque profil sur son propre
+`visual_aabb()`.
+
+⚠️ **Piege trouve en ecrivant PHASE G** : `Battle.tscn` demarre un vrai
+round des qu'elle entre dans l'arbre, et son brain pilote l'adversaire
+chaque frame. La premiere version laissait l'arene tourner et lisait un
+marqueur leve par l'attaque de l'IA comme un marqueur leve par la garde que
+la boucle venait de demander. `set_process(false)` **et**
+`set_physics_process(false)` avant toute mesure.
+
+### Validation
+
+**HUIT sondes diffees contre `origin/main` en worktree separe (imports
+verifies complets des deux cotes) : les HUIT sont BYTE-IDENTIQUES sur les
+DEUX flux, stdout ET stderr** — `BattleContractProbe` (le determinisme :
+**ce lot est purement visuel et l'identite au bit pres le dit plus fort
+qu'un verdict identique**), `BattleFeintProbe`, `BattleDefenseProbe`,
+`BattleStatsProbe`, `ProbeTimeoutAudit`, `DeathModelAudit`,
+`ChargerShapeProbe`, `AssetContractAudit` (12/12 visuels, **0/10 colliders
+deplaces**). Import + export Web **exit 0**.
+
+⚠️ **`BattleFeintProbe` est ROUGE (5/27) — et elle l'est A L'IDENTIQUE sur
+`origin/main`**, meme sortie au bit pres. Rouge **pre-existant**, deja
+consigne au lot battleStats, **hors perimetre et non aggrave par ce lot** ;
+constate avant et apres, comme demande. Cause deja connue : `LATENCIES` y
+vaut toujours `[0.12, 0.18, 0.24]` alors que la section lot 5 annonce
+`[0.30, 0.38, 0.45]` — **ce changement n'a jamais atteint `main`**.
+
+### Reste ouvert — jugement device, seul juge
+
+1. **Est-ce qu'un ecureuil assis « kawaii » se lit comme un COMBATTANT ?**
+   Aucune sonde ne repond. C'est une pose assise, sans jambes visibles et
+   sans garde : elle a ete choisie parce que c'est le seul Keepy du depot,
+   pas parce qu'elle se bat bien. C'est le risque principal du lot.
+2. **Est-ce que le marqueur d'attaque se lit** a vitesse reelle sur un
+   telephone, et est-ce qu'il ne parasite pas la lecture de la silhouette ?
+   Sa taille (0,36 x 0,32 unite) et sa hauteur (`ALERT_GAP = 0,22`) sont des
+   choix mesures pour tenir dans le cadre, pas valides a l'oeil.
+3. **Les combattants occupent ~20 % de la hauteur d'ecran** contre ~28 %
+   pour les capsules — consequence directe de la queue de l'ecureuil, qui
+   force un cadre plus large. Mesure, assume, mais reel.
+4. **Aucun son, aucune particule, aucune animation squelettale, aucun second
+   adversaire, aucune progression** : hors perimetre, inchange depuis le
+   lot 1. Le point de bascule reste `$Body`/`ModelSlot`.

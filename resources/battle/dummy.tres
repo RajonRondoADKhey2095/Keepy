@@ -1,6 +1,7 @@
-[gd_resource type="Resource" script_class="FighterProfile" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="FighterProfile" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/FighterProfile.gd" id="1"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_hibou_pursuer.glb" id="2"]
 
 [resource]
 script = ExtResource("1")
@@ -25,8 +26,8 @@ ai_reaction_jitter_s = 0.18
 ai_aggression = 0.75
 ai_defense_rate = 0.85
 ai_guard_bias = 0.6
-model_scene = null
-model_scale = 1.0
+model_scene = ExtResource("2")
+model_scale = 0.895095
 model_rotation_degrees = Vector3(0, 0, 0)
-model_offset = Vector3(0, 0, 0)
+model_offset = Vector3(0, -0.0489, 0)
 placeholder_color = Color(0.55, 0.72, 0.88, 1)
