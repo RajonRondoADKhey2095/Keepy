@@ -9752,3 +9752,332 @@ instabilite).
 
 `main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
 export et sondes verts).
+
+## KEEPY BATTLE, LOT 10 : SYMETRISATION -- 50 PV et le meme chip des deux cotes, et la cadence du joueur qui DOUBLE pour le payer (21 aout 2026)
+
+Branche `claude/keepy-battle-symmetry-dnjqvx`, partie de `staging` (`bce85ed`,
+lot 9). Retour device, capture a l'appui : **Sparring 43/64 PV, Keepy 12/42 PV**
+-- l'adversaire a 22 PV de plus que le joueur. Les PV avaient servi de levier de
+difficulte pendant neuf lots sans que la symetrie soit jamais remise a plat.
+Decision de conception de Mathieu : **50 PV des deux cotes, `attack_damage`
+ordinaire identique, et la riposte conservee comme avantage EXCLUSIF du
+joueur** -- base symetrique, une seule asymetrie, assumee et lisible.
+
+**Sept valeurs, deux fichiers `.tres`, ZERO ligne de code.** `git diff --stat`
+contre `origin/staging` ne rapporte que `resources/battle/keepy.tres`,
+`resources/battle/dummy.tres` et ce document. Aucune scene, aucun `.glb`, aucun
+collider, aucun script de `scripts/battle/` ni de `scripts/ui/`.
+
+### PHASE 0 -- l'etat reel, mesure dans les `.tres` et pas cru sur parole
+
+| | Keepy (joueur) | Sparring (adversaire) |
+|---|---|---|
+| `max_hp` | **42** | **64** |
+| `attack_damage` | 7 | 10 |
+| `riposte_damage` | 14 | 16 |
+| `attack_windup_s` | **0,00** (instantane) | **0,90** (barre de charge) |
+| `attack_recovery_s` | 1,16 | 0,95 |
+
+Coups pour tuer, avant ce lot : le joueur a besoin de **10 chips** ou **5
+ripostes** pour vider 64 PV ; l'adversaire de **5 chips** ou **3 ripostes**
+pour vider 42. L'ecart que Mathieu a photographie n'est donc pas une
+impression : c'est un facteur **2** sur le nombre de coups a encaisser.
+**Et oui, l'adversaire AVAIT une riposte** (`dummy.riposte_damage = 16`,
+depensee par `FighterBrain._choose()` des que `is_riposte_ready()`).
+
+### ⚠️ LA SYMETRISATION SEULE REND LE JEU TRIVIAL -- 87 a 100 % de martelage
+
+Premiere mesure, avant toute compensation : `max_hp` a 50/50 et
+`attack_damage` identique des deux cotes, tout le reste inchange. Banc reel
+(les DEUX combattants pilotes, chaque tap du joueur paie une latence humaine
+300-450 ms), n=300, graine 20260821.
+
+| `attack_damage` (les deux) | martelage | esquive-panique | lecteur parfait | lecteur imparfait |
+|---|---|---|---|---|
+| 6 | **86,7 %** | 87,3 % | 100,0 % | 99,7 % |
+| 7 | **96,0 %** | 87,7 % | 100,0 % | 99,0 % |
+| 8 | **100,0 %** | 91,3 % | 100,0 % | 99,3 % |
+| 9 | **100,0 %** | 88,7 % | 100,0 % | 99,7 % |
+| 10 | **100,0 %** | 91,3 % | 100,0 % | 99,7 % |
+| 12 | **100,0 %** | 87,0 % | 100,0 % | 99,7 % |
+
+⚠️ **La valeur du chip ne change quasiment QUE la duree, pas le vainqueur** --
+et la raison est arithmetique, pas accidentelle : **l'attaque du joueur a un
+wind-up de ZERO** (lot 8), donc son cycle est `0 + 0,12 + 1,16 = 1,28 s`
+contre `0,90 + 0,12 + 0,95 = 1,97 s` pour l'adversaire. A PV egaux et degats
+egaux, le joueur inflige **1,54x** le DPS de l'adversaire par pure cadence, et
+le combat est decide avant que la moindre lecture n'intervienne.
+
+⚠️ **C'est le lot 8 qui parle : « an attack's damage is priced by how
+avoidable it is ».** Une attaque instantanee et INESQUIVABLE payee au meme
+prix qu'une attaque telegraphee de 0,9 s et esquivable n'est pas un prix egal,
+c'est un avantage joueur. **La decision de Mathieu ne casse pas cette regle,
+elle la deplace : le prix doit desormais etre paye en CADENCE au lieu de
+l'etre en degats.**
+
+### ⚠️ AUCUN CADRAN D'IA NE TOUCHE LE MARTELAGE -- ni un point sur huit essais
+
+Avant de toucher a la cadence, les deux dials de personnalite de l'adversaire
+ont ete balayes (D=8, PV 50/50, n=300). **Ils sont INERTES contre un
+marteleur** :
+
+| `dummy.ai_defense_rate` | 0,0 | 0,2 | 0,4 | 0,6 | 0,7 |
+|---|---|---|---|---|---|
+| martelage | 100,0 % | 100,0 % | 100,0 % | 100,0 % | 100,0 % |
+
+| `dummy.ai_aggression` | 0,8 | 0,9 | 1,0 |
+|---|---|---|---|
+| martelage | 100,0 % | 100,0 % | 100,0 % |
+
+Le lecteur imparfait ne bouge pas davantage (98,7 a 99,7 % partout). **Ne pas
+rejouer ce balayage : il a une reponse, et elle est « non ».**
+
+### ⚠️ `dummy.attack_recovery_s` EST VERROUILLE PAR PHASE C -- 43 ms de marge
+
+Le levier symetrique evident -- accelerer l'adversaire -- **n'existe pas**.
+`BattleDefenseProbe` PHASE C gate le fait que l'esquive PUNISSE :
+
+```
+worst_lead = (W + active + recovery)_adversaire - (tap_pire + cycle_esquive)_joueur
+           = 1,97 - 1,6267 = 0,343 s     doit rester >= HUMAN_FAST (0,30)
+```
+
+`dummy.attack_recovery_s` ne peut donc pas descendre sous **~0,907** sans que
+la fenetre de punition cesse d'etre prenable par un humain -- c'est-a-dire
+sans rouvrir le defaut que le lot 8 existe pour fermer. **Non touche, valeur
+inchangee a 0,95.** Les pics de resonance du lot 7 sur ce champ (0,44 -> 47/150,
+0,56 -> 128/150) sont donc hors d'atteinte de toute facon.
+
+### `keepy.attack_recovery_s` : le SEUL levier -- et il a CHANGE DE NATURE depuis le lot 9
+
+Balayage a D=8, PV 50/50, n=300, graine 20260821 :
+
+| `attack_recovery_s` joueur | martelage | lecteur parfait | lecteur imparfait |
+|---|---|---|---|
+| 1,16 (livre lot 9) | **100,0 %** | 100,0 % | 99,3 % |
+| 1,40 | 93,7 % | 100,0 % | 99,3 % |
+| 1,60 | 86,3 % | 97,3 % | 89,7 % |
+| **1,80** | **89,7 %** ⚠️ | **87,3 %** | 75,7 % |
+| 2,00 | 84,0 % | 87,3 % | 71,7 % |
+| 2,20 | 57,7 % | 94,3 % | 73,0 % |
+| 2,30 | 43,3 % | 93,7-98,0 % | 78,7-86,7 % |
+| 2,40 | 25,0 % | 91,7-97,3 % | 71,0-81,7 % |
+| 2,50 | 15,7 % | 92,0-96,0 % | 71,0-80,7 % |
+| **2,60 (retenu)** | **11,7 %** | 94,0-96,0 % | 70,7-81,3 % |
+| **2,70** | **13,0 %** ⚠️ | 93,0-96,0 % | 70,7-80,0 % |
+| 2,80 | 4,7 % | 93,3-96,3 % | 70,7-80,0 % |
+
+⚠️ **DEUX non-monotonies mesurees, la famille de resonance deja consignee aux
+lots 7, 8 et 9 sur ce meme champ** : **1,80 REMONTE a 89,7 %** apres 86,3 % a
+1,60, et **2,70 REMONTE a 13,0 %** apres 11,7 % a 2,60. Un balayage grossier
+qui aurait saute de 1,60 a 1,80 aurait conclu que le levier ne marchait pas.
+
+⚠️ **ET SURTOUT : ce champ ne SEPARE PLUS le marteleur du lecteur, contrairement
+a ce que le lot 9 avait mesure.** Le lot 9 avait explicitement verifie que
+`read+riposte` restait a 100 % sur TOUTE la plage 0,72-1,24, ce qui faisait de
+`attack_recovery_s` un levier anti-martelage pur. **Ce n'est plus vrai apres
+symetrisation** : entre 1,60 et 2,00 le lecteur parfait s'effondre de 97,3 a
+87,3 % pendant que le marteleur ne perd que 2 points -- **a 1,80 le lecteur
+est MOINS BON que le marteleur**. La raison est que la riposte est tiree par
+le meme champ de timing, et qu'a PV/degats egaux le lecteur n'a plus de marge
+de PV pour absorber le ralentissement. **Le levier ne redevient utilisable
+qu'au-dela de 2,20**, ou le marteleur decroche enfin plus vite que le lecteur.
+
+### La riposte est un levier QUANTIFIE : ce qui compte est le NOMBRE de ripostes pour tuer
+
+`riposte_damage` du joueur est un levier **strictement lecteur** -- le
+marteleur et l'esquive-panique n'en tirent jamais une, donc leurs lignes sont
+**identiques au fight pres** sur toute la colonne. Mais son effet n'est pas
+continu :
+
+| `keepy.riposte_damage` (PV 50, rec 2,60) | ripostes pour tuer | lecteur parfait | lecteur imparfait |
+|---|---|---|---|
+| 18 | **3** | 94,0 % | **70,7 %** |
+| 22 | **3** | 95,0 % | **71,3 %** |
+| 26 | **2** | 96,0 % | **81,3 %** |
+
+⚠️ **18 et 22 donnent le MEME resultat a un point pres, et 26 fait un saut de
+10 points** : `ceil(50/18) = ceil(50/22) = 3` et `ceil(50/26) = 2`. **Le
+reglage utile n'est pas « combien de degats » mais « combien de ripostes pour
+tuer » -- une variable ENTIERE.** Toute future retouche de ce champ doit se
+lire dans cette colonne-la, pas en pourcentage de degats.
+
+### La riposte de l'adversaire : TRANCHEE, et son cout est chiffre
+
+Le brief demandait de trancher explicitement. **Tranche : la riposte cesse
+d'etre un avantage cote adversaire.** `dummy.riposte_damage` passe de **16 a
+9**, soit `attack_damage + 1` -- la plus petite valeur que
+`BattleDefenseProbe` PHASE C2 autorise (`riposte_damage > attack_damage`, gate
+applique aux DEUX profils). Le mecanisme reste structurellement vivant (il
+stagger, la sonde reste verte) mais le PAYOFF appartient au joueur :
+**3,25x cote joueur contre 1,125x cote adversaire.**
+
+⚠️ **Ce n'est PAS gratuit, et le chiffre est publie plutot qu'enjolive.** La
+riposte adverse etait un frein anti-martelage reel : un marteleur attaque deux
+fois plus souvent qu'un lecteur, donne donc deux fois plus d'occasions a
+l'adversaire d'esquiver a l'aveugle et de riposter. Mesure a config finale
+identique par ailleurs (D=8, PV 50/50, rec 2,60, `keepy.riposte_damage` 26) :
+
+| `dummy.riposte_damage` | martelage | lecteur imparfait |
+|---|---|---|
+| 16 (avant) | **11,7 %** | 81,3 % |
+| **9 (livre)** | **13,3 %** | 84,0 % |
+
+**+1,6 point de martelage** : c'est le prix exact de l'asymetrie voulue.
+Il est paye, pas cache.
+
+### Configuration retenue
+
+`resources/battle/keepy.tres` : `max_hp` **42 -> 50**, `attack_damage`
+**7 -> 8**, `riposte_damage` **14 -> 26**, `attack_recovery_s` **1,16 -> 2,60**.
+`resources/battle/dummy.tres` : `max_hp` **64 -> 50**, `attack_damage`
+**10 -> 8**, `riposte_damage` **16 -> 9**.
+
+Coups pour tuer, apres : **7 chips dans les DEUX sens** (`ceil(50/8)`) ;
+**2 ripostes** cote joueur (`ceil(50/26)`) contre **6** cote adversaire
+(`ceil(50/9)`). Ratio riposte/chip : **3,25x** cote joueur -- le lot 9 laissait
+ouverte la question de son 2,0x « pas mesure comme insuffisant mais pas
+confirme non plus » ; **ce lot le remonte franchement**, et c'est ce qui garde
+une raison d'esquiver quand le chip est devenu symetrique.
+
+⚠️ **`ai_dodge_aim` (0,70) reste calibre sur le wind-up de l'ADVERSAIRE et non
+sur celui du joueur : rien de ce lot ne le touche.** De meme
+`dodge_windup_s`/`dodge_active_s`/`dodge_recovery_s`, `stagger_duration_s`,
+`riposte_window_s`, les cadrans `ai_*` et tout l'art (modeles `.glb`,
+`model_scale`/`rotation`/`offset`) sont **intouches**.
+
+### ⚠️ LE PRIX A ANNONCER : la commitment d'attaque du joueur passe de 1,28 s a 2,72 s
+
+C'est le vrai cout de ce lot, et il n'est pas dissimule dans un tableau :
+`attack_active_s + attack_recovery_s` passe de **1,28 s a 2,72 s (+113 %)**.
+Le joueur est desormais **plus lent par attaque que l'adversaire** (2,72 contre
+1,97) -- ce qui est coherent (son coup est instantane et inesquivable, il le
+paie en engagement) mais represente un changement de FEEL majeur, sur le champ
+que les lots 8 et 9 avaient deja allonge deux fois (0,62 -> 0,72 -> 1,16 -> 2,60).
+**La riposte subit la meme recuperation** ; comme elle stagger l'adversaire
+0,70 s seulement, celui-ci redevient libre AVANT le joueur apres un echange
+gagne. **Aucune sonde ne dit si c'est jouable au pouce. C'est LE point de
+jugement device de ce lot.**
+
+### VALIDATION -- banc REEL du depot, 3 graines, n=300, AVANT et APRES tous deux remesures
+
+`BattleDefenseProbe` PHASE D. La baseline n'est **pas citee de memoire** : les
+`.tres` ont ete temporairement revertes et les 3 graines rejouees dans ce
+sandbox (edit temporaire de la graine interne, jamais commite, revert verifie
+par `git diff` vide). **Elle reproduit exactement la table publiee au lot 9**,
+ce qui valide la comparaison avant d'en tirer quoi que ce soit.
+
+| politique | AVANT (20260821 / 31415926 / 7654321) | moyenne | APRES (memes graines) | moyenne |
+|---|---|---|---|---|
+| **martelage** | 7,3 / 8,0 / 9,3 % | **8,2 %** | 13,3 / 13,7 / 13,3 % | **13,4 %** |
+| esquive seule (`dodge-only`) | 0 / 0 / 0 % | **0,0 %** | 0 / 0 / 0 % | **0,0 %** |
+| esquive-panique | 0,0 / 0,3 / 0,3 % | **0,2 %** | 0,7 / 0,3 / 0,0 % | **0,3 %** |
+| lecture+riposte PARFAITE | 99,3 / 99,7 / 99,3 % | **99,4 %** | 99,0 / 97,3 / 98,7 % | **98,3 %** |
+| **lecture+riposte IMPARFAITE** | 82,0 / 78,3 / 80,0 % | **80,1 %** | 84,0 / 85,0 / 90,0 % | **86,3 %** |
+| duree, lecteur imparfait | 14,9 / 14,9 / 15,0 s | **14,9 s** | 13,2 / 13,0 / 12,6 s | **12,9 s** |
+
+Objectifs du brief :
+* **le martelage reste non dominant** -- OUI : 13,4 % contre 98,3 % pour le
+  lecteur, soit un ecart de **85 points**. Mais il **monte de 5,2 points** par
+  rapport au lot 9, et c'est dit tel quel.
+* **lecture+riposte reste la meilleure strategie** -- OUI, de tres loin, sur
+  les 3 graines.
+* **duree 12-20 s** -- OUI sur les moyennes (10,9 a 15,9 s selon la politique).
+  ⚠️ Les MAXIMA depassent : jusqu'a **22,2 s** (esquive-panique). C'etait deja
+  le cas au lot 9 (23,7 s en baseline sur la graine 7654321).
+
+### ⚠️ LE JEU EST PLUS FACILE POUR LE LECTEUR IMPARFAIT -- +6,2 points, dit franchement
+
+**80,1 % -> 86,3 %**, et l'amelioration est presente sur les 3 graines
+(84,0>82,0 ; 85,0>78,3 ; 90,0>80,0). C'est exactement le basculement que le
+brief annoncait et acceptait d'avance. **Aucune compensation silencieuse n'a
+ete faite** : la seule compensation appliquee est
+`keepy.attack_recovery_s`, elle est le mandat explicite de la PHASE 2 du
+brief, et elle a sa propre section chiffree ci-dessus. Le lecteur imparfait
+n'est PAS proche de 100 % (86,3 %), donc la clause « si ca devient trivial, ne
+compense pas de ta propre initiative » n'a pas eu a jouer.
+
+**Les leviers chiffres si Mathieu veut re-durcir**, tous des editions d'UN seul
+champ, deja mesures dans les tableaux ci-dessus :
+* `keepy.attack_recovery_s` **2,60 -> 2,80** : martelage **11,7 -> 4,7 %**
+  (mesure a `dummy.riposte_damage = 16` ; attendu ~6 % a 9), lecteur imparfait
+  quasi inchange. **Cout : la commitment passe a 2,92 s.**
+* `keepy.riposte_damage` **26 -> 22** : lecteur imparfait **~84 -> ~71 %**
+  (passage de 2 a 3 ripostes pour tuer). Le levier le plus brutal.
+* `dummy.riposte_damage` **9 -> 16** : martelage **13,3 -> 11,7 %**, mais rend
+  a l'adversaire la riposte que ce lot lui retire.
+
+### Determinisme
+
+`BattleDefenseProbe` rejouee deux fois a la meme graine (20260806) :
+**stdout ET stderr byte-identiques** (`cmp` silencieux sur les deux flux). Les
+traces ONT bouge par rapport au lot 9 -- c'est le resultat attendu d'un lot
+qui change sept nombres de gameplay -- mais la reproductibilite a graine egale
+est intacte, ce qui est la propriete dont depend tout ce qui precede.
+
+### Sondes
+
+**Toutes exit 0** : `BattleDefenseProbe` (**36/36**, PHASE D rapportee
+ci-dessus, gates PHASE A/B/C/C2/R/R2/E verts avec les nouveaux nombres),
+`BattleContractProbe` (**46/46**), `BattleReadabilityProbe` (**65/65**),
+`BattleStatsProbe` (**83/83**), `ProbeTimeoutAudit` (**37 sondes scenes**,
+retour exact a la baseline apres suppression de la sonde de balayage jetable),
+`AssetContractAudit` (12/12 visuels, **0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`.
+
+**Aucune assertion codee en dur sur les anciennes valeurs -- verifie par grep,
+pas suppose** : la seule occurrence litterale de `42` du perimetre est le
+DEFAUT `@export var max_hp: int = 42` de `FighterProfile.gd`, que les deux
+`.tres` ecrasent et qu'aucune sonde ne lit. Il est **laisse tel quel** (les
+autres defauts de ce fichier ont deja derive de la meme facon depuis le lot 8)
+plutot que touche, pour que ce lot reste strictement `.tres`-only.
+
+⚠️ **La sonde de balayage etait une COPIE de `_policy_fight`, donc un fixture
+qui pouvait diverger sur l'axe meme que ce lot change.** Parade appliquee avant
+de lui faire confiance, selon la discipline maison : un run de CONTROLE sans
+aucun override, qui devait reproduire la sortie de la sonde livree. Il l'a
+reproduite **au fight pres sur les cinq politiques** (7,3 / 0,0 / 0,0 / 99,3 /
+82,0 %). La sonde est supprimee avant commit.
+
+`GROUP_BLOCKS` de `BattleTally` reste **fige a zero** (rules Firestore
+deployees, `hasAll(statKeys())`) -- aucun champ de `BattleStats`, de
+`BattleTally` ou des rules n'est touche par ce lot.
+
+### Build et export
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles ; **tailles verifiees contre le `Content-Length` avant extraction**
+-- 50 276 070 et 1 073 228 327 octets, le piege de troncature silencieuse deja
+consigne). Import headless **exit 0** (24 `.scn`, import complet verifie et pas
+suppose), export Web release **exit 0**. `index.wasm` **35 376 909 octets**, md5
+`af4a8fc2925d992348eb30deeeb54360` ; `index.js` md5
+`4e08904b1b7107858246af44b602067b` -- **identiques au fingerprint deja consigne
+pour tout lot qui ne touche pas le code moteur**, coherent : ce lot ne change
+que sept nombres dans deux `.tres`. Piege payload verifie sur le log
+`savepack` : **0** ligne `Storing File` pour `assets_source`, `scripts/dev`,
+`docs`, `web` ou `build`. `index.pck` 5 762 880 octets (export unique et
+propre, `build/` supprime avant -- a lire avec la mise en garde permanente sur
+son instabilite, jamais offert comme preuve).
+
+### Reste ouvert
+
+1. **Jugement device, et il porte sur UN chiffre precis** : la commitment
+   d'attaque a **2,72 s**. Est-ce que taper et rester bloque presque trois
+   secondes se sent comme un engagement lourd et lisible, ou comme un jeu qui
+   ne repond pas ? C'est le seul point que ce lot ne peut pas mesurer, et
+   c'est le plus gros risque qu'il prend.
+2. **Le jeu est plus facile** (+6,2 points pour le lecteur imparfait, +5,2 pour
+   le marteleur). Assume et annonce ; les trois leviers de re-durcissement
+   ci-dessus sont chiffres et attendent la decision de Mathieu.
+3. **2 ripostes pour tuer** est tres court -- deux lectures reussies suffisent.
+   C'est ce qui rend la riposte « nettement plus payante » comme le brief le
+   demandait, mais c'est aussi ce qui rend le combat swingy. Le voisin a 3
+   ripostes (`riposte_damage` 22) coute 13 points au lecteur imparfait.
+4. **`attack_recovery_s` a cesse d'etre un levier anti-martelage PUR** sous
+   symetrie (section dediee) -- toute future session qui reprendrait la recette
+   du lot 9 sur ce champ mesurerait autre chose que ce que le lot 9 mesurait.
+5. Toujours aucun son, aucune particule, aucun second adversaire, aucune
+   progression, aucun brain adaptatif, et `dodge_active_s` toujours pas touche
+   (lot dedie) : hors perimetre, inchange.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique.
