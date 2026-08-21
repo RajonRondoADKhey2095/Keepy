@@ -8501,3 +8501,28 @@ BattleHUD.gd`, `scripts/dev/Battle*` et `resources/battle/*.tres`.
    EST plus long -- mais au-dessus de la cible 12-20 s du lot 3.
 4. Toujours aucun asset 3D, aucun son, aucune persistance : la bascule
    Meshy passe toujours par `$Body` / `ModelSlot`, intouchee.
+
+### Deploiement staging du lot 5 (palier 1, automatique)
+
+`staging` `92a0f8f`, CI run **#174** (id `32471971573`) **verte en
+3 min 18 s** (10:17:41 -> 10:20:59 UTC) -- `Deploy to Vercel
+[STAGING -- staging]` succes, `[PRODUCTION -- main]` correctement
+**skipped**. `main` **non touche** (palier 2, gate Mathieu apres
+validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** (`keepy-staging.vercel.app`,
+via `mcp__Vercel__web_fetch_vercel_url` -- l'egress direct du sandbox reste
+refuse en 403 CONNECT sur ce domaine) : `CACHE_VERSION` du
+`index.service.worker.js` servi = **`1787307631` = 10:20:31 UTC**, donc
+**dans la fenetre du run #174**, contre `1787304120` = 09:22:00 (run #173,
+lot 4) juste avant. `x-vercel-cache: MISS`, `age: 0`. L'alias sert bien ce
+build.
+
+⚠️ **L'API GitHub Actions a de nouveau servi des reponses PERIMEES**
+pendant ce deploiement -- deux appels `list_workflow_jobs` byte-identiques,
+figes sur `Import project resources / in_progress`, `filter: "latest"`
+compris. **Le `CACHE_VERSION` servi est ce qui a tranche**, et il a tranche
+DANS LES DEUX SENS : lu trop tot il valait encore `1787304120` (lot 4), ce
+qui a confirme que le job tournait REELLEMENT au lieu d'etre un cache
+perime, puis il est passe a `1787307631`. Un second signal independant
+distingue les deux cas ; un poll de plus ne l'aurait pas fait.
