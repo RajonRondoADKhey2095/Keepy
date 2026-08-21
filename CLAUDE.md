@@ -10080,4 +10080,38 @@ son instabilite, jamais offert comme preuve).
    progression, aucun brain adaptatif, et `dodge_active_s` toujours pas touche
    (lot dedie) : hors perimetre, inchange.
 
-`main` **non touche**. Merge sur `staging` : palier 1, automatique.
+### Deploiement staging (palier 1, automatique)
+
+`staging` `9b41b5d` (merge `--no-ff`, arbre **byte-identique** a la branche
+feature -- verifie avant le push, `git diff` vide). CI run **#188**
+(id `32525098032`).
+
+**Verifie SUR LE SERVICE, pas dans le log CI**, et **dans les DEUX sens** --
+la valeur AVANT a ete lue avant que le deploiement ne tombe, ce que les lots
+precedents n'avaient pas toujours pu faire :
+
+| | `CACHE_VERSION` servi | = UTC |
+|---|---|---|
+| avant (lot 9, run #187) | `1787342427` | **20:00:27** |
+| **apres (ce lot, run #188)** | **`1787345288`** | **20:48:08** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre du run #188** (demarre
+20:44:31, import a 20:45:50), et la reponse est fraiche : `x-vercel-cache:
+MISS`, `age: 0`, `last-modified` colle a l'instant de la requete. L'alias
+sert donc bien le build symetrise.
+
+⚠️ **L'API GitHub Actions a de nouveau servi des reponses PERIMEES, et cette
+fois SUR LES DEUX filtres.** `filter: "latest"` etait fige des le depart ;
+`filter: "all"` a d'abord rendu l'etat REEL (job a l'etape « Import project
+resources », 20:45:50) puis s'est fige a son tour, rendant une reponse
+byte-identique plusieurs appels de suite. **Le parametre n'est ni la cause ni
+le remede** -- constat deja pose au lot 6, reconfirme ici dans une troisieme
+configuration. Seul le `CACHE_VERSION` servi a tranche.
+
+⚠️ **`curl` direct vers `*.vercel.app` est refuse par le proxy d'egress de ce
+sandbox** (`http_code 000`, exit 56 -- **re-teste, pas suppose** ; meme
+`example.com` est refuse). Le canal MCP Vercel est le seul disponible ici,
+comme deja consigne au lot 3.
+
+`main` **non touche** (`origin/main` toujours `924d81f`, verifie apres le
+push). Merge sur `staging` : palier 1, automatique.
