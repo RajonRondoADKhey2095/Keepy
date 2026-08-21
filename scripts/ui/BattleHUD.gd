@@ -152,11 +152,17 @@ func show_result(player_won: bool) -> void:
 ## Verdict of one resolved strike. `by_player` says who threw it, so the
 ## line reads as the player's own action rather than as a fact about
 ## nobody in particular.
-func report_strike(by_player: bool, outcome: BattleTypes.Outcome) -> void:
+##
+## `attempted` is what the DEFENDER had committed to, so the line can say
+## "GARDE BRISEE" instead of a bare "TOUCHE" -- see
+## BattleTypes.strike_label(). The subject stays the attacker either way:
+## the player reads one line per exchange, and switching whose name it
+## carries halfway through a fight would be worse than a coarser verb.
+func report_strike(by_player: bool, outcome: BattleTypes.Outcome, attempted: BattleTypes.Action) -> void:
 	if outcome == BattleTypes.Outcome.MISSED:
 		return
 	var who := "Toi" if by_player else _display_name(_opponent)
-	flash_label.text = "%s : %s" % [who, BattleTypes.outcome_label(outcome)]
+	flash_label.text = "%s : %s" % [who, BattleTypes.strike_label(outcome, attempted)]
 	_flash_left = FLASH_S
 
 func _process(delta: float) -> void:

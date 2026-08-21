@@ -36,19 +36,82 @@ class_name FighterProfile
 ## Telegraph: the defender's whole reaction window. Longer = more
 ## readable, more punishable. This is the single most feel-critical
 ## number in the file.
+##
+## =====================================================================
+## THE FLOOR UNDER THIS NUMBER IS A FACT ABOUT PEOPLE, NOT A TASTE (lot 5)
+##
+## A guard tapped in reaction to this telegraph becomes active at
+## `human latency + guard_windup_s`. For it to be up when the blow lands:
+##
+##     attack_windup_s  >=  human latency + defender's guard_windup_s
+##
+## There is no way around that inequality -- not a wider guard, not
+## cheaper damage. A telegraph shorter than a human reaction time is a
+## telegraph that cannot be reacted to, only guessed at.
+##
+## The honest human band through a touchscreen and a browser is
+## 0.30-0.45 s (see BattleDefenseProbe.HUMAN_*). Lots 1-4 shipped 0.30,
+## which put the whole band OUTSIDE the window: the guard's coverage of a
+## plain attack ended 217 ms in. Measured, a player who only mashed
+## ATTACK beat every defensive strategy at every latency, which is what
+## Mathieu reported from the device while the probes said guard worked
+## 99.3% of the time. The probes were answering at 0.12-0.24 s.
+##
+## BattleDefenseProbe PHASE B gates the inequality. Do not lower this
+## below ~0.50 without re-reading it.
 @export var attack_windup_s: float = 0.34
 ## The strike resolves once, at the FIRST tick of this window. The
 ## window's LENGTH is therefore not the hit window -- it is how long the
 ## attacker stays committed and exposed after connecting.
 @export var attack_active_s: float = 0.12
-## Punish window. The defender's free hit if the attack whiffed.
+## Punish window. The defender's free hit if the attack whiffed -- and,
+## since lot 5, the number that decides whether blocking is worth doing
+## at all.
+##
+## =====================================================================
+## WIDENING THE GUARD WAS NOT ENOUGH, AND THIS IS WHY (lot 5, measured)
+##
+## With the guard windows fixed but this left where lots 1-4 had it, a
+## player who did nothing but hammer ATTACK won 300 fights out of 300 --
+## BETTER than before the fix. Blocking worked perfectly and still lost.
+##
+## The arithmetic: a fighter that blocks is locked out for the rest of
+## its guard cycle. To make the exchange cost the attacker anything it
+## must then land a strike, which costs a full attack_windup_s. If
+##
+##     defender's remaining lockout + defender's attack_windup_s
+##         >=  attack_active_s + attack_recovery_s + attack_windup_s
+##
+## the counter never arrives: the attacker is already behind its next
+## telegraph. Blocking becomes a slower way to lose, and the correct
+## strategy is to never stop attacking.
+##
+## Lot 2 lengthened the telegraph and lot 5 lengthened it much further.
+## Both grew the left side of that inequality. Nobody grew the right one
+## -- this field had been sized against a 0.30 s windup and never
+## re-sized. BattleDefenseProbe PHASE C2 now gates it.
 @export var attack_recovery_s: float = 0.40
 @export var attack_damage: int = 12
 
 @export_group("Guard")
+## Startup. Adds directly to how early the tap has to be -- see
+## attack_windup_s. Keep it small: every millisecond here is a
+## millisecond taken off the player's reaction budget.
 @export var guard_windup_s: float = 0.08
 ## The block window. Wide and cheap on purpose: guard is the safe answer,
 ## dodge is the greedy one.
+##
+## Since lot 5 it has a second job, and it is the one that sizes it: a
+## guard must cover a plain attack AND a held feint from the SAME tap.
+## That is what makes it the option a player can take before they can
+## read a feint -- and a player with no such option has, in practice, no
+## defence at all. It requires
+##
+##     guard_windup_s + guard_active_s  >=  attack_windup_s + feint_hold_s
+##
+## measured from a tap placed anywhere in the human band. Dodge is held
+## to the OPPOSITE bar (see dodge_active_s) and the gap between the two
+## is the whole risk/reward of this game.
 @export var guard_active_s: float = 0.42
 @export var guard_recovery_s: float = 0.22
 ## Fraction of the damage a blocked strike still deals. 0.0 makes guard
@@ -61,6 +124,12 @@ class_name FighterProfile
 ## Strictly narrower than guard_active_s, and that gap IS the risk/reward
 ## of this lot's combat: a read that lands costs the attacker a full
 ## recovery, a read that misses leaves you in dodge recovery with nothing.
+##
+## It must stay narrow enough that a dodge CANNOT cover a plain attack
+## and a held feint from one tap -- otherwise it strictly dominates
+## guard and the feint becomes decoration. BattleDefenseProbe PHASE B
+## asserts that failure, which is the only assertion in this project
+## that wants something not to work.
 @export var dodge_active_s: float = 0.20
 @export var dodge_recovery_s: float = 0.34
 
@@ -111,7 +180,9 @@ class_name FighterProfile
 
 @export_group("Reaction")
 ## How long a clean hit takes away. Longer than any recovery on purpose:
-## being hit must be worse than whiffing.
+## being hit must be worse than whiffing -- gated in
+## BattleDefenseProbe PHASE C2, because lot 5 lengthened attack_recovery_s
+## past the shipped stagger and would otherwise have inverted it silently.
 @export var stagger_duration_s: float = 0.55
 
 @export_group("AI")

@@ -114,3 +114,24 @@ static func outcome_label(outcome: Outcome) -> String:
 		Outcome.DODGED: return "ESQUIVE"
 		Outcome.MISSED: return ""
 	return "?"
+
+## The verdict as the DEFENDER earned it, which is not the same question
+## as `outcome_label`. A clean HIT has two completely different meanings
+## depending on whether the defender had pressed anything:
+##
+##   attempted NONE  -> "TOUCHE"        you were caught standing
+##   attempted GUARD -> "GARDE BRISEE"  you guarded, and mistimed it
+##   attempted DODGE -> "ESQUIVE RATEE" you dodged, and mistimed it
+##
+## Lot 5 exists because those three were one string. A player who cannot
+## tell "the button did nothing" from "you were 80 ms late" has no way
+## to learn the timing, and an option nobody can learn is an option
+## nobody takes -- which is exactly what the device report said.
+static func strike_label(outcome: Outcome, attempted: Action) -> String:
+	if outcome != Outcome.HIT or attempted == Action.NONE:
+		return outcome_label(outcome)
+	if attempted == Action.GUARD:
+		return "GARDE BRISEE"
+	if attempted == Action.DODGE:
+		return "ESQUIVE RATEE"
+	return outcome_label(outcome)
