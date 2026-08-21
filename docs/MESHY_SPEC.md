@@ -4015,3 +4015,140 @@ cost if actually packed. Test file removed before commit.
 - The §11 entry for the 12 August pink recolour (documented in §8.5, never
   logged here) stays missing — a pre-existing doc gap, out of scope for
   this batch.
+
+## 12. Keepy Battle: the same assets on a SECOND pair of slots (2026-08-21)
+
+Lot 6 of Keepy Battle put art on the two duel fighters. It is the first
+install in this project that generates **no new asset at all**: both
+fighters carry a `.glb` that Chased already ships, mounted on a second
+`ModelSlot` in a different scene.
+
+| fighter | asset | tris | scale | rotation | offset |
+|---|---|---|---|---|---|
+| `PlayerFighter/Body` (Keepy) | `assets/models/keepy_squirrel_hero.glb` | 3,129 | 1.07368 | `(0, 0, 0)` | `(0, -0.2246, 0)` |
+| `OpponentFighter/Body` (Sparring) | `assets/models/keepy_hibou_pursuer.glb` | 7,070 | 0.895095 | `(0, 0, 0)` | `(0, -0.0489, 0)` |
+
+Both are within their §7.1 per-asset budgets (6,000 and 8,000) as they
+stand, so **nothing was decimated** — and that is a decision, not an
+omission. See 12.2.
+
+### 12.1 Orientation: `(0, 0, 0)`, and the zero is MEASURED
+
+Chased mounts both of these models at `model_rotation_degrees =
+(0, 180, 0)` (§5, §6). Battle mounts them at zero. That is not a
+contradiction and it is not copied from either place: it was re-derived by
+rendering each `.glb` from `+Z`, `-Z`, `+X` and above, in a throwaway
+probe, exactly as §3 requires.
+
+- **Squirrel** — from `+Z` the render shows the face, the eyes and the "K"
+  chest badge. Authored front is **model +Z**.
+- **Owl** — from `+Z`, face, glowing eye rings and front feathers; from
+  `-Z`, the back and the wing markings. Authored front is **model +Z**.
+
+Chased needs `180` because §3 puts Keepy and the pursuer facing **-Z**
+(both are seen from behind). A Battle fighter instead faces **its
+opponent**, and `Battle.tscn` yaws the two fighters so each one's own
+local `+Z` points at the other — `BattleReadabilityProbe` PHASE A asserts
+that dot product against the shipped scene. Model front `+Z` onto slot
+front `+Z` is therefore a zero rotation. Same asset, same measured fact,
+two different corrections because the two scenes point their slots
+differently.
+
+⚠️ **The squirrel's own bounding box is the thing that sizes the arena,
+not its height.** It is a seated kawaii pose whose curled tail runs along
+Z: 1.229 x 1.257 x **1.897** raw. Turned side-on to face an opponent, that
+1.897 is presented along the axis SEPARATING the two fighters, so the
+depth — not the width — is what decides whether a lunge can reach through
+the other body. Measured on the shipped scene at the scales above:
+forward reach **1.018** (squirrel) against **0.524** (owl), so with the
+fighters 2.70 apart the surface gap is **1.16** and two simultaneous
+lunges close **0.60**. Fighter separation went 2.00 -> 2.70 and the camera
+moved back (z 5 -> 7.1, pitch -10.2 -> -13.5, `fov` untouched at 40) to
+fit that; both fighters are asserted whole in frame at 1080x1920 **and**
+1170x2532.
+
+### 12.2 Re-using a shipped `.glb` costs ZERO payload — so do not decimate it
+
+`export_filter="all_resources"` packs a resource once. Both of these
+models were already in the pack for Chased, so pointing a second slot at
+them adds **no image, no mesh and no `.ctex`**. Verified on the export log
+rather than argued: each of the seven derived resources
+(`keepy_squirrel_hero.glb-*.scn`, `keepy_hibou_pursuer.glb-*.scn` and
+their five `.ctex` textures) appears in exactly ONE `Storing File` line.
+
+Measured on two clean exports in the same session and toolchain -- the
+only comparison that means anything, given this project's standing warning
+that a `.pck` is not byte-stable between two exports of the same commit:
+**5,759,040 -> 5,761,376 bytes, +2,336 (+0.04%)**. That is the two
+`.tres`, the two scene edits and the grown `FighterView.gdc`; not one byte
+of it is art. `index.wasm` is **identical on both sides**, 35,376,909
+bytes / md5 `af4a8fc2925d992348eb30deeeb54360` -- and that, not the `.pck`,
+is the identity proof.
+
+⚠️ **Corollary that inverts the usual instinct: running one of these
+through `decimate_hazard.py` would have made the build BIGGER, not
+smaller.** A decimated copy is a new file, so the pack would carry both
+the original (for Chased) and the reduction (for Battle). The decimation
+pipeline exists to bring a NEW asset under budget; it is the wrong tool
+for an asset already shipped and already within budget. Battle draws
+~10,200 triangles in total against the 50,000 frame target, on a scene
+with no track, no hazards and no collectibles — there was nothing to buy.
+
+### 12.3 A colour cue cannot live on the slot either — the rule §2.1 was half of
+
+§2.1 and §8 already say an **emission** cue cannot survive an imported
+unlit material, which is why the pursuer's eyes are engine-side nodes
+rather than part of its `.glb`. Lot 6 found the other half of the same
+rule, and it is the more dangerous one because it fails by degrees instead
+of by silence:
+
+> An **albedo** cue survives the swap mechanically — `apply_material()`
+> reaches the imported surfaces and `albedo_color` multiplies the
+> baseColor texture — but **how much of it a player can see becomes a
+> property of the asset.**
+
+Measured on the shipped Battle scene, rest versus fully-alarmed, averaged
+in linear light over each fighter's own pixels (mask taken by re-rendering
+the frame with the slot hidden, so no colour classification and no
+silhouette edge can contaminate it):
+
+| fighter | luminance | hue swing | saturation swing |
+|---|---|---|---|
+| capsule Keepy (lots 2-5, device-validated) | 1.63:1 | 26.9 deg | +0.18 |
+| capsule Sparring (lots 2-5, device-validated) | 1.61:1 | **159.6 deg** | +0.47 |
+| **Keepy squirrel `.glb`** | **2.21:1** | 11.4 deg | +0.53 |
+| **Sparring owl `.glb`** | **1.57:1** | **10.2 deg** | +0.52 |
+
+The player's squirrel comes out **ahead**: a warm cream body multiplied by
+red is a bigger luminance drop than the orange capsule managed. The
+opponent does not. Its luminance and saturation swings hold; what
+collapses is **hue**, 159.6 deg -> 10.2 deg, because a blue capsule turning
+red is a near-complementary flip and a brown owl turning red is barely a
+hue change at all. The opponent is the fighter a player actually reads.
+
+⚠️ **A first measurement of the same thing read 1.18:1 and was WRONG —
+method, not tree.** It took a histogram dominant over an 11x11 window,
+which is the method the hazard recolours in §11 use and which works there
+because a flat unlit hazard fills its window with one colour. On a
+textured model that window held **95 distinct colours in 121 pixels**,
+i.e. no dominant at all. Any future contrast measurement against an
+imported, textured asset must mask the object instead of sampling a box.
+
+**The fix is the pattern §2.1 already established, applied to hue:**
+`BattleFighter.tscn` grows a `Body/Alert` marker — two prisms, a bright
+core inside a near-black outline, above the fighter's head, hidden except
+during an attack telegraph. Its colours are project-owned, so its
+legibility is a fact about the engine rather than about whichever `.glb` a
+future profile carries. `BattleReadabilityProbe` PHASE G gates that at the
+project's usual 3.0:1 floor against **both** things it can be drawn over
+(core 5.14:1 against the sky, outline 3.67:1 against the ground — neither
+colour has to beat both, but between them no background swallows it), and
+gates that guard and dodge never raise it, so colour still means exactly
+one thing. The tint ramp is kept alongside it: it still reads on a light
+model, and nothing now depends on it alone.
+
+⚠️ The marker is a child of the slot, so it **inherits the fighter's yaw**.
+The first version rendered edge-on and read as a 6 cm splinter. It is
+placed from `visual_aabb().end.y` and un-yawed from `global_basis`, both
+measured at resolve time — no per-profile field, so the "one `.tres` and
+one `.glb`, zero lines of code" contract survives this file too.
