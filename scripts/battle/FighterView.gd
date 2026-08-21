@@ -66,13 +66,13 @@ class_name FighterView
 ##
 ## Colour is reserved for INCOMING DANGER: a fighter ramps toward
 ## ALERT_COLOR only while winding up an ATTACK, and progressively, so the
-## intensity itself is the clock a defender reads. Guard and dodge are
-## told apart by SHAPE (brace, lean-back), never by tint. A telegraph
-## that shares its channel with two harmless actions is a telegraph that
-## has to be decoded rather than seen.
+## intensity itself is the clock a defender reads. A dodge is told apart
+## by SHAPE (lean-back), never by tint. A telegraph that shares its
+## channel with a harmless action is a telegraph that has to be decoded
+## rather than seen.
 ##
 ## =====================================================================
-## THE TINT ALONE CANNOT CARRY IT ANY MORE -- MEASURED AT LOT 6
+## THE TINT ALONE CANNOT CARRY IT -- MEASURED AT LOT 6, STILL TRUE
 ##
 ## The paragraph above was written when both fighters were flat unlit
 ## capsules, where `albedo_color` IS the colour on screen and a ramp to
@@ -81,9 +81,7 @@ class_name FighterView
 ## survives is then a property of the ASSET, not of this file.
 ##
 ## Measured on the shipped Battle scene, rest vs fully-alarmed, averaged
-## in linear light over the fighter's OWN pixels (mask taken by rendering
-## the same frame with the slot hidden, so no colour classification and no
-## silhouette edge can contaminate it):
+## in linear light over the fighter's OWN pixels:
 ##
 ##   fighter                          luminance   hue swing   sat swing
 ##   capsule Keepy    (lots 2-5)        1.63:1       26.9 deg    +0.18
@@ -91,33 +89,49 @@ class_name FighterView
 ##   Keepy squirrel .glb                2.21:1       11.4 deg    +0.53
 ##   Sparring owl .glb                  1.57:1       10.2 deg    +0.52
 ##
-## The player's squirrel comes out AHEAD -- a warm cream body times red
-## is a bigger luminance drop than the orange capsule managed. The
-## opponent does not. Its luminance and saturation swings survive; what
-## collapses is HUE, from 159.6 degrees to 10.2. The blue capsule turning
-## red was a near-complementary flip, the single loudest thing about the
-## old telegraph. A brown owl turning red is barely a hue change at all,
-## because red times brown is brown.
+## The player's squirrel comes out AHEAD. The OPPONENT -- the fighter a
+## player actually reads -- does not: its hue swing collapses from 159.6
+## degrees to 10.2, because a blue capsule turning red is a
+## near-complementary flip and a brown owl turning red is barely a hue
+## change at all. So the telegraph cannot live on the asset's material
+## alone, and lot 6 added engine-side geometry above the head to carry
+## it: colours and shapes this project owns, which no future .glb can
+## weaken.
 ##
-## The opponent is the fighter a player actually reads, so lot 6 would
-## otherwise have shipped a quieter warning than the one five lots were
-## spent making legible.
+## =====================================================================
+## LOT 7: THAT GEOMETRY IS NOW A CHARGE BAR, AND THE MARKER IS DELETED
 ##
-## So the cue no longer lives only on the asset's material. `Body/Alert`
-## is an engine-side marker -- geometry and colours this project owns,
-## above the fighter's head, hidden except during an attack telegraph.
-## That is the project's established answer to exactly this problem: the
-## pursuer's eyes in Chased are engine-side nodes and not part of the
-## .glb, for the same reason (see CLAUDE.md, "cue emission -> separate
-## node; cue albedo -> slot material"). The tint ramp is KEPT -- it still
-## reads on a light model, and two channels beat one -- but nothing now
-## depends on it alone.
+## Lot 6's marker was a triangle that grew over the wind-up. It said "an
+## attack is coming, and roughly this far along". Four device reports in
+## a row said that was not enough: the player knew an attack was coming
+## and still could not defend, because nothing told them WHEN it lands.
 ##
-## The marker is two prisms, bright core inside a near-black outline, so
-## one of the two always clears 3.0:1 whether it is drawn against the
-## dark sky or against the lit ground. BattleReadabilityProbe PHASE G
-## gates that, and gates that the marker never shows for a guard or a
-## dodge -- colour still means exactly one thing.
+## `Body/Charge` is a two-piece bar -- a dark Track and a bright Fill --
+## and its fill fraction is `Fighter.charge_progress()` read every frame.
+## The bar reaching full IS the instant of impact, by construction and
+## not by tuning: the strike resolves on the first tick of ACTIVE, which
+## is the tick the wind-up runs out on, which is the tick progress
+## reaches 1.0. BattleReadabilityProbe PHASE G gates that to the frame.
+##
+## THE MARKER WAS REMOVED RATHER THAN KEPT ALONGSIDE, and that is a
+## decision, not tidying. The bar carries the marker's entire content
+## (an attack telegraph is running, this far through) and strictly more.
+## Two growing cues stacked in the same patch of screen would compete for
+## one read, and the player would learn whichever happens to lead -- the
+## exact failure this file already warns about for tint versus marker
+## ("the two channels have to be the SAME clock"). The marker's contrast
+## argument transfers intact: bright fill inside a near-black track, so
+## one of the two always clears 3.0:1 whether it is drawn over the dark
+## sky or the lit ground, and PHASE G still gates that.
+##
+## THE TINT RAMP IS KEPT. It is a different surface (the body itself, no
+## extra geometry), lot 6 measured that it survives on the player's
+## model, and two channels beat one. What it no longer has to do is carry
+## the telegraph alone.
+##
+## Colour still means EXACTLY ONE THING. The bar appears for an ATTACK
+## wind-up and for nothing else; a dodge raises no bar and reddens
+## nothing.
 
 ## Breathing. Small on purpose -- it exists so an idle screen is never
 ## dead, not so it competes with the telegraph.
@@ -137,10 +151,7 @@ const LUNGE_REACH := 0.30
 const LUNGE_LEAN_DEG := 12.0
 const LUNGE_IN_S := 0.06
 
-## Guard braces low and wide; dodge slips back and away. Neither uses
-## colour -- see the header.
-const GUARD_CROUCH := 0.86
-const GUARD_WIDEN := 1.10
+## Dodge slips back and away. It does not use colour -- see the header.
 const DODGE_SLIDE := -0.28
 const DODGE_LEAN_DEG := -16.0
 
@@ -162,7 +173,7 @@ const ALERT_COLOR := Color(1.0, 0.28, 0.16)
 ## it, so the frame the strike leaves is distinguishable from the frame
 ## before it.
 const STRIKE_COLOR := Color(1.0, 0.66, 0.36)
-## Impact, on the fighter TAKING it. FOUR outcomes, four looks -- lot 5.
+## Impact, on the fighter TAKING it. THREE outcomes, three looks.
 ##
 ## =====================================================================
 ## THIS IS A DIFFERENT COLOUR CHANNEL FROM THE TELEGRAPH, AND THE LOT-2
@@ -174,19 +185,17 @@ const STRIKE_COLOR := Color(1.0, 0.66, 0.36)
 ## colour is held over time, and it still ramps for attacks alone.
 ##
 ## These are IMPACT flashes: momentary, fired on contact, on the fighter
-## that was hit. That channel already carried two meanings before this
-## lot (white / cold blue). Lot 5 adds the two it was missing, because
-## the device report was precisely that the player cannot tell a
-## mistimed defence from a defence that never happened -- and an option
-## a player cannot learn the timing of is a dead option (the Chased
-## lesson, already in CLAUDE.md).
+## that was hit. Lot 5 added the distinction the device report asked for:
+## a player cannot tell a mistimed defence from a defence that never
+## happened, and an option a player cannot learn the timing of is a dead
+## option (the Chased lesson, already in CLAUDE.md). Lot 7 keeps that
+## distinction and drops the block flash with the action it described.
 ##
 ## BREAK_FLASH_COLOR is violet on purpose: it must not be read as the
 ## telegraph's red, and it must not be read as the neutral white of
 ## "you were just standing there". It says "you DID press it, and you
 ## were early or late".
 const HIT_FLASH_COLOR := Color(1.0, 1.0, 1.0)
-const BLOCK_FLASH_COLOR := Color(0.70, 0.88, 1.0)
 const DODGE_FLASH_COLOR := Color(0.62, 1.0, 0.92)
 const BREAK_FLASH_COLOR := Color(0.86, 0.26, 1.0)
 const FLASH_IN_S := 0.05
@@ -199,16 +208,14 @@ const BREAK_OUT_S := 0.40
 ## gets the shortest, brightest flash of the four -- a snap, not a bruise.
 const DODGE_OUT_S := 0.16
 
-## Shape, not just colour, for the two defensive verdicts. Colour alone
-## is the channel most likely to be lost to a small screen, a bright
-## room, or colour-blindness, and these are exactly the two events the
-## player has to learn a timing from.
+## Shape, not just colour, for the two dodge verdicts. Colour alone is
+## the channel most likely to be lost to a small screen, a bright room,
+## or colour-blindness, and these are exactly the two events the player
+## has to learn a timing from.
 ##
-## A guard that HELD compresses further under the blow: it absorbed it.
-## A guard or dodge that BROKE flares outward and rolls: the shape falls
-## apart. The two are opposite motions on purpose.
-const ABSORB_SQUASH := 0.90
-const ABSORB_S := 0.09
+## An evade that WORKED slips a little further clear. A dodge that was
+## MISTIMED flares outward and rolls: the shape falls apart. The two are
+## opposite motions on purpose.
 const BREAK_FLARE := 1.14
 const BREAK_ROLL_DEG := 14.0
 const BREAK_S := 0.07
@@ -218,20 +225,59 @@ const BREAK_S := 0.07
 const EVADE_SLIP := -0.10
 const EVADE_S := 0.08
 
-## The engine-side attack marker (Body/Alert). Sized and placed from the
-## slot's MEASURED visual AABB, never from a per-profile number, so a
-## future .glb of any height gets it in the right place with no .tres
-## field to remember -- the "one .tres and one .glb, zero lines of code"
-## contract has to survive this file too.
-const ALERT_GAP := 0.22
-## It starts visible but small rather than at nothing: a marker that pops
-## in from zero reads as an event, and the event has not happened yet.
-## Growth over the windup is the clock, same as the tint.
-const ALERT_MIN_SCALE := 0.28
-const ALERT_MAX_SCALE := 1.0
+## The engine-side charge bar (Body/Charge). Placed from the slot's
+## MEASURED visual AABB, never from a per-profile number, so a future
+## .glb of any height gets it in the right place with no .tres field to
+## remember -- the "one .tres and one .glb, zero lines of code" contract
+## has to survive this file too.
+const CHARGE_GAP := 0.22
+## The Fill mesh's authored width, in the .tscn. Kept here because the
+## fill is grown by scaling and re-centring it, which needs the number in
+## code; asserted against the mesh at resolve time so the two cannot
+## drift apart silently.
+const CHARGE_WIDTH := 0.90
+## Colours live HERE and are applied to the two meshes at resolve time,
+## rather than being authored in BattleFighter.tscn. One source of truth:
+## PHASE G gates these constants for contrast AND checks that the meshes
+## really carry them, so a scene edit cannot quietly ship a bar that
+## fails the floor the probe just approved.
+##
+## Bright fill inside a near-black track. Neither has to beat both
+## backgrounds -- between them they must leave no backdrop that swallows
+## the bar, which is exactly the argument lot 6's marker shipped with.
+const CHARGE_FILL_COLOR := Color(1.0, 0.86, 0.35)
+const CHARGE_TRACK_COLOR := Color(0.03, 0.02, 0.02)
+## THE EVADE WINDOW, DRAWN. A band straddling the bar, marking the span
+## of the fill in which a dodge tapped now would cover the blow.
+##
+## =====================================================================
+## WHY THE WINDOW IS DRAWN AND NOT LEFT TO BE LEARNED
+##
+## Knowing WHEN the blow lands is only half of what a defender needs; the
+## other half is when to PRESS, and those are not the same instant. A
+## dodge has a startup and a finite active window, so the correct tap is
+## a span ENDING slightly before the bar completes -- measured on the
+## shipped profiles, ticks 26..49 of 54, i.e. the fill between 48% and
+## 91%. A player told "tap when it is full" taps 83 ms too late, every
+## time, and learns that the button does not work. That is the sentence
+## four device reports in a row contained.
+##
+## So the span is drawn on the bar. The band stands PROUD of the track
+## rather than being a coloured segment inside it: drawn inside, it would
+## sit behind the fill for the first half of the wind-up and against the
+## fill for the second, so its contrast would be a different number in
+## each half. Standing proud, it is always seen against the same two
+## backdrops the rest of the bar is gated against.
+##
+## Aqua on purpose -- the same family as DODGE_FLASH_COLOR, which is what
+## a successful evade flashes. The mark and the reward say the same word.
+const CHARGE_CUE_COLOR := Color(0.62, 1.0, 0.92)
 ## Off is a short fade, not a cut -- the warning ending is not itself
-## information, so it must not draw the eye away from the strike.
-const ALERT_OFF_S := 0.09
+## information, so it must not draw the eye away from the strike. The bar
+## is held FULL for the whole of it, because it was full at the instant
+## the blow left and cutting it back would erase the one frame that
+## teaches the timing.
+const CHARGE_OFF_S := 0.12
 
 ## Floor under any tween duration read from a profile, so a phase that is
 ## nominally a couple of ticks long still produces a movement a human eye
@@ -259,13 +305,21 @@ var _material: StandardMaterial3D = null
 var _material_resolved := false
 var _base_color := Color.WHITE
 
-## The attack marker and its own tween. Resolved lazily for the same
-## reason the material is: at this node's _ready() the slot still carries
-## the placeholder, so its visual AABB -- which decides where the marker
-## sits -- is not the one the fighter will actually be drawn with.
-var _alert: Node3D = null
-var _alert_resolved := false
-var _alert_tween: Tween = null
+## The charge bar, its two pieces, and its own tween. Resolved lazily for
+## the same reason the material is: at this node's _ready() the slot still
+## carries the placeholder, so its visual AABB -- which decides where the
+## bar sits -- is not the one the fighter will actually be drawn with.
+var _charge: Node3D = null
+var _charge_fill: MeshInstance3D = null
+var _charge_cue: MeshInstance3D = null
+## The evade window as (lo, hi) fractions of this fighter's bar, handed
+## in by BattleArena. NEGATIVE until it is, and the band stays hidden --
+## a window derived from this fighter's OWN dodge numbers would be a
+## guess about the fighter standing opposite, which is exactly the kind
+## of plausible-but-wrong fixture this repo keeps paying for.
+var _dodge_window := Vector2(-1.0, -1.0)
+var _charge_resolved := false
+var _charge_tween: Tween = null
 
 ## Three tweens, never one. Pose and tint are killed independently
 ## because a state change must be able to re-pose a fighter WITHOUT
@@ -286,6 +340,9 @@ var _idle_tween: Tween = null
 var _enabled := false
 
 func _ready() -> void:
+	# Off until the wiring below is proven good: a view that failed to
+	# find its fighter must not spend a frame callback asking it anything.
+	set_process(false)
 	_fighter = get_parent() as Fighter
 	if _fighter == null:
 		push_error("FighterView must be a direct child of a Fighter node.")
@@ -299,18 +356,57 @@ func _ready() -> void:
 	_base_rotation = _slot.rotation_degrees
 	_base_scale = _slot.scale
 	_enabled = true
+	set_process(true)
 	_fighter.state_changed.connect(_on_state_changed)
 	_fighter.hit_taken.connect(_on_hit_taken)
+
+## The ONE per-frame read in this file, and the only reason it exists:
+## the charge bar has to be the FSM's phase clock rather than an
+## animation that merely started at the same time as it.
+##
+## =====================================================================
+## WHY A TWEEN WOULD BE WRONG HERE AND NOWHERE ELSE
+##
+## Every other animation in this file is a tween on ENGINE time, and that
+## is fine because none of them makes a promise about a specific instant
+## -- a lunge that finishes a frame late still reads as a lunge. The bar
+## makes exactly that promise: full means the blow has left. A tween
+## started on the WINDUP transition and run for the phase's nominal
+## length would drift against the arena's fixed-step accumulator by
+## whatever the frame times happened to be, and it would drift most
+## visibly at the end, where the whole mechanic lives.
+##
+## Reading `charge_progress()` instead makes the two the same number by
+## construction. It is still STRICTLY READ-ONLY -- this reads a float and
+## writes a transform on a mesh; nothing crosses back -- so the rule that
+## makes this file safe is untouched, and PHASE B still proves it by
+## running the same fight with and without real frames between ticks.
+func _process(_delta: float) -> void:
+	if not _enabled or _fighter == null:
+		return
+	if not _fighter.is_charging():
+		return
+	_set_charge_fill(_fighter.charge_progress())
+
+## The span of THIS fighter's charge bar in which its OPPONENT should tap
+## a dodge, as (lo, hi) fractions. Handed in by BattleArena, the only
+## object that knows both fighters -- see _dodge_window.
+##
+## Presentation only: it paints a band and nothing else. Called once per
+## round, never during a tick.
+func set_dodge_window(lo: float, hi: float) -> void:
+	_dodge_window = Vector2(clampf(lo, 0.0, 1.0), clampf(hi, 0.0, 1.0))
+	_apply_dodge_window()
 
 func _exit_tree() -> void:
 	_kill(_pose_tween)
 	_kill(_tint_tween)
 	_kill(_idle_tween)
-	_kill(_alert_tween)
+	_kill(_charge_tween)
 	_pose_tween = null
 	_tint_tween = null
 	_idle_tween = null
-	_alert_tween = null
+	_charge_tween = null
 	if _fighter == null:
 		return
 	if _fighter.state_changed.is_connected(_on_state_changed):
@@ -332,7 +428,7 @@ func settle() -> void:
 		return
 	if _fighter.state == BattleTypes.State.KO:
 		return
-	_alert_off()
+	_charge_off()
 	_rest(0.28)
 
 func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> void:
@@ -343,23 +439,28 @@ func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> 
 	# copy of the action -> timing map, and it stays true if a phase is
 	# ever shortened by the overshoot Fighter.advance() carries.
 	var phase := maxf(_fighter.phase_duration(), MIN_POSE_S)
-	# The marker is driven from HERE and nowhere else. Every other pose
-	# helper would otherwise need its own _alert_off(), and the one that
-	# got forgotten would leave a warning hanging over a fighter that is
-	# no longer threatening anything -- the exact failure the marker
-	# exists to prevent, wearing the opposite sign.
-	if state == BattleTypes.State.WINDUP and BattleTypes.is_attack_like(action):
-		_alert_on(maxf(_fighter.telegraph_duration(), MIN_POSE_S))
+	# The bar is raised and lowered from HERE and nowhere else. Every
+	# other pose helper would otherwise need its own _charge_off(), and
+	# the one that got forgotten would leave a countdown hanging over a
+	# fighter that is no longer threatening anything -- the exact failure
+	# the bar exists to prevent, wearing the opposite sign.
+	#
+	# ACTIVE is the tick the strike LEAVES, so the bar is pinned FULL
+	# there and then faded, rather than snapped away: the frame that
+	# teaches the player "this is where the tap belonged" is the frame
+	# where the fill met the end of the track.
+	if state == BattleTypes.State.WINDUP and action == BattleTypes.Action.ATTACK:
+		_charge_on()
+	elif state == BattleTypes.State.ACTIVE and action == BattleTypes.Action.ATTACK:
+		_charge_release()
 	else:
-		_alert_off()
+		_charge_off()
 	match state:
 		BattleTypes.State.IDLE:
 			_rest(0.16)
 			_start_idle_bob()
 		BattleTypes.State.WINDUP:
-			# telegraph_duration(), NOT phase: a feint's windup is longer
-			# than the pose that depicts it, on purpose. See Fighter.
-			_windup(action, maxf(_fighter.telegraph_duration(), MIN_POSE_S))
+			_windup(action, phase)
 		BattleTypes.State.ACTIVE:
 			_active(action, phase)
 		BattleTypes.State.RECOVERY:
@@ -369,18 +470,20 @@ func _on_state_changed(state: BattleTypes.State, action: BattleTypes.Action) -> 
 		BattleTypes.State.KO:
 			_knock_out()
 
-## The verdict of one strike, on the fighter that just took it. FOUR
-## distinct readings, which is the whole of lot 5's task C:
+## The verdict of one strike, on the fighter that just took it. THREE
+## distinct readings:
 ##
-##   guard held    cold blue  + the brace compresses further (absorbed)
-##   dodge worked  bright aqua + an extra slip             (clean miss)
-##   defence broke violet     + the pose flares and rolls  (MISTIMED)
-##   caught cold   white      + nothing                    (no input)
+##   dodge worked  bright aqua + an extra slip            (clean miss)
+##   dodge broke   violet      + the pose flares and rolls (MISTIMED)
+##   caught cold   white       + nothing                   (no input)
 ##
-## The fourth versus the third is the pair that matters. Before this lot
-## they were the same white flash, so a guard pressed 80 ms too late was
+## The third versus the second is the pair that matters. Before lot 5
+## they were the same white flash, so a dodge pressed 80 ms too late was
 ## visually identical to never having pressed anything -- which is
-## exactly what "you have no confidence that it works" describes.
+## exactly what "you have no confidence that it works" describes. Lot 7
+## adds the other half of the same lesson: the charge bar says which way
+## the tap was wrong, so a violet flash is now actionable rather than
+## merely informative.
 ##
 ## The recoil of a clean hit still belongs to STAGGER, which Fighter
 ## emits immediately after this; the break flare below is deliberately
@@ -395,9 +498,6 @@ func _on_hit_taken(_damage: int, outcome: BattleTypes.Outcome, attempted: Battle
 		BattleTypes.Outcome.DODGED:
 			_flash(DODGE_FLASH_COLOR, DODGE_OUT_S)
 			_evade_accent()
-		BattleTypes.Outcome.BLOCKED:
-			_flash(BLOCK_FLASH_COLOR, FLASH_OUT_S)
-			_absorb_accent()
 		_:
 			# A clean hit. Whether it is a FAILURE or merely a hit
 			# depends entirely on whether the player asked for a defence
@@ -417,18 +517,6 @@ func _flash(colour: Color, out_s: float) -> void:
 	_tint_tween.tween_property(_material, "albedo_color", colour, FLASH_IN_S)
 	_tint_tween.tween_property(_material, "albedo_color", _base_color, out_s)
 
-## The guard held: it compresses further into the blow. Scale only, from
-## wherever the brace already is, so it reads as absorbing rather than as
-## a second pose being started.
-func _absorb_accent() -> void:
-	_kill(_pose_tween)
-	var squashed := Vector3(_slot.scale.x, _base_scale.y * GUARD_CROUCH * ABSORB_SQUASH, _slot.scale.z)
-	_pose_tween = create_tween()
-	_pose_tween.tween_property(_slot, "scale", squashed, ABSORB_S) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_pose_tween.tween_property(_slot, "scale", _slot.scale, ABSORB_S * 1.6) \
-		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-
 ## The evade worked: a little more distance, fast. Positive, and clearly
 ## not an impact -- nothing touched this fighter.
 func _evade_accent() -> void:
@@ -437,9 +525,9 @@ func _evade_accent() -> void:
 	_pose_tween.tween_property(_slot, "position", _slot.position + _offset(EVADE_SLIP, 0.0) - _base_position, EVADE_S) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
-## The defence BROKE. Opposite motion to _absorb_accent(): the shape
-## flares outward and rolls instead of compressing, so the two verdicts
-## are told apart by silhouette and not only by hue. STAGGER follows
+## The dodge BROKE. Opposite motion to _evade_accent(): the shape flares
+## outward and rolls instead of slipping clear, so the two verdicts are
+## told apart by silhouette and not only by hue. STAGGER follows
 ## immediately and takes the pose over from here.
 func _break_accent() -> void:
 	_kill(_pose_tween)
@@ -459,20 +547,9 @@ func _windup(action: BattleTypes.Action, phase: float) -> void:
 	_stop_idle_bob()
 	_kill(_pose_tween)
 	_pose_tween = create_tween().set_parallel(true)
-	# A FEINT takes this branch identically to an ATTACK -- same lean,
-	# same recoil, same red ramp -- and `phase` is already the same
-	# number, because FighterProfile.timing_for() hands a feint the
-	# attack's own attack_windup_s field rather than a copy of it.
-	# The two telegraphs are therefore not "similar": they are the same
-	# animation, run for the same duration, from the same source value.
-	#
-	# This is the ONE place a tell would have been cheapest to introduce
-	# and hardest to notice, so it is also the one BattleFeintProbe
-	# gates hardest: it plays both and compares the resulting transforms
-	# tick by tick.
-	var attack_like := BattleTypes.is_attack_like(action)
-	var lean := WINDUP_LEAN_DEG if attack_like else WINDUP_LEAN_DEG * 0.4
-	var reach := -WINDUP_RECOIL if attack_like else -WINDUP_RECOIL * 0.35
+	var attacking := action == BattleTypes.Action.ATTACK
+	var lean := WINDUP_LEAN_DEG if attacking else WINDUP_LEAN_DEG * 0.4
+	var reach := -WINDUP_RECOIL if attacking else -WINDUP_RECOIL * 0.35
 	_pose_tween.tween_property(_slot, "position", _offset(reach, 0.0), phase) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	_pose_tween.tween_property(_slot, "rotation_degrees", _lean(lean, 0.0), phase) \
@@ -480,26 +557,22 @@ func _windup(action: BattleTypes.Action, phase: float) -> void:
 	_pose_tween.tween_property(_slot, "scale", _base_scale * WINDUP_SCALE, phase) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
-	if not attack_like:
+	if not attacking:
 		_tint_to(_base_color, phase * 0.5)
 		return
-	# Colour still means exactly ONE thing, and lot 4 does not widen it:
-	# "an attack telegraph is running". That a telegraph can now turn out
-	# to have been a lie is a property of the fight, not a second meaning
-	# bolted onto the channel -- the ramp says the same sentence it said
-	# in lot 2, it is just no longer always true.
+	# Colour means exactly ONE thing: "an attack telegraph is running".
+	# The bar above the head says the rest -- how far through it is, to
+	# the frame -- so the two channels share one clock instead of two.
 	_tint_to(ALERT_COLOR, phase, Tween.EASE_IN)
 
-## The effect window. Attack snaps forward; guard and dodge get their own
-## silhouette so neither can be mistaken for a blow being thrown.
+## The effect window. Attack snaps forward; a dodge gets its own
+## silhouette so it cannot be mistaken for a blow being thrown.
 func _active(action: BattleTypes.Action, phase: float) -> void:
 	_stop_idle_bob()
 	_kill(_pose_tween)
 	match action:
 		BattleTypes.Action.ATTACK:
 			_lunge()
-		BattleTypes.Action.GUARD:
-			_brace(phase)
 		BattleTypes.Action.DODGE:
 			_slip(phase)
 		_:
@@ -514,17 +587,6 @@ func _lunge() -> void:
 	_pose_tween.tween_property(_slot, "scale", _base_scale, LUNGE_IN_S) \
 		.set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
 	_tint_to(STRIKE_COLOR, LUNGE_IN_S)
-
-func _brace(phase: float) -> void:
-	var braced := Vector3(_base_scale.x * GUARD_WIDEN, _base_scale.y * GUARD_CROUCH, _base_scale.z * GUARD_WIDEN)
-	_pose_tween = create_tween().set_parallel(true)
-	_pose_tween.tween_property(_slot, "position", _offset(0.0, -0.06), minf(phase, 0.10)) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_pose_tween.tween_property(_slot, "rotation_degrees", _lean(4.0, 0.0), minf(phase, 0.10)) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_pose_tween.tween_property(_slot, "scale", braced, minf(phase, 0.10)) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	_tint_to(_base_color, 0.10)
 
 func _slip(phase: float) -> void:
 	_pose_tween = create_tween().set_parallel(true)
@@ -664,78 +726,135 @@ func _ensure_material() -> void:
 	_base_color = _material.albedo_color
 	_slot.apply_material(_material)
 
-## Shows the attack marker and grows it over the telegraph's own length,
-## with the same EASE_IN the tint ramp uses -- the two channels have to be
-## the SAME clock, or a player would learn to read whichever one happens
-## to lead.
-##
-## A feint gets telegraph_duration() here exactly like a plain attack
-## does, so the marker finishes growing at the usual moment and then
-## simply stays up through the hold. It cannot leak the lie: it is driven
-## from the same number Fighter hands the tint.
-func _alert_on(duration: float) -> void:
-	_ensure_alert()
-	if _alert == null:
+## Raises the charge bar for an attack wind-up. There is no tween here on
+## purpose: the fill is written every frame in _process() from
+## Fighter.charge_progress(), so its length is the FSM's own phase clock
+## rather than an engine-time animation that merely started at the same
+## moment. A tween would look identical and be wrong exactly where it
+## matters -- at the end, where the bar's promise is that full means
+## thrown.
+func _charge_on() -> void:
+	_ensure_charge()
+	if _charge == null:
 		return
-	_kill(_alert_tween)
-	_alert.visible = true
-	_alert.scale = Vector3.ONE * ALERT_MIN_SCALE
-	_alert_tween = create_tween()
-	_alert_tween.tween_property(_alert, "scale", Vector3.ONE * ALERT_MAX_SCALE, duration) \
-		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	_kill(_charge_tween)
+	_charge.visible = true
+	_charge.scale = Vector3.ONE
+	_set_charge_fill(0.0)
 
-func _alert_off() -> void:
-	if not _alert_resolved:
-		# Never resolved means never shown -- nothing to take down, and
-		# resolving here would force the AABB read on the first IDLE
-		# transition, before the model is necessarily installed.
+## The strike has left. Pin the bar full -- it WAS full on this tick --
+## and fade the whole thing out without shrinking the fill, so the last
+## thing the player sees is the fill meeting the end of the track.
+func _charge_release() -> void:
+	if not _charge_resolved or _charge == null or not _charge.visible:
 		return
-	if _alert == null:
-		return
-	_kill(_alert_tween)
-	if not _alert.visible:
-		return
-	_alert_tween = create_tween()
-	_alert_tween.tween_property(_alert, "scale", Vector3.ZERO, ALERT_OFF_S) \
+	_set_charge_fill(1.0)
+	_kill(_charge_tween)
+	_charge_tween = create_tween()
+	_charge_tween.tween_property(_charge, "scale", Vector3(1.0, 0.0, 1.0), CHARGE_OFF_S) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	_alert_tween.tween_callback(func() -> void: _alert.visible = false)
+	_charge_tween.tween_callback(func() -> void: _charge.visible = false)
 
-## Finds the marker and puts it just clear of whatever the slot actually
-## draws -- measured, so it lands correctly above a 1.35 m squirrel and a
-## 1.70 m owl without either profile carrying a height field.
+## Takes the bar down for anything that is not an attack. Never resolved
+## means never shown -- nothing to take down, and resolving here would
+## force the AABB read on the first IDLE transition, before the model is
+## necessarily installed.
+func _charge_off() -> void:
+	if not _charge_resolved or _charge == null:
+		return
+	_kill(_charge_tween)
+	if not _charge.visible:
+		return
+	_charge.visible = false
+	_set_charge_fill(0.0)
+
+## The fill, at fraction `p`. Scaled AND re-centred so it grows from the
+## left edge of the track: a BoxMesh is centred on its own origin, so
+## scaling alone would grow it in both directions from the middle and the
+## bar would read as a widening block rather than as a filling one.
+func _set_charge_fill(p: float) -> void:
+	if _charge_fill == null:
+		return
+	var f := clampf(p, 0.0, 1.0)
+	_charge_fill.scale.x = f
+	_charge_fill.position.x = -CHARGE_WIDTH * 0.5 * (1.0 - f)
+
+## Finds the bar, colours it, and puts it just clear of whatever the slot
+## actually draws -- measured, so it lands correctly above a 1.35 m
+## squirrel and a 1.70 m owl without either profile carrying a height
+## field.
 ##
 ## Lazy for the same reason _ensure_material() is: children _ready()
 ## before their parent, so at this node's _ready() the fighter has not run
 ## _apply_profile_art() and visual_aabb() would still be reporting the
 ## capsule.
-func _ensure_alert() -> void:
-	if _alert_resolved:
+func _ensure_charge() -> void:
+	if _charge_resolved:
 		return
-	_alert_resolved = true
+	_charge_resolved = true
 	if _slot == null:
 		return
-	_alert = _slot.get_node_or_null("Alert") as Node3D
-	if _alert == null:
-		# A fighter scene without the marker still animates in full; only
-		# the second telegraph channel is missing. Loud, because that is
-		# a scene that has drifted from this file.
-		push_warning("FighterView: no Body/Alert marker, attack telegraph is tint-only.")
+	_charge = _slot.get_node_or_null("Charge") as Node3D
+	if _charge == null:
+		# A fighter scene without the bar still animates in full; only the
+		# channel that states the impact instant is missing. Loud, because
+		# that is a scene that has drifted from this file.
+		push_warning("FighterView: no Body/Charge bar, attack telegraph is tint-only.")
 		return
-	_alert.position.y = _slot.visual_aabb().end.y + ALERT_GAP
-	# Cancel the fighter's yaw so the marker's flat face points at the
-	# camera instead of at the opposite wall. The fighters are turned a
-	# quarter-turn to face each other, and a child of the slot inherits
-	# that -- the first version of this rendered the prism EDGE ON and
-	# read as a 6 cm splinter rather than as a warning. Read off the
-	# slot's own basis rather than hard-coding +-90, so it stays correct
-	# if the arena is ever re-laid-out.
+	_charge_fill = _charge.get_node_or_null("Fill") as MeshInstance3D
+	_charge_cue = _charge.get_node_or_null("Cue") as MeshInstance3D
+	var track := _charge.get_node_or_null("Track") as MeshInstance3D
+	if _charge_fill == null or track == null or _charge_cue == null:
+		push_warning("FighterView: Body/Charge is missing Track, Fill or Cue.")
+		_charge = null
+		return
+	# The colours come from THIS file, not from the .tscn, so the numbers
+	# BattleReadabilityProbe gates for contrast are the numbers that get
+	# drawn. A scene that authored its own would be a second source of
+	# truth for a value a probe just approved somewhere else.
+	track.set_surface_override_material(0, _bar_material(CHARGE_TRACK_COLOR))
+	_charge_fill.set_surface_override_material(0, _bar_material(CHARGE_FILL_COLOR))
+	_charge_cue.set_surface_override_material(0, _bar_material(CHARGE_CUE_COLOR))
+	_apply_dodge_window()
+	_charge.position.y = _slot.visual_aabb().end.y + CHARGE_GAP
+	# Cancel the fighter's yaw so the bar's flat face points at the camera
+	# instead of at the opposite wall. The fighters are turned a quarter
+	# turn to face each other and a child of the slot inherits that -- lot
+	# 6 shipped the marker edge-on the first time for exactly this reason.
+	# Read off the slot's own basis rather than hard-coding +-90, so it
+	# stays correct if the arena is ever re-laid-out.
 	#
 	# Once, at resolve time, and not per frame: the pose tweens lean the
-	# body by at most 8 degrees, which tilts the marker slightly with the
+	# body by at most 8 degrees, which tilts the bar slightly with the
 	# fighter, and that reads as part of the same motion.
-	_alert.rotation.y = -_slot.global_basis.get_euler().y
-	_alert.visible = false
-	_alert.scale = Vector3.ZERO
+	_charge.rotation.y = -_slot.global_basis.get_euler().y
+	_charge.visible = false
+	_set_charge_fill(0.0)
+
+## Unshaded, like every other surface in this project: the colour written
+## is the colour seen, which is the only reason a contrast number
+## measured off a constant means anything at all (CLAUDE.md, "DIRECTION
+## ARTISTIQUE PERMANENTE").
+## Places the evade band across [lo, hi] of the track, or hides it when
+## no window has been handed in. Same scale-and-recentre arithmetic as
+## the fill, and for the same reason: a BoxMesh is centred on its origin.
+func _apply_dodge_window() -> void:
+	if _charge_cue == null:
+		return
+	if _dodge_window.x < 0.0 or _dodge_window.y <= _dodge_window.x:
+		_charge_cue.visible = false
+		return
+	var span := _dodge_window.y - _dodge_window.x
+	var centre := (_dodge_window.x + _dodge_window.y) * 0.5
+	_charge_cue.visible = true
+	_charge_cue.scale.x = span
+	_charge_cue.position.x = CHARGE_WIDTH * (centre - 0.5)
+
+func _bar_material(colour: Color) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = colour
+	return material
 
 func _kill(tween: Tween) -> void:
 	if tween != null and tween.is_valid():
