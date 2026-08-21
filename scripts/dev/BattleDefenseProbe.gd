@@ -89,6 +89,8 @@ func _ready() -> void:
 	_phase_b_window()
 	_phase_c_punishment()
 	_phase_c2_stagger()
+	_phase_r_riposte()
+	_phase_r2_shipped()
 	_phase_e_feedback()
 	_phase_d_imperfect()
 	print("\n--- %d check(s), %d failure(s) ---" % [_checks, _failures])
@@ -204,6 +206,32 @@ func _phase_c_punishment() -> void:
 	print("  worst lead over the whole window : %.0f ms" % (worst_lead * 1000.0))
 	_expect(worst_lead > 0.0,
 		"a dodge tapped ANYWHERE in the window leaves the defender free first")
+
+	# =================================================================
+	# LOT 8: "> 0" WAS THE WRONG BAR, AND THE MEASUREMENT SAYS SO
+	#
+	# Lot 7 satisfied the line above and published its margin: +13 ms at
+	# the worst tap. A player cannot take a 13 ms opening -- they come
+	# free, and then spend HUMAN_FAST..HUMAN_LATE before a finger lands.
+	# The window has to be at least that wide or the punish exists only
+	# on paper, which is what "j'esquive effectivement, mais je fais que
+	# perdre" describes.
+	#
+	# Two floors, because two different things must be true:
+	#   * the deterministic lead alone clears the FAST tap, so a quick
+	#     player is punishing on the profiles alone;
+	#   * the lead PLUS the opponent's minimum thinking time -- a hard
+	#     floor, since ai_reaction_jitter_s is only ever added -- clears
+	#     the LATE tap, so a slow player is punishing too.
+	var guaranteed := worst_lead + DummyProfile.ai_reaction_delay_s
+	print("  + the opponent's minimum think time (%.0f ms) = %.0f ms of guaranteed free time" % [
+		DummyProfile.ai_reaction_delay_s * 1000.0, guaranteed * 1000.0])
+	_expect(worst_lead >= HUMAN_FAST,
+		"the lead alone clears a FAST human tap (%.0f ms >= %.0f ms)" % [
+			worst_lead * 1000.0, HUMAN_FAST * 1000.0])
+	_expect(guaranteed >= HUMAN_LATE,
+		"lead + minimum think time clears a LATE human tap (%.0f ms >= %.0f ms)" % [
+			guaranteed * 1000.0, HUMAN_LATE * 1000.0])
 	# Measured rather than derived: the two fighters are actually run, and
 	# the one that dodged has to land the next blow.
 	var counter := _counter_lands(int(round(0.70 * DummyProfile.attack_windup_s / TICK_S)))
@@ -212,21 +240,189 @@ func _phase_c_punishment() -> void:
 
 # --------------------------------------------------------------- PHASE C2
 
-## GATED. Being hit must be worse than whiffing. It is easy to invert
-## this silently -- lot 5 lengthened attack_recovery_s past the shipped
-## stagger and lot 7 lengthened it again -- and the symptom is that
-## trading beats defending, which is exactly what nobody would attribute
-## to a stagger constant.
+## GATED, AND RESCOPED AT LOT 8 -- read this before "fixing" it.
+##
+## Through lot 7 this asserted stagger_duration_s > every recovery, on the
+## reasoning that being hit must cost more TEMPO than whiffing. That was
+## the right question while every clean hit staggered, because tempo was
+## then the entire cost of being hit.
+##
+## It is not any more. Only a RIPOSTE staggers; an ordinary hit is damage
+## and nothing else. So the old inequality now compares a riposte's
+## stagger against a recovery that lot 8 had to lengthen to pay for the
+## punish window, and it FAILS -- 700 ms against Sparring's 950 ms.
+##
+## Satisfying it was tried and measured, not waved away: raising the
+## staggers past those recoveries hands the fight to a player who simply
+## holds dodge, because one lucky riposte then locks the opponent out
+## long enough to set up the next. Dodge-spam went from 0% to 100%. The
+## number is published in CLAUDE.md rather than tuned around.
+##
+## What IS gated instead is the invariant that actually keeps the two
+## strike kinds apart, and it is the one a future lot would break by
+## accident: a riposte has to cost strictly more than a chip, on both
+## axes. Flatten either and the reward for reading the bar disappears
+## while every other probe here stays green.
 func _phase_c2_stagger() -> void:
-	print("\n--- PHASE C2: being hit is worse than whiffing (GATED) ---")
+	print("\n--- PHASE C2: a riposte costs strictly more than a chip (GATED) ---")
 	for entry in [["Keepy", KeepyProfile], ["Sparring", DummyProfile]]:
 		var label: String = entry[0]
 		var p: FighterProfile = entry[1]
+		print("  %-9s chip %d dmg (no stagger) vs riposte %d dmg + %.0f ms stagger" % [
+			label, p.attack_damage, p.riposte_damage, p.stagger_duration_s * 1000.0])
+		_expect(p.riposte_damage > p.attack_damage,
+			"%s: a riposte hurts more than a blind hit" % label)
+		_expect(p.stagger_duration_s > 0.0,
+			"%s: and it costs the target tempo a blind hit does not" % label)
 		var worst_recovery: float = maxf(p.attack_recovery_s, p.dodge_recovery_s)
-		print("  %-9s stagger %.0f ms vs longest recovery %.0f ms" % [
-			label, p.stagger_duration_s * 1000.0, worst_recovery * 1000.0])
-		_expect(p.stagger_duration_s > worst_recovery,
-			"%s: a clean hit costs more than any whiff" % label)
+		print("    (reported, no longer gated: stagger %.0f ms vs longest recovery %.0f ms)" % [
+			p.stagger_duration_s * 1000.0, worst_recovery * 1000.0])
+
+# ---------------------------------------------------------------- PHASE R
+
+## GATED. THE CONTRACT LOT 8 EXISTS FOR: a successful dodge has to pay.
+##
+## Everything before this phase measures that the player CAN dodge and
+## that the opponent is left open afterwards. Neither is worth anything
+## if the opening cannot be converted, and through lot 7 it could not be:
+## the reward was 13 ms of tempo spent on a counter that was itself a
+## 900 ms telegraph the opponent simply read and evaded.
+##
+## The riposte replaces that. Four properties, each of which silently
+## deletes the mechanic if it stops holding:
+##   1. it is EARNED by a real evade and by nothing else;
+##   2. the window is long enough for a human to spend;
+##   3. it is spendable -- the window survives the dodge lockout that
+##      earned it, which is the specific way a naive implementation
+##      fails;
+##   4. it is spent ONCE.
+func _phase_r_riposte() -> void:
+	print("\n--- PHASE R: a successful dodge pays (GATED) ---")
+	var window: float = KeepyProfile.riposte_window_s
+	print("  riposte window %.0f ms of FREE time; chip %d dmg -> riposte %d dmg" % [
+		window * 1000.0, KeepyProfile.attack_damage, KeepyProfile.riposte_damage])
+	_expect(window >= HUMAN_LATE,
+		"the window outlasts a LATE human tap (%.0f ms >= %.0f ms)" % [
+			window * 1000.0, HUMAN_LATE * 1000.0])
+
+	# (1) earned only by an evade that really covered a blow.
+	var band := _cover_band()
+	var mid := int((band.x + band.y) / 2)
+	var f := _measure_riposte(mid)
+	_expect(bool(f[0]), "a dodge that covered the blow earns a riposte")
+	var early := _measure_riposte(0)
+	_expect(not bool(early[0]), "a dodge tapped far too early earns nothing")
+
+	# (3) SPENDABLE. The dodge that earned it locks its owner up for the
+	# rest of the dodge cycle; if the window were charged for that lockout
+	# the reward would be mostly gone before the player could move. Ticks
+	# of window left AT THE MOMENT THE FIGHTER COMES FREE is the number
+	# that matters, and it is read off the shipped FSM.
+	var free_ms: float = float(f[1]) * TICK_S * 1000.0
+	print("  window still open when the dodger comes free : %.0f ms" % free_ms)
+	_expect(free_ms >= HUMAN_LATE * 1000.0,
+		"a LATE human tap still finds the riposte up (%.0f ms >= %.0f ms)" % [
+			free_ms, HUMAN_LATE * 1000.0])
+
+	# (4) one dodge, one riposte.
+	var once := _make(KeepyProfile)
+	_hold_in_active_dodge(once)
+	once.receive_strike(1, false)
+	_expect(once.is_riposte_ready(), "riposte armed")
+	while not once.is_free():
+		once.advance(TICK_S)
+	once.request_action(BattleTypes.Action.ATTACK)
+	_expect(once.attack_is_riposte(), "the next attack IS the riposte")
+	_expect(not once.is_riposte_ready(), "and it is spent -- a dodge cannot bank two")
+	once.free()
+
+## GATED, ON THE SHIPPED SCENE. Everything above builds its own fighters,
+## which is the fixture this repo has already been burned by: a rule can
+## be true of two Fighters a probe wired together and false of the arena
+## the player actually plays. So the riposte is also resolved once
+## through Battle.tscn itself -- real scene, real BattleArena pricing,
+## real signal wiring.
+func _phase_r2_shipped() -> void:
+	print("\n--- PHASE R2: the riposte through the SHIPPED arena (GATED) ---")
+	var arena := load("res://scenes/Battle.tscn").instantiate() as BattleArena
+	add_child(arena)
+	arena.set_process(false)
+	var player: Fighter = arena.player
+	var opponent: Fighter = arena.opponent
+	var before: int = opponent.hp
+
+	# Chip first: an ordinary tap, priced and staggered by the arena.
+	player.request_action(BattleTypes.Action.ATTACK)
+	for i in 4:
+		arena._tick(TICK_S)
+	var chip: int = before - opponent.hp
+	print("  blind attack through the arena : %d dmg, opponent state %d" % [
+		chip, opponent.state])
+	_expect(chip == KeepyProfile.attack_damage, "a blind attack costs attack_damage")
+	_expect(opponent.state != BattleTypes.State.STAGGER, "and does not stagger the opponent")
+
+	# Now arm a riposte on the player and take the same tap.
+	while not player.is_free():
+		arena._tick(TICK_S)
+	player.receive_strike(0, false)  # no-op damage; used only to reach a clean state
+	var mid_hp: int = opponent.hp
+	_force_riposte(player)
+	player.request_action(BattleTypes.Action.ATTACK)
+	for i in 4:
+		arena._tick(TICK_S)
+	var hit: int = mid_hp - opponent.hp
+	print("  riposte through the arena      : %d dmg, opponent state %d" % [
+		hit, opponent.state])
+	_expect(hit == KeepyProfile.riposte_damage, "a riposte costs riposte_damage")
+	_expect(opponent.state == BattleTypes.State.STAGGER, "and DOES stagger the opponent")
+	arena.free()
+
+## Arms a riposte the only way the game ever does -- by making a real
+## dodge cover a real blow -- so nothing here can arm a state the fight
+## cannot reach.
+func _force_riposte(fighter: Fighter) -> void:
+	fighter.request_action(BattleTypes.Action.DODGE)
+	while fighter.state != BattleTypes.State.ACTIVE:
+		fighter.advance(TICK_S)
+	fighter.receive_strike(0, false)
+	while not fighter.is_free():
+		fighter.advance(TICK_S)
+
+func _hold_in_active_dodge(fighter: Fighter) -> void:
+	fighter.request_action(BattleTypes.Action.DODGE)
+	var n := 0
+	while fighter.state != BattleTypes.State.ACTIVE and n < 240:
+		fighter.advance(TICK_S)
+		n += 1
+
+## Runs one telegraph with a dodge tapped at `tap`, and reports
+## [earned a riposte, ticks of window left when the dodger came free].
+func _measure_riposte(tap: int) -> Array:
+	var attacker := _make(DummyProfile)
+	var defender := _make(KeepyProfile)
+	attacker.strike_activated.connect(func() -> void:
+		var rip := attacker.attack_is_riposte()
+		defender.receive_strike(attacker.profile.damage_for(rip), rip))
+	attacker.request_action(BattleTypes.Action.ATTACK)
+	var earned := false
+	var left := 0
+	for n in 400:
+		if n == tap:
+			defender.request_action(BattleTypes.Action.DODGE)
+		attacker.advance(TICK_S)
+		defender.advance(TICK_S)
+		if defender.is_riposte_ready():
+			earned = true
+		if earned and defender.is_free():
+			# Count the window down from here -- FREE ticks only, which is
+			# exactly what the player gets to react in.
+			while defender.is_riposte_ready() and left < 600:
+				defender.advance(TICK_S)
+				left += 1
+			break
+	attacker.free()
+	defender.free()
+	return [earned, left]
 
 # ---------------------------------------------------------------- PHASE E
 
@@ -291,10 +487,19 @@ const POLICY_CAP_TICKS := 3600
 
 func _phase_d_imperfect() -> void:
 	print("\n--- PHASE D: imperfect players, n=%d (reported, NOT gated) ---" % POLICY_N)
-	print("  mash        : hammer ATTACK, never read anything")
-	print("  dodge-only  : read the bar, dodge, never attack")
-	print("  read+counter: read the bar, dodge, attack when free")
-	for policy in ["mash", "dodge-only", "read+counter"]:
+	print("  EVERY tap below costs a human reaction of %.0f..%.0f ms, drawn per tap." % [
+		HUMAN_FAST * 1000.0, HUMAN_LATE * 1000.0])
+	print("  Lot 7's bench let the counter fire on the same tick the fighter came free,")
+	print("  which is a machine, not a person -- and it is why its reader read 98.7%.")
+	print("  mash         : hammer ATTACK, never read anything")
+	print("  dodge-only   : read the bar, dodge, never attack")
+	print("  panic-dodge  : tap dodge the instant a bar appears, then attack")
+	print("  read+riposte : read the BAND, dodge, cash the riposte")
+	print("  ...sloppy    : the same player reading only 3 telegraphs in 4, at 140 ms jitter")
+	print("  A PERFECT reader wins essentially every fight, and that is a machine, not a")
+	print("  person: it reads every bar and never mistimes. The sloppy row is the margin --")
+	print("  it is what the same strategy is worth once the reads stop being free.")
+	for policy in ["mash", "dodge-only", "panic-dodge", "read+riposte", "read+riposte-sloppy"]:
 		var wins := 0
 		var total := 0.0
 		var longest := 0.0
@@ -304,7 +509,7 @@ func _phase_d_imperfect() -> void:
 			longest = maxf(longest, r.y)
 			if r.x > 0.5:
 				wins += 1
-		print("  %-12s wins %3d/%d (%5.1f%%)  mean %5.1fs  max %5.1fs" % [
+		print("  %-20s wins %3d/%d (%5.1f%%)  mean %5.1fs  max %5.1fs" % [
 			policy, wins, POLICY_N, 100.0 * wins / POLICY_N, total / POLICY_N, longest])
 
 ## One fight. `policy` drives the player, the shipped brain drives the
@@ -318,29 +523,71 @@ func _policy_fight(policy: String, fight_seed: int) -> Vector2:
 	rng.seed = fight_seed
 	var brain := FighterBrain.new()
 	brain.setup(opponent, player, opponent.profile, rng)
-	player.strike_activated.connect(func() -> void: opponent.receive_strike(player.profile.attack_damage))
-	opponent.strike_activated.connect(func() -> void: player.receive_strike(opponent.profile.attack_damage))
+	player.strike_activated.connect(func() -> void:
+		var rip := player.attack_is_riposte()
+		opponent.receive_strike(player.profile.damage_for(rip), rip))
+	opponent.strike_activated.connect(func() -> void:
+		var rip := opponent.attack_is_riposte()
+		player.receive_strike(opponent.profile.damage_for(rip), rip))
 
 	var aim: float = KeepyProfile.ai_dodge_aim
+	# A sloppy player misses reads outright and is looser on the ones they
+	# take. Both, because they fail differently: a missed read is a blow
+	# taken clean, a loose one is "ESQUIVE RATEE".
+	var sloppy := policy.ends_with("-sloppy")
+	var jitter := 0.14 if sloppy else HUMAN_JITTER
+	var read_rate := 0.75 if sloppy else 1.0
+	var reads := true
 	var planned := -1
 	var watching := false
+	var tapped := false
+	# Ticks this player still owes before an OFFENSIVE tap can land. Drawn
+	# fresh every time they come free: a person notices they can move
+	# again, and only then presses. Lot 7's bench had no such term, and
+	# that single omission is the whole gap between its 98.7% reader and
+	# the device report.
+	var think := -1
 	var t := 0
 	while player.is_alive() and opponent.is_alive() and t < POLICY_CAP_TICKS:
+		if not player.is_free():
+			think = -1
+		elif think < 0:
+			think = maxi(int(round(rng.randf_range(HUMAN_FAST, HUMAN_LATE) / TICK_S)), 0)
+		var may_attack := player.is_free() and think == 0
+
 		if policy == "mash":
 			if player.is_free():
 				player.request_action(BattleTypes.Action.ATTACK)
 		elif opponent.is_charging():
-			if not watching:
-				watching = true
-				var target: float = aim * opponent.profile.attack_windup_s + rng.randfn(0.0, HUMAN_JITTER)
-				planned = t + maxi(int(round(target / TICK_S)), 0)
-			if t == planned:
-				player.request_action(BattleTypes.Action.DODGE)
+			if policy == "panic-dodge":
+				# No reading at all: tap the moment the bar appears. The
+				# dodge window has long expired by the time the blow lands.
+				if not tapped:
+					tapped = true
+					player.request_action(BattleTypes.Action.DODGE)
+			else:
+				if not watching:
+					watching = true
+					reads = rng.randf() < read_rate
+					var target: float = aim * opponent.profile.attack_windup_s + rng.randfn(0.0, jitter)
+					planned = t + maxi(int(round(target / TICK_S)), 0)
+				if reads and t == planned:
+					player.request_action(BattleTypes.Action.DODGE)
+			# A riposte in hand is worth more than the dodge that would
+			# hedge the incoming blow -- it staggers, so it cancels the
+			# telegraph outright. Measured: a player who does NOT know
+			# this went from 100% to 1.7% at lot 7's 13 ms punish window,
+			# and the window this lot ships is what closes that gap.
+			if may_attack and player.is_riposte_ready() and policy.begins_with("read+riposte"):
+				player.request_action(BattleTypes.Action.ATTACK)
 		else:
 			watching = false
+			tapped = false
 			planned = -1
-			if policy == "read+counter" and player.is_free():
+			if may_attack and policy != "dodge-only":
 				player.request_action(BattleTypes.Action.ATTACK)
+		if think > 0:
+			think -= 1
 		player.advance(TICK_S)
 		opponent.advance(TICK_S)
 		brain.advance(TICK_S)
@@ -387,7 +634,8 @@ func _resolve(tap: int) -> BattleTypes.Outcome:
 	var defender := _make(KeepyProfile)
 	var outcome := [BattleTypes.Outcome.MISSED]
 	attacker.strike_activated.connect(func() -> void:
-		outcome[0] = defender.receive_strike(attacker.profile.attack_damage))
+		var rip := attacker.attack_is_riposte()
+		outcome[0] = defender.receive_strike(attacker.profile.damage_for(rip), rip))
 	attacker.request_action(BattleTypes.Action.ATTACK)
 	for n in 240:
 		if n == tap:
@@ -413,7 +661,8 @@ func _resolve_reported(defence: BattleTypes.Action, tap: int) -> Array:
 		got[1] = a
 		got[2] = true)
 	attacker.strike_activated.connect(func() -> void:
-		defender.receive_strike(attacker.profile.attack_damage))
+		var rip := attacker.attack_is_riposte()
+		defender.receive_strike(attacker.profile.damage_for(rip), rip))
 	attacker.request_action(BattleTypes.Action.ATTACK)
 	for n in 240:
 		if n == tap and defence != BattleTypes.Action.NONE:
@@ -435,11 +684,13 @@ func _counter_lands(tap: int) -> bool:
 	var defender := _make(KeepyProfile)
 	var first_hit := [""]
 	attacker.strike_activated.connect(func() -> void:
-		if defender.receive_strike(attacker.profile.attack_damage) == BattleTypes.Outcome.HIT \
+		var rip := attacker.attack_is_riposte()
+		if defender.receive_strike(attacker.profile.damage_for(rip), rip) == BattleTypes.Outcome.HIT \
 				and first_hit[0].is_empty():
 			first_hit[0] = "attacker")
 	defender.strike_activated.connect(func() -> void:
-		if attacker.receive_strike(defender.profile.attack_damage) == BattleTypes.Outcome.HIT \
+		var rip := defender.attack_is_riposte()
+		if attacker.receive_strike(defender.profile.damage_for(rip), rip) == BattleTypes.Outcome.HIT \
 				and first_hit[0].is_empty():
 			first_hit[0] = "defender")
 	attacker.request_action(BattleTypes.Action.ATTACK)

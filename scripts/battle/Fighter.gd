@@ -74,6 +74,11 @@ signal hit_taken(damage: int, outcome: BattleTypes.Outcome, attempted: BattleTyp
 ## rule lives in ONE place rather than in each fighter's view of the
 ## other.
 signal strike_activated()
+## Emitted whenever this fighter's riposte availability flips. Exists so
+## the view can hold a cue for as long as the reward is actually
+## spendable, instead of polling `is_riposte_ready()` every frame and
+## drifting from it by a tick.
+signal riposte_changed(ready: bool)
 signal knocked_out()
 
 ## How long an early tap is remembered. Without it, a tap during the last
@@ -112,6 +117,15 @@ var _buffer_left: float = 0.0
 ## True once this fighter's current ATTACK has already resolved, so a
 ## multi-tick ACTIVE window cannot land twice.
 var _strike_spent: bool = false
+## Seconds of FREE time left to spend a successful dodge on a riposte.
+## Burned only while IDLE -- see advance(). Zero means "no riposte owed".
+var _riposte_left: float = 0.0
+## Whether the attack currently in flight was launched as a riposte.
+## Latched at the tap in _begin_action(), not read at resolution time:
+## the reward belongs to the moment the player decided, and for a
+## telegraphed attacker the window would otherwise expire mid-wind-up and
+## silently downgrade a blow the player had already earned.
+var _attack_is_riposte: bool = false
 
 @onready var _slot: ModelSlot = $Body
 
@@ -132,6 +146,8 @@ func reset() -> void:
 	_buffered_action = BattleTypes.Action.NONE
 	_buffer_left = 0.0
 	_strike_spent = false
+	_attack_is_riposte = false
+	_set_riposte(0.0)
 	hp_changed.emit(hp, _max_hp())
 	state_changed.emit(state, current_action)
 
@@ -162,6 +178,12 @@ func advance(dt: float) -> void:
 			_buffer_left = 0.0
 
 	if state == BattleTypes.State.IDLE:
+		# The riposte clock burns FREE time and nothing else. The dodge
+		# that earned it locks this fighter up for the rest of its own
+		# cycle, and charging the reward for that lockout is what made
+		# lot 7's punish window unreachable in the first place.
+		if _riposte_left > 0.0:
+			_set_riposte(max(_riposte_left - dt, 0.0))
 		_consume_buffer()
 		return
 
@@ -182,7 +204,7 @@ func advance(dt: float) -> void:
 ## returns what happened so the arena can report it. The defensive rules
 ## live here rather than in the attacker because they are a property of
 ## the defender's own state machine.
-func receive_strike(damage: int) -> BattleTypes.Outcome:
+func receive_strike(damage: int, staggers: bool) -> BattleTypes.Outcome:
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.MISSED
 
@@ -195,6 +217,11 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 
 	var defending := state == BattleTypes.State.ACTIVE
 	if defending and current_action == BattleTypes.Action.DODGE:
+		# THE REWARD. Earned here, at the one instant that proves the read
+		# was right, and nowhere else -- a dodge that covered nothing
+		# earns nothing, which is what stops holding the button from
+		# being a strategy.
+		_set_riposte(_riposte_window())
 		hit_taken.emit(0, BattleTypes.Outcome.DODGED, attempted)
 		return BattleTypes.Outcome.DODGED
 
@@ -205,7 +232,13 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.HIT
 	hit_taken.emit(damage, BattleTypes.Outcome.HIT, attempted)
-	_enter_stagger()
+	# Only a RIPOSTE cancels what the target was doing. An ordinary hit is
+	# damage and nothing else, which is the rule that makes an instant,
+	# unavoidable attack something a fight can survive: without it, a
+	# player mashing faster than the opponent's wind-up stun-locks it
+	# outright -- measured at 300 wins out of 300.
+	if staggers:
+		_enter_stagger()
 	return BattleTypes.Outcome.HIT
 
 ## The defensive action this fighter is committed to RIGHT NOW -- in any
@@ -289,8 +322,15 @@ func phase_duration() -> float:
 ##
 ## BattleReadabilityProbe PHASE G gates both halves -- the number here,
 ## tick by tick, and the bar FighterView actually draws from it.
+## A zero-length wind-up is NOT charging. It occupies WINDUP for a single
+## tick on its way to ACTIVE, and reporting that as a telegraph would
+## raise a bar for one frame and offer the AI a mark to aim a dodge at --
+## on an attack that is, by construction, unreactable. `_phase_total` is
+## the phase's own length, so this reads the timing rather than a flag.
 func is_charging() -> bool:
-	return state == BattleTypes.State.WINDUP and current_action == BattleTypes.Action.ATTACK
+	return state == BattleTypes.State.WINDUP \
+		and current_action == BattleTypes.Action.ATTACK \
+		and _phase_total > 0.0
 
 ## 0.0 at the first tick of the wind-up, 1.0 the moment it ends. Returns
 ## 0.0 when not charging, so a caller that forgets is_charging() gets an
@@ -300,9 +340,36 @@ func charge_progress() -> float:
 		return 0.0
 	return clampf(1.0 - _phase_left / _phase_total, 0.0, 1.0)
 
+## True while a successful dodge is still spendable. Read by the view (to
+## show the player they are owed something) and by FighterBrain (so the
+## AI spends its own reward the way a player would). Both of those are
+## facts about THIS fighter, which is the line the brain may not cross.
+func is_riposte_ready() -> bool:
+	return _riposte_left > 0.0
+
+## Whether the attack in flight was launched as a riposte. Read by
+## BattleArena when the strike resolves, to price it.
+func attack_is_riposte() -> bool:
+	return _attack_is_riposte
+
+func _set_riposte(value: float) -> void:
+	var was := _riposte_left > 0.0
+	_riposte_left = value
+	var now := _riposte_left > 0.0
+	if was != now:
+		riposte_changed.emit(now)
+
+func _riposte_window() -> float:
+	return profile.riposte_window_s if profile else 0.0
+
 func _begin_action(action: BattleTypes.Action) -> void:
 	current_action = action
 	_strike_spent = false
+	if action == BattleTypes.Action.ATTACK:
+		# Spent at the tap whether or not it was owed, so one dodge buys
+		# exactly one riposte and a player cannot bank two.
+		_attack_is_riposte = _riposte_left > 0.0
+		_set_riposte(0.0)
 	_buffered_action = BattleTypes.Action.NONE
 	_buffer_left = 0.0
 	action_started.emit(action)
@@ -354,6 +421,9 @@ func _set_phase(next_state: BattleTypes.State) -> void:
 func _enter_stagger() -> void:
 	current_action = BattleTypes.Action.NONE
 	_strike_spent = false
+	# Being staggered loses an unspent riposte: it was a window of free
+	# time, and this fighter no longer has any.
+	_set_riposte(0.0)
 	_buffered_action = BattleTypes.Action.NONE
 	_buffer_left = 0.0
 	state = BattleTypes.State.STAGGER
@@ -370,6 +440,7 @@ func _apply_damage(amount: int) -> void:
 	state = BattleTypes.State.KO
 	_phase_left = 0.0
 	_phase_total = 0.0
+	_set_riposte(0.0)
 	state_changed.emit(state, current_action)
 	knocked_out.emit()
 

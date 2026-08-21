@@ -195,13 +195,15 @@ func _on_player_action(action: BattleTypes.Action) -> void:
 ## same place one line earlier.
 func _on_player_strike() -> void:
 	var attempted := opponent.last_defence()
-	var outcome := opponent.receive_strike(_damage_of(player))
+	var riposte := player.attack_is_riposte()
+	var outcome := opponent.receive_strike(_damage_of(player, riposte), riposte)
 	_tally.note_attack_resolved(outcome)
 	hud.report_strike(true, outcome, attempted)
 
 func _on_opponent_strike() -> void:
 	var attempted := player.last_defence()
-	var outcome := player.receive_strike(_damage_of(opponent))
+	var riposte := opponent.attack_is_riposte()
+	var outcome := player.receive_strike(_damage_of(opponent, riposte), riposte)
 	# Same (attempted, outcome) pair the HUD is about to turn into
 	# "ESQUIVE RATEE" on the next line, taken from the same read: the
 	# counter and the word the player sees cannot drift.
@@ -304,8 +306,18 @@ func _evade_hi(attacker: Fighter, defender: Fighter) -> float:
 func _windup_of(fighter: Fighter) -> float:
 	return fighter.profile.attack_windup_s if fighter.profile else 0.0
 
-func _damage_of(fighter: Fighter) -> int:
-	return fighter.profile.attack_damage if fighter.profile else 0
+## What one strike costs, and whether it cancels what the target was
+## doing. BOTH answers come from the same fact -- was this attack thrown
+## off a successful dodge -- so they cannot drift apart into a heavy blow
+## that does not stagger or a chip that does.
+##
+## Priced HERE rather than inside Fighter for the reason the whole
+## resolution lives here: a fighter must not have to know anything about
+## the one in front of it, and pricing is half of resolving.
+func _damage_of(fighter: Fighter, riposte: bool) -> int:
+	if fighter.profile == null:
+		return 0
+	return fighter.profile.damage_for(riposte)
 
 ## `--seed=<int>` passed after a bare `--`, or base_seed. Deliberately a
 ## copy of DevSeed.seed_value()'s six lines rather than a call to it --

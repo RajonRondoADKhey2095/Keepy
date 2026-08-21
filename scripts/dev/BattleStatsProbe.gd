@@ -270,12 +270,22 @@ func _phase_f_real_fight() -> void:
 	BattleStats.record_finished.connect(on_record)
 
 	var ticks := 0
-	# A caricature player: attack sometimes, dodge otherwise. Enough to
-	# generate every counter without being a strategy under test.
+	# A caricature player: alternate attack and dodge. Enough to generate
+	# every counter without being a strategy under test.
+	#
+	# Alternates on each ACCEPTED action rather than on `ticks % 3`, which
+	# is what this did until lot 8 and which was quietly fragile: the
+	# player is only ever asked while free, so the choice depended on the
+	# lockout length modulo 3. Lot 8's instant attack made that lockout
+	# exactly 51 ticks, the caricature attacked and never dodged again,
+	# and a probe that exists to see every counter move stopped seeing
+	# half of them. A toggle cannot resonate with a timing.
+	var want_attack := true
 	while arena._running and ticks < MAX_FIGHT_TICKS:
 		if arena.player.is_free():
 			arena.player.request_action(
-				BattleTypes.Action.ATTACK if ticks % 3 == 0 else BattleTypes.Action.DODGE)
+				BattleTypes.Action.ATTACK if want_attack else BattleTypes.Action.DODGE)
+			want_attack = not want_attack
 		arena._tick(TICK_S)
 		ticks += 1
 

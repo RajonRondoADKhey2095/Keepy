@@ -148,12 +148,19 @@ func _phase_b_no_leak() -> void:
 ## The defect lot 2 exists to fix: during an opponent's attack windup,
 ## something on the FIGHTER has to move, and it has to keep moving, so
 ## that "how far it has wound up" reads as "how long is left".
+##
+## Measured on the OPPONENT's profile since lot 8, and that is the whole
+## point of the phase rather than a detail: a telegraph is a thing the
+## DEFENDER reads, so it only ever exists on the fighter opposite. The
+## player's attack is instant and has no wind-up to animate -- running
+## this against it would sample a phase of length zero and assert that
+## nothing had moved yet, which is true and meaningless.
 func _phase_c_telegraph() -> void:
 	print("\n--- PHASE C: the attack telegraph is visible and grows ---")
-	var fighter := _make(KeepyProfile)
+	var fighter := _make(DummyProfile)
 	var slot := fighter.get_node("Body") as ModelSlot
 	var rest := slot.position
-	var windup: float = KeepyProfile.attack_windup_s
+	var windup: float = DummyProfile.attack_windup_s
 
 	fighter.request_action(BattleTypes.Action.ATTACK)
 	_expect(fighter.state == BattleTypes.State.WINDUP, "precondition: the fighter is winding up")
@@ -172,7 +179,7 @@ func _phase_c_telegraph() -> void:
 	_expect(late_recoil <= FighterView.WINDUP_RECOIL + 0.001, "the recoil stays inside its authored bound")
 
 	print("  tint toward alert (green) : %.3f -> %.3f  (base %.3f, alert %.3f)" % [
-		early_tint.g, late_tint.g, KeepyProfile.placeholder_color.g, FighterView.ALERT_COLOR.g])
+		early_tint.g, late_tint.g, DummyProfile.placeholder_color.g, FighterView.ALERT_COLOR.g])
 	_expect(early_tint != Color.WHITE, "the view took ownership of a material to tint")
 	_expect(late_tint.g < early_tint.g, "the danger colour ramps progressively, not as a flash")
 	fighter.free()
@@ -247,7 +254,7 @@ func _phase_e_interrupt() -> void:
 		fighter.advance(TICK_S)
 		ticks += 1
 	await _wait(0.05)
-	fighter.receive_strike(KeepyProfile.max_hp)
+	fighter.receive_strike(KeepyProfile.max_hp, true)
 	_expect(fighter.state == BattleTypes.State.KO, "precondition: the fighter is KO mid-lunge")
 	await _wait(FighterView.KO_S + 0.12)
 	print("  toppled to pitch %.1f deg, centre y %.3f" % [slot.rotation_degrees.x, slot.position.y])
@@ -317,8 +324,12 @@ func _run_fight(fight_seed: int, tick_cap: int, animate: bool) -> FightResult:
 	rng.seed = fight_seed
 	var brain := FighterBrain.new()
 	brain.setup(right, left, right.profile, rng)
-	left.strike_activated.connect(func() -> void: right.receive_strike(left.profile.attack_damage))
-	right.strike_activated.connect(func() -> void: left.receive_strike(right.profile.attack_damage))
+	left.strike_activated.connect(func() -> void:
+		var rip := left.attack_is_riposte()
+		right.receive_strike(left.profile.damage_for(rip), rip))
+	right.strike_activated.connect(func() -> void:
+		var rip := right.attack_is_riposte()
+		left.receive_strike(right.profile.damage_for(rip), rip))
 
 	var parts := PackedStringArray()
 	while result.ticks < tick_cap and left.is_alive() and right.is_alive():
@@ -488,6 +499,44 @@ func _phase_g_charge_bar() -> void:
 	_expect(_contrast(fill_colour, track_colour) >= CONTRAST_FLOOR,
 		"the fill is legible against its own track")
 
+	# =================================================================
+	# LOT 8: THE PLAYER HAS NO BAR AT ALL, AND THAT IS A GATE
+	#
+	# The bar was put on both fighters at lot 7 in the belief it helped
+	# the player. It did the opposite: it imposed a timing on the
+	# player's OWN attack, which is a thing they decide rather than a
+	# thing they read. Lot 8 makes the player's attack instant, so there
+	# is no wind-up to depict -- and the absence has to be checked, not
+	# assumed, because a one-frame flash of a full bar is exactly what a
+	# zero-length WINDUP would produce if FighterView keyed off the state
+	# instead of the phase having a length.
+	var player_fighter := world.get_node("PlayerFighter") as Fighter
+	var player_slot := player_fighter.get_node("Body") as ModelSlot
+	var player_bar := player_slot.get_node_or_null("Charge") as Node3D
+	_expect(player_bar != null, "the player's fighter still carries the same scene geometry")
+	if player_bar != null:
+		player_fighter.reset()
+		await _wait(FighterView.CHARGE_OFF_S + 0.06)
+		var ever_shown := false
+		player_fighter.request_action(BattleTypes.Action.ATTACK)
+		for i in 8:
+			player_fighter.advance(TICK_S)
+			await get_tree().process_frame
+			if player_bar.visible:
+				ever_shown = true
+		print("    player's bar during a full instant attack : %s" % [
+			"SHOWN" if ever_shown else "never raised"])
+		_expect(not ever_shown,
+			"an instant attack never raises a bar, not even for one frame")
+		# is_visible_in_tree(), not the local flag: the band is a child of
+		# the bar, so what decides whether a pixel is drawn is the whole
+		# chain. Asserting the local flag would fail on a band that is
+		# hidden along with its parent -- correct behaviour reported as a
+		# defect.
+		var player_cue := player_bar.get_node_or_null("Cue") as MeshInstance3D
+		_expect(player_cue == null or not player_cue.is_visible_in_tree(),
+			"and no evade band is drawn on a fighter that never telegraphs")
+
 	# The authored mesh width and the constant FighterView re-centres with
 	# must agree, or the fill grows from the wrong place -- silently, and
 	# only visibly at fractions nobody screenshots.
@@ -600,7 +649,8 @@ func _dodge_at(fraction: float) -> bool:
 	var defender := _make(KeepyProfile)
 	var outcome := [BattleTypes.Outcome.MISSED]
 	attacker.strike_activated.connect(func() -> void:
-		outcome[0] = defender.receive_strike(attacker.profile.attack_damage))
+		var rip := attacker.attack_is_riposte()
+		outcome[0] = defender.receive_strike(attacker.profile.damage_for(rip), rip))
 	attacker.request_action(BattleTypes.Action.ATTACK)
 	var tapped := false
 	var ticks := 0
