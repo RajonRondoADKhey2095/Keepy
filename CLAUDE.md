@@ -8258,3 +8258,28 @@ UNIQUEMENT dans le build web).
    chaque telegraphe** (chiffres ci-dessus). Mesure, argumentee, non corrigee.
 3. `ai_reaction_delay_s` a change de sens et n'est plus le cadran de
    difficulte qu'il etait.
+
+### Deploiement staging du lot 4 (palier 1, automatique)
+
+`staging` `0fadccf` (merge `--no-ff`, arbre **byte-identique** a la branche
+feature, verifie avant le push : meme hash d'arbre des deux cotes). CI run
+**#172** (id `32466399904`) **verte en 3 min 57 s** (09:07:43 -> 09:11:40 UTC)
+-- `Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement skippe. **`main` NON touche** (palier 2, gate Mathieu apres
+validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** : l'egress direct vers
+`keepy-staging.vercel.app` est refuse par le proxy du sandbox (`http=000`,
+re-teste et pas suppose), donc via `mcp__Vercel__web_fetch_vercel_url`.
+`index.service.worker.js` sert **`CACHE_VERSION = '1787303471|4112654'`** =
+**09:11:11 UTC**, c'est-a-dire A L'INTERIEUR de la fenetre du run #172 --
+l'alias sert donc bien ce build et pas le precedent (lot 3 : `1787255094`,
+19:44:54 la veille). `x-vercel-cache: MISS`, `age: 0`, `last-modified` colle
+a l'instant de la requete : trois signaux independants qui disent que ce
+n'est pas une reponse de cache.
+
+⚠️ **Note de format, sans consequence** : le `CACHE_VERSION` porte desormais
+un suffixe `|4112654` que les lots precedents n'avaient pas. Seule la partie
+avant le `|` est l'epoch d'export ; c'est elle le discriminateur, et elle a
+bien avance.
+
