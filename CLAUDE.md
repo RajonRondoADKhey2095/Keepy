@@ -9540,3 +9540,215 @@ apres l'autre, elles sont **byte-identiques sur les DEUX flux** (2670 et
 2149 octets des deux cotes). **Comparer les TAILLES avant de comparer les
 contenus** : meme famille que le faux-rouge par import tronque deja
 consigne, et une sortie tronquee ne se signale pas elle-meme.
+
+## KEEPY BATTLE, LOT 9 : REEQUILIBRAGE DES DEGATS -- le ratio baisse, martelage NE bouge PAS (21 aout 2026)
+
+Branche `claude/lot-9-damage-rebalance-pxw02t`, partie de `staging` (`054c8dc`,
+lot 8). Retour device : « les attaques du hibou infligent des degats enormes,
+disproportionne », et les deux symptomes a la fois -- le joueur meurt vite ET
+n'arrive pas a faire baisser la vie de l'adversaire.
+
+### PHASE 0 -- les chiffres re-verifies, et un etaient faux dans le brief
+
+Le brief tablait sur « 64 PV joueur -> mort en 6 coups ». **Faux, mesure dans
+les `.tres` et pas cru sur parole** : `keepy.tres.max_hp = 42`, pas 64 (64 est
+le `max_hp` de **Sparring**, l'adversaire). Avec `attack_damage` adverse a 12,
+un joueur passif meurt en `ceil(42/12) = 4` coups, pas 6. Le ratio
+`adv_dmg/chip = 12/5 = 2,4x` cite dans le brief, lui, etait exact.
+
+### PHASE 1 -- le conflit trouve par le sweep : le ratio cible casse le martelage
+
+**Le vrai risque du lot n'etait pas dans le brief.** Un sweep en grille
+(banc Python jetable reproduisant la FSM au tick pres, puis confirme sur
+`BattleDefenseProbe` PHASE D -- le vrai banc, permanent, deja dans le depot)
+montre que le taux de victoire du **martelage** est gouverne par une course de
+DPS pure : `chip / cycle_joueur` contre `adv_dmg / cycle_adverse`. Monter le
+chip sans toucher `attack_recovery_s` du joueur fait **exploser** le
+martelage :
+
+| adv_dmg | chip | ratio | martelage (rec=0.72 inchangee) |
+|---|---|---|---|
+| 12 (livre lot 8) | 5 (livre lot 8) | 2,40x | **11,7 %** (baseline) |
+| 10 | 6 | 1,67x | **59,0 %** |
+| 10 | 7 | 1,43x (cible du brief) | **63,3 %** |
+| 11 | 8 | 1,38x | **94,3 %** |
+
+**Directement au-dela de 8 dmg de chip, le martelage devient QUASI CERTAIN
+(94-100 %).** Un ratio de 1,43x tel que suggere par le brief, applique
+litteralement (chip 5->7, adv 12->10, rien d'autre), aurait rouvert
+exactement l'exploit que les lots 7 et 8 ont ferme a la sueur -- « il suffit
+d'attaquer » serait redevenu vrai.
+
+### Le levier trouve, et il n'etait PAS dans le perimetre suggere : `attack_recovery_s` du JOUEUR
+
+`attack_recovery_s` ralentit le cycle de chip SANS ralentir la riposte
+(meme champ de timing, mais la riposte n'est quasi jamais throttlee par lui
+puisqu'elle n'est tiree qu'apres une esquive reussie -- **mesure, pas
+suppose** : `read+riposte`/`read+riposte-sloppy` restent a 100,0/14,0s et
+94-96%/17,4-17,8s sur TOUTE la plage de recovery testee, 0,72 a 1,24). Sweep
+fin a `adv=10 chip=7` (ratio 1,43x, la valeur suggeree par le brief) :
+
+| `attack_recovery_s` joueur | martelage (3 graines) | chip DPS |
+|---|---|---|
+| 0,72 (livre lot 8) | 63,3 / 66,3 % | -- |
+| 0,96 | 44,7 / 46,3 / 40,3 % | -- |
+| 1,04 | 28,3 / 24,3 / 24,3 % | -- |
+| 1,12 | 17,3 / 14,3 / 11,7 % | -- |
+| **1,16 (retenu)** | **7,7 / 10,0 / 6,3 %** | 5,47 (baseline 5,95) |
+| 1,20 | 6,3 / 4,0 / 3,7 % | -- |
+| 1,24 | 1,7 / 3,0 / 2,7 % | -- |
+
+⚠️ **La courbe n'est PAS monotone -- resonance, meme famille que celle deja
+documentee au lot 7/8 sur ce meme champ.** Un point isole (ex. rec=0,88 : le
+sweep montrait 95-97% de martelage, PIRE qu'a 0,72) aurait pu faire choisir
+une fausse zone sure. `1,16` a ete verifie stable sur 3 graines independantes
+et n'est pas sur un pic.
+
+### Configuration retenue : EXACTEMENT le point suggere par le brief, PLUS le levier necessaire
+
+`dummy.tres` (Sparring) : `attack_damage 12 -> 10`.
+`keepy.tres` (Keepy) : `attack_damage 5 -> 7`, **`attack_recovery_s 0,72 ->
+1,16`** (le champ non prevu par le brief, requis pour tenir « martelage reste
+non dominant »).
+
+`riposte_damage` **INCHANGE** des deux cotes (14 / 16) : ratio riposte/chip
+Keepy `14/7 = 2,0x` (contre 2,8x avant) -- juge suffisant, la riposte reste
+strictement plus forte ET la seule a staggerer (`BattleDefenseProbe` PHASE C2
+gate `riposte_damage > attack_damage`, verifie).
+
+Hits pour tuer (unguarded, worst case) :
+- joueur (42 PV) vs adversaire : `ceil(42/12)=4` avant -> `ceil(42/10)=5`
+  apres (**+25% de survie**).
+- adversaire (64 PV) vs chip seul : `ceil(64/5)=13` avant -> `ceil(64/7)=10`
+  apres (**chip plus fort, moins de coups pour vider la barre**).
+- adversaire vs riposte seule : `ceil(64/14)=5`, inchange (la riposte reste le
+  chemin de kill rapide).
+
+### Validation, sur le VRAI banc du depot (`BattleDefenseProbe` PHASE D), pas une approximation
+
+`BattleDefenseProbe` embarque deja un banc **permanent** (reported, jamais
+gate) qui pilote les DEUX combattants (le vrai `FighterBrain` cote
+adversaire, une politique caricaturale cote joueur, chaque tap payant une
+latence humaine 300-450ms) -- exactement la methode que ce lot demandait,
+deja ecrite. **3 graines independantes** (`20260821`, `31415926`, `7654321`
+-- edit temporaire de la constante interne, jamais commite, revert avant tout
+commit), 300 combats chacune, 900 combats par config :
+
+| politique | AVANT (lot 8, moyenne 3 graines) | APRES (lot 9, moyenne 3 graines) |
+|---|---|---|
+| **martelage** | **8,2 %** (8,0/7,7/9,0) | **8,2 %** (7,3/8,0/9,3) -- **inchange** |
+| dodge-only | 0,0 % (par arithmetique) | 0,0 % -- inchange |
+| panic-dodge | 0,0 % | 0,0-0,3 % -- inchange |
+| read+riposte (parfait) | 99,8-100,0 % | 99,3-100,0 % -- inchange |
+| **read+riposte-sloppy (imparfait)** | **77,3 %** (80,0/72,7/79,3) | **80,1 %** (82,0/78,3/80,0) |
+| duree (sloppy) | 14,5-14,9s | 14,9-15,0s |
+
+**Le martelage ne bouge PAS d'un point sur la moyenne des 3 graines** --
+c'etait l'invariant a proteger, et le sweep de la section precedente est ce
+qui l'a garanti plutot que de le decouvrir apres coup. **Le lecteur imparfait
+gagne PLUS souvent dans les 3 graines sur 3** (82,0>80,0 ; 78,3>72,7 ;
+80,0>79,3) -- amelioration modeste (+2,8 points en moyenne) mais
+**consistante**, pas un artefact d'une seule graine chanceuse. La cible du
+brief (« le joueur imparfait doit gagner PLUS souvent qu'au lot 8 ») est donc
+atteinte, avec l'honnetete que ce n'est pas un saut spectaculaire.
+
+⚠️ **Reference unique-graine a connaitre** : la valeur `80,0 %` citee dans le
+brief comme « base lot 8 » est la sortie de la graine par defaut de la sonde
+(`20260821`), et un seul run supplementaire a une autre graine (`31415926`)
+donne **72,7 %** pour ce MEME code -- un ecart de 7+ points venant de la seule
+graine, sur 300 combats. **Ne jamais lire un seul run de PHASE D comme une
+verite absolue** ; les 3 graines ci-dessus existent pour ca.
+
+### PHASE 2 -- l'esquive-panique : `dodge_recovery_s` est MECANIQUEMENT DECOUPLE, verifie sur le vrai banc
+
+Le brief demandait de regarder `dodge_recovery_s` pour adoucir la lecon
+severe de l'esquive-panique (100 % de defaites). **Reponse franche : ce
+champ n'a AUCUN effet sur ce policy, ni en Python ni sur le vrai banc du
+depot -- verifie par edit temporaire + revert, pas suppose.**
+
+```
+dodge_recovery_s=0.20  panic-dodge wins   1/300 (  0.3%)  mean  11.3s
+dodge_recovery_s=0.28  panic-dodge wins   0/300 (  0.0%)  mean  11.3s
+dodge_recovery_s=0.36  panic-dodge wins   0/300 (  0.0%)  mean  11.3s
+```
+
+**Duree ET taux de victoire identiques au bruit pres sur toute la plage.**
+Lu dans le code de la sonde (`BattleDefenseProbe.gd::_policy_fight`) : le
+panic-dodge tape sa DODGE **au tick meme ou la barre apparait** (`t=0` du
+windup adverse, zero latence de reaction meme), une seule fois par
+telegraphe, sans retenter. Le succes d'un tel tap depend uniquement de
+`dodge_windup_s` et `dodge_active_s` (est-ce que la fenetre active, calee sur
+CE tap, couvre l'instant du coup) -- `dodge_recovery_s` ne gouverne QUE le
+cout d'un enchainement de plusieurs esquives (spam), jamais la reussite d'un
+tap unique deja tire. Un tap a `t=0` a besoin de `dodge_active_s >= W - dw`
+(soit `>= 0,85s`, plus du DOUBLE de la valeur actuelle 0,40s) pour esperer
+couvrir le coup -- une largeur qui, mecaniquement, ferait aussi decoller le
+spam d'esquive continu par le meme argument de duty-cycle qui a motive le
+`dodge_recovery_s=0,36` actuel (piste testee en Python : `dodge_active_s`
+0,40->0,50->0,55 fait passer panic-dodge de 0% a 68% a 100%, un saut abrupt
+dans la meme zone que celle documentee comme dangereuse pour le spam).
+
+**Aucune valeur de `dodge_recovery_s` ne satisfait donc l'objectif du
+brief, parce que ce n'est pas la variable en jeu -- dit franchement plutot
+que choisir un compromis silencieux.** Le levier reel serait
+`dodge_active_s`/`dodge_windup_s`, hors du champ que le brief a nomme, et son
+elargissement porte un risque de spam documente sur cet axe meme. **NON
+touche dans ce lot** -- `dodge_recovery_s` reste a `0,36` des deux cotes,
+inchange. Une future session qui voudrait vraiment adoucir l'esquive-panique
+devrait ouvrir son propre lot sur `dodge_active_s`, avec sa propre passe de
+validation device (le risque de spam n'a pas ete mesure sur le vrai banc,
+seulement argumente par le duty-cycle).
+
+### Sondes rejouees, toutes exit 0
+
+`BattleContractProbe` (46/46), `BattleDefenseProbe` (36/36, PHASE D
+rapportee ci-dessus), `BattleReadabilityProbe` (65/65), `BattleStatsProbe`
+(83/83), `ProbeTimeoutAudit` (37 sondes scenes armees), `AssetContractAudit`
+(12/12 visuels, 0/10 colliders deplaces), `DeathModelAudit`,
+`ChargerShapeProbe`. Aucune assertion codee en dur sur les anciennes valeurs
+de degats/recovery n'a ete trouvee -- **verifie par grep, pas suppose** :
+toutes les sondes lisent `KeepyProfile.attack_damage`/`riposte_damage`/
+`attack_recovery_s` etc. directement sur les `.tres`, jamais un litteral --
+c'est la discipline que `damage_for()` (le point unique de prix) impose
+depuis le lot 8.
+
+`GROUP_BLOCKS` de `BattleTally` reste fige a zero (rules Firestore
+deployees, `hasAll(statKeys())`), inchange par ce lot -- aucun champ de
+`BattleStats` ou des rules n'est touche.
+
+### Build et export
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre `Content-Length` avant
+extraction -- le piege de troncature silencieuse deja consigne). Import
+headless **exit 0** (24 `.scn`, import complet verifie et pas suppose),
+export Web release **exit 0**. `index.wasm` **35 376 909 octets**, md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b` -- **identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur**, coherent : ce lot
+ne change que 3 valeurs dans 2 fichiers `.tres`. Piege payload verifie :
+**0** ligne `Storing File` pour `assets_source`, `scripts/dev`, `docs`, ou
+`web`. `index.pck` 5 762 912 octets (export unique et propre, `build/` et
+`.godot/` supprimes avant -- a lire avec la mise en garde permanente sur son
+instabilite).
+
+### Reste ouvert
+
+1. **Jugement device, seul juge** : est-ce que le ratio 1,43x et la
+   recuperation allongee du joueur (0,72->1,16s, +61%) se SENTENT justes --
+   chaque coup ordinaire est plus fort (+40%) mais moins frequent, et
+   l'amelioration mesuree du lecteur imparfait est reelle mais modeste
+   (+2,8 points en moyenne, pas un bond).
+2. **L'esquive-panique reste une lecon a 100% de defaite**, non adoucie --
+   argumente comme mecaniquement hors de portee de `dodge_recovery_s`, avec
+   la piste reelle (`dodge_active_s`) nommee et deliberement pas prise dans
+   ce lot.
+3. Le riposte/chip a 2,0x (contre 2,8x avant) n'a pas ete mesure comme
+   insuffisant, mais n'a pas non plus ete confirme comme le point d'equilibre
+   ideal -- si un futur retour device dit que la riposte "ne se sent plus
+   speciale", c'est le premier chiffre a revisiter.
+4. Toujours aucun son, aucune particule, aucun second adversaire, aucune
+   progression, aucun brain adaptatif : hors perimetre, inchange.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
+export et sondes verts).
