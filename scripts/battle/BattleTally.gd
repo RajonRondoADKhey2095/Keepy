@@ -26,7 +26,6 @@ class_name BattleTally
 ##             resolves, so it is attempted-but-neither.
 ##   dodges  : most dodges face no incoming strike at all -- pressing
 ##             dodge into empty air is attempted-but-neither.
-##   blocks  : same.
 ##
 ## So the relation is `<=`, never `==`, and `attempted - (hit + missed)`
 ## is a real number a dashboard can read as "commitments that never got
@@ -57,6 +56,30 @@ const FIELD_WINS := "wins"
 const FIELD_LOSSES := "losses"
 const GROUP_ATTACKS := "attacks"
 const GROUP_DODGES := "dodges"
+## =====================================================================
+## FROZEN AT ZERO SINCE LOT 7 -- KEPT ON PURPOSE, AND NOT AN OVERSIGHT
+##
+## Lot 7 deleted the GUARD action, so nothing can ever increment this
+## group again: `_group_of()` no longer maps anything to it, and there is
+## no Outcome.BLOCKED to resolve into it. Every write from here on sends
+## blocks.attempted/hit/missed as 0.
+##
+## It is NOT removed, because the Firestore rules deployed on
+## keepy-8df91 (firestore.rules, live since 21 August) require the key:
+## `statKeys()` lists 'blocks' and the create/update paths assert both
+## hasOnly(statKeys()) AND hasAll(statKeys()). A write without the group
+## would be REFUSED outright -- every battle stat in the game would stop
+## recording, silently, because BattleStats never raises.
+##
+## Removing it therefore needs a rules change, and rules only deploy on a
+## push to main (.github/workflows/firestore-rules.yml is scoped to that
+## branch by design). Lot 7 does not go to main. The monotonicity rule is
+## satisfied meanwhile: an increment of 0 is not a decrease.
+##
+## Whoever does remove it must do the two halves in this order -- first
+## ship a client that stops sending the key would FAIL hasAll, so it is
+## the RULES that must drop it first, then the client. Getting that
+## backwards breaks recording for everyone until the second half lands.
 const GROUP_BLOCKS := "blocks"
 const GROUPS := [GROUP_ATTACKS, GROUP_DODGES, GROUP_BLOCKS]
 const SUB_ATTEMPTED := "attempted"
@@ -82,10 +105,8 @@ func reset() -> void:
 	_won = false
 
 ## A commitment. Called from Fighter.action_started on the PLAYER only.
-## GUARD and DODGE map to their own groups; ATTACK to attacks; anything
-## else (NONE, and FEINT which is opponent-only and can never reach here)
-## is ignored rather than silently folded into a group it does not belong
-## to.
+## DODGE maps to its own group and ATTACK to attacks; NONE is ignored
+## rather than silently folded into a group it does not belong to.
 func note_action_started(action: BattleTypes.Action) -> void:
 	var group := _group_of(action)
 	if group.is_empty():
@@ -95,10 +116,8 @@ func note_action_started(action: BattleTypes.Action) -> void:
 ## The player attacked and the strike has been resolved against the
 ## opponent.
 ##
-## HIT is the only outcome counted as a hit. BLOCKED deals chip damage
-## and is deliberately counted as MISSED: the question this counter
-## answers is "did the attack land cleanly", and an attack the opponent
-## guarded did not. MISSED (opponent already KO) is a no-op resolution
+## HIT is the only outcome counted as a hit. DODGED did not land, so it
+## counts as missed. MISSED (opponent already KO) is a no-op resolution
 ## and counts as missed too, which is what it is.
 func note_attack_resolved(outcome: BattleTypes.Outcome) -> void:
 	if outcome == BattleTypes.Outcome.HIT:
@@ -116,18 +135,14 @@ func note_attack_resolved(outcome: BattleTypes.Outcome) -> void:
 ## the word the player just read would be a second, invisible truth.
 ##
 ##   DODGED  -> dodges.hit      the evade worked
-##   BLOCKED -> blocks.hit      the guard held
-##   HIT     -> .missed of whichever defence was committed
-##              ("ESQUIVE RATEE" / "GARDE BRISEE"); nothing at all when
-##              the player had committed to no defence, because being
-##              caught mid-attack or standing still is not a failed
-##              defence and counting it as one would poison the ratio.
+##   HIT     -> dodges.missed    the evade was mistimed ("ESQUIVE RATEE");
+##              nothing at all when the player had committed to no
+##              defence, because being caught mid-attack or standing
+##              still is not a failed defence and counting it as one
+##              would poison the ratio.
 func note_defence_resolved(attempted: BattleTypes.Action, outcome: BattleTypes.Outcome) -> void:
 	if outcome == BattleTypes.Outcome.DODGED:
 		_groups[GROUP_DODGES][SUB_HIT] += 1
-		return
-	if outcome == BattleTypes.Outcome.BLOCKED:
-		_groups[GROUP_BLOCKS][SUB_HIT] += 1
 		return
 	if outcome != BattleTypes.Outcome.HIT:
 		return
@@ -207,5 +222,6 @@ func _group_of(action: BattleTypes.Action) -> String:
 	match action:
 		BattleTypes.Action.ATTACK: return GROUP_ATTACKS
 		BattleTypes.Action.DODGE: return GROUP_DODGES
-		BattleTypes.Action.GUARD: return GROUP_BLOCKS
+	# No branch to GROUP_BLOCKS: see its declaration. The group survives
+	# as a schema field the deployed rules insist on, not as a counter.
 	return ""
