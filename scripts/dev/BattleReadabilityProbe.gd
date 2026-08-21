@@ -19,11 +19,12 @@ extends Node
 ##   PHASE B  engine time cannot leak into the fight, exercised by
 ##            running the SAME fight with tweens actually stepping
 ##   PHASE C  an incoming attack is visible on the fighter, and GROWS
-##   PHASE D  attack, guard and dodge do not look alike
+##   PHASE D  attack and dodge do not look alike
 ##   PHASE E  an interrupted animation is replaced, never stacked
 ##   PHASE F  the two HUD contradictions the captures showed
-##   PHASE G  the attack marker: legible against BOTH backgrounds, and
-##            shown for attacks and nothing else (lot 6)
+##   PHASE G  the CHARGE BAR (lot 7): full fill IS the instant of impact,
+##            to the frame; legible against BOTH backgrounds; raised for
+##            an attack and for nothing else
 ##
 ## PHASE B is the one that earns the file. Everything else here could be
 ## satisfied by an animation layer that also, quietly, changed the fight.
@@ -54,7 +55,7 @@ func _ready() -> void:
 	await _phase_d_silhouettes()
 	await _phase_e_interrupt()
 	_phase_f_hud()
-	await _phase_g_marker()
+	await _phase_g_charge_bar()
 	print("--- %d check(s), %d failure(s) ---" % [_checks, _failures])
 	get_tree().quit(1 if _failures > 0 else 0)
 
@@ -178,14 +179,13 @@ func _phase_c_telegraph() -> void:
 
 # ---------------------------------------------------------------- PHASE D
 
-## Three actions, three silhouettes. A guard that looked like an attack
-## would be worse than no animation at all: it would actively mislead.
+## Two actions, two silhouettes. A dodge that looked like an attack would
+## be worse than no animation at all: it would actively mislead.
 func _phase_d_silhouettes() -> void:
-	print("\n--- PHASE D: attack, guard and dodge do not look alike ---")
+	print("\n--- PHASE D: attack and dodge do not look alike ---")
 	var poses := {}
 	for entry in [
 		["ATTACK", BattleTypes.Action.ATTACK],
-		["GUARD", BattleTypes.Action.GUARD],
 		["DODGE", BattleTypes.Action.DODGE],
 	]:
 		var label: String = entry[0]
@@ -211,9 +211,11 @@ func _phase_d_silhouettes() -> void:
 
 	_expect(poses["ATTACK"]["forward"] > 0.1, "ATTACK lunges TOWARD the opponent")
 	_expect(poses["DODGE"]["forward"] < -0.1, "DODGE slips AWAY from the opponent")
-	_expect(poses["GUARD"]["height"] < 0.98, "GUARD braces low instead of moving in")
-	_expect(poses["ATTACK"]["forward"] > poses["GUARD"]["forward"], "ATTACK and GUARD are not the same pose")
-	_expect(poses["GUARD"]["forward"] > poses["DODGE"]["forward"], "GUARD and DODGE are not the same pose")
+	# Opposite SIGNS, not merely different numbers: the two poses have to
+	# be distinguishable at a glance on a phone, and "one is a bit further
+	# forward than the other" is not that.
+	_expect(poses["ATTACK"]["forward"] > poses["DODGE"]["forward"] + 0.3,
+		"ATTACK and DODGE move in opposite directions, not just by different amounts")
 
 # ---------------------------------------------------------------- PHASE E
 
@@ -338,41 +340,94 @@ func _run_fight(fight_seed: int, tick_cap: int, animate: bool) -> FightResult:
 
 # ---------------------------------------------------------------- PHASE G
 
-## The engine-side attack marker, added at lot 6 because the tint alone
-## stopped being able to carry the telegraph once real .glb art landed.
-## Measured on the shipped Battle scene, rest vs fully-alarmed, averaged
-## over the fighter's own pixels: the player's squirrel is BETTER off than
-## the capsule it replaced (2.21:1 against 1.63:1 in luminance), but the
-## opponent's owl loses the channel that carried most of the old cue --
-## its hue swing falls from 159.6 degrees to 10.2, because a blue capsule
-## turning red is a near-complementary flip and a brown owl turning red is
-## barely a hue change at all. The opponent is the fighter a player
-## actually reads. Full table in FighterView's header.
+## THE CHARGE BAR -- the whole of lot 7, in one phase.
 ##
-## What this phase gates is the property that makes the marker worth
-## having: its legibility is a fact about GEOMETRY AND COLOURS THIS
-## PROJECT OWNS, so it cannot be weakened by a future asset the way the
-## tint was. Two prisms, bright core inside a near-black outline, and the
-## assertion is that at least one of the two clears 3.0:1 against each of
-## the two things it can be drawn over -- the dark sky above the arena and
-## the lit ground below it. Neither colour has to beat both; between them
-## they must leave no background that swallows the marker.
+## Lots 3, 4, 5 and 6 each closed a different, measured cause of the same
+## device report and none of them shifted it. The cause finally retained
+## is that the player knew an attack was COMING and never knew WHEN it
+## lands, so defending was a guess -- and a guess that fails is
+## indistinguishable from a button that does nothing.
 ##
-## And it gates the lot-2 rule the marker could most easily have broken:
-## it is shown for an attack telegraph and for nothing else. A marker over
-## a guard would make the colour channel mean two things again.
+## The bar states the instant. What this phase gates is that the
+## statement is TRUE, and it checks it on both halves separately, because
+## they can fail independently:
+##
+##   1. the FSM number, tick by tick: charge_progress() is elapsed/total
+##      through the wind-up and reaches 1.0 on the tick the strike
+##      leaves. That is arithmetic and it is checked as arithmetic.
+##   2. the DRAWN bar: the Fill mesh actually carries that fraction on
+##      the frame the blow is thrown. A correct number rendered a frame
+##      late would teach the wrong timing, which is why lot 7 reads it in
+##      _process() instead of animating it with a tween.
+##
+## It also carries forward the two things lot 6's marker phase gated, on
+## the geometry that replaced it: legibility against BOTH backdrops (the
+## bar is engine-side, so no future .glb can weaken it), and the lot-2
+## rule that this channel means an incoming attack and nothing else.
 const CONTRAST_FLOOR := 3.0
 
-func _phase_g_marker() -> void:
-	print("\n--- PHASE G: the attack marker is asset-independent and attack-only ---")
+func _phase_g_charge_bar() -> void:
+	print("\n--- PHASE G: the charge bar completes exactly at impact ---")
+
+	# --- 1. the number, on a bare fighter, tick by tick -----------------
+	var solo := _make(DummyProfile)
+	var struck := [-1]
+	var ticks := [0]
+	solo.strike_activated.connect(func() -> void: struck[0] = ticks[0])
+	solo.request_action(BattleTypes.Action.ATTACK)
+	_expect(solo.is_charging(), "an ATTACK wind-up reports itself as charging")
+	_expect(is_equal_approx(solo.charge_progress(), 0.0), "and starts at an empty bar")
+
+	var last_progress := 0.0
+	var monotone := true
+	var worst_error := 0.0
+	var total: float = DummyProfile.attack_windup_s
+	while struck[0] < 0 and ticks[0] < 600:
+		# Counted BEFORE the step, so `ticks[0]` is the index of the tick
+		# being executed and `struck[0]` is the tick the blow left on --
+		# not the one before it. The strike fires from inside advance().
+		ticks[0] += 1
+		solo.advance(TICK_S)
+		if not solo.is_charging():
+			break
+		var elapsed := float(ticks[0]) * TICK_S
+		var progress := solo.charge_progress()
+		worst_error = maxf(worst_error, absf(progress - elapsed / total))
+		if progress < last_progress - 1e-6:
+			monotone = false
+		last_progress = progress
+	print("  wind-up %.3fs = %d ticks; strike left on tick %d" % [total, int(round(total / TICK_S)), struck[0]])
+	print("  worst |progress - elapsed/total| over the whole fill : %.6f" % worst_error)
+	_expect(struck[0] > 0, "the strike really did leave")
+	_expect(monotone, "the fill never goes backwards")
+	_expect(worst_error < 1e-4, "the fill fraction IS elapsed/total, not an approximation of it")
+	# The bar's promise, as a tick index. The strike leaves on the FIRST
+	# tick of ACTIVE, i.e. the tick after the last charging one, so the
+	# fill was within one tick of full when the blow was thrown -- which
+	# is the tightest a 60 Hz clock can be.
+	var last_charging_tick: int = struck[0] - 1
+	var progress_at_release := float(last_charging_tick) * TICK_S / total
+	print("  fill at the last charging tick : %.4f (one tick = %.4f of the bar)" % [
+		progress_at_release, TICK_S / total])
+	_expect(1.0 - progress_at_release <= TICK_S / total + 1e-6,
+		"the bar is full to within ONE TICK when the strike leaves")
+	_expect(not solo.is_charging(), "and stops charging the instant it does")
+	_expect(is_equal_approx(solo.charge_progress(), 0.0), "charge_progress() is 0 outside a wind-up")
+	# A dodge raises nothing: the bar is the attack channel and only that.
+	solo.reset()
+	solo.request_action(BattleTypes.Action.DODGE)
+	_expect(not solo.is_charging(), "a DODGE wind-up is NOT a charge")
+	solo.free()
+
+	# --- 2. the drawn bar, in the shipped scene -------------------------
 	var arena := BattleScene.instantiate()
 	add_child(arena)
 	await get_tree().process_frame
 	# The arena starts a real round the moment it enters the tree, and its
 	# brain drives the opponent every frame. Leaving it running would mean
-	# this phase measured a fighter it does not control -- the first
-	# version of it did, and read a marker raised by the AI's own attack
-	# as one raised by the guard this loop had just asked for.
+	# this phase measured a fighter it does not control -- lot 6's version
+	# of it did, and read a bar raised by the AI's own attack as one
+	# raised by the action this loop had just asked for.
 	arena.set_process(false)
 	arena.set_physics_process(false)
 	var world := arena.get_node("World") as Node3D
@@ -383,79 +438,189 @@ func _phase_g_marker() -> void:
 
 	var fighter := world.get_node("OpponentFighter") as Fighter
 	var slot := fighter.get_node("Body") as ModelSlot
-	var alert := slot.get_node_or_null("Alert") as Node3D
-	_expect(alert != null, "the fighter scene carries a Body/Alert marker")
-	if alert == null:
+	var bar := slot.get_node_or_null("Charge") as Node3D
+	_expect(bar != null, "the fighter scene carries a Body/Charge bar")
+	if bar == null:
+		arena.queue_free()
+		return
+	var fill := bar.get_node_or_null("Fill") as MeshInstance3D
+	var track := bar.get_node_or_null("Track") as MeshInstance3D
+	var cue := bar.get_node_or_null("Cue") as MeshInstance3D
+	_expect(fill != null and track != null and cue != null, "with a Track, a Fill and an evade Cue")
+	if fill == null or track == null or cue == null:
 		arena.queue_free()
 		return
 
-	var core := _marker_colour(alert, "Core")
-	var outline := _marker_colour(alert, "Outline")
-	print("  marker core %s, outline %s" % [core, outline])
+	# Raise it once so FighterView resolves the bar and paints it. The
+	# colours are FighterView constants and not authored in the .tscn, so
+	# what is gated below is what gets drawn.
+	fighter.request_action(BattleTypes.Action.ATTACK)
+	fighter.advance(TICK_S)
+	await _wait(0.05)
+	var fill_colour := _bar_colour(fill)
+	var track_colour := _bar_colour(track)
+	var cue_colour := _bar_colour(cue)
+	print("  fill %s, track %s, cue %s" % [fill_colour, track_colour, cue_colour])
+	_expect(fill_colour.is_equal_approx(FighterView.CHARGE_FILL_COLOR),
+		"the drawn fill carries FighterView.CHARGE_FILL_COLOR")
+	_expect(track_colour.is_equal_approx(FighterView.CHARGE_TRACK_COLOR),
+		"the drawn track carries FighterView.CHARGE_TRACK_COLOR")
+	_expect(cue_colour.is_equal_approx(FighterView.CHARGE_CUE_COLOR),
+		"the drawn evade band carries FighterView.CHARGE_CUE_COLOR")
 	print("  drawn over sky %s and ground %s" % [sky, ground])
 	for backdrop in [["sky", sky], ["ground", ground]]:
-		var name: String = backdrop[0]
+		var backdrop_name: String = backdrop[0]
 		var behind: Color = backdrop[1]
-		var best := maxf(_contrast(core, behind), _contrast(outline, behind))
-		print("    vs %-6s : core %.2f:1, outline %.2f:1, best %.2f:1" % [
-			name, _contrast(core, behind), _contrast(outline, behind), best])
-		_expect(best >= CONTRAST_FLOOR, "the marker clears %.1f:1 against the %s" % [CONTRAST_FLOOR, name])
+		var best := maxf(_contrast(fill_colour, behind), _contrast(track_colour, behind))
+		print("    vs %-6s : fill %.2f:1, track %.2f:1, best %.2f:1" % [
+			backdrop_name, _contrast(fill_colour, behind), _contrast(track_colour, behind), best])
+		_expect(best >= CONTRAST_FLOOR, "the bar clears %.1f:1 against the %s" % [CONTRAST_FLOOR, backdrop_name])
+		# The evade band stands PROUD of the track, so unlike the fill it
+		# is never seen against the bar -- it is always against one of
+		# these two, and it has to clear on its OWN rather than being
+		# carried by a neighbour.
+		print("    vs %-6s : cue  %.2f:1" % [backdrop_name, _contrast(cue_colour, behind)])
+		_expect(_contrast(cue_colour, behind) >= CONTRAST_FLOOR,
+			"the evade band clears %.1f:1 against the %s on its own" % [CONTRAST_FLOOR, backdrop_name])
+	# And the two halves have to be told apart from EACH OTHER, or the
+	# bar is one solid block whose fill nobody can locate.
+	print("    fill vs track : %.2f:1" % _contrast(fill_colour, track_colour))
+	_expect(_contrast(fill_colour, track_colour) >= CONTRAST_FLOOR,
+		"the fill is legible against its own track")
+
+	# The authored mesh width and the constant FighterView re-centres with
+	# must agree, or the fill grows from the wrong place -- silently, and
+	# only visibly at fractions nobody screenshots.
+	var authored_width: float = (fill.mesh as BoxMesh).size.x
+	print("    Fill mesh width %.3f, FighterView.CHARGE_WIDTH %.3f" % [authored_width, FighterView.CHARGE_WIDTH])
+	_expect(is_equal_approx(authored_width, FighterView.CHARGE_WIDTH),
+		"the scene's Fill width and the constant used to re-centre it are the same number")
 
 	# Attack-only, driven through the real FSM rather than by calling the
 	# view's helpers: the question is what a PLAYER sees during each
 	# action, and only the state machine decides that.
-	var view := fighter.get_node("View") as FighterView
-	var cases := {"ATTACK": BattleTypes.Action.ATTACK, "FEINT": BattleTypes.Action.FEINT,
-		"GUARD": BattleTypes.Action.GUARD, "DODGE": BattleTypes.Action.DODGE}
-	for tag in cases:
-		var action: BattleTypes.Action = cases[tag]
-		# Back to a PROVEN-clean marker first. Without this the loop would
-		# be reading the previous case's marker still retracting -- the
-		# fade is deliberately not instant -- and a guard would look like
-		# it had raised one. Asserting the clean state instead of merely
-		# waiting for it also gates the other half of the contract: the
-		# marker really does come back down.
+	for entry in [["ATTACK", BattleTypes.Action.ATTACK, true], ["DODGE", BattleTypes.Action.DODGE, false]]:
+		var tag: String = entry[0]
+		var action: BattleTypes.Action = entry[1]
+		var want: bool = entry[2]
 		fighter.reset()
-		await _wait(FighterView.ALERT_OFF_S + 0.06)
-		_expect(not alert.visible, "%s: precondition, the marker is down before the action" % tag)
+		await _wait(FighterView.CHARGE_OFF_S + 0.06)
+		_expect(not bar.visible, "%s: precondition, the bar is down before the action" % tag)
 		fighter.request_action(action)
 		fighter.advance(TICK_S)
 		await _wait(0.05)
-		var shown: bool = alert.visible and alert.scale.x > 0.01
-		var want := BattleTypes.is_attack_like(action)
-		print("    %-6s windup -> marker %s (want %s)" % [
-			tag, "SHOWN" if shown else "hidden", "SHOWN" if want else "hidden"])
-		_expect(shown == want, "%s %s the marker" % [tag, "raises" if want else "does not raise"])
+		print("    %-6s wind-up -> bar %s (want %s)" % [
+			tag, "SHOWN" if bar.visible else "hidden", "SHOWN" if want else "hidden"])
+		_expect(bar.visible == want, "%s %s the bar" % [tag, "raises" if want else "does not raise"])
 
-	# It has to grow, for the same reason the tint ramps: the size IS the
-	# clock. A marker that appears at full size says "an attack" and not
-	# "an attack, this soon".
+	# The drawn fill FOLLOWS the FSM, and is full on the frame the strike
+	# leaves. This is half 2 of the contract, and it is the half a tween
+	# would fail: the loop below yields a real frame per tick, so a
+	# tween-driven bar would be running on engine time against an FSM on
+	# fixed steps.
 	fighter.reset()
-	await _wait(0.05)
+	await _wait(FighterView.CHARGE_OFF_S + 0.06)
+	var release_fill := [-1.0]
+	var mid_fill := -1.0
+	fighter.strike_activated.connect(func() -> void: release_fill[0] = -2.0)
 	fighter.request_action(BattleTypes.Action.ATTACK)
-	fighter.advance(TICK_S)
-	await _wait(0.02)
-	var early: float = alert.scale.x
-	await _wait(fighter.telegraph_duration() * 0.7)
-	var late: float = alert.scale.x
-	print("    marker scale %.3f early -> %.3f late" % [early, late])
-	_expect(late > early + 0.1, "the marker GROWS over the telegraph rather than popping")
+	var frames := 0
+	while fighter.state == BattleTypes.State.WINDUP and frames < 600:
+		fighter.advance(TICK_S)
+		frames += 1
+		await get_tree().process_frame
+		if release_fill[0] == -2.0:
+			release_fill[0] = fill.scale.x
+		elif absf(fighter.charge_progress() - 0.5) < 0.02:
+			mid_fill = fill.scale.x
+	print("    drawn fill at ~50%% of the wind-up : %.4f" % mid_fill)
+	print("    drawn fill on the strike frame    : %.4f" % release_fill[0])
+	_expect(mid_fill > 0.4 and mid_fill < 0.6, "the drawn fill tracks the wind-up rather than jumping")
+	_expect(is_equal_approx(release_fill[0], 1.0), "and is exactly FULL on the frame the strike leaves")
+	# Left-aligned: a fill at fraction f must have its left edge where an
+	# empty one did, or the bar reads as a block growing outward from the
+	# middle instead of as a bar filling up.
+	var left_edge_full: float = fill.position.x - FighterView.CHARGE_WIDTH * 0.5 * fill.scale.x
+	print("    left edge at full : %.4f (half-width %.3f)" % [left_edge_full, FighterView.CHARGE_WIDTH * 0.5])
+	_expect(is_equal_approx(left_edge_full, -FighterView.CHARGE_WIDTH * 0.5),
+		"the fill grows from the left edge of the track, not from its centre")
+
+	# --- 3. the evade band marks the taps that actually work -----------
+	#
+	# The band is drawn from arithmetic in BattleArena. This checks it
+	# against the MECHANIC instead: it taps a dodge at the band's two
+	# edges and at its centre and asserts the blow is really evaded, and
+	# taps outside both edges and asserts it is not. A band that merely
+	# looked plausible would pass every assertion above this one.
+	var lo: float = arena._evade_lo(fighter, arena.player)
+	var hi: float = arena._evade_hi(fighter, arena.player)
+	print("    evade band on the opponent's bar : %.3f .. %.3f of the fill" % [lo, hi])
+	_expect(lo > 0.0 and hi > lo and hi < 1.0,
+		"the band is a real span inside the bar, not the whole of it")
+	print("    drawn band centre %.3f, span %.3f" % [
+		cue.position.x / FighterView.CHARGE_WIDTH + 0.5, cue.scale.x])
+	_expect(absf(cue.scale.x - (hi - lo)) < 1e-4, "the drawn band is exactly that span wide")
+	_expect(absf((cue.position.x / FighterView.CHARGE_WIDTH + 0.5) - (lo + hi) * 0.5) < 1e-4,
+		"and sits exactly where the span is")
+	var w: float = DummyProfile.attack_windup_s
+	# One tick inside each edge, because the FSM is quantised and the
+	# arithmetic is not: the band's own boundary tick can fall either
+	# side of a tick line.
+	var margin := TICK_S / w
+	for probe in [["just inside lo", lo + margin, true], ["centre", (lo + hi) * 0.5, true],
+			["just inside hi", hi - margin, true],
+			["well before lo", lo - 4.0 * margin, false],
+			["after hi", hi + 3.0 * margin, false]]:
+		var tag: String = probe[0]
+		var at: float = probe[1]
+		var want: bool = probe[2]
+		var evaded := _dodge_at(at)
+		print("    tap at %.3f of the bar (%-15s) -> %s (want %s)" % [
+			at, tag, "EVADED" if evaded else "hit", "EVADED" if want else "hit"])
+		_expect(evaded == want, "a dodge tapped %s %s" % [tag, "evades" if want else "does not evade"])
 
 	# Placed from what the slot really draws, not from a per-profile
 	# number -- so it is above the head of a 1.70 m owl and of a 1.35 m
 	# squirrel with nothing in either .tres saying so.
 	var head: float = slot.visual_aabb().end.y
-	print("    slot head at local y %.3f, marker at %.3f" % [head, alert.position.y])
-	_expect(alert.position.y > head, "the marker sits clear of the fighter it belongs to")
+	print("    slot head at local y %.3f, bar at %.3f" % [head, bar.position.y])
+	_expect(bar.position.y > head, "the bar sits clear of the fighter it belongs to")
+	var view := fighter.get_node("View") as FighterView
 	if view != null:
 		view.settle()
 	arena.queue_free()
 	await get_tree().process_frame
 
-func _marker_colour(alert: Node3D, child: String) -> Color:
-	var mesh := alert.get_node_or_null(child) as MeshInstance3D
-	if mesh == null:
-		return Color.MAGENTA
+## Does a dodge tapped at `fraction` of the attacker's charge bar evade
+## the blow? Run on real Fighters through the real resolution path, on
+## bare instances rather than the arena's, so nothing the arena is doing
+## can contribute.
+func _dodge_at(fraction: float) -> bool:
+	var attacker := _make(DummyProfile)
+	var defender := _make(KeepyProfile)
+	var outcome := [BattleTypes.Outcome.MISSED]
+	attacker.strike_activated.connect(func() -> void:
+		outcome[0] = defender.receive_strike(attacker.profile.attack_damage))
+	attacker.request_action(BattleTypes.Action.ATTACK)
+	var tapped := false
+	var ticks := 0
+	while attacker.state == BattleTypes.State.WINDUP and ticks < 400:
+		if not tapped and attacker.charge_progress() >= fraction:
+			tapped = true
+			defender.request_action(BattleTypes.Action.DODGE)
+		attacker.advance(TICK_S)
+		defender.advance(TICK_S)
+		ticks += 1
+	if not tapped:
+		defender.request_action(BattleTypes.Action.DODGE)
+	attacker.advance(TICK_S)
+	defender.advance(TICK_S)
+	var evaded: bool = outcome[0] == BattleTypes.Outcome.DODGED
+	attacker.free()
+	defender.free()
+	return evaded
+
+func _bar_colour(mesh: MeshInstance3D) -> Color:
 	var material := mesh.get_surface_override_material(0) as StandardMaterial3D
 	return material.albedo_color if material else Color.MAGENTA
 

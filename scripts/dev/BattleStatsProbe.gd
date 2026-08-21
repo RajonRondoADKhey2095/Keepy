@@ -59,24 +59,23 @@ func _phase_a_counting() -> void:
 	print("\n--- PHASE A: counting rules ---")
 	var t := BattleTally.new()
 	t.note_action_started(BattleTypes.Action.ATTACK)
-	t.note_action_started(BattleTypes.Action.GUARD)
 	t.note_action_started(BattleTypes.Action.DODGE)
 	t.note_action_started(BattleTypes.Action.NONE)
-	# FEINT is opponent-only and can never reach the player's tally; if it
-	# ever did, it must not silently become an attack.
-	t.note_action_started(BattleTypes.Action.FEINT)
 	var s := t.snapshot()
 	_expect(s["attacks"]["attempted"] == 1, "ATTACK counts one attempt")
-	_expect(s["blocks"]["attempted"] == 1, "GUARD counts one block attempt")
 	_expect(s["dodges"]["attempted"] == 1, "DODGE counts one dodge attempt")
 	_expect(
-		s["attacks"]["attempted"] + s["blocks"]["attempted"] + s["dodges"]["attempted"] == 3,
-		"NONE and FEINT are counted nowhere")
+		s["attacks"]["attempted"] + s["dodges"]["attempted"] == 2,
+		"NONE is counted nowhere")
+	# The frozen group. Lot 7 deleted GUARD, and the deployed Firestore
+	# rules still demand the key -- so the contract is now "always present,
+	# always zero", and it is asserted rather than assumed. A future lot
+	# that starts incrementing it again would fail here first.
+	_expect(s["blocks"]["attempted"] == 0 and s["blocks"]["hit"] == 0 and s["blocks"]["missed"] == 0,
+		"the blocks group survives the schema and stays at zero")
 
-	# The player attacking. BLOCKED is deliberately NOT a hit: chip damage
-	# is not a clean landing, and the counter answers "did it land".
+	# The player attacking.
 	_expect(_attack_case(BattleTypes.Outcome.HIT) == [1, 0], "attack HIT -> attacks.hit")
-	_expect(_attack_case(BattleTypes.Outcome.BLOCKED) == [0, 1], "attack BLOCKED -> attacks.missed")
 	_expect(_attack_case(BattleTypes.Outcome.DODGED) == [0, 1], "attack DODGED -> attacks.missed")
 	_expect(_attack_case(BattleTypes.Outcome.MISSED) == [0, 1], "attack MISSED -> attacks.missed")
 
@@ -84,9 +83,7 @@ func _phase_a_counting() -> void:
 	# a counter that disagreed with the word on screen would be a second,
 	# invisible truth.
 	_expect(_defence_case(BattleTypes.Action.DODGE, BattleTypes.Outcome.DODGED) == ["dodges", "hit"], "dodge that evades -> dodges.hit")
-	_expect(_defence_case(BattleTypes.Action.GUARD, BattleTypes.Outcome.BLOCKED) == ["blocks", "hit"], "guard that holds -> blocks.hit")
 	_expect(_defence_case(BattleTypes.Action.DODGE, BattleTypes.Outcome.HIT) == ["dodges", "missed"], "ESQUIVE RATEE -> dodges.missed")
-	_expect(_defence_case(BattleTypes.Action.GUARD, BattleTypes.Outcome.HIT) == ["blocks", "missed"], "GARDE BRISEE -> blocks.missed")
 	_expect(_defence_case(BattleTypes.Action.NONE, BattleTypes.Outcome.HIT) == ["", ""],
 		"caught with no defence committed counts as no failed defence")
 	_expect(_defence_case(BattleTypes.Action.ATTACK, BattleTypes.Outcome.HIT) == ["", ""],
@@ -127,19 +124,19 @@ func _phase_b_invariant() -> void:
 	# One commitment, two resolutions -- the shape a future lot could
 	# introduce by letting two strikes land inside one defensive action.
 	var broken := BattleTally.new()
-	broken.note_action_started(BattleTypes.Action.GUARD)
-	broken.note_defence_resolved(BattleTypes.Action.GUARD, BattleTypes.Outcome.BLOCKED)
-	broken.note_defence_resolved(BattleTypes.Action.GUARD, BattleTypes.Outcome.HIT)
+	broken.note_action_started(BattleTypes.Action.DODGE)
+	broken.note_defence_resolved(BattleTypes.Action.DODGE, BattleTypes.Outcome.DODGED)
+	broken.note_defence_resolved(BattleTypes.Action.DODGE, BattleTypes.Outcome.HIT)
 	var before: Dictionary = broken.snapshot()
-	_expect(before["blocks"]["attempted"] == 1 and before["blocks"]["hit"] == 1
-			and before["blocks"]["missed"] == 1,
+	_expect(before["dodges"]["attempted"] == 1 and before["dodges"]["hit"] == 1
+			and before["dodges"]["missed"] == 1,
 		"the incoherent state is reached, so the repair is exercised for real")
 	var repairs := broken.repair()
 	_expect(repairs.size() == 1, "the repair is reported, not silent")
 	var after: Dictionary = broken.snapshot()
-	_expect(after["blocks"]["attempted"] == 2,
+	_expect(after["dodges"]["attempted"] == 2,
 		"attempted is RAISED to hit + missed -- observed resolutions are never dropped")
-	_expect(after["blocks"]["hit"] == 1 and after["blocks"]["missed"] == 1,
+	_expect(after["dodges"]["hit"] == 1 and after["dodges"]["missed"] == 1,
 		"resolutions survive the repair untouched")
 	for group in BattleTally.GROUPS:
 		var g: Dictionary = after[group]
@@ -273,12 +270,12 @@ func _phase_f_real_fight() -> void:
 	BattleStats.record_finished.connect(on_record)
 
 	var ticks := 0
-	# A caricature player: attack whenever free, guard otherwise. Enough
-	# to generate every counter without being a strategy under test.
+	# A caricature player: attack sometimes, dodge otherwise. Enough to
+	# generate every counter without being a strategy under test.
 	while arena._running and ticks < MAX_FIGHT_TICKS:
 		if arena.player.is_free():
 			arena.player.request_action(
-				BattleTypes.Action.ATTACK if ticks % 3 == 0 else BattleTypes.Action.GUARD)
+				BattleTypes.Action.ATTACK if ticks % 3 == 0 else BattleTypes.Action.DODGE)
 		arena._tick(TICK_S)
 		ticks += 1
 
@@ -296,7 +293,9 @@ func _phase_f_real_fight() -> void:
 		"and it degraded on the headless gate rather than reaching out")
 
 	_expect(snap["attacks"]["attempted"] > 0, "the fight produced attack attempts")
-	_expect(snap["blocks"]["attempted"] > 0, "the fight produced guard attempts")
+	_expect(snap["dodges"]["attempted"] > 0, "the fight produced dodge attempts")
+	_expect(snap["blocks"]["attempted"] == 0,
+		"and produced no block attempts -- the group is frozen, not merely unused today")
 	for group in BattleTally.GROUPS:
 		var g: Dictionary = snap[group]
 		_expect(g["hit"] + g["missed"] <= g["attempted"],

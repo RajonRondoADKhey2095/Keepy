@@ -8847,3 +8847,256 @@ la cure — seul un SECOND SIGNAL INDEPENDANT tranche.** Ici, comme au lot 3,
 c'est le `CACHE_VERSION` reellement servi qui a repondu, et il a repondu dans
 les deux sens (d'abord « toujours l'ancien build », donc le job tournait
 vraiment ; puis le nouveau).
+
+## KEEPY BATTLE, LOT 7 : REFONTE -- la GARDE et la FEINTE sont SUPPRIMEES, une BARRE DE CHARGEMENT dit quand le coup tombe (21 aout 2026)
+
+Branche `claude/keepy-lot7-gameplay-98dj9f`, redemarree sur `origin/staging`
+(`8c8a6c3`) -- elle pointait encore sur `main`, ou le lot 6 n'existe pas.
+**Ce n'est ni un reglage ni une couche de plus : c'est une SIMPLIFICATION
+assumee**, decidee par Mathieu apres quatre lots qui n'ont jamais deplace le
+meme retour device.
+
+### ⚠️ POURQUOI ON A ARRETE DE CORRIGER
+
+Retours device identiques sur les lots **3, 4, 5 ET 6** : « la garde et
+l'esquive ne marchent pas, la seule strategie c'est d'attaquer ». Chaque lot a
+trouve une cause DIFFERENTE, REELLE et MESUREE, l'a fermee, et a recu la meme
+phrase en retour. Les sondes disaient que defendre gagnait (garde 99,3 % au
+lot 4, 300/300 pour une politique defensive au lot 5) ; le joueur ressentait
+l'inverse.
+
+**Cause finalement retenue** : le joueur savait qu'une attaque ARRIVAIT (le
+telegraphe, valide au lot 2) et n'a jamais su QUAND elle frappe. Le lot 4 a en
+plus rendu l'instant d'impact volontairement ambigu (feinte : coup retenu
+0,28 s). Aucune largeur de fenetre ne fournit cette information -- c'est une
+information manquante, pas une fenetre trop etroite.
+
+### LE MODELE SUPPRIME, ET CE QUI LE REMPLACE
+
+**SUPPRIME, pas desactive** -- aucun etat mort, aucun champ orphelin :
+`Action.GUARD`, `Action.FEINT`, `Outcome.BLOCKED`, `is_attack_like()`,
+`Fighter.telegraph_duration()`, la branche garde de `receive_strike()`,
+`FighterView._brace()`/`_absorb_accent()`/`BLOCK_FLASH_COLOR`, le bouton
+GARDE du HUD, et **sept champs de profil** (`guard_windup_s`,
+`guard_active_s`, `guard_recovery_s`, `guard_damage_ratio`, `feint_hold_s`,
+`ai_feint_rate`, `ai_guard_bias`). `FighterBrain` perd deux helpers qui
+n'avaient plus qu'une seule valeur de retour atteignable.
+
+**LA BARRE DE CHARGEMENT.** `Body/Charge` remplace le marqueur `Body/Alert`
+du lot 6 : une piste sombre, un remplissage clair, et une **bande d'esquive**
+qui deborde de la piste. Le remplissage est
+`Fighter.charge_progress() = 1 - phase_left/phase_total`, lu **chaque frame**
+dans `FighterView._process()`.
+
+⚠️ **La barre pleine EST l'instant d'impact, par CONSTRUCTION et pas par
+reglage** : le coup se resout au PREMIER tick d'`ACTIVE`, qui est le tick ou
+le windup expire, qui est le tick ou la progression atteint 1,0. Mesure :
+**barre pleine a UN TICK pres quand le coup part**, et l'ecart
+`|progression - ecoule/total|` reste sous **1e-4** sur tout le remplissage.
+
+⚠️ **PAS un tween, et la raison est le seul endroit ou ca compte.** Toutes les
+autres animations de `FighterView` sont des tweens en temps MOTEUR -- aucune
+ne promet un instant precis. La barre le promet. Un tween lance sur la
+transition WINDUP deriverait contre l'accumulateur a pas fixe de l'arene, et
+deriverait le PLUS a la fin, la ou vit toute la mecanique. La vue reste
+strictement en LECTURE SEULE (un float entre, un transform sort) -- PHASE B
+de `BattleReadabilityProbe` reste byte-identique avec les tweens vivants.
+
+### ⚠️ LE MARQUEUR DU LOT 6 EST SUPPRIME, PAS GARDE A COTE -- c'est une decision
+
+Le marqueur disait « une attaque arrive, a peu pres a ce stade ». La barre dit
+ca ET l'instant. **Deux cues qui grandissent dans le meme coin d'ecran se
+disputent une seule lecture, et le joueur apprend celui qui mene** -- c'est
+exactement l'avertissement que `FighterView` porte deja pour teinte-vs-marqueur
+(« les deux canaux doivent etre la MEME horloge »). L'argument de contraste du
+lot 6 est transfere intact : remplissage clair dans une piste quasi-noire, donc
+l'un des deux franchit toujours 3,0:1. **La rampe de teinte est CONSERVEE** --
+autre surface, aucune geometrie en plus, et le lot 6 a mesure qu'elle survit
+sur le modele du joueur. La couleur ne veut toujours dire qu'UNE chose : une
+esquive ne leve aucune barre et ne rougit rien.
+
+| paire | contraste mesure |
+|---|---|
+| remplissage vs ciel | **12,91:1** |
+| remplissage vs sol | **4,10:1** |
+| piste vs sol | 3,67:1 |
+| remplissage vs sa propre piste | **15,05:1** |
+| bande d'esquive vs ciel / vs sol | **14,9:1 / 4,73:1** (seule, sans etre portee par un voisin) |
+
+### ⚠️ « APPUYER QUAND LA BARRE EST PLEINE » EST FAUX -- d'ou la bande dessinee
+
+Savoir quand le coup tombe n'est que la moitie de ce qu'il faut ; l'autre
+moitie est QUAND APPUYER, et ce n'est pas le meme instant. Une esquive a un
+startup et une fenetre finie, donc le tap correct est un intervalle qui se
+TERMINE avant la barre pleine. **Mesure** : les taps qui esquivent reellement
+sont les ticks **26..49 sur 54**, soit **48 %..91 % de la barre, 400 ms de
+large**. Un joueur a qui on dit « appuie quand c'est plein » appuie **83 ms
+trop tard, a chaque fois**, et apprend que le bouton ne marche pas -- la phrase
+exacte de quatre retours device.
+
+La bande est donc DESSINEE, calculee par `BattleArena` (le seul objet qui
+connait a la fois le windup de l'attaquant et les timings d'esquive du
+defenseur -- une vue qui la deriverait de son propre profil dessinerait une
+supposition sur le combattant d'en face).
+
+⚠️ **La bande est DELIBEREMENT un SOUS-ENSEMBLE de ce qui marche.**
+L'arithmetique continue donne 0,500..0,944 ; la mecanique quantifiee donne
+0,481..0,907. Le bord bas est deja conservateur ; **le bord haut sur-promettait
+de deux ticks**, il porte donc une allocation de deux ticks
+(`EVADE_EDGE_ALLOWANCE_TICKS`). Une bande qui promet un tap et le fait echouer
+est pire que pas de bande : elle enseigne le mauvais timing avec l'autorite du
+jeu derriere elle. **Trouve par la sonde, pas par relecture** : l'assertion
+« taper au bord haut esquive » est partie ROUGE au premier run.
+
+### ⚠️ PHASE 2 -- les deux pistes existent DEJA, et la question etait le calibrage
+
+Les deux pistes du brief (A : cout en tempo ; B : fenetre stricte) sont toutes
+deux **inherentes au FSM** : `dodge_recovery_s` EST le cout, `dodge_active_s`
+EST la fenetre. **Les deux sont retenues**, et c'est leur calibrage qui a ete
+mesure, pas leur existence.
+
+- **B, la fenetre** : `dodge_active_s = 0,40` -> **400 ms**, soit exactement
+  la marge d'erreur du joueur, une pour une (il n'y a aucun autre terme).
+  Gate a trois endroits parce qu'elle echoue dans trois directions : trop
+  etroite pour la gigue humaine (plancher **4 sigma = 360 ms**), trop large
+  (elle couvre **44 %** de la barre ; plafond 75 %, au-dela « taper n'importe
+  quand » est correct et la decision disparait), ou fermee avant qu'un humain
+  ait pu remarquer la barre (elle ferme a **817 ms** contre 450 ms au pire).
+- **A, le cout** : `dodge_recovery_s = 0,36`. Gate par l'inegalite
+  `tap + cycle d'esquive < windup + active + recovery` -- **avance au pire tap
+  de la fenetre : +13 ms**, mince et positive, et le contre est **mesure** (les
+  deux combattants joues, celui qui a esquive frappe le premier) et non calcule.
+
+⚠️ **La bande humaine 300-450 ms du lot 5 n'est PLUS le critere de largeur, et
+c'est le vrai changement conceptuel.** Regarder un remplissage se completer est
+une ANTICIPATION, pas une REACTION ; la precision humaine sur un instant
+anticipe est bien meilleure qu'une latence de reaction. La bande survit pour
+UNE chose : le joueur doit d'abord REMARQUER le telegraphe, donc la fenetre ne
+doit pas fermer avant qu'il ait pu le voir.
+
+### ⚠️ LE CERVEAU LIT LA BARRE -- correction d'une position que ce lot avait prise deux heures plus tot
+
+Un premier jet de `FighterBrain` refusait `charge_progress()` a l'IA, au motif
+que la barre est « une information pour l'oeil humain ». **Mesure, c'etait
+faux** : un joueur qui martele ATTAQUE gagnait **294/300** contre cette IA
+aveugle, qui tape son esquive des qu'elle repere un telegraphe -- donc bien
+trop tot -- et dont la fenetre a expire quand le coup arrive.
+
+**La barre est a l'ecran. Le joueur L'A.** Une IA privee de cette information
+n'est pas plus dure ni plus facile, elle joue a un autre jeu -- ce qui (a)
+rompt la promesse de l'en-tete de ce fichier et (b) rend toute mesure
+d'equilibrage de ce projet une mesure contre un mannequin incapable de faire ce
+qu'une personne fait. **C'est le piege `SubstituteModel`, un lot apres le
+precedent.** L'IA tire donc une fraction cible une fois par telegraphe
+(`ai_dodge_aim`, dispersee par `ai_dodge_slop`) et tape quand le remplissage la
+franchit. Ce qu'elle ne peut toujours pas faire : connaitre les timings de
+l'adversaire, voir la milliseconde exacte, ou agir avant d'avoir paye son delai
+de reaction.
+
+### ⚠️ PHASE 3 -- `attack_recovery_s` est le levier, et la courbe N'EST PAS LISSE
+
+Banc jetable (jamais commite, supprime avant commit), **n=300 par cellule**
+(jamais n=40 : ecart-type binomial ~8 points, lecon du lot 3), gigue gaussienne
+sigma 90 ms, **les DEUX cotes pilotes** (piege du sac de frappe deja rencontre
+trois fois).
+
+**Aucun reglage `.tres` ne corrigeait le martelage contre l'IA aveugle** --
+mesure sur cinq champs avant le fix du cerveau, jamais sous 190/300. Apres le
+fix, le levier apparait :
+
+| `attack_recovery_s` | martelage (n=150) |
+|---|---|
+| 0,44 | 47/150 |
+| 0,50 | 34/150 |
+| **0,56 (valeur de depart)** | **128/150** |
+| **0,62 (livre)** | **7/150** |
+| 0,70 | 7/150 |
+
+⚠️ **0,56 etait un PIC de resonance**, pas un point representatif : la valeur
+que ce lot avait choisie au depart etait le pire point de la courbe. Regler sur
+une resonance serait exactement le faux-vert que `ProbeCoverage.gd` documente
+cinq fois -- 0,62 et 0,70 forment un plateau, pas un pic.
+
+**Configuration livree** : `attack_windup_s 0,90` / `attack_active_s 0,12` /
+`attack_recovery_s 0,62` / `attack_damage 14` / `max_hp 42` /
+`dodge 0,05 / 0,40 / 0,36` / `stagger 0,70` / `ai_defense_rate 0,70` (adversaire)
+/ `ai_dodge_aim 0,70` / `ai_dodge_slop 0,14`.
+
+| politique caricaturale (n=300) | avant lot 7 | **apres** |
+|---|---|---|
+| **martelage d'ATTAQUE** | 98,0 % | **11,7 %** (moyenne 10,5 s) |
+| esquive seule, jamais d'attaque | 0 % | **0 %** *(par arithmetique : elle n'inflige aucun degat)* |
+| **lecture de la barre + contre** | -- | **98,7 %** (moyenne 24,2 s) |
+
+**L'objectif du brief est atteint : le martelage n'est plus dominant, et de
+loin.** Reste ouvert et dit franchement : la moyenne de 24,2 s depasse la cible
+12-20 s du lot 3, et le max touche le plafond de 60 s -- quand les deux cotes
+lisent bien, peu de coups passent. C'est inherent a un telegraphe de 0,90 s ;
+non corrige, non maquille.
+
+### Ce qui reste, et ce qui a ete signale plutot que garde « au cas ou »
+
+⚠️ **`BattleTally.GROUP_BLOCKS` est CONSERVE, fige a zero, et documente comme
+tel.** Rien ne peut plus l'incrementer. Il n'est PAS retire parce que les rules
+Firestore **deployees** sur `keepy-8df91` exigent la cle : `statKeys()` liste
+`blocks` et les chemins create/update assertent `hasOnly(statKeys())` **ET**
+`hasAll(statKeys())`. Un write sans le groupe serait **REFUSE**, et toutes les
+stats de Battle cesseraient d'etre enregistrees **en silence** (BattleStats ne
+leve jamais). Le retirer demande un changement de rules, les rules ne se
+deploient que sur un push `main` (`firestore-rules.yml` est scope a cette
+branche par conception), et **ce lot ne va pas sur `main`**. La monotonie est
+respectee entre-temps (increment de 0). **Ordre obligatoire le jour ou on le
+retire : les RULES d'abord, le client ensuite** -- l'inverse casse
+l'enregistrement pour tout le monde entre les deux.
+`BattleStatsProbe` asserte desormais que le groupe est present ET a zero sur un
+vrai combat, donc un futur lot qui le reincremente echoue la en premier.
+
+**`BattleFeintProbe` est SUPPRIMEE** avec la mecanique qu'elle gatait. Elle
+etait **DEJA ROUGE avant ce lot** (5/27 sur `origin/main`, ses `LATENCIES`
+jamais mises a jour depuis le lot 4) -- sa suppression retire un rouge qui n'a
+jamais ete celui de ce lot, et c'est dit plutot qu'absorbe dans un run vert.
+
+**Conserves et vivants** : `dodge_windup_s` (vrai startup, il entre directement
+dans l'arithmetique de la fenetre), les quatre `ai_*` d'origine, `Outcome.MISSED`.
+
+### Validation
+
+`BattleDefenseProbe` **21/21**, `BattleReadabilityProbe` **62/62**,
+`BattleContractProbe` **33/33**, `BattleStatsProbe` **83/83**,
+`ProbeTimeoutAudit` **37 sondes** (38 avant, une de moins avec la sonde feinte),
+`AssetContractAudit` (12/12 visuels, **0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**.
+
+**Determinisme prouve APRES la refonte** : `BattleContractProbe` jouee deux fois
+a la graine 20260806 est **byte-identique sur les DEUX flux** (stdout ET
+stderr). Les traces ont massivement bouge par rapport au lot 6, comme une
+refonte doit le faire -- ce qui est prouve ici est la reproductibilite, pas
+l'immobilite.
+
+Import headless **exit 0**, export Web release **exit 0**, `index.wasm`
+**35 376 909 octets** / md5 `af4a8fc2925d992348eb30deeeb54360` et `index.js` md5
+`4e08904b1b7107858246af44b602067b` -- identiques au fingerprint deja consigne
+pour tout lot qui ne touche pas le code moteur. `index.pck` 5 761 088 (export
+unique et propre, `build/` et `.godot/` supprimes avant -- a lire avec la mise
+en garde permanente sur son instabilite). Piege payload tenu : **0** ligne
+`Storing File` pour `scripts/dev`, `assets_source`, `docs`, `web` ou `build`, et
+le banc jetable absent du pack.
+
+**Point de bascule Meshy intact** : rien d'ajoute, deplace ou renomme dans
+l'arbre de scene cote combattant hors du sous-arbre `Body/Charge` ; tout passe
+toujours par `$Body`/`ModelSlot`, les modeles 3D du lot 6 sont intouches.
+**Aucune reference de `scripts/battle/` vers `scripts/dev/`.**
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **La barre se lit-elle comme une horloge** a vitesse reelle sur un
+   telephone, et la bande d'esquive se lit-elle comme « appuie ICI » ? Aucune
+   sonde ne le dit, et c'est tout l'objet du lot.
+2. **La duree des combats** : 24,2 s de moyenne pour un joueur qui lit bien,
+   contre 12-20 s vises au lot 3, avec des combats qui touchent le plafond de
+   60 s. Mesure, signale, non corrige.
+3. **L'avance apres une esquive est de 13 ms au pire tap de la fenetre** --
+   positive et gatee, mais mince. Si le contre parait ne jamais passer sur
+   device, c'est le premier chiffre a regarder.
+4. Le brief precisait « si ca s'avere trop facile, on complexifiera plus tard »
+   -- rien n'a donc ete ajoute par precaution.

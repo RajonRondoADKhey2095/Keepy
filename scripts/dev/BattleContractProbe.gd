@@ -87,10 +87,10 @@ func _phase_a_fsm() -> void:
 	_expect_ticks(total, nominal, "the WHOLE attack lasts the sum of its phases (overshoot carried, not dropped)")
 
 	# An action is refused mid-commitment: only IDLE accepts one directly.
-	f.request_action(BattleTypes.Action.GUARD)
-	_expect(f.current_action == BattleTypes.Action.GUARD, "GUARD accepted from IDLE")
+	f.request_action(BattleTypes.Action.DODGE)
+	_expect(f.current_action == BattleTypes.Action.DODGE, "DODGE accepted from IDLE")
 	f.request_action(BattleTypes.Action.ATTACK)
-	_expect(f.current_action == BattleTypes.Action.GUARD, "a second action cannot interrupt a commitment")
+	_expect(f.current_action == BattleTypes.Action.DODGE, "a second action cannot interrupt a commitment")
 	f.free()
 
 # ---------------------------------------------------------------- PHASE B
@@ -98,14 +98,6 @@ func _phase_a_fsm() -> void:
 func _phase_b_resolution() -> void:
 	print("\n--- PHASE B: strike resolution matrix ---")
 	var damage := 20
-
-	var guarded := _make(KeepyProfile)
-	_hold_in_active(guarded, BattleTypes.Action.GUARD)
-	var chip := int(ceil(float(damage) * KeepyProfile.guard_damage_ratio))
-	_expect(guarded.receive_strike(damage) == BattleTypes.Outcome.BLOCKED, "GUARD active -> BLOCKED")
-	_expect(guarded.hp == KeepyProfile.max_hp - chip, "BLOCKED costs chip damage only (%d)" % chip)
-	_expect(guarded.state == BattleTypes.State.ACTIVE, "BLOCKED does NOT stagger -- guard keeps its timing")
-	guarded.free()
 
 	var dodged := _make(KeepyProfile)
 	_hold_in_active(dodged, BattleTypes.Action.DODGE)
@@ -126,11 +118,12 @@ func _phase_b_resolution() -> void:
 	_expect(attacker.state == BattleTypes.State.STAGGER, "a traded hit cancels the attack in progress")
 	attacker.free()
 
-	# Guard is not free: chip damage alone can finish a fight, so a purely
-	# defensive player cannot stall forever.
+	# The dodge's startup is NOT part of its window. This is the half of
+	# the timing the charge bar exists to teach: tapping late is a real,
+	# nameable failure and not a button that did nothing.
 	var windup := _make(KeepyProfile)
-	windup.request_action(BattleTypes.Action.GUARD)
-	_expect(windup.receive_strike(damage) == BattleTypes.Outcome.HIT, "GUARD in WINDUP is NOT yet blocking")
+	windup.request_action(BattleTypes.Action.DODGE)
+	_expect(windup.receive_strike(damage) == BattleTypes.Outcome.HIT, "DODGE in WINDUP is NOT yet evading")
 	windup.free()
 
 	var recovering := _make(KeepyProfile)
@@ -163,16 +156,16 @@ func _phase_c_buffer() -> void:
 	early.reset()
 	early.request_action(BattleTypes.Action.ATTACK)
 	_advance(early, left - buffer_ticks + 1)
-	early.request_action(BattleTypes.Action.GUARD)
+	early.request_action(BattleTypes.Action.DODGE)
 	_advance(early, buffer_ticks)
-	_expect(early.current_action == BattleTypes.Action.GUARD, "a tap inside the buffer window is replayed on IDLE")
+	_expect(early.current_action == BattleTypes.Action.DODGE, "a tap inside the buffer window is replayed on IDLE")
 	early.free()
 
 	# Tapped far too early: dropped, and the fighter is idle rather than
 	# committed to something the player has stopped expecting.
 	var stale := _make(KeepyProfile)
 	stale.request_action(BattleTypes.Action.ATTACK)
-	stale.request_action(BattleTypes.Action.GUARD)
+	stale.request_action(BattleTypes.Action.DODGE)
 	_advance(stale, left + 2)
 	_expect(stale.current_action == BattleTypes.Action.NONE, "a tap older than the buffer is dropped")
 	_expect(stale.state == BattleTypes.State.IDLE, "and leaves the fighter IDLE, not committed")
