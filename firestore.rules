@@ -356,5 +356,157 @@ service cloud.firestore {
 
       allow delete: if ownsExisting();
     }
+
+    // =================================================================
+    // KEEPY BATTLE -- battleStats/{docId} (21 aout 2026).
+    //
+    // PREMIERE ecriture Firestore de Keepy Battle. UN SEUL document
+    // cumule et ANONYME, incremente a chaque fin de combat par
+    // scripts/autoload/BattleStats.gd :
+    //
+    //   battleStats/global
+    //     gamesPlayed, wins, losses : int
+    //     attacks / dodges / blocks : { attempted, hit, missed } : int
+    //     updatedAt                 : timestamp serveur
+    //
+    // PAS de champ `uid`, et ce n'est pas un oubli : c'est le schema
+    // valide par Mathieu. Rien ici ne se rattache a un joueur, donc le
+    // triplet owner-only de /quizzes et /categories (hasAll(['uid']) +
+    // uid == request.auth.uid) est SANS OBJET -- il n'y a pas de
+    // proprietaire a comparer. La lecture suit /scores (signed-in, pas
+    // owner-only) parce que ce document est global par construction :
+    // un futur dashboard le lit pour tout le monde.
+    //
+    // !! LIMITE STRUCTURELLE ACCEPTEE EXPLICITEMENT PAR MATHIEU. Un
+    // document unique partage, incremente COTE CLIENT, ne peut pas etre
+    // rendu etanche par des rules : la cle d'API cliente est publique
+    // (elle est dans le build), donc n'importe quel porteur d'un jeton
+    // Google valide peut envoyer les increments qu'il veut. Les regles
+    // ci-dessous reduisent la surface autant que des rules le peuvent --
+    // signed-in, jeu de cles exact, entiers non negatifs, `updatedAt`
+    // impose par le serveur, aucun delete, et un controle de MONOTONIE
+    // qui refuse toute ecriture faisant BAISSER un compteur -- et c'est
+    // la limite assumee pour des chiffres d'affichage. Ce ne sont pas
+    // des donnees sensibles et il n'y a rien a exfiltrer.
+    //
+    // La monotonie sert DEUX fois, et la seconde est la moins evidente :
+    // elle est aussi le filet sous la FORME de l'ecriture du client.
+    // BattleStats envoie un `update` sans `fields`, avec un `updateMask`
+    // PRESENT et VIDE plus des `updateTransforms` -- la forme que les
+    // SDK officiels emettent pour set(increment(), {merge:true}). Si ce
+    // masque etait un jour perdu, les transforms atterriraient sur un
+    // document blanchi et les valeurs resultantes seraient les seuls
+    // deltas du combat courant, donc INFERIEURES a ce qui est stocke :
+    // la regle refuse alors l'ecriture au lieu de laisser les totaux
+    // repartir de zero. Le mode de panne d'un mauvais masque est une
+    // ecriture refusee, pas une donnee perdue.
+    // =================================================================
+    match /battleStats/{docId} {
+
+      // Toutes les cles du schema, a un seul endroit : hasOnly et hasAll
+      // portent la MEME liste, donc le jeu de cles est exact -- ni un
+      // champ en trop, ni un champ manquant. C'est ce qui oblige le
+      // client a envoyer meme les compteurs dont le delta vaut zero, et
+      // donc ce qui garantit que le tout premier write de la vie du
+      // document produit la forme complete (un `increment` sur un champ
+      // absent le cree a partir de 0).
+      function statKeys() {
+        return ['gamesPlayed','wins','losses','attacks','dodges','blocks','updatedAt'];
+      }
+
+      // Un groupe { attempted, hit, missed }.
+      //
+      // `hit + missed <= attempted` est une INEGALITE et jamais une
+      // egalite, parce que les deux populations different : `attempted`
+      // compte des engagements, `hit`/`missed` des resolutions. Une
+      // attaque interrompue avant sa fenetre active, une garde ou une
+      // esquive qui n'affronte aucun coup, sont engagees et jamais
+      // resolues. L'invariant se conserve par addition -- si chaque
+      // combat le respecte, la somme le respecte -- donc il est gatable
+      // sur des totaux cumules.
+      //
+      // `g is map` d'abord : appeler .keys() sur autre chose qu'une map
+      // est une ERREUR D'EVALUATION, pas un false propre (meme famille
+      // que le validCount() de /quizzes).
+      function groupValid(g) {
+        return g is map
+          && g.keys().hasOnly(['attempted','hit','missed'])
+          && g.keys().hasAll(['attempted','hit','missed'])
+          && g.attempted is int && g.attempted >= 0
+          && g.hit is int && g.hit >= 0
+          && g.missed is int && g.missed >= 0
+          && g.hit + g.missed <= g.attempted;
+      }
+
+      // La forme du document RESULTANT. `request.resource.data` porte les
+      // valeurs POST-transform, ce qui est exactement ce qui permet a
+      // /scores d'exiger `createdAt == request.time` depuis le 18 aout :
+      // seul un setToServerValue REQUEST_TIME peut satisfaire cette
+      // egalite, jamais l'horloge d'un client.
+      //
+      // `wins + losses <= gamesPlayed` et non `==` : un combat produit
+      // aujourd'hui exactement une victoire OU une defaite, donc
+      // l'egalite tiendrait -- mais elle briserait le jour ou un match
+      // nul existerait, pour ne rien apporter de plus contre un client
+      // malveillant qui peut de toute facon incrementer les trois.
+      function shapeValid() {
+        return request.resource.data.keys().hasOnly(statKeys())
+          && request.resource.data.keys().hasAll(statKeys())
+          && request.resource.data.gamesPlayed is int
+          && request.resource.data.gamesPlayed >= 0
+          && request.resource.data.wins is int && request.resource.data.wins >= 0
+          && request.resource.data.losses is int && request.resource.data.losses >= 0
+          && request.resource.data.wins + request.resource.data.losses
+             <= request.resource.data.gamesPlayed
+          && groupValid(request.resource.data.attacks)
+          && groupValid(request.resource.data.dodges)
+          && groupValid(request.resource.data.blocks)
+          && request.resource.data.updatedAt == request.time;
+      }
+
+      function groupGrew(now, before) {
+        return before is map
+          && before.keys().hasAll(['attempted','hit','missed'])
+          && now.attempted >= before.attempted
+          && now.hit >= before.hit
+          && now.missed >= before.missed;
+      }
+
+      // MONOTONIE -- aucun compteur ne peut baisser. Le hasAll sur le
+      // document DEJA EN BASE est la pour la meme raison que partout
+      // ailleurs dans ce fichier : lire une cle absente est une erreur
+      // d'evaluation, et on veut un refus propre. Consequence assumee :
+      // un document qui serait arrive en base sans ces cles (ecriture
+      // manuelle en Console, lot futur mal forme) bloquerait toute
+      // ecriture suivante. C'est le sens souhaite du refus.
+      function grew() {
+        return resource.data.keys().hasAll(
+                 ['gamesPlayed','wins','losses','attacks','dodges','blocks'])
+          && request.resource.data.gamesPlayed >= resource.data.gamesPlayed
+          && request.resource.data.wins >= resource.data.wins
+          && request.resource.data.losses >= resource.data.losses
+          && groupGrew(request.resource.data.attacks, resource.data.attacks)
+          && groupGrew(request.resource.data.dodges, resource.data.dodges)
+          && groupGrew(request.resource.data.blocks, resource.data.blocks);
+      }
+
+      allow read: if signedIn();
+
+      // Le tout premier combat de la vie du projet cree le document ;
+      // tous les suivants passent par `update`. Le client n'a AUCUNE
+      // branche pour distinguer les deux -- meme corps, meme transforms
+      // -- parce qu'un read-then-write courrait contre tous les autres
+      // joueurs. Les deux regles doivent donc exister, et `create` n'a
+      // pas de monotonie a verifier : il n'y a rien avant lui.
+      allow create: if signedIn() && shapeValid();
+
+      allow update: if signedIn() && shapeValid() && grew();
+
+      // Rien ne supprime jamais ce document. Aucun ecran ne le demande,
+      // et une collection sans delete ouvert est une collection qu'un
+      // jeton vole ne peut pas vider.
+      allow delete: if false;
+    }
+
   }
 }

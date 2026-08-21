@@ -32,6 +32,20 @@ class_name BattleArena
 ## half-rules disagreeing.
 ##
 ## =====================================================================
+## CUMULATIVE STATS -- THE ONE FIRESTORE WRITE IN THIS GAME
+##
+## Because this file is already "the ONE place a strike is resolved", it
+## is also the only place that sees both halves of every exchange: what
+## the player committed to, and what came of it. So the per-fight tally
+## is counted here and nowhere else -- a Fighter counting its own strikes
+## would be a second bookkeeper on the same facts.
+##
+## The tally is pure counting (BattleTally, no network). It is handed to
+## BattleStats ONCE, in _end_round(), and never during a tick: nothing
+## about recording can reach into the fight, and a fight abandoned to the
+## hub mid-round records nothing because it never ended.
+##
+## =====================================================================
 ## SEEDING
 ##
 ## One RandomNumberGenerator, seeded explicitly, handed to the brain --
@@ -70,6 +84,9 @@ const HUB_SCENE := "res://scenes/Hub.tscn"
 
 var _rng := RandomNumberGenerator.new()
 var _brain := FighterBrain.new()
+## Counters for the fight in progress, player side only. Reset at every
+## round start, closed and handed to BattleStats at every round end.
+var _tally := BattleTally.new()
 var _accumulator: float = 0.0
 var _round: int = 0
 var _running: bool = false
@@ -90,6 +107,12 @@ func _ready() -> void:
 	hud.rematch_requested.connect(_start_round)
 	hud.quit_requested.connect(_on_quit)
 
+	# The player's commitments -- the `attempted` half of the stats. Read
+	# from the fighter's own signal rather than from the HUD's taps: a
+	# tap that arrives mid-lockout is BUFFERED and may never become an
+	# action at all, and counting a commitment that never happened would
+	# quietly inflate every ratio.
+	player.action_started.connect(_on_player_action_started)
 	player.strike_activated.connect(_on_player_strike)
 	opponent.strike_activated.connect(_on_opponent_strike)
 	player.knocked_out.connect(_on_player_ko)
@@ -107,6 +130,7 @@ func _exit_tree() -> void:
 		_disconnect(hud.rematch_requested, _start_round)
 		_disconnect(hud.quit_requested, _on_quit)
 	if is_instance_valid(player):
+		_disconnect(player.action_started, _on_player_action_started)
 		_disconnect(player.strike_activated, _on_player_strike)
 		_disconnect(player.knocked_out, _on_player_ko)
 	if is_instance_valid(opponent):
@@ -144,6 +168,8 @@ func _start_round() -> void:
 	_rng.seed = _effective_seed() + _round
 	player.reset()
 	opponent.reset()
+	# A rematch is a NEW fight: it must not inherit the previous tally.
+	_tally.reset()
 	_brain.setup(opponent, player, opponent.profile, _rng)
 	_accumulator = 0.0
 	_running = true
@@ -162,12 +188,23 @@ func _on_player_action(action: BattleTypes.Action) -> void:
 func _on_player_strike() -> void:
 	var attempted := opponent.last_defence()
 	var outcome := opponent.receive_strike(_damage_of(player))
+	_tally.note_attack_resolved(outcome)
 	hud.report_strike(true, outcome, attempted)
 
 func _on_opponent_strike() -> void:
 	var attempted := player.last_defence()
 	var outcome := player.receive_strike(_damage_of(opponent))
+	# Same (attempted, outcome) pair the HUD is about to turn into
+	# "GARDE BRISEE" / "ESQUIVE RATEE" on the next line, taken from the
+	# same read: the counter and the word the player sees cannot drift.
+	_tally.note_defence_resolved(attempted, outcome)
 	hud.report_strike(false, outcome, attempted)
+
+## The player committed to something. NOT called for the opponent: the
+## shared stats document describes how PEOPLE play, and folding an AI's
+## actions into it would make every ratio unreadable.
+func _on_player_action_started(action: BattleTypes.Action) -> void:
+	_tally.note_action_started(action)
 
 func _on_player_ko() -> void:
 	_end_round(false)
@@ -189,7 +226,24 @@ func _end_round(player_won: bool) -> void:
 	_running = false
 	player_view.settle()
 	opponent_view.settle()
+	# One write per FINISHED fight, fired and forgotten. BattleStats
+	# never blocks and never raises, so nothing below depends on it and
+	# the result panel goes up regardless of network, auth or rules --
+	# and `finish()` is idempotent, so a second KO signal cannot
+	# double-count this fight.
+	if _tally.finish(player_won):
+		BattleStats.record(_tally)
 	hud.show_result(player_won)
+
+## Read-only view of the fight in progress, for BattleStatsProbe.
+##
+## Nothing in the GAME reads this -- the tally has exactly one consumer,
+## _end_round() above. It exists so the probe can check the counters an
+## actual, shipped fight produced instead of re-deriving them from a
+## copy of the wiring, which is the "fixture that diverges from the real
+## thing" trap this repo has already paid for once (AlarmRampAudit).
+func fight_tally() -> BattleTally:
+	return _tally
 
 func _on_quit() -> void:
 	get_tree().change_scene_to_file(HUB_SCENE)
