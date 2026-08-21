@@ -293,9 +293,15 @@ func _phase_e_feedback() -> void:
 	print("\n--- PHASE E: four outcomes, four verdicts (GATED) ---")
 
 	var plain := _strike_tick(BattleTypes.Action.ATTACK)
-	# A tap far too late to matter: the defence is still in WINDUP when
-	# the blow lands. This is the case the device report was about.
-	var late := plain + 2
+	# Late, but not absent: the guard is requested one tick before the
+	# blow, so it is still in its WINDUP when the strike resolves. That
+	# is the case the device report was about -- the button WAS pressed.
+	#
+	# It must be `plain - 1` and not `plain + N`: a tap placed after the
+	# strike has already resolved is not a mistimed defence at all, it is
+	# no defence, and the probe would then be asserting that the wrong
+	# thing passes. Caught by this phase failing on its first run.
+	var late := plain - 1
 	# A tap far too early: the window has already expired.
 	var early := 0
 
