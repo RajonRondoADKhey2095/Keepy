@@ -10334,3 +10334,23 @@ fichiers de sonde deja lies au build via `exclude_filter`).
 
 `main` **non touche**. Merge sur `staging` : palier 1, automatique des que
 la CI est verte.
+
+### Deploiement staging du lot 11 (palier 1, automatique)
+
+`staging` (`3a2f6f6`), merge `--no-ff` sans conflit. CI **web-build run
+#190** (id `32555358620`) **verte en 3 min 19 s** (05:49:51 -> 05:53:10
+UTC) -- `Deploy to Vercel [STAGING -- staging]` succes,
+`[PRODUCTION -- main]` correctement **skipped**. `main` **non touche**
+(palier 2, gate Mathieu apres validation device).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI** (canal MCP
+Vercel) : `index.service.worker.js` servi par `keepy-staging.vercel.app`
+porte **`CACHE_VERSION = 1787377960|4144358`** = **05:52:40 UTC**,
+tombant **a l'interieur** de la fenetre du run #190 (05:49:51-05:53:10) --
+l'alias sert bien ce build. `x-vercel-cache: MISS`, `age: 0`,
+`last-modified` colle a l'instant de la requete : trois signaux
+independants qui disent que ce n'est pas une reponse de cache.
+
+**Reste ouvert, inchange depuis la section principale ci-dessus** :
+jugement device sur le ressenti de l'engagement ~1,22s et sur si
+l'esquive-par-chance-de-phase merite encore d'etre pressee.
