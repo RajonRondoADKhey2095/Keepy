@@ -56,6 +56,11 @@ class_name FighterBrain
 ## =====================================================================
 ## LOT 8: AGAINST AN INSTANT ATTACKER THERE IS NOTHING LEFT TO READ
 ##
+## LOT 11 UPDATE: this is no longer just the player's case. Every combat
+## field is now equal between profiles, and measurement picked a shared
+## ZERO wind-up (see FighterProfile.gd's lot-11 header) -- so everything
+## below is true of BOTH fighters attacking, not one.
+##
 ## The player's attack now has a zero-length wind-up, so `is_charging()`
 ## is never true for them, so the `_dodge_aim` path below is UNREACHABLE
 ## against the shipped player. Nothing replaces it: an instant blow has

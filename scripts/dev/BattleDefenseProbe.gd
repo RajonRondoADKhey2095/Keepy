@@ -79,19 +79,57 @@ const HUMAN_JITTER := 0.09
 var _failures := 0
 var _checks := 0
 
+## =====================================================================
+## LOT 11: BOTH FIGHTERS ARE NOW ZERO-WINDUP, AND PHASES A/B/C/R/E TEST A
+## MECHANIC THAT NO LONGER EXISTS ON EITHER SIDE
+##
+## Every one of those phases exists to answer "can a human REACT to a
+## telegraph and time a dodge against it". Lot 11 makes attack_windup_s a
+## COMBAT FIELD that must be identical on both profiles -- Mathieu's
+## explicit, non-negotiable call -- and measurement (not preference) is
+## what picked its shared value: a shared NONZERO wind-up made mashing
+## LOSE (the brain reads and dodges a perfectly regular telegraph), which
+## directly contradicts the accepted design outcome that whoever attacks
+## more often should win a strictly symmetric duel. Zero is also the only
+## value the stated cadence arithmetic closes with (recovery ~1.10s +
+## active 0.12s + windup 0 = ~1.22s, matching lot 8's proven "jouable"
+## 1.28s) -- see CLAUDE.md, Keepy Battle lot 11.
+##
+## With DummyProfile.attack_windup_s == 0.0, `_cover_band()` is
+## STRUCTURALLY empty: `_resolve()` always requests the attack before its
+## loop starts, so the strike (one tick later, by construction) resolves
+## before a dodge requested at ANY tap in that loop can reach its own
+## ACTIVE window (dodge_windup_s alone costs 3 ticks). A REACTIVE dodge
+## against an instant attack is not narrow, it is impossible -- which
+## Fighter.gd and FighterBrain.gd already document as the accepted lot-8
+## consequence of a zero wind-up. Phases A/B/C/R/E below GUARD on this
+## and report it rather than asserting geometry that cannot hold; failing
+## them would not catch a regression, it would punish the design Mathieu
+## ordered. PHASE C2, R2 and D do not depend on there being a telegraph
+## and are UNCHANGED.
+func _windup_retired() -> bool:
+	return is_zero_approx(DummyProfile.attack_windup_s) and is_zero_approx(KeepyProfile.attack_windup_s)
+
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "BattleDefenseProbe")
 	print("=== BATTLE DEFENCE VIABILITY PROBE ===")
 	print("tick=%.6fs  attacker=%s  defender=%s" % [TICK_S, DummyProfile.display_name, KeepyProfile.display_name])
 	print("human notice band %.2f..%.2fs, anticipation jitter sigma %.0f ms" % [
 		HUMAN_FAST, HUMAN_LATE, HUMAN_JITTER * 1000.0])
-	_phase_a_chronogram()
-	_phase_b_window()
-	_phase_c_punishment()
+	if _windup_retired():
+		print("\n--- PHASES A/B/C/R/E RETIRED: both profiles are zero-windup (lot 11) ---")
+		print("  There is no telegraph on either side any more, so there is nothing a")
+		print("  REACTIVE dodge can time itself against -- see this file's header. Not")
+		print("  gated, not silently passed: reported once, here, instead of asserting")
+		print("  band geometry that is now structurally empty on the shipped profiles.")
+	else:
+		_phase_a_chronogram()
+		_phase_b_window()
+		_phase_c_punishment()
+		_phase_r_riposte()
+		_phase_e_feedback()
 	_phase_c2_stagger()
-	_phase_r_riposte()
 	_phase_r2_shipped()
-	_phase_e_feedback()
 	_phase_d_imperfect()
 	print("\n--- %d check(s), %d failure(s) ---" % [_checks, _failures])
 	get_tree().quit(1 if _failures > 0 else 0)

@@ -45,13 +45,29 @@ const SAMPLE_LATE := 0.80
 var _failures := 0
 var _checks := 0
 
+## LOT 11: both profiles are zero-windup now (see CLAUDE.md, Keepy Battle
+## lot 11, and BattleDefenseProbe's matching guard). Neither fighter ever
+## charges any more, so there is no telegraph to grow (PHASE C) and no
+## bar to draw, colour or time (the "drawn bar" half of PHASE G) -- both
+## are retired below rather than asserted against a phase of length zero,
+## which this file's own PHASE C comment already called "true and
+## meaningless" for the one side that was already instant before lot 11.
+func _windup_retired() -> bool:
+	return is_zero_approx(DummyProfile.attack_windup_s) and is_zero_approx(KeepyProfile.attack_windup_s)
+
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "BattleReadabilityProbe")
 	print("=== BATTLE READABILITY PROBE ===")
 	print("tick=%.6fs  profiles: %s vs %s" % [TICK_S, KeepyProfile.display_name, DummyProfile.display_name])
 	_phase_a_facing()
 	await _phase_b_no_leak()
-	await _phase_c_telegraph()
+	if _windup_retired():
+		print("\n--- PHASE C RETIRED: both profiles are zero-windup (lot 11) ---")
+		print("  Neither fighter charges any more, so there is no telegraph on the")
+		print("  fighter's own body to grow -- reported once here instead of sampling")
+		print("  a windup of length zero and asserting the (true, meaningless) result.")
+	else:
+		await _phase_c_telegraph()
 	await _phase_d_silhouettes()
 	await _phase_e_interrupt()
 	_phase_f_hud()
@@ -379,6 +395,42 @@ const CONTRAST_FLOOR := 3.0
 
 func _phase_g_charge_bar() -> void:
 	print("\n--- PHASE G: the charge bar completes exactly at impact ---")
+
+	# LOT 11: this whole phase measures a WIND-UP -- both profiles are now
+	# zero-windup (see this file's PHASE C guard and CLAUDE.md, Keepy
+	# Battle lot 11), so `is_charging()` is false for either fighter's
+	# ATTACK and there is no fill fraction, no drawn bar and no evade band
+	# to gate. What survives unconditionally, below, is that the geometry
+	# still exists in the scene (a future lot could re-arm a telegraph
+	# without touching BattleFighter.tscn) and that an instant attack
+	# never raises it -- the one assertion this phase already made for the
+	# player alone at lot 8, now true of both fighters.
+	if _windup_retired():
+		var arena := BattleScene.instantiate()
+		add_child(arena)
+		await get_tree().process_frame
+		arena.set_process(false)
+		arena.set_physics_process(false)
+		var world := arena.get_node("World") as Node3D
+		for fighter_name in ["PlayerFighter", "OpponentFighter"]:
+			var fighter := world.get_node(fighter_name) as Fighter
+			var slot := fighter.get_node("Body") as ModelSlot
+			var bar := slot.get_node_or_null("Charge") as Node3D
+			_expect(bar != null, "%s still carries the Body/Charge bar geometry" % fighter_name)
+			if bar == null:
+				continue
+			fighter.request_action(BattleTypes.Action.ATTACK)
+			var ever_shown := false
+			for i in 8:
+				fighter.advance(TICK_S)
+				await get_tree().process_frame
+				if bar.visible:
+					ever_shown = true
+			print("  %s's bar during a zero-windup attack : %s" % [
+				fighter_name, "SHOWN" if ever_shown else "never raised"])
+			_expect(not ever_shown, "%s's instant attack never raises a bar" % fighter_name)
+		arena.queue_free()
+		return
 
 	# --- 1. the number, on a bare fighter, tick by tick -----------------
 	var solo := _make(DummyProfile)

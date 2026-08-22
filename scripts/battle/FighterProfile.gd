@@ -27,16 +27,50 @@ class_name FighterProfile
 ## about the rules they are both playing by.
 ##
 ## =====================================================================
-## LOT 8 SPLIT ONE ATTACK INTO TWO PAYOFFS
+## LOT 11 REVERSED LOT 8's ASYMMETRY -- EVERY COMBAT FIELD IS NOW EQUAL
+##
+## Device report: recovery had grown to 2.6s (lot 10) pricing an
+## unavoidable instant attack, and the resulting ~2.7s engagement was
+## unplayable. Mathieu's call, non-negotiable: keepy.tres and dummy.tres
+## must carry IDENTICAL values on every COMBAT field (max_hp,
+## attack_damage, riposte_damage, attack_windup_s, attack_recovery_s,
+## dodge_*, stagger_duration_s, riposte_window_s). Only the ai_* DECISION
+## fields, display_name and the Art group may differ.
+##
+## That forces attack_windup_s to be equal too, and MEASUREMENT (not
+## preference) picked ZERO for both, over any shared nonzero value:
+## giving Sparring back a real wind-up while giving Keepy one to match
+## made mashing LOSE (300-fight sample) -- a rules-following brain reads
+## and dodges a perfectly regular telegraph -- which is the opposite of
+## the accepted design outcome ("celui qui frappe le plus souvent gagne"
+## in a strictly symmetric duel). Zero is also the only value the stated
+## cadence budget closes with: active (0.12s) + recovery (~1.10s) already
+## sum to ~1.22s, matching lot 8's proven "jouable" 1.28s, leaving no room
+## for a wind-up on either side.
+##
+## Consequence, reported rather than hidden: a REACTIVE dodge against a
+## zero-length wind-up is not narrow, it is impossible (the defender's
+## own dodge_windup_s alone costs 3 ticks, and the strike resolves on the
+## very next tick after the tap). Dodging only still works by PHASE LUCK
+## -- a fighter already mid-dodge, from an earlier tap, happening to be
+## in its ACTIVE window on the tick an incoming strike resolves. See
+## BattleDefenseProbe's and BattleReadabilityProbe's lot-11 guards, and
+## CLAUDE.md's Keepy Battle lot 11 section, for the measured numbers.
+##
+## =====================================================================
+## LOT 8 SPLIT ONE ATTACK INTO TWO PAYOFFS (SUPERSEDED BY LOT 11 ABOVE)
 ##
 ## The player's attack became INSTANT (attack_windup_s = 0) and the
 ## reward for a successful dodge became a RIPOSTE: an attack begun while
 ## riposte-ready deals riposte_damage AND staggers, where an ordinary
 ## "blind" attack deals attack_damage and does not stagger at all.
 ##
-## Both are per-profile numbers, so the asymmetry the player feels --
-## an instant, unavoidable chip against a slow, readable, heavy blow --
-## is two .tres files disagreeing about numbers, not two code paths.
+## Both are per-profile numbers -- the riposte-vs-chip SPLIT survives lot
+## 11 unchanged. What did not survive is the asymmetry between the two
+## profiles' wind-ups: lot 11 makes attack_windup_s a shared, equal
+## number (zero, see above), so "instant, unavoidable chip against a
+## slow, readable, heavy blow" no longer describes the shipped fight --
+## both fighters are now the instant side.
 ##
 ## =====================================================================
 ## LOT 7 DELETED THE GUARD AND FEINT GROUPS
