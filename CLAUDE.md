@@ -10354,3 +10354,52 @@ independants qui disent que ce n'est pas une reponse de cache.
 **Reste ouvert, inchange depuis la section principale ci-dessus** :
 jugement device sur le ressenti de l'engagement ~1,22s et sur si
 l'esquive-par-chance-de-phase merite encore d'etre pressee.
+
+## INFRA : plan Firebase — Spark, apres un aller-retour Blaze non explique (21-22 aout 2026)
+
+**Plan actuel du projet `keepy-8df91` : SPARK, depuis le 22 aout 2026.**
+Confirme en Console a 0 $/mois. C'est le seul plan que ce depot doit
+utiliser tant que la regle ci-dessous n'a pas ete suivie.
+
+### Historique
+
+Le projet est passe en **Blaze le 21 aout 2026**, sans qu'aucune session
+agentique ni aucun commit de ce depot n'en soit la cause identifiee —
+`Cloud Storage` et `Cloud Functions` sont tous deux **absents** du projet
+a ce jour (Storage affichait encore « Premiers pas » en Console au moment
+de la recon, jamais initialise ; aucune Cloud Function n'existe dans ce
+depot ni dans la console). Les deux seuls produits Firebase reellement
+utilises par Keepy — **Firestore** et **Authentication** — sont l'un
+comme l'autre couverts par le plan Spark. Rebascule en Spark effectuee
+manuellement en Console le **22 aout 2026**, confirmee a 0 $/mois. Rien
+dans le code, les rules ou la config de ce depot n'a jamais exige Blaze ;
+le passage du 21 aout est traite comme un aller-retour sans effet
+durable, pas comme un changement d'architecture.
+
+### Regle permanente : Blaze est une DECISION, jamais un side-effect de clic
+
+**Cloud Storage et Cloud Functions exigent tous les deux le plan Blaze.**
+Aucun des deux n'existe dans ce projet a ce jour. Si l'un devient
+necessaire — l'exemple deja identifie est un **masquage cote serveur des
+bonnes reponses Quizz** (`docs/QUIZZ_SPEC.md`, deja note comme necessitant
+une piece serveur que ce projet n'a pas, puisque Keepy parle a Firestore
+en REST direct depuis le client et que les rules ne savent pas masquer un
+champ a l'interieur d'un document) — alors le passage en Blaze doit etre :
+
+1. **decide explicitement par Mathieu**,
+2. **documente dans ce fichier AVANT execution** (quel produit Blaze est
+   necessaire, pour quel besoin, quel cout attendu),
+3. et seulement ensuite execute en Console.
+
+Un changement de plan Firebase n'est **jamais** un effet de bord acceptable
+d'un autre clic en Console (activer un produit, explorer un onglet) — c'est
+exactement le mode de defaillance du 21 aout que cette regle existe pour
+fermer.
+
+### Recommandation permanente
+
+**Des que ce projet repasse en Blaze un jour, poser un budget GCP avec des
+alertes a 50 %, 90 % et 100 %, avant tout usage reel du produit qui a
+motive le passage.** Aucune session agentique ne peut poser ce budget elle-
+meme (action Console/GCP) — c'est une action manuelle a faire par Mathieu
+au moment de la bascule, pas apres coup.
