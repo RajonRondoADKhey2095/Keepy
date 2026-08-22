@@ -10403,3 +10403,173 @@ alertes a 50 %, 90 % et 100 %, avant tout usage reel du produit qui a
 motive le passage.** Aucune session agentique ne peut poser ce budget elle-
 meme (action Console/GCP) — c'est une action manuelle a faire par Mathieu
 au moment de la bascule, pas apres coup.
+
+## KEEPY BATTLE LOT 12 : LE TELEGRAPHE ADVERSE EST RESTAURE -- `attack_windup_s` N'EST PAS UN CHAMP DE COMBAT SYMETRISABLE (22 aout 2026)
+
+Branche `claude/restore-opponent-telegraph-nkv24z`, partie de `staging`
+(`75ea28f`). Corrige une CONSIGNE, pas une execution : le brief du lot 11
+classait `attack_windup_s` comme un champ de COMBAT devant etre identique
+des deux cotes, au meme titre que `max_hp`/`attack_damage`/etc. Cette
+classification etait FAUSSE -- ce champ ne tarife rien, il GENERE la barre
+de charge que le defenseur lit. Le lot 11 a suivi la consigne correctement
+et a mesure sa propre consequence : esquive-panique et lecture+riposte
+rendaient le MEME chiffre (27,7 %), parce qu'une fois le telegraphe
+supprime des deux cotes il n'y avait plus rien a LIRE, seulement une
+esquive de chance de phase. Ce lot ne corrige pas ce resultat comme un
+bug -- il corrige la premisse qui l'a produit.
+
+**Decision de Mathieu, une exception et une seule** : `dummy.tres`
+retrouve `attack_windup_s = 0.9` (Sparring redevient LISIBLE).
+`keepy.tres` garde `attack_windup_s = 0.0` (le tap EST le coup, inchange
+depuis le lot 8). **Tous les autres champs de combat restent strictement
+identiques** entre les deux profils, exactement comme le lot 11 l'exigeait :
+`max_hp` 50/50, `attack_damage` 6/6, `riposte_damage` 12/12,
+`attack_recovery_s` 1,10/1,10, `dodge_windup_s` 0,05/0,05,
+`dodge_active_s` 0,4/0,4, `dodge_recovery_s` 0,36/0,36,
+`stagger_duration_s` 0,7/0,7, `riposte_window_s` 1,2/1,2 -- verifie par
+diff des deux `.tres` sur tous les champs de combat, **une seule ligne
+differe**.
+
+⚠️ **Ce n'est PAS une asymetrie de puissance.** Le hibou n'encaisse pas
+plus, n'inflige pas plus, ne recupere pas plus vite, n'a pas plus de vie.
+C'est la difference entre un adversaire LISIBLE et un joueur REACTIF --
+sans elle il n'y a rien a lire ni a decider, seulement une course de
+cadence. **Borne dure `attack_recovery_s <= 1,20 s` des deux cotes
+maintenue** (1,10 des deux cotes, sous le plafond) -- rien dans ce lot
+n'a eu besoin de s'en approcher.
+
+### Perimetre du code : deux `.tres`, trois fichiers de commentaires/sondes, ZERO ligne de logique de jeu
+
+`git diff --stat` contre `origin/staging` : `resources/battle/dummy.tres`
+(un champ), `scripts/battle/FighterProfile.gd` et
+`scripts/battle/FighterBrain.gd` (commentaires d'en-tete seulement, aucune
+valeur ni logique touchee), `scripts/dev/BattleDefenseProbe.gd` et
+`scripts/dev/BattleReadabilityProbe.gd` (adaptation d'une seule fonction
+d'assertion chacun, plus leurs messages `print`). **Aucune scene, aucun
+`.glb`, aucun collider, aucun script de `BattleArena.gd`/`Fighter.gd`/
+`FighterView.gd`/`BattleHUD.gd` touche** -- tous generiques (`is_charging()`
+keye sur la longueur de phase, `_evade_lo`/`_evade_hi` de `BattleArena.gd`
+retournent deja `-1.0` si `attack_windup_s <= 0`), donc restaurer le
+telegraphe cote Dummy les fait fonctionner sans une ligne a changer.
+
+### `_windup_retired()` corrigee dans les DEUX sondes -- elle testait la mauvaise question
+
+Le lot 11 l'avait ecrite comme `is_zero_approx(Dummy) AND
+is_zero_approx(Keepy)` et gardait les phases A/B/C/R/E de
+`BattleDefenseProbe` et PHASE C / la moitie "barre dessinee" de PHASE G de
+`BattleReadabilityProbe` derriere elle. **Chaque phase gardee y est deja
+ecrite attaquant=Dummy, defenseur=Keepy** (verifie ligne par ligne avant
+tout edit) -- c'est exactement lot 8-10 restaure, pas un nouveau mecanisme.
+La fonction ne testait donc jamais "y a-t-il un telegraphe dans le
+combat", elle testait "y a-t-il un telegraphe du cote que CES phases
+mesurent" -- et ce cote est **Dummy seul**. Corrigee en
+`is_zero_approx(DummyProfile.attack_windup_s)` dans les deux fichiers,
+avec les en-tetes et messages `print` mis a jour en consequence. Aucune
+geometrie, aucun seuil, aucune tolerance modifiee -- seule la condition de
+garde change, et elle passe desormais a `false`, ce qui **reactive** les
+phases telles qu'ecrites plutot que d'en reecrire une seule.
+
+### Validation -- editeur + templates Godot 4.3-stable installes dans ce sandbox
+
+Releases GitHub officielles, tailles verifiees contre `Content-Length`
+avant extraction (50 276 070 et 1 073 228 327 octets -- aucune troncature).
+Import headless **exit 0** (24 `.scn`, complet). Export Web release
+**exit 0**.
+
+**`BattleDefenseProbe` : 36/36, PHASES A/B/C/R/E REACTIVEES et vertes** --
+fenetre d'esquive 0,500..0,907 de la barre (817 ms, ferme apres le pire
+humain a 450 ms), attaquant libre a 2 120 ms / cycle d'esquive 810 ms (marge
+493 ms au pire tap, largement > `HUMAN_FAST` 300 ms), fenetre de riposte
+1 200 ms encore ouverte au retour libre, les trois verdicts HUD distincts.
+**`BattleReadabilityProbe` : 65/65**, PHASE C et la moitie barre de PHASE G
+REACTIVEES -- telegraphe visible et croissant sur le corps de Sparring,
+barre dessinee contraste 12,91:1 (ciel) / 4,10:1 (sol), bande d'esquive
+14,89:1 / 4,73:1, et **la barre du joueur reste bien NON levee sur une
+attaque instantanee** (assertion lot 8 inchangee). `BattleContractProbe` :
+**46/46** (PHASE A2 -- l'attaque du joueur reste instantanee -- inchangee ;
+PHASE F, rapportee jamais gatee, montre desormais Keepy-profil gagnant
+40/40 en IA-vs-IA mirroite, consequence attendue et non maquillee d'un
+adversaire lisible face a un attaquant instantane). `BattleStatsProbe` :
+**83/83**, inchangee (ne depend d'aucun timing d'attaque). `AssetContractAudit`
+(12/12 visuels, **0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe`, `ProbeTimeoutAudit` (**37 sondes scenes**, retour exact
+a la baseline apres suppression de la sonde de sweep jetable) -- **toutes
+exit 0**.
+
+**Determinisme verifie** : `BattleDefenseProbe` et `BattleContractProbe`
+rejouees deux fois a la graine `20260806`, sortie **byte-identique** sur les
+deux (stdout compris, `cmp` silencieux).
+
+### PHASE 2 -- mesure, banc REEL du depot, n=900 par politique (3 graines x 300), pas suppose
+
+Sonde jetable (jamais commitee, supprimee avant ce commit -- verifie
+qu'elle disparaissait bien de `ProbeTimeoutAudit`, 38 -> 37 scenes) qui
+reprend **verbatim** `_policy_fight()` de `BattleDefenseProbe.gd` (les deux
+combattants pilotes -- le joueur par une politique caricature, l'adversaire
+par le vrai `FighterBrain`, piege du sac de frappe deja rencontre 3 fois) et
+la rejoue sur TROIS bases de graine (`20260821`, `31415926`, `7654321`), pas
+une seule -- la lecon du lot 3 sur n=40. Chaque tap du joueur paie une
+latence humaine 300-450 ms tiree par tap.
+
+| politique | pooled (n=900) | duree moyenne |
+|---|---|---|
+| martelage (mash) | **900/900 (100,0 %)** | 10,4 s |
+| esquive seule (dodge-only) | 0/900 (0,0 %) | 60,0 s *(plafond -- n'attaque jamais)* |
+| **panique (panic-dodge)** | **591/900 (65,7 %)** | 17,2 s |
+| **lecture+riposte parfaite** | **900/900 (100,0 %)** | 12,7 s |
+| lecture+riposte imparfaite (3/4, gigue 140 ms) | 894/900 (99,3 %) | 14,2 s |
+
+**Critere central du lot, atteint** : panique et lecture+riposte etaient
+IDENTIQUES au lot 11 (27,7 % chacune) -- elles sont desormais **65,7 %
+contre 100,0 %**, un ecart de **34,3 points**, stable sur les trois graines
+(64,3-67,3 % pour panique). La dimension de LECTURE est reellement revenue :
+lire la barre et riposter bat significativement le fait de taper au hasard
+des l'apparition du telegraphe.
+
+**Martelage reste eleve (100,0 %), et ce n'est PAS ecrase par une
+asymetrie supplementaire** -- assume depuis le lot 11, aucun reglage n'a
+ete ajoute pour le faire baisser. Il gagne par CADENCE : le cycle du joueur
+(0 + 0,12 + 1,10 = 1,22 s) reste plus rapide que celui de Sparring
+(0,9 + 0,12 + 1,10 = 2,12 s), meme si le joueur encaisse chaque coup
+telegraphie sans jamais esquiver.
+
+⚠️ **Panique depasse legerement la fourchette 10-15 s (17,2 s)** -- rapporte,
+pas gate (meme discipline que `BattleDefenseProbe` PHASE D), et deja dans
+la marge que d'autres lots ont acceptee pour cette meme politique
+(lot 10 : maxima jusqu'a 22,2 s sur esquive-panique). Aucun reglage
+supplementaire n'a ete fait pour le faire rentrer dans la fourchette --
+ce n'etait pas demande et l'aurait ete au prix d'une modification hors
+`.tres`.
+
+**Engagement du joueur inchange** : `0 + 0,12 + 1,10 = 1,22 s` -- identique
+au lot 11, dans la famille du lot 8 (1,28 s, "jouable"), loin du 2,72 s
+injouable du lot 10.
+
+### Ce qui n'a PAS ete touche
+
+`ai_reaction_delay_s`/`ai_reaction_jitter_s`/`ai_aggression`/
+`ai_defense_rate`/`ai_dodge_aim`/`ai_dodge_slop` sur les deux profils :
+**intouches**, comme demande. Le chemin `_dodge_aim` de
+`FighterBrain._choose()` redevient **atteignable** contre Sparring des
+qu'un cerveau (probe mirroite ou un futur brain joueur) defend contre son
+telegraphe -- il reste **inatteignable** contre le joueur, exactement
+comme documente depuis le lot 8. `GROUP_BLOCKS` de `BattleTally` reste
+**fige a zero** (rules Firestore deployees, `hasAll(statKeys())`) --
+aucun champ de `BattleStats` ni des rules touche. Modeles `.glb`/
+`ModelSlot`, attaque instantanee du joueur, fenetre de riposte, barre +
+bande cote adversaire (lots 6-9) : tous **intouches**.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que le telegraphe de Sparring se lit a nouveau comme un
+   signal exploitable au pouce**, sur un vrai telephone -- aucune sonde
+   ne peut repondre a ca, c'est l'objet meme du lot.
+2. Le martelage a 100,0 % reste la strategie dominante en absolu, meme si
+   elle n'est plus indiscernable de la panique en face -- si Mathieu juge
+   ca encore trop fort, le levier reste `keepy.attack_recovery_s` (deja
+   documente aux lots 9/10), a re-mesurer avant tout changement.
+3. Panique a 17,2 s de moyenne, legerement au-dessus de la fourchette
+   10-15 s -- signale, non corrige.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique des que
+la CI est verte.
