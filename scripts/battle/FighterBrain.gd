@@ -56,12 +56,15 @@ class_name FighterBrain
 ## =====================================================================
 ## LOT 8: AGAINST AN INSTANT ATTACKER THERE IS NOTHING LEFT TO READ
 ##
-## LOT 11 UPDATE: this is no longer just the player's case. Every combat
-## field is now equal between profiles, and measurement picked a shared
-## ZERO wind-up (see FighterProfile.gd's lot-11 header) -- so everything
-## below is true of BOTH fighters attacking, not one.
+## LOT 12 (reversing lot 11's brief detour through a shared zero
+## wind-up -- see FighterProfile.gd's lot-12 header): this is back to
+## being ONLY the player's case, exactly as lot 8 shipped it.
+## attack_windup_s is not a symmetrizable combat field, so
+## dummy.tres/Sparring has its telegraph back (0.9) while keepy.tres
+## stays instant (0.0). Everything below is true of the PLAYER attacking,
+## not of Sparring.
 ##
-## The player's attack now has a zero-length wind-up, so `is_charging()`
+## The player's attack still has a zero-length wind-up, so `is_charging()`
 ## is never true for them, so the `_dodge_aim` path below is UNREACHABLE
 ## against the shipped player. Nothing replaces it: an instant blow has
 ## no telegraph, and no amount of AI would make one appear. The brain
@@ -75,9 +78,13 @@ class_name FighterBrain
 ## an ordinary hit no longer cancels the telegraph it lands on, so the
 ## opponent's blow completes and the trade is real.
 ##
-## The path is KEPT, not deleted: it is the brain's behaviour against any
-## telegraphed opponent, which is what it faces the moment BattleArena's
-## wiring is mirrored -- BattleContractProbe PHASE E does exactly that.
+## The path is REACHABLE AGAIN, not merely kept for later: with Sparring
+## telegraphing once more, this fighter's OWN brain -- when it defends,
+## i.e. when Sparring is mirrored onto the player's side, or when a probe
+## mirrors both sides -- reads its opponent's bar exactly like this on any
+## telegraphed opponent, including the shipped Sparring the moment
+## BattleArena's wiring is mirrored -- BattleContractProbe PHASE E does
+## exactly that.
 ##
 ## So the brain reads it, WITH HUMAN-LIKE ERROR: it draws a target bar
 ## fraction once per telegraph (ai_dodge_aim, spread by ai_dodge_slop)

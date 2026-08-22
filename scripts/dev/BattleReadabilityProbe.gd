@@ -45,15 +45,18 @@ const SAMPLE_LATE := 0.80
 var _failures := 0
 var _checks := 0
 
-## LOT 11: both profiles are zero-windup now (see CLAUDE.md, Keepy Battle
-## lot 11, and BattleDefenseProbe's matching guard). Neither fighter ever
-## charges any more, so there is no telegraph to grow (PHASE C) and no
-## bar to draw, colour or time (the "drawn bar" half of PHASE G) -- both
-## are retired below rather than asserted against a phase of length zero,
-## which this file's own PHASE C comment already called "true and
-## meaningless" for the one side that was already instant before lot 11.
+## LOT 12 REVERSED LOT 11's WINDUP EQUALITY (see CLAUDE.md, Keepy Battle
+## lot 12, and BattleDefenseProbe's matching guard): attack_windup_s is
+## NOT a symmetrizable combat field. Mathieu's call: dummy.tres gets its
+## telegraph back (0.9), keepy.tres stays instant (0.0) -- every other
+## combat field is still identical. This checks DummyProfile only,
+## because PHASE C and PHASE G's "drawn bar" half were always written
+## against the OPPONENT's wind-up (see each phase's own header) -- the
+## player's own instant attack never had a bar to begin with, back to
+## lot 8. Restoring dummy's telegraph makes both phases valid again,
+## unmodified.
 func _windup_retired() -> bool:
-	return is_zero_approx(DummyProfile.attack_windup_s) and is_zero_approx(KeepyProfile.attack_windup_s)
+	return is_zero_approx(DummyProfile.attack_windup_s)
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "BattleReadabilityProbe")
@@ -62,10 +65,10 @@ func _ready() -> void:
 	_phase_a_facing()
 	await _phase_b_no_leak()
 	if _windup_retired():
-		print("\n--- PHASE C RETIRED: both profiles are zero-windup (lot 11) ---")
-		print("  Neither fighter charges any more, so there is no telegraph on the")
-		print("  fighter's own body to grow -- reported once here instead of sampling")
-		print("  a windup of length zero and asserting the (true, meaningless) result.")
+		print("\n--- PHASE C RETIRED: the attacker profile is zero-windup ---")
+		print("  There is no telegraph on the attacker's own body to grow -- reported")
+		print("  once here instead of sampling a windup of length zero and asserting")
+		print("  the (true, meaningless) result.")
 	else:
 		await _phase_c_telegraph()
 	await _phase_d_silhouettes()
@@ -396,15 +399,15 @@ const CONTRAST_FLOOR := 3.0
 func _phase_g_charge_bar() -> void:
 	print("\n--- PHASE G: the charge bar completes exactly at impact ---")
 
-	# LOT 11: this whole phase measures a WIND-UP -- both profiles are now
-	# zero-windup (see this file's PHASE C guard and CLAUDE.md, Keepy
-	# Battle lot 11), so `is_charging()` is false for either fighter's
-	# ATTACK and there is no fill fraction, no drawn bar and no evade band
-	# to gate. What survives unconditionally, below, is that the geometry
-	# still exists in the scene (a future lot could re-arm a telegraph
-	# without touching BattleFighter.tscn) and that an instant attack
-	# never raises it -- the one assertion this phase already made for the
-	# player alone at lot 8, now true of both fighters.
+	# LOT 12 REVERSED LOT 11's WINDUP EQUALITY: dummy.tres has its
+	# telegraph back (0.9), keepy.tres stays instant (0.0) -- see
+	# CLAUDE.md, Keepy Battle lot 12. This branch is therefore DEAD on the
+	# shipped profiles (kept, not deleted: if a future lot ever ships two
+	# zero-windup fighters again, `is_charging()` is false for either
+	# fighter's ATTACK and there is no fill fraction, no drawn bar and no
+	# evade band to gate -- what would survive is that the geometry still
+	# exists in the scene and that an instant attack never raises it, the
+	# one assertion this phase already made for the player alone at lot 8).
 	if _windup_retired():
 		var arena := BattleScene.instantiate()
 		add_child(arena)

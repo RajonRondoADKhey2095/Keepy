@@ -80,35 +80,41 @@ var _failures := 0
 var _checks := 0
 
 ## =====================================================================
-## LOT 11: BOTH FIGHTERS ARE NOW ZERO-WINDUP, AND PHASES A/B/C/R/E TEST A
-## MECHANIC THAT NO LONGER EXISTS ON EITHER SIDE
+## LOT 12 REVERSED LOT 11's WINDUP EQUALITY -- attack_windup_s IS NOT A
+## SYMMETRIZABLE COMBAT FIELD, AND THIS FILE IS WHY
 ##
-## Every one of those phases exists to answer "can a human REACT to a
-## telegraph and time a dodge against it". Lot 11 makes attack_windup_s a
-## COMBAT FIELD that must be identical on both profiles -- Mathieu's
-## explicit, non-negotiable call -- and measurement (not preference) is
-## what picked its shared value: a shared NONZERO wind-up made mashing
-## LOSE (the brain reads and dodges a perfectly regular telegraph), which
-## directly contradicts the accepted design outcome that whoever attacks
-## more often should win a strictly symmetric duel. Zero is also the only
-## value the stated cadence arithmetic closes with (recovery ~1.10s +
-## active 0.12s + windup 0 = ~1.22s, matching lot 8's proven "jouable"
-## 1.28s) -- see CLAUDE.md, Keepy Battle lot 11.
+## Lot 11 forced attack_windup_s equal on both profiles and measured that
+## the only value the stated cadence budget closed with was zero -- which
+## made panic-dodge and read+riposte the SAME policy (27.7% each): once
+## neither side telegraphs, there is nothing left to READ, only a phase-
+## luck dodge. That was reported honestly as the accepted cost, not a bug
+## -- but it deleted the whole reading dimension these phases exist to
+## measure, on Mathieu's own reading. His call: dummy.tres gets its
+## telegraph BACK (attack_windup_s 0.9), keepy.tres keeps its instant
+## attack (0.0) -- every OTHER combat field stays identical. This is not
+## a power asymmetry (same max_hp, same attack_damage, same riposte_damage,
+## same recovery): it is the difference between a READABLE opponent and a
+## REACTIVE player, and it is what gives this file's phases something to
+## gate again.
 ##
-## With DummyProfile.attack_windup_s == 0.0, `_cover_band()` is
-## STRUCTURALLY empty: `_resolve()` always requests the attack before its
-## loop starts, so the strike (one tick later, by construction) resolves
-## before a dodge requested at ANY tap in that loop can reach its own
-## ACTIVE window (dodge_windup_s alone costs 3 ticks). A REACTIVE dodge
-## against an instant attack is not narrow, it is impossible -- which
-## Fighter.gd and FighterBrain.gd already document as the accepted lot-8
-## consequence of a zero wind-up. Phases A/B/C/R/E below GUARD on this
-## and report it rather than asserting geometry that cannot hold; failing
-## them would not catch a regression, it would punish the design Mathieu
-## ordered. PHASE C2, R2 and D do not depend on there being a telegraph
-## and are UNCHANGED.
+## So `_windup_retired()` below checks DummyProfile ONLY. It was never
+## really "is there a telegraph on the fight", it is "is there a
+## telegraph on the side these phases test a dodge against" -- and every
+## phase in this file already resolves DummyProfile as the attacker and
+## KeepyProfile as the defender (see PHASE A onward). Restoring dummy's
+## windup makes them valid again, unmodified: this is not a new mechanic,
+## it is lot 8's original asymmetry, reinstated by measurement rather than
+## reintroduced by guesswork.
+##
+## KeepyProfile.attack_windup_s stays zero, so the REVERSE direction --
+## the opponent dodging the player's attack -- remains structurally
+## impossible, exactly as lot 8 already documented and accepted for one
+## side. `_cover_band()` on a zero-length attacker would still be
+## STRUCTURALLY empty for that reason; it simply never runs that
+## direction, because every phase here is written attacker=Dummy,
+## defender=Keepy.
 func _windup_retired() -> bool:
-	return is_zero_approx(DummyProfile.attack_windup_s) and is_zero_approx(KeepyProfile.attack_windup_s)
+	return is_zero_approx(DummyProfile.attack_windup_s)
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "BattleDefenseProbe")
@@ -117,11 +123,10 @@ func _ready() -> void:
 	print("human notice band %.2f..%.2fs, anticipation jitter sigma %.0f ms" % [
 		HUMAN_FAST, HUMAN_LATE, HUMAN_JITTER * 1000.0])
 	if _windup_retired():
-		print("\n--- PHASES A/B/C/R/E RETIRED: both profiles are zero-windup (lot 11) ---")
-		print("  There is no telegraph on either side any more, so there is nothing a")
-		print("  REACTIVE dodge can time itself against -- see this file's header. Not")
-		print("  gated, not silently passed: reported once, here, instead of asserting")
-		print("  band geometry that is now structurally empty on the shipped profiles.")
+		print("\n--- PHASES A/B/C/R/E RETIRED: attacker profile is zero-windup ---")
+		print("  There is no telegraph to dodge REACTIVELY against -- see this file's")
+		print("  header. Not gated, not silently passed: reported once, here, instead")
+		print("  of asserting band geometry that is structurally empty on this profile.")
 	else:
 		_phase_a_chronogram()
 		_phase_b_window()

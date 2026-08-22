@@ -27,50 +27,62 @@ class_name FighterProfile
 ## about the rules they are both playing by.
 ##
 ## =====================================================================
-## LOT 11 REVERSED LOT 8's ASYMMETRY -- EVERY COMBAT FIELD IS NOW EQUAL
+## LOT 12 REVERSED LOT 11's WINDUP EQUALITY -- attack_windup_s IS NOT A
+## SYMMETRIZABLE COMBAT FIELD, AND THIS IS STRUCTURAL, NOT A TASTE CALL
 ##
-## Device report: recovery had grown to 2.6s (lot 10) pricing an
-## unavoidable instant attack, and the resulting ~2.7s engagement was
-## unplayable. Mathieu's call, non-negotiable: keepy.tres and dummy.tres
-## must carry IDENTICAL values on every COMBAT field (max_hp,
-## attack_damage, riposte_damage, attack_windup_s, attack_recovery_s,
-## dodge_*, stagger_duration_s, riposte_window_s). Only the ai_* DECISION
-## fields, display_name and the Art group may differ.
+## Lot 11's brief classed attack_windup_s as a COMBAT field that had to be
+## identical on both profiles, alongside max_hp/attack_damage/etc. That
+## classification was WRONG: attack_windup_s is not a price paid or a
+## resource spent, it is the field that GENERATES THE OPPONENT'S CHARGE
+## BAR -- the one channel a defender reads to know a blow is coming and
+## WHEN it lands (see the field's own doc below). Forcing it equal at
+## zero did not make the fight fairer, it deleted the telegraph on both
+## sides at once, and lot 11's own measurement proved the cost: panic-
+## dodge and read+riposte became the SAME policy (27.7% each) because
+## there was nothing left to READ, only a phase-luck dodge.
 ##
-## That forces attack_windup_s to be equal too, and MEASUREMENT (not
-## preference) picked ZERO for both, over any shared nonzero value:
-## giving Sparring back a real wind-up while giving Keepy one to match
-## made mashing LOSE (300-fight sample) -- a rules-following brain reads
-## and dodges a perfectly regular telegraph -- which is the opposite of
-## the accepted design outcome ("celui qui frappe le plus souvent gagne"
-## in a strictly symmetric duel). Zero is also the only value the stated
-## cadence budget closes with: active (0.12s) + recovery (~1.10s) already
-## sum to ~1.22s, matching lot 8's proven "jouable" 1.28s, leaving no room
-## for a wind-up on either side.
+## Mathieu's call, and the one durable exception to "every combat field
+## equal": dummy.tres gets attack_windup_s back to 0.9 -- Sparring is
+## LEGIBLE again. keepy.tres keeps 0.0 -- the player's tap IS the blow,
+## unchanged since lot 8. EVERY OTHER combat field (max_hp, attack_damage,
+## riposte_damage, attack_recovery_s, dodge_*, stagger_duration_s,
+## riposte_window_s) stays strictly identical between the two profiles,
+## exactly as lot 11 mandated. This is NOT a power asymmetry: Sparring
+## does not hit harder, survive longer, or recover faster for having a
+## telegraph. It is the difference between a fighter a player has to
+## READ and a fighter the player CONTROLS -- and one of the two combatants
+## in this duel has to be each, or there is nothing to react to and
+## nothing to decide.
 ##
-## Consequence, reported rather than hidden: a REACTIVE dodge against a
-## zero-length wind-up is not narrow, it is impossible (the defender's
-## own dodge_windup_s alone costs 3 ticks, and the strike resolves on the
-## very next tick after the tap). Dodging only still works by PHASE LUCK
-## -- a fighter already mid-dodge, from an earlier tap, happening to be
-## in its ACTIVE window on the tick an incoming strike resolves. See
-## BattleDefenseProbe's and BattleReadabilityProbe's lot-11 guards, and
-## CLAUDE.md's Keepy Battle lot 11 section, for the measured numbers.
+## A future lot must NOT "fix" this back to equality in the name of
+## symmetry: the asymmetry is the fix. If it is ever revisited, it must
+## be revisited by MEASURING what a shared value does to the reading
+## dimension (as lot 11 measured, and got wrong), not by pattern-matching
+## on "every other field is equal so this one should be too".
+##
+## Consequence unchanged from lot 8/11 and still true here: a REACTIVE
+## dodge against KEEPY's zero-length wind-up remains impossible (the
+## defender's own dodge_windup_s alone costs 3 ticks, and the strike
+## resolves on the very next tick after the tap) -- that half of the
+## asymmetry is accepted, not new. What lot 12 restores is the OTHER
+## half: a REACTIVE dodge against SPARRING's wind-up is possible again,
+## exactly as it was through lots 8-10. See BattleDefenseProbe's and
+## BattleReadabilityProbe's lot-12 guards, and CLAUDE.md's Keepy Battle
+## lot 12 section, for the measured numbers.
 ##
 ## =====================================================================
-## LOT 8 SPLIT ONE ATTACK INTO TWO PAYOFFS (SUPERSEDED BY LOT 11 ABOVE)
+## LOT 8 SPLIT ONE ATTACK INTO TWO PAYOFFS
 ##
 ## The player's attack became INSTANT (attack_windup_s = 0) and the
 ## reward for a successful dodge became a RIPOSTE: an attack begun while
 ## riposte-ready deals riposte_damage AND staggers, where an ordinary
 ## "blind" attack deals attack_damage and does not stagger at all.
 ##
-## Both are per-profile numbers -- the riposte-vs-chip SPLIT survives lot
-## 11 unchanged. What did not survive is the asymmetry between the two
-## profiles' wind-ups: lot 11 makes attack_windup_s a shared, equal
-## number (zero, see above), so "instant, unavoidable chip against a
-## slow, readable, heavy blow" no longer describes the shipped fight --
-## both fighters are now the instant side.
+## Both are per-profile numbers. The riposte-vs-chip split survives lot 12
+## unchanged, and so does the asymmetry this header describes: "instant,
+## unavoidable chip against a slow, readable, heavy blow" is, once again
+## (after lot 11's brief detour through shared zero), exactly what the
+## shipped fight is.
 ##
 ## =====================================================================
 ## LOT 7 DELETED THE GUARD AND FEINT GROUPS
