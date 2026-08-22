@@ -10115,3 +10115,222 @@ comme deja consigne au lot 3.
 
 `main` **non touche** (`origin/main` toujours `924d81f`, verifie apres le
 push). Merge sur `staging` : palier 1, automatique.
+
+## KEEPY BATTLE LOT 11 : EGALITE STRICTE DES CHAMPS DE COMBAT, WINDUP=0 DES DEUX COTES, LE MARTELAGE RETROUVE (22 aout 2026)
+
+Branche `claude/lot-11-battle-balance-70gtqq`, partie de `staging`
+(`924079a`, lot 10). Retour device sur lot 10 : « c'est impossible de
+prendre du plaisir, c'est trop long entre deux attaques » --
+`attack_recovery_s` du joueur avait grimpe a 2,6 s pour tarifer un coup
+INSTANTANE et INEVITABLE, portant l'engagement a 2,72 s. Decision de
+Mathieu, non negociable : `keepy.tres` et `dummy.tres` doivent porter des
+valeurs **IDENTIQUES** sur tout champ de COMBAT (`max_hp`,
+`attack_damage`, `riposte_damage`, `attack_windup_s`,
+`attack_recovery_s`, `dodge_*`, `stagger_duration_s`,
+`riposte_window_s`). Seuls les champs de DECISION (`ai_*`), `display_name`
+et le groupe Art peuvent differer.
+
+### ⚠️ `attack_windup_s` DOIT etre egal aussi -- et la MESURE, pas la
+### preference, a choisi ZERO plutot qu'une valeur partagee non nulle
+
+Premiere tentative testee et REJETEE, mesuree avant d'etre ecartee :
+`attack_windup_s = 0,9` des deux cotes (redonner au joueur le meme
+telegraphe que Sparring). Resultat mesure sur `BattleDefenseProbe` PHASE D
+(300 combats, joueur pilote par une politique-caricature, adversaire par
+le vrai brain) : **martelage (« mash ») gagne 0/300**, contre 94,3% une
+fois revenu a zero. Cause : un cerveau qui suit les regles LIT et esquive
+un telegraphe parfaitement regulier -- exactement l'inverse de l'issue
+acceptee d'avance (« dans un duel strictement symetrique, celui qui frappe
+le plus souvent gagne »). L'arithmetique de cadence ferme aussi sur zero :
+`active (0,12s) + recovery (~1,10s)` font deja ~1,22s, correspondant a
+l'engagement 1,28s « jouable » du lot 8 -- il ne reste aucune marge pour un
+wind-up sur aucun des deux cotes.
+
+**`attack_windup_s = 0.0` des DEUX cotes**, restaurant la cadence « jouable »
+du lot 8 mais desormais partagee. `attack_recovery_s = 1.1` (le milieu de
+la fourchette demandee, sous la borne dure de 1,20). `attack_damage = 6`,
+`riposte_damage = 12` (choisis par sweep, voir plus bas). `dodge_*`,
+`stagger_duration_s`, `riposte_window_s` etaient deja identiques et
+restent inchanges.
+
+### ⚠️ BORNE DURE `attack_recovery_s <= 1,20s`, DES DEUX COTES -- pourquoi
+### elle existe et ne doit plus jamais etre franchie
+
+Le lot 10 a rendu le jeu injouable en portant cette valeur a 2,6s pour
+compenser un coup qu'on ne pouvait pas eviter. Avec la symetrie stricte de
+ce lot, plus aucun cote n'a besoin d'etre compense de cette facon : le
+telegraphe est desormais nul des deux cotes, donc il n'y a plus de raison
+structurelle de faire grimper `attack_recovery_s`. La borne est
+NON FRANCHISSABLE precisement pour empecher qu'une future session ne
+recree le meme piege (« il faut juste compenser un peu plus »). Sweep de
+0,90 a 1,20 fait par pas de 0,05 (voir tableau plus bas) : aucune falaise,
+progression lisse -- contrairement a l'ancienne falaise documentee a
+0,60/0,62 sous l'ancienne configuration asymetrique, qui ne s'applique
+plus a ce design.
+
+### Sweep mesure, pas suppose -- `BattleDefenseProbe` PHASE D, n=300, graine fixe
+
+| recovery | mash (win / duree) | panic / read+riposte |
+|---|---|---|
+| 0,90 | 100,0% / 8,9s | 19,7% / 10,8s |
+| 0,95 | 100,0% / 9,5s | 25,3% / 11,4s |
+| 1,00 | 100,0% / 10,0s | 23,3% / 12,0s |
+| 1,05 | 100,0% / 10,4s | 25,0% / 12,2s |
+| **1,10 (retenu)** | **94,3% / 10,8s** | **27,7% / 12,6s** |
+| 1,15 | 86,0% / 11,0s | 28,0% / 12,8s |
+| 1,20 (plafond) | 73,7% / 11,4s | 28,3% / 13,1s |
+
+`BattleContractProbe` PHASE F (mirrore, les deux cotes pilotes par le vrai
+brain, rapporte, jamais gate) confirme a `recovery=1,10` :
+**duree moyenne 12,84s** (min 9,03 / max 16,92), dans la fourchette 10-15s
+demandee.
+
+### ⚠️ CONSEQUENCE MESUREE, PAS CACHEE : l'esquive REACTIVE contre un coup
+### instantane est structurellement IMPOSSIBLE, des deux cotes desormais
+
+Avec `attack_windup_s = 0`, le coup se resout au tick JUSTE APRES la
+demande (`request_action`), avant que le defenseur -- meme s'il vient de
+demander une esquive au meme instant -- ait pu atteindre sa propre phase
+ACTIVE (`dodge_windup_s` a lui seul coute 3 ticks a 60 Hz). Ce n'est pas
+une fenetre etroite, c'est une impossibilite structurelle, deja documentee
+comme la consequence acceptee du lot 8 pour UN seul cote ; ce lot
+l'etend a l'autre. Ce qui reste : l'esquive par CHANCE DE PHASE (un
+combattant deja en train d'esquiver, d'un tap anterieur, se trouve par
+hasard en phase ACTIVE au tick ou un coup adverse se resout). C'est
+exactement ce que mesurent les politiques `panic-dodge` / `read+riposte`
+du banc -- et elles rendent desormais des chiffres **IDENTIQUES** entre
+elles (27,7%), parce qu'il n'existe plus de barre a lire : « lecture
+parfaite » et « panique » sont devenues la MEME politique une fois le
+telegraphe supprime des deux cotes. C'est une consequence honnete du
+design, pas un defaut de sonde : signalee ici plutot que masquee.
+
+### PHASE 3 -- validation sur le banc REEL du depot, n=300, plusieurs graines
+
+| politique | victoires | duree moyenne | duree max |
+|---|---|---|---|
+| **martelage (mash)** | **283/300 (94,3%)** | 10,8s | 13,5s |
+| esquive seule (dodge-only) | 0/300 (0,0%) | 13,6s | 20,9s |
+| panique (panic-dodge) | 83/300 (27,7%) | 12,6s | 17,2s |
+| lecture+riposte parfaite | 83/300 (27,7%) | 12,6s | 17,2s |
+| lecture+riposte imparfaite (3/4, jitter 140ms) | 83/300 (27,7%) | 12,6s | 17,2s |
+
+`BattleContractProbe` PHASE E (le brain pilote le fighter du JOUEUR, pas
+seulement l'adversaire) confirme l'interchangeabilite sans cas special.
+Les DEUX cotes sont pilotes dans chaque mesure (piege du sac de frappe,
+deja rencontre 3 fois dans ce projet).
+
+**Engagement du joueur (windup + resolution + recuperation)** :
+`0 + 0,12 + 1,10 = 1,22s` -- tres proche de la cible ~1,20s, et dans la
+famille du lot 8 (1,28s, « jouable »), tres loin du 2,72s injouable du
+lot 10.
+
+**Ce que ce lot NE resout PAS, et c'est assume plutot que maquille** :
+l'esquive n'est plus une COMPETENCE (il n'y a plus rien a lire), elle
+est desormais un pari de timing/rythme. `ai_dodge_aim`/`ai_dodge_slop`
+deviennent vestigiaux pour la defense de l'IA contre un attaquant
+instantane (deja documente comme consequence acceptee du lot 8, etendue
+ici) -- le chemin `_dodge_aim` de `FighterBrain._choose()` reste
+inatteignable des deux cotes. `ai_reaction_delay_s`/`jitter`,
+`ai_aggression`, `ai_defense_rate` restent les seuls leviers reellement
+actifs (cadence et frequence de decision), et n'ont pas ete retouches
+(deja raisonnables, mesures ci-dessus).
+
+### PHASE 2 -- calibrage IA : AUCUN changement de valeur, signal plutot que reglage force
+
+Le brief demandait de regler les `ai_*` pour qu'« un joueur qui lit
+correctement gagne clairement, et qu'un joueur distrait perde ». Mesure
+avant d'agir : sous `attack_windup_s = 0`, il n'existe plus de telegraphe
+a lire, donc aucune combinaison d'`ai_*` ne peut recreer une distinction
+entre « lecture correcte » et « panique » -- les deux politiques rendent
+deja des chiffres identiques (voir plus haut), et c'est une propriete de
+la mecanique, pas de reglage IA. Forcer artificiellement une difference
+(ex. donner au joueur un avantage cache) aurait ete exactement la
+"compensation cachee" interdite par le brief. **Signale, non corrige** :
+Mathieu tranche s'il souhaite reintroduire un signal de lecture ailleurs
+(hors perimetre .tres, ou dans un lot futur). Les valeurs `ai_*`
+existantes (`ai_aggression`, `ai_defense_rate`, `ai_reaction_delay_s`,
+`ai_reaction_jitter_s`) sont **inchangees** et deja mesurees comme
+raisonnables : mash gagne clairement (94,3%), les strategies passives ou
+tardives perdent la majorite du temps (27,7% ou 0%).
+
+### Sondes adaptees -- assertions rendues fausses par le design, jamais gate en douce
+
+Trois fichiers de sonde touches, tous des adaptations d'assertions
+devenues fausses par ce changement de design, jamais des reglages
+d'anciens defauts :
+
+- **`BattleDefenseProbe.gd`** : les PHASES A/B/C/R/E testent une
+  esquive REACTIVE a un telegraphe -- structurellement impossible des
+  deux cotes desormais (voir plus haut). Gardees derriere
+  `_windup_retired()` : rapportees une fois, jamais gate sur une
+  geometrie de bande devenue vide par construction (division par
+  `DummyProfile.attack_windup_s` = 0 aurait produit des NaN en cascade
+  si laissee telle quelle). PHASE C2, R2 et D **inchangees** -- elles ne
+  dependent pas d'un telegraphe et restent pleinement valides.
+- **`BattleReadabilityProbe.gd`** : PHASE C (le telegraphe grandit sur le
+  corps du combattant) et la moitie « barre dessinee » de PHASE G sont
+  gardees derriere le meme `_windup_retired()` -- il n'y a plus de barre
+  a dessiner ni a colorer sur AUCUN des deux fighters. Ce que PHASE G
+  verifie desormais dans ce cas : la geometrie `Body/Charge` existe
+  encore dans la scene (un futur lot pourrait reintroduire un telegraphe
+  sans toucher `BattleFighter.tscn`) et qu'un coup instantane ne leve
+  jamais la barre, sur les DEUX fighters -- exactement l'assertion que
+  le lot 8 faisait deja pour le seul joueur.
+- **`BattleContractProbe.gd`** : PHASE A2 (« le coup du joueur est
+  instantane ») passe SANS modification -- `KeepyProfile.attack_windup_s`
+  reste zero. Aucune assertion cassee ici.
+
+**Documentation de code mise a jour** (commentaires seulement, aucune
+valeur ni logique touchee) : `FighterProfile.gd` (nouveau bloc d'en-tete
+« LOT 11 » expliquant le renversement de l'asymetrie du lot 8, paragraphe
+« instant, unavoidable chip... » corrige pour ne plus decrire une
+asymetrie qui n'existe plus) et `FighterBrain.gd` (note que le
+commentaire lot 8 sur l'attaquant instantane s'applique desormais aux
+DEUX fighters).
+
+### Determinisme verifie
+
+`BattleContractProbe` rejouee deux fois a la meme graine (20260806) :
+**sortie byte-identique**, stdout compris. Aucun `randi()`/`randf()`
+global touche par ce lot (seul le `RandomNumberGenerator` seede de
+l'arene est utilise, comme documente par `BattleArena.gd`).
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre `Content-Length`, aucune
+troncature). Import headless **exit 0**, export Web release **exit 0**,
+aucune erreur GDScript. `index.wasm` **35 376 909 octets** -- identique au
+fingerprint deja consigne pour tout lot qui ne touche pas le code moteur
+(coherent : ce lot ne touche que 2 `.tres` + 2 fichiers de commentaires
+`.gd` + 2 sondes). `index.pck` 5 762 880 octets (export unique et propre,
+`build/`+`.godot/` supprimes avant -- a lire avec la mise en garde
+permanente sur l'instabilite du `.pck`).
+
+**Sondes, toutes exit 0** : `BattleContractProbe` (46/46),
+`BattleDefenseProbe` (8/8 gate + PHASE D rapportee), `BattleReadabilityProbe`
+(24/24), `BattleStatsProbe` (83/83, inchangee -- ne depend pas des timings
+d'attaque), `AssetContractAudit` (12/12 visuels, 0/10 colliders deplaces),
+`DeathModelAudit` (CHARGER seul fatal, capture au 2e contact pour les 5
+autres types -- inchange, ce lot ne touche aucun hazard), `ChargerShapeProbe`,
+`ProbeTimeoutAudit` (37 scenes, toutes armees). Piege payload sans objet
+(ce lot ne touche ni `assets_source/`, ni `scripts/dev/*` au-dela des deux
+fichiers de sonde deja lies au build via `exclude_filter`).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que ~1,22s d'engagement se ressent comme jouable au pouce**,
+   comme le lot 8 l'avait ete -- aucune sonde ne rend ce jugement, c'est
+   l'objet meme de ce lot.
+2. **L'esquive est-elle encore une option qui merite d'etre pressee** ?
+   Mesuree comme statistiquement PERDANTE face au martelage (27,7% contre
+   94,3%) -- c'est assume par le brief, mais reste une question de
+   ressenti : un joueur qui esquive par chance de phase doit-il avoir
+   l'impression de "jouer avec le systeme" ou de "presser un bouton
+   inutile" ? Aucune sonde ne peut trancher.
+3. **La disparition de la "lecture" comme competence** (panic-dodge ==
+   read+riposte desormais) est signalee, pas corrigee -- decision future
+   de Mathieu si un signal de lecture doit revenir sous une autre forme.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique des que
+la CI est verte.
