@@ -10573,3 +10573,22 @@ bande cote adversaire (lots 6-9) : tous **intouches**.
 
 `main` **non touche**. Merge sur `staging` : palier 1, automatique des que
 la CI est verte.
+
+### Deploiement staging du lot 12 (palier 1, automatique)
+
+`staging` (`7dd5924`, merge `--no-ff`, arbre **byte-identique** a la
+branche feature -- `git diff` vide). CI **web-build run #193**
+(id `32598120648`) **verte en 3 min 34 s** (20:56:12 -> 20:59:46 UTC) --
+`Deploy to Vercel [STAGING -- staging]` succes,
+`[PRODUCTION -- main]` correctement **skipped**.
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI** (canal MCP
+Vercel) : `index.service.worker.js` servi par `keepy-staging.vercel.app`
+porte **`CACHE_VERSION = 1787432354|3293683`** = **20:59:14 UTC**, tombant
+**a l'interieur** de la fenetre du run #193 -- l'alias sert bien ce build.
+`x-vercel-cache: MISS`, `age: 0`, `last-modified` colle a l'instant de la
+requete : trois signaux independants qui disent que ce n'est pas une
+reponse de cache.
+
+`main` **non touche** (palier 2, gate Mathieu apres validation device sur
+`keepy-staging.vercel.app` -- lisibilite du telegraphe adverse restaure).
