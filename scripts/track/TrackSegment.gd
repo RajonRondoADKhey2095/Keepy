@@ -198,7 +198,15 @@ func _reroll_ground_tint() -> void:
 ## lower saturation than the ground (S=0.50 vs the ground's ~0.62) so it
 ## still reads as the brightest, calmest surface rather than competing with
 ## the track for saturation -- value is still what carries the lane read.
-const _CURB_COLOR: Color = Color(0.475, 0.760, 0.380)
+## The shared swamp identity. Preloaded here rather than reached through
+## the GameState autoload because these are `const`: an autoload is a
+## runtime node and cannot be read at constant-folding time, while a
+## preloaded resource can. The colours it feeds are `static var` because a
+## const initialiser cannot read a resource instance's property either;
+## nothing writes them, so treat them as the constants they replaced.
+const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres")
+
+static var _CURB_COLOR: Color = _PALETTE.curb_color
 const _CURB_WIDTH: float = 0.12
 const _CURB_HEIGHT: float = 0.03
 const _CURB_X: Array[float] = [-1.0, 1.0] # midway between LANE_X's three lanes
@@ -439,8 +447,8 @@ const _BUSH_SINK: float = 0.78
 ## and it retires the worst pair the table shipped with (canopy-vs-trunk
 ## at 1.29:1, two values on the same object that were the hardest of the
 ## six to tell apart).
-const _TREE_TRUNK_COLOR: Color = Color(0.070, 0.095, 0.070)
-const _ROCK_COLOR: Color = Color(0.140, 0.160, 0.135)
+static var _TREE_TRUNK_COLOR: Color = _PALETTE.prop_tree_trunk_color
+static var _ROCK_COLOR: Color = _PALETTE.prop_rock_color
 
 ## The four kinds added in the second props pass. Their luminances were
 ## picked by SWEEPING the scene's occupied luminance line, not by eye --
@@ -452,10 +460,10 @@ const _ROCK_COLOR: Color = Color(0.140, 0.160, 0.135)
 ## the 1.29:1 the canopy/trunk pair already ships with) and costs some
 ## backdrop contrast on the two mid-value kinds, which is the trade 8.2
 ## already makes explicit rather than a new compromise.
-const _BUSH_COLOR: Color = Color(0.105, 0.150, 0.100)
-const _STUMP_COLOR: Color = Color(0.200, 0.205, 0.140)
-const _BENCH_COLOR: Color = Color(0.275, 0.285, 0.195)
-const _SIGN_COLOR: Color = Color(0.340, 0.350, 0.255)
+static var _BUSH_COLOR: Color = _PALETTE.prop_bush_color
+static var _STUMP_COLOR: Color = _PALETTE.prop_stump_color
+static var _BENCH_COLOR: Color = _PALETTE.prop_bench_color
+static var _SIGN_COLOR: Color = _PALETTE.prop_sign_color
 
 ## Every mesh key a slot carries, in one place. _hide_all_props() and
 ## nearest_prop_edge_x() both walk this rather than each repeating a
