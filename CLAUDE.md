@@ -10971,3 +10971,18 @@ plutot qu'argumente** :
 **Piege payload tenu** : **0** ligne `Storing File` pour `assets_source`,
 `scripts/dev`, `docs` ou `web`. La palette EST packee (`swamp_palette.res`
 + son `.remap`), comme il faut puisque le jeu la lit.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`90694eb`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature -- meme hash d'arbre des deux cotes, verifie AVANT le
+push). CI run **#198** (id `32651298012`) **verte en 3 min 31 s**
+(16:19:15 -> 16:22:46 UTC), `[STAGING -- staging]` succes,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(palier 2, gate Mathieu apres validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** --
+le `CACHE_VERSION` a ete lu AVANT le deploiement puis apres :
+**`1787496944` (14:55:44, run #197) -> `1787502139` (16:22:19)**, le
+second **a l'interieur de la fenetre du run #198**. `x-vercel-cache:
+MISS`, `age: 0` sur les DEUX lectures. L'alias sert bien ce build.
