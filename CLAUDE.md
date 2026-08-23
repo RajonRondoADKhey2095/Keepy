@@ -10836,6 +10836,92 @@ L'epoch d'apres tombe **a l'interieur de la fenetre du run #196**, et les deux
 lectures portent `x-vercel-cache: MISS` + `age: 0` -- ce n'est pas une reponse
 de cache. L'alias sert bien le build du plateau.
 
+### ⚠️ SECOND PIEGE GODOT, MEME FAMILLE QUE LE PREMIER, ET IL AVALAIT CHAQUE TAP : un `Control` plein ecran laisse a `MOUSE_FILTER_STOP` (23 aout 2026)
+
+Branche `claude/hub-portal-transition-bug-vcf47y`, partie de `staging`
+(`b64eb37`). Retour device : « Keepy se deplace par bonds mais atterrir dans
+un anneau ne declenche aucune transition ». **Un seul changement de
+comportement : `mouse_filter = 2` sur le noeud racine de `HubWorld.tscn`.**
+
+⚠️ **`_unhandled_input` s'execute APRES le picking GUI.** Tout `Control`
+sous le doigt dont le `mouse_filter` vaut `STOP` consomme l'evenement et
+appelle `set_input_as_handled()` ; plus rien en aval ne le voit — **aucune
+erreur, aucun warning, juste un plateau qui ignore les taps**. La racine de
+`HubWorld.tscn` est un `Control` plein ecran laisse au **DEFAUT de `Control`,
+qui est `MOUSE_FILTER_STOP`** : elle avalait donc chaque tap avant
+`HubTapInput`. Meme famille que le piege `@export`/`NodePath` de la section
+ci-dessus — un cablage qui echoue en silence dans un `.tscn` ecrit a la main.
+
+**MESURE EN A/B, pas deduit** — meme scene, meme binaire, fenetre REELLE
+1170x2532 (`xvfb-run --rendering-driver opengl3`), un vrai
+`InputEventScreenTouch` injecte sur le pixel de l'anneau :
+
+| `HubWorld.mouse_filter` | `tapped_ground` emis | verdict |
+|---|---|---|
+| `0` = STOP (livre) | **0 fois** (touch ET souris) | le tap n'arrive JAMAIS |
+| `2` = IGNORE (ce lot) | 2 fois (touch) / 1 fois (souris) | chaine complete verte |
+
+⚠️ **`--headless` NE PEUT PAS voir ce defaut, et c'est le piege dans le
+piege.** Le display server dummy rapporte une fenetre **0x0**, donc
+`get_final_transform()` vaut 1/30 et un evenement injecte atterrit
+hors-ecran : `gui_find_control` ne trouve rien, personne ne consomme, et
+`_unhandled_input` se declenche — **un vert que le device n'a pas**. Une
+sonde headless du lot precedent avait ainsi valide la chaine complete
+(portails construits, `hop_landed` connecte, `portal_entered` cable,
+`change_scene_to_file` execute) : tout cela etait vrai, et le tap n'arrivait
+quand meme pas. **Toute sonde qui injecte un evenement de pointeur doit
+tourner en FENETRE REELLE.**
+
+**Ce que le diagnostic a INNOCENTE, mesure et pas suppose** — aucun de ces
+points n'avait besoin d'etre touche : `hop_landed` est emis a chaque
+atterrissage avec la position monde ; son unique auditeur est bien
+`HubWorld._on_hop_landed` ; `landed_within` compare en X/Z contre le rayon lu
+sur le `CylinderShape3D` (**1,35**, jamais duplique en constante) ;
+`portal_entered` a exactement un auditeur par portail ; `HubRouter.ROUTES`
+resout les trois `game_id` ; et **aucun `@export` de type noeud n'a ete
+reintroduit** (les trois references de `HubTapInput` et celle de `HubCamera`
+sont bien des `NodePath` resolus en `_ready()`). Verifie aussi **sur le
+`.pck` exporte** : `hub_layout.tres` est converti en `.res` binaire a
+l'export et le round-trip preserve les `StringName` de `type`/`game_id`.
+
+**Preuve, TROIS portails testes un par un** (sonde jetable, fenetre reelle,
+tap sur le pixel de l'anneau, supprimee avant commit — `ProbeTimeoutAudit`
+revient a **37 sondes**) : le tap arrive, vise a **0,17-0,19 m** du centre
+(rayon 1,35), et `change_scene_to_file` aboutit reellement sur
+`TitleScreen.tscn` / `QuizzHomeScreen.tscn` / `Battle.tscn`. **Rouge d'abord**
+sur l'arbre pre-fix, sur l'assertion qui compte (« le tap atteint
+HubTapInput »), avant d'etre vert.
+
+**Le bouton « Menu » de secours n'est PAS abime** : `IGNORE` ne retire que la
+racine du picking, ses enfants sont piques normalement — mesure, 1 pression
+recue et **0 tap parasite** sur le sol. `KeepyHopper` est **intouche**, et
+aucun `body_entered`/`monitoring` n'est reintroduit.
+
+⚠️ **Derive de doc corrigee au passage, elle etait FAUSSE** : l'en-tete de
+`HubTapInput.gd` affirmait « exactement un des deux evenements arrive par
+geste, pas de double-fire a garder ». Mesure : `emulate_mouse_from_touch`
+vaut **true** par defaut, donc un doigt produit un touch release **ET** une
+souris synthetisee, et `tapped_ground` part **deux fois**. Inoffensif
+(`hop_to` est de profondeur un, le second appel redit la meme destination),
+mais l'affirmation ne tenait pas.
+
+⚠️ **DEUX POINTS OUVERTS, mesures et deliberement NON corriges ici.**
+1. **Le rapport device dit « Keepy se deplace par bonds », or la mesure dit
+   qu'aucun tap n'arrivait** — ces deux faits ne se recouvrent pas. Le fix
+   est necessaire dans les deux lectures (il est la seule difference entre
+   une chaine morte et une chaine verte, prouvee des deux cotes), mais si
+   Keepy bougeait REELLEMENT avant, alors un second facteur reste a trouver
+   et le prochain test device le dira.
+2. **Le LABEL flottant est un piege de visee**, mesure : il est a
+   `y = 1,55`, donc un tap dessus retombe **3,7-3,8 m AU-DELA** du portail
+   (parallaxe a -34 deg). Balayage sur 108 taps realistes (6 departs x 6
+   points de visee x 3 portails) : **9 ne tombent jamais dans le disque de
+   declenchement**, tous par le label ou le bord de l'anneau, et tous
+   marginaux (1,41-1,78 contre 1,35). Non corrige — bouger le rayon ou
+   viser le sol sous le label est un reglage de gameplay qui merite sa
+   propre passe device.
+
+
 ## SWAMPPALETTE : la palette marecage a UNE seule source (23 aout 2026)
 
 Branche `claude/swamp-palette-extraction-ioofz3`, partie de `staging`
