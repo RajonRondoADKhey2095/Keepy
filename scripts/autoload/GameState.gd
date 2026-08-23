@@ -837,18 +837,39 @@ const MIST_FADE_DURATION_S: float = 0.8
 # =====================================================================
 # WHERE THE REST OF THE PALETTE LIVES
 #
-# This file owns the ATMOSPHERE only -- the two colours and one density
-# it drives at runtime. Every other swamp colour is owned by whatever
-# draws it, because a second copy here would be a value nobody renders
-# from and everybody could let drift:
+# The palette itself now lives in ONE place --
+# resources/world/swamp_palette.tres (scripts/world/SwampPalette.gd) --
+# because a second screen, the plateau hub, draws this same marsh and was
+# authored from a copy of these numbers. This file no longer OWNS any
+# colour; it names the atmosphere fields it drives at runtime and reads
+# them from there.
 #
-#   ground slab, hazards, collectibles  scenes/*.tscn albedos
+# Who reads the palette, and for what:
+#
+#   sky / haze / fog density            HERE (below) + scenes/Game.tscn
 #   lane curbs, trackside props         scripts/track/TrackSegment.gd
 #   background hill billboards          scripts/world/Decor.gd (_LAYERS tint)
-#   sky / haze / fog density            HERE + scenes/Game.tscn
+#   hub plateau atmosphere              scripts/hub/HubWorld.gd
+#
+# STILL AUTHORED IN THEIR OWN SCENE, on purpose -- the ground slab, the
+# hazards and the collectibles. DarkPaletteAudit reads those .tscn files
+# through PackedScene.get_state() to assert the shipped baseline, and the
+# hazards' placeholders must stay byte-mirrored with their .glb, which
+# cannot read a .tres. The palette DECLARES those values so it stays a
+# complete description; the scenes remain what renders. See the header of
+# scripts/world/SwampPalette.gd for the full argument.
 #
 # The full measured table -- every surface, its rendered colour and its
 # contrast against what it is read on -- is docs/MESHY_SPEC.md section 8.
+
+## The shared swamp identity, extracted so the hub plateau draws the same
+## marsh Chased does. The six names below are unchanged and still the way
+## every caller reads these values -- only where the numbers LIVE moved.
+##
+## They are `static var` rather than `const` because a const initialiser
+## cannot reach into a resource. Nothing writes them; treat them as
+## constants, and change a colour in the .tres, never here.
+const SWAMP_PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres")
 
 ## The two atmosphere colours at the SHALLOW end of the mist breath.
 ##
@@ -871,8 +892,8 @@ const MIST_FADE_DURATION_S: float = 0.8
 ## the ground's own contrast floors against CHARGER/JUMP/STOMPER -- see the
 ## `_reroll_ground_tint` doc in scripts/track/TrackSegment.gd for that
 ## constraint and the two rendered-vs-raw measurements that pinned it.
-const SWAMP_SKY: Color = Color(0.062, 0.115, 0.044)  # #0F1D0B dark saturated swamp green
-const SWAMP_HAZE: Color = Color(0.151, 0.260, 0.114) # #26421D saturated green haze
+static var SWAMP_SKY: Color = SWAMP_PALETTE.sky_shallow  # #0F1D0B dark saturated swamp green
+static var SWAMP_HAZE: Color = SWAMP_PALETTE.haze_shallow # #26421D saturated green haze
 
 ## The DEEP end of the mist breath -- where the sky and haze sit at
 ## mist_intensity 1.0.
@@ -884,8 +905,8 @@ const SWAMP_HAZE: Color = Color(0.151, 0.260, 0.114) # #26421D saturated green h
 ## value. If a future session finds itself picking a DEEP colour that
 ## reads as a different place, the answer is no -- that is the phase
 ## system this batch removed, growing back.
-const SWAMP_SKY_DEEP: Color = Color(0.035, 0.068, 0.024)  # #091106
-const SWAMP_HAZE_DEEP: Color = Color(0.107, 0.190, 0.080) # #1B3014
+static var SWAMP_SKY_DEEP: Color = SWAMP_PALETTE.sky_deep  # #091106
+static var SWAMP_HAZE_DEEP: Color = SWAMP_PALETTE.haze_deep # #1B3014
 
 ## Fog density at each end of the breath. The shallow value is the one
 ## scenes/Game.tscn ships and has carried since the depth-fog batch;
@@ -901,8 +922,8 @@ const SWAMP_HAZE_DEEP: Color = Color(0.107, 0.190, 0.080) # #1B3014
 ## gameplay contrast figure in section 8 therefore holds at both ends of
 ## the breath by construction, not by re-measuring luck (it is
 ## re-measured anyway -- see the batch report).
-const SWAMP_FOG_DENSITY: float = 0.0035
-const SWAMP_FOG_DENSITY_DEEP: float = 0.0052
+static var SWAMP_FOG_DENSITY: float = SWAMP_PALETTE.fog_density_shallow
+static var SWAMP_FOG_DENSITY_DEEP: float = SWAMP_PALETTE.fog_density_deep
 
 # =====================================================================
 

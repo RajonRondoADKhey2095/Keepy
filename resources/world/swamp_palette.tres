@@ -1,0 +1,30 @@
+[gd_resource type="Resource" script_class="SwampPalette" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/SwampPalette.gd" id="1_swamp_palette"]
+
+[resource]
+script = ExtResource("1_swamp_palette")
+sky_shallow = Color(0.062, 0.115, 0.044, 1)
+sky_deep = Color(0.035, 0.068, 0.024, 1)
+haze_shallow = Color(0.151, 0.26, 0.114, 1)
+haze_deep = Color(0.107, 0.19, 0.08, 1)
+fog_density_shallow = 0.0035
+fog_density_deep = 0.0052
+ambient_light_color = Color(0.42, 0.5, 0.35, 1)
+ambient_light_energy = 0.75
+sun_light_color = Color(0.66, 0.74, 0.52, 1)
+ground_albedo = Color(0.24, 0.46, 0.17, 1)
+hub_fog_light_color = Color(0.062, 0.115, 0.044, 1)
+hub_fog_density = 0.016
+curb_color = Color(0.475, 0.76, 0.38, 1)
+prop_tree_trunk_color = Color(0.07, 0.095, 0.07, 1)
+prop_rock_color = Color(0.14, 0.16, 0.135, 1)
+prop_bush_color = Color(0.105, 0.15, 0.1, 1)
+prop_stump_color = Color(0.2, 0.205, 0.14, 1)
+prop_bench_color = Color(0.275, 0.285, 0.195, 1)
+prop_sign_color = Color(0.34, 0.35, 0.255, 1)
+decor_mountain_tint = Color(0.274, 0.37, 0.244, 1)
+decor_hill_far_tint = Color(0.233, 0.34, 0.204, 1)
+decor_hill_near_tint = Color(0.177, 0.28, 0.151, 1)
+contrast_light_threshold = 0.549
+contrast_dark_threshold = 0.0165

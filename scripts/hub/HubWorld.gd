@@ -35,6 +35,11 @@ class_name HubWorld
 ## button away, so the worst case is an ugly screen rather than an
 ## unreachable game.
 
+## The shared swamp identity. The plateau and Keepy Chased are the same
+## marsh, and were authored months apart from copies of the same numbers --
+## this is what stops them drifting.
+const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres")
+
 @onready var _container: SubViewportContainer = $WorldViewport
 @onready var _builder: HubBuilder = $WorldViewport/SubViewport/World/Props
 @onready var _keepy: KeepyHopper = $WorldViewport/SubViewport/World/Keepy
@@ -42,6 +47,7 @@ class_name HubWorld
 @onready var _router: HubRouter = $Router
 @onready var _fallback_menu: Control = $FallbackMenu
 @onready var _fallback_button: Button = $FallbackButton
+@onready var _world_env: WorldEnvironment = $WorldViewport/SubViewport/World/WorldEnvironment
 @onready var _fallback_close: Button = $FallbackMenu/Panel/VBoxContainer/CloseButton
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -57,6 +63,8 @@ func _ready() -> void:
 	SafeArea.set_default()
 	SafeArea.fill_screen()
 
+	_apply_swamp_palette()
+
 	_portals = _builder.portals()
 	for portal in _portals:
 		portal.portal_entered.connect(_on_portal_entered)
@@ -69,6 +77,30 @@ func _ready() -> void:
 	_chased_button.pressed.connect(_on_fallback_chased)
 	_quizz_button.pressed.connect(_on_fallback_quizz)
 	_battle_button.pressed.connect(_on_fallback_battle)
+
+## Repaints this screen's atmosphere from the shared palette.
+##
+## The .tscn ships these same values, so this is a no-op on the pixels --
+## it exists so the plateau cannot drift away from Chased when a colour is
+## tuned in the .tres. The scene keeps its literals as the first-frame
+## baseline, which is also what makes this screen correct if this node
+## ever fails to run.
+##
+## THE FOG IS DELIBERATELY NOT CHASED'S. A plateau read from a fixed
+## camera wants the horizon closed much sooner than a track the player is
+## running down, so it fogs toward the SKY colour at roughly 4.6x the
+## density. Those two values are named `hub_*` in the palette rather than
+## left as literals here, so the deviation is visible next to what it
+## deviates from instead of hiding in a scene file.
+func _apply_swamp_palette() -> void:
+	var env: Environment = _world_env.environment
+	if env == null:
+		return
+	env.background_color = _PALETTE.sky_shallow
+	env.ambient_light_color = _PALETTE.ambient_light_color
+	env.ambient_light_energy = _PALETTE.ambient_light_energy
+	env.fog_light_color = _PALETTE.hub_fog_light_color
+	env.fog_density = _PALETTE.hub_fog_density
 
 func _process(_delta: float) -> void:
 	# Three calls a frame, and the portals stay ignorant of who is
