@@ -14,8 +14,7 @@ class_name FighterProfile
 ##     Keepy.gd, no Boar.gd, no per-animal subclass, and adding one would
 ##     be the failure this file is designed to prevent.
 ##   * FighterBrain.gd is generic too. An opponent's "personality" is the
-##     ai_* numbers below, not a bespoke behaviour script -- lot 4's
-##     feint is one more of them (ai_feint_rate), not a new class.
+##     ai_* numbers below, not a bespoke behaviour script.
 ##   * The art swap is a PackedScene reference in this file, handed to
 ##     ModelSlot (scripts/world/ModelSlot.gd) at runtime -- the project's
 ##     established placeholder-to-.glb exchange point. See Fighter.gd's
@@ -26,191 +25,281 @@ class_name FighterProfile
 ## and the input buffer are properties of the GAME, not of a combatant --
 ## duplicating them per .tres would let two fighters silently disagree
 ## about the rules they are both playing by.
+##
+## =====================================================================
+## LOT 12 REVERSED LOT 11's WINDUP EQUALITY -- attack_windup_s IS NOT A
+## SYMMETRIZABLE COMBAT FIELD, AND THIS IS STRUCTURAL, NOT A TASTE CALL
+##
+## Lot 11's brief classed attack_windup_s as a COMBAT field that had to be
+## identical on both profiles, alongside max_hp/attack_damage/etc. That
+## classification was WRONG: attack_windup_s is not a price paid or a
+## resource spent, it is the field that GENERATES THE OPPONENT'S CHARGE
+## BAR -- the one channel a defender reads to know a blow is coming and
+## WHEN it lands (see the field's own doc below). Forcing it equal at
+## zero did not make the fight fairer, it deleted the telegraph on both
+## sides at once, and lot 11's own measurement proved the cost: panic-
+## dodge and read+riposte became the SAME policy (27.7% each) because
+## there was nothing left to READ, only a phase-luck dodge.
+##
+## Mathieu's call, and the one durable exception to "every combat field
+## equal": dummy.tres gets attack_windup_s back to 0.9 -- Sparring is
+## LEGIBLE again. keepy.tres keeps 0.0 -- the player's tap IS the blow,
+## unchanged since lot 8. EVERY OTHER combat field (max_hp, attack_damage,
+## riposte_damage, attack_recovery_s, dodge_*, stagger_duration_s,
+## riposte_window_s) stays strictly identical between the two profiles,
+## exactly as lot 11 mandated. This is NOT a power asymmetry: Sparring
+## does not hit harder, survive longer, or recover faster for having a
+## telegraph. It is the difference between a fighter a player has to
+## READ and a fighter the player CONTROLS -- and one of the two combatants
+## in this duel has to be each, or there is nothing to react to and
+## nothing to decide.
+##
+## A future lot must NOT "fix" this back to equality in the name of
+## symmetry: the asymmetry is the fix. If it is ever revisited, it must
+## be revisited by MEASURING what a shared value does to the reading
+## dimension (as lot 11 measured, and got wrong), not by pattern-matching
+## on "every other field is equal so this one should be too".
+##
+## Consequence unchanged from lot 8/11 and still true here: a REACTIVE
+## dodge against KEEPY's zero-length wind-up remains impossible (the
+## defender's own dodge_windup_s alone costs 3 ticks, and the strike
+## resolves on the very next tick after the tap) -- that half of the
+## asymmetry is accepted, not new. What lot 12 restores is the OTHER
+## half: a REACTIVE dodge against SPARRING's wind-up is possible again,
+## exactly as it was through lots 8-10. See BattleDefenseProbe's and
+## BattleReadabilityProbe's lot-12 guards, and CLAUDE.md's Keepy Battle
+## lot 12 section, for the measured numbers.
+##
+## =====================================================================
+## LOT 8 SPLIT ONE ATTACK INTO TWO PAYOFFS
+##
+## The player's attack became INSTANT (attack_windup_s = 0) and the
+## reward for a successful dodge became a RIPOSTE: an attack begun while
+## riposte-ready deals riposte_damage AND staggers, where an ordinary
+## "blind" attack deals attack_damage and does not stagger at all.
+##
+## Both are per-profile numbers. The riposte-vs-chip split survives lot 12
+## unchanged, and so does the asymmetry this header describes: "instant,
+## unavoidable chip against a slow, readable, heavy blow" is, once again
+## (after lot 11's brief detour through shared zero), exactly what the
+## shipped fight is.
+##
+## =====================================================================
+## LOT 7 DELETED THE GUARD AND FEINT GROUPS
+##
+## Four lots of guard tuning (3, 4, 5, 6) never shifted the same device
+## report. The model is now two actions, and an attack whose landing
+## instant is STATED by a charge bar rather than guessed at. Nine fields
+## went with them -- guard_windup_s, guard_active_s, guard_recovery_s,
+## guard_damage_ratio, feint_hold_s, ai_feint_rate, ai_guard_bias -- and
+## none survives as a zeroed placeholder, because a field nobody reads is
+## a field somebody eventually reads by accident.
 
 @export_group("Identity")
 ## Shown by the HUD. The only string a player ever reads about a fighter.
 @export var display_name: String = "Combattant"
-@export var max_hp: int = 100
+@export var max_hp: int = 42
 
 @export_group("Attack")
-## Telegraph: the defender's whole reaction window. Longer = more
-## readable, more punishable. This is the single most feel-critical
-## number in the file.
+## The CHARGE BAR'S LENGTH. This is now the single most feel-critical
+## number in the project, and its meaning changed at lot 7.
 ##
 ## =====================================================================
-## THE FLOOR UNDER THIS NUMBER IS A FACT ABOUT PEOPLE, NOT A TASTE (lot 5)
+## IT IS NO LONGER A REACTION WINDOW -- IT IS A COUNTDOWN THE PLAYER READS
 ##
-## A guard tapped in reaction to this telegraph becomes active at
-## `human latency + guard_windup_s`. For it to be up when the blow lands:
+## Lot 5 sized it against a fact about people: a defence tapped in
+## REACTION to an onset becomes active at `human latency + startup`, and
+## the honest human latency through a touchscreen and a browser is
+## 0.30-0.45 s, so a telegraph shorter than that could only be guessed
+## at. That inequality was correct and it was never enough, because
+## reacting to an onset only tells you an attack STARTED. Knowing when it
+## LANDS was the missing half, and no length of telegraph supplies it.
 ##
-##     attack_windup_s  >=  human latency + defender's guard_windup_s
+## The bar supplies it. A player watching a fill complete is performing
+## an ANTICIPATION, not a reaction, and human precision on an anticipated
+## instant is far tighter than a reaction latency -- which is why lot 7
+## could finally make the defensive window a fixed target instead of a
+## race. What this number now buys is READING TIME: long enough that the
+## fill is legible as a clock and not as a flicker.
 ##
-## There is no way around that inequality -- not a wider guard, not
-## cheaper damage. A telegraph shorter than a human reaction time is a
-## telegraph that cannot be reacted to, only guessed at.
+## The floor that replaces lot 5's is in BattleDefenseProbe PHASE B: the
+## dodge window, expressed as a fraction of THIS number, must be wide
+## enough to absorb a human's timing jitter around wherever they aim.
 ##
-## The honest human band through a touchscreen and a browser is
-## 0.30-0.45 s (see BattleDefenseProbe.HUMAN_*). Lots 1-4 shipped 0.30,
-## which put the whole band OUTSIDE the window: the guard's coverage of a
-## plain attack ended 217 ms in. Measured, a player who only mashed
-## ATTACK beat every defensive strategy at every latency, which is what
-## Mathieu reported from the device while the probes said guard worked
-## 99.3% of the time. The probes were answering at 0.12-0.24 s.
+## =====================================================================
+## ZERO IS A MEANINGFUL VALUE, AND IT IS WHAT THE PLAYER SHIPS WITH
 ##
-## BattleDefenseProbe PHASE B gates the inequality. Do not lower this
-## below ~0.50 without re-reading it.
-@export var attack_windup_s: float = 0.34
+## A fighter whose wind-up is 0 throws INSTANTLY: the strike resolves on
+## the tick after the tap, there is no telegraph, and -- because there is
+## no telegraph -- no charge bar is raised and no evade band is drawn.
+## FighterView keys that off the phase having no length, so it is a
+## consequence of this number and not a per-side flag someone has to
+## remember to set.
+##
+## It also means the blow CANNOT BE DODGED except by luck: a defender
+## already inside its own dodge window evades it, and nobody reacts to an
+## instant. That is why keepy.tres pairs a zero wind-up with a small
+## attack_damage -- see the field itself. An attack's damage is priced by
+## how avoidable it is.
+@export var attack_windup_s: float = 0.90
 ## The strike resolves once, at the FIRST tick of this window. The
 ## window's LENGTH is therefore not the hit window -- it is how long the
 ## attacker stays committed and exposed after connecting.
 @export var attack_active_s: float = 0.12
 ## Punish window. The defender's free hit if the attack whiffed -- and,
-## since lot 5, the number that decides whether blocking is worth doing
+## since lot 5, the number that decides whether defending is worth doing
 ## at all.
 ##
 ## =====================================================================
-## WIDENING THE GUARD WAS NOT ENOUGH, AND THIS IS WHY (lot 5, measured)
+## THE INEQUALITY THAT MAKES A SUCCESSFUL DODGE WORTH ANYTHING
 ##
-## With the guard windows fixed but this left where lots 1-4 had it, a
-## player who did nothing but hammer ATTACK won 300 fights out of 300 --
-## BETTER than before the fix. Blocking worked perfectly and still lost.
+## A defender who dodges is locked out for dodge_windup_s +
+## dodge_active_s + dodge_recovery_s from their tap. For the exchange to
+## have cost the attacker something, the defender must come free EARLIER
+## than the attacker does and get the next attack out first:
 ##
-## The arithmetic: a fighter that blocks is locked out for the rest of
-## its guard cycle. To make the exchange cost the attacker anything it
-## must then land a strike, which costs a full attack_windup_s. If
+##     tap + dodge cycle  <  windup + active + recovery
 ##
-##     defender's remaining lockout + defender's attack_windup_s
-##         >=  attack_active_s + attack_recovery_s + attack_windup_s
+## Lot 5 found the guard version of this inequality failing and shipped a
+## fix; the dodge version is what BattleDefenseProbe PHASE C gates now.
+## If it fails, dodging is a slower way to lose and the correct strategy
+## is to never stop attacking -- which is the exact sentence four device
+## reports in a row contained.
 ##
-## the counter never arrives: the attacker is already behind its next
-## telegraph. Blocking becomes a slower way to lose, and the correct
-## strategy is to never stop attacking.
+## =====================================================================
+## LOT 8: ">0" WAS NEVER THE RIGHT BAR. IT HAS TO CLEAR A HUMAN.
 ##
-## Lot 2 lengthened the telegraph and lot 5 lengthened it much further.
-## Both grew the left side of that inequality. Nobody grew the right one
-## -- this field had been sized against a 0.30 s windup and never
-## re-sized. BattleDefenseProbe PHASE C2 now gates it.
-@export var attack_recovery_s: float = 0.40
-@export var attack_damage: int = 12
+## Lot 7 satisfied that inequality and published the margin: +13 ms at
+## the worst tap of the drawn band. Measured against a person that is
+## nothing -- the player came free thirteen milliseconds early and then
+## had to spend a 300-450 ms reaction before they could press anything.
+## The punish window existed on paper and could not be taken.
+##
+## Written out, the free time a defender really gets is
+##
+##   punish = (W + active + recovery)_attacker
+##          - (t_tap + dodge_windup + dodge_active + dodge_recovery)_defender
+##
+## at the LATEST tap the drawn band promises. It is this field, minus the
+## defender's dodge cycle, minus a constant -- so it is the attacker's
+## recovery that pays for the defender's punish window, and nothing else
+## can. BattleDefenseProbe PHASE C now gates it against the human band
+## instead of against zero.
+@export var attack_recovery_s: float = 0.62
+## Damage of an ORDINARY attack -- one thrown without a riposte pending.
+##
+## It does NOT stagger. That is not a softening, it is the rule that
+## makes an instant attack survivable to face: a hit that cancels what
+## the target was doing, repeated faster than the target's wind-up, is a
+## stun-lock, and MEASURED it wins 300 fights out of 300. With the cancel
+## gone, a telegraph completes even while its owner is being chipped, so
+## mashing trades damage for every blow the opponent throws.
+@export var attack_damage: int = 14
 
-@export_group("Guard")
-## Startup. Adds directly to how early the tap has to be -- see
-## attack_windup_s. Keep it small: every millisecond here is a
-## millisecond taken off the player's reaction budget.
-@export var guard_windup_s: float = 0.08
-## The block window. Wide and cheap on purpose: guard is the safe answer,
-## dodge is the greedy one.
+@export_group("Riposte")
+## THE REWARD FOR READING THE BAR. An attack begun while this fighter is
+## riposte-ready deals this instead of attack_damage, and it DOES
+## stagger.
 ##
-## Since lot 5 it has a second job, and it is the one that sizes it: a
-## guard must cover a plain attack AND a held feint from the SAME tap.
-## That is what makes it the option a player can take before they can
-## read a feint -- and a player with no such option has, in practice, no
-## defence at all. It requires
+## Must be strictly greater than attack_damage, or dodging is a detour on
+## the way to the same hit and the whole loop collapses back into "just
+## attack" -- the sentence four device reports contained. Gated.
+@export var riposte_damage: int = 14
+## How long a successful dodge stays spendable.
 ##
-##     guard_windup_s + guard_active_s  >=  attack_windup_s + feint_hold_s
+## =====================================================================
+## IT COUNTS DOWN ONLY WHILE THE FIGHTER IS IDLE
 ##
-## measured from a tap placed anywhere in the human band. Dodge is held
-## to the OPPOSITE bar (see dodge_active_s) and the gap between the two
-## is the whole risk/reward of this game.
-@export var guard_active_s: float = 0.42
-@export var guard_recovery_s: float = 0.22
-## Fraction of the damage a blocked strike still deals. 0.0 makes guard
-## strictly dominant over dodge; chip damage is what keeps a purely
-## defensive player from stalling forever.
-@export_range(0.0, 1.0, 0.05) var guard_damage_ratio: float = 0.25
+## The dodge that earns the riposte also locks its owner up for the rest
+## of its own cycle, and that lockout must not eat the reward: a window
+## measured from the evade instant would be mostly spent before the
+## player could act at all. Counting only FREE time makes this field mean
+## exactly what a player would assume -- "you have this long, once you
+## can move again" -- so it can be gated directly against a human
+## reaction instead of against a lockout that varies with where the tap
+## landed.
+@export var riposte_window_s: float = 1.20
 
 @export_group("Dodge")
-@export var dodge_windup_s: float = 0.06
-## Strictly narrower than guard_active_s, and that gap IS the risk/reward
-## of this lot's combat: a read that lands costs the attacker a full
-## recovery, a read that misses leaves you in dodge recovery with nothing.
+## Startup. It is charged from the tap, so it moves the whole success
+## window EARLIER by its own length -- a dodge tapped exactly as the bar
+## completes is already this late. Keep it small.
+@export var dodge_windup_s: float = 0.05
+## The evade window, and the ONLY defensive window in the game now that
+## guard is gone.
 ##
-## It must stay narrow enough that a dodge CANNOT cover a plain attack
-## and a held feint from one tap -- otherwise it strictly dominates
-## guard and the feint becomes decoration. BattleDefenseProbe PHASE B
-## asserts that failure, which is the only assertion in this project
-## that wants something not to work.
-@export var dodge_active_s: float = 0.20
-@export var dodge_recovery_s: float = 0.34
-
-@export_group("Feint")
-## A feint is an attack that HOLDS. The windup runs its normal length,
-## the strike does not come, the fighter stays wound up for this long,
-## and only then does it land -- one single action, never two.
+## =====================================================================
+## HOW WIDE IT HAS TO BE, DERIVED RATHER THAN GUESSED
 ##
-## WHY IT IS A HELD STRIKE AND NOT "A WINDUP FOLLOWED BY NOTHING", WHICH
-## IS WHAT LOT 4 SET OUT TO BUILD AND MEASURED ITS WAY OUT OF:
+## A dodge tapped `t` seconds into the attacker's wind-up covers the blow
+## iff  t + dodge_windup_s  <=  attack_windup_s  <=  t + dodge_windup_s +
+## dodge_active_s, i.e.
 ##
-## The first design was a lie with no strike at all, followed by a real
-## attack thrown immediately after. It cannot work in this FSM, and the
-## reason is arithmetic rather than tuning: EVERY attack in this game
-## carries the same attack_windup_s telegraph, so the second beat is
-## exactly as readable as the first. A player who dodged the lie is out
-## of their recovery and dodging again long before the follow-up lands.
-## Measured, that version made a reflex-dodging player BETTER, not worse
-## -- 85.7% wins with no feints, 96.3% at a 0.35 feint rate -- because
-## every feint the AI threw was one attack it did not throw. Raising
-## dodge_recovery_s from 0.32 all the way to 0.72 changed nothing, at
-## three different player reaction latencies: the defender was never
-## caught in that recovery, they were already answering the new
-## telegraph.
+##     t in [ W - dw - da , W - dw ]
 ##
-## Holding the strike removes the second telegraph entirely. The
-## defender still gets exactly one window to read, at exactly the usual
-## moment; what they cannot know is WHEN the blow arrives. A dodge, whose
-## active window is narrow, expires during the hold. A guard, whose
-## window is more than twice as wide, usually does not. That asymmetry is
-## not a special rule for feints -- there is none -- it falls straight
-## out of guard_active_s vs dodge_active_s.
+## which is a window of exactly `dodge_active_s`, ending `dodge_windup_s`
+## before the bar completes. So this field IS the player's margin for
+## error, in seconds, one-for-one -- there is no other term.
 ##
-## Length of the hold, i.e. how long the strike is late by. Too short and
-## a reflex dodge still covers it; too long and even a guard has dropped,
-## which turns the feint into an unconditional hit. The band is measured
-## in BattleFeintProbe, per player reaction latency, and it is narrow.
-## The fighter is fully vulnerable throughout, so a hold is also the
-## fighter standing still, telegraphing, for this much longer.
-@export var feint_hold_s: float = 0.26
-## Probability that an offensive decision comes out as a feint instead of
-## a plain attack. 0.0 disables the mechanic entirely for this fighter,
-## which is what every player-side profile must carry: BattleHUD emits
-## three actions and only three, so a human has no feint button, and an
-## AI standing in for the player must not hold an option the player does
-## not have.
-@export_range(0.0, 1.0, 0.05) var ai_feint_rate: float = 0.0
+## It must be comfortably wider than a human's timing jitter on an
+## anticipated instant. Note what it must NOT be: wide enough to cover
+## the whole bar, which would make "tap at any point" correct and delete
+## the decision. BattleDefenseProbe PHASE B gates both ends.
+@export var dodge_active_s: float = 0.40
+## The cost. A dodge is not free: this is tempo handed back to the
+## attacker, and it is the term that decides whether spamming the evade
+## button beats reading the bar. Gated by PHASE C's inequality above.
+@export var dodge_recovery_s: float = 0.36
 
 @export_group("Reaction")
 ## How long a clean hit takes away. Longer than any recovery on purpose:
-## being hit must be worse than whiffing -- gated in
-## BattleDefenseProbe PHASE C2, because lot 5 lengthened attack_recovery_s
-## past the shipped stagger and would otherwise have inverted it silently.
-@export var stagger_duration_s: float = 0.55
+## being hit must be worse than whiffing -- gated in BattleDefenseProbe
+## PHASE C2, because a lot that lengthens attack_recovery_s past the
+## shipped stagger would otherwise invert it silently.
+@export var stagger_duration_s: float = 0.70
 
 @export_group("AI")
 ## Seconds of "thinking" before the brain commits, once its fighter is
-## IDLE. This is the difficulty dial: a lower value is a sharper opponent
-## far more than a higher damage number would be.
-@export var ai_reaction_delay_s: float = 0.42
+## IDLE. Since lot 4 this measures the MINIMUM SPACING between decisions
+## rather than a penalty after each one -- see FighterBrain.advance().
+@export var ai_reaction_delay_s: float = 0.30
 ## Random spread added on top, drawn from the arena's SEEDED rng -- never
 ## from the global one. Exists so an opponent is not metronomic; keep it
 ## non-zero or a player can learn to tap on a beat.
-@export var ai_reaction_jitter_s: float = 0.28
+@export var ai_reaction_jitter_s: float = 0.20
 ## Probability of choosing ATTACK when the opponent is NOT threatening.
-@export_range(0.0, 1.0, 0.05) var ai_aggression: float = 0.55
-## Probability of answering a telegraphed attack defensively instead of
-## trading. 1.0 reads every windup perfectly and is unfun to fight.
-@export_range(0.0, 1.0, 0.05) var ai_defense_rate: float = 0.6
-## Split between the two defensive answers: GUARD with this probability,
-## DODGE otherwise.
-@export_range(0.0, 1.0, 0.05) var ai_guard_bias: float = 0.65
+@export_range(0.0, 1.0, 0.05) var ai_aggression: float = 0.70
+## Probability of answering a telegraphed attack with a dodge instead of
+## trading. 1.0 answers every wind-up and is unfun to fight -- note that
+## it does NOT mean "dodges successfully": the timing below still has to
+## be right.
+@export_range(0.0, 1.0, 0.05) var ai_defense_rate: float = 0.65
+## WHERE ON THE CHARGE BAR this fighter aims its dodge, as a fraction of
+## the fill. The AI reads the bar exactly as the player does -- see
+## FighterBrain's header for the measurement that put it there rather
+## than leaving the brain blind.
+##
+## The ideal is the centre of the evade window, which for a defender with
+## these dodge timings facing a wind-up of length W is
+##
+##     ( W - dodge_windup_s - dodge_active_s / 2 ) / W
+##
+## It is a per-profile NUMBER and not that formula, because the formula
+## needs W -- the OPPONENT's wind-up -- and a brain that could read its
+## opponent's profile would know something no player does. A future
+## opponent whose numbers differ carries its own value here, which is the
+## same "personality is numbers" contract as every other ai_ field.
+@export_range(0.0, 1.0, 0.01) var ai_dodge_aim: float = 0.70
+## How far off that mark this fighter actually lands, drawn once per
+## telegraph from the seeded rng. This is the AI's timing error, and it
+## is the honest difficulty dial for defence: 0.0 is a machine that never
+## mistimes an evade.
+@export_range(0.0, 1.0, 0.01) var ai_dodge_slop: float = 0.16
 
 @export_group("Art")
 ## The imported .glb for this fighter, or null to keep the capsule
-## placeholder. Null on every profile in lot 1 by design -- this lot
-## exists to settle feel and balance BEFORE any Meshy credit is spent.
-##
-## Handed straight to ModelSlot.model_scene, so the three corrections
-## below have exactly the meaning documented in ModelSlot.gd. Nothing
-## about the swap needs new code: drop a .glb in, point this at it.
+## placeholder. Handed straight to ModelSlot.model_scene, so the three
+## corrections below have exactly the meaning documented in ModelSlot.gd.
 @export var model_scene: PackedScene = null
 @export var model_scale: float = 1.0
 @export var model_rotation_degrees: Vector3 = Vector3.ZERO
@@ -221,35 +310,35 @@ class_name FighterProfile
 ## PERMANENTE": nothing post-processes the frame any more).
 @export var placeholder_color: Color = Color(0.85, 0.62, 0.28)
 
+## drive every action through one code path instead of branching per
+## action in the FSM itself.
+##
+## This match is the ONLY place in the codebase that maps an action to
+## its numbers, and it maps to FIELDS, not to values. Lot 7 shrank it
+## from four cases to two by deleting actions, which is the direction it
+## is supposed to be able to move in as easily as the other one.
+## What one of this fighter's strikes costs. The ONE place the two damage
+## numbers are chosen between -- BattleArena prices a real strike with it
+## and every probe resolves with it, so a fixture cannot quietly price a
+## riposte as a chip and still pass. That divergence, on the one axis a
+## lot changes, is the failure this repo already paid for once
+## (SubstituteModel.tscn).
+##
+## Its companion rule -- only a riposte staggers -- is a single boolean
+## and stays at the call site in BattleArena, where resolution lives.
+func damage_for(riposte: bool) -> int:
+	return riposte_damage if riposte else attack_damage
+
 ## (windup, active, recovery) in seconds for `action`, so Fighter.gd can
 ## drive every action through one code path instead of branching per
 ## action in the FSM itself.
 ##
 ## This match is the ONLY place in the codebase that maps an action to
-## its numbers, and it maps to FIELDS, not to values. Lot 4 proved the
-## claim: adding FEINT touched this function and the exports above, and
-## nothing else in this file.
+## its numbers, and it maps to FIELDS, not to values.
 func timing_for(action: BattleTypes.Action) -> Vector3:
 	match action:
 		BattleTypes.Action.ATTACK:
 			return Vector3(attack_windup_s, attack_active_s, attack_recovery_s)
-		BattleTypes.Action.GUARD:
-			return Vector3(guard_windup_s, guard_active_s, guard_recovery_s)
 		BattleTypes.Action.DODGE:
 			return Vector3(dodge_windup_s, dodge_active_s, dodge_recovery_s)
-		BattleTypes.Action.FEINT:
-			# EVERY component is read from the attack's own fields -- the
-			# feint owns no timing of its own except the hold it adds to
-			# the windup. There is deliberately no feint_windup_s, no
-			# feint_active_s and no feint_recovery_s: separable fields
-			# are fields that eventually diverge, and a feint that is
-			# even 50 ms off a real attack anywhere is a feint a player
-			# reads on a stopwatch instead of on a guess.
-			#
-			# The hold lives INSIDE the windup, which is what makes the
-			# whole mechanic one action rather than two. FighterView
-			# still animates the telegraph over attack_windup_s alone
-			# (Fighter.telegraph_duration()), so the pose reaches the
-			# same place at the same moment and then simply stays there.
-			return Vector3(attack_windup_s + feint_hold_s, attack_active_s, attack_recovery_s)
 	return Vector3.ZERO

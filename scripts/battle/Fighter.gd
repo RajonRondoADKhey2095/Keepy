@@ -9,7 +9,7 @@ class_name Fighter
 ##
 ## There is no "player fighter" and no "AI fighter" -- there is a
 ## Fighter, and something that calls `request_action()` on it. A human
-## tap (BattleHUD's three zones) and the AI brain (FighterBrain.gd) enter
+## tap (BattleHUD's two zones) and the AI brain (FighterBrain.gd) enter
 ## through the SAME function and are indistinguishable from here on.
 ## Swapping which one drives which fighter is a wiring change in
 ## BattleArena, not a code change here.
@@ -53,14 +53,14 @@ signal state_changed(state: BattleTypes.State, action: BattleTypes.Action)
 ## Emitted the tick an action is accepted out of IDLE.
 signal action_started(action: BattleTypes.Action)
 ## Emitted once per resolved strike against this fighter, whatever the
-## outcome -- BLOCKED and DODGED are reported too, because "my guard
-## worked" is exactly the feedback this lot needs to be readable.
+## outcome -- DODGED is reported too, because "my dodge worked" is
+## exactly the feedback this game needs to be readable.
 ##
 ## `attempted` is the defensive action this fighter was COMMITTED TO when
 ## the blow landed, or NONE if it was not defending at all. It carries
 ## the one distinction lot 5 exists to make visible: a clean HIT with
-## `attempted == GUARD` is a guard that was MISTIMED, and it must not
-## look to the player like a guard that was never pressed.
+## `attempted == DODGE` is a dodge that was MISTIMED, and it must not
+## look to the player like a dodge that was never pressed.
 ##
 ## It is a signal argument and not something a listener reads back off
 ## `current_action`, even though that would work today: this signal is
@@ -74,6 +74,11 @@ signal hit_taken(damage: int, outcome: BattleTypes.Outcome, attempted: BattleTyp
 ## rule lives in ONE place rather than in each fighter's view of the
 ## other.
 signal strike_activated()
+## Emitted whenever this fighter's riposte availability flips. Exists so
+## the view can hold a cue for as long as the reward is actually
+## spendable, instead of polling `is_riposte_ready()` every frame and
+## drifting from it by a tick.
+signal riposte_changed(ready: bool)
 signal knocked_out()
 
 ## How long an early tap is remembered. Without it, a tap during the last
@@ -112,6 +117,15 @@ var _buffer_left: float = 0.0
 ## True once this fighter's current ATTACK has already resolved, so a
 ## multi-tick ACTIVE window cannot land twice.
 var _strike_spent: bool = false
+## Seconds of FREE time left to spend a successful dodge on a riposte.
+## Burned only while IDLE -- see advance(). Zero means "no riposte owed".
+var _riposte_left: float = 0.0
+## Whether the attack currently in flight was launched as a riposte.
+## Latched at the tap in _begin_action(), not read at resolution time:
+## the reward belongs to the moment the player decided, and for a
+## telegraphed attacker the window would otherwise expire mid-wind-up and
+## silently downgrade a blow the player had already earned.
+var _attack_is_riposte: bool = false
 
 @onready var _slot: ModelSlot = $Body
 
@@ -132,6 +146,8 @@ func reset() -> void:
 	_buffered_action = BattleTypes.Action.NONE
 	_buffer_left = 0.0
 	_strike_spent = false
+	_attack_is_riposte = false
+	_set_riposte(0.0)
 	hp_changed.emit(hp, _max_hp())
 	state_changed.emit(state, current_action)
 
@@ -162,6 +178,12 @@ func advance(dt: float) -> void:
 			_buffer_left = 0.0
 
 	if state == BattleTypes.State.IDLE:
+		# The riposte clock burns FREE time and nothing else. The dodge
+		# that earned it locks this fighter up for the rest of its own
+		# cycle, and charging the reward for that lockout is what made
+		# lot 7's punish window unreachable in the first place.
+		if _riposte_left > 0.0:
+			_set_riposte(max(_riposte_left - dt, 0.0))
 		_consume_buffer()
 		return
 
@@ -182,31 +204,26 @@ func advance(dt: float) -> void:
 ## returns what happened so the arena can report it. The defensive rules
 ## live here rather than in the attacker because they are a property of
 ## the defender's own state machine.
-func receive_strike(damage: int) -> BattleTypes.Outcome:
+func receive_strike(damage: int, staggers: bool) -> BattleTypes.Outcome:
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.MISSED
 
 	# Captured BEFORE anything below can clear it, so a mistimed defence
 	# is still nameable at the moment it fails. NONE unless this fighter
-	# had actually committed to guarding or dodging: an attack caught
-	# mid-swing was not a failed defence, it was a trade lost, and
-	# telling the player otherwise would teach the wrong lesson.
+	# had actually committed to dodging: an attack caught mid-swing was
+	# not a failed defence, it was a trade lost, and telling the player
+	# otherwise would teach the wrong lesson.
 	var attempted := last_defence()
 
 	var defending := state == BattleTypes.State.ACTIVE
 	if defending and current_action == BattleTypes.Action.DODGE:
+		# THE REWARD. Earned here, at the one instant that proves the read
+		# was right, and nowhere else -- a dodge that covered nothing
+		# earns nothing, which is what stops holding the button from
+		# being a strategy.
+		_set_riposte(_riposte_window())
 		hit_taken.emit(0, BattleTypes.Outcome.DODGED, attempted)
 		return BattleTypes.Outcome.DODGED
-
-	if defending and current_action == BattleTypes.Action.GUARD:
-		# Chip damage, and NO stagger: the guard holds, so the defender
-		# keeps its own timing. That difference -- not the damage number
-		# -- is what makes guard worth taking.
-		var chip := int(ceil(float(damage) * _guard_ratio()))
-		_apply_damage(chip)
-		if state != BattleTypes.State.KO:
-			hit_taken.emit(chip, BattleTypes.Outcome.BLOCKED, attempted)
-		return BattleTypes.Outcome.BLOCKED
 
 	# Everything else is a clean hit, INCLUDING being mid-attack: active
 	# attack frames do not defend. That is what stops both fighters from
@@ -215,65 +232,54 @@ func receive_strike(damage: int) -> BattleTypes.Outcome:
 	if state == BattleTypes.State.KO:
 		return BattleTypes.Outcome.HIT
 	hit_taken.emit(damage, BattleTypes.Outcome.HIT, attempted)
-	_enter_stagger()
+	# Only a RIPOSTE cancels what the target was doing. An ordinary hit is
+	# damage and nothing else, which is the rule that makes an instant,
+	# unavoidable attack something a fight can survive: without it, a
+	# player mashing faster than the opponent's wind-up stun-locks it
+	# outright -- measured at 300 wins out of 300.
+	if staggers:
+		_enter_stagger()
 	return BattleTypes.Outcome.HIT
 
 ## The defensive action this fighter is committed to RIGHT NOW -- in any
 ## phase of it, windup and recovery included -- or NONE.
 ##
 ## Deliberately not "is the defence active": the whole point of lot 5's
-## feedback is that a guard which is still winding up, or has already
-## dropped into recovery, is a guard the player DID press and mistimed.
+## feedback is that a dodge which is still starting up, or has already
+## dropped into recovery, is a dodge the player DID press and mistimed.
 ## Those are the two cases that used to be indistinguishable from having
-## pressed nothing.
+## pressed nothing -- and with the charge bar they are the two the player
+## can now actually correct, because the bar says which way they were
+## wrong.
 func last_defence() -> BattleTypes.Action:
-	if current_action == BattleTypes.Action.GUARD or current_action == BattleTypes.Action.DODGE:
+	if current_action == BattleTypes.Action.DODGE:
 		return current_action
 	return BattleTypes.Action.NONE
 
 func is_alive() -> bool:
 	return state != BattleTypes.State.KO
 
-## True while this fighter is free to commit to something right now --
-## the second, and last, thing FighterBrain may "see" about its opponent.
+## True while this fighter is free to commit to something right now.
 ##
-## FighterBrain uses it INVERTED: it bluffs an opponent who is NOT free.
-## That reads backwards until you look at the clock. A feint holds its
-## strike, so it stands wound up and fully vulnerable for attack_windup_s
-## plus the hold -- long enough that an opponent who is free when it
-## starts can simply hit first, which is not a mind game, it is a turn
-## given away. An opponent who is COMMITTED cannot do that, and will come
-## free partway through the telegraph: exactly in time to read it, answer
-## it, and be caught by a blow that arrives after their answer has
-## expired. Bluffing during someone's recovery is what a real fighter
-## does, and here it is also the only window in which a feint survives
-## long enough to land.
-##
-## Measured, at three player reaction latencies: with the condition the
-## right way round a purely reflex-dodging player goes from winning 100%
-## of fights to 52%. With it the wrong way round -- bluffing only free
-## opponents -- the feint never fires against that player at all and the
-## figure does not move a single point.
+## One of the two things FighterBrain may "see" about its opponent, and
+## it is what stops the AI from throwing an attack into a window where
+## the opponent can simply hit first.
 func is_free() -> bool:
 	return state == BattleTypes.State.IDLE
 
 ## True while this fighter is telegraphing or landing an attack -- the
-## first of the two things FighterBrain is allowed to "see" about its
+## other of the two things FighterBrain is allowed to "see" about its
 ## opponent. Kept as a named question rather than letting the brain read
 ## `state` and `current_action` directly, so what the AI perceives is one
 ## explicit, reviewable surface instead of the whole FSM.
 ##
-## A FEINT ANSWERS TRUE HERE, and it has to. This is an observer's whole
-## view of an incoming attack, so if a feint were excluded, any brain
-## would see straight through it -- and a brain is exactly what stands in
-## for the player when this lot's balance is measured. A measurement
-## taken against an opponent that cannot be fooled is not a measurement
-## of the mechanic, it is a measurement of its absence.
-##
-## The reveal is downstream and identical for a brain and for a human:
-## the blow does not come when the telegraph said it would.
+## It is a coarse "an attack is coming"; the charge bar is the fine
+## answer to "and it lands WHEN". The brain only needs the coarse one,
+## because it pays a reaction delay and then commits -- exactly what a
+## player does. Nothing in here lets it read a phase clock a player
+## cannot see.
 func is_threatening() -> bool:
-	return BattleTypes.is_attack_like(current_action) \
+	return current_action == BattleTypes.Action.ATTACK \
 		and (state == BattleTypes.State.WINDUP or state == BattleTypes.State.ACTIVE)
 
 ## Full length, in seconds, of the phase this fighter is currently in --
@@ -286,27 +292,84 @@ func is_threatening() -> bool:
 func phase_duration() -> float:
 	return _phase_total
 
-## How long the TELEGRAPH of the current phase should be shown for, which
-## is not always how long the phase lasts.
+## =====================================================================
+## THE CHARGE BAR CONTRACT -- LOT 7's WHOLE POINT, IN TWO FUNCTIONS
 ##
-## They differ for exactly one action. A feint's windup is
-## attack_windup_s PLUS its hold, but the anticipation pose has to reach
-## its peak on the same beat a real attack's does, or the slower ramp
-## would be a tell -- and a tell during the windup is the one thing this
-## mechanic cannot survive. So the view plays the telegraph over this
-## number and then holds the pose for whatever is left, which is exactly
-## what a held blow looks like: wound up, waiting.
+## The device report that lots 3-6 could not shift was that defending
+## does not work. The cause finally retained is that the telegraph said
+## an attack was COMING and never said WHEN it lands, so a defender could
+## only guess -- and a guess that fails looks exactly like a button that
+## does nothing.
 ##
-## Presentation-only, like phase_duration(). Nothing in this file
-## branches on it.
-func telegraph_duration() -> float:
-	if state == BattleTypes.State.WINDUP and BattleTypes.is_attack_like(current_action) and profile != null:
-		return minf(profile.attack_windup_s, _phase_total)
-	return _phase_total
+## These two read-only functions are the fix. They expose the ONE number
+## the player was missing: how far through its wind-up an attack is, as a
+## fraction. FighterView draws it as a bar above the attacker's head, and
+## the bar reaching full IS the instant of impact -- not approximately,
+## by construction:
+##
+##   * `_phase_total` is the wind-up's own length, set by _set_phase()
+##     from the profile;
+##   * the strike resolves on the FIRST tick of ACTIVE, i.e. the tick
+##     immediately after `_phase_left` runs out;
+##   * so progress reaches 1.0 exactly when the phase ends, which is
+##     exactly when the blow is thrown.
+##
+## PRESENTATION ONLY. Nothing in this file branches on either of them, no
+## rule reads them, and the AI cannot: FighterBrain sees is_threatening()
+## and is_free() and nothing else. A brain that could read this clock
+## would be an opponent playing a different game from the player, which
+## is the divergence this project has already paid for once.
+##
+## BattleReadabilityProbe PHASE G gates both halves -- the number here,
+## tick by tick, and the bar FighterView actually draws from it.
+## A zero-length wind-up is NOT charging. It occupies WINDUP for a single
+## tick on its way to ACTIVE, and reporting that as a telegraph would
+## raise a bar for one frame and offer the AI a mark to aim a dodge at --
+## on an attack that is, by construction, unreactable. `_phase_total` is
+## the phase's own length, so this reads the timing rather than a flag.
+func is_charging() -> bool:
+	return state == BattleTypes.State.WINDUP \
+		and current_action == BattleTypes.Action.ATTACK \
+		and _phase_total > 0.0
+
+## 0.0 at the first tick of the wind-up, 1.0 the moment it ends. Returns
+## 0.0 when not charging, so a caller that forgets is_charging() gets an
+## empty bar rather than a stale one.
+func charge_progress() -> float:
+	if not is_charging() or _phase_total <= 0.0:
+		return 0.0
+	return clampf(1.0 - _phase_left / _phase_total, 0.0, 1.0)
+
+## True while a successful dodge is still spendable. Read by the view (to
+## show the player they are owed something) and by FighterBrain (so the
+## AI spends its own reward the way a player would). Both of those are
+## facts about THIS fighter, which is the line the brain may not cross.
+func is_riposte_ready() -> bool:
+	return _riposte_left > 0.0
+
+## Whether the attack in flight was launched as a riposte. Read by
+## BattleArena when the strike resolves, to price it.
+func attack_is_riposte() -> bool:
+	return _attack_is_riposte
+
+func _set_riposte(value: float) -> void:
+	var was := _riposte_left > 0.0
+	_riposte_left = value
+	var now := _riposte_left > 0.0
+	if was != now:
+		riposte_changed.emit(now)
+
+func _riposte_window() -> float:
+	return profile.riposte_window_s if profile else 0.0
 
 func _begin_action(action: BattleTypes.Action) -> void:
 	current_action = action
 	_strike_spent = false
+	if action == BattleTypes.Action.ATTACK:
+		# Spent at the tap whether or not it was owed, so one dodge buys
+		# exactly one riposte and a player cannot bank two.
+		_attack_is_riposte = _riposte_left > 0.0
+		_set_riposte(0.0)
 	_buffered_action = BattleTypes.Action.NONE
 	_buffer_left = 0.0
 	action_started.emit(action)
@@ -324,11 +387,12 @@ func _advance_phase() -> void:
 	match state:
 		BattleTypes.State.WINDUP:
 			_set_phase(BattleTypes.State.ACTIVE)
-			# is_attack_like, so a FEINT strikes exactly as an ATTACK
-			# does. A feint is not a blow withheld -- it is a blow that
-			# arrives LATE, and that lateness is already baked into the
-			# windup it just finished (FighterProfile.timing_for).
-			if BattleTypes.is_attack_like(current_action) and not _strike_spent:
+			# The strike leaves HERE, on the first tick of ACTIVE, which
+			# is the tick the wind-up ran out on. That is what makes the
+			# charge bar exact rather than merely indicative: full bar
+			# and thrown blow are the same event, not two events that
+			# happen to be scheduled close together.
+			if current_action == BattleTypes.Action.ATTACK and not _strike_spent:
 				_strike_spent = true
 				strike_activated.emit()
 		BattleTypes.State.ACTIVE:
@@ -357,6 +421,9 @@ func _set_phase(next_state: BattleTypes.State) -> void:
 func _enter_stagger() -> void:
 	current_action = BattleTypes.Action.NONE
 	_strike_spent = false
+	# Being staggered loses an unspent riposte: it was a window of free
+	# time, and this fighter no longer has any.
+	_set_riposte(0.0)
 	_buffered_action = BattleTypes.Action.NONE
 	_buffer_left = 0.0
 	state = BattleTypes.State.STAGGER
@@ -373,6 +440,7 @@ func _apply_damage(amount: int) -> void:
 	state = BattleTypes.State.KO
 	_phase_left = 0.0
 	_phase_total = 0.0
+	_set_riposte(0.0)
 	state_changed.emit(state, current_action)
 	knocked_out.emit()
 
@@ -411,9 +479,6 @@ func _apply_profile_art() -> void:
 
 func _max_hp() -> int:
 	return profile.max_hp if profile else 100
-
-func _guard_ratio() -> float:
-	return profile.guard_damage_ratio if profile else 0.25
 
 func _stagger_duration() -> float:
 	return profile.stagger_duration_s if profile else 0.5

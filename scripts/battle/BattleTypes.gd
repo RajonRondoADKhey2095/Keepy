@@ -1,6 +1,6 @@
 extends RefCounted
 class_name BattleTypes
-## Shared vocabulary of Keepy Battle: the combat FSM's states, the three
+## Shared vocabulary of Keepy Battle: the combat FSM's states, the TWO
 ## actions, and the outcome of one strike resolution.
 ##
 ## Lives in its own file rather than inside Fighter.gd for one structural
@@ -11,6 +11,24 @@ class_name BattleTypes
 ## logic -- exactly the coupling this lot's "zero business logic in UI"
 ## rule exists to prevent.
 ##
+## =====================================================================
+## LOT 7 DELETED GUARD AND FEINT. THIS IS THE SHORT VERSION; THE LONG
+## ONE IS IN CLAUDE.md.
+##
+## Lots 3, 4, 5 and 6 each fixed a different, measured, proven cause of
+## the same device report -- "guard and dodge do not work, the only
+## strategy is to attack" -- and the report never changed. The probes
+## said defending won; the player felt the opposite. The cause finally
+## retained is that the player knew an attack was COMING (the telegraph,
+## validated at lot 2) but never knew WHEN it would land, and lot 4
+## deliberately made that instant ambiguous on top.
+##
+## So the model changed instead of being patched again: two actions, and
+## a charge bar on the attacker whose fill reaches 100% at the exact
+## instant of impact. There is nothing left to guess, so there is nothing
+## left for a second defensive option to hedge against -- GUARD had no
+## job, and a FEINT is a lie about an instant the bar now states.
+##
 ## Nothing here is per-fighter. Everything that differs between two
 ## combatants lives in FighterProfile (a .tres), never in an enum.
 
@@ -18,9 +36,10 @@ class_name BattleTypes
 ## the AI brain pushed the action in -- see Fighter.request_action().
 ##
 ##   IDLE      accepts a new action (and only IDLE does)
-##   WINDUP    committed, telegraph phase, still vulnerable
-##   ACTIVE    the action's effect window (a strike lands, a guard blocks,
-##             a dodge evades) -- this is the whole timing game
+##   WINDUP    committed, telegraph phase, still vulnerable. For an
+##             ATTACK this is exactly the span the charge bar depicts.
+##   ACTIVE    the action's effect window (a strike lands, a dodge
+##             evades) -- this is the whole timing game
 ##   RECOVERY  committed, cannot act, punishable
 ##   STAGGER   hit clean; cancels whatever was in progress
 ##   KO        terminal
@@ -33,40 +52,27 @@ enum State {
 	KO,
 }
 
-## The three tap zones, and the three things a fighter can commit to.
+## The two tap zones, and the two things a fighter can commit to.
 ## NONE is the resting action carried while IDLE/STAGGER/KO, so
 ## `current_action` is never a null-ish special case to guard against.
-## FEINT is the opponent-only fourth commitment (lot 4). It is NOT a
-## fourth tap zone: BattleHUD emits three actions and only three, so a
-## human never requests it. It exists so an attack telegraph can turn out
-## to have been a lie -- see Fighter._advance_phase(), which routes it
-## WINDUP -> RECOVERY with no effect window at all.
+##
+## There is no third member and no AI-only member. Everything the brain
+## can ask for, a human can ask for with the same two buttons -- which is
+## the promise FighterBrain's header makes and which a fourth,
+## opponent-only action (lot 4's FEINT) quietly broke.
 enum Action {
 	NONE,
 	ATTACK,
-	GUARD,
 	DODGE,
-	FEINT,
 }
 
 ## What one strike resolution produced, reported to the HUD so a player
-## can tell "my guard worked" from "I got hit anyway".
+## can tell "my dodge worked" from "I got hit anyway".
 enum Outcome {
-	HIT,      ## Clean: full damage, defender staggers.
-	BLOCKED,  ## Defender was in GUARD's active window: chip damage, no stagger.
-	DODGED,   ## Defender was in DODGE's active window: no damage at all.
-	MISSED,   ## Defender was already KO -- resolution is a no-op.
+	HIT,     ## Clean: full damage, defender staggers.
+	DODGED,  ## Defender was in DODGE's active window: no damage at all.
+	MISSED,  ## Defender was already KO -- resolution is a no-op.
 }
-
-## The two commitments that open on an attack telegraph. Defined ONCE
-## here, in the vocabulary every layer already speaks, so "what looks
-## like an attack" has a single answer that the FSM (Fighter.
-## is_threatening) and the view layer (FighterView._windup) both defer
-## to. Two separate `== ATTACK or == FEINT` tests would be two things
-## that can be updated one at a time -- and the one left behind would be
-## a channel that quietly tells a feint apart.
-static func is_attack_like(action: Action) -> bool:
-	return action == Action.ATTACK or action == Action.FEINT
 
 ## Human-readable state, for the HUD only. Kept next to the enum it
 ## describes so a new state cannot be added without this going stale in
@@ -74,7 +80,7 @@ static func is_attack_like(action: Action) -> bool:
 static func state_label(state: State) -> String:
 	match state:
 		State.IDLE: return "Pret"
-		State.WINDUP: return "Prepare"
+		State.WINDUP: return "Charge"
 		State.ACTIVE: return "Actif"
 		State.RECOVERY: return "Recupere"
 		State.STAGGER: return "Sonne"
@@ -83,26 +89,13 @@ static func state_label(state: State) -> String:
 
 ## Human-readable action, for the HUD only.
 ##
-## =====================================================================
-## FEINT DELIBERATELY REPORTS ITSELF AS "Attaque", AND THAT IS THE WHOLE
-## POINT -- DO NOT "FIX" THIS
-##
-## BattleHUD prints this string live, next to the opponent's state, while
-## the windup is still running. A label reading "Feinte" would give the
-## answer away before the player has even looked at the fighter, which
-## would make the entire lot-4 mechanic worthless: the feint has to be
-## INDISTINGUISHABLE from an attack for exactly as long as an attack's
-## windup lasts. Every other channel is held to the same rule --
-## Fighter.is_threatening() answers true for both, and FighterView plays
-## the identical telegraph -- and BattleFeintProbe gates all three.
-##
-## The reveal is the ABSENCE of the strike at the end of the windup, and
-## it arrives at that moment and not one millisecond earlier.
+## Lot 4 needed a long note here explaining why FEINT deliberately lied
+## about itself. There is nothing left to lie about: an attack says
+## "Attaque", and the charge bar above the fighter says exactly when it
+## lands.
 static func action_label(action: Action) -> String:
 	match action:
 		Action.ATTACK: return "Attaque"
-		Action.FEINT: return "Attaque"
-		Action.GUARD: return "Garde"
 		Action.DODGE: return "Esquive"
 		Action.NONE: return ""
 	return "?"
@@ -110,28 +103,23 @@ static func action_label(action: Action) -> String:
 static func outcome_label(outcome: Outcome) -> String:
 	match outcome:
 		Outcome.HIT: return "TOUCHE"
-		Outcome.BLOCKED: return "BLOQUE"
 		Outcome.DODGED: return "ESQUIVE"
 		Outcome.MISSED: return ""
 	return "?"
 
 ## The verdict as the DEFENDER earned it, which is not the same question
-## as `outcome_label`. A clean HIT has two completely different meanings
-## depending on whether the defender had pressed anything:
+## as `outcome_label`. A clean HIT has two different meanings depending on
+## whether the defender had pressed anything:
 ##
 ##   attempted NONE  -> "TOUCHE"        you were caught standing
-##   attempted GUARD -> "GARDE BRISEE"  you guarded, and mistimed it
 ##   attempted DODGE -> "ESQUIVE RATEE" you dodged, and mistimed it
 ##
-## Lot 5 exists because those three were one string. A player who cannot
-## tell "the button did nothing" from "you were 80 ms late" has no way
-## to learn the timing, and an option nobody can learn is an option
-## nobody takes -- which is exactly what the device report said.
+## Lot 5 exists because those were one string. A player who cannot tell
+## "the button did nothing" from "you were 80 ms early" has no way to
+## learn the timing, and an option nobody can learn is an option nobody
+## takes. Lot 7 keeps the distinction and makes it far cheaper to act on:
+## the charge bar says where in the fill the tap should have gone.
 static func strike_label(outcome: Outcome, attempted: Action) -> String:
-	if outcome != Outcome.HIT or attempted == Action.NONE:
-		return outcome_label(outcome)
-	if attempted == Action.GUARD:
-		return "GARDE BRISEE"
-	if attempted == Action.DODGE:
+	if outcome == Outcome.HIT and attempted == Action.DODGE:
 		return "ESQUIVE RATEE"
 	return outcome_label(outcome)

@@ -1,32 +1,30 @@
-[gd_resource type="Resource" script_class="FighterProfile" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="FighterProfile" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/FighterProfile.gd" id="1"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_hibou_pursuer.glb" id="2"]
 
 [resource]
 script = ExtResource("1")
 display_name = "Sparring"
 max_hp = 50
-attack_windup_s = 0.58
+attack_windup_s = 0.9
 attack_active_s = 0.12
-attack_recovery_s = 0.54
-attack_damage = 8
-guard_windup_s = 0.04
-guard_active_s = 0.50
-guard_recovery_s = 0.22
-guard_damage_ratio = 0.25
+attack_recovery_s = 1.1
+riposte_damage = 12
+riposte_window_s = 1.2
+attack_damage = 6
 dodge_windup_s = 0.05
-dodge_active_s = 0.24
-dodge_recovery_s = 0.38
-feint_hold_s = 0.20
-ai_feint_rate = 0.35
-stagger_duration_s = 0.60
-ai_reaction_delay_s = 0.26
-ai_reaction_jitter_s = 0.18
-ai_aggression = 0.75
-ai_defense_rate = 0.85
-ai_guard_bias = 0.6
-model_scene = null
-model_scale = 1.0
+dodge_active_s = 0.4
+dodge_recovery_s = 0.36
+stagger_duration_s = 0.7
+ai_reaction_delay_s = 0.3
+ai_reaction_jitter_s = 0.2
+ai_aggression = 0.7
+ai_defense_rate = 0.7
+ai_dodge_aim = 0.70
+ai_dodge_slop = 0.14
+model_scene = ExtResource("2")
+model_scale = 0.895095
 model_rotation_degrees = Vector3(0, 0, 0)
-model_offset = Vector3(0, 0, 0)
+model_offset = Vector3(0, -0.0489, 0)
 placeholder_color = Color(0.55, 0.72, 0.88, 1)

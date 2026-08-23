@@ -176,17 +176,6 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_normal")
 text = "ATTAQUE"
 
-[node name="GuardButton" type="Button" parent="Root/Controls"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-theme_override_font_sizes/font_size = 34
-theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
-theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
-theme_override_styles/focus = SubResource("StyleBoxFlat_button_normal")
-text = "GARDE"
-
 [node name="DodgeButton" type="Button" parent="Root/Controls"]
 layout_mode = 2
 size_flags_horizontal = 3

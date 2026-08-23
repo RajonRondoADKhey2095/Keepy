@@ -76,8 +76,9 @@ const HUB_SCENE := "res://scenes/Hub.tscn"
 @onready var opponent: Fighter = $World/OpponentFighter
 ## The two view layers, addressed by path exactly like the fighters above
 ## and for the same reason: the scene IS the wiring. They are touched at
-## ONE moment only -- the end of a round, below -- and never during a
-## tick, so nothing here can make an animation an input to the fight.
+## TWO moments only -- the start and the end of a round, below -- and
+## never during a tick, so nothing here can make an animation an input to
+## the fight.
 @onready var player_view: FighterView = $World/PlayerFighter/View
 @onready var opponent_view: FighterView = $World/OpponentFighter/View
 @onready var hud: BattleHUD = $BattleHUD
@@ -171,6 +172,13 @@ func _start_round() -> void:
 	# A rematch is a NEW fight: it must not inherit the previous tally.
 	_tally.reset()
 	_brain.setup(opponent, player, opponent.profile, _rng)
+	# Each fighter's charge bar shows the window in which its OPPONENT
+	# should tap a dodge. That span mixes the ATTACKER's wind-up with the
+	# DEFENDER's dodge timings, so this is the only object that can work
+	# it out -- a view deriving it from its own profile would be drawing a
+	# guess about the fighter opposite.
+	player_view.set_dodge_window(_evade_lo(player, opponent), _evade_hi(player, opponent))
+	opponent_view.set_dodge_window(_evade_lo(opponent, player), _evade_hi(opponent, player))
 	_accumulator = 0.0
 	_running = true
 	hud.show_fight()
@@ -181,22 +189,24 @@ func _on_player_action(action: BattleTypes.Action) -> void:
 	player.request_action(action)
 
 ## `last_defence()` is read BEFORE the strike resolves, because resolving
-## it is what clears the action: a broken guard has already become a
+## it is what clears the action: a mistimed dodge has already become a
 ## stagger with no action at all by the time receive_strike() returns.
 ## Same fact the defender's own view gets on `hit_taken`, taken from the
 ## same place one line earlier.
 func _on_player_strike() -> void:
 	var attempted := opponent.last_defence()
-	var outcome := opponent.receive_strike(_damage_of(player))
+	var riposte := player.attack_is_riposte()
+	var outcome := opponent.receive_strike(_damage_of(player, riposte), riposte)
 	_tally.note_attack_resolved(outcome)
 	hud.report_strike(true, outcome, attempted)
 
 func _on_opponent_strike() -> void:
 	var attempted := player.last_defence()
-	var outcome := player.receive_strike(_damage_of(opponent))
+	var riposte := opponent.attack_is_riposte()
+	var outcome := player.receive_strike(_damage_of(opponent, riposte), riposte)
 	# Same (attempted, outcome) pair the HUD is about to turn into
-	# "GARDE BRISEE" / "ESQUIVE RATEE" on the next line, taken from the
-	# same read: the counter and the word the player sees cannot drift.
+	# "ESQUIVE RATEE" on the next line, taken from the same read: the
+	# counter and the word the player sees cannot drift.
 	_tally.note_defence_resolved(attempted, outcome)
 	hud.report_strike(false, outcome, attempted)
 
@@ -248,8 +258,66 @@ func fight_tally() -> BattleTally:
 func _on_quit() -> void:
 	get_tree().change_scene_to_file(HUB_SCENE)
 
-func _damage_of(fighter: Fighter) -> int:
-	return fighter.profile.attack_damage if fighter.profile else 0
+## The evade window on `attacker`'s bar, as fractions of its fill.
+##
+## A dodge tapped `t` seconds into a wind-up of length W becomes active at
+## t + dw and drops at t + dw + da, so it covers a blow landing at W iff
+##
+##     W - dw - da  <=  t  <=  W - dw
+##
+## which is a span of exactly the defender's dodge_active_s, ending
+## dodge_windup_s short of a full bar.
+##
+## =====================================================================
+## THE BAND IS DELIBERATELY A SUBSET OF WHAT REALLY WORKS
+##
+## That inequality is continuous and the FSM is not: everything is
+## quantised to TICK_S, and inside a tick the ATTACKER advances before
+## the defender (see _tick()), so a strike can resolve on a tick the
+## defender has not stepped yet. Measured on the shipped profiles, the
+## taps that really evade are ticks 26..49 of 54, i.e. 0.481..0.907 of
+## the bar, while the plain arithmetic gives 0.500..0.944.
+##
+## The low end is therefore already conservative and is left alone. The
+## HIGH end is not -- it over-promises by two ticks -- so it carries a
+## two-tick allowance. A band that claims a tap works and then does not
+## is worse than no band: it teaches the wrong timing, with the game's
+## own authority behind it. BattleReadabilityProbe taps at both edges and
+## at the centre and asserts the blow is really evaded, so the band is
+## checked against the MECHANIC and not against this comment.
+##
+## Both ends are clamped by FighterView; a wind-up shorter than the
+## dodge's own startup would put the whole window before the bar even
+## appears, and drawing a negative span is not a thing this arena should
+## invent a meaning for.
+const EVADE_EDGE_ALLOWANCE_TICKS := 2.0
+func _evade_lo(attacker: Fighter, defender: Fighter) -> float:
+	var w := _windup_of(attacker)
+	if w <= 0.0:
+		return -1.0
+	return (w - defender.profile.dodge_windup_s - defender.profile.dodge_active_s) / w
+
+func _evade_hi(attacker: Fighter, defender: Fighter) -> float:
+	var w := _windup_of(attacker)
+	if w <= 0.0:
+		return -1.0
+	return (w - defender.profile.dodge_windup_s - EVADE_EDGE_ALLOWANCE_TICKS * TICK_S) / w
+
+func _windup_of(fighter: Fighter) -> float:
+	return fighter.profile.attack_windup_s if fighter.profile else 0.0
+
+## What one strike costs, and whether it cancels what the target was
+## doing. BOTH answers come from the same fact -- was this attack thrown
+## off a successful dodge -- so they cannot drift apart into a heavy blow
+## that does not stagger or a chip that does.
+##
+## Priced HERE rather than inside Fighter for the reason the whole
+## resolution lives here: a fighter must not have to know anything about
+## the one in front of it, and pricing is half of resolving.
+func _damage_of(fighter: Fighter, riposte: bool) -> int:
+	if fighter.profile == null:
+		return 0
+	return fighter.profile.damage_for(riposte)
 
 ## `--seed=<int>` passed after a bare `--`, or base_seed. Deliberately a
 ## copy of DevSeed.seed_value()'s six lines rather than a call to it --

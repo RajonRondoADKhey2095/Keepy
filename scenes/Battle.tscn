@@ -37,18 +37,18 @@ mesh = SubResource("PlaneMesh_Ground")
 surface_material_override/0 = SubResource("StandardMaterial3D_Ground")
 
 [node name="PlayerFighter" parent="World" instance=ExtResource("2")]
-position = Vector3(-1, 0, 0)
+position = Vector3(-1.35, 0, 0)
 rotation_degrees = Vector3(0, 90, 0)
 profile = ExtResource("4")
 
 [node name="OpponentFighter" parent="World" instance=ExtResource("2")]
-position = Vector3(1, 0, 0)
+position = Vector3(1.35, 0, 0)
 rotation_degrees = Vector3(0, -90, 0)
 profile = ExtResource("5")
 
 [node name="Camera3D" type="Camera3D" parent="World"]
-position = Vector3(0, 2, 5)
-rotation_degrees = Vector3(-10.2, 0, 0)
+position = Vector3(-0.247, 2, 7.1)
+rotation_degrees = Vector3(-13.5, 0, 0)
 current = true
 keep_aspect = 0
 fov = 40.0
