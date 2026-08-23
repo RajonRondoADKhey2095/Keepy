@@ -32,10 +32,15 @@ const NEAR_RELEASE: float = 2.6
 const PULSE_SCALE: float = 1.14
 const PULSE_S: float = 0.55
 
-signal portal_entered(game_id: StringName)
+## Carries the label alongside the id: both are this portal's own authored
+## data (game_id from the layout, the text from its own sign), and the
+## confirmation step downstream needs the name without going and finding a
+## second table that maps ids to names.
+signal portal_entered(game_id: StringName, label: String)
 
 @onready var _shape: CollisionShape3D = $Shape
 @onready var _ring: MeshInstance3D = $Ring
+@onready var _label: Label3D = $Label
 
 var _radius: float = 1.0
 var _base_scale: Vector3 = Vector3.ONE
@@ -66,7 +71,16 @@ func landed_within(point: Vector3) -> bool:
 ## the decision "a landing counts as an entry" stays in one place instead
 ## of being duplicated per portal.
 func enter() -> void:
-	portal_entered.emit(game_id)
+	portal_entered.emit(game_id, display_label())
+
+## The game's name as painted on the plateau.
+##
+## Read back off the Label3D that HubBuilder already filled from
+## resources/hub/hub_layout.tres, rather than stored a second time: the
+## confirmation dialog must name the game the player is standing on, and
+## a separate copy of that string is a copy free to drift from the sign.
+func display_label() -> String:
+	return _label.text if _label else ""
 
 ## Feeds the approach cue. Called once per frame by HubWorld with Keepy's
 ## position -- the portal stays ignorant of who is approaching, and of

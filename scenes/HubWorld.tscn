@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -10,6 +10,7 @@
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
 [ext_resource type="PackedScene" path="res://assets/models/keepy_squirrel_hero.glb" id="10"]
+[ext_resource type="PackedScene" path="res://scenes/HubConfirmDialog.tscn" id="11"]
 
 [sub_resource type="Environment" id="Environment_Hub"]
 background_mode = 1
@@ -235,3 +236,7 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
 text = "Retour"
+
+[node name="ConfirmDialog" parent="." instance=ExtResource("11")]
+visible = false
+layout_mode = 1
