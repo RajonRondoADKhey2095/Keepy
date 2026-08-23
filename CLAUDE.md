@@ -10592,3 +10592,223 @@ reponse de cache.
 
 `main` **non touche** (palier 2, gate Mathieu apres validation device sur
 `keepy-staging.vercel.app` -- lisibilite du telegraphe adverse restaure).
+
+## HUB PLATEAU 3D : les trois boutons deviennent trois portails, Keepy s'y rend PAR BONDS (23 aout 2026)
+
+Branche `claude/hub-plateau-3d-bonds-wzt2oa`, partie de `staging` (`d68a157`
+-- `main` etait un merge de `staging` au MEME arbre `c2d587f5`, verifie et
+pas suppose). `scenes/HubWorld.tscn` remplace `scenes/Hub.tscn` comme point
+d'arrivee post-connexion : un plateau 3D, trois portails, et Keepy qui se
+deplace vers le point tape.
+
+⚠️ **`scenes/Hub.tscn` et `scripts/ui/Hub.gd` sont DELIBEREMENT CONSERVES.**
+C'est le rollback, et un ecran par lequel passe l'acces a TOUS les jeux ne
+doit pas perdre sa version precedente dans le commit qui livre son
+remplacant. Les trois appelants (`LoginScreen.gd`, `QuizzHomeScreen.gd`,
+`BattleArena.gd`) pointent desormais sur `HubWorld.tscn`.
+
+### ETAPE 0 -- l'inventaire du `.glb`, MESURE avant d'ecrire une ligne
+
+`assets/models/keepy_squirrel_hero.glb`, parse du JSON du conteneur :
+**aucun skeleton** (`skins` absent), **1 seul noeud** (`Mesh1.0`), **1 seul
+mesh, 1 seule primitive**, **0 animation**, `KHR_materials_unlit`.
+
+⚠️ **La queue N'EST PAS un noeud separe** -- elle est dans la meme primitive
+que le corps. L'oscillation de queue contre-phase prevue au brief **n'a donc
+pas ete tentee** : il n'y a rien a animer independamment, et decouper la
+geometrie serait un lot d'asset, pas un lot de gameplay. Signale, pas
+contourne.
+
+Consequence structurante : **tout est PROCEDURAL**, sur des transforms --
+meme technique que `scripts/battle/FighterView.gd`, sur le meme asset, a
+travers le meme `ModelSlot`.
+
+### DECISION PERMANENTE : le layout est une RESOURCE, jamais des transforms de scene
+
+`resources/hub/hub_layout.tres` (`scripts/hub/HubLayout.gd`, un
+`Array[Dictionary]`) porte **la totalite du placement** : 3 portails +
+12 props. `scenes/HubWorld.tscn` porte la **STRUCTURE** (viewport, camera,
+Keepy, les parents vides, l'UI de secours) et **ne nomme aucune coordonnee
+monde**. `HubBuilder.gd` instancie au `_ready()`.
+
+**Pourquoi c'est une regle et pas un gout** : `Hub.tscn` posait ses trois
+entrees dans un container, leurs positions etaient une consequence du
+layout, il n'y avait rien a regler. Un plateau 3D a le probleme inverse --
+chaque prop a une position choisie a la main, et la premiere version est
+toujours fausse sur device. Baker ces nombres dans la scene ferait de chaque
+passe de reglage un diff sur le fichier qui porte AUSSI le viewport, la
+camera et le menu de secours : un mauvais merge la coute l'ecran entier, pas
+un rocher. **Deplacer un portail = editer des chiffres dans un fichier
+texte.** Toute session future qui ajoute un prop l'ajoute au `.tres`.
+
+`HubBuilder` **valide et saute** une entree malformee avec un `push_error`
+plutot que de planter : une faute de frappe dans un fichier de decor ne doit
+jamais etre la raison pour laquelle un joueur ne peut plus atteindre ses
+jeux. Les meshes de props sont construits en code depuis des primitives, a
+tessellation EXPLICITE (le piege §7.2 des collectibles), **unshaded** comme
+toute surface de ce projet -- la scene n'a aucune `DirectionalLight3D`.
+
+### ⚠️ LA REGLE QUI DONNE DU POIDS : un tap PENDANT un bond ne l'interrompt JAMAIS
+
+`KeepyHopper.gd`. Un tap remplace la DESTINATION ; le changement est honore
+**a l'atterrissage suivant**, jamais en vol. C'est toute la difference entre
+un personnage qui a du poids et un curseur : une redirection en l'air ferait
+pivoter Keepy en pleine parabole, et un joueur qui tape plusieurs fois de
+suite le verrait vibrer sur place au lieu d'avancer. Le cout est au pire
+`HOP_DURATION` (0,35 s) de reactivite. **La file est de PROFONDEUR UN** : la
+seule destination interessante est la derniere.
+
+**Un seul tween par bond**, sur un 0..1 normalise (`tween_method`), pas trois
+`tween_property` paralleles -- l'arc est une parabole et le squash est
+lineaire par morceaux, ce qu'aucun tween de propriete n'exprime. Trois canaux
+ecrits depuis le MEME `t`, donc ils ne peuvent pas deriver l'un de l'autre :
+position (`4t(1-t)`, exactement 0 aux deux bouts, donc pas de flottement par
+arrondi), **squash-and-stretch** (compression au decollage ET a
+l'atterrissage -- c'est ce canal qui porte le poids, et c'est pourquoi un
+modele sans squelette suffit), et un pitch avant qui revient a plat a la
+frame d'atterrissage.
+
+Le corps s'oriente **avant** de quitter le sol (`_face`, ecriture directe et
+non tween) : une rotation etalee sur le bond serait exactement le pilotage en
+l'air que la regle ci-dessus refuse.
+
+### Les portails ne declenchent PAS sur un overlap, et le router n'est PAS un autoload
+
+`HubPortal` (Area3D) repond a « ce point d'atterrissage est-il dans moi ? »,
+question posee uniquement sur `KeepyHopper.hop_landed`. Un `body_entered`
+serait faux : un bond vise AU-DELA d'un portail traverse son volume en plein
+vol, et le joueur serait avale en passant. `monitoring` et `monitorable` sont
+**coupes** -- la forme reste la source unique de verite du rayon (lu sur le
+`CylinderShape3D`, jamais duplique en constante), et rien ne peut recabler
+`body_entered` par inadvertance. Cue d'approche : pulse en boucle sur
+l'anneau, avec hysteresis (2,2 R / 2,6 R) pour qu'un Keepy pose sur la
+frontiere ne fasse pas clignoter le portail a chaque bond.
+
+`HubRouter` est un **noeud local de `HubWorld.tscn`**, pas un autoload : une
+table de routage qui gagne un deuxieme appelant cesse d'etre un detail du hub
+et devient un framework. Il porte aussi le garde `_leaving` (deux portails
+atteints la meme frame ne doivent pas empiler deux chargements).
+
+### ⚠️ PIEGE GODOT MESURE, ET IL ECHOUE EN SILENCE : un export de NOEUD TYPE ecrit A LA MAIN dans un `.tscn` NE SE RESOUT PAS
+
+`@export var camera: Camera3D` avec `camera = NodePath("...")` dans le
+fichier de scene rend **`null` au chargement**. La sonde de ce lot a obtenu
+`null` sur les trois references de `HubTapInput` et **chaque tap mourait sur
+le garde** -- aucune erreur, aucun crash, juste un plateau ou rien ne repond.
+L'editeur peuple cette forme par une machinerie qu'un `.tscn` ecrit a la main
+ne porte pas. **Parade adoptee : `@export var x_path: NodePath` + resolution
+dans `_ready()` avec un cast et un `push_error`.** Toujours un chemin dont
+l'auteur de scene est proprietaire, jamais un `get_node("../../X")` en dur.
+**A connaitre avant d'ecrire un `.tscn` a la main dans ce depot.**
+
+### Framing et sol : MESURES aux deux ratios, pas estimes
+
+`HubCamera` suit la position AU SOL de Keepy (le y de l'arc est jete) a offset
+fixe et **rotation FIXE, jamais un `look_at`** : un `look_at` reaimant chaque
+frame sur une cible qui oscille de 0,6 unite par bond ferait tanguer
+l'horizon entier au rythme des bonds -- bien plus visible que le personnage.
+Lissage exponentiel, donc independant du framerate.
+
+Offset `(0, 7,6, 8,9)` a **-34 deg**, `keep_aspect = KEEP_WIDTH`, `fov 45` --
+**choisi par mesure** (sonde jetable, supprimee avant commit ;
+`ProbeTimeoutAudit` revient a **37 sondes**) :
+
+| offset | Keepy | portails lateraux |
+|---|---|---|
+| (0, 9,0, 10,5) | 104 px | labels a l'ecran |
+| **(0, 7,6, 8,9) -- livre** | **124 px** | **pads a 7,8 % et 92,2 % de la largeur** |
+| (0, 6,6, 7,7) | 144 px | **labels HORS CADRE** |
+
+Verifie a **1080x1920 ET 1170x2532** : les trois labels et les trois pads
+sont dans le cadre aux deux ratios, Keepy a 51-58 % de la hauteur.
+
+⚠️ **Le sol fait 600x600 et `fog_light_color` EGALE `background_color`**
+(le `SWAMP_SKY` `Color(0.062, 0.115, 0.044)`), et ce n'est pas decoratif :
+a `-34 deg` avec la vfov portrait (72,7 deg a `KEEP_WIDTH`), **le haut du
+cadre passe AU-DESSUS de l'horizon** (composante y du rayon `+0.041` en
+1080x1920, `+0.137` en 1170x2532). Un sol trop court laissait donc voir son
+bord franc : mesure a 26x26, l'arete tombait a 39 % de la hauteur d'ecran.
+Avec la brume qui converge vers la couleur de fond, la jonction sol/ciel est
+invisible par construction, quelle que soit la taille. Brume a **0,016** :
+17 % sur Keepy, 25 % sur le portail central -- de la profondeur, pas un
+delavage (les rayons de portail restent ambre).
+
+`PLATEAU_HALF_EXTENT = 11` borne les taps. Verifie : le carre +-11 tombe
+juste hors cadre lateralement, donc la borne est en pratique « le plateau
+visible ». Un tap au-dela est **clampe, jamais ignore** -- un tap pres de
+l'horizon est un joueur qui demande a aller aussi loin qu'il peut, et le
+refuser en silence se lit comme un ecran casse.
+
+### Le menu de secours n'est pas du poids mort
+
+Un ecran 3D peut echouer la ou une liste de boutons ne peut pas : un contexte
+WebGL qui ne revient jamais, un viewport noir, une projection de tap fausse a
+un certain ratio. N'importe lequel echouerait sur le SEUL ecran par lequel
+tous les jeux sont atteints. `FallbackMenu` porte les trois memes appels de
+navigation, un petit bouton « Menu » a l'ecart -- le pire cas est un ecran
+laid, pas un jeu inaccessible.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre `Content-Length` -- **50 276 070**
+et **1 073 228 327**, aucune troncature). Import headless **exit 0** (24
+`.scn`). Boot headless de `HubWorld.tscn` **exit 0, 0 erreur de parse**.
+Export Web release **exit 0, 0 erreur, 0 warning** -- **les 8 scripts de
+`scripts/hub/` sont compiles en `.gdc` dans le `.pck`**, ce qui est la preuve
+qu'aucun n'a d'erreur GDScript. `index.wasm` **35 376 909** octets / md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b` -- identiques au fingerprint deja consigne
+pour tout lot qui ne touche pas le code moteur. `index.pck` 5 796 560 (export
+unique et propre, `build/` supprime avant -- mise en garde permanente sur son
+instabilite). Piege payload tenu : **0** ligne `Storing File` pour
+`assets_source`, `scripts/dev`, `docs`, `web` ou `build`, sur 211 lignes.
+**Aucune reference de `scripts/hub/` vers `scripts/dev/`** (grep, pas suppose)
+-- `scripts/dev/*` est exclu du pack, une telle reference ne casserait QUE
+dans le build web.
+
+Sondes : `ProbeTimeoutAudit` (**37 sondes scenes**, retour exact a la
+baseline), `AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**. Non-applicabilite
+verifiee : aucune sonde de `scripts/dev/` ne charge `Hub.tscn`,
+`HubWorld.tscn` ni `LoginScreen.tscn`.
+
+⚠️ **Piege deja documente, re-rencontre a la lettre** : une sonde jetable dont
+le SCRIPT ne parse pas ne tombe pas vite, elle traine jusqu'au timeout (la
+scene ne se charge jamais, donc rien n'arme quoi que ce soit). Symptome ici :
+sortie vide et `exit 124` a 200 s, cause reelle une seule ligne
+`var err := 99.0 if ... else ...` (type non inferable). **Rediriger vers un
+fichier et lire le log**, plutot que de conclure a un blocage.
+
+### Ce que la sonde jetable a mesure (supprimee avant commit)
+
+- **Round-trip du tap : erreur 0,00000** sur quatre cibles, et quatre taps aux
+  extremes du cadre (pres de l'horizon, les deux coins bas) tous clampes dans
+  le plateau, aucun avale en silence.
+- **Apex du bond 0,599** contre `HOP_HEIGHT` 0,6.
+- **Les pieds reposent a y = -0,0000** (AABB du modele installe + transform du
+  slot), donc `model_offset (0, -0,2246, 0)` et le slot a `y = 0,9` -- les
+  memes chiffres que `resources/battle/keepy.tres`, repris par mesure et non
+  recopies a l'aveugle.
+- **La regle de commit tient, prouvee dans le sens qui compte** : depart vers
+  le portail Quizz, redirection **en plein vol** (frame 6) vers Battle, et le
+  joueur atterrit sur **Battle** apres 5 bonds -- l'ordre `hop_landed` puis
+  `_advance()` fait qu'un portail atteint route avant d'etre depasse par une
+  destination au-dela.
+- **`entered` contient exactement UNE entree**, et `change_scene_to_file` a
+  reellement tourne (la scene a ete remplacee sous la sonde).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que le bond se lit comme un bond** a vitesse reelle au pouce, et
+   est-ce que le squash donne du poids plutot que l'air d'un modele qui
+   clignote ? Aucune sonde ne le dit, c'est tout l'objet du lot.
+2. **La commit-au-bond (0,35 s) se sent-elle comme du poids ou comme du
+   retard** quand on tape plusieurs fois de suite ?
+3. **Keepy fait 124 px de haut** sur 1920 : mesure comme le maximum
+   atteignable sans perdre un label de portail, mais lisible n'est pas mesure.
+4. **Pas de queue animee** (Etape 0 : elle n'est pas un noeud separe).
+5. **Aucun son, aucun asset Meshy neuf, aucune persistance** : hors perimetre.
+6. Derive de doc pre-existante non corrigee ici : `scripts/autoload/Quizz.gd`
+   dit encore que le bouton Quizz de `Hub.tscn` est `disabled` et connecte a
+   rien -- faux depuis des semaines, et sans rapport avec ce lot.

@@ -1,0 +1,88 @@
+[gd_resource type="Resource" script_class="HubLayout" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/hub/HubLayout.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+props = [{
+"game_id": &"chased",
+"label": "Chased",
+"position": Vector3(-5.4, 0, -4.6),
+"rotation_y": 24.0,
+"scale": 1.0,
+"type": &"portal"
+}, {
+"game_id": &"quizz",
+"label": "Quizz",
+"position": Vector3(0, 0, -7.2),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"portal"
+}, {
+"game_id": &"battle",
+"label": "Battle",
+"position": Vector3(5.4, 0, -4.6),
+"rotation_y": -24.0,
+"scale": 1.0,
+"type": &"portal"
+}, {
+"position": Vector3(-8.6, 0, -8.4),
+"rotation_y": 18.0,
+"scale": 1.15,
+"type": &"tree"
+}, {
+"position": Vector3(8.9, 0, -8.1),
+"rotation_y": -42.0,
+"scale": 1.0,
+"type": &"tree"
+}, {
+"position": Vector3(-2.2, 0, -10.1),
+"rotation_y": 130.0,
+"scale": 0.9,
+"type": &"tree"
+}, {
+"position": Vector3(3.1, 0, -10.4),
+"rotation_y": -95.0,
+"scale": 1.05,
+"type": &"tree"
+}, {
+"position": Vector3(-9.3, 0, 1.4),
+"rotation_y": 60.0,
+"scale": 1.2,
+"type": &"tree"
+}, {
+"position": Vector3(9.1, 0, 1.9),
+"rotation_y": -70.0,
+"scale": 1.1,
+"type": &"tree"
+}, {
+"position": Vector3(-3.6, 0, 2.4),
+"rotation_y": 15.0,
+"scale": 1.0,
+"type": &"rock"
+}, {
+"position": Vector3(4.4, 0, 1.1),
+"rotation_y": -35.0,
+"scale": 0.8,
+"type": &"rock"
+}, {
+"position": Vector3(6.8, 0, -1.9),
+"rotation_y": 80.0,
+"scale": 1.1,
+"type": &"rock"
+}, {
+"position": Vector3(-6.9, 0, -1.2),
+"rotation_y": -20.0,
+"scale": 0.9,
+"type": &"bush"
+}, {
+"position": Vector3(1.7, 0, 3.3),
+"rotation_y": 45.0,
+"scale": 1.0,
+"type": &"bush"
+}, {
+"position": Vector3(-1.4, 0, -2.6),
+"rotation_y": 200.0,
+"scale": 0.75,
+"type": &"bush"
+}]
