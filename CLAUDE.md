@@ -11137,6 +11137,32 @@ l'ecran-titre.
    verifie STRUCTURELLEMENT ici (`BattleArena.HUB_SCENE`, PHASE I) et
    toujours pas a la main.
 
+### Deploiement staging du retour Chased + popup (palier 1, automatique)
+
+`staging` **`05fe613`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `2eb7e122` des deux cotes, verifie
+AVANT le push). CI run **#202** (id `32663818628`). **`main` NON touche**
+(`origin/main` toujours `ea722bd`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, dans les DEUX sens** — `CACHE_VERSION` de
+`index.service.worker.js` de `keepy-staging.vercel.app` :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #201) | `1787512074` | 23 aout **19:07:54** |
+| **apres (ce lot, run #202)** | **`1787516270`** | 23 aout **20:17:50** |
+
+L'epoch d'apres tombe dans la fenetre du run #202 (demarre 20:14:50), avec
+`x-vercel-cache: MISS` et `age: 0` — l'alias sert bien le build du lot.
+⚠️ Le « avant » n'est pas lu de memoire : il a ete relu sur le service a
+20:16:22 puis a 20:18:09, **toujours l'ancienne valeur**, ce qui prouve
+aussi que le job tournait REELLEMENT au lieu d'etre un cache perime.
+⚠️ L'API GitHub Actions est restee **figee sur `in_progress`**,
+`updated_at` bloque a 20:14:54 sur tous les appels : enieme reproduction du
+piege deja consigne, et c'est encore le `CACHE_VERSION` servi qui a
+tranche, dans les deux sens.
+
 ## SWAMPPALETTE : la palette marecage a UNE seule source (23 aout 2026)
 
 Branche `claude/swamp-palette-extraction-ioofz3`, partie de `staging`
