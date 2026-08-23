@@ -10812,3 +10812,26 @@ fichier et lire le log**, plutot que de conclure a un blocage.
 6. Derive de doc pre-existante non corrigee ici : `scripts/autoload/Quizz.gd`
    dit encore que le bouton Quizz de `Hub.tscn` est `disabled` et connecte a
    rien -- faux depuis des semaines, et sans rapport avec ce lot.
+
+### Deploiement staging du hub plateau (palier 1, automatique)
+
+`staging` **`8fdb591`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `b01d7948` des deux cotes, verifie AVANT le push).
+CI run **#196** (id `32646438061`) **verte** (14:46:02 -> 14:49:27 UTC) --
+`Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`ea722bd`, verifie apres le push) : palier 2, gate Mathieu apres validation
+device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** --
+`index.service.worker.js` de `keepy-staging.vercel.app` lu AVANT le merge et
+APRES :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #194, lot 12 docs) | `1787432682` | 22 aout **21:04:42** |
+| **apres (ce lot, run #196)** | **`1787496537`** | 23 aout **14:48:57** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre du run #196**, et les deux
+lectures portent `x-vercel-cache: MISS` + `age: 0` -- ce n'est pas une reponse
+de cache. L'alias sert bien le build du plateau.
