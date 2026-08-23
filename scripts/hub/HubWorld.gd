@@ -22,7 +22,7 @@ class_name HubWorld
 ##
 ## Every one of those is separately replaceable. What lives HERE is only
 ## the wiring between them, plus the one decision none of them can make
-## alone: a landing inside a portal is an entry.
+## alone: a landing inside a portal is a PROPOSAL (see the block below).
 ##
 ## =====================================================================
 ## THE FALLBACK MENU IS NOT DEAD WEIGHT
@@ -34,6 +34,21 @@ class_name HubWorld
 ## exact three change_scene_to_file calls the old hub had, one small
 ## button away, so the worst case is an ugly screen rather than an
 ## unreachable game.
+##
+## =====================================================================
+## A LANDING PROPOSES, IT NO LONGER ENTERS (23 aout 2026)
+##
+## Landing inside a portal used to route straight into the sub-game. A hop
+## is aimed with a tap on the ground, so that made a mis-aimed tap enough
+## to leave the plateau -- and Chased, at the time, had no way back.
+## HubConfirmDialog now sits between the landing and HubRouter: the landing
+## opens it, "Jouer" routes, "Annuler" leaves Keepy standing where they
+## are. The ROUTING is unchanged, only delayed by one deliberate tap.
+##
+## The fallback menu deliberately keeps routing DIRECTLY. Pressing a button
+## labelled "Keepy Quizz" is already an explicit choice; a confirmation on
+## top of it would be a second dialog asking about the first, on the very
+## path that exists to be the simple one when the 3D screen has failed.
 
 ## The shared swamp identity. The plateau and Keepy Chased are the same
 ## marsh, and were authored months apart from copies of the same numbers --
@@ -49,6 +64,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _fallback_button: Button = $FallbackButton
 @onready var _world_env: WorldEnvironment = $WorldViewport/SubViewport/World/WorldEnvironment
 @onready var _fallback_close: Button = $FallbackMenu/Panel/VBoxContainer/CloseButton
+@onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
 @onready var _battle_button: Button = $FallbackMenu/Panel/VBoxContainer/BattleButton
@@ -71,6 +87,9 @@ func _ready() -> void:
 
 	_tap.tapped_ground.connect(_on_tapped_ground)
 	_keepy.hop_landed.connect(_on_hop_landed)
+
+	_confirm.confirmed.connect(_on_confirm_accepted)
+	_confirm.cancelled.connect(_on_confirm_cancelled)
 
 	_fallback_button.pressed.connect(_on_fallback_toggled)
 	_fallback_close.pressed.connect(_on_fallback_toggled)
@@ -111,13 +130,28 @@ func _process(_delta: float) -> void:
 		portal.set_proximity(here)
 
 func _on_tapped_ground(point: Vector3) -> void:
-	# A tap while the fallback menu is open is a tap on the menu, not on
-	# the plateau behind it.
-	if _fallback_menu.visible:
+	# A tap while either overlay is up is a tap on the overlay, not on the
+	# plateau behind it.
+	#
+	# Both overlays already swallow the event by GUI picking, so neither of
+	# these guards should ever fire -- they are the second half of the belt
+	# and braces described in HubConfirmDialog.gd's MOUSE FILTER block.
+	# Losing the plateau's taps to a Control has cost this screen twice
+	# already (HubTapInput.gd), and the failure in that direction is silent;
+	# a guard that is normally dead is the cheap half of not finding out the
+	# hard way that Keepy hops around under an open dialog.
+	if _fallback_menu.visible or _confirm.is_open():
 		return
 	_keepy.hop_to(point)
 
 func _on_hop_landed(position: Vector3) -> void:
+	# A landing while the dialog is up cannot happen from a plateau tap
+	# (they are refused above), but a hop already in the air when the dialog
+	# opened would still land. Re-opening on top of itself is refused by
+	# HubConfirmDialog.open(); this stops the question even being asked
+	# twice.
+	if _confirm.is_open():
+		return
 	# On a LANDING, never on an overlap: a hop aimed past a portal flies
 	# straight through its volume, and entering there would take the
 	# player somewhere they were only passing over. First match wins --
@@ -128,8 +162,21 @@ func _on_hop_landed(position: Vector3) -> void:
 			portal.enter()
 			return
 
-func _on_portal_entered(game_id: StringName) -> void:
+## A landing inside a portal now PROPOSES the sub-game instead of entering
+## it. The routing table is untouched: the same game_id reaches the same
+## HubRouter, one tap later, from _on_confirm_accepted below.
+func _on_portal_entered(game_id: StringName, label: String) -> void:
+	_confirm.open(game_id, label)
+
+func _on_confirm_accepted(game_id: StringName) -> void:
 	_router.route(game_id)
+
+## Nothing to undo. Keepy stays exactly where they landed -- standing on a
+## portal is a legal position, and shoving the player back off one would
+## answer a question they just declined to answer with a movement they
+## never asked for. The next tap takes them wherever they aim.
+func _on_confirm_cancelled() -> void:
+	pass
 
 func _on_fallback_toggled() -> void:
 	_fallback_menu.visible = not _fallback_menu.visible
