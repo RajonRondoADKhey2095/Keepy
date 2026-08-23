@@ -10928,3 +10928,46 @@ naturel, mais elle toucherait `scripts/dev/` et a ete laissee hors
 perimetre. Et **jugement device** : Chased doit etre visuellement
 IDENTIQUE avant/apres en navigation privee -- toute difference constatee
 est une regression a signaler, pas a expliquer apres coup.
+
+### Validation : NEUF sondes BYTE-IDENTIQUES, dont la sonde a PIXELS
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre `Content-Length` :
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0** (**24 `.scn`**, import complet verifie et pas suppose), export
+Web release **exit 0**, **0 erreur GDScript**. `index.wasm`
+**35 376 909 octets** -- le fingerprint deja consigne pour tout lot qui ne
+touche pas le code moteur.
+
+Diffees contre `origin/staging` en worktree separe, graine 20260806 :
+`DarkPaletteAudit`, `AssetContractAudit`, `ProbeTimeoutAudit` (**37 sondes
+scenes**), `DeathModelAudit`, `ChargerShapeProbe`, `DecorStabilityAudit`,
+`ComboAudit`, `ShrinkAudit`, `ChargerAudit` -- **BYTE-IDENTIQUES sur les
+DEUX flux (stdout ET stderr), exit 0 des deux cotes**.
+
+⚠️ **`DarkPaletteAudit` byte-identique est LA preuve du lot**, et pas une
+ligne de plus dans une liste : c'est la seule sonde qui echantillonne de
+vrais PIXELS. Elle rend exactement les chiffres deja consignes -- DODGE
+3,39/3,37, JUMP 3,04/3,02, CHARGER 3,37/3,34, STOMPER 3,41/3,41, ENEMY
+4,12/4,10, AIR_ENEMY 2,13/2,12, 0 echantillon manque. Une couleur
+deplacee de travers aurait bouge une de ces lignes.
+`SwampIdentityAudit` : **4/4 etats OK, `SWAMP_IDENTITY_VERIFIED=yes`**.
+Les 24 valeurs de la palette ont aussi ete relues a l'execution et
+comparees une a une aux litteraux remplaces (**0 mismatch**, sonde jetable
+supprimee avant commit).
+
+⚠️ **DEUX sondes divergent, les DEUX sont NON SEEDEES, et c'est verifie
+plutot qu'argumente** :
+- `DecorParallaxProbe` -- **deux runs sur LA MEME branche divergent
+  autant que branche-vs-base** (bornes de bande `[-700,-540]` /
+  `[-520,-360]` / `[-340,-210]` identiques partout, seul le maximum
+  observe bouge de moins d'un millimetre). PASS des deux cotes.
+- `TrackPropsAudit` -- deja documente comme inerte au `--seed`. 4 runs de
+  chaque cote : branche **1164 / 1220 / 1608 / 1648**, base **746 / 1166 /
+  1690 / 1772**. **La base depasse le plafond de 1 500 sur 2 runs sur 4,
+  exactement comme la branche** : les deux plages se chevauchent, l'echec
+  est PRE-EXISTANT et non imputable a ce lot. Aucun seuil n'a ete bouge.
+
+**Piege payload tenu** : **0** ligne `Storing File` pour `assets_source`,
+`scripts/dev`, `docs` ou `web`. La palette EST packee (`swamp_palette.res`
++ son `.remap`), comme il faut puisque le jeu la lit.
