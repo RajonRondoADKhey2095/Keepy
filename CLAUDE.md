@@ -10944,6 +10944,199 @@ L'epoch d'apres tombe dans la fenetre du run #200 (demarre 18:56:55), avec
 temps, `updated_at` bloque a 18:56:59 : enieme reproduction du piege deja
 consigne, et c'est encore le `CACHE_VERSION` servi qui a tranche.
 
+### RETOUR CHASED CASSE, ET LA CAUSE N'ETAIT PAS UN CHEMIN A CORRIGER (23 aout 2026)
+
+Branche `claude/keepy-hub-return-portal-phv4hm`, partie de `staging`
+(`d2e5233`). Retour device : depuis le plateau, entrer dans Keepy Chased
+est un aller simple — plus aucun moyen de revenir sans recharger la page.
+Quizz revient bien, Battle non teste.
+
+⚠️ **LE BALAYAGE COMPLET DU DEPOT SUR `Hub.tscn` NE TROUVE AUCUN CHEMIN
+CHASED A CORRIGER — parce qu'il n'y en a jamais eu un.** C'est le
+diagnostic entier du lot, et il inverse la premisse du brief (« mettre a
+jour tout chemin de retour trouve »). Mesure, pas suppose :
+
+| sous-jeu | sortie vers le hub, AVANT ce lot |
+|---|---|
+| Quizz | `QuizzHomeScreen.gd:63` — `BackButton` du header, **deja** repointe sur `HubWorld.tscn` |
+| Battle | `BattleArena.gd:60` `HUB_SCENE` + `:259` `_on_quit()` — **deja** repointe, correct, aucun defaut latent |
+| **Chased** | **AUCUNE.** `TitleScreen.gd` ne fait que `change_scene_to_file("res://scenes/Game.tscn")` (vers l'AVANT) ; `GameOverScreen.gd:189` n'offre que `_on_retry_pressed()` -> `GameState.start_run()` |
+
+Le lot plateau avait donc raison de ne modifier que trois fichiers
+(`LoginScreen.gd`, `QuizzHomeScreen.gd`, `BattleArena.gd`) : ce sont les
+trois seuls qui **nommaient** une scene de hub. Chased n'en nommait
+aucune, donc il n'est pas apparu dans le `grep` du lot precedent — et il
+etait deja sans retour AVANT le plateau, simplement invisible tant que le
+hub etait l'ecran d'ou l'on venait et ou le bouton retour du navigateur
+suffisait. **Le fix est un chemin de retour NEUF, pas un chemin corrige.**
+
+**Balayage complet re-verifie apres ce lot** : les seules occurrences
+restantes de la chaine `Hub.tscn` hors `HubWorld.tscn` sont des
+commentaires historiques (`HubWorld.gd`, `HubLayout.gd`, `Quizz.gd`,
+`LoginScreen.gd`) plus `scenes/Hub.tscn` et `scripts/ui/Hub.gd`
+eux-memes. **Aucun code vivant ne route vers l'ancien hub.**
+`scenes/Hub.tscn` reste dans le depot, intouche : c'est le rollback, comme
+le lot plateau l'avait pose.
+
+**Deux sorties ajoutees, une par point de blocage** — une seule n'aurait
+pas suffi, parce qu'une run se termine sur `GameOverScreen` et pas sur
+`TitleScreen` :
+
+* `scenes/TitleScreen.tscn` + `TitleScreen.gd` : bouton **`< Hub`** en haut
+  a gauche, meme role que le `BackButton` du header de Quizz.
+* `scenes/GameOverScreen.tscn` + `GameOverScreen.gd` : bouton **`Retour au
+  hub`** sous `Rejouer`. Sans lui, mourir enfermait le joueur dans une
+  boucle « Rejouer » infinie. Aucun `GameState` reset avant de partir :
+  `Game.tscn` appelle `start_run()` dans son propre `_ready()`, donc
+  reinitialiser ici ne ferait que doubler ce travail dans la scene qu'on
+  s'apprete a liberer.
+
+### UN BOND QUI ATTERRIT DANS UN ANNEAU NE LANCE PLUS LE JEU : `HubConfirmDialog`
+
+Un bond est vise par un **tap sur le sol**, et un tap n'est pas precis :
+un joueur qui traverse le plateau pouvait atterrir dans un portail qu'il
+comptait seulement survoler et se retrouver dans un sous-jeu sans avoir eu
+un mot a dire — sur Chased, sans retour, c'etait une impasse. Depuis ce
+lot, **un atterrissage PROPOSE, il n'entre plus** : `portal_entered` ouvre
+une popup (nom du jeu + `Jouer` / `Annuler`), et seul `Jouer` route.
+
+⚠️ **Le ROUTAGE est inchange, seulement retarde d'un tap.** `HubRouter`
+reste la seule table `game_id -> scene` et le seul appelant de
+`change_scene_to_file`. `HubConfirmDialog.gd` **ne contient aucune logique
+de routage** : il recoit un `game_id`, le rend tel quel sur
+`confirmed(game_id)`, et ne le lit jamais. Ajouter un 4e jeu touche
+`HubRouter.ROUTES` et le layout `.tres`, pas ce fichier.
+
+**Le nom affiche vient du portail lui-meme**, pas d'une table ici :
+`HubPortal.display_label()` relit le `Label3D` que `HubBuilder` a deja
+rempli depuis `resources/hub/hub_layout.tres`. Le signal devient donc
+`portal_entered(game_id: StringName, label: String)` — les deux valeurs
+sont la donnee propre du portail. Une seconde table de noms serait une
+copie libre de deriver du panneau plante sur le plateau.
+
+**Le menu de secours route TOUJOURS DIRECTEMENT, volontairement.** Appuyer
+sur un bouton libelle « Keepy Quizz » est deja un choix explicite ; y
+ajouter une confirmation serait une seconde popup posant la question de la
+premiere, sur le chemin qui existe justement pour etre le simple quand le
+3D a echoue.
+
+**`Annuler` ne recule pas Keepy.** Se tenir dans un portail est une
+position legale du plateau ; repousser le joueur repondrait par un
+mouvement qu'il n'a pas demande a une question qu'il vient de decliner. La
+popup ne se rouvre qu'au PROCHAIN atterrissage, donc taper ailleurs suffit
+a repartir. Un tap sur le scrim ne fait rien non plus — ni valider ni
+annuler : un doigt egare a cote du panneau ne doit pas pouvoir repondre a
+la place du joueur, dans un sens comme dans l'autre.
+
+### ⚠️ TROISIEME PASSAGE SUR LE PIEGE `mouse_filter`, ET IL COURT DANS L'AUTRE SENS
+
+Les deux fois precedentes, un `Control` a `MOUSE_FILTER_STOP` **avalait**
+les taps du plateau. Ici le danger est inverse : `HubTapInput` ecoute dans
+`_unhandled_input`, donc tout ce que la popup **n'avale pas** atteint le
+plateau et fait bondir Keepy sous une popup ouverte.
+
+**Mesure sur Godot 4.3 dans ce sandbox, pas lue de memoire** (`ClassDB`
+instancie chaque type, `mouse_filter` imprime) :
+
+| type | defaut mesure |
+|---|---|
+| `Control`, `ColorRect`, `PanelContainer`, `Button` | **0 = STOP** |
+| `VBoxContainer`, `TextureRect` | 1 = PASS |
+| `Label` | 2 = IGNORE |
+
+Le defaut est donc deja correct — et il n'est **deliberement pas laisse au
+defaut** : `HubConfirmDialog.tscn` ecrit `mouse_filter = 0` explicitement
+sur sa racine, son `Scrim` et son `Panel`, et `_ready()` re-affirme
+`MOUSE_FILTER_STOP` sur la racine. Les deux devraient etre casses ensemble
+pour que la popup redevienne traversante. **Ceinture et bretelles
+par-dessus** : `HubWorld._on_tapped_ground` refuse aussi tout tap sol tant
+que `_confirm.is_open()` (le meme garde que le menu de secours utilise
+deja), et `_on_hop_landed` refuse d'ouvrir une seconde fois pour un bond
+deja en l'air. Ces gardes ne devraient jamais tirer ; la panne qu'elles
+couvrent est **silencieuse**, et c'est la moitie la moins chere de ne pas
+la decouvrir sur device.
+
+**`HubConfirmDialog.tscn` est instancie EN DERNIER dans `HubWorld.tscn`** :
+le picking GUI parcourt l'arbre en ordre inverse, donc la popup recoit
+l'evenement avant `FallbackButton` et `FallbackMenu`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles confirmees contre le `Content-Length` —
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0**, **24 `.scn`** (import complet verifie, pas suppose : le piege du
+faux-rouge par import tronque est controle). Export Web release **exit 0**.
+`index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+5 807 744 (export unique et propre, `build/` supprime avant — a lire avec
+la mise en garde permanente sur son instabilite). Piege payload tenu :
+**0** ligne `Storing File` pour `scripts/dev`, `assets_source`, `docs`,
+`web` ou `build`.
+
+**Boot headless des 7 scenes concernees** (`--quit-after 2`) : `HubWorld`,
+`HubConfirmDialog`, `TitleScreen`, `GameOverScreen`, `Hub` (le rollback,
+toujours chargeable), `Battle`, `QuizzHomeScreen` — **exit 0, 0 erreur
+GDScript** partout.
+
+**Sonde jetable** (`scripts/dev/HubConfirmProbe.tscn`, jamais commitee,
+supprimee avant le commit — `ProbeTimeoutAudit` revient a **37 scenes de
+sonde**, le chiffre de `origin/staging`). Elle pilote la **scene livree**
+`HubWorld.tscn`, jamais un stub : **47 assertions, 0 echec, exit 0**.
+PHASE A contrat de scene et les trois `mouse_filter` ; PHASE B les 3 routes
+intactes ; PHASE C **un atterrissage sur chacun des 3 portails ouvre la
+popup, titre lu sur le `Label3D` du portail, et ne route RIEN** ; PHASE D
+tap sol ignore popup ouverte (Keepy immobile) + pas de re-ciblage ; PHASE E
+Annuler ferme, ne route pas, ne bouge pas Keepy ; PHASE F le plateau
+reaccepte les taps apres Annuler ; PHASE G `Jouer` emet exactement le bon
+`game_id`, popup deja cachee au moment de l'emission ; PHASE H les 3 routes
+pointent sur des scenes qui existent ; PHASE I **les trois sous-jeux ont un
+retour vers `HubWorld.tscn`**, lu sur les scenes et les scripts livres.
+
+⚠️ **PHASE G a d'abord PROUVE le routage en se suicidant** : le vrai
+handler de `HubWorld` laisse branche fait changer de scene pour de vrai, ce
+qui libere la sonde en pleine assertion (`get_tree()` null, mesure). La
+phase asserte donc d'abord que `_on_confirm_accepted`/`_on_confirm_cancelled`
+SONT branches, puis debranche le premier — la chaine reste prouvee de bout
+en bout sans que la sonde se detruise.
+
+⚠️ **Piege d'outillage rencontre : `godot4 --script` NE CHARGE PAS LES
+AUTOLOADS.** Une premiere version de la sonde en `SceneTree`/`--script` est
+morte sur `Identifier not found: SafeArea` dans `HubWorld.gd` — un faux
+rouge qui ressemble a une erreur de compilation du jeu. Toute sonde de ce
+depot doit etre une `.tscn` lancee comme scene principale, ce que la
+convention maison fait deja partout.
+
+**Sondes permanentes rejouees, toutes exit 0** : `ProbeTimeoutAudit`
+(**37 scenes de sonde**, toutes armees), `AssetContractAudit` (**12/12
+visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe`. **Non-applicabilite VERIFIEE par grep, pas supposee** :
+aucune sonde de `scripts/dev/` ne charge `HubWorld.tscn`,
+`HubConfirmDialog.tscn`, `TitleScreen.tscn` ni `GameOverScreen.tscn` — la
+seule mention est dans des COMMENTAIRES de `SwampIdentityAudit.gd`, qui
+explique justement depuis le 14 aout pourquoi il n'echantillonne plus
+l'ecran-titre.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Le retour de Chased fonctionne-t-il vraiment sur telephone**, depuis
+   l'ecran-titre ET depuis l'ecran de fin de partie. C'est le bug qui a
+   ouvert le lot, et aucune sonde ne rend ce jugement.
+2. **La popup se lit-elle comme une question**, ou comme un ecran de plus
+   entre le joueur et son jeu ? Un bond reussi qui debouche sur une
+   confirmation est un frottement volontaire ; s'il agace plus qu'il ne
+   protege, le reglage est de la retirer du portail deja survole plutot que
+   de la raccourcir.
+3. **`Annuler` laisse Keepy DANS l'anneau**, donc le portail continue de
+   pulser sous lui. Mesure comme sans effet mecanique (la popup ne se
+   rouvre qu'au prochain atterrissage), mais l'effet visuel « je suis
+   toujours dessus » n'a pas ete juge a l'oeil.
+4. **Battle n'avait pas ete teste sur device** avant ce lot ; son retour est
+   verifie STRUCTURELLEMENT ici (`BattleArena.HUB_SCENE`, PHASE I) et
+   toujours pas a la main.
+
 ## SWAMPPALETTE : la palette marecage a UNE seule source (23 aout 2026)
 
 Branche `claude/swamp-palette-extraction-ioofz3`, partie de `staging`
