@@ -23,9 +23,30 @@ class_name HubTapInput
 ## project.godot sets no `emulate_touch_from_mouse`, so on a desktop
 ## browser a click produces InputEventMouseButton and NOTHING else -- a
 ## touch-only handler leaves the plateau unusable outside a phone, which
-## is where a lot of the looking-at happens. Neither emulation flag is set
-## either way, so exactly one of the two events arrives per gesture and
-## there is no double-fire to guard against.
+## is where a lot of the looking-at happens.
+##
+## A finger, on the other hand, DOES produce both: emulate_mouse_from_touch
+## defaults to true, so one tap arrives as a touch release AND as a
+## synthesised mouse release, and _handle_point runs twice. Measured, not
+## assumed -- a real touch injected into a real window emitted
+## tapped_ground twice. It is harmless because hop_to() is depth-one: the
+## second call re-states the same destination.
+##
+## =====================================================================
+## WHY THIS ONLY EVER FIRES IF NO CONTROL EATS THE EVENT FIRST
+##
+## _unhandled_input runs AFTER GUI picking. Any Control under the finger
+## whose mouse_filter is STOP consumes the event and calls
+## set_input_as_handled(), and nothing downstream of that ever sees it --
+## no error, no warning, just a plateau that ignores taps.
+##
+## HubWorld.tscn's root Control is full-screen, so at Control's DEFAULT
+## MOUSE_FILTER_STOP it swallowed every tap on the plateau. It carries
+## mouse_filter = MOUSE_FILTER_IGNORE for exactly that reason; the
+## fallback Button and menu are separate Controls and are still picked
+## normally, so the change costs nothing they need. Do not "tidy" that
+## property away, and give any Control added over the plateau the same
+## treatment.
 
 ## Emitted with the world point under the finger, on the ground plane.
 signal tapped_ground(point: Vector3)
