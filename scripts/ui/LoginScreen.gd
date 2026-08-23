@@ -19,7 +19,7 @@ extends Control
 ## The repo's single hard-coded post-login destination -- verified by grep
 ## rather than assumed: no other script navigates anywhere once Auth reports
 ## a session, so moving the landing point is this one constant.
-const HUB_SCENE := "res://scenes/Hub.tscn"
+const HUB_SCENE := "res://scenes/HubWorld.tscn"
 ## `detail` can carry two full URLs (a failed dynamic import reports both the
 ## base and the module it could not fetch), which measured at 4 wrapped lines
 ## and pushed the panel to 26 px from the screen bottom -- inside the iOS
