@@ -10922,6 +10922,28 @@ mais l'affirmation ne tenait pas.
    propre passe device.
 
 
+### Deploiement staging du fix mouse_filter (palier 1, automatique)
+
+`staging` **`1c960c3`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `f899cc64` des deux cotes, verifie AVANT le push).
+CI run **#200** (id `32659662717`). **`main` NON touche** (`origin/main`
+toujours `ea722bd`, verifie apres le push) : palier 2, gate Mathieu apres
+validation device.
+
+**Verifie SUR LE SERVICE, dans les DEUX sens** — `CACHE_VERSION` de
+`index.service.worker.js` de `keepy-staging.vercel.app` lu avant et apres :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #199, SwampPalette) | `1787502474` | 23 aout **16:27:54** |
+| **apres (ce lot, run #200)** | **`1787511598`** | 23 aout **18:59:58** |
+
+L'epoch d'apres tombe dans la fenetre du run #200 (demarre 18:56:55), avec
+`x-vercel-cache: MISS` et `age: 0` — l'alias sert bien le build du fix.
+⚠️ L'API GitHub Actions est restee **figee sur `in_progress`** pendant tout ce
+temps, `updated_at` bloque a 18:56:59 : enieme reproduction du piege deja
+consigne, et c'est encore le `CACHE_VERSION` servi qui a tranche.
+
 ## SWAMPPALETTE : la palette marecage a UNE seule source (23 aout 2026)
 
 Branche `claude/swamp-palette-extraction-ioofz3`, partie de `staging`
