@@ -60,7 +60,7 @@ func _ready() -> void:
 	_refresh_list()
 
 func _on_back_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/Hub.tscn")
+	get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
 
 ## Navigation only -- the creation form (title, optional category) lives on
 ## QuizzCreateScreen since 20 aout 2026.

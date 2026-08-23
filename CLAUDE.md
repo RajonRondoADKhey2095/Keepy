@@ -10592,3 +10592,724 @@ reponse de cache.
 
 `main` **non touche** (palier 2, gate Mathieu apres validation device sur
 `keepy-staging.vercel.app` -- lisibilite du telegraphe adverse restaure).
+
+## HUB PLATEAU 3D : les trois boutons deviennent trois portails, Keepy s'y rend PAR BONDS (23 aout 2026)
+
+Branche `claude/hub-plateau-3d-bonds-wzt2oa`, partie de `staging` (`d68a157`
+-- `main` etait un merge de `staging` au MEME arbre `c2d587f5`, verifie et
+pas suppose). `scenes/HubWorld.tscn` remplace `scenes/Hub.tscn` comme point
+d'arrivee post-connexion : un plateau 3D, trois portails, et Keepy qui se
+deplace vers le point tape.
+
+⚠️ **`scenes/Hub.tscn` et `scripts/ui/Hub.gd` sont DELIBEREMENT CONSERVES.**
+C'est le rollback, et un ecran par lequel passe l'acces a TOUS les jeux ne
+doit pas perdre sa version precedente dans le commit qui livre son
+remplacant. Les trois appelants (`LoginScreen.gd`, `QuizzHomeScreen.gd`,
+`BattleArena.gd`) pointent desormais sur `HubWorld.tscn`.
+
+### ETAPE 0 -- l'inventaire du `.glb`, MESURE avant d'ecrire une ligne
+
+`assets/models/keepy_squirrel_hero.glb`, parse du JSON du conteneur :
+**aucun skeleton** (`skins` absent), **1 seul noeud** (`Mesh1.0`), **1 seul
+mesh, 1 seule primitive**, **0 animation**, `KHR_materials_unlit`.
+
+⚠️ **La queue N'EST PAS un noeud separe** -- elle est dans la meme primitive
+que le corps. L'oscillation de queue contre-phase prevue au brief **n'a donc
+pas ete tentee** : il n'y a rien a animer independamment, et decouper la
+geometrie serait un lot d'asset, pas un lot de gameplay. Signale, pas
+contourne.
+
+Consequence structurante : **tout est PROCEDURAL**, sur des transforms --
+meme technique que `scripts/battle/FighterView.gd`, sur le meme asset, a
+travers le meme `ModelSlot`.
+
+### DECISION PERMANENTE : le layout est une RESOURCE, jamais des transforms de scene
+
+`resources/hub/hub_layout.tres` (`scripts/hub/HubLayout.gd`, un
+`Array[Dictionary]`) porte **la totalite du placement** : 3 portails +
+12 props. `scenes/HubWorld.tscn` porte la **STRUCTURE** (viewport, camera,
+Keepy, les parents vides, l'UI de secours) et **ne nomme aucune coordonnee
+monde**. `HubBuilder.gd` instancie au `_ready()`.
+
+**Pourquoi c'est une regle et pas un gout** : `Hub.tscn` posait ses trois
+entrees dans un container, leurs positions etaient une consequence du
+layout, il n'y avait rien a regler. Un plateau 3D a le probleme inverse --
+chaque prop a une position choisie a la main, et la premiere version est
+toujours fausse sur device. Baker ces nombres dans la scene ferait de chaque
+passe de reglage un diff sur le fichier qui porte AUSSI le viewport, la
+camera et le menu de secours : un mauvais merge la coute l'ecran entier, pas
+un rocher. **Deplacer un portail = editer des chiffres dans un fichier
+texte.** Toute session future qui ajoute un prop l'ajoute au `.tres`.
+
+`HubBuilder` **valide et saute** une entree malformee avec un `push_error`
+plutot que de planter : une faute de frappe dans un fichier de decor ne doit
+jamais etre la raison pour laquelle un joueur ne peut plus atteindre ses
+jeux. Les meshes de props sont construits en code depuis des primitives, a
+tessellation EXPLICITE (le piege §7.2 des collectibles), **unshaded** comme
+toute surface de ce projet -- la scene n'a aucune `DirectionalLight3D`.
+
+### ⚠️ LA REGLE QUI DONNE DU POIDS : un tap PENDANT un bond ne l'interrompt JAMAIS
+
+`KeepyHopper.gd`. Un tap remplace la DESTINATION ; le changement est honore
+**a l'atterrissage suivant**, jamais en vol. C'est toute la difference entre
+un personnage qui a du poids et un curseur : une redirection en l'air ferait
+pivoter Keepy en pleine parabole, et un joueur qui tape plusieurs fois de
+suite le verrait vibrer sur place au lieu d'avancer. Le cout est au pire
+`HOP_DURATION` (0,35 s) de reactivite. **La file est de PROFONDEUR UN** : la
+seule destination interessante est la derniere.
+
+**Un seul tween par bond**, sur un 0..1 normalise (`tween_method`), pas trois
+`tween_property` paralleles -- l'arc est une parabole et le squash est
+lineaire par morceaux, ce qu'aucun tween de propriete n'exprime. Trois canaux
+ecrits depuis le MEME `t`, donc ils ne peuvent pas deriver l'un de l'autre :
+position (`4t(1-t)`, exactement 0 aux deux bouts, donc pas de flottement par
+arrondi), **squash-and-stretch** (compression au decollage ET a
+l'atterrissage -- c'est ce canal qui porte le poids, et c'est pourquoi un
+modele sans squelette suffit), et un pitch avant qui revient a plat a la
+frame d'atterrissage.
+
+Le corps s'oriente **avant** de quitter le sol (`_face`, ecriture directe et
+non tween) : une rotation etalee sur le bond serait exactement le pilotage en
+l'air que la regle ci-dessus refuse.
+
+### Les portails ne declenchent PAS sur un overlap, et le router n'est PAS un autoload
+
+`HubPortal` (Area3D) repond a « ce point d'atterrissage est-il dans moi ? »,
+question posee uniquement sur `KeepyHopper.hop_landed`. Un `body_entered`
+serait faux : un bond vise AU-DELA d'un portail traverse son volume en plein
+vol, et le joueur serait avale en passant. `monitoring` et `monitorable` sont
+**coupes** -- la forme reste la source unique de verite du rayon (lu sur le
+`CylinderShape3D`, jamais duplique en constante), et rien ne peut recabler
+`body_entered` par inadvertance. Cue d'approche : pulse en boucle sur
+l'anneau, avec hysteresis (2,2 R / 2,6 R) pour qu'un Keepy pose sur la
+frontiere ne fasse pas clignoter le portail a chaque bond.
+
+`HubRouter` est un **noeud local de `HubWorld.tscn`**, pas un autoload : une
+table de routage qui gagne un deuxieme appelant cesse d'etre un detail du hub
+et devient un framework. Il porte aussi le garde `_leaving` (deux portails
+atteints la meme frame ne doivent pas empiler deux chargements).
+
+### ⚠️ PIEGE GODOT MESURE, ET IL ECHOUE EN SILENCE : un export de NOEUD TYPE ecrit A LA MAIN dans un `.tscn` NE SE RESOUT PAS
+
+`@export var camera: Camera3D` avec `camera = NodePath("...")` dans le
+fichier de scene rend **`null` au chargement**. La sonde de ce lot a obtenu
+`null` sur les trois references de `HubTapInput` et **chaque tap mourait sur
+le garde** -- aucune erreur, aucun crash, juste un plateau ou rien ne repond.
+L'editeur peuple cette forme par une machinerie qu'un `.tscn` ecrit a la main
+ne porte pas. **Parade adoptee : `@export var x_path: NodePath` + resolution
+dans `_ready()` avec un cast et un `push_error`.** Toujours un chemin dont
+l'auteur de scene est proprietaire, jamais un `get_node("../../X")` en dur.
+**A connaitre avant d'ecrire un `.tscn` a la main dans ce depot.**
+
+### Framing et sol : MESURES aux deux ratios, pas estimes
+
+`HubCamera` suit la position AU SOL de Keepy (le y de l'arc est jete) a offset
+fixe et **rotation FIXE, jamais un `look_at`** : un `look_at` reaimant chaque
+frame sur une cible qui oscille de 0,6 unite par bond ferait tanguer
+l'horizon entier au rythme des bonds -- bien plus visible que le personnage.
+Lissage exponentiel, donc independant du framerate.
+
+Offset `(0, 7,6, 8,9)` a **-34 deg**, `keep_aspect = KEEP_WIDTH`, `fov 45` --
+**choisi par mesure** (sonde jetable, supprimee avant commit ;
+`ProbeTimeoutAudit` revient a **37 sondes**) :
+
+| offset | Keepy | portails lateraux |
+|---|---|---|
+| (0, 9,0, 10,5) | 104 px | labels a l'ecran |
+| **(0, 7,6, 8,9) -- livre** | **124 px** | **pads a 7,8 % et 92,2 % de la largeur** |
+| (0, 6,6, 7,7) | 144 px | **labels HORS CADRE** |
+
+Verifie a **1080x1920 ET 1170x2532** : les trois labels et les trois pads
+sont dans le cadre aux deux ratios, Keepy a 51-58 % de la hauteur.
+
+⚠️ **Le sol fait 600x600 et `fog_light_color` EGALE `background_color`**
+(le `SWAMP_SKY` `Color(0.062, 0.115, 0.044)`), et ce n'est pas decoratif :
+a `-34 deg` avec la vfov portrait (72,7 deg a `KEEP_WIDTH`), **le haut du
+cadre passe AU-DESSUS de l'horizon** (composante y du rayon `+0.041` en
+1080x1920, `+0.137` en 1170x2532). Un sol trop court laissait donc voir son
+bord franc : mesure a 26x26, l'arete tombait a 39 % de la hauteur d'ecran.
+Avec la brume qui converge vers la couleur de fond, la jonction sol/ciel est
+invisible par construction, quelle que soit la taille. Brume a **0,016** :
+17 % sur Keepy, 25 % sur le portail central -- de la profondeur, pas un
+delavage (les rayons de portail restent ambre).
+
+`PLATEAU_HALF_EXTENT = 11` borne les taps. Verifie : le carre +-11 tombe
+juste hors cadre lateralement, donc la borne est en pratique « le plateau
+visible ». Un tap au-dela est **clampe, jamais ignore** -- un tap pres de
+l'horizon est un joueur qui demande a aller aussi loin qu'il peut, et le
+refuser en silence se lit comme un ecran casse.
+
+### Le menu de secours n'est pas du poids mort
+
+Un ecran 3D peut echouer la ou une liste de boutons ne peut pas : un contexte
+WebGL qui ne revient jamais, un viewport noir, une projection de tap fausse a
+un certain ratio. N'importe lequel echouerait sur le SEUL ecran par lequel
+tous les jeux sont atteints. `FallbackMenu` porte les trois memes appels de
+navigation, un petit bouton « Menu » a l'ecart -- le pire cas est un ecran
+laid, pas un jeu inaccessible.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre `Content-Length` -- **50 276 070**
+et **1 073 228 327**, aucune troncature). Import headless **exit 0** (24
+`.scn`). Boot headless de `HubWorld.tscn` **exit 0, 0 erreur de parse**.
+Export Web release **exit 0, 0 erreur, 0 warning** -- **les 8 scripts de
+`scripts/hub/` sont compiles en `.gdc` dans le `.pck`**, ce qui est la preuve
+qu'aucun n'a d'erreur GDScript. `index.wasm` **35 376 909** octets / md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b` -- identiques au fingerprint deja consigne
+pour tout lot qui ne touche pas le code moteur. `index.pck` 5 796 560 (export
+unique et propre, `build/` supprime avant -- mise en garde permanente sur son
+instabilite). Piege payload tenu : **0** ligne `Storing File` pour
+`assets_source`, `scripts/dev`, `docs`, `web` ou `build`, sur 211 lignes.
+**Aucune reference de `scripts/hub/` vers `scripts/dev/`** (grep, pas suppose)
+-- `scripts/dev/*` est exclu du pack, une telle reference ne casserait QUE
+dans le build web.
+
+Sondes : `ProbeTimeoutAudit` (**37 sondes scenes**, retour exact a la
+baseline), `AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**. Non-applicabilite
+verifiee : aucune sonde de `scripts/dev/` ne charge `Hub.tscn`,
+`HubWorld.tscn` ni `LoginScreen.tscn`.
+
+⚠️ **Piege deja documente, re-rencontre a la lettre** : une sonde jetable dont
+le SCRIPT ne parse pas ne tombe pas vite, elle traine jusqu'au timeout (la
+scene ne se charge jamais, donc rien n'arme quoi que ce soit). Symptome ici :
+sortie vide et `exit 124` a 200 s, cause reelle une seule ligne
+`var err := 99.0 if ... else ...` (type non inferable). **Rediriger vers un
+fichier et lire le log**, plutot que de conclure a un blocage.
+
+### Ce que la sonde jetable a mesure (supprimee avant commit)
+
+- **Round-trip du tap : erreur 0,00000** sur quatre cibles, et quatre taps aux
+  extremes du cadre (pres de l'horizon, les deux coins bas) tous clampes dans
+  le plateau, aucun avale en silence.
+- **Apex du bond 0,599** contre `HOP_HEIGHT` 0,6.
+- **Les pieds reposent a y = -0,0000** (AABB du modele installe + transform du
+  slot), donc `model_offset (0, -0,2246, 0)` et le slot a `y = 0,9` -- les
+  memes chiffres que `resources/battle/keepy.tres`, repris par mesure et non
+  recopies a l'aveugle.
+- **La regle de commit tient, prouvee dans le sens qui compte** : depart vers
+  le portail Quizz, redirection **en plein vol** (frame 6) vers Battle, et le
+  joueur atterrit sur **Battle** apres 5 bonds -- l'ordre `hop_landed` puis
+  `_advance()` fait qu'un portail atteint route avant d'etre depasse par une
+  destination au-dela.
+- **`entered` contient exactement UNE entree**, et `change_scene_to_file` a
+  reellement tourne (la scene a ete remplacee sous la sonde).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que le bond se lit comme un bond** a vitesse reelle au pouce, et
+   est-ce que le squash donne du poids plutot que l'air d'un modele qui
+   clignote ? Aucune sonde ne le dit, c'est tout l'objet du lot.
+2. **La commit-au-bond (0,35 s) se sent-elle comme du poids ou comme du
+   retard** quand on tape plusieurs fois de suite ?
+3. **Keepy fait 124 px de haut** sur 1920 : mesure comme le maximum
+   atteignable sans perdre un label de portail, mais lisible n'est pas mesure.
+4. **Pas de queue animee** (Etape 0 : elle n'est pas un noeud separe).
+5. **Aucun son, aucun asset Meshy neuf, aucune persistance** : hors perimetre.
+6. Derive de doc pre-existante non corrigee ici : `scripts/autoload/Quizz.gd`
+   dit encore que le bouton Quizz de `Hub.tscn` est `disabled` et connecte a
+   rien -- faux depuis des semaines, et sans rapport avec ce lot.
+
+### Deploiement staging du hub plateau (palier 1, automatique)
+
+`staging` **`8fdb591`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `b01d7948` des deux cotes, verifie AVANT le push).
+CI run **#196** (id `32646438061`) **verte** (14:46:02 -> 14:49:27 UTC) --
+`Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`ea722bd`, verifie apres le push) : palier 2, gate Mathieu apres validation
+device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** --
+`index.service.worker.js` de `keepy-staging.vercel.app` lu AVANT le merge et
+APRES :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #194, lot 12 docs) | `1787432682` | 22 aout **21:04:42** |
+| **apres (ce lot, run #196)** | **`1787496537`** | 23 aout **14:48:57** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre du run #196**, et les deux
+lectures portent `x-vercel-cache: MISS` + `age: 0` -- ce n'est pas une reponse
+de cache. L'alias sert bien le build du plateau.
+
+### ⚠️ SECOND PIEGE GODOT, MEME FAMILLE QUE LE PREMIER, ET IL AVALAIT CHAQUE TAP : un `Control` plein ecran laisse a `MOUSE_FILTER_STOP` (23 aout 2026)
+
+Branche `claude/hub-portal-transition-bug-vcf47y`, partie de `staging`
+(`b64eb37`). Retour device : « Keepy se deplace par bonds mais atterrir dans
+un anneau ne declenche aucune transition ». **Un seul changement de
+comportement : `mouse_filter = 2` sur le noeud racine de `HubWorld.tscn`.**
+
+⚠️ **`_unhandled_input` s'execute APRES le picking GUI.** Tout `Control`
+sous le doigt dont le `mouse_filter` vaut `STOP` consomme l'evenement et
+appelle `set_input_as_handled()` ; plus rien en aval ne le voit — **aucune
+erreur, aucun warning, juste un plateau qui ignore les taps**. La racine de
+`HubWorld.tscn` est un `Control` plein ecran laisse au **DEFAUT de `Control`,
+qui est `MOUSE_FILTER_STOP`** : elle avalait donc chaque tap avant
+`HubTapInput`. Meme famille que le piege `@export`/`NodePath` de la section
+ci-dessus — un cablage qui echoue en silence dans un `.tscn` ecrit a la main.
+
+**MESURE EN A/B, pas deduit** — meme scene, meme binaire, fenetre REELLE
+1170x2532 (`xvfb-run --rendering-driver opengl3`), un vrai
+`InputEventScreenTouch` injecte sur le pixel de l'anneau :
+
+| `HubWorld.mouse_filter` | `tapped_ground` emis | verdict |
+|---|---|---|
+| `0` = STOP (livre) | **0 fois** (touch ET souris) | le tap n'arrive JAMAIS |
+| `2` = IGNORE (ce lot) | 2 fois (touch) / 1 fois (souris) | chaine complete verte |
+
+⚠️ **`--headless` NE PEUT PAS voir ce defaut, et c'est le piege dans le
+piege.** Le display server dummy rapporte une fenetre **0x0**, donc
+`get_final_transform()` vaut 1/30 et un evenement injecte atterrit
+hors-ecran : `gui_find_control` ne trouve rien, personne ne consomme, et
+`_unhandled_input` se declenche — **un vert que le device n'a pas**. Une
+sonde headless du lot precedent avait ainsi valide la chaine complete
+(portails construits, `hop_landed` connecte, `portal_entered` cable,
+`change_scene_to_file` execute) : tout cela etait vrai, et le tap n'arrivait
+quand meme pas. **Toute sonde qui injecte un evenement de pointeur doit
+tourner en FENETRE REELLE.**
+
+**Ce que le diagnostic a INNOCENTE, mesure et pas suppose** — aucun de ces
+points n'avait besoin d'etre touche : `hop_landed` est emis a chaque
+atterrissage avec la position monde ; son unique auditeur est bien
+`HubWorld._on_hop_landed` ; `landed_within` compare en X/Z contre le rayon lu
+sur le `CylinderShape3D` (**1,35**, jamais duplique en constante) ;
+`portal_entered` a exactement un auditeur par portail ; `HubRouter.ROUTES`
+resout les trois `game_id` ; et **aucun `@export` de type noeud n'a ete
+reintroduit** (les trois references de `HubTapInput` et celle de `HubCamera`
+sont bien des `NodePath` resolus en `_ready()`). Verifie aussi **sur le
+`.pck` exporte** : `hub_layout.tres` est converti en `.res` binaire a
+l'export et le round-trip preserve les `StringName` de `type`/`game_id`.
+
+**Preuve, TROIS portails testes un par un** (sonde jetable, fenetre reelle,
+tap sur le pixel de l'anneau, supprimee avant commit — `ProbeTimeoutAudit`
+revient a **37 sondes**) : le tap arrive, vise a **0,17-0,19 m** du centre
+(rayon 1,35), et `change_scene_to_file` aboutit reellement sur
+`TitleScreen.tscn` / `QuizzHomeScreen.tscn` / `Battle.tscn`. **Rouge d'abord**
+sur l'arbre pre-fix, sur l'assertion qui compte (« le tap atteint
+HubTapInput »), avant d'etre vert.
+
+**Le bouton « Menu » de secours n'est PAS abime** : `IGNORE` ne retire que la
+racine du picking, ses enfants sont piques normalement — mesure, 1 pression
+recue et **0 tap parasite** sur le sol. `KeepyHopper` est **intouche**, et
+aucun `body_entered`/`monitoring` n'est reintroduit.
+
+⚠️ **Derive de doc corrigee au passage, elle etait FAUSSE** : l'en-tete de
+`HubTapInput.gd` affirmait « exactement un des deux evenements arrive par
+geste, pas de double-fire a garder ». Mesure : `emulate_mouse_from_touch`
+vaut **true** par defaut, donc un doigt produit un touch release **ET** une
+souris synthetisee, et `tapped_ground` part **deux fois**. Inoffensif
+(`hop_to` est de profondeur un, le second appel redit la meme destination),
+mais l'affirmation ne tenait pas.
+
+⚠️ **DEUX POINTS OUVERTS, mesures et deliberement NON corriges ici.**
+1. **Le rapport device dit « Keepy se deplace par bonds », or la mesure dit
+   qu'aucun tap n'arrivait** — ces deux faits ne se recouvrent pas. Le fix
+   est necessaire dans les deux lectures (il est la seule difference entre
+   une chaine morte et une chaine verte, prouvee des deux cotes), mais si
+   Keepy bougeait REELLEMENT avant, alors un second facteur reste a trouver
+   et le prochain test device le dira.
+2. **Le LABEL flottant est un piege de visee**, mesure : il est a
+   `y = 1,55`, donc un tap dessus retombe **3,7-3,8 m AU-DELA** du portail
+   (parallaxe a -34 deg). Balayage sur 108 taps realistes (6 departs x 6
+   points de visee x 3 portails) : **9 ne tombent jamais dans le disque de
+   declenchement**, tous par le label ou le bord de l'anneau, et tous
+   marginaux (1,41-1,78 contre 1,35). Non corrige — bouger le rayon ou
+   viser le sol sous le label est un reglage de gameplay qui merite sa
+   propre passe device.
+
+
+### Deploiement staging du fix mouse_filter (palier 1, automatique)
+
+`staging` **`1c960c3`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `f899cc64` des deux cotes, verifie AVANT le push).
+CI run **#200** (id `32659662717`). **`main` NON touche** (`origin/main`
+toujours `ea722bd`, verifie apres le push) : palier 2, gate Mathieu apres
+validation device.
+
+**Verifie SUR LE SERVICE, dans les DEUX sens** — `CACHE_VERSION` de
+`index.service.worker.js` de `keepy-staging.vercel.app` lu avant et apres :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #199, SwampPalette) | `1787502474` | 23 aout **16:27:54** |
+| **apres (ce lot, run #200)** | **`1787511598`** | 23 aout **18:59:58** |
+
+L'epoch d'apres tombe dans la fenetre du run #200 (demarre 18:56:55), avec
+`x-vercel-cache: MISS` et `age: 0` — l'alias sert bien le build du fix.
+⚠️ L'API GitHub Actions est restee **figee sur `in_progress`** pendant tout ce
+temps, `updated_at` bloque a 18:56:59 : enieme reproduction du piege deja
+consigne, et c'est encore le `CACHE_VERSION` servi qui a tranche.
+
+### RETOUR CHASED CASSE, ET LA CAUSE N'ETAIT PAS UN CHEMIN A CORRIGER (23 aout 2026)
+
+Branche `claude/keepy-hub-return-portal-phv4hm`, partie de `staging`
+(`d2e5233`). Retour device : depuis le plateau, entrer dans Keepy Chased
+est un aller simple — plus aucun moyen de revenir sans recharger la page.
+Quizz revient bien, Battle non teste.
+
+⚠️ **LE BALAYAGE COMPLET DU DEPOT SUR `Hub.tscn` NE TROUVE AUCUN CHEMIN
+CHASED A CORRIGER — parce qu'il n'y en a jamais eu un.** C'est le
+diagnostic entier du lot, et il inverse la premisse du brief (« mettre a
+jour tout chemin de retour trouve »). Mesure, pas suppose :
+
+| sous-jeu | sortie vers le hub, AVANT ce lot |
+|---|---|
+| Quizz | `QuizzHomeScreen.gd:63` — `BackButton` du header, **deja** repointe sur `HubWorld.tscn` |
+| Battle | `BattleArena.gd:60` `HUB_SCENE` + `:259` `_on_quit()` — **deja** repointe, correct, aucun defaut latent |
+| **Chased** | **AUCUNE.** `TitleScreen.gd` ne fait que `change_scene_to_file("res://scenes/Game.tscn")` (vers l'AVANT) ; `GameOverScreen.gd:189` n'offre que `_on_retry_pressed()` -> `GameState.start_run()` |
+
+Le lot plateau avait donc raison de ne modifier que trois fichiers
+(`LoginScreen.gd`, `QuizzHomeScreen.gd`, `BattleArena.gd`) : ce sont les
+trois seuls qui **nommaient** une scene de hub. Chased n'en nommait
+aucune, donc il n'est pas apparu dans le `grep` du lot precedent — et il
+etait deja sans retour AVANT le plateau, simplement invisible tant que le
+hub etait l'ecran d'ou l'on venait et ou le bouton retour du navigateur
+suffisait. **Le fix est un chemin de retour NEUF, pas un chemin corrige.**
+
+**Balayage complet re-verifie apres ce lot** : les seules occurrences
+restantes de la chaine `Hub.tscn` hors `HubWorld.tscn` sont des
+commentaires historiques (`HubWorld.gd`, `HubLayout.gd`, `Quizz.gd`,
+`LoginScreen.gd`) plus `scenes/Hub.tscn` et `scripts/ui/Hub.gd`
+eux-memes. **Aucun code vivant ne route vers l'ancien hub.**
+`scenes/Hub.tscn` reste dans le depot, intouche : c'est le rollback, comme
+le lot plateau l'avait pose.
+
+**Deux sorties ajoutees, une par point de blocage** — une seule n'aurait
+pas suffi, parce qu'une run se termine sur `GameOverScreen` et pas sur
+`TitleScreen` :
+
+* `scenes/TitleScreen.tscn` + `TitleScreen.gd` : bouton **`< Hub`** en haut
+  a gauche, meme role que le `BackButton` du header de Quizz.
+* `scenes/GameOverScreen.tscn` + `GameOverScreen.gd` : bouton **`Retour au
+  hub`** sous `Rejouer`. Sans lui, mourir enfermait le joueur dans une
+  boucle « Rejouer » infinie. Aucun `GameState` reset avant de partir :
+  `Game.tscn` appelle `start_run()` dans son propre `_ready()`, donc
+  reinitialiser ici ne ferait que doubler ce travail dans la scene qu'on
+  s'apprete a liberer.
+
+### UN BOND QUI ATTERRIT DANS UN ANNEAU NE LANCE PLUS LE JEU : `HubConfirmDialog`
+
+Un bond est vise par un **tap sur le sol**, et un tap n'est pas precis :
+un joueur qui traverse le plateau pouvait atterrir dans un portail qu'il
+comptait seulement survoler et se retrouver dans un sous-jeu sans avoir eu
+un mot a dire — sur Chased, sans retour, c'etait une impasse. Depuis ce
+lot, **un atterrissage PROPOSE, il n'entre plus** : `portal_entered` ouvre
+une popup (nom du jeu + `Jouer` / `Annuler`), et seul `Jouer` route.
+
+⚠️ **Le ROUTAGE est inchange, seulement retarde d'un tap.** `HubRouter`
+reste la seule table `game_id -> scene` et le seul appelant de
+`change_scene_to_file`. `HubConfirmDialog.gd` **ne contient aucune logique
+de routage** : il recoit un `game_id`, le rend tel quel sur
+`confirmed(game_id)`, et ne le lit jamais. Ajouter un 4e jeu touche
+`HubRouter.ROUTES` et le layout `.tres`, pas ce fichier.
+
+**Le nom affiche vient du portail lui-meme**, pas d'une table ici :
+`HubPortal.display_label()` relit le `Label3D` que `HubBuilder` a deja
+rempli depuis `resources/hub/hub_layout.tres`. Le signal devient donc
+`portal_entered(game_id: StringName, label: String)` — les deux valeurs
+sont la donnee propre du portail. Une seconde table de noms serait une
+copie libre de deriver du panneau plante sur le plateau.
+
+**Le menu de secours route TOUJOURS DIRECTEMENT, volontairement.** Appuyer
+sur un bouton libelle « Keepy Quizz » est deja un choix explicite ; y
+ajouter une confirmation serait une seconde popup posant la question de la
+premiere, sur le chemin qui existe justement pour etre le simple quand le
+3D a echoue.
+
+**`Annuler` ne recule pas Keepy.** Se tenir dans un portail est une
+position legale du plateau ; repousser le joueur repondrait par un
+mouvement qu'il n'a pas demande a une question qu'il vient de decliner. La
+popup ne se rouvre qu'au PROCHAIN atterrissage, donc taper ailleurs suffit
+a repartir. Un tap sur le scrim ne fait rien non plus — ni valider ni
+annuler : un doigt egare a cote du panneau ne doit pas pouvoir repondre a
+la place du joueur, dans un sens comme dans l'autre.
+
+### ⚠️ TROISIEME PASSAGE SUR LE PIEGE `mouse_filter`, ET IL COURT DANS L'AUTRE SENS
+
+Les deux fois precedentes, un `Control` a `MOUSE_FILTER_STOP` **avalait**
+les taps du plateau. Ici le danger est inverse : `HubTapInput` ecoute dans
+`_unhandled_input`, donc tout ce que la popup **n'avale pas** atteint le
+plateau et fait bondir Keepy sous une popup ouverte.
+
+**Mesure sur Godot 4.3 dans ce sandbox, pas lue de memoire** (`ClassDB`
+instancie chaque type, `mouse_filter` imprime) :
+
+| type | defaut mesure |
+|---|---|
+| `Control`, `ColorRect`, `PanelContainer`, `Button` | **0 = STOP** |
+| `VBoxContainer`, `TextureRect` | 1 = PASS |
+| `Label` | 2 = IGNORE |
+
+Le defaut est donc deja correct — et il n'est **deliberement pas laisse au
+defaut** : `HubConfirmDialog.tscn` ecrit `mouse_filter = 0` explicitement
+sur sa racine, son `Scrim` et son `Panel`, et `_ready()` re-affirme
+`MOUSE_FILTER_STOP` sur la racine. Les deux devraient etre casses ensemble
+pour que la popup redevienne traversante. **Ceinture et bretelles
+par-dessus** : `HubWorld._on_tapped_ground` refuse aussi tout tap sol tant
+que `_confirm.is_open()` (le meme garde que le menu de secours utilise
+deja), et `_on_hop_landed` refuse d'ouvrir une seconde fois pour un bond
+deja en l'air. Ces gardes ne devraient jamais tirer ; la panne qu'elles
+couvrent est **silencieuse**, et c'est la moitie la moins chere de ne pas
+la decouvrir sur device.
+
+**`HubConfirmDialog.tscn` est instancie EN DERNIER dans `HubWorld.tscn`** :
+le picking GUI parcourt l'arbre en ordre inverse, donc la popup recoit
+l'evenement avant `FallbackButton` et `FallbackMenu`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles confirmees contre le `Content-Length` —
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0**, **24 `.scn`** (import complet verifie, pas suppose : le piege du
+faux-rouge par import tronque est controle). Export Web release **exit 0**.
+`index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+5 807 744 (export unique et propre, `build/` supprime avant — a lire avec
+la mise en garde permanente sur son instabilite). Piege payload tenu :
+**0** ligne `Storing File` pour `scripts/dev`, `assets_source`, `docs`,
+`web` ou `build`.
+
+**Boot headless des 7 scenes concernees** (`--quit-after 2`) : `HubWorld`,
+`HubConfirmDialog`, `TitleScreen`, `GameOverScreen`, `Hub` (le rollback,
+toujours chargeable), `Battle`, `QuizzHomeScreen` — **exit 0, 0 erreur
+GDScript** partout.
+
+**Sonde jetable** (`scripts/dev/HubConfirmProbe.tscn`, jamais commitee,
+supprimee avant le commit — `ProbeTimeoutAudit` revient a **37 scenes de
+sonde**, le chiffre de `origin/staging`). Elle pilote la **scene livree**
+`HubWorld.tscn`, jamais un stub : **47 assertions, 0 echec, exit 0**.
+PHASE A contrat de scene et les trois `mouse_filter` ; PHASE B les 3 routes
+intactes ; PHASE C **un atterrissage sur chacun des 3 portails ouvre la
+popup, titre lu sur le `Label3D` du portail, et ne route RIEN** ; PHASE D
+tap sol ignore popup ouverte (Keepy immobile) + pas de re-ciblage ; PHASE E
+Annuler ferme, ne route pas, ne bouge pas Keepy ; PHASE F le plateau
+reaccepte les taps apres Annuler ; PHASE G `Jouer` emet exactement le bon
+`game_id`, popup deja cachee au moment de l'emission ; PHASE H les 3 routes
+pointent sur des scenes qui existent ; PHASE I **les trois sous-jeux ont un
+retour vers `HubWorld.tscn`**, lu sur les scenes et les scripts livres.
+
+⚠️ **PHASE G a d'abord PROUVE le routage en se suicidant** : le vrai
+handler de `HubWorld` laisse branche fait changer de scene pour de vrai, ce
+qui libere la sonde en pleine assertion (`get_tree()` null, mesure). La
+phase asserte donc d'abord que `_on_confirm_accepted`/`_on_confirm_cancelled`
+SONT branches, puis debranche le premier — la chaine reste prouvee de bout
+en bout sans que la sonde se detruise.
+
+⚠️ **Piege d'outillage rencontre : `godot4 --script` NE CHARGE PAS LES
+AUTOLOADS.** Une premiere version de la sonde en `SceneTree`/`--script` est
+morte sur `Identifier not found: SafeArea` dans `HubWorld.gd` — un faux
+rouge qui ressemble a une erreur de compilation du jeu. Toute sonde de ce
+depot doit etre une `.tscn` lancee comme scene principale, ce que la
+convention maison fait deja partout.
+
+**Sondes permanentes rejouees, toutes exit 0** : `ProbeTimeoutAudit`
+(**37 scenes de sonde**, toutes armees), `AssetContractAudit` (**12/12
+visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe`. **Non-applicabilite VERIFIEE par grep, pas supposee** :
+aucune sonde de `scripts/dev/` ne charge `HubWorld.tscn`,
+`HubConfirmDialog.tscn`, `TitleScreen.tscn` ni `GameOverScreen.tscn` — la
+seule mention est dans des COMMENTAIRES de `SwampIdentityAudit.gd`, qui
+explique justement depuis le 14 aout pourquoi il n'echantillonne plus
+l'ecran-titre.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Le retour de Chased fonctionne-t-il vraiment sur telephone**, depuis
+   l'ecran-titre ET depuis l'ecran de fin de partie. C'est le bug qui a
+   ouvert le lot, et aucune sonde ne rend ce jugement.
+2. **La popup se lit-elle comme une question**, ou comme un ecran de plus
+   entre le joueur et son jeu ? Un bond reussi qui debouche sur une
+   confirmation est un frottement volontaire ; s'il agace plus qu'il ne
+   protege, le reglage est de la retirer du portail deja survole plutot que
+   de la raccourcir.
+3. **`Annuler` laisse Keepy DANS l'anneau**, donc le portail continue de
+   pulser sous lui. Mesure comme sans effet mecanique (la popup ne se
+   rouvre qu'au prochain atterrissage), mais l'effet visuel « je suis
+   toujours dessus » n'a pas ete juge a l'oeil.
+4. **Battle n'avait pas ete teste sur device** avant ce lot ; son retour est
+   verifie STRUCTURELLEMENT ici (`BattleArena.HUB_SCENE`, PHASE I) et
+   toujours pas a la main.
+
+### Deploiement staging du retour Chased + popup (palier 1, automatique)
+
+`staging` **`05fe613`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `2eb7e122` des deux cotes, verifie
+AVANT le push). CI run **#202** (id `32663818628`). **`main` NON touche**
+(`origin/main` toujours `ea722bd`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, dans les DEUX sens** — `CACHE_VERSION` de
+`index.service.worker.js` de `keepy-staging.vercel.app` :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #201) | `1787512074` | 23 aout **19:07:54** |
+| **apres (ce lot, run #202)** | **`1787516270`** | 23 aout **20:17:50** |
+
+L'epoch d'apres tombe dans la fenetre du run #202 (demarre 20:14:50), avec
+`x-vercel-cache: MISS` et `age: 0` — l'alias sert bien le build du lot.
+⚠️ Le « avant » n'est pas lu de memoire : il a ete relu sur le service a
+20:16:22 puis a 20:18:09, **toujours l'ancienne valeur**, ce qui prouve
+aussi que le job tournait REELLEMENT au lieu d'etre un cache perime.
+⚠️ L'API GitHub Actions est restee **figee sur `in_progress`**,
+`updated_at` bloque a 20:14:54 sur tous les appels : enieme reproduction du
+piege deja consigne, et c'est encore le `CACHE_VERSION` servi qui a
+tranche, dans les deux sens.
+
+## SWAMPPALETTE : la palette marecage a UNE seule source (23 aout 2026)
+
+Branche `claude/swamp-palette-extraction-ioofz3`, partie de `staging`
+(`b119a43`, le lot hub plateau). **C'est une EXTRACTION, pas une refonte
+visuelle** : aucune couleur, aucune densite, aucune energie ne change.
+Chased est en production ; ce lot doit etre invisible a l'oeil.
+
+`scripts/world/SwampPalette.gd` (`class_name SwampPalette`, `extends
+Resource`) + `resources/world/swamp_palette.tres`. Motif : **deux ecrans
+dessinent desormais ce marecage** -- Chased (`scenes/Game.tscn`) et le hub
+plateau (`scenes/HubWorld.tscn`, lot du 23 aout) -- et le second a ete
+ecrit a partir d'une COPIE des memes nombres. Le `.tres` est la seule
+forme qu'une scene et un script peuvent viser tous les deux.
+
+**Consommateurs branches** (chacun son commit, chaque valeur verifiee
+identique au litteral qu'elle remplace) :
+
+| fichier | ce qu'il lit |
+|---|---|
+| `scripts/autoload/GameState.gd` | `SWAMP_SKY` / `_HAZE` / `_SKY_DEEP` / `_HAZE_DEEP` / `SWAMP_FOG_DENSITY` / `_DEEP` |
+| `scripts/track/TrackSegment.gd` | `_CURB_COLOR` + les 6 couleurs de props |
+| `scripts/world/Decor.gd` | les 3 tints de billboards (`_LAYERS`) |
+| `scripts/hub/HubWorld.gd` | `background_color`, `ambient_light_*`, `fog_light_color`, `fog_density` |
+
+⚠️ **`const` -> `static var` sur les valeurs DERIVEES, et c'est
+obligatoire, pas un gout** : un initialiseur `const` ne peut pas lire la
+propriete d'une instance de `Resource`. `_PALETTE` lui-meme reste `const`
+(un `preload` est repliable). **Aucun nom d'API ne change** et rien
+n'ecrit ces valeurs -- `Decor._LAYERS` garde sa forme, ses cles et son
+ordre, donc `DecorParallaxProbe`/`DecorStabilityAudit` le parcourent
+exactement comme avant. **Chaque consommateur `preload` le `.tres`
+directement plutot que de passer par l'autoload `GameState`** : un
+autoload est un noeud d'execution, il n'est pas lisible a la
+constant-folding, et `GameState.gd` n'a de toute facon pas de
+`class_name`.
+
+### ⚠️ TROIS FAMILLES DE COULEURS NE SONT DELIBEREMENT PAS DEPLACEES
+
+Signale plutot que tranche seul -- ce sont des dependances de sonde et de
+contrat d'asset, pas des oublis :
+
+1. **`scenes/Game.tscn` et `scenes/TrackSegment.tscn`.**
+   `scripts/dev/DarkPaletteAudit.gd` lit ces scenes via
+   `PackedScene.get_state()` (`_scene_environment`,
+   `_scene_directional_light`, `_scene_ground_material`) et **mesure les
+   valeurs qu'il y trouve** : c'est comme ca que la baseline livree est
+   assertee sans faire tourner le jeu. Remplacer ces litteraux par une
+   assignation d'execution laisserait la sonde mesurer le stub restant.
+   La palette **DECLARE** donc `ambient_light_color`,
+   `ambient_light_energy`, `sun_light_color` et `ground_albedo` -- elle
+   reste une description complete -- mais **la scene reste ce qui rend**.
+   **Contrat manuel tant qu'aucune sonde ne l'asserte.**
+2. **`scenes/Obstacle.tscn` (les 6 albedos de hazards).** C'est le chemin
+   de FALLBACK uniquement : les six hazards portent un `.glb` dont le
+   `baseColorFactor` est ce qui dessine, et les sections hazards de ce
+   fichier exigent que le placeholder MIROITE l'asset. **Un `.glb` ne peut
+   pas lire un `.tres`** -- ne deplacer que la moitie placeholder
+   FABRIQUERAIT la divergence qu'`AlarmRampAudit` existe pour fermer.
+3. **`scripts/hub/HubBuilder.gd`** (`TRUNK`/`CROWN`/`ROCK`/`BUSH`) :
+   numeriquement distinctes des props de Chased, lues par rien d'autre --
+   locales au hub, pas de l'identite partagee.
+
+### Les deux seuils de luminance : ils n'etaient DANS AUCUN script
+
+Recon : `0.549` et `0.0165` n'existaient que dans `docs/MESHY_SPEC.md`
+(sections 8.4 / 1057-1064), **jamais dans du code**. Aucune sonde ne les
+asserte -- `DarkPaletteAudit` gate le ratio MESURE contre
+`CONTRAST_FLOOR = 3.0` sur des pixels rendus, ce qui est le test le plus
+fort. Ils sont desormais `@export contrast_light_threshold` /
+`contrast_dark_threshold` : le raccourci d'AUTHORING qui dit qu'une
+couleur echouera **avant** de la rendre. Rappel de leur origine : le sol
+rend a `L = 0.150`, donc franchir 3,0:1 exige `L >= 0.549` ou
+`L <= 0.0165` -- **rien au milieu ne passe, a aucune teinte**, et le
+plafond sombre est dependant de la teinte en V (0,136 gris neutre, 0,166
+a la teinte du rat, 0,289 au rouge DODGE sature) : resoudre en luminance,
+jamais en HSV.
+
+### Le fog du hub N'EST PAS celui de Chased, et c'est voulu
+
+Chased fogge vers `haze_shallow` a `0.0035` ; le hub fogge vers
+`sky_shallow` a `0.016` (~4,6x). Un plateau lu depuis une camera fixe veut
+l'horizon ferme bien plus tot qu'une piste qu'on descend. Ces deux valeurs
+sont nommees `hub_fog_light_color` / `hub_fog_density` **dans la palette**
+plutot que laissees en litteraux, pour que la deviation soit visible a
+cote de ce dont elle devie.
+
+**Reste ouvert** : la synchronisation `.tscn` <-> `.tres` du point 1
+ci-dessus est manuelle ; une sonde qui l'asserterait est le prochain pas
+naturel, mais elle toucherait `scripts/dev/` et a ete laissee hors
+perimetre. Et **jugement device** : Chased doit etre visuellement
+IDENTIQUE avant/apres en navigation privee -- toute difference constatee
+est une regression a signaler, pas a expliquer apres coup.
+
+### Validation : NEUF sondes BYTE-IDENTIQUES, dont la sonde a PIXELS
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre `Content-Length` :
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0** (**24 `.scn`**, import complet verifie et pas suppose), export
+Web release **exit 0**, **0 erreur GDScript**. `index.wasm`
+**35 376 909 octets** -- le fingerprint deja consigne pour tout lot qui ne
+touche pas le code moteur.
+
+Diffees contre `origin/staging` en worktree separe, graine 20260806 :
+`DarkPaletteAudit`, `AssetContractAudit`, `ProbeTimeoutAudit` (**37 sondes
+scenes**), `DeathModelAudit`, `ChargerShapeProbe`, `DecorStabilityAudit`,
+`ComboAudit`, `ShrinkAudit`, `ChargerAudit` -- **BYTE-IDENTIQUES sur les
+DEUX flux (stdout ET stderr), exit 0 des deux cotes**.
+
+⚠️ **`DarkPaletteAudit` byte-identique est LA preuve du lot**, et pas une
+ligne de plus dans une liste : c'est la seule sonde qui echantillonne de
+vrais PIXELS. Elle rend exactement les chiffres deja consignes -- DODGE
+3,39/3,37, JUMP 3,04/3,02, CHARGER 3,37/3,34, STOMPER 3,41/3,41, ENEMY
+4,12/4,10, AIR_ENEMY 2,13/2,12, 0 echantillon manque. Une couleur
+deplacee de travers aurait bouge une de ces lignes.
+`SwampIdentityAudit` : **4/4 etats OK, `SWAMP_IDENTITY_VERIFIED=yes`**.
+Les 24 valeurs de la palette ont aussi ete relues a l'execution et
+comparees une a une aux litteraux remplaces (**0 mismatch**, sonde jetable
+supprimee avant commit).
+
+⚠️ **DEUX sondes divergent, les DEUX sont NON SEEDEES, et c'est verifie
+plutot qu'argumente** :
+- `DecorParallaxProbe` -- **deux runs sur LA MEME branche divergent
+  autant que branche-vs-base** (bornes de bande `[-700,-540]` /
+  `[-520,-360]` / `[-340,-210]` identiques partout, seul le maximum
+  observe bouge de moins d'un millimetre). PASS des deux cotes.
+- `TrackPropsAudit` -- deja documente comme inerte au `--seed`. 4 runs de
+  chaque cote : branche **1164 / 1220 / 1608 / 1648**, base **746 / 1166 /
+  1690 / 1772**. **La base depasse le plafond de 1 500 sur 2 runs sur 4,
+  exactement comme la branche** : les deux plages se chevauchent, l'echec
+  est PRE-EXISTANT et non imputable a ce lot. Aucun seuil n'a ete bouge.
+
+**Piege payload tenu** : **0** ligne `Storing File` pour `assets_source`,
+`scripts/dev`, `docs` ou `web`. La palette EST packee (`swamp_palette.res`
++ son `.remap`), comme il faut puisque le jeu la lit.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`90694eb`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature -- meme hash d'arbre des deux cotes, verifie AVANT le
+push). CI run **#198** (id `32651298012`) **verte en 3 min 31 s**
+(16:19:15 -> 16:22:46 UTC), `[STAGING -- staging]` succes,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(palier 2, gate Mathieu apres validation device).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** --
+le `CACHE_VERSION` a ete lu AVANT le deploiement puis apres :
+**`1787496944` (14:55:44, run #197) -> `1787502139` (16:22:19)**, le
+second **a l'interieur de la fenetre du run #198**. `x-vercel-cache:
+MISS`, `age: 0` sur les DEUX lectures. L'alias sert bien ce build.

@@ -57,7 +57,7 @@ const TICK_S := 1.0 / 60.0
 ## Guard against a spiral of death after a long stall (tab restored, GC
 ## pause): drop the excess rather than trying to catch up in one frame.
 const MAX_TICKS_PER_FRAME := 8
-const HUB_SCENE := "res://scenes/Hub.tscn"
+const HUB_SCENE := "res://scenes/HubWorld.tscn"
 
 ## Base seed for the fight. Overridable from the command line with
 ## `-- --seed=<int>`, the same convention every probe in scripts/dev/
