@@ -10835,3 +10835,96 @@ APRES :
 L'epoch d'apres tombe **a l'interieur de la fenetre du run #196**, et les deux
 lectures portent `x-vercel-cache: MISS` + `age: 0` -- ce n'est pas une reponse
 de cache. L'alias sert bien le build du plateau.
+
+## SWAMPPALETTE : la palette marecage a UNE seule source (23 aout 2026)
+
+Branche `claude/swamp-palette-extraction-ioofz3`, partie de `staging`
+(`b119a43`, le lot hub plateau). **C'est une EXTRACTION, pas une refonte
+visuelle** : aucune couleur, aucune densite, aucune energie ne change.
+Chased est en production ; ce lot doit etre invisible a l'oeil.
+
+`scripts/world/SwampPalette.gd` (`class_name SwampPalette`, `extends
+Resource`) + `resources/world/swamp_palette.tres`. Motif : **deux ecrans
+dessinent desormais ce marecage** -- Chased (`scenes/Game.tscn`) et le hub
+plateau (`scenes/HubWorld.tscn`, lot du 23 aout) -- et le second a ete
+ecrit a partir d'une COPIE des memes nombres. Le `.tres` est la seule
+forme qu'une scene et un script peuvent viser tous les deux.
+
+**Consommateurs branches** (chacun son commit, chaque valeur verifiee
+identique au litteral qu'elle remplace) :
+
+| fichier | ce qu'il lit |
+|---|---|
+| `scripts/autoload/GameState.gd` | `SWAMP_SKY` / `_HAZE` / `_SKY_DEEP` / `_HAZE_DEEP` / `SWAMP_FOG_DENSITY` / `_DEEP` |
+| `scripts/track/TrackSegment.gd` | `_CURB_COLOR` + les 6 couleurs de props |
+| `scripts/world/Decor.gd` | les 3 tints de billboards (`_LAYERS`) |
+| `scripts/hub/HubWorld.gd` | `background_color`, `ambient_light_*`, `fog_light_color`, `fog_density` |
+
+⚠️ **`const` -> `static var` sur les valeurs DERIVEES, et c'est
+obligatoire, pas un gout** : un initialiseur `const` ne peut pas lire la
+propriete d'une instance de `Resource`. `_PALETTE` lui-meme reste `const`
+(un `preload` est repliable). **Aucun nom d'API ne change** et rien
+n'ecrit ces valeurs -- `Decor._LAYERS` garde sa forme, ses cles et son
+ordre, donc `DecorParallaxProbe`/`DecorStabilityAudit` le parcourent
+exactement comme avant. **Chaque consommateur `preload` le `.tres`
+directement plutot que de passer par l'autoload `GameState`** : un
+autoload est un noeud d'execution, il n'est pas lisible a la
+constant-folding, et `GameState.gd` n'a de toute facon pas de
+`class_name`.
+
+### ⚠️ TROIS FAMILLES DE COULEURS NE SONT DELIBEREMENT PAS DEPLACEES
+
+Signale plutot que tranche seul -- ce sont des dependances de sonde et de
+contrat d'asset, pas des oublis :
+
+1. **`scenes/Game.tscn` et `scenes/TrackSegment.tscn`.**
+   `scripts/dev/DarkPaletteAudit.gd` lit ces scenes via
+   `PackedScene.get_state()` (`_scene_environment`,
+   `_scene_directional_light`, `_scene_ground_material`) et **mesure les
+   valeurs qu'il y trouve** : c'est comme ca que la baseline livree est
+   assertee sans faire tourner le jeu. Remplacer ces litteraux par une
+   assignation d'execution laisserait la sonde mesurer le stub restant.
+   La palette **DECLARE** donc `ambient_light_color`,
+   `ambient_light_energy`, `sun_light_color` et `ground_albedo` -- elle
+   reste une description complete -- mais **la scene reste ce qui rend**.
+   **Contrat manuel tant qu'aucune sonde ne l'asserte.**
+2. **`scenes/Obstacle.tscn` (les 6 albedos de hazards).** C'est le chemin
+   de FALLBACK uniquement : les six hazards portent un `.glb` dont le
+   `baseColorFactor` est ce qui dessine, et les sections hazards de ce
+   fichier exigent que le placeholder MIROITE l'asset. **Un `.glb` ne peut
+   pas lire un `.tres`** -- ne deplacer que la moitie placeholder
+   FABRIQUERAIT la divergence qu'`AlarmRampAudit` existe pour fermer.
+3. **`scripts/hub/HubBuilder.gd`** (`TRUNK`/`CROWN`/`ROCK`/`BUSH`) :
+   numeriquement distinctes des props de Chased, lues par rien d'autre --
+   locales au hub, pas de l'identite partagee.
+
+### Les deux seuils de luminance : ils n'etaient DANS AUCUN script
+
+Recon : `0.549` et `0.0165` n'existaient que dans `docs/MESHY_SPEC.md`
+(sections 8.4 / 1057-1064), **jamais dans du code**. Aucune sonde ne les
+asserte -- `DarkPaletteAudit` gate le ratio MESURE contre
+`CONTRAST_FLOOR = 3.0` sur des pixels rendus, ce qui est le test le plus
+fort. Ils sont desormais `@export contrast_light_threshold` /
+`contrast_dark_threshold` : le raccourci d'AUTHORING qui dit qu'une
+couleur echouera **avant** de la rendre. Rappel de leur origine : le sol
+rend a `L = 0.150`, donc franchir 3,0:1 exige `L >= 0.549` ou
+`L <= 0.0165` -- **rien au milieu ne passe, a aucune teinte**, et le
+plafond sombre est dependant de la teinte en V (0,136 gris neutre, 0,166
+a la teinte du rat, 0,289 au rouge DODGE sature) : resoudre en luminance,
+jamais en HSV.
+
+### Le fog du hub N'EST PAS celui de Chased, et c'est voulu
+
+Chased fogge vers `haze_shallow` a `0.0035` ; le hub fogge vers
+`sky_shallow` a `0.016` (~4,6x). Un plateau lu depuis une camera fixe veut
+l'horizon ferme bien plus tot qu'une piste qu'on descend. Ces deux valeurs
+sont nommees `hub_fog_light_color` / `hub_fog_density` **dans la palette**
+plutot que laissees en litteraux, pour que la deviation soit visible a
+cote de ce dont elle devie.
+
+**Reste ouvert** : la synchronisation `.tscn` <-> `.tres` du point 1
+ci-dessus est manuelle ; une sonde qui l'asserterait est le prochain pas
+naturel, mais elle toucherait `scripts/dev/` et a ete laissee hors
+perimetre. Et **jugement device** : Chased doit etre visuellement
+IDENTIQUE avant/apres en navigation privee -- toute difference constatee
+est une regression a signaler, pas a expliquer apres coup.
