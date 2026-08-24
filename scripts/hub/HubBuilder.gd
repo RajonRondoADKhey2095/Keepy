@@ -46,6 +46,7 @@ const FLOWER_PETAL_COLORS: Array[Color] = [
 	Color(0.86, 0.52, 0.62),
 	Color(0.72, 0.66, 0.88),
 ]
+
 var _portals: Array[HubPortal] = []
 
 func _ready() -> void:
