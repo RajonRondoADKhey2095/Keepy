@@ -11343,3 +11343,163 @@ lot qui ne touche pas le code moteur ; `index.pck` 5 807 728 octets.
 pas seulement sur staging. Aucune sonde de ce depot ne rend de pixels
 iOS reels -- la confirmation finale reste un jugement device, a refaire
 sur prod meme si deja fait sur staging (environnement different).
+
+## HUB : DENSIFICATION DU DECOR -- nouveau type `flower`, 15 -> 53 entrees, zone jouable INCHANGEE (24 aout 2026)
+
+Branche `claude/hub-decor-densification-rcnrj5`, partie de `main`
+(`fe1d110`, le commit de doc du merge de prod du hub plateau). **Lot
+purement VISUEL** : `PLATEAU_HALF_EXTENT` (11.0), `HOP_DISTANCE` (1.5) et
+`HubCamera.OFFSET` sont **intouches**, verifie par `git diff` -- les trois
+fichiers qui les portent (`HubTapInput.gd`, `KeepyHopper.gd`,
+`HubCamera.gd`) ne sont pas dans le diff du tout.
+
+### RECON : `HubCamera` SUIT bien Keepy, elle n'est pas statique
+
+Reponse a la question qui conditionne le lot B, avec le code exact :
+`HubCamera.gd` porte un `_process(delta)` qui recalcule sa position
+**chaque frame** depuis le joueur --
+
+```gdscript
+func _process(delta: float) -> void:
+	if target == null: return
+	var weight: float = 1.0 - exp(-FOLLOW_LAMBDA * delta)
+	global_position = global_position.lerp(_wanted(), weight)
+
+func _wanted() -> Vector3:
+	var ground := Vector3(target.global_position.x, 0.0, target.global_position.z)
+	return ground + OFFSET
+```
+
+`target` est resolu dans `_ready()` depuis `target_path`, que
+`HubWorld.tscn` pose a `NodePath("../Keepy")` -- donc la cible EST le
+`KeepyHopper`. Trois proprietes a connaitre pour le lot B : le suivi est
+**exponentiel donc independant du framerate** (`FOLLOW_LAMBDA = 5.0`) ;
+la **rotation est FIXE**, jamais un `look_at` (un re-visage chaque frame
+sur une cible qui oscille de 0,6 unite par bond ferait tanguer l'horizon
+entier) ; et le y de Keepy est **jete** -- la camera suit sa position AU
+SOL, pas sa position dans l'arc.
+
+### Nouveau type `&"flower"` -- deux primitives, trois teintes
+
+`_make_flower(entry)` dans `HubBuilder.gd`, meme doctrine que les props
+existants : primitives Godot uniquement (aucun `.glb`, aucun credit Meshy
+depense), `StandardMaterial3D` **unshaded** (la scene n'a aucune
+`DirectionalLight3D`, donc une surface eclairee ne rendrait plus la
+couleur qu'on a ecrite), et tessellation basse **explicite** -- tige
+`CylinderMesh` a `radial_segments = 6`, corolle `SphereMesh` aplatie a
+`radial_segments = 8` / `rings = 3`. C'est le piege §7.2 des
+collectibles, ferme a la source plutot que decouvert au budget.
+
+**Trois teintes de corolle, pas une** : un champ monochrome se lit comme
+une instance repetee, ce qu'il est litteralement. Le champ optionnel
+`"variant": int` choisit l'index dans `FLOWER_PETAL_COLORS` ; **hors
+plage ou absent retombe sur 0**, donc un layout ecrit sans ce champ
+construit quand meme.
+
+⚠️ **`FLOWER_STEM_COLOR` et `FLOWER_PETAL_COLORS` restent LOCALES a
+`HubBuilder.gd`, deliberement.** `SwampPalette.gd` porte l'identite que
+Chased et le plateau PARTAGENT ; son propre en-tete range les couleurs de
+props du hub comme "hub-local, not shared identity", au meme titre que
+`TRUNK`/`CROWN`/`ROCK`/`BUSH` deja en place. Les migrer serait promouvoir
+du decor local au rang d'identite partagee, et donner a une future
+retouche de fleur le pouvoir de deplacer une couleur que
+`DarkPaletteAudit` mesure.
+
+### Garde-fou de bornes : la constante est LUE, jamais recopiee
+
+`HubBuilder._build()` `push_warning` si une entree sort du clamp de tap,
+avec son index, son type et sa position. **L'entree est CONSERVEE**, pas
+rejetee : du decor lointain est une chose legitime a vouloir, alors qu'un
+prop qu'on croit atteignable et qui ne l'est pas est un defaut silencieux.
+
+Le bound vient de `HubTapInput.PLATEAU_HALF_EXTENT` (`class_name`, donc
+la reference resout statiquement) et **n'est pas duplique** : deux copies
+d'une limite de zone jouable, c'est comme ca qu'elles divergent.
+
+### 15 -> 53 entrees, toutes verifiees contre trois contraintes
+
+3 portails + 50 props : **14 `tree`, 8 `rock`, 13 `bush`, 15 `flower`**
+(cible indicative 14/8/14/16 ; deux placements de grappe ont echoue le
+test de separation et n'ont pas ete forces).
+
+Les trois contraintes sont **mesurees sur le jeu de positions genere**,
+pas supposees :
+
+| contrainte | exigee | mesuree |
+|---|---|---|
+| dans le plateau | `<= 10.4` | **max 10.13** |
+| loin d'un centre de portail | `>= 2.0` | **min 2.147** |
+| loin du spawn de Keepy | `>= 1.5` | **min 3.043** |
+
+Le rayon de declenchement d'un portail est **1,35** (lu sur le
+`CylinderShape3D` de `HubPortal.tscn`, jamais recopie) : les 2,0 laissent
+donc 0,65 de marge autour de l'anneau ou un bond atterrit. Le spawn de
+Keepy est l'origine -- le noeud `Keepy` de `HubWorld.tscn` ne porte aucun
+transform.
+
+**La zone AVANT / SOUS les portails (z positif, cote camera) est
+desormais peuplee** : c'etait le vide reellement visible a l'ecran, la
+totalite des 15 entrees d'origine vivant a `z <= 3.3` cote proche et
+surtout au fond. Buissons et fleurs sont poses en **grappes de 3 a 5**
+autour d'ancres choisies, avec jitter -- un semis regulier se lit comme
+un placeholder. `scale` couvre **0,64 a 1,38** et `rotation_y` est libre
+sur 360 degres.
+
+### Cout : 92 `MeshInstance3D`, sous le seuil de 120
+
+Compte exact des noeuds que `HubBuilder` construit (un `tree` = 2, un
+`rock` = 1, un `bush` = 2, une `flower` = 2) : **92**, plus les meshes
+internes des 3 portails, qui viennent de `HubPortal.tscn` et non du
+builder. **Aucun `MultiMeshInstance3D` dans ce lot** -- a ~50 props
+statiques unshaded low-poly l'instance individuelle tient, et le refactor
+serait premature. Le chiffre est sous les 120 qui auraient valu alerte,
+donc rien a signaler au lot B sur cet axe ; c'est en revanche le nombre a
+reprendre comme base si la densite doit encore monter.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles confirmees contre le `Content-Length` --
+**50 276 070** et **1 073 228 327** octets, aucune troncature). Import
+headless **exit 0**, **24 `.scn`** (import complet verifie et pas
+suppose : le piege du faux-rouge par import tronque est controle),
+**0 erreur**. Boot headless de `HubWorld.tscn` (`--quit-after 3`)
+**exit 0**, aucune erreur de parse -- et **aucun `push_warning` de
+bornes**, ce qui est la confirmation a l'execution que les 53 entrees
+sont dans le plateau. Export Web release **exit 0**, aucune erreur
+GDScript.
+
+`index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** ; `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur, coherent : ce
+lot n'ajoute qu'une fonction de builder et des chiffres dans un `.tres`.
+`index.pck` 5 813 936 octets (export unique et propre, `build/` supprime
+avant -- a lire avec la mise en garde permanente sur son instabilite,
+jamais offert comme preuve). **Piege payload tenu** : **0** ligne
+`Storing File` pour `assets_source`, `scripts/dev`, `docs`, `web` ou
+`build`.
+
+**Sondes rejouees, toutes exit 0** : `ProbeTimeoutAudit` (**37 sondes
+scenes**, toutes armees -- chiffre inchange, ce lot n'ajoute aucune
+sonde), `AssetContractAudit` (**12/12 visuels, 0/10 colliders
+deplaces**), `DeathModelAudit`, `ChargerShapeProbe`.
+**Non-applicabilite VERIFIEE par grep, pas supposee** : aucune sonde de
+`scripts/dev/` ne reference `HubWorld`, `HubBuilder` ni `hub_layout` --
+elles ne peuvent pas voir ce lot, elles peuvent seulement attester qu'il
+n'a rien casse ailleurs.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que le plateau se lit comme un lieu** plutot que comme trois
+   portails sur un terrain vide ? C'est tout l'objet du lot, et aucune
+   sonde ne le dit.
+2. **Les fleurs sont-elles lisibles a la taille reelle** ? Une corolle de
+   0,15 d'unite de rayon sur un Keepy mesure a 124 px de haut est petite ;
+   son contraste contre le sol vert n'a **pas** ete mesure au pixel, il a
+   ete choisi a l'oeil sur des valeurs claires (jaune, rose, mauve pale)
+   contre un sol a `Color(0.2, 0.4, 0.15)`.
+3. **La densite pres du chemin** : rien ne bloque un bond (les props n'ont
+   aucun collider), mais un plateau plus charge peut rendre la lecture du
+   sol plus difficile au moment de viser un tap.
+4. `MultiMeshInstance3D` non fait, deliberement (92 instances, seuil 120).
