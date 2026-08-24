@@ -31,6 +31,22 @@ const CROWN_COLOR: Color = Color(0.17, 0.34, 0.13)
 const ROCK_COLOR: Color = Color(0.26, 0.27, 0.24)
 const BUSH_COLOR: Color = Color(0.21, 0.39, 0.16)
 
+## Flower colours, LOCAL to the hub on purpose. SwampPalette.gd carries the
+## identity Chased and the plateau share; these are hub-local decor, read by
+## nothing else, and its own header says that kind of colour stays here
+## rather than being promoted into the shared resource.
+const FLOWER_STEM_COLOR: Color = Color(0.19, 0.35, 0.14)
+
+## Three corolla tints rather than one: a field of a single colour reads as
+## a repeated instance, which is exactly what it is. Entries pick one with
+## an optional "variant" int; anything out of range falls back to 0 so a
+## layout written without the field still builds.
+const FLOWER_PETAL_COLORS: Array[Color] = [
+	Color(0.93, 0.86, 0.42),
+	Color(0.86, 0.52, 0.62),
+	Color(0.72, 0.66, 0.88),
+]
+
 var _portals: Array[HubPortal] = []
 
 func _ready() -> void:
@@ -58,12 +74,23 @@ func _build() -> void:
 				node = _make_rock()
 			&"bush":
 				node = _make_bush()
+			&"flower":
+				node = _make_flower(entry)
 			_:
 				push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 				continue
 		if node == null:
 			continue
-		node.position = entry.get("position", Vector3.ZERO)
+		var where: Vector3 = entry.get("position", Vector3.ZERO)
+		# A prop outside the tap clamp is drawn but can never be walked to.
+		# Not fatal -- distant scenery is a legitimate thing to want -- so
+		# warn and keep it rather than dropping it. The bound is READ from
+		# HubTapInput, never copied: two copies of a play-area limit is how
+		# they drift apart.
+		var bound: float = HubTapInput.PLATEAU_HALF_EXTENT
+		if absf(where.x) > bound or absf(where.z) > bound:
+			push_warning("HubBuilder: entry %d ('%s') at %s is outside the +-%.1f plateau; visible but unreachable." % [index, type, where, bound])
+		node.position = where
 		node.rotation_degrees = Vector3(0.0, entry.get("rotation_y", 0.0), 0.0)
 		var uniform: float = entry.get("scale", 1.0)
 		node.scale = Vector3.ONE * uniform
@@ -124,6 +151,27 @@ func _make_bush() -> Node3D:
 	mesh.rings = 4
 	root.add_child(_mesh_node(mesh, BUSH_COLOR, Vector3(0.0, 0.3, 0.0)))
 	root.add_child(_mesh_node(mesh, BUSH_COLOR, Vector3(0.42, 0.2, 0.18)))
+	return root
+
+func _make_flower(entry: Dictionary) -> Node3D:
+	var root := Node3D.new()
+	var stem_mesh := CylinderMesh.new()
+	stem_mesh.top_radius = 0.025
+	stem_mesh.bottom_radius = 0.035
+	stem_mesh.height = 0.42
+	stem_mesh.radial_segments = 6
+	stem_mesh.rings = 1
+	root.add_child(_mesh_node(stem_mesh, FLOWER_STEM_COLOR, Vector3(0.0, 0.21, 0.0)))
+
+	var petal_mesh := SphereMesh.new()
+	petal_mesh.radius = 0.15
+	petal_mesh.height = 0.14
+	petal_mesh.radial_segments = 8
+	petal_mesh.rings = 3
+	var variant: int = entry.get("variant", 0)
+	if variant < 0 or variant >= FLOWER_PETAL_COLORS.size():
+		variant = 0
+	root.add_child(_mesh_node(petal_mesh, FLOWER_PETAL_COLORS[variant], Vector3(0.0, 0.44, 0.0)))
 	return root
 
 func _mesh_node(mesh: Mesh, colour: Color, offset: Vector3) -> MeshInstance3D:
