@@ -11313,3 +11313,33 @@ le `CACHE_VERSION` a ete lu AVANT le deploiement puis apres :
 **`1787496944` (14:55:44, run #197) -> `1787502139` (16:22:19)**, le
 second **a l'interieur de la fenetre du run #198**. `x-vercel-cache:
 MISS`, `age: 0` sur les DEUX lectures. L'alias sert bien ce build.
+
+### HUB PLATEAU 3D : LIVREE EN PRODUCTION (23 aout 2026)
+
+`staging` (`0815327`, incluant le fix overlap bouton Hub sur
+`TitleScreen`) -> `main`, commit de merge **`20b9d93`**, `--no-ff`,
+autorisation explicite de Mathieu apres validation device complete du
+hub plateau 3D (bonds, 3 portails, popup de confirmation, retour depuis
+Chased/Quizz/Battle, fix overlap).
+
+**Verifie AVANT le merge** : `git fetch --all --prune`, `origin/staging`
+= ref la plus recente du depot, aucune session concurrente. `main`
+n'avait qu'un seul commit hors ancetres de `staging` -- le merge
+`ea722bd` (battle lots 9-12) lui-meme, deja integre en contenu via
+`staging` -- donc `--no-ff` sans conflit, arbre du merge **byte-identique
+a `origin/staging`** (`git diff HEAD origin/staging` vide, meme hash
+d'arbre `323cd8a0`).
+
+**CI run #205** (id `32666854142`) **verte** (21:13:30 -> 21:16:31 UTC),
+`conclusion: success`. **Verifie SUR LE SERVICE, pas seulement dans le
+log CI** : `index.service.worker.js` de `keepy-ten.vercel.app` sert
+`CACHE_VERSION = 1787519765` = **21:16:05 UTC**, a l'interieur de la
+fenetre du run. `x-vercel-cache: MISS`, `age: 0` sur `index.html` ET
+`index.service.worker.js` -- pas une reponse de cache. `index.wasm`
+**35 376 909 octets**, identique au fingerprint deja consigne pour tout
+lot qui ne touche pas le code moteur ; `index.pck` 5 807 728 octets.
+
+**Le hub plateau 3D est donc EN PRODUCTION sur `keepy-ten.vercel.app`**,
+pas seulement sur staging. Aucune sonde de ce depot ne rend de pixels
+iOS reels -- la confirmation finale reste un jugement device, a refaire
+sur prod meme si deja fait sur staging (environnement different).
