@@ -11503,3 +11503,36 @@ n'a rien casse ailleurs.
    aucun collider), mais un plateau plus charge peut rendre la lecture du
    sol plus difficile au moment de viser un tap.
 4. `MultiMeshInstance3D` non fait, deliberement (92 instances, seuil 120).
+
+### Deploiement staging de la densification (palier 1, automatique)
+
+`staging` **`12386bf`**. CI run **#208** (id `32785607895`) **verte**
+(22:38:35 -> 22:41:14 UTC) -- `Deploy to Vercel [STAGING -- staging]`
+succes a 22:41:12, `[PRODUCTION -- main]` correctement **skipped**.
+**`main` NON touche** (`origin/main` toujours `fe1d110`, verifie apres le
+push) : palier 2, gate Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** --
+`CACHE_VERSION` de `index.service.worker.js` de
+`keepy-staging.vercel.app` :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #204, 23 aout) | `1787517625` | 23 aout **20:40:25** |
+| **apres (ce lot, run #208)** | **`1787611249`** | 24 aout **22:40:49** |
+
+L'epoch d'apres tombe **a l'interieur de l'etape `Export Web build` du
+run #208** (22:40:46 -> 22:40:50), avec `x-vercel-cache: MISS` et
+`age: 0`. Le « avant » a ete relu **quatre fois pendant que le job
+tournait**, toujours a l'ancienne valeur : le job avancait donc REELLEMENT
+au lieu d'etre un cache perime, et la bascule est prouvee dans les deux
+sens.
+
+⚠️ **Le run #207 (le merge du code) est `cancelled`, et ce n'est PAS un
+echec** : `web-build.yml` porte `cancel-in-progress: true` sur sa
+`concurrency`, donc le push du commit de doc (#208) a tue #207 en cours
+d'import. #208 construit le MEME arbre plus `CLAUDE.md` -- qui n'est pas
+une ressource Godot -- donc le contenu de jeu deploye est bien celui du
+lot. **Consequence pour un futur lot : pousser le code puis la doc coup
+sur coup annule le premier run**, et un lecteur qui ne regarde que le
+numero de run le lirait comme un echec.
