@@ -164,3 +164,38 @@ touches no engine code — and it, not the `.pck`, is the identity check.
 Payload trap re-checked on this export's own `savepack` log: **0** `Storing
 File` lines for `assets_source`, `scripts/dev`, `docs` or `web`, out of 219
 stored files.
+
+**Deployed to staging.** CI run #226 (`web-build.yml`) green on `staging`
+`aa10500` — read at the JOB level (`build-and-deploy`: completed / success,
+all 17 steps, staging deploy 13:18:46 → 13:18:58 UTC), because the RUN-level
+status stayed frozen on `in_progress` with `updated_at` stuck at 13:14:25.
+That frozen-run trap is already recorded against runs #201 and #202 in
+`CLAUDE.md`; the job level and the served build both settle it.
+
+Verified **on the live service, not just the CI log**, in both directions and
+on two independent markers:
+
+| marker | before | after |
+|---|---|---|
+| `CACHE_VERSION` (`index.service.worker.js`) | `1787658495\|4288515` (11:48:15, run #224) | `1787663911\|4242878` (≈13:18:31, inside run #226's export step 13:18:26–13:18:32) |
+| `GODOT_CONFIG.fileSizes.index.pck` (`index.html`) | 5 833 088 | **5 833 616** |
+| `GODOT_CONFIG.fileSizes.index.wasm` | 35 376 909 | 35 376 909 (unchanged, as expected) |
+
+Both "before" readings (13:14:55 and 13:15:11) and both "after" readings
+(13:20:54 and 13:21:16) came back `x-vercel-cache: MISS` with `age: 0`, so
+neither end is a frozen CDN copy.
+
+⚠️ **The lot D reading trap reproduced twice, and was refused both times.**
+Re-reads at 13:16:05 and 13:18:20 came back `x-vercel-cache: HIT` with
+`age` 53 and 189 — copies frozen before the deploy landed. A HIT with a
+non-zero age is not a freshness measurement. Note also that a `?query`
+cache-buster does NOT work here: Vercel normalises it away for these static
+assets, so both busted reads hit the same cached object. What does work is
+waiting for the new deployment (a new deployment has its own cache, so the
+first read after it MISSes) or requesting a path not yet in the CDN cache.
+
+The served `.pck` (5 833 616) differs from both local clean exports of this
+same commit (5 833 648 / 5 833 728) by tens of bytes — the same documented
+`.pck` instability the row above brackets, not a different build. The
+`.wasm` is identical everywhere, and it is the file that carries the
+identity check.
