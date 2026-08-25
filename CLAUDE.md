@@ -12523,3 +12523,199 @@ exacte et tableau de comparaisons pour chaque ajout futur :
 `scripts/dev/HubPerfBaseline.gd`/`.tscn` (exclue du build comme tout
 `scripts/dev/*`), n'asserte rien et sort toujours en 0 -- c'est une mesure,
 pas un contrat.
+
+## LOT D (plateau 25 -> 35) : ARRETE EN RECON — le seuil de traversee du brief est FRANCHI, aucun changement applique (25 aout 2026)
+
+Branche `claude/keepy-plateau-radius-35-3sq42r`. **Ce lot ne modifie AUCUN
+fichier de jeu** : ni `HubTapInput.PLATEAU_HALF_EXTENT`, ni
+`resources/hub/hub_layout.tres`, ni `HubBuilder.gd`, ni la camera, ni le
+hopper. Le brief posait un seuil d'arbitrage explicite sur R1 et ce seuil
+est franchi — **il n'y avait donc rien a coder, seulement a mesurer et a
+rapporter.** La decision appartient a Mathieu, elle n'est pas technique.
+
+⚠️ **Ecart de ref au demarrage, signale plutot que passe sous silence.** Le
+brief annonce `origin/main = ffcc552` — exact — et demande une branche
+partie de `main`. Mais `docs/HUB_PERF_BASELINE.md` et
+`scripts/dev/HubPerfBaseline.{gd,tscn}`, que la tache 5 exige de rejouer,
+**n'existent QUE sur `staging`** (5 commits d'avance, le lot baseline perf
+du matin meme). Branche partie de `origin/staging` (`a17d6ed`) en
+consequence : partir de `main` aurait rendu la tache 5 litteralement
+impossible. Regle n°1 verifiee AU DEBUT — `origin/staging` est la ref la
+plus recente du depot (09:58:46), aucune session concurrente.
+
+### R1 — TRAVERSEE : le seuil de 22 s est FRANCHI (23,10 s), c'est le STOP
+
+Methode du lot C reprise a l'identique : hopper LIVRE, chaine de bonds
+reelle, `--fixed-fps 60`, comptage de frames entre `hop_to()` et
+`became_idle`. **Les deux trajets de reference au rayon 25 ont ete rejoues
+dans le meme run** pour valider le banc avant de lui faire confiance sur
+les nouveaux — ils reproduisent les chiffres publies **au bond et au
+centieme pres**.
+
+| trajet | distance | bonds | temps |
+|---|---|---|---|
+| **[ref 25] centre -> bord (25,0)** | 25,00 u | **17** | **5,95 s** *(publie lot C : 17 / 5,95)* |
+| **[ref 25] coin a coin (-25,-25)->(25,25)** | 70,71 u | **47** | **16,45 s** *(publie lot C : 47 / 16,45)* |
+| centre -> bord (35,0) | 35,00 u | 24 | **8,40 s** |
+| centre -> bord (0,-35) | 35,00 u | 24 | 8,40 s |
+| centre -> coin diagonal (35,35) | 49,50 u | 33 | **11,55 s** |
+| **coin a coin (-35,-35)->(35,35)** | 98,99 u | **66** | **23,10 s** |
+
+**Delta contre le lot C, pas seulement les valeurs brutes** : centre->bord
+**5,95 -> 8,40 s (+2,45 s, +41,2 %)** ; coin a coin **16,45 -> 23,10 s
+(+6,65 s, +40,4 %)**. L'echelle est lineaire en distance, comme elle doit
+l'etre — un bond coute `HOP_DURATION` quelle que soit la taille du plateau.
+
+⚠️ **`23,10 s > 22 s` — le STOP du brief se declenche.** Le brief le posait
+comme un arbitrage de Mathieu et pas une decision technique : **aucun
+levier n'a donc ete applique**, et `HOP_DISTANCE`/`HOP_DURATION` sont
+byte-intouches.
+
+**Les leviers, chiffres sur le trajet qui declenche le STOP (98,99 u), pour
+que l'arbitrage se fasse sur des nombres et pas sur une intuition :**
+
+| levier | coin a coin | centre -> bord (35 u) |
+|---|---|---|
+| **aucun (etat actuel)** | **66 bonds — 23,10 s** | 24 bonds — 8,40 s |
+| `HOP_DISTANCE` 1,5 -> 1,75 | 57 bonds — 19,95 s | — |
+| `HOP_DISTANCE` 1,5 -> **2,0** | 50 bonds — **17,50 s** | 18 bonds — 6,30 s |
+| `HOP_DISTANCE` 1,5 -> **2,5** | 40 bonds — **14,00 s** | 14 bonds — 4,90 s |
+| `HOP_DURATION` 0,35 -> 0,32 | 66 bonds — 21,12 s | — |
+| `HOP_DURATION` 0,35 -> **0,28** | 66 bonds — **18,48 s** | 24 bonds — 6,72 s |
+
+Les deux familles de levier ramenent sous 22 s des le premier cran, mais
+**elles ne coutent pas la meme chose** : `HOP_DISTANCE` allonge la foulee
+(Keepy couvre plus de sol par bond, la cadence visuelle ne bouge pas),
+`HOP_DURATION` accelere le bond lui-meme — donc touche directement le
+squash/stretch et le poids que le lot du hub decrit comme « toute la
+difference entre un personnage qui a du poids et un curseur ». Aucun des
+deux n'a ete essaye sur device.
+
+⚠️ **LE VRAI COUT N'EST TOUJOURS PAS LA DUREE, C'EST L'ASYMETRIE DE VISEE
+— et elle empire.** Mesuree sur la camera livree, aux deux ratios :
+
+* **Vers l'AVANT : UN SEUL TAP, a n'importe quel rayon.** Un tap juste sous
+  la ligne d'horizon vise **4 311 u** (1080x1920) / **5 967 u**
+  (1170x2532) — donc le clamp de `PLATEAU_HALF_EXTENT` le ramene au bord,
+  quel que soit ce bord. Ce n'est pas une limite et ca ne le deviendra pas.
+* **DE COTE : la portee d'un tap ne depend PAS du plateau.** Le fov
+  HORIZONTAL est fixe a 45 deg (`keep_aspect = KEEP_WIDTH`), donc la
+  demi-largeur du frustum a la profondeur de Keepy vaut **~5,15 u
+  identique aux deux ratios** (lot C publie 4,82 — meme phenomene, l'ecart
+  vient de la bande en z sur laquelle on echantillonne, +-1 tap selon ou
+  on la trace). Traverser lateralement coute donc **~5-6 taps a 25 et
+  ~7 taps a 35**.
+
+C'est la degradation reelle d'un elargissement : pas le nombre de bonds,
+qui reste un seul tap vers l'avant, mais le nombre de TAPS qu'un joueur qui
+longe un bord doit donner.
+
+### R2 — FOG ET HORIZON AU RAYON 35 : aucun bord de sol, mais le landmark PERD en lisibilite
+
+Banc camera-figee du lot C repris tel quel (`_process` de `HubCamera`
+coupe, `SubViewportContainer.stretch` desactive — sans les deux la camera
+lerpe pendant la mesure et l'aspect mesure n'est pas celui demande).
+
+| viewport | haut du cadre | sol le plus lointain atteint (Keepy au pire coin) |
+|---|---|---|
+| 1080x1920 | `dir.y = +0,0413` (**+2,37 deg**) -> **CIEL** | `\|axe\|` **41,2** |
+| 1170x2532 | `dir.y = +0,1370` (**+7,87 deg**) -> **CIEL** | `\|axe\|` **42,0** |
+
+Les `+2,37` et `+7,87` **reproduisent au centieme** ceux deja consignes aux
+lots B et C — le banc mesure bien la meme chose. Le pire rayon atteint
+**42,0** contre les **+-300** du `PlaneMesh` 600x600 : **facteur 7 de
+marge**, le bord du sol reste hors de portee. Et la jonction sol/ciel reste
+invisible par construction (`fog_light_color == background_color`).
+**Le sol n'est donc pas la contrainte.**
+
+Fog exponentiel, `hub_fog_density = 0,016`, `occlusion = 1 - exp(-d*0,016)`
+— formule relue sur l'`Environment` reel, pas sur la doc :
+
+| distance camera | 10 u | 20 u | 30 u | 40 u | 43,3 u | 60 u | 75 u | 100 u |
+|---|---|---|---|---|---|---|---|---|
+| occlusion | 14,8 % | 27,4 % | 38,1 % | 47,3 % | **50 %** | 61,7 % | ~69,9 % | 79,8 % |
+
+⚠️ **Ce que ca fait a un landmark pose a ~30,5, et c'est la mauvaise
+nouvelle de R2** — un landmark n'est pas vu depuis le centre du plateau, il
+est vu de partout :
+
+| rayon du landmark | vu depuis le CENTRE | vu depuis le bord OPPOSE |
+|---|---|---|
+| 12,6 (anneau interieur, lot B) | 22,80 u — **30,6 %** | 57,01 u — 59,8 % |
+| 21,4 (anneau median, lot C) | 31,24 u — **39,3 %** | 65,74 u — 65,1 % |
+| **30,5 (ce lot, non pose)** | 40,13 u — **47,4 %** | **74,79 u — 69,8 %** |
+
+Le brief posait « si le fog efface au-dela de ~25 unites » comme condition
+de blocage. **Il n'efface pas** — a 47,4 % le landmark garde encore ~53 %
+de sa propre couleur depuis le centre. Mais c'est **la premiere fois qu'un
+landmark de ce projet passerait sous la barre des 60 % de couleur propre**
+la ou les lots B et C tenaient 69 % et 61 %, et **vu du bord oppose il
+tombe a 30 % de couleur propre**. Ce n'est pas un STOP, c'est une
+degradation reelle a mettre dans la balance de l'arbitrage R1 : les 4
+landmarks que ce lot devait poser seraient les moins lisibles des douze.
+
+### R3 — COUT : 17 noeuds, et ce n'est pas la contrainte
+
+`landmark` **n'est PAS batche** — verifie dans `HubBuilder.gd`, dont
+l'en-tete le dit explicitement (« batching them would trade 31 nodes for
+~12 and lose the per-variant readability of the tree »). Cout par
+silhouette, compte sur les constructeurs livres : **spire = 4 meshes,
+cairn = 5, slabs = 3**.
+
+Compte reel sur la scene livree, pas deduit du layout :
+
+| | actuel | + 4 landmarks |
+|---|---|---|
+| `MeshInstance3D` (HubBuilder, hors portails) | 47 | 64 |
+| `MultiMeshInstance3D` | 8 | 8 |
+| **noeuds de dessin hors portails** | **55** | **72** |
+| noeuds de dessin, total (+ 3 portails) | 61 | 78 |
+| marge sous le plafond de 260 | 205 | **188** |
+
+Les 4 variantes forcees par la regle « pas deux identiques adjacentes »
+seraient cairn/slabs/cairn/spire aux azimuts intercales **23,5 / 112,75 /
+202,4 / 292,4** (les 8 existants sont a 0 / 47 / 92,5 / 133 / 177,3 /
+227,5 / 271,8 / 313, en spire-slabs-cairn-spire-slabs-spire-cairn-slabs) —
+soit **5+3+5+4 = 17 noeuds**. **Le budget n'est a aucun moment la
+contrainte de ce lot**, et le refactor MultiMesh du matin est ce qui le
+garantit.
+
+### Piege de sonde rencontre, a connaitre — il coute 20 minutes en silence
+
+⚠️ **Un lambda GDScript capture une variable LOCALE PAR VALEUR.** La
+premiere version du banc R1 faisait
+`hopper.became_idle.connect(func(): done = true)` avec `done` local a la
+boucle : le lambda ecrit sa propre COPIE, la boucle d'attente ne voit
+jamais le changement, et chaque trajet tourne jusqu'a son plafond de
+frames. **Aucune erreur, aucun warning** — juste une sonde qui a l'air
+lente au lieu d'avoir l'air cassee, et qui l'etait sous un rendu logiciel
+ou 20 000 frames sont plausibles. Parade : un membre de classe et une
+methode nommee, jamais un lambda, pour tout drapeau qu'une boucle attend.
+
+⚠️ **Second piege, meme run** : `SubViewportContainer.stretch = true` fait
+FORCER par le conteneur la taille du `SubViewport` a la sienne, donc un
+`vp.size` explicite est **ignore en silence** (un simple `WARNING`) et
+l'aspect reellement mesure est celui de la fenetre, pas celui demande. La
+premiere passe a rendu des chiffres **identiques pour les deux ratios**,
+ce qui ressemblait a un resultat et n'en etait pas. Couper `stretch` avant
+toute mesure d'aspect — ce que le banc du lot C faisait deja, et que la
+partie R1 du mien avait omis.
+
+### Ce que ce lot laisse au depot
+
+**Aucun changement de jeu.** Les deux sondes de mesure etaient jetables et
+sont supprimees avant commit — `ProbeTimeoutAudit` revient a **38 sondes
+scenes**, le chiffre exact de `origin/staging`. `docs/HUB_PERF_BASELINE.md`
+n'a **pas** recu de ligne de comparaison : son tableau compare des ETATS du
+plateau, et ce lot n'en produit aucun nouveau. Import headless **exit 0**
+(24 `.scn`).
+
+**Reste ouvert — c'est l'arbitrage de Mathieu, pas une question
+technique** : accepter 23,10 s de diagonale complete au rayon 35 ; ou
+tirer un levier (`HOP_DISTANCE` 2,0 -> 17,50 s / 2,5 -> 14,00 s ;
+`HOP_DURATION` 0,28 -> 18,48 s), sachant qu'aucun n'a ete juge sur device
+et que `HOP_DURATION` touche directement le poids du bond ; ou s'arreter a
+un rayon intermediaire. A cela s'ajoutent les **~7 taps lateraux** contre
+5-6 aujourd'hui, et le fait que **les 4 landmarks de la nouvelle couronne
+seraient les moins lisibles des douze** (47,4 % de fog depuis le centre,
+69,8 % depuis le bord oppose).
