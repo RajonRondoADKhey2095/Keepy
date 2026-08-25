@@ -12511,3 +12511,15 @@ des que leur nombre depasse largement 14 (donc que le gain en noeuds
 depasse la charge d'indirection), `stump` peut etre batche exactement comme
 `rock` l'est deja -- meme mesh, meme couleur fixe, aucune replanification
 de couleur necessaire avant de le faire.
+
+## MESURE DE REFERENCE PERF DU HUB, avant tout ajout Meshy (25 aout 2026)
+
+Branche `claude/hub-perf-baseline-qoo6dq`, partie de `main` (`ffcc552`).
+Baseline reproductible du plateau (temps de construction, noeuds de dessin,
+FPS simulee wall-clock, poids d'export) prise juste apres le refactor
+MultiMesh, avant tout `.glb` Meshy sur le hub. Detail chiffre, methode
+exacte et tableau de comparaisons pour chaque ajout futur :
+`docs/HUB_PERF_BASELINE.md`. Sonde permanente dediee
+`scripts/dev/HubPerfBaseline.gd`/`.tscn` (exclue du build comme tout
+`scripts/dev/*`), n'asserte rien et sort toujours en 0 -- c'est une mesure,
+pas un contrat.
