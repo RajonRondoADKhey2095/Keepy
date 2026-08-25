@@ -213,16 +213,14 @@ func _phase_screen(camera: Camera3D, viewport: SubViewport, keepy: KeepyHopper) 
 ## formula once in this same recon (see the report) -- a stand-in could
 ## make the same mistake a second time and look fine doing it.
 ##
-## No-ops safely under --headless (DUMMY driver: get_image() returns a
-## black frame, saved anyway with that fact printed) rather than failing
-## the whole probe -- the pixel measurements above do not need a real
-## renderer and should not be held hostage to one being available.
+## Never reached under --headless: `_ready()` only calls this branch when
+## DisplayServer.get_name() != "headless", precisely so PHASE HOPS/SCREEN
+## never pay for a driver they do not need and this phase never runs
+## against a DUMMY driver that could only ever save a black frame.
 func _phase_capture(hub: Node, builder: HubBuilder, keepy: KeepyHopper, camera: Camera3D, viewport: SubViewport) -> void:
 	print("")
 	print("--- PHASE CAPTURE: one real spire at r=40, rendered ---")
-	var driver: String = DisplayServer.get_name()
-	print("  DisplayServer driver: %s%s" % [driver,
-		"  (DUMMY -- capture will be a black frame, expected under --headless)" if driver == "headless" else ""])
+	print("  DisplayServer driver: %s" % DisplayServer.get_name())
 
 	keepy.global_position = Vector3.ZERO
 	camera.global_position = Vector3.ZERO + HubCamera.OFFSET
