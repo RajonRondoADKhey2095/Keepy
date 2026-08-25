@@ -13181,3 +13181,40 @@ qui suit **spamme sans jamais s'arreter**.
    depuis le centre.
 4. **3 props deplaces** -- mesure comme le minimum possible a 2,5x, mais c'est
    une modification d'un decor deja valide sur device.
+
+### Deploiement staging du lot lake (palier 1, automatique)
+
+`staging` **`47dac76`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `fd0cd689` des deux cotes, verifie AVANT le push).
+CI run **#229** (id `32862216768`). **`main` NON touche** (`origin/main`
+toujours `6b4b46f`, verifie apres le push) : palier 2, gate Mathieu apres
+validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787664307` = **13:25:07** (run #227) | **`1787669738` = 14:55:38** *(dans la fenetre du run #229, demarre 14:52:15)* |
+| `.pck` servi | 5 833 632 | **5 834 592** |
+| `.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+Les deux lectures « avant » et les deux lectures « apres » sont
+`x-vercel-cache: MISS` avec `age: 0` -- aucun bout n'est une copie CDN gelee.
+
+⚠️ **Le piege de lecture HIT/age s'est reproduit DEUX fois en cours de run et a
+ete REFUSE les deux fois** (14:53:01 age 102, 14:53:36 age 137) : un HIT avec
+un `age` non nul n'est pas une mesure de fraicheur, donc ces lectures n'ont pas
+ete comptees comme la preuve « c'est encore l'ancienne valeur ».
+
+⚠️ **Le piege du run gele s'est reproduit aussi** : l'API Actions tenait le run
+#229 a `status: in_progress`, `updated_at` bloque a 14:52:21, bien apres que le
+deploiement soit tombe. C'est le `CACHE_VERSION` servi qui a tranche, comme aux
+runs #201, #202 et #226.
+
+⚠️ **`curl` direct vers `*.vercel.app` reste refuse par le proxy de ce sandbox**
+(un poll de 30 s x 10 n'a rien emis) : le canal MCP Vercel est le seul
+disponible ici, comme deja consigne.
+
+Le `.pck` servi (5 834 592) est 16 octets sous l'export local propre de cette
+session (5 834 608) -- l'instabilite deja documentee, pas un autre build.

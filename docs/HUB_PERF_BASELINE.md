@@ -249,3 +249,33 @@ touches no engine code — and it, not the `.pck`, is the identity check.
 Payload trap re-checked on this export's own `savepack` log: **0** `Storing
 File` lines for `assets_source`, `scripts/dev`, `docs`, `web` or `build`,
 out of 219 stored files.
+
+**Deployed to staging.** CI run #229 (`web-build.yml`) on `staging` `47dac76`.
+Verified **on the live service, not just the CI log, and on TWO independent
+markers**:
+
+| marker | before | after |
+|---|---|---|
+| `CACHE_VERSION` (`index.service.worker.js`) | `1787664307\|4350600` (13:25:07, run #227) | **`1787669738\|4285704`** (**14:55:38**, inside run #229's window, started 14:52:15) |
+| `GODOT_CONFIG.fileSizes.index.pck` (`index.html`) | 5 833 632 | **5 834 592** |
+| `GODOT_CONFIG.fileSizes.index.wasm` | 35 376 909 | 35 376 909 (unchanged, as expected) |
+
+Both "before" readings and both "after" readings came back
+`x-vercel-cache: MISS` with `age: 0`, so neither end is a frozen CDN copy.
+
+⚠️ **The HIT/age reading trap reproduced twice mid-run and was refused both
+times** — re-reads at 14:53:01 and 14:53:36 came back `x-vercel-cache: HIT`
+with `age` 102 and 137, copies frozen before the deploy landed. A HIT with a
+non-zero age is not a freshness measurement, so those were not counted as the
+"still the old value" proof.
+
+⚠️ **The frozen-run trap reproduced too**: the Actions API held run #229 at
+`status: in_progress` with `updated_at` stuck at 14:52:21 well after the
+deploy had landed. The served `CACHE_VERSION` settled it, as it has on runs
+#201, #202 and #226.
+
+The served `.pck` (5 834 592) is 16 bytes under this session's clean local
+export (5 834 608) — the documented `.pck` instability, not a different build.
+`index.wasm` is identical everywhere, and it is the file that carries the
+identity check.
+
