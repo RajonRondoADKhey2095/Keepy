@@ -558,7 +558,7 @@ props = [{
 "scale": 1.008,
 "type": &"tree"
 }, {
-"position": Vector3(-17.32, 0, -3.54),
+"position": Vector3(-33.76, 0, -10.30),
 "rotation_y": 327.6,
 "scale": 1.269,
 "type": &"tree"
@@ -668,12 +668,12 @@ props = [{
 "scale": 0.817,
 "type": &"rock"
 }, {
-"position": Vector3(-23.95, 0, -9.04),
+"position": Vector3(-20.86, 0, -13.80),
 "rotation_y": 247.6,
 "scale": 0.974,
 "type": &"rock"
 }, {
-"position": Vector3(-22.80, 0, -9.68),
+"position": Vector3(-17.32, 0, -10.75),
 "rotation_y": 17.1,
 "scale": 1.367,
 "type": &"rock"
@@ -859,7 +859,7 @@ props = [{
 "scale": 0.922,
 "type": &"stump"
 }, {
-"position": Vector3(-16.60, 0, -5.19),
+"position": Vector3(-15.60, 0, -5.18),
 "rotation_y": 248.7,
 "scale": 0.901,
 "type": &"stump"
@@ -873,4 +873,19 @@ props = [{
 "rotation_y": 0.0,
 "scale": 1.0,
 "type": &"pond"
+}, {
+"position": Vector3(-25.10, 0, -5.30),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"lake"
+}, {
+"position": Vector3(-18.68, 0, 1.70),
+"rotation_y": 41.0,
+"scale": 1.18,
+"type": &"rock"
+}, {
+"position": Vector3(-25.85, 0, 4.17),
+"rotation_y": 214.0,
+"scale": 0.94,
+"type": &"rock"
 }]

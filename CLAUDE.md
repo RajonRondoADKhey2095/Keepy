@@ -12942,3 +12942,279 @@ est revenue `x-vercel-cache: HIT` avec **`age: 172`** — une copie CDN figee
 AVANT le deploiement. **Un HIT avec un `age` non nul n'est pas une mesure de
 fraicheur**, donc cette lecture n'a pas ete comptee comme la lecture
 « pendant que le job tourne » ; c'est la lecture MISS/age 0 qui tranche.
+
+## HUB : NOUVEAU TYPE `lake` -- un grand plan d'eau bleu clair, 2,5x le pond, dans la couronne exterieure (25 aout 2026)
+
+Branche `claude/keepy-lake-type-4bxvqc`, partie de `main` (`6b4b46f`, la ref la
+plus recente du depot : `main..staging` est VIDE, `staging` est entierement
+mergee -- aucune session concurrente). **CONTRAINTE DURE TENUE** :
+`HubTapInput.gd` (`PLATEAU_HALF_EXTENT` reste **35.0**), `HubCamera.gd`,
+`KeepyHopper.gd` et `HubWorld.tscn` **ne sont PAS dans le diff**, verifie par
+`git diff --stat` et pas suppose.
+
+### R1 -- le pond, lu dans le code plutot que decrit
+
+`_make_pond()` construit **DEUX disques plats**, tous deux `CylinderMesh` et
+jamais `PlaneMesh` (un plan est simple face, et un spectateur qui verrait cet
+ecran depuis sous l'horizon trouverait l'eau simplement absente) :
+
+| disque | rayon | hauteur | y | segments | couleur |
+|---|---|---|---|---|---|
+| berge (opaque) | **3,62** | 0,05 | 0,03 | **24** | `POND_BANK_COLOR` `(0,22, 0,21, 0,15)` |
+| eau (alpha) | **3,20** | 0,06 | 0,05 | **24** | `POND_WATER_COLOR` `(0,16, 0,30, 0,36, 0,55)` |
+
+Les hauteurs sont ce qui le sort du z-fight : le sol est un `PlaneMesh` a
+**exactement y = 0**, le dessous de la berge est a 0,005 et celui de l'eau a
+0,02, donc ni l'un ni l'autre n'est jamais coplanaire avec lui. Et
+`material.transparency = TRANSPARENCY_ALPHA` est **pose explicitement** : le
+canal alpha d'`albedo_color` est ignore tant que `transparency` reste a
+`DISABLED`, donc l'eau rendrait en teal opaque plat **sans aucune erreur pour
+le dire**.
+
+⚠️ **Les props de bordure du pond ne sont PAS une coincidence de placement,
+et ce n'est pas non plus un mecanisme de code** : `hub_layout.tres` pose
+**quatre souches** a d = 3,99 / 4,09 / 4,13 / 4,16 du centre, soit
+**0,37 a 0,54 au-dela de la berge de 3,62**. C'est de la donnee, pas de la
+geometrie generee -- `_make_pond()` ne sait rien d'une rive. Cette marge de
+0,37-0,54 est le PRECEDENT que la rive du lac reproduit.
+
+### R2 -- ce qui est batche, et pourquoi le lac ne l'est pas
+
+Batches en `MultiMeshInstance3D`, un par paire **(mesh, couleur)** et non par
+type semantique : `tree` (2 batches), `rock`, `bush` (2 instances d'UN batch),
+`flower` (tige + 3 batches de corolle). Individuels : `portal` (c'est un
+`Area3D` auquel `HubWorld` connecte un signal), `landmark` (3 a 5 meshes,
+batcher echangerait 31 noeuds contre ~12 et perdrait la lisibilite par
+variante), **`pond`** (une seule instance, rien a batcher, et la seule surface
+alpha de l'ecran) et **`stump`** -- dont l'en-tete de `HubBuilder.gd` dit
+explicitement que la raison est un calcul cout/benefice (13 noeuds economises
+sur ~220 liberes) **et pas** sa couleur fixe, laquelle est au contraire le cas
+le plus simple a batcher.
+
+**`lake` rejoint la liste des individuels pour la raison du pond : il y en a
+UN.** Il n'y a rien a batcher.
+
+### R3 -- l'anneau exterieur est PLEIN, et c'est le vrai resultat de la recon
+
+Douze landmarks, pas huit (le lot D en a ajoute quatre au far-ring) :
+
+| anneau | rayon | azimuts |
+|---|---|---|
+| interieur | ~12,6-12,8 | 0 / 92,5 / 177,3 / 271,8 |
+| median | ~20,9-22,1 | 47,0 / 133,0 / 227,5 / 313,0 |
+| **far-ring (lot D)** | **~30,2-30,9** | **67,5 / 157,5 / 247,5 / 337,5** |
+
+⚠️ **Balayage exhaustif (azimut 0-360 par 0,1 deg x rayon 20,0-33,0 par 0,1) :
+il n'existe AUCUNE position, a AUCUNE taille >= 2,5x, ou un disque de cette
+envergure ne recouvre pas au moins un prop de scatter.** A 3,0x et a 2,81x il
+n'existe meme aucune position LEGALE (le disque ne peut pas degager les
+landmarks et tenir dans les bornes en meme temps) ; a 2,69x le meilleur point
+recouvre **8** props ; a **2,50x** le meilleur en recouvre **3**. Le blocage
+n'est pas un prop en particulier, c'est la densite que les lots A/B/C ont
+installee.
+
+**Le secteur le plus libre est l'OUEST**, entre le landmark median a
+az 227,5 et le rock a az 290,7. Le bord haut de la taille est fixe par la
+borne `|x| + rayon_berge <= 34,2`, pas par les props.
+
+### Ce qui est livre
+
+`&"lake"` : **eau r = 8,00, berge r = 9,05** -- le pond a **2,50x exactement,
+sur les deux disques**, donc la rive garde sa proportion au lieu de devenir un
+cheveu sur un disque bien plus grand. Centre **(-25,10 ; -5,30)**, r 25,65,
+az 281,9.
+
+⚠️ **Les HAUTEURS ne sont PAS mises a l'echelle** (0,05 / 0,06, y 0,03 / 0,05,
+identiques au pond) : une dalle d'eau de taille lac epaisse de 0,15 montrerait
+sa propre tranche, la seule chose qu'une surface d'eau plate ne doit pas faire.
+`_make_pond()` et `_make_lake()` appellent desormais **le meme
+`_make_water_body()`** -- les deux ne peuvent donc plus diverger ni sur ces
+hauteurs ni sur le piege `TRANSPARENCY_ALPHA`.
+
+**Tessellation 40 et non 24, et le critere est la deviation ABSOLUE de facette,
+qui grandit avec le rayon.** Calcule, pas estime :
+
+| disque | rayon | segments | sagitta |
+|---|---|---|---|
+| eau pond | 3,20 | 24 | 0,0274 |
+| berge pond | 3,62 | 24 | 0,0310 |
+| **eau lac aux 24 du pond** | 8,00 | 24 | **0,0684** *(2,5x pire, visiblement facette)* |
+| **eau lac livree** | 8,00 | **40** | **0,0247** |
+| **berge lac livree** | 9,05 | **40** | **0,0279** |
+
+A 40 le lac est donc **marginalement PLUS PLAT par facette que le pond** malgre
+2,5x le rayon, pour 16 segments de plus. Ca reste une tessellation basse et
+explicite (regle §7.2), simplement calibree sur la taille au lieu d'etre heritee
+d'un disque plus petit.
+
+### La teinte : DIFFERENTE, et l'ecart est plus grand RENDU qu'AUTORISE
+
+`LAKE_WATER_COLOR = Color(0.30, 0.46, 0.82, 0.55)`, constante **LOCALE** au hub
+comme toutes les couleurs de decor du plateau -- rien n'est promu dans
+`SwampPalette`. La berge **reutilise `POND_BANK_COLOR`** : une berge est une
+berge, exactement le raisonnement qui fait partager au `stump` la couleur
+d'ecorce des arbres.
+
+| | autorise (albedo) | **rendu, mesure** |
+|---|---|---|
+| eau pond | hsv(198,0 / 0,556 / 0,360) | `rgb(39,57,56)` = hsv(**176,7** / 0,316 / 0,224) |
+| eau lac | hsv(221,5 / 0,634 / 0,820) | `rgb(56,76,110)` = hsv(**217,8** / 0,491 / 0,431) |
+| **ecart de teinte** | **23,5 deg** | **41,1 deg** |
+
+Mesure sur des PIXELS, a **distance camera IDENTIQUE** (25,08 u, donc 33,1 % de
+fog des deux cotes -- Keepy pose 15 u au +Z de chaque plan d'eau, la camera du
+hub ne lacetant jamais). **Les deux fenetres d'echantillon sont a 100 % de
+l'objet** : 2 valeurs 8 bits distinctes pour le pond, 3 pour le lac (le degrade
+de fog en travers du disque), zero pixel de sol ou de ciel -- donc aucune des
+deux mesures n'est contaminee et l'ecart entre elles EST la couleur de l'objet.
+L'ecart de teinte est **plus grand rendu qu'autorise**, parce que le sol vert
+qui transparait a travers l'alpha tire le teal du pond vers le vert alors que le
+bleu plus fort du lac y resiste.
+
+### Placement -- les invariants sont mesures, pas argumentes
+
+| contrainte | valeur |
+|---|---|
+| tout point du lac : `\|x\|` max | **34,15** *(borne auto-imposee 34,2 ; garde-fou 35,0)* |
+| tout point du lac : `\|z\|` max | 14,35 |
+| props a l'interieur de l'eau (r 8,0) | **0** |
+| props a l'interieur de la berge (r 9,05) | **0** |
+| landmark le plus proche, degagement de la berge | **+4,20** |
+| portail le plus proche, degagement de la berge | +10,66 |
+| pond | a l'oppose du plateau, aucune interaction |
+
+**Fog a la position choisie, formule `1 - exp(-d*0,016)` sur la distance
+CAMERA-objet et non sur le rayon :** **37,9 %** vu du centre du plateau
+(29,82 u), **29,4 %** sur sa rive proche, 60,1 % depuis le bord oppose. Le lac
+est donc **moins delave que les landmarks du far-ring** (47,4 % projetes au
+lot D pour r ~30,5) et dans la meme bande que l'anneau median (39,3 %) --
+c'est ce que le rayon 25,7 achete contre 30.
+
+⚠️ **TROIS PROPS SONT DEPLACES, PAS SUPPRIMES, et c'est le cout reel du lot.**
+Aucune position ne recouvrait zero prop (R3). Deux rochers et un arbre dont le
+centre tombait dans l'eau sont **relocalises sur la rive** : un lac occupe du
+sol, donc ce qui s'y tenait passe au bord, et le plateau garde son compte.
+S'y ajoutent **2 rochers neufs**, ce qui donne **4 rochers de rive** -- le meme
+idiome que les 4 souches du pond, et le bas de la fourchette 4-6 demandee.
+**Aucun nouveau TYPE de bordure** : ce sont des entrees `&"rock"` ordinaires,
+donc elles coutent 4 INSTANCES dans le batch `Rock` existant et **zero noeud**.
+
+Une souche preexistante tombait **sur la berge** (d = 8,50, entre l'eau 8,0 et
+la berge 9,05) : poussee a d = 9,50 comme les quatre rochers, soit **0,45
+au-dela de la berge -- exactement la marge 0,37-0,54 des souches du pond**.
+Cinq props de rive au total, tous a d = 9,50.
+
+**Le garde-fou de bornes n'a rien eu a recabler** (il lit le dictionnaire du
+layout, jamais l'arbre de scene) et **il est reste SILENCIEUX au boot** : la
+confirmation a l'execution que les 168 entrees sont atteignables.
+
+### Cout : +2 noeuds, exactement le nombre predit
+
+Mesure des DEUX cotes dans cette session, worktree separe sur `origin/main`,
+meme machine, meme commande, 3 runs chacun :
+
+| | draw hors portails | total | construction |
+|---|---|---|---|
+| AVANT (`6b4b46f`) | **72** | **78** | 47,3-51,1 ms |
+| **APRES** | **74** | **80** | 43,3-46,6 ms |
+
+**+2 : la berge et l'eau.** Les 8 batches `MultiMesh` sont **intouches**.
+Marge sous le plafond de 260 : **188 -> 186**. Draw nodes identiques sur
+**six** runs consecutifs. Tout le reste est dans le bruit documente de ce
+sandbox (la construction BAISSE en ajoutant deux noeuds -- c'est le plancher de
+bruit, pas un gain). Ligne complete et lecture detaillee :
+`docs/HUB_PERF_BASELINE.md`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles, **tailles verifiees contre le `Content-Length`** -- 50 276 070 et
+1 073 228 327 octets, aucune troncature silencieuse). Import headless
+**exit 0**, **24 `.scn`** (import complet verifie, pas suppose). Boot headless
+de `HubWorld.tscn` **exit 0, aucun `push_warning`, aucune erreur**. Export Web
+release **exit 0, 0 ligne d'erreur**.
+
+`index.wasm` **35 376 909 octets** / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+**5 834 608** (export unique et propre, `build/` ET `.godot/` supprimes avant --
+a lire avec la mise en garde permanente sur son instabilite, jamais offert comme
+preuve). **Piege payload tenu** : **0** ligne `Storing File` pour
+`assets_source`, `scripts/dev`, `docs`, `web` ou `build`, sur 219.
+
+Sondes : `ProbeTimeoutAudit` (**38 sondes scenes**, retour exact a la baseline
+apres suppression de la sonde de capture jetable), `AssetContractAudit`
+(**12/12 visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe` -- **toutes exit 0**. **Non-applicabilite VERIFIEE par
+grep** : aucune sonde de `scripts/dev/` ne reference `HubWorld`, `HubBuilder`,
+`HubTapInput` ni `hub_layout`, hormis `HubPerfBaseline` qui ne tape jamais.
+
+⚠️ **DEUX rendus reels captures** (1080x1920, `xvfb-run --rendering-driver
+opengl3`, sonde jetable supprimee avant commit) : le lac s'affiche comme un
+grand disque bleu a rive sombre, **bord lisse, aucun facettage visible**, et
+nettement bleu contre le vert du plateau. Vu du centre il est **hors cadre** --
+la camera ne lacete jamais (fov horizontal 45 deg) et le lac est lateral,
+exactement comme le pond ; il entre dans le champ quand Keepy se deplace vers
+lui, ce que la seconde capture confirme.
+
+⚠️ **Piege de sonde re-rencontre, deja consigne pour `DecorStabilityAudit`** :
+une capture qui `await RenderingServer.frame_post_draw` en boucle sous llvmpipe
+**depasse 10 minutes sans rien produire**. Reecrite en pilotant `_process` avec
+un compteur de frames : deux captures en quelques secondes. Deuxieme piege du
+meme run : les chemins de noeuds de `HubWorld.tscn` sont
+`WorldViewport/SubViewport/World`, et la camera s'y appelle **`Camera3D`** et
+non `HubCamera` -- un `get_node()` faux rend `null` et le `set_process(null)`
+qui suit **spamme sans jamais s'arreter**.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce qu'un disque bleu clair de 16 unites de large se lit comme de
+   l'EAU** a l'echelle reelle d'un telephone, ou comme une tache peinte ? La
+   teinte, la sagitta et l'alpha sont mesures ; la lecture ne l'est pas.
+2. **La rive** : la berge reprend la couleur du pond, donc c'est un anneau
+   sombre de 1,05 de large la ou le pond en a 0,42. Proportionnel et assume,
+   jamais juge a l'oeil.
+3. **Le lac est LATERAL**, a ~6 taps de cote depuis le centre (l'asymetrie de
+   visee deja mesuree au lot D : un tap vers l'avant traverse tout le plateau,
+   un tap de cote ne porte que ~5,15 u). Il se decouvre en s'en approchant, pas
+   depuis le centre.
+4. **3 props deplaces** -- mesure comme le minimum possible a 2,5x, mais c'est
+   une modification d'un decor deja valide sur device.
+
+### Deploiement staging du lot lake (palier 1, automatique)
+
+`staging` **`47dac76`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `fd0cd689` des deux cotes, verifie AVANT le push).
+CI run **#229** (id `32862216768`). **`main` NON touche** (`origin/main`
+toujours `6b4b46f`, verifie apres le push) : palier 2, gate Mathieu apres
+validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787664307` = **13:25:07** (run #227) | **`1787669738` = 14:55:38** *(dans la fenetre du run #229, demarre 14:52:15)* |
+| `.pck` servi | 5 833 632 | **5 834 592** |
+| `.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+Les deux lectures « avant » et les deux lectures « apres » sont
+`x-vercel-cache: MISS` avec `age: 0` -- aucun bout n'est une copie CDN gelee.
+
+⚠️ **Le piege de lecture HIT/age s'est reproduit DEUX fois en cours de run et a
+ete REFUSE les deux fois** (14:53:01 age 102, 14:53:36 age 137) : un HIT avec
+un `age` non nul n'est pas une mesure de fraicheur, donc ces lectures n'ont pas
+ete comptees comme la preuve « c'est encore l'ancienne valeur ».
+
+⚠️ **Le piege du run gele s'est reproduit aussi** : l'API Actions tenait le run
+#229 a `status: in_progress`, `updated_at` bloque a 14:52:21, bien apres que le
+deploiement soit tombe. C'est le `CACHE_VERSION` servi qui a tranche, comme aux
+runs #201, #202 et #226.
+
+⚠️ **`curl` direct vers `*.vercel.app` reste refuse par le proxy de ce sandbox**
+(un poll de 30 s x 10 n'a rien emis) : le canal MCP Vercel est le seul
+disponible ici, comme deja consigne.
+
+Le `.pck` servi (5 834 592) est 16 octets sous l'export local propre de cette
+session (5 834 608) -- l'instabilite deja documentee, pas un autre build.
