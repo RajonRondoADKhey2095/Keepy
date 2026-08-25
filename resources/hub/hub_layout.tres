@@ -773,4 +773,80 @@ props = [{
 "rotation_y": 356.4,
 "scale": 1.224,
 "type": &"bush"
+
+}, {
+"position": Vector3(22.57, 0, 10.92),
+"rotation_y": 229.5,
+"scale": 0.882,
+"type": &"stump"
+}, {
+"position": Vector3(21.99, 0, 3.44),
+"rotation_y": 27.4,
+"scale": 0.802,
+"type": &"stump"
+}, {
+"position": Vector3(17.61, 0, 4.72),
+"rotation_y": 349.9,
+"scale": 0.843,
+"type": &"stump"
+}, {
+"position": Vector3(16.99, 0, 9.21),
+"rotation_y": 343.0,
+"scale": 0.901,
+"type": &"stump"
+}, {
+"position": Vector3(-19.14, 0, 19.24),
+"rotation_y": 270.6,
+"scale": 1.047,
+"type": &"stump"
+}, {
+"position": Vector3(-16.34, 0, 9.99),
+"rotation_y": 138.9,
+"scale": 0.994,
+"type": &"stump"
+}, {
+"position": Vector3(9.07, 0, -1.11),
+"rotation_y": 254.0,
+"scale": 1.062,
+"type": &"stump"
+}, {
+"position": Vector3(-3.75, 0, -21.71),
+"rotation_y": 339.9,
+"scale": 1.195,
+"type": &"stump"
+}, {
+"position": Vector3(6.58, 0, -23.06),
+"rotation_y": 281.5,
+"scale": 1.100,
+"type": &"stump"
+}, {
+"position": Vector3(-4.39, 0, -10.06),
+"rotation_y": 147.9,
+"scale": 1.009,
+"type": &"stump"
+}, {
+"position": Vector3(0.34, 0, -10.05),
+"rotation_y": 87.7,
+"scale": 1.139,
+"type": &"stump"
+}, {
+"position": Vector3(22.81, 0, 21.35),
+"rotation_y": 159.6,
+"scale": 0.922,
+"type": &"stump"
+}, {
+"position": Vector3(-16.60, 0, -5.19),
+"rotation_y": 248.7,
+"scale": 0.901,
+"type": &"stump"
+}, {
+"position": Vector3(3.04, 0, -12.43),
+"rotation_y": 155.6,
+"scale": 0.914,
+"type": &"stump"
+}, {
+"position": Vector3(20.70, 0, 7.40),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"pond"
 }]

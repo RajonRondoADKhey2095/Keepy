@@ -51,8 +51,13 @@ class_name HubBuilder
 ##   landmark  three silhouettes, 3 to 5 meshes each, 8 on the plateau --
 ##             batching them would trade 31 nodes for ~12 and lose the
 ##             per-variant readability of the tree.
+##   pond      one instance on the plateau. There is nothing to batch,
+##             and it is the only ALPHA-BLENDED surface on this screen.
+##   stump     14 on the plateau at one mesh each. Batching would save 13
+##             nodes out of the ~220 this change frees; measured and left
+##             individual until the count makes the indirection worth it.
 ##
-## NO COLLISION IS LOST. tree / rock / bush / flower have never
+## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond have never
 ## had a CollisionShape3D -- grepped, not assumed -- so nothing on the
 ## plateau depends on a per-prop physics node. The ground is not a
 ## collider either: HubTapInput intersects a maths Plane rather than
@@ -107,6 +112,18 @@ const _FLOWER_PETAL_KEYS: Array[StringName] = [
 ## horizontal), so it is read against the sky, and the sky here is the
 ## near-black swamp green. A dark silhouette against a dark sky is not a
 ## landmark, it is a hole.
+## The pond. Its water is the ONLY alpha-blended surface on the plateau:
+## an opaque disc reads as a painted circle, and the point of a pond as a
+## destination is that it reads as a hole in the ground rather than a mark
+## on it. The bank is opaque and slightly wider, so the water has an edge
+## to sit inside instead of ending on bare ground.
+##
+## Blue-green rather than blue. The ground is swamp green and the sky is
+## near-black green: a saturated blue would be the only thing on this
+## screen with no relation to anything else on it.
+const POND_WATER_COLOR: Color = Color(0.16, 0.30, 0.36, 0.55)
+const POND_BANK_COLOR: Color = Color(0.22, 0.21, 0.15)
+
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
 const LANDMARK_SPIRE_CROWN: Color = Color(0.38, 0.58, 0.30)
 const LANDMARK_CAIRN_STONE: Color = Color(0.44, 0.45, 0.40)
@@ -163,6 +180,10 @@ func _build() -> void:
 					node = _make_portal(entry, index)
 				&"landmark":
 					node = _make_landmark(entry)
+				&"stump":
+					node = _make_stump()
+				&"pond":
+					node = _make_pond()
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -329,6 +350,58 @@ func _make_portal(entry: Dictionary, index: int) -> Node3D:
 		label_node.text = entry.get("label", "")
 	_portals.append(portal)
 	return portal
+## A cut trunk. Deliberately ONE mesh in the trees' own bark colour: a
+## stump is what a tree leaves behind, so sharing the colour is what makes
+## the pair read as a story rather than as two unrelated props. No lighter
+## disc on the cut face -- that would be a second material for a surface
+## the camera, at -34 degrees and 7.6 units up, sees almost edge-on.
+func _make_stump() -> Node3D:
+	var root := Node3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.34
+	mesh.bottom_radius = 0.44
+	mesh.height = 0.55
+	mesh.radial_segments = 8
+	mesh.rings = 1
+	root.add_child(_mesh_node(mesh, TRUNK_COLOR, Vector3(0.0, 0.275, 0.0)))
+	return root
+
+## Standing water, far out in the outer ring, as somewhere to go.
+##
+## Two flat discs, not one: an opaque bank slightly wider than the water,
+## so the alpha surface has a rim to end on. Both are CylinderMesh rather
+## than PlaneMesh -- a plane is single-sided, and a viewer who ever sees
+## this screen from below the horizon would find the pond simply absent.
+##
+## The heights are what keep it out of a z-fight with the ground. The
+## ground is a PlaneMesh at exactly y = 0; the bank's underside sits at
+## 0.005 and the water's at 0.02, so neither is ever coplanar with it.
+func _make_pond() -> Node3D:
+	var root := Node3D.new()
+
+	var bank := CylinderMesh.new()
+	bank.top_radius = 3.62
+	bank.bottom_radius = 3.62
+	bank.height = 0.05
+	bank.radial_segments = 24
+	bank.rings = 1
+	root.add_child(_mesh_node(bank, POND_BANK_COLOR, Vector3(0.0, 0.03, 0.0)))
+
+	var water := CylinderMesh.new()
+	water.top_radius = 3.2
+	water.bottom_radius = 3.2
+	water.height = 0.06
+	water.radial_segments = 24
+	water.rings = 1
+	var surface := _mesh_node(water, POND_WATER_COLOR, Vector3(0.0, 0.05, 0.0))
+	var material := surface.get_surface_override_material(0) as StandardMaterial3D
+	# Alpha blending, and it has to be asked for: albedo_color's alpha
+	# channel is ignored entirely while transparency stays at DISABLED, so
+	# the water would render as flat opaque teal with no error to say so.
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	root.add_child(surface)
+	return root
+
 ## An orientation marker, readable from the far side of the plateau.
 ##
 ## ~8.4 units tall against a standard tree's 2.85 -- roughly 3x, which is
