@@ -47,6 +47,21 @@ const FLOWER_PETAL_COLORS: Array[Color] = [
 	Color(0.72, 0.66, 0.88),
 ]
 
+## Landmark colours, LOCAL to the hub for the same reason as the flower
+## tints above -- decor, not the identity SwampPalette carries.
+##
+## Deliberately LIGHT. A landmark's top pokes just above the horizon line
+## (the camera's -34 deg pitch leaves the top of the frame ~2.4 deg above
+## horizontal), so it is read against the sky, and the sky here is the
+## near-black swamp green. A dark silhouette against a dark sky is not a
+## landmark, it is a hole.
+const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
+const LANDMARK_SPIRE_CROWN: Color = Color(0.38, 0.58, 0.30)
+const LANDMARK_CAIRN_STONE: Color = Color(0.44, 0.45, 0.40)
+const LANDMARK_CAIRN_CAP: Color = Color(0.56, 0.56, 0.50)
+const LANDMARK_SLAB_STONE: Color = Color(0.36, 0.44, 0.32)
+const LANDMARK_SLAB_BASE: Color = Color(0.26, 0.30, 0.23)
+
 var _portals: Array[HubPortal] = []
 
 func _ready() -> void:
@@ -76,6 +91,8 @@ func _build() -> void:
 				node = _make_bush()
 			&"flower":
 				node = _make_flower(entry)
+			&"landmark":
+				node = _make_landmark(entry)
 			_:
 				push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 				continue
@@ -174,10 +191,95 @@ func _make_flower(entry: Dictionary) -> Node3D:
 	root.add_child(_mesh_node(petal_mesh, FLOWER_PETAL_COLORS[variant], Vector3(0.0, 0.44, 0.0)))
 	return root
 
-func _mesh_node(mesh: Mesh, colour: Color, offset: Vector3) -> MeshInstance3D:
+## An orientation marker, readable from the far side of the plateau.
+##
+## ~8.4 units tall against a standard tree's 2.85 -- roughly 3x, which is
+## what buys it back over the tree field at 25+ units. Height alone is not
+## enough though: a tree scaled up is still tree-shaped and reads as more
+## of the same, so each variant is a DIFFERENT SILHOUETTE (a needle, a
+## blocky pile, a pair of standing slabs). Telling one landmark from
+## another at a glance is what carries orientation; merely having four of
+## them does not.
+##
+## "variant" picks the silhouette, same mechanism as flower -- out of
+## range falls back to 0 so a layout written without the field still
+## builds.
+func _make_landmark(entry: Dictionary) -> Node3D:
+	var variant: int = entry.get("variant", 0)
+	match variant:
+		1:
+			return _make_landmark_cairn()
+		2:
+			return _make_landmark_slabs()
+		_:
+			return _make_landmark_spire()
+
+## Variant 0 -- a narrow needle. Distinguished at distance by being thin.
+func _make_landmark_spire() -> Node3D:
+	var root := Node3D.new()
+	var trunk := CylinderMesh.new()
+	trunk.top_radius = 0.16
+	trunk.bottom_radius = 0.42
+	trunk.height = 5.2
+	trunk.radial_segments = 8
+	trunk.rings = 1
+	root.add_child(_mesh_node(trunk, LANDMARK_SPIRE_TRUNK, Vector3(0.0, 2.6, 0.0)))
+	# Cones are CylinderMesh with a zero top radius; three stacked ones
+	# give the stepped conifer edge a single cone cannot.
+	var tiers: Array = [[1.25, 2.4, 5.0], [0.95, 2.1, 6.3], [0.62, 1.8, 7.55]]
+	for tier in tiers:
+		var cone := CylinderMesh.new()
+		cone.top_radius = 0.0
+		cone.bottom_radius = tier[0]
+		cone.height = tier[1]
+		cone.radial_segments = 8
+		cone.rings = 1
+		root.add_child(_mesh_node(cone, LANDMARK_SPIRE_CROWN, Vector3(0.0, tier[2], 0.0)))
+	return root
+
+## Variant 1 -- a blocky stacked mass. The opposite read to the spire:
+## wide, stepped, and grey rather than green.
+func _make_landmark_cairn() -> Node3D:
+	var root := Node3D.new()
+	var blocks: Array = [
+		[Vector3(2.60, 1.50, 2.40), 0.75, 0.0, LANDMARK_CAIRN_STONE],
+		[Vector3(2.10, 1.70, 1.90), 2.30, 22.0, LANDMARK_CAIRN_STONE],
+		[Vector3(1.55, 1.90, 1.45), 4.00, -18.0, LANDMARK_CAIRN_STONE],
+		[Vector3(1.05, 1.50, 0.95), 5.60, 35.0, LANDMARK_CAIRN_CAP],
+	]
+	for block in blocks:
+		var box := BoxMesh.new()
+		box.size = block[0]
+		root.add_child(_mesh_node(box, block[3], Vector3(0.0, block[1], 0.0), Vector3(0.0, block[2], 0.0)))
+	var spike := CylinderMesh.new()
+	spike.top_radius = 0.0
+	spike.bottom_radius = 0.55
+	spike.height = 2.2
+	spike.radial_segments = 6
+	spike.rings = 1
+	root.add_child(_mesh_node(spike, LANDMARK_CAIRN_CAP, Vector3(0.0, 7.3, 0.0)))
+	return root
+
+## Variant 2 -- two standing slabs of unequal height. Reads as a pair of
+## vertical bars, which neither of the other two can be mistaken for.
+func _make_landmark_slabs() -> Node3D:
+	var root := Node3D.new()
+	var rubble := BoxMesh.new()
+	rubble.size = Vector3(2.90, 0.70, 1.90)
+	root.add_child(_mesh_node(rubble, LANDMARK_SLAB_BASE, Vector3(0.0, 0.35, 0.0), Vector3(0.0, 6.0, 0.0)))
+	var tall := BoxMesh.new()
+	tall.size = Vector3(1.15, 8.00, 0.60)
+	root.add_child(_mesh_node(tall, LANDMARK_SLAB_STONE, Vector3(-0.85, 4.00, 0.10), Vector3(0.0, 12.0, -4.0)))
+	var short := BoxMesh.new()
+	short.size = Vector3(0.95, 6.60, 0.50)
+	root.add_child(_mesh_node(short, LANDMARK_SLAB_STONE, Vector3(0.90, 3.30, -0.15), Vector3(0.0, -18.0, 5.0)))
+	return root
+
+func _mesh_node(mesh: Mesh, colour: Color, offset: Vector3, rotation_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
 	var node := MeshInstance3D.new()
 	node.mesh = mesh
 	node.position = offset
+	node.rotation_degrees = rotation_deg
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.albedo_color = colour
