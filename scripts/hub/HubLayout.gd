@@ -26,7 +26,7 @@ class_name HubLayout
 ##
 ##   type        StringName  &"portal", &"rock", &"tree", &"bush",
 ##                           &"flower", &"stump", &"pond", &"lake",
-##                           &"stream" or &"landmark"
+##                           &"stream", &"boat" or &"landmark"
 ##   position    Vector3     world position, y is ignored for props that
 ##                           sit on the ground (they are placed AT y = 0)
 ##   rotation_y  float       degrees
@@ -62,9 +62,25 @@ class_name HubLayout
 ## apart are therefore NOT redundant -- they are what makes the curve turn
 ## sharply there, and dropping them straightens a bend the trace needs.
 ##
+## =====================================================================
+## &"boat" IS AUTHORED ONCE AND MOVED FOR EVER AFTER
+##
+## Its "position" is the FIRST FRAME's mooring and nothing more. From the
+## moment the screen is running, BoatMooring owns where the hull is: it
+## re-parks it at whichever end of the stream is nearer the player, and
+## during a ride KeepyHopper carries it. The field is authored anyway, and
+## deliberately: it gives the out-of-bounds guard a real point to check,
+## where an entry with no position at all would fall back to Vector3.ZERO
+## and pass for free -- the same silent hole the &"stream" branch of that
+## guard exists to close.
+##
+## ONE boat. A second entry is built but never moored, and HubBuilder says
+## so with a push_error rather than picking one silently.
+##
 ## WHICH TYPES ARE BATCHED. rock / tree / bush / flower are drawn as
 ## MultiMesh instances, one batch per unique (mesh, colour) pair;
-## portal / landmark / stump / pond / lake / stream are individual nodes. That split is
+## portal / landmark / stump / pond / lake / stream / boat are individual
+## nodes. That split is
 ## HubBuilder's business and changes nothing here -- an entry looks the
 ## same either way -- but it is worth knowing that adding a hundred
 ## flowers costs a hundred instances and no new nodes, while adding a
