@@ -14112,3 +14112,192 @@ porte `scripts/dev/*` dans son `exclude_filter` (relu, pas suppose), et
 **Ce lot ne touche aucun fichier de jeu et n'ajoute aucune sonde** : son diff
 est ce document seul. `scripts/dev/StreamGeometryProbe.*` reste l'artefact
 unique du lot G, celui de l'incumbent.
+
+## RIDE-1 EN PRODUCTION, ET RECON ZONE LAC AU-DELA DE 35 (26 aout 2026)
+
+### Merge RIDE-1 -> main (autorisation explicite de Mathieu, validation
+### device faite)
+
+`staging` (`18282fa`) -> `main`, commit de merge **`ae13b99`**, `--no-ff`,
+apres resolution d'une incoherence signalee dans le rapport RIDE-1 avant
+tout merge.
+
+⚠️ **L'incoherence des trois tailles de `index.pck` (5 853 648 en BUILD,
+5 853 728 en DEPLOY) EST EXPLIQUEE, pas ignoree.** Verifie avant de merger,
+pas suppose : `git diff` entre les commits feature de RIDE-1 ne touche QUE
+`scripts/hub/*`, `resources/hub/hub_layout.tres`, `scenes/HubWorld.tscn` et
+des fichiers dev/doc -- **ni `project.godot` ni `export_presets.cfg`**. C'est
+exactement la classe de lot qui, partout ailleurs dans ce fichier, produit un
+`index.wasm`/`index.js` identiques au bit pres mais un `index.pck` instable
+d'un export a l'autre (variance de la passe de compression VRAM sur les
+textures des AUTRES assets, deja documentee des le 10 aout). `index.wasm`
+**35 376 909** / md5 **`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- **identiques dans le build RIDE-1
+local ET sur le service apres deploiement**, ce qui est la preuve d'identite
+qui compte. Un **quatrieme** export (celui de ce lot, verification GDScript
+de l'Etape 1) donne un **quatrieme** chiffre de pck (5 853 776), avec le meme
+wasm/js -- confirmation supplementaire que l'instabilite est bien celle deja
+connue.
+
+**CI run #239** verte (22:28:05 -> 22:31:26 UTC). **Verifie SUR LE SERVICE,
+deux marqueurs independants, MISS/age 0 des deux cotes** :
+`CACHE_VERSION` du `index.service.worker.js` servi = `1787697059` =
+**22:30:59 UTC**, a l'interieur de la fenetre du run ; `index.pck` servi =
+5 853 776 (un CINQUIEME chiffre, `index.html` `fileSizes`) ; `index.wasm`
+servi = 35 376 909, inchange. `x-vercel-cache: MISS`, `age: 0` sur
+`index.html` et `index.service.worker.js`.
+
+### Etape 1 -- recon zone lac au-dela de 35, mesure pure, RIEN implemente
+
+`scripts/hub/*.gd`, `resources/hub/hub_layout.tres` : **intouches**. Seul
+ajout : `scripts/dev/LakeZoneReconProbe.{gd,tscn}`, mesure pure sur la scene
+livree (KeepyHopper/HubCamera reels), aucune assertion, aucun gate.
+
+**Q1 -- CLAMP** : `PLATEAU_HALF_EXTENT` est un SCALAIRE UNIQUE, deux sites de
+lecture (`HubTapInput._handle_point`, clamp de la destination ;
+`HubBuilder._build()`, avertissement de bornes -- qui lit deja **tous** les
+points de controle d'un `stream`, pas seulement sa position). Camera et
+generation de decor n'en dependent PAS (`grep` : zero occurrence hors ces
+deux fichiers). Remplacer par une FORME (carre + peninsule) toucherait ces
+memes deux sites, avec une geometrie de clamp plus riche qu'un simple
+`clampf` par axe (test d'appartenance carre-ou-rectangle-peninsule, projection
+sur le bord le plus proche en cas d'exterieur) -- de l'ordre de quelques
+dizaines de lignes, pas une reecriture.
+
+**Q2 -- SEUIL 22s** : reproduit sur le VRAI `KeepyHopper` (`--fixed-fps 60`,
+`hop_to()` n'a aucune notion du clamp). Diagonale a 35 : **66 hops / 1122
+frames / 18,700s** (reproduit le docblock a la frame pres). Carre : **H=40
+tient (76 hops, 21,533s), H=41 depasse (78 hops, 22,100s)** -- dernier
+half-extent carre sous 22s = **40**. Peninsule azimut 282° (direction du lac
+du lot F), coin oppose (35,35) -> pointe, **AUCUNE des trois longueurs ne
+depasse** : L=5 -> 16,150s, L=10 -> 17,283s, L=15 -> 18,133s (57/61/64 hops).
+Une peninsule etroite coute bien moins cher qu'un carre elargi sur le pire
+trajet.
+
+**Q3 -- VISIBILITE DES LANDMARKS** : `fog_mode` n'est POSE NULLE PART dans
+`HubWorld.tscn` -> defaut EXPONENTIEL (0), jamais Depth -- **le rappel sur le
+bug moteur Depth-fog (#97875/#92019) ne s'applique donc pas a cette scene**,
+verifie et pas suppose. Occlusion `1-exp(-d*0,016)` reproduit EXACTEMENT les
+trois figures deja publiees (30,6% / 39,3% / 47,4% a r=12,6/21,4/30,5, azimut
+0, "vu depuis le centre"). Extrapole a r=40 -> **54,7%** (45,3% de couleur
+propre), r=45 -> **58,1%** (41,9%) -- degradation continue, jamais "efface".
+
+⚠️ **Ma premiere formule de HAUTEUR A L'ECRAN (H*px_per_unit sur la distance
+euclidienne) etait FAUSSE, et la mesure REELLE l'a prouve.** Elle predisait
+spire=222,6px a r=40 (1080x1920) ; le VRAI `HubCamera.unproject_position()`
+sur la scene livree donne **300,2px**. Cause : la camera est tiltee -34° et
+la hauteur du landmark (8,45u) n'est pas petite devant la distance (22,8-
+54,4u), donc le HAUT du landmark est reellement plus proche de la camera que
+sa BASE -- l'approximation lineaire H/D casse. **Chiffres retenus =
+UNIQUEMENT ceux mesures sur `HubCamera` reelle** (Keepy et camera repositionnes
+exactement a l'origine avant mesure, `SubViewportContainer.stretch` desactive
+le temps de la mesure) :
+
+| r | 1080x1920 spire | 1170x2532 spire |
+|---|---|---|
+| 12,6 (existant) | 618px | 670px |
+| 21,4 (existant) | 461px | 500px |
+| 30,5 (existant) | 365px | 396px |
+| **40,0** | **300px** | **325px** |
+| **45,0** | **275px** | **297px** |
+
+Degradation continue et lisible en pixels (aucun effondrement brutal), mais
+**PAS de conclusion "lisible" ou "illisible" tiree ici** -- seule la mesure
+est rapportee.
+
+⚠️ **Capture offscreen REELLE produite** (`xvfb-run --rendering-driver
+opengl3`, un vrai `_make_landmark_spire()` construit par `HubBuilder`, pas un
+stand-in), a r=40 : la silhouette du spire reste distinctement identifiable a
+l'oeil contre le ciel/fog, plus attenuee que le spire existant a r=12,6 dans
+la meme image -- confirme visuellement la degradation mesuree.
+
+⚠️ **CAVEAT NON RESOLU, signale plutot que cache** : un ECHANTILLON DE PIXEL
+REEL (pas une formule) sur un spire jetable a r=40, **azimut 20°** (hors axe,
+pas azimut 0) donne une occlusion de fog mesuree a **~35%**, contre 54,7%
+predit par la formule azimut-0/distance-euclidienne extrapolee a ce meme
+rayon. La formule azimut-0 reste la bonne convention pour "vu en approchant
+le landmark" (c'est celle deja etablie par les lots B/C/D), mais elle
+SURESTIME l'occlusion hors axe -- donc les 54,7%/58,1% ci-dessus sont un
+MAJORANT prudent (pessimiste sur la lisibilite), pas une prediction exacte
+pour toute position d'approche. Cause exacte non investiguee (disproportionne
+pour cette recon) -- a re-ouvrir si un futur lot pose un landmark hors axe et
+a besoin d'un chiffre precis plutot qu'une borne.
+
+**Q4 -- SURFACE NAVIGABLE** : lac existant (`hub_layout.tres`, scale=1,0) =
+eau r=8,0 -> **201,06 u² de surface**, traversee diametrale en bateau a
+8,0u/s = **2,000s**. Largement assez de PLACE pour un trace libre dans
+l'absolu -- mais **`HubStreamRoute` est structurellement 1D** (arc-length
+sur UNE courbe fixe, `project()`/`point_at()` n'ont aucune notion de
+position 2D libre) : la contrainte n'est pas la taille du lac, c'est que rien
+dans l'architecture actuelle ne sait representer un mouvement 2D libre.
+
+**Q5 -- REUTILISATION DU RAIL** : OUI, mecaniquement. `HubStreamRoute._init(spine:
+Array)` accepte N'IMPORTE QUEL tableau de points -- rien ne le lie au
+`&"stream"` du layout. `KeepyHopper.board(route, half_width, toward)` est
+deja generique sur `HubStreamRoute`. **`_centripetal(points, per_span)` de
+`HubBuilder` ne lit AUCUN etat d'instance** (verifie : aucune reference `self`
+dans son corps) -- trivialement `static`. Ce qu'il faudrait changer : marquer
+`_centripetal` `static` (ou l'exposer publiquement) pour qu'un futur input de
+drag puisse construire une route a chaud SANS dupliquer l'algorithme -- la
+duplication serait exactement le piege `SubstituteModel.tscn` deja paye une
+fois sur cet ecran. Le mouvement resterait 1D le long de la courbe dessinee
+(pas un pilotage libre continu), coherent avec Q4.
+
+**Q6 -- PONTONS** : y=0 est suppose PARTOUT dans le hop ordinaire, verifie
+dans le code, pas suppose -- `_hop_from`/`_hop_to`/`_target`/le landing final
+de `_on_hop_finished()` sont TOUS explicitement aplatis a y=0
+(`Vector3(x, 0.0, z)`), et `hop_to(point)` jette le y de `point` a l'entree.
+Il n'existe AUCUN parametre de hauteur d'atterrissage dans l'API. Pour un
+ponton affleurant a `STREAM_SURFACE_Y=0,095` : la confirmation demandee par
+le brief ("aucune modification necessaire") est VRAIE seulement en pratique,
+pas par construction -- 0,095u est assez petit (comparer a `HOP_HEIGHT=0,6`,
+aux hauteurs de landmark 8+u) pour probablement lire comme negligeable, dans
+la meme famille que `RIDE_SEAT_Y=0,14` deja qualifie "NEAR ENOUGH" par son
+propre commentaire -- mais ce n'est PAS verifie par un rendu, et un ponton
+sensiblement plus haut (un vrai quai souleve) casserait visiblement.
+
+**Q7 -- GESTE DRAG SUR SAFARI iOS** : deja en place -- `touch-action: none`
+sur `body` (herite par `#canvas`), `user-scalable=no` en meta viewport,
+`overflow: hidden`. Precedent fort : `scripts/input/SwipeDetector.gd`, deploye
+et valide sur iPhone, MAIS il ne lit que PRESSE+RELACHE (`InputEventScreenTouch`),
+jamais `InputEventScreenDrag` en continu -- **verifie par grep : zero occurrence
+de `InputEventScreenDrag` dans tout le depot**, donc un drag CONTINU (necessaire
+pour dessiner un trace) n'a jamais ete exerce par ce projet. Manque, si un drag
+long/lent devait etre ajoute : aucun `overscroll-behavior` (mitigation standard
+du rubber-band iOS, absente de `html_shell.html`) ; aucun listener JS
+`touchmove`/`preventDefault` custom -- toute la suppression tactile au-dela du
+CSS depend du runtime web compile de Godot, non inspectable depuis ce depot ;
+et le geste edge-swipe-back de Safari (UIScreenEdgePanGestureRecognizer,
+systeme) n'est pas garanti supprime par `touch-action:none` seul pres du bord
+gauche. **Rien modifie.**
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre le `Content-Length` -- 50 276 070
+et 1 073 228 327 octets). Import headless **exit 0**, **24 `.scn`**. Export
+Web release **exit 0, 0 erreur GDScript**. `index.wasm` **35 376 909**
+octets / md5 **`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. **Piege payload
+verifie sur le log `savepack`** : **0** ligne `Storing File` pour
+`res://scripts/dev` sur 39 lignes au total -- `LakeZoneReconProbe.*` bien
+exclu.
+
+`ProbeTimeoutAudit` (**41 sondes scenes**, toutes armees -- la nouvelle
+comprise), `AssetContractAudit` (12/12 visuels, 0/10 colliders deplaces),
+`DeathModelAudit`, `ChargerShapeProbe` -- toutes exit 0.
+
+### Reste ouvert -- decisions de Mathieu, pas des questions techniques
+
+1. **Extension de zone** : forme (carre H<=40, ou peninsule L jusqu'a 15 sans
+   cout de traversee mesurable) ; aucune n'est appliquee ici.
+2. **Le caveat fog hors axe** (Q3) -- borne prudente publiee, pas un chiffre
+   precis pour toute position.
+3. **Le systeme de navigation libre** (Q4/Q5) reste a concevoir si voulu --
+   ce lot montre que le RAIL (`HubStreamRoute`/`board()`) est reutilisable
+   tel quel pour une route construite a chaud, mais qu'aucun mouvement 2D
+   libre n'existe dans l'architecture actuelle.
+
+`main` **touche uniquement par le merge RIDE-1** (Etape 0). Ce lot de recon
+merge sur `staging` : palier 1, automatique.
