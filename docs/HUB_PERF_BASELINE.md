@@ -100,6 +100,7 @@ instead of a one-off number in a session report.
 |---|---|---|---|---|---|---|---|---|
 | 25 aout 2026 | baseline (no Meshy asset yet) | 45.3–52.4 | 55 | 61 | 14.5–16.4 | 7.7–12.4 | 5 833 104 | 35 376 909 / `af4a8fc2` |
 | 25 aout 2026 | `KeepyHopper.HOP_DURATION` 0.35 → 0.28 (hop tuning; **no scene, no layout, no prop, no camera change**) | 47.8–65.3 | 55 | 61 | 15.1–16.7 | 8.7–10.4 | 5 833 088 | 35 376 909 / `af4a8fc2` |
+| 25 aout 2026 | `HubTapInput.PLATEAU_HALF_EXTENT` 25 → 35 **+ 4 landmarks at r ~30** (far ring; no camera change, no `HOP_*` change, no new prop type) | 36.8–38.8 | **72** | **78** | 27.0–27.6 | 14.8–19.6 | 5 833 648 / 5 833 728 | 35 376 909 / `af4a8fc2` |
 
 **Reading of the second row.** The **draw node counts are the numbers
 that matter here, and they are identical to the baseline on all three
@@ -117,3 +118,84 @@ Keepy never moves during the sample.
 `CLAUDE.md` — not a signal. `index.wasm` is byte-identical (same size,
 same md5), the expected result for a change that touches no engine code,
 and it is that file, not the `.pck`, that carries the identity check.
+
+**Reading of the third row — READ THE CONTROL RUNS FIRST, NOT THE BASELINE
+ROW.** This row's FPS figures (27.0–27.6 mean) are roughly **double** the
+baseline row's (14.5–16.4). That is **not a speed-up**, and reading it as
+one would be the single most likely mistake this file can invite: it is a
+different day on a shared-CPU sandbox, and this run's llvmpipe simply had
+more of the machine. The only comparison worth anything here is against
+**three BEFORE runs taken in the same session, on the same machine, minutes
+apart, on the parent commit**:
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, parent commit) | 38.5 / 40.1 / 42.6 | 55 | 61 | 26.5–27.3 | 14.8–21.0 |
+| AFTER (3 runs, this commit) | 36.8 / 38.1 / 38.8 | **72** | **78** | 27.0–27.6 | 14.8–19.6 |
+
+**The draw node counts are the numbers that matter, and they are the only
+ones that moved outside noise.** 55 → 72 excluding portals, 61 → 78 total:
+exactly **+17 individual `MeshInstance3D`**, which is exactly what four
+landmarks cost at cairn 5 + spire 4 + cairn 5 + slabs 3. The 8 MultiMesh
+batches are untouched, as they must be — landmarks are not batched (see
+`HubBuilder.gd`'s header for why). That leaves **188 under the 260
+ceiling**, against 205 before.
+
+Everything else is inside the sandbox's own documented noise, and in the
+direction that proves it: construction is *lower* after adding 17 nodes
+(36.8–38.8 vs 38.5–42.6) and FPS mean is flat (27.0–27.6 vs 26.5–27.3).
+Construction genuinely getting faster while the tree grows is not a real
+effect — it is the noise floor, restated. FPS min overlaps on the low end
+at 14.8 on both sides.
+
+And, as with every row here: **none of this is evidence about a device.**
+A software renderer with no GPU cannot tell you whether four more silhouettes
+at 30 units read well or cost anything on a phone. What it can tell you is
+that nothing structural changed, and that the node budget moved by exactly
+the amount predicted before the change was made.
+
+`index.pck` is 5 833 648 on one clean export of this commit and 5 833 728 on
+a second — the pre-existing instability documented in `CLAUDE.md`, here
+bracketing rather than hidden behind a single number. Both are ~560–640
+bytes over the previous row, consistent with 24 added lines of layout data
+and an edited docblock. `index.wasm` is **byte-identical** (35 376 909,
+md5 `af4a8fc2`) to both earlier rows, the expected result for a change that
+touches no engine code — and it, not the `.pck`, is the identity check.
+Payload trap re-checked on this export's own `savepack` log: **0** `Storing
+File` lines for `assets_source`, `scripts/dev`, `docs` or `web`, out of 219
+stored files.
+
+**Deployed to staging.** CI run #226 (`web-build.yml`) green on `staging`
+`aa10500` — read at the JOB level (`build-and-deploy`: completed / success,
+all 17 steps, staging deploy 13:18:46 → 13:18:58 UTC), because the RUN-level
+status stayed frozen on `in_progress` with `updated_at` stuck at 13:14:25.
+That frozen-run trap is already recorded against runs #201 and #202 in
+`CLAUDE.md`; the job level and the served build both settle it.
+
+Verified **on the live service, not just the CI log**, in both directions and
+on two independent markers:
+
+| marker | before | after |
+|---|---|---|
+| `CACHE_VERSION` (`index.service.worker.js`) | `1787658495\|4288515` (11:48:15, run #224) | `1787663911\|4242878` (≈13:18:31, inside run #226's export step 13:18:26–13:18:32) |
+| `GODOT_CONFIG.fileSizes.index.pck` (`index.html`) | 5 833 088 | **5 833 616** |
+| `GODOT_CONFIG.fileSizes.index.wasm` | 35 376 909 | 35 376 909 (unchanged, as expected) |
+
+Both "before" readings (13:14:55 and 13:15:11) and both "after" readings
+(13:20:54 and 13:21:16) came back `x-vercel-cache: MISS` with `age: 0`, so
+neither end is a frozen CDN copy.
+
+⚠️ **The lot D reading trap reproduced twice, and was refused both times.**
+Re-reads at 13:16:05 and 13:18:20 came back `x-vercel-cache: HIT` with
+`age` 53 and 189 — copies frozen before the deploy landed. A HIT with a
+non-zero age is not a freshness measurement. Note also that a `?query`
+cache-buster does NOT work here: Vercel normalises it away for these static
+assets, so both busted reads hit the same cached object. What does work is
+waiting for the new deployment (a new deployment has its own cache, so the
+first read after it MISSes) or requesting a path not yet in the CDN cache.
+
+The served `.pck` (5 833 616) differs from both local clean exports of this
+same commit (5 833 648 / 5 833 728) by tens of bytes — the same documented
+`.pck` instability the row above brackets, not a different build. The
+`.wasm` is identical everywhere, and it is the file that carries the
+identity check.

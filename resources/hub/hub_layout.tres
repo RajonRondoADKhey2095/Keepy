@@ -519,6 +519,30 @@ props = [{
 "type": &"landmark",
 "variant": 2
 }, {
+"position": Vector3(11.634, 0, 28.086),
+"rotation_y": -34.0,
+"scale": 1.060,
+"type": &"landmark",
+"variant": 1
+}, {
+"position": Vector3(28.455, 0, -11.787),
+"rotation_y": 71.0,
+"scale": 1.120,
+"type": &"landmark",
+"variant": 0
+}, {
+"position": Vector3(-11.557, 0, -27.901),
+"rotation_y": 148.0,
+"scale": 1.000,
+"type": &"landmark",
+"variant": 1
+}, {
+"position": Vector3(-28.548, 0, 11.825),
+"rotation_y": -103.0,
+"scale": 1.090,
+"type": &"landmark",
+"variant": 2
+}, {
 "position": Vector3(-14.73, 0, 7.79),
 "rotation_y": 114.8,
 "scale": 0.678,
