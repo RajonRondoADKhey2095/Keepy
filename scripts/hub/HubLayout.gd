@@ -25,7 +25,8 @@ class_name HubLayout
 ## and a dozen [sub_resource] blocks between the author and the numbers.
 ##
 ##   type        StringName  &"portal", &"rock", &"tree", &"bush",
-##                           &"flower", &"stump", &"pond" or &"landmark"
+##                           &"flower", &"stump", &"pond", &"lake" or
+##                           &"landmark"
 ##   position    Vector3     world position, y is ignored for props that
 ##                           sit on the ground (they are placed AT y = 0)
 ##   rotation_y  float       degrees
@@ -40,7 +41,7 @@ class_name HubLayout
 ##
 ## WHICH TYPES ARE BATCHED. rock / tree / bush / flower are drawn as
 ## MultiMesh instances, one batch per unique (mesh, colour) pair;
-## portal / landmark / stump / pond are individual nodes. That split is
+## portal / landmark / stump / pond / lake are individual nodes. That split is
 ## HubBuilder's business and changes nothing here -- an entry looks the
 ## same either way -- but it is worth knowing that adding a hundred
 ## flowers costs a hundred instances and no new nodes, while adding a

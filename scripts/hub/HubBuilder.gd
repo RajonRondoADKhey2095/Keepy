@@ -52,12 +52,17 @@ class_name HubBuilder
 ##             batching them would trade 31 nodes for ~12 and lose the
 ##             per-variant readability of the tree.
 ##   pond      one instance on the plateau. There is nothing to batch,
-##             and it is the only ALPHA-BLENDED surface on this screen.
+##             and it is the only ALPHA-BLENDED surface on this screen --
+##             together with lake, below.
+##   lake       one instance, same reason as pond: nothing to batch. It is
+##             built by the same _make_water_body() the pond is, so the two
+##             cannot drift apart on the z-fight heights or on the
+##             transparency flag that has to be asked for.
 ##   stump     14 on the plateau at one mesh each. Batching would save 13
 ##             nodes out of the ~220 this change frees; measured and left
 ##             individual until the count makes the indirection worth it.
 ##
-## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond have never
+## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond / lake have never
 ## had a CollisionShape3D -- grepped, not assumed -- so nothing on the
 ## plateau depends on a per-prop physics node. The ground is not a
 ## collider either: HubTapInput intersects a maths Plane rather than
@@ -123,6 +128,40 @@ const _FLOWER_PETAL_KEYS: Array[StringName] = [
 ## screen with no relation to anything else on it.
 const POND_WATER_COLOR: Color = Color(0.16, 0.30, 0.36, 0.55)
 const POND_BANK_COLOR: Color = Color(0.22, 0.21, 0.15)
+const POND_WATER_RADIUS: float = 3.2
+const POND_BANK_RADIUS: float = 3.62
+const POND_SEGMENTS: int = 24
+
+## The lake -- the pond's silhouette at 2.5x, far out in the outer ring as
+## a second, bigger destination. LOCAL to the hub for the same reason every
+## other decor colour here is: SwampPalette carries the identity Chased and
+## the plateau share, not the plateau's own scenery.
+##
+## A DIFFERENT HUE, not merely a lighter pond. Measured rather than eyeballed:
+## the pond's water is hsv(198.0, 0.56, 0.36) -- a dark teal sitting right on
+## the cyan edge -- and this is hsv(221.5, 0.63, 0.82), a light blue.
+## 23.5 degrees of hue apart, which crosses the teal/blue boundary rather
+## than sliding along it, and 0.46 of value on top. Under fog both converge
+## on the same near-black swamp green, so leaning on brightness alone would
+## have made them indistinguishable exactly where the lake is furthest away
+## and most in need of reading as its own thing.
+const LAKE_WATER_COLOR: Color = Color(0.30, 0.46, 0.82, 0.55)
+
+## 2.5x the pond on both discs (3.2 -> 8.0, 3.62 -> 9.05), so the rim keeps
+## the same proportion rather than becoming a hairline on a much bigger disc.
+const LAKE_WATER_RADIUS: float = 8.0
+const LAKE_BANK_RADIUS: float = 9.05
+
+## Deliberately NOT the pond's 24, and not 2.5x it either. What matters is
+## the ABSOLUTE facet deviation, and that scales with the radius: a circle
+## of radius 8.0 drawn with the pond's 24 segments would bulge inward by
+## 0.068 units between vertices against the pond's own 0.027 -- visibly
+## faceted at this size, on the largest flat surface on the plateau. 40
+## segments bring it to 0.0247 (bank 0.0279), i.e. marginally FLATTER per
+## facet than the pond despite 2.5x the radius, for 16 extra segments.
+## Still a low, explicit tessellation -- the docs/MESHY_SPEC.md 7.2 rule --
+## just calibrated to the size instead of inherited from a smaller disc.
+const LAKE_SEGMENTS: int = 40
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
 const LANDMARK_SPIRE_CROWN: Color = Color(0.38, 0.58, 0.30)
@@ -184,6 +223,8 @@ func _build() -> void:
 					node = _make_stump()
 				&"pond":
 					node = _make_pond()
+				&"lake":
+					node = _make_lake()
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -371,29 +412,35 @@ func _make_stump() -> Node3D:
 ## Two flat discs, not one: an opaque bank slightly wider than the water,
 ## so the alpha surface has a rim to end on. Both are CylinderMesh rather
 ## than PlaneMesh -- a plane is single-sided, and a viewer who ever sees
-## this screen from below the horizon would find the pond simply absent.
+## this screen from below the horizon would find the water simply absent.
 ##
 ## The heights are what keep it out of a z-fight with the ground. The
 ## ground is a PlaneMesh at exactly y = 0; the bank's underside sits at
 ## 0.005 and the water's at 0.02, so neither is ever coplanar with it.
-func _make_pond() -> Node3D:
+## They are NOT scaled with the radius: a lake-sized slab 0.15 thick would
+## show its own edge, which is the one thing a flat water surface must not
+## do.
+##
+## Shared by pond and lake so the two cannot drift apart on either of the
+## traps above.
+func _make_water_body(water_radius: float, bank_radius: float, segments: int, water_colour: Color) -> Node3D:
 	var root := Node3D.new()
 
 	var bank := CylinderMesh.new()
-	bank.top_radius = 3.62
-	bank.bottom_radius = 3.62
+	bank.top_radius = bank_radius
+	bank.bottom_radius = bank_radius
 	bank.height = 0.05
-	bank.radial_segments = 24
+	bank.radial_segments = segments
 	bank.rings = 1
 	root.add_child(_mesh_node(bank, POND_BANK_COLOR, Vector3(0.0, 0.03, 0.0)))
 
 	var water := CylinderMesh.new()
-	water.top_radius = 3.2
-	water.bottom_radius = 3.2
+	water.top_radius = water_radius
+	water.bottom_radius = water_radius
 	water.height = 0.06
-	water.radial_segments = 24
+	water.radial_segments = segments
 	water.rings = 1
-	var surface := _mesh_node(water, POND_WATER_COLOR, Vector3(0.0, 0.05, 0.0))
+	var surface := _mesh_node(water, water_colour, Vector3(0.0, 0.05, 0.0))
 	var material := surface.get_surface_override_material(0) as StandardMaterial3D
 	# Alpha blending, and it has to be asked for: albedo_color's alpha
 	# channel is ignored entirely while transparency stays at DISABLED, so
@@ -401,6 +448,16 @@ func _make_pond() -> Node3D:
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	root.add_child(surface)
 	return root
+
+func _make_pond() -> Node3D:
+	return _make_water_body(POND_WATER_RADIUS, POND_BANK_RADIUS, POND_SEGMENTS, POND_WATER_COLOR)
+
+## The lake. Same two discs as the pond, 2.5x across, in a light blue of
+## its own -- see LAKE_WATER_COLOR for why a different HUE and not just a
+## brighter pond. The bank reuses POND_BANK_COLOR on purpose: a bank is a
+## bank, the same reasoning that has a stump share the trees' bark colour.
+func _make_lake() -> Node3D:
+	return _make_water_body(LAKE_WATER_RADIUS, LAKE_BANK_RADIUS, LAKE_SEGMENTS, LAKE_WATER_COLOR)
 
 ## An orientation marker, readable from the far side of the plateau.
 ##
