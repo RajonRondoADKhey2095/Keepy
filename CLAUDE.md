@@ -13739,3 +13739,71 @@ mesh, aucun materiau et ne touche aucune constante de jeu.
    sortie en cours de trajet est possible. Hors perimetre de cette recon.
 4. **Aucun jugement device n'est possible sur ce lot** — il n'ajoute rien de
    visible.
+### ⚠️ QUATRIEME INCIDENT DE SESSIONS CONCURRENTES — le lot G a ete brieffe DEUX fois (25 aout 2026)
+
+**La regle n°1 de ce fichier a ete enfreinte une quatrieme fois** (precedents
+des 6 et 11 aout, puis 21 aout). Deux sessions ont recu le meme brief de recon
+lot G, avec deux noms de branche quasi identiques :
+`claude/stream-geometry-measure-3dnlsr` (l'incumbent) et
+`claude/stream-geometry-measure-fasmdp` (celle-ci).
+
+**Resolu au moindre cout des quatre, et pour la raison que l'incident du
+11 aout avait nommee** : le `git fetch --all --prune` a ete fait **AVANT
+d'ecrire une ligne**. La collision est apparue immediatement — `origin/staging`
+portait deja `1d06c18` (la sonde) et son merge `97ab1db`, pousses ~2 minutes
+plus tot. **Cette session n'a donc produit AUCUN doublon a abandonner** : zero
+ligne de sonde ecrite, contre ~3 h de travail duplique au 11 aout. Elle s'est
+convertie en **verification independante**, comme la session du 21 aout.
+
+⚠️ **Rien dans l'outillage n'a signale la collision, une quatrieme fois.** Le
+seul indice etait la presence de `origin/claude/stream-geometry-measure-3dnlsr`
+dans `git branch -r` — un nom a **un suffixe pres** du mien, ce qui rend la
+lecture par nom encore plus fragile qu'aux incidents precedents. **Ce qui a
+tranche en une commande est le tri des refs distantes par date de commit**
+(`git for-each-ref --sort=-committerdate`), qui a mis la branche incumbente et
+`origin/staging` en tete a 20:42 et 20:43.
+
+#### Verification independante : les chiffres du lot G se reproduisent TOUS
+
+Re-derivation **en Python pur, hors moteur**, depuis le texte brut de
+`resources/hub/hub_layout.tres` — donc sans la sonde livree, sans Godot (ni
+editeur ni templates dans ce sandbox), et sans reutiliser une seule de ses
+lignes : parseur `PackedVector3Array` par regex, transcription independante de
+`_centripetal()` relue dans `HubBuilder.gd`, rejeu de la regle de
+`_advance()` relue dans `KeepyHopper.gd`.
+
+| grandeur | lot G (publie) | **cette verification** |
+|---|---|---|
+| points lus sans mesh (R1) | 12, `width` 1,2 | **12, `width` 1,2** ✅ |
+| polyline `L_arc` / `L_corde` / ratio | 41,1150 / 36,8702 / 1,115127 | **identiques** ✅ |
+| polyline rayon min | 3,5022 @6 | **identique** ✅ |
+| spine : echantillons | 89 | **89** ✅ |
+| spine `L_arc` / ratio | 41,2837 / 1,119703 | **identiques** ✅ |
+| spine rayon min | 1,4058 @48 (2,34x la demi-largeur 0,6) | **identiques** ✅ |
+| HEAD / TAIL | (17,58 ; 0 ; 6,67) / (-18,54 ; 0 ; -0,73) | **identiques** ✅ |
+| hops / frames / nominal / quantifie | 25 / 17 / 7,0000 s / 7,0833 s | **identiques** ✅ |
+| **vitesse de ride minimale (R4)** | **> 5,8283 u/s** | **> 5,8283 u/s** ✅ |
+| vitesse au sol de la chaine de hops | 5,2941 u/s (ratio 1,101x) | **identiques** ✅ |
+| props a moins de 3 u (R5) | 2 souches HEAD + 1 rocher TAIL | **identiques au centieme** ✅ |
+
+**Aucun ecart, sur aucune ligne.** Le `1,4058` recoupe une troisieme fois le
+`1,403` du lot stream, cette fois par un chemin qui ne passe ni par le mesh
+construit ni par la sonde qui le relit.
+
+⚠️ **Ce que cette verification NE couvre PAS, dit plutot que sous-entendu** :
+elle ne rejoue pas la PHASE B de la sonde (la confrontation de la
+transcription aux sommets de l'`ArrayMesh` livre, ecart 4,77e-7) — **aucun
+Godot n'est installe dans ce sandbox** et le telecharger pour un lot doc-only
+ne se justifiait pas. C'est la seule assertion du lot G qui reste sur la seule
+parole de l'incumbent ici. **Elle a en revanche ete validee par la CI** : le
+run **#235** (id 32896953382) sur `staging` `97ab1db` est **`conclusion:
+success`**, donc l'import + l'export Web de ces deux fichiers de sonde passent
+exit 0 sur le commit exact.
+
+**`exclude_filter` couvre bien le nouveau fichier** — `export_presets.cfg`
+porte `scripts/dev/*` dans son `exclude_filter` (relu, pas suppose), et
+`StreamGeometryProbe.{gd,tscn}` est sous ce glob.
+
+**Ce lot ne touche aucun fichier de jeu et n'ajoute aucune sonde** : son diff
+est ce document seul. `scripts/dev/StreamGeometryProbe.*` reste l'artefact
+unique du lot G, celui de l'incumbent.
