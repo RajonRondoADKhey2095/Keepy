@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=17 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://scripts/hub/HubCamera.gd" id="4"]
 [ext_resource type="Script" path="res://scripts/hub/HubTapInput.gd" id="5"]
 [ext_resource type="Script" path="res://scripts/hub/HubRouter.gd" id="6"]
+[ext_resource type="Script" path="res://scripts/hub/BoatMooring.gd" id="12"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -134,6 +135,11 @@ script = ExtResource("5")
 camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
 container_path = NodePath("../WorldViewport")
 viewport_path = NodePath("../WorldViewport/SubViewport")
+mooring_path = NodePath("../Mooring")
+
+[node name="Mooring" type="Node" parent="."]
+script = ExtResource("12")
+camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
 
 [node name="Router" type="Node" parent="."]
 script = ExtResource("6")

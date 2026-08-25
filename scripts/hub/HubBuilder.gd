@@ -61,11 +61,16 @@ class_name HubBuilder
 ##   stream    one instance, and its mesh is a one-off ribbon built for its
 ##             own trace -- there is no shared mesh for a MultiMesh to
 ##             repeat. It is the third ALPHA-BLENDED surface here.
+##   boat      one instance, and it is MOVED every frame of a ride. A
+##             MultiMesh instance can be moved, but the hull also has to be
+##             handed to BoatMooring as a node -- and there is exactly one,
+##             so there is nothing to batch either way.
 ##   stump     14 on the plateau at one mesh each. Batching would save 13
 ##             nodes out of the ~220 this change frees; measured and left
 ##             individual until the count makes the indirection worth it.
 ##
-## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond / lake / stream have never
+## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond / lake /
+## stream / boat have never
 ## had a CollisionShape3D -- grepped, not assumed -- so nothing on the
 ## plateau depends on a per-prop physics node. The ground is not a
 ## collider either: HubTapInput intersects a maths Plane rather than
@@ -204,6 +209,119 @@ const STREAM_SURFACE_Y: float = 0.095
 ## curve's sagitta: doubling it halves the flat-edge deviation.
 const STREAM_SAMPLES_PER_SPAN: int = 8
 
+## =====================================================================
+## THE BOAT, AND WHY ITS LENGTH IS A CALCULATION AND NOT A TASTE
+##
+## The hull rides the stream spine, so it has to fit inside the ribbon at
+## the TIGHTEST bend the trace takes. Both numbers come from the shipped
+## geometry rather than from a guess: StreamGeometryProbe measures the
+## spine's minimum radius of curvature at 1.4058 u (sample 48) and the
+## ribbon's half-width is the layout's own width / 2 = 0.6 u.
+##
+## A RIGID hull of length L and beam B, centred on the spine and turned
+## along the tangent, has its worst point at an OUTER CORNER. On a circle
+## of radius R that corner sits at
+##
+##     sqrt((R + B/2)^2 + (L/2)^2)
+##
+## from the circle's centre, so it leaves the spine by that minus R. The
+## hull stays on the water while
+##
+##     sqrt((R + B/2)^2 + (L/2)^2) - R  <=  half-width
+##
+## At R = 1.4058, half-width 0.6, the shipped BOAT_LENGTH 0.78 and
+## BOAT_BEAM 0.86 give 0.4709 u of corner excursion -- 0.1291 u of margin.
+## The brief's ceiling of 0.80 x 1.00 would give 0.5415 and only 0.0585,
+## which is why neither is taken to its limit. That inequality is asserted
+## on the built spine by StreamRideProbe rather than left as a comment:
+## re-trace the stream and the margin moves, and it must fail loudly if it
+## ever goes negative.
+##
+## The corner form is CONSERVATIVE for this hull -- the shell is rounded,
+## so its real extreme is inside the rectangle the formula bounds. Being
+## conservative is the point: a bound that a future, boxier hull would
+## still satisfy.
+const BOAT_LENGTH: float = 0.78
+const BOAT_BEAM: float = 0.86
+
+## Depth of the shell below its rim, and the width of the rim lip.
+const BOAT_DEPTH: float = 0.24
+const BOAT_RIM: float = 0.09
+
+## Ring/tier counts on the shell. Explicit, low, and calibrated to a hull
+## under a metre across -- the same reasoning LAKE_SEGMENTS carries, and
+## the same trap (a primitive left at Godot's default tessellation) that
+## docs/MESHY_SPEC.md 7.2 caught on the collectibles.
+const BOAT_RADIAL_SEGMENTS: int = 16
+const BOAT_TIERS: int = 4
+
+## How far the inner shell is set inside the hull, so the dark outer wall
+## still reads as a thickness at the rim.
+const BOAT_INNER_INSET: float = 0.06
+
+## Height of the RIM above the ground plane.
+##
+## MEASURED, after the first version was wrong in a way no error reported.
+## The shell hangs BOAT_DEPTH below its rim, so at the original 0.16 the
+## keel sat at -0.08 -- under the ground plane, which is opaque at y = 0.
+## Everything below the waterline was therefore clipped by the ground and
+## the boat rendered as a hollow RING with the lake visible straight
+## through it. Caught on a render, not in review; the geometry was correct
+## the whole time and simply drawn inside the floor.
+##
+## At 0.30 the keel sat at 0.06, which cleared the floor but left a SECOND
+## artifact the same render showed: the stream's own surface is at
+## STREAM_SURFACE_Y = 0.095, ABOVE that keel, so the water plane cut
+## through the inside of the shell and a sliver of stream was visible in
+## the bottom of the boat.
+##
+## 0.34 puts the keel at 0.10 -- five millimetres over the stream's
+## surface and two centimetres over the lake's, so it seats ON the
+## waterline with nothing showing through, and the gap is far too small to
+## read as hovering at a hull this size.
+const BOAT_FLOAT_Y: float = 0.34
+
+## Hull colours, LOCAL to the hub like every other decor colour in this
+## file -- SwampPalette carries the identity Chased and the plateau share,
+## not a prop tint.
+##
+## A nutshell, so the outside is bark-dark and close to the trees it came
+## from; the rim is the cut edge, and the INSIDE is lighter still.
+##
+## The inner shell is not decoration. MEASURED on a render: with the hull
+## drawn as one double-sided surface, what the camera sees of a bowl at
+## this pitch is mostly the INSIDE of the far wall -- so a single dark
+## tone made the boat read as a hole in the bank rather than as an object,
+## the more so because it moors on the lake's own dark bank ring. Three
+## tones, dark outside to light inside, is what turns the same silhouette
+## into an open shell.
+##
+## The hull is also lifted off the trees' bark colour rather than sharing
+## it (the way stump does): a stump beside a tree is telling a story, a
+## boat lost against a bank is just missing.
+const BOAT_HULL_COLOR: Color = Color(0.33, 0.21, 0.12)
+const BOAT_INNER_COLOR: Color = Color(0.74, 0.60, 0.40)
+const BOAT_RIM_COLOR: Color = Color(0.88, 0.76, 0.55)
+
+## Ground footprint radius per prop type, in LOCAL units (multiplied by the
+## entry's uniform scale at read time). Used by the ride's disembark search
+## to refuse a bank point that is already occupied.
+##
+## These are the AT-GROUND radii, deliberately NOT the silhouettes: a tree
+## TRUNK is 0.24 while its crown is 0.95, but the crown floats two metres
+## up. A trunk in the water is a bug; a crown overhanging it is what a real
+## tree beside a stream does. That distinction is the same one the lot G
+## routing measured with, so the two agree by construction.
+const FOOTPRINT_RADIUS: Dictionary = {
+	&"tree": 0.24,
+	&"rock": 0.44,
+	&"bush": 0.71,
+	&"flower": 0.22,
+	&"stump": 0.44,
+	&"landmark": 1.66,
+	&"portal": 1.35,
+}
+
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
 const LANDMARK_SPIRE_CROWN: Color = Color(0.38, 0.58, 0.30)
 const LANDMARK_CAIRN_STONE: Color = Color(0.44, 0.45, 0.40)
@@ -212,6 +330,14 @@ const LANDMARK_SLAB_STONE: Color = Color(0.36, 0.44, 0.32)
 const LANDMARK_SLAB_BASE: Color = Color(0.26, 0.30, 0.23)
 
 var _portals: Array[HubPortal] = []
+
+## The one &"boat" node, and the spine of the one &"stream", both kept so
+## the ride can be handed the geometry that was actually BUILT rather than
+## a second derivation of it. Null / empty when the layout carries neither,
+## which is a legal plateau -- the ride simply does not exist there.
+var _boat: Node3D = null
+var _stream_spine: Array = []
+var _stream_half_width: float = 0.0
 
 ## Batch key -> {"mesh": Mesh, "colour": Color, "xforms": Array[Transform3D]}.
 ## Filled while the layout is walked, drained once at the end by
@@ -231,6 +357,48 @@ func _ready() -> void:
 ## build rather than the builder knowing what a portal is wired to.
 func portals() -> Array[HubPortal]:
 	return _portals
+
+## The hull built for the one &"boat" entry, or null if the layout has
+## none. Owned by this node; BoatMooring only moves it.
+func boat() -> Node3D:
+	return _boat
+
+## The spine of the one &"stream" entry -- the SAMPLED centripetal curve
+## this file ribboned, not the layout's control points.
+##
+## Handed over rather than re-derived on purpose: the drawn curve bulges
+## outside the chords of a polyline through the same control points, so a
+## rider following the control points would leave the water on every bend.
+## One curve in the build, and the ride is on it.
+func stream_spine() -> Array:
+	return _stream_spine
+
+## Half the width of the one &"stream", as it was built. The ride needs it
+## to know where the bank is; it is layout data, so it is reported from
+## here rather than re-read from the resource by a second caller.
+func stream_half_width() -> float:
+	return _stream_half_width
+
+## Every prop's ground footprint, as {"position": Vector3, "radius": float},
+## read from the LAYOUT rather than from the built tree -- batched props
+## have no node of their own to measure, and a stream/boat has no single
+## position at all. Both are skipped: neither is something to land on top
+## of, and neither has a meaningful ground radius.
+func ground_footprints() -> Array:
+	var out: Array = []
+	if layout == null:
+		return out
+	for entry in layout.props:
+		var type: StringName = entry.get("type", &"")
+		if not FOOTPRINT_RADIUS.has(type):
+			continue
+		var where: Vector3 = entry.get("position", Vector3.ZERO)
+		var uniform: float = entry.get("scale", 1.0)
+		out.append({
+			"position": Vector3(where.x, 0.0, where.z),
+			"radius": float(FOOTPRINT_RADIUS[type]) * uniform,
+		})
+	return out
 
 func _build() -> void:
 	if layout == null:
@@ -268,6 +436,8 @@ func _build() -> void:
 					node = _make_lake()
 				&"stream":
 					node = _make_stream(entry)
+				&"boat":
+					node = _make_boat()
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -302,6 +472,11 @@ func _build() -> void:
 			node.rotation_degrees = Vector3(0.0, rotation_y, 0.0)
 			node.scale = Vector3.ONE * uniform
 			add_child(node)
+			if type == &"boat":
+				if _boat != null:
+					push_error("HubBuilder: a second &\"boat\" entry at %d; the ride owns one hull, the extra is drawn but never moored." % index)
+				else:
+					_boat = node
 	_flush_batches()
 
 ## Files a scatter prop into its batches. Returns false for a type that
@@ -564,7 +739,11 @@ func _make_stream(entry: Dictionary) -> Node3D:
 		push_error("HubBuilder: a stream needs a positive width, got %f." % width)
 		return null
 	var half: float = width * 0.5
+	_stream_half_width = half
 	var spine: Array = _centripetal(trace, STREAM_SAMPLES_PER_SPAN)
+	# Kept so HubStreamRoute can be handed the curve that was BUILT.
+	# See stream_spine() for why it is not re-derived from the trace.
+	_stream_spine = spine
 
 	var left: Array = []
 	var right: Array = []
@@ -600,6 +779,108 @@ func _make_stream(entry: Dictionary) -> Node3D:
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	node.set_surface_override_material(0, material)
 	return node
+
+## An open nutshell, floating in the stream.
+##
+## SYMMETRIC FORE AND AFT, deliberately: the ride is bidirectional (its
+## direction comes from where the player tapped, not from the layout), so
+## a hull with a bow would be pointing the wrong way half the time and
+## would need an orientation this file has no way to know. A shape with no
+## front cannot be back to front.
+##
+## Built with SurfaceTool and NOT a CSG node, for the four reasons
+## _make_stream() spells out -- there is not one CSG node in this
+## repository, CSG is a runtime solver carrying a use_collision flag this
+## screen must not grow, segment control here is direct, and a CSG node
+## could not go through _unshaded().
+##
+## The shell is drawn DOUBLE-SIDED and hollow rather than as a closed
+## solid: one surface then reads as a bowl from above and as a hull from
+## the side, which is both the cheaper mesh and the shape a walnut half
+## actually is. It carries NO collider, like every other prop here -- the
+## ride is driven by an abscissa along HubStreamRoute, never by physics.
+func _make_boat() -> Node3D:
+	var root := Node3D.new()
+	var shell := _mesh_node(_boat_shell_mesh(), BOAT_HULL_COLOR, Vector3(0.0, BOAT_FLOAT_Y, 0.0))
+	# The shell is an open surface, so its inside faces AWAY from the
+	# camera: at the default cull mode the bowl would be an invisible hole
+	# with a rim floating over it. Same class of trap as the ponds' alpha
+	# flag -- correct-looking geometry, nothing drawn, and no error to say
+	# so. The rim is a flat annulus seen from above and needs no such help.
+	var shell_material: StandardMaterial3D = shell.get_surface_override_material(0)
+	shell_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	root.add_child(shell)
+	# The hollow, drawn as its own slightly smaller shell in the light
+	# tone. Inset so the dark outer wall still shows as a thickness at the
+	# rim rather than the two surfaces meeting exactly.
+	var inner := _mesh_node(_boat_shell_mesh(BOAT_INNER_INSET), BOAT_INNER_COLOR,
+		Vector3(0.0, BOAT_FLOAT_Y + 0.005, 0.0))
+	var inner_material: StandardMaterial3D = inner.get_surface_override_material(0)
+	inner_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	root.add_child(inner)
+	root.add_child(_mesh_node(_boat_rim_mesh(), BOAT_RIM_COLOR, Vector3(0.0, BOAT_FLOAT_Y, 0.0)))
+	return root
+
+## The hull: the lower half of an ellipsoid, keel at -BOAT_DEPTH, rim at 0.
+##
+## Parameterised by a quarter turn so the wall is vertical at the rim and
+## flat at the keel -- a straight-sided cone would read as a bucket, and a
+## hemisphere with the rim's radius would sit too deep for a hull under a
+## metre long.
+func _boat_shell_mesh(inset: float = 0.0) -> ArrayMesh:
+	var half_beam: float = BOAT_BEAM * 0.5 - inset
+	var half_length: float = BOAT_LENGTH * 0.5 - inset
+	var tool := SurfaceTool.new()
+	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for tier in BOAT_TIERS:
+		var phi_a: float = PI * 0.5 * float(tier) / float(BOAT_TIERS)
+		var phi_b: float = PI * 0.5 * float(tier + 1) / float(BOAT_TIERS)
+		for seg in BOAT_RADIAL_SEGMENTS:
+			var th_a: float = TAU * float(seg) / float(BOAT_RADIAL_SEGMENTS)
+			var th_b: float = TAU * float(seg + 1) / float(BOAT_RADIAL_SEGMENTS)
+			var quad: Array = [
+				_boat_shell_point(phi_a, th_a, half_beam, half_length),
+				_boat_shell_point(phi_b, th_a, half_beam, half_length),
+				_boat_shell_point(phi_b, th_b, half_beam, half_length),
+				_boat_shell_point(phi_a, th_a, half_beam, half_length),
+				_boat_shell_point(phi_b, th_b, half_beam, half_length),
+				_boat_shell_point(phi_a, th_b, half_beam, half_length),
+			]
+			for vertex in quad:
+				tool.set_normal(Vector3.UP)
+				tool.add_vertex(vertex)
+	var mesh: ArrayMesh = tool.commit()
+	return mesh
+
+func _boat_shell_point(phi: float, theta: float, half_beam: float, half_length: float) -> Vector3:
+	var r: float = sin(phi)
+	return Vector3(
+		half_beam * r * sin(theta),
+		-BOAT_DEPTH * cos(phi),
+		half_length * r * cos(theta))
+
+## The cut edge of the shell: a flat annulus at the rim, in the lighter
+## tint. Small, and it is what makes the hollow legible at the size this is
+## drawn -- without it the bowl reads as a dark blob.
+func _boat_rim_mesh() -> ArrayMesh:
+	var inner_beam: float = BOAT_BEAM * 0.5
+	var inner_length: float = BOAT_LENGTH * 0.5
+	var outer_beam: float = inner_beam + BOAT_RIM
+	var outer_length: float = inner_length + BOAT_RIM
+	var tool := SurfaceTool.new()
+	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for seg in BOAT_RADIAL_SEGMENTS:
+		var th_a: float = TAU * float(seg) / float(BOAT_RADIAL_SEGMENTS)
+		var th_b: float = TAU * float(seg + 1) / float(BOAT_RADIAL_SEGMENTS)
+		var ia := Vector3(inner_beam * sin(th_a), 0.0, inner_length * cos(th_a))
+		var ib := Vector3(inner_beam * sin(th_b), 0.0, inner_length * cos(th_b))
+		var oa := Vector3(outer_beam * sin(th_a), 0.0, outer_length * cos(th_a))
+		var ob := Vector3(outer_beam * sin(th_b), 0.0, outer_length * cos(th_b))
+		for vertex in [ia, oa, ob, ia, ob, ib]:
+			tool.set_normal(Vector3.UP)
+			tool.add_vertex(vertex)
+	var mesh: ArrayMesh = tool.commit()
+	return mesh
 
 ## Centripetal Catmull-Rom (alpha = 0.5) through the control points.
 ##
