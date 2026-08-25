@@ -102,6 +102,20 @@ instead of a one-off number in a session report.
 | 25 aout 2026 | `KeepyHopper.HOP_DURATION` 0.35 → 0.28 (hop tuning; **no scene, no layout, no prop, no camera change**) | 47.8–65.3 | 55 | 61 | 15.1–16.7 | 8.7–10.4 | 5 833 088 | 35 376 909 / `af4a8fc2` |
 | 25 aout 2026 | `HubTapInput.PLATEAU_HALF_EXTENT` 25 → 35 **+ 4 landmarks at r ~30** (far ring; no camera change, no `HOP_*` change, no new prop type) | 36.8–38.8 | **72** | **78** | 27.0–27.6 | 14.8–19.6 | 5 833 648 / 5 833 728 | 35 376 909 / `af4a8fc2` |
 | 25 aout 2026 | new `&"lake"` prop type: **one** water body at (-25.10, -5.30), 2.5x the pond (water r 8.0, bank r 9.05, 40 segments) + 4 rim rocks (batched) + 3 props relocated out of its footprint. **No camera, no `HOP_*`, no `PLATEAU_HALF_EXTENT` change.** | 43.3–46.6 | **74** | **80** | 15.2–16.6 | 8.1–12.9 | 5 834 608 | 35 376 909 / `af4a8fc2` |
+| 25 aout 2026 | new `&"stream"` prop type: **one** hand-built ribbon connecting the pond to the lake, 12 control points, width 1.2, 176 triangles. **No prop moved, no camera, no `HOP_*`, no `PLATEAU_HALF_EXTENT` change.** | 46.2–49.7 | **75** | **81** | 16.3–17.0 | 12.0–12.6 | 5 838 128 | 35 376 909 / `af4a8fc2` |
+
+**Reading of the stream row.** **+1 draw node, exactly the one the change
+adds**, identical on all three runs — a stream is a single one-off ribbon
+mesh, so there is nothing for a `MultiMesh` to repeat and nothing else in
+the tree moved. That is the number this row exists to carry. Construction
+(46.2–49.7 ms) sits inside the band every previous row has occupied, and
+the FPS figures overlap the baseline's; neither is offered as evidence the
+plateau got faster or slower, because this sandbox renders through
+llvmpipe and 176 triangles is not a quantity a software rasteriser
+notices. `index.pck` grows by 3 520 octets against the lake row — the
+layout entry plus the builder code — and is offered only as corroboration,
+never as proof: its size is not stable between exports of the same commit.
+`index.wasm` is byte-identical, which is the actual identity check.
 
 **Reading of the second row.** The **draw node counts are the numbers
 that matter here, and they are identical to the baseline on all three
