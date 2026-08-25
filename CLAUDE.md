@@ -12445,3 +12445,25 @@ l'origine**, ce qui est la forme visible qu'aurait prise le piege
    consignee au lot C s'applique en plein a elle.
 5. **205 noeuds de marge** sous le plafond. Le prochain lot qui densifie
    n'a plus le refactor MultiMesh devant lui.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`98a7ac9`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `4a89fd38` des deux cotes, verifie AVANT
+le push). CI run **#216** (id `32827408790`). **`main` NON touche**
+(`origin/main` toujours `77548dc`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE et DANS LES DEUX SENS** -- `CACHE_VERSION` de
+`index.service.worker.js` de `keepy-staging.vercel.app` :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #214, lot C docs) | `1787641860` | **07:11:00** |
+| **apres (ce lot, run #216)** | **`1787647099`** | **08:38:19** |
+
+L'epoch d'apres tombe dans la fenetre du run #216 (demarre 08:35:27), avec
+`x-vercel-cache: MISS` et `age: 0`. L'ancienne valeur a ete **relue a
+08:36:18 pendant que le job tournait** (toujours `1787641860`,
+`x-vercel-cache: HIT`) : le job avancait donc REELLEMENT au lieu d'etre un
+cache perime, et la bascule est prouvee dans les deux sens.
