@@ -99,3 +99,21 @@ instead of a one-off number in a session report.
 | date | change | construction (ms) | draw nodes (excl. portals) | draw nodes (total) | FPS mean | FPS min | index.pck | index.wasm |
 |---|---|---|---|---|---|---|---|---|
 | 25 aout 2026 | baseline (no Meshy asset yet) | 45.3–52.4 | 55 | 61 | 14.5–16.4 | 7.7–12.4 | 5 833 104 | 35 376 909 / `af4a8fc2` |
+| 25 aout 2026 | `KeepyHopper.HOP_DURATION` 0.35 → 0.28 (hop tuning; **no scene, no layout, no prop, no camera change**) | 47.8–65.3 | 55 | 61 | 15.1–16.7 | 8.7–10.4 | 5 833 088 | 35 376 909 / `af4a8fc2` |
+
+**Reading of the second row.** The **draw node counts are the numbers
+that matter here, and they are identical to the baseline on all three
+runs** — as they must be: this change edits one float in one script and
+adds nothing to the tree. Everything else on the row is inside the
+sandbox's own documented noise. Construction overlaps the baseline range
+on two of three runs and puts one at **65.3 ms**, above it; FPS mean and
+min both overlap. Nothing here is evidence of a cost, and — read the
+warning above — **nothing here is evidence of a gain on a device
+either**: this probe cannot see a hop at all, because it never taps, so
+Keepy never moves during the sample.
+
+`index.pck` is 16 bytes under the baseline, which is a comment edit in a
+`.gd` plus the permanent `.pck` instability already documented in
+`CLAUDE.md` — not a signal. `index.wasm` is byte-identical (same size,
+same md5), the expected result for a change that touches no engine code,
+and it is that file, not the `.pck`, that carries the identity check.
