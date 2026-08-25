@@ -12107,3 +12107,122 @@ true`, piege deja paye au lot A.
    lot B, posee ici a une distance 1,7x plus grande.
 5. **259 MeshInstance3D, une de marge.** Le refactor `MultiMeshInstance3D`
    n'est plus reportable si un lot futur veut densifier.
+
+## HUB : LE DECOR PASSE EN MultiMeshInstance3D -- PHASE 0, la recon et la baseline (25 aout 2026)
+
+Branche `claude/hub-decor-refactor-props-jxfu6a`, partie de `main`
+(`77548dc`). Le lot C (plateau 25) est **deja en prod** : `main..staging`
+est VIDE et `main` porte le merge en plus, donc `origin/main` est la ref la
+plus a jour du depot. Aucune session concurrente (les refs les plus recentes
+sont toutes cette chaine de lots).
+
+Le lot precedent se termine sur « **259 MeshInstance3D, une de marge** ». Ce
+lot ouvre le budget avant d'ajouter quoi que ce soit, et cette section
+consigne la mesure d'AVANT -- elle est ecrite avant que la moindre ligne de
+`HubBuilder.gd` ne bouge, pour qu'il n'y ait pas a la reconstituer apres coup.
+
+### BASELINE MESUREE, sur la scene livree et pas deduite du layout
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles confirmees contre le `Content-Length`** --
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0**, **24 `.scn`**, 0 erreur. Sonde jetable qui instancie
+`HubWorld.tscn` cinq fois et compte le sous-arbre `Props` :
+
+| mesure | valeur |
+|---|---|
+| `MeshInstance3D` dans `Props` (total) | **265** |
+| dont a l'interieur des 3 `HubPortal.tscn` | 6 |
+| **construites par `HubBuilder`** | **259** |
+| `MultiMeshInstance3D` | **0** |
+| `instantiate()` + `_ready()` (5 passes) | **moyenne 19,8 ms** (min 13,3 / max 42,8) |
+
+Le 259 **reproduit au noeud pres** le chiffre publie par le lot C, ce qui
+valide la sonde avant qu'on lui fasse confiance sur l'apres. Detail par type,
+recompte sur le `.tres` (146 entrees) :
+
+| type | entrees | meshes / entree | total |
+|---|---|---|---|
+| tree | 39 | 2 (fut + houppier) | 78 |
+| rock | 42 | 1 | 42 |
+| bush | 29 | 2 (une seule mesh, deux offsets) | 58 |
+| flower | 25 | 2 (tige + corolle) | 50 |
+| landmark | 8 | 4 / 5 / 3 selon la silhouette | 31 |
+| **HubBuilder** | **143** | | **259** |
+| portal | 3 | 2 (dans `HubPortal.tscn`) | 6 |
+
+⚠️ **Pas de proxy FPS.** Ce sandbox rend en llvmpipe sous xvfb ; un chiffre
+d'images par seconde mesure la ferme de CPU, pas le telephone. Ce qui est
+mesure a la place est ce qui est reellement comparable d'un arbre a l'autre :
+le nombre de noeuds de dessin et le cout de construction de l'ecran.
+
+### ⚠️ LE NOMBRE DE MULTIMESH N'EST PAS LE NOMBRE DE TYPES -- il est de HUIT
+
+L'unite de batch est la paire **(mesh, couleur)**, et elle ne coincide avec
+aucun type semantique :
+
+| batch | mesh | instances |
+|---|---|---|
+| `TreeTrunk` | `CylinderMesh` 0,16/0,24 x 1,5 | 39 |
+| `TreeCrown` | `SphereMesh` r 0,95 h 1,7 | 39 |
+| `Rock` | `SphereMesh` r 0,6 h 0,8 | 42 |
+| `Bush` | `SphereMesh` r 0,5 h 0,7 | **58** *(2 lobes par buisson, MEME mesh)* |
+| `FlowerStem` | `CylinderMesh` 0,025/0,035 x 0,42 | 25 |
+| `FlowerPetal0/1/2` | `SphereMesh` r 0,15 h 0,14 | 8 / 8 / 9 |
+
+Trois faits que seule la lecture du code donne : **un arbre alimente DEUX
+batches** (fut et houppier sont deux meshes) ; **un buisson alimente DEUX
+INSTANCES d'un seul batch** (ses deux lobes partagent la meme `SphereMesh` a
+deux offsets, `_make_bush` reutilise litteralement la variable) ; et **la
+corolle se scinde en TROIS** parce que ses trois teintes sont trois dessins
+differents. Les trois `SphereMesh` d'arbre/rocher/buisson ont des rayons et
+des tessellations differents : ce sont bien trois meshes, pas une.
+
+### AUCUNE COLLISION N'EST PERDUE -- verifie par grep, pas suppose
+
+`grep -rn "CollisionShape3D\|StaticBody3D\|Area3D\|RigidBody3D\|CharacterBody3D"`
+sur `scripts/hub/` et les scenes du hub ne rend que **`HubPortal`** (un
+`Area3D` avec son `Shape`). `tree` / `rock` / `bush` / `flower` sont des
+`Node3D` + `MeshInstance3D`, rien d'autre. Le sol n'est pas un collider non
+plus : `HubTapInput` intersecte un `Plane` mathematique plutot que de lancer
+un raycast, et son propre commentaire dit pourquoi. **Le passage en MultiMesh
+ne peut donc rien coster en collision**, et les portails -- les seuls noeuds
+qui en ont une, et les seuls auxquels `HubWorld` connecte un signal --
+restent des noeuds individuels.
+
+### ⚠️ LA DOC ETAIT FAUSSE SUR LE GARDE-FOU DE BORNES
+
+Le lot C ecrit qu'un refactor MultiMesh « demanderait de re-cabler le
+garde-fou de bornes, **qui inspecte des noeuds** ». **C'est faux, et c'est le
+code qui le dit** : le garde-fou vit dans `HubBuilder._build()` et lit
+`entry.get("position")` **dans le dictionnaire du layout**, avant meme que le
+noeud n'existe --
+
+```gdscript
+var where: Vector3 = entry.get("position", Vector3.ZERO)
+var bound: float = HubTapInput.PLATEAU_HALF_EXTENT
+if absf(where.x) > bound or absf(where.z) > bound:
+    push_warning(...)
+```
+
+Il est donc **pilote par la DONNEE et pas par l'arbre de scene**, et un prop
+batche le franchit exactement comme un prop-noeud. **Rien a recabler.** Le
+seul soin a prendre est de garder l'ORDRE des messages : le garde-fou tire
+apres que le type a ete reconnu, donc un type inconnu produit un
+`push_error` et **aucun** avertissement de bornes -- une inversion changerait
+stderr sans changer le jeu.
+
+### Ce que la phase 0 laisse comme decisions, prises et non subies
+
+* **Couleur par instance ecartee.** `MultiMesh.use_colors` +
+  `vertex_color_use_as_albedo` fondrait `FlowerPetal0/1/2` en un seul noeud.
+  Non retenu : ca ferait diverger le materiau livre de celui que ce fichier
+  construisait, sur un lot que personne ne peut regarder avant staging, pour
+  economiser deux noeuds sur un budget que ce lot vide de toute facon. Trois
+  noeuds portant le materiau exact d'avant, c'est la version dont la parite
+  se PROUVE.
+* **`custom_aabb` pose explicitement.** `MultiMesh.custom_aabb` existe bien
+  en 4.3 (verifie a l'execution, pas lu de memoire). Une AABB fausse ou
+  perimee fait disparaitre tout un batch quand la camera tourne, **sans
+  aucune erreur attachee** -- l'union exacte est bon marche a calculer ici,
+  donc elle est ecrite plutot que laissee au calcul implicite.
