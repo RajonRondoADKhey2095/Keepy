@@ -13500,3 +13500,37 @@ defaut du ruban. Corrige, et re-mesure.
 5. **Le ruisseau arque devant la place des portails.** Il ne les approche
    pas (9,25 minimum), mais c'est un ajout visuel notable sur l'ecran par
    lequel passe l'acces a tous les jeux.
+
+### Deploiement staging du ruisseau (palier 1, automatique)
+
+`staging` **`7e7822c`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `afdcddcf` des deux cotes, verifie AVANT le push).
+CI run **#232** (id 32873944898). **`main` NON touche** (`origin/main` toujours
+`92d00be`, verifie apres le push) : palier 2, gate Mathieu apres validation
+device.
+
+**Verifie SUR LE SERVICE et sur DEUX marqueurs independants**, chacun lu aux
+deux bouts :
+
+| marqueur | avant (run #230) | apres (ce lot, run #232) |
+|---|---|---|
+| `CACHE_VERSION` | `1787670247` = **15:04:07** | **`1787676542` = 16:49:02** *(dans la fenetre du run #232, demarre 16:46:19)* |
+| `index.pck` servi | **5 834 576** | **5 838 064** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+Les quatre lectures utiles portent `x-vercel-cache: MISS` et `age: 0`. La
+valeur AVANT du `CACHE_VERSION` a ete relevee **avant le merge**, donc la
+bascule est prouvee dans les deux sens et pas deduite du log CI.
+
+⚠️ **Le piege de lecture s'est reproduit et a ete REFUSE** : une lecture faite
+~45 s apres le push est revenue `x-vercel-cache: HIT` avec **`age: 45`** --
+une copie CDN figee avant le deploiement. **Un HIT avec un `age` non nul n'est
+pas une mesure de fraicheur**, donc elle n'a pas ete comptee ; les lectures
+suivantes ont ete cache-bustees par un parametre de requete.
+
+⚠️ **L'API GitHub Actions a de nouveau servi des reponses PERIMEES** : deux
+appels `list_workflow_jobs` successifs avec `filter: "all"` ont rendu une
+reponse **byte-identique**, figee sur « Import project resources /
+in_progress » a 16:46:45, bien apres que le build ait avance. Enieme
+reproduction du piege deja consigne ; c'est le `CACHE_VERSION` servi qui a
+tranche, comme aux runs #201, #202, #226 et #229.
