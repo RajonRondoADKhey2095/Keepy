@@ -13778,6 +13778,44 @@ dessus ; sous le driver DUMMY le rect du conteneur est 0x0 et la fonction
 sort avant de projeter quoi que ce soit — un vert qui ne veut rien dire.
 Meme famille que le piege deja paye sur cet ecran au lot `mouse_filter`.
 
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`4ff3611`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `25ece069` des deux cotes, verifie AVANT
+le push). CI run **#237** (id 32903307934) **verte** — `Deploy to Vercel
+[STAGING -- staging]` succes a 21:58:04, `[PRODUCTION -- main]` correctement
+**skipped**. **`main` NON touche** (`origin/main` toujours `ab62ba6`, verifie
+apres le push) : palier 2, gate Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants et DANS LES DEUX SENS** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787692117` = **21:08:37** | **`1787695057` = 21:57:37** *(dans l'etape `Export Web build` du run #237, 21:57:32 -> 21:57:38)* |
+| `index.pck` servi | **5 838 064** | **5 853 728** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+Les valeurs AVANT ont ete lues **avant le merge**, et les quatre lectures
+utiles portent `x-vercel-cache: MISS` avec `age: 0` — la bascule est donc
+prouvee dans les deux sens et pas deduite du log. Le `.pck` servi est 80
+octets au-dessus de l'export local propre (5 853 648) : l'instabilite deja
+documentee, pas un autre build.
+
+⚠️ **Le piege HIT/age s'est reproduit TROIS fois et a ete refuse les trois
+fois** (age 50, 80 puis 244). Detail utile : c'est ma PROPRE lecture de
+21:52:14 qui avait rempli le cache de bord, et un parametre de requete
+different n'a pas suffi a le contourner. **Un HIT avec un `age` non nul
+n'est pas une mesure de fraicheur**, quel que soit le cache-bust.
+
+⚠️ **NUANCE HONNETE sur le piege « API Actions perimee » : ici elle ne
+l'etait PAS.** Un appel intermediaire montrait le job fige sur « Checkout /
+21:52:38 », ce qui ressemble exactement au piege deja consigne — mais le
+checkout de ce run a reellement dure **2 min 12 s** (21:52:38 -> 21:54:50),
+et l'import **2 min 21 s**. La reponse etait juste. **Ne pas conclure a une
+API perimee sans regarder si l'etape en cours peut simplement etre lente** ;
+c'est le meme reflexe que la regle `completed_at`, dans l'autre sens.
+
 ### Reste ouvert — jugement device, seul juge
 
 1. **La coque est BEAUCOUP plus petite que Keepy a l'ecran** (0.78 x 0.86
