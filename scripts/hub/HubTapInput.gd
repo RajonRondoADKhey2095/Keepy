@@ -72,7 +72,26 @@ var viewport: SubViewport = null
 ## clamped to the edge rather than ignored: a tap near the horizon is a
 ## player asking to go as far as they can, and refusing it silently reads
 ## as the screen being broken.
-const PLATEAU_HALF_EXTENT: float = 11.0
+##
+## Widened 11 -> 15 for the landmark batch, then 15 -> 25 for the outer
+## ring. This is the ONLY place the limit is written: HubBuilder reads it
+## for its out-of-bounds warning rather than carrying a second copy, so
+## widening here widens both at once. Camera OFFSET, fov, pitch and
+## HOP_DISTANCE are deliberately NOT touched with it -- the camera follows
+## Keepy, so a bigger plateau costs nothing in framing, and the fog closes
+## the horizon long before the 600x600 ground plane runs out (measured at
+## 25: the furthest ground point any frame corner can reach is |axis| 59.8
+## against the plane's +-300).
+##
+## WHAT A CROSSING COSTS AT 25, measured on the shipped hopper at a fixed
+## 60fps rather than derived: 25 units is 17 chained hops = 5.95s, and the
+## chain is automatic -- KeepyHopper._on_hop_finished calls _advance(), so
+## ONE tap buys the whole journey. Aimed FORWARD (-Z) the far edge is
+## inside the frustum, so it really is one tap; aimed SIDEWAYS it is 6,
+## because the camera keeps only a 45-degree HORIZONTAL fov and a single
+## tap can never reach more than 4.82 units to the side. That asymmetry is
+## the real cost of widening, not the hop count.
+const PLATEAU_HALF_EXTENT: float = 25.0
 
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
