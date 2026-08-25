@@ -12914,3 +12914,31 @@ c'est ce que `ProbeTimeoutAudit` a 38 confirme.
 5. Inchange et toujours ouvert par ailleurs : les **~5-6 taps lateraux**
    pour traverser (le vrai cout d'un plateau large, deja mesure au lot D),
    et l'arbitrage du rayon 35 que le lot D a laisse a Mathieu.
+
+### Deploiement staging du lot E (palier 1, automatique)
+
+`staging` **`e838169`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `d554baf4` des deux cotes, verifie AVANT
+le push). CI run **#223** (id `32843414686`) **verte** (11:39:10 -> 11:42:33
+UTC), `conclusion: success`. **`main` NON touche** (`origin/main` toujours
+`ffcc552`, verifie apres le push) : palier 2 gate par Mathieu, et il pese
+**plus lourd que d'habitude ici** — ce lot change le RESSENTI du deplacement
+partout dans le hub, pas seulement sur les longs trajets.
+
+**Verifie SUR LE SERVICE, pas dans le log CI** — `CACHE_VERSION` de
+`index.service.worker.js` de `keepy-staging.vercel.app` :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #222) | `1787657053` | **11:24:13** |
+| **apres (ce lot, run #223)** | **`1787658121`** | **11:42:01** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre du run #223**, avec
+`x-vercel-cache: MISS` et `age: 0` sur les deux lectures utiles.
+
+⚠️ **Le piege de lecture consigne au lot D s'est reproduit a l'identique et
+a ete refuse plutot que compte** : une relecture faite ~2 min apres le push
+est revenue `x-vercel-cache: HIT` avec **`age: 172`** — une copie CDN figee
+AVANT le deploiement. **Un HIT avec un `age` non nul n'est pas une mesure de
+fraicheur**, donc cette lecture n'a pas ete comptee comme la lecture
+« pendant que le job tourne » ; c'est la lecture MISS/age 0 qui tranche.
