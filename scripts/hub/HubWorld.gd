@@ -126,6 +126,7 @@ func _ready() -> void:
 	_keepy.ride_moved.connect(_on_ride_moved)
 	_keepy.ride_started.connect(_on_ride_started)
 	_keepy.ride_ended.connect(_on_ride_ended)
+	_keepy.became_idle.connect(_on_keepy_idle)
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -267,14 +268,27 @@ func _on_hop_landed(position: Vector3) -> void:
 ## who tapped the boat and walked to it cannot arrive and be told they are
 ## not there yet.
 func _try_board(toward: Vector3) -> bool:
-	_boarding = false
 	if _route == null or not _mooring.is_available():
+		_boarding = false
 		return false
 	var here := _keepy.global_position
 	if here.distance_to(_mooring.boat_position()) > BoatMooring.BOARD_TAP_RADIUS:
+		# NOT YET, and the intent SURVIVES. Clearing it here was this
+		# batch's one real defect: a boarding walk longer than a single
+		# hop lost its intent on the first landing, so Keepy finished the
+		# walk standing beside the boat and never got in. It passed the
+		# probe anyway until an unrelated tap was added ahead of it and
+		# pushed the walk one hop further out -- the green had only ever
+		# been the arrival happening to fall inside the radius on hop one.
 		return false
+	_boarding = false
 	_keepy.board(_route, _ride_half_width, toward)
 	return true
+
+## The chain ran out without reaching the hull. Drops the intent rather
+## than leaving it armed: a later, unrelated landing must not board.
+func _on_keepy_idle() -> void:
+	_boarding = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches

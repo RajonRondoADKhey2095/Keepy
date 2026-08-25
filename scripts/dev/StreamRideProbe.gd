@@ -42,6 +42,10 @@ var _checks: int = 0
 ## written up in CLAUDE.md; it cost this file a run to re-learn.
 var _portal_entries: int = 0
 
+## Tap counters, members for the same reason as the one above.
+var _tapped_boat: int = 0
+var _tapped_ground: int = 0
+
 func _ready() -> void:
 	# Armed FIRST, before anything that could itself hang. arm() covers the
 	# frame-driven half, deadline() the blocking half -- this probe has
@@ -67,6 +71,7 @@ func _ready() -> void:
 	_phase_hull(route, half_width, builder)
 	_phase_speed(keepy, route)
 	_phase_tap(mooring)
+	await _phase_board(hub, keepy, mooring)
 	await _phase_portals(hub, keepy, route, half_width, builder)
 	await _phase_eject(keepy, route, half_width, builder)
 	_phase_mooring(mooring, route, keepy)
@@ -179,6 +184,82 @@ func _phase_tap(mooring: BoatMooring) -> void:
 		"a tap outside the radius is NOT a boarding tap")
 	_check(not mooring.accepts_boarding_tap(Vector3.ZERO),
 		"a tap in the middle of the plateau is NOT a boarding tap")
+	print("")
+
+## ---------------------------------------------------------------------
+## The whole boarding gesture, end to end, through the REAL tap handler.
+##
+## PHASE TAP checks the mooring's answer; this checks that the answer is
+## actually reached -- HubTapInput's branch, HubWorld's arming, the hop
+## chain, and the landing that boards. Driven by projecting the hull back
+## to a screen point and feeding it to _handle_point, so the container rect
+## and the ray projection are exercised rather than stepped around.
+##
+## This is why the probe must run under xvfb: --headless forces the DUMMY
+## driver, where the container rect is 0x0 and _handle_point returns before
+## it projects anything -- a green that means nothing.
+func _phase_board(hub: Node, keepy: KeepyHopper, mooring: BoatMooring) -> void:
+	print("--- PHASE BOARD: one tap, from screen point to aboard ---")
+	var camera: Camera3D = hub.get_node("WorldViewport/SubViewport/World/Camera3D")
+	var container: SubViewportContainer = hub.get_node("WorldViewport")
+	var viewport: SubViewport = hub.get_node("WorldViewport/SubViewport")
+	var tap: HubTapInput = hub.get_node("TapInput")
+
+	# Stand Keepy a few hops short of the hull and let the camera settle,
+	# so the hull is really on screen to be aimed at.
+	var boat: Vector3 = mooring.boat_position()
+	keepy.global_position = boat + Vector3(0.0, 0.0, 4.0)
+	for _i in 60:
+		await get_tree().process_frame
+
+	var rect: Rect2 = container.get_global_rect()
+	var local: Vector2 = camera.unproject_position(boat)
+	var screen: Vector2 = rect.position + Vector2(
+		local.x * rect.size.x / float(viewport.size.x),
+		local.y * rect.size.y / float(viewport.size.y))
+	print("  hull at (%.2f, %.2f) projects to screen %s (rect %s)" % [
+		boat.x, boat.z, screen, rect.size])
+	_check(rect.has_point(screen), "the hull projects inside the viewport rect")
+
+	tap.tapped_boat.connect(_count_boat_tap)
+	tap.tapped_ground.connect(_count_ground_tap)
+
+	# The control FIRST, while Keepy is still ashore: open ground well
+	# outside the radius must still reach tapped_ground. Run after
+	# boarding it would pass for the wrong reason -- the mooring refuses
+	# every boarding tap during a ride, so any tap would go to ground.
+	var far: Vector3 = boat + Vector3(0.0, 0.0, 8.0)
+	var far_local: Vector2 = camera.unproject_position(far)
+	var far_screen: Vector2 = rect.position + Vector2(
+		far_local.x * rect.size.x / float(viewport.size.x),
+		far_local.y * rect.size.y / float(viewport.size.y))
+	_check(rect.has_point(far_screen), "the open-ground control point is on screen")
+	_check(far.distance_to(boat) > BoatMooring.BOARD_TAP_RADIUS,
+		"and it really is outside the boarding radius (%.2f u)" % far.distance_to(boat))
+	_tapped_boat = 0
+	_tapped_ground = 0
+	tap._handle_point(far_screen)
+	_check(_tapped_ground == 1 and _tapped_boat == 0,
+		"a tap in open ground goes to tapped_ground (boat %d / ground %d)" % [
+			_tapped_boat, _tapped_ground])
+
+	_tapped_boat = 0
+	_tapped_ground = 0
+	tap._handle_point(screen)
+	_check(_tapped_boat == 1, "a tap on the hull emits tapped_boat once (%d)" % _tapped_boat)
+	_check(_tapped_ground == 0, "and does NOT emit tapped_ground (%d)" % _tapped_ground)
+
+	# One tap. No second one anywhere below: the chain walks itself.
+	var boarded: bool = false
+	for _i in 600:
+		await get_tree().process_frame
+		if keepy.is_riding():
+			boarded = true
+			break
+	_check(boarded, "that single tap carried Keepy all the way onto the boat")
+
+	tap.tapped_boat.disconnect(_count_boat_tap)
+	tap.tapped_ground.disconnect(_count_ground_tap)
 	print("")
 
 ## ---------------------------------------------------------------------
@@ -366,6 +447,12 @@ func _phase_nodes(builder: HubBuilder, dl: ProbeDeadline) -> void:
 
 func _count_portal_entry(_game_id: StringName, _label: String) -> void:
 	_portal_entries += 1
+
+func _count_boat_tap(_point: Vector3) -> void:
+	_tapped_boat += 1
+
+func _count_ground_tap(_point: Vector3) -> void:
+	_tapped_ground += 1
 
 func _inside_portal(node: Node) -> bool:
 	var walk: Node = node
