@@ -13535,6 +13535,273 @@ in_progress » a 16:46:45, bien apres que le build ait avance. Enieme
 reproduction du piege deja consigne ; c'est le `CACHE_VERSION` servi qui a
 tranche, comme aux runs #201, #202, #226 et #229.
 
+## HUB : LE RUISSEAU DEVIENT RIDABLE — une coque de noix, un seul tap, et AUCUN portail depuis le bateau (26 aout 2026)
+
+Branche `claude/ride-1-ridable-stream-8uswi8`. **Partie de `origin/staging`
+(`b102e0c`) et non de `main`** : la recon du lot G
+(`scripts/dev/StreamGeometryProbe.*`) que ce lot doit lire n'existe QUE sur
+`staging`, donc partir de `main` (`ab62ba6`, verifie conforme au brief)
+aurait rendu la tache 5 litteralement impossible. Regle n°1 verifiee AU
+DEBUT : `origin/staging` est la ref la plus recente du depot (21:04:39) et
+**aucune branche ne porte ce brief** — verifie en comparant les ARBRES
+(`git rev-parse <ref>^{tree}`) et pas seulement les noms, la lecon du
+quatrieme incident ou deux branches differaient d'un suffixe.
+
+**AUCUNE des trois constantes protegees n'est touchee**, verifie par
+`git diff` : `HubTapInput.PLATEAU_HALF_EXTENT` reste **35.0**,
+`KeepyHopper.HOP_DISTANCE` **1.5**, `HOP_DURATION` **0.28**, et
+`HubCamera.OFFSET`/`FOLLOW_LAMBDA`/`fov`/rotation sont intouches —
+`HubCamera.gd` n'est pas dans le diff du tout.
+
+### R1 -- les 12 points sont lisibles sans mesh, MAIS ce n'est pas eux qu'on ride
+
+Deja etabli par la recon et **re-verifie ici plutot que recopie** : l'entree
+`&"stream"` porte ses points en clair dans un `PackedVector3Array`, donc un
+`load()` suffit. Mais `HubBuilder` ne dessine PAS ces 12 points — il les
+passe par `_centripetal()` a 8 echantillons par span, ce qui donne **89
+echantillons**, et la spline BOMBE hors des cordes de la polyligne.
+
+**`HubStreamRoute` recoit donc le spine que `HubBuilder` a REELLEMENT
+construit** (`stream_spine()`), il ne le re-derive jamais. Une seconde
+transcription de la courbe serait un fixture libre de diverger de celle a
+l'ecran — le piege `SubstituteModel.tscn` exactement, et celui contre
+lequel `StreamGeometryProbe` se controle deja lui-meme.
+
+### La longueur de coque est un CALCUL, pas un gout
+
+Une coque rigide de longueur L et de largeur B, centree sur le spine et
+tournee le long de la tangente, a son pire point a un **COIN EXTERIEUR** :
+sur un cercle de rayon R il est a `sqrt((R + B/2)^2 + (L/2)^2)` du centre,
+donc il quitte le spine de cela moins R. La coque tient tant que
+
+```
+sqrt((R + B/2)^2 + (L/2)^2) - R  <=  demi-largeur du ruban
+```
+
+Mesure sur le spine CONSTRUIT (jamais sur la polyligne, qui plie moins) :
+R = **1.4058** au sample **48**, demi-largeur **0.6000**.
+
+| coque | excursion de coin | marge |
+|---|---|---|
+| **0.78 x 0.86 (livre)** | **0.4710** | **0.1290** |
+| 0.80 x 1.00 (le plafond du brief) | 0.5415 | 0.0585 |
+
+Aucun des deux axes n'est pousse a sa limite : le plafond ne laisserait que
+0.0585. **La forme de coin est CONSERVATRICE** pour une coque arrondie —
+c'est le but, un bord qu'une future coque plus cubique satisferait encore.
+Gate par `StreamRideProbe`, pas laisse en commentaire : re-tracer le
+ruisseau deplace la marge.
+
+⚠️ **La coque est SYMETRIQUE avant/arriere**, et pas par economie : le ride
+est bidirectionnel (son sens vient du tap, jamais du layout), donc une
+proue pointerait dans le mauvais sens une fois sur deux. Une forme sans
+avant ne peut pas etre a l'envers.
+
+### ⚠️ DEUX DEFAUTS DE RENDU TROUVES SUR CAPTURE, invisibles a la relecture
+
+Aucun n'a produit d'erreur ; les deux ont ete vus sur un rendu offscreen
+1080x1920 et corriges avec la mesure a l'appui.
+
+1. **La coque etait DESSINEE DANS LE SOL.** A `BOAT_FLOAT_Y = 0.16` la
+   quille tombait a **-0.08**, sous un plan de sol opaque a y = 0 : tout ce
+   qui etait sous le liston etait clippe par le plancher et le bateau
+   rendait comme un **ANNEAU CREUX** a travers lequel on voyait le lac. La
+   geometrie etait juste depuis le debut, simplement dessinee dans le
+   plancher.
+2. **Puis l'eau passait a travers la coque.** A 0.30 la quille etait a 0.06,
+   sous `STREAM_SURFACE_Y = 0.095` : le plan d'eau coupait l'interieur de
+   la coque et un eclat de ruisseau se voyait au fond du bateau.
+
+**Livre a 0.34** : quille a **0.10**, soit 5 mm au-dessus de la surface du
+ruisseau et 2 cm au-dessus de celle du lac — rien ne traverse, et l'ecart
+est bien trop petit pour se lire comme un survol. Les trois relations sont
+desormais **gatees** (`keel > 0`, `keel >= STREAM_SURFACE_Y`,
+`keel - STREAM_SURFACE_Y < 0.05`).
+
+⚠️ **Troisieme tone ajoute pour la meme raison** : a un seul tone la coque
+se lisait comme un TROU dans la berge, parce qu'a ce pitch la camera voit
+surtout l'INTERIEUR de la paroi opposee — et elle s'amarre justement sur
+l'anneau sombre du lac. Trois tones (coque sombre, interieur clair, liston
+plus clair) transforment la meme silhouette en coquille ouverte, pour
+**+1 noeud**.
+
+### RIDE_SPEED 8.0 -- le plancher 5.8283 est MESURE, pas choisi
+
+Le ruisseau MEANDRE : **41.2837 u** de spine contre **36.8702 u** de ligne
+droite entre les memes extremites (ratio **1.1197**), la ou une chaine de
+hops couvre cette droite en **25 hops de 17 frames**. Sous ce plancher, un
+rider qui parcourt le chemin le plus long arrive APRES quelqu'un qui a
+simplement saute — le bateau serait une facon plus lente de voyager qui a
+juste l'air plus jolie.
+
+| | temps |
+|---|---|
+| chaine de hops (25 hops, quantifie) | **7.0833 s** |
+| ride a 8.0 u/s | **5.1605 s** |
+
+`_ready()` **push_error** si `ride_speed` passe sous le plancher, et la
+sonde le gate : c'est ce qui empeche un futur reglage de le faire par
+accident. `ride_speed` est **exporte** (reglable depuis la scene) et le
+plancher est un `const` (lisible par une sonde sans instancier).
+
+### Un seul tap achete tout le voyage
+
+`HubTapInput` demande a la mooring, **en unites MONDE et AVANT toute
+resolution de destination**, si le doigt a atterri sur la coque. Rayon
+**2.5 u** : la coque fait 0.78 de long et serait une cible que personne ne
+peut toucher a cette distance de camera. **Exactement UN des deux signaux
+part par tap** — emettre les deux et laisser l'ecouteur choisir rendrait
+chaque tap ambigu en aval.
+
+Pendant un ride cette question repond **false**, donc le meme tap retombe
+sur le chemin sol — et c'est ca qui en fait un **eject**. Un tap, un
+signal, dans les deux cas.
+
+⚠️ **DEFAUT REEL TROUVE PAR LA SONDE, et il etait vert par CHANCE.**
+`_try_board` effacait l'intention de monter a bord **au PREMIER
+atterrissage**, qu'on soit arrive ou non : une marche de plus d'un hop
+finissait donc avec Keepy debout a cote de la coque sans jamais y entrer.
+La sonde le validait quand meme — jusqu'a ce qu'un tap de controle ajoute
+AVANT le tap bateau repousse la marche d'un hop. **Le vert n'avait jamais
+tenu qu'a ce que le premier atterrissage tombe dans le rayon.** L'intention
+survit desormais a un atterrissage de passage, et n'est lachee que sur un
+embarquement reussi, un autre tap, ou `became_idle`.
+
+### ⚠️ AUCUN PORTAIL N'EST DECLENCHE DEPUIS LE BATEAU
+
+C'est la pire chose que cette feature puisse faire, et le ruisseau arque
+justement devant la rangee de portails (9.25 u du plus proche). Un ride
+n'emet AUCUN `hop_landed`, donc la detection est muette gratuitement — et
+« gratuitement » est exactement le genre de garantie qui cesse
+silencieusement d'etre vraie, donc `_on_hop_landed` refuse en plus
+explicitement tant que `is_riding()`.
+
+**Prouve plutot que constate** : la sonde appelle `_on_hop_landed`
+directement avec le **CENTRE d'un portail** pendant le ride (0 declenche),
+tape sur un portail pendant le ride (0 declenche, et le ride se termine —
+c'etait un eject), puis rejoue le meme appel une fois a terre : **1
+declenche**. Le compteur bouge, donc les zeros sont des refus reels et pas
+un compteur mort.
+
+⚠️ **Et c'etait justement un compteur mort au premier run.** Le piege deja
+consigne dans ce fichier — **un lambda GDScript capture une LOCALE PAR
+VALEUR** — a repris la sonde en flagrant delit : les trois « 0 declenche »
+passaient pour la mauvaise raison. Corrige en membre de classe.
+
+### Sortie : un bond plus haut, sur une berge verifiee
+
+`EJECT_HOP_HEIGHT = 1.05` contre `HOP_HEIGHT = 0.6` — quitter un bateau est
+un evenement different de traverser le plateau, et l'arc est le seul canal
+qui le dit sans un son ni un mesh de plus. Le point d'atterrissage est
+verifie contre **166 empreintes au sol** tirees du layout ; s'il est
+occupe, la recherche marche **LE LONG** de la berge (et pas plus loin sur
+le cote : le cote est justement ou sont les props que la trace a ete routee
+pour degager).
+
+**Mesure sur 42 points d'eject** (21 abscisses x 2 cotes) : **0 atterrit
+encore sur l'eau**, **0 tombe dans une empreinte**, pire degagement
+**0.4785 u**. Arriver au bout du ruisseau debarque tout seul.
+
+⚠️ **Les empreintes sont AU SOL, pas les silhouettes** : un tronc fait 0.24
+quand son houppier fait 0.95 mais flotte a deux metres. Un tronc dans l'eau
+est un bug, un houppier au-dessus est ce que fait un vrai arbre au bord
+d'un ruisseau — la meme distinction que le routage du lot G.
+
+### La mooring : la regle des 12 u NE SUFFIT PAS, et c'est mesure
+
+La regle du brief est implementee telle quelle : quand Keepy est a plus de
+**12 u de TOUTE extremite**, la coque se repositionne sans animation a
+l'extremite la plus proche. **Elle ne garantit pas a elle seule que le
+deplacement soit hors champ**, et ce n'est pas une supposition : la bascule
+n'a lieu que sur la mediatrice des deux extremites, ou les DEUX sont a
+~18 u de Keepy — 18 u de COTE est loin hors d'un fov horizontal de 45°,
+mais 18 u DROIT DEVANT est dedans, la camera regardant vers -Z.
+
+La regle de distance est donc **ET-ee avec un test de frustum** sur la
+position actuelle de la coque ET sur celle visee.
+
+⚠️ **Le garde est PORTEUR, mesure sur 90 frames consecutives avec la vraie
+camera** : au point de bascule cote head, la coque amarree au loin est
+**dans le frustum**, et le deplacement est **RETENU**. Sans le garde le
+joueur aurait regarde un bateau se teleporter. Le report distingue les deux
+raisons de ne pas bouger (retenu par le garde / deja au bon endroit) pour
+qu'un futur lecteur ne les confonde pas.
+
+Le cout de differer est seulement que la coque reste brievement au mauvais
+bout — l'etat dans lequel elle etait deja — et la condition est re-testee
+chaque frame.
+
+### Cout : +3 noeuds de dessin
+
+| | avant (lot stream) | ce lot |
+|---|---|---|
+| noeuds de dessin hors portails | **75** | **78** |
+| noeuds de dessin, total | **81** | **84** |
+| marge sous le plafond de 260 | 185 | **182** |
+| construction | 46.2–49.7 ms | **38.3–40.9 ms** |
+
+Les 3 noeuds sont la coque, la coquille interieure et le liston. **Non
+batche** : il y en a UN, il n'y a rien a repeter, et il est deplace chaque
+frame d'un ride. Ligne complete : `docs/HUB_PERF_BASELINE.md`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **taille du `.tpz` verifiee contre le `Content-Length`**
+— 1 073 228 327 octets, aucune troncature silencieuse). Import headless
+**exit 0**, **24 `.scn`** (import complet verifie, pas suppose). Boot
+headless de `HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`** — la
+confirmation A L'EXECUTION que les 169 entrees restent atteignables. Export
+Web release **exit 0**.
+
+`index.wasm` **35 376 909 octets** / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+**5 853 648** (export unique et propre — a lire avec la mise en garde
+permanente sur son instabilite, jamais offert comme preuve). **Piege
+payload tenu** : sur **223** lignes `Storing File`, **0** pour
+`assets_source`, `scripts/dev`, `docs`, `web`, `build` ou `firebase.json`,
+et `BoatMooring`/`HubStreamRoute` sont bien packes.
+
+**`StreamRideProbe` (nouvelle) : 37 checks, 0 echec, exit 0.** Diffees
+contre `origin/staging` en worktree separe (imports verifies complets des
+deux cotes) : `AssetContractAudit` (12/12 visuels, **0/10 colliders
+deplaces**), `DeathModelAudit`, `ChargerShapeProbe` — **BYTE-IDENTIQUES sur
+les DEUX flux**. `ProbeTimeoutAudit` differe **d'exactement deux lignes** :
+la ligne de la nouvelle sonde et son total (**39 -> 40 sondes scenes**,
+toutes armees).
+
+⚠️ **`StreamRideProbe` doit tourner sous `xvfb`, PAS `--headless`.** Sa
+phase de tap projette la coque en point d'ecran et appelle `_handle_point`
+dessus ; sous le driver DUMMY le rect du conteneur est 0x0 et la fonction
+sort avant de projeter quoi que ce soit — un vert qui ne veut rien dire.
+Meme famille que le piege deja paye sur cet ecran au lot `mouse_filter`.
+
+### Reste ouvert — jugement device, seul juge
+
+1. **La coque est BEAUCOUP plus petite que Keepy a l'ecran** (0.78 x 0.86
+   contre un ecureuil qui remplit ~124 px de haut), donc pendant un ride
+   elle est en grande partie cachee sous lui. **Ce n'est pas reglable** :
+   la longueur est bornee par le rayon de courbure du ruisseau, pas par un
+   gout. C'est le risque principal du lot — est-ce qu'on lit « Keepy dans
+   une barque » ou « Keepy qui glisse sur l'eau » ?
+2. **Est-ce que la coquille de noix se lit comme une barque** a la taille
+   reelle sur un telephone ? Les trois tones et les hauteurs sont mesures ;
+   la lecture ne l'est pas.
+3. **Le rayon de tap de 2.5 u est genereux** — mesure comme necessaire
+   (la coque est minuscule a l'ecran), mais il couvre aussi de l'eau et de
+   la berge autour d'elle. Un joueur qui voulait marcher pres du bateau
+   monte dedans.
+4. **5.16 s de ride se sentent-ils comme un raccourci** ou comme une
+   attente ? Le chiffre bat la chaine de hops de 1.9 s ; le ressenti n'est
+   pas mesure.
+5. **La mooring peut rester differee longtemps** si le joueur regarde en
+   permanence le long du ruisseau. Argumente comme le bon compromis (la
+   coque reste au mauvais bout, l'etat ou elle etait deja), jamais observe
+   sur device.
+
+
 ## HUB, LOT G — RECON PURE : la geometrie du stream mesuree contre la chaine de hops (25 aout 2026)
 
 Branche `claude/stream-geometry-measure-3dnlsr`, partie de `main` (`ab62ba6`,
