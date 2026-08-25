@@ -12753,3 +12753,164 @@ un parametre de requete.
 ⚠️ L'egress direct vers `*.vercel.app` reste refuse par le proxy de ce
 sandbox (`http_code 000`, re-teste et pas suppose) : le canal MCP Vercel est
 le seul disponible ici, comme deja consigne.
+
+## LOT E : LE BOND ACCELERE — `HOP_DURATION` 0,35 -> 0,28, RAYON ET FOULEE INCHANGES (25 aout 2026)
+
+Branche `claude/keepy-hop-duration-tuning-t85q7q`, partie de `staging`
+(**`1b9933e`**, exactement la ref annoncee par le brief — pas d'ecart de
+base cette fois, contrairement aux lots C et D). Regle n°1 verifiee AU
+DEBUT : `git fetch --all --prune` puis tri de toutes les refs distantes par
+date — la plus recente est `claude/keepy-plateau-radius-35-3sq42r` (le lot
+D, **deja merge dans `staging`**, verifie par `git merge-base
+--is-ancestor` et pas suppose), **aucune session concurrente**.
+
+**UN SEUL fichier de jeu touche, UNE SEULE ligne de code.**
+`git diff --stat` contre `origin/staging` ne rapporte que
+`scripts/hub/KeepyHopper.gd` (une constante + des commentaires),
+`docs/HUB_PERF_BASELINE.md` et ce document. **`HubTapInput.gd`
+(`PLATEAU_HALF_EXTENT` reste 25,0), `HubCamera.gd`, `HubBuilder.gd`,
+`hub_layout.tres` et `HubWorld.tscn` ne sont PAS dans le diff du tout.**
+
+### PHASE 1 — RECON : `HOP_DURATION` a EXACTEMENT UN consommateur fonctionnel
+
+Verifie par `grep` sur tout le depot avant de toucher la constante, comme
+le brief l'exigeait, et cite plutot que resume :
+
+```gdscript
+_hop_tween = create_tween()
+_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)   # <- le seul
+_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
+```
+
+**Aucune scene, aucun autre script, AUCUNE SONDE ne lit cette constante** —
+`grep "HOP_DURATION"` sur `scripts/dev/` rend **zero** occurrence, et
+`grep "hop"` sur le meme dossier n'en rend aucune non plus. Les deux seules
+autres references du fichier etaient deux mentions litterales « 0.35s »
+**dans son propre en-tete**, reecrites pour nommer la constante au lieu de
+recopier sa valeur — c'est-a-dire exactement la derive que ce lot aurait
+sinon laissee derriere lui.
+
+⚠️ **DEUX consequences reelles, MESUREES plutot que supposees — aucune des
+deux n'est un couplage cache qui aurait justifie un STOP, mais les deux
+sont reelles et sont dites plutot que passees sous silence :**
+
+1. **Le recoil d'atterrissage est 0,12 s de TEMPS ABSOLU**, pas une
+   fraction du bond (`recoil.tween_property(_body, "scale", _base_scale,
+   0.12)`). Il passe donc de **34 % a 43 %** d'un bond. Il reste plus court
+   qu'un bond, donc le squash de decollage du bond suivant l'ecrase
+   toujours comme avant — mais **c'est la premiere chose a regarder si
+   cette valeur descend un jour nettement plus bas.**
+2. **La camera traine 24 % plus loin.** `HubCamera` suit la position AU SOL
+   avec un lerp exponentiel (`FOLLOW_LAMBDA = 5.0`), donc une cible plus
+   rapide est une cible plus distancee. **Mesure sur la camera livree, lerp
+   VIVANT, trajet centre -> (25,0) : ecart maximal 0,893 u -> 1,110 u
+   (+24,3 %)** — coherent avec les +25 % de vitesse au sol
+   (`1,5 / 0,28` contre `1,5 / 0,35`). `HubCamera.gd` est **intouche** :
+   c'est une consequence de la vitesse, c'est-a-dire precisement ce que le
+   lot change, pas un reglage a rattraper.
+
+### PHASE 2 — MESURE : le nombre de BONDS ne bouge pas, seules les secondes bougent
+
+Methode des lots C et D reprise a l'identique — hopper **LIVRE** (la scene
+`HubWorld.tscn` reelle, jamais un fixture), chaine de bonds reelle,
+`--fixed-fps 60`, comptage des `hop_landed` ET des frames entre `hop_to()`
+et `became_idle`. **Les deux trajets de reference ont ete rejoues sur
+l'ANCIENNE valeur d'abord, pour valider le banc avant de lui faire
+confiance sur la nouvelle** : il reproduit les chiffres publies **au bond,
+a la frame et au millieme de seconde pres**.
+
+| trajet | dist | bonds | 0,35 (frames / s) | **0,28 (frames / s)** |
+|---|---|---|---|---|
+| centre -> (25,0) | 25,00 u | **17** | 357 / **5,950 s** *(publie lot C/D : 17 / 5,95)* | 289 / **4,817 s** |
+| (-25,-25) -> (25,25) | 70,71 u | **47** | 987 / **16,450 s** *(publie lot C/D : 47 / 16,45)* | 799 / **13,317 s** |
+
+**Le nombre de bonds est IDENTIQUE sur les deux trajets (17 et 47).** C'est
+le controle que le brief demandait, et il passe : `HOP_DISTANCE` est
+intouche, donc seul le temps par bond a bouge. **Pas de STOP.** Gains :
+**-1,133 s (-19,0 %)** et **-3,133 s (-19,0 %)**.
+
+⚠️ **LA PROJECTION DU LOT D ETAIT NOMINALE, ET LA MESURE LA DEPASSE DE
+0,157 s — a connaitre avant de citer un chiffre projete comme un resultat.**
+Le lot D annoncait 13,16 s pour la diagonale au rayon 25, ce qui est
+`47 x 0,28` — une multiplication. **La mesure donne 13,317 s**, et l'ecart
+n'est pas du bruit, c'est de la **quantification** : 0,35 s vaut exactement
+**21 frames** a 60 fps, 0,28 s en vaut **16,8**, donc le tween se termine a
+la frame **17** et un bond occupe reellement **0,2833 s**. Chaque trajet
+coute donc **~1,19 % de plus** que l'arithmetique nominale. C'est faible,
+mais c'est la raison pour laquelle les deux valeurs livrees dans le
+commentaire de la constante sont **4,817 / 13,317** et non 4,76 / 13,16 —
+**un futur reglage doit citer la ligne MESUREE.**
+
+### PHASE 3 — SONDES ET NON-REGRESSION
+
+* **`ProbeTimeoutAudit` : exit 0, `38 probe scenes`** — retour exact a la
+  baseline de `origin/staging` apres suppression de la sonde jetable.
+* **`AssetContractAudit` : exit 0**, 12/12 visuels swappes, **0/10
+  colliders deplaces**.
+* **Aucune sonde existante ne suppose une duree de bond** — `grep -E
+  "0\.35|HOP_DURATION|hop"` sur `scripts/dev/*.gd` : **zero occurrence**
+  liee au hopper. **Non-applicabilite verifiee, pas supposee** : la seule
+  sonde de `scripts/dev/` qui charge `HubWorld.tscn` est
+  `HubPerfBaseline`, et elle **ne tape jamais**, donc Keepy ne bouge pas
+  pendant son echantillon et elle ne peut structurellement pas voir un
+  bond.
+* **`HubPerfBaseline` rejouee 3 fois** sous `xvfb --rendering-driver
+  opengl3` (jamais `--headless`, qui forcerait le driver DUMMY — piege deja
+  consigne), et **`docs/HUB_PERF_BASELINE.md` recoit sa premiere ligne de
+  COMPARAISON** sous la ligne de baseline. **Draw nodes 55 / 61,
+  IDENTIQUES a la baseline sur les trois runs** — c'est le seul chiffre
+  exact du tableau, et c'est celui qui doit ne pas bouger. Construction
+  47,8-65,3 ms, FPS moyen 15,1-16,7, FPS min 8,7-10,4 : tout chevauche la
+  baseline (45,3-52,4 / 14,5-16,4 / 7,7-12,4) sauf **un run de
+  construction a 65,3 ms**, au-dessus — publie tel quel plutot que lisse,
+  c'est le bruit de CPU partagee que ce fichier documente deja.
+
+⚠️ **Ce que la ligne perf ne dit PAS, et il faut le dire avant qu'on la
+lise a l'envers** : elle n'est **pas** une preuve que le hub tourne mieux.
+La sonde ne tape jamais, donc elle ne mesure aucun bond ; ce lot ne change
+ni un noeud, ni un mesh, ni un materiau. La ligne existe pour attester
+qu'il **n'a rien coute**, pas qu'il a gagne quoi que ce soit.
+
+### Build et export
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** —
+**50 276 070** et **1 073 228 327** octets, aucune troncature silencieuse).
+Import headless **exit 0**, **24 `.scn`** (import complet verifie et pas
+suppose — le piege du faux-rouge par import tronque est controle), **0
+erreur**. Boot headless de `HubWorld.tscn`, `Hub.tscn` (le rollback) et
+`TitleScreen.tscn` : **0 erreur** chacun. Export Web release **exit 0, 0
+erreur**.
+
+`index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** ; `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — **identiques au fingerprint deja
+consigne** pour tout lot qui ne touche pas le code moteur, coherent avec un
+diff d'un seul flottant. `index.pck` **5 833 088** (export unique et
+propre, `build/` supprime avant — 16 octets sous la baseline, a lire avec
+la mise en garde permanente sur son instabilite, **jamais offert comme
+preuve**). **Piege payload tenu** : **0** ligne `Storing File` pour
+`assets_source`, `scripts/dev`, `docs`, `web` ou `build`, sur 219.
+
+**La sonde de mesure etait JETABLE et est supprimee avant tout commit** —
+c'est ce que `ProbeTimeoutAudit` a 38 confirme.
+
+### Reste ouvert — jugement device, seul juge, et il pese plus lourd ici
+
+1. **Le bond a-t-il encore du POIDS ?** C'est tout l'objet du lot et aucune
+   sonde ne peut y repondre. `KeepyHopper.gd` decrit lui-meme le squash
+   comme « toute la difference entre un personnage qui a du poids et un
+   curseur » ; ce lot raccourcit de 19 % l'intervalle sur lequel cette
+   enveloppe se joue. **C'est le seul risque reel du lot, et il porte sur
+   TOUT le hub, pas seulement sur les longs trajets.**
+2. **Le recoil occupe 43 % d'un bond** au lieu de 34 %. Argumente comme
+   inoffensif (il reste plus court qu'un bond), pas juge a l'oeil.
+3. **La camera traine 1,110 u au lieu de 0,893 u.** Mesure ; personne n'a
+   regarde si ca se lit comme une camera qui suit ou comme une camera en
+   retard.
+4. **La reactivite au tap tombe de 0,35 s a 0,28 s au pire cas** — c'est un
+   gain, mais il vient du meme changement que le point 1 : les deux ne
+   peuvent pas etre regles separement.
+5. Inchange et toujours ouvert par ailleurs : les **~5-6 taps lateraux**
+   pour traverser (le vrai cout d'un plateau large, deja mesure au lot D),
+   et l'arbitrage du rayon 35 que le lot D a laisse a Mathieu.
