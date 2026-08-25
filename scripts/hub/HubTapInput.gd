@@ -51,6 +51,15 @@ class_name HubTapInput
 ## Emitted with the world point under the finger, on the ground plane.
 signal tapped_ground(point: Vector3)
 
+## Emitted INSTEAD of tapped_ground when the finger landed close enough to
+## the moored boat to mean "board it", with that same ground point.
+##
+## Exactly one of the two fires per tap. Emitting both and letting the
+## listener pick would make every tap ambiguous downstream; deciding here
+## is what makes the boat a priority rather than a competing reading of the
+## same event.
+signal tapped_boat(point: Vector3)
+
 ## The three nodes this needs, as scene-authored paths.
 ##
 ## NodePath and not a typed node export (`@export var camera: Camera3D`),
@@ -64,9 +73,15 @@ signal tapped_ground(point: Vector3)
 @export var container_path: NodePath
 @export var viewport_path: NodePath
 
+## The mooring, asked -- before any destination is resolved -- whether the
+## tap was on the boat. Optional: a plateau whose layout carries no boat
+## resolves this to null and every tap is a ground tap, exactly as before.
+@export var mooring_path: NodePath
+
 var camera: Camera3D = null
 var container: SubViewportContainer = null
 var viewport: SubViewport = null
+var mooring: BoatMooring = null
 
 ## Half-extent of the walkable plateau, in world units. Taps outside are
 ## clamped to the edge rather than ignored: a tap near the horizon is a
@@ -118,6 +133,7 @@ func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
 	container = get_node_or_null(container_path) as SubViewportContainer
 	viewport = get_node_or_null(viewport_path) as SubViewport
+	mooring = get_node_or_null(mooring_path) as BoatMooring
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
@@ -158,4 +174,18 @@ func _handle_point(screen_point: Vector2) -> void:
 	var point: Vector3 = hit
 	point.x = clampf(point.x, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT)
 	point.z = clampf(point.z, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT)
-	tapped_ground.emit(Vector3(point.x, 0.0, point.z))
+	var destination := Vector3(point.x, 0.0, point.z)
+
+	# THE BOAT WINS, and it is asked BEFORE the ground point becomes a
+	# destination. The radius is in WORLD units and is measured on this
+	# same ground point, so "the boat or the ground behind it" is decided
+	# in the space a hop destination already lives in rather than in
+	# pixels, where the target would shrink with distance.
+	#
+	# accepts_boarding_tap() is false for the whole of a ride, so a tap
+	# then falls through to tapped_ground -- which is what turns it into
+	# an eject. One tap, one signal, either way.
+	if mooring != null and mooring.accepts_boarding_tap(destination):
+		tapped_boat.emit(destination)
+		return
+	tapped_ground.emit(destination)
