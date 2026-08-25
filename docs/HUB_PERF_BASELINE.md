@@ -81,6 +81,15 @@ all 3 exports. Payload trap re-checked on this export's `savepack` log:
 `web` — `scripts/dev/HubPerfBaseline.gd`/`.tscn` included, confirmed
 absent from the pack.
 
+**Deployed to staging.** CI run #219 (`web-build.yml`) green on `staging`
+`7aae0a4`. Verified **on the live service, not just the CI log**:
+`keepy-staging.vercel.app`'s served `CACHE_VERSION` moved
+`1787647515` (08:45:15 UTC, pre-merge) -> `1787651782` (09:56:22 UTC),
+inside the run's own window (09:53:29 -> 09:56:51), `x-vercel-cache: MISS`
+on both reads. The served `GODOT_CONFIG.fileSizes.index.wasm` is
+`35376909` — identical to the local export above, as expected since this
+change touches no Godot engine code.
+
 ## Comparisons
 
 One row per future addition. Same method, same probe, same renderer as
