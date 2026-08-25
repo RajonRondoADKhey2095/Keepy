@@ -10,8 +10,8 @@ class_name KeepyHopper
 ## zero animations. A model that cannot deform can still read as alive if
 ## the thing moving it has weight, and a hop is the cheapest motion that
 ## has any: it has a takeoff, an airborne arc and a landing, so the eye is
-## given three events per 0.35s instead of a constant velocity that reads
-## as a sprite being dragged.
+## given three events per HOP_DURATION instead of a constant velocity that
+## reads as a sprite being dragged.
 ##
 ## Every channel below is PROCEDURAL, driven by tweens on transforms --
 ## the same technique scripts/battle/FighterView.gd uses on the same asset
@@ -28,7 +28,7 @@ class_name KeepyHopper
 ## flight and every hop would look like it weighs nothing; worse, a player
 ## tapping repeatedly would see him jitter in place rather than travel.
 ## Committing to the hop in progress costs at most HOP_DURATION of
-## responsiveness (0.35s) and buys a body that obeys momentum.
+## responsiveness and buys a body that obeys momentum.
 ##
 ## The queue is deliberately DEPTH ONE. A queue of taps would replay a
 ## stale path the player has already changed their mind about; the only
@@ -44,7 +44,39 @@ const HOP_DISTANCE: float = 1.5
 const HOP_HEIGHT: float = 0.6
 
 ## Wall-clock length of one hop, ground to ground.
-const HOP_DURATION: float = 0.35
+##
+## 0.35 until 25 aout 2026, when the plateau had grown to a half-extent of
+## 25 and crossing it had become the complaint. This is the ONLY constant
+## that shortens a hop without lengthening the stride: HOP_DISTANCE buys
+## the same crossing time by making Keepy cover more ground per hop, which
+## leaves the visual cadence alone; this one speeds the hop itself, so it
+## is also the one that spends the weight the squash envelope below exists
+## to sell. That trade is the whole reason the value is tuned here rather
+## than in HOP_DISTANCE -- it was asked for as a feel change, not as a
+## distance change.
+##
+## Measured on the shipped hopper at --fixed-fps 60, plateau half-extent
+## 25, HOP_DISTANCE untouched -- so the hop COUNT is identical on both
+## rows and only the seconds move, which is the check that this constant
+## and nothing else changed:
+##
+##   trip                        hops   0.35       0.28
+##   centre -> (25,0)              17   5.950 s    4.817 s
+##   (-25,-25) -> (25,25)          47   16.450 s   13.317 s
+##
+## Those are WALL-CLOCK frame counts, not hops x this constant, and the
+## two stopped agreeing here: 0.35 is exactly 21 frames at 60fps, 0.28 is
+## 16.8, so a hop actually occupies 17 frames (0.2833s) and every trip
+## costs ~1.2% more than the nominal arithmetic predicts. Small, but it is
+## why the numbers above are 4.817/13.317 rather than the 4.76/13.16 a
+## multiplication gives -- a future tune should quote the measured row.
+##
+## Note the landing recoil below is 0.12s of WALL CLOCK, not a fraction of
+## this: shortening the hop makes the recoil a larger share of it (34% at
+## 0.35, 43% at 0.28). It is still shorter than a hop, so the next hop's
+## own takeoff squash still overwrites it -- but it is the first thing to
+## look at if this value is ever taken much lower.
+const HOP_DURATION: float = 0.28
 
 ## How close to the target counts as arrived. Slightly under a third of a
 ## hop: below this, another hop would overshoot and Keepy would oscillate
