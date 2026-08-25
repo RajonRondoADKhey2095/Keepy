@@ -12719,3 +12719,37 @@ un rayon intermediaire. A cela s'ajoutent les **~7 taps lateraux** contre
 5-6 aujourd'hui, et le fait que **les 4 landmarks de la nouvelle couronne
 seraient les moins lisibles des douze** (47,4 % de fog depuis le centre,
 69,8 % depuis le bord oppose).
+
+### Deploiement staging du lot D (palier 1, automatique — DOC SEULE)
+
+`staging` **`17b49d8`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `494e0487` des deux cotes, verifie AVANT
+le push). **Le contenu de JEU est rigoureusement inchange** — le diff ne
+porte que sur `CLAUDE.md`, qui n'est pas une ressource Godot et n'entre donc
+pas dans le pack. CI run **#221** (id `32840536211`) **verte** (11:05:48 ->
+11:14:06 UTC), `[STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`ffcc552`).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #220) | `1787652096` | **10:01:36** |
+| **apres (ce lot, run #221)** | **`1787656419`** | **11:13:39** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre du run #221**, avec
+`x-vercel-cache: MISS` et `age: 0`. La valeur d'avant a ete **relue a
+11:10:45 pendant que le job tournait** — toujours l'ancienne — donc la
+bascule est prouvee dans les deux sens et pas deduite du log.
+
+⚠️ **Piege de lecture rencontre a cette relecture** : la reponse de 11:10:45
+portait `x-vercel-cache: HIT` et `age: 308`, c'est-a-dire une copie CDN
+figee a 11:05:37. **Un `HIT` avec un `age` non nul n'est pas une mesure de
+fraicheur** — il ne dit rien de l'etat du service a l'instant de la lecture.
+Seule la lecture `MISS`/`age: 0` compte, au besoin en cassant le cache par
+un parametre de requete.
+
+⚠️ L'egress direct vers `*.vercel.app` reste refuse par le proxy de ce
+sandbox (`http_code 000`, re-teste et pas suppose) : le canal MCP Vercel est
+le seul disponible ici, comme deja consigne.
