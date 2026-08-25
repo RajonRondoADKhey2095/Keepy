@@ -12467,3 +12467,59 @@ L'epoch d'apres tombe dans la fenetre du run #216 (demarre 08:35:27), avec
 08:36:18 pendant que le job tournait** (toujours `1787641860`,
 `x-vercel-cache: HIT`) : le job avancait donc REELLEMENT au lieu d'etre un
 cache perime, et la bascule est prouvee dans les deux sens.
+
+## MERGE EN PRODUCTION (25 aout 2026, autorisation explicite de Mathieu) -- CLARIFICATION `stump`
+
+`staging` (`f046c7c`) -> `main`, apres validation device (screenshot) du lot
+MultiMesh. Perimetre confirme par diff avant merge :
+`git diff --name-only origin/main..origin/staging` = exactement
+`CLAUDE.md`, `resources/hub/hub_layout.tres`, `scripts/hub/HubBuilder.gd`,
+`scripts/hub/HubLayout.gd` -- `HubTapInput.gd`, `HubCamera.gd`,
+`KeepyHopper.gd`, `HubWorld.tscn` et `firestore.rules` **absents**, verifie
+par grep sur ce diff plutot que suppose.
+
+**Clarification demandee sur `&"stump"`, repondue par citation du code, pas
+par supposition.** `HubBuilder.gd` place le type dans sa liste "WHAT STAYS
+AN INDIVIDUAL NODE, and why" :
+
+```
+##   stump     14 on the plateau at one mesh each. Batching would save 13
+##             nodes out of the ~220 this change frees; measured and left
+##             individual until the count makes the indirection worth it.
+```
+
+Et `_make_stump()` porte lui-meme la raison de couleur -- qui **N'EST PAS**
+celle qui l'exclut du batch :
+
+```gdscript
+## A cut trunk. Deliberately ONE mesh in the trees' own bark colour: a
+## stump is what a tree leaves behind, so sharing the colour is what makes
+## the pair read as a story rather than as two unrelated props.
+```
+
+**Reponse** : `stump` n'a **aucune** couleur variable par instance -- une
+seule teinte fixe, `TRUNK_COLOR`, partagee avec le tronc de `tree` par
+choix narratif (« la souche est ce que l'arbre laisse derriere lui »). Rien
+dans ce choix de couleur n'empeche le batching -- une teinte unique est au
+contraire le cas le plus simple a batcher, exactement celui deja traite
+pour `rock`. **La seule raison de son exclusion est un calcul cout/benefice
+sur le nombre de noeuds** : 14 instances a un seul mesh chacune ne
+represente que 13 noeuds economisables sur les ~220 que ce lot libere deja
+par ailleurs, et la session a juge l'indirection non rentable a ce compte
+la. **Note pour la prochaine session qui voudrait densifier les souches** :
+des que leur nombre depasse largement 14 (donc que le gain en noeuds
+depasse la charge d'indirection), `stump` peut etre batche exactement comme
+`rock` l'est deja -- meme mesh, meme couleur fixe, aucune replanification
+de couleur necessaire avant de le faire.
+
+## MESURE DE REFERENCE PERF DU HUB, avant tout ajout Meshy (25 aout 2026)
+
+Branche `claude/hub-perf-baseline-qoo6dq`, partie de `main` (`ffcc552`).
+Baseline reproductible du plateau (temps de construction, noeuds de dessin,
+FPS simulee wall-clock, poids d'export) prise juste apres le refactor
+MultiMesh, avant tout `.glb` Meshy sur le hub. Detail chiffre, methode
+exacte et tableau de comparaisons pour chaque ajout futur :
+`docs/HUB_PERF_BASELINE.md`. Sonde permanente dediee
+`scripts/dev/HubPerfBaseline.gd`/`.tscn` (exclue du build comme tout
+`scripts/dev/*`), n'asserte rien et sort toujours en 0 -- c'est une mesure,
+pas un contrat.
