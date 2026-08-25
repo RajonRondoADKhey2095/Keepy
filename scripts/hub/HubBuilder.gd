@@ -58,11 +58,14 @@ class_name HubBuilder
 ##             built by the same _make_water_body() the pond is, so the two
 ##             cannot drift apart on the z-fight heights or on the
 ##             transparency flag that has to be asked for.
+##   stream    one instance, and its mesh is a one-off ribbon built for its
+##             own trace -- there is no shared mesh for a MultiMesh to
+##             repeat. It is the third ALPHA-BLENDED surface here.
 ##   stump     14 on the plateau at one mesh each. Batching would save 13
 ##             nodes out of the ~220 this change frees; measured and left
 ##             individual until the count makes the indirection worth it.
 ##
-## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond / lake have never
+## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond / lake / stream have never
 ## had a CollisionShape3D -- grepped, not assumed -- so nothing on the
 ## plateau depends on a per-prop physics node. The ground is not a
 ## collider either: HubTapInput intersects a maths Plane rather than
@@ -163,6 +166,44 @@ const LAKE_BANK_RADIUS: float = 9.05
 ## just calibrated to the size instead of inherited from a smaller disc.
 const LAKE_SEGMENTS: int = 40
 
+## The stream that runs from the pond to the lake. A THIRD water tint, and
+## each pair is told apart on a DIFFERENT axis rather than all three
+## sliding along one:
+##
+##   pond    hsv(198.0, 0.556, 0.36)  dark teal
+##   lake    hsv(221.5, 0.634, 0.82)  light blue
+##   stream  hsv(190.9, 0.512, 0.86)  bright cyan
+##
+## stream vs pond  -- 7.1 deg of hue apart, so they are separated by VALUE
+##                    (0.86 against 0.36), a half of the scale.
+## stream vs lake  -- near-identical value, so they are separated by HUE
+##                    (30.6 deg), which crosses the cyan/blue boundary.
+##
+## Leaning on one axis for both pairs would have made one of them collapse:
+## a brighter pond reads as the lake, and a cyan-shifted lake reads as the
+## stream. LOCAL to the hub, like every other decor colour here.
+const STREAM_WATER_COLOR: Color = Color(0.42, 0.78, 0.86, 0.55)
+
+## 1.2 units across. Half of that -- 0.6 -- is the number the trace was
+## routed against: every prop's GROUND footprint clears the water's edge by
+## at least 0.39, measured on the shipped layout rather than eyeballed.
+const STREAM_WIDTH: float = 1.2
+
+## Above the ground plane (y = 0), above the ponds' banks (top 0.055) and
+## above their water (top 0.08), so it is never coplanar with any of them.
+## The trace ends exactly on each water body's WATER rim, so the ribbon
+## crosses the bank ring from outside and stops where the water starts:
+## it covers the rim rather than leaving a gap, and it never overlaps an
+## alpha surface with another alpha surface.
+const STREAM_SURFACE_Y: float = 0.095
+
+## Samples per control-point span. 8 gives 89 samples over the shipped
+## 12-point trace, i.e. 176 triangles for the whole watercourse -- less
+## than the lake's two discs cost on their own. Explicit rather than
+## inherited, the docs/MESHY_SPEC.md 7.2 rule, and it is what fixes the
+## curve's sagitta: doubling it halves the flat-edge deviation.
+const STREAM_SAMPLES_PER_SPAN: int = 8
+
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
 const LANDMARK_SPIRE_CROWN: Color = Color(0.38, 0.58, 0.30)
 const LANDMARK_CAIRN_STONE: Color = Color(0.44, 0.45, 0.40)
@@ -225,6 +266,8 @@ func _build() -> void:
 					node = _make_pond()
 				&"lake":
 					node = _make_lake()
+				&"stream":
+					node = _make_stream(entry)
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -241,9 +284,18 @@ func _build() -> void:
 		# batching changed nothing about it. It stays AFTER the type is
 		# known good so an unknown type still produces one error and no
 		# warning, exactly as before.
+		# A stream has NO single position -- its trace is its placement -- so
+		# the check walks every control point. Without this branch a stream
+		# would fall back to Vector3.ZERO and pass for free: a silent hole in
+		# the one guard that catches a prop nobody can walk to.
+		var anchors: Array = [where]
+		if type == &"stream":
+			anchors = _trace_points(entry)
 		var bound: float = HubTapInput.PLATEAU_HALF_EXTENT
-		if absf(where.x) > bound or absf(where.z) > bound:
-			push_warning("HubBuilder: entry %d ('%s') at %s is outside the +-%.1f plateau; visible but unreachable." % [index, type, where, bound])
+		for anchor in anchors:
+			var point: Vector3 = anchor
+			if absf(point.x) > bound or absf(point.z) > bound:
+				push_warning("HubBuilder: entry %d ('%s') at %s is outside the +-%.1f plateau; visible but unreachable." % [index, type, point, bound])
 
 		if node != null:
 			node.position = where
@@ -458,6 +510,136 @@ func _make_pond() -> Node3D:
 ## bank, the same reasoning that has a stump share the trees' bark colour.
 func _make_lake() -> Node3D:
 	return _make_water_body(LAKE_WATER_RADIUS, LAKE_BANK_RADIUS, LAKE_SEGMENTS, LAKE_WATER_COLOR)
+
+## The trace of a &"stream" entry, as plain Vector3s. Empty for anything
+## malformed -- validated here rather than trusted, like every other entry.
+func _trace_points(entry: Dictionary) -> Array:
+	var raw: Variant = entry.get("points", null)
+	if raw == null:
+		return []
+	if not (raw is PackedVector3Array or raw is Array):
+		return []
+	var out: Array = []
+	for value in raw:
+		if value is Vector3:
+			out.append(value)
+	return out
+
+## Running water between two standing ones.
+##
+## WHY A HAND-BUILT RIBBON AND NOT A CSGPolygon3D ALONG A Path3D. Four
+## reasons, in the order they decided it:
+##
+##   1. There is not ONE CSG node anywhere in this repository -- grepped,
+##      not assumed. Every piece of hub decor is a primitive built in code.
+##      A stream is not the place to introduce a second paradigm.
+##   2. CSG is a runtime solver: a CSGShape3D keeps a brush and re-evaluates
+##      it, and it carries a use_collision flag that would have to be
+##      explicitly held off against this screen's standing rule that nothing
+##      on the plateau has physics. An ArrayMesh is baked once, here, and
+##      has no flag that can turn into a collider by default.
+##   3. Segment control. CSGPolygon3D's path mode subdivides by an interval,
+##      which is an indirect handle on the thing that actually matters --
+##      the flat-edge deviation on a curve. STREAM_SAMPLES_PER_SPAN sets it
+##      directly, the same way LAKE_SEGMENTS was calibrated to its radius.
+##   4. A CSG node is not a MeshInstance3D, so it could not go through
+##      _unshaded() -- and this file having exactly one material factory is
+##      what keeps every surface on the plateau honest.
+##
+## ZERO THICKNESS, drawn double-sided. _make_water_body spells out why a
+## flat water surface must never show its own edge; a ribbon with no
+## thickness cannot, and CULL_DISABLED answers the "a plane is single-sided"
+## objection by construction rather than by hoping nobody looks from below.
+func _make_stream(entry: Dictionary) -> Node3D:
+	var trace: Array = _trace_points(entry)
+	if trace.size() < 2:
+		push_error("HubBuilder: a stream needs at least 2 trace points, got %d." % trace.size())
+		return null
+	for key in ["position", "rotation_y", "scale"]:
+		if entry.has(key):
+			push_warning("HubBuilder: a stream entry carries '%s'; its trace IS its placement, so the field is ignored." % key)
+
+	var width: float = entry.get("width", STREAM_WIDTH)
+	if width <= 0.0:
+		push_error("HubBuilder: a stream needs a positive width, got %f." % width)
+		return null
+	var half: float = width * 0.5
+	var spine: Array = _centripetal(trace, STREAM_SAMPLES_PER_SPAN)
+
+	var left: Array = []
+	var right: Array = []
+	for i in spine.size():
+		var before: Vector3 = spine[maxi(0, i - 1)]
+		var after: Vector3 = spine[mini(spine.size() - 1, i + 1)]
+		var tangent := Vector3(after.x - before.x, 0.0, after.z - before.z)
+		if tangent.length() < 0.0001:
+			tangent = Vector3(0.0, 0.0, 1.0)
+		tangent = tangent.normalized()
+		# Perpendicular in the ground plane. The ribbon is flat by
+		# construction: y comes from the constant, never from the trace, so
+		# a control point authored with a stray y cannot tilt the water.
+		var side := Vector3(-tangent.z, 0.0, tangent.x) * half
+		var middle: Vector3 = spine[i]
+		left.append(Vector3(middle.x - side.x, STREAM_SURFACE_Y, middle.z - side.z))
+		right.append(Vector3(middle.x + side.x, STREAM_SURFACE_Y, middle.z + side.z))
+
+	var tool := SurfaceTool.new()
+	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in spine.size() - 1:
+		for vertex in [left[i], right[i], right[i + 1], left[i], right[i + 1], left[i + 1]]:
+			tool.set_normal(Vector3.UP)
+			tool.add_vertex(vertex)
+
+	var node := MeshInstance3D.new()
+	node.mesh = tool.commit()
+	var material := _unshaded(STREAM_WATER_COLOR)
+	# Same trap the ponds hit: albedo_color's alpha is ignored entirely
+	# while transparency stays DISABLED, and the stream would render as
+	# flat opaque cyan with no error to say so.
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	node.set_surface_override_material(0, material)
+	return node
+
+## Centripetal Catmull-Rom (alpha = 0.5) through the control points.
+##
+## CENTRIPETAL AND NOT UNIFORM, and it is the difference between a stream
+## that fits and one that does not. The uniform form overshoots on a tight
+## bend, and measured on this plateau that overshoot alone pushed the ribbon
+## 0.4 units into props the trace was routed to clear. Centripetal is the
+## variant that provably produces no cusp and no self-intersection.
+##
+## The end tangents are mirrored rather than duplicated, so the curve leaves
+## each water body along the direction of its own first span instead of
+## flattening against it.
+func _centripetal(points: Array, per_span: int) -> Array:
+	var padded: Array = []
+	padded.append(points[0] * 2.0 - points[1])
+	padded.append_array(points)
+	padded.append(points[points.size() - 1] * 2.0 - points[points.size() - 2])
+
+	var out: Array = []
+	for i in padded.size() - 3:
+		var p0: Vector3 = padded[i]
+		var p1: Vector3 = padded[i + 1]
+		var p2: Vector3 = padded[i + 2]
+		var p3: Vector3 = padded[i + 3]
+		var t0: float = 0.0
+		var t1: float = t0 + sqrt(maxf(p0.distance_to(p1), 0.0001))
+		var t2: float = t1 + sqrt(maxf(p1.distance_to(p2), 0.0001))
+		var t3: float = t2 + sqrt(maxf(p2.distance_to(p3), 0.0001))
+		var last: int = per_span - 1
+		if i == padded.size() - 4:
+			last = per_span
+		for k in last + 1:
+			var t: float = t1 + (t2 - t1) * float(k) / float(per_span)
+			var a1: Vector3 = p0.lerp(p1, (t - t0) / (t1 - t0))
+			var a2: Vector3 = p1.lerp(p2, (t - t1) / (t2 - t1))
+			var a3: Vector3 = p2.lerp(p3, (t - t2) / (t3 - t2))
+			var b1: Vector3 = a1.lerp(a2, (t - t0) / (t2 - t0))
+			var b2: Vector3 = a2.lerp(a3, (t - t1) / (t3 - t1))
+			out.append(b1.lerp(b2, (t - t1) / (t2 - t1)))
+	return out
 
 ## An orientation marker, readable from the far side of the plateau.
 ##
