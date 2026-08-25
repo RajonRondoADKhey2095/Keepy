@@ -11799,3 +11799,311 @@ dans les deux sens.
 `web-build.yml` porte `cancel-in-progress: true`, donc pousser code puis doc
 coup sur coup annule le premier run -- exactement le piege consigne au
 lot A, ou le run #207 apparait `cancelled` sans etre un echec.
+
+## HUB : LE PLATEAU PASSE DE 15 A 25, QUATRE LANDMARKS DE PLUS, ET UNE COURONNE EXTERIEURE VOLONTAIREMENT MAIGRE (25 aout 2026)
+
+Branche `claude/plateau-extension-visibility-2rtora`, partie de `staging`
+(`3061637`). **Lot purement VISUEL et de zone jouable** : `HubCamera.OFFSET`,
+`FOLLOW_LAMBDA`, `fov`, la rotation de camera et `KeepyHopper.HOP_DISTANCE`
+sont **INTOUCHES**, verifie par `git diff` -- `HubCamera.gd`, `KeepyHopper.gd`
+et `HubWorld.tscn` ne sont pas dans le diff du tout. **DEUX fichiers touches,
+UNE seule ligne de code** : `git diff --stat origin/staging` rend
+`hub_layout.tres` (+279) et `HubTapInput.gd` (+27/-8, dont **une** ligne non
+commentaire : la constante).
+
+⚠️ **Ecart de ref au demarrage, benin et signale plutot que passe sous
+silence** : le brief annoncait `origin/staging = 8fe6c5e`, la mesure donne
+**`3061637`**. `8fe6c5e` EST bien le merge du lot B et il est ancetre de
+`origin/staging` ; les deux commits d'ecart sont **doc seule**
+(`git diff --stat 8fe6c5e origin/staging` = `CLAUDE.md` uniquement). Parti de
+`3061637`. `origin/main` (`33f7aa4`) est strictement en retard, le lot B n'est
+donc toujours pas en prod, conforme au brief.
+
+### R1 -- UN TAP ACHETE TOUT LE VOYAGE : c'est une CHAINE, pas un bond
+
+C'etait la question decisive du lot, et la reponse est dans deux lignes du
+code livre. `KeepyHopper.hop_to()` ne fait que **poser une destination** :
+
+```gdscript
+func hop_to(point: Vector3) -> void:
+	_target = Vector3(point.x, 0.0, point.z)
+	_has_target = true
+	if not _hopping:
+		_advance()
+```
+
+et `_on_hop_finished()` **se rappelle lui-meme** a chaque atterrissage :
+
+```gdscript
+	hop_landed.emit(global_position)
+	_advance()          # <- la chaine
+```
+
+`_advance()` ne s'arrete que quand `delta.length() <= ARRIVE_EPSILON` (0,45).
+`HubTapInput._handle_point` emet **un** `tapped_ground` par tap, et
+`HubWorld._on_tapped_ground` appelle **un** `hop_to`. Donc : **un tap, une
+destination, autant de bonds qu'il faut, automatiquement.**
+
+**Mesure sur le hopper LIVRE, a `--fixed-fps 60`, pas un calcul** (sonde
+jetable, supprimee avant commit) :
+
+| trajet | distance | bonds | frames | secondes |
+|---|---|---|---|---|
+| **(0,0) -> (25,0)** *(la mesure que le brief nomme)* | 25,0 u | **17** | 357 | **5,95 s** |
+| (0,0) -> (0,-25) | 25,0 u | 17 | 357 | 5,95 s |
+| (0,0) -> (25,25) | 35,4 u | 24 | 504 | 8,40 s |
+| **(-25,-25) -> (25,25)** *(diagonale complete)* | 70,7 u | **47** | 987 | **16,45 s** |
+
+`HOP_DURATION = 0,35 s`, `HOP_DISTANCE = 1,5`, `ARRIVE_EPSILON = 0,45`.
+
+**SEUIL D'ARBITRAGE : PASSE.** La mesure que le brief designe explicitement --
+centre `(0,0)` vers le bord `(25,0)` -- coute **5,95 s** et, selon l'axe,
+**1 a 6 taps**. Les deux plafonds (12 s, 15 taps) sont tenus avec une large
+marge, donc **pas de STOP** et aucune option chiffree a arbitrer pour ce
+trajet-la.
+
+⚠️ **MAIS le pire cas depasse, et il est publie tel quel plutot qu'enjolive :
+la diagonale complete (-25,-25) -> (25,25) coute 16,45 s**, au-dessus des
+12 s. Un bord a bord droit (50 u) coute 11,90 s, juste dessous. Rien n'a ete
+tranche la-dessus -- **decision de Mathieu**, et les leviers sont chiffres :
+porter `HOP_DISTANCE` de 1,5 a 2,0 ramenerait la diagonale a **12,60 s** et a
+2,5 a **10,15 s** ; raccourcir `HOP_DURATION` de 0,35 a 0,28 la ramenerait a
+**13,16 s**. **Aucun des deux n'est fait ici** : le brief les met hors
+perimetre, et les deux changent le FEEL d'un mouvement valide sur device.
+
+⚠️ **LE VRAI COUT DE L'ELARGISSEMENT N'EST PAS LE NOMBRE DE BONDS, C'EST
+L'ASYMETRIE DE VISEE -- mesure, et ce n'etait pas dans le brief.** La camera
+garde un fov **HORIZONTAL** de 45 deg (`keep_aspect = KEEP_WIDTH`), donc :
+
+| direction | portee d'UN SEUL tap | taps pour 25 u |
+|---|---|---|
+| vers l'AVANT (-Z) | **tout le plateau** (le bord est dans le frustum) | **1** |
+| de COTE (+X) | **4,82 u** | **6** |
+
+Identique a 1080x1920 et 1170x2532 (le `KEEP_WIDTH` ne change que la vfov).
+Un joueur qui va tout droit paie un tap ; un joueur qui longe le bord en paie
+six. **C'est ca qui se degradera si le plateau s'elargit encore**, pas la
+duree.
+
+⚠️ **Pas de falaise de precision au bord** : le tap qui demande 25 u devant
+tombe a **y = 450 px sur 1920**, tres loin de la ligne d'horizon a **81 px**.
+Viser loin ne demande donc pas de viser un pixel.
+
+### R2 -- aucun bord de sol, et le landmark a 22 u n'est pas efface
+
+Banc camera-figee du lot B repris tel quel (`_process` de `HubCamera` coupe,
+`SubViewportContainer.stretch` desactive -- sans les deux la camera lerpe
+pendant la mesure et les coins ne sortent plus symetriques), aux deux ratios,
+Keepy pose au NOUVEAU coin :
+
+| viewport | keepy | haut du cadre | sol le plus lointain atteint |
+|---|---|---|---|
+| 1080x1920 | (0,0) | **+2,37 deg -> CIEL** | `max\|axe\|` 22,1 |
+| 1080x1920 | (25,25) | +2,37 deg -> CIEL | 37,4 |
+| 1080x1920 | (0,-25) / (-25,-25) | +2,37 deg -> CIEL | 47,1 |
+| 1170x2532 | (0,0) | **+7,87 deg -> CIEL** | 34,8 |
+| 1170x2532 | (25,25) | +7,87 deg -> CIEL | 41,8 |
+| 1170x2532 | (0,-25) / (-25,-25) | +7,87 deg -> CIEL | **59,8** |
+
+Les `+2,37` et `+7,87` **reproduisent au centieme** ceux deja consignes pour
+ce hub, ce qui valide le banc avant qu'on lui fasse confiance. Le pire rayon
+atteint **59,8** contre les **+-300** du `PlaneMesh` 600x600 : **facteur 5 de
+marge**, le bord est hors de portee. Et la jonction sol/ciel reste invisible
+**par construction** -- `fog_light_color == background_color`, verifie a
+l'execution (`identical=true`), pas lu dans la scene.
+
+⚠️ **Ce n'est toujours PAS un cas de cadrage nouveau** : la camera suit Keepy
+en x/z, donc la vue depuis le bord a exactement la meme FORME que depuis le
+centre ; seul le monde sous elle change. Elargir le plateau ne peut
+structurellement pas ouvrir un bord.
+
+**Fog, lu sur l'`Environment` reel** : `fog_mode = 0` (EXPONENTIEL),
+`fog_height_density = 0`, `fog_density = 0,016`, donc
+`occlusion = 1 - exp(-d * 0,016)` :
+
+| distance | 10 u | 20 u | 30 u | 34 u | 43,3 u | 70 u | 144 u | 275 u |
+|---|---|---|---|---|---|---|---|---|
+| occlusion | 14,8 % | 27,4 % | 38,1 % | 42,0 % | **50 %** | 67,4 % | 90 % | 98,8 % |
+
+Les quatre landmarks neufs (rayon 20,9 a 22,1) mesures sur la scene
+construite : **36,6 a 37,0 % de fog vus depuis le centre** -- donc ils gardent
+~63 % de leur propre couleur, **la meme marge que les 36,1 % du lot B**. Vus
+depuis le point diametralement oppose ils montent a 44,3-55,3 %, mais a cette
+distance c'est le landmark de mi-parcours (rayon 12,6) qui sert de repere
+proche. **La condition de blocage du brief (« si le fog efface au-dela de
+~25 unites ») ne se declenche pas**, et `hub_fog_density` n'a pas ete touche.
+
+### R3 -- LE PLAFOND DE 260 EST LA CONTRAINTE QUI MORD, et de tres loin
+
+Projection faite AVANT de placer quoi que ce soit, sur les densites reelles
+mesurees (aire en CARRES, la metrique du clamp per-axe, et les densites
+comptent les props ordinaires -- ni portails ni landmarks, convention du
+lot B, reproduite ici a l'identique : coeur 11,56 et couronne B 9,09) :
+
+| scenario pour la couronne 14,2 -> 24 (1 497 u2) | props | meshes ajoutees | **total** |
+|---|---|---|---|
+| a la densite du COEUR (11,56/100u2) | 173 | +313 | **482** |
+| a la MOITIE de la couronne B (4,55/100u2) | 68 | +138 | **307** |
+| **livre** | **51** | **+90** | **259** |
+
+**Les deux scenarios du brief creveraient le plafond**, le second inclus.
+Conformement a la consigne (« REDUIRE le nombre de props plutot que de
+depasser »), c'est la densite qui a cede.
+
+### Ce qui est livre
+
+`PLATEAU_HALF_EXTENT` **15,0 -> 25,0**. La constante a toujours **exactement
+trois lecteurs** (sa declaration, les deux `clampf` de `_handle_point`, la
+lecture de `HubBuilder` pour son avertissement de bornes) -- **verifie par
+grep, aucune valeur `15.0` dupliquee** dans `scripts/hub/`, `scenes/Hub*.tscn`
+ni `resources/hub/`. Le garde-fou suit donc automatiquement, et **le boot
+headless de `HubWorld.tscn` ne produit AUCUN `push_warning`** : la
+confirmation A L'EXECUTION que les 146 entrees sont atteignables.
+
+**Quatre landmarks de plus, rayon 20,9 a 22,1, azimuts 47 / 133 / 227,5 /
+313** -- intercales entre les quatre du lot B (N/E/S/O, rayon ~12,6, **non
+deplaces**, ils deviennent des reperes de mi-parcours). Aucun nouveau type,
+les trois silhouettes existantes sont reutilisees.
+
+⚠️ **Le choix de silhouette n'est PAS arbitraire, il est FORCE.** Avec trois
+silhouettes et deux voisins par insertion, chaque variante est la seule qui
+differe des deux cotes -- et le resultat laisse **aucune paire adjacente
+identique sur les huit positions** :
+
+| azimut | 0 | **47** | 92,5 | **133** | 177,3 | **227,5** | 271,8 | **313** |
+|---|---|---|---|---|---|---|---|---|
+| silhouette | spire | **slabs** | cairn | **spire** | slabs | **spire** | cairn | **slabs** |
+| rayon | 12,60 | **21,40** | 12,71 | **22,10** | 12,61 | **20,90** | 12,76 | **21,80** |
+
+**Couronne C : 51 props sur 1 497 u2.** Densites mesurees des trois zones,
+avec la convention du lot B :
+
+| zone | props | aire | **props / 100 u2** | vs couronne B |
+|---|---|---|---|---|
+| coeur, cheb <= 10,4 | 50 | 432,6 | **11,56** | -- |
+| couronne B, 10,4 < cheb <= 14,2 | 34 | 373,9 | **9,09** | reference |
+| **couronne C, 14,2 < cheb <= 24** | **51** | 1 497,4 | **3,41** | **2,67x plus clairsemee** |
+
+⚠️ **La cible etait 2x plus clairsemee (4,55), le livre est a 2,67x -- ecart
+assume et dit franchement.** Le plafond de 260 est ce qui l'impose : a
+4,55/100u2 il faudrait 68 props pour 77 meshes disponibles, soit 1,13 mesh
+par prop, c'est-a-dire **une couronne entierement en rochers**. L'ecart va
+d'ailleurs dans le sens de l'objectif de design du brief (« que s'eloigner du
+centre se RESSENTE comme s'eloigner ») : il rend l'exterieur plus vide, pas
+moins.
+
+⚠️ **AUCUNE fleur dans la couronne C, et c'est un choix, pas un oubli.** Une
+corolle de 0,15 de rayon sur une tige de 0,42 fait quelques pixels a 20+
+unites sous 40 % de fog : elle depenserait **deux meshes pour rien**. Le mix
+livre privilegie ce qui se lit de loin et ce qui coute peu : **17 arbres**
+(2 meshes, la silhouette la plus lisible a distance), **26 rochers**
+(1 mesh, le corps le moins cher), **8 buissons** (2 meshes). Grappes plutot
+que semis regulier, `scale` **0,64 a 1,38**, `rotation_y` libre sur 360 deg.
+
+**Separations mesurees sur le jeu complet** : neuf -> prop existant **2,234**,
+neuf -> landmark du lot B **4,042**, neuf -> landmark neuf **3,484**,
+neuf -> portail **10,417**, neuf -> neuf **0,763** (membres d'une meme
+grappe, volontairement proches -- meme lecture qu'aux lots A et B).
+`max |x| = 23,95`, `max |z| = 23,88`, sous le plafond de 24,2.
+
+### COUT : 259 MeshInstance3D, sous le plafond dur de 260
+
+Compte **reel**, mesure par une sonde jetable qui parcourt le sous-arbre
+`Props` de la scene livree, pas deduit du layout :
+
+| source | meshes |
+|---|---|
+| Props, sous-arbre complet | 265 |
+| dont appartenant aux trois `HubPortal.tscn` | 6 |
+| **construites par HubBuilder** | **259** *(plafond 260)* |
+
+Detail : 169 (lot B) + 14 (les 4 landmarks neufs : slabs 3 + spire 4 +
+spire 4 + slabs 3) + 76 (couronne C : 17x2 + 26x1 + 8x2).
+
+⚠️ **`MultiMeshInstance3D` toujours PAS fait, et l'arbitrage reste ouvert
+depuis le lot B.** Le brief l'interdit explicitement dans ce lot. Ce qu'il
+faudra peser le jour venu, inchange : les props sont statiques, unshaded et
+low-poly donc parfaitement eligibles, mais un `MultiMesh` par type retirerait
+la rotation et l'echelle par-instance et demanderait de recabler le garde-fou
+de bornes, qui inspecte des noeuds. **Le prochain lot qui veut densifier
+devra le faire d'abord** : il ne reste qu'une mesh de marge.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** --
+50 276 070 et 1 073 228 327 octets, aucune troncature silencieuse). Import
+headless **exit 0**, **24 `.scn`** (import complet verifie, pas suppose --
+le piege du faux-rouge par import tronque est controle). Boot headless de
+`HubWorld.tscn` **exit 0**, aucune erreur de parse, **aucun `push_warning`**.
+Export Web release **exit 0**, **0 erreur**.
+
+`index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** ; `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur, coherent avec un
+diff d'une constante et d'un fichier de donnees. `index.pck` 5 828 208
+(export unique et propre, `build/` supprime avant -- a lire avec la mise en
+garde permanente sur son instabilite, jamais offert comme preuve). **Piege
+payload tenu** : **0** ligne `Storing File` pour `assets_source`,
+`scripts/dev`, `docs`, `web` ou `build`, sur 219 lignes.
+
+**Sondes rejouees, toutes exit 0** : `ProbeTimeoutAudit` (**37 sondes
+scenes**, retour exact a la baseline apres suppression de la sonde jetable),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`. **Non-applicabilite VERIFIEE par
+grep, pas supposee** : aucune sonde de `scripts/dev/` ne reference
+`HubWorld`, `HubBuilder`, `HubTapInput`, `HubCamera`, `KeepyHopper`,
+`HubPortal`, `HubLayout` ni `hub_layout` -- elles ne peuvent pas voir ce lot,
+elles peuvent seulement attester qu'il n'a rien casse ailleurs.
+
+⚠️ **Piege de sonde rencontre, a connaitre** : une fonction de phase qui
+contient un `await` est une COROUTINE, et l'appeler sans `await` la fait
+tourner EN PARALLELE de la suite. La premiere version du banc a mesure R2 et
+R1 en meme temps, et R1 deplacait la camera que R2 lisait -- les trois
+positions de test ont rendu le meme chiffre, ce qui avait l'air d'un resultat
+et n'en etait pas. Corrige en `await _phase_r2()`.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`f43c898`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `13bb8e01` des deux cotes, verifie AVANT
+le push). CI run **#213** (id `32819621857`) **verte** (07:01:54 -> 07:05:00
+UTC) -- `Deploy to Vercel [STAGING -- staging]` **succes**,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche.**
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** --
+`CACHE_VERSION` de `index.service.worker.js` de `keepy-staging.vercel.app`,
+lu avant le merge puis apres :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #212, lot B docs) | `1787636616` | **05:43:36** |
+| **apres (ce lot, run #213)** | **`1787641474`** | **07:04:34** |
+
+L'epoch d'apres tombe **a l'interieur de l'etape `Export Web build`** du run
+#213 (07:04:30 -> 07:04:35), avec `x-vercel-cache: MISS` et `age: 0` sur les
+deux lectures. L'alias sert bien ce build.
+
+⚠️ **Le commit de doc est pousse APRES la fin du run de code** (07:05:00),
+pour ne pas annuler ce run -- `web-build.yml` porte `cancel-in-progress:
+true`, piege deja paye au lot A.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **La diagonale a 16,45 s depasse le seuil de 12 s.** Mesuree, publiee,
+   **non tranchee** : les leviers (`HOP_DISTANCE` 2,0 -> 12,60 s, 2,5 ->
+   10,15 s ; `HOP_DURATION` 0,28 -> 13,16 s) sont chiffres et attendent la
+   decision de Mathieu. Le trajet que le brief nomme, lui, passe largement.
+2. **Six taps pour 25 unites de COTE contre un seul vers l'avant.** C'est le
+   vrai cout de l'elargissement, et aucune sonde ne dit si ca se sent comme
+   une camera qui suit ou comme un jeu qui resiste.
+3. **Un plateau de 50x50 se lit-il encore comme un lieu, ou comme un desert ?**
+   La couronne C est a 3,41 props/100u2, un tiers de la densite du coeur --
+   c'est l'intention, mais rien ne dit qu'elle ne bascule pas en vide.
+4. **Les landmarks a 21-22 u se lisent-ils comme des reperes** sous 37 % de
+   fog, et les trois silhouettes restent-elles distinguables a cette distance
+   ou se reduisent-elles a « des taches claires » ? Question deja ouverte au
+   lot B, posee ici a une distance 1,7x plus grande.
+5. **259 MeshInstance3D, une de marge.** Le refactor `MultiMeshInstance3D`
+   n'est plus reportable si un lot futur veut densifier.
