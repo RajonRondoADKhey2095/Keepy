@@ -101,6 +101,7 @@ instead of a one-off number in a session report.
 | 25 aout 2026 | baseline (no Meshy asset yet) | 45.3–52.4 | 55 | 61 | 14.5–16.4 | 7.7–12.4 | 5 833 104 | 35 376 909 / `af4a8fc2` |
 | 25 aout 2026 | `KeepyHopper.HOP_DURATION` 0.35 → 0.28 (hop tuning; **no scene, no layout, no prop, no camera change**) | 47.8–65.3 | 55 | 61 | 15.1–16.7 | 8.7–10.4 | 5 833 088 | 35 376 909 / `af4a8fc2` |
 | 25 aout 2026 | `HubTapInput.PLATEAU_HALF_EXTENT` 25 → 35 **+ 4 landmarks at r ~30** (far ring; no camera change, no `HOP_*` change, no new prop type) | 36.8–38.8 | **72** | **78** | 27.0–27.6 | 14.8–19.6 | 5 833 648 / 5 833 728 | 35 376 909 / `af4a8fc2` |
+| 25 aout 2026 | new `&"lake"` prop type: **one** water body at (-25.10, -5.30), 2.5x the pond (water r 8.0, bank r 9.05, 40 segments) + 4 rim rocks (batched) + 3 props relocated out of its footprint. **No camera, no `HOP_*`, no `PLATEAU_HALF_EXTENT` change.** | 43.3–46.6 | **74** | **80** | 15.2–16.6 | 8.1–12.9 | 5 834 608 | 35 376 909 / `af4a8fc2` |
 
 **Reading of the second row.** The **draw node counts are the numbers
 that matter here, and they are identical to the baseline on all three
@@ -199,3 +200,52 @@ same commit (5 833 648 / 5 833 728) by tens of bytes — the same documented
 `.pck` instability the row above brackets, not a different build. The
 `.wasm` is identical everywhere, and it is the file that carries the
 identity check.
+
+**Reading of the fourth row — again, READ THE CONTROL RUNS, NOT THE ROW
+ABOVE IT.** The third row's FPS figures (27.0–27.6 mean) came from a day
+when this shared-CPU sandbox had more of the machine; this row's 15.2–16.6
+is back in the same band as the baseline row, and **neither difference is a
+property of the code**. The only comparison that carries anything is against
+three BEFORE runs taken in this same session, minutes apart, on the parent
+commit `6b4b46f` in a separate worktree:
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `6b4b46f`) | 47.34 / 47.70 / 51.07 | 72 | 78 | 15.1–16.1 | 8.7–12.1 |
+| AFTER (3 runs, this commit) | 43.27 / 45.05 / 46.63 | **74** | **80** | 15.2–16.4 | 8.1–12.9 |
+
+**The draw node counts are the only numbers that moved outside noise, and
+they moved by exactly the predicted amount: +2.** A lake is one
+`_make_water_body()` node with two `MeshInstance3D` children (the opaque
+bank and the alpha water), and it is not batched — same reason as the pond,
+there is one of it. 72 → 74 excluding portals, 78 → 80 total, which leaves
+**186 under the 260 ceiling** against 188 before. The 8 `MultiMesh` batches
+are untouched: the four new rim rocks are `&"rock"` entries, so they cost
+four *instances* in the existing `Rock` batch and **zero** nodes — the
+adding-a-hundred-flowers-costs-no-nodes property `HubLayout.gd` documents,
+used deliberately here rather than a new bordering type.
+
+⚠️ **Draw nodes were 74 / 80 on SIX consecutive runs of this commit**, not
+three: the first three were run before the construction timing was captured
+and are counted here only for that column. Construction is *lower* after
+adding two nodes (43.3–46.6 vs 47.3–51.1) — that is the noise floor
+restating itself, not a speed-up, exactly as the third row's reading warns.
+FPS mean and min both overlap the BEFORE range on every run.
+
+And, as with every row: **none of this is evidence about a device.** A
+software renderer with no GPU cannot say whether one alpha-blended disc 16
+units across costs anything on a phone. What it can say is that the node
+budget moved by exactly the amount predicted before the change was made, and
+that nothing structural changed.
+
+`index.pck` is 5 834 608 on a clean export of this commit (`build/` and
+`.godot/` removed first), ~960–1 520 bytes over the third row's two readings
+— consistent with 21 added lines of layout data plus a ~60-line docblock and
+the new builder function, and inside the `.pck` instability `CLAUDE.md`
+documents permanently. `index.wasm` is **byte-identical** (35 376 909, md5
+`af4a8fc2925d992348eb30deeeb54360`) and so is `index.js` (md5
+`4e08904b1b7107858246af44b602067b`), the expected result for a change that
+touches no engine code — and it, not the `.pck`, is the identity check.
+Payload trap re-checked on this export's own `savepack` log: **0** `Storing
+File` lines for `assets_source`, `scripts/dev`, `docs`, `web` or `build`,
+out of 219 stored files.
