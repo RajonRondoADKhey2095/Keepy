@@ -13534,3 +13534,208 @@ reponse **byte-identique**, figee sur « Import project resources /
 in_progress » a 16:46:45, bien apres que le build ait avance. Enieme
 reproduction du piege deja consigne ; c'est le `CACHE_VERSION` servi qui a
 tranche, comme aux runs #201, #202, #226 et #229.
+
+## HUB, LOT G — RECON PURE : la geometrie du stream mesuree contre la chaine de hops (25 aout 2026)
+
+Branche `claude/stream-geometry-measure-3dnlsr`, partie de `main` (`ab62ba6`,
+la ref la plus a jour du depot : `main..staging` est VIDE et les deux portent
+le MEME arbre `2ee5143` — `staging` n'a que le commit de merge en moins.
+Aucune session concurrente). **AUCUN fichier de jeu touche** : `git diff
+--stat` ne rapporte que `scripts/dev/StreamGeometryProbe.{gd,tscn}` (nouveaux)
+et ce document. Ni `scripts/hub/*`, ni `resources/hub/hub_layout.tres`, ni une
+scene, ni un `.glb`. **Aucun changement de gameplay, aucune decision prise** —
+ce lot produit les chiffres qui permettront a Mathieu de trancher si un
+ruisseau ridable peut etre un RACCOURCI ou seulement un mode de deplacement
+passif.
+
+### R1 — OUI, les 12 points sont lisibles SANS reconstruire le mesh
+
+Reponse explicite a la question du brief. L'entree `&"stream"` de
+`hub_layout.tres` porte ses points en clair, dans un
+**`PackedVector3Array`** (la forme retenue au lot precedent apres un test
+d'aller-retour de serialisation), plus un champ `width` :
+
+```
+"points": PackedVector3Array(17.58, 0, 6.67, ... , -18.54, 0, -0.73),
+"type": &"stream",
+"width": 1.2
+```
+
+Un simple `load("res://resources/hub/hub_layout.tres") as HubLayout` puis
+`layout.props` les rend tels quels : `HubLayout` est une `Resource` a
+`@export var props: Array[Dictionary]`, **aucun `SurfaceTool`, aucun
+`ArrayMesh`, aucune scene n'a besoin d'exister** pour les lire.
+
+### ⚠️ MAIS LA POLYLINE DES POINTS DE CONTROLE N'EST PAS LE CHEMIN D'UN RIDER
+
+C'est la nuance qui change la reponse a la question 4, et elle n'etait pas
+dans le brief. `HubBuilder` ne dessine PAS les 12 points : il les passe par
+`_centripetal()` (Catmull-Rom centripete, alpha 0,5) a
+`STREAM_SAMPLES_PER_SPAN = 8`, ce qui produit **89 echantillons**, et c'est
+CE spine qui est ribbonne. Une spline **bombe a l'exterieur** des cordes
+d'une polyline passant par les memes points, donc son arc est le PLUS LONG
+des deux — et c'est celui qu'un rider parcourrait reellement.
+
+Les deux sont donc mesures et publies. **La vitesse minimale de ride est
+calculee sur le SPINE** : la calculer sur la polyline annoncerait une
+vitesse que la geometrie reelle ne peut pas tenir.
+
+| | polyline (12 points de controle) | **spine (89 echantillons, ce qui est construit)** |
+|---|---|---|
+| **L_arc** | **41,1150 u** | **41,2837 u** |
+| **L_corde** | **36,8702 u** | 36,8702 u |
+| **ratio** | **1,115127** | **1,119703** |
+| **rayon de courbure min** | **3,5022 u** (index 6) | **1,4058 u** (index 48) |
+
+**Demi-largeur du ruban a la construction : 0,6000 u** (`width` 1,2 lu dans
+l'entree, `half = width * 0,5` dans `_make_stream`). Le rayon de courbure
+minimum du spine vaut donc **2,34x la demi-largeur** — un ruban dont le
+rayon de courbure descend sous sa propre demi-largeur SE REPLIE, et c'est
+pourquoi ce chiffre est imprime a cote d'elle plutot que seul.
+
+**Extremites monde** : HEAD **(17,5800 ; 0,0000 ; 6,6700)**, TAIL
+**(-18,5400 ; 0,0000 ; -0,7300)**.
+
+⚠️ **Le 1,4058 reproduit le « 1,403 » deja consigne au lot stream**, mesure a
+l'epoque sur le mesh construit et non sur une transcription — premier
+recoupement independant de ce chiffre.
+
+### La transcription du spline est CONFRONTEE au mesh livre, pas crue
+
+Recopier `_centripetal()` dans une sonde, c'est fabriquer un fixture libre de
+diverger du code qu'il imite — le piege exact que ce depot a deja paye une
+fois (`SubstituteModel.tscn`). PHASE B **reconstruit `scenes/HubWorld.tscn`
+pour de vrai**, retrouve le `MeshInstance3D` du stream **par sa COULEUR de
+materiau et jamais par un index de noeud** (le fichier de layout decide
+combien de props le precedent), et relit les sommets de l'`ArrayMesh` livre :
+
+| | valeur |
+|---|---|
+| mesh construit | **528 sommets, 176 triangles, 88 quads** |
+| echantillons du spine, transcription | 89 |
+| echantillons reconstruits depuis le mesh | 89 |
+| **ecart pire transcription vs mesh** | **0,000000477 u** *(precision float32 du buffer)* |
+| arc du ruban relu SUR LE MESH | **41,2837 u** — identique a la transcription |
+
+**Contre-verification independante** : les memes chiffres ont ete recalcules
+en Python depuis le texte brut du `.tres`, hors moteur — L_arc 41,1150 /
+41,2837, corde 36,8702, rayons 3,5022 / 1,4058, 25 hops, toutes les vitesses.
+**Identiques au dernier chiffre imprime.**
+
+### R3 — la chaine de hops equivalente, et la QUANTIFICATION qui la rallonge
+
+Constantes **lues dans `KeepyHopper.gd`**, jamais recopiees du brief :
+`HOP_DISTANCE = 1,5000`, `HOP_DURATION = 0,2800`, `ARRIVE_EPSILON = 0,4500`.
+Le nombre de hops est obtenu **en rejouant la regle de `_advance()`**
+(pas par une formule fermee qui pourrait cesser d'etre d'accord avec elle
+apres une edition du hopper).
+
+| | valeur |
+|---|---|
+| distance euclidienne extremite a extremite | **36,8702 u** |
+| **hops dans la chaine** | **25** |
+| frames par hop a 60 fps | **17** (0,2833 s) |
+| **temps NOMINAL** (25 x 0,28) | **7,0000 s** |
+| **temps QUANTIFIE** (ce que voit un chronometre) | **7,0833 s** |
+
+⚠️ Un hop est UN Tween sur `HOP_DURATION`, et un Tween se termine sur une
+FRONTIERE DE FRAME : 0,28 s vaut 16,8 frames a 60 fps, donc le tween finit a
+la frame **17** et un hop occupe reellement 0,2833 s. **Toute chaine coute
+donc ~1,19 % de plus que la multiplication nominale** — la meme quantification
+deja consignee au lot E, ici sur un trajet de 25 hops. Le 25e hop est par
+ailleurs **partiel** (0,87 u restant, pas 1,5) et coute quand meme un
+`HOP_DURATION` plein.
+
+### R4 — LA VITESSE DE RIDE MINIMALE : > 5,83 u/s
+
+| comparaison | seuil |
+|---|---|
+| **spine vs temps QUANTIFIE** *(la reponse)* | **> 5,8283 u/s** |
+| spine vs temps NOMINAL | > 5,8977 u/s |
+| polyline vs temps QUANTIFIE *(sous-estime — voir plus haut)* | > 5,8045 u/s |
+| pour l'echelle : vitesse au sol de la chaine de hops | **5,2941 u/s** |
+
+⚠️ **CE QUE CE CHIFFRE DIT, ET IL EST INCONFORTABLE : un ride qui se
+contenterait de la vitesse de deplacement actuelle serait PLUS LENT que
+marcher.** Il faut **au moins 1,101x la vitesse au sol de Keepy** juste pour
+faire match nul, et cela **uniquement parce que le ruisseau meandre** — il
+fait 41,28 u pour relier deux points distants de 36,87 u (**+12 %** de detour,
+ratio 1,1197). Un raccourci reel — disons 25 % plus rapide que la chaine de
+hops — demanderait **> 7,77 u/s**, soit **1,47x** la vitesse au sol.
+
+**Ni cette decision ni aucune autre n'est prise ici.** Ce que la mesure
+autorise a dire, et rien de plus : la vitesse de ride n'est pas un parametre
+libre a choisir a l'oreille — sous 5,83 u/s le ruisseau ne peut etre qu'un
+mode de deplacement PASSIF (agreable, panoramique, jamais optimal), et au
+dela il devient un raccourci. **Il n'existe pas de reglage qui donne les
+deux.**
+
+### R5 — ce qui se tient pres des extremites (candidats a bloquer un embarquement)
+
+Rayon de recherche 3,0 u autour de chaque extremite. **Trois props, tous
+degages du ruban** :
+
+| extremite | prop | position | distance | echelle |
+|---|---|---|---|---|
+| **HEAD** (17,58 ; 6,67) | `stump` | (17,61 ; 4,72) | **1,9502 u** | 0,84 |
+| **HEAD** | `stump` | (16,99 ; 9,21) | **2,6076 u** | 0,90 |
+| **TAIL** (-18,54 ; -0,73) | `rock` | (-18,68 ; 1,70) | **2,4340 u** | 1,18 |
+
+⚠️ **Les deux plans d'eau n'apparaissent PAS dans cette liste, et c'est une
+propriete du seuil, pas une absence** : le centre de la mare est a
+**3,2043 u** du HEAD et celui du lac a **7,9949 u** du TAIL — c'est-a-dire
+exactement leurs rayons d'eau (3,20 et 8,00), les extremites du stream etant
+posees **sur la rive EAU** de chacun. Un embarquement se ferait donc au bord
+de l'eau, pas au milieu d'un prop.
+
+Les deux souches du HEAD sont deux des **quatre souches de rive de la mare**
+deja consignees (0,37 a 0,54 au-dela de la berge) ; le rocher du TAIL est l'un
+des **rochers de rive du lac**. Aucun n'est un ajout de ce lot, aucun n'est
+deplace par lui.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** —
+50 276 070 et 1 073 228 327 octets, aucune troncature silencieuse). Import
+headless **exit 0**, **24 `.scn`** (import complet verifie, pas suppose — le
+piege du faux-rouge par import tronque est controle), **0 erreur**. Export Web
+release **exit 0**, **0 ligne d'erreur** dans le log.
+
+`index.wasm` **35 376 909 octets** / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur, ce qui est exactement
+ce qu'un lot dev-only doit rendre. `index.pck` **5 838 080** (export unique et
+propre, `build/` supprime avant — a lire avec la mise en garde permanente sur
+son instabilite, jamais offert comme preuve).
+
+**`exclude_filter` couvre bien le nouveau fichier, VERIFIE sur le pack et pas
+sur le filtre** : `scripts/dev/*` est un glob, et le log `savepack` porte
+**0** ligne `Storing File` pour `res://scripts/dev` (comme pour
+`assets_source`, `docs`, `web`, `build` et `firebase.json`) sur 219 lignes ;
+la chaine `StreamGeometryProbe` est **absente du `.pck`**.
+
+Sondes : `ProbeTimeoutAudit` **exit 0, 39 sondes scenes** (38 + celle-ci,
+toutes armees — la nouvelle arme `arm()` en PREMIERE instruction de `_ready()`
+**et** un `deadline()`, parce qu'elle a les deux formes : PHASE B attend des
+frames, les autres phases bloquent dans un seul appel ou un watchdog arme
+serait MUET). `AssetContractAudit` (**12/12 visuels, 0 collider deplace**),
+`DeathModelAudit`, `ChargerShapeProbe` — **toutes exit 0**.
+**Non-applicabilite du reste VERIFIEE** : ce lot n'ajoute aucun noeud, aucun
+mesh, aucun materiau et ne touche aucune constante de jeu.
+
+### Reste ouvert — c'est une decision de Mathieu, pas une question technique
+
+1. **La vitesse de ride** : sous **5,83 u/s** le ruisseau est un mode de
+   deplacement passif, au-dessus c'est un raccourci. Le detour de +12 % du
+   meandre est une propriete de la trace livree, pas un reglage.
+2. **Si un raccourci est voulu, la trace elle-meme est un levier** — la
+   redresser baisserait le seuil, mais elle a ete routee pour degager les
+   props ET pour tenir un rayon de courbure de 1,4058 u ; la retoucher
+   rouvrirait les deux contraintes du lot precedent.
+3. **Rien n'a ete mesure sur l'EMBARQUEMENT** : ni comment on monte sur le
+   ruban, ni ce que devient le `KeepyHopper` pendant un ride, ni si une
+   sortie en cours de trajet est possible. Hors perimetre de cette recon.
+4. **Aucun jugement device n'est possible sur ce lot** — il n'ajoute rien de
+   visible.
