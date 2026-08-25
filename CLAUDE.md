@@ -12107,3 +12107,363 @@ true`, piege deja paye au lot A.
    lot B, posee ici a une distance 1,7x plus grande.
 5. **259 MeshInstance3D, une de marge.** Le refactor `MultiMeshInstance3D`
    n'est plus reportable si un lot futur veut densifier.
+
+## HUB : LE DECOR PASSE EN MultiMeshInstance3D -- PHASE 0, la recon et la baseline (25 aout 2026)
+
+Branche `claude/hub-decor-refactor-props-jxfu6a`, partie de `main`
+(`77548dc`). Le lot C (plateau 25) est **deja en prod** : `main..staging`
+est VIDE et `main` porte le merge en plus, donc `origin/main` est la ref la
+plus a jour du depot. Aucune session concurrente (les refs les plus recentes
+sont toutes cette chaine de lots).
+
+Le lot precedent se termine sur « **259 MeshInstance3D, une de marge** ». Ce
+lot ouvre le budget avant d'ajouter quoi que ce soit, et cette section
+consigne la mesure d'AVANT -- elle est ecrite avant que la moindre ligne de
+`HubBuilder.gd` ne bouge, pour qu'il n'y ait pas a la reconstituer apres coup.
+
+### BASELINE MESUREE, sur la scene livree et pas deduite du layout
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles confirmees contre le `Content-Length`** --
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0**, **24 `.scn`**, 0 erreur. Sonde jetable qui instancie
+`HubWorld.tscn` cinq fois et compte le sous-arbre `Props` :
+
+| mesure | valeur |
+|---|---|
+| `MeshInstance3D` dans `Props` (total) | **265** |
+| dont a l'interieur des 3 `HubPortal.tscn` | 6 |
+| **construites par `HubBuilder`** | **259** |
+| `MultiMeshInstance3D` | **0** |
+| `instantiate()` + `_ready()` (5 passes) | **moyenne 19,8 ms** (min 13,3 / max 42,8) |
+
+Le 259 **reproduit au noeud pres** le chiffre publie par le lot C, ce qui
+valide la sonde avant qu'on lui fasse confiance sur l'apres. Detail par type,
+recompte sur le `.tres` (146 entrees) :
+
+| type | entrees | meshes / entree | total |
+|---|---|---|---|
+| tree | 39 | 2 (fut + houppier) | 78 |
+| rock | 42 | 1 | 42 |
+| bush | 29 | 2 (une seule mesh, deux offsets) | 58 |
+| flower | 25 | 2 (tige + corolle) | 50 |
+| landmark | 8 | 4 / 5 / 3 selon la silhouette | 31 |
+| **HubBuilder** | **143** | | **259** |
+| portal | 3 | 2 (dans `HubPortal.tscn`) | 6 |
+
+⚠️ **Pas de proxy FPS.** Ce sandbox rend en llvmpipe sous xvfb ; un chiffre
+d'images par seconde mesure la ferme de CPU, pas le telephone. Ce qui est
+mesure a la place est ce qui est reellement comparable d'un arbre a l'autre :
+le nombre de noeuds de dessin et le cout de construction de l'ecran.
+
+### ⚠️ LE NOMBRE DE MULTIMESH N'EST PAS LE NOMBRE DE TYPES -- il est de HUIT
+
+L'unite de batch est la paire **(mesh, couleur)**, et elle ne coincide avec
+aucun type semantique :
+
+| batch | mesh | instances |
+|---|---|---|
+| `TreeTrunk` | `CylinderMesh` 0,16/0,24 x 1,5 | 39 |
+| `TreeCrown` | `SphereMesh` r 0,95 h 1,7 | 39 |
+| `Rock` | `SphereMesh` r 0,6 h 0,8 | 42 |
+| `Bush` | `SphereMesh` r 0,5 h 0,7 | **58** *(2 lobes par buisson, MEME mesh)* |
+| `FlowerStem` | `CylinderMesh` 0,025/0,035 x 0,42 | 25 |
+| `FlowerPetal0/1/2` | `SphereMesh` r 0,15 h 0,14 | 8 / 8 / 9 |
+
+Trois faits que seule la lecture du code donne : **un arbre alimente DEUX
+batches** (fut et houppier sont deux meshes) ; **un buisson alimente DEUX
+INSTANCES d'un seul batch** (ses deux lobes partagent la meme `SphereMesh` a
+deux offsets, `_make_bush` reutilise litteralement la variable) ; et **la
+corolle se scinde en TROIS** parce que ses trois teintes sont trois dessins
+differents. Les trois `SphereMesh` d'arbre/rocher/buisson ont des rayons et
+des tessellations differents : ce sont bien trois meshes, pas une.
+
+### AUCUNE COLLISION N'EST PERDUE -- verifie par grep, pas suppose
+
+`grep -rn "CollisionShape3D\|StaticBody3D\|Area3D\|RigidBody3D\|CharacterBody3D"`
+sur `scripts/hub/` et les scenes du hub ne rend que **`HubPortal`** (un
+`Area3D` avec son `Shape`). `tree` / `rock` / `bush` / `flower` sont des
+`Node3D` + `MeshInstance3D`, rien d'autre. Le sol n'est pas un collider non
+plus : `HubTapInput` intersecte un `Plane` mathematique plutot que de lancer
+un raycast, et son propre commentaire dit pourquoi. **Le passage en MultiMesh
+ne peut donc rien coster en collision**, et les portails -- les seuls noeuds
+qui en ont une, et les seuls auxquels `HubWorld` connecte un signal --
+restent des noeuds individuels.
+
+### ⚠️ LA DOC ETAIT FAUSSE SUR LE GARDE-FOU DE BORNES
+
+Le lot C ecrit qu'un refactor MultiMesh « demanderait de re-cabler le
+garde-fou de bornes, **qui inspecte des noeuds** ». **C'est faux, et c'est le
+code qui le dit** : le garde-fou vit dans `HubBuilder._build()` et lit
+`entry.get("position")` **dans le dictionnaire du layout**, avant meme que le
+noeud n'existe --
+
+```gdscript
+var where: Vector3 = entry.get("position", Vector3.ZERO)
+var bound: float = HubTapInput.PLATEAU_HALF_EXTENT
+if absf(where.x) > bound or absf(where.z) > bound:
+    push_warning(...)
+```
+
+Il est donc **pilote par la DONNEE et pas par l'arbre de scene**, et un prop
+batche le franchit exactement comme un prop-noeud. **Rien a recabler.** Le
+seul soin a prendre est de garder l'ORDRE des messages : le garde-fou tire
+apres que le type a ete reconnu, donc un type inconnu produit un
+`push_error` et **aucun** avertissement de bornes -- une inversion changerait
+stderr sans changer le jeu.
+
+### Ce que la phase 0 laisse comme decisions, prises et non subies
+
+* **Couleur par instance ecartee.** `MultiMesh.use_colors` +
+  `vertex_color_use_as_albedo` fondrait `FlowerPetal0/1/2` en un seul noeud.
+  Non retenu : ca ferait diverger le materiau livre de celui que ce fichier
+  construisait, sur un lot que personne ne peut regarder avant staging, pour
+  economiser deux noeuds sur un budget que ce lot vide de toute facon. Trois
+  noeuds portant le materiau exact d'avant, c'est la version dont la parite
+  se PROUVE.
+* **`custom_aabb` pose explicitement.** `MultiMesh.custom_aabb` existe bien
+  en 4.3 (verifie a l'execution, pas lu de memoire). Une AABB fausse ou
+  perimee fait disparaitre tout un batch quand la camera tourne, **sans
+  aucune erreur attachee** -- l'union exacte est bon marche a calculer ici,
+  donc elle est ecrite plutot que laissee au calcul implicite.
+
+### PHASE 1 -- le decor passe en MultiMesh : 259 -> 39 noeuds de dessin, a PARITE STRICTE
+
+`tree` / `rock` / `bush` / `flower` sont desormais accumules dans **un
+`MultiMeshInstance3D` par paire (mesh, couleur)**, remplis en seconde passe
+une fois toutes les entrees lues. `portal` et `landmark` restent des noeuds
+individuels : le premier est un `Area3D` auquel `HubWorld` connecte un
+signal (un MultiMesh n'a aucun noeud par instance a connecter), le second
+echangerait 31 noeuds contre ~12 en perdant la lisibilite par variante.
+
+| | avant | apres |
+|---|---|---|
+| `MeshInstance3D` construites par `HubBuilder` | **259** | **31** *(les 8 landmarks seuls)* |
+| `MultiMeshInstance3D` | 0 | **8** |
+| instances dessinees par MultiMesh | 0 | **228** |
+| **noeuds de dessin, total** | **259** | **39** |
+| `instantiate()` + `_ready()`, MEME renderer | **40,0 ms** | **29,5 ms** *(-26 %)* |
+
+⚠️ **Les 19,8 ms de la baseline headless et ces 40,0 ms sont le MEME arbre**
+-- la baseline avait ete prise en `--headless` (driver DUMMY) et l'apres sous
+`xvfb` + `opengl3`. Les deux chiffres du tableau sont donc **remesures des
+deux cotes sous le meme renderer** plutot que compares a travers deux
+drivers. Ne jamais comparer un temps de build headless a un temps xvfb.
+
+### La parite est PROUVEE instance par instance, pas deduite du compte
+
+Un compte de noeuds qui baisse est facile a obtenir en dessinant la mauvaise
+chose. Sonde jetable (supprimee avant le commit -- `ProbeTimeoutAudit`
+revient a **37 sondes**) qui reconstruit, pour **chacune des 135 entrees
+scatter**, le placement d'AVANT avec un vrai `Node3D` + enfant, lit le
+`global_transform` de cet enfant, et exige que l'instance batchee le
+reproduise :
+
+| assertion | resultat |
+|---|---|
+| le placement compose == ce qu'un `Node3D` vivant donne (135 props) | **OK**, ecart pire **6,7e-7** |
+| chaque batch a exactement les instances de son type | **OK** (39/39/42/58/25/8/8/9) |
+| aucun noeud de batch en trop | **OK** (8 construits, 8 attendus) |
+| **chaque instance est exactement ou son ancien noeud etait** | **OK**, ecart pire **0,000000000** |
+| chaque batch porte un `StandardMaterial3D` UNSHADED | **OK** |
+| le `custom_aabb` de chaque batch enclot toutes ses instances | **OK** |
+| les couleurs de batch == les constantes remplacees | **OK** |
+
+Le calcul de placement est **exact et pas approche** : `Transform3D(
+Basis.from_euler(y).scaled(uniform), where)` est ce que `Node3D` compose,
+**parce que le `scale` du layout est un flottant UNIFORME** -- rotation et
+echelle uniforme commutent, donc l'ambiguite « de quel cote Godot applique
+l'echelle » disparait. Ce n'est pas argumente, c'est asserte contre un vrai
+noeud.
+
+### ⚠️ DEUX PIEGES MESURES, dont un qui aurait dessine TOUT LE DECOR A L'ORIGINE
+
+1. **`MultiMesh.transform_format` vaut `TRANSFORM_2D` (0) PAR DEFAUT en
+   Godot 4.3, PAS `TRANSFORM_3D`.** Mesure sur quatre ordres d'ecriture :
+   seul `transform_format` -> `mesh` -> `instance_count` rend
+   `get_instance_transform(0) = (1,2,3)` ; les trois autres rendent
+   `(0,0,0)` avec `fmt=0`. Un `MultiMesh` laisse au defaut **jette toutes
+   les transforms qu'on lui ecrit et dessine le batch entier a l'origine** --
+   c'est-a-dire un plateau ou tout le decor est empile sous les pieds de
+   Keepy. `HubBuilder` pose donc `transform_format` en PREMIERE ligne, et
+   le commentaire dit pourquoi.
+2. **`--headless` ne peut PAS lire une instance de MultiMesh.** Le driver
+   DUMMY n'en conserve rien : la sonde de parite a d'abord rapporte un
+   ecart de **33,7** avec des transforms toutes a l'identite, sur un code
+   qui etait juste. Ce qui l'a prouve : le `custom_aabb`, calcule dans la
+   MEME boucle a partir des memes transforms, sortait CORRECT (bornes
+   `-19,18..24,55`) -- donc les valeurs etaient bonnes a l'ecriture et
+   perdues a la relecture. Rejouee sous `xvfb-run --rendering-driver
+   opengl3` : **0 echec, ecart 0,000000000**. Meme famille que le piege
+   `--headless` deja consigne pour les sondes a pixels, sur un autre
+   sous-systeme. **Toute sonde qui lit un MultiMesh doit tourner sous
+   xvfb.**
+
+### Deux choix pris et non subis
+
+* **Couleur par instance ECARTEE.** `MultiMesh.use_colors` +
+  `vertex_color_use_as_albedo` fondrait `FlowerPetal0/1/2` en un seul
+  noeud. Non retenu : ca ferait diverger le materiau livre de celui que ce
+  fichier construisait, **sur un lot que personne ne peut regarder avant
+  staging**, pour economiser deux noeuds sur un budget que ce lot vide de
+  toute facon. Trois noeuds portant le materiau exact d'avant, c'est la
+  version dont la parite se PROUVE.
+* **`custom_aabb` ecrit explicitement.** L'union exacte des AABB
+  d'instances est calculee dans la boucle de remplissage. Une AABB fausse
+  ou perimee fait disparaitre **tout un batch** quand la camera tourne,
+  **sans aucune erreur attachee** -- le pire mode de panne possible sur un
+  ecran qu'on ne peut pas regarder avant staging.
+
+### Le garde-fou de bornes n'a RIEN eu a recabler
+
+Consequence directe du constat de phase 0 : il lit le dictionnaire du
+layout, pas l'arbre de scene. Le seul soin pris est de le laisser **APRES**
+le dispatch de type, pour qu'un type inconnu produise toujours une erreur et
+**aucun** avertissement -- l'ordre des lignes de stderr est preserve.
+
+## HUB : DEUX NOUVEAUX TYPES -- la souche et la mare (25 aout 2026)
+
+Meme branche, commit distinct, depensant le budget que la phase 1 libere.
+
+**`stump`** -- une seule `CylinderMesh` (0,34/0,44 x 0,55, 8 segments) dans
+le **`TRUNK_COLOR` des arbres**, aucun nouvel asset et **aucun second
+materiau** : partager la couleur d'ecorce est ce qui fait lire une souche
+comme ce qu'un arbre a laisse derriere lui plutot que comme un prop sans
+rapport. Pas de disque plus clair sur la face coupee -- ce serait un second
+materiau pour une surface que la camera, a -34 deg et 7,6 unites de haut,
+voit presque par la tranche. **14 sur le plateau**, posees a cote de
+grappes d'arbres existantes et en rive de la mare.
+
+**`pond`** -- **une seule instance**, loin dans la couronne exterieure
+(**(20,70 ; 7,40)**, rayon 22,0, azimut ~110 deg), comme point de
+destination. **Deux disques plats et pas un** : une berge opaque legerement
+plus large (r 3,62) sous une eau alpha (r 3,20), pour que la surface
+transparente ait un bord ou finir au lieu de s'arreter sur l'herbe nue.
+`CylinderMesh` et non `PlaneMesh` -- un plan est simple face, et un
+spectateur qui verrait cet ecran depuis sous l'horizon trouverait la mare
+simplement absente.
+
+⚠️ **`transparency` doit etre DEMANDEE.** Le canal alpha d'`albedo_color`
+est **entierement ignore** tant que `transparency` reste a `DISABLED` : la
+mare rendrait en turquoise plat opaque, **sans aucune erreur pour le dire**.
+`BaseMaterial3D.TRANSPARENCY_ALPHA` est pose explicitement. C'est la SEULE
+surface alpha du plateau.
+
+Les hauteurs sont ce qui la sort d'un z-fight : le sol est un `PlaneMesh` a
+**exactement y = 0**, le dessous de la berge est a **0,005** et celui de
+l'eau a **0,02** -- ni l'un ni l'autre n'est jamais coplanaire avec lui.
+
+**Teinte bleu-vert et pas bleue** : le sol est vert marecage et le ciel un
+vert quasi noir ; un bleu sature serait la seule chose de cet ecran sans
+aucun rapport avec le reste.
+
+### Placement VERIFIE contre toutes les entrees existantes, pas a l'oeil
+
+| contrainte | mesuree |
+|---|---|
+| souche -> prop existant le plus proche | **1,734** |
+| souche -> souche | **3,598** |
+| centre de la mare -> prop existant | **6,900** |
+| rive de l'eau (r 3,2) -> souche la plus proche | **>= 3,45** *(aucun chevauchement)* |
+| `max abs(x)` / `max abs(z)` sur les 161 entrees | **23,95 / 23,88** *(borne 25,0)* |
+
+Le garde-fou de bornes reste donc **silencieux au boot** -- confirmation A
+L'EXECUTION que les 161 entrees sont atteignables, et pas seulement le
+resultat du script de placement.
+
+### Les deux nouveaux types restent HORS MultiMesh, et le volume est publie
+
+La mare est une instance unique : il n'y a rien a batcher. Les 14 souches
+sont a une mesh chacune, donc les batcher economiserait **13 noeuds sur les
+~220 que la phase 1 libere** -- mesure et laisse individuel jusqu'a ce que
+le compte rende l'indirection payante. `HubLayout.gd` documente desormais
+quels types sont batches, avec la consequence utile : ajouter cent fleurs
+coute cent instances et **zero** noeud, ajouter cent souches coute cent
+noeuds.
+
+### BUDGET FINAL
+
+| | lot C (avant) | ce lot |
+|---|---|---|
+| `MeshInstance3D` construites par `HubBuilder` | **259** | **47** *(31 landmarks + 14 souches + 2 mare)* |
+| `MultiMeshInstance3D` | 0 | **8** |
+| **noeuds de dessin, total** | **259** | **55** |
+| marge sous le plafond de 260 | **1** | **205** |
+| entrees de layout | 146 | **161** |
+| `instantiate()` + `_ready()` (xvfb) | 40,0 ms | **28,8 ms** |
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles confirmees contre le `Content-Length`). Import
+headless **exit 0**, **24 `.scn`**. Boot headless de `HubWorld.tscn`
+**exit 0, 0 erreur, 0 `push_warning`**. Export Web release **exit 0**,
+**0 erreur**. `index.wasm` **35 376 909 octets** / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+5 833 152 (export unique et propre, `build/` supprime avant -- a lire avec
+la mise en garde permanente sur son instabilite). **Piege payload tenu** :
+**0** ligne `Storing File` pour `assets_source`, `scripts/dev`, `docs`,
+`web` ou `build`, sur 219.
+
+Sondes : `ProbeTimeoutAudit` (**37 sondes scenes**, retour exact a la
+baseline apres suppression des deux sondes jetables), `AssetContractAudit`
+(**12/12 visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe` -- **toutes exit 0**, et **byte-identiques entre l'arbre
+de phase 1 et l'arbre final** sur les deux flux, ce qui dit que la phase 2
+est un no-op pour elles. **Non-applicabilite VERIFIEE par grep** : aucune
+sonde de `scripts/dev/` ne reference `HubWorld`, `HubBuilder`,
+`HubTapInput` ni `hub_layout`. **Aucun diff contre `origin/main` n'a ete
+joue pour ces quatre sondes** -- elles ne chargent aucune scene de hub, donc
+il n'y avait rien a comparer ; c'est dit plutot que sous-entendu.
+
+⚠️ **TROIS RENDUS REELS CAPTURES** (1080x1920, `xvfb-run
+--rendering-driver opengl3`, sonde jetable supprimee avant commit), parce
+qu'aucune validation device n'etait possible ce soir : centre du plateau,
+mare, champ de souches. Les trois confirment A L'OEIL ce que les chiffres
+disaient -- les trois portails et leurs labels, les arbres, les rochers,
+les fleurs dans leurs **trois** teintes, les landmarks, et la mare avec sa
+berge et ses cinq souches de rive. **Rien ne manque et rien n'est empile a
+l'origine**, ce qui est la forme visible qu'aurait prise le piege
+`transform_format` s'il n'avait pas ete ferme.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Aucune mesure de performance REELLE.** Ce sandbox rend en llvmpipe :
+   les 40,0 -> 28,8 ms mesurent un cout de CONSTRUCTION, pas un framerate,
+   et le gain attendu du batch est au DESSIN (8 draw calls la ou il y en
+   avait 228). **Rien ici ne dit que le plateau tourne mieux sur un
+   telephone** -- c'est precisement ce que le test device doit repondre.
+2. **La mare se lit-elle comme de l'eau** a vitesse reelle sur un ecran de
+   telephone, ou comme un disque sombre ? L'alpha 0,55 et la berge sont des
+   choix, pas des mesures.
+3. **Est-ce qu'une souche se lit comme une souche** dans la couleur exacte
+   d'un tronc, sans face coupee differenciee ?
+4. **La mare est a 6 taps de cote** (azimut 110 deg) : c'est un point de
+   destination lointain par conception, mais l'asymetrie de visee deja
+   consignee au lot C s'applique en plein a elle.
+5. **205 noeuds de marge** sous le plafond. Le prochain lot qui densifie
+   n'a plus le refactor MultiMesh devant lui.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`98a7ac9`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `4a89fd38` des deux cotes, verifie AVANT
+le push). CI run **#216** (id `32827408790`). **`main` NON touche**
+(`origin/main` toujours `77548dc`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE et DANS LES DEUX SENS** -- `CACHE_VERSION` de
+`index.service.worker.js` de `keepy-staging.vercel.app` :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #214, lot C docs) | `1787641860` | **07:11:00** |
+| **apres (ce lot, run #216)** | **`1787647099`** | **08:38:19** |
+
+L'epoch d'apres tombe dans la fenetre du run #216 (demarre 08:35:27), avec
+`x-vercel-cache: MISS` et `age: 0`. L'ancienne valeur a ete **relue a
+08:36:18 pendant que le job tournait** (toujours `1787641860`,
+`x-vercel-cache: HIT`) : le job avancait donc REELLEMENT au lieu d'etre un
+cache perime, et la bascule est prouvee dans les deux sens.

@@ -18,6 +18,51 @@ class_name HubBuilder
 ## DirectionalLight3D, so a lit surface would render at whatever the
 ## ambient term alone gives it and its colour would stop being the colour
 ## that was authored.
+##
+## =====================================================================
+## SCATTER PROPS ARE BATCHED, LANDMARKS AND PORTALS ARE NOT (25 aout 2026)
+##
+## tree / rock / bush / flower used to be a Node3D each with one
+## or two MeshInstance3D children, which put the plateau at 259 draw nodes
+## against a 260 ceiling -- one spare. They are now accumulated into a
+## MultiMeshInstance3D per UNIQUE (mesh, colour) pair, filled in a second
+## pass once every entry has been read.
+##
+## The unit of batching is the (mesh, colour) PAIR and not the semantic
+## type, and the two do not line up: a tree contributes to two batches
+## (trunk and crown are different meshes), a bush contributes TWO
+## INSTANCES to one batch (its two lobes share a single SphereMesh at two
+## offsets), and a flower's corolla splits three ways because its three
+## tints are three different draws.
+##
+## Per-instance colour (MultiMesh.use_colors plus
+## vertex_color_use_as_albedo) would collapse those three corolla nodes
+## into one. It is NOT used: it would make the shipped material differ
+## from the one this file used to build, on a batch nobody can look at
+## before it is on staging, to save two nodes out of a budget this change
+## empties. Three nodes carrying the exact material they carried before is
+## the version whose parity can be proven rather than hoped for.
+##
+## WHAT STAYS AN INDIVIDUAL NODE, and why:
+##
+##   portal    it is an Area3D with a CollisionShape3D and a Label3D, and
+##             HubWorld connects a signal to each one. A MultiMesh has no
+##             per-instance node to connect to.
+##   landmark  three silhouettes, 3 to 5 meshes each, 8 on the plateau --
+##             batching them would trade 31 nodes for ~12 and lose the
+##             per-variant readability of the tree.
+##   pond      one instance on the plateau. There is nothing to batch,
+##             and it is the only ALPHA-BLENDED surface on this screen.
+##   stump     14 on the plateau at one mesh each. Batching would save 13
+##             nodes out of the ~220 this change frees; measured and left
+##             individual until the count makes the indirection worth it.
+##
+## NO COLLISION IS LOST. tree / rock / bush / flower / stump / pond have never
+## had a CollisionShape3D -- grepped, not assumed -- so nothing on the
+## plateau depends on a per-prop physics node. The ground is not a
+## collider either: HubTapInput intersects a maths Plane rather than
+## raycasting. The only Area3D on this screen belongs to HubPortal, which
+## is exactly what this change leaves alone.
 
 ## The plateau's contents. Swap this resource and the whole screen
 ## re-lays-out with no code change -- the point of the split.
@@ -41,10 +86,22 @@ const FLOWER_STEM_COLOR: Color = Color(0.19, 0.35, 0.14)
 ## a repeated instance, which is exactly what it is. Entries pick one with
 ## an optional "variant" int; anything out of range falls back to 0 so a
 ## layout written without the field still builds.
+##
+## One MultiMesh batch each -- see the header. The batch keys are kept in
+## step with this array by _FLOWER_PETAL_KEYS below.
 const FLOWER_PETAL_COLORS: Array[Color] = [
 	Color(0.93, 0.86, 0.42),
 	Color(0.86, 0.52, 0.62),
 	Color(0.72, 0.66, 0.88),
+]
+
+## Batch key per corolla tint, index-aligned with FLOWER_PETAL_COLORS. A
+## fourth tint means a fourth entry in both, and the assert in _ready()
+## fails loudly rather than silently drawing every extra tint as tint 0.
+const _FLOWER_PETAL_KEYS: Array[StringName] = [
+	&"FlowerPetal0",
+	&"FlowerPetal1",
+	&"FlowerPetal2",
 ]
 
 ## Landmark colours, LOCAL to the hub for the same reason as the flower
@@ -55,6 +112,18 @@ const FLOWER_PETAL_COLORS: Array[Color] = [
 ## horizontal), so it is read against the sky, and the sky here is the
 ## near-black swamp green. A dark silhouette against a dark sky is not a
 ## landmark, it is a hole.
+## The pond. Its water is the ONLY alpha-blended surface on the plateau:
+## an opaque disc reads as a painted circle, and the point of a pond as a
+## destination is that it reads as a hole in the ground rather than a mark
+## on it. The bank is opaque and slightly wider, so the water has an edge
+## to sit inside instead of ending on bare ground.
+##
+## Blue-green rather than blue. The ground is swamp green and the sky is
+## near-black green: a saturated blue would be the only thing on this
+## screen with no relation to anything else on it.
+const POND_WATER_COLOR: Color = Color(0.16, 0.30, 0.36, 0.55)
+const POND_BANK_COLOR: Color = Color(0.22, 0.21, 0.15)
+
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
 const LANDMARK_SPIRE_CROWN: Color = Color(0.38, 0.58, 0.30)
 const LANDMARK_CAIRN_STONE: Color = Color(0.44, 0.45, 0.40)
@@ -64,7 +133,18 @@ const LANDMARK_SLAB_BASE: Color = Color(0.26, 0.30, 0.23)
 
 var _portals: Array[HubPortal] = []
 
+## Batch key -> {"mesh": Mesh, "colour": Color, "xforms": Array[Transform3D]}.
+## Filled while the layout is walked, drained once at the end by
+## _flush_batches(); a batch nothing landed in is never created.
+var _batches: Dictionary = {}
+
+## Batch keys in first-seen order, so the child order of the MultiMesh
+## nodes follows the layout rather than Dictionary iteration order.
+var _batch_order: Array[StringName] = []
+
 func _ready() -> void:
+	assert(_FLOWER_PETAL_KEYS.size() == FLOWER_PETAL_COLORS.size(),
+		"HubBuilder: a corolla tint has no batch key, or the reverse.")
 	_build()
 
 ## Every portal built, in layout order. HubWorld connects them after the
@@ -79,38 +159,181 @@ func _build() -> void:
 	for index in layout.props.size():
 		var entry: Dictionary = layout.props[index]
 		var type: StringName = entry.get("type", &"")
-		var node: Node3D = null
-		match type:
-			&"portal":
-				node = _make_portal(entry, index)
-			&"tree":
-				node = _make_tree()
-			&"rock":
-				node = _make_rock()
-			&"bush":
-				node = _make_bush()
-			&"flower":
-				node = _make_flower(entry)
-			&"landmark":
-				node = _make_landmark(entry)
-			_:
-				push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
-				continue
-		if node == null:
-			continue
 		var where: Vector3 = entry.get("position", Vector3.ZERO)
+		var rotation_y: float = entry.get("rotation_y", 0.0)
+		var uniform: float = entry.get("scale", 1.0)
+
+		# The transform the prop's root node WOULD have had. Composed by
+		# hand because a batched instance has no node to read it off --
+		# and it is exact rather than approximate because the layout's
+		# scale is a UNIFORM float: rotation and uniform scale commute, so
+		# there is no ambiguity about which side Node3D applies the scale.
+		# Asserted against a real node, not argued: see the batch's probe.
+		var placement := Transform3D(
+			Basis.from_euler(Vector3(0.0, deg_to_rad(rotation_y), 0.0)).scaled(Vector3.ONE * uniform),
+			where)
+
+		var node: Node3D = null
+		if not _batch_prop(type, entry, placement):
+			match type:
+				&"portal":
+					node = _make_portal(entry, index)
+				&"landmark":
+					node = _make_landmark(entry)
+				&"stump":
+					node = _make_stump()
+				&"pond":
+					node = _make_pond()
+				_:
+					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
+					continue
+			if node == null:
+				continue
+
 		# A prop outside the tap clamp is drawn but can never be walked to.
 		# Not fatal -- distant scenery is a legitimate thing to want -- so
 		# warn and keep it rather than dropping it. The bound is READ from
 		# HubTapInput, never copied: two copies of a play-area limit is how
 		# they drift apart.
+		#
+		# This reads the LAYOUT, never the scene tree, which is why
+		# batching changed nothing about it. It stays AFTER the type is
+		# known good so an unknown type still produces one error and no
+		# warning, exactly as before.
 		var bound: float = HubTapInput.PLATEAU_HALF_EXTENT
 		if absf(where.x) > bound or absf(where.z) > bound:
 			push_warning("HubBuilder: entry %d ('%s') at %s is outside the +-%.1f plateau; visible but unreachable." % [index, type, where, bound])
-		node.position = where
-		node.rotation_degrees = Vector3(0.0, entry.get("rotation_y", 0.0), 0.0)
-		var uniform: float = entry.get("scale", 1.0)
-		node.scale = Vector3.ONE * uniform
+
+		if node != null:
+			node.position = where
+			node.rotation_degrees = Vector3(0.0, rotation_y, 0.0)
+			node.scale = Vector3.ONE * uniform
+			add_child(node)
+	_flush_batches()
+
+## Files a scatter prop into its batches. Returns false for a type that
+## wants a node of its own, which is the caller's cue to fall through to
+## the match.
+func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) -> bool:
+	match type:
+		&"tree":
+			_instance(&"TreeTrunk", placement.translated_local(Vector3(0.0, 0.75, 0.0)))
+			_instance(&"TreeCrown", placement.translated_local(Vector3(0.0, 2.0, 0.0)))
+		&"rock":
+			_instance(&"Rock", placement.translated_local(Vector3(0.0, 0.28, 0.0)))
+		&"bush":
+			# Two lobes, ONE mesh: two instances of a single batch.
+			_instance(&"Bush", placement.translated_local(Vector3(0.0, 0.3, 0.0)))
+			_instance(&"Bush", placement.translated_local(Vector3(0.42, 0.2, 0.18)))
+		&"flower":
+			_instance(&"FlowerStem", placement.translated_local(Vector3(0.0, 0.21, 0.0)))
+			var variant: int = entry.get("variant", 0)
+			if variant < 0 or variant >= FLOWER_PETAL_COLORS.size():
+				variant = 0
+			_instance(_FLOWER_PETAL_KEYS[variant], placement.translated_local(Vector3(0.0, 0.44, 0.0)))
+		_:
+			return false
+	return true
+
+func _instance(key: StringName, xform: Transform3D) -> void:
+	if not _batches.has(key):
+		var spec: Array = _batch_spec(key)
+		var xforms: Array[Transform3D] = []
+		_batches[key] = {"mesh": spec[0], "colour": spec[1], "xforms": xforms}
+		_batch_order.append(key)
+	_batches[key]["xforms"].append(xform)
+
+## The (mesh, colour) pair a batch key stands for. Built once per key, on
+## first use -- the whole point of a MultiMesh is that 39 trees share one
+## trunk mesh rather than owning 39 copies of it.
+##
+## Godot's default tessellation on a primitive is far denser than any
+## silhouette this size needs -- the same trap docs/MESHY_SPEC.md 7.2
+## caught on the collectibles. Set explicitly rather than inherited.
+func _batch_spec(key: StringName) -> Array:
+	match key:
+		&"TreeTrunk":
+			var trunk := CylinderMesh.new()
+			trunk.top_radius = 0.16
+			trunk.bottom_radius = 0.24
+			trunk.height = 1.5
+			trunk.radial_segments = 8
+			trunk.rings = 1
+			return [trunk, TRUNK_COLOR]
+		&"TreeCrown":
+			var crown := SphereMesh.new()
+			crown.radius = 0.95
+			crown.height = 1.7
+			crown.radial_segments = 10
+			crown.rings = 5
+			return [crown, CROWN_COLOR]
+		&"Rock":
+			var rock := SphereMesh.new()
+			rock.radius = 0.6
+			rock.height = 0.8
+			rock.radial_segments = 8
+			rock.rings = 4
+			return [rock, ROCK_COLOR]
+		&"Bush":
+			var bush := SphereMesh.new()
+			bush.radius = 0.5
+			bush.height = 0.7
+			bush.radial_segments = 8
+			bush.rings = 4
+			return [bush, BUSH_COLOR]
+		&"FlowerStem":
+			var stem := CylinderMesh.new()
+			stem.top_radius = 0.025
+			stem.bottom_radius = 0.035
+			stem.height = 0.42
+			stem.radial_segments = 6
+			stem.rings = 1
+			return [stem, FLOWER_STEM_COLOR]
+		_:
+			var tint: int = _FLOWER_PETAL_KEYS.find(key)
+			if tint < 0:
+				push_error("HubBuilder: no mesh known for batch key '%s'." % key)
+				return [SphereMesh.new(), Color.MAGENTA]
+			var petal := SphereMesh.new()
+			petal.radius = 0.15
+			petal.height = 0.14
+			petal.radial_segments = 8
+			petal.rings = 3
+			return [petal, FLOWER_PETAL_COLORS[tint]]
+
+## Turns every filled batch into one MultiMeshInstance3D.
+func _flush_batches() -> void:
+	for key in _batch_order:
+		var batch: Dictionary = _batches[key]
+		var xforms: Array = batch["xforms"]
+		if xforms.is_empty():
+			continue
+		var mesh: Mesh = batch["mesh"]
+		var multi := MultiMesh.new()
+		multi.transform_format = MultiMesh.TRANSFORM_3D
+		multi.mesh = mesh
+		multi.instance_count = xforms.size()
+		var bounds := AABB()
+		var local_aabb: AABB = mesh.get_aabb()
+		for i in xforms.size():
+			var xform: Transform3D = xforms[i]
+			multi.set_instance_transform(i, xform)
+			var box: AABB = xform * local_aabb
+			bounds = box if i == 0 else bounds.merge(box)
+		# A MultiMesh derives an AABB of its own, and a wrong or stale one
+		# makes the entire batch vanish when the camera turns -- a failure
+		# with no error attached to it, on a screen no one can look at
+		# before staging. The exact union is cheap to compute right here,
+		# so it is written rather than trusted.
+		multi.custom_aabb = bounds
+
+		var node := MultiMeshInstance3D.new()
+		node.name = String(key)
+		node.multimesh = multi
+		# material_override rather than a material on the mesh: the mesh is
+		# shared by every instance in the batch, and this keeps the colour
+		# on the node that draws it, next to the instances it applies to.
+		node.material_override = _unshaded(batch["colour"])
 		add_child(node)
 
 func _make_portal(entry: Dictionary, index: int) -> Node3D:
@@ -127,68 +350,56 @@ func _make_portal(entry: Dictionary, index: int) -> Node3D:
 		label_node.text = entry.get("label", "")
 	_portals.append(portal)
 	return portal
-
-func _make_tree() -> Node3D:
+## A cut trunk. Deliberately ONE mesh in the trees' own bark colour: a
+## stump is what a tree leaves behind, so sharing the colour is what makes
+## the pair read as a story rather than as two unrelated props. No lighter
+## disc on the cut face -- that would be a second material for a surface
+## the camera, at -34 degrees and 7.6 units up, sees almost edge-on.
+func _make_stump() -> Node3D:
 	var root := Node3D.new()
-	var trunk_mesh := CylinderMesh.new()
-	trunk_mesh.top_radius = 0.16
-	trunk_mesh.bottom_radius = 0.24
-	trunk_mesh.height = 1.5
-	# Godot's default tessellation on a primitive is far denser than any
-	# silhouette this size needs -- the same trap docs/MESHY_SPEC.md 7.2
-	# caught on the collectibles. Set explicitly rather than inherited.
-	trunk_mesh.radial_segments = 8
-	trunk_mesh.rings = 1
-	root.add_child(_mesh_node(trunk_mesh, TRUNK_COLOR, Vector3(0.0, 0.75, 0.0)))
-
-	var crown_mesh := SphereMesh.new()
-	crown_mesh.radius = 0.95
-	crown_mesh.height = 1.7
-	crown_mesh.radial_segments = 10
-	crown_mesh.rings = 5
-	root.add_child(_mesh_node(crown_mesh, CROWN_COLOR, Vector3(0.0, 2.0, 0.0)))
-	return root
-
-func _make_rock() -> Node3D:
-	var root := Node3D.new()
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.6
-	mesh.height = 0.8
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 0.34
+	mesh.bottom_radius = 0.44
+	mesh.height = 0.55
 	mesh.radial_segments = 8
-	mesh.rings = 4
-	root.add_child(_mesh_node(mesh, ROCK_COLOR, Vector3(0.0, 0.28, 0.0)))
+	mesh.rings = 1
+	root.add_child(_mesh_node(mesh, TRUNK_COLOR, Vector3(0.0, 0.275, 0.0)))
 	return root
 
-func _make_bush() -> Node3D:
+## Standing water, far out in the outer ring, as somewhere to go.
+##
+## Two flat discs, not one: an opaque bank slightly wider than the water,
+## so the alpha surface has a rim to end on. Both are CylinderMesh rather
+## than PlaneMesh -- a plane is single-sided, and a viewer who ever sees
+## this screen from below the horizon would find the pond simply absent.
+##
+## The heights are what keep it out of a z-fight with the ground. The
+## ground is a PlaneMesh at exactly y = 0; the bank's underside sits at
+## 0.005 and the water's at 0.02, so neither is ever coplanar with it.
+func _make_pond() -> Node3D:
 	var root := Node3D.new()
-	var mesh := SphereMesh.new()
-	mesh.radius = 0.5
-	mesh.height = 0.7
-	mesh.radial_segments = 8
-	mesh.rings = 4
-	root.add_child(_mesh_node(mesh, BUSH_COLOR, Vector3(0.0, 0.3, 0.0)))
-	root.add_child(_mesh_node(mesh, BUSH_COLOR, Vector3(0.42, 0.2, 0.18)))
-	return root
 
-func _make_flower(entry: Dictionary) -> Node3D:
-	var root := Node3D.new()
-	var stem_mesh := CylinderMesh.new()
-	stem_mesh.top_radius = 0.025
-	stem_mesh.bottom_radius = 0.035
-	stem_mesh.height = 0.42
-	stem_mesh.radial_segments = 6
-	stem_mesh.rings = 1
-	root.add_child(_mesh_node(stem_mesh, FLOWER_STEM_COLOR, Vector3(0.0, 0.21, 0.0)))
+	var bank := CylinderMesh.new()
+	bank.top_radius = 3.62
+	bank.bottom_radius = 3.62
+	bank.height = 0.05
+	bank.radial_segments = 24
+	bank.rings = 1
+	root.add_child(_mesh_node(bank, POND_BANK_COLOR, Vector3(0.0, 0.03, 0.0)))
 
-	var petal_mesh := SphereMesh.new()
-	petal_mesh.radius = 0.15
-	petal_mesh.height = 0.14
-	petal_mesh.radial_segments = 8
-	petal_mesh.rings = 3
-	var variant: int = entry.get("variant", 0)
-	if variant < 0 or variant >= FLOWER_PETAL_COLORS.size():
-		variant = 0
-	root.add_child(_mesh_node(petal_mesh, FLOWER_PETAL_COLORS[variant], Vector3(0.0, 0.44, 0.0)))
+	var water := CylinderMesh.new()
+	water.top_radius = 3.2
+	water.bottom_radius = 3.2
+	water.height = 0.06
+	water.radial_segments = 24
+	water.rings = 1
+	var surface := _mesh_node(water, POND_WATER_COLOR, Vector3(0.0, 0.05, 0.0))
+	var material := surface.get_surface_override_material(0) as StandardMaterial3D
+	# Alpha blending, and it has to be asked for: albedo_color's alpha
+	# channel is ignored entirely while transparency stays at DISABLED, so
+	# the water would render as flat opaque teal with no error to say so.
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	root.add_child(surface)
 	return root
 
 ## An orientation marker, readable from the far side of the plateau.
@@ -280,8 +491,15 @@ func _mesh_node(mesh: Mesh, colour: Color, offset: Vector3, rotation_deg: Vector
 	node.mesh = mesh
 	node.position = offset
 	node.rotation_degrees = rotation_deg
+	node.set_surface_override_material(0, _unshaded(colour))
+	return node
+
+## The one material this file ever makes. UNSHADED is the project's
+## standing rule for every surface (see the header), and having a single
+## factory is what keeps a batched prop's material identical to the
+## individual-node one it replaced.
+func _unshaded(colour: Color) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.albedo_color = colour
-	node.set_surface_override_material(0, material)
-	return node
+	return material

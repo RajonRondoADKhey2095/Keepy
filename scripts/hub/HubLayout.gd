@@ -25,7 +25,7 @@ class_name HubLayout
 ## and a dozen [sub_resource] blocks between the author and the numbers.
 ##
 ##   type        StringName  &"portal", &"rock", &"tree", &"bush",
-##                           &"flower" or &"landmark"
+##                           &"flower", &"stump", &"pond" or &"landmark"
 ##   position    Vector3     world position, y is ignored for props that
 ##                           sit on the ground (they are placed AT y = 0)
 ##   rotation_y  float       degrees
@@ -37,6 +37,14 @@ class_name HubLayout
 ##                           OR landmark silhouette, 0..2:            (landmarks)
 ##                           0 spire, 1 cairn, 2 twin slabs. Same
 ##                           fallback rule.
+##
+## WHICH TYPES ARE BATCHED. rock / tree / bush / flower are drawn as
+## MultiMesh instances, one batch per unique (mesh, colour) pair;
+## portal / landmark / stump / pond are individual nodes. That split is
+## HubBuilder's business and changes nothing here -- an entry looks the
+## same either way -- but it is worth knowing that adding a hundred
+## flowers costs a hundred instances and no new nodes, while adding a
+## hundred stumps costs a hundred nodes.
 ##
 ## HubBuilder.gd validates every entry and skips a malformed one with a
 ## push_error rather than crashing the screen: a typo in a decor file must
