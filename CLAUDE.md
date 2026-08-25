@@ -11536,3 +11536,239 @@ une ressource Godot -- donc le contenu de jeu deploye est bien celui du
 lot. **Consequence pour un futur lot : pousser le code puis la doc coup
 sur coup annule le premier run**, et un lecteur qui ne regarde que le
 numero de run le lirait comme un echec.
+
+## HUB : LE PLATEAU PASSE DE 11 A 15, ET GAGNE QUATRE LANDMARKS D'ORIENTATION (25 aout 2026)
+
+Branche `claude/plateau-extension-landmarks-6dxwge`, partie de `main`
+(`33f7aa4`, le merge du lot A de densification). **Lot purement VISUEL et de
+zone jouable** : `HubCamera.OFFSET`, `FOLLOW_LAMBDA`, `fov`, la rotation de
+camera et `KeepyHopper.HOP_DISTANCE` sont **INTOUCHES**, verifie par
+`git diff` -- `HubCamera.gd` et `KeepyHopper.gd` ne sont pas dans le diff du
+tout.
+
+### RECON BLOQUANTE -- les trois questions, repondues par mesure
+
+**R1. PORTEE DU FOG -- le landmark n'est PAS efface, avec une grosse marge.**
+`fog_mode` n'est ecrit nulle part dans `HubWorld.tscn`, donc c'est le DEFAUT,
+**mesure et pas suppose** (`Environment.new()` en headless) : `fog_mode = 0`
+= EXPONENTIEL, `fog_height_density = 0` (aucun fog de hauteur qui viendrait
+s'ajouter). La formule appliquee par le shader Godot 4.3 dans ce mode est
+`amount = 1 - exp(-distance * fog_density)`, avec `hub_fog_density = 0.016`
+(lu dans `swamp_palette.tres`, jamais recopie) :
+
+| distance camera | occlusion |
+|---|---|
+| 10 u | 14,8 % |
+| 20 u | 27,4 % |
+| **28 u** *(landmark vu du bord oppose)* | **36,1 %** |
+| 43,3 u | **50 %** |
+| 143,9 u | **90 %** |
+
+Le 50 % n'est atteint qu'a **43,3 unites** et le 90 % a **143,9**. Un
+landmark a rayon 12,6 vu depuis le bord oppose est a ~28 unites de la
+camera et garde donc **64 % de sa propre couleur**. Aucune reduction de
+`hub_fog_density` n'a ete necessaire, et aucun rayon n'a eu a etre reduit :
+la condition de blocage du brief (« si le fog efface au-dela de ~25
+unites ») **ne se declenche pas**.
+
+**R2. HORIZON -- aucun bord de sol n'est jamais visible, et le haut du cadre
+etait DEJA du ciel avant ce lot.** Mesure sur la scene reelle, camera figee
+a `(15, 7.6, 8.9)` (Keepy au NOUVEAU bord), `_process` de `HubCamera` coupe
+et `SubViewportContainer.stretch` desactive -- sans ces deux precautions la
+camera lerpe pendant la mesure et les coins ne sortent plus symetriques,
+piege rencontre au premier essai :
+
+| viewport | haut-centre | bas-centre |
+|---|---|---|
+| 1080x1920 | `dir.y = +0,0413` (**+2,37 deg**) -> **CIEL** | -70,34 deg -> sol a 8,1 u, `max\|axe\| = 15,0` |
+| 1170x2532 | `dir.y = +0,1370` (**+7,87 deg**) -> **CIEL** | -75,85 deg -> sol a 7,8 u, `max\|axe\| = 15,0` |
+
+Les `+0,041` et `+0,137` **reproduisent au chiffre pres** ceux deja
+consignes pour ce hub, ce qui valide le banc avant qu'on lui fasse
+confiance. Le rayon de sol le plus lointain atteint `max\|axe\| = 28,5`
+contre les **+-300** du `PlaneMesh` 600x600 : marge d'un facteur 10, le
+bord est hors de portee. Et la jonction sol/ciel reste invisible par
+construction, `hub_fog_light_color` valant exactement `sky_shallow`.
+⚠️ **Point important : ce n'est PAS un cas de cadrage nouveau.** La camera
+suit Keepy en x/z, donc la vue depuis `x = 15` a exactement la meme FORME
+que depuis `x = 0` -- seul le contenu du monde sous elle change. Elargir le
+plateau ne peut structurellement pas ouvrir un bord.
+
+**R3. CADRAGE DES PORTAILS -- la lecture du brief est JUSTE, `OFFSET` n'a
+rien a re-mesurer.** Les trois portails restent a `(-5,4, -4,6)`,
+`(0, -7,2)` et `(5,4, -4,6)` : ce lot n'y touche pas. Le calibrage documente
+de `OFFSET` porte sur la lisibilite d'un label de portail **quand Keepy est
+pres de lui**, et la camera etant un suivi 1:1 cette situation est
+identique avant et apres. Rien a bouger.
+
+### La constante a exactement TROIS lecteurs, verifie par grep
+
+`PLATEAU_HALF_EXTENT` : sa declaration, les deux `clampf` de
+`HubTapInput._handle_point`, et la lecture de `HubBuilder` pour son
+avertissement de bornes. **Aucune valeur `11.0` dupliquee ailleurs** dans
+`scripts/hub/`, `scenes/Hub*.tscn` ni `resources/hub/`. Le passage a
+**15.0** suit donc automatiquement des deux cotes -- c'est precisement
+pourquoi le lot A avait refuse d'en faire une seconde copie.
+
+### Le nouveau type `&"landmark"` -- la HAUTEUR ne suffit pas
+
+`_make_landmark()` dans `HubBuilder.gd`, meme doctrine que l'existant :
+primitives Godot seules (**aucun `.glb`, aucun credit Meshy depense**),
+`StandardMaterial3D` **unshaded**, tessellation basse **explicite** (piege
+7.2 des collectibles). Couleurs en constantes **LOCALES** (`LANDMARK_*`),
+rien migre vers `SwampPalette` -- son propre en-tete range ce genre de
+couleur comme decor hub-local, au meme titre que `TRUNK`/`ROCK`/`BUSH` et
+les teintes de fleurs du lot A.
+
+**Hauteur mesuree sur la scene construite : 8,45 / 8,40 / 8,06 unites**
+contre **2,85** pour le prop ordinaire le plus haut (l'arbre) -- soit
+**2,96x**, la cible de ~3x. Mais la hauteur seule ne suffit pas : un arbre
+agrandi reste de forme d'arbre et se lit comme « encore du decor ». Chaque
+variante est donc une **SILHOUETTE differente**, et c'est ce qui porte
+l'orientation -- distinguer deux landmarks l'un de l'autre, pas simplement
+en avoir quatre.
+
+| `variant` | silhouette | meshes |
+|---|---|---|
+| **0** spire | une aiguille : fut elance + trois cones empiles, etroit | 4 |
+| **1** cairn | un empilement de blocs tournes, large et gris | 5 |
+| **2** twin slabs | deux dalles verticales de hauteurs inegales | 3 |
+
+Hors plage retombe sur 0, meme regle que `flower`.
+
+⚠️ **LES COULEURS SONT DELIBEREMENT CLAIRES, et c'est une consequence
+directe de R2.** Le haut d'un landmark depasse la ligne d'horizon (le haut
+du cadre est a +2,4 deg au-dessus de l'horizontale), donc il est lu **contre
+le CIEL** -- et le ciel ici est le vert marecage quasi noir
+(`sky_shallow`, luminance ~0,099). Une silhouette sombre contre un ciel
+sombre n'est pas un repere, c'est un trou. Les deux familles se separent
+aussi par la TEINTE et pas seulement par la valeur : spire vert clair
+`(0.38, 0.58, 0.30)`, pierre grise `(0.44..0.56)` -- un second axe de
+distinction quand la silhouette est vue de trop loin pour etre lue.
+
+⚠️ **`_mesh_node` gagne un quatrieme parametre `rotation_deg`, avec un
+defaut `Vector3.ZERO`** : purement additif, les quatre appelants existants
+sont inchanges. Il est necessaire parce qu'un cairn est fait de blocs
+tournes et une dalle est inclinee -- un offset seul ne l'exprime pas.
+
+### Placement -- les trois contraintes MESUREES, pas supposees
+
+Quatre landmarks a azimuts distincts (N/E/S/O), rayon ~12,6, compatible avec
+R1 :
+
+| landmark | position | variant | echelle |
+|---|---|---|---|
+| N | `(0, -12,60)` | 0 spire | 1,00 |
+| E | `(12,70, 0,55)` | 1 cairn | 1,00 |
+| S | `(0,60, 12,60)` | 2 slabs | 0,92 |
+| O | `(-12,75, -0,40)` | 1 cairn | 0,86 |
+
+| contrainte | exigee | mesuree |
+|---|---|---|
+| `\|x\|`, `\|z\|` | <= 14,2 | **13,96** (max sur TOUTES les entrees neuves) |
+| landmark -> centre de portail | >= 3,0 | **5,400** |
+| landmark -> prop existant | >= 2,0 | **2,980** |
+
+Avec trois silhouettes pour quatre azimuts, **aucun landmark n'est
+identique a un voisin** : la seule paire repetee est les deux cairns, et
+ils sont E et O, donc diametralement opposes -- ~25 unites d'ecart, jamais
+vus ensemble dans un cadre, et differant encore par l'echelle (1,00 contre
+0,86) et la rotation. C'est
+pour ca que trois variantes ont ete ecrites plutot que les deux minimum
+demandees : avec deux, une paire adjacente aurait ete identique.
+
+### La couronne 10,4 -> 14,2 : 34 props, DELIBEREMENT plus clairsemee
+
+| type | ajoutes |
+|---|---|
+| flower | 10 (3 grappes + une) |
+| bush | 8 (3 grappes) |
+| tree | 8 |
+| rock | 8 |
+
+Grappes de 3 a 5 pour `bush`/`flower`, `scale` **0,62 a 1,36**,
+`rotation_y` libre sur 360 deg -- jamais un semis regulier, doctrine du
+lot A.
+
+**Densite degressive, mesuree** : le coeur porte **50 props sur 432 u2**
+(11,6 pour 100 u2), la couronne **34 sur 374 u2** (**9,1 pour 100 u2**),
+soit **1,27x plus clairsemee**. Un plateau uniformement dense supprime
+toute lisibilite de direction, ce qui detruirait l'utilite meme des
+landmarks que ce lot ajoute.
+
+Separations mesurees sur le jeu complet : couronne -> prop existant
+**1,866**, couronne -> landmark **2,728**, couronne -> couronne **0,805**
+(les membres d'une meme grappe, volontairement proches -- le lot A a des
+paires a 0,555, c'est la meme lecture).
+
+⚠️ **Le garde-fou de bornes n'a PAS declenche** : le boot headless de
+`HubWorld.tscn` ne produit **aucun** `push_warning` « outside the +-15.0
+plateau ». C'est la confirmation A L'EXECUTION que les 91 entrees sont
+atteignables, et pas seulement le resultat du script de placement.
+
+### COUT : 169 MeshInstance3D construites par HubBuilder -- AU-DESSUS DU SEUIL
+
+Compte reel, mesure par une sonde jetable qui parcourt le sous-arbre `Props`
+de la scene livree : **175 au total, dont 6 appartiennent aux trois
+`HubPortal.tscn`** (2 chacun, mesure et pas deduit). **HubBuilder en
+construit donc 169**, contre 92 au lot A.
+
+| source | meshes |
+|---|---|
+| lot A (14 tree, 8 rock, 13 bush, 15 flower) | 92 |
+| 4 landmarks (spire 4 + cairn 5 + slabs 3 + cairn 5) | **17** |
+| couronne (8 tree, 8 rock, 8 bush, 10 flower) | **60** |
+| **total HubBuilder** | **169** |
+
+⚠️ **169 DEPASSE le seuil de 160, et c'est signale comme le brief le
+demande : le refactor `MultiMeshInstance3D` devient a ARBITRER.** Non fait
+ici, deliberement -- ce lot n'a aucune mesure de perf sur device pour dire
+qu'il est necessaire, et le faire en meme temps que l'extension rendrait
+toute regression future ambigue. Ce que l'arbitrage aurait a peser : les
+props sont statiques, unshaded et low-poly, donc parfaitement eligibles ;
+mais un `MultiMesh` par type retirerait la rotation et l'echelle
+par-instance de leur forme actuelle et demanderait de re-cabler le
+garde-fou de bornes, qui inspecte des noeuds.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** --
+50 276 070 et 1 073 228 327 octets, aucune troncature silencieuse). Import
+headless **exit 0**, **24 `.scn`** (import complet verifie, pas suppose --
+le piege du faux-rouge par import tronque est controle). Boot headless de
+`HubWorld.tscn` **exit 0**, aucune erreur de parse, aucun `push_warning`.
+Export Web release **exit 0**, **0 erreur**.
+
+`index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** ; `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+5 821 280 (export unique et propre, `build/` supprime avant -- a lire avec
+la mise en garde permanente sur son instabilite, jamais offert comme
+preuve). **Piege payload tenu** : **0** ligne `Storing File` pour
+`assets_source`, `scripts/dev`, `docs`, `web` ou `build`.
+
+**Sondes rejouees, toutes exit 0** : `ProbeTimeoutAudit` (**37 sondes
+scenes**, retour exact a la baseline apres suppression des sondes
+jetables), `AssetContractAudit` (**12/12 visuels, 0/10 colliders
+deplaces**), `DeathModelAudit`, `ChargerShapeProbe`.
+**Non-applicabilite VERIFIEE par grep, pas supposee** : aucune sonde de
+`scripts/dev/` ne reference `HubWorld`, `HubBuilder`, `HubTapInput` ni
+`hub_layout` -- elles ne peuvent pas voir ce lot, elles peuvent seulement
+attester qu'il n'a rien casse ailleurs.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Un plateau de 30x30 se traverse-t-il encore agreablement ?**
+   `HOP_DISTANCE` reste a 1,5, donc aller d'un bord a l'autre coute
+   desormais ~20 bonds la ou il en coutait ~15. Mesure, assume, et c'est le
+   risque principal du lot : rien ne dit que la traversee ne devient pas
+   fastidieuse.
+2. **Les landmarks se lisent-ils comme des reperes** a 28 unites sous 36 %
+   de fog, sur un vrai telephone ? La geometrie et le contraste sont
+   mesures ; la lisibilite ne l'est pas.
+3. **Les trois silhouettes sont-elles reellement distinguables** a cette
+   distance, ou se reduisent-elles a « trois taches claires » ?
+4. **169 MeshInstance3D** -- au-dessus du seuil, `MultiMeshInstance3D` a
+   arbitrer (section ci-dessus).
