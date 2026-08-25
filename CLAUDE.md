@@ -11772,3 +11772,30 @@ attester qu'il n'a rien casse ailleurs.
    distance, ou se reduisent-elles a « trois taches claires » ?
 4. **169 MeshInstance3D** -- au-dessus du seuil, `MultiMeshInstance3D` a
    arbitrer (section ci-dessus).
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`8fe6c5e`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `2ff97fa9` des deux cotes, verifie AVANT
+le push). CI run **#211** (id `32813373828`), demarre 05:34:33 UTC.
+**`main` NON touche** (`origin/main` toujours `33f7aa4`) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** --
+`CACHE_VERSION` de `index.service.worker.js` de `keepy-staging.vercel.app` :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #209, lot A) | `1787611489` | 24 aout **22:44:49** |
+| **apres (ce lot, run #211)** | **`1787636255`** | 25 aout **05:37:35** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre du run #211**, avec
+`x-vercel-cache: MISS` et `age: 0`. Le « avant » a ete relu **pendant que
+le job tournait** (05:36:43, toujours l'ancienne valeur) : le job avancait
+donc REELLEMENT au lieu d'etre un cache perime, et la bascule est prouvee
+dans les deux sens.
+
+⚠️ **Le commit de doc est pousse APRES la fin du run #211, deliberement** :
+`web-build.yml` porte `cancel-in-progress: true`, donc pousser code puis doc
+coup sur coup annule le premier run -- exactement le piege consigne au
+lot A, ou le run #207 apparait `cancelled` sans etre un echec.
