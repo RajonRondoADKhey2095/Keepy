@@ -13218,3 +13218,319 @@ disponible ici, comme deja consigne.
 
 Le `.pck` servi (5 834 592) est 16 octets sous l'export local propre de cette
 session (5 834 608) -- l'instabilite deja documentee, pas un autre build.
+
+## HUB : NOUVEAU TYPE `stream` -- un ruisseau relie la mare au lac, et la MESURE a corrige DEUX fois la consigne (25 aout 2026)
+
+Branche `claude/stream-pond-lake-connector-ocs0ko`, partie de `main`
+(`92d00be`, le merge du lot lake -- `main..staging` VIDE, `origin/main` est
+donc la ref la plus a jour du depot, aucune session concurrente).
+**CONTRAINTE DURE TENUE** : `HubTapInput.gd`, `HubCamera.gd`,
+`KeepyHopper.gd` et `HubWorld.tscn` **ne sont PAS dans le diff**, verifie par
+`git diff --stat`. Aucune collision ajoutee : le ruisseau est purement
+visuel, comme tout le decor du plateau.
+
+### R1 -- ruban SurfaceTool, PAS CSGPolygon3D : quatre raisons, dans l'ordre ou elles ont tranche
+
+1. ⚠️ **Il n'existe PAS UN SEUL noeud CSG dans tout le depot** -- `grep`
+   sur `*.gd`/`*.tscn`/`*.tres` : **zero occurrence**, et `SurfaceTool`/
+   `ArrayMesh`/`Curve3D`/`Path3D` non plus (la seule mention d'`ArrayMesh`
+   est un commentaire de `TrackSegment.gd`). Tout le decor du hub est une
+   primitive construite en code. Un ruisseau n'est pas l'endroit ou
+   introduire un second paradigme.
+2. **CSG est un solveur a l'execution** : un `CSGShape3D` garde un brush et
+   le re-evalue, et il porte un `use_collision` qu'il faudrait tenir
+   explicitement a `false` contre la regle permanente « rien sur le plateau
+   n'a de physique ». Un `ArrayMesh` est cuit une fois, ici, et n'a aucun
+   drapeau qui puisse devenir un collider par defaut.
+3. **Controle des segments.** Le mode Path de `CSGPolygon3D` subdivise par
+   un `path_interval`, une poignee INDIRECTE sur ce qui compte vraiment --
+   la deviation de facette d'une courbe. `STREAM_SAMPLES_PER_SPAN` la fixe
+   directement, exactement comme `LAKE_SEGMENTS` avait ete calibre sur son
+   rayon.
+4. **Un noeud CSG n'est pas un `MeshInstance3D`**, donc il ne passerait pas
+   par `_unshaded()` -- et le fait que ce fichier n'ait qu'UNE seule usine a
+   materiau est ce qui tient toutes les surfaces du plateau.
+
+### R2 -- le schema : `PackedVector3Array`, VERIFIE par ecriture/relecture AVANT d'y batir quoi que ce soit
+
+Un projet Godot jetable a servi a tester la serialisation reelle, pas a la
+supposer. **Les trois formes imbriquees dans un `Dictionary` dans un
+`Array[Dictionary]` exporte font l'aller-retour**, en ecriture par
+`ResourceSaver` **et** en `.tres` ECRIT A LA MAIN (le cas qui compte, puisque
+`hub_layout.tres` s'edite en texte) :
+
+| forme ecrite a la main | rechargee en | valeurs |
+|---|---|---|
+| `[Vector3(...), Vector3(...)]` | `TYPE_ARRAY` (28) | exactes |
+| `PackedVector3Array(...)` | `TYPE_PACKED_VECTOR3_ARRAY` (36) | exactes |
+| `Array[Vector3]([...])` | `TYPE_ARRAY` (28) | exactes |
+
+**`PackedVector3Array` retenu** : type par construction (un flottant egare
+ou un `Vector2` dans la liste est une erreur de parse, pas une forme
+silencieusement differente), et il tient sur une seule ligne du fichier.
+
+⚠️ **`&"stream"` est le SEUL type qui porte une TRACE au lieu d'une
+POSITION** -- il n'a ni `position`, ni `rotation_y`, ni `scale`, et
+`HubBuilder` `push_warning` si l'un des trois apparait plutot que de
+translater silencieusement tout le cours d'eau.
+
+### R3 -- positions LUES, pas supposees
+
+| | centre | rive eau | rive berge |
+|---|---|---|---|
+| mare (`&"pond"`) | **(20,70 ; 7,40)** | 3,20 | 3,62 |
+| lac (`&"lake"`) | **(-25,10 ; -5,30)** | 8,00 | 9,05 |
+
+Centre a centre **47,528** (azimut -164,50 deg). **Bord de berge a bord de
+berge : 47,528 - 3,62 - 9,05 = 34,858.**
+
+### R4 -- ⚠️ LE TRAJET DIRECT EST ENCOMBRE : 20 props dans le couloir +-2,0
+
+Le segment direct rive-a-rive traverse **20 props**, dont **une fleur a
+0,075 de l'axe** -- litteralement au milieu du lit. Le plus proche par type :
+fleur idx 70 (13,48 ; 5,32) a 0,075 ; arbre idx 103 (-15,72 ; -3,15) a 0,435 ;
+rocher idx 20 (4,62 ; 2,49) a 0,435 ; buisson idx 36 (5,92 ; 4,42) a 1,078 ;
+landmark idx 56 (-12,75 ; -0,40) a 1,422 ; souche idx 152 (17,61 ; 4,72) a
+1,757. Un trace courbe etait donc bien necessaire.
+
+⚠️ **PREMIERE CORRECTION DE LA CONSIGNE, MESUREE : « 2-3 points de controle
+intermediaires » NE SUFFIT PAS.** Le brief le donnait comme estimation ; la
+mesure la contredit. Recherche exhaustive (Dijkstra bottleneck sur une
+grille au pas 0,25, puis plus-court-chemin sous contrainte de clearance,
+puis descente locale sur la spline reelle) :
+
+| points de controle | meilleure clearance atteignable |
+|---|---|
+| **3** | **-0,407** -- un prop est 0,41 A L'INTERIEUR de l'eau, **impossible** |
+| 4 | +0,039 -- faisable, marge nulle |
+| 7 | +0,172 |
+| **12 (livre)** | **+0,419** |
+
+**12 points de controle**, donc, et ce n'est pas un compromis : une seule
+entree de layout, une seule ligne de `PackedVector3Array`, et c'est ce a
+quoi ressemble un ruisseau qui meandre.
+
+### ⚠️ SECONDE CORRECTION, ET C'EST LE RENDU QUI L'A TROUVEE : la clearance NE SUFFIT PAS COMME METRIQUE
+
+**Une premiere trace a 12 points passait la clearance a +0,391 et etait
+POURTANT defectueuse.** La capture offscreen montre un **pincement en
+eventail** : le ruban se replie sur lui-meme. Cause mesuree :
+
+> **Un ruban dont le rayon de courbure descend sous sa propre demi-largeur
+> SE REPLIE** -- le bord interieur se croise et la surface pince. La
+> metrique de clearance ne peut PAS voir ca : l'axe reste parfaitement
+> valide.
+
+Rayon de courbure minimum de cette premiere trace : **0,089** contre une
+demi-largeur de 0,60, aux deux endroits ou la simplification RDP d'un
+trajet de grille 8-connexe avait laisse des zigzags a 45 deg.
+
+⚠️ **Piege de raisonnement dans lequel ce lot est tombe et dont il est
+ressorti par la mesure** : ces paires de points rapprochees avaient ete
+gardees parce que les FUSIONNER faisait chuter la clearance de +0,391 a
++0,094 -- elles etaient reellement porteuses pour CETTE metrique. Elles
+etaient aussi exactement ce qui cassait le ruban. **Une contrainte mesuree
+n'est pas une contrainte suffisante tant qu'on n'a pas regarde le rendu.**
+
+Corrige en lissant le trajet de grille AVANT la simplification, puis en
+optimisant contre les **deux** metriques simultanement. Trace livree :
+**clearance +0,4191, rayon de courbure minimum 1,403** -- soit **2,3x la
+demi-largeur**, un repli est geometriquement impossible. Verifie a l'oeil
+sur un nouveau rendu : le pincement a disparu.
+
+### Ce qui est livre
+
+`&"stream"`, **une** entree, **12 points de controle**, largeur **1,2** :
+
+```
+PackedVector3Array(17.58, 0, 6.67, 16.1, 0, 8.01, 11.59, 0, 8.54,
+  7.65, 0, 10.37, 5.43, 0, 9.95, -1.73, 0, 10, -3.9, 0, 10.14,
+  -6.34, 0, 7.89, -11.14, 0, 5.97, -12.35, 0, 4.41, -14.58, 0, 3.42,
+  -18.54, 0, -0.73)
+```
+
+**Centripete et pas uniforme.** Le Catmull-Rom uniforme fait de l'overshoot
+dans un virage serre, et **mesure sur ce plateau cet overshoot seul poussait
+le ruban 0,4 unite dans des props que la trace etait routee pour degager**.
+La forme centripete (alpha = 0,5) est celle qui ne produit ni cusp ni
+auto-intersection.
+
+**Extremites exactement sur les rives EAU** (r = 3,2043 contre 3,20 et
+7,9949 contre 8,00 -- l'ecart est l'arrondi a 2 decimales du fichier de
+layout). Le ruban traverse donc l'anneau de berge depuis l'exterieur et
+s'arrete la ou l'eau commence : **il couvre la rive au lieu de laisser un
+trou, et il ne superpose jamais une surface alpha a une autre**.
+
+**Hauteur `y = 0,095`**, au-dessus du sol (0), des berges (dessus 0,055) et
+de l'eau (dessus 0,08) -- jamais coplanaire avec quoi que ce soit.
+**Epaisseur ZERO, dessine double face** (`CULL_DISABLED`) :
+`_make_water_body` explique deja pourquoi une surface d'eau plate ne doit
+jamais montrer sa propre tranche ; un ruban sans epaisseur ne le peut pas,
+et le double face repond par construction a l'objection « un plan est simple
+face » qui avait impose `CylinderMesh` aux deux disques.
+
+### La troisieme teinte d'eau : chaque paire separee sur un axe DIFFERENT
+
+| | HSV | lecture |
+|---|---|---|
+| mare | hsv(198,0 / 0,556 / **0,36**) | teal sombre |
+| lac | hsv(**221,5** / 0,634 / 0,82) | bleu clair |
+| **ruisseau** | hsv(**190,9** / 0,512 / **0,86**) | cyan vif |
+
+**ruisseau vs mare** : 7,1 deg de teinte -- separes par la **VALEUR**
+(0,86 contre 0,36, la moitie de l'echelle).
+**ruisseau vs lac** : valeur quasi identique -- separes par la **TEINTE**
+(30,6 deg, ce qui franchit la frontiere cyan/bleu).
+
+S'appuyer sur un seul axe pour les deux paires en aurait fait s'effondrer
+une : une mare plus claire se lit comme le lac, un lac decale vers le cyan
+se lit comme le ruisseau. Constante **LOCALE** au hub, comme toute couleur
+de decor ici.
+
+### AUCUN prop n'est deplace -- contrairement au lot lake
+
+**Clearance minimale +0,4191**, mesuree sur le maillage **REELLEMENT
+CONSTRUIT** par `HubWorld.tscn` (sonde jetable qui lit les sommets de
+l'`ArrayMesh` livre, pas mon modele) :
+
+| prop | empreinte | d au BORD du ruban | clearance |
+|---|---|---|---|
+| landmark (0,60 ; 12,60) | 1,66 | 2,075 | **+0,419** |
+| rocher (-13,90 ; 2,10) | 0,44 | 0,858 | +0,421 |
+| rocher (-18,68 ; 1,70) | 0,71 | 1,129 | +0,421 |
+| fleur (0,52 ; 8,68) | 0,22 | 0,646 | +0,424 |
+| arbre (11,70 ; 7,30) | 0,16 | 0,591 | +0,431 |
+
+⚠️ **L'empreinte utilisee est celle AU SOL, pas la silhouette** : un tronc
+d'arbre fait **0,24**, son houppier 0,95 mais il flotte a 2 m de haut. Un
+tronc dans l'eau est un bug ; un houppier au-dessus de l'eau est du decor,
+et c'est ce que fait un vrai arbre au bord d'un ruisseau. **La distinction
+est reelle et les deux chiffres sont publies plutot qu'un seul** -- quatre
+houppiers surplombent le ruban de **0,044 a 0,525**, rapportes et non gates.
+Les 0,42 de marge sont par ailleurs dans la meme famille que les 0,37-0,54
+deja documentes pour les souches de rive de la mare.
+
+**Ecart aux portails : 9,25 / 12,70 / 14,28** -- le ruisseau arque devant la
+place des portails (`max|z|` du bord = 10,985) et n'en approche aucun.
+
+### Garde-fou de bornes : il A FALLU l'adapter, et c'est dit explicitement
+
+⚠️ **La doc du lot lake affirmait que le garde-fou « inspecte des noeuds ».
+C'est FAUX** -- il lit `entry.get("position")` **dans le dictionnaire du
+layout**, avant meme que le noeud existe. C'est pour ca que le passage en
+MultiMesh n'avait rien eu a y recabler.
+
+Mais il **fallait bien l'adapter ici**, pour une autre raison : un
+`&"stream"` n'a pas de `position`, donc il serait retombe sur `Vector3.ZERO`
+et aurait passe le controle **gratuitement** -- un trou silencieux dans le
+seul garde-fou qui attrape un prop inatteignable. Le controle parcourt
+desormais **tous les points de la trace** pour ce type. L'ordre est
+preserve : il reste APRES le dispatch de type, donc un type inconnu produit
+toujours une erreur et **aucun** avertissement.
+
+**Bornes mesurees sur le ruban livre : `max|x| = 18,98`, `max|z| = 10,99`**
+(bord, pas axe) contre un garde-fou a 35,0. Le boot headless de
+`HubWorld.tscn` ne produit **aucun** `push_warning` -- confirmation A
+L'EXECUTION que les 169 entrees sont atteignables.
+
+### COUT : +1 noeud de dessin, exactement
+
+| | avant (lot lake) | ce lot |
+|---|---|---|
+| noeuds de dessin, hors portails | **74** | **75** |
+| noeuds de dessin, total | **80** | **81** |
+| triangles du ruisseau | -- | **176** (88 quads, 528 sommets) |
+| construction | 43,3-46,6 ms | 46,2-49,7 ms |
+
+**Individuel et non batche** : il y en a UN, et son maillage est un ruban
+unique construit pour sa propre trace -- il n'existe aucun mesh partage
+qu'un `MultiMesh` pourrait repeter. **176 triangles est moins que ce que
+coutent les deux disques du lac a eux seuls.** Marge sous le plafond de
+260 : **179**.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** --
+50 276 070 et 1 073 228 327 octets, aucune troncature silencieuse). Import
+headless **exit 0**, **24 `.scn`** (import complet verifie, pas suppose --
+le piege du faux-rouge par import tronque est controle). Boot headless de
+`HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`**. Export Web release
+**exit 0**.
+
+`index.wasm` **35 376 909 octets**, md5
+**`af4a8fc2925d992348eb30deeeb54360`** ; `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+**5 838 128** (export unique et propre, `build/` ET `.godot/` supprimes
+avant -- a lire avec la mise en garde permanente sur son instabilite,
+jamais offert comme preuve). **Piege payload tenu** : sur 219 lignes
+`Storing File`, **0** pour `assets_source`, `scripts/dev`, `docs`, `web`,
+`build` ou `firebase.json`.
+
+Sondes : `ProbeTimeoutAudit` (**38 sondes scenes**, retour exact a la
+baseline apres suppression des deux sondes jetables), `AssetContractAudit`
+(**12/12 visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe` -- **toutes exit 0**. **Non-applicabilite VERIFIEE par
+grep, pas supposee** : aucune sonde de `scripts/dev/` ne reference
+`HubWorld`, `HubBuilder`, `HubTapInput` ni `hub_layout`, hormis
+`HubPerfBaseline` -- qui ne tape jamais et ne peut donc pas voir un
+ruisseau.
+
+⚠️ **Piege de sonde rencontre, a connaitre** : ma sonde de mesure
+reconstruisait l'axe du ruban en moyennant des paires de sommets tirees de
+la liste de triangles, et son DERNIER point moyennait deux sommets du
+**meme bord** -- elle rapportait un rayon de courbure de 0,707 la ou le
+ruban en a 1,403. Un defaut de la sonde qui ressemblait exactement a un
+defaut du ruban. Corrige, et re-mesure.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce qu'un ruban cyan de 1,2 de large se lit comme de l'EAU QUI
+   COURT** a l'echelle reelle d'un telephone, ou comme une bande peinte ?
+   La teinte, la courbure et la clearance sont mesurees ; la lecture ne
+   l'est pas.
+2. **Les trois teintes d'eau restent-elles distinguables** quand deux
+   d'entre elles ne sont pas dans le meme cadre ? La separation est
+   mesuree en HSV, jamais jugee a l'oeil sur device.
+3. **Les embouchures** : le ruban s'arrete au bord de l'eau et couvre
+   l'anneau de berge. Verifie au rendu offscreen, pas sur device.
+4. **Les quatre houppiers qui surplombent le ruisseau** (0,044 a 0,525) --
+   argumente comme naturel, jamais juge a l'oeil.
+5. **Le ruisseau arque devant la place des portails.** Il ne les approche
+   pas (9,25 minimum), mais c'est un ajout visuel notable sur l'ecran par
+   lequel passe l'acces a tous les jeux.
+
+### Deploiement staging du ruisseau (palier 1, automatique)
+
+`staging` **`7e7822c`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `afdcddcf` des deux cotes, verifie AVANT le push).
+CI run **#232** (id 32873944898). **`main` NON touche** (`origin/main` toujours
+`92d00be`, verifie apres le push) : palier 2, gate Mathieu apres validation
+device.
+
+**Verifie SUR LE SERVICE et sur DEUX marqueurs independants**, chacun lu aux
+deux bouts :
+
+| marqueur | avant (run #230) | apres (ce lot, run #232) |
+|---|---|---|
+| `CACHE_VERSION` | `1787670247` = **15:04:07** | **`1787676542` = 16:49:02** *(dans la fenetre du run #232, demarre 16:46:19)* |
+| `index.pck` servi | **5 834 576** | **5 838 064** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+Les quatre lectures utiles portent `x-vercel-cache: MISS` et `age: 0`. La
+valeur AVANT du `CACHE_VERSION` a ete relevee **avant le merge**, donc la
+bascule est prouvee dans les deux sens et pas deduite du log CI.
+
+⚠️ **Le piege de lecture s'est reproduit et a ete REFUSE** : une lecture faite
+~45 s apres le push est revenue `x-vercel-cache: HIT` avec **`age: 45`** --
+une copie CDN figee avant le deploiement. **Un HIT avec un `age` non nul n'est
+pas une mesure de fraicheur**, donc elle n'a pas ete comptee ; les lectures
+suivantes ont ete cache-bustees par un parametre de requete.
+
+⚠️ **L'API GitHub Actions a de nouveau servi des reponses PERIMEES** : deux
+appels `list_workflow_jobs` successifs avec `filter: "all"` ont rendu une
+reponse **byte-identique**, figee sur « Import project resources /
+in_progress » a 16:46:45, bien apres que le build ait avance. Enieme
+reproduction du piege deja consigne ; c'est le `CACHE_VERSION` servi qui a
+tranche, comme aux runs #201, #202, #226 et #229.
