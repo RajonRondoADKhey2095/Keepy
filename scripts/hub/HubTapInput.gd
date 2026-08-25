@@ -72,7 +72,15 @@ var viewport: SubViewport = null
 ## clamped to the edge rather than ignored: a tap near the horizon is a
 ## player asking to go as far as they can, and refusing it silently reads
 ## as the screen being broken.
-const PLATEAU_HALF_EXTENT: float = 11.0
+##
+## Widened 11 -> 15 for the landmark batch. This is the ONLY place the
+## limit is written: HubBuilder reads it for its out-of-bounds warning
+## rather than carrying a second copy, so widening here widens both at
+## once. Camera OFFSET, fov, pitch and HOP_DISTANCE are deliberately NOT
+## touched with it -- the camera follows Keepy, so a bigger plateau costs
+## nothing in framing, and the fog closes the horizon long before the
+## 600x600 ground plane runs out.
+const PLATEAU_HALF_EXTENT: float = 15.0
 
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D

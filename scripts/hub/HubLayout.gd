@@ -24,8 +24,8 @@ class_name HubLayout
 ## opening Godot -- a sub-resource per rock would put a load_steps count
 ## and a dozen [sub_resource] blocks between the author and the numbers.
 ##
-##   type        StringName  &"portal", &"rock", &"tree", &"bush" or
-##                           &"flower"
+##   type        StringName  &"portal", &"rock", &"tree", &"bush",
+##                           &"flower" or &"landmark"
 ##   position    Vector3     world position, y is ignored for props that
 ##                           sit on the ground (they are placed AT y = 0)
 ##   rotation_y  float       degrees
@@ -34,6 +34,9 @@ class_name HubLayout
 ##   label       String      text shown on the portal              (portals only)
 ##   variant     int         corolla tint index, 0..2              (flowers only,
 ##                           optional -- out of range falls back to 0)
+##                           OR landmark silhouette, 0..2:            (landmarks)
+##                           0 spire, 1 cairn, 2 twin slabs. Same
+##                           fallback rule.
 ##
 ## HubBuilder.gd validates every entry and skips a malformed one with a
 ## push_error rather than crashing the screen: a typo in a decor file must

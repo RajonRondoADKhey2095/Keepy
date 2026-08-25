@@ -290,4 +290,208 @@ props = [{
 "scale": 1.19,
 "type": &"flower",
 "variant": 1
+}, {
+"position": Vector3(0.0, 0, -12.6),
+"rotation_y": 14.0,
+"scale": 1.0,
+"variant": 0,
+"type": &"landmark"
+}, {
+"position": Vector3(12.7, 0, 0.55),
+"rotation_y": -28.0,
+"scale": 1.0,
+"variant": 1,
+"type": &"landmark"
+}, {
+"position": Vector3(0.6, 0, 12.6),
+"rotation_y": 38.0,
+"scale": 0.92,
+"variant": 2,
+"type": &"landmark"
+}, {
+"position": Vector3(-12.75, 0, -0.4),
+"rotation_y": 62.0,
+"scale": 0.86,
+"variant": 1,
+"type": &"landmark"
+}, {
+"position": Vector3(-11.26, 0, -8.86),
+"rotation_y": 121.4,
+"scale": 0.756,
+"type": &"bush"
+}, {
+"position": Vector3(-12.52, 0, -9.14),
+"rotation_y": 100.3,
+"scale": 0.624,
+"type": &"bush"
+}, {
+"position": Vector3(-12.93, 0, -8.26),
+"rotation_y": 274.8,
+"scale": 0.787,
+"type": &"bush"
+}, {
+"position": Vector3(12.74, 0, -9.1),
+"rotation_y": 232.6,
+"scale": 1.335,
+"type": &"bush"
+}, {
+"position": Vector3(11.73, 0, -9.59),
+"rotation_y": 121.2,
+"scale": 0.969,
+"type": &"bush"
+}, {
+"position": Vector3(-10.69, 0, 11.45),
+"rotation_y": 207.0,
+"scale": 1.291,
+"type": &"bush"
+}, {
+"position": Vector3(-10.17, 0, 12.24),
+"rotation_y": 201.4,
+"scale": 1.311,
+"type": &"bush"
+}, {
+"position": Vector3(-10.32, 0, 13.41),
+"rotation_y": 227.6,
+"scale": 1.185,
+"type": &"bush"
+}, {
+"position": Vector3(-6.84, 0, -12.21),
+"rotation_y": 345.9,
+"scale": 0.83,
+"variant": 1,
+"type": &"flower"
+}, {
+"position": Vector3(-6.27, 0, -12.9),
+"rotation_y": 20.1,
+"scale": 1.058,
+"variant": 1,
+"type": &"flower"
+}, {
+"position": Vector3(-6.19, 0, -13.91),
+"rotation_y": 263.1,
+"scale": 0.925,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(6.44, 0, 12.52),
+"rotation_y": 291.6,
+"scale": 0.942,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(7.2, 0, 13.38),
+"rotation_y": 240.5,
+"scale": 1.308,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(13.48, 0, 5.32),
+"rotation_y": 149.5,
+"scale": 1.195,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(12.97, 0, 7.06),
+"rotation_y": 263.4,
+"scale": 0.8,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(13.94, 0, 6.01),
+"rotation_y": 152.2,
+"scale": 0.85,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(-13.96, 0, 5.69),
+"rotation_y": 248.7,
+"scale": 0.785,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(-13.18, 0, 5.49),
+"rotation_y": 46.9,
+"scale": 0.989,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-13.6, 0, -3.9),
+"rotation_y": 255.4,
+"scale": 1.301,
+"type": &"tree"
+}, {
+"position": Vector3(-11.6, 0, 7.6),
+"rotation_y": 269.9,
+"scale": 0.927,
+"type": &"tree"
+}, {
+"position": Vector3(13.5, 0, -5.4),
+"rotation_y": 357.6,
+"scale": 0.806,
+"type": &"tree"
+}, {
+"position": Vector3(11.7, 0, 7.3),
+"rotation_y": 210.2,
+"scale": 0.668,
+"type": &"tree"
+}, {
+"position": Vector3(-3.6, 0, -13.6),
+"rotation_y": 253.2,
+"scale": 0.7,
+"type": &"tree"
+}, {
+"position": Vector3(4.9, 0, -13.2),
+"rotation_y": 80.7,
+"scale": 0.829,
+"type": &"tree"
+}, {
+"position": Vector3(-2.6, 0, 13.7),
+"rotation_y": 20.6,
+"scale": 0.647,
+"type": &"tree"
+}, {
+"position": Vector3(13.9, 0, -1.9),
+"rotation_y": 212.3,
+"scale": 1.264,
+"type": &"tree"
+}, {
+"position": Vector3(-13.9, 0, 2.1),
+"rotation_y": 332.7,
+"scale": 0.728,
+"type": &"rock"
+}, {
+"position": Vector3(13.8, 0, 3.4),
+"rotation_y": 17.3,
+"scale": 0.996,
+"type": &"rock"
+}, {
+"position": Vector3(8.6, 0, -13.3),
+"rotation_y": 229.4,
+"scale": 0.666,
+"type": &"rock"
+}, {
+"position": Vector3(-8.6, 0, -13.5),
+"rotation_y": 259.4,
+"scale": 1.137,
+"type": &"rock"
+}, {
+"position": Vector3(-13.5, 0, 10.2),
+"rotation_y": 86.3,
+"scale": 1.09,
+"type": &"rock"
+}, {
+"position": Vector3(13.1, 0, 10.0),
+"rotation_y": 151.3,
+"scale": 0.928,
+"type": &"rock"
+}, {
+"position": Vector3(3.6, 0, 13.9),
+"rotation_y": 284.7,
+"scale": 0.626,
+"type": &"rock"
+}, {
+"position": Vector3(-13.9, 0, -6.9),
+"rotation_y": 138.2,
+"scale": 0.665,
+"type": &"rock"
 }]
