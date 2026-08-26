@@ -46,6 +46,10 @@ const _CROSSING_BUDGET_S: float = 22.0
 
 var _failures: int = 0
 var _hop_count: int = 0
+## Landings counted for the CURRENT trip, and how many of them came
+## down on the great lake's water. Reset by _trip, read after it.
+var _total_landings: int = 0
+var _wet_landings: int = 0
 var _hop_done: bool = false
 var _tapped: Vector3 = Vector3.INF
 var _tap_seen: bool = false
@@ -95,13 +99,29 @@ func _check(ok: bool, label: String) -> void:
 func _phase_region() -> void:
 	print("--- PHASE REGION: HubRegion shape ---")
 
-	# The axis is a static var derived from the azimuth. Re-derived here so
-	# a hand-edited component can never silently disagree with the degrees
-	# the rest of the file documents.
+	# The axis and the published azimuth are both derived from the cartesian
+	# centre since LAKE-MOVE. Re-derived here from the degrees so the two
+	# spellings can never silently disagree.
 	var th: float = deg_to_rad(HubRegion.LAKE_AZIMUTH_DEG)
 	var expected := Vector3(sin(th), 0.0, -cos(th))
 	_check(HubRegion.lake_axis().distance_to(expected) < 1e-6,
-		"axis matches azimuth %.1f deg -> %s" % [HubRegion.LAKE_AZIMUTH_DEG, HubRegion.lake_axis()])
+		"axis matches azimuth %.3f deg -> %s" % [HubRegion.LAKE_AZIMUTH_DEG, HubRegion.lake_axis()])
+
+	# THE CHECK THIS FILE WAS MISSING, and LAKE-MOVE is what made its
+	# absence expensive: HubRegion holds the lake centre as constants and
+	# hub_layout.tres holds it AGAIN as the greatlake entry's position. The
+	# region and the drawn disc are two different objects built from two
+	# different numbers, and nothing asserted they were the same number.
+	# Move one and not the other and the water you can see stops being the
+	# water you cannot walk into -- with no error anywhere.
+	var layout: HubLayout = load("res://resources/hub/hub_layout.tres") as HubLayout
+	var stated := Vector3.INF
+	for entry in layout.props:
+		if entry.get("type", &"") == &"greatlake":
+			stated = entry.get("position", Vector3.INF) as Vector3
+	_check(stated.is_finite() and stated.distance_to(HubRegion.lake_centre()) < 1e-3,
+		"the layout's greatlake sits where HubRegion says the water is: %s vs %s"
+			% [stated, HubRegion.lake_centre()])
 	_check(absf(HubRegion.lake_centre().length() - HubRegion.LAKE_CENTRE_DISTANCE) < 1e-4,
 		"lake centre at %.3f u -> %s" % [HubRegion.lake_centre().length(), HubRegion.lake_centre()])
 	_check(absf(HubRegion.near_bank().length() - (HubRegion.LAKE_CENTRE_DISTANCE - HubRegion.LAKE_WATER_RADIUS)) < 1e-4,
@@ -113,11 +133,15 @@ func _phase_region() -> void:
 	_check(not HubRegion.contains(HubRegion.lake_centre()), "the middle of the lake is not")
 	_check(HubRegion.contains(HubRegion.near_bank()), "the near bank waterline is (the rim is land)")
 
-	# The lobe has to add ground BEYOND the square, or the pad is
-	# decoration. Scanned rather than aimed at a point picked by hand: the
-	# first version of this assertion failed because the point I chose was
-	# still inside the square, which says the guess was wrong, not the
-	# region -- and a scan cannot make that mistake.
+	# THE ASSERTION IS INVERTED SINCE LAKE-MOVE, deliberately and not
+	# quietly. It used to demand that the shore pad add ground BEYOND the
+	# square, because a pad that did not was decoration. With the lake now
+	# INSIDE the square the pad is contained by arithmetic -- near bank
+	# 8.520 out, pad radius 20, so the pad spans at most 28.520 from the
+	# centre against a half-extent of 35 -- and the honest thing to gate is
+	# that it really is contained, rather than to delete the check and
+	# leave nobody watching. If a later batch pushes a lake back out
+	# through an edge, THIS assertion is the one that will fail and say so.
 	var beyond: int = 0
 	var farthest := Vector3.ZERO
 	for i in 1441:
@@ -130,8 +154,12 @@ func _phase_region() -> void:
 				beyond += 1
 				if p.length() > farthest.length():
 					farthest = p
-	_check(beyond > 0, "the shore lobe reaches past the square (%d sampled points, farthest %s)"
-		% [beyond, farthest])
+	_check(beyond == 0,
+		"the shore pad adds nothing past the square, as an interior lake implies (%d sampled points beyond, farthest %s)"
+			% [beyond, farthest])
+	_check(HubRegion.near_bank().length() + HubRegion.SHORE_PAD_RADIUS <= HubRegion.PLATEAU_HALF_EXTENT,
+		"the pad is contained by arithmetic: %.3f + %.1f <= %.1f"
+			% [HubRegion.near_bank().length(), HubRegion.SHORE_PAD_RADIUS, HubRegion.PLATEAU_HALF_EXTENT])
 
 	# clamp_to must always answer with a point in the region, from anywhere
 	# -- including from inside the water, which is the case the square
@@ -248,13 +276,18 @@ func _phase_tap(hub: Node, tap: HubTapInput, camera: Camera3D) -> void:
 	# of it -- aiming at the lake from the plateau centre projects every
 	# water point off-screen, which is what the first run of this phase
 	# measured (0 of 3 tested) rather than a fault in the tap path.
+	# EIGHT AZIMUTHS, not three, and that is what LAKE-MOVE asked for: the
+	# lake used to be a hole at the EDGE of the region and is now a hole in
+	# the MIDDLE of it, so a tap on it can be pushed out in any direction
+	# rather than always shorewards. Sampling one ring of eight is what
+	# turns "clamp_to reads like it handles an interior hole" into a
+	# measurement.
 	var keepy: Node3D = camera.get_parent().get_node("Keepy") as Node3D
-	var side := HubRegion.lake_axis().cross(Vector3.UP).normalized()
-	var water_points: Array[Vector3] = [
-		HubRegion.near_bank() + HubRegion.lake_axis() * 4.0,
-		HubRegion.near_bank() + HubRegion.lake_axis() * 7.0 + side * 5.0,
-		HubRegion.near_bank() + HubRegion.lake_axis() * 6.0 - side * 4.0,
-	]
+	var water_points: Array[Vector3] = []
+	for i in 8:
+		var a: float = deg_to_rad(float(i) * 45.0)
+		water_points.append(HubRegion.lake_centre()
+			+ Vector3(sin(a), 0.0, -cos(a)) * (HubRegion.LAKE_WATER_RADIUS * 0.6))
 	var tested: int = 0
 	var dry: int = 0
 	for target in water_points:
@@ -276,7 +309,7 @@ func _phase_tap(hub: Node, tap: HubTapInput, camera: Camera3D) -> void:
 		print("    tap aimed at %s -> destination %s (in water: %s)"
 			% [target, _tapped, HubRegion.in_lake_water(_tapped)])
 	tap.tapped_ground.disconnect(_on_tapped)
-	_check(tested > 0, "at least one lake point projected inside the viewport (%d tested)" % tested)
+	_check(tested >= 8, "all 8 sampled lake points projected inside the viewport (%d tested)" % tested)
 	_check(tested > 0 and dry == tested, "%d/%d taps on the lake resolved to dry land" % [dry, tested])
 	print("")
 
@@ -305,43 +338,65 @@ func _phase_crossing(keepy: KeepyHopper) -> void:
 	var diagonal: float = await _trip(keepy, "square diagonal (published 66 hops / 18.700 s)",
 		Vector3(-h, 0.0, -h), Vector3(h, 0.0, h))
 
-	# The lobe's real extremes, SCANNED out of the region rather than
-	# written down. The first version of this phase aimed at a point picked
-	# by hand (near_bank +- side * (pad - 1)) and timed 16.717 s against
-	# it -- but that point is inside the square, so it was timing the
-	# plateau and calling it the lobe. A scan cannot make that mistake.
-	var side := HubRegion.lake_axis().cross(Vector3.UP).normalized()
-	var left := Vector3.ZERO
-	var right := Vector3.ZERO
-	for i in 1441:
-		var a: float = deg_to_rad(float(i) * 0.25)
-		for step in range(1, 240):
-			var p := Vector3(cos(a) * float(step) * 0.5, 0.0, sin(a) * float(step) * 0.5)
-			if not HubRegion.contains(p):
-				continue
-			if absf(p.x) <= HubRegion.PLATEAU_HALF_EXTENT and absf(p.z) <= HubRegion.PLATEAU_HALF_EXTENT:
-				continue
-			if p.dot(side) >= 0.0:
-				if p.length() > left.length():
-					left = p
-			elif p.length() > right.length():
-				right = p
-	_check(left.length() > 0.0 and right.length() > 0.0,
-		"the lobe reaches past the square on BOTH sides of the axis: %s / %s" % [left, right])
+	# THERE IS NO LOBE TO TIME ANY MORE. The pad is contained (PHASE
+	# REGION gates that), so the region is exactly the square minus an
+	# interior disc and every walkable point is a square point. What is
+	# worth timing instead is a trip whose straight chord runs THROUGH the
+	# water, because that is the shape of trip an interior lake creates and
+	# the one whose cost the recon predicted would not change: a lake
+	# cannot bend a chord, so it cannot add a second.
+	var through: float = 0.0
+	var through_label: String = ""
+	for pair in [
+		[Vector3(-h, 0.0, h), Vector3(h, 0.0, -h)],
+		[Vector3(0.0, 0.0, h), Vector3(h * 0.6, 0.0, -h)],
+		[Vector3(-h, 0.0, 0.0), Vector3(h, 0.0, -h * 0.8)],
+	]:
+		var t: float = await _trip(keepy, "across the lake %s -> %s" % [pair[0], pair[1]], pair[0], pair[1])
+		if t > through:
+			through = t
+			through_label = "%s -> %s" % [pair[0], pair[1]]
 
-	var worst: float = 0.0
-	var worst_label: String = ""
-	for target in [left, right]:
-		for corner in [Vector3(h, 0.0, h), Vector3(h, 0.0, -h), Vector3(-h, 0.0, h)]:
-			var t: float = await _trip(keepy, "corner %s -> shore lobe %s" % [corner, target], corner, target)
-			if t > worst:
-				worst = t
-				worst_label = "%s -> %s" % [corner, target]
-
-	print("    worst lobe crossing %.3f s (%s)" % [worst, worst_label])
+	print("    worst lake-crossing trip %.3f s (%s)" % [through, through_label])
 	_check(diagonal < _CROSSING_BUDGET_S, "the square diagonal stays under the %.0f s budget" % _CROSSING_BUDGET_S)
-	_check(worst < _CROSSING_BUDGET_S, "the worst lobe crossing stays under the %.0f s budget" % _CROSSING_BUDGET_S)
+	_check(through < _CROSSING_BUDGET_S, "the worst lake-crossing trip stays under the %.0f s budget" % _CROSSING_BUDGET_S)
+	var worst: float = through
 	_check(worst <= diagonal, "the square diagonal is still the hub's worst crossing")
+
+	# THE THREE MARCHES A PLAYER ACTUALLY MAKES. Every session starts at
+	# the plateau centre and walks to one of three portals, so these are
+	# the only trips certain to happen -- and an interior lake is exactly
+	# the change that could put one of them in the water. Gated, not
+	# reported: a portal you cannot reach dry is a broken hub.
+	var portal_targets: Dictionary = {
+		"chased": Vector3(-5.4, 0.0, -4.6),
+		"quizz": Vector3(0.0, 0.0, -7.2),
+		"battle": Vector3(5.4, 0.0, -4.6),
+	}
+	var dry_marches: int = 0
+	for name in portal_targets:
+		var target: Vector3 = portal_targets[name]
+		var t: float = await _trip(keepy, "centre -> %s portal" % name, Vector3.ZERO, target)
+		print("    centre -> %s: %.3f s, %d landings, %d in water"
+			% [name, t, _total_landings, _wet_landings])
+		if _wet_landings == 0:
+			dry_marches += 1
+	_check(dry_marches == 3, "%d/3 marches from the plateau centre to a portal stay dry" % dry_marches)
+
+	# WALKING ON WATER, REPORTED AND NOT GATED. Keepy's chord consults
+	# nothing -- there is no obstacle avoidance anywhere in the repo -- so
+	# these landings are a real, known defect that this batch makes WORSE
+	# and deliberately does not fix. Gating it would fail the hub for a
+	# decision taken elsewhere; leaving it unmeasured would let the cost of
+	# an interior lake go unsaid.
+	for pair in [
+		[Vector3(-h, 0.0, -h), Vector3(h, 0.0, h)],
+		[Vector3(-h, 0.0, h), Vector3(h, 0.0, -h)],
+		[Vector3.ZERO, Vector3(h, 0.0, -h)],
+	]:
+		var t: float = await _trip(keepy, "wet-count %s -> %s" % [pair[0], pair[1]], pair[0], pair[1])
+		print("    %s -> %s: %d landings, %d on the great lake (%.3f s)"
+			% [pair[0], pair[1], _total_landings, _wet_landings, t])
 
 func _trip(keepy: KeepyHopper, label: String, start: Vector3, target: Vector3) -> float:
 	# WAIT FOR IDLE FIRST, and this is not belt-and-braces. PHASE TAP fires
@@ -359,6 +414,8 @@ func _trip(keepy: KeepyHopper, label: String, start: Vector3, target: Vector3) -
 	keepy.global_position = Vector3(start.x, 0.0, start.z)
 	await get_tree().process_frame
 	_hop_count = 0
+	_total_landings = 0
+	_wet_landings = 0
 	_hop_done = false
 	keepy.hop_landed.connect(_on_hop_landed)
 	keepy.became_idle.connect(_on_hop_idle)
@@ -374,8 +431,11 @@ func _trip(keepy: KeepyHopper, label: String, start: Vector3, target: Vector3) -
 		% [label, _hop_count, frames, seconds, "" if _hop_done else "  ** FRAME CAP **"])
 	return seconds
 
-func _on_hop_landed(_pos: Vector3) -> void:
+func _on_hop_landed(pos: Vector3) -> void:
 	_hop_count += 1
+	_total_landings += 1
+	if HubRegion.in_lake_water(pos):
+		_wet_landings += 1
 
 func _on_hop_idle() -> void:
 	_hop_done = true
