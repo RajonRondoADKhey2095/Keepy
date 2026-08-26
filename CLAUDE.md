@@ -16175,3 +16175,151 @@ qui a tranche**, comme aux runs #201, #202, #226, #229 et #232 ; l'appel
 `conclusion: success` et le detail des 18 etapes. Enieme reproduction du piege
 deja consigne : ne jamais conclure d'un seul appel, et ne jamais lire un etat
 de CI sans regarder son horodatage.
+
+## WATER-WALK RECON : ce qu'un ARRET A LA BERGE couterait -- MESURE, aucun code de jeu touche (26 aout 2026)
+
+Branche `claude/keepy-water-collision-recon-6w1a0a`, partie de `staging`
+(`2ba12e0` ; `main` = `ae13b99`, les deux exactement comme le brief
+l'annoncait). **Recon bloquante : ce lot ne modifie AUCUN fichier de jeu.**
+`git diff --stat` ne rapporte que `docs/WATER_WALK_RECON.md` (nouveau) et ce
+document. Sonde de mesure JETABLE, supprimee avant le commit --
+`ProbeTimeoutAudit` revient a **48 sondes scenes**, le chiffre de
+`origin/staging`. **Rapport chiffre complet : `docs/WATER_WALK_RECON.md`.**
+
+**Q1 -- la chaine est calculee HOP PAR HOP, jamais en une fois.** `hop_to()`
+(L240) ne fait que poser `_target` ; `_advance()` (L418) relit la position
+COURANTE a chaque atterrissage ; `_begin_hop()` (L432) calcule UN saut
+(`_hop_to = here + delta.normalized() * min(HOP_DISTANCE, |delta|)`, L434-436)
+et `_on_hop_finished()` (L488) rappelle `_advance()` (L504). **Le point
+d'insertion d'une troncature est donc entre L436 et L450**, ou un test dans
+`_advance` avant L430 -- les deux voient un seul atterrissage candidat a la
+fois.
+
+### ⚠️ PREMISSE DU BRIEF PUBLIEE EN ECHEC : `HubRegion` ne connait que 2 des 5 eaux
+
+Le test unique existe bien et est bien centralise -- `HubRegion.contains()`
+(L250) sur `in_lake_water()` (L215) sur `_lake_holding()` (L243), une boucle
+sur `HubRegion.lakes()`. **Mais cette table ne porte que les DEUX lobes du
+grand lac.** Mesure sur la region livree : pond, petit lac et ruisseau
+rendent tous `contains() == true` -- ils sont WALKABLE par conception
+(l'en-tete de `HubRegion.gd` le dit et explique pourquoi : le bateau embarque
+depuis la tete du ruisseau, posee sur la rive du pond). **Une garde couvrant
+les 5 corps NE PEUT PAS s'ecrire contre le `HubRegion` d'aujourd'hui** : les
+rayons du pond et du petit lac vivent dans `HubBuilder`, et le ruisseau est
+un ruban autour d'un spine que seul `HubBuilder` possede.
+
+**Float32 au rim : le brief a raison, et c'est mesure.** 360 azimuts par
+disque, chaque disque teste contre LUI-MEME : a exactement `radius`,
+**141/360** (pond), **171/360** (petit lac), **115/360** (grand lac A),
+**54/360** (lobe B) lisent comme EAU sous le `<` strict ; a `radius + 0.001`,
+**0/360 sur les quatre**. Pire glissement 1,907e-06. Echantillonner a
+`radius + 0.001`, comme `_out_of_lake()` le fait deja.
+
+### ⚠️ Q3 -- L'EJECTION N'EST PAS LE PROBLEME. C'EST L'EMBARQUEMENT.
+
+Le brief prevenait qu'une garde naive "casse les deux". **Moitie faux,
+moitie vrai, et la moitie fausse est celle qu'on aurait protegee.**
+
+* **Le saut d'ejection est INERTE a une garde dans `_begin_hop`** :
+  `leave_ride()` construit son tween EN LIGNE (L337-343) et n'appelle jamais
+  `_begin_hop` ni `_advance` avant de sauter. Tout `RIDING` est hors
+  d'atteinte de la meme facon (`_advance` sort L421, `hop_to` refuse L246,
+  `_place_on_route` L363 ecrit le corps directement).
+* **Mais la chaine APRES l'ejection ne l'est pas** -- mesure sur une vraie
+  ride : atterrissage 1 apres la ride `(-17.548, -1.646)` **SEC**,
+  atterrissage 2 `(-19.047, -1.705)` **DANS LE PETIT LAC**. Le
+  desembarquement automatique vise `ahead` (L358) le long de la tangente
+  au-dela du bout -- et a la queue cette direction pointe dans le lac.
+* **L'EMBARQUEMENT est la vraie casse.** La coque est amarree SUR l'eau
+  (`_mooring_pose` la pose au bout du ruban) : tete `(17.580, 6.670)` = DANS
+  LE RUISSEAU (et 0,0043 u hors du pond) ; queue `(-18.540, -0.730)` = DANS
+  LE PETIT LAC (7,995 pour un rayon 8). `_try_board` exige
+  `d(coque) <= BOARD_TAP_RADIUS = 2,500`. Marches d'embarquement reelles
+  tronquees au dernier atterrissage sec, 6 azimuts par bout, depart a 9 u :
+  **5 sur 10 approches NE PEUVENT PLUS EMBARQUER** (2/6 embarquent a la
+  tete, 3/4 a la queue), avec des ecarts de 3,000 a 7,500 u.
+
+### Q4 -- le ruisseau : instruit, PAS tranche
+
+**(a)** Le ruban est **CONSTANT a 1,200 u** par construction (offset
+`+-0,600` a la perpendiculaire sur les 89 samples) : il n'a ni plus large ni
+plus etroit. Ce qui varie est la **portee mouillee vue par une corde
+droite** : **1,199 u** (perpendiculaire) a **8,013 u** (rasante), 36 azimuts.
+**(b)** `HOP_DISTANCE = 1,500` (lu dans le code), `HOP_HEIGHT 0,600`,
+`ARRIVE_EPSILON 0,450`. **(c)** 40 traversees paralleles : **39 sur 40**
+posent au moins un atterrissage DANS le ruban, 40 atterrissages mouilles au
+total (**~1 arret par traversee**), et **1 sur 40** seulement l'enjambe d'un
+saut -- malgre 1,5 > 1,2.
+
+| option | runs mouilles sur les 13 trajets | trajets arretes au moins une fois |
+|---|---|---|
+| garde uniforme sur les 5 corps | **12** | **10 sur 13** |
+| ruisseau exempte | **7** | **7 sur 13** |
+
+**Non choisi ici** -- c'est la decision de Mathieu.
+
+### Q5 -- la detection de portail survit a la troncature
+
+Pas de portail fantome (`_begin_hop` est deterministe en `here`/`_target`,
+donc une chaine tronquee est le PREFIXE exact de la chaine entiere : la
+troncature retire des atterrissages, elle n'en invente aucun). Aucun disque
+de portail ne recouvre d'eau -- eau la plus proche d'un centre de portail
+**1,589 u** (battle vs grand lac A) contre un rayon de declenchement lu sur
+le `CylinderShape3D` du portail -- donc une garde ne peut jamais supprimer
+une entree legitime. Les trois portails sont secs, les cordes
+spawn -> portail ont **0,000 u** de portee mouillee, et les trois trajets
+spawn -> portail font 5 sauts avec **0 atterrissage mouille**. Aucun portail
+n'est detecte pendant une ride (`HubWorld._on_hop_landed` refuse L240).
+**MAIS** : depuis 20 u, **12/16, 12/15 et 13/18** des departs secs traversent
+de l'eau en approche -- environ trois quarts des approches droites
+demanderaient un second tap.
+
+### Q6 -- le cout, et le piege qui le fixe
+
+**MESURE** sur les 10 trajets LAKE-MOVE/SPAWN + les 3 spawn -> portail :
+**350 sauts, 93 atterrissages mouilles (26,6 %), 12 runs mouilles**, les 3
+trajets vers les portails **inchanges (0 mouille)** -- le 350 et les 3
+trajets secs reproduisent les chiffres cites par le brief, ce qui valide le
+banc avant qu'on lui fasse confiance.
+
+⚠️ **LE PIEGE, MESURE : un retap IDENTIQUE depuis la berge n'achete RIEN.**
+Place au dernier atterrissage sec et redonne la MEME destination :
+**0 saut sec sur 4 cas sur 4**. La corde depuis la berge rentre dans l'eau
+des son premier saut, donc le joueur DOIT viser hors de la corde.
+
+**EXTRAPOLE, et marque comme tel** : un run mouille coute donc **au moins
+DEUX taps** supplementaires (un a cote de l'eau, un pour repartir), soit
+**>= 24 taps en plus sur les 10 trajets concernes, >= 2,4 par trajet
+concerne**. Le vrai chiffre depend de la facon dont un joueur contourne, et
+aucune sonde de ce depot ne peut le mesurer. Ce qui EST mesure : le plancher
+n'est pas d'un tap par run, et le premier tap achete tres peu du trajet --
+**2 sauts sur 47** (W -> E, 4 %), **1 sur 14** (petit lac court, 7 %),
+**12 sur 66** (diagonale, 18 %). Le temps mur ne bouge pas (18,700 s reste
+la pire traversee) mais cesse d'etre un seul geste.
+
+### Validation
+
+Editeur Godot 4.3-stable installe dans ce sandbox (release GitHub
+officielle, **taille verifiee contre le `Content-Length`** -- 50 276 070
+octets, aucune troncature). Import headless **exit 0**, **24 `.scn`**
+(import complet verifie, pas suppose). La sonde jetable sort **exit 0,
+stderr vide**. Sondes rejouees apres suppression de la sonde :
+`ProbeTimeoutAudit` (**48 sondes scenes**, retour exact a la baseline),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`, `LakeZoneProbe` (**0 failure**) --
+**toutes exit 0**. Recoupement independant : `LakeZoneProbe` imprime
+`33 landings, 21 on great-lake water` pour `(0,0,0) -> (35,0,-35)`, exactement
+la ligne `centre -> SE corner 33 sauts / 21 mouilles` de la sonde de ce lot.
+Aucun export Web joue : ce lot ne touche aucune ressource Godot.
+
+### Reste ouvert -- ce sont des decisions, pas des questions techniques
+
+1. **Ou vit le test d'eau** : `HubRegion` couvre 2 corps sur 5, l'etendre lui
+   fait lire des rayons qui vivent dans `HubBuilder`.
+2. **Comment l'embarquement survit** : 5 approches sur 10 perdent le bateau.
+   Une exemption "ce trajet est un trajet d'embarquement" est la forme
+   evidente, mais `_begin_hop` ignore pourquoi il marche -- cette intention
+   vit dans `HubWorld._boarding`.
+3. **Le ruisseau, uniforme ou exempte** (les deux couts sont tabules).
+4. **La cible du desembarquement automatique** vise dans le petit lac a la
+   queue : quelle que soit la garde, ce point demande aussi un clamp.
