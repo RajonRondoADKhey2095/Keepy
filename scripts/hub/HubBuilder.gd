@@ -318,8 +318,33 @@ const GREATLAKE_BANK_MARGIN: float = 1.30
 ## flatter still. Left at 96 -- the disc did not get coarser by getting
 ## smaller, and a segment count is not worth a rendered change to re-tune.
 const GREATLAKE_SEGMENTS: int = 96
-const GREATLAKE_BANK_SLAB: Vector2 = Vector2(0.011, 0.0075)
-const GREATLAKE_WATER_SLAB: Vector2 = Vector2(0.012, 0.021)
+
+## Slab thickness and centre height, ONE ROW PER LOBE, in HubRegion.lakes()
+## order. Two rows since SPAWN-LAKE-1, and the second row is not cosmetic:
+## the two lobes' BANK rings overlap by 1.096 u (their waters stay 1.505
+## apart, so no water is ever drawn over water, but the opaque shore rings
+## do interpenetrate). Two opaque discs at the SAME height z-fight; at
+## different heights the higher one simply wins, and since both rings are
+## POND_BANK_COLOR the seam is invisible either way. So the second lobe is
+## lifted 2.5 mm, which is below anything else on this screen and above the
+## first lobe's own stack:
+##
+##   great bank    y = 0.0020 .. 0.0130
+##   great water   y = 0.0150 .. 0.0270
+##   spawn bank    y = 0.0045 .. 0.0155
+##   spawn water   y = 0.0175 .. 0.0295
+##
+## The spawn lobe's bank also overlaps the SMALL lake's bank by 1.030 u,
+## and that one is settled by the small lake's own stack rather than here:
+## its bank top is 0.055, well above both rows, so it wins that lens.
+const GREATLAKE_BANK_SLABS: Array[Vector2] = [
+	Vector2(0.011, 0.0075),
+	Vector2(0.011, 0.0100),
+]
+const GREATLAKE_WATER_SLABS: Array[Vector2] = [
+	Vector2(0.012, 0.0210),
+	Vector2(0.012, 0.0235),
+]
 
 ## An islet: a flat shingle disc just proud of the great lake's surface,
 ## there to carry a landmark out where the water is.
@@ -604,7 +629,7 @@ func _build() -> void:
 				&"lake":
 					node = _make_lake()
 				&"greatlake":
-					node = _make_greatlake()
+					node = _make_greatlake(entry)
 				&"islet":
 					node = _make_islet(entry)
 				&"stream":
@@ -897,14 +922,26 @@ func _make_lake() -> Node3D:
 ## give 0.0617 -- visibly faceted at more than twice the deviation. 96
 ## segments bring it back to 0.0107, flatter per edge than either of the
 ## smaller waters, for a mesh that is still trivially cheap.
-func _make_greatlake() -> Node3D:
+##
+## SPAWN-LAKE-1 made this maker serve TWO lobes, and the radius comes from
+## HubRegion rather than from the entry: the walkable hole and the drawn
+## disc have to be one circle, so the entry names WHICH lake and HubRegion
+## says HOW BIG. A centre HubRegion does not know is an error and draws
+## nothing, rather than silently defaulting to the first lobe's size.
+func _make_greatlake(entry: Dictionary) -> Node3D:
+	var centre: Vector3 = entry.get("position", Vector3.ZERO)
+	var index: int = HubRegion.lake_index_at(centre)
+	if index < 0:
+		push_error("HubBuilder: greatlake at %s is not one of HubRegion's lakes; nothing drawn." % centre)
+		return null
+	var water_radius: float = HubRegion.water_radius_at(centre)
 	return _make_water_body(
-		HubRegion.LAKE_WATER_RADIUS,
-		HubRegion.LAKE_WATER_RADIUS + GREATLAKE_BANK_MARGIN,
+		water_radius,
+		water_radius + GREATLAKE_BANK_MARGIN,
 		GREATLAKE_SEGMENTS,
 		GREATLAKE_WATER_COLOR,
-		GREATLAKE_BANK_SLAB,
-		GREATLAKE_WATER_SLAB)
+		GREATLAKE_BANK_SLABS[index],
+		GREATLAKE_WATER_SLABS[index])
 
 ## An islet in the great lake. One disc; the landmark that stands on it is
 ## a separate layout entry at the same position, so the pairing is data and

@@ -114,14 +114,36 @@ func _phase_region() -> void:
 	# different numbers, and nothing asserted they were the same number.
 	# Move one and not the other and the water you can see stops being the
 	# water you cannot walk into -- with no error anywhere.
+	#
+	# PLURAL SINCE SPAWN-LAKE-1. There are two great-lake lobes now, so the
+	# check is a BIJECTION rather than one comparison: every layout entry
+	# has to land on a distinct HubRegion lake, and every HubRegion lake has
+	# to be claimed. Either half alone would pass while the other drifted --
+	# a lobe drawn twice, or a subtracted hole nothing draws.
 	var layout: HubLayout = load("res://resources/hub/hub_layout.tres") as HubLayout
-	var stated := Vector3.INF
+	var stated: Array[Vector3] = []
 	for entry in layout.props:
 		if entry.get("type", &"") == &"greatlake":
-			stated = entry.get("position", Vector3.INF) as Vector3
-	_check(stated.is_finite() and stated.distance_to(HubRegion.lake_centre()) < 1e-3,
-		"the layout's greatlake sits where HubRegion says the water is: %s vs %s"
-			% [stated, HubRegion.lake_centre()])
+			stated.append(entry.get("position", Vector3.INF) as Vector3)
+	var claimed: Dictionary = {}
+	var matched: bool = true
+	for centre in stated:
+		var index: int = HubRegion.lake_index_at(centre)
+		if index < 0 or claimed.has(index):
+			matched = false
+		else:
+			claimed[index] = centre
+	_check(stated.size() == HubRegion.lakes().size() and matched
+			and claimed.size() == HubRegion.lakes().size(),
+		"the %d greatlake entries map one-to-one onto HubRegion's %d lakes: %s"
+			% [stated.size(), HubRegion.lakes().size(), stated])
+	# And the RADII, which the layout does not state at all: the builder
+	# asks HubRegion for them, so this is the one place that says out loud
+	# how big each drawn disc is.
+	var radii: PackedFloat32Array = PackedFloat32Array()
+	for lake in HubRegion.lakes():
+		radii.append(float(lake["radius"]))
+	print("    lakes: %s  radii %s" % [stated, radii])
 	_check(absf(HubRegion.lake_centre().length() - HubRegion.LAKE_CENTRE_DISTANCE) < 1e-4,
 		"lake centre at %.3f u -> %s" % [HubRegion.lake_centre().length(), HubRegion.lake_centre()])
 	_check(absf(HubRegion.near_bank().length() - (HubRegion.LAKE_CENTRE_DISTANCE - HubRegion.LAKE_WATER_RADIUS)) < 1e-4,
@@ -130,7 +152,34 @@ func _phase_region() -> void:
 	_check(HubRegion.contains(Vector3.ZERO), "the plateau centre is walkable")
 	_check(HubRegion.contains(Vector3(34.9, 0.0, 34.9)), "the square corner is walkable")
 	_check(not HubRegion.contains(Vector3(40.0, 0.0, 40.0)), "past the square corner is not")
-	_check(not HubRegion.contains(HubRegion.lake_centre()), "the middle of the lake is not")
+	var centres_dry: bool = true
+	var rims_land: bool = true
+	for lake in HubRegion.lakes():
+		var centre: Vector3 = lake["centre"]
+		var radius: float = lake["radius"]
+		if HubRegion.contains(centre):
+			centres_dry = false
+		# Sampled all the way round: with two lobes a rim point can fall
+		# inside the OTHER lobe, and only contains() is entitled to say so.
+		#
+		# ⚠️ SAMPLED AT radius + 0.001, NOT AT radius, and that is the same
+		# nudge _out_of_lake() applies rather than a softened assertion.
+		# in_lake_water compares STRICTLY against the radius, so a point
+		# built as centre + dir*radius is a float coin-flip -- Vector3 is
+		# float32, not float64. MEASURED, not argued: 7 of these 32 rim
+		# points land 9.54e-07 INSIDE their own circle and read as water.
+		# What the region actually promises is
+		# that clamp_to's output is land, and clamp_to nudges -- so this
+		# gates the promise instead of an unrepresentable edge case.
+		for i in 16:
+			var a: float = deg_to_rad(float(i) * 22.5)
+			var rim := centre + Vector3(sin(a), 0.0, -cos(a)) * (radius + 0.001)
+			if absf(rim.x) <= HubRegion.PLATEAU_HALF_EXTENT \
+					and absf(rim.z) <= HubRegion.PLATEAU_HALF_EXTENT \
+					and not HubRegion.contains(rim):
+				rims_land = false
+	_check(centres_dry, "the middle of every lobe is not walkable")
+	_check(rims_land, "every lobe's waterline is walkable (the rim is land)")
 	_check(HubRegion.contains(HubRegion.near_bank()), "the near bank waterline is (the rim is land)")
 
 	# THE ASSERTION IS INVERTED SINCE LAKE-MOVE, deliberately and not
@@ -167,6 +216,8 @@ func _phase_region() -> void:
 	var probes: Array[Vector3] = [
 		HubRegion.lake_centre(),
 		HubRegion.lake_centre() + Vector3(5.0, 0.0, -3.0),
+		Vector3(HubRegion.SPAWN_LAKE_CENTRE_X, 0.0, HubRegion.SPAWN_LAKE_CENTRE_Z),
+		Vector3(HubRegion.SPAWN_LAKE_CENTRE_X + 4.0, 0.0, HubRegion.SPAWN_LAKE_CENTRE_Z + 2.0),
 		Vector3(-300.0, 0.0, 0.0),
 		Vector3(0.0, 0.0, 900.0),
 		Vector3(-45.0, 0.0, -45.0),
@@ -217,28 +268,54 @@ func _phase_geometry(props: Node3D, ground: MeshInstance3D) -> void:
 
 	# The height stack. Ordering, not exact values: what matters is that
 	# nothing shares a plane with anything it overlaps.
+	#
+	# ⚠️ IDENTIFIED BY POSITION, NOT BY COLOUR, since SPAWN-LAKE-1 made every
+	# water body share one albedo: the four bodies now differ only in ALPHA,
+	# and the two great-lake lobes not even in that. A colour match would
+	# silently collapse them into one reading. The layout's own centres are
+	# the key instead, which is also the only key that cannot go stale
+	# without the bijection check above failing first.
 	var tops: Dictionary = {}
+	var great_tops: PackedFloat32Array = PackedFloat32Array()
+	for node in props.get_children():
+		var root := node as Node3D
+		if root == null:
+			continue
+		var top: float = -INF
+		var found: bool = false
+		for child in root.get_children():
+			var mi := child as MeshInstance3D
+			if mi == null or mi.mesh == null:
+				continue
+			var mat := mi.get_surface_override_material(0) as StandardMaterial3D
+			if mat == null or mat.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA:
+				continue
+			top = maxf(top, (mi.global_transform * mi.mesh.get_aabb()).end.y)
+			found = true
+		if not found:
+			continue
+		var flat := Vector3(root.global_position.x, 0.0, root.global_position.z)
+		if HubRegion.lake_index_at(flat) >= 0:
+			great_tops.append(top)
+		elif flat.distance_to(Vector3(-25.10, 0.0, -5.30)) < 0.01:
+			tops["small water"] = top
 	for node in _descendants(props):
 		var mi := node as MeshInstance3D
 		if mi == null or mi.mesh == null:
 			continue
-		var top: float = (mi.global_transform * mi.mesh.get_aabb()).end.y
-		var colour: Color = Color.BLACK
 		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
-		if mat != null:
-			colour = mat.albedo_color
-		if colour.is_equal_approx(HubBuilder.GREATLAKE_WATER_COLOR):
-			tops["great water"] = top
-		elif colour.is_equal_approx(HubBuilder.ISLET_COLOR):
-			tops["islet"] = top
-		elif colour.is_equal_approx(HubBuilder.LAKE_WATER_COLOR):
-			tops["small water"] = top
-	var ordered: bool = tops.has("great water") and tops.has("islet") and tops.has("small water")
+		if mat != null and mat.albedo_color.is_equal_approx(HubBuilder.ISLET_COLOR):
+			tops["islet"] = (mi.global_transform * mi.mesh.get_aabb()).end.y
+	var ordered: bool = great_tops.size() == HubRegion.lakes().size() \
+		and tops.has("islet") and tops.has("small water")
 	if ordered:
-		ordered = tops["great water"] < tops["islet"] and tops["islet"] < tops["small water"]
-		print("    tops: great water %.4f < islet %.4f < small water %.4f"
-			% [tops["great water"], tops["islet"], tops["small water"]])
-	_check(ordered, "great water sits under the islets, and both under the small lake")
+		for t in great_tops:
+			if t >= tops["islet"]:
+				ordered = false
+		ordered = ordered and tops["islet"] < tops["small water"]
+		print("    tops: great-lake lobes %s < islet %.4f < small water %.4f"
+			% [great_tops, tops["islet"], tops["small water"]])
+	_check(ordered, "every great-lake lobe sits under the islets, and both under the small lake")
 
 	# Nothing reachable may leave the ground mesh. The half-size is READ
 	# from the scene, never assumed.
@@ -283,11 +360,16 @@ func _phase_tap(hub: Node, tap: HubTapInput, camera: Camera3D) -> void:
 	# turns "clamp_to reads like it handles an interior hole" into a
 	# measurement.
 	var keepy: Node3D = camera.get_parent().get_node("Keepy") as Node3D
+	# EIGHT AZIMUTHS PER LOBE since SPAWN-LAKE-1. The second lobe is not
+	# covered for free by the first: clamp_to now offers a candidate per
+	# lake and picks between them, so the branch that matters is the one
+	# where pushing out of one lobe could land inside the other.
 	var water_points: Array[Vector3] = []
-	for i in 8:
-		var a: float = deg_to_rad(float(i) * 45.0)
-		water_points.append(HubRegion.lake_centre()
-			+ Vector3(sin(a), 0.0, -cos(a)) * (HubRegion.LAKE_WATER_RADIUS * 0.6))
+	for lake in HubRegion.lakes():
+		for i in 8:
+			var a: float = deg_to_rad(float(i) * 45.0)
+			water_points.append((lake["centre"] as Vector3)
+				+ Vector3(sin(a), 0.0, -cos(a)) * (float(lake["radius"]) * 0.6))
 	var tested: int = 0
 	var dry: int = 0
 	for target in water_points:
@@ -309,7 +391,9 @@ func _phase_tap(hub: Node, tap: HubTapInput, camera: Camera3D) -> void:
 		print("    tap aimed at %s -> destination %s (in water: %s)"
 			% [target, _tapped, HubRegion.in_lake_water(_tapped)])
 	tap.tapped_ground.disconnect(_on_tapped)
-	_check(tested >= 8, "all 8 sampled lake points projected inside the viewport (%d tested)" % tested)
+	_check(tested >= water_points.size(),
+		"all %d sampled lake points projected inside the viewport (%d tested)"
+			% [water_points.size(), tested])
 	_check(tested > 0 and dry == tested, "%d/%d taps on the lake resolved to dry land" % [dry, tested])
 	print("")
 
