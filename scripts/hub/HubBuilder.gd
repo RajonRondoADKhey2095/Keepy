@@ -235,11 +235,14 @@ const LAKE_SEGMENTS: int = 40
 ## =====================================================================
 ## THE GREAT LAKE, THE ISLETS AND THE PONTOONS
 ##
-## The great lake is a THIRD standing water, 2.5x the small lake across,
-## set out along the same azimuth. Its radius (20) and its centre distance
-## (54) are fixed decisions and are not re-derived here -- HubRegion owns
-## them, because the walkable region is built from the same two numbers and
-## a second copy would be free to drift.
+## The great lake is a THIRD standing water, twice the small lake across.
+## It shipped OUTSIDE the square (radius 20, centre 54 out along the small
+## lake's azimuth) and LAKE-MOVE brought it INSIDE, to (15.5, -19) at
+## radius 16 -- the only placement the recon measured as clearly visible
+## from the plateau centre, and the largest radius that fits the square at
+## all. Those numbers are not re-derived here: HubRegion owns them, because
+## the walkable region is built from the same ones and a second copy would
+## be free to drift.
 ##
 ## COLOUR: a fourth water tone had to stay separable from the other three.
 ##
@@ -252,21 +255,24 @@ const LAKE_SEGMENTS: int = 40
 ##   great   hsv(254.6, 0.62, 0.60)   deep indigo   <- this one, then
 ##
 ## WATER-HUE-2 (family B) narrows every hue into 170-180 deg instead and
-## separates the pair that actually touches -- the small lake and this one
+## separates the pair that touched AT THE TIME -- the small lake and this
+## one, then 0.347 u apart; LAKE-MOVE has since pulled them 18.849 u apart
+## and every colour here is deliberately UNCHANGED by it, so that a recolour
+## is its own batch with its own measurements rather than a side effect
 ## -- by SATURATION: dSAT 0.421 against family A's 0.188 and family C's
 ## 0.291, measured on the rendered plate, not the albedo alone (see
 ## POND_WATER_COLOR's docblock). Family B's table is in STREAM_WATER_COLOR's
 ## docblock, just above.
 ##
-## HEIGHTS: the great lake's slabs sit BELOW the small lake's, and that is
-## not a style choice. The two waters end up 0.347 units apart and their
-## BANKS overlap by 2.003 -- forced, not chosen: those are what a radius of
-## 20 at a distance of 54 gives against a lake of radius 8 at 25.65, and
-## the small lake is not being touched. Two opaque discs at the same height
-## would z-fight. Stacking the great lake's pair under the small lake's
-## resolves it by depth instead: where they meet, the small lake's shore
-## draws on top, which is also the reading that makes sense -- a bay whose
-## own bank runs into the big water.
+## HEIGHTS: the great lake's slabs sit BELOW the small lake's. That was
+## forced when the two touched -- at radius 20 and distance 54 their waters
+## came within 0.347 u and their banks OVERLAPPED by 2.003, and two opaque
+## discs at one height z-fight. LAKE-MOVE separates them by 18.849 u of
+## open water (16.499 bank to bank), so nothing forces the stack any more. It is KEPT anyway: the
+## order is measured, gated by LakeZoneProbe, and costs nothing, whereas
+## flattening it would be an unforced change to geometry nobody can look at
+## before staging. If a later batch ever brings two waters back into
+## contact, the resolution is already here.
 ##
 ##   ground        y = 0
 ##   great bank    y = 0.002 .. 0.013
@@ -292,12 +298,25 @@ const LAKE_SEGMENTS: int = 40
 ## 0.0799), which this lot corrects by a wide margin (measured, not assumed
 ## -- see the lot's report).
 const GREATLAKE_WATER_COLOR: Color = Color(0.8000, 1.0000, 0.9922, 0.85)
-## Bank margin, NOT the pond's 0.42 scaled up. Proportional scaling would
-## put the ring at 22.625, and the ring's inner edge would then reach 2.0
-## units further into the small lake than it already does. 1.30 is the
-## widest margin that keeps the overlap at the 2.003 the water radius alone
-## forces, rather than adding to it.
+## Bank margin, NOT the pond's 0.42 scaled up. It was sized when the two
+## lakes touched: proportional scaling would have put the ring at 22.625
+## and pushed its inner edge 2.0 further into the small lake. LAKE-MOVE
+## ends that contact, and the margin is UNCHANGED -- 1.30 is a shore width
+## that reads at this scale, and re-tuning it would move a rendered edge
+## this batch cannot look at.
+##
+## ⚠️ It is also what puts the bank ring 1.06 u ACROSS the Battle portal's
+## pad: at the shipped centre the portal sits 17.59 from the lake centre,
+## so its 1.35 pad reaches to 16.24 while the bank runs out to 17.30. The
+## WATER still clears the pad by 0.24, so nothing is walkable-into-water;
+## it is a visual overlap and it is reported rather than papered over.
+## Clearing it needs the centre at x >= 18, which is a different placement
+## than the one that was chosen.
 const GREATLAKE_BANK_MARGIN: float = 1.30
+## 96 segments: sized against facet deviation r(1-cos(pi/n)), which grows
+## with r. At the shipped radius of 20 that is 0.0107; at 16 it is 0.0086,
+## flatter still. Left at 96 -- the disc did not get coarser by getting
+## smaller, and a segment count is not worth a rendered change to re-tune.
 const GREATLAKE_SEGMENTS: int = 96
 const GREATLAKE_BANK_SLAB: Vector2 = Vector2(0.011, 0.0075)
 const GREATLAKE_WATER_SLAB: Vector2 = Vector2(0.012, 0.021)

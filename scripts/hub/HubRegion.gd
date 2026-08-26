@@ -28,12 +28,25 @@ class_name HubRegion
 ##
 ##   ( square(+-PLATEAU_HALF_EXTENT)  OR  shore pad )  AND NOT  lake water
 ##
-## The shore pad is a disc centred on the great lake's NEAR BANK, which is
-## what lets the walkable ground follow the shore past the square's western
-## edge. The subtraction is what answers "a tap on the lake must not walk
-## Keepy into it": the water is a hole in the region, so a tap there is
-## clamped to the rim exactly as a tap past the square edge is clamped to
-## the edge.
+## The shore pad is a disc centred on the great lake's NEAR BANK. It used
+## to be what let the walkable ground follow the shore past the square's
+## western edge, back when the lake sat outside the square entirely.
+## Since LAKE-MOVE it is INERT and measured so: with the centre at
+## (15.5, -19) the near bank is at 8.52 from the plateau centre, so a pad
+## of radius 20 around it spans x in [-14.6, 25.4] and z in [-26.6, 13.4]
+## -- ENTIRELY inside the square, adding exactly 0 u2 of walkable ground.
+## It is kept rather than deleted because it is the generic term of the
+## union and costs nothing while contained; a future batch that pushes a
+## lake back out through an edge gets the lobe back for free.
+##
+## The subtraction is what answers "a tap on the lake must not walk Keepy
+## into it": the water is a hole in the region, so a tap there is clamped
+## to the rim exactly as a tap past the square edge is clamped to the edge.
+## With the lake now in the MIDDLE of the square that hole is interior
+## rather than edge-adjacent, which _out_of_water() already handled -- it
+## pushes radially and never assumed where the disc sat. MEASURED after
+## the move, not inferred: 8 taps on the water from 8 different azimuths,
+## 8 resolved onto dry land.
 ##
 ## ONLY THE GREAT LAKE IS SUBTRACTED, and that asymmetry is deliberate.
 ## The pond and the small lake have been walkable since they shipped -- the
@@ -43,20 +56,33 @@ class_name HubRegion
 ## own batch with its own device pass.
 ##
 ## =====================================================================
-## MEASURED, NOT ASSUMED: THE PENINSULA HAS NO LENGTH
+## WHAT THE LAKE COSTS, NOW THAT IT IS INSIDE
 ##
-## The brief for this batch described a walkable strip BRIDGING the plateau
-## edge to the lake's near shore. There is nothing to bridge, and the two
-## fixed numbers are what say so: a lake of radius 20 whose centre is 54
-## out has its near bank at 34, while the square's boundary along that same
-## azimuth is at 35/|axis.x| = 35.782. The shore starts INSIDE the square.
+## The LAKE-1 batch measured a lake OUTSIDE the square: it removed 27.6 u2
+## of walkable ground and the shore pad handed back 91.6 u2 beyond the
+## edge, a lobe following the shore rather than a causeway. Both numbers
+## are dead. The lake is inside now, so the pad reaches nothing new and
+## the hole is paid for in full:
 ##
-## What that costs, measured on a 0.1-unit grid rather than argued:
-##   - the water removes 27.6 u2 of square that used to be walkable
-##   - the shore pad adds 91.6 u2 of walkable ground beyond the square
-## So the extension is real, but it is a LOBE FOLLOWING THE SHORE, not a
-## causeway, and the net gain is smaller than the pad alone suggests.
-## Whoever tunes these numbers next should expect that, not rediscover it.
+##   water area removed from the square   804.5 u2  (16.42% of 4900)
+##   walkable ground added by the pad         0 u2
+##
+## That 16.42% was the price the recon put on the ONLY placement clearly
+## visible from the plateau centre, and it is what Mathieu accepted when
+## he picked it. 3 landmarks and 25 scatter props stood inside the new
+## water and were RELOCATED, never deleted; 7 more stood in the lobe the
+## pad used to reach and were relocated for the same reason.
+##
+## WHAT IT DOES NOT COST: a single second of crossing. A lake cannot bend
+## a chord -- KeepyHopper walks a straight line and consults nothing --
+## so the worst crossing is the square's own diagonal, 18.700 s, before
+## and after, measured both times rather than argued.
+##
+## WHAT IT DOES COST, and there is no fix for it in this file: Keepy walks
+## OVER the water. That was already true of the pond and the small lake in
+## production, and an interior lake simply puts far more of it under the
+## usual chords. Fixing it means obstacle avoidance in KeepyHopper, which
+## exists nowhere in the repo and is its own project.
 
 ## Half-extent of the square part of the region. Moved here from
 ## HubTapInput when the limit stopped being a scalar: the shape has one
@@ -77,48 +103,62 @@ class_name HubRegion
 ##   trip                        hops   frames    seconds
 ##   centre -> (35,0)              24      408     6.800
 ##   (-35,-35) -> (35,35)          66     1122    18.700   <- worst case
-##   worst corner -> shore lobe    64     1088    18.133
 ##
-## The lobe stays UNDER the diagonal, which is the property this batch was
-## asked to preserve and which SHORE_PAD_RADIUS was sized against: at pad
-## radius 24 the lobe reaches 18.983 s and becomes the worst case itself.
+## Re-measured after LAKE-MOVE and unchanged to the frame: the diagonal is
+## still the worst walk in the game.
 const PLATEAU_HALF_EXTENT: float = 35.0
 
-## The great lake, in the azimuth convention every hub batch has used:
-## 0 degrees is -Z, growing toward +X. The small lake of the earlier batch
-## sits at azimuth 281.9, so 282 puts the great lake straight beyond it,
-## on the same side of the plateau.
-const LAKE_AZIMUTH_DEG: float = 282.0
-const LAKE_CENTRE_DISTANCE: float = 54.0
-const LAKE_WATER_RADIUS: float = 20.0
+## The great lake, as a PLAIN CARTESIAN CENTRE.
+##
+## It used to be an azimuth (282 deg) and a distance (54) because the lake
+## sat straight beyond the small lake, off the plateau entirely, and polar
+## was the shorter way to say that. The LAKE-MOVE batch moved it INSIDE the
+## square to (15.5, -19) -- the only candidate the recon measured as
+## clearly visible from the plateau centre -- and polar stopped being the
+## shorter way to say anything: the layout states the centre in cartesian,
+## so an azimuth here would be a second spelling of it, free to drift by a
+## rounding error nobody would see until a bank slab sliced a prop.
+##
+## The azimuth and the distance are still PUBLISHED below, derived from
+## this pair rather than the other way round, because the probe and the
+## shore pad both still speak in them.
+##
+## RADIUS 16 IS THE MAXIMUM, and it is measured, not chosen. The recon
+## swept the whole legal box at 0.5 u: at radius 20 and at radius 18 there
+## is NO centre anywhere that keeps the disc inside the square while
+## clearing the pond, the stream and the three portals. 16 is the largest
+## that fits, and its best centre is the one written here.
+const LAKE_CENTRE_X: float = 15.5
+const LAKE_CENTRE_Z: float = -19.0
+const LAKE_WATER_RADIUS: float = 16.0
 
 ## Radius of the shore pad, centred on the near bank.
 ##
-## SIZED BY MEASUREMENT, not chosen. Swept against the worst corner-to-lobe
-## crossing, on the real hopper stepping rule:
-##
-##   pad   new walkable   worst crossing
-##    12       12.8 u2       15.867 s
-##    16       38.8 u2       17.283 s
-##    20       91.6 u2       18.133 s   <- shipped
-##    24      179.6 u2       18.983 s   -- passes 22 s, but BEATS the
-##    28      311.9 u2       20.117 s      diagonal and becomes the new
-##                                         worst case
-##
-## 20 is the largest pad that still leaves the square diagonal as the
-## hub's worst crossing. Going past it does not break the 22 s budget; it
-## breaks the simpler promise that the plateau's own diagonal is the
-## longest walk in the game.
+## INERT SINCE LAKE-MOVE, and left at its measured value rather than
+## zeroed. It was sized by sweeping the worst corner-to-lobe crossing on
+## the real hopper (12 -> 15.867 s, 16 -> 17.283 s, 20 -> 18.133 s,
+## 24 -> 18.983 s, which beat the diagonal and became the worst case), so
+## 20 was the largest pad that still left the square diagonal as the hub's
+## worst walk. With the lake inside the square the pad no longer reaches
+## past any edge -- see the header for the containment arithmetic -- so it
+## contributes 0 u2 and 0 s today. Zeroing it would delete a measured
+## number to say the same thing; changing it now would change nothing.
 const SHORE_PAD_RADIUS: float = 20.0
 
-## Unit vector along the lake axis, and the two points on it the region is
-## built from. static var and not const because a const initialiser cannot
-## call sin() -- writing the components as literals instead would be a
-## second copy of the azimuth, free to drift from the degrees above.
-static var _axis: Vector3 = Vector3(
-	sin(deg_to_rad(LAKE_AZIMUTH_DEG)), 0.0, -cos(deg_to_rad(LAKE_AZIMUTH_DEG)))
-static var _lake_centre: Vector3 = _axis * LAKE_CENTRE_DISTANCE
-static var _near_bank: Vector3 = _axis * (LAKE_CENTRE_DISTANCE - LAKE_WATER_RADIUS)
+## The centre, and the two things every other rule here is built from.
+## static var and not const because a const initialiser cannot call
+## normalized() or atan2() -- writing the results as literals instead would
+## be a second copy of the centre, free to drift from the pair above.
+static var _lake_centre: Vector3 = Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z)
+static var _axis: Vector3 = _lake_centre.normalized()
+static var _near_bank: Vector3 = _axis * (_lake_centre.length() - LAKE_WATER_RADIUS)
+
+## Published for the probe and for anyone reasoning in the hub's usual
+## polar convention (0 degrees is -Z, growing toward +X). DERIVED, never a
+## second source of truth: change the centre above and these follow.
+static var LAKE_CENTRE_DISTANCE: float = _lake_centre.length()
+static var LAKE_AZIMUTH_DEG: float = fposmod(
+	rad_to_deg(atan2(LAKE_CENTRE_X, -LAKE_CENTRE_Z)), 360.0)
 
 ## Unit vector from the plateau centre toward the lake centre.
 static func lake_axis() -> Vector3:
