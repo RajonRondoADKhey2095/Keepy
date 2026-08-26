@@ -558,7 +558,7 @@ props = [{
 "scale": 1.008,
 "type": &"tree"
 }, {
-"position": Vector3(-33.76, 0, -10.30),
+"position": Vector3(-29.90, 0, -13.73),
 "rotation_y": 327.6,
 "scale": 1.269,
 "type": &"tree"
@@ -897,4 +897,191 @@ props = [{
 "rotation_y": 0.0,
 "scale": 1.0,
 "type": &"boat"
+}, {
+"position": Vector3(-52.82, 0, -11.23),
+"rotation_y": 0.0,
+"scale": 1.000,
+"offshore": true,
+"type": &"greatlake"
+}, {
+"position": Vector3(-50.48, 0, -3.06),
+"rotation_y": 0.0,
+"scale": 1.000,
+"offshore": true,
+"radius": 3.20,
+"type": &"islet"
+}, {
+"position": Vector3(-50.48, 0, -3.06),
+"rotation_y": 290.9,
+"scale": 1.000,
+"offshore": true,
+"variant": 0,
+"type": &"landmark"
+}, {
+"position": Vector3(-63.65, 0, -13.14),
+"rotation_y": 0.0,
+"scale": 1.000,
+"offshore": true,
+"radius": 3.40,
+"type": &"islet"
+}, {
+"position": Vector3(-63.65, 0, -13.14),
+"rotation_y": 259.4,
+"scale": 1.000,
+"offshore": true,
+"variant": 1,
+"type": &"landmark"
+}, {
+"position": Vector3(-47.34, 0, -19.35),
+"rotation_y": 0.0,
+"scale": 1.000,
+"offshore": true,
+"radius": 3.00,
+"type": &"islet"
+}, {
+"position": Vector3(-47.34, 0, -19.35),
+"rotation_y": 56.1,
+"scale": 1.000,
+"offshore": true,
+"variant": 2,
+"type": &"landmark"
+}, {
+"position": Vector3(-31.72, 0, -12.70),
+"rotation_y": -176.0,
+"scale": 1.000,
+"type": &"pontoon"
+}, {
+"position": Vector3(-33.98, 0, -1.63),
+"rotation_y": 153.0,
+"scale": 1.000,
+"type": &"pontoon"
+}, {
+"position": Vector3(-51.26, 0, -5.80),
+"rotation_y": 106.0,
+"scale": 1.000,
+"offshore": true,
+"type": &"pontoon"
+}, {
+"position": Vector3(-60.65, 0, -12.61),
+"rotation_y": -10.0,
+"scale": 1.000,
+"offshore": true,
+"type": &"pontoon"
+}, {
+"position": Vector3(-48.82, 0, -17.15),
+"rotation_y": -124.0,
+"scale": 1.000,
+"offshore": true,
+"type": &"pontoon"
+}, {
+"position": Vector3(-26.89, 0, -7.97),
+"rotation_y": 225.2,
+"scale": 1.197,
+"type": &"tree"
+}, {
+"position": Vector3(-36.74, 0, -25.93),
+"rotation_y": 143.6,
+"scale": 0.719,
+"type": &"tree"
+}, {
+"position": Vector3(-35.66, 0, -25.03),
+"rotation_y": 235.0,
+"scale": 1.222,
+"type": &"tree"
+}, {
+"position": Vector3(-28.53, 0, -27.81),
+"rotation_y": 282.4,
+"scale": 1.154,
+"type": &"tree"
+}, {
+"position": Vector3(-30.42, 0, -23.56),
+"rotation_y": 104.7,
+"scale": 1.272,
+"type": &"tree"
+}, {
+"position": Vector3(-28.45, 0, -18.56),
+"rotation_y": 297.0,
+"scale": 0.978,
+"type": &"rock"
+}, {
+"position": Vector3(-42.01, 0, 9.15),
+"rotation_y": 127.4,
+"scale": 1.203,
+"type": &"rock"
+}, {
+"position": Vector3(-29.19, 0, 0.52),
+"rotation_y": 45.2,
+"scale": 0.748,
+"type": &"rock"
+}, {
+"position": Vector3(-36.45, 0, 7.14),
+"rotation_y": 256.8,
+"scale": 0.839,
+"type": &"rock"
+}, {
+"position": Vector3(-31.86, 0, -8.07),
+"rotation_y": 169.4,
+"scale": 1.205,
+"type": &"rock"
+}, {
+"position": Vector3(-28.10, 0, -23.52),
+"rotation_y": 61.7,
+"scale": 1.188,
+"type": &"rock"
+}, {
+"position": Vector3(-27.92, 0, -0.60),
+"rotation_y": 60.2,
+"scale": 0.985,
+"type": &"bush"
+}, {
+"position": Vector3(-34.90, 0, 11.59),
+"rotation_y": 192.7,
+"scale": 0.847,
+"type": &"bush"
+}, {
+"position": Vector3(-37.34, 0, 5.03),
+"rotation_y": 99.6,
+"scale": 0.887,
+"type": &"bush"
+}, {
+"position": Vector3(-32.37, 0, -28.59),
+"rotation_y": 96.7,
+"scale": 0.707,
+"type": &"bush"
+}, {
+"position": Vector3(-27.07, 0, -6.88),
+"rotation_y": 192.3,
+"scale": 1.008,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(-37.29, 0, 3.43),
+"rotation_y": 41.1,
+"scale": 1.253,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-28.16, 0, -21.63),
+"rotation_y": 67.8,
+"scale": 0.992,
+"variant": 1,
+"type": &"flower"
+}, {
+"position": Vector3(-32.45, 0, 8.96),
+"rotation_y": 327.3,
+"scale": 0.953,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-27.99, 0, -12.28),
+"rotation_y": 22.5,
+"scale": 1.299,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-38.06, 0, 9.65),
+"rotation_y": 244.3,
+"scale": 1.203,
+"variant": 0,
+"type": &"flower"
 }]

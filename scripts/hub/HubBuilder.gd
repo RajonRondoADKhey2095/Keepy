@@ -187,6 +187,93 @@ const LAKE_SEGMENTS: int = 40
 ## Leaning on one axis for both pairs would have made one of them collapse:
 ## a brighter pond reads as the lake, and a cyan-shifted lake reads as the
 ## stream. LOCAL to the hub, like every other decor colour here.
+## =====================================================================
+## THE GREAT LAKE, THE ISLETS AND THE PONTOONS
+##
+## The great lake is a THIRD standing water, 2.5x the small lake across,
+## set out along the same azimuth. Its radius (20) and its centre distance
+## (54) are fixed decisions and are not re-derived here -- HubRegion owns
+## them, because the walkable region is built from the same two numbers and
+## a second copy would be free to drift.
+##
+## COLOUR: a fourth water tone had to stay separable from the other three,
+## and the project's rule for that is the same one the small lake was
+## chosen under -- separate on HUE or on VALUE, never on neither.
+##
+##   pond    hsv(198.0, 0.56, 0.36)   dark teal
+##   lake    hsv(221.5, 0.63, 0.82)   light blue
+##   stream  hsv(190.9, 0.51, 0.86)   bright cyan
+##   great   hsv(254.6, 0.62, 0.60)   deep indigo   <- this one
+##
+## 33.1 degrees of hue from the nearest of the three AND 0.22 of value from
+## it. Measured on the authored albedo; what the camera reads is further
+## apart still, because the ground showing through the alpha pulls a teal
+## toward green and a blue resists it -- the same effect already measured
+## when the small lake was added.
+##
+## HEIGHTS: the great lake's slabs sit BELOW the small lake's, and that is
+## not a style choice. The two waters end up 0.347 units apart and their
+## BANKS overlap by 2.003 -- forced, not chosen: those are what a radius of
+## 20 at a distance of 54 gives against a lake of radius 8 at 25.65, and
+## the small lake is not being touched. Two opaque discs at the same height
+## would z-fight. Stacking the great lake's pair under the small lake's
+## resolves it by depth instead: where they meet, the small lake's shore
+## draws on top, which is also the reading that makes sense -- a bay whose
+## own bank runs into the big water.
+##
+##   ground        y = 0
+##   great bank    y = 0.002 .. 0.013
+##   great water   y = 0.015 .. 0.027
+##   small bank    y = 0.005 .. 0.055   (unchanged)
+##   small water   y = 0.020 .. 0.080   (unchanged)
+##   islet         y = 0.030 .. 0.060
+##   pontoon deck  y = 0.045 .. 0.095
+##   stream        y = 0.095            (unchanged)
+##
+## The slabs are also THINNER than the pond's, for the reason the pond's
+## own docblock gives for not scaling them at all: a lake-sized slab thick
+## enough to see is a lake showing its own edge.
+const GREATLAKE_WATER_COLOR: Color = Color(0.32, 0.23, 0.60, 0.55)
+## Bank margin, NOT the pond's 0.42 scaled up. Proportional scaling would
+## put the ring at 22.625, and the ring's inner edge would then reach 2.0
+## units further into the small lake than it already does. 1.30 is the
+## widest margin that keeps the overlap at the 2.003 the water radius alone
+## forces, rather than adding to it.
+const GREATLAKE_BANK_MARGIN: float = 1.30
+const GREATLAKE_SEGMENTS: int = 96
+const GREATLAKE_BANK_SLAB: Vector2 = Vector2(0.011, 0.0075)
+const GREATLAKE_WATER_SLAB: Vector2 = Vector2(0.012, 0.021)
+
+## An islet: a flat shingle disc just proud of the great lake's surface,
+## there to carry a landmark out where the water is.
+##
+## FLUSH ON PURPOSE. KeepyHopper flattens y to 0 on every write it makes to
+## a position (measured, in _apply_hop and _on_hop_finished both), so there
+## is no landing height in its API and this batch deliberately does not add
+## one. An islet 3 cm proud of the water reads as flush and costs nothing;
+## a real raised quay would visibly break, and would need that API first.
+## PALE, and that was a render finding rather than a preference. The first
+## pass used the banks' dark olive; against the great lake's indigo it read
+## as a HOLE in the water rather than as land standing in it. A shingle
+## light enough to sit above the water's own value fixes it, and it is the
+## only islet colour this file has ever had reason to want.
+const ISLET_COLOR: Color = Color(0.46, 0.43, 0.31)
+const ISLET_RADIUS: float = 3.2
+const ISLET_SEGMENTS: int = 24
+const ISLET_THICKNESS: float = 0.030
+const ISLET_CENTRE_Y: float = 0.045
+
+## A pontoon. One plank slab, batched, top face landing on the stream's own
+## surface height so every flush thing on this screen sits on one line.
+##
+## It has NO function in this batch. It marks where boarding will happen
+## when the lake gets a boat; today it is scenery, and nothing reads it.
+const PONTOON_COLOR: Color = Color(0.38, 0.27, 0.17)
+const PONTOON_LENGTH: float = 2.60
+const PONTOON_WIDTH: float = 1.10
+const PONTOON_THICKNESS: float = 0.05
+const PONTOON_CENTRE_Y: float = 0.07
+
 const STREAM_WATER_COLOR: Color = Color(0.42, 0.78, 0.86, 0.55)
 
 ## 1.2 units across. Half of that -- 0.6 -- is the number the trace was
@@ -320,6 +407,7 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	&"stump": 0.44,
 	&"landmark": 1.66,
 	&"portal": 1.35,
+	&"pontoon": 1.30,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -434,6 +522,10 @@ func _build() -> void:
 					node = _make_pond()
 				&"lake":
 					node = _make_lake()
+				&"greatlake":
+					node = _make_greatlake()
+				&"islet":
+					node = _make_islet(entry)
 				&"stream":
 					node = _make_stream(entry)
 				&"boat":
@@ -458,14 +550,28 @@ func _build() -> void:
 		# the check walks every control point. Without this branch a stream
 		# would fall back to Vector3.ZERO and pass for free: a silent hole in
 		# the one guard that catches a prop nobody can walk to.
+		#
+		# The bound is no longer a float: the lake zone made the walkable
+		# hub a union minus a disc, so the question "can this be walked to"
+		# is HubRegion.contains() and nothing here restates it.
+		#
+		# "offshore": true is how an entry DECLARES it is meant to be out
+		# of reach -- the islets, their landmarks and the lake itself are
+		# deliberately unreachable on foot in this batch. The check is then
+		# INVERTED rather than skipped: an offshore entry that turns out to
+		# be walkable is warned about too. A flag that only ever silenced
+		# things would be a way to silence a real mistake.
 		var anchors: Array = [where]
 		if type == &"stream":
 			anchors = _trace_points(entry)
-		var bound: float = HubTapInput.PLATEAU_HALF_EXTENT
+		var offshore: bool = entry.get("offshore", false)
 		for anchor in anchors:
 			var point: Vector3 = anchor
-			if absf(point.x) > bound or absf(point.z) > bound:
-				push_warning("HubBuilder: entry %d ('%s') at %s is outside the +-%.1f plateau; visible but unreachable." % [index, type, point, bound])
+			var reachable: bool = HubRegion.contains(point)
+			if offshore and reachable:
+				push_warning("HubBuilder: entry %d ('%s') at %s is marked offshore but IS walkable; the flag is wrong." % [index, type, point])
+			elif not offshore and not reachable:
+				push_warning("HubBuilder: entry %d ('%s') at %s is outside the walkable region; visible but unreachable." % [index, type, point])
 
 		if node != null:
 			node.position = where
@@ -493,6 +599,10 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 			# Two lobes, ONE mesh: two instances of a single batch.
 			_instance(&"Bush", placement.translated_local(Vector3(0.0, 0.3, 0.0)))
 			_instance(&"Bush", placement.translated_local(Vector3(0.42, 0.2, 0.18)))
+		&"pontoon":
+			# A deck, batched: every pontoon is the same plank slab at a
+			# different angle, which is precisely what one MultiMesh is for.
+			_instance(&"Pontoon", placement.translated_local(Vector3(0.0, PONTOON_CENTRE_Y, 0.0)))
 		&"flower":
 			_instance(&"FlowerStem", placement.translated_local(Vector3(0.0, 0.21, 0.0)))
 			var variant: int = entry.get("variant", 0)
@@ -549,6 +659,10 @@ func _batch_spec(key: StringName) -> Array:
 			bush.radial_segments = 8
 			bush.rings = 4
 			return [bush, BUSH_COLOR]
+		&"Pontoon":
+			var deck := BoxMesh.new()
+			deck.size = Vector3(PONTOON_LENGTH, PONTOON_THICKNESS, PONTOON_WIDTH)
+			return [deck, PONTOON_COLOR]
 		&"FlowerStem":
 			var stem := CylinderMesh.new()
 			stem.top_radius = 0.025
@@ -650,24 +764,30 @@ func _make_stump() -> Node3D:
 ##
 ## Shared by pond and lake so the two cannot drift apart on either of the
 ## traps above.
-func _make_water_body(water_radius: float, bank_radius: float, segments: int, water_colour: Color) -> Node3D:
+##
+## The two slabs are (thickness, centre y) pairs with the pond's own values
+## as defaults, so pond and lake keep the exact geometry they shipped with
+## and only the great lake -- which has to slide under the small one, see
+## its constants -- ever passes anything else.
+func _make_water_body(water_radius: float, bank_radius: float, segments: int, water_colour: Color,
+		bank_slab: Vector2 = Vector2(0.05, 0.03), water_slab: Vector2 = Vector2(0.06, 0.05)) -> Node3D:
 	var root := Node3D.new()
 
 	var bank := CylinderMesh.new()
 	bank.top_radius = bank_radius
 	bank.bottom_radius = bank_radius
-	bank.height = 0.05
+	bank.height = bank_slab.x
 	bank.radial_segments = segments
 	bank.rings = 1
-	root.add_child(_mesh_node(bank, POND_BANK_COLOR, Vector3(0.0, 0.03, 0.0)))
+	root.add_child(_mesh_node(bank, POND_BANK_COLOR, Vector3(0.0, bank_slab.y, 0.0)))
 
 	var water := CylinderMesh.new()
 	water.top_radius = water_radius
 	water.bottom_radius = water_radius
-	water.height = 0.06
+	water.height = water_slab.x
 	water.radial_segments = segments
 	water.rings = 1
-	var surface := _mesh_node(water, water_colour, Vector3(0.0, 0.05, 0.0))
+	var surface := _mesh_node(water, water_colour, Vector3(0.0, water_slab.y, 0.0))
 	var material := surface.get_surface_override_material(0) as StandardMaterial3D
 	# Alpha blending, and it has to be asked for: albedo_color's alpha
 	# channel is ignored entirely while transparency stays at DISABLED, so
@@ -685,6 +805,43 @@ func _make_pond() -> Node3D:
 ## bank, the same reasoning that has a stump share the trees' bark colour.
 func _make_lake() -> Node3D:
 	return _make_water_body(LAKE_WATER_RADIUS, LAKE_BANK_RADIUS, LAKE_SEGMENTS, LAKE_WATER_COLOR)
+
+## The great lake. Same two discs again, sized and coloured by its own
+## constants and slid under the small lake's -- see GREATLAKE_WATER_COLOR
+## for the height stack and for why the two shores necessarily merge.
+##
+## Segment count is calibrated to the RADIUS, not inherited. The flat-edge
+## deviation of a disc is r*(1-cos(pi/n)), and it grows with r: the lake's
+## 40 segments at radius 8 give 0.0247, and reusing them at radius 20 would
+## give 0.0617 -- visibly faceted at more than twice the deviation. 96
+## segments bring it back to 0.0107, flatter per edge than either of the
+## smaller waters, for a mesh that is still trivially cheap.
+func _make_greatlake() -> Node3D:
+	return _make_water_body(
+		HubRegion.LAKE_WATER_RADIUS,
+		HubRegion.LAKE_WATER_RADIUS + GREATLAKE_BANK_MARGIN,
+		GREATLAKE_SEGMENTS,
+		GREATLAKE_WATER_COLOR,
+		GREATLAKE_BANK_SLAB,
+		GREATLAKE_WATER_SLAB)
+
+## An islet in the great lake. One disc; the landmark that stands on it is
+## a separate layout entry at the same position, so the pairing is data and
+## an islet can be moved, resized or left bare without touching code.
+func _make_islet(entry: Dictionary) -> Node3D:
+	var radius: float = entry.get("radius", ISLET_RADIUS)
+	if radius <= 0.0:
+		push_error("HubBuilder: an islet needs a positive radius, got %f." % radius)
+		return null
+	var disc := CylinderMesh.new()
+	disc.top_radius = radius
+	disc.bottom_radius = radius
+	disc.height = ISLET_THICKNESS
+	disc.radial_segments = ISLET_SEGMENTS
+	disc.rings = 1
+	var root := Node3D.new()
+	root.add_child(_mesh_node(disc, ISLET_COLOR, Vector3(0.0, ISLET_CENTRE_Y, 0.0)))
+	return root
 
 ## The trace of a &"stream" entry, as plain Vector3s. Empty for anything
 ## malformed -- validated here rather than trusted, like every other entry.

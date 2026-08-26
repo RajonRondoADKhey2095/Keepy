@@ -83,51 +83,18 @@ var container: SubViewportContainer = null
 var viewport: SubViewport = null
 var mooring: BoatMooring = null
 
-## Half-extent of the walkable plateau, in world units. Taps outside are
-## clamped to the edge rather than ignored: a tap near the horizon is a
-## player asking to go as far as they can, and refusing it silently reads
-## as the screen being broken.
+## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
-## Widened 11 -> 15 for the landmark batch, 15 -> 25 for the outer ring,
-## then 25 -> 35 for the far landmark ring. This is the ONLY place the
-## limit is written: HubBuilder reads it for its out-of-bounds warning
-## rather than carrying a second copy, so widening here widens both at
-## once. Camera OFFSET, fov, pitch and HOP_DISTANCE are deliberately NOT
-## touched with it -- the camera follows Keepy, so a bigger plateau costs
-## nothing in framing, and the fog closes the horizon long before the
-## 600x600 ground plane runs out: the lot D recon measured the worst
-## ground |axis| any frame reaches AT EXTENT 35 as 42.0 against the
-## plane's +-300, and found no ground edge visible at either aspect
-## ratio. That 42.0 is QUOTED from that recon and deliberately NOT
-## re-derived from the |axis| 59.8 this docblock used to carry for
-## extent 25 -- the two do not sit on one definition (59.8 at the
-## SMALLER extent cannot be a lower bound for 42.0 at the larger one),
-## so extrapolating either into the other would invent a number. If a
-## figure is ever needed here rather than a bound, measure it; do not
-## multiply.
+## This file used to own `const PLATEAU_HALF_EXTENT` and clamp each axis
+## against it. That worked while the walkable hub was a square; the lake
+## zone made it a union-minus-a-disc, and a per-axis clampf cannot express
+## a hole. The constant moved to HubRegion.gd together with the rest of the
+## shape, so there is still exactly one owner -- see that file for the
+## measured crossing costs and for why the square stopped growing at 35.
 ##
-## WHAT A CROSSING COSTS AT 35, measured on the shipped hopper at
-## --fixed-fps 60 and at the CURRENT HOP_DURATION of 0.28. These are
-## WALL-CLOCK frame counts, not hops x HOP_DURATION: a 0.28s hop occupies
-## 17 frames (0.2833s), so every trip costs ~1.2% more than the nominal
-## arithmetic predicts -- 18.700s below against a nominal 18.48s. Quote
-## the measured row, never the multiplication.
-##
-##   trip                        hops   frames   0.28       (0.35 was)
-##   centre -> (35,0)              24      408   6.800 s     8.400 s
-##   centre -> (35,35)             33      561   9.350 s    11.550 s
-##   (-35,-35) -> (35,35)          66     1122  18.700 s    23.100 s
-##
-## The hop COUNT is identical on both cadence columns, which is the check
-## that HOP_DISTANCE was not touched to buy this. The chain is automatic
-## -- KeepyHopper._on_hop_finished calls _advance() -- so ONE tap buys the
-## whole journey. Aimed FORWARD (-Z) the far edge is inside the frustum,
-## so it really is one tap; aimed SIDEWAYS a single tap can never reach
-## more than 4.82 units to the side, because the camera keeps only a
-## 45-degree HORIZONTAL fov. That asymmetry is the real cost of widening,
-## not the hop count, and it grew with this change: sideways, 35 units is
-## 8 taps against 6 at extent 25.
-const PLATEAU_HALF_EXTENT: float = 35.0
+## What changed for a player: a tap outside is still pulled to the nearest
+## reachable point rather than dropped, and a tap ON the great lake is now
+## pulled to its shore instead of walking Keepy into the water.
 
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
@@ -172,9 +139,10 @@ func _handle_point(screen_point: Vector2) -> void:
 		# Camera looking at or above the horizon. Nothing to aim at.
 		return
 	var point: Vector3 = hit
-	point.x = clampf(point.x, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT)
-	point.z = clampf(point.z, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT)
-	var destination := Vector3(point.x, 0.0, point.z)
+	# One shape, one owner. The region is a union minus the great lake, so
+	# this is a nearest-point projection and not two independent clamps --
+	# see HubRegion for why the difference matters and what it costs.
+	var destination := HubRegion.clamp_to(point)
 
 	# THE BOAT WINS, and it is asked BEFORE the ground point becomes a
 	# destination. The radius is in WORLD units and is measured on this
