@@ -15109,3 +15109,46 @@ l'eau -- exactement le genre d'etiquette qui survit au run qui l'a produite.
    `KeepyHopper`, qui n'existe nulle part et serait son propre chantier.
 3. **Le ruisseau restera delave** quoi qu'il advienne du grand lac (chaine a
    trois maillons ci-dessus).
+
+### Deploiement staging de la recon lake-move (palier 1, automatique)
+
+`staging` **`8c243b8`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre des deux cotes ET `git diff` vide, verifie AVANT le
+push). CI run **#247** (id 32974312057) **verte** (13:27:30 -> 13:30:25 UTC) --
+`Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`ae13b99`, verifie apres le push). **Le contenu de JEU est rigoureusement
+inchange** : le diff ne porte que sur `CLAUDE.md` et quatre fichiers de sonde
+sous `scripts/dev/`, aucun n'etant une ressource Godot packee.
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787735262` = **09:07:42** (run #246) | **`1787750998` = 13:29:58** *(dans la fenetre du run #247)* |
+| `index.pck` servi | *(non lu avant le merge -- voir ci-dessous)* | **5 862 880** |
+| `index.wasm` servi | -- | **35 376 909** *(inchange, attendu)* |
+
+⚠️ **Honnetete sur la couverture** : la bascule n'est prouvee DANS LES DEUX
+SENS que sur le `CACHE_VERSION` ; sa valeur d'avant a ete relevee avant le
+merge. Le `.pck` servi n'a ete lu qu'APRES, donc il vaut comme second marqueur
+independant de l'etat courant, pas comme preuve de transition. Les deux
+lectures d'apres sont `x-vercel-cache: MISS` avec `age: 0`.
+
+⚠️ **Le piege HIT/age s'est reproduit DEUX fois et a ete refuse les deux
+fois** (age 15479 puis 15649, la meme copie de bord vieillissant entre mes
+deux lectures). Un parametre de requete different ne l'a pas bustee ; seul un
+changement reel de valeur y est parvenu.
+
+⚠️ **L'API GitHub Actions a de nouveau servi une reponse PERIMEE, et cette
+fois c'est net** : un appel `list_workflow_jobs` **posterieur a 13:30:25** --
+donc apres la fin reelle du run -- rendait encore « Import project resources /
+in_progress » fige a 13:28:01, **byte-identique** a l'appel precedent. C'est le
+`CACHE_VERSION` servi qui a tranche, comme aux runs #201, #202, #226, #229 et
+#242. **Nuance a garder de RIDE-1** : avant de crier a l'API perimee, verifier
+qu'une etape ne soit pas simplement lente ; ici la borne temporelle du run
+lui-meme (`updated_at` 13:30:25) l'a exclu.
+
+⚠️ **L'export LOCAL de cette session donne `index.pck` 5 862 944 et le service
+en sert 5 862 880** pour le meme contenu -- 64 octets d'ecart, enieme
+illustration de l'instabilite deja consignee. `index.wasm` est identique
+partout (**35 376 909**, md5 `af4a8fc2925d992348eb30deeeb54360`) : c'est lui
+la preuve d'identite, jamais le `.pck`.
