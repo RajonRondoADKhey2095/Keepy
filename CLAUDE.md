@@ -16118,3 +16118,60 @@ irrepresentable.
 5. Inchange et toujours ouvert : la berge du grand lac qui passe sur la
    dalle du portail Battle (1,061 u), et les 6 props dans l'eau du petit
    lac.
+
+### Deploiement staging de SPAWN-LAKE-1 (palier 1, automatique)
+
+`staging` **`ab37db0`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `5044abdf` des deux cotes, `git diff` vide, verifie
+AVANT le push). CI run **#255** (id 33009737566) **verte** -- `Import project
+resources` 20:19:11 -> 20:21:27, `Export Web build` **20:21:27 -> 20:21:32**,
+`Deploy to Vercel [STAGING -- staging]` **succes** (20:21:48 -> 20:24:29),
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ae13b990...`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs independants
+et dans les DEUX sens** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787771357` = **19:09:17** (run #254) | **`1787775691` = 20:21:31** *(a l'interieur de l'etape `Export Web build`, 20:21:27 -> 20:21:32)* |
+| `index.pck` servi | **NON MESURE** *(voir ci-dessous)* | **5 864 560** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+⚠️ **Le second marqueur n'a de valeur « avant » sur AUCUNE lecture, et c'est
+un manque de cette session plutot qu'un chiffre a citer** : `index.html` n'a
+pas ete relu sur le service avant le merge, donc l'`index.pck` servi par le
+build precedent n'existe nulle part. Il n'est pas reconstitue depuis un log de
+CI ni depuis un export local -- ce serait un chiffre d'une autre provenance
+presente comme une mesure du service. La bascule reste prouvee par le
+`CACHE_VERSION`, lu aux deux bouts.
+
+Les deux lectures « apres » portent **`x-vercel-cache: MISS` et `age: 0`**,
+`last-modified` colle a l'instant de la requete. L'epoch servi tombe **dans la
+fenetre d'export du run #255** : l'alias sert bien ce build.
+
+⚠️ **La valeur « avant » du `CACHE_VERSION` a ete lue sur un `HIT` a
+`age: 4070`, et c'est dit plutot que maquille** : elle est valable comme
+**VALEUR** (elle est anterieure au push, donc c'est bien l'ancien build), mais
+**ce n'etait PAS une mesure de fraicheur** au sens de la regle permanente. La
+bascule est prouvee par la lecture MISS/age 0 d'apres et par l'horodatage de
+l'epoch, pas par cette lecture-la.
+
+⚠️ **`index.pck` a de nouveau trois valeurs pour le meme contenu de jeu** :
+**5 864 288** a l'export local propre de cette session, **5 864 560** servi par
+la CI. C'est l'instabilite permanente deja consignee -- le `.pck` est un
+marqueur « nouveau build », **jamais** une preuve d'identite. La preuve
+d'identite est `index.wasm` (**35 376 909**, md5
+`af4a8fc2925d992348eb30deeeb54360`), identique des deux cotes comme il doit
+l'etre pour un lot qui ne touche pas le code moteur.
+
+⚠️ **L'API GitHub Actions a de nouveau servi un etat PERIME** : `get_workflow_run`
+rendait `status: "in_progress"` avec `updated_at` fige a **20:18:34** alors que
+le deploiement etait deja tombe (l'export s'etait termine a 20:21:32 et l'alias
+servait deja le nouveau `CACHE_VERSION` a 20:24:41). **C'est le marqueur servi
+qui a tranche**, comme aux runs #201, #202, #226, #229 et #232 ; l'appel
+`list_workflow_jobs` avec `filter: "all"` a ensuite confirme
+`conclusion: success` et le detail des 18 etapes. Enieme reproduction du piege
+deja consigne : ne jamais conclure d'un seul appel, et ne jamais lire un etat
+de CI sans regarder son horodatage.
