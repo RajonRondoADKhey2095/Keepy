@@ -344,3 +344,40 @@ current state rather than as proof of the transition. The HIT/age trap fired
 once mid-run (`age: 151`, an edge copy this session's own pre-merge read had
 populated) and was refused rather than counted.
 
+
+
+---
+
+## LAKE-MOVE (26 aout 2026) -- the lake moves inside, and the node count does not
+
+`origin/staging` measured in a separate worktree sharing this session's
+Godot binary and machine, both ends under `xvfb-run --rendering-driver
+opengl3`. 3 runs each. Imports verified complete on both trees (24 `.scn`)
+before any number was read -- a truncated import is the documented way to
+produce a false red here.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/staging`) | 37.81 / 36.74 / 37.87 | 96 | 102 | 27.1-27.3 | 8.5-14.6 |
+| AFTER (3 runs, this commit) | 37.88 / 35.52 / 37.44 | **96** | **102** | 24.6-26.3 | 11.5-20.4 |
+
+**The node count does not move, and that is the expected result**: this
+batch relocates entries, it creates and deletes none. 87 individual
+`MeshInstance3D`, 9 `MultiMeshInstance3D`, 6 owned by the portals, on both
+sides. Margin under the 260 ceiling stays **164**. Construction overlaps
+run for run -- 35.52 to 37.88 ms across both trees with no separation.
+
+⚠️ **FPS mean is DOWN and the ranges do NOT overlap** -- 27.1-27.3 before
+against 24.6-26.3 after, consistent across three runs each. Reported
+rather than rounded away. The most likely cause is simply that the lake is
+now IN FRAME: the probe samples from the plateau centre, where the shipped
+lake was 0% visible and the moved one covers 39% of the disc, so a large
+alpha-blended water disc plus 3 islets have entered the fill-rate budget
+that used to be empty grass. That is a real cost of the placement, not a
+regression in the layout.
+
+⚠️ **It is also the number in this table least worth trusting.** llvmpipe
+under xvfb is a software rasteriser: fill rate is exactly what it is worst
+at and exactly what a phone GPU is best at, so a fill-bound delta here
+over-states the device cost by an unknown factor. Nothing in this row says
+how the plateau behaves on a phone. **Device judgement.**
