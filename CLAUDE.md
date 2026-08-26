@@ -14576,3 +14576,234 @@ l'ancienne valeur ».
 session — et ce n'est DELIBEREMENT PAS offert comme preuve d'identite**,
 conformement a la doctrine du §7 ci-dessus. C'est un marqueur « un nouveau
 build a ete servi », rien de plus ; `index.wasm` est le controle d'identite.
+
+## HUB, LOT WATER-HUE-1 : LA PLANCHE DES CANDIDATS -- rien n'est installe, et deux premisses du brief tombent a la mesure (26 aout 2026)
+
+Branche `claude/water-hue-candidates-aqeckt`, partie de `staging` (**`4c7da9a`**,
+un commit de doc au-dessus du `73d45d2` annonce par le brief -- ecart benin,
+verifie ancetre plutot que suppose). Regle n°1 verifiee AU DEBUT : tri des refs
+distantes par date, `origin/staging` en tete, **aucune branche ne porte ce
+brief**, et la comparaison porte sur les ARBRES et pas sur les noms.
+
+**AUCUNE COULEUR D'EAU N'EST MODIFIEE.** `git diff --stat` contre
+`origin/staging` ne rapporte que `scripts/dev/WaterHueSheet.{gd,tscn}`
+(nouveaux), `docs/color-sheets/water_hue_*.png` (nouveaux) et ce document.
+`scripts/hub/HubBuilder.gd`, `resources/hub/hub_layout.tres`,
+`resources/world/swamp_palette.tres`, `KeepyHopper.gd`, `HubCamera.gd` et
+`HubRegion.gd` **ne sont pas dans le diff du tout**. Les candidats vivent dans
+le script de planche, exactement pour que juger l'un coute un rendu et pas un
+commit.
+
+### RECON -- ou vivent REELLEMENT les quatre couleurs
+
+Les quatre sont des constantes de `scripts/hub/HubBuilder.gd`, et **le layout
+n'en porte aucune** (`grep -c -i color resources/hub/hub_layout.tres` -> **0**).
+Rien n'est migre vers `SwampPalette` : son propre en-tete range les couleurs de
+decor du hub comme locales, et ce lot ne touche pas a ca.
+
+| ligne | constante | valeur | hex | hsv | Lrel albedo |
+|---|---|---|---|---|---|
+| 137 | `POND_WATER_COLOR` | `Color(0.16, 0.30, 0.36, 0.55)` | **#294C5C** | (198.0, 0.556, 0.360) | **0.0647** |
+| 156 | `LAKE_WATER_COLOR` | `Color(0.30, 0.46, 0.82, 0.55)` | **#4C75D1** | (221.5, 0.634, 0.820) | **0.1896** |
+| 236 | `GREATLAKE_WATER_COLOR` | `Color(0.32, 0.23, 0.60, 0.55)` | **#523B99** | (254.6, 0.617, 0.600) | **0.0717** |
+| 277 | `STREAM_WATER_COLOR` | `Color(0.42, 0.78, 0.86, 0.55)` | **#6BC7DB** | (190.9, 0.512, 0.860) | **0.4906** |
+
+### ⚠️ PREMISSE 1 QUI TOMBE : le sol du HUB n'est pas celui de Chased, donc le plancher n'est pas 0.549
+
+Le brief pose « le sol est a Lrel = 0.15 », d'ou la bande claire a **L >= 0.549**.
+Ce 0.150 est le sol de **Chased** (`SwampPalette.ground_albedo`, multiplie par
+son ambiante). Le hub a le sien, ecrit dans `HubWorld.tscn` et **unshaded** :
+`Color(0.2, 0.4, 0.15)`. **Mesure sur le rendu, pas calculee : #2C5A20,
+Lrel 0.0799** (le fog l'assombrit encore par rapport a son albedo).
+
+**Le plancher 3.0:1 contre le sol du hub est donc `L rendu >= 0.3397`,
+pas 0.549.** Le 0.549 reste juste comme cible sur l'**ALBEDO**, et c'est comme
+ca qu'il est applique ici : **les 12 couleurs candidates le franchissent
+toutes**.
+
+### ⚠️ PREMISSE 2 QUI TOMBE, ET C'EST LE RESULTAT CENTRAL DU LOT : a alpha 0.55, AUCUNE eau ne peut atteindre 3.0:1 -- ni maintenant, ni dans aucun des trois candidats
+
+L'eau est la **seule surface alpha-melangee** du plateau (0.55), et elle se
+melange sur sa propre **berge opaque** (`POND_BANK_COLOR`, Lrel **0.0359**), pas
+sur le sol -- la berge est un disque plein plus large que l'eau. Le ruisseau,
+lui, n'a pas de berge et se melange sur le sol. Puis le fog exponentiel
+(`hub_fog_density` 0.016 vers un vert quasi noir) passe par-dessus.
+
+Meilleur chiffre mesure, toutes familles confondues : **2.61:1** (le ruisseau
+de la famille B). **Le grand lac plafonne a 2.02:1.** Aucune teinte, aucune
+saturation ne franchit 3.0:1 -- **c'est l'alpha qui plafonne, pas la couleur.**
+
+Ce n'est pas un modele : la planche capture chaque vue **deux fois**, une a
+l'alpha livre et une en opaque. Le fog et le melange alpha sont tous deux des
+melanges lineaires, donc la luminance rendue est **AFFINE en alpha** et deux
+points mesures donnent le resultat exact a n'importe quel alpha. D'ou la
+colonne « a -> 3.0:1 » de la planche :
+
+| famille | mare | ruisseau | petit lac | grand lac |
+|---|---|---|---|---|
+| ACTUEL | >1.00 | 1.00 | >1.00 | >1.00 |
+| A | 0.91 | 0.67 | 0.94 | 0.97 |
+| **B** | **0.74** | **0.62** | 0.93 | **0.72** |
+| C | 0.81 | 0.68 | 0.97 | 1.00 |
+
+**Non fait, et deliberement : l'alpha n'est pas une couleur.** Le chiffre est
+publie parce qu'il transforme « impossible » en « voici le levier », pas parce
+que ce lot le tire. Second levier possible, non tire non plus : eclaircir
+`POND_BANK_COLOR`, qui est le fond sur lequel trois des quatre eaux se melangent.
+
+### ⚠️ PREMISSE 3 QUI TOMBE : un BLEU SATURE est interdit par la bande claire
+
+Consequence de la formule de luminance (le canal bleu pese 0.0722). Saturation
+maximale a V = 1.00 qui tient encore `Lalb >= 0.549` :
+
+| teinte | 158 | 170 | 182 | **188** | **194** | 200 | 212 | **224** | 236 |
+|---|---|---|---|---|---|---|---|---|---|
+| S max | 1.00 | 1.00 | 1.00 | **1.00** | **0.74** | 0.57 | 0.41 | **0.32** | 0.27 |
+
+**Au-dela de ~190 deg, tenir la bande claire OBLIGE a desaturer.** Une famille
+a « saturation homogene et teinte etalee » est donc **impossible** telle quelle
+si elle doit atteindre le bleu : la famille C est livree avec la saturation **au
+plafond de chaque teinte** plutot qu'avec une valeur unique, et c'est dit
+plutot que maquille.
+
+### ⚠️ SEULES TROIS PAIRES SONT CO-VISIBLES -- mesure, pas suppose
+
+Le cadre du hub fait ~13 a 18 unites de large a la profondeur du sujet
+(fov horizontal 45 deg, fixe). Les distances entre plans d'eau :
+
+| paire | co-visible ? |
+|---|---|
+| **petit lac / grand lac** | **OUI -- ils SE TOUCHENT** (0.347 u entre les eaux) |
+| **mare / ruisseau** | **OUI** -- la tete du ruisseau est sur la rive de la mare |
+| **petit lac / ruisseau** | **OUI** -- la queue du ruisseau est sur la rive du lac |
+| mare / petit lac | non (47.5 u) |
+| mare / grand lac | non (~75 u) |
+| ruisseau / grand lac | non |
+
+La matrice complete est publiee sur chaque planche, mais **seules ces trois
+lignes decident** ; les autres sont de l'information.
+
+### Les trois familles candidates
+
+**A -- ANCRE STRICTE.** Le grand lac EST `#40E0D0` ; les trois autres derivent,
+l'ecart est mene par la TEINTE.
+`mare #2FD8EB` / `ruisseau #61FFC5` / `petit lac #7AD3FF` / `grand lac #40E0D0`.
+
+**B -- TEINTE RESSERREE, SATURATION ECARTEE.** Toutes les teintes dans 170-180
+deg d'albedo ; l'ecart est porte par la SATURATION seule, et elle alterne le
+long de la chaine mare -> ruisseau -> petit lac -> grand lac (0.92 / 0.28 /
+0.714 / 0.20), donc **chaque paire adjacente alterne**. L'ancre `#40E0D0` y est
+le petit lac.
+`mare #14FFD8` / `ruisseau #B8FFFF` / `petit lac #40E0D0` / `grand lac #CCFFFD`.
+
+**C -- TEINTE ETALEE, SATURATION AU PLAFOND.** 146 / 172 / 196 / 220 deg, avec
+la saturation la plus haute que la bande claire autorise a chaque teinte (voir
+la premisse 3). L'ancre y est le ruisseau.
+`mare #24F27E` / `ruisseau #26FFE2` / `petit lac #57D2FF` / `grand lac #ABC7FF`.
+
+**Paires critiques, MESUREES sur le rendu** (pas sur l'albedo) :
+
+| famille | petit lac / grand lac | mare / ruisseau | petit lac / ruisseau |
+|---|---|---|---|
+| ACTUEL | 1.39:1 -- 37.2 deg -- dS 0.083 | 2.71:1 -- 11.2 deg -- dS 0.163 | 2.05:1 -- 53.0 deg -- dS 0.022 |
+| A | **1.04:1** -- 26.5 deg -- dS 0.188 | 1.50:1 -- 34.3 deg -- dS 0.058 | 1.54:1 -- 48.3 deg -- dS 0.178 |
+| **B** | **1.29:1** -- 8.4 deg -- **dS 0.421** | 1.34:1 -- 13.5 deg -- **dS 0.448** | 1.66:1 -- 14.7 deg -- dS 0.257 |
+| C | **1.02:1** -- 23.5 deg -- dS 0.291 | 1.35:1 -- 19.5 deg -- dS 0.047 | 1.56:1 -- 30.1 deg -- dS 0.232 |
+
+⚠️ **Le defaut du grand lac ACTUEL est nomme par un seul chiffre : il rend a
+Lrel 0.0342 contre un sol a 0.0799 -- il est PLUS SOMBRE que le sol qui
+l'entoure.** C'est litteralement le « trou » du retour terrain, et les trois
+candidats le placent au-dessus du sol (0.1246 a 0.2120).
+
+### La planche
+
+`docs/color-sheets/water_hue_{current,A,B,C}.png` -- une planche par famille,
+trois vues chacune : la jonction des deux lacs (le cas dur), la mare + la tete
+du ruisseau, le petit lac + la queue du ruisseau. Plus
+`docs/color-sheets/water_hue_comparatif.png`, les quatre jonctions cote a cote
+-- **le seul cadre ou la paire critique est visible d'un coup**, donc la seule
+image sur laquelle le choix se fait vraiment.
+
+Rendu offscreen sous `xvfb-run --rendering-driver opengl3` avec la **VRAIE
+camera du hub** : meme base, meme `fov 45`, meme `keep_aspect KEEP_WIDTH`, seule
+la POSITION change -- ce que la camera fait deja en jeu quand Keepy se deplace.
+540x960 = exactement la moitie du viewport livre, donc le RATIO et le cadrage
+sont ceux du jeu. Recadre a 620 px pour la planche : le tiers bas de chaque
+cadre est du sol nu au pied du joueur.
+
+### ⚠️ LA MESURE EST MASQUEE, PAS ECHANTILLONNEE DANS UNE BOITE -- et la moyenne prime sur le dominant
+
+Deux ruptures assumees avec la methode de toutes les recolorations de hazards
+de ce depot, et les deux sont des consequences de ce qu'est l'eau :
+
+1. **Masque et non fenetre.** Une passe d'identification par corps et par vue
+   rend la cible en blanc opaque, fog coupe, les trois autres en noir ; un pixel
+   appartient a ce corps **ssi il revient exactement 255,255,255**. Une fenetre
+   fixe est inutilisable ici : l'eau est alpha-melangee sur sa berge (une
+   fenetre qui deborde lit la berge) et le ruisseau est un ruban de 1.2 u vu de
+   biais (aucune boite n'est jamais 100 % objet).
+2. **Moyenne lineaire et non dominant d'histogramme.** Un hazard plat unlit
+   remplit sa fenetre d'UNE valeur, donc son dominant EST sa couleur. Ces
+   surfaces-la s'etendent sur assez de profondeur pour que le fog les degrade en
+   continu : **le dominant du grand lac porte 4 a 9 % de ses 34 653 pixels** et
+   n'est que la marche la plus frequente d'un degrade. La planche publie les
+   deux, plus la part et le nombre de valeurs distinctes -- c'est ce qui dit
+   que l'ecart est un degrade et pas du bruit.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles, **tailles verifiees contre le `Content-Length`** -- 50 276 070 et
+1 073 228 327 octets, aucune troncature silencieuse). Import headless
+**exit 0**, **24 `.scn`**. Export Web release **exit 0**, **0 erreur GDScript**.
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur, ce qui est exactement
+ce qu'un lot doc + sonde doit rendre.
+
+**Piege payload verifie sur le pack et pas sur le filtre** : sur **225** lignes
+`Storing File`, **0** pour `res://docs`, `res://scripts/dev`,
+`res://assets_source`, `res://web` ou `firebase.json`, et la chaine
+`WaterHueSheet` est **absente du `.pck`**. `docs/*` etait deja dans
+l'`exclude_filter` (ferme le 13 aout apres qu'une planche de recon y ait coute
+414 862 octets) -- ce lot le confirme pour le nouveau chemin plutot que de le
+supposer.
+
+Sondes : `AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`, `ProbeTimeoutAudit` -- **toutes
+exit 0**. Ce dernier passe de **42 a 43 sondes scenes**, **mesure des deux
+cotes** (les deux fichiers retires puis remis) et non deduit : c'est la planche
+elle-meme, gardee pour que le lot soit reproductible, au meme titre que
+`EnemyEarthtoneAxisSheet` et `ChargerEarthtoneAxisSheet` avant elle.
+
+⚠️ **`SwampIdentityAudit` : 4/4 etats OK, `SWAMP_IDENTITY_VERIFIED=yes`,
+exit 0 -- et ce verdict ne prouve RIEN sur ce lot.** Le brief prevoyait qu'elle
+signale une derive ; elle ne le peut pas, parce que **ce lot n'installe aucune
+couleur** et que l'arbre livre est inchange sur ce point. Elle est par ailleurs
+**non deterministe** (la derive de teinte du sol de Chased, `_tint_rng`, est un
+flux `DecorRng` insensible a `--seed`), donc son chiffre n'aurait de toute
+facon bloque aucune decision. Publie pour information, comme le brief le
+demande, plutot que tu.
+
+### Reste ouvert -- c'est la decision de Mathieu, pas une question technique
+
+1. **Le choix de la famille**, sur la planche. Ce que les chiffres disent et ne
+   disent pas : B donne la plus grande separation de la paire qui touche
+   (dS 0.421 mesuree, et le grand lac le plus lisible de tous a 2.02:1 contre
+   le sol) ; A tient l'ancre `#40E0D0` telle quelle mais son grand lac ne
+   separe presque plus du petit en luminance (1.04:1, tout est porte par 26.5
+   deg de teinte) ; C etale la teinte mais son grand lac est le plus pale des
+   trois et retombe a 1.02:1 contre le petit lac. **Aucune sonde ne dit
+   laquelle est belle.**
+2. **Le plafond d'alpha.** Si Mathieu veut reellement des eaux dans la bande
+   claire au sens du CONTRASTE RENDU et pas seulement de l'albedo, il faudra
+   toucher `transparency`/alpha (0.62 a 0.74 suffisent en famille B) ou la
+   couleur de berge. **Hors perimetre de ce lot**, chiffre plutot que tranche.
+3. **Jugement device** : la planche est un rendu llvmpipe sous xvfb, pas un
+   ecran de telephone. Est-ce qu'un grand lac pale se lit comme de l'eau et pas
+   comme de la brume ou de la glace, et est-ce que la separation par saturation
+   de la famille B survit a un petit ecran -- aucune mesure ici n'y repond.
+4. Hors perimetre et inchange : les 6 props qui se tiennent dans l'eau du petit
+   lac, le bateau du lac (lot LAKE-2), et la sensation d'eau (mouvement de
+   surface, reflets).
