@@ -16323,3 +16323,72 @@ Aucun export Web joue : ce lot ne touche aucune ressource Godot.
 3. **Le ruisseau, uniforme ou exempte** (les deux couts sont tabules).
 4. **La cible du desembarquement automatique** vise dans le petit lac a la
    queue : quelle que soit la garde, ce point demande aussi un clamp.
+
+## RECON ACCES + RENDU DES CINQ EAUX -- la premisse "immersion lisible OU
+## disparition brutale" ne survit PAS a la mesure : c'est une troisieme
+## chose, pire que les deux (26 aout 2026)
+
+Branche `claude/keepy-water-recon-3w83et`, posee sur
+`claude/keepy-water-collision-recon-6w1a0a` (`7b04132`,
+`docs/WATER_WALK_RECON.md`, pas encore mergee sur `staging` au demarrage).
+**RECON PURE, aucun fichier de jeu touche.** Decision de Mathieu deja prise
+et **non re-arbitree ici** : Keepy doit pouvoir entrer dans les cinq corps
+d'eau (mare, petit lac, ruisseau, 2 lobes du grand lac) ; la garde des 2
+lobes sera retiree dans le lot suivant ; le chantier "arret a la berge" de
+`docs/WATER_WALK_RECON.md` est abandonne. Le bateau est hors perimetre.
+Detail chiffre complet des six questions : `docs/WATER_ACCESS_RENDER_RECON.md`.
+
+**Ce qui compte le plus** : `WaterImmersionCaptureProbe` (rendu reel, xvfb +
+opengl3, jamais `--headless` qui donne un viewport DUMMY 1920x1920 au lieu
+du vrai 1080x1920 -- piege reconfirme independamment de celui deja consigne
+ailleurs) a mesure, pixel par pixel et par capture ecran, Keepy enfonce a
+0/30/60% dans le ruisseau (a=0.90) ET dans le lobe spawn du grand lac
+(a=0.95) : **les SIX cas donnent le meme resultat, BOTH == KEEPY-ONLY au
+dernier chiffre pres, WATER-ONLY totalement different.** L'eau ne dessine
+JAMAIS par-dessus la silhouette de Keepy, quel que soit l'enfoncement
+synthetique ou l'alpha. Ce n'est ni « immersion lisible » ni « disparition
+brutale » -- c'est un TROISIEME resultat, plus mauvais que les deux : le
+corps reste TOUJOURS pleinement opaque et visible, sans aucun signe visuel
+d'etre dans l'eau. Mecanisme mesure et pas suppose : un maillage opaque
+plein devant un plan transparent plat gagne le test de profondeur partout
+ou sa silhouette dessine, quelle que soit sa position Y -- ce n'est pas un
+bug de tri gl_compatibility a corriger, c'est le comportement correct et
+attendu de cette geometrie. **Consequence directe pour le lot suivant :
+deplacer le Y de Keepy seul ne produira JAMAIS un effet de submersion
+visible, sur aucun renderer.** Un effet lisible demandera un mecanisme qui
+NE COMPTE PAS sur l'occlusion de l'eau -- degrade de couleur vers la teinte
+de l'eau, cue de squash/echelle, decals de vaguelettes a la ligne d'eau,
+et/ou un shader a plan de coupe sur le materiau de Keepy (aujourd'hui plat
+unshaded, aucun de ces mecanismes n'existe).
+
+**Les cinq autres reponses, en bref** (chiffres complets dans le doc dedie) :
+Q1 -- `KeepyHopper.gd` ecrit `y` de facon **purement procedurale**, jamais
+via terrain/collision (grep confirme) : parabole `4t(1-t)*HOP_HEIGHT` en
+vol, `0.0` exact au repos, `RIDE_SEAT_Y=0.14` constant en bateau (hors
+perimetre). Q2 -- les cinq surfaces d'eau sont a des Y differents,
+**0.0270 (grand lac A) a 0.0950 (ruisseau)**, tous a moins de 10cm du repos
+de Keepy (`y=0`) -- alphas confirmes : mare/petit lac/lobes 0.95, ruisseau
+0.90. Q4 -- `HubRegion.contains()` ne connait que 2 corps sur 5 (les lobes
+du grand lac) ; etendre a cinq demande DEUX formes de travail differentes
+(2 lignes de disque triviales pour mare/petit lac, un vrai test
+point-vers-polyligne pour le ruisseau, pas une case de plus dans la meme
+table) -- et une **collision de nom trouvee au passage** :
+`HubBuilder.LAKE_WATER_RADIUS` (8.0, le PETIT lac) contre
+`HubRegion.LAKE_WATER_RADIUS` (16.0, le GRAND lac), meme identifiant, deux
+fichiers, deux corps differents -- a renommer avant toute table partagee.
+Q5 -- hauteur du modele **MESUREE a 1.3501u** (`visual_aabb()` sur le
+vrai .glb installe) ; a 30%/60% d'enfoncement (si un futur lot decoupe
+reellement la geometrie), il resterait 70%/40% de la hauteur visible, sur
+les cinq corps sans distinction reelle (leur ecart de Y est negligeable
+face a 1.35u). Q6 -- le ruisseau **n'a aucune berge** (il alpha-blend
+directement sur le sol), donc rien ne peut masquer un corps qui s'y tient ;
+la camera suit toujours Keepy au meme cadrage relatif, confirme a la fois
+par calcul (une fois le piege du viewport DUMMY headless evite) et par
+capture reelle (le ruisseau, Keepy dedans, se lit sans ambiguite dans le
+meme cadre que la mare, le grand lac et les trois portails).
+
+**Reste ouvert, decision du lot suivant, pas de celui-ci** : le choix du
+mecanisme de rendu de submersion (Q3) ; le renommage de collision (Q4) ;
+le test point-vers-polyligne du ruisseau et sa marge float32 propre (Q4) ;
+et l'occlusion possible par des houppiers d'arbres au-dessus du ruisseau,
+mesuree ailleurs mais pas re-verifiee ici (Q6).
