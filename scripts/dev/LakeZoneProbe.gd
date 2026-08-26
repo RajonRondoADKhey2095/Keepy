@@ -47,7 +47,9 @@ const _CROSSING_BUDGET_S: float = 22.0
 var _failures: int = 0
 var _hop_count: int = 0
 ## Landings counted for the CURRENT trip, and how many of them came
-## down on the great lake's water. Reset by _trip, read after it.
+## down on great-lake water -- EITHER LOBE since SPAWN-LAKE-1, because the
+## counter asks HubRegion.in_lake_water and that is now a loop over the
+## table. Reset by _trip, read after it.
 var _total_landings: int = 0
 var _wet_landings: int = 0
 var _hop_done: bool = false
@@ -470,7 +472,9 @@ func _phase_crossing(keepy: KeepyHopper) -> void:
 	# WALKING ON WATER, REPORTED AND NOT GATED. Keepy's chord consults
 	# nothing -- there is no obstacle avoidance anywhere in the repo -- so
 	# these landings are a real, known defect that this batch makes WORSE
-	# and deliberately does not fix. Gating it would fail the hub for a
+	# and deliberately does not fix. The count covers BOTH lobes since
+	# SPAWN-LAKE-1, so a row that was 0 before can be non-zero now without
+	# the great lake having moved a millimetre. Gating it would fail the hub for a
 	# decision taken elsewhere; leaving it unmeasured would let the cost of
 	# an interior lake go unsaid.
 	for pair in [
@@ -479,7 +483,7 @@ func _phase_crossing(keepy: KeepyHopper) -> void:
 		[Vector3.ZERO, Vector3(h, 0.0, -h)],
 	]:
 		var t: float = await _trip(keepy, "wet-count %s -> %s" % [pair[0], pair[1]], pair[0], pair[1])
-		print("    %s -> %s: %d landings, %d on the great lake (%.3f s)"
+		print("    %s -> %s: %d landings, %d on great-lake water (%.3f s)"
 			% [pair[0], pair[1], _total_landings, _wet_landings, t])
 
 func _trip(keepy: KeepyHopper, label: String, start: Vector3, target: Vector3) -> float:
