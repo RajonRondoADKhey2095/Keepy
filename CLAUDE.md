@@ -14854,3 +14854,258 @@ pousser a cote des planches sous `docs/`) est **pousse APRES la fin du run
 #244**, deliberement : `web-build.yml` porte `cancel-in-progress: true` et
 pousser coup sur coup annule le premier run -- piege deja paye au lot de
 densification du hub.
+
+## LAKE-MOVE : RECON PURE -- ou le grand lac peut aller, et ce que ca coute (26 aout 2026)
+
+Branche `claude/lake-move-recon-6irqhq`, partie de `staging` (`7f5e6e6`).
+**AUCUN fichier de jeu touche** : `git diff --stat origin/staging` ne rapporte
+que `scripts/dev/LakeMove{Recon,Capture}Probe.{gd,tscn}` (nouveaux) et ce
+document. Ni `HubBuilder.gd`, ni `hub_layout.tres`, ni `HubRegion.gd`, ni
+`KeepyHopper.gd`, ni `HubTapInput.gd`, ni `HubCamera.gd`. **Aucune decision
+prise** -- ce lot produit les chiffres, l'arbitrage appartient a Mathieu.
+
+### ⚠️ Q1 -- KEEPY MARCHE SUR L'EAU, ET C'EST MESURE
+
+**Verdict : il n'existe AUCUN evitement d'obstacle dans tout le depot.**
+`grep -rniE "navigation|navmesh|astar|pathfind|avoid|detour|waypoint"` sur
+`*.gd`/`*.tscn`/`*.tres` : **zero occurrence** liee a un chemin. `HubRegion` n'a
+que **deux** consommateurs -- `HubTapInput._handle_point` (clampe la
+DESTINATION) et `HubBuilder._build` (teste si un prop est atteignable). **Le
+hopper ne l'interroge jamais** : `_begin_hop` avance sur une corde droite
+(`delta.normalized() * step`) et ne consulte rien en route.
+
+Mesure sur le hopper LIVRE, `--fixed-fps 60`, chaque atterrissage teste contre
+l'eau reelle. **Le banc restitue d'abord la diagonale publiee -- 66 hops /
+18,700 s, au bond et au millieme pres** : un banc incapable de reproduire un
+chiffre deja au dossier n'a pas qualite a en publier un nouveau.
+
+| trajet | hops | atterrissages SUR l'eau |
+|---|---|---|
+| (-35,-5) -> (-15,-5), traverse le PETIT LAC | 14 | **10 sur le lac** |
+| (14,7) -> (28,8), traverse la MARE | 10 | **4 sur la mare, 1 sur le ruisseau** |
+| (-2,4) -> (-2,16), traverse le RUISSEAU | 8 | **1 sur le ruisseau** |
+| (-35,-20) -> (-12,10), longue corde | 25 | **11 sur le lac** |
+
+**Keepy bondit par-dessus la mare, les deux lacs et le ruisseau, aujourd'hui,
+en production.** La regle « une eau est un trou dans la region » ne dit ou un
+tap peut ENVOYER Keepy, jamais ou il peut PASSER.
+
+⚠️ **Consequence qui rend tout le lot EXACT plutot qu'extrapole** : puisque
+aucun lac ne peut courber une corde, la chaine de bonds d'un trajet est
+IDENTIQUE avec et sans lac candidat. Tester les atterrissages reels contre un
+disque candidat **mesure** ce candidat, il ne le modelise pas.
+
+### Q2 -- L'EXCLUSION INTERIEURE EXISTE DEJA, ET ELLE FONCTIONNE
+
+**Reponse : OUI, sans un mot de code a changer.** `HubRegion.contains()` ouvre
+deja sur `if in_lake_water(flat): return false` -- le grand lac EST un trou, et
+la doc du fichier le nomme « the one subtraction in it ». `clamp_to()` genere
+des candidats dont `_out_of_water(flat)`, qui pousse radialement hors du
+disque : ce candidat est correct pour un trou INTERIEUR exactement comme pour
+un trou de bord, parce qu'il ne suppose rien sur la position du disque.
+
+Ce qui manquerait pour un lac au milieu du carre n'est donc PAS `clamp_to` --
+c'est le hopper (Q1). Un tap sur le lac serait bien ramene a la rive ; un
+trajet qui PASSE au-dessus continuerait de passer au-dessus.
+
+### Q3 -- LA CARTE, ET DEUX PRECISIONS SUR L'ANNONCE
+
+203 entrees de layout : 3 portails, **15** landmarks, 172 props de scatter,
+plus mare / petit lac / grand lac / ruisseau / barque / 3 ilots / 5 pontons.
+
+⚠️ **« 12 landmarks » du brief est juste pour le PLATEAU** : 12 sont sur le
+plateau (anneaux a d~12,7, ~21, ~30,5), et les **3 autres sont poses sur les
+ilots du grand lac** -- leurs positions sont identiques a celles des ilots
+(`(-50,48;-3,06)`, `(-63,65;-13,14)`, `(-47,34;-19,35)`), donc ils
+demenageraient AVEC le lac.
+
+Portails : `chased` (-5,40;-4,60), `quizz` (0;-7,20), `battle` (5,40;-4,60),
+tous a d~7,1. Mare (20,70;7,40) r 3,20. Petit lac (-25,10;-5,30) r 8,00. Grand
+lac (-52,82;-11,23) r 20, az 282, d 54. Ruisseau : 12 points de trace, de
+(17,58;6,67) a (-18,54;-0,73), largeur 1,20.
+
+**Densite par secteur de 30 deg** (scatter, par anneau radial) -- les plus
+charges sont az 300-330 (26) et 240-270 (22), les plus libres az 330-360 (8)
+et 60-90 (10).
+
+⚠️ **Le plus grand disque libre, et c'est ce qui decide Q4** : en evitant les
+portails ET les landmarks, le maximum atteignable est **R = 11,33** (az
+180-210). **Aucun disque de rayon 20 ne tient nulle part sur le plateau sans
+recouvrir un landmark.** En n'evitant que les portails, le maximum monte a
+**20,15** (az 120-150 et 210-240).
+
+### ⚠️ Q4 -- P2 TEL QUE SPECIFIE EST GEOMETRIQUEMENT INFAISABLE
+
+Deux prémisses du brief ne survivent pas a la mesure.
+
+**1. La contrainte P2 est PAR AXE, pas radiale.** Le brief donne « centre a
+15 u MAXIMUM du centre du plateau (15 + 20 = 35) ». Un disque r=20 tient dans
+le carre ssi `|cx| + 20 <= 35` ET `|cz| + 20 <= 35`, donc `|cx| <= 15` et
+`|cz| <= 15` : le centre peut etre a **21,21 u** du centre (au coin de la
+boite 15x15). La contrainte reelle est plus large que l'annonce.
+
+**2. Et pourtant AUCUN centre n'est viable.** Balayage exhaustif de la boite au
+pas 0,5, avec la seule exigence de ne pas engloutir mare, ruisseau et portails :
+
+| rayon, entierement dans le carre | verdict |
+|---|---|
+| **20** | **AUCUN CENTRE N'EXISTE** |
+| **18** | **AUCUN CENTRE N'EXISTE** |
+| 16 | faisable, meilleur centre (15,50;-19,00), degagement min **7,71 u** |
+| 14 | faisable, (7,50;-21,00), 14,12 u |
+| 12 | faisable, (8,50;-23,00), 17,56 u |
+
+Le meilleur centre r=20 que le brief demande, (15;15), **recouvre la mare de
+13,70 u et le ruisseau de 13,79 u** : il engloutit la mare, la majeure partie du
+ruisseau, et donc le ride en barque. **Le rayon maximum d'un lac entierement
+dans le plateau est 16.**
+
+### Q4 -- LE TABLEAU DES CANDIDATS
+
+Trajets marches une fois sur le hopper livre ; les atterrissages sont ensuite
+testes contre chaque disque (exact, cf. Q1). Jeu de 10 trajets, 340 bonds.
+
+| candidat | dedans | aire perdue | portails | landmarks | scatter | bonds sur l'eau | pire trajet |
+|---|---|---|---|---|---|---|---|
+| **ACTUEL** az282 d54 r20 | non | 26,7 u2 (0,55 %) | 0 | 0 | 0 | **0 / 340** | 0 |
+| **P1** (35;-35) r20, a cheval | non | **314,2 u2 (6,41 %)** | 0 | **0** | **1** buisson | 28 / 340 | 14 |
+| P1' (-35;35) r20 | non | 314,2 u2 (6,41 %) | 0 | 0 | 2 rochers | 27 / 340 | 14 |
+| **P2** (15;15) r20 | oui | **1 256,8 u2 (25,65 %)** | 0 | **4** | **51** | **90 / 340** | **27** |
+| **P2f** (15,5;-19) **r16** | **oui** | 804,5 u2 (16,42 %) | 0 | 3 | 25 | -- | -- |
+| P3a (-27;27) r8 | oui | 201,1 u2 (4,10 %) | 0 | **0** | **0** | 20 / 340 | 10 |
+| **P3b** (24,5;-25) **r10** | oui | 314,3 u2 (6,41 %) | 0 | **0** | **2** buissons | 26 / 340 | 13 |
+| P3c (22;19) r12 | oui | 452,4 u2 (9,23 %) | 0 | 1 | 6 | 32 / 340 | 16 |
+
+⚠️ **LE PIRE CAS DE TRAVERSEE NE BOUGE POUR AUCUN CANDIDAT : 18,700 s.**
+Mesure, pas deduit -- la diagonale du carre coute 66 hops / 1 122 frames avec
+ou sans lac, **parce qu'un lac ne peut pas courber une corde**. Le cout d'un
+lac interieur n'est pas du TEMPS, c'est que Keepy marche sur l'eau : P2 met
+**27 bonds sur 66 au-dessus du lac** sur cette meme diagonale.
+
+**Separation d'avec le petit lac** (la contrainte d'origine du chantier : ils
+se touchent a 0,347 u) : **tous les candidats les separent**, de +13,50 u
+(P1') a +39,04 u (P1). Aucun ne recree le contact.
+
+### Q5 -- LE LAC N'EST PAS VISIBLE, ET LA CAMERA NE PEUT PAS SE TOURNER
+
+⚠️ **Fait qui decide la question : `HubCamera` a une rotation FIXE, elle ne
+lace JAMAIS** (par conception -- un `look_at` re-vise chaque frame ferait
+tanguer l'horizon au rythme des bonds). Elle regarde toujours -Z, fov 45
+KEEP_WIDTH, pitch -34. Un corps est dans le cadre **ssi son gisement est a
++-22,5 deg de -Z**. « Orienter la camera vers le lac » est donc impossible :
+la seule facon de voir une chose est de se placer de facon qu'elle soit deja
+devant soi.
+
+Captures offscreen reelles, 1080x1920, `xvfb` + `opengl3` (jamais
+`--headless` seul, driver DUMMY sans valeur), disques candidats construits
+DANS la sonde et jamais dans le layout :
+
+| candidat | gisement depuis le centre | fraction du disque dans le cadre | positions du plateau avec vue reelle |
+|---|---|---|---|
+| **ACTUEL** | **-69,1 deg** | **0 %** | **4,4 %** |
+| P1 (35;-35) r20 | +38,6 deg | 12 % *(sliver)* | 35,7 % |
+| P2 (15;15) r20 | -- | **camera DANS l'eau** | 31,0 % |
+| **P2f (15,5;-19) r16** | **+29,1 deg** | **39 %** | **50,4 %** |
+| P3b (24,5;-25) r10 | +35,9 deg | 2 % *(sliver)* | 39,7 % |
+| P3a (-27;27) r8 | -123,8 deg | 0 % | 6,8 % |
+
+**La capture depuis le centre sur l'arbre LIVRE ne montre AUCUNE eau** -- de
+l'herbe, des arbres, les trois portails, des fleurs. La plainte de Mathieu est
+exacte et desormais prouvee a l'image.
+
+⚠️ **Le booleen « dans le cadre » ment.** P3b est techniquement visible depuis
+le centre (bord a 22,1 deg contre un cadre a 22,5) : c'est un **sliver de
+0,4 deg** a 41,8 u sous la brume, et le rendu ne montre rien. **Le seul
+candidat clairement visible depuis le centre est P2f**, et sa capture le
+confirme : une grande etendue pale derriere le portail Battle.
+
+### Q6 -- LA CHAINE D'ADJACENCE EST DE TROIS MAILLONS, PAS D'UNE
+
+⚠️ **Troisieme prémisse corrigee.** Le brief dit que la famille B a ete imposee
+« UNIQUEMENT par la paire qui se touche » (singulier). **Mesure : il y a TROIS
+paires en contact, en chaine.**
+
+```
+mare --(-0,596 u)-- ruisseau --(-0,605 u)-- petit lac --(+0,347 u)-- GRAND LAC
+```
+
+Le ruisseau part de la rive de la mare et arrive sur celle du petit lac -- par
+construction, c'est ce qui en fait un connecteur. **Deplacer le grand lac ne
+casse qu'UN maillon sur trois** ; la chaine mare-ruisseau-petit lac subsiste et
+continue d'exiger une echelle de saturation a trois crans.
+
+La famille livree separe par la **SATURATION seule** -- la teinte est quasi
+constante (170,0 a 180,0 deg, 10 deg d'ecart) :
+
+| corps | hex | H | **S** | V | alpha |
+|---|---|---|---|---|---|
+| mare | `#14FFD8` | 170,0 | **0,922** | 1,000 | 0,78 |
+| **petit lac** | **`#40E0D0`** | 174,0 | **0,714** | 0,878 | 0,96 |
+| ruisseau | `#B8FFFF` | 180,0 | **0,278** | 1,000 | 0,65 |
+| **grand lac** | `#CCFFFD` | 177,7 | **0,200** | 1,000 | 0,85 |
+
+⚠️ **`#40E0D0` -- la couleur que Mathieu a validee a l'ecran -- EST DEJA,
+exactement, l'albedo du petit lac.** Et les deux corps dont il se plaint
+(« ruisseau blanchatre », grand lac « glacier ») sont **precisement les deux
+plus bas de l'echelle de saturation**, 0,278 et 0,200. Le defaut n'est pas une
+teinte mal choisie : c'est l'echelle de saturation qui, pour separer quatre
+corps enchaines, a du pousser les deux derniers vers le blanc.
+
+**Reponse mesuree a la question posee : une famille turquoise homogene ne
+devient PAS possible par un simple deplacement.** La co-visibilite n'est
+eliminee par aucun candidat -- grand lac + petit lac restent co-visibles depuis
+4,4 % a 11,0 % des positions, grand lac + ruisseau depuis 7,9 % a 26,6 %.
+
+**Ce qu'un deplacement achete reellement, et c'est net** : le grand lac cesse
+d'etre ADJACENT a quoi que ce soit (ecarts mesures : P1 +21,5 / +39,0 / +24,6 ;
+P3b +19,4 / +35,4 / +21,8 ; P2f +7,7 / +18,9 / +9,2 sur mare / petit lac /
+ruisseau). **Il sort de l'echelle et peut reprendre `#40E0D0`** -- deux corps
+turquoise a 20 u l'un de l'autre dans un cadre n'ont aucun bord commun a faire
+lire, contrairement a deux corps qui se touchent. Le ruisseau, lui, **reste
+coince entre la mare et le petit lac** et garde son probleme : c'est un lot
+distinct, et aucun placement du grand lac ne le resout.
+
+### DOCTRINE PERMANENTE : LE RENDU N'EST PAS AFFINE EN ALPHA
+
+Consignee ici parce que c'est le lot WATER-HUE-2 qui l'a payee, et qu'elle vaut
+pour tout reglage d'eau a venir. Le modele du lot WATER-HUE-1 avait ete cale
+sur **DEUX points** (l'alpha livre et l'opaque) puis extrapole ; il a
+**sous-estime les QUATRE plans d'eau**, qui sont sortis a **2,48-2,94:1** aux
+alphas predits, tous **sous le plancher de 3,0**.
+
+**Deux points definissent une droite, ils ne prouvent pas la linearite.** Tout
+reglage d'alpha doit passer par un **BALAYAGE direct** -- mesurer la valeur a
+chaque cran candidat -- **jamais par une forme fermee**.
+
+### Ce que ce lot laisse au depot
+
+Deux sondes de mesure sous `scripts/dev/` (couvert par `exclude_filter` :
+**0** ligne `Storing File` pour `res://scripts/dev` sur 225, et **0**
+occurrence de `LakeMoveRecon` dans le `.pck`). `ProbeTimeoutAudit` passe de
+**43 a 45 sondes scenes**, toutes armees.
+
+⚠️ **`LakeMoveReconProbe` tourne EN HEADLESS, pas sous `xvfb`** -- elle ne lit
+aucun pixel (positions et transforms seulement), et sous llvmpipe elle n'avait
+pas depasse la phase de controle. Meme famille que la lecon deja consignee pour
+`PursuerFramingAudit`. `LakeMoveCaptureProbe`, elle, DOIT tourner sous `xvfb` :
+elle lit des pixels, et `--headless` forcerait le driver DUMMY.
+
+⚠️ **Defaut trouve dans ma propre sonde et corrige** : quand la camera est
+DANS le disque, `asin(r/d)` n'a pas de sens et le demi-angle vaut 90 deg, pas
+0. La premiere version imprimait « off screen » pour un plan qui n'est QUE de
+l'eau -- exactement le genre d'etiquette qui survit au run qui l'a produite.
+
+### Reste ouvert -- c'est l'arbitrage de Mathieu, pas une question technique
+
+1. **P2 tel que specifie n'existe pas** (r=20 entierement dedans : aucun centre).
+   Le choix reel est entre **P2f r=16** (le seul clairement visible du centre,
+   50,4 % de couverture -- mais 16,42 % du plateau perdu, 3 landmarks et 25
+   props recouverts), **P3b r=10** (6,41 % perdu, 0 landmark, 2 buissons, 39,7 %
+   de couverture mais un sliver depuis le centre), et **P1 a cheval r=20**
+   (6,41 % perdu, 0 landmark, 1 buisson, 35,7 %).
+2. **Aucun de ces choix ne change une seconde de traversee**, et tous mettent
+   des bonds sur l'eau (20 a 90 sur 340). **Marcher sur l'eau est le vrai cout,
+   et il n'a pas de correctif dans ce lot** : il faudrait un evitement dans
+   `KeepyHopper`, qui n'existe nulle part et serait son propre chantier.
+3. **Le ruisseau restera delave** quoi qu'il advienne du grand lac (chaine a
+   trois maillons ci-dessus).
