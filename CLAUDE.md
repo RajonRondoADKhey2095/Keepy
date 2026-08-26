@@ -15539,3 +15539,335 @@ n'a laisse aucun log, et le diagnostic cote facturation (spending limit,
 moyen de paiement) demande la Console GitHub, hors de portee d'une session.
 Si le symptome revient, la premiere chose a faire est de **relancer un
 `workflow_dispatch`** et de regarder si le job recoit un `runner_id`.
+
+## RECON SPAWN-LAKE : un second grand lac devant le spawn — GEOMETRIQUEMENT POSSIBLE, mais PAS a r=16 sans fusionner avec le premier (26 aout 2026)
+
+Branche `claude/spawn-lake-recon-phbzq6`, partie de `staging` (`8772f86`).
+**Mesure seule, aucune geometrie posee, aucune couleur changee** :
+`git diff --stat` contre `origin/staging` ne rapporte que
+`scripts/dev/SpawnLakeReconProbe.{gd,tscn}` et
+`scripts/dev/SpawnLakeCaptureProbe.{gd,tscn}` (nouveaux) plus ce document.
+Ni `HubBuilder.gd`, ni `hub_layout.tres`, ni `HubRegion.gd`, ni
+`KeepyHopper.gd`, ni `HubTapInput.gd`, ni `HubCamera.gd`. Regle n°1
+verifiee AU DEBUT : `git fetch --all --prune` + tri des refs par date +
+comparaison d'ARBRES (pas de noms) — `origin/staging` est la ref la plus
+recente du depot, aucune branche ne porte ce brief.
+
+Demande de Mathieu : AJOUTER un second lac (pas deplacer celui de
+LAKE-MOVE-1), rayon 16, devant le spawn, visible des l'entree. Methode :
+sweep geometrique offline en Python (meme doctrine que LAKE-MOVE RECON —
+"chosen by the python sweep... re-measured on the shipped hopper"), puis
+verification sur le VRAI moteur (`SpawnLakeReconProbe`, headless,
+`--fixed-fps 60`, KeepyHopper reel) et une VRAIE capture camera
+(`SpawnLakeCaptureProbe`, `xvfb` + `opengl3`, jamais `--headless` seul).
+
+### Q1 — SPAWN, MESURE sur la scene live
+
+`scenes/HubWorld.tscn` : le noeud `Keepy` ne porte AUCUN transform
+(`Vector3.ZERO` par defaut de `Node3D`) — confirme en lisant
+`Keepy.global_position` au boot sur la scene REELLEMENT instanciee :
+**`(0, 0, 0)`**. `Camera3D` a un `transform` fige dans la scene
+(`scripts/hub/HubCamera.gd:22`, `OFFSET = Vector3(0.0, 7.6, 8.9)`,
+`_wanted()` = position au sol de Keepy + `OFFSET`) : au spawn, camera a
+**`(0, 7.6, 8.9)`**, lu en direct sur le noeud instancie plutot que
+recalcule a la main.
+
+**Direction "devant"** — la camera ne pivote jamais (`HubCamera.gd`,
+rotation fixe, pas de `look_at`) : `forward = -basis.z = (0, -0.55919,
+-0.82904)`, soit **34,000 deg** de pitch vers le bas (`asin(0.55919)`,
+reproduit exactement le -34 deg documente dans `HubCamera.gd`) et une
+composante horizontale **pure -Z**. **"Devant Keepy a l'ecran" au spawn =
+l'axe -Z**, sans ambiguite : la composante horizontale du forward est
+`(≈0, -0.829)`, aucun decalage en X.
+
+Point au sol au centre de l'ecran, au spawn : **`(0, 0, -2.368)`** (calcul
+`camera + t*forward` avec `t` tel que `y=0`).
+
+Distances, mesurees sur la scene reelle :
+
+| | distance |
+|---|---|
+| spawn -> centre du plateau | **0,000** (le spawn EST le centre) |
+| spawn -> portail `chased` (-5,40;-4,60) | **7,094** |
+| spawn -> portail `quizz` (0;-7,20) | **7,200** |
+| spawn -> portail `battle` (5,40;-4,60) | **7,094** |
+
+**Formule de bearing validee AVANT d'etre utilisee, pas supposee** :
+`bearing = atan2(dx, -dz)` avec `(dx,dz) = cible - camera` reproduit au
+dixieme de degre pres les deux seuls chiffres deja publies dans ce depot
+sur cet axe — l'ancien grand lac `(-52,82;-11,23)` donne **-69,1 deg**
+(publie par LAKE-MOVE RECON) et le grand lac actuel `(15,5;-19,0)` donne
+**+29,1 deg** (publie par LAKE-MOVE-1). Les deux assertions passent dans
+`SpawnLakeReconProbe`.
+
+### Q2 — CARTE COMPLETE et PLACE RESTANTE, sur l'arbre LIVRE (post LAKE-MOVE-1)
+
+203 entrees de layout, relues via le script livre lui-meme (positions,
+rayons) : 3 portails, 15 landmarks (**12 sur le plateau, 3 sur les ilots
+du grand lac** — confirme `offshore` sur la scene reelle), 172 props de
+decor, 3 ilots, 5 pontons, et les 4 plans d'eau :
+
+| corps | centre | rayon eau | rayon berge |
+|---|---|---|---|
+| mare (`pond`) | (20,70;7,40) | 3,20 | 3,62 |
+| petit lac (`lake`) | (-25,10;-5,30) | 8,00 | 9,05 |
+| **grand lac (`greatlake`)** | **(15,50;-19,00)** | **16,00** | **17,30** |
+| ruisseau (`stream`) | 12 points, (17,58;6,67) -> (-18,54;-0,73) | largeur 1,20 | — |
+
+**Surface d'eau TOTALE actuelle : 1 086,82 u2 = 22,180 % des 4 900 u2**
+(mare 32,17 + petit lac 201,06 + grand lac 804,25 + ruisseau ~49,34 en
+approximation par corde — sous-estime legerement l'aire reelle du ruban
+spline, meme sens d'erreur que `_on_stream()` de `LakeMoveReconProbe.gd`).
+
+**Plus grand disque libre restant**, balaye au pas 0,5 sur tout le carre
+puis affine a 0,02 :
+
+| contrainte | rayon max | centre |
+|---|---|---|
+| (a) evite portails + eaux existantes seulement | **15,415** | **(-19,58;19,58)** |
+| (b) evite AUSSI les 12 landmarks du plateau | **11,391** | **(-6,44;23,60)** |
+
+⚠️ **Les deux meilleurs emplacements sont DERRIERE le spawn (z positif),
+pas devant** — z=+19,58 et z=+23,60 sont du cote OPPOSE a la direction
+"devant" (Q1 : devant = -Z). Ca dit deja, avant meme le sweep dirige de
+Q3, que la place libre du plateau n'est pas du cote ou Mathieu veut son
+second lac.
+
+### Q3 — FAISABILITE DU r=16 DEVANT LE SPAWN — GEOMETRIQUEMENT infaisable comme second lac SEPARE, MESURE
+
+**Lecture stricte du brief d'abord, honnetement** : la condition de
+declenchement du sweep degressif ("Si AUCUN centre r=16 ne degage les
+portails") est **FAUSSE au sens le plus etroit** — le sweep exhaustif au
+pas 0,5 sur tout le demi-plan devant (z<0) trouve **66 centres r=16 qui
+degagent les 3 portails**. Mais **AUCUN de ces 66 ne degage AUSSI les eaux
+deja en place** : verifie explicitement, **0/66** degagent a la fois les
+portails ET les banques de la mare, du petit lac, du grand lac et du
+ruisseau. C'est la vraie reponse a la question posee ("AJOUTER un lac, pas
+fusionner avec l'existant") — publiee franchement plutot que masquee
+derriere la lecture litterale qui aurait dit "oui, ca passe".
+
+**Le plus proche du spawn parmi les 66** — `(16,50;-18,00)` — est
+quasiment **superpose au grand lac existant** : distance eau-a-eau
+**+0,016** (quasi zero), banques **-1,284** (elles se CHEVAUCHENT). Le
+second candidat symetrique, `(-16,50;-18,00)`, mange lourdement le petit
+lac (`d_eau = -8,662`). **La zone "devant le spawn" est deja largement
+occupee par le grand lac lui-meme** — a r=16, il n'y a tout simplement pas
+la place d'en poser un second a cote sans toucher le premier.
+
+**Sur l'axe strict x=0 (droit devant, aucun decalage lateral) : AUCUN
+centre r=16 ne degage meme les portails** — verifie par balayage complet
+de la plage legale (`z` de -19 a -16) : les 7 positions testees echouent
+toutes sur le portail `quizz` (0;-7,2), qui se trouve litteralement sur le
+chemin direct. Un lac r=16 droit devant, sans decalage, est **impossible**
+avant meme de considerer les autres eaux.
+
+**Sweep degressif refait sous le CRITERE HONNETE** (portails ET toutes les
+eaux existantes, banque a banque, "devant" = z<0), comme le veut l'esprit
+de "ajouter" un second lac :
+
+| rayon | centres 100% propres trouves | le plus proche du spawn |
+|---|---|---|
+| 16 | **0** | — |
+| 14 | **0** | — |
+| 12 | **0** | — |
+| **10** | **142** | **(-12,00;-19,50)**, d(spawn)=22,94 |
+| 8 | 527 | (-9,50;-13,50), d(spawn)=16,68 |
+
+**r=10 est donc "le plus grand qui tient devant le spawn"** au sens
+demande par le brief (portails + eaux existantes toutes degagees). Detail
+complet du centre retenu, `(-12,00;-19,50)` r=10, mesure sur le layout
+livre :
+
+- portails : **aucun chevauchement**
+- mare : distance eau **29,143** / berge **28,723**
+- petit lac : distance eau **1,320** / berge **0,270**
+- grand lac : distance eau **1,505** / **berge 0,205** (tres proche —
+  voir l'avertissement Q6 plus bas)
+- ruisseau : distance **9,277**
+- landmarks recouverts : **2** (`(-15,94;-14,87)` a 6,08 ; `(-11,557;
+  -27,901)` a 8,41 — ces deux sont a l'INTERIEUR du disque)
+- props recouverts : **27** (arbres, buissons, rochers, fleurs, souches —
+  liste complete dans le probe)
+- surface marchable perdue : **314,16 u2 = 6,411 %** des 4 900
+- surface d'eau TOTALE apres ajout : **1 400,98 u2 = 28,591 %**
+
+⚠️ **Le second candidat retenu pour contraste — `(16,50;-18,00)` r=16, le
+plus proche du spawn parmi les 66 "portails seuls"** — est aussi teste
+(voir Q4/Q5) precisement PARCE QU'il illustre le risque de fusion : ses
+banques chevauchent celles du grand lac de 1,284 u.
+
+### Q4 — MARCHER SUR L'EAU, MESURE sur le VRAI KeepyHopper (`--headless --fixed-fps 60`)
+
+`SpawnLakeReconProbe` reproduit d'ABORD, au bond et a la seconde pres, la
+diagonale (66 hops / 1 122 frames / 18,700 s) et l'anti-diagonale de
+LAKE-MOVE-1 (66 hops, 21 atterrissages sur le grand lac) avant de publier
+quoi que ce soit de neuf — **0 echec** sur les deux controles.
+
+Les 10 trajets de LAKE-MOVE + les 3 allers spawn -> portail, tous marches
+UNE fois (la chaine de bonds ne depend d'aucun candidat — un lac ne peut
+pas courber une corde) :
+
+| trajet | hops | secondes |
+|---|---|---|
+| spawn -> portail chased/quizz/battle (les 3) | **5** chacun | **1,417 s** chacun |
+| diagonale du carre | 66 | 18,700 |
+| anti-diagonale | 66 | 18,700 |
+
+**Atterrissages sur chaque candidat, sur l'ensemble des 13 trajets (350
+atterrissages au total)** :
+
+| candidat | atterrissages sur l'eau | trajets touches | spawn->portail touches |
+|---|---|---|---|
+| **retenu, r=10 @ (-12,-19,5)** | **11 / 350 (3,1 %)** | seulement la diagonale du carre (11/66) | **0 / 15** |
+| r=16 "portails seuls" @ (16,5;-18) | **42 / 350 (12,0 %)** | anti-diagonale (21/66) + centre->coin SE (21/33) | **0 / 15** |
+
+**Aucun des deux candidats ne touche jamais les 3 allers-retours
+spawn->portail** — les portails sont trop pres du spawn (7,1-7,2 u) pour
+que ces trajets courts croisent un candidat pose plus loin. Le candidat
+r=16 "portails seuls" touche **3,8x plus** de bonds que le candidat r=10
+retenu, coherent avec son chevauchement mesure du grand lac existant :
+ses 21 atterrissages sur l'anti-diagonale sont EXACTEMENT les 21 deja
+comptes sur le grand lac lui-meme en Q4-controle — c'est la meme eau.
+
+### Q5 — VISIBILITE A L'ENTREE, capture REELLE (`xvfb` + `opengl3`, jamais `--headless` seul)
+
+`SpawnLakeCaptureProbe` : Keepy pose exactement au spawn, camera reelle,
+viewport 1080x1920. Fraction visible mesuree par
+`Camera3D.is_position_in_frustum()` (le test EXACT du moteur, pas une
+trigonometrie remaniee a la main) sur une grille de ~1250 points couvrant
+chaque disque.
+
+| | bearing | distance | fraction du disque dans le cadre |
+|---|---|---|---|
+| **grand lac existant** (arbre LIVRE, avant tout ajout) | +29,1 deg | 31,92 | **34,5 %** |
+| **candidat retenu r=10 @ (-12,-19,5)** | -22,9 deg | 30,83 | **47,0 %** |
+
+**VERDICT Q5 : OUI, le candidat retenu occupe le cadre des l'entree dans
+le hub, et une PLUS GRANDE fraction de son disque est visible que celle du
+grand lac deja en place** (47,0 % contre 34,5 %). Deux captures
+enregistrees (`before_shipped_from_spawn.png`, l'arbre livre depuis le
+spawn ; `after_candidate_from_spawn.png`, le candidat dessine ad-hoc par
+le probe, jamais ecrit dans le layout) confirment a l'image : le grand lac
+existant reste visible en haut a droite (comme documente par LAKE-MOVE-1),
+et le candidat apparait a gauche, **les DEUX plans d'eau visibles dans le
+MEME cadre au tout premier instant**.
+
+⚠️ **La capture montre des arbres/rochers/une souche visuellement DANS le
+candidat** — attendu et sans consequence pour cette recon : le disque est
+dessine tel quel par le probe, sans deplacer aucun des 27 props qu'il
+recouvre (Q3), exactement comme LAKE-MOVE RECON l'avait fait pour ses
+propres candidats. Une installation reelle relocaliserait ces props,
+comme LAKE-MOVE-1 l'a fait pour le grand lac.
+
+### Q6 — COULEUR UNIFORME (`#40E0D0` partout) — question DOCUMENTEE, PAS TRANCHEE
+
+Adjacences eau-a-eau, relues sur les constantes reellement construites par
+`HubBuilder`/`HubRegion` (pas recopiees) :
+
+| paire | distance (bord a bord) | touchent ? |
+|---|---|---|
+| mare <-> ruisseau | **-0,596** | **OUI** (chaine intacte, identique a LAKE-MOVE-1) |
+| ruisseau <-> petit lac | **-0,605** | **OUI** (chaine intacte, identique a LAKE-MOVE-1) |
+| petit lac <-> grand lac | +18,849 | non |
+| mare <-> grand lac | +7,707 | non |
+| grand lac <-> ruisseau | +9,154 | non |
+
+**La chaine a trois maillons (mare-ruisseau-petit lac) est RE-VERIFIEE
+intacte**, au millieme pres des chiffres publies par LAKE-MOVE-1 —
+`SpawnLakeReconProbe` l'asserte explicitement (2 checks, 0 echec). Le
+grand lac reste isole de tout, comme documente.
+
+**Co-visibilite (calculee sur la formule de bearing validee en Q1, sur les
+positions marchables reelles de `HubRegion`, pas une simple mesure de
+distance)** : contrairement au sweep pre-LAKE-MOVE de WATER-HUE-1 (qui ne
+trouvait que 3 paires co-visibles), **TOUTES les paires sont desormais
+co-visibles depuis AU MOINS une position** — consequence directe du grand
+lac deplace a l'INTERIEUR du carre :
+
+| paire | co-visible | % des positions marchables scannees |
+|---|---|---|
+| mare <-> petit lac | oui (sliver rare) | 0,1 % |
+| mare <-> grand lac | oui | 19,3 % |
+| petit lac <-> grand lac | oui | 14,8 % |
+| grand lac <-> ruisseau (point milieu) | oui | 12,5 % |
+| mare <-> ruisseau | oui (TOUCHENT) | trivial |
+| petit lac <-> ruisseau | oui (TOUCHENT) | trivial |
+
+**Ce qu'une couleur unique produirait** : si les 3 corps qui se touchent
+(mare + ruisseau + petit lac) portent la meme teinte, ils se liraient
+comme UNE masse continue de **282,57 u2** (somme des disques, le ruisseau
+compte en approximation de corde). Le grand lac resterait visuellement
+separe de cette masse (aucun contact), MAIS —
+
+⚠️ **LE CANDIDAT Q3 RETENU (r=10 @ -12,-19,5) CHANGE CE CALCUL, et c'est
+un couplage que Q3 seul n'aurait pas revele** : sa **banque** n'est qu'a
+**0,205** de celle du grand lac existant (Q3, ligne "greatlake bank" =
+0,205) — quasiment collees. **Si Mathieu installe ce candidat ET une
+couleur uniforme, le second lac fusionnerait visuellement avec le
+premier** (masse combinee ≈ 804,25 + 314,16 ≈ 1 118 u2, quasi continue),
+ce qui est exactement l'inverse de "un SECOND lac distinct" que la demande
+visait. **Non tranche ici, publie pour que Mathieu le pese** : soit
+reculer legerement le candidat r=10 (au prix de moins bien degager le
+spawn), soit accepter la fusion visuelle des deux grands lacs, soit ne pas
+appliquer la couleur uniforme a cette paire precise.
+
+**NE RIEN INSTALLE** — ni geometrie ni couleur, conforme a la consigne.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre le `Content-Length` — 50 276 070
+et 1 073 228 327 octets, aucune troncature). Import headless **exit 0**,
+**24 `.scn`** (import complet verifie, pas suppose). Export Web release
+**exit 0, 0 erreur GDScript** — export unique et propre (`build/` et
+`.godot/` supprimes avant, la lecon deja consignee sur l'auto-contamination
+d'un second export sans nettoyage).
+
+`index.wasm` **35 376 909 octets**, md5 **`af4a8fc2925d992348eb30deeeb54360`**
+et `index.js` md5 **`4e08904b1b7107858246af44b602067b`** — identiques au
+fingerprint deja consigne pour tout lot qui ne touche pas le code moteur,
+coherent : ce lot n'ajoute que deux sondes dev-only. `index.pck` 5 863 040
+octets (dans la plage deja documentee comme instable d'un export a l'autre,
+jamais offert comme preuve). **Piege payload tenu, verifie sur le pack et
+pas sur le filtre** : sur **225** lignes `Storing File`, **0** pour
+`res://scripts/dev`, `res://assets_source`, `res://docs`, `res://web/` ou
+`firebase.json`, et **0** occurrence de `SpawnLake` dans tout le pack.
+
+Sondes : `ProbeTimeoutAudit` (**47 sondes scenes** — 45 + les deux
+nouvelles, toutes armees, `SpawnLakeReconProbe` et `SpawnLakeCaptureProbe`
+listees explicitement avec `ProbeWatchdog.arm()`), `AssetContractAudit`
+(**12/12 visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe` — **toutes exit 0**, et **BYTE-IDENTIQUES sur les DEUX
+flux (stdout ET stderr)** contre `origin/staging` en worktree separe, meme
+graine 20260806, `--fixed-fps 60` : ce lot ne touche a rien que ces quatre
+sondes lisent, et l'identite au bit pres le dit plus fort qu'un simple
+verdict identique.
+
+⚠️ **`SpawnLakeReconProbe` tourne EN HEADLESS, pas sous `xvfb`** — elle ne
+lit aucun pixel (positions et transforms seulement), meme lecon deja
+consignee pour `LakeMoveReconProbe` et `PursuerFramingAudit`.
+`SpawnLakeCaptureProbe`, elle, tourne SOUS `xvfb` + `opengl3` : elle lit
+des pixels via `is_position_in_frustum()` et des captures PNG, et
+`--headless` forcerait le driver DUMMY (surface vide, faux vert deja
+documente pour cette famille de piege).
+
+### Reste ouvert — c'est l'arbitrage de Mathieu, pas une question technique
+
+1. **r=16 devant le spawn n'existe pas comme second lac SEPARE.** Les
+   options chiffrees : accepter la fusion visuelle avec le grand lac
+   existant (candidat "portails seuls" a (16,5;-18), qui n'est alors plus
+   vraiment un SECOND lac) ; ou reduire le rayon a **10** (le plus grand
+   qui degage tout, a (-12,-19,5), 6,41 % de plateau perdu, 2 landmarks et
+   27 props a relocaliser) ; ou a **8** si Mathieu veut plus de marge
+   (4,10 % perdu, 1 landmark, 20 props).
+2. **Le candidat r=10 est deja visible a 47,0 % depuis le spawn**,
+   legerement mieux que le grand lac existant (34,5 %) — confirme a
+   l'image, pas seulement au chiffre.
+3. **La banque du candidat r=10 n'est qu'a 0,205 du grand lac existant** —
+   couplage direct avec Q6 : une couleur uniforme fusionnerait
+   visuellement les deux grands lacs. A peser AVANT de trancher Q6.
+4. **Marcher sur l'eau reste sans correctif** (deja documente par LAKE-MOVE
+   RECON) : le candidat retenu ajoute 11 atterrissages sur 350 a la chaine
+   de trajets deja mesuree, sur la seule diagonale du carre.
+5. **Aucun test device** : les captures sont un rendu llvmpipe sous xvfb,
+   pas un ecran de telephone.
