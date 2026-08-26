@@ -63,6 +63,16 @@ const VIEW_SIZE: Vector2i = Vector2i(540, 960)
 ## frozen by then, so this is only the render target catching up.
 const SETTLE_FRAMES: int = 4
 
+## ⚠️ STALE, AND IT WAS STALE BEFORE SPAWN-LAKE-1 -- measured on
+## origin/staging, not inferred: this table still holds the PRE-WATER-HUE-2
+## colours, so `_build()` already failed with "no mesh found for water body
+## 'pond'" and quit(1) on the shipped tree. SPAWN-LAKE-1 makes it
+## unfixable by colour at all: every body now shares one albedo, so nothing
+## here could ever tell them apart again. A future run of this sheet has to
+## key on the layout CENTRE instead -- WaterAlphaSweep.gd already does, and
+## its BODIES table is the shape to copy. Left as it is rather than
+## half-repaired inside an unrelated batch; it gates nothing.
+##
 ## The four water constants as HubBuilder.gd ships them, used ONLY to work
 ## out which MeshInstance3D is which. Matching on the material colour rather
 ## than on a node name or index is what StreamGeometryProbe already does,
