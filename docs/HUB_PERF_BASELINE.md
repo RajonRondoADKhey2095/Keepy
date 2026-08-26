@@ -104,6 +104,7 @@ instead of a one-off number in a session report.
 | 25 aout 2026 | new `&"lake"` prop type: **one** water body at (-25.10, -5.30), 2.5x the pond (water r 8.0, bank r 9.05, 40 segments) + 4 rim rocks (batched) + 3 props relocated out of its footprint. **No camera, no `HOP_*`, no `PLATEAU_HALF_EXTENT` change.** | 43.3–46.6 | **74** | **80** | 15.2–16.6 | 8.1–12.9 | 5 834 608 | 35 376 909 / `af4a8fc2` |
 | 25 aout 2026 | new `&"stream"` prop type: **one** hand-built ribbon connecting the pond to the lake, 12 control points, width 1.2, 176 triangles. **No prop moved, no camera, no `HOP_*`, no `PLATEAU_HALF_EXTENT` change.** | 46.2–49.7 | **75** | **81** | 16.3–17.0 | 12.0–12.6 | 5 838 128 | 35 376 909 / `af4a8fc2` |
 | 26 aout 2026 | the stream becomes RIDEABLE: new `&"boat"` prop type (**one** hull, 3 meshes: shell / inner shell / rim), a `RIDING` state in `KeepyHopper`, `BoatMooring`, `HubStreamRoute`. **No prop moved, no camera, no `HOP_DISTANCE`/`HOP_DURATION`, no `PLATEAU_HALF_EXTENT` change.** | 38.3–40.9 | **78** | **84** | 23.7–27.0 | 11.6–19.9 | 5 853 648 | 35 376 909 / `af4a8fc2` |
+| 26 aout 2026 | **lake zone**: `HubRegion` (the walkable limit becomes a shape: square +-35 OR shore pad, MINUS the great lake's water), new `&"greatlake"` / `&"islet"` / `&"pontoon"` types, 1 lake (r 20 at 54 u, 96 segments) + 3 islets + 3 landmarks + 5 pontoons (batched) + 21 shore props + 1 prop relocated. **No camera, no `HOP_*` change; `PLATEAU_HALF_EXTENT` still 35.** | 37.5-39.7 | **96** | **102** | 21.6-22.1 | 17.5-18.4 | 5 862 224 | 35 376 909 / `af4a8fc2` |
 
 **Reading of the stream row.** **+1 draw node, exactly the one the change
 adds**, identical on all three runs — a stream is a single one-off ribbon
@@ -294,3 +295,38 @@ export (5 834 608) — the documented `.pck` instability, not a different build.
 `index.wasm` is identical everywhere, and it is the file that carries the
 identity check.
 
+
+
+---
+
+## Lake zone (26 aout 2026) -- before / after, same session, same renderer
+
+`origin/staging` measured in a separate worktree sharing this session's
+import cache, so both ends ran on the same binary, the same machine and the
+same `xvfb-run --rendering-driver opengl3`. 3 runs each.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/staging`) | 38.51 / 38.97 / 36.87 | 78 | 84 | 19.8-21.9 | 12.0-18.2 |
+| AFTER (3 runs, this commit) | 37.52 / 38.57 / 39.67 | **96** | **102** | 21.6-22.1 | 17.5-18.4 |
+
+**+18 draw nodes excluding portals, and the 18 are accounted for one by
+one** rather than inferred from the total: the great lake's 2 discs, 3
+islets at 1 each, 3 landmarks at 4 + 5 + 3 (spire / cairn / slabs), and 1
+new `MultiMeshInstance3D` for the batched pontoons (8 batches -> 9).
+Margin under the 260 ceiling: 182 -> **164**.
+
+Everything else overlaps. The construction and FPS ranges cross between
+before and after, which is the documented noise floor of this sandbox --
+this row is evidence the change cost nothing measurable here, NOT evidence
+it made anything faster. Nothing in it says how the plateau behaves on a
+phone; llvmpipe under xvfb is a different machine.
+
+⚠️ **`index.pck` is NOT usable as a build identity check, and this batch is
+where that stopped being a nuance.** Three sizes have now been observed for
+two states of content -- 5 853 728 / 5 853 744 / 5 853 760 -- including a
+**16-byte difference across a comment-only commit**. It remains fine as a
+"a new build was served" marker, which is how it is used in the deploy
+tables above. The lot G inference -- "the served `.pck` matches this
+session's local export byte for byte, therefore it is my build" -- is
+INVALID and must not be replayed. `index.wasm` is the identity check.
