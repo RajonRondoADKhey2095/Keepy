@@ -134,7 +134,32 @@ const _FLOWER_PETAL_KEYS: Array[StringName] = [
 ## Blue-green rather than blue. The ground is swamp green and the sky is
 ## near-black green: a saturated blue would be the only thing on this
 ## screen with no relation to anything else on it.
-const POND_WATER_COLOR: Color = Color(0.16, 0.30, 0.36, 0.55)
+## WATER-HUE-2: family B installed, per Mathieu's decision on the
+## WATER-HUE-1 plate -- B is the only one of the three that separates the
+## touching pair (lake/great lake, 0.347 u between the waters) by
+## SATURATION (dSAT 0.421 against 0.188 in A and 0.291 in C); A and C both
+## fall to ~1.0:1 on that pair and the two lakes fuse. The bright band bars
+## a saturated blue (S max at V=1: h200 -> 0.57, h224 -> 0.32), so hue was
+## never an option for that separation.
+##
+## Alpha is the second half of this lot, not a style tweak: at the shipped
+## 0.55 NO water reached 3.0:1 against the hub ground (measured in
+## WATER-HUE-1) -- alpha alone was the ceiling, not the colour. Each body
+## carries its OWN alpha here rather than one shared value, because the
+## required alpha differs per body.
+##
+## WATER-HUE-1's affine model (interpolating between a=0.55 and a=1.0)
+## UNDERSHOOTS here -- measured, not assumed: at its predicted a=0.74, this
+## body rendered 2.85:1, still short of the 3.0:1 floor. The render pipeline
+## blends alpha in a way that is not affine in LINEAR luminance over this
+## range (convex: ratio climbs faster near a=1 than a straight line between
+## the two endpoints predicts), so this lot swept alpha directly in 0.05
+## steps and read the floor off the actual measured ratio rather than
+## re-deriving a closed form. #14FFD8 at a=0.78 -- swept between 0.75
+## (2.90:1, FAIL) and 0.80 (3.18:1, PASS) in the "pond" view, the only view
+## this body is visible in; see the lot's report for the exact confirmed
+## ratio at 0.78.
+const POND_WATER_COLOR: Color = Color(0.0784, 1.0000, 0.8471, 0.78)
 const POND_BANK_COLOR: Color = Color(0.22, 0.21, 0.15)
 const POND_WATER_RADIUS: float = 3.2
 const POND_BANK_RADIUS: float = 3.62
@@ -145,15 +170,35 @@ const POND_SEGMENTS: int = 24
 ## other decor colour here is: SwampPalette carries the identity Chased and
 ## the plateau share, not the plateau's own scenery.
 ##
-## A DIFFERENT HUE, not merely a lighter pond. Measured rather than eyeballed:
-## the pond's water is hsv(198.0, 0.56, 0.36) -- a dark teal sitting right on
-## the cyan edge -- and this is hsv(221.5, 0.63, 0.82), a light blue.
-## 23.5 degrees of hue apart, which crosses the teal/blue boundary rather
-## than sliding along it, and 0.46 of value on top. Under fog both converge
-## on the same near-black swamp green, so leaning on brightness alone would
-## have made them indistinguishable exactly where the lake is furthest away
-## and most in need of reading as its own thing.
-const LAKE_WATER_COLOR: Color = Color(0.30, 0.46, 0.82, 0.55)
+## ⚠️ PRE-WATER-HUE-2 REASONING, SUPERSEDED BELOW. Kept for the record, not
+## as a description of the shipped colour: this described a lake separated
+## from the pond by HUE (198.0 vs 221.5 deg). Family B abandons that -- see
+## POND_WATER_COLOR's docblock for why saturation, not hue, now carries the
+## small-lake/great-lake split, which is the pair that actually touches.
+##   A DIFFERENT HUE, not merely a lighter pond. Measured rather than
+##   eyeballed: the pond's water was hsv(198.0, 0.56, 0.36) -- a dark teal
+##   sitting right on the cyan edge -- and this was hsv(221.5, 0.63, 0.82),
+##   a light blue. 23.5 degrees of hue apart, which crosses the teal/blue
+##   boundary rather than sliding along it, and 0.46 of value on top.
+##
+## WATER-HUE-2, family B: #40E0D0, turquoise, hsv(174.0, 0.714, 0.878).
+## This REPLACES the shipped #4C75D1 (hsv 221.5, a light blue) above, it is
+## not carried over from it -- #40E0D0 is family B's anchor, and family B
+## puts that anchor on the SMALL lake (family A put it on the great lake
+## instead; the two families disagree on which body gets the anchor colour,
+## not on what the colour is).
+##
+## ⚠️ THE TIGHTEST alpha in this lot, and it says something real about this
+## body: swept in 0.05 steps (see POND_WATER_COLOR for why a sweep and not
+## the affine model), a=0.90 still only reaches 2.81:1 and a=0.95 gives
+## 3.03:1 -- 0.03 of margin over the 3.0:1 floor, in BOTH views this body
+## is visible in (junction and laketail render near-identically, this
+## body's Lrel barely moves between them). a=0.96 buys a little more
+## headroom without pushing all the way to fully opaque, which the file's
+## own header explains a lake cannot afford to become (it stops reading as
+## a hole in the ground). Even at 0.96 this body is 96% of the way there --
+## see the lot's report for the trade-off this makes with depth/translucency.
+const LAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.96)
 
 ## 2.5x the pond on both discs (3.2 -> 8.0, 3.62 -> 9.05), so the rim keeps
 ## the same proportion rather than becoming a hairline on a much bigger disc.
@@ -171,22 +216,22 @@ const LAKE_BANK_RADIUS: float = 9.05
 ## just calibrated to the size instead of inherited from a smaller disc.
 const LAKE_SEGMENTS: int = 40
 
-## The stream that runs from the pond to the lake. A THIRD water tint, and
-## each pair is told apart on a DIFFERENT axis rather than all three
-## sliding along one:
+## The stream that runs from the pond to the lake. A THIRD water tint, LOCAL
+## to the hub like every other decor colour here.
 ##
+## ⚠️ PRE-WATER-HUE-2 table, superseded -- kept for the record:
 ##   pond    hsv(198.0, 0.556, 0.36)  dark teal
 ##   lake    hsv(221.5, 0.634, 0.82)  light blue
 ##   stream  hsv(190.9, 0.512, 0.86)  bright cyan
-##
-## stream vs pond  -- 7.1 deg of hue apart, so they are separated by VALUE
-##                    (0.86 against 0.36), a half of the scale.
-## stream vs lake  -- near-identical value, so they are separated by HUE
-##                    (30.6 deg), which crosses the cyan/blue boundary.
-##
-## Leaning on one axis for both pairs would have made one of them collapse:
-## a brighter pond reads as the lake, and a cyan-shifted lake reads as the
-## stream. LOCAL to the hub, like every other decor colour here.
+## Under that palette each pair was told apart on a different axis (stream
+## vs pond by VALUE, stream vs lake by HUE). Family B (WATER-HUE-2) narrows
+## every hue into 170-180 deg and separates instead by SATURATION -- see
+## POND_WATER_COLOR's docblock for the measured reason. Family B's own
+## table:
+##   pond       hsv(170.0, 0.922, 1.00)
+##   lake       hsv(174.0, 0.714, 0.88)
+##   stream     hsv(180.0, 0.278, 1.00)
+##   great lake hsv(177.6, 0.200, 1.00)
 ## =====================================================================
 ## THE GREAT LAKE, THE ISLETS AND THE PONTOONS
 ##
@@ -196,20 +241,22 @@ const LAKE_SEGMENTS: int = 40
 ## them, because the walkable region is built from the same two numbers and
 ## a second copy would be free to drift.
 ##
-## COLOUR: a fourth water tone had to stay separable from the other three,
-## and the project's rule for that is the same one the small lake was
-## chosen under -- separate on HUE or on VALUE, never on neither.
+## COLOUR: a fourth water tone had to stay separable from the other three.
 ##
+## ⚠️ PRE-WATER-HUE-2 table, superseded -- kept for the record (the great
+## lake used to be a deep indigo, separated from the other three by hue AND
+## value):
 ##   pond    hsv(198.0, 0.56, 0.36)   dark teal
 ##   lake    hsv(221.5, 0.63, 0.82)   light blue
 ##   stream  hsv(190.9, 0.51, 0.86)   bright cyan
-##   great   hsv(254.6, 0.62, 0.60)   deep indigo   <- this one
+##   great   hsv(254.6, 0.62, 0.60)   deep indigo   <- this one, then
 ##
-## 33.1 degrees of hue from the nearest of the three AND 0.22 of value from
-## it. Measured on the authored albedo; what the camera reads is further
-## apart still, because the ground showing through the alpha pulls a teal
-## toward green and a blue resists it -- the same effect already measured
-## when the small lake was added.
+## WATER-HUE-2 (family B) narrows every hue into 170-180 deg instead and
+## separates the pair that actually touches -- the small lake and this one
+## -- by SATURATION: dSAT 0.421 against family A's 0.188 and family C's
+## 0.291, measured on the rendered plate, not the albedo alone (see
+## POND_WATER_COLOR's docblock). Family B's table is in STREAM_WATER_COLOR's
+## docblock, just above.
 ##
 ## HEIGHTS: the great lake's slabs sit BELOW the small lake's, and that is
 ## not a style choice. The two waters end up 0.347 units apart and their
@@ -233,7 +280,18 @@ const LAKE_SEGMENTS: int = 40
 ## The slabs are also THINNER than the pond's, for the reason the pond's
 ## own docblock gives for not scaling them at all: a lake-sized slab thick
 ## enough to see is a lake showing its own edge.
-const GREATLAKE_WATER_COLOR: Color = Color(0.32, 0.23, 0.60, 0.55)
+## WATER-HUE-2, family B: #CCFFFD at a=0.85 -- swept, not the affine
+## model's a=0.72 (see POND_WATER_COLOR): at 0.72 this body was still only
+## 2.83:1/2.48:1 (junction/laketail), well short of the floor. 0.85 clears
+## 3.0:1 in BOTH views (junction 3.58:1, laketail 3.12:1 -- laketail is the
+## harder of the two, this body sits further from camera there). Reads far
+## lighter than the small lake at rest -- see POND_WATER_COLOR for the
+## family choice; this is the pale end of family B's saturation swing, and
+## it is what fixes the "hole in the ground" defect: the great lake used to
+## render DARKER than the ground around it (Lrel 0.0342 vs the ground's
+## 0.0799), which this lot corrects by a wide margin (measured, not assumed
+## -- see the lot's report).
+const GREATLAKE_WATER_COLOR: Color = Color(0.8000, 1.0000, 0.9922, 0.85)
 ## Bank margin, NOT the pond's 0.42 scaled up. Proportional scaling would
 ## put the ring at 22.625, and the ring's inner edge would then reach 2.0
 ## units further into the small lake than it already does. 1.30 is the
@@ -274,7 +332,11 @@ const PONTOON_WIDTH: float = 1.10
 const PONTOON_THICKNESS: float = 0.05
 const PONTOON_CENTRE_Y: float = 0.07
 
-const STREAM_WATER_COLOR: Color = Color(0.42, 0.78, 0.86, 0.55)
+## WATER-HUE-2, family B: #B8FFFF at a=0.65 -- swept, not the affine
+## model's a=0.62 (see POND_WATER_COLOR): at 0.62 this body was still only
+## 2.92:1/2.93:1, short of the floor by a hair. 0.65 clears 3.0:1 in BOTH
+## views this body is visible in (pond 3.07:1, laketail 3.06:1).
+const STREAM_WATER_COLOR: Color = Color(0.7216, 1.0000, 1.0000, 0.65)
 
 ## 1.2 units across. Half of that -- 0.6 -- is the number the trace was
 ## routed against: every prop's GROUND footprint clears the water's edge by
