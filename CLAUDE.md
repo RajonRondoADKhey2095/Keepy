@@ -14807,3 +14807,50 @@ demande, plutot que tu.
 4. Hors perimetre et inchange : les 6 props qui se tiennent dans l'eau du petit
    lac, le bateau du lac (lot LAKE-2), et la sensation d'eau (mouvement de
    surface, reflets).
+
+### Deploiement staging de la planche eau (palier 1, automatique)
+
+`staging` **`693432a`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `6d8aae48` des deux cotes, verifie AVANT le push).
+CI run **#244** (id 32947596733) **verte** (08:24:31 -> 08:27:54 UTC) --
+`Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`ae13b99`, verifie apres le push) : ce lot n'a de toute facon rien a livrer en
+prod, il n'installe aucune couleur.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants :**
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787728666` = **07:17:46** (run #243) | **`1787732847` = 08:27:27** *(dans l'etape `Export Web build`, 08:27:23 -> 08:27:28)* |
+| `index.pck` servi | **5 862 240** | **5 862 480** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+Le `CACHE_VERSION` est lu **aux deux bouts en `x-vercel-cache: MISS` avec
+`age: 0`**, et la valeur d'avant a ete prise **avant le merge** : la bascule
+est donc prouvee dans les deux sens et pas deduite du log.
+
+⚠️ **Honnetete sur le second marqueur** : la valeur `index.pck` d'AVANT vient
+d'une reponse **`HIT` avec `age: 3899`** (copie de bord datee de 07:19:48).
+Elle precede le merge, donc elle est valable comme VALEUR, mais **elle n'est
+pas une mesure de fraicheur** et n'est pas comptee comme telle. La lecture
+d'APRES, elle, est MISS/age 0.
+
+⚠️ **Le piege HIT/age s'est reproduit DEUX fois et a ete refuse les deux
+fois** (age 3899 puis age 191) -- et la seconde fois c'est ma PROPRE lecture
+de 08:24:15 qui avait rempli le cache de bord, exactement comme au lot
+rideable. Un parametre de requete different ne le contourne pas toujours ; il
+faut en changer reellement la valeur.
+
+⚠️ **L'export LOCAL de cette session donne `index.pck` 5 862 512 et le service
+en sert 5 862 480 pour le MEME contenu** -- 32 octets d'ecart, une nouvelle
+illustration de l'instabilite deja consignee. **Le `.pck` reste un marqueur de
+« un nouveau build a ete servi », jamais une preuve d'identite avec l'export
+local** ; c'est `index.wasm` qui porte l'identite, et il est identique partout.
+
+Le commit d'hygiene `.gitignore` (les sidecars `.import` que l'editeur fait
+pousser a cote des planches sous `docs/`) est **pousse APRES la fin du run
+#244**, deliberement : `web-build.yml` porte `cancel-in-progress: true` et
+pousser coup sur coup annule le premier run -- piege deja paye au lot de
+densification du hub.
