@@ -28,6 +28,11 @@ class_name HubRegion
 ##
 ##   ( square(+-PLATEAU_HALF_EXTENT)  OR  shore pad )  AND NOT  lake water
 ##
+## "lake water" became PLURAL with SPAWN-LAKE-1: a second great-lake lobe
+## sits at (-12, -19.5) radius 10, in front of the spawn. The subtraction
+## is a LOOP over LAKES rather than a second hard-coded disc, so a third
+## lobe is a row in that table and nothing else.
+##
 ## The shore pad is a disc centred on the great lake's NEAR BANK. It used
 ## to be what let the walkable ground follow the shore past the square's
 ## western edge, back when the lake sat outside the square entirely.
@@ -43,12 +48,13 @@ class_name HubRegion
 ## into it": the water is a hole in the region, so a tap there is clamped
 ## to the rim exactly as a tap past the square edge is clamped to the edge.
 ## With the lake now in the MIDDLE of the square that hole is interior
-## rather than edge-adjacent, which _out_of_water() already handled -- it
+## rather than edge-adjacent, which _out_of_lake() already handled -- it
 ## pushes radially and never assumed where the disc sat. MEASURED after
 ## the move, not inferred: 8 taps on the water from 8 different azimuths,
 ## 8 resolved onto dry land.
 ##
-## ONLY THE GREAT LAKE IS SUBTRACTED, and that asymmetry is deliberate.
+## ONLY THE GREAT-LAKE FAMILY IS SUBTRACTED, and that asymmetry is
+## deliberate.
 ## The pond and the small lake have been walkable since they shipped -- the
 ## boat ride boards from the stream head, which sits ON the pond's water rim
 ## -- and taking that away is a gameplay change this batch was not asked to
@@ -132,6 +138,22 @@ const LAKE_CENTRE_X: float = 15.5
 const LAKE_CENTRE_Z: float = -19.0
 const LAKE_WATER_RADIUS: float = 16.0
 
+## The SECOND great-lake lobe, added by SPAWN-LAKE-1, in front of the spawn.
+##
+## RADIUS 10 IS THE MAXIMUM, and it is measured rather than chosen. The
+## SPAWN-LAKE recon swept the whole half-plane in front of the spawn: at
+## radius 16 there are 66 centres that clear the three portals and NOT ONE
+## of them also clears the waters already in place; 14 and 12 find nothing
+## at all. 10 is the largest radius with a clean centre, and (-12, -19.5)
+## is the one of the 142 that sits closest to the spawn.
+##
+## It is a SEPARATE ENTRY rather than a bigger first lake because the two
+## are 1.505 u apart water to water: they are two lobes of what reads as
+## one mass, not one disc.
+const SPAWN_LAKE_CENTRE_X: float = -12.0
+const SPAWN_LAKE_CENTRE_Z: float = -19.5
+const SPAWN_LAKE_WATER_RADIUS: float = 10.0
+
 ## Radius of the shore pad, centred on the near bank.
 ##
 ## INERT SINCE LAKE-MOVE, and left at its measured value rather than
@@ -152,6 +174,19 @@ const SHORE_PAD_RADIUS: float = 20.0
 static var _lake_centre: Vector3 = Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z)
 static var _axis: Vector3 = _lake_centre.normalized()
 static var _near_bank: Vector3 = _axis * (_lake_centre.length() - LAKE_WATER_RADIUS)
+
+## Every disc the region subtracts, in the order the layout states them.
+##
+## ONE TABLE, and the builder reads its radii off it rather than carrying a
+## second copy: the walkable hole and the drawn disc have to be the same
+## circle, and two numbers describing one circle is exactly how a bank slab
+## ends up slicing a prop nobody is warned about. The layout still states
+## the CENTRES a second time -- that is what LakeZoneProbe's PHASE REGION
+## gates, entry by entry.
+static var _lakes: Array[Dictionary] = [
+	{"centre": Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z), "radius": LAKE_WATER_RADIUS},
+	{"centre": Vector3(SPAWN_LAKE_CENTRE_X, 0.0, SPAWN_LAKE_CENTRE_Z), "radius": SPAWN_LAKE_WATER_RADIUS},
+]
 
 ## Published for the probe and for anyone reasoning in the hub's usual
 ## polar convention (0 degrees is -Z, growing toward +X). DERIVED, never a
@@ -178,7 +213,38 @@ static func near_bank() -> Vector3:
 ## NOT water -- a point pushed out to exactly the radius has to count as
 ## land, or clamp_to() could never produce a valid answer.
 static func in_lake_water(point: Vector3) -> bool:
-	return _flat(point).distance_to(_lake_centre) < LAKE_WATER_RADIUS
+	return _lake_holding(_flat(point)) >= 0
+
+## Every subtracted disc, centre and water radius. Read-only by convention:
+## it is the one table, and a caller that mutated it would move the walkable
+## hole without moving the drawn one.
+static func lakes() -> Array[Dictionary]:
+	return _lakes
+
+## Water radius of the lake whose centre is `centre`, or -1.0 when no lake
+## sits there. The builder uses it to size a drawn disc from the same number
+## the region subtracts, and gets -1.0 -- an error, not a default -- when a
+## layout entry names a centre this table does not know.
+static func water_radius_at(centre: Vector3) -> float:
+	var index := lake_index_at(centre)
+	return -1.0 if index < 0 else float(_lakes[index]["radius"])
+
+## Index of the lake whose centre is `centre`, or -1. Exposed because the
+## builder keys its per-lake slab heights off the same order.
+static func lake_index_at(centre: Vector3) -> int:
+	var flat := _flat(centre)
+	for index in _lakes.size():
+		if flat.distance_to(_lakes[index]["centre"] as Vector3) < 0.001:
+			return index
+	return -1
+
+## Index of the lake `flat` is inside, or -1. The rim itself is NOT water
+## -- see in_lake_water's contract, which this implements.
+static func _lake_holding(flat: Vector3) -> int:
+	for index in _lakes.size():
+		if flat.distance_to(_lakes[index]["centre"] as Vector3) < float(_lakes[index]["radius"]):
+			return index
+	return -1
 
 ## The one membership test. Everything else in this file is built on it.
 static func contains(point: Vector3) -> bool:
@@ -216,9 +282,10 @@ static func clamp_to(point: Vector3) -> Vector3:
 	var pad := _near_bank + (flat - _near_bank).limit_length(SHORE_PAD_RADIUS)
 	candidates.append(square)
 	candidates.append(pad)
-	candidates.append(_out_of_water(flat))
-	candidates.append(_out_of_water(square))
-	candidates.append(_out_of_water(pad))
+	for index in _lakes.size():
+		candidates.append(_out_of_lake(flat, index))
+		candidates.append(_out_of_lake(square, index))
+		candidates.append(_out_of_lake(pad, index))
 
 	var best := Vector3.ZERO
 	var best_distance := INF
@@ -235,14 +302,20 @@ static func clamp_to(point: Vector3) -> Vector3:
 	# promise a valid destination rather than only usually returning one.
 	return best
 
-## `point` pushed radially out of the lake to just past the waterline. The
-## nudge is what keeps the result on the land side of a strict comparison
-## instead of on a float's coin-flip.
-static func _out_of_water(point: Vector3) -> Vector3:
-	var offset := point - _lake_centre
+## `point` pushed radially out of lake `index` to just past its waterline.
+## The nudge is what keeps the result on the land side of a strict
+## comparison instead of on a float's coin-flip.
+##
+## Called once per lake by clamp_to rather than once for "the" lake: with
+## two lobes, pushing out of the one the point happens to be inside can
+## land it inside the other, and only contains() is entitled to decide.
+static func _out_of_lake(point: Vector3, index: int) -> Vector3:
+	var centre: Vector3 = _lakes[index]["centre"]
+	var radius: float = _lakes[index]["radius"]
+	var offset := point - centre
 	if offset.length() < 0.0001:
-		offset = _axis * -1.0
-	return _lake_centre + offset.normalized() * (LAKE_WATER_RADIUS + 0.001)
+		offset = centre.normalized() * -1.0 if centre.length() > 0.0001 else Vector3.FORWARD
+	return centre + offset.normalized() * (radius + 0.001)
 
 static func _flat(point: Vector3) -> Vector3:
 	return Vector3(point.x, 0.0, point.z)

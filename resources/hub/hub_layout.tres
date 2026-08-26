@@ -41,7 +41,7 @@ props = [{
 "scale": 1.13,
 "type": &"tree"
 }, {
-"position": Vector3(-9.15, 0, -22.579),
+"position": Vector3(31.583, 0, -3.665),
 "rotation_y": 139.5,
 "scale": 0.85,
 "type": &"tree"
@@ -320,7 +320,7 @@ props = [{
 "scale": 0.756,
 "type": &"bush"
 }, {
-"position": Vector3(-12.52, 0, -9.14),
+"position": Vector3(6.965, 0, 19.832),
 "rotation_y": 100.3,
 "scale": 0.624,
 "type": &"bush"
@@ -330,12 +330,12 @@ props = [{
 "scale": 0.787,
 "type": &"bush"
 }, {
-"position": Vector3(-8.389, 0, -19.556),
+"position": Vector3(10.769, 0, 20.263),
 "rotation_y": 232.6,
 "scale": 1.335,
 "type": &"bush"
 }, {
-"position": Vector3(-10.516, 0, -19.38),
+"position": Vector3(27.86, 0, 1.552),
 "rotation_y": 121.2,
 "scale": 0.969,
 "type": &"bush"
@@ -355,19 +355,19 @@ props = [{
 "scale": 1.185,
 "type": &"bush"
 }, {
-"position": Vector3(-6.84, 0, -12.21),
+"position": Vector3(-22.117, 0, 11.471),
 "rotation_y": 345.9,
 "scale": 0.83,
 "variant": 1,
 "type": &"flower"
 }, {
-"position": Vector3(-6.27, 0, -12.9),
+"position": Vector3(21.832, 0, 17.031),
 "rotation_y": 20.1,
 "scale": 1.058,
 "variant": 1,
 "type": &"flower"
 }, {
-"position": Vector3(-6.19, 0, -13.91),
+"position": Vector3(21.015, 0, 12.726),
 "rotation_y": 263.1,
 "scale": 0.925,
 "variant": 0,
@@ -425,7 +425,7 @@ props = [{
 "scale": 0.927,
 "type": &"tree"
 }, {
-"position": Vector3(-15.382, 0, -23.505),
+"position": Vector3(26.948, 0, -4.93),
 "rotation_y": 357.6,
 "scale": 0.806,
 "type": &"tree"
@@ -465,12 +465,12 @@ props = [{
 "scale": 0.996,
 "type": &"rock"
 }, {
-"position": Vector3(-4.207, 0, -25.133),
+"position": Vector3(14.799, 0, 21.987),
 "rotation_y": 229.4,
 "scale": 0.666,
 "type": &"rock"
 }, {
-"position": Vector3(-8.6, 0, -13.5),
+"position": Vector3(-5.106, 0, 22.332),
 "rotation_y": 259.4,
 "scale": 1.137,
 "type": &"rock"
@@ -513,7 +513,7 @@ props = [{
 "type": &"landmark",
 "variant": 0
 }, {
-"position": Vector3(-15.94, 0, -14.87),
+"position": Vector3(29.346, 0, 12.76),
 "rotation_y": 57.0,
 "scale": 0.880,
 "type": &"landmark",
@@ -531,7 +531,7 @@ props = [{
 "type": &"landmark",
 "variant": 0
 }, {
-"position": Vector3(-11.557, 0, -27.901),
+"position": Vector3(-7.198, 0, 31.18),
 "rotation_y": 148.0,
 "scale": 1.000,
 "type": &"landmark",
@@ -553,7 +553,7 @@ props = [{
 "scale": 0.768,
 "type": &"tree"
 }, {
-"position": Vector3(-2.74, 0, -19.12),
+"position": Vector3(13.137, 0, 24.378),
 "rotation_y": 223.8,
 "scale": 1.008,
 "type": &"tree"
@@ -638,12 +638,12 @@ props = [{
 "scale": 1.081,
 "type": &"rock"
 }, {
-"position": Vector3(-19.023, 0, -26.294),
+"position": Vector3(0.434, 0, 24.447),
 "rotation_y": 195.6,
 "scale": 0.999,
 "type": &"rock"
 }, {
-"position": Vector3(-16.266, 0, -26.76),
+"position": Vector3(17.489, 0, 11.277),
 "rotation_y": 100.3,
 "scale": 1.352,
 "type": &"rock"
@@ -673,7 +673,7 @@ props = [{
 "scale": 0.974,
 "type": &"rock"
 }, {
-"position": Vector3(-17.32, 0, -10.75),
+"position": Vector3(24.847, 0, -4.56),
 "rotation_y": 17.1,
 "scale": 1.367,
 "type": &"rock"
@@ -683,7 +683,7 @@ props = [{
 "scale": 0.886,
 "type": &"rock"
 }, {
-"position": Vector3(-13.593, 0, -18.711),
+"position": Vector3(21.588, 0, 1.417),
 "rotation_y": 18.7,
 "scale": 1.090,
 "type": &"rock"
@@ -693,17 +693,17 @@ props = [{
 "scale": 0.830,
 "type": &"rock"
 }, {
-"position": Vector3(-17.58, 0, -19.76),
+"position": Vector3(25.637, 0, 15.944),
 "rotation_y": 200.7,
 "scale": 1.172,
 "type": &"rock"
 }, {
-"position": Vector3(-18.85, 0, -19.34),
+"position": Vector3(-22.467, 0, -13.624),
 "rotation_y": 214.0,
 "scale": 0.659,
 "type": &"rock"
 }, {
-"position": Vector3(-17.82, 0, -18.97),
+"position": Vector3(-3.437, 0, 28.243),
 "rotation_y": 230.2,
 "scale": 1.241,
 "type": &"rock"
@@ -738,7 +738,7 @@ props = [{
 "scale": 1.218,
 "type": &"rock"
 }, {
-"position": Vector3(-12.846, 0, -24.24),
+"position": Vector3(-11.159, 0, 19.474),
 "rotation_y": 302.1,
 "scale": 1.085,
 "type": &"rock"
@@ -758,7 +758,7 @@ props = [{
 "scale": 0.789,
 "type": &"rock"
 }, {
-"position": Vector3(-6.503, 0, -21.03),
+"position": Vector3(20.775, 0, 14.896),
 "rotation_y": 233.9,
 "scale": 1.155,
 "type": &"bush"
@@ -768,12 +768,12 @@ props = [{
 "scale": 0.742,
 "type": &"bush"
 }, {
-"position": Vector3(-14.98, 0, -9.66),
+"position": Vector3(8.735, 0, 19.051),
 "rotation_y": 29.6,
 "scale": 1.304,
 "type": &"bush"
 }, {
-"position": Vector3(-22.34, 0, -18.58),
+"position": Vector3(26.639, 0, 2.695),
 "rotation_y": 80.2,
 "scale": 0.665,
 "type": &"bush"
@@ -783,7 +783,7 @@ props = [{
 "scale": 1.157,
 "type": &"bush"
 }, {
-"position": Vector3(-21.80, 0, -17.68),
+"position": Vector3(24.808, 0, 3.606),
 "rotation_y": 353.9,
 "scale": 1.210,
 "type": &"bush"
@@ -834,7 +834,7 @@ props = [{
 "scale": 1.062,
 "type": &"stump"
 }, {
-"position": Vector3(-3.75, 0, -21.71),
+"position": Vector3(-24.909, 0, 18.228),
 "rotation_y": 339.9,
 "scale": 1.195,
 "type": &"stump"
@@ -864,7 +864,7 @@ props = [{
 "scale": 0.901,
 "type": &"stump"
 }, {
-"position": Vector3(-11.871, 0, -15.057),
+"position": Vector3(-30.173, 0, 4.992),
 "rotation_y": 155.6,
 "scale": 0.914,
 "type": &"stump"
@@ -899,6 +899,12 @@ props = [{
 "type": &"boat"
 }, {
 "position": Vector3(15.5, 0, -19),
+"rotation_y": 0.0,
+"scale": 1.000,
+"offshore": true,
+"type": &"greatlake"
+}, {
+"position": Vector3(-12, 0, -19.5),
 "rotation_y": 0.0,
 "scale": 1.000,
 "offshore": true,
@@ -979,7 +985,7 @@ props = [{
 "scale": 1.197,
 "type": &"tree"
 }, {
-"position": Vector3(-13.717, 0, -21.226),
+"position": Vector3(6.643, 0, 32.682),
 "rotation_y": 143.6,
 "scale": 0.719,
 "type": &"tree"
@@ -1004,7 +1010,7 @@ props = [{
 "scale": 0.978,
 "type": &"rock"
 }, {
-"position": Vector3(-6.792, 0, -25.097),
+"position": Vector3(15.461, 0, 19.708),
 "rotation_y": 127.4,
 "scale": 1.203,
 "type": &"rock"

@@ -381,3 +381,40 @@ under xvfb is a software rasteriser: fill rate is exactly what it is worst
 at and exactly what a phone GPU is best at, so a fill-bound delta here
 over-states the device cost by an unknown factor. Nothing in this row says
 how the plateau behaves on a phone. **Device judgement.**
+
+## SPAWN-LAKE-1 -- a second great-lake lobe (r10 at -12,-19.5) + one uniform water colour
+
+Same Godot binary and machine, both ends under `xvfb-run --rendering-driver
+opengl3`, 3 runs each, **run one at a time**. Imports verified complete on
+both trees (24 `.scn`) before any number was read.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/staging`) | 57.42 / 47.55 / 63.07 | 96 | 102 | 14.3-15.0 | 6.1-7.8 |
+| AFTER (3 runs, this batch) | 48.91 / 51.81 / 49.41 | **98** | **104** | 14.4-15.4 | 7.2-11.0 |
+
+**+2 draw nodes, and that is the whole cost**: the new lobe is one bank
+disc and one water disc, exactly like every other standing water here. 89
+individual `MeshInstance3D` against 87 before, 9 `MultiMeshInstance3D` on
+both sides (unchanged -- the lobe is not batched, there is one of it),
+6 owned by the portals. Margin under the 260 ceiling: **164 -> 162**.
+
+⚠️ **FPS did NOT drop, and the honest reading of that is "the ranges
+overlap", not "it got faster"**: 14.3-15.0 before against 14.4-15.4 after,
+with construction overlapping too (47.55-63.07 against 48.91-51.81). That
+is a different result from LAKE-MOVE-1's row, which measured a clear drop
+when the great lake first entered the frame. The likely reason the second
+lobe does not repeat it: the probe samples from the plateau CENTRE, where
+the great lake already occupies the frame, so the new lobe mostly adds
+alpha to a budget that was already paying for water rather than to empty
+grass.
+
+⚠️ **DO NOT COMPARE THIS TABLE'S FPS TO THE ROWS ABOVE IT.** They were
+measured in a different sandbox and run 27-ish fps for the same scene where
+this one runs 15. Only the BEFORE/AFTER pair inside a single row block is
+comparable, because only that pair shares a machine and a session.
+
+⚠️ And as ever: llvmpipe under xvfb is a software rasteriser -- fill rate is
+exactly what it is worst at and exactly what a phone GPU is best at, so
+nothing in this row says how the plateau behaves on a phone. **Device
+judgement.**
