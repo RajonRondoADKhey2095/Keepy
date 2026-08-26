@@ -14535,3 +14535,44 @@ ca doit l'etre.
    de cote ne porte que ~5,15 u) s'applique en plein a lui.
 5. **Les pontons n'ont aucune fonction** : ils doivent se lire comme une
    promesse, pas comme un controle mort.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`73d45d2`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre des deux cotes ET `git diff` vide,
+verifie AVANT le push). CI run **#242** (id 32941388112) **verte** —
+`Deploy to Vercel [STAGING -- staging]` succes (07:12:21 -> 07:12:31 UTC),
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ae13b99`) : palier 2, gate Mathieu apres
+validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI** (`keepy-staging.vercel.app`,
+via le canal MCP Vercel — l'egress direct du sandbox reste refuse sur ce
+domaine) :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787698811` = **25 aout 23:00:11** (run #241) | **`1787728327` = 26 aout 07:12:07** |
+| `index.pck` servi | *(non lu avant le merge — voir ci-dessous)* | **5 862 224** |
+| `index.wasm` servi | — | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de l'etape `Export Web build`** du
+run #242 (07:12:03 -> 07:12:08). Les trois lectures utiles portent
+`x-vercel-cache: MISS` avec `age: 0`.
+
+⚠️ **Honnetete sur la couverture : la bascule n'est prouvee DANS LES DEUX
+SENS que sur le `CACHE_VERSION`.** Le `.pck` servi n'a ete lu qu'APRES le
+merge, donc il vaut ici comme second marqueur independant de l'etat courant,
+pas comme preuve de transition. Les lots precedents lisaient les deux aux
+deux bouts ; celui-ci ne le fait pas, et c'est dit plutot que suggere.
+
+⚠️ **Le piege HIT/age s'est reproduit et a ete REFUSE** : une relecture a
+07:11:34, pendant que le job tournait, est revenue `x-vercel-cache: HIT`
+avec **`age: 151`** — une copie de bord figee par ma PROPRE lecture
+d'avant-merge. Elle n'a donc pas ete comptee comme la preuve « c'est encore
+l'ancienne valeur ».
+
+⚠️ **Le `.pck` servi (5 862 224) est identique a l'export local de cette
+session — et ce n'est DELIBEREMENT PAS offert comme preuve d'identite**,
+conformement a la doctrine du §7 ci-dessus. C'est un marqueur « un nouveau
+build a ete servi », rien de plus ; `index.wasm` est le controle d'identite.

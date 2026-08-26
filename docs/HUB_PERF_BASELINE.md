@@ -330,3 +330,17 @@ two states of content -- 5 853 728 / 5 853 744 / 5 853 760 -- including a
 tables above. The lot G inference -- "the served `.pck` matches this
 session's local export byte for byte, therefore it is my build" -- is
 INVALID and must not be replayed. `index.wasm` is the identity check.
+
+**Deployed to staging.** CI run #242 (`web-build.yml`) on `staging`
+`73d45d2`. Served `CACHE_VERSION` moves `1787698811` (25 aout 23:00:11,
+run #241) -> **`1787728327`** (26 aout **07:12:07**), inside that run's
+`Export Web build` step (07:12:03-07:12:08). Served `index.pck` = 5 862 224,
+`index.wasm` = 35 376 909. All three useful readings are `x-vercel-cache:
+MISS` with `age: 0`.
+
+⚠️ Only `CACHE_VERSION` was read at BOTH ends this time; the served `.pck`
+is an after-only reading, so it stands as a second independent marker of the
+current state rather than as proof of the transition. The HIT/age trap fired
+once mid-run (`age: 151`, an edge copy this session's own pre-merge read had
+populated) and was refused rather than counted.
+
