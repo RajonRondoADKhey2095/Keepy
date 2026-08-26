@@ -15152,3 +15152,257 @@ en sert 5 862 880** pour le meme contenu -- 64 octets d'ecart, enieme
 illustration de l'instabilite deja consignee. `index.wasm` est identique
 partout (**35 376 909**, md5 `af4a8fc2925d992348eb30deeeb54360`) : c'est lui
 la preuve d'identite, jamais le `.pck`.
+
+## LAKE-MOVE-1 : LE GRAND LAC ENTRE DANS LE PLATEAU -- (15,5 ; -19) rayon 16, et le LOBE MEURT AVEC LE DEPLACEMENT (26 aout 2026)
+
+Branche `claude/lake-move-1-relocate-3sisc6`, partie de `staging` (`d13047b`).
+Decision de Mathieu prise sur les mesures de la recon LAKE-MOVE : **P2f est le
+SEUL candidat nettement visible depuis le centre du plateau** (39 % du disque au
+cadre, 50,4 % des positions), et 16 est le rayon MAXIMUM qui tient entierement
+dans le carre. **Le placement n'a pas ete re-arbitre.**
+
+**CONTRAINTES DURES TENUES, verifiees par `git diff --stat` et pas affirmees** :
+`KeepyHopper.gd`, `HubCamera.gd` et `HubTapInput.gd` **ne sont PAS dans le
+diff**. `PLATEAU_HALF_EXTENT` reste **35.0**. **Aucune couleur, aucun alpha
+touche nulle part** -- la recolorisation est le lot suivant, et melanger les deux
+rendrait tout diagnostic impossible.
+
+### Ce qui bouge, et pourquoi le centre cesse d'etre polaire
+
+`HubRegion` tenait le lac en **azimut 282 + distance 54 + rayon 20**. C'etait la
+formulation la plus courte tant qu'il etait dehors, droit derriere le petit lac.
+Il est desormais a **(15,5 ; -19) rayon 16**, et le layout enonce ce centre en
+cartesien : un azimut ici serait une **seconde orthographe du meme point**, libre
+de deriver d'un arrondi que personne ne verrait avant qu'une berge ne tranche un
+prop. `LAKE_CENTRE_X`/`LAKE_CENTRE_Z` deviennent la source ; l'azimut
+(**39,207 deg**) et la distance (**24,520**) sont **publies, derives**.
+
+⚠️ **DEFAUT LATENT FERME AU PASSAGE, et il aurait ete silencieux** : rien
+n'assertait que la position `greatlake` du layout et les constantes de
+`HubRegion` decrivaient le MEME point. Ce sont deux nombres independants
+construisant deux objets differents -- **le disque DESSINE et le trou
+MARCHABLE**. Bouger l'un sans l'autre aurait fait cesser l'eau qu'on voit
+d'etre l'eau ou l'on ne peut pas marcher, **sans aucune erreur**. Gate
+maintenant (PHASE REGION).
+
+### ⚠️ LE LOBE DE RIVE MEURT, ET IL EMPORTE 7 PROPS QUE LE BRIEF NE COMPTAIT PAS
+
+Le `SHORE_PAD_RADIUS = 20` centre sur la berge proche ajoutait **91,6 u2** de sol
+marchable AU-DELA du carre. Avec la berge proche desormais a **8,520** du centre,
+le pad s'etend au plus a **28,520** contre un demi-cote de 35 : **entierement
+contenu, 0 u2 ajoute**. Mesure, pas deduit -- la sonde balaye la region et trouve
+**0 point au-dela du carre** (contre 1 070 avant).
+
+**Consequence que le brief ne prevoyait pas : 7 props vivaient dans ce lobe**
+(`|x| > 35`, jusqu'a 42,01) et deviennent inatteignables. Ils sont **relocalises
+comme les autres**. Total reel : **25 props dans l'eau + 7 dans le lobe = 32
+props, plus 3 landmarks**, jamais supprimes.
+
+Le pad est **garde a 20 plutot que zero** : il est le terme generique de l'union,
+il ne coute rien tant qu'il est contenu, et un lot futur qui repousse un lac
+hors d'un bord recupere le lobe gratuitement. **L'assertion de sonde est
+INVERSEE, pas supprimee** -- elle exigeait que le pad depasse, elle exige
+desormais qu'il soit contenu, donc c'est elle qui parlera le jour ou ca change.
+
+### La zone lac demenage EN BLOC, echelle 0,8 sur les positions
+
+3 ilots + leurs 3 landmarks + 5 pontons gardent leurs positions **relatives**,
+mises a l'echelle 16/20 = **0,8** (mises a l'echelle, pas translatees -- le
+brief avait raison, un rayon plus petit ne peut pas porter les memes offsets).
+
+⚠️ **Les RAYONS d'ilot ne sont deliberement PAS mis a l'echelle** : chaque ilot
+porte encore son landmark avec la marge qu'il avait livree. Les deux options ont
+ete mesurees -- rayons a l'echelle : eau libre 4,48-6,64 a la rive et 7,99-8,84
+entre ilots ; **rayons inchanges (livre)** : **3,802-6,001** a la rive et
+**6,668-7,562** entre ilots. Contre une coque de **0,78** de long, les deux sont
+amplement navigables pour LAKE-2 ; l'option livree garde les ilots lisibles.
+
+### Separations d'eau, MESUREES
+
+| paire | avant | apres |
+|---|---|---|
+| **grand lac <-> petit lac (eau)** | **+0,347** *(ils se touchaient)* | **+18,849** |
+| grand lac <-> petit lac (berges) | **-2,003** *(chevauchement)* | **+16,499** |
+| grand lac <-> mare (eau) | -- | **+7,707** |
+| grand lac <-> ruisseau (bords) | -- | **+9,158** |
+| mare <-> ruisseau | -0,596 | **-0,596** *(intouche)* |
+| ruisseau <-> petit lac | -0,605 | **-0,605** *(intouche)* |
+
+La contrainte d'origine du chantier est levee : **plus aucun contact**. La
+chaine mare-ruisseau-petit lac, elle, **subsiste** et continue d'exiger son
+echelle de saturation a trois crans -- aucun deplacement du grand lac ne la
+resout, comme la recon l'avait dit.
+
+### ⚠️ RISQUE MESURE ET NON CORRIGE : la berge passe SUR la dalle du portail Battle
+
+C'est le seul cout du placement que la recon n'avait pas chiffre, et il est
+publie plutot que maquille. Portail Battle a **17,589** du centre du lac :
+
+| | valeur |
+|---|---|
+| **eau** vs dalle du portail (rayon 1,35) | **+0,239** -- degage |
+| **berge** (17,30) vs dalle du portail | **-1,061** -- **elle passe dessus** |
+| portail Quizz, berge | +0,831 -- degage |
+| portail Chased, berge | +6,731 -- degage |
+
+**L'anneau du portail se dessine PAR-DESSUS la berge** (torus au-dessus du sol,
+berge a y 0,011-0,0185) et **reste entierement lisible au rendu** -- verifie a
+l'image, capture `portal_row`, pas seulement calcule. Rien n'est marchable dans
+l'eau. **Non corrige** : le degager demanderait un centre a `x >= 18`,
+c'est-a-dire un AUTRE placement que celui qui a ete choisi. **Decision de
+Mathieu.**
+
+### ⚠️ KEEPY MARCHE SUR L'EAU, ET CE LOT AGGRAVE LE DEFAUT -- mesure avant/apres
+
+La recon l'avait etabli : **aucun evitement d'obstacle n'existe dans le depot**,
+le hopper suit une corde droite et ne consulte rien. Ce lot ne le corrige pas
+(chantier a part entiere) mais **le mesure**. Meme jeu de 10 trajets, meme
+binaire, meme machine, `--fixed-fps 60`, `origin/staging` en worktree separe :
+
+| trajet | hops | grand lac AVANT | grand lac APRES |
+|---|---|---|---|
+| (-35,-35) -> (35,35) *(la diagonale)* | 66 | **0** | **0** |
+| **(-35,35) -> (35,-35)** *(l'anti-diagonale)* | 66 | **0** | **21** |
+| **(0,0) -> (35,-35)** | 33 | **0** | **21** |
+| (0,0) -> (-35,-35) | 33 | 0 | 0 |
+| (0,0) -> (35,0) | 24 | 0 | 0 |
+| **(0,0) -> (0,-35)** | 24 | **0** | **5** |
+| (-35,-5) -> (-15,-5) *(petit lac)* | 14 | 10 petit lac | 10 petit lac |
+| (14,7) -> (28,8) *(mare)* | 10 | 4 mare | 4 mare |
+| (-2,4) -> (-2,16) *(ruisseau)* | 8 | 0 | 0 |
+| (-35,-20) -> (-12,10) | 25 | 11 petit lac | 11 petit lac |
+| **TOTAL** | **303** | **0 grand lac** | **47 grand lac (15,5 %)** |
+
+Le banc **reproduit d'abord les quatre trajets publies par la recon au bond
+pres** (10/14 et 11/25 sur le petit lac, 4/10 sur la mare) -- un banc incapable
+de restituer un chiffre au dossier n'a pas qualite a en publier un neuf. Les
+lignes petit lac / mare / ruisseau sont **byte-identiques** des deux cotes : ce
+lot ne touche a aucune de ces trois eaux.
+
+⚠️ **La diagonale principale reste a ZERO bond sur l'eau, et c'est
+l'anti-diagonale qui prend 21** -- l'estimation « ~27 bonds sur 66 sur une
+traversee » du brief visait la bonne echelle mais pas le bon trajet : la
+diagonale `(-35,-35)->(35,35)` passe a **24,4 u** du centre du lac, bien au-dela
+de 16.
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles, **tailles confirmees contre le `Content-Length`** : 50 276 070 et
+1 073 228 327 octets, aucune troncature). Import headless **exit 0**, **24
+`.scn`** des deux cotes (import complet verifie, pas suppose). Boot headless de
+`HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`** -- la confirmation A
+L'EXECUTION que les 203 entrees sont coherentes avec leur drapeau `offshore`.
+Export Web release **exit 0, 0 erreur**. `index.wasm` **35 376 909** / md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b`. `index.pck` 5 863 056 (marqueur, **jamais
+preuve d'identite**). Piege payload tenu : sur **225** lignes `Storing File`,
+**0** pour `assets_source`, `scripts/dev`, `docs`, `web`, `build` ou
+`firebase.json`.
+
+**`LakeZoneProbe` : 27 checks, 0 echec, exit 0** (sous `xvfb`, jamais
+`--headless` -- PHASE TAP a besoin d'un rect de conteneur reel).
+`ProbeTimeoutAudit` **45 sondes scenes** (retour exact a la baseline apres
+retrait des deux sondes jetables), `AssetContractAudit` (**12/12 visuels, pas un
+collider deplace**), `DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**.
+
+| # | verdict | methode |
+|---|---|---|
+| **[a]** | **diagonale 66 hops / 1122 frames / 18,700 s, INCHANGEE et toujours le pire cas** ; pire traversee passant DANS l'eau 18,700 s aussi | vrai `KeepyHopper`, `--fixed-fps 60` -- **MESURE** |
+| **[b]** | grand lac <-> petit lac **+0,347 -> +18,849** ; chaine mare/ruisseau/petit lac **-0,596 / -0,605 inchangee** | geometrie sur le layout livre -- **MESURE** |
+| **[c]** | ruisseau et mare ni recouverts ni touches (**+9,158** et **+7,707**) | idem -- **MESURE** |
+| **[d]** | **3/3 marches centre -> portail restent AU SEC** (5 hops, 0 atterrissage dans l'eau chacune) | vrai hopper, gate dans la sonde -- **MESURE** |
+| **[e]** | draw nodes hors portails **96 -> 96**, total **102 -> 102**, 9 MultiMesh tous `TRANSFORM_3D` | comptage de l'arbre `Props` vivant des deux cotes -- **MESURE** |
+| **[f]** | ligne ajoutee a `docs/HUB_PERF_BASELINE.md` | `HubPerfBaseline` x3 des deux cotes -- **MESURE** |
+| **[g]** | **le lac se voit clairement du centre** | 4 captures offscreen 1080x1920, vraie camera du hub -- **MESURE** |
+
+**[e] est un ZERO delta et c'est le resultat attendu** : ce lot relocalise des
+entrees, il n'en cree ni n'en detruit aucune. Marge sous le plafond de 260 :
+**164**, inchangee.
+
+**[g] VERDICT.** Capture depuis le centre du plateau : **le lac occupe tout le
+quadrant haut-droit**, distinct du vert, avec sa berge, un ilot pale et son
+spire dedans, et les trois anneaux de portail lisibles devant. La plainte
+d'origine -- « on ne voit pas le lac » -- est fermee A L'IMAGE. Trois autres
+points de vue (rangee de portails, rive est, rive nord) montrent les ilots avec
+leurs landmarks, les deux pontons de rive poses sur la berge, et **aucun prop
+dans l'eau** (verifie par mesure aussi : **0** entree non-`offshore` a moins de
+16 du centre).
+
+⚠️ **`worst reachable |axis|` passe de 46,36 a 35,00** : c'est le lobe qui
+disparait, mesure et attendu, contre un sol de demi-taille 300.
+
+### Densite : degressive, comme la doctrine l'exige
+
+| bande | AVANT | APRES |
+|---|---|---|
+| r 0-10 | 12,01 | **12,01** |
+| r 10-20 | 6,93 | **5,86** |
+| r 20-27 | 3,20 | **2,91** |
+| r 27-35 | 1,47 | **2,75** |
+
+Toujours strictement decroissante du centre vers l'exterieur. Les 32 props
+partent dans les secteurs les plus libres mesures par la recon (az 330-360 et
+60-90, elargis a 298-360 / 0-8 / 55-100 pour ne pas creer un ilot de densite),
+en grappes pour buissons et fleurs, echelle et lacet inchanges. Separation
+minimale relocalise-vs-tout : **0,498** (membres de grappe, comparable aux
+0,555 deja livres) ; degagement d'eau le pire parmi les relocalises :
+**+0,412**. `max |x| = 34,15`, `max |z| = 33,90`, sous la borne 34,2.
+
+**Landmarks : min landmark-a-landmark 11,390** contre 13,108 livre -- plus
+serre, et c'est la geometrie qui l'impose (le trou de rayon 16 mange un coin de
+90 deg sur chacun des trois anneaux). **Regle « jamais deux silhouettes
+identiques adjacentes » tenue** : dans l'ordre des azimuts on lit desormais
+337,5 v1 -> **4,5 v0** -> **78,0 v2** -> **90,5 v0** -> 92,5 v1 -> 133 v0.
+
+### Liste nominative des relocalisations
+
+**Zone lac (12, echelle 0,8 autour du nouveau centre)** : greatlake
+(-52,82;-11,23)->(15,500;-19,000) ; ilots+landmarks (-50,48;-3,06)->(17,372;-12,464),
+(-63,65;-13,14)->(6,836;-20,528), (-47,34;-19,35)->(19,884;-25,496) ; pontons
+(-31,72;-12,70)->(32,380;-20,176), (-33,98;-1,63)->(30,572;-11,320),
+(-51,26;-5,80)->(16,748;-14,656), (-60,65;-12,61)->(9,236;-20,104),
+(-48,82;-17,15)->(18,700;-23,736).
+
+**Landmarks du plateau (3)** : v0 (0,00;-12,60)->(2,668;-33,895) ; v2
+(15,65;-14,59)->(33,257;-7,069) ; v0 (28,45;-11,79)->(24,499;0,214).
+
+**Scatter (32)** -- 25 tires de l'eau : tree (2,54;-10,02)->(-9,150;-22,579),
+(6,37;-9,85)->(-4,864;-32,623), (9,69;-8,22)->(-4,916;-28,293),
+(13,50;-5,40)->(-15,382;-23,505), (4,90;-13,20)->(32,686;-3,045),
+(4,41;-21,31)->(-14,680;-30,331), (5,03;-20,70)->(0,518;-30,863),
+(12,27;-20,78)->(-3,078;-30,357) ; bush (12,74;-9,10)->(-8,389;-19,556),
+(11,73;-9,59)->(-10,516;-19,380), (3,28;-20,15)->(-6,503;-21,030),
+(2,40;-19,84)->(29,785;4,998), (21,44;-19,21)->(27,719;5,473),
+(20,84;-19,69)->(30,404;2,806) ; rock (8,60;-13,30)->(-4,207;-25,133),
+(13,94;-19,72)->(-19,023;-26,294), (14,70;-20,22)->(-16,266;-26,760),
+(13,35;-21,21)->(-7,198;-28,845), (16,26;-4,22)->(33,637;0,285),
+(20,86;-10,67)->(-13,593;-18,711), (21,67;-9,07)->(29,234;-5,170),
+(4,85;-22,89)->(-27,292;-15,055), (3,23;-23,25)->(-12,846;-24,240) ; stump
+(6,58;-23,06)->(30,265;-1,506), (3,04;-12,43)->(-11,871;-15,057).
+**7 tires du lobe mort** : tree (-36,74;-25,93)->(-13,717;-21,226),
+(-35,66;-25,03)->(-21,942;-25,532) ; rock (-42,01;9,15)->(-6,792;-25,097),
+(-36,45;7,14)->(-1,916;-26,616) ; bush (-37,34;5,03)->(29,869;7,138) ; flower
+(-37,29;3,43)->(28,336;6,894), (-38,06;9,65)->(-9,713;-31,580).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Le lac se lit-il comme un LAC** a l'echelle reelle d'un telephone, ou comme
+   une grande tache pale au milieu du plateau ? Il occupe **16,42 % du plateau**
+   -- c'est le prix accepte, et personne ne l'a encore vu sur un ecran.
+2. **La berge sur la dalle du portail Battle** (chevauchement mesure 1,06 u,
+   anneau lisible au rendu). Le degager demande un autre centre.
+3. **47 bonds sur 303 marchent sur l'eau** contre 0 avant. Mesure, assume, sans
+   correctif possible dans ce lot.
+4. **Les landmarks a 11,390 l'un de l'autre** contre 13,108 livre -- plus
+   serres, impose par la geometrie du trou.
+5. ⚠️ **Le FPS simule BAISSE** (27,1-27,3 -> 24,6-26,3, trois runs de chaque
+   cote, plages disjointes). Cause la plus probable : le lac est desormais DANS
+   LE CADRE depuis le centre, donc un grand disque alpha est entre dans un
+   budget de fill rate qui etait de l'herbe vide. **Sous llvmpipe, le pire
+   proxy possible pour un GPU de telephone** -- ce chiffre sur-estime le cout
+   device d'un facteur inconnu.
+6. **Aucune couleur n'a bouge.** Le grand lac garde son `#CCFFFD` a 0,85, choisi
+   quand il TOUCHAIT le petit lac. Il en est maintenant a 18,849 u : la premisse
+   de l'echelle de saturation a change pour ce corps, et c'est exactement ce que
+   le lot de recolorisation suivant doit reprendre.
