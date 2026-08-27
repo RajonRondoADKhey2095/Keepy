@@ -230,6 +230,29 @@ var _hop_tween: Tween = null
 ## never leak into the hop after it.
 var _hop_height: float = HOP_HEIGHT
 
+## Ground height at the two ends of the hop in progress, in world units.
+##
+## BOTH DEFAULT TO ZERO, and every hop the plateau has ever taken leaves
+## them there: the plateau is a single-altitude model (HubRegion.contains()
+## throws Y away, HubTapInput raycasts a plane at y = 0), so a hop between
+## two points on it starts and ends on the ground by definition.
+##
+## They exist so ONE hop can start high and land low -- the dive off the
+## board. Generalising the existing arc rather than adding a second one is
+## deliberate: the squash envelope, the pitch and the landing recoil are
+## all driven off the same normalised t as the height, and a parallel
+## "high hop" implementation would be a second copy of all of them, free
+## to drift from the one the whole plateau uses.
+##
+## The generalisation is EXACT at from == to, not merely close: at equal
+## endpoints lerpf returns that value for every t, so the parabola is
+## added to a constant and the trajectory is the one that shipped. Proved
+## rather than argued -- DivingBoardProbe PHASE A samples the shipped
+## _apply_hop against the pre-change formula and reports the worst
+## divergence over the whole hop.
+var _hop_from_y: float = 0.0
+var _hop_to_y: float = 0.0
+
 ## Ride state. _route is null whenever _state is not RIDING.
 var _route: HubStreamRoute = null
 var _ride_s: float = 0.0
@@ -443,6 +466,10 @@ func _advance() -> void:
 
 func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	_hop_height = HOP_HEIGHT
+	# Reset alongside the height, and for the same reason: a sloped arc
+	# left over from a dive must not leak into the ordinary hop after it.
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
 	var step: float = minf(HOP_DISTANCE, delta.length())
 	_hop_from = here
 	_hop_to = here + delta.normalized() * step
@@ -478,10 +505,15 @@ func _face(direction: Vector3) -> void:
 
 func _apply_hop(t: float) -> void:
 	var ground := _hop_from.lerp(_hop_to, t)
+	# The line the arc is drawn ON. Flat for every hop on the plateau
+	# (both ends default to 0.0); sloped only for the dive, which starts
+	# on the board and ends in the water.
+	var base: float = lerpf(_hop_from_y, _hop_to_y, t)
 	# 4t(1-t) peaks at exactly 1.0 at t = 0.5 and is exactly 0 at both
-	# ends, so the arc cannot leave Keepy hovering on a rounding error.
+	# ends, so the arc cannot leave Keepy hovering on a rounding error --
+	# it lands exactly ON the base line, whatever that line is.
 	var height: float = _hop_height * 4.0 * t * (1.0 - t)
-	global_position = Vector3(ground.x, height, ground.z)
+	global_position = Vector3(ground.x, base + height, ground.z)
 	_body.scale = _squash_at(t)
 	_body.rotation_degrees.x = _base_pitch - PITCH_DEG * sin(PI * t)
 
@@ -500,7 +532,13 @@ func _squash_at(t: float) -> Vector3:
 func _on_hop_finished() -> void:
 	_state = State.IDLE
 	_hop_height = HOP_HEIGHT
-	global_position = Vector3(_hop_to.x, 0.0, _hop_to.z)
+	# Snapped to the END of the base line, not to zero. Identical for
+	# every plateau hop, where that line is flat at zero; for the dive it
+	# is what puts the feet on the water surface instead of teleporting
+	# them from wherever the tween's last frame happened to fall.
+	global_position = Vector3(_hop_to.x, _hop_to_y, _hop_to.z)
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
 	_body.rotation_degrees.x = _base_pitch
 	# Landing recoil, then back to rest. Started AFTER the hop tween has
 	# finished so it can never be killed by the next hop mid-recoil -- the
