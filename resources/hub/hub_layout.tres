@@ -901,54 +901,46 @@ props = [{
 "position": Vector3(15.5, 0, -19),
 "rotation_y": 0.0,
 "scale": 1.000,
-"offshore": true,
 "type": &"greatlake"
 }, {
 "position": Vector3(-12, 0, -19.5),
 "rotation_y": 0.0,
 "scale": 1.000,
-"offshore": true,
 "type": &"greatlake"
 }, {
 "position": Vector3(17.372, 0, -12.464),
 "rotation_y": 0.0,
 "scale": 1.000,
-"offshore": true,
 "radius": 3.20,
 "type": &"islet"
 }, {
 "position": Vector3(17.372, 0, -12.464),
 "rotation_y": 290.9,
 "scale": 1.000,
-"offshore": true,
 "variant": 0,
 "type": &"landmark"
 }, {
 "position": Vector3(6.836, 0, -20.528),
 "rotation_y": 0.0,
 "scale": 1.000,
-"offshore": true,
 "radius": 3.40,
 "type": &"islet"
 }, {
 "position": Vector3(6.836, 0, -20.528),
 "rotation_y": 259.4,
 "scale": 1.000,
-"offshore": true,
 "variant": 1,
 "type": &"landmark"
 }, {
 "position": Vector3(19.884, 0, -25.496),
 "rotation_y": 0.0,
 "scale": 1.000,
-"offshore": true,
 "radius": 3.00,
 "type": &"islet"
 }, {
 "position": Vector3(19.884, 0, -25.496),
 "rotation_y": 56.1,
 "scale": 1.000,
-"offshore": true,
 "variant": 2,
 "type": &"landmark"
 }, {
@@ -965,19 +957,16 @@ props = [{
 "position": Vector3(16.748, 0, -14.656),
 "rotation_y": 106.0,
 "scale": 1.000,
-"offshore": true,
 "type": &"pontoon"
 }, {
 "position": Vector3(9.236, 0, -20.104),
 "rotation_y": -10.0,
 "scale": 1.000,
-"offshore": true,
 "type": &"pontoon"
 }, {
 "position": Vector3(18.7, 0, -23.736),
 "rotation_y": -124.0,
 "scale": 1.000,
-"offshore": true,
 "type": &"pontoon"
 }, {
 "position": Vector3(-26.89, 0, -7.97),
