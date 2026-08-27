@@ -88,6 +88,18 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _battle_button: Button = $FallbackMenu/Panel/VBoxContainer/BattleButton
 @onready var _mooring: BoatMooring = $Mooring
 
+## The 3D root, and the ONE reason this path is held: the impact splash is
+## parented HERE and never under Props.
+##
+## That is not tidiness, it is what keeps a transient node out of a
+## permanent budget. Every draw-node count this project publishes --
+## HubPerfBaseline's, DivingBoardProbe PHASE E's -- walks
+## World/Props and nothing else. A splash parented under Props would be
+## counted as a prop for the fraction of a second it exists, so the number
+## would depend on WHEN the probe happened to sample, which is the kind of
+## measurement that reads as a regression and is not one.
+@onready var _world: Node3D = $WorldViewport/SubViewport/World
+
 var _portals: Array[HubPortal] = []
 
 ## The stream, arc-length parameterised, built from the spine HubBuilder
@@ -133,6 +145,27 @@ var _keepy_tint_tween: Tween = null
 ## settle.
 var _keepy_wet: bool = false
 
+## Set when a dive LEAVES the board, consumed by the landing that ends it.
+##
+## WHY A LATCH AND NOT A STATE READ. By the time the dive's landing is
+## emitted the state is already back to IDLE -- _on_hop_finished sets it
+## before it emits, and the dive goes through that same function on
+## purpose so the water tint and every other landing listener keep working
+## without knowing a board exists. So a listener cannot tell a dive's
+## landing from an ordinary hop's by asking, and the only honest way to
+## know is to have been told when the dive started.
+##
+## Armed on board_dived, which fires once inside dive(). Consumed in
+## _on_hop_landed, where the landing position and the water answer are
+## both already in hand -- so the effect uses the SAME water test the tint
+## uses, not a second one that could disagree with it.
+var _dive_pending: bool = false
+
+## The waterline pulse, held so a second dive cannot leave two tweens
+## fighting over one uniform. Killed and restarted rather than queued: the
+## newest impact is the one worth showing.
+var _keepy_waterline_tween: Tween = null
+
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
 	# the swamp safe-area paint (this is still the one screen every way
@@ -162,6 +195,7 @@ func _ready() -> void:
 	_keepy.ride_started.connect(_on_ride_started)
 	_keepy.ride_ended.connect(_on_ride_ended)
 	_keepy.became_idle.connect(_on_keepy_idle)
+	_keepy.board_dived.connect(_on_board_dived)
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -366,7 +400,30 @@ func _on_hop_landed(position: Vector3) -> void:
 	# ground it left from. Both of the branches below return early, so a
 	# tint placed after them would simply stop updating on the landings that
 	# do something -- silently, and only sometimes.
-	_set_keepy_wet(_water != null and _water.contains(position))
+	var in_water: bool = _water != null and _water.contains(position)
+	_set_keepy_wet(in_water)
+
+	# THE IMPACT, and it is consumed here for two reasons that both matter.
+	#
+	# It sits immediately under the tint and above every branch that
+	# returns, for the reason the tint itself is written here: the branches
+	# below leave this function early, so an effect placed after them would
+	# simply stop firing on the landings that do something -- silently, and
+	# only sometimes.
+	#
+	# And it reuses `in_water` rather than asking the water again. One
+	# landing, one water answer: a second test could drift from the first
+	# by a float, and then Keepy would be tinted without a splash or
+	# splashed without a tint on exactly the rim cases HubWater's own two
+	# margins exist to document.
+	#
+	# The latch is cleared whatever the answer, so a dive back to the
+	# LADDER FOOT -- dry land, the board's other target -- disarms it
+	# instead of leaving it primed for the next unrelated landing.
+	if _dive_pending:
+		_dive_pending = false
+		if in_water:
+			_on_water_impact(position)
 
 	# The landing that finishes a boarding walk starts the ride, before
 	# anything else looks at where it landed.
@@ -569,6 +626,87 @@ const KEEPY_TINT_FADE_S: float = 0.18
 ## is Mathieu's, not this file's.
 const KEEPY_WATERLINE_Y: float = 0.45
 
+# ======================= THE WATER IMPACT =======================
+#
+# What a dive into water gets that an ordinary landing does not: the
+# waterline rides UP him for a quarter of a second, and a ring spreads on
+# the surface where he went in. Both are transient, both are keyed on the
+# dive's own landing, and a dive back down to the ladder foot -- dry land
+# -- gets neither.
+#
+# ⚠️ NO PARTICLE SYSTEM, and that is a decision taken before this batch
+# rather than a shortcut inside it. There is not one GPUParticles3D or
+# CPUParticles3D anywhere in this repository -- not in the hub, not in
+# Chased, not in Battle. Introducing the project's first one inside an
+# effect nobody can look at until it reaches staging would put an unproven
+# rendering technology and an unproven effect on the same commit, with no
+# way to tell which of them was at fault. A MeshInstance3D with an
+# unshaded material and a scale/alpha tween is the mechanism this screen
+# already uses everywhere else, and it is the one used here.
+
+## How far up Keepy the waterline is thrown by the impact, and back down
+## to KEEPY_WATERLINE_Y after.
+##
+## The pulse is driven through the SAME uniform the shipped waterline
+## uses, so the shader file is not touched by this batch at all -- and it
+## must not be: the one time that shader was edited it took a device round
+## trip to find that the edit had cost it its depth write. The uniform was
+## already proven tweenable in the batch that shipped it, on this same
+## material, and this reuses that proof rather than re-deriving it.
+const KEEPY_SPLASH_WATERLINE_Y: float = 0.92
+
+## Up fast, down slow, and the asymmetry is the whole read: an impact is a
+## sudden displacement of water followed by it settling back, so a rise and
+## fall of equal length would read as a pulse rather than as a splash.
+## Same shape, and the same reason, as the pursuer's drop cue in Chased.
+const KEEPY_SPLASH_RISE_S: float = 0.09
+const KEEPY_SPLASH_FALL_S: float = 0.19
+
+## The height the ring is drawn at, and it is ABOVE EVERY WATER SURFACE ON
+## THE PLATEAU rather than at any one of them.
+##
+## MEASURED on the built tree, not read off the constants: the five discs'
+## TOP faces sit at 0.0270 / 0.0295 / 0.0800 / 0.0800 / 0.0950. A ring at
+## a body's own height would need a second copy of that body's height
+## living here, and this project has already paid for one number kept in
+## two files. One number that clears all five is a single inequality a
+## probe can assert against the built scene, which a per-body table is not.
+##
+## The cost is real and is not hidden: on the great lake, whose surface is
+## the lowest at 0.0270, the ring floats 0.0930 above the water -- 6.9% of
+## Keepy's 1.3501. The error is deliberately in the SAFE direction. A ring
+## a few centimetres high reads as spray; a ring a few centimetres low is
+## drawn INSIDE the disc and reads as nothing at all, which is exactly
+## what the isolation probe rendered when this constant was first written
+## against the disc's centre instead of its top face.
+const SPLASH_RING_Y: float = 0.12
+
+## The ring's reach, in metres, at the end of its spread.
+const SPLASH_RING_RADIUS: float = 1.15
+
+## How long the ring takes to open, and how long it lives. It fades over
+## the whole of its life while it is still spreading, so it never sits
+## still at full size -- a ring that stops is a prop, a ring that is still
+## moving when it disappears is a splash.
+const SPLASH_GROW_S: float = 0.20
+const SPLASH_LIFE_S: float = 0.34
+
+## The ring's colour. Near-white rather than the water's own hue: the
+## water is already turquoise at 0.95 alpha, and a turquoise ring on it
+## separates only by alpha. Both were rendered -- see the sheet named in
+## the batch notes -- and this is a starting value for a device call, not
+## a measured optimum.
+const SPLASH_RING_COLOR: Color = Color(0.918, 1.0, 0.988, 0.85)
+
+## Tessellation, stated rather than defaulted. A Godot TorusMesh left
+## alone is 64x32, i.e. 4096 triangles for one transient node -- the exact
+## "primitive left at the engine default" trap this project has now
+## measured five separate times. 24 ring segments keep the circle round at
+## this size; the tube is nearly edge-on to the camera and needs almost
+## nothing.
+const SPLASH_RING_SEGMENTS: int = 24
+const SPLASH_TUBE_SEGMENTS: int = 4
+
 ## The waterline shader, applied to Keepy's own material rather than to a
 ## whole-body property. See the shader for why the split cannot be done
 ## any other way on this asset.
@@ -632,6 +770,107 @@ func _set_keepy_wet(wet: bool) -> void:
 ## carried over -- it is (1,1,1,1) on this asset, i.e. a no-op multiply,
 ## and folding a would-be tint into it is exactly the whole-body effect
 ## this batch replaces.
+## Armed by the dive leaving the board. See _dive_pending for why the
+## landing cannot work this out for itself.
+func _on_board_dived() -> void:
+	_dive_pending = true
+
+## A dive that ended IN WATER. Never called for the board's other target,
+## the ladder foot, which is dry land.
+func _on_water_impact(position: Vector3) -> void:
+	_pulse_keepy_waterline()
+	_spawn_impact_ring(position)
+
+## Throws the waterline up Keepy and lets it settle back.
+##
+## ⚠️ IT ALWAYS ENDS ON KEEPY_WATERLINE_Y, and that is load-bearing rather
+## than tidy. This uniform is the shipped waterline; a pulse that was
+## interrupted and left it high would leave Keepy soaked to the shoulders
+## for the rest of the session, on dry land included, with nothing to say
+## why. So the previous pulse is KILLED rather than allowed to finish, and
+## the fall is part of the same tween as the rise -- there is no path
+## through this function that raises the line without also scheduling its
+## return.
+func _pulse_keepy_waterline() -> void:
+	_ensure_keepy_material()
+	if _keepy_material == null:
+		return
+	if _keepy_waterline_tween != null and _keepy_waterline_tween.is_valid():
+		_keepy_waterline_tween.kill()
+	_keepy_waterline_tween = create_tween()
+	_keepy_waterline_tween.tween_property(
+		_keepy_material, "shader_parameter/water_y",
+		KEEPY_SPLASH_WATERLINE_Y, KEEPY_SPLASH_RISE_S) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_keepy_waterline_tween.tween_property(
+		_keepy_material, "shader_parameter/water_y",
+		KEEPY_WATERLINE_Y, KEEPY_SPLASH_FALL_S) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+## The ring on the surface: one MeshInstance3D, built here, spread and
+## faded, then freed.
+##
+## ⚠️ CULL_BACK, NOT CULL_DISABLED, and this is the batch's one carried
+## scar. A torus is a CLOSED body. The waterline shader's device failure
+## was an alpha-writing material with cull_disabled on a closed body: with
+## no depth write, the far side paints over the near side in index-buffer
+## order, which is fixed while which-side-is-far is not -- so the picture
+## comes out right at some yaws and wrong at others. An alpha ring lying
+## next to an alpha water disc is the same neighbourhood, so the back
+## faces are dropped and only the near surface ever draws.
+##
+## Parented to the 3D world root and never to Props -- see _world.
+func _spawn_impact_ring(position: Vector3) -> void:
+	if _world == null:
+		return
+	var torus := TorusMesh.new()
+	# Authored at unit-ish size and grown by SCALE, so one mesh serves any
+	# reach and the tween has a single property to drive.
+	torus.inner_radius = 0.78
+	torus.outer_radius = 1.0
+	torus.rings = SPLASH_RING_SEGMENTS
+	torus.ring_segments = SPLASH_TUBE_SEGMENTS
+
+	var material := StandardMaterial3D.new()
+	# UNSHADED, the project's standing rule for every surface on this
+	# screen: there is no DirectionalLight3D in this scene at all, so a lit
+	# surface would not return the colour written here.
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = SPLASH_RING_COLOR
+	# Asked for explicitly. albedo_color's alpha is ignored outright while
+	# transparency stays DISABLED -- the ring would pop in fully opaque and
+	# never fade, with no error to say so. The same trap the water discs
+	# themselves carry a comment about.
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_BACK
+
+	var ring := MeshInstance3D.new()
+	ring.mesh = torus
+	ring.set_surface_override_material(0, material)
+	# FLAT IN THE WATER'S OWN PLANE. A torus is authored standing up, so
+	# the quarter turn is what lays it down; a ring lying on the surface
+	# reads as the water moving, where an upright one reads as a sign
+	# planted in it.
+	ring.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	ring.position = Vector3(position.x, SPLASH_RING_Y, position.z)
+	ring.scale = Vector3.ONE * 0.001
+	_world.add_child(ring)
+
+	# The tween is created ON THE RING, so it is bound to it: if anything
+	# frees the ring early the tween goes with it instead of writing to a
+	# freed object.
+	var grow := ring.create_tween()
+	grow.set_parallel(true)
+	grow.tween_property(ring, "scale", Vector3.ONE * SPLASH_RING_RADIUS, SPLASH_GROW_S) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	grow.tween_property(material, "albedo_color:a", 0.0, SPLASH_LIFE_S) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	# EXPLICIT, and chained after the parallel block rather than left to
+	# the node outliving the scene. A cue that leaks one node per dive is a
+	# leak that only shows up after a long session, which is the hardest
+	# kind to attribute later.
+	grow.chain().tween_callback(ring.queue_free)
+
 func _ensure_keepy_material() -> void:
 	if _keepy_material_resolved:
 		return
