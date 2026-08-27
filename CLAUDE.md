@@ -17034,3 +17034,236 @@ marqueur unique et non deux marqueurs independants.
 `index.wasm` de l'export local : **35 376 909** octets / md5
 `af4a8fc2925d992348eb30deeeb54360` -- identique au fingerprint permanent.
 `index.pck` **5 874 256**, marqueur, **jamais** preuve d'identite.
+
+## LA LIGNE DE FLOTTAISON ETAIT UN DEFAUT DE PROFONDEUR, PAS DE REPERE : une ligne, `ALPHA = tex.a`, et elle coutait le depth write (27 aout 2026)
+
+Branche `claude/waterline-shader-orientation-e5hnyr`, partie de `staging`
+(`3e4dd35`, exactement la ref annoncee ; `main` a `a007e78`, **INTOUCHE**).
+Regle n°1 verifiee AU DEBUT : tri des refs distantes par date et
+comparaison des ARBRES -- `origin/staging` est la ref la plus recente du
+depot et la branche du lot precedent (`c88de88`) en est deja un ancetre,
+**aucune session concurrente**.
+
+Regression constatee sur device par Mathieu (iPhone, Safari, navigation
+privee, staging) : la teinte se lit correctement de face et **faux des que
+Keepy n'est pas de face** -- un bloc central teinte avec la queue et le bas
+qui ressortent en roux par-dessus, et un corps delave blanc-creme **sur
+l'herbe**, hors de l'eau, ou la teinte est pourtant gatee a zero.
+
+### ⚠️ LES DEUX HYPOTHESES DU BRIEF SONT L'UNE ET L'AUTRE ECARTEES
+
+**H1 -- MODEL_MATRIX / mauvais espace : REFUTEE, par lecture ET par
+mesure.** Le shader calcule bien `v_world = (MODEL_MATRIX * vec4(VERTEX,
+1.0)).xyz`, c'est-a-dire l'espace MONDE, et `VERTEX` est bien en espace
+modele faute de `render_mode world_vertex_coords`. La mesure le confirme
+plus fort que la lecture : une fois l'etat de rendu corrige, l'image est
+**identique au pixel pres a huit azimuts** a celle de la matiere d'avant --
+un calcul dans le mauvais espace ne peut pas produire huit zeros.
+
+⚠️ Et une raison de PRINCIPE qui aurait du ecarter H1 d'emblee : **le
+lacet ne touche pas Y.** Keepy ne pivote qu'autour de Y (`Yaw`), donc
+l'espace modele et l'espace monde ne different que par une echelle et un
+decalage sur cet axe -- une bande horizontale reste horizontale a tout
+lacet, dans les deux espaces. H1 ne pouvait pas expliquer une correlation
+a l'orientation.
+
+**H2 -- precision `mediump` du varying en WebGL2 mobile : NON NECESSAIRE.**
+Le defaut **se reproduit integralement dans le sandbox** sous
+`opengl3` bureau / llvmpipe, ou la precision n'est pas en cause. H2 n'a donc
+plus rien a expliquer. Ce n'est pas une refutation -- elle n'a pas ete
+testee sur device -- c'est un rasoir : la cause trouvee suffit.
+
+### LA CAUSE : `ALPHA = tex.a` MET LE MATERIAU DANS LA PASSE TRANSPARENTE
+
+**MESURE** : ecrire `ALPHA` coute au materiau son ecriture de profondeur.
+Ce n'est pas deduit -- c'est ce que dit D4 ci-dessous, ou forcer
+`depth_draw_always` TOUT EN gardant l'ecriture donne exactement le meme
+resultat que retirer l'ecriture, au pixel pres, aux huit azimuts. Le seul
+terme qui change entre ces deux-la est le depth write.
+
+**MECANISME (documente, non mesure ici)** : dans Godot, assigner `ALPHA`
+dans un shader spatial classe le materiau dans la passe TRANSPARENTE,
+laquelle n'ecrit pas la profondeur par defaut. C'est le NOM de ce que la
+mesure montre ; rien dans ce lot ne l'observe directement, et rien n'en
+depend -- la mesure tient sans lui.
+
+Avec `cull_disabled` (qui est le
+bon reglage : la matiere d'origine rapporte `cull_mode = 2`), la face
+ARRIERE d'un corps ferme repeint alors la face avant **dans l'ordre du
+buffer d'indices**. Cet ordre est FIXE ; le cote qui est loin ne l'est pas.
+D'ou une image juste a certains lacets et fausse aux autres -- exactement la
+forme du rapport.
+
+⚠️ **La matiere que ce shader remplace est OPAQUE** : `transparency = 0`,
+`cull_mode = 2`, `depth_draw = 0`, `shading = 0`, `albedo = (1,1,1,1)`. Elle
+n'a **jamais** utilise l'alpha de cette texture. L'ecriture etait gratuite.
+
+### LA PREUVE, et pourquoi la metrique evidente a du etre JETEE
+
+⚠️ **La metrique intuitive -- « tout pixel mouille est sous tout pixel sec »
+-- est FAUSSE**, et l'avoir crue aurait fait rapporter la camera comme un
+defaut. Un plan horizontal ne se projette pas sur une seule rangee sous une
+camera inclinee : la recon avait deja mesure `y = 0.55` s'etalant sur
+**147 px** de rangees a travers la seule profondeur de Keepy. Le
+recouvrement de rangees a donc un PLANCHER legitime de cette taille. Il est
+imprime, avec son plancher nomme, et **rien n'en est conclu**.
+
+Ce dont tout est conclu est **la difference contre une reference a
+profondeur correcte**, ou aucune geometrie de camera n'entre. Et le point
+qui rend la preuve courte : **a `tint_fraction = 0` la couleur que calcule
+le shader est `mix(a, a, x)`, c'est-a-dire `a`** -- arithmetiquement la meme
+expression que la matiere qu'il remplace. Une difference non nulle la ne
+PEUT pas etre une couleur.
+
+**D2 -- Keepy SEC, shader a 0 contre la matiere d'origine, huit azimuts :**
+
+| yaw | 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 |
+|---|---|---|---|---|---|---|---|---|
+| **avant** (px differents) | 94 | 186 | **13 438** | **25 202** | **19 329** | **17 913** | **12 883** | 278 |
+| avant (pire ecart canal) | 0,56 | 0,57 | **0,89** | 0,73 | 0,71 | 0,73 | 0,89 | 0,76 |
+| **apres** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+
+C'est la troisieme capture de Mathieu, chiffree : hors de l'eau, la teinte
+a zero, et le shader changeait quand meme l'image de 25 202 pixels sur les
+~26 000 que Keepy occupe.
+
+**D4 -- QUEL TERME porte le defaut.** Quatre variantes du MEME calcul de
+couleur, ne differant que par l'etat de rendu, chacune comparee a la
+reference a profondeur correcte :
+
+| variante | 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 |
+|---|---|---|---|---|---|---|---|---|
+| livre (`cull_disabled`, ecrit `ALPHA`) | 85 | 177 | 13 191 | **24 470** | 18 599 | 17 545 | 12 558 | 255 |
+| **sans `ALPHA`** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+| **`ALPHA` + `depth_draw_always`** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+| `ALPHA` + `cull_back` | 12 | 43 | 915 | 1 397 | 4 362 | 4 753 | 835 | 49 |
+
+⚠️ **Les deux lignes a zero sont DEUX SHADERS DIFFERENTS qui s'accordent au
+pixel pres a huit angles.** Rien d'autre ne leur est commun que d'ecrire la
+profondeur : c'est ce qui epingle la cause sur le depth write et pas sur la
+couleur. La quatrieme ligne montre que couper les faces arriere **attenue
+sans fermer** -- utile pour comprendre le mecanisme, inutile comme correctif.
+
+**D1 -- la correlation a l'orientation, quantifiee.** Nombre de pixels
+lus MOUILLES, dans l'eau, a `tint_fraction = 0,75` :
+
+| yaw | 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 |
+|---|---|---|---|---|---|---|---|---|
+| avant, px | 2 251 | 2 838 | 9 073 | **12 084** | 10 452 | 10 298 | 8 807 | 4 523 |
+| **apres, px** | 2 251 | 2 824 | 4 430 | 4 657 | 2 703 | 2 380 | 4 581 | 4 481 |
+| avant, **% de sa silhouette** | 11,1 | 14,1 | 36,1 | 46,5 | 52,8 | **55,0** | 34,2 | 17,4 |
+| **apres, %** | 11,1 | 14,1 | 17,6 | 17,9 | 13,6 | 12,7 | 17,8 | 17,3 |
+
+La derniere paire de lignes est la comparaison honnete : le compte brut de
+pixels bouge aussi parce que sa silhouette n'est pas la meme de face et de
+profil (il a une queue). En PART de sa silhouette, la zone teintee passait
+de **11,1 % a 55,0 % par le seul lacet -- un facteur 4,95**. Apres, elle
+tient dans **11,1 a 17,9 %, un facteur 1,61**, et ce qui reste est la
+variation legitime d'un corps qui n'est pas de revolution.
+
+Le surplus etait sa face ARRIERE -- dont la moitie basse est sous la ligne
+-- peinte par-dessus la moitie haute et seche de sa face avant. C'est mot
+pour mot « un bloc central teinte avec la queue et le bas en roux
+par-dessus ».
+
+### LE CORRECTIF : retirer l'ecriture, PAS forcer la profondeur
+
+`depth_draw_always` aplatit les memes chiffres (ligne 3 ci-dessus) et **n'est
+pas ce qui est fait**. Il laisserait le materiau dans la file alpha, trie
+comme un objet entier contre les cinq disques d'eau, eux-memes transparents
+-- on echangerait un bug visible contre un bug latent. Retirer l'ecriture
+restaure **exactement** l'etat de la matiere remplacee, et la preuve que
+rien n'est perdu est que D2 tombe a **0 partout** : la texture n'avait
+aucun alpha a porter.
+
+### ⚠️ TROIS SONDES SONT PASSEES VERTES SUR CE BUG, DONT DEUX ECRITES DANS CE LOT
+
+C'est le vrai enseignement, et il ne porte pas sur le shader.
+
+**1. `WaterTintProbe` etait 36/36 verte avec le defaut dedans.** Elle lit
+des UNIFORMES, et tous les uniformes etaient corrects : la hauteur, la
+fraction, la couleur. Aucun d'eux n'a le moindre rapport avec la surface qui
+gagne le pixel.
+
+**2. La premiere PHASE G que ce lot ecrit POUR fermer ca est passee verte
+sur le bug, 8/8.** Cause : PHASE D emmene Keepy a `x ~ 12` par un ride et
+rien ne le ramene, donc la phase comparait deux images **qui ne contenaient
+pas Keepy**. Son assertion est « ces deux rendus sont identiques », et deux
+rendus d'un Keepy hors champ le sont gratuitement.
+
+**3. La deuxieme PHASE G a echoue les huit azimuts sur un shader
+CORRECT.** Ramener Keepy ne suffisait pas : `HubCamera` le poursuit par un
+lerp exponentiel, donc les deux rendus d'une paire differaient par la derive
+de la camera ENTRE eux. La signature est sans ambiguite une fois qu'on la
+regarde -- **42 624, 30 420, 23 820, 16 315, 9 882, 6 919, 5 986, 5 015**,
+une decroissance monotone qui est la camera qui se pose, pas un materiau.
+
+**Parade, structurelle et pas cosmetique.** La phase (a) repose Keepy a
+l'origine, (b) **SNAPPE** la camera a la pose qu'elle aurait atteinte et
+coupe son `_process`, et (c) porte un **CONTROLE D'AVEUGLEMENT** : avant
+d'avoir le droit de conclure, elle teinte Keepy et exige que le nombre
+BOUGE. **Une sonde dont l'assertion est une EGALITE doit d'abord prouver
+qu'elle sait voir une difference, sinon elle mesure son propre angle mort.**
+
+⚠️ Le controle mesure **2 251 px** -- et c'est exactement le nombre de
+pixels mouilles que `WaterlineOrientationProbe` compte a yaw 0 par une
+toute autre voie. Deux sondes, deux mises en scene, un seul chiffre.
+
+**Verifiee ROUGE avant d'etre verte**, camera figee, sur l'arbre reverti :
+
+| | controle | yaw 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 | exit |
+|---|---|---|---|---|---|---|---|---|---|---|
+| shader d'avant | 2 291 | 94 | 185 | **13 461** | **25 342** | 19 436 | 18 078 | 12 926 | 278 | **1** |
+| shader corrige | 2 251 | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** | **0** |
+
+⚠️ **Cette ligne rouge reproduit D2 a quelques pixels pres** (94 / 186 /
+13 438 / 25 202 / 19 329 / 17 913 / 12 883 / 278) alors que les deux sondes
+ne partagent ni scene, ni masque, ni chemin de code. Et sa FORME est le
+rapport de Mathieu : **94 px a yaw 0** -- de face, c'est juste -- contre
+13 000 a 25 000 des qu'on tourne.
+
+### ⚠️ LIMITE A NE PAS SOUS-ENTENDRE
+
+Le sandbox rend en **llvmpipe / opengl3 BUREAU** ; le jeu tourne en **WebGL2
+sous Safari iOS**. Le vert obtenu ici **ne prouve pas** le vert sur device --
+c'est precisement ce qui vient d'echouer au lot precedent. Ce que ce lot
+peut affirmer : le defaut se reproduit dans le sandbox, sa cause y est
+isolee a un terme unique, et ce terme retire l'image redevient identique au
+pixel pres a celle d'avant le shader. Ce que seul Mathieu peut trancher :
+que ce soit aussi vrai sur son telephone.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+50 276 070 et 1 073 228 327 octets, aucune troncature silencieuse). Import
+headless **exit 0**, **24 `.scn`** (import complet verifie, pas suppose --
+le piege du faux-rouge par import tronque est controle). Export Web release
+**exit 0**, **0** ligne d'erreur ou de parse.
+
+`index.wasm` **35 376 909** octets -- le fingerprint permanent de tout lot
+qui ne touche pas le code moteur, ce qu'un shader et deux sondes sont.
+`index.pck` **5 876 560**, marqueur, **jamais** preuve d'identite.
+
+**Piege payload tenu** : sur **228** lignes `Storing File`, **0** pour
+`res://scripts/dev`, `res://assets_source`, `res://docs`, `res://web/`,
+`res://build` ou `firebase.json`. ⚠️ La chaine `WaterlineOrientationProbe`
+apparait bien dans le `.pck` -- comme `WaterTintProbe` avant elle -- parce
+que `res://.godot/uid_cache.bin` EST packe et les porte. **Aucun fichier de
+`scripts/dev` n'est stocke**, ce qui est le controle qui compte ; c'est
+exactement l'artefact deja consigne pour `assets_source`.
+`keepy_waterline.gdshader` **est** packe, comme il le doit.
+
+Sondes, **toutes exit 0** : `WaterTintProbe` (**48 OK, 0 echec** -- PHASE G
+comprise, controle 2 251 px, pire ecart 0 px, et **98 draw nodes hors
+portails**, inchange), `WaterlineOrientationProbe`, `AssetContractAudit`
+(**12/12 visuels, pas un collider deplace**), `DeathModelAudit`,
+`ChargerShapeProbe`, `ProbeTimeoutAudit` (**49 -> 50 sondes scenes**,
+toutes armees -- le +1 est `WaterlineOrientationProbe`, et le 49 est
+**MESURE sur `origin/staging` en worktree separe**, pas deduit du fait
+qu'un seul `.tscn` a ete ajoute).
+
+**Les V1-V8 du lot precedent tiennent** : PHASE A cinq corps, PHASE B les
+deux marges de rim float32, PHASE C la teinte atteint le materiau DESSINE
+et porte la bonne hauteur, PHASE D un ride ne teinte pas, PHASE F les trois
+portails tirent encore, PHASE E 98 draw nodes.

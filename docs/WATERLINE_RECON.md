@@ -74,7 +74,25 @@ caught.
 
    All four are identical and all four are ~one flip per column: **the
    boundary is clean in every combination.** What I read as speckle was
-   the fur texture's own markings on a profile pose. The re-shot ladder
+   the fur texture's own markings on a profile pose.
+
+   > ⚠️ **CORRECTION, 27 August 2026 -- this table is CORRECT and it is
+   > also the reason a real bug shipped. Do not read it as "ALPHA was
+   > tested and is harmless".**
+   >
+   > Flips-per-column measures how CLEAN the waterline EDGE is. It cannot
+   > see WHICH SURFACE of a closed body won the pixel, so a Keepy whose
+   > far side is painting over his near side still flips once per column
+   > and still scores 0.96. The `ALPHA` write in row 1 costs the material
+   > its depth write -- it moves into the transparent pass -- and combined
+   > with `cull_disabled` that is exactly the failure this metric is blind
+   > to. Re-measured at eight azimuths as pixels differing from a
+   > depth-correct reference, row 1 scores 85 to 24 470 and rows 2 and 4
+   > score 0. See CLAUDE.md, "LA LIGNE DE FLOTTAISON ETAIT UN DEFAUT DE
+   > PROFONDEUR", and `scripts/dev/WaterlineOrientationProbe.gd`.
+   >
+   > Every capture in this document is ALSO at a single pose, which is the
+   > other half of why nothing here caught it. The re-shot ladder
    below ranges 0.36 to 1.55 flips/column, the higher figures being rungs
    where the line legitimately crosses the tail and the body separately.
 
