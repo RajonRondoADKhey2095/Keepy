@@ -17267,3 +17267,45 @@ qu'un seul `.tscn` a ete ajoute).
 deux marges de rim float32, PHASE C la teinte atteint le materiau DESSINE
 et porte la bonne hauteur, PHASE D un ride ne teinte pas, PHASE F les trois
 portails tirent encore, PHASE E 98 draw nodes.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`b9fed08`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `6bd5bde` des deux cotes ET `git diff`
+vide, verifie AVANT le push). CI run **#269** (id 33083855053) **verte** --
+`Deploy to Vercel [STAGING -- staging]` succes (14:47:18 -> 14:47:29),
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `a007e78`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et dans les DEUX sens** :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #268) | `1787839263` | **14:01:03** |
+| **apres (ce lot, run #269)** | **`1787842018`** | **14:46:58** |
+
+L'epoch d'apres tombe **a l'interieur de l'etape `Export Web build`** du run
+#269 (14:46:54 -> 14:46:59), et **les DEUX lectures portent
+`x-vercel-cache: MISS` avec `age: 0`**, la valeur d'avant ayant ete relevee
+**avant le merge**. La bascule est donc prouvee dans les deux sens et pas
+deduite du log.
+
+⚠️ **Un SEUL marqueur, dit plutot que sous-entendu** : `index.pck` /
+`index.wasm` servis n'ont pas ete relus sur le service. Le `CACHE_VERSION`
+lu aux DEUX bouts en MISS/age 0 est la forme la plus forte que ce fichier
+documente pour un marqueur unique, mais ce ne sont pas deux marqueurs
+independants.
+
+⚠️ **Piege de lecture rencontre, et REFUSE** : une lecture intermediaire est
+revenue `HIT` avec **`age: 78`**. Elle portait encore l'ancienne valeur, ce
+qui avait l'air de confirmer que le job tournait -- **ce n'est PAS une
+mesure de fraicheur** et elle n'a donc rien confirme du tout. Seules les
+deux lectures MISS/age 0 comptent.
+
+⚠️ **Et l'INVERSE du piege « API Actions perimee », pour la deuxieme fois
+consignee** : deux appels `list_workflow_jobs` a 30 s d'intervalle sont
+revenus **byte-identiques**, figes sur « Import project resources » -- la
+forme exacte du piege documente. **Ce n'en etait pas un.** L'horloge le dit :
+il n'etait que 14:45, l'import avait demarre a 14:44:25, et il a reellement
+dure **2 min 29 s** (14:44:25 -> 14:46:54). Verifier l'HEURE avant d'accuser
+l'API reste la parade, dans les deux sens.
