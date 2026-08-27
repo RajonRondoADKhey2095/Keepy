@@ -104,6 +104,12 @@ var _ride_half_width: float = 0.0
 ## so a player who changes their mind simply walks somewhere else.
 var _boarding: bool = false
 
+## Set while a hop chain is walking to the ladder foot, cleared the moment
+## the climb starts or the chain runs out. Same shape and same lifetime as
+## _boarding above -- and separate from it because a player who taps the
+## boat mid-walk to the ladder means the boat.
+var _climbing: bool = false
+
 ## The five-body water test, built once from the geometry HubBuilder just
 ## drew. Never null after _ready(); a plateau with no water simply answers
 ## false to everything.
@@ -148,6 +154,8 @@ func _ready() -> void:
 	_water = HubWater.new(_builder, _route)
 
 	_tap.tapped_ground.connect(_on_tapped_ground)
+	_tap.tapped_ladder.connect(_on_tapped_ladder)
+	_setup_board()
 	_tap.tapped_boat.connect(_on_tapped_boat)
 	_keepy.hop_landed.connect(_on_hop_landed)
 	_keepy.ride_moved.connect(_on_ride_moved)
@@ -178,6 +186,27 @@ func _ready() -> void:
 ## density. Those two values are named `hub_*` in the palette rather than
 ## left as literals here, so the deviation is visible next to what it
 ## deviates from instead of hiding in a scene file.
+## How close a tap has to land to the ladder foot to mean "climb it", in
+## world units.
+##
+## The SAME 2.5 the boat uses (BoatMooring.BOARD_TAP_RADIUS), and for the
+## same measured reason: a ladder foot is a fraction of a unit across and
+## would be a target nobody can hit at this camera distance. Kept as its
+## own constant rather than reaching for the boat's -- they answer
+## questions about two different props, and one of them may well be
+## retuned on device without the other.
+const LADDER_TAP_RADIUS: float = 2.5
+
+## Hands the built board to whatever needs to know where it is. Called
+## once, after the props are built; a layout with no board leaves the tap
+## radius at zero and nothing downstream ever fires.
+func _setup_board() -> void:
+	var board: Dictionary = _builder.diving_board()
+	if board.is_empty():
+		return
+	_tap.ladder_foot = board["ladder"]
+	_tap.ladder_radius = LADDER_TAP_RADIUS
+
 func _apply_swamp_palette() -> void:
 	var env: Environment = _world_env.environment
 	if env == null:
@@ -236,10 +265,23 @@ func _on_tapped_ground(point: Vector3) -> void:
 	if _keepy.is_riding():
 		_keepy.leave_ride(point, _builder.ground_footprints())
 		return
+	# A tap while the board owns the body is intercepted BY STATE, exactly
+	# as the ride's is, and for the same reason: the point arrived resolved
+	# on the y = 0 ground plane, which is the only plane taps resolve
+	# against, so it can say WHICH WAY the player pointed but must never
+	# become somewhere to walk to. Standing on the deck it means dive;
+	# mid-climb or mid-dive it means nothing at all, and is dropped rather
+	# than queued -- a climb that could be interrupted would leave Keepy
+	# walking out of a ladder halfway up it.
+	if _keepy.is_on_board():
+		if _keepy.is_standing_on_board():
+			_keepy.dive(point)
+		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
 	# screen overruling them.
 	_boarding = false
+	_climbing = false
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -252,11 +294,51 @@ func _on_tapped_boat(point: Vector3) -> void:
 	if _keepy.is_riding() or _route == null:
 		return
 	_boarding = true
+	_climbing = false
 	_keepy.hop_to(point)
 	# Already standing at the boat: nothing to walk, so board on the spot
 	# rather than waiting for a landing that will never come.
 	if not _keepy.is_hopping():
 		_try_board(point)
+
+## A tap on the ladder foot. ONE tap buys the whole thing -- the hop chain
+## walks to the ladder and _on_hop_landed climbs on arrival -- because that
+## is exactly how a tap on the boat already behaves, and a board that
+## needed a second tap would be the one object on this screen that did.
+func _on_tapped_ladder(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board():
+		return
+	_boarding = false
+	_climbing = true
+	_keepy.hop_to(point)
+	# Already standing at the foot: nothing to walk, so climb on the spot
+	# rather than waiting for a landing that will never come.
+	if not _keepy.is_hopping():
+		_try_climb(_keepy.global_position)
+
+## Climbs if the landing is close enough to the ladder foot. Returns true
+## when the climb started, so the caller can stop looking at that landing.
+##
+## The proximity test is the SAME radius the tap used, for the reason the
+## boat's is: a player who tapped the ladder and walked to it cannot arrive
+## and be told they are not there yet.
+func _try_climb(position: Vector3) -> bool:
+	var board: Dictionary = _builder.diving_board()
+	if board.is_empty():
+		_climbing = false
+		return false
+	var foot: Vector3 = board["ladder"]
+	if Vector3(position.x, 0.0, position.z).distance_to(foot) > LADDER_TAP_RADIUS:
+		# NOT YET, and the intent SURVIVES -- the boarding walk's own
+		# defect, which passed its probe for a whole batch because the
+		# arrival happened to fall inside the radius on hop one. A climb
+		# further than one hop away must not lose its intent on the way.
+		return false
+	_climbing = false
+	_keepy.climb_board(board)
+	return true
 
 func _on_hop_landed(position: Vector3) -> void:
 	# NO PORTAL WHILE ABOARD. A ride emits no landings, so this branch
@@ -265,6 +347,17 @@ func _on_hop_landed(position: Vector3) -> void:
 	# failure it would cause (being carried into a sub-game the player was
 	# only sailing past) is exactly the kind that only shows up on device.
 	if _keepy.is_riding():
+		return
+	# NOR WHILE THE BOARD OWNS HIM. A climb and a dive emit no landings
+	# either, so this branch should be as unreachable as the one above --
+	# and it is here for the same reason: "no landing is emitted" is a
+	# property of KeepyHopper that could change, and the failure it would
+	# cause is being carried into a sub-game from the top of a ladder.
+	#
+	# The dive's OWN landing is deliberately not covered: by the time it
+	# fires the state is back to IDLE, because the water is ordinary
+	# walkable ground and a dive ends like any other leap.
+	if _keepy.is_on_board():
 		return
 
 	# WHERE KEEPY IS, decided before anything about what this landing goes
@@ -278,6 +371,12 @@ func _on_hop_landed(position: Vector3) -> void:
 	# The landing that finishes a boarding walk starts the ride, before
 	# anything else looks at where it landed.
 	if _boarding and _try_board(position):
+		return
+	# And the one that finishes a walk to the ladder starts the climb. Both
+	# sit AFTER the tint and BEFORE the portals, which is the whole reason
+	# the tint is written at the top of this function: a landing that goes
+	# on to climb still reports the ground it left from.
+	if _climbing and _try_climb(position):
 		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
@@ -325,6 +424,7 @@ func _try_board(toward: Vector3) -> bool:
 ## than leaving it armed: a later, unrelated landing must not board.
 func _on_keepy_idle() -> void:
 	_boarding = false
+	_climbing = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches
