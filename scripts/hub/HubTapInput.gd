@@ -60,6 +60,12 @@ signal tapped_ground(point: Vector3)
 ## same event.
 signal tapped_boat(point: Vector3)
 
+## Emitted INSTEAD of tapped_ground when the finger landed close enough to
+## the diving board's LADDER FOOT to mean "climb that", on the same
+## world-units terms the boat is picked out on. Same one-tap-one-signal
+## rule: a tap is a climb or a destination, never both.
+signal tapped_ladder(point: Vector3)
+
 ## The three nodes this needs, as scene-authored paths.
 ##
 ## NodePath and not a typed node export (`@export var camera: Camera3D`),
@@ -95,6 +101,16 @@ var mooring: BoatMooring = null
 ## What changed for a player: a tap outside is still pulled to the nearest
 ## reachable point rather than dropped, and a tap ON the great lake is now
 ## pulled to its shore instead of walking Keepy into the water.
+
+## The diving board's ladder foot, flat, and how close a tap has to land to
+## mean it. Vector3.INF until HubWorld hands over the built board, so a
+## layout with no board simply never emits tapped_ladder.
+##
+## Set from the BUILT board rather than read from the layout here: the
+## plank the player aims at and the foot this radius is measured from have
+## to be the same fact.
+var ladder_foot: Vector3 = Vector3.INF
+var ladder_radius: float = 0.0
 
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
@@ -155,5 +171,18 @@ func _handle_point(screen_point: Vector2) -> void:
 	# an eject. One tap, one signal, either way.
 	if mooring != null and mooring.accepts_boarding_tap(destination):
 		tapped_boat.emit(destination)
+		return
+	# THE LADDER, asked after the boat and on the same terms: a world-unit
+	# radius on the ground point, so the target does not shrink with
+	# distance the way a pixel one would. Ordered after the boat only
+	# because the boat came first; the two are metres apart at opposite
+	# ends of the plateau, so the order can never actually decide anything.
+	#
+	# Nothing is asked here about whether Keepy is FREE to climb. That is
+	# KeepyHopper's business, and it refuses from any state but standing
+	# still -- asking twice is how the two answers start to differ.
+	if ladder_radius > 0.0 and ladder_foot != Vector3.INF \
+			and Vector3(destination.x, 0.0, destination.z).distance_to(ladder_foot) <= ladder_radius:
+		tapped_ladder.emit(destination)
 		return
 	tapped_ground.emit(destination)

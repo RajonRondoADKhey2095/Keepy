@@ -136,6 +136,91 @@ const RIDE_SPEED_FLOOR: float = 5.8283
 ## only channel that says so without a sound or a new mesh.
 const EJECT_HOP_HEIGHT: float = 1.05
 
+## =====================================================================
+## THE BOARD
+
+## Wall-clock length of the ladder climb, ground to deck. Fixed rather
+## than derived from the height: the climb is scripted and uninterruptible,
+## so it is a beat in the screen's rhythm before it is a distance, and a
+## taller board should read as a taller board rather than as a longer wait.
+##
+## UNCHANGED by the 27 aout 2026 cadence rework below: that batch was asked
+## to change the RHYTHM of the climb, not its length, and it does not touch
+## this constant. What moved is how the same 0.85 s is spent.
+const CLIMB_DURATION: float = 0.85
+
+## The fraction of CLIMB_DURATION spent climbing RUNGS rather than mounting
+## the deck. Same value as before the 27 aout 2026 cadence rework, but its
+## meaning changed with it: this used to be "the fraction spent rising"
+## against a flat walk-out; now it is the boundary between the quantized
+## rung-by-rung tractions (see _apply_climb) and the final mounting hop
+## (see CLIMB_MOUNT_HOP_HEIGHT), which folds what used to be that flat
+## walk into one short arc onto the anchor.
+const CLIMB_RISE_FRACTION: float = 0.72
+
+## =====================================================================
+## CLIMB CADENCE (27 aout 2026)
+##
+## The climb used to be one smooth lerp from the ladder foot to the
+## anchor -- Mathieu's own word for it on device was "like an elevator".
+## The fix is rhythm, not distance: the rise is now RUNG_COUNT - 1
+## discrete tractions (RUNG_COUNT read off the board HubBuilder actually
+## built -- board["rung_heights"], never a second copy of its formula),
+## each a quick push followed by a still micro-pause, so the eye is given
+## a repeated grab-and-settle beat instead of one constant velocity. The
+## last rung is not a traction of its own -- see the header on
+## _apply_climb for why -- it is folded into the final mounting hop.
+##
+## Keepy has no skeleton and no separable parts (measured on the .glb:
+## one node, one mesh, one primitive, zero skins -- see the file header
+## above), so nothing here can animate a hand closing on a rung. Every
+## beat is sold by the body's own transform: height that pauses, a
+## squash borrowed unchanged from the hop envelope, and a small sway.
+
+## Fraction of ONE traction slot spent PUSHING (rising, eased out) rather
+## than held in the pause that follows it. Exported rather than a const:
+## the SOBER / MEDIAN / MARKED rows on the cadence sheet
+## (docs/color-sheets/) are this same field at three values on three
+## instanced hoppers, and MEDIAN -- the default below -- is what ships.
+## No sonde judges cadence, only an eye can -- and it has: MEDIAN
+## (0.55 / 0.05, this row and climb_sway_amplitude below) was validated on
+## device by Mathieu on 27 Aug 2026.
+@export var climb_push_ratio: float = 0.55
+
+## Lateral sway on each push, in world units, perpendicular to the ladder
+## (board["side"]) and alternating rung to rung. Zero again by the time
+## the pause begins: sin(PI * push_t) returns to 0 at push_t = 1, so the
+## feet are back directly over the ladder foot for every held rung, and a
+## rung that is HELD still reads as gripped rather than swaying under him.
+## Same exposure reasoning as climb_push_ratio above -- and the same
+## device validation, 27 Aug 2026.
+@export var climb_sway_amplitude: float = 0.05
+
+## Arc height of the final beat -- the hop from the last quantized rung
+## onto the deck, ON TOP OF the rise from that rung's height to the
+## anchor's. Deliberately SMALLER than an ordinary HOP_HEIGHT (0.6): the
+## escalation the eject (1.05) and the dive (1.55) each argue for is
+## "further from where you started", and this beat starts one rung below
+## the platform it lands on -- the smallest event this file arcs, not
+## the biggest. "a small crossing", not a leap.
+const CLIMB_MOUNT_HOP_HEIGHT: float = 0.40
+
+## Arc height of the dive, ON TOP of the drop from the deck.
+##
+## Taller than EJECT_HOP_HEIGHT (1.05), which is itself taller than an
+## ordinary hop, and for the escalating version of the same reason: the
+## arc is the only channel this screen has for saying that one leap is a
+## bigger event than another, and a dive off a board is the biggest one on
+## it. It is measured from the sloped base line the generalised arc draws,
+## so the actual apex clears the deck rather than merely clearing the
+## water.
+const DIVE_HOP_HEIGHT: float = 1.55
+
+## Wall-clock length of the dive. Longer than HOP_DURATION because it
+## covers more ground and more height; a dive at hop speed reads as a
+## stumble off the end.
+const DIVE_DURATION: float = 0.62
+
 ## How high Keepy's feet ride while aboard.
 ##
 ## The shell's inner floor, near enough: HubBuilder floats the rim at
@@ -187,6 +272,17 @@ signal ride_moved(position: Vector3, yaw_degrees: float)
 signal ride_started()
 signal ride_ended()
 
+## The board, one signal per transition: planted on the deck, left it, and
+## the dive's landing. Nothing routes on them -- the landing still arrives
+## as an ordinary hop_landed, which is what keeps the water tint and every
+## other landing listener working through a dive without knowing a board
+## exists. They are here because "is he up there" is the question a future
+## camera or cue will want, and asking a state enum from another file is
+## how that enum stops being private.
+signal board_mounted()
+signal board_dived()
+signal board_dismounted()
+
 ## Yaw carrier. Kept separate from this node so world position (written by
 ## the hop) and facing (written by the turn) never contend for one
 ## transform, and separate from the model slot so pitch stays body-local.
@@ -216,9 +312,32 @@ var _base_pitch: float = 0.0
 var _target: Vector3 = Vector3.ZERO
 var _has_target: bool = false
 
-## The three states this body can be in. IDLE and HOPPING are what the
-## bool used to say; RIDING is the new one.
-enum State { IDLE, HOPPING, RIDING }
+## =====================================================================
+## THE BOARD (27 aout 2026)
+##
+## Three more states, and the same shape as RIDING before them: none of
+## them is a second movement system. CLIMBING and DIVING each replace
+## where the body is written from for their own duration and hand back to
+## the ordinary chain when they end; ON_BOARD writes nothing at all.
+##
+## WHY THE DECK IS NOT WALKABLE, on purpose. The plateau is a
+## single-altitude model -- HubRegion.contains() throws Y away and
+## HubTapInput raycasts a plane at y = 0 -- so there is no such thing as a
+## tap that means "a point on the deck". Letting Keepy move freely up there
+## would need a second, elevated ground for taps to resolve against, which
+## is a plateau-wide change for one plank. Instead the board has exactly
+## one standing place, and a tap while on it means DIVE, not WALK.
+##
+## Which is also why the tap is intercepted BY STATE, exactly as a tap
+## during a ride is: the ground point still arrives resolved on y = 0, and
+## it is still useful -- its side of the anchor is what picks the water
+## dive from the landward one -- but it must never become a destination.
+##
+## The three of them share RIDING's other property too: they emit no
+## hop_landed, so portal detection is silent for their whole duration. A
+## board planted 9 u from the portal row would otherwise carry a diver into
+## a sub-game they were only passing over.
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -229,6 +348,35 @@ var _hop_tween: Tween = null
 ## single leap off the boat. Reset on every _begin_hop so a taller arc can
 ## never leak into the hop after it.
 var _hop_height: float = HOP_HEIGHT
+
+## Ground height at the two ends of the hop in progress, in world units.
+##
+## BOTH DEFAULT TO ZERO, and every hop the plateau has ever taken leaves
+## them there: the plateau is a single-altitude model (HubRegion.contains()
+## throws Y away, HubTapInput raycasts a plane at y = 0), so a hop between
+## two points on it starts and ends on the ground by definition.
+##
+## They exist so ONE hop can start high and land low -- the dive off the
+## board. Generalising the existing arc rather than adding a second one is
+## deliberate: the squash envelope, the pitch and the landing recoil are
+## all driven off the same normalised t as the height, and a parallel
+## "high hop" implementation would be a second copy of all of them, free
+## to drift from the one the whole plateau uses.
+##
+## The generalisation is EXACT at from == to, not merely close: at equal
+## endpoints lerpf returns that value for every t, so the parabola is
+## added to a constant and the trajectory is the one that shipped. Proved
+## rather than argued -- DivingBoardProbe PHASE A samples the shipped
+## _apply_hop against the pre-change formula and reports the worst
+## divergence over the whole hop.
+var _hop_from_y: float = 0.0
+var _hop_to_y: float = 0.0
+
+## The board this body is climbing, standing on or diving off, in the shape
+## HubBuilder.diving_board() publishes. Empty whenever none of those three
+## states is current.
+var _board: Dictionary = {}
+var _climb_tween: Tween = null
 
 ## Ride state. _route is null whenever _state is not RIDING.
 var _route: HubStreamRoute = null
@@ -255,7 +403,12 @@ func hop_to(point: Vector3) -> void:
 	# that tap to leave_ride() instead. Refusing here is the second half of
 	# that: a stray hop_to mid-ride would leave the body walking while the
 	# hull kept sailing.
-	if _state == State.RIDING:
+	# CLIMBING / ON_BOARD / DIVING are refused for the same reason RIDING
+	# is: the body is being written from somewhere else for the duration,
+	# and a stray hop_to would leave it walking while the plank, the
+	# ladder or the arc kept driving it. HubWorld routes a tap in those
+	# states to the board instead -- see _on_tapped_ground.
+	if _state != State.IDLE and _state != State.HOPPING:
 		return
 	_target = Vector3(point.x, 0.0, point.z)
 	_has_target = true
@@ -272,6 +425,22 @@ func is_hopping() -> bool:
 ## silent for the whole ride.
 func is_riding() -> bool:
 	return _state == State.RIDING
+
+## True from the first rung to the moment the feet hit the water: the whole
+## span in which the body belongs to the board rather than to the plateau.
+##
+## ONE query for the three states rather than three, because every caller
+## outside this file asks the same question -- "may I treat a tap as a
+## destination" -- and answering it in one place is what stops a fourth
+## board state being added later and quietly missed by two of them.
+func is_on_board() -> bool:
+	return _state == State.CLIMBING or _state == State.ON_BOARD or _state == State.DIVING
+
+## True only while planted on the deck, which is the one board state that
+## can accept a tap. Read by HubWorld to tell a tap-that-dives from a tap
+## that lands during a climb or a dive and must simply be dropped.
+func is_standing_on_board() -> bool:
+	return _state == State.ON_BOARD
 
 ## Puts Keepy on the boat and starts the ride.
 ##
@@ -350,9 +519,181 @@ func leave_ride(toward: Vector3, blocked: Array) -> void:
 	_hop_from = here
 	_hop_to = landing
 	_hop_height = EJECT_HOP_HEIGHT
+	# Flat, and set here rather than relied on: this is the one tween built
+	# outside _begin_hop, so it is the one place a sloped arc left over from
+	# a dive could leak into. Unreachable today -- every path into a ride
+	# passes a landing, and _on_hop_finished zeroes them -- which is exactly
+	# why it is written down instead of depended on.
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
 	_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
+
+## Starts the ladder climb. `board` is HubBuilder.diving_board() as it was
+## published; refused, quietly, on an empty board or from any state other
+## than standing still -- a hub that does nothing beats one that crashes on
+## the screen every game is reached through.
+##
+## The climb is SCRIPTED and takes no input: it runs a fixed duration and
+## ends planted on the anchor. That is not a shortcut around a walk up the
+## ladder -- there is no elevated ground for a walk to resolve against (see
+## the enum's block above), so the alternative to a scripted climb is no
+## climb at all.
+func climb_board(board: Dictionary) -> void:
+	if board.is_empty() or _state != State.IDLE:
+		return
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_board = board
+	_has_target = false
+	_state = State.CLIMBING
+
+	# Face along the plank before the first rung, for the reason _face
+	# gives: a body that turns while it is off the ground reads as being
+	# steered rather than as having committed.
+	_face(board["forward"])
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+
+	_climb_tween = create_tween()
+	_climb_tween.tween_method(_apply_climb, 0.0, 1.0, CLIMB_DURATION)
+	_climb_tween.finished.connect(_on_climb_finished, CONNECT_ONE_SHOT)
+
+## Writes the body up the ladder in quantized tractions and then mounts
+## the deck with one short hop.
+##
+## Two segments on ONE normalised t, not two chained tweens: a single
+## parameter is what guarantees the hand-off happens at exactly one frame
+## and cannot leave a gap where the body is at neither height.
+##
+## WHY THE LAST RUNG IS NOT A TRACTION OF ITS OWN. board["rung_heights"]
+## has RUNG_COUNT entries, RUNG_COUNT - 1 of them (rung_heights[0 ..
+## RUNG_COUNT - 2]) are used as push/pause stops below; the top rung,
+## rung_heights[RUNG_COUNT - 2] -- read that again, the LAST INDEX USED,
+## not the top of the physical ladder -- is instead the FROM height of
+## the final hop up onto the deck. A real climb does not carefully place
+## a foot on the very top rung before stepping onto a platform above it,
+## it hauls up and over; folding that beat into an arc is also what turns
+## the old flat "walk out along the plank" into one mounted leap (see
+## CLIMB_MOUNT_HOP_HEIGHT).
+##
+## This also means the rise now reuses _apply_hop for its own last beat,
+## the same way the dive already does: one arc formula for every leap on
+## this screen, not a second copy of it free to drift.
+func _apply_climb(t: float) -> void:
+	var ladder: Vector3 = _board["ladder"]
+	var anchor: Vector3 = _board["anchor"]
+	var deck_height: float = anchor.y
+	var rung_heights: Array = _board["rung_heights"]
+	var side: Vector3 = _board["side"]
+	# RUNG_COUNT - 1 tractions below the mount hop -- at least one, even on
+	# the two-rung minimum HubBuilder's own rung_count floor allows.
+	var traction_count: int = maxi(rung_heights.size() - 1, 1)
+	var last_rung: float = rung_heights[traction_count - 1]
+
+	if t <= CLIMB_RISE_FRACTION:
+		# UP the ladder in TRACTION_COUNT discrete pulls: the feet stay
+		# over the foot of it and only the height changes (as before),
+		# but that height now holds still between pulls instead of
+		# rising at one constant rate the whole way.
+		var rise_t: float = t / CLIMB_RISE_FRACTION
+		var slot_f: float = rise_t * float(traction_count)
+		var slot: int = mini(int(slot_f), traction_count - 1)
+		var local_t: float = clampf(slot_f - float(slot), 0.0, 1.0)
+		var from_y: float = 0.0 if slot == 0 else rung_heights[slot - 1]
+		var to_y: float = rung_heights[slot]
+
+		# The push: eased OUT (decelerating into the rung) over the first
+		# climb_push_ratio share of the slot. Beyond that the pause holds
+		# the reached height still -- push_t is clamped to 1.0, so eased
+		# is 1.0 and y == to_y for the rest of the slot.
+		var push_t: float = clampf(local_t / climb_push_ratio, 0.0, 1.0)
+		var eased: float = 1.0 - (1.0 - push_t) * (1.0 - push_t)
+		var y: float = lerpf(from_y, to_y, eased)
+
+		# Sway alternates rung to rung and is zero at push_t = 0 AND
+		# push_t = 1 -- out and back within the push, never carried into
+		# the pause, so a held rung reads as gripped rather than swaying.
+		var sway_dir: float = 1.0 if slot % 2 == 0 else -1.0
+		var sway: float = sway_dir * climb_sway_amplitude * sin(PI * push_t)
+
+		global_position = Vector3(ladder.x, y, ladder.z) + side * sway
+		# Reused unchanged, driven by the traction's own local_t rather
+		# than the hop's: compress off the last rung, extend into the
+		# reach, relax and settle into the one this traction ends on --
+		# the same spring shape a hop already uses, borrowed rather than
+		# re-authored.
+		_body.scale = _squash_at(local_t)
+		return
+
+	# THE MOUNT: one short hop from the last rung's height onto the deck,
+	# ground and height moving together -- which is what makes this ONE
+	# leap rather than a rise glued to a slide. _apply_hop also writes
+	# the squash and the forward pitch for this beat, so both are free:
+	# the mount looks like a hop because it IS one.
+	var hop_t: float = (t - CLIMB_RISE_FRACTION) / (1.0 - CLIMB_RISE_FRACTION)
+	_hop_from = ladder
+	_hop_to = Vector3(anchor.x, 0.0, anchor.z)
+	_hop_from_y = last_rung
+	_hop_to_y = deck_height
+	_hop_height = CLIMB_MOUNT_HOP_HEIGHT
+	_apply_hop(hop_t)
+
+func _on_climb_finished() -> void:
+	_climb_tween = null
+	# Snapped to the anchor rather than left wherever the tween's last
+	# frame fell: the anchor is the one place the deck can be stood on, and
+	# a dive is measured from it.
+	var anchor: Vector3 = _board["anchor"]
+	global_position = anchor
+	_state = State.ON_BOARD
+	board_mounted.emit()
+
+## Dives off the board towards `toward` -- the ground point the player
+## tapped, resolved on y = 0 like every other tap.
+##
+## Which of the board's two targets is used is decided by the SIDE of the
+## anchor the tap fell on, along the board's facing: forward of it means
+## the water, behind it means back down to the ladder foot. The tap's
+## distance is deliberately ignored -- a board has two places to land, and
+## letting a far tap aim further would put Keepy down in open water with no
+## way back.
+func dive(toward: Vector3) -> void:
+	if _state != State.ON_BOARD or _board.is_empty():
+		return
+	var anchor: Vector3 = _board["anchor"]
+	var forward: Vector3 = _board["forward"]
+	var reach: float = (Vector3(toward.x, 0.0, toward.z) - Vector3(anchor.x, 0.0, anchor.z)).dot(forward)
+	var landing: Vector3 = _board["water_target"] if reach >= 0.0 else _board["land_target"]
+
+	var here := Vector3(anchor.x, 0.0, anchor.z)
+	var flat_landing := Vector3(landing.x, 0.0, landing.z)
+	_state = State.DIVING
+	_board = {}
+	_face(flat_landing - here)
+
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_hop_from = here
+	_hop_to = flat_landing
+	# THE GENERALISED ARC, and the only caller that uses it for anything:
+	# off the deck at one end, on the water surface at the other.
+	_hop_from_y = anchor.y
+	_hop_to_y = 0.0
+	_hop_height = DIVE_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, DIVE_DURATION)
+	_hop_tween.finished.connect(_on_dive_finished, CONNECT_ONE_SHOT)
+	board_dived.emit()
+
+## The dive lands and the body is handed straight back to the ordinary
+## chain -- _on_hop_finished does the snapping, the recoil and the landing
+## signal, so a dive ends exactly the way every other leap on this screen
+## ends. Nothing here is special-cased: the water is walkable ground.
+func _on_dive_finished() -> void:
+	_on_hop_finished()
+	board_dismounted.emit()
 
 func _process(delta: float) -> void:
 	if _state != State.RIDING or _route == null:
@@ -430,7 +771,7 @@ func _is_clear(point: Vector3, blocked: Array) -> bool:
 func _advance() -> void:
 	if not _has_target:
 		return
-	if _state == State.RIDING:
+	if _state != State.IDLE and _state != State.HOPPING:
 		return
 	var here := Vector3(global_position.x, 0.0, global_position.z)
 	var delta := _target - here
@@ -443,6 +784,10 @@ func _advance() -> void:
 
 func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	_hop_height = HOP_HEIGHT
+	# Reset alongside the height, and for the same reason: a sloped arc
+	# left over from a dive must not leak into the ordinary hop after it.
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
 	var step: float = minf(HOP_DISTANCE, delta.length())
 	_hop_from = here
 	_hop_to = here + delta.normalized() * step
@@ -478,10 +823,15 @@ func _face(direction: Vector3) -> void:
 
 func _apply_hop(t: float) -> void:
 	var ground := _hop_from.lerp(_hop_to, t)
+	# The line the arc is drawn ON. Flat for every hop on the plateau
+	# (both ends default to 0.0); sloped only for the dive, which starts
+	# on the board and ends in the water.
+	var base: float = lerpf(_hop_from_y, _hop_to_y, t)
 	# 4t(1-t) peaks at exactly 1.0 at t = 0.5 and is exactly 0 at both
-	# ends, so the arc cannot leave Keepy hovering on a rounding error.
+	# ends, so the arc cannot leave Keepy hovering on a rounding error --
+	# it lands exactly ON the base line, whatever that line is.
 	var height: float = _hop_height * 4.0 * t * (1.0 - t)
-	global_position = Vector3(ground.x, height, ground.z)
+	global_position = Vector3(ground.x, base + height, ground.z)
 	_body.scale = _squash_at(t)
 	_body.rotation_degrees.x = _base_pitch - PITCH_DEG * sin(PI * t)
 
@@ -500,7 +850,13 @@ func _squash_at(t: float) -> Vector3:
 func _on_hop_finished() -> void:
 	_state = State.IDLE
 	_hop_height = HOP_HEIGHT
-	global_position = Vector3(_hop_to.x, 0.0, _hop_to.z)
+	# Snapped to the END of the base line, not to zero. Identical for
+	# every plateau hop, where that line is flat at zero; for the dive it
+	# is what puts the feet on the water surface instead of teleporting
+	# them from wherever the tween's last frame happened to fall.
+	global_position = Vector3(_hop_to.x, _hop_to_y, _hop_to.z)
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
 	_body.rotation_degrees.x = _base_pitch
 	# Landing recoil, then back to rest. Started AFTER the hop tween has
 	# finished so it can never be killed by the next hop mid-recoil -- the
