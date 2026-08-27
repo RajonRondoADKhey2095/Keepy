@@ -250,10 +250,15 @@ func _phase_c_states(keepy: KeepyHopper, props: HubBuilder) -> void:
 	_check(not keepy.is_standing_on_board(), "mid-climb is not standing on the deck")
 
 	# A tap during a climb must be DROPPED, not queued: an interruptible
-	# climb would walk Keepy out of a ladder halfway up it.
-	# Sampled after the tween has had frames to run -- the first version
-	# read it on the same frame climb_board was called and reported 0.000,
-	# which looked like a climb that never left the ground.
+	# climb would walk Keepy out of a ladder halfway up it. THREE taps are
+	# thrown at three DIFFERENT sub-phases of the 27 aout 2026 quantized
+	# rise -- during an early push, during a later pause, and during the
+	# final mount hop -- because a state cut into sub-steps is exactly how
+	# a "tap does nothing while climbing" rule quietly grows an exception
+	# for one of the steps and not the others. Sampled after the tween has
+	# had frames to run -- the first version read it on the same frame
+	# climb_board was called and reported 0.000, which looked like a climb
+	# that never left the ground.
 	keepy.hop_to(Vector3(20.0, 0.0, 20.0))
 	await _wait(KeepyHopper.CLIMB_DURATION * 0.5)
 	var mid_climb_y: float = keepy.global_position.y
@@ -261,10 +266,36 @@ func _phase_c_states(keepy: KeepyHopper, props: HubBuilder) -> void:
 		"mid-climb he is genuinely PART WAY up the ladder (%.3f of %.3f)" % [mid_climb_y, anchor.y])
 	_check(keepy.is_on_board() and not keepy.is_standing_on_board(),
 		"a tap during the climb was DROPPED, not queued -- he is still climbing")
-	await _wait(KeepyHopper.CLIMB_DURATION * 0.5 + 0.25)
+	# The LOW-LEVEL half of the same claim: not just "the state looks
+	# unchanged" but "the tap left no trace at all" -- _has_target reading
+	# false is what proves nothing was queued to fire later, once the body
+	# is handed back to the ordinary chain by a dive. Read by the same
+	# reflection PHASE A already uses on this file's private fields.
+	_check(not bool(keepy.get("_has_target")),
+		"and it left no target QUEUED either (_has_target reads false)")
+
+	# SECOND tap, a different destination again, landing somewhere in a
+	# later traction's push-or-pause than the first one did.
+	keepy.hop_to(Vector3(-30.0, 0.0, 10.0))
+	await _wait(0.25)
+	_check(keepy.is_on_board() and not keepy.is_standing_on_board(),
+		"a SECOND tap, at a different point in the quantized rise, is also dropped")
+	_check(not bool(keepy.get("_has_target")), "no target queued from it either")
+
+	# THIRD tap, timed to land inside the mount hop -- CLIMB_RISE_FRACTION
+	# of CLIMB_DURATION is 0.612 s; the two waits above total 0.675 s, so
+	# this one lands past that boundary, in the segment _apply_climb hands
+	# to _apply_hop rather than the quantized-rung branch above it.
+	keepy.hop_to(Vector3(40.0, 0.0, -5.0))
+	_check(keepy.is_on_board() and not keepy.is_standing_on_board(),
+		"a THIRD tap, during the mount hop itself, is dropped too")
+	_check(not bool(keepy.get("_has_target")),
+		"and STILL no target queued -- the mount hop is not a hole in the guard")
+
+	await _wait(KeepyHopper.CLIMB_DURATION - 0.675 + 0.25)
 	_check(keepy.is_standing_on_board(), "the climb finishes ON the deck")
 	_check(keepy.global_position.is_equal_approx(anchor),
-		"and lands exactly on the anchor (%s)" % keepy.global_position)
+		"and lands exactly on the anchor despite three taps along the way (%s)" % keepy.global_position)
 	print("    mid-climb height %.3f -> deck %.3f" % [mid_climb_y, keepy.global_position.y])
 
 	# A dive AWAY from the water goes back down the ladder.

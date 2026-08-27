@@ -1552,9 +1552,17 @@ func _make_divingboard(entry: Dictionary, index: int, where: Vector3) -> Node3D:
 	# (side x UP is a unit vector perpendicular to both), which an angle
 	# would only be if the sign convention happened to be guessed right.
 	var rung_basis := Basis(side.cross(Vector3.UP), side, Vector3.UP)
+	# The exact heights are collected as they are computed for the drawn
+	# rungs -- ONE formula, not a copy of it published alongside a second.
+	# KeepyHopper's climb reads this array rather than re-deriving
+	# DIVINGBOARD_RUNG_LOWEST/SPACING itself: those stay private here, and
+	# the climb keys its cadence to whatever the ladder was actually built
+	# with instead of a value free to disagree with it.
+	var rung_heights: Array = []
 	for i in rung_count:
 		var frac: float = float(i) / float(rung_count - 1)
 		var y: float = DIVINGBOARD_RUNG_LOWEST + rung_run * frac
+		rung_heights.append(y)
 		var origin: Vector3 = ladder + forward * (-DIVINGBOARD_DECK_BACK_OVERHANG * 0.5) + Vector3.UP * y
 		_instance(&"DivingBoardRung", Transform3D(rung_basis, origin))
 
@@ -1564,6 +1572,14 @@ func _make_divingboard(entry: Dictionary, index: int, where: Vector3) -> Node3D:
 		"ladder": ladder,
 		"anchor": Vector3(anchor.x, deck_height, anchor.z),
 		"forward": forward,
+		# The climb's lateral sway is measured off THIS side, not a second
+		# one re-derived from "forward" in KeepyHopper -- the sign
+		# convention already lives here, next to the rails and posts it
+		# places the same way, and a second copy of it is exactly how a
+		# rename or a flipped cross product becomes a sway that goes the
+		# wrong way on one file and not the other.
+		"side": side,
+		"rung_heights": rung_heights,
 		"water_target": flat_anchor + forward * DIVINGBOARD_DIVE_REACH,
 		# BACK TO THE LADDER FOOT, and not to some point behind it: that is
 		# ground a player has already stood on, so it is the one landward

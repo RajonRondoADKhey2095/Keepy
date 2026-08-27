@@ -143,12 +143,64 @@ const EJECT_HOP_HEIGHT: float = 1.05
 ## than derived from the height: the climb is scripted and uninterruptible,
 ## so it is a beat in the screen's rhythm before it is a distance, and a
 ## taller board should read as a taller board rather than as a longer wait.
+##
+## UNCHANGED by the 27 aout 2026 cadence rework below: that batch was asked
+## to change the RHYTHM of the climb, not its length, and it does not touch
+## this constant. What moved is how the same 0.85 s is spent.
 const CLIMB_DURATION: float = 0.85
 
-## The fraction of the climb spent going UP. The rest is the step out along
-## the plank to the anchor, so the motion reads as "climbs, then walks to
-## the end" rather than as a diagonal slide through the ladder.
+## The fraction of CLIMB_DURATION spent climbing RUNGS rather than mounting
+## the deck. Same value as before the 27 aout 2026 cadence rework, but its
+## meaning changed with it: this used to be "the fraction spent rising"
+## against a flat walk-out; now it is the boundary between the quantized
+## rung-by-rung tractions (see _apply_climb) and the final mounting hop
+## (see CLIMB_MOUNT_HOP_HEIGHT), which folds what used to be that flat
+## walk into one short arc onto the anchor.
 const CLIMB_RISE_FRACTION: float = 0.72
+
+## =====================================================================
+## CLIMB CADENCE (27 aout 2026)
+##
+## The climb used to be one smooth lerp from the ladder foot to the
+## anchor -- Mathieu's own word for it on device was "like an elevator".
+## The fix is rhythm, not distance: the rise is now RUNG_COUNT - 1
+## discrete tractions (RUNG_COUNT read off the board HubBuilder actually
+## built -- board["rung_heights"], never a second copy of its formula),
+## each a quick push followed by a still micro-pause, so the eye is given
+## a repeated grab-and-settle beat instead of one constant velocity. The
+## last rung is not a traction of its own -- see the header on
+## _apply_climb for why -- it is folded into the final mounting hop.
+##
+## Keepy has no skeleton and no separable parts (measured on the .glb:
+## one node, one mesh, one primitive, zero skins -- see the file header
+## above), so nothing here can animate a hand closing on a rung. Every
+## beat is sold by the body's own transform: height that pauses, a
+## squash borrowed unchanged from the hop envelope, and a small sway.
+
+## Fraction of ONE traction slot spent PUSHING (rising, eased out) rather
+## than held in the pause that follows it. Exported rather than a const:
+## the SOBER / MEDIAN / MARKED rows on the cadence sheet
+## (docs/color-sheets/) are this same field at three values on three
+## instanced hoppers, and MEDIAN -- the default below -- is what ships.
+## Nothing here is validated by a sonde; only Mathieu's eye picks a row.
+@export var climb_push_ratio: float = 0.55
+
+## Lateral sway on each push, in world units, perpendicular to the ladder
+## (board["side"]) and alternating rung to rung. Zero again by the time
+## the pause begins: sin(PI * push_t) returns to 0 at push_t = 1, so the
+## feet are back directly over the ladder foot for every held rung, and a
+## rung that is HELD still reads as gripped rather than swaying under him.
+## Same exposure reasoning as climb_push_ratio above.
+@export var climb_sway_amplitude: float = 0.05
+
+## Arc height of the final beat -- the hop from the last quantized rung
+## onto the deck, ON TOP OF the rise from that rung's height to the
+## anchor's. Deliberately SMALLER than an ordinary HOP_HEIGHT (0.6): the
+## escalation the eject (1.05) and the dive (1.55) each argue for is
+## "further from where you started", and this beat starts one rung below
+## the platform it lands on -- the smallest event this file arcs, not
+## the biggest. "a small crossing", not a leap.
+const CLIMB_MOUNT_HOP_HEIGHT: float = 0.40
 
 ## Arc height of the dive, ON TOP of the drop from the deck.
 ##
@@ -505,26 +557,85 @@ func climb_board(board: Dictionary) -> void:
 	_climb_tween.tween_method(_apply_climb, 0.0, 1.0, CLIMB_DURATION)
 	_climb_tween.finished.connect(_on_climb_finished, CONNECT_ONE_SHOT)
 
-## Writes the body up the ladder and then out along the plank.
+## Writes the body up the ladder in quantized tractions and then mounts
+## the deck with one short hop.
 ##
 ## Two segments on ONE normalised t, not two chained tweens: a single
 ## parameter is what guarantees the hand-off happens at exactly one frame
 ## and cannot leave a gap where the body is at neither height.
+##
+## WHY THE LAST RUNG IS NOT A TRACTION OF ITS OWN. board["rung_heights"]
+## has RUNG_COUNT entries, RUNG_COUNT - 1 of them (rung_heights[0 ..
+## RUNG_COUNT - 2]) are used as push/pause stops below; the top rung,
+## rung_heights[RUNG_COUNT - 2] -- read that again, the LAST INDEX USED,
+## not the top of the physical ladder -- is instead the FROM height of
+## the final hop up onto the deck. A real climb does not carefully place
+## a foot on the very top rung before stepping onto a platform above it,
+## it hauls up and over; folding that beat into an arc is also what turns
+## the old flat "walk out along the plank" into one mounted leap (see
+## CLIMB_MOUNT_HOP_HEIGHT).
+##
+## This also means the rise now reuses _apply_hop for its own last beat,
+## the same way the dive already does: one arc formula for every leap on
+## this screen, not a second copy of it free to drift.
 func _apply_climb(t: float) -> void:
 	var ladder: Vector3 = _board["ladder"]
 	var anchor: Vector3 = _board["anchor"]
 	var deck_height: float = anchor.y
+	var rung_heights: Array = _board["rung_heights"]
+	var side: Vector3 = _board["side"]
+	# RUNG_COUNT - 1 tractions below the mount hop -- at least one, even on
+	# the two-rung minimum HubBuilder's own rung_count floor allows.
+	var traction_count: int = maxi(rung_heights.size() - 1, 1)
+	var last_rung: float = rung_heights[traction_count - 1]
+
 	if t <= CLIMB_RISE_FRACTION:
-		# UP the ladder: the feet stay over the foot of it and only the
-		# height changes, which is what makes it read as a ladder rather
-		# than as a ramp.
-		var rise: float = t / CLIMB_RISE_FRACTION
-		global_position = Vector3(ladder.x, deck_height * rise, ladder.z)
+		# UP the ladder in TRACTION_COUNT discrete pulls: the feet stay
+		# over the foot of it and only the height changes (as before),
+		# but that height now holds still between pulls instead of
+		# rising at one constant rate the whole way.
+		var rise_t: float = t / CLIMB_RISE_FRACTION
+		var slot_f: float = rise_t * float(traction_count)
+		var slot: int = mini(int(slot_f), traction_count - 1)
+		var local_t: float = clampf(slot_f - float(slot), 0.0, 1.0)
+		var from_y: float = 0.0 if slot == 0 else rung_heights[slot - 1]
+		var to_y: float = rung_heights[slot]
+
+		# The push: eased OUT (decelerating into the rung) over the first
+		# climb_push_ratio share of the slot. Beyond that the pause holds
+		# the reached height still -- push_t is clamped to 1.0, so eased
+		# is 1.0 and y == to_y for the rest of the slot.
+		var push_t: float = clampf(local_t / climb_push_ratio, 0.0, 1.0)
+		var eased: float = 1.0 - (1.0 - push_t) * (1.0 - push_t)
+		var y: float = lerpf(from_y, to_y, eased)
+
+		# Sway alternates rung to rung and is zero at push_t = 0 AND
+		# push_t = 1 -- out and back within the push, never carried into
+		# the pause, so a held rung reads as gripped rather than swaying.
+		var sway_dir: float = 1.0 if slot % 2 == 0 else -1.0
+		var sway: float = sway_dir * climb_sway_amplitude * sin(PI * push_t)
+
+		global_position = Vector3(ladder.x, y, ladder.z) + side * sway
+		# Reused unchanged, driven by the traction's own local_t rather
+		# than the hop's: compress off the last rung, extend into the
+		# reach, relax and settle into the one this traction ends on --
+		# the same spring shape a hop already uses, borrowed rather than
+		# re-authored.
+		_body.scale = _squash_at(local_t)
 		return
-	# OUT along the plank, at deck height.
-	var walk: float = (t - CLIMB_RISE_FRACTION) / (1.0 - CLIMB_RISE_FRACTION)
-	var along: Vector3 = ladder.lerp(Vector3(anchor.x, 0.0, anchor.z), walk)
-	global_position = Vector3(along.x, deck_height, along.z)
+
+	# THE MOUNT: one short hop from the last rung's height onto the deck,
+	# ground and height moving together -- which is what makes this ONE
+	# leap rather than a rise glued to a slide. _apply_hop also writes
+	# the squash and the forward pitch for this beat, so both are free:
+	# the mount looks like a hop because it IS one.
+	var hop_t: float = (t - CLIMB_RISE_FRACTION) / (1.0 - CLIMB_RISE_FRACTION)
+	_hop_from = ladder
+	_hop_to = Vector3(anchor.x, 0.0, anchor.z)
+	_hop_from_y = last_rung
+	_hop_to_y = deck_height
+	_hop_height = CLIMB_MOUNT_HOP_HEIGHT
+	_apply_hop(hop_t)
 
 func _on_climb_finished() -> void:
 	_climb_tween = null
