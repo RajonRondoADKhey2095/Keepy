@@ -17454,3 +17454,190 @@ convention posee par les lots hub anterieurs. Les lignes ne sont pas
 reconstruites ni deplacees ici -- seul le constat est note, pour qu'une
 future session ne cherche pas ces chiffres au seul endroit ou la
 convention dit qu'ils devraient etre.
+
+## L'IMPACT DANS L'EAU : une rampe de ligne de flottaison + un anneau de surface, ZERO particule (27 aout 2026)
+
+Branche `claude/keepy-water-impact-effect-lhxhh0`, partie de `main`
+(`a346912`). **UN SEUL fichier de jeu touche : `scripts/hub/HubWorld.gd`.**
+`keepy_waterline.gdshader`, `HubRegion.gd`, `HubCamera.gd` et
+`HubTapInput.gd` **ne sont PAS dans le diff**, verifie par
+`git diff --name-only` et pas affirme.
+
+⚠️ **ECART DE BASE SIGNALE : le lot placement N'ETAIT PAS sur `main`.**
+Le brief demandait de partir de `main` « qui doit inclure le lot 3 s'il a
+ete merge ». Il ne l'incluait pas : `origin/staging` etait **4 commits en
+avance** avec les deux plongeoirs supplementaires (petit lac + lobe spawn),
+et ce lot renomme `diving_board()` en `diving_boards()` **dans
+`HubWorld.gd`**, c'est-a-dire mon fichier. Parti de `main` comme demande,
+puis **`staging` merge DANS la branche feature avant la validation finale**
+— donc tous les chiffres publies ici sont mesures sur l'arbre qui part,
+pas sur un arbre que personne ne fera tourner. Aucun conflit : ce lot ne
+touche ni `_setup_boards()` ni `_try_climb()`.
+
+### Le declencheur : un latch, parce que le landing ne peut PAS savoir
+
+`_on_hop_finished()` remet l'etat a `IDLE` **avant** d'emettre
+`hop_landed`, et le plongeon passe par cette meme fonction volontairement
+— c'est ce qui fait que la teinte d'eau et tout autre auditeur de landing
+continuent de marcher a travers un plongeon sans savoir qu'un plongeoir
+existe. **Un auditeur ne peut donc pas distinguer le landing d'un plongeon
+de celui d'un hop ordinaire en demandant l'etat.** Le seul moyen honnete
+est d'avoir ete prevenu au depart : `_dive_pending` est arme sur
+`board_dived` (emis une fois dans `dive()`) et consomme dans
+`_on_hop_landed`, **la ou la position ET la reponse eau sont deja en
+main** — donc l'effet utilise LE MEME test d'eau que la teinte, et pas un
+second qui pourrait diverger d'un float sur les cas de bord que les deux
+marges de `HubWater` existent pour documenter.
+
+Le latch est efface **quelle que soit la reponse** : un plongeon vers le
+pied de l'echelle (terre ferme, l'autre cible du plongeoir) le desarme au
+lieu de le laisser amorce pour le landing suivant. Gate.
+
+### ⚠️ DEUX PREMISSES FAUSSES, ET LES DEUX ETAIENT LES MIENNES
+
+1. **« l'uniform `water_y` ne se tweene pas ».** Mon premier run de sonde a
+   rapporte `0.4500 -> 0.4500` et accuse l'uniform. **C'ETAIT LA SONDE.**
+   Elle echantillonnait UN instant wall-clock a 95 % de la montee ; sous
+   llvmpipe le hub tourne a ~14 fps, donc un timer de 0,0855 s et le
+   premier pas de process du tween tombent sur **la meme frame**, dans un
+   ordre non defini. Un `ShaderMaterial` isole pilote ce chemin de
+   propriete de 0,88 a 0,48 sans broncher. Corrige en echantillonnant
+   **toute la courbe** frame par frame : pic mesure **0,8172**.
+   ⚠️ Le pic vaut 0,92 dans le tween ; **0,8172 est ce que
+   l'echantillonnage a 14 fps attrape**, pas l'apex reel — la sonde gate
+   « monte » et « ne depasse pas », pas la valeur exacte.
+2. **`Object.get("UNE_CONST")` rend `null`**, silencieusement — une
+   constante GDScript n'est pas une propriete. Ni erreur ni warning.
+   Trouve en cherchant la cause de (1) ; ce n'etait pas la cause, mais
+   c'est un vrai piege. La sonde lit desormais
+   `get_script().get_script_constant_map()`.
+
+### ⚠️ La hauteur de l'anneau, et le piege que la sonde d'isolement a attrape
+
+Sonde jetable (supprimee avant commit) : anneau + disque d'eau seuls, 4
+azimuts. **Le candidat plat rendait quasi invisible** — je l'avais pose a
+`centre + 0,02` alors qu'un disque d'eau a une EPAISSEUR et que sa face
+SUPERIEURE est plus haute que son centre. Il etait dessine **DANS** l'eau.
+
+Faces superieures **MESUREES sur l'arbre construit**, pas lues dans les
+constantes : **0,0270 / 0,0295 / 0,0800 / 0,0800 / 0,0950** — ce qui
+reproduit exactement les cinq surfaces que le shader documente deja, et
+c'est ce qui a valide le banc avant de s'en servir pour du neuf.
+
+`SPLASH_RING_Y = 0,12` **passe au-dessus des CINQ**, et c'est une seule
+inegalite qu'une sonde asserte contre l'arbre construit — ce qu'une table
+par corps ne serait pas, et ce depot a deja paye pour un nombre garde dans
+deux fichiers. **Le cout est reel et publie** : sur le grand lac
+(surface la plus basse) l'anneau flotte **0,0930** au-dessus de l'eau, soit
+6,9 % de la taille de Keepy. L'erreur est deliberement dans le sens SUR :
+quelques centimetres trop haut se lit comme de l'ecume, quelques
+centimetres trop bas ne se lit **pas du tout**.
+
+### La cicatrice portee : CULL_BACK, pas CULL_DISABLED
+
+Un tore est un **corps ferme**. La panne device du shader de flottaison
+etait un materiau ecrivant ALPHA avec `cull_disabled` sur un corps ferme :
+sans ecriture de profondeur, la face lointaine repeint la face proche dans
+l'ordre du buffer d'indices — ordre fixe, alors que quel-cote-est-loin ne
+l'est pas. Un anneau alpha a cote d'un disque d'eau alpha est le meme
+voisinage. Faces arriere coupees, gate par sonde.
+
+### Ce qui est livre
+
+`KEEPY_SPLASH_WATERLINE_Y` 0,92 ; montee 0,09 s / descente 0,19 s
+(asymetrique : un impact est un deplacement brusque puis un retour) ;
+anneau `TorusMesh` **24 x 4 = 192 triangles** — stated, pas defaulted (un
+`TorusMesh` laisse tranquille est 64x32 = **4096**, le piege que ce depot
+a deja mesure cinq fois) ; rayon 1,15 ; ouverture 0,20 s, vie 0,34 s ;
+blanc casse `rgb(0.918, 1.0, 0.988)` a 0,85.
+
+⚠️ **AUCUN systeme de particules.** Il n'y a **pas un seul**
+`GPUParticles3D` ni `CPUParticles3D` dans tout ce depot. Decision prise en
+amont et non rouverte : introduire la premiere techno de rendu du projet
+dans un effet que personne ne peut regarder avant staging mettrait une
+techno non prouvee et un effet non prouve sur le meme commit, sans moyen
+de savoir lequel des deux est en cause.
+
+**Parente au ROOT 3D, jamais sous `Props`** : tous les comptes de draw
+nodes que ce projet publie parcourent `World/Props` et rien d'autre. Un
+anneau sous `Props` serait compte comme un prop pendant la fraction de
+seconde ou il existe, donc le chiffre dependrait de QUAND la sonde
+echantillonne.
+
+### `WaterImpactProbe` : 24 checks, 0 echec
+
+Gatee et pas rapportee, parce que **toute panne de ce cue est SILENCIEUSE**
+— un uniform qui ne bouge pas, une rampe interrompue en haut qui laisse
+Keepy trempe jusqu'aux epaules sur l'herbe pour le reste de la session, un
+anneau qui fuit un noeud par plongeon. Aucune ne leve, aucune ne casse un
+build, et toutes ressemblent a « l'effet n'a jamais ete branche ».
+
+⚠️ **PHASE B ordonne ses assertions exprès** : le cas EAU est asserte
+AVANT le cas TERRE, parce que « aucun anneau n'est apparu » passe
+gratuitement contre un cue jamais branche. Prouver qu'il PEUT tirer est ce
+qui donne le droit d'asserter qu'il n'a pas tire.
+
+**Fuite : 20 plongeons consecutifs**, pic de 6 anneaux vivants a la fois,
+**compte d'enfants du root revenu a l'identique (5 -> 5)**, 0 anneau
+survivant. **Budget statique** : `Props` mesure **AVANT, PENDANT et
+APRES** — 116 / 116 / 116 sur l'arbre fusionne (102 sur `main` seul, l'ecart
+etant les deux plongeoirs du lot placement).
+
+### Validation, sur l'arbre FUSIONNE
+
+Import **exit 0, 24 `.scn`** ; boot de `HubWorld.tscn` **0 erreur** ;
+export Web **exit 0, 0 ligne d'erreur**. `index.wasm` **35 376 909** / md5
+**`af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+5 888 448, **marqueur et jamais preuve d'identite**. Piege payload tenu :
+sur 228 `Storing File`, **0** pour `scripts/dev`, `assets_source`, `docs`,
+`web`, `build`.
+
+Sondes **toutes exit 0** : `WaterImpactProbe` (24/24),
+`DivingBoardProbe` (**BLIND CHECK arme et vert**), `WaterTintProbe`
+(**BLIND CHECK arme : controle 2251 px, pire ecart 0 px**),
+`LakeZoneProbe`, `StreamRideProbe` (37), `AssetContractAudit` (12/12
+visuels, **0 collider deplace**), `DeathModelAudit`, `ChargerShapeProbe`,
+`ProbeTimeoutAudit` — **51 -> 53 sondes scenes**, MESURE des deux cotes
+(mes deux `.tscn` deplacees puis remises) et non deduit.
+
+### La planche
+
+`docs/color-sheets/water_impact_sheet.png` — 4 lignes (anneau PLAT et
+anneau DEBOUT, chacun en blanc casse et en turquoise de l'eau) x 4
+azimuts, plus une bande de l'effet livre a 18 / 42 / 68 / 92 % de sa vie.
+
+⚠️ **Piege documente et dans lequel je suis tombe quand meme** : le premier
+rendu avait **une seule tuile cadree sur quatre** — `HubCamera` se lerp sur
+Keepy a chaque frame, donc ecrire `global_position` sans couper son
+`_process` ne tient pas. Deja consigne pour ce hub ; re-consigne ici.
+
+**Ce que la planche montre, dit franchement** : la bande LIVE se lit
+nettement comme une onde qui s'ouvre ; les quatre tuiles GELEES sont
+**subtiles**, et **blanc casse et turquoise y sont quasi indistinguables**
+— un anneau turquoise sur de l'eau turquoise ne se separe que par l'alpha,
+et le blanc casse a peine plus. Autre limite : `_set_keepy_wet(true)` y
+est appele une frame avant la capture, donc le fondu de teinte de 0,18 s
+n'est pas arrive — **les tuiles ne representent pas l'etat de teinte**,
+seulement l'anneau.
+
+### Reste ouvert — jugement device, seul juge
+
+1. **Est-ce qu'un anneau qui s'ouvre en 0,34 s se lit comme une
+   ECLABOUSSURE** a vitesse reelle sur un telephone ? Aucune sonde ne le
+   dit, et c'est tout l'objet du lot.
+2. ⚠️ **Rien ici ne prouve le rendu device.** llvmpipe / opengl3 BUREAU
+   contre WebGL2 / Safari : deux compilateurs GLSL et surtout **deux
+   implementations de tri des transparents**. Un anneau alpha a cote d'un
+   disque d'eau alpha est exactement le voisinage ou le shader de
+   flottaison etait vert dans ce sandbox jusqu'a ce qu'on le regarde sur
+   un telephone **depuis un second angle**. **Test multi-azimuts
+   obligatoire avant tout merge `main`.**
+3. **Les 0,0930 de flottement sur le grand lac** — mesures, dans le sens
+   sur, jamais juges a l'oeil.
+4. **La rampe de flottaison monte a 0,92**, donc l'eau atteint brievement
+   les epaules de Keepy. C'est voulu ; personne ne l'a vu bouger.
+5. **La couleur et l'orientation sont un point de depart pour un appel
+   device**, pas un optimum mesure — la planche existe pour etre
+   redirigee, et chaque candidat est une edition de constante.
