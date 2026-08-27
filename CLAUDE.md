@@ -16561,3 +16561,56 @@ sondes** (la nouvelle ; les deux sondes jetables sont supprimees avant commit).
    (tout ecrit de couleur y est un tween), pas un optimum mesure.
 4. **Les ~1,4 cm de debord du ruisseau** sur un virage serre : cosmetiquement
    sans effet pour une teinte, reel pour tout futur appelant.
+
+### Deploiement staging de la teinte eau (palier 1, automatique)
+
+`staging` **`fd81399`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `b204953c` des deux cotes ET `git diff` vide,
+verifie AVANT le push). CI run **#263** (id 33064273870) **verte** --
+`Import project resources` 10:44:25 -> 10:46:21, **`Export Web build`
+10:46:21 -> 10:46:25**, `Deploy to Vercel [STAGING -- staging]` succes
+10:46:40 -> 10:46:49, `[PRODUCTION -- main]` correctement **skipped**.
+**`main` NON touche** (`origin/main` toujours `a007e78`, verifie apres le
+push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | **`1787825206`** = 10:06:46 (run #262) | **`1787827584`** = **10:46:24** |
+| `index.pck` servi | *(non lu avant le merge -- voir ci-dessous)* | **5 868 560** |
+| `index.wasm` servi | -- | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**, et
+les deux lectures du `CACHE_VERSION` portent **`x-vercel-cache: MISS` avec
+`age: 0`**, celle d'avant prise **avant le merge** : la bascule est donc
+prouvee dans les deux sens et pas deduite du log.
+
+⚠️ **Honnetete sur le second marqueur** : l'`index.pck` servi n'a ete lu
+qu'APRES, donc il vaut comme marqueur d'etat courant, **pas** comme preuve de
+transition. L'`index.wasm` servi est en revanche **identique au bit pres a
+l'export local** (md5 `af4a8fc2925d992348eb30deeeb54360`) -- c'est lui la
+preuve d'identite. L'`index.pck` local vaut 5 868 544 contre 5 868 560 servi,
+**16 octets d'ecart** : enieme illustration de l'instabilite deja consignee,
+jamais offerte comme preuve.
+
+⚠️ **Le piege HIT/age s'est reproduit DEUX fois et a ete refuse les deux
+fois** (age 58 puis 82), et **un parametre de requete different ne l'a pas
+buste** -- comportement deja documente. Seule une lecture MISS/age 0 compte.
+
+⚠️ **Piege NOUVEAU, et il aurait produit un FAUX VERT silencieux** : une
+boucle d'attente `until [ "$(curl ... | grep CACHE_VERSION)" != "<ancien>" ]`
+est sortie **immediatement**, en annoncant que la valeur avait change. Elle
+n'avait rien lu : **l'egress direct de ce sandbox refuse `*.vercel.app`**
+(`http_code 000`, exit 56, re-teste et pas suppose), donc la comparaison
+portait sur une **chaine VIDE**, qui est bien differente de l'ancienne
+valeur. Une garde d'attente qui ne verifie pas qu'elle a REELLEMENT lu
+quelque chose confond « change » et « rien recu ». Le canal MCP Vercel est le
+seul disponible ici.
+
+⚠️ **Et une NUANCE en sens inverse sur le piege « API Actions perimee »** :
+`updated_at` est reste fige pendant plusieurs minutes, ce qui en a
+exactement la forme -- mais `list_workflow_jobs` montrait les etapes 1 a 8
+terminees avec de vrais horodatages et l'etape 9 en cours. L'API disait
+vrai : l'import a reellement pris **1 min 56 s**. « L'etape est simplement
+lente » doit etre ecarte avant d'accuser l'API, comme au lot RIDE-1.
