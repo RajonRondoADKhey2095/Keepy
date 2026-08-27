@@ -16614,3 +16614,136 @@ exactement la forme -- mais `list_workflow_jobs` montrait les etapes 1 a 8
 terminees avec de vrais horodatages et l'etape 9 en cours. L'API disait
 vrai : l'import a reellement pris **1 min 56 s**. « L'etape est simplement
 lente » doit etre ecarte avant d'accuser l'API, comme au lot RIDE-1.
+
+## LIGNE DE FLOTTAISON : RECON PURE -- il faut un SHADER, et la metrique de contraste du brief tombe a la mesure (27 aout 2026)
+
+Branche `claude/water-tint-height-recon-avzd47`, partie de `staging`
+(`2c1563f`, qui porte la teinte uniforme 75 %). `origin/main` = `a007e78`,
+conforme. Refs triees par date et comparees par ARBRE : toutes les branches
+plus recentes que `main` sont deja ancetres de `origin/staging`, **aucune
+session concurrente**. **AUCUN fichier de jeu touche** : `git diff --stat`
+ne rapporte que `docs/WATERLINE_RECON.md`, dix captures sous
+`docs/color-sheets/` et ce document. Detail chiffre complet :
+**`docs/WATERLINE_RECON.md`**.
+
+Retour device : la teinte uniforme a 75 % rend Keepy entierement turquoise
+et ne se lit pas comme « il a pied ». Decision de Mathieu, **non
+re-arbitree ici** : ce sont des PATAUGEOIRES, le CORPS est mouille et la
+TETE reste seche, avec une **ligne de flottaison a Y CONSTANT dans le
+monde**. Nage et bateau hors perimetre.
+
+**Keepy est bien UN SEUL MESH, l'ambiguite est fermee** : le `.glb` porte
+1 mesh / 1 primitive / 1 materiau (3121 verts). Les « 2 instances » de la
+recon precedente sont `Body` (le `ModelSlot`, `mesh = null` une fois le
+modele installe) plus `Mesh1_0`, le seul qui dessine. Il n'y a donc aucune
+decoupe tete/corps exploitable par ecriture de propriete -- le shader est
+la seule route, et ce serait le premier du hub.
+
+### ⚠️ QUATRE PREMISSES TOMBENT A LA MESURE, dont trois sont les miennes
+
+1. **La metrique du brief tourne A L'ENVERS, et c'est la correction la plus
+   lourde.** Le brief demande « le contraste de la TETE contre l'eau » et de
+   chiffrer le gain contre les 1,64-1,81:1 de la teinte uniforme. Mesure :
+   une tete SECHE marque **1,13-1,23:1**, soit **MOINS BIEN** que les
+   **1,89:1** de la teinte livree. Le WCAG est un rapport de LUMINANCE,
+   l'eau rend clair (0,457) et le creme naturel de Keepy aussi (0,409),
+   alors que la teinte 75 % est sombre (0,193). Ce qui fait lire une tete
+   seche comme « pas de l'eau », c'est la TEINTE : **155 deg** d'ecart
+   contre **41 deg** pour le corps teinte. Les deux axes sont publies
+   partout ; aucun des deux seul n'est la reponse.
+2. **MIENNE : « le materiau livre cull les faces arriere ». FAUX** --
+   `cull_mode = 2` (DISABLED), `transparency = 0`, UNSHADED, texture
+   1024x1024. Mon `cull_disabled` etait le bon choix, mon assertion la
+   mauvaise.
+3. **MIENNE : « le premier rendu de l'echelle est moucheté, donc ca
+   z-fight ». FAUX** -- mesure a **0,96 flip/colonne sur les QUATRE
+   combinaisons** de `render_mode` : la frontiere est propre partout. Ce
+   que je lisais comme du moucheté etait la fourrure sur une pose de
+   profil.
+4. **MIENNE : « 6 des 34 checks de `WaterTintProbe` vont casser ». FAUX,
+   c'est 5** -- mesure en patchant temporairement `HubWorld` puis en
+   revertant (34 OK / 0 echec avant, **29 OK / 5 echecs apres**). Le 6e
+   PASSE **pour la mauvaise raison** : c'est une assertion NEGATIVE, le
+   lecteur rend MAGENTA sur un cast rate, et MAGENTA n'est effectivement
+   « pas la couleur de base ». Un check qui ne peut pas echouer dans le
+   sens ou il pointe.
+
+S'y ajoutent trois defauts de MES sondes, chacun ayant produit un chiffre
+faux et confiant : une erreur de parse (15 min a ne rien mesurer -- le
+piege que ce fichier documente deja), un diff CROISE ENTRE POSES qui
+mesurait le deplacement de la silhouette et rapportait un Keepy qui monte
+comme **de plus en plus mouille** (0,189 -> 0,948, l'exact inverse), et
+`--fixed-fps 60` oublie (un hop de 0,28 s termine en **trois** frames
+llvmpipe).
+
+### Ce qui est MESURE et acquis
+
+* **`gl_compatibility` fournit tout** : `varying` + `MODEL_MATRIX` en
+  `vertex()`, `INV_VIEW_MATRIX` en `fragment()` (equivalent, mesure
+  identique), `uniform sampler2D : source_color`, `step()`, `mix()`. Une
+  variante volontairement cassee sort l'erreur exacte -- le detecteur peut
+  echouer rouge.
+* **L'ESPACE EST LE PIEGE, et l'ecart n'est pas subtil** : model
+  `VERTEX.y` va de -0,6291 a +0,6283, monde de 0 a 1,3500 (slot a 0,9,
+  offset -0,2246, echelle 1,07368). `water_y = 0,55` mouille **40,7 %** de
+  lui en monde et **93,8 %** en modele. Mesure : le shader monde le seche
+  completement des que ses pieds passent la ligne (0,187 -> 0,000) ; le
+  shader modele le laisse trempe a **toutes** les altitudes (0,906 ->
+  0,914) et sa ligne **remonte l'ecran avec lui** (943 -> 855) alors que la
+  vraie est a 1060.
+* **Un vrai hop traverse une ligne qui ne bouge pas** : 11 634 px teintes
+  au sol contre **592 a l'apex** (y 0,599), soit 95 % d'effondrement.
+* **Le residu de 18 px n'est pas une derive** : la camera est inclinee de
+  -34 deg, donc le plan y=0,55 s'etale sur **147 px** avec la profondeur
+  (rows 992 a 1139 sur les +-1,02 de Keepy) ; la ligne mesuree, 1042, est
+  dedans.
+* **Le shader REMPLACE l'ecriture d'albedo, il ne remplace PAS
+  `HubWater`** : au spawn `contains()` est faux, les pieds sont a y=0 et
+  une ligne a 0,55 les couvrirait -- un test de hauteur sans gate de
+  membership mouille Keepy sur l'herbe.
+* **L'uniform se tween exactement comme la propriete** (`shader_parameter/
+  tint_fraction` : 0,4986 a mi-course, 0,7500 en fin), donc
+  `KEEPY_WATER_TINT_FRACTION` et `KEEPY_TINT_FADE_S` sont conserves.
+* **Cout : nul et mesure** -- **98 / 104 draw nodes AVANT ET APRES** sur
+  trois runs de chaque cote, 9 batches MultiMesh, FPS 25,1-25,3 contre
+  25,4-27,1 (les plages se chevauchent : « rien de detectable », pas « plus
+  rapide »).
+
+### La planche, et ce qu'elle montre
+
+`docs/color-sheets/waterline_ladder_sheet.png` -- dix tuiles, **toutes dans
+la MEME pose** (la premiere version avait la tuile « livree » dans une
+autre orientation parce qu'un hop l'avait tourne ; re-shootee plutot
+qu'expliquee). ⚠️ **Les trois barreaux bas sont quasi inoperants** (fraction
+mouillee 0,021 / 0,059 / 0,110) : Keepy est modelise ASSIS, ses pattes sont
+petites et auto-occultees, donc **la plage utile commence a 0,62**. La bande
+« corps mouille, tete seche » est **0,78 a 0,92**, marquee sur la planche.
+**Le barreau n'est PAS choisi ici.**
+
+⚠️ **Propriete que personne n'avait demandee et que la planche rend
+evidente** : la couleur de teinte EST la couleur de l'eau, donc la partie
+immergee ne se lit pas « Keepy mouille » mais **DISPARAIT** dans l'eau. A
+0,62-0,78 c'est exactement l'effet voulu ; a 0,92 le corps sous la machoire
+a largement fusionne avec le fond et on est plus proche d'une tete
+flottante. Teinter vers une couleur PROCHE de l'eau plutot qu'EGALE a elle
+adoucirait ca -- non tranche, non demande.
+
+### Reste ouvert -- jugement device, et une limite de validation a dire franchement
+
+⚠️ **Tout ce qui precede est rendu par llvmpipe sous xvfb via le backend
+`opengl3` de bureau ; le jeu tourne en WebGL2 dans Safari iOS.** Deux
+compilateurs GLSL differents derriere la meme source `gl_compatibility`.
+Les deux points sur lesquels ce design s'appuie sont justement les plus
+exposes : la **precision d'interpolation d'un `varying`** (WebGL2 mobile
+donne couramment `mediump` la ou le bureau donne `highp`) et la
+**disponibilite de `MODEL_MATRIX` en `vertex()`**. Un Y monde autour de
+0,55 en `mediump` devrait passer ; **rien ici ne le prouve**.
+
+Restent aussi : le choix du barreau ; le fait qu'avec une ligne fixe **tout
+hop en pataugeant est un cycle mouille -> sec -> mouille en 0,28 s**
+(physiquement juste, potentiellement lu comme un clignotement) ; la
+reecriture des 5 checks de `WaterTintProbe` (plus le 6e, a qui il faut
+donner quelque chose de POSITIF a asserter) ; et le fait que **les cinq
+surfaces d'eau ne sont pas a la meme hauteur** (0,0270 a 0,0950, soit
+**5,04 %** de la taille de Keepy) alors qu'une seule constante est prevue.
+Une seule masse d'eau a ete echelonnee (le lobe spawn du grand lac).
