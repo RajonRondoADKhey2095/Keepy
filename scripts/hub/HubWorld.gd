@@ -111,8 +111,13 @@ var _water: HubWater = null
 
 ## Keepy's material, DUPLICATED, and the tween that recolours it. See
 ## _ensure_keepy_material() for why the duplicate is not optional.
-var _keepy_material: StandardMaterial3D = null
-var _keepy_base_color := Color.WHITE
+##
+## A ShaderMaterial since the waterline batch: the tint stopped being a
+## whole-body property and became a per-fragment split, which no
+## StandardMaterial3D property can express. What drives it did NOT change
+## -- the same landing hook, the same latch, the same tween, now aimed at
+## a shader uniform instead of albedo_color.
+var _keepy_material: ShaderMaterial = null
 var _keepy_material_resolved: bool = false
 var _keepy_tint_tween: Tween = null
 
@@ -377,28 +382,41 @@ func _on_fallback_battle() -> void:
 ## =====================================================================
 ## KEEPY TINTS TOWARD THE WATER HE IS STANDING IN
 ##
-## The plateau's five waters are all painted one turquoise, and Keepy is
-## blended 75% of the way toward it while he is in any of them. Mathieu
-## picked the fraction on the recon's rendered ladder (0/25/50/75/100%
-## captured against the shipped camera): 25% reads as a lighting quirk
-## rather than an effect, 50% is ambiguous between "wet" and "unwell", and
-## 100% starts putting his palest patches into competition with a teal
-## background. 75% is unambiguous with the silhouette, ears, eyes and badge
-## all still fully legible.
+## The plateau's five waters are all painted one turquoise, and the part
+## of Keepy BELOW the waterline is blended 75% of the way toward it while
+## he is in any of them. Mathieu picked the fraction on the recon's
+## rendered ladder (0/25/50/75/100% captured against the shipped camera):
+## 25% reads as a lighting quirk rather than an effect, 50% is ambiguous
+## between "wet" and "unwell", and 100% starts putting his palest patches
+## into competition with a teal background. 75% is unambiguous with the
+## silhouette, ears, eyes and badge all still fully legible.
 ##
-## WHY THIS IS THE WHOLE EFFECT. Sinking Keepy into the water and letting
-## the surface draw over him was measured and does not work at all: an
-## opaque mesh in front of a flat transparent plane wins the depth test
-## everywhere its silhouette draws, so at 0/30/60% submerged the rendered
-## frames came back identical to the dry one, pixel for pixel. Squash and a
-## waterline were considered and dropped. Colour is what is left, and it is
-## enough.
+## ⚠️ THE UNIFORM VERSION OF THIS SHIPPED FIRST AND WAS JUDGED
+## INSUFFICIENT ON DEVICE. Tinting ALL of him turned the whole squirrel
+## turquoise, which reads as "Keepy is made of water" rather than "Keepy
+## is standing in water". The fraction was never the problem and is
+## unchanged; WHICH PART OF HIM it applies to is what this batch fixes.
+## See KEEPY_WATERLINE_Y below and the shader it drives.
 ##
-## The mechanism is not new. scripts/battle/FighterView.gd already tints
+## WHY A SHADER AND NOT A CHEAPER ROUTE -- both alternatives were MEASURED
+## and neither works on this asset:
+##
+##   sink him and let the water draw over him -- does literally nothing.
+##     An opaque mesh in front of a flat transparent plane wins the depth
+##     test everywhere its silhouette draws, so 0/30/60% submerged came
+##     back pixel-identical to the dry frame.
+##   address head and body separately -- there is nothing to address. The
+##     .glb is ONE mesh, ONE primitive, ONE material.
+##
+## So the split is per-fragment or it does not exist. Squash was considered
+## and dropped; swimming and the boat are out of scope.
+##
+## The plumbing is not new. scripts/battle/FighterView.gd already tints
 ## THIS EXACT ASSET through a ModelSlot, and these two functions are its
 ## _ensure_material()/_tint_to() pair with the battle-specific parts left
-## behind. That file is not touched; it is copied from deliberately, so the
-## two screens cannot drift into two different ways of recolouring one .glb.
+## behind and a shader where its albedo write was. That file is not
+## touched; it is copied from deliberately, so the two screens cannot
+## drift into two different ways of recolouring one .glb.
 
 ## How long the tint takes to arrive or leave. Short enough that a landing
 ## is visibly its cause -- it is under a hop, so the fade is done before
@@ -418,7 +436,52 @@ const KEEPY_WATER_TINT_FRACTION: float = 0.75
 
 const KEEPY_TINT_FADE_S: float = 0.18
 
+## The world height the waterline sits at, in metres above the plateau.
+##
+## MATHIEU'S CALL, made on docs/color-sheets/waterline_ladder_sheet.png --
+## eight rungs rendered from the shipped camera in one pose. This is the
+## "hips" rung: the water reaches Keepy's hips, and his whole upper body,
+## arms and HEAD stay dry and above the surface. THESE ARE PADDLING POOLS
+## and the read that matters is "he is standing in water", not "he is
+## submerged in it".
+##
+## ⚠️ The recon recommended 0.78-0.92 and was OVERRULED, deliberately, so
+## nothing here re-opens it. Its metric was the share of his silhouette
+## that turns turquoise, and by that metric the low rungs look near-inert
+## (wet fractions 0.021 / 0.059 / 0.110) because Keepy is modelled SITTING
+## and his legs are small and self-occluded. But surface area is not the
+## same as legibility of intent, and the sheet settles it: at 0.45 the
+## intent reads instantly. Do not propose a higher rung.
+##
+## WHY A WORLD HEIGHT AND NOT A FRACTION OF HIM. A constant world Y stays
+## correct the day the depths differ or swimming arrives; a fraction of
+## his body would travel with him and soak him mid-air. That is not a
+## hypothetical -- it is the exact difference the recon measured between
+## the world-space and model-space forms of this shader, and the
+## model-space one renders plausibly enough in a still frame to ship by
+## accident. See assets/shaders/keepy_waterline.gdshader.
+##
+## ⚠️ ONE CONSTANT FOR FIVE BODIES, and it is not exact. The real surfaces
+## sit at 0.0270 / 0.0295 / 0.0800 / 0.0800 / 0.0950, a spread of 0.0680
+## -- 5.04% of Keepy's 1.3501. So the line lands a little differently on
+## him depending on which water he is in; this batch MEASURES that spread
+## rather than assuming it away, and whether it needs a constant per body
+## is Mathieu's, not this file's.
+const KEEPY_WATERLINE_Y: float = 0.45
+
+## The waterline shader, applied to Keepy's own material rather than to a
+## whole-body property. See the shader for why the split cannot be done
+## any other way on this asset.
+const KEEPY_WATERLINE_SHADER: Shader = preload(
+	"res://assets/shaders/keepy_waterline.gdshader")
+
 ## Aims the tint at wet or dry, doing nothing when that has not changed.
+##
+## The uniform is tweened EXACTLY as albedo_color used to be -- measured on
+## a live ShaderMaterial before this batch was written, because a uniform
+## that could not be tweened would have cost the fade the whole project's
+## colour writes are built on: 0.4986 mid-tween, 0.7500 final, the same
+## numbers the property gave.
 func _set_keepy_wet(wet: bool) -> void:
 	if wet == _keepy_wet and _keepy_material_resolved:
 		return
@@ -426,35 +489,49 @@ func _set_keepy_wet(wet: bool) -> void:
 	_ensure_keepy_material()
 	if _keepy_material == null:
 		return
-	var target := _keepy_base_color
-	if wet:
-		# LERP THE ALBEDO, which MULTIPLIES the model's texture rather than
-		# replacing it: Keepy keeps his markings, his badge and his eyes,
-		# and takes the water's hue over the top of them. Replacing the
-		# colour outright would have flattened him to a turquoise blob.
-		target = _keepy_base_color.lerp(HubWater.hue(), KEEPY_WATER_TINT_FRACTION)
+	# HOW FAR the submerged part is carried, not WHICH part -- the shader
+	# owns the split, and it owns it in world space, so this value never
+	# has to know where Keepy is. Zero is a true no-op: the shader still
+	# samples his texture and mixes nothing into it.
+	var target := KEEPY_WATER_TINT_FRACTION if wet else 0.0
 	if _keepy_tint_tween != null and _keepy_tint_tween.is_valid():
 		_keepy_tint_tween.kill()
 	_keepy_tint_tween = create_tween()
-	_keepy_tint_tween.tween_property(_keepy_material, "albedo_color", target, KEEPY_TINT_FADE_S) \
+	_keepy_tint_tween.tween_property(
+		_keepy_material, "shader_parameter/tint_fraction", target, KEEPY_TINT_FADE_S) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 ## Takes ownership of a material this screen may recolour.
 ##
-## LAZY, and DUPLICATED, both load-bearing and both for the reasons
-## FighterView.gd already documents on this same asset:
+## LAZY, and never written THROUGH -- both load-bearing, and both for the
+## reasons FighterView.gd already documents on this same asset:
 ##
 ##   lazy      -- the slot is only carrying its final model once the model
 ##                has installed; resolving in _ready() can catch the scene's
 ##                authored placeholder instead.
-##   duplicate -- Godot's glTF importer binds ONE shared material on the
-##                mesh itself, so writing the material the slot hands back
-##                would tint every instance of keepy_squirrel_hero.glb in
-##                the project. Battle's player fighter is the same .glb.
+##   not written through -- Godot's glTF importer binds ONE shared material
+##                on the mesh itself, so writing the material the slot hands
+##                back would tint every instance of keepy_squirrel_hero.glb
+##                in the project. Battle's player fighter is the same .glb.
 ##
-## A non-StandardMaterial3D (a shader material on some future asset) leaves
+## ⚠️ The shipped code USED to satisfy that second point with duplicate().
+## It no longer duplicates anything: a brand-new ShaderMaterial is built
+## and bound over the top, which is strictly safer (a material this
+## function constructed cannot be shared with anything) but is NOT the same
+## mechanism, and a comment still claiming duplicate() would send the next
+## reader looking for a call that is not there.
+##
+## An asset whose slot material is not a StandardMaterial3D leaves
 ## _keepy_material null and every tint call above no-ops. Keepy stops
 ## changing colour in water; nothing else on this screen notices.
+##
+## WHAT IT READS OFF THE OLD MATERIAL, and why the read is still needed
+## even though the material is replaced: the model's entire colour lives
+## in its baseColorTexture, and the shader has to sample the same one or
+## Keepy loses his markings, his badge and his eyes. albedo_color is NOT
+## carried over -- it is (1,1,1,1) on this asset, i.e. a no-op multiply,
+## and folding a would-be tint into it is exactly the whole-body effect
+## this batch replaces.
 func _ensure_keepy_material() -> void:
 	if _keepy_material_resolved:
 		return
@@ -465,6 +542,13 @@ func _ensure_keepy_material() -> void:
 	var current := slot.slot_material() as StandardMaterial3D
 	if current == null:
 		return
-	_keepy_material = current.duplicate() as StandardMaterial3D
-	_keepy_base_color = _keepy_material.albedo_color
+	var shaded := ShaderMaterial.new()
+	shaded.shader = KEEPY_WATERLINE_SHADER
+	shaded.set_shader_parameter("albedo_texture", current.albedo_texture)
+	shaded.set_shader_parameter("water_color", HubWater.hue())
+	shaded.set_shader_parameter("water_y", KEEPY_WATERLINE_Y)
+	# Starts DRY. The first landing decides the rest; until one arrives,
+	# a zero fraction is indistinguishable from the material this replaces.
+	shaded.set_shader_parameter("tint_fraction", 0.0)
+	_keepy_material = shaded
 	slot.apply_material(_keepy_material)
