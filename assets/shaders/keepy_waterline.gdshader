@@ -30,6 +30,45 @@ render_mode unshaded, cull_disabled;
 // reports cull_mode = 2 (DISABLED). The recon's first shader asserted the
 // opposite and the assertion was the thing that was wrong -- see its
 // premise 2.
+//
+// ⚠️ WHY THIS FILE DOES NOT WRITE ALPHA, and it is not a tidy-up.
+//
+// It used to, and that one line was the whole of the defect Mathieu saw on
+// a device: the waterline read correctly from the front and fell apart
+// from every other angle, and Keepy came out washed-out cream on dry grass
+// where the tint is gated to zero and should be doing nothing at all.
+//
+// Assigning ALPHA is what moves a spatial material into the TRANSPARENT
+// pass, and a transparent material does not write depth. With back faces
+// also drawn (cull_disabled, above), the far side of a closed body then
+// paints over the near side in whatever order the index buffer happens to
+// be in. That order is fixed; which side is far is not -- so the picture
+// is wrong at some yaws and right at others, which is exactly the shape of
+// the report.
+//
+// MEASURED, at eight azimuths, as pixels differing from the same shader
+// with its depth write restored (scripts/dev/WaterlineOrientationProbe):
+//
+//   yaw                    0     45     90    135    180    225    270    315
+//   writes ALPHA          85    177  13191  24470  18599  17545  12558    255
+//   no ALPHA               0      0      0      0      0      0      0      0
+//   ALPHA + depth_draw     0      0      0      0      0      0      0      0
+//
+// The last two rows are two DIFFERENT shaders agreeing to the pixel at
+// every angle, which is what pins the cause on the depth write and not on
+// the colour: nothing else about them is the same.
+//
+// depth_draw_always would flatten those numbers too, and is NOT what is
+// done here. It would leave the material in the alpha queue, sorted as a
+// whole object against the five water discs, which are themselves
+// transparent -- trading a bug that is visible for one that is latent.
+// Dropping the write restores exactly the state of the material this
+// replaced: that one reports transparency = 0, so the screen never used
+// this texture's alpha to begin with.
+//
+// The proof that nothing was lost is that a dry Keepy is now pixel-
+// identical to that material at all eight azimuths, gated by
+// WaterTintProbe PHASE G.
 
 // ============================ THE WATERLINE ============================
 //
@@ -98,5 +137,6 @@ void fragment() {
 	float submerged = step(v_world.y, water_y);
 
 	ALBEDO = mix(tex.rgb, mix(tex.rgb, water_color.rgb, tint_fraction), submerged);
-	ALPHA = tex.a;
+	// ALPHA is deliberately left alone -- see the block above. Writing it
+	// at all costs the depth write, and this asset has no alpha to carry.
 }
