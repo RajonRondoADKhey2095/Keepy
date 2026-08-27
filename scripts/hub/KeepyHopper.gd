@@ -464,6 +464,13 @@ func leave_ride(toward: Vector3, blocked: Array) -> void:
 	_hop_from = here
 	_hop_to = landing
 	_hop_height = EJECT_HOP_HEIGHT
+	# Flat, and set here rather than relied on: this is the one tween built
+	# outside _begin_hop, so it is the one place a sloped arc left over from
+	# a dive could leak into. Unreachable today -- every path into a ride
+	# passes a landing, and _on_hop_finished zeroes them -- which is exactly
+	# why it is written down instead of depended on.
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
 	_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
