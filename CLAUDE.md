@@ -16392,3 +16392,172 @@ mecanisme de rendu de submersion (Q3) ; le renommage de collision (Q4) ;
 le test point-vers-polyligne du ruisseau et sa marge float32 propre (Q4) ;
 et l'occlusion possible par des houppiers d'arbres au-dessus du ruisseau,
 mesuree ailleurs mais pas re-verifiee ici (Q6).
+
+## KEEPY SE TEINTE DANS L'EAU : 75 % vers #40E0D0, cinq corps, et DEUX chiffres de marge publies en echec avant d'etre corriges (27 aout 2026)
+
+Branche `claude/keepy-water-tint-impl-n2wan2`, partie de `staging` (`f2f5654`).
+Regle n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri des refs par date,
+comparaison des ARBRES et pas des noms -- `origin/main` (`a007e78`) et
+`origin/staging` (`916d7d8`) portent le MEME arbre `3246b4a4`, aucune branche
+ne porte ce brief, aucune session concurrente.
+
+⚠️ **ETAPE PREALABLE : le rapport de recon avait ete laisse NON MERGE.**
+`claude/keepy-water-tint-recon-mp838x` (`648bb3b`, `docs/WATER_TINT_RECON.md`,
+335 lignes, doc-only) n'etait pas ancetre de `staging` -- une instruction
+d'environnement contradictoire de la session precedente. Merge en PREMIER
+(`f2f5654`, `--no-ff`), arbre du merge **byte-identique** a la branche recon
+(`b54292ba` des deux cotes, `git diff` vide). Sans ca le rapport se perdait.
+
+**Decision de Mathieu, non re-arbitree** : fraction **75 %** vers `#40E0D0`,
+les CINQ corps traites identiquement, Keepy seul (la barque n'est PAS
+teintee), squash et ligne de flottaison ecartes.
+
+### Le mecanisme est COPIE, pas invente
+
+`scripts/battle/FighterView.gd` teinte deja **CE MEME `.glb`** a travers un
+`ModelSlot`. Son couple `_ensure_material()`/`_tint_to()` est repris tel quel
+dans `HubWorld.gd` ; **`FighterView.gd` est INTOUCHE** -- on s'en inspire, on
+ne le modifie pas, et les deux ecrans ne peuvent pas deriver vers deux facons
+de recolorier un `.glb`.
+
+Les deux proprietes qui portent tout, mesurees et pas supposees : l'albedo de
+Keepy part a **`rgb(1,1,1)` pur** (toute sa couleur vit dans la texture), donc
+ecrire l'albedo **MULTIPLIE** la texture au lieu de la remplacer -- il garde
+ses marquages, ses yeux et son badge et prend la teinte par-dessus ; et le
+materiau est **DUPLIQUE** avant ecriture, parce que l'importeur glTF lie UN
+materiau partage sur le mesh, et que le fighter joueur de Battle est le meme
+`.glb`.
+
+### `HubWater.gd` -- un seul test pour cinq corps, aucune dimension restatee
+
+`class_name HubWater`, `RefCounted`, construit une fois. Il repond **« Keepy
+est-il mouille »** et rien d'autre : il ne refuse aucun tap, ne clampe aucune
+destination. `HubRegion.contains()` garde sa propre reponse a **« Keepy
+peut-il tenir ici »**, qui est une autre question (les trois corps hors grand
+lac sont marchables **par conception** -- la barque s'embarque depuis la tete
+du ruisseau, posee sur la rive de la mare).
+
+Pas un seul nombre n'est reecrit : pond et petit lac viennent de
+`HubBuilder.pond_centre()` / `small_lake_centre()` (**nouveaux**, du meme
+patron que `boat()`/`stream_spine()` -- ils rapportent ou le disque a ete
+**DESSINE**), les deux lobes de `HubRegion.lakes()`, la teinte de
+`HubBuilder.POND_WATER_COLOR`, et le ruisseau de
+`HubStreamRoute.distance_to()` -- l'appel que le mouillage utilise deja.
+
+### ⚠️ TROIS PREMISSES FAUSSES, PUBLIEES EN ECHEC -- dont DEUX etaient les miennes
+
+**1. La recon SOUS-ESTIMAIT le residu du ruisseau.** Elle mesurait 1/40 a
++0,001. Echantillonnage dense : **116/4000**.
+
+**2. Ma propre premiere constante, `STREAM_RIM_MARGIN = 0.010`, NE CORRIGEAIT
+PAS le defaut** -- et ma propre sonde la validait en vert. Sa sonde balayait
+**80 echantillons**, trop peu pour tomber sur une courbe serree. Passee a
+**2000 abscisses x 2 cotes**, elle mesure **3/4000 de residu a +0,010**.
+Corrige a **0,020** AVANT commit, sur la mesure et pas sur la relecture.
+
+**3. Et la CAUSE n'est pas float32 du tout.** Le ruban est **DESSINE** en
+decalages perpendiculaires aux 89 samples du spine ; `distance_to()` mesure a
+la **CORDE** qui les relie. Sur un virage les deux lignes different d'une
+sagitta `r(1-cos(theta/2))` = **0,0195** au rayon le plus serre (1,4058, son
+propre chiffre publie), du meme ordre que le debord pire mesure **0,0141**.
+C'est un ecart **GEOMETRIQUE** entre ce qui est dessine et ce qui est mesure ;
+il ne retrecit pas avec la precision. Les disques, eux, sont bien un cas
+float32 (52 a 141 azimuts sur 360 glissent au bord exact, tous propres a un
+millimetre).
+
+| marge | span-midpoints x2000 | sommets du spine | uniforme x5000 |
+|---|---|---|---|
+| +0,001 | 116/4000 | 46/178 | 283/10000 |
+| +0,010 | **3/4000** | **2/178** | **8/10000** |
+| **+0,020** | **0/4000** | **0/178** | **0/10000** |
+
+⚠️ **Aucune des deux marges n'est utilisee par la teinte.** Elargir le test
+deplacerait la ligne d'eau elle-meme -- Keepy se lirait mouille debout sur la
+berge. Ce que le chiffre du ruisseau dit vraiment, et qu'un futur appelant
+doit savoir : **un point jusqu'a ~1,4 cm hors du bord dessine est rapporte
+comme de l'eau sur un virage serre.**
+
+### Le branchement : `hop_landed`, AVANT tout ce que l'atterrissage declenche
+
+Le test tombe immediatement apres la garde `is_riding()`, **avant** les
+branches embarquement / dialogue / portail -- les trois sortent en `return`,
+donc une teinte placee apres cesserait de se mettre a jour sur exactement les
+atterrissages qui font quelque chose, en silence et seulement parfois.
+
+⚠️ **`_on_ride_started()` ETEINT la teinte, et ce n'est pas de la ceinture et
+bretelles.** Un ride n'emet aucun atterrissage (mesure : **0 sur 91 frames**),
+donc rien ne peut l'allumer en cours de traversee -- mais la coque est amarree
+**SUR l'eau aux deux bouts**, donc le dernier atterrissage d'une marche
+d'embarquement est mouille dans le cas ORDINAIRE, et la teinte serait portee a
+bord pour toute la traversee.
+
+### Validation
+
+**`WaterTintProbe` (nouvelle, PERMANENTE, gatante) : 34 checks, 0 echec,
+exit 0.** Elle existe parce que **tout mode de panne de cette feature est
+SILENCIEUX** : materiau non resolu, accesseur de centre disparu, hook place
+apres un `return` -- aucun ne leve, aucun ne casse un build, et tous
+ressemblent a « la teinte n'a jamais ete allumee » sur un device. Sa PHASE C
+lit l'albedo **sur les surfaces que le slot DESSINE**, jamais la variable que
+`HubWorld` a ecrite : verifier la variable passerait le jour ou `ModelSlot`
+cesse de lier l'override, le defaut exact qui a rendu `AlarmRampAudit`
+necessaire un ecran plus loin.
+
+⚠️ **Sa PHASE F est celle qui compte le plus pour ce lot, et elle ne parle pas
+de couleur** : le hook est insere **AU-DESSUS de la boucle des portails**, et
+cette boucle est ce qui fait entrer un joueur dans un sous-jeu -- toute la
+raison d'etre de cet ecran. Elle mesure donc que les **3 portails ouvrent
+toujours leur dialogue** (`Chased`, `Quizz`, `Battle`) **et** que la teinte a
+bien ete mise a jour au passage.
+
+**V1/V2 -- captures reelles** (`xvfb` + `opengl3`, jamais `--headless` seul),
+masque par diff avec/sans Keepy (**20 275 px**), jamais une fenetre fixe :
+
+| frame | corps | moyenne masquee |
+|---|---|---|
+| dry_before | LAND | **rgb(0,8521, 0,6047, 0,4910)** |
+| pond / small_lake | pond / small_lake | rgb(0,3724, 0,5532, 0,4269) |
+| great_lake A / B | great_lake_0 / _1 | rgb(0,3727, 0,5507, 0,4241) |
+| stream | stream | rgb(0,3721, 0,5521, 0,4259) |
+| **dry_after** | LAND | **rgb(0,8521, 0,6047, 0,4910)** |
+
+Le banc **reproduit la ligne f=0 de la recon au millieme** (0,852 / 0,605 /
+0,491) avant qu'on lui fasse confiance sur du neuf, et ses cinq lignes
+mouillees retombent sur la ligne f=0,75 de la recon (0,373 / 0,550 / 0,423).
+**Les cinq corps a la meme force** (ecart max 0,0006 en R). **`dry_after` est
+identique a `dry_before` au dernier chiffre : aucun residu.** Verifie a l'oeil
+aussi -- `docs/hub-shots/tint_comparison.png` : silhouette, oreilles, yeux,
+badge « K » et rougeurs restent tous lisibles.
+
+⚠️ **COUT REEL, MESURE ET NON MAQUILLE : la teinte echange du contraste de
+silhouette.** Keepy sec contre l'herbe **3,25:1** ; teinte, il tombe a
+**1,64-1,81:1 contre l'eau** et **1,52:1 contre l'herbe** (cas ruisseau, le
+pire). C'est inherent a teindre quelqu'un vers la chose dans laquelle il se
+tient, pas un defaut -- et le ratio porte sur des MOYENNES, donc il sous-estime
+la lisibilite reelle que la capture montre.
+
+**V5 -- 98 draw nodes hors portails** (104 au total, 6 dans les portails),
+**inchange** : une teinte est une ecriture de propriete sur une surface qui
+existe deja.
+
+**V6, diffe contre `origin/staging` en worktree separe** (imports verifies
+complets des deux cotes, **24 `.scn`**, et **tailles comparees avant les
+contenus** -- la lecon du faux-rouge par troncature) : `AssetContractAudit`
+(12/12 visuels, 0/10 colliders deplaces), `DeathModelAudit`,
+`ChargerShapeProbe` -- **BYTE-IDENTIQUES sur les DEUX flux**.
+`ProbeTimeoutAudit` differe d'**exactement les lignes ajoutees**, **48 -> 49
+sondes** (la nouvelle ; les deux sondes jetables sont supprimees avant commit).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que 75 % se lit comme MOUILLE** a vitesse reelle sur un telephone,
+   plutot que comme « malade » ou comme un bug de rendu ? Le chiffre est la
+   decision de Mathieu prise sur une echelle rendue ; personne ne l'a encore
+   vu bouger sur un ecran.
+2. **Le contraste perdu** (3,25 -> 1,5-1,8:1) : mesure, argumente comme
+   inherent, jamais juge a l'oeil en mouvement.
+3. **Le fondu de 0,18 s** : la capture valide le POINT D'ARRIVEE (75 % atteint,
+   entierement retire sur terre), pas la duree -- c'est la convention du depot
+   (tout ecrit de couleur y est un tween), pas un optimum mesure.
+4. **Les ~1,4 cm de debord du ruisseau** sur un virage serre : cosmetiquement
+   sans effet pour une teinte, reel pour tout futur appelant.
