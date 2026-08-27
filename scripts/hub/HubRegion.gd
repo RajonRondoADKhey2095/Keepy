@@ -134,9 +134,16 @@ const PLATEAU_HALF_EXTENT: float = 35.0
 ## is NO centre anywhere that keeps the disc inside the square while
 ## clearing the pond, the stream and the three portals. 16 is the largest
 ## that fits, and its best centre is the one written here.
+##
+## NAMED "GREATLAKE_WATER_RADIUS", not "LAKE_WATER_RADIUS": that name used
+## to collide with `HubBuilder.LAKE_WATER_RADIUS` (the SMALL lake's 8.0) --
+## same identifier, two different bodies, two different files, and no
+## compiler error to catch a future edit that read the wrong one. A pure
+## rename, no value change on either side; matches HubBuilder's own
+## GREATLAKE_* prefix for this same body.
 const LAKE_CENTRE_X: float = 15.5
 const LAKE_CENTRE_Z: float = -19.0
-const LAKE_WATER_RADIUS: float = 16.0
+const GREATLAKE_WATER_RADIUS: float = 16.0
 
 ## The SECOND great-lake lobe, added by SPAWN-LAKE-1, in front of the spawn.
 ##
@@ -173,7 +180,7 @@ const SHORE_PAD_RADIUS: float = 20.0
 ## be a second copy of the centre, free to drift from the pair above.
 static var _lake_centre: Vector3 = Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z)
 static var _axis: Vector3 = _lake_centre.normalized()
-static var _near_bank: Vector3 = _axis * (_lake_centre.length() - LAKE_WATER_RADIUS)
+static var _near_bank: Vector3 = _axis * (_lake_centre.length() - GREATLAKE_WATER_RADIUS)
 
 ## Every disc the region subtracts, in the order the layout states them.
 ##
@@ -184,7 +191,7 @@ static var _near_bank: Vector3 = _axis * (_lake_centre.length() - LAKE_WATER_RAD
 ## the CENTRES a second time -- that is what LakeZoneProbe's PHASE REGION
 ## gates, entry by entry.
 static var _lakes: Array[Dictionary] = [
-	{"centre": Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z), "radius": LAKE_WATER_RADIUS},
+	{"centre": Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z), "radius": GREATLAKE_WATER_RADIUS},
 	{"centre": Vector3(SPAWN_LAKE_CENTRE_X, 0.0, SPAWN_LAKE_CENTRE_Z), "radius": SPAWN_LAKE_WATER_RADIUS},
 ]
 

@@ -148,7 +148,7 @@ func _phase_region() -> void:
 	print("    lakes: %s  radii %s" % [stated, radii])
 	_check(absf(HubRegion.lake_centre().length() - HubRegion.LAKE_CENTRE_DISTANCE) < 1e-4,
 		"lake centre at %.3f u -> %s" % [HubRegion.lake_centre().length(), HubRegion.lake_centre()])
-	_check(absf(HubRegion.near_bank().length() - (HubRegion.LAKE_CENTRE_DISTANCE - HubRegion.LAKE_WATER_RADIUS)) < 1e-4,
+	_check(absf(HubRegion.near_bank().length() - (HubRegion.LAKE_CENTRE_DISTANCE - HubRegion.GREATLAKE_WATER_RADIUS)) < 1e-4,
 		"near bank at %.3f u -> %s" % [HubRegion.near_bank().length(), HubRegion.near_bank()])
 
 	_check(HubRegion.contains(Vector3.ZERO), "the plateau centre is walkable")

@@ -187,7 +187,12 @@ const LAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
 
 ## 2.5x the pond on both discs (3.2 -> 8.0, 3.62 -> 9.05), so the rim keeps
 ## the same proportion rather than becoming a hairline on a much bigger disc.
-const LAKE_WATER_RADIUS: float = 8.0
+##
+## NAMED "SMALL_LAKE", not "LAKE": `HubRegion.gd` used to carry its own
+## `LAKE_WATER_RADIUS` for the great lake (16.0, two lobes) -- same
+## identifier, two different bodies, two different files. A pure rename, no
+## value change on either side; see `HubRegion.GREATLAKE_WATER_RADIUS`.
+const SMALL_LAKE_WATER_RADIUS: float = 8.0
 const LAKE_BANK_RADIUS: float = 9.05
 
 ## Deliberately NOT the pond's 24, and not 2.5x it either. What matters is
@@ -921,7 +926,7 @@ func _make_pond() -> Node3D:
 ## brighter pond. The bank reuses POND_BANK_COLOR on purpose: a bank is a
 ## bank, the same reasoning that has a stump share the trees' bark colour.
 func _make_lake() -> Node3D:
-	return _make_water_body(LAKE_WATER_RADIUS, LAKE_BANK_RADIUS, LAKE_SEGMENTS, LAKE_WATER_COLOR)
+	return _make_water_body(SMALL_LAKE_WATER_RADIUS, LAKE_BANK_RADIUS, LAKE_SEGMENTS, LAKE_WATER_COLOR)
 
 ## The great lake. Same two discs again, sized and coloured by its own
 ## constants and slid under the small lake's -- see GREATLAKE_WATER_COLOR
