@@ -17641,3 +17641,41 @@ seulement l'anneau.
 5. **La couleur et l'orientation sont un point de depart pour un appel
    device**, pas un optimum mesure — la planche existe pour etre
    redirigee, et chaque candidat est une edition de constante.
+
+### Deploiement staging du cue d'impact (palier 1, automatique)
+
+`staging` **`e7c54ce`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `e6c4bdc` des deux cotes ET `git diff`
+vide, verifie AVANT le push). CI run **#278** (id 33117979322)
+**verte** — `Import project resources` 21:24:49 -> 21:27:17, **`Export Web
+build` 21:27:17 -> 21:27:22**, `Deploy to Vercel [STAGING -- staging]`
+**succes**, `[PRODUCTION -- main]` correctement **skipped**. **`main` NON
+touche** (`origin/main` toujours `a346912`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #277) | `1787862057` | **20:20:57** |
+| **apres (ce lot, run #278)** | **`1787866042`** | **21:27:22** |
+
+L'epoch d'apres tombe **exactement sur la fin de l'etape `Export Web
+build`** du run #278, et la lecture porte **`x-vercel-cache: MISS`,
+`age: 0`**, `last-modified` colle a l'instant de la requete.
+
+⚠️ **Honnetete sur la couverture, deux limites plutot qu'une** :
+1. **La valeur AVANT vient d'un `HIT` avec `age: 3668`.** Elle est valable
+   comme VALEUR — elle est anterieure au merge, donc c'est bien l'ancien
+   build — mais **ce n'est PAS une mesure de fraicheur**, et elle n'est
+   pas comptee comme telle.
+2. **UN SEUL marqueur.** `index.pck` / `index.wasm` servis n'ont pas ete
+   relus sur le service. L'`index.wasm` de l'export local vaut
+   **35 376 909** / md5 `af4a8fc2925d992348eb30deeeb54360` — le
+   fingerprint permanent — mais c'est une mesure locale, pas une mesure
+   du service. Dit plutot que sous-entendu.
+
+⚠️ **L'API Actions n'etait PAS perimee sur ce run, et c'est note dans ce
+sens-la** : les appels successifs montraient de vraies progressions
+d'etapes avec de vrais horodatages, et l'import a reellement pris
+**2 min 28 s**. Le piege deja consigne existe ; il ne s'est pas produit
+ici, et le verifier coute un regard a l'horloge.
