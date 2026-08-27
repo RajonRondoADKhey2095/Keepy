@@ -178,8 +178,9 @@ tint-on render of the SAME pose:
 | 0.60 | **0.000** | none | 0.911 | 885 |
 | 0.90 | **0.000** | none | 0.914 | 855 |
 
-The camera's own projection of world `y = 0.55` is row **1060** at every
-one of those poses. **The world-space shader lands on it and dries him
+The camera's own projection of world `y = 0.55` is **1059.9** at every one
+of those poses (the A table prints it truncated as 1059, the B table
+rounded as 1060 -- same number, two format strings). **The world-space shader lands on it and dries him
 completely once his feet clear the line; the model-space shader keeps him
 soaked at every altitude and its line marches UP the screen with him
 (943 -> 855).** That is the trap, and it is worth naming precisely: the
