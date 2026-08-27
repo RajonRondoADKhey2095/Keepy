@@ -17001,3 +17001,36 @@ comme du clignotement, aucune image fixe ne peut le dire.
 4. **La teinte EST la couleur de l'eau**, donc la partie immergee
    DISPARAIT dans l'eau plutot que de lire « Keepy mouille ». A 0,45 c'est
    ce qui vend la pataugeoire ; c'est une consequence, pas un reglage.
+
+### Deploiement staging de la ligne de flottaison (palier 1, automatique)
+
+`staging` **`c4d32f4`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature -- meme hash d'arbre `31638d07` des deux cotes ET
+`git diff` vide, verifie AVANT le push). CI run **#267**
+(id 33079018165) **verte** : `Import project resources` 13:51:39 ->
+13:54:10, `Export Web build` **13:54:10 -> 13:54:15**, `Deploy to Vercel
+[STAGING -- staging]` **succes**, `[PRODUCTION -- main]` correctement
+**skipped**. **`main` NON touche** (`origin/main` toujours `a007e78`,
+verifie apres le push) : palier 2, gate Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et DANS LES DEUX SENS** :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #266) | `1787831980` | **11:59:40** |
+| **apres (ce lot, run #267)** | **`1787838854`** | **13:54:14** |
+
+L'epoch d'apres tombe **a l'interieur de l'etape `Export Web build`** du
+run #267, et **les DEUX lectures portent `x-vercel-cache: MISS` avec
+`age: 0`**, la valeur d'avant ayant ete relevee **avant le merge**. La
+bascule est donc prouvee dans les deux sens et pas deduite du log.
+
+⚠️ **Un SEUL marqueur, dit plutot que sous-entendu** : contrairement a
+plusieurs lots recents, `index.pck`/`index.wasm` servis n'ont pas ete
+relus sur le service. Le `CACHE_VERSION` lu aux DEUX bouts en MISS/age 0
+est la forme la plus forte que ce fichier documente, mais c'est un
+marqueur unique et non deux marqueurs independants.
+
+`index.wasm` de l'export local : **35 376 909** octets / md5
+`af4a8fc2925d992348eb30deeeb54360` -- identique au fingerprint permanent.
+`index.pck` **5 874 256**, marqueur, **jamais** preuve d'identite.
