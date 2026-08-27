@@ -94,6 +94,7 @@ func _ready() -> void:
 	await _phase_c_tint(hub, keepy, water, props)
 	await _phase_d_ride(keepy)
 	await _phase_f_portals(hub, keepy, props)
+	await _phase_g_rotation(hub, keepy)
 	_phase_e_cost(props, world)
 
 	print("")
@@ -353,6 +354,190 @@ func _phase_f_portals(hub: Node, keepy: KeepyHopper, props: HubBuilder) -> void:
 	dialog.close()
 	await get_tree().process_frame
 	print("")
+
+## PHASE G: THE DRY SHADER IS A NO-OP, AT EVERY ANGLE.
+##
+## ⚠️ THIS PHASE EXISTS BECAUSE THIS FILE WENT 36/36 GREEN WITH A BUG IN
+## IT, and the bug was one line of the shader.
+##
+## The waterline shipped writing ALPHA. That is what puts a spatial
+## material in the transparent pass, and a transparent material does not
+## write depth -- so with back faces drawn too, Keepy's far side painted
+## over his near side in index order. Index order is fixed; which side is
+## far is not, so the picture was right at some yaws and wrong at others,
+## and every capture that batch took was at ONE yaw. Nothing here could
+## see it: the uniforms were all correct, and they are what PHASE C reads.
+##
+## THE INVARIANT, and why it is this one rather than a picture of a
+## waterline: out of water HubWorld gates the fraction to zero, and at zero
+## the shader's colour is mix(a, a, x), which IS a. So a dry Keepy must be
+## pixel-identical to the material this shader replaced -- the .glb's own,
+## still sitting on the mesh under the override. Any difference at all is
+## render state, because it cannot be colour.
+##
+## Swept over eight azimuths, because one pose is exactly how this got
+## through the first time. Measured on the shipped scene, at the shipped
+## viewport, through the shipped camera.
+const _AZIMUTHS: PackedFloat32Array = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+
+## Cost of a byte differing between two renders before it counts. One 8-bit
+## step absorbs nothing real: the defect this gates measured 0.56 to 0.89
+## of full scale, three orders of magnitude above it.
+const _PIXEL_EPSILON: int = 1
+
+## How many pixels a 75% turquoise tint has to move before this phase will
+## believe it can see Keepy.
+##
+## The failure it guards is an off-screen Keepy, which scores ZERO, so any
+## floor at all catches it. It is set at roughly HALF the measured value
+## (2251 px at yaw 0, with the camera snapped and Keepy at the origin --
+## a figure WaterlineOrientationProbe arrives at independently) rather than
+## just under it: a floor sitting 11% below the number it guards would turn
+## a future waterline height into a false RED on a probe that is not about
+## waterline height.
+const _CONTROL_FLOOR: int = 1000
+
+func _phase_g_rotation(hub: Node, keepy: KeepyHopper) -> void:
+	print("--- PHASE G: the dry shader is a no-op, at eight azimuths ---")
+	var container := hub.get_node("WorldViewport") as SubViewportContainer
+	# stretch makes the container dictate the SubViewport size, so an
+	# explicit size is dropped with only a warning and the aspect measured
+	# is the window's, not the game's.
+	container.stretch = false
+	var viewport := hub.get_node("WorldViewport/SubViewport") as SubViewport
+	viewport.size = Vector2i(1080, 1920)
+	_check(viewport.size == Vector2i(1080, 1920),
+		"the viewport is the shipped 1080x1920 (a DUMMY driver fakes this)")
+	if viewport.size != Vector2i(1080, 1920):
+		print("")
+		return
+
+	# ⚠️ NOTHING MAY MOVE WHILE PIXELS ARE BEING READ, and neither half of
+	# this is optional -- both were learned by watching this phase report
+	# nonsense.
+	#
+	#   PHASE D rides Keepy out to the end of its throwaway spine and PHASE F
+	#   never brings him back, so by the time this runs he is nowhere near
+	#   the camera. Two renders of an off-screen Keepy are identical for
+	#   free, which is how the first version of this phase passed on the
+	#   very bug it exists to catch.
+	#
+	#   And moving him is not enough on its own: HubCamera chases him with
+	#   an exponential lerp, so the two renders of a PAIR then differ by
+	#   the camera's own drift between them. That version failed all eight
+	#   azimuths on a CORRECT shader, with the count decaying 42624 down to
+	#   5015 as the lerp settled -- a perfect picture of the camera and not
+	#   of the material.
+	#
+	# So: put him home, SNAP the camera to where it would have arrived, and
+	# stop it chasing.
+	keepy.global_position = Vector3.ZERO
+	keepy.set_process(false)
+	keepy.set_physics_process(false)
+	var camera := hub.get_node("WorldViewport/SubViewport/World/Camera3D") as HubCamera
+	camera.global_position = Vector3.ZERO + HubCamera.OFFSET
+	camera.set_process(false)
+	await _frame(viewport)
+
+	var slot: ModelSlot = keepy.body_slot()
+	var yaw := keepy.get_node("Yaw") as Node3D
+	var shipped := slot.slot_material()
+	var mesh_instance := _first_mesh(slot)
+	if mesh_instance == null or mesh_instance.mesh == null:
+		_check(false, "the slot draws a mesh whose own material can be compared")
+		print("")
+		return
+	var original := mesh_instance.mesh.surface_get_material(0)
+	_check(original is StandardMaterial3D,
+		"the .glb still carries the StandardMaterial3D to compare against")
+	_check(shipped is ShaderMaterial, "the drawn material is the waterline shader")
+	if not (shipped is ShaderMaterial) or original == null:
+		print("")
+		return
+	var material := shipped as ShaderMaterial
+	# _set_keepy_wet TWEENS this uniform and a Tween runs whether or not the
+	# node processes, so it is written here and not left to whatever the
+	# earlier phases aimed it at.
+	material.set_shader_parameter("tint_fraction", 0.0)
+
+	# =============================================================
+	# THE CONTROL, and it is not ceremony: WITHOUT IT THIS PHASE PASSED
+	# ON THE VERY BUG IT WAS WRITTEN TO CATCH.
+	#
+	# Its whole assertion is "these two renders are identical", and two
+	# renders of a Keepy who is off-screen are identical for free. So
+	# before it is allowed to conclude anything, it has to show that it can
+	# tell the two materials apart AT ALL -- by tinting him and watching
+	# the number move. A blind run now fails loudly instead of passing
+	# silently.
+	# =============================================================
+	yaw.rotation_degrees.y = 0.0
+	slot.apply_material(original)
+	var plain := await _frame(viewport)
+	material.set_shader_parameter("tint_fraction", HubWorld.KEEPY_WATER_TINT_FRACTION)
+	slot.apply_material(material)
+	var tinted := await _frame(viewport)
+	var control := _differing(tinted, plain)
+	_check(control > _CONTROL_FLOOR,
+		"CONTROL: a tinted Keepy differs from the plain material by %d px (needs > %d, or this phase is blind)"
+		% [control, _CONTROL_FLOOR])
+	material.set_shader_parameter("tint_fraction", 0.0)
+	if control <= _CONTROL_FLOOR:
+		slot.apply_material(material)
+		print("")
+		return
+
+	var before := yaw.rotation_degrees.y
+	var worst := 0
+	for azimuth in _AZIMUTHS:
+		yaw.rotation_degrees.y = azimuth
+		slot.apply_material(material)
+		var with_shader := await _frame(viewport)
+		slot.apply_material(original)
+		var without := await _frame(viewport)
+		slot.apply_material(material)
+		var differing := _differing(with_shader, without)
+		worst = maxi(worst, differing)
+		_check(differing == 0,
+			"yaw %d: dry Keepy is pixel-identical to the material replaced (%d differ)"
+			% [int(azimuth), differing])
+	yaw.rotation_degrees.y = before
+	slot.apply_material(material)
+	print("  control = %d px, worst differing across the sweep = %d px" % [control, worst])
+	print("")
+
+func _first_mesh(node: Node) -> MeshInstance3D:
+	for child in node.get_children():
+		if child is MeshInstance3D and (child as MeshInstance3D).mesh != null:
+			return child as MeshInstance3D
+		var found := _first_mesh(child)
+		if found != null:
+			return found
+	return null
+
+func _frame(viewport: SubViewport) -> Image:
+	for i in 3:
+		await RenderingServer.frame_post_draw
+	var img := viewport.get_texture().get_image()
+	img.convert(Image.FORMAT_RGBA8)
+	return img
+
+## Byte-wise rather than get_pixel(): a per-pixel sweep of 1080x1920 across
+## sixteen renders is tens of millions of GDScript iterations and does not
+## finish inside any sane budget.
+func _differing(a: Image, b: Image) -> int:
+	var da := a.get_data()
+	var db := b.get_data()
+	var n: int = mini(da.size(), db.size())
+	var count := 0
+	var i := 0
+	while i < n:
+		if absi(da[i] - db[i]) > _PIXEL_EPSILON \
+				or absi(da[i + 1] - db[i + 1]) > _PIXEL_EPSILON \
+				or absi(da[i + 2] - db[i + 2]) > _PIXEL_EPSILON:
+			count += 1
+		i += 4
+	return count
 
 func _count_draw(node: Node) -> int:
 	var n := 0
