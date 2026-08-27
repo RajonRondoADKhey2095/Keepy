@@ -9,17 +9,34 @@ extends Node
 ##
 ## Every way this feature can break is SILENT. HubWorld resolves Keepy's
 ## material lazily through ModelSlot and no-ops when the slot hands back
-## something that is not a StandardMaterial3D; the five-body test answers
+## something that is not a StandardMaterial3D to build from; the five-body
+## test answers
 ## false for a body whose centre accessor went missing; a landing hook
 ## placed after an early return simply stops firing on the landings that
 ## matter. None of those raise, none of them fail a build, and all of them
 ## look exactly like "the tint was never turned on" on a device.
 ##
 ## The one assertion that carries the most here is PHASE C: it reads the
-## albedo off the MeshInstance3D nodes the slot actually draws, not off the
-## variable HubWorld wrote. Checking the variable would pass on the day
-## ModelSlot stops binding the override -- the precise defect that made
-## AlarmRampAudit necessary, one screen over.
+## uniforms off the material the MeshInstance3D nodes the slot actually
+## draws are bound to, not off the variable HubWorld wrote. Checking the
+## variable would pass on the day ModelSlot stops binding the override --
+## the precise defect that made AlarmRampAudit necessary, one screen over.
+##
+## PHASE C READS UNIFORMS AND NOT AN ALBEDO since the waterline batch: the
+## tint became a per-fragment split, so there is no whole-body colour left
+## to compare. Two of its checks changed meaning rather than merely
+## changing type, and both are worth knowing about:
+##
+##   the waterline HEIGHT is now asserted. It was not previously checkable
+##     at all, and a line at the wrong world y is the loudest way this can
+##     be wrong while still looking like a working effect.
+##   "the wet albedo is not just the base colour" is GONE, deliberately.
+##     It was a NEGATIVE assertion, and the old reader returned MAGENTA
+##     when its cast failed -- MAGENTA being duly "not the base colour", it
+##     went green against a material it had not read. It is replaced by two
+##     positive assertions (the height, and the shader's own identity), and
+##     the reader now answers UNREADABLE, which no comparison mistakes for
+##     a real value.
 ##
 ## =====================================================================
 ## RUN IT UNDER xvfb, NOT --headless
@@ -44,8 +61,12 @@ var _ride_landings: int = 0
 ## Keepy's untinted albedo, captured in PHASE C from the live slot. Shared
 ## with PHASE F rather than restated there: a second literal would agree with
 ## the first right up until the asset changes, and then agree with nothing.
-var _base_albedo := Color.WHITE
-var _base_captured: bool = false
+## Sentinel for "the drawn material could not be read at all". NEGATIVE on
+## purpose: every legal tint_fraction is in [0, 1], so this can never be
+## mistaken for one. Its predecessor returned MAGENTA, which satisfied a
+## negative assertion ("not the base colour") and took that check green
+## against a material it had failed to read -- see PHASE C below.
+const UNREADABLE: float = -1.0
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "WATER TINT PROBE")
@@ -215,9 +236,6 @@ func _phase_c_tint(hub: Node, keepy: KeepyHopper, water: HubWater, props: HubBui
 		print("")
 		return
 
-	var base: Color = (slot.slot_material() as StandardMaterial3D).albedo_color
-	_base_albedo = base
-	_base_captured = true
 	var pond := props.pond_centre()
 	var dry := Vector3(0.0, 0.0, 0.0)
 	_check(not water.contains(dry), "the spawn is dry (control for the assertions below)")
@@ -226,18 +244,46 @@ func _phase_c_tint(hub: Node, keepy: KeepyHopper, water: HubWater, props: HubBui
 	# WET. The signal is emitted exactly as KeepyHopper emits it.
 	keepy.hop_landed.emit(pond)
 	await _settle()
-	var wet_albedo := _drawn_albedo(slot)
-	var expected := base.lerp(HubWater.hue(), HubWorld.KEEPY_WATER_TINT_FRACTION)
-	print("  base %s -> wet %s (expected %s)" % [_fmt(base), _fmt(wet_albedo), _fmt(expected)])
-	_check(_near(wet_albedo, expected), "a landing in water tints the DRAWN surfaces to 75%")
-	_check(not _near(wet_albedo, base), "the wet albedo is not just the base colour")
+
+	# WHAT THE WATERLINE BATCH CHANGED HERE, and what it did not. The tint
+	# stopped being a whole-body albedo and became a per-fragment split, so
+	# there is no albedo left to compare. The phase's POINT is unchanged and
+	# is the reason it is still the most valuable assertion in this file:
+	# every value below is read off the material the slot actually DRAWS,
+	# never off the variable HubWorld wrote.
+	var drawn := slot.slot_material() as ShaderMaterial
+	_check(drawn != null, "the DRAWN material is a ShaderMaterial")
+	if drawn == null:
+		print("")
+		return
+
+	# POSITIVE, and this one replaces a check that could not fail. Its
+	# predecessor asserted "the wet albedo is not just the base colour" --
+	# which the old reader satisfied by returning MAGENTA when its cast
+	# failed, i.e. it went green against a material it could not read. A
+	# waterline that is not applied, or applied at the wrong height, is
+	# exactly the silent defect this file exists for, so assert the height
+	# itself rather than the absence of something.
+	var line: float = _shader_float(drawn, "water_y")
+	print("  waterline world y = %s (HubWorld says %.4f)" % [
+		_fmt_f(line), HubWorld.KEEPY_WATERLINE_Y])
+	_check(absf(line - HubWorld.KEEPY_WATERLINE_Y) < 0.0001,
+		"the DRAWN shader carries the shipped waterline height")
+	_check(drawn.shader != null and drawn.shader.resource_path.ends_with("keepy_waterline.gdshader"),
+		"the DRAWN material runs the waterline shader")
+
+	var wet := _shader_float(drawn, "tint_fraction")
+	print("  wet fraction on the DRAWN material = %s (expected %.4f)" % [
+		_fmt_f(wet), HubWorld.KEEPY_WATER_TINT_FRACTION])
+	_check(absf(wet - HubWorld.KEEPY_WATER_TINT_FRACTION) < 0.002,
+		"a landing in water tints the DRAWN surfaces to 75%")
 
 	# DRY again.
 	keepy.hop_landed.emit(dry)
 	await _settle()
-	var dry_albedo := _drawn_albedo(slot)
-	print("  back on land -> %s" % _fmt(dry_albedo))
-	_check(_near(dry_albedo, base), "a landing on land removes the tint completely")
+	var back := _shader_float(drawn, "tint_fraction")
+	print("  back on land -> %s" % _fmt_f(back))
+	_check(absf(back) < 0.002, "a landing on land removes the tint completely")
 	print("")
 
 ## PHASE D -- a ride cannot tint, and cannot carry a tint aboard.
@@ -302,7 +348,7 @@ func _phase_f_portals(hub: Node, keepy: KeepyHopper, props: HubBuilder) -> void:
 		_check(dialog.is_open(), "a landing on '%s' opened its dialog" % portal.display_label())
 		# The hook runs before the portal branch returns, so a dry portal
 		# landing must have left the tint OFF rather than skipped it.
-		_check(_base_captured and _near(_drawn_albedo(slot), _base_albedo),
+		_check(absf(_shader_float(slot.slot_material() as ShaderMaterial, "tint_fraction")) < 0.002,
 			"'%s': the tint was updated (dry) on the way past" % portal.display_label())
 	dialog.close()
 	await get_tree().process_frame
@@ -316,20 +362,26 @@ func _count_draw(node: Node) -> int:
 		n += _count_draw(child)
 	return n
 
-## The albedo actually bound on the surfaces the slot draws. Returns the
-## first one found; PHASE C's whole point is that this is not the variable
-## HubWorld wrote.
-func _drawn_albedo(slot: ModelSlot) -> Color:
-	var mat := slot.slot_material() as StandardMaterial3D
-	return Color.MAGENTA if mat == null else mat.albedo_color
+## A uniform read off the material the slot actually DRAWS. PHASE C's whole
+## point is that this is not the variable HubWorld wrote.
+##
+## Returns UNREADABLE rather than any in-range value when the material is
+## missing or carries no such uniform. Its predecessor returned MAGENTA for
+## the same case, and MAGENTA is a perfectly good colour -- which is how a
+## check pointed at "not the base colour" passed against a material the
+## reader had failed to read at all.
+func _shader_float(mat: ShaderMaterial, uniform: String) -> float:
+	if mat == null:
+		return UNREADABLE
+	var v: Variant = mat.get_shader_parameter(uniform)
+	if v == null:
+		return UNREADABLE
+	return float(v)
+
+func _fmt_f(v: float) -> String:
+	return "UNREADABLE" if v == UNREADABLE else "%.4f" % v
 
 ## Long enough for a KEEPY_TINT_FADE_S tween to finish, in real frames.
 func _settle() -> void:
 	for i in 40:
 		await get_tree().process_frame
-
-func _near(a: Color, b: Color) -> bool:
-	return absf(a.r - b.r) < 0.002 and absf(a.g - b.g) < 0.002 and absf(a.b - b.b) < 0.002
-
-func _fmt(c: Color) -> String:
-	return "rgb(%.3f, %.3f, %.3f)" % [c.r, c.g, c.b]

@@ -16747,3 +16747,257 @@ donner quelque chose de POSITIF a asserter) ; et le fait que **les cinq
 surfaces d'eau ne sont pas a la meme hauteur** (0,0270 a 0,0950, soit
 **5,04 %** de la taille de Keepy) alors qu'une seule constante est prevue.
 Une seule masse d'eau a ete echelonnee (le lobe spawn du grand lac).
+
+
+## LIGNE DE FLOTTAISON LIVREE : un shader a hauteur MONDE, la ligne aux hanches (0,45), la tete au sec (27 aout 2026)
+
+Branche `claude/waterline-shader-impl-d87hnj`, partie de `staging`
+(`c2ec912`). **TROIS fichiers** : `assets/shaders/keepy_waterline.gdshader`
+(nouveau), `scripts/hub/HubWorld.gd`, `scripts/dev/WaterTintProbe.gd`.
+`HubWater.gd` est **BYTE-INTOUCHE**, verifie par `git diff --stat` et pas
+affirme -- il continue de repondre « est-il dans l'eau », le shader repond
+« quelle partie de lui ».
+
+⚠️ **Ecart de ref au demarrage, benin et signale plutot que tu** : le brief
+annoncait `origin/staging = 1f1486f`, la mesure donne **`c2ec912`**.
+`1f1486f` EST son parent (verifie par `git merge-base --is-ancestor`, pas
+suppose) et le seul commit au-dessus est **doc seule**. `origin/main` =
+`a007e78`, exactement comme annonce. Regle n°1 verifiee AU DEBUT : tri des
+refs par date et comparaison des **ARBRES**, jamais des noms -- toutes les
+branches plus recentes que `main` sont deja ancetres de `origin/staging`,
+**aucune session concurrente**.
+
+**DECISION DE MATHIEU, PRISE SUR PLANCHE, NON RE-ARBITREE ICI** : barreau
+**0,45**, le rung « hips » de
+`docs/color-sheets/waterline_ladder_sheet.png`. La recon recommandait
+0,78-0,92 et est **ECARTEE**. Sa metrique mesurait la SURFACE teintee
+(fractions 0,021 / 0,059 / 0,110 sur les barreaux bas, parce que Keepy est
+modelise ASSIS et que ses jambes sont petites et auto-occultees) ; la
+question posee est la LISIBILITE DE L'INTENTION, et ce sont des
+PATAUGEOIRES. **Ne pas reproposer un barreau plus haut.** Nage et bateau
+hors perimetre.
+
+### Ce qui est livre
+
+Le shader remplace **l'ecriture d'albedo**, pas `HubWater`. Variante A de
+la recon, reprise telle quelle : un `varying vec3` calcule en `vertex()`
+depuis `MODEL_MATRIX`, `step(v_world.y, water_y)`, `mix()` vers la teinte
+de l'eau. `render_mode unshaded, cull_disabled` -- les deux sont un
+**appariement mesure** au materiau remplace (`shading_mode = 0`,
+`cull_mode = 2 DISABLED`) et non un choix.
+
+| ligne | avant | apres |
+|---|---|---|
+| `_keepy_material` | `StandardMaterial3D` | **`ShaderMaterial`** |
+| `_keepy_base_color` | source du tint | **supprime** -- le shader multiplie la texture |
+| `KEEPY_WATER_TINT_FRACTION` 0,75 / `KEEPY_TINT_FADE_S` 0,18 | -- | **inchanges** |
+| `_keepy_wet` / les 2 sites d'appel / le latch | -- | **inchanges** |
+| `_set_keepy_wet()` | tween `albedo_color` | tween `shader_parameter/tint_fraction` |
+| **nouveau** | -- | `KEEPY_WATERLINE_Y = 0.45` |
+
+⚠️ **Le test est en coordonnees MONDE, et c'est TOUT le design.** La
+version espace-modele compile, rend, et parait plausible sur une image
+fixe -- c'est ce qui la rend dangereuse. La recon l'avait mesuree
+(soaked a toute altitude, ligne qui remonte l'ecran 943 -> 855) ; ce lot
+la re-mesure a l'envers, sur le code livre, et la ligne tient.
+
+### V1 -- les cinq corps, MEME pose, MESURE
+
+Chaque chiffre est un diff **PLEIN CADRE de la MEME POSE rendue deux
+fois** -- teinte off, puis on -- **jamais** un diff entre deux poses (la
+recon a deja publie cette erreur, qui lui avait rapporte un Keepy montant
+comme « de plus en plus mouille »). **2 073 600 pixels lus**, pas un
+echantillonnage : 80 points ont deja valide un vrai defaut en vert sur cet
+ecran.
+
+| corps | px teintes | 1re ligne | derniere | camera dit | ecart |
+|---|---|---|---|---|---|
+| pond | 2011 | 1055 | 1165 | 1069,3 | -14,3 |
+| small_lake | 2033 | 1055 | 1164 | 1068,4 | -13,4 |
+| great_lake_0 | 2242 | 1054 | 1170 | 1068,4 | -14,4 |
+| great_lake_1 | 2239 | 1056 | 1171 | 1068,9 | -12,9 |
+| stream | 2255 | 1054 | 1173 | 1070,2 | -16,2 |
+
+**Ligne la plus haute : 1054 a 1056, soit 2 px d'ecart sur cinq corps.**
+L'ecart de ~14 px avec ce que dit la camera n'est PAS une derive : un plan
+horizontal ne se projette pas sur UNE ligne d'ecran (camera a -34 deg, la
+bande fait 147 px de haut sur la profondeur de Keepy), et la ligne teintee
+la plus haute est le cote LOIN de son corps. La recon mesurait -18 px par
+le meme mecanisme.
+
+⚠️ **Defaut de MA sonde, corrige et publie** : la premiere version emettait
+`hop_landed` **sans deplacer Keepy**, donc les cinq lectures etaient la
+meme pose par construction (2251 px partout, ecart 0) -- un controle propre
+du gate, mais il ne le mettait dans aucune eau.
+
+### V2 -- la ligne tient pendant un vrai hop
+
+Hopper livre, `--fixed-fps 60` (sans ce flag un hop de 0,28 s tient en
+trois frames llvmpipe et la table ne veut rien dire) :
+
+| | y | px teintes | 1re ligne |
+|---|---|---|---|
+| au sol | 0,0000 | **1758** | 1050 |
+| a l'apex | 0,5833 | **165** | 1048 |
+
+**Effondrement de 91 %, et la ligne dessinee bouge de 2 px.** Le corps
+traverse une ligne qui ne bouge pas.
+
+### V3 -- la sortie d'eau, et pourquoi `HubWater` reste indispensable
+
+Au spawn `contains() == false` et les pieds sont a `y = 0` : `tint_fraction`
+lit **0,0000**. Puis, en forcant la fraction a 0,75 a ce meme endroit,
+**8 529 px se teindraient**. C'est exactement pourquoi le gate de
+`HubWater` n'est pas remplacable par le test de hauteur.
+
+### V4 -- riding : 0,0000
+
+⚠️ **Second defaut de MA sonde** : a 10 frames elle lisait **0,0051** et
+appelait ca un residu. Ce n'en est pas un -- c'est ou se trouve un tween
+`TRANS_SINE`/`EASE_OUT` 0,75 -> 0 a cet instant :
+`0,75 * (1 - sin(0,926 * PI/2)) = 0,0051`, a la quatrieme decimale.
+Echantillonne au-dela du fondu de 0,18 s : **0,0000**.
+
+### ⚠️ V5 -- UNE constante, CINQ surfaces : l'ecart est REEL et il est publie
+
+| corps | surface | ligne au-dessus | % de Keepy |
+|---|---|---|---|
+| greatlake_a | 0,0270 | 0,4230 | 31,33 % |
+| greatlake_b | 0,0295 | 0,4205 | 31,15 % |
+| pond | 0,0800 | 0,3700 | 27,41 % |
+| small_lake | 0,0800 | 0,3700 | 27,41 % |
+| stream | 0,0950 | 0,3550 | 26,29 % |
+
+**SPREAD 0,0680 = 5,04 % de sa hauteur.** La distinction qui compte, et
+que le brief demandait de trancher : **sur SON CORPS la ligne est
+identique partout** (0,45 / 1,3501 = 33,33 %, et V1 le confirme au pixel :
+2 px d'ecart sur cinq corps). Ce qui varie, c'est de combien elle flotte
+**au-dessus de la surface dessinee**. **NON CORRIGE** : une constante par
+corps est la decision de Mathieu, pas celle de ce fichier.
+
+### ⚠️ UNE PREMISSE A MOI, PUBLIEE EN ECHEC
+
+J'ai lu du **mouchete turquoise haut sur la queue** sur deux captures et
+j'ai soupconne la ligne. **FAUX**, et la mesure l'a refute plutot que
+l'inverse : une passe de MASQUE (`ALBEDO = vec3(step(...))`, aucune
+texture) rend **une seule region blanche contigue aux pattes, zero
+mouchetis** ; la meme image teinte **OFF** montre le meme mouchetis ; et a
+`water_y = 99` le masque est **blanc plein** sur toute la silhouette, donc
+le varying couvre bien tout le corps. C'etait sa fourrure -- les taches
+creme sur le roux -- amplifiee par mon agrandissement NEAREST. C'est la
+premisse 3 de la recon, rencontree et refutee independamment.
+
+### `WaterTintProbe` : 34 -> 36 checks, aucun desarme
+
+| check | ce qui lui arrive | pourquoi |
+|---|---|---|
+| « tints the DRAWN surfaces to 75% » | **reecrit** | lit `tint_fraction` au lieu d'un albedo |
+| « a landing on land removes the tint » | **reecrit** | idem |
+| « the tint was updated (dry) » x3 portails | **reecrit** | idem |
+| « the wet albedo is not just the base colour » | **SUPPRIME** | assertion NEGATIVE que l'ancien lecteur satisfaisait en rendant MAGENTA sur un cast rate -- verte contre un materiau qu'elle n'avait pas lu |
+| **« the DRAWN material is a ShaderMaterial »** | **NOUVEAU** | positif |
+| **« carries the shipped waterline height »** | **NOUVEAU** | positif -- la hauteur n'etait pas verifiable avant, et une ligne au mauvais y est la panne la plus bruyante qui ait encore l'air de marcher |
+| **« runs the waterline shader »** | **NOUVEAU** | positif |
+| les 28 autres | **intouches** | appartenance, les deux marges de rim, le ride, les draw nodes, les portails |
+
+Le lecteur `_drawn_albedo()` (MAGENTA sur echec) devient `_shader_float()`,
+qui rend **`UNREADABLE = -1.0`** -- negatif exprès, puisque tout
+`tint_fraction` legal est dans [0, 1] et qu'aucune comparaison ne peut le
+prendre pour une vraie valeur. **Baseline 34 OK / 0 echec, apres 36 OK /
+0 echec.** Les helpers couleur `_near()`/`_fmt()` sont retires : plus rien
+dans ce fichier ne compare des couleurs.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature silencieuse).
+Import headless **exit 0, 24 `.scn`, 0 erreur** (import complet verifie,
+pas suppose -- un import tronque produit un faux rouge). Boot de
+`HubWorld.tscn` **exit 0** en headless ET sous `xvfb`/`opengl3` : **aucun
+`SHADER ERROR`**, le shader compile pour de vrai (le headless force le
+driver DUMMY et ne compile rien -- il ne prouve rien tout seul). Export Web
+release **exit 0**, aucune erreur GDScript ni shader.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+**5 874 256** (marqueur, **jamais** preuve d'identite). **Piege payload
+tenu** : sur **228** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web/` ou `firebase.json` -- et
+`keepy_waterline.gdshader` **EST** packe, comme il le doit.
+
+**Sondes diffees contre `origin/staging` en worktree separe** (imports
+verifies complets des deux cotes, 24 `.scn`), graine 20260806,
+`--fixed-fps 60` :
+
+| sonde | verdict |
+|---|---|
+| `ProbeTimeoutAudit` | **BYTE-IDENTIQUE**, 49 sondes scenes + 1 `--script`, toutes armees |
+| `AssetContractAudit` | **BYTE-IDENTIQUE**, 12/12 visuels, **0 collider deplace** |
+| `DeathModelAudit` | **BYTE-IDENTIQUE** |
+| `ChargerShapeProbe` | **BYTE-IDENTIQUE** |
+| `LakeZoneProbe` | 25 checks, 0 echec |
+| `StreamRideProbe` | 37 checks, 0 echec |
+| `WaterTintProbe` | 36 checks, 0 echec (34 en baseline) |
+
+**`scripts/dev/*.tscn` est un ensemble IDENTIQUE a `origin/staging`** --
+aucune sonde ajoutee, aucune retiree, les deux jetables supprimees.
+
+**Cout : rien de mesurable.** Trois runs `HubPerfBaseline` de chaque cote,
+dans une seule session, sur une machine LAISSEE AU REPOS -- la seule
+comparaison que les regles de ce fichier autorisent :
+
+| | AVANT (`origin/staging`) | APRES |
+|---|---|---|
+| draw nodes hors portails | **98 / 98 / 98** | **98 / 98 / 98** |
+| draw nodes, total | 104 / 104 / 104 | 104 / 104 / 104 |
+| FPS simule, moyen | 14,1 / 14,3 / 14,6 | 15,3 / 15,3 / 14,6 |
+| FPS simule, min | 6,6 / 12,0 / 12,1 | 11,9 / 11,5 / 11,8 |
+
+Un echange de materiau est un echange de materiau : le meme
+`MeshInstance3D` dessine la meme surface avec un autre programme. Marge
+sous le plafond de 260 : inchangee.
+
+⚠️ **La lecture honnete des lignes FPS est « les plages se chevauchent »
+(14,6 apparait des DEUX cotes), PAS « c'est plus rapide ».** Ce que ces
+lignes soutiennent est la revendication etroite qu'**aucun cout n'est
+detectable**. ⚠️ **Et une premiere paire a ete JETEE** plutot que publiee :
+mes trois runs de branche initiaux (11,2-11,4) tournaient pendant que
+l'import de la baseline occupait la machine. Les comparer aurait mesure la
+contention, pas le shader. **Ces chiffres ne sont comparables ni a un GPU
+de telephone ni aux lignes FPS de `docs/HUB_PERF_BASELINE.md`** -- llvmpipe
+est un rasteriseur logiciel, ou un `step()`/`mix()` par fragment coute
+comparativement cher, donc la mesure est si tout va pessimiste.
+
+### ⚠️ CE QUE CE LOT NE PEUT PAS PROUVER -- a redire avant tout test device
+
+Tout ce qui precede est rendu par **llvmpipe/Mesa sous xvfb via le backend
+`opengl3` DESKTOP**. Le jeu tourne en **WebGL2 dans Safari iOS**. Ce sont
+deux compilateurs GLSL differents derriere la meme source
+`gl_compatibility`, et **les deux points sur lesquels ce design repose sont
+exactement ceux que rien ici ne prouve** : la precision d'interpolation
+d'un `varying` (**`mediump` est courant en WebGL2 mobile** la ou le desktop
+donne `highp`) et la disponibilite/precision de `MODEL_MATRIX` en
+`vertex()`. Un world y autour de 0,45 porte en `mediump` devrait passer ;
+**rien ici ne le demontre.**
+
+**Aucune couleur mesuree ici n'est une couleur device.** Aucune capture de
+ce sandbox n'est une preuve de rendu telephone. Et ce lot ne rend que des
+**IMAGES FIXES** : si un bord mouille/sec se lit comme une ligne d'eau ou
+comme une couture A VITESSE REELLE, et si le cycle
+mouille -> sec -> mouille d'un hop en 0,28 s se lit comme de la physique ou
+comme du clignotement, aucune image fixe ne peut le dire.
+
+### Reste ouvert
+
+1. **Jugement device**, et c'est tout l'objet du lot : est-ce que 0,45 se
+   lit comme « il patauge » sur un vrai telephone.
+2. **Le clignotement du hop** -- mesure (1758 -> 165 px en 0,28 s), correct,
+   possiblement laid. Personne ne l'a vu en mouvement.
+3. **Les 5,04 % d'ecart entre les cinq surfaces** (V5) -- mesure, publie,
+   non corrige.
+4. **La teinte EST la couleur de l'eau**, donc la partie immergee
+   DISPARAIT dans l'eau plutot que de lire « Keepy mouille ». A 0,45 c'est
+   ce qui vend la pataugeoire ; c'est une consequence, pas un reglage.
