@@ -25,8 +25,9 @@ class_name HubLayout
 ## and a dozen [sub_resource] blocks between the author and the numbers.
 ##
 ##   type        StringName  &"portal", &"rock", &"tree", &"bush",
-##                           &"flower", &"stump", &"pond", &"lake",
-##                           &"stream", &"boat" or &"landmark"
+##                           &"flower", &"stump", &"landmark", &"pond",
+##                           &"lake", &"greatlake", &"islet", &"pontoon",
+##                           &"stream", &"boat" or &"divingboard"
 ##   position    Vector3     world position, y is ignored for props that
 ##                           sit on the ground (they are placed AT y = 0)
 ##   rotation_y  float       degrees
@@ -40,9 +41,23 @@ class_name HubLayout
 ##                           fallback rule.
 ##   points      PackedVector3Array  the TRACE, in world space   (streams only)
 ##   width       float       stream width in units, optional     (streams only)
+##   deck_anchor Vector3     where a climber ends up standing, y  (boards only)
+##                           INCLUDED -- it is the deck's height
+##   dive_direction Vector3  flat, the way a dive faces; optional (boards only)
+##                           -- omitted, the ladder-to-anchor line
+##                           is used, which is the only direction a
+##                           board with those two ends could face
+##   offshore    bool        DECLARES the entry is meant to be out
+##                           of reach on foot (the islets, their
+##                           landmarks, the lake discs). The walkable
+##                           check is then INVERTED rather than
+##                           skipped: an offshore entry that turns
+##                           out to be reachable is warned about too,
+##                           so the flag can never quietly silence a
+##                           real mistake
 ##
 ## =====================================================================
-## &"stream" IS THE ONE TYPE WITH A TRACE INSTEAD OF A POSITION
+## &"stream" AND &"divingboard" ARE AUTHORED BY SHAPE, NOT BY A ROTATION
 ##
 ## Every other entry is one point plus a rotation and a scale. A stream is
 ## a run of water between two places, so its placement IS its trace: it
@@ -62,6 +77,14 @@ class_name HubLayout
 ## apart are therefore NOT redundant -- they are what makes the curve turn
 ## sharply there, and dropping them straightens a bend the trace needs.
 ##
+## A &"divingboard" is the same idea with two points instead of twelve. It
+## carries "position" (the ladder foot, on land) and "deck_anchor" (where a
+## climber ends up, y included), and the plank, posts, rails and rungs are
+## drawn to CONNECT them. So it too refuses "rotation_y" and "scale": its
+## facing already follows from its two ends, and a rotation would be a
+## second orthography of that fact, free to disagree with the first. Move
+## the board by moving its ends.
+##
 ## =====================================================================
 ## &"boat" IS AUTHORED ONCE AND MOVED FOR EVER AFTER
 ##
@@ -77,14 +100,17 @@ class_name HubLayout
 ## ONE boat. A second entry is built but never moored, and HubBuilder says
 ## so with a push_error rather than picking one silently.
 ##
-## WHICH TYPES ARE BATCHED. rock / tree / bush / flower are drawn as
-## MultiMesh instances, one batch per unique (mesh, colour) pair;
-## portal / landmark / stump / pond / lake / stream / boat are individual
-## nodes. That split is
-## HubBuilder's business and changes nothing here -- an entry looks the
-## same either way -- but it is worth knowing that adding a hundred
-## flowers costs a hundred instances and no new nodes, while adding a
-## hundred stumps costs a hundred nodes.
+## WHICH TYPES ARE BATCHED. rock / tree / bush / flower / pontoon are drawn
+## as MultiMesh instances, one batch per unique (mesh, colour) pair;
+## portal / landmark / stump / pond / lake / greatlake / islet / stream /
+## boat are individual nodes. A &"divingboard" is BOTH: its plank, posts
+## and rails are its own nodes, and its ladder rungs -- identical geometry
+## repeated up a run -- are batched.
+##
+## That split is HubBuilder's business and changes nothing here -- an entry
+## looks the same either way -- but it is worth knowing that adding a
+## hundred flowers costs a hundred instances and no new nodes, while adding
+## a hundred stumps costs a hundred nodes.
 ##
 ## HubBuilder.gd validates every entry and skips a malformed one with a
 ## push_error rather than crashing the screen: a typo in a decor file must

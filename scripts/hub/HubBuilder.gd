@@ -396,6 +396,65 @@ const PONTOON_CENTRE_Y: float = 0.07
 ## alpha-blends straight onto the GROUND, while the four discs blend onto
 ## their own dark olive rim. It clears in all five views at 0.90 (worst
 ## 3.09:1) where 0.85 leaves it at 2.91:1.
+## =====================================================================
+## THE DIVING BOARD
+##
+## A ladder on the bank, a deck cantilevered out over the great lake, and
+## the one piece of hub furniture Keepy can be ON rather than merely walk
+## past. The states that use it live in KeepyHopper; this file only draws
+## it and publishes where its two ends are.
+##
+## AUTHORED BY ITS TWO ENDS, NOT BY A ROTATION. The entry carries the
+## ladder foot (its "position"), the deck anchor Keepy stands on (its
+## "deck_anchor", y included) and the way a dive faces ("dive_direction").
+## The geometry is then built to CONNECT those, so the plank the player
+## sees and the point the state machine puts them on cannot drift apart --
+## there is one source for each fact rather than a rotation here and a
+## world position there saying the same thing twice.
+##
+## That is also why "rotation_y" and "scale" are refused on this type, the
+## same way &"stream" refuses them: a second orthography of the facing
+## would be free to disagree with the first.
+
+## Deck plank. Length is authored per entry (it has to reach past the
+## waterline, which is a property of where it is planted); the cross
+## section is fixed here because it is the same plank everywhere.
+const DIVINGBOARD_DECK_WIDTH: float = 0.95
+const DIVINGBOARD_DECK_THICKNESS: float = 0.10
+
+## How far the plank overhangs BEHIND the ladder. Small, and load-bearing
+## for the reading: a deck that stopped exactly at the ladder would look
+## like it was balanced on it rather than fixed to it.
+const DIVINGBOARD_DECK_BACK_OVERHANG: float = 0.35
+
+## Ladder rails: two uprights, this far either side of the centre line.
+## The rungs span between them, so this is also half a rung's length.
+const DIVINGBOARD_RAIL_HALF_SPAN: float = 0.34
+const DIVINGBOARD_RAIL_RADIUS: float = 0.05
+
+## Rungs. Spacing is a TARGET -- the count is rounded so the run divides
+## evenly, because a last rung crammed against the deck reads as a mistake.
+const DIVINGBOARD_RUNG_RADIUS: float = 0.035
+const DIVINGBOARD_RUNG_SPACING: float = 0.30
+const DIVINGBOARD_RUNG_LOWEST: float = 0.30
+
+## Support posts under the deck: a pair at the ladder and a pair near the
+## tip, standing in the water.
+const DIVINGBOARD_POST_RADIUS: float = 0.09
+const DIVINGBOARD_POST_HALF_SPAN: float = 0.36
+const DIVINGBOARD_POST_TIP_INSET: float = 0.45
+
+## How far past the anchor a dive lands, along the facing. Far enough that
+## Keepy clears the plank he left rather than dropping alongside it.
+const DIVINGBOARD_DIVE_REACH: float = 2.20
+
+## Timber. BOTH REUSED, deliberately: the deck takes the pontoons' own
+## plank colour and the frame takes the boat hull's darker one, so the
+## board reads as built from what is already on this water rather than
+## introducing a colour nobody has judged on a sheet.
+const DIVINGBOARD_DECK_COLOR: Color = PONTOON_COLOR
+const DIVINGBOARD_FRAME_COLOR: Color = BOAT_HULL_COLOR
+
 const STREAM_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.90)
 
 ## 1.2 units across. Half of that -- 0.6 -- is the number the trace was
@@ -530,6 +589,10 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	&"landmark": 1.66,
 	&"portal": 1.35,
 	&"pontoon": 1.30,
+	# The ladder foot and the pair of posts around it. The deck reaches out
+	# over WATER from there, which nothing can be standing on, so the
+	# footprint is the frame on land and not the plank's whole length.
+	&"divingboard": 0.50,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -560,6 +623,9 @@ var _stream_half_width: float = 0.0
 ## Vector3.INF marks "the layout has none", which is a legal plateau: a hub
 ## without a pond simply has one fewer body of water, not a pond at the
 ## origin. A caller must test for it rather than trusting a zero.
+## The one &"divingboard" as built -- see diving_board() for the shape.
+var _diving_board: Dictionary = {}
+
 var _pond_centre: Vector3 = Vector3.INF
 var _small_lake_centre: Vector3 = Vector3.INF
 
@@ -602,6 +668,23 @@ func stream_spine() -> Array:
 ## here rather than re-read from the resource by a second caller.
 func stream_half_width() -> float:
 	return _stream_half_width
+
+## The one &"divingboard", as it was BUILT, or an empty Dictionary when the
+## layout has none. Keys: "ladder" (Vector3, flat, the foot on land),
+## "anchor" (Vector3, y = deck height, where a climber ends up), "forward"
+## (Vector3, flat unit, the way a dive faces), and "water_target" /
+## "land_target" (Vector3, flat, where the two dives land).
+##
+## Published from the geometry rather than left to be re-read from the
+## layout by KeepyHopper: the plank the player sees and the point they are
+## planted on have to be the same fact, and the only way to guarantee that
+## is for both to come out of the pass that drew it.
+##
+## ONE board. A second entry is drawn but never reported, and that is an
+## error rather than a silent overwrite -- the same rule the hull is held
+## to above.
+func diving_board() -> Dictionary:
+	return _diving_board
 
 ## Centre of the one &"pond", or Vector3.INF when the layout has none.
 func pond_centre() -> Vector3:
@@ -676,6 +759,8 @@ func _build() -> void:
 					node = _make_stream(entry)
 				&"boat":
 					node = _make_boat()
+				&"divingboard":
+					node = _make_divingboard(entry, index, where)
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -738,6 +823,13 @@ func _build() -> void:
 					push_error("HubBuilder: a second &\"lake\" entry at %d; the first one is the one anything else can find." % index)
 				else:
 					_small_lake_centre = where
+			if type == &"divingboard":
+				# Recorded AFTER add_child, alongside the hull, so the
+				# published board is one that actually got drawn.
+				if not _diving_board.is_empty():
+					push_error("HubBuilder: a second &\"divingboard\" entry at %d; the climb owns one board, the extra is drawn but never climbed." % index)
+				else:
+					_diving_board = _last_board
 			if type == &"boat":
 				if _boat != null:
 					push_error("HubBuilder: a second &\"boat\" entry at %d; the ride owns one hull, the extra is drawn but never moored." % index)
@@ -823,6 +915,18 @@ func _batch_spec(key: StringName) -> Array:
 			var deck := BoxMesh.new()
 			deck.size = Vector3(PONTOON_LENGTH, PONTOON_THICKNESS, PONTOON_WIDTH)
 			return [deck, PONTOON_COLOR]
+		&"DivingBoardRung":
+			# Laid along local X so the batch's yaw basis swings it across
+			# the ladder; the mesh is a cylinder standing on Y by default,
+			# so the rotation is authored into the mesh here rather than
+			# into every instance transform.
+			var rung := CylinderMesh.new()
+			rung.top_radius = DIVINGBOARD_RUNG_RADIUS
+			rung.bottom_radius = DIVINGBOARD_RUNG_RADIUS
+			rung.height = DIVINGBOARD_RAIL_HALF_SPAN * 2.0
+			rung.radial_segments = 6
+			rung.rings = 1
+			return [rung, DIVINGBOARD_FRAME_COLOR]
 		&"FlowerStem":
 			var stem := CylinderMesh.new()
 			stem.top_radius = 0.025
@@ -1337,6 +1441,135 @@ func _make_landmark_slabs() -> Node3D:
 	var short := BoxMesh.new()
 	short.size = Vector3(0.95, 6.60, 0.50)
 	root.add_child(_mesh_node(short, LANDMARK_SLAB_STONE, Vector3(0.90, 3.30, -0.15), Vector3(0.0, -18.0, 5.0)))
+	return root
+
+## Scratch for the board just built, handed to _build so it can enforce
+## one-board-per-layout before publishing it. Not the published copy.
+var _last_board: Dictionary = {}
+
+## The diving board. A ladder on the bank, a plank out over the water, and
+## the supports under it.
+##
+## `where` is the LADDER FOOT in world space -- the same value _build will
+## give the returned node -- and it is passed in because the rungs are
+## BATCHED, and a batch instance carries a world transform rather than
+## living under this node.
+##
+## Everything else is measured off the entry's own two ends. The facing is
+## the flat unit vector from the ladder to the anchor unless the entry
+## states one, the deck height is the anchor's y, and the plank is drawn
+## long enough to reach past the anchor -- so an author moves the board by
+## moving its ends, and the drawing follows.
+func _make_divingboard(entry: Dictionary, index: int, where: Vector3) -> Node3D:
+	_last_board = {}
+
+	# Refused rather than honoured, exactly as &"stream" refuses them: the
+	# facing already comes from the two ends, so a rotation would be a
+	# second orthography of it, free to disagree.
+	if entry.has("rotation_y") or entry.has("scale"):
+		push_warning("HubBuilder: entry %d is a divingboard and carries rotation_y/scale; its facing comes from its ends, so those are ignored." % index)
+
+	var ladder := Vector3(where.x, 0.0, where.z)
+	var anchor: Vector3 = entry.get("deck_anchor", Vector3.INF)
+	if anchor == Vector3.INF:
+		push_error("HubBuilder: entry %d is a divingboard with no \"deck_anchor\"; without it there is nowhere to stand." % index)
+		return null
+	var deck_height: float = anchor.y
+	if deck_height <= 0.0:
+		push_error("HubBuilder: entry %d has a deck_anchor at y = %.3f; a board at or below the ground cannot be dived from." % [index, deck_height])
+		return null
+
+	var forward: Vector3 = entry.get("dive_direction", Vector3.ZERO)
+	forward = Vector3(forward.x, 0.0, forward.z)
+	if forward.length_squared() < 0.000001:
+		# Not stated: the ladder-to-anchor line IS the facing, which is the
+		# only direction a board with those two ends could possibly face.
+		forward = Vector3(anchor.x - ladder.x, 0.0, anchor.z - ladder.z)
+	if forward.length_squared() < 0.000001:
+		push_error("HubBuilder: entry %d has an anchor on top of its ladder and no dive_direction; the board has no facing." % index)
+		return null
+	forward = forward.normalized()
+	var side := Vector3(forward.z, 0.0, -forward.x)
+
+	# How far out along the facing the anchor sits, and therefore how long
+	# the plank has to be to carry it plus a step of tip beyond.
+	var anchor_reach: float = (Vector3(anchor.x, 0.0, anchor.z) - ladder).dot(forward)
+	var deck_reach: float = maxf(anchor_reach + 0.60, 1.20)
+
+	var root := Node3D.new()
+	root.name = "DivingBoard"
+
+	# ---- the plank
+	var deck := BoxMesh.new()
+	deck.size = Vector3(DIVINGBOARD_DECK_WIDTH,
+		DIVINGBOARD_DECK_THICKNESS,
+		deck_reach + DIVINGBOARD_DECK_BACK_OVERHANG)
+	var deck_centre: float = (deck_reach - DIVINGBOARD_DECK_BACK_OVERHANG) * 0.5
+	# Rotated to lie ALONG the facing. Built in the parent's space rather
+	# than in a local frame because the node itself carries no rotation --
+	# see the header on why this type refuses one.
+	var deck_yaw: float = rad_to_deg(atan2(forward.x, forward.z))
+	root.add_child(_mesh_node(deck, DIVINGBOARD_DECK_COLOR,
+		forward * deck_centre + Vector3.UP * (deck_height + DIVINGBOARD_DECK_THICKNESS * 0.5),
+		Vector3(0.0, deck_yaw, 0.0)))
+
+	# ---- posts, a pair at the ladder and a pair under the tip
+	var underside: float = deck_height
+	for reach in [0.0, maxf(deck_reach - DIVINGBOARD_POST_TIP_INSET, 0.6)]:
+		for lateral in [-DIVINGBOARD_POST_HALF_SPAN, DIVINGBOARD_POST_HALF_SPAN]:
+			var post := CylinderMesh.new()
+			post.top_radius = DIVINGBOARD_POST_RADIUS
+			post.bottom_radius = DIVINGBOARD_POST_RADIUS
+			post.height = underside
+			post.radial_segments = 8
+			post.rings = 1
+			root.add_child(_mesh_node(post, DIVINGBOARD_FRAME_COLOR,
+				forward * float(reach) + side * float(lateral) + Vector3.UP * (underside * 0.5)))
+
+	# ---- ladder rails, set back behind the plank's leading edge
+	for lateral in [-DIVINGBOARD_RAIL_HALF_SPAN, DIVINGBOARD_RAIL_HALF_SPAN]:
+		var rail := CylinderMesh.new()
+		rail.top_radius = DIVINGBOARD_RAIL_RADIUS
+		rail.bottom_radius = DIVINGBOARD_RAIL_RADIUS
+		rail.height = deck_height
+		rail.radial_segments = 6
+		rail.rings = 1
+		root.add_child(_mesh_node(rail, DIVINGBOARD_FRAME_COLOR,
+			forward * -DIVINGBOARD_DECK_BACK_OVERHANG * 0.5
+				+ side * float(lateral) + Vector3.UP * (deck_height * 0.5)))
+
+	# ---- rungs, BATCHED: identical geometry repeated up the ladder is the
+	# one thing on this prop a MultiMesh is for. The count is rounded so
+	# the run divides evenly rather than leaving a rung jammed under the
+	# deck; the transforms are WORLD, because a batch has no node to sit
+	# under.
+	var rung_run: float = deck_height - DIVINGBOARD_RUNG_LOWEST - 0.15
+	var rung_count: int = maxi(int(round(rung_run / DIVINGBOARD_RUNG_SPACING)) + 1, 2)
+	# A CylinderMesh stands on its own +Y, and a rung lies ACROSS the
+	# ladder -- so the batch basis maps that +Y onto `side`. Built from the
+	# two vectors the board already has rather than from an Euler angle:
+	# the columns are orthonormal and right-handed by construction
+	# (side x UP is a unit vector perpendicular to both), which an angle
+	# would only be if the sign convention happened to be guessed right.
+	var rung_basis := Basis(side.cross(Vector3.UP), side, Vector3.UP)
+	for i in rung_count:
+		var frac: float = float(i) / float(rung_count - 1)
+		var y: float = DIVINGBOARD_RUNG_LOWEST + rung_run * frac
+		var origin: Vector3 = ladder + forward * (-DIVINGBOARD_DECK_BACK_OVERHANG * 0.5) + Vector3.UP * y
+		_instance(&"DivingBoardRung", Transform3D(rung_basis, origin))
+
+	# The two ends and the two dive targets, published as one fact each.
+	var flat_anchor := Vector3(anchor.x, 0.0, anchor.z)
+	_last_board = {
+		"ladder": ladder,
+		"anchor": Vector3(anchor.x, deck_height, anchor.z),
+		"forward": forward,
+		"water_target": flat_anchor + forward * DIVINGBOARD_DIVE_REACH,
+		# BACK TO THE LADDER FOOT, and not to some point behind it: that is
+		# ground a player has already stood on, so it is the one landward
+		# spot that cannot turn out to be inside a rock or over water.
+		"land_target": ladder,
+	}
 	return root
 
 func _mesh_node(mesh: Mesh, colour: Color, offset: Vector3, rotation_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
