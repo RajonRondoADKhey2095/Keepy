@@ -129,7 +129,7 @@ func _phase_existing_water(keepy: KeepyHopper) -> void:
 		for p in _landings:
 			if _in_disc(p, _pond_centre, HubBuilder.POND_WATER_RADIUS):
 				over_pond += 1
-			if _in_disc(p, _lake_centre, HubBuilder.LAKE_WATER_RADIUS):
+			if _in_disc(p, _lake_centre, HubBuilder.SMALL_LAKE_WATER_RADIUS):
 				over_lake += 1
 			if _on_stream(p):
 				over_stream += 1

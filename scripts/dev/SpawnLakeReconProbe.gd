@@ -180,7 +180,7 @@ func _phase_control(keepy: KeepyHopper) -> void:
 		"anti-diagonal hops %d == published %d" % [_hop_count, _PUBLISHED_ANTIDIAG_HOPS])
 	var over_great: int = 0
 	for p in _landings:
-		if _in_disc(p, _greatlake_centre, HubRegion.LAKE_WATER_RADIUS):
+		if _in_disc(p, _greatlake_centre, HubRegion.GREATLAKE_WATER_RADIUS):
 			over_great += 1
 	_check(over_great == _PUBLISHED_ANTIDIAG_GREATLAKE_LANDINGS,
 		"anti-diagonal landings on great lake %d == published %d" % [over_great, _PUBLISHED_ANTIDIAG_GREATLAKE_LANDINGS])
@@ -192,10 +192,10 @@ func _phase_q2q6(_builder: HubBuilder) -> void:
 	print("    pond centre      = (%.3f,%.3f)  water_r=%.2f bank_r=%.2f" % [
 		_pond_centre.x, _pond_centre.z, HubBuilder.POND_WATER_RADIUS, HubBuilder.POND_BANK_RADIUS])
 	print("    small lake centre = (%.3f,%.3f)  water_r=%.2f bank_r=%.2f" % [
-		_lake_centre.x, _lake_centre.z, HubBuilder.LAKE_WATER_RADIUS, HubBuilder.LAKE_BANK_RADIUS])
+		_lake_centre.x, _lake_centre.z, HubBuilder.SMALL_LAKE_WATER_RADIUS, HubBuilder.LAKE_BANK_RADIUS])
 	print("    great lake centre = (%.3f,%.3f)  water_r=%.2f bank_r=%.2f" % [
-		_greatlake_centre.x, _greatlake_centre.z, HubRegion.LAKE_WATER_RADIUS,
-		HubRegion.LAKE_WATER_RADIUS + HubBuilder.GREATLAKE_BANK_MARGIN])
+		_greatlake_centre.x, _greatlake_centre.z, HubRegion.GREATLAKE_WATER_RADIUS,
+		HubRegion.GREATLAKE_WATER_RADIUS + HubBuilder.GREATLAKE_BANK_MARGIN])
 	print("    stream: %d control points, half-width=%.2f" % [_stream_points.size(), _stream_half_width])
 	print("    landmarks on plateau (offshore==false) = %d  (15 total, 3 on islets)" % _landmarks_on_plateau.size())
 
@@ -206,12 +206,12 @@ func _phase_q2q6(_builder: HubBuilder) -> void:
 	_check(_greatlake_centre.is_equal_approx(Vector3(15.5, 0.0, -19.0)), "great lake centre matches offline sweep input")
 	_check(_landmarks_on_plateau.size() == 12, "12 landmarks on the plateau proper")
 
-	var d_pond_lake: float = _pond_centre.distance_to(_lake_centre) - HubBuilder.POND_WATER_RADIUS - HubBuilder.LAKE_WATER_RADIUS
-	var d_pond_great: float = _pond_centre.distance_to(_greatlake_centre) - HubBuilder.POND_WATER_RADIUS - HubRegion.LAKE_WATER_RADIUS
-	var d_lake_great: float = _lake_centre.distance_to(_greatlake_centre) - HubBuilder.LAKE_WATER_RADIUS - HubRegion.LAKE_WATER_RADIUS
+	var d_pond_lake: float = _pond_centre.distance_to(_lake_centre) - HubBuilder.POND_WATER_RADIUS - HubBuilder.SMALL_LAKE_WATER_RADIUS
+	var d_pond_great: float = _pond_centre.distance_to(_greatlake_centre) - HubBuilder.POND_WATER_RADIUS - HubRegion.GREATLAKE_WATER_RADIUS
+	var d_lake_great: float = _lake_centre.distance_to(_greatlake_centre) - HubBuilder.SMALL_LAKE_WATER_RADIUS - HubRegion.GREATLAKE_WATER_RADIUS
 	var d_pond_stream: float = _dist_to_stream(_pond_centre) - HubBuilder.POND_WATER_RADIUS - _stream_half_width
-	var d_lake_stream: float = _dist_to_stream(_lake_centre) - HubBuilder.LAKE_WATER_RADIUS - _stream_half_width
-	var d_great_stream: float = _dist_to_stream(_greatlake_centre) - HubRegion.LAKE_WATER_RADIUS - _stream_half_width
+	var d_lake_stream: float = _dist_to_stream(_lake_centre) - HubBuilder.SMALL_LAKE_WATER_RADIUS - _stream_half_width
+	var d_great_stream: float = _dist_to_stream(_greatlake_centre) - HubRegion.GREATLAKE_WATER_RADIUS - _stream_half_width
 	print("    Q6 adjacency (water edge to edge):")
 	print("      pond <-> small lake   = %.3f" % d_pond_lake)
 	print("      pond <-> great lake   = %.3f" % d_pond_great)
@@ -224,7 +224,7 @@ func _phase_q2q6(_builder: HubBuilder) -> void:
 	_check(d_lake_stream < 0.0 and absf(d_lake_stream - (-0.605)) < 0.02,
 		"small lake<->stream chain link intact: %.3f ~= -0.605" % d_lake_stream)
 	var chain_area: float = PI * pow(HubBuilder.POND_WATER_RADIUS, 2) \
-		+ PI * pow(HubBuilder.LAKE_WATER_RADIUS, 2) \
+		+ PI * pow(HubBuilder.SMALL_LAKE_WATER_RADIUS, 2) \
 		+ _stream_area()
 	print("      3-link chain (mare+ruisseau+petit lac) total surface if merged visually = %.2f u2" % chain_area)
 	print("      (great lake is NOT in this chain: %.3f from small lake, %.3f from stream -- separate)" % [

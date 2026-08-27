@@ -121,7 +121,7 @@ func _ready() -> void:
 ## FIRST lake, and this line establishes what "already visible" looks like
 ## before judging whether a SECOND lake can add to it.
 func _report_existing_greatlake_visibility() -> void:
-	_report_disc_visibility(HubRegion.lake_centre(), HubRegion.LAKE_WATER_RADIUS, "existing great lake")
+	_report_disc_visibility(HubRegion.lake_centre(), HubRegion.GREATLAKE_WATER_RADIUS, "existing great lake")
 
 func _report_disc_visibility(centre: Vector3, radius: float, label: String) -> void:
 	var total: int = 0
