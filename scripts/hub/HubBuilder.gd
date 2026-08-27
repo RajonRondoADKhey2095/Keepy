@@ -940,10 +940,14 @@ func _make_lake() -> Node3D:
 ## smaller waters, for a mesh that is still trivially cheap.
 ##
 ## SPAWN-LAKE-1 made this maker serve TWO lobes, and the radius comes from
-## HubRegion rather than from the entry: the walkable hole and the drawn
-## disc have to be one circle, so the entry names WHICH lake and HubRegion
-## says HOW BIG. A centre HubRegion does not know is an error and draws
-## nothing, rather than silently defaulting to the first lobe's size.
+## HubRegion rather than from the entry: the drawn disc and the one
+## `HubRegion.in_lake_water()` can still answer questions about have to be
+## one circle, so the entry names WHICH lake and HubRegion says HOW BIG. A
+## centre HubRegion does not know is an error and draws nothing, rather
+## than silently defaulting to the first lobe's size. (HubRegion no longer
+## subtracts this disc from the walkable region -- 26 aout 2026, Mathieu's
+## decision that all five water bodies are walkable -- but it is still the
+## one owner of this disc's geometry.)
 func _make_greatlake(entry: Dictionary) -> Node3D:
 	var centre: Vector3 = entry.get("position", Vector3.ZERO)
 	var index: int = HubRegion.lake_index_at(centre)

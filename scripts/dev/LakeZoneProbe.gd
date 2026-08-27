@@ -5,17 +5,24 @@ extends Node
 ## =====================================================================
 ## WHAT THIS EXISTS TO CATCH
 ##
-## The lake zone turned the walkable hub from a scalar into a shape, and a
-## shape fails in ways a float cannot. Three of those are silent:
+## ⚠️ 26 AOUT 2026: THE GREAT-LAKE WATER GUARD IS REMOVED (Mathieu's
+## decision, see HubRegion.contains()). This file's own PHASE REGION and
+## PHASE TAP used to gate the guard's EXISTENCE -- "a tap on the lake must
+## resolve to dry land" -- and both are REPOINTED at the inverted contract
+## below rather than left asserting a behaviour that no longer ships. What
+## this probe still exists to catch, unchanged by the guard's removal:
 ##
-##   - a tap on the lake walks Keepy into the water. No error; the player
-##     simply ends up standing in a lake.
 ##   - the shore lobe quietly becomes the longest walk in the game, so the
 ##     22 s crossing budget is spent somewhere nobody looked.
 ##   - two water slabs land at the same height and z-fight. The great lake
 ##     and the small lake DO overlap -- forced by their fixed radii, not
 ##     chosen -- so the only thing keeping them apart is an ordering of
 ##     y values that a later edit could flatten without noticing.
+##
+## What it now ALSO catches, since the inversion: a future edit that
+## reintroduces any form of water exclusion into HubRegion.contains() --
+## PHASE TAP would go back to reading dry landings and fail loudly, exactly
+## the mirror of what it gated before this commit.
 ##
 ## =====================================================================
 ## THIS PROBE MUST RUN UNDER xvfb, NOT --headless
@@ -154,35 +161,34 @@ func _phase_region() -> void:
 	_check(HubRegion.contains(Vector3.ZERO), "the plateau centre is walkable")
 	_check(HubRegion.contains(Vector3(34.9, 0.0, 34.9)), "the square corner is walkable")
 	_check(not HubRegion.contains(Vector3(40.0, 0.0, 40.0)), "past the square corner is not")
-	var centres_dry: bool = true
-	var rims_land: bool = true
+	# ⚠️ INVERTED, 26 aout 2026 -- the premise this sub-block gated (a
+	# discontinuity at the waterline, requiring a float32 rim nudge so a
+	# rim point never coin-flips between "land" and "water") is VOID now
+	# that contains() no longer excludes water at all: there is no boundary
+	# left to slip across. Retired rather than kept as a softened assertion
+	# -- the +0.001 nudge and the 22.5 deg rim sampling served exactly that
+	# discontinuity and nothing else. What replaces it is the simpler,
+	# stronger claim the removal makes true: EVERY point of EVERY lobe,
+	# centre to rim, now reads as walkable, sampled the same way (16 rim
+	# azimuths per lobe, exactly at the radius -- no nudge needed, because
+	# there is no longer a "wrong side" of that radius to land on).
+	var centres_walkable: bool = true
+	var rims_walkable: bool = true
 	for lake in HubRegion.lakes():
 		var centre: Vector3 = lake["centre"]
 		var radius: float = lake["radius"]
-		if HubRegion.contains(centre):
-			centres_dry = false
-		# Sampled all the way round: with two lobes a rim point can fall
-		# inside the OTHER lobe, and only contains() is entitled to say so.
-		#
-		# ⚠️ SAMPLED AT radius + 0.001, NOT AT radius, and that is the same
-		# nudge _out_of_lake() applies rather than a softened assertion.
-		# in_lake_water compares STRICTLY against the radius, so a point
-		# built as centre + dir*radius is a float coin-flip -- Vector3 is
-		# float32, not float64. MEASURED, not argued: 7 of these 32 rim
-		# points land 9.54e-07 INSIDE their own circle and read as water.
-		# What the region actually promises is
-		# that clamp_to's output is land, and clamp_to nudges -- so this
-		# gates the promise instead of an unrepresentable edge case.
+		if not HubRegion.contains(centre):
+			centres_walkable = false
 		for i in 16:
 			var a: float = deg_to_rad(float(i) * 22.5)
-			var rim := centre + Vector3(sin(a), 0.0, -cos(a)) * (radius + 0.001)
+			var rim := centre + Vector3(sin(a), 0.0, -cos(a)) * radius
 			if absf(rim.x) <= HubRegion.PLATEAU_HALF_EXTENT \
 					and absf(rim.z) <= HubRegion.PLATEAU_HALF_EXTENT \
 					and not HubRegion.contains(rim):
-				rims_land = false
-	_check(centres_dry, "the middle of every lobe is not walkable")
-	_check(rims_land, "every lobe's waterline is walkable (the rim is land)")
-	_check(HubRegion.contains(HubRegion.near_bank()), "the near bank waterline is (the rim is land)")
+				rims_walkable = false
+	_check(centres_walkable, "the middle of every lobe is now walkable (the guard is removed)")
+	_check(rims_walkable, "every lobe's waterline is walkable")
+	_check(HubRegion.contains(HubRegion.near_bank()), "the near bank waterline is walkable")
 
 	# THE ASSERTION IS INVERTED SINCE LAKE-MOVE, deliberately and not
 	# quietly. It used to demand that the shore pad add ground BEYOND the
@@ -373,7 +379,16 @@ func _phase_tap(hub: Node, tap: HubTapInput, camera: Camera3D) -> void:
 			water_points.append((lake["centre"] as Vector3)
 				+ Vector3(sin(a), 0.0, -cos(a)) * (float(lake["radius"]) * 0.6))
 	var tested: int = 0
-	var dry: int = 0
+	# ⚠️ INVERTED, 26 aout 2026. Before the guard's removal this counted DRY
+	# landings and gated dry == tested -- a tap on the lake had to be pushed
+	# to the shore. The verdict this measures is now the opposite one, on
+	# the same 16 points (8 azimuths x 2 lobes), the same methodology, and
+	# the same real HubTapInput._handle_point: water is walkable, so a tap
+	# aimed AT the water must resolve INTO the water instead of being
+	# pushed off it. Named `wet` rather than reusing `dry` with a negated
+	# condition, so a reader diffing this file sees a renamed variable and
+	# not a silently flipped boolean hiding in the same name.
+	var wet: int = 0
 	for target in water_points:
 		# Stand 12 units south of the water point; that puts it in frame.
 		var stand := HubRegion.clamp_to(target + Vector3(0.0, 0.0, 12.0))
@@ -388,15 +403,15 @@ func _phase_tap(hub: Node, tap: HubTapInput, camera: Camera3D) -> void:
 		_tap_seen = false
 		tap._handle_point(screen)
 		await get_tree().process_frame
-		if _tap_seen and not HubRegion.in_lake_water(_tapped):
-			dry += 1
+		if _tap_seen and HubRegion.in_lake_water(_tapped):
+			wet += 1
 		print("    tap aimed at %s -> destination %s (in water: %s)"
 			% [target, _tapped, HubRegion.in_lake_water(_tapped)])
 	tap.tapped_ground.disconnect(_on_tapped)
 	_check(tested >= water_points.size(),
 		"all %d sampled lake points projected inside the viewport (%d tested)"
 			% [water_points.size(), tested])
-	_check(tested > 0 and dry == tested, "%d/%d taps on the lake resolved to dry land" % [dry, tested])
+	_check(tested > 0 and wet == tested, "%d/%d taps on the lake resolved INTO the water (guard removed)" % [wet, tested])
 	print("")
 
 func _on_tapped(point: Vector3) -> void:
@@ -471,12 +486,15 @@ func _phase_crossing(keepy: KeepyHopper) -> void:
 
 	# WALKING ON WATER, REPORTED AND NOT GATED. Keepy's chord consults
 	# nothing -- there is no obstacle avoidance anywhere in the repo -- so
-	# these landings are a real, known defect that this batch makes WORSE
-	# and deliberately does not fix. The count covers BOTH lobes since
+	# these landings are a known, INTENDED consequence of the guard's
+	# removal (26 aout 2026, Mathieu's decision: water is a place, not an
+	# obstacle) and not a defect. The count covers BOTH lobes since
 	# SPAWN-LAKE-1, so a row that was 0 before can be non-zero now without
-	# the great lake having moved a millimetre. Gating it would fail the hub for a
-	# decision taken elsewhere; leaving it unmeasured would let the cost of
-	# an interior lake go unsaid.
+	# the great lake having moved a millimetre. Gating it would fail the hub
+	# for a decision taken elsewhere; leaving it unmeasured would let the
+	# fact that Keepy visually walks OVER the water, not through it (no
+	# submersion render exists -- see docs/WATER_ACCESS_RENDER_RECON.md),
+	# go unsaid.
 	for pair in [
 		[Vector3(-h, 0.0, -h), Vector3(h, 0.0, h)],
 		[Vector3(-h, 0.0, h), Vector3(h, 0.0, -h)],
