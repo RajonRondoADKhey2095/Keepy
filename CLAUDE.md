@@ -17309,3 +17309,148 @@ forme exacte du piege documente. **Ce n'en etait pas un.** L'horloge le dit :
 il n'etait que 14:45, l'import avait demarre a 14:44:25, et il a reellement
 dure **2 min 29 s** (14:44:25 -> 14:46:54). Verifier l'HEURE avant d'accuser
 l'API reste la parade, dans les deux sens.
+
+## LE PLONGEOIR : LA CHAINE COMPLETE, ET L'ARRONDI DU COMPTE DE BARREAUX (27 aout 2026)
+
+Trois lots ont livre la chaine plongeoir sans qu'aucune section n'ait ete
+ecrite ici. Celle-ci couvre les trois d'un coup, plus le lot de reglage du
+compte de barreaux qui les clot.
+
+**Le plongeoir** vit dans `resources/hub/hub_layout.tres` sous un type
+`&"divingboard"` (une entree, sur le lobe du grand lac), et est construit
+par `HubBuilder._make_divingboard()`. Une entree porte trois champs : la
+`position` (le pied de l'echelle, sur terre), `deck_anchor` (ou l'on se
+tient une fois monte, y compris son Y) et `dive_direction`. La longueur de
+la planche, le nombre de poteaux, les rails et la hauteur du deck derivent
+tous de ces deux points -- deplacer le plongeoir se fait en deplacant ses
+extremites, le dessin suit. **Hauteur de deck = 1,8**, validee sur device
+par Mathieu.
+
+### Les trois etats CLIMBING / ON_BOARD / DIVING, et pourquoi RIDING est
+### REUTILISE plutot que generalise
+
+`KeepyHopper.State` gagne trois valeurs en plus d'IDLE/HOPPING/RIDING.
+Aucune n'est un second systeme de mouvement : CLIMBING et DIVING
+remplacent chacun, pour leur duree, la source qui ecrit le corps, et
+rendent la main a la chaine ordinaire a leur sortie ; ON_BOARD n'ecrit
+rien du tout pendant qu'on s'y tient. Les trois partagent la propriete
+de RIDING : aucun n'emet `hop_landed`, donc la detection de portail est
+silencieuse pendant toute leur duree -- un plongeoir pose a 9 u de la
+rangee de portails emporterait sinon un plongeur dans un sous-jeu qu'il
+ne faisait que survoler.
+
+⚠️ **LE DECK N'EST PAS PRATICABLE, PAR CONSTRUCTION ET PAR CHOIX, pas par
+oubli.** Le plateau est un modele MONO-ALTITUDE : `HubRegion.contains()`
+jette le Y (`_flat()`), et `HubTapInput` raycaste contre un
+`Plane(UP, 0.0)` **en dur**. Il n'existe donc structurellement pas de tap
+qui signifie « un point sur le deck ». Laisser Keepy s'y deplacer
+librement demanderait un second sol, sureleve, contre lequel resoudre les
+taps -- un changement a l'echelle du plateau entier pour une seule
+planche. Le plongeoir a donc exactement UNE place pour se tenir, et un
+tap depuis cette place signifie PLONGER, jamais MARCHER. C'est aussi
+pourquoi le tap est intercepte PAR ETAT, exactement comme pendant un
+ride : le point au sol arrive toujours resolu a y=0, et il reste utile
+(son cote par rapport a l'ancre choisit le plongeon eau/terre), mais il
+ne doit jamais devenir une destination.
+
+### La generalisation de `_apply_hop` a des extremites de hauteurs inegales
+
+`_hop_from_y` / `_hop_to_y` valent **zero par defaut**, et tout bond que le
+plateau a jamais fait les y laisse : le plateau etant mono-altitude, un
+bond entre deux points de sa surface commence et finit au sol par
+definition. Ils existent pour qu'UN SEUL bond puisse partir haut et
+atterrir bas -- le plongeon depuis le plongeoir. Generaliser l'arc
+existant plutot que d'en ajouter un second est deliberee : l'enveloppe de
+squash, le pitch et le recoil d'atterrissage roulent tous sur le meme `t`
+normalise que la hauteur, et une seconde implementation « bond haut »
+aurait ete une copie de chacun d'eux, libre de deriver de celle que tout
+le plateau utilise.
+
+**La generalisation est EXACTE a `from == to`, pas seulement proche** :
+a extremites egales `lerpf` rend cette valeur pour tout `t`, donc la
+parabole s'ajoute a une constante et la trajectoire est celle qui etait
+deja livree. **Prouve, pas argumente** : `DivingBoardProbe` PHASE A
+echantillonne le `_apply_hop` livre contre la formule d'avant sur 1001
+points, sur un bond plein, un dernier bond court et un bond d'ejection --
+**divergence pire mesuree : 0,000000000000 u** sur les trois.
+
+### La grimpe quantifiee : cadence MEDIAN validee, et le piege float32
+
+La montee sur l'echelle avance par PALIERS (`climb_push_ratio` = fraction
+d'un palier passee a pousser, `climb_sway_amplitude` = balancement
+lateral au push, qui revient a zero avant la pause). Trois profils
+existent sur la planche de cadence (`docs/color-sheets/`) -- SOBER /
+MEDIAN / MARKED -- et **MEDIAN (0,55 / 0,05) est le profil valide sur
+device par Mathieu le 27 aout 2026**, avec la cadence de saut du sommet
+vers l'herbe qui fonctionne (une divergence ouverte depuis deux lots,
+desormais fermee).
+
+⚠️ **LE PIEGE FLOAT32, MESURE ET CORRIGE CE LOT.** Le compte de barreaux
+etait `int(round(rung_run / DIVINGBOARD_RUNG_SPACING)) + 1`. A
+`deck_anchor.y = 1,8`, cette expression tombe **EXACTEMENT** sur le
+couteau de `round()` : en double precision le ratio vaut
+`4,500000000000001` (au-dessus du seuil, arrondirait a 5 -> 6 barreaux),
+mais `Vector3.y` est du **float32**, donc la valeur qui atteint le calcul
+est en realite `1,7999999523162842`, dont le ratio vaut `4,499999841...`
+(en-dessous du seuil, arrondit a 4 -> 5 barreaux). **Le compte de
+barreaux ne dependait donc pas de la hauteur voulue, mais du sens
+arbitraire dans lequel le float32 avait bruite cette hauteur.**
+
+**Mesure AVANT tout changement, aux trois hauteurs (1,4 / 1,8 / 2,4),
+en float64 et en float32** :
+
+| hauteur | ratio float64 | ratio float32 (reellement utilise) | sur un couteau .5 ? |
+|---|---|---|---|
+| 1,4 | 3,166666666666667 | 3,166666587193807 | non (loin de tout .5) |
+| **1,8** | **4,500000000000001** | **4,499999841054281** | **OUI** |
+| **2,4** | **6,5** (exact) | **6,500000317891439** | **OUI, et la aussi** |
+
+**Constat qui depasse le seul cas connu** : 1,8 ET 2,4 sont TOUTES LES
+DEUX exactement sur un couteau de `round()` -- structurel, pas une
+malchance isolee. Toute hauteur de deck de la forme `0,6 + 0,3*n` retombe
+sur cette meme frontiere, parce que les barreaux eux-memes sont espaces
+tous les 0,3.
+
+**Correctif livre** : un arrondi EXPLICITE, a ties **casses vers le bas**,
+avec un epsilon (`0,0001`) trois ordres de grandeur au-dessus du bruit
+float32 mesure (~1,6e-7 a 3,2e-7) — `int(floor(ratio + 0,5 - EPS))`. Non
+tie, il se comporte comme un arrondi normal ; sur un tie (reel ou
+bruite), il choisit toujours la meme direction, independamment du sens
+dans lequel le float32 a arrondi la hauteur d'entree. **Verifie donner
+`rung_count = 5` a 1,8** -- la cadence livree et validee sur device y est
+calee, pas seulement a la hauteur.
+
+Les hauteurs de barreaux publiees restent **0,30 / 0,6375 / 0,975 /
+1,3125 / 1,65** -- inchangees, parce que le premier et le dernier barreau
+sont fixes par construction (`DIVINGBOARD_RUNG_LOWEST` et
+`deck_height - 0,15`) quel que soit le compte ; seul l'espacement entre
+eux en dependait.
+
+### Keepy N'A AUCUN SQUELETTE -- contrainte qui reviendra
+
+Le `.glb` de Keepy porte **1 seul noeud, 1 seul mesh, 0 skin, 0
+animation** -- aucune queue separable, aucun os. Toute animation de ce
+personnage, sur cet ecran comme sur celui de Battle, passe donc par le
+transform du CORPS ENTIER (position, rotation, echelle) -- jamais par une
+sous-partie. C'est deja ce que `FighterView.gd` (Battle) et
+`KeepyHopper.gd` (le hub) font tous les deux, independamment, pour la
+meme raison. A retenir pour tout futur mouvement de Keepy : il n'y a rien
+a animer separement, seulement le corps comme un bloc.
+
+### HORS PERIMETRE, non fait
+
+- **Eclaboussures a l'impact** (lot 2 envisage) -- **AUCUNE particule
+  n'existe nulle part dans ce depot**, verifie par grep. Techno non
+  prouvee sur WebGL2 mobile ; hors de ce chantier.
+- **Plongeoirs sur les 4 autres corps d'eau** (mare, petit lac, ruisseau,
+  second lobe du grand lac) -- un seul plongeoir existe, sur le lobe du
+  grand lac. Non etendu ici.
+
+⚠️ **Derive de convention, constatee et NON corrigee retroactivement** :
+plusieurs lots shader anterieurs (teinte eau, ligne de flottaison) ont
+publie leurs mesures de cout/FPS directement dans ce fichier plutot que
+dans `docs/HUB_PERF_BASELINE.md`, ou elles auraient du vivre selon la
+convention posee par les lots hub anterieurs. Les lignes ne sont pas
+reconstruites ni deplacees ici -- seul le constat est note, pour qu'une
+future session ne cherche pas ces chiffres au seul endroit ou la
+convention dit qu'ils devraient etre.

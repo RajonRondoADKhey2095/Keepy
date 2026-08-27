@@ -1544,7 +1544,24 @@ func _make_divingboard(entry: Dictionary, index: int, where: Vector3) -> Node3D:
 	# deck; the transforms are WORLD, because a batch has no node to sit
 	# under.
 	var rung_run: float = deck_height - DIVINGBOARD_RUNG_LOWEST - 0.15
-	var rung_count: int = maxi(int(round(rung_run / DIVINGBOARD_RUNG_SPACING)) + 1, 2)
+	# rung_run / DIVINGBOARD_RUNG_SPACING lands EXACTLY on round()'s .5
+	# knife-edge whenever deck_height sits on the 0.6-unit grid (deck_height
+	# = 0.6 + 0.3*n) -- measured: BOTH 1.8 (n=4, true ratio 4.5) and 2.4
+	# (n=6, true ratio 6.5) do, not just the height that happened to be
+	# noticed. anchor.y is a Vector3 component, so it is float32 storage:
+	# what reaches here is never the true tie, it is that tie perturbed by
+	# ~1.6e-7 to ~3.2e-7 in whichever direction float32 rounding happens to
+	# go -- and THAT arbitrary direction used to decide the rung count (5 vs
+	# 6 at deck_height=1.8, measured before this fix). Rounding explicitly
+	# with ties broken DOWN, at an epsilon three orders of magnitude above
+	# that noise floor, makes the count depend on the intended height
+	# instead of on a rounding artefact. Verified to still give
+	# rung_count=5 at deck_height=1.8 -- the shipped, device-validated
+	# MEDIAN cadence keys its rhythm to that number, not just to the height.
+	const DIVINGBOARD_RUNG_TIE_EPS: float = 0.0001
+	var rung_ratio: float = rung_run / DIVINGBOARD_RUNG_SPACING
+	var rung_rounded: int = int(floor(rung_ratio + 0.5 - DIVINGBOARD_RUNG_TIE_EPS))
+	var rung_count: int = maxi(rung_rounded + 1, 2)
 	# A CylinderMesh stands on its own +Y, and a rung lies ACROSS the
 	# ladder -- so the batch basis maps that +Y onto `side`. Built from the
 	# two vectors the board already has rather than from an Euler angle:

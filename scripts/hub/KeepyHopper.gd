@@ -182,7 +182,9 @@ const CLIMB_RISE_FRACTION: float = 0.72
 ## the SOBER / MEDIAN / MARKED rows on the cadence sheet
 ## (docs/color-sheets/) are this same field at three values on three
 ## instanced hoppers, and MEDIAN -- the default below -- is what ships.
-## Nothing here is validated by a sonde; only Mathieu's eye picks a row.
+## No sonde judges cadence, only an eye can -- and it has: MEDIAN
+## (0.55 / 0.05, this row and climb_sway_amplitude below) was validated on
+## device by Mathieu on 27 Aug 2026.
 @export var climb_push_ratio: float = 0.55
 
 ## Lateral sway on each push, in world units, perpendicular to the ladder
@@ -190,7 +192,8 @@ const CLIMB_RISE_FRACTION: float = 0.72
 ## the pause begins: sin(PI * push_t) returns to 0 at push_t = 1, so the
 ## feet are back directly over the ladder foot for every held rung, and a
 ## rung that is HELD still reads as gripped rather than swaying under him.
-## Same exposure reasoning as climb_push_ratio above.
+## Same exposure reasoning as climb_push_ratio above -- and the same
+## device validation, 27 Aug 2026.
 @export var climb_sway_amplitude: float = 0.05
 
 ## Arc height of the final beat -- the hop from the last quantized rung
