@@ -1079,4 +1079,9 @@ props = [{
 "scale": 1.203,
 "variant": 0,
 "type": &"flower"
+}, {
+"position": Vector3(0.4935, 0, -28.196),
+"deck_anchor": Vector3(3.0515, 1.8, -26.6285),
+"dive_direction": Vector3(0.85264, 0, 0.5225),
+"type": &"divingboard"
 }]

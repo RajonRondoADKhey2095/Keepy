@@ -51,9 +51,21 @@ extends Node
 const _HUB_WORLD_SCENE: String = "res://scenes/HubWorld.tscn"
 
 ## Draw nodes excluding the three portals, from docs/HUB_PERF_BASELINE.md's
-## own latest row. This batch writes a property on an existing surface and
-## must not move it.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 98
+## own latest row. The tint batch writes a property on an existing surface
+## and must not move it.
+##
+## THIS IS A SNAPSHOT OF THE WHOLE PLATEAU, not a fact about the tint, so
+## every batch that legitimately adds geometry has to bump it -- and that
+## is the point rather than a nuisance: an absolute number is what makes a
+## property write that quietly spawned a node impossible to miss.
+##
+## 98 -> 106 on 27 aout 2026, the diving board (7 mesh nodes for the plank,
+## four posts and two rails, plus one MultiMesh carrying its five ladder
+## rungs). That batch is itemised in its own probe's PHASE E and in the
+## perf file's row, so this number can be checked against something rather
+## than merely believed. A future bump wants the same treatment: say what
+## added the nodes, or the constant becomes a place to hide a regression.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 106
 
 var _failures: int = 0
 var _ride_landings: int = 0

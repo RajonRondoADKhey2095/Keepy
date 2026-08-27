@@ -418,3 +418,63 @@ comparable, because only that pair shares a machine and a session.
 exactly what it is worst at and exactly what a phone GPU is best at, so
 nothing in this row says how the plateau behaves on a phone. **Device
 judgement.**
+
+## DIVING BOARD (27 aout 2026) -- the plateau's first climbable prop
+
+Same Godot binary and machine, both ends under `xvfb-run --rendering-driver
+opengl3`, 3 runs each, **run one at a time**. Imports verified complete on
+both trees (24 `.scn`) before any number was read.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean |
+|---|---|---|---|---|
+| BEFORE (3 runs, `origin/main`) | 35.81 / 36.49 / 42.89 | 98 | 104 | 22.6-23.3 |
+| AFTER (3 runs, this batch) | 37.44 / 45.74 / 38.07 | **106** | **112** | 22.3-23.2 |
+
+**+8 draw nodes, and the eight are itemised rather than inferred from the
+total**: `DivingBoardProbe` PHASE E walks the live tree and reports **7
+mesh nodes** (one plank, four posts, two ladder rails) **plus one
+`MultiMeshInstance3D` carrying 5 rungs**. A total that moved by the right
+amount for the wrong reason is exactly what an itemisation catches, so the
+7 and the batch are both gated, not merely printed. Margin under the 260
+ceiling: **162 -> 154**.
+
+The rung run is the one part of this prop a `MultiMesh` is for -- identical
+geometry repeated up a ladder. Five rungs cost one draw node; the plank and
+posts are one-offs and cost their own.
+
+⚠️ **FPS did not move, and the honest reading is "the ranges overlap"**:
+22.6-23.3 before against 22.3-23.2 after, with construction overlapping too
+(35.81-42.89 against 37.44-45.74). Which is what a prop of this size on the
+far bank should do -- unlike LAKE-MOVE-1, nothing here puts new fill into
+the middle of the frame.
+
+⚠️ **DO NOT COMPARE THIS TABLE'S FPS TO THE ROWS ABOVE IT.** Only the
+BEFORE/AFTER pair inside one row block shares a machine and a session. This
+sandbox runs ~23 fps for the scene the SPAWN-LAKE-1 sandbox ran at ~15 and
+an earlier one at ~27.
+
+⚠️ **A GAP IN THIS FILE, CONSTATED AND NOT PAPERED OVER.** The last row
+before this one is SPAWN-LAKE-1: `grep -ci "shader\|waterline"` over this
+file returns **0**, and `git log -- docs/HUB_PERF_BASELINE.md` confirms the
+newest commit touching it is `e7c45cf` (SPAWN-LAKE-1). None of the eight
+waterline/shader commits between it and this batch wrote a row here.
+
+To be precise about what that is and is not: those commits do NOT claim in
+their messages to have added one (`grep -ci "HUB_PERF_BASELINE"` over them
+returns 0). They measured -- CLAUDE.md records "98 / 104 draw nodes,
+unchanged" and three `HubPerfBaseline` runs per side for the waterline
+batch -- and published the numbers in CLAUDE.md instead of here, which is
+the file that exists to hold them. So this is a convention drift, not a
+false claim.
+
+**The missing rows are NOT reconstructed here.** They would be numbers from
+another sandbox, entered by someone who did not take them, into a table
+whose entire value is that each row's two halves were measured together.
+The BEFORE column above is measured on `origin/main` in this session, so it
+already carries whatever the waterline batch cost -- this row is complete
+on its own terms, and the gap behind it stays visible.
+
+⚠️ And as ever: llvmpipe under xvfb is a software rasteriser -- fill rate is
+exactly what it is worst at and exactly what a phone GPU is best at, so
+nothing in this row says how the plateau behaves on a phone. **Device
+judgement.**
