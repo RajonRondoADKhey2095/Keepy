@@ -549,6 +549,20 @@ var _boat: Node3D = null
 var _stream_spine: Array = []
 var _stream_half_width: float = 0.0
 
+## Where the one &"pond" and the one &"lake" were actually PLACED. Kept for
+## the same reason as the spine above: a caller that needs to know where the
+## water is has to be handed the centre this file drew the disc at, never a
+## second reading of the layout. Two numbers describing one circle is how a
+## bank slab ends up slicing a prop nobody was warned about -- the note
+## HubRegion._lakes already carries for the great lake, and the great lake is
+## the only family that already had a published table to answer from.
+##
+## Vector3.INF marks "the layout has none", which is a legal plateau: a hub
+## without a pond simply has one fewer body of water, not a pond at the
+## origin. A caller must test for it rather than trusting a zero.
+var _pond_centre: Vector3 = Vector3.INF
+var _small_lake_centre: Vector3 = Vector3.INF
+
 ## Batch key -> {"mesh": Mesh, "colour": Color, "xforms": Array[Transform3D]}.
 ## Filled while the layout is walked, drained once at the end by
 ## _flush_batches(); a batch nothing landed in is never created.
@@ -588,6 +602,16 @@ func stream_spine() -> Array:
 ## here rather than re-read from the resource by a second caller.
 func stream_half_width() -> float:
 	return _stream_half_width
+
+## Centre of the one &"pond", or Vector3.INF when the layout has none.
+func pond_centre() -> Vector3:
+	return _pond_centre
+
+## Centre of the one &"lake" -- the SMALL one. The great lake's two lobes are
+## not reported here: HubRegion.lakes() already publishes them, and this file
+## draws them from that table rather than the other way round.
+func small_lake_centre() -> Vector3:
+	return _small_lake_centre
 
 ## Every prop's ground footprint, as {"position": Vector3, "radius": float},
 ## read from the LAYOUT rather than from the built tree -- batched props
@@ -700,6 +724,20 @@ func _build() -> void:
 			node.rotation_degrees = Vector3(0.0, rotation_y, 0.0)
 			node.scale = Vector3.ONE * uniform
 			add_child(node)
+			# The centre a water disc was actually drawn at, published so
+			# nothing has to read the layout a second time to find the water.
+			# A second entry is an error rather than a silent overwrite, the
+			# same rule the hull below is held to: one pond, one lake.
+			if type == &"pond":
+				if _pond_centre != Vector3.INF:
+					push_error("HubBuilder: a second &\"pond\" entry at %d; the first one is the one anything else can find." % index)
+				else:
+					_pond_centre = where
+			elif type == &"lake":
+				if _small_lake_centre != Vector3.INF:
+					push_error("HubBuilder: a second &\"lake\" entry at %d; the first one is the one anything else can find." % index)
+				else:
+					_small_lake_centre = where
 			if type == &"boat":
 				if _boat != null:
 					push_error("HubBuilder: a second &\"boat\" entry at %d; the ride owns one hull, the extra is drawn but never moored." % index)
