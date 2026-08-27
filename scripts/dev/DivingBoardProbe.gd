@@ -364,6 +364,22 @@ func _phase_e_cost(world: Node3D) -> void:
 	print("    MeshInstance3D under Props: %d" % meshes)
 	print("    MultiMeshInstance3D:        %d" % multis)
 	print("    draw nodes, total:          %d" % (meshes + multis))
+
+	# What the BOARD costs of that, itemised. A total that moved by the
+	# right amount for the wrong reason is the failure this itemisation
+	# exists to catch.
+	var board_meshes: int = 0
+	var rungs: int = 0
+	for child in props.get_children():
+		if child.name == "DivingBoard":
+			board_meshes = _count_meshes(child)
+		elif child is MultiMeshInstance3D and String(child.name).begins_with("DivingBoard"):
+			rungs = (child as MultiMeshInstance3D).multimesh.instance_count
+	print("    of which the board: %d mesh nodes + 1 rung batch of %d instances"
+		% [board_meshes, rungs])
+	_check(board_meshes == 7,
+		"the board is 7 mesh nodes (plank, 4 posts, 2 rails), not more (%d)" % board_meshes)
+	_check(rungs >= 2, "the ladder has a rung run (%d rungs, ONE draw node)" % rungs)
 	_check(meshes + multis < 260, "under the 260 draw-node ceiling")
 	print("")
 
