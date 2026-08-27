@@ -197,6 +197,18 @@ signal ride_ended()
 ## this is animation, and the two must not fight over one property.
 @onready var _body: ModelSlot = $Yaw/Body
 
+## The slot drawing Keepy, READ-ONLY, for a caller that needs to recolour
+## him. The one thing this file exposes about its own art.
+##
+## Handed over rather than let HubWorld walk `Keepy/Yaw/Body` itself: that
+## path is this file's private business, and a second copy of it in another
+## file is exactly how a rename becomes a silent null. Nothing here writes
+## to the returned slot -- the hop's own squash and pitch still go through
+## `_body` above, and a caller that tints it is writing a material, not a
+## transform, so the two never contend.
+func body_slot() -> ModelSlot:
+	return _body
+
 var _base_scale: Vector3 = Vector3.ONE
 var _base_pitch: float = 0.0
 

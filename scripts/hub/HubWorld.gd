@@ -104,6 +104,24 @@ var _ride_half_width: float = 0.0
 ## so a player who changes their mind simply walks somewhere else.
 var _boarding: bool = false
 
+## The five-body water test, built once from the geometry HubBuilder just
+## drew. Never null after _ready(); a plateau with no water simply answers
+## false to everything.
+var _water: HubWater = null
+
+## Keepy's material, DUPLICATED, and the tween that recolours it. See
+## _ensure_keepy_material() for why the duplicate is not optional.
+var _keepy_material: StandardMaterial3D = null
+var _keepy_base_color := Color.WHITE
+var _keepy_material_resolved: bool = false
+var _keepy_tint_tween: Tween = null
+
+## What the tint is currently aimed at, so a landing that does not change
+## the answer does not restart the tween. Without it, hopping along a lake
+## bed would re-fire a 0.18s fade every 0.28s and the tint would never
+## settle.
+var _keepy_wet: bool = false
+
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
 	# the swamp safe-area paint (this is still the one screen every way
@@ -119,6 +137,10 @@ func _ready() -> void:
 		portal.portal_entered.connect(_on_portal_entered)
 
 	_setup_ride()
+	# AFTER _setup_ride(), which is what owns the one HubStreamRoute: the
+	# water test is handed that same route rather than building a second
+	# one over the same spine.
+	_water = HubWater.new(_builder, _route)
 
 	_tap.tapped_ground.connect(_on_tapped_ground)
 	_tap.tapped_boat.connect(_on_tapped_boat)
@@ -239,6 +261,15 @@ func _on_hop_landed(position: Vector3) -> void:
 	# only sailing past) is exactly the kind that only shows up on device.
 	if _keepy.is_riding():
 		return
+
+	# WHERE KEEPY IS, decided before anything about what this landing goes
+	# on to TRIGGER. A landing in a portal still updates the tint on its way
+	# to opening the dialog; a landing that starts a ride still reports the
+	# ground it left from. Both of the branches below return early, so a
+	# tint placed after them would simply stop updating on the landings that
+	# do something -- silently, and only sometimes.
+	_set_keepy_wet(_water != null and _water.contains(position))
+
 	# The landing that finishes a boarding walk starts the ride, before
 	# anything else looks at where it landed.
 	if _boarding and _try_board(position):
@@ -302,6 +333,15 @@ func _on_ride_moved(position: Vector3, yaw_degrees: float) -> void:
 
 func _on_ride_started() -> void:
 	_mooring.set_riding(true)
+	# RIDING THE WATER IS NOT BEING IN IT. Measured, a ride emits no
+	# landings at all, so nothing can turn the tint ON mid-ride -- but a
+	# boarding walk whose last landing was in the shallows would carry a
+	# tint aboard and hold it for the whole crossing, because the next
+	# landing that could clear it is the one after disembarking. Cleared
+	# here instead of trusting the geometry: the hull is moored ON the
+	# water at both ends, so that landing being wet is the ordinary case,
+	# not the freak one.
+	_set_keepy_wet(false)
 
 func _on_ride_ended() -> void:
 	_mooring.set_riding(false)
@@ -333,3 +373,98 @@ func _on_fallback_quizz() -> void:
 
 func _on_fallback_battle() -> void:
 	_router.route(&"battle")
+
+## =====================================================================
+## KEEPY TINTS TOWARD THE WATER HE IS STANDING IN
+##
+## The plateau's five waters are all painted one turquoise, and Keepy is
+## blended 75% of the way toward it while he is in any of them. Mathieu
+## picked the fraction on the recon's rendered ladder (0/25/50/75/100%
+## captured against the shipped camera): 25% reads as a lighting quirk
+## rather than an effect, 50% is ambiguous between "wet" and "unwell", and
+## 100% starts putting his palest patches into competition with a teal
+## background. 75% is unambiguous with the silhouette, ears, eyes and badge
+## all still fully legible.
+##
+## WHY THIS IS THE WHOLE EFFECT. Sinking Keepy into the water and letting
+## the surface draw over him was measured and does not work at all: an
+## opaque mesh in front of a flat transparent plane wins the depth test
+## everywhere its silhouette draws, so at 0/30/60% submerged the rendered
+## frames came back identical to the dry one, pixel for pixel. Squash and a
+## waterline were considered and dropped. Colour is what is left, and it is
+## enough.
+##
+## The mechanism is not new. scripts/battle/FighterView.gd already tints
+## THIS EXACT ASSET through a ModelSlot, and these two functions are its
+## _ensure_material()/_tint_to() pair with the battle-specific parts left
+## behind. That file is not touched; it is copied from deliberately, so the
+## two screens cannot drift into two different ways of recolouring one .glb.
+
+## How long the tint takes to arrive or leave. Short enough that a landing
+## is visibly its cause -- it is under a hop, so the fade is done before
+## Keepy could reach the next tile.
+##
+## A TWEEN AND NOT A CUT, on the same reasoning every colour write in this
+## project already follows: an instant swap on the landing frame reads as a
+## rendering fault rather than as something that happened. The capture below
+## validates the ENDPOINT (that 75% is reached, and fully removed on land);
+## the duration is convention, not a measured optimum, and is said as such.
+## How far toward the water's hue Keepy is taken. MATHIEU'S CALL, made on
+## the recon's rendered ladder rather than on a preference -- see the block
+## above for what each rung looked like. Applied identically in all five
+## bodies: the waters share one hue, so being in one of them is one state,
+## not five.
+const KEEPY_WATER_TINT_FRACTION: float = 0.75
+
+const KEEPY_TINT_FADE_S: float = 0.18
+
+## Aims the tint at wet or dry, doing nothing when that has not changed.
+func _set_keepy_wet(wet: bool) -> void:
+	if wet == _keepy_wet and _keepy_material_resolved:
+		return
+	_keepy_wet = wet
+	_ensure_keepy_material()
+	if _keepy_material == null:
+		return
+	var target := _keepy_base_color
+	if wet:
+		# LERP THE ALBEDO, which MULTIPLIES the model's texture rather than
+		# replacing it: Keepy keeps his markings, his badge and his eyes,
+		# and takes the water's hue over the top of them. Replacing the
+		# colour outright would have flattened him to a turquoise blob.
+		target = _keepy_base_color.lerp(HubWater.hue(), KEEPY_WATER_TINT_FRACTION)
+	if _keepy_tint_tween != null and _keepy_tint_tween.is_valid():
+		_keepy_tint_tween.kill()
+	_keepy_tint_tween = create_tween()
+	_keepy_tint_tween.tween_property(_keepy_material, "albedo_color", target, KEEPY_TINT_FADE_S) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+## Takes ownership of a material this screen may recolour.
+##
+## LAZY, and DUPLICATED, both load-bearing and both for the reasons
+## FighterView.gd already documents on this same asset:
+##
+##   lazy      -- the slot is only carrying its final model once the model
+##                has installed; resolving in _ready() can catch the scene's
+##                authored placeholder instead.
+##   duplicate -- Godot's glTF importer binds ONE shared material on the
+##                mesh itself, so writing the material the slot hands back
+##                would tint every instance of keepy_squirrel_hero.glb in
+##                the project. Battle's player fighter is the same .glb.
+##
+## A non-StandardMaterial3D (a shader material on some future asset) leaves
+## _keepy_material null and every tint call above no-ops. Keepy stops
+## changing colour in water; nothing else on this screen notices.
+func _ensure_keepy_material() -> void:
+	if _keepy_material_resolved:
+		return
+	_keepy_material_resolved = true
+	var slot := _keepy.body_slot()
+	if slot == null:
+		return
+	var current := slot.slot_material() as StandardMaterial3D
+	if current == null:
+		return
+	_keepy_material = current.duplicate() as StandardMaterial3D
+	_keepy_base_color = _keepy_material.albedo_color
+	slot.apply_material(_keepy_material)
