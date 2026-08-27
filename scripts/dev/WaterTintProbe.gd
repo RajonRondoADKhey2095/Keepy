@@ -65,7 +65,14 @@ const _HUB_WORLD_SCENE: String = "res://scenes/HubWorld.tscn"
 ## perf file's row, so this number can be checked against something rather
 ## than merely believed. A future bump wants the same treatment: say what
 ## added the nodes, or the constant becomes a place to hide a regression.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 106
+##
+## 106 -> 120 on 27 aout 2026, two MORE diving boards -- one on the small
+## lake, one on the great lake's spawn lobe -- at the same 7 mesh nodes
+## each. NO new MultiMesh: the rung batch is keyed by mesh and colour, so
+## three ladders share one node and it simply carries 15 instances instead
+## of 5. Measured on the shipped tree before and after: 106 -> 120 excluding
+## portals, 112 -> 126 including them, stable over three runs each side.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 120
 
 var _failures: int = 0
 var _ride_landings: int = 0

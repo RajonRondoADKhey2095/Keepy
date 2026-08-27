@@ -188,7 +188,7 @@ func _ready() -> void:
 
 	_tap.tapped_ground.connect(_on_tapped_ground)
 	_tap.tapped_ladder.connect(_on_tapped_ladder)
-	_setup_board()
+	_setup_boards()
 	_tap.tapped_boat.connect(_on_tapped_boat)
 	_keepy.hop_landed.connect(_on_hop_landed)
 	_keepy.ride_moved.connect(_on_ride_moved)
@@ -231,14 +231,17 @@ func _ready() -> void:
 ## retuned on device without the other.
 const LADDER_TAP_RADIUS: float = 2.5
 
-## Hands the built board to whatever needs to know where it is. Called
+## Hands the built boards to whatever needs to know where they are. Called
 ## once, after the props are built; a layout with no board leaves the tap
 ## radius at zero and nothing downstream ever fires.
-func _setup_board() -> void:
-	var board: Dictionary = _builder.diving_board()
-	if board.is_empty():
+func _setup_boards() -> void:
+	var boards: Array[Dictionary] = _builder.diving_boards()
+	if boards.is_empty():
 		return
-	_tap.ladder_foot = board["ladder"]
+	var feet: Array[Vector3] = []
+	for board in boards:
+		feet.append(board["ladder"])
+	_tap.ladder_feet = feet
 	_tap.ladder_radius = LADDER_TAP_RADIUS
 
 func _apply_swamp_palette() -> void:
@@ -358,13 +361,26 @@ func _on_tapped_ladder(point: Vector3) -> void:
 ## The proximity test is the SAME radius the tap used, for the reason the
 ## boat's is: a player who tapped the ladder and walked to it cannot arrive
 ## and be told they are not there yet.
+## WHICH board, now that there are three: the NEAREST ladder foot within
+## the radius, chosen from where Keepy actually landed rather than from
+## which entry came first in the layout. Nearest and not first-match
+## because "first" is a fact about the file, and the player is standing at
+## a place -- the feet are metres apart so the two only ever differ when
+## first-match would be plainly wrong.
 func _try_climb(position: Vector3) -> bool:
-	var board: Dictionary = _builder.diving_board()
-	if board.is_empty():
+	var boards: Array[Dictionary] = _builder.diving_boards()
+	if boards.is_empty():
 		_climbing = false
 		return false
-	var foot: Vector3 = board["ladder"]
-	if Vector3(position.x, 0.0, position.z).distance_to(foot) > LADDER_TAP_RADIUS:
+	var flat := Vector3(position.x, 0.0, position.z)
+	var board: Dictionary = {}
+	var nearest: float = INF
+	for candidate in boards:
+		var d: float = flat.distance_to(candidate["ladder"] as Vector3)
+		if d < nearest:
+			nearest = d
+			board = candidate
+	if nearest > LADDER_TAP_RADIUS:
 		# NOT YET, and the intent SURVIVES -- the boarding walk's own
 		# defect, which passed its probe for a whole batch because the
 		# arrival happened to fall inside the radius on hop one. A climb
