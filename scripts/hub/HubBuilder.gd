@@ -134,7 +134,30 @@ const _FLOWER_PETAL_KEYS: Array[StringName] = [
 ## Blue-green rather than blue. The ground is swamp green and the sky is
 ## near-black green: a saturated blue would be the only thing on this
 ## screen with no relation to anything else on it.
-const POND_WATER_COLOR: Color = Color(0.16, 0.30, 0.36, 0.55)
+## SPAWN-LAKE-1: ONE COLOUR FOR EVERY WATER ON THE PLATEAU -- #40E0D0,
+## rgb(0.2510, 0.8784, 0.8157). This REPLACES the WATER-HUE-2 saturation
+## family (B) wholesale, and the replacement is a decision rather than a
+## tuning pass: family B separated four bodies by SATURATION alone because
+## three of them touch, and Mathieu judged the result on device -- the
+## stream washed out, the great lake reading as glacier. Separation by
+## saturation is ABANDONED. Every body now carries the one turquoise he
+## approved on screen, which was already, exactly, the small lake's albedo.
+##
+## WHAT THAT COSTS, said plainly: with the colour shared, ALPHA is the only
+## lever left. There is nothing else to trade if a body will not clear the
+## contrast floor.
+##
+## ⚠️ ALPHA IS SWEPT, NEVER SOLVED. WATER-HUE-1 fitted an affine model to
+## two points and it UNDERSHOT all four bodies -- every one landed at
+## 2.48-2.94:1 at its predicted alpha, under the floor. Two points define a
+## line; they do not prove linearity. scripts/dev/WaterAlphaSweep.tscn
+## measures every 0.05 step against the hub's own ground (#2C5A20,
+## Lrel 0.0799) through a per-body render mask, and the values below are
+## read off that table.
+##
+## This body: a=0.95 -- 0.90 reaches 2.99:1 in its own view, a hair under,
+## and 0.95 reaches 3.22:1.
+const POND_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
 const POND_BANK_COLOR: Color = Color(0.22, 0.21, 0.15)
 const POND_WATER_RADIUS: float = 3.2
 const POND_BANK_RADIUS: float = 3.62
@@ -145,19 +168,31 @@ const POND_SEGMENTS: int = 24
 ## other decor colour here is: SwampPalette carries the identity Chased and
 ## the plateau share, not the plateau's own scenery.
 ##
-## A DIFFERENT HUE, not merely a lighter pond. Measured rather than eyeballed:
-## the pond's water is hsv(198.0, 0.56, 0.36) -- a dark teal sitting right on
-## the cyan edge -- and this is hsv(221.5, 0.63, 0.82), a light blue.
-## 23.5 degrees of hue apart, which crosses the teal/blue boundary rather
-## than sliding along it, and 0.46 of value on top. Under fog both converge
-## on the same near-black swamp green, so leaning on brightness alone would
-## have made them indistinguishable exactly where the lake is furthest away
-## and most in need of reading as its own thing.
-const LAKE_WATER_COLOR: Color = Color(0.30, 0.46, 0.82, 0.55)
+## ⚠️ PRE-WATER-HUE-2 REASONING, SUPERSEDED TWICE. Kept for the record, not
+## as a description of the shipped colour: it described a lake separated
+## from the pond by HUE (198.0 vs 221.5 deg). Family B abandoned that for
+## SATURATION, and SPAWN-LAKE-1 abandons per-body colour entirely -- see
+## POND_WATER_COLOR's docblock, which owns the shared colour and the alpha
+## rule for all five bodies.
+##
+## #40E0D0 was ALREADY this body's albedo under family B: it is family B's
+## anchor and family B put that anchor on the small lake. So the uniform
+## colour changes nothing here except its neighbours.
+##
+## This body: a=0.95 -- 0.90 reaches 2.82:1 in its own view and 0.95 reaches
+## 3.04:1, the tightest clearance of the five. It also drops a hair from the
+## shipped 0.96, which the WATER-HUE-2 report had already flagged as far
+## enough toward opaque to cost the body its depth.
+const LAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
 
 ## 2.5x the pond on both discs (3.2 -> 8.0, 3.62 -> 9.05), so the rim keeps
 ## the same proportion rather than becoming a hairline on a much bigger disc.
-const LAKE_WATER_RADIUS: float = 8.0
+##
+## NAMED "SMALL_LAKE", not "LAKE": `HubRegion.gd` used to carry its own
+## `LAKE_WATER_RADIUS` for the great lake (16.0, two lobes) -- same
+## identifier, two different bodies, two different files. A pure rename, no
+## value change on either side; see `HubRegion.GREATLAKE_WATER_RADIUS`.
+const SMALL_LAKE_WATER_RADIUS: float = 8.0
 const LAKE_BANK_RADIUS: float = 9.05
 
 ## Deliberately NOT the pond's 24, and not 2.5x it either. What matters is
@@ -171,23 +206,197 @@ const LAKE_BANK_RADIUS: float = 9.05
 ## just calibrated to the size instead of inherited from a smaller disc.
 const LAKE_SEGMENTS: int = 40
 
-## The stream that runs from the pond to the lake. A THIRD water tint, and
-## each pair is told apart on a DIFFERENT axis rather than all three
-## sliding along one:
+## The stream that runs from the pond to the lake. A THIRD water tint, LOCAL
+## to the hub like every other decor colour here.
 ##
+## ⚠️ PRE-WATER-HUE-2 table, superseded -- kept for the record:
 ##   pond    hsv(198.0, 0.556, 0.36)  dark teal
 ##   lake    hsv(221.5, 0.634, 0.82)  light blue
 ##   stream  hsv(190.9, 0.512, 0.86)  bright cyan
+## Under that palette each pair was told apart on a different axis (stream
+## vs pond by VALUE, stream vs lake by HUE). Family B (WATER-HUE-2) narrows
+## every hue into 170-180 deg and separates instead by SATURATION -- see
+## POND_WATER_COLOR's docblock for the measured reason. Family B's own
+## table:
+##   pond       hsv(170.0, 0.922, 1.00)
+##   lake       hsv(174.0, 0.714, 0.88)
+##   stream     hsv(180.0, 0.278, 1.00)
+##   great lake hsv(177.6, 0.200, 1.00)
+## =====================================================================
+## THE GREAT-LAKE LOBES, THE ISLETS AND THE PONTOONS
 ##
-## stream vs pond  -- 7.1 deg of hue apart, so they are separated by VALUE
-##                    (0.86 against 0.36), a half of the scale.
-## stream vs lake  -- near-identical value, so they are separated by HUE
-##                    (30.6 deg), which crosses the cyan/blue boundary.
+## The great lake is a THIRD standing water, twice the small lake across.
+## It shipped OUTSIDE the square (radius 20, centre 54 out along the small
+## lake's azimuth) and LAKE-MOVE brought it INSIDE, to (15.5, -19) at
+## radius 16 -- the only placement the recon measured as clearly visible
+## from the plateau centre, and the largest radius that fits the square at
+## all. Those numbers are not re-derived here: HubRegion owns them, because
+## the walkable region is built from the same ones and a second copy would
+## be free to drift.
 ##
-## Leaning on one axis for both pairs would have made one of them collapse:
-## a brighter pond reads as the lake, and a cyan-shifted lake reads as the
-## stream. LOCAL to the hub, like every other decor colour here.
-const STREAM_WATER_COLOR: Color = Color(0.42, 0.78, 0.86, 0.55)
+## SPAWN-LAKE-1 made it TWO lobes of the same family: a second disc at
+## (-12, -19.5) radius 10, in front of the spawn. Everything below serves
+## both -- the maker takes the radius from HubRegion and the slab height
+## from the lobe's row in GREATLAKE_*_SLABS -- and the ONE thing that
+## differs between them is that height.
+##
+## ⚠️ COLOUR: SUPERSEDED, and the paragraphs below are kept only as the
+## record of how it got here. Since SPAWN-LAKE-1 there is no "fourth water
+## tone": every body on the plateau is #40E0D0 and the whole subject lives
+## in POND_WATER_COLOR's docblock.
+##
+## ⚠️ PRE-WATER-HUE-2 table, superseded -- kept for the record (the great
+## lake used to be a deep indigo, separated from the other three by hue AND
+## value):
+##   pond    hsv(198.0, 0.56, 0.36)   dark teal
+##   lake    hsv(221.5, 0.63, 0.82)   light blue
+##   stream  hsv(190.9, 0.51, 0.86)   bright cyan
+##   great   hsv(254.6, 0.62, 0.60)   deep indigo   <- this one, then
+##
+## ⚠️ SUPERSEDED BY SPAWN-LAKE-1 -- record only, not the shipped rule:
+## WATER-HUE-2 (family B) narrows every hue into 170-180 deg instead and
+## separates the pair that touched AT THE TIME -- the small lake and this
+## one, then 0.347 u apart; LAKE-MOVE has since pulled them 18.849 u apart
+## and every colour here is deliberately UNCHANGED by it, so that a recolour
+## is its own batch with its own measurements rather than a side effect
+## -- by SATURATION: dSAT 0.421 against family A's 0.188 and family C's
+## 0.291, measured on the rendered plate, not the albedo alone (see
+## POND_WATER_COLOR's docblock). Family B's table is in STREAM_WATER_COLOR's
+## docblock, just above.
+##
+## HEIGHTS: the great lake's slabs sit BELOW the small lake's. That was
+## forced when the two touched -- at radius 20 and distance 54 their waters
+## came within 0.347 u and their banks OVERLAPPED by 2.003, and two opaque
+## discs at one height z-fight. LAKE-MOVE separates them by 18.849 u of
+## open water (16.499 bank to bank), so nothing forces the stack any more. It is KEPT anyway: the
+## order is measured, gated by LakeZoneProbe, and costs nothing, whereas
+## flattening it would be an unforced change to geometry nobody can look at
+## before staging. If a later batch ever brings two waters back into
+## contact, the resolution is already here.
+##
+##   ground        y = 0
+##   great bank    y = 0.002 .. 0.013
+##   great water   y = 0.015 .. 0.027
+##   small bank    y = 0.005 .. 0.055   (unchanged)
+##   small water   y = 0.020 .. 0.080   (unchanged)
+##   islet         y = 0.030 .. 0.060
+##   pontoon deck  y = 0.045 .. 0.095
+##   stream        y = 0.095            (unchanged)
+##
+## The slabs are also THINNER than the pond's, for the reason the pond's
+## own docblock gives for not scaling them at all: a lake-sized slab thick
+## enough to see is a lake showing its own edge.
+## SPAWN-LAKE-1: #40E0D0 like every other water here -- see
+## POND_WATER_COLOR's docblock for the decision and the sweep rule. This
+## constant now colours BOTH great-lake lobes, so they cannot disagree, and
+## that is the point: the two are 1.505 u apart water to water and are meant
+## to read as one mass in two lobes.
+##
+## ⚠️ THE ONLY BODIES THAT DO NOT CLEAR 3.0:1 EVERYWHERE THEY ARE VISIBLE,
+## and the number is published rather than rescued. a=0.95 clears in each
+## lobe's OWN view (great 3.14:1, spawn 3.22:1) and that is the value
+## shipped -- the smallest step that clears where the body is the subject.
+## Seen from across the plateau it cannot clear at ANY alpha up to 1.00:
+##
+##   view        distance   fog     best (a=1.00)
+##   pond          49.6 u   54.8%   2.54:1   <- great lobe
+##   twolobes      41.7 u   48.7%   2.89:1   <- great lobe
+##   laketail      45.1 u   51.4%   2.68:1   <- spawn lobe
+##   twolobes      42.2 u   49.1%   2.87:1   <- spawn lobe
+##
+## That is the exponential fog (hub_fog_density 0.016 toward a near-black
+## green), not the colour: it has replaced half the surface before alpha
+## gets a say, and it does the same to every opaque thing at that range.
+## Pushing to 1.00 buys a failure AND costs the translucency that makes a
+## lake read as a hole in the ground rather than a mark on it.
+const GREATLAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
+## Bank margin, NOT the pond's 0.42 scaled up. It was sized when the two
+## lakes touched: proportional scaling would have put the ring at 22.625
+## and pushed its inner edge 2.0 further into the small lake. LAKE-MOVE
+## ends that contact, and the margin is UNCHANGED -- 1.30 is a shore width
+## that reads at this scale, and re-tuning it would move a rendered edge
+## this batch cannot look at.
+##
+## ⚠️ It is also what puts the bank ring 1.06 u ACROSS the Battle portal's
+## pad: at the shipped centre the portal sits 17.59 from the lake centre,
+## so its 1.35 pad reaches to 16.24 while the bank runs out to 17.30. The
+## WATER still clears the pad by 0.24, so nothing is walkable-into-water;
+## it is a visual overlap and it is reported rather than papered over.
+## Clearing it needs the centre at x >= 18, which is a different placement
+## than the one that was chosen.
+const GREATLAKE_BANK_MARGIN: float = 1.30
+## 96 segments: sized against facet deviation r(1-cos(pi/n)), which grows
+## with r. At the shipped radius of 20 that is 0.0107; at 16 it is 0.0086,
+## flatter still. Left at 96 -- the disc did not get coarser by getting
+## smaller, and a segment count is not worth a rendered change to re-tune.
+const GREATLAKE_SEGMENTS: int = 96
+
+## Slab thickness and centre height, ONE ROW PER LOBE, in HubRegion.lakes()
+## order. Two rows since SPAWN-LAKE-1, and the second row is not cosmetic:
+## the two lobes' BANK rings overlap by 1.096 u (their waters stay 1.505
+## apart, so no water is ever drawn over water, but the opaque shore rings
+## do interpenetrate). Two opaque discs at the SAME height z-fight; at
+## different heights the higher one simply wins, and since both rings are
+## POND_BANK_COLOR the seam is invisible either way. So the second lobe is
+## lifted 2.5 mm, which is below anything else on this screen and above the
+## first lobe's own stack:
+##
+##   great bank    y = 0.0020 .. 0.0130
+##   great water   y = 0.0150 .. 0.0270
+##   spawn bank    y = 0.0045 .. 0.0155
+##   spawn water   y = 0.0175 .. 0.0295
+##
+## The spawn lobe's bank also overlaps the SMALL lake's bank by 1.030 u,
+## and that one is settled by the small lake's own stack rather than here:
+## its bank top is 0.055, well above both rows, so it wins that lens.
+const GREATLAKE_BANK_SLABS: Array[Vector2] = [
+	Vector2(0.011, 0.0075),
+	Vector2(0.011, 0.0100),
+]
+const GREATLAKE_WATER_SLABS: Array[Vector2] = [
+	Vector2(0.012, 0.0210),
+	Vector2(0.012, 0.0235),
+]
+
+## An islet: a flat shingle disc just proud of the great lake's surface,
+## there to carry a landmark out where the water is.
+##
+## FLUSH ON PURPOSE. KeepyHopper flattens y to 0 on every write it makes to
+## a position (measured, in _apply_hop and _on_hop_finished both), so there
+## is no landing height in its API and this batch deliberately does not add
+## one. An islet 3 cm proud of the water reads as flush and costs nothing;
+## a real raised quay would visibly break, and would need that API first.
+## PALE, and that was a render finding rather than a preference. The first
+## pass used the banks' dark olive; against the great lake's indigo it read
+## as a HOLE in the water rather than as land standing in it. A shingle
+## light enough to sit above the water's own value fixes it, and it is the
+## only islet colour this file has ever had reason to want.
+const ISLET_COLOR: Color = Color(0.46, 0.43, 0.31)
+const ISLET_RADIUS: float = 3.2
+const ISLET_SEGMENTS: int = 24
+const ISLET_THICKNESS: float = 0.030
+const ISLET_CENTRE_Y: float = 0.045
+
+## A pontoon. One plank slab, batched, top face landing on the stream's own
+## surface height so every flush thing on this screen sits on one line.
+##
+## It has NO function in this batch. It marks where boarding will happen
+## when the lake gets a boat; today it is scenery, and nothing reads it.
+const PONTOON_COLOR: Color = Color(0.38, 0.27, 0.17)
+const PONTOON_LENGTH: float = 2.60
+const PONTOON_WIDTH: float = 1.10
+const PONTOON_THICKNESS: float = 0.05
+const PONTOON_CENTRE_Y: float = 0.07
+
+## SPAWN-LAKE-1: #40E0D0 like every other water here -- see
+## POND_WATER_COLOR's docblock for the decision and the sweep rule.
+##
+## This body: a=0.90, and it is the ONE body that needs less than 0.95. Not
+## a coincidence and not a rounding: the stream has no bank under it, so it
+## alpha-blends straight onto the GROUND, while the four discs blend onto
+## their own dark olive rim. It clears in all five views at 0.90 (worst
+## 3.09:1) where 0.85 leaves it at 2.91:1.
+const STREAM_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.90)
 
 ## 1.2 units across. Half of that -- 0.6 -- is the number the trace was
 ## routed against: every prop's GROUND footprint clears the water's edge by
@@ -320,6 +529,7 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	&"stump": 0.44,
 	&"landmark": 1.66,
 	&"portal": 1.35,
+	&"pontoon": 1.30,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -434,6 +644,10 @@ func _build() -> void:
 					node = _make_pond()
 				&"lake":
 					node = _make_lake()
+				&"greatlake":
+					node = _make_greatlake(entry)
+				&"islet":
+					node = _make_islet(entry)
 				&"stream":
 					node = _make_stream(entry)
 				&"boat":
@@ -458,14 +672,28 @@ func _build() -> void:
 		# the check walks every control point. Without this branch a stream
 		# would fall back to Vector3.ZERO and pass for free: a silent hole in
 		# the one guard that catches a prop nobody can walk to.
+		#
+		# The bound is no longer a float: the lake zone made the walkable
+		# hub a union minus a disc, so the question "can this be walked to"
+		# is HubRegion.contains() and nothing here restates it.
+		#
+		# "offshore": true is how an entry DECLARES it is meant to be out
+		# of reach -- the islets, their landmarks and the lake itself are
+		# deliberately unreachable on foot in this batch. The check is then
+		# INVERTED rather than skipped: an offshore entry that turns out to
+		# be walkable is warned about too. A flag that only ever silenced
+		# things would be a way to silence a real mistake.
 		var anchors: Array = [where]
 		if type == &"stream":
 			anchors = _trace_points(entry)
-		var bound: float = HubTapInput.PLATEAU_HALF_EXTENT
+		var offshore: bool = entry.get("offshore", false)
 		for anchor in anchors:
 			var point: Vector3 = anchor
-			if absf(point.x) > bound or absf(point.z) > bound:
-				push_warning("HubBuilder: entry %d ('%s') at %s is outside the +-%.1f plateau; visible but unreachable." % [index, type, point, bound])
+			var reachable: bool = HubRegion.contains(point)
+			if offshore and reachable:
+				push_warning("HubBuilder: entry %d ('%s') at %s is marked offshore but IS walkable; the flag is wrong." % [index, type, point])
+			elif not offshore and not reachable:
+				push_warning("HubBuilder: entry %d ('%s') at %s is outside the walkable region; visible but unreachable." % [index, type, point])
 
 		if node != null:
 			node.position = where
@@ -493,6 +721,10 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 			# Two lobes, ONE mesh: two instances of a single batch.
 			_instance(&"Bush", placement.translated_local(Vector3(0.0, 0.3, 0.0)))
 			_instance(&"Bush", placement.translated_local(Vector3(0.42, 0.2, 0.18)))
+		&"pontoon":
+			# A deck, batched: every pontoon is the same plank slab at a
+			# different angle, which is precisely what one MultiMesh is for.
+			_instance(&"Pontoon", placement.translated_local(Vector3(0.0, PONTOON_CENTRE_Y, 0.0)))
 		&"flower":
 			_instance(&"FlowerStem", placement.translated_local(Vector3(0.0, 0.21, 0.0)))
 			var variant: int = entry.get("variant", 0)
@@ -549,6 +781,10 @@ func _batch_spec(key: StringName) -> Array:
 			bush.radial_segments = 8
 			bush.rings = 4
 			return [bush, BUSH_COLOR]
+		&"Pontoon":
+			var deck := BoxMesh.new()
+			deck.size = Vector3(PONTOON_LENGTH, PONTOON_THICKNESS, PONTOON_WIDTH)
+			return [deck, PONTOON_COLOR]
 		&"FlowerStem":
 			var stem := CylinderMesh.new()
 			stem.top_radius = 0.025
@@ -650,24 +886,30 @@ func _make_stump() -> Node3D:
 ##
 ## Shared by pond and lake so the two cannot drift apart on either of the
 ## traps above.
-func _make_water_body(water_radius: float, bank_radius: float, segments: int, water_colour: Color) -> Node3D:
+##
+## The two slabs are (thickness, centre y) pairs with the pond's own values
+## as defaults, so pond and lake keep the exact geometry they shipped with
+## and only the great lake -- which has to slide under the small one, see
+## its constants -- ever passes anything else.
+func _make_water_body(water_radius: float, bank_radius: float, segments: int, water_colour: Color,
+		bank_slab: Vector2 = Vector2(0.05, 0.03), water_slab: Vector2 = Vector2(0.06, 0.05)) -> Node3D:
 	var root := Node3D.new()
 
 	var bank := CylinderMesh.new()
 	bank.top_radius = bank_radius
 	bank.bottom_radius = bank_radius
-	bank.height = 0.05
+	bank.height = bank_slab.x
 	bank.radial_segments = segments
 	bank.rings = 1
-	root.add_child(_mesh_node(bank, POND_BANK_COLOR, Vector3(0.0, 0.03, 0.0)))
+	root.add_child(_mesh_node(bank, POND_BANK_COLOR, Vector3(0.0, bank_slab.y, 0.0)))
 
 	var water := CylinderMesh.new()
 	water.top_radius = water_radius
 	water.bottom_radius = water_radius
-	water.height = 0.06
+	water.height = water_slab.x
 	water.radial_segments = segments
 	water.rings = 1
-	var surface := _mesh_node(water, water_colour, Vector3(0.0, 0.05, 0.0))
+	var surface := _mesh_node(water, water_colour, Vector3(0.0, water_slab.y, 0.0))
 	var material := surface.get_surface_override_material(0) as StandardMaterial3D
 	# Alpha blending, and it has to be asked for: albedo_color's alpha
 	# channel is ignored entirely while transparency stays at DISABLED, so
@@ -684,7 +926,60 @@ func _make_pond() -> Node3D:
 ## brighter pond. The bank reuses POND_BANK_COLOR on purpose: a bank is a
 ## bank, the same reasoning that has a stump share the trees' bark colour.
 func _make_lake() -> Node3D:
-	return _make_water_body(LAKE_WATER_RADIUS, LAKE_BANK_RADIUS, LAKE_SEGMENTS, LAKE_WATER_COLOR)
+	return _make_water_body(SMALL_LAKE_WATER_RADIUS, LAKE_BANK_RADIUS, LAKE_SEGMENTS, LAKE_WATER_COLOR)
+
+## The great lake. Same two discs again, sized and coloured by its own
+## constants and slid under the small lake's -- see GREATLAKE_WATER_COLOR
+## for the height stack and for why the two shores necessarily merge.
+##
+## Segment count is calibrated to the RADIUS, not inherited. The flat-edge
+## deviation of a disc is r*(1-cos(pi/n)), and it grows with r: the lake's
+## 40 segments at radius 8 give 0.0247, and reusing them at radius 20 would
+## give 0.0617 -- visibly faceted at more than twice the deviation. 96
+## segments bring it back to 0.0107, flatter per edge than either of the
+## smaller waters, for a mesh that is still trivially cheap.
+##
+## SPAWN-LAKE-1 made this maker serve TWO lobes, and the radius comes from
+## HubRegion rather than from the entry: the drawn disc and the one
+## `HubRegion.in_lake_water()` can still answer questions about have to be
+## one circle, so the entry names WHICH lake and HubRegion says HOW BIG. A
+## centre HubRegion does not know is an error and draws nothing, rather
+## than silently defaulting to the first lobe's size. (HubRegion no longer
+## subtracts this disc from the walkable region -- 26 aout 2026, Mathieu's
+## decision that all five water bodies are walkable -- but it is still the
+## one owner of this disc's geometry.)
+func _make_greatlake(entry: Dictionary) -> Node3D:
+	var centre: Vector3 = entry.get("position", Vector3.ZERO)
+	var index: int = HubRegion.lake_index_at(centre)
+	if index < 0:
+		push_error("HubBuilder: greatlake at %s is not one of HubRegion's lakes; nothing drawn." % centre)
+		return null
+	var water_radius: float = HubRegion.water_radius_at(centre)
+	return _make_water_body(
+		water_radius,
+		water_radius + GREATLAKE_BANK_MARGIN,
+		GREATLAKE_SEGMENTS,
+		GREATLAKE_WATER_COLOR,
+		GREATLAKE_BANK_SLABS[index],
+		GREATLAKE_WATER_SLABS[index])
+
+## An islet in the great lake. One disc; the landmark that stands on it is
+## a separate layout entry at the same position, so the pairing is data and
+## an islet can be moved, resized or left bare without touching code.
+func _make_islet(entry: Dictionary) -> Node3D:
+	var radius: float = entry.get("radius", ISLET_RADIUS)
+	if radius <= 0.0:
+		push_error("HubBuilder: an islet needs a positive radius, got %f." % radius)
+		return null
+	var disc := CylinderMesh.new()
+	disc.top_radius = radius
+	disc.bottom_radius = radius
+	disc.height = ISLET_THICKNESS
+	disc.radial_segments = ISLET_SEGMENTS
+	disc.rings = 1
+	var root := Node3D.new()
+	root.add_child(_mesh_node(disc, ISLET_COLOR, Vector3(0.0, ISLET_CENTRE_Y, 0.0)))
+	return root
 
 ## The trace of a &"stream" entry, as plain Vector3s. Empty for anything
 ## malformed -- validated here rather than trusted, like every other entry.

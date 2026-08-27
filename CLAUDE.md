@@ -14112,3 +14112,2283 @@ porte `scripts/dev/*` dans son `exclude_filter` (relu, pas suppose), et
 **Ce lot ne touche aucun fichier de jeu et n'ajoute aucune sonde** : son diff
 est ce document seul. `scripts/dev/StreamGeometryProbe.*` reste l'artefact
 unique du lot G, celui de l'incumbent.
+
+## RIDE-1 EN PRODUCTION, ET RECON ZONE LAC AU-DELA DE 35 (26 aout 2026)
+
+### Merge RIDE-1 -> main (autorisation explicite de Mathieu, validation
+### device faite)
+
+`staging` (`18282fa`) -> `main`, commit de merge **`ae13b99`**, `--no-ff`,
+apres resolution d'une incoherence signalee dans le rapport RIDE-1 avant
+tout merge.
+
+⚠️ **L'incoherence des trois tailles de `index.pck` (5 853 648 en BUILD,
+5 853 728 en DEPLOY) EST EXPLIQUEE, pas ignoree.** Verifie avant de merger,
+pas suppose : `git diff` entre les commits feature de RIDE-1 ne touche QUE
+`scripts/hub/*`, `resources/hub/hub_layout.tres`, `scenes/HubWorld.tscn` et
+des fichiers dev/doc -- **ni `project.godot` ni `export_presets.cfg`**. C'est
+exactement la classe de lot qui, partout ailleurs dans ce fichier, produit un
+`index.wasm`/`index.js` identiques au bit pres mais un `index.pck` instable
+d'un export a l'autre (variance de la passe de compression VRAM sur les
+textures des AUTRES assets, deja documentee des le 10 aout). `index.wasm`
+**35 376 909** / md5 **`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- **identiques dans le build RIDE-1
+local ET sur le service apres deploiement**, ce qui est la preuve d'identite
+qui compte. Un **quatrieme** export (celui de ce lot, verification GDScript
+de l'Etape 1) donne un **quatrieme** chiffre de pck (5 853 776), avec le meme
+wasm/js -- confirmation supplementaire que l'instabilite est bien celle deja
+connue.
+
+**CI run #239** verte (22:28:05 -> 22:31:26 UTC). **Verifie SUR LE SERVICE,
+deux marqueurs independants, MISS/age 0 des deux cotes** :
+`CACHE_VERSION` du `index.service.worker.js` servi = `1787697059` =
+**22:30:59 UTC**, a l'interieur de la fenetre du run ; `index.pck` servi =
+5 853 776 (un CINQUIEME chiffre, `index.html` `fileSizes`) ; `index.wasm`
+servi = 35 376 909, inchange. `x-vercel-cache: MISS`, `age: 0` sur
+`index.html` et `index.service.worker.js`.
+
+### Etape 1 -- recon zone lac au-dela de 35, mesure pure, RIEN implemente
+
+`scripts/hub/*.gd`, `resources/hub/hub_layout.tres` : **intouches**. Seul
+ajout : `scripts/dev/LakeZoneReconProbe.{gd,tscn}`, mesure pure sur la scene
+livree (KeepyHopper/HubCamera reels), aucune assertion, aucun gate.
+
+**Q1 -- CLAMP** : `PLATEAU_HALF_EXTENT` est un SCALAIRE UNIQUE, deux sites de
+lecture (`HubTapInput._handle_point`, clamp de la destination ;
+`HubBuilder._build()`, avertissement de bornes -- qui lit deja **tous** les
+points de controle d'un `stream`, pas seulement sa position). Camera et
+generation de decor n'en dependent PAS (`grep` : zero occurrence hors ces
+deux fichiers). Remplacer par une FORME (carre + peninsule) toucherait ces
+memes deux sites, avec une geometrie de clamp plus riche qu'un simple
+`clampf` par axe (test d'appartenance carre-ou-rectangle-peninsule, projection
+sur le bord le plus proche en cas d'exterieur) -- de l'ordre de quelques
+dizaines de lignes, pas une reecriture.
+
+**Q2 -- SEUIL 22s** : reproduit sur le VRAI `KeepyHopper` (`--fixed-fps 60`,
+`hop_to()` n'a aucune notion du clamp). Diagonale a 35 : **66 hops / 1122
+frames / 18,700s** (reproduit le docblock a la frame pres). Carre : **H=40
+tient (76 hops, 21,533s), H=41 depasse (78 hops, 22,100s)** -- dernier
+half-extent carre sous 22s = **40**. Peninsule azimut 282° (direction du lac
+du lot F), coin oppose (35,35) -> pointe, **AUCUNE des trois longueurs ne
+depasse** : L=5 -> 16,150s, L=10 -> 17,283s, L=15 -> 18,133s (57/61/64 hops).
+Une peninsule etroite coute bien moins cher qu'un carre elargi sur le pire
+trajet.
+
+**Q3 -- VISIBILITE DES LANDMARKS** : `fog_mode` n'est POSE NULLE PART dans
+`HubWorld.tscn` -> defaut EXPONENTIEL (0), jamais Depth -- **le rappel sur le
+bug moteur Depth-fog (#97875/#92019) ne s'applique donc pas a cette scene**,
+verifie et pas suppose. Occlusion `1-exp(-d*0,016)` reproduit EXACTEMENT les
+trois figures deja publiees (30,6% / 39,3% / 47,4% a r=12,6/21,4/30,5, azimut
+0, "vu depuis le centre"). Extrapole a r=40 -> **54,7%** (45,3% de couleur
+propre), r=45 -> **58,1%** (41,9%) -- degradation continue, jamais "efface".
+
+⚠️ **Ma premiere formule de HAUTEUR A L'ECRAN (H*px_per_unit sur la distance
+euclidienne) etait FAUSSE, et la mesure REELLE l'a prouve.** Elle predisait
+spire=222,6px a r=40 (1080x1920) ; le VRAI `HubCamera.unproject_position()`
+sur la scene livree donne **300,2px**. Cause : la camera est tiltee -34° et
+la hauteur du landmark (8,45u) n'est pas petite devant la distance (22,8-
+54,4u), donc le HAUT du landmark est reellement plus proche de la camera que
+sa BASE -- l'approximation lineaire H/D casse. **Chiffres retenus =
+UNIQUEMENT ceux mesures sur `HubCamera` reelle** (Keepy et camera repositionnes
+exactement a l'origine avant mesure, `SubViewportContainer.stretch` desactive
+le temps de la mesure) :
+
+| r | 1080x1920 spire | 1170x2532 spire |
+|---|---|---|
+| 12,6 (existant) | 618px | 670px |
+| 21,4 (existant) | 461px | 500px |
+| 30,5 (existant) | 365px | 396px |
+| **40,0** | **300px** | **325px** |
+| **45,0** | **275px** | **297px** |
+
+Degradation continue et lisible en pixels (aucun effondrement brutal), mais
+**PAS de conclusion "lisible" ou "illisible" tiree ici** -- seule la mesure
+est rapportee.
+
+⚠️ **Capture offscreen REELLE produite** (`xvfb-run --rendering-driver
+opengl3`, un vrai `_make_landmark_spire()` construit par `HubBuilder`, pas un
+stand-in), a r=40 : la silhouette du spire reste distinctement identifiable a
+l'oeil contre le ciel/fog, plus attenuee que le spire existant a r=12,6 dans
+la meme image -- confirme visuellement la degradation mesuree.
+
+⚠️ **CAVEAT NON RESOLU, signale plutot que cache** : un ECHANTILLON DE PIXEL
+REEL (pas une formule) sur un spire jetable a r=40, **azimut 20°** (hors axe,
+pas azimut 0) donne une occlusion de fog mesuree a **~35%**, contre 54,7%
+predit par la formule azimut-0/distance-euclidienne extrapolee a ce meme
+rayon. La formule azimut-0 reste la bonne convention pour "vu en approchant
+le landmark" (c'est celle deja etablie par les lots B/C/D), mais elle
+SURESTIME l'occlusion hors axe -- donc les 54,7%/58,1% ci-dessus sont un
+MAJORANT prudent (pessimiste sur la lisibilite), pas une prediction exacte
+pour toute position d'approche. Cause exacte non investiguee (disproportionne
+pour cette recon) -- a re-ouvrir si un futur lot pose un landmark hors axe et
+a besoin d'un chiffre precis plutot qu'une borne.
+
+**Q4 -- SURFACE NAVIGABLE** : lac existant (`hub_layout.tres`, scale=1,0) =
+eau r=8,0 -> **201,06 u² de surface**, traversee diametrale en bateau a
+8,0u/s = **2,000s**. Largement assez de PLACE pour un trace libre dans
+l'absolu -- mais **`HubStreamRoute` est structurellement 1D** (arc-length
+sur UNE courbe fixe, `project()`/`point_at()` n'ont aucune notion de
+position 2D libre) : la contrainte n'est pas la taille du lac, c'est que rien
+dans l'architecture actuelle ne sait representer un mouvement 2D libre.
+
+**Q5 -- REUTILISATION DU RAIL** : OUI, mecaniquement. `HubStreamRoute._init(spine:
+Array)` accepte N'IMPORTE QUEL tableau de points -- rien ne le lie au
+`&"stream"` du layout. `KeepyHopper.board(route, half_width, toward)` est
+deja generique sur `HubStreamRoute`. **`_centripetal(points, per_span)` de
+`HubBuilder` ne lit AUCUN etat d'instance** (verifie : aucune reference `self`
+dans son corps) -- trivialement `static`. Ce qu'il faudrait changer : marquer
+`_centripetal` `static` (ou l'exposer publiquement) pour qu'un futur input de
+drag puisse construire une route a chaud SANS dupliquer l'algorithme -- la
+duplication serait exactement le piege `SubstituteModel.tscn` deja paye une
+fois sur cet ecran. Le mouvement resterait 1D le long de la courbe dessinee
+(pas un pilotage libre continu), coherent avec Q4.
+
+**Q6 -- PONTONS** : y=0 est suppose PARTOUT dans le hop ordinaire, verifie
+dans le code, pas suppose -- `_hop_from`/`_hop_to`/`_target`/le landing final
+de `_on_hop_finished()` sont TOUS explicitement aplatis a y=0
+(`Vector3(x, 0.0, z)`), et `hop_to(point)` jette le y de `point` a l'entree.
+Il n'existe AUCUN parametre de hauteur d'atterrissage dans l'API. Pour un
+ponton affleurant a `STREAM_SURFACE_Y=0,095` : la confirmation demandee par
+le brief ("aucune modification necessaire") est VRAIE seulement en pratique,
+pas par construction -- 0,095u est assez petit (comparer a `HOP_HEIGHT=0,6`,
+aux hauteurs de landmark 8+u) pour probablement lire comme negligeable, dans
+la meme famille que `RIDE_SEAT_Y=0,14` deja qualifie "NEAR ENOUGH" par son
+propre commentaire -- mais ce n'est PAS verifie par un rendu, et un ponton
+sensiblement plus haut (un vrai quai souleve) casserait visiblement.
+
+**Q7 -- GESTE DRAG SUR SAFARI iOS** : deja en place -- `touch-action: none`
+sur `body` (herite par `#canvas`), `user-scalable=no` en meta viewport,
+`overflow: hidden`. Precedent fort : `scripts/input/SwipeDetector.gd`, deploye
+et valide sur iPhone, MAIS il ne lit que PRESSE+RELACHE (`InputEventScreenTouch`),
+jamais `InputEventScreenDrag` en continu -- **verifie par grep : zero occurrence
+de `InputEventScreenDrag` dans tout le depot**, donc un drag CONTINU (necessaire
+pour dessiner un trace) n'a jamais ete exerce par ce projet. Manque, si un drag
+long/lent devait etre ajoute : aucun `overscroll-behavior` (mitigation standard
+du rubber-band iOS, absente de `html_shell.html`) ; aucun listener JS
+`touchmove`/`preventDefault` custom -- toute la suppression tactile au-dela du
+CSS depend du runtime web compile de Godot, non inspectable depuis ce depot ;
+et le geste edge-swipe-back de Safari (UIScreenEdgePanGestureRecognizer,
+systeme) n'est pas garanti supprime par `touch-action:none` seul pres du bord
+gauche. **Rien modifie.**
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre le `Content-Length` -- 50 276 070
+et 1 073 228 327 octets). Import headless **exit 0**, **24 `.scn`**. Export
+Web release **exit 0, 0 erreur GDScript**. `index.wasm` **35 376 909**
+octets / md5 **`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. **Piege payload
+verifie sur le log `savepack`** : **0** ligne `Storing File` pour
+`res://scripts/dev` sur 39 lignes au total -- `LakeZoneReconProbe.*` bien
+exclu.
+
+`ProbeTimeoutAudit` (**41 sondes scenes**, toutes armees -- la nouvelle
+comprise), `AssetContractAudit` (12/12 visuels, 0/10 colliders deplaces),
+`DeathModelAudit`, `ChargerShapeProbe` -- toutes exit 0.
+
+### Reste ouvert -- decisions de Mathieu, pas des questions techniques
+
+1. **Extension de zone** : forme (carre H<=40, ou peninsule L jusqu'a 15 sans
+   cout de traversee mesurable) ; aucune n'est appliquee ici.
+2. **Le caveat fog hors axe** (Q3) -- borne prudente publiee, pas un chiffre
+   precis pour toute position.
+3. **Le systeme de navigation libre** (Q4/Q5) reste a concevoir si voulu --
+   ce lot montre que le RAIL (`HubStreamRoute`/`board()`) est reutilisable
+   tel quel pour une route construite a chaud, mais qu'aucun mouvement 2D
+   libre n'existe dans l'architecture actuelle.
+
+`main` **touche uniquement par le merge RIDE-1** (Etape 0). Ce lot de recon
+merge sur `staging` : palier 1, automatique.
+
+## HUB LAKE-1 : LE CLAMP DEVIENT UNE FORME, et la « presqu'ile » du brief N'A AUCUNE LONGUEUR (26 aout 2026)
+
+Branche `claude/lake-zone-geometry-access-ses541`, partie de `staging`
+(`7ec444f`). **CONTRAINTES DURES TENUES, verifiees par `git diff --stat` et
+pas affirmees** : `KeepyHopper.gd` et `HubCamera.gd` ne sont PAS dans le
+diff — donc `HOP_DISTANCE` (1.5), `HOP_DURATION` (0.28), `RIDE_SPEED`,
+`OFFSET`, `fov` et la rotation de camera sont intouches. Le clamp carre
+reste a **35.0** : l'extension passe par la FORME, jamais par le scalaire.
+
+**Ni bateau, ni geste de drag, ni trajectoire dessinee** — c'est le lot
+LAKE-2, hors perimetre. Ce lot est validable A PIED.
+
+### 1. `HubRegion.gd` — un seul proprietaire de la forme
+
+```
+Region = ( carre(+-35) OU pad de berge ) ET PAS l'eau du grand lac
+```
+
+Deux sites l'interrogent, aucun ne redit la regle :
+`HubTapInput._handle_point` -> `clamp_to()`, `HubBuilder._build` ->
+`contains()`. `PLATEAU_HALF_EXTENT` **demenage** dans `HubRegion` plutot
+que d'exister en double — c'est deja la raison pour laquelle il n'avait
+qu'un proprietaire.
+
+La soustraction EST la reponse a « un tap sur le lac ne doit pas envoyer
+Keepy dedans » : l'eau est un TROU dans la region, donc un tap dessus est
+ramene a la rive exactement comme un tap au-dela du carre est ramene au
+bord. `clamp_to()` projette au plus proche point valide (candidats :
+bord du carre, bord du pad, ligne d'eau, et leurs combinaisons) — un point
+hors region est TOUJOURS tire dedans, jamais ignore.
+
+⚠️ **UNE SEULE eau est soustraite, et l'asymetrie est deliberee.** La mare
+et le petit lac sont marchables depuis leur livraison — la barque
+s'embarque depuis la tete du ruisseau, qui est SUR la rive d'eau de la
+mare — et le leur retirer serait un changement de gameplay que ce lot n'a
+ni demande ni pu valider.
+
+### ⚠️ 2. LA PRESQU'ILE DU BRIEF N'EXISTE PAS — mesure, pas une opinion
+
+Le brief decrivait « une bande marchable RELIANT le plateau (bord 35 u) a
+la berge proche du lac ». **Il n'y a rien a relier, et ce sont les deux
+nombres figes qui le disent** : un lac de rayon 20 centre a 54 a sa berge
+proche a **34**, alors que la frontiere du carre le long de ce meme azimut
+est a **35/|axis.x| = 35,782**. La rive commence DANS le carre.
+
+Mesure sur une grille de 0,1 u plutot qu'argumentee :
+
+| | u² |
+|---|---|
+| carre RETIRE par la nouvelle eau | **27,6** |
+| pad de berge AJOUTE au-dela du carre | **91,6** |
+
+L'extension est donc reelle mais c'est un **LOBE QUI SUIT LA RIVE**, pas
+une chaussee, et le gain net est plus petit que le pad seul ne le suggere.
+Consigne ici pour qu'une future session ne le redecouvre pas.
+
+⚠️ **Consequence non prevue par le brief : les deux lacs se touchent.** Le
+grand lac (r 20 a 54) et le petit (r 8 a 25,65) laissent **0,347 u** entre
+leurs eaux et **2,003 u de chevauchement de berges** — force par les
+nombres figes, pas choisi, et le petit lac n'est pas touche. Deux disques
+opaques a la meme hauteur z-fighteraient : les dalles du grand lac passent
+donc SOUS celles du petit. Ordre livre, gate par sonde :
+
+```
+sol 0 < grande berge 0,013 < grande eau 0,027 < ilot 0,060
+    < ponton 0,095 < petite berge 0,055 / petite eau 0,080
+```
+
+Au rendu, ca se lit comme une baie dont la rive rejoint la grande eau —
+verifie a l'oeil sur capture, pas seulement calcule.
+
+### 3. `SHORE_PAD_RADIUS = 20` — balaye, pas choisi
+
+| pad | marchable neuf | pire traversee |
+|---|---|---|
+| 12 | 12,8 u² | 15,867 s |
+| 16 | 38,8 u² | 17,283 s |
+| **20 (livre)** | **91,6 u²** | **18,133 s** |
+| 24 | 179,6 u² | 18,983 s — **passe les 22 s mais BAT la diagonale** |
+| 28 | 311,9 u² | 20,117 s |
+
+20 est le plus grand pad qui laisse la **diagonale du carre** comme pire
+traversee du hub. Au-dela le budget de 22 s tient encore, mais la promesse
+plus simple (« la diagonale du plateau est la plus longue marche du jeu »)
+tombe.
+
+### 4. Geometrie : trois types neufs, aucun asset Meshy
+
+**`&"greatlake"`** — memes deux disques que la mare, r 20 / berge 21,30,
+**96 segments** (la deviation de facette d'un disque est `r(1-cos(pi/n))`
+et grandit avec r : les 40 segments du petit lac a r=8 donnent 0,0247, et
+les reutiliser a r=20 donnerait **0,0617**, visiblement facette ; 96
+ramene a **0,0107**). Teinte **hsv(254,6 / 0,62 / 0,60)**, indigo profond :
+
+| | teinte | valeur |
+|---|---|---|
+| mare | 198,0 | 0,36 |
+| petit lac | 221,5 | 0,82 |
+| ruisseau | 190,9 | 0,86 |
+| **grand lac** | **254,6** | **0,60** |
+
+33,1° de teinte du plus proche des trois **et** 0,22 de valeur. La berge
+reutilise `POND_BANK_COLOR` : une berge est une berge.
+
+**`&"islet"`** — 3 ilots affleurants, un landmark chacun, les trois
+silhouettes (spire / cairn / slabs) donc aucune paire identique. Eau libre
+**5,6 a 8,3 u** jusqu'a la rive et **10,0 a 11,1 u** entre eux : navigable
+pour LAKE-2. ⚠️ **Couleur CORRIGEE PAR LE RENDU** : la premiere passe
+utilisait l'olive sombre des berges et les ilots se lisaient comme des
+TROUS dans l'eau. Un galet clair `(0,46, 0,43, 0,31)` les rend a nouveau
+comme de la terre.
+
+**`&"pontoon"`** — 5 pontons, **batches en UN seul noeud**, face
+superieure a `0,095` (la valeur de `STREAM_SURFACE_Y`, relue et non
+recopiee). **Aucune fonction dans ce lot** : ils marquent ou l'embarquement
+aura lieu.
+
+⚠️ **`KeepyHopper` aplatit y a 0 sur CHAQUE ecriture de position**
+(`_apply_hop` et `_on_hop_finished`), donc il n'existe aucune hauteur
+d'atterrissage dans son API — et ce lot n'en ajoute pas. Un ilot 3 cm au-
+dessus de l'eau se lit comme affleurant ; un vrai quai souleve casserait.
+
+**Le sol n'a besoin d'AUCUN mesh neuf** : le `PlaneMesh` du plateau fait
+deja 600x600. Le lobe est du sol de plateau ordinaire ; seule la region de
+tap le rend atteignable.
+
+### 5. `"offshore": true` — le garde-fou est INVERSE, jamais eteint
+
+Les ilots, leurs landmarks et le lac sont volontairement hors d'atteinte a
+pied. Une entree le DECLARE, et le controle devient l'inverse : une entree
+`offshore` qui se revele marchable est signalee elle aussi. Un drapeau qui
+ne ferait que taire des choses serait un moyen de taire une vraie erreur.
+Le controle lit toujours les **DONNEES** du layout et jamais l'arbre
+construit — c'est ce qui fait qu'un type a trace multi-points (`stream`) ne
+passe pas au travers.
+
+### 6. VALIDATION — `LakeZoneProbe`, 22 checks, 0 echec, exit 0
+
+⚠️ **Elle DOIT tourner sous `xvfb`, pas `--headless`** : PHASE TAP pilote
+le vrai `_handle_point`, qui a besoin d'un rect de conteneur reel ; sous le
+driver DUMMY ce rect est 0x0 et la fonction sort avant de projeter quoi que
+ce soit. Le rect est **asserte non degenere**, donc la sonde echoue
+bruyamment au lieu de passer gratuitement.
+
+| # | verdict | methode |
+|---|---|---|
+| **[a]** | **pire traversee du lobe 18,133 s** < 22 s | vrai `KeepyHopper`, `--fixed-fps 60`, frames comptees entre `hop_to()` et `became_idle` — **MESURE** |
+| **[b]** | **diagonale 66 hops / 1122 frames / 18,700 s**, reproduit le chiffre publie a la frame pres, et reste le pire cas | idem, rejouee AVANT tout chiffre neuf — **MESURE** |
+| **[c]** | pire `\|axe\|` atteignable **46,36** contre un sol de demi-taille **300** | balayage de la region ; la demi-taille est LUE sur le `PlaneMesh` de la scene — **MESURE** |
+| **[d]** | **3/3 taps sur l'eau resolvent en terre ferme** | vrai `HubTapInput._handle_point` sur fenetre reelle 1080x1920 — **MESURE** |
+| **[e]** | draw nodes hors portails **78 -> 96** (+18), 9 MultiMesh, tous `TRANSFORM_3D` | comptage de l'arbre `Props` vivant, avant/apres dans la meme session — **MESURE** |
+| **[f]** | ligne ajoutee a `docs/HUB_PERF_BASELINE.md` | `HubPerfBaseline` x3 des deux cotes — **MESURE** |
+| **[g]** | capture offscreen reelle, verdict ci-dessous | `xvfb-run --rendering-driver opengl3`, vraie camera du hub — **MESURE** |
+
+Les +18 sont **comptes un par un** et non deduits : 2 disques de lac, 3
+ilots, 3 landmarks (4+5+3), 1 `MultiMeshInstance3D` de pontons. Marge sous
+le plafond de 260 : **182 -> 164**.
+
+⚠️ **Le balayage Python independant et la sonde tombent sur le MEME
+18,133 s** pour le pire lobe — deux chemins qui ne partagent aucune ligne
+de code.
+
+⚠️ **DEUX defauts trouves dans la SONDE, tous deux capables d'un faux
+vert** : ses extremes de lobe etaient d'abord ecrits a la main et
+**tombaient dans le carre** (elle chronometrait le plateau en l'appelant le
+lobe) ; et PHASE TAP emet le vrai `tapped_ground`, auquel `HubWorld` repond
+par un vrai `hop_to()` — sans attendre l'inactivite, PHASE CROSSING
+mesurait la fin de cette chaine et rapportait la diagonale a **54 hops /
+15,200 s** contre 66 / 18,700 publie. Les deux sont corriges et commentes.
+
+**[g] VERDICT DE LISIBILITE, et il porte une limite structurelle.** Capture
+depuis le lobe nord-ouest : le lac se lit clairement comme une grande eau
+indigo distincte du vert, les ilots pales se lisent comme de la terre, le
+spire et les slabs sont identifiables, et la jonction des deux lacs se lit
+comme une langue de terre entre deux eaux. ⚠️ **Mais SEULS 2 ilots sur 3
+tiennent dans un cadre** : la camera a une rotation FIXE et 45° de fov
+HORIZONTAL, et le troisieme ilot est a −39,4° de l'axe depuis le meilleur
+point de rive. Mesure (`unproject_position` sur les 4 points de vue),
+structurel a la camera et non au placement — et c'est precisement ce que
+la barque de LAKE-2 resoudra.
+
+**Autres sondes, toutes exit 0** : `ProbeTimeoutAudit` (**42 sondes
+scenes**, la nouvelle comprise, toutes armees ; la sonde de capture etait
+jetable et est supprimee avant commit), `AssetContractAudit` (**12/12
+visuels, pas un collider deplace**), `DeathModelAudit`,
+`ChargerShapeProbe`. Import headless **exit 0**, **24 `.scn`**. Boot
+headless de `HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`** — la
+confirmation A L'EXECUTION que les 203 entrees sont coherentes avec leur
+drapeau `offshore`. Export Web release **exit 0, 0 erreur**. `index.wasm`
+**35 376 909** / md5 `af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b`. Piege payload tenu : sur **225** lignes
+`Storing File`, **0** pour `assets_source`, `scripts/dev`, `docs`, `web`,
+`build` ou `firebase.json`.
+
+### ⚠️ 7. DOCTRINE : `index.pck` N'EST PAS UNE PREUVE D'IDENTITE DE BUILD
+
+Trois tailles ont ete observees pour **deux** etats de contenu —
+**5 853 728 / 5 853 744 / 5 853 760** — dont **16 octets d'ecart sur un
+commit de COMMENTAIRE SEUL**. Elle reste valable comme marqueur « un
+nouveau build a ete servi », et c'est ainsi qu'elle est utilisee dans les
+tables de deploiement. **L'inference du lot G — « le `.pck` servi est
+identique au bit pres a mon export local, donc c'est bien mon build » — est
+INVALIDE et ne doit pas etre rejouee.** `index.wasm` est le controle
+d'identite.
+
+### Un prop deplace, et la premiere tentative etait FAUSSE
+
+Un arbre existant tombait dans la nouvelle eau a `(-33,76 ; -10,30)`. Le
+premier deplacement l'a mis a `(-31,35 ; -10,18)` — soit **7,93 du centre
+du PETIT lac, donc dans SON eau**. Trouve sur un rendu, pas par
+raisonnement. Livre a `(-29,90 ; -13,73)`, degage des deux berges, 0,551 du
+prop le plus proche.
+
+⚠️ **Six props se tenaient DEJA dans l'eau du petit lac avant ce lot**
+(mesure : deux arbres, deux rochers, deux fleurs, plus un buisson dans sa
+berge). C'est livre et valide sur device, donc laisse tel quel — ce lot se
+contente de ne pas en ajouter un septieme. A traiter dans son propre lot si
+ca doit l'etre.
+
+### Reste ouvert — jugement device, seul juge
+
+1. **Un disque indigo de 40 u de large se lit-il comme un LAC** a l'echelle
+   reelle d'un telephone, ou comme une tache violette ? La teinte, la
+   sagitta et l'alpha sont mesures ; la lecture ne l'est pas.
+2. **Les ilots se lisent-ils comme des iles** et leurs landmarks comme des
+   reperes, a 20-30 u sous 30-40 % de fog ?
+3. **Seuls 2 ilots sur 3 tiennent dans un cadre** (mesure ci-dessus).
+   Acceptable si LAKE-2 emmene le joueur vers le troisieme ; a trancher.
+4. **Le lobe de rive est a ~6-8 taps de cote** — l'asymetrie de visee deja
+   mesuree au lot D (un tap vers l'avant traverse tout le plateau, un tap
+   de cote ne porte que ~5,15 u) s'applique en plein a lui.
+5. **Les pontons n'ont aucune fonction** : ils doivent se lire comme une
+   promesse, pas comme un controle mort.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`73d45d2`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre des deux cotes ET `git diff` vide,
+verifie AVANT le push). CI run **#242** (id 32941388112) **verte** —
+`Deploy to Vercel [STAGING -- staging]` succes (07:12:21 -> 07:12:31 UTC),
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ae13b99`) : palier 2, gate Mathieu apres
+validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI** (`keepy-staging.vercel.app`,
+via le canal MCP Vercel — l'egress direct du sandbox reste refuse sur ce
+domaine) :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787698811` = **25 aout 23:00:11** (run #241) | **`1787728327` = 26 aout 07:12:07** |
+| `index.pck` servi | *(non lu avant le merge — voir ci-dessous)* | **5 862 224** |
+| `index.wasm` servi | — | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de l'etape `Export Web build`** du
+run #242 (07:12:03 -> 07:12:08). Les trois lectures utiles portent
+`x-vercel-cache: MISS` avec `age: 0`.
+
+⚠️ **Honnetete sur la couverture : la bascule n'est prouvee DANS LES DEUX
+SENS que sur le `CACHE_VERSION`.** Le `.pck` servi n'a ete lu qu'APRES le
+merge, donc il vaut ici comme second marqueur independant de l'etat courant,
+pas comme preuve de transition. Les lots precedents lisaient les deux aux
+deux bouts ; celui-ci ne le fait pas, et c'est dit plutot que suggere.
+
+⚠️ **Le piege HIT/age s'est reproduit et a ete REFUSE** : une relecture a
+07:11:34, pendant que le job tournait, est revenue `x-vercel-cache: HIT`
+avec **`age: 151`** — une copie de bord figee par ma PROPRE lecture
+d'avant-merge. Elle n'a donc pas ete comptee comme la preuve « c'est encore
+l'ancienne valeur ».
+
+⚠️ **Le `.pck` servi (5 862 224) est identique a l'export local de cette
+session — et ce n'est DELIBEREMENT PAS offert comme preuve d'identite**,
+conformement a la doctrine du §7 ci-dessus. C'est un marqueur « un nouveau
+build a ete servi », rien de plus ; `index.wasm` est le controle d'identite.
+
+## HUB, LOT WATER-HUE-1 : LA PLANCHE DES CANDIDATS -- rien n'est installe, et deux premisses du brief tombent a la mesure (26 aout 2026)
+
+Branche `claude/water-hue-candidates-aqeckt`, partie de `staging` (**`4c7da9a`**,
+un commit de doc au-dessus du `73d45d2` annonce par le brief -- ecart benin,
+verifie ancetre plutot que suppose). Regle n°1 verifiee AU DEBUT : tri des refs
+distantes par date, `origin/staging` en tete, **aucune branche ne porte ce
+brief**, et la comparaison porte sur les ARBRES et pas sur les noms.
+
+**AUCUNE COULEUR D'EAU N'EST MODIFIEE.** `git diff --stat` contre
+`origin/staging` ne rapporte que `scripts/dev/WaterHueSheet.{gd,tscn}`
+(nouveaux), `docs/color-sheets/water_hue_*.png` (nouveaux) et ce document.
+`scripts/hub/HubBuilder.gd`, `resources/hub/hub_layout.tres`,
+`resources/world/swamp_palette.tres`, `KeepyHopper.gd`, `HubCamera.gd` et
+`HubRegion.gd` **ne sont pas dans le diff du tout**. Les candidats vivent dans
+le script de planche, exactement pour que juger l'un coute un rendu et pas un
+commit.
+
+### RECON -- ou vivent REELLEMENT les quatre couleurs
+
+Les quatre sont des constantes de `scripts/hub/HubBuilder.gd`, et **le layout
+n'en porte aucune** (`grep -c -i color resources/hub/hub_layout.tres` -> **0**).
+Rien n'est migre vers `SwampPalette` : son propre en-tete range les couleurs de
+decor du hub comme locales, et ce lot ne touche pas a ca.
+
+| ligne | constante | valeur | hex | hsv | Lrel albedo |
+|---|---|---|---|---|---|
+| 137 | `POND_WATER_COLOR` | `Color(0.16, 0.30, 0.36, 0.55)` | **#294C5C** | (198.0, 0.556, 0.360) | **0.0647** |
+| 156 | `LAKE_WATER_COLOR` | `Color(0.30, 0.46, 0.82, 0.55)` | **#4C75D1** | (221.5, 0.634, 0.820) | **0.1896** |
+| 236 | `GREATLAKE_WATER_COLOR` | `Color(0.32, 0.23, 0.60, 0.55)` | **#523B99** | (254.6, 0.617, 0.600) | **0.0717** |
+| 277 | `STREAM_WATER_COLOR` | `Color(0.42, 0.78, 0.86, 0.55)` | **#6BC7DB** | (190.9, 0.512, 0.860) | **0.4906** |
+
+### ⚠️ PREMISSE 1 QUI TOMBE : le sol du HUB n'est pas celui de Chased, donc le plancher n'est pas 0.549
+
+Le brief pose « le sol est a Lrel = 0.15 », d'ou la bande claire a **L >= 0.549**.
+Ce 0.150 est le sol de **Chased** (`SwampPalette.ground_albedo`, multiplie par
+son ambiante). Le hub a le sien, ecrit dans `HubWorld.tscn` et **unshaded** :
+`Color(0.2, 0.4, 0.15)`. **Mesure sur le rendu, pas calculee : #2C5A20,
+Lrel 0.0799** (le fog l'assombrit encore par rapport a son albedo).
+
+**Le plancher 3.0:1 contre le sol du hub est donc `L rendu >= 0.3397`,
+pas 0.549.** Le 0.549 reste juste comme cible sur l'**ALBEDO**, et c'est comme
+ca qu'il est applique ici : **les 12 couleurs candidates le franchissent
+toutes**.
+
+### ⚠️ PREMISSE 2 QUI TOMBE, ET C'EST LE RESULTAT CENTRAL DU LOT : a alpha 0.55, AUCUNE eau ne peut atteindre 3.0:1 -- ni maintenant, ni dans aucun des trois candidats
+
+L'eau est la **seule surface alpha-melangee** du plateau (0.55), et elle se
+melange sur sa propre **berge opaque** (`POND_BANK_COLOR`, Lrel **0.0359**), pas
+sur le sol -- la berge est un disque plein plus large que l'eau. Le ruisseau,
+lui, n'a pas de berge et se melange sur le sol. Puis le fog exponentiel
+(`hub_fog_density` 0.016 vers un vert quasi noir) passe par-dessus.
+
+Meilleur chiffre mesure, toutes familles confondues : **2.61:1** (le ruisseau
+de la famille B). **Le grand lac plafonne a 2.02:1.** Aucune teinte, aucune
+saturation ne franchit 3.0:1 -- **c'est l'alpha qui plafonne, pas la couleur.**
+
+Ce n'est pas un modele : la planche capture chaque vue **deux fois**, une a
+l'alpha livre et une en opaque. Le fog et le melange alpha sont tous deux des
+melanges lineaires, donc la luminance rendue est **AFFINE en alpha** et deux
+points mesures donnent le resultat exact a n'importe quel alpha. D'ou la
+colonne « a -> 3.0:1 » de la planche :
+
+| famille | mare | ruisseau | petit lac | grand lac |
+|---|---|---|---|---|
+| ACTUEL | >1.00 | 1.00 | >1.00 | >1.00 |
+| A | 0.91 | 0.67 | 0.94 | 0.97 |
+| **B** | **0.74** | **0.62** | 0.93 | **0.72** |
+| C | 0.81 | 0.68 | 0.97 | 1.00 |
+
+**Non fait, et deliberement : l'alpha n'est pas une couleur.** Le chiffre est
+publie parce qu'il transforme « impossible » en « voici le levier », pas parce
+que ce lot le tire. Second levier possible, non tire non plus : eclaircir
+`POND_BANK_COLOR`, qui est le fond sur lequel trois des quatre eaux se melangent.
+
+### ⚠️ PREMISSE 3 QUI TOMBE : un BLEU SATURE est interdit par la bande claire
+
+Consequence de la formule de luminance (le canal bleu pese 0.0722). Saturation
+maximale a V = 1.00 qui tient encore `Lalb >= 0.549` :
+
+| teinte | 158 | 170 | 182 | **188** | **194** | 200 | 212 | **224** | 236 |
+|---|---|---|---|---|---|---|---|---|---|
+| S max | 1.00 | 1.00 | 1.00 | **1.00** | **0.74** | 0.57 | 0.41 | **0.32** | 0.27 |
+
+**Au-dela de ~190 deg, tenir la bande claire OBLIGE a desaturer.** Une famille
+a « saturation homogene et teinte etalee » est donc **impossible** telle quelle
+si elle doit atteindre le bleu : la famille C est livree avec la saturation **au
+plafond de chaque teinte** plutot qu'avec une valeur unique, et c'est dit
+plutot que maquille.
+
+### ⚠️ SEULES TROIS PAIRES SONT CO-VISIBLES -- mesure, pas suppose
+
+Le cadre du hub fait ~13 a 18 unites de large a la profondeur du sujet
+(fov horizontal 45 deg, fixe). Les distances entre plans d'eau :
+
+| paire | co-visible ? |
+|---|---|
+| **petit lac / grand lac** | **OUI -- ils SE TOUCHENT** (0.347 u entre les eaux) |
+| **mare / ruisseau** | **OUI** -- la tete du ruisseau est sur la rive de la mare |
+| **petit lac / ruisseau** | **OUI** -- la queue du ruisseau est sur la rive du lac |
+| mare / petit lac | non (47.5 u) |
+| mare / grand lac | non (~75 u) |
+| ruisseau / grand lac | non |
+
+La matrice complete est publiee sur chaque planche, mais **seules ces trois
+lignes decident** ; les autres sont de l'information.
+
+### Les trois familles candidates
+
+**A -- ANCRE STRICTE.** Le grand lac EST `#40E0D0` ; les trois autres derivent,
+l'ecart est mene par la TEINTE.
+`mare #2FD8EB` / `ruisseau #61FFC5` / `petit lac #7AD3FF` / `grand lac #40E0D0`.
+
+**B -- TEINTE RESSERREE, SATURATION ECARTEE.** Toutes les teintes dans 170-180
+deg d'albedo ; l'ecart est porte par la SATURATION seule, et elle alterne le
+long de la chaine mare -> ruisseau -> petit lac -> grand lac (0.92 / 0.28 /
+0.714 / 0.20), donc **chaque paire adjacente alterne**. L'ancre `#40E0D0` y est
+le petit lac.
+`mare #14FFD8` / `ruisseau #B8FFFF` / `petit lac #40E0D0` / `grand lac #CCFFFD`.
+
+**C -- TEINTE ETALEE, SATURATION AU PLAFOND.** 146 / 172 / 196 / 220 deg, avec
+la saturation la plus haute que la bande claire autorise a chaque teinte (voir
+la premisse 3). L'ancre y est le ruisseau.
+`mare #24F27E` / `ruisseau #26FFE2` / `petit lac #57D2FF` / `grand lac #ABC7FF`.
+
+**Paires critiques, MESUREES sur le rendu** (pas sur l'albedo) :
+
+| famille | petit lac / grand lac | mare / ruisseau | petit lac / ruisseau |
+|---|---|---|---|
+| ACTUEL | 1.39:1 -- 37.2 deg -- dS 0.083 | 2.71:1 -- 11.2 deg -- dS 0.163 | 2.05:1 -- 53.0 deg -- dS 0.022 |
+| A | **1.04:1** -- 26.5 deg -- dS 0.188 | 1.50:1 -- 34.3 deg -- dS 0.058 | 1.54:1 -- 48.3 deg -- dS 0.178 |
+| **B** | **1.29:1** -- 8.4 deg -- **dS 0.421** | 1.34:1 -- 13.5 deg -- **dS 0.448** | 1.66:1 -- 14.7 deg -- dS 0.257 |
+| C | **1.02:1** -- 23.5 deg -- dS 0.291 | 1.35:1 -- 19.5 deg -- dS 0.047 | 1.56:1 -- 30.1 deg -- dS 0.232 |
+
+⚠️ **Le defaut du grand lac ACTUEL est nomme par un seul chiffre : il rend a
+Lrel 0.0342 contre un sol a 0.0799 -- il est PLUS SOMBRE que le sol qui
+l'entoure.** C'est litteralement le « trou » du retour terrain, et les trois
+candidats le placent au-dessus du sol (0.1246 a 0.2120).
+
+### La planche
+
+`docs/color-sheets/water_hue_{current,A,B,C}.png` -- une planche par famille,
+trois vues chacune : la jonction des deux lacs (le cas dur), la mare + la tete
+du ruisseau, le petit lac + la queue du ruisseau. Plus
+`docs/color-sheets/water_hue_comparatif.png`, les quatre jonctions cote a cote
+-- **le seul cadre ou la paire critique est visible d'un coup**, donc la seule
+image sur laquelle le choix se fait vraiment.
+
+Rendu offscreen sous `xvfb-run --rendering-driver opengl3` avec la **VRAIE
+camera du hub** : meme base, meme `fov 45`, meme `keep_aspect KEEP_WIDTH`, seule
+la POSITION change -- ce que la camera fait deja en jeu quand Keepy se deplace.
+540x960 = exactement la moitie du viewport livre, donc le RATIO et le cadrage
+sont ceux du jeu. Recadre a 620 px pour la planche : le tiers bas de chaque
+cadre est du sol nu au pied du joueur.
+
+### ⚠️ LA MESURE EST MASQUEE, PAS ECHANTILLONNEE DANS UNE BOITE -- et la moyenne prime sur le dominant
+
+Deux ruptures assumees avec la methode de toutes les recolorations de hazards
+de ce depot, et les deux sont des consequences de ce qu'est l'eau :
+
+1. **Masque et non fenetre.** Une passe d'identification par corps et par vue
+   rend la cible en blanc opaque, fog coupe, les trois autres en noir ; un pixel
+   appartient a ce corps **ssi il revient exactement 255,255,255**. Une fenetre
+   fixe est inutilisable ici : l'eau est alpha-melangee sur sa berge (une
+   fenetre qui deborde lit la berge) et le ruisseau est un ruban de 1.2 u vu de
+   biais (aucune boite n'est jamais 100 % objet).
+2. **Moyenne lineaire et non dominant d'histogramme.** Un hazard plat unlit
+   remplit sa fenetre d'UNE valeur, donc son dominant EST sa couleur. Ces
+   surfaces-la s'etendent sur assez de profondeur pour que le fog les degrade en
+   continu : **le dominant du grand lac porte 4 a 9 % de ses 34 653 pixels** et
+   n'est que la marche la plus frequente d'un degrade. La planche publie les
+   deux, plus la part et le nombre de valeurs distinctes -- c'est ce qui dit
+   que l'ecart est un degrade et pas du bruit.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles, **tailles verifiees contre le `Content-Length`** -- 50 276 070 et
+1 073 228 327 octets, aucune troncature silencieuse). Import headless
+**exit 0**, **24 `.scn`**. Export Web release **exit 0**, **0 erreur GDScript**.
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur, ce qui est exactement
+ce qu'un lot doc + sonde doit rendre.
+
+**Piege payload verifie sur le pack et pas sur le filtre** : sur **225** lignes
+`Storing File`, **0** pour `res://docs`, `res://scripts/dev`,
+`res://assets_source`, `res://web` ou `firebase.json`, et la chaine
+`WaterHueSheet` est **absente du `.pck`**. `docs/*` etait deja dans
+l'`exclude_filter` (ferme le 13 aout apres qu'une planche de recon y ait coute
+414 862 octets) -- ce lot le confirme pour le nouveau chemin plutot que de le
+supposer.
+
+Sondes : `AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`, `ProbeTimeoutAudit` -- **toutes
+exit 0**. Ce dernier passe de **42 a 43 sondes scenes**, **mesure des deux
+cotes** (les deux fichiers retires puis remis) et non deduit : c'est la planche
+elle-meme, gardee pour que le lot soit reproductible, au meme titre que
+`EnemyEarthtoneAxisSheet` et `ChargerEarthtoneAxisSheet` avant elle.
+
+⚠️ **`SwampIdentityAudit` : 4/4 etats OK, `SWAMP_IDENTITY_VERIFIED=yes`,
+exit 0 -- et ce verdict ne prouve RIEN sur ce lot.** Le brief prevoyait qu'elle
+signale une derive ; elle ne le peut pas, parce que **ce lot n'installe aucune
+couleur** et que l'arbre livre est inchange sur ce point. Elle est par ailleurs
+**non deterministe** (la derive de teinte du sol de Chased, `_tint_rng`, est un
+flux `DecorRng` insensible a `--seed`), donc son chiffre n'aurait de toute
+facon bloque aucune decision. Publie pour information, comme le brief le
+demande, plutot que tu.
+
+### Reste ouvert -- c'est la decision de Mathieu, pas une question technique
+
+1. **Le choix de la famille**, sur la planche. Ce que les chiffres disent et ne
+   disent pas : B donne la plus grande separation de la paire qui touche
+   (dS 0.421 mesuree, et le grand lac le plus lisible de tous a 2.02:1 contre
+   le sol) ; A tient l'ancre `#40E0D0` telle quelle mais son grand lac ne
+   separe presque plus du petit en luminance (1.04:1, tout est porte par 26.5
+   deg de teinte) ; C etale la teinte mais son grand lac est le plus pale des
+   trois et retombe a 1.02:1 contre le petit lac. **Aucune sonde ne dit
+   laquelle est belle.**
+2. **Le plafond d'alpha.** Si Mathieu veut reellement des eaux dans la bande
+   claire au sens du CONTRASTE RENDU et pas seulement de l'albedo, il faudra
+   toucher `transparency`/alpha (0.62 a 0.74 suffisent en famille B) ou la
+   couleur de berge. **Hors perimetre de ce lot**, chiffre plutot que tranche.
+3. **Jugement device** : la planche est un rendu llvmpipe sous xvfb, pas un
+   ecran de telephone. Est-ce qu'un grand lac pale se lit comme de l'eau et pas
+   comme de la brume ou de la glace, et est-ce que la separation par saturation
+   de la famille B survit a un petit ecran -- aucune mesure ici n'y repond.
+4. Hors perimetre et inchange : les 6 props qui se tiennent dans l'eau du petit
+   lac, le bateau du lac (lot LAKE-2), et la sensation d'eau (mouvement de
+   surface, reflets).
+
+### Deploiement staging de la planche eau (palier 1, automatique)
+
+`staging` **`693432a`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `6d8aae48` des deux cotes, verifie AVANT le push).
+CI run **#244** (id 32947596733) **verte** (08:24:31 -> 08:27:54 UTC) --
+`Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`ae13b99`, verifie apres le push) : ce lot n'a de toute facon rien a livrer en
+prod, il n'installe aucune couleur.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants :**
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787728666` = **07:17:46** (run #243) | **`1787732847` = 08:27:27** *(dans l'etape `Export Web build`, 08:27:23 -> 08:27:28)* |
+| `index.pck` servi | **5 862 240** | **5 862 480** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+Le `CACHE_VERSION` est lu **aux deux bouts en `x-vercel-cache: MISS` avec
+`age: 0`**, et la valeur d'avant a ete prise **avant le merge** : la bascule
+est donc prouvee dans les deux sens et pas deduite du log.
+
+⚠️ **Honnetete sur le second marqueur** : la valeur `index.pck` d'AVANT vient
+d'une reponse **`HIT` avec `age: 3899`** (copie de bord datee de 07:19:48).
+Elle precede le merge, donc elle est valable comme VALEUR, mais **elle n'est
+pas une mesure de fraicheur** et n'est pas comptee comme telle. La lecture
+d'APRES, elle, est MISS/age 0.
+
+⚠️ **Le piege HIT/age s'est reproduit DEUX fois et a ete refuse les deux
+fois** (age 3899 puis age 191) -- et la seconde fois c'est ma PROPRE lecture
+de 08:24:15 qui avait rempli le cache de bord, exactement comme au lot
+rideable. Un parametre de requete different ne le contourne pas toujours ; il
+faut en changer reellement la valeur.
+
+⚠️ **L'export LOCAL de cette session donne `index.pck` 5 862 512 et le service
+en sert 5 862 480 pour le MEME contenu** -- 32 octets d'ecart, une nouvelle
+illustration de l'instabilite deja consignee. **Le `.pck` reste un marqueur de
+« un nouveau build a ete servi », jamais une preuve d'identite avec l'export
+local** ; c'est `index.wasm` qui porte l'identite, et il est identique partout.
+
+Le commit d'hygiene `.gitignore` (les sidecars `.import` que l'editeur fait
+pousser a cote des planches sous `docs/`) est **pousse APRES la fin du run
+#244**, deliberement : `web-build.yml` porte `cancel-in-progress: true` et
+pousser coup sur coup annule le premier run -- piege deja paye au lot de
+densification du hub.
+
+## LAKE-MOVE : RECON PURE -- ou le grand lac peut aller, et ce que ca coute (26 aout 2026)
+
+Branche `claude/lake-move-recon-6irqhq`, partie de `staging` (`7f5e6e6`).
+**AUCUN fichier de jeu touche** : `git diff --stat origin/staging` ne rapporte
+que `scripts/dev/LakeMove{Recon,Capture}Probe.{gd,tscn}` (nouveaux) et ce
+document. Ni `HubBuilder.gd`, ni `hub_layout.tres`, ni `HubRegion.gd`, ni
+`KeepyHopper.gd`, ni `HubTapInput.gd`, ni `HubCamera.gd`. **Aucune decision
+prise** -- ce lot produit les chiffres, l'arbitrage appartient a Mathieu.
+
+### ⚠️ Q1 -- KEEPY MARCHE SUR L'EAU, ET C'EST MESURE
+
+**Verdict : il n'existe AUCUN evitement d'obstacle dans tout le depot.**
+`grep -rniE "navigation|navmesh|astar|pathfind|avoid|detour|waypoint"` sur
+`*.gd`/`*.tscn`/`*.tres` : **zero occurrence** liee a un chemin. `HubRegion` n'a
+que **deux** consommateurs -- `HubTapInput._handle_point` (clampe la
+DESTINATION) et `HubBuilder._build` (teste si un prop est atteignable). **Le
+hopper ne l'interroge jamais** : `_begin_hop` avance sur une corde droite
+(`delta.normalized() * step`) et ne consulte rien en route.
+
+Mesure sur le hopper LIVRE, `--fixed-fps 60`, chaque atterrissage teste contre
+l'eau reelle. **Le banc restitue d'abord la diagonale publiee -- 66 hops /
+18,700 s, au bond et au millieme pres** : un banc incapable de reproduire un
+chiffre deja au dossier n'a pas qualite a en publier un nouveau.
+
+| trajet | hops | atterrissages SUR l'eau |
+|---|---|---|
+| (-35,-5) -> (-15,-5), traverse le PETIT LAC | 14 | **10 sur le lac** |
+| (14,7) -> (28,8), traverse la MARE | 10 | **4 sur la mare, 1 sur le ruisseau** |
+| (-2,4) -> (-2,16), traverse le RUISSEAU | 8 | **1 sur le ruisseau** |
+| (-35,-20) -> (-12,10), longue corde | 25 | **11 sur le lac** |
+
+**Keepy bondit par-dessus la mare, les deux lacs et le ruisseau, aujourd'hui,
+en production.** La regle « une eau est un trou dans la region » ne dit ou un
+tap peut ENVOYER Keepy, jamais ou il peut PASSER.
+
+⚠️ **Consequence qui rend tout le lot EXACT plutot qu'extrapole** : puisque
+aucun lac ne peut courber une corde, la chaine de bonds d'un trajet est
+IDENTIQUE avec et sans lac candidat. Tester les atterrissages reels contre un
+disque candidat **mesure** ce candidat, il ne le modelise pas.
+
+### Q2 -- L'EXCLUSION INTERIEURE EXISTE DEJA, ET ELLE FONCTIONNE
+
+**Reponse : OUI, sans un mot de code a changer.** `HubRegion.contains()` ouvre
+deja sur `if in_lake_water(flat): return false` -- le grand lac EST un trou, et
+la doc du fichier le nomme « the one subtraction in it ». `clamp_to()` genere
+des candidats dont `_out_of_water(flat)`, qui pousse radialement hors du
+disque : ce candidat est correct pour un trou INTERIEUR exactement comme pour
+un trou de bord, parce qu'il ne suppose rien sur la position du disque.
+
+Ce qui manquerait pour un lac au milieu du carre n'est donc PAS `clamp_to` --
+c'est le hopper (Q1). Un tap sur le lac serait bien ramene a la rive ; un
+trajet qui PASSE au-dessus continuerait de passer au-dessus.
+
+### Q3 -- LA CARTE, ET DEUX PRECISIONS SUR L'ANNONCE
+
+203 entrees de layout : 3 portails, **15** landmarks, 172 props de scatter,
+plus mare / petit lac / grand lac / ruisseau / barque / 3 ilots / 5 pontons.
+
+⚠️ **« 12 landmarks » du brief est juste pour le PLATEAU** : 12 sont sur le
+plateau (anneaux a d~12,7, ~21, ~30,5), et les **3 autres sont poses sur les
+ilots du grand lac** -- leurs positions sont identiques a celles des ilots
+(`(-50,48;-3,06)`, `(-63,65;-13,14)`, `(-47,34;-19,35)`), donc ils
+demenageraient AVEC le lac.
+
+Portails : `chased` (-5,40;-4,60), `quizz` (0;-7,20), `battle` (5,40;-4,60),
+tous a d~7,1. Mare (20,70;7,40) r 3,20. Petit lac (-25,10;-5,30) r 8,00. Grand
+lac (-52,82;-11,23) r 20, az 282, d 54. Ruisseau : 12 points de trace, de
+(17,58;6,67) a (-18,54;-0,73), largeur 1,20.
+
+**Densite par secteur de 30 deg** (scatter, par anneau radial) -- les plus
+charges sont az 300-330 (26) et 240-270 (22), les plus libres az 330-360 (8)
+et 60-90 (10).
+
+⚠️ **Le plus grand disque libre, et c'est ce qui decide Q4** : en evitant les
+portails ET les landmarks, le maximum atteignable est **R = 11,33** (az
+180-210). **Aucun disque de rayon 20 ne tient nulle part sur le plateau sans
+recouvrir un landmark.** En n'evitant que les portails, le maximum monte a
+**20,15** (az 120-150 et 210-240).
+
+### ⚠️ Q4 -- P2 TEL QUE SPECIFIE EST GEOMETRIQUEMENT INFAISABLE
+
+Deux prémisses du brief ne survivent pas a la mesure.
+
+**1. La contrainte P2 est PAR AXE, pas radiale.** Le brief donne « centre a
+15 u MAXIMUM du centre du plateau (15 + 20 = 35) ». Un disque r=20 tient dans
+le carre ssi `|cx| + 20 <= 35` ET `|cz| + 20 <= 35`, donc `|cx| <= 15` et
+`|cz| <= 15` : le centre peut etre a **21,21 u** du centre (au coin de la
+boite 15x15). La contrainte reelle est plus large que l'annonce.
+
+**2. Et pourtant AUCUN centre n'est viable.** Balayage exhaustif de la boite au
+pas 0,5, avec la seule exigence de ne pas engloutir mare, ruisseau et portails :
+
+| rayon, entierement dans le carre | verdict |
+|---|---|
+| **20** | **AUCUN CENTRE N'EXISTE** |
+| **18** | **AUCUN CENTRE N'EXISTE** |
+| 16 | faisable, meilleur centre (15,50;-19,00), degagement min **7,71 u** |
+| 14 | faisable, (7,50;-21,00), 14,12 u |
+| 12 | faisable, (8,50;-23,00), 17,56 u |
+
+Le meilleur centre r=20 que le brief demande, (15;15), **recouvre la mare de
+13,70 u et le ruisseau de 13,79 u** : il engloutit la mare, la majeure partie du
+ruisseau, et donc le ride en barque. **Le rayon maximum d'un lac entierement
+dans le plateau est 16.**
+
+### Q4 -- LE TABLEAU DES CANDIDATS
+
+Trajets marches une fois sur le hopper livre ; les atterrissages sont ensuite
+testes contre chaque disque (exact, cf. Q1). Jeu de 10 trajets, 340 bonds.
+
+| candidat | dedans | aire perdue | portails | landmarks | scatter | bonds sur l'eau | pire trajet |
+|---|---|---|---|---|---|---|---|
+| **ACTUEL** az282 d54 r20 | non | 26,7 u2 (0,55 %) | 0 | 0 | 0 | **0 / 340** | 0 |
+| **P1** (35;-35) r20, a cheval | non | **314,2 u2 (6,41 %)** | 0 | **0** | **1** buisson | 28 / 340 | 14 |
+| P1' (-35;35) r20 | non | 314,2 u2 (6,41 %) | 0 | 0 | 2 rochers | 27 / 340 | 14 |
+| **P2** (15;15) r20 | oui | **1 256,8 u2 (25,65 %)** | 0 | **4** | **51** | **90 / 340** | **27** |
+| **P2f** (15,5;-19) **r16** | **oui** | 804,5 u2 (16,42 %) | 0 | 3 | 25 | -- | -- |
+| P3a (-27;27) r8 | oui | 201,1 u2 (4,10 %) | 0 | **0** | **0** | 20 / 340 | 10 |
+| **P3b** (24,5;-25) **r10** | oui | 314,3 u2 (6,41 %) | 0 | **0** | **2** buissons | 26 / 340 | 13 |
+| P3c (22;19) r12 | oui | 452,4 u2 (9,23 %) | 0 | 1 | 6 | 32 / 340 | 16 |
+
+⚠️ **LE PIRE CAS DE TRAVERSEE NE BOUGE POUR AUCUN CANDIDAT : 18,700 s.**
+Mesure, pas deduit -- la diagonale du carre coute 66 hops / 1 122 frames avec
+ou sans lac, **parce qu'un lac ne peut pas courber une corde**. Le cout d'un
+lac interieur n'est pas du TEMPS, c'est que Keepy marche sur l'eau : P2 met
+**27 bonds sur 66 au-dessus du lac** sur cette meme diagonale.
+
+**Separation d'avec le petit lac** (la contrainte d'origine du chantier : ils
+se touchent a 0,347 u) : **tous les candidats les separent**, de +13,50 u
+(P1') a +39,04 u (P1). Aucun ne recree le contact.
+
+### Q5 -- LE LAC N'EST PAS VISIBLE, ET LA CAMERA NE PEUT PAS SE TOURNER
+
+⚠️ **Fait qui decide la question : `HubCamera` a une rotation FIXE, elle ne
+lace JAMAIS** (par conception -- un `look_at` re-vise chaque frame ferait
+tanguer l'horizon au rythme des bonds). Elle regarde toujours -Z, fov 45
+KEEP_WIDTH, pitch -34. Un corps est dans le cadre **ssi son gisement est a
++-22,5 deg de -Z**. « Orienter la camera vers le lac » est donc impossible :
+la seule facon de voir une chose est de se placer de facon qu'elle soit deja
+devant soi.
+
+Captures offscreen reelles, 1080x1920, `xvfb` + `opengl3` (jamais
+`--headless` seul, driver DUMMY sans valeur), disques candidats construits
+DANS la sonde et jamais dans le layout :
+
+| candidat | gisement depuis le centre | fraction du disque dans le cadre | positions du plateau avec vue reelle |
+|---|---|---|---|
+| **ACTUEL** | **-69,1 deg** | **0 %** | **4,4 %** |
+| P1 (35;-35) r20 | +38,6 deg | 12 % *(sliver)* | 35,7 % |
+| P2 (15;15) r20 | -- | **camera DANS l'eau** | 31,0 % |
+| **P2f (15,5;-19) r16** | **+29,1 deg** | **39 %** | **50,4 %** |
+| P3b (24,5;-25) r10 | +35,9 deg | 2 % *(sliver)* | 39,7 % |
+| P3a (-27;27) r8 | -123,8 deg | 0 % | 6,8 % |
+
+**La capture depuis le centre sur l'arbre LIVRE ne montre AUCUNE eau** -- de
+l'herbe, des arbres, les trois portails, des fleurs. La plainte de Mathieu est
+exacte et desormais prouvee a l'image.
+
+⚠️ **Le booleen « dans le cadre » ment.** P3b est techniquement visible depuis
+le centre (bord a 22,1 deg contre un cadre a 22,5) : c'est un **sliver de
+0,4 deg** a 41,8 u sous la brume, et le rendu ne montre rien. **Le seul
+candidat clairement visible depuis le centre est P2f**, et sa capture le
+confirme : une grande etendue pale derriere le portail Battle.
+
+### Q6 -- LA CHAINE D'ADJACENCE EST DE TROIS MAILLONS, PAS D'UNE
+
+⚠️ **Troisieme prémisse corrigee.** Le brief dit que la famille B a ete imposee
+« UNIQUEMENT par la paire qui se touche » (singulier). **Mesure : il y a TROIS
+paires en contact, en chaine.**
+
+```
+mare --(-0,596 u)-- ruisseau --(-0,605 u)-- petit lac --(+0,347 u)-- GRAND LAC
+```
+
+Le ruisseau part de la rive de la mare et arrive sur celle du petit lac -- par
+construction, c'est ce qui en fait un connecteur. **Deplacer le grand lac ne
+casse qu'UN maillon sur trois** ; la chaine mare-ruisseau-petit lac subsiste et
+continue d'exiger une echelle de saturation a trois crans.
+
+La famille livree separe par la **SATURATION seule** -- la teinte est quasi
+constante (170,0 a 180,0 deg, 10 deg d'ecart) :
+
+| corps | hex | H | **S** | V | alpha |
+|---|---|---|---|---|---|
+| mare | `#14FFD8` | 170,0 | **0,922** | 1,000 | 0,78 |
+| **petit lac** | **`#40E0D0`** | 174,0 | **0,714** | 0,878 | 0,96 |
+| ruisseau | `#B8FFFF` | 180,0 | **0,278** | 1,000 | 0,65 |
+| **grand lac** | `#CCFFFD` | 177,7 | **0,200** | 1,000 | 0,85 |
+
+⚠️ **`#40E0D0` -- la couleur que Mathieu a validee a l'ecran -- EST DEJA,
+exactement, l'albedo du petit lac.** Et les deux corps dont il se plaint
+(« ruisseau blanchatre », grand lac « glacier ») sont **precisement les deux
+plus bas de l'echelle de saturation**, 0,278 et 0,200. Le defaut n'est pas une
+teinte mal choisie : c'est l'echelle de saturation qui, pour separer quatre
+corps enchaines, a du pousser les deux derniers vers le blanc.
+
+**Reponse mesuree a la question posee : une famille turquoise homogene ne
+devient PAS possible par un simple deplacement.** La co-visibilite n'est
+eliminee par aucun candidat -- grand lac + petit lac restent co-visibles depuis
+4,4 % a 11,0 % des positions, grand lac + ruisseau depuis 7,9 % a 26,6 %.
+
+**Ce qu'un deplacement achete reellement, et c'est net** : le grand lac cesse
+d'etre ADJACENT a quoi que ce soit (ecarts mesures : P1 +21,5 / +39,0 / +24,6 ;
+P3b +19,4 / +35,4 / +21,8 ; P2f +7,7 / +18,9 / +9,2 sur mare / petit lac /
+ruisseau). **Il sort de l'echelle et peut reprendre `#40E0D0`** -- deux corps
+turquoise a 20 u l'un de l'autre dans un cadre n'ont aucun bord commun a faire
+lire, contrairement a deux corps qui se touchent. Le ruisseau, lui, **reste
+coince entre la mare et le petit lac** et garde son probleme : c'est un lot
+distinct, et aucun placement du grand lac ne le resout.
+
+### DOCTRINE PERMANENTE : LE RENDU N'EST PAS AFFINE EN ALPHA
+
+Consignee ici parce que c'est le lot WATER-HUE-2 qui l'a payee, et qu'elle vaut
+pour tout reglage d'eau a venir. Le modele du lot WATER-HUE-1 avait ete cale
+sur **DEUX points** (l'alpha livre et l'opaque) puis extrapole ; il a
+**sous-estime les QUATRE plans d'eau**, qui sont sortis a **2,48-2,94:1** aux
+alphas predits, tous **sous le plancher de 3,0**.
+
+**Deux points definissent une droite, ils ne prouvent pas la linearite.** Tout
+reglage d'alpha doit passer par un **BALAYAGE direct** -- mesurer la valeur a
+chaque cran candidat -- **jamais par une forme fermee**.
+
+### Ce que ce lot laisse au depot
+
+Deux sondes de mesure sous `scripts/dev/` (couvert par `exclude_filter` :
+**0** ligne `Storing File` pour `res://scripts/dev` sur 225, et **0**
+occurrence de `LakeMoveRecon` dans le `.pck`). `ProbeTimeoutAudit` passe de
+**43 a 45 sondes scenes**, toutes armees.
+
+⚠️ **`LakeMoveReconProbe` tourne EN HEADLESS, pas sous `xvfb`** -- elle ne lit
+aucun pixel (positions et transforms seulement), et sous llvmpipe elle n'avait
+pas depasse la phase de controle. Meme famille que la lecon deja consignee pour
+`PursuerFramingAudit`. `LakeMoveCaptureProbe`, elle, DOIT tourner sous `xvfb` :
+elle lit des pixels, et `--headless` forcerait le driver DUMMY.
+
+⚠️ **Defaut trouve dans ma propre sonde et corrige** : quand la camera est
+DANS le disque, `asin(r/d)` n'a pas de sens et le demi-angle vaut 90 deg, pas
+0. La premiere version imprimait « off screen » pour un plan qui n'est QUE de
+l'eau -- exactement le genre d'etiquette qui survit au run qui l'a produite.
+
+### Reste ouvert -- c'est l'arbitrage de Mathieu, pas une question technique
+
+1. **P2 tel que specifie n'existe pas** (r=20 entierement dedans : aucun centre).
+   Le choix reel est entre **P2f r=16** (le seul clairement visible du centre,
+   50,4 % de couverture -- mais 16,42 % du plateau perdu, 3 landmarks et 25
+   props recouverts), **P3b r=10** (6,41 % perdu, 0 landmark, 2 buissons, 39,7 %
+   de couverture mais un sliver depuis le centre), et **P1 a cheval r=20**
+   (6,41 % perdu, 0 landmark, 1 buisson, 35,7 %).
+2. **Aucun de ces choix ne change une seconde de traversee**, et tous mettent
+   des bonds sur l'eau (20 a 90 sur 340). **Marcher sur l'eau est le vrai cout,
+   et il n'a pas de correctif dans ce lot** : il faudrait un evitement dans
+   `KeepyHopper`, qui n'existe nulle part et serait son propre chantier.
+3. **Le ruisseau restera delave** quoi qu'il advienne du grand lac (chaine a
+   trois maillons ci-dessus).
+
+### Deploiement staging de la recon lake-move (palier 1, automatique)
+
+`staging` **`8c243b8`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre des deux cotes ET `git diff` vide, verifie AVANT le
+push). CI run **#247** (id 32974312057) **verte** (13:27:30 -> 13:30:25 UTC) --
+`Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`ae13b99`, verifie apres le push). **Le contenu de JEU est rigoureusement
+inchange** : le diff ne porte que sur `CLAUDE.md` et quatre fichiers de sonde
+sous `scripts/dev/`, aucun n'etant une ressource Godot packee.
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787735262` = **09:07:42** (run #246) | **`1787750998` = 13:29:58** *(dans la fenetre du run #247)* |
+| `index.pck` servi | *(non lu avant le merge -- voir ci-dessous)* | **5 862 880** |
+| `index.wasm` servi | -- | **35 376 909** *(inchange, attendu)* |
+
+⚠️ **Honnetete sur la couverture** : la bascule n'est prouvee DANS LES DEUX
+SENS que sur le `CACHE_VERSION` ; sa valeur d'avant a ete relevee avant le
+merge. Le `.pck` servi n'a ete lu qu'APRES, donc il vaut comme second marqueur
+independant de l'etat courant, pas comme preuve de transition. Les deux
+lectures d'apres sont `x-vercel-cache: MISS` avec `age: 0`.
+
+⚠️ **Le piege HIT/age s'est reproduit DEUX fois et a ete refuse les deux
+fois** (age 15479 puis 15649, la meme copie de bord vieillissant entre mes
+deux lectures). Un parametre de requete different ne l'a pas bustee ; seul un
+changement reel de valeur y est parvenu.
+
+⚠️ **L'API GitHub Actions a de nouveau servi une reponse PERIMEE, et cette
+fois c'est net** : un appel `list_workflow_jobs` **posterieur a 13:30:25** --
+donc apres la fin reelle du run -- rendait encore « Import project resources /
+in_progress » fige a 13:28:01, **byte-identique** a l'appel precedent. C'est le
+`CACHE_VERSION` servi qui a tranche, comme aux runs #201, #202, #226, #229 et
+#242. **Nuance a garder de RIDE-1** : avant de crier a l'API perimee, verifier
+qu'une etape ne soit pas simplement lente ; ici la borne temporelle du run
+lui-meme (`updated_at` 13:30:25) l'a exclu.
+
+⚠️ **L'export LOCAL de cette session donne `index.pck` 5 862 944 et le service
+en sert 5 862 880** pour le meme contenu -- 64 octets d'ecart, enieme
+illustration de l'instabilite deja consignee. `index.wasm` est identique
+partout (**35 376 909**, md5 `af4a8fc2925d992348eb30deeeb54360`) : c'est lui
+la preuve d'identite, jamais le `.pck`.
+
+## LAKE-MOVE-1 : LE GRAND LAC ENTRE DANS LE PLATEAU -- (15,5 ; -19) rayon 16, et le LOBE MEURT AVEC LE DEPLACEMENT (26 aout 2026)
+
+Branche `claude/lake-move-1-relocate-3sisc6`, partie de `staging` (`d13047b`).
+Decision de Mathieu prise sur les mesures de la recon LAKE-MOVE : **P2f est le
+SEUL candidat nettement visible depuis le centre du plateau** (39 % du disque au
+cadre, 50,4 % des positions), et 16 est le rayon MAXIMUM qui tient entierement
+dans le carre. **Le placement n'a pas ete re-arbitre.**
+
+**CONTRAINTES DURES TENUES, verifiees par `git diff --stat` et pas affirmees** :
+`KeepyHopper.gd`, `HubCamera.gd` et `HubTapInput.gd` **ne sont PAS dans le
+diff**. `PLATEAU_HALF_EXTENT` reste **35.0**. **Aucune couleur, aucun alpha
+touche nulle part** -- la recolorisation est le lot suivant, et melanger les deux
+rendrait tout diagnostic impossible.
+
+### Ce qui bouge, et pourquoi le centre cesse d'etre polaire
+
+`HubRegion` tenait le lac en **azimut 282 + distance 54 + rayon 20**. C'etait la
+formulation la plus courte tant qu'il etait dehors, droit derriere le petit lac.
+Il est desormais a **(15,5 ; -19) rayon 16**, et le layout enonce ce centre en
+cartesien : un azimut ici serait une **seconde orthographe du meme point**, libre
+de deriver d'un arrondi que personne ne verrait avant qu'une berge ne tranche un
+prop. `LAKE_CENTRE_X`/`LAKE_CENTRE_Z` deviennent la source ; l'azimut
+(**39,207 deg**) et la distance (**24,520**) sont **publies, derives**.
+
+⚠️ **DEFAUT LATENT FERME AU PASSAGE, et il aurait ete silencieux** : rien
+n'assertait que la position `greatlake` du layout et les constantes de
+`HubRegion` decrivaient le MEME point. Ce sont deux nombres independants
+construisant deux objets differents -- **le disque DESSINE et le trou
+MARCHABLE**. Bouger l'un sans l'autre aurait fait cesser l'eau qu'on voit
+d'etre l'eau ou l'on ne peut pas marcher, **sans aucune erreur**. Gate
+maintenant (PHASE REGION).
+
+### ⚠️ LE LOBE DE RIVE MEURT, ET IL EMPORTE 7 PROPS QUE LE BRIEF NE COMPTAIT PAS
+
+Le `SHORE_PAD_RADIUS = 20` centre sur la berge proche ajoutait **91,6 u2** de sol
+marchable AU-DELA du carre. Avec la berge proche desormais a **8,520** du centre,
+le pad s'etend au plus a **28,520** contre un demi-cote de 35 : **entierement
+contenu, 0 u2 ajoute**. Mesure, pas deduit -- la sonde balaye la region et trouve
+**0 point au-dela du carre** (contre 1 070 avant).
+
+**Consequence que le brief ne prevoyait pas : 7 props vivaient dans ce lobe**
+(`|x| > 35`, jusqu'a 42,01) et deviennent inatteignables. Ils sont **relocalises
+comme les autres**. Total reel : **25 props dans l'eau + 7 dans le lobe = 32
+props, plus 3 landmarks**, jamais supprimes.
+
+Le pad est **garde a 20 plutot que zero** : il est le terme generique de l'union,
+il ne coute rien tant qu'il est contenu, et un lot futur qui repousse un lac
+hors d'un bord recupere le lobe gratuitement. **L'assertion de sonde est
+INVERSEE, pas supprimee** -- elle exigeait que le pad depasse, elle exige
+desormais qu'il soit contenu, donc c'est elle qui parlera le jour ou ca change.
+
+### La zone lac demenage EN BLOC, echelle 0,8 sur les positions
+
+3 ilots + leurs 3 landmarks + 5 pontons gardent leurs positions **relatives**,
+mises a l'echelle 16/20 = **0,8** (mises a l'echelle, pas translatees -- le
+brief avait raison, un rayon plus petit ne peut pas porter les memes offsets).
+
+⚠️ **Les RAYONS d'ilot ne sont deliberement PAS mis a l'echelle** : chaque ilot
+porte encore son landmark avec la marge qu'il avait livree. Les deux options ont
+ete mesurees -- rayons a l'echelle : eau libre 4,48-6,64 a la rive et 7,99-8,84
+entre ilots ; **rayons inchanges (livre)** : **3,802-6,001** a la rive et
+**6,668-7,562** entre ilots. Contre une coque de **0,78** de long, les deux sont
+amplement navigables pour LAKE-2 ; l'option livree garde les ilots lisibles.
+
+### Separations d'eau, MESUREES
+
+| paire | avant | apres |
+|---|---|---|
+| **grand lac <-> petit lac (eau)** | **+0,347** *(ils se touchaient)* | **+18,849** |
+| grand lac <-> petit lac (berges) | **-2,003** *(chevauchement)* | **+16,499** |
+| grand lac <-> mare (eau) | -- | **+7,707** |
+| grand lac <-> ruisseau (bords) | -- | **+9,158** |
+| mare <-> ruisseau | -0,596 | **-0,596** *(intouche)* |
+| ruisseau <-> petit lac | -0,605 | **-0,605** *(intouche)* |
+
+La contrainte d'origine du chantier est levee : **plus aucun contact**. La
+chaine mare-ruisseau-petit lac, elle, **subsiste** et continue d'exiger son
+echelle de saturation a trois crans -- aucun deplacement du grand lac ne la
+resout, comme la recon l'avait dit.
+
+### ⚠️ RISQUE MESURE ET NON CORRIGE : la berge passe SUR la dalle du portail Battle
+
+C'est le seul cout du placement que la recon n'avait pas chiffre, et il est
+publie plutot que maquille. Portail Battle a **17,589** du centre du lac :
+
+| | valeur |
+|---|---|
+| **eau** vs dalle du portail (rayon 1,35) | **+0,239** -- degage |
+| **berge** (17,30) vs dalle du portail | **-1,061** -- **elle passe dessus** |
+| portail Quizz, berge | +0,831 -- degage |
+| portail Chased, berge | +6,731 -- degage |
+
+**L'anneau du portail se dessine PAR-DESSUS la berge** (torus au-dessus du sol,
+berge a y 0,011-0,0185) et **reste entierement lisible au rendu** -- verifie a
+l'image, capture `portal_row`, pas seulement calcule. Rien n'est marchable dans
+l'eau. **Non corrige** : le degager demanderait un centre a `x >= 18`,
+c'est-a-dire un AUTRE placement que celui qui a ete choisi. **Decision de
+Mathieu.**
+
+### ⚠️ KEEPY MARCHE SUR L'EAU, ET CE LOT AGGRAVE LE DEFAUT -- mesure avant/apres
+
+La recon l'avait etabli : **aucun evitement d'obstacle n'existe dans le depot**,
+le hopper suit une corde droite et ne consulte rien. Ce lot ne le corrige pas
+(chantier a part entiere) mais **le mesure**. Meme jeu de 10 trajets, meme
+binaire, meme machine, `--fixed-fps 60`, `origin/staging` en worktree separe :
+
+| trajet | hops | grand lac AVANT | grand lac APRES |
+|---|---|---|---|
+| (-35,-35) -> (35,35) *(la diagonale)* | 66 | **0** | **0** |
+| **(-35,35) -> (35,-35)** *(l'anti-diagonale)* | 66 | **0** | **21** |
+| **(0,0) -> (35,-35)** | 33 | **0** | **21** |
+| (0,0) -> (-35,-35) | 33 | 0 | 0 |
+| (0,0) -> (35,0) | 24 | 0 | 0 |
+| **(0,0) -> (0,-35)** | 24 | **0** | **5** |
+| (-35,-5) -> (-15,-5) *(petit lac)* | 14 | 10 petit lac | 10 petit lac |
+| (14,7) -> (28,8) *(mare)* | 10 | 4 mare | 4 mare |
+| (-2,4) -> (-2,16) *(ruisseau)* | 8 | 0 | 0 |
+| (-35,-20) -> (-12,10) | 25 | 11 petit lac | 11 petit lac |
+| **TOTAL** | **303** | **0 grand lac** | **47 grand lac (15,5 %)** |
+
+Le banc **reproduit d'abord les quatre trajets publies par la recon au bond
+pres** (10/14 et 11/25 sur le petit lac, 4/10 sur la mare) -- un banc incapable
+de restituer un chiffre au dossier n'a pas qualite a en publier un neuf. Les
+lignes petit lac / mare / ruisseau sont **byte-identiques** des deux cotes : ce
+lot ne touche a aucune de ces trois eaux.
+
+⚠️ **La diagonale principale reste a ZERO bond sur l'eau, et c'est
+l'anti-diagonale qui prend 21** -- l'estimation « ~27 bonds sur 66 sur une
+traversee » du brief visait la bonne echelle mais pas le bon trajet : la
+diagonale `(-35,-35)->(35,35)` passe a **24,4 u** du centre du lac, bien au-dela
+de 16.
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles, **tailles confirmees contre le `Content-Length`** : 50 276 070 et
+1 073 228 327 octets, aucune troncature). Import headless **exit 0**, **24
+`.scn`** des deux cotes (import complet verifie, pas suppose). Boot headless de
+`HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`** -- la confirmation A
+L'EXECUTION que les 203 entrees sont coherentes avec leur drapeau `offshore`.
+Export Web release **exit 0, 0 erreur**. `index.wasm` **35 376 909** / md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b`. `index.pck` 5 863 056 (marqueur, **jamais
+preuve d'identite**). Piege payload tenu : sur **225** lignes `Storing File`,
+**0** pour `assets_source`, `scripts/dev`, `docs`, `web`, `build` ou
+`firebase.json`.
+
+**`LakeZoneProbe` : 27 checks, 0 echec, exit 0** (sous `xvfb`, jamais
+`--headless` -- PHASE TAP a besoin d'un rect de conteneur reel).
+`ProbeTimeoutAudit` **45 sondes scenes** (retour exact a la baseline apres
+retrait des deux sondes jetables), `AssetContractAudit` (**12/12 visuels, pas un
+collider deplace**), `DeathModelAudit`, `ChargerShapeProbe` -- **toutes exit 0**.
+
+| # | verdict | methode |
+|---|---|---|
+| **[a]** | **diagonale 66 hops / 1122 frames / 18,700 s, INCHANGEE et toujours le pire cas** ; pire traversee passant DANS l'eau 18,700 s aussi | vrai `KeepyHopper`, `--fixed-fps 60` -- **MESURE** |
+| **[b]** | grand lac <-> petit lac **+0,347 -> +18,849** ; chaine mare/ruisseau/petit lac **-0,596 / -0,605 inchangee** | geometrie sur le layout livre -- **MESURE** |
+| **[c]** | ruisseau et mare ni recouverts ni touches (**+9,158** et **+7,707**) | idem -- **MESURE** |
+| **[d]** | **3/3 marches centre -> portail restent AU SEC** (5 hops, 0 atterrissage dans l'eau chacune) | vrai hopper, gate dans la sonde -- **MESURE** |
+| **[e]** | draw nodes hors portails **96 -> 96**, total **102 -> 102**, 9 MultiMesh tous `TRANSFORM_3D` | comptage de l'arbre `Props` vivant des deux cotes -- **MESURE** |
+| **[f]** | ligne ajoutee a `docs/HUB_PERF_BASELINE.md` | `HubPerfBaseline` x3 des deux cotes -- **MESURE** |
+| **[g]** | **le lac se voit clairement du centre** | 4 captures offscreen 1080x1920, vraie camera du hub -- **MESURE** |
+
+**[e] est un ZERO delta et c'est le resultat attendu** : ce lot relocalise des
+entrees, il n'en cree ni n'en detruit aucune. Marge sous le plafond de 260 :
+**164**, inchangee.
+
+**[g] VERDICT.** Capture depuis le centre du plateau : **le lac occupe tout le
+quadrant haut-droit**, distinct du vert, avec sa berge, un ilot pale et son
+spire dedans, et les trois anneaux de portail lisibles devant. La plainte
+d'origine -- « on ne voit pas le lac » -- est fermee A L'IMAGE. Trois autres
+points de vue (rangee de portails, rive est, rive nord) montrent les ilots avec
+leurs landmarks, les deux pontons de rive poses sur la berge, et **aucun prop
+dans l'eau** (verifie par mesure aussi : **0** entree non-`offshore` a moins de
+16 du centre).
+
+⚠️ **`worst reachable |axis|` passe de 46,36 a 35,00** : c'est le lobe qui
+disparait, mesure et attendu, contre un sol de demi-taille 300.
+
+### Densite : degressive, comme la doctrine l'exige
+
+| bande | AVANT | APRES |
+|---|---|---|
+| r 0-10 | 12,01 | **12,01** |
+| r 10-20 | 6,93 | **5,86** |
+| r 20-27 | 3,20 | **2,91** |
+| r 27-35 | 1,47 | **2,75** |
+
+Toujours strictement decroissante du centre vers l'exterieur. Les 32 props
+partent dans les secteurs les plus libres mesures par la recon (az 330-360 et
+60-90, elargis a 298-360 / 0-8 / 55-100 pour ne pas creer un ilot de densite),
+en grappes pour buissons et fleurs, echelle et lacet inchanges. Separation
+minimale relocalise-vs-tout : **0,498** (membres de grappe, comparable aux
+0,555 deja livres) ; degagement d'eau le pire parmi les relocalises :
+**+0,412**. `max |x| = 34,15`, `max |z| = 33,90`, sous la borne 34,2.
+
+**Landmarks : min landmark-a-landmark 11,390** contre 13,108 livre -- plus
+serre, et c'est la geometrie qui l'impose (le trou de rayon 16 mange un coin de
+90 deg sur chacun des trois anneaux). **Regle « jamais deux silhouettes
+identiques adjacentes » tenue** : dans l'ordre des azimuts on lit desormais
+337,5 v1 -> **4,5 v0** -> **78,0 v2** -> **90,5 v0** -> 92,5 v1 -> 133 v0.
+
+### Liste nominative des relocalisations
+
+**Zone lac (12, echelle 0,8 autour du nouveau centre)** : greatlake
+(-52,82;-11,23)->(15,500;-19,000) ; ilots+landmarks (-50,48;-3,06)->(17,372;-12,464),
+(-63,65;-13,14)->(6,836;-20,528), (-47,34;-19,35)->(19,884;-25,496) ; pontons
+(-31,72;-12,70)->(32,380;-20,176), (-33,98;-1,63)->(30,572;-11,320),
+(-51,26;-5,80)->(16,748;-14,656), (-60,65;-12,61)->(9,236;-20,104),
+(-48,82;-17,15)->(18,700;-23,736).
+
+**Landmarks du plateau (3)** : v0 (0,00;-12,60)->(2,668;-33,895) ; v2
+(15,65;-14,59)->(33,257;-7,069) ; v0 (28,45;-11,79)->(24,499;0,214).
+
+**Scatter (32)** -- 25 tires de l'eau : tree (2,54;-10,02)->(-9,150;-22,579),
+(6,37;-9,85)->(-4,864;-32,623), (9,69;-8,22)->(-4,916;-28,293),
+(13,50;-5,40)->(-15,382;-23,505), (4,90;-13,20)->(32,686;-3,045),
+(4,41;-21,31)->(-14,680;-30,331), (5,03;-20,70)->(0,518;-30,863),
+(12,27;-20,78)->(-3,078;-30,357) ; bush (12,74;-9,10)->(-8,389;-19,556),
+(11,73;-9,59)->(-10,516;-19,380), (3,28;-20,15)->(-6,503;-21,030),
+(2,40;-19,84)->(29,785;4,998), (21,44;-19,21)->(27,719;5,473),
+(20,84;-19,69)->(30,404;2,806) ; rock (8,60;-13,30)->(-4,207;-25,133),
+(13,94;-19,72)->(-19,023;-26,294), (14,70;-20,22)->(-16,266;-26,760),
+(13,35;-21,21)->(-7,198;-28,845), (16,26;-4,22)->(33,637;0,285),
+(20,86;-10,67)->(-13,593;-18,711), (21,67;-9,07)->(29,234;-5,170),
+(4,85;-22,89)->(-27,292;-15,055), (3,23;-23,25)->(-12,846;-24,240) ; stump
+(6,58;-23,06)->(30,265;-1,506), (3,04;-12,43)->(-11,871;-15,057).
+**7 tires du lobe mort** : tree (-36,74;-25,93)->(-13,717;-21,226),
+(-35,66;-25,03)->(-21,942;-25,532) ; rock (-42,01;9,15)->(-6,792;-25,097),
+(-36,45;7,14)->(-1,916;-26,616) ; bush (-37,34;5,03)->(29,869;7,138) ; flower
+(-37,29;3,43)->(28,336;6,894), (-38,06;9,65)->(-9,713;-31,580).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Le lac se lit-il comme un LAC** a l'echelle reelle d'un telephone, ou comme
+   une grande tache pale au milieu du plateau ? Il occupe **16,42 % du plateau**
+   -- c'est le prix accepte, et personne ne l'a encore vu sur un ecran.
+2. **La berge sur la dalle du portail Battle** (chevauchement mesure 1,06 u,
+   anneau lisible au rendu). Le degager demande un autre centre.
+3. **47 bonds sur 303 marchent sur l'eau** contre 0 avant. Mesure, assume, sans
+   correctif possible dans ce lot.
+4. **Les landmarks a 11,390 l'un de l'autre** contre 13,108 livre -- plus
+   serres, impose par la geometrie du trou.
+5. ⚠️ **Le FPS simule BAISSE** (27,1-27,3 -> 24,6-26,3, trois runs de chaque
+   cote, plages disjointes). Cause la plus probable : le lac est desormais DANS
+   LE CADRE depuis le centre, donc un grand disque alpha est entre dans un
+   budget de fill rate qui etait de l'herbe vide. **Sous llvmpipe, le pire
+   proxy possible pour un GPU de telephone** -- ce chiffre sur-estime le cout
+   device d'un facteur inconnu.
+6. **Aucune couleur n'a bouge.** Le grand lac garde son `#CCFFFD` a 0,85, choisi
+   quand il TOUCHAIT le petit lac. Il en est maintenant a 18,849 u : la premisse
+   de l'echelle de saturation a change pour ce corps, et c'est exactement ce que
+   le lot de recolorisation suivant doit reprendre.
+
+## ⚠️ BLOCAGE GITHUB ACTIONS DU 26 AOUT 2026 : TRANSITOIRE, ET LA PREMISSE « QUOTA DE MINUTES » ETAIT FAUSSE — le repo est PUBLIC
+
+Ce lot ne modifie **aucun fichier de jeu et aucun fichier de CI** : son seul
+diff est cette section. Il est parti de `staging` (`25e54d9`, LAKE-MOVE-1),
+`origin/main` (`ae13b99`) est **intouche**, et `.github/workflows/web-build.yml`
+n'a pas ete effleure — le contournement manuel envisage n'a finalement pas eu
+lieu, pour la raison qui suit.
+
+### Le repo est PUBLIC : un quota de minutes ne peut structurellement pas etre la cause
+
+**Mesure via l'API GitHub, pas supposee** : `RajonRondoADKhey2095/Keepy` porte
+`"private": false` et `"visibility": "public"`. Sur un repo public, GitHub
+Actions est **gratuit et illimite sur runners standard** (`ubuntu-latest`,
+ce que ce workflow utilise) — le compteur de minutes gratuites ne s'applique
+qu'aux repos prives. **Toute explication du type « quota epuise, reset au
+prochain cycle de facturation » est donc exclue par construction ici, et ne
+doit pas etre reprise dans un futur brief.**
+
+### Ce que les runs echoues montraient reellement : le job n'obtenait PAS de runner
+
+Trois runs sur `staging` `25e54d9` ont echoue avant cette session — #249
+(`push`, 15:13 -> 15:29, `failure`), #250 (`workflow_dispatch`, 15:33,
+`startup_failure`) et #251 (`workflow_dispatch`, 15:42, `failure`). Leur
+signature commune, lue sur l'API et pas deduite :
+
+- le job `build-and-deploy` reste **`queued`**, sans jamais recevoir de
+  `runner_id` ;
+- `get_job_logs` avec `failed_only` rend **`"No failed jobs found"`** alors
+  que le run est `failure` — parce qu'aucun job n'a jamais tourne, donc il
+  n'existe aucun log d'etape a lire.
+
+C'est-a-dire : ce n'etait ni une erreur de build, ni un secret manquant, ni
+le workflow. C'etait l'attribution du runner elle-meme.
+
+### ⚠️ LE BLOCAGE S'EST LEVE TOUT SEUL — run #252 vert, ~2 h apres le dernier echec
+
+Un `workflow_dispatch` relance sur `staging` a **17:46:09** a obtenu un
+runner en **2 secondes** (`runner_id 1000001231`) et est alle au bout :
+**`conclusion: success`**, 17:46:09 -> 17:53:35.
+
+```
+Checkout                                17:46:15 -> 17:50:04   (3 min 49 s)
+Import project resources                17:50:34 -> 17:52:59
+Export Web build                        17:52:59 -> 17:53:04
+Verify export output                    17:53:04   success
+Deploy to Vercel [PRODUCTION -- main]   17:53:21   skipped     <- main intouche
+Deploy to Vercel [STAGING -- staging]   17:53:21 -> 17:53:32   success
+```
+
+**LAKE-MOVE-1 est donc deploye sur staging par la voie NORMALE.** Aucun
+`vercel deploy` manuel n'a ete emis, aucun alias n'a ete repointe a la main,
+et le pipeline permanent est byte-intouche.
+
+⚠️ **Consequence pour une future session : ne pas construire un contournement
+avant d'avoir retente un `workflow_dispatch`.** Ce blocage n'a laisse aucune
+trace exploitable (pas de log, pas de message d'erreur, pas d'etape rouge) et
+s'est resorbe sans intervention. Un simple re-declenchement l'a leve ; le
+contournement, lui, aurait coute un token Vercel que le sandbox n'a pas (voir
+plus bas) et un deploiement hors-CI a documenter pour toujours.
+
+⚠️ **Piege de lecture evite, et c'est la nuance deja consignee au lot RIDE-1
+qui a servi** : pendant le run #252, deux appels `list_workflow_jobs`
+successifs (`filter: "all"` puis `"latest"`) ont rendu une reponse
+**byte-identique**, figee sur « Checkout / in_progress » — exactement la forme
+du piege « API Actions perimee ». **Ce n'en etait pas un** : ce checkout a
+reellement dure **3 min 49 s** sur ce repo de 230 Mo. « L'etape est simplement
+lente » doit etre ecarte avant d'accuser l'API, dans les deux sens.
+
+### Verification SUR LE SERVICE, deux marqueurs, MISS/age 0 aux deux bouts
+
+| marqueur | AVANT (run #248) | APRES (run #252) |
+|---|---|---|
+| `CACHE_VERSION` | `1787751298` = **13:34:58** | **`1787766783` = 17:53:03** |
+| `index.pck` servi | **5 862 896** | **5 863 008** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de l'etape `Export Web build`**
+(17:52:59 -> 17:53:04), et les lectures d'apres portent `x-vercel-cache: MISS`
+avec `age: 0` et un `last-modified` colle a l'instant de la requete.
+
+⚠️ **Limite dite plutot que sous-entendue** : les deux lectures AVANT sont
+arrivees en `x-vercel-cache: HIT` avec un `age` de 9 110 et 9 278 s — donc
+**ce ne sont pas des mesures de fraicheur** au sens de la doctrine maison.
+Elles valent comme lecture d'etat parce qu'elles reproduisent exactement les
+deux valeurs que le brief donnait deja comme connues, et parce que le
+`CACHE_VERSION` qu'elles portent tombe dans la fenetre du run #248 — pas parce
+que la requete etait fraiche.
+
+### Build local reproduit a l'identique de la CI, en secours et comme controle independant
+
+Fait en parallele du run CI, avec les **memes versions que le workflow**
+(`GODOT_VERSION 4.3-stable`, templates `4.3.stable`), **tailles verifiees
+contre le `Content-Length`** avant extraction — **50 276 070** et
+**1 073 228 327** octets, aucune troncature silencieuse. Import headless
+**exit 0**, **24 `.scn`** (import complet verifie, pas suppose). Export Web
+release **exit 0**.
+
+`index.wasm` **35 376 909** / md5 **`af4a8fc2925d992348eb30deeeb54360`** et
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** — **identiques au
+fingerprint permanent** de ce depot, et identiques au `.wasm` servi. C'est LUI
+la preuve d'identite. `index.pck` local **5 863 040** contre **5 863 008**
+servi : **32 octets d'ecart**, l'instabilite de compression VRAM deja
+documentee entre deux exports distincts du meme commit, jamais offerte comme
+preuve.
+
+### ⚠️ AUCUN `VERCEL_TOKEN` N'EXISTE DANS LE SANDBOX — a savoir avant de planifier un deploiement manuel
+
+Verifie plutot que suppose : aucune variable `VERCEL_*` dans l'environnement,
+pas de `~/.vercel` ni de `.vercel/` dans le depot, et le CLI `vercel` n'est
+pas installe. Le token vit **uniquement** dans les secrets GitHub
+(`VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_PROJECT_ID`), que le workflow lit
+et qu'une session ne peut pas lire.
+
+Le serveur MCP Vercel, lui, est authentifie et permet de LIRE le projet et le
+site servi (`get_project`, `web_fetch_vercel_url`) — c'est par la que les
+marqueurs ci-dessus sont mesures, l'egress direct vers `*.vercel.app` restant
+refuse par le proxy de ce sandbox. Mais son `deploy_to_vercel` prend un
+**arbre de fichiers inline**, ce qui est inutilisable pour un build web Godot
+(`index.wasm` seul fait 35 Mo). **Un deploiement manuel exigerait donc que
+Mathieu fournisse un token**, et c'est le vrai cout du contournement qui a ete
+evite ici.
+
+### Reste ouvert
+
+Rien sur le deploiement : LAKE-MOVE-1 est en ligne sur
+`keepy-staging.vercel.app`, servi par le build du run #252, et le jugement
+device sur le lac deplace reste celui que le lot LAKE-MOVE-1 a laisse ouvert.
+**La cause racine du blocage Actions de 15:13-15:46 n'est PAS etablie** — elle
+n'a laisse aucun log, et le diagnostic cote facturation (spending limit,
+moyen de paiement) demande la Console GitHub, hors de portee d'une session.
+Si le symptome revient, la premiere chose a faire est de **relancer un
+`workflow_dispatch`** et de regarder si le job recoit un `runner_id`.
+
+## RECON SPAWN-LAKE : un second grand lac devant le spawn — GEOMETRIQUEMENT POSSIBLE, mais PAS a r=16 sans fusionner avec le premier (26 aout 2026)
+
+Branche `claude/spawn-lake-recon-phbzq6`, partie de `staging` (`8772f86`).
+**Mesure seule, aucune geometrie posee, aucune couleur changee** :
+`git diff --stat` contre `origin/staging` ne rapporte que
+`scripts/dev/SpawnLakeReconProbe.{gd,tscn}` et
+`scripts/dev/SpawnLakeCaptureProbe.{gd,tscn}` (nouveaux) plus ce document.
+Ni `HubBuilder.gd`, ni `hub_layout.tres`, ni `HubRegion.gd`, ni
+`KeepyHopper.gd`, ni `HubTapInput.gd`, ni `HubCamera.gd`. Regle n°1
+verifiee AU DEBUT : `git fetch --all --prune` + tri des refs par date +
+comparaison d'ARBRES (pas de noms) — `origin/staging` est la ref la plus
+recente du depot, aucune branche ne porte ce brief.
+
+Demande de Mathieu : AJOUTER un second lac (pas deplacer celui de
+LAKE-MOVE-1), rayon 16, devant le spawn, visible des l'entree. Methode :
+sweep geometrique offline en Python (meme doctrine que LAKE-MOVE RECON —
+"chosen by the python sweep... re-measured on the shipped hopper"), puis
+verification sur le VRAI moteur (`SpawnLakeReconProbe`, headless,
+`--fixed-fps 60`, KeepyHopper reel) et une VRAIE capture camera
+(`SpawnLakeCaptureProbe`, `xvfb` + `opengl3`, jamais `--headless` seul).
+
+### Q1 — SPAWN, MESURE sur la scene live
+
+`scenes/HubWorld.tscn` : le noeud `Keepy` ne porte AUCUN transform
+(`Vector3.ZERO` par defaut de `Node3D`) — confirme en lisant
+`Keepy.global_position` au boot sur la scene REELLEMENT instanciee :
+**`(0, 0, 0)`**. `Camera3D` a un `transform` fige dans la scene
+(`scripts/hub/HubCamera.gd:22`, `OFFSET = Vector3(0.0, 7.6, 8.9)`,
+`_wanted()` = position au sol de Keepy + `OFFSET`) : au spawn, camera a
+**`(0, 7.6, 8.9)`**, lu en direct sur le noeud instancie plutot que
+recalcule a la main.
+
+**Direction "devant"** — la camera ne pivote jamais (`HubCamera.gd`,
+rotation fixe, pas de `look_at`) : `forward = -basis.z = (0, -0.55919,
+-0.82904)`, soit **34,000 deg** de pitch vers le bas (`asin(0.55919)`,
+reproduit exactement le -34 deg documente dans `HubCamera.gd`) et une
+composante horizontale **pure -Z**. **"Devant Keepy a l'ecran" au spawn =
+l'axe -Z**, sans ambiguite : la composante horizontale du forward est
+`(≈0, -0.829)`, aucun decalage en X.
+
+Point au sol au centre de l'ecran, au spawn : **`(0, 0, -2.368)`** (calcul
+`camera + t*forward` avec `t` tel que `y=0`).
+
+Distances, mesurees sur la scene reelle :
+
+| | distance |
+|---|---|
+| spawn -> centre du plateau | **0,000** (le spawn EST le centre) |
+| spawn -> portail `chased` (-5,40;-4,60) | **7,094** |
+| spawn -> portail `quizz` (0;-7,20) | **7,200** |
+| spawn -> portail `battle` (5,40;-4,60) | **7,094** |
+
+**Formule de bearing validee AVANT d'etre utilisee, pas supposee** :
+`bearing = atan2(dx, -dz)` avec `(dx,dz) = cible - camera` reproduit au
+dixieme de degre pres les deux seuls chiffres deja publies dans ce depot
+sur cet axe — l'ancien grand lac `(-52,82;-11,23)` donne **-69,1 deg**
+(publie par LAKE-MOVE RECON) et le grand lac actuel `(15,5;-19,0)` donne
+**+29,1 deg** (publie par LAKE-MOVE-1). Les deux assertions passent dans
+`SpawnLakeReconProbe`.
+
+### Q2 — CARTE COMPLETE et PLACE RESTANTE, sur l'arbre LIVRE (post LAKE-MOVE-1)
+
+203 entrees de layout, relues via le script livre lui-meme (positions,
+rayons) : 3 portails, 15 landmarks (**12 sur le plateau, 3 sur les ilots
+du grand lac** — confirme `offshore` sur la scene reelle), 172 props de
+decor, 3 ilots, 5 pontons, et les 4 plans d'eau :
+
+| corps | centre | rayon eau | rayon berge |
+|---|---|---|---|
+| mare (`pond`) | (20,70;7,40) | 3,20 | 3,62 |
+| petit lac (`lake`) | (-25,10;-5,30) | 8,00 | 9,05 |
+| **grand lac (`greatlake`)** | **(15,50;-19,00)** | **16,00** | **17,30** |
+| ruisseau (`stream`) | 12 points, (17,58;6,67) -> (-18,54;-0,73) | largeur 1,20 | — |
+
+**Surface d'eau TOTALE actuelle : 1 086,82 u2 = 22,180 % des 4 900 u2**
+(mare 32,17 + petit lac 201,06 + grand lac 804,25 + ruisseau ~49,34 en
+approximation par corde — sous-estime legerement l'aire reelle du ruban
+spline, meme sens d'erreur que `_on_stream()` de `LakeMoveReconProbe.gd`).
+
+**Plus grand disque libre restant**, balaye au pas 0,5 sur tout le carre
+puis affine a 0,02 :
+
+| contrainte | rayon max | centre |
+|---|---|---|
+| (a) evite portails + eaux existantes seulement | **15,415** | **(-19,58;19,58)** |
+| (b) evite AUSSI les 12 landmarks du plateau | **11,391** | **(-6,44;23,60)** |
+
+⚠️ **Les deux meilleurs emplacements sont DERRIERE le spawn (z positif),
+pas devant** — z=+19,58 et z=+23,60 sont du cote OPPOSE a la direction
+"devant" (Q1 : devant = -Z). Ca dit deja, avant meme le sweep dirige de
+Q3, que la place libre du plateau n'est pas du cote ou Mathieu veut son
+second lac.
+
+### Q3 — FAISABILITE DU r=16 DEVANT LE SPAWN — GEOMETRIQUEMENT infaisable comme second lac SEPARE, MESURE
+
+**Lecture stricte du brief d'abord, honnetement** : la condition de
+declenchement du sweep degressif ("Si AUCUN centre r=16 ne degage les
+portails") est **FAUSSE au sens le plus etroit** — le sweep exhaustif au
+pas 0,5 sur tout le demi-plan devant (z<0) trouve **66 centres r=16 qui
+degagent les 3 portails**. Mais **AUCUN de ces 66 ne degage AUSSI les eaux
+deja en place** : verifie explicitement, **0/66** degagent a la fois les
+portails ET les banques de la mare, du petit lac, du grand lac et du
+ruisseau. C'est la vraie reponse a la question posee ("AJOUTER un lac, pas
+fusionner avec l'existant") — publiee franchement plutot que masquee
+derriere la lecture litterale qui aurait dit "oui, ca passe".
+
+**Le plus proche du spawn parmi les 66** — `(16,50;-18,00)` — est
+quasiment **superpose au grand lac existant** : distance eau-a-eau
+**+0,016** (quasi zero), banques **-1,284** (elles se CHEVAUCHENT). Le
+second candidat symetrique, `(-16,50;-18,00)`, mange lourdement le petit
+lac (`d_eau = -8,662`). **La zone "devant le spawn" est deja largement
+occupee par le grand lac lui-meme** — a r=16, il n'y a tout simplement pas
+la place d'en poser un second a cote sans toucher le premier.
+
+**Sur l'axe strict x=0 (droit devant, aucun decalage lateral) : AUCUN
+centre r=16 ne degage meme les portails** — verifie par balayage complet
+de la plage legale (`z` de -19 a -16) : les 7 positions testees echouent
+toutes sur le portail `quizz` (0;-7,2), qui se trouve litteralement sur le
+chemin direct. Un lac r=16 droit devant, sans decalage, est **impossible**
+avant meme de considerer les autres eaux.
+
+**Sweep degressif refait sous le CRITERE HONNETE** (portails ET toutes les
+eaux existantes, banque a banque, "devant" = z<0), comme le veut l'esprit
+de "ajouter" un second lac :
+
+| rayon | centres 100% propres trouves | le plus proche du spawn |
+|---|---|---|
+| 16 | **0** | — |
+| 14 | **0** | — |
+| 12 | **0** | — |
+| **10** | **142** | **(-12,00;-19,50)**, d(spawn)=22,94 |
+| 8 | 527 | (-9,50;-13,50), d(spawn)=16,68 |
+
+**r=10 est donc "le plus grand qui tient devant le spawn"** au sens
+demande par le brief (portails + eaux existantes toutes degagees). Detail
+complet du centre retenu, `(-12,00;-19,50)` r=10, mesure sur le layout
+livre :
+
+- portails : **aucun chevauchement**
+- mare : distance eau **29,143** / berge **28,723**
+- petit lac : distance eau **1,320** / berge **0,270**
+- grand lac : distance eau **1,505** / **berge 0,205** (tres proche —
+  voir l'avertissement Q6 plus bas)
+- ruisseau : distance **9,277**
+- landmarks recouverts : **2** (`(-15,94;-14,87)` a 6,08 ; `(-11,557;
+  -27,901)` a 8,41 — ces deux sont a l'INTERIEUR du disque)
+- props recouverts : **27** (arbres, buissons, rochers, fleurs, souches —
+  liste complete dans le probe)
+- surface marchable perdue : **314,16 u2 = 6,411 %** des 4 900
+- surface d'eau TOTALE apres ajout : **1 400,98 u2 = 28,591 %**
+
+⚠️ **Le second candidat retenu pour contraste — `(16,50;-18,00)` r=16, le
+plus proche du spawn parmi les 66 "portails seuls"** — est aussi teste
+(voir Q4/Q5) precisement PARCE QU'il illustre le risque de fusion : ses
+banques chevauchent celles du grand lac de 1,284 u.
+
+### Q4 — MARCHER SUR L'EAU, MESURE sur le VRAI KeepyHopper (`--headless --fixed-fps 60`)
+
+`SpawnLakeReconProbe` reproduit d'ABORD, au bond et a la seconde pres, la
+diagonale (66 hops / 1 122 frames / 18,700 s) et l'anti-diagonale de
+LAKE-MOVE-1 (66 hops, 21 atterrissages sur le grand lac) avant de publier
+quoi que ce soit de neuf — **0 echec** sur les deux controles.
+
+Les 10 trajets de LAKE-MOVE + les 3 allers spawn -> portail, tous marches
+UNE fois (la chaine de bonds ne depend d'aucun candidat — un lac ne peut
+pas courber une corde) :
+
+| trajet | hops | secondes |
+|---|---|---|
+| spawn -> portail chased/quizz/battle (les 3) | **5** chacun | **1,417 s** chacun |
+| diagonale du carre | 66 | 18,700 |
+| anti-diagonale | 66 | 18,700 |
+
+**Atterrissages sur chaque candidat, sur l'ensemble des 13 trajets (350
+atterrissages au total)** :
+
+| candidat | atterrissages sur l'eau | trajets touches | spawn->portail touches |
+|---|---|---|---|
+| **retenu, r=10 @ (-12,-19,5)** | **11 / 350 (3,1 %)** | seulement la diagonale du carre (11/66) | **0 / 15** |
+| r=16 "portails seuls" @ (16,5;-18) | **42 / 350 (12,0 %)** | anti-diagonale (21/66) + centre->coin SE (21/33) | **0 / 15** |
+
+**Aucun des deux candidats ne touche jamais les 3 allers-retours
+spawn->portail** — les portails sont trop pres du spawn (7,1-7,2 u) pour
+que ces trajets courts croisent un candidat pose plus loin. Le candidat
+r=16 "portails seuls" touche **3,8x plus** de bonds que le candidat r=10
+retenu, coherent avec son chevauchement mesure du grand lac existant :
+ses 21 atterrissages sur l'anti-diagonale sont EXACTEMENT les 21 deja
+comptes sur le grand lac lui-meme en Q4-controle — c'est la meme eau.
+
+### Q5 — VISIBILITE A L'ENTREE, capture REELLE (`xvfb` + `opengl3`, jamais `--headless` seul)
+
+`SpawnLakeCaptureProbe` : Keepy pose exactement au spawn, camera reelle,
+viewport 1080x1920. Fraction visible mesuree par
+`Camera3D.is_position_in_frustum()` (le test EXACT du moteur, pas une
+trigonometrie remaniee a la main) sur une grille de ~1250 points couvrant
+chaque disque.
+
+| | bearing | distance | fraction du disque dans le cadre |
+|---|---|---|---|
+| **grand lac existant** (arbre LIVRE, avant tout ajout) | +29,1 deg | 31,92 | **34,5 %** |
+| **candidat retenu r=10 @ (-12,-19,5)** | -22,9 deg | 30,83 | **47,0 %** |
+
+**VERDICT Q5 : OUI, le candidat retenu occupe le cadre des l'entree dans
+le hub, et une PLUS GRANDE fraction de son disque est visible que celle du
+grand lac deja en place** (47,0 % contre 34,5 %). Deux captures
+enregistrees (`before_shipped_from_spawn.png`, l'arbre livre depuis le
+spawn ; `after_candidate_from_spawn.png`, le candidat dessine ad-hoc par
+le probe, jamais ecrit dans le layout) confirment a l'image : le grand lac
+existant reste visible en haut a droite (comme documente par LAKE-MOVE-1),
+et le candidat apparait a gauche, **les DEUX plans d'eau visibles dans le
+MEME cadre au tout premier instant**.
+
+⚠️ **La capture montre des arbres/rochers/une souche visuellement DANS le
+candidat** — attendu et sans consequence pour cette recon : le disque est
+dessine tel quel par le probe, sans deplacer aucun des 27 props qu'il
+recouvre (Q3), exactement comme LAKE-MOVE RECON l'avait fait pour ses
+propres candidats. Une installation reelle relocaliserait ces props,
+comme LAKE-MOVE-1 l'a fait pour le grand lac.
+
+### Q6 — COULEUR UNIFORME (`#40E0D0` partout) — question DOCUMENTEE, PAS TRANCHEE
+
+Adjacences eau-a-eau, relues sur les constantes reellement construites par
+`HubBuilder`/`HubRegion` (pas recopiees) :
+
+| paire | distance (bord a bord) | touchent ? |
+|---|---|---|
+| mare <-> ruisseau | **-0,596** | **OUI** (chaine intacte, identique a LAKE-MOVE-1) |
+| ruisseau <-> petit lac | **-0,605** | **OUI** (chaine intacte, identique a LAKE-MOVE-1) |
+| petit lac <-> grand lac | +18,849 | non |
+| mare <-> grand lac | +7,707 | non |
+| grand lac <-> ruisseau | +9,154 | non |
+
+**La chaine a trois maillons (mare-ruisseau-petit lac) est RE-VERIFIEE
+intacte**, au millieme pres des chiffres publies par LAKE-MOVE-1 —
+`SpawnLakeReconProbe` l'asserte explicitement (2 checks, 0 echec). Le
+grand lac reste isole de tout, comme documente.
+
+**Co-visibilite (calculee sur la formule de bearing validee en Q1, sur les
+positions marchables reelles de `HubRegion`, pas une simple mesure de
+distance)** : contrairement au sweep pre-LAKE-MOVE de WATER-HUE-1 (qui ne
+trouvait que 3 paires co-visibles), **TOUTES les paires sont desormais
+co-visibles depuis AU MOINS une position** — consequence directe du grand
+lac deplace a l'INTERIEUR du carre :
+
+| paire | co-visible | % des positions marchables scannees |
+|---|---|---|
+| mare <-> petit lac | oui (sliver rare) | 0,1 % |
+| mare <-> grand lac | oui | 19,3 % |
+| petit lac <-> grand lac | oui | 14,8 % |
+| grand lac <-> ruisseau (point milieu) | oui | 12,5 % |
+| mare <-> ruisseau | oui (TOUCHENT) | trivial |
+| petit lac <-> ruisseau | oui (TOUCHENT) | trivial |
+
+**Ce qu'une couleur unique produirait** : si les 3 corps qui se touchent
+(mare + ruisseau + petit lac) portent la meme teinte, ils se liraient
+comme UNE masse continue de **282,57 u2** (somme des disques, le ruisseau
+compte en approximation de corde). Le grand lac resterait visuellement
+separe de cette masse (aucun contact), MAIS —
+
+⚠️ **LE CANDIDAT Q3 RETENU (r=10 @ -12,-19,5) CHANGE CE CALCUL, et c'est
+un couplage que Q3 seul n'aurait pas revele** : sa **banque** n'est qu'a
+**0,205** de celle du grand lac existant (Q3, ligne "greatlake bank" =
+0,205) — quasiment collees. **Si Mathieu installe ce candidat ET une
+couleur uniforme, le second lac fusionnerait visuellement avec le
+premier** (masse combinee ≈ 804,25 + 314,16 ≈ 1 118 u2, quasi continue),
+ce qui est exactement l'inverse de "un SECOND lac distinct" que la demande
+visait. **Non tranche ici, publie pour que Mathieu le pese** : soit
+reculer legerement le candidat r=10 (au prix de moins bien degager le
+spawn), soit accepter la fusion visuelle des deux grands lacs, soit ne pas
+appliquer la couleur uniforme a cette paire precise.
+
+**NE RIEN INSTALLE** — ni geometrie ni couleur, conforme a la consigne.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre le `Content-Length` — 50 276 070
+et 1 073 228 327 octets, aucune troncature). Import headless **exit 0**,
+**24 `.scn`** (import complet verifie, pas suppose). Export Web release
+**exit 0, 0 erreur GDScript** — export unique et propre (`build/` et
+`.godot/` supprimes avant, la lecon deja consignee sur l'auto-contamination
+d'un second export sans nettoyage).
+
+`index.wasm` **35 376 909 octets**, md5 **`af4a8fc2925d992348eb30deeeb54360`**
+et `index.js` md5 **`4e08904b1b7107858246af44b602067b`** — identiques au
+fingerprint deja consigne pour tout lot qui ne touche pas le code moteur,
+coherent : ce lot n'ajoute que deux sondes dev-only. `index.pck` 5 863 040
+octets (dans la plage deja documentee comme instable d'un export a l'autre,
+jamais offert comme preuve). **Piege payload tenu, verifie sur le pack et
+pas sur le filtre** : sur **225** lignes `Storing File`, **0** pour
+`res://scripts/dev`, `res://assets_source`, `res://docs`, `res://web/` ou
+`firebase.json`, et **0** occurrence de `SpawnLake` dans tout le pack.
+
+Sondes : `ProbeTimeoutAudit` (**47 sondes scenes** — 45 + les deux
+nouvelles, toutes armees, `SpawnLakeReconProbe` et `SpawnLakeCaptureProbe`
+listees explicitement avec `ProbeWatchdog.arm()`), `AssetContractAudit`
+(**12/12 visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe` — **toutes exit 0**, et **BYTE-IDENTIQUES sur les DEUX
+flux (stdout ET stderr)** contre `origin/staging` en worktree separe, meme
+graine 20260806, `--fixed-fps 60` : ce lot ne touche a rien que ces quatre
+sondes lisent, et l'identite au bit pres le dit plus fort qu'un simple
+verdict identique.
+
+⚠️ **`SpawnLakeReconProbe` tourne EN HEADLESS, pas sous `xvfb`** — elle ne
+lit aucun pixel (positions et transforms seulement), meme lecon deja
+consignee pour `LakeMoveReconProbe` et `PursuerFramingAudit`.
+`SpawnLakeCaptureProbe`, elle, tourne SOUS `xvfb` + `opengl3` : elle lit
+des pixels via `is_position_in_frustum()` et des captures PNG, et
+`--headless` forcerait le driver DUMMY (surface vide, faux vert deja
+documente pour cette famille de piege).
+
+### Reste ouvert — c'est l'arbitrage de Mathieu, pas une question technique
+
+1. **r=16 devant le spawn n'existe pas comme second lac SEPARE.** Les
+   options chiffrees : accepter la fusion visuelle avec le grand lac
+   existant (candidat "portails seuls" a (16,5;-18), qui n'est alors plus
+   vraiment un SECOND lac) ; ou reduire le rayon a **10** (le plus grand
+   qui degage tout, a (-12,-19,5), 6,41 % de plateau perdu, 2 landmarks et
+   27 props a relocaliser) ; ou a **8** si Mathieu veut plus de marge
+   (4,10 % perdu, 1 landmark, 20 props).
+2. **Le candidat r=10 est deja visible a 47,0 % depuis le spawn**,
+   legerement mieux que le grand lac existant (34,5 %) — confirme a
+   l'image, pas seulement au chiffre.
+3. **La banque du candidat r=10 n'est qu'a 0,205 du grand lac existant** —
+   couplage direct avec Q6 : une couleur uniforme fusionnerait
+   visuellement les deux grands lacs. A peser AVANT de trancher Q6.
+4. **Marcher sur l'eau reste sans correctif** (deja documente par LAKE-MOVE
+   RECON) : le candidat retenu ajoute 11 atterrissages sur 350 a la chaine
+   de trajets deja mesuree, sur la seule diagonale du carre.
+5. **Aucun test device** : les captures sont un rendu llvmpipe sous xvfb,
+   pas un ecran de telephone.
+
+## SPAWN-LAKE-1 : UN SECOND LOBE D'EAU DEVANT LE SPAWN, ET UNE SEULE TEINTE POUR TOUTE L'EAU DU PLATEAU (26 aout 2026)
+
+Branche `claude/spawn-lake-second-lobe-jcd2qi`, partie de `staging`
+(`e6e9083`). Regle n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri
+des refs distantes par date, comparaison d'ARBRES et pas de noms —
+`origin/staging` est la ref la plus recente du depot, la branche de recon
+`claude/spawn-lake-recon-phbzq6` porte **exactement l'arbre de
+`origin/staging`** (donc deja mergee), **aucune session concurrente**.
+`origin/main` = `ae13b99`, conforme au brief.
+
+**CONTRAINTES DURES TENUES, verifiees par `git diff --stat` et pas
+affirmees** : `KeepyHopper.gd`, `HubCamera.gd`, `HubTapInput.gd` et
+`resources/world/swamp_palette.tres` **ne sont PAS dans le diff**.
+`PLATEAU_HALF_EXTENT` reste **35.0**. Le grand lac de LAKE-MOVE-1 n'est ni
+deplace ni redimensionne. Geometrie et couleur sont **deux commits
+distincts**, comme demande.
+
+Decision de Mathieu, prise sur les mesures de la recon SPAWN-LAKE et **non
+re-arbitree ici** : r=16 devant le spawn est infaisable (0 centre sur 66 ne
+degage a la fois les portails ET les eaux en place ; 14 et 12 n'ont aucun
+centre), donc **r=10 a (-12,00 ; -19,50)**, le plus grand rayon propre et
+le plus proche du spawn des 142 candidats.
+
+### ⚠️ LA PREMISSE « LES BERGES SERONT A 0,205 » EST FAUSSE — les deux paires de berges SE CHEVAUCHENT
+
+C'est le premier chiffre du brief a ne pas survivre a la mesure, et il vaut
+la peine d'etre dit precisement parce que **la conclusion visuelle qu'il
+portait reste juste, pour une raison plus forte**.
+
+Le `0,205` de la recon est la distance entre la **BERGE du grand lac** et
+l'**EAU du candidat** — le candidat n'y avait pas de berge, c'etait un
+disque nu dessine par la sonde. Un vrai corps de la famille `greatlake`
+porte `GREATLAKE_BANK_MARGIN = 1,30`, donc son anneau va jusqu'a **11,30** :
+
+| paire | eau <-> eau | berge <-> eau du voisin | **berge <-> berge** |
+|---|---|---|---|
+| nouveau lobe <-> **grand lac** | **+1,5045** | +0,2045 | **-1,0955 (CHEVAUCHENT)** |
+| nouveau lobe <-> **petit lac** | **+1,3197** | **+0,0197** | **-1,0303 (CHEVAUCHENT)** |
+| nouveau lobe <-> mare | +29,14 | +27,84 | +27,42 |
+| nouveau lobe <-> ruisseau | +9,2767 | — | — |
+
+**Aucune berge ne couvre jamais l'eau du voisin** (les deux colonnes du
+milieu sont positives), donc rien d'opaque ne vient mordre une surface
+alpha. Ce qui se chevauche, ce sont deux anneaux **opaques de la meme
+couleur** (`POND_BANK_COLOR`), a des hauteurs differentes : le plus haut
+gagne, la couture est invisible, et le resultat est une **rive commune plus
+large** entre les deux lobes — exactement ce que l'intention « deux lobes
+d'une seule masse » demande.
+
+⚠️ **MAIS LA MESURE DIT AUSSI QUE LE BRIEF SE TROMPE DE NOMBRE DE MASSES.**
+Le nouveau lobe est **PLUS PRES du petit lac (1,3197) que du grand lac
+(1,5045)**, et sa berge n'est qu'a **0,0197** de l'eau du petit lac. Avec
+une couleur uniforme, la chaine ne se coupe donc pas en deux : elle se
+**FERME**. mare — ruisseau — petit lac — **nouveau lobe** — grand lac
+forment un seul systeme quasi continu, et non les DEUX masses que le brief
+annonce. Publie tel quel, non corrige : ecarter le lobe du petit lac
+voudrait dire un autre centre, c'est-a-dire re-arbitrer le placement que le
+brief interdit explicitement de re-arbitrer.
+
+### ⚠️ LE BRIEF SUPPOSAIT QUE `HubRegion` GERAIT DEJA L'EXCLUSION — c'etait vrai pour UN lac
+
+`HubRegion` soustrayait **un** disque, code en dur. Un second corps de la
+meme famille n'y serait pas entre, et un tap sur sa surface aurait envoye
+Keepy marcher dedans — sans erreur. La soustraction devient donc une
+**LISTE** (`_lakes`), `in_lake_water`/`contains`/`clamp_to` bouclent
+dessus, et un troisieme lobe serait une ligne de plus dans cette table.
+
+Le builder **demande son rayon a `HubRegion`** au lieu d'en porter une
+copie : le trou marchable et le disque dessine doivent etre un seul cercle,
+et deux nombres pour un cercle est exactement comme une dalle de berge
+finit par trancher un prop que personne n'avait prevenu. Un centre que
+`HubRegion` ne connait pas est une **erreur** et ne dessine rien.
+
+### EVICTION : 29 entrees, 0 supprimee
+
+Critere : toute entree dont **l'empreinte au sol** touche la nouvelle eau —
+**2 landmarks + 27 props**, exactement les chiffres de la recon (23 par le
+centre, +4 par l'empreinte seule). Relocalisees dans les secteurs
+reellement libres, **mesures et pas supposes** : les azimuts 330-360 que le
+brief proposait sont justement ceux que le nouveau lobe mange (son centre
+est a l'azimut 328,4), et 30-60 sont sous le grand lac. L'arc libre reel
+est **az 60-100 et 115-275**.
+
+| contrainte | valeur mesuree |
+|---|---|
+| separation d'empreinte impliquant une relocalisee | **+0,4936** (LAKE-MOVE-1 : 0,498) |
+| pire degagement d'eau parmi les relocalisees | **+0,4409** (LAKE-MOVE-1 : 0,412) |
+| `max abs(x)` / `max abs(z)` | **31,583 / 32,682** (borne 34,2) |
+| landmark <-> landmark minimum | **11,391** (inchange, paire pre-existante) |
+
+**Densite strictement degressive**, et c'est ce qui a fixe les quotas (19
+entrees en bande 20-27, 8 en bande 27-35) : apres eviction seule la bande
+20-27 tombait SOUS la bande 27-35, donc tout renvoyer vers l'exterieur
+aurait casse la doctrine.
+
+| bande | avant | apres |
+|---|---|---|
+| r 0-10 | 12,10 | **12,10** |
+| r 10-20 | 5,84 | **4,99** |
+| r 20-27 | 2,90 | **3,39** |
+| r 27-35 | 2,76 | **2,95** |
+
+**Regle « jamais deux silhouettes de landmark identiques adjacentes »
+tenue**, bouclage compris : 4,5 v0 -> 78,0 v2 -> 90,5 v0 -> 92,5 v1 ->
+**113,5 v2** -> 133,0 v0 -> 157,5 v1 -> 177,3 v2 -> **193,0 v1** -> 227,5
+v0 -> 247,5 v2 -> 271,8 v1 -> (retour 4,5 v0).
+
+### COULEUR UNIFORME : #40E0D0 sur les CINQ corps
+
+La famille B de WATER-HUE-2 est **supprimee**, pas ajustee. Elle separait
+quatre corps par la SATURATION uniquement parce que trois se touchent ;
+Mathieu a juge le resultat sur device (ruisseau delave, grand lac
+« glacier »). `#40E0D0` etait deja, exactement, l'albedo du petit lac.
+
+**Consequence dite franchement : la couleur partagee laisse l'ALPHA comme
+SEUL levier.**
+
+### ⚠️ L'ALPHA EST BALAYE, JAMAIS RESOLU — et deux corps NE PASSENT PAS
+
+`scripts/dev/WaterAlphaSweep.tscn` (nouvelle, **rapporte, ne gate rien**)
+mesure chaque pas de 0,05 contre le sol du hub, par **masque de rendu** par
+corps (une passe d'identification rend la cible en blanc opaque, fog coupe,
+le reste en noir ; un pixel appartient au corps ssi il revient exactement
+255,255,255). Une fenetre fixe est inutilisable ici : l'eau est alpha sur sa
+propre berge et le ruisseau est un ruban vu de biais.
+
+⚠️ **Les corps sont identifies par leur CENTRE de layout, jamais par leur
+couleur** — la couleur a cesse d'etre un identifiant a l'instant ou les
+cinq corps ont pris le meme albedo. Meme correction appliquee a
+`LakeZoneProbe` (sa pile de hauteurs matchait sur `GREATLAKE_WATER_COLOR`,
+qui designe desormais DEUX lobes).
+
+Sol du hub mesure par vue : **Lrel 0,0741 a 0,0815**.
+
+| corps | alpha livre | pire vue ou le corps est SUJET |
+|---|---|---|
+| mare | **0,95** | 3,22:1 *(0,90 -> 2,99, sous le plancher)* |
+| petit lac | **0,95** | 3,04:1 *(0,90 -> 2,82)* |
+| **grand lac** | **0,95** | **3,14:1** dans sa propre vue |
+| **nouveau lobe** | **0,95** | **3,22:1** dans sa propre vue |
+| ruisseau | **0,90** | 3,09:1 *(0,85 -> 2,91)* |
+
+**Le ruisseau est le seul sous 0,95, et ce n'est pas un arrondi** : il n'a
+pas de berge sous lui et se melange directement sur le SOL, la ou les
+quatre disques se melangent sur leur propre anneau olive sombre.
+
+⚠️ **LES DEUX GRANDS LOBES NE FRANCHISSENT PAS 3,0:1 DANS TOUTES LES VUES
+OU ILS SONT VISIBLES, ET AUCUN ALPHA JUSQU'A 1,00 N'Y CHANGE RIEN.** Publie
+plutot que sauve :
+
+| vue | corps | distance camera | fog | meilleur (a=1,00) |
+|---|---|---|---|---|
+| pond | grand lac | 49,6 u | 54,8 % | **2,54:1** |
+| twolobes | grand lac | 41,7 u | 48,7 % | **2,89:1** |
+| laketail | nouveau lobe | 45,1 u | 51,4 % | **2,68:1** |
+| twolobes | nouveau lobe | 42,2 u | 49,1 % | **2,87:1** |
+
+C'est le **fog exponentiel** (`hub_fog_density` 0,016 vers un vert quasi
+noir), pas la couleur : a ces distances il a deja remplace la moitie de la
+surface avant que l'alpha ait son mot a dire, et il fait la meme chose a
+tout objet opaque a cette portee. **0,95 est le plus petit pas qui franchit
+le plancher la ou le corps est le SUJET** ; pousser a 1,00 achete un echec
+ET coute la translucidite qui fait qu'un lac se lit comme un trou dans le
+sol plutot que comme une marque dessus — le defaut deja signale a 0,96 sur
+le petit lac par WATER-HUE-2. La couleur n'a **pas** ete deviee en douce
+pour sauver le chiffre.
+
+**Passe de CONFIRMATION** : la sonde accepte `--alphas=0.90,0.95` et a ete
+rejouee sur les **constantes reellement livrees** plutot que sur un
+override d'execution. Elle reproduit la table au centieme.
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0**, **24 `.scn`** des deux cotes. Boot headless de `HubWorld.tscn`
+**exit 0, 0 erreur, 0 `push_warning`** — la confirmation A L'EXECUTION que
+les 204 entrees sont coherentes avec leur drapeau `offshore`. Export Web
+release **exit 0**, **0 SCRIPT/Parse Error**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+5 864 288 (**marqueur, jamais preuve d'identite** : le meme arbre a donne
+5 864 272 a l'export precedent, 16 octets d'ecart, enieme illustration de
+l'instabilite deja consignee). **Piege payload verifie sur le pack et pas
+sur le filtre** : sur **225** lignes `Storing File`, **0** pour
+`res://scripts/dev`, `res://assets_source`, `res://docs`, `res://web/`,
+`res://build` ou `firebase.json`, et **0** occurrence de `WaterAlphaSweep`
+dans le `.pck`.
+
+| # | verdict | methode |
+|---|---|---|
+| **[a]** | **diagonale 66 hops / 1 122 frames / 18,700 s, INCHANGEE**, et toujours le pire cas ; anti-diagonale 18,700 s aussi | vrai `KeepyHopper`, `--fixed-fps 60` — **MESURE des deux cotes** |
+| **[b]** | **11 / 350 atterrissages sur le nouveau lobe (3,1 %)**, sur la seule diagonale du carre ; **0 / 15** sur les 3 allers spawn -> portail | 13 trajets, vrai hopper — **MESURE** |
+| **[c]** | aucun portail recouvert : chased **+3,65**, quizz **+4,53**, battle **+10,26** (dalle 1,35 contre la BERGE) | geometrie sur le layout livre — **MESURE** |
+| **[d]** | ni mare (+29,14), ni ruisseau (+9,28), ni petit lac (+1,32) recouverts — **mais berge du lobe a +0,0197 de l'eau du petit lac**, voir plus haut | idem — **MESURE** |
+| **[e]** | **16/16 taps resolus sur la terre ferme** (8 azimuts par lobe), tous projetes dans le viewport | `HubTapInput._handle_point` livre, fenetre reelle sous `xvfb` — **MESURE** |
+| **[f]** | draw nodes hors portails **96 -> 98** (+2 : la berge et l'eau du lobe), total **102 -> 104**, 9 MultiMesh tous `TRANSFORM_3D` | comptage de l'arbre `Props` vivant des deux cotes — **MESURE** |
+| **[g]** | ligne ajoutee a `docs/HUB_PERF_BASELINE.md` : construction 47,55-63,07 -> 48,91-51,81 ms, **FPS 14,3-15,0 -> 14,4-15,4 (les plages SE CHEVAUCHENT, pas de baisse)** | `HubPerfBaseline` x3 des deux cotes, lances UN A LA FOIS — **MESURE** |
+| **[h]** | 3 vues avant/apres sous `docs/hub-shots/{before,after}_{spawn,junction,chain}.png` | offscreen 1080x1920, vraie camera du hub, `xvfb` + `opengl3` — **MESURE** |
+| **[i]** | eau totale **1 086,82 -> 1 400,98 u2**, **22,180 % -> 28,591 %** des 4 900 ; 314,16 u2 = **6,411 %** de sol marchable perdu | geometrie — **MESURE** |
+
+⚠️ **CONTRE-INTUITIF ET PUBLIE TEL QUEL : le FPS simule ne BAISSE PAS**,
+contrairement a LAKE-MOVE-1 ou l'arrivee du grand lac dans le cadre avait
+coute 27,1-27,3 -> 24,6-26,3. Explication la plus probable : la sonde
+echantillonne depuis le CENTRE du plateau, ou le grand lac occupe deja le
+cadre — le second lobe ajoute donc de l'alpha a un budget qui payait deja
+de l'eau, pas a de l'herbe vide. ⚠️ **Et ces 14-15 fps ne sont PAS
+comparables aux 27 des lignes precedentes du fichier** : autre sandbox.
+Seule la paire AVANT/APRES d'un meme bloc partage une machine.
+
+**Sondes, toutes exit 0** : `LakeZoneProbe` (sous `xvfb`, PHASE REGION /
+GEOMETRY / TAP / CROSSING), `ProbeTimeoutAudit` (**48 sondes scenes** : 47
++ `WaterAlphaSweep`, retour exact a la baseline apres retrait des deux
+sondes jetables), `AssetContractAudit` (**12/12 visuels, 0/10 colliders
+deplaces**), `DeathModelAudit`, `ChargerShapeProbe`.
+
+⚠️ **UNE ASSERTION QUE J'AI ECRITE EST PARTIE ROUGE, ET C'ETAIT LA SONDE**
+— « chaque rive de lobe est marchable » echouait sur **7 des 32 points de
+rive testes**. Cause mesuree et non devinee : `Vector3` est en **float32**,
+`in_lake_water` compare STRICTEMENT au rayon, et un point construit comme
+`centre + dir*rayon` retombe **9,54e-07 A L'INTERIEUR** de son propre
+cercle. Ce que la region promet reellement, c'est que la sortie de
+`clamp_to` est de la terre — et `clamp_to` decale de 0,001, precisement
+pour ca. L'assertion gate donc la promesse au lieu d'un cas de bord
+irrepresentable.
+
+### RESTE OUVERT — jugement device, seul juge
+
+1. **Est-ce que deux lobes turquoise separes par 1,5 u lisent comme UNE
+   masse en deux lobes**, ou comme deux lacs qu'on a rates de peu ? C'est
+   l'intention explicite du lot, et aucune sonde ne la juge.
+2. ⚠️ **La chaine se ferme** (voir plus haut) : avec la teinte unique, les
+   cinq corps forment probablement un seul systeme continu et non deux
+   masses. Mesure, publie, **non corrige**.
+3. **Les deux grands lobes a 2,54-2,89:1 vus d'en face du plateau.**
+   Mesure, argumente par le fog, sans correctif possible a couleur fixe.
+4. **28,6 % du plateau est de l'eau** et **11 bonds sur 350 marchent dessus
+   en plus**. Marcher sur l'eau n'a toujours aucun correctif : il faudrait
+   un evitement dans `KeepyHopper`, qui n'existe nulle part.
+5. Inchange et toujours ouvert : la berge du grand lac qui passe sur la
+   dalle du portail Battle (1,061 u), et les 6 props dans l'eau du petit
+   lac.
+
+### Deploiement staging de SPAWN-LAKE-1 (palier 1, automatique)
+
+`staging` **`ab37db0`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `5044abdf` des deux cotes, `git diff` vide, verifie
+AVANT le push). CI run **#255** (id 33009737566) **verte** -- `Import project
+resources` 20:19:11 -> 20:21:27, `Export Web build` **20:21:27 -> 20:21:32**,
+`Deploy to Vercel [STAGING -- staging]` **succes** (20:21:48 -> 20:24:29),
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ae13b990...`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs independants
+et dans les DEUX sens** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787771357` = **19:09:17** (run #254) | **`1787775691` = 20:21:31** *(a l'interieur de l'etape `Export Web build`, 20:21:27 -> 20:21:32)* |
+| `index.pck` servi | **NON MESURE** *(voir ci-dessous)* | **5 864 560** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+⚠️ **Le second marqueur n'a de valeur « avant » sur AUCUNE lecture, et c'est
+un manque de cette session plutot qu'un chiffre a citer** : `index.html` n'a
+pas ete relu sur le service avant le merge, donc l'`index.pck` servi par le
+build precedent n'existe nulle part. Il n'est pas reconstitue depuis un log de
+CI ni depuis un export local -- ce serait un chiffre d'une autre provenance
+presente comme une mesure du service. La bascule reste prouvee par le
+`CACHE_VERSION`, lu aux deux bouts.
+
+Les deux lectures « apres » portent **`x-vercel-cache: MISS` et `age: 0`**,
+`last-modified` colle a l'instant de la requete. L'epoch servi tombe **dans la
+fenetre d'export du run #255** : l'alias sert bien ce build.
+
+⚠️ **La valeur « avant » du `CACHE_VERSION` a ete lue sur un `HIT` a
+`age: 4070`, et c'est dit plutot que maquille** : elle est valable comme
+**VALEUR** (elle est anterieure au push, donc c'est bien l'ancien build), mais
+**ce n'etait PAS une mesure de fraicheur** au sens de la regle permanente. La
+bascule est prouvee par la lecture MISS/age 0 d'apres et par l'horodatage de
+l'epoch, pas par cette lecture-la.
+
+⚠️ **`index.pck` a de nouveau trois valeurs pour le meme contenu de jeu** :
+**5 864 288** a l'export local propre de cette session, **5 864 560** servi par
+la CI. C'est l'instabilite permanente deja consignee -- le `.pck` est un
+marqueur « nouveau build », **jamais** une preuve d'identite. La preuve
+d'identite est `index.wasm` (**35 376 909**, md5
+`af4a8fc2925d992348eb30deeeb54360`), identique des deux cotes comme il doit
+l'etre pour un lot qui ne touche pas le code moteur.
+
+⚠️ **L'API GitHub Actions a de nouveau servi un etat PERIME** : `get_workflow_run`
+rendait `status: "in_progress"` avec `updated_at` fige a **20:18:34** alors que
+le deploiement etait deja tombe (l'export s'etait termine a 20:21:32 et l'alias
+servait deja le nouveau `CACHE_VERSION` a 20:24:41). **C'est le marqueur servi
+qui a tranche**, comme aux runs #201, #202, #226, #229 et #232 ; l'appel
+`list_workflow_jobs` avec `filter: "all"` a ensuite confirme
+`conclusion: success` et le detail des 18 etapes. Enieme reproduction du piege
+deja consigne : ne jamais conclure d'un seul appel, et ne jamais lire un etat
+de CI sans regarder son horodatage.
+
+## WATER-WALK RECON : ce qu'un ARRET A LA BERGE couterait -- MESURE, aucun code de jeu touche (26 aout 2026)
+
+Branche `claude/keepy-water-collision-recon-6w1a0a`, partie de `staging`
+(`2ba12e0` ; `main` = `ae13b99`, les deux exactement comme le brief
+l'annoncait). **Recon bloquante : ce lot ne modifie AUCUN fichier de jeu.**
+`git diff --stat` ne rapporte que `docs/WATER_WALK_RECON.md` (nouveau) et ce
+document. Sonde de mesure JETABLE, supprimee avant le commit --
+`ProbeTimeoutAudit` revient a **48 sondes scenes**, le chiffre de
+`origin/staging`. **Rapport chiffre complet : `docs/WATER_WALK_RECON.md`.**
+
+**Q1 -- la chaine est calculee HOP PAR HOP, jamais en une fois.** `hop_to()`
+(L240) ne fait que poser `_target` ; `_advance()` (L418) relit la position
+COURANTE a chaque atterrissage ; `_begin_hop()` (L432) calcule UN saut
+(`_hop_to = here + delta.normalized() * min(HOP_DISTANCE, |delta|)`, L434-436)
+et `_on_hop_finished()` (L488) rappelle `_advance()` (L504). **Le point
+d'insertion d'une troncature est donc entre L436 et L450**, ou un test dans
+`_advance` avant L430 -- les deux voient un seul atterrissage candidat a la
+fois.
+
+### ⚠️ PREMISSE DU BRIEF PUBLIEE EN ECHEC : `HubRegion` ne connait que 2 des 5 eaux
+
+Le test unique existe bien et est bien centralise -- `HubRegion.contains()`
+(L250) sur `in_lake_water()` (L215) sur `_lake_holding()` (L243), une boucle
+sur `HubRegion.lakes()`. **Mais cette table ne porte que les DEUX lobes du
+grand lac.** Mesure sur la region livree : pond, petit lac et ruisseau
+rendent tous `contains() == true` -- ils sont WALKABLE par conception
+(l'en-tete de `HubRegion.gd` le dit et explique pourquoi : le bateau embarque
+depuis la tete du ruisseau, posee sur la rive du pond). **Une garde couvrant
+les 5 corps NE PEUT PAS s'ecrire contre le `HubRegion` d'aujourd'hui** : les
+rayons du pond et du petit lac vivent dans `HubBuilder`, et le ruisseau est
+un ruban autour d'un spine que seul `HubBuilder` possede.
+
+**Float32 au rim : le brief a raison, et c'est mesure.** 360 azimuts par
+disque, chaque disque teste contre LUI-MEME : a exactement `radius`,
+**141/360** (pond), **171/360** (petit lac), **115/360** (grand lac A),
+**54/360** (lobe B) lisent comme EAU sous le `<` strict ; a `radius + 0.001`,
+**0/360 sur les quatre**. Pire glissement 1,907e-06. Echantillonner a
+`radius + 0.001`, comme `_out_of_lake()` le fait deja.
+
+### ⚠️ Q3 -- L'EJECTION N'EST PAS LE PROBLEME. C'EST L'EMBARQUEMENT.
+
+Le brief prevenait qu'une garde naive "casse les deux". **Moitie faux,
+moitie vrai, et la moitie fausse est celle qu'on aurait protegee.**
+
+* **Le saut d'ejection est INERTE a une garde dans `_begin_hop`** :
+  `leave_ride()` construit son tween EN LIGNE (L337-343) et n'appelle jamais
+  `_begin_hop` ni `_advance` avant de sauter. Tout `RIDING` est hors
+  d'atteinte de la meme facon (`_advance` sort L421, `hop_to` refuse L246,
+  `_place_on_route` L363 ecrit le corps directement).
+* **Mais la chaine APRES l'ejection ne l'est pas** -- mesure sur une vraie
+  ride : atterrissage 1 apres la ride `(-17.548, -1.646)` **SEC**,
+  atterrissage 2 `(-19.047, -1.705)` **DANS LE PETIT LAC**. Le
+  desembarquement automatique vise `ahead` (L358) le long de la tangente
+  au-dela du bout -- et a la queue cette direction pointe dans le lac.
+* **L'EMBARQUEMENT est la vraie casse.** La coque est amarree SUR l'eau
+  (`_mooring_pose` la pose au bout du ruban) : tete `(17.580, 6.670)` = DANS
+  LE RUISSEAU (et 0,0043 u hors du pond) ; queue `(-18.540, -0.730)` = DANS
+  LE PETIT LAC (7,995 pour un rayon 8). `_try_board` exige
+  `d(coque) <= BOARD_TAP_RADIUS = 2,500`. Marches d'embarquement reelles
+  tronquees au dernier atterrissage sec, 6 azimuts par bout, depart a 9 u :
+  **5 sur 10 approches NE PEUVENT PLUS EMBARQUER** (2/6 embarquent a la
+  tete, 3/4 a la queue), avec des ecarts de 3,000 a 7,500 u.
+
+### Q4 -- le ruisseau : instruit, PAS tranche
+
+**(a)** Le ruban est **CONSTANT a 1,200 u** par construction (offset
+`+-0,600` a la perpendiculaire sur les 89 samples) : il n'a ni plus large ni
+plus etroit. Ce qui varie est la **portee mouillee vue par une corde
+droite** : **1,199 u** (perpendiculaire) a **8,013 u** (rasante), 36 azimuts.
+**(b)** `HOP_DISTANCE = 1,500` (lu dans le code), `HOP_HEIGHT 0,600`,
+`ARRIVE_EPSILON 0,450`. **(c)** 40 traversees paralleles : **39 sur 40**
+posent au moins un atterrissage DANS le ruban, 40 atterrissages mouilles au
+total (**~1 arret par traversee**), et **1 sur 40** seulement l'enjambe d'un
+saut -- malgre 1,5 > 1,2.
+
+| option | runs mouilles sur les 13 trajets | trajets arretes au moins une fois |
+|---|---|---|
+| garde uniforme sur les 5 corps | **12** | **10 sur 13** |
+| ruisseau exempte | **7** | **7 sur 13** |
+
+**Non choisi ici** -- c'est la decision de Mathieu.
+
+### Q5 -- la detection de portail survit a la troncature
+
+Pas de portail fantome (`_begin_hop` est deterministe en `here`/`_target`,
+donc une chaine tronquee est le PREFIXE exact de la chaine entiere : la
+troncature retire des atterrissages, elle n'en invente aucun). Aucun disque
+de portail ne recouvre d'eau -- eau la plus proche d'un centre de portail
+**1,589 u** (battle vs grand lac A) contre un rayon de declenchement lu sur
+le `CylinderShape3D` du portail -- donc une garde ne peut jamais supprimer
+une entree legitime. Les trois portails sont secs, les cordes
+spawn -> portail ont **0,000 u** de portee mouillee, et les trois trajets
+spawn -> portail font 5 sauts avec **0 atterrissage mouille**. Aucun portail
+n'est detecte pendant une ride (`HubWorld._on_hop_landed` refuse L240).
+**MAIS** : depuis 20 u, **12/16, 12/15 et 13/18** des departs secs traversent
+de l'eau en approche -- environ trois quarts des approches droites
+demanderaient un second tap.
+
+### Q6 -- le cout, et le piege qui le fixe
+
+**MESURE** sur les 10 trajets LAKE-MOVE/SPAWN + les 3 spawn -> portail :
+**350 sauts, 93 atterrissages mouilles (26,6 %), 12 runs mouilles**, les 3
+trajets vers les portails **inchanges (0 mouille)** -- le 350 et les 3
+trajets secs reproduisent les chiffres cites par le brief, ce qui valide le
+banc avant qu'on lui fasse confiance.
+
+⚠️ **LE PIEGE, MESURE : un retap IDENTIQUE depuis la berge n'achete RIEN.**
+Place au dernier atterrissage sec et redonne la MEME destination :
+**0 saut sec sur 4 cas sur 4**. La corde depuis la berge rentre dans l'eau
+des son premier saut, donc le joueur DOIT viser hors de la corde.
+
+**EXTRAPOLE, et marque comme tel** : un run mouille coute donc **au moins
+DEUX taps** supplementaires (un a cote de l'eau, un pour repartir), soit
+**>= 24 taps en plus sur les 10 trajets concernes, >= 2,4 par trajet
+concerne**. Le vrai chiffre depend de la facon dont un joueur contourne, et
+aucune sonde de ce depot ne peut le mesurer. Ce qui EST mesure : le plancher
+n'est pas d'un tap par run, et le premier tap achete tres peu du trajet --
+**2 sauts sur 47** (W -> E, 4 %), **1 sur 14** (petit lac court, 7 %),
+**12 sur 66** (diagonale, 18 %). Le temps mur ne bouge pas (18,700 s reste
+la pire traversee) mais cesse d'etre un seul geste.
+
+### Validation
+
+Editeur Godot 4.3-stable installe dans ce sandbox (release GitHub
+officielle, **taille verifiee contre le `Content-Length`** -- 50 276 070
+octets, aucune troncature). Import headless **exit 0**, **24 `.scn`**
+(import complet verifie, pas suppose). La sonde jetable sort **exit 0,
+stderr vide**. Sondes rejouees apres suppression de la sonde :
+`ProbeTimeoutAudit` (**48 sondes scenes**, retour exact a la baseline),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`, `LakeZoneProbe` (**0 failure**) --
+**toutes exit 0**. Recoupement independant : `LakeZoneProbe` imprime
+`33 landings, 21 on great-lake water` pour `(0,0,0) -> (35,0,-35)`, exactement
+la ligne `centre -> SE corner 33 sauts / 21 mouilles` de la sonde de ce lot.
+Aucun export Web joue : ce lot ne touche aucune ressource Godot.
+
+### Reste ouvert -- ce sont des decisions, pas des questions techniques
+
+1. **Ou vit le test d'eau** : `HubRegion` couvre 2 corps sur 5, l'etendre lui
+   fait lire des rayons qui vivent dans `HubBuilder`.
+2. **Comment l'embarquement survit** : 5 approches sur 10 perdent le bateau.
+   Une exemption "ce trajet est un trajet d'embarquement" est la forme
+   evidente, mais `_begin_hop` ignore pourquoi il marche -- cette intention
+   vit dans `HubWorld._boarding`.
+3. **Le ruisseau, uniforme ou exempte** (les deux couts sont tabules).
+4. **La cible du desembarquement automatique** vise dans le petit lac a la
+   queue : quelle que soit la garde, ce point demande aussi un clamp.
+
+## RECON ACCES + RENDU DES CINQ EAUX -- la premisse "immersion lisible OU
+## disparition brutale" ne survit PAS a la mesure : c'est une troisieme
+## chose, pire que les deux (26 aout 2026)
+
+Branche `claude/keepy-water-recon-3w83et`, posee sur
+`claude/keepy-water-collision-recon-6w1a0a` (`7b04132`,
+`docs/WATER_WALK_RECON.md`, pas encore mergee sur `staging` au demarrage).
+**RECON PURE, aucun fichier de jeu touche.** Decision de Mathieu deja prise
+et **non re-arbitree ici** : Keepy doit pouvoir entrer dans les cinq corps
+d'eau (mare, petit lac, ruisseau, 2 lobes du grand lac) ; la garde des 2
+lobes sera retiree dans le lot suivant ; le chantier "arret a la berge" de
+`docs/WATER_WALK_RECON.md` est abandonne. Le bateau est hors perimetre.
+Detail chiffre complet des six questions : `docs/WATER_ACCESS_RENDER_RECON.md`.
+
+**Ce qui compte le plus** : `WaterImmersionCaptureProbe` (rendu reel, xvfb +
+opengl3, jamais `--headless` qui donne un viewport DUMMY 1920x1920 au lieu
+du vrai 1080x1920 -- piege reconfirme independamment de celui deja consigne
+ailleurs) a mesure, pixel par pixel et par capture ecran, Keepy enfonce a
+0/30/60% dans le ruisseau (a=0.90) ET dans le lobe spawn du grand lac
+(a=0.95) : **les SIX cas donnent le meme resultat, BOTH == KEEPY-ONLY au
+dernier chiffre pres, WATER-ONLY totalement different.** L'eau ne dessine
+JAMAIS par-dessus la silhouette de Keepy, quel que soit l'enfoncement
+synthetique ou l'alpha. Ce n'est ni « immersion lisible » ni « disparition
+brutale » -- c'est un TROISIEME resultat, plus mauvais que les deux : le
+corps reste TOUJOURS pleinement opaque et visible, sans aucun signe visuel
+d'etre dans l'eau. Mecanisme mesure et pas suppose : un maillage opaque
+plein devant un plan transparent plat gagne le test de profondeur partout
+ou sa silhouette dessine, quelle que soit sa position Y -- ce n'est pas un
+bug de tri gl_compatibility a corriger, c'est le comportement correct et
+attendu de cette geometrie. **Consequence directe pour le lot suivant :
+deplacer le Y de Keepy seul ne produira JAMAIS un effet de submersion
+visible, sur aucun renderer.** Un effet lisible demandera un mecanisme qui
+NE COMPTE PAS sur l'occlusion de l'eau -- degrade de couleur vers la teinte
+de l'eau, cue de squash/echelle, decals de vaguelettes a la ligne d'eau,
+et/ou un shader a plan de coupe sur le materiau de Keepy (aujourd'hui plat
+unshaded, aucun de ces mecanismes n'existe).
+
+**Les cinq autres reponses, en bref** (chiffres complets dans le doc dedie) :
+Q1 -- `KeepyHopper.gd` ecrit `y` de facon **purement procedurale**, jamais
+via terrain/collision (grep confirme) : parabole `4t(1-t)*HOP_HEIGHT` en
+vol, `0.0` exact au repos, `RIDE_SEAT_Y=0.14` constant en bateau (hors
+perimetre). Q2 -- les cinq surfaces d'eau sont a des Y differents,
+**0.0270 (grand lac A) a 0.0950 (ruisseau)**, tous a moins de 10cm du repos
+de Keepy (`y=0`) -- alphas confirmes : mare/petit lac/lobes 0.95, ruisseau
+0.90. Q4 -- `HubRegion.contains()` ne connait que 2 corps sur 5 (les lobes
+du grand lac) ; etendre a cinq demande DEUX formes de travail differentes
+(2 lignes de disque triviales pour mare/petit lac, un vrai test
+point-vers-polyligne pour le ruisseau, pas une case de plus dans la meme
+table) -- et une **collision de nom trouvee au passage** :
+`HubBuilder.LAKE_WATER_RADIUS` (8.0, le PETIT lac) contre
+`HubRegion.LAKE_WATER_RADIUS` (16.0, le GRAND lac), meme identifiant, deux
+fichiers, deux corps differents -- a renommer avant toute table partagee.
+Q5 -- hauteur du modele **MESUREE a 1.3501u** (`visual_aabb()` sur le
+vrai .glb installe) ; a 30%/60% d'enfoncement (si un futur lot decoupe
+reellement la geometrie), il resterait 70%/40% de la hauteur visible, sur
+les cinq corps sans distinction reelle (leur ecart de Y est negligeable
+face a 1.35u). Q6 -- le ruisseau **n'a aucune berge** (il alpha-blend
+directement sur le sol), donc rien ne peut masquer un corps qui s'y tient ;
+la camera suit toujours Keepy au meme cadrage relatif, confirme a la fois
+par calcul (une fois le piege du viewport DUMMY headless evite) et par
+capture reelle (le ruisseau, Keepy dedans, se lit sans ambiguite dans le
+meme cadre que la mare, le grand lac et les trois portails).
+
+**Reste ouvert, decision du lot suivant, pas de celui-ci** : le choix du
+mecanisme de rendu de submersion (Q3) ; le renommage de collision (Q4) ;
+le test point-vers-polyligne du ruisseau et sa marge float32 propre (Q4) ;
+et l'occlusion possible par des houppiers d'arbres au-dessus du ruisseau,
+mesuree ailleurs mais pas re-verifiee ici (Q6).

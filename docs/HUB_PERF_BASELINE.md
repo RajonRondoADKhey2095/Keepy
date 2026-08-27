@@ -104,6 +104,7 @@ instead of a one-off number in a session report.
 | 25 aout 2026 | new `&"lake"` prop type: **one** water body at (-25.10, -5.30), 2.5x the pond (water r 8.0, bank r 9.05, 40 segments) + 4 rim rocks (batched) + 3 props relocated out of its footprint. **No camera, no `HOP_*`, no `PLATEAU_HALF_EXTENT` change.** | 43.3–46.6 | **74** | **80** | 15.2–16.6 | 8.1–12.9 | 5 834 608 | 35 376 909 / `af4a8fc2` |
 | 25 aout 2026 | new `&"stream"` prop type: **one** hand-built ribbon connecting the pond to the lake, 12 control points, width 1.2, 176 triangles. **No prop moved, no camera, no `HOP_*`, no `PLATEAU_HALF_EXTENT` change.** | 46.2–49.7 | **75** | **81** | 16.3–17.0 | 12.0–12.6 | 5 838 128 | 35 376 909 / `af4a8fc2` |
 | 26 aout 2026 | the stream becomes RIDEABLE: new `&"boat"` prop type (**one** hull, 3 meshes: shell / inner shell / rim), a `RIDING` state in `KeepyHopper`, `BoatMooring`, `HubStreamRoute`. **No prop moved, no camera, no `HOP_DISTANCE`/`HOP_DURATION`, no `PLATEAU_HALF_EXTENT` change.** | 38.3–40.9 | **78** | **84** | 23.7–27.0 | 11.6–19.9 | 5 853 648 | 35 376 909 / `af4a8fc2` |
+| 26 aout 2026 | **lake zone**: `HubRegion` (the walkable limit becomes a shape: square +-35 OR shore pad, MINUS the great lake's water), new `&"greatlake"` / `&"islet"` / `&"pontoon"` types, 1 lake (r 20 at 54 u, 96 segments) + 3 islets + 3 landmarks + 5 pontoons (batched) + 21 shore props + 1 prop relocated. **No camera, no `HOP_*` change; `PLATEAU_HALF_EXTENT` still 35.** | 37.5-39.7 | **96** | **102** | 21.6-22.1 | 17.5-18.4 | 5 862 224 | 35 376 909 / `af4a8fc2` |
 
 **Reading of the stream row.** **+1 draw node, exactly the one the change
 adds**, identical on all three runs — a stream is a single one-off ribbon
@@ -294,3 +295,126 @@ export (5 834 608) — the documented `.pck` instability, not a different build.
 `index.wasm` is identical everywhere, and it is the file that carries the
 identity check.
 
+
+
+---
+
+## Lake zone (26 aout 2026) -- before / after, same session, same renderer
+
+`origin/staging` measured in a separate worktree sharing this session's
+import cache, so both ends ran on the same binary, the same machine and the
+same `xvfb-run --rendering-driver opengl3`. 3 runs each.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/staging`) | 38.51 / 38.97 / 36.87 | 78 | 84 | 19.8-21.9 | 12.0-18.2 |
+| AFTER (3 runs, this commit) | 37.52 / 38.57 / 39.67 | **96** | **102** | 21.6-22.1 | 17.5-18.4 |
+
+**+18 draw nodes excluding portals, and the 18 are accounted for one by
+one** rather than inferred from the total: the great lake's 2 discs, 3
+islets at 1 each, 3 landmarks at 4 + 5 + 3 (spire / cairn / slabs), and 1
+new `MultiMeshInstance3D` for the batched pontoons (8 batches -> 9).
+Margin under the 260 ceiling: 182 -> **164**.
+
+Everything else overlaps. The construction and FPS ranges cross between
+before and after, which is the documented noise floor of this sandbox --
+this row is evidence the change cost nothing measurable here, NOT evidence
+it made anything faster. Nothing in it says how the plateau behaves on a
+phone; llvmpipe under xvfb is a different machine.
+
+⚠️ **`index.pck` is NOT usable as a build identity check, and this batch is
+where that stopped being a nuance.** Three sizes have now been observed for
+two states of content -- 5 853 728 / 5 853 744 / 5 853 760 -- including a
+**16-byte difference across a comment-only commit**. It remains fine as a
+"a new build was served" marker, which is how it is used in the deploy
+tables above. The lot G inference -- "the served `.pck` matches this
+session's local export byte for byte, therefore it is my build" -- is
+INVALID and must not be replayed. `index.wasm` is the identity check.
+
+**Deployed to staging.** CI run #242 (`web-build.yml`) on `staging`
+`73d45d2`. Served `CACHE_VERSION` moves `1787698811` (25 aout 23:00:11,
+run #241) -> **`1787728327`** (26 aout **07:12:07**), inside that run's
+`Export Web build` step (07:12:03-07:12:08). Served `index.pck` = 5 862 224,
+`index.wasm` = 35 376 909. All three useful readings are `x-vercel-cache:
+MISS` with `age: 0`.
+
+⚠️ Only `CACHE_VERSION` was read at BOTH ends this time; the served `.pck`
+is an after-only reading, so it stands as a second independent marker of the
+current state rather than as proof of the transition. The HIT/age trap fired
+once mid-run (`age: 151`, an edge copy this session's own pre-merge read had
+populated) and was refused rather than counted.
+
+
+
+---
+
+## LAKE-MOVE (26 aout 2026) -- the lake moves inside, and the node count does not
+
+`origin/staging` measured in a separate worktree sharing this session's
+Godot binary and machine, both ends under `xvfb-run --rendering-driver
+opengl3`. 3 runs each. Imports verified complete on both trees (24 `.scn`)
+before any number was read -- a truncated import is the documented way to
+produce a false red here.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/staging`) | 37.81 / 36.74 / 37.87 | 96 | 102 | 27.1-27.3 | 8.5-14.6 |
+| AFTER (3 runs, this commit) | 37.88 / 35.52 / 37.44 | **96** | **102** | 24.6-26.3 | 11.5-20.4 |
+
+**The node count does not move, and that is the expected result**: this
+batch relocates entries, it creates and deletes none. 87 individual
+`MeshInstance3D`, 9 `MultiMeshInstance3D`, 6 owned by the portals, on both
+sides. Margin under the 260 ceiling stays **164**. Construction overlaps
+run for run -- 35.52 to 37.88 ms across both trees with no separation.
+
+⚠️ **FPS mean is DOWN and the ranges do NOT overlap** -- 27.1-27.3 before
+against 24.6-26.3 after, consistent across three runs each. Reported
+rather than rounded away. The most likely cause is simply that the lake is
+now IN FRAME: the probe samples from the plateau centre, where the shipped
+lake was 0% visible and the moved one covers 39% of the disc, so a large
+alpha-blended water disc plus 3 islets have entered the fill-rate budget
+that used to be empty grass. That is a real cost of the placement, not a
+regression in the layout.
+
+⚠️ **It is also the number in this table least worth trusting.** llvmpipe
+under xvfb is a software rasteriser: fill rate is exactly what it is worst
+at and exactly what a phone GPU is best at, so a fill-bound delta here
+over-states the device cost by an unknown factor. Nothing in this row says
+how the plateau behaves on a phone. **Device judgement.**
+
+## SPAWN-LAKE-1 -- a second great-lake lobe (r10 at -12,-19.5) + one uniform water colour
+
+Same Godot binary and machine, both ends under `xvfb-run --rendering-driver
+opengl3`, 3 runs each, **run one at a time**. Imports verified complete on
+both trees (24 `.scn`) before any number was read.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/staging`) | 57.42 / 47.55 / 63.07 | 96 | 102 | 14.3-15.0 | 6.1-7.8 |
+| AFTER (3 runs, this batch) | 48.91 / 51.81 / 49.41 | **98** | **104** | 14.4-15.4 | 7.2-11.0 |
+
+**+2 draw nodes, and that is the whole cost**: the new lobe is one bank
+disc and one water disc, exactly like every other standing water here. 89
+individual `MeshInstance3D` against 87 before, 9 `MultiMeshInstance3D` on
+both sides (unchanged -- the lobe is not batched, there is one of it),
+6 owned by the portals. Margin under the 260 ceiling: **164 -> 162**.
+
+⚠️ **FPS did NOT drop, and the honest reading of that is "the ranges
+overlap", not "it got faster"**: 14.3-15.0 before against 14.4-15.4 after,
+with construction overlapping too (47.55-63.07 against 48.91-51.81). That
+is a different result from LAKE-MOVE-1's row, which measured a clear drop
+when the great lake first entered the frame. The likely reason the second
+lobe does not repeat it: the probe samples from the plateau CENTRE, where
+the great lake already occupies the frame, so the new lobe mostly adds
+alpha to a budget that was already paying for water rather than to empty
+grass.
+
+⚠️ **DO NOT COMPARE THIS TABLE'S FPS TO THE ROWS ABOVE IT.** They were
+measured in a different sandbox and run 27-ish fps for the same scene where
+this one runs 15. Only the BEFORE/AFTER pair inside a single row block is
+comparable, because only that pair shares a machine and a session.
+
+⚠️ And as ever: llvmpipe under xvfb is a software rasteriser -- fill rate is
+exactly what it is worst at and exactly what a phone GPU is best at, so
+nothing in this row says how the plateau behaves on a phone. **Device
+judgement.**
