@@ -172,44 +172,77 @@ func _phase_a_arc(keepy: KeepyHopper) -> void:
 ## a climber is planted on are the same fact, and a probe that re-read the
 ## resource would pass on the day those two diverge.
 func _phase_b_geometry(props: HubBuilder) -> void:
-	print("--- PHASE B: the board as it was BUILT ---")
-	var board: Dictionary = props.diving_board()
-	_check(not board.is_empty(), "the layout builds exactly one diving board")
-	if board.is_empty():
-		print("")
-		return
+	print("--- PHASE B: every board as it was BUILT ---")
+	var boards: Array[Dictionary] = props.diving_boards()
+	_check(boards.size() == 3, "the layout builds three diving boards (built %d)" % boards.size())
+	for i in boards.size():
+		_phase_b_one(props, boards[i], i)
+	# Two planks sharing a ladder foot would each be reachable and only one
+	# climbable, which is the singleton defect wearing a different hat.
+	for i in boards.size():
+		for j in range(i + 1, boards.size()):
+			var gap: float = (boards[i]["ladder"] as Vector3).distance_to(boards[j]["ladder"] as Vector3)
+			_check(gap > 2.0 * 2.5,
+				"boards %d and %d are further apart than one tap radius could span (%.3f u)" % [i, j, gap])
+	print("")
 
+## One board, measured against WHICHEVER body of water it dives into --
+## resolved from the target rather than pinned to the great lake's near
+## lobe, which is all this phase could speak for while there was one board.
+func _phase_b_one(props: HubBuilder, board: Dictionary, index: int) -> void:
 	var ladder: Vector3 = board["ladder"]
 	var anchor: Vector3 = board["anchor"]
 	var forward: Vector3 = board["forward"]
 	var water: Vector3 = board["water_target"]
 	var land: Vector3 = board["land_target"]
 
-	# The great lake's near lobe, from the region that OWNS it. Restating
-	# a centre and a radius here is how a board slowly stops being on the
-	# water it was planted on.
-	var lobe: Dictionary = HubRegion.lakes()[0]
-	var centre: Vector3 = lobe["centre"]
-	var radius: float = lobe["radius"]
+	# WHICH water, asked of the water rather than assumed. Every body is
+	# taken from the owner that publishes it -- HubRegion for the great
+	# lake's two lobes, HubBuilder for the pond and the small lake --
+	# because restating a centre and a radius here is how a board slowly
+	# stops being on the water it was planted on.
+	var bodies: Array[Dictionary] = []
+	for lobe in HubRegion.lakes():
+		bodies.append({"name": "great-lake lobe", "centre": lobe["centre"], "radius": lobe["radius"]})
+	if props.small_lake_centre() != Vector3.INF:
+		bodies.append({"name": "small lake", "centre": props.small_lake_centre(),
+			"radius": HubBuilder.SMALL_LAKE_WATER_RADIUS})
+	if props.pond_centre() != Vector3.INF:
+		bodies.append({"name": "pond", "centre": props.pond_centre(),
+			"radius": HubBuilder.POND_WATER_RADIUS})
+
+	var flat_water := Vector3(water.x, 0.0, water.z)
+	var body: Dictionary = {}
+	for candidate in bodies:
+		if flat_water.distance_to(candidate["centre"] as Vector3) < float(candidate["radius"]):
+			body = candidate
+			break
+	print("  [board %d]" % index)
+	_check(not body.is_empty(), "board %d dives into a body of water this hub actually has" % index)
+	if body.is_empty():
+		return
+	var centre: Vector3 = body["centre"]
+	var radius: float = body["radius"]
+	print("    dives into the %s" % body["name"])
 	var d_ladder: float = Vector3(ladder.x, 0.0, ladder.z).distance_to(centre)
 	var d_anchor: float = Vector3(anchor.x, 0.0, anchor.z).distance_to(centre)
 	var d_water: float = Vector3(water.x, 0.0, water.z).distance_to(centre)
 	print("    lobe centre %s radius %.2f" % [centre, radius])
 	print("    ladder %.3f from centre | anchor %.3f | water target %.3f" % [d_ladder, d_anchor, d_water])
 
-	_check(d_ladder > radius, "the ladder foot stands on LAND (%.3f > %.3f)" % [d_ladder, radius])
-	_check(HubRegion.contains(ladder), "the ladder foot is WALKABLE, so a tap can actually reach it")
-	_check(d_anchor < radius, "the deck anchor is out over WATER (%.3f < %.3f)" % [d_anchor, radius])
-	_check(d_water < radius, "the dive lands in WATER (%.3f < %.3f)" % [d_water, radius])
+	_check(d_ladder > radius, "board %d: the ladder foot stands on LAND (%.3f > %.3f)" % [index, d_ladder, radius])
+	_check(HubRegion.contains(ladder), "board %d: the ladder foot is WALKABLE, so a tap can actually reach it" % index)
+	_check(d_anchor < radius, "board %d: the deck anchor is out over WATER (%.3f < %.3f)" % [index, d_anchor, radius])
+	_check(d_water < radius, "board %d: the dive lands in WATER (%.3f < %.3f)" % [index, d_water, radius])
 	_check(land.is_equal_approx(ladder),
-		"the landward dive lands on the ladder foot -- ground already stood on, so it cannot be inside a prop")
-	_check(anchor.y > 0.0, "the deck is above the ground (%.3f u)" % anchor.y)
-	_check(is_equal_approx(forward.length(), 1.0), "the facing is a unit vector")
+		"board %d: the landward dive lands on the ladder foot -- ground already stood on, so it cannot be inside a prop" % index)
+	_check(anchor.y > 0.0, "board %d: the deck is above the ground (%.3f u)" % [index, anchor.y])
+	_check(is_equal_approx(forward.length(), 1.0), "board %d: the facing is a unit vector" % index)
 
 	# The facing is the ladder-to-anchor line and not some third direction.
 	var implied: Vector3 = (Vector3(anchor.x, 0.0, anchor.z) - Vector3(ladder.x, 0.0, ladder.z)).normalized()
 	_check(forward.dot(implied) > 0.999,
-		"the facing agrees with the board's own two ends (dot %.6f)" % forward.dot(implied))
+		"board %d: the facing agrees with its own two ends (dot %.6f)" % [index, forward.dot(implied)])
 
 	# The board must not have been planted on top of something. Measured
 	# against the same footprints a disembark clears.
@@ -221,8 +254,19 @@ func _phase_b_geometry(props: HubBuilder) -> void:
 			continue
 		worst = minf(worst, Vector3(ladder.x, 0.0, ladder.z).distance_to(where) - r)
 	print("    nearest other prop footprint: %.3f u from the ladder foot" % worst)
-	_check(worst > 0.0, "the ladder foot is clear of every other prop footprint")
-	print("")
+	_check(worst > 0.0, "board %d: the ladder foot is clear of every other prop footprint" % index)
+
+	# THE RUNG COUNT, gated per board rather than assumed shared. It is a
+	# pure function of deck height, so three boards at 1.8 must agree --
+	# but that height reaches the builder as float32, and the ratio it
+	# feeds lands on round()'s .5 knife-edge at exactly this height. Which
+	# way an unguarded round() fell used to be decided by float32 noise, so
+	# "they are all 1.8, therefore they all match" is the assumption that
+	# fix exists to stop anyone making. Measured per instance instead.
+	var rung_heights: Array = board["rung_heights"]
+	print("    %d rungs at %s" % [rung_heights.size(), rung_heights])
+	_check(rung_heights.size() == 5,
+		"board %d: the 1.8 u deck derives 5 rungs (got %d)" % [index, rung_heights.size()])
 
 ## PHASE C -- the three states, driven through a whole climb and dive on the
 ## shipped hopper.
@@ -233,12 +277,26 @@ func _phase_b_geometry(props: HubBuilder) -> void:
 ## neither raises anything.
 func _phase_c_states(keepy: KeepyHopper, props: HubBuilder) -> void:
 	print("--- PHASE C: climb, stand, dive ---")
-	var board: Dictionary = props.diving_board()
-	if board.is_empty():
+	var boards: Array[Dictionary] = props.diving_boards()
+	if boards.is_empty():
 		_check(false, "no board to climb")
 		print("")
 		return
+	# EVERY board, not just the first. The states are shared code, so the
+	# second and third can only fail on their own GEOMETRY -- which is
+	# exactly the half this batch added, and exactly the half a single-board
+	# run would never touch.
+	for i in boards.size():
+		print("  [board %d]" % i)
+		# AWAITED. _phase_c_one contains awaits, so it is a coroutine, and
+		# calling it bare would start all three at once on ONE body -- the
+		# three climbs then interleave and two of them measure a Keepy the
+		# third is driving. Seen, not guessed: the bare form failed 12
+		# checks whose printed positions were board 0's.
+		await _phase_c_one(keepy, boards[i])
+	print("")
 
+func _phase_c_one(keepy: KeepyHopper, board: Dictionary) -> void:
 	var ladder: Vector3 = board["ladder"]
 	var anchor: Vector3 = board["anchor"]
 
@@ -330,7 +388,6 @@ func _phase_c_states(keepy: KeepyHopper, props: HubBuilder) -> void:
 	_check(apex > anchor.y, "the dive ARCS above the deck it left rather than sliding off it")
 	_check(not keepy.is_on_board() and not keepy.is_riding(),
 		"the body is back on the plateau's own state machine")
-	print("")
 
 ## PHASE D -- no portal is reachable from the board.
 ##
@@ -340,8 +397,8 @@ func _phase_c_states(keepy: KeepyHopper, props: HubBuilder) -> void:
 ## top of a ladder, which no amount of looking at the screen would predict.
 func _phase_d_portals(hub: Node, keepy: KeepyHopper, props: HubBuilder) -> void:
 	print("--- PHASE D: nothing routes while the board owns the body ---")
-	var board: Dictionary = props.diving_board()
-	if board.is_empty():
+	var boards: Array[Dictionary] = props.diving_boards()
+	if boards.is_empty():
 		_check(false, "no board")
 		print("")
 		return
@@ -356,28 +413,39 @@ func _phase_d_portals(hub: Node, keepy: KeepyHopper, props: HubBuilder) -> void:
 	if confirm == null:
 		print("")
 		return
-	keepy.global_position = board["ladder"]
-	keepy.climb_board(board)
-	await _wait(0.05)
-
-	# The landing hook, called by hand with a PORTAL CENTRE while the board
-	# owns the body. If the guard is missing this opens the dialog.
 	var portals: Array = props.portals()
 	_check(portals.size() > 0, "there are portals to be wrongly triggered")
-	for portal in portals:
-		hub.call("_on_hop_landed", portal.global_position)
-	_check(not confirm.call("is_open"),
-		"a landing on a portal CENTRE mid-climb opens nothing (%d portals tried)" % portals.size())
 
-	await _wait(KeepyHopper.CLIMB_DURATION + 0.25)
-	for portal in portals:
-		hub.call("_on_hop_landed", portal.global_position)
-	_check(not confirm.call("is_open"), "nor while standing on the deck")
+	# EVERY board. "No portal from up here" is a fact about WHERE a board
+	# stands, and the two added this batch stand somewhere else -- the one
+	# nearest the portal row is not necessarily the one that was measured.
+	for i in boards.size():
+		var board: Dictionary = boards[i]
+		keepy.global_position = board["ladder"]
+		keepy.climb_board(board)
+		await _wait(0.05)
+
+		# The landing hook, called by hand with a PORTAL CENTRE while the
+		# board owns the body. If the guard is missing this opens the dialog.
+		for portal in portals:
+			hub.call("_on_hop_landed", portal.global_position)
+		_check(not confirm.call("is_open"),
+			"board %d: a landing on a portal CENTRE mid-climb opens nothing (%d portals tried)" % [i, portals.size()])
+
+		await _wait(KeepyHopper.CLIMB_DURATION + 0.25)
+		for portal in portals:
+			hub.call("_on_hop_landed", portal.global_position)
+		_check(not confirm.call("is_open"), "board %d: nor while standing on the deck" % i)
+
+		# Off the plank and back onto the plateau's own state machine
+		# before the next board is climbed.
+		keepy.dive(Vector3(board["anchor"].x, 0.0, board["anchor"].z) - board["forward"] * 6.0)
+		await _wait(KeepyHopper.DIVE_DURATION + 0.3)
 
 	# The counter MOVES once he is back on the ground -- without this the
-	# two zeroes above would pass on a dialog that simply never opens.
-	keepy.dive(Vector3(board["anchor"].x, 0.0, board["anchor"].z) - board["forward"] * 6.0)
-	await _wait(KeepyHopper.DIVE_DURATION + 0.3)
+	# zeroes above would pass on a dialog that simply never opens. LAST,
+	# and outside the loop: it leaves the dialog OPEN, which would poison
+	# every "opens nothing" check that ran after it.
 	hub.call("_on_hop_landed", portals[0].global_position)
 	_check(confirm.call("is_open"),
 		"BLIND CHECK: the same call DOES open the dialog once he is off the board")

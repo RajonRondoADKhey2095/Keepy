@@ -478,3 +478,45 @@ on its own terms, and the gap behind it stays visible.
 exactly what it is worst at and exactly what a phone GPU is best at, so
 nothing in this row says how the plateau behaves on a phone. **Device
 judgement.**
+
+---
+
+## DIVING BOARDS 2 AND 3 (27 aout 2026) -- one per remaining large water body
+
+Two more `&"divingboard"` entries: one on the small lake's north-east bank,
+one on the great lake's spawn lobe. No new prop TYPE and no new geometry
+code -- `_make_divingboard()` was already generic, and each new entry is
+the same seven mesh nodes the first one is.
+
+Same session, same renderer, same machine, runs taken ONE AT A TIME so the
+two sides are not measuring each other's contention.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/main`) | 51.93 / 44.61 / 42.50 | 106 | 112 | 26.4-27.1 | 22.6-22.9 |
+| AFTER (3 runs, this batch) | 42.03 / 42.53 / 42.36 | **120** | **126** | 26.5-27.3 | 12.1-20.8 |
+
+**+14 draw nodes, and the number is itemised rather than asserted**: two
+boards x seven mesh nodes each (one plank, four posts, two rails). The
+**MultiMesh batch count does not move** -- it stays at 10. The rung batch is
+keyed by mesh and colour, so three ladders share ONE node and it simply
+carries 15 instances where it carried 5. Margin under the 260 ceiling:
+**140**.
+
+⚠️ **The BEFORE column was RE-MEASURED, not copied from the previous row.**
+It comes out at 106/112, which does agree with what the diving-board batch
+published -- but agreeing is a result, not a licence to have skipped it.
+
+⚠️ **FPS mean is flat (the two ranges overlap); FPS MIN is not, and the
+honest reading is "one bad frame", not "slower".** Two of the three AFTER
+runs sit at 20.3-20.8 against a BEFORE band of 22.6-22.9 -- a real but
+small step. The third reports 12.1, which is a single worst frame in one
+sample and is the kind of outlier this software rasteriser produces on a
+shared machine; it is published rather than dropped, and it is not
+evidence of a 2x cost. Construction is flat-to-better and says nothing
+either way.
+
+⚠️ llvmpipe under xvfb, as ever: fill rate is what it is worst at and what
+a phone GPU is best at. Fourteen small opaque unshaded boxes and cylinders
+are close to the cheapest thing that can be added to this scene. **Device
+judgement.**
