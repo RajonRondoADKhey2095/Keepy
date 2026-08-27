@@ -623,8 +623,9 @@ var _stream_half_width: float = 0.0
 ## Vector3.INF marks "the layout has none", which is a legal plateau: a hub
 ## without a pond simply has one fewer body of water, not a pond at the
 ## origin. A caller must test for it rather than trusting a zero.
-## The one &"divingboard" as built -- see diving_board() for the shape.
-var _diving_board: Dictionary = {}
+## Every &"divingboard" as built, in layout order -- see diving_boards()
+## for the shape of one entry.
+var _diving_boards: Array[Dictionary] = []
 
 var _pond_centre: Vector3 = Vector3.INF
 var _small_lake_centre: Vector3 = Vector3.INF
@@ -669,22 +670,29 @@ func stream_spine() -> Array:
 func stream_half_width() -> float:
 	return _stream_half_width
 
-## The one &"divingboard", as it was BUILT, or an empty Dictionary when the
-## layout has none. Keys: "ladder" (Vector3, flat, the foot on land),
-## "anchor" (Vector3, y = deck height, where a climber ends up), "forward"
-## (Vector3, flat unit, the way a dive faces), and "water_target" /
-## "land_target" (Vector3, flat, where the two dives land).
+## Every &"divingboard", as it was BUILT, in layout order; empty when the
+## layout has none. Keys per entry: "ladder" (Vector3, flat, the foot on
+## land), "anchor" (Vector3, y = deck height, where a climber ends up),
+## "forward" (Vector3, flat unit, the way a dive faces), "side",
+## "rung_heights", and "water_target" / "land_target" (Vector3, flat, where
+## the two dives land).
 ##
 ## Published from the geometry rather than left to be re-read from the
 ## layout by KeepyHopper: the plank the player sees and the point they are
 ## planted on have to be the same fact, and the only way to guarantee that
 ## is for both to come out of the pass that drew it.
 ##
-## ONE board. A second entry is drawn but never reported, and that is an
-## error rather than a silent overwrite -- the same rule the hull is held
-## to above.
-func diving_board() -> Dictionary:
-	return _diving_board
+## WAS A SINGLETON, AND THAT WAS A REAL LIMIT rather than a style: a second
+## entry used to be drawn and then refused with an error, so a plank the
+## player could see was one they could never climb. The GEOMETRY was always
+## generic -- _make_divingboard() reads position/deck_anchor/dive_direction
+## off the entry and hardcodes nothing about the first one -- it was only
+## this table, and the single ladder_foot downstream of it, that could hold
+## one. Boards are independent of each other, so the plural is a list and
+## not a special case; the climb still owns exactly one AT A TIME, which is
+## KeepyHopper's business and unchanged.
+func diving_boards() -> Array[Dictionary]:
+	return _diving_boards
 
 ## Centre of the one &"pond", or Vector3.INF when the layout has none.
 func pond_centre() -> Vector3:
@@ -824,12 +832,17 @@ func _build() -> void:
 				else:
 					_small_lake_centre = where
 			if type == &"divingboard":
-				# Recorded AFTER add_child, alongside the hull, so the
+				# Recorded AFTER add_child, alongside the hull, so every
 				# published board is one that actually got drawn.
-				if not _diving_board.is_empty():
-					push_error("HubBuilder: a second &\"divingboard\" entry at %d; the climb owns one board, the extra is drawn but never climbed." % index)
-				else:
-					_diving_board = _last_board
+				#
+				# NOT held to the pond/lake/boat "one only" rule, and the
+				# difference is not arbitrary: those three are singletons
+				# because something downstream needs to name THE pond or
+				# THE hull. Nothing names THE board -- a climb is started
+				# by whichever ladder the player walked to -- so a second
+				# plank is another place to climb, not an ambiguity.
+				if not _last_board.is_empty():
+					_diving_boards.append(_last_board)
 			if type == &"boat":
 				if _boat != null:
 					push_error("HubBuilder: a second &\"boat\" entry at %d; the ride owns one hull, the extra is drawn but never moored." % index)
