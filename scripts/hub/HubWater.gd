@@ -32,6 +32,24 @@ class_name HubWater
 ## second time here -- is how one circle quietly becomes two.
 ##
 ## =====================================================================
+## AN ISLET IS DRY GROUND, EVEN THOUGH IT SITS INSIDE A LAKE'S DISC
+##
+## The great lake carries three islets (`&"islet"` layout entries), each a
+## flat shingle disc the player stands on and walks around. A plain
+## centre/radius disc test cannot see them: an islet's own centre is well
+## inside the water disc it stands on (the closest is 6.80 u from the great
+## lake's centre against its 16.0 u radius), so `body_at()` used to answer
+## "great_lake_0" for a point ON the islet exactly as it does for a point
+## on open water beside it -- the tint and the splash never told the two
+## apart, and the fix is not "widen the islet", it is a second test that
+## SUBTRACTS the islet's own footprint from whatever disc it sits in.
+##
+## Checked FIRST, before any disc or the stream: an islet excludes water, it
+## does not compete with it for the answer. HubBuilder.islets() reports
+## each one AS BUILT (position, radius already scaled) for the same reason
+## the discs above are borrowed and not restated.
+##
+## =====================================================================
 ## THE STREAM IS NOT A FIFTH DISC ROW, AND ITS RIM IS NOT THE DISCS' RIM
 ##
 ## A disc test is one distance_to(centre). The stream test is a distance to
@@ -106,6 +124,11 @@ const STREAM_RIM_MARGIN: float = 0.020
 ## Built once, in the order the bodies are named above.
 var _discs: Array[Dictionary] = []
 
+## Every great-lake islet, {"centre": Vector3, "radius": float}, y flattened.
+## Checked BEFORE `_discs` in body_at(): an islet is dry ground that happens
+## to sit inside a water disc, not a fifth body of water.
+var _islets: Array[Dictionary] = []
+
 ## The stream, or null when the layout carries none -- a legal plateau, and
 ## then this file simply has four bodies to answer about.
 var _route: HubStreamRoute = null
@@ -126,6 +149,12 @@ func _init(builder: HubBuilder, route: HubStreamRoute = null) -> void:
 		if small != Vector3.INF:
 			_add_disc(&"small_lake", small, HubBuilder.SMALL_LAKE_WATER_RADIUS)
 		_stream_half_width = builder.stream_half_width()
+		for islet in builder.islets():
+			var centre: Vector3 = islet["centre"]
+			_islets.append({
+				"centre": Vector3(centre.x, 0.0, centre.z),
+				"radius": float(islet["radius"]),
+			})
 	# Both great-lake lobes, from the table that already publishes them.
 	# Named by index so a third lobe would report as one without an edit.
 	var lakes := HubRegion.lakes()
@@ -144,9 +173,10 @@ func _add_disc(name: StringName, centre: Vector3, radius: float) -> void:
 		"radius": radius,
 	})
 
-## True when `point` lies inside ANY of the five bodies. Y is ignored: every
-## water surface on this plateau sits within 10cm of Keepy's rest height, so
-## height cannot tell them apart and was never the question.
+## True when `point` lies inside ANY of the five bodies AND not on an islet.
+## Y is ignored: every water surface on this plateau sits within 10cm of
+## Keepy's rest height, so height cannot tell them apart and was never the
+## question.
 ##
 ## Strict `<`, like HubRegion's own disc test: a point exactly on the rim
 ## reads as LAND. A boundary has to fall on one side deterministically, and
@@ -154,14 +184,20 @@ func _add_disc(name: StringName, centre: Vector3, radius: float) -> void:
 func contains(point: Vector3) -> bool:
 	return body_at(point) != &""
 
-## Which body holds `point`, or &"" for none. First match wins; the bodies
-## do not overlap today (the closest pair is 0.347 apart), and if a future
-## layout overlaps two, naming one deterministically beats naming neither.
+## Which body holds `point`, or &"" for none -- none INCLUDES standing on an
+## islet, checked first and unconditionally: an islet is dry ground carved
+## out of whatever disc it sits in, so it wins over every body before any of
+## them get a say. First disc match wins after that; the bodies do not
+## overlap today (the closest pair is 0.347 apart), and if a future layout
+## overlaps two, naming one deterministically beats naming neither.
 ##
 ## The name is what makes a probe able to report WHICH body a landing was
 ## in, instead of only that it was in one.
 func body_at(point: Vector3) -> StringName:
 	var flat := Vector3(point.x, 0.0, point.z)
+	for islet in _islets:
+		if flat.distance_to(islet["centre"] as Vector3) < float(islet["radius"]):
+			return &""
 	for disc in _discs:
 		if flat.distance_to(disc["centre"] as Vector3) < float(disc["radius"]):
 			return disc["name"] as StringName
@@ -173,6 +209,10 @@ func body_at(point: Vector3) -> StringName:
 ## stream is not in it because it is not a disc.
 func discs() -> Array[Dictionary]:
 	return _discs
+
+## Every islet this instance excludes water for, in build order. For probes.
+func islets() -> Array[Dictionary]:
+	return _islets
 
 ## True when a stream was found and is being tested against.
 func has_stream() -> bool:

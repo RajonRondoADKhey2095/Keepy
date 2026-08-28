@@ -68,6 +68,7 @@ func _ready() -> void:
 	await _phase_e()
 	await _phase_f()
 	await _phase_g()
+	await _phase_h()
 
 	print("--- %d failure(s) ---" % _failures)
 	get_tree().quit(1 if _failures > 0 else 0)
@@ -577,6 +578,88 @@ func _phase_g() -> void:
 ## itself.
 func _turnstile_exit_probe(entry: Dictionary) -> Vector3:
 	return _hub._turnstile_exit_point(entry)
+
+## ---------------------------------------------------------------------
+## PHASE H -- a tap ON the prop, mid-spin, re-arms the ride instead of
+## letting it coast to a stop. Added 28 aout 2026 -- the request was
+## "unlimited turns while he keeps tapping", so this gates the extension
+## itself, that it does not stack a second tween on the first, and that
+## letting go still lets the ride end on its own.
+##
+## THE BLIND CHECK ORDER PHASE C and WaterImpactProbe already use: "he is
+## still aboard" passes for free against a tap that was never wired to
+## anything, so the right to assert an extension has to be bought by
+## proving the re-tap SWAPS the tween rather than merely coinciding with
+## one that was going to keep running anyway.
+func _phase_h() -> void:
+	print("--- PHASE H: a tap on the prop mid-spin re-arms the ride ---")
+	var reg := _registry()
+	if reg.is_empty():
+		return
+	var entry: Dictionary = reg[0]
+	var here: Vector3 = entry["position"]
+	var radius: float = entry["radius"]
+	var spin_s: float = _const(_hub, "TURNSTILE_SPIN_S", 2.2)
+	var approach: Vector3 = here + Vector3(radius * 0.7, 0.0, radius * 0.4)
+
+	await _settle_off_turnstile()
+	await get_tree().create_timer(spin_s + 0.35).timeout
+
+	await _land_at(approach)
+	await get_tree().process_frame
+	if not _keepy.is_on_turnstile():
+		_check(false, "mount for the re-arm test")
+		return
+	var first_tween: Tween = _spin_tween(entry)
+
+	# RE-TAP MID-SPIN, ON the prop -- well inside its own trigger radius,
+	# unlike PHASE G's far tap.
+	await get_tree().create_timer(spin_s * 0.6).timeout
+	_hub._on_tapped_ground(here)
+	await get_tree().process_frame
+	var second_tween: Tween = _spin_tween(entry)
+	print("  re-tap swapped the tween: %s (first=%s second=%s)"
+		% [str(first_tween != second_tween), first_tween, second_tween])
+	_check(second_tween != null and second_tween != first_tween,
+		"a tap on the prop starts a NEW tween rather than letting the old one run out")
+	_check(first_tween == null or not first_tween.is_valid() or not first_tween.is_running(),
+		"the old tween is killed, not left running alongside the new one")
+
+	# Past where the FIRST shove alone would have put him down -- still
+	# aboard, because the re-tap replaced it with a fresh one.
+	await get_tree().create_timer(spin_s * 0.4 + 0.35).timeout
+	print("  past the original single-shove end: on turnstile = %s" % str(_keepy.is_on_turnstile()))
+	_check(_keepy.is_on_turnstile(),
+		"the re-tap keeps him aboard past where one shove alone would have ended")
+
+	# And with no FURTHER tap, the extended ride still ends on its own --
+	# this is an extension, not an escape from ever dismounting.
+	await get_tree().create_timer(spin_s * 0.6 + 0.35).timeout
+	print("  after the second shove's own duration: on turnstile = %s" % str(_keepy.is_on_turnstile()))
+	_check(not _keepy.is_on_turnstile(),
+		"with no further tap, the extended ride still ends on its own")
+	_check(HubRegion.contains(_keepy.global_position), "he lands inside the walkable region")
+
+	# THREE re-taps in a row, proving "unlimited while he keeps tapping" and
+	# not merely "twice".
+	await _settle_off_turnstile()
+	await get_tree().create_timer(spin_s + 0.35).timeout
+	await _land_at(approach)
+	await get_tree().process_frame
+	if not _keepy.is_on_turnstile():
+		_check(false, "re-mount for the repeated-tap test")
+		return
+	for i in 3:
+		await get_tree().create_timer(spin_s * 0.5).timeout
+		_hub._on_tapped_ground(here)
+		await get_tree().process_frame
+		if not _keepy.is_on_turnstile():
+			_check(false, "stayed aboard through re-tap %d of 3" % (i + 1))
+			return
+	print("  stayed aboard through 3 consecutive re-taps")
+	_check(_keepy.is_on_turnstile(), "three consecutive re-taps keep him aboard the whole time")
+	await _settle_off_turnstile()
+	_check(not _keepy.is_on_turnstile(), "letting go after the third re-tap still lets him off")
 
 func _count_draw(n: Node) -> int:
 	var k: int = 1 if (n is MeshInstance3D or n is MultiMeshInstance3D) else 0

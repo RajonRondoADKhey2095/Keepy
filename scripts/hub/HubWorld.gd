@@ -358,24 +358,69 @@ func _spin_near(landing: Vector3) -> Dictionary:
 		var running: Tween = entry["tween"]
 		if running != null and running.is_valid() and running.is_running():
 			return entry
-		# Wrapped before it is tweened, never reset to zero: the top keeps
-		# whatever facing it coasted to, which is what a roundabout does,
-		# while the number it is counted from stays bounded instead of
-		# climbing by 540 degrees for the rest of the session.
-		var from_deg: float = fposmod(pivot.rotation_degrees.y, 360.0)
-		pivot.rotation_degrees.y = from_deg
-		var tween := pivot.create_tween()
-		tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		# tween_method and not tween_property, and the angles it walks are
-		# identical -- same start, same end, same trans, same ease, same
-		# duration -- so the SPIN is the shipped one to the degree. What
-		# the method buys is that the rider is written in the same call as
-		# the angle: see _apply_spin.
-		tween.tween_method(_apply_spin.bind(entry),
-			from_deg, from_deg + 360.0 * TURNSTILE_SPIN_TURNS, TURNSTILE_SPIN_S)
-		entry["tween"] = tween
+		_build_turnstile_spin(entry)
 		return entry
 	return {}
+
+## Builds and starts the shove tween for `entry`, from wherever the pivot
+## currently sits, and returns it. THE ONE PLACE that construction lives:
+## _spin_near()'s ordinary shove above and _reshove_turnstile()'s extension
+## below both call it, so a re-tap travels the exact arc the first tap did
+## -- same start, same trans, same ease, same duration, same turns.
+##
+## tween_method and not tween_property, and the angles it walks are
+## identical to what _spin_near always built here -- so the SPIN is the
+## shipped one to the degree. What the method buys is that the rider is
+## written in the same call as the angle: see _apply_spin.
+func _build_turnstile_spin(entry: Dictionary) -> Tween:
+	var pivot: Node3D = entry["spinner"]
+	# Wrapped before it is tweened, never reset to zero: the top keeps
+	# whatever facing it coasted to, which is what a roundabout does, while
+	# the number it is counted from stays bounded instead of climbing by
+	# 540 degrees for every re-tap.
+	var from_deg: float = fposmod(pivot.rotation_degrees.y, 360.0)
+	pivot.rotation_degrees.y = from_deg
+	var tween := pivot.create_tween()
+	tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.tween_method(_apply_spin.bind(entry),
+		from_deg, from_deg + 360.0 * TURNSTILE_SPIN_TURNS, TURNSTILE_SPIN_S)
+	entry["tween"] = tween
+	return tween
+
+## Re-arms the ride Keepy is already on, if the tap landed within the SAME
+## prop's own trigger radius -- and does nothing otherwise, which is what
+## leaves it to coast down and dismount on its own exactly as before this
+## batch. Called from _on_tapped_ground's is_on_turnstile() branch, in place
+## of the plain drop that shipped until 28 aout 2026.
+##
+## A FRESH SHOVE, deliberately NOT _spin_near()'s. _spin_near() exists for a
+## LANDING that finds the prop already turning and leaves it alone on
+## purpose -- its own debounce, so a player who merely walks past a
+## coasting turnstile cannot re-arm it by accident. Reusing that function
+## here would always hit the same debounce, because the tween IS running
+## for the entire time Keepy is aboard, and "tap again, ride again" would
+## silently do nothing -- exactly the bug this batch was asked to close.
+##
+## The OLD tween is killed first, and killing does not fire `finished`: a
+## kill is not a completion, so the ONE_SHOT connection riding on the old
+## tween dies with it instead of firing on top of the new one. The
+## replacement is reconnected the same way _mount_turnstile connects the
+## first shove -- exactly one listener on "this shove ended", always
+## pointed at whichever tween is actually driving the ride.
+func _reshove_turnstile(point: Vector3) -> void:
+	if _turnstile_ride.is_empty():
+		return
+	var pivot: Node3D = _turnstile_ride.get("spinner")
+	if pivot == null or not is_instance_valid(pivot):
+		return
+	var flat := Vector3(point.x, 0.0, point.z)
+	if flat.distance_to(_turnstile_ride["position"] as Vector3) > float(_turnstile_ride["radius"]):
+		return
+	var old: Tween = _turnstile_ride.get("tween")
+	if old != null and old.is_valid():
+		old.kill()
+	var tween: Tween = _build_turnstile_spin(_turnstile_ride)
+	tween.finished.connect(_on_turnstile_spin_finished, CONNECT_ONE_SHOT)
 
 ## Turns a spinning prop to `angle`, and -- in the SAME call, immediately
 ## after -- moves whoever is riding it.
@@ -553,14 +598,19 @@ func _on_tapped_ground(point: Vector3) -> void:
 		if _keepy.is_standing_on_board():
 			_keepy.dive(point)
 		return
-	# A tap while the turnstile owns the body is DROPPED, and dropped
-	# rather than queued. It is intercepted BY STATE like the ride's and the
-	# board's, for the identical reason: the point arrived resolved on the
-	# y = 0 plane, so it can say which way the player pointed but must
-	# never become somewhere to walk to. Unlike the plank, there is nothing
-	# it could mean instead -- a rider is let off by the spin ending, not by
-	# asking -- so it means nothing and does nothing.
+	# A tap while the turnstile owns the body is intercepted BY STATE like
+	# the ride's and the board's, for the identical reason: the point
+	# arrived resolved on the y = 0 plane, so it can say which way the
+	# player pointed but must never become somewhere to walk to.
+	#
+	# 28 AOUT 2026: it is no longer ALWAYS dropped. A tap that lands on the
+	# SAME prop re-arms its ride instead -- see _reshove_turnstile for why
+	# that is a fresh shove and not _spin_near()'s. A tap anywhere else is
+	# still dropped exactly as before: there is nothing else it could mean,
+	# and the one thing this branch must never do is turn it into a
+	# destination to walk to once the ride is over.
 	if _keepy.is_on_turnstile():
+		_reshove_turnstile(point)
 		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
