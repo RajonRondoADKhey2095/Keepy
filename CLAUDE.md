@@ -18333,3 +18333,42 @@ geometrie ajoutee, comme il se doit : un etat n'est pas un mesh.
    vu si etre embarque aussi longtemps sans pouvoir rien faire est agreable ou
    long -- un tap pendant le tour est DELIBEREMENT sans effet.
 4. **Aucun son, aucune particule, aucun asset** : hors perimetre.
+
+### Deploiement staging du tourniquet ridable (palier 1, automatique)
+
+`staging` **`5f7ee7b`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `ccb31a4` des deux cotes ET `git diff` vide,
+verifie AVANT le push). CI run **#284** (id 33153748835) **verte** --
+`Import project resources` 08:03:04 -> 08:05:42, **`Export Web build`
+08:05:42 -> 08:05:47**, `Deploy to Vercel [STAGING -- staging]` **succes**
+(08:06:04 -> 08:06:15), `[PRODUCTION -- main]` correctement **skipped**.
+**`main` NON touche** (`origin/main` toujours `12a1d6b`, verifie apres le
+push) : ce lot corrige un defaut CONSTATE SUR DEVICE, donc la validation
+doit se faire sur device avant tout palier 2.
+
+**Verifie SUR LE SERVICE, sur DEUX marqueurs independants, et les QUATRE
+lectures sont `x-vercel-cache: MISS` avec `age: 0`** -- les valeurs "avant"
+ayant ete relevees AVANT le merge, la bascule est prouvee dans les deux sens
+et pas deduite du log :
+
+| marqueur | avant (run #283) | apres (ce lot, run #284) |
+|---|---|---|
+| `CACHE_VERSION` | `1787899481` = **06:44:41** | **`1787904346` = 08:05:46** |
+| `index.pck` servi | **5 892 560** | **5 897 408** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(08:05:42 -> 08:05:47) : l'alias sert bien ce build.
+
+⚠️ **`index.pck` prend une valeur de plus pour le meme contenu** : 5 897 376 a
+l'export local propre contre 5 897 408 servi, **32 octets d'ecart**. Enieme
+illustration de l'instabilite deja consignee -- le `.pck` est un marqueur
+"nouveau build", **jamais** une preuve d'identite. `index.wasm` (**35 376 909**,
+md5 `af4a8fc2925d992348eb30deeeb54360`) est identique des deux cotes et c'est
+lui la preuve d'identite.
+
+⚠️ **L'API GitHub Actions N'ETAIT PAS perimee sur ce run, et c'est note dans ce
+sens-la** : les appels successifs ont rendu de vraies progressions d'etapes
+avec de vrais horodatages, et l'import a reellement pris **2 min 38 s**. Le
+piege existe ; il ne s'est pas produit ici, et le verifier coute un regard a
+l'horloge.
