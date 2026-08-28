@@ -608,6 +608,31 @@ const TURNSTILE_BAR_Y: float = 0.62
 ## thing it is bolted to.
 const TURNSTILE_BAR_LENGTH: float = TURNSTILE_DECK_RADIUS - 0.13
 
+## How far out from the pivot a rider stands. DERIVED, not chosen -- the
+## geometry leaves exactly one window and this is its outer end.
+##
+## A rider faces OUTWARD (Mathieu's call), so the model's long axis lies
+## along the radius: measured on the shipped .glb, Keepy is 2.0371 deep,
+## which puts his TAIL at ride_radius - 1.0187. The centre post is 0.10
+## across and stands from the deck up to local y 0.98 -- straight through
+## the height his body occupies -- so the tail clears it only while
+##
+##     ride_radius >= 1.0187 + TURNSTILE_POST_RADIUS  ->  >= 1.1187
+##
+## and the deck rim is at 1.15. The whole legal window is [1.119, 1.150],
+## which is under four centimetres wide, and the rim is its natural end:
+## "on the edge" is what was asked for, and anything further in only moves
+## the tail closer to the post it has to miss.
+##
+## ⚠️ HIS NOSE OVERHANGS, and that is measured rather than hidden: at this
+## radius the model reaches 2.17 from the pivot against a 1.15 deck and a
+## 1.35 footing. Keepy is 2.04 long and the deck is 2.30 across, so a body
+## facing outward on it cannot be contained by it at any radius at all --
+## the overhang is a property of the two sizes, not of this number. Turning
+## him TANGENTIALLY would fit him (his width is only 1.32), and that is the
+## one lever if the device says the overhang reads badly.
+const TURNSTILE_RIDE_RADIUS: float = TURNSTILE_DECK_RADIUS
+
 ## How close a landing has to be to shove it. A property of THIS PROP's
 ## reach and not of the gesture, which is why it is published per entry in
 ## spinning_props() rather than held as one number by the caller: the
@@ -781,6 +806,23 @@ func diving_boards() -> Array[Dictionary]:
 ##   "spinner"   Node3D  -- the sub-node to rotate, and ONLY that sub-node:
 ##                          whatever the prop leaves static (a footing, a
 ##                          foundation) is deliberately not under it
+##   "deck_y"    float   -- TOP of the ridable surface, in the SPINNER's own
+##                          local space, so a rider stands on it rather than
+##                          in it
+##   "ride_radius" float -- how far out from the pivot a rider sits, same
+##                          local space
+##   "bars"      int     -- how many radial grips the top carries, so a
+##                          rider can be seated BETWEEN two of them instead
+##                          of inside one
+##   "clear_radius" float -- the static footing's own radius: the smallest
+##                          circle a dismount has to land outside of
+##
+## THE LAST FOUR ARE PUBLISHED, NOT LEFT TO THE RIDER TO RECOMPUTE. Keepy is
+## written onto this prop every frame while he rides it, and the height and
+## the radius he is written at ARE the deck's -- so they come out of the pass
+## that drew the deck, exactly as "radius" and "spinner" already do. The
+## alternative is the same number living in two files, which is the failure
+## this project has paid for often enough to stop choosing it.
 ##
 ## Published from the geometry rather than re-read from the layout, for the
 ## same reason the boards are: the thing the player sees turning and the
@@ -1859,6 +1901,14 @@ func _make_turnstile(_entry: Dictionary, _index: int, where: Vector3) -> Node3D:
 		"position": Vector3(where.x, 0.0, where.z),
 		"radius": TURNSTILE_TRIGGER_RADIUS,
 		"spinner": spinner,
+		# The TOP of the deck, not its centre: a CylinderMesh is centred on
+		# its own origin, so the surface a rider stands on is half a
+		# thickness above the node that carries it. Measured on the built
+		# tree at 0.31 world with this prop at scale 1.
+		"deck_y": TURNSTILE_DECK_Y + TURNSTILE_DECK_THICKNESS * 0.5,
+		"ride_radius": TURNSTILE_RIDE_RADIUS,
+		"bars": TURNSTILE_BARS,
+		"clear_radius": TURNSTILE_BASE_RADIUS,
 	}
 	return root
 

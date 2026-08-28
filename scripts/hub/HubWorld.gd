@@ -180,6 +180,23 @@ var _keepy_waterline_tween: Tween = null
 ## mechanism.
 var _spinners: Array[Dictionary] = []
 
+## The spinner entry Keepy is currently riding, empty when he is not on
+## one. Held rather than re-searched so the dismount lands off the prop he
+## actually rode, even if a layout ever grows a second one.
+var _turnstile_ride: Dictionary = {}
+
+## Armed by a dismount, consumed by the landing it produces.
+##
+## ⚠️ WITHOUT IT THIS FEATURE LOOPS FOREVER. A dismount ends in an ordinary
+## landing, and an ordinary landing near the prop is exactly what mounts
+## him -- so a dismount that came down inside the trigger radius would put
+## him straight back on. The exit point is measured to clear that radius,
+## which makes the latch unreachable today; it is written anyway because
+## "the exit lands far enough away" is a fact about GEOMETRY AND LAYOUT,
+## and layouts are edited without this file being reread. Same argument the
+## dive gate below already makes, and the same shape as _dive_pending.
+var _dismount_pending: bool = false
+
 ## How far the top swings when a landing sets it going, and over how long.
 ##
 ## EASE_OUT, and that is the whole reading: a real roundabout is shoved
@@ -187,6 +204,33 @@ var _spinners: Array[Dictionary] = []
 ## read as a machine being driven rather than as something that was pushed.
 const TURNSTILE_SPIN_TURNS: float = 1.5
 const TURNSTILE_SPIN_S: float = 2.2
+
+## How far outside a spinning prop's own footing a dismount aims.
+##
+## The landing has to clear the TRIGGER radius and not merely the footing:
+## coming down inside the trigger would shove the prop again on the way
+## off, which reads as the roundabout restarting itself the moment you let
+## go. A step past that is the smallest margin that also leaves room for
+## the body, which overhangs the deck.
+const TURNSTILE_EXIT_MARGIN: float = 0.85
+
+## How far round the prop the exit search may walk when the outward point
+## is occupied, and in how many steps. It walks AROUND rather than further
+## OUT for the reason the boat's bank search walks along the stream: the
+## ring at one radius is fresh ground, while pushing outward only finds
+## more of whatever is already in that direction.
+const TURNSTILE_EXIT_ARC_DEG: float = 150.0
+const TURNSTILE_EXIT_STEPS: int = 24
+
+## How much room a landing needs on top of whatever it is standing next to.
+##
+## Keepy's own half-width, MEASURED on the shipped .glb: the model is
+## 1.3198 across, so half of it is 0.6599. Deliberately the WIDTH and not
+## the depth (2.0371, which is mostly tail) -- the depth is the same
+## overhang the boat's bank search already tolerates, and demanding a metre
+## of clearance in every direction would refuse most of a plateau this
+## densely scattered.
+const KEEPY_CLEARANCE: float = 0.66
 
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
@@ -272,12 +316,13 @@ func _setup_boards() -> void:
 ## landing below simply walks a list of nothing.
 func _setup_spinners() -> void:
 	for prop in _builder.spinning_props():
-		_spinners.append({
-			"position": prop["position"],
-			"radius": prop["radius"],
-			"spinner": prop["spinner"],
-			"tween": null,
-		})
+		# Copied WHOLESALE and then given the tween slot, rather than
+		# listing the keys one by one: the registry grew four fields when
+		# the turnstile became ridable, and a hand-written copy is exactly
+		# the thing that silently drops the fifth.
+		var entry: Dictionary = prop.duplicate()
+		entry["tween"] = null
+		_spinners.append(entry)
 
 ## Sets going every spinning prop the landing is standing at.
 ##
@@ -291,7 +336,11 @@ func _setup_spinners() -> void:
 ## full speed -- that is a jolt, and a jolt is exactly what a second tween
 ## laid over a running one produces. A shove that arrives while it is
 ## already turning is simply not a shove.
-func _spin_near(landing: Vector3) -> void:
+## Returns the entry the landing is standing at, or an empty Dictionary --
+## so the caller can go on to put Keepy on the thing it just shoved without
+## running the same proximity search a second time and risking a different
+## answer from it.
+func _spin_near(landing: Vector3) -> Dictionary:
 	var flat := Vector3(landing.x, 0.0, landing.z)
 	for entry in _spinners:
 		var pivot: Node3D = entry["spinner"]
@@ -299,9 +348,16 @@ func _spin_near(landing: Vector3) -> void:
 			continue
 		if flat.distance_to(entry["position"] as Vector3) > float(entry["radius"]):
 			continue
+		# ⚠️ THE DEBOUNCE STOPS THE SHOVE, NOT THE ANSWER. Being in reach and
+		# being shoved are two different facts, and only the first one is
+		# what a rider asks about: a player who lands on a roundabout that
+		# is still coasting must be able to get ON it, even though his
+		# landing is correctly not counted as a second push. Returning
+		# early here -- which the first draft of this did -- made a
+		# coasting prop unmountable, silently.
 		var running: Tween = entry["tween"]
 		if running != null and running.is_valid() and running.is_running():
-			continue
+			return entry
 		# Wrapped before it is tweened, never reset to zero: the top keeps
 		# whatever facing it coasted to, which is what a roundabout does,
 		# while the number it is counted from stays bounded instead of
@@ -310,9 +366,122 @@ func _spin_near(landing: Vector3) -> void:
 		pivot.rotation_degrees.y = from_deg
 		var tween := pivot.create_tween()
 		tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tween.tween_property(pivot, "rotation_degrees:y",
-			from_deg + 360.0 * TURNSTILE_SPIN_TURNS, TURNSTILE_SPIN_S)
+		# tween_method and not tween_property, and the angles it walks are
+		# identical -- same start, same end, same trans, same ease, same
+		# duration -- so the SPIN is the shipped one to the degree. What
+		# the method buys is that the rider is written in the same call as
+		# the angle: see _apply_spin.
+		tween.tween_method(_apply_spin.bind(entry),
+			from_deg, from_deg + 360.0 * TURNSTILE_SPIN_TURNS, TURNSTILE_SPIN_S)
 		entry["tween"] = tween
+		return entry
+	return {}
+
+## Turns a spinning prop to `angle`, and -- in the SAME call, immediately
+## after -- moves whoever is riding it.
+##
+## ⚠️ THIS IS WHY THE SPIN IS A tween_method. A rider who read the pivot on
+## his own per-frame callback was measured a full frame behind it (12.0 deg
+## at the peak of the shove, and process_priority did not help: Tween steps
+## land after every node's _process). One writer, two writes, one order --
+## the rider cannot be a frame behind the deck because there is no frame
+## between them. It is the rule _place_on_route() already follows so the
+## hull can never drift from the boat's passenger.
+func _apply_spin(angle: float, entry: Dictionary) -> void:
+	var pivot: Node3D = entry["spinner"]
+	if pivot == null or not is_instance_valid(pivot):
+		return
+	pivot.rotation_degrees.y = angle
+	# Only the rider of THIS prop, and only while he is actually aboard.
+	if _keepy.is_on_turnstile() and not _turnstile_ride.is_empty() \
+			and _turnstile_ride.get("spinner") == pivot:
+		_keepy.follow_turnstile()
+
+## Puts Keepy on a spinning prop and arranges for him to be let off when it
+## stops.
+##
+## The ride lasts exactly as long as the SHOVE does -- the dismount hangs
+## off the prop's own tween finishing, not off a duration copied next to
+## it. A second number for "how long a spin lasts" is a second number to
+## keep in step with TURNSTILE_SPIN_S, and the two would drift the first
+## time either was tuned.
+func _mount_turnstile(entry: Dictionary) -> bool:
+	var pivot: Node3D = entry["spinner"]
+	if pivot == null or not is_instance_valid(pivot):
+		return false
+	if not _keepy.mount_turnstile(pivot, float(entry["deck_y"]),
+			float(entry["ride_radius"]), int(entry["bars"])):
+		return false
+	_turnstile_ride = entry
+	var spin: Tween = entry["tween"]
+	if spin != null and spin.is_valid() and spin.is_running():
+		spin.finished.connect(_on_turnstile_spin_finished, CONNECT_ONE_SHOT)
+	else:
+		# Nothing is turning -- unreachable while _spin_near either shoves
+		# or reports a running tween, and handled anyway because the
+		# alternative failure is a rider stranded on a prop with no signal
+		# left to let him off.
+		_on_turnstile_spin_finished()
+	return true
+
+## The shove has coasted to a stop, so the rider steps off.
+func _on_turnstile_spin_finished() -> void:
+	if _turnstile_ride.is_empty() or not _keepy.is_on_turnstile():
+		_turnstile_ride = {}
+		return
+	var landing: Vector3 = _turnstile_exit_point(_turnstile_ride)
+	_turnstile_ride = {}
+	_dismount_pending = true
+	_keepy.leave_turnstile(landing)
+
+## Where to step off: on the ground, outside the prop's reach, and clear of
+## anything standing there.
+##
+## OUTWARD FIRST, because that is the way he is already facing -- a rider
+## flung off a roundabout carries on in the direction he was pointed, and
+## turning him round to step off backwards would be the screen overruling
+## the pose it just spent two seconds selling.
+##
+## The radius clears the TRIGGER radius rather than the footing, so the
+## landing cannot shove the prop again on the way off. When the outward
+## point is occupied the search walks AROUND the prop at that same radius:
+## the ring is fresh ground, while pushing further out only finds more of
+## whatever is already in that direction -- the argument the boat's bank
+## search makes, applied to a circle.
+func _turnstile_exit_point(entry: Dictionary) -> Vector3:
+	var pivot_pos := Vector3(float(entry["position"].x), 0.0, float(entry["position"].z))
+	var here := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+	var out := here - pivot_pos
+	if out.length_squared() < 0.000001:
+		out = Vector3.FORWARD
+	out = out.normalized()
+	var reach: float = float(entry["radius"]) + TURNSTILE_EXIT_MARGIN
+	var blocked: Array = _builder.ground_footprints()
+
+	var fallback := HubRegion.clamp_to(pivot_pos + out * reach)
+	for i in TURNSTILE_EXIT_STEPS:
+		# 0, +step, -step, +2*step, ... so the first acceptable point is
+		# always the one closest to straight ahead.
+		var half: int = (i + 1) / 2
+		var sign: float = 1.0 if i % 2 == 0 else -1.0
+		var sweep: float = deg_to_rad(TURNSTILE_EXIT_ARC_DEG) * float(half) / float(TURNSTILE_EXIT_STEPS)
+		var dir: Vector3 = out.rotated(Vector3.UP, sweep * sign)
+		var candidate := pivot_pos + dir * reach
+		if not HubRegion.contains(candidate):
+			continue
+		if candidate.distance_to(pivot_pos) < float(entry["radius"]):
+			continue
+		var free: bool = true
+		for spot in blocked:
+			if candidate.distance_to(spot["position"] as Vector3) < float(spot["radius"]) + KEEPY_CLEARANCE:
+				free = false
+				break
+		if free:
+			return candidate
+	# Nowhere on the ring is clear. The outward point is used anyway rather
+	# than leaving him aboard forever: standing in a bush is a blemish, and
+	# never being let off a roundabout is a stuck screen.
+	return fallback
 
 func _apply_swamp_palette() -> void:
 	var env: Environment = _world_env.environment
@@ -383,6 +552,15 @@ func _on_tapped_ground(point: Vector3) -> void:
 	if _keepy.is_on_board():
 		if _keepy.is_standing_on_board():
 			_keepy.dive(point)
+		return
+	# A tap while the turnstile owns the body is DROPPED, and dropped
+	# rather than queued. It is intercepted BY STATE like the ride's and the
+	# board's, for the identical reason: the point arrived resolved on the
+	# y = 0 plane, so it can say which way the player pointed but must
+	# never become somewhere to walk to. Unlike the plank, there is nothing
+	# it could mean instead -- a rider is let off by the spin ending, not by
+	# asking -- so it means nothing and does nothing.
+	if _keepy.is_on_turnstile():
 		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
@@ -524,8 +702,22 @@ func _on_hop_landed(position: Vector3) -> void:
 	# the distance test would refuse a dive landing anyway -- but that is a
 	# fact about the layout, which is DATA, and a layout is exactly the kind
 	# of thing that gets edited without this file being reread.
+	var was_dismount: bool = _dismount_pending
+	_dismount_pending = false
 	if not was_dive:
-		_spin_near(position)
+		var shoved: Dictionary = _spin_near(position)
+		# AND THEN HE GETS ON IT. The mount sits on the SAME landing and the
+		# SAME proximity answer as the shove, so the prop he is put on can
+		# never be a different one from the prop that turned.
+		#
+		# It returns immediately on success: he is ON_TURNSTILE from here, and
+		# every branch below this point is about a body that is standing on
+		# the plateau -- boarding a boat, climbing a ladder, entering a portal.
+		# Portal detection in particular goes quiet for the whole ride exactly
+		# as it does for the boat, and for the same reason: the state emits no
+		# landings, so there is nothing for a portal to answer.
+		if not was_dismount and not shoved.is_empty() and _mount_turnstile(shoved):
+			return
 
 	# The landing that finishes a boarding walk starts the ride, before
 	# anything else looks at where it landed.
