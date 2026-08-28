@@ -199,21 +199,40 @@ func _phase_region() -> void:
 	# that it really is contained, rather than to delete the check and
 	# leave nobody watching. If a later batch pushes a lake back out
 	# through an edge, THIS assertion is the one that will fail and say so.
+	# ⚠️ 28 AOUT 2026 -- THE NORTH LOBE ALSO REACHES PAST THE SQUARE, and it
+	# is MEANT to: it is the ground that batch was written to add. So the
+	# sweep no longer counts every point past the square (that count is a
+	# design decision now, not a defect) -- it counts points past the square
+	# that the LOBE does not account for, which is still exactly the pad's
+	# contribution and still exactly what this assertion was gating.
+	#
+	# The exclusion is paid for on the next line: a lobe that had itself gone
+	# inert would make this pass for free, so the sweep also has to SEE the
+	# lobe's ground. One number cannot be trusted without the other.
 	var beyond: int = 0
+	var lobe_points: int = 0
 	var farthest := Vector3.ZERO
+	var lobe_centre: Vector3 = HubRegion.north_lobe_centre()
 	for i in 1441:
 		var a: float = deg_to_rad(float(i) * 0.25)
 		for step in range(1, 220):
 			var p := Vector3(cos(a) * float(step) * 0.5, 0.0, sin(a) * float(step) * 0.5)
 			if not HubRegion.contains(p):
 				continue
-			if absf(p.x) > HubRegion.PLATEAU_HALF_EXTENT or absf(p.z) > HubRegion.PLATEAU_HALF_EXTENT:
-				beyond += 1
-				if p.length() > farthest.length():
-					farthest = p
+			if absf(p.x) <= HubRegion.PLATEAU_HALF_EXTENT and absf(p.z) <= HubRegion.PLATEAU_HALF_EXTENT:
+				continue
+			if p.distance_to(lobe_centre) <= HubRegion.NORTH_LOBE_RADIUS:
+				lobe_points += 1
+				continue
+			beyond += 1
+			if p.length() > farthest.length():
+				farthest = p
 	_check(beyond == 0,
-		"the shore pad adds nothing past the square, as an interior lake implies (%d sampled points beyond, farthest %s)"
+		"the shore pad adds nothing past the square, as an interior lake implies (%d sampled points beyond and outside the north lobe, farthest %s)"
 			% [beyond, farthest])
+	_check(lobe_points > 0,
+		"and the exclusion above is not hiding a dead lobe: %d sampled points past the square ARE the north lobe"
+			% lobe_points)
 	_check(HubRegion.near_bank().length() + HubRegion.SHORE_PAD_RADIUS <= HubRegion.PLATEAU_HALF_EXTENT,
 		"the pad is contained by arithmetic: %.3f + %.1f <= %.1f"
 			% [HubRegion.near_bank().length(), HubRegion.SHORE_PAD_RADIUS, HubRegion.PLATEAU_HALF_EXTENT])
@@ -336,6 +355,9 @@ func _phase_geometry(props: Node3D, ground: MeshInstance3D) -> void:
 			var p := Vector3(cos(a) * float(r) * 0.5, 0.0, sin(a) * float(r) * 0.5)
 			if HubRegion.contains(p):
 				reach = maxf(reach, maxf(absf(p.x), absf(p.z)))
+	# 35.00 until the north lobe, 47.00 since -- half-extent plus the lobe
+	# radius, and reported rather than asserted at a value because the point
+	# of the check is the ground mesh, not the number.
 	print("    worst reachable |axis| = %.2f against a ground half-size of %.1f" % [reach, half])
 	_check(reach < half, "no reachable point leaves the ground mesh")
 	print("")
