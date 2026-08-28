@@ -19978,3 +19978,242 @@ nord/balancoire et chouette decor precedents.
 lot de staging (est-ce que "assis sur la nuque" se lit comme "Keepy
 chevauche le hibou") est un jugement device deja tranche par la
 validation qui a autorise ce merge.
+
+## LA CABANE : premier prop ou Keepy DISPARAIT, et le gate copie le BATEAU et non l'echelle (28 aout 2026)
+
+Branche `claude/keepy-cabin-install-u5gk87`, partie de `staging`
+(`06f5b39`). Regle n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri
+des refs par date et comparaison des **ARBRES** -- les deux branches plus
+recentes que `main` (`keepy-debug-coords`, `keepy-cabin-debug-markers`)
+sont deja ancetres de `origin/staging`, **aucune session concurrente**.
+
+⚠️ **DEROGATION DE BRANCHE, SIGNALEE** : le brief nommait
+`claude/keepy-cabin-install` ; la contrainte d'environnement de cette
+session imposait `claude/keepy-cabin-install-u5gk87` et interdisait tout
+push ailleurs. Meme arbitrage que les lots precedents ou les deux se sont
+contredits -- le nom designe l'emporte, et l'ecart est dit plutot que tu.
+
+`assets/models/keepy_cabin_decor.glb` sur une entree `&"cabin"` a
+**(-17,43 ; 28,18)**, echelle 1,0, `rotation_y` 0. Un tap sur le pas de la
+porte l'y amene et le fait entrer ; **il disparait sur place**, et
+n'importe quel tap ensuite le fait ressortir a l'endroit exact ou il a
+disparu. Aucune derogation mono-altitude : il ne quitte jamais y = 0.
+
+### La chirurgie du `.glb` : losslessness prouvee AVANT, strip prouve APRES
+
+Meme methode que le hibou, executee cette fois plutot qu'heritee, et dans
+l'ordre que le brief impose :
+
+| passe | resultat |
+|---|---|
+| **reecriture verbatim** | chunk BIN **byte-identique** (md5 `7222e5fa6f3498d10888839b9c2da185`), JSON semantiquement identique, et fichier de sortie a **exactement 23 198 240 octets**, la taille de la source |
+| **+ `KHR_materials_unlit`** | BIN **encore byte-identique** ; `used`, jamais `required`, comme le hibou et le poursuivant |
+| **- metallicRoughness** | prefixe BIN conserve **byte-identique** -- son bufferView etait le DERNIER, donc une pure troncature |
+
+⚠️ **Le retrait n'est pas argumente, il est MESURE sur des pixels** : le
+materiau unlit a ete rendu a **quatre azimuts** sous `xvfb`
+(`--rendering-driver opengl3`) avec et sans la map, et **les quatre paires
+de PNG sont BYTE-IDENTIQUES**. Le mecanisme derriere ce zero est
+l'importeur glTF de Godot lui-meme, verifie a part : sur un materiau
+UNLIT il ne lie **jamais** `metallic_texture` ni `roughness_texture` --
+les deux lisent `null` des l'import, donc la map 4096x4096 ne pouvait
+atteindre aucun pixel.
+
+**23 198 320 -> 13 756 932 octets, soit 9 441 388 economises (40,7 %)**,
+et aucun sidecar metallicRoughness n'est plus genere a l'import.
+
+### ⚠️ ET LA MEME MESURE TROUVE 8,6 Mo DE PLUS, NON RETIRES -- decision de Mathieu
+
+Le brief scopait le strip a la seule map metallicRoughness. En verifiant le
+materiau reellement DESSINE, la meme lecture donne
+**`normal_tex null = true`, `normal_enabled = false`** : la normal map ne
+peut pas davantage atteindre un pixel sur une surface unshaded.
+
+Son `.ctex` pese **8 619 000 octets** -- **le plus gros contributeur
+unique du lot**, plus lourd que la baseColor (6 455 000). La retirer
+economiserait plus de la moitie du cout de la cabane, avec exactement la
+meme structure de preuve.
+
+**NON FAIT, deliberement** : c'est hors du perimetre demande, et
+`keepy_owl_decor.glb` **embarque la sienne** dans les memes conditions --
+le precedent dit de la garder. Le chiffre est publie pour que Mathieu
+tranche, comme le lot hibou avait publie le sien.
+
+### ⚠️ LE `.pck` PLUS QUE DOUBLE, et c'est le vrai cout de ce lot
+
+Mesure des DEUX cotes **dans la meme session**, exports uniques et propres
+(`build/` et `.godot/` supprimes avant), la seule comparaison que ce
+fichier autorise :
+
+| | `index.pck` | `index.wasm` |
+|---|---|---|
+| baseline (`origin/staging`, worktree separe) | **14 798 736** | 35 376 909 |
+| ce lot | **30 228 448** | 35 376 909 |
+| delta | **+15 429 712 (+104,3 %)** | **0** |
+
+Le delta se decompose **a 3 963 octets pres** : `.scn` 351 749 + baseColor
+`.ctex` 6 455 000 + normal `.ctex` 8 619 000 = 15 425 749, le reste etant
+les quelques ecritures GDScript et l'entree de layout. `index.wasm`
+identique au bit pres (md5 `af4a8fc2925d992348eb30deeeb54360`), `index.js`
+md5 `4e08904b1b7107858246af44b602067b` -- le fingerprint permanent de tout
+lot qui ne touche pas le code moteur.
+
+⚠️ **Piege payload rencontre et evite** : un premier export a rendu **7**
+lignes `Storing File: res://build` -- l'auto-contamination deja consignee
+(un second export sans `rm -rf build` reimporte les PNG que le PREMIER
+avait ecrits). Refait proprement : **0** pour `assets_source`,
+`scripts/dev`, `docs`, `web`, `build` et `firebase.json` sur 253 lignes.
+
+### `rotation_y = 0` est MESURE, pas laisse par defaut
+
+Le modele a ete rendu sur quatre axes avant qu'une ligne soit ecrite :
+**depuis +Z le tronc est evide et meuble** -- un lit, des etageres, une
+enseigne suspendue, des marches au pied -- **et depuis -Z c'est un tronc
+ferme sans ouverture**. `HubCamera` ne lacete jamais et regarde toujours
+-Z, donc un prop n'est jamais vu que de son cote +Z : zero est la seule
+rotation qui montre l'interieur meuble plutot que de l'ecorce.
+
+La cabane etant a z = +28,18, elle se decouvre **en redescendant du lobe
+nord** -- la meme propriete « structurellement derriere le spawn » deja
+consignee pour le lobe et la balancoire, et la trajectoire contre laquelle
+le placement a ete arbitre.
+
+`CABIN_MODEL_OFFSET` est lu sur l'accesseur POSITION du `.glb` livre
+(min.y = **-0,800420**) et non suppose d'un modele centre -- l'origine d'un
+`.glb` est la ou son auteur l'a laissee, la lecon du rondin JUMP.
+`CABIN_FOOTPRINT_RADIUS` est le rayon circonscrit **mesure** (1,228043)
+arrondi **vers le haut** a 1,25 : arrondir vers le bas l'empreinte d'un
+volume plein est la direction qui fait passer un rocher a travers un mur.
+
+Le pas de la porte est **derive dans `_build`** depuis la meme position et
+la meme rotation qui ont place le prop, puis publie sur le registre --
+jamais ecrit dans le layout comme une seconde coordonnee : deux nombres
+pour une porte, c'est comme ca qu'une porte finit derriere une cabane que
+quelqu'un a tournee. Le registre est une **LISTE des le premier commit**,
+la lecon du plongeoir payee d'avance.
+
+### ⚠️ LE GATE EST CELUI DU BATEAU, ET CE N'EST PAS UNE HABITUDE ICI
+
+`cabin_available` est la retraite de la mooring sous forme de drapeau : le
+pas de la porte **cesse d'accepter les taps pour toute la visite**, donc le
+tap suivant retombe sur `tapped_ground` et **DEVIENT la sortie** --
+exactement comme un tap pendant une navigation devient l'eject.
+
+Copier l'ECHELLE aurait ete le bug : elle emet `tapped_ladder` quoi que
+fasse Keepy et `HubWorld` le jette, ce qui est inoffensif pour une planche
+dont le seul autre sens est un plongeon deja traite par etat, et qui
+laisserait ici un joueur **A L'INTERIEUR d'un prop qui avale chacun de ses
+taps, sans aucune sortie**.
+
+**Ce n'est pas un argument, c'est mesure** : neutraliser la retraite fait
+partir la sonde en rouge sur **3 assertions**, dont *« un tap ON THE
+DOORSTEP a termine la visite »* qui echoue avec Keepy **toujours dedans
+240 frames plus tard**.
+
+**N'IMPORTE QUEL tap le fait ressortir, et c'est deliberement plus permissif
+que le tourniquet ou la balancoire** : ceux-la peuvent exiger un tap sur
+eux-memes parce que le joueur les voit ; **la cabane ne le peut pas**, il
+est invisible dedans et n'a rien a viser. Le point reste **jete** et jamais
+mis en file : il peut dire que le joueur voulait quelque chose, il ne doit
+jamais devenir un endroit ou marcher depuis l'interieur d'un arbre.
+
+### `IN_CABIN` est le plus petit etat de ride de l'ecran
+
+Rien ne le porte : **aucun `follow_*()`**, rien qui ecrive son transform
+par frame, et **aucun `_ride_exit_point`** -- la sortie est l'entree, et
+cet endroit est du sol sur lequel il avait deja atterri. Ce que l'etat
+achete n'est pas du mouvement mais de la **propriete** : `hop_to()` refuse
+deja depuis tout etat autre qu'immobile, aucun atterrissage n'est emis, et
+les quatre gardes « aucun atterrissage » de `_on_hop_landed` deviennent
+cinq.
+
+⚠️ **Aucun latch `_dismount_pending`, et pour une fois c'est structurel
+plutot qu'une exception** : sortir n'emet **AUCUN atterrissage**, donc il
+n'y a rien a re-declencher -- contrairement a chaque dismount qui
+redescend en hop ordinaire. L'animation est une esquive : il se tourne
+vers la porte, se ramasse a 25 % de son echelle en 0,30 s, puis le corps
+est **cache** (`_body.visible`, pas le hopper -- la camera suit le hopper,
+et une camera qui perdrait sa cible le temps d'une disparition sauterait
+ailleurs puis reviendrait).
+
+### `CabinProbe` : 42 checks, 0 echec, GATEE et verifiee ROUGE d'abord
+
+Gatee parce que **tout mode de panne est SILENCIEUX** : scene non
+assignee avalee par un `push_error`, modele flottant ou enfonce, porte
+derivee du cote ferme du tronc, signal de tap qui continue de tirer. Aucun
+ne leve ; tous ressemblent a « la cabane n'a jamais ete installee ».
+
+| cassure deliberee | resultat |
+|---|---|
+| hook d'entree neutralise | **1 FAIL** -- il marche jusque-la et rien ne se passe |
+| retraite neutralisee (patron echelle) | **3 FAIL** -- dont Keepy toujours dedans a 240 frames |
+
+⚠️ **DEFAUT TROUVE DANS MA PROPRE SONDE, publie plutot que lisse.** La
+premiere PHASE D appelait `_on_tapped_ground` **directement**, et elle est
+donc restee VERTE sous le patron echelle qu'elle existe pour ecarter --
+elle ne testait que le drapeau, jamais le ROUTAGE, qui est precisement ce
+que la retraite decide. Reecrite pour piloter le **`HubTapInput._handle_point`
+LIVRE** via un point d'ecran projete (donc `xvfb`, jamais `--headless`),
+elle attrape les trois echecs ci-dessus. PHASE D porte aussi un **BLIND
+CHECK** (« il est de nouveau visible » passe gratuitement contre un corps
+jamais cache) et PHASE E le fait rentrer **une seconde fois**, ce qui
+prouve que la premiere visite n'a laisse ni retraite non restauree ni tween
+non nettoye.
+
+### L'overlay de debug est supprime DANS CE LOT
+
+`scripts/hub/debug/KeepyCoordsOverlay.gd`, sa constante
+`KEEPY_COORDS_DEBUG_ENABLED` et son site d'appel : partis. Son propre
+en-tete l'exigeait -- il existait pour lire la coordonnee que ce lot
+installe, et **rien qui le porte ne doit atteindre `main`**.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0** ; boot de `HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`**
+-- la confirmation A L'EXECUTION que les 217 entrees restent coherentes ;
+export Web release **exit 0, 0 erreur**.
+
+**Sondes, toutes exit 0** : `CabinProbe` (**42/42**), `ProbeTimeoutAudit`
+(**58 sondes scenes**, 57 en baseline, le +1 etant `CabinProbe`),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`, `OwlProbe`, `OwlFlightProbe`,
+`DivingBoardProbe`, `WaterImpactProbe`, `WaterTintProbe`, `SeesawProbe`.
+
+⚠️ **`TurnstileProbe` sort en 1, sur son echec UNIQUE et PRE-EXISTANT**
+(`entry 0's custom_aabb encloses every bar`), deja consigne comme tel dans
+ce fichier et non aggrave par ce lot.
+
+⚠️ **Piege `--fixed-fps` re-rencontre, et il a produit un faux rouge.**
+`SeesawProbe` lancee sans le flag rapporte la diagonale a **45,033 s** et
+part en rouge sur deux assertions. Avec `--fixed-fps 60` elle rend
+**18,700 s** -- la valeur deja publiee -- et **0 echec**. Le budget de
+draw nodes partage passe de **128 a 129**, itemise dans les trois en-tetes
+qui le portent (`SeesawProbe`, `TurnstileProbe`, `WaterTintProbe`) plutot
+que pousse : une constante de budget qui derive en silence est un budget
+que personne ne surveille.
+
+**Rendu reel capture** (1080x1920, `xvfb` + `opengl3`) : la cabane est
+posee au sol au bon endroit, face ouverte vers la camera, l'interieur
+meuble lisible.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. ⚠️ **L'ECHELLE EST LA VRAIE QUESTION.** A 1,0 la cabane fait **1,59 de
+   haut contre un Keepy de 1,35** : sur le rendu il se lit presque aussi
+   grand que la maison, et son ouverture est plus petite que lui. L'echelle
+   etait **fixee par la recon avec un verdict GO et n'a PAS ete
+   re-arbitree** -- mais elle est mesuree, et c'est le premier chiffre a
+   regarder sur device.
+2. **La normal map, 8 619 000 octets prouves morts** (section dediee) --
+   plus de la moitie du cout du lot, non retiree parce que hors perimetre
+   et contre le precedent du hibou.
+3. **Le `.pck` double** (14,8 -> 30,2 Mo) sur un jeu web mobile. Mesure,
+   decompose, non corrige.
+4. **L'anim d'entree est un placeholder assume** : il se ramasse et
+   disparait. Le gag « sieste » que le brief evoque reste a affiner sur
+   rendu reel, et c'etait le perimetre.
+5. **La cabane n'est pas visible depuis le spawn** (z = +28,18, camera qui
+   ne lacete jamais) -- comme la moitie des props du plateau.
