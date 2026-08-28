@@ -86,7 +86,11 @@ const _HUB_WORLD_SCENE: String = "res://scenes/HubWorld.tscn"
 ## 127 -> 128 on 28 aout 2026: the first Meshy model on this plateau, one
 ## static, decorative owl -- ONE MeshInstance3D (the .glb's own mesh) under
 ## a wrapping, non-drawing Node3D. Not batched: there is only one.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 128
+## 128 -> 129 on 28 aout 2026: the cabin, the second Meshy model on this
+## plateau -- ONE MeshInstance3D (the .glb's own mesh) under a wrapping,
+## non-drawing Node3D, on the owl's terms. Not batched: there is only one,
+## and nothing about it is ever animated.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 129
 
 var _failures: int = 0
 var _ride_landings: int = 0
