@@ -306,6 +306,12 @@ signal board_dismounted()
 signal turnstile_mounted()
 signal turnstile_dismounted()
 
+## Emitted when a seesaw ride starts and when it ends, the turnstile pair's
+## twins. The dismount fires AFTER the landing, so a listener sees the
+## ground he arrived on rather than the plank he left.
+signal seesaw_mounted
+signal seesaw_dismounted
+
 ## Yaw carrier. Kept separate from this node so world position (written by
 ## the hop) and facing (written by the turn) never contend for one
 ## transform, and separate from the model slot so pitch stays body-local.
@@ -360,7 +366,7 @@ var _has_target: bool = false
 ## hop_landed, so portal detection is silent for their whole duration. A
 ## board planted 9 u from the portal row would otherwise carry a diver into
 ## a sub-game they were only passing over.
-enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE }
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -423,6 +429,19 @@ var _ride_half_width: float = 0.0
 var _turnstile: Node3D = null
 var _turnstile_seat: Vector3 = Vector3.ZERO
 
+## The seesaw pivot Keepy is riding and where he sits IN THAT PIVOT'S OWN
+## LOCAL SPACE. Both null/zero whenever _state is not ON_SEESAW.
+##
+## ⚠️ THE SAME LOCAL-OFFSET-AND-to_global RULE the turnstile states above,
+## and it carries MORE here for free. A seesaw tilts, so the seat's world
+## HEIGHT changes as well as its position -- and because the offset is
+## local and the transform is the plank's own, the height comes out of the
+## same multiply the plank is drawn with. A rider whose Y was advanced on a
+## clock of its own would be a second number turning at the same rate,
+## which is the definition of the thing that drifts.
+var _seesaw: Node3D = null
+var _seesaw_seat: Vector3 = Vector3.ZERO
+
 func _ready() -> void:
 	_base_scale = _body.scale
 	_base_pitch = _body.rotation_degrees.x
@@ -478,6 +497,12 @@ func is_riding() -> bool:
 ## which is a load-bearing job for a query that was never given it.
 func is_on_turnstile() -> bool:
 	return _state == State.ON_TURNSTILE
+
+## True while a seesaw owns the body. Like ON_TURNSTILE it emits no
+## landings, so portal detection, boarding and climbing all go quiet for the
+## whole ride without any of them needing a line about seesaws.
+func is_on_seesaw() -> bool:
+	return _state == State.ON_SEESAW
 
 ## True from the first rung to the moment the feet hit the water: the whole
 ## span in which the body belongs to the board rather than to the plateau.
@@ -666,6 +691,126 @@ func leave_turnstile(landing: Vector3) -> void:
 func _on_turnstile_dismount_finished() -> void:
 	_on_hop_finished()
 	turnstile_dismounted.emit()
+
+## Puts Keepy on a seesaw plank, at the end he arrived at.
+##
+## `pivot` is the node that tilts, `seat_y` the TOP of the plank and
+## `ride_x` how far out along it a rider sits -- all three in the pivot's
+## own local space, all three published by HubBuilder from the pass that
+## drew them. Nothing here re-derives any of them, for the reason
+## mount_turnstile states: the plank a rider stands on and the plank that
+## was drawn have to be one fact.
+##
+## THE END IS THE ONE HE CAME FROM, which is the seesaw's version of the
+## turnstile snapping its seat to the nearest gap. A rider teleported to the
+## far end the instant he arrives is the jolt that rule exists to avoid, and
+## on a two-ended prop "nearest" is simply the sign of his local x.
+##
+## Refused, quietly, unless he is standing still -- the same overlap every
+## other entry point on this file refuses.
+func mount_seesaw(pivot: Node3D, seat_y: float, ride_x: float) -> bool:
+	if pivot == null or not is_instance_valid(pivot):
+		return false
+	if _state != State.IDLE:
+		return false
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+
+	# Where he is standing, expressed in the pivot's frame, so the end is
+	# chosen against the plank as it is turned RIGHT NOW rather than against
+	# the layout's idea of which way it points.
+	var local: Vector3 = pivot.to_local(global_position)
+	var side: float = 1.0 if local.x >= 0.0 else -1.0
+
+	_seesaw = pivot
+	_seesaw_seat = Vector3(side * ride_x, seat_y, 0.0)
+	_has_target = false
+	_state = State.ON_SEESAW
+	# Rest pose, as every state that takes the body over sets it: a squash
+	# left over from the landing that mounted him would ride with him.
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	follow_seesaw()
+	seesaw_mounted.emit()
+	return true
+
+## Writes Keepy at the seat for the plank's CURRENT tilt. The ONE place a
+## seesaw ride touches a transform.
+##
+## ⚠️ CALLED BY WHATEVER TILTS THE PIVOT, NEVER FROM _process(). This is not
+## a precaution copied across from the turnstile -- it is that file's
+## MEASUREMENT: a rider who sampled the pivot on his own per-frame callback
+## was a full frame behind it, 12.0 deg at the peak of the shove, and
+## process_priority did not move it because Tween steps land after every
+## node's _process whatever the priority says. So the caller that writes the
+## angle writes the rider too, in that order.
+func follow_seesaw() -> void:
+	if _seesaw == null or not is_instance_valid(_seesaw):
+		# The prop went away underneath him. Put the body back on the ground
+		# rather than leaving it parked in mid-air on a dead reference: this
+		# is unreachable while HubWorld owns both, which is exactly why it is
+		# written down instead of assumed.
+		_seesaw = null
+		_seesaw_seat = Vector3.ZERO
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		return
+	global_position = _seesaw.to_global(_seesaw_seat)
+	# Facing along the plank, INWARD toward the fulcrum. Outward is what the
+	# turnstile does because a roundabout rider faces the way he is flung;
+	# a seesaw rider faces the middle, which is also the pose that keeps him
+	# side-on to a camera that never yaws instead of showing it his back.
+	var inward: Vector3 = _seesaw.global_transform.basis * Vector3(-_seesaw_seat.x, 0.0, 0.0)
+	inward.y = 0.0
+	if inward.length_squared() > 0.000001:
+		_yaw.rotation_degrees.y = rad_to_deg(atan2(inward.x, inward.z))
+
+## Steps off the seesaw onto `landing`, which the caller has already
+## measured to be clear ground outside the prop.
+##
+## Reuses the generalised arc -- from the seat height down to zero -- rather
+## than writing a fourth way down off something, exactly as the dive, the
+## boat eject and the turnstile dismount already do. The seat height is READ
+## OFF THE BODY rather than recomputed, because the plank may be at any
+## tilt when the rock ends and the height he actually leaves from is the one
+## the arc has to start at.
+func leave_seesaw(landing: Vector3) -> void:
+	if _state != State.ON_SEESAW:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_seesaw = null
+	_seesaw_seat = Vector3.ZERO
+	_has_target = false
+
+	var delta := target - here
+	if delta.length() < 0.001:
+		# Degenerate: the caller aimed at the seat. Set him down rather than
+		# tweening a zero-length arc.
+		_state = State.IDLE
+		global_position = here
+		seesaw_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_seesaw_dismount_finished, CONNECT_ONE_SHOT)
+
+## The dismount lands and the body is handed straight back to the ordinary
+## chain, the way the turnstile's and the dive's do.
+func _on_seesaw_dismount_finished() -> void:
+	_on_hop_finished()
+	seesaw_dismounted.emit()
 
 ## Leaves the boat: one taller-than-usual leap to the bank on the side the
 ## player tapped, and then the ordinary hop chain on towards the tap.
