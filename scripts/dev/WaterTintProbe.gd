@@ -114,6 +114,8 @@ func _ready() -> void:
 
 	_phase_a_membership(water, props, route)
 	dl.abort_if_exceeded()
+	_phase_a2_islets(water, props)
+	dl.abort_if_exceeded()
 	_phase_b_rim(water, props, route)
 	dl.abort_if_exceeded()
 	await _phase_c_tint(hub, keepy, water, props)
@@ -161,6 +163,40 @@ func _phase_a_membership(water: HubWater, props: HubBuilder, route: HubStreamRou
 	var normal := Vector3(-tangent.z, 0.0, tangent.x).normalized()
 	side = mid + normal * (props.stream_half_width() * 4.0)
 	_check(water.body_at(side) != &"stream", "stream: a point four half-widths off is not it")
+	print("")
+
+## PHASE A2 -- an islet is dry ground, even though it sits inside a lake's
+## own disc.
+##
+## THIS IS THE ISLAND BUG, GATED. Before this fix `body_at()` never
+## consulted islet geometry at all, so a point standing dead centre on an
+## islet -- 6.80 to 8.80 u from the great lake's own centre, well inside its
+## 16.0 u radius -- read as "great_lake_0" exactly like open water beside
+## it. The tint and the splash effect both key off this one function, so
+## either would have fired for a player standing on dry shingle.
+func _phase_a2_islets(water: HubWater, props: HubBuilder) -> void:
+	print("--- PHASE A2: islets are dry, even inside a lake's disc ---")
+	var islets := props.islets()
+	_check(islets.size() == 3, "three islet entries were built (%d found)" % islets.size())
+	_check(water.islets().size() == islets.size(),
+		"HubWater carries the same count the builder built")
+
+	for islet in islets:
+		var centre: Vector3 = islet["centre"]
+		var radius: float = islet["radius"]
+		# The islet's own centre: unambiguously ON it, and -- the whole
+		# point -- unambiguously inside SOME lake disc too. Before the fix
+		# this read as that lake's name.
+		_check(water.body_at(centre) == &"",
+			"islet at %s: its own centre reads as dry land, not water" % centre)
+		# Just outside the islet's radius, still deep inside the lake it
+		# stands in: the exclusion is the islet's OWN footprint, not the
+		# whole lake turned dry.
+		var just_outside := centre + Vector3(radius + 0.2, 0.0, 0.0)
+		var body := water.body_at(just_outside)
+		_check(body != &"" and body.begins_with("great_lake"),
+			"islet at %s: 0.2u past its own rim is water again (%s)" % [centre, body])
+
 	print("")
 
 ## PHASE B -- the float32 rim, and the two margins that are NOT the same.
