@@ -19491,3 +19491,282 @@ script touche. `HubBuilder.gd`, `HubWorld.gd`, `HubRegion.gd`,
 
 `main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
 import, export et sondes verts).
+
+### Merge en production (28 aout 2026, autorisation explicite de Mathieu)
+
+`staging` (`db2ce11`) -> `main`, commit de merge **`e12966c`**, `--no-ff`,
+apres validation device confirmee (capture a l'appui : echelle correcte,
+aucune gene visuelle).
+
+**Verifie AVANT le merge** : `git fetch --all --prune`, `origin/main`
+(`2ae7901`) et `origin/staging` (`db2ce11`) exactement les SHA annonces.
+`merge-base(origin/main, origin/staging) = origin/main` -- `main` n'avait
+avance d'AUCUN commit au-dela du merge-base (pas de commit `.glb` brut a
+verifier ici), donc `staging` est un strict sur-ensemble de `main`. La
+chaine de commits attendue (`80cb614`, `c689113`, `5ce276a`, `b8456de`,
+`b7aa628`, `18195e8`, `1be4f14`, `92742be`, `db2ce11`) est presente au
+complet. Merge `--no-ff` sans conflit, arbre du merge **byte-identique a
+`origin/staging`** (`git diff HEAD origin/staging` vide) -- ce qui part en
+prod est litteralement l'arbre valide, pas une recomposition.
+
+CI **run #298** (id `33197115598`) **verte** (17:58:00 -> 18:02:23 UTC) --
+`Import project resources` 17:58:36 -> 18:01:50, `Export Web build`
+**18:01:50 -> 18:01:55**, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+18:02:09 -> 18:02:21, `[STAGING -- staging]` correctement **skipped** (push
+sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI, avec les DEUX
+marqueurs de fraicheur** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1787940114` = **18:01:54 UTC** -- tombe exactement dans la fenetre `Export Web build` (18:01:50 -> 18:01:55) |
+| `x-vercel-cache` / `age` | `MISS` / `0` sur `index.html` ET `index.service.worker.js` |
+| `index.wasm` servi | **35 376 909** octets -- identique au fingerprint permanent deja consigne pour tout lot qui ne touche pas le code moteur |
+| `index.pck` servi | 14 791 328 octets (marqueur "nouveau build", jamais preuve d'identite -- attendu plus lourd que le fingerprint historique, ce lot ajoute pour la premiere fois un `.glb` Meshy non-Keepy + ses deux textures baked au pack) |
+
+`index.wasm` inchange confirme qu'aucun code moteur n'a bouge, coherent :
+ce merge n'ajoute que l'asset chouette (`.glb` + textures, `.import`),
+`hub_layout.tres`, `HubBuilder.gd`, `HubWorld.tscn`, `OwlProbe.{gd,tscn}`
+et les ajustements de budget de noeuds dans les sondes existantes.
+
+**Aucune sonde re-derouleee dans cette session** : le tree pousse sur
+`main` est byte-identique a celui deja valide sur `staging` (`OwlProbe`
+verte, budget de noeuds partage a 128, capture device confirmee par
+Mathieu) -- meme principe deja applique aux merges tourniquet, diving
+board, lobe nord/balancoire precedents.
+
+**La chouette decor statique (LOT PROPS-1 complet) est desormais EN
+PRODUCTION** sur `keepy-ten.vercel.app`.
+
+**Reste ouvert : aucun sur ce merge.** Les deux points laisses ouverts par
+le lot de staging (poids du `.pck`, lisibilite au spawn) restent des
+questions de jugement device deja tranchees par la validation qui a
+autorise ce merge -- rien ne bloque plus derriere.
+
+## LE HIBOU EMPORTE KEEPY : une boucle FERMEE, un tap dedie sur le patron du BATEAU, et trois premisses du brief qui tombent a la mesure (28 aout 2026)
+
+Branche `claude/hub-owl-flight-sbepk8`, partie de `main` (`f2b44a1`, verifie
+par ARBRE et pas par nom : `origin/main` porte exactement ce SHA et
+`origin/staging` (`db2ce11`) en est un ancetre strict -- aucune session
+concurrente, aucun commit `.glb` brut a signaler).
+
+Le hibou statique de LOT PROPS-1 devient ridable : un tap sur son perchoir
+fait MARCHER Keepy jusqu'a lui (le patron du bateau et de l'echelle), il
+decolle DEPUIS le hibou, fait une boucle et se repose AU hibou. **UN SEUL
+hibou** -- c'est le prop lui-meme qui vole, le perchoir reste vide pendant
+le vol, donc **zero noeud de dessin ajoute**. Aucune animation de squelette :
+le `.glb` n'en a pas, et tout ce lot passe par des transforms, comme
+`FighterView.gd` et `KeepyHopper.gd` le font deja pour le meme modele.
+
+### ⚠️ PREMISSE FAUSSE N°1 : L'ECHELLE FAIT DEJA CE QUE LE BRIEF LUI OPPOSE
+
+Le brief opposait deux comportements -- l'echelle declencherait `CLIMBING`
+**immediatement** au tap, le hibou devrait au contraire reagir **A
+L'ARRIVEE** d'un hop normal. **Lu dans le code : l'echelle fait DEJA la
+seconde chose.** `_on_tapped_ladder` arme `_climbing` puis appelle
+`hop_to(point)` -- un hop parfaitement ordinaire -- et c'est
+`_on_hop_landed` qui appelle `_try_climb` a l'arrivee. Le seul chemin
+immediat est `if not _keepy.is_hopping()`, c'est-a-dire « il etait deja
+debout au pied ».
+
+La vraie difference est ailleurs, et elle est ce qui a decide le patron a
+copier : **le bateau SE RETIRE du tap pendant un ride** (`accepts_boarding_
+tap()` rend faux, donc un tap retombe sur `tapped_ground` et DEVIENT
+l'eject) ; **l'echelle ne se retire jamais** -- elle emet `tapped_ladder`
+quoi que fasse Keepy, et `HubWorld` le jette. C'est sans consequence pour une
+planche, dont le seul autre sens serait un plongeon deja traite par etat ;
+ce serait faux ici, ou un tap pendant le vol doit pouvoir atteindre le
+chemin sol. `owl_available` est cette retraite, et c'est un simple booleen
+plutot qu'un second noeud a interroger parce qu'il n'y a pas d'objet
+cote hibou a qui demander : `HubWorld` sait deja si un vol tourne.
+
+### ⚠️ PREMISSE FAUSSE N°2 : le hibou n'etait PAS a un endroit tenable
+
+Le brief donnait l'ecart Quizz comme un chevauchement de **0,05 u** entre le
+disque de tap standard (2,5) et celui du portail. **Reproduit exactement** :
+`d((0,-3,4),(0,-7,2)) = 3,800` contre `2,5 + 1,35 = 3,85`.
+
+Mais ce chiffre n'est pas le vrai probleme, et le brief avait raison de
+demander un DECALAGE plutot qu'un rayon plus petit : **sur l'axe, le disque
+du hibou se serait tenu en travers de la seule ligne qu'un joueur parcourt
+du spawn au portail Quizz.** Chaque tap vise sur Quizz serait devenu un tap
+« vole avec moi ». Un rayon plus etroit ferme l'arithmetique et laisse le
+defaut d'usage entier.
+
+Balayage exhaustif au pas 0,1 contre les **215 autres entrees** du layout,
+les **4 plans d'eau** et la position de Keepy, avec le rayon d'empreinte de
+chaque type :
+
+| | position | degagement | d(Quizz) | lateral |
+|---|---|---|---|---|
+| avant | (0, 0, -3.4) | 1,346 u | **3,800** | **0,00** |
+| **livre** | **(-2.7, 0, 0.8)** | **1,088 u** | **8,443** | **2,70** |
+
+⚠️ **ET UNE TROISIEME CHOSE, MESUREE ET PUBLIEE PLUTOT QUE MAQUILLEE :
+« devant le spawn, hors de l'axe, et dans le cadre » est un ensemble VIDE.**
+Le cone visible est de ±22,5° autour de -Z (fov HORIZONTAL de 45°,
+`keep_aspect = KEEP_WIDTH`, et la camera ne lacete jamais), donc a z negatif
+« dans le cadre » veut dire « pres de l'axe » -- exactement ce dont il faut
+sortir. Le balayage rend **0 candidat** a z<0 avec un degagement utilisable.
+Ce qui existe est **a COTE du spawn** (z ≈ +0,8), et c'est ce qui est livre :
+en frame, a 2,82 u de Keepy, avec le spawn lui-meme **1,02 u en dehors** du
+disque de tap.
+
+**`OWL_TAP_RADIUS = 1.8`, et non les 2,5 du bateau et de l'echelle.** Ces
+deux-la valent 2,5 parce que la cible est minuscule (un pied d'echelle fait
+0,5 u de large). Le hibou fait 1,39 x 1,53 au sol et 2,04 de haut -- une
+bien plus grosse marque -- et 2,5 centre a 2,82 u du spawn aurait recouvert
+les pieds de Keepy, si bien qu'un tap sur ses orteils aurait voulu dire
+« vole ».
+
+### LA BOUCLE FERME PAR ARITHMETIQUE, JAMAIS PAR REGLAGE
+
+C'est la raison pour laquelle cette courbe a ete choisie plutot qu'un chemin
+pose a la main. Chaque terme est periodique en `t` et vaut exactement le
+perchoir aux deux bouts :
+
+```
+x = R sin(TAU t)          sin(0) = sin(TAU) = 0
+z = -R (1 - cos(TAU t))   cos(0) = cos(TAU) = 1
+y = APEX sin(PI t)        sin(0) = sin(PI) = 0
+```
+
+C'est un cercle de rayon `R` passant par le perchoir, centre `R` devant lui,
+donc le point le plus lointain est a `2R` -- **mesure a 7,34 u du perchoir
+et 3,60 u en l'air**, et le retour tombe sur le perchoir a **0,000000 u**.
+Le lacet est la TANGENTE de ce meme cercle, qui n'est jamais de longueur
+nulle : il n'y a aucun instant degenere a garder, contrairement a un chemin
+droit entre deux points.
+
+`HubStreamRoute` n'est **PAS** reutilise et n'a pas ete touche : il aplatit
+Y et son modele est a deux bouts, ce qu'une boucle fermee n'est pas.
+
+⚠️ **LE PENCHANT DE LA BOUCLE EST MESURE, PAS CHOISI -- et la premiere
+version echouait sans que rien ne le dise.** A `heading = 0` le cercle
+balaie un rayon plein de chaque cote du perchoir, or le perchoir est deja a
+gauche du centre : **la jambe de retour sortait du cadre, 26 points sur 33 a
+l'ecran** -- le hibou s'envolait, disparaissait, puis revenait. Toutes les
+autres assertions passaient quand meme. Balaye contre la VRAIE camera aux
+DEUX ratios livres (1080x1920 et 1170x2532) avec `unproject_position`, sur
+le rayon et le penchant ensemble :
+
+| heading | dans le cadre | pire marge laterale |
+|---|---|---|
+| 0° | **50/65** | **-105 px (HORS CADRE)** |
+| **-35° (livre)** | **65/65** | **+100 px** (1080) / **+109 px** (1170) |
+| -45° | 65/65 | +143 px |
+
+`OWL_LOOP_HEADING_DEG = -35.0` est le premier penchant qui garde **toute** la
+boucle a l'ecran au rayon plein. La rotation est appliquee a l'OFFSET et a
+la TANGENTE, jamais a la forme de la courbe -- une rotation de zero reste
+zero, donc la fermeture demontree plus haut survit intacte. **Gate par
+sonde** : le penchant est une constante, donc il peut etre retire aussi
+silencieusement qu'il a ete trouve necessaire.
+
+### Le rider est ecrit DANS LE MEME APPEL que le hibou
+
+`follow_owl()` n'est **jamais** appele depuis `_process`. Ce n'est pas une
+precaution recopiee du seesaw -- c'est la MESURE du tourniquet : un rider
+qui echantillonnait son porteur sur son propre callback par frame etait une
+frame entiere en retard, **12,0 deg au pic de la poussee**, et
+`process_priority` n'y changeait rien (les steps de Tween tombent apres le
+`_process` de tout noeud). Un vol couvre des metres et non des degres, donc
+le meme retard serait un Keepy visiblement traine derriere l'oiseau.
+`_apply_flight` ecrit le porteur puis le rider, dans cet ordre. **Mesure sur
+40 frames reelles, tween en marche : pire ecart 0,000000 u**, avec un BLIND
+CHECK qui prouve d'abord que le hibou a reellement couvert 1,96 u sous lui
+-- sans quoi « il est exactement sur la selle » passerait gratuitement
+contre un hibou qui n'aurait pas bouge.
+
+Le siege est **Y SEUL** (`OWL_SEAT_Y = 1.22`, 60 % de la hauteur mesuree du
+hibou construit, 2,0371 u) : un offset en X ou Z partirait de cote des que
+l'oiseau s'incline dans son virage.
+
+### Le demontage reutilise `_ride_exit_point()` SANS LE MODIFIER
+
+Cette fonction ne lit que `"position"` et `"radius"` et ne sait rien d'un
+prop particulier -- elle etait deja generique, donc le hibou l'a appelee
+plutot que d'en copier une. `OWL_TAP_RADIUS` est ecrit dans l'entree copiee
+par `_setup_owls()` comme `"radius"`, ce qui fait de « assez pres pour
+taper », « assez pres pour decoller » et « assez loin pour etre depose » **un
+seul nombre** au lieu de trois qui derivent. Mesure : il atterrit a
+**2,65 u** du perchoir contre une portee de 1,80 -- la boucle de remontage
+que le tourniquet a du apprendre ne peut pas se produire.
+
+Le registre `owls()` est une **LISTE des le premier commit**, et c'est la
+lecon du plongeoir payee d'avance : sa GEOMETRIE etait generique le jour ou
+il a ete livre, c'est la table en aval qui n'en tenait qu'un, si bien qu'une
+seconde planche etait dessinee et jamais grimpable -- et defaire ca a coute
+son propre lot.
+
+### `OwlFlightProbe` : 43 checks, 0 echec, GATEE, et VERIFIEE ROUGE D'ABORD
+
+Gatee parce que **tout mode de panne est SILENCIEUX** : registre vide,
+signal de tap qui n'arrive jamais, hook de decollage cable sous un des
+`return` anticipes de `_on_hop_landed`, rider une frame en retard, courbe
+qui ne ferme pas tout a fait (le hibou derive de son perchoir un peu plus a
+chaque vol), demontage qui retombe dans la portee. Aucun ne leve, aucun ne
+casse un build.
+
+**Rouge avant vert, mesure et pas affirme** : le hook de decollage
+neutralise (`if false and _try_fly(...)`), la sonde sort en **exit 1** avec
+exactement **2 FAIL** -- « he walked there and took off (900 frames) » et
+« clear of the perch's own reach (0.00 u vs 1.80) », c'est-a-dire un Keepy
+qui finit debout SUR le perchoir sans jamais decoller. Hook restaure :
+**43/43, exit 0**.
+
+Deux BLIND CHECKS, sur la discipline de `SeesawProbe`/`TurnstileProbe` : une
+assertion d'egalite doit prouver qu'elle sait voir une difference avant
+qu'on lui fasse confiance en cas de succes. « la boucle revient a son point
+de depart » est satisfait gratuitement par un hibou qui n'a jamais bouge, et
+« il est exactement sur la selle » par un hibou immobile sous lui.
+
+⚠️ **Piege deja consigne, re-rencontre a la lettre** : ma premiere version
+appelait `ProbeWatchdog.abort_if_exceeded(dl)` (statique) au lieu de
+`dl.abort_if_exceeded()`. Une sonde dont le SCRIPT ne parse pas ne tombe pas
+vite -- la scene ne se charge jamais, donc `arm()` n'est jamais atteint, il
+n'y a pas de watchdog du tout, et le process tourne a vide **sans une seule
+ligne de sortie**. Le boot `--quit-after 3` le fait apparaitre en secondes.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature silencieuse).
+Import headless **exit 0, 35 `.scn`, 0 erreur**. Export Web release
+**exit 0**, aucune erreur GDScript.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+**14 796 400** -- marqueur « nouveau build », **jamais** preuve d'identite.
+**Piege payload tenu** : sur **234** lignes `Storing File`, **0** pour
+`scripts/dev`, `assets_source`, `docs`, `web`, `build` ou `firebase.json`.
+
+**Non-regression, et elle n'est pas prise sur parole** : ce lot touche
+`HubTapInput`, `KeepyHopper` et `HubWorld`, que le bateau, l'echelle, le
+plongeoir, le tourniquet et la balancoire partagent tous. PHASE UNTOUCHED de
+la sonde re-verifie les trois pieds d'echelle, les trois planches, la
+balancoire, le tourniquet et les trois portails ; `AssetContractAudit`
+(**12/12 visuels, 0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe` et `ProbeTimeoutAudit` sont rejouees en diff contre
+`origin/main` en worktree separe.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce qu'un hibou qui emmene Keepy en boucle sur 3,2 s se lit comme un
+   oiseau qui prend un passager**, ou comme un prop qui glisse dans l'air ?
+   C'est tout l'objet du lot, et aucune sonde ne le dit.
+2. **Le perchoir est a COTE du spawn et non devant** (§ premisse n°2), donc
+   il se decouvre en se retournant plutot qu'a l'arrivee -- mesure comme la
+   seule option disponible, jamais juge a l'oeil.
+3. **Un tap pendant le vol ne fait rien.** Le tourniquet et la balancoire se
+   re-arment sur un tap parce qu'un manege et une planche sont des choses
+   qu'on repousse ; une boucle qui ferme exactement ne peut pas etre
+   prolongee sans casser la propriete pour laquelle la courbe a ete choisie.
+   Assume, jamais teste au pouce.
+4. **Aucun son, aucune particule, aucun asset neuf** : hors perimetre.
+5. **Rien ici n'est un rendu device** : llvmpipe sous xvfb via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.

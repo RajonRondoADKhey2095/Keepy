@@ -312,6 +312,10 @@ signal turnstile_dismounted()
 signal seesaw_mounted
 signal seesaw_dismounted
 
+## Keepy has been put on the owl's back, and has been let off it again.
+signal owl_flight_mounted
+signal owl_flight_dismounted
+
 ## Yaw carrier. Kept separate from this node so world position (written by
 ## the hop) and facing (written by the turn) never contend for one
 ## transform, and separate from the model slot so pitch stays body-local.
@@ -366,7 +370,7 @@ var _has_target: bool = false
 ## hop_landed, so portal detection is silent for their whole duration. A
 ## board planted 9 u from the portal row would otherwise carry a diver into
 ## a sub-game they were only passing over.
-enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW }
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -442,6 +446,12 @@ var _turnstile_seat: Vector3 = Vector3.ZERO
 var _seesaw: Node3D = null
 var _seesaw_seat: Vector3 = Vector3.ZERO
 
+## The owl currently carrying him, and where on it he sits -- in that
+## node's own local space, so a seat written once stays put through every
+## yaw and every metre of the loop.
+var _owl: Node3D = null
+var _owl_seat: Vector3 = Vector3.ZERO
+
 func _ready() -> void:
 	_base_scale = _body.scale
 	_base_pitch = _body.rotation_degrees.x
@@ -503,6 +513,10 @@ func is_on_turnstile() -> bool:
 ## whole ride without any of them needing a line about seesaws.
 func is_on_seesaw() -> bool:
 	return _state == State.ON_SEESAW
+
+## True while the owl is carrying him round its loop.
+func is_on_owl_flight() -> bool:
+	return _state == State.ON_OWL_FLIGHT
 
 ## True from the first rung to the moment the feet hit the water: the whole
 ## span in which the body belongs to the board rather than to the plateau.
@@ -811,6 +825,117 @@ func leave_seesaw(landing: Vector3) -> void:
 func _on_seesaw_dismount_finished() -> void:
 	_on_hop_finished()
 	seesaw_dismounted.emit()
+
+## Puts Keepy on the owl's back.
+##
+## `carrier` is the node a flight MOVES and `seat_y` where on it he sits,
+## both published by HubBuilder from the pass that drew the prop. Nothing
+## here re-derives either, for the reason mount_seesaw and mount_turnstile
+## both state: the back the player sees and the back a rider is written
+## onto have to be one fact.
+##
+## NO SIDE TO CHOOSE, unlike the seesaw's two ends and the turnstile's gaps
+## between bars: an owl has one back, so the seat is simply it. The seat is
+## Y-only, which is what makes it survive the yaw the loop turns him
+## through -- an X or Z offset would swing out sideways as the bird banks.
+##
+## Refused, quietly, unless he is standing still -- the same overlap every
+## other entry point on this file refuses.
+func mount_owl(carrier: Node3D, seat_y: float) -> bool:
+	if carrier == null or not is_instance_valid(carrier):
+		return false
+	if _state != State.IDLE:
+		return false
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+
+	_owl = carrier
+	_owl_seat = Vector3(0.0, seat_y, 0.0)
+	_has_target = false
+	_state = State.ON_OWL_FLIGHT
+	# Rest pose, as every state that takes the body over sets it: a squash
+	# left over from the landing that mounted him would ride with him.
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	follow_owl()
+	owl_flight_mounted.emit()
+	return true
+
+## Writes Keepy at the seat for the owl's CURRENT pose. The ONE place a
+## flight touches his transform.
+##
+## ⚠️ CALLED BY WHATEVER MOVES THE OWL, NEVER FROM _process(). This is not
+## a precaution copied across from the seesaw -- it is the TURNSTILE'S
+## MEASUREMENT: a rider who sampled his carrier on his own per-frame
+## callback was a full frame behind it, 12.0 deg at the peak of the shove,
+## and process_priority did not move it because Tween steps land after
+## every node's _process whatever the priority says. A flight covers metres
+## rather than degrees, so the same one-frame lag would be a Keepy visibly
+## trailing the bird he is sitting on. The caller that writes the owl
+## writes the rider too, in that order.
+func follow_owl() -> void:
+	if _owl == null or not is_instance_valid(_owl):
+		# The prop went away underneath him. Put the body back on the
+		# ground rather than leaving it parked in mid-air on a dead
+		# reference: unreachable while HubWorld owns both, which is exactly
+		# why it is written down instead of assumed.
+		_owl = null
+		_owl_seat = Vector3.ZERO
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		return
+	global_position = _owl.to_global(_owl_seat)
+	# Facing where the owl faces: a passenger on a bird's back looks the
+	# way the bird is flying, and the owl's own yaw is already the tangent
+	# of the loop -- so this is one fact read, not a second one computed.
+	_yaw.rotation_degrees.y = _owl.global_rotation_degrees.y
+
+## Steps off the owl onto `landing`, which the caller has already measured
+## to be clear ground outside the perch.
+##
+## Reuses the generalised arc -- from the seat height down to zero -- rather
+## than writing a fifth way down off something, exactly as the dive, the
+## boat eject, the turnstile dismount and the seesaw dismount already do.
+## The seat height is READ OFF THE BODY rather than recomputed: the flight
+## ends with the owl back on its perch, so the height he actually leaves
+## from is the one the arc has to start at whatever the loop did.
+func leave_owl(landing: Vector3) -> void:
+	if _state != State.ON_OWL_FLIGHT:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_owl = null
+	_owl_seat = Vector3.ZERO
+	_has_target = false
+
+	var delta := target - here
+	if delta.length() < 0.001:
+		# Degenerate: the caller aimed at the seat. Set him down rather
+		# than tweening a zero-length arc.
+		_state = State.IDLE
+		global_position = here
+		owl_flight_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_owl_dismount_finished, CONNECT_ONE_SHOT)
+
+## The dismount lands and the body is handed straight back to the ordinary
+## chain, the way the turnstile's, the seesaw's and the dive's do.
+func _on_owl_dismount_finished() -> void:
+	_on_hop_finished()
+	owl_flight_dismounted.emit()
 
 ## Leaves the boat: one taller-than-usual leap to the bank on the side the
 ## player tapped, and then the ordinary hop chain on towards the tap.

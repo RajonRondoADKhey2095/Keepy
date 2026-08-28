@@ -61,6 +61,22 @@ signal tapped_ground(point: Vector3)
 signal tapped_boat(point: Vector3)
 
 ## Emitted INSTEAD of tapped_ground when the finger landed close enough to
+## an OWL PERCH to mean "fly with it", on the same world-units terms the
+## boat is picked out on. Same one-tap-one-signal rule.
+##
+## MODELLED ON THE BOAT AND DELIBERATELY NOT ON THE LADDER. The boat asks
+## its mooring, which answers false for the whole of a ride, so a tap
+## during one falls through to tapped_ground and BECOMES the eject. The
+## ladder has no such withdrawal: it emits tapped_ladder whatever Keepy is
+## doing, and HubWorld then drops it -- which is fine for a board, whose
+## only other meaning would be a dive it already handles by state, and
+## would be wrong here, because a tap during a flight has to be able to
+## reach the ground path. `owl_available` is that withdrawal, and it is a
+## plain flag rather than a second node only because there is no owl-side
+## object to ask: HubWorld already knows whether a flight is running.
+signal tapped_owl(point: Vector3)
+
+## Emitted INSTEAD of tapped_ground when the finger landed close enough to
 ## the diving board's LADDER FOOT to mean "climb that", on the same
 ## world-units terms the boat is picked out on. Same one-tap-one-signal
 ## rule: a tap is a climb or a destination, never both.
@@ -118,6 +134,20 @@ var mooring: BoatMooring = null
 ## board; the feet are metres apart, so no tap can be inside two.
 var ladder_feet: Array[Vector3] = []
 var ladder_radius: float = 0.0
+
+## Every owl perch, flat, and how close a tap has to land to mean one.
+## Empty until HubWorld hands over the built owls, so a layout with no owl
+## simply never emits tapped_owl.
+##
+## Set from the BUILT owls for the reason the feet are: the prop the player
+## aims at and the point this radius is measured from have to be one fact.
+##
+## `owl_available` is the boat's withdrawal, written above: HubWorld clears
+## it for the length of a flight so a tap then falls through to the ground
+## path instead of being swallowed here.
+var owl_perches: Array[Vector3] = []
+var owl_radius: float = 0.0
+var owl_available: bool = true
 
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
@@ -179,6 +209,25 @@ func _handle_point(screen_point: Vector2) -> void:
 	if mooring != null and mooring.accepts_boarding_tap(destination):
 		tapped_boat.emit(destination)
 		return
+	# THE OWL, asked after the boat and before the ladder, on the same
+	# world-unit terms both of them use. The order between the owl and the
+	# ladder can never actually decide anything -- the perch is by the
+	# spawn and the three ladder feet are out over the water, metres away
+	# -- so it is only that the boat came first and the ladder was here
+	# before this.
+	#
+	# Nothing is asked here about whether Keepy is FREE to fly: that is
+	# KeepyHopper's business and it refuses from any state but standing
+	# still. What IS asked is `owl_available`, which is a different
+	# question -- not "may he" but "is this signal still meaningful", the
+	# boat's own withdrawal, and the thing that turns a tap during a
+	# flight back into an ordinary ground tap.
+	if owl_available and owl_radius > 0.0:
+		var owl_flat := Vector3(destination.x, 0.0, destination.z)
+		for perch in owl_perches:
+			if owl_flat.distance_to(perch) <= owl_radius:
+				tapped_owl.emit(destination)
+				return
 	# THE LADDER, asked after the boat and on the same terms: a world-unit
 	# radius on the ground point, so the target does not shrink with
 	# distance the way a pixel one would. Ordered after the boat only
