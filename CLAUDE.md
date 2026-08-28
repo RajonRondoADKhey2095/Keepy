@@ -18594,3 +18594,336 @@ preuve a elle seule.
    confortable au pouce.
 3. Aucun des deux lots ne touche a l'art, aux couleurs, ni au gameplay de
    Chased/Quizz/Battle -- hors perimetre, inchange.
+
+### Merge en production (28 aout 2026, autorisation explicite de Mathieu)
+
+`staging` (`0a7fe05`) -> `main`, commit de merge **`785390f`**, `--no-ff`,
+apres validation device confirmee sur les deux lots ("ilots ne
+declenchent plus la teinte/impact", "tourniquet tourne indefiniment sur
+re-tap, ejection normale au lacher prise").
+
+**Verifie AVANT le merge** : `git fetch --all --prune`, `origin/main`
+(`fe0f4d7`) et `origin/staging` (`0a7fe05`) exactement les SHA annonces,
+aucune divergence. `main..staging` porte les quatre commits attendus
+(`e90e922` fix ilots, `23949df` re-shove tourniquet, `b37de5c` merge,
+`0a7fe05` doc), rien de plus. `git rev-parse HEAD^{tree}` et
+`git rev-parse origin/staging^{tree}` **identiques** (`01f329047...`)
+avant le push -- ce qui part en prod est litteralement l'arbre valide,
+pas une recomposition. Merge `--no-ff` sans conflit.
+
+CI **run #289** (id `33164821995`) **verte** (10:49:36 -> 10:52:56 UTC) --
+`Import project resources` 10:50:10 -> 10:52:27, `Export Web build`
+10:52:27 -> 10:52:32, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+10:52:48 -> 10:52:56, `[STAGING -- staging]` correctement **skipped**
+(push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1787914351` = **10:52:31 UTC** -- tombe exactement dans la fenetre `Export Web build` (10:52:27 -> 10:52:32) |
+| `x-vercel-cache` / `age` | `MISS` / `0` sur `index.html` ET `index.service.worker.js` |
+| `index.wasm` servi | **35 376 909** octets |
+| `index.pck` servi | 5 898 448 octets (marqueur "nouveau build", jamais preuve d'identite) |
+
+`index.wasm` **35 376 909 octets** -- identique au fingerprint permanent
+deja consigne pour tout lot qui ne touche pas le code moteur, coherent :
+ce merge n'ajoute aucun commit de code au-dela de ce qui etait deja
+valide sur staging, aucune sonde n'a ete rejouee ici (pas de code
+nouveau depuis la derniere verification sur l'arbre fusionne).
+
+**Le hub plateau 3D avec ses lacs, ilots et tourniquet est desormais EN
+PRODUCTION** sur `keepy-ten.vercel.app`, avec les deux correctifs (fix
+teinte/eclaboussure des ilots, re-shove illimite du tourniquet)
+integres.
+
+**Reste ouvert : aucun sur ce merge.** Les deux points laisses ouverts
+par le lot de staging (lisibilite des ilots, ressenti du re-shove) sont
+**clos** par la validation device confirmee ci-dessus.
+
+## LE LOBE NORD ET LA BALANCOIRE : le carre grandit par FORME pour la premiere fois, et trois premisses tombent a la mesure (28 aout 2026)
+
+Branche `claude/hub-north-lobe-seesaw-pa8u21`, partie de `main` (`b00fa1d`,
+verifie par ARBRE et pas par nom : `origin/main` est la ref la plus recente du
+depot, `origin/staging` est strictement en retard des deux commits du merge de
+prod, **aucune session concurrente**).
+
+**CONTRAINTES DURES TENUES, verifiees par `git diff --stat`** :
+`PLATEAU_HALF_EXTENT` reste **35.0**, `HOP_DISTANCE` **1.5**, `HOP_DURATION`
+**0.28**, `HubCamera` **n'est pas dans le diff du tout**. Aucun asset Meshy.
+
+Decisions de Mathieu, prises sur la recon precedente et **non re-arbitrees
+ici** : lobe CONTIGU unionne dans `HubRegion` (option A), azimut **NORD (+Z)**,
+rayon **12**, **balancoire seule**.
+
+### MONO-ALTITUDE : verifie, et il n'y a rien a refactorer
+
+Le brief demandait un STOP si un point du lobe ou de la balancoire exigeait une
+hauteur de SOL non nulle. **Mesure : non, et sur les deux axes.**
+
+* **Le sol reste a y = 0 partout.** Les 215 entrees de `hub_layout.tres`
+  portent `y = 0.0` **sans exception** (parcourues, pas supposees), le lobe
+  ajoute du sol a y = 0, `HubTapInput` raycaste toujours contre
+  `Plane(UP, 0.0)` et `HubRegion._flat()` jette toujours le Y. Aucun de ces
+  trois fichiers ne change de modele.
+* **Keepy monte, mais par ETAT et jamais par TAP.** Sa hauteur ne varie que
+  pendant `ON_SEESAW`, exactement comme `ON_TURNSTILE` le fait deja a 0,31 et
+  `ON_BOARD` a 1,80. Le precedent est ecrit noir sur blanc dans la section
+  plongeoir : **« LE DECK N'EST PAS PRATICABLE, PAR CONSTRUCTION ET PAR
+  CHOIX »** -- il n'existe structurellement aucun tap qui signifie « un point
+  sur la planche ». La balancoire suit la meme regle.
+
+Donc pas de STOP, pas de refactor improvise, et le mono-altitude est preserve
+par construction et non par chance.
+
+### ⚠️ PREMISSE FAUSSE N°1 : les appelants ne sont pas TROIS, ils sont QUATRE
+
+Le brief annoncait « 3 sites appelants : `HubTapInput._handle_point`,
+`HubWorld` x2 ». Mesure par `grep` sur tout le depot -- il y en a **quatre**,
+repartis sur **trois fichiers** :
+
+| site | appel |
+|---|---|
+| `HubTapInput._handle_point:168` | `clamp_to()` -- un tap devient une destination |
+| `HubWorld._ride_exit_point:506` | `clamp_to()` -- le repli d'un demontage |
+| `HubWorld._ride_exit_point:515` | `contains()` -- chaque candidat de l'anneau |
+| `HubBuilder._build:966` | `contains()` -- ce prop est-il atteignable |
+
+**Aucun des quatre ne restate la geometrie**, et c'est toute la proposition de
+valeur de l'option A. Confirme **par mesure et pas par lecture** : PHASE CLAMP
+de la sonde exerce les quatre chemins sur le lobe -- 361/361 taps a l'interieur
+laisses en place, 361/361 au-dela ramenes sur du sol reellement contenu, et les
+7 props du sol neuf tous walkable. **Zero ligne modifiee dans ces trois
+fichiers pour le lobe.**
+
+### ⚠️ PREMISSE FAUSSE N°2 : une assertion de `LakeZoneProbe` devient FAUSSE PAR CONCEPTION
+
+`LakeZoneProbe` gate `beyond == 0` -- « la berge n'ajoute rien au-dela du
+carre » -- et l'implemente par un balayage generique sur `contains()`. **Le
+lobe ajoute du sol au-dela du carre : c'est ce pour quoi il est ecrit.**
+L'INTENTION de l'assertion (le shore pad est inerte) reste vraie et vaut d'etre
+gatee ; son IMPLEMENTATION a expire.
+
+Corrigee plutot que supprimee ou contournee : le balayage compte desormais les
+points au-dela du carre **que le lobe n'explique pas**. Et l'exclusion est
+payee sur la ligne suivante -- **un lobe lui-meme devenu inerte ferait passer
+ca gratuitement**, donc le balayage doit AUSSI voir le sol du lobe
+(`lobe_points > 0`). Un chiffre ne se croit pas sans l'autre.
+
+Sa ligne `worst reachable |axis|` passe de **35,00 a 47,00** (demi-extension +
+rayon du lobe) contre un sol de demi-taille 300 : **rapporte, pas masque**, et
+son gate (`reach < half`) tient avec un facteur 6,4.
+
+### ⚠️ PREMISSE FAUSSE N°3 : le `_EXPECTED_DRAW_NODES_EXCL_PORTALS` de DEUX autres sondes
+
+`TurnstileProbe` et `WaterTintProbe` portent la meme constante a 124. Le prop
+en ajoute 3. **Montees a 127 et ITEMISEES** (fulcrum + planche + UN batch de
+poignees) plutot que poussees : une constante de budget qui derive en silence
+est un budget que personne ne surveille.
+
+### Le lobe
+
+`( carre(+-35) OU shore pad OU lobe nord )`. Disque de **rayon 12 centre sur le
+MILIEU DE L'ARETE +Z**, `(0, 35)`, unionne. Le centre est **DERIVE** de
+`PLATEAU_HALF_EXTENT` et non ecrit en litteral : le lobe est defini « sur
+l'arete nord », donc si le carre bouge un jour le lobe doit bouger avec.
+
+**Disque ENTIER et pas demi-disque** : la moitie interieure est deja carree,
+donc les deux ecritures decrivent la meme region -- et un disque est la forme
+que `clamp_to()` sait deja traiter. Un lobe dont le centre serait au-dela de
+l'arete laisserait au contraire une encoche a la jonction.
+
+| | mesure |
+|---|---|
+| sol neuf, **mesure sur le `contains()` livre** | **224,89 u2** (analytique 226,195) |
+| part du carre de 4 900 u2 | **+4,590 %** |
+| portee maximale de la region | \|z\| = **47,00** contre un sol de 300 |
+| props deplaces | **ZERO** |
+
+**+Z parce que la moitie exterieure est VIDE, mesure et pas suppose** : le
+plus grand \|z\| du layout est **33,895**, donc rien ne se tient au-dela de
+l'arete nord et le lobe ne coute a aucun prop une relocalisation -- contrairement
+au grand lac, qui en avait coute 32.
+
+⚠️ **LE LOBE EST DERRIERE LE SPAWN, et c'est structurel** : `HubCamera` ne
+lacete jamais, donc le joueur ne voit QUE ce qui est a un z inferieur au sien.
+En marchant vers +Z il a la balancoire dans le dos ; il la decouvre en la
+depassant, et les **8,5 u** de sol laissees au nord d'elle sont exactement ce
+qui lui permet de se placer pour la voir. Mathieu a choisi cet azimut en
+connaissance de cause, aux memes conditions que le tourniquet avant elle.
+
+⚠️ **POURQUOI UNE FORME ET PAS UN PLUS GRAND CARRE, re-mesure ici plutot que
+cite** : la recon du lot D place la derniere demi-extension carree sous le
+budget de 22 s a 40 (21,533 s ; 41 donne 22,100 s). Un lobe boulonne sur une
+ARETE n'ajoute rien a une diagonale entre COINS -- **PHASE CROSSING marche le
+pire couple sur le vrai hopper** :
+
+| trajet | hops | frames | secondes |
+|---|---|---|---|
+| diagonale du carre *(publie 66 / 18,700)* | **66** | **1122** | **18,700** |
+| coin oppose -> pointe du lobe | 60 | 1020 | **17,000** |
+
+La diagonale **se reproduit au frame pres** -- un banc incapable de restituer
+un chiffre deja au dossier n'a pas qualite a en publier un neuf -- et le pire
+trajet que le lobe cree est **PLUS COURT**. La diagonale reste la pire marche
+du jeu.
+
+### La balancoire
+
+`&"seesaw"`, une entree, a **(0,00 ; 38,50)** -- dans le sol NEUF, 3,5 u
+au-dela de l'arete, avec **8,5 u** de recul au nord (le seul cote depuis lequel
+une camera qui ne lacete jamais peut la cadrer) et **8,15 u** de degagement au
+prop le plus proche. Trois noeuds de dessin, aucun asset :
+
+```
+Seesaw            <- place par _build (position / rotation_y / scale)
+  Fulcrum         <- STATIQUE. Ce contre quoi la bascule se lit.
+  Pivot           <- le SEUL noeud jamais incline
+    Plank
+    Grips         <- MultiMeshInstance3D, 2 instances
+```
+
+**Le fulcrum est HORS du pivot**, exactement comme le footing du tourniquet est
+hors de son spinner : une rotation n'est lisible que contre quelque chose qui
+reste en place. **La planche court le long de X** et non de Z -- `HubCamera`
+regarde -Z a pitch fixe, donc une planche selon X est de travers a l'ecran et
+sa bascule se lit en VERTICAL ECRAN ; selon Z elle basculerait vers et loin de
+la camera, la seule direction qu'un cadrage fixe rend comme presque aucun
+mouvement.
+
+⚠️ **UNE INEGALITE, PAS UN LOOK : la hauteur du fulcrum est ce qui garde la
+planche hors du sol.** Le coin bas d'une planche inclinee est a
+`fulcrum - (L/2)·sin(tilt) - (e/2)·cos(tilt)` = `0,62 - 1,80·sin(15) -
+0,07·cos(15)` = **0,0865** -- positif de 8,6 cm, et **gate** plutot
+qu'argumente, pour qu'un lot futur qui rallonge la planche ou creuse la bascule
+soit prevenu au lieu de l'enfoncer.
+
+**Interaction : declenchement par `hop_landed` dans le rayon**, le patron du
+tourniquet. Le brief laissait l'arbitrage ouvert entre « bascule automatique au
+poids » et « tap pour actionner » et demandait, en cas d'ambiguite, le plus
+proche du patron etabli. **Les deux lectures convergent ici** : un
+atterrissage EST le poids, et c'est aussi exactement ce que le tourniquet fait.
+Le tap reste utile pendant la course -- il **re-pompe** la bascule, jamais il
+ne devient une destination.
+
+⚠️ **La bascule est un ROCK AMORTI, et le retour a plat est ARITHMETIQUE**
+plutot qu'un reglage : `cos(TAU·2,5·t)·(1-t)`, dont le facteur `(1-t)` est nul
+a `t = 1` quoi que fasse le cosinus -- la planche ne peut pas etre laissee
+penchee. Le tween est **LINEAIRE** exprès : le cosinus EST l'amortissement, un
+`EASE_OUT` par-dessus adoucirait une courbe deja adoucie.
+
+⚠️ **Defaut d'ordonnancement trouve en ecrivant le code, pas apres.** Le cote
+qui descend etait d'abord ecrit dans `_mount_seesaw`, c'est-a-dire APRES que
+`_rock_near` ait deja lance le tween -- donc la premiere frame de la bascule
+aurait penche du mauvais cote chaque fois que le moteur aurait step le tween en
+premier. Deplace dans `_rock_near`, decide **une fois, depuis le point
+d'atterrissage**, avant que le tween puisse exister. Effet de bord voulu : la
+planche repond desormais aussi a un atterrissage qui ne monte pas, ce qui est
+ce que fait une balancoire.
+
+**Keepy est ECRIT sur le pivot, jamais reparente**, et sa position sort de la
+MEME multiplication que la planche -- donc sa hauteur suit la bascule par
+construction. C'est la regle mesuree du tourniquet (`_apply_spin` : un rider
+qui echantillonnait le pivot sur son propre callback etait **une frame
+entiere** en retard, 12,0 deg au pic, et `process_priority` n'y changeait
+rien). Verifie ici a **0,000000 u** d'ecart sur 40 frames.
+
+### La sonde : `SeesawProbe`, 48 checks, 0 echec, GATEE
+
+Gatee et pas rapportee parce que **tout mode de panne des deux moities est
+SILENCIEUX** : un terme d'union qui ne tire jamais, un `clamp_to` qui repond
+un point hors region, un registre vide, un `MultiMesh` laisse au
+`TRANSFORM_2D` par defaut (qui jette toute transform et dessine le batch a
+l'origine), un declencheur accroche sous un `return` anticipe, un demontage
+qui retombe dans le rayon et remonte pour toujours. Aucun ne leve, aucun ne
+casse un build.
+
+**ROUGE AVANT VERT, trois cassures deliberees, chacune produisant le FAIL
+attendu** puis revertee :
+
+| cassure | resultat |
+|---|---|
+| terme du lobe retire de `contains()` | **13 FAIL** (pointe, azimuts, aire, clamp, 7 props inatteignables) |
+| `_apply_tilt` n'ecrit plus le rider | **1 FAIL** -- *puis 1 autre apres correction, voir ci-dessous* |
+| `_repump_seesaw` en no-op | **2 FAIL** (tween pas frais, ancien pas tue) |
+
+⚠️ **DEUX DEFAUTS DANS MA PROPRE SONDE, trouves par cette passe et publies
+plutot que lisses :**
+
+1. **L'assertion de suivi etait VIDE.** Elle comparait Keepy a
+   `pivot.to_global(pivot.to_local(SA POSITION))` -- l'identite, donc zero
+   quel que soit son retard. Elle est restee VERTE avec l'ecriture du rider
+   retiree ; **seul le BLIND CHECK l'a attrapee**, ce qui est toute sa raison
+   d'etre. Re-visee sur le SIEGE FIXE, elle mesure desormais **0,347 u** de
+   derive quand on retire l'ecriture.
+2. **L'assertion de re-pompe etait VIDE aussi** (`absf(x - before) >= 0.0`,
+   trivialement vraie). Remplacee par l'identite du TWEEN : l'ancien tue, un
+   objet different en place.
+
+⚠️ **ET UN TROISIEME, celui-la sur l'ETAT GLOBAL : la diagonale traverse un
+PORTAIL.** `PHASE CROSSING` marche `(-35,-35) -> (35,35)`, qui passe a 0,8 u du
+portail `chased` -- un atterrissage l'ouvre, et `_on_tapped_ground` retourne
+alors a sa toute premiere garde. Les phases suivantes sont parties rouges sur
+un build sain, en rapportant un tap qui ne fait rien : **c'est exactement ce a
+quoi ressemble un tap sous un dialogue ouvert**. Ferme explicitement en fin de
+phase, et **asserte ferme**, plutot que contourne par un detour -- marcher le
+VRAI pire couple est tout l'objet de la phase.
+
+⚠️ **`PHASE CROSSING` doit tourner AVANT que quoi que ce soit ne touche
+Keepy**, et le premier jet ne le faisait pas : les phases de ride le laissent
+sur une planche, `hop_to()` est refuse dans cet etat, et la diagonale est
+sortie a **1 hop / 83,333 s** -- la signature exacte d'un `hop_to` refuse. Le
+`settle` attend desormais l'inactivite COMPLETE et non le seul `is_hopping()`.
+
+### Decor du lobe : 6 entrees, et la doctrine degressive tient
+
+Un premier jet en posait **16**, soit **7,07 props/100 u2** -- au-dessus des
+bandes deja livrees (r0-10 = 12,10 ; r10-20 = 4,99 ; r20-27 = 3,39 ;
+r27-35 = **2,95**) et donc **cassant la doctrine degressive** sur la bande la
+plus exterieure du plateau. Recalcule : **6 entrees = 2,65/100 u2**, strictement
+sous 2,95. Leger, discret, et conforme -- ce que « rester leger » voulait dire.
+
+2 rochers, 1 buisson, 3 fleurs, en grappes, ecart minimal **1,188 u**, toutes
+dans le sol NEUF (z > 35,4) et a **5,185 u** au moins du centre de la
+balancoire (keep-out 3,60). **Batchees en MultiMesh comme tout le scatter, donc
+zero noeud de dessin.**
+
+### Cout
+
+| | AVANT | APRES |
+|---|---|---|
+| noeuds de dessin hors portails | **124 / 124 / 124** | **127 / 127 / 127** |
+| noeuds de dessin, total | 130 | **133** |
+| construction | 49,61-57,78 ms | 50,48-59,49 ms |
+| FPS simule, moyen | 14,9-15,8 | 14,4-15,0 |
+| marge sous le plafond de 260 | 136 | **133** |
+| entrees de layout | 208 | **215** |
+
+Les deux cotes mesures dans UNE session sur machine au repos, trois runs
+chacun. **Toutes les plages se chevauchent** : la revendication est
+« aucun cout n'est detectable », jamais « c'est plus rapide ». Ligne
+complete : `docs/HUB_PERF_BASELINE.md`.
+
+**+3, itemises** : le fulcrum, la planche, et **UN** `MultiMeshInstance3D` pour
+les deux poignees. Le decor du lobe coute **zero** noeud.
+
+⚠️ **Le compteur de la sonde compte AUSSI les `MultiMeshInstance3D`, et pas
+seulement les `MeshInstance3D`** : les poignees sont un batch **NICHE** sous le
+pivot, et un compteur qui ne cherchait que des noeuds de mesh simples le
+raterait -- exactement le sous-comptage que `HubPerfBaseline` s'est fait
+trouver au lot tourniquet.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce qu'une planche qui bascule de 15 deg deux fois et demie sur 2,4 s
+   se lit comme une balancoire qui repond a un poids**, ou comme un prop qui
+   glitche ? C'est tout l'objet du lot et aucune sonde ne le dit.
+2. **Est-ce qu'un lobe derriere le spawn se lit comme un endroit ou aller ?**
+   Il est structurellement invisible tant qu'on ne l'a pas depasse (la camera
+   ne lacete jamais). Mesure, assume, jamais juge a l'oeil.
+3. **Keepy traverse la planche** comme il traverse tout le decor du plateau --
+   rien ici ne bloque une approche, et la balancoire n'allait pas devenir le
+   premier prop a le faire.
+4. **Aucun son, aucune particule, aucun second riders** : hors perimetre.
+5. **Rien ici n'est un rendu device** : llvmpipe sous xvfb via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.

@@ -24,10 +24,35 @@ class_name HubRegion
 ## owner.
 ##
 ## =====================================================================
-## THE REGION -- square OR shore pad, NO SUBTRACTION, since 26 aout 2026
+## THE REGION -- square OR shore pad OR north lobe, NO SUBTRACTION
 ##
-##   ( square(+-PLATEAU_HALF_EXTENT)  OR  shore pad )
+##   ( square(+-PLATEAU_HALF_EXTENT)  OR  shore pad  OR  north lobe )
 ##
+## THE NORTH LOBE (28 aout 2026) is the shape argument above, used for the
+## first time on purpose rather than on water. Mathieu's decision, taken on
+## the recon that measured it: a disc of radius 12 centred on the MIDDLE OF
+## THE NORTH EDGE, (0, +35), unioned in. Only its outer half is new ground
+## -- the inner half is already square -- so it is written as a full disc
+## because the two spellings are the same region and a disc is the one this
+## file already knows how to clamp to.
+##
+##   new walkable ground   pi * 12^2 / 2  =  226.195 u2   (+4.616% of 4900)
+##   worst crossing        UNCHANGED, and that is the whole point
+##
+## Radius 12 was the most conservative of the four sizes the recon measured.
+## +Z rather than any other azimuth because the recon found the outer half
+## EMPTY: the layout's largest |z| is 33.895, so nothing at all stands past
+## the north edge and the lobe costs no prop a relocation. It sits BEHIND
+## the spawn -- HubCamera never yaws, so the player only ever sees what is
+## at lower z than Keepy -- which Mathieu accepted when he picked the
+## azimuth, on the same terms as the turnstile before it.
+##
+## WHY UNION AND NOT A SEPARATE ZONE: every site that asks this file a
+## question keeps asking the same one. contains() and clamp_to() are the
+## only two entry points, and neither grew a case for the lobe that the
+## square and the pad did not already need -- which is what "option A" was
+## chosen for, and is measured by SeesawProbe's PHASE LOBE rather than
+## assumed.
 ## Water is a PLACE, not a hole. Mathieu's explicit decision: Keepy must be
 ## able to walk into all five water bodies on the plateau -- the pond, the
 ## small lake, the stream, and both great-lake lobes -- and this file no
@@ -199,6 +224,23 @@ const SPAWN_LAKE_WATER_RADIUS: float = 10.0
 ## number to say the same thing; changing it now would change nothing.
 const SHORE_PAD_RADIUS: float = 20.0
 
+## The north lobe: a disc unioned onto the middle of the +Z edge.
+##
+## THE CENTRE IS ON THE EDGE, NOT PAST IT. Half the disc therefore lies
+## inside the square and contributes nothing, which is deliberate: a lobe
+## whose centre sat outside would either leave a notch where it meets the
+## edge or need a second term to fill one, and the union of a square with a
+## disc that straddles its boundary has neither problem.
+##
+## RADIUS 12, the most conservative of the four the recon measured, and the
+## reason a lobe is affordable at all where a wider square is not: the
+## square's corner-to-corner diagonal is what sets the worst crossing
+## (18.700 s at half-extent 35, measured on the shipped hopper), and a lobe
+## bolted onto an EDGE adds no length to a diagonal between CORNERS. The
+## number is gated rather than argued -- SeesawProbe walks the region's
+## worst pair on the real hopper and checks the diagonal is still it.
+const NORTH_LOBE_RADIUS: float = 12.0
+
 ## The centre, and the two things every other rule here is built from.
 ## static var and not const because a const initialiser cannot call
 ## normalized() or atan2() -- writing the results as literals instead would
@@ -206,6 +248,12 @@ const SHORE_PAD_RADIUS: float = 20.0
 static var _lake_centre: Vector3 = Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z)
 static var _axis: Vector3 = _lake_centre.normalized()
 static var _near_bank: Vector3 = _axis * (_lake_centre.length() - GREATLAKE_WATER_RADIUS)
+
+## Centre of the north lobe: the midpoint of the +Z edge, DERIVED from the
+## half-extent rather than written as a literal 35. The lobe is defined as
+## "on the north edge", so if the square ever moves the lobe has to move
+## with it, and a literal is how the two would stop agreeing.
+static var _north_lobe: Vector3 = Vector3(0.0, 0.0, PLATEAU_HALF_EXTENT)
 
 ## Every great-lake disc, in the order the layout states them. No longer
 ## SUBTRACTS anything since 26 aout 2026 (see contains()'s docblock) -- this
@@ -228,6 +276,12 @@ static var _lakes: Array[Dictionary] = [
 static var LAKE_CENTRE_DISTANCE: float = _lake_centre.length()
 static var LAKE_AZIMUTH_DEG: float = fposmod(
 	rad_to_deg(atan2(LAKE_CENTRE_X, -LAKE_CENTRE_Z)), 360.0)
+
+## Centre of the north lobe, in world units. Published so a probe and a
+## layout author can both aim at the lobe without restating where the north
+## edge is.
+static func north_lobe_centre() -> Vector3:
+	return _north_lobe
 
 ## Unit vector from the plateau centre toward the lake centre.
 static func lake_axis() -> Vector3:
@@ -308,6 +362,8 @@ static func contains(point: Vector3) -> bool:
 	var flat := _flat(point)
 	if absf(flat.x) <= PLATEAU_HALF_EXTENT and absf(flat.z) <= PLATEAU_HALF_EXTENT:
 		return true
+	if flat.distance_to(_north_lobe) <= NORTH_LOBE_RADIUS:
+		return true
 	return flat.distance_to(_near_bank) <= SHORE_PAD_RADIUS
 
 ## The nearest point of the region to `point`, on the ground plane.
@@ -331,10 +387,11 @@ static func contains(point: Vector3) -> bool:
 ## this commit removes, so keeping them would have been dead code with
 ## nothing left to call it.
 ##
-## Candidates rather than a closed form: the region is still a union of a
-## square and a disc (the shore pad), so its nearest point is on one of a
-## handful of features (the square's boundary, the pad's boundary, or a
-## corner where the two meet). Generating those and taking the closest that
+## Candidates rather than a closed form: the region is a union of a square
+## and two discs (the shore pad and the north lobe), so its nearest point
+## is on one of a
+## handful of features (the square's boundary, either disc's boundary, or
+## a corner where two of them meet). Generating those and taking the closest that
 ## actually passes contains() is both shorter and harder to get subtly
 ## wrong than case-splitting the geometry by hand.
 static func clamp_to(point: Vector3) -> Vector3:
@@ -347,8 +404,13 @@ static func clamp_to(point: Vector3) -> Vector3:
 		clampf(flat.x, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT), 0.0,
 		clampf(flat.z, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT))
 	var pad := _near_bank + (flat - _near_bank).limit_length(SHORE_PAD_RADIUS)
+	# The lobe is one more disc, so it is one more candidate and no new kind
+	# of case -- the reason contains() and this function both took the union
+	# without growing a branch shaped like "the north lobe".
+	var lobe := _north_lobe + (flat - _north_lobe).limit_length(NORTH_LOBE_RADIUS)
 	candidates.append(square)
 	candidates.append(pad)
+	candidates.append(lobe)
 
 	var best := Vector3.ZERO
 	var best_distance := INF

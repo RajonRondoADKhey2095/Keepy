@@ -33,7 +33,12 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## machine -- never carried over from a previous batch's note. 120 -> 124
 ## excluding portals, 126 -> 130 including them: the footing, the deck, the
 ## post, and ONE MultiMesh node for however many grip bars there are.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 124
+## 124 -> 127 on 28 aout 2026, ITEMISED rather than nudged: the seesaw adds
+## a fulcrum, a plank, and ONE MultiMeshInstance3D for however many grips it
+## has. Raised here rather than left to fail, and written down rather than
+## absorbed -- a draw-node constant that drifts quietly is a budget nobody
+## is watching.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 127
 
 var _failures: int = 0
 var _hub: Node = null
@@ -576,8 +581,15 @@ func _phase_g() -> void:
 ## recomputed here: a probe that worked out its own exit point would be
 ## grading the implementation against a second opinion instead of against
 ## itself.
+##
+## RENAMED _turnstile_exit_point -> _ride_exit_point on 28 aout 2026, when
+## the seesaw started calling the same entry-driven function and the old
+## name stopped being true. ⚠️ This call site was MISSED by that rename and
+## found by diffing this probe's stdout against main: the failure printed
+## "Nonexistent function" on STDOUT and the probe still EXITED 0, so a run
+## that was only checked for its exit code would have reported it green.
 func _turnstile_exit_probe(entry: Dictionary) -> Vector3:
-	return _hub._turnstile_exit_point(entry)
+	return _hub._ride_exit_point(entry)
 
 ## ---------------------------------------------------------------------
 ## PHASE H -- a tap ON the prop, mid-spin, re-arms the ride instead of
