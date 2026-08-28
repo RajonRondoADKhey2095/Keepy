@@ -19035,3 +19035,302 @@ board precedents.
 
 **Le lobe nord et la balancoire (seesaw) sont desormais EN PRODUCTION** sur
 `keepy-ten.vercel.app`.
+
+## HUB, LOT PROPS-1 : PREMIER .glb NON-KEEPY DU PLATEAU -- une chouette statique, purement decorative, posee pres du portail Quizz (28 aout 2026)
+
+Branche `claude/hub-owl-static-prop`, partie de `main` (`2ae7901`). Regle
+n°1 verifiee AU DEBUT : `git fetch --all --prune`, comparaison par ARBRE et
+pas par nom -- `origin/main` porte exactement `2ae7901`, et
+`origin/main..origin/staging` est VIDE (staging n'a que le merge en moins).
+`main` avait ete pousse deux commits au-dela du dernier etat connu de ce
+fichier (`8e8b9bd` "ennemis" + le merge GitHub `d7a0b81`) : **10 `.glb`
+bruts sous `assets_source/openworld/{animated,decor,perso}/`, 0 ligne de
+code/scene/config**, exactement l'exception permanente deja actee (Mathieu
+depose des `.glb` Meshy bruts depuis VS Code/l'interface web, bornee a
+`assets_source/`). Signale, continue normalement, comme la regle le
+prescrit pour ce cas precis.
+
+**LOT 1 uniquement** : chouette STATIQUE, purement decorative, aucune
+interaction, aucune animation, aucun signal, aucun etat. Le vol scripte
+avec Keepy (LOT 2) est **explicitement hors perimetre** -- rien n'a ete
+prepare pour lui : pas de hook, pas d'etat `KeepyHopper` supplementaire, pas
+de trajectoire.
+
+### ETAPE 1 -- RECON : l'arborescence reelle, pas supposee
+
+`assets_source/` porte desormais SIX dossiers, pas les deux que le brief
+nommait de memoire (`openworld/animated/` et `openworld/decor/`) :
+
+```
+assets_source/
+  decor/       6 .glb + 3 .png (dejà en prod, pipeline decor historique)
+  ennemis/     6 .glb (dejà en prod, pipeline hazards)
+  hero/        1 .glb (Keepy, dejà en prod)
+  pursuer/     1 .glb (hibou pursuer, dejà en prod)
+  ui/          1 .png (dejà en prod)
+  openworld/   NOUVEAU, pousse le 28 aout 2026
+    animated/  5 .glb -- TOUS rigges (skins=1, animations=1-2, 26-29 noeuds)
+    decor/     1 .glb -- "cabane keepy" (1 noeud, non riggee)
+    perso/     4 .glb -- 1 riggee (doublon de animated/Merged_Animations),
+               3 NON riggees : Owlet, Hedgehog_Adventurer, Pie
+```
+
+**Aucune ambiguite sur la chouette** : un seul nom evoque un hibou/chouette
+dans tout le lot, `Meshy_AI_Ember_Eyed_Owlet_0828125359_texture.glb`. Les
+deux autres candidats non rigges de `perso/` sont sans equivoque autre
+chose (un herisson, "Pie" = probablement une pie, pas un rapace nocturne),
+et `openworld/decor/` porte une cabane. Pas de STOP necessaire.
+
+### Inspection du .glb retenu, MESUREE et pas supposee
+
+Parseur glTF binaire ecrit pour l'occasion (lit les chunks JSON/BIN, aucune
+dependance externe) :
+
+| | valeur |
+|---|---|
+| noeuds / meshes / skins / animations | 1 / 1 / **0** / **0** |
+| triangles | **4 423** (dans la fourchette ~4000-6000 annoncee) |
+| materiaux | 1, PBR complet : baseColor (2048x2048 PNG), normal (2048x2048
+  PNG), metallicRoughness (**4096x4096 PNG**) |
+| `extensionsUsed` | **[]** -- aucun `KHR_materials_unlit`, comme tout .glb
+  Meshy brut deja documente dans ce depot |
+| bbox brute (model space) | X 1,29264, **Y 1,899284** (axe dominant,
+  debout), Z 1,427501 ; centre a moins de 2 mm de l'origine sur les 3 axes |
+
+**Confirme au rendu, pas seulement au JSON** : Godot 4.3-stable installe
+dans ce sandbox (releases GitHub officielles, tailles verifiees contre le
+`Content-Length` -- 50 276 070 et 1 073 228 327 octets, aucune troncature).
+Rendu offscreen 4 azimuts + dessus, `xvfb-run --rendering-driver opengl3`,
+avec la vraie texture et un eclairage temporaire (le materiau brut est
+encore LIT a ce stade) : **face au model +Z** (yeux, bec, aigrettes
+visibles), **dos au model -Z** (aucun trait de visage) -- meme convention
+que `keepy_squirrel_hero.glb`.
+
+### Traitement necessaire : UNLIT ajoute, PBR maps conservees comme sur le hero/pursuer
+
+**Reponse a la question du recon** : oui, un traitement est necessaire, et
+c'est celui que la doctrine de ce depot impose deja a **tout** asset du
+projet -- ajouter `KHR_materials_unlit`. Rien d'autre n'est change.
+
+Script d'ecriture GLB ecrit pour ce lot (JSON-only, jamais touche au chunk
+BIN) : **losslessness prouvee EN DEUX TEMPS**, comme la doctrine du depot
+l'exige --
+1. reecriture verbatim (sans toucher au materiau) : chunk **BIN
+   byte-identique** a la source, JSON semantiquement identique (l'ecart de
+   serialisation JSON pur -- ordre des cles -- ne compte pas) ;
+2. ajout de `"extensions": {"KHR_materials_unlit": {}}` sur le materiau et
+   dans `extensionsUsed` (jamais `extensionsRequired`, comme
+   `keepy_squirrel_hero.glb`/`keepy_hibou_pursuer.glb`) : chunk BIN encore
+   **byte-identique** apres coup (14 569 376 octets), verifie sur le
+   fichier de sortie et pas seulement plaide.
+
+Verifie dans Godot apres coup : materiau `shading_mode = 0` (UNSHADED),
+bbox **inchangee au dernier chiffre**.
+
+⚠️ **Les trois maps PBR sont CONSERVEES, decision explicite et pas un
+oubli.** `keepy_hibou_pursuer.glb` (deja en prod) est lui aussi unlit et
+porte pourtant `normalTexture`/`metallicRoughnessTexture` intactes --
+c'est le precedent direct pour un asset qui GARDE sa texture (par
+opposition aux hazards, decimes a plat sans texture). Suivre ce precedent
+plutot que de trancher seul si stripper etait souhaite : voir le paragraphe
+payload plus bas, qui chiffre precisement ce que ca coute.
+
+Installe sous **`assets/models/keepy_owl_decor.glb`** -- `assets_source/*`
+est dans l'`exclude_filter` de l'export (`export_presets.cfg`), `assets/*`
+n'y est PAS, donc c'est le seul chemin qui embarque l'asset dans le build.
+Les trois sidecars PNG extraits par l'importeur glTF de Godot
+(`keepy_owl_decor_Baked_BaseColor.png`, `_Baked_MetallicRoughness.png`,
+`_normal.png`) sont commites a cote, meme convention que
+`keepy_hibou_pursuer_*` deja en depot.
+
+### ETAPE 2 -- installation : layout-driven, comme les 216 autres entrees
+
+**Aucune coordonnee en dur dans un script.** `HubBuilder.gd` gagne
+`@export var owl_scene: PackedScene` (meme patron que `portal_scene`,
+wire dans `HubWorld.tscn`), un nouveau cas `&"owl"` dans le `match` de
+`_build()`, et `_make_owl(index)` qui instancie `owl_scene` directement --
+**pas via `ModelSlot`** : ModelSlot existe pour un noeud avec un
+PLACEHOLDER de repli, et ce prop n'en a aucun (il est soit le modele, soit
+rien), exactement le raisonnement deja tenu par `_make_portal()` qui
+instancie `portal_scene` sans intermediaire.
+
+```
+Owl               <- pose par _build (position / rotation_y / scale)
+  Model           <- owl_scene instance, OWL_MODEL_SCALE / OWL_MODEL_OFFSET
+```
+
+**Echelle -- derivee, pas choisie a l'oeil.** Le brief anchore
+explicitement sur "2,04 de long" -- la profondeur CONSTRUITE de Keepy dans
+le hub, mesuree precedemment a 2,0371. La chouette n'a pas d'axe "longueur"
+comparable (elle est debout, Y domine) ; le choix retenu fait correspondre
+son propre axe dominant (Y brut 1,899284) a cette meme reference, pour que
+les deux creatures se lisent a une echelle comparable plutot que l'une
+ecrasant l'autre :
+
+```
+scale = 2,0371 / 1,899284 = 1,07256 (uniforme)
+```
+
+Dimensions construites : X 1,3864, **Y 2,0371** (= la reference, par
+construction), Z 1,5311. **`OWL_MODEL_SCALE` est type `Vector3`** (et pas
+`float`, contrairement a `ModelSlot.model_scale`) -- suivant le rappel du
+brief -- meme si les trois composantes sont egales ici : les proportions
+mesurees etaient deja naturelles, rien ne justifiait de les deformer, et un
+type Vector3 laisse un futur asset moins bien proportionne se corriger sans
+replomber cette constante.
+
+**Offset** : `Vector3(0, 1,02039, 0)`, calcule pour que le point le plus
+bas du mesh (model-space min.y = -0,95136, mesure et pas suppose) touche
+`y = 0` une fois mis a l'echelle -- la lecon du rondin JUMP ("l'origine
+d'un .glb est ou son auteur l'a laissee") appliquee ici plutot que
+supposee sans effet. X/Z laisses a zero : le centre du mesh est a moins de
+2 mm de son origine sur ces deux axes, le meme ordre de bruit de mesure
+deja accepte pour la libellule (1,7 mm).
+
+**Placement -- pres du portail Quizz, PAS dessus.** Le brief avertissait
+explicitement du risque de superposition. Portail Quizz a `(0, 0, -7,2)`,
+rayon de disque/trigger 1,35 (mesure sur le `CylinderShape3D` reel, pas
+suppose). Chouette a **`(2,7, 0, -7,2)`** -- meme profondeur Z que le
+portail, offset LATERAL de 2,7 -- verifie contre les 214 autres entrees du
+layout (parseur Python dedie) : le prop le plus proche degage a 2,870 u
+(une souche), l'espace autour du portail Quizz avant ce lot etait donc deja
+libre sur cet axe. Marge au-dela du rayon+empreinte du portail : 2,700 -
+(1,35 + 0,77) = **0,58 u**.
+
+**Orientation -- rotation_y = 0, deliberement.** Le modele fait deja face
+au model +Z (mesure ci-dessus). La camera du hub regarde en permanence
+`-Z` depuis le spawn ; un prop plus loin en Z-negatif que le spawn qui fait
+face au monde `+Z` regarde donc VERS le joueur qui approche -- pas vers le
+portail. `rotation_y = 0` obtient exactement ca sans aucune correction
+locale dans `_make_owl()`.
+
+**`OWL_FOOTPRINT_RADIUS = 0,77`** ajoute a `FOOTPRINT_RADIUS`, meme
+convention que les 10 autres types deja presents (moitie du plus grand
+cote construit, X ou Z) -- utilise par la recherche de debarquement du
+bateau, sans effet pratique ici (la chouette n'est pres d'aucune eau), mais
+la doctrine du depot veut que chaque type publie le sien.
+
+### ETAPE 3 -- sondes et mesures
+
+**`OwlProbe.gd`/`.tscn` (nouvelle), 16 checks, PATRON ROUGE-AVANT-VERT
+VERIFIE** : le cas `&"owl":` a ete retire du `match` de `_build()`
+(reproduisant le chemin `push_error("...unknown type...")` deja existant
+pour tout type inconnu), le probe est reste sur **2 echecs exacts**
+("an 'Owl' node exists" + "owl_root present"), puis restaure -- diff `cmp`
+confirmant le fichier restaure est byte-identique a l'original. Trois
+phases sur l'arbre restaure : PHASE A presence/materiau unshaded, PHASE B
+placement/echelle/offset/walkabilite, PHASE C les 3 portails INCHANGES
+(positions, rayon de trigger, game_id) et la chouette degagee du rayon du
+portail Quizz. **16/16 OK, exit 0.**
+
+**Compte de draw nodes : 127 -> 128, ITEMISE et pas nudge.** L'unique
+`MeshInstance3D` du `.glb` (mesure : 1 noeud, 1 mesh, 1 primitive), sous un
+`Node3D` non-dessinant. Non batchable -- il n'y en a qu'un. Les trois
+constantes `_EXPECTED_DRAW_NODES_EXCL_PORTALS` (`SeesawProbe.gd`,
+`TurnstileProbe.gd`, `WaterTintProbe.gd`) sont montees a 128 en meme temps
+que le prop, jamais laissees driver seules.
+
+**Sondes partagees, diffees contre `origin/main` en worktree separe**
+(import verifie complet des deux cotes : 34 `.scn` baseline, 35 sur la
+branche -- exactement +1, la chouette) :
+
+| sonde | verdict |
+|---|---|
+| `AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe` | **BYTE-IDENTIQUES** sur les deux flux |
+| `ProbeTimeoutAudit` | +1 ligne exacte (`OwlProbe.tscn`, `arm()`+`deadline()` armes), **55 -> 56 sondes scenes** |
+| `DivingBoardProbe`, `LakeZoneProbe`, `StreamRideProbe` | diff EXACTEMENT le compte de draw nodes/footprints rapporte (jamais gate a cet endroit) |
+| `SeesawProbe`, `WaterTintProbe` | **exit 0 des deux cotes**, diff limite a la ligne de budget (127->128) |
+| `TurnstileProbe` | exit 1 des DEUX cotes, **meme echec unique et pre-existant** (`entry 0's custom_aabb encloses every bar`), non cause par ce lot |
+| `StreamRideProbe` | exit 1 des DEUX cotes, **memes 2 echecs pre-existants** (controle plein ecran, deja rouges sur `origin/main` avant ce lot) |
+
+⚠️ **`WaterTintProbe` DOIT tourner sous `xvfb --rendering-driver opengl3`,
+jamais `--headless`** -- son propre en-tete l'exige (elle lit des pixels).
+Un premier run sous `--headless` a semble bloquer/timeout ; rejoue sous
+xvfb, exit 0 des deux cotes en quelques minutes. Piege deja documente pour
+cette famille de sonde, re-rencontre ici.
+
+**`HubPerfBaseline` -- ligne ajoutee a `docs/HUB_PERF_BASELINE.md`**, trois
+runs de chaque cote, meme session, machine au repos : draw nodes 127->128
+(hors portails) confirme sur les 3 runs de chaque cote, construction et
+FPS simule dans des plages qui se CHEVAUCHENT mais avec les pires frames
+de la branche legerement sous celles du baseline (8,5 fps vs 9,7-13,1) --
+rapporte tel quel, **RIEN ICI N'EST UNE MESURE DEVICE** (llvmpipe/xvfb, pas
+WebGL2/Safari iOS).
+
+### Cout .pck : mesure REELLE, exports de la meme session
+
+| | baseline (`origin/main`, meme session) | branche |
+|---|---|---|
+| `index.pck` | **5 908 976** | **19 118 368** |
+| `index.wasm` | 35 376 909 / md5 `af4a8fc2925d992348eb30deeeb54360` | **identique, INCHANGE** |
+
+**Delta : +13 209 392 octets (+12,6 Mio), soit un `.pck` 3,2x plus gros.**
+`index.wasm` ne bouge PAS -- confirme qu'aucun code moteur/`project.godot`
+n'est touche, coherent avec un lot qui n'ajoute qu'un asset + du GDScript +
+un `.tres`.
+
+Le delta est explique **a l'octet pres** par les quatre ressources
+derivees de l'installation (mesurees dans `.godot/imported/`, pas
+estimees) : `.scn` geometrie 157 531 + `.ctex` baseColor 3 954 500 +
+`.ctex` metallicRoughness 4 326 370 + `.ctex` normal 4 767 746 ≈ 13,2 Mio.
+**Piege payload verifie plutot que suppose** : `grep`/`strings` sur le
+`.pck` exporte + comptage des lignes `Storing File:` du log de savepack
+(236 lignes) confirment **0** occurrence de `res://assets_source/*` ou
+`res://scripts/dev/*` reellement packee, malgre les 10 nouveaux `.glb`
+"ennemis" nichees DEUX niveaux sous `assets_source/openworld/` -- le glob
+de l'`exclude_filter` traverse bien les sous-dossiers, pas seulement le
+premier niveau.
+
+⚠️ **LA MAP METALLIC-ROUGHNESS (4 326 370 octets, 33 % du delta) A UN
+EFFET RENDU NUL SUR CE MATERIAU UNLIT** -- exactement le piege payload deja
+documente cinq fois dans ce fichier pour d'autres assets. **Non stripee
+ici, deliberement** : `keepy_hibou_pursuer.glb` (deja en prod) garde la
+sienne dans les memes conditions, et LOT 1 est scope a "valider le
+pipeline, l'echelle et le cout de rendu -- rien d'autre". Le chiffre est
+publie pour que Mathieu decide : la retirer du `.glb` recupererait ~4,3 Mio
+sans changer un seul pixel a l'ecran, si le poids shippe s'avere genant sur
+device.
+
+⚠️ **RAPPEL EXPLICITE, PAS UNE GARANTIE** : aucune mesure de ce sandbox
+n'est une mesure de performance device. Le rendu tourne sous llvmpipe
+(rasteriseur logiciel) via `xvfb`, jamais sur un GPU mobile reel ni sous
+WebGL2/Safari iOS. Les chiffres ci-dessus disent CE QUI A CHANGE et DE
+COMBIEN sur ce banc precis -- ils ne predisent, ne garantissent et
+n'excluent rien sur un telephone.
+
+### Validation build
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles). Import headless **exit 0**, **35 `.scn`** (34 baseline
++1, import complet verifie et pas suppose). Boot headless de
+`HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`** -- confirmation a
+l'execution que l'entree owl est coherente et walkable. Export Web release
+**exit 0, 0 ligne d'erreur** sur 236 lignes de savepack.
+
+### Non-regression explicite
+
+Les 3 portails (Chased/Quizz/Battle) restent fonctionnels et inchanges
+(positions, rayons de trigger, game_id -- verifie par `OwlProbe` PHASE C).
+Le lobe nord, la balancoire, le plongeoir, le tourniquet, la mare, le
+ruisseau et les deux lobes du grand lac : **aucun de ces fichiers/systemes
+n'est dans le diff** de ce lot (`HubRegion.gd`, `HubCamera.gd`,
+`HubTapInput.gd`, `KeepyHopper.gd`, `HubStreamRoute.gd`, `HubWater.gd`
+byte-intouches), et les sondes qui les couvrent (`LakeZoneProbe`,
+`StreamRideProbe`, `DivingBoardProbe`, `TurnstileProbe`, `SeesawProbe`)
+confirment un comportement inchange au-dela du seul compte de draw nodes.
+
+### Reste ouvert -- jugement device, seul juge, et une decision explicite pour Mathieu
+
+1. **Est-ce qu'une chouette de la taille de Keepy, posee a cote du portail
+   Quizz, se lit comme un compagnon decoratif** a l'echelle reelle d'un
+   telephone ? Aucune sonde ne le dit.
+2. **Le poids ajoute (+12,6 Mio, .pck x3,2) est-il acceptable ?** Le levier
+   chiffre existe (strip metallicRoughness, ~-4,3 Mio, zero effet visuel
+   mesure) mais n'a pas ete tire dans ce lot.
+3. **LOT 2 (vol scripte avec Keepy sur le motif RIDE_SEAT_Y) reste
+   entierement a faire** -- aucun etat, hook ou trajectoire n'a ete
+   prepare ici, comme demande.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
+import, export et sondes verts -- le seul echec restant, `StreamRideProbe`,
+est deja rouge sur `origin/main` et non cause par ce lot).
