@@ -17798,3 +17798,340 @@ sens-la** : les appels successifs montraient de vraies progressions
 d'etapes avec de vrais horodatages, et l'import a reellement pris
 **2 min 28 s**. Le piege deja consigne existe ; il ne s'est pas produit
 ici, et le verifier coute un regard a l'horloge.
+
+## LE TOURNIQUET : LE PLATEAU GAGNE UN PROP QUI REPOND, ET TROIS PREMISSES DU BRIEF TOMBENT A LA MESURE (28 aout 2026)
+
+Branche `claude/tourniquet-hub-prop-qj4778`, partie de `main` (`12a1d6b`,
+et `origin/staging` portait alors le MEME arbre `ea21c6b7`). Regle n°1
+verifiee AU DEBUT : `git fetch --all --prune`, tri des refs distantes par
+date et comparaison des **ARBRES** et pas des noms -- toutes les branches
+plus recentes sont deja ancetres de `main`, **aucune session concurrente**.
+
+Un manege de cour de recreation sur la pelouse nord. Un tap ordinaire y
+amene Keepy ; **l'atterrissage fait tourner le prop**. Rien ne change chez
+Keepy : aucun nouvel etat de `KeepyHopper`, aucune elevation sur le
+plateau, et le plateau du manege **n'est pas praticable**.
+
+### ⚠️ PREMISSE FAUSSE N°1 : L'ECHELLE FAIT DEJA CE QUE LE BRIEF LUI OPPOSE
+
+Le brief posait deux comportements a distinguer -- l'echelle declencherait
+`CLIMBING` **immediatement** au tap, le tourniquet devrait au contraire
+reagir **A L'ARRIVEE** d'un hop normal. **Mesure : l'echelle fait DEJA la
+seconde chose.** `_on_tapped_ladder` arme `_climbing` puis appelle
+`hop_to(point)` -- un hop parfaitement ordinaire -- et c'est
+`_on_hop_landed` qui appelle `_try_climb` a l'arrivee. Le seul chemin
+immediat est `if not _keepy.is_hopping()`, c'est-a-dire « il etait deja
+debout au pied ».
+
+La vraie difference est ailleurs, et elle est plus simple : l'echelle
+consomme un **signal de tap dedie** (`tapped_ladder` EMIS A LA PLACE de
+`tapped_ground`, un tap un signal), qui arme une intention. Le tourniquet
+n'a besoin d'aucun signal special : il repond a **n'importe quel
+atterrissage** pres de lui, depuis n'importe quel tap ordinaire.
+`HubTapInput.gd` est donc **byte-intouche**.
+
+### ⚠️ PREMISSE FAUSSE N°2 : AUCUN PROP NE BLOQUE L'APPROCHE, AUJOURD'HUI
+
+Le brief demandait de confirmer « comment un prop bloque l'approche
+(landmark, pontoon) pour que le tourniquet suive le meme modele et que
+Keepy s'arrete devant plutot que de le traverser ». **Mesure : rien ne
+bloque quoi que ce soit.** `FOOTPRINT_RADIUS` existe, mais
+`ground_footprints()` n'a **qu'un seul appelant de jeu** --
+`leave_ride()`, la recherche de point de debarquement -- plus deux sondes.
+La chaine de hop ordinaire ne consulte RIEN : `_begin_hop` avance sur une
+corde droite. Keepy traverse aujourd'hui les arbres, les landmarks et les
+pontons.
+
+Suivre « le meme modele » signifie donc exactement ceci : le tourniquet
+declare son empreinte au sol (`&"turnstile": TURNSTILE_BASE_RADIUS`, la
+dalle de pierre) et Keepy passe au travers comme devant tout le reste.
+**Rien de nouveau n'est ajoute pour l'arreter** -- ce serait une regle de
+DEPLACEMENT neuve, dans une fonction qui ne consulte rien, et elle rendrait
+ce prop le seul du plateau a stopper Keepy.
+
+### ⚠️ PREMISSE FAUSSE N°3 : LES BARRES NE PEUVENT PAS ETRE UN BATCH PARTAGE
+
+Le brief demandait les barres « BATCHEES en MultiMesh, meme principe que
+les barreaux d'echelle ». **Le principe est bon, le batch partage est
+impossible**, et c'est structurel : `_instance()`/`_flush_batches()`
+produisent un `MultiMeshInstance3D` **enfant de HubBuilder**, avec des
+transforms **MONDE cuits une fois**. Des barres deposees la resteraient
+immobiles pendant que le pivot auquel elles appartiennent tourne,
+pointant ou le manege etait avant.
+
+Livre : un `MultiMeshInstance3D` **propre au prop**, parente **sous le
+pivot**, ses instances en espace LOCAL. Toujours **un noeud de dessin pour
+les quatre barres**, ce qui est toute la raison d'etre d'un batch ici --
+simplement pas un batch partage.
+
+### L'ARCHITECTURE EST GENERIQUE DES LE PREMIER COMMIT
+
+C'est la lecon que le plongeoir a fait payer : sa GEOMETRIE etait generique
+depuis le debut et c'est la **TABLE** en aval qui etait un singleton, si
+bien qu'une seconde planche etait dessinable et non grimpable -- defaire ca
+a coute son propre lot.
+
+`HubBuilder.spinning_props()` est donc **une LISTE des le premier commit**,
+avec une entree dedans, et sa forme n'a rien de tourniquet :
+`{"position", "radius", "spinner"}`. Un second prop reactif est une entree
+de plus, pas un second mecanisme. `HubWorld` en copie une fois une version
+avec un champ `"tween"` -- **un seul tableau et pas deux tableaux
+paralleles index-alignes**, qui sont exactement la facon dont le tween du
+prop 3 finit par tuer le prop 4.
+
+Le rayon de declenchement est publie **par entree** et non tenu comme un
+nombre unique par l'appelant : `LADDER_TAP_RADIUS` est le meme pour toutes
+les planches parce qu'un pouce fait la meme taille partout, alors qu'un
+manege plus grand voudrait une portee plus grande.
+
+### Le prop, et ce qui ne tourne pas
+
+```
+Turnstile          <- place par _build (position / rotation_y / scale)
+  Footing          <- STATIQUE. Ce contre quoi la rotation se lit.
+  Spinner          <- le pivot, le SEUL noeud jamais tourne
+    Deck
+    Post
+    Bars           <- MultiMeshInstance3D, TURNSTILE_BARS instances
+```
+
+**La dalle est deliberement HORS du pivot** : une rotation n'est lisible
+que contre quelque chose qui reste en place, et un manege dont l'assise
+tournerait avec lui se lirait comme le prop entier qui glisse. Gate par
+sonde, y compris « la dalle est plus large que le plateau ».
+
+`transform_format = MultiMesh.TRANSFORM_3D` est pose **en premiere ligne** :
+`TRANSFORM_2D` est le DEFAUT en Godot 4.3, et un batch laisse dessus jette
+toutes les transforms qu'on lui ecrit et dessine tout a l'origine -- le
+piege que `_flush_batches()` avait deja du apprendre. `custom_aabb` est
+ecrit et non hérité : une AABB fausse fait disparaitre le batch entier
+quand la camera tourne, sans erreur.
+
+### Le declencheur : `hop_landed`, AU-DESSUS de tous les retours anticipes
+
+Il n'y a **aucun troisieme mecanisme parallele** a inventer : `_on_hop_landed`
+est deja le point d'entree commun « Keepy a atterri ici », et tout le monde
+y passe -- teinte d'eau, cue d'impact, embarquement, grimpe, portails. Le
+tourniquet s'y branche juste sous le cue d'impact, **avant** chaque branche
+qui `return`, pour la raison exacte que la teinte est ecrite en haut de
+cette fonction : une reaction placee apres cesserait de tirer sur les
+atterrissages qui FONT quelque chose, en silence et seulement parfois.
+
+⚠️ **Un plongeon est gate DEHORS, explicitement et pas par le placement.**
+Un plongeon n'est pas une marche. Le latch `_dive_pending` est lu dans une
+copie (`was_dive`) avant d'etre consomme, et le tourniquet ne repond que si
+elle est fausse. Le test de distance refuserait de toute facon un
+atterrissage de plongeon aujourd'hui -- les planches sont au-dessus de
+l'eau et le manege sur la terre ferme -- mais **c'est un fait sur le
+LAYOUT, qui est de la DONNEE**, et une donnee se modifie sans qu'on relise
+ce fichier.
+
+**Debounce par IGNORER, jamais par redemarrer.** Un joueur qui retape le
+meme endroit pendant que le haut coasse ne doit pas le voir repartir a
+pleine vitesse. `_spin_near` enroule l'angle dans `[0, 360)` avant de
+tweener -- le haut garde le cap ou il s'est arrete, ce que fait un vrai
+manege, pendant que le nombre reste borne au lieu de grimper de 540 degres
+par shove pour le reste de la session.
+
+### ⚠️ DEUX DEFAUTS TROUVES AU RENDU, PAS A LA RELECTURE
+
+La premiere passe utilisait `BOAT_HULL_COLOR` pour le cadre -- ce que le
+plongeoir emprunte -- contre un plateau en `PONTOON_COLOR`. **Les deux
+bruns sont assez proches pour que le poteau central DISPARAISSE et que les
+barres se lisent comme des traits dessines sur la planche** : le prop
+cessait d'etre un manege et devenait une assiette. Le cadre prend donc le
+**liston pale du bateau** (`BOAT_RIM_COLOR`), deja sur la planche, et le
+rayon des barres passe de 0,045 a **0,06** -- a 0,045, depuis la camera a
+-34 degres de cet ecran, elles se lisaient comme des brindilles POSEES sur
+le plateau plutot que comme des rails au-dessus.
+
+**Aucune couleur neuve n'est installee** : plateau = planche de ponton,
+cadre = liston du bateau, dalle = rocher du scatter.
+
+### ⚠️ DEUX DEFAUTS TROUVES DANS MA PROPRE SONDE, publies plutot que lisses
+
+1. **PHASE D assertait d'abord « l'angle ne bouge pas » a travers un
+   re-atterrissage, et a echoue de 12,4 degres SUR DU CODE CORRECT.** Une
+   rotation qui coasse AVANCE pendant les deux frames que coute un
+   atterrissage : je mesurais le tween en train de faire son travail. Elle
+   gate desormais ce qu'un tween empile ou redemarre ferait vraiment -- un
+   saut EN ARRIERE (un redemarrage ré-enroule dans `[0, 360)`) ou un
+   depassement de la cible en vol -- plus le fait que **deux atterrissages
+   pendant une rotation voyagent exactement d'un seul shove**.
+2. **Elle relisait l'origine du shove APRES l'atterrissage**, alors que le
+   tween tournait deja : 214,11 mesure contre une vraie origine de 180,0.
+
+### ⚠️ UN TROU DE COMPTAGE FERME : `HubPerfBaseline` sous-comptait d'un noeud
+
+Deux sondes se contredisaient -- `TurnstileProbe` et `WaterTintProbe`
+disaient **124**, `HubPerfBaseline` **123**. Cause :
+`_count_mesh_instances()` ne comptait que `MeshInstance3D`. C'etait complet
+tant que chaque batch du plateau etait un enfant DIRECT de HubBuilder
+(l'appelant les traite dans sa propre branche) -- **le batch NICHE du
+tourniquet lui etait invisible**. Corrige, et **aucun chiffre historique ne
+bouge** : la colonne AVANT ci-dessous est mesuree avec le compteur CORRIGE
+et rend toujours 120 / 126, parce qu'avant ce prop il n'existait aucun
+batch niche sur le plateau.
+
+### Placement : balaye, pas choisi a l'oeil
+
+Balayage exhaustif au pas 0,5 puis affine a 0,25, avec exclusion de **l'eau
+des cinq corps** (`HubWater`) plus une marge de 1,50 sur tout le pourtour du
+disque -- un manege de cour de recreation ne se pose pas dans un lac, et
+`HubRegion.contains()` dit « marchable » dans l'eau depuis que la
+soustraction du grand lac a ete retiree.
+
+**Retenu : (-4,00 ; 17,25)**, degagement **1,994 u** au prop le plus proche
+(un arbre, index 111 du layout), 17,71 u du spawn. Mesure avec un rayon de
+placement conservateur de 1,60 ; contre l'empreinte reellement declaree
+(1,35) le degagement est de 2,244.
+
+⚠️ **LE CONE AVANT DU SPAWN EST PLEIN, mesure** : dans les +-18 degres de
+l'axe camera il n'existe que **12 candidats secs**, tous coinces dans la
+rangee de portails, avec un degagement de **0,02 a 0,52 u** contre 1,99
+disponible ailleurs. Le lobe spawn du grand lac plus les trois portails
+l'occupent entierement. Le tourniquet est donc **derriere le spawn** et ne
+se voit pas depuis l'ecran d'arrivee -- comme la moitie des props du
+plateau, la camera ne lacetant jamais. **Signale, pas corrige** : cramer un
+prop a 0,5 u d'une dalle de portail pour le rendre visible au spawn aurait
+coute plus qu'il ne rapporte.
+
+### La planche
+
+`docs/color-sheets/turnstile_proportions_sheet.png` -- **4 lignes x 3
+colonnes** : deck 1,15 / 4 barres (LIVRE), deck 1,15 / 3 barres, deck 1,45 /
+4 barres, deck 1,45 / 3 barres ; colonnes = lacet du prop 0 / 22,5 / 45
+degres, Keepy plante a cote pour l'echelle. **Rien n'est valide, Mathieu
+tranche** -- et changer d'avis coute une constante.
+
+⚠️ **La planche est rendue par un mock parametrique, et il est CONTROLE
+avant qu'une tuile soit crue** : les transforms de son MultiMesh et le
+rayon de son deck sont compares un a un a ceux du tourniquet REELLEMENT
+construit dans la scene livree. `CONTROL: sheet mock reproduces the shipped
+turnstile exactly = true`. Piege deja consigne et re-rencontre quand meme :
+`HubCamera` se lerp sur Keepy chaque frame, donc sans couper son `_process`
+une tuile sur quatre est cadree en plein glissement.
+
+### `TurnstileProbe` : 32 checks, 0 echec, GATEE
+
+Gatee et pas rapportee parce que **tout mode de panne de cette feature est
+SILENCIEUX** : registre vide, pivot null, MultiMesh reste en TRANSFORM_2D,
+declencheur accroche sous un retour anticipe, debounce qui laisse deux
+tweens se disputer un angle. Aucun ne leve, aucun ne casse un build, et
+tous ressemblent a « le tourniquet n'a jamais ete branche ».
+
+**PHASE C achete le droit d'asserter un refus par un BLIND CHECK d'abord** :
+« rien n'a tourne » passe gratuitement contre un declencheur jamais cable,
+donc il faut prouver qu'une rotation PEUT arriver avant de mesurer qu'elle
+n'arrive pas. Meme ordre que `WaterImpactProbe`, pour la meme raison.
+
+PHASE A registre et contrat de noeuds (dont « la dalle est HORS du
+pivot »), PHASE B le batch et ses pieges, PHASE C declenchement et refus,
+PHASE D debounce, PHASE E le plongeon ne pousse rien / le latch est bien
+consomme / **Keepy reste a y = 0 et dans aucun etat de planche ou de ride**,
+PHASE F budget et separation d'avec les echelles (**22,255 u contre un
+rayon de tap de 2,50**).
+
+### Budget
+
+| | AVANT | APRES |
+|---|---|---|
+| draw nodes hors portails | **120** | **124** |
+| draw nodes, total | 126 | **130** |
+| marge sous le plafond de 260 | 140 | **136** |
+
+**+4, itemises** : une dalle, un plateau, un poteau, et **UN**
+`MultiMeshInstance3D` pour les quatre barres. Detail perf, les deux cotes
+mesures dans une seule session sur machine au repos :
+`docs/HUB_PERF_BASELINE.md`. **Aucun cout n'est detectable** -- les plages
+se chevauchent sur les trois metriques, ce qui soutient « rien de
+mesurable » et pas « c'est plus rapide ».
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+50 276 070 et 1 073 228 327 octets, aucune troncature silencieuse). Import
+headless **exit 0, 24 `.scn`** (import complet verifie, pas suppose). Boot
+de `HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`** -- la
+confirmation A L'EXECUTION que les 208 entrees sont coherentes. Export Web
+release **exit 0**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. `index.pck`
+**5 892 576 puis 5 892 544** sur deux exports du MEME arbre, 32 octets
+d'ecart : enieme illustration de l'instabilite deja consignee, **marqueur
+et jamais preuve d'identite**. **Piege payload tenu** : sur **228** lignes
+`Storing File`, **0** pour `scripts/dev`, `assets_source`, `docs`, `web/`,
+`build` ou `firebase.json` -- et **0** occurrence de `TurnstileProbe` ou de
+la planche dans le pack.
+
+**Sondes, toutes exit 0** : `TurnstileProbe` (32), `DivingBoardProbe`
+(**113**, `HubTapInput` etant partage), `WaterImpactProbe` (**23** --
+le chiffre du brief, pas le 24 d'une note anterieure), `WaterTintProbe`
+(48), `LakeZoneProbe`, `StreamRideProbe` (37), `AssetContractAudit` (12/12
+visuels, **0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe`, `ProbeTimeoutAudit` -- **53 -> 54 sondes scenes**,
+**MESURE des deux cotes** (mes deux fichiers deplaces puis remis) et non
+deduit du fait qu'un seul `.tscn` a ete ajoute. Les BLIND CHECKS existants
+restent armes et verts.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que 1,5 tour en 2,2 s se lit comme une poussee qui coasse**, ou
+   comme un prop qui glitche ? C'est tout l'objet du lot et aucune sonde ne
+   le dit.
+2. **Les proportions** : la planche compare deux tailles de plateau et deux
+   comptes de barres, rien n'y est valide.
+3. **Le tourniquet n'est pas visible depuis le spawn** (cone avant plein,
+   mesure). A trancher : l'accepter comme un prop qu'on decouvre en
+   marchant, ou rouvrir le placement.
+4. **Keepy traverse le prop** comme il traverse tout le reste du decor
+   (premisse n°2). Reel, mesure, et hors perimetre d'un lot de decor.
+5. **Rien ici n'est un rendu device** : llvmpipe sous xvfb via le backend
+   opengl3 BUREAU, contre WebGL2 sous Safari.
+
+### Deploiement staging du tourniquet (palier 1, automatique)
+
+`staging` **`d51fee4`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `1626b712` des deux cotes ET
+`git diff` vide, verifie AVANT le push). CI run **#282**
+(id 33148550179) -- `Import project resources` 06:37:57 -> 06:40:14,
+**`Export Web build` 06:40:14 -> 06:40:19**, `Verify export output`
+succes, `Deploy to Vercel [STAGING -- staging]` succes,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `12a1d6b`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants et aux DEUX bouts** :
+
+| marqueur | avant (run #280) | apres (ce lot, run #282) |
+|---|---|---|
+| `CACHE_VERSION` | `1787892373` = **04:46:13** | **`1787899219` = 06:40:19** |
+| `index.pck` servi | **5 888 448** | **5 892 592** |
+| `index.wasm` servi | 35 376 909 | 35 376 909 *(inchange, attendu)* |
+
+L'epoch d'apres tombe **exactement sur la fermeture de l'etape `Export Web
+build`** du run #282, et **les deux lectures d'apres portent
+`x-vercel-cache: MISS` avec `age: 0`**. Le trou du lot precedent est ferme :
+les DEUX marqueurs sont relus aux deux bouts, pas un seul.
+
+⚠️ **Limite dite plutot que sous-entendue** : les valeurs AVANT ont ete
+prises **avant le merge** mais sur des reponses `HIT` avec un `age` non nul
+(6595 et 6602 s). Elles sont valables comme **VALEURS** -- elles precedent
+le push, donc ce sont bien celles de l'ancien build -- mais **ce ne sont
+PAS des mesures de fraicheur**, et un parametre de requete different ne les
+a pas bustees. Seules les lectures MISS/age 0 d'apres le sont.
+
+⚠️ **`index.pck` prend un TROISIEME chiffre pour le meme contenu** : 5 892 576
+et 5 892 544 sur deux exports locaux du meme arbre, 5 892 592 servi.
+Marqueur « un nouveau build est en ligne », **jamais preuve d'identite** --
+c'est `index.wasm` qui la porte, et il est identique partout.
+
+⚠️ **L'API Actions n'etait PAS perimee sur ce run**, et c'est note dans ce
+sens-la : les appels successifs montraient de vraies progressions d'etapes
+avec de vrais horodatages, et l'import a reellement pris **2 min 17 s**.
+Le piege existe ; il ne s'est pas produit ici, et le verifier coute un
+regard a l'horloge.
