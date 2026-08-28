@@ -13,8 +13,16 @@ extends Node
 ## was never switched on". Which is exactly what a device tester would
 ## report, and exactly what nobody could then attribute.
 ##
+## PHASE G covers the RIDER, added when Keepy stopped walking through the
+## prop and started turning with it. Its silences are different ones and
+## just as quiet: a seat height that leaves him shin-deep in the deck, a
+## rider a frame behind the thing carrying him, a dismount that comes down
+## inside the trigger radius and remounts him for ever.
+##
 ## ⚠️ WHAT THIS PROBE CANNOT DECIDE. It measures ANGLES and NODES, never
-## how a spin READS. Whether 1.5 turns over 2.2 seconds looks like a shove
+## how a spin READS, and never how the RIDE reads either -- whether a body
+## swung round a knee-high roundabout with his nose over the rim looks like
+## a passenger or like a prop that has fallen over is a device judgement. Whether 1.5 turns over 2.2 seconds looks like a shove
 ## that coasts down or like a prop glitching is a device judgement, and so
 ## are the proportions -- see docs/color-sheets/turnstile_proportions_sheet.png,
 ## on which nothing is validated.
@@ -59,6 +67,7 @@ func _ready() -> void:
 	await _phase_d()
 	await _phase_e()
 	await _phase_f()
+	await _phase_g()
 
 	print("--- %d failure(s) ---" % _failures)
 	get_tree().quit(1 if _failures > 0 else 0)
@@ -316,6 +325,24 @@ func _phase_e() -> void:
 	print("  a DIVE landing at it moved the pivot by %.4f deg" % moved)
 	_check(moved < 0.0001, "a dive's landing does not shove it")
 
+	# ⚠️ REWRITTEN, NOT DROPPED. Until Keepy could ride the thing, this
+	# phase closed by asserting that NOTHING about him ever changed -- no
+	# lift, no new state -- because that was the contract. It is not any
+	# more, so the assertion is re-aimed at the half of it that still holds
+	# and is still worth guarding: a DIVE's landing must leave him on the
+	# ground. Measured HERE, right after the dive landing, rather than at
+	# the end of the phase, because the ordinary landing below is now
+	# supposed to pick him up and asserting this after it would be
+	# asserting the feature does not work.
+	print("  after the DIVE landing: y = %.4f, on turnstile = %s"
+		% [_keepy.global_position.y, str(_keepy.is_on_turnstile())])
+	_check(absf(_keepy.global_position.y) < 0.0001,
+		"a dive's landing leaves Keepy on the ground")
+	_check(not _keepy.is_on_turnstile(),
+		"a dive's landing does not put Keepy on the prop")
+	_check(not _keepy.is_riding() and not _keepy.is_on_board(),
+		"a dive's landing leaves him in no board or ride state")
+
 	# The latch must be spent by that landing rather than left primed.
 	await _land_at(here + Vector3(999.0, 0.0, 0.0))
 	await _land_at(here)
@@ -323,12 +350,13 @@ func _phase_e() -> void:
 	_check(absf(_angle(entry) - before) > 0.01,
 		"the next ordinary landing shoves it again (the latch was spent)")
 
-	# NOTHING ABOUT KEEPY CHANGES. No new state, no lift onto the deck --
-	# the deck is not walkable and this is what says so.
-	print("  Keepy: y = %.4f, idle = %s" % [_keepy.global_position.y, str(not _keepy.is_hopping())])
-	_check(absf(_keepy.global_position.y) < 0.0001, "Keepy stays at ground level")
-	_check(not _keepy.is_riding() and not _keepy.is_on_board(),
-		"Keepy is in no board or ride state")
+	# And that ordinary landing DID pick him up, which is the other half of
+	# the same gate: a dive-vs-walk test that refused both would pass this
+	# phase for free.
+	print("  the ordinary landing put him on the prop: %s" % str(_keepy.is_on_turnstile()))
+	_check(_keepy.is_on_turnstile(),
+		"an ordinary landing at the prop DOES put Keepy on it (gate blind check)")
+	await _settle_off_turnstile()
 
 ## ---------------------------------------------------------------------
 ## PHASE F -- the budget, and no collision with the ladders.
@@ -363,6 +391,192 @@ func _phase_f() -> void:
 	# not to put Keepy inside it.
 	var known: bool = _props.FOOTPRINT_RADIUS.has(&"turnstile")
 	_check(known, "the turnstile has a ground footprint the disembark search can see")
+
+## Waits until the turnstile has put him down again and he is standing
+## still. Every phase that lands him on the prop has to leave the next one
+## a body that is idle rather than one still being swung.
+func _settle_off_turnstile() -> void:
+	for i in 900:
+		await get_tree().process_frame
+		if not _keepy.is_on_turnstile() and not _keepy.is_hopping():
+			return
+
+## Keepy's feet, in world units, off the drawn model rather than off his
+## origin -- the same visual_aabb() the waterline work measures with.
+func _feet_y() -> float:
+	var slot: Node3D = _keepy.get_node("Yaw/Body")
+	var box: AABB = slot.global_transform * slot.visual_aabb()
+	return box.position.y
+
+## Keepy's seat expressed in the pivot's OWN frame. Constant for as long as
+## he is turning with it -- and constant WHATEVER sign convention a yaw
+## uses, which is why the check is written this way rather than by
+## comparing two angles.
+##
+## ⚠️ THE FIRST VERSION OF THIS COMPARED ANGLES and reported a 179.6-degree
+## drift on correct code: a +Y rotation in Godot makes the bearing
+## atan2(z, x) DECREASE, so the metric was measuring its own sign mistake.
+## De-rotating through the pivot cannot make that error.
+func _seat_local(entry: Dictionary) -> Vector3:
+	return (entry["spinner"] as Node3D).to_local(_keepy.global_position)
+
+## ---------------------------------------------------------------------
+## PHASE G -- Keepy rides it.
+##
+## WHY GATED. Every way this can fail is silent, and they are not the same
+## silences the rest of this file already covers: a seat height that leaves
+## him shin-deep in the deck, a rider a frame behind the thing carrying him,
+## a dismount that lands back inside the trigger radius and remounts him
+## forever, a tap that walks him off mid-spin. None of those raise, none
+## break a build, and all of them look on a device like "the roundabout is
+## broken" rather than like any one of these causes.
+func _phase_g() -> void:
+	print("--- PHASE G: Keepy mounts, turns with it, and steps off ---")
+	var reg := _registry()
+	if reg.is_empty():
+		return
+	var entry: Dictionary = reg[0]
+	var pivot: Node3D = entry["spinner"]
+	var here: Vector3 = entry["position"]
+	var trigger: float = float(entry["radius"])
+	var deck_y: float = float(entry["deck_y"])
+	var ride_r: float = float(entry["ride_radius"])
+	var bars: int = int(entry["bars"])
+	var spin_s: float = _const(_hub, "TURNSTILE_SPIN_S", 2.2)
+
+	await _settle_off_turnstile()
+	await get_tree().create_timer(spin_s + 0.35).timeout
+
+	# ---- mount
+	var approach: Vector3 = here + Vector3(trigger * 0.7, 0.0, trigger * 0.4)
+	await _land_at(approach)
+	await get_tree().process_frame
+	print("  after a landing %.2f u from the pivot: on turnstile = %s"
+		% [Vector3(approach.x, 0.0, approach.z).distance_to(here), str(_keepy.is_on_turnstile())])
+	_check(_keepy.is_on_turnstile(), "a landing in reach puts Keepy on the prop")
+	if not _keepy.is_on_turnstile():
+		return
+
+	# ---- seat: on the deck, at the published radius, in a GAP
+	var seat: Vector3 = _seat_local(entry)
+	var seat_r: float = Vector2(seat.x, seat.z).length()
+	var feet: float = _feet_y()
+	print("  feet y = %.5f (deck top %.5f)   orbit radius = %.5f (published %.5f)"
+		% [feet, deck_y, seat_r, ride_r])
+	_check(absf(feet - deck_y) < 0.01, "his feet stand ON the deck top, not in it")
+	_check(absf(seat_r - ride_r) < 0.001, "he sits at the published ride radius")
+
+	# The bars are at k*step exactly; a rider must be between two of them.
+	var step: float = TAU / float(maxi(bars, 1))
+	var ang: float = atan2(seat.z, seat.x)
+	var off: float = absf(fposmod(ang + step * 0.5, step) - step * 0.5)
+	# His own angular half-width at this radius: 0.6599 of model across
+	# 1.15 of orbit. The bar he has to miss is a spoke, so the clearance
+	# that matters is angular.
+	var half_w: float = rad_to_deg(atan2(0.6599, seat_r))
+	print("  seated %.2f deg from the nearest bar; half a gap is %.2f deg, his own half-width is %.2f deg"
+		% [rad_to_deg(off), rad_to_deg(step * 0.5), half_w])
+	# ⚠️ THIS ASSERTED THE WRONG QUANTITY FIRST TIME and failed on correct
+	# code. `off` is the distance to the nearest BAR and wants to be LARGE;
+	# the first version tested (half a gap - off), which is the distance to
+	# the gap's CENTRE and is correctly ZERO for a rider seated dead in the
+	# middle of one. The print said so -- "45.00 from the nearest bar, half
+	# a gap is 45.00" -- which is what a perfect seat looks like.
+	_check(absf(rad_to_deg(off) - rad_to_deg(step * 0.5)) < 1.0,
+		"he is seated at the CENTRE of a gap between two bars")
+	_check(rad_to_deg(off) > half_w,
+		"his body clears the grip bars either side of him")
+
+	# ---- synchrony, and a blind check that the metric can SEE a break
+	var base: Vector3 = _seat_local(entry)
+	var worst: float = 0.0
+	var landings: int = 0
+	var counter := func(_p: Vector3) -> void: landings += 1
+	_keepy.hop_landed.connect(counter)
+	for i in 200:
+		await get_tree().process_frame
+		if not _keepy.is_on_turnstile():
+			break
+		worst = maxf(worst, _seat_local(entry).distance_to(base))
+	_keepy.hop_landed.disconnect(counter)
+	print("  worst de-rotated seat drift over the shove = %.9f u" % worst)
+	_check(worst < 0.01, "he turns WITH the deck rather than beside it")
+
+	# ---- portal detection is silent for the whole ride
+	print("  landings emitted while aboard: %d" % landings)
+	_check(landings == 0, "no landing is emitted while the prop carries him")
+
+	await _settle_off_turnstile()
+
+	# ---- dismount: on the ground, out of reach, in the region, clear
+	var end_pos: Vector3 = _keepy.global_position
+	var out_d: float = Vector3(end_pos.x, 0.0, end_pos.z).distance_to(here)
+	print("  stepped off at (%.3f, %.3f, %.3f), %.3f u from the pivot (trigger %.2f)"
+		% [end_pos.x, end_pos.y, end_pos.z, out_d, trigger])
+	_check(absf(end_pos.y) < 0.0001, "he steps off onto the ground, not into the air")
+	_check(out_d > trigger, "he lands OUTSIDE the trigger radius, so stepping off cannot re-shove it")
+	_check(HubRegion.contains(end_pos), "he lands inside the walkable region")
+	var worst_fp: float = INF
+	for spot in _props.ground_footprints():
+		worst_fp = minf(worst_fp, Vector3(end_pos.x, 0.0, end_pos.z)
+			.distance_to(spot["position"] as Vector3) - float(spot["radius"]))
+	print("  nearest prop edge: %.3f u" % worst_fp)
+	_check(worst_fp > 0.0, "he does not land inside a prop")
+	_check(not _keepy.is_on_turnstile() and not _keepy.is_hopping(),
+		"he is standing still when it is over -- the dismount did not remount him")
+
+	# ---- a tap while aboard is dropped, not walked
+	await get_tree().create_timer(spin_s + 0.35).timeout
+	await _land_at(approach)
+	await get_tree().process_frame
+	if not _keepy.is_on_turnstile():
+		_check(false, "re-mount for the tap test")
+		return
+	var seat_before: Vector3 = _seat_local(entry)
+	_hub._on_tapped_ground(here + Vector3(12.0, 0.0, 12.0))
+	await get_tree().process_frame
+	var seat_after: Vector3 = _seat_local(entry)
+	print("  tap while aboard: still on = %s, seat moved %.6f u"
+		% [str(_keepy.is_on_turnstile()), seat_after.distance_to(seat_before)])
+	_check(_keepy.is_on_turnstile(), "a tap while aboard does not take him off")
+	_check(seat_after.distance_to(seat_before) < 0.01, "a tap while aboard does not move him on the deck")
+
+	# ---- BLIND CHECK for the synchrony metric, on a stopped prop.
+	# Turning the pivot WITHOUT telling him must show up, or the drift
+	# figure above passes for free against a rider who never moved at all.
+	await _settle_off_turnstile()
+	await get_tree().create_timer(spin_s + 0.35).timeout
+	await _land_at(approach)
+	await get_tree().process_frame
+	if not _keepy.is_on_turnstile():
+		_check(false, "re-mount for the blind check")
+		return
+	var spin: Tween = _spin_tween(entry)
+	if spin != null and spin.is_valid():
+		spin.kill()
+	await get_tree().process_frame
+	var held: Vector3 = _seat_local(entry)
+	pivot.rotation_degrees.y += 25.0
+	await get_tree().process_frame
+	var broken: float = _seat_local(entry).distance_to(held)
+	print("  BLIND CHECK: turning the pivot without telling him drifts the seat %.6f u" % broken)
+	_check(broken > 0.05, "the drift metric can see a rider left behind (blind check)")
+	_keepy.follow_turnstile()
+	await get_tree().process_frame
+	var healed: float = _seat_local(entry).distance_to(held)
+	print("  and telling him puts it back: %.9f u" % healed)
+	_check(healed < 0.001, "one call to follow_turnstile restores the seat exactly")
+
+	# leave the world tidy for anything after this phase
+	_keepy.leave_turnstile(_turnstile_exit_probe(entry))
+	await _settle_off_turnstile()
+
+## The same place HubWorld would put him, asked of HubWorld rather than
+## recomputed here: a probe that worked out its own exit point would be
+## grading the implementation against a second opinion instead of against
+## itself.
+func _turnstile_exit_probe(entry: Dictionary) -> Vector3:
+	return _hub._turnstile_exit_point(entry)
 
 func _count_draw(n: Node) -> int:
 	var k: int = 1 if (n is MeshInstance3D or n is MultiMeshInstance3D) else 0
