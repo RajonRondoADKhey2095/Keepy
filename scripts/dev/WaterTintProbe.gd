@@ -78,7 +78,12 @@ const _HUB_WORLD_SCENE: String = "res://scenes/HubWorld.tscn"
 ## grip bars -- four bars, one node, which is what the batch is for.
 ## Measured on the shipped tree before and after in one session: 120 -> 124
 ## excluding portals, 126 -> 130 including them.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 124
+## 124 -> 127 on 28 aout 2026, ITEMISED rather than nudged: the seesaw adds
+## a fulcrum, a plank, and ONE MultiMeshInstance3D for however many grips it
+## has. Raised here rather than left to fail, and written down rather than
+## absorbed -- a draw-node constant that drifts quietly is a budget nobody
+## is watching.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 127
 
 var _failures: int = 0
 var _ride_landings: int = 0
