@@ -18960,3 +18960,78 @@ illustration de l'instabilite deja consignee -- marqueur "nouveau build",
 `4e08904b1b7107858246af44b602067b`) est identique des deux cotes et c'est lui
 la preuve d'identite, coherent avec un lot qui ne touche que
 `scripts/hub/*.gd`, `scripts/dev/*` et un `.tres`.
+
+### Merge en production (28 aout 2026, autorisation explicite de Mathieu)
+
+`staging` (`8d79d95`) -> `main`, commit de merge **`b10b216`**, `--no-ff`,
+apres validation device confirmee ("bascule lue comme naturelle, lobe/
+balancoire acceptes tels quels, traversee du decor jugee coherente avec le
+reste du plateau").
+
+⚠️ **`origin/main` avait DIVERGE de la ref attendue au moment de demarrer ce
+lot, et ce n'etait ni une session concurrente ni du travail perdu.** Verifie
+AVANT tout merge, jamais suppose : `merge-base(origin/main, origin/staging)
+= b00fa1d` exactement, donc `b00fa1d` est bien le point de depart reel et
+commun. `origin/main` avait avance de 2 commits au-dela -- **`8e8b9bd`
+"ennemis"** (10 `.glb` bruts sous `assets_source/openworld/`, **0 insertion
+/ 0 suppression de texte**, poussee par Mathieu depuis VS Code/GitHub le
+28 aout 15:27 CEST) et **`d7a0b81`**, le merge automatique GitHub qui
+reconcilie ce commit avec `b00fa1d` sans rien y ajouter. **Zero
+chevauchement de fichiers** avec ce que `staging` avait change (diff croise
+vide). C'est exactement l'exception permanente deja actee dans ce fichier :
+Mathieu depose des `.glb` Meshy bruts directement sur `main` depuis
+l'interface web/VS Code, bornee a `assets_source/`, sans jamais toucher de
+code, de scene ni de configuration -- meme motif que `51aa01d`+`3f04b89`
+deja consigne. **Signale plutot que suppose : divergence detectee, session
+arretee pour rapport, confirmee benigne par Mathieu, puis merge relance.**
+
+**Verifie AVANT le merge, tree par tree** : `origin/main` = `d7a0b81` et
+`origin/staging` = `8d79d95` (SHA du brief confirmes, re-fetch fait en tete
+de session ET juste avant de relancer -- aucun troisieme etat n'est apparu
+entre les deux checks). Local `main` mis a jour en `--ff-only` vers
+`origin/main` (aucune divergence locale) avant le merge. **Le merge lui-meme
+est purement additif sur les deux flancs** : `git diff HEAD origin/staging`
+= exactement les 10 `.glb` "ennemis" (0 ligne de texte) ; `git diff HEAD
+origin/main` = exactement les 12 fichiers du lot hub (`CLAUDE.md`,
+`docs/HUB_PERF_BASELINE.md`, `resources/hub/hub_layout.tres`,
+`scripts/dev/LakeZoneProbe.gd`, `scripts/dev/SeesawProbe.{gd,tscn}`
+(nouveaux), `scripts/dev/TurnstileProbe.gd`, `scripts/dev/WaterTintProbe.gd`,
+`scripts/hub/HubBuilder.gd`, `scripts/hub/HubRegion.gd`,
+`scripts/hub/HubWorld.gd`, `scripts/hub/KeepyHopper.gd`). Aucun conflit,
+merge `ort` automatique.
+
+CI **run #294** (id `33176960418`) **verte** (13:46:41 -> 13:51:48 UTC) --
+`Checkout` 13:46:46 -> 13:47:30 (44 s, malgre les ~150 Mo de `.glb` "ennemis"
+ajoutes a l'historique), `Import project resources` 13:47:58 -> 13:51:13,
+`Export Web build` **13:51:13 -> 13:51:18**, `Deploy to Vercel
+[PRODUCTION -- main]` **succes** 13:51:36 -> 13:51:44, `[STAGING --
+staging]` correctement **skipped** (push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI, sur DEUX marqueurs
+independants et aux DEUX bouts** -- les DEUX lectures en `x-vercel-cache:
+MISS` / `age: 0`, la valeur "avant" relevee AVANT le merge :
+
+| marqueur | avant (run #293, `d7a0b81`) | apres (ce lot, run #294) |
+|---|---|---|
+| `CACHE_VERSION` | `1787924004` = **13:33:24 UTC** | **`1787925077` = 13:51:17 UTC** |
+| `index.pck` servi | -- (non relu) | **5 909 024** |
+| `index.wasm` servi | -- (non relu) | **35 376 909** |
+
+L'epoch d'apres tombe **exactement dans la fenetre `Export Web build`**
+(13:51:13 -> 13:51:18) : l'alias sert bien ce build. `index.wasm`
+**35 376 909 octets** -- identique au fingerprint permanent deja consigne
+pour tout lot qui ne touche pas le code moteur, coherent : ce merge n'ajoute
+que des `.gd`/`.tres`/`.md` du lot hub, plus des `.glb` bruts non installes
+(exclus du build par `exclude_filter`, jamais referencs par une scene).
+`index.pck` **5 909 024** -- marqueur "nouveau build servi", **jamais**
+preuve d'identite, l'instabilite entre exports etant deja documentee.
+
+**Aucune sonde re-derouleee dans cette session** : le tree pousse sur `main`
+est byte-identique a celui deja valide sur `staging` par la session
+precedente (`AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`,
+`ProbeTimeoutAudit`, `LakeZoneProbe`, `SeesawProbe` tous verts au lot
+staging) -- meme principe deja applique aux merges tourniquet et diving
+board precedents.
+
+**Le lobe nord et la balancoire (seesaw) sont desormais EN PRODUCTION** sur
+`keepy-ten.vercel.app`.
