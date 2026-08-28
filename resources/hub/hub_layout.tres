@@ -31,6 +31,11 @@ props = [{
 "scale": 1.0,
 "type": &"owl"
 }, {
+"position": Vector3(-17.43, 0, 28.18),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"cabin"
+}, {
 "position": Vector3(-9.44, 0, -8.45),
 "rotation_y": 35.1,
 "scale": 1.25,
