@@ -18927,3 +18927,36 @@ trouver au lot tourniquet.
 4. **Aucun son, aucune particule, aucun second riders** : hors perimetre.
 5. **Rien ici n'est un rendu device** : llvmpipe sous xvfb via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+### Deploiement staging du lobe nord + balancoire (palier 1, automatique)
+
+`staging` **`07f094f`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `d37a5b35` des deux cotes ET `git diff` vide,
+verifie AVANT le push). CI run **#291** (id 33172072883) **verte** --
+`Import project resources` 12:41:20 -> 12:43:16, **`Export Web build`
+12:43:16 -> 12:43:20**, `Deploy to Vercel [STAGING -- staging]` **succes**,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `b00fa1d`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs independants
+et aux DEUX bouts -- les QUATRE lectures en `x-vercel-cache: MISS` / `age: 0`**,
+les valeurs "avant" ayant ete relevees AVANT le merge :
+
+| marqueur | avant | apres (ce lot, run #291) |
+|---|---|---|
+| `CACHE_VERSION` | `1787910913` | **`1787920999` = 12:43:19 UTC** |
+| `index.pck` servi | **5 898 448** | **5 906 080** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(12:43:16 -> 12:43:20) : l'alias sert bien ce build.
+
+⚠️ **`index.pck` prend une valeur de plus pour le meme contenu** : 5 906 064 a
+l'export local propre contre 5 906 080 servi, **16 octets d'ecart**. Enieme
+illustration de l'instabilite deja consignee -- marqueur "nouveau build",
+**jamais** preuve d'identite. `index.wasm` (**35 376 909**, md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b`) est identique des deux cotes et c'est lui
+la preuve d'identite, coherent avec un lot qui ne touche que
+`scripts/hub/*.gd`, `scripts/dev/*` et un `.tres`.
