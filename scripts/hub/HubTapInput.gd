@@ -102,14 +102,21 @@ var mooring: BoatMooring = null
 ## reachable point rather than dropped, and a tap ON the great lake is now
 ## pulled to its shore instead of walking Keepy into the water.
 
-## The diving board's ladder foot, flat, and how close a tap has to land to
-## mean it. Vector3.INF until HubWorld hands over the built board, so a
+## Every diving board's ladder foot, flat, and how close a tap has to land
+## to mean one. Empty until HubWorld hands over the built boards, so a
 ## layout with no board simply never emits tapped_ladder.
 ##
-## Set from the BUILT board rather than read from the layout here: the
+## Set from the BUILT boards rather than read from the layout here: the
 ## plank the player aims at and the foot this radius is measured from have
 ## to be the same fact.
-var ladder_foot: Vector3 = Vector3.INF
+##
+## A LIST, not one point: the plateau carries three ladders now, and a
+## single foot could only ever have answered for the first of them --
+## tapping either of the others would have fallen through to tapped_ground
+## and walked Keepy up to a plank he then could not climb. The radius stays
+## a single number because it is a property of the GESTURE, not of any one
+## board; the feet are metres apart, so no tap can be inside two.
+var ladder_feet: Array[Vector3] = []
 var ladder_radius: float = 0.0
 
 func _ready() -> void:
@@ -181,8 +188,10 @@ func _handle_point(screen_point: Vector2) -> void:
 	# Nothing is asked here about whether Keepy is FREE to climb. That is
 	# KeepyHopper's business, and it refuses from any state but standing
 	# still -- asking twice is how the two answers start to differ.
-	if ladder_radius > 0.0 and ladder_foot != Vector3.INF \
-			and Vector3(destination.x, 0.0, destination.z).distance_to(ladder_foot) <= ladder_radius:
-		tapped_ladder.emit(destination)
-		return
+	if ladder_radius > 0.0:
+		var flat := Vector3(destination.x, 0.0, destination.z)
+		for foot in ladder_feet:
+			if flat.distance_to(foot) <= ladder_radius:
+				tapped_ladder.emit(destination)
+				return
 	tapped_ground.emit(destination)
