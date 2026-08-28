@@ -10,15 +10,17 @@ extends Node
 ## installed" on a device, not like an error.
 ##
 ## Also checks the one thing this lot must NOT touch: the three portals,
-## unchanged and still functional, with the owl clear of the Quizz ring it
-## sits beside.
+## unchanged and still functional, with the owl clear of every portal's
+## own trigger ring -- LOT B moved it near Keepy's spawn, no longer beside
+## Quizz specifically, but the clearance check is generic and still holds.
 
 const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 
 ## The layout entry this lot ships, read back rather than duplicated so a
 ## future reposition of the owl cannot silently desync this probe from the
-## thing it is checking.
-const _EXPECTED_POSITION: Vector3 = Vector3(2.7, 0.0, -7.2)
+## thing it is checking. LOT B moved this from beside the Quizz portal
+## (2.7, 0, -7.2) to near Keepy's own spawn point (0, 0, -3.4).
+const _EXPECTED_POSITION: Vector3 = Vector3(0.0, 0.0, -3.4)
 
 var _failures: int = 0
 

@@ -19334,3 +19334,160 @@ confirment un comportement inchange au-dela du seul compte de draw nodes.
 `main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
 import, export et sondes verts -- le seul echec restant, `StreamRideProbe`,
 est deja rouge sur `origin/main` et non cause par ce lot).
+
+### SUITE : la map metallicRoughness retiree, la chouette repositionnee au spawn de Keepy (28 aout 2026)
+
+Branche `claude/owl-strip-metallic-and-reposition`, partie de `staging`
+(`1be4f14`, ce lot). Deux points laisses ouverts par LOT PROPS-1, tranches
+l'un et l'autre par la mesure et non par deduction seule.
+
+#### LOT A -- la map metallicRoughness retiree du `.glb`, effet nul PROUVE au pixel
+
+**Recon avant tout retrait, comme demande** : le `.glb` de la chouette ne
+porte **qu'UN SEUL materiau** (parseur glTF dedie, pas suppose) --
+`material.001`, `KHR_materials_unlit` deja pose par LOT PROPS-1, un seul
+mesh/une seule primitive. Aucune ambiguite "plusieurs sous-materiaux" a
+lever.
+
+Le materiau **reellement dessine par Godot** a ete inspecte directement
+(sonde jetable instanciant `keepy_owl_decor.glb` et lisant le
+`StandardMaterial3D` de la surface) : **`metallic_texture` et
+`roughness_texture` sont NULS des l'import** -- l'importeur glTF de Godot
+ne les lie JAMAIS sur un materiau UNLIT, quelle que soit la presence de la
+map dans le fichier source. Ce n'est donc pas une deduction theorique sur
+le seul flag `shading_mode = 0` : la map n'atteint jamais le materiau que
+le moteur dessine, avant meme tout retrait.
+
+`grep` sur tout le depot confirme que le nom de fichier de la texture n'est
+utilise nulle part ailleurs (aucun autre prop, aucune autre scene, aucune
+entree de cache uid) -- un seul consommateur, celui qu'on retire.
+
+**Comparaison visuelle AVANT/APRES, offscreen `xvfb-run --rendering-driver
+opengl3`, 4 azimuts (0/90/180/270 deg)** : rendu avec la map presente puis
+rendu sans elle, diff pixel par pixel des PNG captures (640x640, RGBA) --
+**les quatre paires sont BYTE-IDENTIQUES** (921 600 octets par image, 0
+octet de difference sur les quatre). "Aucun effet visuel" est donc objective
+et pas seulement plausible.
+
+**Retrait par chirurgie de `.glb`, pas par simple deconnexion de reference.**
+La map `Baked_MetallicRoughness` occupe le **DERNIER bufferView du chunk
+BIN** (offset 8 592 908 sur 14 569 376 octets) : sa suppression est une pure
+troncature, aucun decalage d'offset a faire pour la geometrie, la normal map
+ni la baseColor map, qui restent **byte-identiques** avant/apres sur toute
+leur plage (verifie par comparaison directe des octets, pas suppose du
+fait de la position en queue de buffer). Materiau, texture et image retires
+des trois tableaux JSON (`materials[].pbrMetallicRoughness.
+metallicRoughnessTexture`, `textures[]`, `images[]`), `KHR_materials_unlit`
+et `extensionsUsed` intacts. Le sidecar
+`keepy_owl_decor_Baked_MetallicRoughness.png` + son `.import` sont
+supprimes du depot -- reimport verifie : **aucun `.ctex` genere pour cette
+map**, confirme sur un import propre apres `rm -rf .godot`.
+
+**Poids `.pck` mesure DANS CETTE SESSION, export unique et propre des deux
+cotes** (`rm -rf build .godot` avant chaque export, la mise en garde
+permanente sur l'instabilite du `.pck`) :
+
+| | baseline (`origin/staging`, meme session) | branche |
+|---|---|---|
+| `index.pck` | **19 118 288** | **14 791 280** |
+| `index.wasm` | 35 376 909 / md5 `af4a8fc2925d992348eb30deeeb54360` | **identique, inchange** |
+
+**Delta : -4 327 008 octets (-4,13 Mio, -22,6 %)** -- coherent avec
+l'estimation de LOT PROPS-1 (~4,3 Mio, le poids exact de l'ancien `.ctex`
+metallicRoughness, 4 326 370 octets) a moins de 700 octets pres, l'ecart
+residuel etant dans la marge de bruit deja documentee (edition de
+`hub_layout.tres` en LOT B + instabilite de compression connue).
+`index.wasm` inchange confirme qu'aucun code moteur n'est touche.
+
+**Piege payload verifie sur le log `savepack` du build final** : **0**
+occurrence de `keepy_owl_decor_Baked_MetallicRoughness` dans les 234 lignes
+`Storing File`, contre `keepy_hibou_pursuer_Baked_MetallicRoughness.jpg`
+(un asset DIFFERENT, deja en prod, non touche par ce lot, conserve par
+precedent) toujours present -- confirme qu'aucun autre asset n'a ete
+affecte par erreur.
+
+#### LOT B -- la chouette au spawn de Keepy, pas au portail Quizz
+
+**Le point de spawn, LU et pas suppose** : le noeud `Keepy` de
+`HubWorld.tscn` (`WorldViewport/SubViewport/World/Keepy`) ne porte **aucune
+propriete `transform`** dans la scene -- il herite donc l'identite de
+`Node3D`, soit **`(0, 0, 0)`**. Ce point est **fixe et unique** : `HubWorld`
+est rechargee entierement (`change_scene_to_file`) a chaque retour d'un
+sous-jeu, donc le noeud repart systematiquement de cette meme position
+ecrite dans le `.tscn`, quel que soit le mini-jeu quitte. Pas de variation
+a signaler.
+
+**Degagement recalcule a la nouvelle position, pas suppose reconduit** :
+grille fine (pas 0,1 u) sur un anneau 1,6-6,0 u autour du spawn, testant
+chaque candidat contre les 214 autres entrees du layout (rayon d'empreinte
+par type), contre le demi-largeur de Keepy au repos (0,6599) et contre les
+quatre corps d'eau du plateau (tous a plus de 5 u de marge, sans objet ici).
+Meilleur candidat retenu apres arrondi a une valeur propre :
+**`(0.0, 0, -3.4)`** -- **degagement 1,574 u** au prop le plus proche (un
+buisson), **1,970 u** a Keepy lui-meme, **directement dans l'axe camera**
+(le champ horizontal de `HubCamera` est purement `-Z` au spawn, donc X=0
+place la chouette EN PLEIN CENTRE de l'ecran des la premiere frame, sans
+calcul de gisement a faire). Confirme visible en `--headless` (0 push_warning
+au boot) et par execution de `OwlProbe` (position lue = position attendue).
+
+**`rotation_y = 0` inchange, la raison tient toujours** : le modele fait
+face au `+Z` local, la chouette reste plus loin en `-Z` que le spawn, donc
+elle continue de regarder vers Keepy qui s'avance -- le meme raisonnement
+que LOT PROPS-1, applique a la nouvelle distance.
+
+**Aucun chevauchement au premier frame** : a 3,4 u de Keepy et 1,97 u de
+marge sur son propre demi-largeur, la chouette n'est jamais visuellement
+"dans" Keepy des l'apparition -- verifie par le calcul de degagement
+ci-dessus, pas par observation seule.
+
+`hub_layout.tres` reste la seule source de la position -- aucune
+coordonnee en dur ajoutee dans un script.
+
+#### Validation (LOT A + LOT B)
+
+`OwlProbe` (`_EXPECTED_POSITION` mise a jour a `(0, 0, -3.4)`, commentaires
+de tete corriges pour ne plus dire "beside Quizz") : **16/16 OK, exit 0**,
+rejouee sous `xvfb --rendering-driver opengl3`. La verification de
+degagement PHASE C reste generique (distance au portail Quizz + son rayon
+de trigger + le rayon de la chouette) et passe avec une marge plus large
+qu'avant (separation 3,800 contre 2,120 requis).
+
+**Quatre sondes partagees, diffees contre `origin/staging` (`1be4f14`) en
+worktree separe, import complet verifie des deux cotes (35 `.scn`
+chacun)** : `AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`,
+`ProbeTimeoutAudit` -- **BYTE-IDENTIQUES sur les DEUX flux (stdout ET
+stderr)**, exit 0 des deux cotes. Aucun de ces quatre fichiers ne reference
+la position ou le materiau de la chouette : l'identite au bit pres confirme
+que ce lot n'a touche rien d'autre que ce qu'il annonce.
+
+Import headless **exit 0, 35 `.scn`** (complet, verifie et pas suppose).
+Boot de `HubWorld.tscn` **exit 0, 0 erreur, 0 `push_warning`**. Export Web
+release **exit 0, 0 ligne d'erreur** sur 234 lignes de savepack.
+
+Sondes jetables de recon (inspection materiau, capture comparative,
+script de chirurgie `.glb`) **supprimees avant ce commit** -- meme
+discipline que toute sonde de diagnostic ponctuel dans ce depot.
+
+#### Non-regression explicite
+
+Perimetre strictement limite a `assets/models/keepy_owl_decor.glb` (+ le
+sidecar metallicRoughness retire), `resources/hub/hub_layout.tres` (une
+seule position) et `scripts/dev/OwlProbe.gd` (constante + commentaires).
+Aucun autre prop, aucune autre map, aucun autre fichier de scene ou de
+script touche. `HubBuilder.gd`, `HubWorld.gd`, `HubRegion.gd`,
+`HubCamera.gd`, `HubTapInput.gd` -- tous byte-intouches.
+
+#### Reste ouvert -- jugement device, seul juge
+
+1. **Le poids final (`.pck` -22,6 %) est-il suffisant, ou faut-il aussi
+   retoucher `keepy_hibou_pursuer.glb`** (asset different, non touche ici,
+   deja en prod avec sa propre map metallicRoughness) ? Question distincte,
+   hors perimetre de ce lot.
+2. **Est-ce que la chouette au centre de l'ecran des le spawn se lit comme
+   un accueil plutot que comme un obstacle visuel** ? Aucune sonde ne le
+   dit -- c'est le seul jugement qui reste, et LOT PROPS-1 complet (texture
+   + position) est desormais pret pour la revue device qui debloque le
+   palier 2.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
+import, export et sondes verts).
