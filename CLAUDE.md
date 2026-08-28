@@ -20180,7 +20180,10 @@ export Web release **exit 0, 0 erreur**.
 (**58 sondes scenes**, 57 en baseline, le +1 etant `CabinProbe`),
 `AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
 `DeathModelAudit`, `ChargerShapeProbe`, `OwlProbe`, `OwlFlightProbe`,
-`DivingBoardProbe`, `WaterImpactProbe`, `WaterTintProbe`, `SeesawProbe`.
+`DivingBoardProbe`, `WaterImpactProbe`, `WaterTintProbe`, `SeesawProbe`,
+`LakeZoneProbe` et `StreamRideProbe` (**37/37**, sous `xvfb` et au budget
+complet du watchdog -- ce dernier est d'ailleurs VERT ici, alors que ce
+fichier le consigne ailleurs comme portant deux echecs pre-existants).
 
 ⚠️ **`TurnstileProbe` sort en 1, sur son echec UNIQUE et PRE-EXISTANT**
 (`entry 0's custom_aabb encloses every bar`), deja consigne comme tel dans
