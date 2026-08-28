@@ -316,6 +316,16 @@ signal seesaw_dismounted
 signal owl_flight_mounted
 signal owl_flight_dismounted
 
+## Keepy has gone into a cabin, and has come back out of one.
+##
+## IN_CABIN is the smallest of the ride states: nothing carries him, so
+## there is no follow_*() and nothing writes his transform per frame. He
+## ducks in where he stands, the body is hidden, and the state exists only
+## so that everything else -- taps, portals, landings -- knows the body is
+## spoken for.
+signal cabin_entered
+signal cabin_exited
+
 ## Yaw carrier. Kept separate from this node so world position (written by
 ## the hop) and facing (written by the turn) never contend for one
 ## transform, and separate from the model slot so pitch stays body-local.
@@ -370,7 +380,7 @@ var _has_target: bool = false
 ## hop_landed, so portal detection is silent for their whole duration. A
 ## board planted 9 u from the portal row would otherwise carry a diver into
 ## a sub-game they were only passing over.
-enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT }
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT, IN_CABIN }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -515,6 +525,13 @@ func is_on_seesaw() -> bool:
 	return _state == State.ON_SEESAW
 
 ## True while the owl is carrying him round its loop.
+## True while Keepy is inside a cabin -- ducked in, hidden, and waiting for
+## the tap that brings him out. Read by HubWorld to withdraw the cabin from
+## the tap the way a sail withdraws the boat, and to intercept the tap that
+## follows by state.
+func is_in_cabin() -> bool:
+	return _state == State.IN_CABIN
+
 func is_on_owl_flight() -> bool:
 	return _state == State.ON_OWL_FLIGHT
 
@@ -936,6 +953,116 @@ func leave_owl(landing: Vector3) -> void:
 func _on_owl_dismount_finished() -> void:
 	_on_hop_finished()
 	owl_flight_dismounted.emit()
+
+## How long the duck-in and the step-back-out take.
+##
+## Symmetrical, and short. There is no distance to cover -- he vanishes ON
+## THE SPOT -- so this is the whole of the animation, and anything longer
+## would be a pause where a gag is meant to be. Two names rather than one
+## reused constant because the two are free to diverge the moment the
+## coming-out is meant to read differently from the going-in.
+const CABIN_ENTER_S: float = 0.30
+const CABIN_EXIT_S: float = 0.30
+
+## How small the body gets on its way in, as a fraction of its rest scale.
+##
+## Not zero: shrinking to nothing is a body deleted, and the eye reads that
+## as a glitch. Shrinking to a quarter and THEN hiding reads as ducking
+## through a doorway, which is the whole gag.
+const CABIN_DUCK_SCALE: float = 0.25
+
+## Where he came from, so the way out puts him back exactly there.
+##
+## Stored rather than recomputed from the cabin: he vanishes on the spot,
+## so the spot is a fact about the LANDING and not about the prop, and
+## deriving it from the door would move him on the way out.
+var _cabin_spot: Vector3 = Vector3.ZERO
+var _cabin_tween: Tween = null
+
+## Goes into the cabin whose doorstep is `door`: turns to face it, ducks
+## down on the spot, and hides.
+##
+## THE SIMPLEST RIDE STATE ON THIS SCREEN, deliberately. He does not walk,
+## does not climb, and never leaves y = 0 -- the plateau is single-altitude
+## and this prop is not the one to make it otherwise. What the state buys
+## is not motion but OWNERSHIP: while it holds, hop_to() refuses (the body
+## is spoken for, the same test every other ride state answers yes to),
+## no landing is emitted, and HubWorld withdraws the cabin from the tap.
+##
+## Returns false from any state but standing still, so a tap made mid-hop
+## cannot fold him into a wall.
+func enter_cabin(door: Vector3) -> bool:
+	if _state != State.IDLE:
+		return false
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_has_target = false
+	_state = State.IN_CABIN
+	_cabin_spot = Vector3(global_position.x, 0.0, global_position.z)
+	global_position = _cabin_spot
+	# Rest pose first, as every state that takes the body over sets it: a
+	# squash left over from the landing that brought him here would be the
+	# scale the duck-in starts from.
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	_body.visible = true
+	var facing := Vector3(door.x - _cabin_spot.x, 0.0, door.z - _cabin_spot.z)
+	if facing.length() > 0.001:
+		_face(facing)
+	if _cabin_tween and _cabin_tween.is_valid():
+		_cabin_tween.kill()
+	_cabin_tween = create_tween()
+	_cabin_tween.tween_property(_body, "scale", _base_scale * CABIN_DUCK_SCALE, CABIN_ENTER_S) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	_cabin_tween.finished.connect(_on_cabin_entered, CONNECT_ONE_SHOT)
+	cabin_entered.emit()
+	return true
+
+## The duck-in has finished, so the body goes away.
+##
+## Hiding the BODY and not the whole hopper: the hopper is what HubWorld
+## reads a position off and what the camera follows, and a camera that
+## lost its target for the length of a hide would snap somewhere else and
+## then snap back.
+func _on_cabin_entered() -> void:
+	if _state != State.IN_CABIN:
+		return
+	_body.visible = false
+
+## Comes back out, on the spot he went in at.
+##
+## Nothing is passed in and nothing is searched for: the way out is the way
+## in, and the spot he vanished at is ground he had already landed on, so
+## there is no exit ring to walk and no footprint to clear. That is the
+## whole reason this prop needed no _ride_exit_point -- and why no dismount
+## latch is written for it either: coming out emits NO LANDING, so there is
+## structurally nothing for it to re-trigger, unlike every dismount that
+## comes down as an ordinary hop.
+func leave_cabin() -> void:
+	if _state != State.IN_CABIN:
+		return
+	if _cabin_tween and _cabin_tween.is_valid():
+		_cabin_tween.kill()
+	_body.visible = true
+	global_position = _cabin_spot
+	_cabin_tween = create_tween()
+	_cabin_tween.tween_property(_body, "scale", _base_scale, CABIN_EXIT_S) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	_cabin_tween.finished.connect(_on_cabin_exited, CONNECT_ONE_SHOT)
+
+## Back on the plateau, and handed straight back to the ordinary chain.
+##
+## became_idle is emitted the way every other dismount emits it, so the
+## latches HubWorld clears on idle are cleared here too rather than being
+## left armed by a state that ended a different way from all the others.
+func _on_cabin_exited() -> void:
+	if _state != State.IN_CABIN:
+		return
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	_state = State.IDLE
+	cabin_exited.emit()
+	became_idle.emit()
 
 ## Leaves the boat: one taller-than-usual leap to the bank on the side the
 ## player tapped, and then the ordinary hop chain on towards the tap.
