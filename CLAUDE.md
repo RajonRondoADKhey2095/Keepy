@@ -20220,3 +20220,52 @@ meuble lisible.
    rendu reel, et c'etait le perimetre.
 5. **La cabane n'est pas visible depuis le spawn** (z = +28,18, camera qui
    ne lacete jamais) -- comme la moitie des props du plateau.
+
+### Deploiement staging de la cabane (palier 1, automatique)
+
+`staging` **`4ca3778`** (merge `--no-ff` `c2077fb`, arbre **byte-identique** a
+la branche feature, verifie AVANT le push ; le commit de doc au-dessus n'ajoute
+aucune ressource Godot). CI run **#308** (id 33218098447) **verte** --
+`Import project resources` 22:48:16 -> 22:51:32, **`Export Web build`
+22:51:32 -> 22:51:36**, `Deploy to Vercel [STAGING -- staging]` **succes**
+22:51:57 -> 22:52:10, `[PRODUCTION -- main]` correctement **skipped**.
+**`main` NON touche** (`origin/main` toujours `9031e5e`, verifie apres le
+push) : palier 2, gate Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres (ce lot, run #308) |
+|---|---|---|
+| `CACHE_VERSION` | `1787953320` = **21:42:00 UTC** (run #306) | **`1787957495` = 22:51:35 UTC** |
+| `index.pck` servi | -- | **30 228 432** |
+| `index.wasm` servi | -- | **35 376 909** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(22:51:32 -> 22:51:36), et les DEUX lectures d'apres portent
+**`x-vercel-cache: MISS` avec `age: 0`**, `last-modified` colle a l'instant de
+la requete. `index.wasm` servi est **identique au bit pres a l'export local**
+(md5 `af4a8fc2925d992348eb30deeeb54360`) -- c'est lui la preuve d'identite.
+
+⚠️ **Limites dites plutot que sous-entendues, deux fois.** (1) La valeur AVANT
+n'existe que pour le `CACHE_VERSION`, et elle a ete lue sur un `HIT` a
+`age 4079` : valable comme VALEUR (elle precede le push, c'est bien l'ancien
+build), **pas une mesure de fraicheur**. (2) `index.pck`/`index.wasm` n'ont ete
+lus qu'APRES, donc ils valent comme second marqueur d'ETAT COURANT, pas comme
+preuve de transition.
+
+⚠️ **Le piege HIT/age s'est reproduit et a ete REFUSE** : une lecture
+cache-bustee par parametre de requete (`?probe=...`) est revenue `HIT` avec
+`age 4079` -- **le parametre ne buste pas ce cache de bord**, comportement deja
+consigne. Seule la lecture MISS/age 0 d'apres compte.
+
+⚠️ **Pour une fois `index.pck` servi et export local sont EGAUX** (30 228 432
+des deux cotes) -- ca reste un marqueur « nouveau build servi » et **jamais**
+une preuve d'identite : l'instabilite de compression VRAM entre deux exports du
+meme commit est documentee, et une coincidence ne la contredit pas.
+
+⚠️ **Le run #307 (le merge du code) est `cancelled`, et ce n'est PAS un
+echec** : le push du commit de doc a declenche #308, qui a tue #307 via
+`cancel-in-progress: true`. #308 construit le MEME arbre plus `CLAUDE.md`, qui
+n'est pas une ressource Godot -- le contenu de jeu deploye est bien celui du
+lot. Piege deja consigne, reproduit ici.
