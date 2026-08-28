@@ -565,3 +565,44 @@ unshaded primitives are close to the cheapest thing that can be added here.
 ⚠️ **The FPS band is NOT comparable to the rows above it.** Those were taken
 on other machines in other sessions; only the BEFORE/AFTER pair inside one
 block shares hardware. llvmpipe under xvfb, as ever. **Device judgement.**
+
+---
+
+## 28 aout 2026 -- the north lobe and the seesaw
+
+The walkable hub grew by SHAPE for the first time (a disc of radius 12
+unioned onto the middle of the +Z edge, +224.89 u2 measured on the shipped
+`contains()`), and the plateau gained its second prop that answers a
+landing. BEFORE is `origin/main` (`b00fa1d`) in a separate worktree with a
+verified-complete import; both sides measured in ONE session on an idle
+machine, three runs each, nothing else running.
+
+| | BEFORE | AFTER |
+|---|---|---|
+| draw nodes, HubBuilder only (excl. portals) | **124 / 124 / 124** | **127 / 127 / 127** |
+| draw nodes, total (incl. portals) | 130 | 133 |
+| construction, `instantiate()` + `_ready()` | 49.61 / 50.17 / 57.78 ms | 51.84 / 59.49 / 50.48 ms |
+| simulated FPS, mean | 15.8 / 15.2 / 14.9 | 14.7 / 14.4 / 15.0 |
+| simulated FPS, min | 12.7 / 11.1 / 12.6 | 11.9 / 12.0 / 13.2 |
+| layout entries | 208 | 215 |
+
+**+3 draw nodes, ITEMISED**: the seesaw's fulcrum, its plank, and ONE
+`MultiMeshInstance3D` carrying both grips. Margin under the 260 ceiling
+goes 136 -> 133.
+
+**THE LOBE'S OWN DECOR COSTS ZERO NODES.** Its six scatter entries are
+`rock`/`bush`/`flower`, all already batched, so they are six more instances
+in batches that existed -- which is exactly the property the MultiMesh
+refactor was done to buy, used here for the first time to add ground
+without adding draw calls.
+
+⚠️ **Nothing about the cost is detectable, and the RANGES say so rather
+than the means.** Construction 49.61-57.78 against 50.48-59.49
+(overlapping), FPS mean 14.9-15.8 against 14.4-15.0 (overlapping), FPS min
+11.1-12.7 against 11.9-13.2 (overlapping). The claim these support is the
+narrow one: **no cost is measurable**, never that anything got faster.
+
+⚠️ **The FPS band is NOT comparable to the rows above it.** Those were
+taken on other machines in other sessions; only the BEFORE/AFTER pair
+inside one block shares hardware. llvmpipe under xvfb, as ever. **Device
+judgement.**
