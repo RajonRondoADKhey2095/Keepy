@@ -18372,3 +18372,225 @@ sens-la** : les appels successifs ont rendu de vraies progressions d'etapes
 avec de vrais horodatages, et l'import a reellement pris **2 min 38 s**. Le
 piege existe ; il ne s'est pas produit ici, et le verifier coute un regard a
 l'horloge.
+
+## DEUX CORRECTIFS INDEPENDANTS : LES ILOTS NE SONT PLUS DE L'EAU, LE TOURNIQUET TOURNE SANS LIMITE (28 aout 2026)
+
+⚠️ **DEROGATION DE BRANCHE, ASSUMEE ET SIGNALEE.** Le brief nommait deux
+branches distinctes a titre d'exemple (`claude/fix-water-islands`,
+`claude/turnstile-infinite-spin`). La contrainte d'environnement de cette
+session imposait explicitement une seule branche pre-designee
+(`claude/keepy-water-islands-turnstile-uyrwbo`) et interdisait tout push
+ailleurs sans permission explicite. **Les deux lots sont donc livres comme
+DEUX COMMITS ATOMIQUES distincts sur cette branche unique**, chacun
+independamment verifiable et revertable, puis merges ensemble sur `staging`
+en UN SEUL merge commit -- exactement le compromis que la contrainte
+laissait ouvert (deux lots independants, deux commits independants, un seul
+vehicule de merge). Rien n'a ete fusionne au niveau du CODE : les deux
+diffs ne partagent aucune ligne.
+
+### LOT A -- LES ILOTS DU GRAND LAC ETAIENT TOUJOURS DE L'EAU, ET UN SEUL SYSTEME EN ETAIT LA CAUSE
+
+Retour de Mathieu, capture a l'appui : les petits ilots du grand lac (dont
+celui pres du plongeoir/tourniquet) sont toujours traites comme de l'eau,
+alors que Keepy s'y tient et y marche normalement.
+
+**Recon en quatre points, faite AVANT tout patch, comme le brief l'exigeait
+-- et elle isole UN SEUL coupable, pas plusieurs.**
+
+1. `grep` sur toute drapeau/flag d'eau du depot : deux systemes distincts
+   repondent chacun a une question differente sur la meme geometrie --
+   `HubRegion.contains()` ("Keepy peut-il se TENIR ici ?", walkability) et
+   `HubWater.body_at()` ("Keepy est-il MOUILLE ici ?", tint/splash visuels).
+2. `HubRegion.gd` lu en entier : depuis le lot du 27 aout ("rename
+   colliding LAKE_WATER_RADIUS, remove great-lake water guard"), il
+   **N'EXCLUT PLUS AUCUNE EAU** -- Mathieu a decide que toute l'eau du
+   plateau est marchable. Ce fichier est donc **structurellement
+   innocent** : il n'a jamais pu produire le defaut rapporte, et n'a pas
+   ete touche.
+3. Les drapeaux `offshore` de `hub_layout.tres` : verifies **absents**
+   (0 occurrence), retires par le lot "drop the 11 stale offshore flags"
+   du meme jour. Ecarte aussi.
+4. **`HubWater.body_at()` reste seul en lice, et c'est bien lui** : c'est
+   le seul appelant que `HubWorld._on_hop_landed()` consulte pour
+   `_set_keepy_wet(in_water)` **et** pour declencher l'effet d'impact
+   (splash) -- les deux effets visuels signales partagent la meme
+   variable `in_water`, donc un seul systeme suffit a expliquer les deux
+   symptomes a la fois.
+
+**Cause exacte, lue dans le code, pas devinee** : `body_at()` etait un pur
+test de disque (`distance_to(centre) < radius`) sur quatre corps (mare,
+petit lac, les deux lobes du grand lac) plus un test de ruban pour le
+ruisseau -- **aucune notion d'ilot**. Le grand lac porte trois entrees
+`&"islet"` dans `hub_layout.tres` (rayons 3.20 / 3.40 / 3.00, a 6.80-9.98 u
+du centre du lac contre son propre rayon de 16.0 u) : chacune est un
+banc de galets plat sur lequel le joueur marche, **bien a l'interieur** du
+disque d'eau du lac qui le porte. Un simple test de disque ne peut pas les
+voir -- `body_at()` repondait `"great_lake_0"` sur le CENTRE d'un ilot
+exactement comme sur de l'eau libre a cote.
+
+**Fix -- une soustraction, pas une redefinition** :
+`HubBuilder.gd` gagne `_islets: Array[Dictionary]` (rempli dans `_build()`
+sur chaque entree `&"islet"`, rayon **tel que reellement dessine**, meme
+discipline que `pond_centre()`/`small_lake_centre()` -- ne jamais relire le
+layout une seconde fois ailleurs) et un accesseur `islets()`.
+`HubWater.gd` gagne son propre `_islets` (lu depuis `builder.islets()` dans
+`_init`), **teste EN PREMIER, avant tout disque et avant le ruisseau** :
+etre sur un ilot exclut l'eau sans conditions, il ne rivalise pas avec elle
+pour la reponse.
+
+```gdscript
+func body_at(point: Vector3) -> StringName:
+	var flat := Vector3(point.x, 0.0, point.z)
+	for islet in _islets:
+		if flat.distance_to(islet["centre"] as Vector3) < float(islet["radius"]):
+			return &""
+	for disc in _discs:
+		if flat.distance_to(disc["centre"] as Vector3) < float(disc["radius"]):
+			return disc["name"] as StringName
+	if _route != null and _route.distance_to(flat) < _stream_half_width:
+		return &"stream"
+	return &""
+```
+
+**Validation, rouge avant vert** : `WaterTintProbe` gagne **PHASE A2**
+(5 checks) -- le centre de chacun des 3 ilots lit "sec", et un point a
+0.2 u au-dela du bord propre de chaque ilot redevient de l'eau. Prouvee
+rouge d'abord en desactivant temporairement (sans toucher aux accesseurs,
+pour ne pas faire echouer le parsing du script) la seule boucle
+d'exclusion : **exactement 3 FAIL**, un par ilot -- reproduit le defaut
+rapporte au chiffre pres avant d'etre corrige. Aucune geometrie neuve :
+`_EXPECTED_DRAW_NODES_EXCL_PORTALS` reste **124**, inchange.
+
+### LOT B -- LE TOURNIQUET NE FAISAIT QU'UN SEUL TOUR, MEME EN RETAPANT DESSUS
+
+Comportement actuel : le tourniquet fait exactement un tour (1.5 tour,
+ease-out, ~2.2 s) puis ejecte Keepy automatiquement. Comportement voulu :
+un tap sur le tourniquet PENDANT qu'il tourne (etat `ON_TURNSTILE`)
+relance un tour complet au lieu d'ejecter, indefiniment tant que Mathieu
+retape ; l'ejection automatique reste le repli si aucun tap ne suit.
+
+**Recon stricte, lecture seule, sur les trois fichiers partages AVANT tout
+patch** (le plongeoir et la barque partagent le meme motif `RIDE_SEAT_Y`,
+donc toute modification de ces fichiers est a haut risque de regression) :
+
+1. **`KeepyHopper.gd` lu en entier (~1057 lignes)** : `hop_to()` est deja
+   **inerte** pendant `ON_TURNSTILE` (`if _state != State.IDLE and
+   _state != State.HOPPING: return`) -- **aucun changement necessaire ici**.
+   La sortie du tour est pilotee de l'EXTERIEUR (par le callback de fin de
+   tween de `HubWorld.gd`), pas par ce fichier.
+2. **`HubTapInput.gd` lu en entier (198 lignes)** : emet
+   `tapped_ground`/`tapped_boat`/`tapped_ladder`
+   **INCONDITIONNELLEMENT**, sans aucune notion de l'etat de ride de
+   Keepy -- toute la logique de suspension vit dans `HubWorld.gd`, pas
+   ici. **Repond directement a la question 3 du brief : aucun changement
+   necessaire dans ce fichier non plus.**
+3. **`HubWorld.gd`** : localise l'endroit exact ou un tap pendant
+   `ON_TURNSTILE` etait avale sans effet (`_on_tapped_ground()`, branche
+   tourniquet, `return` inconditionnel) et le callback qui termine le
+   tour (`_on_turnstile_spin_finished` -> `leave_turnstile()`).
+
+**Fix, dans `HubWorld.gd` uniquement** -- le tween-construction de
+`_spin_near()` est extrait dans un helper partage
+`_build_turnstile_spin(entry)` (memes parametres exacts :
+`TURNSTILE_SPIN_TURNS`, `TRANS_CUBIC`/`EASE_OUT`, `TURNSTILE_SPIN_S`).
+Nouvelle fonction `_reshove_turnstile(point)` : verifie que le tap tombe
+dans le rayon de declenchement du tourniquet MONTE, **tue l'ancien tween**
+(`Tween.kill()` -- verifie qu'il n'emet PAS `finished`, donc aucune
+ejection parasite), construit un tween frais via le helper partage, et
+reconnecte `_on_turnstile_spin_finished` en `CONNECT_ONE_SHOT`. La branche
+tourniquet de `_on_tapped_ground()` appelle desormais `_reshove_turnstile`
+avant son `return`.
+
+⚠️ **Le debounce existant de `_spin_near()` (ignorer une poussee si un
+tween tourne deja, pour qu'une simple marche a proximite ne relance pas un
+prop qui coasse) est DELIBEREMENT PAS reutilise ici** : pendant un ride, un
+tween tourne EN PERMANENCE -- le reutiliser aurait avale chaque retap en
+silence, exactement l'inverse de la feature demandee. D'ou une fonction
+dediee plutot qu'un partage naif.
+
+**Validation, rouge avant vert** : `TurnstileProbe` gagne **PHASE H**
+(8 checks) -- un retap en plein tour demarre un tween **REELLEMENT
+NOUVEAU** (pas le meme objet) et tue l'ancien ; il maintient Keepy a bord
+au-dela de la duree d'un seul tour ; sans retap suivant, le tour prolonge
+se termine quand meme tout seul et atterrit dans la region marchable ;
+trois retaps consecutifs le maintiennent a bord a chaque fois ; lacher
+prise ensuite le laisse descendre normalement. Prouvee rouge en
+court-circuitant temporairement `_reshove_turnstile` en no-op :
+**exactement 4 FAIL**, reproduisant le defaut rapporte (Keepy perd l'etat
+"a bord" apres le seul tour) avant d'etre corrige. La PHASE G existante
+("un tap a 12 u, hors du rayon de declenchement, pendant le ride est
+ignore, pas marche") reste **inchangee et toujours valide** -- ce tap
+depasse aussi le rayon du nouveau `_reshove_turnstile`.
+
+**Non-regression plongeoir/barque, explicitement verifiee et pas
+supposee** : aucune ligne de `KeepyHopper.gd` ni de `HubTapInput.gd` n'est
+touchee par ce lot ; `DivingBoardProbe` (**113/113**) reste
+byte-identique a `origin/main`.
+
+### VALIDATION COMMUNE AUX DEUX LOTS
+
+Editeur + templates Godot 4.3-stable dans ce sandbox (releases GitHub
+officielles). Import headless **exit 0**, boot **exit 0**, export Web
+release **exit 0, 0 erreur GDScript**. `index.wasm`/`index.js` **identiques
+au fingerprint permanent** de tout lot qui ne touche pas le code moteur --
+coherent, aucun de ces deux fixes ne touche `project.godot` ni aucune
+ressource hors `scripts/hub/` et `scripts/dev/`.
+
+**Quatre sondes partagees, diffees contre `origin/main` en worktree
+separe : BYTE-IDENTIQUES sur les deux flux** -- `ProbeTimeoutAudit`,
+`AssetContractAudit` (12/12 visuels, 0/10 colliders deplaces),
+`DeathModelAudit`, `ChargerShapeProbe`. **`LakeZoneProbe` (25 checks,
+0 echec) rejouee sur les deux arbres, `--fixed-fps 60`, graine 20260806 :
+BYTE-IDENTIQUE** entre baseline et branche -- confirmation independante
+que ni `HubRegion.in_lake_water()` ni les timings de traversee ne bougent,
+alors qu'aucun des deux lots ne touche `HubRegion.gd`.
+
+**Piege payload verifie sur le log `savepack`** : 0 ligne `Storing File`
+pour `res://scripts/dev`, `assets_source`, `docs`, `web` ou `build`.
+
+### DEPLOIEMENT STAGING (palier 1, automatique)
+
+`staging` (**b37de5c**, merge `--no-ff` des deux commits atomiques
+`e90e922`/`23949df` sur `341d0dc`). CI run **#287**
+(id 33160805893) **verte** : import 09:47:59 -> 09:50:52 (2 min 53 s),
+export Web 09:50:52 -> 09:50:57, `Deploy to Vercel [STAGING -- staging]`
+succes, `[PRODUCTION -- main]` correctement **skipped**. **`main` NON
+touche** (`origin/main` reste `fe0f4d7`) : palier 2, gate Mathieu apres
+validation device des deux correctifs.
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI, aux DEUX bouts** :
+
+| marqueur | avant (run #285, `341d0dc`) | apres (ce lot, run #287) |
+|---|---|---|
+| `CACHE_VERSION` | `1787904701` = **08:11:41 UTC** | **`1787910657` = 09:50:57 UTC** |
+| `index.pck` servi | -- | **5 898 432** |
+| `index.wasm` servi | -- | **35 376 909** |
+
+L'epoch d'apres tombe **exactement sur la fermeture de l'etape `Export Web
+build`** du run #287 (09:50:52 -> 09:50:57), et la lecture porte
+**`x-vercel-cache: MISS`, `age: 0`**, `last-modified` colle a l'instant de
+la requete. La lecture d'avant portait `x-vercel-cache: HIT`, `age: 4317` --
+valable comme VALEUR (elle precede le push) mais **pas une mesure de
+fraicheur**, comme toujours dans ce fichier.
+
+**`index.wasm` est la preuve d'identite** : md5 servi identique a l'export
+local (**`af4a8fc2925d992348eb30deeeb54360`**), et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- le fingerprint permanent de tout
+lot qui ne touche pas le code moteur, confirme ici pour un lot qui ne
+touche que `scripts/hub/*.gd`. **`index.pck` n'est PAS offert comme
+preuve** : l'export local propre donne 5 898 464 octets contre 5 898 432
+servis, 32 octets d'ecart -- l'instabilite deja consignee (variance de la
+passe de compression VRAM sur les textures des autres assets), jamais une
+preuve a elle seule.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **LOT A** : est-ce que marcher sur un ilot se lit desormais comme de la
+   terre ferme (pas de teinte, pas d'eclaboussure a l'atterrissage) sur
+   les trois ilots du grand lac, a l'echelle reelle d'un telephone.
+2. **LOT B** : est-ce que retaper le tourniquet en plein tour se ressent
+   comme "je le relance" plutot que comme un bug d'un tour qui ne
+   s'arrete jamais -- et si le rythme de spins consecutifs reste
+   confortable au pouce.
+3. Aucun des deux lots ne touche a l'art, aux couleurs, ni au gameplay de
+   Chased/Quizz/Battle -- hors perimetre, inchange.
