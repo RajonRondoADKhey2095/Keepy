@@ -166,6 +166,28 @@ var _dive_pending: bool = false
 ## newest impact is the one worth showing.
 var _keepy_waterline_tween: Tween = null
 
+## Every prop that answers a landing by turning, as HubBuilder built them,
+## plus the tween each one currently owns.
+##
+## ONE array holding both rather than a registry here and a parallel array
+## of tweens beside it: index-aligned parallel arrays are how the tween for
+## prop three ends up killing prop four. Copied out of the builder once, in
+## _ready(), and never resized.
+##
+## The entries carry HubBuilder's own keys -- "position", "radius",
+## "spinner" -- with a "tween" slot added. Nothing in here is
+## turnstile-shaped, so a second kind of spinning prop needs no second
+## mechanism.
+var _spinners: Array[Dictionary] = []
+
+## How far the top swings when a landing sets it going, and over how long.
+##
+## EASE_OUT, and that is the whole reading: a real roundabout is shoved
+## once and then coasts down. A linear spin or an ease-in-out would both
+## read as a machine being driven rather than as something that was pushed.
+const TURNSTILE_SPIN_TURNS: float = 1.5
+const TURNSTILE_SPIN_S: float = 2.2
+
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
 	# the swamp safe-area paint (this is still the one screen every way
@@ -189,6 +211,7 @@ func _ready() -> void:
 	_tap.tapped_ground.connect(_on_tapped_ground)
 	_tap.tapped_ladder.connect(_on_tapped_ladder)
 	_setup_boards()
+	_setup_spinners()
 	_tap.tapped_boat.connect(_on_tapped_boat)
 	_keepy.hop_landed.connect(_on_hop_landed)
 	_keepy.ride_moved.connect(_on_ride_moved)
@@ -243,6 +266,53 @@ func _setup_boards() -> void:
 		feet.append(board["ladder"])
 	_tap.ladder_feet = feet
 	_tap.ladder_radius = LADDER_TAP_RADIUS
+
+## Copies the built spinning props out of the builder, once, adding the
+## per-prop tween slot. A layout with none leaves the list empty and every
+## landing below simply walks a list of nothing.
+func _setup_spinners() -> void:
+	for prop in _builder.spinning_props():
+		_spinners.append({
+			"position": prop["position"],
+			"radius": prop["radius"],
+			"spinner": prop["spinner"],
+			"tween": null,
+		})
+
+## Sets going every spinning prop the landing is standing at.
+##
+## NO NEW STATE, and that is the point of the whole feature: Keepy is IDLE
+## when this runs, he is IDLE when it returns, nothing about him changes and
+## nothing here touches KeepyHopper. The prop reacts to him; he does not
+## interact with it.
+##
+## DEBOUNCE BY IGNORING, not by restarting. A player who taps back onto the
+## same spot while the top is still coasting must not see it snap back to
+## full speed -- that is a jolt, and a jolt is exactly what a second tween
+## laid over a running one produces. A shove that arrives while it is
+## already turning is simply not a shove.
+func _spin_near(landing: Vector3) -> void:
+	var flat := Vector3(landing.x, 0.0, landing.z)
+	for entry in _spinners:
+		var pivot: Node3D = entry["spinner"]
+		if pivot == null or not is_instance_valid(pivot):
+			continue
+		if flat.distance_to(entry["position"] as Vector3) > float(entry["radius"]):
+			continue
+		var running: Tween = entry["tween"]
+		if running != null and running.is_valid() and running.is_running():
+			continue
+		# Wrapped before it is tweened, never reset to zero: the top keeps
+		# whatever facing it coasted to, which is what a roundabout does,
+		# while the number it is counted from stays bounded instead of
+		# climbing by 540 degrees for the rest of the session.
+		var from_deg: float = fposmod(pivot.rotation_degrees.y, 360.0)
+		pivot.rotation_degrees.y = from_deg
+		var tween := pivot.create_tween()
+		tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tween.tween_property(pivot, "rotation_degrees:y",
+			from_deg + 360.0 * TURNSTILE_SPIN_TURNS, TURNSTILE_SPIN_S)
+		entry["tween"] = tween
 
 func _apply_swamp_palette() -> void:
 	var env: Environment = _world_env.environment
@@ -436,10 +506,26 @@ func _on_hop_landed(position: Vector3) -> void:
 	# The latch is cleared whatever the answer, so a dive back to the
 	# LADDER FOOT -- dry land, the board's other target -- disarms it
 	# instead of leaving it primed for the next unrelated landing.
+	var was_dive: bool = _dive_pending
 	if _dive_pending:
 		_dive_pending = false
 		if in_water:
 			_on_water_impact(position)
+
+	# THE SPINNING PROPS, and they sit here for the reason the tint and the
+	# impact above do: every branch below this point returns, so a reaction
+	# placed after them would stop firing on exactly the landings that go on
+	# to do something -- silently, and only sometimes.
+	#
+	# NOT ON A DIVE. A dive is not a walk, and a prop that answered one
+	# would be answering a leap off a plank rather than someone arriving on
+	# foot. The gate is written out rather than left to the placement: the
+	# boards are all over water and the turnstile is on dry land, so today
+	# the distance test would refuse a dive landing anyway -- but that is a
+	# fact about the layout, which is DATA, and a layout is exactly the kind
+	# of thing that gets edited without this file being reread.
+	if not was_dive:
+		_spin_near(position)
 
 	# The landing that finishes a boarding walk starts the ride, before
 	# anything else looks at where it landed.
