@@ -18594,3 +18594,49 @@ preuve a elle seule.
    confortable au pouce.
 3. Aucun des deux lots ne touche a l'art, aux couleurs, ni au gameplay de
    Chased/Quizz/Battle -- hors perimetre, inchange.
+
+### Merge en production (28 aout 2026, autorisation explicite de Mathieu)
+
+`staging` (`0a7fe05`) -> `main`, commit de merge **`785390f`**, `--no-ff`,
+apres validation device confirmee sur les deux lots ("ilots ne
+declenchent plus la teinte/impact", "tourniquet tourne indefiniment sur
+re-tap, ejection normale au lacher prise").
+
+**Verifie AVANT le merge** : `git fetch --all --prune`, `origin/main`
+(`fe0f4d7`) et `origin/staging` (`0a7fe05`) exactement les SHA annonces,
+aucune divergence. `main..staging` porte les quatre commits attendus
+(`e90e922` fix ilots, `23949df` re-shove tourniquet, `b37de5c` merge,
+`0a7fe05` doc), rien de plus. `git rev-parse HEAD^{tree}` et
+`git rev-parse origin/staging^{tree}` **identiques** (`01f329047...`)
+avant le push -- ce qui part en prod est litteralement l'arbre valide,
+pas une recomposition. Merge `--no-ff` sans conflit.
+
+CI **run #289** (id `33164821995`) **verte** (10:49:36 -> 10:52:56 UTC) --
+`Import project resources` 10:50:10 -> 10:52:27, `Export Web build`
+10:52:27 -> 10:52:32, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+10:52:48 -> 10:52:56, `[STAGING -- staging]` correctement **skipped**
+(push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1787914351` = **10:52:31 UTC** -- tombe exactement dans la fenetre `Export Web build` (10:52:27 -> 10:52:32) |
+| `x-vercel-cache` / `age` | `MISS` / `0` sur `index.html` ET `index.service.worker.js` |
+| `index.wasm` servi | **35 376 909** octets |
+| `index.pck` servi | 5 898 448 octets (marqueur "nouveau build", jamais preuve d'identite) |
+
+`index.wasm` **35 376 909 octets** -- identique au fingerprint permanent
+deja consigne pour tout lot qui ne touche pas le code moteur, coherent :
+ce merge n'ajoute aucun commit de code au-dela de ce qui etait deja
+valide sur staging, aucune sonde n'a ete rejouee ici (pas de code
+nouveau depuis la derniere verification sur l'arbre fusionne).
+
+**Le hub plateau 3D avec ses lacs, ilots et tourniquet est desormais EN
+PRODUCTION** sur `keepy-ten.vercel.app`, avec les deux correctifs (fix
+teinte/eclaboussure des ilots, re-shove illimite du tourniquet)
+integres.
+
+**Reste ouvert : aucun sur ce merge.** Les deux points laisses ouverts
+par le lot de staging (lisibilite des ilots, ressenti du re-shove) sont
+**clos** par la validation device confirmee ci-dessus.
