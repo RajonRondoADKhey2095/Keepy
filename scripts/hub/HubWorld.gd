@@ -318,6 +318,19 @@ const OWL_LOOP_HEADING_DEG: float = -35.0
 
 const KEEPY_CLEARANCE: float = 0.66
 
+## ⚠️ TEMPORARY, STAGING-ONLY DEBUG TOOL -- DELETE BEFORE ANY `main` MERGE.
+## `true` here draws four numbered ground markers (see
+## `scripts/hub/debug/CabinPlacementMarkers.gd`) so Mathieu can judge four
+## candidate cabin spots by walking to them on `keepy-staging.vercel.app`.
+## This project has no runtime prod/staging split -- both serve the exact
+## same build -- so the only thing keeping this off production is that the
+## branch carrying it is never merged past `staging`. Once a candidate is
+## picked, this constant, its `_ready()` call below and the whole
+## `scripts/hub/debug/` file are removed in the same lot that installs the
+## real cabin `.glb`.
+const CABIN_DEBUG_MARKERS_ENABLED: bool = true
+
+
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
 	# the swamp safe-area paint (this is still the one screen every way
@@ -327,6 +340,13 @@ func _ready() -> void:
 	SafeArea.fill_screen()
 
 	_apply_swamp_palette()
+
+	if CABIN_DEBUG_MARKERS_ENABLED and _world != null:
+		# Parented to `_world`, never to `Props` -- see _spawn_impact_ring()
+		# below for why: the hub's draw-node budget sondes walk the `Props`
+		# subtree specifically, and these four markers are not decor.
+		var cabin_markers_script := preload("res://scripts/hub/debug/CabinPlacementMarkers.gd")
+		_world.add_child(cabin_markers_script.new())
 
 	_portals = _builder.portals()
 	for portal in _portals:
