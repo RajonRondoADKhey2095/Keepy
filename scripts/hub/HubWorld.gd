@@ -318,6 +318,18 @@ const OWL_LOOP_HEADING_DEG: float = -35.0
 
 const KEEPY_CLEARANCE: float = 0.66
 
+## ⚠️ TEMPORARY, STAGING-ONLY DEBUG TOOL -- DELETE BEFORE ANY `main` MERGE.
+## `true` here draws a live x/z readout of Keepy's own world position (see
+## `scripts/hub/debug/KeepyCoordsOverlay.gd`) so Mathieu can walk to the
+## exact spot he wants the future cabin on `keepy-staging.vercel.app` and
+## read back the two numbers this repo needs to place it. This project has
+## no runtime prod/staging split -- both serve the exact same build -- so
+## the only thing keeping this off production is that the branch carrying
+## it is never merged past `staging`. Once the coordinate is read off,
+## this constant, its call below and the whole `scripts/hub/debug/` file
+## are removed in the same lot that installs the real cabin `.glb`.
+const KEEPY_COORDS_DEBUG_ENABLED: bool = true
+
 
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
@@ -328,6 +340,16 @@ func _ready() -> void:
 	SafeArea.fill_screen()
 
 	_apply_swamp_palette()
+
+	if KEEPY_COORDS_DEBUG_ENABLED and _keepy != null:
+		var coords_overlay_script := preload("res://scripts/hub/debug/KeepyCoordsOverlay.gd")
+		var overlay: Control = coords_overlay_script.new()
+		# Child of HubWorld itself, not `_world` -- this is a 2D UI
+		# overlay, not a 3D ground marker, so it belongs beside
+		# `FallbackButton`/`FallbackMenu` in the Control tree rather than
+		# inside the SubViewport's 3D scene.
+		add_child(overlay)
+		overlay.track(_keepy)
 
 	_portals = _builder.portals()
 	for portal in _portals:
