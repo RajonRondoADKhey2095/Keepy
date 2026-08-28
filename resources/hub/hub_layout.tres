@@ -1094,4 +1094,8 @@ props = [{
 "deck_anchor": Vector3(-14.6407, 1.8, -11.4206),
 "dive_direction": Vector3(0.31068, 0, -0.95052),
 "type": &"divingboard"
+}, {
+"position": Vector3(-4, 0, 17.25),
+"rotation_y": 22,
+"type": &"turnstile"
 }]

@@ -520,3 +520,48 @@ either way.
 a phone GPU is best at. Fourteen small opaque unshaded boxes and cylinders
 are close to the cheapest thing that can be added to this scene. **Device
 judgement.**
+
+## THE TURNSTILE (28 aout 2026) -- one reactive prop, and a counting hole
+## it closed on the way in
+
+One `&"turnstile"` entry: a playground roundabout on the north lawn at
+(-4.00, 17.25). A new prop TYPE, and the plateau's first with a MOVING part
+-- a landing within 2.40 u of it sets its top turning.
+
+Same session, same renderer, same machine, runs taken ONE AT A TIME so the
+two sides are not measuring each other's contention.
+
+| | construction (ms) | draw excl. portals | draw total | FPS mean | FPS min |
+|---|---|---|---|---|---|
+| BEFORE (3 runs, `origin/main`) | 41.19 / 40.71 / 39.29 | 120 | 126 | 19.5-20.2 | 15.1-17.4 |
+| AFTER (3 runs, this batch) | 39.64 / 40.29 / 39.17 | **124** | **130** | 20.2-21.2 | 17.1-18.0 |
+
+**+4 draw nodes, itemised rather than asserted**: a footing, a deck, a
+centre post, and ONE `MultiMeshInstance3D` carrying all four grip bars.
+Margin under the 260 ceiling: **136**.
+
+⚠️ **THIS PROBE WAS UNDERCOUNTING BY ONE, and the turnstile is what
+exposed it.** `_count_mesh_instances()` counted `MeshInstance3D` only. That
+was complete while every batch on the plateau was a DIRECT child of
+HubBuilder -- the caller reaches those through its own branch -- but the
+turnstile's bars are a MultiMesh of its OWN, parented under its pivot,
+because a shared batch's node hangs off HubBuilder with world transforms
+baked in and could never rotate with it. A nested batch was therefore
+invisible here: this probe reported **123** against `TurnstileProbe`'s and
+`WaterTintProbe`'s **124**. Fixed rather than reconciled by hand.
+
+**No historical number moves.** The BEFORE column above was measured with
+the FIXED counter and still reports 120 / 126 -- identical to what the old
+one reported for the same tree, because before this prop there was no
+nested batch anywhere on the plateau.
+
+⚠️ **Nothing about the cost is detectable, and the ranges say so rather
+than the means.** Construction 39.17-40.29 against 39.29-41.19 (overlapping),
+FPS mean 20.2-21.2 against 19.5-20.2 (touching at 20.2), FPS min 17.1-18.0
+against 15.1-17.4 (overlapping). The claim these support is the narrow one:
+**no cost is measurable**, not that anything got faster. Four small opaque
+unshaded primitives are close to the cheapest thing that can be added here.
+
+⚠️ **The FPS band is NOT comparable to the rows above it.** Those were taken
+on other machines in other sessions; only the BEFORE/AFTER pair inside one
+block shares hardware. llvmpipe under xvfb, as ever. **Device judgement.**

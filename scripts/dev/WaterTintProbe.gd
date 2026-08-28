@@ -72,7 +72,13 @@ const _HUB_WORLD_SCENE: String = "res://scenes/HubWorld.tscn"
 ## three ladders share one node and it simply carries 15 instances instead
 ## of 5. Measured on the shipped tree before and after: 106 -> 120 excluding
 ## portals, 112 -> 126 including them, stable over three runs each side.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 120
+##
+## 120 -> 124 on 28 aout 2026, ONE turnstile, itemised the same way: a
+## footing, a deck, a centre post, and ONE MultiMeshInstance3D for its four
+## grip bars -- four bars, one node, which is what the batch is for.
+## Measured on the shipped tree before and after in one session: 120 -> 124
+## excluding portals, 126 -> 130 including them.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 124
 
 var _failures: int = 0
 var _ride_landings: int = 0

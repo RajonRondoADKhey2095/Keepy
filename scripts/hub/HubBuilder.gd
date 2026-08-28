@@ -571,6 +571,96 @@ const BOAT_HULL_COLOR: Color = Color(0.33, 0.21, 0.12)
 const BOAT_INNER_COLOR: Color = Color(0.74, 0.60, 0.40)
 const BOAT_RIM_COLOR: Color = Color(0.88, 0.76, 0.55)
 
+## ---------------------------------------------------------------------
+## THE TURNSTILE -- a playground roundabout, and the plateau's first prop
+## with a MOVING part.
+##
+## Sizes rather than a scale factor, for the reason every other prop here
+## states its own: the layout's `scale` is a uniform float applied to the
+## whole node, and a roundabout whose bars grew with its deck would stop
+## being a roundabout the moment anyone tuned one of the two.
+##
+## THE BASE DOES NOT TURN. It is a separate, slightly wider, very flat disc
+## left OUTSIDE the spinner on purpose: a rotation is only readable against
+## something that stays put, and a turnstile whose footing swung with it
+## would read as the whole prop sliding rather than as a top spinning.
+const TURNSTILE_BASE_RADIUS: float = 1.35
+const TURNSTILE_BASE_THICKNESS: float = 0.06
+const TURNSTILE_BASE_SEGMENTS: int = 20
+
+const TURNSTILE_DECK_RADIUS: float = 1.15
+const TURNSTILE_DECK_THICKNESS: float = 0.10
+const TURNSTILE_DECK_Y: float = 0.26
+const TURNSTILE_DECK_SEGMENTS: int = 20
+
+const TURNSTILE_POST_RADIUS: float = 0.10
+const TURNSTILE_POST_HEIGHT: float = 0.72
+
+## The grip bars. A count, not a hardcoded four: the proportions sheet for
+## this batch compares three against four and neither is device-validated.
+const TURNSTILE_BARS: int = 4
+## ⚠️ 0.06 AND NOT 0.045, and that came off a render rather than off a
+## preference: at 0.045, from this screen's 34-degree camera, the bars read
+## as twigs lying ON the deck instead of as rails standing above it.
+const TURNSTILE_BAR_RADIUS: float = 0.06
+const TURNSTILE_BAR_Y: float = 0.62
+## Stopped just inside the deck rim so a bar end never pokes out past the
+## thing it is bolted to.
+const TURNSTILE_BAR_LENGTH: float = TURNSTILE_DECK_RADIUS - 0.13
+
+## How far out from the pivot a rider stands. DERIVED, not chosen -- the
+## geometry leaves exactly one window and this is its outer end.
+##
+## A rider faces OUTWARD (Mathieu's call), so the model's long axis lies
+## along the radius: measured on the shipped .glb, Keepy is 2.0371 deep,
+## which puts his TAIL at ride_radius - 1.0187. The centre post is 0.10
+## across and stands from the deck up to local y 0.98 -- straight through
+## the height his body occupies -- so the tail clears it only while
+##
+##     ride_radius >= 1.0187 + TURNSTILE_POST_RADIUS  ->  >= 1.1187
+##
+## and the deck rim is at 1.15. The whole legal window is [1.119, 1.150],
+## which is under four centimetres wide, and the rim is its natural end:
+## "on the edge" is what was asked for, and anything further in only moves
+## the tail closer to the post it has to miss.
+##
+## ⚠️ HIS NOSE OVERHANGS, and that is measured rather than hidden: at this
+## radius the model reaches 2.17 from the pivot against a 1.15 deck and a
+## 1.35 footing. Keepy is 2.04 long and the deck is 2.30 across, so a body
+## facing outward on it cannot be contained by it at any radius at all --
+## the overhang is a property of the two sizes, not of this number. Turning
+## him TANGENTIALLY would fit him (his width is only 1.32), and that is the
+## one lever if the device says the overhang reads badly.
+const TURNSTILE_RIDE_RADIUS: float = TURNSTILE_DECK_RADIUS
+
+## How close a landing has to be to shove it. A property of THIS PROP's
+## reach and not of the gesture, which is why it is published per entry in
+## spinning_props() rather than held as one number by the caller: the
+## ladder's tap radius is the same number for every board because a thumb
+## is the same size everywhere, but a bigger roundabout would want a bigger
+## reach.
+##
+## Base rim plus about a step: a landing a metre outside the footing is a
+## player standing AT it, and a landing further than that is one walking
+## past.
+const TURNSTILE_TRIGGER_RADIUS: float = 2.40
+
+## No new colours. The deck is the pontoon plank, the frame is the boat's
+## PALE RIM, and the footing is the scatter rock -- so the prop is built out
+## of the same wood and stone the plateau already is, and nothing here
+## installs a hue that has never been on a sheet.
+##
+## ⚠️ THE FRAME IS THE RIM AND NOT THE HULL, and that is a render finding,
+## not a taste. The first pass used BOAT_HULL_COLOR -- which is what the
+## diving board's frame borrows -- and against a PONTOON_COLOR deck the two
+## browns are close enough that the centre post DISAPPEARED and the bars
+## read as marks drawn on the plank. The prop stopped being a roundabout and
+## became a plate. The rim is the pale wood already on the boat, so the hub
+## and its rails separate from the deck they are bolted to.
+const TURNSTILE_DECK_COLOR: Color = PONTOON_COLOR
+const TURNSTILE_FRAME_COLOR: Color = BOAT_RIM_COLOR
+const TURNSTILE_BASE_COLOR: Color = ROCK_COLOR
+
 ## Ground footprint radius per prop type, in LOCAL units (multiplied by the
 ## entry's uniform scale at read time). Used by the ride's disembark search
 ## to refuse a bank point that is already occupied.
@@ -593,6 +683,9 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	# over WATER from there, which nothing can be standing on, so the
 	# footprint is the frame on land and not the plank's whole length.
 	&"divingboard": 0.50,
+	# The stone footing, which is the whole of what this prop puts on the
+	# ground -- the deck sits above it and the bars above that.
+	&"turnstile": TURNSTILE_BASE_RADIUS,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -623,6 +716,17 @@ var _stream_half_width: float = 0.0
 ## Vector3.INF marks "the layout has none", which is a legal plateau: a hub
 ## without a pond simply has one fewer body of water, not a pond at the
 ## origin. A caller must test for it rather than trusting a zero.
+## Every prop with a PIVOT to spin, as built -- see spinning_props().
+##
+## A LIST FROM THE FIRST COMMIT, with one entry in it. That is the lesson
+## the diving board charged for: its geometry was generic from the start
+## and it was the singleton TABLE downstream of it that made a second plank
+## drawable-but-unclimbable, and unpicking that cost its own batch. The
+## shape here is deliberately NOT turnstile-specific either -- position,
+## radius, and the node to turn -- so a second kind of spinning prop is an
+## entry in this array rather than a second parallel mechanism.
+var _spinning_props: Array[Dictionary] = []
+
 ## Every &"divingboard" as built, in layout order -- see diving_boards()
 ## for the shape of one entry.
 var _diving_boards: Array[Dictionary] = []
@@ -693,6 +797,39 @@ func stream_half_width() -> float:
 ## KeepyHopper's business and unchanged.
 func diving_boards() -> Array[Dictionary]:
 	return _diving_boards
+
+## Every prop that reacts to a landing by turning, as it was BUILT.
+##
+## Keys per entry:
+##   "position"  Vector3, flat -- where the landing distance is measured to
+##   "radius"    float   -- how close a landing has to be to set it going
+##   "spinner"   Node3D  -- the sub-node to rotate, and ONLY that sub-node:
+##                          whatever the prop leaves static (a footing, a
+##                          foundation) is deliberately not under it
+##   "deck_y"    float   -- TOP of the ridable surface, in the SPINNER's own
+##                          local space, so a rider stands on it rather than
+##                          in it
+##   "ride_radius" float -- how far out from the pivot a rider sits, same
+##                          local space
+##   "bars"      int     -- how many radial grips the top carries, so a
+##                          rider can be seated BETWEEN two of them instead
+##                          of inside one
+##   "clear_radius" float -- the static footing's own radius: the smallest
+##                          circle a dismount has to land outside of
+##
+## THE LAST FOUR ARE PUBLISHED, NOT LEFT TO THE RIDER TO RECOMPUTE. Keepy is
+## written onto this prop every frame while he rides it, and the height and
+## the radius he is written at ARE the deck's -- so they come out of the pass
+## that drew the deck, exactly as "radius" and "spinner" already do. The
+## alternative is the same number living in two files, which is the failure
+## this project has paid for often enough to stop choosing it.
+##
+## Published from the geometry rather than re-read from the layout, for the
+## same reason the boards are: the thing the player sees turning and the
+## thing a landing is measured against have to be one fact, and the only
+## way to guarantee that is for both to come out of the pass that drew it.
+func spinning_props() -> Array[Dictionary]:
+	return _spinning_props
 
 ## Centre of the one &"pond", or Vector3.INF when the layout has none.
 func pond_centre() -> Vector3:
@@ -769,6 +906,8 @@ func _build() -> void:
 					node = _make_boat()
 				&"divingboard":
 					node = _make_divingboard(entry, index, where)
+				&"turnstile":
+					node = _make_turnstile(entry, index, where)
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -831,6 +970,15 @@ func _build() -> void:
 					push_error("HubBuilder: a second &\"lake\" entry at %d; the first one is the one anything else can find." % index)
 				else:
 					_small_lake_centre = where
+			if type == &"turnstile":
+				# Recorded AFTER add_child, alongside the boards, so every
+				# published spinner is one that actually got drawn. Held to
+				# the boards' plural rule and not the pond's singleton one:
+				# nothing downstream names THE turnstile, a landing shoves
+				# whichever one it landed at, so a second entry is another
+				# place to play rather than an ambiguity.
+				if not _last_turnstile.is_empty():
+					_spinning_props.append(_last_turnstile)
 			if type == &"divingboard":
 				# Recorded AFTER add_child, alongside the hull, so every
 				# published board is one that actually got drawn.
@@ -1615,6 +1763,152 @@ func _make_divingboard(entry: Dictionary, index: int, where: Vector3) -> Node3D:
 		# ground a player has already stood on, so it is the one landward
 		# spot that cannot turn out to be inside a rock or over water.
 		"land_target": ladder,
+	}
+	return root
+
+## Scratch for the turnstile just built, handed to _build the same way the
+## board's is. Not the published copy.
+var _last_turnstile: Dictionary = {}
+
+## The turnstile: a playground roundabout. A stone footing that stays put,
+## and above it a deck, a centre post and a ring of grip bars that all turn
+## together on one pivot.
+##
+## =====================================================================
+## THE BARS ARE BATCHED, BUT NOT INTO THE SCATTER BATCHES -- and that is a
+## measured constraint, not a preference.
+##
+## _instance()/_flush_batches() file a prop into a MultiMesh whose instance
+## transforms are WORLD and are baked once, and whose node is added as a
+## child of HubBuilder itself. Nothing about that can rotate: the bars
+## would sit in a different subtree from the pivot, so turning the pivot
+## would leave them behind, pointing where the roundabout used to face.
+##
+## So this prop owns a MultiMeshInstance3D of its OWN, parented under the
+## spinner, with its instances in the spinner's LOCAL space. It is still
+## one draw node for however many bars there are, which is the whole reason
+## a batch is wanted here -- it simply cannot be a shared one.
+##
+## =====================================================================
+## WHAT IS AND IS NOT UNDER THE PIVOT
+##
+##   Turnstile          <- placed by _build (position / rotation_y / scale)
+##     Footing          <- STATIC. The thing the spin is read against.
+##     Spinner          <- the pivot, and the ONLY node ever rotated
+##       Deck
+##       Post
+##       Bars           <- MultiMeshInstance3D, TURNSTILE_BARS instances
+##
+## The deck is NOT WALKABLE and nothing here tries to make it so. The
+## plateau is single-altitude by construction -- HubRegion drops y and
+## HubTapInput resolves every tap against Plane(UP, 0) -- so there is no
+## tap that could mean "a point on the deck", and giving this prop one
+## would mean a second ground for the whole screen. Keepy walks past it at
+## y = 0 exactly as he walks past a landmark.
+func _make_turnstile(_entry: Dictionary, _index: int, where: Vector3) -> Node3D:
+	_last_turnstile = {}
+
+	var root := Node3D.new()
+	root.name = "Turnstile"
+
+	# ---- the footing, OUTSIDE the spinner on purpose (see the header)
+	var footing := CylinderMesh.new()
+	footing.top_radius = TURNSTILE_BASE_RADIUS
+	footing.bottom_radius = TURNSTILE_BASE_RADIUS
+	footing.height = TURNSTILE_BASE_THICKNESS
+	# Stated, never inherited: a primitive left at Godot's default is far
+	# denser than any silhouette this size needs -- docs/MESHY_SPEC.md 7.2.
+	footing.radial_segments = TURNSTILE_BASE_SEGMENTS
+	footing.rings = 1
+	var footing_node := _mesh_node(footing, TURNSTILE_BASE_COLOR,
+		Vector3.UP * (TURNSTILE_BASE_THICKNESS * 0.5))
+	footing_node.name = "Footing"
+	root.add_child(footing_node)
+
+	var spinner := Node3D.new()
+	spinner.name = "Spinner"
+	root.add_child(spinner)
+
+	# ---- the deck
+	var deck := CylinderMesh.new()
+	deck.top_radius = TURNSTILE_DECK_RADIUS
+	deck.bottom_radius = TURNSTILE_DECK_RADIUS
+	deck.height = TURNSTILE_DECK_THICKNESS
+	deck.radial_segments = TURNSTILE_DECK_SEGMENTS
+	deck.rings = 1
+	var deck_node := _mesh_node(deck, TURNSTILE_DECK_COLOR, Vector3.UP * TURNSTILE_DECK_Y)
+	deck_node.name = "Deck"
+	spinner.add_child(deck_node)
+
+	# ---- the centre post
+	var post := CylinderMesh.new()
+	post.top_radius = TURNSTILE_POST_RADIUS
+	post.bottom_radius = TURNSTILE_POST_RADIUS
+	post.height = TURNSTILE_POST_HEIGHT
+	post.radial_segments = 8
+	post.rings = 1
+	var post_node := _mesh_node(post, TURNSTILE_FRAME_COLOR,
+		Vector3.UP * (TURNSTILE_DECK_Y + TURNSTILE_POST_HEIGHT * 0.5))
+	post_node.name = "Post"
+	spinner.add_child(post_node)
+
+	# ---- the grip bars
+	var bar := CylinderMesh.new()
+	bar.top_radius = TURNSTILE_BAR_RADIUS
+	bar.bottom_radius = TURNSTILE_BAR_RADIUS
+	bar.height = TURNSTILE_BAR_LENGTH
+	bar.radial_segments = 6
+	bar.rings = 1
+
+	var multi := MultiMesh.new()
+	# FIRST, and before mesh/instance_count: TRANSFORM_2D is the DEFAULT in
+	# Godot 4.3, and a MultiMesh left at it silently discards every 3D
+	# transform written to it and draws the whole batch at the origin. The
+	# order is the one _flush_batches() already had to learn.
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = bar
+	multi.instance_count = TURNSTILE_BARS
+	var local_aabb: AABB = bar.get_aabb()
+	var bounds := AABB()
+	for i in TURNSTILE_BARS:
+		var angle: float = TAU * float(i) / float(TURNSTILE_BARS)
+		var out := Vector3(cos(angle), 0.0, sin(angle))
+		# A CylinderMesh stands on its own +Y and a bar lies ALONG `out`,
+		# so the basis maps that +Y onto it. Built from the cross product
+		# rather than from an Euler angle: the columns are orthonormal and
+		# right-handed by construction, which an angle would only be if the
+		# sign convention happened to be guessed right. Same construction
+		# as the ladder rungs, for the same reason.
+		var basis := Basis(out.cross(Vector3.UP), out, Vector3.UP)
+		var xform := Transform3D(basis,
+			out * (TURNSTILE_BAR_LENGTH * 0.5) + Vector3.UP * TURNSTILE_BAR_Y)
+		multi.set_instance_transform(i, xform)
+		var box: AABB = xform * local_aabb
+		bounds = box if i == 0 else bounds.merge(box)
+	# Written and not trusted: a MultiMesh derives an AABB of its own, and a
+	# wrong or stale one makes the whole batch vanish when the camera turns
+	# -- with no error attached, on a screen nobody can look at before
+	# staging. _flush_batches() carries the same note for the same reason.
+	multi.custom_aabb = bounds
+
+	var bars := MultiMeshInstance3D.new()
+	bars.name = "Bars"
+	bars.multimesh = multi
+	bars.material_override = _unshaded(TURNSTILE_FRAME_COLOR)
+	spinner.add_child(bars)
+
+	_last_turnstile = {
+		"position": Vector3(where.x, 0.0, where.z),
+		"radius": TURNSTILE_TRIGGER_RADIUS,
+		"spinner": spinner,
+		# The TOP of the deck, not its centre: a CylinderMesh is centred on
+		# its own origin, so the surface a rider stands on is half a
+		# thickness above the node that carries it. Measured on the built
+		# tree at 0.31 world with this prop at scale 1.
+		"deck_y": TURNSTILE_DECK_Y + TURNSTILE_DECK_THICKNESS * 0.5,
+		"ride_radius": TURNSTILE_RIDE_RADIUS,
+		"bars": TURNSTILE_BARS,
+		"clear_radius": TURNSTILE_BASE_RADIUS,
 	}
 	return root
 

@@ -232,6 +232,23 @@ const DIVE_DURATION: float = 0.62
 ## drifting.
 const RIDE_SEAT_Y: float = 0.14
 
+## Arc height of the step off the turnstile, ON TOP of the drop from the
+## deck to the ground.
+##
+## SMALLER than an ordinary hop (0.6) and than every other special arc on
+## this screen -- the climb's mount is 0.40, the boat's eject 1.05, the
+## dive 1.55. The escalation those three argue for is "further from where
+## you started", and stepping off a knee-high roundabout is the SMALLEST of
+## the set: the sloped base line already carries the body down 0.31 on its
+## own, so the apex still clears the deck without the arc having to say
+## anything grander than "he got off".
+const TURNSTILE_DISMOUNT_HOP_HEIGHT: float = 0.50
+
+## How far past the outward-facing lock a dismount is aimed, in world units.
+## The caller passes the landing itself -- HubWorld is the only thing that
+## knows both the prop's clear radius and what props a landing has to miss
+## -- so this file never computes one.
+
 ## How far past the ribbon's edge a disembark aims, in world units. The
 ## ribbon's own half-width is layout data (HubStreamRoute knows the curve,
 ## not the width), so the bank offset is passed in by the caller and this
@@ -282,6 +299,12 @@ signal ride_ended()
 signal board_mounted()
 signal board_dived()
 signal board_dismounted()
+
+## The turnstile, mounted and left. Same shape and same purpose as the ride
+## pair: HubWorld listens so it can hold other reactions off for the
+## duration, and so the prop and the rider are never two opinions.
+signal turnstile_mounted()
+signal turnstile_dismounted()
 
 ## Yaw carrier. Kept separate from this node so world position (written by
 ## the hop) and facing (written by the turn) never contend for one
@@ -337,7 +360,7 @@ var _has_target: bool = false
 ## hop_landed, so portal detection is silent for their whole duration. A
 ## board planted 9 u from the portal row would otherwise carry a diver into
 ## a sub-game they were only passing over.
-enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING }
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -387,6 +410,19 @@ var _ride_dir: float = 1.0
 ## and this file only ever sees the curve.
 var _ride_half_width: float = 0.0
 
+## The turnstile pivot Keepy is riding, and where he sits IN THAT PIVOT'S
+## OWN LOCAL SPACE. Both null/zero whenever _state is not ON_TURNSTILE.
+##
+## ⚠️ A LOCAL OFFSET AND A to_global() EVERY FRAME, never an angle of our
+## own advanced alongside the prop's. Two numbers turning at the same rate
+## is the definition of a thing that drifts; ONE transform applied to a
+## fixed offset cannot, because it is the same transform the deck and the
+## bars are drawn with. The brief asked for the spin to be synchronised
+## rather than paralleled, and this is what makes it synchronised by
+## construction instead of by tuning.
+var _turnstile: Node3D = null
+var _turnstile_seat: Vector3 = Vector3.ZERO
+
 func _ready() -> void:
 	_base_scale = _body.scale
 	_base_pitch = _body.rotation_degrees.x
@@ -408,6 +444,9 @@ func hop_to(point: Vector3) -> void:
 	# and a stray hop_to would leave it walking while the plank, the
 	# ladder or the arc kept driving it. HubWorld routes a tap in those
 	# states to the board instead -- see _on_tapped_ground.
+	# ON_TURNSTILE joins them for the same reason and needs no line of its
+	# own: the test is "is anything else writing the body", and the answer
+	# for a rider being swung round a pivot is yes.
 	if _state != State.IDLE and _state != State.HOPPING:
 		return
 	_target = Vector3(point.x, 0.0, point.z)
@@ -425,6 +464,20 @@ func is_hopping() -> bool:
 ## silent for the whole ride.
 func is_riding() -> bool:
 	return _state == State.RIDING
+
+## True while the turnstile is carrying him.
+##
+## ⚠️ DELIBERATELY NOT FOLDED INTO is_on_board(). That query exists because
+## the three board states all answer ONE question the same way -- "may I
+## treat a tap as a destination", no -- and a caller that asked it got the
+## right answer for all three. This state answers that question the same
+## way but a DIFFERENT one differently: a tap while standing on the plank
+## means DIVE, and a tap while being swung round a roundabout means
+## nothing at all. Folding it in would make is_standing_on_board() the only
+## thing keeping a turnstile rider from diving off a plank he is not on,
+## which is a load-bearing job for a query that was never given it.
+func is_on_turnstile() -> bool:
+	return _state == State.ON_TURNSTILE
 
 ## True from the first rung to the moment the feet hit the water: the whole
 ## span in which the body belongs to the board rather than to the plateau.
@@ -482,6 +535,137 @@ func board(route: HubStreamRoute, half_width: float, toward: Vector3) -> void:
 	_body.rotation_degrees.x = _base_pitch
 	_place_on_route()
 	ride_started.emit()
+
+## Steps onto the turnstile and starts turning with it.
+##
+## `pivot` is the prop's spinner node, `deck_y` the TOP of its deck and
+## `radius` how far out a rider sits -- all three in the pivot's own local
+## space, all three published by HubBuilder from the pass that drew them.
+## Nothing here re-derives any of them: the deck a rider stands on and the
+## deck that was drawn have to be one fact.
+##
+## Refused, quietly, unless he is standing still. A mount mid-hop would
+## teleport a body that is currently mid-arc, and a mount while another
+## state already owns him is the same overlap every other entry point on
+## this file refuses.
+##
+## THE SEAT ANGLE IS SNAPPED TO A GAP BETWEEN TWO BARS, and to the gap
+## NEAREST THE WAY HE CAME. Two things are wanted and they pull apart: a
+## rider standing inside a grip rail is wrong, and a rider who teleports
+## round to the far side of the disc the instant he arrives is worse.
+## Snapping to the nearest gap satisfies both -- he never moves more than
+## half a gap from where he landed, and he never lands on a bar.
+func mount_turnstile(pivot: Node3D, deck_y: float, radius: float, bars: int) -> bool:
+	if pivot == null or not is_instance_valid(pivot):
+		return false
+	if _state != State.IDLE:
+		return false
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+
+	# Where he is standing, expressed in the pivot's frame, so the gap is
+	# chosen against the deck as it is turned RIGHT NOW rather than against
+	# the layout's idea of which way it faces.
+	var local: Vector3 = pivot.to_local(global_position)
+	var arrival: float = atan2(local.z, local.x)
+	var count: int = maxi(bars, 1)
+	var step: float = TAU / float(count)
+	# The bars sit at k*step exactly (HubBuilder builds them that way), so
+	# the gaps sit half a step off them.
+	var seat_angle: float = arrival
+	if count > 0:
+		var k: float = round((arrival - step * 0.5) / step)
+		seat_angle = k * step + step * 0.5
+
+	_turnstile = pivot
+	_turnstile_seat = Vector3(cos(seat_angle) * radius, deck_y, sin(seat_angle) * radius)
+	_has_target = false
+	_state = State.ON_TURNSTILE
+	# Rest pose, as every state that takes the body over sets it: a squash
+	# left over from the landing that mounted him would ride round with him.
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	follow_turnstile()
+	turnstile_mounted.emit()
+	return true
+
+## Writes Keepy at the seat for the pivot's CURRENT facing. The ONE place a
+## turnstile ride touches a transform -- the same rule _place_on_route()
+## states, for the same reason.
+##
+## ⚠️ CALLED BY WHATEVER TURNS THE PIVOT, NEVER FROM _process(). The prop
+## owns this motion (a Tween on the spinner's yaw), so a rider who SAMPLED
+## that yaw on his own clock would be reading it at whatever point in the
+## frame his own callback happened to fall. Measured when this file did
+## exactly that: a one-frame lag, 12.0 deg at the peak of the shove, and
+## process_priority did NOT move it -- Tween steps land after every node's
+## _process whatever the priority says. So the caller that writes the angle
+## writes the rider too, in that order, and the two cannot be a frame apart
+## because they are one call. Same rule _place_on_route() follows for the
+## boat, arrived at from the opposite direction.
+func follow_turnstile() -> void:
+	if _turnstile == null or not is_instance_valid(_turnstile):
+		# The prop went away underneath him. Put the body back on the ground
+		# rather than leaving it parked in mid-air on a dead reference: this
+		# is unreachable while HubWorld owns both, which is exactly why it is
+		# written down instead of assumed.
+		_turnstile = null
+		_turnstile_seat = Vector3.ZERO
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		return
+	global_position = _turnstile.to_global(_turnstile_seat)
+	# Facing OUTWARD: the seat offset IS the outward direction, flattened.
+	# Taken through the pivot's basis rather than added to its yaw so the
+	# prop's own placement rotation (the layout's rotation_y) is carried too.
+	var out: Vector3 = _turnstile.global_transform.basis * Vector3(_turnstile_seat.x, 0.0, _turnstile_seat.z)
+	if out.length_squared() > 0.000001:
+		_yaw.rotation_degrees.y = rad_to_deg(atan2(out.x, out.z))
+
+## Steps off the turnstile onto `landing`, which the caller has already
+## measured to be clear ground outside the prop.
+##
+## Reuses the generalised arc -- from the seat height down to zero -- rather
+## than writing a third way down off something, exactly as the dive and the
+## boat eject already do.
+func leave_turnstile(landing: Vector3) -> void:
+	if _state != State.ON_TURNSTILE:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_turnstile = null
+	_turnstile_seat = Vector3.ZERO
+	_has_target = false
+
+	var delta := target - here
+	if delta.length() < 0.001:
+		# Degenerate: the caller aimed at the seat. Set him down rather than
+		# tweening a zero-length arc.
+		_state = State.IDLE
+		global_position = here
+		turnstile_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_turnstile_dismount_finished, CONNECT_ONE_SHOT)
+
+## The dismount lands and the body is handed straight back to the ordinary
+## chain, the way the dive's does. The signal fires AFTER the landing so a
+## listener sees the ground he arrived on, not the deck he left.
+func _on_turnstile_dismount_finished() -> void:
+	_on_hop_finished()
+	turnstile_dismounted.emit()
 
 ## Leaves the boat: one taller-than-usual leap to the bank on the side the
 ## player tapped, and then the ordinary hop chain on towards the tap.

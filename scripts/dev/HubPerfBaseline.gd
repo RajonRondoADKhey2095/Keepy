@@ -136,9 +136,27 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 ## Recursively counts MeshInstance3D under `node`, INCLUDING `node` itself.
+## ⚠️ COUNTS MultiMeshInstance3D TOO, and that is a fix rather than a
+## flourish. This used to count MeshInstance3D only, which was complete for
+## as long as every batch in the hub was a DIRECT child of HubBuilder --
+## the caller below handles those in its own branch, so nothing was being
+## missed. The turnstile broke that: its grip bars are a MultiMesh of its
+## OWN, parented under its pivot, because a shared batch cannot rotate.
+## A nested batch was therefore invisible here, and this probe reported 123
+## against TurnstileProbe's and WaterTintProbe's 124 -- one draw node the
+## budget could not see, which is precisely the kind of undercount a budget
+## exists to prevent.
+##
+## No historical number moves: before that prop there was no nested batch
+## anywhere on the plateau, so every earlier tree counts the same either way
+## -- measured on the pre-turnstile tree with this version, 120 / 126,
+## exactly what the old one reported.
+##
+## Direct-child batches still cannot be double-counted: the caller reaches
+## them through its own `elif` and never hands one to this function.
 func _count_mesh_instances(node: Node) -> int:
 	var count := 0
-	if node is MeshInstance3D:
+	if node is MeshInstance3D or node is MultiMeshInstance3D:
 		count += 1
 	for child in node.get_children():
 		count += _count_mesh_instances(child)
