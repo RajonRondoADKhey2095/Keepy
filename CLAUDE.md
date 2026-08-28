@@ -19491,3 +19491,55 @@ script touche. `HubBuilder.gd`, `HubWorld.gd`, `HubRegion.gd`,
 
 `main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
 import, export et sondes verts).
+
+### Merge en production (28 aout 2026, autorisation explicite de Mathieu)
+
+`staging` (`db2ce11`) -> `main`, commit de merge **`e12966c`**, `--no-ff`,
+apres validation device confirmee (capture a l'appui : echelle correcte,
+aucune gene visuelle).
+
+**Verifie AVANT le merge** : `git fetch --all --prune`, `origin/main`
+(`2ae7901`) et `origin/staging` (`db2ce11`) exactement les SHA annonces.
+`merge-base(origin/main, origin/staging) = origin/main` -- `main` n'avait
+avance d'AUCUN commit au-dela du merge-base (pas de commit `.glb` brut a
+verifier ici), donc `staging` est un strict sur-ensemble de `main`. La
+chaine de commits attendue (`80cb614`, `c689113`, `5ce276a`, `b8456de`,
+`b7aa628`, `18195e8`, `1be4f14`, `92742be`, `db2ce11`) est presente au
+complet. Merge `--no-ff` sans conflit, arbre du merge **byte-identique a
+`origin/staging`** (`git diff HEAD origin/staging` vide) -- ce qui part en
+prod est litteralement l'arbre valide, pas une recomposition.
+
+CI **run #298** (id `33197115598`) **verte** (17:58:00 -> 18:02:23 UTC) --
+`Import project resources` 17:58:36 -> 18:01:50, `Export Web build`
+**18:01:50 -> 18:01:55**, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+18:02:09 -> 18:02:21, `[STAGING -- staging]` correctement **skipped** (push
+sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI, avec les DEUX
+marqueurs de fraicheur** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1787940114` = **18:01:54 UTC** -- tombe exactement dans la fenetre `Export Web build` (18:01:50 -> 18:01:55) |
+| `x-vercel-cache` / `age` | `MISS` / `0` sur `index.html` ET `index.service.worker.js` |
+| `index.wasm` servi | **35 376 909** octets -- identique au fingerprint permanent deja consigne pour tout lot qui ne touche pas le code moteur |
+| `index.pck` servi | 14 791 328 octets (marqueur "nouveau build", jamais preuve d'identite -- attendu plus lourd que le fingerprint historique, ce lot ajoute pour la premiere fois un `.glb` Meshy non-Keepy + ses deux textures baked au pack) |
+
+`index.wasm` inchange confirme qu'aucun code moteur n'a bouge, coherent :
+ce merge n'ajoute que l'asset chouette (`.glb` + textures, `.import`),
+`hub_layout.tres`, `HubBuilder.gd`, `HubWorld.tscn`, `OwlProbe.{gd,tscn}`
+et les ajustements de budget de noeuds dans les sondes existantes.
+
+**Aucune sonde re-derouleee dans cette session** : le tree pousse sur
+`main` est byte-identique a celui deja valide sur `staging` (`OwlProbe`
+verte, budget de noeuds partage a 128, capture device confirmee par
+Mathieu) -- meme principe deja applique aux merges tourniquet, diving
+board, lobe nord/balancoire precedents.
+
+**La chouette decor statique (LOT PROPS-1 complet) est desormais EN
+PRODUCTION** sur `keepy-ten.vercel.app`.
+
+**Reste ouvert : aucun sur ce merge.** Les deux points laisses ouverts par
+le lot de staging (poids du `.pck`, lisibilite au spawn) restent des
+questions de jugement device deja tranchees par la validation qui a
+autorise ce merge -- rien ne bloque plus derriere.
