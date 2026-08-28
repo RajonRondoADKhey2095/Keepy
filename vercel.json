@@ -1,16 +1,27 @@
 {
-  "headers": [
+  "rewrites": [
     {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
-        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
-      ]
-    },
+      "source": "/__/auth/:path*",
+      "destination": "https://keepy-8df91.firebaseapp.com/__/auth/:path*"
+    }
+  ],
+  "headers": [
     {
       "source": "/(.*).wasm",
       "headers": [
         { "key": "Content-Type", "value": "application/wasm" }
+      ]
+    },
+    {
+      "source": "/",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
       ]
     }
   ]

@@ -10,14 +10,18 @@ config_version=5
 [application]
 
 config/name="Keepy"
-run/main_scene="res://scenes/TitleScreen.tscn"
+run/main_scene="res://scenes/LoginScreen.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
-config/icon="res://icon.svg"
+config/icon="res://icon.png"
 
 [autoload]
 
 GameState="*res://scripts/autoload/GameState.gd"
 Leaderboard="*res://scripts/autoload/Leaderboard.gd"
+Auth="*res://scripts/autoload/Auth.gd"
+Quizz="*res://scripts/autoload/Quizz.gd"
+BattleStats="*res://scripts/autoload/BattleStats.gd"
+SafeArea="*res://scripts/autoload/SafeArea.gd"
 
 [display]
 

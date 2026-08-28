@@ -38,6 +38,13 @@ class_name GameOverScreen
 ## purpose -- worst case is a cosmetic mismatch in the prompt, and the
 ## round trip is normally far shorter than a full run.
 
+## THE WAY BACK TO THE HUB (23 aout 2026). "Rejouer" was the only control
+## here, so a run that ended left the player looping Chased forever -- the
+## plateau hub was unreachable without a browser reload. HubButton is that
+## exit, and it is a NEW path rather than a repointed one: Chased never had
+## a route to Hub.tscn to begin with (see TitleScreen.gd's header).
+const HUB_SCENE := "res://scenes/HubWorld.tscn"
+
 enum _TopFetchStep { NONE, PRECHECK, FINAL }
 
 @onready var root: Control = $Root
@@ -58,7 +65,16 @@ const CAUSE_TEXT := {
 @onready var submit_name_button: Button = $Root/CenterContainer/VBoxContainer/NameEntryContainer/SubmitNameButton
 @onready var top_list_label: Label = $Root/CenterContainer/VBoxContainer/TopListLabel
 @onready var top_list_container: VBoxContainer = $Root/CenterContainer/VBoxContainer/TopListContainer
+## Shown under the top list whenever a network round trip (submission or
+## fetch) came back failed -- discreet (see its styling in the .tscn), and
+## never blocks Rejouer: it is a plain Label with no effect on
+## RetryButton's own click handling, it just occupies its own row above it.
+## Text is authored on the node itself (GameOverScreen.tscn), matching
+## RecordLabel/TopListLabel's own pattern -- the script only ever flips
+## .visible, never .text, on this one.
+@onready var sync_status_label: Label = $Root/CenterContainer/VBoxContainer/SyncStatusLabel
 @onready var retry_button: Button = $Root/CenterContainer/VBoxContainer/RetryButton
+@onready var hub_button: Button = $Root/CenterContainer/VBoxContainer/HubButton
 
 var _top_fetch_step: int = _TopFetchStep.NONE
 var _is_new_record: bool = false
@@ -68,6 +84,7 @@ var _pending_glands: int = 0
 
 func _ready() -> void:
 	retry_button.pressed.connect(_on_retry_pressed)
+	hub_button.pressed.connect(_on_hub_pressed)
 	submit_name_button.pressed.connect(_on_submit_name_pressed)
 	GameState.state_changed.connect(_on_state_changed)
 	Leaderboard.top_scores_fetched.connect(_on_top_scores_fetched)
@@ -91,6 +108,7 @@ func _show_game_over() -> void:
 	record_label.visible = _is_new_record
 
 	name_entry_container.visible = false
+	sync_status_label.visible = false
 	_set_top_list_status("Chargement du classement...")
 	root.visible = true
 
@@ -115,6 +133,12 @@ func _handle_precheck_result(entries: Array, success: bool) -> void:
 	if qualifies:
 		name_input.text = Leaderboard.get_saved_name()
 		name_entry_container.visible = true
+		# TopListLabel was left on "Chargement du classement..." by
+		# _show_game_over -- with the precheck now resolved and the name
+		# prompt up, that text describes a fetch that already finished,
+		# not what the player needs to do next.
+		_set_top_list_status("Entre ton pseudo pour valider ton score")
+		name_input.grab_focus()
 	else:
 		_begin_submit(Leaderboard.get_saved_name())
 
@@ -129,12 +153,23 @@ func _begin_submit(player_name: String) -> void:
 ## Fires after every submit attempt, success or failure alike -- either
 ## way the board may have changed (this run's own submission, or simply
 ## time passing), so it's re-fetched for display once more.
-func _on_submit_finished(_success: bool) -> void:
+func _on_submit_finished(success: bool) -> void:
+	# success=false here means the score never reached Firestore (offline,
+	# request error, precondition failure...) despite network_enabled
+	# being true -- there is otherwise no visible sign of that, since the
+	# final fetch below can very well succeed on its own and render an
+	# unrelated (stale, this run absent) top list right after.
+	sync_status_label.visible = not success
 	_set_top_list_status("Chargement du classement...")
 	_top_fetch_step = _TopFetchStep.FINAL
 	Leaderboard.fetch_top_scores()
 
 func _render_top_scores(entries: Array, success: bool) -> void:
+	if not success:
+		# The submit itself may well have succeeded; this is the FOLLOW-UP
+		# fetch failing. Surfaced too, alongside the submit outcome above
+		# (never overwritten to a false "all good" once either has failed).
+		sync_status_label.visible = true
 	_clear_top_list()
 	if not success:
 		_set_top_list_status("Classement indisponible")
@@ -162,3 +197,10 @@ func _clear_top_list() -> void:
 
 func _on_retry_pressed() -> void:
 	GameState.start_run()
+
+## Leaves Chased entirely. No GameState reset first: the hub does not read
+## run state, and Game.tscn calls GameState.start_run() in its own _ready()
+## whenever it is entered again -- so resetting here would only duplicate
+## that, in the scene that is about to be freed.
+func _on_hub_pressed() -> void:
+	get_tree().change_scene_to_file(HUB_SCENE)

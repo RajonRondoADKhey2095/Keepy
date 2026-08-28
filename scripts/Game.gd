@@ -9,6 +9,11 @@ extends Node3D
 @onready var camera: CameraFollow = $World/CameraFollow
 
 func _ready() -> void:
+	# DEFENSIVE, not a fix for a screen that forgot: the tuned 9:16 framing is
+	# what OBSTACLE_REACTION_BUDGET_S is calibrated against, so this scene must
+	# never inherit whatever aspect the previous screen happened to leave. A
+	# probe booting Game.tscn directly has to get it too.
+	SafeArea.keep_game_framing()
 	camera.target = keepy
 	GameState.state_changed.connect(_on_state_changed)
 	GameState.start_run()

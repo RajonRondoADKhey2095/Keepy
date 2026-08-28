@@ -1,0 +1,1101 @@
+[gd_resource type="Resource" script_class="HubLayout" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/hub/HubLayout.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+props = [{
+"game_id": &"chased",
+"label": "Chased",
+"position": Vector3(-5.4, 0, -4.6),
+"rotation_y": 24.0,
+"scale": 1.0,
+"type": &"portal"
+}, {
+"game_id": &"quizz",
+"label": "Quizz",
+"position": Vector3(0, 0, -7.2),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"portal"
+}, {
+"game_id": &"battle",
+"label": "Battle",
+"position": Vector3(5.4, 0, -4.6),
+"rotation_y": -24.0,
+"scale": 1.0,
+"type": &"portal"
+}, {
+"position": Vector3(-9.44, 0, -8.45),
+"rotation_y": 35.1,
+"scale": 1.25,
+"type": &"tree"
+}, {
+"position": Vector3(-6.21, 0, -9.83),
+"rotation_y": 155.5,
+"scale": 0.92,
+"type": &"tree"
+}, {
+"position": Vector3(-2.32, 0, -10.13),
+"rotation_y": 168.3,
+"scale": 1.13,
+"type": &"tree"
+}, {
+"position": Vector3(31.583, 0, -3.665),
+"rotation_y": 139.5,
+"scale": 0.85,
+"type": &"tree"
+}, {
+"position": Vector3(-4.864, 0, -32.623),
+"rotation_y": 114.9,
+"scale": 1.10,
+"type": &"tree"
+}, {
+"position": Vector3(-4.916, 0, -28.293),
+"rotation_y": 296.8,
+"scale": 1.03,
+"type": &"tree"
+}, {
+"position": Vector3(-9.87, 0, -4.07),
+"rotation_y": 284.0,
+"scale": 1.37,
+"type": &"tree"
+}, {
+"position": Vector3(9.69, 0, -3.7),
+"rotation_y": 350.8,
+"scale": 0.88,
+"type": &"tree"
+}, {
+"position": Vector3(-10.05, 0, 0.86),
+"rotation_y": 97.1,
+"scale": 1.16,
+"type": &"tree"
+}, {
+"position": Vector3(9.12, 0, 0.82),
+"rotation_y": 133.3,
+"scale": 1.18,
+"type": &"tree"
+}, {
+"position": Vector3(-9.08, 0, 4.98),
+"rotation_y": 323.4,
+"scale": 1.38,
+"type": &"tree"
+}, {
+"position": Vector3(8.87, 0, 5.14),
+"rotation_y": 341.7,
+"scale": 1.09,
+"type": &"tree"
+}, {
+"position": Vector3(-7.22, 0, 8.98),
+"rotation_y": 81.7,
+"scale": 1.37,
+"type": &"tree"
+}, {
+"position": Vector3(7.18, 0, 8.9),
+"rotation_y": 283.9,
+"scale": 1.19,
+"type": &"tree"
+}, {
+"position": Vector3(-7.2, 0, -1.92),
+"rotation_y": 219.0,
+"scale": 0.80,
+"type": &"rock"
+}, {
+"position": Vector3(6.84, 0, -2.31),
+"rotation_y": 2.9,
+"scale": 0.85,
+"type": &"rock"
+}, {
+"position": Vector3(-4.63, 0, 2.74),
+"rotation_y": 299.7,
+"scale": 0.70,
+"type": &"rock"
+}, {
+"position": Vector3(4.62, 0, 2.49),
+"rotation_y": 19.1,
+"scale": 1.30,
+"type": &"rock"
+}, {
+"position": Vector3(-1.65, 0, 6.45),
+"rotation_y": 44.2,
+"scale": 1.22,
+"type": &"rock"
+}, {
+"position": Vector3(2.64, 0, 6.68),
+"rotation_y": 178.1,
+"scale": 0.90,
+"type": &"rock"
+}, {
+"position": Vector3(-5.88, 0, 6.34),
+"rotation_y": 319.3,
+"scale": 0.64,
+"type": &"rock"
+}, {
+"position": Vector3(5.98, 0, 5.31),
+"rotation_y": 161.1,
+"scale": 1.36,
+"type": &"rock"
+}, {
+"position": Vector3(-3.42, 0, -1.76),
+"rotation_y": 205.7,
+"scale": 1.10,
+"type": &"bush"
+}, {
+"position": Vector3(-3.26, 0, -2.67),
+"rotation_y": 260.3,
+"scale": 1.04,
+"type": &"bush"
+}, {
+"position": Vector3(-3.49, 0, -3.62),
+"rotation_y": 301.4,
+"scale": 0.84,
+"type": &"bush"
+}, {
+"position": Vector3(2.53, 0, -1.69),
+"rotation_y": 32.3,
+"scale": 1.32,
+"type": &"bush"
+}, {
+"position": Vector3(3.27, 0, -1.28),
+"rotation_y": 280.9,
+"scale": 0.68,
+"type": &"bush"
+}, {
+"position": Vector3(3.03, 0, -2.65),
+"rotation_y": 289.7,
+"scale": 0.91,
+"type": &"bush"
+}, {
+"position": Vector3(-6.05, 0, 4.22),
+"rotation_y": 265.3,
+"scale": 1.05,
+"type": &"bush"
+}, {
+"position": Vector3(-5.55, 0, 3.53),
+"rotation_y": 337.7,
+"scale": 1.09,
+"type": &"bush"
+}, {
+"position": Vector3(-4.42, 0, 4.78),
+"rotation_y": 248.6,
+"scale": 1.01,
+"type": &"bush"
+}, {
+"position": Vector3(-5.46, 0, 4.93),
+"rotation_y": 288.4,
+"scale": 1.11,
+"type": &"bush"
+}, {
+"position": Vector3(4.48, 0, 4.1),
+"rotation_y": 323.4,
+"scale": 0.81,
+"type": &"bush"
+}, {
+"position": Vector3(5.92, 0, 4.42),
+"rotation_y": 7.2,
+"scale": 1.12,
+"type": &"bush"
+}, {
+"position": Vector3(4.69, 0, 4.95),
+"rotation_y": 151.9,
+"scale": 1.10,
+"type": &"bush"
+}, {
+"position": Vector3(-2.23, 0, 3.64),
+"rotation_y": 141.4,
+"scale": 1.37,
+"type": &"flower",
+"variant": 0
+}, {
+"position": Vector3(-2.05, 0, 2.72),
+"rotation_y": 104.5,
+"scale": 0.77,
+"type": &"flower",
+"variant": 2
+}, {
+"position": Vector3(-2.69, 0, 3.02),
+"rotation_y": 276.6,
+"scale": 1.22,
+"type": &"flower",
+"variant": 1
+}, {
+"position": Vector3(1.58, 0, 3.52),
+"rotation_y": 83.2,
+"scale": 1.05,
+"type": &"flower",
+"variant": 2
+}, {
+"position": Vector3(2.03, 0, 3.09),
+"rotation_y": 161.5,
+"scale": 0.72,
+"type": &"flower",
+"variant": 2
+}, {
+"position": Vector3(1.82, 0, 4.02),
+"rotation_y": 234.1,
+"scale": 1.27,
+"type": &"flower",
+"variant": 1
+}, {
+"position": Vector3(1.07, 0, 3.24),
+"rotation_y": 184.0,
+"scale": 1.16,
+"type": &"flower",
+"variant": 0
+}, {
+"position": Vector3(0.46, 0, 7.42),
+"rotation_y": 84.5,
+"scale": 1.09,
+"type": &"flower",
+"variant": 0
+}, {
+"position": Vector3(-0.18, 0, 7.53),
+"rotation_y": 110.5,
+"scale": 1.11,
+"type": &"flower",
+"variant": 1
+}, {
+"position": Vector3(0.96, 0, 8.13),
+"rotation_y": 36.5,
+"scale": 0.86,
+"type": &"flower",
+"variant": 1
+}, {
+"position": Vector3(-0.29, 0, 8.29),
+"rotation_y": 339.2,
+"scale": 1.04,
+"type": &"flower",
+"variant": 2
+}, {
+"position": Vector3(0.52, 0, 8.68),
+"rotation_y": 4.8,
+"scale": 1.23,
+"type": &"flower",
+"variant": 0
+}, {
+"position": Vector3(-7.78, 0, 3.36),
+"rotation_y": 94.5,
+"scale": 0.91,
+"type": &"flower",
+"variant": 1
+}, {
+"position": Vector3(-8.63, 0, 2.55),
+"rotation_y": 36.2,
+"scale": 1.00,
+"type": &"flower",
+"variant": 2
+}, {
+"position": Vector3(-8.23, 0, 2.95),
+"rotation_y": 51.5,
+"scale": 1.19,
+"type": &"flower",
+"variant": 1
+}, {
+"position": Vector3(2.668, 0, -33.895),
+"rotation_y": 14.0,
+"scale": 1.0,
+"variant": 0,
+"type": &"landmark"
+}, {
+"position": Vector3(12.7, 0, 0.55),
+"rotation_y": -28.0,
+"scale": 1.0,
+"variant": 1,
+"type": &"landmark"
+}, {
+"position": Vector3(0.6, 0, 12.6),
+"rotation_y": 38.0,
+"scale": 0.92,
+"variant": 2,
+"type": &"landmark"
+}, {
+"position": Vector3(-12.75, 0, -0.4),
+"rotation_y": 62.0,
+"scale": 0.86,
+"variant": 1,
+"type": &"landmark"
+}, {
+"position": Vector3(-11.26, 0, -8.86),
+"rotation_y": 121.4,
+"scale": 0.756,
+"type": &"bush"
+}, {
+"position": Vector3(6.965, 0, 19.832),
+"rotation_y": 100.3,
+"scale": 0.624,
+"type": &"bush"
+}, {
+"position": Vector3(-12.93, 0, -8.26),
+"rotation_y": 274.8,
+"scale": 0.787,
+"type": &"bush"
+}, {
+"position": Vector3(10.769, 0, 20.263),
+"rotation_y": 232.6,
+"scale": 1.335,
+"type": &"bush"
+}, {
+"position": Vector3(27.86, 0, 1.552),
+"rotation_y": 121.2,
+"scale": 0.969,
+"type": &"bush"
+}, {
+"position": Vector3(-10.69, 0, 11.45),
+"rotation_y": 207.0,
+"scale": 1.291,
+"type": &"bush"
+}, {
+"position": Vector3(-10.17, 0, 12.24),
+"rotation_y": 201.4,
+"scale": 1.311,
+"type": &"bush"
+}, {
+"position": Vector3(-10.32, 0, 13.41),
+"rotation_y": 227.6,
+"scale": 1.185,
+"type": &"bush"
+}, {
+"position": Vector3(-22.117, 0, 11.471),
+"rotation_y": 345.9,
+"scale": 0.83,
+"variant": 1,
+"type": &"flower"
+}, {
+"position": Vector3(21.832, 0, 17.031),
+"rotation_y": 20.1,
+"scale": 1.058,
+"variant": 1,
+"type": &"flower"
+}, {
+"position": Vector3(21.015, 0, 12.726),
+"rotation_y": 263.1,
+"scale": 0.925,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(6.44, 0, 12.52),
+"rotation_y": 291.6,
+"scale": 0.942,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(7.2, 0, 13.38),
+"rotation_y": 240.5,
+"scale": 1.308,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(13.48, 0, 5.32),
+"rotation_y": 149.5,
+"scale": 1.195,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(12.97, 0, 7.06),
+"rotation_y": 263.4,
+"scale": 0.8,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(13.94, 0, 6.01),
+"rotation_y": 152.2,
+"scale": 0.85,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(-13.96, 0, 5.69),
+"rotation_y": 248.7,
+"scale": 0.785,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(-13.18, 0, 5.49),
+"rotation_y": 46.9,
+"scale": 0.989,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-13.6, 0, -3.9),
+"rotation_y": 255.4,
+"scale": 1.301,
+"type": &"tree"
+}, {
+"position": Vector3(-11.6, 0, 7.6),
+"rotation_y": 269.9,
+"scale": 0.927,
+"type": &"tree"
+}, {
+"position": Vector3(26.948, 0, -4.93),
+"rotation_y": 357.6,
+"scale": 0.806,
+"type": &"tree"
+}, {
+"position": Vector3(11.7, 0, 7.3),
+"rotation_y": 210.2,
+"scale": 0.668,
+"type": &"tree"
+}, {
+"position": Vector3(-3.6, 0, -13.6),
+"rotation_y": 253.2,
+"scale": 0.7,
+"type": &"tree"
+}, {
+"position": Vector3(32.686, 0, -3.045),
+"rotation_y": 80.7,
+"scale": 0.829,
+"type": &"tree"
+}, {
+"position": Vector3(-2.6, 0, 13.7),
+"rotation_y": 20.6,
+"scale": 0.647,
+"type": &"tree"
+}, {
+"position": Vector3(13.9, 0, -1.9),
+"rotation_y": 212.3,
+"scale": 1.264,
+"type": &"tree"
+}, {
+"position": Vector3(-13.9, 0, 2.1),
+"rotation_y": 332.7,
+"scale": 0.728,
+"type": &"rock"
+}, {
+"position": Vector3(13.8, 0, 3.4),
+"rotation_y": 17.3,
+"scale": 0.996,
+"type": &"rock"
+}, {
+"position": Vector3(14.799, 0, 21.987),
+"rotation_y": 229.4,
+"scale": 0.666,
+"type": &"rock"
+}, {
+"position": Vector3(-5.106, 0, 22.332),
+"rotation_y": 259.4,
+"scale": 1.137,
+"type": &"rock"
+}, {
+"position": Vector3(-13.5, 0, 10.2),
+"rotation_y": 86.3,
+"scale": 1.09,
+"type": &"rock"
+}, {
+"position": Vector3(13.1, 0, 10.0),
+"rotation_y": 151.3,
+"scale": 0.928,
+"type": &"rock"
+}, {
+"position": Vector3(3.6, 0, 13.9),
+"rotation_y": 284.7,
+"scale": 0.626,
+"type": &"rock"
+}, {
+"position": Vector3(-13.9, 0, -6.9),
+"rotation_y": 138.2,
+"scale": 0.665,
+"type": &"rock"
+}, {
+"position": Vector3(33.257, 0, -7.069),
+"rotation_y": -26.0,
+"scale": 1.000,
+"type": &"landmark",
+"variant": 2
+}, {
+"position": Vector3(16.16, 0, 15.07),
+"rotation_y": 18.0,
+"scale": 1.060,
+"type": &"landmark",
+"variant": 0
+}, {
+"position": Vector3(-15.41, 0, 14.12),
+"rotation_y": -41.0,
+"scale": 0.940,
+"type": &"landmark",
+"variant": 0
+}, {
+"position": Vector3(29.346, 0, 12.76),
+"rotation_y": 57.0,
+"scale": 0.880,
+"type": &"landmark",
+"variant": 2
+}, {
+"position": Vector3(11.634, 0, 28.086),
+"rotation_y": -34.0,
+"scale": 1.060,
+"type": &"landmark",
+"variant": 1
+}, {
+"position": Vector3(24.499, 0, 0.214),
+"rotation_y": 71.0,
+"scale": 1.120,
+"type": &"landmark",
+"variant": 0
+}, {
+"position": Vector3(-7.198, 0, 31.18),
+"rotation_y": 148.0,
+"scale": 1.000,
+"type": &"landmark",
+"variant": 1
+}, {
+"position": Vector3(-28.548, 0, 11.825),
+"rotation_y": -103.0,
+"scale": 1.090,
+"type": &"landmark",
+"variant": 2
+}, {
+"position": Vector3(-14.73, 0, 7.79),
+"rotation_y": 114.8,
+"scale": 0.678,
+"type": &"tree"
+}, {
+"position": Vector3(17.13, 0, 18.42),
+"rotation_y": 166.4,
+"scale": 0.768,
+"type": &"tree"
+}, {
+"position": Vector3(13.137, 0, 24.378),
+"rotation_y": 223.8,
+"scale": 1.008,
+"type": &"tree"
+}, {
+"position": Vector3(-29.90, 0, -13.73),
+"rotation_y": 327.6,
+"scale": 1.269,
+"type": &"tree"
+}, {
+"position": Vector3(-15.72, 0, -3.15),
+"rotation_y": 250.1,
+"scale": 1.294,
+"type": &"tree"
+}, {
+"position": Vector3(-14.68, 0, -30.331),
+"rotation_y": 270.6,
+"scale": 1.068,
+"type": &"tree"
+}, {
+"position": Vector3(0.518, 0, -30.863),
+"rotation_y": 211.9,
+"scale": 0.643,
+"type": &"tree"
+}, {
+"position": Vector3(-0.45, 0, 22.21),
+"rotation_y": 238.2,
+"scale": 1.162,
+"type": &"tree"
+}, {
+"position": Vector3(-1.52, 0, 21.41),
+"rotation_y": 282.8,
+"scale": 1.339,
+"type": &"tree"
+}, {
+"position": Vector3(-3.078, 0, -30.357),
+"rotation_y": 147.9,
+"scale": 1.021,
+"type": &"tree"
+}, {
+"position": Vector3(-18.02, 0, 20.96),
+"rotation_y": 229.4,
+"scale": 0.885,
+"type": &"tree"
+}, {
+"position": Vector3(-7.93, 0, 18.43),
+"rotation_y": 66.1,
+"scale": 0.875,
+"type": &"tree"
+}, {
+"position": Vector3(-7.05, 0, 19.46),
+"rotation_y": 97.3,
+"scale": 0.719,
+"type": &"tree"
+}, {
+"position": Vector3(-11.92, 0, 23.68),
+"rotation_y": 23.3,
+"scale": 1.072,
+"type": &"tree"
+}, {
+"position": Vector3(23.75, 0, 23.88),
+"rotation_y": 292.4,
+"scale": 0.650,
+"type": &"tree"
+}, {
+"position": Vector3(20.36, 0, 0.38),
+"rotation_y": 17.3,
+"scale": 0.686,
+"type": &"tree"
+}, {
+"position": Vector3(19.40, 0, -0.75),
+"rotation_y": 259.4,
+"scale": 1.110,
+"type": &"tree"
+}, {
+"position": Vector3(-23.13, 0, -16.01),
+"rotation_y": 344.1,
+"scale": 1.321,
+"type": &"rock"
+}, {
+"position": Vector3(-0.25, 0, 19.11),
+"rotation_y": 10.5,
+"scale": 1.081,
+"type": &"rock"
+}, {
+"position": Vector3(0.434, 0, 24.447),
+"rotation_y": 195.6,
+"scale": 0.999,
+"type": &"rock"
+}, {
+"position": Vector3(17.489, 0, 11.277),
+"rotation_y": 100.3,
+"scale": 1.352,
+"type": &"rock"
+}, {
+"position": Vector3(-7.198, 0, -28.845),
+"rotation_y": 191.8,
+"scale": 0.776,
+"type": &"rock"
+}, {
+"position": Vector3(7.16, 0, 22.19),
+"rotation_y": 80.4,
+"scale": 1.069,
+"type": &"rock"
+}, {
+"position": Vector3(8.61, 0, 22.30),
+"rotation_y": 348.7,
+"scale": 1.190,
+"type": &"rock"
+}, {
+"position": Vector3(23.56, 0, 16.46),
+"rotation_y": 68.7,
+"scale": 0.817,
+"type": &"rock"
+}, {
+"position": Vector3(-20.86, 0, -13.80),
+"rotation_y": 247.6,
+"scale": 0.974,
+"type": &"rock"
+}, {
+"position": Vector3(24.847, 0, -4.56),
+"rotation_y": 17.1,
+"scale": 1.367,
+"type": &"rock"
+}, {
+"position": Vector3(33.637, 0, 0.285),
+"rotation_y": 222.2,
+"scale": 0.886,
+"type": &"rock"
+}, {
+"position": Vector3(21.588, 0, 1.417),
+"rotation_y": 18.7,
+"scale": 1.090,
+"type": &"rock"
+}, {
+"position": Vector3(29.234, 0, -5.17),
+"rotation_y": 77.2,
+"scale": 0.830,
+"type": &"rock"
+}, {
+"position": Vector3(25.637, 0, 15.944),
+"rotation_y": 200.7,
+"scale": 1.172,
+"type": &"rock"
+}, {
+"position": Vector3(-22.467, 0, -13.624),
+"rotation_y": 214.0,
+"scale": 0.659,
+"type": &"rock"
+}, {
+"position": Vector3(-3.437, 0, 28.243),
+"rotation_y": 230.2,
+"scale": 1.241,
+"type": &"rock"
+}, {
+"position": Vector3(-20.43, 0, 21.41),
+"rotation_y": 316.2,
+"scale": 0.809,
+"type": &"rock"
+}, {
+"position": Vector3(-19.65, 0, 22.47),
+"rotation_y": 186.9,
+"scale": 0.993,
+"type": &"rock"
+}, {
+"position": Vector3(-11.39, 0, 22.26),
+"rotation_y": 243.6,
+"scale": 0.664,
+"type": &"rock"
+}, {
+"position": Vector3(-16.46, 0, 18.92),
+"rotation_y": 354.2,
+"scale": 1.351,
+"type": &"rock"
+}, {
+"position": Vector3(-6.82, 0, 22.37),
+"rotation_y": 282.0,
+"scale": 0.792,
+"type": &"rock"
+}, {
+"position": Vector3(-27.292, 0, -15.055),
+"rotation_y": 46.1,
+"scale": 1.218,
+"type": &"rock"
+}, {
+"position": Vector3(-11.159, 0, 19.474),
+"rotation_y": 302.1,
+"scale": 1.085,
+"type": &"rock"
+}, {
+"position": Vector3(-22.66, 0, 5.45),
+"rotation_y": 181.5,
+"scale": 1.211,
+"type": &"rock"
+}, {
+"position": Vector3(-17.40, 0, 5.78),
+"rotation_y": 64.3,
+"scale": 0.980,
+"type": &"rock"
+}, {
+"position": Vector3(-16.75, 0, 6.61),
+"rotation_y": 113.2,
+"scale": 0.789,
+"type": &"rock"
+}, {
+"position": Vector3(20.775, 0, 14.896),
+"rotation_y": 233.9,
+"scale": 1.155,
+"type": &"bush"
+}, {
+"position": Vector3(29.785, 0, 4.998),
+"rotation_y": 126.4,
+"scale": 0.742,
+"type": &"bush"
+}, {
+"position": Vector3(8.735, 0, 19.051),
+"rotation_y": 29.6,
+"scale": 1.304,
+"type": &"bush"
+}, {
+"position": Vector3(26.639, 0, 2.695),
+"rotation_y": 80.2,
+"scale": 0.665,
+"type": &"bush"
+}, {
+"position": Vector3(-23.67, 0, -19.79),
+"rotation_y": 99.7,
+"scale": 1.157,
+"type": &"bush"
+}, {
+"position": Vector3(24.808, 0, 3.606),
+"rotation_y": 353.9,
+"scale": 1.210,
+"type": &"bush"
+}, {
+"position": Vector3(27.719, 0, 5.473),
+"rotation_y": 44.7,
+"scale": 0.993,
+"type": &"bush"
+}, {
+"position": Vector3(30.404, 0, 2.806),
+"rotation_y": 356.4,
+"scale": 1.224,
+"type": &"bush"
+
+}, {
+"position": Vector3(22.57, 0, 10.92),
+"rotation_y": 229.5,
+"scale": 0.882,
+"type": &"stump"
+}, {
+"position": Vector3(21.99, 0, 3.44),
+"rotation_y": 27.4,
+"scale": 0.802,
+"type": &"stump"
+}, {
+"position": Vector3(17.61, 0, 4.72),
+"rotation_y": 349.9,
+"scale": 0.843,
+"type": &"stump"
+}, {
+"position": Vector3(16.99, 0, 9.21),
+"rotation_y": 343.0,
+"scale": 0.901,
+"type": &"stump"
+}, {
+"position": Vector3(-19.14, 0, 19.24),
+"rotation_y": 270.6,
+"scale": 1.047,
+"type": &"stump"
+}, {
+"position": Vector3(-16.34, 0, 9.99),
+"rotation_y": 138.9,
+"scale": 0.994,
+"type": &"stump"
+}, {
+"position": Vector3(9.07, 0, -1.11),
+"rotation_y": 254.0,
+"scale": 1.062,
+"type": &"stump"
+}, {
+"position": Vector3(-24.909, 0, 18.228),
+"rotation_y": 339.9,
+"scale": 1.195,
+"type": &"stump"
+}, {
+"position": Vector3(30.265, 0, -1.506),
+"rotation_y": 281.5,
+"scale": 1.100,
+"type": &"stump"
+}, {
+"position": Vector3(-4.39, 0, -10.06),
+"rotation_y": 147.9,
+"scale": 1.009,
+"type": &"stump"
+}, {
+"position": Vector3(0.34, 0, -10.05),
+"rotation_y": 87.7,
+"scale": 1.139,
+"type": &"stump"
+}, {
+"position": Vector3(22.81, 0, 21.35),
+"rotation_y": 159.6,
+"scale": 0.922,
+"type": &"stump"
+}, {
+"position": Vector3(-15.60, 0, -5.18),
+"rotation_y": 248.7,
+"scale": 0.901,
+"type": &"stump"
+}, {
+"position": Vector3(-30.173, 0, 4.992),
+"rotation_y": 155.6,
+"scale": 0.914,
+"type": &"stump"
+}, {
+"position": Vector3(20.70, 0, 7.40),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"pond"
+}, {
+"position": Vector3(-25.10, 0, -5.30),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"lake"
+}, {
+"position": Vector3(-18.68, 0, 1.70),
+"rotation_y": 41.0,
+"scale": 1.18,
+"type": &"rock"
+}, {
+"position": Vector3(-25.85, 0, 4.17),
+"rotation_y": 214.0,
+"scale": 0.94,
+"type": &"rock"
+}, {
+"points": PackedVector3Array(17.58, 0, 6.67, 16.1, 0, 8.01, 11.59, 0, 8.54, 7.65, 0, 10.37, 5.43, 0, 9.95, -1.73, 0, 10, -3.9, 0, 10.14, -6.34, 0, 7.89, -11.14, 0, 5.97, -12.35, 0, 4.41, -14.58, 0, 3.42, -18.54, 0, -0.73),
+"type": &"stream",
+"width": 1.2
+}, {
+"position": Vector3(17.58, 0, 6.67),
+"rotation_y": 0.0,
+"scale": 1.0,
+"type": &"boat"
+}, {
+"position": Vector3(15.5, 0, -19),
+"rotation_y": 0.0,
+"scale": 1.000,
+"type": &"greatlake"
+}, {
+"position": Vector3(-12, 0, -19.5),
+"rotation_y": 0.0,
+"scale": 1.000,
+"type": &"greatlake"
+}, {
+"position": Vector3(17.372, 0, -12.464),
+"rotation_y": 0.0,
+"scale": 1.000,
+"radius": 3.20,
+"type": &"islet"
+}, {
+"position": Vector3(17.372, 0, -12.464),
+"rotation_y": 290.9,
+"scale": 1.000,
+"variant": 0,
+"type": &"landmark"
+}, {
+"position": Vector3(6.836, 0, -20.528),
+"rotation_y": 0.0,
+"scale": 1.000,
+"radius": 3.40,
+"type": &"islet"
+}, {
+"position": Vector3(6.836, 0, -20.528),
+"rotation_y": 259.4,
+"scale": 1.000,
+"variant": 1,
+"type": &"landmark"
+}, {
+"position": Vector3(19.884, 0, -25.496),
+"rotation_y": 0.0,
+"scale": 1.000,
+"radius": 3.00,
+"type": &"islet"
+}, {
+"position": Vector3(19.884, 0, -25.496),
+"rotation_y": 56.1,
+"scale": 1.000,
+"variant": 2,
+"type": &"landmark"
+}, {
+"position": Vector3(32.38, 0, -20.176),
+"rotation_y": -176.0,
+"scale": 1.000,
+"type": &"pontoon"
+}, {
+"position": Vector3(30.572, 0, -11.32),
+"rotation_y": 153.0,
+"scale": 1.000,
+"type": &"pontoon"
+}, {
+"position": Vector3(16.748, 0, -14.656),
+"rotation_y": 106.0,
+"scale": 1.000,
+"type": &"pontoon"
+}, {
+"position": Vector3(9.236, 0, -20.104),
+"rotation_y": -10.0,
+"scale": 1.000,
+"type": &"pontoon"
+}, {
+"position": Vector3(18.7, 0, -23.736),
+"rotation_y": -124.0,
+"scale": 1.000,
+"type": &"pontoon"
+}, {
+"position": Vector3(-26.89, 0, -7.97),
+"rotation_y": 225.2,
+"scale": 1.197,
+"type": &"tree"
+}, {
+"position": Vector3(6.643, 0, 32.682),
+"rotation_y": 143.6,
+"scale": 0.719,
+"type": &"tree"
+}, {
+"position": Vector3(-21.942, 0, -25.532),
+"rotation_y": 235.0,
+"scale": 1.222,
+"type": &"tree"
+}, {
+"position": Vector3(-28.53, 0, -27.81),
+"rotation_y": 282.4,
+"scale": 1.154,
+"type": &"tree"
+}, {
+"position": Vector3(-30.42, 0, -23.56),
+"rotation_y": 104.7,
+"scale": 1.272,
+"type": &"tree"
+}, {
+"position": Vector3(-28.45, 0, -18.56),
+"rotation_y": 297.0,
+"scale": 0.978,
+"type": &"rock"
+}, {
+"position": Vector3(15.461, 0, 19.708),
+"rotation_y": 127.4,
+"scale": 1.203,
+"type": &"rock"
+}, {
+"position": Vector3(-29.19, 0, 0.52),
+"rotation_y": 45.2,
+"scale": 0.748,
+"type": &"rock"
+}, {
+"position": Vector3(-1.916, 0, -26.616),
+"rotation_y": 256.8,
+"scale": 0.839,
+"type": &"rock"
+}, {
+"position": Vector3(-31.86, 0, -8.07),
+"rotation_y": 169.4,
+"scale": 1.205,
+"type": &"rock"
+}, {
+"position": Vector3(-28.10, 0, -23.52),
+"rotation_y": 61.7,
+"scale": 1.188,
+"type": &"rock"
+}, {
+"position": Vector3(-27.92, 0, -0.60),
+"rotation_y": 60.2,
+"scale": 0.985,
+"type": &"bush"
+}, {
+"position": Vector3(-34.90, 0, 11.59),
+"rotation_y": 192.7,
+"scale": 0.847,
+"type": &"bush"
+}, {
+"position": Vector3(29.869, 0, 7.138),
+"rotation_y": 99.6,
+"scale": 0.887,
+"type": &"bush"
+}, {
+"position": Vector3(-32.37, 0, -28.59),
+"rotation_y": 96.7,
+"scale": 0.707,
+"type": &"bush"
+}, {
+"position": Vector3(-27.07, 0, -6.88),
+"rotation_y": 192.3,
+"scale": 1.008,
+"variant": 2,
+"type": &"flower"
+}, {
+"position": Vector3(28.336, 0, 6.894),
+"rotation_y": 41.1,
+"scale": 1.253,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-28.16, 0, -21.63),
+"rotation_y": 67.8,
+"scale": 0.992,
+"variant": 1,
+"type": &"flower"
+}, {
+"position": Vector3(-32.45, 0, 8.96),
+"rotation_y": 327.3,
+"scale": 0.953,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-27.99, 0, -12.28),
+"rotation_y": 22.5,
+"scale": 1.299,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(-9.713, 0, -31.58),
+"rotation_y": 244.3,
+"scale": 1.203,
+"variant": 0,
+"type": &"flower"
+}, {
+"position": Vector3(0.4935, 0, -28.196),
+"deck_anchor": Vector3(3.0515, 1.8, -26.6285),
+"dive_direction": Vector3(0.85264, 0, 0.5225),
+"type": &"divingboard"
+}, {
+"position": Vector3(-21.1469, 0, 3.0628),
+"deck_anchor": Vector3(-22.4290, 1.8, 0.3505),
+"dive_direction": Vector3(-0.42736, 0, -0.90408),
+"type": &"divingboard"
+}, {
+"position": Vector3(-15.5728, 0, -8.5691),
+"deck_anchor": Vector3(-14.6407, 1.8, -11.4206),
+"dive_direction": Vector3(0.31068, 0, -0.95052),
+"type": &"divingboard"
+}, {
+"position": Vector3(-4, 0, 17.25),
+"rotation_y": 22,
+"type": &"turnstile"
+}]

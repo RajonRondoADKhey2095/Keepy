@@ -1,0 +1,512 @@
+rules_version = '2';
+
+// =====================================================================
+// Keepy -- Firestore security rules. THIS FILE IS THE SOURCE OF TRUTH.
+//
+// Deployed automatically by .github/workflows/firestore-rules.yml on any
+// push to `main` that touches it. Anything edited directly in the
+// Firebase Console is overwritten silently by the next such push -- do
+// not edit there.
+//
+// The ruleset is GLOBAL to the keepy-8df91 project: staging and
+// production evaluate this very same file, there is no per-environment
+// copy. That is exactly why the hardening below could only land once the
+// client that sends an auth token and a uid had itself reached `main`
+// (18 aout 2026, merge 9029bfe). Doing it in the other order would have
+// broken production the instant the rules changed, since prod would
+// still have been running a client that sent neither.
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /scores/{scoreId} {
+
+      // READ IS SIGNED-IN ONLY (18 aout 2026) -- decided on a measurement,
+      // not on a guess. The only reader of this collection in the entire
+      // project is GameOverScreen (Leaderboard.fetch_top_scores); grep
+      // finds no other caller. GameOverScreen is reachable only after a
+      // run, a run only through TitleScreen, and TitleScreen only through
+      // LoginScreen, which loads it solely for a signed-in user: its
+      // "Continuer (hors web)" escape hatch is `visible = false` in
+      // LoginScreen.tscn and is un-hidden on the `not OS.has_feature("web")`
+      // branch alone, which a shipped web build never takes. So no screen
+      // ever shows the leaderboard before authentication, and closing the
+      // read costs a real player nothing while removing a trivially
+      // scriptable dump of every stored pseudo by anyone holding the
+      // client API key (which is public by design, it ships in the build).
+      //
+      // Known, accepted residue: a player who IS signed in but whose
+      // getIdToken() round-trip never landed sends no Authorization header
+      // (Leaderboard._request_headers refuses to send an empty bearer), so
+      // request.auth is null and this read now fails where it used to
+      // succeed. It degrades to "Classement indisponible", never a crash,
+      // and that same player cannot write either -- so the leaderboard is
+      // uniformly unavailable to them instead of half-working.
+      allow read: if request.auth != null;
+
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['name','score','nuts','glands','createdAt','uid'])
+        // uid is DE FACTO mandatory from here on. hasOnly only caps the key
+        // set, so hasAll is what actually demands the field -- and it turns
+        // a missing uid into a clean false rather than an evaluation error.
+        // The equality is the point of the pair: it stops a signed-in client
+        // from filing a run under somebody else's uid, which authentication
+        // alone would still have allowed.
+        && request.resource.data.keys().hasAll(['uid'])
+        && request.resource.data.uid == request.auth.uid
+        // Everything below is unchanged from the ruleset deployed before
+        // this hardening -- same bounds, same types, same server-time
+        // requirement on createdAt (only :commit with setToServerValue
+        // REQUEST_TIME can satisfy it; see Leaderboard.submit_score).
+        && request.resource.data.score is int
+        && request.resource.data.score >= 0 && request.resource.data.score <= 100000
+        && request.resource.data.name is string && request.resource.data.name.size() <= 12
+        && request.resource.data.nuts is int && request.resource.data.nuts >= 0
+        && request.resource.data.glands is int && request.resource.data.glands >= 0
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // =================================================================
+    // KEEPY QUIZZ -- quizzes/{quizId} et sa sous-collection questions.
+    //
+    // Porte le brouillon de docs/QUIZZ_SPEC.md section 4. Les rules
+    // /scores ci-dessus sont INTOUCHEES par ce lot : meme service, meme
+    // `match /databases/{database}/documents`, blocs `match` distincts.
+    //
+    // Le triplet d'auth est LITTERALEMENT celui de /scores -- hasOnly /
+    // hasAll(['uid']) / uid == request.auth.uid -- pour qu'un relecteur
+    // voie le meme motif aux deux endroits et pas deux variantes a
+    // comparer (QUIZZ_SPEC.md 1, "Nom du champ proprietaire").
+    //
+    // LIMITES ACCEPTEES, pas des defauts a corriger ici (QUIZZ_SPEC.md 5) :
+    //   - le NOMBRE de questions par quiz n'est pas gatable : les rules
+    //     ne savent pas compter les documents d'une sous-collection. Le
+    //     plafond de 50 est client-side, et `questionCount` sur le doc
+    //     parent est borne mais JAMAIS verifie contre la realite -- c'est
+    //     une valeur d'affichage, pas une source de verite ;
+    //   - pas de suppression en cascade : supprimer un quiz ne supprime
+    //     pas ses questions. Les orphelines restent en base, lisibles par
+    //     leur seul proprietaire. Cout de stockage, pas de fuite ;
+    //   - `order` n'est ni unique ni contigu : une regle ne voit jamais
+    //     les autres documents. Le tri d'affichage doit etre fait sur
+    //     (order, questionId), jamais sur order seul.
+    // =================================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Proprietaire du document DEJA EN BASE (read / update / delete).
+    function ownsExisting() {
+      return signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Proprietaire du document ENTRANT (create / update).
+    function ownsIncoming() {
+      return signedIn() && request.resource.data.uid == request.auth.uid;
+    }
+
+    match /quizzes/{quizId} {
+
+      // `questionCount` est le SEUL champ optionnel du schema, d'ou la
+      // forme "absent OU valide" -- une comparaison directe sur un champ
+      // absent est une erreur d'evaluation, pas un false propre.
+      function validCount() {
+        return !request.resource.data.keys().hasAny(['questionCount'])
+          || (request.resource.data.questionCount is int
+              && request.resource.data.questionCount >= 0
+              && request.resource.data.questionCount <= 50);
+      }
+
+      // Second champ optionnel du schema (19 aout 2026), meme forme
+      // "absent OU valide" que validCount() et pour la meme raison.
+      //
+      // !! LE SERVEUR NE VERIFIE PAS QUE LA CATEGORIE EXISTE, ni qu'elle
+      // appartient au meme uid. Il le POURRAIT --
+      // `get(/databases/$(database)/documents/categories/$(...)).data.uid`
+      // -- et c'est ECARTE, pour les trois raisons deja invoquees au
+      // QUIZZ_SPEC.md 1 quand la denormalisation de `uid` sur les
+      // questions a evite ce meme get() :
+      //   1. un get() est une LECTURE FACTUREE a chaque evaluation, sur
+      //      le chemin le plus chaud de l'ecriture d'un quiz ;
+      //   2. il ferait dependre l'ecriture d'un quiz de la LISIBILITE
+      //      d'un autre document -- une categorie supprimee rendrait
+      //      soudain non modifiable chaque quiz qui la citait ;
+      //   3. `get()` d'un document absent rend null, et lire `.data`
+      //      dessus est une ERREUR D'EVALUATION, pas un false propre --
+      //      donc il faudrait de toute facon le doubler d'un exists().
+      // Ce qu'un `categoryId` invalide peut faire au pire : ranger un
+      // quiz du proprietaire dans un tiroir a lui qui n'existe pas.
+      // Aucune donnee d'autrui n'est atteignable par ce champ -- il ne
+      // sert JAMAIS de cle de lecture, la liste des quiz est filtree sur
+      // `uid` et rien d'autre. C'est donc une contrainte d'integrite,
+      // pas de securite : elle est validee CLIENT-SIDE (Quizz.gd) et
+      // documentee comme telle (QUIZZ_SPEC.md 5.5).
+      //
+      // 64 et non 20 : le plafond ne doit pas epouser la longueur de
+      // l'auto-id du generateur courant, sinon changer le generateur
+      // demanderait un passage par le gate `main`.
+      function validCategoryId() {
+        return !request.resource.data.keys().hasAny(['categoryId'])
+          || (request.resource.data.categoryId is string
+              && request.resource.data.categoryId.size() >= 1
+              && request.resource.data.categoryId.size() <= 64);
+      }
+
+      // Owner-only, SANS aucune condition sur `visibility`. Deliberement :
+      // une regle de lecture qui consulterait deja ce champ serait une
+      // porte a moitie ouverte (QUIZZ_SPEC.md 2.3).
+      //
+      // Vaut pour `get` ET pour `list`. Consequence cote client : Firestore
+      // n'execute que les requetes qu'il peut PROUVER conformes, donc un
+      // :runQuery de liste DOIT porter un fieldFilter `uid EQUAL <mon uid>`.
+      // Une liste non filtree est refusee, pas vide.
+      allow read: if ownsExisting();
+
+      allow create: if ownsIncoming()
+        && request.resource.data.keys().hasOnly(
+             ['uid','title','visibility','questionCount','categoryId','createdAt','updatedAt'])
+        && request.resource.data.keys().hasAll(
+             ['uid','title','visibility','createdAt','updatedAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 60
+        // SEULE la valeur 'private' est acceptee. Ce n'est pas un etat
+        // d'attente : c'est la decision actee par Mathieu le 18 aout 2026
+        // (QUIZZ_SPEC.md 2.3). Elargir le partage demande DEUX edits
+        // distincts de ce fichier -- elargir les valeurs acceptees ici,
+        // PUIS elargir la regle de lecture ci-dessus -- donc deux passages
+        // par le gate `main`, et la question de la triche structurelle
+        // tranchee avant le premier des deux.
+        && request.resource.data.visibility == 'private'
+        && validCount()
+        && validCategoryId()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      // La difference de fond avec /scores : ici `update` existe, donc il
+      // faut dire explicitement ce qui NE PEUT PAS bouger. Sans les deux
+      // lignes d'immuabilite, un proprietaire pourrait reassigner son quiz
+      // a un autre uid, ou antidater sa creation.
+      allow update: if ownsExisting()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.keys().hasOnly(
+             ['uid','title','visibility','questionCount','categoryId','createdAt','updatedAt'])
+        && request.resource.data.keys().hasAll(
+             ['uid','title','visibility','createdAt','updatedAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 60
+        && request.resource.data.visibility == 'private'
+        && validCount()
+        && validCategoryId()
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if ownsExisting();
+
+      match /questions/{questionId} {
+
+        // `uid` est DENORMALISE sur chaque question : ownsExisting() lit
+        // donc le uid de la QUESTION, jamais celui du quiz parent. C'est
+        // voulu -- un get() du parent serait une lecture facturee a chaque
+        // evaluation (plafond 10 par requete) et ferait dependre l'ecriture
+        // d'une question de la lisibilite du quiz (QUIZZ_SPEC.md 1).
+
+        function choiceValid(c) {
+          return c is string && c.size() >= 1 && c.size() <= 120;
+        }
+
+        function mcq4Valid() {
+          return request.resource.data.keys().hasOnly(
+                   ['uid','type','prompt','order','createdAt','updatedAt',
+                    'choice0','choice1','choice2','choice3','answerIndex'])
+            && request.resource.data.keys().hasAll(
+                 ['choice0','choice1','choice2','choice3','answerIndex'])
+            && choiceValid(request.resource.data.choice0)
+            && choiceValid(request.resource.data.choice1)
+            && choiceValid(request.resource.data.choice2)
+            && choiceValid(request.resource.data.choice3)
+            && request.resource.data.answerIndex is int
+            && request.resource.data.answerIndex >= 0
+            && request.resource.data.answerIndex <= 3;
+        }
+
+        function trueFalseValid() {
+          return request.resource.data.keys().hasOnly(
+                   ['uid','type','prompt','order','createdAt','updatedAt',
+                    'answerBool'])
+            && request.resource.data.keys().hasAll(['answerBool'])
+            && request.resource.data.answerBool is bool;
+        }
+
+        function freeValid() {
+          return request.resource.data.keys().hasOnly(
+                   ['uid','type','prompt','order','createdAt','updatedAt',
+                    'answerText'])
+            && request.resource.data.keys().hasAll(['answerText'])
+            && request.resource.data.answerText is string
+            && request.resource.data.answerText.size() >= 1
+            && request.resource.data.answerText.size() <= 120;
+        }
+
+        // C'est CE bloc qui rend `type` contraignant plutot que decoratif :
+        // chaque branche ferme son PROPRE jeu de cles, donc un 'mcq4' ne
+        // peut pas transporter answerBool, ni un 'truefalse' un answerIndex.
+        // C'est aussi le seul porteur de hasOnly sur cette sous-collection --
+        // commonValid() ne fait que hasAll, et les deux allow l'exigent.
+        function typeShapeValid() {
+          return (request.resource.data.type == 'mcq4' && mcq4Valid())
+            || (request.resource.data.type == 'truefalse' && trueFalseValid())
+            || (request.resource.data.type == 'free' && freeValid());
+        }
+
+        function commonValid() {
+          return request.resource.data.keys().hasAll(
+                   ['uid','type','prompt','order','createdAt','updatedAt'])
+            && request.resource.data.type in ['mcq4','truefalse','free']
+            && request.resource.data.prompt is string
+            && request.resource.data.prompt.size() >= 1
+            && request.resource.data.prompt.size() <= 200
+            && request.resource.data.order is int
+            && request.resource.data.order >= 0
+            && request.resource.data.order <= 199
+            && request.resource.data.updatedAt == request.time;
+        }
+
+        allow read: if ownsExisting();
+
+        allow create: if ownsIncoming()
+          && commonValid()
+          && request.resource.data.createdAt == request.time
+          && typeShapeValid();
+
+        // Trois immuables ici contre deux sur le quiz : `type` s'ajoute,
+        // parce qu'un changement de type en place ferait cohabiter un
+        // ancien jeu de champs avec un nouveau discriminant.
+        allow update: if ownsExisting()
+          && request.resource.data.uid == resource.data.uid
+          && request.resource.data.type == resource.data.type
+          && request.resource.data.createdAt == resource.data.createdAt
+          && commonValid()
+          && typeShapeValid();
+
+        allow delete: if ownsExisting();
+      }
+    }
+
+    // =================================================================
+    // KEEPY QUIZZ -- categories/{categoryId} (19 aout 2026).
+    //
+    // Collection TOP-LEVEL, au meme niveau que `quizzes`, PAS une
+    // sous-collection de celle-ci. Une categorie est un rangement qui
+    // appartient a l'UTILISATEUR et sert PLUSIEURS quiz : la nicher sous
+    // un quiz dirait l'inverse (une categorie par quiz), et lister
+    // "toutes mes categories" demanderait alors un collectionGroup --
+    // c'est-a-dire une requete que la regle owner-only ci-dessous ne
+    // saurait plus prouver conforme sans un index de plus.
+    //
+    // Meme triplet d'auth que /scores et /quizzes -- hasOnly /
+    // hasAll(['uid']) / uid == request.auth.uid. Aucune variante.
+    //
+    // PAS de champ `visibility` ici, et ce n'est pas un oubli : une
+    // categorie est TOUJOURS privee, il n'y a aucune decision de partage
+    // a trancher a son sujet. Un champ dont une seule valeur est
+    // acceptable existe sur /quizzes parce que la question du partage y
+    // est ouverte (QUIZZ_SPEC.md 2.3) ; ici elle ne l'est pas, donc le
+    // champ n'existe pas -- `hasOnly` le refuserait.
+    // =================================================================
+    match /categories/{categoryId} {
+
+      // Owner-only, `get` ET `list` -- meme consequence cliente que sur
+      // /quizzes : un :runQuery de liste DOIT porter un fieldFilter
+      // `uid EQUAL <mon uid>`, sinon il est REFUSE, pas vide.
+      allow read: if ownsExisting();
+
+      allow create: if ownsIncoming()
+        && request.resource.data.keys().hasOnly(['uid','name','createdAt'])
+        && request.resource.data.keys().hasAll(['uid','name','createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 30
+        && request.resource.data.createdAt == request.time;
+
+      // PAS d'`updatedAt` sur ce schema, contrairement a /quizzes : rien
+      // ne peut modifier une categorie (voir juste en dessous), donc un
+      // champ "derniere modification" ne pourrait jamais valoir autre
+      // chose que `createdAt`. Un champ qui ne peut pas varier est du
+      // bruit, pas une donnee.
+
+      // RENOMMER EST IMPOSSIBLE, et c'est explicite plutot que subi.
+      // Le client de ce lot (Quizz.gd : create / list / delete) n'ecrit
+      // jamais de mise a jour, donc ouvrir `update` deploierait une
+      // surface que rien n'exerce. Cout assume et reel : corriger une
+      // faute de frappe demande de supprimer puis recreer, ce qui donne
+      // un id NEUF -- tous les quiz qui pointaient sur l'ancien se
+      // retrouvent avec un `categoryId` pendant (meme famille que
+      // l'absence de cascade, QUIZZ_SPEC.md 5.2 ; cote client ils
+      // retombent dans "Sans categorie", jamais en erreur).
+      // Rouvrir demande DEUX choses, pas une : cette ligne devient le
+      // meme bloc que `update` sur /quizzes (ownsExisting + uid et
+      // createdAt immuables + name valide + hasOnly/hasAll), ET une
+      // methode `update_category()` cote Quizz.gd. Une seule des deux ne
+      // sert a rien.
+      allow update: if false;
+
+      allow delete: if ownsExisting();
+    }
+
+    // =================================================================
+    // KEEPY BATTLE -- battleStats/{docId} (21 aout 2026).
+    //
+    // PREMIERE ecriture Firestore de Keepy Battle. UN SEUL document
+    // cumule et ANONYME, incremente a chaque fin de combat par
+    // scripts/autoload/BattleStats.gd :
+    //
+    //   battleStats/global
+    //     gamesPlayed, wins, losses : int
+    //     attacks / dodges / blocks : { attempted, hit, missed } : int
+    //     updatedAt                 : timestamp serveur
+    //
+    // PAS de champ `uid`, et ce n'est pas un oubli : c'est le schema
+    // valide par Mathieu. Rien ici ne se rattache a un joueur, donc le
+    // triplet owner-only de /quizzes et /categories (hasAll(['uid']) +
+    // uid == request.auth.uid) est SANS OBJET -- il n'y a pas de
+    // proprietaire a comparer. La lecture suit /scores (signed-in, pas
+    // owner-only) parce que ce document est global par construction :
+    // un futur dashboard le lit pour tout le monde.
+    //
+    // !! LIMITE STRUCTURELLE ACCEPTEE EXPLICITEMENT PAR MATHIEU. Un
+    // document unique partage, incremente COTE CLIENT, ne peut pas etre
+    // rendu etanche par des rules : la cle d'API cliente est publique
+    // (elle est dans le build), donc n'importe quel porteur d'un jeton
+    // Google valide peut envoyer les increments qu'il veut. Les regles
+    // ci-dessous reduisent la surface autant que des rules le peuvent --
+    // signed-in, jeu de cles exact, entiers non negatifs, `updatedAt`
+    // impose par le serveur, aucun delete, et un controle de MONOTONIE
+    // qui refuse toute ecriture faisant BAISSER un compteur -- et c'est
+    // la limite assumee pour des chiffres d'affichage. Ce ne sont pas
+    // des donnees sensibles et il n'y a rien a exfiltrer.
+    //
+    // La monotonie sert DEUX fois, et la seconde est la moins evidente :
+    // elle est aussi le filet sous la FORME de l'ecriture du client.
+    // BattleStats envoie un `update` sans `fields`, avec un `updateMask`
+    // PRESENT et VIDE plus des `updateTransforms` -- la forme que les
+    // SDK officiels emettent pour set(increment(), {merge:true}). Si ce
+    // masque etait un jour perdu, les transforms atterriraient sur un
+    // document blanchi et les valeurs resultantes seraient les seuls
+    // deltas du combat courant, donc INFERIEURES a ce qui est stocke :
+    // la regle refuse alors l'ecriture au lieu de laisser les totaux
+    // repartir de zero. Le mode de panne d'un mauvais masque est une
+    // ecriture refusee, pas une donnee perdue.
+    // =================================================================
+    match /battleStats/{docId} {
+
+      // Toutes les cles du schema, a un seul endroit : hasOnly et hasAll
+      // portent la MEME liste, donc le jeu de cles est exact -- ni un
+      // champ en trop, ni un champ manquant. C'est ce qui oblige le
+      // client a envoyer meme les compteurs dont le delta vaut zero, et
+      // donc ce qui garantit que le tout premier write de la vie du
+      // document produit la forme complete (un `increment` sur un champ
+      // absent le cree a partir de 0).
+      function statKeys() {
+        return ['gamesPlayed','wins','losses','attacks','dodges','blocks','updatedAt'];
+      }
+
+      // Un groupe { attempted, hit, missed }.
+      //
+      // `hit + missed <= attempted` est une INEGALITE et jamais une
+      // egalite, parce que les deux populations different : `attempted`
+      // compte des engagements, `hit`/`missed` des resolutions. Une
+      // attaque interrompue avant sa fenetre active, une garde ou une
+      // esquive qui n'affronte aucun coup, sont engagees et jamais
+      // resolues. L'invariant se conserve par addition -- si chaque
+      // combat le respecte, la somme le respecte -- donc il est gatable
+      // sur des totaux cumules.
+      //
+      // `g is map` d'abord : appeler .keys() sur autre chose qu'une map
+      // est une ERREUR D'EVALUATION, pas un false propre (meme famille
+      // que le validCount() de /quizzes).
+      function groupValid(g) {
+        return g is map
+          && g.keys().hasOnly(['attempted','hit','missed'])
+          && g.keys().hasAll(['attempted','hit','missed'])
+          && g.attempted is int && g.attempted >= 0
+          && g.hit is int && g.hit >= 0
+          && g.missed is int && g.missed >= 0
+          && g.hit + g.missed <= g.attempted;
+      }
+
+      // La forme du document RESULTANT. `request.resource.data` porte les
+      // valeurs POST-transform, ce qui est exactement ce qui permet a
+      // /scores d'exiger `createdAt == request.time` depuis le 18 aout :
+      // seul un setToServerValue REQUEST_TIME peut satisfaire cette
+      // egalite, jamais l'horloge d'un client.
+      //
+      // `wins + losses <= gamesPlayed` et non `==` : un combat produit
+      // aujourd'hui exactement une victoire OU une defaite, donc
+      // l'egalite tiendrait -- mais elle briserait le jour ou un match
+      // nul existerait, pour ne rien apporter de plus contre un client
+      // malveillant qui peut de toute facon incrementer les trois.
+      function shapeValid() {
+        return request.resource.data.keys().hasOnly(statKeys())
+          && request.resource.data.keys().hasAll(statKeys())
+          && request.resource.data.gamesPlayed is int
+          && request.resource.data.gamesPlayed >= 0
+          && request.resource.data.wins is int && request.resource.data.wins >= 0
+          && request.resource.data.losses is int && request.resource.data.losses >= 0
+          && request.resource.data.wins + request.resource.data.losses
+             <= request.resource.data.gamesPlayed
+          && groupValid(request.resource.data.attacks)
+          && groupValid(request.resource.data.dodges)
+          && groupValid(request.resource.data.blocks)
+          && request.resource.data.updatedAt == request.time;
+      }
+
+      function groupGrew(now, before) {
+        return before is map
+          && before.keys().hasAll(['attempted','hit','missed'])
+          && now.attempted >= before.attempted
+          && now.hit >= before.hit
+          && now.missed >= before.missed;
+      }
+
+      // MONOTONIE -- aucun compteur ne peut baisser. Le hasAll sur le
+      // document DEJA EN BASE est la pour la meme raison que partout
+      // ailleurs dans ce fichier : lire une cle absente est une erreur
+      // d'evaluation, et on veut un refus propre. Consequence assumee :
+      // un document qui serait arrive en base sans ces cles (ecriture
+      // manuelle en Console, lot futur mal forme) bloquerait toute
+      // ecriture suivante. C'est le sens souhaite du refus.
+      function grew() {
+        return resource.data.keys().hasAll(
+                 ['gamesPlayed','wins','losses','attacks','dodges','blocks'])
+          && request.resource.data.gamesPlayed >= resource.data.gamesPlayed
+          && request.resource.data.wins >= resource.data.wins
+          && request.resource.data.losses >= resource.data.losses
+          && groupGrew(request.resource.data.attacks, resource.data.attacks)
+          && groupGrew(request.resource.data.dodges, resource.data.dodges)
+          && groupGrew(request.resource.data.blocks, resource.data.blocks);
+      }
+
+      allow read: if signedIn();
+
+      // Le tout premier combat de la vie du projet cree le document ;
+      // tous les suivants passent par `update`. Le client n'a AUCUNE
+      // branche pour distinguer les deux -- meme corps, meme transforms
+      // -- parce qu'un read-then-write courrait contre tous les autres
+      // joueurs. Les deux regles doivent donc exister, et `create` n'a
+      // pas de monotonie a verifier : il n'y a rien avant lui.
+      allow create: if signedIn() && shapeValid();
+
+      allow update: if signedIn() && shapeValid() && grew();
+
+      // Rien ne supprime jamais ce document. Aucun ecran ne le demande,
+      // et une collection sans delete ouvert est une collection qu'un
+      // jeton vole ne peut pas vider.
+      allow delete: if false;
+    }
+
+  }
+}

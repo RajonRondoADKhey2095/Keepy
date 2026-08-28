@@ -42,7 +42,21 @@ data_*/
 *.ipa
 *.zip
 
+# Python bytecode. scripts/dev/decimate_hazard.py imports decimate_decor.py
+# rather than copying its glTF writer, so running it leaves a __pycache__
+# beside them.
+__pycache__/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
 *.tmp
+
+# Godot import sidecars for the recon plates under docs/. The editor imports
+# every file under res:// whether or not anything references it, so a plate
+# dropped in docs/color-sheets/ grows a .import the first time anyone runs
+# `godot --headless --import`. They are reproducible, nothing reads them,
+# and docs/* is already in export_presets.cfg's exclude_filter so they never
+# reach the pack -- tracking them would be noise in every plate commit.
+# Scoped to docs/ on purpose: assets/**/*.import IS tracked and must stay so.
+docs/**/*.import

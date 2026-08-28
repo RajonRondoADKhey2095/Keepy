@@ -1,7 +1,13 @@
-[gd_scene load_steps=24 format=3]
+[gd_scene load_steps=28 format=3]
 
 [ext_resource type="Script" path="res://scripts/gameplay/Obstacle.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="2"]
+[ext_resource type="PackedScene" uid="uid://c2f7v5slxknqs" path="res://assets/models/keepy_jump_log.glb" id="3"]
+[ext_resource type="PackedScene" uid="uid://c43xb6ua6en3f" path="res://assets/models/keepy_stomper_toad.glb" id="4"]
+[ext_resource type="PackedScene" uid="uid://dgs4683xlxohy" path="res://assets/models/keepy_dodge_trunk.glb" id="5"]
+[ext_resource type="PackedScene" uid="uid://bjig84rlk0g5o" path="res://assets/models/keepy_enemy_rat.glb" id="6"]
+[ext_resource type="PackedScene" uid="uid://byog4flgb7vnd" path="res://assets/models/keepy_air_enemy_dragonfly.glb" id="7"]
+[ext_resource type="PackedScene" uid="uid://fhe2nblf5v5b" path="res://assets/models/keepy_charger_boar.glb" id="8"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_Dodge"]
 size = Vector3(1.2, 2.0, 1.0)
@@ -10,7 +16,8 @@ size = Vector3(1.2, 2.0, 1.0)
 size = Vector3(1.2, 2.0, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Dodge"]
-albedo_color = Color(0.3, 0.025, 0.025, 1)
+shading_mode = 0
+albedo_color = Color(0.21, 0.0175, 0.0175, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_Jump"]
 size = Vector3(1.2, 0.7, 1.0)
@@ -31,9 +38,10 @@ radius = 0.3
 height = 0.7
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Enemy"]
-albedo_color = Color(0.52, 0.08, 0.72, 1)
+shading_mode = 0
+albedo_color = Color(0.92, 0.9039, 0.8924, 1)
 emission_enabled = true
-emission = Color(0.52, 0.08, 0.72, 1)
+emission = Color(0.92, 0.9039, 0.8924, 1)
 emission_energy_multiplier = 0.3
 
 [sub_resource type="TorusMesh" id="TorusMesh_AirEnemy"]
@@ -44,9 +52,10 @@ outer_radius = 0.6
 size = Vector3(1.2, 1.2, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_AirEnemy"]
-albedo_color = Color(0.12, 0.85, 0.22, 1)
+shading_mode = 0
+albedo_color = Color(0.24, 1.0, 0.31, 1)
 emission_enabled = true
-emission = Color(0.15, 1.0, 0.2, 1)
+emission = Color(0.24, 1.0, 0.31, 1)
 emission_energy_multiplier = 1.1
 
 [sub_resource type="PrismMesh" id="PrismMesh_Charger"]
@@ -57,7 +66,7 @@ size = Vector3(1.2, 2.0, 1.0)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_Charger"]
 shading_mode = 0
-albedo_color = Color(1, 0.72, 0.88, 1)
+albedo_color = Color(0.1156, 0.0936, 0.12, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_ChargerTrail"]
 size = Vector3(1.1, 0.1, 0.6)
@@ -98,6 +107,9 @@ script = ExtResource("2")
 position = Vector3(0, 1.0, 0)
 mesh = SubResource("BoxMesh_Dodge")
 surface_material_override/0 = SubResource("StandardMaterial3D_Dodge")
+model_scene = ExtResource("5")
+model_scale = 1.18793
+model_offset = Vector3(0, 0.13542, 0)
 
 [node name="DodgeShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 1.0, 0)
@@ -109,6 +121,9 @@ position = Vector3(0, 0.35, 0)
 visible = false
 mesh = SubResource("BoxMesh_Jump")
 surface_material_override/0 = SubResource("StandardMaterial3D_Jump")
+model_scene = ExtResource("3")
+model_scale = 0.63483
+model_offset = Vector3(0, -0.185, 0)
 
 [node name="JumpShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 0.35, 0)
@@ -121,6 +136,9 @@ position = Vector3(0, 0.35, 0)
 visible = false
 mesh = SubResource("CapsuleMesh_Enemy")
 surface_material_override/0 = SubResource("StandardMaterial3D_Enemy")
+model_scene = ExtResource("6")
+model_scale = 0.46266
+model_offset = Vector3(0, -0.10231, 0)
 
 [node name="EnemyShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 0.35, 0)
@@ -133,6 +151,9 @@ position = Vector3(0, 0.35, 0)
 visible = false
 mesh = SubResource("CylinderMesh_Stomper")
 surface_material_override/0 = SubResource("StandardMaterial3D_Stomper")
+model_scene = ExtResource("4")
+model_scale = 0.7951
+model_offset = Vector3(0, -0.0663, 0)
 
 [node name="StomperShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 0.35, 0)
@@ -144,6 +165,8 @@ script = ExtResource("2")
 visible = false
 mesh = SubResource("TorusMesh_AirEnemy")
 surface_material_override/0 = SubResource("StandardMaterial3D_AirEnemy")
+model_scene = ExtResource("7")
+model_scale = 0.63173
 
 [node name="AirEnemyShape" type="CollisionShape3D" parent="."]
 disabled = true
@@ -155,6 +178,10 @@ transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.9, 0)
 visible = false
 mesh = SubResource("PrismMesh_Charger")
 surface_material_override/0 = SubResource("StandardMaterial3D_Charger")
+model_scene = ExtResource("8")
+model_scale = 1.82584
+model_rotation_degrees = Vector3(-90, 0, 0)
+model_offset = Vector3(-0.01547, 0.53393, -0.12699)
 
 [node name="ChargerShape" type="CollisionShape3D" parent="."]
 position = Vector3(0, 1.0, 0)

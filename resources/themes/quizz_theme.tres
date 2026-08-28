@@ -1,0 +1,466 @@
+[gd_resource type="Theme" load_steps=30 format=3]
+
+[ext_resource type="FontFile" path="res://assets/fonts/quizz/Fredoka-Variable.ttf" id="1_fredoka"]
+[ext_resource type="FontFile" path="res://assets/fonts/quizz/Quicksand-Variable.ttf" id="2_quicksand"]
+
+[sub_resource type="FontVariation" id="FontVariation_fredoka_semibold"]
+base_font = ExtResource("1_fredoka")
+variation_opentype = {"wght": 600.0}
+
+[sub_resource type="FontVariation" id="FontVariation_fredoka_bold"]
+base_font = ExtResource("1_fredoka")
+variation_opentype = {"wght": 700.0}
+
+[sub_resource type="FontVariation" id="FontVariation_quicksand_regular"]
+base_font = ExtResource("2_quicksand")
+variation_opentype = {"wght": 400.0}
+
+[sub_resource type="FontVariation" id="FontVariation_quicksand_semibold"]
+base_font = ExtResource("2_quicksand")
+variation_opentype = {"wght": 600.0}
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 20.0
+content_margin_right = 24.0
+content_margin_bottom = 20.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.14)
+shadow_size = 14
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_info_panel"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 18.0
+content_margin_right = 24.0
+content_margin_bottom = 18.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.14)
+shadow_size = 14
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_normal"]
+bg_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.22)
+shadow_size = 10
+shadow_offset = Vector2(0, 3)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_hover"]
+bg_color = Color(1.0, 0.6118, 0.451, 1)
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.28)
+shadow_size = 12
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_pressed"]
+bg_color = Color(0.898, 0.4471, 0.2745, 1)
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_disabled"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 32
+corner_radius_top_right = 32
+corner_radius_bottom_right = 32
+corner_radius_bottom_left = 32
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 24.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_field_normal"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 8.0
+content_margin_right = 22.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_field_focus"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 8.0
+content_margin_right = 22.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_search_panel"]
+bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 42
+corner_radius_top_right = 42
+corner_radius_bottom_right = 42
+corner_radius_bottom_left = 42
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.24)
+shadow_size = 26
+shadow_offset = Vector2(0, 8)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_search_field"]
+draw_center = false
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 14.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_search_field_focus"]
+draw_center = false
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+content_margin_left = 24.0
+content_margin_top = 8.0
+content_margin_right = 14.0
+content_margin_bottom = 8.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_row_panel"]
+bg_color = Color(1, 1, 1, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.20)
+shadow_size = 20
+shadow_offset = Vector2(0, 7)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_row_pressed"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 26
+corner_radius_top_right = 26
+corner_radius_bottom_right = 26
+corner_radius_bottom_left = 26
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.20)
+shadow_size = 20
+shadow_offset = Vector2(0, 7)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_accent_bar"]
+bg_color = Color(0.9098, 0.5647, 0.498, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cta_normal"]
+bg_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 44
+corner_radius_top_right = 44
+corner_radius_bottom_right = 44
+corner_radius_bottom_left = 44
+content_margin_left = 34.0
+content_margin_top = 26.0
+content_margin_right = 34.0
+content_margin_bottom = 26.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.42)
+shadow_size = 28
+shadow_offset = Vector2(0, 12)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cta_hover"]
+bg_color = Color(1.0, 0.6118, 0.451, 1)
+corner_radius_top_left = 44
+corner_radius_top_right = 44
+corner_radius_bottom_right = 44
+corner_radius_bottom_left = 44
+content_margin_left = 34.0
+content_margin_top = 26.0
+content_margin_right = 34.0
+content_margin_bottom = 26.0
+shadow_color = Color(1.0, 0.5412, 0.3569, 0.48)
+shadow_size = 30
+shadow_offset = Vector2(0, 13)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cta_pressed"]
+bg_color = Color(0.898, 0.4471, 0.2745, 1)
+corner_radius_top_left = 44
+corner_radius_top_right = 44
+corner_radius_bottom_right = 44
+corner_radius_bottom_left = 44
+content_margin_left = 34.0
+content_margin_top = 26.0
+content_margin_right = 34.0
+content_margin_bottom = 26.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cta_disabled"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 44
+corner_radius_top_right = 44
+corner_radius_bottom_right = 44
+corner_radius_bottom_left = 44
+content_margin_left = 34.0
+content_margin_top = 26.0
+content_margin_right = 34.0
+content_margin_bottom = 26.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_normal"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 6.0
+content_margin_right = 22.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_hover"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 6.0
+content_margin_right = 22.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_pressed"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(1.0, 0.5412, 0.3569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 6.0
+content_margin_right = 22.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_on_normal"]
+bg_color = Color(1.0, 0.5412, 0.3569, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2902, 0.2157, 0.1569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 6.0
+content_margin_right = 22.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_on_hover"]
+bg_color = Color(1.0, 0.6118, 0.451, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2902, 0.2157, 0.1569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 6.0
+content_margin_right = 22.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_on_pressed"]
+bg_color = Color(0.898, 0.4471, 0.2745, 1)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.2902, 0.2157, 0.1569, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 6.0
+content_margin_right = 22.0
+content_margin_bottom = 6.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_chip_disabled"]
+bg_color = Color(1.0, 0.8627, 0.7686, 1)
+corner_radius_top_left = 28
+corner_radius_top_right = 28
+corner_radius_bottom_right = 28
+corner_radius_bottom_left = 28
+content_margin_left = 22.0
+content_margin_top = 6.0
+content_margin_right = 22.0
+content_margin_bottom = 6.0
+
+[resource]
+default_font = SubResource("FontVariation_quicksand_regular")
+default_font_size = 22
+
+Button/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_hover_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_pressed_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_focus_color = Color(0.2902, 0.2157, 0.1569, 1)
+Button/colors/font_disabled_color = Color(0.2902, 0.2157, 0.1569, 0.55)
+Button/fonts/font = SubResource("FontVariation_fredoka_semibold")
+Button/font_sizes/font_size = 24
+Button/styles/normal = SubResource("StyleBoxFlat_button_normal")
+Button/styles/hover = SubResource("StyleBoxFlat_button_hover")
+Button/styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+Button/styles/focus = SubResource("StyleBoxFlat_button_hover")
+Button/styles/disabled = SubResource("StyleBoxFlat_button_disabled")
+
+Label/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+Label/fonts/font = SubResource("FontVariation_quicksand_regular")
+Label/font_sizes/font_size = 20
+
+LineEdit/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+LineEdit/colors/font_placeholder_color = Color(0.2902, 0.2157, 0.1569, 0.45)
+LineEdit/colors/font_selected_color = Color(0.2902, 0.2157, 0.1569, 1)
+LineEdit/colors/caret_color = Color(0.2902, 0.2157, 0.1569, 1)
+LineEdit/colors/selection_color = Color(1.0, 0.8627, 0.7686, 0.8)
+LineEdit/fonts/font = SubResource("FontVariation_quicksand_regular")
+LineEdit/font_sizes/font_size = 22
+LineEdit/styles/normal = SubResource("StyleBoxFlat_field_normal")
+LineEdit/styles/focus = SubResource("StyleBoxFlat_field_focus")
+LineEdit/styles/read_only = SubResource("StyleBoxFlat_field_normal")
+
+PanelContainer/styles/panel = SubResource("StyleBoxFlat_panel")
+
+TitleLabel/base_type = &"Label"
+TitleLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+TitleLabel/fonts/font = SubResource("FontVariation_fredoka_bold")
+TitleLabel/font_sizes/font_size = 32
+
+CardTitleLabel/base_type = &"Label"
+CardTitleLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+CardTitleLabel/fonts/font = SubResource("FontVariation_fredoka_semibold")
+CardTitleLabel/font_sizes/font_size = 26
+
+MutedLabel/base_type = &"Label"
+MutedLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 0.62)
+MutedLabel/fonts/font = SubResource("FontVariation_quicksand_regular")
+MutedLabel/font_sizes/font_size = 18
+
+InfoPanel/base_type = &"PanelContainer"
+InfoPanel/styles/panel = SubResource("StyleBoxFlat_info_panel")
+
+SearchPanel/base_type = &"PanelContainer"
+SearchPanel/styles/panel = SubResource("StyleBoxFlat_search_panel")
+
+SearchField/base_type = &"LineEdit"
+SearchField/styles/normal = SubResource("StyleBoxFlat_search_field")
+SearchField/styles/focus = SubResource("StyleBoxFlat_search_field_focus")
+SearchField/styles/read_only = SubResource("StyleBoxFlat_search_field")
+
+QuizRowPanel/base_type = &"PanelContainer"
+QuizRowPanel/styles/panel = SubResource("StyleBoxFlat_row_panel")
+
+QuizRowButton/base_type = &"Button"
+QuizRowButton/styles/normal = SubResource("StyleBoxFlat_row_panel")
+QuizRowButton/styles/hover = SubResource("StyleBoxFlat_row_panel")
+QuizRowButton/styles/pressed = SubResource("StyleBoxFlat_row_pressed")
+QuizRowButton/styles/focus = SubResource("StyleBoxFlat_row_panel")
+QuizRowButton/styles/disabled = SubResource("StyleBoxFlat_row_panel")
+
+AccentBar/base_type = &"Panel"
+AccentBar/styles/panel = SubResource("StyleBoxFlat_accent_bar")
+
+CtaButton/base_type = &"Button"
+CtaButton/fonts/font = SubResource("FontVariation_fredoka_bold")
+CtaButton/font_sizes/font_size = 30
+CtaButton/styles/normal = SubResource("StyleBoxFlat_cta_normal")
+CtaButton/styles/hover = SubResource("StyleBoxFlat_cta_hover")
+CtaButton/styles/pressed = SubResource("StyleBoxFlat_cta_pressed")
+CtaButton/styles/focus = SubResource("StyleBoxFlat_cta_hover")
+CtaButton/styles/disabled = SubResource("StyleBoxFlat_cta_disabled")
+
+Chip/base_type = &"Button"
+Chip/fonts/font = SubResource("FontVariation_quicksand_semibold")
+Chip/font_sizes/font_size = 20
+Chip/styles/normal = SubResource("StyleBoxFlat_chip_normal")
+Chip/styles/hover = SubResource("StyleBoxFlat_chip_hover")
+Chip/styles/pressed = SubResource("StyleBoxFlat_chip_pressed")
+Chip/styles/focus = SubResource("StyleBoxFlat_chip_hover")
+Chip/styles/disabled = SubResource("StyleBoxFlat_chip_disabled")
+
+ChipSelected/base_type = &"Button"
+ChipSelected/fonts/font = SubResource("FontVariation_fredoka_semibold")
+ChipSelected/font_sizes/font_size = 20
+ChipSelected/styles/normal = SubResource("StyleBoxFlat_chip_on_normal")
+ChipSelected/styles/hover = SubResource("StyleBoxFlat_chip_on_hover")
+ChipSelected/styles/pressed = SubResource("StyleBoxFlat_chip_on_pressed")
+ChipSelected/styles/focus = SubResource("StyleBoxFlat_chip_on_hover")
+ChipSelected/styles/disabled = SubResource("StyleBoxFlat_chip_disabled")
+
+SectionLabel/base_type = &"Label"
+SectionLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+SectionLabel/fonts/font = SubResource("FontVariation_fredoka_semibold")
+SectionLabel/font_sizes/font_size = 26
+
+CtaTitleLabel/base_type = &"Label"
+CtaTitleLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+CtaTitleLabel/fonts/font = SubResource("FontVariation_fredoka_bold")
+CtaTitleLabel/font_sizes/font_size = 36
+
+CtaSubLabel/base_type = &"Label"
+CtaSubLabel/colors/font_color = Color(0.2902, 0.2157, 0.1569, 1)
+CtaSubLabel/fonts/font = SubResource("FontVariation_quicksand_semibold")
+CtaSubLabel/font_sizes/font_size = 22

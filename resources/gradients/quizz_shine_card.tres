@@ -1,0 +1,24 @@
+[gd_resource type="GradientTexture2D" load_steps=2 format=3]
+
+; Reflet des surfaces BLANCHES (cartes de la liste, barres de recherche).
+; Sens INVERSE de celui du CTA, et c'est une contrainte et non un gout :
+; du blanc semi-transparent sur du blanc est invisible par construction.
+; C'est donc la peche pastel #FFDCC4 (token existant, aucune couleur
+; nouvelle) qui monte par le BAS -- meme lecture a l'oeil, "clair en haut,
+; chaud en bas", et mesurable au pixel.
+;
+; Radial centre sur le milieu du bord BAS, pour la meme raison que le CTA :
+; c'est la ou l'alpha est maximal qu'un degrade lineaire debordait des
+; coins arrondis.
+
+[sub_resource type="Gradient" id="Gradient_card"]
+offsets = PackedFloat32Array(0, 1)
+colors = PackedColorArray(1, 0.8627, 0.7686, 0.62, 1, 0.8627, 0.7686, 0)
+
+[resource]
+gradient = SubResource("Gradient_card")
+width = 256
+height = 256
+fill = 1
+fill_from = Vector2(0.5, 1)
+fill_to = Vector2(0.5, 0.55)

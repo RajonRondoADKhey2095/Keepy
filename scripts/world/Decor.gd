@@ -148,7 +148,15 @@ const _FADE_FRACTION: float = 0.12
 ## (mountain most desaturated/brightest, near hill darkest/most saturated)
 ## is unchanged -- see the class doc's FOG paragraph for why that ordering
 ## is what preserves the near/far/mountain depth read.
-const _LAYERS: Array[Dictionary] = [
+## The shared swamp identity, preloaded rather than reached through the
+## GameState autoload so it is available while this declaration is built.
+const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres")
+
+## `static var` rather than `const` only because the three tints below are
+## read out of a resource, which a const initialiser cannot do. Nothing
+## writes it, and the probes that walk it (DecorParallaxProbe,
+## DecorStabilityAudit) reach it exactly as before.
+static var _LAYERS: Array[Dictionary] = [
 	{
 		# Mountain layer: the farthest-back band, behind both hill layers.
 		# Low count, modest height_range (deliberately close to the far
@@ -163,7 +171,7 @@ const _LAYERS: Array[Dictionary] = [
 		# capture probe (same method as MESHY_SPEC.md section 11), not by
 		# inspection.
 		"texture": _MOUNTAIN_TEXTURE,
-		"tint": Color(0.274, 0.370, 0.244),
+		"tint": _PALETTE.decor_mountain_tint,
 		"count": 3,
 		"parallax": 0.08,
 		"spawn_z_min": -700.0,
@@ -198,7 +206,7 @@ const _LAYERS: Array[Dictionary] = [
 		# landmark, real gaps" territory the mountain layer already targets,
 		# without touching height_range (art-directed scale, left alone).
 		"texture": _HILL_FAR_TEXTURE,
-		"tint": Color(0.233, 0.340, 0.204),
+		"tint": _PALETTE.decor_hill_far_tint,
 		"count": 5,
 		"parallax": 0.15,
 		"spawn_z_min": -520.0,
@@ -224,7 +232,7 @@ const _LAYERS: Array[Dictionary] = [
 		# this is a spawn-spread fix, not a rescale of how big a near hill
 		# is allowed to look.
 		"texture": _HILL_NEAR_TEXTURE,
-		"tint": Color(0.177, 0.280, 0.151),
+		"tint": _PALETTE.decor_hill_near_tint,
 		"count": 5,
 		"parallax": 0.35,
 		"spawn_z_min": -340.0,

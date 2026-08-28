@@ -667,20 +667,54 @@ const COMBO_TO_CLEAR_STRIKE: int = COMBO_TIER_SIZE
 ## both halves stay hand-tunable at a glance.
 ##
 ## HALVED (difficulty+variety batch, playtest: "too easy, had to lose on
-## purpose") from the durations originally tuned for 40-90s runs -- the
-## SPEEDS are UNCHANGED (same table of steps), only how fast the run
-## climbs through them: the cap now lands around 45s instead of 90s.
+## purpose") from the durations originally tuned for 40-90s runs -- that
+## batch changed only how fast the run CLIMBS the table, not the table:
+## the cap lands around 45s instead of 90s.
 ##
-##   idx  run time window    speed      step    palier length
-##   ---  -----------------  ---------  ------  -------------
-##    0   0s .. 6s           12.0 m/s     --       6s
-##    1   6s .. 12s          15.0 m/s   +3.0       6s
-##    2   12s .. 18s         18.0 m/s   +3.0       6s
-##    3   18s .. 24s         20.5 m/s   +2.5       6s   <- mist breath starts
-##    4   24s .. 30s         22.5 m/s   +2.0       6s
-##    5   30s .. 37.5s       24.0 m/s   +1.5     7.5s
-##    6   37.5s .. 45s       25.0 m/s   +1.0     7.5s
-##    7   45s and beyond     26.0 m/s   +1.0      cap, held to the end
+## =====================================================================
+## SPEEDS x1.6 ACROSS THE WHOLE CURVE (playtest: "il faut que ca aille
+## vite des le debut"). Mathieu's explicit call.
+##
+## Every STAGE_SPEEDS entry is multiplied by 1.6. STAGE_START_S is
+## DELIBERATELY UNTOUCHED: the run climbs the table on exactly the same
+## schedule it always did, it is just faster at every rung. Multiplying
+## the whole table rather than raising the cap alone is what makes the
+## FIRST SECOND faster too -- current_speed is seeded from START_SPEED
+## (see its declaration below), so palier 0 is the opening frame's speed,
+## not a separate spawn constant that could be missed.
+##
+##   idx  run time window    speed      step    palier length   (was)
+##   ---  -----------------  ---------  ------  -------------   -----
+##    0   0s .. 6s           19.2 m/s     --       6s            12.0
+##    1   6s .. 12s          24.0 m/s   +4.8       6s            15.0
+##    2   12s .. 18s         28.8 m/s   +4.8       6s            18.0
+##    3   18s .. 24s         32.8 m/s   +4.0       6s   <- mist  20.5
+##    4   24s .. 30s         36.0 m/s   +3.2       6s            22.5
+##    5   30s .. 37.5s       38.4 m/s   +2.4     7.5s            24.0
+##    6   37.5s .. 45s       40.0 m/s   +1.6     7.5s            25.0
+##    7   45s and beyond     41.6 m/s   +1.6      cap            26.0
+##
+## WHY THIS DOES NOT MAKE THE TRACK UNREADABLE, and it is arithmetic
+## rather than hope: TrackManager states its spacing in SECONDS and
+## converts to whole 20m rows with a ceil() against the run speed
+## (_rows_for_seconds). The enforced gap is therefore ALWAYS at least
+## MIN_OBSTACLE_GAP_S no matter how fast the run goes, so the reaction
+## budget left after the lane switch can never drop below
+## OBSTACLE_REACTION_BUDGET_S (0.55s) at ANY speed -- that floor is a
+## property of the ceil, not of this table. Measured at the new cap:
+## ceil(0.80 * 41.6 / 20) = 2 rows = 40m = 0.962s gap = 0.712s budget,
+## which is BETTER than what the old 25.0 m/s palier gave (0.550s, its
+## gap landing just inside a single row).
+##
+## What DOES change, and is not hidden: the run now covers 1.6x the
+## distance per second, so distance-derived score (distance_score, 1
+## point per metre) accrues 1.6x faster and every score-gated mechanic
+## -- SHRINK_UNLOCK_SCORE above all -- fires roughly 1.6x sooner in
+## wall-clock time. The score constants themselves are untouched; it is
+## the run that arrives at them earlier. Time-gated mechanics (the whole
+## MIST_* family, STAGE_START_S itself) are genuinely unaffected: they
+## read run_time_s, which no speed can accelerate.
+## =====================================================================
 ##
 ## The two arrays are INDEX-ALIGNED and must stay the same length:
 ## STAGE_START_S[i] is the run time at which STAGE_SPEEDS[i] takes over.
@@ -691,16 +725,23 @@ const COMBO_TO_CLEAR_STRIKE: int = COMBO_TIER_SIZE
 ## time they leave the player (see its MIN_OBSTACLE_GAP_S), so a higher
 ## cap automatically thins the track rather than making it unreadable.
 const STAGE_START_S: Array[float] = [0.0, 6.0, 12.0, 18.0, 24.0, 30.0, 37.5, 45.0]
-const STAGE_SPEEDS: Array[float] = [12.0, 15.0, 18.0, 20.5, 22.5, 24.0, 25.0, 26.0]
+const STAGE_SPEEDS: Array[float] = [19.2, 24.0, 28.8, 32.8, 36.0, 38.4, 40.0, 41.6]
 
 # Named aliases. START_SPEED/BASE_SPEED == STAGE_SPEEDS[0] and
 # MAX_SPEED == the last STAGE_SPEEDS entry, restated as plain literals
 # because a const array cannot be indexed in a const initialiser. Kept
 # because other scripts' comments (Obstacle.gd, Keepy.gd) reason in
 # terms of "the BASE_SPEED..MAX_SPEED range".
-const START_SPEED: float = 12.0
+#
+# THESE TWO MUST MOVE WITH THE TABLE, and nothing enforces it -- they are
+# hand-restated literals, so the x1.6 pass had to touch three lines, not
+# one. Everything that normalises against them does so as a RATIO
+# ((lookahead_speed() - BASE_SPEED) / (MAX_SPEED - BASE_SPEED), three
+# call sites in TrackManager), which is invariant under a uniform scale
+# of all three -- so those lerps needed no change and got none.
+const START_SPEED: float = 19.2
 const BASE_SPEED: float = START_SPEED
-const MAX_SPEED: float = 26.0
+const MAX_SPEED: float = 41.6
 
 ## Run time at which the mist breath FIRST starts. Aligned on the
 ## start of palier 3 (see STAGE_START_S) so the run's first visual event
@@ -796,18 +837,39 @@ const MIST_FADE_DURATION_S: float = 0.8
 # =====================================================================
 # WHERE THE REST OF THE PALETTE LIVES
 #
-# This file owns the ATMOSPHERE only -- the two colours and one density
-# it drives at runtime. Every other swamp colour is owned by whatever
-# draws it, because a second copy here would be a value nobody renders
-# from and everybody could let drift:
+# The palette itself now lives in ONE place --
+# resources/world/swamp_palette.tres (scripts/world/SwampPalette.gd) --
+# because a second screen, the plateau hub, draws this same marsh and was
+# authored from a copy of these numbers. This file no longer OWNS any
+# colour; it names the atmosphere fields it drives at runtime and reads
+# them from there.
 #
-#   ground slab, hazards, collectibles  scenes/*.tscn albedos
+# Who reads the palette, and for what:
+#
+#   sky / haze / fog density            HERE (below) + scenes/Game.tscn
 #   lane curbs, trackside props         scripts/track/TrackSegment.gd
 #   background hill billboards          scripts/world/Decor.gd (_LAYERS tint)
-#   sky / haze / fog density            HERE + scenes/Game.tscn
+#   hub plateau atmosphere              scripts/hub/HubWorld.gd
+#
+# STILL AUTHORED IN THEIR OWN SCENE, on purpose -- the ground slab, the
+# hazards and the collectibles. DarkPaletteAudit reads those .tscn files
+# through PackedScene.get_state() to assert the shipped baseline, and the
+# hazards' placeholders must stay byte-mirrored with their .glb, which
+# cannot read a .tres. The palette DECLARES those values so it stays a
+# complete description; the scenes remain what renders. See the header of
+# scripts/world/SwampPalette.gd for the full argument.
 #
 # The full measured table -- every surface, its rendered colour and its
 # contrast against what it is read on -- is docs/MESHY_SPEC.md section 8.
+
+## The shared swamp identity, extracted so the hub plateau draws the same
+## marsh Chased does. The six names below are unchanged and still the way
+## every caller reads these values -- only where the numbers LIVE moved.
+##
+## They are `static var` rather than `const` because a const initialiser
+## cannot reach into a resource. Nothing writes them; treat them as
+## constants, and change a colour in the .tres, never here.
+const SWAMP_PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres")
 
 ## The two atmosphere colours at the SHALLOW end of the mist breath.
 ##
@@ -830,8 +892,8 @@ const MIST_FADE_DURATION_S: float = 0.8
 ## the ground's own contrast floors against CHARGER/JUMP/STOMPER -- see the
 ## `_reroll_ground_tint` doc in scripts/track/TrackSegment.gd for that
 ## constraint and the two rendered-vs-raw measurements that pinned it.
-const SWAMP_SKY: Color = Color(0.062, 0.115, 0.044)  # #0F1D0B dark saturated swamp green
-const SWAMP_HAZE: Color = Color(0.151, 0.260, 0.114) # #26421D saturated green haze
+static var SWAMP_SKY: Color = SWAMP_PALETTE.sky_shallow  # #0F1D0B dark saturated swamp green
+static var SWAMP_HAZE: Color = SWAMP_PALETTE.haze_shallow # #26421D saturated green haze
 
 ## The DEEP end of the mist breath -- where the sky and haze sit at
 ## mist_intensity 1.0.
@@ -843,8 +905,8 @@ const SWAMP_HAZE: Color = Color(0.151, 0.260, 0.114) # #26421D saturated green h
 ## value. If a future session finds itself picking a DEEP colour that
 ## reads as a different place, the answer is no -- that is the phase
 ## system this batch removed, growing back.
-const SWAMP_SKY_DEEP: Color = Color(0.035, 0.068, 0.024)  # #091106
-const SWAMP_HAZE_DEEP: Color = Color(0.107, 0.190, 0.080) # #1B3014
+static var SWAMP_SKY_DEEP: Color = SWAMP_PALETTE.sky_deep  # #091106
+static var SWAMP_HAZE_DEEP: Color = SWAMP_PALETTE.haze_deep # #1B3014
 
 ## Fog density at each end of the breath. The shallow value is the one
 ## scenes/Game.tscn ships and has carried since the depth-fog batch;
@@ -860,8 +922,8 @@ const SWAMP_HAZE_DEEP: Color = Color(0.107, 0.190, 0.080) # #1B3014
 ## gameplay contrast figure in section 8 therefore holds at both ends of
 ## the breath by construction, not by re-measuring luck (it is
 ## re-measured anyway -- see the batch report).
-const SWAMP_FOG_DENSITY: float = 0.0035
-const SWAMP_FOG_DENSITY_DEEP: float = 0.0052
+static var SWAMP_FOG_DENSITY: float = SWAMP_PALETTE.fog_density_shallow
+static var SWAMP_FOG_DENSITY_DEEP: float = SWAMP_PALETTE.fog_density_deep
 
 # =====================================================================
 
@@ -1412,6 +1474,17 @@ const MAX_LOOKAHEAD_S: float = 7.0 * 20.0 / START_SPEED
 ## under-space it. Scanning forward by TIME instead of by a fixed stage
 ## count is the general fix -- correct regardless of how short a future
 ## re-tune makes the paliers, not just today's.
+##
+## The x1.6 speed pass is the first change to EXERCISE that generality
+## rather than just benefit from it, and in the direction nobody expected:
+## MAX_LOOKAHEAD_S is 140m / START_SPEED, so scaling the table SHORTENS
+## the horizon (11.67s -> 7.29s) instead of lengthening it -- 140m is
+## geometry and does not scale, the speed crossing it does. The horizon
+## still spans up to two 6s paliers, so this loop still has work to do;
+## it simply looks less far ahead, which is CORRECT (the lead time
+## genuinely is shorter now) rather than merely tolerable. Had this been
+## the old "+1 stage" hardcode, the change would have been invisible and
+## wrong in the other direction.
 func lookahead_speed() -> float:
 	return STAGE_SPEEDS[lookahead_stage_index()]
 
