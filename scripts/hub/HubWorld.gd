@@ -195,6 +195,17 @@ var _turnstile_ride: Dictionary = {}
 var _seesaws: Array[Dictionary] = []
 var _seesaw_ride: Dictionary = {}
 
+## Every owl, as _setup_owls copied it, plus the per-prop tween slot; and
+## the one entry currently carrying Keepy.
+var _owls: Array[Dictionary] = []
+var _owl_ride: Dictionary = {}
+
+## A tap on a perch armed a walk to it, and the landing that finishes that
+## walk should start the flight. Exactly the latch _boarding and _climbing
+## already are, and cleared on the same three occasions: another tap, a
+## successful mount, or the chain running out without arriving.
+var _flying: bool = false
+
 ## Armed by a dismount, consumed by the landing it produces.
 ##
 ## ⚠️ WITHOUT IT THIS FEATURE LOOPS FOREVER. A dismount ends in an ordinary
@@ -256,6 +267,55 @@ const SEESAW_ROCK_S: float = 2.4
 ## overhang the boat's bank search already tolerates, and demanding a metre
 ## of clearance in every direction would refuse most of a plateau this
 ## densely scattered.
+## How close a tap has to land to an owl perch to mean "fly with it", in
+## world units -- and, because they are one number rather than two, also
+## how close the arrival has to be to actually take off, and the ring the
+## dismount is thrown clear on.
+##
+## SMALLER than the boat's and the ladder's 2.5, and measured rather than
+## copied down. Those two are 2.5 because the thing aimed at is tiny: a
+## ladder foot is half a unit across and would be a target nobody could hit
+## at this camera distance. The owl is 1.39 x 1.53 on the ground and 2.04
+## tall -- a far bigger mark -- and 2.5 centred on a perch 2.8 units from
+## the spawn would have reached back over Keepy's own feet, so a tap at his
+## toes would have meant "fly". 1.8 still leaves a comfortable margin round
+## a prop 1.5 wide and leaves the spawn a full unit outside it.
+const OWL_TAP_RADIUS: float = 1.8
+
+## How long the whole loop takes, perch to perch.
+##
+## Named rather than left in the call for the reason TURNSTILE_SPIN_S is,
+## and the dismount hangs off the tween's own `finished` rather than off a
+## copy of this number -- a second "how long a flight lasts" is a second
+## number to keep in step, and the two drift the first time either is
+## tuned. Within the 3.0-3.5 s the batch was scoped to; a device pass moves
+## this constant and nothing else.
+const OWL_FLIGHT_S: float = 3.2
+
+## The loop, in world units: how far out to the side it swings, and how
+## high it climbs at the far point.
+##
+## The path is a CIRCLE through the perch, so it closes EXACTLY -- see
+## _apply_flight for why that is arithmetic rather than a setting. The
+## radius puts the far point 2 x OWL_LOOP_RADIUS in front of the perch,
+## which is where the loop is most visible from a camera that never yaws.
+const OWL_LOOP_RADIUS: float = 3.2
+const OWL_LOOP_APEX: float = 3.6
+
+## Which way the loop leans off the perch, in degrees about Y.
+##
+## MEASURED, NOT PICKED. At zero the circle swings a full radius to either
+## side of the perch, and the perch is already left of centre -- so the
+## return leg left the frame: 26 of 33 sampled points on screen, the owl
+## flying out and vanishing before it came back. Swept against the real
+## camera at BOTH shipped ratios (1080x1920 and 1170x2532) with
+## unproject_position, over radius and heading together: -35 degrees is the
+## first heading that keeps the WHOLE loop on screen at the full radius,
+## with about 100 px of margin at the tighter of the two. Leaning it
+## further buys more margin and less of the plateau; leaning it back loses
+## the left edge again.
+const OWL_LOOP_HEADING_DEG: float = -35.0
+
 const KEEPY_CLEARANCE: float = 0.66
 
 func _ready() -> void:
@@ -283,6 +343,8 @@ func _ready() -> void:
 	_setup_boards()
 	_setup_spinners()
 	_setup_seesaws()
+	_setup_owls()
+	_tap.tapped_owl.connect(_on_tapped_owl)
 	_tap.tapped_boat.connect(_on_tapped_boat)
 	_keepy.hop_landed.connect(_on_hop_landed)
 	_keepy.ride_moved.connect(_on_ride_moved)
@@ -361,6 +423,190 @@ func _setup_seesaws() -> void:
 		var entry: Dictionary = prop.duplicate()
 		entry["tween"] = null
 		_seesaws.append(entry)
+
+## Copies the built owls out of the builder, once, adding the per-prop
+## tween slot and the ONE reach this prop is measured with -- and then
+## hands the perches to the tap so a finger can pick them out.
+##
+## The reach is added HERE rather than published by the builder because it
+## is a TAP radius, and the two props that publish their own ("radius" on
+## the turnstile and the seesaw) are triggered by a landing, where how near
+## is a property of the prop. Writing it into the copied entry rather than
+## reading the constant at three call sites is what makes "near enough to
+## tap", "near enough to take off" and "far enough to be dropped clear" one
+## number instead of three that can drift -- and is what lets the dismount
+## reuse _ride_exit_point() unchanged, since that function only ever reads
+## "position" and "radius" and knows nothing about any particular prop.
+func _setup_owls() -> void:
+	for prop in _builder.owls():
+		# Copied WHOLESALE and then given the extra keys, for the reason
+		# _setup_spinners() states: a hand-written copy is exactly the
+		# thing that silently drops the field added last.
+		var entry: Dictionary = prop.duplicate()
+		entry["tween"] = null
+		entry["radius"] = OWL_TAP_RADIUS
+		_owls.append(entry)
+	if _owls.is_empty():
+		return
+	var perches: Array[Vector3] = []
+	for entry in _owls:
+		perches.append(entry["position"])
+	_tap.owl_perches = perches
+	_tap.owl_radius = OWL_TAP_RADIUS
+
+## A tap on an owl perch. ONE tap buys the whole thing -- the hop chain
+## walks to the perch and _on_hop_landed takes off on arrival -- because
+## that is exactly how a tap on the boat and on the ladder already behave.
+func _on_tapped_owl(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board():
+		return
+	_boarding = false
+	_climbing = false
+	_flying = true
+	_keepy.hop_to(point)
+	# Already standing at the perch: nothing to walk, so take off on the
+	# spot rather than waiting for a landing that will never come.
+	if not _keepy.is_hopping():
+		_try_fly(_keepy.global_position)
+
+## Takes off if the landing is close enough to a perch. Returns true when
+## the flight started, so the caller can stop looking at that landing.
+##
+## The proximity test is the SAME radius the tap used, for the reason the
+## boat's and the ladder's are: a player who tapped the owl and walked to
+## it cannot arrive and be told they are not there yet.
+##
+## NEAREST perch and not first-match, on the ladder's terms: "first" is a
+## fact about the layout file, and the player is standing at a place. And
+## the intent SURVIVES a landing that has not arrived yet -- that was the
+## boarding walk's own defect, which passed its probe for a whole batch
+## because the arrival happened to fall inside the radius on hop one.
+func _try_fly(position: Vector3) -> bool:
+	if _owls.is_empty():
+		_flying = false
+		return false
+	var flat := Vector3(position.x, 0.0, position.z)
+	var entry: Dictionary = {}
+	var nearest: float = INF
+	for candidate in _owls:
+		var d: float = flat.distance_to(candidate["position"] as Vector3)
+		if d < nearest:
+			nearest = d
+			entry = candidate
+	if nearest > OWL_TAP_RADIUS:
+		return false
+	var carrier: Node3D = entry.get("carrier")
+	if carrier == null or not is_instance_valid(carrier):
+		_flying = false
+		return false
+	if not _keepy.mount_owl(carrier, float(entry["seat_y"])):
+		return false
+	_flying = false
+	_owl_ride = entry
+	# The perch stops accepting taps for the length of the flight, so a tap
+	# meanwhile falls through to the ground path exactly as the boat's does
+	# -- which is what leaves it free to mean something else instead of
+	# being swallowed by a prop that is not there any more.
+	_tap.owl_available = false
+	var flight: Tween = _build_owl_flight(entry)
+	flight.finished.connect(_on_owl_flight_finished, CONNECT_ONE_SHOT)
+	return true
+
+## Builds and starts the flight tween for `entry`, and returns it.
+##
+## tween_method on a NORMALISED t, for the turnstile's measured reason: the
+## rider is written in the same call as the carrier, so he cannot be a
+## frame behind the bird he is sitting on -- see _apply_flight.
+##
+## LINEAR, deliberately. The shape of the flight is already in the curve:
+## the horizontal sweep is a circle walked at constant angular rate and the
+## height is a sine, so it already leaves slowly, climbs, and settles. An
+## ease laid over that would be a second easing on top of one that is
+## already there -- the argument _build_seesaw_rock makes about its own
+## damped cosine.
+func _build_owl_flight(entry: Dictionary) -> Tween:
+	var carrier: Node3D = entry["carrier"]
+	var tween := carrier.create_tween()
+	tween.tween_method(_apply_flight.bind(entry), 0.0, 1.0, OWL_FLIGHT_S)
+	entry["tween"] = tween
+	return tween
+
+## Moves the owl to its place on the loop at `t`, and -- in the SAME call,
+## immediately after -- moves whoever is riding it.
+##
+## ⚠️ THE CLOSURE IS ARITHMETIC, NOT A SETTING, and that is the whole
+## reason this curve was chosen over a hand-placed path. Every term is
+## periodic in t and evaluates to exactly the perch at both ends:
+##
+##   x  = R * sin(TAU * t)          sin(0) = sin(TAU) = 0
+##   z  = -R * (1 - cos(TAU * t))   cos(0) = cos(TAU) = 1, so both are 0
+##   y  = APEX * sin(PI * t)        sin(0) = sin(PI) = 0
+##
+## so the owl is back on its perch at t = 1 because the trigonometry says
+## so, not because a duration and a speed were tuned until it looked
+## closed. That is a circle of radius R through the perch, centred R in
+## front of it, which puts the far point of the loop 2R ahead -- the part
+## of the plateau a camera that never yaws is actually looking at.
+##
+## The yaw is the TANGENT of that circle, which is never zero-length: a
+## bird banking through a turn faces where it is going, and there is no
+## degenerate instant to guard for the way a straight path between two
+## points has at its ends.
+func _apply_flight(t: float, entry: Dictionary) -> void:
+	var carrier: Node3D = entry["carrier"]
+	if carrier == null or not is_instance_valid(carrier):
+		return
+	var perch: Vector3 = entry["position"]
+	var angle: float = TAU * t
+	var lean: float = deg_to_rad(OWL_LOOP_HEADING_DEG)
+	# The circle, in the perch's own frame, then LEANED -- see
+	# OWL_LOOP_HEADING_DEG for why the lean is measured rather than chosen.
+	# Rotating the offset rather than reshaping the curve is what keeps the
+	# closure above true: a rotation of zero is still zero.
+	var offset := Vector3(
+		OWL_LOOP_RADIUS * sin(angle),
+		0.0,
+		-OWL_LOOP_RADIUS * (1.0 - cos(angle))).rotated(Vector3.UP, lean)
+	carrier.global_position = Vector3(
+		perch.x + offset.x,
+		OWL_LOOP_APEX * sin(PI * t),
+		perch.z + offset.z)
+	# The tangent of that same circle, leaned by the same angle -- one
+	# rotation applied to both, so the bird cannot face off its own path.
+	var tangent := Vector3(cos(angle), 0.0, -sin(angle)).rotated(Vector3.UP, lean)
+	carrier.rotation_degrees.y = rad_to_deg(atan2(tangent.x, tangent.z))
+	# Only the rider of THIS prop, and only while he is actually aboard.
+	if _keepy.is_on_owl_flight() and not _owl_ride.is_empty() \
+			and _owl_ride.get("carrier") == carrier:
+		_keepy.follow_owl()
+
+## The loop has closed, so the rider steps off and the perch takes taps
+## again.
+##
+## The owl is put back EXPLICITLY rather than left wherever the last tween
+## step happened to write it. The curve closes exactly, so this should be a
+## no-op to the float -- which is precisely why it is cheap, and why a
+## flight that was ever cut short (a tween killed, a scene torn down
+## mid-loop) still leaves a perch with an owl on it rather than an owl
+## stranded in the air.
+func _on_owl_flight_finished() -> void:
+	_tap.owl_available = true
+	if _owl_ride.is_empty():
+		return
+	var entry: Dictionary = _owl_ride
+	var carrier: Node3D = entry.get("carrier")
+	if carrier != null and is_instance_valid(carrier):
+		carrier.global_position = entry["position"]
+		carrier.rotation_degrees.y = 0.0
+	_owl_ride = {}
+	if not _keepy.is_on_owl_flight():
+		return
+	# The same ring the turnstile and the seesaw are dropped clear on, and
+	# the same function: it reads "position" and "radius" and knows nothing
+	# about any particular prop, so the owl needed it rather than a copy.
+	_keepy.leave_owl(_ride_exit_point(entry))
 
 ## Sets going every spinning prop the landing is standing at.
 ##
@@ -801,11 +1047,26 @@ func _on_tapped_ground(point: Vector3) -> void:
 	if _keepy.is_on_seesaw():
 		_repump_seesaw(point)
 		return
+	# A tap while the OWL owns the body is intercepted by state like the
+	# ride's, the board's, the turnstile's and the seesaw's, for the
+	# identical reason: the point arrived resolved on the y = 0 plane, so
+	# it must never become somewhere to walk to while he is thirty feet up.
+	#
+	# Dropped and not queued, and there is deliberately nothing here for it
+	# to mean. The turnstile and the seesaw re-arm on a tap because a
+	# roundabout and a plank are things you push again; a loop that closes
+	# exactly cannot be extended without breaking the one property the
+	# curve was chosen for. It is reached at all only because the perch
+	# withdraws from the tap for the length of the flight -- the boat's
+	# withdrawal -- so this branch is what that fall-through lands in.
+	if _keepy.is_on_owl_flight():
+		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
 	# screen overruling them.
 	_boarding = false
 	_climbing = false
+	_flying = false
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -819,6 +1080,7 @@ func _on_tapped_boat(point: Vector3) -> void:
 		return
 	_boarding = true
 	_climbing = false
+	_flying = false
 	_keepy.hop_to(point)
 	# Already standing at the boat: nothing to walk, so board on the spot
 	# rather than waiting for a landing that will never come.
@@ -836,6 +1098,7 @@ func _on_tapped_ladder(point: Vector3) -> void:
 		return
 	_boarding = false
 	_climbing = true
+	_flying = false
 	_keepy.hop_to(point)
 	# Already standing at the foot: nothing to walk, so climb on the spot
 	# rather than waiting for a landing that will never come.
@@ -895,6 +1158,14 @@ func _on_hop_landed(position: Vector3) -> void:
 	# fires the state is back to IDLE, because the water is ordinary
 	# walkable ground and a dive ends like any other leap.
 	if _keepy.is_on_board():
+		return
+	# NOR WHILE THE OWL HAS HIM. A flight emits no landings either, so
+	# this branch should be as unreachable as the two above -- and it is
+	# written for their reason: "no landing is emitted" is a property of
+	# KeepyHopper that could change, and the failure it would cause is
+	# being carried into a sub-game by a bird the player was only flying
+	# over it on.
+	if _keepy.is_on_owl_flight():
 		return
 
 	# WHERE KEEPY IS, decided before anything about what this landing goes
@@ -976,6 +1247,12 @@ func _on_hop_landed(position: Vector3) -> void:
 	# on to climb still reports the ground it left from.
 	if _climbing and _try_climb(position):
 		return
+	# And the one that finishes a walk to a perch takes off. Sits with the
+	# other two -- after the tint and the impact, before the portals -- for
+	# the reason they do: a landing that goes on to fly still reports the
+	# ground it left from, and every branch past this point returns.
+	if _flying and _try_fly(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -1023,6 +1300,7 @@ func _try_board(toward: Vector3) -> bool:
 func _on_keepy_idle() -> void:
 	_boarding = false
 	_climbing = false
+	_flying = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches

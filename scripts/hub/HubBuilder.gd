@@ -766,6 +766,21 @@ const OWL_MODEL_OFFSET: Vector3 = Vector3(0.0, 1.02039, 0.0)
 ## (Z, 1.531), matching the FOOTPRINT_RADIUS convention below.
 const OWL_FOOTPRINT_RADIUS: float = 0.77
 
+## Where a rider sits on the owl's back, in the owl root's own local space.
+##
+## DERIVED FROM THE MEASURED MODEL, not eyeballed: the built owl stands
+## 2.0371 units tall (raw bbox Y 1.899284 x OWL_MODEL_SCALE), and this is
+## 60% of that -- above the body mass, below the head, which is where a
+## rider straddles a bird rather than perching on its skull or sinking into
+## its chest. Only Y: a seat offset on X or Z would swing out sideways the
+## moment the owl yaws into its turn, and the whole point of writing the
+## rider through the owl's own transform is that he cannot.
+##
+## Published by owls() rather than read by whoever seats him, on the terms
+## spinning_props() states at length: the back the player sees and the back
+## the rider is written onto have to be one fact.
+const OWL_SEAT_Y: float = 1.22
+
 ## Ground footprint radius per prop type, in LOCAL units (multiplied by the
 ## entry's uniform scale at read time). Used by the ride's disembark search
 ## to refuse a bank point that is already occupied.
@@ -846,6 +861,18 @@ var _spinning_props: Array[Dictionary] = []
 ## another place to play rather than an ambiguity.
 var _seesaws: Array[Dictionary] = []
 var _last_seesaw: Dictionary = {}
+
+## Every &"owl", as it was BUILT.
+##
+## A LIST FROM THE FIRST COMMIT, and that is the diving board's lesson paid
+## forward rather than a guess about the future. The board's GEOMETRY was
+## generic from the day it shipped; it was this table downstream of it that
+## held one, so a second plank was drawn and then never climbable -- and
+## undoing that cost its own batch. Nothing downstream names THE owl: a
+## flight is started by whichever perch the player walked to, so a second
+## owl is another place to fly from rather than an ambiguity.
+var _owls: Array[Dictionary] = []
+var _last_owl: Dictionary = {}
 
 ## Every &"divingboard" as built, in layout order -- see diving_boards()
 ## for the shape of one entry.
@@ -970,6 +997,25 @@ func spinning_props() -> Array[Dictionary]:
 ## the only way to guarantee that is for both to come out of one pass.
 func seesaws() -> Array[Dictionary]:
 	return _seesaws
+
+## Every &"owl", as it was BUILT, in layout order:
+##
+##   "position" Vector3 -- flat world perch, where a tap is measured to
+##   "carrier"  Node3D  -- the node a flight MOVES, and the node a rider is
+##                         written through. The whole prop moves: there is
+##                         one owl and it leaves the perch empty while it
+##                         flies, rather than a second copy being spawned
+##                         and the draw-node count paying for it
+##   "seat_y"   float   -- OWL_SEAT_Y, in the carrier's own local space
+##
+## No "radius" here, unlike the seesaw and the turnstile: those two are
+## triggered by a LANDING, so how near a landing must be is a property of
+## the prop. This one is triggered by a TAP, so the reach belongs with the
+## other tap radii in HubWorld -- see OWL_TAP_RADIUS there, which is also
+## the number the arrival test and the dismount ring are measured with, so
+## "near enough to tap" and "near enough to fly from" cannot drift apart.
+func owls() -> Array[Dictionary]:
+	return _owls
 
 ## Centre of the one &"pond", or Vector3.INF when the layout has none.
 func pond_centre() -> Vector3:
@@ -1145,6 +1191,13 @@ func _build() -> void:
 				# downstream names THE seesaw.
 				if not _last_seesaw.is_empty():
 					_seesaws.append(_last_seesaw)
+			if type == &"owl":
+				# Recorded AFTER add_child, on the boards' and the seesaw's
+				# plural terms: every published perch is one that actually
+				# got drawn, and nothing downstream names THE owl.
+				if not _last_owl.is_empty():
+					_last_owl["position"] = Vector3(where.x, 0.0, where.z)
+					_owls.append(_last_owl)
 			if type == &"turnstile":
 				# Recorded AFTER add_child, alongside the boards, so every
 				# published spinner is one that actually got drawn. Held to
@@ -1353,6 +1406,7 @@ func _make_portal(entry: Dictionary, index: int) -> Node3D:
 ## model toward the camera. Nothing else about this prop moves: no signal,
 ## no _process, no state.
 func _make_owl(index: int) -> Node3D:
+	_last_owl = {}
 	if owl_scene == null:
 		push_error("HubBuilder: entry %d is an owl but no owl_scene is assigned." % index)
 		return null
@@ -1365,6 +1419,15 @@ func _make_owl(index: int) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Owl"
 	root.add_child(model)
+	# Recorded here, from the pass that DREW it, and filed by _build once
+	# add_child has actually happened -- the rule every other published
+	# registry on this file is held to. The carrier is this root and not
+	# the model child: a flight moves the whole prop, and the rider is
+	# written through the same transform, so seat and body cannot drift.
+	_last_owl = {
+		"carrier": root,
+		"seat_y": OWL_SEAT_Y,
+	}
 	return root
 
 ## A cut trunk. Deliberately ONE mesh in the trees' own bark colour: a
