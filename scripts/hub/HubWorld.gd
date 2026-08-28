@@ -200,14 +200,16 @@ var _seesaw_ride: Dictionary = {}
 var _owls: Array[Dictionary] = []
 var _owl_ride: Dictionary = {}
 
-## Every cabin, as _setup_cabins copied it; and the one Keepy is currently
-## inside.
+## Every cabin, as _setup_cabins copied it.
 ##
-## No per-prop tween slot, unlike the spinners, the seesaws and the owls:
-## nothing here is ever animated. The cabin stands still and it is KEEPY
-## who is hidden, which is why this is the smallest entry of the four.
+## No per-prop tween slot, unlike the spinners, the seesaws and the owls,
+## and no "the one he is inside" companion either -- unlike all three of
+## them. Nothing here is ever animated and nothing has to be put back: the
+## cabin stands still and it is KEEPY who is hidden, so there is no carrier
+## to restore and nothing a visit needs to remember. Which cabin he is in
+## is a question no one asks, and a field written only to be cleared is a
+## field nobody is reading.
 var _cabins: Array[Dictionary] = []
-var _cabin_visit: Dictionary = {}
 
 ## A tap on a doorstep armed a walk to it, and the landing that finishes
 ## that walk should take him inside. Exactly the latch _boarding, _climbing
@@ -704,7 +706,6 @@ func _try_enter_cabin(position: Vector3) -> bool:
 	if not _keepy.enter_cabin(entry["door"] as Vector3):
 		return false
 	_entering = false
-	_cabin_visit = entry
 	# The doorstep stops accepting taps for the whole visit, so the next tap
 	# falls through to the ground path exactly as the boat's and the perch's
 	# do -- which is what leaves it free to MEAN something, and here what it
@@ -720,7 +721,6 @@ func _try_enter_cabin(position: Vector3) -> bool:
 ## that spot is ground he had already landed on.
 func _leave_cabin() -> void:
 	_tap.cabin_available = true
-	_cabin_visit = {}
 	if _keepy.is_in_cabin():
 		_keepy.leave_cabin()
 

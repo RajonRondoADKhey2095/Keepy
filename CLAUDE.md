@@ -20048,10 +20048,10 @@ fichier autorise :
 | | `index.pck` | `index.wasm` |
 |---|---|---|
 | baseline (`origin/staging`, worktree separe) | **14 798 736** | 35 376 909 |
-| ce lot | **30 228 448** | 35 376 909 |
-| delta | **+15 429 712 (+104,3 %)** | **0** |
+| ce lot | **30 228 432** | 35 376 909 |
+| delta | **+15 429 696 (+104,3 %)** | **0** |
 
-Le delta se decompose **a 3 963 octets pres** : `.scn` 351 749 + baseColor
+Le delta se decompose **a 3 947 octets pres** : `.scn` 351 749 + baseColor
 `.ctex` 6 455 000 + normal `.ctex` 8 619 000 = 15 425 749, le reste etant
 les quelques ecritures GDScript et l'entree de layout. `index.wasm`
 identique au bit pres (md5 `af4a8fc2925d992348eb30deeeb54360`), `index.js`
