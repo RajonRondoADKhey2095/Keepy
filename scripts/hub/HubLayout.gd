@@ -27,7 +27,8 @@ class_name HubLayout
 ##   type        StringName  &"portal", &"rock", &"tree", &"bush",
 ##                           &"flower", &"stump", &"landmark", &"pond",
 ##                           &"lake", &"greatlake", &"islet", &"pontoon",
-##                           &"stream", &"boat" or &"divingboard"
+##                           &"stream", &"boat", &"divingboard" or
+##                           &"turnstile"
 ##   position    Vector3     world position, y is ignored for props that
 ##                           sit on the ground (they are placed AT y = 0)
 ##   rotation_y  float       degrees
@@ -106,6 +107,13 @@ class_name HubLayout
 ## boat are individual nodes. A &"divingboard" is BOTH: its plank, posts
 ## and rails are its own nodes, and its ladder rungs -- identical geometry
 ## repeated up a run -- are batched.
+##
+## A &"turnstile" is a third case again. Its grip bars ARE a MultiMesh, but
+## one of its OWN, parented under its pivot -- not a shared batch. It has
+## to be: a shared batch's node hangs off HubBuilder with world transforms
+## baked in, so bars filed into one would stay put while the pivot they
+## belong to turned. One draw node for however many bars, but never a
+## shared one.
 ##
 ## That split is HubBuilder's business and changes nothing here -- an entry
 ## looks the same either way -- but it is worth knowing that adding a
