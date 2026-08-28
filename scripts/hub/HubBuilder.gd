@@ -768,18 +768,32 @@ const OWL_FOOTPRINT_RADIUS: float = 0.77
 
 ## Where a rider sits on the owl's back, in the owl root's own local space.
 ##
-## DERIVED FROM THE MEASURED MODEL, not eyeballed: the built owl stands
-## 2.0371 units tall (raw bbox Y 1.899284 x OWL_MODEL_SCALE), and this is
-## 60% of that -- above the body mass, below the head, which is where a
-## rider straddles a bird rather than perching on its skull or sinking into
-## its chest. Only Y: a seat offset on X or Z would swing out sideways the
-## moment the owl yaws into its turn, and the whole point of writing the
-## rider through the owl's own transform is that he cannot.
+## MEASURED ON THE MESH, not estimated from the bbox -- a prior pass here
+## picked 60% of the model's total height (1.22) as "above the body mass,
+## below the head", by analogy with a slender rider mount rather than by
+## looking at THIS model. This owlet has no such waist: it is one rounded
+## mass with the head fused into the body, and a straight-down raycast
+## through the mesh at (x=0, z=0) -- the only point a seat can sit at, see
+## below -- lands on a broad, smooth dome (sampled across a 0.4x0.3 patch
+## centred on it, every point within 0.08 of its neighbours: a real
+## surface, not a spike) at model-space y = 0.9031254854712962, not
+## somewhere on a torso two-thirds of the way up. 1.22 buried Keepy's
+## whole upper body in the owl's chest; this is the actual dorsal ridge a
+## rider's feet land on.
+##
+##   OWL_MODEL_OFFSET.y + OWL_MODEL_SCALE.y * 0.9031254854712962
+##     = 1.02039 + 1.07256 * 0.9031254854712962 = 1.98905 (rounded)
+##
+## Only Y: a seat offset on X or Z would swing out sideways the moment the
+## owl yaws into its turn, and the whole point of writing the rider through
+## the owl's own transform is that he cannot -- which is also why (0, 0) is
+## not a choice among several candidate seats, it is the one point this
+## constant is allowed to measure.
 ##
 ## Published by owls() rather than read by whoever seats him, on the terms
 ## spinning_props() states at length: the back the player sees and the back
 ## the rider is written onto have to be one fact.
-const OWL_SEAT_Y: float = 1.22
+const OWL_SEAT_Y: float = 1.98905
 
 ## Ground footprint radius per prop type, in LOCAL units (multiplied by the
 ## entry's uniform scale at read time). Used by the ride's disembark search
