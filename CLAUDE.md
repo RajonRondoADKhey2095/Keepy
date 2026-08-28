@@ -18135,3 +18135,201 @@ sens-la : les appels successifs montraient de vraies progressions d'etapes
 avec de vrais horodatages, et l'import a reellement pris **2 min 17 s**.
 Le piege existe ; il ne s'est pas produit ici, et le verifier coute un
 regard a l'horloge.
+
+## KEEPY MONTE SUR LE TOURNIQUET : un etat qui l'ecrit sur le pivot, et le "second tween parallele" evite PAR CONSTRUCTION (28 aout 2026)
+
+Branche `claude/keepy-turnstile-riding-c10wvi`, partie de `staging`
+(**`2bf755c`** -- le `d51fee4` annonce par le brief plus un commit DOC SEULE,
+verifie ancetre plutot que suppose). Regle n°1 verifiee AU DEBUT : tri des refs
+par date et comparaison des **ARBRES** -- `claude/tourniquet-hub-prop-qj4778`
+porte **exactement l'arbre de `origin/staging`**, donc deja mergee, **aucune
+session concurrente**. `origin/main` = `12a1d6b`, **INTOUCHE**.
+
+**CONTRAINTES DURES TENUES, verifiees par `git diff` et pas affirmees** :
+`HubRegion.gd`, `HubTapInput.gd`, `HubCamera.gd` et
+`resources/hub/hub_layout.tres` **ne sont PAS dans le diff**.
+`PLATEAU_HALF_EXTENT` reste **35.0**, `HOP_DISTANCE` **1.5**, `HOP_DURATION`
+**0.28**, `HubCamera.OFFSET`/`FOLLOW_LAMBDA` inchanges. **Le tourniquet n'est
+pas replace** : toujours (-4, 17.25), yaw 22.
+
+### Le defaut, et ce qu'il n'etait PAS
+
+Keepy TRAVERSAIT le tourniquet -- le plateau le coupait a mi-corps, les barres
+lui passaient au travers. **Ce n'est pas un defaut du tourniquet** : aucun prop
+de ce depot ne bloque une approche, c'est le regime de tout le decor. Il monte
+dessus, donc, plutot que de se voir refuser le passage.
+
+### Q1-Q2 -- le squelette repris, et le hook
+
+`board()` -> `_state = RIDING` + `_place_on_route()` ; `_process` avance
+l'abscisse et re-place ; `leave_ride()` repasse en HOPPING avec
+`EJECT_HOP_HEIGHT` et `_hop_from_y/_hop_to_y`. C'est cette forme qui est
+reprise. Le hook est bien `_on_hop_landed`, la ou `_spin_near` vit deja et
+au-dessus de tous les `return` -- le montage partage donc **le meme
+atterrissage et la meme reponse de proximite** que la poussee, si bien que le
+prop sur lequel il est pose ne peut pas etre un autre que celui qui tourne.
+
+### Q3 -- geometrie MESUREE sur l'arbre construit
+
+Pivot (-4, 0, 17.25), scale 1, yaw 22. **Dessus du deck 0.31** (le
+`CylinderMesh` est centre sur son origine : 0.26 + 0.10/2), rayon deck 1.15,
+footing 0..0.06 rayon 1.35, post rayon 0.10 jusqu'a 0.98, **4 barres, pointes
+a 1.0200, y 0.62**, trigger 2.40. Keepy : pieds a y=0, **hauteur 1.35006,
+largeur 1.3198, profondeur 2.0371**.
+
+⚠️ **PIEGE RE-RENCONTRE, deja consigne pour LAKE-MOVE : `--headless` ne peut
+PAS relire les transforms d'un MultiMesh.** Le premier passage a rapporte
+`bar0 origin=(0,0,0)` et `max|dx|=0.07` -- des zeros du driver DUMMY, pas la
+geometrie. Sous `xvfb` les quatre barres sortent a 0/90/180/270 deg,
+pointes 1.0200.
+
+### Q4 -- le pivot porte bien les deux, et l'orbite est CALCULEE, pas parentee
+
+Mesure : une rotation de +90 deg deplace bar0 de (-3.5271, 0.62, 17.0590) a
+(-4.1910, 0.62, 16.7771) -- deck ET barres suivent.
+
+**Keepy n'est PAS reparente**, et c'est un choix argumente : (a) le precedent
+de ce fichier est d'ECRIRE le corps chaque frame (`_place_on_route`) plutot
+que de le parenter a la coque, alors que la coque bouge ; (b) le `scale`
+uniforme du layout est sur la racine `Turnstile`, donc un Keepy reparente
+serait silencieusement redimensionne par une edition de DONNEES ; (c) `_yaw`
+se composerait sous un parent tournant. Il est place par
+`pivot.to_global(offset_local)` : **le meme transform que le deck et les
+barres**, donc synchrone par construction et non par reglage.
+
+### ⚠️ LE RAYON N'EST PAS CHOISI, IL EST DERIVE -- une fenetre de 3 cm
+
+Face a l'exterieur (choix de Mathieu), la profondeur 2.0371 se couche le long
+du rayon, donc la queue arrive a `r - 1.0187`. Le post central fait 0.10 et
+monte jusqu'a 0.98 -- en plein dans la hauteur du corps -- donc la queue ne le
+manque que si `r >= 1.1187`. Le bord du deck est a 1.15. **Toute la fenetre
+legale est [1.119, 1.150]**, moins de quatre centimetres, et le bord en est
+l'extremite naturelle. `TURNSTILE_RIDE_RADIUS = TURNSTILE_DECK_RADIUS`.
+
+⚠️ **SON MUSEAU DEBORDE, mesure et non cache** : a ce rayon le modele atteint
+2.17 du pivot contre un deck de 1.15 et un footing de 1.35. Keepy fait 2.04 de
+long et le deck 2.30 de large : **un corps tourne vers l'exterieur ne peut
+etre contenu par ce deck a AUCUN rayon**, c'est une propriete des deux tailles
+et pas de ce nombre. Le tourner TANGENTIELLEMENT le ferait tenir (sa largeur
+n'est que 1.32) -- c'est le seul levier si le device juge le debord mauvais.
+
+### ⚠️ LE DEFAUT REEL DU LOT : un rider qui echantillonne un tween est une frame derriere
+
+Premiere version : `_place_on_turnstile()` appele depuis `_process`. Rayon et
+hauteur exacts a 1e-6, **mais la position angulaire derivait de 0.240317 u**.
+
+⚠️ **Ma premiere metrique etait FAUSSE et annoncait 179.6 deg sur du code
+correct** : une rotation +Y fait DECROITRE le relevement `atan2(z, x)`, donc
+je comparais `dk` a `+dp` quand il fallait `-dp`. Remplacee par une mesure
+sans convention -- l'offset **de-rotate par le pivot lui-meme**, qui est une
+constante si le rider tourne avec lui.
+
+Cause isolee par mesure : re-placer DANS la frame donne **3.93e-6 u**, donc le
+siege est exact a l'instant du placement et les 0.240 sont l'ecart entre ce
+moment et l'echantillon. L'arithmetique le confirme : cubic EASE_OUT, 540 deg
+en 2.2 s, pic a 3x540/2.2 = **736 deg/s**, soit **12.3 deg par frame a 60 Hz**
+contre **12.0 mesures**.
+
+⚠️ **`process_priority` N'Y CHANGE RIEN -- 0.240317 au dernier chiffre pres,
+les steps de Tween tombent apres le `_process` de tout noeud.** Il est
+**RETIRE plutot que garde**, selon le precedent du clamp adaptatif du lot JUMP :
+un fix qui ne corrige rien ne reste pas.
+
+**Correctif : la poussee devient un `tween_method` qui ecrit l'angle PUIS le
+rider, dans le meme appel.** Angles identiques (meme depart, meme arrivee,
+meme trans, meme ease, meme duree), donc la poussee est celle validee sur
+device au degre pres ; ce que la methode achete est qu'il n'existe plus de
+frame entre les deux. **Derive sur 515.8 deg de poussee : 0.240317 u ->
+0.000004 u.** C'est la regle que `_place_on_route()` suit deja pour que la
+coque ne derive pas de son passager, atteinte par l'autre bout.
+
+### ⚠️ LA BOUCLE INFINIE, ET LE LATCH QUI EST PROUVE PORTEUR
+
+Un demontage se termine par un atterrissage ordinaire, et un atterrissage
+ordinaire pres du prop est exactement ce qui le monte. La sortie est donc
+mesuree **au-dela du rayon de DECLENCHEMENT** (2.40 + 0.85 = 3.25 mesures) et
+non du seul footing -- sinon elle re-pousserait le prop en partant. Un latch
+`_dismount_pending` double la garde, parce que "la sortie tombe assez loin"
+est un fait de GEOMETRIE ET DE LAYOUT, et les layouts s'editent sans relire ce
+fichier.
+
+**Prouve porteur, pas decoratif** : latch neutralise + sortie ramenee dans le
+rayon, Keepy finit a **y = 0.310 -- la hauteur du deck**, c'est-a-dire remonte.
+
+### La sonde : 32 -> 50 checks, chacun verifie ROUGE d'abord
+
+⚠️ **PHASE E est REECRITE, pas supprimee.** Elle affirmait que "rien chez
+Keepy ne change jamais" -- la chose meme que ce lot change. Re-visee sur la
+moitie qui tient encore et qui merite de l'etre : l'atterrissage d'un PLONGEON
+le laisse au sol et ne le monte pas. Mesure **la, juste apres le plongeon**,
+et non en fin de phase ou l'atterrissage ordinaire est desormais cense le
+ramasser -- l'y mesurer serait asserter que la feature ne marche pas. Une
+assertion positive ("un atterrissage ordinaire le monte BIEN") est ajoutee en
+face : un test plongeon-contre-marche qui refuserait les deux passerait
+gratuitement.
+
+**Trois cassures deliberees, chacune attrapee** : rider non ecrit -> la
+synchronie tombe ROUGE ; sortie dans le rayon -> "il atterrit HORS du rayon"
+tombe ROUGE ; latch neutralise -> "le demontage ne l'a pas remonte" tombe
+ROUGE. PHASE G porte son propre **BLIND CHECK** : tourner le pivot sans le lui
+dire doit deplacer le siege (mesure 0.646 u), et un seul `follow_turnstile()`
+le remet exactement (**< 0.001 u**) -- sans quoi le chiffre de derive passerait
+gratuitement contre un rider qui n'aurait jamais bouge.
+
+⚠️ **UNE ASSERTION A MOI EST PARTIE ROUGE SUR DU CODE CORRECT.** "il est assis
+dans un ECART" testait `demi-ecart - off`, c'est-a-dire la distance au CENTRE
+de l'ecart, correctement NULLE pour un rider assis en plein milieu. Le print le
+disait : **"45.00 deg de la barre la plus proche, un demi-ecart vaut 45.00"**,
+ce a quoi ressemble un siege parfait. Corrigee en deux assertions -- il est au
+centre de l'ecart, et son propre demi-angle (**29.85 deg** a ce rayon) reste
+sous les 45.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes (releases GitHub officielles).
+⚠️ **Le `.tpz` est arrive TRONQUE au premier essai -- 925 499 392 contre
+1 073 228 327, sans erreur curl.** Piege deja consigne ; retelecharge en ENTIER
+(jamais `curl -C -`), taille reverifiee contre le `Content-Length`.
+
+Import headless **exit 0, 24 `.scn`** (import complet verifie, pas suppose).
+Boot de `HubWorld.tscn` **0 erreur**. Export Web release **exit 0, 0 erreur**.
+`index.wasm` **35 376 909** / md5 **`af4a8fc2925d992348eb30deeeb54360`**,
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** -- identiques au
+fingerprint deja consigne pour tout lot qui ne touche pas le code moteur.
+`index.pck` 5 897 376, **marqueur et jamais preuve d'identite**. Piege payload
+tenu : sur **228** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web`, `build` ou `firebase.json`.
+
+⚠️ **`--script` ne charge PAS les autoloads** (`Identifier not found: SafeArea`)
+-- piege deja consigne, la verification syntaxique passe par un boot de scene.
+
+**Sondes, toutes exit 0** : `TurnstileProbe` **50** (32 en baseline),
+`DivingBoardProbe` **113**, `WaterTintProbe` **48**, `StreamRideProbe` **37**,
+`WaterImpactProbe` **23**, `LakeZoneProbe`, `ProbeTimeoutAudit`,
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`.
+
+**`_apply_hop` re-echantillonne** (le fichier est touche) : **0.000000000000 u
+de divergence pire sur 1001 points**, sur le hop plein, le dernier hop court
+ET l'eject.
+
+**Draw nodes REMESURES des deux cotes dans cette session** -- `origin/staging`
+en worktree separe, import verifie complet (24 `.scn`) : **124 hors portails /
+130 au total AVANT ET APRES**, et **54 scenes de sonde des deux cotes**. Aucune
+geometrie ajoutee, comme il se doit : un etat n'est pas un mesh.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce qu'un Keepy pose au bord, museau au-dessus du vide, se lit comme un
+   PASSAGER** plutot que comme un prop tombe ? Le debord de 1.02 au-dela du
+   bord est mesure et structurel (§ Q4) ; sa lecture ne l'est pas. C'est le
+   risque principal du lot, et le seul levier est de le tourner
+   tangentiellement.
+2. **Les barres passent a hauteur de genou** (0.62 local contre un corps de
+   1.35 debout sur 0.31), donc elles le traversent toujours -- il est assis
+   ENTRE deux d'entre elles, pas au-dessus. Mesure, assume, jamais juge a
+   l'oeil.
+3. **La duree du tour est celle de la poussee** (2.2 s) : personne n'a encore
+   vu si etre embarque aussi longtemps sans pouvoir rien faire est agreable ou
+   long -- un tap pendant le tour est DELIBEREMENT sans effet.
+4. **Aucun son, aucune particule, aucun asset** : hors perimetre.
