@@ -19926,3 +19926,55 @@ build`** du run #301, et les deux lectures d'apres (`CACHE_VERSION` et
 colle a l'instant de la requete -- pas une reponse de cache. La valeur
 "avant" a ete relevee sur un `HIT` d'age non nul, valable comme VALEUR
 (elle precede le push) mais explicitement **pas** une mesure de fraicheur.
+
+### Merge en production (28 aout 2026, autorisation explicite de Mathieu)
+
+`staging` (`b052881`) -> `main`, commit de merge **`0a2b4d3`**, `--no-ff`,
+apres validation device confirmee sur capture ("satisfaisant") : vol du
+hibou en boucle fermee, fix du siege (`seat_y` mesure sur le mesh reel
+plutot que sur une fraction de bbox), plus de chevauchement Keepy/hibou.
+
+**Verifie AVANT le merge** : `git fetch --all --prune`, `origin/main`
+(`f2b44a1`) et `origin/staging` (`b052881`) exactement les SHA annonces.
+`merge-base(origin/main, origin/staging) = origin/main` -- main n'avait
+avance d'AUCUN commit au-dela du merge-base, donc `staging` est un strict
+sur-ensemble de `main`. La chaine de commits attendue (`d813ed7`,
+`f16e143`, `54efc05`, `8aa4f09`, `565bdb7`, `66ac351`, `b052881`) est
+presente au complet. Merge `--no-ff` sans conflit, arbre du merge
+**byte-identique a `origin/staging`** (`git diff HEAD origin/staging`
+vide, memes hash d'arbre des deux cotes `a30dfda8`) -- ce qui part en
+prod est litteralement l'arbre valide, pas une recomposition.
+
+CI **run #303** (id `33207178140`) **verte** (20:11:48 -> 20:16:20 UTC) --
+`Import project resources` 20:12:29 -> 20:15:45, `Export Web build`
+**20:15:45 -> 20:15:50**, `Deploy to Vercel [PRODUCTION -- main]`
+**succes** 20:16:07 -> 20:16:17, `[STAGING -- staging]` correctement
+**skipped** (push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI, avec les DEUX
+marqueurs de fraicheur** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1787948149` = **20:15:49 UTC** -- tombe exactement dans la fenetre `Export Web build` (20:15:45 -> 20:15:50) |
+| `x-vercel-cache` / `age` | `MISS` / `0` sur `index.html` ET `index.service.worker.js` |
+| `index.wasm` servi | **35 376 909** octets -- identique au fingerprint permanent deja consigne pour tout lot qui ne touche pas le code moteur |
+| `index.pck` servi | 14 796 384 octets (marqueur "nouveau build", jamais preuve d'identite) |
+
+`index.wasm` inchange confirme qu'aucun code moteur n'a bouge, coherent :
+ce merge ne touche que `scripts/hub/*.gd`, `resources/hub/hub_layout.tres`
+et `scripts/dev/OwlFlightProbe.{gd,tscn}` -- deja valides sur `staging`.
+
+**Aucune sonde re-derouleee dans cette session** : le tree pousse sur
+`main` est byte-identique a celui deja valide sur `staging` (`OwlFlightProbe`
+42/42, sondes partagees toutes vertes, validation device confirmee) --
+meme principe deja applique aux merges tourniquet, diving board, lobe
+nord/balancoire et chouette decor precedents.
+
+**Le vol du hibou avec le fix de siege est desormais EN PRODUCTION** sur
+`keepy-ten.vercel.app`.
+
+**Reste ouvert : aucun sur ce merge.** Le seul point laisse ouvert par le
+lot de staging (est-ce que "assis sur la nuque" se lit comme "Keepy
+chevauche le hibou") est un jugement device deja tranche par la
+validation qui a autorise ce merge.
