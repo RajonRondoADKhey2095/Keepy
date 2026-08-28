@@ -84,6 +84,13 @@ class_name HubBuilder
 ## Scene instantiated for every &"portal" entry.
 @export var portal_scene: PackedScene
 
+## Scene instantiated for every &"owl" entry -- the imported
+## assets/models/keepy_owl_decor.glb, the first hub prop that is a Meshy
+## model rather than a primitive built in this file. Same pattern as
+## portal_scene: assigned once on the HubBuilder node in HubWorld.tscn,
+## instantiated per entry by _make_owl().
+@export var owl_scene: PackedScene
+
 const TRUNK_COLOR: Color = Color(0.20, 0.13, 0.08)
 const CROWN_COLOR: Color = Color(0.17, 0.34, 0.13)
 const ROCK_COLOR: Color = Color(0.26, 0.27, 0.24)
@@ -728,6 +735,37 @@ const SEESAW_PLANK_COLOR: Color = PONTOON_COLOR
 const SEESAW_GRIP_COLOR: Color = BOAT_RIM_COLOR
 const SEESAW_FULCRUM_COLOR: Color = ROCK_COLOR
 
+## The first non-Keepy Meshy model on this plateau: a static, purely
+## decorative owl (assets/models/keepy_owl_decor.glb, converted from
+## assets_source/openworld/perso/Meshy_AI_Ember_Eyed_Owlet_0828125359_texture.glb
+## by adding KHR_materials_unlit -- the project rule for every asset, applied
+## here exactly as it was for keepy_squirrel_hero.glb and
+## keepy_hibou_pursuer.glb, with the source's own PBR maps left untouched).
+## No interaction, no animation, no state: a lone MeshInstance3D under a
+## wrapping Node3D, placed like any other &"owl" entry.
+##
+## Uniform scale derived by matching the model's own tallest raw axis (Y,
+## the model measures 1.899284 standing) to Keepy's own built length in the
+## hub (2.0371, the "2.04" the brief names) -- so the two read as
+## comparable creature scales rather than one dwarfing the other. Typed as
+## a Vector3 rather than a float so a future asset whose proportions need
+## correcting does not have to re-plumb this constant to do it; this one
+## measured out natural enough that all three components are equal.
+const OWL_MODEL_SCALE: Vector3 = Vector3(1.07256, 1.07256, 1.07256)
+
+## Raises the model so its lowest vertex (measured at model-space y =
+## -0.95136, the raw AABB's own min.y) sits at the slot's y = 0 once scaled
+## -- the JUMP log's lesson (a .glb's origin is wherever its author left
+## it) applied here instead of assumed. The model's X/Z centre is within
+## 1.3mm and 0.7mm of its own origin, the same order of noise the
+## dragonfly's install already treated as measurement error rather than
+## something to correct.
+const OWL_MODEL_OFFSET: Vector3 = Vector3(0.0, 1.02039, 0.0)
+
+## At-ground radius, post-scale: half of the built footprint's longer side
+## (Z, 1.531), matching the FOOTPRINT_RADIUS convention below.
+const OWL_FOOTPRINT_RADIUS: float = 0.77
+
 ## Ground footprint radius per prop type, in LOCAL units (multiplied by the
 ## entry's uniform scale at read time). Used by the ride's disembark search
 ## to refuse a bank point that is already occupied.
@@ -757,6 +795,7 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	# other prop: nothing on this plateau blocks an approach, and the seesaw
 	# is not about to become the first thing that does.
 	&"seesaw": SEESAW_PLANK_LENGTH * 0.5,
+	&"owl": OWL_FOOTPRINT_RADIUS,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -1025,6 +1064,8 @@ func _build() -> void:
 					node = _make_turnstile(entry, index, where)
 				&"seesaw":
 					node = _make_seesaw(entry, index, where)
+				&"owl":
+					node = _make_owl(index)
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -1291,6 +1332,41 @@ func _make_portal(entry: Dictionary, index: int) -> Node3D:
 		label_node.text = entry.get("label", "")
 	_portals.append(portal)
 	return portal
+
+## A static, purely decorative owl -- the first hub prop drawn from an
+## imported Meshy model rather than built from primitives in this file.
+##
+##   Owl              <- placed by _build (position / rotation_y / scale)
+##     Model          <- owl_scene instance, OWL_MODEL_SCALE / OWL_MODEL_OFFSET
+##
+## Same shape as the ModelSlot correction trio (model_scale / model_rotation
+## / model_offset) used everywhere else a .glb replaces a placeholder, but
+## applied by hand here rather than through a ModelSlot node: ModelSlot's
+## whole point is a placeholder that can fall back to a primitive, and this
+## prop has no placeholder to fall back to -- it is either the model or
+## nothing, exactly like _make_portal() above already instantiates
+## portal_scene directly rather than through an intermediary.
+##
+## No local rotation correction: the raw model already faces +Z (measured
+## by rendering it from all four cardinal directions -- see the lot's
+## report), so a placement entry with rotation_y = 0 already faces the
+## model toward the camera. Nothing else about this prop moves: no signal,
+## no _process, no state.
+func _make_owl(index: int) -> Node3D:
+	if owl_scene == null:
+		push_error("HubBuilder: entry %d is an owl but no owl_scene is assigned." % index)
+		return null
+	var model := owl_scene.instantiate() as Node3D
+	if model == null:
+		push_error("HubBuilder: owl_scene does not instantiate to a Node3D.")
+		return null
+	model.scale = OWL_MODEL_SCALE
+	model.position = OWL_MODEL_OFFSET
+	var root := Node3D.new()
+	root.name = "Owl"
+	root.add_child(model)
+	return root
+
 ## A cut trunk. Deliberately ONE mesh in the trees' own bark colour: a
 ## stump is what a tree leaves behind, so sharing the colour is what makes
 ## the pair read as a story rather than as two unrelated props. No lighter
