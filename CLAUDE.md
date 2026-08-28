@@ -17455,6 +17455,125 @@ reconstruites ni deplacees ici -- seul le constat est note, pour qu'une
 future session ne cherche pas ces chiffres au seul endroit ou la
 convention dit qu'ils devraient etre.
 
+## LE PLONGEOIR SE GENERALISE : DEUX PLANCHES DE PLUS, UN PIEGE DE CONCURRENCE DANS SA PROPRE SONDE (27 aout 2026)
+
+Branche `claude/diving-board-placement-lot-2-8misfh`, partie de `main`
+(`a346912`, le plongeoir unique deja valide sur device). **La section
+ci-dessus documentait la chaine complete mais s'arretait a une seule
+planche, sur le lobe du grand lac** ; ce lot en ajoute deux, une par
+grand corps d'eau restant (petit lac, lobe de spawn), et corrige au
+passage un defaut de sonde qui aurait laisse le vert mentir.
+
+### PREMISSE FAUSSE N°1 : la GEOMETRIE etait deja generique, PAS la PLOMBERIE autour
+
+`_make_divingboard()` lisait deja `position`/`deck_anchor`/`dive_direction`
+sur l'entree de layout sans rien coder en dur sur "la premiere planche" --
+rien a generaliser la. Ce qui ne tenait qu'a UN etait la chaine autour,
+et elle tenait a un a TROIS endroits distincts, chacun refuse plutot que
+corrige a l'aveugle :
+
+- **`HubBuilder`** : `_diving_board {}` singulier / `diving_board()` ->
+  `_diving_boards []` / `diving_boards()`. **Pas** soumis a la regle "un
+  seul" du pond/lake/boat -- ces singletons existent parce qu'un
+  appelant en aval doit nommer LE pond ; rien ne nomme LE plongeoir, un
+  climb part de l'echelle sur laquelle on a marche, donc une planche de
+  plus est un lieu de plus a grimper, pas une ambiguite.
+- **`HubTapInput`** : `ladder_foot` -> `ladder_feet`. Un point ne
+  repondait que pour la premiere echelle ; un tap sur l'une des deux
+  autres tombait a travers vers `tapped_ground` et marchait Keepy jusqu'a
+  une planche qu'il ne pouvait ensuite pas grimper. Le rayon reste un
+  nombre unique : c'est une propriete du GESTE, pas d'une planche.
+- **`HubWorld`** : `_try_climb` choisit desormais le pied le PLUS PROCHE
+  dans ce rayon, pas la premiere entree du layout. Le plus proche et pas
+  le premier, parce que "premier" est un fait sur le fichier et le
+  joueur se tient a un endroit.
+
+**Avant ce lot, un deuxieme plongeoir aurait ete DESSINE et JAMAIS
+GRIMPABLE** : la geometrie genereait la planche (elle ne lisait rien de
+special au premier index), mais un `push_error` refusait explicitement
+toute deuxieme entree tant que la plomberie n'avait pas suivi -- exactement
+le defaut qu'une session pressee aurait pu livrer en silence si elle
+avait vu la geometrie generique et suppose, a tort, que le reste
+suivait automatiquement.
+
+`KeepyHopper` est **intouche** : il possede une planche A LA FOIS, ce qui
+reste vrai, et ses seules mentions de l'ancien accesseur etaient des
+commentaires.
+
+### Placement mesure, pas choisi a l'oeil -- meme critere que la premiere planche
+
+Deux entrees, aucune nouvelle constante. Hauteur de deck **1,8** sur les
+deux, comme la planche deja livree -- cette hauteur est validee sur
+device et n'est pas rouverte ici.
+
+Le candidat retenu par lac est celui qui maximise
+`min(degagement aux props, degagement a l'autre eau)` **du cote par
+lequel un joueur approche reellement**, et non le point le plus vide de
+la carte -- maximiser le degagement seul pousserait les deux planches
+dans un coin ou personne ne marche :
+
+| corps d'eau | pied d'echelle | degagement |
+|---|---|---|
+| petit lac | (-21,1469 ; 3,0628), rive nord-est | 2,293 u au prop le plus proche, 3,9 u a toute autre eau |
+| lobe de spawn | (-15,5728 ; -8,5691), rive nord, entre les deux lacs | 2,070 u au prop le plus proche, **2,07 u au petit lac** |
+| grand lac (deja livre) | -- | **2,512 u**, RE-MESURE ici par la sonde plutot que repris de memoire |
+
+### PREMISSE FAUSSE N°2 : le compte de barreaux ne se deduit PAS de "ils sont tous a 1,8"
+
+Le nombre de barreaux est **mesure par planche**, pas suppose identique
+parce que les trois partagent la meme hauteur de deck. Le ratio dont il
+derive tombe **exactement** sur le couteau `.5` de `round()` a 1,8 (voir
+la section precedente), et lequel des deux cotes un arrondi non protege
+choisit dependait du bruit float32 -- pas de la hauteur voulue. "Ils sont
+tous a 1,8, donc ils correspondent tous" est precisement l'hypothese que
+le correctif de tie-break existe pour interdire. Les trois planches
+retombent a **5 barreaux**, mesure et non suppose.
+
+### PREMISSE FAUSSE N°3, TROUVEE DANS LA SONDE ELLE-MEME : un `await` fait d'une phase une COROUTINE, et l'appeler nue la fait tourner CONCURREMMENT
+
+`DivingBoardProbe` mesurait la planche zero et l'appelait "la planche".
+Chaque phase tourne desormais par instance :
+
+- **PHASE B** resout de QUELLE eau chaque planche plonge en interrogeant
+  les corps eux-memes -- `HubRegion` pour les lobes du grand lac,
+  `HubBuilder` pour la mare et le petit lac -- au lieu d'etre epinglee a
+  `lakes()[0]`, tout ce qu'une seule planche pouvait nommer. Ajoute un
+  gate de compte de barreaux par planche et un controle qu'aucun pied
+  d'echelle n'est a moins d'un rayon de tap d'un autre.
+- **PHASE C** grimpe, se tient et plonge chaque planche, cibles TERRE et
+  EAU toutes les deux.
+- **PHASE D** essaie chaque centre de portail depuis chaque deck. Le
+  BLIND CHECK reste arme et **sort de la boucle** : le laisser dedans
+  laisserait le dialogue ouvert, ce qui empoisonnerait tous les
+  controles "n'ouvre rien" suivants.
+
+**113 checks, 0 echec.**
+
+⚠️ **Trouve en ecrivant cette sonde, et ca merite d'etre nomme parce que
+le vert avait l'air reel** : `_phase_c_one` contient des `await`, donc
+c'est une coroutine, et l'appeler nue faisait tourner les trois planches
+CONCURREMMENT sur un seul corps. Douze checks echouaient en imprimant les
+coordonnees de la planche zero pendant les planches un et deux. **Corrige
+en `await`ant l'appel** -- le meme piege que celui deja consigne pour les
+sondes Battle et Hub ailleurs dans ce fichier, ici trouve une couche plus
+loin, dans une sonde qui verifiait justement l'absence de concurrence
+entre planches.
+
+`WaterTintProbe` : constante de draw-nodes **106 -> 120**, itemisee comme
+son propre commentaire l'exige : deux planches x sept noeuds de mesh
+chacune. **Aucun nouveau MultiMesh** -- le lot de barreaux est cle par
+mesh et couleur, donc trois echelles partagent UN noeud qui porte
+desormais 15 instances au lieu de 5.
+
+### Reste ouvert -- verifie sur l'arbre fusionne au lot suivant, pas ici
+
+`resources/hub/hub_layout.tres` porte desormais trois entrees
+`&"divingboard"`, `HubBuilder.gd`/`HubTapInput.gd`/`HubWorld.gd` portent
+la generalisation ci-dessus, `DivingBoardProbe.gd` couvre les trois, et
+`docs/HUB_PERF_BASELINE.md` recoit une ligne perf (106/112 avant ->
+120/126 apres, FPS moyen inchange, FPS min bruite par la machine
+partagee -- **jugement device**, comme toujours pour ce banc llvmpipe).
+
 ## L'IMPACT DANS L'EAU : une rampe de ligne de flottaison + un anneau de surface, ZERO particule (27 aout 2026)
 
 Branche `claude/keepy-water-impact-effect-lhxhh0`, partie de `main`
