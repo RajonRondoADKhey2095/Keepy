@@ -731,6 +731,10 @@ var _spinning_props: Array[Dictionary] = []
 ## for the shape of one entry.
 var _diving_boards: Array[Dictionary] = []
 
+## Every &"islet" as built -- {"centre": Vector3 (flat), "radius": float}, in
+## layout order. See islets() for why this exists at all.
+var _islets: Array[Dictionary] = []
+
 var _pond_centre: Vector3 = Vector3.INF
 var _small_lake_centre: Vector3 = Vector3.INF
 
@@ -840,6 +844,20 @@ func pond_centre() -> Vector3:
 ## draws them from that table rather than the other way round.
 func small_lake_centre() -> Vector3:
 	return _small_lake_centre
+
+## Every &"islet", as it was BUILT -- {"centre": Vector3 (flat), "radius":
+## float}. Read by HubWater to know where a great-lake island's dry ground
+## is: a disc test alone cannot see it, because an islet sits well inside
+## the water disc it stands on -- HubWater has to subtract it, not merely
+## draw it.
+##
+## AS-BUILT, not as-declared, for the same reason pond_centre() and
+## small_lake_centre() are: the layout's "radius" is scaled by the entry's
+## own uniform "scale" before it becomes the disc actually drawn, and a
+## caller that redid that multiplication itself would be a second reading of
+## the layout -- which is exactly how one circle quietly becomes two.
+func islets() -> Array[Dictionary]:
+	return _islets
 
 ## Every prop's ground footprint, as {"position": Vector3, "radius": float},
 ## read from the LAYOUT rather than from the built tree -- batched props
@@ -970,6 +988,16 @@ func _build() -> void:
 					push_error("HubBuilder: a second &\"lake\" entry at %d; the first one is the one anything else can find." % index)
 				else:
 					_small_lake_centre = where
+			if type == &"islet":
+				# AS-BUILT: the radius the mesh was actually given, scaled by
+				# the same uniform this entry's node.scale carries. Recorded
+				# in layout order, plural from the first entry -- an islet
+				# names no singleton the way THE pond does, it is one more
+				# island for HubWater to subtract.
+				_islets.append({
+					"centre": Vector3(where.x, 0.0, where.z),
+					"radius": float(entry.get("radius", ISLET_RADIUS)) * uniform,
+				})
 			if type == &"turnstile":
 				# Recorded AFTER add_child, alongside the boards, so every
 				# published spinner is one that actually got drawn. Held to
