@@ -200,6 +200,22 @@ var _seesaw_ride: Dictionary = {}
 var _owls: Array[Dictionary] = []
 var _owl_ride: Dictionary = {}
 
+## Every cabin, as _setup_cabins copied it; and the one Keepy is currently
+## inside.
+##
+## No per-prop tween slot, unlike the spinners, the seesaws and the owls:
+## nothing here is ever animated. The cabin stands still and it is KEEPY
+## who is hidden, which is why this is the smallest entry of the four.
+var _cabins: Array[Dictionary] = []
+var _cabin_visit: Dictionary = {}
+
+## A tap on a doorstep armed a walk to it, and the landing that finishes
+## that walk should take him inside. Exactly the latch _boarding, _climbing
+## and _flying already are, and cleared on the same three occasions:
+## another tap, a successful entry, or the chain running out without
+## arriving.
+var _entering: bool = false
+
 ## A tap on a perch armed a walk to it, and the landing that finishes that
 ## walk should start the flight. Exactly the latch _boarding and _climbing
 ## already are, and cleared on the same three occasions: another tap, a
@@ -282,6 +298,18 @@ const SEESAW_ROCK_S: float = 2.4
 ## a prop 1.5 wide and leaves the spawn a full unit outside it.
 const OWL_TAP_RADIUS: float = 1.8
 
+## How close a tap has to land to a cabin's doorstep to mean "go in".
+##
+## Wider than the owl's 1.8 because the target is bigger -- the prop is
+## 1.89 across against the owlet's 1.39 -- and because there is nothing
+## nearby for it to steal a tap from: the doorstep is at (-17.43, 29.63)
+## and the nearest thing that reads a tap of its own is the turnstile, 17.3
+## units away, with the seesaw 20.3 beyond that. It is still measured
+## against the prop rather than picked: 2.2 reaches a little past the
+## footprint (1.25) and stops well short of the 5.7-unit gap to the nearest
+## rock, so a player walking by does not get pulled indoors.
+const CABIN_TAP_RADIUS: float = 2.2
+
 ## How long the whole loop takes, perch to perch.
 ##
 ## Named rather than left in the call for the reason TURNSTILE_SPIN_S is,
@@ -318,18 +346,6 @@ const OWL_LOOP_HEADING_DEG: float = -35.0
 
 const KEEPY_CLEARANCE: float = 0.66
 
-## ⚠️ TEMPORARY, STAGING-ONLY DEBUG TOOL -- DELETE BEFORE ANY `main` MERGE.
-## `true` here draws a live x/z readout of Keepy's own world position (see
-## `scripts/hub/debug/KeepyCoordsOverlay.gd`) so Mathieu can walk to the
-## exact spot he wants the future cabin on `keepy-staging.vercel.app` and
-## read back the two numbers this repo needs to place it. This project has
-## no runtime prod/staging split -- both serve the exact same build -- so
-## the only thing keeping this off production is that the branch carrying
-## it is never merged past `staging`. Once the coordinate is read off,
-## this constant, its call below and the whole `scripts/hub/debug/` file
-## are removed in the same lot that installs the real cabin `.glb`.
-const KEEPY_COORDS_DEBUG_ENABLED: bool = true
-
 
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
@@ -340,16 +356,6 @@ func _ready() -> void:
 	SafeArea.fill_screen()
 
 	_apply_swamp_palette()
-
-	if KEEPY_COORDS_DEBUG_ENABLED and _keepy != null:
-		var coords_overlay_script := preload("res://scripts/hub/debug/KeepyCoordsOverlay.gd")
-		var overlay: Control = coords_overlay_script.new()
-		# Child of HubWorld itself, not `_world` -- this is a 2D UI
-		# overlay, not a 3D ground marker, so it belongs beside
-		# `FallbackButton`/`FallbackMenu` in the Control tree rather than
-		# inside the SubViewport's 3D scene.
-		add_child(overlay)
-		overlay.track(_keepy)
 
 	_portals = _builder.portals()
 	for portal in _portals:
@@ -368,6 +374,8 @@ func _ready() -> void:
 	_setup_seesaws()
 	_setup_owls()
 	_tap.tapped_owl.connect(_on_tapped_owl)
+	_setup_cabins()
+	_tap.tapped_cabin.connect(_on_tapped_cabin)
 	_tap.tapped_boat.connect(_on_tapped_boat)
 	_keepy.hop_landed.connect(_on_hop_landed)
 	_keepy.ride_moved.connect(_on_ride_moved)
@@ -630,6 +638,91 @@ func _on_owl_flight_finished() -> void:
 	# the same function: it reads "position" and "radius" and knows nothing
 	# about any particular prop, so the owl needed it rather than a copy.
 	_keepy.leave_owl(_ride_exit_point(entry))
+
+func _setup_cabins() -> void:
+	for prop in _builder.cabins():
+		# Copied WHOLESALE and then given the extra key, for the reason
+		# _setup_spinners() states: a hand-written copy is exactly the thing
+		# that silently drops the field added last.
+		var entry: Dictionary = prop.duplicate()
+		entry["radius"] = CABIN_TAP_RADIUS
+		_cabins.append(entry)
+	if _cabins.is_empty():
+		return
+	var doors: Array[Vector3] = []
+	for entry in _cabins:
+		doors.append(entry["door"])
+	_tap.cabin_doors = doors
+	_tap.cabin_radius = CABIN_TAP_RADIUS
+
+## A tap on a cabin doorstep. ONE tap buys the whole thing -- the hop chain
+## walks to the door and _on_hop_landed goes in on arrival -- because that
+## is exactly how a tap on the boat, the ladder and the perch already
+## behave.
+func _on_tapped_cabin(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board():
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = true
+	_keepy.hop_to(point)
+	# Already standing at the door: nothing to walk, so go in on the spot
+	# rather than waiting for a landing that will never come.
+	if not _keepy.is_hopping():
+		_try_enter_cabin(_keepy.global_position)
+
+## Goes inside if the landing is close enough to a doorstep. Returns true
+## when he went in, so the caller can stop looking at that landing.
+##
+## The proximity test is the SAME radius the tap used, for the reason the
+## boat's, the ladder's and the perch's are: a player who tapped the cabin
+## and walked to it cannot arrive and be told they are not there yet.
+##
+## NEAREST door and not first-match, on the ladder's and the perch's terms:
+## "first" is a fact about the layout file, and the player is standing at a
+## place. And the intent SURVIVES a landing that has not arrived yet --
+## that was the boarding walk's own defect, which passed its probe for a
+## whole batch because the arrival happened to fall inside the radius on
+## hop one.
+func _try_enter_cabin(position: Vector3) -> bool:
+	if _cabins.is_empty():
+		_entering = false
+		return false
+	var flat := Vector3(position.x, 0.0, position.z)
+	var entry: Dictionary = {}
+	var nearest: float = INF
+	for candidate in _cabins:
+		var d: float = flat.distance_to(candidate["door"] as Vector3)
+		if d < nearest:
+			nearest = d
+			entry = candidate
+	if nearest > CABIN_TAP_RADIUS:
+		return false
+	if not _keepy.enter_cabin(entry["door"] as Vector3):
+		return false
+	_entering = false
+	_cabin_visit = entry
+	# The doorstep stops accepting taps for the whole visit, so the next tap
+	# falls through to the ground path exactly as the boat's and the perch's
+	# do -- which is what leaves it free to MEAN something, and here what it
+	# means is "come back out". Copying the ladder instead would have left a
+	# player inside a prop that was swallowing every tap he made.
+	_tap.cabin_available = false
+	return true
+
+## Brings him back out, and the doorstep takes taps again.
+##
+## Called from the ground path, which is where a tap made while he is
+## inside lands. No point is passed on: he comes out where he went in, and
+## that spot is ground he had already landed on.
+func _leave_cabin() -> void:
+	_tap.cabin_available = true
+	_cabin_visit = {}
+	if _keepy.is_in_cabin():
+		_keepy.leave_cabin()
 
 ## Sets going every spinning prop the landing is standing at.
 ##
@@ -1084,12 +1177,28 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# withdrawal -- so this branch is what that fall-through lands in.
 	if _keepy.is_on_owl_flight():
 		return
+	# A tap while he is INSIDE A CABIN brings him back out, and this branch
+	# is the whole exit. It is reached because the doorstep withdraws from
+	# the tap for the length of the visit -- the boat's withdrawal -- so
+	# every tap made meanwhile falls through to here.
+	#
+	# ANY tap, not only one back on the doorstep, and that is deliberate
+	# rather than lax: he is INVISIBLE while he is in there, so a player has
+	# nothing to aim at. The turnstile and the seesaw can ask for a tap on
+	# themselves because the player can see them; a cabin cannot. The point
+	# is still dropped rather than queued -- it can say the player wanted
+	# something, but it must never become somewhere to walk to from inside a
+	# tree.
+	if _keepy.is_in_cabin():
+		_leave_cabin()
+		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
 	# screen overruling them.
 	_boarding = false
 	_climbing = false
 	_flying = false
+	_entering = false
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -1190,6 +1299,14 @@ func _on_hop_landed(position: Vector3) -> void:
 	# over it on.
 	if _keepy.is_on_owl_flight():
 		return
+	# NOR WHILE HE IS IN A CABIN, on the identical terms: going in and
+	# coming out emit no landings either, so this branch should be as
+	# unreachable as the three above, and it is written for their reason --
+	# "no landing is emitted" is a property of KeepyHopper that could
+	# change, and the failure it would cause is a player being carried into
+	# a sub-game from inside a tree he was asleep in.
+	if _keepy.is_in_cabin():
+		return
 
 	# WHERE KEEPY IS, decided before anything about what this landing goes
 	# on to TRIGGER. A landing in a portal still updates the tint on its way
@@ -1276,6 +1393,12 @@ func _on_hop_landed(position: Vector3) -> void:
 	# ground it left from, and every branch past this point returns.
 	if _flying and _try_fly(position):
 		return
+	# And the one that finishes a walk to a doorstep goes inside. Sits with
+	# the other three -- after the tint and the impact, before the portals --
+	# for the reason they do: a landing that goes on to hide still reports
+	# the ground it left from, and every branch past this point returns.
+	if _entering and _try_enter_cabin(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -1324,6 +1447,7 @@ func _on_keepy_idle() -> void:
 	_boarding = false
 	_climbing = false
 	_flying = false
+	_entering = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches
