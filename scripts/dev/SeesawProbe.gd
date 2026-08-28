@@ -26,7 +26,10 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## excluding portals: the fulcrum, the plank, and ONE MultiMesh node for
 ## however many grips there are. Itemised rather than stated, so a fourth
 ## node has to be explained rather than absorbed.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 127
+## 127 -> 128 on 28 aout 2026: the first Meshy model on this plateau, one
+## static, decorative owl -- ONE MeshInstance3D (the .glb's own mesh) under
+## a wrapping, non-drawing Node3D. Not batched: there is only one.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 128
 
 var _failures: int = 0
 var _hub: Node = null

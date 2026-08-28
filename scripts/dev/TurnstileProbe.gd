@@ -38,7 +38,10 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## has. Raised here rather than left to fail, and written down rather than
 ## absorbed -- a draw-node constant that drifts quietly is a budget nobody
 ## is watching.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 127
+## 127 -> 128 on 28 aout 2026: the first Meshy model on this plateau, one
+## static, decorative owl -- ONE MeshInstance3D (the .glb's own mesh) under
+## a wrapping, non-drawing Node3D. Not batched: there is only one.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 128
 
 var _failures: int = 0
 var _hub: Node = null
