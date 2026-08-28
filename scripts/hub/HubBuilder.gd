@@ -661,6 +661,73 @@ const TURNSTILE_DECK_COLOR: Color = PONTOON_COLOR
 const TURNSTILE_FRAME_COLOR: Color = BOAT_RIM_COLOR
 const TURNSTILE_BASE_COLOR: Color = ROCK_COLOR
 
+## =====================================================================
+## THE SEESAW -- the plateau's second prop that answers a landing.
+##
+## Built to the TURNSTILE's pattern deliberately, because the turnstile
+## already paid for it: a static part, a pivot, a rider written onto that
+## pivot in the same call that turns it, and a published registry the ride
+## reads instead of re-deriving anything. What differs is one axis. The
+## turnstile turns about Y and its rider's height never changes; a seesaw
+## tilts about Z and his does, which is why the seat is a LOCAL offset
+## through the pivot rather than a world position -- the same construction,
+## carrying one more thing for free.
+##
+## THE PLANK RUNS ALONG X, and that is a readability choice rather than an
+## arbitrary axis. HubCamera never yaws: it looks down -Z with a fixed
+## -34 deg pitch, so a plank along X is broadside to it and its tilt reads
+## as one end up and the other down in SCREEN vertical. A plank along Z
+## would tilt toward and away from the camera, which is the one direction a
+## fixed camera renders as almost no movement at all.
+const SEESAW_FULCRUM_RADIUS: float = 0.30
+const SEESAW_FULCRUM_SEGMENTS: int = 10
+
+## Fulcrum height, and it is NOT a look: it is what keeps the low end of the
+## plank above the ground at full tilt. The far corner of a tilted plank
+## sits at
+##
+##   y = fulcrum - (length/2)*sin(tilt) - (thickness/2)*cos(tilt)
+##     = 0.62 - 1.80*sin(15) - 0.07*cos(15) = 0.0865
+##
+## which is positive, so the plank never enters the ground -- with 8.6 cm to
+## spare rather than by luck. SeesawProbe gates that inequality against the
+## shipped numbers, so a later batch that lengthens the plank or deepens the
+## tilt is told rather than left to sink it.
+const SEESAW_FULCRUM_HEIGHT: float = 0.62
+
+const SEESAW_PLANK_LENGTH: float = 3.60
+const SEESAW_PLANK_WIDTH: float = 0.62
+const SEESAW_PLANK_THICKNESS: float = 0.14
+
+## Grip posts, one at each end, batched into ONE MultiMeshInstance3D for the
+## reason the turnstile bars are: two instances of one mesh is one node, and
+## the batch is also where the TRANSFORM_3D discipline lives.
+const SEESAW_GRIPS: int = 2
+const SEESAW_GRIP_RADIUS: float = 0.055
+const SEESAW_GRIP_HEIGHT: float = 0.34
+const SEESAW_GRIP_SEGMENTS: int = 6
+
+## How far out along the plank a rider sits, and the grip sits OUTBOARD of
+## him so he holds it rather than standing inside it -- the same problem the
+## turnstile solved by snapping its seat to a gap between bars.
+const SEESAW_RIDE_X: float = 1.38
+const SEESAW_GRIP_X: float = 1.72
+
+## The trigger radius: how close a landing has to be to set the plank
+## rocking and put him on it. Larger than the turnstile's footing because
+## the prop it has to cover is a 3.6 u plank rather than a 2.3 u disc, and
+## sized from the plank rather than picked -- half the length plus the same
+## reach the turnstile allows past its own footing.
+const SEESAW_TRIGGER_RADIUS: float = SEESAW_PLANK_LENGTH * 0.5 + 0.80
+
+## The plank and the fulcrum reuse the pontoon plank and the rock, exactly
+## as the turnstile reuses the pontoon and the boat rim: no new colour is
+## introduced by a decor prop, and a wooden plank on a stone pivot is what
+## the two already are.
+const SEESAW_PLANK_COLOR: Color = PONTOON_COLOR
+const SEESAW_GRIP_COLOR: Color = BOAT_RIM_COLOR
+const SEESAW_FULCRUM_COLOR: Color = ROCK_COLOR
+
 ## Ground footprint radius per prop type, in LOCAL units (multiplied by the
 ## entry's uniform scale at read time). Used by the ride's disembark search
 ## to refuse a bank point that is already occupied.
@@ -686,6 +753,10 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	# The stone footing, which is the whole of what this prop puts on the
 	# ground -- the deck sits above it and the bars above that.
 	&"turnstile": TURNSTILE_BASE_RADIUS,
+	# Half the plank, so Keepy walks around it the way he walks around any
+	# other prop: nothing on this plateau blocks an approach, and the seesaw
+	# is not about to become the first thing that does.
+	&"seesaw": SEESAW_PLANK_LENGTH * 0.5,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -726,6 +797,16 @@ var _stream_half_width: float = 0.0
 ## radius, and the node to turn -- so a second kind of spinning prop is an
 ## entry in this array rather than a second parallel mechanism.
 var _spinning_props: Array[Dictionary] = []
+
+## Every &"seesaw" as built, in layout order. A LIST FROM THE FIRST COMMIT
+## and with one entry in it, which is the lesson the diving board charged
+## for: that prop's GEOMETRY was generic from the start and the singleton
+## sat in the table DOWNSTREAM of it, so a second plank was drawable and
+## unclimbable and undoing it cost its own batch. Nothing names THE seesaw
+## -- a landing rocks whichever one it landed at -- so a second entry is
+## another place to play rather than an ambiguity.
+var _seesaws: Array[Dictionary] = []
+var _last_seesaw: Dictionary = {}
 
 ## Every &"divingboard" as built, in layout order -- see diving_boards()
 ## for the shape of one entry.
@@ -835,6 +916,22 @@ func diving_boards() -> Array[Dictionary]:
 func spinning_props() -> Array[Dictionary]:
 	return _spinning_props
 
+## Every &"seesaw", as it was BUILT, in layout order:
+##
+##   "position"     Vector3 -- flat world centre, the fulcrum
+##   "radius"       float   -- trigger radius: how near a landing must be
+##   "pivot"        Node3D  -- the node that TILTS; nothing else moves
+##   "seat_y"       float   -- top of the plank, in the pivot's local space
+##   "ride_x"       float   -- how far out along the plank a rider sits
+##   "clear_radius" float   -- half the plank: what a dismount must clear
+##
+## PUBLISHED FROM THE PASS THAT DREW IT, never re-read from the layout, for
+## the reason spinning_props() states at length: the plank the player sees
+## tilting and the plank a rider is written onto have to be one fact, and
+## the only way to guarantee that is for both to come out of one pass.
+func seesaws() -> Array[Dictionary]:
+	return _seesaws
+
 ## Centre of the one &"pond", or Vector3.INF when the layout has none.
 func pond_centre() -> Vector3:
 	return _pond_centre
@@ -926,6 +1023,8 @@ func _build() -> void:
 					node = _make_divingboard(entry, index, where)
 				&"turnstile":
 					node = _make_turnstile(entry, index, where)
+				&"seesaw":
+					node = _make_seesaw(entry, index, where)
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -998,6 +1097,13 @@ func _build() -> void:
 					"centre": Vector3(where.x, 0.0, where.z),
 					"radius": float(entry.get("radius", ISLET_RADIUS)) * uniform,
 				})
+			if type == &"seesaw":
+				# Recorded AFTER add_child, on the turnstile's terms and for
+				# its reasons: every published pivot is one that actually
+				# got drawn, and the list is plural because nothing
+				# downstream names THE seesaw.
+				if not _last_seesaw.is_empty():
+					_seesaws.append(_last_seesaw)
 			if type == &"turnstile":
 				# Recorded AFTER add_child, alongside the boards, so every
 				# published spinner is one that actually got drawn. Held to
@@ -1937,6 +2043,110 @@ func _make_turnstile(_entry: Dictionary, _index: int, where: Vector3) -> Node3D:
 		"ride_radius": TURNSTILE_RIDE_RADIUS,
 		"bars": TURNSTILE_BARS,
 		"clear_radius": TURNSTILE_BASE_RADIUS,
+	}
+	return root
+
+## The seesaw. Three draw nodes, no asset, and the turnstile's tree with
+## one axis changed:
+##
+##   Seesaw            <- placed by _build (position / rotation_y / scale)
+##     Fulcrum         <- STATIC. What the tilt is read AGAINST.
+##     Pivot           <- the ONLY node ever tilted
+##       Plank
+##       Grips         <- MultiMeshInstance3D, SEESAW_GRIPS instances
+##
+## THE FULCRUM IS OUTSIDE THE PIVOT, exactly as the turnstile's footing is
+## outside its spinner, and for the same measured reason: a rotation is only
+## legible against something that stays put, and a seesaw whose stone pivot
+## rocked with the plank would read as the whole prop sliding rather than as
+## one end going up.
+func _make_seesaw(_entry: Dictionary, _index: int, where: Vector3) -> Node3D:
+	_last_seesaw = {}
+
+	var root := Node3D.new()
+	root.name = "Seesaw"
+
+	# ---- the fulcrum, OUTSIDE the pivot on purpose (see above)
+	var stone := CylinderMesh.new()
+	stone.top_radius = SEESAW_FULCRUM_RADIUS * 0.72
+	stone.bottom_radius = SEESAW_FULCRUM_RADIUS
+	stone.height = SEESAW_FULCRUM_HEIGHT
+	# Stated, never inherited: a primitive left at Godot's default is far
+	# denser than any silhouette this size needs -- docs/MESHY_SPEC.md 7.2.
+	stone.radial_segments = SEESAW_FULCRUM_SEGMENTS
+	stone.rings = 1
+	var stone_node := _mesh_node(stone, SEESAW_FULCRUM_COLOR,
+		Vector3.UP * (SEESAW_FULCRUM_HEIGHT * 0.5))
+	stone_node.name = "Fulcrum"
+	root.add_child(stone_node)
+
+	# ---- the pivot, sitting ON TOP of the fulcrum so the plank rocks about
+	# the stone's crown rather than about the ground.
+	var pivot := Node3D.new()
+	pivot.name = "Pivot"
+	pivot.position = Vector3.UP * SEESAW_FULCRUM_HEIGHT
+	root.add_child(pivot)
+
+	# ---- the plank, along local X (see the constants for why X and not Z)
+	var plank := BoxMesh.new()
+	plank.size = Vector3(SEESAW_PLANK_LENGTH, SEESAW_PLANK_THICKNESS, SEESAW_PLANK_WIDTH)
+	var plank_node := _mesh_node(plank, SEESAW_PLANK_COLOR, Vector3.ZERO)
+	plank_node.name = "Plank"
+	pivot.add_child(plank_node)
+
+	# ---- the grips, one per end, batched
+	var grip := CylinderMesh.new()
+	grip.top_radius = SEESAW_GRIP_RADIUS
+	grip.bottom_radius = SEESAW_GRIP_RADIUS
+	grip.height = SEESAW_GRIP_HEIGHT
+	grip.radial_segments = SEESAW_GRIP_SEGMENTS
+	grip.rings = 1
+
+	var multi := MultiMesh.new()
+	# FIRST, and before mesh/instance_count: TRANSFORM_2D is the DEFAULT in
+	# Godot 4.3, and a MultiMesh left at it silently discards every 3D
+	# transform written to it and draws the whole batch at the origin. The
+	# order is the one _flush_batches() and the turnstile bars already had
+	# to learn.
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = grip
+	multi.instance_count = SEESAW_GRIPS
+	var local_aabb: AABB = grip.get_aabb()
+	var bounds := AABB()
+	var seat_top: float = SEESAW_PLANK_THICKNESS * 0.5
+	for i in SEESAW_GRIPS:
+		var side: float = 1.0 if i == 0 else -1.0
+		# A CylinderMesh already stands on its own +Y and a grip stands
+		# upright, so the basis is the identity -- unlike the turnstile
+		# bars, which LIE along their radius and need one built.
+		var xform := Transform3D(Basis(),
+			Vector3(side * SEESAW_GRIP_X, seat_top + SEESAW_GRIP_HEIGHT * 0.5, 0.0))
+		multi.set_instance_transform(i, xform)
+		var box: AABB = xform * local_aabb
+		bounds = box if i == 0 else bounds.merge(box)
+	# Written and not trusted: a MultiMesh derives an AABB of its own, and a
+	# wrong or stale one makes the whole batch vanish when the camera turns
+	# -- with no error attached, on a screen nobody can look at before
+	# staging.
+	multi.custom_aabb = bounds
+
+	var grips := MultiMeshInstance3D.new()
+	grips.name = "Grips"
+	grips.multimesh = multi
+	grips.material_override = _unshaded(SEESAW_GRIP_COLOR)
+	pivot.add_child(grips)
+
+	_last_seesaw = {
+		"position": Vector3(where.x, 0.0, where.z),
+		"radius": SEESAW_TRIGGER_RADIUS,
+		"pivot": pivot,
+		# The TOP of the plank, not its centre: a BoxMesh is centred on its
+		# own origin, so the surface a rider stands on is half a thickness
+		# above the node that carries it. Same correction the turnstile's
+		# deck_y carries, for the same reason.
+		"seat_y": seat_top,
+		"ride_x": SEESAW_RIDE_X,
+		"clear_radius": SEESAW_PLANK_LENGTH * 0.5,
 	}
 	return root
 

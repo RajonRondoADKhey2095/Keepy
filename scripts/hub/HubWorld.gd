@@ -185,6 +185,16 @@ var _spinners: Array[Dictionary] = []
 ## actually rode, even if a layout ever grows a second one.
 var _turnstile_ride: Dictionary = {}
 
+## Every seesaw, copied out of the builder in _ready() with a "tween" slot
+## added, and the one Keepy is riding. Held apart from _spinners rather than
+## merged into it: the two props move on DIFFERENT AXES -- a spinner's yaw,
+## a seesaw's tilt -- so one list would need a discriminator on every read,
+## which is a case statement pretending to be a table. The SHAPE of the two
+## registries is deliberately identical, and that is what the seesaw
+## actually reuses.
+var _seesaws: Array[Dictionary] = []
+var _seesaw_ride: Dictionary = {}
+
 ## Armed by a dismount, consumed by the landing it produces.
 ##
 ## ⚠️ WITHOUT IT THIS FEATURE LOOPS FOREVER. A dismount ends in an ordinary
@@ -222,6 +232,22 @@ const TURNSTILE_EXIT_MARGIN: float = 0.85
 const TURNSTILE_EXIT_ARC_DEG: float = 150.0
 const TURNSTILE_EXIT_STEPS: int = 24
 
+## How far the plank tilts, how many times it crosses level before it
+## settles, and over how long.
+##
+## A DAMPED ROCK, not a spin: the shape is cos(TAU * cycles * t) * (1 - t),
+## which starts at full tilt on the rider's side -- his weight -- crosses
+## level SEESAW_ROCK_CYCLES times and arrives at exactly zero. Level at the
+## end is arithmetic and not tuning: the (1 - t) factor is zero at t = 1
+## whatever the cosine is doing, so the plank can never be left leaning.
+##
+## The tween that drives it is LINEAR on purpose. The easing IS the cosine;
+## an EASE_OUT on top would ease an already-eased curve and the rock would
+## stop looking like a rock.
+const SEESAW_TILT_DEG: float = 15.0
+const SEESAW_ROCK_CYCLES: float = 2.5
+const SEESAW_ROCK_S: float = 2.4
+
 ## How much room a landing needs on top of whatever it is standing next to.
 ##
 ## Keepy's own half-width, MEASURED on the shipped .glb: the model is
@@ -256,6 +282,7 @@ func _ready() -> void:
 	_tap.tapped_ladder.connect(_on_tapped_ladder)
 	_setup_boards()
 	_setup_spinners()
+	_setup_seesaws()
 	_tap.tapped_boat.connect(_on_tapped_boat)
 	_keepy.hop_landed.connect(_on_hop_landed)
 	_keepy.ride_moved.connect(_on_ride_moved)
@@ -323,6 +350,17 @@ func _setup_spinners() -> void:
 		var entry: Dictionary = prop.duplicate()
 		entry["tween"] = null
 		_spinners.append(entry)
+
+
+## Copies the built seesaws out of the builder, once, adding the per-prop
+## tween slot. Wholesale duplicate() and then the slot, for the reason
+## _setup_spinners() states: listing keys by hand is exactly the thing that
+## silently drops the one added last.
+func _setup_seesaws() -> void:
+	for prop in _builder.seesaws():
+		var entry: Dictionary = prop.duplicate()
+		entry["tween"] = null
+		_seesaws.append(entry)
 
 ## Sets going every spinning prop the landing is standing at.
 ##
@@ -474,13 +512,158 @@ func _on_turnstile_spin_finished() -> void:
 	if _turnstile_ride.is_empty() or not _keepy.is_on_turnstile():
 		_turnstile_ride = {}
 		return
-	var landing: Vector3 = _turnstile_exit_point(_turnstile_ride)
+	var landing: Vector3 = _ride_exit_point(_turnstile_ride)
 	_turnstile_ride = {}
 	_dismount_pending = true
 	_keepy.leave_turnstile(landing)
 
+## Sets rocking the seesaw the landing is standing at, and returns that
+## entry so the caller can put Keepy on the very prop it just started
+## without running the proximity search twice and risking a different
+## answer.
+##
+## THE DEBOUNCE STOPS THE ROCK, NOT THE ANSWER -- the distinction
+## _spin_near() had to learn the hard way. Being in reach and being rocked
+## are two different facts, and a player who lands on a plank that is still
+## settling must be able to get ON it even though his landing correctly is
+## not counted as a second push.
+func _rock_near(landing: Vector3) -> Dictionary:
+	var flat := Vector3(landing.x, 0.0, landing.z)
+	for entry in _seesaws:
+		var pivot: Node3D = entry["pivot"]
+		if pivot == null or not is_instance_valid(pivot):
+			continue
+		if flat.distance_to(entry["position"] as Vector3) > float(entry["radius"]):
+			continue
+		var running: Tween = entry["tween"]
+		if running != null and running.is_valid() and running.is_running():
+			return entry
+		# WHICH END TOOK THE WEIGHT, decided HERE and only here, from the
+		# landing point -- so it is settled before the tween can take its
+		# first step. Set inside _mount_seesaw instead, it would be written
+		# after the tween was already running, and the first frame of the
+		# rock would tilt the wrong way whenever the engine happened to step
+		# the tween first. Deciding it from the LANDING also means the plank
+		# answers a landing that fails to mount, which is what a seesaw does.
+		entry["down_side"] = 1.0 if pivot.to_local(flat).x >= 0.0 else -1.0
+		_build_seesaw_rock(entry)
+		return entry
+	return {}
+
+## Builds and starts the rock tween for `entry` and returns it. THE ONE
+## PLACE that construction lives: the ordinary rock above and the re-pump
+## below both call it, so a re-tap travels the exact arc the first tap did.
+##
+## tween_method and not tween_property, and this is the measured rule rather
+## than a preference: the rider is written in the SAME CALL as the angle
+## (see _apply_tilt), because a rider on his own callback was measured a
+## full frame behind the prop and process_priority did not move it.
+func _build_seesaw_rock(entry: Dictionary) -> Tween:
+	var pivot: Node3D = entry["pivot"]
+	var tween := pivot.create_tween()
+	# LINEAR: the cosine in _apply_tilt is the easing. See SEESAW_TILT_DEG.
+	tween.set_trans(Tween.TRANS_LINEAR)
+	tween.tween_method(_apply_tilt.bind(entry), 0.0, 1.0, SEESAW_ROCK_S)
+	entry["tween"] = tween
+	return tween
+
+## Tilts the plank for normalised rock time `t`, and -- in the same call,
+## immediately after -- moves whoever is riding it.
+##
+## THE SIDE HE SAT ON GOES DOWN FIRST, which is the whole reading of a
+## seesaw: it answers his weight. The sign is taken from the seat the rider
+## actually holds, so it is his end that drops rather than a fixed one.
+func _apply_tilt(t: float, entry: Dictionary) -> void:
+	var pivot: Node3D = entry["pivot"]
+	if pivot == null or not is_instance_valid(pivot):
+		return
+	var riding: bool = _keepy.is_on_seesaw() and not _seesaw_ride.is_empty() \
+		and _seesaw_ride.get("pivot") == pivot
+	# +Z rotation lifts the +X end, so a rider on +X needs a NEGATIVE angle
+	# to be carried down. With nobody aboard the plank still rocks -- the
+	# prop reacts to the landing whether or not the mount took.
+	var side: float = float(entry.get("down_side", 1.0))
+	var damp: float = 1.0 - t
+	pivot.rotation_degrees.z = -side * SEESAW_TILT_DEG * cos(TAU * SEESAW_ROCK_CYCLES * t) * damp
+	if riding:
+		_keepy.follow_seesaw()
+
+## Puts Keepy on a seesaw and arranges for him to be let off when it settles.
+##
+## The ride lasts exactly as long as the ROCK does -- the dismount hangs off
+## the prop's own tween finishing, never off a duration copied beside it,
+## which is the rule the turnstile states and the reason two numbers for
+## "how long" cannot drift here.
+func _mount_seesaw(entry: Dictionary) -> bool:
+	var pivot: Node3D = entry["pivot"]
+	if pivot == null or not is_instance_valid(pivot):
+		return false
+	if not _keepy.mount_seesaw(pivot, float(entry["seat_y"]), float(entry["ride_x"])):
+		return false
+	# NOT written here: _rock_near already decided which end went down, from
+	# the same landing point mount_seesaw just picked his seat from. Two
+	# writers for one fact is how the plank and its rider end up disagreeing
+	# about which way is down -- SeesawProbe gates that they agree.
+	_seesaw_ride = entry
+	var rock: Tween = entry["tween"]
+	if rock != null and rock.is_valid() and rock.is_running():
+		rock.finished.connect(_on_seesaw_rock_finished, CONNECT_ONE_SHOT)
+	else:
+		# Nothing is rocking -- unreachable while _rock_near either starts
+		# one or reports a running tween, and handled anyway because the
+		# alternative failure is a rider stranded with no signal to let him
+		# off.
+		_on_seesaw_rock_finished()
+	return true
+
+## The rock has settled, so the rider steps off.
+func _on_seesaw_rock_finished() -> void:
+	if _seesaw_ride.is_empty() or not _keepy.is_on_seesaw():
+		_seesaw_ride = {}
+		return
+	var landing: Vector3 = _ride_exit_point(_seesaw_ride)
+	_seesaw_ride = {}
+	_dismount_pending = true
+	_keepy.leave_seesaw(landing)
+
+## Re-pumps the seesaw Keepy is already on, when the tap landed within the
+## SAME prop's trigger radius -- and does nothing otherwise, which leaves it
+## to settle and dismount on its own.
+##
+## A FRESH ROCK, deliberately NOT _rock_near()'s, for the reason
+## _reshove_turnstile spells out: _rock_near()'s debounce exists so someone
+## merely walking past a settling plank cannot re-arm it, and during a ride
+## the tween is ALWAYS running, so reusing it would swallow every re-tap in
+## silence -- the exact defect the turnstile batch was written to fix.
+##
+## Killed rather than layered: Tween.kill() does NOT emit finished, so no
+## stray dismount fires, and the replacement is reconnected the same way
+## _mount_seesaw connects the first.
+func _repump_seesaw(point: Vector3) -> void:
+	if _seesaw_ride.is_empty():
+		return
+	var pivot: Node3D = _seesaw_ride.get("pivot")
+	if pivot == null or not is_instance_valid(pivot):
+		return
+	var flat := Vector3(point.x, 0.0, point.z)
+	if flat.distance_to(_seesaw_ride["position"] as Vector3) > float(_seesaw_ride["radius"]):
+		return
+	var old: Tween = _seesaw_ride.get("tween")
+	if old != null and old.is_valid():
+		old.kill()
+	var tween: Tween = _build_seesaw_rock(_seesaw_ride)
+	tween.finished.connect(_on_seesaw_rock_finished, CONNECT_ONE_SHOT)
+
 ## Where to step off: on the ground, outside the prop's reach, and clear of
 ## anything standing there.
+##
+## NAMED FOR THE RIDE AND NOT FOR THE TURNSTILE since the seesaw joined it.
+## Nothing in here was ever turnstile-shaped -- it reads "position",
+## "radius" and the footprint list and knows nothing else about the prop --
+## so the seesaw needed the function rather than a copy of it. Renamed
+## rather than called under a name that had stopped being true: this project
+## has already paid for a file whose name described what it used to
+## measure.
 ##
 ## OUTWARD FIRST, because that is the way he is already facing -- a rider
 ## flung off a roundabout carries on in the direction he was pointed, and
@@ -493,7 +676,7 @@ func _on_turnstile_spin_finished() -> void:
 ## the ring is fresh ground, while pushing further out only finds more of
 ## whatever is already in that direction -- the argument the boat's bank
 ## search makes, applied to a circle.
-func _turnstile_exit_point(entry: Dictionary) -> Vector3:
+func _ride_exit_point(entry: Dictionary) -> Vector3:
 	var pivot_pos := Vector3(float(entry["position"].x), 0.0, float(entry["position"].z))
 	var here := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
 	var out := here - pivot_pos
@@ -611,6 +794,12 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# destination to walk to once the ride is over.
 	if _keepy.is_on_turnstile():
 		_reshove_turnstile(point)
+		return
+	# And the seesaw on the identical terms: intercepted by state, re-pumped
+	# when the tap is on the same prop, dropped otherwise -- never turned
+	# into somewhere to walk to.
+	if _keepy.is_on_seesaw():
+		_repump_seesaw(point)
 		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
@@ -767,6 +956,14 @@ func _on_hop_landed(position: Vector3) -> void:
 		# as it does for the boat, and for the same reason: the state emits no
 		# landings, so there is nothing for a portal to answer.
 		if not was_dismount and not shoved.is_empty() and _mount_turnstile(shoved):
+			return
+		# THE SEESAW, on the same landing and under the same dive and
+		# dismount gates. It sits here rather than in a branch of its own
+		# below for the reason the shove does: every branch past this point
+		# returns, so a reaction placed after them stops firing on exactly
+		# the landings that go on to do something.
+		var rocked: Dictionary = _rock_near(position)
+		if not was_dismount and not rocked.is_empty() and _mount_seesaw(rocked):
 			return
 
 	# The landing that finishes a boarding walk starts the ride, before
