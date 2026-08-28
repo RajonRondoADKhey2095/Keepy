@@ -19770,3 +19770,130 @@ balancoire, le tourniquet et les trois portails ; `AssetContractAudit`
 4. **Aucun son, aucune particule, aucun asset neuf** : hors perimetre.
 5. **Rien ici n'est un rendu device** : llvmpipe sous xvfb via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+## VOL DU HIBOU : LE SIEGE ETAIT UNE FRACTION DE BBOX, PAS UNE MESURE -- Keepy remonte du buste a la nuque (28 aout 2026)
+
+Branche `claude/owl-flight-seat-fix-2dbq8k`, partie de `staging` (`8aa4f09`,
+tree-identique a `54efc05` -- le merge du lot vol n'ajoute aucune ligne).
+Retour device de Mathieu, capture a l'appui : Keepy est PLANTE DANS le
+corps du hibou en vol (buste chevauchant les ailes), et semble tourne de
+travers.
+
+### RECON -- `OWL_SEAT_Y` n'avait jamais touche le mesh reel
+
+`OWL_SEAT_Y = 1.22` etait derive comme **60 % de la hauteur totale du
+hibou construite** (2,0371) -- "au-dessus de la masse du corps, sous la
+tete", **par analogie** avec un rider a torse fin plutot que par une
+mesure sur CE modele. Faux, et faux d'un facteur enorme : parse glTF
+direct du `.glb` livre (attribut `POSITION`/`indices`, aucune dependance
+externe), **ray-cast reel contre les triangles du maillage** (pas la
+simple lecture de sommets voisins, qui aurait pu tomber sur une arete
+plutot que la surface) au point (x=0, z=0) -- le SEUL point possible,
+puisque `mount_owl()` n'accepte qu'un offset en Y
+(`_owl_seat = Vector3(0.0, seat_y, 0.0)`), tout offset horizontal
+balayant lateralement des que l'oiseau vire :
+
+```
+surface reelle du maillage a (0,0), model-space  y = 0,9031254854712962
+seat_y = OWL_MODEL_OFFSET.y + OWL_MODEL_SCALE.y * 0,9031254854712962
+       = 1,02039 + 1,07256 * 0,9031254854712962
+       = 1,98905
+```
+
+**Le plancher/plafond de recherche est le meme calcul que `OWL_MODEL_OFFSET`
+et `OWL_MODEL_SCALE` (LOT PROPS-1), reutilise et pas redecouvert** : les
+bornes brutes du modele (Y -0,95136 a +0,94792) donnent bien un total
+construit de 2,0371 -- confirme, pas suppose.
+
+**Verifie que la surface est un DOME LARGE et pas un artefact ponctuel** :
+balayage 7x5 autour de (0,0) (x de -0,20 a +0,20, z de -0,15 a +0,15),
+tous les points dans [0,826 ; 0,908] -- une nappe continue, pas un pic
+isole. C'est la nuque/le sommet de tete d'un oisillon rond ("Ember Eyed
+Owlet"), ou le corps et la tete sont fusionnes en une seule masse : il
+n'existe PAS de "dos" separe plus bas que la tete, contrairement a
+l'hypothese de l'ancien 60 %, qui enterrait Keepy jusqu'a la poitrine.
+
+### CE QUI N'EST PAS TOUCHE, et pourquoi
+
+`_yaw.rotation_degrees.y = _owl.global_rotation_degrees.y` -- **la copie
+directe du yaw du porteur** -- est **intouchee**. Ce n'est pas un oubli :
+c'est l'architecture documentee de `mount_owl()`/`follow_owl()` (seat
+Y-only, "aucun cote a choisir, un hibou n'a qu'un dos"), et rien dans les
+captures ne montre une orientation fausse une fois le clipping corrige
+(voir plus bas). Le "tourne de travers" du retour device etait tres
+probablement une lecture visuelle confuse d'un buste enterre a un angle
+bizarre, pas un defaut d'orientation reel -- **et c'est verifie, pas
+suppose** : la sequence de captures ci-dessous montre Keepy face a la
+meme direction que le hibou a chaque point de la boucle, y compris en
+plein virage banking (apex).
+
+### PREUVE MULTI-POINTS, capture reelle et pas seulement le calcul
+
+`OwlFlightProbe` (42/42 OK) confirme la ligne "the seat is above the
+owl's feet (1.989)" et que le rider n'est jamais a plus de 0,000000 u de
+son porteur (le controle du lag d'une frame, deja etabli au lot
+turnstile/seesaw). Mais ca ne dit rien de ce que ca donne A L'ECRAN --
+d'ou une sonde jetable (supprimee avant commit) rendant `xvfb-run
+--rendering-driver opengl3` :
+
+- **Vue orthogonale de profil, au perchoir, sans banking** -- Keepy
+  touche la nuque du hibou exactement au niveau de la base des
+  aigrettes, aucun chevauchement, aucun flottement.
+- **Vue orthogonale de face** -- Keepy parfaitement centre au-dessus de
+  la tete, confirme que l'offset horizontal nul ne derive pas.
+- **Quatre points de la boucle (decollage t=0,02 / montee t=0,25 / apex
+  t=0,5 / descente t=0,75)**, camera au NIVEAU du siege (pas au-dessus,
+  ce qui aurait introduit une illusion de flottement par raccourci -- le
+  piege dans lequel une premiere passe de capture, avec la camera
+  au-dessus regardant vers le bas, est tombee et a ete corrigee avant
+  toute conclusion) -- Keepy assis proprement sur la tete a chaque point,
+  y compris a l'apex ou l'oiseau est vu de dos en plein virage : meme
+  orientation, aucun chevauchement de buste.
+
+⚠️ **Piege de mesure rencontre et corrige avant de conclure quoi que ce
+soit** : la premiere camera diagnostique (position `owl + (4, 1.2, 0)`,
+`look_at` vers un point legerement au-dessus du hibou) donnait
+l'impression d'un Keepy flottant tres au-dessus du hibou -- un artefact
+de perspective (camera regardant vers le bas depuis une position
+au-dessus de la cible, donc raccourcissant l'oiseau plus que le rider).
+Refaite en orthogonal (aucune distortion de perspective possible) et en
+perspective-mais-au-niveau-du-siege : les deux convergent sur le meme
+resultat, contact propre, aucun flottement.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre le `Content-Length` --
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0, 35 `.scn`** (import complet verifie, pas suppose). Boot de
+`HubWorld.tscn` **exit 0, 0 erreur**. `OwlFlightProbe` **42/42 OK, exit 0**
+(seat 1,989 lu par la sonde elle-meme, pas par ce rapport). Export Web
+release **exit 0, 0 ligne d'erreur** sur 234 lignes de savepack.
+`index.wasm` **35 376 909 octets / md5
+`af4a8fc2925d992348eb30deeeb54360`** -- identique au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur, coherent : ce
+lot ne change qu'une constante et son commentaire dans `HubBuilder.gd`.
+Piege payload tenu (0 ligne `Storing File` pour `scripts/dev`).
+
+**Sondes partagees, toutes exit 0** : `AssetContractAudit` (12/12
+visuels, 0/10 colliders deplaces), `DeathModelAudit` (le seul stderr est
+`Parameter "m" is null`, deja documente comme benin -- dummy driver, a la
+liberation des noeuds, APRES son propre verdict PASSED), `ChargerShapeProbe`,
+`ProbeTimeoutAudit` (**57 sondes scenes**, toutes armees -- retour exact
+a la baseline apres suppression de la sonde de capture jetable).
+
+**Non-regression** : le hibou statique au repos, le tourniquet, la
+balancoire, le plongeoir et le bateau -- aucun de ces fichiers n'est dans
+le diff (`git diff --stat` : un seul fichier, `HubBuilder.gd`), et PHASE
+UNTOUCHED de `OwlFlightProbe` re-confirme les trois pieds d'echelle, les
+trois planches, la balancoire, le tourniquet et les trois portails.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce qu'assis sur la nuque/le sommet de tete -- plutot qu'entre des
+   ailes qu'un oisillon rond n'a pas vraiment de "dos" pour separer --
+   se lit comme "Keepy chevauche le hibou"** ? C'est la question que ce
+   lot pose a Mathieu -- la geometrie ne laisse pas d'autre point possible
+   au seul offset (x=0, z=0) que l'architecture autorise.
+2. Tout ce qui restait ouvert au lot precedent (perchoir a cote du spawn,
+   aucun tap pendant le vol, aucun son/particule) est **inchange**.
