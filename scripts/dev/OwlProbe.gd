@@ -19,8 +19,12 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## The layout entry this lot ships, read back rather than duplicated so a
 ## future reposition of the owl cannot silently desync this probe from the
 ## thing it is checking. LOT B moved this from beside the Quizz portal
-## (2.7, 0, -7.2) to near Keepy's own spawn point (0, 0, -3.4).
-const _EXPECTED_POSITION: Vector3 = Vector3(0.0, 0.0, -3.4)
+## (2.7, 0, -7.2) to Keepy's own spawn line (0, 0, -3.4); the flight batch
+## moved it OFF that line, because a perch that answers taps could not sit
+## across the one path from the spawn to the Quizz portal -- its tap disc
+## overlapped that portal's trigger ring by 0.05 u and stood between the
+## player and it.
+const _EXPECTED_POSITION: Vector3 = Vector3(-2.7, 0.0, 0.8)
 
 var _failures: int = 0
 

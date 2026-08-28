@@ -26,7 +26,7 @@ props = [{
 "scale": 1.0,
 "type": &"portal"
 }, {
-"position": Vector3(0.0, 0, -3.4),
+"position": Vector3(-2.7, 0, 0.8),
 "rotation_y": 0.0,
 "scale": 1.0,
 "type": &"owl"
