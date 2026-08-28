@@ -19897,3 +19897,32 @@ trois planches, la balancoire, le tourniquet et les trois portails.
    au seul offset (x=0, z=0) que l'architecture autorise.
 2. Tout ce qui restait ouvert au lot precedent (perchoir a cote du spawn,
    aucun tap pendant le vol, aucun son/particule) est **inchange**.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`66ac351`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre des deux cotes ET `git diff` vide,
+verifie AVANT le push -- `staging` n'avait pas divergue depuis le merge du
+lot vol, aucune session concurrente). CI run **#301** (id 33206249700)
+**verte** : `Import project resources` 19:59:59 -> 20:03:16 (3 min 17 s),
+`Export Web build` **20:03:16 -> 20:03:21**, `Verify export output` succes,
+`Deploy to Vercel [STAGING -- staging]` succes, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (le lot corrige un defaut
+constate sur device, la validation doit repasser par device avant tout
+palier 2).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants et aux DEUX bouts** :
+
+| marqueur | avant | apres (ce lot, run #301) |
+|---|---|---|
+| `CACHE_VERSION` | `1787944610` = **19:56:50 UTC** | **`1787947401` = 20:03:21 UTC** |
+| `index.pck` servi | -- | **14 796 384** |
+| `index.wasm` servi | -- | **35 376 909** *(identique a l'export local, md5 `af4a8fc2925d992348eb30deeeb54360`)* |
+
+L'epoch d'apres tombe **exactement sur la fermeture de l'etape `Export Web
+build`** du run #301, et les deux lectures d'apres (`CACHE_VERSION` et
+`fileSizes`) portent **`x-vercel-cache: MISS`, `age: 0`**, `last-modified`
+colle a l'instant de la requete -- pas une reponse de cache. La valeur
+"avant" a ete relevee sur un `HIT` d'age non nul, valable comme VALEUR
+(elle precede le push) mais explicitement **pas** une mesure de fraicheur.
