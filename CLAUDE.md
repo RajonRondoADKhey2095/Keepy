@@ -20972,3 +20972,223 @@ Build : import headless **exit 0**, **36 `.scn`** (import complet verifie),
 export Web release **exit 0**, **0 erreur GDScript ou de parse**. Piege
 payload tenu : sur **240** lignes `Storing File`, **0** pour `scripts/dev`,
 `assets_source`, `docs`, `web`, `build` ou `firebase.json`.
+
+## SYSTEME DE NAVIGATION MULTI-NIVEAUX : le noyau, prouve dans une scene isolee (29 aout 2026)
+
+Branche `claude/keepy-multilevel-nav-core-dimooi`, partie de `staging`
+(`2b0fa66`). Regle n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri
+des refs par date et comparaison des **ARBRES** -- toutes les branches plus
+recentes que `main` sont deja ancetres de `origin/staging`, **aucune session
+concurrente**. La branche existait sans commit propre et pointait encore sur
+`main` (precedent deja consigne) : reposee sur `staging`.
+
+⚠️ **AUCUN FICHIER DU HUB N'EST TOUCHE.** `git status` sur ce lot ne rend
+que des fichiers NEUFS -- `HubWorld.gd`, `HubBuilder.gd`, `HubTapInput.gd`,
+`HubRegion.gd`, `KeepyHopper.gd`, `HubCamera.gd` et `hub_layout.tres` ne
+sont dans le diff a aucun titre. **Destination assumee : ce systeme
+remplacera a terme la navigation du hub -- mais cette migration est un lot
+ULTERIEUR, hors de la sequence des quatre lots en cours.** Conception
+complete : `docs/MULTILEVEL_NAV_DESIGN.md`.
+
+### RECON -- toutes les hypotheses mono-altitude, MESUREES
+
+**Le raycast de tap est UN plan ecrit en dur.** `HubTapInput:219` porte
+`Plane(Vector3.UP, 0.0)`, et c'est **le seul `Plane(...)` de tout
+`scripts/` hors `scripts/dev/`** (grep sur le depot). Il n'existe aucun
+chemin par lequel un tap se resolve contre autre chose que y = 0.
+
+**La region est litteralement 2D.** `HubRegion._flat()` est appele en
+PREMIERE ligne de `contains()`, `clamp_to()`, `in_lake_water()`,
+`lake_index_at()` et `_lake_holding()` : elle ne peut pas repondre
+differemment a deux points qui ne different que par leur hauteur.
+`PLATEAU_HALF_EXTENT` (35.0) est un scalaire unique -- aucune notion de
+bornes par zone.
+
+**Le corps ecrit Y proceduralement, jamais lu d'un terrain** -- trois sites
+seulement, tous calcules : `_apply_hop` (`base + height`),
+`_on_hop_finished` (`_hop_to_y`), `_place_on_route` (`RIDE_SEAT_Y`).
+
+⚠️ **`_hop_from_y`/`_hop_to_y` SONT DEJA la generalisation multi-altitude
+de l'arc**, livree par le lot plongeoir et prouvee exacte a extremites
+egales (`DivingBoardProbe` PHASE A, divergence **0,000000000000 u** sur
+1001 points). **C'est la seule brique existante directement reutilisable --
+et elle est verrouillee a zero par TOUS ses appelants** : `_begin_hop`
+re-zerote les deux a chaque hop ordinaire, `_on_hop_finished` les remet a
+zero apres chaque atterrissage, et **tout dismount vise `_hop_to_y = 0.0`
+en dur** (plongeon, eject bateau, tourniquet, balancoire, hibou). Le
+mecanisme pour circuler a une altitude non nulle existe et n'a jamais ete
+atteignable.
+
+**⚠️ LA CAMERA N'A AUCUN OFFSET VERTICAL CONFIGURABLE** -- reponse
+explicite a la question de recon. `HubCamera._wanted()` jette le Y de la
+cible (`Vector3(x, 0.0, z) + OFFSET`) et `OFFSET.y = 7.6` est une constante
+absolue mesuree depuis y = 0. Le "banking" du hibou evoque au brief est le
+lacet de l'OISEAU : `grep camera` sur `HubWorld.gd` ne rend que des
+commentaires, aucun code. Porter Keepy a y = +5 aujourd'hui le ferait
+sortir par le haut du cadre sans que la camera bouge d'un pixel.
+
+Recensement de l'idiome `Vector3(x, 0.0, z)` : **59 occurrences dans
+`scripts/hub`** (KeepyHopper 24, HubBuilder 10, HubWorld 8, BoatMooring 6,
+HubStreamRoute 5, HubWater 3, et 1 chacun pour HubCamera / HubRegion /
+HubTapInput).
+
+### ⚠️ LES TROIS DEROGATIONS SONT ETUDIEES ET ECARTEES -- ce sont deux problemes differents
+
+Question de recon 3, repondue franchement. Tourniquet, balancoire et hibou
+partagent un squelette identique (`mount` / `follow` appele **par
+l'ecrivain du porteur dans le meme appel** / `leave` avec `_hop_from_y =
+seat_y` lu sur le corps). Ils ne conviennent pas :
+
+| | derogation | niveau |
+|---|---|---|
+| duree | **TRANSITOIRE**, bornee par un tween | **PERSISTANTE** |
+| qui ecrit le corps | le PORTEUR, chaque frame | **personne** |
+| taps pendant | interceptes, jamais une destination | **doivent devenir des destinations** |
+| sortie | vers y = 0, en dur | vers l'altitude d'un AUTRE niveau |
+
+**Un niveau ou Keepy ne peut pas marcher n'est pas un niveau, c'est un
+siege.** Seul leur ARC est repris.
+
+### CONCEPTION -- un niveau est aussi simple INTERNEMENT que le hub
+
+`LevelDefinition` : un plan plat, `plane_y` absolu, `half_extent` **par
+niveau**, plus `contains()` / `clamp_to()` / `flat()` / `plane()`.
+
+⚠️ **`flat()` REMPLACE Y, il ne le JETTE PAS** -- la seule difference de
+fond avec `HubRegion._flat()`, et ce qui permet a deux niveaux de repondre
+differemment sur le meme XZ. `plane()` rend `Plane(UP, plane_y)`, pas le
+`Plane(UP, 0)` qui fait du hub un rez-de-chaussee.
+
+`LevelController` : le niveau courant decide **A LA FOIS** le raycast ET le
+clamp -- resoudre contre le plan du niveau A puis clamper avec les bornes du
+niveau B produit une destination dans la region et a la mauvaise hauteur,
+sans erreur, un corps qui marche a travers le sol.
+
+⚠️ **LE PATRON AIM/DESTINATION DU LOT 1 EST REPRIS DES LA PREMIERE LIGNE**,
+pas ajoute apres. Tout test de lien lit `aim` (non clampe) ; seule
+`destination` est un endroit ou marcher. **Le multi-niveaux AGGRAVE
+l'entonnoir plutot que de le laisser inchange** : chaque niveau a son propre
+bord, donc chaque lien pose pres d'un bord est un entonnoir de plus.
+
+`LevelTransition` : le gate est **le RETRAIT ACTIF du bateau**, et le patron
+ECHELLE est **INTERDIT** -- il a deja coute deux bugs distincts a ce depot.
+Un lien se declare indisponible pour toute la duree d'une traversee, donc
+un tap tombe **A TRAVERS** vers le chemin sol au lieu d'etre avale. Un
+joueur en pleine traversee garde toujours un moyen de dire quelque chose.
+
+**Camera : option INTERPOLEE retenue**, parce qu'elle ne coute rien -- le
+suivi est deja un lerp exponentiel, lui donner une cible plus haute suffit.
+⚠️ Elle suit **`plane_y`, jamais le Y du corps** : l'argument d'origine de
+`HubCamera` (un arc qui oscille de 0,6 u par hop ferait tanguer l'horizon)
+reste entierement valable -- un niveau est stable, un arc ne l'est pas.
+
+### HORS PERIMETRE, nomme et non construit
+
+Rendu de plusieurs niveaux empiles (occlusion, tri de transparence, culling
+entre etages) ; plus de deux niveaux -- les structures sont des **LISTES des
+le premier commit** (lecon du plongeoir payee d'avance) mais **seul le cas a
+deux est EXERCE** ; persistance de position entre sessions ; la migration du
+hub ; toute geometrie reelle (`.glb` cabane, echelle) qui est le lot 3 ;
+collision et evitement d'obstacle, que le hub n'a pas non plus.
+
+### `LevelNavProbe` : 56 checks, 0 echec, ROUGE AVANT VERT sur QUATRE cassures
+
+Gatee et pas rapportee parce que **tout mode de panne de ce systeme est
+SILENCIEUX** : un retrait qui ne s'engage jamais, un plan qui n'est pas
+celui contre lequel les taps se resolvent, une visee lue sur une
+destination clampee. Aucun ne leve, aucun ne casse un build.
+
+⚠️ **Elle pilote `scenes/dev/LevelNavTest.tscn`, JAMAIS un fixture a elle**
+-- le piege `SubstituteModel.tscn`. Et elle **DOIT tourner sous `xvfb`** :
+PHASE AIM projette des points monde vers l'ecran et les repasse par le vrai
+`dispatch()` ; sous le driver DUMMY le rect du conteneur est 0x0 et chaque
+check passerait **en ne s'executant jamais**. Le rect est donc **asserte
+non degenere** (mesure 1080x1920).
+
+| cassure | rouge obtenu |
+|---|---|
+| patron ECHELLE (`is_available()` -> `true`) | **2 FAIL** |
+| retrait jamais engage (`set_busy` no-op) | **2 FAIL** |
+| **LES DEUX** gardes de re-declenchement retirees | **3 FAIL** |
+| liens lus sur la DESTINATION (regression du lot 1) | **1 FAIL** -- « un vrai tap vise a 22 u hors carte est dispatche en `transition` » |
+
+**DEUX DEFAUTS DE MA PROPRE SONDE, publies plutot que lisses**, tous deux
+ayant fait echouer du code CORRECT :
+
+1. **`contains()` est XZ-SEUL PAR CONTRAT.** J'assertais qu'un tap lointain
+   sur le niveau haut ne serait pas contenu par le niveau bas -- or le carre
+   haut est entierement dans l'empreinte XZ du bas, qui a raison de le
+   contenir ("sur quel niveau est-il" est la question du CONTROLEUR).
+   Re-visee sur la BORNE contre laquelle le clamp s'est arrete.
+2. **« aucune visee hors carte ne peut signifier traverser » est FAUX.** Une
+   visee a 1 u au-dela du bord est a 1 u d'un pied de rayon 1,6 : c'est un
+   joueur qui tape A LA PORTE depuis juste dehors. Ce que la regle du lot 1
+   achete n'est pas un ensemble VIDE mais un ensemble **borne par le
+   RAYON**. Mesure : la visee hors carte la plus profonde qui signifie
+   encore "traverser" est **-10,50**, la borne du rayon (-10,60) a un pas
+   pres, et **0 des 690 visees balayees de 11 u a 88 u** au-dela.
+
+⚠️ **UN DEFAUT REEL TROUVE PAR LA PASSE ROUGE-AVANT-VERT** :
+`LevelTransition.accepts_tap()` lisait `_available` **en direct** alors que
+`is_available()` est l'accesseur. Avec l'accesseur sabote, elle continuait
+de refuser -- donc **une seule** des deux assertions de gate passait au
+rouge. Un champ, deux lecteurs, l'un contournant l'accesseur. Corrige avant
+commit ; le meme sabotage rend desormais **les deux** rouges.
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature). ⚠️ **Le
+premier import a rendu 21 `.scn` au lieu de 36** -- le piege du faux-rouge
+par import tronque, rencontre et controle plutot que suppose ; relance,
+**36 `.scn`, 0 erreur**.
+
+Boot de `scenes/dev/LevelNavTest.tscn` **exit 0** (le seul stderr est
+`Parameter "m" is null`, l'erreur benigne du driver dummy deja consignee).
+Export Web release **exit 0, 0 erreur** -- et **les 6 scripts de
+`scripts/nav/` sont compiles en `.gdc` dans le pack**, ce qui est la preuve
+qu'aucun n'a d'erreur GDScript.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur.
+
+⚠️ **Le `.pck` a DOUBLE depuis le dernier chiffre consigne (14,8 -> 30,2 Mo),
+et ce n'est PAS ce lot** -- mesure des DEUX cotes dans la meme session,
+`origin/staging` en worktree separe : **30 228 320** en baseline contre
+**30 251 360** ici, soit **+23 040 octets**, exactement ce que coutent 6
+petits `.gdc` et un `.tscn`. Le doublement precede ce lot (la cabane).
+
+**Piege payload tenu, verifie sur le pack et pas sur le filtre** : sur
+**254** lignes `Storing File`, **0** pour `scripts/dev`, `assets_source`,
+`docs`, `web/`, `build` ou `firebase.json` -- et `scripts/nav/*` +
+`scenes/dev/LevelNavTest.tscn` **sont** packes, comme ils le doivent.
+
+**Sondes partagees, diffees contre `origin/staging` en worktree separe**
+(imports verifies complets des deux cotes) : `AssetContractAudit` (12/12
+visuels, **0/10 colliders deplaces**), `DeathModelAudit`,
+`ChargerShapeProbe` -- **BYTE-IDENTIQUES sur les DEUX flux**.
+`ProbeTimeoutAudit` differe d'**exactement deux lignes** : la nouvelle sonde
+et son total, **58 -> 59 sondes scenes**, mesure des deux cotes et non
+deduit du fait qu'un seul `.tscn` a ete ajoute.
+
+**Aucune reference de code de `scripts/nav/` ou `scenes/dev/` vers
+`scripts/dev/`** -- verifie commentaires strippes, parce que `scripts/dev/*`
+est dans l'`exclude_filter` et qu'une telle reference resoudrait en editeur
+et en headless puis echouerait **uniquement dans le build web**.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce qu'un franchissement de 0,62 s se lit comme une montee** plutot
+   que comme un saut vers un etage qui apparait ? Aucune sonde ne le dit.
+2. **Le point explicitement demande au prochain test device** : verifier
+   qu'aucun tap pres du bord ne declenche une transition non voulue -- meme
+   classe de bug que le lot 1, sur ce nouveau systeme. La geometrie du banc
+   est choisie pour ca (le pied du lien est **SUR** le bord du niveau bas),
+   et la sonde la gate, mais un pouce a vitesse reelle est un autre juge.
+3. **La camera traine pendant une montee** (lerp exponentiel, `FOLLOW_LAMBDA`
+   5,0). Mesure comme le choix le moins couteux, jamais juge a l'oeil.
+4. **L'etage haut est une dalle dont on voit le dessous.** Le rendu de deux
+   niveaux empiles est nomme hors perimetre, pas resolu.
