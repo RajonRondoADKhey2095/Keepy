@@ -27,9 +27,14 @@ class_name LevelNavTestWorld
 ##
 ## It is a bench for the core: primitives, no Meshy asset, no game flow, no
 ## persistence. It does NOT solve drawing two storeys well -- the upper
-## floor is a slab you can see the underside of, and occlusion, transparency
-## sorting and culling between storeys are named out of scope in the design
-## doc rather than attempted here.
+## floor is a slab you can see the underside of, and transparency sorting
+## and culling BETWEEN storeys are named out of scope in the design doc
+## rather than attempted here.
+##
+## Camera occlusion is no longer among those: the device pass found the
+## upper slab hiding the walker for the whole approach to the link, and
+## LevelCamera now fades whatever stands in the way. What this file owns of
+## that mechanism is one thing only -- saying which geometry may be faded.
 
 const LOWER_HALF_EXTENT: float = 9.0
 const UPPER_HALF_EXTENT: float = 4.0
@@ -109,9 +114,34 @@ func _build_world() -> void:
 	var props: Node3D = $WorldViewport/SubViewport/World/Props
 	var lower: LevelDefinition = _controller.levels[0]
 	var upper: LevelDefinition = _controller.levels[1]
-	props.add_child(_slab(lower, Color(0.24, 0.42, 0.20)))
-	props.add_child(_slab(upper, Color(0.44, 0.36, 0.26)))
-	props.add_child(_post(_controller.links[0]))
+	var lower_slab := _slab(lower, Color(0.24, 0.42, 0.20))
+	lower_slab.name = "LowerSlab"
+	props.add_child(lower_slab)
+	var upper_slab := _slab(upper, Color(0.44, 0.36, 0.26))
+	upper_slab.name = "UpperSlab"
+	props.add_child(upper_slab)
+	var post := _post(_controller.links[0])
+	post.name = "LinkPost"
+	props.add_child(post)
+	_mark_occluders(upper_slab, post)
+
+## Opting the transition geometry into LevelCamera's fade.
+##
+## Which nodes, decided by MEASUREMENT and not by taste. Against this
+## camera offset, on the segment from the lens to the walker's mass:
+##
+##   * the UPPER SLAB blocks him from z -7 all the way to the link foot at
+##     -9, across the slab's whole width -- the entire approach to the one
+##     transition this world has.
+##   * the LINK POST blocks him at the foot itself, the last standing
+##     point before a crossing.
+##   * the LOWER SLAB never can. It is the ground the camera looks DOWN
+##     at; nothing standing on it is ever behind it. Marking it would cost
+##     a fade that could not fire and would say something untrue about
+##     what the group means.
+func _mark_occluders(upper_slab: MeshInstance3D, post: MeshInstance3D) -> void:
+	upper_slab.add_to_group(LevelCamera.OCCLUDER_GROUP)
+	post.add_to_group(LevelCamera.OCCLUDER_GROUP)
 
 func _slab(level: LevelDefinition, colour: Color) -> MeshInstance3D:
 	var mesh := BoxMesh.new()

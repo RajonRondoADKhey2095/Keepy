@@ -21279,3 +21279,169 @@ deplacer sur chaque niveau, franchir la transition dans les deux sens,
 et verifier qu'aucun tap pres du bord ne declenche une transition non
 voulue. `main` **non touche**.
 l'horloge.
+
+## LA CAMERA DE NIVEAU FAIT DISPARAITRE CE QUI CACHE KEEPY -- et le risque alpha deja paye sur l'eau reste entier (29 aout 2026)
+
+Branche `claude/keepy-nav-camera-occlusion-cz7m5q`, partie de `staging`
+(`4c204c8`). Regle n°1 verifiee AU DEBUT, par ARBRE et pas par nom : la
+branche la plus recente du depot porte **exactement l'arbre de
+`origin/staging`** (donc deja mergee) et `staging..main` est VIDE --
+**aucune session concurrente**. `main` = `9031e5e`, **INTOUCHE**.
+
+Retour device du noyau nav (lot 2) : le mecanisme de transition marche,
+mais la camera se fait masquer Keepy des qu'un plan intermediaire passe
+entre les deux, ce qui rend l'endroit injouable. **TROIS fichiers touches**,
+verifie par `git diff --stat` : `scripts/nav/LevelCamera.gd`,
+`scripts/nav/LevelNavTestWorld.gd`, `scripts/dev/LevelNavProbe.gd`. Le diff
+hub est **VIDE** (`scripts/hub/`, `scenes/HubWorld.tscn`, `resources/hub/`,
+`scripts/world/`, `scripts/battle/`, `scripts/autoload/` : rien).
+
+### Le defaut est MESURE sur les constantes livrees, pas deduit du rapport
+
+Segment lentille -> masse du corps, teste contre l'AABB de chaque prop, aux
+constantes que `LevelNavTestWorld` et `LevelCamera` publient deja :
+
+| Keepy sur le niveau BAS (sol 0) | z 0 | -4 | -6 | **-7** | **-8** | **-9** |
+|---|---|---|---|---|---|---|
+| la dalle du haut le cache ? | non | non | non | **OUI** | **OUI** | **OUI** |
+
+Le rayon entre dans la dalle a **52 % du trajet**, et le balayage lateral
+donne **OCCLUDE de x -4 a +4** -- c'est-a-dire toute la largeur de la
+dalle. Ce n'est pas un cas de bord : c'est **l'approche entiere du seul
+lien du monde**, donc le joueur se perd de vue exactement la ou il doit
+viser. Le **poteau** s'y ajoute au pied du lien (z -9, entree a 98 % du
+trajet). Sur le niveau HAUT, **rien n'occulte jamais** : la dalle du haut
+est sa propre dalle et son dessus est a ses pieds.
+
+⚠️ **`HubCamera` n'a pas ce probleme et n'a besoin de rien** -- le plateau
+est mono-altitude par construction, donc rien n'est jamais AU-DESSUS du
+marcheur. Elle n'est **pas modifiee** (reconfirme en la relisant, pas
+suppose perime).
+
+### ⚠️ AUCUN RAYCAST N'EXISTE DANS CE DEPOT -- d'ou un test AABB
+
+`grep` sur tout le depot : **ZERO** `intersect_ray`, `RayCast3D`,
+`PhysicsDirectSpaceState`, `PhysicsRayQuery`. Le noyau nav ecrit des
+transforms ; le plateau dont il reprend l'idiome n'a pas de collider non
+plus. `intersect_ray` ne rapporte que des `CollisionObject3D`, donc le
+faire marcher exigerait de poser des `StaticBody3D` sur la geometrie de
+niveau : **le premier collider de navigation du projet**, un changement
+plus gros que le fondu qu'il sert, une nouvelle classe de panne, et un tick
+physique qu'une sonde devrait ensuite pomper.
+
+Un test **segment-vs-AABB** (methode des slabs, borne au segment) est exact
+pour une boite, deterministe, et gatable sans serveur physique. L'AABB est
+celle du noeud transformee en monde : pour un occluder tourne elle enclot
+plus que le mesh, donc **le fondu s'engage un peu TOT plutot qu'un peu
+tard** -- le sens sur pour un mecanisme dont le travail est de ne pas
+cacher le joueur.
+
+### Ce que le fondu fait, et les trois choses qu'il fait par discipline
+
+Groupe **`level_occluder`** : la geometrie de niveau s'inscrit, le fondu ne
+prend jamais "ce qui passe". Test throttle a **12,5 Hz**, fondu lerpe
+**chaque frame** -- ca throttle la requete et pas la fluidite.
+
+1. **Le materiau est DUPLIQUE avant toute ecriture.** L'importeur glTF de
+   Godot lie UN materiau partage sur le mesh, donc ecrire dedans fait
+   fondre toutes les copies de cette geometrie dans le projet. Precedent
+   direct : `FighterView._ensure_material()`.
+2. **`transparency` passe a ALPHA seulement PENDANT le fondu, et revient a
+   DISABLED des que l'alpha revient a 1.** Un alpha < 1 avec transparency
+   DISABLED est **silencieusement IGNORE** (le lac a deja paye celle-la),
+   et un materiau laisse dans la passe transparente y perd son ecriture de
+   profondeur en permanence. Les deux sont ecrits ensemble, jamais separes.
+3. **`cull_mode` n'est JAMAIS touche.** Le defaut de la ligne de flottaison
+   avait besoin de `cull_disabled` sur un corps ferme pour apparaitre ; le
+   defaut de `StandardMaterial3D` est BACK, et rien ici ne le change.
+   Asserte, pour que rien plus tard ne le fasse sans le dire.
+
+⚠️ **LA GEOMETRIE MARQUEE EST CHOISIE PAR MESURE** : la dalle du HAUT et le
+POTEAU (les deux mesures occultantes ci-dessus). La dalle du BAS n'est
+**pas** marquee -- c'est le sol que la camera regarde d'en haut, rien de
+pose dessus n'est jamais derriere elle, et la marquer dirait quelque chose
+de faux sur ce que le groupe signifie.
+
+### ⚠️ CE LOT NE PEUT PAS ETRE VALIDE SUR LA FOI DU BUILD -- c'est la meme classe de risque que l'eau
+
+La transparence pres des plans d'eau est deja passee **VERTE dans ce
+sandbox** (llvmpipe/opengl3 sous xvfb) et **CASSEE sur device** (Safari
+iOS, WebGL2, a certains azimuts seulement) : le shader de flottaison
+ecrivait ALPHA, ce qui deplace un materiau dans la passe transparente et
+lui coute son ecriture de profondeur. **C'est exactement la meme classe
+ici.** Les trois mesures ci-dessus reduisent la surface exposee ; aucune ne
+prouve le telephone.
+
+⚠️ **Et ce lot ne peut PAS non plus eliminer le risque par construction** :
+la scene de test n'a **aucun plan d'eau**, donc le voisinage precis qui a
+casse -- une surface alpha a cote d'une autre surface alpha -- **n'est pas
+exerce ici du tout**. C'est dit plutot que sous-entendu.
+
+### Rouge avant vert, DEUX FOIS, et une assertion a moi qui ne valait rien
+
+**Casse n°1** -- l'ecriture de l'ensemble bloquant neutralisee : **5 FAIL,
+exit 1**, dont le BLIND CHECK. ⚠️ **Et trois assertions sont passees VERTES
+dans ce run rouge** ("le sol n'est jamais bloquant", "il redevient opaque",
+"il ressort de la passe transparente") -- gratuitement, contre un mecanisme
+qui n'avait jamais ete cable. **C'est litteralement pourquoi le blind check
+n'est pas optionnel.**
+
+**Casse n°2** -- la duplication du materiau retiree, tout le reste intact :
+**2 FAIL**, et le materiau PARTAGE sort a **alpha 0,250** -- le defaut
+"fondre toutes les copies de cette geometrie" attrape en flagrant delit.
+
+⚠️ **UNE ASSERTION QUE J'AVAIS ECRITE ETAIT SANS VALEUR, et le premier run
+vert l'a montree.** Elle comparait l'id du materiau avant/apres pour prouver
+la duplication -- or au moment ou la phase lit son "avant", la camera a deja
+eu des frames pour dupliquer, donc elle comparait le duplicat a lui-meme.
+Pire : elle serait restee verte contre une camera qui aurait ecrit droit
+dans la ressource partagee, puisqu'aucun id ne le remarque. Remplacee par
+le test qui porte sur la propriete reelle -- **deux noeuds recoivent UN
+materiau, un seul est marque, et l'assertion est que l'AUTRE n'a pas
+bouge** -- qui ne peut pas passer par accident, et que la casse n°2
+confirme.
+
+### Validation
+
+`LevelNavProbe` : **56 checks (baseline) -> 77, 0 echec, exit 0**, avec
+**DEUX blind checks** armes et verts. Editeur + templates Godot 4.3-stable
+installes (releases GitHub officielles, **tailles verifiees contre le
+`Content-Length`** : 50 276 070 et 1 073 228 327 octets, aucune troncature
+silencieuse). Import headless **exit 0, 36 `.scn`**, verifie complet des
+DEUX cotes. Export Web release **exit 0, 0 ligne d'erreur** ;
+`index.wasm` **35 376 909** / md5 `af4a8fc2925d992348eb30deeeb54360`,
+`index.js` md5 `4e08904b1b7107858246af44b602067b` -- le fingerprint
+permanent de tout lot qui ne touche pas le code moteur. `index.pck`
+30 255 424, **marqueur et jamais preuve d'identite**. Piege payload tenu :
+sur **254** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web/`, `build` ou `firebase.json` ; les six
+scripts de `scripts/nav/` sont packes, `LevelNavProbe` **absent du pack**.
+
+**Quatre sondes partagees, diffees contre `origin/staging` en worktree
+separe (36 `.scn` des deux cotes, TAILLES comparees avant les contenus) :
+BYTE-IDENTIQUES sur les DEUX flux** -- `ProbeTimeoutAudit` (**59 sondes
+scenes**, inchange : ce lot ajoute une phase a une sonde existante, pas une
+sonde), `AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`.
+
+**Rendu de controle, et rien de plus que ca** (sonde jetable, supprimee
+avant commit -- `ProbeTimeoutAudit` revient a 59) : trois captures
+1080x1920 sous `xvfb`/`opengl3`. Degage, la dalle est opaque et le marcheur
+visible ; dans la bande mesuree, la dalle est visiblement translucide et le
+marcheur se lit au travers ; au pied du lien, dalle ET poteau fondus, corps
+parfaitement lisible. **Ca attrape une erreur grossiere, ca ne dit rien du
+telephone.**
+
+### Reste ouvert -- le device est seul juge, et il l'est plus que d'habitude ici
+
+1. **Est-ce que le fondu se lit proprement sous tous les angles**, sans
+   scintillement ni zone restee opaque ? C'est tout l'objet du lot, et la
+   classe de risque a deja casse une fois exactement la.
+2. **Le voisinage alpha-contre-alpha n'est pas exerce** par cette scene
+   (aucun plan d'eau) -- donc meme un device vert ici ne dira rien du jour
+   ou un occluder cotoiera une surface transparente.
+3. **La dalle fondue lit sombre plutot que brune** dans le sandbox, parce
+   que le ciel derriere est quasi noir. Appreciation, pas defaut.
+4. **`OCCLUDED_ALPHA = 0.25`, `FADE_LAMBDA = 9.0`, `TEST_INTERVAL_S = 0.08`**
+   sont des points de depart pour un appel device, pas des optimums
+   mesures -- chacun est une edition de constante.
