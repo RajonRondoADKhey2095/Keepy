@@ -22047,3 +22047,234 @@ fichier et re-payes ici :**
    propre lot.
 5. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+## LA PORTE DE LA CABANE SE VOIT ENFIN DU DEHORS, ET KEEPY SE COUCHE SUR LE LIT (29 aout 2026)
+
+Branche `claude/keepy-entrance-marker-bed-pose-stbbbp`, partie de `staging`
+(`597326d`). Regle n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri des
+refs par date et comparaison des **ARBRES** -- la seule branche plus recente que
+`main`, `claude/keepy-cabin-floor-and-taps-89xt2k`, porte **exactement l'arbre
+de `origin/staging`** (donc deja mergee), **aucune session concurrente**.
+
+Deux sujets independants, deux commits distincts.
+
+### A -- LE MARQUEUR D'ENTREE : le lot precedent avait marque l'INTERIEUR et rien DEHORS
+
+Retour device : depuis le plateau, rien n'indique ou taper pour entrer. Le lot
+precedent a pose des marques sur l'echelle, le lit et la porte **a l'interieur**
+de la cabane, en reutilisant le disque+anneau+pulse des portails du hub -- et
+n'a jamais applique ce motif a l'ENTREE. La seule porte du jeu qui mene a une
+nouvelle scene etait la seule sans anneau autour.
+
+**`CabinMarker` est REUTILISE, pas reinvente** : le composant gagne un
+`enum Surface { CABIN_FLOOR, HUB_GRASS }` et rien d'autre. Le hub instancie le
+meme fichier, avec l'encre et les hauteurs de l'exterieur.
+
+⚠️ **LE MARQUEUR EST CONSTRUIT DES DEUX MEMES FAITS QUE LE TEST DE TAP** -- le
+point de porte publie par `HubBuilder` et `CABIN_TAP_RADIUS` -- et jamais d'une
+seconde position ou d'une seconde taille. Le cercle qu'on vise et le cercle que
+`HubTapInput` mesure sont donc **un seul nombre** : un marqueur ne peut pas etre
+dessine A COTE du declencheur, ni plus petit que lui, parce qu'il n'y a rien a
+cote de quoi le dessiner. Gate : « il se tient SUR le pas de porte publie
+(0,0000 u d'ecart) » et « l'anneau est exactement le rayon de tap (1,300 vs
+1,300) ».
+
+**Permanent + pulse quand on approche**, ce qui est le comportement DES
+PORTAILS et non un nouveau. C'etait une decision a prendre plutot qu'un defaut :
+une marque qui n'apparait qu'une fois qu'on est proche ne peut pas dire ou
+aller, et les trois portails du plateau sont deja permanents. Le brief demandait
+la coherence avec ce qui est livre, et ce qui est livre est permanent-plus-pulse
+(`HubPortal.NEAR_FACTOR` 2,2 / `NEAR_RELEASE` 2,6, relus et non recopies).
+
+⚠️ **UNE AFFIRMATION QUE J'AVAIS ECRITE ETAIT FAUSSE, ET LA MESURE L'A TUEE.**
+J'avais commente que le creme de l'interieur « echouerait » sur l'herbe du
+plateau, extrapole de la table d'albedos de l'en-tete. **Mesure sur des pixels
+REELLEMENT RENDUS a ce pas de porte** :
+
+| | Lrel rendu | vs le sol |
+|---|---|---|
+| sol du plateau au pas de porte `rgb(0,3258 0,3762 0,1917)` | **0,1042** | -- |
+| anneau AMBRE livre `(0,95 0,74 0,30)` | 0,4366 | **3,16:1** |
+| anneau CREME de l'interieur | 0,7169 | **4,76:1** |
+| pad vert fonce livre `(0,13 0,28 0,12)` | -- | 1,48:1 |
+
+**Le creme aurait mieux score.** L'ambre est donc choisi sur **l'IDENTITE** et
+explicitement PAS sur le contraste : c'est le quatrieme endroit du plateau ou un
+tap vous emmene ailleurs, et les trois autres ressemblent a ca. Les deux
+commentaires qui disaient le contraire sont reecrits. A noter au passage : le
+3,96:1 de l'en-tete est un chiffre d'ALBEDO, alors que le fog a `z = +34` ne
+livre que **3,16:1** a l'ecran -- 0,16 de marge au-dessus du plancher 3,0.
+
+⚠️ **Les HAUTEURS changent avec la surface, et c'est porteur** : dedans le pad
+flotte a 0,20 et l'anneau a 0,23 (le plancher peint de la cabane n'est pas
+plat) ; dehors ils tombent a **0,03 / 0,09**, l'herbe etant un `PlaneMesh` a
+`y = 0` exactement. Gate : « il repose sur la pelouse, pas a un cinquieme de
+metre au-dessus ». Le libelle passe de 32 px / `pixel_size` 0,0032 a **64 px /
+0,006** -- la camera du hub est bien plus loin que celle de la cabane.
+
+⚠️ **`font_size` etait implicite et ne l'est plus** : le libelle roulait sur le
+defaut moteur de 32. Mesure, pas suppose (`Label3D.new()` en 4.3 : font_size 32,
+pixel_size 0,005, outline 12). Un defaut moteur qui bouge d'une version a
+l'autre aurait redimensionne toutes les marques du jeu en silence.
+
+**`CABIN_DOOR_LABEL = "Cabane"` vit dans `HubWorld`, a cote du rayon**, et n'est
+PAS lu dans le layout comme les trois portails lisent le leur : l'entree de
+layout d'une cabane ne porte aucune cle `label`, et en ajouter une imposerait un
+schema a toute cabane future pour un panneau qui dirait le meme mot a chaque
+fois.
+
+### B -- LA POSE COUCHEE : le lit EST le plancher, et c'est ce que la mesure a trouve en premier
+
+⚠️ **LE PREMIER RESULTAT EST QUE LA MEZZANINE *EST* LE LIT.** Le dessus dessine
+de la mezzanine et l'edredon turquoise peint dessus sont **la meme surface** --
+un ray-cast vers le bas sur le carre marchable du loft trouve un seul plateau a
+**7,52-7,59** et aucun matelas separe a l'interieur. Donc « couche-le sur le
+lit » et « couche-le sur le plancher de la mezzanine » etaient la MEME
+instruction sur presque tout ce carre, et **la mise en garde du brief ne pouvait
+pas etre satisfaite en trouvant une surface plus haute : il n'y en a pas** (la
+literie surelevee a 7,66-7,79 est centree a x ≈ -1,9, juste hors du carre
+marchable x ∈ [-1,80 ; 0,40]).
+
+Ce qu'il y A : **sous le marqueur, la literie dessinee CREUSE**. Echantillonnee
+sous le centre du marqueur sur un disque de rayon 0,25 -- a peu pres la largeur
+que son corps presente au lit -- la surface dessinee court de 6,91 a 7,60,
+**mediane 7,3686**, soit **0,1710 SOUS le plan de marche**. Ce creux est
+l'intervalle entre la barriere de lit et l'edredon derriere elle.
+
+⚠️ **ET LE RENDU A CHOISI LE MEME NOMBRE, INDEPENDAMMENT.** Six profondeurs
+candidates rendues a travers la camera livree (0,00 / 0,12 / 0,18 / 0,25 sous le
+plan, a trois lacets) : **0,18 lit le mieux** -- 0,25 met la barriere en travers
+de son menton, 0,00 le laisse assis sur le cadre. La mesure dit **0,1710**. Deux
+routes, un centimetre d'ecart. Livre en unites MODELE
+(`BED_MODEL_Y = -0.13055`, multiplie par `CABIN_SCALE` via `_world_y()`), comme
+les deux planchers -- un litteral monde ici serait une seconde copie muette de
+l'echelle.
+
+⚠️ **IL EST ROULE SUR LE FLANC, PAS BASCULE SUR LE DOS, ET C'EST LE MESH QUI
+L'IMPOSE.** Keepy est modelise ASSIS, queue enroulee derriere lui : mesure sur
+le `.glb` livre, sa profondeur museau-queue est **2,0371** contre une hauteur de
+**1,3501** et une largeur de **1,3198**. Le basculer de 90 deg autour de X met
+sa PROFONDEUR a la verticale -- un axe de deux metres se dresse hors d'un lit
+dont la literie dessinee fait un cinquieme de ca. **Rendu plutot qu'argumente :
+le resultat est une queue qui sort de l'edredon avec le corps enterre dessous,
+et rien qui se lise comme un ecureuil.** Le rouler autour de son propre axe
+avant (`rotation.z = +90`) met sa LARGEUR a la verticale -- 1,32, moitie sous
+l'origine -- et laisse le grand axe couche le long du lit.
+
+**Corollaire mesure et facile a rater** : la portance pendant qu'il est couche
+est `KEEPY_MODEL_MIN_X = -0,616405`, **pas** le `MIN_Y` debout de -0,629070 --
+le roulis met son axe X a la verticale. Utiliser celui du debout enterrerait son
+flanc de la difference.
+
+**`REST_YAW_DEGREES = 20`** : l'axe long du lit court le long du X monde avec
+l'oreiller en -X (lu sur un rendu avec des marqueurs monde poses dessus, pas
+devine du layout). Un roulis de +90 pose deja sa tete vers -X sans tourner le
+walker ; ce lacet est un trois-quarts vers la camera, pour que le visage ET la
+queue se lisent au lieu d'un profil plat. Rendu a 0 / 5 / 20 / 35 ; **20** est
+ou il cesse de ressembler a un decalque.
+
+⚠️ **AUCUNE ANIMATION, ET AUCUNE N'EST POSSIBLE** : le `.glb` porte un noeud, un
+mesh, **zero skin et zero animation** -- le meme constat que le lot hibou a
+publie pour la meme famille d'assets. Toute pose de ce projet est un transform
+sur le corps entier, et celle-ci en est une de plus.
+
+**Le gate est le motif du BATEAU, jamais celui de l'echelle** : le lit
+`set_busy(true)` pendant la sieste, **et l'echelle aussi** -- c'est la seule
+autre chose tapable du loft, et rien ne doit changer d'etage en pleine sieste.
+Tout tap tombe donc A TRAVERS vers `_on_tapped_ground`, ou il devient « leve-toi ».
+Sortie = second tap, comme l'ancienne entree de cabane, sans minuterie.
+
+⚠️ **Le chemin du lit appelle `_try_rest()` IMMEDIATEMENT apres `hop_to()`**,
+parce que `LevelWalker._advance()` termine une marche de longueur nulle par
+`became_idle` et **jamais** par `hop_landed`. Sans ca, taper le lit en se tenant
+deja dessus ne ferait rien.
+
+### ⚠️ DEFAUT PRE-EXISTANT TROUVE ET DELIBEREMENT NON CORRIGE
+
+**Taper la PORTE en se tenant deja dessus ne fait rien**, par ce meme mecanisme :
+`_exit_pending` est arme, la marche de longueur nulle n'emet que `became_idle`,
+et l'intention reste armee pour toujours. Atteignable des le demarrage de la
+scene, puisque `DOOR_SPOT == ENTRY_SPOT`. **Signale, pas elargi dans ce lot** --
+le corriger touche le chemin de sortie de scene et merite sa propre passe.
+
+### VALIDATION
+
+**`CabinProbe` : 0 echec, exit 0** -- et les deux nouvelles phases verifiees
+**ROUGE AVANT VERT**, chaque neutralisation revertee et le fichier re-compare :
+
+| neutralisation | resultat |
+|---|---|
+| `_build_cabin_markers()` -> `return` | **PHASE M, 1 FAIL** (« one mark per cabin (0 marks, 1 cabins) ») |
+| `_try_rest()` -> `return false` | **PHASE P, 7 FAIL** (ne se couche pas, l'intention n'est pas depensee, roulis 0,0 deg, sommet le plus bas a 7,5396 au lieu de 7,3686, ni le lit ni l'echelle ne se retirent, et taper le lit en se tenant dessus ne fait rien) |
+
+⚠️ **UN BUDGET PARTAGE A DERIVE, ET C'EST MOI** : `_EXPECTED_DRAW_NODES_EXCL_PORTALS`
+passe de **129 a 131** dans `SeesawProbe`, `TurnstileProbe` et `WaterTintProbe`.
+**+2 et pas +3, itemise plutot que pousse** : un `CabinMarker` construit un pad,
+un anneau et un `Label3D`, et un `Label3D` n'est ni un `MeshInstance3D` ni un
+`MultiMesh` -- le compteur, par sa propre definition (`_count_draw`), n'a jamais
+vu le panneau. Trouve parce que `SeesawProbe` a rapporte **3** echecs contre 2
+sur la baseline ; apres correction il revient a ses **2** echecs pre-existants.
+
+**Sondes partagees, diffees contre `origin/staging` en worktree separe** (import
+verifie complet des deux cotes) :
+
+| sonde | verdict |
+|---|---|
+| `LevelNavProbe` | **BYTE-IDENTIQUE** sur les DEUX flux -- 77 checks, **2 echecs PRE-EXISTANTS** (fade d'occlusion), donc pas les miens |
+| `AssetContractAudit` | **BYTE-IDENTIQUE** -- 12/12 visuels, **0/10 colliders deplaces** |
+| `DeathModelAudit`, `ChargerShapeProbe` | **BYTE-IDENTIQUES** sur les deux flux |
+| `TurnstileProbe` | exit 1 des DEUX cotes, **meme echec unique pre-existant** (`entry 0's custom_aabb encloses every bar`) |
+| `SeesawProbe` | exit 1 des deux cotes, **memes 2 echecs pre-existants** (banc diagonal a 45 s sous llvmpipe) |
+| `WaterTintProbe` | **0 echec** (sous `xvfb`, jamais `--headless`) |
+| `ProbeTimeoutAudit` | **59 scenes de sonde + 1 `--script`**, identique a la baseline -- retour exact apres suppression des sondes jetables |
+
+**PHASE UNTOUCHED de `CabinProbe`** re-confirme les 3 portails et leurs routes,
+les 3 plongeoirs, le hibou, le tourniquet, la balancoire et le bateau ; et que la
+cible tapable la plus proche du pas de porte est la balancoire a **17,92 u**,
+degagee du rayon de 1,3.
+
+Import headless **exit 0, 36 `.scn`**. Export Web release **exit 0, 0 erreur
+GDScript**. `index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint permanent de
+tout lot qui ne touche pas le code moteur. `index.pck` 30 276 096, **marqueur et
+jamais preuve d'identite**. Piege payload tenu : sur **264** lignes
+`Storing File`, **0** pour `scripts/dev`, `assets_source`, `docs`, `web`,
+`build` ou `firebase.json`.
+
+**RENDU DE VERIFICATION FOURNI**, a travers la camera FIXE de la scene interieure
+livree, Keepy amene sur le lit par le VRAI chemin de code (`_on_tapped_hotspot`)
+et non pose a la main : `docs/hub-shots/cabin_rest_pose.png` (couche) et
+`cabin_rest_stand.png` (debout, meme point, meme camera, pour comparaison). La
+sonde de capture a imprime `resting=true walker_y=7,36857 roll=90 yaw=20` --
+c'est-a-dire exactement ce que `CabinProbe` asserte. **Verdict : il se lit comme
+couche sur le lit** -- sur le flanc, enfonce dans la literie, tete du cote de
+l'oreiller, la barriere du lit passant devant lui ; ni flottant, ni en travers
+d'un mur.
+
+⚠️ **Limite honnete du rendu** : son VISAGE est tourne de 90 degres avec le reste
+de lui -- les yeux se retrouvent l'un au-dessus de l'autre. C'est litteralement
+ce que « couche sur le flanc » veut dire pour un mesh unique sans squelette, et
+ca se lit comme un ecureuil endormi -- mais une pose « tete sur l'oreiller,
+visage vers la piece » demanderait un squelette que ce `.glb` n'a pas.
+
+⚠️ **Piege de sonde re-rencontre, et il a coute deux runs** : ma premiere sonde
+de capture appelait `LevelWalker.place_on()`, qui **n'existe pas**. Le
+`SCRIPT ERROR` etait avale par un `| head -20` en bout de pipe (le trap deja
+consigne : `head` ne peut pas flusher), donc le process a simplement tourne
+jusqu'a son `timeout` de 600 s et **ressemblait a un rendu lent** au lieu d'une
+erreur. Placer le walker se fait par `controller.set_current(1)` puis
+`walker.global_position = level.flat(...)`, comme `CabinProbe` le fait deja.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Le marqueur se voit-il et se lit-il depuis le hub** a l'echelle reelle d'un
+   telephone -- 3,16:1 est mesure, la lisibilite ne l'est pas.
+2. **Taper « Lit » donne-t-il une pose couchee credible**, et le second tap le
+   releve-t-il ? Le visage tourne de 90 deg est la limite publiee ci-dessus.
+3. **Le defaut pre-existant de la porte** (taper dessus en s'y tenant ne fait
+   rien) -- signale, non corrige.
+4. Si valide : retirer le bouton « < Sortir » (conditionne depuis le lot
+   precedent, toujours pas fait), puis le lot 4/4 (migration du hub).
+5. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.
