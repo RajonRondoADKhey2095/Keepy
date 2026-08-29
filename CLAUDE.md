@@ -22677,3 +22677,48 @@ compte.
    llvmpipe) »** rapportes par la meme session intermediaire sont **la meme
    famille** -- c'est le piege d'ordre des flags deja consigne (`--fixed-fps
    60` omis), pas un defaut. Signale, **non corrige ici**.
+
+### Deploiement staging du fix de flakiness (palier 1, automatique)
+
+`staging` **`ea77e7f`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `f3d15cf` des deux cotes ET `git diff` vide, verifie
+AVANT le push). CI run **#330** (id 33282001964) **verte** -- `Import project
+resources` 23:53:35 -> 23:56:22, **`Export Web build` 23:56:22 -> 23:56:27**,
+`Deploy to Vercel [STAGING -- staging]` **succes** 23:56:41 -> 23:56:51,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ebdd1dc`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et AUX DEUX BOUTS EN MISS/age 0
+-- la forme la plus forte que ce fichier documente** :
+
+| | `CACHE_VERSION` | = UTC | lecture |
+|---|---|---|---|
+| avant (run #329) | `1788044568` | **23:02:48** | **MISS, age 0** |
+| **apres (ce lot, run #330)** | **`1788047786`** | **23:56:26** | **MISS, age 0** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(23:56:22 -> 23:56:27). Pour une fois **aucune des deux lectures n'est un
+`HIT`** : la valeur d'avant a ete relevee juste apres le push, avant que la CI
+n'ait exporte, sur une reponse fraiche.
+
+`GODOT_CONFIG.fileSizes` lu au meme moment (MISS/age 0 lui aussi) :
+**`index.wasm` 35 376 909** -- identique a l'export local et au fingerprint
+permanent -- et `index.pck` 30 274 304 contre **30 274 288** en export local
+propre, **16 octets d'ecart**, l'instabilite deja consignee.
+
+⚠️ **Limite dite plutot que sous-entendue** : `fileSizes` n'a ete lu qu'APRES,
+donc il vaut comme marqueur d'ETAT COURANT et **pas** comme preuve de
+transition ; c'est le `CACHE_VERSION`, lu aux deux bouts en MISS/age 0, qui
+porte la bascule.
+
+⚠️ **Le contenu de JEU deploye est rigoureusement IDENTIQUE a celui d'avant** :
+le seul fichier de code de ce lot est sous `scripts/dev/`, exclu du pack.
+`index.wasm` inchange le confirme. Ce deploiement n'existe que parce qu'un push
+sur `staging` en declenche un ; il n'y a rien de neuf a regarder sur device
+**pour ce lot-ci**.
+
+⚠️ **L'API GitHub Actions n'etait PAS perimee sur ce run**, et c'est note dans
+ce sens-la : les appels successifs ont rendu de vraies progressions d'etapes
+avec de vrais horodatages, et l'import a reellement pris **2 min 47 s**. Le
+piege existe ; il ne s'est pas produit ici, et le verifier coute un regard a
+l'horloge.
