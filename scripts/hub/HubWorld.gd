@@ -300,17 +300,51 @@ const SEESAW_ROCK_S: float = 2.4
 ## a prop 1.5 wide and leaves the spawn a full unit outside it.
 const OWL_TAP_RADIUS: float = 1.8
 
-## How close a tap has to land to a cabin's doorstep to mean "go in".
+## How close a tap has to land to a cabin's DOORWAY to mean "go in".
 ##
-## Wider than the owl's 1.8 because the target is bigger -- the prop is
-## 1.89 across against the owlet's 1.39 -- and because there is nothing
-## nearby for it to steal a tap from: the doorstep is at (-17.43, 29.63)
-## and the nearest thing that reads a tap of its own is the turnstile, 17.3
-## units away, with the seesaw 20.3 beyond that. It is still measured
-## against the prop rather than picked: 2.2 reaches a little past the
-## footprint (1.25) and stops well short of the 5.7-unit gap to the nearest
-## rock, so a player walking by does not get pulled indoors.
-const CABIN_TAP_RADIUS: float = 2.2
+## SIZED ON THE DOORWAY, NOT ON THE BUILDING, and that is the correction
+## this constant carries. It used to be 2.2, argued from the prop being
+## "bigger than the owlet" -- an argument about the VOLUME, which is the
+## one quantity a doorstep must not track. A door is the same size on a
+## shed and on a cathedral, because the thing that has to fit through it is
+## Keepy, and Keepy does not scale.
+##
+## THE DEFECT THAT CAME OF TRACKING THE BUILDING, measured rather than
+## reasoned. With the old scaled doorstep, the disc this radius draws
+## overlapped the cabin by 18.2% at scale 1 -- it HUGGED the prop, so
+## "tap the cabin" and "tap the doorstep" were one gesture -- and by 0.0%
+## at scale 3.5, where it had become a 4.4-unit band of invisible lawn
+## floating 2.3 u in FRONT of the wall, 473-617 px wide on a 1080-wide
+## screen. A player walking up to look at the cabin tapped that lawn, and
+## the tap he meant as "walk there" was spent as "go inside". That is the
+## whole of the report: he was not aspirated, he was ANSWERED -- one tap,
+## one signal, and the signal he got was not the one he aimed.
+##
+## 1.30 is read off the behaviour that WORKED rather than picked: with the
+## doorstep now held a flat 0.70 u off the wall at every scale, 1.30 puts
+## 17.5% of the disc back on the building -- the 18.2% the shipped scale-1
+## cabin had. It is scale-INVARIANT by construction, which is the point:
+## the same 17.5% at 3.5 and at 7.0.
+##
+## NOT SCALED, and no future scale-up may make it so. If a bigger cabin
+## ever needs a bigger door, the thing to grow is CABIN_DOOR_STANDOFF -- 
+## where the visitor stands -- not how much lawn counts as the doorway.
+const CABIN_TAP_RADIUS: float = 1.30
+
+## How close he has to have ARRIVED to actually go in.
+##
+## DELIBERATELY LOOSER THAN THE TAP, by exactly the hop chain's own
+## slack. _advance() stops when the remaining distance is within
+## ARRIVE_EPSILON, so a walk aimed at a point R from the door can legally
+## finish R + ARRIVE_EPSILON from it. Testing arrival at the tap's own R --
+## which is what a single shared radius did -- leaves a player who tapped
+## the rim of the doorstep walking all the way there and being told he is
+## not there yet, with the intent still armed and nothing to show for it.
+##
+## Harmless to widen, because this is only ever consulted once _entering is
+## already armed BY A DELIBERATE TAP: it decides whether a walk that was
+## already meant as "go in" has got there, never whether a tap meant it.
+const CABIN_ARRIVE_RADIUS: float = CABIN_TAP_RADIUS + KeepyHopper.ARRIVE_EPSILON
 
 ## How long the whole loop takes, perch to perch.
 ##
@@ -679,9 +713,13 @@ func _on_tapped_cabin(point: Vector3) -> void:
 ## Goes inside if the landing is close enough to a doorstep. Returns true
 ## when he went in, so the caller can stop looking at that landing.
 ##
-## The proximity test is the SAME radius the tap used, for the reason the
-## boat's, the ladder's and the perch's are: a player who tapped the cabin
-## and walked to it cannot arrive and be told they are not there yet.
+## The proximity test is the tap's radius PLUS the hop chain's own arrival
+## slack, for the reason the boat's, the ladder's and the perch's share the
+## tap radius outright: a player who tapped the cabin and walked to it
+## cannot arrive and be told they are not there yet. Those three can share
+## one number because theirs is wide enough to swallow the slack; this one
+## was narrowed to the doorway, so the slack had to be said out loud --
+## see CABIN_ARRIVE_RADIUS.
 ##
 ## NEAREST door and not first-match, on the ladder's and the perch's terms:
 ## "first" is a fact about the layout file, and the player is standing at a
@@ -701,7 +739,7 @@ func _try_enter_cabin(position: Vector3) -> bool:
 		if d < nearest:
 			nearest = d
 			entry = candidate
-	if nearest > CABIN_TAP_RADIUS:
+	if nearest > CABIN_ARRIVE_RADIUS:
 		return false
 	if not _keepy.enter_cabin(entry["door"] as Vector3):
 		return false
