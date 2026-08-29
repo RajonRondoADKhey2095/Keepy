@@ -80,17 +80,14 @@ signal tapped_owl(point: Vector3)
 ## a CABIN DOOR to mean "go inside", on the same world-units terms the boat
 ## and the owl are picked out on. Same one-tap-one-signal rule.
 ##
-## MODELLED ON THE BOAT, AND THAT IS LOAD-BEARING HERE RATHER THAN A HABIT.
-## `cabin_available` is the mooring's withdrawal: HubWorld clears it for
-## the whole time Keepy is inside, so a tap then falls through to
-## tapped_ground and BECOMES the way back out -- exactly as a tap during a
-## sail becomes the eject. Copying the LADDER instead would have been the
-## bug: it emits tapped_ladder whatever Keepy is doing and HubWorld drops
-## it, which is harmless for a plank whose only other meaning is a dive
-## already handled by state, and would be wrong here, because the tap that
-## brings him back out has to be able to reach the ground path. A player
-## whose taps were being swallowed by a prop he is standing INSIDE would
-## have no way out at all.
+## ⚠️ NO WITHDRAWAL, UNLIKE THE BOAT AND THE OWL -- and that is a deletion
+## rather than an omission. It used to carry a `cabin_available` flag on
+## the mooring's pattern, because Keepy USED to hide inside the prop and a
+## tap made meanwhile had to fall through to the ground path to become the
+## way back out. Since 29 aout 2026 going in is a SCENE CHANGE: this whole
+## screen stops existing for the length of the visit, so there is no
+## "meanwhile" in which a tap could need to mean something else, and a flag
+## that can never be false is a flag no one is reading.
 signal tapped_cabin(point: Vector3)
 
 ## Emitted INSTEAD of tapped_ground when the finger landed close enough to
@@ -174,10 +171,9 @@ var owl_available: bool = true
 ## the prop the player aims at and the point this radius is measured from
 ## have to be one fact.
 ##
-## `cabin_available` is the boat's withdrawal, written above.
+## No availability flag beside them -- see the signal's own comment.
 var cabin_doors: Array[Vector3] = []
 var cabin_radius: float = 0.0
-var cabin_available: bool = true
 
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
@@ -283,17 +279,16 @@ func _handle_point(screen_point: Vector2) -> void:
 			if owl_flat.distance_to(perch) <= owl_radius:
 				tapped_owl.emit(destination)
 				return
-	# THE CABIN, asked on the identical world-unit terms and gated on the
-	# identical withdrawal. Ordered here only because the owl was here
-	# first: the perch is by the spawn and the cabin is out at z = +28, so
-	# the order between them can never actually decide anything.
+	# THE CABIN, asked on the identical world-unit terms but NOT gated on a
+	# withdrawal, unlike the two above -- see the signal's comment. Ordered
+	# here only because the owl was here first: the perch is by the spawn
+	# and the cabin is out at z = +28, so the order between them can never
+	# actually decide anything.
 	#
-	# As with the owl, nothing is asked here about whether Keepy is FREE to
-	# go in -- KeepyHopper refuses that from any state but standing still.
-	# What is asked is whether this signal still MEANS anything, which is a
-	# different question, and the one that turns a tap made while he is
-	# inside back into an ordinary ground tap.
-	if cabin_available and cabin_radius > 0.0:
+	# Nothing is asked here about whether Keepy is free to go in. HubWorld
+	# refuses a tap made mid-ride, and the walk to the door is an ordinary
+	# hop chain that any later tap may cancel.
+	if cabin_radius > 0.0:
 		var cabin_flat := aim
 		for door in cabin_doors:
 			if cabin_flat.distance_to(door) <= cabin_radius:

@@ -21502,3 +21502,252 @@ NE PEUT PAS ETRE CONSIDERE VALIDE SUR LA SEULE FOI DU BUILD HEADLESS.**
 Le fondu est de la transparence, et la transparence de ce projet est
 DEJA passee verte dans ce sandbox et cassee sur device une fois. Le
 device est seul juge.
+
+## LA CABANE : L'INTERIEUR JOUABLE -- une scene a part entiere, et le vieux « il disparait sur place » est SUPPRIME (29 aout 2026)
+
+Branche `claude/keepy-cabin-interior-alsew8`, partie de `staging` (**`8bad644`**,
+exactement la ref annoncee ; `origin/main` = **`9031e5e`**, **INTOUCHE**). Regle
+n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri des refs distantes par
+date et comparaison des ARBRES -- `origin/staging` est la ref la plus recente du
+depot et la branche du lot occlusion (`2ecf722`) en est deja un ancetre,
+**aucune session concurrente**.
+
+Le lot 2 avait pose le noyau multi-niveaux dans une scene de banc d'essai. Ce
+lot lui donne son premier vrai client : la cabane du plateau s'ouvre desormais
+sur un **interieur jouable a deux etages**, et le mecanisme precedent -- Keepy
+qui se recroqueville et disparait SUR PLACE -- est **retire**, pas desactive.
+
+### ⚠️ TROIS PREMISSES DU BRIEF TOMBENT A LA MESURE, et elles changent tout le lot
+
+1. **« l'interieur est une texture peinte, pas de la geometrie creuse » --
+   FAUX.** Une carte de profondeur le long de -Z montre la bande centrale de la
+   face avant a **z ~ -0,20** en unites modele contre une coque a **+0,18** :
+   un vrai renfoncement d'environ **0,4** de profondeur.
+2. **« aucune mesure de sommets ne peut dire ou est le vrai sol » -- FAUX.**
+   Des raycasts vers le BAS a l'interieur de la cavite trouvent un plancher
+   plat a **y = -0,5305** (echantillons -0,532 / -0,529 / -0,528 / -0,530 /
+   -0,529, ecart-type **0,0175** sur **117** cellules), une dalle de mezzanine
+   a **-0,115** et un plafond a **+0,106**. Monde = `(y_modele + 0,800420) x
+   echelle`.
+3. **« la navigation devra peut-etre etre contrainte a un axe parce que la
+   profondeur peinte est fausse » -- FAUX POUR LE REZ-DE-CHAUSSEE.** Son
+   empreinte mesuree a l'echelle 11 fait ~3,5 de large sur ~5,5 de profond :
+   de la profondeur REELLE, donc **XZ libre**. C'est la MEZZANINE qui est
+   contrainte, et seulement par la mesure (deck ~3,6 x 2,0) -- ce qui tombe
+   tout seul de son `half_extent`, sans second mode de navigation.
+
+⚠️ **UNE CONTRAINTE REELLE SUBSISTE, elle** : la cavite n'ouvre que sur **+Z**.
+Rendue sur quatre axes, elle est creuse et meublee depuis +Z et un tronc ferme
+depuis -Z. C'est ce qui borne la camera, pas l'illusion.
+
+### RECON DU ROUTAGE : aucun chemin de retour ne savait revenir a une PORTE
+
+Les trois portails passent par `HubRouter` (`ROUTES`, un seul appelant de
+`change_scene_to_file`, deliberement pas un autoload). Et **tout retour vers le
+hub est aujourd'hui un `change_scene_to_file` nu** -- Chased, Quizz, Battle,
+l'ecran de login et le banc nav font exactement ca. Or **le noeud `Keepy` de
+`HubWorld.tscn` ne porte AUCUN transform** : les cinq reviennent donc a
+l'origine du monde, c'est-a-dire au milieu du plateau.
+
+C'est juste pour un sous-jeu. C'est **faux pour une porte**.
+
+D'ou `scripts/hub/HubSpawn.gd` (nouveau) : un `static var` sur une classe
+simple -- la plus petite chose qui survive a un changement de scene, les
+scripts restant charges quand l'arbre ne l'est pas. **Pas un autoload**, pour
+l'argument que `HubRouter` tient deja sur lui-meme (« une table de routage qui
+gagne un second appelant cesse d'etre un detail du hub et devient un
+framework ») : un autoload est joignable de partout, et la seule chose que
+ceci ne doit pas devenir est un teleport generique.
+
+⚠️ **IL EST CONSOMME, PAS LU.** `take()` efface en rendant. Un spawn laisse en
+place s'appliquerait aussi au PROCHAIN chargement du hub : sortir de la cabane,
+s'eloigner, aller dans Chased, revenir -- et se retrouver a la porte de la
+cabane sans savoir pourquoi.
+
+**Et c'est le HUB qui l'ecrit, pas l'interieur.** La coordonnee de la porte est
+un fait que cet ecran possede deja (`HubBuilder` la derive de la position, de
+l'echelle et de la rotation de la cabane), donc il l'enregistre a l'ALLER et la
+scene d'interieur n'apprend jamais rien du plateau -- pas de `HubBuilder`, pas
+de `HubRegion`, pas de ressource de layout. Une seconde copie de cette
+arithmetique la-dedans est exactement comme une porte finit du mauvais cote
+d'un batiment que quelqu'un a tourne dans le layout.
+
+### DECISION CAMERA : FIXE, et `LevelCamera` DELIBEREMENT PAS UTILISEE
+
+C'est la decision que le brief demandait de documenter plutot que de prendre en
+silence, et elle est tranchee par une mesure et non par un gout.
+
+L'AABB monde de la cabane a l'echelle 11 est **x [-10,43 ; 10,40], y [0 ;
+17,49], z [-8,42 ; 8,59]**, et **le marcheur se tient DEDANS aux deux etages**.
+Or un segment qui SE TERMINE dans une boite coupe toujours cette boite : le
+test de dalle de `LevelCamera._segment_hits` rapporterait « bloquant » a chaque
+frame depuis n'importe quelle position, et toute la cabane -- **un seul mesh**
+-- resterait a `alpha 0,25` pendant toute la visite.
+
+Donc : **camera fixe**, `LevelCamera` ni utilisee ni modifiee, et **rien ne
+rejoint le groupe `level_occluder`**. C'est une reponse directe a la case de la
+checklist, pas une omission -- et `CabinProbe` PHASE I la gate
+(`get_nodes_in_group("level_occluder").is_empty()`).
+
+Pose retenue : **`(0,3 ; 9,5 ; 12,5)` a -22 deg**, `KEEP_WIDTH`, `fov 45`,
+choisie parmi quatre candidates rendues. Les deux etages sont assertes devant
+elle.
+
+### DECISION NAVIGATION : XZ LIBRE aux deux etages, PROPOSEE ET JUSTIFIEE
+
+Le brief demandait de **proposer** si la navigation devait etre contrainte a un
+axe (couloir) plutot que libre. **Proposition : non, XZ libre**, et la raison
+est la premisse 3 ci-dessus -- la profondeur du rez-de-chaussee est reelle
+(~5,5 unites monde), pas peinte. Contraindre a un axe serait retirer de
+l'espace que la geometrie possede vraiment.
+
+La mezzanine EST plus etroite, et c'est son `half_extent` (1,10 contre 1,70)
+qui le dit : elle se parcourt naturellement comme une galerie qu'on longe,
+**sans second mode de navigation**, sans code special et sans branche.
+
+### CALIBRATION : ZERO iteration corrective sur la hauteur de sol
+
+Parce que la premisse 2 est tombee : le sol n'a pas ete cherche au rendu, il a
+ete **MESURE** (117 cellules, sd 0,0175), puis le rendu a servi a **CONFIRMER**.
+
+| passe | ce qui a ete rendu | resultat |
+|---|---|---|
+| 1 | echelle 7 / 11 / 14 / 18, Keepy sur le sol mesure | **11 retenue** : 7 montre l'arbre entier (on regarde une cabane, on n'est pas dedans), 14 rogne la mezzanine, 18 perd la mezzanine ET la fenetre ronde |
+| 2 | quatre poses de camera a l'echelle 11 | **(0,3 ; 9,5 ; 12,5) a -22 deg** |
+| 3 | Keepy au centre ET aux quatre coins de chaque etage | plante sur le tapis dessine et sur le plancher de la mezzanine **du premier coup, a chaque echelle** |
+
+**Aucune iteration corrective n'a ete necessaire sur `FLOOR_MODEL_Y` ni sur
+`LOFT_MODEL_Y`.** Ce qui a demande trois passes, c'est le CADRAGE (echelle et
+camera), pas l'altitude.
+
+⚠️ **UNE LIMITE HONNETE, mesuree et publiee plutot que tue.** Lu comme une
+COLLISION, un balayage exhaustif de toutes les hauteurs a la recherche du plus
+grand carre strictement plat (tolerance +-0,18) ne trouve que y ~ 1,75
+(half_extent 1,00), y ~ 2,00 (0,80) et deux touches de canopee a y ~ 10,50 /
+11,00 ; le plus grand carre strictement plat de la mezzanine fait **0,5 x 0,5**
+contre un Keepy de **1,32 de large sur 2,04 de profond**. Lu comme un DECOR --
+ce que le brief demande explicitement : plans invisibles, `.glb` en toile de
+fond -- la mezzanine est un plancher DESSINE, et un plan invisible a sa hauteur
+dominante y pose Keepy, les etageres dessinees etant traversees exactement
+comme les arbres du plateau le sont deja.
+
+### CE QUI EST RETIRE, ET IL EST RETIRE ENTIEREMENT
+
+`grep` le confirme : **zero reference** a `State.IN_CABIN`, `enter_cabin`,
+`leave_cabin`, `is_in_cabin`, `cabin_entered`, `cabin_exited` ou
+`cabin_available` dans du code vivant.
+
+* `KeepyHopper` : l'etat, les deux signaux, `CABIN_ENTER_S` / `CABIN_EXIT_S` /
+  `CABIN_DUCK_SCALE`, `_cabin_spot`, `_cabin_tween` et les quatre fonctions.
+* `HubWorld` : `_leave_cabin()` et **les deux gardes `is_in_cabin()`** (celle
+  du chemin sol, qui etait toute la sortie, et celle de l'atterrissage).
+* `HubTapInput` : `cabin_available`. **La retraite du bateau n'a plus d'objet**
+  -- l'ecran entier cesse d'exister pendant la visite, donc il n'y a plus de
+  « pendant » ou un tap pourrait vouloir dire autre chose, et un drapeau qui ne
+  peut jamais etre faux est un drapeau que personne ne lit.
+* `CabinProbe` : les phases C, D et E. **Une assertion dont le sujet n'existe
+  plus n'est pas un test plus faible, c'est un test de rien** -- et en laisser
+  une derriere est comme une sonde continue d'imprimer OK sur une feature que
+  personne ne livre plus.
+
+⚠️ **CE QUI LES REMPLACE ASSERTE LA MEME PROMESSE PAR L'AUTRE MECANISME** :
+PHASE G prouve que la surface a disparu (`has_method`, la liste de signaux, la
+liste de proprietes), PHASE R que le tap route, PHASE S que la sortie revient
+sur le pas de la porte. Supprimer sans ajouter aurait laisse la SUPPRESSION
+elle-meme non testee : un etat a moitie retire compile, se livre, et ne fait
+rien de visible jusqu'a ce qu'un tap le trouve.
+
+### ⚠️ AUCUN DIALOGUE DE CONFIRMATION, et ce n'est pas un oubli
+
+Les trois portails passent par `HubConfirmDialog`. La cabane non, parce que la
+maniere d'y ARRIVER est differente : **un portail s'entre en ATTERRISSANT
+dessus**, ce qu'un saut vise au-dela fait par accident ; **la cabane s'entre en
+TAPANT SON PAS DE PORTE**, sur une cible retrecie a **1,30** pour exactement
+cette raison. La question a deja ete posee par le geste.
+
+⚠️ **Mais la consequence d'un declenchement intempestif est desormais PIRE, pas
+meilleure** : il coutait un accroupissement dont un tap sortait, il coute
+maintenant un CHANGEMENT DE SCENE. Les phases T et F -- les trois causes de
+declenchement intempestif deja documentees -- sont donc **conservees en
+entier**, inchangees dans ce qu'elles assertent.
+
+### QUATRE PIEGES MESURES DANS LA SONDE ELLE-MEME, publies plutot que lisses
+
+Aucun n'est un defaut du jeu, et chacun a produit un rouge ou un vert
+trompeur avant d'etre compris :
+
+1. **La sonde EST `current_scene`, donc la route la TUE.**
+   `change_scene_to_file` libere ce que `current_scene` designe -- le premier
+   test d'entree honnete a supprime la sonde en pleine phase, et toutes les
+   assertions suivantes ont lu un arbre nul (`Parameter "data.tree" is null`,
+   PHASE R et PHASE S perdues toutes les deux). Le hub est donc **declare
+   `current_scene`** : ce n'est pas une fiction, c'est la scene sous test, et
+   la remplacer est precisement le travail du routeur.
+2. **`set_current_scene` REFUSE un noeud qui n'est pas enfant direct de
+   `root`**, en poussant une erreur moteur et en laissant `current_scene`
+   intacte -- donc silencieusement, du point de vue de la sonde.
+3. **`root` est occupe a monter ses enfants pendant le `_ready()` de la
+   scene principale** : `add_child` dessus echoue net, et la sonde a alors
+   mesure un plateau VIDE -- zero cabane, zero portail, zero bateau, comme si
+   le lot avait supprime le hub. Une frame d'attente le ferme.
+4. **`change_scene_to_packed` met `current_scene` a NULL immediatement** et
+   n'installe la nouvelle scene qu'a la FIN de la frame d'idle. Il existe donc
+   une fenetre ou l'arbre n'a aucune scene courante, et une attente sur
+   `current_scene != hub` seule lit `null` et rapporte l'interieur manquant.
+
+Un cinquieme, sur le CADRAGE : PHASE T aimait a la porte **depuis le spawn**,
+or la porte est a **z = +34** et la camera regarde vers -Z -- elle est donc
+DERRIERE elle. `unproject_position` rend un point hors du conteneur,
+`_handle_point` le jette, et les quatre assertions lisent une liste de signaux
+vide, **y compris leur propre blind check**. Elle place et SNAPPE desormais la
+camera, exactement comme PHASE F le faisait deja.
+
+### ROUGE-AVANT-VERT, trois neutralisations distinctes
+
+Chacune appliquee puis revertee, fichier restaure verifie **byte-identique**
+(`cmp`) :
+
+| ce qui est neutralise | resultat |
+|---|---|
+| `_router.route(&"cabin")` | **2 FAIL** -- « the hub scene was left (240 frames) » et « the interior is the current scene (HubWorld) » |
+| `HubSpawn.request(door)` | **1 FAIL** -- « he walked to the door and the entry fired (900 frames) » |
+| `_consume_return_spawn()` | **3 FAIL** -- il revient a `(0, 0, 0)`, le spawn n'est pas consomme, et la camera cadre l'origine |
+
+### VALIDATION
+
+Import headless **exit 0** (36 `.scn`). Boot headless de `CabinInterior.tscn`
+et de `HubWorld.tscn` : **exit 0, 0 erreur**. Export Web release **exit 0**,
+**0 ligne d'erreur ou de parse** sur 260 lignes `Storing File`.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. **Piege payload
+tenu** : **0** ligne `Storing File` pour `scripts/dev`, `assets_source`,
+`docs`, `web/` ou `build`.
+
+⚠️ **`index.pck` fait 30 264 416 octets, et ce n'est PAS une regression de ce
+lot** : la cabane pese ses textures depuis son propre lot d'installation.
+Marqueur « nouveau build », **jamais preuve d'identite** -- c'est `index.wasm`
+qui la porte.
+
+**Sondes : `CabinProbe` 0 echec (exit 0), `LevelNavProbe` 77 checks / 0 echec
+(exit 0)**, plus la couverture PHASE UNTOUCHED des trois portails et de leurs
+routes, des trois plongeoirs, du hibou, du tourniquet, de la balancoire et du
+bateau.
+
+### RESTE OUVERT -- jugement device, seul juge
+
+1. ⚠️ **LA CALIBRATION VISUELLE DE L'INTERIEUR NE PEUT ETRE VALIDEE
+   DEFINITIVEMENT QUE SUR DEVICE**, meme reserve qu'au lot occlusion : le rendu
+   headless confirme la MECANIQUE (les plans sont a la hauteur mesuree, le
+   marcheur s'y tient, la camera les voit tous les deux), il ne confirme pas le
+   RESSENTI. Tout ce qui precede est rendu par llvmpipe sous xvfb via le
+   backend `opengl3` de BUREAU, contre WebGL2 sous Safari.
+2. **Est-ce que Keepy se lit comme POSE sur le tapis dessine et sur la
+   mezzanine dessinee**, a la taille reelle d'un telephone ?
+3. **L'echelle 11 est un compromis mesure** (les deux etages lisibles), pas un
+   optimum : c'est la seule constante a bouger si le cadrage est rejuge.
+4. **La mezzanine est un plancher DESSINE, pas une collision** (limite
+   ci-dessus) -- les etageres se traversent, comme les arbres du plateau.
+5. **Aucun son, aucune particule, aucun asset neuf** : hors perimetre.
