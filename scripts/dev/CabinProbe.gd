@@ -44,6 +44,26 @@ extends Node
 ## PHASE UNTOUCHED re-checks what this lot must not have moved: the boat,
 ## the owl, the turnstile, the seesaw, the three ladders and the three
 ## portals.
+##
+## =====================================================================
+## SINCE 29 AOUT 2026, TWO MORE THINGS, AND BOTH FAIL SILENTLY
+##
+## PHASE M -- THE DOORSTEP HAS A MARK ON IT. The device report was that
+## from out on the plateau nothing says where to tap to go in: the
+## previous lot marked the ladder, the bed and the door INSIDE the cabin
+## and left the way IN unmarked. A mark that is never built, is built at
+## the wrong point, is built smaller than the trigger it stands for, or
+## quietly stops matching the three portals beside it raises nothing at
+## all -- it looks exactly like "the mark was never added".
+##
+## PHASE P -- THE BED CAN BE LAIN ON. Every failure here is silent too: an
+## intent that clears on a pass-through landing leaves him standing beside
+## the bed; a bed that does not WITHDRAW leaves a second tap re-entering a
+## state he is already in and nothing able to wake him; a wake that does
+## not undo the roll leaves him walking round the loft on his side.
+##
+## Both are verified RED BEFORE GREEN -- see the batch report for the two
+## neutered calls and the exact failures they produced.
 
 const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 const INTERIOR_SCENE: PackedScene = preload("res://scenes/CabinInterior.tscn")
@@ -151,6 +171,8 @@ func _ready() -> void:
 	await _phase_t_no_stray_entry(hub, props, keepy, tap, camera)
 	dl.abort_if_exceeded()
 	await _phase_f_no_funnel(hub, props, keepy, tap, camera)
+	dl.abort_if_exceeded()
+	_phase_m_doorstep_mark(hub, props)
 	dl.abort_if_exceeded()
 	_phase_untouched(props)
 	dl.abort_if_exceeded()
@@ -407,6 +429,7 @@ func _phase_i_interior() -> void:
 
 	_phase_j_standing(interior, controller, walker)
 	_phase_k_taps(interior, controller, walker)
+	_phase_p_rest(interior, controller, walker)
 	interior.queue_free()
 
 ## =====================================================================
@@ -1055,6 +1078,239 @@ func _phase_untouched(props: HubBuilder) -> void:
 	_check(worst > HubWorld.CABIN_TAP_RADIUS + 2.5,
 			"nearest other tap target is the %s at %.2f u, clear of r = %.1f"
 					% [who, worst, HubWorld.CABIN_TAP_RADIUS])
+
+## =====================================================================
+## PHASE M -- THE DOORSTEP CARRIES A MARK, IN THE PORTALS' OWN INK
+##
+## ⚠️ IT OPENS WITH THE POSITIVE for PHASE T's reason. "The mark is not
+## drawn smaller than the trigger" and "it is not in the wrong ink" are
+## both satisfied for free by a mark that was never built, so the mark has
+## to be shown to EXIST before any of its properties mean anything.
+##
+## The ink is compared against HubPortal.tscn READ OFF DISK rather than
+## against a literal repeated here. The claim is not "the ring is
+## rgb(0.95, 0.74, 0.30)" -- that would pass happily while the three
+## portals moved on without it. The claim is "the doorstep is drawn in the
+## same ink as the doors beside it", and only the shipped scene can say.
+func _phase_m_doorstep_mark(hub: Node, props: HubBuilder) -> void:
+	print("")
+	print("--- PHASE M: the doorstep is marked, out on the plateau ---")
+	var cabins: Array[Dictionary] = props.cabins()
+	if cabins.is_empty():
+		_check(false, "there is a cabin to mark")
+		return
+	var marks: Array = []
+	for child in props.get_children():
+		if child is CabinMarker:
+			marks.append(child)
+	_check(marks.size() == cabins.size(),
+			"one mark per cabin (%d marks, %d cabins)" % [marks.size(), cabins.size()])
+	if marks.is_empty():
+		return
+	var mark: CabinMarker = marks[0]
+	var door: Vector3 = cabins[0]["door"]
+	# ⚠️ ON THE TRIGGER, NOT NEAR IT. A mark a metre off the circle the tap
+	# test measures is a mark that teaches the wrong place to aim, and
+	# nothing would report it.
+	_check(mark.global_position.distance_to(door) < 0.001,
+			"it stands ON the published doorstep (%.4f u away)"
+					% mark.global_position.distance_to(door))
+	_check(mark.visible, "and it is visible -- permanent, like the portals")
+
+	# THE RING IS THE TRIGGER'S OWN SIZE. Read off the drawn TorusMesh, so
+	# a marker drawn smaller than the circle it stands for cannot pass.
+	var ring: MeshInstance3D = null
+	var pad: MeshInstance3D = null
+	var label: Label3D = null
+	for child in mark.get_children():
+		if child is Label3D:
+			label = child
+		elif child is MeshInstance3D:
+			var mi: MeshInstance3D = child
+			if mi.mesh is TorusMesh:
+				ring = mi
+			elif mi.mesh is CylinderMesh:
+				pad = mi
+	_check(ring != null and pad != null and label != null,
+			"it has a ring, a pad and a label")
+	if ring == null or pad == null or label == null:
+		return
+	var torus: TorusMesh = ring.mesh
+	_check(absf(torus.outer_radius - HubWorld.CABIN_TAP_RADIUS) < 0.001,
+			"the ring is exactly the tap radius (%.3f vs %.3f)"
+					% [torus.outer_radius, HubWorld.CABIN_TAP_RADIUS])
+
+	# THE INK, AGAINST THE THREE DOORS BESIDE IT -- read off the shipped
+	# HubPortal.tscn rather than restated.
+	var portal_ink := _portal_ink()
+	_check(not portal_ink.is_empty(), "HubPortal.tscn's own ink could be read")
+	if portal_ink.is_empty():
+		return
+	var ring_mat: StandardMaterial3D = ring.material_override
+	var pad_mat: StandardMaterial3D = pad.material_override
+	_check(ring_mat != null and pad_mat != null, "both surfaces carry a material")
+	if ring_mat == null or pad_mat == null:
+		return
+	_check(ring_mat.albedo_color.is_equal_approx(portal_ink["ring"]),
+			"the ring is the portals' amber (%s)" % ring_mat.albedo_color)
+	_check(pad_mat.albedo_color.is_equal_approx(portal_ink["pad"]),
+			"the pad is the portals' green (%s)" % pad_mat.albedo_color)
+	_check(ring_mat.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED,
+			"and it is UNSHADED, like every other surface out here")
+	# ⚠️ AND IT IS NOT THE CABIN'S INDOOR INK. Stated as its own assertion
+	# because the two constants sit six lines apart in one file, and the
+	# way this breaks is a default argument left in place.
+	_check(not ring_mat.albedo_color.is_equal_approx(CabinMarker.CABIN_RING_COLOR),
+			"and NOT the cream it is drawn in indoors")
+	# THE LIFTS ARE THE PLATEAU'S SMALL ONES. The cabin's clear a drawn
+	# floor that wanders; this lawn is a flat plane and does not.
+	_check(absf(pad.position.y - CabinMarker.HUB_PAD_LIFT) < 0.0001
+			and absf(ring.position.y - CabinMarker.HUB_RING_LIFT) < 0.0001,
+			"it lies on the lawn, not a fifth of a metre above it (pad %.3f, ring %.3f)"
+					% [pad.position.y, ring.position.y])
+	_check(label.text == HubWorld.CABIN_DOOR_LABEL,
+			"the sign says what the doorstep is called (\"%s\")" % label.text)
+
+	# THE APPROACH CUE, on the portals' own two thresholds and driven
+	# through the REAL per-frame path rather than by poking set_near().
+	var keepy: KeepyHopper = hub.get_node(
+			"WorldViewport/SubViewport/World/Keepy") as KeepyHopper
+	var was := keepy.global_position
+	keepy.global_position = door
+	hub.call("_pulse_cabin_markers", keepy.global_position)
+	_check(bool(mark.get("_near")), "standing on it, the ring breathes")
+	keepy.global_position = door + Vector3(
+			HubWorld.CABIN_TAP_RADIUS * HubPortal.NEAR_RELEASE + 1.0, 0.0, 0.0)
+	hub.call("_pulse_cabin_markers", keepy.global_position)
+	_check(not bool(mark.get("_near")), "and stops once he walks away")
+	keepy.global_position = was
+
+## HubPortal.tscn's ring and pad colours, read off the SHIPPED scene.
+func _portal_ink() -> Dictionary:
+	var packed: PackedScene = load("res://scenes/HubPortal.tscn")
+	if packed == null:
+		return {}
+	var portal: Node = packed.instantiate()
+	var out: Dictionary = {}
+	var ring := portal.get_node_or_null("Ring") as MeshInstance3D
+	var pad := portal.get_node_or_null("Pad") as MeshInstance3D
+	if ring != null and ring.get_surface_override_material(0) != null:
+		out["ring"] = (ring.get_surface_override_material(0) as StandardMaterial3D).albedo_color
+	if pad != null and pad.get_surface_override_material(0) != null:
+		out["pad"] = (pad.get_surface_override_material(0) as StandardMaterial3D).albedo_color
+	portal.free()
+	return out if out.has("ring") and out.has("pad") else {}
+
+## =====================================================================
+## PHASE P -- HE CAN LIE ON THE BED, AND GET BACK UP
+##
+## ⚠️ THE POSITIVE FIRST, again: every refusal below ("a landing short of
+## the bed does not lay him down", "a tap while resting does not walk
+## him") passes for free against a bed that was never wired, so the bed is
+## shown WORKING before any of them is asked.
+func _phase_p_rest(interior: Node, controller: LevelController,
+		walker: LevelWalker) -> void:
+	print("")
+	print("--- PHASE P: the bed can be lain on, and left ---")
+	var bed: LevelHotspot = null
+	for spot in controller.hotspots:
+		if spot.kind == &"bed":
+			bed = spot
+	_check(bed != null, "the bed hotspot is held")
+	var body: Node3D = walker.find_child("Body", true, false) as Node3D
+	_check(body != null, "and his body is on the walker")
+	if bed == null or body == null:
+		return
+	var loft: LevelDefinition = controller.levels[1]
+	var link: LevelTransition = controller.links[0]
+	controller.set_current(1)
+
+	# THE POSITIVE: a tap on the bed from ACROSS THE LOFT arms the intent,
+	# survives the landing that does not arrive, and lays him down on the
+	# one that does.
+	walker.global_position = loft.flat(Vector3(bed.point.x + 2.0, 0.0, bed.point.z))
+	interior.call("_on_tapped_hotspot", bed, bed.point)
+	_check(bool(interior.get("_rest_pending")), "tapping the bed arms the rest intent")
+	_check(not bool(interior.get("_resting")), "and does NOT lay him down where he stands")
+	# ⚠️ THE PASS-THROUGH LANDING. This is the owl batch's measured bug and
+	# the third thing in this repository to copy the fix; asserted rather
+	# than trusted, because its probe was green until a walk grew to two
+	# hops.
+	walker.global_position = loft.flat(Vector3(bed.point.x + 1.2, 0.0, bed.point.z))
+	interior.call("_on_hop_landed", walker.global_position)
+	_check(bool(interior.get("_rest_pending")),
+			"a landing short of the bed KEEPS the intent")
+	_check(not bool(interior.get("_resting")), "and has not laid him down")
+	# AND THE LANDING THAT ARRIVES.
+	walker.global_position = loft.flat(bed.point)
+	interior.call("_on_hop_landed", walker.global_position)
+	_check(bool(interior.get("_resting")), "landing at the bed lays him down")
+	_check(not bool(interior.get("_rest_pending")), "and spends the intent")
+
+	# THE POSE ITSELF, measured off the BODY rather than off the constants
+	# that placed it.
+	_check(absf(body.rotation_degrees.z - CabinInterior.REST_ROLL_DEGREES) < 0.001,
+			"he is rolled onto his side (%.1f deg)" % body.rotation_degrees.z)
+	_check(absf(body.rotation_degrees.x) < 0.001,
+			"and NOT tipped onto his back -- that buries him and stands the tail up")
+	# ⚠️ THE LIFT COMES OFF HIS X EXTENT because the roll put that axis
+	# vertical. Checked on the DRAWN geometry: his lowest vertex has to
+	# land on the bedding, exactly the way PHASE J checks him standing.
+	var meshes: Array = _mesh_instances(body)
+	interior.propagate_notification(CanvasItem.NOTIFICATION_TRANSFORM_CHANGED)
+	var low: float = _lowest_drawn_y(meshes)
+	var bed_y: float = (CabinInterior.BED_MODEL_Y + CabinInterior.CABIN_MODEL_OFFSET_Y) \
+			* CabinInterior.CABIN_SCALE
+	_check(absf(low - bed_y) < 0.01,
+			"his lowest drawn vertex rests on the bedding (%.4f vs %.4f)" % [low, bed_y])
+	# AND THE BEDDING IS NOT JUST THE FLOOR HE WALKS ON.
+	_check(bed_y < loft.plane_y - 0.10,
+			"which is BELOW the walking plane, in the bedding (%.4f under %.4f)"
+					% [bed_y, loft.plane_y])
+	# HE HAS NOT MOVED IN XZ. No teleport to watch: only the height moved.
+	_check(Vector2(walker.global_position.x, walker.global_position.z)
+			.distance_to(CabinInterior.BED_SPOT) < 0.001,
+			"and he lies exactly where he stood, not somewhere better")
+
+	# ⚠️ THE WITHDRAWAL -- the boat's, and the whole reason a second tap
+	# can mean "get up". Both the bed AND the ladder, because the ladder is
+	# the only other thing on this storey that answers.
+	_check(not bed.accepts_tap(bed.point, 1), "the bed withdraws while he is in it")
+	_check(not link.accepts_tap(link.entry_for(1), 1),
+			"and so does the ladder -- nothing crosses storeys mid-nap")
+
+	# THE WAY UP. A tap that FELL THROUGH to the ground path, which is what
+	# a withdrawn hotspot produces.
+	var before := walker.global_position
+	interior.call("_on_tapped_ground", loft.flat(Vector3(0.0, 0.0, -1.0)))
+	_check(not bool(interior.get("_resting")), "a tap gets him up")
+	_check(absf(body.rotation_degrees.z) < 0.001, "the roll is undone")
+	_check(absf(body.position.y - (-CabinInterior.KEEPY_MODEL_MIN_Y
+			* CabinInterior.KEEPY_SCALE)) < 0.0001,
+			"and he is lifted as a standing Keepy again (%.4f)" % body.position.y)
+	interior.propagate_notification(CanvasItem.NOTIFICATION_TRANSFORM_CHANGED)
+	low = _lowest_drawn_y(meshes)
+	_check(absf(low - loft.plane_y) < 0.01,
+			"standing back ON the loft, not in it (%.4f vs %.4f)" % [low, loft.plane_y])
+	# ⚠️ AND THAT TAP DID NOT ALSO WALK HIM. One tap, one answer: the tap
+	# that wakes him must not ALSO be spent as a destination, or getting up
+	# would fling him across the loft.
+	_check(walker.global_position.x == before.x
+			and walker.global_position.z == before.z,
+			"and it did not ALSO send him walking")
+	_check(bed.accepts_tap(bed.point, 1), "the bed takes taps again")
+	_check(link.accepts_tap(link.entry_for(1), 1), "and so does the ladder")
+
+	# ONE MORE, AND IT IS THE ONE A LANDING-ONLY PATH WOULD MISS: tapping
+	# the bed while ALREADY standing on it. A zero-length walk finishes in
+	# _advance() with became_idle and NEVER emits hop_landed, so a version
+	# wired only to the landing would do nothing at all here.
+	walker.global_position = loft.flat(bed.point)
+	interior.call("_on_tapped_hotspot", bed, bed.point)
+	_check(bool(interior.get("_resting")),
+			"tapping the bed while standing on it lies down on the spot")
+	interior.call("_on_tapped_ground", loft.flat(Vector3(0.0, 0.0, -1.0)))
+	_check(not bool(interior.get("_resting")), "and he gets up again")
 
 ## World point -> screen point, in the container's own space, inverting
 ## exactly what _handle_point does on the way in.
