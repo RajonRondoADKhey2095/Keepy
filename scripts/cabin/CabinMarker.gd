@@ -16,6 +16,35 @@ class_name CabinMarker
 ## the plateau where they just learned it.
 ##
 ## =====================================================================
+## ⚠️ AND IT NOW DRAWS IN TWO PLACES, WHICH IS WHY THE INK IS A
+## PARAMETER RATHER THAN A CONSTANT
+##
+## The device report that opened this batch was that from OUTSIDE, on the
+## plateau, NOTHING says where to tap to go in. The previous lot marked the
+## ladder, the bed and the door INSIDE the cabin and never marked the way
+## IN -- so a player who had learned what a tappable spot looks like on the
+## plateau arrived at the tree-house and found the one door in the game
+## that carries no mark at all.
+##
+## This file is what answers that, unchanged in SHAPE: the hub's doorstep
+## gets the same pad, the same ring, the same label and the same pulse.
+## Reinventing a second marker for it would have been two components to
+## keep in step, and the brief was explicit that the existing one is to be
+## reused.
+##
+## What does NOT carry across is the INK and the LIFTS. `setup()` therefore
+## takes a `Surface`, and every colour and every height in here is stated
+## per surface. The enum names the BACKGROUND rather than the colour,
+## deliberately: what a mark has to be depends on what it is drawn ON, and
+## constants called "cream" and "amber" would have hidden that.
+##
+## ⚠️ AND THE PLATEAU'S INK IS NOT A NEW ONE -- it is the three portals',
+## verbatim. Which is a decision about IDENTITY and not about contrast:
+## measured on a real render, this file's cream would have scored HIGHER
+## on the lawn than the amber it is drawn in. See the HUB block below for
+## the numbers and for why they lose the argument anyway.
+
+## =====================================================================
 ## ⚠️ AND ITS COLOURS ARE NOT, BECAUSE THEY MEASURE WRONG IN HERE
 ##
 ## This is the one place the pattern is knowingly departed from, and it is
@@ -69,13 +98,74 @@ class_name CabinMarker
 ## PLACE rather than an outline, and the ring around it is what has to be
 ## seen. Anything that relies on the pad alone being legible is relying on
 ## the wrong half.
-const RING_COLOR := Color(1.00, 0.96, 0.88)
-const PAD_COLOR := Color(1.00, 0.96, 0.88, 0.28)
-const LABEL_COLOR := Color(1.00, 0.97, 0.90)
-const LABEL_OUTLINE := Color(0.10, 0.07, 0.05)
+## WHICH BACKGROUND THIS MARKER IS BEING DRAWN ON.
+##
+## Not "which colour scheme": the two entries below are the SAME marker
+## measured against two different floors, and the measurement is the whole
+## reason there are two.
+enum Surface { CABIN_FLOOR, HUB_GRASS }
+
+## THE CABIN'S FLOOR -- cream ring, cream pool. Derived above.
+const CABIN_RING_COLOR := Color(1.00, 0.96, 0.88)
+const CABIN_PAD_COLOR := Color(1.00, 0.96, 0.88, 0.28)
+const CABIN_LABEL_COLOR := Color(1.00, 0.97, 0.90)
+const CABIN_LABEL_OUTLINE := Color(0.10, 0.07, 0.05)
+
+## =====================================================================
+## THE PLATEAU'S GRASS -- AND THE INK IS THE PORTALS' OWN, CHOSEN ON
+## IDENTITY AND *NOT* ON CONTRAST
+##
+## ⚠️ THE OBVIOUS ARGUMENT FOR IT IS WRONG, AND MEASURING KILLED IT. The
+## table at the top of this file compares the hub's amber against the
+## CABIN floor and the plateau's grass, and it is easy to read that as
+## "the two colours swap roles". They do not: it never measured the cream
+## against the grass, and when that measurement is actually taken the
+## cream WINS.
+##
+## Sampled off a real render of the shipped plateau, at the cabin's own
+## doorstep, through the shipped camera -- 96 points on the torus body and
+## 96 on the lawn 2.6 to 4.0 units clear of it:
+##
+##   ground, rendered   rgb(0.326, 0.376, 0.192)   Lrel 0.104
+##   amber ring         rgb(0.852, 0.664, 0.268)   Lrel 0.437   3.16:1
+##   cream ring         rgb(0.896, 0.861, 0.787)   Lrel 0.717   4.76:1
+##
+## Both clear this project's 3.0:1 floor and the CREAM CLEARS IT BY MORE.
+## Contrast does not decide this one.
+##
+## ⚠️ WHAT DOES DECIDE IT: Chased, Quizz and Battle already stand on this
+## plateau wearing exactly these colours. A door marked in a DIFFERENT ink
+## would read as a different KIND of thing -- and it is not one. It is the
+## fourth place out here where a tap takes you somewhere else, and the
+## player has already been taught three times what that looks like.
+## Matching them is what makes it legible without being explained; a
+## brighter ring that says "not one of those" would be worse at the job
+## while measuring better.
+##
+## ⚠️ AND NOTE WHAT THE FOG COSTS, because it is the number a future
+## reader will be surprised by: the header's 3.96:1 for this same amber is
+## an ALBEDO figure. The cabin stands at z = +34 and the plateau fogs
+## exponentially toward a near-black green, so what actually reaches the
+## screen out there is 3.16:1. It still clears the floor. It has 0.16 of
+## room, and any future prop marked further out has less.
+##
+## These five values are HubPortal.tscn's, verbatim, and CabinProbe reads
+## that scene and asserts they still agree. Two copies of one ink is
+## exactly how a door slowly stops matching the doors beside it.
+##
+## ⚠️ THE PAD IS THE PORTALS' TOO, AND IT DOES NOT CLEAR 3.0:1 -- measured
+## 1.48:1 against the same lawn, which reproduces the header's 1.54 albedo
+## figure. That is stated rather than hidden, and it is the same division
+## of labour the cabin's own pad is built on: the pad fills the shape so
+## the mark reads as a PLACE, and the RING is what has to be seen.
+const HUB_RING_COLOR := Color(0.95, 0.74, 0.30)
+const HUB_PAD_COLOR := Color(0.13, 0.28, 0.12)
+const HUB_LABEL_COLOR := Color(1.00, 0.92, 0.76)
+const HUB_LABEL_OUTLINE := Color(0.06, 0.09, 0.04)
 
 ## Colour the ring flashes to when the marker is actually tapped. See
-## flash().
+## flash(). Shared: a flash is a brightness pop towards white, and white is
+## brighter than both rings.
 const FLASH_COLOR := Color(1.00, 1.00, 1.00)
 
 ## =====================================================================
@@ -91,8 +181,41 @@ const FLASH_COLOR := Color(1.00, 1.00, 1.00)
 ## on the low spots the marker floats by up to ~0.3 -- which at this
 ## camera's -22 degree pitch reads as a mark lying on the floor, where a
 ## pad half-sunk into it reads as a bug.
-const PAD_LIFT: float = 0.20
-const RING_LIFT: float = 0.23
+const CABIN_PAD_LIFT: float = 0.20
+const CABIN_RING_LIFT: float = 0.23
+
+## ⚠️ AND ON THE PLATEAU THEY ARE THE PORTALS' MUCH SMALLER NUMBERS,
+## because the reason the cabin's are big DOES NOT EXIST OUT THERE.
+##
+## In here the lift clears a DRAWN floor that wanders +-0.19 world units
+## around the walking plane. The plateau's ground is a flat PlaneMesh at
+## y = 0 with nothing to clear, so HubPortal lifts its pad 0.03 and its
+## ring 0.09 and that is all it needs. Carrying the cabin's 0.20/0.23 out
+## there would float the mark a fifth of a metre off the lawn -- the
+## "hovering" reading the cabin pays for a reason it has and the hub
+## does not.
+const HUB_PAD_LIFT: float = 0.03
+const HUB_RING_LIFT: float = 0.09
+
+## =====================================================================
+## HOW BIG THE LABEL IS DRAWN, PER SURFACE
+##
+## Label3D's world size is font_size x pixel_size, so both have to be
+## stated together or one of them silently rides on Godot's default.
+##
+## The plateau's pair is HubPortal.tscn's own (64 x 0.006 = 0.384 world
+## units per em) for the reason its colours are: the cabin's sign has to
+## be the size of the three signs standing beside it, not a fourth size.
+## The cabin's own pair is what the interior lot measured against a room
+## eleven times the model's size.
+const CABIN_LABEL_FONT_SIZE: int = 32
+const CABIN_LABEL_PIXEL_SIZE: float = 0.0032
+const CABIN_LABEL_HEIGHT: float = 0.75
+const HUB_LABEL_FONT_SIZE: int = 64
+const HUB_LABEL_PIXEL_SIZE: float = 0.006
+const HUB_LABEL_HEIGHT: float = 1.46
+const CABIN_LABEL_OUTLINE_SIZE: int = 16
+const HUB_LABEL_OUTLINE_SIZE: int = 14
 
 ## Pulse, copied from HubPortal so the two screens agree about what a
 ## live tappable spot looks like.
@@ -108,6 +231,10 @@ var _ring: MeshInstance3D = null
 var _pad: MeshInstance3D = null
 var _label: Label3D = null
 var _ring_mat: StandardMaterial3D = null
+## The ring's OWN colour, whichever surface it was built for. Held rather
+## than read back off a constant so flash() cannot quietly return a cabin
+## ring to a plateau cream, or the other way round.
+var _ring_color: Color = CABIN_RING_COLOR
 var _base_scale: Vector3 = Vector3.ONE
 var _pulse: Tween = null
 var _flash: Tween = null
@@ -117,8 +244,19 @@ var _near: bool = false
 ## rather than restated: the ring a player aims at and the circle the code
 ## tests are then one number, and a marker can never quietly be drawn
 ## smaller than the thing it marks.
-func setup(radius: float, text: String) -> void:
+##
+## `surface` picks the ink and the lifts. It DEFAULTS to the cabin's, so
+## every existing caller in the interior is unchanged -- a default that
+## exists because this class was the cabin's first and the plateau came
+## second, and not because one of the two is the "normal" one.
+func setup(radius: float, text: String,
+		surface: Surface = Surface.CABIN_FLOOR) -> void:
 	var inner: float = maxf(radius * 0.74, 0.01)
+	var hub: bool = surface == Surface.HUB_GRASS
+	var pad_color: Color = HUB_PAD_COLOR if hub else CABIN_PAD_COLOR
+	var pad_lift: float = HUB_PAD_LIFT if hub else CABIN_PAD_LIFT
+	var ring_lift: float = HUB_RING_LIFT if hub else CABIN_RING_LIFT
+	_ring_color = HUB_RING_COLOR if hub else CABIN_RING_COLOR
 
 	_pad = MeshInstance3D.new()
 	var pad_mesh := CylinderMesh.new()
@@ -130,8 +268,8 @@ func setup(radius: float, text: String) -> void:
 	pad_mesh.radial_segments = 20
 	pad_mesh.rings = 1
 	_pad.mesh = pad_mesh
-	_pad.position = Vector3(0.0, PAD_LIFT, 0.0)
-	_pad.material_override = _unshaded(PAD_COLOR)
+	_pad.position = Vector3(0.0, pad_lift, 0.0)
+	_pad.material_override = _unshaded(pad_color)
 	add_child(_pad)
 
 	_ring = MeshInstance3D.new()
@@ -141,8 +279,8 @@ func setup(radius: float, text: String) -> void:
 	ring_mesh.rings = 20
 	ring_mesh.ring_segments = 8
 	_ring.mesh = ring_mesh
-	_ring.position = Vector3(0.0, RING_LIFT, 0.0)
-	_ring_mat = _unshaded(RING_COLOR)
+	_ring.position = Vector3(0.0, ring_lift, 0.0)
+	_ring_mat = _unshaded(_ring_color)
 	_ring.material_override = _ring_mat
 	add_child(_ring)
 	_base_scale = _ring.scale
@@ -150,17 +288,23 @@ func setup(radius: float, text: String) -> void:
 	if text != "":
 		_label = Label3D.new()
 		_label.text = text
-		_label.position = Vector3(0.0, RING_LIFT + 0.75, 0.0)
-		_label.pixel_size = 0.0032
+		_label.position = Vector3(0.0, ring_lift
+				+ (HUB_LABEL_HEIGHT if hub else CABIN_LABEL_HEIGHT), 0.0)
+		# STATED, both halves. Label3D's world size is font_size x
+		# pixel_size, so leaving font_size at the engine default would put
+		# half of that number outside this file -- and the interior's sign
+		# was tuned against whatever that default happened to be.
+		_label.font_size = HUB_LABEL_FONT_SIZE if hub else CABIN_LABEL_FONT_SIZE
+		_label.pixel_size = HUB_LABEL_PIXEL_SIZE if hub else CABIN_LABEL_PIXEL_SIZE
 		_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		_label.shaded = false
 		_label.double_sided = true
 		# Drawn over the room rather than into it: the cabin is a dense
 		# backdrop and a label that z-fights a beam is a label nobody reads.
 		_label.no_depth_test = true
-		_label.modulate = LABEL_COLOR
-		_label.outline_modulate = LABEL_OUTLINE
-		_label.outline_size = 16
+		_label.modulate = HUB_LABEL_COLOR if hub else CABIN_LABEL_COLOR
+		_label.outline_modulate = HUB_LABEL_OUTLINE if hub else CABIN_LABEL_OUTLINE
+		_label.outline_size = HUB_LABEL_OUTLINE_SIZE if hub else CABIN_LABEL_OUTLINE_SIZE
 		add_child(_label)
 
 func _unshaded(col: Color) -> StandardMaterial3D:
@@ -230,6 +374,6 @@ func _apply_flash(t: float) -> void:
 	# cannot leave the ring stuck bright on a rounding error -- the same
 	# arc the walker's hop is drawn with, for the same reason.
 	var k: float = 4.0 * t * (1.0 - t)
-	_ring_mat.albedo_color = RING_COLOR.lerp(FLASH_COLOR, k)
+	_ring_mat.albedo_color = _ring_color.lerp(FLASH_COLOR, k)
 	if not _near:
 		_ring.scale = _base_scale.lerp(_base_scale * FLASH_SCALE, k)

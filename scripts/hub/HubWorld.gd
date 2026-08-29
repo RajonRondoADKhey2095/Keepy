@@ -221,6 +221,19 @@ var _owl_ride: Dictionary = {}
 ## player is in there.
 var _cabins: Array[Dictionary] = []
 
+## One doorstep mark per cabin, held so _process can pulse them.
+##
+## ⚠️ THE WHOLE POINT OF THIS BATCH, and the omission it repairs: the
+## previous lot marked the ladder, the bed and the door INSIDE the cabin
+## and marked nothing OUT HERE, so the one door in the game that leads to
+## a new scene was the one with no ring around it. A player who had been
+## taught by three portals what a tappable spot looks like walked up to the
+## tree-house and found nothing to aim at.
+##
+## Held in a plural array for the reason _cabins is: nothing here names THE
+## cabin, and a layout with two of them gets two marks rather than one.
+var _cabin_markers: Array[CabinMarker] = []
+
 ## A tap on a doorstep armed a walk to it, and the landing that finishes
 ## that walk should take him inside. Exactly the latch _boarding, _climbing
 ## and _flying already are, and cleared on the same three occasions:
@@ -346,6 +359,17 @@ const OWL_TAP_RADIUS: float = 1.8
 ## ever needs a bigger door, the thing to grow is CABIN_DOOR_STANDOFF -- 
 ## where the visitor stands -- not how much lawn counts as the doorway.
 const CABIN_TAP_RADIUS: float = 1.30
+
+## What the doorstep's sign says.
+##
+## Stated HERE, beside the radius, and NOT read out of the layout the way
+## the three portals read theirs. The layout entry for a cabin carries no
+## `label` key at all, and adding one would mean a schema every future
+## cabin has to fill in for a sign that would say the same word every time.
+## The radius is already this file's to own; the word on the mark and the
+## circle under it are one fact about what that doorstep is, so they live
+## together.
+const CABIN_DOOR_LABEL: String = "Cabane"
 
 ## How close he has to have ARRIVED to actually go in.
 ##
@@ -742,6 +766,43 @@ func _setup_cabins() -> void:
 		doors.append(entry["door"])
 	_tap.cabin_doors = doors
 	_tap.cabin_radius = CABIN_TAP_RADIUS
+	_build_cabin_markers()
+
+## The doorstep marks, one per cabin.
+##
+## ⚠️ BUILT FROM THE SAME TWO FACTS THE TAP TEST IS ASKED ABOUT -- the
+## door point published by the builder and CABIN_TAP_RADIUS -- and not from
+## a second position or a second size. The mark a player aims at and the
+## circle HubTapInput measures are then one number: a marker can never be
+## drawn beside the trigger, or smaller than it, because there is nothing
+## for it to be drawn beside.
+##
+## ⚠️ ALWAYS VISIBLE, PULSING WHEN NEAR, which is the PORTALS' behaviour
+## and not a new one. That was a decision to take rather than a default:
+## a mark that only appears once you are close cannot tell you where to go,
+## and the three portals across the plateau are already permanent. The
+## brief asked for consistency with what ships, and what ships is
+## permanent-plus-pulse.
+##
+## Parented to the SAME node the props are, so the marker is in world space
+## beside the cabin rather than a child of it -- a mark hung under a prop
+## would take that prop's scale, and this cabin is drawn at 7.0.
+func _build_cabin_markers() -> void:
+	for entry in _cabins:
+		var marker := CabinMarker.new()
+		# HUB_GRASS, which is the portals' own amber and dark green rather
+		# than the cabin's cream -- and NOT because the cream would fail
+		# out here. Measured on a real render at this very doorstep the
+		# cream scores 4.76:1 against the lawn and the amber 3.16:1, so
+		# contrast argues the other way. It is drawn in the portals' ink
+		# because it is the fourth thing on this plateau that a tap takes
+		# you somewhere else, and the other three look like this. See
+		# CabinMarker for the full table.
+		marker.setup(CABIN_TAP_RADIUS, CABIN_DOOR_LABEL,
+				CabinMarker.Surface.HUB_GRASS)
+		marker.position = entry["door"] as Vector3
+		_builder.add_child(marker)
+		_cabin_markers.append(marker)
 
 ## A tap on a cabin doorstep. ONE tap buys the whole thing -- the hop chain
 ## walks to the door and _on_hop_landed goes in on arrival -- because that
@@ -1220,7 +1281,24 @@ func _process(_delta: float) -> void:
 	var here := _keepy.global_position
 	for portal in _portals:
 		portal.set_proximity(here)
+	_pulse_cabin_markers(here)
 	_mooring.update(here)
+
+## The doorstep marks' approach cue, on HubPortal's own two thresholds.
+##
+## TWO and never one: a Keepy standing exactly on a single boundary would
+## flicker the pulse on and off once per frame. The factors are read off
+## HubPortal rather than restated so the doorstep breathes at the distance
+## the portals do -- one rule about what "near" means on this plateau.
+func _pulse_cabin_markers(here: Vector3) -> void:
+	for marker in _cabin_markers:
+		var flat := Vector2(marker.position.x - here.x,
+				marker.position.z - here.z)
+		var d: float = flat.length()
+		if d <= CABIN_TAP_RADIUS * HubPortal.NEAR_FACTOR:
+			marker.set_near(true)
+		elif d >= CABIN_TAP_RADIUS * HubPortal.NEAR_RELEASE:
+			marker.set_near(false)
 
 func _on_tapped_ground(point: Vector3) -> void:
 	# A tap while either overlay is up is a tap on the overlay, not on the
