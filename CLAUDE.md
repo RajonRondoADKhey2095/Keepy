@@ -20447,3 +20447,287 @@ ambiguite sur la transition. `index.pck`/`index.wasm` n'ont ete lus
 qu'APRES, donc ils valent comme marqueur d'ETAT COURANT, pas comme
 preuve de transition a eux seuls -- c'est le `CACHE_VERSION` qui porte
 cette preuve.
+
+## LA CABANE : LE DECLENCHEMENT INTEMPESTIF, ET L'ECHELLE 7,0 (29 aout 2026)
+
+Branche `claude/keepy-cabin-trigger-fix-scaleup-rqj344`, partie de `staging`
+(`e53571e`). Regle n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri des
+refs par date et comparaison des **ARBRES** -- `claude/keepy-cabin-scale-up`
+est deja ancetre de `origin/staging`, **aucune session concurrente**.
+`origin/main` = `9031e5e`, **INTOUCHE**.
+
+**DEUX lots dans une branche, DEUX commits atomiques**, le fix avant
+l'agrandissement -- parce que le fix devait tenir a N'IMPORTE QUELLE echelle
+pour que le second lot soit sur, et c'est exactement ce qu'il fallait
+prouver avant de doubler la taille du prop.
+
+### ⚠️ PARTIE A -- LES DEUX HYPOTHESES DU BRIEF SONT FAUSSES, ET LES DEUX SONT REFUTEES PAR MESURE
+
+Retour device : Keepy « disparait / se fait aspirer par le bas » en
+s'approchant simplement de la cabane, sans tap volontaire dessus. Le brief
+proposait deux causes ; aucune ne survit a la lecture du code.
+
+**H1 -- « un rayon de declenchement devenu trop large en scalant 1:1 avec la
+taille visuelle ». FAUX.** `CABIN_TAP_RADIUS` est un `const` de
+`HubWorld.gd` valant **2,2**, et il n'est multiplie par rien, nulle part --
+`grep` sur ses quatre sites d'usage. Il n'a jamais scale avec le modele.
+
+**H2 -- « un declenchement par PROXIMITE pure, sans tap ». FAUX, et mesure
+plutot que deduit.** `_try_enter_cabin` n'est atteignable que derriere
+`if _entering`, et `_entering` n'est arme que par `_on_tapped_cabin`. Sonde :
+Keepy pose **exactement sur le seuil**, `_entering = false`, un `hop_landed`
+emis a la main -> `in cabin before=false after=false`. **Un tap est requis.**
+
+### LA CAUSE REELLE : c'est le SEUIL DE PORTE qui a derive, pas le rayon
+
+`CABIN_DOOR_REACH` etait mesure contre `CABIN_FOOTPRINT_RADIUS` (1,25), qui
+est le rayon **CIRCONSCRIT** -- le COIN -- alors que le seuil est place le
+long de la **FACE**. L'ecart entre les deux vaut **0,469 par unite
+d'echelle** : 0,47 u a l'echelle 1, invisible ; **1,64 u a 3,5**.
+
+| | echelle 1,0 | echelle 3,5 |
+|---|---|---|
+| face avant (AABB construite) | z 28,961 | z **30,913** |
+| seuil de porte | z 29,630 | z **33,255** |
+| **ecart seuil / mur** | **0,669** | **2,342** |
+| **disque de declenchement SUR le batiment** | **18,2 %** | **0,0 %** |
+| disque sur la PELOUSE | 12,44 u2 | **15,21 u2 (100 %)** |
+
+⚠️ **C'est ce 18,2 % -> 0,0 % qui EST le rapport device, en un chiffre.** A
+l'echelle 1 le disque **HABILLAIT le prop** : « taper la cabane » et « taper
+le seuil » etaient le meme geste. A 3,5 il s'en etait **detache** -- une
+bande de **4,4 u de pelouse invisible flottant 2,34 u DEVANT le mur**,
+mesuree a **473-617 px de large sur un ecran de 1080** (soit jusqu'a 57 % de
+la largeur). Le joueur qui tape cette pelouse pour aller regarder la cabane
+depense en « entrer » le tap qu'il voulait en « marcher ».
+
+⚠️ **Il n'a donc pas ete ASPIRE, il a ete REPONDU.** Un tap, un signal --
+et le signal n'etait pas celui qu'il visait. Le fondu de `enter_cabin`
+(`CABIN_DUCK_SCALE` 0,25 puis `visible = false`) est ce qui donne
+l'impression d'aspiration ; le defaut est en amont, dans le routage.
+
+**Piste ecartee, mesuree aussi** : un tap vise sur le CORPS VISIBLE de la
+cabane (le joueur tape le batiment pour aller le voir) -- le rayon traverse
+le mesh (aucun collider) et atterrit sur le plan du sol. **0 % de ces pixels
+tombent dans le disque**, aux quatre distances testees. Ce n'etait pas ca.
+
+### LE FIX : le seuil se scinde en DEUX, et une seule moitie scale
+
+```
+door = position + rotate( CABIN_DOOR_FACE_DEPTH * scale  +  CABIN_DOOR_STANDOFF )
+                          ^--- suit le mur                  ^--- NE SCALE PAS
+```
+
+* **`CABIN_DOOR_FACE_DEPTH = 0,78078`** -- la demi-profondeur +Z du modele,
+  **mesuree sur l'AABB construite** (2,73274 / 3,5), donc elle suit le mur
+  ou qu'il aille.
+* **`CABIN_DOOR_STANDOFF = 0,70`** -- le recul d'un VISITEUR, **FIXE, parce
+  que KEEPY NE SCALE PAS.** Il fait 1,32 de large quelle que soit la taille
+  de la cabane, donc la place dont il a besoin devant une porte est une
+  constante et jamais une fraction du batiment.
+
+⚠️ **La paire reproduit le seuil livre a l'echelle 1 a 3 cm pres (1,4808
+contre 1,45)** -- le nouveau formalisme est un quasi no-op a l'echelle pour
+laquelle l'ancien avait ete calibre, et ne corrige que la derive. C'est le
+signe le plus fort que c'est la bonne formulation. **L'ecart au mur devient
+un 0,700 plat A TOUTES LES ECHELLES**, et c'est cette invariance que la
+sonde gate.
+
+**`CABIN_TAP_RADIUS` 2,2 -> 1,30**, re-documente comme **indexe sur la
+PORTE et non sur le BATIMENT**. L'ancien 2,2 etait argumente par « le prop
+est plus gros que le hibou » -- un argument sur le VOLUME, la seule grandeur
+qu'un seuil ne doit pas suivre : une porte fait la meme taille sur une
+cabane et sur une cathedrale, parce que ce qui doit y passer est Keepy.
+**1,30 est LU sur le comportement qui MARCHAIT** et non choisi : avec le
+seuil desormais tenu a 0,70 du mur, il remet **17,5 %** du disque sur le
+batiment -- les 18,2 % de la cabane livree a l'echelle 1. Et il est
+**scale-INVARIANT par construction** : les memes 17,5 % a 3,5 et a 7,0.
+
+⚠️ **NOUVEAU : `CABIN_ARRIVE_RADIUS` = tap + `ARRIVE_EPSILON`.** Defaut
+LATENT ferme au passage : `_advance()` s'arrete quand le reste est sous
+`ARRIVE_EPSILON` (0,45), donc une marche visant un point a R du seuil peut
+legalement finir a **R + 0,45**. Tester l'arrivee au R du tap -- ce qu'un
+rayon unique partage faisait -- laisse un joueur qui a tape le bord du seuil
+y marcher entierement et s'entendre dire qu'il n'y est pas encore, intention
+toujours armee. Inoffensif a elargir : ce test n'est consulte qu'une fois
+`_entering` deja arme **par un tap delibere**.
+
+### `CabinProbe` PHASE T -- verifiee ROUGE AVANT VERT sur l'arbre livre
+
+Worktree separe sur `origin/staging`, seule la sonde portee : **5 echecs**,
+et ils redisent le rapport device mot pour mot --
+
+```
+FAIL  the doorstep stands 2.342 u off the front wall (want 0.70, any scale)
+FAIL  a walking tap two paces BACK from the door (2.00 u out) stays a walking tap ([&"cabin"])
+FAIL  a walking tap one pace to the SIDE of it (2.00 u out) stays a walking tap ([&"cabin"])
+FAIL  a walking tap one pace to the OTHER side (2.00 u out) stays a walking tap ([&"cabin"])
+FAIL  a walking tap one pace to the side left him OUTDOORS (4 frames)
+```
+
+Apres fix : **0 echec**, et la sonde entiere **48 checks / 0 failure**.
+
+Trois disciplines dans cette phase, chacune payee :
+
+1. **Les points sont derives du BATIMENT, jamais du rayon.** Les dimensionner
+   sur `CABIN_TAP_RADIUS` ferait passer la phase pour n'importe quel rayon --
+   ce serait asserter qu'un cercle est un cercle.
+2. **Elle ouvre sur le POSITIF.** « Rien ne s'est declenche » est satisfait
+   gratuitement par un seuil jamais cable, donc elle prouve d'abord qu'il
+   PEUT tirer -- la discipline de blind check que PHASE D porte deja.
+3. ⚠️ **La moitie « signal » tourne avec le handler de `HubWorld`
+   DECONNECTE.** Ce qui est teste est QUEL SIGNAL un tap devient ; laisser le
+   handler vivant fait entrer Keepy des le blind check et chaque assertion
+   suivante mesure les restes de la precedente. **Une premiere version a fait
+   exactement ca et a rapporte trois echecs qu'elle s'etait causes.**
+
+### ⚠️ PARTIE B -- LA CIBLE DU BRIEF EST AMBIGUE, ET LES DEUX LECTURES DONNENT UN TRAVAIL DIFFERENT
+
+Mesure sur le monde CONSTRUIT (batches `MultiMesh` parcourus instance par
+instance -- lire les seuls `MeshInstance3D` aurait rate **tous** les arbres) :
+
+| | hauteur monde |
+|---|---|
+| **plus grand arbre BATCHE** (`TreeCrown`, 44 instances) | **3,9330** |
+| **plus grande chose EN FORME D'ARBRE** (landmark spire, variante 0 a 1,12) | **9,4640** |
+| cabane a l'echelle 3,5 | 5,5653 |
+
+⚠️ **La cabane a 3,5 depassait DEJA le plus grand arbre litteral de 41,5 %.**
+La lecture litterale de « plus grand arbre de la foret » voulait donc dire
+« ne rien faire » -- ce qu'un lot d'agrandissement ne peut pas demander. La
+**spire** est le conifere du plateau (fut brun, trois cones a couronne VERTE,
+`LANDMARK_SPIRE_CROWN`), c'est-a-dire la plus haute silhouette d'arbre du
+jeu, et la cabane n'en faisait que **59 %**. C'est cette lecture qui est
+retenue, et le brief l'anticipait : il prevoit des collisions d'ARBRES a
+signaler, ce que la lecture litterale ne pouvait pas produire.
+
+**Deux derivations independantes s'accordent sur 9,4640** : la mesure sur
+l'arbre construit, et le calcul depuis les constantes de
+`_make_landmark_spire()` (cone haut a 7,55 + 1,8/2 = 8,45, x 1,12).
+
+**Echelle retenue : 7,0** -- toit a **11,1306**, soit **+17,6 %** au-dessus
+de la spire (milieu de la bande 15-20 % demandee) et **x2,83** le plus grand
+arbre batche. C'est aussi exactement le double de 3,5.
+
+### Quatre rochers retires, trois conflits SIGNALES et non resolus
+
+Balayage `distance_centre - footprint_voisin < rayon_cabine` sur **tous** les
+voisins a portee, footprint 8,75 :
+
+| retire (politique tranchee) | position | recouvrement |
+|---|---|---|
+| rocher | (-19,650 ; 22,470) | **3,061** |
+| rocher | (-20,430 ; 21,410) | **1,701** |
+| rocher | (-11,390 ; 22,260) | **0,585** |
+| rocher | (-16,460 ; 18,920) | **0,034** |
+
+| ⚠️ SIGNALE, NON TOUCHE | position | recouvrement |
+|---|---|---|
+| **arbre** | (-11,920 ; 23,680) | **1,893** |
+| **arbre** | (-18,020 ; 20,960) | **1,718** |
+| **souche** | (-19,140 ; 19,240) | **0,109** |
+
+⚠️ **Aucune echelle atteignant la cible ne degage les arbres** : il faudrait
+un footprint sous 6,86, soit l'echelle 5,5 et **+0,8 %** seulement. La souche
+n'est pas un rocher, donc elle attend avec eux -- une ligne de layout si
+Mathieu veut qu'elle parte. Voisin degage le plus proche : un landmark a
+**0,253**.
+
+**`ground_footprints()` multiplie deja `CABIN_FOOTPRINT_RADIUS` par le
+`scale` de l'entree** -- le footprint a suivi tout seul a 8,75, rien a
+re-deriver, rien de re-casse (verifie dans le code, pas suppose).
+
+### ⚠️ CONSEQUENCE MESUREE ET NON RESOLUE : le seuil est a 0,65 u du bord du plateau
+
+A l'echelle 7,0 le seuil tombe a **z = 34,3455** contre une arete nord a
+**z = 35,0**. Il reste donc **0,65 u de sol praticable derriere la porte** --
+« deux pas en arriere de la porte » n'existe pas comme terrain.
+
+C'est ce qu'une assertion de PHASE T a trouve en echouant sur du code
+CORRECT : `_handle_point` clampe a la region **AVANT** de choisir un signal,
+donc ce point hors-carte revient a 0,65 u du seuil, et 0,65 u d'une porte
+**EST** a la porte -- la reponse est juste. La phase filtre desormais ses
+points par `HubRegion.contains()`, imprime celui qu'elle saute et pourquoi,
+et **refuse d'etre vide a moins de deux points reels**. Le chiffre est
+**rapporte a chaque run** plutot qu'enterre ici.
+
+⚠️ **Ce serrage n'est PAS propre a l'echelle** : il vient de la POSITION
+(z = 28,18 pour une arete a 35). A 3,5 il restait deja 1,745 u. Aucune
+echelle >= 6 -- le minimum pour depasser la spire -- n'en laisse plus de
+1,44. **Deplacer la cabane est un changement de placement que ce lot n'avait
+pas mandat de faire**, donc c'est signale, pas resolu.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature silencieuse).
+Import headless **exit 0**, **36 `.scn`** (import complet verifie, pas
+suppose). Export Web release **exit 0**, **0 erreur GDScript** -- les cinq
+lignes que `grep -i error` rend sont du bruit ALSA/pilote audio factice.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint deja
+consigne pour tout lot qui ne touche pas le code moteur. **Piege payload
+tenu** : sur **240** lignes `Storing File`, **0** pour `assets_source`,
+`scripts/dev`, `docs`, `web`, `build` ou `firebase.json`.
+
+**Sondes, TOUTES exit 0** : `CabinProbe` (**48 checks, 0 failure**, PHASE T
+comprise), `LakeZoneProbe`, `DivingBoardProbe`, `OwlFlightProbe`,
+`WaterImpactProbe`, `StreamRideProbe` (37), `SeesawProbe`, `TurnstileProbe`,
+`WaterTintProbe`, `AssetContractAudit` (**12/12 visuels, 0 collider
+deplace**), `DeathModelAudit`, `ChargerShapeProbe`, `ProbeTimeoutAudit`
+(**58 sondes scenes + 1 `--script`**). **Le jeu de sondes est IDENTIQUE a
+`origin/staging`** (`diff` des noms de `.tscn`, 59 des deux cotes) -- les
+trois sondes de recon de ce lot etaient jetables et sont supprimees.
+
+**Budget de noeuds de dessin INCHANGE a 129** (hors portails), confirme par
+les trois sondes qui le portent : retirer quatre rochers ne coute aucun
+noeud, ils sont des instances dans un `MultiMesh` et non des noeuds.
+
+⚠️ **Le piege d'ordre des flags s'est reproduit et a ete refuse** :
+`SeesawProbe` lancee SANS `--fixed-fps 60` rapporte « the diagonal
+reproduces at 4.983 s » et echoue. Relancee AVEC, elle rend **66 hops /
+1122 frames / 18,700 s** -- le chiffre publie, au frame pres -- et sort a
+0 echec. Ce n'etait pas une regression, c'etait l'invocation.
+
+⚠️ **Piege deja consigne, re-rencontre deux fois** : une sonde dont le
+SCRIPT ne parse pas ne tombe pas vite, elle traine jusqu'au timeout (la
+scene ne se charge jamais, donc `arm()` n'est jamais atteint). Le boot
+`--quit-after 3` la fait apparaitre en secondes, et c'est ce qui a servi
+les deux fois.
+
+### Rendus
+
+`docs/hub-shots/cabin_scale7_{front,standoff}.png` -- la taille, meme azimut
+que les plaques cabane precedentes, Keepy pose au seuil pour l'echelle.
+`docs/hub-shots/cabin_tap_{before,after}.png` -- un tap de marche **un pas a
+cote de la porte**, pilote par le vrai routage : il marche, reste dehors,
+reste a taille pleine.
+
+⚠️ **La premiere version de la plaque « tap » a photographie un tap qui ne
+faisait rien**, parce que le point vise tombait **hors du frustum** (fov
+horizontal 45°, camera sans lacet) : `_to_screen` le projetait hors du rect
+du conteneur et `_handle_point` le jetait. La plaque asserte desormais
+`rect.has_point()` avant de declencher -- un tap invisible se photographie
+exactement comme un tap ignore.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **La cible.** Si « plus grand arbre de la foret » voulait dire le type
+   `tree` littéral (3,9330) et non la spire, la cabane le depassait deja a
+   3,5 et ce lot est trop grand d'un facteur 2. **Une constante dans
+   `hub_layout.tres` le corrige** ; la mesure des deux est ci-dessus.
+2. **Deux arbres et une souche traversent la cabane** (recouvrements 1,893 /
+   1,718 / 0,109). Signale, non resolu, et aucune echelle atteignant la
+   cible ne les degage.
+3. **0,65 u de sol devant la porte.** Le joueur a tres peu de place pour se
+   tenir devant la cabane et la regarder ; c'est la position, pas l'echelle,
+   et la corriger est un changement de placement.
+4. **Le `.pck` est a 30,2 Mo**, dont ~14 Mo de textures de cabane
+   (`normal.png` seule fait 8,6 Mo de `.ctex`). **Anterieur a ce lot** -- le
+   lot d'installation les a apportees -- mais c'est le double du 14,8 Mo
+   d'avant la cabane, et sur un jeu web mobile ca merite d'etre su.
+5. **Rien ici n'est un rendu device** : llvmpipe sous xvfb via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.
