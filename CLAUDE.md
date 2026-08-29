@@ -21445,3 +21445,60 @@ telephone.**
 4. **`OCCLUDED_ALPHA = 0.25`, `FADE_LAMBDA = 9.0`, `TEST_INTERVAL_S = 0.08`**
    sont des points de depart pour un appel device, pas des optimums
    mesures -- chacun est une edition de constante.
+
+### Deploiement staging du fondu d'occlusion (palier 1, automatique)
+
+`staging` **`026bcc4`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `388abd07` des deux cotes ET
+`git diff` vide, verifie AVANT le push). CI run **#318**
+(id 33249349142) **verte** -- `Import project resources`
+11:07:25 -> 11:10:43, **`Export Web build` 11:10:43 -> 11:10:49**,
+`Deploy to Vercel [STAGING -- staging]` **succes** 11:11:03 -> 11:11:13,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `9031e5e`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants et aux DEUX bouts** :
+
+| marqueur | avant | apres (ce lot, run #318) |
+|---|---|---|
+| `CACHE_VERSION` | `1787999014` = **10:23:34 UTC** | **`1788001848` = 11:10:48 UTC** |
+| `index.pck` servi | **30 252 288** | **30 255 392** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(11:10:43 -> 11:10:49), et **les deux lectures d'apres portent
+`x-vercel-cache: MISS` avec `age: 0`**.
+
+⚠️ **Limite dite plutot que sous-entendue** : les deux valeurs AVANT ont
+ete relevees **avant le merge** mais sur des reponses `HIT` avec un `age`
+non nul (2510 et 2524 s). Elles sont valables comme **VALEURS** -- elles
+precedent le push, donc ce sont bien celles de l'ancien build -- mais **ce
+ne sont PAS des mesures de fraicheur**.
+
+⚠️ **`index.pck` prend une valeur de plus pour le meme contenu** :
+30 255 424 a l'export local propre contre 30 255 392 servi, **32 octets
+d'ecart**. Enieme illustration de l'instabilite deja consignee -- marqueur
+« nouveau build », **jamais** preuve d'identite. `index.wasm`
+(**35 376 909**, md5 `af4a8fc2925d992348eb30deeeb54360`) est identique des
+deux cotes et c'est lui la preuve d'identite.
+
+⚠️ **L'API Actions n'etait PAS perimee sur ce run**, et c'est note dans ce
+sens-la : les appels successifs ont rendu de vraies progressions d'etapes
+avec de vrais horodatages, et l'import a reellement pris **3 min 18 s**.
+Le piege existe ; il ne s'est pas produit ici, et le verifier coute un
+regard a l'horloge.
+
+⚠️ **PIEGE `pgrep` RE-RENCONTRE, celui que ce fichier documente deja** :
+une boucle d'attente `until pgrep -f "[p]ath . --import"` ne s'est jamais
+terminee, parce que la ligne de commande du shell ANCETRE contenait le
+motif nu (le heredoc du script qui lancait l'import). Le crochet ferme
+« je me matche moi-meme », il ne fait rien contre un ancetre. Contourne en
+attendant le **PID reel** (`until [ ! -d /proc/<pid> ]`), ce que
+`scripts/dev/wait_for_probe.sh --pid` fait deja proprement.
+
+**RAPPEL, et il vaut plus ici que sur n'importe quel lot recent : CE LOT
+NE PEUT PAS ETRE CONSIDERE VALIDE SUR LA SEULE FOI DU BUILD HEADLESS.**
+Le fondu est de la transparence, et la transparence de ce projet est
+DEJA passee verte dans ce sandbox et cassee sur device une fois. Le
+device est seul juge.
