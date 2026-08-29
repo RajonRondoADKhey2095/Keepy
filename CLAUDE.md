@@ -21192,3 +21192,44 @@ et en headless puis echouerait **uniquement dans le build web**.
    5,0). Mesure comme le choix le moins couteux, jamais juge a l'oeil.
 4. **L'etage haut est une dalle dont on voit le dessous.** Le rendu de deux
    niveaux empiles est nomme hors perimetre, pas resolu.
+
+### Deploiement staging du noyau multi-niveaux (palier 1, automatique)
+
+`staging` **`73a9d0a`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `2399d661` des deux cotes ET
+`git diff` vide, verifie AVANT le push). CI run **#315**
+(id 33246016102) **verte** -- `Import project resources` 09:40:29 ->
+09:43:49, **`Export Web build` 09:43:49 -> 09:43:55**, `Deploy to Vercel
+[STAGING -- staging]` **succes**, `[PRODUCTION -- main]` correctement
+**skipped**. **`main` NON touche** (`origin/main` toujours `9031e5e`,
+verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** :
+
+| | `CACHE_VERSION` | = UTC |
+|---|---|---|
+| avant (run #314) | `1787994186` | **09:03:06** |
+| **apres (ce lot, run #315)** | **`1787996634`** | **09:43:54** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(09:43:49 -> 09:43:55), et **les DEUX lectures portent `x-vercel-cache:
+MISS` avec `age: 0`**, celle d'avant ayant ete relevee **avant le push**.
+La bascule est donc prouvee dans les deux sens et pas deduite du log.
+
+`GODOT_CONFIG.fileSizes` lu au meme moment (MISS/age 0 aussi) :
+**`index.wasm` 35 376 909** -- identique a l'export local et au
+fingerprint permanent -- et `index.pck` 30 251 408.
+
+⚠️ **Une limite dite plutot que sous-entendue** : les deux tailles n'ont
+ete lues qu'APRES le merge, donc elles valent comme marqueur d'etat
+courant et **pas** comme preuve de transition ; c'est le `CACHE_VERSION`,
+lu aux deux bouts en MISS/age 0, qui porte la bascule. Le `.pck` servi
+(30 251 408) est 48 octets au-dessus de l'export local propre
+(30 251 360) -- l'instabilite deja consignee, **marqueur et jamais preuve
+d'identite**.
+
+⚠️ **L'API GitHub Actions n'etait PAS perimee sur ce run**, et c'est note
+dans ce sens-la : un seul appel a rendu les 18 etapes avec de vrais
+horodatages, et l'import a reellement pris **3 min 20 s**. Le piege
+existe ; il ne s'est pas produit ici, et le verifier coute un regard a
+l'horloge.
