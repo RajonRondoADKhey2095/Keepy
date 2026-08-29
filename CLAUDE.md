@@ -20911,3 +20911,64 @@ mesure la preuve qu'elle a reellement eu lieu.
 3. **Le seuil est toujours a 0,655 u du bord du plateau.** Le fix supprime
    l'entonnoir, il ne deplace pas la cabane -- le serrage vient de la
    POSITION (z = 28,18 pour une arete a 35) et reste signale, pas resolu.
+
+### Deploiement staging de la troisieme cause (palier 1, automatique)
+
+`staging` **`54b1b30`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `fc5a2602` des deux cotes ET `git diff`
+vide, verifie AVANT le push). CI run **#313** (id 33244050576) **verte** --
+`Import project resources` 08:50:09 -> 08:53:14, **`Export Web build`
+08:53:14 -> 08:53:19**, `Deploy to Vercel [STAGING -- staging]` **succes**,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `9031e5e`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787988691` = **07:31:31 UTC** | **`1787993598` = 08:53:18 UTC** |
+| `index.wasm` servi | -- | **35 376 909** *(identique a l'export local, md5 `af4a8fc2925d992348eb30deeeb54360`)* |
+| `index.pck` servi | -- | 30 228 288 *(marqueur, jamais preuve)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(08:53:14 -> 08:53:19), et les deux lectures d'apres portent
+**`x-vercel-cache: MISS` avec `age: 0`**.
+
+⚠️ **Deux limites dites plutot que sous-entendues** : la valeur AVANT du
+`CACHE_VERSION` a ete relevee **avant le push** mais sur une reponse `HIT`
+avec `age: 4374` -- valable comme **VALEUR** (elle precede le merge),
+**pas** comme mesure de fraicheur ; et `index.wasm`/`index.pck` n'ont ete
+lus qu'APRES, donc ils valent comme marqueur d'etat courant et non comme
+preuve de transition. L'`index.pck` local vaut 30 228 272 contre
+30 228 288 servi -- 16 octets, l'instabilite deja consignee.
+
+**Sondes partagees, diffees contre `origin/staging` en worktree separe**
+(import verifie complet des deux cotes, **36 `.scn`** chacun) :
+
+| sonde | verdict |
+|---|---|
+| `AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`, `ProbeTimeoutAudit`, `WaterTintProbe` | **BYTE-IDENTIQUES sur les deux flux** |
+| `SeesawProbe`, `LakeZoneProbe` (`--fixed-fps 60`) | **BYTE-IDENTIQUES sur les deux flux**, 0 echec |
+| `StreamRideProbe` | 37 checks / 0 echec des deux cotes ; **une seule ligne differe, et elle differe AUSSI entre deux runs du MEME arbre** (une projection ecran a 4 decimales, 0,008 px) |
+| `OwlFlightProbe`, `DivingBoardProbe`, `TurnstileProbe` | memes verdicts, memes tailles ; les seules lignes qui bougent sont des comptes de frames et des echantillons de tween (41 vs 44 frames, apex 2,565 vs 2,566) |
+| `CabinProbe` | 8 phases, **0 echec** ; diff limite au passage saute -> asserte de PHASE T et aux lignes neuves de PHASE F |
+
+⚠️ **`SeesawProbe` est sorti ROUGE au premier essai sur LES DEUX arbres, et
+c'etait MON invocation** : j'avais omis `--fixed-fps 60` sur les runs xvfb,
+donc son banc de traversee tournait a la vitesse du mur sous llvmpipe et sa
+diagonale sortait a 8,150 s au lieu de 18,700 s. Avec le flag : **0 echec,
+byte-identique**. C'est le piege d'ordre des flags deja consigne dans ce
+fichier, rencontre sur un autre flag.
+
+⚠️ **Piege d'outillage rencontre, et il a produit un faux diff** : un
+premier script de sondes lance en `nohup ... &` a **survecu a son shell** et
+a tourne EN PARALLELE de sa propre relance, les deux ecrivant dans les memes
+fichiers `/tmp`. Le rapport annoncait alors 17 lignes de diff et une taille
+de 5 109 contre 5 794 octets -- de la corruption mutuelle, pas une mesure.
+**Comparer les TAILLES avant les contenus** est ce qui l'a attrape, comme
+pour la troncature de run deja consignee.
+
+Build : import headless **exit 0**, **36 `.scn`** (import complet verifie),
+export Web release **exit 0**, **0 erreur GDScript ou de parse**. Piege
+payload tenu : sur **240** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web`, `build` ou `firebase.json`.
