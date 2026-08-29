@@ -29,9 +29,15 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## is checking.
 const _EXPECTED_POSITION: Vector3 = Vector3(-17.43, 0.0, 28.18)
 
-## The doorstep _build derives from that position and the entry's own
-## rotation_y of 0: straight out along the open face, which is model +Z.
-const _EXPECTED_DOOR: Vector3 = Vector3(-17.43, 0.0, 29.63)
+## The scale this entry ships at. SCALE-UP LOT: was 1.0, is 3.5 -- the
+## door and the built AABB both derive from it below, read here rather
+## than copied twice.
+const _EXPECTED_SCALE: float = 3.5
+
+## The doorstep _build derives from that position, that scale and the
+## entry's own rotation_y of 0: straight out along the open face, which
+## is model +Z, by CABIN_DOOR_REACH * scale (28.18 + 1.45 * 3.5).
+const _EXPECTED_DOOR: Vector3 = Vector3(-17.43, 0.0, 33.255)
 
 var _failures: int = 0
 
@@ -135,15 +141,27 @@ func _phase_b_geometry(props: HubBuilder) -> void:
 	var aabb: AABB = _world_aabb(root)
 	_check(absf(aabb.position.y) < 0.01,
 			"it sits ON the ground (lowest point y = %.4f)" % aabb.position.y)
-	_check(absf(aabb.size.x - 1.8929) < 0.01 and absf(aabb.size.y - 1.5901) < 0.01,
-			"built at scale 1.0 (%.3f x %.3f x %.3f)" % [aabb.size.x, aabb.size.y, aabb.size.z])
+	# The raw model is 1.8929 x 1.5901 (X x Y, measured), scaled by the
+	# SCALE-UP LOT's own entry scale -- never a second literal for "the
+	# built size at 3.5", which is exactly the two-numbers-for-one-thing
+	# mistake the doorstep comment above warns about.
+	var expected_x: float = 1.8929 * _EXPECTED_SCALE
+	var expected_y: float = 1.5901 * _EXPECTED_SCALE
+	_check(absf(aabb.size.x - expected_x) < 0.01 and absf(aabb.size.y - expected_y) < 0.01,
+			"built at scale %.1f (%.3f x %.3f x %.3f)"
+					% [_EXPECTED_SCALE, aabb.size.x, aabb.size.y, aabb.size.z])
 	# The footprint a landing has to clear, rounded UP from the measured
 	# circumscribed radius -- a cabin is a volume, and rounding a footprint
-	# down is the direction that puts a rock through a wall.
+	# down is the direction that puts a rock through a wall. AS-BUILT: read
+	# off root.scale.x rather than a second copy of the entry's own scale,
+	# because ground_footprints() scales CABIN_FOOTPRINT_RADIUS by exactly
+	# that same node property and nothing here should be able to disagree
+	# with it.
 	var half: float = maxf(aabb.size.x, aabb.size.z) * 0.5
-	_check(HubBuilder.CABIN_FOOTPRINT_RADIUS >= half,
+	var footprint: float = HubBuilder.CABIN_FOOTPRINT_RADIUS * root.scale.x
+	_check(footprint >= half,
 			"the footprint (%.2f) covers the built half-span (%.3f)"
-					% [HubBuilder.CABIN_FOOTPRINT_RADIUS, half])
+					% [footprint, half])
 
 func _phase_c_enter(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 		tap: HubTapInput) -> void:
