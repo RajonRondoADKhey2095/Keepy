@@ -169,6 +169,48 @@ const LADDER_TAP_RADIUS: float = 1.10
 ## ground floor, facing into the room.
 const ENTRY_SPOT := Vector2(0.60, 1.35)
 
+## =====================================================================
+## KEEPY'S OWN ART CORRECTIONS
+##
+## ⚠️ THE LIFT IS DERIVED, THE SIZE IS COPIED, AND THAT SPLIT IS THE WHOLE
+## POINT -- getting it wrong sank him by 0.9166 world units, 67.9% of his
+## own height, so that only his head showed above the floor.
+##
+## KEEPY_SCALE is COPIED from the shipped hub node so he is drawn indoors
+## at exactly the size he is drawn outdoors. That part of the old comment
+## was right and is kept.
+##
+## The LIFT is NOT an art correction and must not be copied from there.
+## LevelWalker's contract is that its origin is the FEET: it sets
+## global_position.y to the level's floor and _apply_hop draws the arc on
+## that same line. So the body has to be raised by exactly the depth the
+## model hangs below its own origin, scaled -- which is what the line in
+## _place_walker() computes.
+##
+## WHAT THE SHIPPED CODE DID INSTEAD, and why it looked plausible: the hub
+## states that lift as TWO authored numbers that only mean anything
+## together -- the Body slot sits at y = 0.9 in HubWorld.tscn and
+## ModelSlot then places the model at model_offset = -0.2246 inside it,
+## for a total of 0.6754. This file copied the SECOND of those two terms
+## on its own, and multiplied it by the scale on top -- and ModelSlot does
+## not scale it (it assigns model_offset straight to the child's
+## position). So the body sat at -0.2246 * 1.07368 = -0.2411 instead of
+## +0.6754: the 0.9 dropped, and a term the hub never scales scaled.
+##
+## Deriving it closes both at once and cannot drift with either number.
+## Cross-checked THREE ways rather than argued:
+##   * the hub, feet at y = -0.000020 with its two authored terms;
+##   * scenes/dev/LevelNavTest.tscn, whose capsule is height 1.3 at local
+##     y = 0.65 -- bottom exactly on the walker's origin, same contract;
+##   * this constant, which reproduces the hub's 0.6754 to 4.5e-5.
+const KEEPY_SCALE: float = 1.07368
+
+## Lowest point of the shipped Keepy .glb, in ITS OWN model units, read off
+## the POSITION accessor of assets/models/keepy_squirrel_hero.glb rather
+## than assumed from the model being centred. It is not: min.y = -0.629070
+## against max.y = +0.628346.
+const KEEPY_MODEL_MIN_Y: float = -0.629070
+
 @onready var _controller: LevelController = $LevelController
 @onready var _walker: LevelWalker = $WorldViewport/SubViewport/World/Walker
 @onready var _props: Node3D = $WorldViewport/SubViewport/World/Props
@@ -241,18 +283,20 @@ func _build_backdrop() -> void:
 ## cabin prop's own terms: a slot exists to hold a PLACEHOLDER that a real
 ## model later replaces, and this is either Keepy or nothing.
 ##
-## The two art corrections are copied from the shipped hub node so that he
-## is drawn here exactly as he is drawn out there -- same 1.07368, same
-## -0.2246 -- rather than re-derived into a Keepy who is subtly a different
-## size indoors.
+## His SIZE is copied from the shipped hub node so he is drawn here exactly
+## as he is drawn out there. His LIFT is derived from the mesh instead of
+## copied -- see the KEEPY_SCALE block for the 0.9166 that cost.
 func _place_walker() -> void:
 	var body := KEEPY.instantiate() as Node3D
 	if body == null:
 		push_error("CabinInterior: the Keepy .glb did not instantiate to a Node3D.")
 	else:
 		body.name = "Body"
-		body.scale = Vector3.ONE * 1.07368
-		body.position = Vector3(0.0, -0.2246 * 1.07368, 0.0)
+		body.scale = Vector3.ONE * KEEPY_SCALE
+		# Raise him by exactly the depth he hangs below his own origin, so
+		# his lowest vertex lands ON the walker's origin -- which IS the
+		# floor. One multiplication, no authored offset to drift.
+		body.position = Vector3(0.0, -KEEPY_MODEL_MIN_Y * KEEPY_SCALE, 0.0)
 		_walker.add_child(body)
 	var floor_level: LevelDefinition = _controller.levels[0]
 	_walker.global_position = Vector3(ENTRY_SPOT.x, floor_level.plane_y, ENTRY_SPOT.y)
