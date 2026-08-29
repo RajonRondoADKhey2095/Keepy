@@ -30,6 +30,7 @@ var _checks: int = 0
 var _world: LevelNavTestWorld = null
 var _controller: LevelController = null
 var _walker: LevelWalker = null
+var _camera: LevelCamera = null
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "LEVEL NAV PROBE")
@@ -61,9 +62,11 @@ func _run() -> void:
 	await get_tree().process_frame
 	_controller = _world.get_node("LevelController") as LevelController
 	_walker = _world.get_node("WorldViewport/SubViewport/World/Walker") as LevelWalker
+	_camera = _world.get_node("WorldViewport/SubViewport/World/Camera3D") as LevelCamera
 	_ok(_controller != null, "the controller resolves")
 	_ok(_walker != null, "the walker resolves")
-	if _controller == null or _walker == null:
+	_ok(_camera != null, "the camera resolves")
+	if _controller == null or _walker == null or _camera == null:
 		_finish(1)
 		return
 
@@ -72,6 +75,7 @@ func _run() -> void:
 	await _phase_cross()
 	await _phase_gate()
 	await _phase_aim()
+	await _phase_occlusion()
 
 	print("--- %d checks, %d failure(s) ---" % [_checks, _failures])
 	_finish(1 if _failures > 0 else 0)
@@ -407,3 +411,165 @@ func _settle(heights: Array[float]) -> int:
 			if _walker.state() == LevelWalker.State.IDLE:
 				return frames
 	return frames
+
+## =====================================================================
+## PHASE OCCLUSION -- the storey that hid him, and the fade that does not
+##
+## The defect this gates is SILENT in both directions. A fade that never
+## engages leaves the walker behind a slab, which reads as a rendering
+## quirk rather than as a camera that never asked. A fade that never
+## releases leaves a storey permanently ghosted, which reads as art. And
+## an alpha written without its transparency flag is IGNORED outright --
+## the lake already paid for that one -- so the material looks untouched
+## while the code believes it faded.
+##
+## ⚠️ THE BLIND CHECK IS NOT OPTIONAL. "nothing was occluding" passes for
+## free against a mechanism that was never wired: the group test has to be
+## shown FIRING at the measured position before its silence anywhere else
+## means anything.
+func _phase_occlusion() -> void:
+	print("--- PHASE OCCLUSION ---")
+	var props: Node3D = _world.get_node("WorldViewport/SubViewport/World/Props")
+	var upper_slab := props.get_node_or_null("UpperSlab") as MeshInstance3D
+	var lower_slab := props.get_node_or_null("LowerSlab") as MeshInstance3D
+	var post := props.get_node_or_null("LinkPost") as MeshInstance3D
+	_ok(upper_slab != null and lower_slab != null and post != null,
+		"the three built props resolve by name")
+	if upper_slab == null or lower_slab == null or post == null:
+		return
+
+	# WHAT MAY BE FADED -- opt-in, and the ground deliberately left out.
+	_ok(upper_slab.is_in_group(LevelCamera.OCCLUDER_GROUP),
+		"the upper slab is marked as an occluder")
+	_ok(post.is_in_group(LevelCamera.OCCLUDER_GROUP),
+		"the link post is marked as an occluder")
+	_ok(not lower_slab.is_in_group(LevelCamera.OCCLUDER_GROUP),
+		"the LOWER slab is NOT marked -- it can never be between lens and body")
+
+	# THE EYE HEIGHT IS ONE FACT. LevelCamera keeps a const rather than
+	# reading the walker's node structure; this is what stops the copy
+	# drifting from the body it is meant to describe.
+	var body := _walker.get_node_or_null("Body") as MeshInstance3D
+	_ok(body != null and is_equal_approx(body.position.y, LevelCamera.TARGET_EYE_Y),
+		"TARGET_EYE_Y (%.2f) still matches the shipped Body offset (%.2f)"
+			% [LevelCamera.TARGET_EYE_Y, 0.0 if body == null else body.position.y])
+
+	# The waterline defect needed cull_disabled on a closed body to appear.
+	# Nothing here sets it; asserted so nothing later can without notice.
+	var slab_material := upper_slab.material_override as StandardMaterial3D
+	_ok(slab_material != null and slab_material.cull_mode != BaseMaterial3D.CULL_DISABLED,
+		"the occluder is not CULL_DISABLED -- the waterline failure mode needs that")
+
+	# ---- BLIND CHECK: prove the test FIRES before trusting its silence.
+	# z -7 is inside the measured band; the walker's own floor is level 0.
+	await _place_walker(0.0, -7.0)
+	_ok(_camera.is_occluding(upper_slab),
+		"BLIND CHECK: at the measured position the upper slab DOES block the body")
+	_ok(not _camera.is_occluding(lower_slab),
+		"the ground he stands on is never reported as blocking")
+
+	# ---- IT FADES.
+	await _pump(90)
+	var faded := upper_slab.material_override as StandardMaterial3D
+	_ok(faded != null and faded.albedo_color.a < 0.5,
+		"an occluding slab fades (alpha %.3f)" % [0.0 if faded == null else faded.albedo_color.a])
+	_ok(faded != null and faded.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA,
+		"and its transparency is ALPHA -- an alpha written without it is ignored")
+	var untouched := lower_slab.material_override as StandardMaterial3D
+	_ok(untouched != null and is_equal_approx(untouched.albedo_color.a, 1.0),
+		"the un-marked slab is left alone (alpha %.3f)"
+			% [0.0 if untouched == null else untouched.albedo_color.a])
+
+	# ---- THE MATERIAL IS THIS INSTANCE'S OWN, and this is tested with a
+	# SHARED one rather than by comparing instance ids.
+	#
+	# An id comparison is what the first version of this check did, and it
+	# was worthless: by the time the phase reads a "before" id the camera
+	# has already had frames to duplicate, so it compares the duplicate to
+	# itself. Worse, it would still have read green against a camera that
+	# wrote the shared resource straight through -- there is no id to
+	# notice that with.
+	#
+	# So: two nodes are given ONE material, one of them is marked, and the
+	# assertion is that the OTHER never changed. That is the property that
+	# matters -- Godot's glTF importer binds one shared material across
+	# every instance of a mesh, so writing through it fades every copy of
+	# that geometry in the project -- and it cannot pass by accident.
+	var shared := StandardMaterial3D.new()
+	shared.albedo_color = Color(0.9, 0.3, 0.3)
+	shared.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var marked := _probe_box(shared)
+	var sibling := _probe_box(shared)
+	props.add_child(marked)
+	props.add_child(sibling)
+	# Straddling the midpoint of the segment, so it is in the way by
+	# construction rather than by a position that happens to work.
+	marked.global_position = _camera.global_position.lerp(_camera.eye_point(), 0.5)
+	sibling.global_position = Vector3(0.0, 40.0, 0.0)
+	marked.add_to_group(LevelCamera.OCCLUDER_GROUP)
+	await get_tree().process_frame
+	_camera.refresh_occlusion()
+	_ok(_camera.is_occluding(marked),
+		"BLIND CHECK: the shared-material stand-in is genuinely in the way")
+	await _pump(60)
+	var marked_material := marked.material_override as StandardMaterial3D
+	_ok(marked_material != null and marked_material.albedo_color.a < 0.5,
+		"it fades (alpha %.3f)"
+			% [0.0 if marked_material == null else marked_material.albedo_color.a])
+	_ok(marked_material != shared,
+		"and the camera swapped in a DUPLICATE rather than writing the shared one")
+	_ok(is_equal_approx(shared.albedo_color.a, 1.0)
+			and shared.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+		"the SHARED material is untouched (alpha %.3f), so the sibling never faded"
+			% shared.albedo_color.a)
+	_ok(sibling.material_override == shared,
+		"and the sibling still points at the shared material")
+	marked.queue_free()
+	sibling.queue_free()
+	await get_tree().process_frame
+
+	# ---- IT RELEASES, ALL THE WAY, AND LEAVES THE TRANSPARENT PASS.
+	await _place_walker(0.0, 6.0)
+	_ok(not _camera.is_occluding(upper_slab),
+		"stepped clear, the slab is no longer reported as blocking")
+	await _pump(90)
+	var clear := upper_slab.material_override as StandardMaterial3D
+	_ok(clear != null and is_equal_approx(clear.albedo_color.a, 1.0),
+		"and it returns to fully opaque (alpha %.3f)"
+			% [0.0 if clear == null else clear.albedo_color.a])
+	_ok(clear != null and clear.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED,
+		"and back OUT of the transparent pass, so it depth-writes again")
+
+	# ---- THE POST, AT THE ONE PLACE IT MEASURES AS AN OCCLUDER.
+	await _place_walker(0.0, -9.0)
+	_ok(_camera.is_occluding(post),
+		"at the link foot the post blocks him too")
+
+## Puts the walker at a point on his CURRENT level, snaps the camera to the
+## offset it would have settled at, and re-runs the test out of band.
+##
+## Snapped rather than waited out: a probe that sleeps for the follow lerp
+## and the 12.5 Hz throttle is measuring those two clocks, not the
+## mechanism. OFFSET and ground_y() are read from their owners, so this
+## restates neither.
+func _place_walker(x: float, z: float) -> void:
+	var floor_y: float = _controller.ground_y()
+	_walker.global_position = Vector3(x, floor_y, z)
+	_camera.global_position = Vector3(x, floor_y, z) + LevelCamera.OFFSET
+	await get_tree().process_frame
+	_camera.refresh_occlusion()
+
+func _pump(frames: int) -> void:
+	for _i in frames:
+		await get_tree().process_frame
+
+## A one-unit box carrying a caller-supplied material. Deliberately handed
+## the SAME material twice above: the point is to have a shared resource to
+## watch, which is the shape the glTF importer produces for real.
+func _probe_box(material: StandardMaterial3D) -> MeshInstance3D:
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3.ONE
+	var node := MeshInstance3D.new()
+	node.mesh = mesh
+	node.material_override = material
+	return node
