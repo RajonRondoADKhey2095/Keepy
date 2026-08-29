@@ -222,6 +222,31 @@ func _handle_point(screen_point: Vector2) -> void:
 		# Camera looking at or above the horizon. Nothing to aim at.
 		return
 	var point: Vector3 = hit
+	# WHERE THE FINGER POINTED, and it is a SEPARATE fact from where he can
+	# walk. Every prop below is asked about `aim`; only the destination is
+	# clamped. Those were one variable until the cabin proved they are two.
+	#
+	# ⚠️ THE THIRD STRAY-ENTRY CAUSE, and the one no radius could have
+	# fixed. clamp_to() answers "where can he stand"; a prop test answers
+	# "what did the player mean". Reading the second off the first makes
+	# the clamp a FUNNEL: every tap on ground that does not exist is
+	# dragged to the nearest ground that does, and if a prop happens to sit
+	# near that edge, the whole half-plane behind it starts meaning the
+	# prop. Measured on the shipped layout: the cabin's doorstep stands
+	# 0.655 u inside the plateau's north edge, so a 2.246 u strip of that
+	# edge lies inside the doorstep disc -- and taps aimed from as far as
+	# 49.8 u off the map landed on it and MEANT "go inside". Standing at
+	# the door, 15.26% of all visible ground said "go inside", 89.2% of it
+	# aimed at ground that is not there.
+	#
+	# WHY THE OTHER THREE ARE ASKED THE SAME WAY when only the cabin was
+	# broken: measured, the boat, the owl and the three ladder feet are
+	# 6.85 u to infinitely far from any off-map ground and NOT ONE off-map
+	# point funnels into any of them, so this costs them nothing today. It
+	# is written once rather than as a cabin special case because the
+	# funnel is a property of standing near an EDGE, not of being a cabin,
+	# and the next prop placed near one would rediscover it.
+	var aim := Vector3(point.x, 0.0, point.z)
 	# One shape, one owner. The region is a union minus the great lake, so
 	# this is a nearest-point projection and not two independent clamps --
 	# see HubRegion for why the difference matters and what it costs.
@@ -236,7 +261,7 @@ func _handle_point(screen_point: Vector2) -> void:
 	# accepts_boarding_tap() is false for the whole of a ride, so a tap
 	# then falls through to tapped_ground -- which is what turns it into
 	# an eject. One tap, one signal, either way.
-	if mooring != null and mooring.accepts_boarding_tap(destination):
+	if mooring != null and mooring.accepts_boarding_tap(aim):
 		tapped_boat.emit(destination)
 		return
 	# THE OWL, asked after the boat and before the ladder, on the same
@@ -253,7 +278,7 @@ func _handle_point(screen_point: Vector2) -> void:
 	# boat's own withdrawal, and the thing that turns a tap during a
 	# flight back into an ordinary ground tap.
 	if owl_available and owl_radius > 0.0:
-		var owl_flat := Vector3(destination.x, 0.0, destination.z)
+		var owl_flat := aim
 		for perch in owl_perches:
 			if owl_flat.distance_to(perch) <= owl_radius:
 				tapped_owl.emit(destination)
@@ -269,7 +294,7 @@ func _handle_point(screen_point: Vector2) -> void:
 	# different question, and the one that turns a tap made while he is
 	# inside back into an ordinary ground tap.
 	if cabin_available and cabin_radius > 0.0:
-		var cabin_flat := Vector3(destination.x, 0.0, destination.z)
+		var cabin_flat := aim
 		for door in cabin_doors:
 			if cabin_flat.distance_to(door) <= cabin_radius:
 				tapped_cabin.emit(destination)
@@ -284,7 +309,7 @@ func _handle_point(screen_point: Vector2) -> void:
 	# KeepyHopper's business, and it refuses from any state but standing
 	# still -- asking twice is how the two answers start to differ.
 	if ladder_radius > 0.0:
-		var flat := Vector3(destination.x, 0.0, destination.z)
+		var flat := aim
 		for foot in ladder_feet:
 			if flat.distance_to(foot) <= ladder_radius:
 				tapped_ladder.emit(destination)
