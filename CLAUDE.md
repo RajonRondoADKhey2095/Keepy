@@ -22278,3 +22278,52 @@ erreur. Placer le walker se fait par `controller.set_current(1)` puis
    precedent, toujours pas fait), puis le lot 4/4 (migration du hub).
 5. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+### Deploiement staging du marqueur d'entree + de la pose couchee (palier 1, automatique)
+
+`staging` **`ac5937c`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `eb558d1` des deux cotes ET `git diff` vide, verifie
+AVANT le push). CI run **#323** (id 33276322504) **verte** -- `Import project
+resources` 21:32:57 -> 21:36:16, **`Export Web build` 21:36:16 -> 21:36:21**,
+`Deploy to Vercel [STAGING -- staging]` **succes** 21:36:37 -> 21:36:50,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `9031e5e`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, sur DEUX marqueurs independants et aux DEUX bouts** :
+
+| marqueur | avant (run #322) | apres (ce lot, run #323) |
+|---|---|---|
+| `CACHE_VERSION` | `1788015452` = **14:57:32** | **`1788039380` = 21:36:20** |
+| `index.pck` servi | **30 272 864** | **30 276 096** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**, et les
+**deux lectures d'apres portent `x-vercel-cache: MISS` avec `age: 0`**.
+
+⚠️ **Limite dite plutot que sous-entendue** : les deux valeurs AVANT ont ete
+relevees **avant le merge** mais sur des reponses `HIT` avec un `age` non nul
+(23 604 et 23 728 s). Elles sont valables comme **VALEURS** -- elles precedent
+le push -- mais **ce ne sont PAS des mesures de fraicheur**.
+
+⚠️ **Pour une fois `index.pck` servi EST identique a l'export local**
+(30 276 096 des deux cotes). Ca ne change rien a la doctrine : c'est un
+marqueur « nouveau build », **jamais** une preuve d'identite -- l'identite est
+portee par `index.wasm` (md5 `af4a8fc2925d992348eb30deeeb54360`).
+
+⚠️ **PIEGE D'ATTENTE RENCONTRE, ET IL A COUTE UNE FAUSSE ALERTE DE 40 MINUTES.**
+Deux erreurs se sont composees. D'abord une boucle
+`until [ -n "$(curl ... | grep -v ANCIENNE_VALEUR)" ]` sur
+`keepy-staging.vercel.app` : **l'egress direct vers `*.vercel.app` est refuse
+dans ce sandbox** (`http_code 000`, exit 56, re-teste et pas suppose), donc la
+lecture rendait une chaine VIDE, qui est bien « differente de l'ancienne
+valeur » -- la boucle serait sortie immediatement en annoncant un deploiement.
+**Une garde d'attente qui ne verifie pas qu'elle a REELLEMENT lu quelque chose
+confond « ca a change » et « je n'ai rien recu ».** Tuee avant de conclure quoi
+que ce soit. Ensuite, `sleep` en avant-plan etant bloque, les attentes ont ete
+lancees en arriere-plan puis **relues immediatement** : chaque `cat` du fichier
+de sortie revenait vide en une seconde, si bien que ce qui ressemblait a
+40 minutes d'import fige n'etait en realite que **2 minutes**. **Comparer
+l'horloge du sandbox (`date -u`) a l'en-tete `date` de la reponse HTTP est ce
+qui l'a tranche en une commande**, et c'est le meme reflexe que la regle
+« ne jamais lire un etat de CI sans regarder son horodatage », applique a soi.
+L'API Actions n'etait PAS perimee : l'import a reellement pris 3 min 19 s.
