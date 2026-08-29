@@ -86,14 +86,6 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
 @onready var _battle_button: Button = $FallbackMenu/Panel/VBoxContainer/BattleButton
-## STAGING-ONLY, TEMPORARY: device access to the multi-level nav core's
-## isolated test scene, for the device pass that validates lot 2/4. Not
-## routed through HubRouter.ROUTES on purpose -- that table is production
-## routing, and this button and its handler are meant to come back OUT
-## before any merge to main. Remove this node, this @onready line, the
-## signal connection below and _on_fallback_navtest() together, in the
-## same lot that retires scenes/dev/LevelNavTest.tscn.
-@onready var _navtest_button: Button = $FallbackMenu/Panel/VBoxContainer/NavTestButton
 @onready var _mooring: BoatMooring = $Mooring
 @onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
 
@@ -474,7 +466,6 @@ func _ready() -> void:
 	_chased_button.pressed.connect(_on_fallback_chased)
 	_quizz_button.pressed.connect(_on_fallback_quizz)
 	_battle_button.pressed.connect(_on_fallback_battle)
-	_navtest_button.pressed.connect(_on_fallback_navtest)
 
 ## Puts Keepy back where he left the plateau, when something asked.
 ##
@@ -1666,14 +1657,6 @@ func _on_fallback_quizz() -> void:
 
 func _on_fallback_battle() -> void:
 	_router.route(&"battle")
-
-## STAGING-ONLY, TEMPORARY: see the @onready declaration above. Bypasses
-## HubRouter deliberately -- ROUTES is the production table, and this path
-## is a dev bench that is not meant to outlive the device pass it exists
-## for. get_tree().change_scene_to_file() is HubRouter.route()'s own call,
-## used directly rather than through it.
-func _on_fallback_navtest() -> void:
-	get_tree().change_scene_to_file("res://scenes/dev/LevelNavTest.tscn")
 
 ## =====================================================================
 ## KEEPY TINTS TOWARD THE WATER HE IS STANDING IN
