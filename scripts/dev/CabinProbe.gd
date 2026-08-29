@@ -35,9 +35,23 @@ const _EXPECTED_POSITION: Vector3 = Vector3(-17.43, 0.0, 28.18)
 const _EXPECTED_SCALE: float = 3.5
 
 ## The doorstep _build derives from that position, that scale and the
-## entry's own rotation_y of 0: straight out along the open face, which
-## is model +Z, by CABIN_DOOR_REACH * scale (28.18 + 1.45 * 3.5).
-const _EXPECTED_DOOR: Vector3 = Vector3(-17.43, 0.0, 33.255)
+## entry's own rotation_y of 0: straight out along the open face, which is
+## model +Z, by the model's own +Z half-depth SCALED plus the visitor's
+## FIXED standoff -- 28.18 + (0.78078 * scale) + 0.70.
+##
+## Two terms and not one because the single scaled reach it replaced put
+## the doorstep further from the wall the bigger the cabin got, which is
+## what floated the trigger disc off the prop and onto open lawn. Written
+## out here rather than computed so a change to either constant has to be
+## restated deliberately.
+const _EXPECTED_DOOR: Vector3 = Vector3(-17.43, 0.0,
+		28.18 + 0.78078 * _EXPECTED_SCALE + 0.70)
+
+## How far the doorstep must sit off the front wall, at ANY scale. This is
+## the invariant the two-term reach exists to hold, and the number the
+## stray-entry defect broke: it was 0.669 at scale 1 and 2.342 at scale
+## 3.5, which is how the disc ended up standing on lawn.
+const _EXPECTED_WALL_GAP: float = 0.70
 
 var _failures: int = 0
 
@@ -68,6 +82,8 @@ func _ready() -> void:
 	await _phase_d_exit(hub, props, keepy, tap, camera)
 	dl.abort_if_exceeded()
 	await _phase_e_revisit(hub, props, keepy, tap)
+	dl.abort_if_exceeded()
+	await _phase_t_no_stray_entry(hub, props, keepy, tap, camera)
 	dl.abort_if_exceeded()
 	_phase_untouched(props)
 	dl.abort_if_exceeded()
@@ -281,6 +297,137 @@ func _phase_e_revisit(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	_check(not keepy.is_in_cabin(), "a tap 9 u away also ended it (%d frames)" % frames)
 	_check(keepy.body_slot().visible, "the body is visible after the second visit")
 	_check(tap.cabin_available, "the doorstep takes taps again after the second visit")
+
+
+## The doorstep must not answer for the lawn in front of the cabin.
+##
+## THE DEFECT THIS GATES, and it shipped: the tap radius was argued from
+## the size of the BUILDING, and the doorstep was placed against the
+## CIRCUMSCRIBED footprint rather than the front face. Both errors grow
+## with scale, and at 3.5 they had put a 4.4-unit invisible disc of pure
+## lawn 2.3 u in front of the wall. A player walking up to look at the
+## cabin tapped that lawn; the tap he meant as "walk there" was spent as
+## "go inside", and he vanished. Nothing raised, nothing looked broken.
+##
+## VERIFIED RED BEFORE GREEN on the shipped tree: 6 failures, including
+## "a walking tap one pace to the SIDE of it stays a walking tap
+## ([&"cabin"])" and "he did not end up indoors" -- the device report, in
+## the probe's own words.
+##
+## THE POINTS ARE DERIVED FROM THE BUILDING, NEVER FROM THE RADIUS. Sizing
+## them off CABIN_TAP_RADIUS would make this phase pass for any radius at
+## all -- it would be asserting that a circle is a circle. They are three
+## places a player demonstrably stands: two paces back from the doorway to
+## look up at the roof, and one pace either side walking across the front.
+##
+## AND IT OPENS WITH THE POSITIVE. "Nothing triggered" is satisfied for
+## free by a doorstep that was never wired, so the phase shows it CAN fire
+## before its refusals mean anything -- PHASE D's blind-check discipline.
+##
+## THE SIGNAL HALF RUNS WITH HubWorld's HANDLER DISCONNECTED, and that is
+## not tidiness: what is under test is WHICH SIGNAL a tap becomes, and
+## leaving the handler live means the blind check walks Keepy indoors and
+## every assertion after it is measuring the leftovers of the one before.
+## An earlier version of this phase did exactly that and reported three
+## failures it had caused itself.
+func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
+		tap: HubTapInput, camera: Camera3D) -> void:
+	print("")
+	print("--- PHASE T: walking past does not put him indoors ---")
+	if props.cabins().is_empty():
+		return
+	var entry: Dictionary = props.cabins()[0]
+	var door: Vector3 = entry["door"]
+	var root: Node3D = entry.get("root")
+	if root == null:
+		return
+
+	# The invariant the two-term reach exists to hold, checked against the
+	# wall as BUILT rather than against either constant.
+	var aabb: AABB = _world_aabb(root)
+	var wall: float = aabb.position.z + aabb.size.z
+	_check(absf((door.z - wall) - _EXPECTED_WALL_GAP) < 0.02,
+			"the doorstep stands %.3f u off the front wall (want %.2f, any scale)"
+					% [door.z - wall, _EXPECTED_WALL_GAP])
+	# And the disc is tied to the DOORWAY, so it must not have grown with
+	# the prop: a radius that reaches the far side of the building is a
+	# radius answering for ground the building is nowhere near.
+	_check(HubWorld.CABIN_TAP_RADIUS < aabb.size.x * 0.5,
+			"the trigger (%.2f) is smaller than the cabin's own half-width (%.3f)"
+					% [HubWorld.CABIN_TAP_RADIUS, aabb.size.x * 0.5])
+
+	var container: SubViewportContainer = hub.get_node("WorldViewport") as SubViewportContainer
+	var rect := container.get_global_rect()
+	_check(rect.size.x > 0.0 and rect.size.y > 0.0,
+			"the container has a real rect %s (run under xvfb, not --headless)" % rect)
+	if rect.size.x <= 0.0:
+		return
+
+	await _settle(keepy)
+
+	# Two paces back, and one either side. Stated in world units so they
+	# say "a person standing clear of a doorway" rather than "outside
+	# whatever the radius happens to be".
+	var away := 2.0
+	var probes: Array = [
+		[Vector3(door.x, 0.0, door.z + away), "two paces BACK from the door"],
+		[Vector3(door.x + away, 0.0, door.z), "one pace to the SIDE of it"],
+		[Vector3(door.x - away, 0.0, door.z), "one pace to the OTHER side"],
+	]
+
+	# --- which SIGNAL does each tap become? ------------------------------
+	var saw: Array[StringName] = []
+	var on_cabin := func(_p: Vector3) -> void: saw.append(&"cabin")
+	var on_ground := func(_p: Vector3) -> void: saw.append(&"ground")
+	tap.tapped_cabin.connect(on_cabin)
+	tap.tapped_ground.connect(on_ground)
+	# Handler off for the length of the signal test -- see the note above.
+	tap.tapped_cabin.disconnect(Callable(hub, "_on_tapped_cabin"))
+	tap.tapped_ground.disconnect(Callable(hub, "_on_tapped_ground"))
+
+	saw.clear()
+	tap._handle_point(_to_screen(container, camera, door))
+	_check(saw.size() == 1 and saw[0] == &"cabin",
+			"BLIND CHECK: a tap ON the doorstep still means the cabin (%s)" % str(saw))
+
+	for probe in probes:
+		var where: Vector3 = probe[0]
+		var what: String = probe[1]
+		saw.clear()
+		tap._handle_point(_to_screen(container, camera, where))
+		_check(saw.size() == 1 and saw[0] == &"ground",
+				"a walking tap %s (%.2f u out) stays a walking tap (%s)"
+						% [what, where.distance_to(door), str(saw)])
+
+	tap.tapped_cabin.connect(Callable(hub, "_on_tapped_cabin"))
+	tap.tapped_ground.connect(Callable(hub, "_on_tapped_ground"))
+	tap.tapped_cabin.disconnect(on_cabin)
+	tap.tapped_ground.disconnect(on_ground)
+
+	# --- and end to end, through the real routing ------------------------
+	# One walking tap, driven all the way: he must walk, and he must still
+	# be outdoors when the walk is over.
+	await _settle(keepy)
+	var lawn: Vector3 = probes[1][0]
+	tap._handle_point(_to_screen(container, camera, lawn))
+	var frames: int = 0
+	while keepy.is_hopping() and frames < 900:
+		await get_tree().process_frame
+		frames += 1
+	_check(not keepy.is_in_cabin(),
+			"a walking tap one pace to the side left him OUTDOORS (%d frames)" % frames)
+	_check(keepy.body_slot().visible, "and visible")
+	await _settle(keepy)
+
+## Puts him back outside, still, and clear of the doorstep, so the next
+## assertion measures its own tap and not the one before it.
+func _settle(keepy: KeepyHopper) -> void:
+	if keepy.is_in_cabin():
+		keepy.leave_cabin()
+	var frames: int = 0
+	while (keepy.is_in_cabin() or keepy.is_hopping()) and frames < 900:
+		await get_tree().process_frame
+		frames += 1
 
 func _phase_untouched(props: HubBuilder) -> void:
 	print("")

@@ -842,24 +842,39 @@ const CABIN_MODEL_OFFSET: Vector3 = Vector3(0.0, 0.800420, 0.0)
 ## that puts a rock through a wall.
 const CABIN_FOOTPRINT_RADIUS: float = 1.25
 
-## How far out from the cabin's own centre, along its open face, a visitor
-## stands to go in, AT SCALE ONE.
+## The doorstep, in TWO terms -- and the split is the whole correction.
 ##
-## Just outside the footprint (1.25) so the doorstep is ground a landing
-## can legitimately be standing on rather than a point inside the prop --
-## and only just, so "he walked to the door" and "he is at the cabin" stay
-## the same place to the eye. Along local +Z because that is the open face;
-## _build rotates this by the entry's own rotation_y, so a cabin turned in
-## the layout takes its doorstep with it instead of leaving it round the
-## back.
+## It used to be one number scaled whole (CABIN_DOOR_REACH 1.45 x scale),
+## measured against CABIN_FOOTPRINT_RADIUS. That footprint is the
+## CIRCUMSCRIBED radius -- the corner -- and the doorstep is placed along
+## the FACE, which on this model is 0.469 nearer per unit of scale. At
+## scale one that error is 0.47 u and invisible; it multiplies, and at 3.5
+## it had put the doorstep 2.34 u clear of the front wall, standing on open
+## lawn with the whole trigger disc floating out there with it. MEASURED:
+## the disc overlapped the building 18.2% at scale 1 and 0.0% at scale 3.5,
+## which is the stray-entry report in one number.
 ##
-## SCALED BY THE ENTRY'S OWN "scale" AT THE POINT OF USE, the same rule
-## ground_footprints() already applies to CABIN_FOOTPRINT_RADIUS via
-## FOOTPRINT_RADIUS -- a fixed reach on a 3.5x cabin would leave the door
-## buried inside the walls it was measured to clear, not merely off by a
-## constant: a scale-up lot found this the day it needed a reach bigger
-## than one.
-const CABIN_DOOR_REACH: float = 1.45
+## So the reach is now the FACE plus a VISITOR'S STANDOFF, and only the
+## first of the two scales:
+##
+##   CABIN_DOOR_FACE_DEPTH  is the model's own +Z half-depth (measured off
+##   the built AABB, 2.73274 / 3.5), so it tracks the wall wherever the
+##   wall goes.
+##
+##   CABIN_DOOR_STANDOFF    is how far a VISITOR stands off that wall, and
+##   it does NOT scale, because KEEPY DOES NOT SCALE. He is 0.66 wide at
+##   the shoulder whatever size the cabin is, so the room he needs to stand
+##   at a door is a constant and never a fraction of the building.
+##
+## The pair reproduces the shipped scale-one doorstep to 3 cm (1.4808 vs
+## 1.45) and holds the gap to the wall at a flat 0.700 u at EVERY scale --
+## that invariance is the decoupling, and it is what the probe gates.
+##
+## Along local +Z because that is the open face; _build rotates the pair by
+## the entry's own rotation_y, so a cabin turned in the layout takes its
+## doorstep with it instead of leaving it round the back.
+const CABIN_DOOR_FACE_DEPTH: float = 0.78078
+const CABIN_DOOR_STANDOFF: float = 0.70
 
 const FOOTPRINT_RADIUS: Dictionary = {
 	&"tree": 0.24,
@@ -1305,7 +1320,11 @@ func _build() -> void:
 				# ends up on the wrong side of a cabin somebody rotated.
 				if not _last_cabin.is_empty():
 					var cabin_flat := Vector3(where.x, 0.0, where.z)
-					var reach := Vector3(0.0, 0.0, CABIN_DOOR_REACH * uniform)
+					# The FACE scales, the visitor's standoff does not --
+					# see the two constants for why one number could not do
+					# both and what it cost when it tried.
+					var reach := Vector3(0.0, 0.0,
+							CABIN_DOOR_FACE_DEPTH * uniform + CABIN_DOOR_STANDOFF)
 					reach = reach.rotated(Vector3.UP, deg_to_rad(rotation_y))
 					_last_cabin["position"] = cabin_flat
 					_last_cabin["door"] = cabin_flat + reach
