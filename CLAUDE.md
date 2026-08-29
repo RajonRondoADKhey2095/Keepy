@@ -21233,3 +21233,49 @@ dans ce sens-la : un seul appel a rendu les 18 etapes avec de vrais
 horodatages, et l'import a reellement pris **3 min 20 s**. Le piege
 existe ; il ne s'est pas produit ici, et le verifier coute un regard a
 l'horloge.
+
+### ACCES DEVICE TEMPORAIRE : bouton "Test nav (dev)" dans le menu de
+### secours du hub (29 aout 2026)
+
+Branche `claude/keepy-navtest-access-u63mxv`, partie de `staging`
+(`cdad00e`). **Lot jetable, pas une feature** : il n'existe que pour
+permettre a Mathieu de valider le noyau de navigation multi-niveaux
+(lot 2/4, section ci-dessus) sur un vrai telephone avant le lot 3/4.
+
+`scenes/HubWorld.tscn` gagne `NavTestButton` dans `FallbackMenu/Panel/
+VBoxContainer` (memes `StyleBoxFlat` que `ChasedButton`/`QuizzButton`/
+`BattleButton`, aucune ressource dupliquee), et `HubWorld.gd` un
+`_on_fallback_navtest()` qui appelle `get_tree().change_scene_to_file(
+"res://scenes/dev/LevelNavTest.tscn")` **directement, sans passer par
+`HubRouter.ROUTES`** -- cette table est la routing de production, et ce
+chemin est un banc jetable qui n'est pas cense lui survivre.
+`scenes/dev/LevelNavTest.tscn` gagne symetriquement un bouton
+"Retour hub" (`HubButton`) qui appelle `change_scene_to_file(
+"res://scenes/HubWorld.tscn")` -- sans lui la validation device etait un
+aller sans retour.
+
+⚠️ **GATING STRUCTUREL, PAS RUNTIME** : ce projet n'a aucun flag
+prod/staging a l'execution (deja note pour les outils de debug
+precedents). Le bouton reste donc accessible tant que ce lot vit sur
+`staging` -- il est retire **avant tout merge vers `main`**, dans le
+meme lot que le retrait de `scenes/dev/LevelNavTest.tscn` lui-meme ou
+juste avant, selon ce qui reste utile a ce moment-la.
+
+**PHASE UNTOUCHED** : `HubBuilder.gd`, `HubTapInput.gd`, `HubRegion.gd`,
+`KeepyHopper.gd`, `HubCamera.gd` et `resources/hub/hub_layout.tres` ne
+sont dans le diff a aucun titre -- verifie par `git diff --stat`, pas
+suppose. Seuls `HubWorld.tscn`/`HubWorld.gd` (un bouton, un handler) et
+`LevelNavTest.tscn`/`LevelNavTestWorld.gd` (un bouton, un handler) sont
+touches.
+
+`LevelNavProbe` pilote la scene shippee et ne connait aucun nom de
+noeud UI ni aucune assertion de comptage d'enfants -- un bouton de plus
+sous `Control` ne peut donc pas la faire regresser, et elle reste verte
+sur l'arbre modifie.
+
+**Reste ouvert -- jugement device, seul juge** : Mathieu doit acceder a
+la scene de test via ce bouton sur `keepy-staging.vercel.app`, se
+deplacer sur chaque niveau, franchir la transition dans les deux sens,
+et verifier qu'aucun tap pres du bord ne declenche une transition non
+voulue. `main` **non touche**.
+l'horloge.

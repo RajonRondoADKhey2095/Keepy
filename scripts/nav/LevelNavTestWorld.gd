@@ -51,9 +51,15 @@ const LINK_TAP_RADIUS: float = 1.6
 
 @onready var _controller: LevelController = $LevelController
 @onready var _walker: LevelWalker = $WorldViewport/SubViewport/World/Walker
+## STAGING-ONLY device access point: HubWorld's "Test nav (dev)" fallback
+## menu button lands here, and this is the only way back out. Without it
+## the device pass this scene exists for would be a one-way trip. Removed
+## in the same lot that retires this whole scene.
+@onready var _hub_button: Button = $HubButton
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hub_button.pressed.connect(_on_hub_pressed)
 	_controller.levels = [
 		LevelDefinition.make(&"ground", 0.0, LOWER_HALF_EXTENT, 0.0, 0.0),
 		LevelDefinition.make(&"upper", UPPER_PLANE_Y, UPPER_HALF_EXTENT, 0.0, UPPER_CENTRE_Z),
@@ -78,6 +84,9 @@ func _on_tapped_ground(destination: Vector3) -> void:
 
 func _on_tapped_transition(link: LevelTransition, _destination: Vector3) -> void:
 	_walker.request_transition(link)
+
+func _on_hub_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Release only, and both paths, for HubTapInput's measured reasons:

@@ -70,3 +70,15 @@ script = ExtResource("2")
 camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
 container_path = NodePath("../WorldViewport")
 viewport_path = NodePath("../WorldViewport/SubViewport")
+
+[node name="HubButton" type="Button" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -220.0
+offset_top = 32.0
+offset_right = -32.0
+offset_bottom = 100.0
+theme_override_font_sizes/font_size = 26
+text = "Retour hub"
