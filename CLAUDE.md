@@ -22509,3 +22509,46 @@ couvrent.
    porte) — confirme, recuperable, non aggrave, **son propre lot**.
 3. **Le banc de nav packe pour ~0,04 %** — inerte et injoignable, a trancher
    dans son propre lot si le poids devient un sujet.
+
+### Deploiement PRODUCTION verifie SUR LE SERVICE (29 aout 2026)
+
+CI **run #326** (id 33279493147) **verte**, 22:48:55 -> 22:53:33 UTC —
+`Import project resources` 22:49:39 -> 22:53:01, **`Export Web build`
+22:53:01 -> 22:53:06**, **`Deploy to Vercel [PRODUCTION -- main]` succes**
+22:53:22 -> 22:53:31, **`[STAGING -- staging]` correctement skipped** (push
+sur `main`).
+
+**Verifie sur `keepy-ten.vercel.app` — la PRODUCTION, pas
+`keepy-staging.vercel.app`** — sur DEUX marqueurs independants, et les
+lectures utiles sont **toutes `x-vercel-cache: MISS` avec `age: 0`** :
+
+| marqueur | avant | apres |
+|---|---|---|
+| `CACHE_VERSION` | `1787948577` | **`1788043986` = 22:53:06 UTC** |
+| `index.wasm` servi | — | **35 376 909** *(fingerprint permanent, inchange)* |
+| `index.pck` servi | — | 30 274 320 |
+
+L'epoch d'apres tombe **exactement sur la seconde de fermeture de l'etape
+`Export Web build`**, et la valeur d'avant a ete relevee **avant le push**,
+en MISS/age 0 elle aussi : **la bascule est prouvee dans les deux sens** et
+pas deduite du log CI.
+
+⚠️ **Le `index.pck` servi (30 274 320) est byte-identique a l'export local
+de cette session — et ce n'est DELIBEREMENT PAS offert comme preuve
+d'identite.** La doctrine du depot tient : le `.pck` est un marqueur
+« nouveau build servi », jamais une preuve, parce que sa taille n'est pas
+stable d'un export a l'autre du meme commit. Ici les deux coincident, ce
+qui est agreable et sans valeur probante. **`index.wasm` reste la preuve
+d'identite**, et il est au fingerprint permanent.
+
+⚠️ **Un piege de MESURE de ma part, publie plutot que tu** : les premiers
+`sleep` d'attente ont ete lances **en arriere-plan**, donc ils ne
+bloquaient rien — deux lectures d'API separees de quelques secondes sont
+revenues **byte-identiques** et avaient exactement la forme du piege
+« API Actions perimee » deja consigne. **Ce n'en etait pas un** : il
+suffisait de regarder l'horloge (2 minutes ecoulees depuis le push, import
+en cours pour de vrai, qui a dure **3 min 22 s**). La regle vaut donc dans
+les deux sens, et cette fois c'est moi qui ai failli l'appliquer a
+l'envers. Le **404 lu au meme moment** sur la prod n'etait pas davantage
+une panne : c'est la fenetre de ~3 min du deploiement NATIF Vercel, deja
+documentee, refermee par le depot de la CI.
