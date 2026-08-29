@@ -843,7 +843,7 @@ const CABIN_MODEL_OFFSET: Vector3 = Vector3(0.0, 0.800420, 0.0)
 const CABIN_FOOTPRINT_RADIUS: float = 1.25
 
 ## How far out from the cabin's own centre, along its open face, a visitor
-## stands to go in.
+## stands to go in, AT SCALE ONE.
 ##
 ## Just outside the footprint (1.25) so the doorstep is ground a landing
 ## can legitimately be standing on rather than a point inside the prop --
@@ -852,6 +852,13 @@ const CABIN_FOOTPRINT_RADIUS: float = 1.25
 ## _build rotates this by the entry's own rotation_y, so a cabin turned in
 ## the layout takes its doorstep with it instead of leaving it round the
 ## back.
+##
+## SCALED BY THE ENTRY'S OWN "scale" AT THE POINT OF USE, the same rule
+## ground_footprints() already applies to CABIN_FOOTPRINT_RADIUS via
+## FOOTPRINT_RADIUS -- a fixed reach on a 3.5x cabin would leave the door
+## buried inside the walls it was measured to clear, not merely off by a
+## constant: a scale-up lot found this the day it needed a reach bigger
+## than one.
 const CABIN_DOOR_REACH: float = 1.45
 
 const FOOTPRINT_RADIUS: Dictionary = {
@@ -1298,7 +1305,7 @@ func _build() -> void:
 				# ends up on the wrong side of a cabin somebody rotated.
 				if not _last_cabin.is_empty():
 					var cabin_flat := Vector3(where.x, 0.0, where.z)
-					var reach := Vector3(0.0, 0.0, CABIN_DOOR_REACH)
+					var reach := Vector3(0.0, 0.0, CABIN_DOOR_REACH * uniform)
 					reach = reach.rotated(Vector3.UP, deg_to_rad(rotation_y))
 					_last_cabin["position"] = cabin_flat
 					_last_cabin["door"] = cabin_flat + reach

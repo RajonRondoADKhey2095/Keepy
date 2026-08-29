@@ -33,7 +33,7 @@ props = [{
 }, {
 "position": Vector3(-17.43, 0, 28.18),
 "rotation_y": 0.0,
-"scale": 1.0,
+"scale": 3.5,
 "type": &"cabin"
 }, {
 "position": Vector3(-9.44, 0, -8.45),
