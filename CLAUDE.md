@@ -21802,3 +21802,248 @@ camera cadre les deux etages, le tap route, la sortie revient sur le pas de
 la porte) ; il ne confirme pas le RESSENTI -- tout ce qui precede est rendu
 par llvmpipe sous xvfb via le backend `opengl3` de BUREAU, contre WebGL2 sous
 Safari.
+
+## LE PLANCHER DE LA CABANE : Keepy etait enfonce de 68 % de sa taille, et la cause etait UNE MOITIE d'un chiffre copie (29 aout 2026)
+
+Branche `claude/keepy-cabin-floor-and-taps-89xt2k`, partie de `staging`
+(`d613034` — un commit DOC SEULE au-dessus du `28bf6a5` annonce par le brief,
+verifie ancetre plutot que suppose ; `main` = `9031e5e`, **INTOUCHE**). Regle
+n°1 verifiee AU DEBUT par comparaison d'ARBRES et pas de noms : la branche du
+lot precedent porte exactement l'arbre de `origin/staging`, donc deja mergee,
+**aucune session concurrente**.
+
+### SECTION A — LA CAUSE, ET LES DEUX HYPOTHESES DU BRIEF QUI TOMBENT
+
+Retour device : Keepy visible **uniquement a partir des yeux**. Le brief
+proposait trois pistes ; la mesure en garde une, et pas sous la forme annoncee.
+
+* **H2 (formule de conversion) — REFUTEE.** `CABIN_MODEL_OFFSET_Y = 0.800420`
+  **EST** le `min.y` du `.glb` (mesure sur l'accessor POSITION : min
+  `-0.800420`, max `+0.789680`). Et la question « le transform reel du noeud
+  `.glb` dans `CabinInterior.tscn` » n'a pas d'objet : **la scene ne contient
+  aucun noeud `.glb`**, `Props` est vide et le decor est instancie en code.
+  Les deux modeles portent par ailleurs **un seul noeud a transform
+  identite** — aucun transform cache a decouvrir.
+* **H3 (face touchee) — REFUTEE.** Rayons verticaux dans la piece, toutes les
+  intersections listees avec la normale : le sol trouve a `y ≈ -0.528..-0.533`
+  porte **`n_y = +0.99`**, c'est-a-dire la face SUPERIEURE. Le raycast d'origine
+  visait juste.
+* **H1 (pivot) — CONFIRMEE, mais PAS « centre vs pieds ».** Ce pivot-la
+  couterait une demi-hauteur (0.675) ; le defaut mesure vaut **0.916568**.
+
+⚠️ **LA CAUSE : UN CHIFFRE COPIE PAR MOITIE.** Le hub enonce le lift de Keepy
+en **DEUX nombres qui ne veulent rien dire separement** — le slot `Body` est a
+`y = 0.9` dans `HubWorld.tscn`, et `ModelSlot` y place ensuite le modele a
+`model_offset = -0.2246`, total **0.6754**. `CabinInterior._place_walker()`
+avait copie **le SECOND terme seul** et l'avait **multiplie par l'echelle** —
+or `ModelSlot` ne le multiplie pas (`_model_root.position = model_offset`,
+directement). Le 0.9 saute, et un terme que le hub ne scale jamais est scale :
+
+| | y du modele au-dessus des pieds |
+|---|---|
+| hub (correct) | `0.9 + (-0.2246)` = **+0.6754** |
+| cabane (livre) | `-0.2246 * 1.07368` = **-0.2411** |
+| **ecart** | **0.916549 analytique / 0.916568 mesure** |
+
+Contre une hauteur dessinee de **1.3501**, cela fait **67,9 % de lui sous le
+plancher** — seul le haut du crane depasse, ce qui est exactement le rapport
+device. **Les DEUX etages souffraient du meme decalage**, confirme par la sonde
+en rouge : `-0.916568` sur `cabin_floor` **et** sur `cabin_loft`. Une seule
+formule, donc une seule cause.
+
+**Corrige A LA RACINE en DERIVANT le lift du maillage** plutot qu'en ajoutant
+une correction par-dessus une formule fausse : le contrat de `LevelWalker` est
+que son origine EST les pieds, donc le corps est leve d'exactement la
+profondeur a laquelle le modele pend sous sa propre origine
+(`-KEEPY_MODEL_MIN_Y * KEEPY_SCALE`). **Recoupe trois fois** : le hub (pieds a
+`-0.000020`), `scenes/dev/LevelNavTest.tscn` (capsule hauteur 1.3 a `y = 0.65`,
+donc bas sur l'origine, meme contrat), et cette constante qui **reproduit le
+0.6754 du hub a 2.0e-5**. Verifie sur la scene construite : **pieds − plan =
++0.000000** aux deux etages, et il fait toujours **1.3501** de haut.
+
+⚠️ **PIEGE A CONNAITRE, ET C'EST L'INVERSE DE CELUI QU'ON ATTEND : ici le
+RAYCAST avait raison et c'est la COPIE qui mentait.** Le lot precedent avait
+mesure les deux planchers par rayons et les avait eus JUSTES du premier coup ;
+ce qui a coule, c'est un chiffre repris d'un autre fichier. **Un nombre copie
+d'ailleurs merite plus de defiance qu'un nombre mesure ici** — surtout quand il
+est UNE MOITIE d'une somme, parce qu'une moitie de somme se lit comme un
+nombre complet et ne se signale jamais.
+
+### SECTION B — LES ZONES TAPABLES, ET LE PATRON DU HUB REUTILISE A MOITIE
+
+Le patron existant EST reconnu : `HubPortal.tscn` = pad sombre + anneau vif +
+`Label3D` billboard + pulse d'anneau en ECHELLE a l'approche (1.14 sur 0.55 s,
+hysteresis 2.2/2.6). **Forme et comportement repris tels quels** — c'est ce
+qu'un joueur vient d'apprendre sur le plateau.
+
+⚠️ **MAIS SES COULEURS NON, ET C'EST MESURE.** Le sol de la cabane a ete
+echantillonne **sur un rendu reel de cette scene**, 121 points a travers la
+camera livree : **`rgb(0.7138, 0.4829, 0.3730)`**, un bois clair et chaud,
+contre l'herbe du hub a `rgb(0.2, 0.4, 0.15)`. Les deux encres ne marchent pas
+sur les deux fonds :
+
+| couleur | vs SOL CABANE | vs HERBE HUB |
+|---|---|---|
+| anneau ambre du portail | **2.03:1** | 3.96:1 |
+| pad vert sombre du portail | 3.00:1 | 1.54:1 |
+
+L'ambre du hub est une marque a 3.96:1 dehors et **2.03:1 dedans — sous le
+plancher 3.0:1 de ce projet**. La reutiliser telle quelle aurait livre un
+marqueur quasi invisible sur du bois, c'est-a-dire exactement la plainte que ce
+lot doit fermer. **La doctrine des deux bandes du plateau ne s'applique pas
+ici** : le sol cabane rend a `L = 0.2498`, donc franchir 3.0:1 exige
+`L >= 0.8493` (quasi blanc) ou `L <= 0.0499` (quasi noir) — verifie, pas
+suppose.
+
+Livre : **anneau creme `rgb(1.00, 0.96, 0.88)` a 3.23:1**, qui porte seul le
+contraste.
+
+⚠️ **ET LE PAD SOMBRE A ETE PRIS SUR UN RENDU QUE LE RATIO AVAIT DEJA
+VALIDE.** La premiere version copiait l'arrangement du hub : pad quasi noir
+`rgb(0.10,0.07,0.05)`, **5.29:1**, confortable. Le ratio etait bon et la
+LECTURE fausse — sur du bois clair un disque quasi noir ne se lit pas comme un
+tapis d'atterrissage mais comme **un TROU perce dans le plancher**. Sur l'herbe
+sombre du hub le meme disque se lit comme une ombre, ce qui est pourquoi le
+patron marche dehors et pas dedans. **Aucun chiffre de contraste ne pouvait
+attraper ca** : c'est du contraste ELEVE, et le defaut porte sur QUELLE CHOSE
+l'oeil decide qu'il regarde. Il a fallu regarder le rendu. Remplace par le
+creme de l'anneau **a alpha 0.28** — une flaque de lumiere posee sur les
+planches. Son **1.45:1 est publie plutot que cache** : le pad ne franchit pas
+3.0:1 et n'a pas a le faire, il remplit la forme pour que le marqueur se lise
+comme un LIEU et pas comme un contour.
+
+⚠️ `transparency = TRANSPARENCY_ALPHA` est **pose explicitement** : le canal
+alpha d'`albedo_color` est ignore tant qu'il reste a `DISABLED`, et le pad
+rendrait creme opaque **sans aucune erreur pour le dire** — le meme piege
+autour duquel les disques d'eau de ce projet sont deja construits.
+
+**Retour au tap** : `CabinMarker.flash()`, un pop d'echelle + de luminosite sur
+**un seul tween** normalise 0..1 (`4t(1-t)`, exactement 0 aux deux bouts, donc
+l'anneau ne peut pas rester coince clair sur un arrondi). C'est la moitie que
+le hub n'a pas : son pulse dit « ceci est vivant », il ne dit rien du tap qui
+vient d'avoir lieu, et dehors la marche elle-meme fait la reponse. Ici un tap
+sur la porte peut ne declencher aucun hop.
+
+⚠️ **LE MARQUEUR DE L'ECHELLE SE DEPLACE AVEC L'ETAGE**, et c'est l'option
+honnete : le lien a une entree sur CHAQUE niveau et seule celle du niveau
+courant repond a un tap (`accepts_tap` mesure contre `entry_for(current)`).
+Dessiner les deux bouts poserait un anneau inerte sur la mezzanine pendant
+qu'on est en bas — **un marqueur qui ment sur sa propre tapabilite**.
+
+### SECTION C — SORTIR PAR LA PORTE
+
+Taper la porte fait **marcher** Keepy jusqu'a elle puis sortir a l'arrivee —
+la forme de l'echelle du hub, et non celle du bouton. Mesure plutot que
+supposee maison : l'echelle du hub ne declenche pas non plus au moment du tap,
+`_on_tapped_ladder` arme une intention et appelle `hop_to()`, et c'est
+l'atterrissage qui grimpe.
+
+**Gate patron BATEAU, jamais patron echelle** : la porte **se retire**
+(`is_available()` faux) des que la sortie commence, donc un second tap
+**tombe a travers** vers le chemin sol au lieu d'etre avale. Ce n'est pas de
+la coquetterie : `change_scene_to_file()` est differe en fin de frame, donc
+sans ca deux taps dans la meme frame demandent deux fois.
+
+**L'intention de sortie SURVIT a un atterrissage de passage** — la lecon du lot
+hibou, assertee et pas supposee : une version qui la lachait au premier
+atterrissage laissait Keepy debout a cote de la chose sans l'avoir utilisee, et
+sa sonde etait verte jusqu'a ce qu'une marche passe a deux hops. Un tap
+ordinaire ailleurs l'annule.
+
+⚠️ **LE BOUTON « < Sortir » EST CONSERVE, DELIBEREMENT.** Son retrait est
+**conditionne** a la validation device de la sortie par tap. Tant que ce test
+n'a pas eu lieu, il est le chemin de sortie qui ne peut enfermer personne — et
+il partage desormais `_leave_to_hub()` avec la porte, donc « ce que sortir veut
+dire » est un seul fait.
+
+### ⚠️ TROUVE ET **NON CORRIGE** : l'echelle dessinee n'est pas ou le lien la met
+
+Rendu de debug avec des marqueurs aux positions configurees : le carre du sol
+tombe bien sur le tapis, mais **le haut du lien `LADDER_TOP` atterrit sur le
+LIT**, pas au sommet de l'echelle dessinee, qui arrive a la mezzanine **a
+droite de l'ourson, hors du carre de la mezzanine**.
+
+**Non recalibre ici, et c'est un choix.** Re-deriver une position 3D a l'oeil
+depuis une seule vue est precisement la methode peu fiable qui produit ce genre
+d'erreur — le faire mal serait pire que le signaler. Le marqueur est donc pose
+**la ou un tap fonctionne reellement**, parce que son travail est de dire ou
+taper, pas de decorer le dessin ; et le desaccord devient VISIBLE sur device,
+ce qui est le chemin le plus court vers une calibration propre (multi-vues ou
+par maillage) dans son propre lot.
+
+**Le lit** est en revanche bien dans le carre de la mezzanine (confirme au
+rendu : les points du carre tombent sur le matelas). Son cercle est a **0.70**
+et non 0.85 parce que le haut de l'echelle occupe deja ce petit carre : les
+deux sont a **1.920** l'un de l'autre contre des rayons qui somment a **1.800**
+— **asserte par la sonde** plutot que laisse a un commentaire.
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles, **tailles verifiees contre le `Content-Length`** : 50 276 070 et
+1 073 228 327 octets, aucune troncature). Import headless **exit 0, 36 `.scn`,
+0 erreur de parse**. Boot de `CabinInterior.tscn` **0 erreur**. Export Web
+release **exit 0, 0 erreur**, `index.wasm` **35 376 909** / md5
+`af4a8fc2925d992348eb30deeeb54360`, `index.js` md5
+`4e08904b1b7107858246af44b602067b` — le fingerprint permanent de tout lot qui
+ne touche pas le code moteur. **Piege payload tenu** : sur 264 lignes
+`Storing File`, **0** pour `scripts/dev`, `assets_source`, `docs`, `web`,
+`build` ou `firebase.json`.
+
+**`CabinProbe` : 125 OK, 0 echec** (PHASE J et PHASE K neuves), et **les deux
+verifiees ROUGE AVANT VERT** :
+
+| sabotage | resultat |
+|---|---|
+| lift d'origine restaure | **2 FAIL**, `-0.916568` au sol ET a la mezzanine ; la hauteur reste verte |
+| signal de porte lache (patron echelle) | **2 FAIL** sur l'intention ; les deux refus restent verts |
+
+Le second rouge justifie l'ordre de la phase : « un tap ailleurs ne sort pas »
+passe gratuitement contre une porte jamais cablee, donc la porte est montree
+TIRANT avant que ses refus veuillent dire quoi que ce soit.
+
+**PHASE UNTOUCHED, diffee contre `origin/staging` en worktree separe** (import
+verifie complet des deux cotes, 36 `.scn`) : `LevelNavProbe`,
+`ProbeTimeoutAudit` (**59 sondes scenes**, chiffre inchange),
+`AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe` —
+**BYTE-IDENTIQUES sur les DEUX flux, stdout ET stderr**. Le hub complet de
+`CabinProbe` (portails, plongeoirs, hibou, tourniquet, balancoire, bateau,
+routes) est vert.
+
+⚠️ **DEUX ROUGES PRE-EXISTANTS, verifies sur `origin/staging` et NON imputables
+a ce lot** : `LevelNavProbe` **2 echecs** (fade d'occlusion, `alpha 0.997`) —
+sortie **byte-identique** des deux cotes ; et `SeesawProbe` **2 echecs**, deja
+signale comme tel par le brief. Ni l'un ni l'autre n'est traite ici.
+
+⚠️ **PIEGES D'OUTILLAGE RENCONTRES, tous deja documentes ailleurs dans ce
+fichier et re-payes ici :**
+* **Editer un `.gd` pendant qu'un `--import` tourne** produit une cascade de
+  `Could not find type` sur une classe qui existe : l'import avait scanne le
+  consommateur avant que le `class_name` soit sur le disque. Un import propre
+  ensuite : 0 erreur. **Ne pas editer pendant un import.**
+* **Un `class_name` neuf n'est pas visible avant un re-import** — le boot
+  echoue sur `Could not find type` alors que le fichier est correct.
+* **`pkill -f 'Godot_v4.3'` TUE SON PROPRE SHELL** : le motif matche la ligne
+  de commande qui le contient. Toute la suite de la commande n'a jamais tourne,
+  silencieusement. Forme crochetee obligatoire (`'[G]odot_v4.3'`), exactement
+  le piege `pgrep -f` deja consigne.
+* **`SubViewportContainer.stretch = true` ignore un `vp.size` explicite** — une
+  tentative de rendre a demi-resolution a rendu a 1080x1920 quand meme (sans
+  consequence ici : le cadrage est donc bien celui livre).
+* **Un lambda GDScript capture une locale PAR VALEUR**, et `.z` sur un
+  `Vector2` fait tourner une sonde a vide sans verdict.
+
+### RESTE OUVERT — jugement device, seul juge
+
+1. **Keepy est-il pose correctement aux deux etages** a l'echelle reelle ? Le
+   chiffre est `+0.000000` ; l'oeil n'a pas encore tranche.
+2. **Les zones tapables sont-elles identifiables sans explication** ? Le
+   contraste est mesure, la lecture ne l'est pas — et le pad a deja prouve que
+   les deux ne sont pas la meme question.
+3. **La sortie par la porte se sent-elle naturelle**, et le bouton
+   « < Sortir » peut-il alors disparaitre ? **Son retrait est un lot ulterieur,
+   explicitement conditionne a ce test.**
+4. **Le desaccord echelle-dessinee / lien** ci-dessus, a calibrer dans son
+   propre lot.
+5. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.

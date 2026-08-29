@@ -169,10 +169,116 @@ const LADDER_TAP_RADIUS: float = 1.10
 ## ground floor, facing into the room.
 const ENTRY_SPOT := Vector2(0.60, 1.35)
 
+## =====================================================================
+## THE TAPPABLE SPOTS THAT ARE NOT THE LADDER
+##
+## The door is the SAME point Keepy arrives on, deliberately: he walks in
+## there and he walks out from there, and two constants for one doorway is
+## how the way in and the way out end up in different places.
+const DOOR_SPOT := ENTRY_SPOT
+## Smaller than the ladder's 1.10. The door stands only 0.35 world units
+## inside the floor's +Z edge, so a generous circle here would be mostly
+## hanging over ground that does not exist -- see LevelHotspot's header for
+## why that is harmless on the AIM and would have been a funnel on a
+## clamped point.
+const DOOR_TAP_RADIUS: float = 0.85
+
+## The bed, on the loft.
+##
+## ⚠️ SMALL, AND THE SIZE IS FORCED RATHER THAN CHOSEN. The loft's walkable
+## square is only 1.10 half-extent and the ladder's top already sits inside
+## it, so the bed's circle has to fit in what is left without touching the
+## ladder's. The probe asserts that gap rather than trusting this comment:
+## the two are 1.920 apart against radii that sum to 1.800.
+const BED_SPOT := Vector2(-1.67, -1.32)
+const BED_TAP_RADIUS: float = 0.70
+
+## How close a LANDING has to be to the door to actually leave. Compared in
+## XZ, like LevelWalker's own ENTRY_REACH and for its reason: the arrival
+## is on the floor by construction, so height cannot disagree.
+const DOOR_REACH: float = 0.9
+
+## Ring pulses when the walker is inside this many times a marker's radius,
+## and stops at the release. Two numbers and not one, straight out of
+## HubPortal: a body standing exactly on one threshold would otherwise
+## strobe the marker on and off every frame.
+const NEAR_FACTOR: float = 2.2
+const NEAR_RELEASE: float = 2.6
+
+## =====================================================================
+## KEEPY'S OWN ART CORRECTIONS
+##
+## ⚠️ THE LIFT IS DERIVED, THE SIZE IS COPIED, AND THAT SPLIT IS THE WHOLE
+## POINT -- getting it wrong sank him by 0.9166 world units, 67.9% of his
+## own height, so that only his head showed above the floor.
+##
+## KEEPY_SCALE is COPIED from the shipped hub node so he is drawn indoors
+## at exactly the size he is drawn outdoors. That part of the old comment
+## was right and is kept.
+##
+## The LIFT is NOT an art correction and must not be copied from there.
+## LevelWalker's contract is that its origin is the FEET: it sets
+## global_position.y to the level's floor and _apply_hop draws the arc on
+## that same line. So the body has to be raised by exactly the depth the
+## model hangs below its own origin, scaled -- which is what the line in
+## _place_walker() computes.
+##
+## WHAT THE SHIPPED CODE DID INSTEAD, and why it looked plausible: the hub
+## states that lift as TWO authored numbers that only mean anything
+## together -- the Body slot sits at y = 0.9 in HubWorld.tscn and
+## ModelSlot then places the model at model_offset = -0.2246 inside it,
+## for a total of 0.6754. This file copied the SECOND of those two terms
+## on its own, and multiplied it by the scale on top -- and ModelSlot does
+## not scale it (it assigns model_offset straight to the child's
+## position). So the body sat at -0.2246 * 1.07368 = -0.2411 instead of
+## +0.6754: the 0.9 dropped, and a term the hub never scales scaled.
+##
+## Deriving it closes both at once and cannot drift with either number.
+## Cross-checked THREE ways rather than argued:
+##   * the hub, feet at y = -0.000020 with its two authored terms;
+##   * scenes/dev/LevelNavTest.tscn, whose capsule is height 1.3 at local
+##     y = 0.65 -- bottom exactly on the walker's origin, same contract;
+##   * this constant, which reproduces the hub's 0.6754 to 4.5e-5.
+const KEEPY_SCALE: float = 1.07368
+
+## Lowest point of the shipped Keepy .glb, in ITS OWN model units, read off
+## the POSITION accessor of assets/models/keepy_squirrel_hero.glb rather
+## than assumed from the model being centred. It is not: min.y = -0.629070
+## against max.y = +0.628346.
+const KEEPY_MODEL_MIN_Y: float = -0.629070
+
 @onready var _controller: LevelController = $LevelController
 @onready var _walker: LevelWalker = $WorldViewport/SubViewport/World/Walker
 @onready var _props: Node3D = $WorldViewport/SubViewport/World/Props
 @onready var _exit_button: Button = $ExitButton
+
+## The door hotspot, held so the exit can withdraw it. The bed's is not
+## held: nothing withdraws it yet, and a field kept "for later" is a field
+## nobody maintains.
+var _door: LevelHotspot = null
+
+## THE HELD EXIT INTENT, and it is LevelWalker's `_pending` in miniature --
+## including the lesson that one cost.
+##
+## ⚠️ IT MUST SURVIVE A PASS-THROUGH LANDING. The owl batch shipped a
+## version of that walker intent which cleared on the FIRST landing
+## whatever it was, so any walk longer than one hop ended with Keepy
+## standing next to the thing having never used it -- and the probe was
+## green until a control tap pushed the walk out to two hops. A tap on the
+## door from across the room is exactly such a walk, so this is released
+## on a landing AT the door, on a plain tap somewhere else, or never.
+var _exit_pending: bool = false
+
+## Set once the scene change has been asked for. change_scene_to_file() is
+## deferred to the end of the frame, so without this a second tap in the
+## same frame asks twice.
+var _leaving: bool = false
+
+## One marker per tappable thing, kept so the ladder's can follow Keepy
+## between storeys and the others can hide when he is not on their level.
+var _ladder_marker: CabinMarker = null
+var _door_marker: CabinMarker = null
+var _bed_marker: CabinMarker = null
 
 func _ready() -> void:
 	# ⚠️ MOUSE_FILTER_IGNORE, and it is load-bearing. _unhandled_input runs
@@ -204,11 +310,33 @@ func _ready() -> void:
 			Vector3(LADDER_TOP.x, loft_level.plane_y, LADDER_TOP.y),
 			LADDER_TAP_RADIUS),
 	]
+	# THE DOOR AND THE BED, as hotspots on the ground floor and the loft.
+	# Built FROM the level definitions for the reason the link's ends are:
+	# a hand-written height here would be a second opinion about where a
+	# floor is.
+	_door = LevelHotspot.make(0,
+			Vector3(DOOR_SPOT.x, floor_level.plane_y, DOOR_SPOT.y),
+			DOOR_TAP_RADIUS, &"door", "Sortir")
+	_controller.hotspots = [
+		_door,
+		LevelHotspot.make(1,
+			Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y),
+			BED_TAP_RADIUS, &"bed", "Lit"),
+	]
+
 	_controller.tapped_ground.connect(_on_tapped_ground)
 	_controller.tapped_transition.connect(_on_tapped_transition)
+	_controller.tapped_hotspot.connect(_on_tapped_hotspot)
+	_controller.level_changed.connect(_on_level_changed)
 
 	_build_backdrop()
 	_place_walker()
+	_build_markers()
+	# The walker moves the markers' near/far state, and its landings are
+	# where a held exit intent is honoured.
+	_walker.hop_landed.connect(_on_hop_landed)
+	_walker.became_idle.connect(_refresh_proximity)
+	_on_level_changed(_controller.current_index())
 
 ## Model space to world space. ONE conversion, used by both floors and by
 ## nothing else, so the scale and the lift cannot be applied twice to one
@@ -241,27 +369,147 @@ func _build_backdrop() -> void:
 ## cabin prop's own terms: a slot exists to hold a PLACEHOLDER that a real
 ## model later replaces, and this is either Keepy or nothing.
 ##
-## The two art corrections are copied from the shipped hub node so that he
-## is drawn here exactly as he is drawn out there -- same 1.07368, same
-## -0.2246 -- rather than re-derived into a Keepy who is subtly a different
-## size indoors.
+## His SIZE is copied from the shipped hub node so he is drawn here exactly
+## as he is drawn out there. His LIFT is derived from the mesh instead of
+## copied -- see the KEEPY_SCALE block for the 0.9166 that cost.
 func _place_walker() -> void:
 	var body := KEEPY.instantiate() as Node3D
 	if body == null:
 		push_error("CabinInterior: the Keepy .glb did not instantiate to a Node3D.")
 	else:
 		body.name = "Body"
-		body.scale = Vector3.ONE * 1.07368
-		body.position = Vector3(0.0, -0.2246 * 1.07368, 0.0)
+		body.scale = Vector3.ONE * KEEPY_SCALE
+		# Raise him by exactly the depth he hangs below his own origin, so
+		# his lowest vertex lands ON the walker's origin -- which IS the
+		# floor. One multiplication, no authored offset to drift.
+		body.position = Vector3(0.0, -KEEPY_MODEL_MIN_Y * KEEPY_SCALE, 0.0)
 		_walker.add_child(body)
 	var floor_level: LevelDefinition = _controller.levels[0]
 	_walker.global_position = Vector3(ENTRY_SPOT.x, floor_level.plane_y, ENTRY_SPOT.y)
 
+## =====================================================================
+## THE MARKERS
+##
+## One per tappable thing, each built from the hotspot or link it marks so
+## the ring a player aims at and the circle the code tests are the same
+## number. See CabinMarker for why the hub's colours are not reused.
+func _build_markers() -> void:
+	var floor_level: LevelDefinition = _controller.levels[0]
+	_ladder_marker = _add_marker(_controller.links[0].tap_radius, "Mezzanine")
+	_door_marker = _add_marker(DOOR_TAP_RADIUS, "Sortir")
+	_door_marker.position = Vector3(DOOR_SPOT.x, floor_level.plane_y, DOOR_SPOT.y)
+	_bed_marker = _add_marker(BED_TAP_RADIUS, "Lit")
+	var loft_level: LevelDefinition = _controller.levels[1]
+	_bed_marker.position = Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y)
+
+func _add_marker(radius: float, text: String) -> CabinMarker:
+	var marker := CabinMarker.new()
+	marker.setup(radius, text)
+	_props.add_child(marker)
+	return marker
+
+## Markers follow the storey Keepy is on.
+##
+## ⚠️ THE LADDER'S MARKER MOVES, and that is the honest thing rather than
+## the cheap one. The link has an entry on EACH level, and only the one on
+## the level Keepy is standing on answers a tap -- accepts_tap() measures
+## against entry_for(current). Drawing both ends at once would put a ring
+## on the loft that does nothing while he is downstairs, which is a marker
+## that lies about being tappable. So there is one ring and it is always at
+## the end that works.
+##
+## The door and the bed simply hide off their own level, for the same
+## reason: a tappable-looking thing that is not tappable is worse than no
+## mark at all.
+func _on_level_changed(index: int) -> void:
+	var level: LevelDefinition = _controller.level_at(index)
+	if level == null:
+		return
+	var link: LevelTransition = _controller.links[0]
+	if _ladder_marker != null:
+		_ladder_marker.position = link.entry_for(index)
+		_ladder_marker.visible = link.serves(index)
+	if _door_marker != null:
+		_door_marker.visible = _door != null and _door.serves(index)
+	if _bed_marker != null:
+		_bed_marker.visible = (index == 1)
+	_refresh_proximity()
+
+## Pulses whatever Keepy is standing near, with HubPortal's hysteresis.
+func _refresh_proximity() -> void:
+	var here := _walker.global_position
+	_pulse_if_near(_ladder_marker, _controller.links[0].tap_radius, here)
+	_pulse_if_near(_door_marker, DOOR_TAP_RADIUS, here)
+	_pulse_if_near(_bed_marker, BED_TAP_RADIUS, here)
+
+func _pulse_if_near(marker: CabinMarker, radius: float, here: Vector3) -> void:
+	if marker == null or not marker.visible:
+		return
+	var a := Vector3(marker.position.x, 0.0, marker.position.z)
+	var b := Vector3(here.x, 0.0, here.z)
+	var d := a.distance_to(b)
+	# Two thresholds, never one -- see NEAR_FACTOR.
+	if d <= radius * NEAR_FACTOR:
+		marker.set_near(true)
+	elif d >= radius * NEAR_RELEASE:
+		marker.set_near(false)
+
 func _on_tapped_ground(destination: Vector3) -> void:
+	# A plain destination tap CANCELS a held exit intent -- the player
+	# asked for somewhere else, and honouring the old intent on arrival
+	# would be the screen acting on a decision he has already replaced.
+	# LevelWalker.hop_to() does exactly this to its own link intent.
+	_exit_pending = false
 	_walker.hop_to(destination)
 
 func _on_tapped_transition(link: LevelTransition, _destination: Vector3) -> void:
+	_exit_pending = false
+	if _ladder_marker != null:
+		_ladder_marker.flash()
 	_walker.request_transition(link)
+
+## A tap on something that is not a level change.
+##
+## The door is the LADDER'S shape and not the button's: he WALKS there and
+## leaves on arrival. Measured rather than assumed to be the house style --
+## the hub's own ladder does not fire at tap time either; _on_tapped_ladder
+## arms an intent and calls hop_to(), and the landing is what climbs.
+func _on_tapped_hotspot(hotspot: LevelHotspot, destination: Vector3) -> void:
+	match hotspot.kind:
+		&"door":
+			if _door_marker != null:
+				_door_marker.flash()
+			_walker.hop_to(destination)
+			# Armed AFTER hop_to(). That call clears the WALKER's own link
+			# intent, and arming before it would read as though the two
+			# were the same field -- they are not, and only one of them is
+			# cleared there.
+			_exit_pending = true
+		&"bed":
+			if _bed_marker != null:
+				_bed_marker.flash()
+			# NO interaction yet, and none is invented here. The brief asked
+			# for the bed to be legible as tappable; what it does when
+			# tapped is a later decision, and a placeholder behaviour would
+			# be a decision taken quietly.
+			_exit_pending = false
+			_walker.hop_to(destination)
+		_:
+			_exit_pending = false
+			_walker.hop_to(destination)
+
+## Every landing: proximity, and the held exit intent.
+func _on_hop_landed(position: Vector3) -> void:
+	_refresh_proximity()
+	if not _exit_pending or _leaving:
+		return
+	var flat_here := Vector2(position.x, position.z)
+	if flat_here.distance_to(DOOR_SPOT) > DOOR_REACH:
+		# NOT there yet. The intent is KEPT -- this is the pass-through
+		# landing that LevelWalker's own `_pending` exists to survive.
+		return
+	_exit_pending = false
+	_leave_to_hub()
 
 ## Back out onto the plateau.
 ##
@@ -275,6 +523,21 @@ func _on_tapped_transition(link: LevelTransition, _destination: Vector3) -> void
 ## It also means this file has NO dependency on the plateau at all beyond
 ## the scene path: no HubBuilder, no HubRegion, no layout resource.
 func _on_exit_pressed() -> void:
+	_leave_to_hub()
+
+## THE ONE WAY OUT, whichever of the two things asked for it.
+##
+## The button and the door share it rather than each calling
+## change_scene_to_file(), so "what leaving means" is one fact. The
+## withdrawal is the boat's: the door stops accepting taps the moment
+## leaving starts, so a second tap falls THROUGH to the ground path
+## instead of asking for a scene change that is already queued.
+func _leave_to_hub() -> void:
+	if _leaving:
+		return
+	_leaving = true
+	if _door != null:
+		_door.set_busy(true)
 	get_tree().change_scene_to_file(HUB_SCENE)
 
 func _unhandled_input(event: InputEvent) -> void:

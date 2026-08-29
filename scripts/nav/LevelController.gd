@@ -48,6 +48,13 @@ signal tapped_ground(destination: Vector3)
 ## entry) but it is not what decided the meaning.
 signal tapped_transition(link: LevelTransition, destination: Vector3)
 
+## Emitted INSTEAD of tapped_ground when the AIM landed inside an
+## available hotspot -- a door, a bed, something that answers a tap
+## without changing level. Carries the clamped destination for the same
+## reason tapped_transition does: it is where he WALKS to reach the thing,
+## and it is not what decided the meaning.
+signal tapped_hotspot(hotspot: LevelHotspot, destination: Vector3)
+
 ## Emitted when the current level actually changes, with the new index.
 signal level_changed(index: int)
 
@@ -78,6 +85,10 @@ var levels: Array[LevelDefinition] = []
 
 ## Every link. A list for the same reason.
 var links: Array[LevelTransition] = []
+
+## Every hotspot. A list for the diving board's reason as well -- and this
+## one is exercised with three from its first commit rather than one.
+var hotspots: Array[LevelHotspot] = []
 
 var _current: int = 0
 
@@ -182,6 +193,18 @@ func dispatch(screen_point: Vector2) -> void:
 		if link.accepts_tap(aim, _current):
 			tapped_transition.emit(link, destination)
 			return
+	# THEN the hotspots, on the AIM too and with the same withdrawal.
+	#
+	# ⚠️ AFTER the links, deliberately: a transition is the only thing here
+	# that can strand a player on the wrong storey, so where two targets
+	# ever overlap the one that moves him between levels has to win. The
+	# probe asserts the cabin's three are far enough apart that the
+	# question never actually arises -- this ordering is what makes that an
+	# assertion about the LAYOUT rather than about the code.
+	for spot in hotspots:
+		if spot.accepts_tap(aim, _current):
+			tapped_hotspot.emit(spot, destination)
+			return
 	tapped_ground.emit(destination)
 
 ## Every link that serves the current level. Published for a probe and for
@@ -191,4 +214,12 @@ func links_here() -> Array[LevelTransition]:
 	for link in links:
 		if link.serves(_current):
 			out.append(link)
+	return out
+
+## Every hotspot on the current level. Published for the same reason.
+func hotspots_here() -> Array[LevelHotspot]:
+	var out: Array[LevelHotspot] = []
+	for spot in hotspots:
+		if spot.serves(_current):
+			out.append(spot)
 	return out

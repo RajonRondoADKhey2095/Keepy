@@ -404,7 +404,200 @@ func _phase_i_interior() -> void:
 	# fade alpha for the entire visit.
 	_check(get_tree().get_nodes_in_group("level_occluder").is_empty(),
 			"no node joined level_occluder (the cabin is one mesh around the player)")
+
+	_phase_j_standing(interior, controller, walker)
+	_phase_k_taps(interior, controller, walker)
 	interior.queue_free()
+
+## =====================================================================
+## HE STANDS **ON** THE FLOOR, ON BOTH STOREYS
+##
+## ⚠️ THE DEFECT THIS GATES SHIPPED, AND THIS FILE WATCHED IT GO PAST.
+## PHASE I already checked that a node called "Body" reached the walker --
+## and it had. What nothing checked was how high it was DRAWN, so Keepy
+## went out sunk 0.9166 world units, 67.9% of his own height, with only
+## his head above the boards. Every other assertion stayed green.
+##
+## The cause was that his lift was copied out of the hub as ONE of the two
+## authored numbers that make it up there -- the slot's y = 0.9 was
+## dropped, and ModelSlot's model_offset was multiplied by a scale
+## ModelSlot does not multiply it by.
+##
+## So this measures the LOWEST DRAWN VERTEX, in world space, off the AABBs
+## of whatever MeshInstance3Ds the body actually contains. Not the node's
+## position, which was never wrong; not a constant, which would just be the
+## same arithmetic asserting itself.
+func _phase_j_standing(interior: Node, controller: LevelController,
+		walker: LevelWalker) -> void:
+	print("")
+	print("--- PHASE J: Keepy stands on the floor, not in it ---")
+	var body: Node3D = walker.find_child("Body", true, false) as Node3D
+	_check(body != null, "his body reached the walker")
+	if body == null:
+		return
+	var meshes: Array = _mesh_instances(body)
+	_check(not meshes.is_empty(), "the body draws at least one mesh (%d)" % meshes.size())
+	if meshes.is_empty():
+		return
+	# TOLERANCE. A hop's arc is 0.6 and his own height 1.35, so anything
+	# this loose would still be visible; it is a millimetre band because
+	# the placement is exact arithmetic, not a fit.
+	const TOL: float = 0.002
+	for index in controller.levels.size():
+		var level: LevelDefinition = controller.levels[index]
+		walker.global_position = level.centre()
+		# The transforms have to be recomputed before the AABBs are read.
+		interior.propagate_notification(CanvasItem.NOTIFICATION_TRANSFORM_CHANGED)
+		var low: float = _lowest_drawn_y(meshes)
+		_check(absf(low - level.plane_y) < TOL,
+				"on '%s' his lowest drawn vertex is the floor (%.6f vs %.6f, off by %+.6f)"
+						% [level.level_name, low, level.plane_y, low - level.plane_y])
+		var high: float = _highest_drawn_y(meshes)
+		# And he is the size he is outdoors. A lift fixed by SHRINKING him
+		# would satisfy the line above and be a different bug.
+		_check(absf((high - low) - 1.3501) < 0.01,
+				"and he is still 1.35 tall (%.4f)" % (high - low))
+
+func _mesh_instances(node: Node) -> Array:
+	var out: Array = []
+	if node is MeshInstance3D:
+		out.append(node)
+	for child in node.get_children():
+		out.append_array(_mesh_instances(child))
+	return out
+
+func _lowest_drawn_y(meshes: Array) -> float:
+	var low: float = 1.0e9
+	for m in meshes:
+		var mi: MeshInstance3D = m as MeshInstance3D
+		var box: AABB = mi.get_aabb()
+		for k in range(8):
+			low = minf(low, (mi.global_transform * box.get_endpoint(k)).y)
+	return low
+
+func _highest_drawn_y(meshes: Array) -> float:
+	var high: float = -1.0e9
+	for m in meshes:
+		var mi: MeshInstance3D = m as MeshInstance3D
+		var box: AABB = mi.get_aabb()
+		for k in range(8):
+			high = maxf(high, (mi.global_transform * box.get_endpoint(k)).y)
+	return high
+
+## =====================================================================
+## THE TAPPABLE SPOTS, AND THE WAY OUT
+##
+## ⚠️ THIS PHASE OPENS WITH THE POSITIVE, for PHASE T's reason. "A tap over
+## there does not leave the room" is satisfied for free by a door that was
+## never wired at all, so the door has to be shown FIRING before any of its
+## refusals mean anything.
+func _phase_k_taps(interior: Node, controller: LevelController,
+		walker: LevelWalker) -> void:
+	print("")
+	print("--- PHASE K: the door, the bed and the ladder answer taps ---")
+	_check(controller.hotspots.size() == 2,
+			"two hotspots: a door and a bed (%d)" % controller.hotspots.size())
+	var door: LevelHotspot = null
+	var bed: LevelHotspot = null
+	for spot in controller.hotspots:
+		if spot.kind == &"door":
+			door = spot
+		elif spot.kind == &"bed":
+			bed = spot
+	_check(door != null, "one of them is the door")
+	_check(bed != null, "one of them is the bed")
+	if door == null or bed == null:
+		return
+	var floor_level: LevelDefinition = controller.levels[0]
+	var loft_level: LevelDefinition = controller.levels[1]
+	_check(door.level_index == 0, "the door is on the ground floor")
+	_check(bed.level_index == 1, "the bed is on the loft")
+	_check(absf(door.point.y - floor_level.plane_y) < 0.001,
+			"the door sits on the ground floor (%.4f)" % door.point.y)
+	_check(absf(bed.point.y - loft_level.plane_y) < 0.001,
+			"the bed sits on the loft (%.4f)" % bed.point.y)
+	_check(floor_level.contains(door.point), "the door is inside the floor's extent")
+	_check(loft_level.contains(bed.point), "the bed is inside the loft's extent")
+
+	# THE POSITIVE FIRST: the door's own point means the door.
+	_check(door.accepts_tap(door.point, 0), "a tap ON the door means the door")
+	# AND THE LADDER STILL WINS ITS OWN GROUND. Links are asked before
+	# hotspots, so this is what makes that ordering a fact about the LAYOUT
+	# rather than about the order of two loops.
+	var link: LevelTransition = controller.links[0]
+	var gap: float = Vector2(link.point_a.x - door.point.x,
+			link.point_a.z - door.point.z).length()
+	_check(gap > link.tap_radius + door.tap_radius,
+			"the ladder's foot and the door do not overlap (%.3f apart, radii sum %.3f)"
+					% [gap, link.tap_radius + door.tap_radius])
+	# ⚠️ AND ON THE LOFT THE BED HAS TO SHARE A SMALL SQUARE WITH THE
+	# LADDER'S TOP. This is the tightest pair in the scene and the reason
+	# BED_TAP_RADIUS is 0.70 rather than the door's 0.85.
+	var loft_gap: float = Vector2(link.point_b.x - bed.point.x,
+			link.point_b.z - bed.point.z).length()
+	_check(loft_gap > link.tap_radius + bed.tap_radius,
+			"the ladder's top and the bed do not overlap (%.3f apart, radii sum %.3f)"
+					% [loft_gap, link.tap_radius + bed.tap_radius])
+
+	# THE REFUSALS. Asked on the AIM, which is the only thing a hotspot is
+	# ever allowed to read -- see LevelHotspot's header for the funnel this
+	# would otherwise open at the floor's +Z edge, 0.35 u past the door.
+	_check(not door.accepts_tap(floor_level.flat(Vector3(door.point.x, 0.0, door.point.z - 2.0)), 0),
+			"a tap two units into the room does not mean the door")
+	_check(not door.accepts_tap(door.point, 1),
+			"and the door does not answer at all from the loft")
+	_check(not bed.accepts_tap(bed.point, 0), "the bed does not answer from the floor")
+
+	# THE WITHDRAWAL, the boat's and not the ladder's: once leaving has
+	# started the door stops accepting, so a second tap falls THROUGH to
+	# the ground path instead of asking for a scene change already queued.
+	door.set_busy(true)
+	_check(not door.accepts_tap(door.point, 0),
+			"a withdrawn door refuses even its own point")
+	door.set_busy(false)
+	_check(door.accepts_tap(door.point, 0), "and accepts again once released")
+
+	# ONE TAP, ONE SIGNAL: a tap on the door must arrive as tapped_hotspot
+	# and NOT as tapped_ground, or the walk and the exit would both fire.
+	var ground_hits: Array = []
+	var hotspot_hits: Array = []
+	controller.tapped_ground.connect(func(d): ground_hits.append(d))
+	controller.tapped_hotspot.connect(func(h, _d): hotspot_hits.append(h))
+	var camera: Camera3D = interior.get_node(
+			"WorldViewport/SubViewport/World/Camera3D") as Camera3D
+	var container: SubViewportContainer = interior.get_node(
+			"WorldViewport") as SubViewportContainer
+	# Through the REAL dispatch, from a REAL screen point, so what is
+	# measured is the path a finger takes and not a function called direct.
+	var screen: Vector2 = camera.unproject_position(door.point) 			* (container.get_global_rect().size / Vector2(
+					(interior.get_node("WorldViewport/SubViewport") as SubViewport).size)) 			+ container.get_global_rect().position
+	controller.dispatch(screen)
+	_check(hotspot_hits.size() == 1 and ground_hits.is_empty(),
+			"a screen tap on the door fires tapped_hotspot once and tapped_ground never (%d/%d)"
+					% [hotspot_hits.size(), ground_hits.size()])
+	if hotspot_hits.size() == 1:
+		_check((hotspot_hits[0] as LevelHotspot).kind == &"door",
+				"and the hotspot it carried is the door")
+
+	# THE EXIT INTENT SURVIVES A PASS-THROUGH LANDING. This is the owl
+	# batch's lesson, and it is asserted rather than trusted: a version
+	# that cleared on the first landing whatever it was left Keepy standing
+	# beside the thing having never used it, and its probe was green until
+	# a walk grew to two hops.
+	walker.global_position = floor_level.flat(
+			Vector3(door.point.x, 0.0, door.point.z - 3.0))
+	interior.call("_on_tapped_hotspot", door, door.point)
+	_check(bool(interior.get("_exit_pending")), "tapping the door arms the exit intent")
+	# A landing HALF WAY there must not leave, and must not drop it.
+	interior.call("_on_hop_landed",
+			floor_level.flat(Vector3(door.point.x, 0.0, door.point.z - 1.5)))
+	_check(bool(interior.get("_exit_pending")),
+			"a landing short of the door KEEPS the intent")
+	_check(not bool(interior.get("_leaving")), "and has not left")
+	# A plain tap elsewhere CANCELS it -- the player replaced the decision.
+	interior.call("_on_tapped_ground", floor_level.centre())
+	_check(not bool(interior.get("_exit_pending")),
+			"a plain tap somewhere else cancels the exit intent")
 
 ## The doorstep must not answer for the lawn in front of the cabin.
 ##
