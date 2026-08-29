@@ -20269,3 +20269,144 @@ echec** : le push du commit de doc a declenche #308, qui a tue #307 via
 `cancel-in-progress: true`. #308 construit le MEME arbre plus `CLAUDE.md`, qui
 n'est pas une ressource Godot -- le contenu de jeu deploye est bien celui du
 lot. Piege deja consigne, reproduit ici.
+
+## LA CABANE GRANDIT : echelle 3,5, la porte devient plus grande que Keepy -- AUCUN rocher n'etait en collision, MESURE et pas suppose (29 aout 2026)
+
+Branche `claude/keepy-cabin-scale-up`, partie de `staging` (`e5b1160`).
+Regle n°1 verifiee AU DEBUT : `git fetch --all --prune`, tri des refs
+distantes par date -- `origin/staging` est la ref la plus recente du depot,
+`origin/main` (`9031e5e`) strictement en retard, **aucune session
+concurrente**. Position de la cabane **INCHANGEE**
+`(-17,43 ; 0 ; 28,18)` -- seule l'echelle bouge.
+
+Retour du lot precedent, qui avait fixe l'echelle a 1,0 avec un verdict GO
+mais l'avait publiee comme « la vraie question » : a 1,0 la cabane faisait
+1,59 de haut contre un Keepy de 1,35, et son ouverture etait **plus petite
+que lui**. Ce lot repond a cette question, sans re-arbitrer le placement.
+
+### ⚠️ RECON : ZERO ROCHER, ZERO ARBRE EN COLLISION -- la formule du brief donne un ensemble vide
+
+Le brief anticipait une suppression de rochers genants. **La mesure dit le
+contraire.** Layout parse (217 entrees a l'epoque), tous les voisins a
+moins de 15 u du centre releves avec leur type, leur position et leur
+propre `scale`, puis testes contre la formule exacte du brief --
+`distance_centre - footprint_voisin < rayon_cabine`, avec
+**rayon_cabine = 1,228043 (circonscrit MESURE, pas le 1,25 arrondi) x
+3,5 = 4,298 u** :
+
+| pire cas | type | position | distance | footprint | marge |
+|---|---|---|---|---|---|
+| **idx 135** | rock | (-19,65 ; 22,47) | 6,126 | 0,437 | **+1,391 (clear)** |
+| idx 114 | tree | (-11,92 ; 23,68) | 7,114 | 0,257 | +2,559 (clear) |
+| idx 111 | tree | (-18,02 ; 20,96) | 7,244 | 0,212 | +2,733 (clear) |
+
+Balayage refait a 20 u de rayon (pas seulement 15) pour couvrir toute
+collision geometriquement possible (rayon cabine + plus grand footprint de
+la famille, landmark 1,66) : **aucun nouveau cas**. Meme en substituant la
+constante arrondie `CABIN_FOOTPRINT_RADIUS = 1,25` (donc rayon 4,375 au
+lieu de 4,298), le pire cas (idx 135) garde une marge de **+1,314 u** --
+toujours clair. **Aucune entree n'est retiree du layout.** Le doorstep
+(voir plus bas, desormais a z = 33,255) a aussi ete verifie sans voisin a
+moins de 5 u. **Aucun conflit d'arbre a signaler non plus** -- rien a
+arbitrer.
+
+### `CABIN_DOOR_REACH` ne scalait PAS -- bug latent ferme avant qu'il morde
+
+`CABIN_FOOTPRINT_RADIUS` etait deja correctement mis a l'echelle par
+`ground_footprints()` (`FOOTPRINT_RADIUS[type] * uniform`), verifie par
+lecture et non suppose. Mais le pas de la porte, lui, etait calcule avec
+`CABIN_DOOR_REACH` **litteral**, jamais multiplie par `uniform` :
+`var reach := Vector3(0.0, 0.0, CABIN_DOOR_REACH)`. A l'echelle 1,0
+c'etait invisible (juste assez au-dela du footprint de 1,25). A 3,5 ca
+aurait plante la porte a `z = 28,18 + 1,45 = 29,63`, **soit 3,68 u a
+l'interieur du volume desormais circonscrit a 4,3 u** -- un pas de porte
+DANS le tronc.
+
+**Corrige a la source** : `reach := Vector3(0.0, 0.0, CABIN_DOOR_REACH *
+uniform)`, dans `_build()`, la meme regle que `ground_footprints()` deja
+appliquee au footprint. Porte livree : **(-17,43 ; 0 ; 33,255)**
+(28,18 + 1,45×3,5 = 33,255), verifiee sur la scene construite par
+`CabinProbe` PHASE B au dixieme de millimetre pres, et confirmee ne
+recouvrir aucun voisin dans un rayon de 5 u.
+
+### `CabinProbe.gd` : deux hypotheses de taille codees en dur, corrigees plutot que contournees
+
+Deux assertions PHASE B supposaient l'echelle 1,0 explicitement et
+auraient echoue sur du code par ailleurs correct :
+
+- **La taille AABB attendue** (`1,8929 x 1,5901`) est devenue
+  `1,8929 * _EXPECTED_SCALE` / `1,5901 * _EXPECTED_SCALE` -- une seule
+  source (`_EXPECTED_SCALE = 3,5`), jamais un second litteral pour « la
+  taille a 3,5 ».
+- **Le controle de footprint** (`CABIN_FOOTPRINT_RADIUS >= half`)
+  comparait une constante non-scalee au demi-empan d'un mesh CONSTRUIT
+  (donc deja mis a l'echelle). Corrige en lisant `root.scale.x` --
+  AS-BUILT, la meme discipline que le reste de ce fichier applique deja a
+  `pond_centre()`/`islets()` -- plutot que de dupliquer l'entree du
+  layout dans la sonde.
+
+`_EXPECTED_POSITION` reste inchangee, `_EXPECTED_DOOR` mise a jour a
+`(-17,43 ; 0 ; 33,255)`.
+
+### Rendu offscreen -- la porte est desormais NETTEMENT plus grande que Keepy
+
+Capture jetable (`xvfb-run --rendering-driver opengl3`, supprimee avant
+commit), Keepy pose au pas de la porte puis recule de 3 u sur le meme
+axe : **l'ouverture voutee de la cabane est plusieurs fois la hauteur de
+Keepy**, le mobilier interieur (lit, etageres, table, enseigne suspendue)
+reste lisible, et le hibou du lot precedent est visible au fond a droite
+-- confirmation visuelle directe que l'inversion « maison plus petite que
+son ouverture apparente » du lot precedent est fermee.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre le `Content-Length` --
+50 276 070 et 1 073 228 327 octets, aucune troncature). Import headless
+**exit 0** ; boot de `HubWorld.tscn` **exit 0, 0 erreur, 0
+`push_warning`** -- la confirmation A L'EXECUTION qu'aucune entree n'est
+devenue inatteignable ni en collision ; export Web release **exit 0, 0
+erreur**. `index.wasm` **35 376 909 / md5
+af4a8fc2925d992348eb30deeeb54360**, `index.js` md5
+**4e08904b1b7107858246af44b602067b** -- identiques au fingerprint
+permanent de tout lot qui ne touche pas le code moteur, coherent : ce
+lot ne change qu'un flottant de layout et deux fichiers GDScript.
+`index.pck` **30 228 512** (marqueur, jamais preuve d'identite -- l'ecart
+de quelques dizaines d'octets avec le lot precedent est l'instabilite deja
+documentee). Piege payload tenu : **0** ligne `Storing File` pour
+`scripts/dev`, `assets_source`, `docs`, `web`, `build` ou `firebase.json`
+sur 240 lignes.
+
+**Sondes, toutes exit 0** : `CabinProbe` (**42/42**, reproductible au
+chiffre pres avec le brief), `AssetContractAudit` (12/12 visuels, 0/10
+colliders deplaces), `DeathModelAudit`, `ChargerShapeProbe`, `OwlProbe`,
+`OwlFlightProbe`, `DivingBoardProbe`, `WaterImpactProbe`, `WaterTintProbe`,
+`SeesawProbe`, `LakeZoneProbe`, `StreamRideProbe` (**37/37**),
+`TurnstileProbe` (**0 echec** -- l'echec pre-existant deja consigne pour
+cette sonde ne s'est pas reproduit ici). **PHASE UNTOUCHED** de
+`CabinProbe` confirme les 3 portails, les 3 planches, l'unique hibou,
+tourniquet, balancoire et bateau intacts, et le voisin de tap le plus
+proche (la balancoire, 18,20 u) largement hors du rayon de la porte.
+`ProbeTimeoutAudit` **exit 0, 58 sondes scenes** -- identique a la
+baseline, confirmant qu'aucune sonde jetable n'a fuite dans le commit.
+Compte de draw nodes hors portails **inchange sur toutes les sondes qui le
+mesurent (129)** : ce lot ne touche a aucune geometrie, seulement a un
+facteur d'echelle sur un noeud existant.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que 3,5 est le bon cran**, ou trop grand maintenant a l'inverse
+   -- la mesure dit seulement que la porte franchit desormais la taille de
+   Keepy, pas qu'elle est BIEN calibree a l'oeil sur un telephone.
+2. Le `.pck` reste a 30,2 Mo (inchange par ce lot -- la geometrie/texture
+   de la cabane n'a pas bouge, seul un scalaire de placement). La normal
+   map 8,6 Mo signalee comme morte au lot precedent reste non retiree,
+   hors perimetre ici aussi.
+3. La cabane reste structurellement derriere le spawn (camera qui ne
+   lacete jamais) -- inchange.
+
+### Deploiement staging de la cabane agrandie (palier 1, automatique)
+
+`main` **NON touche** (`origin/main` reste `9031e5e`) : palier 2, gate
+Mathieu apres validation device sur `keepy-staging.vercel.app` -- tap sur
+le pas de porte, entree/sortie a la nouvelle taille.
