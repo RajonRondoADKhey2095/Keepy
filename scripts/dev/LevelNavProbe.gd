@@ -25,6 +25,14 @@ extends Node
 
 const TEST_SCENE: String = "res://scenes/dev/LevelNavTest.tscn"
 
+## How long a fade is given to LAND before the probe calls it broken.
+##
+## A real cap, not a formality: a fade that never arrives still fails, it
+## just fails after this long instead of after a fixed number of frames.
+## LevelCamera needs ~0.68 s to snap from either end at FADE_LAMBDA 9.0, so
+## this is roughly six times the budget the mechanism actually wants.
+const FADE_SETTLE_BUDGET_MS: int = 4000
+
 var _failures: int = 0
 var _checks: int = 0
 var _world: LevelNavTestWorld = null
@@ -469,7 +477,7 @@ func _phase_occlusion() -> void:
 		"the ground he stands on is never reported as blocking")
 
 	# ---- IT FADES.
-	await _pump(90)
+	await _settle_alpha(upper_slab, LevelCamera.OCCLUDED_ALPHA)
 	var faded := upper_slab.material_override as StandardMaterial3D
 	_ok(faded != null and faded.albedo_color.a < 0.5,
 		"an occluding slab fades (alpha %.3f)" % [0.0 if faded == null else faded.albedo_color.a])
@@ -511,7 +519,7 @@ func _phase_occlusion() -> void:
 	_camera.refresh_occlusion()
 	_ok(_camera.is_occluding(marked),
 		"BLIND CHECK: the shared-material stand-in is genuinely in the way")
-	await _pump(60)
+	await _settle_alpha(marked, LevelCamera.OCCLUDED_ALPHA)
 	var marked_material := marked.material_override as StandardMaterial3D
 	_ok(marked_material != null and marked_material.albedo_color.a < 0.5,
 		"it fades (alpha %.3f)"
@@ -532,7 +540,7 @@ func _phase_occlusion() -> void:
 	await _place_walker(0.0, 6.0)
 	_ok(not _camera.is_occluding(upper_slab),
 		"stepped clear, the slab is no longer reported as blocking")
-	await _pump(90)
+	await _settle_alpha(upper_slab, 1.0)
 	var clear := upper_slab.material_override as StandardMaterial3D
 	_ok(clear != null and is_equal_approx(clear.albedo_color.a, 1.0),
 		"and it returns to fully opaque (alpha %.3f)"
@@ -559,8 +567,29 @@ func _place_walker(x: float, z: float) -> void:
 	await get_tree().process_frame
 	_camera.refresh_occlusion()
 
-func _pump(frames: int) -> void:
-	for _i in frames:
+## Waits for a fade to actually LAND, on a wall-clock budget.
+##
+## ⚠️ THE FRAME COUNT WAS THE DEFECT, AND IT COST A LATER SESSION A
+## MISDIAGNOSIS. LevelCamera converges by exp(-FADE_LAMBDA * delta), so how
+## far a fade has travelled depends on ELAPSED TIME and never on how many
+## frames went by -- a fixed `_pump(90)` therefore asserts something
+## different on every machine. Measured here: 45 frames bought 914 ms on a
+## busy box and 493 ms on a quieter one, and the release lands exactly on
+## 1.0 only past ~0.68 s. A later session ran this file, got the two
+## failures below at alpha 0.997, and recorded them as pre-existing noise
+## that were "not mine". They were neither pre-existing nor noise: they
+## were this, and the pair is reproducible on demand by shortening the
+## pump (25 frames here => the same two failures at alpha 0.991).
+##
+## Takes the NODE and not the material: on the first fade the override does
+## not exist yet -- LevelCamera creates it -- so a helper handed a material
+## up front would be handed null.
+func _settle_alpha(node: MeshInstance3D, wanted: float) -> void:
+	var deadline: int = Time.get_ticks_msec() + FADE_SETTLE_BUDGET_MS
+	while Time.get_ticks_msec() < deadline:
+		var material := node.material_override as StandardMaterial3D
+		if material != null and is_equal_approx(material.albedo_color.a, wanted):
+			return
 		await get_tree().process_frame
 
 ## A one-unit box carrying a caller-supplied material. Deliberately handed
