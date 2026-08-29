@@ -21751,3 +21751,54 @@ bateau.
 4. **La mezzanine est un plancher DESSINE, pas une collision** (limite
    ci-dessus) -- les etageres se traversent, comme les arbres du plateau.
 5. **Aucun son, aucune particule, aucun asset neuf** : hors perimetre.
+
+### Deploiement staging de l'interieur de la cabane (palier 1, automatique)
+
+`staging` **`28bf6a5`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `4bb3865a` des deux cotes ET `git diff` vide,
+verifie AVANT le push). CI run **#320** (id 33253871453) **verte** --
+`Import project resources` 13:00:19 -> 13:03:37, **`Export Web build`
+13:03:37 -> 13:03:43**, `Verify export output` succes, `Deploy to Vercel
+[STAGING -- staging]` **succes** 13:03:58 -> 13:04:12, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`9031e5e`, verifie apres le push) : palier 2, gate Mathieu apres validation
+device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs independants
+et aux DEUX bouts -- les QUATRE lectures en `x-vercel-cache: MISS` /
+`age: 0`**, les valeurs "avant" ayant ete relevees AVANT le merge :
+
+| marqueur | avant | apres (ce lot, run #320) |
+|---|---|---|
+| `CACHE_VERSION` | `1788002366` = **11:19:26 UTC** | **`1788008622` = 13:03:42 UTC** |
+| `index.pck` servi | **30 255 392** | **30 264 448** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(13:03:37 -> 13:03:43) : l'alias sert bien ce build. C'est la forme la plus
+forte que ce fichier documente -- deux marqueurs, quatre lectures fraiches,
+la bascule prouvee dans les deux sens et pas deduite du log.
+
+⚠️ **`index.pck` prend une valeur de plus pour le meme contenu** : 30 264 416
+a l'export local propre contre 30 264 448 servi, **32 octets d'ecart**.
+Enieme illustration de l'instabilite deja consignee -- marqueur « nouveau
+build », **jamais** preuve d'identite. `index.wasm` (**35 376 909**, md5
+`af4a8fc2925d992348eb30deeeb54360`) est identique des deux cotes et c'est lui
+la preuve d'identite, coherent avec un lot qui ne touche que du GDScript et
+deux scenes.
+
+⚠️ **L'API GitHub Actions N'ETAIT PAS perimee sur ce run, et c'est note dans
+ce sens-la** : deux appels successifs ont rendu une reponse byte-identique
+figee sur « Import project resources », ce qui en a exactement la forme --
+mais l'horloge disait 13:02:46 pour un import demarre a 13:00:19, et cet
+import a reellement dure **3 min 18 s**. « L'etape est simplement lente »
+doit etre ecarte avant d'accuser l'API, dans les deux sens.
+
+⚠️ **RAPPEL, et il vaut plus ici que sur la plupart des lots : LA
+CALIBRATION VISUELLE DE L'INTERIEUR NE PEUT ETRE VALIDEE DEFINITIVEMENT QUE
+SUR DEVICE**, meme reserve qu'au lot occlusion. Le rendu headless confirme la
+MECANIQUE (les plans sont a la hauteur mesuree, le marcheur s'y tient, la
+camera cadre les deux etages, le tap route, la sortie revient sur le pas de
+la porte) ; il ne confirme pas le RESSENTI -- tout ce qui precede est rendu
+par llvmpipe sous xvfb via le backend `opengl3` de BUREAU, contre WebGL2 sous
+Safari.
