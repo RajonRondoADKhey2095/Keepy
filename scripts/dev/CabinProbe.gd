@@ -91,6 +91,8 @@ func _ready() -> void:
 	dl.abort_if_exceeded()
 	await _phase_t_no_stray_entry(hub, props, keepy, tap, camera)
 	dl.abort_if_exceeded()
+	await _phase_f_no_funnel(hub, props, keepy, tap, camera)
+	dl.abort_if_exceeded()
 	_phase_untouched(props)
 	dl.abort_if_exceeded()
 
@@ -382,33 +384,36 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	# say "a person standing clear of a doorway" rather than "outside
 	# whatever the radius happens to be".
 	#
-	# FILTERED THROUGH THE REGION, and that filter is load-bearing rather
-	# than defensive. _handle_point clamps to the walkable shape BEFORE it
-	# picks a signal, so a point on ground that does not exist is not the
-	# point that gets tested -- it is dragged to the nearest place that
-	# does, and asserting on where it LANDED would be asserting about the
-	# clamp. Measured here: at this scale the doorstep sits 0.65 u from the
-	# plateau's north edge, so "two paces back from the door" is off the
-	# map entirely, comes back 0.65 u from the doorstep, and MEANS the
-	# cabin -- correctly, because 0.65 u from a doorway is at it.
+	# ⚠️ THE REGION FILTER THAT USED TO STAND HERE IS GONE, AND SO IS THE
+	# ARGUMENT FOR IT. It skipped any candidate on ground that does not
+	# exist, reasoning that _handle_point clamps before it picks a signal
+	# so the tested point "comes back 0.65 u from the doorstep and MEANS
+	# the cabin -- correctly, because 0.65 u from a doorway is at it".
+	#
+	# That reasoning excused the third stray-entry cause and removed the
+	# only case that would have caught it. The point is not 0.65 u from the
+	# door because the player aimed there: it is 0.65 u from the door
+	# because an UNBOUNDED half-plane of off-map ground was collapsed onto
+	# the 2.246 u strip of the north edge that lies inside the doorstep
+	# disc. Measured on the shipped layout, standing at the door, 15.26% of
+	# all visible ground meant "go inside" and 89.2% of it aimed at ground
+	# that is not there -- from as far as 49.8 u away.
+	#
+	# _handle_point now decides MEANING on the raw aim and only the
+	# DESTINATION on the clamp, so an off-map tap is a walking tap again
+	# and every candidate below can be asserted rather than skipped.
 	var away := 2.0
 	var candidates: Array = [
 		[Vector3(door.x, 0.0, door.z + away), "two paces BACK from the door"],
 		[Vector3(door.x + away, 0.0, door.z), "one pace to the SIDE of it"],
 		[Vector3(door.x - away, 0.0, door.z), "one pace to the OTHER side"],
 	]
-	var probes: Array = []
+	var probes: Array = candidates
 	for candidate in candidates:
 		var where: Vector3 = candidate[0]
-		if HubRegion.contains(where):
-			probes.append(candidate)
-		else:
-			print("  ..    skipped %s -- that ground does not exist (clamps to %.2f u from the door)"
+		if not HubRegion.contains(where):
+			print("  ..    %s is off the map, and clamps to %.2f u from the door -- asserted anyway"
 					% [candidate[1], HubRegion.clamp_to(where).distance_to(door)])
-	# And it can never go vacuous by skipping its way to nothing.
-	_check(probes.size() >= 2,
-			"at least two walking taps were on real ground (%d of %d)"
-					% [probes.size(), candidates.size()])
 
 	# --- which SIGNAL does each tap become? ------------------------------
 	var saw: Array[StringName] = []
@@ -451,6 +456,112 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 		frames += 1
 	_check(not keepy.is_in_cabin(),
 			"a walking tap one pace to the side left him OUTDOORS (%d frames)" % frames)
+	_check(keepy.body_slot().visible, "and visible")
+	await _settle(keepy)
+
+## PHASE F -- THE CLAMP MUST NOT BE A FUNNEL INTO THE DOORSTEP.
+##
+## The third stray-entry cause, and the one no radius could have fixed.
+## _handle_point resolves a tap in two steps that used to share one
+## variable: clamp_to() answers "where can he stand", and each prop test
+## answers "what did the player mean". Reading the second off the first
+## turns the clamp into a FUNNEL -- every tap on ground that does not exist
+## is dragged to the nearest ground that does, and a prop sitting near that
+## edge starts answering for the whole half-plane behind it.
+##
+## The cabin is the only prop on this plateau exposed to it, measured
+## rather than assumed: its doorstep stands 0.655 u inside the north edge,
+## while the boat, the owl and the three ladder feet are 6.85 u to
+## infinitely far from any off-map ground and NOT ONE off-map point funnels
+## into any of them.
+##
+## ⚠️ THE FUNNEL IS ASSERTED TO EXIST BEFORE ANYTHING IS ASKED TO RESIST
+## IT. Every refusal below would pass gratuitously against a layout where
+## the clamp simply left these points far from the door -- the phase would
+## then be measuring the geometry rather than the fix. So it first proves
+## that these aims are off the map AND that the clamp still drags them onto
+## the doorstep, and only then requires that they mean a walk.
+func _phase_f_no_funnel(hub: Node, props: HubBuilder, keepy: KeepyHopper,
+		tap: HubTapInput, camera: Camera3D) -> void:
+	print("")
+	print("--- PHASE F: off-map taps behind the cabin are walks, not entries ---")
+	if props.cabins().is_empty():
+		return
+	var door: Vector3 = (props.cabins()[0])["door"]
+	var container: SubViewportContainer = hub.get_node("WorldViewport") as SubViewportContainer
+	var rect := container.get_global_rect()
+	_check(rect.size.x > 0.0 and rect.size.y > 0.0,
+			"the container has a real rect %s (run under xvfb, not --headless)" % rect)
+	if rect.size.x <= 0.0:
+		return
+
+	await _settle(keepy)
+	# Placed and the camera SNAPPED, rather than left wherever the phase
+	# before happened to end: a half-converged camera aims every screen
+	# point below from somewhere no player stands.
+	keepy.global_position = Vector3(door.x, 0.0, door.z)
+	camera.global_position = Vector3(door.x, 0.0, door.z) + HubCamera.OFFSET
+	for i in 4:
+		await get_tree().process_frame
+
+	# --- the funnel is real, or the refusals below mean nothing ---------
+	var behind: Array[float] = [2.0, 3.0, 4.0]
+	for back in behind:
+		var aim := Vector3(door.x, 0.0, door.z + back)
+		_check(not HubRegion.contains(aim),
+				"%.0f u behind the door is off the map" % back)
+		_check(HubRegion.clamp_to(aim).distance_to(door) <= HubWorld.CABIN_TAP_RADIUS,
+				"  and the clamp still drags it onto the doorstep (%.3f u, radius %.2f)"
+						% [HubRegion.clamp_to(aim).distance_to(door), HubWorld.CABIN_TAP_RADIUS])
+
+	# --- which SIGNAL does each become? ---------------------------------
+	var saw: Array[StringName] = []
+	var on_cabin := func(_p: Vector3) -> void: saw.append(&"cabin")
+	var on_ground := func(_p: Vector3) -> void: saw.append(&"ground")
+	tap.tapped_cabin.connect(on_cabin)
+	tap.tapped_ground.connect(on_ground)
+	tap.tapped_cabin.disconnect(Callable(hub, "_on_tapped_cabin"))
+	tap.tapped_ground.disconnect(Callable(hub, "_on_tapped_ground"))
+
+	saw.clear()
+	tap._handle_point(_to_screen(container, camera, door))
+	_check(saw.size() == 1 and saw[0] == &"cabin",
+			"BLIND CHECK: a tap ON the doorstep still means the cabin (%s)" % str(saw))
+
+	for back in behind:
+		var aim := Vector3(door.x, 0.0, door.z + back)
+		var screen := _to_screen(container, camera, aim)
+		if camera.is_position_behind(aim) or not rect.has_point(screen):
+			print("  ..    %.0f u behind is not on screen from the doorstep -- not measured" % back)
+			continue
+		saw.clear()
+		tap._handle_point(screen)
+		_check(saw.size() == 1 and saw[0] == &"ground",
+				"a tap %.0f u BEHIND the cabin is a walking tap, not an entry (%s)"
+						% [back, str(saw)])
+
+	tap.tapped_cabin.connect(Callable(hub, "_on_tapped_cabin"))
+	tap.tapped_ground.connect(Callable(hub, "_on_tapped_ground"))
+	tap.tapped_cabin.disconnect(on_cabin)
+	tap.tapped_ground.disconnect(on_ground)
+
+	# --- and end to end, through the real routing -----------------------
+	# The whole report, in one assertion: aim past the cabin, and be
+	# standing outdoors when the walk is over.
+	await _settle(keepy)
+	keepy.global_position = Vector3(door.x, 0.0, door.z - 2.0)
+	camera.global_position = Vector3(door.x, 0.0, door.z - 2.0) + HubCamera.OFFSET
+	for i in 4:
+		await get_tree().process_frame
+	var past := Vector3(door.x, 0.0, door.z + 3.0)
+	tap._handle_point(_to_screen(container, camera, past))
+	var frames: int = 0
+	while keepy.is_hopping() and frames < 900:
+		await get_tree().process_frame
+		frames += 1
+	_check(not keepy.is_in_cabin(),
+			"aiming 3 u PAST the cabin left him outdoors (%d frames, %.3f u from the door)"
+					% [frames, Vector3(keepy.global_position.x, 0.0, keepy.global_position.z).distance_to(door)])
 	_check(keepy.body_slot().visible, "and visible")
 	await _settle(keepy)
 

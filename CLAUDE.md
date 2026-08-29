@@ -20731,3 +20731,183 @@ exactement comme un tap ignore.
    d'avant la cabane, et sur un jeu web mobile ca merite d'etre su.
 5. **Rien ici n'est un rendu device** : llvmpipe sous xvfb via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+## LA CABANE, TROISIEME CAUSE : le CLAMP est un ENTONNOIR -- l'assertion qui l'avait trouvee avait ete FAITE TAIRE (29 aout 2026)
+
+Branche `claude/keepy-cabin-trigger-diag-gllj3v`, partie de `staging`
+(`24de82f`). Retour device apres le lot precedent : « c'est different
+maintenant, mais toujours pas net ». Le symptome a change sans disparaitre,
+donc une troisieme cause restait. **DEUX fichiers de jeu touches**, et
+`CABIN_TAP_RADIUS`, `CABIN_DOOR_FACE_DEPTH`, `CABIN_DOOR_STANDOFF` et
+`CABIN_ARRIVE_RADIUS` **ne sont dans le diff d'aucun des deux** : elles
+avaient ete derivees, pas devinees, et rien ici ne prouve qu'une seule soit
+encore fautive.
+
+### ⚠️ LES DEUX HYPOTHESES DU BRIEF SONT REFUTEES PAR MESURE
+
+Aucun fix n'a ete propose avant que le symptome soit reproduit dans une
+sonde. Les deux pistes que le brief nommait ont ete exercees sur le code
+livre et **ne produisent aucune entree** :
+
+| piste | mesure |
+|---|---|
+| un tap fait PENDANT un hop en cours | 2 taps enchaines, le second a `hopping=true` -> `in_cabin=false`, **0 entree** |
+| une chaine de hops TRAVERSANT le disque | approche la plus proche **0,501 u** (rayon d'arrivee 1,75) -> `in_cabin=false`, **0 entree** |
+
+La raison est structurelle et vaut d'etre dite : `_try_enter_cabin` n'est
+appele que derriere le latch `_entering`, et `_entering` n'est arme que par
+un tap deliberement resolu en `tapped_cabin`. Un atterrissage qui traverse
+le seuil sans cette intention ne peut rien declencher, quelle que soit sa
+proximite. **Le defaut n'a jamais ete du cote de l'ATTERRISSAGE ; il est du
+cote de CE QU'UN TAP VEUT DIRE.**
+
+### LA CAUSE : une seule variable repond a DEUX questions
+
+`_handle_point` resout un tap en deux temps qui partageaient une variable :
+
+```
+clamp_to()   repond  « ou peut-il se TENIR »
+un test prop repond  « qu'est-ce que le joueur a VOULU DIRE »
+```
+
+Lire la seconde sur la premiere fait du clamp un **ENTONNOIR** : tout tap
+sur du sol qui n'existe pas est tire vers le sol le plus proche qui existe,
+et si un prop se trouve pres de ce bord, **tout le demi-plan derriere lui
+se met a signifier ce prop**.
+
+Le seuil de la cabane est a **0,655 u** a l'interieur de l'arete nord
+(`z = 34,345` contre `z = 35,0`), donc une bande de **2,246 u** de cette
+arete tombe **dans** le disque du seuil. Mesure sur la scene livree, sonde
+jetable pilotant le vrai `_handle_point` en fenetre reelle 1080x1920 :
+
+| visee (depuis le seuil) | sur la carte | clampe a | signal AVANT |
+|---|---|---|---|
+| 0,5 u derriere la porte | oui | 0,500 u | `cabin` |
+| **1,5 u derriere** | **non** | **0,655 u** | **`cabin`** |
+| **3,0 u derriere** | **non** | **0,655 u** | **`cabin`** |
+| **5,0 u derriere** | **non** | **0,655 u** | **`cabin`** |
+
+Et le balayage d'ecran, qui est le chiffre qui dit l'ampleur -- **debout au
+seuil, 15,26 % de tout le sol visible voulait dire « entre », et 89,2 % de
+ces pixels visaient du sol qui n'existe pas** ; le tap le plus lointain a
+etre avale visait **49,8 u hors carte**.
+
+### ⚠️ LA CABANE EST LE SEUL PROP EXPOSE, ET C'EST MESURE
+
+C'est ce qui a decide le perimetre du fix plutot qu'une preference. Pour
+chaque point de declenchement du plateau, distance au sol hors-carte le
+plus proche, et nombre de points hors-carte qui s'y deversent :
+
+| prop | position | sol hors-carte le plus proche | entonnoir |
+|---|---|---|---|
+| bateau | (-18,54 ; -0,73) | 16,50 u | **aucun** |
+| perchoir hibou | (-2,70 ; 0,80) | infini | **aucun** |
+| pied d'echelle x3 | (0,49 ; -28,20), (-21,15 ; 3,06), (-15,57 ; -8,57) | 6,85 / 13,90 / 19,45 u | **aucun** |
+| **seuil cabane** | **(-17,43 ; 34,35)** | **0,70 u** | **3 004 points, jusqu'a 49,8 u** |
+
+### LE FIX : le sens vient de la VISEE, la destination reste clampee
+
+`_handle_point` calcule desormais `aim` -- le point brut sur le plan du sol
+-- et **tous les tests de prop l'interrogent lui** ; seule la destination
+emise reste `clamp_to(point)`. Une ligne par prop.
+
+**Ecrit une fois pour les quatre plutot qu'en cas special cabane**, et la
+mesure ci-dessus est ce qui rend ca gratuit : les cinq autres points de
+declenchement sont de 6,85 u a infiniment loin de tout sol hors-carte et
+aucun tap ne s'y deverse, donc leur comportement ne peut pas changer. Le
+regle est ecrite une fois parce que l'entonnoir est une propriete du fait
+d'etre **PRES D'UN BORD**, pas du fait d'etre une cabane -- le prochain prop
+pose pres d'une arete la redecouvrirait.
+
+**AVANT / APRES, meme sonde, memes postes, sujet verifie immobile :**
+
+| debout | AVANT | APRES | pixels SUR la carte | pixels HORS carte |
+|---|---|---|---|---|
+| au seuil | 3 015 (15,26 %) | **443 (2,24 %)** | **327 -> 327** | 2 688 -> **116** |
+| 2 u avant | 2 687 (13,60 %) | **700 (3,54 %)** | **522 -> 522** | 2 165 -> **178** |
+| 4 u avant | 2 140 (10,83 %) | **1 226 (6,20 %)** | **902 -> 902** | 1 238 -> **324** |
+| 8 u avant | 0 | 0 | 0 | 0 |
+
+⚠️ **Le compte SUR LA CARTE est identique a chaque poste** (327 / 522 /
+902), et c'est ca la preuve que le fix ne touche pas au seuil legitime : il
+ne retire que l'entonnoir. Le residu hors-carte (116 / 178 / 324) est la
+lamelle du disque du seuil qui depasse `z = 35` **tout en restant a moins
+de 1,30 u de la porte** -- correctement encore le seuil. Un tap vise 1,0 u
+derriere la porte entre donc toujours, et c'est juste : 1,0 u d'une
+embrasure, on y est.
+
+### ⚠️ L'ASSERTION QUI AVAIT TROUVE CETTE CAUSE AVAIT ETE FAITE TAIRE
+
+C'est le vrai enseignement du lot, et il ne porte pas sur la geometrie.
+`CabinProbe` PHASE T avait **echoue sur ce cas exact** au lot precedent. La
+section « CONSEQUENCE MESUREE ET NON RESOLUE » de ce fichier le raconte
+elle-meme -- « ce qu'une assertion de PHASE T a trouve en echouant sur du
+code CORRECT » -- et conclut que « 0,65 u d'une porte **EST** a la porte,
+la reponse est juste ». La phase a alors ete modifiee pour **filtrer** ses
+points par `HubRegion.contains()` et **sauter** celui-la.
+
+L'assertion avait raison ; le raisonnement qui l'a fait taire avait tort.
+Le point n'est pas a 0,655 u de la porte parce que le joueur a vise la :
+il y est parce qu'un demi-plan hors-carte NON BORNE a ete replie sur une
+bande de 2,246 u. Le filtre est retire, le commentaire qui l'excusait est
+remplace par la mesure, et **les trois candidats de PHASE T sont desormais
+assertes au lieu d'etre sautes**.
+
+**Regle generale, au prix d'un lot** : une sonde qui echoue sur du code
+qu'on croit correct est une question, pas une nuisance. La faire taire par
+un filtre supprime le seul temoin du defaut -- et ici le filtre a survecu
+un lot entier avant que le device le redise.
+
+### `CabinProbe` PHASE F -- ROUGE AVANT VERT, et non vide par construction
+
+Nouvelle phase dediee a l'entonnoir. **Verifiee ROUGE sur l'arbre pre-fix :
+5 echecs** (les 3 refus de PHASE F, celui de PHASE T re-active, et
+l'assertion bout-en-bout), puis **0 echec** apres le fix.
+
+⚠️ **L'ENTONNOIR EST ASSERTE COMME EXISTANT AVANT QU'ON DEMANDE A QUOI QUE
+CE SOIT DE LUI RESISTER.** Chaque refus passerait gratuitement sur un
+layout ou le clamp laisserait simplement ces points loin de la porte -- la
+phase mesurerait alors la geometrie et pas le fix. Elle prouve donc d'abord
+que ces visees sont hors carte **ET** que le clamp les traine encore sur le
+seuil (0,655 u pour un rayon de 1,30), et seulement ensuite exige qu'elles
+signifient une marche. Plus un **BLIND CHECK** : un tap SUR le seuil veut
+toujours dire la cabane, sans quoi les refus ne diraient rien.
+
+Bout-en-bout : viser 3 u au-dela de la cabane le laisse **dehors**, debout
+a 0,655 u de la porte -- c'est-a-dire que « s'approcher pour regarder »
+fonctionne enfin.
+
+### ⚠️ DEUX DEFAUTS DANS MA PROPRE SONDE DE DIAGNOSTIC, publies plutot que lisses
+
+Les deux rapportaient « aucun defaut » en ne mesurant rien, et les deux ont
+ete trouves parce que les chiffres ne se recoupaient pas :
+
+1. **`_settle` appelait `keepy.leave_cabin()` DIRECTEMENT**, ce qui ne
+   restaure jamais le retrait du tap tenu par `HubWorld` -- apres la
+   premiere entree, plus aucun tap ne pouvait signifier la cabane et le
+   balayage lisait **0 pixel**. Un zero qui ressemblait a un fix.
+2. **Le balayage ne coupait que `tapped_ground` et `tapped_cabin`.** Des
+   pixels pres de l'horizon atteignaient encore une **ECHELLE** a travers
+   `HubWorld`, qui emmenait Keepy jusqu'a elle : les postes 2 a 4 etaient
+   mesures depuis le pied d'echelle `(-21,15 ; 3,06)`, dans les DEUX
+   arbres. Une sonde qui deplace son propre sujet ne mesure rien. Le
+   balayage coupe desormais **les quatre** signaux et **verifie que le
+   sujet n'a pas bouge**, sinon il l'imprime au lieu de publier un chiffre.
+
+Meme famille que la troncature de run deja consignee : la parade est de
+**comparer les TAILLES avant les contenus**, et de faire porter a chaque
+mesure la preuve qu'elle a reellement eu lieu.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que l'entree ne se declenche plus QUE sur un tap volontaire sur
+   la porte ?** C'est tout l'objet du lot, et aucune sonde ne le dit : ce
+   qui est mesure ici est llvmpipe sous xvfb via le backend `opengl3` de
+   BUREAU, pas WebGL2 sous Safari.
+2. **Le residu assume** : un tap vise jusqu'a 1,30 u de la porte entre
+   toujours, hors carte compris (116 pixels au seuil). C'est le seuil, et
+   le retrecir serait retoucher `CABIN_TAP_RADIUS`, que rien ne prouve
+   fautif.
+3. **Le seuil est toujours a 0,655 u du bord du plateau.** Le fix supprime
+   l'entonnoir, il ne deplace pas la cabane -- le serrage vient de la
+   POSITION (z = 28,18 pour une arete a 35) et reste signale, pas resolu.
