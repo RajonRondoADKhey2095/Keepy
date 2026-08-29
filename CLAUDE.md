@@ -22327,3 +22327,185 @@ l'horloge du sandbox (`date -u`) a l'en-tete `date` de la reponse HTTP est ce
 qui l'a tranche en une commande**, et c'est le meme reflexe que la regle
 « ne jamais lire un etat de CI sans regarder son horodatage », applique a soi.
 L'API Actions n'etait PAS perimee : l'import a reellement pris 3 min 19 s.
+
+## MERGE EN PRODUCTION : LA CABANE — et les deux portes de debug fermees avant (29 aout 2026)
+
+Branche `claude/keepy-production-merge-cleanup-3iuobt`, partie de `staging`
+(`16e3579`). `staging` (`cc0d105`) -> `main`, commit de merge **`e3cffd5`**,
+`--no-ff`, apres feu vert explicite de Mathieu suivant la validation device
+complete de la chaine cabane (marqueur d'entree, pose sur le lit, sortie par
+tap). **`main` avant : `9031e5e`.**
+
+Regle n°1 verifiee AU DEBUT et par ARBRE, jamais par confiance dans un
+numero annonce : `origin/main` = `9031e5e` et `origin/staging` = `16e3579`
+exactement les SHA du brief, `merge-base(main, staging) = main` — **`staging`
+est un strict sur-ensemble**, `staging..main` VIDE, aucune session
+concurrente, aucun commit `.glb` brut a signaler cette fois. Arbre du merge
+**byte-identique a `origin/staging`** (meme hash `9043a2c8`, `git diff` vide),
+verifie AVANT le push : ce qui part en prod est litteralement l'arbre valide.
+
+**Perimetre du merge : 40 fichiers**, la chaine cabane complete (install du
+`.glb`, les trois causes d'entree parasite, echelle 11.0, interieur jouable,
+occlusion camera, marqueur d'entree, pose couchee) plus le noyau de
+navigation `scripts/nav/` — **garde, reutilise par la cabane, et sans
+migration du hub**, decision actee et non rouverte ici.
+
+### Ce que ce lot RETIRE, et ce qu'il garde deliberement
+
+Les deux boutons de debug etaient ecrits pour ressortir, et **chacun le
+disait dans son propre commentaire** — ce lot est celui-la.
+
+* **`"Test nav (dev)"`** — aux trois sites exacts que son commentaire
+  nommait : le noeud de `HubWorld.tscn`, le `@onready`, la connexion de
+  signal et `_on_fallback_navtest()`. ⚠️ **`scripts/nav/` et
+  `scenes/dev/LevelNavTest.tscn` sont CONSERVES** : la cabane est batie sur
+  ce noyau, et le banc qui l'exerce vaut d'etre garde. Seule la **porte
+  joueur** est fermee.
+* **`"< Sortir"`** — le noeud, son `StyleBoxFlat` devenu orphelin
+  (`load_steps` 6 -> 5), le `@onready`, la connexion et
+  `_on_exit_pressed()`. **`_leave_to_hub()` reste** : la porte en est le
+  seul appelant restant, et « ce que partir veut dire » garde un seul foyer.
+
+⚠️ **La note architecturale accrochee a `_on_exit_pressed()` est DEPLACEE sur
+`_leave_to_hub()`, pas supprimee avec le wrapper** — elle documente pourquoi
+rien du pas de porte n'est calcule dans cette scene, c'est-a-dire
+l'independance totale de ce fichier vis-a-vis du plateau. Ce fait survit au
+bouton. `LevelNavTestWorld` disait dans son propre en-tete que le bouton du
+hub y menait : **il n'y mene plus, donc il ne le dit plus.**
+
+### ⚠️ TROIS PREMISSES DU BRIEF TOMBENT A LA MESURE
+
+1. **« CabinProbe / LevelNavProbe dependent de ces deux boutons » — FAUX.**
+   `grep` sur les deux sondes : **zero** occurrence de `ExitButton`,
+   `_exit_button`, `_on_exit_pressed`, `NavTestButton`, `navtest` ou
+   `"Test nav"`. Aucune assertion a retirer — la tache 3 de
+   l'implementation etait **un no-op**, et c'est dit plutot que presente
+   comme un travail fait.
+2. **« Les scripts/scenes de test resteront hors du `.pck` s'ils ne sont
+   plus references » — FAUX, et MESURE plutot que suppose.**
+   `export_filter="all_resources"` packe **toute** ressource, referencee ou
+   non, et `scenes/dev/*` n'est PAS dans l'`exclude_filter` (qui ne couvre
+   que `scripts/dev/*`, `assets_source/*`, `docs/*`, `web/*`,
+   `firebase.json`). Le log `savepack` porte **4 lignes `Storing File`** pour
+   le banc : `LevelNavTestWorld.gdc`, `LevelNavTest.scn`, et leurs deux
+   `.remap`. **Le retrait du bouton ne le depacke pas.** C'est exactement le
+   piege payload deja consigne cinq fois dans ce fichier.
+   ⚠️ **Cout mesure : ~6,7 Ko de `.scn` plus son `.gdc`, sur un `.pck` de
+   30 274 320 octets — de l'ordre de 0,04 %.** **NON corrige, et c'est un
+   choix** : toucher `export_presets.cfg` sur le merge le plus sensible du
+   projet est un changement de configuration de build que rien n'a valide
+   sur device, pour recuperer un dix-millieme du poids. Le banc est **inerte
+   et injoignable** (aucun chemin de code livre ne l'ouvre) — c'est la
+   propriete qui compte pour la production, et elle est acquise. A trancher
+   dans son propre lot si le poids devient un sujet.
+3. **« Echecs pre-existants a reconfirmer (LevelNavProbe occlusion, Seesaw,
+   Turnstile) » — IL N'Y EN A AUCUN.** Les trois sont **vertes, 0 echec**,
+   sur la branche ET sur `origin/staging` en worktree separe.
+   `StreamRideProbe`, documentee rouge a un lot anterieur, est elle aussi
+   **37 checks / 0 echec**. Il n'y avait donc rien a reconfirmer ni a
+   epargner : **tout est vert des deux cotes.**
+
+### ⚠️ LE DEFAUT DE PORTE PRE-EXISTANT : confirme, NON aggrave, NON corrige
+
+Confirme dans le code plutot que suppose. `&"door"` appelle
+`_walker.hop_to(destination)` **puis** arme `_exit_pending` ; une marche de
+longueur nulle se termine par `became_idle` et **jamais** `hop_landed` (le
+commentaire du lit le dit, et c'est pourquoi le lit — lui — porte un
+`_try_rest()` immediat). **Taper la porte en s'y tenant deja n'a donc aucun
+effet et laisse l'intention armee.**
+
+⚠️ **Mais ce n'est PAS un soft-lock, et le retrait du bouton n'en cree pas
+un** — verifie sur le chemin de recuperation et pas seulement plaide :
+taper le sol ailleurs passe par la branche `_:`, qui **efface
+`_exit_pending`** ; revenir et taper la porte a distance produit un vrai
+atterrissage, donc une sortie. Le cout reel du defaut est **un tap perdu**
+quand on est deja sur le pas de porte, pas un enfermement. **Hors perimetre,
+non corrige ici** — c'est son propre lot, comme le brief le demande.
+
+### Ce qui est PROUVE de l'absence des deux boutons, et ce qui ne l'est PAS
+
+⚠️ **Le canal `.gdc` du `.pck` n'est PAS greppable, et un BLIND CHECK l'a
+prouve avant que le zero soit compte.** `_on_fallback_navtest` et
+`_on_exit_pressed` rendent **0** occurrence dans le `.pck` — mais
+`_on_fallback_battle`, `_leave_to_hub`, `_try_rest` et `_on_hop_landed`, qui
+**survivent tous**, rendent **0** eux aussi. **Ces zeros-la ne veulent donc
+rien dire** et ne sont pas offerts comme preuve : une assertion d'absence
+passe gratuitement quand le canal ne voit rien. C'est la discipline de blind
+check deja etablie par `SeesawProbe`/`TurnstileProbe`, appliquee a ma propre
+mesure.
+
+Ce qui EST une preuve, sur un canal **demontre greppable** (`"Keepy Battle"`,
+un libelle de `.tscn` qui survit, rend **2**) :
+
+| chaine | dans le `.pck` |
+|---|---|
+| `"Test nav (dev)"` | **0** |
+| `"NavTestButton"` | **0** |
+| `"< Sortir"` | **0** |
+| `"ExitButton"` | **0** |
+| *(temoin)* `"Keepy Battle"` | **2** |
+
+Et la preuve **fonctionnelle**, la seule qui compte vraiment : les deux
+scenes touchees **bootent en headless sans une seule erreur de noeud**. Un
+`@onready` laisse pendant sur un noeud supprime rendrait `null` puis
+echouerait sur `.pressed.connect()` — un bouton qui n'existe pas dans la
+scene ne peut de toute facon pas etre presse.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature silencieuse).
+Import headless **exit 0, 36 `.scn`, 0 erreur** (import complet verifie des
+deux cotes, pas suppose). Export Web release **exit 0, 0 erreur GDScript**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** — **identiques au fingerprint
+permanent** de tout lot qui ne touche pas le code moteur, ce qu'un retrait de
+deux boutons est. **Piege payload tenu** : sur **264** lignes `Storing File`,
+**0** pour `scripts/dev`, `assets_source`, `docs`, `web/` ou `firebase.json`.
+
+**Sondes, diffees contre `origin/staging` en worktree separe** (imports
+verifies complets des deux cotes, 36 `.scn`), graine 20260806,
+`--fixed-fps 60` :
+
+| sonde | verdict |
+|---|---|
+| **`CabinProbe`** | **0 echec — BYTE-IDENTIQUE sur les DEUX flux** |
+| **`LevelNavProbe`** | **77 checks, 0 echec — BYTE-IDENTIQUE** |
+| `AssetContractAudit` | 12/12 visuels, **0/10 colliders deplaces**, identique |
+| `DeathModelAudit` | identique |
+| `ChargerShapeProbe` | **BYTE-IDENTIQUE sur les deux flux** |
+| `ProbeTimeoutAudit` | **BYTE-IDENTIQUE**, **59 sondes scenes des DEUX cotes** |
+
+⚠️ **`--fixed-fps 60` N'EST PAS OPTIONNEL ICI, et l'oublier fabrique un faux
+diff.** Le premier passage de `LevelNavProbe` sans ce flag sortait
+**different** des deux cotes — 20 vs 18 frames de marche, 71 vs 64 pour la
+traversee, un pic d'arc a 0,599 contre 0,600. Aucune assertion ne bougeait :
+c'etaient des **comptes de frames en temps mur**. Avec le flag, byte-identique.
+
+⚠️ **Second faux diff, sur `AssetContractAudit` et `DeathModelAudit`** : leur
+stdout differait, uniquement par des lignes `WARNING: ... invalid UID` **du
+cote BASELINE seul** — un artefact du cache d'UID d'un worktree fraichement
+importe, sans rapport avec ce lot. **Aucune ligne d'assertion ne differe** :
+identiques une fois ces warnings filtres. Meme famille que le faux-rouge par
+import tronque deja consigne, sur un autre canal.
+
+**PHASE UNTOUCHED, tout le plateau, toutes exit 0 et 0 echec** :
+`OwlFlightProbe` (hibou statique + vol), `DivingBoardProbe` (3 plongeoirs),
+`TurnstileProbe` (tourniquet), `SeesawProbe` (balancoire), `StreamRideProbe`
+(bateau, 37 checks), `LakeZoneProbe` (les corps d'eau), `WaterImpactProbe`,
+`WaterTintProbe` — plus les 3 portails, verifies par les sondes qui les
+couvrent.
+
+### Reste ouvert
+
+1. **Validation device en PRODUCTION** sur `keepy-ten.vercel.app` (Safari
+   iPhone, navigation privee) : la cabane fonctionne, et **aucun bouton de
+   debug n'est visible** — ni dans le menu de secours du hub, ni dans la
+   cabane.
+2. **Le defaut de porte** (un tap perdu quand on est deja sur le pas de
+   porte) — confirme, recuperable, non aggrave, **son propre lot**.
+3. **Le banc de nav packe pour ~0,04 %** — inerte et injoignable, a trancher
+   dans son propre lot si le poids devient un sujet.
