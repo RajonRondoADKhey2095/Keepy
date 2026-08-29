@@ -16,10 +16,28 @@ class_name HubRouter
 ## portal to something else entirely (a confirmation, an animation) later
 ## without touching HubPortal.gd.
 
+## ⚠️ THE CABIN IS ROUTED HERE TOO, and it is NOT a portal.
+##
+## It is in this table because this file is "the ONE place that knows a
+## game_id maps to a scene path, and the one place that changes scene", and
+## the cabin became a scene change. Letting HubWorld call
+## change_scene_to_file itself for the one prop that is not a portal would
+## put a second scene-changer in the hub -- which is precisely the thing
+## the header above refuses.
+##
+## What it does NOT share with the three portals is the way it is REACHED.
+## A portal is entered by LANDING on it, and a landing is easy to make by
+## accident -- a hop aimed past a portal flies through its volume -- so the
+## three of them go through HubConfirmDialog first. The cabin is entered by
+## TAPPING ITS DOORSTEP, which is already a deliberate act on a target
+## measured and narrowed for exactly that reason, so it routes straight
+## through with no question asked. That difference is in HubWorld, where
+## the decision to route is taken; the table itself does not care.
 const ROUTES: Dictionary = {
 	&"chased": "res://scenes/TitleScreen.tscn",
 	&"quizz": "res://scenes/QuizzHomeScreen.tscn",
 	&"battle": "res://scenes/Battle.tscn",
+	&"cabin": "res://scenes/CabinInterior.tscn",
 }
 
 ## Guards against a second transition being requested while the first is

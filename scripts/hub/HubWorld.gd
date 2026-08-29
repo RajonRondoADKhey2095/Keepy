@@ -87,6 +87,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
 @onready var _battle_button: Button = $FallbackMenu/Panel/VBoxContainer/BattleButton
 @onready var _mooring: BoatMooring = $Mooring
+@onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
 
 ## The 3D root, and the ONE reason this path is held: the impact splash is
 ## parented HERE and never under Props.
@@ -200,6 +201,44 @@ var _seesaw_ride: Dictionary = {}
 var _owls: Array[Dictionary] = []
 var _owl_ride: Dictionary = {}
 
+## Every cabin, as _setup_cabins copied it.
+##
+## No per-prop tween slot, unlike the spinners, the seesaws and the owls,
+## and no "the one he is inside" companion either -- unlike all three of
+## them. Nothing here is ever animated and nothing has to be put back,
+## because since 29 aout 2026 a cabin is not a ride at all: it is a SCENE
+## CHANGE. There is no carrier to restore, no visit to remember, and no
+## state on this screen that outlives the tap -- the whole of the interior
+## lives in CabinInterior.tscn, and this screen stops existing while the
+## player is in there.
+var _cabins: Array[Dictionary] = []
+
+## One doorstep mark per cabin, held so _process can pulse them.
+##
+## ⚠️ THE WHOLE POINT OF THIS BATCH, and the omission it repairs: the
+## previous lot marked the ladder, the bed and the door INSIDE the cabin
+## and marked nothing OUT HERE, so the one door in the game that leads to
+## a new scene was the one with no ring around it. A player who had been
+## taught by three portals what a tappable spot looks like walked up to the
+## tree-house and found nothing to aim at.
+##
+## Held in a plural array for the reason _cabins is: nothing here names THE
+## cabin, and a layout with two of them gets two marks rather than one.
+var _cabin_markers: Array[CabinMarker] = []
+
+## A tap on a doorstep armed a walk to it, and the landing that finishes
+## that walk should take him inside. Exactly the latch _boarding, _climbing
+## and _flying already are, and cleared on the same three occasions:
+## another tap, a successful entry, or the chain running out without
+## arriving.
+##
+## What differs from those three is what "a successful entry" DOES: they
+## hand the body to a ride state on this screen, this one leaves the screen
+## entirely. The latch is still needed for exactly the reason theirs are --
+## the walk to the door takes several hops and the intent has to survive
+## every landing that has not arrived yet.
+var _entering: bool = false
+
 ## A tap on a perch armed a walk to it, and the landing that finishes that
 ## walk should start the flight. Exactly the latch _boarding and _climbing
 ## already are, and cleared on the same three occasions: another tap, a
@@ -282,6 +321,63 @@ const SEESAW_ROCK_S: float = 2.4
 ## a prop 1.5 wide and leaves the spawn a full unit outside it.
 const OWL_TAP_RADIUS: float = 1.8
 
+## How close a tap has to land to a cabin's DOORWAY to mean "go in".
+##
+## SIZED ON THE DOORWAY, NOT ON THE BUILDING, and that is the correction
+## this constant carries. It used to be 2.2, argued from the prop being
+## "bigger than the owlet" -- an argument about the VOLUME, which is the
+## one quantity a doorstep must not track. A door is the same size on a
+## shed and on a cathedral, because the thing that has to fit through it is
+## Keepy, and Keepy does not scale.
+##
+## THE DEFECT THAT CAME OF TRACKING THE BUILDING, measured rather than
+## reasoned. With the old scaled doorstep, the disc this radius draws
+## overlapped the cabin by 18.2% at scale 1 -- it HUGGED the prop, so
+## "tap the cabin" and "tap the doorstep" were one gesture -- and by 0.0%
+## at scale 3.5, where it had become a 4.4-unit band of invisible lawn
+## floating 2.3 u in FRONT of the wall, 473-617 px wide on a 1080-wide
+## screen. A player walking up to look at the cabin tapped that lawn, and
+## the tap he meant as "walk there" was spent as "go inside". That is the
+## whole of the report: he was not aspirated, he was ANSWERED -- one tap,
+## one signal, and the signal he got was not the one he aimed.
+##
+## 1.30 is read off the behaviour that WORKED rather than picked: with the
+## doorstep now held a flat 0.70 u off the wall at every scale, 1.30 puts
+## 17.5% of the disc back on the building -- the 18.2% the shipped scale-1
+## cabin had. It is scale-INVARIANT by construction, which is the point:
+## the same 17.5% at 3.5 and at 7.0.
+##
+## NOT SCALED, and no future scale-up may make it so. If a bigger cabin
+## ever needs a bigger door, the thing to grow is CABIN_DOOR_STANDOFF -- 
+## where the visitor stands -- not how much lawn counts as the doorway.
+const CABIN_TAP_RADIUS: float = 1.30
+
+## What the doorstep's sign says.
+##
+## Stated HERE, beside the radius, and NOT read out of the layout the way
+## the three portals read theirs. The layout entry for a cabin carries no
+## `label` key at all, and adding one would mean a schema every future
+## cabin has to fill in for a sign that would say the same word every time.
+## The radius is already this file's to own; the word on the mark and the
+## circle under it are one fact about what that doorstep is, so they live
+## together.
+const CABIN_DOOR_LABEL: String = "Cabane"
+
+## How close he has to have ARRIVED to actually go in.
+##
+## DELIBERATELY LOOSER THAN THE TAP, by exactly the hop chain's own
+## slack. _advance() stops when the remaining distance is within
+## ARRIVE_EPSILON, so a walk aimed at a point R from the door can legally
+## finish R + ARRIVE_EPSILON from it. Testing arrival at the tap's own R --
+## which is what a single shared radius did -- leaves a player who tapped
+## the rim of the doorstep walking all the way there and being told he is
+## not there yet, with the intent still armed and nothing to show for it.
+##
+## Harmless to widen, because this is only ever consulted once _entering is
+## already armed BY A DELIBERATE TAP: it decides whether a walk that was
+## already meant as "go in" has got there, never whether a tap meant it.
+const CABIN_ARRIVE_RADIUS: float = CABIN_TAP_RADIUS + KeepyHopper.ARRIVE_EPSILON
+
 ## How long the whole loop takes, perch to perch.
 ##
 ## Named rather than left in the call for the reason TURNSTILE_SPIN_S is,
@@ -318,6 +414,7 @@ const OWL_LOOP_HEADING_DEG: float = -35.0
 
 const KEEPY_CLEARANCE: float = 0.66
 
+
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
 	# the swamp safe-area paint (this is still the one screen every way
@@ -345,6 +442,8 @@ func _ready() -> void:
 	_setup_seesaws()
 	_setup_owls()
 	_tap.tapped_owl.connect(_on_tapped_owl)
+	_setup_cabins()
+	_tap.tapped_cabin.connect(_on_tapped_cabin)
 	_tap.tapped_boat.connect(_on_tapped_boat)
 	_keepy.hop_landed.connect(_on_hop_landed)
 	_keepy.ride_moved.connect(_on_ride_moved)
@@ -356,11 +455,46 @@ func _ready() -> void:
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
 
+	# LAST, and after every _setup_* above: this moves Keepy, and the
+	# camera snap it ends with has to be the final word on where the frame
+	# opens. Placed before the builder had run it would be a spawn onto a
+	# plateau that does not exist yet.
+	_consume_return_spawn()
+
 	_fallback_button.pressed.connect(_on_fallback_toggled)
 	_fallback_close.pressed.connect(_on_fallback_toggled)
 	_chased_button.pressed.connect(_on_fallback_chased)
 	_quizz_button.pressed.connect(_on_fallback_quizz)
 	_battle_button.pressed.connect(_on_fallback_battle)
+
+## Puts Keepy back where he left the plateau, when something asked.
+##
+## =====================================================================
+## WHY THIS EXISTS -- and why only the cabin uses it
+##
+## Every other way back to this screen is a return from a SUB-GAME: you
+## went somewhere else entirely and you come back to the middle of the
+## plateau, which is what HubWorld.tscn's transform-less Keepy node gives
+## for free. A DOOR is different: walking out of the cabin has to put you
+## in front of the cabin, and nothing in the scene file can say so because
+## the door coordinate is derived from the layout at build time.
+##
+## The pending spawn is CONSUMED (HubSpawn.take clears as it returns), so
+## the next ordinary return -- out of Chased, say -- lands at the origin
+## the way it always has, rather than at a door the player left an hour
+## ago.
+##
+## ⚠️ THE CAMERA SNAP IS NOT OPTIONAL. HubCamera._ready() runs BEFORE this
+## one (children are readied first) and snaps to Keepy at the origin, so
+## without the second snap the screen would open on the middle of the
+## plateau and then slide to the cabin over the first second. That reads as
+## the camera catching up, not as coming out of a door.
+func _consume_return_spawn() -> void:
+	if not HubSpawn.has_pending():
+		return
+	var where: Vector3 = HubSpawn.take()
+	_keepy.global_position = Vector3(where.x, 0.0, where.z)
+	_camera.snap_to_target()
 
 ## Repaints this screen's atmosphere from the shared palette.
 ##
@@ -607,6 +741,150 @@ func _on_owl_flight_finished() -> void:
 	# the same function: it reads "position" and "radius" and knows nothing
 	# about any particular prop, so the owl needed it rather than a copy.
 	_keepy.leave_owl(_ride_exit_point(entry))
+
+func _setup_cabins() -> void:
+	for prop in _builder.cabins():
+		# Copied WHOLESALE and then given the extra key, for the reason
+		# _setup_spinners() states: a hand-written copy is exactly the thing
+		# that silently drops the field added last.
+		var entry: Dictionary = prop.duplicate()
+		entry["radius"] = CABIN_TAP_RADIUS
+		_cabins.append(entry)
+	if _cabins.is_empty():
+		return
+	var doors: Array[Vector3] = []
+	for entry in _cabins:
+		doors.append(entry["door"])
+	_tap.cabin_doors = doors
+	_tap.cabin_radius = CABIN_TAP_RADIUS
+	_build_cabin_markers()
+
+## The doorstep marks, one per cabin.
+##
+## ⚠️ BUILT FROM THE SAME TWO FACTS THE TAP TEST IS ASKED ABOUT -- the
+## door point published by the builder and CABIN_TAP_RADIUS -- and not from
+## a second position or a second size. The mark a player aims at and the
+## circle HubTapInput measures are then one number: a marker can never be
+## drawn beside the trigger, or smaller than it, because there is nothing
+## for it to be drawn beside.
+##
+## ⚠️ ALWAYS VISIBLE, PULSING WHEN NEAR, which is the PORTALS' behaviour
+## and not a new one. That was a decision to take rather than a default:
+## a mark that only appears once you are close cannot tell you where to go,
+## and the three portals across the plateau are already permanent. The
+## brief asked for consistency with what ships, and what ships is
+## permanent-plus-pulse.
+##
+## Parented to the SAME node the props are, so the marker is in world space
+## beside the cabin rather than a child of it -- a mark hung under a prop
+## would take that prop's scale, and this cabin is drawn at 7.0.
+func _build_cabin_markers() -> void:
+	for entry in _cabins:
+		var marker := CabinMarker.new()
+		# HUB_GRASS, which is the portals' own amber and dark green rather
+		# than the cabin's cream -- and NOT because the cream would fail
+		# out here. Measured on a real render at this very doorstep the
+		# cream scores 4.76:1 against the lawn and the amber 3.16:1, so
+		# contrast argues the other way. It is drawn in the portals' ink
+		# because it is the fourth thing on this plateau that a tap takes
+		# you somewhere else, and the other three look like this. See
+		# CabinMarker for the full table.
+		marker.setup(CABIN_TAP_RADIUS, CABIN_DOOR_LABEL,
+				CabinMarker.Surface.HUB_GRASS)
+		marker.position = entry["door"] as Vector3
+		_builder.add_child(marker)
+		_cabin_markers.append(marker)
+
+## A tap on a cabin doorstep. ONE tap buys the whole thing -- the hop chain
+## walks to the door and _on_hop_landed goes in on arrival -- because that
+## is exactly how a tap on the boat, the ladder and the perch already
+## behave.
+func _on_tapped_cabin(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board():
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = true
+	_keepy.hop_to(point)
+	# Already standing at the door: nothing to walk, so go in on the spot
+	# rather than waiting for a landing that will never come.
+	if not _keepy.is_hopping():
+		_try_enter_cabin(_keepy.global_position)
+
+## Goes inside if the landing is close enough to a doorstep. Returns true
+## when he went in, so the caller can stop looking at that landing.
+##
+## The proximity test is the tap's radius PLUS the hop chain's own arrival
+## slack, for the reason the boat's, the ladder's and the perch's share the
+## tap radius outright: a player who tapped the cabin and walked to it
+## cannot arrive and be told they are not there yet. Those three can share
+## one number because theirs is wide enough to swallow the slack; this one
+## was narrowed to the doorway, so the slack had to be said out loud --
+## see CABIN_ARRIVE_RADIUS.
+##
+## NEAREST door and not first-match, on the ladder's and the perch's terms:
+## "first" is a fact about the layout file, and the player is standing at a
+## place. And the intent SURVIVES a landing that has not arrived yet --
+## that was the boarding walk's own defect, which passed its probe for a
+## whole batch because the arrival happened to fall inside the radius on
+## hop one.
+##
+## =====================================================================
+## ⚠️ SINCE 29 AOUT 2026 THIS LEAVES THE SCREEN.
+##
+## It used to hand the body to a ride state (KeepyHopper.enter_cabin) that
+## ducked him down and hid him ON THE SPOT, and a later tap brought him
+## back out. That mechanism is GONE -- state, signals, tweens and the tap
+## withdrawal with it -- because the cabin now has a real interior, and an
+## interior is a scene rather than a pose.
+##
+## Two things follow, and both are the reason this is not simply a swapped
+## call:
+##
+##   * THE SPAWN IS WRITTEN HERE, not in the interior. Every route out of
+##     CabinInterior is the same bare change_scene_to_file the sub-games
+##     use, and HubWorld.tscn's Keepy carries no transform -- so without a
+##     spawn the way out of the cabin puts him at the world origin, which
+##     is the middle of the plateau. The door coordinate is a fact this
+##     screen already owns (HubBuilder derived it), so the hub records it
+##     on the way IN and the interior never learns a single thing about
+##     the plateau.
+##
+##   * IT ROUTES THROUGH HubRouter AND NOT change_scene_to_file. That file
+##     is "the one place that changes scene", and a second scene-changer in
+##     this one -- for the single prop that is not a portal -- is exactly
+##     what its header refuses.
+##
+## No confirmation dialog, unlike the three portals, and that is not an
+## omission. A portal is entered by LANDING on it, which a hop aimed past
+## it does by accident; a doorstep is entered by TAPPING IT, on a target
+## narrowed to 1.30 for exactly that reason. The question has already been
+## asked by the gesture.
+func _try_enter_cabin(position: Vector3) -> bool:
+	if _cabins.is_empty():
+		_entering = false
+		return false
+	var flat := Vector3(position.x, 0.0, position.z)
+	var entry: Dictionary = {}
+	var nearest: float = INF
+	for candidate in _cabins:
+		var d: float = flat.distance_to(candidate["door"] as Vector3)
+		if d < nearest:
+			nearest = d
+			entry = candidate
+	if nearest > CABIN_ARRIVE_RADIUS:
+		return false
+	_entering = false
+	# The doorstep he is standing on, so the way back out puts him exactly
+	# where he went in. Written BEFORE the route: change_scene_to_file is
+	# deferred, but HubRouter latches on the first call and a spawn written
+	# after a refused second call would be a spawn nobody consumes.
+	HubSpawn.request(entry["door"] as Vector3)
+	_router.route(&"cabin")
+	return true
 
 ## Sets going every spinning prop the landing is standing at.
 ##
@@ -994,7 +1272,24 @@ func _process(_delta: float) -> void:
 	var here := _keepy.global_position
 	for portal in _portals:
 		portal.set_proximity(here)
+	_pulse_cabin_markers(here)
 	_mooring.update(here)
+
+## The doorstep marks' approach cue, on HubPortal's own two thresholds.
+##
+## TWO and never one: a Keepy standing exactly on a single boundary would
+## flicker the pulse on and off once per frame. The factors are read off
+## HubPortal rather than restated so the doorstep breathes at the distance
+## the portals do -- one rule about what "near" means on this plateau.
+func _pulse_cabin_markers(here: Vector3) -> void:
+	for marker in _cabin_markers:
+		var flat := Vector2(marker.position.x - here.x,
+				marker.position.z - here.z)
+		var d: float = flat.length()
+		if d <= CABIN_TAP_RADIUS * HubPortal.NEAR_FACTOR:
+			marker.set_near(true)
+		elif d >= CABIN_TAP_RADIUS * HubPortal.NEAR_RELEASE:
+			marker.set_near(false)
 
 func _on_tapped_ground(point: Vector3) -> void:
 	# A tap while either overlay is up is a tap on the overlay, not on the
@@ -1067,6 +1362,7 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_boarding = false
 	_climbing = false
 	_flying = false
+	_entering = false
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -1253,6 +1549,12 @@ func _on_hop_landed(position: Vector3) -> void:
 	# ground it left from, and every branch past this point returns.
 	if _flying and _try_fly(position):
 		return
+	# And the one that finishes a walk to a doorstep goes inside. Sits with
+	# the other three -- after the tint and the impact, before the portals --
+	# for the reason they do: a landing that goes on to hide still reports
+	# the ground it left from, and every branch past this point returns.
+	if _entering and _try_enter_cabin(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -1301,6 +1603,7 @@ func _on_keepy_idle() -> void:
 	_boarding = false
 	_climbing = false
 	_flying = false
+	_entering = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches

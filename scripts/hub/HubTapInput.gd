@@ -77,6 +77,20 @@ signal tapped_boat(point: Vector3)
 signal tapped_owl(point: Vector3)
 
 ## Emitted INSTEAD of tapped_ground when the finger landed close enough to
+## a CABIN DOOR to mean "go inside", on the same world-units terms the boat
+## and the owl are picked out on. Same one-tap-one-signal rule.
+##
+## ⚠️ NO WITHDRAWAL, UNLIKE THE BOAT AND THE OWL -- and that is a deletion
+## rather than an omission. It used to carry a `cabin_available` flag on
+## the mooring's pattern, because Keepy USED to hide inside the prop and a
+## tap made meanwhile had to fall through to the ground path to become the
+## way back out. Since 29 aout 2026 going in is a SCENE CHANGE: this whole
+## screen stops existing for the length of the visit, so there is no
+## "meanwhile" in which a tap could need to mean something else, and a flag
+## that can never be false is a flag no one is reading.
+signal tapped_cabin(point: Vector3)
+
+## Emitted INSTEAD of tapped_ground when the finger landed close enough to
 ## the diving board's LADDER FOOT to mean "climb that", on the same
 ## world-units terms the boat is picked out on. Same one-tap-one-signal
 ## rule: a tap is a climb or a destination, never both.
@@ -149,6 +163,18 @@ var owl_perches: Array[Vector3] = []
 var owl_radius: float = 0.0
 var owl_available: bool = true
 
+## Every cabin doorstep, flat, and how close a tap has to land to mean one.
+## Empty until HubWorld hands over the built cabins, so a layout with no
+## cabin simply never emits tapped_cabin.
+##
+## Set from the BUILT cabins for the reason the perches and the feet are:
+## the prop the player aims at and the point this radius is measured from
+## have to be one fact.
+##
+## No availability flag beside them -- see the signal's own comment.
+var cabin_doors: Array[Vector3] = []
+var cabin_radius: float = 0.0
+
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
 	container = get_node_or_null(container_path) as SubViewportContainer
@@ -192,6 +218,31 @@ func _handle_point(screen_point: Vector2) -> void:
 		# Camera looking at or above the horizon. Nothing to aim at.
 		return
 	var point: Vector3 = hit
+	# WHERE THE FINGER POINTED, and it is a SEPARATE fact from where he can
+	# walk. Every prop below is asked about `aim`; only the destination is
+	# clamped. Those were one variable until the cabin proved they are two.
+	#
+	# ⚠️ THE THIRD STRAY-ENTRY CAUSE, and the one no radius could have
+	# fixed. clamp_to() answers "where can he stand"; a prop test answers
+	# "what did the player mean". Reading the second off the first makes
+	# the clamp a FUNNEL: every tap on ground that does not exist is
+	# dragged to the nearest ground that does, and if a prop happens to sit
+	# near that edge, the whole half-plane behind it starts meaning the
+	# prop. Measured on the shipped layout: the cabin's doorstep stands
+	# 0.655 u inside the plateau's north edge, so a 2.246 u strip of that
+	# edge lies inside the doorstep disc -- and taps aimed from as far as
+	# 49.8 u off the map landed on it and MEANT "go inside". Standing at
+	# the door, 15.26% of all visible ground said "go inside", 89.2% of it
+	# aimed at ground that is not there.
+	#
+	# WHY THE OTHER THREE ARE ASKED THE SAME WAY when only the cabin was
+	# broken: measured, the boat, the owl and the three ladder feet are
+	# 6.85 u to infinitely far from any off-map ground and NOT ONE off-map
+	# point funnels into any of them, so this costs them nothing today. It
+	# is written once rather than as a cabin special case because the
+	# funnel is a property of standing near an EDGE, not of being a cabin,
+	# and the next prop placed near one would rediscover it.
+	var aim := Vector3(point.x, 0.0, point.z)
 	# One shape, one owner. The region is a union minus the great lake, so
 	# this is a nearest-point projection and not two independent clamps --
 	# see HubRegion for why the difference matters and what it costs.
@@ -206,7 +257,7 @@ func _handle_point(screen_point: Vector2) -> void:
 	# accepts_boarding_tap() is false for the whole of a ride, so a tap
 	# then falls through to tapped_ground -- which is what turns it into
 	# an eject. One tap, one signal, either way.
-	if mooring != null and mooring.accepts_boarding_tap(destination):
+	if mooring != null and mooring.accepts_boarding_tap(aim):
 		tapped_boat.emit(destination)
 		return
 	# THE OWL, asked after the boat and before the ladder, on the same
@@ -223,10 +274,25 @@ func _handle_point(screen_point: Vector2) -> void:
 	# boat's own withdrawal, and the thing that turns a tap during a
 	# flight back into an ordinary ground tap.
 	if owl_available and owl_radius > 0.0:
-		var owl_flat := Vector3(destination.x, 0.0, destination.z)
+		var owl_flat := aim
 		for perch in owl_perches:
 			if owl_flat.distance_to(perch) <= owl_radius:
 				tapped_owl.emit(destination)
+				return
+	# THE CABIN, asked on the identical world-unit terms but NOT gated on a
+	# withdrawal, unlike the two above -- see the signal's comment. Ordered
+	# here only because the owl was here first: the perch is by the spawn
+	# and the cabin is out at z = +28, so the order between them can never
+	# actually decide anything.
+	#
+	# Nothing is asked here about whether Keepy is free to go in. HubWorld
+	# refuses a tap made mid-ride, and the walk to the door is an ordinary
+	# hop chain that any later tap may cancel.
+	if cabin_radius > 0.0:
+		var cabin_flat := aim
+		for door in cabin_doors:
+			if cabin_flat.distance_to(door) <= cabin_radius:
+				tapped_cabin.emit(destination)
 				return
 	# THE LADDER, asked after the boat and on the same terms: a world-unit
 	# radius on the ground point, so the target does not shrink with
@@ -238,7 +304,7 @@ func _handle_point(screen_point: Vector2) -> void:
 	# KeepyHopper's business, and it refuses from any state but standing
 	# still -- asking twice is how the two answers start to differ.
 	if ladder_radius > 0.0:
-		var flat := Vector3(destination.x, 0.0, destination.z)
+		var flat := aim
 		for foot in ladder_feet:
 			if flat.distance_to(foot) <= ladder_radius:
 				tapped_ladder.emit(destination)

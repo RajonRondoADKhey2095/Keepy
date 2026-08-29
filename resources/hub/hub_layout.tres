@@ -31,6 +31,11 @@ props = [{
 "scale": 1.0,
 "type": &"owl"
 }, {
+"position": Vector3(-17.43, 0, 28.18),
+"rotation_y": 0.0,
+"scale": 7.0,
+"type": &"cabin"
+}, {
 "position": Vector3(-9.44, 0, -8.45),
 "rotation_y": 35.1,
 "scale": 1.25,
@@ -711,26 +716,6 @@ props = [{
 "position": Vector3(-3.437, 0, 28.243),
 "rotation_y": 230.2,
 "scale": 1.241,
-"type": &"rock"
-}, {
-"position": Vector3(-20.43, 0, 21.41),
-"rotation_y": 316.2,
-"scale": 0.809,
-"type": &"rock"
-}, {
-"position": Vector3(-19.65, 0, 22.47),
-"rotation_y": 186.9,
-"scale": 0.993,
-"type": &"rock"
-}, {
-"position": Vector3(-11.39, 0, 22.26),
-"rotation_y": 243.6,
-"scale": 0.664,
-"type": &"rock"
-}, {
-"position": Vector3(-16.46, 0, 18.92),
-"rotation_y": 354.2,
-"scale": 1.351,
 "type": &"rock"
 }, {
 "position": Vector3(-6.82, 0, 22.37),

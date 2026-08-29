@@ -91,6 +91,17 @@ class_name HubBuilder
 ## instantiated per entry by _make_owl().
 @export var owl_scene: PackedScene
 
+## Scene instantiated for every &"cabin" entry -- the imported
+## assets/models/keepy_cabin_decor.glb, the tree-house Keepy ducks into.
+##
+## Same shape as owl_scene and for its reason: a .glb is a PackedScene, and
+## a prop whose only appearance IS that scene has no placeholder to fall
+## back to, so it is instantiated directly rather than through a ModelSlot
+## -- which exists to swap a stand-in for a model, a job with no second
+## side here. Assigned in HubWorld.tscn; one is instantiated per entry by
+## _make_cabin().
+@export var cabin_scene: PackedScene
+
 const TRUNK_COLOR: Color = Color(0.20, 0.13, 0.08)
 const CROWN_COLOR: Color = Color(0.17, 0.34, 0.13)
 const ROCK_COLOR: Color = Color(0.26, 0.27, 0.24)
@@ -804,6 +815,67 @@ const OWL_SEAT_Y: float = 1.98905
 ## up. A trunk in the water is a bug; a crown overhanging it is what a real
 ## tree beside a stream does. That distinction is the same one the lot G
 ## routing measured with, so the two agree by construction.
+## The cabin, as it is BUILT from assets/models/keepy_cabin_decor.glb.
+##
+## SCALE ONE, and that is the recon's measurement rather than a default
+## left in place: the raw model is 1.893 x 1.590 x 1.546, which is already
+## the size of a hut a 1.35-tall Keepy ducks into. The owl needed a factor
+## because its own dominant axis had to be matched against Keepy's depth;
+## this one was authored at the size it is wanted at.
+const CABIN_MODEL_SCALE: Vector3 = Vector3(1.0, 1.0, 1.0)
+
+## Lifts the model so its lowest point sits at y = 0.
+##
+## MEASURED off the POSITION accessor of the shipped .glb (min.y =
+## -0.800420), not guessed from the fact that most models are centred: the
+## origin of a .glb is wherever its author left it, which is the lesson the
+## JUMP log charged for. X and Z are left at zero -- the mesh is centred on
+## its own origin there to within a couple of millimetres, the same
+## measurement noise the dragonfly was right to ignore.
+const CABIN_MODEL_OFFSET: Vector3 = Vector3(0.0, 0.800420, 0.0)
+
+## What this prop puts on the ground, for ground_footprints().
+##
+## The CIRCUMSCRIBED radius (1.228043, measured) rounded UP rather than the
+## half-span of the widest side: a cabin is a solid volume a landing has no
+## business being inside, and rounding a footprint down is the direction
+## that puts a rock through a wall.
+const CABIN_FOOTPRINT_RADIUS: float = 1.25
+
+## The doorstep, in TWO terms -- and the split is the whole correction.
+##
+## It used to be one number scaled whole (CABIN_DOOR_REACH 1.45 x scale),
+## measured against CABIN_FOOTPRINT_RADIUS. That footprint is the
+## CIRCUMSCRIBED radius -- the corner -- and the doorstep is placed along
+## the FACE, which on this model is 0.469 nearer per unit of scale. At
+## scale one that error is 0.47 u and invisible; it multiplies, and at 3.5
+## it had put the doorstep 2.34 u clear of the front wall, standing on open
+## lawn with the whole trigger disc floating out there with it. MEASURED:
+## the disc overlapped the building 18.2% at scale 1 and 0.0% at scale 3.5,
+## which is the stray-entry report in one number.
+##
+## So the reach is now the FACE plus a VISITOR'S STANDOFF, and only the
+## first of the two scales:
+##
+##   CABIN_DOOR_FACE_DEPTH  is the model's own +Z half-depth (measured off
+##   the built AABB, 2.73274 / 3.5), so it tracks the wall wherever the
+##   wall goes.
+##
+##   CABIN_DOOR_STANDOFF    is how far a VISITOR stands off that wall, and
+##   it does NOT scale, because KEEPY DOES NOT SCALE. He is 0.66 wide at
+##   the shoulder whatever size the cabin is, so the room he needs to stand
+##   at a door is a constant and never a fraction of the building.
+##
+## The pair reproduces the shipped scale-one doorstep to 3 cm (1.4808 vs
+## 1.45) and holds the gap to the wall at a flat 0.700 u at EVERY scale --
+## that invariance is the decoupling, and it is what the probe gates.
+##
+## Along local +Z because that is the open face; _build rotates the pair by
+## the entry's own rotation_y, so a cabin turned in the layout takes its
+## doorstep with it instead of leaving it round the back.
+const CABIN_DOOR_FACE_DEPTH: float = 0.78078
+const CABIN_DOOR_STANDOFF: float = 0.70
+
 const FOOTPRINT_RADIUS: Dictionary = {
 	&"tree": 0.24,
 	&"rock": 0.44,
@@ -825,6 +897,7 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	# is not about to become the first thing that does.
 	&"seesaw": SEESAW_PLANK_LENGTH * 0.5,
 	&"owl": OWL_FOOTPRINT_RADIUS,
+	&"cabin": CABIN_FOOTPRINT_RADIUS,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -887,6 +960,18 @@ var _last_seesaw: Dictionary = {}
 ## owl is another place to fly from rather than an ambiguity.
 var _owls: Array[Dictionary] = []
 var _last_owl: Dictionary = {}
+
+## Every &"cabin", as it was BUILT.
+##
+## A LIST FROM THE FIRST COMMIT, on the owl's terms and for the diving
+## board's reason: that prop's geometry was generic the day it shipped and
+## the singleton sat in the table DOWNSTREAM of it, so a second plank was
+## drawn and never climbable and undoing it cost its own batch. Nothing
+## downstream names THE cabin -- a landing enters whichever one it landed
+## at -- so a second entry is another place to hide rather than an
+## ambiguity.
+var _cabins: Array[Dictionary] = []
+var _last_cabin: Dictionary = {}
 
 ## Every &"divingboard" as built, in layout order -- see diving_boards()
 ## for the shape of one entry.
@@ -1031,6 +1116,24 @@ func seesaws() -> Array[Dictionary]:
 func owls() -> Array[Dictionary]:
 	return _owls
 
+## Every &"cabin", as it was BUILT, in layout order:
+##
+##   "position" Vector3 -- the entry's own place, flat
+##   "door"     Vector3 -- the point on the ground a visitor stands at to
+##                         go in: the middle of the open face, pushed clear
+##                         of the trunk. Published rather than recomputed
+##                         by whoever walks to it, so the face the player
+##                         aims at and the point the walk ends at are one
+##                         fact and cannot drift apart.
+##
+## No node handle in it, unlike the owl's "carrier" and the turnstile's
+## pivot: nothing ever MOVES a cabin. Keepy goes in and the prop stands
+## still, which is the whole reason this is the smallest interactive prop
+## on the plateau -- there is no carrier to write a rider against and no
+## tween to keep a rider in step with.
+func cabins() -> Array[Dictionary]:
+	return _cabins
+
 ## Centre of the one &"pond", or Vector3.INF when the layout has none.
 func pond_centre() -> Vector3:
 	return _pond_centre
@@ -1126,6 +1229,8 @@ func _build() -> void:
 					node = _make_seesaw(entry, index, where)
 				&"owl":
 					node = _make_owl(index)
+				&"cabin":
+					node = _make_cabin(index)
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -1205,6 +1310,25 @@ func _build() -> void:
 				# downstream names THE seesaw.
 				if not _last_seesaw.is_empty():
 					_seesaws.append(_last_seesaw)
+			if type == &"cabin":
+				# Recorded AFTER add_child, on the owl's and the boards' plural
+				# terms: every published door is one that actually got drawn.
+				#
+				# The door is derived HERE, from the same `where` and `yaw` the
+				# prop was placed with, rather than written into the layout as a
+				# second coordinate: two numbers for one doorway is how a door
+				# ends up on the wrong side of a cabin somebody rotated.
+				if not _last_cabin.is_empty():
+					var cabin_flat := Vector3(where.x, 0.0, where.z)
+					# The FACE scales, the visitor's standoff does not --
+					# see the two constants for why one number could not do
+					# both and what it cost when it tried.
+					var reach := Vector3(0.0, 0.0,
+							CABIN_DOOR_FACE_DEPTH * uniform + CABIN_DOOR_STANDOFF)
+					reach = reach.rotated(Vector3.UP, deg_to_rad(rotation_y))
+					_last_cabin["position"] = cabin_flat
+					_last_cabin["door"] = cabin_flat + reach
+					_cabins.append(_last_cabin)
 			if type == &"owl":
 				# Recorded AFTER add_child, on the boards' and the seesaw's
 				# plural terms: every published perch is one that actually
@@ -1441,6 +1565,44 @@ func _make_owl(index: int) -> Node3D:
 	_last_owl = {
 		"carrier": root,
 		"seat_y": OWL_SEAT_Y,
+	}
+	return root
+
+## A static tree-house. Purely decorative geometry -- the ONE thing it
+## does, Keepy vanishing into it, is a state on him and touches nothing
+## here.
+##
+##     Cabin          <- placed by _build (position / rotation_y / scale)
+##       Model        <- cabin_scene instance, CABIN_MODEL_SCALE / _OFFSET
+##
+## Instantiated directly rather than through a ModelSlot, on the owl's
+## terms: a slot exists to hold a PLACEHOLDER a real model later replaces,
+## and this prop is either the .glb or nothing at all.
+##
+## THE OPEN FACE IS MODEL +Z, and that is what fixes the door offset below
+## as well as the rotation the layout ships. Rendered on four axes before
+## anything was written: from +Z the trunk is hollowed out and furnished --
+## a bed, shelves, a hanging sign, steps at the foot -- and from -Z it is a
+## closed trunk with no opening at all.
+func _make_cabin(index: int) -> Node3D:
+	_last_cabin = {}
+	if cabin_scene == null:
+		push_error("HubBuilder: entry %d is a cabin but no cabin_scene is assigned." % index)
+		return null
+	var model := cabin_scene.instantiate() as Node3D
+	if model == null:
+		push_error("HubBuilder: cabin_scene does not instantiate to a Node3D.")
+		return null
+	model.scale = CABIN_MODEL_SCALE
+	model.position = CABIN_MODEL_OFFSET
+	var root := Node3D.new()
+	root.name = "Cabin"
+	root.add_child(model)
+	# Filed by _build once add_child has actually happened, which is the rule
+	# every published registry in this file is held to -- and the door is
+	# derived there, where the placement rotation is in scope.
+	_last_cabin = {
+		"root": root,
 	}
 	return root
 
