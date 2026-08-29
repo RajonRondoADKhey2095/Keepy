@@ -1,28 +1,52 @@
 extends Node
 
-## Gates the cabin: the tree-house Keepy ducks into, and the smallest
-## interactive prop on the plateau.
+## Gates the cabin: the tree-house on the plateau, and -- since 29 aout
+## 2026 -- the door into a scene of its own.
 ##
-## GATED RATHER THAN REPORTED because every way this feature can fail is
-## SILENT. An unassigned cabin_scene is swallowed by _build()'s push_error;
-## a model left floating or sunk means the ground offset never reached the
-## child; a doorstep derived on the wrong side of the trunk leaves a tap
-## that walks Keepy round the back and never opens; a tap signal that keeps
-## firing while he is inside leaves a player with no way out, because the
-## exit is the ground path the withdrawal is supposed to hand the tap to.
-## Not one of those raises, and every one of them looks like "the cabin was
-## never installed" on a device rather than like an error.
+## =====================================================================
+## ⚠️ WHAT THIS FILE USED TO ASSERT, AND WHY THOSE PHASES ARE GONE
 ##
-## PHASE C is verified RED BEFORE GREEN by neutering the entry hook: see
-## the batch report. PHASE D carries a BLIND CHECK on the way back out --
-## "he is visible again" passes for free against a body that was never
-## hidden, so the hide has to be proven first.
+## Until this batch the cabin was a RIDE STATE. A tap walked Keepy to the
+## doorstep, KeepyHopper.enter_cabin() ducked him down and HID him on the
+## spot, the doorstep WITHDREW from the tap the way the boat's does, and
+## any later tap fell through to the ground path and became the way out.
+## Phases C, D and E gated exactly that: `is_in_cabin()`, `body.visible`,
+## `tap.cabin_available`, "he came out on the spot he vanished at".
+##
+## Every one of those assertions is now about machinery that DOES NOT
+## EXIST -- State.IN_CABIN, enter_cabin/leave_cabin, cabin_entered/
+## cabin_exited and cabin_available were deleted with the mechanism. They
+## are not disabled or skipped here: an assertion whose subject is gone is
+## not a weaker test, it is a test of nothing, and leaving one behind is
+## how a probe keeps printing OK about a feature nobody ships any more.
+##
+## What replaces them asserts the SAME PLAYER-VISIBLE CLAIM through the
+## new mechanism: tapping the doorstep takes you inside, and coming out
+## puts you back at that doorstep rather than in the middle of the
+## plateau.
+##
+## =====================================================================
+## STILL GATED RATHER THAN REPORTED, for the reason it always was: every
+## way this feature fails is SILENT. An unassigned cabin_scene is swallowed
+## by _build()'s push_error; a model left floating or sunk means the ground
+## offset never reached the child; a doorstep derived on the wrong side of
+## the trunk leaves a tap that walks Keepy round the back and never opens;
+## a spawn never written leaves the way out of the cabin dropping him at
+## the world origin. Not one of those raises, and every one of them looks
+## like "the cabin was never installed" on a device rather than like an
+## error.
+##
+## PHASE R is verified RED BEFORE GREEN by neutering the route call: see
+## the batch report. It carries a BLIND CHECK of its own -- "no spawn is
+## pending" passes for free against a probe that never entered, so the
+## clean start is asserted before the write means anything.
 ##
 ## PHASE UNTOUCHED re-checks what this lot must not have moved: the boat,
 ## the owl, the turnstile, the seesaw, the three ladders and the three
 ## portals.
 
 const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
+const INTERIOR_SCENE: PackedScene = preload("res://scenes/CabinInterior.tscn")
 
 ## The layout entry this lot ships, read back rather than duplicated so a
 ## future reposition cannot silently desync this probe from the thing it
@@ -36,8 +60,13 @@ const _EXPECTED_POSITION: Vector3 = Vector3(-17.43, 0.0, 28.18)
 ## 7.0 is not a round number picked for tidiness -- it is what puts the
 ## cabin 17.6% above the tallest tree-shaped thing on the plateau (the
 ## spire landmark, measured at 9.4640 world units), which is the target
-## the scale-up lot was given. The tallest BATCHED tree is only 3.9330,
-## and the cabin cleared that at 3.5 already.
+## the scale-up lot was given.
+##
+## ⚠️ THE INTERIOR SCENE DOES NOT SHARE IT, and that is deliberate rather
+## than a drift: out here the number answers "how tall against the trees",
+## in there it answers "how much of the frame do two storeys fill", and
+## the interior settled on 11.0. Two questions, two numbers, and the probe
+## reads each off the file that owns it.
 const _EXPECTED_SCALE: float = 7.0
 
 ## The doorstep _build derives from that position, that scale and the
@@ -68,10 +97,42 @@ func _ready() -> void:
 	print("=== CABIN PROBE ===")
 	print("")
 
+	# A probe that inherited a spawn from something else would measure that
+	# instead of its own, and PHASE S's clean-start check would be reading
+	# whatever the run before it left behind.
+	HubSpawn.clear()
+
+	var tree := get_tree()
+
+	# ⚠️ PARENTED TO THE WINDOW ROOT AND DECLARED THE CURRENT SCENE, and
+	# those two lines are what let PHASE R drive the REAL route rather than
+	# a recording stand-in.
+	#
+	# change_scene_to_file frees whatever current_scene points at. Left
+	# alone that is THIS PROBE -- so the first honest end-to-end entry test
+	# deleted the probe mid-phase and every assertion after it read a null
+	# tree (`Parameter "data.tree" is null`, PHASE R and PHASE S both lost).
+	#
+	# ⚠️ AND set_current_scene REFUSES A NODE THAT IS NOT ROOT'S OWN CHILD,
+	# silently as far as the probe is concerned: it pushes an engine error
+	# and leaves current_scene alone, so a hub added with add_child() here
+	# still left the probe as the thing the router would delete. Measured
+	# too -- "Condition p_scene->get_parent() != root is true", followed by
+	# the same phase failing a different way.
+	#
+	# Pointing it at the hub is not a fiction: the hub IS the scene under
+	# test, and replacing it is precisely the router's job.
+	# ⚠️ ONE FRAME FIRST, and it is not superstition: root is still setting
+	# up its own children while this _ready() runs, so add_child() on it
+	# fails outright -- "Parent node is busy setting up children" -- and the
+	# probe then measured an EMPTY plateau, reporting zero cabins, zero
+	# portals and zero boats as if the lot had deleted the whole hub.
+	await tree.process_frame
 	var hub: Node = HUB_SCENE.instantiate()
-	add_child(hub)
-	await get_tree().process_frame
-	await get_tree().process_frame
+	tree.root.add_child(hub)
+	tree.current_scene = hub
+	await tree.process_frame
+	await tree.process_frame
 
 	var world: Node3D = hub.get_node("WorldViewport/SubViewport/World") as Node3D
 	var props: HubBuilder = world.get_node("Props") as HubBuilder
@@ -83,11 +144,9 @@ func _ready() -> void:
 	dl.abort_if_exceeded()
 	_phase_b_geometry(props)
 	dl.abort_if_exceeded()
-	await _phase_c_enter(hub, props, keepy, tap)
+	_phase_g_gone(keepy, tap)
 	dl.abort_if_exceeded()
-	await _phase_d_exit(hub, props, keepy, tap, camera)
-	dl.abort_if_exceeded()
-	await _phase_e_revisit(hub, props, keepy, tap)
+	_phase_i_interior()
 	dl.abort_if_exceeded()
 	await _phase_t_no_stray_entry(hub, props, keepy, tap, camera)
 	dl.abort_if_exceeded()
@@ -95,10 +154,19 @@ func _ready() -> void:
 	dl.abort_if_exceeded()
 	_phase_untouched(props)
 	dl.abort_if_exceeded()
+	await _phase_s_spawn(tree)
+	dl.abort_if_exceeded()
+	# LAST, because it ROUTES: it replaces the scene the hub is standing
+	# in, so every phase that needs the plateau has to have run already.
+	await _phase_r_route(tree, hub, props, keepy)
+	dl.abort_if_exceeded()
 
 	print("")
 	print("--- %d failure(s) ---" % _failures)
-	get_tree().quit(1 if _failures > 0 else 0)
+	# Off the CAPTURED tree, never off get_tree(): PHASE R hands the hub to
+	# the router, and a probe that has just watched its own subtree be
+	# replaced may no longer be able to ask for one.
+	tree.quit(1 if _failures > 0 else 0)
 
 func _check(ok: bool, label: String) -> void:
 	if ok:
@@ -167,145 +235,176 @@ func _phase_b_geometry(props: HubBuilder) -> void:
 			"it sits ON the ground (lowest point y = %.4f)" % aabb.position.y)
 	# The raw model is 1.8929 x 1.5901 (X x Y, measured), scaled by the
 	# SCALE-UP LOT's own entry scale -- never a second literal for "the
-	# built size at 3.5", which is exactly the two-numbers-for-one-thing
-	# mistake the doorstep comment above warns about.
+	# built size", which is exactly the two-numbers-for-one-thing mistake
+	# the doorstep comment above warns about.
 	var expected_x: float = 1.8929 * _EXPECTED_SCALE
 	var expected_y: float = 1.5901 * _EXPECTED_SCALE
 	_check(absf(aabb.size.x - expected_x) < 0.01 and absf(aabb.size.y - expected_y) < 0.01,
 			"built at scale %.1f (%.3f x %.3f x %.3f)"
 					% [_EXPECTED_SCALE, aabb.size.x, aabb.size.y, aabb.size.z])
-	# The footprint a landing has to clear, rounded UP from the measured
-	# circumscribed radius -- a cabin is a volume, and rounding a footprint
-	# down is the direction that puts a rock through a wall. AS-BUILT: read
-	# off root.scale.x rather than a second copy of the entry's own scale,
-	# because ground_footprints() scales CABIN_FOOTPRINT_RADIUS by exactly
-	# that same node property and nothing here should be able to disagree
-	# with it.
 	var half: float = maxf(aabb.size.x, aabb.size.z) * 0.5
 	var footprint: float = HubBuilder.CABIN_FOOTPRINT_RADIUS * root.scale.x
 	_check(footprint >= half,
 			"the footprint (%.2f) covers the built half-span (%.3f)"
 					% [footprint, half])
 
-func _phase_c_enter(hub: Node, props: HubBuilder, keepy: KeepyHopper,
-		tap: HubTapInput) -> void:
+## The old ride state is GONE, asserted rather than assumed.
+##
+## ⚠️ THIS IS THE PHASE THAT REPLACES C, D AND E, and it is deliberately
+## the shape they are not: they drove a mechanism, this one proves the
+## mechanism is not there. Deleting them and adding nothing would leave the
+## removal untested -- a half-removed state (the enum value gone but
+## enter_cabin() still on the class, say) compiles, ships, and does nothing
+## visible until a tap finds it.
+##
+## Read off the CLASS through has_method/get, not by calling anything: the
+## point is that the surface does not exist.
+func _phase_g_gone(keepy: KeepyHopper, tap: HubTapInput) -> void:
 	print("")
-	print("--- PHASE C: a tap on the doorstep puts him inside ---")
-	var cabins: Array[Dictionary] = props.cabins()
-	if cabins.is_empty():
-		return
-	var door: Vector3 = cabins[0]["door"]
+	print("--- PHASE G: the old in-place hide is gone ---")
+	_check(not keepy.has_method("enter_cabin"), "KeepyHopper has no enter_cabin()")
+	_check(not keepy.has_method("leave_cabin"), "KeepyHopper has no leave_cabin()")
+	_check(not keepy.has_method("is_in_cabin"), "KeepyHopper has no is_in_cabin()")
+	var signals: Array[StringName] = []
+	for s in keepy.get_signal_list():
+		signals.append(StringName(s["name"]))
+	_check(not signals.has(&"cabin_entered") and not signals.has(&"cabin_exited"),
+			"the cabin_entered/cabin_exited signals are gone")
+	# The withdrawal went with the mechanism: with the visit now a scene
+	# change, this whole screen stops existing for its length, so there is
+	# no "meanwhile" a flag could describe.
+	var fields: Array[StringName] = []
+	for pr in tap.get_property_list():
+		fields.append(StringName(pr["name"]))
+	_check(not fields.has(&"cabin_available"),
+			"HubTapInput has no cabin_available withdrawal any more")
+	# And what REPLACED it is wired: the route exists, and it is the same
+	# table the three portals go through rather than a second scene-changer
+	# grown inside HubWorld.
+	_check(HubRouter.ROUTES.has(&"cabin"),
+			"HubRouter carries a 'cabin' route (%s)"
+					% str(HubRouter.ROUTES.get(&"cabin", "<missing>")))
+	_check(String(HubRouter.ROUTES.get(&"cabin", "")) == "res://scenes/CabinInterior.tscn",
+			"and it points at the interior scene")
 
-	_check(tap.cabin_radius > 0.0 and tap.cabin_doors.size() == 1,
-			"the doorstep was handed to the tap layer (r = %.2f, %d door(s))"
-					% [tap.cabin_radius, tap.cabin_doors.size()])
-	_check(tap.cabin_available, "the doorstep accepts taps before the visit")
-
-	# Driven through HubWorld's own handler and the real hop chain, not by
-	# calling enter_cabin() directly: the thing worth gating is the WIRING,
-	# and a probe that called the method would pass against a signal that
-	# was never connected.
-	hub.call("_on_tapped_cabin", door)
-	var frames: int = 0
-	while not keepy.is_in_cabin() and frames < 900:
-		await get_tree().process_frame
-		frames += 1
-	_check(keepy.is_in_cabin(), "he walked there and went in (%d frames)" % frames)
-	if not keepy.is_in_cabin():
-		return
-	_check(not tap.cabin_available,
-			"the doorstep WITHDREW from the tap for the visit (boat pattern)")
-	# He never leaves the ground: this prop is the one that does not touch
-	# the plateau's single-altitude rule.
-	_check(absf(keepy.global_position.y) < 0.001,
-			"he is still at y = 0 (%.4f) -- no altitude derogation" % keepy.global_position.y)
-	# And the duck-in finishes with the body hidden.
-	var body: ModelSlot = keepy.body_slot()
-	var hidden: int = 0
-	while body.visible and hidden < 240:
-		await get_tree().process_frame
-		hidden += 1
-	_check(not body.visible, "the body is hidden after the duck-in (%d frames)" % hidden)
-
-func _phase_d_exit(hub: Node, props: HubBuilder, keepy: KeepyHopper,
-		tap: HubTapInput, camera: Camera3D) -> void:
+## The interior scene stands up on its own, and its two floors are where
+## the calibration put them.
+##
+## Instantiated ON ITS OWN rather than reached through the route, because
+## what is under test here is the SCENE -- a controller with no levels, a
+## link whose ends do not sit on their floors, or a backdrop that never
+## instantiated are all silent, and none of them needs the hub to show up.
+func _phase_i_interior() -> void:
 	print("")
-	print("--- PHASE D: any tap brings him back out ---")
-	if not keepy.is_in_cabin():
+	print("--- PHASE I: the interior scene builds ---")
+	# add_child runs _ready() synchronously, so everything the scene builds
+	# exists on the line after this one -- no frame to wait for.
+	var interior: Node = INTERIOR_SCENE.instantiate()
+	add_child(interior)
+	var controller: LevelController = interior.get_node("LevelController") as LevelController
+	_check(controller != null, "the interior carries a LevelController")
+	if controller == null:
+		interior.queue_free()
 		return
-	var body: ModelSlot = keepy.body_slot()
-	var spot: Vector3 = keepy.global_position
-	# BLIND CHECK. "He is visible again" is satisfied for free by a body
-	# that was never hidden, so the hide is asserted first -- and it has to
-	# be asserted HERE, on the state this phase is about to change, rather
-	# than trusted from the phase before it.
-	_check(not body.visible, "BLIND CHECK: he really is hidden going in")
-
-	# ON THE DOORSTEP, and that is the SHARPEST test of the boat pattern
-	# rather than a convenient one. This is the tap the ladder's shape
-	# would have swallowed: with the doorstep withdrawn it resolves to
-	# tapped_ground and becomes the way out, and without the withdrawal it
-	# would emit tapped_cabin, be dropped by a Keepy who is already inside,
-	# and leave him in there for the rest of the session with the one thing
-	# a player would think to aim at doing nothing at all.
-	var door: Vector3 = props.cabins()[0]["door"]
-	# AND IT IS DRIVEN THROUGH THE REAL ROUTING, not by calling the ground
-	# handler directly. That distinction is the whole phase: what the
-	# withdrawal actually decides is WHICH SIGNAL a tap on this spot
-	# becomes, so a probe that called _on_tapped_ground itself would pass
-	# just as happily against the ladder pattern it exists to rule out --
-	# measured, after an earlier version of this phase did exactly that.
-	var container: SubViewportContainer = hub.get_node("WorldViewport") as SubViewportContainer
-	var rect := container.get_global_rect()
-	_check(rect.size.x > 0.0 and rect.size.y > 0.0,
-			"the container has a real rect %s (run under xvfb, not --headless)" % rect)
-	tap._handle_point(_to_screen(container, camera, door))
-	var frames: int = 0
-	while keepy.is_in_cabin() and frames < 240:
-		await get_tree().process_frame
-		frames += 1
-	_check(not keepy.is_in_cabin(),
-			"a tap ON THE DOORSTEP ended the visit (%d frames)" % frames)
-	_check(body.visible, "the body is visible again")
-	_check(tap.cabin_available, "the doorstep takes taps again")
-	# He comes back out where he went in: the way out is the way in, so
-	# there is no exit ring to walk and nothing to clear.
-	_check(keepy.global_position.distance_to(spot) < 0.01,
-			"he came out on the spot he vanished at (%.4f u)"
-					% keepy.global_position.distance_to(spot))
-	# And the far tap was DROPPED, not queued as somewhere to walk to.
-	_check(not keepy.is_hopping(), "the exit tap was not turned into a destination")
-
-func _phase_e_revisit(hub: Node, props: HubBuilder, keepy: KeepyHopper,
-		tap: HubTapInput) -> void:
-	print("")
-	print("--- PHASE E: he can go back in, and ANY tap lets him out ---")
-	if props.cabins().is_empty():
+	_check(controller.levels.size() == 2,
+			"two levels: a floor and a loft (%d)" % controller.levels.size())
+	_check(controller.links.size() == 1,
+			"one transition between them (%d)" % controller.links.size())
+	if controller.levels.size() < 2 or controller.links.is_empty():
+		interior.queue_free()
 		return
-	var door: Vector3 = props.cabins()[0]["door"]
-	# A SECOND visit, which is what proves the first one left nothing
-	# latched: a withdrawal never restored, a tween never cleared or a
-	# hidden body never shown would all pass PHASE D and fail here.
-	hub.call("_on_tapped_cabin", door)
-	var frames: int = 0
-	while not keepy.is_in_cabin() and frames < 900:
-		await get_tree().process_frame
-		frames += 1
-	_check(keepy.is_in_cabin(), "he went back in a second time (%d frames)" % frames)
-	if not keepy.is_in_cabin():
-		return
-	# And out on a tap NOWHERE NEAR the prop, which is the other half of
-	# the claim: he is invisible in there, so a player has nothing to aim
-	# at and any tap has to work.
-	hub.call("_on_tapped_ground", Vector3(-10.0, 0.0, 20.0))
-	frames = 0
-	while keepy.is_in_cabin() and frames < 240:
-		await get_tree().process_frame
-		frames += 1
-	_check(not keepy.is_in_cabin(), "a tap 9 u away also ended it (%d frames)" % frames)
-	_check(keepy.body_slot().visible, "the body is visible after the second visit")
-	_check(tap.cabin_available, "the doorstep takes taps again after the second visit")
 
+	var floor_level: LevelDefinition = controller.levels[0]
+	var loft_level: LevelDefinition = controller.levels[1]
+	# The loft is ABOVE the floor -- the one thing a two-storey scene
+	# cannot get wrong and still be a two-storey scene.
+	_check(loft_level.plane_y > floor_level.plane_y,
+			"the loft (%.3f) is above the floor (%.3f)"
+					% [loft_level.plane_y, floor_level.plane_y])
+	# Both heights come out of ONE conversion in the scene, so they are
+	# checked against that same conversion rather than against a second
+	# copy of the arithmetic here.
+	var expect_floor: float = (CabinInterior.FLOOR_MODEL_Y
+			+ CabinInterior.CABIN_MODEL_OFFSET_Y) * CabinInterior.CABIN_SCALE
+	var expect_loft: float = (CabinInterior.LOFT_MODEL_Y
+			+ CabinInterior.CABIN_MODEL_OFFSET_Y) * CabinInterior.CABIN_SCALE
+	_check(absf(floor_level.plane_y - expect_floor) < 0.001,
+			"the floor plane is the MEASURED floor (%.4f)" % floor_level.plane_y)
+	_check(absf(loft_level.plane_y - expect_loft) < 0.001,
+			"the loft plane is the MEASURED slab top (%.4f)" % loft_level.plane_y)
+
+	# THE LINK'S TWO ENDS SIT ON THEIR OWN FLOORS. Built from the level
+	# definitions in the scene for exactly this reason -- a hand-written
+	# height here would be a second opinion about where a floor is, and the
+	# failure it causes is a climb that ends in mid-air.
+	var link: LevelTransition = controller.links[0]
+	_check(link.level_a == 0 and link.level_b == 1,
+			"the link joins level 0 to level 1 (%d -> %d)" % [link.level_a, link.level_b])
+	_check(absf(link.point_a.y - floor_level.plane_y) < 0.001,
+			"its foot is on the floor (%.4f)" % link.point_a.y)
+	_check(absf(link.point_b.y - loft_level.plane_y) < 0.001,
+			"its top is on the loft (%.4f)" % link.point_b.y)
+	# And BOTH ends stand on the level they serve, rather than out over the
+	# edge of it: a foot outside the floor's extent is a ladder a player
+	# cannot legally walk to.
+	_check(floor_level.contains(link.point_a),
+			"the foot is inside the floor's extent")
+	_check(loft_level.contains(link.point_b),
+			"the top is inside the loft's extent")
+
+	# The walker starts standing on the ground floor, at the spot the door
+	# is meant to open onto.
+	var walker: LevelWalker = interior.get_node(
+			"WorldViewport/SubViewport/World/Walker") as LevelWalker
+	_check(walker != null, "the interior carries a LevelWalker")
+	if walker != null:
+		_check(absf(walker.global_position.y - floor_level.plane_y) < 0.001,
+				"Keepy starts ON the ground floor (%.4f)" % walker.global_position.y)
+		_check(floor_level.contains(walker.global_position),
+				"and inside it, not over the edge")
+		_check(walker.find_child("Body", true, false) != null,
+				"his body reached the walker")
+
+	# The backdrop is ONE static node, never moved: everything else in the
+	# scene is positioned against it.
+	var props: Node3D = interior.get_node(
+			"WorldViewport/SubViewport/World/Props") as Node3D
+	var cabin: Node3D = props.get_node_or_null("Cabin") as Node3D
+	_check(cabin != null, "the .glb backdrop was built")
+	if cabin != null:
+		_check(absf(cabin.scale.x - CabinInterior.CABIN_SCALE) < 0.001,
+				"at the interior's own scale %.1f (%.3f)"
+						% [CabinInterior.CABIN_SCALE, cabin.scale.x])
+		_check(cabin.global_position.is_equal_approx(Vector3.ZERO),
+				"and at the origin, unmoved %s" % str(cabin.global_position))
+
+	# THE CAMERA IS FIXED, and that is the decision this batch took rather
+	# than an accident: no LevelCamera, no follow, no occlusion fade.
+	var camera: Camera3D = interior.get_node(
+			"WorldViewport/SubViewport/World/Camera3D") as Camera3D
+	_check(camera != null and not (camera is LevelCamera),
+			"the interior camera is a plain fixed Camera3D, not a LevelCamera")
+	if camera != null:
+		var pitch: float = camera.rotation_degrees.x
+		_check(absf(pitch + 22.0) < 0.5,
+				"pitched at the calibrated -22 deg (%.2f)" % pitch)
+		_check(camera.keep_aspect == Camera3D.KEEP_WIDTH,
+				"KEEP_WIDTH, so the frame does not narrow on a taller phone")
+		# And BOTH floors are in front of it -- a fixed camera that cannot
+		# see one of its two levels is the failure this scene risks.
+		_check(not camera.is_position_behind(Vector3(0.0, expect_floor, 0.0)),
+				"the ground floor is in front of it")
+		_check(not camera.is_position_behind(Vector3(0.0, expect_loft, 0.0)),
+				"the loft is in front of it")
+
+	# NOTHING JOINED level_occluder, and that is measured rather than
+	# forgotten: the cabin is ONE mesh and the walker stands INSIDE its
+	# world AABB on both floors, so a slab test would report "blocking"
+	# every frame from every camera position and hold the whole building at
+	# fade alpha for the entire visit.
+	_check(get_tree().get_nodes_in_group("level_occluder").is_empty(),
+			"no node joined level_occluder (the cabin is one mesh around the player)")
+	interior.queue_free()
 
 ## The doorstep must not answer for the lawn in front of the cabin.
 ##
@@ -317,10 +416,10 @@ func _phase_e_revisit(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 ## cabin tapped that lawn; the tap he meant as "walk there" was spent as
 ## "go inside", and he vanished. Nothing raised, nothing looked broken.
 ##
-## VERIFIED RED BEFORE GREEN on the shipped tree: 6 failures, including
-## "a walking tap one pace to the SIDE of it stays a walking tap
-## ([&"cabin"])" and "he did not end up indoors" -- the device report, in
-## the probe's own words.
+## ⚠️ THE CONSEQUENCE IS WORSE NOW, NOT BETTER: a stray entry used to cost
+## a duck-in he could tap his way out of. It now costs a SCENE CHANGE. So
+## this phase and PHASE F below are kept in full, unchanged in what they
+## assert, even though the mechanism behind the signal was replaced.
 ##
 ## THE POINTS ARE DERIVED FROM THE BUILDING, NEVER FROM THE RADIUS. Sizing
 ## them off CABIN_TAP_RADIUS would make this phase pass for any radius at
@@ -330,14 +429,11 @@ func _phase_e_revisit(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 ##
 ## AND IT OPENS WITH THE POSITIVE. "Nothing triggered" is satisfied for
 ## free by a doorstep that was never wired, so the phase shows it CAN fire
-## before its refusals mean anything -- PHASE D's blind-check discipline.
+## before its refusals mean anything.
 ##
 ## THE SIGNAL HALF RUNS WITH HubWorld's HANDLER DISCONNECTED, and that is
 ## not tidiness: what is under test is WHICH SIGNAL a tap becomes, and
-## leaving the handler live means the blind check walks Keepy indoors and
-## every assertion after it is measuring the leftovers of the one before.
-## An earlier version of this phase did exactly that and reported three
-## failures it had caused itself.
+## leaving the handler live would ROUTE OUT OF THE SCENE mid-phase.
 func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 		tap: HubTapInput, camera: Camera3D) -> void:
 	print("")
@@ -363,11 +459,6 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	_check(HubWorld.CABIN_TAP_RADIUS < aabb.size.x * 0.5,
 			"the trigger (%.2f) is smaller than the cabin's own half-width (%.3f)"
 					% [HubWorld.CABIN_TAP_RADIUS, aabb.size.x * 0.5])
-	# REPORTED, NOT GATED: how much room a visitor has to stand in front of
-	# the cabin before the plateau runs out. It is not a contract -- where
-	# the cabin stands is a layout decision -- but it is the number that
-	# decides whether "walk up and look at it" is a thing a player can do,
-	# and it shrinks as the prop grows. The scale-up lot left it at 0.65 u.
 	print("  ..    %.2f u of walkable ground behind the doorstep (edge at z = %.1f)"
 			% [HubRegion.PLATEAU_HALF_EXTENT - door.z, HubRegion.PLATEAU_HALF_EXTENT])
 
@@ -379,36 +470,28 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 		return
 
 	await _settle(keepy)
+	# ⚠️ PLACED AND THE CAMERA SNAPPED, exactly as PHASE F does and for the
+	# reason it states -- but here it is not a refinement, it is what makes
+	# the phase able to measure anything at all. The doorstep is 33 u out
+	# at z = +34 and the camera looks down -Z, so from the spawn the door
+	# is BEHIND it: unproject_position returns a point off the container,
+	# _handle_point drops it, and every assertion below reads an empty
+	# signal list. Measured -- the first run of this phase reported four
+	# failures with `[]` for every tap, including its own blind check.
+	keepy.global_position = Vector3(door.x, 0.0, door.z)
+	camera.global_position = Vector3(door.x, 0.0, door.z) + HubCamera.OFFSET
+	for i in 4:
+		await get_tree().process_frame
 
 	# Two paces back, and one either side. Stated in world units so they
 	# say "a person standing clear of a doorway" rather than "outside
 	# whatever the radius happens to be".
-	#
-	# ⚠️ THE REGION FILTER THAT USED TO STAND HERE IS GONE, AND SO IS THE
-	# ARGUMENT FOR IT. It skipped any candidate on ground that does not
-	# exist, reasoning that _handle_point clamps before it picks a signal
-	# so the tested point "comes back 0.65 u from the doorstep and MEANS
-	# the cabin -- correctly, because 0.65 u from a doorway is at it".
-	#
-	# That reasoning excused the third stray-entry cause and removed the
-	# only case that would have caught it. The point is not 0.65 u from the
-	# door because the player aimed there: it is 0.65 u from the door
-	# because an UNBOUNDED half-plane of off-map ground was collapsed onto
-	# the 2.246 u strip of the north edge that lies inside the doorstep
-	# disc. Measured on the shipped layout, standing at the door, 15.26% of
-	# all visible ground meant "go inside" and 89.2% of it aimed at ground
-	# that is not there -- from as far as 49.8 u away.
-	#
-	# _handle_point now decides MEANING on the raw aim and only the
-	# DESTINATION on the clamp, so an off-map tap is a walking tap again
-	# and every candidate below can be asserted rather than skipped.
 	var away := 2.0
 	var candidates: Array = [
 		[Vector3(door.x, 0.0, door.z + away), "two paces BACK from the door"],
 		[Vector3(door.x + away, 0.0, door.z), "one pace to the SIDE of it"],
 		[Vector3(door.x - away, 0.0, door.z), "one pace to the OTHER side"],
 	]
-	var probes: Array = candidates
 	for candidate in candidates:
 		var where: Vector3 = candidate[0]
 		if not HubRegion.contains(where):
@@ -430,7 +513,7 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	_check(saw.size() == 1 and saw[0] == &"cabin",
 			"BLIND CHECK: a tap ON the doorstep still means the cabin (%s)" % str(saw))
 
-	for probe in probes:
+	for probe in candidates:
 		var where: Vector3 = probe[0]
 		var what: String = probe[1]
 		saw.clear()
@@ -445,18 +528,20 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	tap.tapped_ground.disconnect(on_ground)
 
 	# --- and end to end, through the real routing ------------------------
-	# One walking tap, driven all the way: he must walk, and he must still
-	# be outdoors when the walk is over.
+	# One walking tap, driven all the way: he must walk, and the hub must
+	# still be the scene when the walk is over. `_entering` is what a
+	# stray entry would arm, and it is the thing to read now that going in
+	# leaves no state on Keepy at all.
 	await _settle(keepy)
-	var lawn: Vector3 = probes[1][0]
+	var lawn: Vector3 = candidates[1][0]
 	tap._handle_point(_to_screen(container, camera, lawn))
 	var frames: int = 0
 	while keepy.is_hopping() and frames < 900:
 		await get_tree().process_frame
 		frames += 1
-	_check(not keepy.is_in_cabin(),
-			"a walking tap one pace to the side left him OUTDOORS (%d frames)" % frames)
-	_check(keepy.body_slot().visible, "and visible")
+	_check(is_instance_valid(hub) and hub.is_inside_tree(),
+			"a walking tap one pace to the side did NOT route away (%d frames)" % frames)
+	_check(not HubSpawn.has_pending(), "and wrote no return spawn")
 	await _settle(keepy)
 
 ## PHASE F -- THE CLAMP MUST NOT BE A FUNNEL INTO THE DOORSTEP.
@@ -472,15 +557,11 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 ## The cabin is the only prop on this plateau exposed to it, measured
 ## rather than assumed: its doorstep stands 0.655 u inside the north edge,
 ## while the boat, the owl and the three ladder feet are 6.85 u to
-## infinitely far from any off-map ground and NOT ONE off-map point funnels
-## into any of them.
+## infinitely far from any off-map ground.
 ##
 ## ⚠️ THE FUNNEL IS ASSERTED TO EXIST BEFORE ANYTHING IS ASKED TO RESIST
 ## IT. Every refusal below would pass gratuitously against a layout where
-## the clamp simply left these points far from the door -- the phase would
-## then be measuring the geometry rather than the fix. So it first proves
-## that these aims are off the map AND that the clamp still drags them onto
-## the doorstep, and only then requires that they mean a walk.
+## the clamp simply left these points far from the door.
 func _phase_f_no_funnel(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 		tap: HubTapInput, camera: Camera3D) -> void:
 	print("")
@@ -546,8 +627,8 @@ func _phase_f_no_funnel(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	tap.tapped_ground.disconnect(on_ground)
 
 	# --- and end to end, through the real routing -----------------------
-	# The whole report, in one assertion: aim past the cabin, and be
-	# standing outdoors when the walk is over.
+	# The whole report, in one assertion: aim past the cabin, and still be
+	# on the plateau when the walk is over.
 	await _settle(keepy)
 	keepy.global_position = Vector3(door.x, 0.0, door.z - 2.0)
 	camera.global_position = Vector3(door.x, 0.0, door.z - 2.0) + HubCamera.OFFSET
@@ -559,19 +640,174 @@ func _phase_f_no_funnel(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	while keepy.is_hopping() and frames < 900:
 		await get_tree().process_frame
 		frames += 1
-	_check(not keepy.is_in_cabin(),
-			"aiming 3 u PAST the cabin left him outdoors (%d frames, %.3f u from the door)"
+	_check(is_instance_valid(hub) and hub.is_inside_tree(),
+			"aiming 3 u PAST the cabin did not route away (%d frames, %.3f u from the door)"
 					% [frames, Vector3(keepy.global_position.x, 0.0, keepy.global_position.z).distance_to(door)])
-	_check(keepy.body_slot().visible, "and visible")
+	_check(not HubSpawn.has_pending(), "and wrote no return spawn")
 	await _settle(keepy)
+
+## The way out puts him back on the doorstep, not at the world origin.
+##
+## THE DEFECT THIS EXISTS FOR, and it is the one every other return path
+## on this screen still has: HubWorld.tscn's Keepy node carries no
+## transform, so a bare change_scene_to_file drops him at (0,0,0) -- the
+## middle of the plateau, a full 33 units from the cabin he just walked
+## out of.
+##
+## Driven STANDALONE rather than off the entry in PHASE R, and that is the
+## order the two were swapped into deliberately: R ends the run (it hands
+## the hub to the router), so a spawn test hanging off it would be a test
+## that can only ever run after the scene it needs has been replaced.
+## Chaining them would also have made this phase pass or fail for reasons
+## belonging to that one.
+func _phase_s_spawn(tree: SceneTree) -> void:
+	print("")
+	print("--- PHASE S: coming back out lands on the doorstep ---")
+	# BLIND CHECK. Every assertion below is about a spawn being honoured,
+	# and "he is at the origin" passes for free when nothing was ever
+	# requested -- so the clean start is proven before the request means
+	# anything.
+	_check(not HubSpawn.has_pending(), "BLIND CHECK: nothing is pending to begin with")
+
+	HubSpawn.request(_EXPECTED_DOOR)
+	_check(HubSpawn.has_pending(), "a request leaves one pending")
+	var where: Vector3 = HubSpawn.take()
+	# Flattened on the way in: the plateau is single-altitude, and a height
+	# stored here would be a second opinion about where the ground is.
+	_check(absf(where.y) < 0.0001, "the spawn carries no height (%.4f)" % where.y)
+	_check(where.distance_to(_EXPECTED_DOOR) < 0.001,
+			"and it comes back as the point it was given %s" % str(where))
+	# CONSUMED, not read: a spawn left set would apply to the next return
+	# from Chased too, and put the player at a door they left an hour ago.
+	_check(not HubSpawn.has_pending(), "take() cleared it")
+
+	# End to end: load the hub the way a return does, and see where he
+	# stands.
+	HubSpawn.request(_EXPECTED_DOOR)
+	var hub: Node = HUB_SCENE.instantiate()
+	add_child(hub)
+	await tree.process_frame
+	await tree.process_frame
+	var keepy: KeepyHopper = hub.get_node(
+			"WorldViewport/SubViewport/World/Keepy") as KeepyHopper
+	_check(keepy.global_position.distance_to(_EXPECTED_DOOR) < 0.01,
+			"a fresh hub put him on the doorstep %s" % str(keepy.global_position))
+	_check(not HubSpawn.has_pending(), "and consumed the spawn doing it")
+	# THE CAMERA CAME WITH HIM. Children are readied before their parent,
+	# so HubCamera snapped to the origin before HubWorld moved Keepy: with
+	# no second snap the screen would open on the middle of the plateau and
+	# slide over. That slide is invisible to every assertion above.
+	var camera: HubCamera = hub.get_node(
+			"WorldViewport/SubViewport/World/Camera3D") as HubCamera
+	var want: Vector3 = Vector3(_EXPECTED_DOOR.x, 0.0, _EXPECTED_DOOR.z) + HubCamera.OFFSET
+	_check(camera.global_position.distance_to(want) < 0.01,
+			"and the camera is already framing it %s" % str(camera.global_position))
+
+	# A SECOND load with nothing pending goes back to the authored origin,
+	# which is what every sub-game return must keep doing.
+	# REMOVED before freed: queue_free() alone leaves the node in the tree
+	# for the rest of the frame, and HubCamera._process then reads a target
+	# that is on its way out -- which prints `!is_inside_tree()` twice into
+	# a log this repo compares byte for byte.
+	remove_child(hub)
+	hub.queue_free()
+	await tree.process_frame
+	HubSpawn.clear()
+	var again: Node = HUB_SCENE.instantiate()
+	add_child(again)
+	await tree.process_frame
+	await tree.process_frame
+	var keepy2: KeepyHopper = again.get_node(
+			"WorldViewport/SubViewport/World/Keepy") as KeepyHopper
+	_check(keepy2.global_position.length() < 0.01,
+			"with nothing pending he is back at the spawn %s" % str(keepy2.global_position))
+	remove_child(again)
+	again.queue_free()
+	await tree.process_frame
+	# And the next phase has to start from a clean slate of its own.
+	HubSpawn.clear()
+
+## A tap on the doorstep walks him there and ROUTES.
+##
+## ⚠️ THIS PHASE ENDS THE HUB, which is why it runs last: the router calls
+## change_scene_to_file, and everything above needs the plateau standing.
+## It is driven through HubWorld's own handler and the real hop chain,
+## never by calling _try_enter_cabin directly -- what is worth gating is
+## the WIRING, and a probe that called the method would pass against a
+## signal that was never connected.
+##
+## The REAL router runs, with no stand-in: the entry is the one place the
+## spawn and the route have to happen together and in that order, and a
+## recording double would be free to agree with the file it is imitating
+## about neither.
+##
+## VERIFIED RED BEFORE GREEN by neutering the route call in
+## HubWorld._try_enter_cabin -- see the batch report.
+func _phase_r_route(tree: SceneTree, hub: Node, props: HubBuilder,
+		keepy: KeepyHopper) -> void:
+	print("")
+	print("--- PHASE R: the doorstep tap routes into the interior ---")
+	if props.cabins().is_empty():
+		return
+	var door: Vector3 = props.cabins()[0]["door"]
+
+	# BLIND CHECK. "A spawn is pending" and "the scene changed" both pass
+	# for free against leftovers, so the clean start is asserted first.
+	_check(not HubSpawn.has_pending(), "BLIND CHECK: nothing is pending before the tap")
+	_check(tree.current_scene == hub,
+			"BLIND CHECK: the hub is the scene the router is about to replace")
+
+	hub.call("_on_tapped_cabin", door)
+	var frames: int = 0
+	while not HubSpawn.has_pending() and frames < 900:
+		await tree.process_frame
+		frames += 1
+	_check(HubSpawn.has_pending(),
+			"he walked to the door and the entry fired (%d frames)" % frames)
+	if not HubSpawn.has_pending():
+		return
+	# THE SPAWN IS THE DOORSTEP HE STOOD ON, which is the one fact linking
+	# this phase to PHASE S: that one proved a spawn is honoured, this one
+	# proves the right point is written.
+	_check(HubSpawn.take().distance_to(_EXPECTED_DOOR) < 0.001,
+			"and the spawn it wrote IS the doorstep %s" % str(_EXPECTED_DOOR))
+
+	# THE SCENE CHANGE ITSELF, and it is a TWO-STEP one -- measured, not
+	# assumed. change_scene_to_packed nulls current_scene and queues the
+	# old scene for deletion straight away, then installs the new one at
+	# the END of the idle frame. So there is a window in which the tree has
+	# no current scene at all, and a probe that waited only for
+	# `current_scene != hub` reads null and reports the interior missing.
+	# That is exactly what the first run of this phase did.
+	frames = 0
+	while (tree.current_scene == hub or tree.current_scene == null) and frames < 240:
+		await tree.process_frame
+		frames += 1
+	_check(tree.current_scene != hub, "the hub scene was left (%d frames)" % frames)
+	var loaded: Node = tree.current_scene
+	_check(loaded != null and loaded.get_script() != null
+					and loaded.get_script().resource_path
+							== "res://scripts/cabin/CabinInterior.gd",
+			"and the interior is the current scene (%s)"
+					% ("<null>" if loaded == null else loaded.name))
+	# He arrives standing on the ground floor of it, which is the whole
+	# claim the player will check first.
+	if loaded != null:
+		var walker: LevelWalker = loaded.get_node_or_null(
+				"WorldViewport/SubViewport/World/Walker") as LevelWalker
+		var controller: LevelController = loaded.get_node_or_null(
+				"LevelController") as LevelController
+		if walker != null and controller != null and not controller.levels.is_empty():
+			var floor_level: LevelDefinition = controller.levels[0]
+			_check(absf(walker.global_position.y - floor_level.plane_y) < 0.001,
+					"and Keepy is standing on its ground floor (%.4f)"
+							% walker.global_position.y)
 
 ## Puts him back outside, still, and clear of the doorstep, so the next
 ## assertion measures its own tap and not the one before it.
 func _settle(keepy: KeepyHopper) -> void:
-	if keepy.is_in_cabin():
-		keepy.leave_cabin()
 	var frames: int = 0
-	while (keepy.is_in_cabin() or keepy.is_hopping()) and frames < 900:
+	while keepy.is_hopping() and frames < 900:
 		await get_tree().process_frame
 		frames += 1
 
@@ -588,6 +824,15 @@ func _phase_untouched(props: HubBuilder) -> void:
 			"one turnstile (%d)" % props.spinning_props().size())
 	_check(props.seesaws().size() == 1, "one seesaw (%d)" % props.seesaws().size())
 	_check(props.boat() != null, "the boat is still there")
+	# AND THE THREE PORTAL ROUTES ARE UNTOUCHED. The cabin was added to
+	# HubRouter's table this batch, which is the one file every sub-game
+	# entry passes through -- a typo there breaks Chased, not the cabin.
+	_check(String(HubRouter.ROUTES.get(&"chased", "")) == "res://scenes/TitleScreen.tscn",
+			"chased still routes to TitleScreen")
+	_check(String(HubRouter.ROUTES.get(&"quizz", "")) == "res://scenes/QuizzHomeScreen.tscn",
+			"quizz still routes to QuizzHomeScreen")
+	_check(String(HubRouter.ROUTES.get(&"battle", "")) == "res://scenes/Battle.tscn",
+			"battle still routes to Battle")
 	# NOTHING ELSE STOLE THE CABIN'S TAP, and nothing had its own stolen:
 	# the doorstep has to be clear of every other prop that reads a tap.
 	var door: Vector3 = props.cabins()[0]["door"] if not props.cabins().is_empty() \

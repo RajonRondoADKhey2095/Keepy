@@ -95,6 +95,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 ## same lot that retires scenes/dev/LevelNavTest.tscn.
 @onready var _navtest_button: Button = $FallbackMenu/Panel/VBoxContainer/NavTestButton
 @onready var _mooring: BoatMooring = $Mooring
+@onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
 
 ## The 3D root, and the ONE reason this path is held: the impact splash is
 ## parented HERE and never under Props.
@@ -212,11 +213,12 @@ var _owl_ride: Dictionary = {}
 ##
 ## No per-prop tween slot, unlike the spinners, the seesaws and the owls,
 ## and no "the one he is inside" companion either -- unlike all three of
-## them. Nothing here is ever animated and nothing has to be put back: the
-## cabin stands still and it is KEEPY who is hidden, so there is no carrier
-## to restore and nothing a visit needs to remember. Which cabin he is in
-## is a question no one asks, and a field written only to be cleared is a
-## field nobody is reading.
+## them. Nothing here is ever animated and nothing has to be put back,
+## because since 29 aout 2026 a cabin is not a ride at all: it is a SCENE
+## CHANGE. There is no carrier to restore, no visit to remember, and no
+## state on this screen that outlives the tap -- the whole of the interior
+## lives in CabinInterior.tscn, and this screen stops existing while the
+## player is in there.
 var _cabins: Array[Dictionary] = []
 
 ## A tap on a doorstep armed a walk to it, and the landing that finishes
@@ -224,6 +226,12 @@ var _cabins: Array[Dictionary] = []
 ## and _flying already are, and cleared on the same three occasions:
 ## another tap, a successful entry, or the chain running out without
 ## arriving.
+##
+## What differs from those three is what "a successful entry" DOES: they
+## hand the body to a ride state on this screen, this one leaves the screen
+## entirely. The latch is still needed for exactly the reason theirs are --
+## the walk to the door takes several hops and the intent has to survive
+## every landing that has not arrived yet.
 var _entering: bool = false
 
 ## A tap on a perch armed a walk to it, and the landing that finishes that
@@ -431,12 +439,47 @@ func _ready() -> void:
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
 
+	# LAST, and after every _setup_* above: this moves Keepy, and the
+	# camera snap it ends with has to be the final word on where the frame
+	# opens. Placed before the builder had run it would be a spawn onto a
+	# plateau that does not exist yet.
+	_consume_return_spawn()
+
 	_fallback_button.pressed.connect(_on_fallback_toggled)
 	_fallback_close.pressed.connect(_on_fallback_toggled)
 	_chased_button.pressed.connect(_on_fallback_chased)
 	_quizz_button.pressed.connect(_on_fallback_quizz)
 	_battle_button.pressed.connect(_on_fallback_battle)
 	_navtest_button.pressed.connect(_on_fallback_navtest)
+
+## Puts Keepy back where he left the plateau, when something asked.
+##
+## =====================================================================
+## WHY THIS EXISTS -- and why only the cabin uses it
+##
+## Every other way back to this screen is a return from a SUB-GAME: you
+## went somewhere else entirely and you come back to the middle of the
+## plateau, which is what HubWorld.tscn's transform-less Keepy node gives
+## for free. A DOOR is different: walking out of the cabin has to put you
+## in front of the cabin, and nothing in the scene file can say so because
+## the door coordinate is derived from the layout at build time.
+##
+## The pending spawn is CONSUMED (HubSpawn.take clears as it returns), so
+## the next ordinary return -- out of Chased, say -- lands at the origin
+## the way it always has, rather than at a door the player left an hour
+## ago.
+##
+## ⚠️ THE CAMERA SNAP IS NOT OPTIONAL. HubCamera._ready() runs BEFORE this
+## one (children are readied first) and snaps to Keepy at the origin, so
+## without the second snap the screen would open on the middle of the
+## plateau and then slide to the cabin over the first second. That reads as
+## the camera catching up, not as coming out of a door.
+func _consume_return_spawn() -> void:
+	if not HubSpawn.has_pending():
+		return
+	var where: Vector3 = HubSpawn.take()
+	_keepy.global_position = Vector3(where.x, 0.0, where.z)
+	_camera.snap_to_target()
 
 ## Repaints this screen's atmosphere from the shared palette.
 ##
@@ -736,6 +779,38 @@ func _on_tapped_cabin(point: Vector3) -> void:
 ## that was the boarding walk's own defect, which passed its probe for a
 ## whole batch because the arrival happened to fall inside the radius on
 ## hop one.
+##
+## =====================================================================
+## ⚠️ SINCE 29 AOUT 2026 THIS LEAVES THE SCREEN.
+##
+## It used to hand the body to a ride state (KeepyHopper.enter_cabin) that
+## ducked him down and hid him ON THE SPOT, and a later tap brought him
+## back out. That mechanism is GONE -- state, signals, tweens and the tap
+## withdrawal with it -- because the cabin now has a real interior, and an
+## interior is a scene rather than a pose.
+##
+## Two things follow, and both are the reason this is not simply a swapped
+## call:
+##
+##   * THE SPAWN IS WRITTEN HERE, not in the interior. Every route out of
+##     CabinInterior is the same bare change_scene_to_file the sub-games
+##     use, and HubWorld.tscn's Keepy carries no transform -- so without a
+##     spawn the way out of the cabin puts him at the world origin, which
+##     is the middle of the plateau. The door coordinate is a fact this
+##     screen already owns (HubBuilder derived it), so the hub records it
+##     on the way IN and the interior never learns a single thing about
+##     the plateau.
+##
+##   * IT ROUTES THROUGH HubRouter AND NOT change_scene_to_file. That file
+##     is "the one place that changes scene", and a second scene-changer in
+##     this one -- for the single prop that is not a portal -- is exactly
+##     what its header refuses.
+##
+## No confirmation dialog, unlike the three portals, and that is not an
+## omission. A portal is entered by LANDING on it, which a hop aimed past
+## it does by accident; a doorstep is entered by TAPPING IT, on a target
+## narrowed to 1.30 for exactly that reason. The question has already been
+## asked by the gesture.
 func _try_enter_cabin(position: Vector3) -> bool:
 	if _cabins.is_empty():
 		_entering = false
@@ -750,26 +825,14 @@ func _try_enter_cabin(position: Vector3) -> bool:
 			entry = candidate
 	if nearest > CABIN_ARRIVE_RADIUS:
 		return false
-	if not _keepy.enter_cabin(entry["door"] as Vector3):
-		return false
 	_entering = false
-	# The doorstep stops accepting taps for the whole visit, so the next tap
-	# falls through to the ground path exactly as the boat's and the perch's
-	# do -- which is what leaves it free to MEAN something, and here what it
-	# means is "come back out". Copying the ladder instead would have left a
-	# player inside a prop that was swallowing every tap he made.
-	_tap.cabin_available = false
+	# The doorstep he is standing on, so the way back out puts him exactly
+	# where he went in. Written BEFORE the route: change_scene_to_file is
+	# deferred, but HubRouter latches on the first call and a spawn written
+	# after a refused second call would be a spawn nobody consumes.
+	HubSpawn.request(entry["door"] as Vector3)
+	_router.route(&"cabin")
 	return true
-
-## Brings him back out, and the doorstep takes taps again.
-##
-## Called from the ground path, which is where a tap made while he is
-## inside lands. No point is passed on: he comes out where he went in, and
-## that spot is ground he had already landed on.
-func _leave_cabin() -> void:
-	_tap.cabin_available = true
-	if _keepy.is_in_cabin():
-		_keepy.leave_cabin()
 
 ## Sets going every spinning prop the landing is standing at.
 ##
@@ -1224,21 +1287,6 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# withdrawal -- so this branch is what that fall-through lands in.
 	if _keepy.is_on_owl_flight():
 		return
-	# A tap while he is INSIDE A CABIN brings him back out, and this branch
-	# is the whole exit. It is reached because the doorstep withdraws from
-	# the tap for the length of the visit -- the boat's withdrawal -- so
-	# every tap made meanwhile falls through to here.
-	#
-	# ANY tap, not only one back on the doorstep, and that is deliberate
-	# rather than lax: he is INVISIBLE while he is in there, so a player has
-	# nothing to aim at. The turnstile and the seesaw can ask for a tap on
-	# themselves because the player can see them; a cabin cannot. The point
-	# is still dropped rather than queued -- it can say the player wanted
-	# something, but it must never become somewhere to walk to from inside a
-	# tree.
-	if _keepy.is_in_cabin():
-		_leave_cabin()
-		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
 	# screen overruling them.
@@ -1345,14 +1393,6 @@ func _on_hop_landed(position: Vector3) -> void:
 	# being carried into a sub-game by a bird the player was only flying
 	# over it on.
 	if _keepy.is_on_owl_flight():
-		return
-	# NOR WHILE HE IS IN A CABIN, on the identical terms: going in and
-	# coming out emit no landings either, so this branch should be as
-	# unreachable as the three above, and it is written for their reason --
-	# "no landing is emitted" is a property of KeepyHopper that could
-	# change, and the failure it would cause is a player being carried into
-	# a sub-game from inside a tree he was asleep in.
-	if _keepy.is_in_cabin():
 		return
 
 	# WHERE KEEPY IS, decided before anything about what this landing goes

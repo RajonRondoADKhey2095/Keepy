@@ -1,0 +1,293 @@
+extends Control
+class_name CabinInterior
+## Inside the tree-house: two walkable levels, one ladder, and the .glb as
+## a fixed backdrop.
+##
+## =====================================================================
+## THE BRIEF'S PREMISE WAS WRONG, AND MEASURING IT IS WHAT MADE THIS LOT
+## POSSIBLE
+##
+## It said the furnished interior is "une TEXTURE PEINTE sur la coque, pas
+## une geometrie creuse", and that therefore "AUCUNE mesure de vertex ne
+## peut donner ou est le sol reel -- ca n'existe pas comme donnee".
+##
+## It does exist as data. keepy_cabin_decor.glb is one mesh of 12 990
+## vertices / 7 262 triangles, and it is genuinely HOLLOWED OUT: a depth
+## map looking along -Z finds the middle band of the front face sitting at
+## z = -0.20 model units while the shell around it sits at +0.18, a recess
+## about 0.4 model units deep. Casting rays down INSIDE that recess finds
+## a flat floor at model y = -0.5305 that is consistent to three decimals
+## across the whole room (-0.532, -0.529, -0.528, -0.530, -0.529...), a
+## slab whose top is at -0.115, and a ceiling at +0.106.
+##
+## So the floors below are MEASURED off the mesh, not eyeballed against a
+## reference render, and the render was used to CONFIRM them rather than to
+## find them. They were right the first time -- see the batch report.
+##
+## =====================================================================
+## ⚠️ BUT THE LEVELS ARE STILL INVISIBLE PLANES, AND THE MESH IS STILL A
+## BACKDROP
+##
+## Which is the brief's design, arrived at from the other end. The measured
+## surfaces are not COLLISION -- nothing in this project has any -- and
+## they are not flat everywhere. An exhaustive search over every height in
+## the model for the largest axis-aligned square whose surface stays within
+## +-0.18 world units of one plane finds:
+##
+##   y ~ 1.75-2.00   half_extent 1.00   <- the ground floor
+##   y ~ 10.50       half_extent 0.60   <- branch tops, up in the canopy
+##   y ~ 11.00       half_extent 0.40   <- canopy again
+##
+## and NOTHING else above 0.4. On the loft the largest strictly-flat patch
+## is 0.5 x 0.5 world units, against a Keepy who is 1.32 wide and 2.04
+## deep. Read as collision, this asset has one floor and no mezzanine.
+##
+## Read as a BACKDROP -- which is what it is -- the loft is a drawn wooden
+## deck spanning the back of the room, and an invisible plane at its
+## dominant height puts Keepy on it. Where the drawing has a shelf or a bed
+## a few centimetres off that plane, he passes over it exactly as he passes
+## through a tree on the plateau, which is this project's settled rule:
+## nothing out there blocks an approach either.
+##
+## =====================================================================
+## ⚠️ THE CAMERA IS FIXED, AND LevelCamera IS DELIBERATELY NOT USED
+##
+## Three reasons, in the order that decides it. Only the first is taste.
+##
+## 1. A diorama is meant to be seen whole. Both storeys are in frame at
+##    once, which is how the model was drawn and how the reference render
+##    reads.
+##
+## 2. THE CAVITY OPENS ON ONE SIDE ONLY. Rendered on four axes: from +Z the
+##    trunk is hollowed and furnished, from -Z it is a closed trunk with no
+##    opening at all. A camera that follows the walker in XZ can be carried
+##    round to where there is nothing to see.
+##
+## 3. ⚠️ AND THE DECIDING ONE, MEASURED: LevelCamera's occlusion test
+##    cannot work on this asset. It fades any node in the `level_occluder`
+##    group whose WORLD AABB the camera-to-walker segment crosses. The
+##    cabin is ONE mesh, so its AABB is the whole building -- at this scale
+##    x[-10.43, 10.40] y[0, 17.49] z[-8.42, 8.59] -- and the walker stands
+##    INSIDE it on both levels. A segment that ENDS inside a box always
+##    intersects that box, so the test would report "blocking" on every
+##    frame from every camera position, and the entire cabin would sit at
+##    alpha 0.25 for the whole visit.
+##
+##    That is why nothing here joins `level_occluder`. It is not an
+##    oversight and it must not be "fixed" by adding the cabin to the
+##    group: the group is for geometry that can stand BETWEEN the camera
+##    and the walker, and a room the walker is inside cannot.
+##
+## LevelCamera itself is NOT modified. LevelController only asks for a
+## Camera3D, and a plain one satisfies it.
+##
+## =====================================================================
+## WHY NAVIGATION IS FREE XZ AND NOT CONSTRAINED TO AN AXIS
+##
+## The brief asked for that decision to be taken out loud. It offered a
+## corridor -- movement along the visible width only -- on the grounds that
+## the painted Z depth "ne correspond a aucune vraie profondeur 3D".
+##
+## It does. The ground floor's measured footprint at this scale is about
+## 3.5 wide by 5.5 deep, which is depth Keepy can actually use, so the
+## ground level is a free XZ square and needs no special case.
+##
+## The LOFT is the constrained one, and it is constrained by MEASUREMENT
+## rather than by rule: its deck is about 3.6 wide and 2.0 deep, so the
+## largest square that fits is what makes it feel like a gallery you walk
+## ALONG. That falls out of half_extent; no second navigation mode exists.
+
+const CABIN := preload("res://assets/models/keepy_cabin_decor.glb")
+const KEEPY := preload("res://assets/models/keepy_squirrel_hero.glb")
+const HUB_SCENE := "res://scenes/HubWorld.tscn"
+
+## Scale the .glb is drawn at INSIDE this scene.
+##
+## NOT the plateau's 7.0, and the difference is the one number this scene
+## is free to choose: out there the cabin is a landmark among trees, in
+## here it is the room. Chosen by rendering 7 / 11 / 14 / 18 side by side
+## with Keepy standing on the measured floor in each:
+##
+##   7   the whole tree fits the frame -- canopy, mound, lawn. You are
+##       looking AT a tree-house, not standing in one, and the room is a
+##       small part of the picture.
+##   11  the room fills the frame, both storeys read, the round window and
+##       the fireplace are legible.  <- this one
+##   14  closer, and the loft starts to crop at the top.
+##   18  too close: the loft and the window are gone.
+##
+## Everything below scales with it, so this constant is the only thing to
+## change if that judgement is revisited on a device.
+const CABIN_SCALE: float = 11.0
+
+## Lifts the model so its lowest point sits at y = 0, exactly as
+## HubBuilder.CABIN_MODEL_OFFSET does on the plateau. Measured off the
+## shipped .glb's POSITION accessor (min.y = -0.800420) rather than assumed
+## from the model being centred -- the origin of a .glb is wherever its
+## author left it.
+const CABIN_MODEL_OFFSET_Y: float = 0.800420
+
+## =====================================================================
+## THE TWO FLOORS, IN MODEL UNITS
+##
+## Stated in the model's OWN space and multiplied by CABIN_SCALE below, so
+## that changing the scale moves the floors with the drawing instead of
+## leaving them behind. A world-space literal here would be a second,
+## silent copy of the scale.
+
+## The ground floor. The flattest thing in the model: 117 sampled cells
+## agreed to a standard deviation of 0.0175 model units (0.12 world at this
+## scale), which is well under the 0.6 arc of a single hop.
+const FLOOR_MODEL_Y: float = -0.5305
+
+## The loft deck's top face, measured the same way (-0.112 / -0.115 / -0.139
+## across the columns that have one).
+const LOFT_MODEL_Y: float = -0.1150
+
+## =====================================================================
+## THE TWO WALKABLE SQUARES, IN WORLD UNITS AT CABIN_SCALE
+##
+## Sized off the measured extent of each drawn surface, then confirmed on a
+## render with Keepy standing at the centre and at the corners of each.
+
+const FLOOR_CENTRE := Vector2(0.60, 0.00)
+const FLOOR_HALF_EXTENT: float = 1.70
+
+const LOFT_CENTRE := Vector2(-0.70, -1.32)
+const LOFT_HALF_EXTENT: float = 1.10
+
+## The ladder, as the layout of the drawing has it: up the right-hand side
+## of the room, past the fireplace, onto the right end of the loft.
+const LADDER_FOOT := Vector2(2.05, -1.45)
+const LADDER_TOP := Vector2(0.25, -1.30)
+## How close an AIM has to land to mean the ladder. World units, like every
+## other prop radius in this project, so the target does not shrink with
+## distance the way a pixel one would.
+const LADDER_TAP_RADIUS: float = 1.10
+
+## Where Keepy starts a visit: just inside the door, at the front of the
+## ground floor, facing into the room.
+const ENTRY_SPOT := Vector2(0.60, 1.35)
+
+@onready var _controller: LevelController = $LevelController
+@onready var _walker: LevelWalker = $WorldViewport/SubViewport/World/Walker
+@onready var _props: Node3D = $WorldViewport/SubViewport/World/Props
+@onready var _exit_button: Button = $ExitButton
+
+func _ready() -> void:
+	# ⚠️ MOUSE_FILTER_IGNORE, and it is load-bearing. _unhandled_input runs
+	# AFTER GUI picking, so a full-screen Control left at Control's DEFAULT
+	# MOUSE_FILTER_STOP consumes every tap and calls set_input_as_handled()
+	# -- no error, no warning, a screen that ignores taps. HubWorld shipped
+	# exactly that and it cost a batch to find. The button below is still
+	# picked normally: only the ROOT is taken out of the way.
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	SafeArea.fill_screen()
+
+	_exit_button.pressed.connect(_on_exit_pressed)
+
+	_controller.levels = [
+		LevelDefinition.make(&"cabin_floor", _world_y(FLOOR_MODEL_Y),
+				FLOOR_HALF_EXTENT, FLOOR_CENTRE.x, FLOOR_CENTRE.y),
+		LevelDefinition.make(&"cabin_loft", _world_y(LOFT_MODEL_Y),
+				LOFT_HALF_EXTENT, LOFT_CENTRE.x, LOFT_CENTRE.y),
+	]
+	# Both ends built FROM the level definitions, so the height a player
+	# arrives at and the height that level's floor is at are one fact
+	# rather than two literals free to drift. Straight out of
+	# LevelNavTestWorld, and for its reason.
+	var floor_level: LevelDefinition = _controller.levels[0]
+	var loft_level: LevelDefinition = _controller.levels[1]
+	_controller.links = [
+		LevelTransition.make(0, 1,
+			Vector3(LADDER_FOOT.x, floor_level.plane_y, LADDER_FOOT.y),
+			Vector3(LADDER_TOP.x, loft_level.plane_y, LADDER_TOP.y),
+			LADDER_TAP_RADIUS),
+	]
+	_controller.tapped_ground.connect(_on_tapped_ground)
+	_controller.tapped_transition.connect(_on_tapped_transition)
+
+	_build_backdrop()
+	_place_walker()
+
+## Model space to world space. ONE conversion, used by both floors and by
+## nothing else, so the scale and the lift cannot be applied twice to one
+## of them and once to the other.
+func _world_y(model_y: float) -> float:
+	return (model_y + CABIN_MODEL_OFFSET_Y) * CABIN_SCALE
+
+## The .glb, once, as scenery. Never moved, never rotated, never scaled
+## again after this: everything else in the scene is positioned against it,
+## so it is the fixed thing.
+func _build_backdrop() -> void:
+	var model := CABIN.instantiate() as Node3D
+	if model == null:
+		push_error("CabinInterior: the cabin .glb did not instantiate to a Node3D.")
+		return
+	# The lift is applied to the CHILD in model units and the scale to the
+	# holder, which is exactly how HubBuilder builds the same asset on the
+	# plateau. Doing it the other way round would multiply the lift by the
+	# scale twice.
+	model.position = Vector3(0.0, CABIN_MODEL_OFFSET_Y, 0.0)
+	var holder := Node3D.new()
+	holder.name = "Cabin"
+	holder.add_child(model)
+	holder.scale = Vector3.ONE * CABIN_SCALE
+	_props.add_child(holder)
+
+## Keepy's body, hung on the walker.
+##
+## Instantiated DIRECTLY and not through a ModelSlot, on the owl's and the
+## cabin prop's own terms: a slot exists to hold a PLACEHOLDER that a real
+## model later replaces, and this is either Keepy or nothing.
+##
+## The two art corrections are copied from the shipped hub node so that he
+## is drawn here exactly as he is drawn out there -- same 1.07368, same
+## -0.2246 -- rather than re-derived into a Keepy who is subtly a different
+## size indoors.
+func _place_walker() -> void:
+	var body := KEEPY.instantiate() as Node3D
+	if body == null:
+		push_error("CabinInterior: the Keepy .glb did not instantiate to a Node3D.")
+	else:
+		body.name = "Body"
+		body.scale = Vector3.ONE * 1.07368
+		body.position = Vector3(0.0, -0.2246 * 1.07368, 0.0)
+		_walker.add_child(body)
+	var floor_level: LevelDefinition = _controller.levels[0]
+	_walker.global_position = Vector3(ENTRY_SPOT.x, floor_level.plane_y, ENTRY_SPOT.y)
+
+func _on_tapped_ground(destination: Vector3) -> void:
+	_walker.hop_to(destination)
+
+func _on_tapped_transition(link: LevelTransition, _destination: Vector3) -> void:
+	_walker.request_transition(link)
+
+## Back out onto the plateau.
+##
+## ⚠️ NOTHING ABOUT THE DOORSTEP IS COMPUTED HERE, and that is the point.
+## The hub derives the doorstep from the cabin's own position, scale and
+## rotation, and it recorded it with HubSpawn on the way IN -- so this
+## scene never has to know where on the plateau it stands. A second copy of
+## that arithmetic in here is exactly how a door ends up on the wrong side
+## of a building somebody turned in the layout.
+##
+## It also means this file has NO dependency on the plateau at all beyond
+## the scene path: no HubBuilder, no HubRegion, no layout resource.
+func _on_exit_pressed() -> void:
+	get_tree().change_scene_to_file(HUB_SCENE)
+
+func _unhandled_input(event: InputEvent) -> void:
+	# Release only, and both paths, for HubTapInput's measured reasons:
+	# acting on the press would fire while a finger is still moving, and a
+	# desktop click produces no touch event at all.
+	var touch := event as InputEventScreenTouch
+	if touch:
+		if not touch.pressed:
+			_controller.dispatch(touch.position)
+			get_viewport().set_input_as_handled()
+		return
+	var click := event as InputEventMouseButton
+	if click and click.button_index == MOUSE_BUTTON_LEFT and not click.pressed:
+		_controller.dispatch(click.position)
+		get_viewport().set_input_as_handled()
