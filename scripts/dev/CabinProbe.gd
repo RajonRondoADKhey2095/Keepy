@@ -29,10 +29,16 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## is checking.
 const _EXPECTED_POSITION: Vector3 = Vector3(-17.43, 0.0, 28.18)
 
-## The scale this entry ships at. SCALE-UP LOT: was 1.0, is 3.5 -- the
-## door and the built AABB both derive from it below, read here rather
+## The scale this entry ships at. Two scale-up lots: 1.0 -> 3.5 -> 7.0.
+## The door and the built AABB both derive from it below, read here rather
 ## than copied twice.
-const _EXPECTED_SCALE: float = 3.5
+##
+## 7.0 is not a round number picked for tidiness -- it is what puts the
+## cabin 17.6% above the tallest tree-shaped thing on the plateau (the
+## spire landmark, measured at 9.4640 world units), which is the target
+## the scale-up lot was given. The tallest BATCHED tree is only 3.9330,
+## and the cabin cleared that at 3.5 already.
+const _EXPECTED_SCALE: float = 7.0
 
 ## The doorstep _build derives from that position, that scale and the
 ## entry's own rotation_y of 0: straight out along the open face, which is
@@ -355,6 +361,13 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	_check(HubWorld.CABIN_TAP_RADIUS < aabb.size.x * 0.5,
 			"the trigger (%.2f) is smaller than the cabin's own half-width (%.3f)"
 					% [HubWorld.CABIN_TAP_RADIUS, aabb.size.x * 0.5])
+	# REPORTED, NOT GATED: how much room a visitor has to stand in front of
+	# the cabin before the plateau runs out. It is not a contract -- where
+	# the cabin stands is a layout decision -- but it is the number that
+	# decides whether "walk up and look at it" is a thing a player can do,
+	# and it shrinks as the prop grows. The scale-up lot left it at 0.65 u.
+	print("  ..    %.2f u of walkable ground behind the doorstep (edge at z = %.1f)"
+			% [HubRegion.PLATEAU_HALF_EXTENT - door.z, HubRegion.PLATEAU_HALF_EXTENT])
 
 	var container: SubViewportContainer = hub.get_node("WorldViewport") as SubViewportContainer
 	var rect := container.get_global_rect()
@@ -368,12 +381,34 @@ func _phase_t_no_stray_entry(hub: Node, props: HubBuilder, keepy: KeepyHopper,
 	# Two paces back, and one either side. Stated in world units so they
 	# say "a person standing clear of a doorway" rather than "outside
 	# whatever the radius happens to be".
+	#
+	# FILTERED THROUGH THE REGION, and that filter is load-bearing rather
+	# than defensive. _handle_point clamps to the walkable shape BEFORE it
+	# picks a signal, so a point on ground that does not exist is not the
+	# point that gets tested -- it is dragged to the nearest place that
+	# does, and asserting on where it LANDED would be asserting about the
+	# clamp. Measured here: at this scale the doorstep sits 0.65 u from the
+	# plateau's north edge, so "two paces back from the door" is off the
+	# map entirely, comes back 0.65 u from the doorstep, and MEANS the
+	# cabin -- correctly, because 0.65 u from a doorway is at it.
 	var away := 2.0
-	var probes: Array = [
+	var candidates: Array = [
 		[Vector3(door.x, 0.0, door.z + away), "two paces BACK from the door"],
 		[Vector3(door.x + away, 0.0, door.z), "one pace to the SIDE of it"],
 		[Vector3(door.x - away, 0.0, door.z), "one pace to the OTHER side"],
 	]
+	var probes: Array = []
+	for candidate in candidates:
+		var where: Vector3 = candidate[0]
+		if HubRegion.contains(where):
+			probes.append(candidate)
+		else:
+			print("  ..    skipped %s -- that ground does not exist (clamps to %.2f u from the door)"
+					% [candidate[1], HubRegion.clamp_to(where).distance_to(door)])
+	# And it can never go vacuous by skipping its way to nothing.
+	_check(probes.size() >= 2,
+			"at least two walking taps were on real ground (%d of %d)"
+					% [probes.size(), candidates.size()])
 
 	# --- which SIGNAL does each tap become? ------------------------------
 	var saw: Array[StringName] = []
