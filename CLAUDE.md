@@ -20407,6 +20407,43 @@ facteur d'echelle sur un noeud existant.
 
 ### Deploiement staging de la cabane agrandie (palier 1, automatique)
 
-`main` **NON touche** (`origin/main` reste `9031e5e`) : palier 2, gate
-Mathieu apres validation device sur `keepy-staging.vercel.app` -- tap sur
-le pas de porte, entree/sortie a la nouvelle taille.
+`staging` **`c24eb11`** (merge `--no-ff` de `d92c755`, arbre
+**byte-identique** a la branche feature, verifie AVANT le push --
+`git rev-parse HEAD^{tree}` egal des deux cotes, `8deece46...`). Regle
+n°1 revrifiee juste avant le push : `origin/staging` (`e5b1160`) et
+`origin/main` (`9031e5e`) inchanges depuis le debut du lot, **aucune
+session concurrente**.
+
+CI run **#310** (id 33237025998) **verte** -- `Import project resources`
+05:49:35 -> 05:53:38, `Export Web build` **05:53:38 -> 05:53:44**,
+`Deploy to Vercel [STAGING -- staging]` **succes** 05:54:01 -> 05:54:13,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `9031e5e`, verifie apres le push) : palier 2,
+gate Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres (ce lot, run #310) |
+|---|---|---|
+| `CACHE_VERSION` | `1787957927` = **22:58:47 UTC (28 aout)** | **`1787982823` = 05:53:43 UTC** |
+| `index.pck` servi | -- | **30 228 592** |
+| `index.wasm` servi | -- | **35 376 909** |
+
+L'epoch d'apres tombe **exactement dans la fenetre `Export Web build`**
+(05:53:38 -> 05:53:44), et les deux lectures d'apres portent
+**`x-vercel-cache: MISS` avec `age: 0`**, `last-modified` colle a
+l'instant de la requete. `index.wasm` servi est **identique au bit pres
+a l'export local** (md5 `af4a8fc2925d992348eb30deeeb54360`) -- c'est lui
+la preuve d'identite. `index.pck` **30 228 592** servi contre
+**30 228 512** en export local propre -- 80 octets d'ecart, l'instabilite
+de compression VRAM deja documentee, jamais offerte comme preuve seule.
+
+⚠️ **Limite dite plutot que sous-entendue** : la valeur AVANT n'existe
+que pour le `CACHE_VERSION`, et elle a ete lue avant le push mais sur une
+reponse deja `MISS/age 0` -- fraiche au moment de la lecture, et
+suffisamment anterieure au push (plusieurs heures) pour ne laisser aucune
+ambiguite sur la transition. `index.pck`/`index.wasm` n'ont ete lus
+qu'APRES, donc ils valent comme marqueur d'ETAT COURANT, pas comme
+preuve de transition a eux seuls -- c'est le `CACHE_VERSION` qui porte
+cette preuve.
