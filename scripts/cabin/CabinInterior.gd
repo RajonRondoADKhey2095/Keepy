@@ -193,10 +193,94 @@ const DOOR_TAP_RADIUS: float = 0.85
 const BED_SPOT := Vector2(-1.67, -1.32)
 const BED_TAP_RADIUS: float = 0.70
 
+## =====================================================================
+## THE BED'S OWN DRAWN SURFACE, AND WHY IT IS NOT THE LOFT PLANE
+##
+## ⚠️ THE FIRST THING MEASURING FOUND IS THAT THE LOFT *IS* THE BED. The
+## mezzanine's drawn top face and the teal duvet painted across it are the
+## same surface -- ray-casting down the model over the loft's walkable
+## square finds one plateau at 7.52-7.59 world units and no separate
+## mattress anywhere inside it. So "lay him on the bed" and "lay him on
+## the mezzanine floor" would have been the same instruction over most of
+## that square, and the brief's warning against the second could not be
+## obeyed by finding a higher one: there ISN'T a higher one you can stand
+## on.
+##
+## What there IS, and what this constant is: right under the marker the
+## drawn bedding DIPS. Sampling the model beneath the marker's own centre
+## -- a 0.25-radius disc, about the width his body presents to the bed --
+## the drawn surface runs 6.91 to 7.60 with a median of 7.3686, which is
+## 0.1710 BELOW the walking plane. That hollow is the gap between the
+## bed's front rail and the duvet behind it.
+##
+## So lying at the plane leaves him resting on bedding that is not under
+## him. Lying at the MEDIAN of what IS under him puts him in it.
+##
+## ⚠️ AND THE RENDER PICKED THE SAME NUMBER INDEPENDENTLY. Six candidate
+## depths were rendered through the shipped camera (0.00 / 0.12 / 0.18 /
+## 0.25 below the plane, at three yaws); 0.18 read best -- 0.25 put the
+## bed's front rail across his chin, 0.00 left him sitting on top of the
+## frame. The measurement says 0.1710. Two roads, one centimetre apart.
+##
+## Stated in MODEL units and multiplied by CABIN_SCALE through _world_y(),
+## exactly as the two floors are: a world literal here would be a second
+## silent copy of the scale.
+const BED_MODEL_Y: float = -0.13055
+
+## =====================================================================
+## THE LYING POSE ITSELF
+##
+## ⚠️ HE IS ROLLED ONTO HIS SIDE, NOT TIPPED ONTO HIS BACK, AND THAT IS
+## FORCED BY THE MESH RATHER THAN CHOSEN. Keepy is modelled SITTING with
+## a tail that curls up behind him: measured off the shipped .glb his
+## nose-to-tail depth is 2.0371 world units against a height of 1.3501 and
+## a width of 1.3198. Tipping him back 90 degrees about X swaps his DEPTH
+## into the vertical -- so a two-metre axis stands up out of a bed whose
+## drawn bedding is a fifth of that. It was rendered rather than argued:
+## the result is a tail sticking out of the duvet with the body buried
+## under it, and nothing that reads as a squirrel.
+##
+## Rolling about his own forward axis swaps his WIDTH into the vertical
+## instead -- 1.32, half of it below the origin -- and leaves the long
+## axis lying along the bed where it belongs. He ends up on his side,
+## facing the room, tail curled over him.
+##
+## ⚠️ NO ANIMATION, AND NONE IS POSSIBLE. The .glb carries one node, one
+## mesh, no skin and no animation -- the same finding the owl batch
+## published for the same family of assets. Every pose in this project is
+## a transform on the whole body, and this is one more.
+const REST_ROLL_DEGREES: float = 90.0
+
+## Which way he faces while he lies there.
+##
+## The bed's long axis runs along world X with the pillow at -X: read off
+## a render with world-space markers dropped on it, not guessed from the
+## layout. A roll of +90 already lays his head toward -X with the walker
+## unturned, so this yaw is not what points him at the pillow -- it is a
+## three-quarter turn towards the camera, so the face and the tail both
+## read instead of a flat profile. Rendered at 0 / 5 / 20 / 35; 20 is
+## where he stops looking like a decal and starts looking curled up.
+const REST_YAW_DEGREES: float = 20.0
+
+## Lowest point of the shipped Keepy .glb along its OWN X, read off the
+## POSITION accessor like KEEPY_MODEL_MIN_Y beside it: -0.616405 against
+## max.x = +0.612863, so he is not centred there either.
+##
+## It is X and not Y because the roll above puts his X axis vertical. The
+## lift while lying is therefore this number, not the standing one, and
+## using the standing one would bury his flank by the difference.
+const KEEPY_MODEL_MIN_X: float = -0.616405
+
 ## How close a LANDING has to be to the door to actually leave. Compared in
 ## XZ, like LevelWalker's own ENTRY_REACH and for its reason: the arrival
 ## is on the floor by construction, so height cannot disagree.
 const DOOR_REACH: float = 0.9
+
+## And the same for the bed. The door's number, not a new one: both answer
+## the same question -- "did the walk that was meant as `use this` actually
+## get there" -- and ARRIVE_EPSILON, which is what a hop chain is allowed
+## to stop short by, is the same 0.45 for both.
+const BED_REACH: float = 0.9
 
 ## Ring pulses when the walker is inside this many times a marker's radius,
 ## and stops at the release. Two numbers and not one, straight out of
@@ -257,6 +341,11 @@ const KEEPY_MODEL_MIN_Y: float = -0.629070
 ## nobody maintains.
 var _door: LevelHotspot = null
 
+## THE BED, held for the same reason the door is: the rest state has to
+## withdraw it. The comment above used to say the bed's was NOT held
+## because nothing withdrew it yet -- something does now.
+var _bed: LevelHotspot = null
+
 ## THE HELD EXIT INTENT, and it is LevelWalker's `_pending` in miniature --
 ## including the lesson that one cost.
 ##
@@ -273,6 +362,21 @@ var _exit_pending: bool = false
 ## deferred to the end of the frame, so without this a second tap in the
 ## same frame asks twice.
 var _leaving: bool = false
+
+## =====================================================================
+## THE HELD REST INTENT, AND THE STATE IT ARMS
+##
+## `_rest_pending` is `_exit_pending` in every respect including the one
+## that matters: IT SURVIVES A PASS-THROUGH LANDING. A tap on the bed from
+## the top of the ladder is a walk of more than one hop, and an intent
+## that cleared on the first landing whatever it was would leave Keepy
+## standing beside the bed having never got into it -- the owl batch's
+## measured bug, restated here because this is the third thing to copy it.
+##
+## `_resting` is a state and not a tween: nothing animates, nothing has to
+## be put back at a deadline, and the only way out is a tap.
+var _rest_pending: bool = false
+var _resting: bool = false
 
 ## One marker per tappable thing, kept so the ladder's can follow Keepy
 ## between storeys and the others can hide when he is not on their level.
@@ -317,12 +421,10 @@ func _ready() -> void:
 	_door = LevelHotspot.make(0,
 			Vector3(DOOR_SPOT.x, floor_level.plane_y, DOOR_SPOT.y),
 			DOOR_TAP_RADIUS, &"door", "Sortir")
-	_controller.hotspots = [
-		_door,
-		LevelHotspot.make(1,
+	_bed = LevelHotspot.make(1,
 			Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y),
-			BED_TAP_RADIUS, &"bed", "Lit"),
-	]
+			BED_TAP_RADIUS, &"bed", "Lit")
+	_controller.hotspots = [_door, _bed]
 
 	_controller.tapped_ground.connect(_on_tapped_ground)
 	_controller.tapped_transition.connect(_on_tapped_transition)
@@ -432,7 +534,7 @@ func _on_level_changed(index: int) -> void:
 	if _door_marker != null:
 		_door_marker.visible = _door != null and _door.serves(index)
 	if _bed_marker != null:
-		_bed_marker.visible = (index == 1)
+		_bed_marker.visible = _bed != null and _bed.serves(index)
 	_refresh_proximity()
 
 ## Pulses whatever Keepy is standing near, with HubPortal's hysteresis.
@@ -455,15 +557,29 @@ func _pulse_if_near(marker: CabinMarker, radius: float, here: Vector3) -> void:
 		marker.set_near(false)
 
 func _on_tapped_ground(destination: Vector3) -> void:
+	# ⚠️ A TAP WHILE HE IS LYING DOWN IS THE WAY UP, AND IT ARRIVES HERE
+	# BECAUSE THE BED WITHDREW -- which is the boat's shape and the whole
+	# reason the withdrawal was chosen over the ladder's. `_enter_rest`
+	# holds the bed and the ladder busy, so neither answers; the tap falls
+	# THROUGH to this path, and this is where it becomes "get up".
+	#
+	# It returns rather than walking. He asked to stop lying down; sending
+	# him off across the loft in the same gesture would be two answers to
+	# one tap.
+	if _resting:
+		_wake()
+		return
 	# A plain destination tap CANCELS a held exit intent -- the player
 	# asked for somewhere else, and honouring the old intent on arrival
 	# would be the screen acting on a decision he has already replaced.
 	# LevelWalker.hop_to() does exactly this to its own link intent.
 	_exit_pending = false
+	_rest_pending = false
 	_walker.hop_to(destination)
 
 func _on_tapped_transition(link: LevelTransition, _destination: Vector3) -> void:
 	_exit_pending = false
+	_rest_pending = false
 	if _ladder_marker != null:
 		_ladder_marker.flash()
 	_walker.request_transition(link)
@@ -488,19 +604,37 @@ func _on_tapped_hotspot(hotspot: LevelHotspot, destination: Vector3) -> void:
 		&"bed":
 			if _bed_marker != null:
 				_bed_marker.flash()
-			# NO interaction yet, and none is invented here. The brief asked
-			# for the bed to be legible as tappable; what it does when
-			# tapped is a later decision, and a placeholder behaviour would
-			# be a decision taken quietly.
+			# THE LADDER'S SHAPE, exactly as the door has it: he WALKS
+			# there and lies down on arrival. Not because a rule says so
+			# but because it is what every other reachable thing in this
+			# project already does -- the hub's boat, its ladder, its
+			# perch, its doorstep, and this scene's own door all arm an
+			# intent and let the landing act.
 			_exit_pending = false
 			_walker.hop_to(destination)
+			# Armed AFTER hop_to(), for the reason the door's is: that call
+			# clears the WALKER's own link intent, and arming first would
+			# read as though the two were one field.
+			_rest_pending = true
+			# ⚠️ ALREADY STANDING ON IT: nothing to walk, so lie down on
+			# the spot. _advance() finishes a zero-length walk by emitting
+			# became_idle and NOT hop_landed, so a landing-only path would
+			# simply never fire here -- the hub's _on_tapped_cabin carries
+			# the same line for the same reason.
+			_try_rest()
 		_:
 			_exit_pending = false
+			_rest_pending = false
 			_walker.hop_to(destination)
 
 ## Every landing: proximity, and the held exit intent.
 func _on_hop_landed(position: Vector3) -> void:
 	_refresh_proximity()
+	# The rest intent is honoured BEFORE the exit intent for no reason
+	# beyond needing an order: the two cannot be armed at once, because
+	# arming either clears the other.
+	if _rest_pending and _try_rest():
+		return
 	if not _exit_pending or _leaving:
 		return
 	var flat_here := Vector2(position.x, position.z)
@@ -510,6 +644,90 @@ func _on_hop_landed(position: Vector3) -> void:
 		return
 	_exit_pending = false
 	_leave_to_hub()
+
+## =====================================================================
+## LYING DOWN, AND GETTING UP
+##
+## ⚠️ THE WITHDRAWAL IS THE BOAT'S AND THE LADDER'S IS BANNED, which is
+## LevelHotspot's own header repeated on the second thing to obey it. The
+## bed AND the ladder are both held busy for the whole of the rest, so
+## neither answers a tap -- and the tap therefore falls THROUGH to the
+## ground path, where it becomes "get up". One tap, one signal, in both
+## directions.
+##
+## The LADDER is held too, and that is not tidiness: it is the only other
+## thing on the loft that answers a tap, and a crossing started while he
+## is lying down would drive the body from LevelWalker while this file
+## thinks it owns it. Held, it simply has nothing to do.
+##
+## THE DOOR is NOT held, and does not need to be: it lives on level 0 and
+## accepts_tap() refuses from anywhere else. Holding it would be a second
+## opinion about a refusal that already exists.
+
+## Lies him down if he has actually reached the bed. Returns whether it
+## did, so the caller knows the landing is spent.
+func _try_rest() -> bool:
+	if _resting or _leaving or _bed == null:
+		return false
+	var here := _walker.global_position
+	var flat := Vector2(here.x, here.z)
+	if flat.distance_to(BED_SPOT) > BED_REACH:
+		# NOT there yet. The intent is KEPT -- the pass-through landing the
+		# owl batch's bug was made of.
+		return false
+	_rest_pending = false
+	_enter_rest()
+	return true
+
+func _enter_rest() -> void:
+	var body := _walker.get_node_or_null("Body") as Node3D
+	if body == null:
+		# Nothing to lay down. Refusing loudly beats a state with no body
+		# in it, which would swallow every later tap as "get up".
+		push_error("CabinInterior: cannot rest -- the walker has no Body.")
+		return
+	_resting = true
+	_bed.set_busy(true)
+	_controller.links[0].set_busy(true)
+	# The marker stops breathing: it is not tappable while he is in it, and
+	# a ring pulsing over a thing that refuses is a ring that lies.
+	if _bed_marker != null:
+		_bed_marker.set_near(false)
+	# XZ is UNTOUCHED -- he lies exactly where he stood, so there is no
+	# teleport to see. Only the height moves, onto the bedding that is
+	# actually under him.
+	_walker.global_position = Vector3(BED_SPOT.x, _world_y(BED_MODEL_Y), BED_SPOT.y)
+	_walker.rotation_degrees = Vector3(0.0, REST_YAW_DEGREES, 0.0)
+	body.rotation_degrees = Vector3(0.0, 0.0, REST_ROLL_DEGREES)
+	# ⚠️ THE LIFT COMES OFF HIS X EXTENT, NOT HIS Y. The roll puts his
+	# model X axis vertical, so the depth he hangs below his own origin is
+	# now KEEPY_MODEL_MIN_X. Reusing the standing lift here would bury his
+	# flank by the difference between the two -- the same class of mistake
+	# that sank him 0.9166 into the floor, one axis over.
+	body.position = Vector3(0.0, -KEEPY_MODEL_MIN_X * KEEPY_SCALE, 0.0)
+
+## Gets him up. Everything is DERIVED rather than restored from a snapshot
+## taken on the way in: a saved transform is a copy that goes stale the
+## first time anything else moves him, and every value below already has
+## exactly one owner.
+##
+## His YAW is deliberately left where the pose put it. He stands up facing
+## the way he lay, which is what a body does; the next hop faces him again
+## through LevelWalker._face().
+func _wake() -> void:
+	if not _resting:
+		return
+	_resting = false
+	var body := _walker.get_node_or_null("Body") as Node3D
+	if body != null:
+		body.rotation_degrees = Vector3.ZERO
+		body.position = Vector3(0.0, -KEEPY_MODEL_MIN_Y * KEEPY_SCALE, 0.0)
+	var loft_level: LevelDefinition = _controller.levels[1]
+	_walker.global_position = Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y)
+	if _bed != null:
+		_bed.set_busy(false)
+	_controller.links[0].set_busy(false)
+	_refresh_proximity()
 
 ## Back out onto the plateau.
 ##
