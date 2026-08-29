@@ -56,10 +56,18 @@ const LINK_TAP_RADIUS: float = 1.6
 
 @onready var _controller: LevelController = $LevelController
 @onready var _walker: LevelWalker = $WorldViewport/SubViewport/World/Walker
-## STAGING-ONLY device access point: HubWorld's "Test nav (dev)" fallback
-## menu button lands here, and this is the only way back out. Without it
-## the device pass this scene exists for would be a one-way trip. Removed
-## in the same lot that retires this whole scene.
+## The way back out, and the reason it is KEPT rather than retired with the
+## hub button that used to lead here.
+##
+## ⚠️ THIS SCENE IS NO LONGER REACHABLE FROM THE GAME. The production
+## cleanup removed HubWorld's "Test nav (dev)" fallback-menu button, so
+## nothing in any shipped code path opens this file any more -- it is a
+## dev bench, reached by running the scene directly. The scene and the nav
+## core it exercises are kept because the cabin uses that core; only the
+## PLAYER-FACING door to this bench was closed.
+##
+## The button stays because a bench with no way out is a bench nobody runs
+## twice: re-expose this scene one day and it is still whole.
 @onready var _hub_button: Button = $HubButton
 
 func _ready() -> void:

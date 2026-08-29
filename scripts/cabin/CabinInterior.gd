@@ -334,7 +334,6 @@ const KEEPY_MODEL_MIN_Y: float = -0.629070
 @onready var _controller: LevelController = $LevelController
 @onready var _walker: LevelWalker = $WorldViewport/SubViewport/World/Walker
 @onready var _props: Node3D = $WorldViewport/SubViewport/World/Props
-@onready var _exit_button: Button = $ExitButton
 
 ## The door hotspot, held so the exit can withdraw it. The bed's is not
 ## held: nothing withdraws it yet, and a field kept "for later" is a field
@@ -393,8 +392,6 @@ func _ready() -> void:
 	# picked normally: only the ROOT is taken out of the way.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	SafeArea.fill_screen()
-
-	_exit_button.pressed.connect(_on_exit_pressed)
 
 	_controller.levels = [
 		LevelDefinition.make(&"cabin_floor", _world_y(FLOOR_MODEL_Y),
@@ -729,7 +726,14 @@ func _wake() -> void:
 	_controller.links[0].set_busy(false)
 	_refresh_proximity()
 
-## Back out onto the plateau.
+## THE ONE WAY OUT -- and since the debug "< Sortir" button was retired for
+## production, the DOOR is the only thing that asks for it.
+##
+## It stays a named function rather than being inlined into the door's
+## landing for two reasons: "what leaving means" is one fact worth having
+## one home, and the withdrawal below is the boat's -- the door stops
+## accepting taps the moment leaving starts, so a second tap falls THROUGH
+## to the ground path instead of asking for a scene change already queued.
 ##
 ## ⚠️ NOTHING ABOUT THE DOORSTEP IS COMPUTED HERE, and that is the point.
 ## The hub derives the doorstep from the cabin's own position, scale and
@@ -740,16 +744,6 @@ func _wake() -> void:
 ##
 ## It also means this file has NO dependency on the plateau at all beyond
 ## the scene path: no HubBuilder, no HubRegion, no layout resource.
-func _on_exit_pressed() -> void:
-	_leave_to_hub()
-
-## THE ONE WAY OUT, whichever of the two things asked for it.
-##
-## The button and the door share it rather than each calling
-## change_scene_to_file(), so "what leaving means" is one fact. The
-## withdrawal is the boat's: the door stops accepting taps the moment
-## leaving starts, so a second tap falls THROUGH to the ground path
-## instead of asking for a scene change that is already queued.
 func _leave_to_hub() -> void:
 	if _leaving:
 		return

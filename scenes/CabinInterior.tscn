@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scripts/cabin/CabinInterior.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/nav/LevelController.gd" id="2"]
@@ -10,18 +10,6 @@ background_color = Color(0.062, 0.115, 0.044, 1)
 ambient_light_source = 2
 ambient_light_color = Color(1, 1, 1, 1)
 ambient_light_energy = 1.0
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_Exit"]
-bg_color = Color(0.18, 0.12, 0.08, 0.85)
-corner_radius_top_left = 14
-corner_radius_top_right = 14
-corner_radius_bottom_right = 14
-corner_radius_bottom_left = 14
-border_width_left = 3
-border_width_top = 3
-border_width_right = 3
-border_width_bottom = 3
-border_color = Color(0.82, 0.62, 0.32, 1)
 
 [node name="CabinInterior" type="Control"]
 layout_mode = 3
@@ -65,17 +53,3 @@ script = ExtResource("2")
 camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
 container_path = NodePath("../WorldViewport")
 viewport_path = NodePath("../WorldViewport/SubViewport")
-
-[node name="ExitButton" type="Button" parent="."]
-layout_mode = 1
-anchors_preset = 0
-offset_left = 32.0
-offset_top = 32.0
-offset_right = 268.0
-offset_bottom = 104.0
-theme_override_font_sizes/font_size = 30
-theme_override_styles/normal = SubResource("StyleBoxFlat_Exit")
-theme_override_styles/hover = SubResource("StyleBoxFlat_Exit")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_Exit")
-theme_override_styles/focus = SubResource("StyleBoxFlat_Exit")
-text = "< Sortir"
