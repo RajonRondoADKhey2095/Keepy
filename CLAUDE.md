@@ -24579,3 +24579,160 @@ automatique (palier 1) -- **pas de merge vers `main` sans validation
 device explicite de Mathieu, et cette fois la question posee est
 explicitement PERCEPTIBLE, pas seulement un nouveau chiffre de sonde au
 vert.**
+
+## LE HOTSPOT DE LA PIE : LE RAYON DE TAP ETAIT MESURE DEPUIS SES PIEDS, PAS DEPUIS OU UN DOIGT VISE (31 aout 2026)
+
+Branche `claude/magpie-hotspot-tap-range-xln93i`, partie de `staging`
+(`751b877`). Retour device, capture a l'appui : embrasser la pie ne
+declenche que depuis une zone etroite pres d'un pot de plante -- de
+partout ailleurs autour d'elle, taper ne fait rien.
+
+### RECON, ET LA CONSIGNE D'ESCALADE EXPLICITEMENT SUIVIE
+
+Le brief posait une regle claire : si le rayon insuffisant est un
+parametre LOCAL a l'appel `LevelHotspot.make()` de `&"magpie"`, corriger
+sur place et rester sur Sonnet 5 ; si le rayon est un parametre PARTAGE
+que `LevelHotspot` applique identiquement a tous les hotspots (porte, lit,
+mezzanine, pie) et qu'une correction demande de le faire varier par type
+dans `LevelHotspot` lui-meme, s'arreter et rapporter avant tout
+changement d'architecture -- ce sous-lot basculerait sur Opus 4.8.
+
+**`LevelHotspot.gd` a ete lu en entier et n'a recu ZERO modification.**
+`accepts_tap(aim, index)` teste `is_available()` puis `serves(index)`
+(`index == level_index`) puis une distance XZ contre `tap_radius` -- un
+seul mecanisme, partage, mais **chaque hotspot porte son propre
+`tap_radius` et son propre `point`**, passes a la construction. Le rayon
+de la pie est donc un `const` local a `CabinInterior.gd`, jamais une
+propriete de `LevelHotspot`. **La correction reste enterement locale, sur
+Sonnet 5, comme la consigne le prevoyait pour ce cas.**
+
+⚠️ **UNE FAUSSE ALERTE SOULEVEE PUIS FERMEE PENDANT LA CONCEPTION** : le
+nouvel ancrage recentre tombe a ~0,97 u de `BED_SPOT` (le lit), ce qui
+aurait pu sembler chevaucher le hotspot du lit a rayon 1,80.
+**Impossible par construction** : le lit est construit avec
+`level_index = 1` (la mezzanine), la pie avec `level_index = 0` (le
+rez-de-chaussee), et `accepts_tap()` verifie `serves(index)` **avant**
+la distance -- le lit n'est jamais meme teste en tapant sur la pie.
+Verifie en lisant le code de construction des deux hotspots, pas suppose.
+
+### LA CAUSE, MESUREE ET PAS DEVINEE
+
+`LevelController.resolve()` ray-caste **chaque tap** depuis la camera
+FIXE vers le **plan plat unique** du niveau courant
+(`level.plane().intersects_ray(...)`), pour **tous** les hotspots,
+quelle que soit la hauteur de ce qu'ils marquent. Un tap qui vise
+visuellement le corps SURELEVE de la pie -- pas ses pieds -- resout donc
+a un point du plan du sol decale de `MAGPIE_SPOT` d'une distance qui
+**croit avec la hauteur du tap** : 0 % (ses pieds) = 0,000 ; 20 % =
+0,504 ; 30 % = 0,773 -- deja au-dela de l'ancien rayon 0,60 ; 100 %
+(sommet de la tete) = 3,045.
+
+**Reproduit avant tout correctif** avec une sonde jetable (9 positions de
+Keepy autour de la piece x 11 hauteurs de tap, 0-100 % du corps dessine) :
+echec **uniforme et INDEPENDANT de la position de Keepy** -- confirme que
+c'est de la geometrie de plan pure, ni la navigation, ni le trou
+d'empreinte au sol (`LevelController.resolve()` ne lit jamais la
+position du walker).
+
+### LE CORRECTIF : RECENTRER L'ANCRE, PAS SEULEMENT ELARGIR LE RAYON
+
+Simplement elargir `MAGPIE_TAP_RADIUS` en le gardant ancre sur
+`MAGPIE_SPOT` (ses pieds) plafonne a **1,623863** avant de toucher le
+cercle de la porte -- ne couvrant au mieux que ~57 % de sa hauteur
+dessinee, ratant en permanence le haut du corps et la tete.
+
+**`MAGPIE_TAP_ANCHOR`** (nouvelle constante, `Vector2(-1.261384,
+-0.437180)`) est la resolution reelle, **lue directement sur
+`LevelController.resolve()`**, d'un tap a 50 % de sa hauteur dessinee --
+**cross-verifiee a la main** par la formule d'intersection
+camera-rayon/plan-du-sol (exacte pour cette camera sans roll) :
+`t = (floor_y - camera.y) / (W.y - camera.y)`,
+`anchor = camera + t * (W - camera)`, en accord a moins de 1e-5 avec le
+round-trip ecran de l'engine. **`MAGPIE_SPOT`, le trou d'empreinte,
+`MAGPIE_STAND_SPOT` et son orientation restent INTOUCHES** : cette
+constante n'existe que pour le hit-test, exactement comme tout
+`LevelHotspot.point` est deja libre de differer de l'ancre visuelle
+d'un prop.
+
+**`MAGPIE_TAP_RADIUS` passe de 0,60 a 1,80**, mesure depuis la nouvelle
+ancre : le point le plus eloigne du balayage de hauteur (100 %, le
+sommet de la tete) est a 1,697867 -- une marge de 0,102 ; le voisin le
+plus proche calcule DEPUIS la nouvelle ancre est la porte a
+**2,361440** -- une marge de 0,561. Ni serre contre l'un ni contre
+l'autre.
+
+`LevelHotspot.make()` et le marqueur visuel (`_magpie_marker`) sont
+**tous deux repointes sur `MAGPIE_TAP_ANCHOR`** -- le cercle que le
+joueur vise et celui que le code teste restent un seul cercle, jamais
+deux valeurs qui pourraient diverger.
+
+### VALIDATION -- ROUGE AVANT VERT, PUIS GATE DE FACON PERMANENTE
+
+Sonde jetable rejouee apres le fix : **8/8 checks OK**, les 11 hauteurs
+(0-100 %) toutes detectees, et **27/27** (9 directions x 3 hauteurs de
+tap representatives : 35 %, 55 %, 85 %) marchent, embrassent, et
+atterrissent exactement sur `MAGPIE_STAND_SPOT`.
+
+**Une regression permanente ajoutee a `CabinProbe.gd`** (PHASE N, deja
+gatee) : un balayage des 11 hauteurs contre le VRAI `magpie.accepts_tap()`
+en direct, plus 3 taps de corps a 55 % depuis 3 positions largement
+separees, chacun verifiant la marche + le baiser complet.
+
+⚠️ **PIEGE DE SONDE RENCONTRE ET CORRIGE, A CONNAITRE** : le balayage de
+hauteur echouait aux 11 hauteurs, y compris 0 % (son point de sol exact),
+alors qu'un bloc adjacent presque identique passait. Cause : `resolve()`
+lit `current()` -> l'index de niveau COURANT du controleur, et la PHASE P
+qui precede (mezzanine/lit) laisse le controleur sur le niveau 1 sans le
+remettre a 0. Le bloc qui passait appelait deja `controller.set_current(0)`
+avant de dispatcher ; celui qui echouait ne l'appelait pas. **Corrige en
+ajoutant `controller.set_current(0)` en tete de la boucle** -- meme motif
+que le bloc voisin. Confirme par lecture de `LevelController.resolve()`
+(ligne 142-165), pas suppose.
+
+**Diffe contre `origin/staging` en worktree separe, import complet
+verifie des deux cotes (37 `.scn`)** : les portes/ladder-gap changent de
+valeur (attendu, `magpie.point`/`tap_radius` ont change) mais restent
+verts sans chevauchement ; 5 nouvelles lignes OK (le balayage + les 3
+kiss) ; une ligne fendue en deux (`MAGPIE_SPOT` et l'ancre testes
+separement pour "hors du carre marchable"). Le reste -- angle de
+penchant du baiser, % de contact, comptes de frames PHASE T -- derive de
+quelques centiemes/frames entre deux runs separes, **connu et documente
+comme non-deterministe sous ce sandbox llvmpipe**, jamais pres d'un seuil
+de FAIL, dans des phases que ce diff ne touche pas.
+
+`ProbeTimeoutAudit`, `AssetContractAudit`, `DeathModelAudit`,
+`ChargerShapeProbe` : **BYTE-IDENTIQUES** (taille de sortie exacte) entre
+la branche et le worktree `origin/staging` -- aucun de ces quatre fichiers
+ne partage de chemin avec ce diff.
+
+⚠️ **Les deux `ERROR: Condition "!is_inside_tree()"` vues en PHASE R sont
+PRE-EXISTANTES**, reproduites a l'identique sur `origin/staging` intact --
+un artefact deja documente du changement de scene en deux temps de
+`change_scene_to_packed` (un noeud du hub interroge son
+`get_global_transform()` une frame apres avoir ete detache), sans rapport
+avec ce lot et hors de son perimetre.
+
+### BUILD
+
+Templates d'export Godot 4.3-stable absents au demarrage de cette
+session (container frais) -- retelecharges depuis la release GitHub
+officielle, **taille verifiee contre le `Content-Length` avant
+extraction** (1 073 228 327 octets, aucune troncature). Import headless
+**exit 0, 37 `.scn`, 0 erreur**. Export Web release **exit 0, 0 erreur**.
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent de tout lot qui ne touche pas le code moteur, coherent : ce
+lot ne change que deux fichiers GDScript. **Piege payload tenu** : sur
+270 lignes `Storing File`, **0** pour `scripts/dev`, `assets_source`,
+`docs`, `web` ou `firebase.json`.
+
+### RESTE OUVERT -- jugement device, seul juge
+
+1. **Est-ce que la pie repond desormais de partout autour d'elle** sur un
+   vrai telephone -- c'est tout l'objet du lot, et aucune mesure sandbox
+   (llvmpipe sous xvfb) ne remplace un test reel.
+2. Ce lot fait partie d'un ensemble de lots pie/bisou. `main` **non
+   touche** -- merge sur `staging` : palier 1, automatique. Un futur
+   prompt fusionnera `staging` -> `main` pour l'ensemble du lot pie une
+   fois tous valides sur device.

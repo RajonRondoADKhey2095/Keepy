@@ -503,11 +503,57 @@ const MAGPIE_MODEL_MIN_Y: float = -0.880644
 ## is what puts the hearts at beak level instead of at an authored guess.
 const MAGPIE_MODEL_MAX_Y: float = 0.885036
 
-## How close an AIM has to land to mean her. Smaller than the ladder's 1.10
-## and than the door's 0.85, and the size is FORCED rather than chosen: at
-## 0.60 she clears the door's circle by 0.30, and every unit past that eats
-## into a gap the probe asserts.
-const MAGPIE_TAP_RADIUS: float = 0.60
+## ⚠️ THE HIT-TEST ANCHOR IS NOT MAGPIE_SPOT -- DEVICE REPORT: a tap only
+## registered from a narrow zone near her feet, "nothing happens" everywhere
+## else on her visibly drawn body. MEASURED, not guessed: LevelController's
+## resolve() ray-casts every tap from the FIXED camera down onto the level's
+## single FLAT floor plane (see LevelDefinition's own header), and does this
+## for EVERY hotspot regardless of how tall the thing it marks actually is.
+## A tap that visually lands on her raised body -- not her feet -- resolves
+## to a floor-plane XZ point offset from MAGPIE_SPOT by however far that ray
+## travels between her body's height and the floor, and the offset GROWS
+## with tap height: 0% (her feet) = 0.000, 20% = 0.504, 30% = 0.773 -- already
+## past the OLD 0.60 radius -- 100% (top of her head) = 3.045. A repro probe
+## confirmed this is uniform and Keepy-position-INDEPENDENT (9/9 starting
+## positions around the room fail identically at a representative body-height
+## tap): pure floor-plane geometry, not navigation, not the footprint hole.
+##
+## THE FIX RECENTRES THE ANCHOR rather than only widening the radius at her
+## feet. Widening MAGPIE_TAP_RADIUS alone, anchored at MAGPIE_SPOT, tops out
+## at 1.623863 before touching the door's circle (door_gap 2.473863 -
+## DOOR_TAP_RADIUS 0.85) -- covering at most ~57% of her drawn height,
+## permanently missing her upper body and head. Recentring to the
+## floor-plane resolution of a tap at 50% of her drawn height moves the
+## anchor away from the door (gap widens 2.473863 -> 3.211440, ceiling
+## 1.623863 -> 2.361440) while only narrowing the ladder's gap a little
+## (3.930013 -> 3.462812, ceiling still 2.362812) -- both ceilings land
+## within a hair of each other by coincidence, and both comfortably clear
+## the radius chosen below. The BED's hotspot lives on level_index 1 (the
+## loft) while the magpie is level_index 0 -- LevelHotspot.accepts_tap()
+## checks serves(index) before distance, so the bed is never even tested
+## while tapping her and its nearby XZ coordinates are not a constraint.
+##
+## MAGPIE_TAP_ANCHOR read directly off LevelController.resolve() for a tap
+## at (MAGPIE_SPOT.x, floor_y + 0.5 * drawn_height, MAGPIE_SPOT.y), and
+## cross-checked by hand with the camera-ray/floor-plane intersection this
+## project's camera (no roll) makes exact -- t = (floor_y - camera.y) /
+## (W.y - camera.y), anchor = camera + t * (W - camera) -- differing from
+## the engine's own screen-space round-trip by under 1e-5. MAGPIE_SPOT
+## itself, the footprint hole, MAGPIE_STAND_SPOT and her facing are ALL
+## untouched: this constant exists ONLY for hit-testing, exactly like every
+## other LevelHotspot.point, which is already free to differ from a prop's
+## visual anchor.
+const MAGPIE_TAP_ANCHOR := Vector2(-1.261384, -0.437180)
+
+## How close an AIM has to land to mean her, now measured FROM
+## MAGPIE_TAP_ANCHOR rather than from her feet. 1.80 covers her whole drawn
+## body with margin either side: the FARTHEST point along the tap-height
+## sweep from the new anchor is 1.697867 (100% height, the top of her
+## head), so 1.80 clears it by 0.102; the nearer of the two neighbour
+## ceilings computed AT the new anchor is 2.361440 (the door), so 1.80
+## still clears IT by 0.561 -- comfortably inside both, not squeezed to
+## either edge.
+const MAGPIE_TAP_RADIUS: float = 1.80
 
 ## How close a LANDING has to be to the stand spot to actually kiss. The
 ## door's and the bed's number, not a new one -- all three answer the same
@@ -738,7 +784,7 @@ func _ready() -> void:
 	# names "a door, a bed, a chest" as what it is for, so a third kind of
 	# thing to tap needs no new machinery, only a new StringName.
 	_magpie = LevelHotspot.make(0,
-			Vector3(MAGPIE_SPOT.x, floor_level.plane_y, MAGPIE_SPOT.y),
+			Vector3(MAGPIE_TAP_ANCHOR.x, floor_level.plane_y, MAGPIE_TAP_ANCHOR.y),
 			MAGPIE_TAP_RADIUS, &"magpie", "Pie")
 	_controller.hotspots = [_door, _bed, _magpie]
 	# ⚠️ THE FOOTPRINT HOLE -- see LevelDefinition's own header for the whole
@@ -910,7 +956,11 @@ func _build_markers() -> void:
 	var loft_level: LevelDefinition = _controller.levels[1]
 	_bed_marker.position = Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y)
 	_magpie_marker = _add_marker(MAGPIE_TAP_RADIUS, "Pie")
-	_magpie_marker.position = Vector3(MAGPIE_SPOT.x, floor_level.plane_y, MAGPIE_SPOT.y)
+	# Positioned at MAGPIE_TAP_ANCHOR, not MAGPIE_SPOT: the ring a player
+	# aims at and the circle LevelHotspot tests must stay the same circle,
+	# and since the fix decoupled that circle from her feet, the marker has
+	# to follow it there rather than keep drawing at her feet alone.
+	_magpie_marker.position = Vector3(MAGPIE_TAP_ANCHOR.x, floor_level.plane_y, MAGPIE_TAP_ANCHOR.y)
 
 func _add_marker(radius: float, text: String,
 		label_offset: Vector3 = Vector3.ZERO) -> CabinMarker:
