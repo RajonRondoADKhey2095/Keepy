@@ -24364,3 +24364,37 @@ plan, avec verification explicite du compte de fichiers avant tout usage.
    toujours** au pouce, sans delai ni double-tap ?
 4. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+### Deploiement staging verifie sur le service (31 aout 2026)
+
+CI run #346 (id 33435068266) sur `staging` `57306ae`, **verte** :
+`Import project resources` 20:16:43 -> 20:20:05, `Export Web build`
+20:20:05 -> 20:20:10, `Deploy to Vercel [STAGING]` **succes** 20:20:28 ->
+20:20:42, `[PRODUCTION -- main]` correctement **skipped** (push sur
+`staging`).
+
+**Verifie SUR LE SERVICE, pas dans le log CI seul, sur DEUX marqueurs
+independants, aux deux lus fraiches** :
+
+| marqueur | valeur |
+|---|---|
+| `CACHE_VERSION` | **`1788207610` = 20:20:10 UTC** -- tombe exactement sur la fermeture de l'etape `Export Web build` |
+| `index.wasm` servi | **35 376 909** octets -- identique au bit pres a l'export local, le fingerprint permanent |
+| `index.pck` servi | 34 351 488 (marqueur, jamais preuve d'identite) |
+
+Les deux lectures (`index.service.worker.js` et `index.html`) portent
+`x-vercel-cache: MISS` avec `age: 0`, `date` colle a l'instant de la
+requete -- pas une reponse de cache.
+
+⚠️ **La valeur "avant" n'a PAS ete relue fraiche dans cette session** --
+seule la valeur deja consignee par le lot precedent (`1788201885`,
+18:44:45 UTC) est disponible en reference. La bascule n'est donc pas
+prouvee dans les deux sens par cette session elle-meme, contrairement a la
+methode habituelle ; ce qui EST prouve directement est que la valeur
+servie MAINTENANT tombe exactement sur la fenetre d'export de CE run et
+est fraiche des deux cotes -- une preuve plus faible d'un cran, dite
+plutot que maquillee en preuve complete.
+
+`main` **non touche** (`origin/main = afa49d7`, verifie apres le push).
+Merge staging automatique, comme le veut la regle du palier 1 -- **pas de
+merge vers `main` sans validation device explicite de Mathieu.**
