@@ -23231,3 +23231,56 @@ inchangees** ; la seule ligne de PHASE K qui bouge est son compte de hotspots,
    `_enter_rest()` dit « XZ is UNTOUCHED -- he lies exactly where he stood »
    juste au-dessus de la ligne qui ecrit `BED_SPOT` dans `global_position`. Le
    code est juste, le commentaire ment ; hors perimetre de ce lot.
+
+### Deploiement staging de la pie (palier 1, automatique)
+
+`staging` **`a021a00`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `14b82445` des deux cotes ET `git diff` vide, verifie
+AVANT le push). CI run **#336** (id 33378335174) **verte** -- `Import project
+resources` 09:36:02 -> 09:39:24 (3 min 22 s), **`Export Web build`
+09:39:24 -> 09:39:30**, `Verify export output` succes, `Deploy to Vercel
+[STAGING -- staging]` **succes** 09:39:46 -> 09:40:01, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`afa49d7`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs independants,
+et les QUATRE lectures utiles portent `x-vercel-cache: MISS` avec `age: 0`** --
+les valeurs « avant » ayant ete relevees AVANT le merge :
+
+| marqueur | avant | apres (ce lot, run #336) |
+|---|---|---|
+| `CACHE_VERSION` | `1788161929` = **07:38:49 UTC** | **`1788169169` = 09:39:29 UTC** |
+| `index.pck` servi | **30 274 448** | **34 349 152** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(09:39:24 -> 09:39:30) : l'alias sert bien ce build. C'est la forme la plus
+forte que ce fichier documente -- deux marqueurs, quatre lectures fraiches, la
+bascule prouvee dans les deux sens et pas deduite du log.
+
+⚠️ **`index.pck` servi (34 349 152) est identique a l'export local, et ce n'est
+DELIBEREMENT PAS offert comme preuve d'identite** : sa taille n'est pas stable
+d'un export a l'autre du meme commit, et une coincidence n'y change rien.
+**`index.wasm` reste la preuve d'identite** (md5
+`af4a8fc2925d992348eb30deeeb54360`), au fingerprint permanent des deux cotes.
+Le saut de **+4 074 704 octets** est le cout mesure de la pie : `.scn` 161 957 +
+`.ctex` baseColor 3 904 992, le `.glb` brut n'etant pas packe.
+
+⚠️ **Piege de lecture rencontre et REFUSE** : une lecture faite a 09:39:40, une
+poignee de secondes apres la fin de l'export, est revenue `x-vercel-cache: HIT`
+avec **`age: 352`** et portait encore l'ANCIEN `CACHE_VERSION`. Elle aurait pu
+se lire comme « le deploiement n'a pas pris » ; ce n'etait qu'une copie de bord
+figee. Seules les lectures MISS/age 0 comptent, et il a fallu un parametre de
+requete different pour la buster.
+
+⚠️ **L'API Actions n'etait PAS perimee sur ce run**, et c'est note dans ce
+sens-la : `updated_at` du RUN est reste fige a 09:34:21 pendant toute la
+duree -- la forme exacte du piege deja consigne -- mais
+`list_workflow_jobs` avec `filter: "all"` a rendu les 18 etapes avec de vrais
+horodatages, et l'import a reellement pris **3 min 22 s**. Le champ de haut
+niveau ment ; la liste des jobs, elle, disait vrai.
+
+**Reste ouvert : la validation device**, seule juge, sur
+`keepy-staging.vercel.app` (Safari iPhone, navigation privee, **jamais la PWA
+installee**) -- les trois points de la section precedente. `main` reste gate par
+Mathieu.
