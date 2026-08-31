@@ -24398,3 +24398,154 @@ plutot que maquillee en preuve complete.
 `main` **non touche** (`origin/main = afa49d7`, verifie apres le push).
 Merge staging automatique, comme le veut la regle du palier 1 -- **pas de
 merge vers `main` sans validation device explicite de Mathieu.**
+
+## LE BAISER MESURAIT LE MAUVAIS SILHOUETTE : le plafond de 25% gatait le corps, pas le visage (31 aout 2026)
+
+Branche `claude/keepy-kiss-contact-validation-6e9hc9`, partie de `staging`
+(`88797c7` -- le second recalibrage de distance, deja documente juste
+au-dessus). **Retour device sur ce meme x = 0.80** : aucune difference
+percue avec l'ancien x = 1.00, alors que le chiffre gate (whole-body PEAK
+19.8% contre 25%) donnait l'impression d'une marge confortable.
+
+### ⚠️ LA RECON ETAIT MANDATEE AVANT TOUT CORRECTIF, ET ELLE A TROUVE UN
+### DEFAUT DANS LA METRIQUE, PAS DANS LA DISTANCE
+
+Une sonde jetable (`KissHeadZoneSweep.gd`, supprimee avant ce commit,
+renders gardes sous `docs/hub-shots/kiss_sweep_x*.png`) a re-mesure les
+memes candidats (x = 1.00 / 0.80 / 0.70 / 0.65 / 0.55 / 0.40) mais **contre
+la ZONE TETE de la pie plutot que contre son AABB entiere** -- la
+propriete qui avait motive le plafond de 25% a l'origine (« ne pas
+enterrer sa tete ») n'a jamais ete ce que ce plafond mesurait.
+
+**Zone tete mesuree sur le glTF brut, pas sur l'AABB de l'importeur** :
+buffer POSITION de `keepy_magpie_prop.glb`, 5439 sommets, parcouru
+directement. Le corps/les ailes occupent `y <~ 0.53` (X jusqu'a +-0,95, Z
+jusqu'a +-0,75 -- envergure et queue, pas la tete), se resserrant en un
+petit blob asymetrique au-dessus de `y = 0,708` (`x` dans [-0,05 ; 0,47],
+`z` dans [-0,23 ; 0,32]) coherent avec « yeux, bec, la fleur » et rien
+d'autre du maillage. Deux coupes gardees : TIGHT (visage/bec seuls), WIDE
+(tete+cou).
+
+**Au x = 0,80 deja livre : REST 0,0% (propre, attendu) mais PEAK 0,0%
+AUSSI** -- le museau de Keepy n'atteint JAMAIS sa zone visage sur tout le
+lean, ce que « environ le double du contact livre » (whole-body) cachait :
+le surplus etait entierement corps-contre-corps, rien de nouveau contre
+son visage. Ce seul chiffre explique un rapport device de « aucune
+difference percue » mieux qu'aucun pourcentage whole-body ne le pourrait.
+
+**Le vieux « mur » entre x = 0,70 (24,6%) et x = 0,65 (27,0%) etait REEL,
+MAIS SUR LE MAUVAIS AXE.** Re-mesure sur la zone tete, les deux memes
+candidats lisent REST 0,0% / PEAK 15,7% (x = 0,70) et REST 0,0% / PEAK
+24,3% (x = 0,65) : son visage reste completement degage tant que Keepy est
+simplement pres d'elle, et genuinement, visiblement touche au pic du lean,
+**aux deux**. x = 0,65 avait ete ecarte pour avoir franchi un plafond qui
+ne mesurait jamais son visage.
+
+**Le vrai mur est plus loin, mesure et pas suppose** : x = 0,55 -- REST
+head-WIDE (tete+cou) devient non nul pour la premiere fois (7,7%) : Keepy
+frole sa zone cou avant meme de se pencher. PEAK head-tight deja 41,8%.
+x = 0,40 -- REST head-TIGHT (visage/bec/yeux) non nul (11,9%) : sa propre
+tete chevauche deja la sienne en restant simplement debout. PEAK 68,1% --
+son visage a disparu, confirme au rendu et pas seulement au chiffre :
+`kiss_sweep_x040_peak.png` montre presque rien d'elle au-dela de sa joue,
+la ou `kiss_sweep_x065_peak.png` et `kiss_sweep_x070_peak.png` montrent
+tous deux son visage nettement, son museau contre lui.
+
+**x = 0,65 est le choix retenu** : le plus proche des deux candidats
+propres, donnant la plus profonde des deux lectures de contact reel (24,3%
+contre 15,7% au pic) tout en restant EXACTEMENT aussi propre au repos que
+0,70 (0,0% sur les deux coupes) -- aucun cout a le prendre plutot que 0,70,
+et plus de marge au-dessus de « effleurement a peine perceptible » avant
+que la compression et le petit ecran d'un telephone n'aplatissent le
+contact a nouveau vers rien.
+
+**Clearances recalculees** : degagement du trou de fondation 1,090 (etait
+1,235 a 0,80) contre un `MAGPIE_FOOTPRINT_RADIUS` de 0,73 -- 1,090 de
+marge, asserte dans `CabinProbe` plutot que laisse comme une coincidence
+non verifiee. Degagement de `DOOR_SPOT` : 1,278 contre `DOOR_REACH` 0,9 --
+**PLUS** de marge qu'a 0,80 (1,208), parce que se rapprocher de la pie
+eloigne de la porte, pas l'inverse.
+
+### PHASE N REECRITE : REST/PEAK sur la zone tete, PAS le corps entier
+
+Le plafond whole-body de 25% est retire ; quatre nouvelles assertions le
+remplacent, gatant desormais sur `_HEAD_TIGHT_XZ`/`_HEAD_Y_TIGHT` (le
+meme zonage mesure ci-dessus, en constantes permanentes dans
+`CabinProbe.gd`) via un nouvel helper `_head_world_rect()` qui lit le
+noeud VIVANT de la pie (`bird.to_global()`) plutot que de reconstruire son
+transform a la main -- la meme discipline que la lecon deja payee dans ce
+lot sur le bug de tangage de camera (instancier la vraie scene, jamais
+retaper ses nombres) :
+
+- REST head-tight < 2% (son visage reste degage avant qu'il se penche)
+- REST head-wide < 2% (meme son cou n'est pas touche)
+- PEAK head-tight > 10% (contact reel atteint son visage au pic du lean)
+- PEAK head-tight < 50% (sans jamais l'avaler entierement)
+
+**Verifie ROUGE AVANT VERT** : `MAGPIE_STAND_SPOT` remis temporairement a
+`(0,80, 0,40)`, la sonde relancee -- l'assertion `peak_head_tight > 0.10`
+echoue exactement avec la valeur predite par la recon
+(`0,0%, want > 10%`), reproduisant le rapport device comme un chiffre
+plutot que comme une impression. Restaure a `(0,65, 0,40)` : **259/259,
+exit 0**.
+
+**Un troisieme litteral perime trouve au passage** (pas dans le bloc du
+lean lui-meme, une assertion PHASE N distincte, deja mentionnee comme
+trouvee-et-corrigee dans le lot precedent pour une AUTRE approche) : le
+degagement du trou de fondation attendait encore `~1,235` (la valeur a
+x = 0,80) apres le changement de `MAGPIE_STAND_SPOT`. Corrige a `~1,090`.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable deja installes dans ce sandbox.
+`rm -rf build .godot` puis import headless **exit 0, 37 `.scn`**. Export
+Web release **exit 0, 0 erreur GDScript**. `index.wasm`
+**35 376 909 octets** / md5 **`af4a8fc2925d992348eb30deeeb54360`**,
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** -- identiques au
+fingerprint permanent de tout lot qui ne touche pas le code moteur, ce
+que deux fichiers GDScript sont. Piege payload tenu : **0** ligne
+`Storing File` pour `scripts/dev`, `assets_source`, `docs`, `web` ou
+`firebase.json` sur 270 lignes.
+
+**Quatre sondes partagees, diffees contre `origin/staging` en worktree
+separe** (import complet verifie des deux cotes, 37 `.scn` chacun) :
+`AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`,
+`ProbeTimeoutAudit` -- **BYTE-IDENTIQUES sur les DEUX flux**, exit 0 des
+deux cotes.
+
+`scripts/dev/KissHeadZoneSweep.gd`/`.tscn` supprimes avant ce commit,
+comme toute sonde jetable de ce depot -- les 13 renders qu'elle a produits
+restent commites sous `docs/hub-shots/kiss_sweep_x*.png`,
+`kiss_sanity_backdrop_only.png` et `kiss_head_zone_check.png` comme preuve
+visuelle plutot que comme seul pourcentage.
+
+⚠️ **VERIFICATION DE COLLISION DE SESSION FAITE APRES COUP, PAS AU
+DEBUT -- signale plutot que cache.** Cette branche avait ete redemarree
+depuis `afa49d7` (= `origin/main` a l'epoque) et son arbre local
+divergeait fortement d'`origin/staging` en surface. Comparaison par ARBRE
+plutot que par nom : `HubBuilder.gd`, `LevelDefinition.gd`, l'asset
+`.glb` de la pie et `CabinHearts.gd` se sont reveles **byte-identiques**
+a `origin/staging`, et le SEUL diff reel portait sur
+`CabinInterior.gd`/`CabinProbe.gd` -- exactement les deux fichiers de ce
+lot. Ce n'etait donc pas une collision de deux implementations
+independantes, mais une continuation legitime de la meme lignee (le
+second recalibrage `3d46f56`/`88797c7`, deploye sur staging sans jamais
+avoir ete revalide visuellement par Mathieu -- palier 1 seulement).
+Branche re-basee (`git reset --mixed origin/staging`) avant tout commit
+pour que le merge reste trivial. **Regle a retenir : verifier l'ancetralite
+par ARBRE (`git merge-base --is-ancestor`), jamais par la seule lecture
+des trois premieres lignes d'un `git log` -- et faire cette verification
+AU DEBUT du lot la prochaine fois, pas apres avoir deja fait tout le
+travail.**
+
+### Reste ouvert -- jugement device, seul juge, et la question posee cette
+### fois est explicitement PERCEPTIBLE et pas seulement numerique
+
+1. **Est-ce qu'un contact 24,3% zone-tete se lit comme un VRAI baiser** sur
+   un ecran de telephone, la ou 19,8% whole-body (le meme x = 0,80 shippe
+   auparavant) ne s'est PAS lu comme tel ? C'est la seule question qui
+   compte, et aucune sonde ne peut y repondre -- seulement la comparaison
+   des renders `kiss_sweep_x065_peak.png` / `x070_peak.png` (contact net,
+   visage intact) contre `x040_peak.png` (visage disparu).
+2. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.
