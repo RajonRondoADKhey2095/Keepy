@@ -22886,3 +22886,48 @@ mur sous llvmpipe -- etait bien la cause historique, et il est passe ici.
 2. **Le banc de nav toujours packe** (~0,04 % du `.pck`), inerte et
    injoignable -- inchange, son propre lot.
 3. Les autres chantiers de la passation sont inchanges.
+
+### Deploiement staging du correctif de porte (palier 1, automatique)
+
+`staging` **`830ed3a`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `24084df9` des deux cotes ET `git diff`
+vide, verifie AVANT le push). CI run **#332** (id 33368511038) **verte** --
+`Import project resources` 07:29:11 -> 07:32:30 (3 min 19 s), **`Export Web
+build` 07:32:30 -> 07:32:36**, `Verify export output` succes, `Deploy to
+Vercel [STAGING -- staging]` **succes** 07:32:54 -> 07:33:06,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ebdd1dc`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres (ce lot, run #332) |
+|---|---|---|
+| `CACHE_VERSION` | **`1788048180` = 30 aout 00:03:00 UTC** | **`1788161555` = 07:32:35 UTC** |
+| `index.pck` servi | -- | 30 274 480 |
+| `index.wasm` servi | -- | **35 376 909** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(07:32:30 -> 07:32:36) : l'alias sert bien ce build.
+
+⚠️ **Pour une fois LES DEUX BOUTS du `CACHE_VERSION` sont lus en
+`x-vercel-cache: MISS` avec `age: 0`**, la valeur d'avant ayant ete relevee
+**avant le push** -- c'est la forme la plus forte que ce fichier documente,
+et non le cas habituel ou le « avant » sort d'un `HIT` a age non nul.
+
+⚠️ **Limite dite plutot que sous-entendue** : `index.pck`/`index.wasm` n'ont
+ete lus qu'APRES, donc ils valent comme marqueur d'etat courant et **pas**
+comme preuve de transition -- c'est le `CACHE_VERSION` qui la porte.
+
+⚠️ **`index.pck` servi (30 274 480) est identique a l'export local, et ce
+n'est DELIBEREMENT PAS offert comme preuve d'identite** : la doctrine tient,
+sa taille n'est pas stable d'un export a l'autre du meme commit et la
+coincidence n'y change rien. **`index.wasm` reste la preuve d'identite**, au
+fingerprint permanent des deux cotes.
+
+⚠️ **L'API Actions n'etait PAS perimee sur ce run**, note dans ce sens-la :
+un seul appel a rendu les 18 etapes avec de vrais horodatages, et l'import a
+reellement pris **3 min 19 s**. Le piege existe ; il ne s'est pas produit
+ici, et le verifier coute un regard a l'horloge -- ce qui a d'ailleurs servi
+une fois de plus dans l'autre sens, un `sleep` en arriere-plan relu
+immediatement ne montrant que **37 secondes** ecoulees.
