@@ -183,6 +183,34 @@ const DOOR_SPOT := ENTRY_SPOT
 ## clamped point.
 const DOOR_TAP_RADIUS: float = 0.85
 
+## ⚠️ THE SIGN ALONE, NOT THE RING -- device report: from the fixed camera,
+## "Sortir" reads on top of the kiss. MEASURED THROUGH THE SHIPPED CAMERA
+## (a jettable probe reading Camera3D.unproject_position() on the real,
+## built markers, 1080x1920, never a hand-rolled projection) before this
+## number was picked:
+##   - the two RINGS clear each other by only 22.91 px (door ring's left
+##     edge at screen x=483.91 against the magpie ring's right edge at
+##     x=461.00) -- already thin on a phone screen;
+##   - the door's own LABEL, un-offset, sits with its left edge at
+##     x=557.05, a bare 40.90 px from MAGPIE_STAND_SPOT at x=516.15 --
+##     the point Keepy actually stands on for the kiss;
+##   - and the door ring's own near-pulse triggers at MAGPIE_STAND_SPOT:
+##     that spot is 1.0977 from DOOR_SPOT against a NEAR_FACTOR *
+##     DOOR_TAP_RADIUS of 1.8700, so "Sortir" is actively growing while
+##     the kiss plays, on top of an already-thin gap.
+##
+## +0.60 on X pushes the SIGN alone toward the wall, away from the
+## magpie's side of the room. RE-MEASURED through the same probe, on
+## the arm built with this offset in place: the label's left edge moves
+## to screen x=620.04, **103.89** px clear of the kiss point instead of
+## 40.90 -- better than double, and the label never crosses back over
+## the door ring's own centreline (world X only grows from 0.60 to 1.20,
+## still on the door's own side of DOOR_SPOT). Passed to CabinMarker as
+## `label_offset`, which moves nothing but the Label3D: `_door`'s
+## LevelHotspot.point (tap AND snap destination) and `_door_marker`'s
+## own ring/pad stay exactly on DOOR_SPOT, unchanged.
+const DOOR_LABEL_OFFSET := Vector3(0.60, 0.0, 0.0)
+
 ## The bed, on the loft.
 ##
 ## ⚠️ SMALL, AND THE SIZE IS FORCED RATHER THAN CHOSEN. The loft's walkable
@@ -794,7 +822,7 @@ func _place_walker() -> void:
 func _build_markers() -> void:
 	var floor_level: LevelDefinition = _controller.levels[0]
 	_ladder_marker = _add_marker(_controller.links[0].tap_radius, "Mezzanine")
-	_door_marker = _add_marker(DOOR_TAP_RADIUS, "Sortir")
+	_door_marker = _add_marker(DOOR_TAP_RADIUS, "Sortir", DOOR_LABEL_OFFSET)
 	_door_marker.position = Vector3(DOOR_SPOT.x, floor_level.plane_y, DOOR_SPOT.y)
 	_bed_marker = _add_marker(BED_TAP_RADIUS, "Lit")
 	var loft_level: LevelDefinition = _controller.levels[1]
@@ -802,9 +830,10 @@ func _build_markers() -> void:
 	_magpie_marker = _add_marker(MAGPIE_TAP_RADIUS, "Pie")
 	_magpie_marker.position = Vector3(MAGPIE_SPOT.x, floor_level.plane_y, MAGPIE_SPOT.y)
 
-func _add_marker(radius: float, text: String) -> CabinMarker:
+func _add_marker(radius: float, text: String,
+		label_offset: Vector3 = Vector3.ZERO) -> CabinMarker:
 	var marker := CabinMarker.new()
-	marker.setup(radius, text)
+	marker.setup(radius, text, CabinMarker.Surface.CABIN_FLOOR, label_offset)
 	_props.add_child(marker)
 	return marker
 

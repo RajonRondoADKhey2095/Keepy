@@ -249,8 +249,18 @@ var _near: bool = false
 ## every existing caller in the interior is unchanged -- a default that
 ## exists because this class was the cabin's first and the plateau came
 ## second, and not because one of the two is the "normal" one.
+##
+## `label_offset` moves the SIGN ALONE, added to its own local position
+## after the height above is picked. It touches neither `_pad` nor `_ring`
+## -- both stay exactly on this node's own origin, which is the hotspot's
+## real point, because the invariant two paragraphs up ("a marker can
+## never quietly be drawn smaller than the thing it marks") is about the
+## RING, not the sign floating over it. Defaults to zero, so every
+## existing caller keeps drawing its label dead-centre above its own
+## circle, unchanged.
 func setup(radius: float, text: String,
-		surface: Surface = Surface.CABIN_FLOOR) -> void:
+		surface: Surface = Surface.CABIN_FLOOR,
+		label_offset: Vector3 = Vector3.ZERO) -> void:
 	var inner: float = maxf(radius * 0.74, 0.01)
 	var hub: bool = surface == Surface.HUB_GRASS
 	var pad_color: Color = HUB_PAD_COLOR if hub else CABIN_PAD_COLOR
@@ -289,7 +299,8 @@ func setup(radius: float, text: String,
 		_label = Label3D.new()
 		_label.text = text
 		_label.position = Vector3(0.0, ring_lift
-				+ (HUB_LABEL_HEIGHT if hub else CABIN_LABEL_HEIGHT), 0.0)
+				+ (HUB_LABEL_HEIGHT if hub else CABIN_LABEL_HEIGHT), 0.0) \
+				+ label_offset
 		# STATED, both halves. Label3D's world size is font_size x
 		# pixel_size, so leaving font_size at the engine default would put
 		# half of that number outside this file -- and the interior's sign
