@@ -23928,3 +23928,44 @@ formule d'echelle et une position de `Label3D`, aucune geometrie neuve.
 
 `main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
 import, export et sondes verts).
+
+### Deploiement staging de la pie lisible + panneau degage (palier 1, automatique)
+
+`staging` **`bbe9f95`** (merge `--no-ff` de `78e771a` sur `266a10e`, arbre
+**byte-identique** a la branche feature -- `git diff HEAD 78e771a` vide,
+verifie AVANT le push). CI run **#342** (id 33411372548) **verte**
+(15:57:19 -> 16:02:21 UTC), `Deploy to Vercel [STAGING -- staging]` succes,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `afa49d7`, verifie apres le push) : palier 2, gate
+Mathieu apres validation device.
+
+**Verifie SUR LE SERVICE, pas dans le log CI seul, sur DEUX marqueurs
+independants** :
+
+| marqueur | apres (ce lot, run #342) |
+|---|---|
+| `CACHE_VERSION` | **`1788192102` = 16:01:42 UTC** |
+| `index.pck` servi | 34 351 520 |
+| `index.wasm` servi | **35 376 909** |
+
+L'epoch `CACHE_VERSION` servi tombe **a l'interieur de la fenetre
+d'execution du run #342** (15:57:19 -> 16:02:21 UTC), et **les deux lectures
+(`index.service.worker.js` et `index.html`) portent `x-vercel-cache: MISS`
+avec `age: 0`**, `date` colle a l'instant de la requete -- pas une reponse
+de cache. `index.wasm` servi est **identique au bit pres a l'export local**
+(md5 `af4a8fc2925d992348eb30deeeb54360`) -- c'est lui la preuve d'identite,
+coherent avec un lot qui ne touche qu'une formule d'echelle et une position
+de `Label3D`, aucun code moteur.
+
+⚠️ **Limite dite plutot que sous-entendue** : aucune lecture "avant" fraiche
+n'a ete prise sur le service avant ce push -- la comparaison "avant" est
+corroboree par l'horodatage de completion du run precedent (#341,
+`updated_at 2026-08-31T14:17:39Z`), pas par une seconde paire MISS/age 0.
+Ce n'est pas la forme la plus forte que ce fichier documente ailleurs (deux
+marqueurs lus aux deux bouts en MISS/age 0), mais la lecture APRES seule,
+deja au niveau de preuve le plus haut, suffit a etablir que ce build precis
+est bien celui servi.
+
+**Reste ouvert : la validation device de Mathieu**, seule juge, sur les deux
+points ci-dessus (taille de la pie dans le hub, lisibilite du baiser sans le
+panneau dessus) -- avant tout merge vers `main`.
