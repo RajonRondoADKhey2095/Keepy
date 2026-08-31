@@ -1124,10 +1124,21 @@ func _phase_v_cutaway_magpie(props: HubBuilder) -> void:
 	var dp: float = hub_as_interior.distance_to(inside.position)
 	_check(dp < 0.001,
 			"scaled back up she stands exactly where the interior stands her (%.5f u)" % dp)
-	var hub_size: float = bird.scale.x * scale_ratio
-	_check(absf(hub_size - inside.scale.x) < 0.0001,
-			"and she is exactly the interior's size (%.5f vs %.5f)"
-					% [hub_size, inside.scale.x])
+	# ⚠️ HER SIZE IS DELIBERATELY NOT bird.scale.x * CABIN_SCALE ANY MORE --
+	# see the legibility comment on _furnish_cabin(). POSITION and YAW still
+	# pass straight through magpie_local_pose() untouched (checked above and
+	# below); SCALE alone is overridden, on purpose, so the hub never draws
+	# her shrunk by this cabin's own layout "scale". What is asserted here
+	# is therefore the NEW invariant instead of the old one: her NET drawn
+	# scale, once _build() applies this cabin's published `uniform` on top
+	# of bird's own local scale, is exactly CabinInterior.MAGPIE_SCALE --
+	# her own interior height, regardless of how big or small this cabin
+	# entry happens to be drawn in the hub.
+	var cabin_uniform: float = float(cabins[0].get("uniform", 1.0))
+	var net_hub_scale: float = bird.scale.x * cabin_uniform
+	_check(absf(net_hub_scale - CabinInterior.MAGPIE_SCALE) < 0.0001,
+			"and her NET hub scale matches her own interior height (%.5f vs MAGPIE_SCALE %.5f)"
+					% [net_hub_scale, CabinInterior.MAGPIE_SCALE])
 	var dyaw: float = absf(bird.rotation_degrees.y - inside.rotation_degrees.y)
 	_check(dyaw < 0.001,
 			"facing the same way (%.3f vs %.3f deg)"

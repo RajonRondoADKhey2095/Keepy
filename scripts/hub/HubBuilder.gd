@@ -1344,6 +1344,11 @@ func _build() -> void:
 					reach = reach.rotated(Vector3.UP, deg_to_rad(rotation_y))
 					_last_cabin["position"] = cabin_flat
 					_last_cabin["door"] = cabin_flat + reach
+					# Published so a reader can recover the magpie's NET drawn
+					# scale (bird.scale.x * uniform) without re-parsing the
+					# layout a second time -- the same discipline every other
+					# fact in this dictionary is held to.
+					_last_cabin["uniform"] = uniform
 					_cabins.append(_last_cabin)
 			if type == &"owl":
 				# Recorded AFTER add_child, on the boards' and the seesaw's
@@ -1614,7 +1619,13 @@ func _make_cabin(index: int) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Cabin"
 	root.add_child(model)
-	_furnish_cabin(root)
+	# Re-derived rather than threaded in from _build(): _build applies the
+	# entry's own "scale" to the ROOT this function returns, AFTER this
+	# call has already returned -- so at this point in the pipeline it is
+	# not yet in scope anywhere except the layout entry itself, which is
+	# exactly where _furnish_cabin's own legibility correction needs it.
+	var cabin_uniform: float = (layout.props[index] as Dictionary).get("scale", 1.0)
+	_furnish_cabin(root, cabin_uniform)
 	# Filed by _build once add_child has actually happened, which is the rule
 	# every published registry in this file is held to -- and the door is
 	# derived there, where the placement rotation is in scope.
@@ -1641,7 +1652,44 @@ func _make_cabin(index: int) -> Node3D:
 ## published tables this file keeps for the boat, the boards or the doors:
 ## a tap near this cabin means the DOOR, and it went on meaning exactly
 ## that. She is scenery out here, and the kiss stays indoors.
-func _furnish_cabin(root: Node3D) -> void:
+##
+## ⚠️ HER SCALE IS A DELIBERATE HUB-ONLY LEGIBILITY CHOICE, NOT A PHYSICAL
+## MEASUREMENT -- closing the open item the cutaway lot left behind ("sa
+## taille... jamais jugée à l'oeil de loin"). MEASURED before anything was
+## touched, through the shipped HubCamera (a jettable probe reading real
+## AABBs off the built nodes, Keepy standing right at the cabin's own
+## layout position so camera-to-subject distance is comparable both ways):
+## at this entry's shipped scale of 7.0, `pose["scale"]` alone (which is
+## MAGPIE_SCALE / CabinInterior.CABIN_SCALE, i.e. 0.76461/11) draws her at
+## a world height of 0.8591 -- **96.06 px** on a 1080x1920 screen, against
+## Keepy's own **123.89 px** at that same camera distance. 77.5% of him,
+## and shrinking further the farther he stands from the cabin.
+##
+## `pose["scale"]` divides MAGPIE_SCALE by CabinInterior.CABIN_SCALE (11.0)
+## because the INTERIOR needs her a fraction of that fixed camera's own
+## frame; dividing again by THIS entry's cabin_uniform below undoes that
+## division and multiplies back by cabin_uniform is what _build() applies
+## to the whole root right after this function returns -- so the two
+## uniforms cancel and what is left, net, is MAGPIE_SCALE itself: her own
+## interior height, undiminished by how small the hub happens to draw the
+## cabin around her. RE-MEASURED on the built result through the SAME
+## probe: world height is exactly 1.3501 (matches
+## MAGPIE_MODEL_MAX_Y - MAGPIE_MODEL_MIN_Y times MAGPIE_SCALE to the 5th
+## decimal -- the formula does what it says), reading as **151.09 px**.
+## That is LARGER than Keepy's own 123.89 px in this same framing, not
+## merely close to it: her local position inside the cabin sits a little
+## nearer the camera along its own depth than the exact spot Keepy was
+## standing on for his own reading, and a scale correction cannot remove a
+## depth difference. Accepted rather than fought -- a magpie that reads
+## as big as or slightly bigger than Keepy from across the plateau is the
+## legible failure mode; the 96.06 px original was the illegible one.
+##
+## This makes her taller, relative to THIS cabin prop, than she is relative
+## to the cabin indoors -- a real physical inconsistency between the two
+## views, accepted on purpose: legibility from a distance is the only job
+## this copy of her has, and magpie_local_pose() (the interior's own,
+## camera-tuned proportions) is never touched to get it.
+func _furnish_cabin(root: Node3D, cabin_uniform: float) -> void:
 	if magpie_scene == null:
 		push_error("HubBuilder: a cabin was built but no magpie_scene is assigned; the cutaway view is missing its bird.")
 		return
@@ -1652,7 +1700,7 @@ func _furnish_cabin(root: Node3D) -> void:
 	var pose: Dictionary = CabinInterior.magpie_local_pose()
 	bird.name = "Magpie"
 	bird.position = pose["position"]
-	bird.scale = Vector3.ONE * float(pose["scale"])
+	bird.scale = Vector3.ONE * (CabinInterior.MAGPIE_SCALE / maxf(cabin_uniform, 0.0001))
 	bird.rotation_degrees = Vector3(0.0, float(pose["yaw_degrees"]), 0.0)
 	root.add_child(bird)
 

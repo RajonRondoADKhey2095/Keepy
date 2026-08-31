@@ -23752,3 +23752,179 @@ existe ; il ne s'est pas produit ici, et le verifier coute un regard a
 l'horloge -- ce qui a d'ailleurs servi une fois de plus dans l'autre sens, la
 lecture au niveau du RUN restant figee a `updated_at 14:05:48` pendant que
 celle au niveau des JOBS montrait l'import en cours depuis 14:06:27.
+
+## LA PIE VUE DU HUB, LE PANNEAU « SORTIR » DEGAGE DU BAISER (31 aout 2026)
+
+Branche `claude/pie-visibility-exit-label-5t6drt`, partie de `staging`
+(`266a10e`). Deux retours device independants sur le lot magpie precedent,
+traites en deux corrections distinctes dans les memes fichiers -- aucune des
+deux ne touche `magpie_local_pose()` (la source de verite de l'interieur) ni
+`LevelHotspot` (le tap/snap de la porte).
+
+### RECON PREALABLE, OBLIGATOIRE AVANT TOUT CODE -- `LevelHotspot` EST DEJA DECOUPLE
+
+Verifie avant d'ecrire une ligne, comme la consigne du lot l'exigeait :
+`scripts/nav/LevelHotspot.gd` ne porte que `point` (utilise IDENTIQUEMENT pour
+accepter un tap et pour la destination du snap) et `label` (du TEXTE, jamais
+une position). Le rendu visuel (anneau/pad/position du label) vit entierement
+dans `CabinMarker`, une classe separee. **Le probleme de position du panneau
+« Sortir » n'est donc PAS un couplage `LevelHotspot`** -- la porte a satisfait
+la condition explicite pour continuer sans escalader.
+
+### PARTIE A -- LA PIE DANS LE HUB : MESUREE, PAS ESTIMEE, A TRAVERS LA VRAIE CAMERA
+
+Sonde jetable (`HubPieSizeReconProbe.gd`, supprimee avant commit) instanciant
+`HubWorld.tscn`, `HubCamera.snap_to_target()` pour une mesure DETERMINISTE
+(la camera suit Keepy par un lerp exponentiel en jeu normal, inutilisable pour
+mesurer). Keepy pose EXACTEMENT a la position de layout de la cabane
+(`-17.43, 0, 28.18`), la distance camera-sujet la plus favorable possible.
+
+| | hauteur monde | pixels (1080x1920) |
+|---|---|---|
+| **Keepy, sa propre AABB** | 1.3501 | **123.89 px** |
+| **la pie, AVANT** | 0.8591 | **96.06 px -- 77,5 % de Keepy** |
+
+**Cause : `_furnish_cabin()` recevait le modele deja construit par
+`magpie_local_pose()`, dont `pose["scale"]` divise deliberement
+`MAGPIE_SCALE` par `CabinInterior.CABIN_SCALE` (11.0) -- necessaire pour tenir
+dans le cadre FIXE de l'interieur, mais le hub applique ENSUITE, en externe,
+le `scale` de layout propre a CETTE entree cabane (7.0) sur tout le noeud
+racine.** Les deux divisions se cumulent : la pie retrecit deux fois, une
+fois pour l'interieur, une fois pour le hub.
+
+**Fix : `_furnish_cabin(root, cabin_uniform)` re-derive `cabin_uniform`
+depuis `layout.props[index]` (pas encore en scope au moment ou `_build()`
+applique son propre `scale` externe, donc lu directement dans la donnee) et
+DIVISE `bird.scale` par lui** :
+
+```gdscript
+bird.scale = Vector3.ONE * (CabinInterior.MAGPIE_SCALE / maxf(cabin_uniform, 0.0001))
+```
+
+Le `cabin_uniform` de `_furnish_cabin` et celui que `_build()` applique
+ensuite au noeud racine s'ANNULENT exactement -- ce qui reste, net, est
+`MAGPIE_SCALE` elle-meme : sa hauteur d'interieur, intacte, quelle que soit la
+petitesse avec laquelle le hub dessine cette cabane. **`_build()` publie
+desormais `_last_cabin["uniform"] = uniform`** (meme discipline que les 214
+autres entrees de ce depot : un fait calcule une fois est publie, jamais
+recalcule ailleurs), pour qu'un futur lecteur -- dont la sonde -- puisse
+recuperer l'echelle nette sans reparser le layout.
+
+**RE-MESURE sur le resultat construit, meme sonde, meme camera** :
+
+| | hauteur monde | pixels |
+|---|---|---|
+| **la pie, APRES** | **1.3501** (= `MAGPIE_SCALE`, au 5e chiffre) | **151.09 px** |
+
+⚠️ **151.09 px est PLUS GRAND que les 123.89 px de Keepy, pas seulement
+proche -- et c'est accepte, pas cache.** La position locale de la pie a
+l'interieur de la cabane la place un peu plus pres de la camera, sur son
+propre axe de profondeur, que le point exact ou Keepy se tenait pour sa
+propre mesure de reference -- et une correction d'ECHELLE ne peut pas
+corriger un ecart de PROFONDEUR. Une pie qui se lit aussi grande ou
+legerement plus grande que Keepy depuis le plateau est l'echec LISIBLE ;
+les 96,06 px d'origine etaient l'echec ILLISIBLE.
+
+⚠️ **Divergence physique assumee, documentee dans le code plutot que dans
+un commentaire externe** : la pie devient, PAR RAPPORT A CETTE CABANE, plus
+haute que ce qu'elle est par rapport a la cabane vue de l'interieur. La
+legibilite depuis la distance est le seul travail de cette copie d'elle ;
+`magpie_local_pose()`, la source des proportions de l'interieur, n'est
+JAMAIS touchee pour l'obtenir.
+
+### PARTIE B -- LE PANNEAU « SORTIR » RECOUVRAIT LA ZONE DU BAISER
+
+Retour device, capture a l'appui : depuis la camera fixe de l'interieur,
+« Sortir » se lit par-dessus le baiser. Sonde jetable
+(`PieMarkerReconProbe.gd`, supprimee avant commit) mesurant les VRAIS
+marqueurs construits (`_door_marker`, `_magpie_marker`) via
+`Camera3D.unproject_position()`/`is_position_in_frustum()`, et l'etendue
+d'un `Label3D` en BILLBOARD projetee le long du vecteur DROITE de la camera
+(jamais l'axe local +X non tourne, que le shader de billboard ignore au
+rendu) :
+
+| | AVANT |
+|---|---|
+| anneaux porte/pie, degagement | **22,91 px** -- deja tres serre |
+| bord du LABEL « Sortir » au point de baiser (`MAGPIE_STAND_SPOT`) | **40,90 px** |
+| pulse de la porte au point de baiser | **DECLENCHE** (1,098 contre un seuil de 1,870) -- « Sortir » grossit PENDANT le baiser |
+
+**Fix : un `label_offset: Vector3` optionnel sur `CabinMarker.setup()`
+(defaut `Vector3.ZERO`, donc chaque appelant existant -- y compris le
+marqueur du hub, `HubWorld.gd`, 3 arguments positionnels -- reste
+inchange), applique UNIQUEMENT a la position du `Label3D`** :
+
+```gdscript
+_label.position = Vector3(0.0, ring_lift
+		+ (HUB_LABEL_HEIGHT if hub else CABIN_LABEL_HEIGHT), 0.0) \
+		+ label_offset
+```
+
+`_pad` et `_ring` restent exactement sur l'origine du noeud -- l'invariant
+« un marqueur ne peut jamais etre dessine plus petit que ce qu'il marque »
+porte sur l'ANNEAU, pas sur le panneau qui flotte au-dessus. Cote
+`CabinInterior.gd` : **`DOOR_LABEL_OFFSET := Vector3(0.60, 0.0, 0.0)`**,
+poussant le PANNEAU SEUL vers le mur, loin du cote pie de la piece --
+`_add_marker(DOOR_TAP_RADIUS, "Sortir", DOOR_LABEL_OFFSET)`.
+`LevelHotspot.point` (le tap et la destination du snap) et l'anneau/pad du
+marqueur de porte restent **exactement** sur `DOOR_SPOT`, inchanges.
+
+**RE-MESURE, meme sonde** :
+
+| | APRES |
+|---|---|
+| bord du label « Sortir » au point de baiser | **103,89 px** -- plus du double, **jamais** ne recroise le centre de l'anneau de porte |
+
+### ⚠️ REGRESSION TROUVEE PAR `CabinProbe`, CORRIGEE PAR LA DOCTRINE ROUGE-AVANT-VERT
+
+La PHASE V existante assertait l'ANCIENNE relation
+(`bird.scale.x * CabinInterior.CABIN_SCALE == inside.scale.x`) -- une
+invariante que ce lot casse DELIBEREMENT. **Ce n'etait pas un bug de ce
+lot : c'etait une hypothese de test perimee par un changement de conception
+volontaire.** Reecrite pour asserter la NOUVELLE invariante --
+`bird.scale.x * cabin_uniform == CabinInterior.MAGPIE_SCALE`, en lisant le
+`uniform` desormais publie par `_last_cabin` plutot que de le redemander au
+layout -- avec un commentaire expliquant pourquoi l'ancienne ne s'applique
+plus. Position et lacet continuent de passer par `magpie_local_pose()` sans
+modification et restent assertes tels quels.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, tailles verifiees contre le `Content-Length` -- **50 276 070**
+et **1 073 228 327** octets, aucune troncature). `rm -rf build .godot` avant
+tout. Import headless **exit 0, 37 `.scn`, 0 erreur**. Export Web release
+**exit 0**, `index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint permanent
+de tout lot qui ne touche pas le code moteur, coherent : deux formules et un
+parametre optionnel dans quatre fichiers GDScript. **Piege payload tenu** :
+**0** ligne `Storing File` pour `scripts/dev`, `assets_source`, `docs`,
+`web/`, `build` ou `firebase.json`.
+
+**Sondes, toutes exit 0** : `CabinProbe` (**256 OK, 0 echec**, PHASE V
+reecrite comprise ; PHASE Z, PHASE K et PHASE N -- porte, snap, baiser --
+inchangees et vertes), `ProbeTimeoutAudit` (**59 sondes scenes**, retour
+exact a la baseline apres suppression des deux sondes jetables),
+`AssetContractAudit` (12/12 visuels, **0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`, `TurnstileProbe`, `WaterTintProbe`,
+`SeesawProbe` (**0 echec** avec `--fixed-fps 60` -- sans ce flag son banc de
+traversee tourne a la vitesse du mur sous llvmpipe et rapporte un faux
+echec, piege d'ordre des flags deja consigne dans ce fichier).
+
+**Budget de noeuds de dessin INCHANGE** (132 hors portails, confirme par
+`SeesawProbe`/`TurnstileProbe`/`WaterTintProbe`) : ce lot ne touche qu'une
+formule d'echelle et une position de `Label3D`, aucune geometrie neuve.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **La taille de la pie dans le hub** (151,09 px, plus grande que Keepy) --
+   mesuree, coherente par construction, jamais jugee a l'oeil sur un
+   telephone.
+2. **La lisibilite du baiser sans le panneau dessus** -- 103,89 px de
+   degagement mesures, jamais vus en mouvement sur device.
+3. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
+import, export et sondes verts).
