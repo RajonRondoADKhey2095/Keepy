@@ -598,6 +598,19 @@ func _on_tapped_hotspot(hotspot: LevelHotspot, destination: Vector3) -> void:
 			# were the same field -- they are not, and only one of them is
 			# cleared there.
 			_exit_pending = true
+			# ⚠️ ALREADY STANDING ON IT: nothing to walk, so leave on the
+			# spot. _advance() finishes a zero-length walk by emitting
+			# became_idle and NOT hop_landed, so a landing-only path never
+			# fires here and the intent armed one line up would simply be
+			# left standing.
+			#
+			# ⚠️ THIS IS THE DEFECT THAT SHIPPED, and it is the bed's line
+			# below that shows how long the other half of the pair had
+			# been right: DOOR_SPOT is ENTRY_SPOT, so he arrives standing
+			# exactly on the doorstep, and the FIRST tap of every visit
+			# was thrown away. Reachable from the opening frame, not a
+			# corner case.
+			_try_exit()
 		&"bed":
 			if _bed_marker != null:
 				_bed_marker.flash()
@@ -624,23 +637,21 @@ func _on_tapped_hotspot(hotspot: LevelHotspot, destination: Vector3) -> void:
 			_rest_pending = false
 			_walker.hop_to(destination)
 
-## Every landing: proximity, and the held exit intent.
-func _on_hop_landed(position: Vector3) -> void:
+## Every landing: proximity, and the held intents.
+##
+## ⚠️ THE POSITION IS NOT READ HERE. Both _try_rest() and _try_exit() ask
+## the WALKER where he is rather than trusting an argument, because both
+## have a second caller -- the tap itself, when the walk is zero-length --
+## that has no landing to hand them.
+func _on_hop_landed(_position: Vector3) -> void:
 	_refresh_proximity()
 	# The rest intent is honoured BEFORE the exit intent for no reason
 	# beyond needing an order: the two cannot be armed at once, because
 	# arming either clears the other.
 	if _rest_pending and _try_rest():
 		return
-	if not _exit_pending or _leaving:
-		return
-	var flat_here := Vector2(position.x, position.z)
-	if flat_here.distance_to(DOOR_SPOT) > DOOR_REACH:
-		# NOT there yet. The intent is KEPT -- this is the pass-through
-		# landing that LevelWalker's own `_pending` exists to survive.
-		return
-	_exit_pending = false
-	_leave_to_hub()
+	if _exit_pending:
+		_try_exit()
 
 ## =====================================================================
 ## LYING DOWN, AND GETTING UP
@@ -660,6 +671,37 @@ func _on_hop_landed(position: Vector3) -> void:
 ## THE DOOR is NOT held, and does not need to be: it lives on level 0 and
 ## accepts_tap() refuses from anywhere else. Holding it would be a second
 ## opinion about a refusal that already exists.
+
+## Leaves if he has actually reached the door. Returns whether it did, so
+## the caller knows the landing is spent -- _try_rest()'s shape exactly,
+## and for the same two callers.
+##
+## ⚠️ IT DOES NOT GUARD ON `_resting`, and that omission is deliberate
+## rather than missed. Lying down happens on the LOFT, and no point on the
+## loft is within DOOR_REACH of the doorstep -- the nearest is 1.583
+## against a reach of 0.9. A guard that can never fire is a guard nobody
+## reads, so the geometry is asserted in CabinProbe PHASE K instead, where
+## moving the loft would break it loudly.
+##
+## ⚠️ AND IT LEAVES WITHOUT WALKING ANYWHERE INSIDE DOOR_REACH, not only
+## from a dead stop. Between ARRIVE_EPSILON (0.45) and DOOR_REACH (0.9)
+## the walk is real but he is already close enough to have arrived, so the
+## immediate call spends the intent and he goes. That is not a side effect
+## of the fix -- it is what the shipped bed has always done, its BED_REACH
+## being the same 0.9 against the same immediate call, and having the two
+## disagree would be the odder of the two answers.
+func _try_exit() -> bool:
+	if _leaving:
+		return false
+	var here := _walker.global_position
+	var flat := Vector2(here.x, here.z)
+	if flat.distance_to(DOOR_SPOT) > DOOR_REACH:
+		# NOT there yet. The intent is KEPT -- this is the pass-through
+		# landing that LevelWalker's own `_pending` exists to survive.
+		return false
+	_exit_pending = false
+	_leave_to_hub()
+	return true
 
 ## Lies him down if he has actually reached the bed. Returns whether it
 ## did, so the caller knows the landing is spent.
