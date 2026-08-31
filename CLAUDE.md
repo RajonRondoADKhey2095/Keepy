@@ -22931,3 +22931,70 @@ reellement pris **3 min 19 s**. Le piege existe ; il ne s'est pas produit
 ici, et le verifier coute un regard a l'horloge -- ce qui a d'ailleurs servi
 une fois de plus dans l'autre sens, un `sleep` en arriere-plan relu
 immediatement ne montrant que **37 secondes** ecoulees.
+
+## MERGE EN PRODUCTION : LE CORRECTIF DE LA PORTE CABANE (31 aout 2026)
+
+`staging` (`6b45744`) -> `main`, commit de merge **`d6e17ff`**, `--no-ff`,
+apres feu vert explicite de Mathieu suivant validation device : sortie
+immediate depuis le pas de porte OK, bande 0,45-0,9 sans marche visible OK,
+coherent avec la pose sur le lit deja en production.
+
+**Verifie AVANT tout push** : `git fetch --all --prune`, `origin/staging`
+(`6b45744`) et `origin/main` (`ebdd1dc`) exactement les SHA annonces par le
+brief -- aucune derive de staging depuis le dernier commit valide sur
+device, aucune session concurrente. Merge `--no-ff` sans conflit ; **diff
+de l'arbre resultant contre l'arbre de `staging` au commit `6b45744` :
+VIDE** (`git diff HEAD origin/staging` vide, meme hash d'arbre
+`3c66c975...` des deux cotes) -- ce qui part en prod est litteralement
+l'arbre valide, pas une recomposition.
+
+**Build local, editeur + templates Godot 4.3-stable installes dans ce
+sandbox** (releases GitHub officielles, tailles verifiees contre le
+`Content-Length` avant extraction -- 50 276 070 et 1 073 228 327 octets,
+aucune troncature). Import headless **exit 0, 36 `.scn`** (import complet,
+pas suppose). **Piege d'auto-contamination rencontre et corrige** : un
+premier export sans `rm -rf build/` a fait re-importer les PNG produits par
+lui-meme comme ressources de projet (7 lignes `Storing File: res://build/*`
+dans le log) -- refait proprement (`rm -rf build .godot` avant l'import),
+et le second export est **propre : 0 ligne `Storing File` pour
+`scripts/dev`, `assets_source`, `docs`, `web`, `build` ou `firebase.json`**.
+`index.wasm` **35 376 909** octets / md5 **`af4a8fc2925d992348eb30deeeb54360`**,
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** -- identiques au
+fingerprint permanent de tout lot qui ne touche pas le code moteur.
+
+CI **run #334** (id `33371986746`) **verte** (08:14:42 -> 08:19:19 UTC) --
+`Import project resources` 08:15:18 -> 08:18:37, `Export Web build`
+**08:18:37 -> 08:18:43**, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+08:18:59 -> 08:19:17, `Deploy to Vercel [STAGING -- staging]` correctement
+**skipped** (push sur `main`, comme attendu pour ce lot -- pas de skip cote
+production ici).
+
+**Verifie SUR LE SERVICE, uniquement sur `keepy-ten.vercel.app` (jamais
+`keepy-staging.vercel.app`)**, sur DEUX marqueurs independants, tous deux
+`x-vercel-cache: MISS` / `age: 0` :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1788164322` = **08:18:42 UTC** -- tombe exactement dans la fenetre `Export Web build` (08:18:37 -> 08:18:43) |
+| `index.wasm` servi | **35 376 909** octets, md5 identique a l'export local -- preuve d'identite |
+| `index.pck` servi | 30 274 480 octets -- marqueur "nouveau build", jamais offert comme preuve seule |
+
+⚠️ **Aucune lecture "avant" live n'a ete prise sur la production avant le
+merge** (le push a precede toute lecture HTTP de ce lot) -- signale plutot
+que masque. La transition est corroboree par comparaison a la fenetre
+`Export Web build` du dernier deploiement production connu (run #328/#329,
+`ebdd1dc` : 29 aout 23:02:32 -> 23:02:37 UTC), soit un ecart de **~46 h**
+avec le `CACHE_VERSION` desormais servi -- non ambigu, mais c'est une
+corroboration historique et pas la forme la plus forte (deux lectures
+fraiches aux deux bouts) que ce fichier documente ailleurs.
+
+**Le correctif de la porte de la cabane (sortie immediate depuis le pas de
+porte, bande de flottaison 0,45-0,9 sans marche visible) est desormais EN
+PRODUCTION** sur `keepy-ten.vercel.app`.
+
+**Reste ouvert : aucun sur ce merge.** `main` pointe sur `d6e17ff`.
+
+### Prochaine etape
+
+Lot pie/bisou (prompt deja scope et livre separement) -- recon obligatoire
+avant toute implementation, comme prevu dans son propre brief.
