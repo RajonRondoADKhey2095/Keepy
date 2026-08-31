@@ -23526,3 +23526,187 @@ l'epoch `CACHE_VERSION` et la fenetre CI reelle, pas sur une comparaison
 avant/apres du service lui-meme. C'est la forme documentee comme suffisante
 quand une lecture prealable n'a pas ete prise -- la limite est dite plutot
 que masquee, comme la doctrine de ce fichier l'exige.
+
+## LA PIE SE VOIT DEPUIS LE HUB : la vue cutaway n'est ni une scène ni un décor codé, c'est le `.glb` LUI-MÊME (31 août 2026)
+
+Branche `claude/hub-pie-cutaway-view-m5kfyd`, partie de `staging`
+(`07f5c77`). Regle n°1 verifiee AU DEBUT et par ARBRE : `origin/main` =
+`afa49d7` **INTOUCHE**, `staging..main` VIDE, `main` ancetre de `staging`,
+et les deux seules branches plus recentes que `main` sont celles des lots
+magpie, deja mergees (`merge-base --is-ancestor` = OK) -- **aucune session
+concurrente**.
+
+La pie etait visible **uniquement une fois entre dans la cabane**. Le
+plateau montre pourtant deja ce salon en cutaway -- la table, les chaises,
+l'ourson, l'echelle -- donc la seule piece du decor qu'un joueur ne
+pouvait pas voir avant d'entrer etait precisement celle qui est construite
+en CODE. Elle est desormais dessinee dehors aussi, **purement decorative** :
+aucun tap, aucun hotspot, aucun rayon, aucune entree dans les tables
+publiees. Le bisou reste exclusivement dans `CabinInterior`.
+
+### ⚠️ RECON : LA VUE HUB N'EST NI (a) NI (b) -- et c'est ce qui a decide tout le lot
+
+Le brief posait deux cas : (a) la meme scene vue sous un autre angle, ou
+(b) une geometrie hub distincte et simplifiee. **Ni l'un ni l'autre**, et
+c'est lu dans les fichiers plutot que deduit des captures :
+
+* Il n'existe **AUCUNE scene `.tscn` de cabane hub** -- `find -iname
+  '*cabin*'` ne rend qu'un seul `.tscn`, `scenes/CabinInterior.tscn`.
+* `HubBuilder._make_cabin()` instancie `@export cabin_scene`, cable dans
+  `scenes/HubWorld.tscn` sur **`res://assets/models/keepy_cabin_decor.glb`**
+  -- exactement le `.glb` que `CabinInterior.gd:100` preload.
+* **Le mobilier cutaway est BAKE DANS LE `.glb`.** `_make_cabin` ne
+  construit rien d'autre qu'un `Node3D` racine autour de l'instance ; le
+  `Props` de `CabinInterior.tscn` est vide et son decor est instancie en
+  code.
+
+Donc : **UN SEUL asset, DEUX instanciations distinctes, a DEUX ECHELLES
+DIFFERENTES** -- `scale: 7.0` dans `hub_layout.tres` contre
+`CabinInterior.CABIN_SCALE = 11.0` -- et **aucun lien de code entre les
+deux**. La pie n'y etait pas parce qu'elle n'est pas dans le `.glb`.
+
+**Consequence directe** : ajouter la pie est **un node enfant de plus**
+sous le root `"Cabin"`, jamais une modification du `.glb` source. Et
+puisque la vue hub est une geometrie autonome sans systeme de rendu
+partage, sans cutaway genere et sans camera/occlusion a toucher, **le
+scope est reste celui annonce** -- pas de STOP, pas de remontee en Opus.
+
+### ⚠️ AUCUN MECANISME DE SYNCHRONISATION HUB <-> CABININTERIOR N'EXISTAIT
+
+Cinquieme point de recon, et il n'a pas de reponse nuancee : le seul etat
+qui traverse un changement de scene est **`HubSpawn`** (un `static var`
+one-shot qui dit ou reposer Keepy au retour). Aucun autoload, aucun
+registre d'apparence, rien qui fasse qu'un objet ait le meme aspect des
+deux cotes. **C'est la premiere fois que ce besoin apparait sur ce
+projet.**
+
+### LA POSE EST PUBLIEE PAR L'INTERIEUR, JAMAIS RECOPIEE PAR LE HUB
+
+`CabinInterior.magpie_local_pose()` (nouvelle, `static`) rend la position,
+l'echelle et le lacet de la pie **en unites MODELE de la cabine** --
+c'est-a-dire dans le seul repere que les deux vues partagent. `HubBuilder`
+la consomme. **Pas un seul nombre n'est duplique.**
+
+⚠️ **C'est ce qui rend le rapport 7/11 impossible a rater** : une position
+monde recopiee serait fausse de ce facteur, et une echelle recopiee
+donnerait une pie a la taille de l'interieur dans une cabine plus petite.
+La division par `CABIN_SCALE` est faite une fois, la ou la pie est
+reellement posee.
+
+Deux helpers purs (`_world_y`, `_yaw_towards`) passent `static` pour que
+la fonction puisse les appeler -- aucun comportement change, leurs
+appelants non-statiques continuent de marcher.
+
+**Enfant du ROOT, jamais du noeud `.glb`** : `_build` donne au root
+l'echelle uniforme et le `rotation_y` de l'entree, donc c'est ce qui fait
+qu'une cabine redimensionnee ou tournee **emporte sa pie** au lieu de la
+laisser a l'origine, taille pleine. Le `.glb` enfant ne porte que le lift
+du modele, et `magpie_local_pose()` inclut deja ce meme lift dans son y :
+les deux sont dans un seul repere local.
+
+### VERIFIE, PAS SUPPOSE -- `CabinProbe` PHASE V, 13 checks
+
+Gatee et pas rapportee parce que **tout mode de panne est SILENCIEUX** :
+un `magpie_scene` non assigne pousse une erreur et ne dessine rien ; une
+pose qui derive de l'interieur la met a travers un mur ou sur la pelouse
+a la mauvaise taille, et les deux vues ne sont **jamais a l'ecran
+ensemble** pour que quiconque le remarque ; un hotspot ajoute ici rendrait
+un tap pres de la cabine ambigu sans la moindre erreur.
+
+⚠️ **L'ACCORD EST MESURE CONTRE LE CORPS QUE L'INTERIEUR CONSTRUIT
+REELLEMENT**, jamais contre une seconde copie de l'arithmetique : la phase
+instancie `CabinInterior.tscn`, lit son noeud `Magpie` dans l'arbre, puis
+exige que la pose locale du hub remontee par `CABIN_SCALE` retombe dessus.
+
+| mesure | resultat |
+|---|---|
+| position rescalee vs le corps de l'interieur | **0.00000 u** |
+| taille | **0.76461 vs 0.76461** |
+| lacet | **68.499 vs 68.499 deg** |
+| geometrie dessinee | **1 draw node** (le `.glb` porte 1 noeud / 1 mesh / 1 primitive, mesure sur le fichier) |
+| dans l'empreinte de la cabine | 0.1292 < 1.2500 |
+| au-dessus de sa base | y = 0.3311 |
+| **elements tappables poses sur elle** | **0** |
+| la cabine publie toujours exactement une porte | OK |
+
+**ROUGE AVANT VERT** : `_furnish_cabin(root)` neutralise -> **exit 1, 1
+FAIL** (« a Magpie hangs inside the built cabin »), toutes les lignes de
+controle et PHASE UNTOUCHED restant vertes. Fichier restaure
+**byte-identique** (`cmp` silencieux) avant de continuer.
+
+### Budget : +1 noeud de dessin, itemise
+
+`_EXPECTED_DRAW_NODES_EXCL_PORTALS` **131 -> 132** dans les trois sondes
+qui le portent (`SeesawProbe`, `TurnstileProbe`, `WaterTintProbe`), avec
+la raison ecrite a cote plutot que poussee : **un** `MeshInstance3D`,
+non batche (il y en a une seule), pure scenerie.
+
+### RENDU REEL, pas seulement des chiffres
+
+`docs/hub-shots/cabin_cutaway_magpie_{near,far}.png` -- la camera LIVREE
+du hub, Keepy pose au pas de porte publie puis 7 u en arriere, le
+`_process` de la camera coupe pour que le cliche soit la pose visee et non
+une frame de son glissement. **La pie se lit nettement au rez-de-chaussee,
+a gauche de la table, sa fleur rose visible, tournee vers l'endroit ou
+Keepy se tient dans le salon** -- et elle reste identifiable a 7 u de
+recul. Le marqueur ambre « Cabane » est intact en dessous.
+
+⚠️ Piege deja consigne, re-paye ici : le `cd build/web` d'une commande
+precedente **persiste**, et la premiere sonde a donc tourne avec
+`--path .` depuis un dossier sans `project.godot` -- 20 minutes a ne rien
+mesurer, sans une seule ligne d'erreur. Chemins absolus depuis.
+Second piege du meme run : un `sleep` lance en arriere-plan puis relu
+immediatement fait passer 2 minutes pour 25 ; c'est `ps -eo etimes` qui
+l'a tranche, exactement comme l'horloge tranche un etat d'API perime.
+
+### PATTERN GENERIQUE : IDENTIFIE, ET DELIBEREMENT PAS CONSTRUIT
+
+Un registre « ces elements de la cabine doivent apparaitre dans les deux
+vues » serait le pas suivant naturel -- et il n'est **pas** ecrit ici,
+conformement au perimetre. Ce que ce lot laisse a sa place est plus petit
+et suffisant pour un second element : `_furnish_cabin(root)` est **le seul
+point d'ameublement**, donc un futur objet est une ligne de plus dedans et
+une seconde fonction `*_local_pose()` publiee par l'interieur. Le jour ou
+il y en aura trois ou quatre, cette fonction devient la boucle sur un
+tableau -- et c'est **a ce moment-la** qu'un registre se justifie, pas
+avant.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature). Import
+headless **exit 0, 37 `.scn`, 0 erreur** apres `rm -rf build .godot`. Boot
+de `HubWorld.tscn` et de `CabinInterior.tscn` : **0 erreur, 0
+`push_warning`** (le seul stderr est le `Parameter "m" is null` du driver
+dummy, deja documente). Export Web release **exit 0, 0 erreur**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent de tout lot qui ne touche pas le code moteur. `index.pck`
+34 351 200, **marqueur et jamais preuve d'identite**. **Piege payload
+tenu** : sur **270** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web/`, `build` ou `firebase.json` -- et les
+captures ajoutees sous `docs/hub-shots/` ne coutent donc rien.
+
+**Sondes, TOUTES exit 0 / 0 failure** : `CabinProbe` (PHASE V comprise),
+`SeesawProbe`, `TurnstileProbe`, `WaterTintProbe` (les trois a **132**
+draw nodes), `LevelNavProbe` (**77 checks**), `DivingBoardProbe`,
+`OwlFlightProbe`, `LakeZoneProbe`, `StreamRideProbe` (**37 checks**),
+`WaterImpactProbe`, `AssetContractAudit` (**12/12 visuels, pas un
+collider deplace**), `DeathModelAudit`, `ChargerShapeProbe`,
+`ProbeTimeoutAudit` (**59 sondes scenes**, retour exact a la baseline
+apres suppression de la sonde de capture jetable).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que voir la pie avant d'entrer se lit comme « il y a quelqu'un
+   dedans »**, a l'echelle reelle d'un telephone ? Les captures sont du
+   llvmpipe sous `xvfb` via le backend `opengl3` de BUREAU, contre WebGL2
+   sous Safari -- rien ici n'est un rendu device.
+2. **Sa taille dans le cutaway** : 7/11 de sa taille d'interieur, mesuree
+   et coherente par construction, jamais jugee a l'oeil de loin.
+3. Elle est **statique** : la doctrine bake-once tient, aucune animation
+   n'est demandee dehors et le `.glb` n'a de toute facon ni squelette ni
+   animation.
