@@ -24736,3 +24736,43 @@ lot ne change que deux fichiers GDScript. **Piege payload tenu** : sur
    touche** -- merge sur `staging` : palier 1, automatique. Un futur
    prompt fusionnera `staging` -> `main` pour l'ensemble du lot pie une
    fois tous valides sur device.
+
+### Deploiement staging verifie sur le service (31 aout 2026)
+
+`staging` `751b877` -> merge `9e3f18e` (`--no-ff`), push confirme
+(`751b877..9e3f18e staging -> staging`). CI **run #350**
+(id `33450634720`, head_sha `9e3f18e4745298d3019e4269cc9ebba0bd361bb5`)
+**verte** : `Import project resources` 23:26:24 -> 23:30:03,
+`Export Web build` **23:30:03 -> 23:30:09**, `Verify export output`
+succes, `Deploy to Vercel [STAGING -- staging]` succes 23:30:25 -> 23:30:39,
+`[PRODUCTION -- main]` correctement **skipped**.
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants et aux DEUX bouts -- les QUATRE lectures en
+`x-vercel-cache: MISS` / `age: 0`**, les valeurs "avant" ayant ete
+relevees AVANT le merge :
+
+| marqueur | avant | apres (ce lot, run #350) |
+|---|---|---|
+| `CACHE_VERSION` | `1788213562` = **21:59:22 UTC** | **`1788219008` = 23:30:08 UTC** |
+| `index.pck` servi | 34 352 320 | 34 352 368 |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **exactement dans la fenetre `Export Web build`**
+(23:30:03 -> 23:30:09), et les DEUX lectures d'apres portent
+**`x-vercel-cache: MISS` avec `age: 0`**, `last-modified` colle a
+l'instant de la requete -- pas une reponse de cache. La valeur d'avant a
+egalement ete lue en MISS/age 0 (avant le push) : c'est la forme la plus
+forte que ce fichier documente, deux marqueurs et quatre lectures fraiches
+plutot qu'une seule.
+
+`index.wasm` **35 376 909 octets / md5
+`af4a8fc2925d992348eb30deeeb54360`** -- identique au fingerprint permanent
+deja consigne pour tout lot qui ne touche pas le code moteur, coherent :
+ce lot ne change que deux fichiers GDScript (`CabinInterior.gd`,
+`CabinProbe.gd`). `index.pck` **jamais offert comme preuve d'identite**,
+seulement comme marqueur "nouveau build servi".
+
+`main` **non touche** (`origin/main` reste en arriere, verifie avant le
+push). Palier 2 -- merge vers `main` -- reste gate par validation device
+de Mathieu, pour ce lot ET pour l'ensemble des lots pie/bisou.
