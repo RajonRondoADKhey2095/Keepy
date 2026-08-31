@@ -23710,3 +23710,45 @@ apres suppression de la sonde de capture jetable).
 3. Elle est **statique** : la doctrine bake-once tient, aucune animation
    n'est demandee dehors et le `.glb` n'a de toute facon ni squelette ni
    animation.
+
+### Deploiement staging de la pie en vue cutaway (palier 1, automatique)
+
+`staging` **`3fa5d91`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `62a86e4b` des deux cotes ET `git diff` vide,
+verifie AVANT le push). CI run **#340** (id 33400628473) **verte** --
+`Import project resources` 14:06:27 -> 14:10:02, **`Export Web build`
+14:10:02 -> 14:10:08**, `Verify export output` succes, `Deploy to Vercel
+[STAGING -- staging]` **succes** 14:10:23 -> 14:10:36, `[PRODUCTION -- main]`
+correctement **skipped**. **`main` NON touche** (`origin/main` toujours
+`afa49d7`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs independants
+-- et pour une fois les QUATRE lectures sont `x-vercel-cache: MISS` avec
+`age: 0`**, les valeurs d'avant ayant ete relevees AVANT le merge : c'est la
+forme la plus forte que ce fichier documente, et non le cas habituel ou le
+« avant » sort d'un `HIT` a age non nul.
+
+| marqueur | avant (run #339) | apres (ce lot, run #340) |
+|---|---|---|
+| `CACHE_VERSION` | `1788180347` = **12:45:47 UTC** | **`1788185407` = 14:10:07 UTC** |
+| `index.pck` servi | **34 349 984** | **34 351 248** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(14:10:02 -> 14:10:08) : l'alias sert bien ce build.
+
+⚠️ **`index.pck` prend une valeur de plus pour le meme contenu** : 34 351 200
+a l'export local propre contre 34 351 248 servi, **48 octets d'ecart**. Enieme
+illustration de l'instabilite deja consignee -- marqueur « nouveau build »,
+**jamais** preuve d'identite. `index.wasm` (**35 376 909**, md5
+`af4a8fc2925d992348eb30deeeb54360`) est identique des deux cotes et c'est lui
+la preuve d'identite, coherent avec un lot qui n'ajoute qu'une instance de
+`.glb` deja packe et trois fichiers GDScript.
+
+⚠️ **L'API GitHub Actions n'etait PAS perimee sur ce run**, note dans ce
+sens-la : les appels successifs ont rendu de vraies progressions d'etapes avec
+de vrais horodatages, et l'import a reellement pris **3 min 35 s**. Le piege
+existe ; il ne s'est pas produit ici, et le verifier coute un regard a
+l'horloge -- ce qui a d'ailleurs servi une fois de plus dans l'autre sens, la
+lecture au niveau du RUN restant figee a `updated_at 14:05:48` pendant que
+celle au niveau des JOBS montrait l'import en cours depuis 14:06:27.
