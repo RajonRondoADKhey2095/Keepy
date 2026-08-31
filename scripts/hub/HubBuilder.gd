@@ -102,6 +102,22 @@ class_name HubBuilder
 ## _make_cabin().
 @export var cabin_scene: PackedScene
 
+## Scene drawn INSIDE every &"cabin" -- assets/models/keepy_magpie_prop.glb,
+## the same bird CabinInterior stands on the living-room floor.
+##
+## PURELY DECORATIVE OUT HERE, and that is a decision rather than an
+## omission. The plateau already shows this cabin in cutaway -- the table,
+## the chairs, the bear and the ladder are baked into the .glb itself --
+## so the one piece of that room the player could NOT see before walking in
+## was the magpie, because she is the one piece built in code. She is drawn
+## here so the room reads the same from outside as from inside; she is
+## given no hotspot, no tap radius and no signal, because the kiss lives in
+## CabinInterior and one bird with two ways to be talked to is two birds.
+##
+## Same shape as cabin_scene and for its reason: a .glb is a PackedScene
+## with no placeholder to fall back to. Assigned in HubWorld.tscn.
+@export var magpie_scene: PackedScene
+
 const TRUNK_COLOR: Color = Color(0.20, 0.13, 0.08)
 const CROWN_COLOR: Color = Color(0.17, 0.34, 0.13)
 const ROCK_COLOR: Color = Color(0.26, 0.27, 0.24)
@@ -1598,6 +1614,7 @@ func _make_cabin(index: int) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Cabin"
 	root.add_child(model)
+	_furnish_cabin(root)
 	# Filed by _build once add_child has actually happened, which is the rule
 	# every published registry in this file is held to -- and the door is
 	# derived there, where the placement rotation is in scope.
@@ -1605,6 +1622,39 @@ func _make_cabin(index: int) -> Node3D:
 		"root": root,
 	}
 	return root
+
+## The magpie, drawn inside the plateau's cutaway view of the cabin.
+##
+## A CHILD OF THE ROOT, never of the .glb node: _build gives the root the
+## entry's uniform scale and its rotation_y, so hanging her here is what
+## makes a resized or turned cabin carry her with it. The .glb child holds
+## only the model's own lift, and CabinInterior.magpie_local_pose() already
+## includes that same lift in its y, so the two sit in one local frame.
+##
+## THE POSE IS READ FROM CabinInterior, NEVER RESTATED. She has to stand in
+## the same corner of the same room in both views, and the two views draw
+## this .glb at different scales -- so a copied world coordinate would be
+## wrong by that ratio. Reading the publisher is what makes "the same
+## magpie" a fact instead of two numbers that agree until one is edited.
+##
+## NOTHING IS REGISTERED. No hotspot, no tap radius, no entry in any of the
+## published tables this file keeps for the boat, the boards or the doors:
+## a tap near this cabin means the DOOR, and it went on meaning exactly
+## that. She is scenery out here, and the kiss stays indoors.
+func _furnish_cabin(root: Node3D) -> void:
+	if magpie_scene == null:
+		push_error("HubBuilder: a cabin was built but no magpie_scene is assigned; the cutaway view is missing its bird.")
+		return
+	var bird := magpie_scene.instantiate() as Node3D
+	if bird == null:
+		push_error("HubBuilder: magpie_scene does not instantiate to a Node3D.")
+		return
+	var pose: Dictionary = CabinInterior.magpie_local_pose()
+	bird.name = "Magpie"
+	bird.position = pose["position"]
+	bird.scale = Vector3.ONE * float(pose["scale"])
+	bird.rotation_degrees = Vector3(0.0, float(pose["yaw_degrees"]), 0.0)
+	root.add_child(bird)
 
 ## A cut trunk. Deliberately ONE mesh in the trees' own bark colour: a
 ## stump is what a tree leaves behind, so sharing the colour is what makes

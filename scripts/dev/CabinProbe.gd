@@ -174,6 +174,8 @@ func _ready() -> void:
 	dl.abort_if_exceeded()
 	_phase_m_doorstep_mark(hub, props)
 	dl.abort_if_exceeded()
+	_phase_v_cutaway_magpie(props)
+	dl.abort_if_exceeded()
 	_phase_untouched(props)
 	dl.abort_if_exceeded()
 	await _phase_s_spawn(tree)
@@ -1052,6 +1054,114 @@ func _settle(keepy: KeepyHopper) -> void:
 	while keepy.is_hopping() and frames < 900:
 		await get_tree().process_frame
 		frames += 1
+
+## PHASE V: the magpie is drawn in the plateau's cutaway view of the cabin,
+## in the SAME corner of the SAME room the interior stands her in -- and she
+## is scenery out there, nothing more.
+##
+## GATED and not reported, because every way this can fail is SILENT. An
+## unassigned magpie_scene pushes an error and draws nothing; a pose that
+## drifts from the interior's puts her through a wall or out on the lawn at
+## the wrong size, and the two views are never on screen together for
+## anyone to notice; and a hotspot added here would make a tap near the
+## cabin ambiguous without any error at all. None of it crashes, and all of
+## it looks like "the bird was never added".
+##
+## THE AGREEMENT IS MEASURED AGAINST THE BODY THE INTERIOR ACTUALLY BUILDS,
+## never against a second copy of the arithmetic: the interior scene is
+## instantiated here and its Magpie node read off the tree, then the hub's
+## local pose is fed back through CABIN_SCALE and the two are required to
+## land on the same world position and the same world size. That is what
+## magpie_local_pose()'s header promises, checked rather than trusted.
+func _phase_v_cutaway_magpie(props: HubBuilder) -> void:
+	print("")
+	print("--- PHASE V: the magpie shows in the hub's cutaway cabin ---")
+	var cabins: Array[Dictionary] = props.cabins()
+	if cabins.is_empty():
+		_check(false, "there is a cabin to furnish")
+		return
+	var root: Node3D = cabins[0].get("root") as Node3D
+	_check(root != null, "the built cabin publishes its root")
+	if root == null:
+		return
+	var bird: Node3D = root.get_node_or_null("Magpie") as Node3D
+	_check(bird != null, "a Magpie hangs inside the built cabin")
+	if bird == null:
+		return
+
+	# She has to DRAW. A wrapper that instantiated to an empty Node3D would
+	# satisfy every position check below and put nothing on screen.
+	var meshes: int = 0
+	var stack: Array[Node] = [bird]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is MeshInstance3D or node is MultiMeshInstance3D:
+			meshes += 1
+		for kid in node.get_children():
+			stack.append(kid)
+	_check(meshes > 0, "she carries drawn geometry (%d draw node(s))" % meshes)
+	_check(bird.visible and root.visible, "and both she and the cabin are visible")
+
+	# ⚠️ A CHILD OF THE ROOT, not of the .glb node. The root is what _build
+	# gives the entry's scale and rotation to, so this is what makes a
+	# resized or turned cabin carry her along instead of leaving her behind
+	# at the origin, full size.
+	_check(bird.get_parent() == root,
+			"she hangs on the cabin ROOT, so its scale and yaw carry her")
+
+	# THE SAME BIRD AS INSIDE, measured against the interior's own built
+	# body rather than against the constants a second time.
+	var interior: Node = INTERIOR_SCENE.instantiate()
+	add_child(interior)
+	var inside: Node3D = interior.get_node_or_null(
+			"WorldViewport/SubViewport/World/Props/Magpie") as Node3D
+	_check(inside != null, "the interior's own Magpie could be read")
+	if inside == null:
+		interior.queue_free()
+		return
+	var scale_ratio: float = CabinInterior.CABIN_SCALE
+	var hub_as_interior := bird.position * scale_ratio
+	var dp: float = hub_as_interior.distance_to(inside.position)
+	_check(dp < 0.001,
+			"scaled back up she stands exactly where the interior stands her (%.5f u)" % dp)
+	var hub_size: float = bird.scale.x * scale_ratio
+	_check(absf(hub_size - inside.scale.x) < 0.0001,
+			"and she is exactly the interior's size (%.5f vs %.5f)"
+					% [hub_size, inside.scale.x])
+	var dyaw: float = absf(bird.rotation_degrees.y - inside.rotation_degrees.y)
+	_check(dyaw < 0.001,
+			"facing the same way (%.3f vs %.3f deg)"
+					% [bird.rotation_degrees.y, inside.rotation_degrees.y])
+	interior.queue_free()
+
+	# INSIDE THE ROOM, not out on the lawn. Her local offset is in model
+	# units, so it is compared against the model's own footprint radius --
+	# the same number ground_footprints() scales for this prop.
+	var flat := Vector2(bird.position.x, bird.position.z)
+	_check(flat.length() < HubBuilder.CABIN_FOOTPRINT_RADIUS,
+			"she stands within the cabin's own footprint (%.4f < %.4f)"
+					% [flat.length(), HubBuilder.CABIN_FOOTPRINT_RADIUS])
+	# Above the model's own base, so she is standing on the floor of the
+	# cutaway rather than sunk under it.
+	_check(bird.position.y > 0.0,
+			"and above its base, on the drawn floor (y = %.4f)" % bird.position.y)
+
+	# SCENERY, AND NOTHING ELSE. The kiss lives in CabinInterior; a second
+	# way to talk to her out here would be a second bird.
+	var interactive: int = 0
+	stack = [bird]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is Area3D or node is CollisionObject3D or node is CabinMarker:
+			interactive += 1
+		for kid in node.get_children():
+			stack.append(kid)
+	_check(interactive == 0,
+			"nothing tappable was hung on her (%d)" % interactive)
+	# And the cabin's published tables are untouched: a tap near this cabin
+	# still means the DOOR and only the door.
+	_check(cabins.size() == 1 and cabins[0].has("door"),
+			"the cabin still publishes exactly one door")
 
 func _phase_untouched(props: HubBuilder) -> void:
 	print("")

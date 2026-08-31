@@ -658,7 +658,7 @@ func _ready() -> void:
 ## Model space to world space. ONE conversion, used by both floors and by
 ## nothing else, so the scale and the lift cannot be applied twice to one
 ## of them and once to the other.
-func _world_y(model_y: float) -> float:
+static func _world_y(model_y: float) -> float:
 	return (model_y + CABIN_MODEL_OFFSET_Y) * CABIN_SCALE
 
 ## The .glb, once, as scenery. Never moved, never rotated, never scaled
@@ -721,11 +721,45 @@ func _build_magpie() -> void:
 ## The yaw that points a node's +Z from `from` at `to`. One conversion, so
 ## nothing in this file writes atan2 twice with the arguments in a different
 ## order.
-func _yaw_towards(from: Vector2, to: Vector2) -> float:
+static func _yaw_towards(from: Vector2, to: Vector2) -> float:
 	var d := to - from
 	if d.length_squared() <= 0.0:
 		return 0.0
 	return rad_to_deg(atan2(d.x, d.y))
+
+## WHERE THE MAGPIE STANDS, IN THE CABIN MODEL'S OWN UNITS.
+##
+## Published so the plateau can draw her in its cutaway view of this same
+## .glb without restating a single one of the numbers above. She is the
+## first thing this project has ever needed to show in TWO places at once,
+## and the two places draw the cabin at DIFFERENT scales -- the hub entry
+## carries 7.0 and CABIN_SCALE here is 11.0 -- so a copied world coordinate
+## would be wrong by that ratio and a copied SCALE would make her the wrong
+## size. Everything below is therefore divided back out of CABIN_SCALE into
+## the model's own frame, which is the one frame both views share.
+##
+## The caller hangs the result on whatever node it built the .glb under, so
+## its own scale and its own rotation_y carry her with them: a cabin turned
+## in the layout takes its magpie along instead of leaving her facing a wall.
+##
+## DERIVED, never authored. Every term is one of the constants
+## _build_magpie() itself uses, so the two cannot drift -- and CabinProbe
+## asserts that feeding this back through CABIN_SCALE reproduces the body
+## that was actually built, rather than trusting that they agree.
+##
+## Position y already carries CABIN_MODEL_OFFSET_Y, exactly as the backdrop
+## child does, so the bird and the building sit in the same local frame.
+static func magpie_local_pose() -> Dictionary:
+	return {
+		"position": Vector3(
+				MAGPIE_SPOT.x / CABIN_SCALE,
+				FLOOR_MODEL_Y + CABIN_MODEL_OFFSET_Y
+						- MAGPIE_MODEL_MIN_Y * MAGPIE_SCALE / CABIN_SCALE,
+				MAGPIE_SPOT.y / CABIN_SCALE),
+		"scale": MAGPIE_SCALE / CABIN_SCALE,
+		"yaw_degrees": _yaw_towards(MAGPIE_SPOT, MAGPIE_STAND_SPOT)
+				+ MAGPIE_FACING_BIAS_DEGREES,
+	}
 
 ## Keepy's body, hung on the walker.
 ##
