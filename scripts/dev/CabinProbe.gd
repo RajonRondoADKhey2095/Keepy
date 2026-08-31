@@ -1608,8 +1608,8 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 			CabinInterior.MAGPIE_SPOT.y)
 	var hole_clearance: float = stand.distance_to(magpie_ground) \
 			- CabinInterior.MAGPIE_FOOTPRINT_RADIUS
-	_check(absf(hole_clearance - 0.524) < 0.01,
-			"and clears her footprint hole by %.3f (radius %.2f, want ~0.524)"
+	_check(absf(hole_clearance - 1.429) < 0.01,
+			"and clears her footprint hole by %.3f (radius %.2f, want ~1.429)"
 					% [hole_clearance, CabinInterior.MAGPIE_FOOTPRINT_RADIUS])
 
 	# ---- AND A GROUND TAP AIMED AT HER FOOTPRINT NEVER LANDS THERE --------
@@ -1717,14 +1717,51 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	# which is exactly ZERO at t = 0 -- and t = 0 is precisely where the
 	# kiss is when the landing that started it returns. Reading it here on
 	# the spot was red on correct code, the same family as the hearts.
+	#
+	# ⚠️ TRACKED THROUGH ITS OWN PEAK AND NO FURTHER -- the overlap bug this
+	# lot fixes was invisible to a probe that only proved SOME lean
+	# happened, so what is tracked here is the real world-space XZ overlap
+	# of his AABB against hers, on the same two LIVE nodes the scene
+	# actually draws, at its own worst point. But everything BELOW this
+	# block still assumes the kiss is mid-flight (her withdrawal, the
+	# hearts, _settle_kiss ending it on its own) -- so the loop stops the
+	# instant the lean starts falling back down, the first frame past the
+	# bell's true peak, rather than running until _kissing turns false on
+	# its own. A first pass that polled all the way to the natural end
+	# read "she withdraws for the length of the kiss" as FAIL, because by
+	# then she no longer was: the kiss had already finished under it.
 	var peak: float = 0.0
+	var worst_overlap_frac: float = 0.0
+	var bird_box: AABB = _world_aabb(bird)
+	var bird_rect := Rect2(bird_box.position.x, bird_box.position.z,
+			bird_box.size.x, bird_box.size.z)
+	var bird_footprint: float = bird_rect.size.x * bird_rect.size.y
+	var prev_lean: float = -1.0
 	var leaned: int = Time.get_ticks_msec()
 	while bool(interior.get("_kissing")) and Time.get_ticks_msec() - leaned < 6000:
-		peak = maxf(peak, absf(body.rotation_degrees.x))
-		if peak > 1.0:
+		var lean: float = absf(body.rotation_degrees.x)
+		peak = maxf(peak, lean)
+		var body_box: AABB = _world_aabb(body)
+		var body_rect := Rect2(body_box.position.x, body_box.position.z,
+				body_box.size.x, body_box.size.z)
+		var overlap: float = body_rect.intersection(bird_rect).get_area()
+		if bird_footprint > 0.0:
+			worst_overlap_frac = maxf(worst_overlap_frac, overlap / bird_footprint)
+		if prev_lean >= 0.0 and lean < prev_lean and peak > 1.0:
 			break
+		prev_lean = lean
 		await get_tree().process_frame
 	_check(peak > 1.0, "he leans in (peak %.2f deg)" % peak)
+	# ⚠️ THE ASSERTION THAT KEEPS PART A'S BUG FROM COMING BACK SILENTLY.
+	# The shipped MAGPIE_STAND_SPOT before this lot measured 62.7% here; the
+	# relocation to (1.00, 0.40) brings it to ~10.6%. Gated at 25% -- well
+	# above the measured figure so normal float noise never trips it, and
+	# well below the old one -- so a future stand-spot or MAGPIE_SCALE
+	# change that reopens the overlap fails loudly here instead of a probe
+	# reading "he leans in" as proof that the pose is legible.
+	_check(worst_overlap_frac < 0.25,
+			"and her head stays clear of him at the worst of it (%.1f%% of her own footprint, want < 25%%)"
+					% (worst_overlap_frac * 100.0))
 	# THE WITHDRAWAL, the boat's and not the ladder's -- one tap, one signal.
 	# Read through is_available(), never the field: LevelHotspot's header
 	# warns that a second reader bypassing the accessor is how one field
@@ -1774,7 +1811,15 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	# HOP_DISTANCE lands EXACTLY on its target and the snap has nothing to
 	# do. He only stops short when a FULL hop leaves a remainder under
 	# ARRIVE_EPSILON. This is such an approach.
-	var short_far := floor_level.flat(Vector3(1.394, 0.0, -0.944))
+	#
+	# ⚠️ RE-DERIVED FOR THE RELOCATED STAND SPOT -- the old approach point
+	# was picked to be exactly 1 HOP_DISTANCE plus ~0.40 short of the OLD
+	# (0.05, 0.40); against the new (1.00, 0.40) it is no longer even that
+	# distance away, so it stopped proving anything about a short hop. Pure
+	# -X from the new spot, magnitude HOP_DISTANCE + 0.40 = 1.90: the first
+	# 1.5-unit hop leaves exactly 0.40 remaining, under ARRIVE_EPSILON
+	# (0.45) but comfortably above the `without > 0.01` floor below.
+	var short_far := floor_level.flat(Vector3(-0.90, 0.0, 0.40))
 	# THE CONTROL: the walker ALONE, with no magpie in it, on this exact
 	# approach. Not a restatement of his arithmetic -- the real walk.
 	walker.global_position = short_far
@@ -1926,7 +1971,7 @@ func _find_mesh(n: Node) -> MeshInstance3D:
 
 
 ## =====================================================================
-## PHASE Z -- THE FIRST TAP OF A VISIT, WHICH USED TO BE THROWN AWAY
+## PHASE Z -- TAPPING THE DOOR WHILE ALREADY STANDING ON IT
 ##
 ## THE DEFECT THIS GATES, and it shipped: the door's branch of
 ## _on_tapped_hotspot called hop_to() and then armed _exit_pending, and
@@ -1935,26 +1980,32 @@ func _find_mesh(n: Node) -> MeshInstance3D:
 ## hop_landed -- so standing within 0.45 of the doorstep, the tap did
 ## nothing at all and left the intent armed behind it.
 ##
-## ⚠️ REACHABLE ON THE VERY FIRST TAP OF EVERY VISIT, because DOOR_SPOT is
-## ENTRY_SPOT: he arrives standing exactly on it, distance 0.000. Not a
-## corner case -- the default state of the room.
+## ⚠️ NO LONGER THE DEFAULT STATE OF THE ROOM -- and that framing has to be
+## corrected rather than just left stale. Before this lot DOOR_SPOT was
+## ENTRY_SPOT, so he arrived standing exactly on it every visit, distance
+## 0.000, and the zero-length-walk bug was live on the very first tap of
+## every session. Relocating the door to the ladder's side of the floor
+## (see DOOR_SPOT's own comment) means a fresh arrival now starts a real
+## walk away from it -- but the EXACT SAME state still arises the instant
+## he actually reaches the doorstep (having walked there, or having tapped
+## it once already), so this phase reproduces it directly by PLACING him on
+## the spot rather than trusting where the scene happens to spawn him.
 ##
 ## The bed's branch has carried the immediate _try_rest() for this exact
 ## reason since it was written, with a ⚠️ comment naming the mechanism.
 ## The door simply never got its half.
 ##
 ## ⚠️ DRIVEN ON THE SCENE THE ROUTER ITSELF JUST LOADED, not on a fresh
-## instance of it. That interior is the one a player is looking at one
-## frame after tapping the doorstep outside, with the walker standing
-## where the scene puts him -- so the thing measured is the real first tap
-## and not a reconstruction of it.
+## instance of it. That interior is the one built by the real router, with
+## the real levels/hotspots/link CabinInterior._ready() constructs -- so
+## what is measured still exercises the shipped door and not a stand-in.
 ##
 ## It runs LAST because leaving is a scene change: this phase hands the
 ## current scene back to the hub, and anything after it would be reading a
 ## tree that had just been replaced.
 func _phase_z_first_tap(tree: SceneTree) -> void:
 	print("")
-	print("--- PHASE Z: the first tap of a visit leaves at once ---")
+	print("--- PHASE Z: tapping the door while already standing on it ---")
 	var interior: Node = tree.current_scene
 	if interior == null or interior.get_script() == null 			or interior.get_script().resource_path != "res://scripts/cabin/CabinInterior.gd":
 		_check(false, "PHASE R left the interior current (nothing to drive)")
@@ -1974,13 +2025,23 @@ func _phase_z_first_tap(tree: SceneTree) -> void:
 		_check(false, "the loaded interior carries a door")
 		return
 
+	# ⚠️ PLACED ON THE DOOR DIRECTLY. DOOR_SPOT no longer sits under where
+	# the router spawns him (that is the whole point of Part B), so this
+	# phase can no longer rely on the natural arrival position to reach the
+	# state under test -- it has to put him there itself, at floor height,
+	# the same way PHASE N places its own control walk.
+	var floor_level: LevelDefinition = controller.levels[0]
+	walker.global_position = floor_level.flat(
+			Vector3(door.point.x, 0.0, door.point.z))
+	controller.set_current(0)
+
 	# THE CONTROL, and without it the assertion below means nothing: if he
 	# were standing far from the door this would measure an ordinary walk,
 	# which was never broken. The claim is that a ZERO-LENGTH walk works.
 	var here := Vector2(walker.global_position.x, walker.global_position.z)
 	var walk: float = here.distance_to(CabinInterior.DOOR_SPOT)
 	_check(walk <= LevelWalker.ARRIVE_EPSILON,
-			"he starts within a zero-length walk of the door (%.3f <= %.3f)"
+			"he stands within a zero-length walk of the door (%.3f <= %.3f)"
 					% [walk, LevelWalker.ARRIVE_EPSILON])
 	_check(not bool(interior.get("_exit_pending")),
 			"and with no exit intent standing")
