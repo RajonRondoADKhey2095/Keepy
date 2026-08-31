@@ -1436,6 +1436,24 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 			_check(mat.metallic_texture == null and mat.roughness_texture == null,
 					"and no metallic-roughness map either")
 
+	# ---- HER DRAWN HEIGHT MATCHES HIS, MEASURED ON BOTH SIDES -------------
+	# ⚠️ NOT DERIVED FROM MAGPIE_SCALE'S OWN ARITHMETIC -- that would only
+	# prove the constant multiplies correctly, not that it multiplies the
+	# RIGHT number. Device found the earlier 0.50 pass reading as "comes up
+	# to his shoulder"; this reads the REAL local AABB of both shipped
+	# meshes, the same two readings (a standalone glTF parser and a headless
+	# Godot probe) that agreed to the 6th significant figure when
+	# MAGPIE_SCALE was derived, now gated so a future re-export of either
+	# .glb cannot silently drift the pairing.
+	var keepy_mesh: MeshInstance3D = _find_mesh(body)
+	_check(keepy_mesh != null, "and Keepy's own body draws one mesh to compare against")
+	if mesh != null and mesh.mesh != null and keepy_mesh != null and keepy_mesh.mesh != null:
+		var her_drawn_height: float = mesh.mesh.get_aabb().size.y * CabinInterior.MAGPIE_SCALE
+		var his_drawn_height: float = keepy_mesh.mesh.get_aabb().size.y * CabinInterior.KEEPY_SCALE
+		_check(absf(her_drawn_height - his_drawn_height) < 0.01,
+				"her drawn height (%.4f) now matches his (%.4f), not half of it"
+						% [her_drawn_height, his_drawn_height])
+
 	# ---- THE STAND SPOT IS SOMEWHERE HE CAN LEGALLY BE --------------------
 	var stand := Vector3(CabinInterior.MAGPIE_STAND_SPOT.x, floor_level.plane_y,
 			CabinInterior.MAGPIE_STAND_SPOT.y)
@@ -1458,6 +1476,41 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	_check(not floor_level.contains(magpie.point),
 			"SHE is outside his square, as a prop may be %s"
 					% str(CabinInterior.MAGPIE_SPOT))
+
+	# ---- AND CLEAR OF THE FOOTPRINT HOLE THE SIZE CORRECTION CUT ----------
+	# A ground tap can never be handed a destination inside
+	# MAGPIE_FOOTPRINT_RADIUS of her now (LevelDefinition's own hole, see its
+	# header) -- the stand spot living inside that hole would make the kiss
+	# snap him onto ground the level itself refuses to hand out as a
+	# destination anywhere else.
+	var magpie_ground := Vector3(CabinInterior.MAGPIE_SPOT.x, floor_level.plane_y,
+			CabinInterior.MAGPIE_SPOT.y)
+	var hole_clearance: float = stand.distance_to(magpie_ground) \
+			- CabinInterior.MAGPIE_FOOTPRINT_RADIUS
+	_check(absf(hole_clearance - 0.524) < 0.01,
+			"and clears her footprint hole by %.3f (radius %.2f, want ~0.524)"
+					% [hole_clearance, CabinInterior.MAGPIE_FOOTPRINT_RADIUS])
+
+	# ---- AND A GROUND TAP AIMED AT HER FOOTPRINT NEVER LANDS THERE --------
+	# LevelDefinition.clamp_to()'s hole push, exercised on the REAL floor
+	# this cabin ships (floor_level itself), not a synthetic level built to
+	# resemble it. Picked well clear of any square edge, so what is measured
+	# is the HOLE subtracting ground and not a boundary coincidence --
+	# MAGPIE_SPOT itself sits ON the square's own west edge, which would
+	# make that particular point a bad witness for this.
+	var aim_inside_hole := Vector3(-0.80, floor_level.plane_y, 0.90)
+	_check(Vector2(aim_inside_hole.x, aim_inside_hole.z)
+					.distance_to(CabinInterior.MAGPIE_SPOT) < CabinInterior.MAGPIE_FOOTPRINT_RADIUS,
+			"the aim point really is inside her footprint radius, by construction")
+	_check(not floor_level.contains(aim_inside_hole),
+			"and the level refuses it as walkable ground")
+	var pushed: Vector3 = floor_level.clamp_to(aim_inside_hole)
+	var pushed_gap: float = Vector2(pushed.x, pushed.z).distance_to(CabinInterior.MAGPIE_SPOT)
+	_check(absf(pushed_gap - (CabinInterior.MAGPIE_FOOTPRINT_RADIUS + 0.02)) < 0.001,
+			"clamp_to() pushes it to exactly the rim margin instead (%.4f)" % pushed_gap)
+	_check(floor_level.contains(pushed), "and the pushed point IS walkable ground")
+	_check(absf(pushed.y - floor_level.plane_y) < 0.0001,
+			"still at floor height, not lifted (%.4f)" % pushed.y)
 
 	# ---- THE TAP DISCARDS `destination` -----------------------------------
 	# ⚠️ PUT HIM BACK ON THE GROUND FLOOR FIRST. PHASE P leaves him on the
@@ -1652,6 +1705,60 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	_check(bool(interior.get("_kissing")),
 			"and she can be kissed again immediately -- no counter, no cooldown")
 	await _settle_kiss(interior)
+
+	# ---- THE DOUBLE-DISPATCH RACE, THIS FILE'S OWN SHIPPED DEFECT ---------
+	# ⚠️ THROUGH controller.dispatch(), NOT interior.call() directly -- every
+	# check above this line calls _on_tapped_hotspot()/_on_tapped_ground()
+	# straight, which is structurally blind to this bug: it never lets
+	# LevelController's OWN routing decide where the SECOND of a pair of taps
+	# lands. Godot's emulate_mouse_from_touch delivers one physical tap as
+	# BOTH an InputEventScreenTouch release and a synthesised
+	# InputEventMouseButton release, and CabinInterior._unhandled_input()
+	# dispatches EACH one independently, in the same input pass.
+	#
+	# Reproduced on this exact path by a throwaway probe before the guard
+	# below existed: 25 of 31 traced frames moved AWAY from the stand spot,
+	# worst +0.3811 in one frame, ending exactly on MAGPIE_SPOT -- he was
+	# yanked off his own kiss and walked onto her.
+	controller.set_current(0)
+	walker.global_position = stand
+	interior.set("_kiss_pending", false)
+	interior.set("_kissing", false)
+	magpie.set_busy(false)
+	interior.call("_refresh_proximity")
+	_check(not bool(interior.get("_kissing")), "starting the race from outside a kiss")
+	var race_camera: Camera3D = interior.get_node(
+			"WorldViewport/SubViewport/World/Camera3D") as Camera3D
+	var race_container: SubViewportContainer = interior.get_node(
+			"WorldViewport") as SubViewportContainer
+	var race_target: Vector2 = _to_screen(race_container, race_camera, magpie.point)
+	# THE FIRST of the pair: standing within a zero-length walk of her, the
+	# SAME immediate-entry branch the zero-length-walk check above already
+	# proved fires -- shown once more here as the blind check this race
+	# depends on, not assumed to still hold.
+	controller.dispatch(race_target)
+	_check(bool(interior.get("_kissing")),
+			"the first of the pair enters the kiss immediately, as it must")
+	_check(not magpie.is_available(), "which withdraws her, as it must")
+	var held: Vector3 = walker.global_position
+	# THE SECOND of the pair, the synthesised mouse release riding the same
+	# physical tap: her hotspot is busy, so LevelController's own routing --
+	# not this test's -- sends it down the ground path with a destination at
+	# her own point. This is the race, reproduced through the real dispatch,
+	# not asserted by construction.
+	controller.dispatch(race_target)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(bool(interior.get("_kissing")),
+			"and the SECOND of the pair does not end the kiss it just started")
+	var drift: float = walker.global_position.distance_to(held)
+	_check(drift < 0.001,
+			"nor drags him toward her one frame from the pose he was just snapped to (%.4f)"
+					% drift)
+	await _settle_kiss(interior)
+	_check(not bool(interior.get("_kissing")),
+			"and the kiss he was never yanked out of still ends on its own")
 
 ## Waits for the walker to actually stop, on a WALL-CLOCK budget rather than
 ## a frame count: a hop chain converges in TIME, and budgeting frames for it

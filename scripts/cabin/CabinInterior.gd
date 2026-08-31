@@ -331,25 +331,58 @@ const MAGPIE_SPOT := Vector2(-1.10, 0.90)
 ## THE FIXED SPOT KEEPY SNAPS TO. Inside the walkable square, on measured-flat
 ## floor, 1.254 from her and further from the camera than she is.
 ##
-## The gap is sized off both bodies rather than picked: his front reaches
-## +1.018 along his own +Z (measured off the POSITION accessor, not assumed
-## symmetric), and her half-depth at MAGPIE_SCALE is about 0.42. At 1.254
-## his muzzle overlaps her by roughly 0.18 -- which for a kiss is the point,
-## and is why the lean below only closes a little more.
+## The gap was originally sized off both bodies at the FIRST MAGPIE_SCALE
+## (0.50): his front reaches +1.018 along his own +Z (measured off the
+## POSITION accessor, not assumed symmetric), and her half-depth was about
+## 0.42, for a muzzle overlap of roughly 0.18 -- which for a kiss was the
+## point.
+##
+## ⚠️ THAT OVERLAP FIGURE IS STALE since the size calibration lot raised
+## MAGPIE_SCALE to 0.76461: her half-depth grows with her, so the same
+## 1.254 now overlaps more than 0.18 at rest, before KISS_REACH_IN's lean
+## adds anything further. NOT re-measured or retuned here -- this lot's
+## three corrections are the scale, the ground obstruction and the
+## _kissing guard below, not the lean's own geometry -- so whether the
+## bigger bird's resting contact still reads as a kiss and not an already-
+## buried muzzle is open, and is a device judgement for its own lot if
+## flagged.
+##
+## ⚠️ AND IT STAYS CLEAR OF THE FOOTPRINT HOLE THE SAME SIZE LOT ADDED, BY
+## MEASUREMENT AND NOT BY LUCK: 1.254 from MAGPIE_SPOT against a
+## MAGPIE_FOOTPRINT_RADIUS of 0.73 leaves 0.524 of margin, asserted in
+## CabinProbe rather than left as an unchecked coincidence. It was not
+## moved to sit "just outside" that circle -- it already was, comfortably.
 ##
 ## It is also 1.098 from the doorstep against a DOOR_REACH of 0.9, so
 ## standing here does not set the "Sortir" ring breathing over his shoulder.
 const MAGPIE_STAND_SPOT := Vector2(0.05, 0.40)
 
-## Drawn at half her own size, which makes her 0.883 world units tall against
-## Keepy's 1.3501 -- a bird that comes up to his shoulder. Her .glb is 1.766
-## tall in model units, so this is the one number to change if the proportion
-## is rejudged on a device.
+## Drawn to MATCH Keepy's own drawn height, not half of it -- device found
+## the 0.50 pass ("comes up to his shoulder") too small to read as a peer.
+## MEASURED, not eyeballed, by two independent readings of the same .glb
+## (a standalone Python glTF-chunk parser and a headless Godot AABB probe,
+## both agreeing to the 6th significant figure): her model is 1.765680 tall
+## in model units, Keepy's own drawn height is 1.257416 * KEEPY_SCALE =
+## 1.350062, so 1.350062 / 1.765680 = 0.76461 draws her exactly as tall as
+## him. This is the one number to change if the proportion is rejudged on a
+## device again.
+const MAGPIE_SCALE: float = 0.76461
+
+## Her circumscribed footprint on the ground, at MAGPIE_SCALE, in the SAME
+## convention HubBuilder's per-type FOOTPRINT_RADIUS uses for every other
+## prop on the plateau: half the larger of her two measured horizontal
+## extents (X 1.899911, Z 1.507811 in model units -- X is larger), rounded
+## UP rather than to nearest so the excluded ground is never smaller than
+## what she actually draws. 0.949956 (half the model-space X extent) *
+## MAGPIE_SCALE = 0.7263, rounded up to the same two decimal places
+## OWL_FOOTPRINT_RADIUS and CABIN_FOOTPRINT_RADIUS already use.
 ##
-## Raised from the 0.40 the first pass used: at 0.71 tall she read as an
-## ornament on the floor rather than as someone to talk to, and her half-
-## width of 0.475 here still clears the measured wall by 0.03.
-const MAGPIE_SCALE: float = 0.50
+## This is a DIFFERENT number from MAGPIE_TAP_RADIUS on purpose -- one is
+## how close a FINGER has to land to mean her, the other is how much
+## GROUND her body actually occupies. Reusing the tap radius here would tie
+## two unrelated questions to one float, free to drift the day either is
+## retuned alone.
+const MAGPIE_FOOTPRINT_RADIUS: float = 0.73
 
 ## Lowest point of her mesh in ITS OWN units, read off the POSITION accessor
 ## rather than assumed from the model being centred. It is not: min.y =
@@ -598,6 +631,14 @@ func _ready() -> void:
 			Vector3(MAGPIE_SPOT.x, floor_level.plane_y, MAGPIE_SPOT.y),
 			MAGPIE_TAP_RADIUS, &"magpie", "Pie")
 	_controller.hotspots = [_door, _bed, _magpie]
+	# ⚠️ THE FOOTPRINT HOLE -- see LevelDefinition's own header for the whole
+	# argument. A ground tap can never CHOOSE a destination inside her
+	# measured footprint; MAGPIE_STAND_SPOT itself is untouched by this (it
+	# is 1.254 from her against a hole radius of 0.73, comfortably clear),
+	# and neither is the hop chain already under way toward it -- this stops
+	# a TAP from landing on her, it does not steer an ongoing walk around
+	# her, exactly as the lake never did either.
+	floor_level.set_hole(MAGPIE_SPOT.x, MAGPIE_SPOT.y, MAGPIE_FOOTPRINT_RADIUS)
 
 	_controller.tapped_ground.connect(_on_tapped_ground)
 	_controller.tapped_transition.connect(_on_tapped_transition)
@@ -794,6 +835,35 @@ func _on_tapped_ground(destination: Vector3) -> void:
 	# one tap.
 	if _resting:
 		_wake()
+		return
+	# ⚠️ A TAP WHILE HE IS KISSING HER MUST DO NOTHING, AND THIS GUARD IS
+	# THE ONE THIS FILE SHIPPED WITHOUT -- confirmed the missing half of a
+	# pair by empirical trace, not assumed. `_enter_kiss()` withdraws the
+	# hotspot (`_magpie.set_busy(true)`) exactly as `_enter_rest()`
+	# withdraws the bed, but unlike `_resting` two lines up, `_kissing` had
+	# no reader here at all.
+	#
+	# That gap is reachable on EVERY real tap that lands close enough to
+	# enter the kiss immediately (the "already standing there" branch
+	# `_try_kiss()` shares with the door's and the bed's): Godot's own
+	# emulate_mouse_from_touch fires an InputEventScreenTouch release AND a
+	# synthesised InputEventMouseButton release for one physical tap, both
+	# independently dispatched by _unhandled_input(). The first entry snaps
+	# him into the lean and busies her; the second, landing on a now-busy
+	# hotspot, fell through to exactly this function with a destination at
+	# or near her own point -- and hop_to() below had no opinion about a
+	# kiss already running, so it walked him straight off his own pose and
+	# onto her. Measured via a throwaway probe driving the real dispatch()
+	# path: 25 of 31 traced frames moved AWAY from the stand spot, worst
+	# +0.3811 in one frame, ending exactly on MAGPIE_SPOT.
+	#
+	# It returns rather than walking, for the reason her own header already
+	# gives and this guard now actually enforces: "she is held for KISS_S
+	# and not one frame longer, and the TWEEN ITSELF is what releases her."
+	# There is no cancel gesture for a kiss the way there is a wake-up
+	# gesture for a nap -- nothing here needs a bed's _wake()-style side
+	# effect, only silence until she lets him go.
+	if _kissing:
 		return
 	# A plain destination tap CANCELS a held exit intent -- the player
 	# asked for somewhere else, and honouring the old intent on arrival
