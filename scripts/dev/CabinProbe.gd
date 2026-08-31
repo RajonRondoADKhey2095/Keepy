@@ -166,7 +166,7 @@ func _ready() -> void:
 	dl.abort_if_exceeded()
 	_phase_g_gone(keepy, tap)
 	dl.abort_if_exceeded()
-	_phase_i_interior()
+	await _phase_i_interior()
 	dl.abort_if_exceeded()
 	await _phase_t_no_stray_entry(hub, props, keepy, tap, camera)
 	dl.abort_if_exceeded()
@@ -434,6 +434,7 @@ func _phase_i_interior() -> void:
 	_phase_j_standing(interior, controller, walker)
 	_phase_k_taps(interior, controller, walker)
 	_phase_p_rest(interior, controller, walker)
+	await _phase_n_magpie(interior, controller, walker)
 	interior.queue_free()
 
 ## =====================================================================
@@ -522,8 +523,9 @@ func _phase_k_taps(interior: Node, controller: LevelController,
 		walker: LevelWalker) -> void:
 	print("")
 	print("--- PHASE K: the door, the bed and the ladder answer taps ---")
-	_check(controller.hotspots.size() == 2,
-			"two hotspots: a door and a bed (%d)" % controller.hotspots.size())
+	_check(controller.hotspots.size() == 3,
+			"three hotspots: a door, a bed and the magpie (%d)"
+					% controller.hotspots.size())
 	var door: LevelHotspot = null
 	var bed: LevelHotspot = null
 	for spot in controller.hotspots:
@@ -1335,6 +1337,336 @@ func _phase_p_rest(interior: Node, controller: LevelController,
 			"tapping the bed while standing on it lies down on the spot")
 	interior.call("_on_tapped_ground", loft.flat(Vector3(0.0, 0.0, -1.0)))
 	_check(not bool(interior.get("_resting")), "and he gets up again")
+
+## =====================================================================
+## PHASE N -- THE MAGPIE, AND THE FOUR TRAPS THIS REPOSITORY HAS ALREADY
+## PAID FOR
+##
+## GATED and not reported, because every way she fails is SILENT:
+##
+##   * the .glb never installed, or installed with the maps that an UNLIT
+##     material cannot use -- 10.7 MB of dead payload, and nothing raises;
+##   * her feet derived from a copied lift instead of from her own mesh --
+##     the 0.9166 that shipped, where only a head showed above the boards;
+##   * the tap honouring `destination` instead of the fixed stand spot --
+##     Keepy kissing the air from wherever the clamp happened to drop him;
+##   * an intent that a pass-through landing clears, or a zero-length walk
+##     that spends nothing -- BOTH of which shipped on the door.
+##
+## ⚠️ IT ASSERTS THE POSITIVE BEFORE EVERY REFUSAL. "The magpie did not
+## answer" and "no second kiss started" pass for FREE against a branch that
+## was never wired, so the kiss is shown FIRING first and only then shown
+## refusing. That is the blind-check discipline PHASE R and the hub's own
+## probes carry, applied to the one phase in this file that could otherwise
+## be green on a magpie nobody can talk to.
+func _phase_n_magpie(interior: Node, controller: LevelController,
+		walker: LevelWalker) -> void:
+	print("")
+	print("--- PHASE N: the magpie, the snap and the kiss ---")
+	var magpie: LevelHotspot = null
+	var door: LevelHotspot = null
+	for spot in controller.hotspots:
+		if spot.kind == &"magpie":
+			magpie = spot
+		elif spot.kind == &"door":
+			door = spot
+	_check(magpie != null, "the magpie is registered as a hotspot")
+	_check(door != null, "and the door is still there beside her")
+	if magpie == null or door == null:
+		return
+	var floor_level: LevelDefinition = controller.levels[0]
+	var link: LevelTransition = controller.links[0]
+	var body: Node3D = walker.find_child("Body", true, false) as Node3D
+	_check(body != null, "his body is on the walker")
+	if body == null:
+		return
+
+	# ---- SHE IS A THIRD `kind`, NOT A THIRD MECHANISM -------------------
+	# LevelHotspot's own header names "a door, a bed, a chest": the generic
+	# registry was already there, so this asserts she joined it rather than
+	# that something new was built for her.
+	_check(magpie.level_index == 0, "she stands on the ground floor")
+	_check(absf(magpie.point.y - floor_level.plane_y) < 0.001,
+			"her hotspot sits ON that floor (%.4f)" % magpie.point.y)
+	_check(magpie.accepts_tap(magpie.point, 0), "a tap ON her means her")
+	_check(not magpie.accepts_tap(magpie.point, 1),
+			"and she does not answer at all from the loft")
+	# The three things a tap on the ground floor can mean must not overlap.
+	var door_gap: float = Vector2(magpie.point.x - door.point.x,
+			magpie.point.z - door.point.z).length()
+	_check(door_gap > magpie.tap_radius + door.tap_radius,
+			"she and the door do not overlap (%.3f apart, radii sum %.3f)"
+					% [door_gap, magpie.tap_radius + door.tap_radius])
+	var ladder_gap: float = Vector2(magpie.point.x - link.point_a.x,
+			magpie.point.z - link.point_a.z).length()
+	_check(ladder_gap > magpie.tap_radius + link.tap_radius,
+			"she and the ladder's foot do not overlap (%.3f apart, radii sum %.3f)"
+					% [ladder_gap, magpie.tap_radius + link.tap_radius])
+
+	# ---- THE BIRD HERSELF ------------------------------------------------
+	var bird: Node3D = interior.get_node_or_null(
+			"WorldViewport/SubViewport/World/Props/Magpie") as Node3D
+	_check(bird != null, "the .glb was built into the scene")
+	if bird == null:
+		return
+	_check(absf(bird.scale.x - CabinInterior.MAGPIE_SCALE) < 0.0001,
+			"at the calibrated scale %.2f (%.3f)"
+					% [CabinInterior.MAGPIE_SCALE, bird.scale.x])
+	# HER FEET, off the LOWEST DRAWN VERTEX and not off her node position --
+	# the node was never wrong when Keepy shipped sunk; the drawing was.
+	var box: AABB = _world_aabb(bird)
+	_check(absf(box.position.y - floor_level.plane_y) < 0.01,
+			"her feet are ON the floor (%.4f vs %.4f)"
+					% [box.position.y, floor_level.plane_y])
+	# THE DEAD MAPS ARE GONE. Godot's glTF importer never binds a normal or
+	# a metallic-roughness map on an UNLIT material -- measured, on this
+	# very material -- so shipping them is payload that cannot reach a
+	# pixel. This is the assertion that keeps them out.
+	var mesh: MeshInstance3D = _find_mesh(bird)
+	_check(mesh != null, "she draws one mesh")
+	if mesh != null and mesh.mesh != null and mesh.mesh.get_surface_count() > 0:
+		var mat: StandardMaterial3D = mesh.mesh.surface_get_material(0) as StandardMaterial3D
+		_check(mat != null, "and carries a StandardMaterial3D")
+		if mat != null:
+			_check(mat.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED,
+					"UNSHADED, like every other asset in this project")
+			_check(mat.albedo_texture != null, "with its baked base colour kept")
+			_check(mat.normal_texture == null and not mat.normal_enabled,
+					"and NO normal map, which unlit cannot use")
+			_check(mat.metallic_texture == null and mat.roughness_texture == null,
+					"and no metallic-roughness map either")
+
+	# ---- THE STAND SPOT IS SOMEWHERE HE CAN LEGALLY BE --------------------
+	var stand := Vector3(CabinInterior.MAGPIE_STAND_SPOT.x, floor_level.plane_y,
+			CabinInterior.MAGPIE_STAND_SPOT.y)
+	_check(floor_level.contains(stand),
+			"the stand spot is inside the walkable floor %s"
+					% str(CabinInterior.MAGPIE_STAND_SPOT))
+	_check(stand.is_equal_approx(floor_level.clamp_to(stand)),
+			"and survives the clamp untouched -- it is not on an edge")
+	# ⚠️ AND THE DOOR DOES NOT ANSWER FROM IT. He stands there for the whole
+	# of a kiss; a doorstep that reached this far would breathe under him and
+	# offer to end the visit every time he says hello.
+	var door_reach: float = (CabinInterior.MAGPIE_STAND_SPOT
+			- CabinInterior.DOOR_SPOT).length()
+	_check(door_reach > CabinInterior.DOOR_REACH,
+			"and stands clear of the doorstep (%.3f > %.3f)"
+					% [door_reach, CabinInterior.DOOR_REACH])
+	# She is NOT inside the walkable square, and that is deliberate: the
+	# square is Keepy's, shrunk by his own half-width. A prop has no such
+	# constraint, and the floor was measured flat out to x = -1.6.
+	_check(not floor_level.contains(magpie.point),
+			"SHE is outside his square, as a prop may be %s"
+					% str(CabinInterior.MAGPIE_SPOT))
+
+	# ---- THE TAP DISCARDS `destination` -----------------------------------
+	# ⚠️ PUT HIM BACK ON THE GROUND FLOOR FIRST. PHASE P leaves him on the
+	# LOFT, and LevelWalker._flat() takes its height from whatever level the
+	# controller says is current -- so without this the whole walk below
+	# happens at 7.54 and every XZ-only assertion passes on a Keepy floating
+	# a storey above the bird.
+	controller.set_current(0)
+	# THE CONTROL: he starts a real walk away from her, so what is measured
+	# below is a snap and not "he was already there".
+	var far := floor_level.flat(Vector3(2.20, 0.0, -1.50))
+	walker.global_position = far
+	# ⚠️ AND CLEAR THE TARGET PHASE P LEFT BEHIND. Its last act sends him
+	# walking on the LOFT; moving the node does not cancel that, so without
+	# this he would still be travelling to a point one storey up while this
+	# phase measured where he ended.
+	walker.hop_to(far)
+	await _settle_walker(walker)
+	walker.global_position = far
+	_check(absf(walker.global_position.y - floor_level.plane_y) < 0.001,
+			"he is back on the ground floor to begin with (%.4f)"
+					% walker.global_position.y)
+	interior.call("_refresh_proximity")
+	var start_gap: float = Vector2(far.x, far.z).distance_to(
+			CabinInterior.MAGPIE_STAND_SPOT)
+	_check(start_gap > LevelWalker.ARRIVE_EPSILON,
+			"he starts a REAL walk away from the stand spot (%.3f > %.3f)"
+					% [start_gap, LevelWalker.ARRIVE_EPSILON])
+	_check(not bool(interior.get("_kissing")), "and is not kissing")
+	_check(not bool(interior.get("_kiss_pending")), "with no kiss intent standing")
+	# The destination handed in is a LIE -- the far corner, nowhere near her.
+	# The branch must throw it away. If it honoured it he would walk there
+	# and kiss the air, which is the funnel bug wearing another hat.
+	var lie := floor_level.flat(Vector3(-1.05, 0.0, 1.60))
+	interior.call("_on_tapped_hotspot", magpie, lie)
+	_check(bool(interior.get("_kiss_pending")),
+			"tapping her arms the kiss intent")
+	_check(not bool(interior.get("_kissing")),
+			"and does NOT kiss her from across the room")
+
+	# ---- A PASS-THROUGH LANDING KEEPS THE INTENT --------------------------
+	# The owl batch's bug: an intent dropped at the first landing leaves him
+	# standing beside the thing having never used it.
+	var hops: int = 0
+	while walker.state() != LevelWalker.State.IDLE and hops < 3 and not bool(interior.get("_kissing")):
+		await get_tree().process_frame
+		hops += 1
+	if not bool(interior.get("_kissing")):
+		_check(bool(interior.get("_kiss_pending")),
+				"a pass-through landing KEEPS the intent")
+	await _settle_walker(walker)
+	var landed := Vector2(walker.global_position.x, walker.global_position.z)
+	# ⚠️ MEASURED AGAINST ARRIVE_EPSILON AND NOT AGAINST ZERO. _advance()
+	# stops a chain once the remainder is under ARRIVE_EPSILON, so he lands
+	# NEAR the target and never ON it -- an exact-position assertion here
+	# would have been red on correct code. What has to be true is the thing
+	# _try_kiss() itself measures: he is inside MAGPIE_REACH of the spot.
+	var to_spot: float = landed.distance_to(CabinInterior.MAGPIE_STAND_SPOT)
+	_check(to_spot <= LevelWalker.ARRIVE_EPSILON,
+			"he ends at the FIXED stand spot %s (%.3f <= %.3f)"
+					% [str(landed), to_spot, LevelWalker.ARRIVE_EPSILON])
+	_check(to_spot <= CabinInterior.MAGPIE_REACH,
+			"which is the reach the kiss is gated on (%.3f <= %.3f)"
+					% [to_spot, CabinInterior.MAGPIE_REACH])
+	_check(landed.distance_to(Vector2(lie.x, lie.z)) > 1.0,
+			"and nowhere near the destination he was handed (%.3f away)"
+					% landed.distance_to(Vector2(lie.x, lie.z)))
+	_check(bool(interior.get("_kissing")), "and arriving kisses her")
+	_check(not bool(interior.get("_kiss_pending")), "spending the intent")
+	# ⚠️ AND THE KISS SNAPS HIM THE REST OF THE WAY. Without it the gap
+	# between the two of them would depend on which side he walked in from,
+	# by up to ARRIVE_EPSILON either way -- from the far side that is closer
+	# than his own muzzle is long. The bed snaps for the same reason.
+	var snapped := Vector2(walker.global_position.x, walker.global_position.z)
+	_check(snapped.distance_to(CabinInterior.MAGPIE_STAND_SPOT) < 0.001,
+			"and the kiss SNAPS him onto the spot exactly %s" % str(snapped))
+	_check(absf(walker.global_position.y - floor_level.plane_y) < 0.001,
+			"without lifting him off the floor doing it (%.4f)"
+					% walker.global_position.y)
+
+	# ---- THE KISS ITSELF ---------------------------------------------------
+	# ⚠️ THE LEAN IS POLLED, NOT SAMPLED. _apply_kiss rides a 4t(1-t) bell,
+	# which is exactly ZERO at t = 0 -- and t = 0 is precisely where the
+	# kiss is when the landing that started it returns. Reading it here on
+	# the spot was red on correct code, the same family as the hearts.
+	var peak: float = 0.0
+	var leaned: int = Time.get_ticks_msec()
+	while bool(interior.get("_kissing")) and Time.get_ticks_msec() - leaned < 6000:
+		peak = maxf(peak, absf(body.rotation_degrees.x))
+		if peak > 1.0:
+			break
+		await get_tree().process_frame
+	_check(peak > 1.0, "he leans in (peak %.2f deg)" % peak)
+	# THE WITHDRAWAL, the boat's and not the ladder's -- one tap, one signal.
+	# Read through is_available(), never the field: LevelHotspot's header
+	# warns that a second reader bypassing the accessor is how one field
+	# starts giving two answers.
+	_check(not magpie.is_available(), "she withdraws for the length of the kiss")
+	_check(not magpie.accepts_tap(magpie.point, 0),
+			"so a second tap cannot start a second kiss on top of this one")
+	# ⚠️ THE LADDER IS DELIBERATELY NOT HELD. The bed holds it because the
+	# bed shares a small square with the ladder's top; the kiss happens on
+	# the ground floor, where the foot is far away -- and the gap asserted
+	# above is what makes that a fact about the layout rather than a hope.
+	_check(link.accepts_tap(link.entry_for(0), 0),
+			"and the ladder is NOT held, being nowhere near her")
+	# THE HEARTS. Sprite3D billboards on a tween, not particles: there is no
+	# particle system anywhere in this repository and that is a written
+	# decision, not an omission.
+	var hearts: Node3D = interior.get_node_or_null(
+			"WorldViewport/SubViewport/World/Props/Hearts") as Node3D
+	_check(hearts != null, "the hearts holder was built")
+	if hearts != null:
+		var waited: int = Time.get_ticks_msec()
+		while hearts.get_child_count() == 0 and Time.get_ticks_msec() - waited < 6000:
+			await get_tree().process_frame
+		_check(hearts.get_child_count() > 0,
+				"and hearts rise during the kiss (%d)" % hearts.get_child_count())
+
+	# ---- IT ENDS, AND EVERYTHING IT TOUCHED GOES BACK ----------------------
+	await _settle_kiss(interior)
+	_check(not bool(interior.get("_kissing")), "the kiss ends on its own")
+	_check(absf(body.rotation_degrees.x) < 0.001, "the lean is undone")
+	_check(absf(body.position.y - (-CabinInterior.KEEPY_MODEL_MIN_Y
+			* CabinInterior.KEEPY_SCALE)) < 0.001,
+			"and he is back at his standing lift (%.4f)" % body.position.y)
+	_check(absf(body.position.z) < 0.001, "and back off his reach-in")
+	_check(magpie.is_available(), "she takes taps again -- there is NO cooldown")
+	if hearts != null:
+		var freed: int = Time.get_ticks_msec()
+		while hearts.get_child_count() > 0 and Time.get_ticks_msec() - freed < 8000:
+			await get_tree().process_frame
+		_check(hearts.get_child_count() == 0,
+				"and every heart frees itself (%d left)" % hearts.get_child_count())
+
+	# ---- THE SNAP, ON AN APPROACH THAT PROVABLY STOPS SHORT ---------------
+	# ⚠️ THE APPROACH ABOVE DOES NOT DISCRIMINATE, and that was measured
+	# rather than assumed: _begin_hop takes a last step of min(HOP_DISTANCE,
+	# |delta|), so a walk whose remainder is between ARRIVE_EPSILON and
+	# HOP_DISTANCE lands EXACTLY on its target and the snap has nothing to
+	# do. He only stops short when a FULL hop leaves a remainder under
+	# ARRIVE_EPSILON. This is such an approach.
+	var short_far := floor_level.flat(Vector3(1.394, 0.0, -0.944))
+	# THE CONTROL: the walker ALONE, with no magpie in it, on this exact
+	# approach. Not a restatement of his arithmetic -- the real walk.
+	walker.global_position = short_far
+	walker.hop_to(stand)
+	await _settle_walker(walker)
+	var without: float = Vector2(walker.global_position.x,
+			walker.global_position.z).distance_to(CabinInterior.MAGPIE_STAND_SPOT)
+	_check(without > 0.01,
+			"the walker ALONE stops SHORT of the spot on this approach (%.3f)"
+					% without)
+	# And now the same approach, through her.
+	walker.global_position = short_far
+	walker.hop_to(short_far)
+	await _settle_walker(walker)
+	walker.global_position = short_far
+	interior.call("_on_tapped_hotspot", magpie, lie)
+	await _settle_walker(walker)
+	_check(bool(interior.get("_kissing")), "the same approach through her kisses")
+	var with_snap: float = Vector2(walker.global_position.x,
+			walker.global_position.z).distance_to(CabinInterior.MAGPIE_STAND_SPOT)
+	_check(with_snap < 0.001,
+			"and the kiss snaps him the rest of the way (%.3f -> %.3f)"
+					% [without, with_snap])
+	await _settle_kiss(interior)
+
+	# ---- THE ZERO-LENGTH WALK, WHICH IS THE DOOR'S SHIPPED DEFECT ----------
+	# ⚠️ THE CONTROL, and the claim means nothing without it: standing
+	# anywhere else this would measure an ordinary walk, which was never
+	# broken. LevelWalker._advance() ends a walk shorter than ARRIVE_EPSILON
+	# with became_idle and NEVER with hop_landed, so a branch wired only to
+	# the landing does nothing at all from here.
+	walker.global_position = stand
+	var zero: float = Vector2(walker.global_position.x,
+			walker.global_position.z).distance_to(CabinInterior.MAGPIE_STAND_SPOT)
+	_check(zero <= LevelWalker.ARRIVE_EPSILON,
+			"he stands within a zero-length walk of her (%.3f <= %.3f)"
+					% [zero, LevelWalker.ARRIVE_EPSILON])
+	_check(magpie.accepts_tap(magpie.point, 0), "and she is asking to be tapped")
+	interior.call("_on_tapped_hotspot", magpie, lie)
+	_check(bool(interior.get("_kissing")),
+			"tapping her while ALREADY standing there kisses on the spot")
+	_check(not bool(interior.get("_kiss_pending")),
+			"and leaves no kiss intent standing behind it")
+	await _settle_kiss(interior)
+	_check(not bool(interior.get("_kissing")), "and that one ends too")
+	# REPEATABLE WITHOUT LIMIT: nothing is remembered between kisses, so the
+	# third one is the first one again.
+	interior.call("_on_tapped_hotspot", magpie, lie)
+	_check(bool(interior.get("_kissing")),
+			"and she can be kissed again immediately -- no counter, no cooldown")
+	await _settle_kiss(interior)
+
+## Waits for the walker to actually stop, on a WALL-CLOCK budget rather than
+## a frame count: a hop chain converges in TIME, and budgeting frames for it
+## is exactly the flakiness LevelNavProbe's fade assertions were fixed for.
+func _settle_walker(walker: LevelWalker, budget_ms: int = 12000) -> void:
+	var started: int = Time.get_ticks_msec()
+	while walker.state() != LevelWalker.State.IDLE and Time.get_ticks_msec() - started < budget_ms:
+		await get_tree().process_frame
+
+## Same, for the kiss tween. KISS_S is a duration, so this waits on the
+## CONDITION and not on a count of frames that may each be 20 ms or 200.
+func _settle_kiss(interior: Node, budget_ms: int = 12000) -> void:
+	var started: int = Time.get_ticks_msec()
+	while bool(interior.get("_kissing")) and Time.get_ticks_msec() - started < budget_ms:
+		await get_tree().process_frame
 
 ## World point -> screen point, in the container's own space, inverting
 ## exactly what _handle_point does on the way in.

@@ -22931,3 +22931,303 @@ reellement pris **3 min 19 s**. Le piege existe ; il ne s'est pas produit
 ici, et le verifier coute un regard a l'horloge -- ce qui a d'ailleurs servi
 une fois de plus dans l'autre sens, un `sleep` en arriere-plan relu
 immediatement ne montrant que **37 secondes** ecoulees.
+
+## MERGE EN PRODUCTION : LE CORRECTIF DE LA PORTE CABANE (31 aout 2026)
+
+`staging` (`6b45744`) -> `main`, commit de merge **`d6e17ff`**, `--no-ff`,
+apres feu vert explicite de Mathieu suivant validation device : sortie
+immediate depuis le pas de porte OK, bande 0,45-0,9 sans marche visible OK,
+coherent avec la pose sur le lit deja en production.
+
+**Verifie AVANT tout push** : `git fetch --all --prune`, `origin/staging`
+(`6b45744`) et `origin/main` (`ebdd1dc`) exactement les SHA annonces par le
+brief -- aucune derive de staging depuis le dernier commit valide sur
+device, aucune session concurrente. Merge `--no-ff` sans conflit ; **diff
+de l'arbre resultant contre l'arbre de `staging` au commit `6b45744` :
+VIDE** (`git diff HEAD origin/staging` vide, meme hash d'arbre
+`3c66c975...` des deux cotes) -- ce qui part en prod est litteralement
+l'arbre valide, pas une recomposition.
+
+**Build local, editeur + templates Godot 4.3-stable installes dans ce
+sandbox** (releases GitHub officielles, tailles verifiees contre le
+`Content-Length` avant extraction -- 50 276 070 et 1 073 228 327 octets,
+aucune troncature). Import headless **exit 0, 36 `.scn`** (import complet,
+pas suppose). **Piege d'auto-contamination rencontre et corrige** : un
+premier export sans `rm -rf build/` a fait re-importer les PNG produits par
+lui-meme comme ressources de projet (7 lignes `Storing File: res://build/*`
+dans le log) -- refait proprement (`rm -rf build .godot` avant l'import),
+et le second export est **propre : 0 ligne `Storing File` pour
+`scripts/dev`, `assets_source`, `docs`, `web`, `build` ou `firebase.json`**.
+`index.wasm` **35 376 909** octets / md5 **`af4a8fc2925d992348eb30deeeb54360`**,
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** -- identiques au
+fingerprint permanent de tout lot qui ne touche pas le code moteur.
+
+CI **run #334** (id `33371986746`) **verte** (08:14:42 -> 08:19:19 UTC) --
+`Import project resources` 08:15:18 -> 08:18:37, `Export Web build`
+**08:18:37 -> 08:18:43**, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+08:18:59 -> 08:19:17, `Deploy to Vercel [STAGING -- staging]` correctement
+**skipped** (push sur `main`, comme attendu pour ce lot -- pas de skip cote
+production ici).
+
+**Verifie SUR LE SERVICE, uniquement sur `keepy-ten.vercel.app` (jamais
+`keepy-staging.vercel.app`)**, sur DEUX marqueurs independants, tous deux
+`x-vercel-cache: MISS` / `age: 0` :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1788164322` = **08:18:42 UTC** -- tombe exactement dans la fenetre `Export Web build` (08:18:37 -> 08:18:43) |
+| `index.wasm` servi | **35 376 909** octets, md5 identique a l'export local -- preuve d'identite |
+| `index.pck` servi | 30 274 480 octets -- marqueur "nouveau build", jamais offert comme preuve seule |
+
+⚠️ **Aucune lecture "avant" live n'a ete prise sur la production avant le
+merge** (le push a precede toute lecture HTTP de ce lot) -- signale plutot
+que masque. La transition est corroboree par comparaison a la fenetre
+`Export Web build` du dernier deploiement production connu (run #328/#329,
+`ebdd1dc` : 29 aout 23:02:32 -> 23:02:37 UTC), soit un ecart de **~46 h**
+avec le `CACHE_VERSION` desormais servi -- non ambigu, mais c'est une
+corroboration historique et pas la forme la plus forte (deux lectures
+fraiches aux deux bouts) que ce fichier documente ailleurs.
+
+**Le correctif de la porte de la cabane (sortie immediate depuis le pas de
+porte, bande de flottaison 0,45-0,9 sans marche visible) est desormais EN
+PRODUCTION** sur `keepy-ten.vercel.app`.
+
+**Reste ouvert : aucun sur ce merge.** `main` pointe sur `d6e17ff`.
+
+### Prochaine etape
+
+Lot pie/bisou (prompt deja scope et livre separement) -- recon obligatoire
+avant toute implementation, comme prevu dans son propre brief.
+
+## LA PIE DANS LA CABANE : un troisieme `kind` de hotspot, un bisou, et TROIS premisses du brief qui tombent a la mesure (31 aout 2026)
+
+Branche `claude/magpie-cabin-interaction-2ou9yw`. Une pie Meshy posee au sol du
+salon de `CabinInterior` : un tap sur elle amene Keepy sur un point FIXE devant
+elle, il se penche pour un bisou, et quelques coeurs montent. **Repetable sans
+limite, aucun cooldown, aucun compteur, rien de retenu entre deux bisous.**
+
+⚠️ **PREMISSE FAUSSE N°1, MESUREE AVANT DE BRANCHER : `main` et `staging`
+n'etaient PAS identiques.** Le brief donnait le meme arbre des deux cotes
+(`3c66c975`). Mesure : `main` porte l'arbre **`8f850a66`**, `staging`
+**`3c66c975`**, et `main` a **deux commits de plus** dont le diff est
+**`CLAUDE.md` seul** (67 insertions). Branche depuis `origin/main`, qui est le
+sur-ensemble strict. Regle n°1 verifiee par comparaison d'ARBRES et pas de noms,
+**aucune session concurrente**.
+
+### ⚠️ PREMISSE FAUSSE N°2 : LE SYSTEME DE TAP DE LA CABANE EXISTE DEJA -- le STOP du brief ne se declenche pas
+
+Le brief prevoyait d'arreter et de re-demander un modele si aucun systeme de tap
+interne n'existait. **Il en existe un, et c'est deja le registre generique que le
+brief demandait de creer** : `scripts/nav/LevelHotspot.gd`, dont l'en-tete nomme
+lui-meme « a door, a bed, a chest », consomme par `LevelController.dispatch()`.
+Il porte **deja** les deux doctrines que ce lot devait respecter -- la question
+posee sur l'**AIM** et jamais sur la destination clampee, et le **retrait facon
+bateau** avec le patron echelle explicitement **banni** (« it has cost this
+repository TWO bugs »).
+
+**La pie est donc un troisieme `kind`, pas un troisieme mecanisme** -- exactement
+comme `&"bed"` avait ete ajoute apres `&"door"`. Aucune machinerie neuve,
+`HubTapInput.gd` byte-intouche.
+
+### ⚠️ PREMISSE FAUSSE N°3 : `CPUParticles2D` EST TECHNIQUEMENT IMPOSSIBLE ICI
+
+Le brief nommait `CPUParticles2D` en billboard. Deux raisons, la seconde
+decisive : c'est un **`Node2D`**, donc il ne peut ni vivre dans le `SubViewport`
+3D de la cabane, ni etre occulte par la geometrie, ni etre porte par une camera
+3D ; et **il n'existe AUCUN systeme de particules dans tout ce depot**, ce qui
+est une **decision ecrite** (`HubWorld.gd:1759-1767`) et pas un oubli. Question
+posee a Mathieu plutot que tranchee seul ; **choix retenu : Sprite3D billboard +
+tween**, c'est-a-dire le mecanisme deja prouve sur cet ecran (l'anneau d'impact
+d'eau, les billboards de `Decor.gd`) -- zero techno nouvelle, et l'intention
+reelle du brief (CPU, billboard, bon marche sur mobile) tenue.
+
+### L'ASSET : la chirurgie lossless-d'abord, et 10,7 Mo de maps structurellement mortes
+
+Source **`assets_source/openworld/perso/Meshy_AI_Pie.glb`** (15 610 452 octets),
+localisee et non supposee ; **aucun `.blend` versionne** nulle part dans le depot
+(regle respectee, verifiee par `find`). Mesure : **1 noeud, 1 mesh, 1 primitive,
+0 skin, 0 animation**, 4 210 triangles, `extensionsUsed` **absent**.
+
+Discipline lossless-d'abord, dans l'ordre que ce depot impose :
+
+| passe | resultat |
+|---|---|
+| reecriture verbatim | chunk BIN **byte-identique** (md5 `2d1afecf85f1ef5be82c3e6b9ded8ff2`) |
+| + `KHR_materials_unlit` | BIN encore byte-identique (`used`, jamais `required`) |
+| - normal + metallicRoughness | prefixe geometrie **byte-identique**, PNG baseColor **byte-identique** |
+
+⚠️ **Les deux maps retirees sont MORTES PAR CONSTRUCTION, et c'est mesure sur le
+materiau importe et pas deduit** : `normal_texture = null`, `normal_enabled =
+false`, `metallic_texture = null`, `roughness_texture = null`, `shading_mode = 0`
+-- l'importeur glTF de Godot ne lie **jamais** ces maps sur un materiau UNLIT.
+**Preuve au pixel** : les quatre azimuts rendus avant/apres sont
+**BYTE-IDENTIQUES**. **15 610 452 -> 4 916 244 octets (-68,5 %).**
+
+Installee en **`assets/models/keepy_magpie_prop.glb`**, sidecar
+`keepy_magpie_prop_Baked_BaseColor.png` conserve, les deux sidecars morts
+supprimes. Face sur le model **+Z**, verifiee par rendu quatre axes.
+
+### ⚠️ LE PREMIER PLACEMENT ETAIT FAUX, ET C'EST LE RENDU QUI L'A TROUVE
+
+A `MAGPIE_SPOT (-0.80, 0.30)` avec un stand spot a `(-0.35, 1.05)`, **Keepy se
+tenait ENTRE elle et la camera fixe** (un z plus grand est plus proche) et un
+ecureuil de 1,35 masquait presque entierement un oiseau de 0,71. **Aucune
+constante ne pouvait attraper ca.** Corrige par mesure -- extents des deux corps
+lus sur les accessors POSITION (portee avant de Keepy **+1,018** le long de son
++Z, demi-profondeur de la pie ~0,42), balayage du mur gauche (sol plat jusqu'a
+x = -1,6, le mur monte a -1,8) :
+
+| | livre |
+|---|---|
+| `MAGPIE_SPOT` | **(-1,10 ; 0,90)** -- plus pres de la camera, decalee en x |
+| `MAGPIE_STAND_SPOT` | **(0,05 ; 0,40)** -- ecart 1,254, 1,098 du pas de porte |
+| `MAGPIE_SCALE` | **0,50** (montee de 0,40 apres rendu) |
+| `MAGPIE_FACING_BIAS_DEGREES` | **-45** -- trois-quarts camera, pas de dos |
+
+⚠️ **ELLE EST HORS DU CARRE MARCHABLE, ET C'EST VOULU** : ce carre est celui de
+Keepy, retreci de sa demi-largeur ; un prop n'a pas cette contrainte, et le sol
+est mesure plat jusqu'a x = -1,6. Asserte plutot que suppose.
+
+### L'INTERACTION : quatre pieges que ce depot a deja payes
+
+* **`destination` EST DISCARDE** -- la seule branche de ce fichier qui le fait.
+  Un oiseau se rejoint, il ne se pietine pas : le point ou se tenir appartient a
+  ce fichier, pas au pouce dans un cercle de 0,60. Honorer la destination
+  clampee serait le bug d'entonnoir sous un autre chapeau.
+* ⚠️ **IL SNAPPE SUR LE POINT FIXE**, et cette ligne est porteuse.
+  `LevelWalker._advance()` arrete une chaine des que le reste passe sous
+  `ARRIVE_EPSILON` (0,45) -- **une marche finit PRES de sa cible et jamais
+  DESSUS**, mesure a **0,401 court** sur une approche. Sans le snap l'ecart entre
+  eux dependrait du cote d'ou il arrive : de l'autre bord, **plus proche que son
+  propre museau n'est long**, c'est-a-dire un ecureuil dessine a travers un
+  oiseau. Le lit fait exactement ca, pour exactement cette raison.
+* **L'INTENT SURVIT A UN ATTERRISSAGE DE PASSAGE** -- le bug du lot hibou.
+* **APPEL IMMEDIAT POUR LA MARCHE DE LONGUEUR NULLE** -- `_advance()` termine une
+  marche plus courte qu'`ARRIVE_EPSILON` par `became_idle` et **jamais** par
+  `hop_landed`, donc une branche cablee sur le seul atterrissage ne fait rien.
+  **C'est le defaut qui a SHIPPE sur la porte** et que le lot precedent a ferme.
+* **RETRAIT FACON BATEAU** (`set_busy`) pour la duree du bisou, jamais le patron
+  echelle. **Ce n'est PAS un cooldown** : elle est tenue `KISS_S` (0,85 s) et pas
+  une milliseconde de plus. Le **lit tient l'echelle** parce qu'il partage un
+  petit carre avec son sommet ; le bisou se passe au rez-de-chaussee ou le pied
+  est a **3,930** contre des rayons qui somment a 1,700 -- **asserte**, donc
+  c'est un fait sur le layout et pas un espoir.
+* Le lean roule une cloche **`4t(1-t)`** sur un seul `tween_method` normalise --
+  exactement 0 aux deux bouts, donc aucune pose ne peut rester coincee.
+
+### `CabinHearts.gd` : LE PROP GENERIQUE QUE CE LOT LAISSE DERRIERE LUI
+
+**Pour le prochain prop interactif de la cabane, tout est deja la :**
+
+1. `LevelHotspot.make(niveau, point, rayon, &"nouveau_kind", "Libelle")`, ajoute
+   a `_controller.hotspots` -- **le registre generique, il existait deja**.
+2. Une branche `&"nouveau_kind"` dans `CabinInterior._on_tapped_hotspot`, sur la
+   forme de `&"magpie"` : flash du marqueur, effacer les autres intents,
+   `hop_to()` vers un point FIXE, armer l'intent APRES, puis appeler le `_try_*`
+   immediatement pour la marche de longueur nulle.
+3. **`scripts/cabin/CabinHearts.gd`** (nouveau, `class_name CabinHearts`) pour
+   tout eclat de billboards : `burst(at: Vector3, tint: Color = HEART_COLOR)`.
+   Trois `Sprite3D` unlit, double face, `BILLBOARD_ENABLED` (et pas `FIXED_Y` --
+   cette camera ne lacete jamais), un `tween_method` par coeur sur 0..1, puis
+   `queue_free`. **Sa texture est DESSINEE en code** depuis la courbe implicite
+   `(u^2+v^2-1)^3 - u^2 v^3 <= 0` avec anti-aliasing 2x2 : **aucun fichier n'est
+   livre**, donc aucun octet ajoute au `.pck` pour les coeurs. Les couloirs sont
+   derives de l'index et **jamais tires au hasard**, pour qu'une sonde puisse les
+   asserter.
+
+### `CabinProbe` PHASE N : 57 checks, et ROUGE AVANT VERT TROIS FOIS
+
+Gatee et pas rapportee, parce que **tout mode de panne est SILENCIEUX** : le
+`.glb` jamais installe ou installe avec ses maps mortes ; des pieds derives d'un
+lift copie (le **0,9166** qui a shippe) ; le tap honorant `destination` ; un
+intent qu'un atterrissage de passage efface ; une marche de longueur nulle qui ne
+depense rien. Aucun ne leve.
+
+⚠️ **ELLE ASSERTE LE POSITIF AVANT CHAQUE REFUS.** « Elle n'a pas repondu » et
+« aucun second bisou n'a demarre » passent **gratuitement** contre une branche
+jamais cablee.
+
+| neutralisation deliberee | rouge obtenu |
+|---|---|
+| branche `&"magpie"` -> `return` | **12 FAIL** |
+| le SNAP retire, tout le reste intact | **1 FAIL** -- exactement l'assertion du snap (`0.401 -> 0.401`) |
+| `_kiss_pending` efface sur un atterrissage hors de portee | **9 FAIL** |
+
+`scripts/cabin/CabinInterior.gd` restaure **byte-identique** (`cmp`) apres
+chacune des trois.
+
+⚠️ **DEUX DEFAUTS DE MES PROPRES ASSERTIONS, publies plutot que lisses -- les
+deux etaient ROUGES sur du code CORRECT :**
+
+1. **« il finit exactement sur le stand spot »** -- faux, `_advance()` s'arrete a
+   moins d'`ARRIVE_EPSILON` de la cible. Re-visee sur ce que `_try_kiss()` mesure
+   reellement, `MAGPIE_REACH`.
+2. **« il se penche »**, lue a l'instant ou le bisou demarre -- la cloche
+   `4t(1-t)` vaut **exactement 0 a t = 0**, et t = 0 est precisement ou le bisou
+   se trouve quand l'atterrissage qui l'a lance rend la main. **Sondee** desormais
+   sur un budget mur, meme famille que le piege des coeurs (**pic 2,00 deg**).
+
+⚠️ **ET UN TROISIEME, sur l'ETAT GLOBAL : PHASE P laisse Keepy SUR LA MEZZANINE
+avec une marche encore en cours.** `LevelWalker._flat()` prend sa hauteur du
+niveau que le controleur dit courant, donc sans `set_current(0)` toute la marche
+de PHASE N se passait a **7,54** et chaque assertion en XZ seul passait sur un
+Keepy flottant un etage au-dessus de l'oiseau. La phase remet le niveau **et**
+annule la cible heritee avant de mesurer quoi que ce soit.
+
+⚠️ **Le control du SNAP a du etre refait** : la premiere approche (2,869 u) ne
+discriminait pas, parce que `_begin_hop` prend un dernier pas de
+`min(HOP_DISTANCE, |delta|)` -- un reste compris entre `ARRIVE_EPSILON` et
+`HOP_DISTANCE` atterrit **exactement** sur la cible. Il ne s'arrete court que
+lorsqu'un hop PLEIN laisse un reste sous `ARRIVE_EPSILON`. Le control livre fait
+donc marcher le walker **SEUL** sur cette approche precise (**0,401 court**),
+puis la refait a travers elle (**0,000**).
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable dans ce sandbox. **`rm -rf build .godot`
+avant l'import**, comme le brief l'exige (le piege d'auto-contamination du lot
+precedent). Import headless **exit 0, 37 `.scn`, 0 erreur**. Export Web release
+**exit 0, 0 SCRIPT/Parse Error**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint permanent de
+tout lot qui ne touche pas le code moteur. **Piege payload tenu** : sur **270**
+lignes `Storing File`, **0** pour `scripts/dev`, `assets_source`, `docs`, `web/`
+ou `build`.
+
+⚠️ **`index.pck` passe a 34 349 152, et le delta est ACCOUNTE a l'octet pres
+plutot que constate** : les deux seules ressources que la pie fait entrer dans le
+pack sont son `.scn` (**161 957**) et le `.ctex` de sa baseColor
+(**3 904 992**) -- **le `.glb` brut n'est PAS packe**, verifie sur le log
+`savepack`. Avec les deux maps mortes conservees, ce serait ~10,7 Mo de plus.
+Marqueur « nouveau build », **jamais preuve d'identite**.
+
+**Sondes, toutes exit 0** : `CabinProbe` (**229 OK, 0 echec**, dont 57 en
+PHASE N), `LevelNavProbe` (**77 checks, 0 echec**), `ProbeTimeoutAudit`
+(**59 sondes scenes**, identique a la baseline -- les trois sondes jetables de ce
+lot sont supprimees), `AssetContractAudit` (**12/12 visuels, 0/10 colliders
+deplaces**), `DeathModelAudit`, `ChargerShapeProbe`, `OwlFlightProbe`,
+`DivingBoardProbe`, `TurnstileProbe`, `SeesawProbe`, `StreamRideProbe`,
+`LakeZoneProbe`, `WaterImpactProbe`, `WaterTintProbe`.
+
+**Non-regression cabine** : PHASE K (porte, lit, echelle), PHASE P (le lit) et
+PHASE Z (le premier tap de la porte, le defaut du lot precedent) sont **vertes et
+inchangees** ; la seule ligne de PHASE K qui bouge est son compte de hotspots,
+**2 -> 3**, itemise plutot que pousse.
+
+### RESTE OUVERT -- jugement device, seul juge
+
+1. **Est-ce que le bisou se LIT comme un bisou** a l'echelle reelle d'un
+   telephone ? Le lean fait 26 deg au pic sur 0,85 s ; personne ne l'a vu bouger
+   sur un ecran.
+2. **Est-ce que trois coeurs suffisent**, et est-ce que leur rose se detache du
+   bois clair du salon ? Aucune sonde ne le dit.
+3. **Rien ici n'est un rendu device** : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari -- et la transparence de ce
+   projet est **deja passee verte dans ce sandbox et cassee sur device une
+   fois**. Les coeurs sont des billboards alpha.
+4. **Derive de doc PRE-EXISTANTE signalee et NON corrigee** : le commentaire de
+   `_enter_rest()` dit « XZ is UNTOUCHED -- he lies exactly where he stood »
+   juste au-dessus de la ligne qui ecrit `BED_SPOT` dans `global_position`. Le
+   code est juste, le commentaire ment ; hors perimetre de ce lot.
