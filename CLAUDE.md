@@ -23969,3 +23969,154 @@ est bien celui servi.
 **Reste ouvert : la validation device de Mathieu**, seule juge, sur les deux
 points ci-dessus (taille de la pie dans le hub, lisibilite du baiser sans le
 panneau dessus) -- avant tout merge vers `main`.
+
+## LE BAISER SE VOIT ENFIN, LA SORTIE QUITTE LE COIN DU BAISER (31 aout 2026)
+
+Branche `claude/cabin-kiss-exit-geometry-qig3fp`, partie de `staging`
+(`45b1140` -- le lot pie-visibility-exit-label deja dessus). Deux retours
+device traites ensemble, parce que les deux touchent la meme piece :
+pendant le baiser, Keepy et la pie se chevauchaient a l'ecran (tete de la
+pie invisible au pic de la pose) ; et le point de sortie ("Sortir")
+partageait le meme coin de la piece que le baiser, si bien qu'un tap pres
+de la pie pouvait resoudre en sortie.
+
+### PARTIE A -- `MAGPIE_STAND_SPOT` ETAIT CALIBRE POUR L'ANCIENNE ECHELLE DE LA PIE
+
+**Cause racine, mesuree et pas devinee.** `MAGPIE_STAND_SPOT` avait ete fixe
+a `(0.05, 0.40)` -- 1,254 u de `MAGPIE_SPOT` -- au moment ou `MAGPIE_SCALE`
+valait 0,50. Un lot ulterieur a monte `MAGPIE_SCALE` a 0,76461 pour aligner
+la hauteur dessinee de la pie sur celle de Keepy, sa demi-profondeur a
+grandi avec elle, et **personne n'a re-derive la distance de pose** -- le
+commentaire du fichier lui-meme le nommait deja comme un risque ouvert :
+"whether the bigger bird's resting contact still reads as a kiss and not
+an already-buried muzzle is open." Le device a confirme que non : il
+enterrait sa tete au repos.
+
+**Mesure sur les vraies transforms** (sonde jetable construisant
+`_build_magpie()`/`_enter_kiss()`/`_apply_kiss()` a l'identique, jamais un
+fixture separe) -- overlap XZ des deux AABB comme fraction de l'empreinte
+de la pie, echantillonne sur TOUTE la bell curve du lean et pas seulement
+au pic :
+
+| position | REPOS | PIC (mi-lean) |
+|---|---|---|
+| **livree, (0.05, 0.40)** | 41,7 % de sa silhouette deja recouverte | **62,7 %** -- sa tete avait disparu |
+| **corrigee, (1.00, 0.40)** | **0,0 %** (deux corps distincts au repos) | **10,6 %** -- un contact court pendant le geste, rien avant ni apres |
+
+**Le fix se deplace en +X et pas en +Z, et ce n'est pas arbitraire.** Le
+commentaire de `MAGPIE_SPOT` explique deja que X est l'axe utilise pour que
+les deux corps ne se cachent pas l'un l'autre sur la camera fixe ("offset
+in x, so he cannot hide her"), alors que Z est l'axe de PROFONDEUR de la
+camera, deja calibre pour que la pie reste plus pres de l'objectif que
+Keepy. Verifie par balayage : deplacer en X reduit l'overlap bien plus vite
+par unite de distance que Z, ET garde son angle de face dans le
+trois-quarts flatteur voulu par le design d'origine (yaw 58,4 deg a la
+position choisie, contre 13-23 deg pour des candidats qui poussaient en Z a
+overlap egal). Z reste a 0,40, inchange -- l'ordonnancement pres/loin contre
+la camera reste exactement celui deja argumente par `MAGPIE_SPOT`.
+
+**`MAGPIE_STAND_SPOT` passe de `(0.05, 0.40)` a `(1.00, 0.40)`.** Toujours
+degage du trou d'empreinte (2,159 contre un rayon de 0,73, marge 1,429 --
+contre 0,524 avant) et desormais degage du nouveau `DOOR_SPOT` (partie B)
+par 1,226 contre 1,05 minimum.
+
+### PARTIE B -- `DOOR_SPOT` ETAIT `ENTRY_SPOT`, DANS LE MEME COIN QUE LE BAISER
+
+**Decision explicite de Mathieu** : deplacer le hotspot `&"door"`
+lui-meme (tap ET destination de snap), pas seulement son label -- le
+`DOOR_LABEL_OFFSET` d'un lot precedent etait un correctif cosmetique sur
+le mauvais cote du meme coin, et devient sans objet une fois le coin
+lui-meme deplace.
+
+**Recon confirmee** : `DOOR_SPOT`/`DOOR_TAP_RADIUS` sont une coordonnee et
+un rayon isoles, ni derives ni couples a la camera. Le hotspot
+`&"mezzanine"` (le lien de l'echelle, un `LevelTransition`) existe bien pres
+de la base de l'echelle et devait etre evite explicitement.
+
+**Candidat retenu, verifie sur les VRAIES classes moteur** (sonde jetable
+construisant `LevelDefinition`/`LevelHotspot`/`LevelTransition` reelles,
+jamais une geometrie recalculee a la main) : `DOOR_SPOT = (2.20, 0.65)`.
+Deux candidats plus proches de l'echelle, `(2.05, 0.35)` et `(1.90, 0.45)`,
+**echouent reellement** le test de degagement contre le disque de tap du
+lien de l'echelle (gap 1,800 et 1,906 contre un radii-sum requis de 1,950)
+-- `(2.20, 0.65)` est pres du plancher reel de ce qui est atteignable, pas
+un compromis choisi a l'oeil. Verifie : dans le carre praticable, degage du
+lien de l'echelle (+0,155), hors de portee du carre de la mezzanine
+(1,999 contre `DOOR_REACH` 0,9), degage du hotspot et du trou de la pie
+(3,309), et desormais degage du `MAGPIE_STAND_SPOT` reloge (1,226 contre
+1,05).
+
+**`DOOR_LABEL_OFFSET` est retire**, confirme redondant : son seul site
+d'appel non-defaut disparait, le marqueur reprend l'offset zero par
+defaut -- deux corrections superposees sur le meme symptome auraient ete
+la mauvaise reponse.
+
+### ⚠️ PHASE Z ETAIT CALIBREE SUR UNE GEOMETRIE QUI N'EXISTE PLUS, ET LE DEFAUT QU'ELLE GATE RESTE REEL
+
+`DOOR_SPOT` etait `ENTRY_SPOT` : Keepy y arrivait a chaque visite, distance
+0,000, et le bug "zero-length walk" (`LevelWalker._advance()` termine une
+marche plus courte qu'`ARRIVE_EPSILON` par `became_idle`, jamais
+`hop_landed` -- donc un tap sur la porte en se tenant deja dessus ne
+faisait rien et laissait `_exit_pending` arme) etait vivant des le premier
+tap de chaque session. Deplacer la porte fait qu'une arrivee fraiche
+demarre desormais une vraie marche loin d'elle -- **mais le meme etat se
+reproduit exactement des qu'il atteint reellement le pas de porte** (en y
+marchant, ou en l'ayant deja tape une fois). PHASE Z reproduit donc ce cas
+en **placant** Keepy sur le point plutot qu'en se fiant a l'endroit ou la
+scene le fait naitre -- pilotee sur la scene que le VRAI routeur vient de
+charger, pas sur une instance fraiche.
+
+**Verifiee rouge avant vert, deux fois** : la neutralisation du
+repositionnement dans la sonde reproduit `1,746 <= 0,450 -> FAIL` sur la
+CONTROLE (le walker naissant a `ENTRY_SPOT` est desormais a 1,746 u du
+`DOOR_SPOT` reloge, largement hors de `DOOR_TAP_RADIUS` et
+`ARRIVE_EPSILON`) et cascade sur les trois assertions suivantes -- prouvant
+que le repositionnement est porteur et pas incident. Restaure, 0 echec.
+
+**Un troisieme defaut, non anticipe par le brief, trouve par la sonde
+elle-meme** : le point d'approche de PHASE N ("stops SHORT of the spot")
+etait un litteral fige, calibre par sa distance exacte a l'ANCIEN
+`MAGPIE_STAND_SPOT`. Une fois la pose relogee, il ne produisait plus
+l'arret-court attendu (`without = 0,000` au lieu de `> 0,01`). Recalcule
+en X pur depuis le nouveau point de pose, magnitude
+`HOP_DISTANCE + 0.40 = 1.90`, reproduisant le meme mecanisme "un hop
+plein puis 0,40 de reste sous `ARRIVE_EPSILON`".
+
+**Une nouvelle assertion GATEE, permanente, ajoutee a PHASE N** pour que
+le bug de la partie A ne puisse plus regresser en silence : overlap
+maximal mesure sur toute la sweep du lean, seuil `< 25 %` (largement
+au-dessus des 10,6 % mesures, largement en-dessous des 62,7 % d'avant).
+
+### Validation
+
+Editeur + templates Godot 4.3-stable **re-installes dans ce sandbox** :
+le `.tpz` d'export templates a d'abord ete tronque en silence
+(517 025 792 octets contre les 1 073 228 327 du `Content-Length` reel,
+piege deja documente cinq fois dans ce fichier), retelecharge en entier et
+verifie taille-exacte avant extraction. Import headless **exit 0, 37
+`.scn`, 0 erreur**. Export Web release **exit 0, 0 erreur GDScript**.
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent deja consigne pour tout lot qui ne touche pas le code moteur.
+**Piege payload tenu** : sur **270** lignes `Storing File`, **0** pour
+`scripts/dev`, `assets_source`, `docs`, `web/`, `build` ou
+`firebase.json` ; `CabinInterior.gdc` est bien packe.
+
+**`CabinProbe` : 256 checks, 0 echec, exit 0.** Rouge-avant-vert verifie
+sur les DEUX fixes de ce lot (l'assertion d'overlap contre l'ancien
+`MAGPIE_STAND_SPOT`, la CONTROLE de PHASE Z contre le repositionnement
+neutralise) plus un troisieme defaut trouve en chemin (le litteral
+d'approche de PHASE N).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **La tete de la pie reste-t-elle visible pendant tout le baiser** a
+   l'echelle reelle d'un telephone ? La mesure dit 10,6 % d'overlap
+   maximal contre 62,7 % avant ; la lecture ne l'est pas.
+2. **Le bouton "Sortir" se trouve-t-il bien pres de la base de
+   l'echelle**, loin de toute confusion avec le baiser ?
+3. **La sortie fonctionne-t-elle toujours** depuis ce nouveau point --
+   tap sur la porte, sortie immediate.
+4. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.

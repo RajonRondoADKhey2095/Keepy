@@ -172,44 +172,38 @@ const ENTRY_SPOT := Vector2(0.60, 1.35)
 ## =====================================================================
 ## THE TAPPABLE SPOTS THAT ARE NOT THE LADDER
 ##
-## The door is the SAME point Keepy arrives on, deliberately: he walks in
-## there and he walks out from there, and two constants for one doorway is
-## how the way in and the way out end up in different places.
-const DOOR_SPOT := ENTRY_SPOT
-## Smaller than the ladder's 1.10. The door stands only 0.35 world units
-## inside the floor's +Z edge, so a generous circle here would be mostly
-## hanging over ground that does not exist -- see LevelHotspot's header for
-## why that is harmless on the AIM and would have been a funnel on a
+## ⚠️ DOOR_SPOT IS NO LONGER ENTRY_SPOT -- device report: the exit hotspot
+## and the kiss shared the same corner of the room, so "Sortir" read on top
+## of the bisou and a re-shove tap near the magpie could resolve as leaving.
+## Mathieu's call, explicit: relocate the HOTSPOT itself (tap AND snap
+## destination), not just its label -- the label-offset fix from a prior
+## lot (below) was a symptom patch on the wrong side of the same corner and
+## is gone now that the corner itself has moved.
+##
+## MEASURED against the real LevelDefinition/LevelHotspot/LevelTransition
+## objects this file itself builds (jettable probe constructing the same
+## classes with the same constructor calls, never hand-rolled circle/
+## rectangle arithmetic): (2.20, 0.65) is the closest-to-the-ladder point
+## that still clears every real gate with margin --
+##   - clear of the ladder LINK's own tap circle: gap 2.105 against a
+##     radii-sum of 1.950 (+0.155). Two closer candidates that were tried,
+##     (2.05, 0.35) and (1.90, 0.45), both FAIL this exact check (gap 1.800
+##     and 1.906 against 1.950) -- 2.20 sits near the true floor of what is
+##     reachable, not an arbitrary compromise.
+##   - inside the floor square: LevelDefinition.contains() = true.
+##   - the loft's own square cannot reach it: its nearest point is 1.999
+##     from here against a DOOR_REACH of 0.9.
+##   - clear of the magpie's own hotspot circle and of her footprint hole
+##     by a wide margin (3.309 to her hole's centre against a 0.73 + 0.85
+##     minimum).
+##   - clear of the relocated MAGPIE_STAND_SPOT (the kiss's stand point) by
+##     1.226 against a 1.05 minimum -- a re-shove tap near the bisou can no
+##     longer resolve as this hotspot.
+const DOOR_SPOT := Vector2(2.20, 0.65)
+## Smaller than the ladder's 1.10. See LevelHotspot's header for why a
+## generous circle is harmless on the AIM and would have been a funnel on a
 ## clamped point.
 const DOOR_TAP_RADIUS: float = 0.85
-
-## ⚠️ THE SIGN ALONE, NOT THE RING -- device report: from the fixed camera,
-## "Sortir" reads on top of the kiss. MEASURED THROUGH THE SHIPPED CAMERA
-## (a jettable probe reading Camera3D.unproject_position() on the real,
-## built markers, 1080x1920, never a hand-rolled projection) before this
-## number was picked:
-##   - the two RINGS clear each other by only 22.91 px (door ring's left
-##     edge at screen x=483.91 against the magpie ring's right edge at
-##     x=461.00) -- already thin on a phone screen;
-##   - the door's own LABEL, un-offset, sits with its left edge at
-##     x=557.05, a bare 40.90 px from MAGPIE_STAND_SPOT at x=516.15 --
-##     the point Keepy actually stands on for the kiss;
-##   - and the door ring's own near-pulse triggers at MAGPIE_STAND_SPOT:
-##     that spot is 1.0977 from DOOR_SPOT against a NEAR_FACTOR *
-##     DOOR_TAP_RADIUS of 1.8700, so "Sortir" is actively growing while
-##     the kiss plays, on top of an already-thin gap.
-##
-## +0.60 on X pushes the SIGN alone toward the wall, away from the
-## magpie's side of the room. RE-MEASURED through the same probe, on
-## the arm built with this offset in place: the label's left edge moves
-## to screen x=620.04, **103.89** px clear of the kiss point instead of
-## 40.90 -- better than double, and the label never crosses back over
-## the door ring's own centreline (world X only grows from 0.60 to 1.20,
-## still on the door's own side of DOOR_SPOT). Passed to CabinMarker as
-## `label_offset`, which moves nothing but the Label3D: `_door`'s
-## LevelHotspot.point (tap AND snap destination) and `_door_marker`'s
-## own ring/pad stay exactly on DOOR_SPOT, unchanged.
-const DOOR_LABEL_OFFSET := Vector3(0.60, 0.0, 0.0)
 
 ## The bed, on the loft.
 ##
@@ -357,33 +351,52 @@ const MAGPIE := preload("res://assets/models/keepy_magpie_prop.glb")
 const MAGPIE_SPOT := Vector2(-1.10, 0.90)
 
 ## THE FIXED SPOT KEEPY SNAPS TO. Inside the walkable square, on measured-flat
-## floor, 1.254 from her and further from the camera than she is.
+## floor, 2.159 from her and further from the camera than she is.
 ##
-## The gap was originally sized off both bodies at the FIRST MAGPIE_SCALE
-## (0.50): his front reaches +1.018 along his own +Z (measured off the
-## POSITION accessor, not assumed symmetric), and her half-depth was about
-## 0.42, for a muzzle overlap of roughly 0.18 -- which for a kiss was the
-## point.
+## ⚠️ THE OLD 1.254 GAP WAS STALE, AND THIS IS THE FIX RATHER THAN A NEW
+## GUESS. It was sized off both bodies at the FIRST MAGPIE_SCALE (0.50); a
+## later lot raised MAGPIE_SCALE to 0.76461 to match Keepy's own drawn
+## height, her half-depth grew with her, and nobody re-tuned the distance --
+## the codebase's own prior comment named this as an open risk in exactly
+## these words: "whether the bigger bird's resting contact still reads as a
+## kiss and not an already-buried muzzle is open." Device confirmed it does
+## not: he buried her head at rest.
 ##
-## ⚠️ THAT OVERLAP FIGURE IS STALE since the size calibration lot raised
-## MAGPIE_SCALE to 0.76461: her half-depth grows with her, so the same
-## 1.254 now overlaps more than 0.18 at rest, before KISS_REACH_IN's lean
-## adds anything further. NOT re-measured or retuned here -- this lot's
-## three corrections are the scale, the ground obstruction and the
-## _kissing guard below, not the lean's own geometry -- so whether the
-## bigger bird's resting contact still reads as a kiss and not an already-
-## buried muzzle is open, and is a device judgement for its own lot if
-## flagged.
+## MEASURED, not eyeballed -- a jettable probe built the real transform
+## chain _build_magpie()/_enter_kiss()/_apply_kiss() use (her scaled AABB,
+## his lean bell curve sampled across the whole 0..1 sweep, not just the
+## peak) and computed the actual world-space XZ overlap of their two
+## silhouettes as a fraction of her own footprint area:
+##   at the shipped (0.05, 0.40): REST 41.7% of her already overlapped,
+##   PEAK (mid-lean) 62.7% -- her head was gone.
+##   at (1.00, 0.40): REST 0.0% (they read as two separate bodies at
+##   rest), PEAK 10.6% -- a small, deliberate touch during the gesture
+##   itself and nothing before or after it, which is what the original
+##   0.18-unit "muzzle overlap... which for a kiss was the point" was
+##   always going for.
 ##
-## ⚠️ AND IT STAYS CLEAR OF THE FOOTPRINT HOLE THE SAME SIZE LOT ADDED, BY
-## MEASUREMENT AND NOT BY LUCK: 1.254 from MAGPIE_SPOT against a
-## MAGPIE_FOOTPRINT_RADIUS of 0.73 leaves 0.524 of margin, asserted in
-## CabinProbe rather than left as an unchecked coincidence. It was not
-## moved to sit "just outside" that circle -- it already was, comfortably.
+## ⚠️ THE FIX MOVES ALONG +X, NOT +Z, AND THAT IS NOT ARBITRARY: the
+## MAGPIE_SPOT comment above already explains that x is the axis this
+## design uses to keep the two bodies from hiding each other on the fixed
+## camera (he is "offset in x, so he cannot hide her"), while z is the
+## camera's OWN depth axis, carefully tuned so she stays nearer the lens
+## than he is. Sweeping candidates confirmed this: moving along x shrinks
+## the overlap far faster per unit of distance than moving along z, AND
+## keeps her drawn facing angle in the flattering three-quarter view the
+## original yaw-from-stand-spot design intended (her yaw at this spot is
+## 58.4 degrees; candidates that instead pushed +z drove it down to a
+## nearly frontal 13-23 degrees for the same overlap reduction). Z is left
+## untouched at 0.40, so the near/far ordering against the camera is
+## exactly the one MAGPIE_SPOT's own comment already argued for.
 ##
-## It is also 1.098 from the doorstep against a DOOR_REACH of 0.9, so
-## standing here does not set the "Sortir" ring breathing over his shoulder.
-const MAGPIE_STAND_SPOT := Vector2(0.05, 0.40)
+## STILL CLEAR OF THE FOOTPRINT HOLE: 2.159 from MAGPIE_SPOT against a
+## MAGPIE_FOOTPRINT_RADIUS of 0.73 leaves 1.429 of margin (up from 0.524),
+## asserted in CabinProbe rather than left as an unchecked coincidence.
+##
+## And clear of the relocated DOOR_SPOT by 1.226 against a DOOR_TAP_RADIUS
+## + margin of 1.05 -- the two hotspots no longer sit anywhere near each
+## other, so a tap meant for one cannot resolve as the other.
+const MAGPIE_STAND_SPOT := Vector2(1.00, 0.40)
 
 ## Drawn to MATCH Keepy's own drawn height, not half of it -- device found
 ## the 0.50 pass ("comes up to his shoulder") too small to read as a peer.
@@ -822,7 +835,7 @@ func _place_walker() -> void:
 func _build_markers() -> void:
 	var floor_level: LevelDefinition = _controller.levels[0]
 	_ladder_marker = _add_marker(_controller.links[0].tap_radius, "Mezzanine")
-	_door_marker = _add_marker(DOOR_TAP_RADIUS, "Sortir", DOOR_LABEL_OFFSET)
+	_door_marker = _add_marker(DOOR_TAP_RADIUS, "Sortir")
 	_door_marker.position = Vector3(DOOR_SPOT.x, floor_level.plane_y, DOOR_SPOT.y)
 	_bed_marker = _add_marker(BED_TAP_RADIUS, "Lit")
 	var loft_level: LevelDefinition = _controller.levels[1]
