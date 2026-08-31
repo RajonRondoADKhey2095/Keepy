@@ -24549,3 +24549,33 @@ travail.**
    visage intact) contre `x040_peak.png` (visage disparu).
 2. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+### Deploiement staging verifie sur le service (31 aout 2026)
+
+CI run #348 (id 33443099326) sur `staging` `5bfc0a0d`, **verte** :
+`Import project resources` 21:48:07 -> 21:51:31, `Export Web build`
+21:51:31 -> 21:51:37, `Deploy to Vercel [STAGING]` **succes** 21:51:56 ->
+21:52:08, `[PRODUCTION -- main]` correctement **skipped** (push sur
+`staging`).
+
+**Verifie SUR LE SERVICE, pas dans le log CI seul, sur DEUX marqueurs
+independants, aux deux lus fraiches** :
+
+| marqueur | valeur |
+|---|---|
+| `CACHE_VERSION` | **`1788213096` = 21:51:36 UTC** -- tombe exactement
+  dans la fenetre `Export Web build` (21:51:31 -> 21:51:37) |
+| `index.wasm` servi | **35 376 909** octets -- identique au bit pres a
+  l'export local, le fingerprint permanent (aucun code moteur touche par
+  ce lot de deux fichiers GDScript) |
+| `index.pck` servi | 34 352 304 (marqueur, jamais preuve d'identite) |
+
+Les deux lectures (`index.service.worker.js` et `index.html`) portent
+`x-vercel-cache: MISS` avec `age: 0`, `date` colle a l'instant de la
+requete -- pas une reponse de cache.
+
+`main` **non touche** (`origin/main = afa49d7`). Merge staging
+automatique (palier 1) -- **pas de merge vers `main` sans validation
+device explicite de Mathieu, et cette fois la question posee est
+explicitement PERCEPTIBLE, pas seulement un nouveau chiffre de sonde au
+vert.**
