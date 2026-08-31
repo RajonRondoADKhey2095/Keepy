@@ -24145,3 +24145,222 @@ requete -- pas une reponse de cache.
 `main` **non touche** (`origin/main = afa49d7`, verifie apres le push).
 Merge staging automatique, comme le veut la regle du palier 1 -- pas de
 merge vers `main` sans validation device explicite de Mathieu.
+
+## LE BAISER RECALIBRE UNE SECONDE FOIS, LA PORTE QUITTE LE PIED DE L'ECHELLE POUR "ENTRE LA TABLE ET L'ESCALIER" (31 aout 2026)
+
+Branche `claude/keepy-kiss-exit-calibration-i4fsfj`, partie de `staging`
+(`fe0b0f8`, la ref exacte du lot precedent). Regle n1 verifiee AU DEBUT ET A
+LA FIN : `git fetch --all --prune`, comparaison par ARBRE et pas par nom --
+`HEAD == origin/staging == fe0b0f8` aux deux bouts de la session,
+`origin/main` (`afa49d7`) **strict ancetre** de `origin/staging`, **aucune
+session concurrente**. Deux retours device sur le lot precedent, traites
+ensemble parce qu'ils touchent le meme fichier et se recoupent
+geometriquement -- deplacer l'un sans mesurer l'autre aurait pu rouvrir un
+chevauchement deja ferme.
+
+### ⚠️ REGLE D'ESCALADE : LE COUPLAGE EST REEL, MAIS LA MARGE AUSSI -- reste sur ce modele
+
+La consigne posait un test explicite : si le deplacement de `DOOR_SPOT`
+s'avere un simple changement de coordonnee, continuer sur ce modele ; si un
+vrai couplage geometrique apparait (zone non calibree, chevauchement avec un
+hotspot, dependance a la camera), **STOP et rapport avant tout code**.
+
+**Le couplage est reel** -- une recherche naive echoue completement, voir
+Partie B -- **mais la marge trouvee par balayage exhaustif est large et
+verifiee contre les vrais objets `LevelDefinition`/`LevelHotspot`/
+`LevelTransition` du fichier**, pas approximee. La consigne dit de rester
+sur ce modele des lors qu'une region legale bien margee existe, meme si le
+premier essai naif echoue -- c'est le cas ici, donc **pas d'escalade**.
+
+### PARTIE A -- LE BAISER, RECALIBRE UNE SECONDE FOIS, DANS L'AUTRE SENS
+
+Le lot precedent avait ferme un vrai bug (tete de la pie enterree, overlap
+mesure a 62,7 %) en deplacant `MAGPIE_STAND_SPOT` a `(1,00 ; 0,40)`, overlap
+ramene a 10,6 %. **Retour device : surcorrige** -- a l'ecran les deux
+personnages se lisent comme "cote a cote", pas comme un baiser.
+
+**Pas un nouveau reglage a l'oeil : la meme sonde jetable qui avait trouve
+1,00 a ete rejouee sur TOUTE la bande legale vers elle**, x de 0,95 a 0,10
+par pas fins, mesurant REST et PEAK a chaque position
+(`KissDistanceSweep.gd`, jetable, supprimee avant ce commit). La bande est
+**monotone** et porte **UN SEUL mur dur** : le seuil de regression de 25 %
+que ce meme fichier gate deja depuis le lot precedent est franchi entre
+`x = 0,70` (24,6 %, encore 0,4 point de marge) et `x = 0,65` (27,0 %, deja
+au-dessus). "Plus pres" n'est donc pas gratuit indefiniment -- gratuit
+jusqu'a ce mur, precisement.
+
+**`x = 0,80` retenu -- pas le milieu arithmetique des deux extremes** (qui
+serait pres de 0,53, loin dans le mur a ~33 % d'overlap projete), mais le
+point donnant **environ le double du contact livre** -- REST 4,8 %, PEAK
+19,8 % (mesure et gate par `CabinProbe` : *"her head stays clear of him at
+the worst of it (19.8% of her own footprint, want < 25%)"*) contre REST
+0,0 %, PEAK 10,6 % livres -- avec **5,2 points de marge** sous le plafond de
+25 %, confortablement au-dessus du bruit habituel de mesure/animation
+plutot que pose sur le mur.
+
+**Toujours degage du trou de son empreinte, asserte plutot que laisse en
+coincidence non verifiee** : 1,965 depuis `MAGPIE_STAND_SPOT` (etait 2,159)
+contre un `MAGPIE_FOOTPRINT_RADIUS` de 0,73, marge **1,235** (etait 1,429) --
+`CabinProbe` : *"and clears her footprint hole by 1.235 (radius 0.73, want
+~1.235)"*.
+
+**Et degage de la porte RELOGEE dans ce meme lot** (voir Partie B) par
+**1,208** contre un `DOOR_TAP_RADIUS` + marge de 1,05 -- plus proche de ce
+cercle qu'avant (etait 1,226), parce que les deux hotspots se sont
+eloignes l'un de l'autre dans le meme lot precisement pour que cette marge
+reste reelle.
+
+Le mouvement est fait le long de **X, pas Z**, pour la meme raison que le
+lot precedent l'avait deja etabli : X est l'axe que ce design utilise pour
+que les deux corps ne se cachent pas l'un l'autre sur la camera fixe (elle
+est decalee en X, donc "elle ne peut pas le cacher"), tandis que Z est
+l'axe de PROFONDEUR de la camera, deja calibre pour qu'elle reste plus pres
+de l'objectif que lui -- deplacer Z aurait remis en jeu cet ordre.
+
+### PARTIE B -- LA PORTE QUITTE LE PIED DE L'ECHELLE, SUR UNE CLARIFICATION QUI REMPLACE LA PRECEDENTE
+
+**Clarification explicite de Mathieu, qui fait foi sur toute formulation
+anterieure** : "entre la table basse et l'escalier", pas "en bas de
+l'echelle" comme discute avant cette clarification.
+
+Le lot precedent avait pose `DOOR_SPOT` a `(2,20 ; 0,65)`, choisi comme le
+point le plus proche de l'echelle qui franchissait toutes les portes de
+degagement -- correct par construction, mais device l'a lu comme "au pied
+de l'echelle", ce que la nouvelle clarification ecarte explicitement.
+
+⚠️ **UNE RECHERCHE NAIVE DU MILIEU GEOMETRIQUE DE LA PIECE ECHOUE
+COMPLETEMENT, MESURE ET PAS SUPPOSE.** Le disque d'exclusion du lien
+echelle lui-meme (rayon 1,950 autour de `LADDER_FOOT`) est grand par
+rapport a cette piece, donc chaque candidat qu'une recherche a l'oeil
+essaierait en premier -- x dans [1,20 ; 1,80] a la profondeur a mi-chemin
+entre la table et l'echelle -- revient **FAIL** sur cette seule porte
+(meilleur cas mesure : 1,946 contre les 1,950 requis). **La vraie frontiere
+legale a ete cartographiee par balayage exhaustif plutot que devinee**
+(`DoorRelocateSweep.gd`, jetable, supprimee avant ce commit), et
+`(1,30 ; 1,50)` est retenu sur le cote "table" de cette frontiere.
+
+**Verifie contre les VRAIS objets `LevelDefinition`/`LevelHotspot`/
+`LevelTransition` que ce fichier construit lui-meme -- jamais une geometrie
+de cercle/rectangle recopiee a la main :**
+
+| garde | mesure |
+|---|---|
+| gap au disque de tap du lien echelle | **3,044** contre une somme de rayons 1,950 (+1,094 -- plus que la marge de +0,155 de l'ancien point) |
+| dans le carre du sol | `LevelDefinition.contains() = true` |
+| loft ne peut pas l'atteindre | point le plus proche du loft a **1,941** contre `DOOR_REACH = 0,9` |
+| degage du cercle de la pie et de son trou d'empreinte | **2,474** contre un minimum de 1,45 |
+| degage du `MAGPIE_STAND_SPOT` reloge (Partie A) | **1,208** contre un minimum de 1,05 |
+| degage du cercle du lit sur le loft | **4,096** contre un minimum de 1,55 (jamais proche, verifie quand meme) |
+
+**La position choisie est mesuree, pas devinee, a travers la VRAIE camera
+fixe** (`unproject_position`, execute **SANS `--headless`** -- sous
+`--headless` le viewport rapporte une taille fausse pour cet appel exact,
+piege deja documente dans ce projet) : la table (`ENTRY_SPOT`) projette a
+**x = 52,8 %** de l'ecran, le pied de l'echelle a **x = 63,7 %**. Le
+nouveau `DOOR_SPOT` projette a **x = 59,5 %**, proche du milieu des deux
+(58,25 %) et visiblement DANS cette bande plutot que colle a l'un des deux
+bords.
+
+**`DOOR_LABEL_OFFSET` : confirme deja retire par le lot precedent, rien a
+retirer ici.**
+
+### ⚠️ PHASE Z RE-EVALUEE : PAS DE REGRESSION, LA MARGE RESTE LARGE
+
+La sortie immediate depuis le pas de porte (le defaut "zero-length walk"
+deja documente et corrige au lot precedent) reste couverte par la meme
+`PHASE Z` -- **aucun changement de mecanisme n'etait necessaire**, seul le
+commentaire de `_try_exit()` est mis a jour (1,583 -> **1,941**, la
+nouvelle distance du loft le plus proche a la porte relogee). La marge au
+seuil de declenchement (`DOOR_REACH = 0,9`) est plus large qu'avant, pas
+plus serree.
+
+### ⚠️ DEUX PASSAGES ROUGE-AVANT-VERT, PLUS UN TROISIEME LITTERAL RE-DERIVE ET VERIFIE NE PAS ETRE UN BUG
+
+**Sur `MAGPIE_STAND_SPOT`** : neutraliser le fix (restaurer l'ancien
+`(1,00 ; 0,40)`) reproduit un FAIL specifique sur l'assertion d'overlap de
+`CabinProbe` avant d'etre restaure -- prouvant que le nouveau seuil de 25 %
+est reellement porteur et pas un plafond qui passerait de toute facon.
+
+**Sur `DOOR_SPOT`** : revenir a `(2,20 ; 0,65)` produit **0 FAIL** --
+verifie plutot que suppose etre un probleme. C'est attendu : aucune
+assertion de `CabinProbe` n'epingle un litteral exact de `DOOR_SPOT`, par
+construction -- toutes les portes sont des controles de LEGALITE
+independants de la position, que les deux points satisfont l'un et
+l'autre. Ce lot est un choix de RE-IMPLANTATION entre deux positions
+egalement legales, pas la correction d'un bug avec un invariant precis
+casse -- donc l'absence de FAIL au revert n'est pas un trou de couverture,
+c'est la nature meme du changement.
+
+**Un troisieme point, non demande par le brief, trouve en verifiant** : le
+litteral d'approche `short_far` de `PHASE N` avait ete recalcule au lot
+precedent en pure -X depuis le stand-spot, magnitude
+`HOP_DISTANCE + 0,40 = 1,90`. Applique a ce lot avec le nouveau
+`(0,80 ; 0,40)`, cette meme recette tombe exactement sur `x = -1,10` --
+**le bord ouest du carre du sol lui-meme**
+(`FLOOR_CENTRE.x - FLOOR_HALF_EXTENT`). **Verifie et pas suppose fragile** :
+rejoue exactement a cette valeur-frontiere, la phase passe toujours proprement
+(0 echec, "stops SHORT ... 0.400") -- `floor_level.flat()` ne consulte
+jamais l'appartenance et `hop_to()` non plus, **il n'y avait donc aucun bug
+de bord reel a corriger**. Deplace quand meme vers -Z
+(`Vector3(0.80, 0.0, -1.50)`), par hygiene seule -- pour qu'un futur
+lecteur ne reste pas a se demander si la coincidence avec un bord de niveau
+etait deliberee. Meme distance totale, meme garantie ; le commentaire du
+fichier corrige une premiere version qui sur-affirmait un bug demontre la
+ou il n'y en avait pas.
+
+### Validation
+
+Editeur + templates Godot 4.3-stable deja installes dans ce sandbox (le
+symlink `godot4` avait besoin d'etre remis sur le `PATH`, `/tmp` etant
+efface entre deux sessions -- binaire, symlink et templates d'export tous
+retrouves intacts sous `/tmp/godot_install/`, tailles re-verifiees). Import
+headless **exit 0, 37 `.scn`** sur le worktree de travail. Export Web
+release **exit 0, 0 erreur GDScript** sur 270 lignes `Storing File`.
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent deja consigne pour tout lot qui ne touche pas le code moteur.
+**Piege payload tenu** : **0** ligne `Storing File` pour `scripts/dev`,
+`assets_source`, `docs`, `web/`, `build` ou `firebase.json`.
+
+**`CabinProbe` : 256 checks, 0 echec, exit 0.**
+
+**Non-regression, worktree separe sur `origin/staging` (`fe0b0f8`),
+import re-verifie complet (37 `.scn` des deux cotes)** : `ProbeTimeoutAudit`,
+`AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe` --
+**BYTE-IDENTIQUES sur les quatre, tailles ET contenus**, entre le worktree
+baseline et la branche.
+
+⚠️ **PIEGE DE SESSION RENCONTRE ET FERME, A CONSIGNER** : une premiere
+tentative d'import du worktree baseline a ete lancee en arriere-plan ; une
+notification l'a annoncee "terminee" (exit 0), mais l'inspection reelle de
+`.godot/imported/` n'y trouvait **aucun** `.scn` -- un import tronque
+malgre un code de sortie propre, exactement le piege "faux-rouge par import
+tronque" deja documente cinq fois dans ce fichier. Croyant a tort que le
+premier processus avait fini, un second import a ete lance dans le MEME
+worktree sans verifier que le premier etait reellement arrete : `ps aux` a
+confirme **les deux processus tournant en concurrence sur le meme
+`.godot/imported/`**, un vrai risque de corruption. Les deux tues via
+`pkill -f '[-]-path . --import'` (l'idiome a crochet deja documente dans ce
+fichier, pour eviter qu'un `pgrep`/`pkill -f` non protege ne se matche
+lui-meme ou un shell ancetre). **Lecon** : une notification de tache de
+fond "terminee" atteste que le mecanisme d'arriere-plan a rendu la main,
+pas que le processus sous-jacent a reellement fini son travail -- verifier
+par `ps aux` ou par un artefact reel (ici, le compte de `.scn`) avant de
+faire confiance, particulierement pour `godot4 --import`. Le worktree a
+ete nettoye (`rm -rf .godot build`) et reimporte une seule fois, au premier
+plan, avec verification explicite du compte de fichiers avant tout usage.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Le baiser se lit-il enfin comme un baiser** a l'echelle reelle d'un
+   telephone, sans reproduire ni l'ancien chevauchement (62,7 %) ni la
+   surcorrection "cote a cote" (10,6 %) ? La mesure dit 19,8 % au pic ;
+   la lecture ne l'est pas.
+2. **La porte se lit-elle comme "entre la table et l'escalier"**, ou
+   encore trop proche de l'un des deux reperes ? La projection ecran donne
+   59,5 % contre un milieu mesure a 58,25 % ; c'est un calcul, pas un oeil.
+3. **La sortie immediate depuis ce nouveau point fonctionne-t-elle
+   toujours** au pouce, sans delai ni double-tap ?
+4. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.

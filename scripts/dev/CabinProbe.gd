@@ -634,7 +634,7 @@ func _phase_k_taps(interior: Node, controller: LevelController,
 	# compares to DOOR_SPOT in XZ WITHOUT asking which level the landing
 	# was on, so a loft corner within DOOR_REACH of the doorstep would end
 	# the visit from upstairs -- a scene change nobody asked for. It cannot
-	# today: the nearest loft point is 1.583 away against a reach of 0.9.
+	# today: the nearest loft point is 1.941 away against a reach of 0.9.
 	#
 	# That is a fact about two rectangles, NOT about the code, and moving
 	# the loft or widening the reach would break it in silence. Asserted
@@ -1608,8 +1608,8 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 			CabinInterior.MAGPIE_SPOT.y)
 	var hole_clearance: float = stand.distance_to(magpie_ground) \
 			- CabinInterior.MAGPIE_FOOTPRINT_RADIUS
-	_check(absf(hole_clearance - 1.429) < 0.01,
-			"and clears her footprint hole by %.3f (radius %.2f, want ~1.429)"
+	_check(absf(hole_clearance - 1.235) < 0.01,
+			"and clears her footprint hole by %.3f (radius %.2f, want ~1.235)"
 					% [hole_clearance, CabinInterior.MAGPIE_FOOTPRINT_RADIUS])
 
 	# ---- AND A GROUND TAP AIMED AT HER FOOTPRINT NEVER LANDS THERE --------
@@ -1752,13 +1752,20 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 		prev_lean = lean
 		await get_tree().process_frame
 	_check(peak > 1.0, "he leans in (peak %.2f deg)" % peak)
-	# ⚠️ THE ASSERTION THAT KEEPS PART A'S BUG FROM COMING BACK SILENTLY.
-	# The shipped MAGPIE_STAND_SPOT before this lot measured 62.7% here; the
-	# relocation to (1.00, 0.40) brings it to ~10.6%. Gated at 25% -- well
-	# above the measured figure so normal float noise never trips it, and
-	# well below the old one -- so a future stand-spot or MAGPIE_SCALE
-	# change that reopens the overlap fails loudly here instead of a probe
-	# reading "he leans in" as proof that the pose is legible.
+	# ⚠️ THE ASSERTION THAT KEEPS PART A'S BUG FROM COMING BACK SILENTLY,
+	# EITHER WAY IT CAN FAIL. The original shipped MAGPIE_STAND_SPOT
+	# measured 62.7% here (head buried); the first fix, (1.00, 0.40),
+	# overcorrected to 10.6% (device: "standing side by side, not
+	# kissing"). This lot's relocation to (0.80, 0.40) targets real
+	# contact without repeating either extreme -- measured at 19.8%, kept
+	# at the SAME 25% ceiling this gate has carried since the first fix.
+	# That ceiling is not re-picked for the new value: it is the true wall
+	# found by sweeping the whole legal band (see MAGPIE_STAND_SPOT's own
+	# comment), 24.6% still clear at x = 0.70 and 27.0% already over at
+	# x = 0.65, so the gate stays exactly where the geometry itself put it.
+	# A future stand-spot or MAGPIE_SCALE change that reopens the overlap
+	# past that wall fails loudly here instead of a probe reading "he
+	# leans in" as proof that the pose is legible.
 	_check(worst_overlap_frac < 0.25,
 			"and her head stays clear of him at the worst of it (%.1f%% of her own footprint, want < 25%%)"
 					% (worst_overlap_frac * 100.0))
@@ -1812,14 +1819,26 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	# do. He only stops short when a FULL hop leaves a remainder under
 	# ARRIVE_EPSILON. This is such an approach.
 	#
-	# ⚠️ RE-DERIVED FOR THE RELOCATED STAND SPOT -- the old approach point
-	# was picked to be exactly 1 HOP_DISTANCE plus ~0.40 short of the OLD
-	# (0.05, 0.40); against the new (1.00, 0.40) it is no longer even that
-	# distance away, so it stopped proving anything about a short hop. Pure
-	# -X from the new spot, magnitude HOP_DISTANCE + 0.40 = 1.90: the first
-	# 1.5-unit hop leaves exactly 0.40 remaining, under ARRIVE_EPSILON
-	# (0.45) but comfortably above the `without > 0.01` floor below.
-	var short_far := floor_level.flat(Vector3(-0.90, 0.0, 0.40))
+	# ⚠️ RE-DERIVED A SECOND TIME, FOR THE SECOND RELOCATION -- BUT MOVED
+	# ALONG A DIFFERENT AXIS FOR HYGIENE, NOT BECAUSE THE OLD RECIPE WAS
+	# SHOWN TO BREAK. Each prior approach point was pure -X from whatever
+	# MAGPIE_STAND_SPOT was at the time, magnitude HOP_DISTANCE + 0.40 =
+	# 1.90 -- and that same recipe applied to THIS lot's (0.80, 0.40) lands
+	# x = -1.10, exactly the floor square's own west edge
+	# (FLOOR_CENTRE.x - FLOOR_HALF_EXTENT). CHECKED rather than assumed
+	# fragile: run at that exact edge value, the phase still passes clean
+	# (0 failures, "stops SHORT ... 0.400"), because floor_level.flat()
+	# does not consult containment and hop_to() does not either -- there
+	# was no live boundary bug to fix. Moved to -Z anyway, purely so a
+	# future reader is not left staring at a literal that coincides with
+	# a level boundary and wondering whether that was deliberate: the
+	# floor's z-range is +-1.70 around 0, comfortably clear on either
+	# side. Same total distance, same guarantee -- the first 1.5-unit hop
+	# still leaves exactly 0.40 remaining, under ARRIVE_EPSILON (0.45) but
+	# comfortably above the `without > 0.01` floor below, because that
+	# arithmetic depends only on the magnitude and hop_to() does not care
+	# which axis it travels along.
+	var short_far := floor_level.flat(Vector3(0.80, 0.0, -1.50))
 	# THE CONTROL: the walker ALONE, with no magpie in it, on this exact
 	# approach. Not a restatement of his arithmetic -- the real walk.
 	walker.global_position = short_far

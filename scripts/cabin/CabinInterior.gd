@@ -177,29 +177,47 @@ const ENTRY_SPOT := Vector2(0.60, 1.35)
 ## of the bisou and a re-shove tap near the magpie could resolve as leaving.
 ## Mathieu's call, explicit: relocate the HOTSPOT itself (tap AND snap
 ## destination), not just its label -- the label-offset fix from a prior
-## lot (below) was a symptom patch on the wrong side of the same corner and
-## is gone now that the corner itself has moved.
+## lot was a symptom patch on the wrong side of the same corner and is gone
+## now that the corner itself has moved.
 ##
-## MEASURED against the real LevelDefinition/LevelHotspot/LevelTransition
-## objects this file itself builds (jettable probe constructing the same
-## classes with the same constructor calls, never hand-rolled circle/
-## rectangle arithmetic): (2.20, 0.65) is the closest-to-the-ladder point
-## that still clears every real gate with margin --
-##   - clear of the ladder LINK's own tap circle: gap 2.105 against a
-##     radii-sum of 1.950 (+0.155). Two closer candidates that were tried,
-##     (2.05, 0.35) and (1.90, 0.45), both FAIL this exact check (gap 1.800
-##     and 1.906 against 1.950) -- 2.20 sits near the true floor of what is
-##     reachable, not an arbitrary compromise.
+## ⚠️ RELOCATED A SECOND TIME, THIS LOT, ON A DIFFERENT CLARIFICATION.
+## (2.20, 0.65) fixed the kiss-corner overlap but device read it as "at the
+## foot of the ladder" -- true by construction, it was chosen as the
+## closest-to-the-ladder point that cleared every gate. Mathieu's later,
+## explicit wording supersedes that framing outright: "between the coffee
+## table and the staircase", not at the base of either. That phrase is
+## measured here, not eyeballed -- projected through the REAL fixed camera
+## (`unproject_position`, run WITHOUT --headless, which under this project's
+## own already-documented pitfall reports the wrong viewport size for this
+## exact call) against the same landmarks a player sees: the table
+## (ENTRY_SPOT) screens at x = 52.8%, the ladder's foot at x = 63.7%.
+## (1.30, 1.50) screens at x = 59.5%, close to the midpoint of the two
+## (58.25%) and visibly inside that band rather than pinned to either edge.
+##
+## A naive geometric middle of the room FAILS outright: the ladder link's
+## own exclusion disc (radius 1.950 around LADDER_FOOT) is large relative
+## to this room, so every candidate an eyeballed "midway" search tried
+## first -- x in [1.20, 1.80] at the depth halfway between table and
+## ladder -- came back FAIL on that one gate (best case 1.946 against the
+## required 1.950). The true legal frontier was mapped by exhaustive scan
+## rather than guessed at, and (1.30, 1.50) sits on the table's side of it,
+## verified against the real LevelDefinition/LevelHotspot/LevelTransition
+## objects this file itself builds (jettable probe, same constructor calls,
+## never hand-rolled circle/rectangle arithmetic):
+##   - clear of the ladder LINK's own tap circle: gap 3.044 against a
+##     radii-sum of 1.950 (+1.094) -- comfortably past the old fix's own
+##     +0.155 margin, because the frontier at this table-side x needs a
+##     higher z than the ladder-side candidate did.
 ##   - inside the floor square: LevelDefinition.contains() = true.
-##   - the loft's own square cannot reach it: its nearest point is 1.999
+##   - the loft's own square cannot reach it: its nearest point is 1.941
 ##     from here against a DOOR_REACH of 0.9.
 ##   - clear of the magpie's own hotspot circle and of her footprint hole
-##     by a wide margin (3.309 to her hole's centre against a 0.73 + 0.85
-##     minimum).
-##   - clear of the relocated MAGPIE_STAND_SPOT (the kiss's stand point) by
-##     1.226 against a 1.05 minimum -- a re-shove tap near the bisou can no
-##     longer resolve as this hotspot.
-const DOOR_SPOT := Vector2(2.20, 0.65)
+##     by a wide margin (2.474 against a 0.73 + 0.85 minimum).
+##   - clear of the RELOCATED MAGPIE_STAND_SPOT (see its own comment, this
+##     same lot) by 1.208 against a 1.05 minimum.
+##   - clear of the bed's circle on the loft by 4.096 against a 1.550
+##     minimum -- never close, checked anyway because it is cheap.
+const DOOR_SPOT := Vector2(1.30, 1.50)
 ## Smaller than the ladder's 1.10. See LevelHotspot's header for why a
 ## generous circle is harmless on the AIM and would have been a funnel on a
 ## clamped point.
@@ -383,20 +401,40 @@ const MAGPIE_SPOT := Vector2(-1.10, 0.90)
 ## than he is. Sweeping candidates confirmed this: moving along x shrinks
 ## the overlap far faster per unit of distance than moving along z, AND
 ## keeps her drawn facing angle in the flattering three-quarter view the
-## original yaw-from-stand-spot design intended (her yaw at this spot is
-## 58.4 degrees; candidates that instead pushed +z drove it down to a
-## nearly frontal 13-23 degrees for the same overlap reduction). Z is left
-## untouched at 0.40, so the near/far ordering against the camera is
-## exactly the one MAGPIE_SPOT's own comment already argued for.
+## original yaw-from-stand-spot design intended. Z is left untouched at
+## 0.40, so the near/far ordering against the camera is exactly the one
+## MAGPIE_SPOT's own comment already argued for.
 ##
-## STILL CLEAR OF THE FOOTPRINT HOLE: 2.159 from MAGPIE_SPOT against a
-## MAGPIE_FOOTPRINT_RADIUS of 0.73 leaves 1.429 of margin (up from 0.524),
-## asserted in CabinProbe rather than left as an unchecked coincidence.
+## ⚠️ RE-TUNED A SECOND TIME, DEVICE FEEDBACK IN THE OTHER DIRECTION: the
+## first fix (x = 1.00) closed the overlap bug but overcorrected it --
+## REST read 0.0%, PEAK only 10.6%, and on a phone the two bodies read as
+## standing side by side rather than kissing. This is not a re-guess: the
+## same jettable sweep that found 1.00 was re-run across the WHOLE legal
+## band toward her, x = 0.95 down to 0.10 in fine steps, tracking both
+## REST and PEAK overlap at each one (`KissDistanceSweep.gd`, deleted
+## before commit). The band is monotonic and has exactly one hard edge --
+## the PEAK figure crosses the 25% regression ceiling this file's own
+## CabinProbe gate already carries (see that gate's comment) between
+## x = 0.70 (24.6%, 0.4 points of headroom) and x = 0.65 (27.0%, over) --
+## so "closer" is not free forever, it is free until that wall.
 ##
-## And clear of the relocated DOOR_SPOT by 1.226 against a DOOR_TAP_RADIUS
-## + margin of 1.05 -- the two hotspots no longer sit anywhere near each
-## other, so a tap meant for one cannot resolve as the other.
-const MAGPIE_STAND_SPOT := Vector2(1.00, 0.40)
+## x = 0.80 is not the arithmetic midpoint of the two extremes (that would
+## be near 0.53, deep past the wall at ~33% peak overlap): it is the point
+## giving roughly DOUBLE the shipped contact -- REST 4.8%, PEAK 19.8%,
+## against the shipped REST 0.0%, PEAK 10.6% -- while keeping 5.2
+## percentage points of margin below the 25% ceiling, comfortably clear of
+## normal float/animation-timing noise rather than balanced on the wall.
+##
+## STILL CLEAR OF THE FOOTPRINT HOLE: 1.965 from MAGPIE_SPOT (was 2.159)
+## against a MAGPIE_FOOTPRINT_RADIUS of 0.73 leaves 1.235 of margin (was
+## 1.429), asserted in CabinProbe rather than left as an unchecked
+## coincidence.
+##
+## And clear of the RELOCATED DOOR_SPOT (see its own comment, this same
+## lot) by 1.208 against a DOOR_TAP_RADIUS + margin of 1.05 -- closer to
+## that circle than before (was 1.226), but the two hotspots moved apart
+## in the same lot precisely so this stayed true with real margin.
+const MAGPIE_STAND_SPOT := Vector2(0.80, 0.40)
 
 ## Drawn to MATCH Keepy's own drawn height, not half of it -- device found
 ## the 0.50 pass ("comes up to his shoulder") too small to read as a peer.
@@ -1081,10 +1119,11 @@ func _on_hop_landed(_position: Vector3) -> void:
 ##
 ## ⚠️ IT DOES NOT GUARD ON `_resting`, and that omission is deliberate
 ## rather than missed. Lying down happens on the LOFT, and no point on the
-## loft is within DOOR_REACH of the doorstep -- the nearest is 1.583
-## against a reach of 0.9. A guard that can never fire is a guard nobody
-## reads, so the geometry is asserted in CabinProbe PHASE K instead, where
-## moving the loft would break it loudly.
+## loft is within DOOR_REACH of the doorstep -- the nearest is 1.941
+## against a reach of 0.9 (was 1.999 before this lot's relocation, still
+## nowhere close). A guard that can never fire is a guard nobody reads, so
+## the geometry is asserted in CabinProbe PHASE K instead, where moving the
+## loft would break it loudly.
 ##
 ## ⚠️ AND IT LEAVES WITHOUT WALKING ANYWHERE INSIDE DOOR_REACH, not only
 ## from a dead stop. Between ARRIVE_EPSILON (0.45) and DOOR_REACH (0.9)
