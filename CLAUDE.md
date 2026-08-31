@@ -22552,3 +22552,382 @@ les deux sens, et cette fois c'est moi qui ai failli l'appliquer a
 l'envers. Le **404 lu au meme moment** sur la prod n'etait pas davantage
 une panne : c'est la fenetre de ~3 min du deploiement NATIF Vercel, deja
 documentee, refermee par le depot de la CI.
+
+## L'ASSERTION DE FONDU D'OCCLUSION ETAIT FLAKY : elle budgetait des FRAMES pour un mecanisme qui converge en TEMPS (29 aout 2026)
+
+Branche `claude/keepy-nav-camera-occlusion-cz7m5q`, ramenee sur `staging`
+(`ebdd1dc`, alors identique a `main`). **UN SEUL fichier touche, et c'est une
+sonde** : `scripts/dev/LevelNavProbe.gd`. `git diff --name-only` ne rend rien
+sous `scripts/hub/`, `scripts/nav/`, `scripts/world/`, `scenes/`, `resources/`,
+`project.godot` ni `export_presets.cfg` -- **aucune ligne de jeu ne bouge, et
+`scripts/dev/*` est dans l'`exclude_filter`, donc le build livre est
+rigoureusement identique.**
+
+### ⚠️ D'ABORD, LA RECONCILIATION : RIEN N'AVAIT ETE PERDU
+
+Le redemarrage de conteneur du lot occlusion avait laisse une lecture faussee
+-- le log de `origin/staging` ne montrait plus mes commits en tete, et j'en
+avais conclu a une divergence. **Verifie plutot que suppose** :
+`git merge-base --is-ancestor` rend **YES** pour `2ecf722`, `026bcc4` et
+`8bad644` contre `origin/staging` **ET** contre `origin/main`. Ils etaient
+simplement 20 commits plus bas, sous le lot cabane qui a suivi. **Le fondu
+d'occlusion est donc EN PRODUCTION**, emporte par le merge de prod de la
+cabane, et la cabane s'appuie dessus (`LevelHotspot`/la geometrie cabane
+rejoignent `level_occluder`).
+
+**Regle a retenir : ne jamais conclure a une divergence sur les 3 premieres
+lignes d'un `git log`.** La question est une question d'ANCETRALITE, et
+`git merge-base --is-ancestor` y repond en une commande.
+
+### LE DEFAUT : les deux assertions de relachement dependaient de la VITESSE DE LA MACHINE
+
+Deux sessions successives ont rapporte `LevelNavProbe` differemment sur du
+**code identique au bit pres** (`git diff 2ecf722 origin/staging` sur
+`LevelCamera.gd` et `LevelNavProbe.gd` : **vide**) :
+
+| session | verdict |
+|---|---|
+| lot occlusion (la mienne) | **77 checks, 0 echec** |
+| lot cabane (intermediaire) | **77 checks, 2 echecs**, `alpha 0.997`, « byte-identique des deux cotes » |
+| lot merge de prod | **77 checks, 0 echec**, « il n'y en a aucun » |
+
+⚠️ **La session intermediaire a range ces deux echecs comme « pre-existants,
+donc pas les miens ». Ils n'etaient ni pre-existants ni du bruit : ils etaient
+MON assertion, et elle est FLAKY.** `LevelCamera` converge par
+`exp(-FADE_LAMBDA * delta)`, donc la distance parcourue par un fondu depend du
+**TEMPS ECOULE** et jamais du nombre de frames -- pendant que la sonde
+budgetait `_pump(90)`, c'est-a-dire des FRAMES. Le relachement ne se pose
+exactement sur 1.0 qu'au-dela de **~0,68 s** ; en dessous il s'arrete a 0,99x,
+et la seconde assertion tombe avec (la transparence ne repasse a DISABLED qu'A
+1.0 -- d'ou une paire d'echecs, jamais un seul).
+
+**MESURE, pas deduit** : 45 frames ont coute **914 ms** sur une machine chargee
+et **493 ms** sur une machine calme, dans la meme session. Une boite ~3x plus
+rapide fait donc 90 frames en ~0,6 s -- et 0,6 s, c'est **alpha 0.997**, le
+chiffre exact rapporte.
+
+**REPRODUIT AVANT D'ETRE CORRIGE** : pump ramene a 25 frames (493 ms ici) ->
+**`77 checks, 2 failure(s)`, `alpha 0.991`, exit 1** -- la meme paire, la meme
+forme.
+
+### LE FIX : attendre la CONDITION sur un budget mur, pas un compte de frames
+
+`_pump(frames)` est **remplacee** par `_settle_alpha(node, wanted)`, qui boucle
+jusqu'a ce que l'alpha atteigne reellement sa valeur cible, avec
+`FADE_SETTLE_BUDGET_MS = 4000` (~6x ce dont le mecanisme a besoin). Les trois
+attentes de fondu passent dessus -- les deux fondus ENTRANTS aussi, qui etaient
+fragiles de la meme facon (`_pump(60)` contre un seuil `< 0.5` : ~0,12 s
+requis, ce que 60 frames rapides ne garantissent pas non plus).
+
+⚠️ **Elle prend le NOEUD et pas le materiau** : au premier fondu l'override
+n'existe pas encore, c'est `LevelCamera` qui le cree -- une aide a qui on
+passerait un materiau d'avance recevrait `null`.
+
+⚠️ **LE PLAFOND EST UN VRAI ECHEC, PAS UNE FORMALITE, ET C'EST PROUVE** :
+ecriture du materiau de `_advance_fades` neutralisee -> **`77 checks, 3
+failure(s)`, exit 1, en 17 s** (les trois budgets plus le reste), sans
+blocage. `LevelCamera.gd` restaure byte-identique apres coup (`git diff` vide).
+
+**Apres fix : trois runs, `77 checks, 0 failure(s)` chacun, et les alphas
+atterrissent desormais sur des valeurs EXACTES** -- 0.250 aux deux fondus
+entrants, 1.000 au relachement, la ou ils flottaient a 0.99x.
+
+⚠️ **AU PASSAGE, UNE AFFIRMATION DU LOT PRECEDENT EST CORRIGEE :
+`LevelNavProbe` N'EST PAS byte-stable, et ne l'a jamais ete.** Trois runs
+consecutifs sur le MEME arbre donnent trois stdout differents -- les comptes de
+frames des tweens de marche et de traversee (`36/34/35 frames`,
+`127/126/128`, ...) bougent avec la charge machine, exactement comme
+`SwampIdentityAudit` et `TrackPropsAudit` deja consignees. **Le « BYTE-IDENTIQUE
+sur les DEUX flux » d'un lot precedent etait une COINCIDENCE** (meme machine,
+deux runs dos a dos), pas une propriete. Ces lignes-la sont **rapportees et
+jamais assertees**, donc elles ne peuvent pas produire de faux rouge -- mais le
+critere pour cette sonde est le VERDICT, pas les octets. **stderr, lui, EST
+byte-identique sur les trois runs.**
+
+### Validation
+
+Import headless **exit 0, 36 `.scn`, 0 erreur** (import complet verifie, pas
+suppose). Export Web release **exit 0, 0 erreur GDScript ou de parse**.
+`index.wasm` **35 376 909** / md5 **`af4a8fc2925d992348eb30deeeb54360`**,
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** -- le fingerprint
+permanent, comme il se doit pour un lot qui ne touche aucun fichier de jeu.
+`index.pck` 30 274 288, marqueur et **jamais** preuve d'identite. Piege payload
+tenu : sur **264** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web/`, `build` ou `firebase.json`.
+
+Sondes, **toutes exit 0** : `LevelNavProbe` (**77/0**, trois fois),
+`ProbeTimeoutAudit` (**59 sondes scenes + 1 `--script`**, inchange -- ce lot
+n'ajoute ni ne retire de sonde), `AssetContractAudit` (**12/12 visuels, 0/10
+colliders deplaces**), `DeathModelAudit`, `ChargerShapeProbe`.
+
+⚠️ **Non-applicabilite du reste ASSUMEE et dite plutot que deguisee en
+preuve** : aucun diff baseline n'est joue pour les sondes partagees, parce que
+le diff de ce lot est **un unique fichier de `scripts/dev/`** qu'aucune d'elles
+ne reference -- la seule qui le LIT est `ProbeTimeoutAudit`, verte au meme
+compte.
+
+### Reste ouvert
+
+1. ⚠️ **Le jugement device du fondu d'occlusion lui-meme reste ENTIER et
+   n'est PAS touche par ce lot** : le risque alpha deja paye sur l'eau (vert en
+   sandbox, casse sur Safari iOS/WebGL2 a certains azimuts) n'a toujours ete
+   ecarte par aucun test device. Ce lot fiabilise une SONDE ; il ne dit rien du
+   telephone.
+2. **`SeesawProbe` « 2 echecs pre-existants (banc diagonal a 45 s sous
+   llvmpipe) »** rapportes par la meme session intermediaire sont **la meme
+   famille** -- c'est le piege d'ordre des flags deja consigne (`--fixed-fps
+   60` omis), pas un defaut. Signale, **non corrige ici**.
+
+### Deploiement staging du fix de flakiness (palier 1, automatique)
+
+`staging` **`ea77e7f`** (merge `--no-ff`, arbre **byte-identique** a la branche
+feature : meme hash d'arbre `f3d15cf` des deux cotes ET `git diff` vide, verifie
+AVANT le push). CI run **#330** (id 33282001964) **verte** -- `Import project
+resources` 23:53:35 -> 23:56:22, **`Export Web build` 23:56:22 -> 23:56:27**,
+`Deploy to Vercel [STAGING -- staging]` **succes** 23:56:41 -> 23:56:51,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ebdd1dc`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, et AUX DEUX BOUTS EN MISS/age 0
+-- la forme la plus forte que ce fichier documente** :
+
+| | `CACHE_VERSION` | = UTC | lecture |
+|---|---|---|---|
+| avant (run #329) | `1788044568` | **23:02:48** | **MISS, age 0** |
+| **apres (ce lot, run #330)** | **`1788047786`** | **23:56:26** | **MISS, age 0** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(23:56:22 -> 23:56:27). Pour une fois **aucune des deux lectures n'est un
+`HIT`** : la valeur d'avant a ete relevee juste apres le push, avant que la CI
+n'ait exporte, sur une reponse fraiche.
+
+`GODOT_CONFIG.fileSizes` lu au meme moment (MISS/age 0 lui aussi) :
+**`index.wasm` 35 376 909** -- identique a l'export local et au fingerprint
+permanent -- et `index.pck` 30 274 304 contre **30 274 288** en export local
+propre, **16 octets d'ecart**, l'instabilite deja consignee.
+
+⚠️ **Limite dite plutot que sous-entendue** : `fileSizes` n'a ete lu qu'APRES,
+donc il vaut comme marqueur d'ETAT COURANT et **pas** comme preuve de
+transition ; c'est le `CACHE_VERSION`, lu aux deux bouts en MISS/age 0, qui
+porte la bascule.
+
+⚠️ **Le contenu de JEU deploye est rigoureusement IDENTIQUE a celui d'avant** :
+le seul fichier de code de ce lot est sous `scripts/dev/`, exclu du pack.
+`index.wasm` inchange le confirme. Ce deploiement n'existe que parce qu'un push
+sur `staging` en declenche un ; il n'y a rien de neuf a regarder sur device
+**pour ce lot-ci**.
+
+⚠️ **L'API GitHub Actions n'etait PAS perimee sur ce run**, et c'est note dans
+ce sens-la : les appels successifs ont rendu de vraies progressions d'etapes
+avec de vrais horodatages, et l'import a reellement pris **2 min 47 s**. Le
+piege existe ; il ne s'est pas produit ici, et le verifier coute un regard a
+l'horloge.
+
+## LA PORTE DE LA CABANE JETAIT LE PREMIER TAP DE CHAQUE VISITE (31 aout 2026)
+
+Branche `claude/keepy-session-handoff-8cl1o6`, partie de `staging`
+(`849e7da`). Regle n°1 verifiee AU DEBUT et par ARBRE, jamais par nom :
+`origin/main` = `ebdd1dc`, `origin/staging` = `849e7da` (3 commits devant,
+`CLAUDE.md` + `LevelNavProbe.gd` uniquement), `staging..main` VIDE, et la
+seule branche plus recente que `main` est deja ancetre de `staging`
+(`merge-base --is-ancestor`) -- **aucune session concurrente**.
+
+⚠️ **DEROGATION DE BRANCHE, SIGNALEE** : le nom impose par l'environnement
+(`keepy-session-handoff`) ne decrit pas ce lot. Meme arbitrage que les lots
+precedents ou la contrainte d'environnement et le sujet se contredisent --
+le nom designe l'emporte, et l'ecart est dit plutot que tu.
+
+**DEUX fichiers, verifies par `git diff --stat`** :
+`scripts/cabin/CabinInterior.gd` et `scripts/dev/CabinProbe.gd`. Ni
+`scripts/hub/`, ni `scripts/nav/`, ni une scene, ni un `.tres`, ni un
+`.glb`.
+
+### LA CAUSE, LUE DANS LE CODE LIVRE ET PAS DEDUITE DU RAPPORT
+
+`LevelWalker._advance()` termine une marche plus courte qu'`ARRIVE_EPSILON`
+(0,45) par **`became_idle.emit()`** (ligne 276) et **jamais** par
+`hop_landed.emit()` (ligne 349, reserve au chemin d'un vrai hop). La
+branche `&"door"` de `_on_tapped_hotspot` appelait `hop_to()` puis armait
+`_exit_pending` -- et **seul `_on_hop_landed` pouvait le depenser**. Le tap
+n'atteignait donc rien, et laissait une intention armee derriere lui.
+
+⚠️ **L'ASYMETRIE ETAIT EXPLICITE DANS LE FICHIER LUI-MEME.** La branche
+`&"bed"`, dix lignes plus bas, porte un `_try_rest()` immediat avec un
+commentaire ⚠️ qui **enonce exactement ce mecanisme**. La porte n'a jamais
+eu sa moitie. C'est la forme la plus couteuse de defaut de ce depot : pas
+un mecanisme inconnu, un mecanisme **deja compris, ecrit, et applique a un
+seul des deux cotes d'une paire**.
+
+**Trois precisions que la mesure ajoute au rapport de passation :**
+
+| | |
+|---|---|
+| **portee reelle** | pas « exactement sur le pas de porte » mais **tout le disque de rayon `ARRIVE_EPSILON` = 0,45**. `DOOR_TAP_RADIUS` vaut 0,85, donc il existe une couronne ou le tap est accepte et la marche nulle. |
+| **atteignable au demarrage** | `DOOR_SPOT := ENTRY_SPOT` -- distance **0,000** a l'apparition, mesuree par la sonde. Le tout premier tap possible d'une visite. Pas un cas de bord : l'etat par defaut de la piece. |
+| **pas un soft-lock** | verifie sur le chemin de recuperation, pas plaide : `_on_tapped_ground`, la branche `&"bed"` et `_on_tapped_transition` remettent tous `_exit_pending = false`. Cout reel = **un tap perdu**. |
+
+### ⚠️ UN SECOND DEFAUT SOUPCONNE, MESURE, ET INEXISTANT
+
+`_on_hop_landed` comparait a `DOOR_SPOT` **en XZ sans jamais demander sur
+quel NIVEAU** l'atterrissage avait eu lieu -- donc un atterrissage sur la
+mezzanine dans le rayon de la porte aurait termine la visite depuis
+l'etage, c'est-a-dire un changement de scene que personne n'a demande.
+
+**Il ne le peut pas** : le point du loft le plus proche
+(`LOFT_CENTRE (-0,70 ; -1,32)` +- 1,10) est a **1,583** de
+`DOOR_SPOT (0,60 ; 1,35)`, contre un `DOOR_REACH` de 0,9.
+
+⚠️ **Mais c'est un fait sur DEUX RECTANGLES, pas sur le code** : deplacer
+le loft ou elargir la portee le casserait **en silence**. Il est donc
+desormais **gate** dans `CabinProbe` PHASE K, derive des constantes livrees
+plutot que recopie -- la sonde imprime `1.583 vs 0.900`, le chiffre calcule
+a la main puis confirme par le code.
+
+### LE CORRECTIF : la forme du LIT, pas une nouvelle doctrine
+
+La sortie inline de `_on_hop_landed` est extraite en **`_try_exit() -> bool`**,
+copie exacte de la forme de `_try_rest()` : elle demande au **WALKER** ou il
+est plutot que de croire un argument, precisement parce qu'elle a **deux
+appelants** -- l'atterrissage, et le tap lui-meme quand la marche est nulle,
+qui n'a aucun atterrissage a lui tendre. `_on_hop_landed` delegue, et sa
+signature passe a `_position` (le parametre n'est plus lu).
+
+⚠️ **AUCUNE GARDE SUR `_resting`, et l'omission est deliberee** : se coucher
+se passe sur le LOFT, et l'invariant ci-dessus interdit a un point du loft
+d'atteindre la porte. Une garde qui ne peut jamais tirer est une garde que
+personne ne lit -- la geometrie est assertee a la place.
+
+⚠️ **CONSEQUENCE NOMMEE DANS LE CODE PLUTOT QUE DECOUVERTE PLUS TARD : il
+part desormais SANS MARCHER partout dans `DOOR_REACH`, pas seulement a
+l'arret.** Entre 0,45 et 0,9 la marche est reelle mais il est deja assez
+pres pour etre arrive, donc l'appel immediat depense l'intention. **Ce
+n'est pas un effet de bord du correctif** : c'est ce que le lit livre fait
+depuis toujours -- meme `BED_REACH` de 0,9, meme appel immediat -- et faire
+diverger les deux serait la plus etrange des deux reponses.
+
+### ROUGE AVANT VERT, sur la scene que le VRAI ROUTEUR charge
+
+`CabinProbe` gagne **PHASE Z**, et elle tourne **en tout dernier, apres
+PHASE R** : partir est un changement de scene, donc rien ne peut la suivre.
+
+⚠️ **Elle est pilotee sur `tree.current_scene` -- l'interieur que PHASE R
+vient de faire charger par le vrai routeur -- et NON sur une instance
+fraiche.** C'est la scene qu'un joueur a sous les yeux une frame apres avoir
+tape le pas de porte dehors, avec le walker la ou la scene le pose : ce qui
+est mesure est donc le vrai premier tap et pas une reconstitution.
+
+**Son CONTROLE est ce qui donne un sens a l'assertion** : sans lui, un
+walker place loin ferait mesurer une marche ordinaire, qui n'a jamais ete
+cassee. La sonde imprime **`he starts within a zero-length walk of the door
+(0.000 <= 0.450)`** avant d'avoir le droit de conclure.
+
+| | resultat |
+|---|---|
+| **avant le correctif** | **exit 1, 3 FAIL** -- « tapping the door while ALREADY on it leaves at once », « leaves no exit intent standing », « the door withdrew ». Les trois lignes de controle deja VERTES. |
+| **apres** | **0 failure(s), exit 0** |
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature silencieuse).
+Import headless **exit 0, 36 `.scn`** -- **des DEUX cotes**, verifie et pas
+suppose. Export Web release **exit 0**, **0 erreur GDScript** (l'unique
+ligne `ERROR` du log est `audio_driver_alsa.cpp:90`, le bruit ALSA sous
+xvfb deja consigne).
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent de tout lot qui ne touche pas le code moteur, ce que deux fichiers
+GDScript sont. `index.pck` 30 274 480, **marqueur et jamais preuve
+d'identite**. **Piege payload tenu** : sur **264** lignes `Storing File`,
+**0** pour `scripts/dev`, `assets_source`, `docs`, `web/`, `build` ou
+`firebase.json`.
+
+**HUIT sondes diffees contre `origin/staging` en worktree separe** (imports
+verifies complets des deux cotes, **TAILLES comparees avant les contenus** --
+la lecon de la troncature de run) :
+
+| sonde | verdict |
+|---|---|
+| `ProbeTimeoutAudit` | **BYTE-IDENTIQUE (2 flux)** -- **59 sondes scenes des deux cotes** : ce lot ajoute une PHASE, pas une sonde |
+| `AssetContractAudit` | **BYTE-IDENTIQUE (2 flux)** |
+| `DeathModelAudit` | **BYTE-IDENTIQUE (2 flux)** |
+| `ChargerShapeProbe` | **BYTE-IDENTIQUE (2 flux)** |
+| `LevelNavProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| `SeesawProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| `TurnstileProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| `WaterTintProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| **`CabinProbe`** | **diff = EXACTEMENT les 9 lignes ajoutees**, stderr **byte-identique** |
+
+⚠️ **Le diff de `CabinProbe` est la mesure qui compte le plus** : aucune
+assertion existante ne bouge d'un caractere -- ni le « pass-through landing
+KEEPS the intent », ni les refus de PHASE T et PHASE F, ni le retrait facon
+bateau. Le correctif ne deplace aucun comportement deja teste.
+
+Cinq sondes de plus, jouees sur la branche, **toutes exit 0 / 0 FAIL** :
+`StreamRideProbe`, `LakeZoneProbe`, `WaterImpactProbe`, `OwlFlightProbe`,
+`DivingBoardProbe`.
+
+⚠️ **CORRECTION A LA PASSATION, MESUREE** : elle annonce `SeesawProbe` et
+`TurnstileProbe` comme portant des « echecs pre-existants ». **Elles sont
+VERTES des deux cotes** (0 FAIL, exit 0). Le piege d'ordre des flags --
+`--fixed-fps 60`, sans lequel le banc de traversee tourne a la vitesse du
+mur sous llvmpipe -- etait bien la cause historique, et il est passe ici.
+
+### Reste ouvert
+
+1. **Jugement device, seul juge** : taper « Sortir » en se tenant sur le pas
+   de porte ressort-il immediatement, et le comportement dans la bande
+   0,45-0,9 (partir sans marcher) se sent-il juste ? Rien ici n'est un rendu
+   device -- llvmpipe sous `xvfb` via le backend `opengl3` de BUREAU, contre
+   WebGL2 sous Safari.
+2. **Le banc de nav toujours packe** (~0,04 % du `.pck`), inerte et
+   injoignable -- inchange, son propre lot.
+3. Les autres chantiers de la passation sont inchanges.
+
+### Deploiement staging du correctif de porte (palier 1, automatique)
+
+`staging` **`830ed3a`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `24084df9` des deux cotes ET `git diff`
+vide, verifie AVANT le push). CI run **#332** (id 33368511038) **verte** --
+`Import project resources` 07:29:11 -> 07:32:30 (3 min 19 s), **`Export Web
+build` 07:32:30 -> 07:32:36**, `Verify export output` succes, `Deploy to
+Vercel [STAGING -- staging]` **succes** 07:32:54 -> 07:33:06,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `ebdd1dc`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres (ce lot, run #332) |
+|---|---|---|
+| `CACHE_VERSION` | **`1788048180` = 30 aout 00:03:00 UTC** | **`1788161555` = 07:32:35 UTC** |
+| `index.pck` servi | -- | 30 274 480 |
+| `index.wasm` servi | -- | **35 376 909** |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(07:32:30 -> 07:32:36) : l'alias sert bien ce build.
+
+⚠️ **Pour une fois LES DEUX BOUTS du `CACHE_VERSION` sont lus en
+`x-vercel-cache: MISS` avec `age: 0`**, la valeur d'avant ayant ete relevee
+**avant le push** -- c'est la forme la plus forte que ce fichier documente,
+et non le cas habituel ou le « avant » sort d'un `HIT` a age non nul.
+
+⚠️ **Limite dite plutot que sous-entendue** : `index.pck`/`index.wasm` n'ont
+ete lus qu'APRES, donc ils valent comme marqueur d'etat courant et **pas**
+comme preuve de transition -- c'est le `CACHE_VERSION` qui la porte.
+
+⚠️ **`index.pck` servi (30 274 480) est identique a l'export local, et ce
+n'est DELIBEREMENT PAS offert comme preuve d'identite** : la doctrine tient,
+sa taille n'est pas stable d'un export a l'autre du meme commit et la
+coincidence n'y change rien. **`index.wasm` reste la preuve d'identite**, au
+fingerprint permanent des deux cotes.
+
+⚠️ **L'API Actions n'etait PAS perimee sur ce run**, note dans ce sens-la :
+un seul appel a rendu les 18 etapes avec de vrais horodatages, et l'import a
+reellement pris **3 min 19 s**. Le piege existe ; il ne s'est pas produit
+ici, et le verifier coute un regard a l'horloge -- ce qui a d'ailleurs servi
+une fois de plus dans l'autre sens, un `sleep` en arriere-plan relu
+immediatement ne montrant que **37 secondes** ecoulees.
