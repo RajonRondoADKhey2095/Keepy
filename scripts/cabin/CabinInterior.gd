@@ -271,6 +271,149 @@ const REST_YAW_DEGREES: float = 20.0
 ## using the standing one would bury his flank by the difference.
 const KEEPY_MODEL_MIN_X: float = -0.616405
 
+## =====================================================================
+## THE MAGPIE, AND THE ONE THING SHE DOES DIFFERENTLY FROM THE DOOR AND
+## THE BED
+##
+## A bird standing on the living-room floor. Tap her and Keepy walks to a
+## FIXED spot in front of her, leans in for a kiss, and a few hearts rise.
+## Repeatable for as long as anyone wants: no cooldown, no counter, nothing
+## remembered between kisses.
+##
+## ⚠️ SHE IS THE FIRST HOTSPOT WHOSE DESTINATION IS NOT THE TAP.
+##
+## The door and the bed both pass LevelController's `destination` -- the
+## CLAMPED point the finger landed on -- straight to hop_to(). That is right
+## for them: a doorway and a bed are places you walk ONTO, so wherever inside
+## their circle you aimed is where you meant to stand.
+##
+## A bird is not. You do not walk onto her; you walk UP TO her, and there is
+## exactly one place to stand where a kiss reads. So this branch DISCARDS
+## `destination` and walks to MAGPIE_STAND_SPOT instead.
+##
+## That is the AIM/destination separation this project already carries, used
+## for the first time in the direction it was always going to be needed:
+## the AIM decides WHAT was meant, and what was meant here is a place this
+## file chooses rather than one the finger picked. Reading the stand spot off
+## the tap would put Keepy wherever in a 0.60 circle the thumb happened to
+## land, kissing the air from the far side of her as often as not.
+
+const MAGPIE := preload("res://assets/models/keepy_magpie_prop.glb")
+
+## Where she stands, on the ground floor.
+##
+## MEASURED rather than eyeballed, and RE-MEASURED after the first render
+## put her behind Keepy. Ray-casting down the cabin mesh finds the front band
+## (z >= 0.3) flat to within 0.06 world units of the floor plane, everything
+## at z <= -0.34 occupied by drawn furniture standing 3.3 to 4.3 above it,
+## and -- sweeping further left than the walkable square goes -- the plank
+## floor continuing flat out to x = -1.6 before the wall starts to climb at
+## -1.8. She stands in that margin.
+##
+## ⚠️ SHE IS DELIBERATELY OUTSIDE THE WALKABLE SQUARE (x >= -1.10), which is
+## not a mistake: that square is Keepy's, shrunk by his own half-width so a
+## destination never puts his body through a wall. A prop has no such
+## constraint, and putting her inside it would have cost the one thing the
+## first render proved matters.
+##
+## ⚠️ AND WHAT THE FIRST RENDER PROVED: SHE AND KEEPY MUST NOT SHARE A LINE
+## OF SIGHT. Placed at (-0.80, 0.30) with the stand spot at (-0.35, 1.05),
+## Keepy stood BETWEEN her and the camera -- this camera is fixed at
+## (0.3, 9.5, 12.5) looking down -Z, so larger z is nearer -- and a 1.35-tall
+## squirrel in front of a 0.88-tall bird hid all but a sliver of her. The
+## capture is what found it; no constant said anything was wrong.
+##
+## So she is now the NEARER of the two and he is behind and to the right:
+## she is smaller, so she cannot hide him, and he is offset in x, so he
+## cannot hide her.
+const MAGPIE_SPOT := Vector2(-1.10, 0.90)
+
+## THE FIXED SPOT KEEPY SNAPS TO. Inside the walkable square, on measured-flat
+## floor, 1.254 from her and further from the camera than she is.
+##
+## The gap is sized off both bodies rather than picked: his front reaches
+## +1.018 along his own +Z (measured off the POSITION accessor, not assumed
+## symmetric), and her half-depth at MAGPIE_SCALE is about 0.42. At 1.254
+## his muzzle overlaps her by roughly 0.18 -- which for a kiss is the point,
+## and is why the lean below only closes a little more.
+##
+## It is also 1.098 from the doorstep against a DOOR_REACH of 0.9, so
+## standing here does not set the "Sortir" ring breathing over his shoulder.
+const MAGPIE_STAND_SPOT := Vector2(0.05, 0.40)
+
+## Drawn at half her own size, which makes her 0.883 world units tall against
+## Keepy's 1.3501 -- a bird that comes up to his shoulder. Her .glb is 1.766
+## tall in model units, so this is the one number to change if the proportion
+## is rejudged on a device.
+##
+## Raised from the 0.40 the first pass used: at 0.71 tall she read as an
+## ornament on the floor rather than as someone to talk to, and her half-
+## width of 0.475 here still clears the measured wall by 0.03.
+const MAGPIE_SCALE: float = 0.50
+
+## Lowest point of her mesh in ITS OWN units, read off the POSITION accessor
+## rather than assumed from the model being centred. It is not: min.y =
+## -0.880644 against max.y = +0.885036.
+const MAGPIE_MODEL_MIN_Y: float = -0.880644
+
+## And her highest, read the same way. The pair gives her drawn height, which
+## is what puts the hearts at beak level instead of at an authored guess.
+const MAGPIE_MODEL_MAX_Y: float = 0.885036
+
+## How close an AIM has to land to mean her. Smaller than the ladder's 1.10
+## and than the door's 0.85, and the size is FORCED rather than chosen: at
+## 0.60 she clears the door's circle by 0.30, and every unit past that eats
+## into a gap the probe asserts.
+const MAGPIE_TAP_RADIUS: float = 0.60
+
+## How close a LANDING has to be to the stand spot to actually kiss. The
+## door's and the bed's number, not a new one -- all three answer the same
+## question, and ARRIVE_EPSILON is the same 0.45 for all three.
+const MAGPIE_REACH: float = 0.9
+
+## ⚠️ HER FACING IS DERIVED PLUS A BIAS, AND THE BIAS IS THE LOT'S ONE PIECE
+## OF STAGING.
+##
+## Pointed straight at the stand spot she faces 113.5 degrees -- across the
+## room and slightly AWAY from the camera, so the render shows her back. This
+## turns her back toward it by 45, to about 68.5: a three-quarter view where
+## the eyes, the beak and the flower all read.
+##
+## It is the same move, and the same reason, as REST_YAW_DEGREES on the bed:
+## a pose that is geometrically correct and photographically flat is worth
+## one authored offset. Keepy takes NO such bias -- he is the one acting, and
+## a lean that does not point at her stops being a kiss.
+const MAGPIE_FACING_BIAS_DEGREES: float = -45.0
+
+## =====================================================================
+## THE KISS
+##
+## ⚠️ NO SKELETON, SO NO CLIP. Her .glb and his both carry one node, one
+## mesh, no skin and no animation -- the same finding the owl and the cabin
+## batches published for this family of assets. Every pose in this project is
+## a transform on the whole body, and this is one more.
+##
+## He leans forward and comes back on ONE tween over a normalised 0..1, with
+## the bell 4t(1-t) that is exactly 0 at both ends -- so he cannot be left
+## leaning by a rounding error the way a pair of chained tweens can.
+
+## How far he tips toward her at the top of the lean. Degrees about his own
+## X, which after _face_magpie() points across his line to her.
+const KISS_LEAN_DEGREES: float = 26.0
+
+## And how far he closes the gap while he does it. Small: the lean is the
+## gesture, the step is what stops it reading as a bow to nobody.
+const KISS_REACH_IN: float = 0.15
+
+## Long enough to read at real speed, short enough that a second tap is a
+## second kiss rather than a wait. There is NO cooldown beyond this: the
+## moment it ends she answers taps again.
+const KISS_S: float = 0.85
+
+## Where in the kiss the hearts leave -- at the top of the lean, not at the
+## start, so they read as caused by it.
+const KISS_HEARTS_AT: float = 0.46
+
 ## How close a LANDING has to be to the door to actually leave. Compared in
 ## XZ, like LevelWalker's own ENTRY_REACH and for its reason: the arrival
 ## is on the floor by construction, so height cannot disagree.
@@ -377,11 +520,37 @@ var _leaving: bool = false
 var _rest_pending: bool = false
 var _resting: bool = false
 
+## =====================================================================
+## THE MAGPIE'S HELD INTENT, AND THE STATE THE KISS ARMS
+##
+## `_kiss_pending` is `_exit_pending` and `_rest_pending` in every respect
+## including the one that matters: IT SURVIVES A PASS-THROUGH LANDING. A tap
+## on her from across the room is a walk of more than one hop, and an intent
+## that cleared on the first landing whatever it was would leave Keepy
+## standing beside her having never leaned in -- the owl batch's measured
+## bug, and this is the fourth thing in this file to be built not to repeat
+## it.
+##
+## `_kissing` is held for the length of the tween and for nothing else. It
+## exists so a second tap during a kiss cannot start a second one on the
+## same body, and it is cleared by the tween itself.
+var _kiss_pending: bool = false
+var _kissing: bool = false
+
+## Her hotspot, held so the kiss can withdraw it -- the boat's shape, the
+## same one the bed and the door use.
+var _magpie: LevelHotspot = null
+
+## The bird herself, and the hearts that rise off her.
+var _magpie_body: Node3D = null
+var _hearts: CabinHearts = null
+
 ## One marker per tappable thing, kept so the ladder's can follow Keepy
 ## between storeys and the others can hide when he is not on their level.
 var _ladder_marker: CabinMarker = null
 var _door_marker: CabinMarker = null
 var _bed_marker: CabinMarker = null
+var _magpie_marker: CabinMarker = null
 
 func _ready() -> void:
 	# ⚠️ MOUSE_FILTER_IGNORE, and it is load-bearing. _unhandled_input runs
@@ -421,7 +590,14 @@ func _ready() -> void:
 	_bed = LevelHotspot.make(1,
 			Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y),
 			BED_TAP_RADIUS, &"bed", "Lit")
-	_controller.hotspots = [_door, _bed]
+	# THE MAGPIE, on the ground floor. Registered exactly like the other two
+	# and through the same generic class -- LevelHotspot's own header already
+	# names "a door, a bed, a chest" as what it is for, so a third kind of
+	# thing to tap needs no new machinery, only a new StringName.
+	_magpie = LevelHotspot.make(0,
+			Vector3(MAGPIE_SPOT.x, floor_level.plane_y, MAGPIE_SPOT.y),
+			MAGPIE_TAP_RADIUS, &"magpie", "Pie")
+	_controller.hotspots = [_door, _bed, _magpie]
 
 	_controller.tapped_ground.connect(_on_tapped_ground)
 	_controller.tapped_transition.connect(_on_tapped_transition)
@@ -429,6 +605,7 @@ func _ready() -> void:
 	_controller.level_changed.connect(_on_level_changed)
 
 	_build_backdrop()
+	_build_magpie()
 	_place_walker()
 	_build_markers()
 	# The walker moves the markers' near/far state, and its landings are
@@ -461,6 +638,53 @@ func _build_backdrop() -> void:
 	holder.add_child(model)
 	holder.scale = Vector3.ONE * CABIN_SCALE
 	_props.add_child(holder)
+
+## The magpie, and the hearts holder that goes with her.
+##
+## Instantiated DIRECTLY rather than through a ModelSlot, on the owl's and
+## the cabin's own terms: a slot exists to hold a PLACEHOLDER that a real
+## model later replaces, and this is either the bird or nothing.
+##
+## ⚠️ HER YAW IS DERIVED, NOT AUTHORED. She faces MAGPIE_STAND_SPOT, which
+## is the one place Keepy can ever be while talking to her -- so a second
+## authored angle here would be a second opinion about where he stands, free
+## to drift from the spot itself the first time either moves. Her model's
+## face is on +Z, measured by rendering her on four axes rather than assumed
+## from the other assets: at yaw 0 the eyes, beak and flower are visible and
+## at 180 only her back is.
+func _build_magpie() -> void:
+	var bird := MAGPIE.instantiate() as Node3D
+	if bird == null:
+		push_error("CabinInterior: the magpie .glb did not instantiate to a Node3D.")
+		return
+	bird.name = "Magpie"
+	bird.scale = Vector3.ONE * MAGPIE_SCALE
+	var floor_level: LevelDefinition = _controller.levels[0]
+	# Lifted by exactly the depth she hangs below her own origin, scaled --
+	# the derivation that cost 0.9166 world units when it was copied instead.
+	bird.position = Vector3(
+			MAGPIE_SPOT.x,
+			floor_level.plane_y - MAGPIE_MODEL_MIN_Y * MAGPIE_SCALE,
+			MAGPIE_SPOT.y)
+	bird.rotation_degrees = Vector3(0.0,
+			_yaw_towards(MAGPIE_SPOT, MAGPIE_STAND_SPOT) + MAGPIE_FACING_BIAS_DEGREES,
+			0.0)
+	_props.add_child(bird)
+	_magpie_body = bird
+	# The hearts live on Props and not on the bird, so her own transform --
+	# which a later batch may well want to animate -- cannot carry them.
+	_hearts = CabinHearts.new()
+	_hearts.name = "Hearts"
+	_props.add_child(_hearts)
+
+## The yaw that points a node's +Z from `from` at `to`. One conversion, so
+## nothing in this file writes atan2 twice with the arguments in a different
+## order.
+func _yaw_towards(from: Vector2, to: Vector2) -> float:
+	var d := to - from
+	if d.length_squared() <= 0.0:
+		return 0.0
+	return rad_to_deg(atan2(d.x, d.y))
 
 ## Keepy's body, hung on the walker.
 ##
@@ -500,6 +724,8 @@ func _build_markers() -> void:
 	_bed_marker = _add_marker(BED_TAP_RADIUS, "Lit")
 	var loft_level: LevelDefinition = _controller.levels[1]
 	_bed_marker.position = Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y)
+	_magpie_marker = _add_marker(MAGPIE_TAP_RADIUS, "Pie")
+	_magpie_marker.position = Vector3(MAGPIE_SPOT.x, floor_level.plane_y, MAGPIE_SPOT.y)
 
 func _add_marker(radius: float, text: String) -> CabinMarker:
 	var marker := CabinMarker.new()
@@ -532,6 +758,8 @@ func _on_level_changed(index: int) -> void:
 		_door_marker.visible = _door != null and _door.serves(index)
 	if _bed_marker != null:
 		_bed_marker.visible = _bed != null and _bed.serves(index)
+	if _magpie_marker != null:
+		_magpie_marker.visible = _magpie != null and _magpie.serves(index)
 	_refresh_proximity()
 
 ## Pulses whatever Keepy is standing near, with HubPortal's hysteresis.
@@ -540,6 +768,7 @@ func _refresh_proximity() -> void:
 	_pulse_if_near(_ladder_marker, _controller.links[0].tap_radius, here)
 	_pulse_if_near(_door_marker, DOOR_TAP_RADIUS, here)
 	_pulse_if_near(_bed_marker, BED_TAP_RADIUS, here)
+	_pulse_if_near(_magpie_marker, MAGPIE_TAP_RADIUS, here)
 
 func _pulse_if_near(marker: CabinMarker, radius: float, here: Vector3) -> void:
 	if marker == null or not marker.visible:
@@ -572,11 +801,13 @@ func _on_tapped_ground(destination: Vector3) -> void:
 	# LevelWalker.hop_to() does exactly this to its own link intent.
 	_exit_pending = false
 	_rest_pending = false
+	_kiss_pending = false
 	_walker.hop_to(destination)
 
 func _on_tapped_transition(link: LevelTransition, _destination: Vector3) -> void:
 	_exit_pending = false
 	_rest_pending = false
+	_kiss_pending = false
 	if _ladder_marker != null:
 		_ladder_marker.flash()
 	_walker.request_transition(link)
@@ -632,9 +863,33 @@ func _on_tapped_hotspot(hotspot: LevelHotspot, destination: Vector3) -> void:
 			# simply never fire here -- the hub's _on_tapped_cabin carries
 			# the same line for the same reason.
 			_try_rest()
+		&"magpie":
+			if _magpie_marker != null:
+				_magpie_marker.flash()
+			_exit_pending = false
+			_rest_pending = false
+			# ⚠️ `destination` IS DELIBERATELY DISCARDED HERE, and this is the
+			# only branch in this file that does it. See the MAGPIE block at
+			# the top: a bird is walked UP TO and not ONTO, so the place to
+			# stand is one this file chooses, not one the thumb picked out of
+			# a 0.60 circle.
+			var floor_level: LevelDefinition = _controller.levels[0]
+			_walker.hop_to(Vector3(MAGPIE_STAND_SPOT.x, floor_level.plane_y,
+					MAGPIE_STAND_SPOT.y))
+			# Armed AFTER hop_to(), for the reason the door's and the bed's
+			# are: that call clears the WALKER's own link intent, and arming
+			# first would read as though the two were one field.
+			_kiss_pending = true
+			# ⚠️ ALREADY STANDING THERE: nothing to walk, so kiss on the spot.
+			# _advance() finishes a zero-length walk by emitting became_idle
+			# and NOT hop_landed, so a landing-only path would never fire --
+			# which is exactly the defect that shipped on the door and was
+			# reachable from the opening frame of every visit.
+			_try_kiss()
 		_:
 			_exit_pending = false
 			_rest_pending = false
+			_kiss_pending = false
 			_walker.hop_to(destination)
 
 ## Every landing: proximity, and the held intents.
@@ -649,6 +904,8 @@ func _on_hop_landed(_position: Vector3) -> void:
 	# beyond needing an order: the two cannot be armed at once, because
 	# arming either clears the other.
 	if _rest_pending and _try_rest():
+		return
+	if _kiss_pending and _try_kiss():
 		return
 	if _exit_pending:
 		_try_exit()
@@ -702,6 +959,138 @@ func _try_exit() -> bool:
 	_exit_pending = false
 	_leave_to_hub()
 	return true
+
+## Kisses her if he has actually reached the stand spot. Returns whether it
+## did, so the caller knows the landing is spent -- _try_exit()'s and
+## _try_rest()'s shape exactly, and for the same two callers.
+##
+## ⚠️ IT MEASURES AGAINST MAGPIE_STAND_SPOT AND NOT AGAINST HER. The walk was
+## aimed at the stand spot, so that is what "did he arrive" means; measuring
+## against the bird would be asking a question nobody was walking towards,
+## and would let a landing anywhere in a 0.9 ring around her count.
+func _try_kiss() -> bool:
+	if _kissing or _resting or _leaving or _magpie == null:
+		return false
+	var here := _walker.global_position
+	var flat := Vector2(here.x, here.z)
+	if flat.distance_to(MAGPIE_STAND_SPOT) > MAGPIE_REACH:
+		# NOT there yet. The intent is KEPT -- the pass-through landing that
+		# LevelWalker's own `_pending` exists to survive.
+		return false
+	_kiss_pending = false
+	_enter_kiss()
+	return true
+
+## =====================================================================
+## THE KISS ITSELF
+##
+## ⚠️ THE WITHDRAWAL IS THE BOAT'S, AND THE LADDER'S IS BANNED -- the rule
+## LevelHotspot's header states and this file already obeys twice. She stops
+## answering taps for the length of the lean, so a tap during it falls
+## THROUGH to the ground path and moves him instead of stacking a second
+## tween on the same body.
+##
+## ⚠️ AND THAT IS NOT A COOLDOWN. The brief asked for the interaction to be
+## repeatable without limit, and it is: she is held for KISS_S and not one
+## frame longer, and the tween itself is what releases her. There is no
+## timer after it, no counter, and nothing remembered between kisses.
+##
+## THE LADDER IS NOT HELD, unlike during a rest. A rest happens on the loft
+## where the ladder is the only other thing to tap and a crossing started
+## mid-pose would drive the body from LevelWalker while this file thinks it
+## owns it. The kiss happens on the GROUND FLOOR, where the ladder's foot is
+## 3.344 away against radii summing to 1.70 -- so a tap cannot reach both,
+## and holding it would be a second opinion about a refusal the geometry
+## already makes.
+func _enter_kiss() -> void:
+	var body := _walker.get_node_or_null("Body") as Node3D
+	if body == null:
+		push_error("CabinInterior: cannot kiss -- the walker has no Body.")
+		return
+	_kissing = true
+	_magpie.set_busy(true)
+	# The marker stops breathing while she is busy: a ring pulsing over a
+	# thing that refuses is a ring that lies.
+	if _magpie_marker != null:
+		_magpie_marker.set_near(false)
+	# ⚠️ HE SNAPS TO THE SPOT, and this line is load-bearing rather than
+	# tidy. LevelWalker._advance() stops a hop chain once the remainder is
+	# under ARRIVE_EPSILON (0.45), so a walk ENDS NEAR its target and never
+	# ON it -- measured at 0.383 short on one approach. Without this the
+	# gap between the two of them would depend on which side of the room he
+	# came from: further than designed from the north, and from the far
+	# side CLOSER than his own muzzle is long, which is a squirrel drawn
+	# through a bird. The bed does exactly this, for exactly this reason.
+	#
+	# Only XZ and the yaw move. The height is the floor he is already on,
+	# read off the level rather than restated.
+	_walker.global_position = Vector3(MAGPIE_STAND_SPOT.x,
+			_controller.levels[0].plane_y, MAGPIE_STAND_SPOT.y)
+	# He turns to her BEFORE the lean, and the angle is derived from the two
+	# points rather than authored -- the same one conversion her own yaw came
+	# out of, with the arguments the other way round.
+	_walker.rotation_degrees = Vector3(0.0,
+			_yaw_towards(MAGPIE_STAND_SPOT, MAGPIE_SPOT), 0.0)
+	var hearts_fired := [false]
+	var tw := create_tween()
+	tw.tween_method(
+		func(t: float) -> void: _apply_kiss(body, hearts_fired, t),
+		0.0, 1.0, KISS_S)
+	tw.tween_callback(_end_kiss)
+
+## One tween over a normalised 0..1, with the bell 4t(1-t).
+##
+## ⚠️ THE BELL IS EXACTLY 0 AT BOTH ENDS BY CONSTRUCTION, which is why this
+## is one tween_method and not a chained lean-out/lean-back pair: he cannot
+## be left leaning by a rounding error, and there is no second tween that
+## could be killed halfway and strand him. The hub's impact ring and
+## CabinMarker's own flash are the same shape for the same reason.
+func _apply_kiss(body: Node3D, fired: Array, t: float) -> void:
+	if not is_instance_valid(body):
+		return
+	var bell := 4.0 * t * (1.0 - t)
+	# Positive X leans a Node3D forward -- its up vector tips toward local
+	# +Z, which _yaw_towards() has just pointed at her.
+	body.rotation_degrees = Vector3(KISS_LEAN_DEGREES * bell, 0.0, 0.0)
+	body.position = Vector3(0.0,
+			-KEEPY_MODEL_MIN_Y * KEEPY_SCALE,
+			KISS_REACH_IN * bell)
+	# The hearts leave at the top of the lean, once. A boolean in a boxed
+	# array and not a field: it belongs to this one kiss, and a field would
+	# have to be reset by whoever starts the next one.
+	if not bool(fired[0]) and t >= KISS_HEARTS_AT:
+		fired[0] = true
+		if _hearts != null:
+			_hearts.burst(_kiss_point())
+
+## Where the hearts leave from: half way between her head and his, at her
+## head's height. DERIVED from the two spots and the two models' own
+## measured heights, so nothing here is a fourth opinion about where either
+## of them is standing.
+func _kiss_point() -> Vector3:
+	var floor_level: LevelDefinition = _controller.levels[0]
+	var bird_head := Vector3(MAGPIE_SPOT.x,
+			floor_level.plane_y + (MAGPIE_MODEL_MAX_Y - MAGPIE_MODEL_MIN_Y) * MAGPIE_SCALE * 0.86,
+			MAGPIE_SPOT.y)
+	var his := Vector3(MAGPIE_STAND_SPOT.x, bird_head.y, MAGPIE_STAND_SPOT.y)
+	return bird_head.lerp(his, 0.5)
+
+## Puts him back. Everything is DERIVED rather than restored from a snapshot
+## taken on the way in -- _wake()'s rule, and for its reason: a saved
+## transform is a copy that goes stale the first time anything else moves
+## him.
+##
+## His YAW is left facing her, exactly as _wake() leaves his facing the way
+## he lay. The next hop turns him again through LevelWalker._face().
+func _end_kiss() -> void:
+	_kissing = false
+	var body := _walker.get_node_or_null("Body") as Node3D
+	if body != null:
+		body.rotation_degrees = Vector3.ZERO
+		body.position = Vector3(0.0, -KEEPY_MODEL_MIN_Y * KEEPY_SCALE, 0.0)
+	if _magpie != null:
+		_magpie.set_busy(false)
+	_refresh_proximity()
 
 ## Lies him down if he has actually reached the bed. Returns whether it
 ## did, so the caller knows the landing is spent.
