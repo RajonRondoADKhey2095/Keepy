@@ -182,6 +182,10 @@ func _ready() -> void:
 	# in, so every phase that needs the plateau has to have run already.
 	await _phase_r_route(tree, hub, props, keepy)
 	dl.abort_if_exceeded()
+	# AFTER the route, and it has to be: it drives the door for real, so it
+	# ends in a second scene change. Nothing may follow it.
+	await _phase_z_first_tap(tree)
+	dl.abort_if_exceeded()
 
 	print("")
 	print("--- %d failure(s) ---" % _failures)
@@ -621,6 +625,26 @@ func _phase_k_taps(interior: Node, controller: LevelController,
 	interior.call("_on_tapped_ground", floor_level.centre())
 	_check(not bool(interior.get("_exit_pending")),
 			"a plain tap somewhere else cancels the exit intent")
+
+	# ⚠️ AND NO POINT ON THE LOFT CAN REACH THE DOOR. _on_hop_landed
+	# compares to DOOR_SPOT in XZ WITHOUT asking which level the landing
+	# was on, so a loft corner within DOOR_REACH of the doorstep would end
+	# the visit from upstairs -- a scene change nobody asked for. It cannot
+	# today: the nearest loft point is 1.583 away against a reach of 0.9.
+	#
+	# That is a fact about two rectangles, NOT about the code, and moving
+	# the loft or widening the reach would break it in silence. Asserted
+	# rather than trusted, and derived from the shipped constants so it
+	# cannot drift from what the scene actually builds.
+	var loft_lo := CabinInterior.LOFT_CENTRE - Vector2.ONE * CabinInterior.LOFT_HALF_EXTENT
+	var loft_hi := CabinInterior.LOFT_CENTRE + Vector2.ONE * CabinInterior.LOFT_HALF_EXTENT
+	var nearest_loft := Vector2(
+			clampf(CabinInterior.DOOR_SPOT.x, loft_lo.x, loft_hi.x),
+			clampf(CabinInterior.DOOR_SPOT.y, loft_lo.y, loft_hi.y))
+	var loft_gap_to_door: float = nearest_loft.distance_to(CabinInterior.DOOR_SPOT)
+	_check(loft_gap_to_door > CabinInterior.DOOR_REACH,
+			"no point on the loft is within the door's reach (%.3f vs %.3f)"
+					% [loft_gap_to_door, CabinInterior.DOOR_REACH])
 
 ## The doorstep must not answer for the lawn in front of the cabin.
 ##
@@ -1339,3 +1363,78 @@ func _find_mesh(n: Node) -> MeshInstance3D:
 	for c in n.find_children("*", "MeshInstance3D", true, false):
 		return c as MeshInstance3D
 	return null
+
+
+## =====================================================================
+## PHASE Z -- THE FIRST TAP OF A VISIT, WHICH USED TO BE THROWN AWAY
+##
+## THE DEFECT THIS GATES, and it shipped: the door's branch of
+## _on_tapped_hotspot called hop_to() and then armed _exit_pending, and
+## ONLY _on_hop_landed could ever spend it. LevelWalker._advance() ends a
+## walk shorter than ARRIVE_EPSILON (0.45) with became_idle and NEVER with
+## hop_landed -- so standing within 0.45 of the doorstep, the tap did
+## nothing at all and left the intent armed behind it.
+##
+## ⚠️ REACHABLE ON THE VERY FIRST TAP OF EVERY VISIT, because DOOR_SPOT is
+## ENTRY_SPOT: he arrives standing exactly on it, distance 0.000. Not a
+## corner case -- the default state of the room.
+##
+## The bed's branch has carried the immediate _try_rest() for this exact
+## reason since it was written, with a ⚠️ comment naming the mechanism.
+## The door simply never got its half.
+##
+## ⚠️ DRIVEN ON THE SCENE THE ROUTER ITSELF JUST LOADED, not on a fresh
+## instance of it. That interior is the one a player is looking at one
+## frame after tapping the doorstep outside, with the walker standing
+## where the scene puts him -- so the thing measured is the real first tap
+## and not a reconstruction of it.
+##
+## It runs LAST because leaving is a scene change: this phase hands the
+## current scene back to the hub, and anything after it would be reading a
+## tree that had just been replaced.
+func _phase_z_first_tap(tree: SceneTree) -> void:
+	print("")
+	print("--- PHASE Z: the first tap of a visit leaves at once ---")
+	var interior: Node = tree.current_scene
+	if interior == null or interior.get_script() == null 			or interior.get_script().resource_path != "res://scripts/cabin/CabinInterior.gd":
+		_check(false, "PHASE R left the interior current (nothing to drive)")
+		return
+	var controller: LevelController = interior.get_node_or_null(
+			"LevelController") as LevelController
+	var walker: LevelWalker = interior.get_node_or_null(
+			"WorldViewport/SubViewport/World/Walker") as LevelWalker
+	if controller == null or walker == null:
+		_check(false, "the loaded interior carries a controller and a walker")
+		return
+	var door: LevelHotspot = null
+	for spot in controller.hotspots:
+		if spot.kind == &"door":
+			door = spot
+	if door == null:
+		_check(false, "the loaded interior carries a door")
+		return
+
+	# THE CONTROL, and without it the assertion below means nothing: if he
+	# were standing far from the door this would measure an ordinary walk,
+	# which was never broken. The claim is that a ZERO-LENGTH walk works.
+	var here := Vector2(walker.global_position.x, walker.global_position.z)
+	var walk: float = here.distance_to(CabinInterior.DOOR_SPOT)
+	_check(walk <= LevelWalker.ARRIVE_EPSILON,
+			"he starts within a zero-length walk of the door (%.3f <= %.3f)"
+					% [walk, LevelWalker.ARRIVE_EPSILON])
+	_check(not bool(interior.get("_exit_pending")),
+			"and with no exit intent standing")
+	_check(not bool(interior.get("_leaving")), "and not already leaving")
+
+	# THE TAP ITSELF, through the door's own branch.
+	interior.call("_on_tapped_hotspot", door, door.point)
+	_check(bool(interior.get("_leaving")),
+			"tapping the door while ALREADY on it leaves at once")
+	_check(not bool(interior.get("_exit_pending")),
+			"and leaves no exit intent standing behind it")
+	# Through is_available(), never the field: LevelHotspot's own header
+	# warns that a second reader bypassing the accessor is how one field
+	# starts giving two answers.
+	_check(not door.is_available(),
+			"and the door withdrew, so a second tap cannot re-ask")
+
