@@ -23495,3 +23495,34 @@ specifiquement sur les trois points corriges :
 Reste aussi hors perimetre : le lot 2 (visibilite de la pie depuis le hub
 avant d'entrer dans la cabine), explicitement pas commence ici ; et le
 commentaire perime de `_enter_rest()` signale plus haut.
+
+### Deploiement staging du calibrage pie (palier 1, automatique)
+
+`staging` (`4a840d0`, merge `--no-ff` de `825d7db`). CI **run #338**
+(id `33392073223`) **verte** -- `Import project resources` 12:30:55 ->
+12:34:26 (3 min 31 s), `Export Web build` **12:34:26 -> 12:34:32**,
+`Deploy to Vercel [STAGING -- staging]` succes 12:34:47 -> 12:35:01,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`afa49d7`, inchange) : palier 2 gate par Mathieu, demande de validation
+device ci-dessus.
+
+**Verifie SUR LE SERVICE, pas dans le log CI seul, sur DEUX marqueurs
+independants** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1788179671` = **12:34:31 UTC** -- tombe exactement dans la fenetre `Export Web build` (12:34:26 -> 12:34:32) |
+| `x-vercel-cache` / `age` | `MISS` / `0` sur `index.service.worker.js` ET `index.html` |
+| `index.wasm` servi | **35 376 909** octets -- identique au fingerprint permanent deja consigne pour tout lot qui ne touche pas le code moteur |
+| `index.pck` servi | 34 350 048 octets (marqueur "nouveau build", jamais preuve d'identite seule) |
+
+`index.wasm` inchange confirme qu'aucun code moteur n'a bouge, coherent :
+ce lot ne modifie que 3 fichiers GDScript deja itemises ci-dessus.
+
+⚠️ **Une seule limite a dire plutot que sous-entendre** : les deux lectures
+ont ete faites APRES le merge (aucune lecture "avant" prise sur le service
+avant le push), donc la preuve de bascule repose sur la CONCORDANCE entre
+l'epoch `CACHE_VERSION` et la fenetre CI reelle, pas sur une comparaison
+avant/apres du service lui-meme. C'est la forme documentee comme suffisante
+quand une lecture prealable n'a pas ete prise -- la limite est dite plutot
+que masquee, comme la doctrine de ce fichier l'exige.
