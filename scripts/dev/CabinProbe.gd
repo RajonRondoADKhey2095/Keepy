@@ -1480,6 +1480,45 @@ func _phase_p_rest(interior: Node, controller: LevelController,
 ## refusing. That is the blind-check discipline PHASE R and the hub's own
 ## probes carry, applied to the one phase in this file that could otherwise
 ## be green on a magpie nobody can talk to.
+## HEAD ZONE, in the magpie's OWN model units -- measured off the raw glTF
+## vertex buffer (assets/models/keepy_magpie_prop.glb, POSITION accessor,
+## 5439 verts, parsed directly, not the Godot importer's AABB). Fine Y
+## banding shows the body and wings occupy y <~ 0.53 (X out to +-0.95, Z
+## out to +-0.75 -- wingspan and tail, not her head), narrowing sharply
+## above y = 0.532 and again above y = 0.708 into a small asymmetric blob
+## (x in [-0.05, 0.47], z in [-0.23, 0.32]) consistent with "eyes, beak,
+## the flower" and nothing else on the mesh. Two cuts, both measured, both
+## kept: TIGHT is face/beak only, WIDE is head+neck. See MAGPIE_STAND_SPOT's
+## own comment for why this replaced a whole-body ceiling that never
+## looked at either.
+const _HEAD_Y_TIGHT: float = 0.708
+const _HEAD_Y_WIDE: float = 0.532
+const _HEAD_TIGHT_XZ := Vector4(-0.06, 0.47, -0.24, 0.34)
+const _HEAD_WIDE_XZ := Vector4(-0.37, 0.65, -0.42, 0.48)
+
+## World-space XZ footprint of one head cut, on the LIVE bird the scene
+## actually drew -- `bird.to_global()` on the model-space corners, not a
+## second copy of her transform rebuilt by hand from position/rotation/
+## scale (that hand-rebuild is exactly what put the camera pitch upside
+## down during this lot's own recon; the fix there was instantiating the
+## real scene instead of retyping its numbers, and this helper carries the
+## same discipline one level down, onto the bird alone).
+func _head_world_rect(bird: Node3D, xz: Vector4, y_lo_model: float) -> Rect2:
+	var y_hi: float = CabinInterior.MAGPIE_MODEL_MAX_Y
+	var minx := INF
+	var maxx := -INF
+	var minz := INF
+	var maxz := -INF
+	for xi in [xz.x, xz.y]:
+		for zi in [xz.z, xz.w]:
+			for yi in [y_lo_model, y_hi]:
+				var w: Vector3 = bird.to_global(Vector3(xi, yi, zi))
+				minx = minf(minx, w.x)
+				maxx = maxf(maxx, w.x)
+				minz = minf(minz, w.z)
+				maxz = maxf(maxz, w.z)
+	return Rect2(minx, minz, maxx - minx, maxz - minz)
+
 func _phase_n_magpie(interior: Node, controller: LevelController,
 		walker: LevelWalker) -> void:
 	print("")
@@ -1608,8 +1647,8 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 			CabinInterior.MAGPIE_SPOT.y)
 	var hole_clearance: float = stand.distance_to(magpie_ground) \
 			- CabinInterior.MAGPIE_FOOTPRINT_RADIUS
-	_check(absf(hole_clearance - 1.235) < 0.01,
-			"and clears her footprint hole by %.3f (radius %.2f, want ~1.235)"
+	_check(absf(hole_clearance - 1.090) < 0.01,
+			"and clears her footprint hole by %.3f (radius %.2f, want ~1.090)"
 					% [hole_clearance, CabinInterior.MAGPIE_FOOTPRINT_RADIUS])
 
 	# ---- AND A GROUND TAP AIMED AT HER FOOTPRINT NEVER LANDS THERE --------
@@ -1718,12 +1757,30 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	# kiss is when the landing that started it returns. Reading it here on
 	# the spot was red on correct code, the same family as the hearts.
 	#
-	# ⚠️ TRACKED THROUGH ITS OWN PEAK AND NO FURTHER -- the overlap bug this
-	# lot fixes was invisible to a probe that only proved SOME lean
-	# happened, so what is tracked here is the real world-space XZ overlap
-	# of his AABB against hers, on the same two LIVE nodes the scene
-	# actually draws, at its own worst point. But everything BELOW this
-	# block still assumes the kiss is mid-flight (her withdrawal, the
+	# ⚠️ THE GATE WAS WHOLE-BODY OVERLAP UNTIL THIS LOT, AND DEVICE PROVED
+	# THAT WAS THE WRONG SILHOUETTE. Her tail and wings can overlap his body
+	# without either of them ever touching her FACE, which is the only
+	# thing a viewer reads as "kiss" or "no kiss" -- see MAGPIE_STAND_SPOT's
+	# own comment for the recon that found it (the shipped 0.80 measured
+	# PEAK 0.0% on her face across the whole lean while still reading
+	# "roughly double the shipped contact" on the old whole-body figure).
+	# What is tracked below is still the real world-space XZ overlap of his
+	# AABB against hers, on the same two LIVE nodes the scene actually
+	# draws -- but now ALSO against two HEAD-ONLY zones (_HEAD_TIGHT_XZ,
+	# face/beak/eyes; _HEAD_WIDE_XZ, head+neck), both fixed and never
+	# re-derived per candidate, because the bird does not move during a
+	# kiss and computing them once outside the loop is what the render-
+	# matching sweep this gate is built from already did.
+	#
+	# ⚠️ REST IS THE FIRST FRAME, NOT A SEPARATE POSE. The lean-is-polled
+	# note above already establishes lean == 0 on iteration zero -- that is
+	# the instant he snaps onto the spot and _kissing turns true in the
+	# same frame, so "standing there, not yet leaning in" and "the first
+	# frame of the kiss" are the same geometry. Reading it any later would
+	# already have some lean baked in and could not tell rest from peak.
+	#
+	# ⚠️ TRACKED THROUGH ITS OWN PEAK AND NO FURTHER -- everything BELOW
+	# this block still assumes the kiss is mid-flight (her withdrawal, the
 	# hearts, _settle_kiss ending it on its own) -- so the loop stops the
 	# instant the lean starts falling back down, the first frame past the
 	# bell's true peak, rather than running until _kissing turns false on
@@ -1732,10 +1789,18 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	# then she no longer was: the kiss had already finished under it.
 	var peak: float = 0.0
 	var worst_overlap_frac: float = 0.0
+	var rest_head_tight: float = 0.0
+	var peak_head_tight: float = 0.0
+	var rest_head_wide: float = 0.0
+	var peak_head_wide: float = 0.0
 	var bird_box: AABB = _world_aabb(bird)
 	var bird_rect := Rect2(bird_box.position.x, bird_box.position.z,
 			bird_box.size.x, bird_box.size.z)
 	var bird_footprint: float = bird_rect.size.x * bird_rect.size.y
+	var head_tight_rect: Rect2 = _head_world_rect(bird, _HEAD_TIGHT_XZ, _HEAD_Y_TIGHT)
+	var head_wide_rect: Rect2 = _head_world_rect(bird, _HEAD_WIDE_XZ, _HEAD_Y_WIDE)
+	var head_tight_area: float = head_tight_rect.size.x * head_tight_rect.size.y
+	var head_wide_area: float = head_wide_rect.size.x * head_wide_rect.size.y
 	var prev_lean: float = -1.0
 	var leaned: int = Time.get_ticks_msec()
 	while bool(interior.get("_kissing")) and Time.get_ticks_msec() - leaned < 6000:
@@ -1747,28 +1812,50 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 		var overlap: float = body_rect.intersection(bird_rect).get_area()
 		if bird_footprint > 0.0:
 			worst_overlap_frac = maxf(worst_overlap_frac, overlap / bird_footprint)
+		var ht: float = body_rect.intersection(head_tight_rect).get_area()
+		var htf: float = ht / head_tight_area if head_tight_area > 0.0 else 0.0
+		var hw: float = body_rect.intersection(head_wide_rect).get_area()
+		var hwf: float = hw / head_wide_area if head_wide_area > 0.0 else 0.0
+		if prev_lean < 0.0:
+			rest_head_tight = htf
+			rest_head_wide = hwf
+		peak_head_tight = maxf(peak_head_tight, htf)
+		peak_head_wide = maxf(peak_head_wide, hwf)
 		if prev_lean >= 0.0 and lean < prev_lean and peak > 1.0:
 			break
 		prev_lean = lean
 		await get_tree().process_frame
 	_check(peak > 1.0, "he leans in (peak %.2f deg)" % peak)
+	print("    (for context: whole-body overlap was %.1f%% at peak, no longer gated)"
+			% (worst_overlap_frac * 100.0))
 	# ⚠️ THE ASSERTION THAT KEEPS PART A'S BUG FROM COMING BACK SILENTLY,
-	# EITHER WAY IT CAN FAIL. The original shipped MAGPIE_STAND_SPOT
-	# measured 62.7% here (head buried); the first fix, (1.00, 0.40),
-	# overcorrected to 10.6% (device: "standing side by side, not
-	# kissing"). This lot's relocation to (0.80, 0.40) targets real
-	# contact without repeating either extreme -- measured at 19.8%, kept
-	# at the SAME 25% ceiling this gate has carried since the first fix.
-	# That ceiling is not re-picked for the new value: it is the true wall
-	# found by sweeping the whole legal band (see MAGPIE_STAND_SPOT's own
-	# comment), 24.6% still clear at x = 0.70 and 27.0% already over at
-	# x = 0.65, so the gate stays exactly where the geometry itself put it.
-	# A future stand-spot or MAGPIE_SCALE change that reopens the overlap
-	# past that wall fails loudly here instead of a probe reading "he
-	# leans in" as proof that the pose is legible.
-	_check(worst_overlap_frac < 0.25,
-			"and her head stays clear of him at the worst of it (%.1f%% of her own footprint, want < 25%%)"
-					% (worst_overlap_frac * 100.0))
+	# NOW ON THE ZONE THAT ACTUALLY MATTERS, AND IN BOTH DIRECTIONS IT CAN
+	# FAIL. REST must stay at 0.0% on the tight cut -- her face is never
+	# touched while he is simply standing there, not kissing anyone, which
+	# is the state the room is in far more often than the kiss itself.
+	# PEAK must clear a FLOOR -- real contact, not "he leaned in and
+	# nothing changed", which is exactly what the shipped 0.80 was doing
+	# (PEAK 0.0% on this same zone) -- and stay under a CEILING, so a
+	# future stand-spot or MAGPIE_SCALE change cannot silently walk this
+	# back into burying her the way the very first shipped value did
+	# (62.7% on the old whole-body metric, head gone). Both bounds are the
+	# measured wall from MAGPIE_STAND_SPOT's own comment: x = 0.55 already
+	# reads REST head-wide 7.7% (a face gate at 0.02 catches this one step
+	# earlier, on the wide cut, before it reaches the tight one) and
+	# x = 0.40 reads REST head-tight 11.9%, PEAK 68.1% -- both firmly
+	# outside the [0.10, 0.50] band the pick sits well inside of (0.243).
+	_check(rest_head_tight < 0.02,
+			"her face stays completely clear before he leans in (%.1f%%, want < 2%%)"
+					% (rest_head_tight * 100.0))
+	_check(rest_head_wide < 0.02,
+			"not even her neck is touched before he leans in (%.1f%%, want < 2%%)"
+					% (rest_head_wide * 100.0))
+	_check(peak_head_tight > 0.10,
+			"and real contact reaches her face at the peak of the lean (%.1f%%, want > 10%%)"
+					% (peak_head_tight * 100.0))
+	_check(peak_head_tight < 0.50,
+			"without ever swallowing it whole (%.1f%%, want < 50%%)"
+					% (peak_head_tight * 100.0))
 	# THE WITHDRAWAL, the boat's and not the ladder's -- one tap, one signal.
 	# Read through is_available(), never the field: LevelHotspot's header
 	# warns that a second reader bypassing the accessor is how one field

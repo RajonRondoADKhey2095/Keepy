@@ -408,33 +408,64 @@ const MAGPIE_SPOT := Vector2(-1.10, 0.90)
 ## ⚠️ RE-TUNED A SECOND TIME, DEVICE FEEDBACK IN THE OTHER DIRECTION: the
 ## first fix (x = 1.00) closed the overlap bug but overcorrected it --
 ## REST read 0.0%, PEAK only 10.6%, and on a phone the two bodies read as
-## standing side by side rather than kissing. This is not a re-guess: the
-## same jettable sweep that found 1.00 was re-run across the WHOLE legal
-## band toward her, x = 0.95 down to 0.10 in fine steps, tracking both
-## REST and PEAK overlap at each one (`KissDistanceSweep.gd`, deleted
-## before commit). The band is monotonic and has exactly one hard edge --
-## the PEAK figure crosses the 25% regression ceiling this file's own
-## CabinProbe gate already carries (see that gate's comment) between
-## x = 0.70 (24.6%, 0.4 points of headroom) and x = 0.65 (27.0%, over) --
-## so "closer" is not free forever, it is free until that wall.
+## standing side by side rather than kissing. x = 0.80 shipped next,
+## measured on her WHOLE-BODY silhouette at REST 4.8% / PEAK 19.8% --
+## "roughly double the shipped contact" -- 5.2 points under a 25% ceiling
+## on that same whole-body figure.
 ##
-## x = 0.80 is not the arithmetic midpoint of the two extremes (that would
-## be near 0.53, deep past the wall at ~33% peak overlap): it is the point
-## giving roughly DOUBLE the shipped contact -- REST 4.8%, PEAK 19.8%,
-## against the shipped REST 0.0%, PEAK 10.6% -- while keeping 5.2
-## percentage points of margin below the 25% ceiling, comfortably clear of
-## normal float/animation-timing noise rather than balanced on the wall.
+## ⚠️ DEVICE FOUND THAT FIX INVISIBLE TOO, AND A THIRD PASS FOUND WHY: THE
+## 25% CEILING WAS GATING THE WRONG SILHOUETTE. Body/tail/wing overlap can
+## climb for reasons that have nothing to do with whether a KISS reads --
+## her tail is nowhere near her face -- and a jettable probe
+## (`KissHeadZoneSweep.gd`, deleted before commit, renders kept under
+## docs/hub-shots/kiss_sweep_x*.png) measured her actual HEAD zone instead:
+## the small blob at the top of her model (model-space y > 0.708, ray-cast
+## off the raw glTF vertex buffer, not the importer's box) that reads as
+## face/beak/eyes rather than plumage.
 ##
-## STILL CLEAR OF THE FOOTPRINT HOLE: 1.965 from MAGPIE_SPOT (was 2.159)
-## against a MAGPIE_FOOTPRINT_RADIUS of 0.73 leaves 1.235 of margin (was
-## 1.429), asserted in CabinProbe rather than left as an unchecked
+## Re-measured on THAT zone, at the shipped 0.80: REST 0.0% (clean, as
+## expected) but PEAK 0.0% TOO -- his muzzle never once reached her face
+## across the whole lean, which is what "roughly double the shipped
+## contact" was hiding: the extra overlap was all body-against-body,
+## nothing new against her face. That single number explains a device
+## report of "no perceptible difference" better than any percentage would.
+##
+## THE OLD "WALL" BETWEEN x = 0.70 (24.6%) AND x = 0.65 (27.0%) WAS REAL,
+## BUT ON THE WRONG AXIS. Re-run on the head zone, the same two candidates
+## read REST 0.0% / PEAK 15.7% (x = 0.70) and REST 0.0% / PEAK 24.3%
+## (x = 0.65): her face is completely untouched whenever he is simply
+## standing there, and genuinely, visibly touched at the peak of the lean,
+## at BOTH. x = 0.65 was rejected once for crossing a ceiling that was
+## never measuring her face.
+##
+## THE REAL WALL SITS FURTHER IN, ALSO MEASURED RATHER THAN GUESSED:
+##   x = 0.55 -- REST head-WIDE (head+neck, the looser of the two cuts)
+##   turns non-zero for the first time (7.7%): he grazes her neck zone
+##   even before leaning in at all. PEAK head-tight already 41.8%.
+##   x = 0.40 -- REST head-TIGHT (face/beak/eyes) is non-zero (11.9%): his
+##   own head already overlaps hers while just standing there, not kissing
+##   anyone. PEAK 68.1% -- her face is gone, confirmed on the render and
+##   not just the number: kiss_sweep_x040_peak.png shows almost nothing of
+##   her left past his cheek, where kiss_sweep_x065_peak.png and
+##   kiss_sweep_x070_peak.png both show her face plainly, his muzzle
+##   against it.
+##
+## x = 0.65 IS THE PICK: the nearer of the two clean candidates, giving the
+## deeper of the two genuine-contact readings (24.3% vs 15.7% at peak)
+## while staying EXACTLY as clean at rest as 0.70 (0.0% on both cuts) --
+## no cost to taking it over 0.70, and more margin above "barely grazing"
+## before a phone's own compression and smaller screen flatten the contact
+## back into nothing, the same failure this whole lot exists to close.
+##
+## STILL CLEAR OF THE FOOTPRINT HOLE: 1.820 from MAGPIE_SPOT (was 1.965 at
+## 0.80, 2.159 at 1.00) against a MAGPIE_FOOTPRINT_RADIUS of 0.73 leaves
+## 1.090 of margin, asserted in CabinProbe rather than left as an unchecked
 ## coincidence.
 ##
-## And clear of the RELOCATED DOOR_SPOT (see its own comment, this same
-## lot) by 1.208 against a DOOR_TAP_RADIUS + margin of 1.05 -- closer to
-## that circle than before (was 1.226), but the two hotspots moved apart
-## in the same lot precisely so this stayed true with real margin.
-const MAGPIE_STAND_SPOT := Vector2(0.80, 0.40)
+## And clear of DOOR_SPOT by 1.278 against a DOOR_REACH of 0.9 -- MORE
+## margin than 0.80 had (1.208), because closing on the bird moves away
+## from the door, not toward it.
+const MAGPIE_STAND_SPOT := Vector2(0.65, 0.40)
 
 ## Drawn to MATCH Keepy's own drawn height, not half of it -- device found
 ## the 0.50 pass ("comes up to his shoulder") too small to read as a peer.
