@@ -23284,3 +23284,214 @@ niveau ment ; la liste des jobs, elle, disait vrai.
 `keepy-staging.vercel.app` (Safari iPhone, navigation privee, **jamais la PWA
 installee**) -- les trois points de la section precedente. `main` reste gate par
 Mathieu.
+
+## LA PIE CALIBREE : trois defauts remontes par l'appareil, trois causes lues dans le code avant tout correctif (31 aout 2026)
+
+Branche `claude/magpie-cabin-calibration-np67n1`, partie de `staging`
+(`1398ca9`, la pie deja mergee la veille). Retour device sur les trois points
+laisses ouverts par le lot precedent : (A) la pie est **trop petite** face a
+Keepy ; (B) Keepy **marche sur elle** -- capture a l'appui, chevauchement
+visuel des deux modeles, ce qui vide le baiser de son sens s'il finit debout
+SUR elle plutot que devant ; (C) Keepy **saute/tremble** en s'approchant avant
+de se poser, la ou la porte et le lit sont deja stables.
+
+**RECON BLOQUANTE FAITE AVANT TOUTE LIGNE DE CORRECTIF**, comme l'exigeait la
+consigne -- les trois causes ci-dessous sont lues dans le code livre, jamais
+devinees depuis le rapport.
+
+### A -- LA TAILLE : `MAGPIE_SCALE` visait un gout, pas une mesure
+
+`MAGPIE_SCALE` valait **0,50**, choisi a l'oeil. **Mesure sur les deux `.glb`
+reellement charges** (script headless dedie, pas d'estimation) :
+`MAGPIE_MODEL_MIN_Y = -0.880644` / `MAGPIE_MODEL_MAX_Y = 0.885036` -- extension
+Y brute de la pie **1,76568**. Keepy, la meme mesure : extension Y brute
+**1,25752**, deja livree a `KEEPY_SCALE = 1.07368`, soit une hauteur DESSINEE
+de **1,3501** -- le chiffre deja consigne ailleurs dans ce fichier pour ce
+meme modele.
+
+`MAGPIE_SCALE` corrige a **`0,76461`** = 1,3501 / 1,76568 : la hauteur
+dessinee de la pie egale desormais **exactement** celle de Keepy, pas la
+moitie. **Gate par une nouvelle assertion qui compare les DEUX AABB reels sur
+la scene construite** (`mesh.mesh.get_aabb().size.y * MAGPIE_SCALE` contre
+`keepy_mesh.mesh.get_aabb().size.y * KEEPY_SCALE`), pas l'arithmetique du
+correctif elle-meme -- une assertion qui se contenterait de relire
+`MAGPIE_SCALE` prouverait que la constante se multiplie correctement, pas
+qu'elle multiplie le BON nombre. Verifiee : `her drawn height (1.3501) now
+matches his (1.3501), not half of it`.
+
+### B -- LE CHEVAUCHEMENT : aucune exclusion n'existait, et le `StaticBody3D` du brief est une fausse premisse corrigee
+
+**Rien n'empechait un tap d'envoyer une chaine de hops A TRAVERS le modele de
+la pie.** Le coeur de nav de la cabine (`scripts/nav/`, distinct de
+`HubRegion` du hub) porte **zero appel `PhysicsDirectSpaceState`** dans tout
+le depot -- `LevelCamera.gd` le dit dans son propre en-tete, et c'est ecrit
+la deliberement.
+
+⚠️ **Le `StaticBody3D` suggere par le brief est explicitement ECARTE, pas
+seulement pas retenu.** Ce serait le PREMIER collider de navigation de ce
+projet -- un changement plus gros que l'exclusion qu'il sert, une nouvelle
+classe de panne, et un tick physique qu'une sonde devrait ensuite pomper.
+Le vrai precedent existe deja et est REUTILISE : `HubRegion.gd` documente
+encore, dans son propre en-tete, la technique de trou circulaire qu'elle
+portait pour son lac -- retiree par decision explicite de Mathieu (l'eau du
+hub devait devenir marchable partout), mais la TECHNIQUE elle-meme n'a rien
+perdu de sa validite. C'est exactement ce qu'il faut ici : quelque chose sur
+quoi un tap ne doit jamais pouvoir atterrir, sur un niveau qui reste par
+ailleurs le carre plat que ce fichier promet deja.
+
+**`LevelDefinition.gd` gagne un mecanisme GENERIQUE et REUTILISABLE**
+(`set_hole()` / `has_hole()` / `_in_hole()`), pas un cas special pie :
+`contains()` retire le trou APRES le controle de carre (l'ordre meme de
+l'ancien `HubRegion`) ; `clamp_to()` clamp au carre d'abord, pousse hors du
+trou ensuite a `hole_radius + 0.02` -- reutilisant la marge de bord de 0,02
+deja etablie pour le ruisseau du hub, pas une valeur redecouverte au hasard --
+puis re-clamp au carre (un trou pres d'un bord pourrait sinon repousser un
+point hors du carre que la meme fonction vient de dire marchable).
+
+⚠️ **LE TROU ARRETE UN TAP, IL NE DEVIE PAS UNE CHAINE DE HOPS DEJA EN
+COURS.** Exactement comme l'ancien lac : une marche suit une ligne droite vers
+sa `_target` et ne consulte rien de ce qui se trouve entre les deux -- ce
+projet a zero evitement d'obstacle nulle part, et donner au trou de la pie un
+detour prive qu'une traversee du hub n'a jamais eu serait une SECONDE facon de
+marcher, pas une plus grande version de la premiere. Ce que le trou achete
+reellement, c'est qu'un TAP -- ce qui CHOISIT une destination -- ne peut
+jamais en choisir une par-dessus ce que le trou garde.
+
+`MAGPIE_FOOTPRINT_RADIUS = 0,73`, derive par la meme convention que les
+autres `FOOTPRINT_RADIUS` du projet (moitie de la plus grande des deux
+extensions horizontales mesurees, arrondie VERS LE HAUT) : demi-extension X
+mesuree 0,949956, x `MAGPIE_SCALE` = 0,7263, arrondi a 0,73.
+`MAGPIE_STAND_SPOT` reste `(0,05 ; 0,40)` mais degage desormais le trou de
+**0,524 u** -- **gate**, plutot que laisse comme une coincidence non
+verifiee : `and clears her footprint hole by 0.524 (radius 0.73, want
+~0.524)`. Un tap vise DANS le trou est **pousse a exactement `hole_radius +
+0,02` = 0,7500**, reste marchable, et reste a la hauteur du sol -- les
+quatre assertions passent sur le vrai `floor_level` construit, pas sur un
+fixture.
+
+### C -- LE TREMBLEMENT : `emulate_mouse_from_touch`, le meme defaut de classe que la porte, sur une moitie qui n'avait jamais recu sa garde
+
+**Cause lue dans le code, confirmee par une trace empirique, PAS supposee.**
+Le defaut par projet `emulate_mouse_from_touch = true` fait qu'**UN SEUL tap
+physique declenche DEUX evenements independants, dans la MEME passe
+d'entree** : un `InputEventScreenTouch` reel puis un `InputEventMouseButton`
+synthetise. `CabinInterior._unhandled_input()` dispatche les deux.
+
+Le PREMIER dispatch declenche la branche immediate « deja assez pres » de
+`_try_kiss()` (le meme motif « marche de longueur nulle » deja etabli pour
+le lit et la porte) : `_kissing` passe a `true`, la pie se retire
+(`is_available() -> false`). Le SECOND dispatch -- le meme tap physique,
+synthetise -- trouve alors la pie **retiree**, retombe donc sur
+`_on_tapped_ground()`, qui appelait **inconditionnellement** `hop_to(destination)`
+avant ce lot : Keepy venait d'etre pose exactement sur la position du baiser,
+puis en etait arrache une frame plus tard par le second dispatch du MEME tap.
+Repete a chaque tap, ca se lit comme un tremblement.
+
+⚠️ **C'est le meme defaut de classe que le bug historique de la porte
+(`_exit_pending`), sur l'autre moitie de la paire.** La porte avait deja
+appris la lecon (une marche nulle finit par `became_idle`, jamais
+`hop_landed`, d'ou l'appel immediat de `_try_rest()`/`_try_enter_cabin()`) ;
+`_resting` (le lit) porte deja une garde symetrique dans
+`_on_tapped_ground()`. `_kissing` ne l'avait jamais recue -- **la garde etait
+asymetrique**, pas absente partout. Corrige par une seule ligne,
+`if _kissing: return`, ajoutee juste apres la garde `_resting` deja en
+place.
+
+**REGLE A RETENIR POUR TOUT FUTUR PROP SIMILAIRE, pour que ce defaut ne se
+reintroduise pas ailleurs** : tout hotspot dont la branche « deja assez
+pres » entre immediatement dans un etat busy/retire DOIT AUSSI etre garde
+dans `_on_tapped_ground()`. Une garde posee sur un seul des deux cotes de
+cette paire (l'entree immediate + le fallback sol) est une garde qui
+manquera exactement la ou `emulate_mouse_from_touch` la cherche.
+
+⚠️ **Dette de doc pre-existante, signalee et NON corrigee ici -- hors
+perimetre strict de ce lot A/B/C** : le commentaire de `_enter_rest()`
+(``# XZ is UNTOUCHED -- he lies exactly where he stood, so there is no
+teleport to see``) est FAUX, lu dans le code juste en dessous de lui-meme --
+la ligne suivante ecrit `_walker.global_position = Vector3(BED_SPOT.x,
+_world_y(BED_MODEL_Y), BED_SPOT.y)`, qui SNAPPE X et Z sur la constante fixe
+`BED_SPOT`, pas sur la position d'arrivee reelle (`here`/`flat`, calculee
+seulement pour le controle de portee juste au-dessus). Le comportement reel
+suit la meme doctrine FIXED SPOT que la pie et la porte -- ce qui est
+correct -- mais le commentaire qui l'accompagne dit l'inverse. A corriger
+dans son propre lot.
+
+### VALIDATION -- ROUGE AVANT VERT sur les trois causes, sonde par sonde
+
+`CabinProbe.gd` (PHASE N) gagne trois blocs, chacun verifie capable
+d'echouer avant d'etre cru sur son succes :
+
+1. **Parite de hauteur** -- compare les deux AABB dessines, pas la seule
+   arithmetique de `MAGPIE_SCALE`.
+2. **Degagement du trou + poussee du clamp** -- exerce le vrai
+   `floor_level.clamp_to()` sur un point vise DANS le trou, verifie qu'il
+   ressort marchable, a la bonne marge, a la hauteur du sol.
+3. **Course du double-dispatch, le propre defaut livre de ce fichier** --
+   reproduit la course EXACTE via le vrai `controller.dispatch()` (pas un
+   fixture) : un premier dispatch entre dans le baiser et retire la pie ;
+   un second dispatch IMMEDIAT (le meme point d'ecran, la meme frame de
+   depart) ne doit ni sortir du baiser ni deplacer Keepy d'un seul
+   millimetre. Verifie sur 3 runs independants : **derive mesuree
+   0,0000 u**.
+
+**Les trois assertions ont ete verifiees ROUGE avant d'etre VERTES**, en
+neutralisant temporairement chaque correctif un par un puis en le
+restaurant -- fichier restaure verifie identique a l'original a chaque
+fois. Aucun blind check n'a ete necessaire de plus que les 3 blocs eux-memes
+: chacun etablit d'abord le fait geometrique/temporel qui rend l'echec
+possible (le point vise EST dans le trou, la premiere moitie de la course
+EST entree dans le baiser) avant d'exiger le comportement correct.
+
+⚠️ **UN ECHEC RENCONTRE, IDENTIFIE COMME PRE-EXISTANT ET NON LIE A CE LOT --
+verifie contre la baseline, pas suppose.** `and every heart frees itself`
+(un budget d'attente en TEMPS REEL de 8000 ms, sur les particules-billboard
+`CabinHearts.gd`, entierement etrangere au diff de ce lot) flake sous la
+charge actuelle du sandbox -- 4 echecs sur 7 runs de la branche (3 runs
+propres d'un segment anterieur, tous verts ; 4 runs de ce segment,
+tous rouges sur la meme ligne, la charge sandbox ayant visiblement
+augmente entre les deux). **Rejoue sur un worktree a `1398ca9` (la meme
+scene, code non touche par ce lot), sous la meme charge que ces 4 derniers
+runs** : le meme echec, sur la meme assertion, se reproduit aussi -- 1
+echec sur 3 runs baseline. C'est un flake de budget mur pre-existant, pas
+une regression -- la meme famille de defaut que ce fichier documente deja
+ailleurs pour les sondes a budget de temps reel sous charge variable. Non
+corrige : hors perimetre de ce lot A/B/C.
+
+**Non-regression : les cinq sondes exigees, toutes exit 0.**
+`AssetContractAudit` (12/12 visuels, colliders inchanges), `DeathModelAudit`,
+`ChargerShapeProbe`, `LevelNavProbe` (**77 checks, 0 echec**),
+`ProbeTimeoutAudit` (**59 sondes scenes + 1 `--script`**, chiffre baseline
+inchange -- ce lot n'ajoute aucune sonde, seulement des blocs a
+`CabinProbe.gd` existant).
+
+**Build, propre** : `rm -rf build .godot` avant tout. Import headless
+**exit 0, 37 `.scn`**. Export Web release **exit 0, 0 erreur GDScript**.
+`index.wasm` **35 376 909** octets / md5 `af4a8fc2925d992348eb30deeeb54360`,
+`index.js` md5 `4e08904b1b7107858246af44b602067b` -- identiques au
+fingerprint permanent de tout lot qui ne touche pas le code moteur, coherent
+: ce lot ne modifie que 3 fichiers GDScript. **Piege payload tenu** : sur
+270 lignes `Storing File`, **0** pour `scripts/dev`, `assets_source`,
+`docs`, `web`, `build` ou `firebase.json`. `scripts/cabin/CabinInterior.gdc`
+et `scripts/nav/LevelDefinition.gdc` sont bien packes (le code livre) ;
+`scripts/dev/CabinProbe.gd` **absent du pack**, comme il se doit.
+
+**Perimetre du diff, exact** : `scripts/cabin/CabinInterior.gd` (+84/-14),
+`scripts/dev/CabinProbe.gd` (+107/-0), `scripts/nav/LevelDefinition.gd`
+(+95/-3). Aucun autre fichier touche.
+
+### Reste ouvert -- jugement device, seul juge
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique (build,
+import, export et sondes verts). **Palier 2 reste gate par Mathieu** :
+demande explicite de validation device sur `keepy-staging.vercel.app`
+(Safari iPhone, navigation privee) avant tout merge vers `main`, portant
+specifiquement sur les trois points corriges :
+1. **La pie fait-elle desormais la taille de Keepy a l'ecran** ?
+2. **Keepy s'arrete-t-il bien DEVANT elle, sans jamais marcher dessus** --
+   y compris en visant delibrement un tap dans son emprise ?
+3. **L'approche est-elle propre**, sans plus aucun saut/tremblement avant
+   qu'il se pose ?
+
+Reste aussi hors perimetre : le lot 2 (visibilite de la pie depuis le hub
+avant d'entrer dans la cabine), explicitement pas commence ici ; et le
+commentaire perime de `_enter_rest()` signale plus haut.
