@@ -1563,6 +1563,103 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 			"she and the ladder's foot do not overlap (%.3f apart, radii sum %.3f)"
 					% [ladder_gap, magpie.tap_radius + link.tap_radius])
 
+	# ---- THE RANGE BUG ITSELF, GATED ---------------------------------------
+	# ⚠️ Device report: a tap only registered from a narrow zone near her
+	# feet, "nothing happens" everywhere else on her visibly drawn body.
+	# MEASURED cause, not guessed: LevelController.resolve() ray-casts
+	# EVERY tap from the fixed camera down onto the level's single flat
+	# floor plane, for every hotspot regardless of how tall the thing it
+	# marks actually is -- so a tap that visually lands on her raised body
+	# resolves to a floor-plane point offset from her feet by however far
+	# that ray travels between her body's height and the floor, and the
+	# offset GROWS with tap height. Reproduced with a throwaway probe before
+	# MAGPIE_TAP_ANCHOR/MAGPIE_TAP_RADIUS existed: every one of the 11
+	# heights below FAILED from 30% up, uniformly across all 9 Keepy
+	# starting positions this file's own PHASE N and this block together
+	# cover -- proven Keepy-position-INDEPENDENT (LevelController.resolve()
+	# never reads the walker's position at all), so one fixed, central
+	# Keepy position is enough to gate the geometry itself here.
+	var magpie_cam: Camera3D = interior.get_node(
+			"WorldViewport/SubViewport/World/Camera3D") as Camera3D
+	var magpie_container: SubViewportContainer = interior.get_node(
+			"WorldViewport") as SubViewportContainer
+	var magpie_tap_drawn_height: float = (CabinInterior.MAGPIE_MODEL_MAX_Y
+			- CabinInterior.MAGPIE_MODEL_MIN_Y) * CabinInterior.MAGPIE_SCALE
+	var mid_stand := floor_level.flat(Vector3(CabinInterior.FLOOR_CENTRE.x, 0.0,
+			CabinInterior.FLOOR_CENTRE.y))
+	var all_heights_detected := true
+	for tenth in range(0, 11):
+		var frac: float = tenth / 10.0
+		# ⚠️ set_current(0) is NOT optional here. resolve() ray-casts against
+		# controller.current()'s plane, and PHASE P (bed/loft) just left the
+		# controller on level 1 -- an omitted reset here silently ray-casts
+		# every height in this loop against the LOFT's plane instead of the
+		# floor's, failing at every fraction including 0% (her exact floor
+		# point). Found exactly this way: this loop failed uniformly while
+		# the body_starts loop just below, which already calls set_current(0),
+		# passed at all 3 positions -- the one difference between them.
+		controller.set_current(0)
+		walker.global_position = mid_stand
+		walker.hop_to(mid_stand)
+		var world_point := Vector3(CabinInterior.MAGPIE_SPOT.x,
+				floor_level.plane_y + frac * magpie_tap_drawn_height, CabinInterior.MAGPIE_SPOT.y)
+		var screen := _to_screen(magpie_container, magpie_cam, world_point)
+		var tap := controller.resolve(screen)
+		var ok: bool = bool(tap.get("ok", false))
+		var aim: Vector3 = tap.get("aim", Vector3.ZERO)
+		if not (ok and magpie.accepts_tap(aim, 0)):
+			all_heights_detected = false
+			_check(false, "height %d%% of her drawn body is detected" % int(frac * 100.0))
+	_check(all_heights_detected,
+			"every tap height 0%..100% of her drawn body is detected (was failing above ~25%)")
+
+	# The geometry above is proven direction-independent by construction --
+	# this closes the remaining gap: that walking to her and actually
+	# kissing her ALSO still works when the tap lands on her body rather
+	# than her exact floor point, from more than the one fixed position
+	# above. Three widely separated starts, one representative body-height
+	# tap (55%, roughly her centre of mass -- where a real thumb lands).
+	var body_world := Vector3(CabinInterior.MAGPIE_SPOT.x,
+			floor_level.plane_y + 0.55 * magpie_tap_drawn_height, CabinInterior.MAGPIE_SPOT.y)
+	var body_screen := _to_screen(magpie_container, magpie_cam, body_world)
+	var body_starts: Array[Vector2] = [
+		Vector2(CabinInterior.FLOOR_CENTRE.x - CabinInterior.FLOOR_HALF_EXTENT + 0.2,
+				CabinInterior.FLOOR_CENTRE.y - CabinInterior.FLOOR_HALF_EXTENT + 0.2),
+		Vector2(CabinInterior.FLOOR_CENTRE.x + CabinInterior.FLOOR_HALF_EXTENT - 0.2,
+				CabinInterior.FLOOR_CENTRE.y + CabinInterior.FLOOR_HALF_EXTENT - 0.2),
+		Vector2(CabinInterior.MAGPIE_STAND_SPOT.x, CabinInterior.MAGPIE_STAND_SPOT.y),
+	]
+	for start in body_starts:
+		var start_flat := floor_level.flat(Vector3(start.x, 0.0, start.y))
+		if not floor_level.contains(start_flat):
+			start_flat = floor_level.clamp_to(start_flat)
+		controller.set_current(0)
+		walker.global_position = start_flat
+		walker.hop_to(start_flat)
+		interior.set("_kiss_pending", false)
+		interior.set("_kissing", false)
+		interior.set("_exit_pending", false)
+		interior.set("_rest_pending", false)
+		magpie.set_busy(false)
+		interior.call("_refresh_proximity")
+		var body_hotspot_hits: Array = []
+		var cb_body := func(h, _d): body_hotspot_hits.append(h)
+		controller.tapped_hotspot.connect(cb_body)
+		controller.dispatch(body_screen)
+		controller.tapped_hotspot.disconnect(cb_body)
+		var body_detected := false
+		for h3 in body_hotspot_hits:
+			if (h3 as LevelHotspot).kind == &"magpie":
+				body_detected = true
+		var body_started_ms := Time.get_ticks_msec()
+		while walker.state() != LevelWalker.State.IDLE \
+				and Time.get_ticks_msec() - body_started_ms < 8000:
+			await get_tree().process_frame
+		var landed := Vector2(walker.global_position.x, walker.global_position.z)
+		_check(body_detected and landed.distance_to(CabinInterior.MAGPIE_STAND_SPOT) < 0.01,
+				"a body-height tap from %s still walks him to her and kisses her" % str(start))
+		await _settle_kiss(interior)
+
 	# ---- THE BIRD HERSELF ------------------------------------------------
 	var bird: Node3D = interior.get_node_or_null(
 			"WorldViewport/SubViewport/World/Props/Magpie") as Node3D
@@ -1633,18 +1730,29 @@ func _phase_n_magpie(interior: Node, controller: LevelController,
 	# She is NOT inside the walkable square, and that is deliberate: the
 	# square is Keepy's, shrunk by his own half-width. A prop has no such
 	# constraint, and the floor was measured flat out to x = -1.6.
-	_check(not floor_level.contains(magpie.point),
+	var magpie_ground := Vector3(CabinInterior.MAGPIE_SPOT.x, floor_level.plane_y,
+			CabinInterior.MAGPIE_SPOT.y)
+	_check(not floor_level.contains(magpie_ground),
 			"SHE is outside his square, as a prop may be %s"
 					% str(CabinInterior.MAGPIE_SPOT))
+	# ⚠️ AND NEITHER IS HER TAP ANCHOR, WHICH IS A DIFFERENT POINT NOW. The
+	# recentring that fixed the range bug moved magpie.point away from
+	# MAGPIE_SPOT (see MAGPIE_TAP_ANCHOR's own comment) -- accepts_tap()
+	# never consulted walkability at all, so this was never REQUIRED, but a
+	# future edit that moved the anchor onto walkable ground and silently
+	# broke this line would still be a real drift worth catching here.
+	_check(not floor_level.contains(magpie.point),
+			"her tap anchor is outside the square too, wherever it moves %s"
+					% str(magpie.point))
 
 	# ---- AND CLEAR OF THE FOOTPRINT HOLE THE SIZE CORRECTION CUT ----------
 	# A ground tap can never be handed a destination inside
 	# MAGPIE_FOOTPRINT_RADIUS of her now (LevelDefinition's own hole, see its
 	# header) -- the stand spot living inside that hole would make the kiss
 	# snap him onto ground the level itself refuses to hand out as a
-	# destination anywhere else.
-	var magpie_ground := Vector3(CabinInterior.MAGPIE_SPOT.x, floor_level.plane_y,
-			CabinInterior.MAGPIE_SPOT.y)
+	# destination anywhere else. magpie_ground, declared above, is the
+	# footprint anchor (MAGPIE_SPOT) and not magpie.point -- the hole is
+	# still centred on where she visually stands.
 	var hole_clearance: float = stand.distance_to(magpie_ground) \
 			- CabinInterior.MAGPIE_FOOTPRINT_RADIUS
 	_check(absf(hole_clearance - 1.090) < 0.01,
