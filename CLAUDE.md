@@ -22722,3 +22722,167 @@ ce sens-la : les appels successifs ont rendu de vraies progressions d'etapes
 avec de vrais horodatages, et l'import a reellement pris **2 min 47 s**. Le
 piege existe ; il ne s'est pas produit ici, et le verifier coute un regard a
 l'horloge.
+
+## LA PORTE DE LA CABANE JETAIT LE PREMIER TAP DE CHAQUE VISITE (31 aout 2026)
+
+Branche `claude/keepy-session-handoff-8cl1o6`, partie de `staging`
+(`849e7da`). Regle n°1 verifiee AU DEBUT et par ARBRE, jamais par nom :
+`origin/main` = `ebdd1dc`, `origin/staging` = `849e7da` (3 commits devant,
+`CLAUDE.md` + `LevelNavProbe.gd` uniquement), `staging..main` VIDE, et la
+seule branche plus recente que `main` est deja ancetre de `staging`
+(`merge-base --is-ancestor`) -- **aucune session concurrente**.
+
+⚠️ **DEROGATION DE BRANCHE, SIGNALEE** : le nom impose par l'environnement
+(`keepy-session-handoff`) ne decrit pas ce lot. Meme arbitrage que les lots
+precedents ou la contrainte d'environnement et le sujet se contredisent --
+le nom designe l'emporte, et l'ecart est dit plutot que tu.
+
+**DEUX fichiers, verifies par `git diff --stat`** :
+`scripts/cabin/CabinInterior.gd` et `scripts/dev/CabinProbe.gd`. Ni
+`scripts/hub/`, ni `scripts/nav/`, ni une scene, ni un `.tres`, ni un
+`.glb`.
+
+### LA CAUSE, LUE DANS LE CODE LIVRE ET PAS DEDUITE DU RAPPORT
+
+`LevelWalker._advance()` termine une marche plus courte qu'`ARRIVE_EPSILON`
+(0,45) par **`became_idle.emit()`** (ligne 276) et **jamais** par
+`hop_landed.emit()` (ligne 349, reserve au chemin d'un vrai hop). La
+branche `&"door"` de `_on_tapped_hotspot` appelait `hop_to()` puis armait
+`_exit_pending` -- et **seul `_on_hop_landed` pouvait le depenser**. Le tap
+n'atteignait donc rien, et laissait une intention armee derriere lui.
+
+⚠️ **L'ASYMETRIE ETAIT EXPLICITE DANS LE FICHIER LUI-MEME.** La branche
+`&"bed"`, dix lignes plus bas, porte un `_try_rest()` immediat avec un
+commentaire ⚠️ qui **enonce exactement ce mecanisme**. La porte n'a jamais
+eu sa moitie. C'est la forme la plus couteuse de defaut de ce depot : pas
+un mecanisme inconnu, un mecanisme **deja compris, ecrit, et applique a un
+seul des deux cotes d'une paire**.
+
+**Trois precisions que la mesure ajoute au rapport de passation :**
+
+| | |
+|---|---|
+| **portee reelle** | pas « exactement sur le pas de porte » mais **tout le disque de rayon `ARRIVE_EPSILON` = 0,45**. `DOOR_TAP_RADIUS` vaut 0,85, donc il existe une couronne ou le tap est accepte et la marche nulle. |
+| **atteignable au demarrage** | `DOOR_SPOT := ENTRY_SPOT` -- distance **0,000** a l'apparition, mesuree par la sonde. Le tout premier tap possible d'une visite. Pas un cas de bord : l'etat par defaut de la piece. |
+| **pas un soft-lock** | verifie sur le chemin de recuperation, pas plaide : `_on_tapped_ground`, la branche `&"bed"` et `_on_tapped_transition` remettent tous `_exit_pending = false`. Cout reel = **un tap perdu**. |
+
+### ⚠️ UN SECOND DEFAUT SOUPCONNE, MESURE, ET INEXISTANT
+
+`_on_hop_landed` comparait a `DOOR_SPOT` **en XZ sans jamais demander sur
+quel NIVEAU** l'atterrissage avait eu lieu -- donc un atterrissage sur la
+mezzanine dans le rayon de la porte aurait termine la visite depuis
+l'etage, c'est-a-dire un changement de scene que personne n'a demande.
+
+**Il ne le peut pas** : le point du loft le plus proche
+(`LOFT_CENTRE (-0,70 ; -1,32)` +- 1,10) est a **1,583** de
+`DOOR_SPOT (0,60 ; 1,35)`, contre un `DOOR_REACH` de 0,9.
+
+⚠️ **Mais c'est un fait sur DEUX RECTANGLES, pas sur le code** : deplacer
+le loft ou elargir la portee le casserait **en silence**. Il est donc
+desormais **gate** dans `CabinProbe` PHASE K, derive des constantes livrees
+plutot que recopie -- la sonde imprime `1.583 vs 0.900`, le chiffre calcule
+a la main puis confirme par le code.
+
+### LE CORRECTIF : la forme du LIT, pas une nouvelle doctrine
+
+La sortie inline de `_on_hop_landed` est extraite en **`_try_exit() -> bool`**,
+copie exacte de la forme de `_try_rest()` : elle demande au **WALKER** ou il
+est plutot que de croire un argument, precisement parce qu'elle a **deux
+appelants** -- l'atterrissage, et le tap lui-meme quand la marche est nulle,
+qui n'a aucun atterrissage a lui tendre. `_on_hop_landed` delegue, et sa
+signature passe a `_position` (le parametre n'est plus lu).
+
+⚠️ **AUCUNE GARDE SUR `_resting`, et l'omission est deliberee** : se coucher
+se passe sur le LOFT, et l'invariant ci-dessus interdit a un point du loft
+d'atteindre la porte. Une garde qui ne peut jamais tirer est une garde que
+personne ne lit -- la geometrie est assertee a la place.
+
+⚠️ **CONSEQUENCE NOMMEE DANS LE CODE PLUTOT QUE DECOUVERTE PLUS TARD : il
+part desormais SANS MARCHER partout dans `DOOR_REACH`, pas seulement a
+l'arret.** Entre 0,45 et 0,9 la marche est reelle mais il est deja assez
+pres pour etre arrive, donc l'appel immediat depense l'intention. **Ce
+n'est pas un effet de bord du correctif** : c'est ce que le lit livre fait
+depuis toujours -- meme `BED_REACH` de 0,9, meme appel immediat -- et faire
+diverger les deux serait la plus etrange des deux reponses.
+
+### ROUGE AVANT VERT, sur la scene que le VRAI ROUTEUR charge
+
+`CabinProbe` gagne **PHASE Z**, et elle tourne **en tout dernier, apres
+PHASE R** : partir est un changement de scene, donc rien ne peut la suivre.
+
+⚠️ **Elle est pilotee sur `tree.current_scene` -- l'interieur que PHASE R
+vient de faire charger par le vrai routeur -- et NON sur une instance
+fraiche.** C'est la scene qu'un joueur a sous les yeux une frame apres avoir
+tape le pas de porte dehors, avec le walker la ou la scene le pose : ce qui
+est mesure est donc le vrai premier tap et pas une reconstitution.
+
+**Son CONTROLE est ce qui donne un sens a l'assertion** : sans lui, un
+walker place loin ferait mesurer une marche ordinaire, qui n'a jamais ete
+cassee. La sonde imprime **`he starts within a zero-length walk of the door
+(0.000 <= 0.450)`** avant d'avoir le droit de conclure.
+
+| | resultat |
+|---|---|
+| **avant le correctif** | **exit 1, 3 FAIL** -- « tapping the door while ALREADY on it leaves at once », « leaves no exit intent standing », « the door withdrew ». Les trois lignes de controle deja VERTES. |
+| **apres** | **0 failure(s), exit 0** |
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+**50 276 070** et **1 073 228 327** octets, aucune troncature silencieuse).
+Import headless **exit 0, 36 `.scn`** -- **des DEUX cotes**, verifie et pas
+suppose. Export Web release **exit 0**, **0 erreur GDScript** (l'unique
+ligne `ERROR` du log est `audio_driver_alsa.cpp:90`, le bruit ALSA sous
+xvfb deja consigne).
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent de tout lot qui ne touche pas le code moteur, ce que deux fichiers
+GDScript sont. `index.pck` 30 274 480, **marqueur et jamais preuve
+d'identite**. **Piege payload tenu** : sur **264** lignes `Storing File`,
+**0** pour `scripts/dev`, `assets_source`, `docs`, `web/`, `build` ou
+`firebase.json`.
+
+**HUIT sondes diffees contre `origin/staging` en worktree separe** (imports
+verifies complets des deux cotes, **TAILLES comparees avant les contenus** --
+la lecon de la troncature de run) :
+
+| sonde | verdict |
+|---|---|
+| `ProbeTimeoutAudit` | **BYTE-IDENTIQUE (2 flux)** -- **59 sondes scenes des deux cotes** : ce lot ajoute une PHASE, pas une sonde |
+| `AssetContractAudit` | **BYTE-IDENTIQUE (2 flux)** |
+| `DeathModelAudit` | **BYTE-IDENTIQUE (2 flux)** |
+| `ChargerShapeProbe` | **BYTE-IDENTIQUE (2 flux)** |
+| `LevelNavProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| `SeesawProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| `TurnstileProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| `WaterTintProbe` | **BYTE-IDENTIQUE (2 flux)**, 0 FAIL |
+| **`CabinProbe`** | **diff = EXACTEMENT les 9 lignes ajoutees**, stderr **byte-identique** |
+
+⚠️ **Le diff de `CabinProbe` est la mesure qui compte le plus** : aucune
+assertion existante ne bouge d'un caractere -- ni le « pass-through landing
+KEEPS the intent », ni les refus de PHASE T et PHASE F, ni le retrait facon
+bateau. Le correctif ne deplace aucun comportement deja teste.
+
+Cinq sondes de plus, jouees sur la branche, **toutes exit 0 / 0 FAIL** :
+`StreamRideProbe`, `LakeZoneProbe`, `WaterImpactProbe`, `OwlFlightProbe`,
+`DivingBoardProbe`.
+
+⚠️ **CORRECTION A LA PASSATION, MESUREE** : elle annonce `SeesawProbe` et
+`TurnstileProbe` comme portant des « echecs pre-existants ». **Elles sont
+VERTES des deux cotes** (0 FAIL, exit 0). Le piege d'ordre des flags --
+`--fixed-fps 60`, sans lequel le banc de traversee tourne a la vitesse du
+mur sous llvmpipe -- etait bien la cause historique, et il est passe ici.
+
+### Reste ouvert
+
+1. **Jugement device, seul juge** : taper « Sortir » en se tenant sur le pas
+   de porte ressort-il immediatement, et le comportement dans la bande
+   0,45-0,9 (partir sans marcher) se sent-il juste ? Rien ici n'est un rendu
+   device -- llvmpipe sous `xvfb` via le backend `opengl3` de BUREAU, contre
+   WebGL2 sous Safari.
+2. **Le banc de nav toujours packe** (~0,04 % du `.pck`), inerte et
+   injoignable -- inchange, son propre lot.
+3. Les autres chantiers de la passation sont inchanges.
