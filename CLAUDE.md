@@ -25186,3 +25186,211 @@ ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
 (build, import, export et sondes verts). **Palier 2 reste gate par
 Mathieu** : validation device sur `keepy-staging.vercel.app` avant tout
 merge vers `main`.
+
+### MERGE EN PRODUCTION (1er septembre 2026, autorisation explicite de Mathieu)
+
+`staging` (`7344bde`) -> `main`, commit de merge **`629317b`**, `--no-ff`,
+apres validation device confirmee par Mathieu : "hotspot du lit reactif
+sur toute sa surface, cout mezzanine bord ouest juge acceptable au
+pouce".
+
+**Verifie AVANT le merge, par ARBRE et pas par nom** : `git fetch --all
+--prune`, `origin/staging = 7344bde` et `origin/main = d8f6fb0`
+exactement les SHA attendus, aucune session concurrente depuis le
+dernier rapport. Merge `--no-ff` sans conflit ; **diff de l'arbre
+resultant contre l'arbre de `staging` a `7344bde` : VIDE** -- meme hash
+d'arbre des deux cotes (**`53731cee0d300a33b425bc293c1585611adea9d1`**),
+verifie AVANT le push : ce qui part en prod est litteralement l'arbre
+valide sur staging, pas une recomposition.
+
+**Build local, editeur + templates Godot 4.3-stable installes dans ce
+sandbox** (releases GitHub officielles). `rm -rf build .godot`, import
+headless **exit 0, 37 `.scn`** (import complet verifie, pas suppose).
+Export Web release **exit 0, 0 erreur GDScript**. `index.wasm`
+**35 376 909** octets / md5 **`af4a8fc2925d992348eb30deeeb54360`**,
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** -- identiques au
+fingerprint permanent deja consigne pour tout lot qui ne touche pas le
+code moteur, coherent avec un diff limite a deux fichiers GDScript.
+`index.pck` local **34 352 624**, marqueur et jamais preuve d'identite.
+
+CI **run #356** (id `33520699742`, job `99898905779`) **verte**
+(14:38:07 -> 14:43:12 UTC) -- `Import project resources` 14:38:54 ->
+14:42:33, **`Export Web build` 14:42:33 -> 14:42:39**, `Verify export
+output` succes, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+14:42:59 -> 14:43:09, `Deploy to Vercel [STAGING -- staging]`
+correctement **skipped** (push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI**, sur DEUX
+marqueurs independants, tous deux `x-vercel-cache: MISS` / `age: 0` :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1788273758` = **14:42:38 UTC** -- tombe exactement dans la fenetre `Export Web build` (14:42:33 -> 14:42:39) |
+| `index.wasm` servi | **35 376 909** octets -- identique a la taille et au md5 de l'export local, le fingerprint permanent |
+| `index.pck` servi | 34 352 560 octets (marqueur "nouveau build servi", jamais offert seul comme preuve d'identite) |
+
+**Le fix du hotspot du lit (C2, anneau visuel decouple du rayon de tap,
+couverture 100 % sur son ancre) est desormais EN PRODUCTION** sur
+`keepy-ten.vercel.app`.
+
+**Reste ouvert : aucun sur ce merge.** Le seul point laisse ouvert par
+le lot de staging (le ressenti device du lit) est deja tranche par la
+validation qui a autorise ce merge.
+
+## LOT B — SPIKE ISOLE : L'OURS ANIME MARCHE EN gl_compatibility, ET LE PIEGE `get_aabb()` EST CONFIRME PUIS CONTOURNE (1er septembre 2026)
+
+Branche `claude/keepy-bear-animation-spike-g5js0d`, partie de `main`
+(`d8f6fb0`). **Scene de test ISOLEE** : `HubBuilder.gd`, `HubWorld.gd`,
+`KeepyHopper.gd` et `resources/hub/hub_layout.tres` sont **byte-intouches**,
+verifie par `git status` -- le seul fichier existant modifie hors doc est
+`LoginScreen`, pour la seule raison qu'il fallait un chemin d'acces device
+(voir plus bas).
+
+### ⚠️ PREREQUIS : L'ASSET DU BRIEF N'EXISTAIT PAS SUR `main`
+
+`keepy_bear_walker.glb` n'existe que sur `origin/claude/bear-asset-visual-id-jwx53w`
+(lot A), **non mergee** -- verifie par ancetralite (`merge-base --is-ancestor`
+= NON) et pas par lecture de `git log`. Le blob y est **identique**
+(`e4c501e9...`) a `Meshy_AI_Ourson.glb` de `main` : c'est un pur renommage.
+Lot A merge en prerequis (`--no-ff`) plutot que de batir contre l'ancien nom,
+qui aurait casse le jour ou lot A atterrit.
+
+### ⚠️ DEUXIEME PREMISSE FAUSSE : IL N'EXISTE AUCUN COLLIDER DE REFERENCE
+
+Le brief demandait de chercher « la hauteur de reference ou le rayon de
+collision de Keepy » dans `KeepyHopper.gd`/`HubBuilder.gd`. **Le walker du
+hub n'a AUCUN collider** -- `grep CollisionShape3D scripts/hub` ne rend que
+l'`Area3D` de `HubPortal`. Deux candidats reels a la place :
+
+| candidat | valeur | verdict |
+|---|---|---|
+| `Hitboxes.KEEPY_HEIGHT` | 1.6 | **ECARTE** -- son propre en-tete la designe comme « the reference every hazard's fairness contract is written against », c'est-a-dire un contrat de **Chased**, pas du hub |
+| hauteur **DESSINEE** du hub | **1.3501** | **RETENU** -- `CabinInterior.gd` la derive deja (`1.257416 * KEEPY_SCALE 1.07368`), c'est la taille a laquelle Keepy apparait reellement a l'ecran |
+
+### ⚠️ LE PIEGE `get_aabb()` EST REPRODUIT DEPUIS ZERO, PUIS LA VRAIE MESURE EST ETABLIE
+
+Parse glTF direct (JSON + BIN, aucune dependance) : accessor POSITION,
+`min.y = 1.002e-07`, `max.y = 1.700000` -> etendue brute **1.700000** ; le
+noeud `Armature` porte `scale [0.01, 0.01, 0.01]` -> **0.017000**. C'est
+**exactement** le chiffre annonce par le lot A, reproduit de premiers
+principes plutot que repris sur parole.
+
+**La mesure honnete** vient de `Skeleton3D.get_bone_global_pose()` sur les
+24 os, en pose de repos : **etendue 1.671335** (le « ~1.67 » du brief).
+
+⚠️ **ET J'AI FAIT LE BUG DEUX FOIS AVANT DE LE COMPRENDRE, PUBLIE PLUTOT QUE
+LISSE.** Ma constante initiale venait du parcours TRS Python (**1.705818**,
+plus haut os `head_end`). Premier boot : `rest span is 1.851959, constant
+says 1.705818`. **Mauvais diagnostic** ("l'engine utilise les
+`inverseBindMatrices`, Python le TRS des noeuds") et j'ai recale la
+constante. Second run : `1.705802` contre `1.851959`. **L'etendue bougeait
+AVEC l'echelle** -- `1.851959 / 1.108066 = 1.671335` et
+`1.705802 / 1.020617 = 1.671335`, le meme nombre des deux cotes.
+
+**Cause reelle : `skel.global_transform` porte DEJA le `BEAR_SCALE` du Rig,
+donc mesurer a travers lui puis multiplier par `BEAR_SCALE` applique
+l'echelle DEUX FOIS.** Corrige en mesurant dans l'espace propre du rig
+(`rig_from_world = _rig.global_transform.affine_inverse()`). **Le controle
+Python (1.705818, 2,1 % plus grand) est conserve en commentaire** : les deux
+chiffres sont justes, ils repondent a deux questions differentes (TRS de
+noeud glTF contre `inverseBindMatrices`).
+
+⚠️ **C'est l'assertion de la sonde elle-meme qui a attrape mon bug** :
+`BEAR_SCALE` est **re-mesure contre le rig vivant a chaque run** et
+`push_error` en cas de derive. Elle a paye des le premier boot.
+
+### L'ECHELLE, CALCUL MONTRE
+
+```
+KEEPY_DRAWN_HEIGHT  = 1.3501      (hauteur dessinee du hub)
+HEIGHT_FACTOR       = 1.4         (milieu de la bande 1.3-1.5 du brief)
+BEAR_TARGET_HEIGHT  = 1.3501 x 1.4      = 1.89014
+BEAR_REST_SPAN      = 1.671335          (mesure os, pose de repos)
+BEAR_SCALE          = 1.89014 / 1.671335 = 1.130876
+verification        = 1.671335 x 1.130876 = 1.8901  OK
+```
+
+### MATERIAU EN `gl_compatibility` : CORRECT, VERIFIE AU PIXEL
+
+`extensionsUsed = ['KHR_materials_specular']`, **`extensionsRequired`
+ABSENT** -- l'extension est optionnelle, donc un fallback est legal et non
+une casse. **Rendu reel** sous `xvfb-run --rendering-driver opengl3`
+(llvmpipe LLVM 20.1.2), jamais `--headless` seul (qui force le driver DUMMY
+et ne rend rien) :
+
+| capture | mean_luma | max_luma |
+|---|---|---|
+| scene eclairee | **0.4664** | **1.0000** |
+| lumiere coupee + ambiante a 0 | 0.2684 | 0.9961 |
+
+Le PNG montre le personnage **entierement texture** -- casque jaune au logo
+ours, fourrure brune, chemise a carreaux rouge/vert, gilet brun, short
+kaki, ceinture. **Ni noir, ni casse.**
+
+⚠️ **CONSTAT POUR LE LOT C, ET IL N'EST PAS COSMETIQUE : cet asset est
+ECLAIRE, et le hub n'a AUCUNE `DirectionalLight3D`.** Toutes les surfaces du
+plateau sont unshaded, precisement pour que « la couleur ecrite soit la
+couleur vue ». Un personnage lit pose dans le hub tel quel n'aura aucune
+source -- il faudra soit lui ajouter une lumiere, soit forcer son materiau
+en unshaded, et les deux ont un cout a peser. La scene du spike porte donc
+un `Sun` a 1.3 et une ambiante a 0.9 **qui n'existent nulle part dans le
+hub**.
+
+### LA SCENE, ET LE CHEMIN D'ACCES DEVICE
+
+`scenes/test/BearAnimSpike.tscn` + `scripts/test/BearAnimSpike.gd` : plan de
+sol 80x80 a l'albedo du hub, `WorldEnvironment` au `SWAMP_SKY`, camera fixe
+a **-34 deg** (l'angle du hub, `HubCamera`), et une **capsule ambre
+translucide de hauteur 1.3501 posee a cote** -- la reference Keepy, pour que
+l'echelle se juge a l'oeil et pas seulement au chiffre.
+
+⚠️ **`Transform3D(...)` dans un `.tscn` serialise la base en LIGNES, pas en
+colonnes.** J'ai « corrige » la camera en supposant l'inverse : elle a pointe
+le ciel (`mean_luma=0.0971`, cadre uniforme et vide). A connaitre avant de
+retoucher une camera a la main dans un fichier de scene.
+
+**Le bouton d'entree est sur `LoginScreen`, DELIBEREMENT** : c'est la
+`run/main_scene`, donc **avant le gate d'auth** -- un device atteint le rig
+sans aller-retour de connexion. Le menu de secours du hub aurait exige un
+handler dans `HubWorld.gd`, que ce lot ne peut pas toucher. **JETABLE** :
+il sort avec la scene de spike, et son commentaire le dit sur place.
+
+### Validation
+
+`rm -rf build .godot` avant tout. Import headless **exit 0, 0 erreur**,
+**36 `.scn` pour 36 `.glb` sources** (import complet verifie, pas suppose).
+Export Web release **exit 0**, **0 `SCRIPT ERROR`, 0 `Parse Error`**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint permanent
+de tout lot qui ne touche pas le code moteur. **Piege payload tenu** : sur
+**280** lignes `Storing File`, **0** pour `scripts/dev`, `assets_source`,
+`docs`, `web/`, `build` ou `firebase.json` -- et les trois ressources du
+spike (`.glb.import`, les deux `.png.import`, `BearAnimSpike.gdc/.remap`)
+**sont** packees, comme elles le doivent.
+
+⚠️ **`index.pck` passe de ~34,35 Mo a 43 293 392 octets (+~8,9 Mo)** : le
+`.glb` de 10,4 Mo et ses deux textures. **C'est le cout d'un SPIKE**, et il
+sort avec lui si le rig n'est pas retenu -- a peser au lot C, avec les memes
+leviers deja mesures ailleurs dans ce fichier (les maps mortes sur un
+materiau unlit).
+
+**Sondes de non-regression, toutes exit 0** : `ProbeTimeoutAudit`
+(**59 sondes scenes + 1 `--script`**, retour exact a la baseline apres
+suppression de la sonde de capture jetable), `AssetContractAudit` (**12/12
+visuels, 0/10 colliders deplaces**), `DeathModelAudit`, `ChargerShapeProbe`.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que "Walking" boucle proprement sur un vrai telephone**, en
+   WebGL2 sous Safari ? En sandbox la boucle est forcee
+   (`Animation.LOOP_LINEAR`), 1,03 s, sans glitch visible -- mais llvmpipe
+   sous `xvfb` via le backend `opengl3` de BUREAU n'est pas WebGL2.
+2. **Est-ce que le materiau `KHR_materials_specular` tient sur device** ?
+   C'est la seule question que le rendu sandbox ne peut pas fermer, et c'est
+   tout l'objet de ce spike.
+3. **Est-ce que 1,4x Keepy est la bonne taille** a l'oeil, la capsule ambre
+   servant de repere ?
+4. **La lumiere manquante du hub** (constat ci-dessus) -- a trancher au
+   lot C, pas ici.
