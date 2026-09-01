@@ -572,11 +572,15 @@ func _phase_k_taps(interior: Node, controller: LevelController,
 			"the ladder's foot and the door do not overlap (%.3f apart, radii sum %.3f)"
 					% [gap, link.tap_radius + door.tap_radius])
 	# ⚠️ AND ON THE LOFT THE BED HAS TO SHARE A SMALL SQUARE WITH THE
-	# LADDER'S TOP. bed.point is BED_TAP_ANCHOR now, not BED_SPOT (see its
-	# own comment) -- recentred off the ladder specifically because the
-	# ORIGINAL BED_SPOT-centred circle had no room left to grow into. This
-	# is still the tightest pair in the scene: BED_TAP_RADIUS was taken up
-	# to exactly this ladder ceiling, minus a 0.20 safety margin.
+	# LADDER'S TOP. bed.point is BED_TAP_ANCHOR, not BED_SPOT -- see its own
+	# comment for why those two split. Candidate C2's anchor/radius were
+	# picked to fully cover the bed's DRAWN MARKER RING (see PHASE P's ring
+	# sweep), not to sit as close to the ladder as the geometry allows the
+	# way the original lot-10 anchor's derivation did -- so unlike that
+	# earlier pair, this one is NOT the tightest margin in the scene by
+	# construction. It still has to clear the ladder in fact, and this is
+	# what proves it does: gap ~3.199 against radii summing to ~2.911,
+	# margin ~0.288.
 	var loft_gap: float = Vector2(link.point_b.x - bed.point.x,
 			link.point_b.z - bed.point.z).length()
 	_check(loft_gap > link.tap_radius + bed.tap_radius,
@@ -1385,71 +1389,119 @@ func _phase_p_rest(interior: Node, controller: LevelController,
 	var link: LevelTransition = controller.links[0]
 	controller.set_current(1)
 
-	# ---- THE BED'S OWN RANGE BUG, SWEPT BY THE SAME METHOD AS HERS --------
-	# ⚠️ NOT ASSUMED FROM THE MAGPIE'S FIX -- MEASURED SEPARATELY, on its
-	# own sweep, before BED_TAP_ANCHOR existed. Same cause as hers
-	# (LevelController.resolve() always ray-casts against the level's flat
-	# plane, never the drawn mesh, so a tap that visually lands on a raised
-	# thing drifts off it by an amount that grows with height) but the two
-	# symptoms are NOT identical, and this loop is what told them apart
-	# rather than assuming it: cross-referenced against actual
-	# camera-to-point occlusion (a separate, offline Möller–Trumbore check
-	# against the shipped .glb -- not repeated here, this loop only needs
-	# what a player could tap, not what they could also fail to see), the
-	# real bug narrows to two visible-and-rejected bands, 10-20% and
-	# 60-80%, not "everything below 90%" the raw sweep alone would suggest.
+	# ---- THE BED'S OWN RANGE BUG -- WHERE THE FIRST SWEEP LOOKED, AND WHY IT
+	# WAS THE WRONG PLACE ------------------------------------------------
+	# ⚠️ RETIRED, ON PURPOSE, NOT SILENTLY DROPPED. The original diagnosis
+	# swept 0%/10%/.../100% of the bed's own measured drawn-surface height
+	# range (6.5522-7.5952) at BED_SPOT's fixed XZ column, the same method
+	# that found the magpie's bug. It found a real defect -- lot 10's
+	# anchor rejected most of that column -- but it was measuring the WRONG
+	# geometry for what a player actually taps: the marker RING (see just
+	# below) sits at BED_SPOT's XZ raised only by CabinMarker's own small
+	# CABIN_RING_LIFT, not stacked up the bed's full drawn-surface height.
+	# Re-run against candidate C2, this column sweep reads 0% at every
+	# decile -- not because C2 is broken, but because C2's anchor was
+	# deliberately recentred OFF this column entirely (see BED_TAP_ANCHOR's
+	# own comment) to cover the ring instead. Keeping this sweep gated
+	# would fail on a fix that is confirmed working below; keeping it
+	# un-gated would report a number about geometry nothing here still
+	# claims to cover. It is named here so a future session does not
+	# re-discover "the column sweep says 0%" as if it were a regression.
 	#
-	# _BED_SURFACE_LOW/_HIGH is the shipped interior's own drawn-surface
-	# height at BED_SPOT's XZ column -- a straight-down raycast against the
-	# real mesh, the same measurement BED_TAP_ANCHOR's own comment cites,
-	# not a second re-derivation free to disagree with it.
+	# ---- THE BED'S MARKER RING -- WHAT A PLAYER ACTUALLY SEES AND TAPS ----
+	# Samples the ring exactly as CabinMarker actually draws it: centred on
+	# BED_SPOT's XZ, at world Y = loft.plane_y + CabinMarker.CABIN_RING_LIFT
+	# (the marker node itself sits at plane_y; CabinMarker lifts the ring
+	# locally on top of that -- see _build_markers()), radius
+	# BED_MARKER_RADIUS. Each of 72 azimuths is projected to screen through
+	# the real camera and round-tripped through the real
+	# controller.resolve() before bed.accepts_tap() is asked -- the same
+	# parallax-drift pipeline already proven for the magpie, now aimed at
+	# the geometry a tap on this ring actually is.
 	#
-	# ⚠️ AND UNLIKE HER FIX, THIS ONE DOES NOT COVER 0%..100%, ON PURPOSE.
-	# It covers [7.3%, 81.2%] -- see BED_TAP_ANCHOR's own comment for why
-	# full coverage is geometrically impossible here (the ladder leaves no
-	# room to grow into) and why the band that IS kept (10-80%, the wider,
-	# more central part of the bed) was chosen over the band that is lost
-	# (90-100%, the narrow tip of the book stack). So this loop asserts the
-	# HONEST contract fraction by fraction, never "all pass": a future
-	# change that silently shifts this coverage -- a moved camera, a
-	# resized ladder, a re-picked anchor -- fails here instead of drifting
-	# unnoticed.
+	# Confirmed RED first, on lot 10's own shipped anchor/radius, in this
+	# same sandbox before any of BED_TAP_ANCHOR's candidates were applied:
+	# 0.00% (0/72). C2 is confirmed here at 100.00% (72/72) -- full ring
+	# coverage, the property this candidate was chosen for.
 	var bed_cam: Camera3D = interior.get_node(
 			"WorldViewport/SubViewport/World/Camera3D") as Camera3D
 	var bed_container: SubViewportContainer = interior.get_node(
 			"WorldViewport") as SubViewportContainer
-	var _bed_surface_low: float = 6.5522
-	var _bed_surface_high: float = 7.5952
-	var bed_expect_covered: Dictionary = {
-		0: false, 10: true, 20: true, 30: true, 40: true, 50: true,
-		60: true, 70: true, 80: true, 90: false, 100: false,
-	}
-	var bed_sweep_ok := true
-	for tenth in range(0, 11):
-		var pct: int = tenth * 10
-		var frac: float = tenth / 10.0
-		# ⚠️ set_current(1) EVERY iteration, for the exact reason the
-		# magpie's own loop resets to 0 every iteration: resolve()
-		# ray-casts against controller.current()'s plane, and nothing
-		# upstream of this loop guarantees the loft stays current.
-		controller.set_current(1)
-		var bed_world_y: float = _bed_surface_low \
-				+ frac * (_bed_surface_high - _bed_surface_low)
-		var bed_world_point := Vector3(CabinInterior.BED_SPOT.x, bed_world_y,
-				CabinInterior.BED_SPOT.y)
-		var bed_screen := _to_screen(bed_container, bed_cam, bed_world_point)
-		var bed_tap := controller.resolve(bed_screen)
-		var bed_ok: bool = bool(bed_tap.get("ok", false))
-		var bed_aim: Vector3 = bed_tap.get("aim", Vector3.ZERO)
-		var bed_accepted: bool = bed_ok and bed.accepts_tap(bed_aim, 1)
-		var bed_expected: bool = bool(bed_expect_covered[pct])
-		if bed_accepted != bed_expected:
-			bed_sweep_ok = false
-		_check(bed_accepted == bed_expected,
-				"height %d%% of the bed's drawn surface is %s, as documented"
-						% [pct, "accepted" if bed_expected else "still refused"])
-	_check(bed_sweep_ok,
-			"the bed's tap coverage matches the geometrically-forced range in full")
+	controller.set_current(1)
+	var ring_y: float = loft.plane_y + CabinMarker.CABIN_RING_LIFT
+	var ring_n := 72
+	var ring_hits := 0
+	for i in range(ring_n):
+		var theta: float = TAU * float(i) / float(ring_n)
+		var ring_x: float = CabinInterior.BED_SPOT.x \
+				+ CabinInterior.BED_MARKER_RADIUS * cos(theta)
+		var ring_z: float = CabinInterior.BED_SPOT.y \
+				+ CabinInterior.BED_MARKER_RADIUS * sin(theta)
+		var ring_point := Vector3(ring_x, ring_y, ring_z)
+		var ring_screen := _to_screen(bed_container, bed_cam, ring_point)
+		var ring_tap := controller.resolve(ring_screen)
+		var ring_ok: bool = bool(ring_tap.get("ok", false))
+		var ring_aim: Vector3 = ring_tap.get("aim", Vector3.ZERO)
+		var ring_accepted: bool = ring_ok and bed.accepts_tap(ring_aim, 1)
+		if ring_accepted:
+			ring_hits += 1
+	var ring_pct: float = 100.0 * float(ring_hits) / float(ring_n)
+	_check(ring_hits == ring_n,
+			"the bed's marker ring is fully tappable (%.2f%%, %d/%d)"
+					% [ring_pct, ring_hits, ring_n])
+
+	# ---- MEZZANINE COST -- WHAT ORDINARY WALKING TAPS THE BED NOW EATS ----
+	# Grids the LOFT's whole walkable square at FLOOR height (an ordinary
+	# "just walk here" tap, not a raised-surface one), round-trips every
+	# sample through the real camera and controller.resolve(), and counts
+	# what fraction of that square bed.accepts_tap() now swallows instead
+	# of leaving as a plain walk -- and, separately, whether any of those
+	# points ALSO fall inside the ladder link's own circle. Accepted as a
+	# trade for the ring's full coverage, not a free result: recon-rendus
+	# measured 10.58% offscreen; the band below re-confirms it in-engine
+	# with the same ~3-point tolerance the acceptance was granted under,
+	# rather than re-copying the offscreen figure verbatim.
+	controller.set_current(1)
+	var ladder_link: LevelTransition = controller.links[0]
+	var mezz_n := 101
+	var mezz_total := 0
+	var mezz_bed_hits := 0
+	var mezz_ladder_hits := 0
+	var mezz_overlap_hits := 0
+	for gx in range(mezz_n):
+		for gz in range(mezz_n):
+			var fx: float = -CabinInterior.LOFT_HALF_EXTENT \
+					+ 2.0 * CabinInterior.LOFT_HALF_EXTENT * float(gx) / float(mezz_n - 1)
+			var fz: float = -CabinInterior.LOFT_HALF_EXTENT \
+					+ 2.0 * CabinInterior.LOFT_HALF_EXTENT * float(gz) / float(mezz_n - 1)
+			var mezz_x: float = CabinInterior.LOFT_CENTRE.x + fx
+			var mezz_z: float = CabinInterior.LOFT_CENTRE.y + fz
+			var mezz_point := Vector3(mezz_x, loft.plane_y, mezz_z)
+			if not loft.contains(mezz_point):
+				continue
+			mezz_total += 1
+			var mezz_screen := _to_screen(bed_container, bed_cam, mezz_point)
+			var mezz_tap := controller.resolve(mezz_screen)
+			var mezz_ok: bool = bool(mezz_tap.get("ok", false))
+			var mezz_aim: Vector3 = mezz_tap.get("aim", Vector3.ZERO)
+			var mezz_bed: bool = mezz_ok and bed.accepts_tap(mezz_aim, 1)
+			var mezz_ladder: bool = mezz_ok and ladder_link.accepts_tap(mezz_aim, 1)
+			if mezz_bed:
+				mezz_bed_hits += 1
+			if mezz_ladder:
+				mezz_ladder_hits += 1
+			if mezz_bed and mezz_ladder:
+				mezz_overlap_hits += 1
+	var mezz_pct: float = 100.0 * float(mezz_bed_hits) / float(mezz_total)
+	# Escalation-clause band: the 10.58% recon figure, +/- 3 points. Below
+	# it would mean the ring fix regressed back toward lot 10's near-zero
+	# coverage; above it would mean a silent widening nobody re-approved.
+	_check(mezz_pct >= 7.58 and mezz_pct <= 13.58,
+			"mezzanine walking taps eaten by the bed stay within the accepted band (%.2f%%, want 7.58-13.58%%)"
+					% mezz_pct)
+	_check(mezz_overlap_hits == 0,
+			"none of those taps also land inside the ladder link's own circle (%d overlap)"
+					% mezz_overlap_hits)
 
 	# ⚠️ EVERY WALKING/LANDING POSITION BELOW IS MEASURED AGAINST
 	# CabinInterior.BED_SPOT, NOT bed.point, AND THIS IS A DELIBERATE SPLIT

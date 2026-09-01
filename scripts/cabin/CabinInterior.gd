@@ -229,62 +229,57 @@ const DOOR_TAP_RADIUS: float = 0.85
 ## BED_TAP_ANCHOR below for why those two had to split.
 const BED_SPOT := Vector2(-1.67, -1.32)
 
-## ⚠️ THE SAME BUG THE MAGPIE HAD, FOUND BY THE SAME METHOD -- swept, not
-## assumed. LevelController.resolve() always raycasts against the loft's
-## FLAT plane, never the drawn mesh, so a tap that visually lands on a
-## raised prop resolves to a ground point that drifts away from the prop
-## as the camera's parallax stretches with height. The magpie's fix
-## doesn't imply the bed has the same symptom on its own -- it was swept
-## the same way (0%/10%/.../100% of the bed's own measured drawn-surface
-## range, 6.5522-7.5952, run through the exact resolve() arithmetic) to
-## find out.
+## ⚠️ LOT 10 SHIPPED THIS HOTSPOT BROKEN -- 0.00% RING COVERAGE, MEASURED,
+## NOT GUESSED FROM A DEVICE REPORT. The device symptom was "tapping the
+## bed almost never registers", and the in-engine measurement that
+## explains it is not the bed's raised drawn-surface height (see below,
+## and CabinProbe's own retired sweep for why that path was a dead end)
+## but the MARKER RING a player actually sees and taps: a 72-point
+## azimuthal sample of that ring -- CabinMarker's own drawn geometry,
+## BED_SPOT's XZ raised by CABIN_RING_LIFT, radius BED_MARKER_RADIUS --
+## round-tripped through the real camera and LevelController.resolve(),
+## same parallax-drift mechanism the magpie's fix already proved: a tap
+## that visually lands on a raised ring resolves, on the level's FLAT
+## plane, to a ground point that drifts further from the ring as the
+## tapped point's height and the camera's parallax combine. Lot 10's
+## anchor (-1.291703, 1.333841) at radius 1.75 -- itself already a
+## recentred fix for an earlier symptom -- caught 0 of the 72 samples.
 ##
-## The sweep alone overstates the bug, though, and cross-referencing it
-## against actual camera-to-point OCCLUSION (Möller–Trumbore against the
-## shipped .glb, not eyeballed off a screenshot) narrows it to what a
-## player can actually see and mis-tap:
-##   0%            -- occluded (nothing to mis-tap; irrelevant)
-##   10%, 20%       -- VISIBLE, and REJECTED by the shipped 0.70 circle
-##   30%, 40%, 50%  -- occluded (irrelevant)
-##   60%, 70%, 80%  -- VISIBLE, and REJECTED by the shipped 0.70 circle
-##   90%, 100%      -- VISIBLE, and already ACCEPTED
+## A recon pass (recon-rendus, offscreen render comparison of several
+## anchor/radius candidates named C1/C2/A) produced this candidate, C2,
+## as the one to ship. Its own numbers below are RE-CONFIRMED in-engine
+## by CabinProbe's PHASE P, not re-copied from that offscreen pass:
 ##
-## So the real, player-facing bug is the visible-but-rejected 10-20% and
-## 60-80% bands, not "everything below 90%" the raw sweep would suggest.
+##   ring coverage:     100.00% (72/72), against 0.00% (0/72) for lot 10
+##   mezzanine cost:    10.14% of the loft's ordinary walking taps near
+##                      its west edge, against recon-rendus's own 10.58%
+##                      -- accepted, not free; see below
+##   ladder clearance:  gap ~3.199 against radii summing to ~2.911,
+##                      margin ~0.288 -- clears it, but NOT because the
+##                      radius was capped at the ladder's ceiling the way
+##                      lot 10's derivation was; C2's radius answers to
+##                      full ring coverage first, and happens to still
+##                      clear the ladder with room in-engine
 ##
-## ⚠️ WIDENING BED_TAP_RADIUS ALONE CANNOT FIX EITHER BAND -- proven, not
-## assumed. The shipped 0.70 was already ladder-clearance-forced (see the
-## old comment this replaced: gap 1.920 against radii summing to 1.80,
-## i.e. margin 0.120). Re-deriving the WIDEST circle the ladder allows
-## around BED_SPOT itself (ladder_ceiling 0.8201, minus the same 0.20
-## safety margin MAGPIE_TAP_ANCHOR's own fix used) gives radius 0.6201 --
-## SMALLER than what shipped, because BED_SPOT sits close enough to the
-## ladder that little room is left to grow into. Recentring is not a
-## stylistic echo of the magpie's fix, it is the only axis this bed has.
+## ⚠️ A PRIOR BRIEF FOR THIS SAME HOTSPOT INVOKED A "GROUND CONTROL
+## ~100%" FIGURE FOR THE DOOR THAT DOES NOT EXIST -- do not let it
+## resurface. The door's own ring coverage plateaus at 24.65% raw /
+## 82.15% measured against its pad, not 100%; whatever produced that
+## number was not this file or this probe, and it should not be assumed
+## true of the bed either just because it sounds like the same kind of
+## claim.
 ##
-## BED_TAP_ANCHOR is picked at the natural MIDPOINT of the measured height
-## range (50%), mirroring exactly how MAGPIE_TAP_ANCHOR was derived --
-## not a numerically search-optimised point. BED_TAP_RADIUS is then taken
-## up to the ladder's clearance ceiling from THAT anchor (1.9519), minus
-## the same 0.20 safety margin, landing on 1.75.
-##
-## Together they cover fraction range [7.3%, 81.2%] -- both real
-## visible-and-broken bands, 10-20% and 60-80%. ⚠️ AND THIS COSTS THE
-## 90-100% BAND, HONESTLY, NOT SILENTLY: no anchor/radius pair clears the
-## ladder circle AND covers both ends at once (checked exhaustively, not
-## assumed) -- preserving 90/100% tops out at fraction 80.2%, missing the
-## larger 60-80% band entirely. 90-100% is the narrow tip of the book
-## stack; 60-80% is the wider, more central part of the bed a player is
-## more likely to actually aim at. That's the trade taken here, on
-## purpose, and it's the one honest limit of this fix: after it, tapping
-## the very peak of the pile no longer registers as "the bed."
-##
-## Sanity-checked against swallowing ordinary floor taps: the new anchor
-## sits 2.681 from BED_SPOT and 2.719 from LOFT_CENTRE, both outside the
-## 1.75 radius -- an everyday "just walk here" tap near the bed's own
-## ground position or the loft's centre is unaffected by this circle.
-const BED_TAP_ANCHOR := Vector2(-1.291703, 1.333841)
-const BED_TAP_RADIUS: float = 1.75
+## The mezzanine cost is a real trade, not a rounding error: 10.14% of
+## the loft's flat, floor-height walkable square -- an ordinary "just
+## walk here" tap, not a raised one -- now resolves to the bed instead of
+## a plain walk, concentrated near the loft's west edge where C2's anchor
+## sits. Cross-checked against the ladder link's own circle: 0 grid
+## points (of a 101x101 sweep) are captured by both at once, so this cost
+## is not also a cross-hotspot overlap. Accepted on the strength of full
+## ring coverage being the property this hotspot actually needs -- a
+## player cannot mis-tap a ring he can never successfully tap at all.
+const BED_TAP_ANCHOR := Vector2(-1.9923, -3.5812)
+const BED_TAP_RADIUS: float = 1.811
 
 ## The ring drawn for the bed keeps the OLD 0.70 -- it was never reported
 ## as visually wrong, only the hit-test circle was blind. Drawn at
