@@ -24776,3 +24776,182 @@ seulement comme marqueur "nouveau build servi".
 `main` **non touche** (`origin/main` reste en arriere, verifie avant le
 push). Palier 2 -- merge vers `main` -- reste gate par validation device
 de Mathieu, pour ce lot ET pour l'ensemble des lots pie/bisou.
+
+## L'ANNEAU DE LA PIE ETAIT VISUELLEMENT TROP GROS, ET LE LIT AVAIT LE MEME BUG QUE LA PIE -- MESURE, PAS SUPPOSE (1 septembre 2026)
+
+Branche `claude/hotspot-tap-radius-visual-2rf3lt`, partie de `staging`
+(`28f63e5`). Deux sujets, un seul commit conceptuel : (A) la pie tape
+juste partout desormais (fix du lot precedent, valide device 9/9), mais
+retour device suivant -- l'anneau dessine autour d'elle est trop grand,
+il avale un tiers de la piece. (B) appliquer la MEME methode de mesure
+qui a trouve le bug de la pie (balayage 0-100 % de la hauteur dessinee
+contre le plan fixe que `LevelController.resolve()` ray-caste) au hotspot
+`&"bed"`, sans supposer qu'il partage le symptome.
+
+### PART A -- LE DECOUPLAGE VISUEL/FONCTIONNEL, ET LA CONSIGNE D'ESCALADE RESPECTEE
+
+Le brief posait la meme regle que le lot precedent : si le decouplage
+tient dans `CabinInterior.gd`, rester Sonnet 5 ; s'il fallait ajouter un
+champ a `LevelHotspot.gd` (partage par door/bed/magpie/mezzanine),
+s'arreter et rapporter avant tout changement -- bascule Opus 4.8.
+
+**`LevelHotspot.gd` et `CabinMarker.gd` sont BYTE-INTOUCHES.**
+`CabinMarker.setup(radius, text, surface, label_offset)` prend le rayon
+qu'on lui donne et ne le relit nulle part ailleurs -- la taille de
+l'anneau DESSINE n'a jamais ete liee a `LevelHotspot.tap_radius`, c'est
+`CabinInterior._build_markers()` qui choisissait quoi lui passer, et
+c'est le seul endroit a corriger.
+
+⚠️ **LA CAUSE N'ETAIT PAS UN BUG, C'ETAIT UN HERITAGE DU LOT PRECEDENT.**
+Le lot magpie-hotspot-tap-range avait repoint `_magpie_marker` sur
+`MAGPIE_TAP_ANCHOR` avec `MAGPIE_TAP_RADIUS` (1,80) -- le meme couple
+que le hit-test -- en ecrivant explicitement "le cercle qu'un joueur vise
+et celui que le code teste doivent rester un seul cercle". Vrai pour le
+FONCTIONNEL, faux pour le RENDU : l'ancre est a 1,35 des pieds reels de
+la pie, et un disque de 1,80 de rayon dessine la flotte au milieu de la
+piece plutot que de l'entourer.
+
+**Corrige en revenant a une paire distincte pour le marqueur** :
+`_magpie_marker` est desormais construit avec `MAGPIE_FOOTPRINT_RADIUS`
+(0,73 -- deja utilise ailleurs pour le trou d'empreinte au sol, pas une
+nouvelle mesure) et positionne a `MAGPIE_SPOT` (ses pieds), tandis que
+`LevelHotspot.make()` garde `MAGPIE_TAP_ANCHOR`/`MAGPIE_TAP_RADIUS`
+intouches pour le hit-test. Trois rayons rendus avant de choisir (1,00 /
+0,73 / 0,60, a l'ancre puis a `MAGPIE_SPOT`) -- 0,73 a `MAGPIE_SPOT` est
+celui qui se lit comme un anneau colle a son corps, au meme registre que
+l'anneau de la porte.
+
+**Le patron devient la regle du fichier** : porte et echelle gardent un
+anneau unifie (jamais eu besoin de bouger), pie et lit (voir Part B)
+portent chacun DEUX paires -- une visuelle (position reelle + rayon
+d'empreinte) et une fonctionnelle (ancre parallaxe-corrigee + rayon de
+hit-test) -- documente en tete de `_build_markers()`.
+
+### PART B -- LE LIT, BALAYE PLUTOT QUE SUPPOSE, ET LE RESULTAT EST PLUS ETROIT QUE CELUI DE LA PIE
+
+**Meme mecanisme**, verifie et pas suppose de la pie : `LevelController.
+resolve()` ray-caste chaque tap contre le plan plat de la mezzanine
+(`level.plane()`), jamais le mesh dessine, donc un tap qui vise
+visuellement le haut du lit derive du plan au sol d'une distance qui
+croit avec la hauteur.
+
+**Balaye avec la meme sonde de mesure** (0/10/.../100 % de la surface
+dessinee du lit, `_bed_surface_low/_high = 6.5522/7.5952` -- deja mesuree
+au lot d'installation du lit, pas re-derivee) contre la formule exacte de
+`resolve()`.
+
+⚠️ **LE BALAYAGE SEUL SURESTIME LE BUG, ET C'EST L'OCCLUSION QUI LE
+CORRIGE.** Croise avec une verification d'occlusion camera-vers-point
+(Moller-Trumbore contre le `.glb` livre, hors ligne) : les fractions
+0 %/30-50 % sont occultees (rien a taper la, non pertinent) ; 10-20 % et
+60-80 % sont VISIBLES et REFUSEES par le cercle livre a 0,70 -- **c'est
+le vrai bug, pas "tout sous 90 %"** ; 90-100 % sont deja visibles ET
+acceptees.
+
+⚠️ **ELARGIR `BED_TAP_RADIUS` SANS DEPLACER L'ANCRE NE PEUT PAS FERMER
+CES DEUX BANDES -- PROUVE, PAS ARGUMENTE.** Le rayon livre (0,70) etait
+deja contraint par l'echelle : re-deriver le plus grand cercle que
+l'echelle autorise autour de `BED_SPOT` lui-meme donne **0,6201** --
+PLUS PETIT que ce qui est livre, parce que `BED_SPOT` est trop pres de
+l'echelle pour laisser de la place. Recentrer n'est pas un echo
+stylistique du fix de la pie, c'est le seul axe disponible ici.
+
+**`BED_TAP_ANCHOR = Vector2(-1.291703, 1.333841)`**, prise au point milieu
+(50 %) de la plage de hauteur mesuree -- meme methode de derivation que
+`MAGPIE_TAP_ANCHOR` (pas un point optimise numeriquement). **`BED_TAP_RADIUS
+= 1.75`**, le plafond de degagement de l'echelle depuis cette nouvelle
+ancre (1,9519) moins la meme marge de securite de 0,20 que le fix de la
+pie. Couverture resultante : **[7,3 %, 81,2 %]**.
+
+⚠️ **CE FIX COUTE LA BANDE 90-100 %, PUBLIE FRANCHEMENT PLUTOT QUE
+CACHE.** Verifie exhaustivement (pas suppose) : aucun couple ancre/rayon
+ne degage a la fois l'echelle ET couvre 0-100 % complet -- preserver
+90-100 % plafonne a 80,2 % de couverture, ratant entierement la bande
+60-80 %, plus large et plus centrale du lit. Le choix retenu prend la
+bande la plus probablement visee par un joueur (60-80 %, le corps du lit)
+au prix de la pointe la plus etroite (90-100 %, le sommet de la pile de
+livres). **Apres ce fix, taper tout en haut de la pile ne s'enregistre
+plus comme "le lit".**
+
+Sanity-check de non-debordement : la nouvelle ancre est a **2,681** de
+`BED_SPOT` et **2,719** de `LOFT_CENTRE`, toutes deux hors du rayon 1,75
+-- un tap ordinaire "je marche ici" pres du lit ou au centre de la
+mezzanine n'est pas avale par ce cercle.
+
+**Le marqueur visuel garde `BED_MARKER_RADIUS = 0.70` a `BED_SPOT`** --
+jamais signale comme visuellement faux, seul le cercle de hit-test etait
+aveugle. Meme discipline que le marqueur de la pie : deux paires
+distinctes, une pour l'oeil, une pour le code.
+
+**Trois consommateurs mis a jour pour suivre le meme split** :
+`_on_tapped_hotspot`'s `&"bed"` branch decharge desormais `destination`
+(qui resout pres de `BED_TAP_ANCHOR`) au profit de `BED_SPOT` pour le
+`hop_to()` -- marcher vers `destination` l'aurait pose a plusieurs unites
+du matelas ; `_refresh_proximity()`/`_pulse_if_near()` generalises pour
+lire un ancrage explicite par appelant plutot que `marker.position`, la
+porte et l'echelle passant leur propre position reelle (inchangee pour
+elles), la pie et le lit leur ancre fonctionnelle.
+
+### VALIDATION -- ROUGE AVANT VERT, GATE DE FACON PERMANENTE
+
+**Nouveau bloc de balayage gate dans `CabinProbe.gd`, PHASE P** : 11
+assertions par decile (0-100 %) contre `bed_expect_covered`, un
+dictionnaire figeant explicitement la couverture attendue -- jamais "tout
+doit passer". Verifie ROUGE en revenant temporairement a
+`BED_SPOT`/`0.70` : **11 echecs** (les 10 deciles + l'agrege), reproduisant
+exactement la table documentee ; puis restaure et reverifie VERT sur
+**trois cycles distincts** dans cette session (avant/apres le nettoyage
+des sondes jetables, et sur un import totalement propre) : **0 echec,
+277 OK, exit 0** a chaque fois.
+
+⚠️ **PHASE K portait une assertion perimee, trouvee en corrigeant Part B**
+: `loft_level.contains(bed.point)` testait le point de hit-test
+(desormais `BED_TAP_ANCHOR`), qui sort legitimement du petit carre
+marchable de la mezzanine -- exactement comme `MAGPIE_TAP_ANCHOR` n'a
+aucune verification equivalente en PHASE N, pour la meme raison. Corrigee
+pour tester `BED_SPOT` (la position REELLE du lit) a la place -- ce n'est
+pas un affaiblissement, c'est la bonne question maintenant.
+
+Huit fichiers de sonde jetables (`BedHeightMarkersProbe`,
+`BedSweepReconProbe`, `MagpieRingReconProbe`, `MagpieRingReconProbe2` --
+`.gd`+`.tscn` chacun) **supprimes avant commit**.
+
+### BUILD ET NON-REGRESSION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **taille du `.tpz` verifiee contre le
+`Content-Length`** -- 1 073 228 327 octets, aucune troncature). Import
+headless **exit 0**, boot **exit 0**, export Web release **exit 0, 0
+erreur GDScript**, piege payload verifie sur le log `savepack` -- **0**
+ligne `Storing File` pour `scripts/dev`, `assets_source`, `docs`, `web`,
+`build` ou `firebase.json` sur 270 lignes. `index.wasm` **35 376 909
+octets / md5 `af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+`4e08904b1b7107858246af44b602067b` -- identiques au fingerprint permanent
+de tout lot qui ne touche pas le code moteur, coherent : ce lot ne change
+que `CabinInterior.gd` et `CabinProbe.gd`.
+
+**Huit sondes diffees contre `origin/staging` en worktree separe**
+(import complet verifie des deux cotes, 37 fichiers `.scn` d'assets
+importes) : `AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`,
+`ProbeTimeoutAudit` -- **BYTE-IDENTIQUES sur les DEUX flux** (tailles
+comparees avant les contenus). `LevelNavProbe` (77/0), `TurnstileProbe`
+(0/0), `WaterTintProbe` (0/0) -- tous exit 0. `SeesawProbe` : premiere
+tentative **exit 1** sur un piege d'ordre de flags deja consigne dans ce
+fichier (`--fixed-fps` place APRES `--` au lieu d'avant, donc ignore --
+la diagonale tourne alors a la vitesse du mur, 6,317 s au lieu du 18,700 s
+publie) ; rejouee avec l'ordre correct, **exit 0, 0 echec**, diagonale
+reproduite au frame pres.
+
+### RESTE OUVERT
+
+Jugement device, seul juge, sur les deux axes : (A) l'anneau de la pie
+se lit-il desormais comme colle a son corps plutot que flottant au milieu
+de la piece ? (B) le lit repond-il enfin depuis son centre visuel, et le
+sacrifice de la pointe (90-100 %) passe-t-il inapercu a l'usage ? Aucune
+sonde headless ne peut trancher ces deux questions.
+
+**Backlog signale, pas traite** : la chaine de lots pie/bisou/lit
+accumule desormais huit iterations de recalibration successives, toutes
+sur `staging`, aucune mergee sur `main`. Une revue de statut group
+groupee est justifiee des que ce lot est valide sur device, plutot que
+de continuer a merger `staging` -> `main` hotspot par hotspot.
