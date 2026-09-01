@@ -25431,3 +25431,157 @@ raison -- une garde qui compare une chaine VIDE a l'ancienne valeur la trouve
 (dev)"** sur l'ecran de connexion (AVANT le gate d'auth, donc aucun
 aller-retour de connexion) -> `res://scenes/test/BearAnimSpike.tscn`. Bouton
 **JETABLE**, il sort avec la scene de spike.
+
+## LE BOUTON DU SPIKE OURS ETAIT SUR UN ECRAN QUE MATHIEU NE TRAVERSE JAMAIS (1er septembre 2026)
+
+Branche `claude/keepy-bear-spike-access-bwykwb`, partie de `staging`
+(`5cf98c8`). Correctif d'un defaut d'ACCES, pas de rendu : le lot spike
+lot B avait pose son bouton d'entree sur `LoginScreen.tscn`/`.gd`, en
+supposant que cet ecran est toujours traverse. **Faux** -- la session de
+Mathieu persiste, donc il arrive directement dans le hub et l'ecran de
+connexion n'est jamais affiche. Le bouton etait litteralement
+inatteignable dans son flux reel.
+
+### ⚠️ RECON : IL N'EXISTE AUCUN MENU DEBUG POUR LA CABANE -- elle est du gameplay ORDINAIRE
+
+C'etait l'etape bloquante du brief (« trouver comment Mathieu atteint
+`CabinInterior.tscn` en test »), et la reponse ferme la question plutot
+que de la contourner :
+
+* **La cabane n'a PAS de porte de debug.** `CabinInterior.tscn` est
+  atteinte par le jeu normal -- `HubRouter.ROUTES[&"cabin"]`, en tapant le
+  marqueur du pas de porte sur le plateau. `HubRouter` est la table de
+  routage de PRODUCTION et l'unique appelant de `change_scene_to_file`
+  pour les quatre destinations (`chased`, `quizz`, `battle`, `cabin`).
+  Il n'y a donc rien a « repliquer » de ce cote-la : le chemin cabane est
+  du gameplay, pas un acces de test.
+* **Le SEUL mecanisme etabli de ce depot pour atteindre une SCENE DE TEST
+  ISOLEE depuis un telephone est le MENU DE SECOURS DU HUB** -- le bouton
+  « Menu » en haut a droite de `HubWorld.tscn`, qui ouvre
+  `FallbackMenu/Panel/VBoxContainer`. C'est exactement par la que le banc
+  multi-niveaux a fait sa propre passe device : bouton « Test nav (dev) »,
+  commit **`b7e641b`**, retire par **`1504982`** (« cleanup: close the two
+  debug doors before production »).
+
+**Ce precedent est replique A L'IDENTIQUE, pas adapte** : meme conteneur
+parent, meme metrique de bouton (320x84, font 24) et memes `StyleBoxFlat`
+que le `NavTestButton` retire, meme appel direct
+`get_tree().change_scene_to_file(...)` **contournant deliberement
+`HubRouter.ROUTES`** (cette table est le routage de production, un banc
+jetable n'y entre pas), et meme discipline de commentaire jetable nommant
+chaque piece a retirer ensemble. **Aucun systeme d'acces parallele n'est
+invente.**
+
+### Ce qui change, et le perimetre tenu
+
+`git diff --stat origin/staging` : **exactement 6 fichiers**.
+
+| fichier | changement |
+|---|---|
+| `scenes/HubWorld.tscn` | +11 -- `SpikeButton` insere juste avant `CloseButton` |
+| `scripts/hub/HubWorld.gd` | +23 -- un `@onready`, une connexion, `_on_fallback_spike()` |
+| `scenes/LoginScreen.tscn` | **-11 -- rendu byte-identique a `origin/main`** |
+| `scripts/ui/LoginScreen.gd` | **-17 -- rendu byte-identique a `origin/main`** |
+| `scripts/test/BearAnimSpike.gd` | +7/-1 -- le retour pointe sur le hub |
+| `scenes/test/BearAnimSpike.tscn` | +-2 -- libelle `« < Retour hub »` |
+
+⚠️ **La contrainte « ne pas toucher au hub au-dela du point d'acces
+lui-meme » est VERIFIEE, pas affirmee** : `git diff origin/staging` rend
+**0 ligne** pour `HubBuilder.gd`, `HubTapInput.gd`, `HubRegion.gd`,
+`HubCamera.gd`, `KeepyHopper.gd`, `HubRouter.gd` et
+`resources/hub/hub_layout.tres`. Les seules lignes de `HubWorld.gd`
+touchees sont les trois du bouton.
+
+**Les deux fichiers `LoginScreen` sont RESTAURES, pas retouches** :
+`git checkout origin/main --` sur les deux, puis `git diff origin/main`
+verifie a **0 ligne**. Le code spike y etait jetable des le depart ; il
+part parce qu'il est inutilisable, pas remplace en silence.
+
+⚠️ **La sortie du spike suit l'entree** : `BearAnimSpike._on_back()`
+renvoyait sur l'ecran de connexion, ce qui rendait le trajet a sens unique
+une fois l'entree deplacee. Il renvoie desormais sur `HubWorld.tscn` --
+meme forme que le « Retour hub » du banc nav.
+
+### LE CHEMIN D'ACCES REEL, depuis l'ecran que Mathieu voit au chargement
+
+```
+keepy-staging.vercel.app  ->  le jeu ouvre sur LE HUB (session persistante)
+   -> taper « Menu » (bouton en haut a DROITE)
+   -> taper « Spike ours (dev) »   -> res://scenes/test/BearAnimSpike.tscn
+   -> retour par « < Retour hub »
+```
+
+### Validation
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases
+GitHub officielles, **tailles verifiees contre le `Content-Length`** :
+50 276 070 et 1 073 228 327 octets, aucune troncature). `rm -rf build
+.godot` avant tout. Import headless **exit 0, 0 erreur, 36 `.scn` pour 36
+sources `.glb`** (import complet verifie, pas suppose). Boot headless de
+`HubWorld.tscn`, `LoginScreen.tscn` et `BearAnimSpike.tscn` : **exit 0,
+aucune erreur SCRIPT/Parse**. Export Web release **exit 0, 0 erreur**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent de tout lot qui ne touche pas le code moteur. `index.pck`
+43 293 472, **marqueur et jamais preuve d'identite**. **Piege payload
+tenu** : sur **280** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web/`, `build` ou `firebase.json` -- et **6**
+pour les ressources propres au spike, qui doivent bien y etre.
+
+**Sondes, toutes exit 0** : `ProbeTimeoutAudit` (**59 sondes scenes + 1
+`--script`**, chiffre inchange -- ce lot n'ajoute aucune sonde),
+`AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**),
+`DeathModelAudit`, `ChargerShapeProbe`, plus -- sous `xvfb-run
+--rendering-driver opengl3`, jamais `--headless` seul -- `CabinProbe`,
+`TurnstileProbe`, `SeesawProbe` et `WaterTintProbe`, chacune **0
+failure(s)**.
+
+### Reste ouvert
+
+1. **Jugement device, seul juge** : le spike ours existe pour etre regarde
+   sur un vrai telephone (WebGL2/Safari), et ce lot ne fait que le rendre
+   ATTEIGNABLE -- il ne dit rien du rig lui-meme.
+2. **Tout ce lot est JETABLE et STAGING-ONLY** : le `SpikeButton`, son
+   `@onready`, sa connexion, `_on_fallback_spike()` et
+   `scenes/test/BearAnimSpike.tscn` sortent **ensemble**, dans le meme lot,
+   avant que quoi que ce soit d'ici n'atteigne `main`.
+
+### Deploiement staging (palier 1, automatique)
+
+`staging` **`6734404`** (merge `--no-ff`, arbre **byte-identique** a la
+branche feature : meme hash d'arbre `5b4374aa` des deux cotes ET
+`git diff --stat` a 0 ligne, verifie AVANT le push). CI run **#360**
+(id 33555961739) **verte** -- `Import project resources` 20:33:45 ->
+20:37:22 (3 min 37), **`Export Web build` 20:37:22 -> 20:37:28**,
+`Verify export output` succes, `Deploy to Vercel [STAGING -- staging]`
+**succes** 20:37:49 -> 20:38:03, `[PRODUCTION -- main]` correctement
+**skipped**. **`main` NON touche** (`origin/main` toujours `215e6d4`).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres (ce lot, run #360) |
+|---|---|---|
+| `CACHE_VERSION` | **`1788292533` = 19:55:33 UTC** | **`1788295047` = 20:37:27 UTC** |
+| `index.wasm` servi | -- | **35 376 909** *(fingerprint permanent)* |
+| `index.pck` servi | -- | 43 293 456 |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(20:37:22 -> 20:37:28), et **les lectures d'avant ET d'apres portent
+`x-vercel-cache: MISS` avec `age: 0`** -- la valeur d'avant ayant ete
+relevee AVANT le merge, la bascule est prouvee dans les deux sens et pas
+deduite du log. C'est la forme la plus forte que ce fichier documente.
+
+⚠️ **`index.pck` : 43 293 472 a l'export local propre contre 43 293 456
+servi, 16 octets d'ecart** -- enieme illustration de l'instabilite deja
+consignee, **marqueur « nouveau build » et jamais preuve d'identite**.
+`index.wasm` est identique des deux cotes et c'est lui qui la porte.
+
+⚠️ **L'API GitHub Actions a de nouveau servi un etat perime**, note dans
+ce sens-la : `get_workflow_run` est reste fige sur `updated_at
+20:33:02` / `in_progress` alors que le job avancait reellement --
+`list_workflow_jobs` avec `filter: "all"` rendait, lui, chaque etape avec
+son vrai horodatage. Le piege est celui deja consigne ; la lecture au
+niveau des JOBS est celle qui dit vrai.
