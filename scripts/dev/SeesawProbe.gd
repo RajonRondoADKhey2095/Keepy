@@ -39,7 +39,13 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## Label3D is not a MeshInstance3D nor a MultiMesh, so this counter -- by
 ## its own definition, see _count_draw -- never saw the sign. One mark per
 ## cabin, and the layout ships one cabin.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 131
+## 131 -> 132 on 31 aout 2026: THE MAGPIE, drawn inside the cabin's cutaway
+## view so the plateau shows the same living room the interior does -- ONE
+## MeshInstance3D (the .glb carries one node, one mesh, one primitive,
+## measured off the file) under the cabin's own root. Not batched: there is
+## only one, and it is pure scenery -- no hotspot, no tap radius, nothing
+## registered.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 132
 
 var _failures: int = 0
 var _hub: Node = null

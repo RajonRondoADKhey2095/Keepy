@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -14,6 +14,7 @@
 [ext_resource type="PackedScene" path="res://scenes/HubConfirmDialog.tscn" id="11"]
 [ext_resource type="PackedScene" path="res://assets/models/keepy_owl_decor.glb" id="13"]
 [ext_resource type="PackedScene" path="res://assets/models/keepy_cabin_decor.glb" id="14"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_magpie_prop.glb" id="15"]
 
 [sub_resource type="Environment" id="Environment_Hub"]
 background_mode = 1
@@ -110,6 +111,7 @@ layout = ExtResource("8")
 portal_scene = ExtResource("9")
 owl_scene = ExtResource("13")
 cabin_scene = ExtResource("14")
+magpie_scene = ExtResource("15")
 
 [node name="Keepy" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("3")
