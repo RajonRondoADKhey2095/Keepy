@@ -25394,3 +25394,40 @@ visuels, 0/10 colliders deplaces**), `DeathModelAudit`, `ChargerShapeProbe`.
    servant de repere ?
 4. **La lumiere manquante du hub** (constat ci-dessus) -- a trancher au
    lot C, pas ici.
+
+### Deploiement staging du spike lot B (palier 1, automatique)
+
+`staging` **`aaf14c6`** (merge `--no-ff` de `29b267e`, arbre **byte-identique**
+a la branche feature -- `git diff HEAD <branche> --stat` vide, verifie AVANT le
+push). CI run **#358** (id 33550844219) **verte** -- `Import project resources`
+19:41:00 -> 19:44:34, **`Export Web build` 19:44:34 -> 19:44:40**, `Verify
+export output` succes, `Deploy to Vercel [STAGING -- staging]` **succes**
+19:45:00 -> 19:45:12, `[PRODUCTION -- main]` correctement **skipped**.
+**`main` NON touche** (`origin/main` toujours `215e6d4`).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants, les deux lectures en `x-vercel-cache: MISS` / `age: 0`** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | **`1788291880` = 19:44:40 UTC** -- tombe exactement sur la fermeture de l'etape `Export Web build` |
+| `index.wasm` servi | **35 376 909** -- identique a l'export local, le fingerprint permanent |
+| `index.pck` servi | 43 293 408 (export local 43 293 392, **16 octets d'ecart** -- l'instabilite deja consignee ; marqueur, jamais preuve d'identite) |
+
+⚠️ **Limite dite plutot que sous-entendue** : la valeur "avant" du
+`CACHE_VERSION` (`1788268182`) a ete lue sur un `HIT` a `age: 23252` -- valable
+comme VALEUR (elle precede le push), **pas** une mesure de fraicheur. La
+bascule est etablie par la concordance de l'epoch servi avec la fenetre
+d'export de CE run, plus deux lectures fraiches -- pas par une paire
+avant/apres toutes deux en MISS.
+
+⚠️ **`curl` vers `*.vercel.app` est refuse par le proxy de ce sandbox** (piege
+deja consigne) : les deux lectures passent par le canal MCP Vercel. Une boucle
+d'attente `curl` avait ete lancee puis **arretee immediatement** pour cette
+raison -- une garde qui compare une chaine VIDE a l'ancienne valeur la trouve
+"differente" et annonce un deploiement qui n'a pas eu lieu.
+
+**Chemin d'acces device** : `keepy-staging.vercel.app` -> bouton **"Spike ours
+(dev)"** sur l'ecran de connexion (AVANT le gate d'auth, donc aucun
+aller-retour de connexion) -> `res://scenes/test/BearAnimSpike.tscn`. Bouton
+**JETABLE**, il sort avec la scene de spike.
