@@ -25186,3 +25186,53 @@ ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
 (build, import, export et sondes verts). **Palier 2 reste gate par
 Mathieu** : validation device sur `keepy-staging.vercel.app` avant tout
 merge vers `main`.
+
+### MERGE EN PRODUCTION (1er septembre 2026, autorisation explicite de Mathieu)
+
+`staging` (`7344bde`) -> `main`, commit de merge **`629317b`**, `--no-ff`,
+apres validation device confirmee par Mathieu : "hotspot du lit reactif
+sur toute sa surface, cout mezzanine bord ouest juge acceptable au
+pouce".
+
+**Verifie AVANT le merge, par ARBRE et pas par nom** : `git fetch --all
+--prune`, `origin/staging = 7344bde` et `origin/main = d8f6fb0`
+exactement les SHA attendus, aucune session concurrente depuis le
+dernier rapport. Merge `--no-ff` sans conflit ; **diff de l'arbre
+resultant contre l'arbre de `staging` a `7344bde` : VIDE** -- meme hash
+d'arbre des deux cotes (**`53731cee0d300a33b425bc293c1585611adea9d1`**),
+verifie AVANT le push : ce qui part en prod est litteralement l'arbre
+valide sur staging, pas une recomposition.
+
+**Build local, editeur + templates Godot 4.3-stable installes dans ce
+sandbox** (releases GitHub officielles). `rm -rf build .godot`, import
+headless **exit 0, 37 `.scn`** (import complet verifie, pas suppose).
+Export Web release **exit 0, 0 erreur GDScript**. `index.wasm`
+**35 376 909** octets / md5 **`af4a8fc2925d992348eb30deeeb54360`**,
+`index.js` md5 **`4e08904b1b7107858246af44b602067b`** -- identiques au
+fingerprint permanent deja consigne pour tout lot qui ne touche pas le
+code moteur, coherent avec un diff limite a deux fichiers GDScript.
+`index.pck` local **34 352 624**, marqueur et jamais preuve d'identite.
+
+CI **run #356** (id `33520699742`, job `99898905779`) **verte**
+(14:38:07 -> 14:43:12 UTC) -- `Import project resources` 14:38:54 ->
+14:42:33, **`Export Web build` 14:42:33 -> 14:42:39**, `Verify export
+output` succes, `Deploy to Vercel [PRODUCTION -- main]` **succes**
+14:42:59 -> 14:43:09, `Deploy to Vercel [STAGING -- staging]`
+correctement **skipped** (push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI**, sur DEUX
+marqueurs independants, tous deux `x-vercel-cache: MISS` / `age: 0` :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1788273758` = **14:42:38 UTC** -- tombe exactement dans la fenetre `Export Web build` (14:42:33 -> 14:42:39) |
+| `index.wasm` servi | **35 376 909** octets -- identique a la taille et au md5 de l'export local, le fingerprint permanent |
+| `index.pck` servi | 34 352 560 octets (marqueur "nouveau build servi", jamais offert seul comme preuve d'identite) |
+
+**Le fix du hotspot du lit (C2, anneau visuel decouple du rayon de tap,
+couverture 100 % sur son ancre) est desormais EN PRODUCTION** sur
+`keepy-ten.vercel.app`.
+
+**Reste ouvert : aucun sur ce merge.** Le seul point laisse ouvert par
+le lot de staging (le ressenti device du lit) est deja tranche par la
+validation qui a autorise ce merge.
