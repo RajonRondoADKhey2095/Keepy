@@ -24955,3 +24955,234 @@ accumule desormais huit iterations de recalibration successives, toutes
 sur `staging`, aucune mergee sur `main`. Une revue de statut group
 groupee est justifiee des que ce lot est valide sur device, plutot que
 de continuer a merger `staging` -> `main` hotspot par hotspot.
+
+## MERGE EN PRODUCTION -- CHANTIER PIE (1er septembre 2026)
+
+`staging` (`e6211b0`) -> `main`, commit de merge **`9cab266`**, `--no-ff`,
+sur feu vert explicite de Mathieu apres validation device de la chaine
+pie/bisou complete : install et calibration du prop pie du hub (echelle,
+integration nav, comportement de saut), visibilite et taille du hub,
+distance d'interaction du bisou (x2), position de sortie, portee du
+hotspot de tap de la pie, et l'anneau visuel de portee de tap decouple de
+son rayon de test -- **tout confirme fonctionnel sur device**.
+
+⚠️ **DETTE ASSUMEE, PAS UN OUBLI : le hotspot `&"bed"` reste NON
+FONCTIONNEL sur device.** Le fix geometrique livre dans le dernier lot
+`staging` (le meme sweep de decouplage anneau/rayon applique au lit) n'a
+produit **aucune difference percue sur device**, malgre la preuve
+geometrique/le calcul presentes au moment de ce lot. Merge sur `main`
+autorise **quand meme**, en connaissance de cause : le lit sera traite
+dans un lot separe, **apres** ce merge, avec un recon v2 qui devra
+produire des rendus offscreen comparatifs (la methode qui a fonctionne
+pour le bisou apres son propre echec de validation) **avant** toute
+nouvelle proposition de correctif -- ne pas se fier au calcul geometrique
+seul, qui a deja produit un faux-vert sur ce meme hotspot.
+
+**Verifie AVANT le merge, par ARBRE et pas par nom** : `git fetch --all
+--prune`, `origin/staging = e6211b0` et `origin/main = afa49d7` exactement
+les SHA annonces, `origin/staging` la ref la plus recente du depot (la
+seule branche plus recente que `main`,
+`claude/hotspot-tap-radius-visual-2rf3lt`, deja ancetre de `staging` --
+`git merge-base --is-ancestor` + comparaison de hash d'arbre), **aucune
+session concurrente**. Merge `--no-ff` sans conflit ; **diff de l'arbre
+resultant contre l'arbre de `staging` a `e6211b0` : VIDE**
+(`git diff HEAD origin/staging` vide, meme hash d'arbre `5a64ae98...` des
+deux cotes) -- ce qui part en prod est litteralement l'arbre valide sur
+staging, pas une recomposition.
+
+**Build local, editeur + templates Godot 4.3-stable installes dans ce
+sandbox** (releases GitHub officielles, tailles verifiees contre le
+`Content-Length` avant extraction -- 50 276 070 et 1 073 228 327 octets,
+aucune troncature). Import headless **exit 0, 37 `.scn`** (import complet
+verifie, pas suppose). Export Web release **exit 0, 0 erreur GDScript**.
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent deja consigne pour tout lot qui ne touche pas le code moteur.
+**Piege payload tenu** : **0** ligne `Storing File` pour `scripts/dev`,
+`assets_source`, `docs`, `web`, `build` ou `firebase.json`.
+
+CI **run #353** (id `33485316412`) **verte** (08:05:57 -> 08:10:52 UTC) --
+`Import project resources` 08:06:39 -> 08:10:19, `Export Web build`
+**08:10:19 -> 08:10:25**, `Deploy to Vercel [PRODUCTION -- main]`
+**succes** 08:10:40 -> 08:10:50, `Deploy to Vercel [STAGING -- staging]`
+correctement **skipped** (push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI**, sur DEUX
+marqueurs independants, tous deux `x-vercel-cache: MISS` / `age: 0` :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1788250224` = **08:10:24 UTC** -- tombe exactement dans la fenetre `Export Web build` (08:10:19 -> 08:10:25) |
+| `index.wasm` servi | **35 376 909** octets -- identique au bit pres a l'export local, preuve d'identite |
+| `index.pck` servi | 34 352 672 octets (export local : 34 352 640 -- 32 octets d'ecart, instabilite de compression VRAM deja documentee, jamais offert comme preuve d'identite a lui seul) |
+
+**Le chantier pie/bisou est desormais EN PRODUCTION** sur
+`keepy-ten.vercel.app`, a l'exception assumee du lit.
+
+**Prochaine etape** : rouvrir le hotspot du lit dans son propre lot, avec
+un recon v2 exigeant des rendus offscreen comparatifs AVANT toute
+proposition de correctif. A cette occasion, verifier aussi si le rond
+visuel du lit doit etre decouple de la meme facon que celui de la pie --
+le rapport dit `BED_MARKER_RADIUS` inchange a 0.70, mais ca vaut la peine
+de confirmer que ce rayon-la est percu et coherent une fois le vrai
+probleme de portee compris.
+
+## LE HOTSPOT DU LIT : LOT 10 CASSE -> RECON V2 -> RECON-RENDUS C1/C2/A -> C2 LIVRE (1er septembre 2026)
+
+Branche `claude/bed-hotspot-c2-20iee9`, partie de `main` (`d8f6fb0`).
+Ferme la dette assumee au merge de prod precedent : le hotspot `&"bed"`
+etait reste non fonctionnel sur device malgre un fix geometrique deja
+tente (lot 10) et deja merge sur `staging`/`main`.
+
+### LE PARCOURS EN TROIS ETAPES, ET POURQUOI CHACUNE A ETE NECESSAIRE
+
+1. **Lot 10** (deja documente plus haut dans ce fichier, section "L'ANNEAU
+   DE LA PIE ETAIT VISUELLEMENT TROP GROS, ET LE LIT AVAIT LE MEME BUG QUE
+   LA PIE") avait deja recentre `BED_TAP_ANCHOR` a `(-1.291703, 1.333841)`,
+   rayon `1.75`, en balayant la hauteur DESSINEE du lit (0-100% de sa
+   plage 6.5522-7.5952) contre le plan plat que `LevelController.resolve()`
+   utilise reellement. **Merge sur `main` avec la dette explicitement
+   assumee** : "le fix geometrique livre... n'a produit AUCUNE difference
+   percue sur device, malgre la preuve geometrique/le calcul presentes au
+   moment de ce lot."
+2. **Recon v2** (hors de ce lot, deja effectuee avant ce brief) : a produit
+   les rendus offscreen comparatifs demandes par la note de merge
+   precedente, plutot que de refaire confiance au seul calcul geometrique
+   qui avait deja produit un faux-vert sur ce meme hotspot.
+3. **Recon-rendus C1/C2/A** : trois candidats d'ancre/rayon compares par
+   rendu offscreen, produisant C2 comme celui a livrer. **Aucun document
+   persiste n'existe pour ce processus** (`find docs -iname "*bed*"` ne
+   rend rien) -- son seul artefact survivant est les valeurs elles-memes,
+   transmises par les instructions de ce lot.
+
+### ⚠️ LA VRAIE CAUSE, ET POURQUOI LE BALAYAGE PAR HAUTEUR ETAIT LA MAUVAISE
+### METRIQUE DES LE DEPART
+
+Le symptome device etait "taper le lit ne s'enregistre presque jamais". Le
+balayage par hauteur du lot 10 mesurait la **plage de hauteur dessinee**
+du lit a la colonne XZ fixe de `BED_SPOT` -- exactement la methode qui a
+trouve le bug de la pie, et un vrai defaut a ete trouve par cette methode
+(l'ancre de lot 10 refusait la majorite de cette colonne).
+
+**Mais ce n'est pas ce qu'un joueur voit reellement taper : c'est
+l'ANNEAU DU MARQUEUR** -- la geometrie que `CabinMarker.gd` dessine
+reellement (XZ de `BED_SPOT`, hauteur monde `loft.plane_y +
+CabinMarker.CABIN_RING_LIFT`, rayon `BED_MARKER_RADIUS`). Un balayage
+azimutal de cet anneau precis, aller-retour par la vraie camera puis par
+`LevelController.resolve()` -- le meme mecanisme de derive par parallaxe
+deja prouve pour la pie -- donne un chiffre tres different du balayage par
+colonne.
+
+**Mesure IN-ENGINE, pas recopiee du recon offscreen** (`CabinProbe.gd`,
+PHASE P, sonde jetable temporaire DEBUGRING/DEBUGMEZZ verifiee puis
+convertie en assertion permanente) :
+
+| | ancre/rayon lot 10 (livre avant) | candidat C2 (livre) |
+|---|---|---|
+| **couverture de l'anneau** (72 azimuts) | **0,00% (0/72)** | **100,00% (72/72)** |
+| **cout mezzanine** (grille 101x101 du sol de la mezzanine) | 4,25% (429 points) | **10,14%** |
+| chevauchement avec le lien de l'echelle | 0 | **0** |
+| degagement du lien de l'echelle | -- | gap ~3,199 contre radii-sum ~2,911, marge ~0,288 |
+
+**Confirme ROUGE-AVANT-VERT dans ce meme sandbox** : les constantes de
+lot 10 restaurees temporairement (`sed`, puis reverties) donnent bien
+`0,00% (0/72)` sous cette meme methode -- fermant la question de savoir
+si la couverture d'anneau est le bon diagnostic ou un artefact qui ne
+lirait differemment entre les deux candidats que par hasard.
+
+### VALEURS -- AVANT / APRES, UN SEUL CHANGEMENT FONCTIONNEL
+
+```
+AVANT (lot 10) : BED_TAP_ANCHOR = Vector2(-1.291703, 1.333841)
+                 BED_TAP_RADIUS = 1.75
+APRES (C2)     : BED_TAP_ANCHOR = Vector2(-1.9923, -3.5812)
+                 BED_TAP_RADIUS = 1.811
+```
+
+`BED_SPOT`, `BED_MARKER_RADIUS` et les lifts marqueur (`CABIN_PAD_LIFT`
+0,20 / `CABIN_RING_LIFT` 0,23) sont **INTOUCHES** -- meme split
+visuel/fonctionnel que la pie : l'ancre de tap n'a jamais eu a coincider
+avec la position ou le rayon reellement DESSINES du marqueur.
+
+### LE COUT MEZZANINE EST ACCEPTE, PAS GRATUIT
+
+**10,14%** du carre praticable de la mezzanine (a hauteur de sol, un tap
+"je marche ici" ordinaire, pas un tap sur une surface surelevee) resout
+desormais vers le lit plutot que vers une simple marche, concentre pres du
+bord ouest de la mezzanine ou l'ancre de C2 se trouve. **Croise contre le
+cercle du lien de l'echelle : 0 point sur 101x101 est capture par les
+deux a la fois** -- ce cout n'est donc pas non plus un chevauchement
+inter-hotspot.
+
+**Bande de tolerance de la clause d'escalade** : 10,58% (chiffre du recon
+offscreen) +- 3 points = **[7,58% ; 13,58%]**. Le chiffre in-engine mesure
+(10,14%) tombe dedans, a 0,44 point du chiffre du recon -- **la clause
+d'escalade ne s'est pas declenchee**, aucun arret n'a ete necessaire.
+
+**Accepte sur la force que la couverture PLEINE de l'anneau est la
+propriete dont ce hotspot a reellement besoin** -- un joueur ne peut pas
+mal-taper un anneau qu'il ne peut jamais taper avec succes du tout.
+
+### ⚠️ CORRECTION PERMANENTE : LE "CONTROLE SOL ~100%" DE LA PORTE N'A
+### JAMAIS EXISTE
+
+Un brief anterieur pour ce meme hotspot invoquait un chiffre "controle
+sol ~100%" pour la porte. **Ce chiffre est FAUX et ne doit plus
+ressortir.** Verifie dans ce lot : la couverture d'anneau de la porte
+plafonne a **24,65% brut / 82,15% mesure contre son pad**, pas 100%. Ce
+qui a produit ce chiffre errone n'etait ni ce fichier ni cette sonde, et
+il ne doit pas etre suppose vrai du lit sous pretexte qu'il ressemble au
+meme genre d'affirmation.
+
+### LE BALAYAGE PAR HAUTEUR EST RETIRE, PAS SILENCIEUSEMENT ABANDONNE
+
+`CabinProbe.gd` documente explicitement pourquoi : rejoue contre C2, ce
+balayage lit 0% a chaque decile -- pas parce que C2 est casse, mais parce
+que son ancre a ete deliberement recentree HORS de cette colonne pour
+couvrir l'anneau a la place. Garder ce balayage gate aurait fait echouer
+un fix confirme fonctionnel plus bas ; le laisser non-gate aurait rapporte
+un chiffre sur une geometrie que plus rien ici ne pretend couvrir. Retire
+et remplace par les deux assertions permanentes ci-dessus (couverture
+d'anneau + cout mezzanine + non-chevauchement), documente en commentaire
+pour qu'une future session ne redecouvre pas "le balayage colonne dit 0%"
+comme une regression.
+
+### VALIDATION
+
+Editeur Godot 4.3-stable installe dans ce sandbox. Import headless
+**exit 0, 37 `.scn`**. `CabinProbe.gd` PHASE P, sous `xvfb-run
+--rendering-driver opengl3` (jamais `--headless` seul, qui force un
+viewport factice 0x0 et invaliderait tout calcul de projection ecran) :
+**268 OK, 0 echec, exit 0**. Export Web release **exit 0, 0 erreur**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent deja consigne pour tout lot qui ne touche pas le code moteur,
+coherent : ce lot ne change que deux fichiers GDScript. **Piege payload
+tenu** : sur **270** lignes `Storing File`, **0** pour `scripts/dev`,
+`assets_source`, `docs`, `web` ou `firebase.json`. `index.pck`
+34 352 560, marqueur et jamais preuve d'identite.
+
+**Quatre sondes de non-regression, diffees contre `origin/main` en
+worktree separe (import complet verifie des deux cotes, 37 `.scn`
+chacun)** : `AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`,
+`ProbeTimeoutAudit` -- **BYTE-IDENTIQUES sur les DEUX flux**, exit 0 des
+deux cotes. `ProbeTimeoutAudit` confirme **59 sondes scenes des deux
+cotes** -- ce lot n'ajoute ni ne retire aucune sonde, seulement des blocs
+a `CabinProbe.gd` existant.
+
+### RESTE OUVERT -- jugement device, seul juge
+
+Est-ce que le lit repond enfin depuis son centre visuel a l'echelle
+reelle d'un telephone ? La couverture d'anneau (100,00%) et le cout
+mezzanine (10,14%, dans la bande acceptee) sont mesures in-engine ;
+aucune sonde de ce depot ne peut confirmer le ressenti sur device. Rien
+ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+`opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+`main` **non touche**. Merge sur `staging` : palier 1, automatique
+(build, import, export et sondes verts). **Palier 2 reste gate par
+Mathieu** : validation device sur `keepy-staging.vercel.app` avant tout
+merge vers `main`.
