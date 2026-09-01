@@ -86,6 +86,20 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
 @onready var _battle_button: Button = $FallbackMenu/Panel/VBoxContainer/BattleButton
+## LOT B SPIKE, DISPOSABLE and STAGING-ONLY: device access to the isolated
+## bear-rig scene, in the SAME place and the SAME shape the multi-level nav
+## bench used for its own device pass ("Test nav (dev)", b7e641b, retired by
+## 1504982). The hub's fallback menu is this repo's one established entry
+## point for an isolated test scene -- there is no debug menu anywhere else,
+## and the cabin is not reached through one either: CabinInterior.tscn is
+## ordinary gameplay, HubRouter.ROUTES[&"cabin"], entered by tapping the
+## doorstep marker on the plateau.
+##
+## Deliberately NOT routed through HubRouter.ROUTES: that table is production
+## routing, and this is a throwaway bench. Remove this node, this @onready
+## line, the signal connection below and _on_fallback_spike() together, in
+## the same lot that retires scenes/test/BearAnimSpike.tscn.
+@onready var _spike_button: Button = $FallbackMenu/Panel/VBoxContainer/SpikeButton
 @onready var _mooring: BoatMooring = $Mooring
 @onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
 
@@ -466,6 +480,7 @@ func _ready() -> void:
 	_chased_button.pressed.connect(_on_fallback_chased)
 	_quizz_button.pressed.connect(_on_fallback_quizz)
 	_battle_button.pressed.connect(_on_fallback_battle)
+	_spike_button.pressed.connect(_on_fallback_spike)
 
 ## Puts Keepy back where he left the plateau, when something asked.
 ##
@@ -1657,6 +1672,14 @@ func _on_fallback_quizz() -> void:
 
 func _on_fallback_battle() -> void:
 	_router.route(&"battle")
+
+## LOT B SPIKE, DISPOSABLE -- see the @onready declaration above. Bypasses
+## HubRouter on purpose: ROUTES is the production table, and this path is a
+## dev bench that is not meant to outlive the device pass it exists for.
+## get_tree().change_scene_to_file() is HubRouter.route()'s own call, used
+## directly rather than through it.
+func _on_fallback_spike() -> void:
+	get_tree().change_scene_to_file("res://scenes/test/BearAnimSpike.tscn")
 
 ## =====================================================================
 ## KEEPY TINTS TOWARD THE WATER HE IS STANDING IN
