@@ -210,6 +210,9 @@ var _turnstile_ride: Dictionary = {}
 var _seesaws: Array[Dictionary] = []
 var _seesaw_ride: Dictionary = {}
 
+## The onlooker. One, built in _ready(), never rebuilt.
+var _bear: HubActorWalker = null
+
 ## Every owl, as _setup_owls copied it, plus the per-prop tween slot; and
 ## the one entry currently carrying Keepy.
 var _owls: Array[Dictionary] = []
@@ -311,6 +314,57 @@ const TURNSTILE_EXIT_STEPS: int = 24
 const SEESAW_TILT_DEG: float = 15.0
 const SEESAW_ROCK_CYCLES: float = 2.5
 const SEESAW_ROCK_S: float = 2.4
+
+## THE BEAR THAT COMES TO WATCH THE SEESAW
+##
+## An onlooker, not a prop and not a ride: it has no hotspot, no tap radius
+## and no entry in `hub_layout.tres`. It is parented under `World/` beside
+## Keepy rather than under `World/Props`, because it MOVES -- a prop, in
+## this file's vocabulary, is something the builder places once from the
+## layout. That parenting also means the shared draw-node budget the
+## `SeesawProbe`/`TurnstileProbe`/`WaterTintProbe` trio gates counts over
+## `World/Props` only and cannot see this actor, so its cost is published
+## in the report instead of riding an assertion that structurally cannot
+## observe it: ONE MeshInstance3D, the rig's single skinned mesh.
+const BEAR_SCENE: PackedScene = preload("res://assets/models/keepy_bear_walker.glb")
+
+## Lot B's measured scale, taken off `Skeleton3D.get_bone_global_pose()`
+## and NOT off an AABB -- the glb authors a 1.7-unit mesh and then puts a
+## 0.01 scale on its Armature node, so anything reading `get_aabb()` here
+## undercounts a hundredfold. See `BearAnimSpike.gd` for the full account.
+const BEAR_SCALE: float = 1.130876
+
+## Where the bear stands when nothing is happening.
+##
+## CHOSEN BY SCANNING THE LAYOUT, not by eye. On the seesaw's own local Z
+## axis (the plank runs along its X), so both plank ends are the same walk
+## and the bear does not favour one side; 5.95 units clear of the nearest
+## prop; and BEHIND the seesaw from the camera, which sits at
+## `target + (0, 7.6, 8.9)` looking down -Z -- so the bear walks toward the
+## viewer in the background rather than crossing in front of Keepy.
+const BEAR_REST: Vector3 = Vector3(0.0, 0.0, 35.5)
+
+## How far past the plank tip the bear stops, in the seesaw's own frame.
+##
+## The plank is `HubBuilder.SEESAW_PLANK_LENGTH` 3.60 long, so its tip is
+## at 1.80; this stands the bear 0.8 beyond that, clear of the swing and
+## about 3.98 from Keepy's seat at `SEESAW_RIDE_X` 1.38 on the other side.
+const BEAR_WATCH_X: float = 2.6
+
+## ⚠️ PARKED GAME-FEEL DECISION, DELIBERATELY NOT TAKEN HERE.
+##
+## `false`  -- the bear stays where it arrived and waits for next time.
+## `true`   -- the bear walks back to BEAR_REST when the rider steps off.
+##
+## Shipped `false`, and this is not a preference dressed up as a default:
+## the rock lasts SEESAW_ROCK_S (2.4 s) and the walk takes about 5.3 s at
+## the clip-derived `walk_speed`, so the dismount fires while the bear is
+## still ON ITS WAY. Under `true` he would turn round mid-approach and
+## never arrive at all -- which means the two options are not symmetric,
+## and picking `true` is really picking "the bear also has to be faster, or
+## the rest point closer". That trade belongs to Mathieu, so both are
+## presented in the report and this constant is the whole of the switch.
+const BEAR_RETURNS_HOME: bool = false
 
 ## How much room a landing needs on top of whatever it is standing next to.
 ##
@@ -465,6 +519,9 @@ func _ready() -> void:
 	_keepy.ride_ended.connect(_on_ride_ended)
 	_keepy.became_idle.connect(_on_keepy_idle)
 	_keepy.board_dived.connect(_on_board_dived)
+	_setup_bear()
+	_keepy.seesaw_mounted.connect(_on_seesaw_mounted)
+	_keepy.seesaw_dismounted.connect(_on_seesaw_dismounted)
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -1164,6 +1221,69 @@ func _on_seesaw_rock_finished() -> void:
 	_seesaw_ride = {}
 	_dismount_pending = true
 	_keepy.leave_seesaw(landing)
+
+## Builds the onlooker and stands it at its rest point.
+##
+## The rig, its scale and its clip are handed to `HubActorWalker` as data;
+## nothing about a bear lives in that script, which is why the same script
+## would carry a second animal without an edit.
+func _setup_bear() -> void:
+	_bear = HubActorWalker.new()
+	_bear.model_scene = BEAR_SCENE
+	_bear.model_scale = BEAR_SCALE
+	# BEFORE add_child, because the walker builds its rig in _ready() and a
+	# scale written afterwards would be a rig drawn once at the wrong size.
+	_bear.position = BEAR_REST
+	_world.add_child(_bear)
+
+## Keepy has sat down: the bear walks to the FAR end of that plank.
+##
+## ⚠️ THE SEESAW IS FOUND HERE RATHER THAN READ OFF `_seesaw_ride`, and
+## that is not a preference. `_mount_seesaw` calls `mount_seesaw()`, which
+## emits `seesaw_mounted` synchronously, and only THEN assigns
+## `_seesaw_ride` -- so at the instant this runs that field still holds the
+## PREVIOUS ride, or nothing at all. Reading it would work by luck on the
+## first mount and be wrong on every one after.
+##
+## Keepy's position is already his seat when the signal fires
+## (`mount_seesaw` calls `follow_seesaw()` before emitting), so the search
+## is the same proximity test `_rock_near` does, against the same table.
+func _on_seesaw_mounted() -> void:
+	if _bear == null:
+		return
+	var entry: Dictionary = _seesaw_under(_keepy.global_position)
+	if entry.is_empty():
+		return
+	var pivot: Node3D = entry["pivot"]
+	# THE ROOT, NOT THE PIVOT. The pivot's z-rotation is what the rock
+	# animates, so a point transformed through it would land somewhere new
+	# every frame of the tilt; the root carries the layout's placement and
+	# nothing else.
+	var root: Node3D = pivot.get_parent() as Node3D
+	if root == null:
+		return
+	var side: float = 1.0 if root.to_local(_keepy.global_position).x >= 0.0 else -1.0
+	_bear.walk_to(root.to_global(Vector3(-side * BEAR_WATCH_X, 0.0, 0.0)))
+
+## Keepy has stepped off. See BEAR_RETURNS_HOME for why this is a constant
+## and not a decision.
+func _on_seesaw_dismounted() -> void:
+	if _bear == null or not BEAR_RETURNS_HOME:
+		return
+	_bear.walk_to(BEAR_REST)
+
+## The seesaw `flat` is standing on, or {}. Same radius test `_rock_near`
+## runs, factored out so the bear and the rock can never disagree about
+## which plank a landing belongs to.
+func _seesaw_under(where: Vector3) -> Dictionary:
+	var flat := Vector3(where.x, 0.0, where.z)
+	for entry in _seesaws:
+		var pivot: Node3D = entry["pivot"]
+		if pivot == null or not is_instance_valid(pivot):
+			continue
+		if flat.distance_to(entry["position"] as Vector3) <= float(entry["radius"]):
+			return entry
+	return {}
 
 ## Re-pumps the seesaw Keepy is already on, when the tap landed within the
 ## SAME prop's trigger radius -- and does nothing otherwise, which leaves it

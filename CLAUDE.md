@@ -25585,3 +25585,247 @@ ce sens-la : `get_workflow_run` est reste fige sur `updated_at
 `list_workflow_jobs` avec `filter: "all"` rendait, lui, chaque etape avec
 son vrai horodatage. Le piege est celui deja consigne ; la lecture au
 niveau des JOBS est celle qui dit vrai.
+
+## LOT C -- L'OURS MARCHE VERS LA BALANCOIRE : un marcheur GENERIQUE, et l'ETAPE 0 se referme sur une egalite qui n'est PAS une garantie (1er septembre 2026)
+
+Branche `claude/keepy-walker-seesaw-t6a12z`, partie de `main` (`215e6d4`) et
+`staging` (`40aa427`) -- le rig ours et son point d'acces de test y sont deja,
+valides sur device au lot B. **`KeepyHopper.gd` n'est PAS touche** : ce lot ne
+fait que LIRE ses deux signaux existants (`seesaw_mounted`,
+`seesaw_dismounted`), verifie par `git diff --stat` et pas affirme.
+
+### ⚠️ ETAPE 0 -- LE MATERIAU SANS LUMIERE : issue (a), MAIS L'EGALITE EST UN ACCIDENT D'ASSET
+
+Le hub n'a **AUCUN noeud `Light3D`** -- compte, pas suppose -- et son
+`Environment` porte `ambient_light_source 2 (COLOR)`, couleur
+`(0.42, 0.5, 0.35)`, energie `0.750`. La scene de spike du lot B, elle, portait
+un `Sun` a 1.3 et une ambiante a 0.9 **qui n'existent nulle part dans le hub** :
+la validation device du lot B ne disait donc rien du rendu reel.
+
+**Mesure au pixel, jamais a l'oeil** (rendus offscreen `xvfb-run
+--rendering-driver opengl3`, 1080x1920 = 2 073 600 px, diffes contre
+`bear_lit.png`) :
+
+| variante | pixels differents |
+|---|---|
+| **unshaded force** | **0** |
+| ambiante forcee ROUGE a 3.0 | **0** |
+| `AMBIENT_SOURCE_DISABLED` | **0** |
+| **BLIND CHECK : override magenta** | **23 372** *(pire delta 238, bbox 439,973 - 591,1191)* |
+
+Le blind check est ce qui donne un sens aux trois zeros : il prouve que le
+chemin d'override atteint bien la surface dessinee, sans quoi « 0 pixel
+different » passerait gratuitement contre un override qui n'ecrit nulle part.
+
+**Le mecanisme, lu sur le materiau importe** : `StandardMaterial3D`,
+`shading_mode = 1` (LIT), `metallic = 1` **sans texture metallic**, `roughness
+= 1`, `emission_enabled = true`, `emission = (0,0,0)` en operateur ADD avec une
+`emission_texture`. Un `metallic = 1` annule le terme diffus -- la seule chose
+qu'une ambiante COULEUR sache alimenter ; zero lumiere et aucune radiance map
+annulent le speculaire. **Ce qui dessine reellement est l'EMISSION**, qui est
+independante de la lumiere. Et sa map est **byte-identique a la map d'albedo**
+(md5 `8f1c95fbd6200aec2827ddb4be7977d2`, deux ressources distinctes, 2048x2048
+toutes les deux).
+
+⚠️ **DONC : issue (a), le personnage reste parfaitement lisible sans lumiere,
+et AUCUNE escalade n'etait due. Mais l'unshaded est force QUAND MEME, et c'est
+la decision qui compte.** Cette egalite repose entierement sur une map
+d'emission survivant a chaque futur re-export : retirez-la, et une surface
+totalement metallique sous zero lumiere dessine **NOIR, en silence**. Sur
+l'albedo, elle ne le peut pas. Forcer coute zero pixel aujourd'hui et ferme un
+mode de panne muet demain.
+
+### ETAPE 1 -- `HubActorWalker.gd`, generique des la premiere ligne
+
+Rien dedans ne nomme un ours, une balancoire ni le hub : le modele, son
+echelle, son clip, sa vitesse et **chaque destination** arrivent en donnee.
+Etats `IDLE / WALKING / ARRIVED`.
+
+⚠️ **LA TRAVERSEE EST A VITESSE CONSTANTE, PAS LE LERP EXPONENTIEL DE
+`HubCamera`, et ce n'est pas une preference.** Un lerp a une vitesse
+proportionnelle a la distance restante : le meme cycle de marche serait joue a
+**~9 u/s** au depart d'un trajet de 6 unites et a **~0 u/s** a l'arrivee. Un
+personnage dont les jambes cyclent a cadence fixe pendant que sa vitesse au sol
+varie d'un ordre de grandeur, c'est la definition du patinage. La forme
+exponentielle est **conservee pour le CAP** (`turn_lambda = 6.0`, memes unites
+que `FOLLOW_LAMBDA`), ou elle est juste : un virage n'a aucune cadence a
+contredire.
+
+⚠️ **`walk_speed = 0.7556` EST DERIVE DU CLIP LUI-MEME, pas choisi -- et pas
+derive de la longueur de foulee non plus.** La seule vitesse a laquelle un pied
+ne patine pas est celle a laquelle le pied POSE recule dans le repere du rig.
+Chaque os a donc ete echantillonne sur le clip livre (longueur **1.033333 s**,
+24 os, `loop_mode` **NONE** a l'origine), les frames de pied bas retenues, et
+`dz/dt` ajuste sur cette fenetre d'appui, rig deja a son echelle 1.130876 :
+
+| os | fenetre | vitesse |
+|---|---|---|
+| LeftToeBase | 18/64 | 0.7501 u/s |
+| LeftFoot | 15/64 | 0.7332 u/s |
+| RightFoot | 20/64 | 0.7835 u/s |
+| RightToeBase | **7/64** | 1.1586 u/s -- **ECARTE** |
+
+L'aberrant est ecarte **sur son nombre d'echantillons, pas sur sa valeur** :
+sept frames est une fenetre que le seuil a tronquee, donc sa pente porte le
+deroule de l'orteil et non la vitesse au sol. Les trois qui s'accordent
+moyennent **0.7556**. Une estimation par foulee entiere aurait donne **0.81 a
+1.05** selon qu'on lit la cheville ou l'orteil -- cet ecart est exactement
+pourquoi l'ajustement d'appui a ete fait a la place.
+
+⚠️ **DEUX PIEGES DE RESSOURCE PARTAGEE, FERMES CHACUN PAR UNE DUPLICATION, ET
+CHACUN PROUVE ROUGE-AVANT-VERT :**
+
+1. **Le materiau** -- l'importeur glTF lie **UN** materiau partage sur le mesh,
+   donc ecrire dedans teinte toutes les instances de ce `.glb` du projet.
+   `_force_unshaded()` duplique avant d'ecrire (precedent
+   `FighterView._ensure_material()`).
+2. **L'ANIMATION** -- et celui-la est moins connu : `instantiate()` copie des
+   NOEUDS, pas les `Animation` qu'ils pointent. Ecrire `loop_mode` sur le clip
+   que le player rend ecrit sur la ressource **PARTAGEE**, donc un second
+   acteur tire du meme `.glb` -- ou la scene de spike du lot B -- en heriterait
+   en silence. L'acteur recoit donc sa **propre `AnimationLibrary`**, et le
+   clip du `.glb` n'est jamais ecrit.
+
+Le gel est un `pause()` **et jamais une ecriture de `loop_mode`** : une pause
+est par-PLAYER, un `loop_mode` est par-RESSOURCE. La derniere frame d'un cycle
+de marche EST sa premiere, donc `seek(0)` tient la meme pose que `seek(length)`
+et 0 est le seul qui ne peut pas boucler.
+
+**Le cap est lu sur la geometrie du rig, pas suppose** : la face est en model
+**+Z**, verifie au rendu a travers la camera du hub (qui regarde -Z, donc voit
+la face +Z d'un noeud) -- visage, casque et ceinture tous a l'ecran a rotation
+zero. Meme convention que le modele de Keepy.
+
+### ETAPE 2 -- LE BRANCHEMENT, ET UN PIEGE D'ORDRE DE SIGNAL
+
+`HubWorld.gd` est **le seul fichier existant du hub touche**, et **purement
+additif** : `git diff --stat origin/staging` = **120 insertions, 0
+suppression**.
+
+⚠️ **`seesaw_mounted` EST EMIS AVANT QUE `_seesaw_ride` NE SOIT ASSIGNE.**
+`_mount_seesaw()` appelle `mount_seesaw()`, qui emet le signal
+**synchroniquement**, et n'assigne `_seesaw_ride` qu'ENSUITE -- donc un
+handler qui lirait `_seesaw_ride` lirait le dictionnaire vide. Resolu par
+`_seesaw_under()`, qui rejoue **le meme test de rayon que `_rock_near`**
+(factorise, pour que l'ours et la bascule ne puissent jamais etre en desaccord
+sur quelle planche un atterrissage appartient).
+
+⚠️ **ET C'EST LA RACINE, PAS LE PIVOT, QUI SERT DE REPERE** : la rotation en z
+du pivot est ce que la bascule ANIME, donc transformer a travers lui donnerait
+un point qui monte et descend avec la planche. Le cote est lu sur
+`root.to_local(keepy)` et l'ours vise `root.to_global(Vector3(-side * 2.6, 0,
+0))` -- l'extremite opposee, jamais celle ou Keepy est assis.
+
+**Point de repos `Vector3(0, 0, 35.5)`, choisi par balayage du layout et pas a
+l'oeil** : sur l'axe local Z de la balancoire (donc les deux bouts de planche
+sont la meme marche), **5.95 u** du prop le plus proche, et DERRIERE la
+balancoire depuis la camera.
+
+**Cout de dessin : UN `MeshInstance3D`.** ⚠️ **L'ours est parente sous `World/`
+a cote de Keepy et NON sous `World/Props`, parce qu'il BOUGE -- et le budget de
+noeuds partage par `SeesawProbe`/`TurnstileProbe`/`WaterTintProbe`
+(`_EXPECTED_DRAW_NODES_EXCL_PORTALS`) compte sur `World/Props` SEUL, donc il ne
+peut structurellement pas le voir.** Verifie : les trois sondes lisent
+**132/132**, inchange. Le cout est donc publie ici plutot que gate la-bas.
+
+### ⚠️ ETAPE 2 -- LE CHOIX DE SENSATION EST PARQUE, ET LES DEUX OPTIONS NE SONT PAS SYMETRIQUES
+
+`BEAR_RETURNS_HOME` est une constante a une ligne, `false` a la livraison.
+**Ce n'est pas une preference, c'est une mesure** :
+
+| | duree |
+|---|---|
+| la bascule (`SEESAW_ROCK_S`) | **2.4 s** |
+| la marche de l'ours, mesuree bout en bout | **5.28 s** |
+
+`seesaw_dismounted` part donc **pendant que l'ours est encore en route**. Sous
+l'option B (« il rentre »), il ferait demi-tour a mi-approche et **n'arriverait
+jamais** -- choisir B, c'est donc choisir implicitement « un ours plus rapide
+ou un point de repos plus proche ». Les deux options ne sont pas deux gouts,
+c'est un gout contre un reglage a refaire. **Decision de Mathieu, non prise
+ici.**
+
+### ETAPE 3 -- NON-REGRESSION, DIFFEE ET PAS AFFIRMEE
+
+`git diff --stat origin/staging` sur `HubBuilder.gd`, `KeepyHopper.gd`,
+`HubRouter.gd` et `resources/hub/hub_layout.tres` : **VIDE** sur les quatre.
+
+Sondes diffees contre un worktree `origin/staging` **dont l'import a ete
+verifie complet des deux cotes (36 `.scn` chacun)** -- le piege du faux-rouge
+par import tronque a d'ailleurs frappe au premier essai (10 `.scn` malgre un
+exit 0), et a ete referme avant toute comparaison :
+
+| sonde | verdict |
+|---|---|
+| `AssetContractAudit`, `DeathModelAudit`, `ChargerShapeProbe`, `SeesawProbe` | **BYTE-IDENTIQUES sur les DEUX flux** |
+| `ProbeTimeoutAudit` | diff = **exactement deux lignes** (`ActorWalkerProbe.tscn` armee, et **59 -> 60** sondes scenes) |
+
+### `ActorWalkerProbe` -- GATEE, 0 echec, et TROIS defauts trouves dans MES PROPRES assertions
+
+Gatee et pas rapportee parce que **tout mode de panne est SILENCIEUX**, et que
+**deux d'entre eux FUIENT HORS de l'acteur** (le materiau partage, l'Animation
+partagee) -- les deux sont donc assertes **des DEUX cotes** : ce que l'acteur
+dessine, ET que la ressource du `.glb` est restee intacte.
+
+⚠️ **PHASE C N'IMPRIMAIT RIEN AU PREMIER RUN -- UN FAUX VERT COMPLET.**
+`_phase_c` contient un `await`, ce qui en fait une **coroutine** : l'appeler nue
+la fait tourner **CONCURREMMENT**, et l'arbre quitte avant que ses assertions
+n'impriment quoi que ce soit. **0 echec rapporte, une phase entiere absente.**
+C'est le piege coroutine deja consigne dans ce fichier, re-paye ici a une
+couche de plus. Corrige en `await _phase_c(walker)`.
+
+⚠️ **L'ASSERTION DE CAP PASSAIT GRATUITEMENT.** `TARGET` valait `(0, 0, 2)` --
+droit sur +Z, donc le cap voulu est **zero**, et un acteur qui ne tourne
+**jamais** satisfaisait le test. Corrige en deplacant la cible **hors axe**
+(`(1.5, 0, 1.5)`, cap voulu 0.785 rad) et en remplacant la disjonction par un
+`absf(yaw - wanted) < 0.01` strict, **plus un BLIND CHECK** que le cap voulu
+n'est pas le cap de depart.
+
+⚠️ **UNE ASSERTION FAIBLE TROUVEE PAR LE TEST ROUGE lui-meme** : avec
+`_force_unshaded` neutralise, `drawn` valait `null` et « l'override est un
+duplicat » passait parce que `null != own`. Corrige en `drawn != null and drawn
+!= own`.
+
+Quatre phases : **A** un seul mesh, un player trouve, la surface DESSINE
+unshaded (lue sur `get_surface_override_material`, **jamais** sur la constante
+ecrite) + blind check que le materiau PROPRE du mesh est reste LIT ; **B** la
+marche, l'arrivee (`arrived` exactement une fois, `< 1.0e-4` de la marque), le
+cap strict, plus deux blind checks (le clip avance vraiment, l'acteur a vraiment
+voyage) ; **C** la pose ne bouge pas sur 12 frames, l'acteur joue SON duplicat,
+ce duplicat boucle, et **le clip du `.glb` est reste `LOOP_NONE`** ; **D** une
+marche de longueur nulle arrive immediatement et ne laisse pas l'acteur coince
+en WALKING.
+
+`walk_speed` est **rapporte et deliberement pas gate** : re-deriver
+l'ajustement d'appui avec une logique de seuil legerement differente ferait
+echouer du code correct.
+
+### Verification bout-en-bout DANS LE HUB LIVRE
+
+Sonde jetable (supprimee avant commit), `xvfb`/`opengl3`, sur
+`scenes/HubWorld.tscn` reelle :
+
+```
+bear rest (0, 0, 35.5)  state IDLE  draws 1 MeshInstance3D
+seesaw (0, 0, 38.5) ride_x=1.38     mounted: true
+keepy local x = +1.855  ->  bear walked to local x = -2.600
+final (-2.6, 0, 38.5)   distance bear<->keepy = 6.05 u
+walk took 5.28 s        state ARRIVED
+```
+
+Deux captures gardees : `docs/hub-shots/lotc_bear_{walking,arrived}.png`
+(`docs/` est dans l'`exclude_filter`, elles ne coutent rien au pack).
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que la marche se lit comme une marche** a vitesse reelle sur un
+   telephone -- le patinage est ferme par construction (vitesse constante,
+   cadence issue de la phase d'appui), mais 0.7556 u/s n'a jamais ete juge a
+   l'oeil.
+2. **Est-ce que l'ours unshaded se lit comme au lot B**, ou la scene portait un
+   Sun et une ambiante que le hub n'a pas ? Les zeros de l'etape 0 sont mesures
+   sous llvmpipe/`opengl3` de BUREAU, **pas** sous WebGL2/Safari.
+3. **`BEAR_RETURNS_HOME`** -- la decision parquee ci-dessus.
+4. **La pose figee** : il gele sur la premiere frame de `Walking`, faute de
+   clip « assis »/« regarde ». C'est une pose de marche arretee, pas une pose
+   de spectateur.
