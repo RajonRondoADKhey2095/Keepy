@@ -144,5 +144,10 @@ func _find_player(n: Node) -> AnimationPlayer:
 	return null
 
 
+## Back to the HUB, not to the login screen: the entry point moved to the
+## hub's fallback menu (Mathieu's session persists, so the login screen is
+## never traversed), and a bench whose exit lands somewhere the entrance is
+## not makes the trip one-way in practice. Same shape as the nav bench's
+## own "Retour hub" button.
 func _on_back() -> void:
-	get_tree().change_scene_to_file("res://scenes/LoginScreen.tscn")
+	get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
