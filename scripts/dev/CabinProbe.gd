@@ -548,7 +548,17 @@ func _phase_k_taps(interior: Node, controller: LevelController,
 	_check(absf(bed.point.y - loft_level.plane_y) < 0.001,
 			"the bed sits on the loft (%.4f)" % bed.point.y)
 	_check(floor_level.contains(door.point), "the door is inside the floor's extent")
-	_check(loft_level.contains(bed.point), "the bed is inside the loft's extent")
+	# ⚠️ TESTED AGAINST BED_SPOT, NOT bed.point -- and this is not a weaker
+	# check, it is the CORRECT one now. bed.point is BED_TAP_ANCHOR (see
+	# its own comment), a camera-resolved parallax point that is legitimate
+	# PRECISELY BECAUSE it can land outside the loft's tiny walkable
+	# square -- the magpie's own MAGPIE_TAP_ANCHOR carries no equivalent
+	# containment check in PHASE N for the identical reason. What this
+	# line still has to be true is that the bed ITSELF, where it is
+	# actually drawn, sits somewhere Keepy can stand.
+	_check(loft_level.contains(Vector3(CabinInterior.BED_SPOT.x, loft_level.plane_y,
+			CabinInterior.BED_SPOT.y)),
+			"the bed's real ground position is inside the loft's extent")
 
 	# THE POSITIVE FIRST: the door's own point means the door.
 	_check(door.accepts_tap(door.point, 0), "a tap ON the door means the door")
@@ -562,8 +572,11 @@ func _phase_k_taps(interior: Node, controller: LevelController,
 			"the ladder's foot and the door do not overlap (%.3f apart, radii sum %.3f)"
 					% [gap, link.tap_radius + door.tap_radius])
 	# ⚠️ AND ON THE LOFT THE BED HAS TO SHARE A SMALL SQUARE WITH THE
-	# LADDER'S TOP. This is the tightest pair in the scene and the reason
-	# BED_TAP_RADIUS is 0.70 rather than the door's 0.85.
+	# LADDER'S TOP. bed.point is BED_TAP_ANCHOR now, not BED_SPOT (see its
+	# own comment) -- recentred off the ladder specifically because the
+	# ORIGINAL BED_SPOT-centred circle had no room left to grow into. This
+	# is still the tightest pair in the scene: BED_TAP_RADIUS was taken up
+	# to exactly this ladder ceiling, minus a 0.20 safety margin.
 	var loft_gap: float = Vector2(link.point_b.x - bed.point.x,
 			link.point_b.z - bed.point.z).length()
 	_check(loft_gap > link.tap_radius + bed.tap_radius,
@@ -1372,10 +1385,86 @@ func _phase_p_rest(interior: Node, controller: LevelController,
 	var link: LevelTransition = controller.links[0]
 	controller.set_current(1)
 
+	# ---- THE BED'S OWN RANGE BUG, SWEPT BY THE SAME METHOD AS HERS --------
+	# ⚠️ NOT ASSUMED FROM THE MAGPIE'S FIX -- MEASURED SEPARATELY, on its
+	# own sweep, before BED_TAP_ANCHOR existed. Same cause as hers
+	# (LevelController.resolve() always ray-casts against the level's flat
+	# plane, never the drawn mesh, so a tap that visually lands on a raised
+	# thing drifts off it by an amount that grows with height) but the two
+	# symptoms are NOT identical, and this loop is what told them apart
+	# rather than assuming it: cross-referenced against actual
+	# camera-to-point occlusion (a separate, offline Möller–Trumbore check
+	# against the shipped .glb -- not repeated here, this loop only needs
+	# what a player could tap, not what they could also fail to see), the
+	# real bug narrows to two visible-and-rejected bands, 10-20% and
+	# 60-80%, not "everything below 90%" the raw sweep alone would suggest.
+	#
+	# _BED_SURFACE_LOW/_HIGH is the shipped interior's own drawn-surface
+	# height at BED_SPOT's XZ column -- a straight-down raycast against the
+	# real mesh, the same measurement BED_TAP_ANCHOR's own comment cites,
+	# not a second re-derivation free to disagree with it.
+	#
+	# ⚠️ AND UNLIKE HER FIX, THIS ONE DOES NOT COVER 0%..100%, ON PURPOSE.
+	# It covers [7.3%, 81.2%] -- see BED_TAP_ANCHOR's own comment for why
+	# full coverage is geometrically impossible here (the ladder leaves no
+	# room to grow into) and why the band that IS kept (10-80%, the wider,
+	# more central part of the bed) was chosen over the band that is lost
+	# (90-100%, the narrow tip of the book stack). So this loop asserts the
+	# HONEST contract fraction by fraction, never "all pass": a future
+	# change that silently shifts this coverage -- a moved camera, a
+	# resized ladder, a re-picked anchor -- fails here instead of drifting
+	# unnoticed.
+	var bed_cam: Camera3D = interior.get_node(
+			"WorldViewport/SubViewport/World/Camera3D") as Camera3D
+	var bed_container: SubViewportContainer = interior.get_node(
+			"WorldViewport") as SubViewportContainer
+	var _bed_surface_low: float = 6.5522
+	var _bed_surface_high: float = 7.5952
+	var bed_expect_covered: Dictionary = {
+		0: false, 10: true, 20: true, 30: true, 40: true, 50: true,
+		60: true, 70: true, 80: true, 90: false, 100: false,
+	}
+	var bed_sweep_ok := true
+	for tenth in range(0, 11):
+		var pct: int = tenth * 10
+		var frac: float = tenth / 10.0
+		# ⚠️ set_current(1) EVERY iteration, for the exact reason the
+		# magpie's own loop resets to 0 every iteration: resolve()
+		# ray-casts against controller.current()'s plane, and nothing
+		# upstream of this loop guarantees the loft stays current.
+		controller.set_current(1)
+		var bed_world_y: float = _bed_surface_low \
+				+ frac * (_bed_surface_high - _bed_surface_low)
+		var bed_world_point := Vector3(CabinInterior.BED_SPOT.x, bed_world_y,
+				CabinInterior.BED_SPOT.y)
+		var bed_screen := _to_screen(bed_container, bed_cam, bed_world_point)
+		var bed_tap := controller.resolve(bed_screen)
+		var bed_ok: bool = bool(bed_tap.get("ok", false))
+		var bed_aim: Vector3 = bed_tap.get("aim", Vector3.ZERO)
+		var bed_accepted: bool = bed_ok and bed.accepts_tap(bed_aim, 1)
+		var bed_expected: bool = bool(bed_expect_covered[pct])
+		if bed_accepted != bed_expected:
+			bed_sweep_ok = false
+		_check(bed_accepted == bed_expected,
+				"height %d%% of the bed's drawn surface is %s, as documented"
+						% [pct, "accepted" if bed_expected else "still refused"])
+	_check(bed_sweep_ok,
+			"the bed's tap coverage matches the geometrically-forced range in full")
+
+	# ⚠️ EVERY WALKING/LANDING POSITION BELOW IS MEASURED AGAINST
+	# CabinInterior.BED_SPOT, NOT bed.point, AND THIS IS A DELIBERATE SPLIT
+	# rather than an inconsistency to fix. bed.point is now BED_TAP_ANCHOR
+	# -- the relocated, parallax-corrected circle accepts_tap() tests (see
+	# its own comment) -- while _try_rest() (unmodified by that fix) has
+	# always measured "is he close enough to lie down" against BED_SPOT,
+	# the bed's real ground position. Positioning the walker relative to
+	# bed.point here would test a distance _try_rest() never asks about.
+	#
 	# THE POSITIVE: a tap on the bed from ACROSS THE LOFT arms the intent,
 	# survives the landing that does not arrive, and lays him down on the
 	# one that does.
-	walker.global_position = loft.flat(Vector3(bed.point.x + 2.0, 0.0, bed.point.z))
+	walker.global_position = loft.flat(
+			Vector3(CabinInterior.BED_SPOT.x + 2.0, 0.0, CabinInterior.BED_SPOT.y))
 	interior.call("_on_tapped_hotspot", bed, bed.point)
 	_check(bool(interior.get("_rest_pending")), "tapping the bed arms the rest intent")
 	_check(not bool(interior.get("_resting")), "and does NOT lay him down where he stands")
@@ -1383,13 +1472,15 @@ func _phase_p_rest(interior: Node, controller: LevelController,
 	# the third thing in this repository to copy the fix; asserted rather
 	# than trusted, because its probe was green until a walk grew to two
 	# hops.
-	walker.global_position = loft.flat(Vector3(bed.point.x + 1.2, 0.0, bed.point.z))
+	walker.global_position = loft.flat(
+			Vector3(CabinInterior.BED_SPOT.x + 1.2, 0.0, CabinInterior.BED_SPOT.y))
 	interior.call("_on_hop_landed", walker.global_position)
 	_check(bool(interior.get("_rest_pending")),
 			"a landing short of the bed KEEPS the intent")
 	_check(not bool(interior.get("_resting")), "and has not laid him down")
 	# AND THE LANDING THAT ARRIVES.
-	walker.global_position = loft.flat(bed.point)
+	walker.global_position = loft.flat(
+			Vector3(CabinInterior.BED_SPOT.x, 0.0, CabinInterior.BED_SPOT.y))
 	interior.call("_on_hop_landed", walker.global_position)
 	_check(bool(interior.get("_resting")), "landing at the bed lays him down")
 	_check(not bool(interior.get("_rest_pending")), "and spends the intent")
@@ -1452,7 +1543,15 @@ func _phase_p_rest(interior: Node, controller: LevelController,
 	# the bed while ALREADY standing on it. A zero-length walk finishes in
 	# _advance() with became_idle and NEVER emits hop_landed, so a version
 	# wired only to the landing would do nothing at all here.
-	walker.global_position = loft.flat(bed.point)
+	#
+	# ⚠️ "standing on it" MEANS BED_SPOT, per the same split as above: the
+	# hop_to() inside the &"bed" branch now targets BED_SPOT regardless of
+	# what destination it was handed, so a walker already there sees a
+	# zero-length walk and this path fires; a walker left at bed.point
+	# instead would see a REAL walk start and would still be mid-hop when
+	# _try_rest() is asked, missing the point of this check entirely.
+	walker.global_position = loft.flat(
+			Vector3(CabinInterior.BED_SPOT.x, 0.0, CabinInterior.BED_SPOT.y))
 	interior.call("_on_tapped_hotspot", bed, bed.point)
 	_check(bool(interior.get("_resting")),
 			"tapping the bed while standing on it lies down on the spot")

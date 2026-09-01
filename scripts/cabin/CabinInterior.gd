@@ -223,15 +223,73 @@ const DOOR_SPOT := Vector2(1.30, 1.50)
 ## clamped point.
 const DOOR_TAP_RADIUS: float = 0.85
 
-## The bed, on the loft.
-##
-## ⚠️ SMALL, AND THE SIZE IS FORCED RATHER THAN CHOSEN. The loft's walkable
-## square is only 1.10 half-extent and the ladder's top already sits inside
-## it, so the bed's circle has to fit in what is left without touching the
-## ladder's. The probe asserts that gap rather than trusting this comment:
-## the two are 1.920 apart against radii that sum to 1.800.
+## The bed, on the loft. BED_SPOT is where it is actually DRAWN -- its
+## ground position, used for the marker and for where Keepy is sent to lie
+## down. It is NOT where the hit-test circle is centred; see
+## BED_TAP_ANCHOR below for why those two had to split.
 const BED_SPOT := Vector2(-1.67, -1.32)
-const BED_TAP_RADIUS: float = 0.70
+
+## ⚠️ THE SAME BUG THE MAGPIE HAD, FOUND BY THE SAME METHOD -- swept, not
+## assumed. LevelController.resolve() always raycasts against the loft's
+## FLAT plane, never the drawn mesh, so a tap that visually lands on a
+## raised prop resolves to a ground point that drifts away from the prop
+## as the camera's parallax stretches with height. The magpie's fix
+## doesn't imply the bed has the same symptom on its own -- it was swept
+## the same way (0%/10%/.../100% of the bed's own measured drawn-surface
+## range, 6.5522-7.5952, run through the exact resolve() arithmetic) to
+## find out.
+##
+## The sweep alone overstates the bug, though, and cross-referencing it
+## against actual camera-to-point OCCLUSION (Möller–Trumbore against the
+## shipped .glb, not eyeballed off a screenshot) narrows it to what a
+## player can actually see and mis-tap:
+##   0%            -- occluded (nothing to mis-tap; irrelevant)
+##   10%, 20%       -- VISIBLE, and REJECTED by the shipped 0.70 circle
+##   30%, 40%, 50%  -- occluded (irrelevant)
+##   60%, 70%, 80%  -- VISIBLE, and REJECTED by the shipped 0.70 circle
+##   90%, 100%      -- VISIBLE, and already ACCEPTED
+##
+## So the real, player-facing bug is the visible-but-rejected 10-20% and
+## 60-80% bands, not "everything below 90%" the raw sweep would suggest.
+##
+## ⚠️ WIDENING BED_TAP_RADIUS ALONE CANNOT FIX EITHER BAND -- proven, not
+## assumed. The shipped 0.70 was already ladder-clearance-forced (see the
+## old comment this replaced: gap 1.920 against radii summing to 1.80,
+## i.e. margin 0.120). Re-deriving the WIDEST circle the ladder allows
+## around BED_SPOT itself (ladder_ceiling 0.8201, minus the same 0.20
+## safety margin MAGPIE_TAP_ANCHOR's own fix used) gives radius 0.6201 --
+## SMALLER than what shipped, because BED_SPOT sits close enough to the
+## ladder that little room is left to grow into. Recentring is not a
+## stylistic echo of the magpie's fix, it is the only axis this bed has.
+##
+## BED_TAP_ANCHOR is picked at the natural MIDPOINT of the measured height
+## range (50%), mirroring exactly how MAGPIE_TAP_ANCHOR was derived --
+## not a numerically search-optimised point. BED_TAP_RADIUS is then taken
+## up to the ladder's clearance ceiling from THAT anchor (1.9519), minus
+## the same 0.20 safety margin, landing on 1.75.
+##
+## Together they cover fraction range [7.3%, 81.2%] -- both real
+## visible-and-broken bands, 10-20% and 60-80%. ⚠️ AND THIS COSTS THE
+## 90-100% BAND, HONESTLY, NOT SILENTLY: no anchor/radius pair clears the
+## ladder circle AND covers both ends at once (checked exhaustively, not
+## assumed) -- preserving 90/100% tops out at fraction 80.2%, missing the
+## larger 60-80% band entirely. 90-100% is the narrow tip of the book
+## stack; 60-80% is the wider, more central part of the bed a player is
+## more likely to actually aim at. That's the trade taken here, on
+## purpose, and it's the one honest limit of this fix: after it, tapping
+## the very peak of the pile no longer registers as "the bed."
+##
+## Sanity-checked against swallowing ordinary floor taps: the new anchor
+## sits 2.681 from BED_SPOT and 2.719 from LOFT_CENTRE, both outside the
+## 1.75 radius -- an everyday "just walk here" tap near the bed's own
+## ground position or the loft's centre is unaffected by this circle.
+const BED_TAP_ANCHOR := Vector2(-1.291703, 1.333841)
+const BED_TAP_RADIUS: float = 1.75
+
+## The ring drawn for the bed keeps the OLD 0.70 -- it was never reported
+## as visually wrong, only the hit-test circle was blind. Drawn at
+## BED_SPOT, the bed's real ground position, same as before this fix.
+const BED_MARKER_RADIUS: float = 0.70
 
 ## =====================================================================
 ## THE BED'S OWN DRAWN SURFACE, AND WHY IT IS NOT THE LOFT PLANE
@@ -776,8 +834,12 @@ func _ready() -> void:
 	_door = LevelHotspot.make(0,
 			Vector3(DOOR_SPOT.x, floor_level.plane_y, DOOR_SPOT.y),
 			DOOR_TAP_RADIUS, &"door", "Sortir")
+	# ⚠️ BUILT FROM BED_TAP_ANCHOR, NOT BED_SPOT -- see BED_TAP_ANCHOR's own
+	# comment. This is the relocated, parallax-corrected circle the hit
+	# test needs; BED_SPOT stays reserved for where the bed is actually
+	# drawn and where Keepy is sent to lie down.
 	_bed = LevelHotspot.make(1,
-			Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y),
+			Vector3(BED_TAP_ANCHOR.x, loft_level.plane_y, BED_TAP_ANCHOR.y),
 			BED_TAP_RADIUS, &"bed", "Lit")
 	# THE MAGPIE, on the ground floor. Registered exactly like the other two
 	# and through the same generic class -- LevelHotspot's own header already
@@ -944,23 +1006,58 @@ func _place_walker() -> void:
 ## =====================================================================
 ## THE MARKERS
 ##
-## One per tappable thing, each built from the hotspot or link it marks so
-## the ring a player aims at and the circle the code tests are the same
-## number. See CabinMarker for why the hub's colours are not reused.
+## One per tappable thing. The door's and the ladder's ring IS the circle
+## the code tests, because neither of them ever needed a second one.
+##
+## ⚠️ THE MAGPIE'S AND THE BED'S ARE NOT, ANYMORE -- and that split is
+## deliberate rather than a drift the other two should be pulled into. Both
+## of them are tall, visually-raised things whose HIT-TEST anchor had to
+## move off their real ground position to survive LevelController's
+## flat-plane raycast (see MAGPIE_TAP_ANCHOR's and BED_TAP_ANCHOR's own
+## comments) -- and a ring drawn AT that relocated anchor, at the relocated
+## RADIUS, draws correctly for accepts_tap() and wrong for a player's eye:
+## it floats off the prop it marks, sized to cover a parallax spread rather
+## than to match what is actually standing there. So the ring for each of
+## these two is built from a SEPARATE pair -- its real ground position and
+## a radius sized to its footprint -- while the LevelHotspot it marks keeps
+## the relocated, parallax-corrected pair for the hit test. See CabinMarker
+## for why the hub's colours are not reused.
 func _build_markers() -> void:
 	var floor_level: LevelDefinition = _controller.levels[0]
 	_ladder_marker = _add_marker(_controller.links[0].tap_radius, "Mezzanine")
 	_door_marker = _add_marker(DOOR_TAP_RADIUS, "Sortir")
 	_door_marker.position = Vector3(DOOR_SPOT.x, floor_level.plane_y, DOOR_SPOT.y)
-	_bed_marker = _add_marker(BED_TAP_RADIUS, "Lit")
+	# ⚠️ BED_MARKER_RADIUS, NOT BED_TAP_RADIUS -- same split as the magpie's,
+	# for the same reason: the ring is drawn at the bed's real ground
+	# position (BED_SPOT) and its old, never-reported-as-wrong size, while
+	# BED_TAP_ANCHOR/BED_TAP_RADIUS (see their own comment) keep doing the
+	# hit test from a relocated, parallax-corrected circle.
+	_bed_marker = _add_marker(BED_MARKER_RADIUS, "Lit")
 	var loft_level: LevelDefinition = _controller.levels[1]
 	_bed_marker.position = Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y)
-	_magpie_marker = _add_marker(MAGPIE_TAP_RADIUS, "Pie")
-	# Positioned at MAGPIE_TAP_ANCHOR, not MAGPIE_SPOT: the ring a player
-	# aims at and the circle LevelHotspot tests must stay the same circle,
-	# and since the fix decoupled that circle from her feet, the marker has
-	# to follow it there rather than keep drawing at her feet alone.
-	_magpie_marker.position = Vector3(MAGPIE_TAP_ANCHOR.x, floor_level.plane_y, MAGPIE_TAP_ANCHOR.y)
+	# ⚠️ DRAWN AT MAGPIE_SPOT WITH MAGPIE_FOOTPRINT_RADIUS, NOT AT
+	# MAGPIE_TAP_ANCHOR WITH MAGPIE_TAP_RADIUS -- DEVICE REPORT, SECOND ONE:
+	# the FUNCTIONAL fix above made her taps register, and the very next
+	# report was that the ring drawn to celebrate it was oversized, sitting
+	# 1.35 off her own feet at a 1.80 radius that swallowed a third of the
+	# room. The ring a player SEES and the circle accepts_tap() TESTS never
+	# had to be the same circle -- CabinMarker.setup() takes whatever radius
+	# it is given, and nothing reads it back. So the ring goes back to being
+	# a small mark hugging her body, at her real ground position, the same
+	# visual role DOOR_TAP_RADIUS/DOOR_SPOT and BED_MARKER_RADIUS/BED_SPOT
+	# already play for their own hotspots -- while MAGPIE_TAP_ANCHOR and
+	# MAGPIE_TAP_RADIUS keep doing the hit-testing, untouched.
+	#
+	# MAGPIE_FOOTPRINT_RADIUS is reused rather than a new constant invented:
+	# it already answers "how much ground does she occupy" for the floor
+	# hole, and a ring sized to that ground is a ring sized to her, not a
+	# second measurement of the same body free to drift from the first.
+	# Rendered at three candidate radii before picking this one (1.00, 0.73,
+	# 0.60 at the anchor first, then 0.85, 0.73, 0.60 at MAGPIE_SPOT once the
+	# position moved too) -- 0.73 at MAGPIE_SPOT is the one that reads as
+	# hugging her, matching the door's own ring style at a comparable scale.
+	_magpie_marker = _add_marker(MAGPIE_FOOTPRINT_RADIUS, "Pie")
+	_magpie_marker.position = Vector3(MAGPIE_SPOT.x, floor_level.plane_y, MAGPIE_SPOT.y)
 
 func _add_marker(radius: float, text: String,
 		label_offset: Vector3 = Vector3.ZERO) -> CabinMarker:
@@ -999,17 +1096,30 @@ func _on_level_changed(index: int) -> void:
 	_refresh_proximity()
 
 ## Pulses whatever Keepy is standing near, with HubPortal's hysteresis.
+##
+## ⚠️ EACH CALL PASSES ITS OWN ANCHOR, NOT `marker.position`, ANYMORE. The
+## door's and the ladder's marker sit exactly on the circle accepts_tap()
+## tests, so reading their own position was harmless. The magpie's and the
+## bed's marker were just moved to their real ground position (see
+## _build_markers' own header) -- which is no longer that circle. What
+## "near" is meant to tell a player is "a tap here will register", so the
+## pulse has to track the same relocated, parallax-corrected anchor the
+## hit test itself uses, not the ring drawn on the ground beside it.
 func _refresh_proximity() -> void:
 	var here := _walker.global_position
-	_pulse_if_near(_ladder_marker, _controller.links[0].tap_radius, here)
-	_pulse_if_near(_door_marker, DOOR_TAP_RADIUS, here)
-	_pulse_if_near(_bed_marker, BED_TAP_RADIUS, here)
-	_pulse_if_near(_magpie_marker, MAGPIE_TAP_RADIUS, here)
+	_pulse_if_near(_ladder_marker, _ladder_marker.position if _ladder_marker != null else Vector3.ZERO,
+			_controller.links[0].tap_radius, here)
+	_pulse_if_near(_door_marker, Vector3(DOOR_SPOT.x, 0.0, DOOR_SPOT.y),
+			DOOR_TAP_RADIUS, here)
+	_pulse_if_near(_bed_marker, Vector3(BED_TAP_ANCHOR.x, 0.0, BED_TAP_ANCHOR.y),
+			BED_TAP_RADIUS, here)
+	_pulse_if_near(_magpie_marker, Vector3(MAGPIE_TAP_ANCHOR.x, 0.0, MAGPIE_TAP_ANCHOR.y),
+			MAGPIE_TAP_RADIUS, here)
 
-func _pulse_if_near(marker: CabinMarker, radius: float, here: Vector3) -> void:
+func _pulse_if_near(marker: CabinMarker, anchor: Vector3, radius: float, here: Vector3) -> void:
 	if marker == null or not marker.visible:
 		return
-	var a := Vector3(marker.position.x, 0.0, marker.position.z)
+	var a := Vector3(anchor.x, 0.0, anchor.z)
 	var b := Vector3(here.x, 0.0, here.z)
 	var d := a.distance_to(b)
 	# Two thresholds, never one -- see NEAR_FACTOR.
@@ -1117,7 +1227,18 @@ func _on_tapped_hotspot(hotspot: LevelHotspot, destination: Vector3) -> void:
 			# perch, its doorstep, and this scene's own door all arm an
 			# intent and let the landing act.
 			_exit_pending = false
-			_walker.hop_to(destination)
+			# ⚠️ `destination` IS DELIBERATELY DISCARDED HERE TOO, NOW --
+			# the second branch in this file that does it, after the
+			# magpie's. Before the fix above this line read exactly like
+			# the door's (`hop_to(destination)`), and that was correct
+			# then: BED_SPOT and the hit-test anchor were the SAME point.
+			# They no longer are -- accepts_tap() now tests against the
+			# relocated BED_TAP_ANCHOR, so `destination` resolves near
+			# THAT circle, not near the bed itself. Walking him to it
+			# would land him a couple of units off the mattress instead
+			# of on it. BED_SPOT is where the bed is actually drawn.
+			var loft_level: LevelDefinition = _controller.levels[1]
+			_walker.hop_to(Vector3(BED_SPOT.x, loft_level.plane_y, BED_SPOT.y))
 			# Armed AFTER hop_to(), for the reason the door's is: that call
 			# clears the WALKER's own link intent, and arming first would
 			# read as though the two were one field.
