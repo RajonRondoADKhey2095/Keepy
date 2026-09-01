@@ -46,6 +46,14 @@ const NEUTRAL_CODES := ["popup-cancelled"]
 ## non-reproducible timeout can be localised without devtools -- see
 ## Auth.gd's auth_debug_stage_changed for what feeds this. Never read by
 ## any auth decision here, purely displayed.
+## LOT B SPIKE, DISPOSABLE. The only way onto scenes/test/BearAnimSpike.tscn
+## from a shipped build: it sits before the auth gate, so a device can reach
+## the rig without a sign-in round trip. Deliberately placed HERE rather than
+## in the hub's fallback menu -- the spike's brief holds HubWorld.gd,
+## HubBuilder.gd, KeepyHopper.gd and hub_layout.tres untouched, and a button
+## there needs a handler in HubWorld.gd. Comes out with the spike scene.
+@onready var spike_button: Button = $CenterContainer/TitlePanel/VBoxContainer/SpikeButton
+
 @onready var debug_stage_label: Label = $CenterContainer/TitlePanel/VBoxContainer/DebugStageLabel
 
 ## Guards against a double scene change: auth_state_changed can legitimately
@@ -60,6 +68,7 @@ func _ready() -> void:
 	SafeArea.fill_screen()
 	sign_in_button.pressed.connect(_on_sign_in_pressed)
 	offline_button.pressed.connect(_go_to_hub)
+	spike_button.pressed.connect(_on_spike_pressed)
 	Auth.auth_state_changed.connect(_on_auth_state_changed)
 	Auth.auth_error.connect(_on_auth_error)
 	Auth.auth_debug_stage_changed.connect(_on_auth_debug_stage_changed)
@@ -182,3 +191,11 @@ func _message_for(code: String) -> String:
 			return "Connexion disponible uniquement dans la version web."
 		_:
 			return "Connexion impossible."
+
+
+## LOT B SPIKE, DISPOSABLE -- see spike_button.
+func _on_spike_pressed() -> void:
+	if _leaving:
+		return
+	_leaving = true
+	get_tree().change_scene_to_file("res://scenes/test/BearAnimSpike.tscn")
