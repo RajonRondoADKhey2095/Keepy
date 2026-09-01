@@ -24955,3 +24955,75 @@ accumule desormais huit iterations de recalibration successives, toutes
 sur `staging`, aucune mergee sur `main`. Une revue de statut group
 groupee est justifiee des que ce lot est valide sur device, plutot que
 de continuer a merger `staging` -> `main` hotspot par hotspot.
+
+## MERGE EN PRODUCTION -- CHANTIER PIE (1er septembre 2026)
+
+`staging` (`e6211b0`) -> `main`, commit de merge **`9cab266`**, `--no-ff`,
+sur feu vert explicite de Mathieu apres validation device de la chaine
+pie/bisou complete : install et calibration du prop pie du hub (echelle,
+integration nav, comportement de saut), visibilite et taille du hub,
+distance d'interaction du bisou (x2), position de sortie, portee du
+hotspot de tap de la pie, et l'anneau visuel de portee de tap decouple de
+son rayon de test -- **tout confirme fonctionnel sur device**.
+
+⚠️ **DETTE ASSUMEE, PAS UN OUBLI : le hotspot `&"bed"` reste NON
+FONCTIONNEL sur device.** Le fix geometrique livre dans le dernier lot
+`staging` (le meme sweep de decouplage anneau/rayon applique au lit) n'a
+produit **aucune difference percue sur device**, malgre la preuve
+geometrique/le calcul presentes au moment de ce lot. Merge sur `main`
+autorise **quand meme**, en connaissance de cause : le lit sera traite
+dans un lot separe, **apres** ce merge, avec un recon v2 qui devra
+produire des rendus offscreen comparatifs (la methode qui a fonctionne
+pour le bisou apres son propre echec de validation) **avant** toute
+nouvelle proposition de correctif -- ne pas se fier au calcul geometrique
+seul, qui a deja produit un faux-vert sur ce meme hotspot.
+
+**Verifie AVANT le merge, par ARBRE et pas par nom** : `git fetch --all
+--prune`, `origin/staging = e6211b0` et `origin/main = afa49d7` exactement
+les SHA annonces, `origin/staging` la ref la plus recente du depot (la
+seule branche plus recente que `main`,
+`claude/hotspot-tap-radius-visual-2rf3lt`, deja ancetre de `staging` --
+`git merge-base --is-ancestor` + comparaison de hash d'arbre), **aucune
+session concurrente**. Merge `--no-ff` sans conflit ; **diff de l'arbre
+resultant contre l'arbre de `staging` a `e6211b0` : VIDE**
+(`git diff HEAD origin/staging` vide, meme hash d'arbre `5a64ae98...` des
+deux cotes) -- ce qui part en prod est litteralement l'arbre valide sur
+staging, pas une recomposition.
+
+**Build local, editeur + templates Godot 4.3-stable installes dans ce
+sandbox** (releases GitHub officielles, tailles verifiees contre le
+`Content-Length` avant extraction -- 50 276 070 et 1 073 228 327 octets,
+aucune troncature). Import headless **exit 0, 37 `.scn`** (import complet
+verifie, pas suppose). Export Web release **exit 0, 0 erreur GDScript**.
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent deja consigne pour tout lot qui ne touche pas le code moteur.
+**Piege payload tenu** : **0** ligne `Storing File` pour `scripts/dev`,
+`assets_source`, `docs`, `web`, `build` ou `firebase.json`.
+
+CI **run #353** (id `33485316412`) **verte** (08:05:57 -> 08:10:52 UTC) --
+`Import project resources` 08:06:39 -> 08:10:19, `Export Web build`
+**08:10:19 -> 08:10:25**, `Deploy to Vercel [PRODUCTION -- main]`
+**succes** 08:10:40 -> 08:10:50, `Deploy to Vercel [STAGING -- staging]`
+correctement **skipped** (push sur `main`).
+
+**Verifie SUR LE SERVICE, pas seulement dans le log CI**, sur DEUX
+marqueurs independants, tous deux `x-vercel-cache: MISS` / `age: 0` :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | `1788250224` = **08:10:24 UTC** -- tombe exactement dans la fenetre `Export Web build` (08:10:19 -> 08:10:25) |
+| `index.wasm` servi | **35 376 909** octets -- identique au bit pres a l'export local, preuve d'identite |
+| `index.pck` servi | 34 352 672 octets (export local : 34 352 640 -- 32 octets d'ecart, instabilite de compression VRAM deja documentee, jamais offert comme preuve d'identite a lui seul) |
+
+**Le chantier pie/bisou est desormais EN PRODUCTION** sur
+`keepy-ten.vercel.app`, a l'exception assumee du lit.
+
+**Prochaine etape** : rouvrir le hotspot du lit dans son propre lot, avec
+un recon v2 exigeant des rendus offscreen comparatifs AVANT toute
+proposition de correctif. A cette occasion, verifier aussi si le rond
+visuel du lit doit etre decouple de la meme facon que celui de la pie --
+le rapport dit `BED_MARKER_RADIUS` inchange a 0.70, mais ca vaut la peine
+de confirmer que ce rayon-la est percu et coherent une fois le vrai
+probleme de portee compris.
