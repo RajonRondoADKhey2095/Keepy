@@ -25829,3 +25829,60 @@ Deux captures gardees : `docs/hub-shots/lotc_bear_{walking,arrived}.png`
 4. **La pose figee** : il gele sur la premiere frame de `Walking`, faute de
    clip « assis »/« regarde ». C'est une pose de marche arretee, pas une pose
    de spectateur.
+
+### Deploiement staging du lot C (palier 1, automatique)
+
+`staging` **`eab31e5`** (merge `--no-ff` de `c07045b`, arbre **byte-identique**
+a la branche feature : meme hash d'arbre `76567e7b` des deux cotes, verifie
+AVANT le push). CI run **#362** (id 33573396917, head_sha `eab31e58...`)
+**verte** -- `Import project resources` 00:00:03 -> 00:03:23 (3 min 20),
+**`Export Web build` 00:03:23 -> 00:03:29**, `Verify export output` succes,
+`Deploy to Vercel [STAGING -- staging]` **succes** 00:03:48 -> 00:04:00,
+`[PRODUCTION -- main]` correctement **skipped**. **`main` NON touche**
+(`origin/main` toujours `215e6d4`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants** :
+
+| marqueur | avant | apres (ce lot, run #362) |
+|---|---|---|
+| `CACHE_VERSION` | **`1788295565` = 1er sept 20:46:05 UTC** | **`1788307409` = 2 sept 00:03:29 UTC** |
+| `index.wasm` servi | -- | **35 376 909** *(fingerprint permanent)* |
+| `index.pck` servi | -- | 43 298 864 |
+
+L'epoch d'apres tombe **exactement sur la seconde de fermeture de l'etape
+`Export Web build`** (00:03:23 -> 00:03:29), et **les lectures d'avant ET
+d'apres portent `x-vercel-cache: MISS` avec `age: 0`** -- la valeur d'avant
+ayant ete relevee AVANT le push, la bascule est prouvee dans les deux sens et
+pas deduite du log. C'est la forme la plus forte que ce fichier documente.
+
+⚠️ **Limite dite plutot que sous-entendue** : `fileSizes` (`index.wasm` /
+`index.pck`) n'a ete lu qu'APRES le merge, donc il vaut comme marqueur d'ETAT
+COURANT et **pas** comme preuve de transition -- c'est le `CACHE_VERSION` qui
+la porte. `index.wasm` servi est en revanche **identique au bit pres a
+l'export local** (md5 `af4a8fc2925d992348eb30deeeb54360`), et c'est lui la
+preuve d'identite.
+
+⚠️ **`index.pck` : 43 298 816 a l'export local propre contre 43 298 864
+servi, 48 octets d'ecart** -- enieme illustration de l'instabilite deja
+consignee, **marqueur « nouveau build » et jamais preuve d'identite**.
+
+⚠️ **`curl` vers `*.vercel.app` reste refuse par le proxy de ce sandbox**
+(`connect_rejected`, politique d'organisation -- re-teste et pas suppose) :
+les deux lectures passent par le canal MCP Vercel. Une boucle d'attente
+`curl` avait ete ecrite puis abandonnee pour cette raison, avant qu'elle ne
+puisse comparer une chaine VIDE a l'ancienne valeur et annoncer un
+deploiement qui n'a pas eu lieu.
+
+⚠️ **L'API Actions n'etait PAS perimee sur ce run, et c'est note dans ce
+sens-la** : deux polls successifs ont rendu une reponse byte-identique, ce
+qui en a exactement la forme -- mais l'horloge disait ~3 minutes ecoulees
+depuis un import demarre a 00:00:03, et cet import a reellement dure
+**3 min 20 s** (plus lourd depuis l'ajout du `.glb` ours de ~10 Mo et de ses
+deux textures ~5 Mo). Verifier l'HEURE avant d'accuser l'API reste la parade,
+dans les deux sens.
+
+**Chemin d'acces device** : `keepy-staging.vercel.app` -> le hub -> taper la
+balancoire (lobe nord, `(0, 0, 38.5)`) -> Keepy monte dessus -> **l'ours
+quitte son point de repos `(0, 0, 35.5)`, marche ~5,3 s vers le bout de
+planche OPPOSE a Keepy, arrive et se fige**.
