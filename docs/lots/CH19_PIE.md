@@ -2447,3 +2447,72 @@ reste hors-cible malgre l'agrandissement, le prochain lot doit reprendre le
 meme calcul de projection camera fait ici plutot que de re-deviner des
 offsets. Palier 2 (merge vers `main`) reste gate par ce feu vert.
 
+## L'OVERLAY DODO : LA BULLE MARCHE, LES YEUX NON -- LE FIX HALO ETAIT TROP TIMIDE (2 septembre 2026, meme jour)
+
+Validation device du merge precedent (`4f671d2`) : la bulle-nuage "Zzz" est
+visible et correcte -- **mais les yeux fermes ne le sont pas, meme visage
+qu'avant ce lot.** Diagnostic demande avant tout redeploiement.
+
+### CE QUI A REELLEMENT CHANGE DANS LE COMMIT PRECEDENT (`f42382a`)
+
+Verifie par `git show`, pas suppose : le code des yeux A ETE MODIFIE (un
+halo `EYES_HALO_COLOR` a ete ajoute), mais deux choses sont restees
+identiques a l'original casse : `EYES_SIZE` (0.30, inchange) et l'alpha du
+halo (0.85, semi-transparent). Le fix qui a fonctionne pour le "Zzz" a
+change DEUX axes a la fois -- un remplissage OPAQUE et une taille monde
+plusieurs fois plus grande (`CLOUD_WORLD_WIDTH` 0.62 contre les 0.128 du
+`Label3D` d'origine). Le fix des yeux n'avait touche QUE le contraste
+(et de facon partielle, translucide), jamais la taille -- exactement le
+diagnostic que l'utilisateur a lui-meme pose.
+
+### PREUVE AVANT REDEPLOIEMENT -- rendu hors-Godot de l'algorithme exact
+
+Aucun Godot dans ce sandbox distant, donc pas de capture d'ecran du jeu
+lui-meme -- mais l'algorithme de dessin de pixels de `_eyes_texture()` est
+un simple parcours de boucle sans dependance moteur, rejouable tel quel en
+Python. Reproduit l'algorithme EXACT (meme halo/arc, memes coordonnees) des
+deux versions, composite sur un swatch de fourrure chaude et sur le vert
+sombre de l'ambiance de la cabine, puis redimensionne a la taille ecran
+simulee (calcul de profondeur camera deja etabli au lot precedent, ~95,9
+px/unite-monde) :
+
+- **Version halo (f42382a, telle que servie)** : a sa taille simulee reelle
+  (29 px), la forme reste lisible sur le swatch synthetique de ce test --
+  mais c'est un swatch PLAT, favorable ; une fourrure texturee reelle avec
+  ses propres variations de ton peut se confondre avec un halo a 85 %
+  d'opacite qui, par construction, se teinte partiellement de ce qu'il y a
+  dessous. Le rapport device ("meme visage qu'avant") est la mesure qui
+  tranche, pas ce rendu de confort.
+- **Version corrigee (fond opaque + contour, taille relevee)** : meme
+  rendu, agrandi a 40 px simule, nettement plus lisible aux DEUX fonds.
+
+### CORRECTIF -- meme patron que la bulle, applique aux yeux
+
+`CabinDodo.gd`, uniquement `_eyes_texture()`/`EYES_SIZE` -- **le Zzz n'est
+pas touche** :
+- `EYES_HALO_COLOR` (semi-transparent) retire, remplace par le MEME couple
+  `CLOUD_FILL_COLOR`/`CLOUD_OUTLINE_COLOR` que la bulle -- pas une troisieme
+  paire de couleurs inventee, doctrine "un fait publie une fois".
+- Chaque oeil est maintenant une ellipse pleine (`EYES_RX`=15,
+  `EYES_RY`=11, calculee par distance signee normalisee, meme decoupage
+  remplissage/contour que `_cloud_texture()`) au lieu d'un halo
+  semi-transparent -- OPAQUE, donc garanti de contraster quel que soit ce
+  qu'il y a dessous, contour sombre inclus.
+- `EYES_SIZE` : 0.30 -> 0.42 (+40 %), le meme mouvement de taille que la
+  bulle plutot qu'un ajustement cosmetique.
+- Le trait de paupiere fermee (l'arc) est redessine PAR-DESSUS ce fond
+  plein, legerement plus epais (4 px contre 3).
+
+### VALIDATION
+
+Aucun binaire Godot dans ce sandbox distant. Rouge-avant-vert applique a
+la mesure disponible : rendu Python de l'algorithme AVANT (halo, echoue
+sur device) confronte au rendu APRES (fond plein, meme algorithme que la
+bulle qui, elle, a ete confirmee visible) -- les deux images sont jointes
+au rapport de fin de tache. Compilation GDScript verifiee par CI
+(`web-build.yml`).
+
+**Reste ouvert : validation device par Mathieu**, cette fois specifiquement
+sur les yeux (la bulle est deja actee bonne, ne pas la retester). Palier 2
+reste gate par ce feu vert.
+
