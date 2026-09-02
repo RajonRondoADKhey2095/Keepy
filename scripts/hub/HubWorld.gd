@@ -223,6 +223,11 @@ var _bear_seat: Vector3 = Vector3.ZERO
 ## re-derived on arrival because by then Keepy may already be off, and a
 ## bear that mounts an empty settled plank is worse than one that gives up.
 var _bear_pending: Dictionary = {}
+## The heading the bear snaps to whenever it settles at rest -- first spawn
+## AND the walk home after a dismount. Computed once in `_setup_bear()`
+## from the seesaw's own published fulcrum; see `_on_bear_arrived()` for
+## why this is the only fix either arrival needs.
+var _bear_rest_facing: Vector3 = Vector3(0.0, 0.0, 1.0)
 
 ## Every owl, as _setup_owls copied it, plus the per-prop tween slot; and
 ## the one entry currently carrying Keepy.
@@ -1320,6 +1325,21 @@ func _setup_bear() -> void:
 	# scale written afterwards would be a rig drawn once at the wrong size.
 	_bear.position = BEAR_REST
 	_world.add_child(_bear)
+	# ⚠️ THE SNAP ON SPAWN, EVEN THOUGH IDENTITY ROTATION ALREADY HAPPENS TO
+	# BE RIGHT. `HubActorWalker._ready()` reads `_yaw` off `rotation.y`,
+	# which defaults to 0 on a freshly-built node -- and 0 IS the correct
+	# heading here, because BEAR_REST sits behind the seesaw on its own
+	# local Z (see BEAR_REST's own note), so "face the seesaw" and "face
+	# the camera" are the same direction by construction. Left implicit,
+	# that correctness is a coincidence of the default rather than a fact
+	# this file asserts -- so it is computed and set explicitly instead of
+	# trusted.
+	if not _seesaws.is_empty():
+		var fulcrum: Vector3 = _seesaws[0]["position"] as Vector3
+		var to_fulcrum: Vector3 = fulcrum - BEAR_REST
+		if Vector2(to_fulcrum.x, to_fulcrum.z).length_squared() > 1.0e-8:
+			_bear_rest_facing = to_fulcrum
+	_bear.face(_bear_rest_facing)
 	# ONCE, here. Connecting on each mount instead is how an actor ends up
 	# with N handlers and mounts N times on the Nth ride.
 	_bear.arrived.connect(_on_bear_arrived)
@@ -1386,6 +1406,14 @@ func _on_seesaw_mounted() -> void:
 ## scenery with no tilt to follow and no dismount coming.
 func _on_bear_arrived() -> void:
 	if _bear_pending.is_empty():
+		# Not an approach: this is the walk home finishing (BEAR_RETURNS_HOME
+		# is the only other caller of walk_to on this actor), and unlike the
+		# seesaw approach -- overwritten in the same frame by
+		# _bear_follow_seesaw() -- nothing else re-orients it. Left alone it
+		# keeps whichever heading the last step of the walk home happened to
+		# face, which is AWAY from the seesaw whenever that walk moved in -Z
+		# -- see _bear_rest_facing.
+		_bear.face(_bear_rest_facing)
 		return
 	var pending: Dictionary = _bear_pending
 	_bear_pending = {}
