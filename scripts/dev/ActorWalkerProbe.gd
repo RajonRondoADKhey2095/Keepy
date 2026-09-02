@@ -86,11 +86,18 @@ func _ready() -> void:
 	print("")
 	await _phase_d()
 	print("")
-	await _phase_e()
+	# ⚠️ THE HUB IS HANDED ON RATHER THAN REBUILT. PHASE F picks up exactly
+	# where E leaves off -- both riders seated on a settled plank -- because
+	# the whole claim of lot E is that THAT state persists. Standing a
+	# second hub up and re-mounting into it would test a fresh mount and
+	# call it persistence.
+	var ctx: Dictionary = await _phase_e()
+	print("")
+	await _phase_f(ctx)
 
 	print("")
 	if _failures == 0:
-		print("PASSED: the actor draws unshaded, walks, arrives, holds still and rides the plank.")
+		print("PASSED: the actor draws unshaded, walks, arrives, holds still, rides the plank and holds the seat.")
 		get_tree().quit(0)
 	else:
 		push_error("ACTOR WALKER PROBE FAILED: %d check(s)." % _failures)
@@ -249,7 +256,7 @@ func _phase_d() -> void:
 # ⚠️ DRIVEN THROUGH THE SHIPPED HUB, never a fixture. The whole claim is
 # about WHERE the write happens, and a stand-in with its own tilt loop
 # would answer a question nobody asked.
-func _phase_e() -> void:
+func _phase_e() -> Dictionary:
 	print("--- PHASE E: the second rider ---")
 	var hub: Node = HUB_SCENE.instantiate()
 	add_child(hub)
@@ -267,13 +274,13 @@ func _phase_e() -> void:
 	_ok(bear != null, "the hub built an actor walker beside Keepy (the bear)")
 	if bear == null:
 		hub.queue_free()
-		return
+		return {}
 
 	var reg: Array = props.seesaws()
 	_ok(not reg.is_empty(), "the layout carries a seesaw to ride")
 	if reg.is_empty():
 		hub.queue_free()
-		return
+		return {}
 	var entry: Dictionary = reg[0]
 	var pivot: Node3D = entry["pivot"]
 	var ride_x: float = float(entry["ride_x"])
@@ -359,23 +366,131 @@ func _phase_e() -> void:
 	_ok(bear.global_position.y > 0.2 and after_repump < 1.0e-4,
 		"a re-tap mid-ride leaves it aboard and still tracking (%.7f u)" % after_repump)
 
-	# OFF ON THE SAME BEAT. Waited out rather than forced, so what is gated
-	# is the shipped dismount path.
-	# Waited out on the SHIPPED path: the rock settles, Keepy arcs off, and
-	# `seesaw_dismounted` fires at the END of that arc -- so the bear coming
-	# down is a beat after he stops being "on" the plank, and a check made
-	# the instant `is_on_seesaw()` turns false reads a bear still seated.
+	# ⚠️ REWRITTEN 2 SEPTEMBRE 2026 (lot E), NOT DROPPED. This block used to
+	# wait the rock out and assert "the rock settled and Keepy stepped off",
+	# then that the bear was back on the ground beside the plank. Neither
+	# went stale: the settle was DELIBERATELY stripped of the dismount, so
+	# both are now false here and both are asserted in PHASE F instead, off
+	# the tap that does end the ride.
+	#
+	# What the settle owes is the opposite claim, and it is asserted here:
+	# nothing lets either rider go on its own.
 	var off: int = 0
-	var off_budget: int = int((rock_s * 3.0 + 4.0) * 60.0)
-	while (keepy.is_on_seesaw() or bear.global_position.y > 0.01) and off < off_budget:
+	var off_budget: int = int((rock_s * 2.0 + 2.0) * 60.0)
+	while off < off_budget:
 		await get_tree().process_frame
 		off += 1
-	_ok(not keepy.is_on_seesaw(), "the rock settled and Keepy stepped off")
+	_ok(keepy.is_on_seesaw(), "two rock-lengths later Keepy is STILL on the plank")
+	_ok(bear.global_position.y > 0.2,
+		"and so is the bear (y = %.4f), so the settle lets nobody go" % bear.global_position.y)
+	_ok(absf(pivot.rotation_degrees.z) < 0.01,
+		"with the plank left LEVEL under them (%.4f deg)" % pivot.rotation_degrees.z)
+
+	return {
+		"hub": hub,
+		"keepy": keepy,
+		"bear": bear,
+		"entry": entry,
+		"pivot": pivot,
+		"seat": seat,
+		"rock_s": rock_s,
+	}
+
+
+# =====================================================================
+# PHASE F -- THE HELD SEAT. Lot E's three claims, on the hub PHASE E left
+# seated: the seat survives the rock, a tap on the prop re-arms it without
+# re-mounting anyone, and a tap anywhere else is the exit -- with the bear
+# walking home behind it.
+#
+# Gated for the same reason as everything else here: each failure is
+# silent. A seat that quietly times out looks like the old behaviour; a
+# re-tap that re-mounts looks like a re-tap that worked, right up to the
+# bear re-walking its approach; an exit that drops the tap leaves a body
+# with no way off a plank and nothing in the log to say so.
+func _phase_f(ctx: Dictionary) -> void:
+	print("--- PHASE F: the seat is held, the tap is the exit ---")
+	if ctx.is_empty():
+		_ok(false, "PHASE E left no hub to continue from")
+		return
+	var hub: Node = ctx["hub"]
+	var keepy: Node3D = ctx["keepy"]
+	var bear: Node3D = ctx["bear"]
+	var entry: Dictionary = ctx["entry"]
+	var pivot: Node3D = ctx["pivot"]
+	var seat: Vector3 = ctx["seat"]
+	var rock_s: float = float(ctx["rock_s"])
+	var pos: Vector3 = entry["position"]
+	var radius: float = float(entry["radius"])
+
+	if not keepy.is_on_seesaw():
+		_ok(false, "PHASE E did not leave him aboard, so there is no held seat to test")
+		hub.queue_free()
+		await get_tree().process_frame
+		return
+
+	# --- 1. RE-TAP RE-ARMS IT, AT REST ---------------------------------
+	# The heart of requirement 2, and the reason it could not work before:
+	# the settle used to clear the ride record, so there was nothing left
+	# for `_repump_seesaw` to find. Asserted on the plank MOVING again from
+	# a standstill, not on a tween object -- SeesawProbe already gates the
+	# tween identity, and this phase's question is whether a motionless
+	# plank answers a tap at all.
+	var bear_seated: Vector3 = bear.global_position
+	var settled: float = pivot.rotation_degrees.z
+	hub.call("_on_tapped_ground", pos)
+	var swing: float = 0.0
+	var carried: float = 0.0
+	for _i in 20:
+		await get_tree().process_frame
+		if not is_instance_valid(pivot):
+			break
+		swing = maxf(swing, absf(pivot.rotation_degrees.z - settled))
+		carried = maxf(carried, bear.global_position.distance_to(pivot.to_global(seat)))
+	_ok(swing > 1.0, "a tap on the prop re-arms a STANDING-STILL plank (%.2f deg of new swing)" % swing)
+	_ok(keepy.is_on_seesaw(), "and leaves Keepy aboard rather than re-seating him")
+	_ok(not bear.is_walking(),
+		"and the bear does NOT re-walk its approach -- it was already sitting there")
+	_ok(carried < 1.0e-4,
+		"and is carried by the fresh rock on the same seat (%.7f u worst)" % carried)
+	_ok(bear.global_position.distance_to(bear_seated) > 0.001,
+		"BLIND CHECK: the bear really moved with the plank, so the number above means something")
+
+	# --- 2. A TAP ELSEWHERE IS THE EXIT --------------------------------
+	# ⚠️ ORDERED AFTER the re-tap on purpose: it ends the ride the re-tap
+	# needs. Taken while the fresh rock is still running, which is also the
+	# harder case -- the tween has to be killed without its `finished`
+	# firing a second dismount.
+	var destination: Vector3 = pos + Vector3(0.0, 0.0, -(radius + 6.0))
+	hub.call("_on_tapped_ground", destination)
+	var off: int = 0
+	var off_budget: int = int((rock_s * 3.0 + 8.0) * 60.0)
+	# `is_hopping()` is in the wait deliberately: the bear's trip home is
+	# SHORTER than Keepy's walk to the tapped point, so a loop that only
+	# watched the bear would read Keepy mid-flight and call the destination
+	# check a miss.
+	while (keepy.is_on_seesaw() or keepy.is_hopping()
+			or bear.global_position.y > 0.01 or bear.is_walking()) \
+			and off < off_budget:
+		await get_tree().process_frame
+		off += 1
+	_ok(not keepy.is_on_seesaw(), "a tap off the prop takes Keepy off the plank")
 	_ok(bear.global_position.y < 0.01,
-		"and the bear is back on the ground (y = %.4f)" % bear.global_position.y)
-	_ok(absf(pivot.to_local(bear.global_position).z) > 0.1,
-		"beside the plank rather than under it (local z = %.3f)"
-			% pivot.to_local(bear.global_position).z)
+		"and the bear comes down on the same beat (y = %.4f)" % bear.global_position.y)
+	var here := Vector3(keepy.global_position.x, 0.0, keepy.global_position.z)
+	_ok(here.distance_to(destination) < 1.0,
+		"and ONE tap bought the dismount AND the walk to where it pointed (%.3f u off)"
+			% here.distance_to(destination))
+
+	# --- 3. THE BEAR GOES HOME -----------------------------------------
+	# BEAR_RETURNS_HOME is now true, and this is the assertion that keeps it
+	# honest: the constant alone would read green off its own value.
+	var rest: Vector3 = hub.get_script().get_script_constant_map().get("BEAR_REST", Vector3.ZERO)
+	var home := Vector3(bear.global_position.x, 0.0, bear.global_position.z)
+	_ok(home.distance_to(Vector3(rest.x, 0.0, rest.z)) < 0.5,
+		"and the bear walked back to its post (%.3f u from %s)"
+			% [home.distance_to(Vector3(rest.x, 0.0, rest.z)), rest])
+	_ok(not bear.is_walking(), "where it stopped rather than overshooting")
 
 	hub.queue_free()
 	await get_tree().process_frame

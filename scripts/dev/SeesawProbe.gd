@@ -355,9 +355,18 @@ func _phase_ride() -> void:
 	print("")
 
 ## =====================================================================
-## PHASE EXIT -- he gets off, onto ground, and does NOT get back on.
+## PHASE EXIT -- the seat is HELD through the settle, and a tap elsewhere is
+## what ends the ride.
+##
+## ⚠️ REWRITTEN 2 SEPTEMBRE 2026 (lot E), NOT SILENCED. Until then the first
+## assertion here was `not _keepy.is_on_seesaw()` -- "the rock settles and
+## he is let off". It did not rot: it was DELIBERATELY made false, because
+## the settle no longer dismounts anyone. What it used to guard is split in
+## two and both halves are asserted below -- that he keeps the seat when the
+## rock ends, and that the tap which does end it puts him down on legal
+## ground outside the trigger radius, exactly as the old settle had to.
 func _phase_exit() -> void:
-	print("--- PHASE EXIT: dismount ---")
+	print("--- PHASE EXIT: the seat is held, the tap is the exit ---")
 	var reg := _registry()
 	if reg.is_empty():
 		print("")
@@ -371,20 +380,60 @@ func _phase_exit() -> void:
 	await get_tree().create_timer(rock_s + 0.6).timeout
 	await get_tree().process_frame
 
-	_check(not _keepy.is_on_seesaw(), "the rock settles and he is let off")
+	_check(_keepy.is_on_seesaw(), "the rock settles and he KEEPS the seat")
 	_check(absf(pivot.rotation_degrees.z) < 0.01,
 		"and the plank is left LEVEL, by arithmetic rather than by tuning (%.4f deg)" % pivot.rotation_degrees.z)
+	var held: bool = _keepy.is_on_seesaw()
+	await get_tree().create_timer(rock_s).timeout
+	_check(held and _keepy.is_on_seesaw(),
+		"and a whole further rock-length later he is STILL on it, so nothing times him out")
+
+	if not _keepy.is_on_seesaw():
+		_check(false, "could not hold a seat to test the exit from")
+		print("")
+		return
+
+	# The dismount LANDING is what the radius check below is about, and the
+	# walk carries him past it -- so it is captured as it happens rather
+	# than inferred from where he ends up.
+	var pos: Vector3 = entry["position"]
+	var destination: Vector3 = pos + Vector3(0.0, 0.0, -(float(entry["radius"]) + 6.0))
+	var landings: Array[Vector3] = []
+	var on_land := func(p: Vector3) -> void: landings.append(p)
+	var idle: Array[bool] = [false]
+	var on_idle := func() -> void: idle[0] = true
+	_keepy.hop_landed.connect(on_land)
+	_keepy.became_idle.connect(on_idle)
+	_hub.call("_on_tapped_ground", destination)
+	var frames: int = 0
+	while not idle[0] and frames < 1200:
+		await get_tree().process_frame
+		frames += 1
+	_keepy.hop_landed.disconnect(on_land)
+	_keepy.became_idle.disconnect(on_idle)
+
+	_check(not _keepy.is_on_seesaw(), "a tap OFF the prop ends the ride")
+	_check(absf(pivot.rotation_degrees.z) < 0.01,
+		"and leaves the plank level behind him (%.4f deg)" % pivot.rotation_degrees.z)
 	_check(absf(_keepy.global_position.y) < 0.01,
 		"he is back on the ground (y = %.4f)" % _keepy.global_position.y)
 	_check(HubRegion.contains(_keepy.global_position),
-		"he lands inside the walkable region: %s" % _keepy.global_position)
+		"he ends inside the walkable region: %s" % _keepy.global_position)
 	# ⚠️ THE LOOP THIS FEATURE WOULD OTHERWISE HAVE. A dismount ends in an
 	# ordinary landing, and an ordinary landing near the prop is what mounts
 	# him -- so the exit has to clear the TRIGGER radius, not the plank.
-	var flat := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
-	_check(flat.distance_to(entry["position"] as Vector3) > float(entry["radius"]),
-		"and he lands OUTSIDE the trigger radius (%.3f u vs %.2f), so the dismount cannot remount him"
-			% [flat.distance_to(entry["position"] as Vector3), entry["radius"]])
+	_check(landings.size() > 0, "the dismount produced a landing to measure (%d)" % landings.size())
+	if landings.size() > 0:
+		var first: Vector3 = landings[0]
+		var flat := Vector3(first.x, 0.0, first.z)
+		_check(flat.distance_to(pos) > float(entry["radius"]),
+			"and it lands OUTSIDE the trigger radius (%.3f u vs %.2f), so the dismount cannot remount him"
+				% [flat.distance_to(pos), entry["radius"]])
+	# THE BOAT'S RULE, and the half of it this phase exists to prove: one
+	# tap bought the dismount AND the walk to where it pointed.
+	var here := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+	_check(here.distance_to(destination) < 1.0,
+		"and the tap he left on is also where he WENT (%.3f u from it)" % here.distance_to(destination))
 	await get_tree().process_frame
 	_check(not _keepy.is_on_seesaw(), "and a frame later he is still off it")
 	print("")
@@ -417,7 +466,22 @@ func _phase_gate() -> void:
 	await _land_at(pos + Vector3(0.0, 0.0, -0.5))
 	_check(absf(pivot.rotation_degrees.z) > 0.5 or _keepy.is_on_seesaw(),
 		"BLIND CHECK: a landing at the prop DOES set it going")
+
+	# ⚠️ THE BLIND CHECK NOW LEAVES HIM SEATED, so getting him off again is a
+	# step of its own. Before lot E the rock's own end handed him back and
+	# `_land_at` could simply teleport him elsewhere; since the seat outlives
+	# the rock, `hop_to` is refused while ON_SEESAW and a teleport would leave
+	# the state behind -- so the way down is the shipped one, a tap off the
+	# prop, waited out to idle. Asserting he actually got off is the thing
+	# that stops the refusal below from passing for free against a Keepy who
+	# was still aboard the whole time.
 	await get_tree().create_timer(_const(_hub, "SEESAW_ROCK_S", 2.4) + 0.6).timeout
+	_hub.call("_on_tapped_ground", away)
+	var settle := 0
+	while (_keepy.is_on_seesaw() or _keepy.is_hopping()) and settle < 1200:
+		await get_tree().process_frame
+		settle += 1
+	_check(not _keepy.is_on_seesaw(), "and the shipped exit gets him back down again")
 	await _land_at(away)
 	await get_tree().create_timer(0.2).timeout
 	pivot.rotation_degrees.z = 0.0
@@ -429,13 +493,12 @@ func _phase_gate() -> void:
 	_check(absf(pivot.rotation_degrees.z) < 0.01,
 		"and does not rock the plank (%.4f deg)" % pivot.rotation_degrees.z)
 
-	# A tap while aboard is intercepted BY STATE: it must never become a
-	# destination to walk to.
+	# A tap while aboard is intercepted BY STATE. It is still never a
+	# destination reached by walking THROUGH the prop -- but since lot E the
+	# one that misses the prop is not dropped either, so the two cases are
+	# asserted separately.
 	await _land_at(pos + Vector3(0.0, 0.0, -0.5))
 	if _keepy.is_on_seesaw():
-		_hub.call("_on_tapped_ground", Vector3(20.0, 0.0, 0.0))
-		await get_tree().process_frame
-		_check(_keepy.is_on_seesaw(), "a tap far away while aboard does not walk him off")
 		# A FRESH TWEEN, not "the angle is still a number". Comparing angles
 		# would pass against a tap that was swallowed, which is the exact
 		# defect the turnstile batch was written to fix -- so the thing
@@ -451,6 +514,16 @@ func _phase_gate() -> void:
 			"and re-pumps it with a FRESH tween instead of swallowing the tap")
 		_check(before == null or not before.is_valid() or not before.is_running(),
 			"killing the old tween, so no stray dismount can fire from it")
+		# ⚠️ REWRITTEN 2 SEPTEMBRE 2026 (lot E). This used to assert "a tap
+		# far away while aboard does not walk him off" -- true while the
+		# rock owned the exit, and deliberately false now that the seat is
+		# held: with no timer to let him go, a dropped tap would be a body
+		# with no way out at all. It ORDERS AFTER the re-pump checks above
+		# because it ends the ride they need.
+		_hub.call("_on_tapped_ground", Vector3(0.0, 0.0, 20.0))
+		await get_tree().process_frame
+		_check(not _keepy.is_on_seesaw(),
+			"and a tap far away while aboard now ENDS the ride instead of being dropped")
 	else:
 		_check(false, "could not re-mount for the tap-interception checks")
 	print("")
