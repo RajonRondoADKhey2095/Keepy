@@ -852,6 +852,37 @@ ajouré, l'**aire ouverte enclose** (dont la chute distingue « refermé » de
 « tombé en morceaux ») ; pour un sujet à extrémités, la **demi-largeur par
 bande**.
 
+## Discipline de lecture sélective — ne pas recréer le problème que le LOT H a fermé
+
+Le LOT H a coupé ce fichier de ~26 000 lignes relues par défaut à chaque
+session à moins de 1 000 lignes de doctrine, avec le détail déplacé sous
+`docs/lots/CHxx_NOM.md`. **Ce découpage ne vaut que si la lecture qui suit
+reste sélective** — rien n'empêche mécaniquement une session de relire les
+vingt fichiers de chantier par réflexe, ou de traiter `docs/PROBE_AUDIT.md`
+et `docs/MESHY_SPEC.md` comme des lectures obligatoires de session. Cette
+règle existe pour fermer ce trou-là.
+
+1. **`docs/lots/CHxx_NOM.md`** : lire **uniquement** le ou les fichiers du
+   chantier concerné par la tâche en cours. Ne jamais lire les vingt par
+   réflexe. Se référer à [`docs/lots/INDEX.md`](docs/lots/INDEX.md) pour
+   identifier lequel concerne la tâche avant d'ouvrir quoi que ce soit.
+2. **`docs/PROBE_AUDIT.md`** : lire **uniquement** si la tâche touche la
+   fiabilité des sondes/probes elles-mêmes (faux verts, timeouts, dérive de
+   fixture). Ce n'est plus une lecture systématique de session.
+3. **`docs/MESHY_SPEC.md`** : lire **uniquement** si la tâche touche le
+   pipeline d'assets Meshy (import, décimation, budget triangles/texture).
+   Ce n'est plus une lecture systématique de session.
+4. **Pour tout fichier dépassant ~500 lignes dont seule une partie concerne
+   la tâche** (nommément `CH10_BATTLE.md`, `CH18_CABANE_NAV.md`,
+   `CH19_PIE.md`, `CH01_MESHY.md`, `CH11_HUB_PLATEAU.md`, et tout futur
+   fichier de taille comparable) : lire par **plage de lignes ciblée**
+   (`Read` avec `offset`/`limit`, ou `Grep` puis un extrait autour du
+   résultat), jamais le fichier entier d'un coup — sauf si la tâche exige
+   explicitement une revue complète du chantier.
+5. Cette règle n'est pas une préférence de style : elle existe précisément
+   pour empêcher qu'une future session ne recrée, fichier par fichier, le
+   problème que le LOT H a été chargé de résoudre.
+
 ## Index des chantiers
 
 Le récit intégral de chaque lot vit sous `docs/lots/`. **Rien n'y a été
