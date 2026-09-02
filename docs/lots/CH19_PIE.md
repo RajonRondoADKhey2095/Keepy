@@ -2328,3 +2328,122 @@ PWA) -- tap sur le lit -> yeux fermes et Zzz visibles ; re-tap -> retour
 a la normale, sans minuteur automatique. Palier 2 (merge vers `main`)
 reste gate par son feu vert explicite apres cette validation.
 
+## L'OVERLAY DODO : RECON DU BUG "RIEN NE S'AFFICHE" ET REDESIGN EN BULLE-NUAGE (2 septembre 2026)
+
+Validation device sur `keepy-staging.vercel.app` (Safari iPhone, navigation
+privee) du merge precedent (`495a0f8`) : **rien ne s'affiche** au tap sur le
+lit, ni yeux fermes ni "Zzz" -- seul le label d'interaction du hotspot
+("Lit") est visible, ce qui est normal et sans rapport avec l'overlay.
+
+### PHASE 1 -- RECON, les quatre hypotheses du triplet evident
+
+1. **Le declenchement** -- lu dans le code, pas suppose : `_enter_rest()`
+   est le SEUL site qui met `_resting = true`, et il appelle
+   inconditionnellement `_dodo.show_asleep(...)` juste apres avoir pose le
+   corps. Confirme par elimination : `_ready()` va jusqu'au bout sur ce
+   chemin (le label du hotspot du lit, construit PLUS TARD dans la meme
+   `_ready()` que `_dodo`, s'affiche bien -- une exception au milieu de
+   `_build_magpie()` qui construit `_dodo` aurait aussi empeche ce label
+   d'exister).
+2. **Le noeud/l'arbre** -- `_dodo` est cree, ajoute a `_props`, `setup()`
+   appele de facon synchrone, aucun retour anticipe sur ce chemin. Rien
+   dans le fichier ne cache ou n'ecrase `_dodo` apres coup (`_refresh_proximity()`,
+   `_pulse_if_near()` : aucun des deux ne le touche).
+3. **Le build** -- fraicheur RECROISEE cette fois (le lot precedent ne
+   l'avait pas pu, `index.wasm` faisant expirer la session MCP a trois
+   reprises) : `CACHE_VERSION` servi `1788370975` = 17:42:55 UTC, lu en
+   MISS/age 0 ; `index.js` etag `4e08904b1b7107858246af44b602067b`
+   **identique** au fingerprint permanent de ce depot pour ce fichier, lu
+   lui aussi en MISS/age 0 -- signal independant que le moteur n'a pas
+   bouge et que la lecture n'est pas une copie de bord perimee.
+   `index.wasm` reste non recroisable par ce canal (meme echec MCP que le
+   lot precedent, reproductible), mais l'etag de `index.js` suffit a fermer
+   cette hypothese : le build sert bien le code de ce lot.
+4. **Le cadrage camera** -- calcul, pas suppose : projection du point
+   `BED_SPOT + EYES_OFFSET/ZZZ_OFFSET` a travers la transform fixe du
+   `Camera3D` de `CabinInterior.tscn` (matrice + origine lues dans le
+   `.tscn`). Le point tombe a une profondeur camera-locale d'environ
+   -13.2 a -13.6 (devant la camera, pas derriere), avec une position
+   verticale/horizontale locale largement a l'interieur de la demi-etendue
+   du frustum aux FOV/aspect de la scene (~5.5 unites de marge de chaque
+   cote contre un ecart mesure de moins de 2 unites). Le point est donc
+   bien visible a l'ecran, pas hors-cadre.
+
+**Conclusion de la Phase 1** : les quatre hypotheses du triplet (et le
+cadrage, ajoute en quatrieme) sont fermees. Il ne reste que ce que le lot
+precedent avait lui-meme signale ne jamais avoir verifie : "le
+positionnement de l'overlay... est un choix raisonnable... PAS une mesure
+faite sur un rendu -- aucun editeur Godot n'etait disponible... A rejuger
+sur device." Chiffrage a la meme camera : le "Zzz" (`Label3D`, `font_size`
+40 x `pixel_size` 0.0032 = 0.128 unite monde) a une profondeur d'environ
+13.5 unites, soit ~12 px de hauteur ecran sur un viewport de 1920 px de
+haut -- minuscule sur un telephone. Les yeux fermes n'avaient par ailleurs
+aucune garantie de contraste : la meme encre sombre que tous les contours
+de cette scene, posee directement sur la fourrure de Keepy, sans halo. Ni
+l'un ni l'autre ne leve d'erreur -- exactement le mode de panne silencieux
+deja documente dans `CLAUDE.md` ("un noeud mal positionne ou a echelle
+quasi nulle ne leve aucune erreur mais reste invisible"), applique ici a
+la taille/au contraste plutot qu'a la position pure.
+
+⚠️ **Piste ecartee, et pourquoi** : le mecanisme de double-dispatch
+`emulate_mouse_from_touch` deja documente plus haut dans ce fichier (le
+tremblement du baiser, section C) a ete envisage -- `_on_tapped_ground()`
+porte deja une lecture de `_resting` qui appelle `_wake()`, et la branche
+"deja assez pres" du lit partage le meme motif "marche de longueur nulle"
+que celle du baiser qui avait declenche le bug. Ecarte parce que le
+`_resting` du lit avait deja ete valide sur device AVANT ce lot (voir "LE
+HOTSPOT DU LIT" plus haut, confirmation de Mathieu "hotspot du lit
+reactif") -- si le double-dispatch reveillait Keepy dans la meme frame que
+son coucher, cette validation anterieure l'aurait deja vu echouer. Le
+chemin normal (marche reelle jusqu'au lit, `_on_hop_landed()`) n'est de
+toute facon pas expose au doublon d'evenements d'entree, celui-ci ne
+touchant que les taps bruts. Non touche dans ce lot.
+
+### PHASE 2 -- REDESIGN : bulle-nuage procedurale
+
+`CabinDodo.gd` : le `Label3D` "Zzz" seul est remplace par une vraie bulle
+de pensee -- un `Sprite3D` portant une texture 96x88 dessinee en code
+(meme patron que le coeur de `CabinHearts.gd` et les yeux de ce fichier :
+une image construite pixel par pixel une seule fois, jamais reimportee).
+La forme : cinq cercles a rayons variables superposes (union par distance
+signee minimale) pour le corps nuageux, plus trois petits cercles
+decroissants en dessous-a-gauche reliant la bulle a la tete de Keepy --
+le patron classique de bulle de pensee de BD. Remplissage clair
+(`CLOUD_FILL_COLOR`), contour sombre (`CLOUD_OUTLINE_COLOR`, la meme encre
+que le reste de la scene). Le "Zzz" reste un `Label3D` (dessiner du texte
+pixel par pixel dans une `Image` sans police bitmap aurait ete la
+complexite que le brief autorisait a eviter), repositionne au-dessus du
+centre de masse des lobes et recolore en encre sombre sur fond clair
+desormais garanti par la bulle -- inversion du couple texte/contour de
+l'ancienne version, qui reposait sur le fond de la piece pour le contraste.
+
+Les yeux fermes recoivent le meme traitement de contraste : un halo clair
+semi-transparent (`EYES_HALO_COLOR`) dessine derriere chaque arc sur la
+texture 64x64 existante, pour que le contour sombre ne depende plus du
+ton de fourrure de Keepy en dessous.
+
+La derive verticale lente est conservee, etendue a la bulle et au texte
+ensemble (`Tween.set_parallel()`/`chain()`, les deux montent puis
+redescendent en phase) plutot qu'au seul texte.
+
+Aucun nouvel etat, aucune nouvelle FSM, aucun fichier binaire ajoute --
+meme discipline que le reste de ce chantier. Le brief envisageait un bake
+via `Polygon2D`/`Line2D` dans un `Viewport` ; le patron "image dessinee en
+code" deja en place pour les yeux et le coeur s'est avere suffisant pour
+une forme en union de cercles, evitant le risque d'un second `SubViewport`
+dans une scene qui en a deja un pour le monde 3D.
+
+### VALIDATION
+
+Aucun binaire Godot dans ce sandbox distant, comme pour le lot precedent --
+pas de sonde `CabinProbe`. Compilation verifiee par le meme canal :
+`web-build.yml` en `workflow_dispatch` sur la branche de ce lot.
+
+**Reste ouvert : validation device par Mathieu sur
+`keepy-staging.vercel.app`** (Safari iPhone, navigation privee, jamais la
+PWA) -- tap sur le lit -> yeux fermes ET bulle-nuage "Zzz" clairement
+visibles cette fois ; re-tap -> retour a la normale. Si la taille/position
+reste hors-cible malgre l'agrandissement, le prochain lot doit reprendre le
+meme calcul de projection camera fait ici plutot que de re-deviner des
+offsets. Palier 2 (merge vers `main`) reste gate par ce feu vert.
+
