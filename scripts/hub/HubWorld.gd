@@ -212,6 +212,17 @@ var _seesaw_ride: Dictionary = {}
 
 ## The onlooker. One, built in _ready(), never rebuilt.
 var _bear: HubActorWalker = null
+## The plank the bear is currently SITTING on, or null. Not a bool and not
+## read off `_seesaw_ride`: `_apply_tilt` is handed an entry and has to
+## answer "is this the prop my second rider is on", and a re-pump replaces
+## the tween while the ride keeps going.
+var _bear_pivot: Node3D = null
+## Its seat in that pivot's own frame -- the mirror of Keepy's.
+var _bear_seat: Vector3 = Vector3.ZERO
+## The mount the bear is still WALKING towards, or {}. Held rather than
+## re-derived on arrival because by then Keepy may already be off, and a
+## bear that mounts an empty settled plank is worse than one that gives up.
+var _bear_pending: Dictionary = {}
 
 ## Every owl, as _setup_owls copied it, plus the per-prop tween slot; and
 ## the one entry currently carrying Keepy.
@@ -338,32 +349,56 @@ const BEAR_SCALE: float = 1.130876
 ##
 ## CHOSEN BY SCANNING THE LAYOUT, not by eye. On the seesaw's own local Z
 ## axis (the plank runs along its X), so both plank ends are the same walk
-## and the bear does not favour one side; 5.95 units clear of the nearest
-## prop; and BEHIND the seesaw from the camera, which sits at
-## `target + (0, 7.6, 8.9)` looking down -Z -- so the bear walks toward the
-## viewer in the background rather than crossing in front of Keepy.
-const BEAR_REST: Vector3 = Vector3(0.0, 0.0, 35.5)
-
-## How far past the plank tip the bear stops, in the seesaw's own frame.
+## and the bear does not favour one side; and BEHIND the seesaw from the
+## camera, which sits at `target + (0, 7.6, 8.9)` looking down -Z -- so the
+## bear walks toward the viewer in the background rather than crossing in
+## front of Keepy.
 ##
-## The plank is `HubBuilder.SEESAW_PLANK_LENGTH` 3.60 long, so its tip is
-## at 1.80; this stands the bear 0.8 beyond that, clear of the swing and
-## about 3.98 from Keepy's seat at `SEESAW_RIDE_X` 1.38 on the other side.
-const BEAR_WATCH_X: float = 2.6
+## ⚠️ MOVED 35.5 -> 37.0 IN LOT D, and the reason is a stopwatch and not a
+## taste. The rock lasts `SEESAW_ROCK_S` 2.4 s; the old rest point put the
+## approach at 3.970 u, which is 5.254 s at the shipped cadence -- the
+## dismount fired 2.85 s BEFORE the bear reached the plank, so it was never
+## once seen aboard. Re-scanned against the layout at the new value: still
+## 5.374 u clear of the nearest prop (the rock at (-5.18, 0, 38.43)), which
+## is the same scan the original 35.5 was picked by.
+const BEAR_REST: Vector3 = Vector3(0.0, 0.0, 37.0)
+
+## How far to the near side of the plank the bear walks up, in the seesaw's
+## own frame -- its X is the plank end it will sit on.
+##
+## ⚠️ BESIDE THE PLANK END AND NOT UNDER IT. At `SEESAW_TILT_DEG` 15 the
+## plank end sweeps +-0.357 u vertically, so an actor standing on the plank
+## line would be walked THROUGH the board on the way in. 0.8 clears that
+## sweep and still leaves the mount snap short.
+const BEAR_APPROACH_Z: float = 0.8
+
+## Playback multiplier handed to the walker -- ground speed AND clip
+## together, so the no-foot-slide relation `HubActorWalker.walk_speed`
+## documents holds by construction rather than by memory.
+##
+## ⚠️ THIS IS THE OTHER HALF OF THE LOT D TIMING FIX, and neither half
+## alone was enough. Even standing at the fulcrum the bear cannot start
+## closer than `SEESAW_RIDE_X` 1.38 from a seat, so a rest point alone
+## floors the walk near 1.83 s; and rate alone, from the old 35.5, needed
+## k ~ 3.0 to fit -- a comical playback. Together: the approach is 1.547 u,
+## which at 2.0 x 0.7556 = 1.5112 u/s takes 1.024 s, leaving the bear
+## ABOARD for 1.376 s of the 2.4 s rock -- 57.3 % of it.
+##
+## `SEESAW_ROCK_S` is deliberately NOT the knob: it is Keepy's own
+## device-validated ride length, and stretching it to fit an onlooker would
+## re-tune gameplay to suit scenery.
+const BEAR_WALK_RATE: float = 2.0
 
 ## ⚠️ PARKED GAME-FEEL DECISION, DELIBERATELY NOT TAKEN HERE.
 ##
 ## `false`  -- the bear stays where it arrived and waits for next time.
 ## `true`   -- the bear walks back to BEAR_REST when the rider steps off.
 ##
-## Shipped `false`, and this is not a preference dressed up as a default:
-## the rock lasts SEESAW_ROCK_S (2.4 s) and the walk takes about 5.3 s at
-## the clip-derived `walk_speed`, so the dismount fires while the bear is
-## still ON ITS WAY. Under `true` he would turn round mid-approach and
-## never arrive at all -- which means the two options are not symmetric,
-## and picking `true` is really picking "the bear also has to be faster, or
-## the rest point closer". That trade belongs to Mathieu, so both are
-## presented in the report and this constant is the whole of the switch.
+## Shipped `false`. Lot D removed the argument that USED to force it --
+## the approach no longer outlasts the rock (see BEAR_WALK_RATE) -- so this
+## is now a game-feel choice and nothing else: the bear steps off beside
+## the plank and waits there for the next rider, rather than trekking back
+## across the plateau every time. Flipping it is the whole of the switch.
 const BEAR_RETURNS_HOME: bool = false
 
 ## How much room a landing needs on top of whatever it is standing next to.
@@ -1183,6 +1218,15 @@ func _apply_tilt(t: float, entry: Dictionary) -> void:
 	pivot.rotation_degrees.z = -side * SEESAW_TILT_DEG * cos(TAU * SEESAW_ROCK_CYCLES * t) * damp
 	if riding:
 		_keepy.follow_seesaw()
+	# THE SECOND RIDER, IN THIS SAME CALL AND NOWHERE ELSE. Not in the
+	# bear's own _process, not on a signal: a rider that reads its prop on
+	# its own callback was MEASURED a full frame behind on the turnstile
+	# (12.0 deg at the shove peak), and process_priority did not move it,
+	# because Tween steps land after every node's _process. The gate for
+	# this is the pivot the bear sits on and not `_seesaw_ride`, so a
+	# re-pump -- which replaces the tween mid-ride -- keeps carrying it.
+	if _bear != null and _bear_pivot == pivot:
+		_bear_follow_seesaw()
 
 ## Puts Keepy on a seesaw and arranges for him to be let off when it settles.
 ##
@@ -1231,10 +1275,15 @@ func _setup_bear() -> void:
 	_bear = HubActorWalker.new()
 	_bear.model_scene = BEAR_SCENE
 	_bear.model_scale = BEAR_SCALE
+	# Ground speed and clip playback at once -- see BEAR_WALK_RATE.
+	_bear.walk_rate = BEAR_WALK_RATE
 	# BEFORE add_child, because the walker builds its rig in _ready() and a
 	# scale written afterwards would be a rig drawn once at the wrong size.
 	_bear.position = BEAR_REST
 	_world.add_child(_bear)
+	# ONCE, here. Connecting on each mount instead is how an actor ends up
+	# with N handlers and mounts N times on the Nth ride.
+	_bear.arrived.connect(_on_bear_arrived)
 
 ## Keepy has sat down: the bear walks to the FAR end of that plank.
 ##
@@ -1251,6 +1300,13 @@ func _setup_bear() -> void:
 func _on_seesaw_mounted() -> void:
 	if _bear == null:
 		return
+	# Unreachable while a dismount always precedes the next mount, and kept
+	# because the failure it prevents is silent: a bear still seated would
+	# walk its approach AT seat height, through the air.
+	if _bear_pivot != null:
+		_bear.global_position = Vector3(_bear.global_position.x, 0.0, _bear.global_position.z)
+		_bear_pivot = null
+		_bear_seat = Vector3.ZERO
 	var entry: Dictionary = _seesaw_under(_keepy.global_position)
 	if entry.is_empty():
 		return
@@ -1263,14 +1319,84 @@ func _on_seesaw_mounted() -> void:
 	if root == null:
 		return
 	var side: float = 1.0 if root.to_local(_keepy.global_position).x >= 0.0 else -1.0
-	_bear.walk_to(root.to_global(Vector3(-side * BEAR_WATCH_X, 0.0, 0.0)))
+	# The FAR end: whichever side Keepy took, the bear takes the other.
+	var seat_x: float = -side * float(entry["ride_x"])
+	# The near side of the plank as seen from where the bear is STANDING,
+	# so it walks up to the board rather than round it. Read off its own
+	# position instead of assumed, because the seesaw carries the layout's
+	# `rotation_y` and a hard +Z would approach from behind on a turned one.
+	var near_z: float = 1.0 if root.to_local(_bear.global_position).z >= 0.0 else -1.0
+	_bear_pending = {
+		"pivot": pivot,
+		"seat": Vector3(seat_x, float(entry["seat_y"]), 0.0),
+	}
+	_bear.walk_to(root.to_global(Vector3(seat_x, 0.0, near_z * BEAR_APPROACH_Z)))
 
-## Keepy has stepped off. See BEAR_RETURNS_HOME for why this is a constant
-## and not a decision.
-func _on_seesaw_dismounted() -> void:
-	if _bear == null or not BEAR_RETURNS_HOME:
+## The bear finished a walk. If that walk was an approach and the ride is
+## still going, it steps up onto the plank.
+##
+## ⚠️ IT SNAPS, and that is a decision rather than a shortcut: the rig ships
+## a walk cycle and nothing else, so there is no climb to play. The snap is
+## 0.8 u sideways and about 0.69 u up, taken in one frame at the moment the
+## walk ends -- which is also the moment the actor stops being watched as a
+## walker.
+##
+## The ride is re-checked HERE and not trusted from the mount, because the
+## approach takes about a second and a re-pump or an early dismount can
+## land inside it. Mounting a settled empty plank would strand the bear on
+## scenery with no tilt to follow and no dismount coming.
+func _on_bear_arrived() -> void:
+	if _bear_pending.is_empty():
 		return
-	_bear.walk_to(BEAR_REST)
+	var pending: Dictionary = _bear_pending
+	_bear_pending = {}
+	var pivot: Node3D = pending["pivot"]
+	if pivot == null or not is_instance_valid(pivot):
+		return
+	if _seesaw_ride.is_empty() or _seesaw_ride.get("pivot") != pivot or not _keepy.is_on_seesaw():
+		return
+	_bear_pivot = pivot
+	_bear_seat = pending["seat"] as Vector3
+	# Placed straight away rather than waiting for the next tilt step: the
+	# tween may be a frame off, and one frame of a bear standing beside the
+	# plank at seat height is exactly the pop this avoids.
+	_bear_follow_seesaw()
+
+## Writes the bear onto its seat on the tilting plank. Position AND facing,
+## the same two things Keepy's own `follow_seesaw` writes, in the same
+## frame the angle was written.
+func _bear_follow_seesaw() -> void:
+	if _bear == null or _bear_pivot == null or not is_instance_valid(_bear_pivot):
+		return
+	_bear.global_position = _bear_pivot.to_global(_bear_seat)
+	# Facing INWARD, along the plank towards the other seat -- which is
+	# Keepy's. Derived from the seat rather than from his position so it is
+	# still right on the frame he leaves, and taken through the pivot's own
+	# basis so the tilt carries the heading with it.
+	_bear.face(_bear_pivot.global_transform.basis * Vector3(-_bear_seat.x, 0.0, 0.0))
+
+## Keepy has stepped off, so the bear does too -- the same beat, off the
+## same signal, rather than a second timer that could drift from it.
+func _on_seesaw_dismounted() -> void:
+	if _bear == null:
+		return
+	_bear_pending = {}
+	if _bear_pivot != null and is_instance_valid(_bear_pivot):
+		var root: Node3D = _bear_pivot.get_parent() as Node3D
+		var ground: Vector3 = _bear.global_position
+		if root != null:
+			# Back down beside the plank -- the point it walked up to, which
+			# is already known clear of the swing. Through the ROOT and not
+			# the pivot: the pivot is left tilted at whatever angle the rock
+			# settled on, and a point taken through it would be off the floor.
+			var local: Vector3 = root.to_local(_bear.global_position)
+			var near_z: float = 1.0 if local.z >= 0.0 else -1.0
+			ground = root.to_global(Vector3(_bear_seat.x, 0.0, near_z * BEAR_APPROACH_Z))
+		_bear.global_position = Vector3(ground.x, 0.0, ground.z)
+	_bear_pivot = null
+	_bear_seat = Vector3.ZERO
+	if BEAR_RETURNS_HOME:
+		_bear.walk_to(BEAR_REST)
 
 ## The seesaw `flat` is standing on, or {}. Same radius test `_rock_near`
 ## runs, factored out so the bear and the rock can never disagree about

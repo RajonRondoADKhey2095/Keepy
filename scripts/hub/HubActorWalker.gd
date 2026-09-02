@@ -61,6 +61,23 @@ enum State { IDLE, WALKING, ARRIVED }
 ## stance fit was done instead.
 @export var walk_speed: float = 0.7556
 
+## Multiplies the ground speed AND the clip's playback, together.
+##
+## ⚠️ ONE KNOB AND NOT TWO, AND THAT IS THE WHOLE POINT. `walk_speed` above
+## is the speed at which the PLANTED foot travels backwards in the rig's own
+## frame at playback rate 1.0 -- the only speed at which a foot does not
+## skate. That relation is exactly linear in the playback rate: run the clip
+## at k and the planted foot sweeps ground k times faster, so the
+## no-foot-slide speed is `walk_speed * k`. Exposing the two separately is
+## how a caller ends up asking for a faster walk and getting a moonwalk;
+## exposing the ratio makes the invariant structural instead of remembered.
+##
+## 1.0 is the measured cadence. The hub's bear is driven above it because
+## the seesaw it is called over to only rocks for `SEESAW_ROCK_S`, and an
+## actor that arrives after the ride is over has not arrived -- see
+## `HubWorld.BEAR_WALK_RATE` for that timing budget.
+@export var walk_rate: float = 1.0
+
 ## How sharply the actor turns onto its heading. Same exponential form and
 ## the same units as `HubCamera.FOLLOW_LAMBDA`; larger is snappier.
 @export var turn_lambda: float = 6.0
@@ -128,6 +145,10 @@ func _ready() -> void:
 	_player.add_animation_library(&"actor", lib)
 	_clip_name = &"actor/walk"
 	_clip_length = clip.length
+	# The other half of `walk_rate`. Written on the PLAYER, never on the clip:
+	# a speed baked into an Animation would be a shared-resource write, the
+	# same trap the duplicate above exists to close.
+	_player.speed_scale = maxf(walk_rate, 0.0001)
 	_yaw = rotation.y
 	_freeze()
 
@@ -166,6 +187,33 @@ func clip_length() -> float:
 	return _clip_length
 
 
+## The speed the feet actually travel at: the measured cadence scaled by
+## `walk_rate`. Published so a caller can budget a walk without re-deriving
+## the product, and so a probe reads the number the actor really uses rather
+## than the one it was configured with.
+func ground_speed() -> float:
+	return walk_speed * maxf(walk_rate, 0.0001)
+
+
+## Turns the actor to face `direction` at once, with no ease.
+##
+## ⚠️ WRITES BOTH `rotation.y` AND `_yaw`, and the second half is the point.
+## `_process` eases FROM `_yaw`, so a caller that set only the node's
+## rotation would see the next walk snap back to whatever heading the actor
+## last eased to -- a turn that visibly un-does itself one frame into the
+## departure. Nothing else in this script touches `_yaw` from outside.
+##
+## No ease because the callers that need this are placing the actor, not
+## animating it: a rider written onto a moving prop every frame has to be
+## AT its pose when the frame is drawn, not on its way to it.
+func face(direction: Vector3) -> void:
+	var flat := Vector2(direction.x, direction.z)
+	if flat.length_squared() < 1.0e-8:
+		return
+	_yaw = atan2(direction.x, direction.z)
+	rotation.y = _yaw
+
+
 func _process(delta: float) -> void:
 	var here: Vector3 = _flat()
 	var to_target: Vector3 = _target - here
@@ -185,7 +233,7 @@ func _process(delta: float) -> void:
 		_yaw = lerp_angle(_yaw, wanted, weight)
 		rotation.y = _yaw
 
-	var step: float = walk_speed * delta
+	var step: float = ground_speed() * delta
 	if dist <= maxf(step, arrive_epsilon):
 		global_position = Vector3(_target.x, global_position.y, _target.z)
 		_arrive()
