@@ -289,6 +289,14 @@ func _phase_e() -> Dictionary:
 
 	var bear_start: Vector3 = bear.global_position
 	_ok(bear.global_position.y < 0.01, "and it starts on the ground (y = %.4f)" % bear.global_position.y)
+	# LOT F. The rest-orientation fix, arrival path 1 of 2: spawn placed it
+	# directly, no walk, so `_arrive()` never ran and nothing but the
+	# explicit snap in `_setup_bear()` could have turned it.
+	var spawn_to_fulcrum: Vector3 = (entry["position"] as Vector3) - bear.global_position
+	var spawn_wanted: float = atan2(spawn_to_fulcrum.x, spawn_to_fulcrum.z)
+	_ok(absf(angle_difference(bear.rotation.y, spawn_wanted)) < 0.01,
+		"on spawn it already faces the seesaw (yaw %.3f rad, wanted %.3f)"
+			% [bear.rotation.y, spawn_wanted])
 
 	# A landing on one end -- the same signal an ordinary hop emits.
 	var arrive: Vector3 = (entry["position"] as Vector3) + Vector3(-ride_x, 0.0, -0.4)
@@ -491,6 +499,15 @@ func _phase_f(ctx: Dictionary) -> void:
 		"and the bear walked back to its post (%.3f u from %s)"
 			% [home.distance_to(Vector3(rest.x, 0.0, rest.z)), rest])
 	_ok(not bear.is_walking(), "where it stopped rather than overshooting")
+	# LOT F. Arrival path 2 of 2: the walk home ends in -Z from the seesaw
+	# (BEAR_REST sits behind it), which is exactly the heading `_process`'s
+	# walking-orientation logic leaves it on if nothing corrects it after
+	# `_arrive()` -- facing away from the seesaw instead of towards it.
+	var home_to_fulcrum: Vector3 = pos - bear.global_position
+	var home_wanted: float = atan2(home_to_fulcrum.x, home_to_fulcrum.z)
+	_ok(absf(angle_difference(bear.rotation.y, home_wanted)) < 0.01,
+		"and settles back facing the seesaw, not away from it (yaw %.3f rad, wanted %.3f)"
+			% [bear.rotation.y, home_wanted])
 
 	hub.queue_free()
 	await get_tree().process_frame
