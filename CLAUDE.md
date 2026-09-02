@@ -26091,3 +26091,176 @@ Aucun chiffre publie ici ne vient de la passe contaminee.
    et disparait ».
 3. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+### Deploiement staging du lot D (palier 1) -- dette de verification, comblee le 2 septembre 2026
+
+Ce paragraphe manquait au rapport du lot D : il avait ete laisse en dette
+plutot qu'invente apres coup. Les chiffres ci-dessous sont releves
+maintenant, sur le run reel et sur le service, pas reconstruits de memoire.
+
+CI **run #364** (id `33577556065`, job `100084741695`), branche `staging`,
+head_sha `aecfd555a076fdc0dde584546e8e076175a5e916`, **conclusion
+`success`** -- cree 00:59:22 UTC, job termine 01:04:00 UTC :
+`Import project resources` 01:00:09 -> 01:03:20 (3 min 11 s), **`Export Web
+build` 01:03:20 -> 01:03:25**, `Verify export output` 01:03:25,
+`Deploy to Vercel [STAGING -- staging]` **succes** 01:03:46 -> 01:03:58,
+`[PRODUCTION -- main]` correctement **skipped** (push sur `staging`).
+
+**Verifie SUR LE SERVICE, sur DEUX marqueurs independants** :
+
+| marqueur | valeur servie |
+|---|---|
+| `CACHE_VERSION` | **`1788311005|4243534` = 01:03:25 UTC** -- tombe exactement sur la fermeture de l'etape `Export Web build` |
+| `index.wasm` servi | **35 376 909** octets -- le fingerprint permanent de tout lot qui ne touche pas le code moteur |
+| `index.pck` servi | 43 300 688 (marqueur « nouveau build », jamais preuve d'identite) |
+
+⚠️ **Limite dite plutot que maquillee** : le `CACHE_VERSION` a ete lu sur
+une reponse **`x-vercel-cache: HIT` avec `age: 17362`** -- ce n'est donc
+**PAS** une mesure de fraicheur, seulement une lecture de VALEUR. Elle est
+corroboree par son `last-modified` (01:04:15 GMT, coherent avec le
+deploiement) et par la lecture d'`index.html`, elle **`MISS` / `age: 0`**,
+qui rend `fileSizes {"index.pck":43300688,"index.wasm":35376909}`. La
+bascule n'est donc pas prouvee dans les deux sens par une paire de
+lectures fraiches, comme le fait la forme la plus forte de ce fichier ;
+elle est etablie par la concordance epoch/fenetre d'export plus une
+seconde lecture fraiche du meme build.
+
+## LOT E -- LA BALANCOIRE DEVIENT UN SIEGE : le rock cesse de decider quand on descend (2 septembre 2026)
+
+Branche `claude/lot-e-seesaw-persistent-a8dqbh`, partie de `origin/staging`
+(`aecfd55`, le lot D merge). Regle n1 verifiee AU DEBUT et par ARBRE :
+`origin/main` strict ancetre d'`origin/staging`, **aucune session
+concurrente**.
+
+Avant ce lot, un tour de balancoire etait quelque chose que le decor te
+FAISAIT toutes les 2,4 s : la fin du tween te rendait au sol, que tu
+l'aies demande ou non. Desormais **le siege survit au rock** -- Keepy et
+l'ours restent assis, planche a plat, jusqu'a ce qu'un tap AILLEURS les
+fasse descendre ; un tap sur la balancoire relance un rock sans que
+personne ne remonte.
+
+### ETAPE 0 -- LES QUATRE POINTS DE RECON, LUS DANS LE CODE ET PAS SUPPOSES
+
+| # | question | reponse etablie par lecture |
+|---|---|---|
+| **a** | qui decide la sortie ? | `HubWorld._mount_seesaw()` connectait `_on_seesaw_rock_finished` en `CONNECT_ONE_SHOT` sur le `finished` du rock -- **c'est le TWEEN qui te descendait**, pas toi |
+| **b** | un tap ailleurs pendant `ON_SEESAW` ? | **JETE**. `HubWorld._on_tapped_ground()` : la branche seesaw appelait `_repump_seesaw(point)` et `return`ait, sans aucun chemin de sortie -- ni file, ni destination retenue |
+| **c** | `_repump_seesaw` marche-t-il au REPOS ? | **OUI**, et c'est tout le coeur de l'exigence 2 : il n'exige qu'un ride vivant, un pivot valide et un point dans le rayon ; son `old.is_valid()` tolerait deja un tween **termine**. Il ne lui manquait que `_seesaw_ride` qui persiste |
+| **d** | reference du « patron bateau » | `BoatMooring.is_available()` / `set_busy()`, consulte par `HubTapInput`, plus le `if _keepy.is_riding(): leave_ride(point, footprints)` d'`_on_tapped_ground` -- **le gate se RETIRE**, donc le tap tombe a travers et DEVIENT l'eject, en gardant sa destination |
+
+⚠️ **PAS D'ESCALADE, ET C'EST VERIFIE PLUTOT QUE PARIE.** La consigne
+imposait un STOP si le changement debordait sur la FSM de
+`KeepyHopper.gd`. Apres `leave_seesaw(landing)` l'etat est `HOPPING` (ou
+`IDLE` sur le chemin degenere), et `hop_to(point)` est **accepte dans les
+deux** -- le tap qui fait descendre peut donc porter sa destination sans
+qu'un seul octet de `KeepyHopper.gd` bouge. **Diff de ce fichier : VIDE**,
+comme les trois autres exiges.
+
+### CE QUI CHANGE, ET LES TROIS PIEGES FERMES AU PASSAGE
+
+**`_on_seesaw_rock_finished` est SUPPRIMEE**, pas neutralisee -- zero
+reference restante. `_mount_seesaw` finit desormais sur un commentaire qui
+dit pourquoi rien n'est accroche au `finished` : « une balancoire posee,
+c'est une planche a plat avec deux passagers dessus ; la seule chose qui
+termine un tour est un tap ailleurs ».
+
+**`_leave_seesaw_towards(point)` (nouvelle)** porte la sortie facon
+bateau. Elle **TUE** le rock plutot que de le laisser se poser :
+`Tween.kill()` n'emet aucun `finished`, donc personne ne l'observe -- et
+un tween qui continuerait d'ecrire un tilt par `_apply_tilt` apres le
+depart des deux passagers ferait basculer un decor sur lequel plus
+personne n'est assis.
+
+**`_repump_seesaw` enregistre son nouveau tween** (`_seesaw_ride["tween"]
+= tween`) : sans ca, la sortie tuerait un tween perime et laisserait le
+vrai en vol.
+
+**`_on_seesaw_dismounted` gagne un `_seesaw_ride = {}` defensif** en
+premiere ligne -- le ride ne doit pas survivre a un demontage, quel que
+soit le chemin qui l'a provoque.
+
+**`BEAR_RETURNS_HOME` passe a `true`**, et le risque nomme par la consigne
+-- un re-tap pendant que l'ours rentre -- est **verifie plutot que
+suppose** : `HubActorWalker.walk_to` remplace simplement sa cible et reste
+`WALKING`, sans rien emettre pour la marche qu'il abandonne, et son
+handler `arrived` sort tot sur un `_bear_pending` vide. Il n'existe donc
+aucun etat ou un ours a mi-chemin puisse produire un montage fantome.
+
+### ROUGE AVANT VERT : QUATRE NEUTRALISATIONS CIBLEES, CHACUNE REVERTEE BYTE-IDENTIQUE
+
+| ce qui est neutralise | rouge obtenu |
+|---|---|
+| le siege ne survit pas au rock (timer qui le depose LOIN) | **ActorWalkerProbe 3 FAIL / SeesawProbe 3 FAIL** |
+| `_repump_seesaw` -> no-op | **ActorWalkerProbe 8 FAIL / SeesawProbe 2 FAIL** |
+| `_leave_seesaw_towards` -> no-op | **ActorWalkerProbe 4 FAIL / SeesawProbe 8 FAIL** |
+| `BEAR_RETURNS_HOME = false` | **ActorWalkerProbe 1 FAIL** (« bear walked back to its post (2.682 u) »), **SeesawProbe exit 0** -- correctement insensible |
+
+`cp` + `cmp` apres chaque passe : `HubWorld.gd` restaure **byte-identique**
+(md5 `28edba072ed3259fe5f6cd9c7dfac131`) les quatre fois.
+
+⚠️ **TROIS TENTATIVES DE ROUGE ONT ECHOUE AVANT LA BONNE, ET LA CAUSE VAUT
+D'ETRE CONSIGNEE.** Deposer Keepy **a sa propre position** pour simuler
+« le siege ne survit pas » le fait atterrir au pied du prop -> `hop_landed`
+-> `_rock_near` le trouve dans le rayon -> **il REMONTE**, et
+l'echantillon deux rocks plus tard le retrouve assis : le rouge visait
+donc a cote (« planche laissee a plat », pas « toujours sur la planche »).
+Il a fallu le deposer **loin** (`entry["position"] + Vector3(0,0,-20)`)
+pour que la neutralisation exerce reellement l'assertion visee. **Une
+neutralisation qui produit un rouge n'est pas forcement une neutralisation
+qui produit LE rouge qu'on croit.**
+
+### ⚠️ UNE ASSERTION DE `SeesawProbe` A EXPIRE, ET ELLE EST REECRITE PLUTOT QUE TUE
+
+PHASE GATE echouait sur « a landing well outside the radius does not mount
+him ». Cause : son BLIND CHECK laisse desormais Keepy **assis** (c'est le
+lot), et son helper `_land_at()` teleporte puis emet `hop_landed` -- il ne
+peut pas faire descendre quelqu'un de `ON_SEESAW`, et `hop_to` est refuse
+dans cet etat. La phase emprunte donc la **sortie livree** (un tap hors du
+prop, attendu jusqu'a l'inactivite) et **asserte qu'il en est reellement
+descendu** -- sans quoi le refus teste juste apres passerait gratuitement
+contre un Keepy reste a bord tout du long.
+
+### VALIDATION
+
+**Perimetre du diff, exact** : `scripts/hub/HubWorld.gd`,
+`scripts/dev/ActorWalkerProbe.gd`, `scripts/dev/SeesawProbe.gd`.
+**Diff VIDE sur `HubBuilder.gd`, `HubRouter.gd`, `hub_layout.tres` ET
+`KeepyHopper.gd`**, verifie par `git diff --stat` sur ces quatre chemins.
+
+`ActorWalkerProbe` gagne **PHASE F** (trois blocs : le siege survit au
+rock, le re-tap relance sans remonter, la sortie sur tap ailleurs avec le
+retour de l'ours), chainee depuis PHASE E via un contexte partage --
+`_phase_e()` rend `{"hub","keepy","bear","entry","pivot","seat","rock_s"}`
+et `_ready` fait `await _phase_f(ctx)` (un `await`, pas un appel nu : une
+phase qui contient un `await` est une coroutine, piege deja paye deux fois
+dans ce depot).
+
+**Six sondes, toutes exit 0 / 0 FAIL** : `ActorWalkerProbe` (PHASE F
+comprise), `SeesawProbe` (**59 OK**), `ProbeTimeoutAudit` (**60 scenes de
+sonde + 1 `--script`**, chiffre inchange -- ce lot n'ajoute aucune sonde),
+`AssetContractAudit` (**10 colliders, pas un deplace**), `DeathModelAudit`,
+`ChargerShapeProbe`.
+
+Import headless **exit 0, 36 `.scn`**. Export Web release **exit 0, 0
+erreur SCRIPT/Parse**, fait **hors de `res://`** (`/tmp/webout`) pour eviter
+l'auto-contamination deja documentee : **282 lignes `Storing File`, 0**
+pour `scripts/dev`, `assets_source`, `docs`, `web/`, `build` et
+`firebase.json`. `index.wasm` **35 376 909** / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- le fingerprint permanent de tout
+lot qui ne touche pas le code moteur, coherent avec un diff de trois
+fichiers GDScript. `index.pck` 43 300 768, **marqueur et jamais preuve
+d'identite**.
+
+### RESTE OUVERT -- jugement device, seul juge
+
+1. **Est-ce que rester assis se lit comme un choix** plutot que comme une
+   balancoire qui a oublie de te reposer ? La planche revient a plat et
+   personne ne bouge tant qu'on ne tape pas ailleurs -- aucune sonde ne
+   dit si ce repos se lit comme volontaire.
+2. **Le re-tap relance-t-il proprement** au pouce, sans a-coup de
+   remontee visible ?
+3. **L'ours qui rentre a pied vers (0,0,37)** apres une sortie : mesure et
+   gate, jamais vu en mouvement sur un telephone.
+4. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.
