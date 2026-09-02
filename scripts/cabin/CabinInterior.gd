@@ -787,6 +787,12 @@ var _magpie: LevelHotspot = null
 var _magpie_body: Node3D = null
 var _hearts: CabinHearts = null
 
+## THE SLEEP OVERLAY -- closed eyes and a drifting "Zzz", shown for exactly
+## as long as `_resting` is true. Built once, like the hearts, and only ever
+## shown or hidden by _enter_rest()/_wake(): no new state, the existing rest
+## boolean already this project's registry entry for "Keepy is in the bed".
+var _dodo: CabinDodo = null
+
 ## One marker per tappable thing, kept so the ladder's can follow Keepy
 ## between storeys and the others can hide when he is not on their level.
 var _ladder_marker: CabinMarker = null
@@ -930,6 +936,10 @@ func _build_magpie() -> void:
 	_hearts = CabinHearts.new()
 	_hearts.name = "Hearts"
 	_props.add_child(_hearts)
+	_dodo = CabinDodo.new()
+	_dodo.name = "Dodo"
+	_props.add_child(_dodo)
+	_dodo.setup()
 
 ## The yaw that points a node's +Z from `from` at `to`. One conversion, so
 ## nothing in this file writes atan2 twice with the arguments in a different
@@ -1515,6 +1525,11 @@ func _enter_rest() -> void:
 	# flank by the difference between the two -- the same class of mistake
 	# that sank him 0.9166 into the floor, one axis over.
 	body.position = Vector3(0.0, -KEEPY_MODEL_MIN_X * KEEPY_SCALE, 0.0)
+	# Eyes closed, Zzz drifting -- the whole point of this state now that it
+	# is not just a pose. `_walker.global_position` was just set above, so
+	# this is the same point the rest of the state uses, not a fourth copy.
+	if _dodo != null:
+		_dodo.show_asleep(_walker.global_position)
 
 ## Gets him up. Everything is DERIVED rather than restored from a snapshot
 ## taken on the way in: a saved transform is a copy that goes stale the
@@ -1528,6 +1543,8 @@ func _wake() -> void:
 	if not _resting:
 		return
 	_resting = false
+	if _dodo != null:
+		_dodo.hide_asleep()
 	var body := _walker.get_node_or_null("Body") as Node3D
 	if body != null:
 		body.rotation_degrees = Vector3.ZERO
