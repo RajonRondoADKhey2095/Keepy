@@ -38,10 +38,6 @@ class_name CabinDodo
 ## regardless of what is drawn under it, and by sizing the bubble to a
 ## fraction of Keepy's own body height rather than to a guess.
 const EYES_COLOR := Color(0.10, 0.07, 0.05)
-## Soft light patch drawn behind the closed-eye ink, semi-transparent so it
-## reads as eyelid skin rather than a stark patch, but present specifically
-## so the dark arc never has to rely on Keepy's own fur tone for contrast.
-const EYES_HALO_COLOR := Color(1.00, 0.97, 0.90, 0.85)
 
 ## The bubble's own fill and outline. The same pair CabinMarker's label
 ## already uses for its light-text/dark-outline pair, inverted here into a
@@ -65,7 +61,31 @@ const CLOUD_OFFSET := Vector3(0.22, 1.22, 0.0)
 ## text is nudged up from the sprite's centre to land inside them.
 const ZZZ_LOCAL_OFFSET := Vector3(0.0, 0.06, 0.0)
 
-const EYES_SIZE: float = 0.30
+## ⚠️ RECON, second pass (2 September 2026): the first fix above (halo,
+## still stated here below for the record before its own correction) shipped
+## with EYES_SIZE unchanged at the old 0.30 and the halo alpha at 0.85 --
+## device report: "meme visage qu'avant ce lot", i.e. no perceptible change.
+## A standalone render of the exact same pixel algorithm (Python, this
+## file's arc/halo maths copied verbatim, composited over both a warm-fur
+## swatch and the cabin's dark ambient colour) confirmed the SHAPE read
+## fine at 64x64 -- the defect was that the halo was see-through (0.85
+## alpha, so it partly took on whatever colour was under it) and, more
+## importantly, that EYES_SIZE never grew: the whole sprite was still the
+## same ~29px-wide footprint that had already read as "the same face" once.
+## The cloud fix worked because it changed BOTH axes at once (opaque fill
+## AND a several-times-larger world size); this one only changed contrast.
+## Fixed the same way as the cloud below: an OPAQUE fill-plus-outline eye
+## shape (CLOUD_FILL_COLOR/CLOUD_OUTLINE_COLOR, reused rather than a third
+## colour pair invented) instead of a translucent halo, and EYES_SIZE raised
+## to a size proportioned the same way CLOUD_WORLD_WIDTH is -- verified
+## again with the same standalone render before touching the .gd.
+const EYES_SIZE: float = 0.42
+## The eye shape itself: a filled ellipse (semi-axes in texture pixels, on
+## the 64x64 canvas below) with an outline band, the same signed-distance
+## fill/outline split _cloud_texture() uses on its circles.
+const EYES_RX: float = 15.0
+const EYES_RY: float = 11.0
+const EYES_OUTLINE_WIDTH: float = 0.16
 
 ## The bubble texture is drawn top-heavy (lobes near the top, a tapering
 ## tail trailing down-left toward Keepy's head), 96x88 so the tail has room
@@ -144,17 +164,15 @@ func setup() -> void:
 	_zzz.visible = false
 	add_child(_zzz)
 
-## Drawn like CabinHearts' own heart: one small shared texture, two shallow
-## downward arcs on a soft light halo. Closed eyes read at a glance at this
-## size, where eyelashes or a proper lid shape would not -- and there is no
+## Drawn like the bubble below: an OPAQUE eyelid shape (fill plus outline,
+## same signed-distance split as _cloud_texture()'s circles, here on an
+## ellipse) with the closed-lid crease drawn in ink on top. There is no
 ## separate eye node on Keepy's own .glb to close instead: it is one mesh,
 ## no skin, no animation, the same finding the cabin and owl batches already
 ## published for this family of assets, so nothing on the model itself can
-## be swapped or masked.
-##
-## The halo is new (see this file's header): the ink alone had no guaranteed
-## contrast against Keepy's own fur, so a soft light patch is drawn behind
-## each arc first.
+## be swapped or masked -- and, per this file's header, the fill has to be
+## opaque and the whole sprite sized like the bubble is, not translucent and
+## left at its old footprint, or it reads as no change at all.
 static func _eyes_texture() -> ImageTexture:
 	if _eyes_tex != null:
 		return _eyes_tex
@@ -166,23 +184,27 @@ static func _eyes_texture() -> ImageTexture:
 		var cy := 34.0
 		for px in size:
 			var dx: float = float(px) - cx
-			if absf(dx) > 13.0:
+			if absf(dx) > EYES_RX + 1.0:
 				continue
 			for py in size:
 				var dy: float = float(py) - cy
-				if (dx * dx) / 169.0 + (dy * dy) / 81.0 <= 1.0:
-					img.set_pixel(px, py, EYES_HALO_COLOR)
+				var q: float = sqrt((dx * dx) / (EYES_RX * EYES_RX) + (dy * dy) / (EYES_RY * EYES_RY))
+				if q <= 1.0:
+					if q > 1.0 - EYES_OUTLINE_WIDTH:
+						img.set_pixel(px, py, CLOUD_OUTLINE_COLOR)
+					else:
+						img.set_pixel(px, py, CLOUD_FILL_COLOR)
 	for eye in 2:
 		var cx: float = 20.0 if eye == 0 else 44.0
 		var cy := 34.0
 		for px in size:
 			var dx: float = float(px) - cx
-			if absf(dx) > 11.0:
+			if absf(dx) > EYES_RX - 2.0:
 				continue
 			# A shallow downward arc, thickened by a few pixels so it reads
 			# as a closed lid rather than a hairline.
-			var y := cy + dx * dx * 0.055
-			for t in 3:
+			var y := cy + dx * dx * 0.045
+			for t in 4:
 				var py := int(round(y)) + t
 				if py >= 0 and py < size:
 					img.set_pixel(px, py, EYES_COLOR)
