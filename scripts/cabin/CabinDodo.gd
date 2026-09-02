@@ -37,6 +37,36 @@ class_name CabinDodo
 ## invisible." Fixed below by giving both a light halo/background that reads
 ## regardless of what is drawn under it, and by sizing the bubble to a
 ## fraction of Keepy's own body height rather than to a guess.
+##
+## ⚠️ RECON, third pass (2 September 2026) -- AND THE CAUSE, AT LAST. The
+## two passes above were both about how the eyes were DRAWN. Neither was
+## the fault. The fault is that they were drawn in the wrong PLACE, and
+## have been since the first commit: `EYES_OFFSET` was a CONSTANT WORLD
+## OFFSET, Vector3(0, 0.78, 0), added to the walker's origin. That can only
+## be right for one pose. The resting pose is not it -- CabinInterior's
+## _enter_rest() rolls the body 90 degrees about its own Z, yaws the walker
+## 20, and swaps the standing lift for KEEPY_MODEL_MIN_X, so his head
+## swings toward -x and drops. The eyes were being drawn in mid-air beside
+## him. Everything the two passes above measured about contrast and size
+## was measured on a sprite nobody could have seen anywhere near his face.
+##
+## Nothing about the RENDERING was ever wrong, and that is worth stating
+## because it is what two passes of work went into: no_depth_test and
+## transparent are set below and were set before, so neither occlusion, nor
+## draw order, nor alpha was ever in play.
+##
+## Fixed by deleting the offset outright. CabinInterior now MEASURES where
+## the eyes are -- see its KEEPY_MODEL_EYE_LEFT block -- and hands this
+## node finished world transforms, one per eye, built through the same
+## `body.global_transform` the engine draws with. This file no longer has
+## an opinion about where a face is, which is the same division it already
+## drew for the bubble: "this node does not know where the bed is".
+##
+## And ONE LID PER EYE, not one sprite carrying two. A single two-eyed
+## sprite is billboarded upright, so on a body rolled 90 degrees its two
+## eyes stay side by side while his are stacked -- it could not have been
+## made to fit at any offset. Two independent lids have no such pose to be
+## wrong about.
 const EYES_COLOR := Color(0.10, 0.07, 0.05)
 
 ## The bubble's own fill and outline. The same pair CabinMarker's label
@@ -50,42 +80,48 @@ const ZZZ_OUTLINE := Color(1.00, 0.97, 0.90)
 
 ## Placed relative to the resting body's own origin (the point
 ## CabinInterior's _enter_rest() already sets _walker.global_position to),
-## in world units at this scene's CABIN_SCALE. Both sit inside the ~1.32
-## world-unit vertical span the resting body itself occupies (see
-## _enter_rest()'s own KEEPY_MODEL_MIN_X comment), the eyes lower against the
-## curled body and the bubble rising clear of it.
-const EYES_OFFSET := Vector3(0.0, 0.78, 0.0)
+## in world units at this scene's CABIN_SCALE. The bubble rises clear of
+## the body -- these two numbers are the ones device validation signed off,
+## and they are untouched by this pass.
 const CLOUD_OFFSET := Vector3(0.22, 1.22, 0.0)
 ## Where "Zzz" sits relative to the bubble's own origin -- the bubble's
 ## lobes are drawn top-heavy in its texture (see _cloud_texture()), so the
 ## text is nudged up from the sprite's centre to land inside them.
 const ZZZ_LOCAL_OFFSET := Vector3(0.0, 0.06, 0.0)
 
-## ⚠️ RECON, second pass (2 September 2026): the first fix above (halo,
-## still stated here below for the record before its own correction) shipped
-## with EYES_SIZE unchanged at the old 0.30 and the halo alpha at 0.85 --
-## device report: "meme visage qu'avant ce lot", i.e. no perceptible change.
-## A standalone render of the exact same pixel algorithm (Python, this
-## file's arc/halo maths copied verbatim, composited over both a warm-fur
-## swatch and the cabin's dark ambient colour) confirmed the SHAPE read
-## fine at 64x64 -- the defect was that the halo was see-through (0.85
-## alpha, so it partly took on whatever colour was under it) and, more
-## importantly, that EYES_SIZE never grew: the whole sprite was still the
-## same ~29px-wide footprint that had already read as "the same face" once.
-## The cloud fix worked because it changed BOTH axes at once (opaque fill
-## AND a several-times-larger world size); this one only changed contrast.
-## Fixed the same way as the cloud below: an OPAQUE fill-plus-outline eye
-## shape (CLOUD_FILL_COLOR/CLOUD_OUTLINE_COLOR, reused rather than a third
-## colour pair invented) instead of a translucent halo, and EYES_SIZE raised
-## to a size proportioned the same way CLOUD_WORLD_WIDTH is -- verified
-## again with the same standalone render before touching the .gd.
-const EYES_SIZE: float = 0.42
-## The eye shape itself: a filled ellipse (semi-axes in texture pixels, on
-## the 64x64 canvas below) with an outline band, the same signed-distance
-## fill/outline split _cloud_texture() uses on its circles.
-const EYES_RX: float = 15.0
-const EYES_RY: float = 11.0
-const EYES_OUTLINE_WIDTH: float = 0.16
+## =====================================================================
+## THE CLOSED LID
+##
+## Its SIZE and its PLACE both come from the caller: CabinInterior measured
+## the eyes and hands over one world Transform3D per lid, already scaled to
+## the lid's diameter. Nothing here restates either, which is the whole
+## point of the third recon above.
+##
+## The canvas is square and the quad is ONE WORLD UNIT across (pixel_size
+## = 1/LID_TEX_SIZE), so the transform's own scale is the only size there
+## is.
+const LID_TEX_SIZE: int = 64
+
+## The lid is painted the fur that surrounds the eye -- CabinInterior's
+## KEEPY_EYE_FUR_COLOR, measured off the ring of texels between the ink and
+## the brow. A closed eyelid IS that fur; picking any other colour would be
+## painting a patch over a face rather than closing an eye.
+##
+## ⚠️ IT IS OPAQUE ONLY WHERE THE INK IS. `show_asleep` is told the ratio
+## of the measured ink radius to the lid radius (0.100 / 0.125 = 0.80): out
+## to that fraction the lid is solid, because that is exactly the disc the
+## eye occupies; past it the alpha ramps to zero across the measured clean
+## ring, so the lid has no rim to see. Both numbers are measurements, and
+## the feather cannot eat into the ink because it starts where the ink
+## stops.
+
+## The lash line: a shallow arc across the closed lid, drawn in the same
+## ink tone as every other outline this scene makes. Its half-width is the
+## ink disc itself, so it spans the eye and stops; its depth and thickness
+## are stated as fractions of that same radius rather than in pixels, so
+## the drawing survives any change to LID_TEX_SIZE.
+const LID_CREASE_SAG: float = 0.30
+const LID_CREASE_THICKNESS: float = 0.20
 
 ## The bubble texture is drawn top-heavy (lobes near the top, a tapering
 ## tail trailing down-left toward Keepy's head), 96x88 so the tail has room
@@ -113,27 +149,20 @@ const ZZZ_DRIFT_S: float = 1.6
 ## The shared textures, built on first use and then never again -- CabinHearts'
 ## own rule for its heart, so a second sleeping prop later in this project
 ## costs no second draw.
-static var _eyes_tex: ImageTexture = null
+static var _lid_tex: ImageTexture = null
 static var _cloud_tex: ImageTexture = null
 
-var _eyes: Sprite3D = null
+## ONE PER EYE, and an Array from the first commit rather than a pair of
+## fields: this project has already paid once for a prop that was drawn as
+## a table and wired as a singleton. The pool is sized by what the caller
+## hands over, so a model with a different number of eyes needs no edit
+## here.
+var _lids: Array[Sprite3D] = []
 var _cloud: Sprite3D = null
 var _zzz: Label3D = null
 var _drift: Tween = null
 
 func setup() -> void:
-	_eyes = Sprite3D.new()
-	_eyes.texture = _eyes_texture()
-	_eyes.pixel_size = EYES_SIZE / 64.0
-	_eyes.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_eyes.shaded = false
-	_eyes.double_sided = true
-	_eyes.transparent = true
-	_eyes.no_depth_test = true
-	_eyes.position = EYES_OFFSET
-	_eyes.visible = false
-	add_child(_eyes)
-
 	_cloud = Sprite3D.new()
 	_cloud.texture = _cloud_texture()
 	_cloud.pixel_size = CLOUD_WORLD_WIDTH / float(CLOUD_TEX_W)
@@ -164,52 +193,58 @@ func setup() -> void:
 	_zzz.visible = false
 	add_child(_zzz)
 
-## Drawn like the bubble below: an OPAQUE eyelid shape (fill plus outline,
-## same signed-distance split as _cloud_texture()'s circles, here on an
-## ellipse) with the closed-lid crease drawn in ink on top. There is no
-## separate eye node on Keepy's own .glb to close instead: it is one mesh,
-## no skin, no animation, the same finding the cabin and owl batches already
-## published for this family of assets, so nothing on the model itself can
-## be swapped or masked -- and, per this file's header, the fill has to be
-## opaque and the whole sprite sized like the bubble is, not translucent and
-## left at its old footprint, or it reads as no change at all.
-static func _eyes_texture() -> ImageTexture:
-	if _eyes_tex != null:
-		return _eyes_tex
-	var size := 64
+## ONE closed eye, centred, on a square canvas whose disc fills it.
+##
+## There is no eye node on Keepy's own .glb to close instead -- one node,
+## one mesh, no skin, no animation, the same finding the cabin and owl
+## batches already published for this family of assets -- so an eye is
+## closed by painting over it, and the paint is the fur that was around it.
+##
+## `opaque_fraction` is the measured ink radius over the lid radius. Inside
+## it the lid is solid; outside it the alpha ramps away over the measured
+## ring of clean fur, so nothing draws a circle on his face.
+static func _lid_texture(fur: Color, opaque_fraction: float) -> ImageTexture:
+	if _lid_tex != null:
+		return _lid_tex
+	var size := LID_TEX_SIZE
 	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0.0, 0.0, 0.0, 0.0))
-	for eye in 2:
-		var cx: float = 20.0 if eye == 0 else 44.0
-		var cy := 34.0
+	var centre := float(size) * 0.5
+	# One texel of margin so the disc never touches the canvas edge, where
+	# a clamped sampler would smear it.
+	var radius := centre - 1.0
+	var ink := radius * opaque_fraction
+	for py in size:
 		for px in size:
-			var dx: float = float(px) - cx
-			if absf(dx) > EYES_RX + 1.0:
+			var dx := float(px) + 0.5 - centre
+			var dy := float(py) + 0.5 - centre
+			var d := sqrt(dx * dx + dy * dy)
+			if d > radius:
 				continue
-			for py in size:
-				var dy: float = float(py) - cy
-				var q: float = sqrt((dx * dx) / (EYES_RX * EYES_RX) + (dy * dy) / (EYES_RY * EYES_RY))
-				if q <= 1.0:
-					if q > 1.0 - EYES_OUTLINE_WIDTH:
-						img.set_pixel(px, py, CLOUD_OUTLINE_COLOR)
-					else:
-						img.set_pixel(px, py, CLOUD_FILL_COLOR)
-	for eye in 2:
-		var cx: float = 20.0 if eye == 0 else 44.0
-		var cy := 34.0
-		for px in size:
-			var dx: float = float(px) - cx
-			if absf(dx) > EYES_RX - 2.0:
-				continue
-			# A shallow downward arc, thickened by a few pixels so it reads
-			# as a closed lid rather than a hairline.
-			var y := cy + dx * dx * 0.045
-			for t in 4:
-				var py := int(round(y)) + t
-				if py >= 0 and py < size:
-					img.set_pixel(px, py, EYES_COLOR)
-	_eyes_tex = ImageTexture.create_from_image(img)
-	return _eyes_tex
+			var alpha := 1.0
+			if d > ink:
+				alpha = 1.0 - (d - ink) / maxf(radius - ink, 0.001)
+			img.set_pixel(px, py, Color(fur.r, fur.g, fur.b, clampf(alpha, 0.0, 1.0)))
+	# The lash line, last so it sits on the fur: a shallow downward arc
+	# spanning the ink disc, thickened so it is not a hairline at the size
+	# a dollhouse camera draws a squirrel's eye.
+	var half := ink
+	var thick := maxf(1.0, ink * LID_CREASE_THICKNESS)
+	var px_i := int(ceil(centre - half))
+	while float(px_i) < centre + half:
+		var dx2 := float(px_i) + 0.5 - centre
+		var t := dx2 / maxf(half, 0.001)
+		var y := centre + ink * LID_CREASE_SAG * (t * t) - ink * LID_CREASE_SAG * 0.5
+		var yi := int(round(y))
+		for k in int(ceil(thick)):
+			var py_i := yi + k
+			if px_i >= 0 and px_i < size and py_i >= 0 and py_i < size:
+				var under := img.get_pixel(px_i, py_i)
+				if under.a > 0.0:
+					img.set_pixel(px_i, py_i, Color(EYES_COLOR.r, EYES_COLOR.g, EYES_COLOR.b, under.a))
+		px_i += 1
+	_lid_tex = ImageTexture.create_from_image(img)
+	return _lid_tex
 
 ## The thought bubble: a lumpy cloud (a union of overlapping circles, not a
 ## single ellipse, so it reads as a cloud and not a coin) with a light fill
@@ -253,12 +288,25 @@ static func _cloud_texture() -> ImageTexture:
 	_cloud_tex = ImageTexture.create_from_image(img)
 	return _cloud_tex
 
-## Shown the moment Keepy lies down. `at` is the WORLD point CabinInterior
-## already placed him at -- this node does not know where the bed is, the
-## same division CabinHearts already draws between "where" and "what".
-func show_asleep(at: Vector3) -> void:
+## Shown the moment Keepy lies down.
+##
+## `at` is the WORLD point CabinInterior already placed him at -- the same
+## division CabinHearts draws between "where" and "what" -- and it still
+## carries the bubble alone, exactly as it did when the bubble was signed
+## off on device.
+##
+## `lids` are finished WORLD transforms, one per eye, measured and composed
+## by CabinInterior._lid_transforms(). This node does not know where a face
+## is any more than it knows where the bed is. An empty array means that
+## function refused loudly; the bubble still shows, because a missing lid
+## is not a reason to take away the one part of this overlay that works.
+func show_asleep(at: Vector3, lids: Array[Transform3D], opaque_fraction: float) -> void:
 	global_position = at
-	_eyes.visible = true
+	_fit_lids(lids.size(), opaque_fraction)
+	for i in _lids.size():
+		var lid := _lids[i]
+		lid.global_transform = lids[i]
+		lid.visible = true
 	_cloud.visible = true
 	_zzz.visible = true
 	if _drift != null and _drift.is_valid():
@@ -276,6 +324,31 @@ func show_asleep(at: Vector3) -> void:
 	_drift.tween_property(_zzz, "position:y", CLOUD_OFFSET.y + ZZZ_LOCAL_OFFSET.y, ZZZ_DRIFT_S * 0.5) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
+## Grows the lid pool to whatever the caller has eyes for, once, and never
+## shrinks it: a Sprite3D that is merely hidden costs nothing, and a pool
+## that is rebuilt every rest is a pool that allocates every rest.
+##
+## ⚠️ THE LIDS ARE NOT BILLBOARDED, and that is deliberate. Their transform
+## already points them at the camera AND rolls them with the body; a
+## billboard flag would throw the roll away and keep a sleeping squirrel's
+## lash lines horizontal while he lies on his side.
+func _fit_lids(count: int, opaque_fraction: float) -> void:
+	while _lids.size() < count:
+		var lid := Sprite3D.new()
+		lid.texture = _lid_texture(CabinInterior.KEEPY_EYE_FUR_COLOR, opaque_fraction)
+		# One world unit across, so the caller's transform carries the size.
+		lid.pixel_size = 1.0 / float(LID_TEX_SIZE)
+		lid.shaded = false
+		lid.double_sided = true
+		lid.transparent = true
+		# Drawn over the room rather than into it, for the bubble's own
+		# reason below: the cabin backdrop is dense and a lid that z-fights
+		# the drawn bedding is a lid that flickers.
+		lid.no_depth_test = true
+		lid.visible = false
+		add_child(lid)
+		_lids.append(lid)
+
 ## Hidden the instant Keepy gets up -- no fade-out, the bed's and the
 ## magpie's own markers' rule: a thing that stops being true stops being
 ## drawn on the same frame, it does not linger to be watched leaving.
@@ -284,6 +357,7 @@ func hide_asleep() -> void:
 		_drift.kill()
 	_cloud.position = CLOUD_OFFSET
 	_zzz.position = CLOUD_OFFSET + ZZZ_LOCAL_OFFSET
-	_eyes.visible = false
+	for lid in _lids:
+		lid.visible = false
 	_cloud.visible = false
 	_zzz.visible = false

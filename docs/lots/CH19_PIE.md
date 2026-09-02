@@ -2516,3 +2516,202 @@ au rapport de fin de tache. Compilation GDScript verifiee par CI
 sur les yeux (la bulle est deja actee bonne, ne pas la retester). Palier 2
 reste gate par ce feu vert.
 
+
+## L'OVERLAY DODO : LA CAUSE REELLE ETAIT UN OFFSET WORLD-SPACE CONSTANT, ET LE CALAGE EST MAINTENANT MESURE SUR LA TEXTURE (2 septembre 2026, meme jour, 4e passe)
+
+### LA CAUSE, ETABLIE ET NON RE-DIAGNOSTIQUEE
+
+`CabinDodo.EYES_OFFSET` valait `Vector3(0, 0.78, 0)` : un offset **WORLD
+SPACE CONSTANT** ajoute a `_walker.global_position`. Ca ne peut etre juste
+que pour UNE pose. La pose de repos n'est pas celle-la --
+`_enter_rest()` applique `REST_ROLL_DEGREES` 90 deg sur Z du corps,
+`REST_YAW_DEGREES` 20 deg sur Y du walker, et remplace le lift debout par
+`-KEEPY_MODEL_MIN_X * KEEPY_SCALE`. La tete part vers -x et descend ; elle
+ne reste PAS a hauteur fixe au-dessus de l'origine du walker.
+
+Les deux passes precedentes (halo, puis fond plein + `EYES_SIZE` 0.30 ->
+0.42) portaient toutes les deux sur la maniere de DESSINER les yeux. Ni
+l'une ni l'autre n'etait la faute. Le rendu n'a jamais ete en cause :
+`no_depth_test` et `transparent` etaient deja poses (CabinDodo.gd:131-144),
+donc ni occlusion, ni ordre de rendu, ni alpha. Les deux passes ont mesure
+le contraste d'un sprite qui n'a jamais ete pres de son visage.
+
+Chiffre de l'erreur, mesure a la sonde (passe rouge ci-dessous) : avec
+l'ancien offset, l'oeil GAUCHE etait couvert a **0,00 %** et l'oeil DROIT a
+**10,15 %**.
+
+### CE QUI A ETE MESURE, ET POURQUOI PAS DANS LE MAILLAGE
+
+Les yeux sont **PEINTS DANS LA TEXTURE**. `keepy_squirrel_hero.glb` est un
+noeud, un mesh, pas de skin, pas d'animation (`KHR_materials_unlit`
+declare, une seule primitive POSITION/NORMAL/TEXCOORD_0, 3 121 sommets /
+3 129 triangles) : il n'existe aucun noeud d'oeil dont lire une position.
+
+Premiere tentative, **echouee et instructive** : moyenner les triangles
+sombres. Le maillage est trop grossier -- chaque triangle portant de
+l'encre est plus grand que l'oeil -- et l'encre la plus sombre est le
+**CIL**, pas le disque. Le centre sortait ~0,05 unite modele en haut et
+en dehors de l'oeil. Verifie visuellement par rendu, pas suppose.
+
+Methode retenue : rasteriser **chaque triangle dans l'atlas 1024x1024** et
+ramener chaque TEXEL en 3D par ses propres coordonnees barycentriques
+(626 193 echantillons de surface). Le centroide des texels sombres autour
+de chaque oeil donne :
+
+| | centre (unites modele) | texels |
+|---|---|---|
+| oeil gauche | (-0.377930, +0.243360, +0.793930) | 2 006 |
+| oeil droit | (+0.039410, +0.232420, +0.798940) | 1 962 |
+
+Les deux yeux ressortent alors de **la meme taille a 0,0002 pres**, ce que
+la lecture par triangle ne donnait jamais : c'est cette symetrie qui dit
+que la mesure porte sur l'oeil et pas sur le maillage.
+
+Les centres ne sont PAS symetriques autour de x = 0, et c'est le modele :
+Keepy est modelise assis, tete vers -x, queue vers +x, donc
+`max.x = +0.612863` est de la queue, pas de la joue.
+
+### LE RAYON EST UNE MESURE, PAS UNE MARGE CHOISIE
+
+Profil de densite d'encre par anneau de 0,01, autour de chaque centre,
+dans le plan tangent de l'oeil :
+
+```
+r      0.01  0.02  0.03  0.04  0.05  0.06  0.07  0.08  0.09  0.10 .. 0.15  0.16+
+gauche 0.13  0.43  0.53  0.69  0.74  0.86  0.96  0.48  0.13  0.00 .. 0.00  0.011
+droit  0.13  0.52  0.67  0.75  0.72  0.86  0.93  0.45  0.19  0.00 .. 0.00  0.031
+```
+
+L'encre s'arrete a **r = 0,10** et il y a **ZERO encre de 0,10 a 0,15 sur
+LES DEUX yeux**, avant que le sourcil et le museau ne reprennent au-dela de
+0,15. L'oeil est donc un disque de rayon 0,10 dans un anneau de fourrure
+propre de 0,05 de large -- et cet anneau est un **budget mesure**, pas une
+marge que quelqu'un a choisie.
+
+D'ou, publie dans `CabinInterior` :
+
+- `KEEPY_MODEL_EYE_INK_RADIUS = 0.100`
+- `KEEPY_MODEL_EYE_CLEAR_RADIUS = 0.150`
+- `KEEPY_MODEL_LID_RADIUS` = **derive** comme le milieu des deux (0,125) --
+  le seul rayon equidistant des deux facons de se tromper : trop petit,
+  l'oeil deborde ; trop grand, on peint sur le sourcil.
+- `KEEPY_EYE_FUR_COLOR = Color(0.988549, 0.873057, 0.770471)` -- moyenne
+  de **6 450 texels** de ce meme anneau propre. Les anneaux des deux yeux
+  s'accordent a 0,002 par canal. Une paupiere fermee EST cette
+  fourrure-la ; toute autre couleur serait une rustine sur un visage.
+
+### L'IMPLEMENTATION : PLUS AUCUN OFFSET
+
+`CabinInterior._lid_transforms()`, publie a cote de `_kiss_point()` et sur
+son patron (deriver d'une mesure plutot que d'autoriser une seconde
+opinion), rend un `Transform3D` MONDE par oeil :
+
+- origine = `body.global_transform * KEEPY_MODEL_EYE_*`. On lit **la
+  transform que le moteur utilise lui-meme pour dessiner** : elle compose
+  deja position + yaw du walker, roll + lift du corps et `KEEPY_SCALE`.
+  Une chaine retapee a la main pourrait diverger de l'ecran ; celle-ci non.
+  Corollaire gratuit : c'est juste dans N'IMPORTE QUELLE pose, debout
+  comprise.
+- base = **face a la CAMERA**, up = axe up propre du corps. Face camera et
+  non face-normale-de-l-oeil : un disque face camera de rayon r centre sur
+  l'oeil couvre tout ce qui est a moins de r de ce centre quel que soit
+  l'angle, ce qui est exactement la couverture que la mesure enonce ; un
+  disque dans le plan tangent de l'oeil raccourcirait avec l'angle et
+  pourrait decouvrir le bord lointain.
+- echelle = diametre de la paupiere. Le quad du `Sprite3D` fait UNE unite
+  monde (`pixel_size = 1/64`), donc la base porte toute la taille.
+
+`CabinDodo` ne sait plus ou est un visage, exactement comme il ne sait deja
+pas ou est le lit. Il recoit des transforms finies et dessine.
+
+**UNE PAUPIERE PAR OEIL**, et c'est structurel : un sprite unique portant
+deux yeux est billboarde a la verticale, donc sur un corps roule a 90 deg
+ses deux yeux restent cote a cote alors que les siens sont **empiles**. Il
+ne pouvait etre juste a AUCUN offset. Mesure a l'ecran : les deux paupieres
+sortent a (342.4, 641.1) et (341.0, 593.5) -- 47 px d'ecart en Y, 1 px en
+X. `_lids` est un `Array` des le premier commit, dimensionne par ce que
+l'appelant fournit.
+
+La paupiere est **opaque exactement la ou est l'encre** : `show_asleep()`
+recoit le ratio `INK_RADIUS / LID_RADIUS = 0,80`, plein jusque-la, puis
+alpha en rampe jusqu'a zero sur l'anneau propre mesure -- donc aucun bord
+de disque a voir sur le visage, et la rampe ne peut pas mordre sur l'encre
+puisqu'elle commence ou l'encre s'arrete.
+
+Non touche, comme demande : la bulle "Zzz" (`CLOUD_OFFSET`,
+`ZZZ_LOCAL_OFFSET`, le tween de derive), `_enter_rest()`, `_wake()`, le
+retour au re-tap. Aucune FSM neuve, aucun asset neuf, aucun shader.
+
+### LE GATE : RENDU OFFSCREEN, ET IL SAIT ECHOUER
+
+Godot 4.3 n'est pas installe dans ce sandbox : l'editeur a ete telecharge
+(**50 276 070 octets**, exactement la taille au dossier -- verification de
+`Content-Length` faite avant extraction) et le projet importe
+(14 `.glb` -> 36 `.scn`, zero erreur, comptes des deux cotes).
+
+Sonde `EyeLidProbe`, sous `xvfb-run --rendering-driver opengl3` (jamais
+`--headless` seul : elle lit des pixels).
+
+**Comment la couverture est mesuree sans pouvoir passer gratuitement.** Les
+yeux etant peints, il n'y a aucun noeud a chercher dans le rendu. La sonde
+substitue donc a l'albedo de Keepy une **texture d'IDENTIFICATION** batie
+sur le meme atlas : tout texel a moins du rayon d'encre mesure de l'oeil
+gauche est ROUGE pur, de l'oeil droit VERT pur, tout autre texel sombre est
+BLEU, le reste noir. Rendus a travers la camera livree, dans la pose de
+repos livree, les pixels rouges et verts SONT l'empreinte ecran des deux
+yeux -- mesuree par le vrai rasteriseur, pas projetee par l'arithmetique de
+la sonde.
+
+| | oeil gauche | oeil droit | autre encre (nez, bouche, etiquette K) |
+|---|---|---|---|
+| PHASE 1, paupieres cachees (**blind check**) | 335 px | 394 px | 320 px |
+| PHASE 2, paupieres visibles | **0 px** | **0 px** | 319 px (doit SURVIVRE) |
+| couverture | **100,00 %** | **100,00 %** | -- |
+
+Le blind check est obligatoire ici : une assertion "c'est couvert" qui n'a
+jamais rien vu de decouvert passerait contre un visage jamais dessine. Et
+le BLEU doit survivre -- une paupiere qui avalerait le nez et la bouche
+serait une paupiere qui repeint la moitie du visage.
+
+**ROUGE AVANT VERT.** Le calage a ete neutralise en remettant l'ancien
+offset constant `_walker.global_position + Vector3(0, 0.78, 0)`. La sonde
+sort **2 FAILED, et exactement les deux attendues** (couverture gauche,
+couverture droite) -- pas les assertions de blind check, pas celle du nez
+et de la bouche. Fichier restaure et verifie **byte-identique** (`cmp`).
+
+PHASE 0 verifie aussi les premisses plutot que de les supposer :
+`mesh.get_aabb()` reproduit `KEEPY_MODEL_MIN_X` et `KEEPY_MODEL_MIN_Y` a
+1e-5, la transform relative `Body -> MeshInstance3D` est **l'identite**
+(c'est ce qui autorise a lire `body.global_transform` comme l'espace
+modele), et les deux yeux mesures sont dans l'AABB.
+
+Taille reelle a l'ecran, pour memoire : la paupiere fait **27,6 px de
+diametre sur une frame de 1080 de large**, a 12,7 unites monde de la
+camera. C'est la taille veritable d'un oeil de Keepy dans la vue maison de
+poupee -- le signal lisible est la disparition des deux gros disques
+sombres, pas le detail du cil.
+
+**Piege d'outillage rencontre et note.** Premier run de la sonde : oeil
+gauche a 970 294 px "visibles" sur 2 073 600. La coque de la cabane est
+BRUN CHAUD sur la majeure partie du cadre, et un test "ce pixel est-il
+rouge" la lit comme un oeil gauche d'un million de pixels. Corrige en
+masquant `Cabin` et `Magpie` pendant les seules passes d'identification --
+ce qui rend d'ailleurs le test plus severe, puisque le lit n'occlut alors
+plus rien.
+
+### SONDE JETABLE, SUPPRIMEE AVANT LE COMMIT
+
+`EyeLidProbe` et son `EyeRecon` de structure ont ete **supprimes avant le
+commit**, doctrine standard. Le compromis est assume et vaut d'etre nomme :
+un gate permanent aurait de la valeur (trois lots ont echoue sur ce
+calage), mais il exige la texture d'identification, et la commiter telle
+quelle recreerait exactement le piege "un fixture qui diverge du reel" --
+si quelqu'un change `KEEPY_MODEL_EYE_LEFT`, la texture ne suivrait pas et
+le gate testerait silencieusement les anciens yeux. Un gate permanent
+correct devrait **generer** cette texture depuis les constantes, dans la
+sonde. C'est du travail a part entiere, hors perimetre de ce lot ; la
+methode et tous les chiffres sont ci-dessus pour la refaire a l'identique.
+
+Sondes permanentes relancees apres le fix : `CabinProbe` **0 failure**,
+`ProbeTimeoutAudit` **PASSED** (60 scenes de sonde, 1 sonde `--script`),
+`AssetContractAudit` exit 0.
