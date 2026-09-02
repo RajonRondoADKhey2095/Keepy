@@ -26264,3 +26264,60 @@ d'identite**.
    gate, jamais vu en mouvement sur un telephone.
 4. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+### Deploiement staging du lot E (palier 1, automatique)
+
+`staging` **`cdba3d7`** (merge `--no-ff` de `05a1457`, arbre **byte-identique**
+a la branche feature : meme hash d'arbre `3a4ba265` des deux cotes ET
+`git diff --stat` vide, verifie AVANT le push). CI run **#365**
+(id `33596862403`, job `100141957694`, head_sha
+`cdba3d79915212d37627949cf11dc4094b205640`) **verte** -- `Import project
+resources` 05:59:16 -> 06:02:51 (3 min 35 s), **`Export Web build`
+06:02:51 -> 06:02:57**, `Verify export output` succes, `Upload web build
+artifact` succes, `Deploy to Vercel [STAGING -- staging]` **succes**
+06:03:15 -> 06:03:27, `[PRODUCTION -- main]` correctement **skipped**.
+Run complete 06:03:30. **`main` NON touche** (`origin/main` toujours
+`215e6d4`, verifie apres le push).
+
+**Verifie SUR LE SERVICE, pas dans le log CI, sur DEUX marqueurs
+independants, et les DEUX lectures d'apres portent `x-vercel-cache: MISS`
+avec `age: 0`** :
+
+| marqueur | avant (run #364) | apres (ce lot, run #365) |
+|---|---|---|
+| `CACHE_VERSION` | `1788311005` = **01:03:25 UTC** | **`1788328976` = 06:02:56 UTC** |
+| `index.pck` servi | 43 300 688 | **43 300 768** |
+| `index.wasm` servi | 35 376 909 | **35 376 909** *(inchange, attendu)* |
+
+L'epoch d'apres tombe **a l'interieur de la fenetre `Export Web build`**
+(06:02:51 -> 06:02:57), `last-modified` colle a l'instant de la requete --
+l'alias sert bien ce build.
+
+⚠️ **Limite dite plutot que sous-entendue** : la valeur AVANT du
+`CACHE_VERSION` n'a pas ete relue fraiche dans cette session -- elle est
+reprise du paragraphe run #364 juste au-dessus, ou elle avait ete lue sur un
+`x-vercel-cache: HIT` a `age 17362`, donc une lecture de VALEUR et pas une
+mesure de fraicheur. Ce qui EST prouve directement est que la valeur servie
+maintenant tombe exactement dans la fenetre d'export de CE run et est
+fraiche des deux cotes.
+
+⚠️ **`index.pck` servi (43 300 768) est identique a l'export local propre de
+cette session -- et ce n'est DELIBEREMENT PAS offert comme preuve
+d'identite** : sa taille n'est pas stable d'un export a l'autre du meme
+commit, et une coincidence n'y change rien. **`index.wasm` reste la preuve
+d'identite** (35 376 909, md5 `af4a8fc2925d992348eb30deeeb54360`), au
+fingerprint permanent de tout lot qui ne touche pas le code moteur --
+coherent avec un diff limite a trois fichiers GDScript.
+
+⚠️ **L'API GitHub Actions n'etait PAS perimee sur ce run**, note dans ce
+sens-la : les appels successifs ont rendu de vraies progressions d'etapes
+avec de vrais horodatages, et l'import a reellement pris **3 min 35 s**. Le
+piege existe ; il ne s'est pas produit ici, et le verifier coute un regard a
+l'horloge -- ce qui a d'ailleurs servi une fois de plus dans l'autre sens,
+un `sleep` lance en arriere-plan puis relu immediatement ne montrant que
+quelques secondes ecoulees la ou une lecture naive aurait conclu a un job
+fige.
+
+**Chemin d'acces device** : `https://keepy-staging.vercel.app` (Safari
+iPhone, navigation privee -- **jamais la PWA installee**, dont le service
+worker peut servir un ancien `CACHE_VERSION`).
