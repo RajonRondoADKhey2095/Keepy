@@ -1254,3 +1254,166 @@ Est-ce que l'ours au repos se lit desormais comme **tourne vers la
 balancoire** a l'echelle reelle d'un telephone ? Le yaw est mesure et gate ;
 la lecture ne l'est pas. Et rien ici n'est un rendu device : llvmpipe sous
 `xvfb` via le backend `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+## LOT J -- VERIFICATION DU LOT F : le code EXISTE, il est CORRECT, et l'assertion qui le gate est REELLEMENT PORTEUSE (2 septembre 2026)
+
+Branche `claude/lot-j-bear-rest-orientation-70xep5`, partie de `staging`
+(`cb557d4`). **AUCUN fichier de jeu, aucun fichier de sonde touche** : le seul
+diff de ce lot est cette section. `git status` verifie vide avant et apres les
+manipulations decrites plus bas.
+
+⚠️ **LE LOT J EXISTE PARCE QUE LE LOT F N'AVAIT JAMAIS ETE VERIFIE.** Sa
+section a ete ecrite **retroactivement** par le lot H, depuis un message de
+commit et un diff -- pas depuis une execution. Deux sessions paralleles ont
+ensuite tente de le refaire, chacune supposant qu'il restait a coder. Ce lot ne
+suppose rien : il relit le code livre, puis **rejoue le rouge-avant-vert
+lui-meme** plutot que de croire une table qu'aucune session vivante n'avait
+produite.
+
+### ETAPE 1 -- LE CODE EXISTE, ET IL EST OU LA DOC LE DIT
+
+⚠️ **Le brief demandait de chercher dans `HubActorWalker.gd`. Ce n'est PAS la
+qu'il vit** -- et c'est un point utile, parce qu'un futur lecteur qui grepera
+le marcheur ne trouvera rien et pourra en conclure a tort que le correctif
+n'existe pas. `HubActorWalker.gd` est **byte-intouche** par le lot F ; il porte
+seulement le MECANISME du defaut :
+
+* `enum State { IDLE, WALKING, ARRIVED }` (l.34) ;
+* le seul site qui ecrit le cap pendant la marche est garde par
+  `if dist > arrive_epsilon` dans `_process` (l.221-234) ;
+* `_arrive()` (l.245-249) fait `_state = ARRIVED`, `set_process(false)`,
+  `_freeze()`, `arrived.emit()` -- **et ne touche jamais au yaw**. L'etat
+  `ARRIVED` herite donc litteralement du dernier pas, exactement comme la doc
+  du lot F le decrit.
+
+Le correctif, lui, vit dans `scripts/hub/HubWorld.gd`, aux **trois** sites que
+la doc annonce, tous presents dans `staging` :
+
+| ligne | contenu |
+|---|---|
+| **230** | `var _bear_rest_facing: Vector3 = Vector3(0.0, 0.0, 1.0)` |
+| **1339-1342** | derivation depuis le fulcrum publie + garde de degenerescence `> 1.0e-8`, puis `_bear.face(_bear_rest_facing)` -- le spawn |
+| **1416** | `_bear.face(_bear_rest_facing)` sur la branche `_bear_pending.is_empty()` de `_on_bear_arrived()` -- le retour a la maison |
+
+Commit confirme : `eea794e`, *"fix(hub): the resting bear faces the seesaw, not
+away from it"*, **2 fichiers, 45 insertions, 0 suppression**
+(`HubWorld.gd` +28, `ActorWalkerProbe.gd` +17) -- le stat exact que la doc
+annonce. Il est **ancetre de `staging` depuis trois commits**, les deux
+au-dessus (`LOT H`, `LOT I`) etant doc seule.
+
+### ETAPE 2 -- LE ROUGE-AVANT-VERT REJOUE, ET LES DEUX AFFIRMATIONS DE LA DOC TIENNENT
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (releases GitHub
+officielles, **tailles verifiees contre le `Content-Length`** : 50 276 070 et
+1 073 228 327 octets, aucune troncature). Import headless **exit 0, 36 `.scn`,
+0 erreur**. `ActorWalkerProbe` sous `xvfb-run --rendering-driver opengl3
+--fixed-fps 60` -- jamais `--headless` seul, qui forcerait le driver DUMMY.
+
+**Baseline : 0 echec, exit 0.** Les deux assertions du lot F sont vertes :
+
+```
+OK  : on spawn it already faces the seesaw (yaw 0.000 rad, wanted 0.000).
+OK  : and settles back facing the seesaw, not away from it (yaw 0.000 rad, wanted 0.000).
+```
+
+Puis **chaque site neutralise separement**, `HubWorld.gd` restaure
+**byte-identique** (`cmp` silencieux) apres chacun :
+
+| site neutralise | resultat mesure ici |
+|---|---|
+| **retour a la maison** (l.1416) | **exit 1, 1 FAIL** -- `yaw -2.601 rad, wanted 0.000` |
+| **spawn** (l.1342) | **exit 0, 0 FAIL** -- aucune regression |
+
+⚠️ **Le `-2,601 rad` est reproduit INDEPENDAMMENT, au millieme pres, du chiffre
+que la doc du lot F annoncait sans l'avoir execute.** C'est ~-149 degres :
+l'ours dos a la balancoire, donc dos a une camera qui ne lacete jamais --
+exactement le symptome device rapporte. L'assertion de PHASE F est donc
+**reellement porteuse**, et le correctif est bien ce qui la fait passer.
+
+⚠️ **Et la seconde affirmation de la doc tient aussi : le snap au SPAWN ne
+corrige rien aujourd'hui.** Neutralise, la sonde reste verte. Sa justesse est
+une **coincidence de deux faits independants** -- `HubActorWalker._ready()` lit
+`_yaw` sur `rotation.y`, nul par defaut, et le layout pose la balancoire a
+`(0, 0, 38.5)` pour un `BEAR_REST` a `(0, 0, 37)`, soit `to_fulcrum = (0, 0,
+1.5)` et `atan2(0, 1.5) = 0`. **Deplacer l'une des deux entrees en X rendrait
+ce site porteur**, et c'est pourquoi il est garde. L'assertion PHASE E, elle,
+passe **gratuitement** dans la geometrie actuelle : elle documente une
+propriete, elle ne protege rien tant que la balancoire reste plein axe.
+
+### ETAPE 3 -- SANS OBJET : RIEN N'A ETE IMPLEMENTE
+
+L'etape 3 du brief (implementer le correctif minimal) **ne s'est pas
+declenchee**. Le diff vide exige sur `KeepyHopper.gd`, `HubBuilder.gd`,
+`HubRouter.gd` et `hub_layout.tres` est donc tenu **par construction** : ce lot
+ne touche aucun de ces quatre fichiers, ni aucun autre fichier de code.
+
+### VALIDATION
+
+Import headless **exit 0** (36 `.scn`). Export Web release **exit 0, 0 erreur
+GDScript ni de parse**. `index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint permanent
+deja consigne pour tout lot qui ne touche pas le code moteur, ce qu'un lot
+doc-seule est trivialement. **Piege payload tenu** : sur **282** lignes
+`Storing File`, **0** pour `scripts/dev`, `assets_source`, `docs`, `web/` ou
+`build`.
+
+Sondes : `ActorWalkerProbe` (**0 echec**, les deux assertions du lot F
+comprises), `ProbeTimeoutAudit` (**60 sondes scenes + 1 `--script`**, toutes
+armees), `AssetContractAudit` (**12/12 visuels, 0/10 colliders deplaces**) --
+toutes **exit 0**.
+
+### ⚠️ AUCUN PUSH DE CODE N'ETAIT NECESSAIRE -- le deploiement en place est deja le bon
+
+Verifie **sur le service** plutot que deduit du log CI, en **un seul appel**,
+les deux marqueurs de fraicheur dans la meme reponse :
+
+| | valeur |
+|---|---|
+| `CACHE_VERSION` servi | `1788349460` = **2 sept. 11:44:20 UTC** |
+| tip `origin/staging` (`cb557d4`) | **11:39:26 UTC** |
+| `x-vercel-cache` | **MISS** |
+| `age` | **0** |
+
+Le build servi est date de ~5 minutes apres le commit de tip -- c'est celui du
+run declenche par ce push. Le correctif du lot F etant ancetre de ce tip depuis
+trois commits (dont deux doc-seule), **le lien de staging expose deja le code a
+tester**, et l'etape 2 du brief retient donc explicitement sa branche « sinon
+utiliser le deploiement deja en place ».
+
+### LE CHEMIN D'ACCES DEVICE, ET LES DEUX CHOSES A REGARDER
+
+L'ours n'est pas derriere un menu de debug : il est du **gameplay ordinaire du
+hub**, pose a `BEAR_REST (0, 0, 37)`, juste derriere la balancoire
+`(0, 0, 38.5)`.
+
+```
+keepy-staging.vercel.app  ->  le jeu ouvre sur LE HUB
+  1. AU CHARGEMENT       -> l'ours est deja au repos derriere la balancoire
+                            (site 1 : le spawn)
+  2. taper la balancoire -> Keepy s'assied, l'ours marche jusqu'a l'autre
+                            bout de la planche et s'y assied
+  3. taper AILLEURS      -> Keepy descend, l'ours descend et RENTRE a son
+                            poste  (site 2 : LE chemin qui portait le bug)
+```
+
+**Ce qu'il faut juger, et c'est le point 3 qui compte** : a la fin de la marche
+de retour, **l'ours doit se retourner vers la balancoire** -- donc vers la
+camera, puisque les deux directions coincident dans cette geometrie. S'il finit
+de dos, le correctif ne tient pas sur device. Le point 1 est un controle
+gratuit : il etait deja juste avant le lot F.
+
+`BEAR_RETURNS_HOME` vaut **`true`** dans le code livre -- verifie, pas suppose :
+sans quoi l'etape 3 n'existerait pas et il n'y aurait rien a juger.
+
+### Reste ouvert -- jugement device, seul juge
+
+1. **Est-ce que l'ours au repos se lit comme tourne vers la balancoire** a
+   l'echelle reelle d'un telephone ? Le yaw est mesure, gate, et son gate est
+   desormais **prouve porteur par execution** et plus seulement par un rapport
+   ecrit apres coup -- mais un cap juste n'est pas une lecture juste.
+2. **La pose figee reste celle du lot C** : il gele sur la premiere frame de
+   `Walking`, faute de clip « assis »/« regarde ». Une pose de marche arretee
+   tournee vers la balancoire reste une pose de marche arretee.
+3. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.
