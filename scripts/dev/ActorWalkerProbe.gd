@@ -42,6 +42,7 @@ extends Node
 ## re-export that changes the cadence is at least visible next to it.
 
 const WALKER := preload("res://scripts/hub/HubActorWalker.gd")
+const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 const BEAR: PackedScene = preload("res://assets/models/keepy_bear_walker.glb")
 ## Lot B's measured scale -- off Skeleton3D.get_bone_global_pose(), not an
 ## AABB. See BearAnimSpike.gd for why an AABB reads a hundredfold low.
@@ -84,10 +85,12 @@ func _ready() -> void:
 	await _phase_c(walker)
 	print("")
 	await _phase_d()
+	print("")
+	await _phase_e()
 
 	print("")
 	if _failures == 0:
-		print("PASSED: the actor draws unshaded, walks, arrives on its mark and holds still.")
+		print("PASSED: the actor draws unshaded, walks, arrives, holds still and rides the plank.")
 		get_tree().quit(0)
 	else:
 		push_error("ACTOR WALKER PROBE FAILED: %d check(s)." % _failures)
@@ -230,6 +233,152 @@ func _phase_d() -> void:
 	w.walk_to(w.global_position)
 	_ok(arrivals[0] == 1, "asking for a walk it is already at arrives at once (%d)" % arrivals[0])
 	_ok(not w.is_walking(), "and does not leave it stuck in WALKING")
+
+
+# =====================================================================
+# PHASE E -- THE SECOND RIDER. The hub's bear walks to the far end of the
+# plank Keepy sat on, is carried BY the plank while it rocks, and steps off
+# on the same beat he does.
+#
+# Everything here fails silently. A bear that never mounts is a bear
+# standing beside a seesaw, which is exactly what it looked like BEFORE the
+# feature existed; a bear written on its own callback is a bear a frame
+# behind, which reads as a wobble; a bear left seated after the dismount is
+# a bear floating over a settled plank. None raise.
+#
+# ⚠️ DRIVEN THROUGH THE SHIPPED HUB, never a fixture. The whole claim is
+# about WHERE the write happens, and a stand-in with its own tilt loop
+# would answer a question nobody asked.
+func _phase_e() -> void:
+	print("--- PHASE E: the second rider ---")
+	var hub: Node = HUB_SCENE.instantiate()
+	add_child(hub)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var props: Node3D = hub.get_node("WorldViewport/SubViewport/World/Props")
+	var keepy: Node3D = hub.get_node("WorldViewport/SubViewport/World/Keepy")
+	var world: Node3D = hub.get_node("WorldViewport/SubViewport/World")
+	var bear: Node3D = null
+	for c in world.get_children():
+		if c.get_script() == WALKER:
+			bear = c as Node3D
+			break
+	_ok(bear != null, "the hub built an actor walker beside Keepy (the bear)")
+	if bear == null:
+		hub.queue_free()
+		return
+
+	var reg: Array = props.seesaws()
+	_ok(not reg.is_empty(), "the layout carries a seesaw to ride")
+	if reg.is_empty():
+		hub.queue_free()
+		return
+	var entry: Dictionary = reg[0]
+	var pivot: Node3D = entry["pivot"]
+	var ride_x: float = float(entry["ride_x"])
+	var seat_y: float = float(entry["seat_y"])
+	var rock_s: float = float(hub.get_script().get_script_constant_map().get("SEESAW_ROCK_S", 2.4))
+
+	var bear_start: Vector3 = bear.global_position
+	_ok(bear.global_position.y < 0.01, "and it starts on the ground (y = %.4f)" % bear.global_position.y)
+
+	# A landing on one end -- the same signal an ordinary hop emits.
+	var arrive: Vector3 = (entry["position"] as Vector3) + Vector3(-ride_x, 0.0, -0.4)
+	keepy.global_position = Vector3(arrive.x, 0.0, arrive.z)
+	keepy.hop_landed.emit(keepy.global_position)
+	await get_tree().process_frame
+	_ok(keepy.is_on_seesaw(), "a landing put Keepy on the plank")
+	_ok(bear.is_walking(), "and the mount sent the bear walking (it did not just stand there)")
+
+	# It has to get there WHILE the rock is still going -- the whole point
+	# of lot D's timing fix. Budgeted against the rock, not against a
+	# comfortable constant, so a slower walk fails here rather than on eyes.
+	# ⚠️ BUDGETED IN FRAMES AND NOT IN WALL CLOCK. Everything under test
+	# here advances on `delta`, and under `--fixed-fps 60` that delta is
+	# 1/60 however long the software rasteriser actually takes -- so a wall
+	# clock measures the sandbox, not the walk. The first draft did, and
+	# reported 2.41 s for a trip that had simulated 0.77 s of one.
+	var frames: int = 0
+	var budget: int = int(rock_s * 60.0)
+	while bear.is_walking() and frames < budget:
+		await get_tree().process_frame
+		frames += 1
+	var walked: float = float(frames) / 60.0
+	_ok(not bear.is_walking(), "it arrived in %.2f s of game time, inside the %.1f s rock"
+		% [walked, rock_s])
+	_ok(bear.global_position.distance_to(bear_start) > 0.5,
+		"BLIND CHECK: it really travelled (%.3f u)" % bear.global_position.distance_to(bear_start))
+
+	# ON the plank, at the OTHER end.
+	var seat_local: Vector3 = pivot.to_local(bear.global_position)
+	var keepy_local: Vector3 = pivot.to_local(keepy.global_position)
+	_ok(bear.global_position.y > 0.2,
+		"it is UP on the plank, not beside it (y = %.4f)" % bear.global_position.y)
+	_ok(signf(seat_local.x) == -signf(keepy_local.x) and absf(seat_local.x) > 0.1,
+		"and on the OPPOSITE end from Keepy (bear x = %.3f, Keepy x = %.3f)"
+			% [seat_local.x, keepy_local.x])
+
+	# ⚠️ THE PROOF THAT IT IS WRITTEN IN `_apply_tilt` AND NOWHERE ELSE.
+	# HubActorWalker calls set_process(false) when it arrives, so while it
+	# is seated it has no callback of its own at all: the only thing that
+	# can be moving it is the tilt call. A rider with its own _process is
+	# the measured turnstile defect, and this is the one observable that
+	# separates the two without reaching into private state.
+	_ok(not bear.is_processing(),
+		"the bear runs NO _process while seated -- only _apply_tilt can move it")
+
+	# CARRIED, against the FIXED seat and never against a round trip of its
+	# own position (that is the identity, and stays green with the rider
+	# write removed -- SeesawProbe records paying for exactly that).
+	var seat := Vector3(signf(seat_local.x) * ride_x, seat_y, 0.0)
+	var worst: float = 0.0
+	var angles: Array[float] = []
+	var faced: float = 0.0
+	for _i in 20:
+		await get_tree().process_frame
+		if not is_instance_valid(pivot):
+			break
+		angles.append(pivot.rotation_degrees.z)
+		worst = maxf(worst, bear.global_position.distance_to(pivot.to_global(seat)))
+		var to_keepy: Vector3 = keepy.global_position - bear.global_position
+		faced = maxf(faced, absf(angle_difference(bear.rotation.y, atan2(to_keepy.x, to_keepy.z))))
+	var swing: float = (angles.max() - angles.min()) if not angles.is_empty() else 0.0
+	_ok(swing > 1.0,
+		"BLIND CHECK: the plank really moved under it while sampling (%.2f deg swing)" % swing)
+	_ok(worst < 1.0e-4, "it stays exactly on its seat through the tilt (%.7f u worst)" % worst)
+	_ok(faced < 0.05, "and keeps facing Keepy across the plank (%.4f rad worst)" % faced)
+
+	# A RE-TAP MID-RIDE. _repump_seesaw kills the tween and builds a fresh
+	# one; Tween.kill() emits no `finished`, so no stray dismount fires --
+	# and the bear must still be aboard and still tracking afterwards.
+	keepy.hop_landed.emit(keepy.global_position)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var after_repump: float = bear.global_position.distance_to(pivot.to_global(seat))
+	_ok(bear.global_position.y > 0.2 and after_repump < 1.0e-4,
+		"a re-tap mid-ride leaves it aboard and still tracking (%.7f u)" % after_repump)
+
+	# OFF ON THE SAME BEAT. Waited out rather than forced, so what is gated
+	# is the shipped dismount path.
+	# Waited out on the SHIPPED path: the rock settles, Keepy arcs off, and
+	# `seesaw_dismounted` fires at the END of that arc -- so the bear coming
+	# down is a beat after he stops being "on" the plank, and a check made
+	# the instant `is_on_seesaw()` turns false reads a bear still seated.
+	var off: int = 0
+	var off_budget: int = int((rock_s * 3.0 + 4.0) * 60.0)
+	while (keepy.is_on_seesaw() or bear.global_position.y > 0.01) and off < off_budget:
+		await get_tree().process_frame
+		off += 1
+	_ok(not keepy.is_on_seesaw(), "the rock settled and Keepy stepped off")
+	_ok(bear.global_position.y < 0.01,
+		"and the bear is back on the ground (y = %.4f)" % bear.global_position.y)
+	_ok(absf(pivot.to_local(bear.global_position).z) > 0.1,
+		"beside the plank rather than under it (local z = %.3f)"
+			% pivot.to_local(bear.global_position).z)
+
+	hub.queue_free()
+	await get_tree().process_frame
 
 
 # =====================================================================

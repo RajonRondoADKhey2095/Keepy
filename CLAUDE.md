@@ -25886,3 +25886,208 @@ dans les deux sens.
 balancoire (lobe nord, `(0, 0, 38.5)`) -> Keepy monte dessus -> **l'ours
 quitte son point de repos `(0, 0, 35.5)`, marche ~5,3 s vers le bout de
 planche OPPOSE a Keepy, arrive et se fige**.
+
+## L'OURS MONTE SUR LA BALANÇOIRE : un second rider, et un conflit de timing qui rendait le premier lot invisible (2 septembre 2026)
+
+Branche `claude/bear-seesaw-lot-d-b0qm3o`, repartie de `origin/staging`
+(`900d827`). Regle n°1 verifiee par ARBRE et pas par nom :
+`origin/claude/keepy-walker-seesaw-t6a12z` est deja ancetre de
+`origin/staging` (`merge-base --is-ancestor`), **aucune session
+concurrente**. **Diff VIDE verifie** sur `KeepyHopper.gd`, `HubBuilder.gd`,
+`HubRouter.gd` et `hub_layout.tres` -- le diff complet ne touche que
+`HubActorWalker.gd`, `HubWorld.gd` et `ActorWalkerProbe.gd`.
+
+### ⚠️ ETAPE 0 -- L'OURS N'AVAIT JAMAIS ETE VU SUR LA PLANCHE, ET LE CHIFFRE LE DIT
+
+Lot C livrait un ours qui marche vers la balancoire quand Keepy s'y
+assoit. Mesure : destination `(±2,6 ; 0 ; 38,5)` depuis un repos
+`(0 ; 0 ; 35,5)` = **3,970 u**, soit **5,254 s** a `walk_speed` 0,7556 u/s
+-- contre un `SEESAW_ROCK_S` de **2,4 s**. Le `seesaw_dismounted` partait
+donc **2,85 s AVANT l'arrivee** : l'ours n'a jamais atteint la planche une
+seule fois.
+
+**Les quatre options du brief, mesurees plutot que jugees :**
+
+| option | verdict |
+|---|---|
+| (a) rapprocher le point de repos SEUL | **impossible** -- meme au pivot, un siege est a `SEESAW_RIDE_X` 1,38, donc la marche plancher est ~1,83 s |
+| (b) accelerer SEUL | k ~ **3,0** depuis 35,5 -- une lecture comique |
+| (c) declencher sur un signal d'approche | **aucun signal n'existe** (verifie, pas invente) : le seul point plus tot serait la destination d'un tap, dont le preavis est nul quand le joueur tape depuis le bord de la balancoire |
+| (d) allonger `SEESAW_ROCK_S` | **DERNIER RECOURS, non utilise** -- c'est la duree de ride de Keepy, deja validee device |
+
+**Retenu : (a) + (b) combines, `SEESAW_ROCK_S` intouche.**
+`BEAR_REST` 35,5 -> **37,0** (re-scan layout : encore **5,374 u** du prop
+le plus proche, le rocher a `(-5,18 ; 0 ; 38,43)`), `BEAR_WALK_RATE`
+**2,0**, et la destination passe de « 0,8 au-dela de la pointe » a **a cote
+du bout de planche** (`BEAR_APPROACH_Z` 0,8 sur le Z local, cote depuis
+lequel l'ours arrive, derive du signe de son propre z local pour qu'une
+balancoire tournee marche aussi).
+
+**Resultat : approche 1,547 u -> 1,024 s -> l'ours est A BORD pendant
+1,376 s des 2,4 s de rock, soit 57,3 %.** Mesure in-engine par la sonde :
+**1,00 s de temps de jeu**.
+
+⚠️ **A COTE DE LA PLANCHE ET PAS DESSOUS** : a `SEESAW_TILT_DEG` 15 le bout
+balaie ±0,357 u en vertical, donc un acteur qui marcherait sur la ligne de
+la planche la traverserait.
+
+⚠️ **`walk_rate` EST UN SEUL BOUTON ET PAS DEUX**, et c'est structurel :
+`walk_speed` est la vitesse a laquelle le pied PLANTE recule dans le
+repere du rig a playback 1,0 -- la seule vitesse ou un pied ne patine pas
+-- et la relation est exactement lineaire en playback. `HubActorWalker`
+ecrit donc `_player.speed_scale = walk_rate` et expose
+`ground_speed() = walk_speed * walk_rate`. Exposer les deux separement,
+c'est comme ca qu'un appelant demande une marche plus rapide et obtient un
+moonwalk. `BEAR_WATCH_X` devient inutilise et est **retire** (grep : aucun
+lecteur hors `HubWorld.gd`).
+
+### ETAPE 1 -- LE SECOND RIDER EST ECRIT DANS `_apply_tilt` ET NULLE PART AILLEURS
+
+```gdscript
+pivot.rotation_degrees.z = -side * SEESAW_TILT_DEG * cos(...) * damp
+if riding:
+    _keepy.follow_seesaw()
+if _bear != null and _bear_pivot == pivot:
+    _bear_follow_seesaw()
+```
+
+**La discipline est mesuree et pas stylistique** : un rider qui lit son
+prop sur son propre callback a ete mesure **une frame entiere en retard**
+sur le tourniquet (12,0 deg au pic), et `process_priority` n'y changeait
+rien parce que les steps de Tween tombent apres le `_process` de tout
+noeud.
+
+⚠️ **`KeepyHopper.gd` N'EST PAS REFACTORE.** La logique de suivi est
+DUPLIQUEE cote `HubWorld` plutot que d'extraire une interface commune --
+le rider de Keepy est valide device, et le facteur commun se paierait sur
+lui. Diff vide verifie.
+
+⚠️ **LE GATE EST `_bear_pivot == pivot` ET PAS `_seesaw_ride`** : un
+re-pump remplace le tween en cours de ride, donc un gate sur l'entree de
+ride perdrait l'ours a chaque re-tap.
+
+Siege : `Vector3(-side * ride_x, seat_y, 0)` en repere pivot -- **le bout
+oppose a celui de Keepy**, derive de sa propre place et non d'un cote
+fixe. Orientation : vers l'interieur (`-seat.x` a travers la base du
+pivot), donc **vers Keepy**, et derivee du SIEGE plutot que de sa position
+pour rester juste la frame ou il part.
+
+⚠️ **IL SNAPPE SUR LA PLANCHE, decision et pas raccourci** : le rig ne
+livre qu'un cycle de marche, il n'existe aucune animation de montee. Le
+snap fait 0,8 u lateral et ~0,69 u vertical, pris en une frame a l'instant
+ou la marche finit. `_bear_follow_seesaw()` est appele **immediatement** a
+l'arrivee plutot qu'a la prochaine step de tween : une frame d'ours debout
+a cote de la planche a hauteur de siege est exactement le pop que ca evite.
+
+⚠️ **L'ARRIVEE RE-VERIFIE LE RIDE** plutot que de faire confiance au
+mount : l'approche dure ~1 s, et un re-pump ou un dismount precoce peut
+tomber dedans. Monter une planche vide et deja posee laisserait l'ours sur
+du decor, sans tilt a suivre et sans dismount a venir.
+
+### ETAPE 2 -- DISMOUNT SYNCHRONE
+
+Sur `seesaw_dismounted` (le meme signal, pas un second timer qui pourrait
+deriver) : l'intention d'approche est effacee, l'ours est repose au sol au
+point d'approche -- **calcule a travers le ROOT et jamais le pivot**, qui
+reste incline a l'angle ou le rock s'est arrete -- et `_bear_pivot` est
+libere, donc `_apply_tilt` cesse de l'ecrire. `BEAR_RETURNS_HOME` reste
+`false` ; son argumentaire d'origine (« l'approche depasse le rock »)
+**disparait avec ce lot** et sa doc est reecrite en consequence : c'est
+desormais un choix de game-feel et rien d'autre.
+
+**Re-pump verifie et pas suppose** : `Tween.kill()` n'emet pas `finished`,
+donc aucun dismount parasite ; le gate sur `_bear_pivot` fait que le
+nouveau tween continue de porter l'ours. Garde defensive ajoutee dans
+`_on_seesaw_mounted` : un ours encore assis est repose au sol avant de
+repartir -- inatteignable tant qu'un dismount precede tout mount, gardee
+parce que l'echec est silencieux (une approche marchee EN L'AIR a hauteur
+de siege).
+
+### ETAPE 3 -- `ActorWalkerProbe` ETENDUE, PAS DOUBLEE
+
+PHASE E ajoutee (aucune sonde nouvelle), pilotee sur **`HubWorld.tscn`
+livre** et jamais un fixture -- toute la revendication porte sur OU
+l'ecriture a lieu, et un stand-in avec sa propre boucle de tilt repondrait
+a une autre question. **17 assertions**, dont deux BLIND CHECKS (l'ours a
+reellement voyage ; la planche a reellement bouge pendant
+l'echantillonnage -- 13,03 deg de swing).
+
+⚠️ **LA PREUVE QUE L'ECRITURE EST DANS `_apply_tilt` ET NULLE PART
+AILLEURS** est une observable et pas une relecture :
+`HubActorWalker.arrive()` appelle `set_process(false)`, donc **assis,
+l'ours n'a AUCUN callback a lui** -- la sonde gate
+`not bear.is_processing()`. La seule chose qui peut le deplacer est
+l'appel de tilt.
+
+Le suivi est mesure **contre le SIEGE FIXE** et jamais contre un
+aller-retour de sa propre position (qui est l'identite, donc zero quel que
+soit le retard -- `SeesawProbe` documente avoir paye exactement ca) :
+**0,0000000 u au pire sur 20 frames**, orientation **0,0000 rad** au pire.
+
+⚠️ **PIEGE DE SONDE RENCONTRE ET CONSIGNE : le budget etait en TEMPS MUR.**
+Tout ce qui est teste ici avance sur `delta`, et sous `--fixed-fps 60` ce
+delta vaut 1/60 quel que soit le temps que met le rasteriseur logiciel --
+donc une horloge murale mesure le sandbox et pas la marche. Le premier
+jet a rapporte **2,41 s pour un trajet qui en avait simule 0,77** et
+echouait sur du code correct. Budget en FRAMES depuis. Second piege du
+meme run : `seesaw_dismounted` part a la FIN de l'arc de sortie de Keepy,
+donc un controle fait a l'instant ou `is_on_seesaw()` bascule lit un ours
+encore assis.
+
+**ROUGE AVANT VERT, deux neutralisations distinctes, fichier restaure
+byte-identique (`cmp`) apres chacune :**
+
+| neutralisation | rouge obtenu |
+|---|---|
+| l'appel `_bear_follow_seesaw()` dans `_apply_tilt` | **2 FAIL** -- 0,3346 u de derive sur le siege, 0,3457 apres re-pump |
+| `_on_bear_arrived()` (le mount) | **4 FAIL** -- jamais sur la planche, 1,183 u de derive, 2,3875 rad d'orientation |
+
+### VALIDATION
+
+Editeur + templates Godot 4.3-stable installes dans ce sandbox (tailles
+verifiees contre le `Content-Length` : 50 276 070 et 1 073 228 327 octets,
+aucune troncature). `rm -rf build .godot`, import headless **exit 0,
+36 `.scn`**, export Web release **exit 0, 0 erreur GDScript**.
+
+`index.wasm` **35 376 909** octets / md5
+**`af4a8fc2925d992348eb30deeeb54360`**, `index.js` md5
+**`4e08904b1b7107858246af44b602067b`** -- identiques au fingerprint
+permanent de tout lot qui ne touche pas le code moteur.
+
+⚠️ **PIEGE PAYLOAD RE-RENCONTRE, ET IL EST AUTO-INFLIGE PAR L'EXPORTEUR :
+un export propre vers `build/web` se contamine LUI-MEME.** Horodatage a
+l'appui -- les six `.import` de `build/web/index.*.png` sont crees a
+00:50:29, c'est-a-dire **pendant** l'export (import termine a 00:47:50),
+donc l'exporteur ecrit ses icones dans `res://` et son propre savepack les
+ramasse : **7 lignes `Storing File: res://build`**. `build/` n'etant pas
+dans l'`exclude_filter`, un `rm -rf build` prealable ne suffit pas. Mesure
+propre obtenue en exportant **hors de `res://`** (`/tmp/webout`) :
+**282 lignes `Storing File`, 0 pour `scripts/dev`, `assets_source`,
+`docs`, `web/`, `build` ET `firebase.json`**. Ce n'est pas une regression
+de ce lot ; c'est le chemin d'export lui-meme.
+
+**Sondes, toutes exit 0 / 0 FAIL** : `ActorWalkerProbe` (PHASE E
+comprise), `SeesawProbe`, `ProbeTimeoutAudit` (**60 scenes de sonde**,
+chiffre inchange -- ce lot n'ajoute aucune sonde), `AssetContractAudit`,
+`DeathModelAudit`, `ChargerShapeProbe`.
+
+⚠️ **INCIDENT D'OUTILLAGE, consigne plutot que tu** : un `rm -rf .godot`
+a ete lance pendant que des sondes tournaient encore, puis un import a ete
+demarre en parallele d'elles -- exactement le hasard « deux processus
+Godot sur le meme `.godot/imported` » que ce fichier documente. Tue par
+`pkill -f '[G]odot_v4.3'` (forme crochetee, sinon le motif se matche
+lui-meme), arbre nettoye, et toute la sequence rejouee **serialisee**.
+Aucun chiffre publie ici ne vient de la passe contaminee.
+
+### RESTE OUVERT -- jugement device, seul juge
+
+1. **Est-ce que l'ours se lit comme un second passager** a l'echelle
+   reelle d'un telephone, ou comme un modele pose sur une planche ? Le
+   snap de montee (0,8 u lateral, 0,69 u vertical, en une frame) est le
+   risque principal du lot -- il n'existe aucune animation de montee dans
+   le rig, et aucune sonde ne peut trancher ca.
+2. **57,3 % du rock passe a bord** : mesure, mais personne n'a encore vu
+   si c'est « il monte, on le voit basculer, il descend » ou « il apparait
+   et disparait ».
+3. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
+   `opengl3` de BUREAU, contre WebGL2 sous Safari.
