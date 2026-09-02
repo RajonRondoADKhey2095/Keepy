@@ -196,6 +196,25 @@ var _turnstile_ride: Dictionary = {}
 var _seesaws: Array[Dictionary] = []
 var _seesaw_ride: Dictionary = {}
 
+## The onlooker. One, built in _ready(), never rebuilt.
+var _bear: HubActorWalker = null
+## The plank the bear is currently SITTING on, or null. Not a bool and not
+## read off `_seesaw_ride`: `_apply_tilt` is handed an entry and has to
+## answer "is this the prop my second rider is on", and a re-pump replaces
+## the tween while the ride keeps going.
+var _bear_pivot: Node3D = null
+## Its seat in that pivot's own frame -- the mirror of Keepy's.
+var _bear_seat: Vector3 = Vector3.ZERO
+## The mount the bear is still WALKING towards, or {}. Held rather than
+## re-derived on arrival because by then Keepy may already be off, and a
+## bear that mounts an empty settled plank is worse than one that gives up.
+var _bear_pending: Dictionary = {}
+## The heading the bear snaps to whenever it settles at rest -- first spawn
+## AND the walk home after a dismount. Computed once in `_setup_bear()`
+## from the seesaw's own published fulcrum; see `_on_bear_arrived()` for
+## why this is the only fix either arrival needs.
+var _bear_rest_facing: Vector3 = Vector3(0.0, 0.0, 1.0)
+
 ## Every owl, as _setup_owls copied it, plus the per-prop tween slot; and
 ## the one entry currently carrying Keepy.
 var _owls: Array[Dictionary] = []
@@ -297,6 +316,88 @@ const TURNSTILE_EXIT_STEPS: int = 24
 const SEESAW_TILT_DEG: float = 15.0
 const SEESAW_ROCK_CYCLES: float = 2.5
 const SEESAW_ROCK_S: float = 2.4
+
+## THE BEAR THAT COMES TO WATCH THE SEESAW
+##
+## An onlooker, not a prop and not a ride: it has no hotspot, no tap radius
+## and no entry in `hub_layout.tres`. It is parented under `World/` beside
+## Keepy rather than under `World/Props`, because it MOVES -- a prop, in
+## this file's vocabulary, is something the builder places once from the
+## layout. That parenting also means the shared draw-node budget the
+## `SeesawProbe`/`TurnstileProbe`/`WaterTintProbe` trio gates counts over
+## `World/Props` only and cannot see this actor, so its cost is published
+## in the report instead of riding an assertion that structurally cannot
+## observe it: ONE MeshInstance3D, the rig's single skinned mesh.
+const BEAR_SCENE: PackedScene = preload("res://assets/models/keepy_bear_walker.glb")
+
+## Lot B's measured scale, taken off `Skeleton3D.get_bone_global_pose()`
+## and NOT off an AABB -- the glb authors a 1.7-unit mesh and then puts a
+## 0.01 scale on its Armature node, so anything reading `get_aabb()` here
+## undercounts a hundredfold. See `BearAnimSpike.gd` for the full account.
+const BEAR_SCALE: float = 1.130876
+
+## Where the bear stands when nothing is happening.
+##
+## CHOSEN BY SCANNING THE LAYOUT, not by eye. On the seesaw's own local Z
+## axis (the plank runs along its X), so both plank ends are the same walk
+## and the bear does not favour one side; and BEHIND the seesaw from the
+## camera, which sits at `target + (0, 7.6, 8.9)` looking down -Z -- so the
+## bear walks toward the viewer in the background rather than crossing in
+## front of Keepy.
+##
+## ⚠️ MOVED 35.5 -> 37.0 IN LOT D, and the reason is a stopwatch and not a
+## taste. The rock lasts `SEESAW_ROCK_S` 2.4 s; the old rest point put the
+## approach at 3.970 u, which is 5.254 s at the shipped cadence -- the
+## dismount fired 2.85 s BEFORE the bear reached the plank, so it was never
+## once seen aboard. Re-scanned against the layout at the new value: still
+## 5.374 u clear of the nearest prop (the rock at (-5.18, 0, 38.43)), which
+## is the same scan the original 35.5 was picked by.
+const BEAR_REST: Vector3 = Vector3(0.0, 0.0, 37.0)
+
+## How far to the near side of the plank the bear walks up, in the seesaw's
+## own frame -- its X is the plank end it will sit on.
+##
+## ⚠️ BESIDE THE PLANK END AND NOT UNDER IT. At `SEESAW_TILT_DEG` 15 the
+## plank end sweeps +-0.357 u vertically, so an actor standing on the plank
+## line would be walked THROUGH the board on the way in. 0.8 clears that
+## sweep and still leaves the mount snap short.
+const BEAR_APPROACH_Z: float = 0.8
+
+## Playback multiplier handed to the walker -- ground speed AND clip
+## together, so the no-foot-slide relation `HubActorWalker.walk_speed`
+## documents holds by construction rather than by memory.
+##
+## ⚠️ THIS IS THE OTHER HALF OF THE LOT D TIMING FIX, and neither half
+## alone was enough. Even standing at the fulcrum the bear cannot start
+## closer than `SEESAW_RIDE_X` 1.38 from a seat, so a rest point alone
+## floors the walk near 1.83 s; and rate alone, from the old 35.5, needed
+## k ~ 3.0 to fit -- a comical playback. Together: the approach is 1.547 u,
+## which at 2.0 x 0.7556 = 1.5112 u/s takes 1.024 s, leaving the bear
+## ABOARD for 1.376 s of the 2.4 s rock -- 57.3 % of it.
+##
+## `SEESAW_ROCK_S` is deliberately NOT the knob: it is Keepy's own
+## device-validated ride length, and stretching it to fit an onlooker would
+## re-tune gameplay to suit scenery.
+const BEAR_WALK_RATE: float = 2.0
+
+## `false`  -- the bear stays where it arrived and waits for next time.
+## `true`   -- the bear walks back to BEAR_REST when the rider steps off.
+##
+## 2 SEPTEMBRE 2026: FLIPPED TO `true`, and the seat outliving the rock is
+## what made it worth flipping. A dismount used to be something the prop
+## did to you every 2.4 s, so a bear that trekked home after each one would
+## have spent the ride commuting. Now the rider decides when to leave and a
+## seat can be held indefinitely, so a dismount is a rare, deliberate beat
+## -- the one moment where the onlooker returning to its post reads as the
+## scene resetting rather than as a treadmill.
+##
+## Safe against a re-tap MID-WALK, verified rather than assumed:
+## `HubActorWalker.walk_to` simply replaces its target and stays WALKING,
+## emitting nothing for the walk it abandoned, so a seesaw tapped while the
+## bear is heading home just re-aims it at the approach point. Its
+## `arrived` handler early-returns on an empty `_bear_pending`, so the
+## homeward arrival itself is inert.
+const BEAR_RETURNS_HOME: bool = true
 
 ## How much room a landing needs on top of whatever it is standing next to.
 ##
@@ -451,6 +552,9 @@ func _ready() -> void:
 	_keepy.ride_ended.connect(_on_ride_ended)
 	_keepy.became_idle.connect(_on_keepy_idle)
 	_keepy.board_dived.connect(_on_board_dived)
+	_setup_bear()
+	_keepy.seesaw_mounted.connect(_on_seesaw_mounted)
+	_keepy.seesaw_dismounted.connect(_on_seesaw_dismounted)
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -1111,13 +1215,31 @@ func _apply_tilt(t: float, entry: Dictionary) -> void:
 	pivot.rotation_degrees.z = -side * SEESAW_TILT_DEG * cos(TAU * SEESAW_ROCK_CYCLES * t) * damp
 	if riding:
 		_keepy.follow_seesaw()
+	# THE SECOND RIDER, IN THIS SAME CALL AND NOWHERE ELSE. Not in the
+	# bear's own _process, not on a signal: a rider that reads its prop on
+	# its own callback was MEASURED a full frame behind on the turnstile
+	# (12.0 deg at the shove peak), and process_priority did not move it,
+	# because Tween steps land after every node's _process. The gate for
+	# this is the pivot the bear sits on and not `_seesaw_ride`, so a
+	# re-pump -- which replaces the tween mid-ride -- keeps carrying it.
+	if _bear != null and _bear_pivot == pivot:
+		_bear_follow_seesaw()
 
-## Puts Keepy on a seesaw and arranges for him to be let off when it settles.
+## Puts Keepy on a seesaw. He stays there.
 ##
-## The ride lasts exactly as long as the ROCK does -- the dismount hangs off
-## the prop's own tween finishing, never off a duration copied beside it,
-## which is the rule the turnstile states and the reason two numbers for
-## "how long" cannot drift here.
+## ⚠️ THE SETTLE NO LONGER LETS HIM OFF, and that is the whole of lot E.
+## The rock used to carry a ONE_SHOT connection to a handler that computed
+## an exit point and dismounted him the instant the tween finished, so a
+## ride was 2.4 s long whatever the player wanted. Now nothing is connected
+## to `finished` at all: the plank settles level (`_apply_tilt` damps to
+## exactly 0 at t = 1), both riders keep their seats, and `_seesaw_ride`
+## SURVIVES -- which is what lets `_repump_seesaw` find a ride to re-arm
+## while the plank is standing still.
+##
+## Leaving is now a tap off the prop, handled in `_on_tapped_ground` on the
+## boat's terms: the seat withdraws from the tap for as long as it is held,
+## so the tap falls through and BECOMES the eject. See
+## `_leave_seesaw_towards`.
 func _mount_seesaw(entry: Dictionary) -> bool:
 	var pivot: Node3D = entry["pivot"]
 	if pivot == null or not is_instance_valid(pivot):
@@ -1129,30 +1251,234 @@ func _mount_seesaw(entry: Dictionary) -> bool:
 	# writers for one fact is how the plank and its rider end up disagreeing
 	# about which way is down -- SeesawProbe gates that they agree.
 	_seesaw_ride = entry
-	var rock: Tween = entry["tween"]
-	if rock != null and rock.is_valid() and rock.is_running():
-		rock.finished.connect(_on_seesaw_rock_finished, CONNECT_ONE_SHOT)
-	else:
-		# Nothing is rocking -- unreachable while _rock_near either starts
-		# one or reports a running tween, and handled anyway because the
-		# alternative failure is a rider stranded with no signal to let him
-		# off.
-		_on_seesaw_rock_finished()
+	# NOTHING is hung off `entry["tween"]`. A settled rock is just a plank
+	# at rest with two riders on it; the only thing that ends a ride is a
+	# tap somewhere else. A tween with no listener also cannot strand
+	# anyone, which is why the old "nothing is rocking" fallback -- a direct
+	# call to the settle handler, to avoid a rider with no signal to let him
+	# off -- has no work left to do either.
 	return true
 
-## The rock has settled, so the rider steps off.
-func _on_seesaw_rock_finished() -> void:
+## Steps Keepy off the plank and sends him on towards the point tapped.
+##
+## THE BOAT'S HALF-EJECT, and deliberately not a copy of the old settle
+## handler with a walk bolted on. `KeepyHopper.leave_ride` states the rule
+## it implements: the destination survives the leap, so ONE tap buys the
+## dismount AND the walk to where it pointed. The seesaw has no tap signal
+## of its own to withdraw -- it is landing-triggered -- so its half of that
+## pattern lives here, in the state branch a tap off the prop falls into.
+##
+## The order is load-bearing. `leave_seesaw` leaves the body in HOPPING
+## (or, on the degenerate seat-is-the-landing case, IDLE), and `hop_to`
+## accepts both: from HOPPING it only records the target, and the arc's own
+## `_on_hop_finished` picks it up after emitting `hop_landed`; from IDLE it
+## advances straight away. Neither path needs a line of `KeepyHopper.gd`,
+## which is why that file is untouched by this batch.
+##
+## `_dismount_pending` is still armed for the same reason it always was:
+## the dismount landing is a landing like any other, and without it
+## `_on_hop_landed` would step off the plank and immediately climb back on.
+func _leave_seesaw_towards(point: Vector3) -> void:
 	if _seesaw_ride.is_empty() or not _keepy.is_on_seesaw():
 		_seesaw_ride = {}
 		return
 	var landing: Vector3 = _ride_exit_point(_seesaw_ride)
+	# Killed rather than left to settle on an empty plank: kill() emits no
+	# `finished`, so nothing observes it, and a tween still writing a tilt
+	# through `_apply_tilt` after both riders have gone would tip scenery
+	# nobody is sitting on.
+	var rock: Tween = _seesaw_ride.get("tween")
+	if rock != null and rock.is_valid():
+		rock.kill()
 	_seesaw_ride = {}
 	_dismount_pending = true
 	_keepy.leave_seesaw(landing)
+	_keepy.hop_to(point)
+
+## Builds the onlooker and stands it at its rest point.
+##
+## The rig, its scale and its clip are handed to `HubActorWalker` as data;
+## nothing about a bear lives in that script, which is why the same script
+## would carry a second animal without an edit.
+func _setup_bear() -> void:
+	_bear = HubActorWalker.new()
+	_bear.model_scene = BEAR_SCENE
+	_bear.model_scale = BEAR_SCALE
+	# Ground speed and clip playback at once -- see BEAR_WALK_RATE.
+	_bear.walk_rate = BEAR_WALK_RATE
+	# BEFORE add_child, because the walker builds its rig in _ready() and a
+	# scale written afterwards would be a rig drawn once at the wrong size.
+	_bear.position = BEAR_REST
+	_world.add_child(_bear)
+	# ⚠️ THE SNAP ON SPAWN, EVEN THOUGH IDENTITY ROTATION ALREADY HAPPENS TO
+	# BE RIGHT. `HubActorWalker._ready()` reads `_yaw` off `rotation.y`,
+	# which defaults to 0 on a freshly-built node -- and 0 IS the correct
+	# heading here, because BEAR_REST sits behind the seesaw on its own
+	# local Z (see BEAR_REST's own note), so "face the seesaw" and "face
+	# the camera" are the same direction by construction. Left implicit,
+	# that correctness is a coincidence of the default rather than a fact
+	# this file asserts -- so it is computed and set explicitly instead of
+	# trusted.
+	if not _seesaws.is_empty():
+		var fulcrum: Vector3 = _seesaws[0]["position"] as Vector3
+		var to_fulcrum: Vector3 = fulcrum - BEAR_REST
+		if Vector2(to_fulcrum.x, to_fulcrum.z).length_squared() > 1.0e-8:
+			_bear_rest_facing = to_fulcrum
+	_bear.face(_bear_rest_facing)
+	# ONCE, here. Connecting on each mount instead is how an actor ends up
+	# with N handlers and mounts N times on the Nth ride.
+	_bear.arrived.connect(_on_bear_arrived)
+
+## Keepy has sat down: the bear walks to the FAR end of that plank.
+##
+## ⚠️ THE SEESAW IS FOUND HERE RATHER THAN READ OFF `_seesaw_ride`, and
+## that is not a preference. `_mount_seesaw` calls `mount_seesaw()`, which
+## emits `seesaw_mounted` synchronously, and only THEN assigns
+## `_seesaw_ride` -- so at the instant this runs that field still holds the
+## PREVIOUS ride, or nothing at all. Reading it would work by luck on the
+## first mount and be wrong on every one after.
+##
+## Keepy's position is already his seat when the signal fires
+## (`mount_seesaw` calls `follow_seesaw()` before emitting), so the search
+## is the same proximity test `_rock_near` does, against the same table.
+func _on_seesaw_mounted() -> void:
+	if _bear == null:
+		return
+	# Unreachable while a dismount always precedes the next mount, and kept
+	# because the failure it prevents is silent: a bear still seated would
+	# walk its approach AT seat height, through the air.
+	if _bear_pivot != null:
+		_bear.global_position = Vector3(_bear.global_position.x, 0.0, _bear.global_position.z)
+		_bear_pivot = null
+		_bear_seat = Vector3.ZERO
+	var entry: Dictionary = _seesaw_under(_keepy.global_position)
+	if entry.is_empty():
+		return
+	var pivot: Node3D = entry["pivot"]
+	# THE ROOT, NOT THE PIVOT. The pivot's z-rotation is what the rock
+	# animates, so a point transformed through it would land somewhere new
+	# every frame of the tilt; the root carries the layout's placement and
+	# nothing else.
+	var root: Node3D = pivot.get_parent() as Node3D
+	if root == null:
+		return
+	var side: float = 1.0 if root.to_local(_keepy.global_position).x >= 0.0 else -1.0
+	# The FAR end: whichever side Keepy took, the bear takes the other.
+	var seat_x: float = -side * float(entry["ride_x"])
+	# The near side of the plank as seen from where the bear is STANDING,
+	# so it walks up to the board rather than round it. Read off its own
+	# position instead of assumed, because the seesaw carries the layout's
+	# `rotation_y` and a hard +Z would approach from behind on a turned one.
+	var near_z: float = 1.0 if root.to_local(_bear.global_position).z >= 0.0 else -1.0
+	_bear_pending = {
+		"pivot": pivot,
+		"seat": Vector3(seat_x, float(entry["seat_y"]), 0.0),
+	}
+	_bear.walk_to(root.to_global(Vector3(seat_x, 0.0, near_z * BEAR_APPROACH_Z)))
+
+## The bear finished a walk. If that walk was an approach and the ride is
+## still going, it steps up onto the plank.
+##
+## ⚠️ IT SNAPS, and that is a decision rather than a shortcut: the rig ships
+## a walk cycle and nothing else, so there is no climb to play. The snap is
+## 0.8 u sideways and about 0.69 u up, taken in one frame at the moment the
+## walk ends -- which is also the moment the actor stops being watched as a
+## walker.
+##
+## The ride is re-checked HERE and not trusted from the mount, because the
+## approach takes about a second and a re-pump or an early dismount can
+## land inside it. Mounting a settled empty plank would strand the bear on
+## scenery with no tilt to follow and no dismount coming.
+func _on_bear_arrived() -> void:
+	if _bear_pending.is_empty():
+		# Not an approach: this is the walk home finishing (BEAR_RETURNS_HOME
+		# is the only other caller of walk_to on this actor), and unlike the
+		# seesaw approach -- overwritten in the same frame by
+		# _bear_follow_seesaw() -- nothing else re-orients it. Left alone it
+		# keeps whichever heading the last step of the walk home happened to
+		# face, which is AWAY from the seesaw whenever that walk moved in -Z
+		# -- see _bear_rest_facing.
+		_bear.face(_bear_rest_facing)
+		return
+	var pending: Dictionary = _bear_pending
+	_bear_pending = {}
+	var pivot: Node3D = pending["pivot"]
+	if pivot == null or not is_instance_valid(pivot):
+		return
+	if _seesaw_ride.is_empty() or _seesaw_ride.get("pivot") != pivot or not _keepy.is_on_seesaw():
+		return
+	_bear_pivot = pivot
+	_bear_seat = pending["seat"] as Vector3
+	# Placed straight away rather than waiting for the next tilt step: the
+	# tween may be a frame off, and one frame of a bear standing beside the
+	# plank at seat height is exactly the pop this avoids.
+	_bear_follow_seesaw()
+
+## Writes the bear onto its seat on the tilting plank. Position AND facing,
+## the same two things Keepy's own `follow_seesaw` writes, in the same
+## frame the angle was written.
+func _bear_follow_seesaw() -> void:
+	if _bear == null or _bear_pivot == null or not is_instance_valid(_bear_pivot):
+		return
+	_bear.global_position = _bear_pivot.to_global(_bear_seat)
+	# Facing INWARD, along the plank towards the other seat -- which is
+	# Keepy's. Derived from the seat rather than from his position so it is
+	# still right on the frame he leaves, and taken through the pivot's own
+	# basis so the tilt carries the heading with it.
+	_bear.face(_bear_pivot.global_transform.basis * Vector3(-_bear_seat.x, 0.0, 0.0))
+
+## Keepy has stepped off, so the bear does too -- the same beat, off the
+## same signal, rather than a second timer that could drift from it.
+func _on_seesaw_dismounted() -> void:
+	# Belt and braces on the ride record. `_leave_seesaw_towards` is the
+	# only caller that dismounts today and it clears this itself, but a
+	# stale entry here would be a plank the player could re-pump from
+	# across the plateau -- so the ride is closed wherever a dismount is
+	# observed, not only where one is issued.
+	_seesaw_ride = {}
+	if _bear == null:
+		return
+	_bear_pending = {}
+	if _bear_pivot != null and is_instance_valid(_bear_pivot):
+		var root: Node3D = _bear_pivot.get_parent() as Node3D
+		var ground: Vector3 = _bear.global_position
+		if root != null:
+			# Back down beside the plank -- the point it walked up to, which
+			# is already known clear of the swing. Through the ROOT and not
+			# the pivot: the pivot is left tilted at whatever angle the rock
+			# settled on, and a point taken through it would be off the floor.
+			var local: Vector3 = root.to_local(_bear.global_position)
+			var near_z: float = 1.0 if local.z >= 0.0 else -1.0
+			ground = root.to_global(Vector3(_bear_seat.x, 0.0, near_z * BEAR_APPROACH_Z))
+		_bear.global_position = Vector3(ground.x, 0.0, ground.z)
+	_bear_pivot = null
+	_bear_seat = Vector3.ZERO
+	if BEAR_RETURNS_HOME:
+		_bear.walk_to(BEAR_REST)
+
+## The seesaw `flat` is standing on, or {}. Same radius test `_rock_near`
+## runs, factored out so the bear and the rock can never disagree about
+## which plank a landing belongs to.
+func _seesaw_under(where: Vector3) -> Dictionary:
+	var flat := Vector3(where.x, 0.0, where.z)
+	for entry in _seesaws:
+		var pivot: Node3D = entry["pivot"]
+		if pivot == null or not is_instance_valid(pivot):
+			continue
+		if flat.distance_to(entry["position"] as Vector3) <= float(entry["radius"]):
+			return entry
+	return {}
 
 ## Re-pumps the seesaw Keepy is already on, when the tap landed within the
-## SAME prop's trigger radius -- and does nothing otherwise, which leaves it
-## to settle and dismount on its own.
+## SAME prop's trigger radius. Reports whether it took the tap, so the
+## caller can turn the ones it refuses into an eject.
+##
+## ⚠️ IT WORKS AT REST, which is the whole of requirement 2. Nothing here
+## needs a tween to be running: the guards are a live ride, a valid pivot
+## and a point inside the radius, and `old.is_valid()` already tolerated a
+## tween that had finished. It was unreachable at rest only because the
+## settle used to clear `_seesaw_ride` and dismount; now that the seat
+## outlives the rock, a tap on a motionless plank re-arms it.
 ##
 ## A FRESH ROCK, deliberately NOT _rock_near()'s, for the reason
 ## _reshove_turnstile spells out: _rock_near()'s debounce exists so someone
@@ -1163,20 +1489,23 @@ func _on_seesaw_rock_finished() -> void:
 ## Killed rather than layered: Tween.kill() does NOT emit finished, so no
 ## stray dismount fires, and the replacement is reconnected the same way
 ## _mount_seesaw connects the first.
-func _repump_seesaw(point: Vector3) -> void:
+func _repump_seesaw(point: Vector3) -> bool:
 	if _seesaw_ride.is_empty():
-		return
+		return false
 	var pivot: Node3D = _seesaw_ride.get("pivot")
 	if pivot == null or not is_instance_valid(pivot):
-		return
+		return false
 	var flat := Vector3(point.x, 0.0, point.z)
 	if flat.distance_to(_seesaw_ride["position"] as Vector3) > float(_seesaw_ride["radius"]):
-		return
+		return false
 	var old: Tween = _seesaw_ride.get("tween")
 	if old != null and old.is_valid():
 		old.kill()
 	var tween: Tween = _build_seesaw_rock(_seesaw_ride)
-	tween.finished.connect(_on_seesaw_rock_finished, CONNECT_ONE_SHOT)
+	# The fresh rock is recorded so the NEXT re-tap kills this one rather
+	# than layering a second tween on the same pivot.
+	_seesaw_ride["tween"] = tween
+	return true
 
 ## Where to step off: on the ground, outside the prop's reach, and clear of
 ## anything standing there.
@@ -1336,11 +1665,17 @@ func _on_tapped_ground(point: Vector3) -> void:
 	if _keepy.is_on_turnstile():
 		_reshove_turnstile(point)
 		return
-	# And the seesaw on the identical terms: intercepted by state, re-pumped
-	# when the tap is on the same prop, dropped otherwise -- never turned
-	# into somewhere to walk to.
+	# The seesaw is intercepted by state like the rest -- but since 2
+	# SEPTEMBRE 2026 the tap it refuses is NOT dropped. A tap on the same
+	# prop re-pumps it; a tap anywhere else ends the ride and sends him
+	# there, because the seat now outlives the rock and a held seat needs a
+	# way out. That is the boat's rule, not the turnstile's: a roundabout
+	# ends on its own, so dropping the tap costs nothing; a plank you can
+	# sit on forever would otherwise trap the body with no exit at all.
 	if _keepy.is_on_seesaw():
-		_repump_seesaw(point)
+		if _repump_seesaw(point):
+			return
+		_leave_seesaw_towards(point)
 		return
 	# A tap while the OWL owns the body is intercepted by state like the
 	# ride's, the board's, the turnstile's and the seesaw's, for the
