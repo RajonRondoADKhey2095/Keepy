@@ -2242,3 +2242,89 @@ couverture 100 % sur son ancre) est desormais EN PRODUCTION** sur
 le lot de staging (le ressenti device du lit) est deja tranche par la
 validation qui a autorise ce merge.
 
+## L'OVERLAY DODO : YEUX FERMES ET "ZZZ" SUR L'ETAT DE REPOS DU LIT, AUCUN ETAT NEUF (2 septembre 2026)
+
+Mathieu a confirme le chantier de la pie/du lit termine (voir la section
+"MERGE EN PRODUCTION" et la section C2 ci-dessus) et a demande un ajout
+purement visuel sur l'etat de repos deja existant : yeux fermes et un
+"Zzz" qui derive doucement au-dessus de Keepy pendant qu'il est couche
+dans le lit, sans nouvel asset 3D/2D genere et sans nouvelle machine
+d'etats -- l'etat `_resting` de `CabinInterior.gd` (voir la section
+"LE HOTSPOT DU LIT" plus haut) existait deja et reste le seul point
+d'accroche.
+
+### CE QUI A ETE AJOUTE
+
+`scripts/cabin/CabinDodo.gd` (nouveau fichier, classe `CabinDodo`) : un
+`Sprite3D` unshaded portant deux arcs sombres dessines en code (meme
+patron que le coeur de `CabinHearts.gd` -- une texture 64x64 construite
+une fois et jamais reimportee) pour les yeux fermes, et un `Label3D`
+"Zzz" qui monte et redescend en boucle lente (`ZZZ_DRIFT` 0.12 unite sur
+`ZZZ_DRIFT_S` 1.6 s). Aucun shader, aucune particule, aucun fichier
+binaire ajoute -- la meme discipline que le reste de ce chantier.
+
+`scripts/cabin/CabinInterior.gd` : un champ `_dodo` construit une fois
+dans `_ready()` (aux cotes de `_hearts`), et deux points d'appel
+seulement -- `_dodo.show_asleep(_walker.global_position)` a la fin de
+`_enter_rest()` (le point ou le corps est deja pose sur le lit) et
+`_dodo.hide_asleep()` au debut de `_wake()`. Aucun nouveau booleen,
+aucune nouvelle transition : `_resting` reste l'unique source de verite,
+exactement comme le registre de hotspots (`_bed`, `_door`, `_magpie`)
+que ce fichier utilisait deja.
+
+### CE QUI N'A PAS ETE FAIT, ET POURQUOI
+
+Le brief envisageait de fermer les yeux du modele lui-meme si le rig le
+permettait "facilement". Il ne le permet pas : `keepy_squirrel_hero.glb`
+est un noeud, un maillage, sans squelette ni animation -- le meme constat
+deja publie par les lots de l'ours et du hibou pour cette famille
+d'assets (voir KEEPY_MODEL_MIN_Y/KEEPY_MODEL_MIN_X plus haut dans
+`CabinInterior.gd`). Il n'existe donc aucun sous-noeud "yeux" a masquer
+ou remplacer, et l'overlay est un indicateur pose au-dessus du corps
+plutot qu'une modification du maillage.
+
+Le positionnement de l'overlay (`EYES_OFFSET`, `ZZZ_OFFSET` dans
+`CabinDodo.gd`) est un choix raisonnable dans l'espan vertical
+(~1.32 unite monde) que le corps couche occupe, PAS une mesure faite sur
+un rendu -- aucun editeur Godot n'etait disponible dans ce sandbox
+distant pour produire un rendu de calibration. A rejuger sur device si
+le rapport de Mathieu le signale hors-cible.
+
+### VALIDATION
+
+Aucun binaire Godot dans ce sandbox distant : pas de sonde `CabinProbe`
+executee ici. La compilation GDScript a ete verifiee via CI GitHub
+Actions plutot qu'en local -- `web-build.yml` declenche manuellement
+(`workflow_dispatch`) sur la branche `claude/bed-overlay-visual-fxcfkd`,
+run #373, **succes**, import + export Web build verts (16:38:18 ->
+16:43:04 UTC), les deux etapes de deploiement Vercel correctement
+skippees (`ref != main/staging`).
+
+Merge sur `staging` : `9af2ea4..495a0f8`, `--no-ff`, diff de l'arbre du
+merge contre l'arbre de la feature branch **VIDE** (verifie avant push).
+
+Deploiement staging verifie SUR LE SERVICE, canal MCP Vercel : deploiement
+`dpl_8Js4GXSRP4J1aPhXW2TkixuEkeja` (sha `495a0f8`, `gitRootDirectory`
+`build/web`), **READY**, cree 17:32:22 UTC. `CACHE_VERSION` servi
+`1788370317` = **17:31:57 UTC**, lu en **MISS/age 0** (cache-buste),
+tombe juste avant l'appel `vercel deploy` -- coherent.
+
+⚠️ **`index.wasm` NON RECROISE cette fois** : le fetch du binaire 35 Mo
+via l'outil MCP Vercel disponible dans ce sandbox (`web_fetch_vercel_url`)
+a fait expirer la session MCP a trois reprises de suite -- reproductible
+sur ce fichier precis, alors que la meme methode fonctionne sans probleme
+sur `index.service.worker.js` (quelques Ko) et sur les appels
+`list_deployments`. Ce lot ne touche que deux fichiers GDScript, aucun
+code moteur, et "Verify export output" en CI a confirme un `.wasm` non
+vide -- mais la taille/md5 exacts (35 376 909 octets /
+`af4a8fc2925d992348eb30deeeb54360`, le fingerprint permanent de ce
+depot) n'ont pas pu etre recroises par ce canal dans ce sandbox. A
+recroiser par une session qui dispose d'un canal capable de recuperer ce
+fichier, ou depuis un poste avec acces direct au CDN.
+
+**Reste ouvert : validation device par Mathieu sur
+`keepy-staging.vercel.app`** (Safari iPhone, navigation privee, jamais la
+PWA) -- tap sur le lit -> yeux fermes et Zzz visibles ; re-tap -> retour
+a la normale, sans minuteur automatique. Palier 2 (merge vers `main`)
+reste gate par son feu vert explicite apres cette validation.
+
