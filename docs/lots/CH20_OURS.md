@@ -1417,3 +1417,92 @@ sans quoi l'etape 3 n'existerait pas et il n'y aurait rien a juger.
    tournee vers la balancoire reste une pose de marche arretee.
 3. Rien ici n'est un rendu device : llvmpipe sous `xvfb` via le backend
    `opengl3` de BUREAU, contre WebGL2 sous Safari.
+
+## LOT K -- LE BLAIREAU EST RESTAURE : LA JUSTIFICATION "BYTE-IDENTIQUE" DU LOT A N'A JAMAIS ETE CE QU'ELLE NOMMAIT, ET LA MESURE LE CONFIRME (3 septembre 2026)
+
+Branche `claude/badger-restore-716m11`, partie de `main` (`6198492`).
+Mathieu a demande de restaurer l'asset blaireau supprime par le LOT A
+(commit `c9362a9`) apres avoir tranche en faveur de sa reintegration
+malgre son cout de payload -- mais d'abord de VERIFIER que la
+justification de suppression tenait, plutot que de la croire sur la foi
+du nom de la doctrine invoquee dans le brief.
+
+⚠️ **LE BRIEF CITAIT UNE JUSTIFICATION QUE LE LOT A N'A JAMAIS ECRITE.**
+Relu avant toute manipulation : le LOT A (section ci-dessus, ligne ~53)
+ne dit a aucun moment que le blaireau etait byte-identique a l'ours. Il
+dit exactement l'inverse -- un rendu offscreen a cinq angles a etabli que
+c'etait un **animal visuellement distinct** (museau blanc a bandes
+noires, corps gris, gilet rapiece, contre l'ourson brun a casquette) --
+et la seule byte-identite mesuree la etait **entre les deux copies du
+blaireau lui-meme** (`animated/` et `perso/`, md5
+`dbc6fbcb116a793012c7fe92e0ad2082`, 14 485 536 octets chacune). Le
+blaireau a ete supprime parce qu'il n'etait **pas le sujet cherche**
+(l'identification portait sur l'ours), jamais parce qu'il dupliquait
+l'ours. La formulation "byte-identique a l'ours" du brief est donc une
+lecture erronee de la doc, corrigee ici avant qu'elle ne se propage.
+
+### Verification independante, refaite ici plutot que crue sur la doc
+
+Blob recupere depuis `c9362a9^` (avant suppression), les deux copies
+`assets_source/openworld/{animated,perso}/Meshy_AI_Meshy_Merged_Animations.glb`
+-- sha256 des deux copies **identique**
+(`303988a22596d3328302d47c031262c38908a5c610d0068403b496563afb17bf`),
+confirmant le md5 deja publie par le LOT A. Compare ensuite au fichier
+ours actuellement dans le depot
+(`assets/models/keepy_bear_walker.glb`, 10 408 936 octets, sha256
+`86e315653df7d144ea77ccddba5691b2b7f8bf004e0c0a8b0e5948b252c0ae58`) :
+**tailles differentes (14 485 536 contre 10 408 936 octets) et sha256
+differents** -- `cmp` confirme un octet de divergence des la position 9.
+**Ce sont deux fichiers distincts.** Aucune erreur d'export Meshy n'a
+jamais fait du blaireau une copie de l'ours ; c'est un vrai modele
+distinct qui existait dans l'historique et qui a ete efface par exces de
+zele du LOT A plutot que par une decouverte de doublon.
+
+### Confirmation visuelle, refaite -- pas simplement recopiee du LOT A
+
+Godot 4.3-stable telecharge (50 276 070 octets, taille verifiee contre
+`Content-Length` avant extraction -- le piege de telechargement tronque
+documente plus haut dans `CLAUDE.md`), projet importe en entier
+(`--headless --path . --import`, execute deux fois : la premiere passe
+n'avait pas encore vu le fichier restaure, depose apres le debut du
+scan), puis rendu offscreen a quatre azimuts (0/90/180/270, dedie a ce
+lot, camera fixe a 2,2 u, lumiere directionnelle -- l'asset source brut
+ne porte pas encore l'extension `KHR_materials_unlit`, contrairement aux
+`.glb` livres sous `assets/models/`) sous `xvfb-run --rendering-driver
+opengl3`, jamais `--headless` seul. Verdict sans ambiguite aux angles
+inspectes : museau blanc, deux bandes noires du nez aux oreilles, corps
+gris, gilet rapiece a boutons -- exactement la description du LOT A,
+**un blaireau et rien d'autre**. Script de rendu jetable, supprime avant
+ce commit conformement a la doctrine (sonde jetable = supprimee avant le
+commit) ; seules les captures PNG ont ete inspectees puis jetees.
+
+### Restauration -- une seule copie, pas les deux
+
+Restaure sous `assets_source/openworld/animated/keepy_badger_walker.glb`
+(convention de nommage alignee sur `keepy_bear_walker.glb`, meme
+dossier). **Une seule des deux copies byte-identiques** est restauree --
+restaurer les deux recreerait exactement le doublon de 14,5 Mo que le
+LOT A avait deja identifie et a bon droit signale comme source morte.
+
+### Impact `.pck` -- mesure, pas suppose : ZERO, parce qu'il n'y a aucune integration
+
+`export_presets.cfg` exclut `assets_source/*` du pack (ligne 39,
+`exclude_filter`), et aucun fichier `.gd`/`.tscn`/`.tres` du depot ne
+reference `keepy_badger_walker` -- verifie par grep sur l'arbre entier
+avant ce commit. **Le blaireau restaure est donc hors du pack livre**,
+exactement comme le LOT A l'avait laisse pour `keepy_bear_walker.glb`
+avant son integration par le LOT B. Le seul cout reel aujourd'hui est la
+taille du DEPOT source : **+14 485 536 octets (~13,8 MiB)** sur
+`assets_source/`. Le cout `.pck` ne s'appliquera que le jour ou un lot
+d'integration future (sur le modele du LOT B pour l'ours) referencera cet
+asset depuis une scene -- a mesurer alors, pas maintenant. Le trade-off
+tranche par Mathieu (blaireau restaure malgre le cout payload) reste
+donc, pour l'instant, un cout purement source-side et non un cout de
+telechargement joueur.
+
+### Reste ouvert
+
+Aucune integration gameplay -- comme pour l'ours au LOT A, c'est un lot
+d'identification et de restauration seul. Un futur lot d'integration
+devra, comme les lots suivants pour l'ours, verifier par ARBRE que cet
+asset existe bien sur sa propre base avant de le nommer dans un brief.
