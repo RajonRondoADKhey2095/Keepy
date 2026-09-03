@@ -1192,3 +1192,100 @@ ce lot** — chiffré et publié pour arbitrage, comme demandé.
 états d'un seul asset, une fois) et non un contrat permanent — supprimée
 avant ce commit, per la règle sonde-jetable. Rien de nouveau n'entre dans
 `scripts/dev/` pour ce lot.
+
+## LOT — RETOUR DEVICE : ÉCHELLE DU BLAIREAU, ET LE POINT NORD DIAGNOSTIQUÉ SANS ÊTRE TOUCHÉ (3 septembre 2026)
+
+### Sujet 1 — le blaireau était scalé pile à la hauteur de Keepy, et ça ne lisait pas comme "plus imposant"
+
+`BADGER_SCALE` avait été dérivée au lot précédent pour matcher EXACTEMENT
+`KEEPY_DRAWN_HEIGHT` (1,3501) — raisonnement volontaire pour la scène où
+les deux passagers pendent côte à côte à UNE seule barre de tyrolienne.
+Retour device de Mathieu (captures à l'appui) : au sol, où le blaireau
+passe l'essentiel de son temps à l'écran, il lit comme trop petit à côté de
+Keepy plutôt que comme "plus imposant".
+
+Nouvelle dérivation, par MOYENNE GÉOMÉTRIQUE sur les trois acteurs du
+casting (Keepy, blaireau, ours) plutôt qu'un chiffre choisi à l'œil :
+
+    k = sqrt(BEAR_DRAWN_HEIGHT / KEEPY_DRAWN_HEIGHT) = sqrt(1,890073 / 1,3501) = 1,183195
+    BADGER_DRAWN_HEIGHT = k * KEEPY_DRAWN_HEIGHT = 1,597431   (était 1,3501)
+    BADGER_SCALE        = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN = 0,962085  (était 0,813125)
+
+Le pas Keepy→blaireau et le pas blaireau→ours sont ainsi le MÊME saut
+multiplicatif (+18,3% chacun) — ni disproportionné, ni à peine perceptible,
+et le blaireau reste chiffrablement plus petit que l'ours (1,597431 <
+1,890073). Preuve visuelle : rendu offscreen xvfb+opengl3, Keepy et
+blaireau côte à côte, avant/après (spike jetable, supprimé avant ce
+commit) — le blaireau dépasse nettement la tête de Keepy dans le rendu
+"après" là où il était à peu près à égalité dans le rendu "avant".
+
+Effets de bord mesurés et corrigés : `BADGER_SIDE_OFFSET` (0,95, inchangée)
+voit sa marge de dégagement contre le rail de l'escalier de la tyrolienne
+passer de +0,23u à +0,175u sous le gabarit élargi — resserrée mais pas un
+conflit, donc laissée telle quelle. Les deux passagers ne partagent plus
+une même hauteur : `_zip_seat` du côté blaireau lit désormais
+`BADGER_DRAWN_HEIGHT` et non plus `KEEPY_DRAWN_HEIGHT`. Fait remarquable
+retrouvé par le calcul : la hauteur de la TÊTE sous la barre est
+INDÉPENDANTE de la taille du corps (elle s'annule dans la formule du
+siège) — les deux têtes restent donc alignées sous la même barre, seuls
+les PIEDS bougent (Keepy à 0,3599, le blaireau, plus grand, à 0,112569).
+`ZiplineRideProbe` (PHASE SEATS, PHASE TRIP, `_corridor_rows`) a été
+réécrite pour asserter cela directement plutôt que de supposer l'égalité
+de hauteur — 0 échec après correction (un premier passage a trouvé 1 échec
+réel : un plancher de "hors sol" à 0,2u codé en dur, sous la hauteur de
+pied du blaireau à 0,112569 ; corrigé pour dériver le plancher du siège de
+chaque corps plutôt que d'un chiffre partagé arbitraire).
+
+### Sujet 2 — le point nord P2 : DIAGNOSTIQUÉ, NON CORRIGÉ (cas b confirmé)
+
+Sonde jetable (`P2NorthDiagSpike`, supprimée avant ce commit) lisant
+directement l'arbre construit :
+
+    P2 tower position:  (25.2, 0, 35.0)   -- EXACTEMENT sur PLATEAU_HALF_EXTENT
+    P2 stair_foot:       (25.037, 0, 36.682)
+    HubRegion.contains(stair_foot) = FALSE
+    HubRegion.clamp_to(stair_foot) = (25.037, 0, 35.0)   -- manque 1.682u
+    anneau r=0.5/1.0/1.5 autour du stair_foot : 0% marchable
+    anneau r=0.5..2.0 autour de P2 lui-même   : 52.8% marchable (coupé pile à l'arête)
+
+Root cause : `_build_zipline_tower` construit l'escalier VERS L'ARRIÈRE de
+chaque tour relativement à son propre `forward` ("vers l'autre tour"). Pour
+la tour de P1 (sud), l'arrière pointe vers l'intérieur du plateau — sans
+souci. Pour la tour de P2 (nord), le même `forward` pointe VERS P1 (sud),
+donc son "arrière" pointe encore plus au NORD que P2 — et P2 est déjà posé
+pile sur le bord (z=35=`PLATEAU_HALF_EXTENT`). Même les jambes arrière de
+la tour (z=35,547) débordent du monde jouable de 0,547u, en plus de
+l'escalier (débord 1,682u). Le lobe nord existant (centré (0,35), rayon
+12) ne couvre pas ce point : distance P2↔centre du lobe = 25,2u, très
+au-delà du rayon 12.
+
+Les deux autres hypothèses écartées PAR MESURE et non par supposition :
+RECON 5 (déjà au dossier) mesurait ZÉRO conflit de clearance décor à P2 à
+tout rayon candidat testé (+10,419u de marge à la silhouette la plus
+proche) — pas de cas (a). Les deux props déplacés au palier 2
+(`landmark` à (29,346/12,760)→(30,491/12,871), `Rock#29` à
+(25,637/15,944)→(24,691/15,852)) sont à z≈12,8-15,9, au milieu du couloir
+P1→P2, à plus de 19u de P2 — pas de cas (c). C'est le cas (b) : une
+contrainte de bord du monde, pas un objet ni un prop.
+
+**Aucun code touché pour ce sujet**, conformément à la consigne — options
+chiffrées pour arbitrage de Mathieu :
+
+1. **Un petit lobe HubRegion dédié à P2** (même forme que le lobe nord
+   existant : un disque à cheval sur le bord), rayon ~3,0u centré sur P2
+   lui-même — couvre le stair_foot (débord 1,682u) avec marge de
+   manœuvre. Coût : ~14u² de sol neuf (0,3% du carré), un recon dédié pour
+   confirmer (mesuré, pas supposé) que ça ne déplace pas la diagonale pire
+   cas 18,700s — l'argument "un lobe posé sur un bord n'allonge aucune
+   diagonale entre coins" qui a déjà validé le lobe nord existant
+   s'applique probablement ici aussi, mais reste à VÉRIFIER par sonde
+   avant d'être cru. Portée comparable au recon+lot du lobe nord du
+   28 août.
+2. **Réorienter/raccourcir l'escalier de la seule tour P2** — évite de
+   toucher `HubRegion`, mais casse la symétrie "une structure, deux tours,
+   un seul bâtisseur" documentée comme délibérée dans
+   `_make_zipline()`, et ne réglerait que l'atteinte du pied d'escalier —
+   pas la liberté de manœuvre générale autour de la tour (les jambes
+   arrière débordent aussi). Plus invasif que l'option 1, non recommandé.
+
+Aucune des deux n'est implémentée ici.
