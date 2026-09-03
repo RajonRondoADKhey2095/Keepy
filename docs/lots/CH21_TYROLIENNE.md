@@ -749,3 +749,301 @@ laquelle P1 ne montre pas P2 du tout. RECON 5 a mesuré cette asymétrie et
 Mathieu l'a acceptée ; aucune sonde de ce dépôt ne score la lisibilité à
 l'intérieur d'une bande de luminance. **C'est la validation device qui
 tranche**, et c'est le seul gate qui reste avant `main`.
+
+## PALIER 2 — LE BLAIREAU, LA PORTE DE TAP ET LE TRAJET À DEUX CORPS (3 septembre 2026)
+
+> **Ce que ce lot livre** : la tyrolienne est jouable dans les deux sens.
+> Le blaireau attend à une extrémité, un tap sur LUI amène Keepy au pied de
+> la tour, les deux traversent ensemble sur une nacelle, et le blaireau
+> reste à l'extrémité atteinte — d'où le trajet retour. Prémisses de
+> PALIER 1 reprises telles quelles ; **la géométrie des tours et du câble
+> n'a pas été retouchée**, la seule addition au prop est la nacelle.
+
+### Le décompte du blaireau — L'ASSET N'ÉTAIT SUR AUCUNE BASE UTILISABLE
+
+Le brief situe le blaireau restauré dans `assets_source/`. **Il n'y était
+pas.** Vérifié par ARBRE et non par nom, sur les cent premières refs de
+`origin` : `keepy_badger_walker.glb` n'existe que sur
+`claude/badger-restore-716m11` (blob `dc8a62d6…`), **branche non mergée**,
+et ni `origin/staging` ni `origin/main` ne le portent. C'est exactement le
+cas CH20 LOT A de l'ours, que `CLAUDE.md` documente : *« si un lot nomme un
+asset dans son brief, vérifier par ARBRE que cet asset existe sur sa propre
+base »*. Ce lot a donc commencé par merger cette branche.
+
+⚠️ **Et le piège shell qui a failli le cacher** : `git rev-parse ref:path`
+**imprime son argument verbatim** quand il n'arrive pas à le résoudre, au
+lieu de ne rien rendre. Un balayage écrit `h=$(git rev-parse "$r:$p"); [ -n "$h" ] && echo …`
+déclare donc **toutes** les refs porteuses. Seule la ref dont la sortie est
+un vrai sha de 40 caractères l'est.
+
+md5 relevé après merge : `dbc6fbcb116a793012c7fe92e0ad2082`,
+14 485 536 octets — **reproduit exactement** celui que RECON 3 avait
+consigné en le ré-extrayant de `c9362a9^`.
+
+### L'ÉCHELLE DU BLAIREAU EST DÉRIVÉE, ET LE BANC A ÉTÉ PROUVÉ AVANT D'ÊTRE CRU
+
+Mesure os par os (`Skeleton3D.get_bone_global_pose()` sur les 24 joints,
+**dans l'espace propre du rig** via `rig.global_transform.affine_inverse()`
+— mesurer à travers `skel.global_transform` puis multiplier par l'échelle
+l'applique DEUX FOIS, le bug que CH20 LOT B a fait et publié) :
+
+| rig | étendue de repos mesurée | référence au dossier |
+|---|---|---|
+| **ours** | **1,671344** | 1,671335 → **9 µu d'écart** |
+| **blaireau** | **1,660387** | — (nouveau) |
+
+⚠️ **C'est la reproduction du chiffre de l'ours qui donne au banc le droit
+de publier celui du blaireau**, et c'est la règle « reproduire d'abord un
+chiffre déjà au dossier avec le banc qu'on s'apprête à utiliser ».
+
+L'échelle, elle, n'a **aucun paramètre libre** :
+
+```
+BADGER_SCALE = KEEPY_DRAWN_HEIGHT / BADGER_REST_SPAN
+             = 1,3501 / 1,660387 = 0,813125
+```
+
+**Le raisonnement, et il est géométrique** : les deux passagers pendent au
+MÊME barreau, à 60 cm l'un de l'autre sur un écran de six pouces. Deux
+corps de hauteurs différentes accrochés à une seule poignée se lisent comme
+« l'un des deux pendouille » ; la même hauteur se lit comme une paire. Donc
+la hauteur dessinée du blaireau **EST** celle de Keepy, déjà au dossier.
+Écrit comme la division et non comme son résultat, pour qu'il ne puisse pas
+dériver d'une moitié. Effet de bord voulu : le blaireau sort visiblement
+plus petit que l'ours (1,8901 dessiné), ce qui garde les deux animaux
+distincts à l'écran — la raison même pour laquelle CH20 LOT K l'a restauré.
+
+### ⚠️ LA POSE DE SUSPENSION : RECON 3 AVAIT NOMMÉ LE MAUVAIS CLIP
+
+RECON 3 recommandait de `seek()` **`Walking`** sur la frame où les bras
+sont les plus hauts. Mesuré sur 129 échantillons de chaque clip, hauteur
+moyenne des deux mains au-dessus des hanches, dans l'espace du rig :
+
+| clip | meilleure frame | lift |
+|---|---|---|
+| `Walking` (blaireau) | t = 0,718 s | **+0,036 u** |
+| `Running` (blaireau) | **t = 0,351302 s** | **+0,289 u** |
+| `Walking` (ours) | t = 0,751 s | **−0,023 u** |
+
+`Walking` balance les bras **le long du corps** : sa meilleure frame est à
+peine au-dessus des hanches, et sur l'OURS la même mesure est **négative**
+— les mains ne montent jamais au-dessus des hanches du tout. `Running` à
+0,351302 s est la **seule** pose que l'un ou l'autre rig livre avec les
+bras réellement levés. Une prémisse de recon tombée sur sa propre mesure,
+pas une recon suivie.
+
+Mécanisme : `HubActorWalker.freeze_at(clip, time)`, généralisation de
+`_freeze()`. **Rien n'est écrit sur la ressource** — `play` / `seek` /
+`pause` sont per-PLAYER, contrairement à un `loop_mode` qui est
+per-RESOURCE et fuirait vers toute autre instance du même glb. La pose d'os
+(`set_bone_pose`) reste inédite dans ce dépôt et n'a pas été ouverte.
+
+### ⚠️ LE `rider_drop` DE PALIER 1 NE PEUT PAS PORTER UN CORPS DE 1,3501
+
+`ZIPLINE_RIDER_DROP` 1,10 est documenté en PALIER 1 comme « à quelle
+distance sous le câble un passager pend ». **L'arithmétique le refuse** :
+un corps dont les PIEDS sont à `2,0 − 1,10 = 0,90` a le crâne à **2,25**,
+soit **0,25 u À TRAVERS le câble de 2,0** dont il est censé pendre. Rien
+dans ce moteur ne s'en plaint ; c'est le genre de chose qui ne se voit que
+sur device, et depuis un seul azimut.
+
+Et le sens inverse est fermé aussi : sous un câble à 2,0, un corps de
+1,3501 ne peut pas avoir les pieds plus haut que **0,6499**, barreau et
+dégagement à zéro. **Il n'existe aucune hauteur de suspension à 0,90.**
+
+Résolution — **le passager pend PAR LES MAINS**, donc son crâne est juste
+sous le barreau, pas sous le câble :
+
+```
+pieds = cable_height − bar_drop − hang_clearance − hauteur
+      = 2,0 − 0,24 − 0,05 − 1,3501 = 0,3599
+```
+
+Le deck est à 0,90 : embarquer est donc **un pas hors de la plateforme et
+une chute de 0,54 u sur la poignée** — ce qu'est une tyrolienne.
+`ZIPLINE_RIDER_DROP` garde son seul vrai métier (la dérivation du deck) et
+n'est pas relitigé.
+
+### ⚠️ LE COULOIR A DÛ ÊTRE REMESURÉ DEUX FOIS, ET LA PREMIÈRE MÉTRIQUE ÉTAIT LA MAUVAISE
+
+RECON 5 avait balayé le couloir avec un passager à **0,90**. Il est
+maintenant à **0,3599**, et décalé latéralement de ±0,30 : la ligne que
+RECON 5 a dégagée n'est pas celle que deux corps parcourent.
+
+**Première réécriture : fausse, et verte-puis-rouge pour une mauvaise
+raison.** Elle mesurait `ground_footprints()`, c'est-à-dire le disque de
+**MARCHABILITÉ** — « où un corps n'a pas le droit de se TENIR » — qui est à
+la fois **rembourré et infiniment haut**. Contre lui, chaque fleur du
+plateau était un obstacle pour quelque chose qui passe un mètre au-dessus,
+et la phase rapportait **−0,438 u** contre des props qu'un passager franchit
+en altitude. C'est littéralement le défaut que `CLAUDE.md` nomme : *« LA
+MÉTRIQUE PEUT ÊTRE LA MAUVAISE, ET LE CHIFFRE VERT AVEC »*.
+
+**Métrique retenue** : la GÉOMÉTRIE DESSINÉE dont la bande de hauteur
+recoupe celle des passagers. La sonde parcourt l'arbre construit, prend
+l'AABB réelle de chaque `MeshInstance3D` **et de chaque instance de
+`MultiMesh`**, ne garde que celles dont l'étendue verticale entre dans
+`[0,3599 ; 1,7100]`, et mesure le dégagement à plat depuis la ligne du
+passager le plus proche.
+
+⚠️ **Et les parties de la tyrolienne elle-même sont exclues PAR ANCÊTRE, pas
+par nom.** `add_child` **renomme** un second enfant appelé `"Deck"` : le
+deck de la tour lointaine arrive sous le nom `@MeshInstance3D@161`, et un
+filtre par nom le laissait passer **comme obstacle**, à −1,41.
+
+**Deux props seulement gênaient réellement** — mesuré, pas supposé :
+
+| prop | dégagement avant | après | déplacement |
+|---|---|---|---|
+| **landmark** (29,346 / 12,760), variante 2 | **−0,9915** | **+0,1588** | **1,150 u** → (30,491 / 12,871) |
+| **Rock#29** (25,637 / 15,944) | **−0,7761** | **+0,1743** | **0,950 u** → (24,691 / 15,852) |
+
+C'est le précédent PALIER 1 exactement : ce lot-là avait déplacé
+`FlowerPetal0` de 1,443 u pour le même couloir. Le landmark est celui que
+RECON 5 nommait déjà **facteur limitant** ; il reste bien en vue, 1,15 u
+plus à l'est.
+
+### DEUX CORPS SUR UNE NACELLE — LE PATRON BALANÇOIRE, CROISÉ AVEC `ride_moved`
+
+RECON 4 avait tranché que `RIDE_SEAT_Y` (float nu, un seul lecteur, écrit
+sur le corps de `KeepyHopper`, aucune notion d'occupant) **n'a aucun chemin
+pour un second passager**. Le siège devient donc un **vecteur dans le repère
+de la nacelle** : `(latéral, hauteur, abscisse)`, et les deux sièges sont le
+même fait au signe près.
+
+⚠️ **LES DEUX PASSAGERS SONT ÉCRITS DANS LE MÊME APPEL QUE LA NACELLE**,
+`_apply_zip`, et nulle part ailleurs. Ni dans le `_process` du blaireau, ni
+sur un signal. Mesure de la balançoire, restituée par la passe rouge :
+neutraliser cette seule ligne fait sortir la sonde à **9,307817 u de retard
+du blaireau** — le corps reste sur place pendant que la nacelle traverse.
+
+### LES TROIS PORTES, ET CE QUE CHACUNE COÛTE
+
+| porte | mécanisme | ce qui reste possible au joueur |
+|---|---|---|
+| **1. approche** | `tapped_zipline` gaté par `ZiplineDoor`, retrait au tap | Keepy est en `HOPPING` ordinaire : tout tap retombe sur `tapped_ground` et **annule** `_zipping` |
+| **2. trajet** | `State.ON_ZIPLINE`, tap jeté dans la branche d'état | légitime **uniquement** parce que le trajet est **BORNÉ** par un tween linéaire finissant sur l'ancrage de la tour d'arrivée — la licence du hibou, non extensible à une phase non bornée |
+| **3. arrivée** | `set_riding(false, arrivée)` + `leave_zipline` | modèle `leave_ride` : **la destination survit à la chute**, un tap achète le trajet ET la marche |
+
+**L'escalier ne porte aucun hotspot**, et la PHASE F de
+`ZiplineStructureProbe` le gate par le texte source — elle a été
+**INVERSÉE** ce lot : elle assertait « aucun canal de tap nulle part », ce
+qui est désormais faux par construction. Ce qui survit à l'inversion est la
+moitié qui relevait de la doctrine : le canal existe, il passe par une porte
+qui **se retire**, et rien ne fait de la marche une cible de tap.
+
+### ⚠️ LA PASSE ROUGE A TROUVÉ QUE LE RETRAIT ÉTAIT PORTÉ PAR DEUX MÉCANISMES
+
+Premier essai : neutraliser `_riding` seul. **UN rouge là où TROIS étaient
+attendus** — et `CLAUDE.md` dit que le nombre d'échecs attendus fait partie
+de l'assertion. Cause : `set_riding(true)` pose AUSSI `_at_end = −1`, et
+`is_available_at()` comme `accepts_boarding_tap()` refusent déjà sur ce
+second fait. La chaîne complète :
+
+| passe rouge | résultat | ce que ça établit |
+|---|---|---|
+| `_riding` retiré seul | **1 FAIL** | le drapeau est réellement lu |
+| `_at_end = −1` retiré seul, `_riding` gardé | **0 FAIL** | **le booléen partagé SEUL ferme les deux extrémités** — la règle du brief, prouvée |
+| **les deux** retirés (patron ÉCHELLE complet) | **3 FAIL** | les trois assertions de retrait savent échouer |
+| l'écriture du blaireau retirée de `_apply_zip` | **1 FAIL**, retard 9,307817 u | le second passager est bien écrit dans l'appel du porteur |
+| l'écriture `_apply_zip(0.0)` immédiate retirée | **1 FAIL**, dot −1,0000 | voir ci-dessous |
+
+Fichiers restaurés et vérifiés **byte-identiques** (`cmp`) après chaque
+passe.
+
+### ⚠️ UNE FRAME DE TRAJET RETOUR À L'ENVERS, TROUVÉE PAR LA SONDE
+
+Le premier pas d'un `Tween` tombe à la frame SUIVANTE. Sur un trajet
+**retour**, la nacelle porte encore le cap du trajet aller jusqu'à ce pas —
+donc une frame de chaque retour dessinait **deux passagers face à l'arrière
+de leur propre câble**. Corrigé par un `_apply_zip(0.0)` immédiat à
+l'ouverture du trajet, qui est le même « placé tout de suite plutôt
+qu'attendre le pas suivant » que le montage de l'ours fait déjà.
+
+### PAYLOAD — MESURÉ AUX DEUX BOUTS, PAS ESTIMÉ
+
+Export web complet des DEUX arbres (baseline = `origin/staging` `b0e0a8f`
+dans un worktree séparé, import complet vérifié ; `rm -rf build` avant
+chaque export, zéro ligne `Storing File: res://build/`) :
+
+| | baseline | palier 2 | delta |
+|---|---|---|---|
+| **`index.pck`** | **43 304 320** | **55 139 728** | **+11 835 408 octets (+11,29 Mio, +27,3 %)** |
+| `index.wasm` | 35 376 909 | **35 376 909** | 0 — md5 `af4a8fc2925d992348eb30deeeb54360` des deux côtés |
+| `index.js` | 331 495 | **331 495** | 0 — md5 `4e08904b1b7107858246af44b602067b` |
+
+Le delta est **entièrement** le blaireau, et il s'itemise exactement :
+
+| part packée | octets |
+|---|---|
+| `keepy_badger_walker.glb-…scn` | 264 451 |
+| `keepy_badger_walker_texture_0.png-….ctex` (**ÉMISSION**) | **5 778 528** |
+| `keepy_badger_walker_texture_0_1.png-….ctex` (albédo) | 5 778 528 |
+| les deux `.import` | ~3 901 |
+| **total** | **11 835 408** ✔ |
+
+⚠️ **LA MOITIÉ ÉMISSION EST DE LA CHARGE MORTE, ET C'EST CHIFFRÉ.**
+`HubActorWalker._force_unshaded()` force chaque surface en
+`SHADING_MODE_UNSHADED`, et `CLAUDE.md` établit que **l'émission est INERTE
+sur une surface unshaded**. Les **5 778 528 octets** de
+`texture_0.ctex` sont donc téléchargés par chaque joueur mobile et ne
+dessinent rien : **48,8 % du delta de ce lot, 10,5 % du `.pck` de
+baseline**. Désactiver le map à l'import ne rendrait rien (un `.ctex` non
+référencé est packé quand même) ; **il faut retirer l'`emissiveTexture` du
+`.glb` d'`assets/models/`**, ce qui est la méthode que `CLAUDE.md`
+documente et qui a déjà économisé jusqu'à 10,7 Mo sur un autre asset.
+
+**NON FAIT DANS CE LOT, DÉLIBÉRÉMENT** : la méthode exige sa propre preuve
+au pixel (rendus offscreen byte-identiques à plusieurs azimuts), et elle
+touche une copie dérivée d'un asset que Mathieu vient de restaurer. Le
+chiffre est publié pour qu'il soit tranché en un mot. La source
+d'`assets_source/` reste **byte-identique** (`dbc6fbcb116a793012c7fe92e0ad2082`).
+
+Vérifié aussi : **zéro** ligne `Storing File: res://assets_source/` dans le
+log de `savepack` — `exclude_filter` tient, et le `.glb` de 14,5 Mo ne part
+qu'**une** fois, par `assets/models/`.
+
+### Draw nodes : 141 → 144, itemisés
+
+La nacelle est **trois** `MeshInstance3D` : une poulie sur le fil, une tige,
+et le barreau auquel les deux passagers pendent. Une seule maille aurait
+laissé deux corps se balancer sous un point. Relevé et gaté dans les
+**quatre** sondes qui portent ce budget (`ZiplineStructureProbe`,
+`TurnstileProbe`, `WaterTintProbe`, `SeesawProbe`).
+
+⚠️ **Le blaireau n'est PAS dans ce compte et ne peut pas y être** : comme
+l'ours, il vit sous `World/` et non sous `World/Props`, que ce budget est le
+seul sous-arbre à parcourir. Son coût est **UN** `MeshInstance3D` (la maille
+skinnée unique du rig), publié ici plutôt que porté par une assertion qui,
+structurellement, ne peut pas l'observer.
+
+### Sonde
+
+`scripts/dev/ZiplineRideProbe.{gd,tscn}` — **gate un contrat permanent**,
+donc elle entre dans le dépôt et compte. **`--headless` est le bon driver
+ici** et c'est délibéré : elle ne lit ni pixel, ni transform de `MultiMesh`,
+ni point d'écran, ni shader — la nacelle est un `Node3D` ordinaire, les
+sièges sont de l'arithmétique, le couloir est un test de distance. Sa sœur
+`ZiplineStructureProbe`, elle, lit des `MultiMesh` et exige `opengl3`.
+`--fixed-fps 60` est **requis** des deux côtés.
+
+| phase | ce qu'elle gate |
+|---|---|
+| REGISTRY | la nacelle est bâtie et garée sur l'ancrage proche ; le blaireau est au sol, au point de repos de l'extrémité 0, **hors de l'axe de l'escalier** ; la porte est ouverte à 0 et **fermée à 1** ; le disque de tap suit l'acteur VIVANT |
+| SEATS | sièges en miroir, à la même hauteur, DANS le barreau ; crâne **sous** le barreau et sous le câble ; pieds décollés du sol et **sous le deck**. **Blind check** : un corps 0,5 u plus grand pend 0,5 u plus bas |
+| CORRIDOR | 210 pièces dessinées recoupent la bande des passagers ; toutes dégagées de **+0,159 u** au pire. **Blind check** : élargir les passagers de 0,659 u rend −0,500 |
+| CANCEL | porte 1 — un tap ordinaire pendant l'approche **annule**, la marche n'embarque pas, la porte n'a jamais fermé |
+| TRIP | porte 2 — marche réelle par la chaîne de signaux livrée ; **les deux extrémités fermées**, tap refusé aux deux tours ; retard des **DEUX** passagers < 0,0005 u avec **blind check** de 9,31 u parcourus ; un tap en trajet n'ouvre pas de second trajet ; aucun portail ne s'ouvre |
+| ARRIVAL | porte 3 — nacelle garée sur l'ancrage lointain à 0,000000 u ; blaireau au sol au repos de l'extrémité 1 ; la porte nomme **1** et plus **0** ; Keepy redescend sur du sol marchable, hors de l'emprise de la tour ; un tap ordinaire le remet en marche |
+| RETURN | **l'autre sens** : un tap à l'extrémité 1 embarque, le trajet court 1 → 0, la nacelle **s'est retournée** (dot 1,0000), et la paire est de retour à 0 |
+| UNTOUCHED | bateau, hibou, trois échelles, trois plongeoirs, balançoire, tourniquet, trois portails, l'ours : tous encore publiés |
+
+### Ce que ce lot NE peut PAS trancher
+
+Si deux petits animaux pendus à un fil **se lisent** comme une paire qui
+prend une tyrolienne, sur un écran de six pouces, sous une caméra qui ne
+tourne jamais, depuis une extrémité qui ne voit pas l'autre. Aucune sonde de
+ce dépôt ne score la lisibilité à l'intérieur d'une bande de luminance.
+**C'est la validation device qui tranche**, et c'est le seul gate qui reste
+avant `main` — auquel s'ajoute, cette fois, un arbitrage de payload que
+seul Mathieu peut rendre : **+11,29 Mio, dont 5,78 Mio inertes**.
