@@ -762,6 +762,145 @@ const SEESAW_PLANK_COLOR: Color = PONTOON_COLOR
 const SEESAW_GRIP_COLOR: Color = BOAT_RIM_COLOR
 const SEESAW_FULCRUM_COLOR: Color = ROCK_COLOR
 
+## =====================================================================
+## ZIPLINE -- TIER 1: THE STRUCTURE ONLY (3 septembre 2026)
+##
+## Two towers and the cable between them. NO interaction, NO ride, NO tap
+## channel of any kind -- tier 2 owns all of that. What ships here is
+## geometry a device can be pointed at, and the published facts tier 2
+## will read rather than re-derive.
+##
+## AUTHORED BY ITS TWO ENDS, exactly like &"divingboard" and for the same
+## reason: the entry carries "position" (the near tower) and "far_end"
+## (the far one), and everything else -- the facing of each tower, where
+## each stair runs, where the cable is strung -- is BUILT from those two
+## points. A second orthography of the facing (a "rotation_y", a per-tower
+## entry) would be free to disagree with the first, so this type refuses
+## rotation_y and scale the way &"stream" and &"divingboard" do.
+##
+## ONE ENTRY, TWO TOWERS. A zipline is not two props that happen to face
+## each other -- a cable that started at one end and missed the other is
+## the failure this shape makes unrepresentable. It is also why
+## ground_footprints() and _build's walkability check both read
+## _zipline_ends() rather than the entry's "position" alone: an entry with
+## two feet on the ground that reported one would be a tower nothing knows
+## is there.
+##
+## THE NUMBERS MATHIEU FROZE, and which are not this file's to relitigate:
+## P1 = (27.7, 0, 9.2), P2 = (25.2, 0, 35.0) -- 25.921 u apart, both at
+## ground level (the plateau is flat; no terrain height function exists in
+## this repo), so the cable is LEVEL and not a slope. Cable height 2.0 u:
+## measured in recon (docs/lots/CH21_TYROLIENNE.md, RECON 5) to be the
+## point past which extra height buys NO further corridor clearance --
+## the same landmark stays the limiting factor from 2 u to 8 u.
+##
+## ⚠️ THE STRUCTURE RADIUS THIS IS BUILT AGAINST IS 1.932 u, MEASURED.
+## A figure of "4.03 u, already measured on DivingBoard" circulated across
+## several briefs; it EXISTS NOWHERE in this repo -- grepped over .gd,
+## .md, .tscn and .json, zero hits -- and at P1 it would have put the
+## tower 1.9 u INSIDE the neighbouring decor. The only radius ever
+## published for the DivingBoard family is 1.932 u, measured twice on the
+## built tree. Everything below is budgeted against that, and the probe
+## re-measures the AS-BUILT footprint rather than trusting this comment.
+const ZIPLINE_CABLE_HEIGHT: float = 2.0
+
+## How far BELOW the cable a rider hangs. Measured in recon (RECON 5's
+## corridor sweep subtracts exactly this before testing clearance), and
+## published HERE rather than left in a probe, because it is the number
+## the deck height is derived from -- and tier 2's ride will read it from
+## this constant instead of retyping it.
+const ZIPLINE_RIDER_DROP: float = 1.10
+
+## The platform Keepy will stand on. DERIVED, never chosen: a rider hangs
+## at cable height minus the drop, so a deck at that same height means the
+## departure, the flight and the arrival are all one level. A deck picked
+## independently would be a second answer to "how high does a rider fly",
+## free to disagree with the first.
+const ZIPLINE_DECK_HEIGHT: float = ZIPLINE_CABLE_HEIGHT - ZIPLINE_RIDER_DROP
+
+## The platform slab. 1.30 u across -- Keepy is 0.66 at the shoulder, so
+## this is a deck he stands ON rather than balances on.
+const ZIPLINE_DECK_HALF: float = 0.65
+const ZIPLINE_DECK_THICKNESS: float = 0.10
+
+## The four uprights. The REAR pair stops at the deck; the FRONT pair (the
+## one the cable leaves from) carries on up to cable height and becomes
+## the head frame -- one part doing both jobs, so the mast and the cable
+## anchor cannot drift apart.
+const ZIPLINE_LEG_RADIUS: float = 0.09
+const ZIPLINE_LEG_HALF_SPAN: float = 0.55
+const ZIPLINE_LEG_FORWARD: float = 0.55
+
+## The beam across the two masts, at cable height. The cable is anchored
+## at its midpoint, which is why the beam's height is not a number of its
+## own: it IS ZIPLINE_CABLE_HEIGHT.
+const ZIPLINE_HEADBEAM_RADIUS: float = 0.06
+
+## The stair, behind the deck. Four treads plus the deck itself makes five
+## risers, so a tread is DECK_HEIGHT / 5 = 0.18 high on a 0.26 run -- a
+## 35 deg climb, steep enough to keep the whole prop inside the 1.932 u
+## budget and shallow enough to still read as stairs rather than a ladder.
+## The count and the depth are exactly what that budget is spent on, and
+## the arithmetic is tight rather than comfortable: at 0.28 the prop
+## measures 1.859 u and still fits, at 0.30 it reaches 1.935 and does not.
+const ZIPLINE_STEP_COUNT: int = 4
+const ZIPLINE_STEP_DEPTH: float = 0.26
+const ZIPLINE_STEP_WIDTH: float = 0.80
+const ZIPLINE_STEP_THICKNESS: float = 0.10
+
+## The two rails the treads sit between, from the deck edge down to the
+## foot of the stair. They are the WIDEST thing this prop puts on the
+## ground at its furthest reach, so they -- not the treads -- set the
+## circumscribed footprint below.
+const ZIPLINE_STRINGER_THICKNESS: float = 0.08
+const ZIPLINE_STRINGER_DEPTH: float = 0.10
+const ZIPLINE_STRINGER_HALF_SPAN: float = 0.42
+
+## The cable. A CYLINDER and not a SurfaceTool ribbon, deliberately: the
+## stream's ribbon exists because its trace is a wide curve that has to
+## follow a spine, and a flat quad has an orientation that has to be right
+## for the angle it is seen from. This cable is straight, 0.07 u across,
+## and seen from a camera that never turns -- a thin cylinder is correct
+## from every azimuth by construction, costs 32 triangles, and is opaque,
+## so it never enters the transparent pass where this project has already
+## paid for depth-write ordering once.
+const ZIPLINE_CABLE_RADIUS: float = 0.035
+const ZIPLINE_CABLE_SEGMENTS: int = 6
+
+## What one tower puts on the ground, as a circumscribed radius: the far
+## bottom corner of a stringer where it meets the ground at the foot of the
+## stair -- see _zipline_circumscribed_radius() for the derivation.
+##
+## ⚠️ IT IS NOT hypot(DECK_HALF + COUNT * DEPTH, HALF_SPAN + THICKNESS/2).
+## That reads 1.72880 and is WRONG BY 5 cm, because a stringer is TILTED:
+## its faces are rectangles lying across the slope, so its furthest corner
+## overhangs the foot of the stair by a further
+## STRINGER_DEPTH/2 * (DECK_HEIGHT / slope length). MEASURED against the
+## eight transformed corners of the BUILT box, and it took two goes: the
+## naive expression first, then a corrected one that used run/length where
+## the ratio is height/length. The as-built measurement caught both --
+## 1.72880, then 1.78800, against a drawn 1.78308.
+##
+## Written as a literal because GDScript has no sqrt() in a const
+## expression, and RE-DERIVED from those constants in _ready() so it cannot
+## quietly drift from the geometry it claims to describe. Under Mathieu's
+## 1.932 u budget with 0.149 u to spare.
+const ZIPLINE_FOOTPRINT_RADIUS: float = 1.78308
+
+## Timber, all three REUSED and none of them new: the deck and the treads
+## take the pontoons' plank colour (as the diving board's deck does), the
+## frame takes the boat hull's darker one (as the diving board's frame
+## does), and the cable takes the boat rim's pale one -- already the
+## project's "a thing you grab" colour on the seesaw grips and the
+## turnstile bars. The rim colour is also the only one of the three that
+## clears the hub ground's contrast floor: relative luminance 0.563
+## against the rendered ground's 0.0799 is 4.72:1, well past 3.0:1, which
+## is what a 0.07 u thread strung 24 u across the frame needs to be seen
+## at all.
+const ZIPLINE_DECK_COLOR: Color = PONTOON_COLOR
+const ZIPLINE_FRAME_COLOR: Color = BOAT_HULL_COLOR
+const ZIPLINE_CABLE_COLOR: Color = BOAT_RIM_COLOR
+
 ## The first non-Keepy Meshy model on this plateau: a static, purely
 ## decorative owl (assets/models/keepy_owl_decor.glb, converted from
 ## assets_source/openworld/perso/Meshy_AI_Ember_Eyed_Owlet_0828125359_texture.glb
@@ -914,6 +1053,12 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	&"seesaw": SEESAW_PLANK_LENGTH * 0.5,
 	&"owl": OWL_FOOTPRINT_RADIUS,
 	&"cabin": CABIN_FOOTPRINT_RADIUS,
+	# ONE radius, TWO feet. Every other type here puts its footprint at the
+	# entry's own "position"; a zipline puts an identical tower at each of
+	# its two ends, so ground_footprints() reads _zipline_ends() for this
+	# type and emits the pair. A single footprint would leave the far tower
+	# invisible to every landing check on the plateau.
+	&"zipline": ZIPLINE_FOOTPRINT_RADIUS,
 }
 
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
@@ -993,6 +1138,10 @@ var _last_cabin: Dictionary = {}
 ## for the shape of one entry.
 var _diving_boards: Array[Dictionary] = []
 
+## Every &"zipline" built, in layout order. Plural from the first entry --
+## see the note at its record site in _build.
+var _ziplines: Array[Dictionary] = []
+
 ## Every &"islet" as built -- {"centre": Vector3 (flat), "radius": float}, in
 ## layout order. See islets() for why this exists at all.
 var _islets: Array[Dictionary] = []
@@ -1012,7 +1161,36 @@ var _batch_order: Array[StringName] = []
 func _ready() -> void:
 	assert(_FLOWER_PETAL_KEYS.size() == FLOWER_PETAL_COLORS.size(),
 		"HubBuilder: a corolla tint has no batch key, or the reverse.")
+	# ZIPLINE_FOOTPRINT_RADIUS is a hand-written literal because GDScript
+	# refuses sqrt() in a const expression. Re-derived here from the
+	# constants it is supposed to summarise: change the stair depth or the
+	# stringer span and the literal fails loudly instead of quietly
+	# under-reporting what the tower puts on the ground.
+	assert(absf(ZIPLINE_FOOTPRINT_RADIUS - _zipline_circumscribed_radius()) < 0.00001,
+		"HubBuilder: ZIPLINE_FOOTPRINT_RADIUS no longer matches the stair it describes.")
 	_build()
+
+## The circumscribed ground radius of ONE tower, derived from the geometry
+## rather than restated: the far bottom corner of a stringer where it meets
+## the ground at the foot of the stair.
+##
+## Three terms, and the third is the one that is easy to miss -- twice.
+## The stair reaches DECK_HALF + COUNT * DEPTH behind the tower centre; a
+## stringer sits STRINGER_HALF_SPAN + THICKNESS/2 out to the side; and
+## because the stringer is a box TILTED along the slope, its furthest
+## corner overhangs the foot by DEPTH/2 scaled by the slope's VERTICAL
+## fraction (DECK_HEIGHT / slope length), NOT its horizontal one. The
+## thickness axis of a tilted box leans the opposite way to the box, which
+## is why the intuitive run/length is the wrong ratio and reads 5 mm long.
+## The legs (0.868) and the treads are both inside the result, which is why
+## this is the only corner the expression needs.
+func _zipline_circumscribed_radius() -> float:
+	var run: float = ZIPLINE_STEP_DEPTH * float(ZIPLINE_STEP_COUNT)
+	var slope_length: float = sqrt(run * run + ZIPLINE_DECK_HEIGHT * ZIPLINE_DECK_HEIGHT)
+	var overhang: float = ZIPLINE_STRINGER_DEPTH * 0.5 * (ZIPLINE_DECK_HEIGHT / slope_length)
+	var reach: float = ZIPLINE_DECK_HALF + run + overhang
+	var lateral: float = ZIPLINE_STRINGER_HALF_SPAN + ZIPLINE_STRINGER_THICKNESS * 0.5
+	return sqrt(reach * reach + lateral * lateral)
 
 ## Every portal built, in layout order. HubWorld connects them after the
 ## build rather than the builder knowing what a portal is wired to.
@@ -1061,6 +1239,27 @@ func stream_half_width() -> float:
 ## one. Boards are independent of each other, so the plural is a list and
 ## not a special case; the climb still owns exactly one AT A TIME, which is
 ## KeepyHopper's business and unchanged.
+## Every zipline that was actually DRAWN, as one dictionary each:
+##
+##   "towers"       two entries, layout order (near end first), each
+##                  {"position": flat Vector3, "forward": unit Vector3
+##                  towards the OTHER tower, "deck": the platform's top
+##                  surface at the tower's centre, "anchor": where the
+##                  cable is fixed on this tower, "stair_foot": the flat
+##                  point on the ground the stair comes down to}
+##   "cable"        {"from": Vector3, "to": Vector3} -- the drawn cable's
+##                  two endpoints, which ARE the two towers' anchors
+##   "cable_height" the level the cable was strung at
+##   "rider_drop"   how far below the cable a rider hangs
+##   "clear_radius" what one tower puts on the ground
+##
+## AS-BUILT and published once, so tier 2's ride reads where the cable
+## actually is rather than recomputing it from the layout -- the failure
+## this repo has already paid for on a doorstep that did not scale with
+## its cabin and on two homonymous lake radii.
+func ziplines() -> Array[Dictionary]:
+	return _ziplines
+
 func diving_boards() -> Array[Dictionary]:
 	return _diving_boards
 
@@ -1187,13 +1386,37 @@ func ground_footprints() -> Array:
 		var type: StringName = entry.get("type", &"")
 		if not FOOTPRINT_RADIUS.has(type):
 			continue
-		var where: Vector3 = entry.get("position", Vector3.ZERO)
 		var uniform: float = entry.get("scale", 1.0)
-		out.append({
-			"position": Vector3(where.x, 0.0, where.z),
-			"radius": float(FOOTPRINT_RADIUS[type]) * uniform,
-		})
+		var radius: float = float(FOOTPRINT_RADIUS[type]) * uniform
+		# A zipline stands a tower at EACH of its two ends, so it reports
+		# two footprints from one entry -- the same reason _build walks
+		# _zipline_ends() for its walkability check. Read through the one
+		# accessor rather than re-parsed here: two readings of "where are
+		# the towers" is how one of them ends up unguarded.
+		var feet: Array = _zipline_ends(entry) if type == &"zipline" else [entry.get("position", Vector3.ZERO)]
+		for foot in feet:
+			var where: Vector3 = foot
+			out.append({
+				"position": Vector3(where.x, 0.0, where.z),
+				"radius": radius,
+			})
 	return out
+
+## The two ends a &"zipline" entry is authored by, FLAT, in layout order --
+## the near tower ("position") then the far one ("far_end"). Empty when the
+## entry is malformed, which every caller treats as "there is no zipline
+## here" rather than inventing a second end.
+##
+## THE one reading of those two points. _make_zipline builds from it,
+## ground_footprints() guards from it, and _build's reachability check
+## walks it -- so a layout that moves an end moves everything that depends
+## on it, instead of moving two of the three.
+func _zipline_ends(entry: Dictionary) -> Array:
+	var near: Vector3 = entry.get("position", Vector3.ZERO)
+	var far: Vector3 = entry.get("far_end", Vector3.INF)
+	if far == Vector3.INF:
+		return []
+	return [Vector3(near.x, 0.0, near.z), Vector3(far.x, 0.0, far.z)]
 
 func _build() -> void:
 	if layout == null:
@@ -1247,6 +1470,8 @@ func _build() -> void:
 					node = _make_owl(index)
 				&"cabin":
 					node = _make_cabin(index)
+				&"zipline":
+					node = _make_zipline(entry, index, where)
 				_:
 					push_error("HubBuilder: entry %d has unknown type '%s', skipped." % [index, type])
 					continue
@@ -1281,6 +1506,11 @@ func _build() -> void:
 		var anchors: Array = [where]
 		if type == &"stream":
 			anchors = _trace_points(entry)
+		elif type == &"zipline":
+			# Both towers, for the same reason a stream walks its whole
+			# trace: an entry with two feet that only checked one could
+			# ship a tower nobody can walk to and warn about nothing.
+			anchors = _zipline_ends(entry)
 		var offshore: bool = entry.get("offshore", false)
 		for anchor in anchors:
 			var point: Vector3 = anchor
@@ -1366,6 +1596,15 @@ func _build() -> void:
 				# place to play rather than an ambiguity.
 				if not _last_turnstile.is_empty():
 					_spinning_props.append(_last_turnstile)
+			if type == &"zipline":
+				# Recorded AFTER add_child, on the boards' plural terms:
+				# every published cable is one that actually got drawn.
+				# An Array from the first entry even though the layout
+				# ships one -- a table is a list from the first commit,
+				# which this repo has already paid a whole batch to learn
+				# on the diving board's singleton.
+				if not _last_zipline.is_empty():
+					_ziplines.append(_last_zipline)
 			if type == &"divingboard":
 				# Recorded AFTER add_child, alongside the hull, so every
 				# published board is one that actually got drawn.
@@ -1483,6 +1722,36 @@ func _batch_spec(key: StringName) -> Array:
 			stem.radial_segments = 6
 			stem.rings = 1
 			return [stem, FLOWER_STEM_COLOR]
+		&"ZiplineLeg":
+			var leg := CylinderMesh.new()
+			leg.top_radius = ZIPLINE_LEG_RADIUS
+			leg.bottom_radius = ZIPLINE_LEG_RADIUS
+			leg.height = ZIPLINE_DECK_HEIGHT
+			leg.radial_segments = 8
+			leg.rings = 1
+			return [leg, ZIPLINE_FRAME_COLOR]
+		&"ZiplineMast":
+			var mast := CylinderMesh.new()
+			mast.top_radius = ZIPLINE_LEG_RADIUS
+			mast.bottom_radius = ZIPLINE_LEG_RADIUS
+			mast.height = ZIPLINE_CABLE_HEIGHT
+			mast.radial_segments = 8
+			mast.rings = 1
+			return [mast, ZIPLINE_FRAME_COLOR]
+		&"ZiplineStep":
+			var step := BoxMesh.new()
+			step.size = Vector3(ZIPLINE_STEP_WIDTH, ZIPLINE_STEP_THICKNESS, ZIPLINE_STEP_DEPTH)
+			return [step, ZIPLINE_DECK_COLOR]
+		&"ZiplineStringer":
+			# Long enough to span the stair exactly, derived here rather
+			# than written down: sqrt() is legal in a function and not in
+			# the const block, and one derivation beats a literal that
+			# would have to be kept in step with the stair by hand.
+			var run: float = ZIPLINE_STEP_DEPTH * float(ZIPLINE_STEP_COUNT)
+			var stringer := BoxMesh.new()
+			stringer.size = Vector3(ZIPLINE_STRINGER_THICKNESS, ZIPLINE_STRINGER_DEPTH,
+				sqrt(run * run + ZIPLINE_DECK_HEIGHT * ZIPLINE_DECK_HEIGHT))
+			return [stringer, ZIPLINE_FRAME_COLOR]
 		_:
 			var tint: int = _FLOWER_PETAL_KEYS.find(key)
 			if tint < 0:
@@ -2313,6 +2582,184 @@ func _make_divingboard(entry: Dictionary, index: int, where: Vector3) -> Node3D:
 	}
 	return root
 
+
+## Scratch for the zipline just built, handed to _build the way the
+## board's and the turnstile's are. Not the published copy.
+var _last_zipline: Dictionary = {}
+
+## The zipline: a tower at each end of the entry's two points, and the
+## cable strung between their head frames.
+##
+## TIER 1 -- STRUCTURE ONLY. Nothing here registers a tap channel, a
+## trigger radius or a ride. The stairs in particular carry NO hotspot of
+## their own, on purpose: RECON 1 (docs/lots/CH21_TYROLIENNE.md) settled
+## that a stair that swallows taps and emits nothing is the LADDER PATTERN
+## this repo has banned -- a player standing on it would have no way left
+## to say anything. Whatever tier 2 wires up will be a BOAT-PATTERN door
+## on the boarding structure, which withdraws itself while it is in use so
+## a tap always falls through to the ground path.
+##
+## `where` is the NEAR end in world space -- the same value _build gives
+## the returned node -- and it is passed in because the legs, treads and
+## stringers are BATCHED, and a batch instance carries a WORLD transform
+## rather than living under this node. Everything that IS a child of the
+## root is therefore built in the root's own space (world minus `where`),
+## which is the one subtraction in this function and is done in one place.
+func _make_zipline(entry: Dictionary, index: int, where: Vector3) -> Node3D:
+	_last_zipline = {}
+
+	# Refused rather than honoured, exactly as &"stream" and
+	# &"divingboard" refuse them: the facing of both towers already comes
+	# from the two ends, so a rotation would be a second orthography of it.
+	if entry.has("rotation_y") or entry.has("scale"):
+		push_warning("HubBuilder: entry %d is a zipline and carries rotation_y/scale; both towers face along its two ends, so those are ignored." % index)
+
+	var ends: Array = _zipline_ends(entry)
+	if ends.is_empty():
+		push_error("HubBuilder: entry %d is a zipline with no \"far_end\"; a cable needs two ends." % index)
+		return null
+	var near: Vector3 = ends[0]
+	var far: Vector3 = ends[1]
+	var span: Vector3 = far - near
+	if span.length_squared() < 0.000001:
+		push_error("HubBuilder: entry %d has a zipline whose two ends are the same point; there is nothing to string a cable across." % index)
+		return null
+	var forward: Vector3 = span.normalized()
+
+	var root := Node3D.new()
+	root.name = "Zipline"
+
+	# Same structure at both ends, each facing the other -- the cable is
+	# bidirectional, so there is no "start" tower and no "arrival" one to
+	# build differently. ONE builder called twice rather than two nearly
+	# identical blocks: a departure that drifted from an arrival is exactly
+	# the kind of divergence a second copy invites.
+	var towers: Array = [
+		_build_zipline_tower(root, forward, near, where),
+		_build_zipline_tower(root, -forward, far, where),
+	]
+
+	# ---- the cable, anchored on the two head frames it was measured from
+	var from_world: Vector3 = towers[0]["anchor"]
+	var to_world: Vector3 = towers[1]["anchor"]
+	var cable := CylinderMesh.new()
+	cable.top_radius = ZIPLINE_CABLE_RADIUS
+	cable.bottom_radius = ZIPLINE_CABLE_RADIUS
+	cable.height = from_world.distance_to(to_world)
+	cable.radial_segments = ZIPLINE_CABLE_SEGMENTS
+	cable.rings = 1
+	# A CylinderMesh stands on its own +Y, and the cable lies ALONG the
+	# span -- so the basis maps that +Y onto `forward`. Built from two
+	# vectors rather than an Euler angle, on the diving board's rungs'
+	# terms: the columns are orthonormal and right-handed by construction,
+	# which an angle would only be if the sign convention were guessed
+	# right.
+	var cable_node: MeshInstance3D = _placed(cable, ZIPLINE_CABLE_COLOR,
+		Basis(forward.cross(Vector3.UP), forward, Vector3.UP),
+		(from_world + to_world) * 0.5 - where)
+	# NAMED, and the probe filters on it: the cable spans 24 u between two
+	# towers, so a footprint measurement that swept every drawn child of
+	# this root without excluding it would report an emprise the width of
+	# the plateau and pass nothing.
+	cable_node.name = "Cable"
+	root.add_child(cable_node)
+
+	_last_zipline = {
+		"towers": towers,
+		"cable": {"from": from_world, "to": to_world},
+		"cable_height": ZIPLINE_CABLE_HEIGHT,
+		"rider_drop": ZIPLINE_RIDER_DROP,
+		"clear_radius": ZIPLINE_FOOTPRINT_RADIUS,
+	}
+	return root
+
+## One tower, at `origin` in world space, facing `forward` (towards the
+## other tower). Adds its node-owned parts under `root` in the root's own
+## space -- hence `root_origin`, the world position _build will give that
+## root -- and files its repeated parts into the shared batches in WORLD
+## space. Returns the facts about the tower it just drew.
+func _build_zipline_tower(root: Node3D, forward: Vector3, origin: Vector3, root_origin: Vector3) -> Dictionary:
+	var side := Vector3(forward.z, 0.0, -forward.x)
+	# side x UP == forward, so these three columns are orthonormal and
+	# right-handed by construction -- the same reasoning as the cable's.
+	var facing := Basis(side, Vector3.UP, forward)
+	var local: Vector3 = origin - root_origin
+
+	# ---- the platform
+	var deck := BoxMesh.new()
+	deck.size = Vector3(ZIPLINE_DECK_HALF * 2.0, ZIPLINE_DECK_THICKNESS, ZIPLINE_DECK_HALF * 2.0)
+	var deck_node: MeshInstance3D = _placed(deck, ZIPLINE_DECK_COLOR, facing,
+		local + Vector3.UP * (ZIPLINE_DECK_HEIGHT - ZIPLINE_DECK_THICKNESS * 0.5))
+	deck_node.name = "Deck"
+	root.add_child(deck_node)
+
+	# ---- uprights, BATCHED. Rear pair stops at the deck; front pair
+	# carries on to cable height and becomes the head frame.
+	for lateral in [-ZIPLINE_LEG_HALF_SPAN, ZIPLINE_LEG_HALF_SPAN]:
+		var rear: Vector3 = origin - forward * ZIPLINE_LEG_FORWARD + side * float(lateral)
+		_instance(&"ZiplineLeg",
+			Transform3D(Basis.IDENTITY, rear + Vector3.UP * (ZIPLINE_DECK_HEIGHT * 0.5)))
+		var front: Vector3 = origin + forward * ZIPLINE_LEG_FORWARD + side * float(lateral)
+		_instance(&"ZiplineMast",
+			Transform3D(Basis.IDENTITY, front + Vector3.UP * (ZIPLINE_CABLE_HEIGHT * 0.5)))
+
+	# ---- the head beam across the two masts. Its +Y lies along `side`,
+	# the rungs' basis exactly.
+	var beam := CylinderMesh.new()
+	beam.top_radius = ZIPLINE_HEADBEAM_RADIUS
+	beam.bottom_radius = ZIPLINE_HEADBEAM_RADIUS
+	beam.height = ZIPLINE_LEG_HALF_SPAN * 2.0 + ZIPLINE_LEG_RADIUS * 2.0
+	beam.radial_segments = 6
+	beam.rings = 1
+	var anchor: Vector3 = origin + forward * ZIPLINE_LEG_FORWARD + Vector3.UP * ZIPLINE_CABLE_HEIGHT
+	var beam_node: MeshInstance3D = _placed(beam, ZIPLINE_FRAME_COLOR,
+		Basis(side.cross(Vector3.UP), side, Vector3.UP), anchor - root_origin)
+	beam_node.name = "HeadBeam"
+	root.add_child(beam_node)
+
+	# ---- treads, BATCHED: identical geometry repeated down the stair is
+	# the one thing on this prop a MultiMesh is for. The deck is the LAST
+	# riser, which is why the count divides DECK_HEIGHT by COUNT + 1 --
+	# a tread level with the deck would be a step onto nothing.
+	for i in ZIPLINE_STEP_COUNT:
+		var top: float = ZIPLINE_DECK_HEIGHT * float(i + 1) / float(ZIPLINE_STEP_COUNT + 1)
+		var reach: float = ZIPLINE_DECK_HALF \
+			+ ZIPLINE_STEP_DEPTH * (float(ZIPLINE_STEP_COUNT - 1 - i) + 0.5)
+		_instance(&"ZiplineStep", Transform3D(facing,
+			origin - forward * reach + Vector3.UP * (top - ZIPLINE_STEP_THICKNESS * 0.5)))
+
+	# ---- stringers, BATCHED. From the foot of the stair up to the deck
+	# edge, so the treads read as fixed between two rails rather than
+	# floating. Their +Z lies along the slope; Y = Z x X keeps the basis
+	# right-handed without an angle anywhere.
+	#
+	# ⚠️ THE SLOPE RUNS foot -> head, AND THE SIGN IS NOT COSMETIC. Written
+	# first as (-forward * run + UP * height) -- backwards-and-up rather
+	# than forwards-and-up -- which MIRRORED each rail about the vertical:
+	# the drawn stringers ran from the deck edge at GROUND level up to the
+	# stair foot at DECK height, crossing the treads instead of carrying
+	# them. The emprise number is blind to it (a mirrored box has the same
+	# circumscribed radius -- measured, identical to five decimals), which
+	# is why the probe also gates that a rail's HIGH end is its end NEAREST
+	# the tower.
+	var run: float = ZIPLINE_STEP_DEPTH * float(ZIPLINE_STEP_COUNT)
+	var slope: Vector3 = (forward * run + Vector3.UP * ZIPLINE_DECK_HEIGHT).normalized()
+	var stair_foot: Vector3 = origin - forward * (ZIPLINE_DECK_HALF + run)
+	for lateral in [-ZIPLINE_STRINGER_HALF_SPAN, ZIPLINE_STRINGER_HALF_SPAN]:
+		var foot: Vector3 = stair_foot + side * float(lateral)
+		var head: Vector3 = origin - forward * ZIPLINE_DECK_HALF + side * float(lateral) \
+			+ Vector3.UP * ZIPLINE_DECK_HEIGHT
+		_instance(&"ZiplineStringer",
+			Transform3D(Basis(side, slope.cross(side), slope), (foot + head) * 0.5))
+
+	return {
+		"position": Vector3(origin.x, 0.0, origin.z),
+		"forward": forward,
+		"deck": Vector3(origin.x, ZIPLINE_DECK_HEIGHT, origin.z),
+		"anchor": anchor,
+		"stair_foot": Vector3(stair_foot.x, 0.0, stair_foot.z),
+	}
+
 ## Scratch for the turnstile just built, handed to _build the same way the
 ## board's is. Not the published copy.
 var _last_turnstile: Dictionary = {}
@@ -2562,6 +3009,20 @@ func _make_seesaw(_entry: Dictionary, _index: int, where: Vector3) -> Node3D:
 		"clear_radius": SEESAW_PLANK_LENGTH * 0.5,
 	}
 	return root
+
+## _mesh_node's sibling, for parts whose orientation is a BASIS rather than
+## a yaw. Euler angles are fine for a prop that only ever turns about Y;
+## the zipline's stringers lie along a slope and its cable and head beam
+## lie along horizontal axes derived from the span, and an Euler triple for
+## those is a sign convention waiting to be guessed wrong -- the same
+## reason the diving board's rungs are placed by a basis built from two
+## vectors it already has.
+func _placed(mesh: Mesh, colour: Color, basis: Basis, origin: Vector3) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	node.mesh = mesh
+	node.transform = Transform3D(basis, origin)
+	node.set_surface_override_material(0, _unshaded(colour))
+	return node
 
 func _mesh_node(mesh: Mesh, colour: Color, offset: Vector3, rotation_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
 	var node := MeshInstance3D.new()

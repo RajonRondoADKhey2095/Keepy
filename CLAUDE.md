@@ -601,6 +601,30 @@ le multiplier par une échelle que l'original ne multiplie pas, a enterré le
 personnage sous **68 % de sa taille**. Une moitié de somme se lit comme un
 nombre complet et **ne se signale jamais**.
 
+### ⚠️ UN CHIFFRE FANTÔME SURVIT AUX SESSIONS — le rayon de structure est 1,932 u
+
+Un « **4,03 u**, déjà mesuré sur `DivingBoard` » a été transporté de brief en
+brief pendant **plusieurs sessions**, présenté comme un acquis. **Grep
+exhaustif du dépôt — `.gd`, `.md`, `.tscn`, `.json` : ZÉRO occurrence.** Il
+n'a jamais existé nulle part. Le seul rayon jamais publié pour cette famille
+est **1,932 u**, mesuré sur l'arbre construit, deux fois, dans deux sessions
+différentes.
+
+Ce que le fantôme aurait coûté : au point P1 de la tyrolienne, une emprise de
+4,03 u mordait de **1,9 u** dans le décor voisin — et rien dans ce moteur ne
+se plaint qu'un prop en chevauche un autre. Le premier symptôme aurait été
+une capture d'écran sur device.
+
+**Un chiffre qui n'a pas de SOURCE dans le dépôt n'a pas de valeur, quel que
+soit le nombre de briefs qui le répètent.** Un chiffre répété est un chiffre
+répété, pas un chiffre mesuré : le grep qui le cherche coûte une commande, et
+le seul chiffre utilisable est celui qu'on peut rouvrir à l'endroit où il a
+été mesuré. Corollaire du même lot : une expression fermée « évidente » pour
+un rayon circonscrit s'est révélée fausse de **3 cm** parce qu'elle oubliait
+qu'une pièce INCLINÉE pose au sol un coin plus reculé que sa projection
+droite — trouvé par une sonde qui mesure les **huit coins transformés** de
+chaque pièce dessinée, jamais par relecture de la formule.
+
 ### ⚠️ LA MÉTRIQUE PEUT ÊTRE LA MAUVAISE, ET LE CHIFFRE VERT AVEC
 
 Deux fois au moins, un plafond gaté mesurait autre chose que la propriété

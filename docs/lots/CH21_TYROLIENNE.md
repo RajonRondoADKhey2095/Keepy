@@ -549,3 +549,203 @@ PHASE D lit des pixels.
 Rendus sous `docs/renders/zipline_recon/` (exclus du pack : `exclude_filter`
 couvre `docs/*`) : `ALL_three_runs`, `A_east__run`, `A_east__arrival`,
 `B_south__run`, `B_south__arrival`.
+
+---
+
+## PALIER 1 — LA STRUCTURE SEULE (3 septembre 2026)
+
+> **Ce que ce lot livre : deux tours et un câble, visibles en jeu sur
+> staging. Rien d'autre.** Aucune interaction, aucun canal de tap, aucun
+> déplacement de personnage, aucune chorégraphie, aucun blaireau — tout
+> cela est le palier 2, et une phase de sonde gate le fait que ce lot n'en
+> a rien câblé. Prémisses de RECON 5 reprises telles quelles ; les lignées
+> de recon antérieures (RECON 2 notamment, qui mesurait une DESCENTE à sens
+> unique de cap opposé) ne s'appliquent pas à ce tracé et n'ont pas été
+> relues comme si elles s'appliquaient.
+
+### Les décisions figées par Mathieu, et ce que ce lot en a fait
+
+| décision | traitement dans le code |
+|---|---|
+| P1 = (27,7 / 9,2), P2 = (25,2 / 35,0) | **une seule entrée de layout**, `"position"` + `"far_end"`. Mesurées AS-BUILT à 25,921 u d'écart, cap −5,53°, altitude 0 des deux côtés |
+| câble NIVELÉ à 2,0 u | `ZIPLINE_CABLE_HEIGHT`. La sonde asserte `Δy = 0` exactement entre les deux ancrages, pas « à peu près » |
+| emprise ≤ 1,932 u | budget de conception de tout le prop. **Mesuré as-built à 1,7880 u**, donc 0,144 u de marge |
+| déplacer la fleur | `FlowerPetal0` déplacée de **1,443 u**, de (28,336 / 6,894) à (28,86 / 5,55) |
+| asymétrie de visibilité acceptée | rien tenté pour la compenser |
+| patron ÉCHELLE interdit | **aucun hotspot sur les escaliers**, et la PHASE F le gate par le texte source |
+
+### ⚠️ LE RAYON DE STRUCTURE EST 1,932 u — le « 4,03 u » N'A JAMAIS EXISTÉ
+
+RECON 5 l'avait déjà écrit ; ce lot le redit parce que c'est le premier à
+BÂTIR contre ce nombre. Un « 4,03 u déjà mesuré sur DivingBoard » a circulé
+dans plusieurs briefs successifs. **Grep exhaustif du dépôt : zéro
+occurrence.** Le seul rayon jamais publié pour cette famille est **1,932 u**,
+mesuré deux fois sur l'arbre construit. À P1, une tour de 4,03 u aurait
+mordu de **1,9 u** dans le décor voisin — et l'aurait fait sans qu'aucune
+erreur ne se lève, parce que rien dans ce moteur ne se plaint qu'un prop en
+chevauche un autre.
+
+C'est la seule doctrine de ce lot promue dans `CLAUDE.md` : un chiffre
+fantôme qui survit à plusieurs sessions coûte plus cher qu'une mesure.
+
+### ⚠️ L'EMPRISE NAÏVE ÉTAIT FAUSSE DE 3 cm, ET C'EST LA SONDE QUI L'A TROUVÉ
+
+Premier jet du rayon circonscrit :
+
+```
+hypot(DECK_HALF + STEP_COUNT * STEP_DEPTH,
+      STRINGER_HALF_SPAN + STRINGER_THICKNESS * 0.5)
+```
+
+Faux. **Un limon est une boîte INCLINÉE** : sa face inférieure est un
+rectangle couché sur la pente, donc le coin qui touche réellement le sol est
+poussé plus loin en arrière de `STRINGER_DEPTH/2 × (run / longueur de
+pente)`. Sur la première géométrie testée (marches de 0,28) ça faisait
+**1,8288 annoncé contre 1,8665 réel** — 3,8 cm de sous-déclaration.
+
+Ce que ça aurait coûté sans la mesure : `FOOTPRINT_RADIUS` est ce que
+**tout** test d'atterrissage du plateau lit. Un footprint plus petit que le
+prop, c'est Keepy posé **dans** l'escalier, sans erreur ni sonde rouge.
+
+Trouvé parce que la sonde mesure les **HUIT COINS transformés** de chaque
+pièce dessinée, et pas l'AABB monde (qui, sur une pièce inclinée, est la
+boîte axis-aligned AUTOUR de l'inclinaison et SUR-déclare) ni la constante
+relue contre elle-même (qui aurait été verte par construction). La PHASE C
+gate en plus que **le footprint publié couvre le dessiné**, dans ce sens-là.
+
+Corrigé en réduisant la marche de 0,28 à **0,26** — pas seulement en
+rectifiant le littéral : le vrai chiffre à 0,28 (1,8665) tenait dans le
+budget mais avec 6,5 cm de marge, et la géométrie a été resserrée pour en
+récupérer 14,4. Chiffres au dossier : **0,26 → 1,7880 · 0,28 → 1,8665 ·
+0,30 → 1,9452** (celui-là dépasse).
+
+### La fleur : 1,443 u, et le critère qui a décidé du chiffre
+
+Le conflit n'était PAS un chevauchement de footprints — à sa place
+d'origine la fleur laissait déjà **+0,288 u** de jeu au disque de la tour.
+Le vrai défaut était ailleurs : elle se tenait à **0,411 u de l'axe de
+l'escalier**, c'est-à-dire dans le débouché même de la volée.
+
+Critère retenu, et il n'invente aucun nombre : **le pied de l'escalier, sur
+toute la largeur de la volée, doit être un point où `HubWorld` accepterait
+de poser Keepy** — la règle que ce fichier applique déjà, `distance ≥ rayon
+du footprint + KEEPY_CLEARANCE`, avec `KEEPY_CLEARANCE = 0,66` **lu dans
+`HubWorld.gd`** et jamais retapé.
+
+| état | marge au pied de l'escalier P1 | par |
+|---|---|---|
+| fleur à (28,336 / 6,894) | **−0,931 u** (bloqué) | la fleur elle-même |
+| fleur à (28,86 / 5,55) | **+0,283 u** | un buisson à (29,869 / 7,138) |
+| tour P2, inchangée | **+12,065 u** | l'arbre le plus proche, à 12 u |
+
+Le déplacement est **minimal sous ce critère**, pas esthétique : un balayage
+au pas de 2 cm a cherché le plus court déplacement satisfaisant à la fois la
+marge de couloir, l'absence de chevauchement avec les autres props et
+`HubRegion.contains()`. La fleur atterrit entre trois buissons
+(jeux +0,163 / +0,275 / +0,976), donc dans le même semis qu'avant plutôt
+qu'isolée sur une pelouse.
+
+**La fleur est DÉPLACÉE, jamais supprimée** — l'entrée existe toujours, même
+variante, même échelle, même rotation.
+
+### ⚠️ BLIND CHECK — pourquoi la PHASE A rejoue l'ancienne position
+
+« Rien ne bloque le pied de l'escalier » est une assertion d'**ABSENCE**, et
+ce dépôt a déjà mesuré trois assertions de cette forme passer **VERTES**
+contre un mécanisme jamais câblé. La PHASE A remet donc la fleur à
+(28,336 / 6,894) dans la liste des footprints et **exige que le test
+ÉCHOUE** (il rend −0,931). Ce n'est qu'après ça que le vert sur le layout
+livré compte pour quelque chose.
+
+### ⚠️ CETTE SONDE DOIT TOURNER SOUS `opengl3`, PAS `--headless`
+
+Contre-exemple au réflexe « une sonde qui ne lit que des transforms tourne
+en headless » : **la PHASE C lit des transforms de `MultiMesh`**, et le
+driver DUMMY les rend à l'**IDENTITÉ**, en silence. Toutes les pièces
+batchées des deux tours se mesureraient alors à l'origine du monde, l'emprise
+sortirait à **0,0000 u**, et le budget de 1,932 serait annoncé
+confortablement tenu sur un prop que la sonde n'a jamais vu.
+
+La PHASE 0 existe pour que se tromper de commande échoue **bruyamment** : elle
+relit une transform d'instance dont l'origine est connue loin du zéro et
+asserte qu'elle revient déplacée.
+
+```
+xvfb-run -a godot4 --rendering-driver opengl3 --fixed-fps 60 \
+  --path . res://scripts/dev/ZiplineStructureProbe.tscn
+```
+
+### Ce qui est construit, et pourquoi c'est cette forme-là
+
+**Une entrée, deux tours.** `&"zipline"` est authored par ses deux bouts,
+comme `&"stream"` et `&"divingboard"`, et pour la même raison : deux entrées
+qui se feraient face seraient **deux orthographes du même cap**, libres de
+diverger. Un câble qui partirait d'une tour et raterait l'autre est une
+panne que cette forme ne sait pas exprimer. Le type refuse donc
+`rotation_y` et `scale`.
+
+**Conséquence structurelle, et elle est unique dans ce fichier** : une
+entrée `&"zipline"` a **DEUX positions au sol**. `ground_footprints()` rend
+donc **deux** footprints pour elle, et le contrôle de marchabilité de
+`_build` teste les deux — tous deux à travers `_zipline_ends()`, **une seule
+lecture** des deux points.
+
+**Par tour** : 2 jambes arrière (sol → deck), 2 mâts avant (sol → 2,0 u, ils
+portent le câble : une seule pièce fait les deux métiers, donc le mât et
+l'ancrage ne peuvent pas diverger), une traverse de tête, une plateforme,
+4 marches, 2 limons. **Le deck est DÉRIVÉ** : `cable_height − rider_drop`
+= 0,90 u, donc le départ, le vol et l'arrivée sont au même niveau. Une
+hauteur de deck choisie séparément aurait été une seconde réponse à « à
+quelle hauteur vole un passager ».
+
+**Le câble est un CYLINDRE, pas un ruban SurfaceTool.** Le ruban du stream
+existe parce que sa trace est une courbe large qu'il faut suivre, et qu'un
+quad plat a une orientation qui doit être juste pour l'angle d'où on le
+regarde. Ce câble-ci est droit, fait 0,07 u de large, et se voit d'une
+caméra qui ne tourne jamais : un cylindre fin est juste depuis tous les
+azimuts **par construction**, coûte 32 triangles, et reste **opaque** — donc
+il n'entre jamais dans la passe transparente, où ce projet a déjà payé une
+fois pour un ordre d'écriture de profondeur.
+
+**Couleurs : aucune nouvelle.** Deck et marches en `PONTOON_COLOR`, ossature
+en `BOAT_HULL_COLOR` (le couple exact du plongeoir), câble en
+`BOAT_RIM_COLOR` — déjà la couleur « ce qu'on attrape » des poignées de
+balançoire et des barres du tourniquet. C'est aussi la seule des trois à
+franchir le plancher de contraste du sol du hub : **luminance relative
+0,563 contre 0,0799 rendu, soit 4,72:1**, largement au-delà de 3,0:1, ce
+dont un fil de 0,07 u tendu sur 24 u a besoin pour être vu du tout.
+
+### Draw nodes : 132 → 141, itemisés
+
+Cinq `MeshInstance3D` en propre (une plateforme et une traverse à chaque
+bout, plus **l'unique** câble) et **quatre** `MultiMeshInstance3D` partagés :
+jambes, mâts, marches, limons — un nœud chacun quel que soit le nombre de
+tours. C'est tout l'écart entre **+9 et +25** : huit jambes, quatre mâts,
+huit marches et quatre limons coûtent quatre nœuds à eux tous. Relevé dans
+`TurnstileProbe` et `WaterTintProbe`, les deux sondes qui gatent ce budget.
+
+### Sonde
+
+`scripts/dev/ZiplineStructureProbe.{gd,tscn}` — **gate un contrat
+permanent**, donc elle entre dans le dépôt et compte (ce n'est pas une sonde
+de mesure jetable).
+
+| phase | ce qu'elle gate |
+|---|---|
+| 0 | le renderer rend des transforms de `MultiMesh` déplacées — sinon la PHASE C mesure du vide |
+| A | **blind check** : le test de couloir échoue bien avec la fleur remise à sa place d'origine |
+| B | les deux tours sont AS-BUILT sur P1 et P2, span 25,921, altitude 0, et elles se font face (`dot = −1`) |
+| C | emprise as-built ≤ 1,932 aux deux bouts, identique des deux côtés, et le footprint publié **couvre** le dessiné |
+| D | câble nivelé, à 2,0, ancré sur les deux têtes ; le cylindre **dessiné** a exactement la longueur de la portée publiée et son centre |
+| E | aucun prop ne chevauche une tour ; le pied des DEUX escaliers est posable ; les deux tours sont dans la région |
+| F | **aucun canal de tap** : `HubWorld.gd`, `HubTapInput.gd` et `KeepyHopper.gd` ne mentionnent pas la tyrolienne, et `ziplines()` publie bien les cinq faits que le palier 2 lira |
+| G | 141 draw nodes hors portails |
+
+### Ce que ce lot NE peut PAS trancher
+
+Si deux tours et un fil entre elles **se lisent** comme une tyrolienne sur
+un écran de 6 pouces, sous une caméra qui ne tourne jamais et depuis
+laquelle P1 ne montre pas P2 du tout. RECON 5 a mesuré cette asymétrie et
+Mathieu l'a acceptée ; aucune sonde de ce dépôt ne score la lisibilité à
+l'intérieur d'une bande de luminance. **C'est la validation device qui
+tranche**, et c'est le seul gate qui reste avant `main`.

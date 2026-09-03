@@ -27,8 +27,9 @@ class_name HubLayout
 ##   type        StringName  &"portal", &"rock", &"tree", &"bush",
 ##                           &"flower", &"stump", &"landmark", &"pond",
 ##                           &"lake", &"greatlake", &"islet", &"pontoon",
-##                           &"stream", &"boat", &"divingboard" or
-##                           &"turnstile"
+##                           &"stream", &"boat", &"divingboard",
+##                           &"turnstile", &"seesaw", &"owl", &"cabin" or
+##                           &"zipline"
 ##   position    Vector3     world position, y is ignored for props that
 ##                           sit on the ground (they are placed AT y = 0)
 ##   rotation_y  float       degrees
@@ -48,6 +49,10 @@ class_name HubLayout
 ##                           -- omitted, the ladder-to-anchor line
 ##                           is used, which is the only direction a
 ##                           board with those two ends could face
+##   far_end     Vector3     the OTHER end of the cable, flat    (ziplines only)
+##                           -- one entry stands a tower at its
+##                           "position" AND at this point, and strings
+##                           the cable between them
 ##   offshore    bool        DECLARES the entry is meant to be out
 ##                           of reach on foot (the islets, their
 ##                           landmarks, the lake discs). The walkable
@@ -85,6 +90,17 @@ class_name HubLayout
 ## facing already follows from its two ends, and a rotation would be a
 ## second orthography of that fact, free to disagree with the first. Move
 ## the board by moving its ends.
+##
+## A &"zipline" is the same rule taken one step further: its two points are
+## "position" and "far_end", and ONE entry builds BOTH towers plus the
+## cable between them. Two entries facing each other would be two facings
+## free to disagree -- a cable that started at one tower and missed the
+## other is a failure this shape cannot express. It refuses "rotation_y"
+## and "scale" for the identical reason the board does.
+##
+## The consequence worth knowing: a zipline entry has TWO ground positions,
+## so HubBuilder.ground_footprints() returns TWO footprints for it and the
+## walkability check tests both. Every other type here has exactly one.
 ##
 ## =====================================================================
 ## &"boat" IS AUTHORED ONCE AND MOVED FOR EVER AFTER
