@@ -716,6 +716,54 @@ const KEEPY_SCALE: float = 1.07368
 ## against max.y = +0.628346.
 const KEEPY_MODEL_MIN_Y: float = -0.629070
 
+## =====================================================================
+## THE TWO PAINTED EYES, IN THE MODEL'S OWN UNITS
+##
+## ⚠️ THEY ARE PAINTED IN THE TEXTURE, SO THEY ARE MEASURED IN THE TEXTURE
+## AND NOT IN THE MESH. keepy_squirrel_hero.glb is one node, one mesh, no
+## skin -- there is no eye node to read a position off, and the mesh is
+## coarse enough (3 129 triangles) that the triangles carrying the eye ink
+## are each far larger than the eye. Reading a centre off those triangles
+## put it 0.05 model units up and out of the eye, on the lash flick, which
+## is simply the darkest ink rather than the middle of the eye.
+##
+## Measured instead by rasterising every triangle into the 1024x1024 baked
+## atlas, carrying each ink TEXEL back to a 3D point through its own
+## barycentric coordinates, and taking the centroid of the dark texels
+## around each eye -- 2 006 and 1 962 of them. Both eyes then come out the
+## same size to within 0.0002, which a per-triangle read never did: that
+## symmetry is what says the measurement is of the eye and not of the mesh.
+##
+## The two centres are NOT symmetric about x = 0, and that is the model and
+## not an error: Keepy is modelled sitting with his head toward -x and his
+## tail toward +x, so max.x = +0.612863 is tail, not cheek.
+const KEEPY_MODEL_EYE_LEFT := Vector3(-0.377930, 0.243360, 0.793930)
+const KEEPY_MODEL_EYE_RIGHT := Vector3(0.039410, 0.232420, 0.798940)
+
+## How far the eye ink reaches from those centres, and where the NEXT ink
+## starts. Both read off the same texel cloud as a density profile: ink
+## density per 0.01-wide annulus runs 0.13 / 0.43 / 0.53 / 0.69 / 0.74 /
+## 0.86 / 0.96 / 0.48 / 0.13 out to r = 0.10 and is then EXACTLY ZERO from
+## 0.10 to 0.15 on BOTH eyes, before the brow and muzzle ink picks up again
+## past 0.15. So the eye is a disc of radius 0.10 sitting inside a clean
+## ring of fur 0.05 wide -- and that ring is a measured budget, not a
+## margin anyone chose.
+const KEEPY_MODEL_EYE_INK_RADIUS: float = 0.100
+const KEEPY_MODEL_EYE_CLEAR_RADIUS: float = 0.150
+
+## The closed lid is drawn at the MIDDLE of that clean ring, which is the
+## one radius that is equally far from the two ways of being wrong: too
+## small and the eye shows around it, too big and it paints over the brow.
+## Derived from the pair above so it cannot drift from either.
+const KEEPY_MODEL_LID_RADIUS: float = \
+		(KEEPY_MODEL_EYE_INK_RADIUS + KEEPY_MODEL_EYE_CLEAR_RADIUS) * 0.5
+
+## The fur immediately around the eyes, averaged over 6 450 texels of that
+## same clean ring -- so a closed lid is painted the colour the closed lid
+## would actually be, rather than a colour chosen against the fur. The two
+## eyes' rings agree to 0.002 on every channel.
+const KEEPY_EYE_FUR_COLOR := Color(0.988549, 0.873057, 0.770471)
+
 @onready var _controller: LevelController = $LevelController
 @onready var _walker: LevelWalker = $WorldViewport/SubViewport/World/Walker
 @onready var _props: Node3D = $WorldViewport/SubViewport/World/Props
@@ -786,6 +834,12 @@ var _magpie: LevelHotspot = null
 ## The bird herself, and the hearts that rise off her.
 var _magpie_body: Node3D = null
 var _hearts: CabinHearts = null
+
+## THE SLEEP OVERLAY -- closed eyes and a drifting "Zzz", shown for exactly
+## as long as `_resting` is true. Built once, like the hearts, and only ever
+## shown or hidden by _enter_rest()/_wake(): no new state, the existing rest
+## boolean already this project's registry entry for "Keepy is in the bed".
+var _dodo: CabinDodo = null
 
 ## One marker per tappable thing, kept so the ladder's can follow Keepy
 ## between storeys and the others can hide when he is not on their level.
@@ -930,6 +984,10 @@ func _build_magpie() -> void:
 	_hearts = CabinHearts.new()
 	_hearts.name = "Hearts"
 	_props.add_child(_hearts)
+	_dodo = CabinDodo.new()
+	_dodo.name = "Dodo"
+	_props.add_child(_dodo)
+	_dodo.setup()
 
 ## The yaw that points a node's +Z from `from` at `to`. One conversion, so
 ## nothing in this file writes atan2 twice with the arguments in a different
@@ -1457,6 +1515,62 @@ func _kiss_point() -> Vector3:
 	var his := Vector3(MAGPIE_STAND_SPOT.x, bird_head.y, MAGPIE_STAND_SPOT.y)
 	return bird_head.lerp(his, 0.5)
 
+## =====================================================================
+## WHERE THE CLOSED LIDS GO -- the same job _kiss_point() does for the
+## hearts, for the same reason: one derivation, read by whoever draws.
+##
+## ⚠️ AND IT IS WHY THE FIRST THREE ATTEMPTS AT THIS OVERLAY MISSED.
+## CabinDodo used to place its eyes at a CONSTANT world offset above the
+## walker's origin -- Vector3(0, 0.78, 0). That offset can only be right
+## for one pose, and the resting pose is not it: _enter_rest() rolls the
+## body 90 degrees about its own Z, yaws the walker 20, and swaps the
+## standing lift for KEEPY_MODEL_MIN_X. His head does not stay at a fixed
+## height over the walker; it swings to -x and drops. Nothing about the
+## overlay's own rendering was ever wrong -- no_depth_test and transparent
+## were both already set -- it was simply drawn somewhere else.
+##
+## So nothing here is offset from anything. Each lid's origin is the
+## MEASURED eye, carried through the transform the engine itself is using
+## to draw the body: `body.global_transform` already composes the walker's
+## position and yaw, the body's roll, its lift and KEEPY_SCALE, so reading
+## it cannot disagree with what is on screen the way a retyped chain
+## could. It is right in any pose, including the standing one, for free.
+##
+## Each lid FACES THE CAMERA rather than facing the way the eye looks. A
+## camera-facing disc of radius r centred on the eye covers everything
+## within r of that centre whatever the viewing angle, which is exactly the
+## coverage the measurement above states; a disc lying in the eye's own
+## tangent plane would foreshorten with the angle and could uncover the far
+## rim. Its UP is the body's own up axis, so the lash line rolls with him
+## and a lid on a sleeper lying on his side reads as one.
+func _lid_transforms() -> Array[Transform3D]:
+	var out: Array[Transform3D] = []
+	var body := _walker.get_node_or_null("Body") as Node3D
+	if body == null:
+		push_error("CabinInterior: cannot place the closed lids -- the walker has no Body.")
+		return out
+	if _controller == null or _controller.camera == null:
+		push_error("CabinInterior: cannot place the closed lids -- no camera to face.")
+		return out
+	var model := body.global_transform
+	var up_ref := model.basis.y.normalized()
+	# The sprite quad below is one world unit across (its pixel_size is
+	# 1/size), so the basis carries the whole size: the lid's DIAMETER.
+	var span := 2.0 * KEEPY_MODEL_LID_RADIUS * KEEPY_SCALE
+	for eye: Vector3 in [KEEPY_MODEL_EYE_LEFT, KEEPY_MODEL_EYE_RIGHT]:
+		var at := model * eye
+		var fwd := (_controller.camera.global_position - at).normalized()
+		var side := up_ref.cross(fwd)
+		if side.length() < 0.001:
+			# Only reachable if the camera ever ends up straight along his
+			# own up axis. Refusing loudly beats a lid with no orientation.
+			push_error("CabinInterior: a closed lid is edge-on to the camera; not drawn.")
+			continue
+		side = side.normalized()
+		var up := fwd.cross(side).normalized()
+		out.append(Transform3D(Basis(side * span, up * span, fwd * span), at))
+	return out
+
 ## Puts him back. Everything is DERIVED rather than restored from a snapshot
 ## taken on the way in -- _wake()'s rule, and for its reason: a saved
 ## transform is a copy that goes stale the first time anything else moves
@@ -1515,6 +1629,12 @@ func _enter_rest() -> void:
 	# flank by the difference between the two -- the same class of mistake
 	# that sank him 0.9166 into the floor, one axis over.
 	body.position = Vector3(0.0, -KEEPY_MODEL_MIN_X * KEEPY_SCALE, 0.0)
+	# Eyes closed, Zzz drifting -- the whole point of this state now that it
+	# is not just a pose. `_walker.global_position` was just set above, so
+	# this is the same point the rest of the state uses, not a fourth copy.
+	if _dodo != null:
+		_dodo.show_asleep(_walker.global_position, _lid_transforms(),
+				KEEPY_MODEL_EYE_INK_RADIUS / KEEPY_MODEL_LID_RADIUS)
 
 ## Gets him up. Everything is DERIVED rather than restored from a snapshot
 ## taken on the way in: a saved transform is a copy that goes stale the
@@ -1528,6 +1648,8 @@ func _wake() -> void:
 	if not _resting:
 		return
 	_resting = false
+	if _dodo != null:
+		_dodo.hide_asleep()
 	var body := _walker.get_node_or_null("Body") as Node3D
 	if body != null:
 		body.rotation_degrees = Vector3.ZERO

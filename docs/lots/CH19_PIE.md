@@ -2242,3 +2242,540 @@ couverture 100 % sur son ancre) est desormais EN PRODUCTION** sur
 le lot de staging (le ressenti device du lit) est deja tranche par la
 validation qui a autorise ce merge.
 
+## L'OVERLAY DODO : YEUX FERMES ET "ZZZ" SUR L'ETAT DE REPOS DU LIT, AUCUN ETAT NEUF (2 septembre 2026)
+
+Mathieu a confirme le chantier de la pie/du lit termine (voir la section
+"MERGE EN PRODUCTION" et la section C2 ci-dessus) et a demande un ajout
+purement visuel sur l'etat de repos deja existant : yeux fermes et un
+"Zzz" qui derive doucement au-dessus de Keepy pendant qu'il est couche
+dans le lit, sans nouvel asset 3D/2D genere et sans nouvelle machine
+d'etats -- l'etat `_resting` de `CabinInterior.gd` (voir la section
+"LE HOTSPOT DU LIT" plus haut) existait deja et reste le seul point
+d'accroche.
+
+### CE QUI A ETE AJOUTE
+
+`scripts/cabin/CabinDodo.gd` (nouveau fichier, classe `CabinDodo`) : un
+`Sprite3D` unshaded portant deux arcs sombres dessines en code (meme
+patron que le coeur de `CabinHearts.gd` -- une texture 64x64 construite
+une fois et jamais reimportee) pour les yeux fermes, et un `Label3D`
+"Zzz" qui monte et redescend en boucle lente (`ZZZ_DRIFT` 0.12 unite sur
+`ZZZ_DRIFT_S` 1.6 s). Aucun shader, aucune particule, aucun fichier
+binaire ajoute -- la meme discipline que le reste de ce chantier.
+
+`scripts/cabin/CabinInterior.gd` : un champ `_dodo` construit une fois
+dans `_ready()` (aux cotes de `_hearts`), et deux points d'appel
+seulement -- `_dodo.show_asleep(_walker.global_position)` a la fin de
+`_enter_rest()` (le point ou le corps est deja pose sur le lit) et
+`_dodo.hide_asleep()` au debut de `_wake()`. Aucun nouveau booleen,
+aucune nouvelle transition : `_resting` reste l'unique source de verite,
+exactement comme le registre de hotspots (`_bed`, `_door`, `_magpie`)
+que ce fichier utilisait deja.
+
+### CE QUI N'A PAS ETE FAIT, ET POURQUOI
+
+Le brief envisageait de fermer les yeux du modele lui-meme si le rig le
+permettait "facilement". Il ne le permet pas : `keepy_squirrel_hero.glb`
+est un noeud, un maillage, sans squelette ni animation -- le meme constat
+deja publie par les lots de l'ours et du hibou pour cette famille
+d'assets (voir KEEPY_MODEL_MIN_Y/KEEPY_MODEL_MIN_X plus haut dans
+`CabinInterior.gd`). Il n'existe donc aucun sous-noeud "yeux" a masquer
+ou remplacer, et l'overlay est un indicateur pose au-dessus du corps
+plutot qu'une modification du maillage.
+
+Le positionnement de l'overlay (`EYES_OFFSET`, `ZZZ_OFFSET` dans
+`CabinDodo.gd`) est un choix raisonnable dans l'espan vertical
+(~1.32 unite monde) que le corps couche occupe, PAS une mesure faite sur
+un rendu -- aucun editeur Godot n'etait disponible dans ce sandbox
+distant pour produire un rendu de calibration. A rejuger sur device si
+le rapport de Mathieu le signale hors-cible.
+
+### VALIDATION
+
+Aucun binaire Godot dans ce sandbox distant : pas de sonde `CabinProbe`
+executee ici. La compilation GDScript a ete verifiee via CI GitHub
+Actions plutot qu'en local -- `web-build.yml` declenche manuellement
+(`workflow_dispatch`) sur la branche `claude/bed-overlay-visual-fxcfkd`,
+run #373, **succes**, import + export Web build verts (16:38:18 ->
+16:43:04 UTC), les deux etapes de deploiement Vercel correctement
+skippees (`ref != main/staging`).
+
+Merge sur `staging` : `9af2ea4..495a0f8`, `--no-ff`, diff de l'arbre du
+merge contre l'arbre de la feature branch **VIDE** (verifie avant push).
+
+Deploiement staging verifie SUR LE SERVICE, canal MCP Vercel : deploiement
+`dpl_8Js4GXSRP4J1aPhXW2TkixuEkeja` (sha `495a0f8`, `gitRootDirectory`
+`build/web`), **READY**, cree 17:32:22 UTC. `CACHE_VERSION` servi
+`1788370317` = **17:31:57 UTC**, lu en **MISS/age 0** (cache-buste),
+tombe juste avant l'appel `vercel deploy` -- coherent.
+
+⚠️ **`index.wasm` NON RECROISE cette fois** : le fetch du binaire 35 Mo
+via l'outil MCP Vercel disponible dans ce sandbox (`web_fetch_vercel_url`)
+a fait expirer la session MCP a trois reprises de suite -- reproductible
+sur ce fichier precis, alors que la meme methode fonctionne sans probleme
+sur `index.service.worker.js` (quelques Ko) et sur les appels
+`list_deployments`. Ce lot ne touche que deux fichiers GDScript, aucun
+code moteur, et "Verify export output" en CI a confirme un `.wasm` non
+vide -- mais la taille/md5 exacts (35 376 909 octets /
+`af4a8fc2925d992348eb30deeeb54360`, le fingerprint permanent de ce
+depot) n'ont pas pu etre recroises par ce canal dans ce sandbox. A
+recroiser par une session qui dispose d'un canal capable de recuperer ce
+fichier, ou depuis un poste avec acces direct au CDN.
+
+**Reste ouvert : validation device par Mathieu sur
+`keepy-staging.vercel.app`** (Safari iPhone, navigation privee, jamais la
+PWA) -- tap sur le lit -> yeux fermes et Zzz visibles ; re-tap -> retour
+a la normale, sans minuteur automatique. Palier 2 (merge vers `main`)
+reste gate par son feu vert explicite apres cette validation.
+
+## L'OVERLAY DODO : RECON DU BUG "RIEN NE S'AFFICHE" ET REDESIGN EN BULLE-NUAGE (2 septembre 2026)
+
+Validation device sur `keepy-staging.vercel.app` (Safari iPhone, navigation
+privee) du merge precedent (`495a0f8`) : **rien ne s'affiche** au tap sur le
+lit, ni yeux fermes ni "Zzz" -- seul le label d'interaction du hotspot
+("Lit") est visible, ce qui est normal et sans rapport avec l'overlay.
+
+### PHASE 1 -- RECON, les quatre hypotheses du triplet evident
+
+1. **Le declenchement** -- lu dans le code, pas suppose : `_enter_rest()`
+   est le SEUL site qui met `_resting = true`, et il appelle
+   inconditionnellement `_dodo.show_asleep(...)` juste apres avoir pose le
+   corps. Confirme par elimination : `_ready()` va jusqu'au bout sur ce
+   chemin (le label du hotspot du lit, construit PLUS TARD dans la meme
+   `_ready()` que `_dodo`, s'affiche bien -- une exception au milieu de
+   `_build_magpie()` qui construit `_dodo` aurait aussi empeche ce label
+   d'exister).
+2. **Le noeud/l'arbre** -- `_dodo` est cree, ajoute a `_props`, `setup()`
+   appele de facon synchrone, aucun retour anticipe sur ce chemin. Rien
+   dans le fichier ne cache ou n'ecrase `_dodo` apres coup (`_refresh_proximity()`,
+   `_pulse_if_near()` : aucun des deux ne le touche).
+3. **Le build** -- fraicheur RECROISEE cette fois (le lot precedent ne
+   l'avait pas pu, `index.wasm` faisant expirer la session MCP a trois
+   reprises) : `CACHE_VERSION` servi `1788370975` = 17:42:55 UTC, lu en
+   MISS/age 0 ; `index.js` etag `4e08904b1b7107858246af44b602067b`
+   **identique** au fingerprint permanent de ce depot pour ce fichier, lu
+   lui aussi en MISS/age 0 -- signal independant que le moteur n'a pas
+   bouge et que la lecture n'est pas une copie de bord perimee.
+   `index.wasm` reste non recroisable par ce canal (meme echec MCP que le
+   lot precedent, reproductible), mais l'etag de `index.js` suffit a fermer
+   cette hypothese : le build sert bien le code de ce lot.
+4. **Le cadrage camera** -- calcul, pas suppose : projection du point
+   `BED_SPOT + EYES_OFFSET/ZZZ_OFFSET` a travers la transform fixe du
+   `Camera3D` de `CabinInterior.tscn` (matrice + origine lues dans le
+   `.tscn`). Le point tombe a une profondeur camera-locale d'environ
+   -13.2 a -13.6 (devant la camera, pas derriere), avec une position
+   verticale/horizontale locale largement a l'interieur de la demi-etendue
+   du frustum aux FOV/aspect de la scene (~5.5 unites de marge de chaque
+   cote contre un ecart mesure de moins de 2 unites). Le point est donc
+   bien visible a l'ecran, pas hors-cadre.
+
+**Conclusion de la Phase 1** : les quatre hypotheses du triplet (et le
+cadrage, ajoute en quatrieme) sont fermees. Il ne reste que ce que le lot
+precedent avait lui-meme signale ne jamais avoir verifie : "le
+positionnement de l'overlay... est un choix raisonnable... PAS une mesure
+faite sur un rendu -- aucun editeur Godot n'etait disponible... A rejuger
+sur device." Chiffrage a la meme camera : le "Zzz" (`Label3D`, `font_size`
+40 x `pixel_size` 0.0032 = 0.128 unite monde) a une profondeur d'environ
+13.5 unites, soit ~12 px de hauteur ecran sur un viewport de 1920 px de
+haut -- minuscule sur un telephone. Les yeux fermes n'avaient par ailleurs
+aucune garantie de contraste : la meme encre sombre que tous les contours
+de cette scene, posee directement sur la fourrure de Keepy, sans halo. Ni
+l'un ni l'autre ne leve d'erreur -- exactement le mode de panne silencieux
+deja documente dans `CLAUDE.md` ("un noeud mal positionne ou a echelle
+quasi nulle ne leve aucune erreur mais reste invisible"), applique ici a
+la taille/au contraste plutot qu'a la position pure.
+
+⚠️ **Piste ecartee, et pourquoi** : le mecanisme de double-dispatch
+`emulate_mouse_from_touch` deja documente plus haut dans ce fichier (le
+tremblement du baiser, section C) a ete envisage -- `_on_tapped_ground()`
+porte deja une lecture de `_resting` qui appelle `_wake()`, et la branche
+"deja assez pres" du lit partage le meme motif "marche de longueur nulle"
+que celle du baiser qui avait declenche le bug. Ecarte parce que le
+`_resting` du lit avait deja ete valide sur device AVANT ce lot (voir "LE
+HOTSPOT DU LIT" plus haut, confirmation de Mathieu "hotspot du lit
+reactif") -- si le double-dispatch reveillait Keepy dans la meme frame que
+son coucher, cette validation anterieure l'aurait deja vu echouer. Le
+chemin normal (marche reelle jusqu'au lit, `_on_hop_landed()`) n'est de
+toute facon pas expose au doublon d'evenements d'entree, celui-ci ne
+touchant que les taps bruts. Non touche dans ce lot.
+
+### PHASE 2 -- REDESIGN : bulle-nuage procedurale
+
+`CabinDodo.gd` : le `Label3D` "Zzz" seul est remplace par une vraie bulle
+de pensee -- un `Sprite3D` portant une texture 96x88 dessinee en code
+(meme patron que le coeur de `CabinHearts.gd` et les yeux de ce fichier :
+une image construite pixel par pixel une seule fois, jamais reimportee).
+La forme : cinq cercles a rayons variables superposes (union par distance
+signee minimale) pour le corps nuageux, plus trois petits cercles
+decroissants en dessous-a-gauche reliant la bulle a la tete de Keepy --
+le patron classique de bulle de pensee de BD. Remplissage clair
+(`CLOUD_FILL_COLOR`), contour sombre (`CLOUD_OUTLINE_COLOR`, la meme encre
+que le reste de la scene). Le "Zzz" reste un `Label3D` (dessiner du texte
+pixel par pixel dans une `Image` sans police bitmap aurait ete la
+complexite que le brief autorisait a eviter), repositionne au-dessus du
+centre de masse des lobes et recolore en encre sombre sur fond clair
+desormais garanti par la bulle -- inversion du couple texte/contour de
+l'ancienne version, qui reposait sur le fond de la piece pour le contraste.
+
+Les yeux fermes recoivent le meme traitement de contraste : un halo clair
+semi-transparent (`EYES_HALO_COLOR`) dessine derriere chaque arc sur la
+texture 64x64 existante, pour que le contour sombre ne depende plus du
+ton de fourrure de Keepy en dessous.
+
+La derive verticale lente est conservee, etendue a la bulle et au texte
+ensemble (`Tween.set_parallel()`/`chain()`, les deux montent puis
+redescendent en phase) plutot qu'au seul texte.
+
+Aucun nouvel etat, aucune nouvelle FSM, aucun fichier binaire ajoute --
+meme discipline que le reste de ce chantier. Le brief envisageait un bake
+via `Polygon2D`/`Line2D` dans un `Viewport` ; le patron "image dessinee en
+code" deja en place pour les yeux et le coeur s'est avere suffisant pour
+une forme en union de cercles, evitant le risque d'un second `SubViewport`
+dans une scene qui en a deja un pour le monde 3D.
+
+### VALIDATION
+
+Aucun binaire Godot dans ce sandbox distant, comme pour le lot precedent --
+pas de sonde `CabinProbe`. Compilation verifiee par le meme canal :
+`web-build.yml` en `workflow_dispatch` sur la branche de ce lot.
+
+**Reste ouvert : validation device par Mathieu sur
+`keepy-staging.vercel.app`** (Safari iPhone, navigation privee, jamais la
+PWA) -- tap sur le lit -> yeux fermes ET bulle-nuage "Zzz" clairement
+visibles cette fois ; re-tap -> retour a la normale. Si la taille/position
+reste hors-cible malgre l'agrandissement, le prochain lot doit reprendre le
+meme calcul de projection camera fait ici plutot que de re-deviner des
+offsets. Palier 2 (merge vers `main`) reste gate par ce feu vert.
+
+## L'OVERLAY DODO : LA BULLE MARCHE, LES YEUX NON -- LE FIX HALO ETAIT TROP TIMIDE (2 septembre 2026, meme jour)
+
+Validation device du merge precedent (`4f671d2`) : la bulle-nuage "Zzz" est
+visible et correcte -- **mais les yeux fermes ne le sont pas, meme visage
+qu'avant ce lot.** Diagnostic demande avant tout redeploiement.
+
+### CE QUI A REELLEMENT CHANGE DANS LE COMMIT PRECEDENT (`f42382a`)
+
+Verifie par `git show`, pas suppose : le code des yeux A ETE MODIFIE (un
+halo `EYES_HALO_COLOR` a ete ajoute), mais deux choses sont restees
+identiques a l'original casse : `EYES_SIZE` (0.30, inchange) et l'alpha du
+halo (0.85, semi-transparent). Le fix qui a fonctionne pour le "Zzz" a
+change DEUX axes a la fois -- un remplissage OPAQUE et une taille monde
+plusieurs fois plus grande (`CLOUD_WORLD_WIDTH` 0.62 contre les 0.128 du
+`Label3D` d'origine). Le fix des yeux n'avait touche QUE le contraste
+(et de facon partielle, translucide), jamais la taille -- exactement le
+diagnostic que l'utilisateur a lui-meme pose.
+
+### PREUVE AVANT REDEPLOIEMENT -- rendu hors-Godot de l'algorithme exact
+
+Aucun Godot dans ce sandbox distant, donc pas de capture d'ecran du jeu
+lui-meme -- mais l'algorithme de dessin de pixels de `_eyes_texture()` est
+un simple parcours de boucle sans dependance moteur, rejouable tel quel en
+Python. Reproduit l'algorithme EXACT (meme halo/arc, memes coordonnees) des
+deux versions, composite sur un swatch de fourrure chaude et sur le vert
+sombre de l'ambiance de la cabine, puis redimensionne a la taille ecran
+simulee (calcul de profondeur camera deja etabli au lot precedent, ~95,9
+px/unite-monde) :
+
+- **Version halo (f42382a, telle que servie)** : a sa taille simulee reelle
+  (29 px), la forme reste lisible sur le swatch synthetique de ce test --
+  mais c'est un swatch PLAT, favorable ; une fourrure texturee reelle avec
+  ses propres variations de ton peut se confondre avec un halo a 85 %
+  d'opacite qui, par construction, se teinte partiellement de ce qu'il y a
+  dessous. Le rapport device ("meme visage qu'avant") est la mesure qui
+  tranche, pas ce rendu de confort.
+- **Version corrigee (fond opaque + contour, taille relevee)** : meme
+  rendu, agrandi a 40 px simule, nettement plus lisible aux DEUX fonds.
+
+### CORRECTIF -- meme patron que la bulle, applique aux yeux
+
+`CabinDodo.gd`, uniquement `_eyes_texture()`/`EYES_SIZE` -- **le Zzz n'est
+pas touche** :
+- `EYES_HALO_COLOR` (semi-transparent) retire, remplace par le MEME couple
+  `CLOUD_FILL_COLOR`/`CLOUD_OUTLINE_COLOR` que la bulle -- pas une troisieme
+  paire de couleurs inventee, doctrine "un fait publie une fois".
+- Chaque oeil est maintenant une ellipse pleine (`EYES_RX`=15,
+  `EYES_RY`=11, calculee par distance signee normalisee, meme decoupage
+  remplissage/contour que `_cloud_texture()`) au lieu d'un halo
+  semi-transparent -- OPAQUE, donc garanti de contraster quel que soit ce
+  qu'il y a dessous, contour sombre inclus.
+- `EYES_SIZE` : 0.30 -> 0.42 (+40 %), le meme mouvement de taille que la
+  bulle plutot qu'un ajustement cosmetique.
+- Le trait de paupiere fermee (l'arc) est redessine PAR-DESSUS ce fond
+  plein, legerement plus epais (4 px contre 3).
+
+### VALIDATION
+
+Aucun binaire Godot dans ce sandbox distant. Rouge-avant-vert applique a
+la mesure disponible : rendu Python de l'algorithme AVANT (halo, echoue
+sur device) confronte au rendu APRES (fond plein, meme algorithme que la
+bulle qui, elle, a ete confirmee visible) -- les deux images sont jointes
+au rapport de fin de tache. Compilation GDScript verifiee par CI
+(`web-build.yml`).
+
+**Reste ouvert : validation device par Mathieu**, cette fois specifiquement
+sur les yeux (la bulle est deja actee bonne, ne pas la retester). Palier 2
+reste gate par ce feu vert.
+
+
+## L'OVERLAY DODO : LA CAUSE REELLE ETAIT UN OFFSET WORLD-SPACE CONSTANT, ET LE CALAGE EST MAINTENANT MESURE SUR LA TEXTURE (2 septembre 2026, meme jour, 4e passe)
+
+### LA CAUSE, ETABLIE ET NON RE-DIAGNOSTIQUEE
+
+`CabinDodo.EYES_OFFSET` valait `Vector3(0, 0.78, 0)` : un offset **WORLD
+SPACE CONSTANT** ajoute a `_walker.global_position`. Ca ne peut etre juste
+que pour UNE pose. La pose de repos n'est pas celle-la --
+`_enter_rest()` applique `REST_ROLL_DEGREES` 90 deg sur Z du corps,
+`REST_YAW_DEGREES` 20 deg sur Y du walker, et remplace le lift debout par
+`-KEEPY_MODEL_MIN_X * KEEPY_SCALE`. La tete part vers -x et descend ; elle
+ne reste PAS a hauteur fixe au-dessus de l'origine du walker.
+
+Les deux passes precedentes (halo, puis fond plein + `EYES_SIZE` 0.30 ->
+0.42) portaient toutes les deux sur la maniere de DESSINER les yeux. Ni
+l'une ni l'autre n'etait la faute. Le rendu n'a jamais ete en cause :
+`no_depth_test` et `transparent` etaient deja poses (CabinDodo.gd:131-144),
+donc ni occlusion, ni ordre de rendu, ni alpha. Les deux passes ont mesure
+le contraste d'un sprite qui n'a jamais ete pres de son visage.
+
+Chiffre de l'erreur, mesure a la sonde (passe rouge ci-dessous) : avec
+l'ancien offset, l'oeil GAUCHE etait couvert a **0,00 %** et l'oeil DROIT a
+**10,15 %**.
+
+### CE QUI A ETE MESURE, ET POURQUOI PAS DANS LE MAILLAGE
+
+Les yeux sont **PEINTS DANS LA TEXTURE**. `keepy_squirrel_hero.glb` est un
+noeud, un mesh, pas de skin, pas d'animation (`KHR_materials_unlit`
+declare, une seule primitive POSITION/NORMAL/TEXCOORD_0, 3 121 sommets /
+3 129 triangles) : il n'existe aucun noeud d'oeil dont lire une position.
+
+Premiere tentative, **echouee et instructive** : moyenner les triangles
+sombres. Le maillage est trop grossier -- chaque triangle portant de
+l'encre est plus grand que l'oeil -- et l'encre la plus sombre est le
+**CIL**, pas le disque. Le centre sortait ~0,05 unite modele en haut et
+en dehors de l'oeil. Verifie visuellement par rendu, pas suppose.
+
+Methode retenue : rasteriser **chaque triangle dans l'atlas 1024x1024** et
+ramener chaque TEXEL en 3D par ses propres coordonnees barycentriques
+(626 193 echantillons de surface). Le centroide des texels sombres autour
+de chaque oeil donne :
+
+| | centre (unites modele) | texels |
+|---|---|---|
+| oeil gauche | (-0.377930, +0.243360, +0.793930) | 2 006 |
+| oeil droit | (+0.039410, +0.232420, +0.798940) | 1 962 |
+
+Les deux yeux ressortent alors de **la meme taille a 0,0002 pres**, ce que
+la lecture par triangle ne donnait jamais : c'est cette symetrie qui dit
+que la mesure porte sur l'oeil et pas sur le maillage.
+
+Les centres ne sont PAS symetriques autour de x = 0, et c'est le modele :
+Keepy est modelise assis, tete vers -x, queue vers +x, donc
+`max.x = +0.612863` est de la queue, pas de la joue.
+
+### LE RAYON EST UNE MESURE, PAS UNE MARGE CHOISIE
+
+Profil de densite d'encre par anneau de 0,01, autour de chaque centre,
+dans le plan tangent de l'oeil :
+
+```
+r      0.01  0.02  0.03  0.04  0.05  0.06  0.07  0.08  0.09  0.10 .. 0.15  0.16+
+gauche 0.13  0.43  0.53  0.69  0.74  0.86  0.96  0.48  0.13  0.00 .. 0.00  0.011
+droit  0.13  0.52  0.67  0.75  0.72  0.86  0.93  0.45  0.19  0.00 .. 0.00  0.031
+```
+
+L'encre s'arrete a **r = 0,10** et il y a **ZERO encre de 0,10 a 0,15 sur
+LES DEUX yeux**, avant que le sourcil et le museau ne reprennent au-dela de
+0,15. L'oeil est donc un disque de rayon 0,10 dans un anneau de fourrure
+propre de 0,05 de large -- et cet anneau est un **budget mesure**, pas une
+marge que quelqu'un a choisie.
+
+D'ou, publie dans `CabinInterior` :
+
+- `KEEPY_MODEL_EYE_INK_RADIUS = 0.100`
+- `KEEPY_MODEL_EYE_CLEAR_RADIUS = 0.150`
+- `KEEPY_MODEL_LID_RADIUS` = **derive** comme le milieu des deux (0,125) --
+  le seul rayon equidistant des deux facons de se tromper : trop petit,
+  l'oeil deborde ; trop grand, on peint sur le sourcil.
+- `KEEPY_EYE_FUR_COLOR = Color(0.988549, 0.873057, 0.770471)` -- moyenne
+  de **6 450 texels** de ce meme anneau propre. Les anneaux des deux yeux
+  s'accordent a 0,002 par canal. Une paupiere fermee EST cette
+  fourrure-la ; toute autre couleur serait une rustine sur un visage.
+
+### L'IMPLEMENTATION : PLUS AUCUN OFFSET
+
+`CabinInterior._lid_transforms()`, publie a cote de `_kiss_point()` et sur
+son patron (deriver d'une mesure plutot que d'autoriser une seconde
+opinion), rend un `Transform3D` MONDE par oeil :
+
+- origine = `body.global_transform * KEEPY_MODEL_EYE_*`. On lit **la
+  transform que le moteur utilise lui-meme pour dessiner** : elle compose
+  deja position + yaw du walker, roll + lift du corps et `KEEPY_SCALE`.
+  Une chaine retapee a la main pourrait diverger de l'ecran ; celle-ci non.
+  Corollaire gratuit : c'est juste dans N'IMPORTE QUELLE pose, debout
+  comprise.
+- base = **face a la CAMERA**, up = axe up propre du corps. Face camera et
+  non face-normale-de-l-oeil : un disque face camera de rayon r centre sur
+  l'oeil couvre tout ce qui est a moins de r de ce centre quel que soit
+  l'angle, ce qui est exactement la couverture que la mesure enonce ; un
+  disque dans le plan tangent de l'oeil raccourcirait avec l'angle et
+  pourrait decouvrir le bord lointain.
+- echelle = diametre de la paupiere. Le quad du `Sprite3D` fait UNE unite
+  monde (`pixel_size = 1/64`), donc la base porte toute la taille.
+
+`CabinDodo` ne sait plus ou est un visage, exactement comme il ne sait deja
+pas ou est le lit. Il recoit des transforms finies et dessine.
+
+**UNE PAUPIERE PAR OEIL**, et c'est structurel : un sprite unique portant
+deux yeux est billboarde a la verticale, donc sur un corps roule a 90 deg
+ses deux yeux restent cote a cote alors que les siens sont **empiles**. Il
+ne pouvait etre juste a AUCUN offset. Mesure a l'ecran : les deux paupieres
+sortent a (342.4, 641.1) et (341.0, 593.5) -- 47 px d'ecart en Y, 1 px en
+X. `_lids` est un `Array` des le premier commit, dimensionne par ce que
+l'appelant fournit.
+
+La paupiere est **opaque exactement la ou est l'encre** : `show_asleep()`
+recoit le ratio `INK_RADIUS / LID_RADIUS = 0,80`, plein jusque-la, puis
+alpha en rampe jusqu'a zero sur l'anneau propre mesure -- donc aucun bord
+de disque a voir sur le visage, et la rampe ne peut pas mordre sur l'encre
+puisqu'elle commence ou l'encre s'arrete.
+
+Non touche, comme demande : la bulle "Zzz" (`CLOUD_OFFSET`,
+`ZZZ_LOCAL_OFFSET`, le tween de derive), `_enter_rest()`, `_wake()`, le
+retour au re-tap. Aucune FSM neuve, aucun asset neuf, aucun shader.
+
+### LE GATE : RENDU OFFSCREEN, ET IL SAIT ECHOUER
+
+Godot 4.3 n'est pas installe dans ce sandbox : l'editeur a ete telecharge
+(**50 276 070 octets**, exactement la taille au dossier -- verification de
+`Content-Length` faite avant extraction) et le projet importe
+(14 `.glb` -> 36 `.scn`, zero erreur, comptes des deux cotes).
+
+Sonde `EyeLidProbe`, sous `xvfb-run --rendering-driver opengl3` (jamais
+`--headless` seul : elle lit des pixels).
+
+**Comment la couverture est mesuree sans pouvoir passer gratuitement.** Les
+yeux etant peints, il n'y a aucun noeud a chercher dans le rendu. La sonde
+substitue donc a l'albedo de Keepy une **texture d'IDENTIFICATION** batie
+sur le meme atlas : tout texel a moins du rayon d'encre mesure de l'oeil
+gauche est ROUGE pur, de l'oeil droit VERT pur, tout autre texel sombre est
+BLEU, le reste noir. Rendus a travers la camera livree, dans la pose de
+repos livree, les pixels rouges et verts SONT l'empreinte ecran des deux
+yeux -- mesuree par le vrai rasteriseur, pas projetee par l'arithmetique de
+la sonde.
+
+| | oeil gauche | oeil droit | autre encre (nez, bouche, etiquette K) |
+|---|---|---|---|
+| PHASE 1, paupieres cachees (**blind check**) | 335 px | 394 px | 320 px |
+| PHASE 2, paupieres visibles | **0 px** | **0 px** | 319 px (doit SURVIVRE) |
+| couverture | **100,00 %** | **100,00 %** | -- |
+
+Le blind check est obligatoire ici : une assertion "c'est couvert" qui n'a
+jamais rien vu de decouvert passerait contre un visage jamais dessine. Et
+le BLEU doit survivre -- une paupiere qui avalerait le nez et la bouche
+serait une paupiere qui repeint la moitie du visage.
+
+**ROUGE AVANT VERT.** Le calage a ete neutralise en remettant l'ancien
+offset constant `_walker.global_position + Vector3(0, 0.78, 0)`. La sonde
+sort **2 FAILED, et exactement les deux attendues** (couverture gauche,
+couverture droite) -- pas les assertions de blind check, pas celle du nez
+et de la bouche. Fichier restaure et verifie **byte-identique** (`cmp`).
+
+PHASE 0 verifie aussi les premisses plutot que de les supposer :
+`mesh.get_aabb()` reproduit `KEEPY_MODEL_MIN_X` et `KEEPY_MODEL_MIN_Y` a
+1e-5, la transform relative `Body -> MeshInstance3D` est **l'identite**
+(c'est ce qui autorise a lire `body.global_transform` comme l'espace
+modele), et les deux yeux mesures sont dans l'AABB.
+
+Taille reelle a l'ecran, pour memoire : la paupiere fait **27,6 px de
+diametre sur une frame de 1080 de large**, a 12,7 unites monde de la
+camera. C'est la taille veritable d'un oeil de Keepy dans la vue maison de
+poupee -- le signal lisible est la disparition des deux gros disques
+sombres, pas le detail du cil.
+
+**Piege d'outillage rencontre et note.** Premier run de la sonde : oeil
+gauche a 970 294 px "visibles" sur 2 073 600. La coque de la cabane est
+BRUN CHAUD sur la majeure partie du cadre, et un test "ce pixel est-il
+rouge" la lit comme un oeil gauche d'un million de pixels. Corrige en
+masquant `Cabin` et `Magpie` pendant les seules passes d'identification --
+ce qui rend d'ailleurs le test plus severe, puisque le lit n'occlut alors
+plus rien.
+
+### SONDE JETABLE, SUPPRIMEE AVANT LE COMMIT
+
+`EyeLidProbe` et son `EyeRecon` de structure ont ete **supprimes avant le
+commit**, doctrine standard. Le compromis est assume et vaut d'etre nomme :
+un gate permanent aurait de la valeur (trois lots ont echoue sur ce
+calage), mais il exige la texture d'identification, et la commiter telle
+quelle recreerait exactement le piege "un fixture qui diverge du reel" --
+si quelqu'un change `KEEPY_MODEL_EYE_LEFT`, la texture ne suivrait pas et
+le gate testerait silencieusement les anciens yeux. Un gate permanent
+correct devrait **generer** cette texture depuis les constantes, dans la
+sonde. C'est du travail a part entiere, hors perimetre de ce lot ; la
+methode et tous les chiffres sont ci-dessus pour la refaire a l'identique.
+
+Sondes permanentes relancees apres le fix : `CabinProbe` **0 failure**,
+`ProbeTimeoutAudit` **PASSED** (60 scenes de sonde, 1 sonde `--script`),
+`AssetContractAudit` exit 0.
+
+### DEPLOIEMENT STAGING VERIFIE SUR LE SERVICE (2 septembre 2026, meme jour)
+
+CI run #380 (id 33683925028, head_sha b4e32a2 = tip de `staging`) :
+`completed` / `SUCCESS`, termine 21:19:47 UTC. `[PRODUCTION -- main]`
+correctement SKIPPED.
+
+⚠️ **L'API GitHub a servi un etat perime pendant la lecture** :
+`status: in_progress` avec `updated_at` fige a 21:13:35, alors que le run
+etait deja termine. C'est le SECOND SIGNAL independant (CACHE_VERSION
+reellement servi) qui a tranche en premier ; `get_workflow_run` relu
+ensuite a confirme `completed`/`success`. Piege deja documente,
+re-rencontre tel quel.
+
+Fenetre de l'etape `Export Web build` : **21:18:59 -> 21:19:06**.
+
+**Marqueur 1 — CACHE_VERSION.** Servi : `1788383945|5950550`, soit
+**21:19:05 UTC**, a l'INTERIEUR de la fenetre Export. Lu a
+`x-vercel-cache: MISS`, `age: 0`.
+
+⚠️ **Premiere lecture rejetee** : `HIT` avec `age: 3064`, portant encore
+l'epoch `1788379007` (19:56:47, le build precedent). Un `?bust=` seul ne
+l'avait pas fait sauter ; il a fallu changer reellement la valeur du
+parametre pour obtenir un `MISS`. Le piege documente plus haut dans ce
+fichier de CLAUDE.md, rencontre a l'identique.
+
+**Le second champ de CACHE_VERSION n'est PAS une taille**, verifie plutot
+que suppose : il est passe de `5219952` a `5950550` (+730598) entre les
+deux derniers runs, ce qui ressemblait a une hausse de payload. Le log de
+build donne `index.pck = 43296256` pour ce run, sans rapport avec ce
+chiffre. C'est un compteur de ticks (microsecondes) d'uptime de
+l'exportateur -- ~5,95 s contre ~5,22 s -- donc du bruit inter-run, pas une
+mesure de poids. Question fermee par la mesure plutot que laissee ouverte.
+
+**Marqueur 2 — index.wasm.** `35 376 909` octets, empreinte permanente
+« aucun code moteur touche » confirmee. `index.js` egalement identique
+(`331 495` octets).
+
+**Delta de payload attribue.** `index.pck` : `43 294 384` (run #379, avant
+ce lot) -> `43 296 256` (run #380, apres) = **+1 872 octets**, exactement
+le poids du GDScript ajoute par ce lot (`_lid_transforms()` +
+`_lid_texture()` + les constantes mesurees). Aucune regression de payload
+imputable a ce lot.
+
+Le `.pck` pese aujourd'hui 43,3 Mo au total, loin des 4,23 Mo documentes
+plus haut dans ce fichier apres l'exclusion des originaux Meshy bruts.
+Verifie : ce n'est PAS une regression du filtre -- `exclude_filter` dans
+`export_presets.cfg` couvre toujours `scripts/dev/*,assets_source/*,
+docs/*,web/*,firebase.json` intact, et `assets_source/` (595 Mo sur disque)
+reste hors pack. La croissance vient des assets reellement livres depuis
+cette mesure-la (`assets/` pese 76 Mo sur disque aujourd'hui : cabin_decor
+13,4 Mo + ses deux maps 6,8 et 6,1 Mo, bear_walker 10,2 Mo, owl_decor
+8,4 Mo, ...). **Sujet reel, mais explicitement HORS PERIMETRE de ce lot**
+-- Mathieu tranchera separement s'il ouvre un chantier de retrait des
+normal/metallic maps sur les assets deja unlit (l'importeur glTF ne les
+lie de toute facon jamais sur un materiau UNLIT, regle deja etablie plus
+haut dans ce fichier).
+
+### PALIER 2 -- MERGE EN PRODUCTION (2 septembre 2026, meme jour)
+
+Validation device de Mathieu sur `keepy-staging.vercel.app` : **yeux
+fermes bien cales, confirmee** ; la bulle "Zzz" **inchangee et toujours
+bonne** (non retestee, comme prevu -- elle etait deja actee). Feu vert
+explicite donne pour le palier 2.
