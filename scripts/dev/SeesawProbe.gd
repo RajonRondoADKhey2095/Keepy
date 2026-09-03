@@ -45,7 +45,14 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## measured off the file) under the cabin's own root. Not batched: there is
 ## only one, and it is pure scenery -- no hotspot, no tap radius, nothing
 ## registered.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 132
+## 132 -> 141 on 3 septembre 2026, ITEMISED on the same terms: the
+## zipline's TIER 1 structure. FIVE MeshInstance3D of its own -- a deck and
+## a head beam at each of the two towers, plus the ONE cable between them
+## -- and FOUR shared MultiMeshInstance3D: legs, masts, treads and
+## stringers, one node each for however many towers the layout ships. That
+## batching is the whole difference between +9 and +25: eight legs, four
+## masts, eight treads and four stringers cost four nodes between them.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 141
 
 var _failures: int = 0
 var _hub: Node = null

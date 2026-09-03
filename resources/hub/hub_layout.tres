@@ -1040,7 +1040,7 @@ props = [{
 "variant": 2,
 "type": &"flower"
 }, {
-"position": Vector3(28.336, 0, 6.894),
+"position": Vector3(28.86, 0, 5.55),
 "rotation_y": 41.1,
 "scale": 1.253,
 "variant": 0,
@@ -1125,4 +1125,8 @@ props = [{
 "rotation_y": 236.3,
 "scale": 1.11,
 "type": &"rock"
+}, {
+"position": Vector3(27.7, 0, 9.2),
+"far_end": Vector3(25.2, 0, 35.0),
+"type": &"zipline"
 }]
