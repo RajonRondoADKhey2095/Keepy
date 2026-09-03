@@ -770,6 +770,52 @@ deux sont sur la même ligne de caméra. Un dégagement est une distance au
 SOL ; « qu'est-ce que ça cache » est une question d'IMAGE, et seul un rendu
 y répond.
 
+### ⚠️ UNE STRUCTURE POSÉE SUR UN BORD DÉBORDE — ça se répare dans la RÉGION
+
+Un prop dont le layout fixe le centre **exactement sur** la limite du monde
+jouable met fatalement des parties de lui-même **au-delà**, et personne
+n'est prévenu : ni erreur, ni sonde rouge, ni build cassé. Sur device ça ne
+se lit même pas comme un bug — c'est une structure dont on ne peut pas faire
+le tour, parce que chaque tap derrière elle est rabattu sur le bord.
+
+Mesuré sur la tour nord de la tyrolienne (P2 pile sur `PLATEAU_HALF_EXTENT`) :
+l'escalier débordait de **1,682 u**, et **même les jambes arrière** de
+**0,547 u** — cinq points au sol, **zéro** dans la région.
+
+**La réparation va dans la RÉGION, pas dans le bâtisseur.** Réorienter la
+seule structure fautive casse la symétrie « un bâtisseur, N instances, une
+règle de facing » ET ne règle que la partie la plus visible du débord.
+
+Le patron, et il est réutilisable tel quel :
+
+1. **Un lobe DÉDIÉ centré sur la structure**, uni à la région — pas un
+   élargissement du lobe de bord existant, qui peut être à des dizaines
+   d'unités (le lobe nord était à 25,2 u pour un rayon 12).
+2. **Une TABLE dès la première entrée**, jamais un second scalaire.
+3. **Le rayon est MESURÉ contre les parties AU SOL telles que construites**,
+   et il vise la MARGE, pas le minimum : viser l'emprise circonscrite laisse
+   un liseré, pas de la place pour manœuvrer. Compter au moins un
+   `KEEPY_CLEARANCE` au-delà de la partie la plus large.
+4. **La traversée pire cas est RE-MARCHÉE, pas déduite.** L'argument « un
+   lobe sur un bord n'allonge aucune diagonale entre coins » est vrai et
+   reste **à vérifier à chaque fois** : la cible est le point du disque le
+   plus éloigné **DU COIN OPPOSÉ**, jamais sa pointe — viser la pointe
+   mesure un trajet plus court et l'appelle le pire.
+5. **Le centre est une seconde orthographe du layout** (la région ne peut pas
+   lire le layout : le bâtisseur lui demande `contains()` PENDANT qu'il
+   construit). Régime des centres de lacs : littéral **gaté** contre l'objet
+   réellement construit, jamais littéral cru.
+6. **Blind check obligatoire** : « tout est couvert » est une assertion de
+   COUVERTURE, qui passe gratuitement. Rejouer l'ANCIENNE région dans la
+   sonde et exiger qu'elle échoue d'abord — et l'y réécrire à la main plutôt
+   que d'ajouter un interrupteur dans la région, parce qu'une sonde capable
+   d'éteindre la région livrée est une sonde capable de la laisser éteinte.
+
+⚠️ **Et regarder ce que la région débloque AILLEURS.** Le même lobe a réparé
+un défaut que personne n'avait cherché : l'anneau de dépôt de fin de trajet
+(`_ride_exit_point`, qui **jette** tout candidat hors région) avait tout son
+arc nord amputé à P2 — un rider ne pouvait être déposé que côté plateau.
+
 ### ⚠️ UNE TABLE EST UNE LISTE DÈS LE PREMIER COMMIT
 
 Le plongeoir avait une géométrie générique mais un **singleton** en aval : une

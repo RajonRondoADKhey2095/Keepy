@@ -569,6 +569,27 @@ func _phase_crossing() -> void:
 			% [lobe, diagonal])
 	_check(diagonal < 22.0, "which is inside the 22 s budget (%.3f s)" % diagonal)
 
+	# ⚠️ EVERY STRUCTURE LOBE IS WALKED TOO, on the same terms and in the
+	# same phase. A lobe is affordable because it hangs off an EDGE and adds
+	# no length to a diagonal between CORNERS -- true of the north lobe, and
+	# true of the P2 lobe only because it was MEASURED to be: the recon that
+	# sized it swept r = 2.0 to 5.0 on this same bench and found 17.850 s to
+	# 18.417 s, all under the diagonal. Gated here so a future row added to
+	# that table cannot quietly become the hub's worst walk.
+	#
+	# The target is the disc's farthest point FROM THIS CORNER, not its +Z
+	# tip: that is the pair a lobe actually creates, and aiming at the tip
+	# would measure a shorter trip and call it the worst one.
+	for entry in HubRegion.structure_lobes():
+		var lc: Vector3 = entry["centre"]
+		var lr: float = float(entry["radius"])
+		var corner := Vector3(-h, 0.0, -h)
+		var tip: Vector3 = lc + (lc - corner).normalized() * lr
+		var trip: float = await _trip("far corner -> structure lobe %s r=%.1f" % [lc, lr], corner, tip)
+		_check(trip < diagonal,
+			"and the structure lobe at %s costs %.3f s, still SHORTER than the diagonal %.3f s"
+				% [lc, trip, diagonal])
+
 	# ⚠️ THE DIAGONAL WALKS THROUGH A PORTAL, and a portal that is entered
 	# opens the confirm dialog -- after which _on_tapped_ground returns at
 	# its very first guard and every later tap in this file is swallowed.
