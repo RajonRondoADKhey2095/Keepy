@@ -1641,3 +1641,127 @@ même forme que le +528 octets déjà documenté pour le blaireau.
 deux états de 4 assets, une fois chacun) et non un contrat permanent —
 supprimée avant ce commit, per la règle sonde-jetable. Rien de nouveau
 n'entre dans `scripts/dev/` pour ce lot.
+
+## LOT — RATIO EXACT 1,6x, ET UN SECOND DÉFAUT DÉCOUVERT PAR LA MESURE, PAS PAR LE BRIEF (3 septembre 2026, même jour)
+
+### Sujet 1 — la moyenne géométrique cède la place à un ratio EXACT
+
+Le lot précédent (même jour) dérivait `BADGER_DRAWN_HEIGHT` par MOYENNE
+GÉOMÉTRIQUE sur les trois acteurs (Keepy, blaireau, ours), pour un résultat
+de 1,597431 (`BADGER_SCALE` 0,962085). Mathieu a demandé un chiffre plus
+simple et plus direct : le blaireau vaut EXACTEMENT 1,6 fois la hauteur de
+Keepy, pas une moyenne géométrique avec l'ours.
+
+`KEEPY_DRAWN_HEIGHT` revérifiée inchangée sur `origin/staging` (`b00b516`
+ancêtre confirmé par `git merge-base --is-ancestor`) : toujours 1,3501.
+
+    BADGER_DRAWN_HEIGHT = 1,6 * KEEPY_DRAWN_HEIGHT = 1,6 * 1,3501 = 2,16016
+    BADGER_SCALE        = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
+                        = 2,16016 / 1,660387 = 1,300998
+
+`BADGER_REST_SPAN` (1,660387) n'a pas bougé — c'est une mesure du rig à
+l'échelle 1, indépendante de tout choix de ratio. Écrit comme la formule
+`1.6 * KEEPY_DRAWN_HEIGHT`, pas comme son résultat typé, même règle que la
+moyenne géométrique qu'elle remplace.
+
+### Sujet 2 — l'inversion de taille blaireau/ours, SIGNALÉE, NON CORRIGÉE (rappel du brief)
+
+À 2,16016, le blaireau dépasse l'ours (`BEAR_DRAWN_HEIGHT` 1,890073,
++14,3 %) — l'ordre Keepy < blaireau < ours du lot précédent devient
+Keepy < ours < blaireau. Mathieu en a été informé avant de demander le
+ratio 1,6x et n'a pas demandé de correction sur `BEAR_SCALE` : la constante
+est intouchée. L'inversion est réelle et visible en jeu, pas seulement dans
+un commentaire — voir le rendu du Sujet 4.
+
+L'assertion `ZiplineRideProbe` qui gate cet ordre («&nbsp;while staying
+SHORTER than the bear&nbsp;») a été RETOURNÉE pour refléter le nouvel ordre
+accepté (`scale_drawn > BEAR_DRAWN_HEIGHT` au lieu de `<`) plutôt que
+laissée à tester une relation que Mathieu a explicitement annulée — la
+retourner est fidèle à sa décision, la laisser telle quelle aurait gaté
+tout lot futur contre un fait devenu faux. ROUGE AVANT VERT respecté :
+l'ancienne assertion a été observée échouer réellement (`FAIL while
+staying SHORTER than the bear (2.1602 < 1.8901)`) avant d'être retournée,
+puis la nouvelle a été observée passer (`OK and now TALLER than the bear
+too (2.1602 > 1.8901)`).
+
+### Sujet 3 — clearance escalier tyrolienne : resserrée, PAS un conflit
+
+`BADGER_SIDE_OFFSET` (0,95) inchangée. La largeur du blaireau grandit avec
+son échelle uniforme ; l'étendue latérale du rig à l'échelle 1 se déduit du
+couple (largeur, échelle) déjà publié au lot précédent (0,710 u à
+0,962085) : 0,710 / 0,962085 = 0,738 u à l'échelle 1. À la nouvelle échelle
+1,300998, largeur = 0,738 * 1,300998 = 0,960 u.
+
+    marge = BADGER_SIDE_OFFSET - largeur/2 - ZIPLINE_STRINGER_HALF_SPAN
+          = 0,95 - 0,960/2 - 0,42 = 0,95 - 0,480 - 0,42 = +0,050 u
+
+Toujours positive — **pas un conflit réel** — mais un cinquième de la marge
+précédente (+0,175 u). Signalé dans le commentaire de `BADGER_SIDE_OFFSET`
+comme un point à surveiller si le blaireau grandit encore, mais laissé tel
+quel : +0,050 u est une marge réelle, non nulle, et rien ne demandait de
+retoucher l'offset.
+
+### Sujet 4 — DÉCOUVERT PAR LA MESURE, PAS DEMANDÉ PAR LE BRIEF : le blaireau passe sous le sol pendant la traversée de la tyrolienne
+
+`ZiplineRideProbe` relancée (`godot4 --headless --fixed-fps 60`, sonde pure
+transform donc légitimement headless per sa propre doctrine d'en-tête) :
+**2 échecs réels**, tous deux la même cause.
+
+`_zip_seat()` aligne les DEUX passagers sous la MÊME barre (`crown_y` =
+`cable_height - bar_drop - hang_clearance` = 2,0 - 0,24 - 0,05 = 1,71,
+constant, indépendant de la hauteur du corps — propriété déjà établie et
+blind-checkée au lot précédent). Les PIEDS, eux, descendent avec la
+hauteur du corps : `feet_y = crown_y - height`. Tant que `height` restait
+sous 1,71 (le cas de Keepy à 1,3501 et du blaireau à l'ancien 1,597431),
+les pieds restaient positifs. À 2,16016, `height` DÉPASSE `crown_y` :
+
+    feet_y = 1,71 - 2,16016 = -0,45016
+
+Mesuré directement par la sonde : `FAIL the badger's feet are off the
+ground (-0.4502)` et `FAIL both are genuinely off the ground (0.360 >
+0.180 / -0.450 > -0.225)`. Ce n'est pas une marge resserrée comme le Sujet
+3 — c'est un passage SOUS le niveau du sol (0,0) pendant tout le trajet de
+la tyrolienne (4,0 s, `ZIPLINE_RIDE_S`), visible et non un artefact de
+sonde : la même formule est celle qui place effectivement le blaireau à
+l'exécution (`HubWorld._zip_seat`), pas une approximation de commentaire.
+
+**Cause verrouillée dans la géométrie partagée** : `bar_drop` et
+`hang_clearance` viennent du MÊME dictionnaire `_zipline` pour les deux
+passagers — une seule barre physique. Le trajet de Keepy est déjà validé
+device ; changer `bar_drop`/`hang_clearance`/`cable_height` pour le
+blaireau déplacerait aussi Keepy. Une résolution correcte (pose de
+suspension distincte pour le blaireau, barre plus haute, ou tout autre
+choix) est une décision de conception que ce lot n'a pas reçu mandat de
+prendre — le brief demandait explicitement de vérifier la clearance
+ESCALIER, pas la géométrie de la tyrolienne elle-même, et ce défaut n'a été
+découvert qu'en re-testant `ZiplineRideProbe` après coup.
+
+**Conséquence sur le déploiement** : `ZiplineRideProbe` gate un contrat
+permanent (sa propre doctrine d'en-tête, section « WHY GATED AND NOT
+MERELY REPORTED »). CLAUDE.md définit le palier 1 (merge vers `staging`)
+comme gaté par « build/export verts, SONDES GATÉES vertes » — un critère
+purement technique. Avec 2 échecs réels et nouveaux sur une sonde gatée,
+ce lot n'est PAS techniquement valide au sens de cette règle. **Le merge
+automatique vers `staging` est donc retenu pour ce lot**, contrairement à
+la routine habituelle — la branche est poussée, prête, mais pas mergée,
+en attente d'une décision de Mathieu sur la géométrie de la tyrolienne
+pour un blaireau plus grand que la barre ne le permet.
+
+### Sujet 5 — preuve visuelle
+
+Rendu offscreen (`xvfb-run --rendering-driver opengl3`, sonde jetable
+supprimée avant ce commit, `HubCamera.snap_to_target()` utilisée plutôt
+qu'un `look_at()` manuel — la caméra du hub garde une ROTATION FIXE et ne
+fait que suivre la position sol de Keepy, un `look_at()` la désynchronise
+et ne s'en remet jamais). Keepy et le blaireau posés côte à côte au point
+de spawn : le blaireau (à droite) domine nettement Keepy et dépasse même
+le hibou statique du plateau, entrés tous deux dans le même cadrage par
+coïncidence de position. Sous `docs/renders/badger_1_6x_rescale/
+keepy_badger_side_by_side.png`.
+
+### Sonde
+
+`ZiplineRideProbe` modifiée (assertion bear/badger retournée, Sujet 2) —
+contrat permanent existant, pas une sonde neuve. Rien d'autre n'entre dans
+`scripts/dev/` pour ce lot ; le spike de rendu (`BadgerRescale16xSpike.
+{gd,tscn}`) a été supprimé avant ce commit, per la règle sonde-jetable.

@@ -155,18 +155,25 @@ func _phase_registry() -> void:
 			% [off_axis, HubBuilder.ZIPLINE_STRINGER_HALF_SPAN])
 	# 3 septembre 2026: no longer "the badger is drawn at Keepy's own
 	# height" -- Mathieu's device feedback overrode that, and the badger is
-	# now DELIBERATELY taller (geometric-mean rescale, see HubWorld's own
-	# BADGER_SCALE docblock). What still has to hold is the ORDERING: the
-	# badger reads bigger than Keepy but still smaller than the bear, or the
-	# three-actor cast collapses into two animals the same size.
+	# now DELIBERATELY taller than Keepy. First pass that same day used a
+	# geometric-mean anchor that also kept the badger under the bear; a
+	# SECOND pass the same day replaced it with an EXACT 1.6x-of-Keepy
+	# ratio (see HubWorld's own BADGER_SCALE docblock), which pushes the
+	# badger PAST the bear (2.16016 > 1.890073). Mathieu was informed of
+	# that inversion before asking for the 1.6x ratio and did not ask for
+	# BEAR_SCALE to move, so the ordering this probe gates is now
+	# Keepy < bear < badger, not Keepy < badger < bear -- asserting the OLD
+	# ordering here would gate every future lot against a relationship
+	# Mathieu has already overridden, which is exactly the stale-assertion
+	# trap this file's own doctrine (CLAUDE.md) warns about.
 	var scale_drawn: float = HubWorld.BADGER_REST_SPAN * HubWorld.BADGER_SCALE
 	_check(absf(scale_drawn - HubWorld.BADGER_DRAWN_HEIGHT) < 0.0005,
 		"the badger is drawn at its own published height, %.4f (derived, not typed)" % scale_drawn)
 	_check(scale_drawn > HubWorld.KEEPY_DRAWN_HEIGHT,
 		"and it is TALLER than Keepy (%.4f > %.4f) -- the device defect this rescale fixes"
 			% [scale_drawn, HubWorld.KEEPY_DRAWN_HEIGHT])
-	_check(scale_drawn < HubWorld.BEAR_DRAWN_HEIGHT,
-		"while staying SHORTER than the bear (%.4f < %.4f), so the two animals stay apart on screen"
+	_check(scale_drawn > HubWorld.BEAR_DRAWN_HEIGHT,
+		"and now TALLER than the bear too (%.4f > %.4f) -- Keepy < badger < bear is INVERTED by design"
 			% [scale_drawn, HubWorld.BEAR_DRAWN_HEIGHT])
 
 	# THE DOOR. A door nobody asks never withdraws, and that failure is

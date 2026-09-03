@@ -341,9 +341,11 @@ const BEAR_SCALE: float = 1.130876
 
 ## The bear rig's rest-pose height at scale 1, Lot B's own measurement,
 ## restated here as a named constant for the SAME reason `BADGER_REST_SPAN`
-## below is one: `BADGER_SCALE` is derived FROM the bear's drawn height, and
-## a literal 1.671335 typed a second time there is exactly the "recopied
-## fact" this file's own doctrine bans (see `KEEPY_DRAWN_HEIGHT`'s users).
+## below is one: this figure is quoted by comments comparing the badger's
+## height to the bear's, and a literal 1.671335 typed a second time there
+## is exactly the "recopied fact" this file's own doctrine bans (see
+## `KEEPY_DRAWN_HEIGHT`'s users). `BADGER_SCALE` itself is derived from
+## `KEEPY_DRAWN_HEIGHT`, not from this constant -- see its own comment.
 ## Re-measured on the badger lot's own bench and read back 1.671344 against
 ## this figure -- 9 micro-units apart, standing to publish, not redo.
 const BEAR_REST_SPAN: float = 1.671335
@@ -1652,46 +1654,43 @@ const KEEPY_DRAWN_HEIGHT: float = 1.3501
 ## scale on its Armature.
 const BADGER_REST_SPAN: float = 1.660387
 
-## ⚠️ SUPERSEDED 3 SEPTEMBRE 2026 -- Mathieu's device feedback (screenshots
-## attached) read the shipped badger as too small next to Keepy. The
-## original reasoning kept here for the record: on the zipline the two
-## riders hang from ONE bar side by side, and a badger the same height as
-## Keepy reads as a matched pair rather than one of them dangling. That
-## reasoning is real, but it optimised the one screen where the badger and
-## Keepy are both in the air, at the cost of every OTHER screen where the
-## badger stands or walks beside Keepy on the ground -- which is most of
-## its screen time, and the one Mathieu's screenshots showed. Overridden by
-## his explicit call: the badger reads bigger than Keepy now, full stop.
+## ⚠️ SUPERSEDED 3 SEPTEMBRE 2026 (first rescale) -- Mathieu's device
+## feedback (screenshots attached) read the shipped badger as too small
+## next to Keepy. The reasoning from that pass is kept here for the
+## record: on the zipline the two riders hang from ONE bar side by side,
+## and a badger the same height as Keepy reads as a matched pair rather
+## than one of them dangling. That reasoning is real, but it optimised the
+## one screen where the badger and Keepy are both in the air, at the cost
+## of every OTHER screen where the badger stands or walks beside Keepy on
+## the ground -- which is most of its screen time, and the one Mathieu's
+## screenshots showed. Overridden by his explicit call at the time: the
+## badger reads bigger than Keepy, full stop. That first pass placed the
+## badger at the GEOMETRIC MEAN of Keepy and the bear (k = sqrt(1.890073 /
+## 1.3501) = 1.183195), giving BADGER_DRAWN_HEIGHT = 1.597431 and
+## BADGER_SCALE = 0.962085.
 ##
-## DERIVED, NOT CHOSEN, and the derivation still has no free parameter --
-## only the TARGET changed. Three actors share this screen -- Keepy, the
-## badger, the bear -- and `BEAR_DRAWN_HEIGHT` (1.890073) is already
-## visibly bigger than `KEEPY_DRAWN_HEIGHT` (1.3501), a ratio of 1.399950.
-## Rather than pick a badger height by eye, the badger is placed at the
-## GEOMETRIC MEAN of the two: the step Keepy -> badger and the step badger
-## -> bear are then the SAME multiplicative jump, so neither gap on screen
-## reads as an afterthought next to the other -- one is not "clearly a
-## step up" while the other is "hard to tell":
+## ⚠️ SUPERSEDED AGAIN, SAME DAY -- Mathieu asked for an EXACT ratio
+## instead: the badger's drawn height is 1.6x Keepy's, not the geometric
+## mean of Keepy and the bear. The geometric-mean reasoning above is no
+## longer what this constant computes; it is kept only as the record of
+## what shipped first. The formula is now:
 ##
-##     k      = sqrt(BEAR_DRAWN_HEIGHT / KEEPY_DRAWN_HEIGHT)
-##            = sqrt(1.890073 / 1.3501) = sqrt(1.399950) = 1.183195
-##     BADGER_DRAWN_HEIGHT = k * KEEPY_DRAWN_HEIGHT = 1.597431
+##     BADGER_DRAWN_HEIGHT = 1.6 * KEEPY_DRAWN_HEIGHT
+##                         = 1.6 * 1.3501 = 2.16016
 ##     BADGER_SCALE        = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
-##                         = 1.597431 / 1.660387 = 0.962085
-##
-## Verified: k * k = 1.399950 = BEAR_DRAWN_HEIGHT / KEEPY_DRAWN_HEIGHT to
-## six figures, i.e. the badger is +18.3% over Keepy and the bear is a
-## further +18.3% over the badger -- the SAME step twice, not two
-## different-looking ones. The badger is STILL visibly smaller than the
-## bear (1.597431 < 1.890073, an 18.3% gap of its own), so the two animals
-## stay apart on screen exactly as the superseded reasoning intended --
-## that half of the old reasoning was never wrong, only the anchor was.
+##                         = 2.16016 / 1.660387 = 1.300998
 ##
 ## Written as the formula rather than as its result, the same rule
 ## `KEEPY_DRAWN_HEIGHT`'s other users follow, so this cannot drift from
-## `BEAR_SCALE`/`BEAR_REST_SPAN` on one side or `BADGER_REST_SPAN` on the
-## other.
-const BADGER_DRAWN_HEIGHT: float = sqrt(BEAR_DRAWN_HEIGHT / KEEPY_DRAWN_HEIGHT) * KEEPY_DRAWN_HEIGHT
+## `BADGER_REST_SPAN`.
+##
+## ⚠️ CONSEQUENCE, FLAGGED AND LEFT AS-IS -- at 2.16016 the badger is now
+## TALLER than the bear (`BEAR_DRAWN_HEIGHT` 1.890073, +14.3%), reversing
+## the Keepy < badger < bear size order the first rescale established.
+## Mathieu was informed of this before the change was made and did not ask
+## for `BEAR_SCALE` to move; it is untouched. The inversion is real and
+## visible in game, not merely a comment -- see CH21_TYROLIENNE.md.
+const BADGER_DRAWN_HEIGHT: float = 1.6 * KEEPY_DRAWN_HEIGHT
 const BADGER_SCALE: float = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
 
 ## How far to the side of the stair foot the badger waits, along the
@@ -1699,17 +1698,24 @@ const BADGER_SCALE: float = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
 ##
 ## ⚠️ BESIDE THE STAIR AND NOT ON IT. The stringers span
 ## `ZIPLINE_STRINGER_HALF_SPAN` 0.42 either side of the flight. At the
-## OLD `BADGER_SCALE` the badger was 0.6 across, and 0.95 put its near
-## flank 0.23 clear of the near rail.
+## ORIGINAL (pre-3-September) `BADGER_SCALE` the badger was 0.6 across,
+## and 0.95 put its near flank 0.23 clear of the near rail.
 ##
-## RE-CHECKED AFTER THE 3 SEPTEMBRE 2026 RESCALE, not left on the old
-## number: a uniform scale widens the rig on every axis by the same factor
-## it grew on, `BADGER_SCALE_new / BADGER_SCALE_old` = 1.183195, so the
-## badger is now 0.6 * 1.183195 = 0.710 u across. Near flank at the SAME
-## 0.95 offset: 0.95 - 0.710/2 = 0.595, still 0.595 - 0.42 = +0.175 u clear
-## of the rail -- tighter than the 0.23 u it had, but not a conflict, so
-## the offset is left at its measured value rather than re-tuned for a
-## margin nothing asked for.
+## RE-CHECKED AFTER EACH RESCALE, not left on the old number. The first
+## 3 September rescale (geometric-mean anchor) widened the rig to 0.6 *
+## 1.183195 = 0.710 u across; near flank at the same 0.95 offset:
+## 0.95 - 0.710/2 = 0.595, 0.595 - 0.42 = +0.175 u clear of the rail --
+## tighter than the 0.23 u it had, but not a conflict.
+##
+## RE-CHECKED AGAIN after the SAME-DAY 1.6x-exact rescale: the rig's own
+## lateral extent at scale 1 (0.710 / 0.962085 = 0.738) times the new
+## `BADGER_SCALE` (1.300998) gives 0.960 u across. Near flank at the same
+## 0.95 offset: 0.95 - 0.960/2 = 0.470, 0.470 - 0.42 = +0.050 u clear of
+## the rail -- STILL positive, i.e. still not a real conflict, but down
+## from +0.175 u to a fifth of that margin. Flagged rather than silently
+## carried: the next badger rescale, if any, may need this offset re-tuned
+## rather than left at 0.95. Left as-is for now because +0.050 u is a
+## real margin, not zero or negative, and nothing asked for a re-tune.
 const BADGER_SIDE_OFFSET: float = 0.95
 
 ## How long the trolley takes to cross.
