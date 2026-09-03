@@ -1047,3 +1047,148 @@ ce dépôt ne score la lisibilité à l'intérieur d'une bande de luminance.
 **C'est la validation device qui tranche**, et c'est le seul gate qui reste
 avant `main` — auquel s'ajoute, cette fois, un arbitrage de payload que
 seul Mathieu peut rendre : **+11,29 Mio, dont 5,78 Mio inertes**.
+
+## PALIER 2 SUITE — LE MAP D'ÉMISSION DU BLAIREAU RETIRÉ, TRANCHÉ EN UN MOT (3 septembre 2026)
+
+L'arbitrage laissé en suspens ci-dessus a été tranché : retirer le map. Ce
+lot ne touche que la copie installée du blaireau — `assets_source/` reste
+byte-identique (`dbc6fbcb116a793012c7fe92e0ad2082`, revérifié après coup).
+
+### La méthode — celle déjà écrite dans `CLAUDE.md`, appliquée sans variante
+
+`Material_1` du blaireau ne porte que deux textures : `emissiveTexture`
+(image 0) et `pbrMetallicRoughness.baseColorTexture` (image 1) — pas de
+normal, pas de metallicRoughness séparé. Confirmé en dumpant le chunk JSON
+du `.glb` : `emissiveFactor=[1,1,1]`, plus un boost
+`KHR_materials_specular.specularColorFactor=[2,2,2]` qui ne s'applique lui
+non plus jamais (même surface unshaded). Script Python (`struct`+`json`
+manuels, pas de dépendance) :
+
+1. Découper le chunk BIN à l'octet près, du `byteOffset` de la bufferView de
+   l'image d'émission jusqu'au `byteOffset` de la bufferView SUIVANTE (donc
+   en emportant le padding d'alignement inter-chunks, pas seulement le
+   `byteLength` déclaré — sans ça, la bufferView restante se retrouve décalée
+   de quelques octets et le PNG suivant devient illisible).
+2. Décaler tous les `byteOffset` postérieurs de la longueur coupée.
+3. Retirer l'entrée `bufferViews`, `images` et `textures` correspondantes,
+   et réindexer chaque référence restante (`images[].bufferView`,
+   `accessors[].bufferView`, `textures[].source`,
+   `material.pbrMetallicRoughness.baseColorTexture.index`) — aucun
+   `sparse accessor` sur cet asset, donc pas de cas à couvrir en plus.
+4. Recoller un GLB valide (magic, JSON paddé à 4 octets avec des espaces,
+   BIN paddé à 4 octets avec des zéros, longueur totale repatchée).
+
+Vérifié avant d'écraser le fichier installé : `pygltflib` charge le résultat
+sans erreur (155 accessors, 1 mesh, 1 skin, 2 animations — **identique** à
+l'avant, aucune donnée de squelette ni d'animation touchée), et le MD5 de
+l'image restante dans le nouveau `.glb` est **byte-identique** au MD5 de
+l'image baseColor originale — la seule chose qui a changé est que l'image
+d'émission n'existe plus.
+
+`keepy_badger_walker.glb` : **14 485 536 → 7 552 692 octets** (quasi moitié,
+cohérent : les deux textures pesaient à un octet près la même chose).
+Siblings extraits par l'import Godot (`gltf/embedded_image_handling=1`,
+Extract) : les DEUX anciens PNG (`_texture_0.png` = émission,
+`_texture_0_1.png` = baseColor, noms attribués par collision sur le nom
+d'image partagé `"texture_0"` dans le `.glb` d'origine) supprimés — pas
+seulement l'émission — parce qu'un unique PNG restant se réextrait sous le
+nom `_texture_0.png`, **sans le suffixe** : laisser l'ancien fichier de ce
+nom (qui contenait l'émission) aurait silencieusement mélangé un octet
+d'émission périmé avec un nouveau baseColor au prochain import qui touche
+autre chose. Reproduit la même bascule de nommage que `CLAUDE.md` documente
+déjà pour le hero écureuil.
+
+### PREUVE AU PIXEL — byte-identique aux quatre azimuts, pas juste "proche"
+
+Sonde jetable `scripts/dev/BadgerEmissionAudit.{gd,tscn}` (supprimée avant
+ce commit, per la règle sonde-jetable) : bâtit l'acteur via
+`HubActorWalker` exactement comme `HubWorld._badger_rest()` le fait —
+même `model_scene`, même `BADGER_SCALE` (0,813125), même
+`_force_unshaded()` — et capture `get_viewport().get_texture().get_image()`
+à yaw 0°/90°/180°/270°, sous `xvfb-run --rendering-driver opengl3` (jamais
+`--headless` seul, pour la raison DUMMY-driver déjà documentée : un premier
+essai avec `--headless` en plus du flag opengl3 a fini en `Terminated` au
+timeout, symptôme de `--headless` écrasant le driver en silence — retiré, le
+rendu a immédiatement fonctionné).
+
+**Blind check d'abord** : yaw 0° contre yaw 90° du même run diffèrent
+(max 230, moyenne 4,66 sur 0-255) — la sonde SAIT voir une différence quand
+il y en a une, donc un résultat "identique" ensuite n'est pas gratuit.
+
+**Résultat, les quatre azimuts, MD5 du PNG entier avant/après** :
+
+| azimut | avant | après |
+|---|---|---|
+| 0° | `b49f7d65d1ea12b67808e6979b0c1766` | **identique** |
+| 90° | `3eb80b9353e5616099de74fcba8ffb2f` | **identique** |
+| 180° | `c724a1144b8592c19f96e7f6cbd3a942` | **identique** |
+| 270° | `13361eaed990308b9c1c58873bd15ffb` | **identique** |
+
+Byte-identique, pas seulement visuellement proche — confirme au pixel près
+ce que `_force_unshaded` (shading_mode UNSHADED) prédisait : le canal
+d'émission ne rendait littéralement rien.
+
+### PAYLOAD — mesuré aux deux bouts, sur le `.pck` réel, pas sur le filtre
+
+Export release Web complet, gabarit 4.3-stable, deux worktrees comparés
+(`git stash` avant/après plutôt qu'un vrai worktree séparé — les deux états
+tiennent dans la même branche et `build/`+`.godot/` sont nettoyés entre les
+deux pour éviter l'auto-contamination documentée) :
+
+| | `index.pck` | `index.wasm` |
+|---|---|---|
+| avant (badger avec émission) | 55 139 728 | 35 376 909 |
+| après (émission retirée) | **49 360 672** | 35 376 909 (inchangé) |
+| delta | **-5 779 056 octets (-5,51 Mio)** | 0 |
+
+`index.wasm` byte-identique aux deux bouts (35 376 909, le contrôle
+d'identité documenté) confirme qu'aucun code moteur n'a bougé — seul l'asset
+a changé. Le TOC du `.pck` lui-même (parsé directement, format GDPC v2, pas
+de log `savepack` à défaut) confirme **une seule** entrée `.ctex` pour le
+blaireau après coup
+(`keepy_badger_walker_texture_0.png-…95948e28…ctex`, **5 778 528 octets** —
+exactement le chiffre publié au Palier 2 sous forme d'estimation, ici
+mesuré) là où il y en avait deux avant. Le delta mesuré (5 779 056) dépasse
+ce chiffre de 528 octets — le fichier `.import` de la texture retirée
+(283 octets) et la réduction du JSON du matériau dans le `.scn` importé
+expliquent l'écart, pas une erreur de mesure.
+
+### AUTRE CHARGE MORTE DÉJÀ INSTALLÉE — REPÉRÉE, CHIFFRÉE, **NON TOUCHÉE**
+
+Scan de tous les `.glb` d'`assets/models/` (15 fichiers) pour tout matériau
+portant `emissiveTexture`/`normalTexture`/`occlusionTexture`/
+`metallicRoughnessTexture` — puis mesure du poids RÉEL de chaque `.ctex`
+correspondant dans le `.pck` déjà exporté ci-dessus (celui qui contient
+encore ces quatre assets intacts), par lecture directe du TOC du pack
+(format GDPC v2 : magic, `pack_format`/version, `pack_flags`+`file_base`,
+16 uint32 réservés, `file_count`, puis par fichier
+chemin+offset+taille+md5+flags) plutôt que par estimation :
+
+| asset | canal mort | matériau | taille `.pck` (octets) |
+|---|---|---|---|
+| `keepy_bear_walker.glb` | `emissiveTexture` | **PAS** `KHR_materials_unlit` dans le `.glb` — unshaded forcé à l'exécution par `HubActorWalker._force_unshaded()`, **exactement le même mécanisme que le blaireau avant ce lot** (même forme de matériau : `emissiveFactor=[1,1,1]`, même boost `KHR_materials_specular=[2,2,2]`) | **4 330 988** |
+| `keepy_cabin_decor.glb` | `normalTexture` | `KHR_materials_unlit` déclaré dans le `.glb` | **8 619 000** |
+| `keepy_hibou_pursuer.glb` | `emissiveTexture` | `KHR_materials_unlit` déclaré | 353 606 |
+| `keepy_hibou_pursuer.glb` | `metallicRoughnessTexture` | `KHR_materials_unlit` déclaré | 408 840 |
+| `keepy_hibou_pursuer.glb` | `normalTexture` | `KHR_materials_unlit` déclaré | 527 212 |
+| `keepy_owl_decor.glb` | `normalTexture` | `KHR_materials_unlit` déclaré | **4 767 746** |
+| **TOTAL** | | | **19 007 392** |
+
+Soit **19,0 Mio** de charge morte supplémentaire déjà dans `main`/`staging`,
+avant même de compter ce lot. Le cas du **bear** est le plus proche parent
+du blaireau — identique dans sa forme (même `HubActorWalker`, même
+émission jamais rendue) — et serait probablement la prochaine cible la
+moins ambiguë si un futur lot en reçoit le mandat. Les trois autres
+(`cabin_decor`, `hibou_pursuer`, `owl_decor`) sont déjà `KHR_materials_unlit`
+dans leur `.glb` — l'importeur glTF ne lie même pas ces maps à l'import
+(règle déjà documentée), donc leur suppression n'a **aucun risque de
+différence rendue** à prouver, seulement le même exercice mécanique de
+découpe binaire fait ici. **Aucune des deux catégories n'a été touchée dans
+ce lot** — chiffré et publié pour arbitrage, comme demandé.
+
+### Sonde
+
+`BadgerEmissionAudit.{gd,tscn}` était une mesure ponctuelle (comparer deux
+états d'un seul asset, une fois) et non un contrat permanent — supprimée
+avant ce commit, per la règle sonde-jetable. Rien de nouveau n'entre dans
+`scripts/dev/` pour ce lot.
