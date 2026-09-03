@@ -153,9 +153,21 @@ func _phase_registry() -> void:
 	_check(off_axis > HubBuilder.ZIPLINE_STRINGER_HALF_SPAN,
 		"it waits %.3f u off the stair's centre line, clear of the %.2f u rail"
 			% [off_axis, HubBuilder.ZIPLINE_STRINGER_HALF_SPAN])
+	# 3 septembre 2026: no longer "the badger is drawn at Keepy's own
+	# height" -- Mathieu's device feedback overrode that, and the badger is
+	# now DELIBERATELY taller (geometric-mean rescale, see HubWorld's own
+	# BADGER_SCALE docblock). What still has to hold is the ORDERING: the
+	# badger reads bigger than Keepy but still smaller than the bear, or the
+	# three-actor cast collapses into two animals the same size.
 	var scale_drawn: float = HubWorld.BADGER_REST_SPAN * HubWorld.BADGER_SCALE
-	_check(absf(scale_drawn - HubWorld.KEEPY_DRAWN_HEIGHT) < 0.0005,
-		"the badger is drawn at Keepy's own height, %.4f (derived, not typed)" % scale_drawn)
+	_check(absf(scale_drawn - HubWorld.BADGER_DRAWN_HEIGHT) < 0.0005,
+		"the badger is drawn at its own published height, %.4f (derived, not typed)" % scale_drawn)
+	_check(scale_drawn > HubWorld.KEEPY_DRAWN_HEIGHT,
+		"and it is TALLER than Keepy (%.4f > %.4f) -- the device defect this rescale fixes"
+			% [scale_drawn, HubWorld.KEEPY_DRAWN_HEIGHT])
+	_check(scale_drawn < HubWorld.BEAR_DRAWN_HEIGHT,
+		"while staying SHORTER than the bear (%.4f < %.4f), so the two animals stay apart on screen"
+			% [scale_drawn, HubWorld.BEAR_DRAWN_HEIGHT])
 
 	# THE DOOR. A door nobody asks never withdraws, and that failure is
 	# silent -- it looks exactly like a working tap.
@@ -181,34 +193,51 @@ func _phase_seats() -> void:
 	var bar_drop: float = float(zip["bar_drop"])
 	var clearance: float = float(zip["hang_clearance"])
 	var height: float = HubWorld.KEEPY_DRAWN_HEIGHT
+	var badger_height: float = HubWorld.BADGER_DRAWN_HEIGHT
 
 	var keepy_seat: Vector3 = _hub._zip_seat(-1.0, height)
-	var badger_seat: Vector3 = _hub._zip_seat(1.0, height)
+	var badger_seat: Vector3 = _hub._zip_seat(1.0, badger_height)
 	_check(absf(keepy_seat.x + badger_seat.x) < 1.0e-6,
 		"the two seats are mirror images across the trolley (%.3f / %.3f)"
 			% [keepy_seat.x, badger_seat.x])
 	_check(absf(keepy_seat.x) > 0.0,
 		"and they are genuinely APART -- a lateral of 0 would be two bodies in one place")
-	_check(absf(keepy_seat.y - badger_seat.y) < 1.0e-6,
-		"they hang LEVEL, which is why the badger is scaled to Keepy's height")
+	# 3 septembre 2026: the badger is no longer scaled to Keepy's own
+	# height (device feedback overrode that, see HubWorld's BADGER_SCALE),
+	# so the two feet no longer hang level. What the shared bar STILL
+	# guarantees is that both CROWNS do -- see `_zip_seat`'s own docblock
+	# for why `height` cancels out of that half of the formula.
+	_check(absf((keepy_seat.y - badger_seat.y) - (badger_height - height)) < 1.0e-6,
+		"the feet differ by exactly the height gap (%.4f / %.4f), not by chance"
+			% [keepy_seat.y, badger_seat.y])
 	_check(absf(keepy_seat.x) < HubBuilder.ZIPLINE_TROLLEY_BAR_HALF_SPAN,
 		"each rider hangs FROM the bar (%.2f) and not off its end (%.2f)"
 			% [absf(keepy_seat.x), HubBuilder.ZIPLINE_TROLLEY_BAR_HALF_SPAN])
 
 	# THE DEFECT, stated as an assertion rather than as a comment: the
-	# crown must be UNDER the bar, and the feet clear of the ground.
-	var feet_y: float = cable_h + keepy_seat.y
-	var crown_y: float = feet_y + height
+	# crown must be UNDER the bar, and the feet clear of the ground. Checked
+	# for BOTH riders now that they are different heights -- the crown
+	# maths says they should land on the SAME crown_y, but "should" is
+	# exactly the kind of claim this repo's doctrine measures instead of
+	# trusting.
 	var bar_y: float = cable_h - bar_drop
-	_check(crown_y <= bar_y + 1.0e-6,
-		"a rider's crown (%.4f) is UNDER the grab bar (%.4f) -- measuring from the cable put it %.3f u above"
-			% [crown_y, bar_y, (cable_h - clearance) + 0.0 - bar_y])
-	_check(crown_y < cable_h,
-		"and therefore under the cable itself (%.4f < %.4f)" % [crown_y, cable_h])
-	_check(feet_y > 0.0, "his feet are off the ground (%.4f)" % feet_y)
-	_check(feet_y < HubBuilder.ZIPLINE_DECK_HEIGHT,
-		"and BELOW the deck (%.4f < %.4f), so boarding is a step off it and a drop"
-			% [feet_y, HubBuilder.ZIPLINE_DECK_HEIGHT])
+	for pair in [["Keepy", keepy_seat, height], ["the badger", badger_seat, badger_height]]:
+		var who: String = pair[0]
+		var seat: Vector3 = pair[1]
+		var h: float = pair[2]
+		var feet_y: float = cable_h + seat.y
+		var crown_y: float = feet_y + h
+		_check(crown_y <= bar_y + 1.0e-6,
+			"%s's crown (%.4f) is UNDER the grab bar (%.4f) -- measuring from the cable put it %.3f u above"
+				% [who, crown_y, bar_y, (cable_h - clearance) + 0.0 - bar_y])
+		_check(crown_y < cable_h,
+			"%s is therefore under the cable itself (%.4f < %.4f)" % [who, crown_y, cable_h])
+		_check(feet_y > 0.0, "%s's feet are off the ground (%.4f)" % [who, feet_y])
+		_check(feet_y < HubBuilder.ZIPLINE_DECK_HEIGHT,
+			"and %s is BELOW the deck (%.4f < %.4f), so boarding is a step off it and a drop"
+				% [who, feet_y, HubBuilder.ZIPLINE_DECK_HEIGHT])
+	_check(absf((cable_h + keepy_seat.y + height) - (cable_h + badger_seat.y + badger_height)) < 1.0e-6,
+		"and the two crowns land on the SAME height regardless of the badger's own, taller, height")
 
 	# BLIND CHECK. "The crown is under the bar" is satisfied for free by a
 	# seat function that ignores its height argument. Feed it a taller body
@@ -284,9 +313,16 @@ func _corridor_rows(fatten: float) -> Array:
 	var b: Vector3 = cable["to"]
 	var flat_a := Vector3(a.x, 0.0, a.z)
 	var flat_b := Vector3(b.x, 0.0, b.z)
+	# The crown is the SAME height for both riders regardless of body height
+	# (see `_zip_seat`'s own docblock -- it cancels out of the formula), so
+	# Keepy's seat gives it for free. The FEET are not: the taller badger
+	# (3 septembre 2026 rescale) hangs lower than Keepy, so the swept band
+	# has to reach down to WHICHEVER foot is lowest, or a part that only
+	# grazes the badger's dangling legs would be missed.
 	var seat: Vector3 = _hub._zip_seat(-1.0, HubWorld.KEEPY_DRAWN_HEIGHT)
-	var feet: float = float(zip["cable_height"]) + seat.y
-	var crown: float = feet + HubWorld.KEEPY_DRAWN_HEIGHT
+	var badger_seat: Vector3 = _hub._zip_seat(1.0, HubWorld.BADGER_DRAWN_HEIGHT)
+	var crown: float = float(zip["cable_height"]) + seat.y + HubWorld.KEEPY_DRAWN_HEIGHT
+	var feet: float = float(zip["cable_height"]) + minf(seat.y, badger_seat.y)
 	var reach: float = float(zip["rider_lateral"]) + HubWorld.KEEPY_CLEARANCE + fatten
 	var rows: Array = []
 	_corridor_walk(_props, flat_a, flat_b, feet, crown, reach, rows)
@@ -402,7 +438,7 @@ func _phase_trip() -> void:
 	var travelled: float = 0.0
 	var previous: Vector3 = carrier.global_position
 	var keepy_seat: Vector3 = _hub._zip_seat(-1.0, HubWorld.KEEPY_DRAWN_HEIGHT)
-	var badger_seat: Vector3 = _hub._zip_seat(1.0, HubWorld.KEEPY_DRAWN_HEIGHT)
+	var badger_seat: Vector3 = _hub._zip_seat(1.0, HubWorld.BADGER_DRAWN_HEIGHT)
 	for i in 90:
 		await get_tree().process_frame
 		if not _keepy.is_on_zipline():
@@ -423,9 +459,17 @@ func _phase_trip() -> void:
 	_check(worst_badger < 0.0005,
 		"and NEITHER IS THE BADGER (worst %.6f u) -- both written in the carrier's own call"
 			% worst_badger)
-	_check(_keepy.global_position.y > 0.2 and badger.global_position.y > 0.2,
-		"both are genuinely off the ground (%.3f / %.3f)"
-			% [_keepy.global_position.y, badger.global_position.y])
+	# NOT a shared magic floor: 0.2 was fine while both riders hung at the
+	# same 0.3599, but the taller badger's own feet (3 septembre 2026
+	# rescale) sit at a measured 0.112569, under that floor while still
+	# genuinely airborne. Each body's OWN expected feet height (PHASE
+	# SEATS' own formula) is the honest floor, at half of it -- comfortably
+	# above a rider resting at y=0, comfortably below the real value.
+	var keepy_floor: float = 0.5 * (float(zip["cable_height"]) + keepy_seat.y)
+	var badger_floor: float = 0.5 * (float(zip["cable_height"]) + badger_seat.y)
+	_check(_keepy.global_position.y > keepy_floor and badger.global_position.y > badger_floor,
+		"both are genuinely off the ground (%.3f > %.3f / %.3f > %.3f)"
+			% [_keepy.global_position.y, keepy_floor, badger.global_position.y, badger_floor])
 
 	# A tap mid-trip reaches the ground path and is dropped there -- the
 	# bounded-tween licence. What must NOT happen is a second trip or a
