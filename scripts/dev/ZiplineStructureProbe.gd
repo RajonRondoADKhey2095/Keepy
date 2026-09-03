@@ -65,8 +65,14 @@ const FLOWER_RADIUS_BEFORE: float = 0.22 * 1.253
 var _keepy_clearance: float = 0.0
 
 var _failures: int = 0
+## The two membership tests PHASE H compares, held as members rather than
+## built inline: a lambda in GDScript captures a LOCAL by VALUE, and this
+## repo has paid three times for a flag a loop then never saw change.
+@onready var funcref_legacy: Callable = _legacy_contains
+@onready var funcref_shipped: Callable = _shipped_contains
 var _props: HubBuilder = null
 var _consts: Dictionary = {}
+var _hub_consts: Dictionary = {}
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "ZIPLINE STRUCTURE PROBE")
@@ -89,7 +95,8 @@ func _ready() -> void:
 	# the Control at the top of that scene, and get_script() on the wrong
 	# node returns null and the clearance silently becomes 0.0 -- a
 	# corridor test that then passes against every possible layout.
-	_keepy_clearance = float((hub.get_script() as Script).get_script_constant_map().get("KEEPY_CLEARANCE", 0.0))
+	_hub_consts = (hub.get_script() as Script).get_script_constant_map()
+	_keepy_clearance = float(_hub_consts.get("KEEPY_CLEARANCE", 0.0))
 
 	_check(_keepy_clearance > 0.0, "read HubWorld.KEEPY_CLEARANCE (%.3f)" % _keepy_clearance)
 	print("")
@@ -109,6 +116,8 @@ func _ready() -> void:
 	_phase_f_tap_channel()
 	dl.abort_if_exceeded()
 	_phase_g_draw_nodes(_props)
+	dl.abort_if_exceeded()
+	_phase_h_p2_lobe()
 
 	print("")
 	print("--- %d failure(s) ---" % _failures)
@@ -583,3 +592,224 @@ func _corner_reach(local: AABB, xform: Transform3D, centre: Vector3) -> float:
 		var corner: Vector3 = xform * local.get_endpoint(i)
 		worst = maxf(worst, Vector3(corner.x, 0.0, corner.z).distance_to(centre))
 	return worst
+
+## =====================================================================
+## PHASE H -- THE P2 STRUCTURE LOBE, and the blind check that gives its
+## coverage assertion the right to be believed.
+##
+## WHY THIS PHASE EXISTS. P2 sits EXACTLY on PLATEAU_HALF_EXTENT, and
+## `_build_zipline_tower` runs each stair BEHIND its tower relative to that
+## tower's own facing -- which at P2 points further north. So the stair and
+## even the REAR LEGS stood on ground HubRegion did not contain, and the
+## way that presents on a phone is not an error: it is a tower Keepy walks
+## up to and then cannot move around, because every tap behind it is
+## clamped back to z = 35. Nothing raises, nothing fails a build.
+##
+## ⚠️ BLIND CHECK FIRST, AND IT IS NOT OPTIONAL HERE. "every point around
+## the tower is walkable" is a COVERAGE assertion, and this repo has
+## measured three coverage/absence assertions passing green against a
+## mechanism that was never wired. So the region is first replayed WITHOUT
+## the structure-lobe term -- the exact state that shipped before this
+## batch -- and the same coverage test is REQUIRED to fail on it. Only then
+## is the shipped region allowed to pass it.
+##
+## The legacy region is spelled out here rather than reached by toggling a
+## flag in HubRegion: a probe that could switch the shipped region off
+## would be a probe that could leave it off.
+func _phase_h_p2_lobe() -> void:
+	print("PHASE H -- the P2 structure lobe")
+
+	var lobes: Array[Dictionary] = HubRegion.structure_lobes()
+	_check(lobes.size() >= 1, "HubRegion publishes %d structure lobe(s)" % lobes.size())
+	if lobes.is_empty():
+		print("")
+		return
+
+	# THE SECOND SPELLING IS GATED, not trusted. HubRegion cannot read the
+	# layout (HubBuilder asks contains() while it builds), so the centre is
+	# a literal there -- and a literal that agrees with nothing is exactly
+	# how a bank slab ends up slicing a prop. Compared against the tower the
+	# builder ACTUALLY stood, read off the published entry.
+	var towers: Array = []
+	var lines: Array[Dictionary] = _props.ziplines()
+	if not lines.is_empty():
+		towers = lines[0]["towers"]
+	var built: Dictionary = {}
+	for tower in towers:
+		var pos: Vector3 = tower["position"]
+		if pos.distance_to(P2) < 0.001:
+			built = tower
+	_check(not built.is_empty(), "the builder stood a tower at P2 %s" % P2)
+	if built.is_empty():
+		print("")
+		return
+	var centre: Vector3 = lobes[0]["centre"]
+	var radius: float = float(lobes[0]["radius"])
+	_check(centre.distance_to(built["position"] as Vector3) < 0.001,
+		"and the lobe row %s is the SAME point the builder used %s" % [centre, built["position"]])
+
+	# The five as-built ground extremities, rebuilt from the SAME basis the
+	# builder uses. These are the points the old region did not contain.
+	var foot: Vector3 = built["stair_foot"]
+	var forward: Vector3 = (P1 - P2).normalized()
+	var side := Vector3(forward.z, 0.0, -forward.x)
+	var stringer: float = _c("ZIPLINE_STRINGER_HALF_SPAN")
+	var leg_span: float = _c("ZIPLINE_LEG_HALF_SPAN")
+	var leg_fwd: float = _c("ZIPLINE_LEG_FORWARD")
+	var parts: Array[Dictionary] = [{"what": "stair_foot", "p": foot}]
+	for lateral in [-stringer, stringer]:
+		parts.append({"what": "stringer foot", "p": foot + side * lateral})
+	for lateral in [-leg_span, leg_span]:
+		parts.append({"what": "rear leg", "p": P2 - forward * leg_fwd + side * lateral})
+
+	# ---- BLIND CHECK. The region as it shipped BEFORE this batch: square,
+	# north lobe, shore pad, and no structure lobe.
+	var missed_before: int = 0
+	for part in parts:
+		if not _legacy_contains(part["p"] as Vector3):
+			missed_before += 1
+	_check(missed_before == parts.size(),
+		"BLIND CHECK: without the structure-lobe term, ALL %d ground parts of the P2 tower are outside the region (%d)"
+			% [parts.size(), missed_before])
+	var legacy_ring: int = _ring_covered(P2, 2.0, funcref_legacy)
+	_check(legacy_ring < 360,
+		"BLIND CHECK: and the manoeuvring ring at r=2.0 is only %d/360 walkable without it" % legacy_ring)
+
+	# ---- THE POSITIVE, and only now. Every part the tower puts on the
+	# ground is somewhere Keepy is allowed to stand.
+	var covered: int = 0
+	for part in parts:
+		var p: Vector3 = part["p"]
+		var ok: bool = HubRegion.contains(p)
+		if ok:
+			covered += 1
+		else:
+			_check(false, "%s %s is STILL outside the region" % [part["what"], p])
+	_check(covered == parts.size(),
+		"all %d ground parts of the P2 tower are inside the region" % parts.size())
+
+	# ---- ROOM TO MANOEUVRE, not merely a rim that admits the stair. The
+	# diagnosis measured 52.8%% walkable on a ring around P2 and 0%% around
+	# the stair foot; both are gated at 100%% here.
+	for r in [0.5, 1.0, 1.5, 2.0, 2.5]:
+		var n: int = _ring_covered(P2, r, funcref_shipped)
+		_check(n == 360, "the full ring around P2 at r=%.1f is walkable (%d/360)" % [r, n])
+	for r in [0.5, 1.0]:
+		var n: int = _ring_covered(foot, r, funcref_shipped)
+		_check(n == 360, "the full ring around the stair foot at r=%.1f is walkable (%d/360)" % [r, n])
+	# At r=1.5 the ring reaches past the lobe rim by construction (the foot
+	# is 1.690 u from P2, so 1.690 + 1.5 > 3.0). Gated exactly rather than
+	# loosely: every point NOT covered has to be one the rim genuinely
+	# excludes, so a hole anywhere else is still caught.
+	var outside_is_beyond_rim: bool = true
+	var wide: int = 0
+	for i in 360:
+		var a: float = deg_to_rad(float(i))
+		var p: Vector3 = foot + Vector3(cos(a), 0.0, sin(a)) * 1.5
+		if HubRegion.contains(p):
+			wide += 1
+		elif p.distance_to(centre) <= radius + 1e-6:
+			outside_is_beyond_rim = false
+	_check(wide > 0 and outside_is_beyond_rim,
+		"at r=1.5 the stair-foot ring is %d/360 walkable, and every gap is genuinely past the lobe rim" % wide)
+
+	# ---- THE MARGIN, stated as a number rather than implied by the rings.
+	var furthest: float = 0.0
+	for part in parts:
+		furthest = maxf(furthest, (part["p"] as Vector3).distance_to(P2))
+	print("    furthest ground part %.4f u from P2; lobe radius %.2f; margin %.4f u (KEEPY_CLEARANCE %.2f)"
+		% [furthest, radius, radius - furthest, _keepy_clearance])
+	_check(radius - furthest >= _keepy_clearance,
+		"the lobe leaves at least one KEEPY_CLEARANCE of room beyond the widest part of the tower")
+
+	# ---- THE ARRIVAL RING. `HubWorld._ride_exit_point` drops a rider on a
+	# ring of clear_radius + TURNSTILE_EXIT_MARGIN around the tower and
+	# SKIPS every candidate the region does not contain. At P2 that used to
+	# discard the whole northern arc, so a rider arriving from P1 could only
+	# ever be put down on the plateau side. Gated here because it is a real
+	# consequence of the lobe and not a coincidence of its radius: the ring
+	# has to fit INSIDE the lobe for the search to have its full sweep.
+	var exit_reach: float = _c("ZIPLINE_FOOTPRINT_RADIUS") \
+		+ float(_hub_consts.get("TURNSTILE_EXIT_MARGIN", 0.0))
+	_check(exit_reach > 0.0, "read the arrival ring radius (%.4f u)" % exit_reach)
+	var ring_in: int = _ring_covered(P2, exit_reach, funcref_shipped)
+	_check(ring_in == 360,
+		"the whole arrival ring at r=%.4f is inside the region (%d/360), so a rider can be put down on ANY side"
+			% [exit_reach, ring_in])
+	_check(exit_reach + _keepy_clearance <= radius + 1e-6 or exit_reach <= radius,
+		"and it fits inside the lobe with %.4f u to spare" % (radius - exit_reach))
+
+	# ---- IT MUST NOT HAVE GROWN ANYWHERE ELSE. Sampled where the north
+	# lobe's own phase gates it, so a fat-fingered term shows as a leak.
+	var h: float = HubRegion.PLATEAU_HALF_EXTENT
+	_check(not HubRegion.contains(Vector3(40.0, 0.0, 40.0)), "past the square corner is still not walkable")
+	_check(not HubRegion.contains(Vector3(0.0, 0.0, -(h + 0.5))), "the SOUTH edge did not move")
+	_check(not HubRegion.contains(Vector3(h + 0.5, 0.0, 0.0)), "the EAST edge did not move")
+	_check(not HubRegion.contains(Vector3(-(h + 0.5), 0.0, 0.0)), "the WEST edge did not move")
+	# And the new ground stops where the disc does, at every azimuth.
+	var just_out: int = 0
+	for i in 360:
+		var a: float = deg_to_rad(float(i))
+		var p: Vector3 = centre + Vector3(cos(a), 0.0, sin(a)) * (radius + 0.05)
+		if not HubRegion.contains(p) or absf(p.x) <= h and absf(p.z) <= h:
+			just_out += 1
+	_check(just_out == 360,
+		"just outside the lobe rim is unwalkable except where the square already covers it (%d/360)" % just_out)
+
+	# ---- CLAMP. A tap just past the tower has to resolve BESIDE it, not be
+	# dragged back to the square edge -- which is the failure that would
+	# look exactly like the lobe not existing.
+	var beyond: Vector3 = centre + Vector3(0.0, 0.0, radius + 2.0)
+	var answer: Vector3 = HubRegion.clamp_to(beyond)
+	_check(HubRegion.contains(answer), "a tap past the lobe resolves onto walkable ground %s" % answer)
+	_check(answer.distance_to(beyond) < 2.05,
+		"and it answers the NEAREST feature (%.3f u), not the square edge %.3f u away"
+			% [answer.distance_to(beyond), beyond.distance_to(Vector3(beyond.x, 0.0, h))])
+	var held: int = 0
+	for i in 360:
+		var a: float = deg_to_rad(float(i))
+		var p: Vector3 = centre + Vector3(cos(a), 0.0, sin(a)) * (radius * 0.8)
+		if HubRegion.clamp_to(p).distance_to(p) < 1e-5:
+			held += 1
+	_check(held == 360, "a tap inside the lobe is left where it is (%d/360)" % held)
+
+	# ---- THE TWO LOBES DO NOT TOUCH, so neither can be shadowing the
+	# other's coverage. Reported with the number, because "they are far
+	# apart" is exactly the kind of claim that stops being true silently.
+	var north_gap: float = HubRegion.north_lobe_centre().distance_to(centre) \
+		- HubRegion.NORTH_LOBE_RADIUS - radius
+	_check(north_gap > 0.0,
+		"the P2 lobe and the existing north lobe are disjoint (rim gap %.3f u)" % north_gap)
+	print("")
+
+## The region AS IT SHIPPED BEFORE the structure lobes: square, north lobe,
+## shore pad. Spelled out rather than reached through a switch in
+## HubRegion, because a probe able to turn the shipped region off is a
+## probe able to leave it off.
+func _legacy_contains(point: Vector3) -> bool:
+	var flat := Vector3(point.x, 0.0, point.z)
+	var h: float = HubRegion.PLATEAU_HALF_EXTENT
+	if absf(flat.x) <= h and absf(flat.z) <= h:
+		return true
+	if flat.distance_to(HubRegion.north_lobe_centre()) <= HubRegion.NORTH_LOBE_RADIUS:
+		return true
+	return flat.distance_to(HubRegion.near_bank()) <= HubRegion.SHORE_PAD_RADIUS
+
+func _shipped_contains(point: Vector3) -> bool:
+	return HubRegion.contains(point)
+
+## How many of 360 azimuths at `radius` around `centre` the given membership
+## test admits. One helper for both the blind check and the positive, so the
+## two cannot be measuring subtly different rings.
+func _ring_covered(centre: Vector3, radius: float, test: Callable) -> int:
+	var n: int = 0
+	for i in 360:
+		var a: float = deg_to_rad(float(i))
+		if test.call(centre + Vector3(cos(a), 0.0, sin(a)) * radius):
+			n += 1
+	return n
+
+## HubBuilder constant, through the constant map: Object.get("SOME_CONST")
+## returns null for a GDScript const, silently.
+func _c(name: String) -> float:
+	return float(_consts.get(name, 0.0))

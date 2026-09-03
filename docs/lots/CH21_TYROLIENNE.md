@@ -1289,3 +1289,201 @@ chiffrées pour arbitrage de Mathieu :
    arrière débordent aussi). Plus invasif que l'option 1, non recommandé.
 
 Aucune des deux n'est implémentée ici.
+
+## LOT — LE LOBE HubRegion DÉDIÉ À P2 : LE DÉBORD NORD RÉSORBÉ (3 septembre 2026)
+
+Suite directe du **Sujet 2** du lot précédent, qui avait diagnostiqué le
+point nord sans y toucher et laissé deux options chiffrées à l'arbitrage.
+**L'option 1 est retenue et implémentée** : un lobe `HubRegion` dédié,
+disque à cheval sur le bord, centré sur P2 lui-même. L'option 2
+(réorienter l'escalier de la seule tour P2) reste écartée pour les raisons
+déjà au dossier — elle casse la symétrie « une structure, deux tours, un
+seul bâtisseur » ET ne réglerait pas les jambes arrière.
+
+### La recon a été faite AVANT de toucher `HubRegion`, comme exigé
+
+Sonde jetable `P2LobeReconSpike` (headless, `--fixed-fps 60`, supprimée
+avant ce commit), lancée sur l'arbre `staging` **non modifié**.
+
+⚠️ **Le banc a d'abord dû restituer un chiffre déjà au dossier**, faute de
+quoi il n'avait pas qualité à en publier un neuf :
+
+    square diagonal (published 66 hops / 18.700 s)   66 hops  1122 frames  18.700 s
+    -> bench REPRODUCES the published diagonal (18.700 s)
+
+Puis le balayage du rayon, sur le hopper réel. La cible n'est **pas** la
+pointe +Z du disque mais son **point le plus éloigné DU COIN OPPOSÉ** —
+c'est la paire qu'un lobe crée réellement, et viser la pointe aurait mesuré
+un trajet plus court en l'appelant le pire :
+
+| rayon | trajet coin lointain → pointe | verdict |
+|---|---|---|
+| 2,0 | 63 hops / 17,850 s | plus court que la diagonale |
+| 2,5 | 63 hops / 17,850 s | plus court |
+| **3,0** | **64 hops / 18,133 s** | **plus court — retenu** |
+| 3,5 | 64 hops / 18,133 s | plus court |
+| 4,0 | 64 hops / 18,133 s | plus court |
+| 5,0 | 65 hops / 18,417 s | plus court |
+| *(référence)* lobe nord existant | 60 hops / 17,000 s | plus court |
+
+**La diagonale reste le pire trajet du hub à TOUS les rayons balayés**, y
+compris très au-delà de celui retenu. C'est le même argument qui avait rendu
+le lobe nord abordable le 28 août — un lobe boulonné près d'un BORD
+n'allonge aucune diagonale entre COINS — mais il est ici **mesuré et non
+transporté** : le lot D avait justement mesuré qu'un carré élargi, lui,
+dépense tout le budget (40 → 21,533 s, 41 → 22,100 s contre 22 s).
+
+### Le sol neuf est VIDE, et ça a été balayé et non supposé
+
+À 5,0 u de P2 — soit bien au-delà du rayon retenu, donc un rayon plus petit
+est propre par construction :
+
+    props whose footprint reaches within 5.0 u of P2:
+      (25.2, 0, 35)  r=1.783  gap to P2 = -1.7831 u    <- la tour elle-même, rien d'autre
+    water bodies reaching within 5.0 u of P2:
+      lake (15.5, 0, -19) r=16.0  gap = 38.8643 u
+      lake (-12, 0, -19.5) r=10.0  gap = 55.9855 u
+      0 within reach
+    existing north lobe centre (0, 0, 35) r=12.0 -- P2 is 25.200 u away (rim gap 13.200)
+
+**Aucun prop, aucune eau, aucune autre structure.** Et les deux lobes sont
+**disjoints de 10,200 u de bord à bord** (gate dans la sonde), donc aucun
+des deux ne peut masquer la couverture de l'autre.
+
+### Le rayon 3,0 est MESURÉ, et la marge est le sujet — pas le minimum
+
+Les cinq points que la tour pose réellement au sol, relus sur l'arbre
+construit :
+
+| partie | position | r depuis P2 | `contains()` AVANT |
+|---|---|---|---|
+| `stair_foot` | (25.037, 36.68212) | 1,6900 | **false** |
+| stringer foot | (25.45505, 36.72263) | **1,7414** | **false** |
+| stringer foot | (24.61896, 36.64161) | **1,7414** | **false** |
+| jambe arrière | (25.69439, 35.60048) | 0,7778 | **false** |
+| jambe arrière | (24.59952, 35.49439) | 0,7778 | **false** |
+
+La chose la plus éloignée est à **1,7414 u**, et l'emprise circonscrite
+publiée (`ZIPLINE_FOOTPRINT_RADIUS`) vaut **1,78308**. Rayon 3,0 laisse donc
+**1,2586 u** de sol marchable au-delà de la partie la plus large du prop —
+soit près de **deux `KEEPY_CLEARANCE` (0,66)** de manœuvre, pas un liseré qui
+admet l'escalier de justesse. Le lot vise explicitement la marge, comme le
+brief l'exigeait.
+
+### ⚠️ UN GAIN QUI N'AVAIT PAS ÉTÉ ANTICIPÉ : L'ANNEAU DE DÉPÔT ÉTAIT AMPUTÉ
+
+`HubWorld._ride_exit_point` dépose un rider sur un anneau de
+`clear_radius + TURNSTILE_EXIT_MARGIN` = **2,6331 u** autour de la tour, et
+**écarte tout candidat que la région ne contient pas**. À P2, tout l'arc
+NORD était donc jeté : un rider arrivant de P1 ne pouvait être déposé que
+côté plateau. Avec le lobe, l'anneau entier (**360/360**) est dans la
+région, avec **0,3669 u** de reste sous le rayon du lobe. Gaté dans la
+sonde plutôt que laissé au hasard — c'est une conséquence du rayon, pas une
+coïncidence.
+
+### La forme retenue : une TABLE, dès la première entrée
+
+`HubRegion.STRUCTURE_LOBE_RADIUS` + `_structure_lobes`, publiée par
+`structure_lobes()`. `contains()` boucle dessus, `clamp_to()` ajoute un
+candidat par entrée — **aucun nouveau TYPE de cas**, exactement la propriété
+qui avait fait choisir l'union pour le lobe nord.
+
+⚠️ **Un `Array` et pas un scalaire, dès l'entrée unique.** Ce dépôt a déjà
+payé l'autre choix : le plongeoir avait une géométrie générique derrière un
+singleton, une seconde planche a été **dessinée et jamais grimpable**, et
+défaire ça a coûté son propre lot. Une seconde structure posée sur un bord
+est désormais **une ligne dans cette table et rien d'autre**.
+
+⚠️ **Le centre est une SECONDE ORTHOGRAPHE du `far_end` du layout**, et il
+est **gaté** au lieu d'être cru. `HubRegion` ne peut pas lire le layout —
+`HubBuilder` lui demande `contains()` PENDANT qu'il construit — donc le
+centre y est un littéral. C'est exactement le régime des centres de lacs, et
+il est traité pareil : `ZiplineStructureProbe` PHASE H compare la ligne de
+table à la tour que le bâtisseur a réellement plantée.
+
+### ⚠️ ROUGE AVANT VERT — DEUX passes, et le compte d'échecs faisait partie de l'assertion
+
+**Passe 1 — le terme de lobe neutralisé dans `contains()`** (`if false and …`),
+`ZiplineStructureProbe` relancée sous `xvfb + opengl3` :
+
+    --- 16 failure(s) ---
+
+**16, exactement le nombre prédit, et chacun sur l'assertion attendue** :
+les 5 parties au sol + l'agrégat (6), les 5 anneaux autour de P2 (5), les
+2 anneaux autour du pied d'escalier (2), l'anneau r=1,5 (1), le clamp « plus
+proche » (1), le clamp « laissé sur place » (1). Aucun ailleurs.
+
+⚠️ **Et les chiffres du rouge reproduisent le diagnostic déjà au dossier** :
+`the full ring around the stair foot at r=0.5 is walkable (0/360)` — le lot
+précédent avait mesuré « anneau r=0,5/1,0/1,5 autour du stair_foot : 0%
+marchable ». `181/360` autour de P2 (50,3 %) contre les « 52,8 % » publiés,
+la différence étant que l'ancienne mesure moyennait une plage de rayons.
+Fichier restauré et vérifié **byte-identique** (`cmp`).
+
+**Passe 2 — l'assertion de TRAVERSÉE**, qui est neuve elle aussi et devait
+prouver qu'elle sait voir un lobe devenu le pire cas. `STRUCTURE_LOBE_RADIUS`
+poussé à 30,0, `SeesawProbe` relancée :
+
+    far corner -> structure lobe (25.2, 0, 35) r=30.0  82 hops  1394 frames  23.233 s
+    FAIL  ... costs 23.233 s, still SHORTER than the diagonal 18.700 s
+
+Elle tire. Les 4 autres rouges de cette passe sont du **collatéral attendu**
+et non des défauts : un disque de rayon 30 avale le lobe nord, donc la
+`PHASE LOBE` existante voit sa pointe, son aire de demi-disque et son coin
+de carré changer. Restauré et vérifié byte-identique.
+
+### ⚠️ BLIND CHECK PERMANENT, parce que « tout est couvert » passe GRATUITEMENT
+
+La PHASE H rejoue **en permanence** la région telle qu'elle shippait avant
+ce lot (carré ∪ lobe nord ∪ shore pad) et **EXIGE que le test de couverture
+y échoue** avant de laisser la région livrée le passer :
+
+    OK  BLIND CHECK: without the structure-lobe term, ALL 5 ground parts of the P2 tower
+        are outside the region (5)
+    OK  BLIND CHECK: and the manoeuvring ring at r=2.0 is only 181/360 walkable without it
+
+La région héritée est **réécrite dans la sonde** plutôt qu'atteinte par un
+interrupteur dans `HubRegion` : une sonde capable d'éteindre la région
+livrée est une sonde capable de la laisser éteinte.
+
+### PREUVE PAR RENDU OFFSCREEN — Keepy a réellement fait le tour
+
+Sonde jetable `P2ManoeuvreCaptureSpike` (`xvfb + opengl3`, viewport
+1080x1920, supprimée avant ce commit). Huit stations à 2,4 u autour de la
+tour, **atteintes par `hop_to` sur le hopper réel** via la destination que
+`clamp_to` renvoie vraiment — pas par une table de flottants.
+
+    -> the OLD region moved 3 of the 8 stations; the shipped one honours 8 of 8
+    -> Keepy ARRIVED at 8 of the 8 stations on the shipped region
+
+Les trois stations que l'ancienne région déplaçait : az045 (**1,697 u**),
+az090 (**2,400 u**), az135 (**1,697 u**) — toutes rabattues sur z = 35.
+
+Les rendus le montrent sans ambiguïté : sur `before_az090.png` Keepy est
+plaqué au bord, **dans** l'escalier de la tour, incapable de passer
+derrière ; sur `after_az090.png` il se tient franchement **au nord de la
+tour**, au-delà de l'escalier, sur du sol qui n'existait pas.
+
+⚠️ Le résidu de **0,337 u** sur az045/az135 n'est pas un défaut de région :
+c'est le comportement déjà documenté d'une marche qui **finit PRÈS de sa
+cible, jamais DESSUS** (0,401 u mesuré ailleurs au dossier). Les stations
+visées exactement (az000, az090) tombent à 0,000.
+
+### Sondes
+
+| sonde | résultat |
+|---|---|
+| `ZiplineStructureProbe` (xvfb+opengl3) | **82 checks, 0 échec** — PHASE H neuve, 25 checks |
+| `SeesawProbe` (headless, `--fixed-fps 60`) | **60 checks, 0 échec** — diagonale toujours **18,700 s**, lobe P2 à **18,133 s** |
+
+Aucune sonde permanente ajoutée : les deux spikes de mesure sont supprimées
+avec ce lot, donc `ProbeTimeoutAudit` retrouve son compte de scènes (65,
+inchangé).
+
+### Ce que ce lot NE peut PAS trancher
+
+Si **3,0 u se SENT comme de la place** autour de la tour sur un écran de
+6 pouces. La sonde mesure des distances et des anneaux ; que le tour de la
+tour se fasse *confortablement* au doigt reste l'appel device de Mathieu.
+Et le lobe reste **derrière le spawn** — `HubCamera` ne lace jamais — donc
+ce sol neuf se voit dans les mêmes conditions que celui du lobe nord.
