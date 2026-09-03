@@ -1487,3 +1487,157 @@ Si **3,0 u se SENT comme de la place** autour de la tour sur un écran de
 tour se fasse *confortablement* au doigt reste l'appel device de Mathieu.
 Et le lobe reste **derrière le spawn** — `HubCamera` ne lace jamais — donc
 ce sol neuf se voit dans les mêmes conditions que celui du lobe nord.
+
+## PALIER 2 SUITE 2 — LES QUATRE AUTRES CANAUX MORTS, TRANCHÉS (3 septembre 2026)
+
+Les 19,0 Mio de charge morte repérés et chiffrés à la fin de la section
+précédente (« AUTRE CHARGE MORTE DÉJÀ INSTALLÉE — REPÉRÉE, CHIFFRÉE, NON
+TOUCHÉE ») ont reçu leur arbitrage : les quatre retirer. Même méthode que le
+blaireau, appliquée sans variante, un asset à la fois. `assets_source/`
+untouched pour les quatre, revérifié par hash après coup.
+
+### bear_walker — LA MÊME COMPLICATION QUE LE BLAIREAU N'AVAIT PAS
+
+`HubActorWalker._force_unshaded()` (le mécanisme partagé bear/badger) porte
+un avertissement écrit AVANT ce lot : « pour ce rig en particulier, c'est
+actuellement un no-op sur les pixels [...] et cette carte est
+byte-identique à sa carte d'albédo ». Ce paragraphe est générique au fichier
+partagé, pas spécifique au blaireau — donc vérifié pour l'ours plutôt que
+supposé hérité.
+
+Mesuré (`pygltflib` + dump JSON) : même forme de matériau que le blaireau
+(`metallicFactor=1`, `emissiveFactor=[1,1,1]`,
+`KHR_materials_specular.specularColorFactor=[2,2,2]`, pas de
+`KHR_materials_unlit`). **Complication réelle, isolée avant chirurgie** : les
+PNG émission et albédo bruts ne sont **PAS byte-identiques**
+(`916fbd3a...` / 4 955 175 o contre `28b0bd6f...` / 4 955 241 o) — contrairement
+au blaireau. Décodés en pixels (PIL, RGBA), **0 pixel différent sur
+2 048×2 048** : la différence n'est qu'un ré-encodage PNG (compression),
+jamais un pixel. Le canal reste mort pour la même raison que le blaireau :
+`_force_unshaded` bascule sur l'albédo, pixel-identique à l'émission.
+
+### cabin_decor / hibou_pursuer / owl_decor — mécaniquement inertes, vérifié plutôt que supposé
+
+Les trois portent `KHR_materials_unlit` dans le `.glb` — la règle déjà
+documentée (« l'importeur glTF ne lie JAMAIS `normal_texture` ni
+`metallic_texture` sur un matériau UNLIT ») s'applique sans variante.
+Confirmé en plus, en lisant `ModelSlot.gd` et `CabinInterior.gd` : ni l'un
+ni l'autre n'applique de surface override sur le corps du modèle installé
+— seul `Pursuer.gd` duplique un matériau, et c'est celui des YEUX (des
+`SphereMesh` de la scène, pas du `.glb`), jamais le corps. Le matériau qui
+dessine réellement ces trois assets est donc **exactement** celui que
+l'importeur a lié depuis le `.glb`, sans détour.
+
+`keepy_hibou_pursuer.glb` portait 3 canaux morts sur le MÊME matériau
+(`emissiveTexture`, `normalTexture`,
+`pbrMetallicRoughness.metallicRoughnessTexture`) — traité en une seule
+passe de chirurgie plutôt que trois, `strip_glb_textures.py` retirant les
+trois bufferViews en une fois (offsets non adjacents : 4, 5, 7 — coupés en
+ordre décroissant d'offset, chacun avec son padding d'alignement jusqu'au
+bufferView suivant dans l'ordre ORIGINAL, la même règle que pour un seul
+canal).
+
+### La méthode — script généralisé, pas retapé à la main 4 fois
+
+`strip_glb_textures.py` (scratch, non committé) généralise exactement la
+méthode déjà écrite dans `CLAUDE.md` et appliquée au blaireau : découpe du
+(des) bufferView(s) mort(s) avec padding d'alignement jusqu'au bufferView
+suivant dans l'ordre des offsets ORIGINAUX (pas l'ordre du tableau JSON),
+décalage de tous les offsets postérieurs, réindexation de
+`accessors[].bufferView`, `images[].bufferView`, `textures[].source` et de
+chaque référence de texture restante sur le matériau. Un garde refuse la
+chirurgie si la texture visée est encore référencée ailleurs (aucun cas
+rencontré ici : chaque asset a un seul matériau).
+
+Vérifié pour les 4 avant d'écraser le fichier installé : `pygltflib`
+charge chaque résultat sans erreur, `len(accessors)`/`len(meshes)`/
+`len(skins)`/`len(animations)` identiques à l'avant (155/1/1/2 pour l'ours,
+4/1/0/0 pour les trois autres), et le MD5 de chaque image restante dans le
+nouveau `.glb` est byte-identique au MD5 de l'image correspondante dans
+l'original.
+
+Siblings extraits par l'import Godot : contrairement au blaireau (collision
+de nom sur `"texture_0"` partagé), ces 4 assets nomment déjà chaque image
+distinctement (`normal`, `Baked_BaseColor`, `Baked_Emit`,
+`Baked_MetallicRoughness`) — pas de collision, donc pas de bascule de nom à
+gérer : seuls les fichiers PNG/JPG + `.import` du canal retiré sont
+supprimés, l'image restante réextrait sous son nom déjà stable, revérifiée
+byte-identique à l'originale après réimport.
+
+### PREUVE AU PIXEL — sonde jetable unique pour les 4, byte-identique aux 16 rendus
+
+`scripts/dev/DeadChannelPixelProbe.{gd,tscn}` (supprimée avant ce commit,
+règle sonde-jetable) : rend UN asset, aux 4 azimuts, à travers exactement
+le chemin de code réel qui le dessine —
+
+* **bear** : via `HubActorWalker` (même `BEAR_SCALE`, même
+  `_force_unshaded`), exactement le protocole du blaireau ;
+* **cabin/owl/hibou** : `.glb` chargé et instancié directement — ce
+  qu'`ModelSlot._install_model()` et `CabinInterior._build_backdrop()`
+  font tous deux, sans override matériau sur le corps (lu, pas supposé,
+  voir ci-dessus).
+
+Sous `xvfb-run --rendering-driver opengl3` (jamais `--headless` seul).
+**Blind check d'abord**, sur les 4 : yaw 0° contre yaw 90° du même run
+rendent des MD5 différents à chaque fois (couleurs moyennes mesurées
+distinctes, ex. ours R 82,6 contre 62,5) — la sonde SAIT voir une
+différence.
+
+**Résultat, MD5 du PNG entier, avant/après, aux 4 azimuts** :
+
+| asset | 0° | 90° | 180° | 270° |
+|---|---|---|---|---|
+| bear | `1c9cdf78...` id. | `37be3361...` id. | `37431f7d...` id. | `40dc2204...` id. |
+| cabin | `11da66ee...` id. | `5620aa2f...` id. | `6d3bcea8...` id. | `d6dc4af6...` id. |
+| owl | `5385f11f...` id. | `0552f5e8...` id. | `83261de6...` id. | `3931f5f7...` id. |
+| hibou | `68ac6fa3...` id. | `ae943624...` id. | `8af46b08...` id. | `4effde02...` id. |
+
+Byte-identique, pas seulement visuellement proche, sur les 16 rendus.
+
+### PAYLOAD — mesuré aux deux bouts sur le `.pck` réel, TOC parsé directement
+
+Export release Web complet, deux états comparés par `git stash`
+(avant/après, `build/`+`.godot/` nettoyés entre les deux) :
+
+| | `index.pck` | `index.wasm` | `index.js` |
+|---|---|---|---|
+| avant (4 canaux présents) | 49 361 200 | 35 376 909 | 331 495 |
+| après (4 canaux retirés) | **30 350 032** | 35 376 909 (inchangé) | 331 495 (inchangé) |
+| delta | **-19 011 168 octets (-18,13 Mio)** | 0 | 0 |
+
+`index.wasm` (`af4a8fc2...`) et `index.js` (`4e08904b...`) byte-identiques
+aux deux bouts, et identiques au md5 déjà publié dans `CLAUDE.md` — aucun
+code moteur n'a bougé.
+
+TOC du `.pck` parsé directement (format GDPC v2, comme pour le blaireau),
+delta par asset, chaque ligne mesurée aux deux bouts plutôt qu'estimée :
+
+| asset | canal(aux) retiré(s) | `.pck` avant | `.pck` après | delta |
+|---|---|---|---|---|
+| bear_walker | emissiveTexture | 8 928 313 | 4 596 955 | **-4 331 358** |
+| cabin_decor | normalTexture | 15 426 496 | 6 807 217 | **-8 619 279** |
+| hibou_pursuer | emissive+metallic+normal | 3 018 980 | 1 728 458 | **-1 290 522** |
+| owl_decor | normalTexture | 8 880 513 | 4 112 492 | **-4 768 021** |
+| **TOTAL (assets seuls)** | | | | **-19 009 180** |
+
+Le delta total mesuré sur le `.pck` complet (-19 011 168) dépasse ce sous-total
+de 1 988 octets — la réduction du nombre d'entrées de la table des matières
+elle-même (286 → 274 fichiers, 12 de moins : 6 `.ctex` + 6 `.import`), au-delà
+des seuls octets de contenu, explique l'écart, pas une erreur de mesure —
+même forme que le +528 octets déjà documenté pour le blaireau.
+
+### `assets_source/` — byte-identique pour les 4, revérifié
+
+| asset source | MD5 |
+|---|---|
+| `assets_source/openworld/animated/keepy_bear_walker.glb` | `4632d433...` inchangé |
+| `assets_source/openworld/decor/Meshy_AI_cabane keepy.glb` | `0ea8689a...` inchangé |
+| `assets_source/openworld/perso/Meshy_AI_Ember_Eyed_Owlet_0828125359_texture.glb` | `3e606d9d...` inchangé |
+| `assets_source/pursuer/owl_pursuer_decimated.glb` | `a450da3a...` inchangé |
+
+### Sonde
+
+`DeadChannelPixelProbe.{gd,tscn}` était une mesure ponctuelle (comparer
+deux états de 4 assets, une fois chacun) et non un contrat permanent —
+supprimée avant ce commit, per la règle sonde-jetable. Rien de nouveau
+n'entre dans `scripts/dev/` pour ce lot.
