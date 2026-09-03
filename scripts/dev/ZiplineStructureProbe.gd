@@ -106,7 +106,7 @@ func _ready() -> void:
 	dl.abort_if_exceeded()
 	_phase_e_clearance()
 	dl.abort_if_exceeded()
-	_phase_f_no_tap_channel()
+	_phase_f_tap_channel()
 	dl.abort_if_exceeded()
 	_phase_g_draw_nodes(_props)
 
@@ -387,27 +387,56 @@ func _phase_e_clearance() -> void:
 		_check(HubRegion.contains(centre), "the tower at %s is inside the walkable region" % centre)
 	print("")
 
-## PHASE F -- TIER 1 SHIPS NO TAP CHANNEL.
+## PHASE F -- THE TAP CHANNEL, AND THE ONE THING THAT MUST STILL BE ABSENT.
 ##
-## RECON 1 settled that a stair carrying a hotspot that emits nothing is
-## the LADDER PATTERN this repo banned: a player standing on it would have
-## no way left to say anything. Tier 1 therefore wires NOTHING, and this
-## phase is what makes "nothing" checkable rather than merely intended --
-## source text, because a channel that does not exist has no runtime
-## symptom to measure.
-func _phase_f_no_tap_channel() -> void:
-	print("PHASE F -- no interaction is wired yet (tier 1 is structure only)")
-	for path in ["res://scripts/hub/HubWorld.gd", "res://scripts/hub/HubTapInput.gd",
-			"res://scripts/hub/KeepyHopper.gd"]:
-		var text: String = FileAccess.get_file_as_string(path)
-		_check(not text.is_empty(), "%s is readable" % path)
-		_check(text.findn("zipline") < 0, "%s wires nothing to the zipline" % path)
-	# The published facts exist FOR tier 2 -- their absence would mean tier
-	# 2 has to re-derive the cable from the layout, which is the failure
-	# this repo has paid for on a doorstep and on two lake radii.
+## ⚠️ THIS PHASE WAS INVERTED ON 3 SEPTEMBRE 2026 (tier 2). It used to
+## assert that HubWorld, HubTapInput and KeepyHopper mention no zipline at
+## all -- correct while tier 1 shipped structure only, and now false by
+## design: tier 2 wires a `tapped_zipline` channel through all three.
+##
+## What survives the inversion is the half that was ever about doctrine.
+## RECON 1 settled that the banned LADDER PATTERN is a hotspot on the
+## STAIRS: a channel that emits whatever the body is doing, dropped by its
+## listener, leaving a player on the steps with no way to say anything. So
+## the assertion is now that the channel exists, that it goes through a
+## WITHDRAWING door, and that the stair still carries nothing -- source
+## text, because a hotspot that does not exist has no runtime symptom to
+## measure.
+func _phase_f_tap_channel() -> void:
+	print("PHASE F -- the tier 2 channel is wired, through a door that withdraws")
+	var world: String = FileAccess.get_file_as_string("res://scripts/hub/HubWorld.gd")
+	var tap: String = FileAccess.get_file_as_string("res://scripts/hub/HubTapInput.gd")
+	var hopper: String = FileAccess.get_file_as_string("res://scripts/hub/KeepyHopper.gd")
+	var door: String = FileAccess.get_file_as_string("res://scripts/hub/ZiplineDoor.gd")
+	for pair in [["HubWorld.gd", world], ["HubTapInput.gd", tap],
+			["KeepyHopper.gd", hopper], ["ZiplineDoor.gd", door]]:
+		_check(not String(pair[1]).is_empty(), "%s is readable" % pair[0])
+
+	_check(tap.findn("signal tapped_zipline") >= 0,
+		"HubTapInput declares the tapped_zipline channel")
+	_check(tap.findn("zipline.accepts_boarding_tap") >= 0,
+		"and it asks the DOOR before emitting -- the boat's withdrawal, not the ladder's unconditional emit")
+	_check(door.findn("func is_available_at") >= 0 and door.findn("_riding") >= 0,
+		"the door carries a per-end question AND a shared riding flag")
+	_check(world.findn("_on_tapped_zipline") >= 0 and world.findn("set_riding(true)") >= 0,
+		"HubWorld handles the channel and closes the door for the trip")
+	_check(hopper.findn("func leave_zipline") >= 0,
+		"KeepyHopper carries a leave_zipline on the leave_ride model, so a destination survives the drop")
+
+	# THE ONE THING THAT MUST STAY ABSENT. No stair, tread or stringer may
+	# ever become a tap target: that is the ladder pattern by another name,
+	# and it is the failure RECON 1 was written to prevent.
+	for needle in ["stair_feet", "stair_radius", "tapped_stair", "tapped_ladder_zipline"]:
+		_check(tap.findn(needle) < 0 and world.findn(needle) < 0,
+			"nothing anywhere makes the stair a tap target (\"%s\")" % needle)
+
+	# The published facts tier 2 reads. Their absence would mean the ride
+	# re-derives the cable from the layout, which is the failure this repo
+	# has paid for on a doorstep and on two lake radii.
 	var zip: Dictionary = _zipline()
-	for key in ["towers", "cable", "cable_height", "rider_drop", "clear_radius"]:
-		_check(zip.has(key), "ziplines() publishes \"%s\" for tier 2" % key)
+	for key in ["towers", "cable", "cable_height", "rider_drop", "clear_radius",
+			"carrier", "bar_drop", "rider_lateral", "hang_clearance"]:
+		_check(zip.has(key), "ziplines() publishes \"%s\"" % key)
 	print("")
 
 ## PHASE G -- the draw-node budget, itemised.
@@ -428,6 +457,15 @@ func _phase_g_draw_nodes(builder: HubBuilder) -> void:
 		"draw nodes excluding portals == %d" % _EXPECTED_DRAW_NODES_EXCL_PORTALS)
 	print("")
 
+## 141 -> 144 on 3 septembre 2026 (tier 2), ITEMISED rather than nudged:
+## the trolley is THREE MeshInstance3D of its own -- a pulley on the wire,
+## a stem, and the grab bar the two riders hang from. One mesh would have
+## left two bodies dangling under a dot. The badger is NOT in this count
+## and cannot be: it lives under `World/` beside Keepy and the bear, not
+## under `World/Props`, so this phase structurally cannot see it -- its
+## cost (ONE MeshInstance3D, the rig's single skinned mesh) is published in
+## the lot report instead of riding an assertion that could not observe it.
+##
 ## 132 -> 141 on 3 septembre 2026, ITEMISED rather than nudged, on the
 ## terms TurnstileProbe set: the zipline adds FIVE MeshInstance3D of its
 ## own (a deck and a head beam at each end, and the one cable between
@@ -435,7 +473,7 @@ func _phase_g_draw_nodes(builder: HubBuilder) -> void:
 ## stringers, one node each for however many towers there are. The batches
 ## are what keep this from being +25: eight legs, four masts, eight treads
 ## and four stringers cost four nodes between them.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 141
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 144
 
 func _count_mesh_instances(node: Node) -> int:
 	var count := 0

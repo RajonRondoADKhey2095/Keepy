@@ -523,7 +523,7 @@ props = [{
 "type": &"landmark",
 "variant": 0
 }, {
-"position": Vector3(29.346, 0, 12.76),
+"position": Vector3(30.491, 0, 12.871),
 "rotation_y": 57.0,
 "scale": 0.880,
 "type": &"landmark",
@@ -703,7 +703,7 @@ props = [{
 "scale": 0.830,
 "type": &"rock"
 }, {
-"position": Vector3(25.637, 0, 15.944),
+"position": Vector3(24.691, 0, 15.852),
 "rotation_y": 200.7,
 "scale": 1.172,
 "type": &"rock"

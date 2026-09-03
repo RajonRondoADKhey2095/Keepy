@@ -867,6 +867,66 @@ const ZIPLINE_STRINGER_HALF_SPAN: float = 0.42
 const ZIPLINE_CABLE_RADIUS: float = 0.035
 const ZIPLINE_CABLE_SEGMENTS: int = 6
 
+## =====================================================================
+## THE TROLLEY -- TIER 2 (3 septembre 2026)
+##
+## The one moving part of this prop, and the thing BOTH riders are written
+## onto. It is built HERE, with the towers and the cable, for the reason
+## the owl's carrier is built with its perch: the ride reads where its
+## carrier is from the same pass that DREW it, instead of recomputing a
+## point on the cable from the layout. This repo has already paid for the
+## other arrangement on a doorstep that did not scale with its cabin and on
+## two homonymous lake radii.
+##
+## It is PARKED at the near tower's anchor by this file and moved by
+## nothing here. HubWorld owns where it goes and re-parks it at whichever
+## end a trip ended -- exactly the owl's division of labour, where the
+## builder puts the bird on its perch and HubWorld flies it.
+##
+## THREE MESH NODES, and each earns its line: a pulley across the cable
+## (the part that reads as running ON the wire), a stem hanging off it, and
+## a grab bar across the bottom that the two riders hang from. A single
+## mesh would have left two bodies dangling under a dot.
+
+## The wheel that sits on the wire. Its axis lies ACROSS the cable, which
+## is the head beam's basis exactly.
+const ZIPLINE_TROLLEY_PULLEY_RADIUS: float = 0.11
+const ZIPLINE_TROLLEY_PULLEY_WIDTH: float = 0.09
+
+## How far below the cable the grab bar hangs, and how wide it is. The
+## half-span is the stringers' 0.42, so the bar is no wider than the stair
+## the riders came up -- and ZIPLINE_RIDER_LATERAL below sits inside it.
+const ZIPLINE_TROLLEY_STEM: float = 0.24
+const ZIPLINE_TROLLEY_BAR_RADIUS: float = 0.035
+const ZIPLINE_TROLLEY_BAR_HALF_SPAN: float = 0.34
+
+## How far to each side of the trolley centre a rider hangs. 0.30 against a
+## bar half-span of 0.34, so both bodies hang FROM the bar rather than off
+## its ends, and 0.60 apart against Keepy's own 0.66 measured width -- they
+## read as a pair sharing one handle, which is what two riders on one
+## trolley have to look like.
+const ZIPLINE_RIDER_LATERAL: float = 0.30
+
+## The gap between a rider's crown and the cable itself.
+##
+## ⚠️ THIS IS WHY A RIDER DOES NOT HANG AT ZIPLINE_RIDER_DROP, AND THE
+## REASON IS ARITHMETIC RATHER THAN TASTE. `ZIPLINE_RIDER_DROP` 1.10 is the
+## number the DECK is derived from, and tier 1 documented it as "how far
+## below the cable a rider hangs" -- but Keepy is 1.3501 u tall (measured,
+## and on file since the cabin work), so a body whose FEET are at
+## cable - 1.10 = 0.90 has its head at 2.25, a quarter of a unit THROUGH
+## the 2.0 cable it is supposed to be hanging under. Nothing in this engine
+## complains about that; it is the sort of thing that only shows up on a
+## device, from one azimuth.
+##
+## So a rider hangs from the BAR by measured height instead: feet at
+## `ZIPLINE_CABLE_HEIGHT - clearance - his own drawn height`. For a body of
+## 1.3501 that is 0.5999, which is 0.30 BELOW the deck -- i.e. boarding is
+## a step off the platform and a short drop onto the handle, which is what
+## a zipline is. `ZIPLINE_RIDER_DROP` keeps its one real job (the deck
+## derivation) and is not relitigated.
+const ZIPLINE_HANG_CLEARANCE: float = 0.05
+
 ## What one tower puts on the ground, as a circumscribed radius: the far
 ## bottom corner of a stringer where it meets the ground at the foot of the
 ## stair -- see _zipline_circumscribed_radius() for the derivation.
@@ -2664,14 +2724,85 @@ func _make_zipline(entry: Dictionary, index: int, where: Vector3) -> Node3D:
 	cable_node.name = "Cable"
 	root.add_child(cable_node)
 
+	# ---- the trolley, PARKED at the near anchor and moved by nobody here
+	var trolley: Node3D = _build_zipline_trolley(forward)
+	trolley.position = from_world - where
+	root.add_child(trolley)
+
 	_last_zipline = {
 		"towers": towers,
 		"cable": {"from": from_world, "to": to_world},
 		"cable_height": ZIPLINE_CABLE_HEIGHT,
 		"rider_drop": ZIPLINE_RIDER_DROP,
 		"clear_radius": ZIPLINE_FOOTPRINT_RADIUS,
+		"carrier": trolley,
+		"bar_drop": ZIPLINE_TROLLEY_STEM,
+		"rider_lateral": ZIPLINE_RIDER_LATERAL,
+		"hang_clearance": ZIPLINE_HANG_CLEARANCE,
 	}
 	return root
+
+## The trolley: a wheel on the wire, a stem, and the bar two riders hang
+## from. Returned UNPARENTED and unplaced -- the caller parks it, because
+## the caller is the one that knows the root's own origin.
+##
+## ⚠️ ITS OWN BASIS IS THE RIDE'S FRAME, and that is the whole point of
+## returning a Node3D rather than three loose meshes. HubWorld writes both
+## riders as `trolley.to_global(seat)`, so a seat is `(lateral, height,
+## abscissa)` in THIS node's space and never a world point -- the shape
+## RECON 4 asked for, and the reason `RIDE_SEAT_Y` (a bare float on
+## KeepyHopper, with no notion of an occupant) could not be extended to
+## carry two.
+##
+## +Z is `forward`, so the bar and the pulley axle lie along local X and
+## the two seats differ only in the sign of their X.
+func _build_zipline_trolley(forward: Vector3) -> Node3D:
+	var trolley := Node3D.new()
+	trolley.name = "Trolley"
+	var side := Vector3(forward.z, 0.0, -forward.x)
+	# side x UP == forward: orthonormal and right-handed by construction,
+	# the cable's and the head beam's reasoning.
+	trolley.basis = Basis(side, Vector3.UP, forward)
+
+	# The wheel ON the wire. A CylinderMesh stands on its own +Y and the
+	# axle lies across the cable, so the mesh is turned onto local X.
+	var pulley := CylinderMesh.new()
+	pulley.top_radius = ZIPLINE_TROLLEY_PULLEY_RADIUS
+	pulley.bottom_radius = ZIPLINE_TROLLEY_PULLEY_RADIUS
+	pulley.height = ZIPLINE_TROLLEY_PULLEY_WIDTH
+	pulley.radial_segments = 8
+	pulley.rings = 1
+	var pulley_node: MeshInstance3D = _placed(pulley, ZIPLINE_FRAME_COLOR,
+		Basis(Vector3.DOWN, Vector3.RIGHT, Vector3.BACK), Vector3.ZERO)
+	pulley_node.name = "Pulley"
+	trolley.add_child(pulley_node)
+
+	# The stem, straight down from the axle to the bar.
+	var stem := CylinderMesh.new()
+	stem.top_radius = ZIPLINE_TROLLEY_BAR_RADIUS
+	stem.bottom_radius = ZIPLINE_TROLLEY_BAR_RADIUS
+	stem.height = ZIPLINE_TROLLEY_STEM
+	stem.radial_segments = 6
+	stem.rings = 1
+	var stem_node: MeshInstance3D = _placed(stem, ZIPLINE_FRAME_COLOR,
+		Basis.IDENTITY, Vector3.DOWN * (ZIPLINE_TROLLEY_STEM * 0.5))
+	stem_node.name = "Stem"
+	trolley.add_child(stem_node)
+
+	# The bar, across local X -- the same colour as the cable, because it
+	# is the other half of "the thing you hold on to".
+	var bar := CylinderMesh.new()
+	bar.top_radius = ZIPLINE_TROLLEY_BAR_RADIUS
+	bar.bottom_radius = ZIPLINE_TROLLEY_BAR_RADIUS
+	bar.height = ZIPLINE_TROLLEY_BAR_HALF_SPAN * 2.0
+	bar.radial_segments = 6
+	bar.rings = 1
+	var bar_node: MeshInstance3D = _placed(bar, ZIPLINE_CABLE_COLOR,
+		Basis(Vector3.DOWN, Vector3.RIGHT, Vector3.BACK),
+		Vector3.DOWN * ZIPLINE_TROLLEY_STEM)
+	bar_node.name = "Bar"
+	trolley.add_child(bar_node)
+	return trolley
 
 ## One tower, at `origin` in world space, facing `forward` (towards the
 ## other tower). Adds its node-owned parts under `root` in the root's own

@@ -64,7 +64,13 @@ const HUB_SCENE: PackedScene = preload("res://scenes/HubWorld.tscn")
 ## stringers, one node each for however many towers the layout ships. That
 ## batching is the whole difference between +9 and +25: eight legs, four
 ## masts, eight treads and four stringers cost four nodes between them.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 141
+## 141 -> 144 on 3 septembre 2026, ITEMISED on the same terms: the
+## zipline's TIER 2 trolley. THREE MeshInstance3D -- a pulley on the wire,
+## a stem, and the grab bar the two riders hang from. The badger that rides
+## it is NOT in this count and cannot be: it lives under `World/` beside
+## Keepy and the bear, not under `World/Props`, so this budget structurally
+## cannot see it.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 144
 
 var _failures: int = 0
 var _hub: Node = null

@@ -269,6 +269,56 @@ func _freeze() -> void:
 	_player.pause()
 
 
+## Holds a static pose taken from ANY clip the rig ships, at any time in
+## it. `_freeze()` generalised, and the one route this project has to a
+## pose the animator never authored.
+##
+## ⚠️ WHY THIS AND NOT `Skeleton3D.set_bone_pose()`. RECON 3
+## (docs/lots/CH21_TYROLIENNE.md) measured both rigs: they carry `Running`
+## and `Walking` and NOTHING else -- no hang, no grip, no idle -- and a
+## grep over this repo finds ZERO uses of `set_bone_pose*`, so per-bone
+## posing would be a first for the project and would need its own
+## red-before-green pass to be trusted. Seeking an existing clip to a
+## MEASURED frame is the mechanism `_freeze()` already uses and already
+## ships.
+##
+## ⚠️ THE ORIGINAL CLIP, NOT THE DUPLICATE, AND NOTHING IS WRITTEN TO IT.
+## `_freeze()` plays this actor's own duplicated `actor/walk` because that
+## clip had its `loop_mode` REWRITTEN, which is a shared-resource write.
+## Nothing here writes anything: `play` / `seek` / `pause` are all per
+## PLAYER, so holding the glb's own `Running` at a frame cannot escape this
+## instance the way a `loop_mode` would.
+##
+## A time outside the clip is clamped rather than refused: a caller that
+## measured a frame off a slightly different export should get the nearest
+## real pose, not a rig that silently keeps walking.
+func freeze_at(clip: StringName, time: float) -> void:
+	if _player == null:
+		return
+	if not _player.has_animation(clip):
+		push_error("HubActorWalker: no clip %s on this rig; the pose was not taken." % clip)
+		return
+	_state = State.ARRIVED
+	set_process(false)
+	_player.play(clip)
+	_player.seek(clampf(time, 0.0, _player.get_animation(clip).length), true)
+	_player.pause()
+
+
+## Tilts the DRAWN RIG about its own X, leaving this node's yaw alone.
+##
+## ⚠️ ON THE MODEL AND NOT ON THIS NODE, and that is load-bearing rather
+## than tidy. `face()` and `_process` write `rotation.y` on THIS node; a
+## pitch written beside it would compose into one Euler triple, so every
+## turn would swing the lean around with it and `_yaw` would no longer be
+## the whole of the heading. The model child carries no yaw of its own, so
+## a pitch there is exactly a pitch.
+func set_model_pitch(degrees: float) -> void:
+	if _model == null:
+		return
+	_model.rotation_degrees.x = degrees
+
+
 ## Forces every drawn surface UNSHADED, on a DUPLICATE of the material.
 ##
 ## ⚠️ THE HUB HAS NO LIGHTS AT ALL -- measured, zero `Light3D` nodes -- so
