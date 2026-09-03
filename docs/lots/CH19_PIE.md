@@ -2779,3 +2779,40 @@ Validation device de Mathieu sur `keepy-staging.vercel.app` : **yeux
 fermes bien cales, confirmee** ; la bulle "Zzz" **inchangee et toujours
 bonne** (non retestee, comme prevu -- elle etait deja actee). Feu vert
 explicite donne pour le palier 2.
+
+### PRODUCTION VERIFIEE SUR LE SERVICE (3 septembre 2026, `main` @ 075e30c)
+
+Merge `--no-ff` `staging` (bb1a7a6) -> `main`, commit de merge `075e30c`.
+**Arbre du merge byte-identique a celui de `staging`** verifie AVANT et
+APRES push (`86e8b60` des deux cotes, `git diff HEAD staging` vide).
+
+CI run #382 (id 33717303013, head_sha 075e30c) sur `main` : `completed` /
+`SUCCESS`, termine 05:08:10 UTC. `Deploy [PRODUCTION -- main]` **success**,
+`Deploy [STAGING -- staging]` correctement **skipped** -- image miroir
+exacte du run staging qui avait skippe PRODUCTION.
+
+Fenetre `Export Web build` : **05:07:35 -> 05:07:41 UTC**.
+
+**Marqueur 1 — CACHE_VERSION**, lu sur `keepy-ten.vercel.app` (la prod,
+pas staging) : `1788412060|5302499` = **05:07:40 UTC**, a l'INTERIEUR de
+la fenetre Export. **MISS/age:0 des la premiere lecture** (parametre de
+requete jamais reutilise, donc pas de risque de relire un cache pose par
+soi-meme).
+
+**Marqueur 2 — index.wasm**, lu dans le log de build : `35 376 909`
+octets, l'empreinte permanente confirmee, identique au run staging et a
+tous les runs anterieurs qui ne touchent pas le code moteur. `--prod`
+bien passe a `vercel deploy`, log confirmant `▲ Aliased
+https://keepy-ten.vercel.app`.
+
+Les deux marqueurs concordent : la production sert bien le build issu de
+`main` @ 075e30c, dans la fenetre de son propre run CI.
+
+Palier 2 clos. Le chantier `CH19_PIE` (recon EYES_OFFSET world-space,
+mesure au texel, gate rendu offscreen, deux paliers de deploiement) est
+**termine et en production**.
+
+**Sujet reste ouvert, hors perimetre, achemine separement** : le poids du
+`.pck` (43,3 Mo au total) et le retrait possible des normal/metallic maps
+sur les assets deja unlit -- voir la section deploiement staging
+ci-dessus pour les chiffres. Decision a prendre par Mathieu.
