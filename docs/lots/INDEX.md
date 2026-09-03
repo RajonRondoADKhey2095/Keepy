@@ -46,6 +46,7 @@
 | CH18 | Cabane et navigation multi-niveaux | [CH18_CABANE_NAV.md](CH18_CABANE_NAV.md) | 13 | 3026 | 28 → 31 août 2026 | `main` |
 | CH19 | Pie, baiser et hotspot du lit | [CH19_PIE.md](CH19_PIE.md) | 11 | 2244 | 31 août → 1 sept 2026 | `main` |
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [CH20_OURS.md](CH20_OURS.md) | 7 | 1256 | 1 → 2 sept 2026 | `staging` |
+| CH21 | Tyrolienne — recon : patron de tap, cadre caméra, rig à deux corps | [CH21_TYROLIENNE.md](CH21_TYROLIENNE.md) | 1 | 369 | 3 sept 2026 | — |
 
 **Total chantiers : 118 sections, 23 830 lignes.**
 

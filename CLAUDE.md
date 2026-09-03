@@ -660,6 +660,28 @@ neutraliser le retrait fait échouer 3 assertions dont « un tap SUR le seuil a
 terminé la visite », avec le personnage **toujours dedans 240 frames plus
 tard**.
 
+⚠️ **ET SA PORTÉE EST EXACTEMENT LE ROUTAGE DU TAP — RIEN D'AUTRE**
+(recon tyrolienne, 3 septembre 2026, ambiguïté levée sur demande). Le patron
+ÉCHELLE nomme **un canal de tap dédié, émis inconditionnellement, dont
+l'écouteur jette le signal**. L'interdiction atteint donc **ce qui possède un
+canal de tap**, et seulement cela : un escalier, une passerelle, une rampe
+que le personnage GRAVIT dans une chorégraphie n'émet aucun signal, n'a pas
+d'`is_available()` à mal câbler, et **ne peut pas être un patron ÉCHELLE** —
+c'est la même classe que les barreaux du plongeoir, de la géométrie le long
+de laquelle un corps est ÉCRIT.
+
+⚠️ **MAIS UNE INTERACTION MULTI-TEMPS REFAIT LE SYMPTÔME SANS LE NOM.**
+Tourniquet, balançoire et hibou partagent « taps pendant : interceptés,
+jamais une destination ». Reprendre ça sur une séquence de plusieurs
+secondes (marcher jusqu'au pied → monter → attendre un second acteur →
+voyager) rend au joueur une fenêtre entière où **chaque tap est jeté**.
+**Le rejet n'est légitime que quand le trajet est BORNÉ par un tween qui se
+termine toujours à un point connu** — c'est ce que « une planche dont le seul
+autre sens est déjà traité par état » dit réellement, et c'est la seule
+raison pour laquelle la branche hibou a le droit de ne rien faire. Toute
+phase NON bornée (une marche d'approche) doit rester une phase où le tap
+retombe et **annule l'intention**.
+
 ### ⚠️ UNE MARCHE DE LONGUEUR NULLE N'ÉMET PAS D'ATTERRISSAGE
 
 `_advance()` termine une marche plus courte qu'`ARRIVE_EPSILON` (0,45) par
@@ -693,6 +715,36 @@ déclenchement dupliqué entre le disque testé et le disque dessiné.
 repère PARTAGÉ qu'on publie** (unités modèle), pas une position monde — sinon
 un rapport d'échelle 7/11 se recopie faux et ne se voit jamais, les deux vues
 n'étant **jamais à l'écran ensemble**.
+
+### ⚠️ LE CADRE DU HUB EST ÉTROIT, ET C'EST LUI QUI DÉCIDE OÙ UN PROP VA
+
+`HubWorld.tscn` pose `keep_aspect = 0` (**KEEP_WIDTH**) et `fov = 45` : les
+45° sont donc l'angle **HORIZONTAL**, demi-angle 22,5°, sur une surface
+1080×1920. Conséquence mesurée : **un prop planté à plus de ~3 u de côté de
+Keepy au spawn n'est PAS à l'écran.** Un site choisi sur le seul dégagement
+au sol est sorti à l'écran **(1316, 1046) sur 1080 de large** — hors cadre,
+sans que rien ne le signale.
+
+**Tout placement de prop destiné à être VU depuis une position donnée se
+vérifie par `unproject_position()` sur la vraie caméra**, jamais par un
+balayage de dégagement seul. Et le balayage doit porter le terme de cadre
+comme une contrainte, pas comme une vérification a posteriori.
+
+⚠️ **COROLLAIRE SUR LES TRAJETS : la caméra ne tourne JAMAIS**, donc elle ne
+peut pas tenir les deux bouts d'une longue course. Avec `fog_density = 0.016`
+exponentiel, une arrivée à 38 u est déjà à **45,6 %** d'occlusion
+(`1 − exp(−38×0,016)`), et une chute de 3,6 u sur 38 u donne **5,4°** de
+pente — à l'image, un fil horizontal en haut du cadre. **Mesuré par rendu,
+pas déduit** : trois courses au corridor parfaitement vert ont été refusées
+sur cette seule base. La bande où une descente LIT comme une descente sur ce
+plateau est de l'ordre de **14 à 22 u**, à une pente de 13° et plus.
+
+⚠️ **ET UN JEU DE CONTRAINTES DE DÉGAGEMENT NE VOIT PAS UNE OCCULTATION.**
+Le site retenu par le balayage était à 2,358 u au sol du portail Quizz, et
+son mât passe pourtant **devant l'anneau et le label** de ce portail : les
+deux sont sur la même ligne de caméra. Un dégagement est une distance au
+SOL ; « qu'est-ce que ça cache » est une question d'IMAGE, et seul un rendu
+y répond.
 
 ### ⚠️ UNE TABLE EST UNE LISTE DÈS LE PREMIER COMMIT
 
@@ -917,6 +969,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH18 | Cabane et navigation multi-niveaux | [`CH18_CABANE_NAV.md`](docs/lots/CH18_CABANE_NAV.md) | 13 | 3026 | 28 → 31 août |
 | CH19 | Pie, baiser et hotspot du lit | [`CH19_PIE.md`](docs/lots/CH19_PIE.md) | 11 | 2244 | 31 août → 1 sept |
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [`CH20_OURS.md`](docs/lots/CH20_OURS.md) | 7 | 1256 | 1 → 2 sept |
+| CH21 | Tyrolienne — recon : patron de tap, cadre caméra, rig à deux corps | [`CH21_TYROLIENNE.md`](docs/lots/CH21_TYROLIENNE.md) | 1 | 369 | 3 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,
