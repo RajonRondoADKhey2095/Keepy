@@ -351,6 +351,188 @@ donnée d'une ligne et **la chorégraphie ne dépend pas du choix**. C'est
 pourquoi ce lot s'arrête ici plutôt que de trancher : le reste du travail est
 identique dans les trois cas.
 
+## RECON 5 — LES DEUX POINTS DÉFINITIFS DE MATHIEU, MESURÉS TELS QUELS
+
+> **Points relevés par Mathieu lui-même, in-game, via l'overlay de position :
+> P1 (27,70 / 9,20) et P2 (25,20 / 35,00). FIXES, non renégociables.** Cette
+> section ne cherche pas de meilleur site — elle mesure CES DEUX POINTS-LÀ.
+> Recon pure, comme RECON 1-4 : aucune structure implémentée, aucune entrée
+> de layout ajoutée. Sonde : `scripts/dev/TyrolienneFixedPointsProbe.{gd,tscn}`.
+> Neuf rendus sous `docs/renders/tyrolienne_fixed_points/`.
+
+### Godot n'était pas installé dans ce sandbox — téléchargé pour ce lot
+
+Aucun binaire `godot4` n'existait sur la machine de recon. Récupéré depuis
+`https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip`
+(la même version que `.github/workflows/web-build.yml`, `GODOT_VERSION:
+"4.3-stable"`) — **taille vérifiée contre le `Content-Length` avant
+extraction** (50 276 070 octets, conforme, cf. le piège de téléchargement
+tronqué déjà documenté dans `CLAUDE.md`). Import complet du projet ensuite
+fait à partir d'un `.godot` vidé : **36 `.scn` importés, 0 erreur** — compté
+avant toute mesure, comme la doctrine l'exige.
+
+### Distance, altitude, orientation — mesurées sur l'arbre construit
+
+| | valeur |
+|---|---|
+| distance P1 → P2 | **25,921 u** |
+| altitude de P1 et de P2 | **0,000 u** — le plateau est un plan plat ; aucune fonction de hauteur de terrain n'existe nulle part dans ce dépôt (grep sur `HubRegion`/`HubBuilder`, zéro résultat), donc l'altitude n'est pas "supposée à zéro", elle est **mesurée comme une absence** |
+| cap P1 → P2 | **−5,53°** (0° = +Z) — le corridor part quasiment plein +Z |
+
+⚠️ **CE CAP EST LA DONNÉE QUI DÉCIDE TOUT LE RESTE DE CETTE SECTION.** Il est
+quasiment l'INVERSE de la contrainte de cap que RECON 2 avait posée pour ses
+deux finalistes (`bearing >= 90° depuis la tour, cap −Z` — la seule direction
+dans laquelle `HubCamera`, qui ne tourne jamais, peut voir quoi que ce soit).
+Un tracé qui part vers +Z n'est PAS le cas que la bande 14-22u / pente ≥13°
+documentait : cette bande vient d'un tracé de cap opposé, et le brief avait
+raison de la traiter comme hypothèse et pas comme verdict acquis — elle ne
+s'applique tout simplement pas telle quelle ici (voir plus bas).
+
+### Clearance des deux points — le rayon "4,03u déjà mesuré sur DivingBoard" N'EXISTE PAS
+
+**Prémisse tombée, mesurée avant d'être crue.** Grep exhaustif sur tout le
+dépôt (`.gd`, `.md`, `.tscn`, `.json`) : aucune constante, aucun commentaire,
+aucun rendu ne porte ce chiffre pour un quelconque plongeoir. La seule
+mesure de rayon jamais publiée pour la famille `DivingBoard` est celle de
+RECON 2 ci-dessus (**1,932 u**, sur l'arbre construit de CETTE session) —
+confirmée à nouveau sur l'arbre construit de CE lot : **1,932 u**. Le
+chiffre du brief est traité ci-dessous comme un candidat NON VÉRIFIÉ parmi
+d'autres, jamais comme une donnée acquise.
+
+**P1 (27,70 / 9,20)** — dans la région (`HubRegion.contains() = true`).
+Silhouette bâtie la plus proche : une simple pétale de fleur
+(`FlowerPetal0 @ (28,34 / 6,89)`, sommet 0,64u), à **+2,127 u** en clearance
+brute (rayon 0).
+
+| rayon de structure candidat | clearance nette | |
+|---|---|---|
+| 0,000 (point) | +2,127 | OK |
+| 1,500 | +0,627 | OK |
+| **1,932 (max DivingBoard MESURÉ, cette session)** | **+0,195** | **TIGHT** |
+| 2,500 | −0,373 | **CONFLICT** |
+| 3,500 (ancienne estimation doctrine) | −1,373 | **CONFLICT** |
+| 4,030 (chiffre du brief, NON VÉRIFIÉ, absent du dépôt) | −1,903 | **CONFLICT** |
+
+**P2 (25,20 / 35,00)** — dans la région (le point tombe exactement sur le
+bord du carré, `|z| = 35 = PLATEAU_HALF_EXTENT`, cas limite inclusif vérifié
+plutôt que supposé). Silhouette la plus proche : une couronne d'arbre
+(`TreeCrown @ (23,75 / 23,88)`, sommet 1,85u), à **+10,419 u** — marge
+confortable même au rayon 4,03u non vérifié (**+6,389, OK**). **Aucun
+conflit côté P2, à aucun rayon candidat testé.**
+
+### Conflit à traiter — P1 SEUL, trois options chiffrées, tranchées par Mathieu
+
+Le conflit n'existe qu'au rayon 1,932u et au-delà, contre UNE SEULE pétale
+de fleur (un élément de décor `MultiMesh`, pas une structure interactive) :
+
+1. **Réduire l'emprise de la structure** — un mât/tour de rayon ≤ ~1,6 u à
+   P1 clearance +0,5 u ou mieux. Coût : plus fin que le chiffre du brief
+   (qui n'a de toute façon aucune source dans ce dépôt).
+2. **Déplacer le prop gênant** — retirer/déplacer cette unique instance de
+   `FlowerPetal0` du batch `MultiMesh` des fleurs. Coût : une entrée de
+   décor cosmétique, zéro incidence gameplay ; rouvre la clearance à
+   n'importe quel rayon, 4,03u compris.
+3. **Nudge minimal de P1** — quelques dixièmes, à l'écart de (28,34 / 6,89).
+   **Non appliqué ici** : le point est déclaré fixe par Mathieu, donc cette
+   option n'est présentée que pour arbitrage explicite de sa part, jamais
+   comme une correction prise d'initiative.
+
+### Corridor P1 → P2 — câble NIVELÉ, pas de pente (bidirectionnel = même structure aux deux bouts)
+
+Le brief demande un câble **bidirectionnel**, donc les deux tours sont la
+MÊME structure — rien à interpoler entre un "départ plus haut" et une
+"arrivée plus basse" comme RECON 2 (qui, elle, mesurait une descente à sens
+unique). La sonde teste donc un câble à hauteur CONSTANTE, une fois par
+delta de plateforme demandé (+ deux valeurs plus hautes pour border le
+seuil) :
+
+| delta H | pire écart corridor | contre | à s= (% du trajet) |
+|---|---|---|---|
+| 1,0 u | **+0,546 u** | `Rock @ (25,64 / 15,94)`, sommet 0,80 | 6,79 u (26,2 %) — TIGHT mais dégagé |
+| 2,0 u | **+0,921 u** | landmark non nommé `@ (29,01 / 13,44)`, sommet 7,07 | 4,03 u (15,5 %) — OK |
+| 3,0 u | +0,921 u (identique) | idem | idem — OK |
+| 4,0 u | +0,921 u (identique) | idem | idem — OK |
+| 6,0 u | +0,921 u (identique) | idem | idem — OK |
+| 8,0 u | +0,921 u (identique) | idem | idem — OK |
+
+**Aucun conflit de corridor à aucune hauteur testée.** Le même landmark
+(un pilier de décor rocheux, visible sur les rendus) reste le facteur
+limitant de H=2 à H=8 sans bouger — sa propre étendue verticale couvre tout
+cet intervalle de hauteur de câble une fois `_RIDER_DROP` (1,10 u)
+soustrait, donc monter la plateforme au-delà de 2u n'achète RIEN de plus en
+clearance. H=1u reste clair mais avec une marge nettement plus mince (contre
+un rocher différent, plus proche du sol).
+
+### Lisibilité — MESURÉE, pas supposée, et le résultat est ASYMÉTRIQUE
+
+⚠️ **`HubCamera` ne tourne jamais et ne voit que ce qui est à Z PLUS BAS
+qu'elle-même — fait déjà documenté par RECON 2, reconfirmé ici par le
+rendu, pas par le raisonnement.** Le cap de ce tracé (−5,53°, quasiment plein
++Z) en fait une conséquence directe :
+
+* **Depuis P1 (tour sud, z=9,2) : P2 est invisible, À TOUTE HAUTEUR.**
+  `H08__at_P1.png` le montre : Keepy au pied du mât, la caméra dans sa pose
+  de repos ne montre que la base du poteau et rien au-delà — P2 est
+  géométriquement DERRIÈRE le champ visible de cette caméra, quelle que soit
+  la hauteur de plateforme. Ce n'est pas un défaut de hauteur, c'est une
+  contrainte structurelle de la caméra que RECON 2 avait déjà nommée pour un
+  tracé de cap opposé, et qui joue ici dans l'autre sens.
+* **Depuis P2 (tour nord, z=35,0) : tout le corridor est visible, et lit
+  BIEN dès H=1-2u.** `H01__at_P2.png` et `H02__at_P2.png` montrent un câble
+  orange net qui traverse une bonne partie du cadre en diagonale, grâce au
+  raccourci de perspective sur 25,9u de distance — la hauteur RÉELLE du
+  câble (1 à 2u) reste faible, mais son extrémité lointaine (celle du côté
+  P1) se projette haut dans le cadre du simple fait de la distance. C'est
+  net dès le rayon 1u, largement avant tout renfort de hauteur.
+* **Vue de survol synthétique (`north_over_corridor`, PAS une position de
+  caméra de jeu réelle — juste un contrôle) : confirme le même écart.** À
+  H=1-2u les deux mâts sont à peine perceptibles contre la lisière
+  d'arbres ; à H=8u le corridor lit clairement comme un "portique" à deux
+  montants de même hauteur, câble bien horizontal (`H08__north_over_corridor.png`).
+* **Brouillard** : `fog_density = 0,016` (même valeur que RECON 2).
+  Occlusion à 25,921u : `1 − exp(−25,921 × 0,016)` = **34,0 %** — moins sévère
+  que les 45,6 % à 38u qui avaient fait tomber les tracés longs de RECON 2,
+  mais non négligeable ; visible sur les rendus par l'assombrissement de
+  l'extrémité P1 vue depuis P2.
+
+**La bande "14-22u / pente ≥13°" ne s'applique PAS ici, et ce n'est pas un
+manque de données : elle mesurait la lisibilité d'une DESCENTE à sens
+unique vue depuis l'amont (cap −Z). Ce tracé-ci est bidirectionnel, à
+niveau constant, de cap quasi +Z — un mécanisme différent, une question de
+lisibilité différente (hauteur en pixels + contraste + brouillard, pas
+pente), et c'est pour ça que le brief demandait un test par rendu plutôt
+qu'une formule.**
+
+### Hauteur de plateforme recommandée
+
+**H ≈ 4u**, provisoire et à valider device :
+
+* le corridor n'a **aucun coût de clearance supplémentaire entre H=2 et
+  H=8** (même obstacle, même marge +0,921u) — donc la hauteur ne se choisit
+  pas sur la clearance au-delà de 2u ;
+* la lisibilité côté P2 (le seul côté d'où le corridor se voit du tout) est
+  déjà bonne dès H=1-2u grâce à la perspective, donc la hauteur ne se
+  choisit pas non plus uniquement là-dessus ;
+* **4u donne une présence structurelle nette** (un mât visible, cohérent
+  avec les autres structures du plateau) sans monter jusqu'à des hauteurs
+  du niveau du plongeoir (deck 1,8u — un tout autre ordre de grandeur —
+  d'où le choix de rester dans la bande basse plutôt que de viser haut par
+  réflexe) ni payer le "portique" plus massif de H=8 dont rien dans les
+  contraintes mesurées n'impose la taille.
+
+### ⚠️ SIGNALÉ, PAS RÉSOLU — l'asymétrie de visibilité P1→P2
+
+Aucun conflit chiffré ici, mais une question de conception à trancher par
+Mathieu avant l'implémentation : la tour de DÉPART (côté par lequel on
+grimpe pour partir vers l'autre) ne montrera JAMAIS sa destination à
+l'écran, dans un sens comme dans l'autre du trajet bidirectionnel — qui que
+ce soit à P1 regardant vers P2 ne voit rien, et symétriquement quelqu'un à
+P2 voit tout de suite tout le corridor vers P1. Ce n'est pas nécessairement
+un défaut ("on ne voit pas sa destination avant de partir" existe déjà pour
+d'autres trajets sur ce plateau sous cette même caméra), mais c'est une
+propriété du choix de points fixes de Mathieu qui mérite d'être vue plutôt
+que découverte après coup.
+
 ## Sonde et rendus
 
 `scripts/dev/ZiplineReconProbe.{gd,tscn}` — **0 assertion, 0 gate**. Elle
