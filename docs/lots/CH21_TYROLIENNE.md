@@ -279,3 +279,196 @@ ne gate rien, aucune assertion. Ne modifie aucune scene shippee (charge
 supprimer quand ce chantier passera en implementation (regle "sonde
 jetable = supprimee avant le commit" qui livre du gameplay reel) ;
 conservee pour l'instant car cette session est pure recon.
+
+## SUIVI — lisibilite du corridor, arbitrage des deux conflits, grand lac et totems (3 septembre 2026)
+
+Session separee, meme discipline (recon pure, aucun fichier de jeu
+modifie). Godot 4.3 non installe au demarrage : meme binaire officiel
+recupere depuis les releases GitHub (`Godot_v4.3-stable_linux.x86_64.zip`,
+**50 276 070** octets, taille verifiee identique). Import complet fait en
+amont (`godot4 --headless --path . --import`, 5 min 17 s, 0 erreur ; 36
+`.glb` importes en `.scn`, tous les assets necessaires a cette recon
+verifies presents avant toute mesure).
+
+⚠️ **Le brief de cette session presupposait une bande lisible "14-22 u" et
+un seuil de pente "13 degres" comme doctrine deja etablie par CH21.** Ce
+n'est pas le cas : la section PARTIE 3 ci-dessus le dit noir sur blanc
+("aucun seuil de pente '13 degres' ni bande '14-22 u' n'est documente nulle
+part dans ce depot"). Re-grepe ici, meme resultat, zero occurrence. Rien
+n'est invente pour faire correspondre le brief a une doctrine qui n'existe
+pas — cette section mesure le corridor A<->B tel qu'il est, avec le
+brouillard reellement en vigueur (statique, toujours actif dans le hub :
+`HubWorld.tscn` porte `fog_enabled=true fog_density=0.016`, aucun noeud
+`SwampAtmosphere` dans cette scene — confirme absent par recherche — donc
+rien a "activer", c'est deja la valeur servie a chaque frame).
+
+Sonde `scripts/dev/CorridorFollowupProbe.gd`/`.tscn`, meme decoupage
+MEASURE (headless)/CAPTURE (xvfb+`opengl3`) que la sonde precedente.
+
+### POINT 1 — le defaut d'occlusion ne se reproduit A AUCUNE des pentes testees, y compris la pente NULLE
+
+Un "fil" (cylindre jaune vif, contraste maximal contre la palette sombre,
+pour qu'aucune lecture ci-dessous ne soit un artefact de couleur) est
+trace entre les deux ancrages, une tour A a une base fixe de 2,0 u et une
+tour B a la meme base + un delta variable (le meme "delta hauteur
+plateforme" que la table de PARTIE 3), depuis la camera standard du hub
+(meme pose que le rendu "standard view" de CH21 : Keepy et camera au
+spawn).
+
+**Verdict par inspection visuelle directe des rendus** (voir plus bas
+pourquoi la metrique de contraste automatisee n'est PAS fiable telle
+qu'ecrite) :
+
+| delta plateforme | pente | lecture visuelle du fil contre le brouillard |
+|---|---|---|
+| 0,0 u | 0,00° | **PARFAITEMENT LISIBLE** — jaune vif, aucune confusion avec le fond |
+| 3,0 u | 6,37° (candidate max) | **PARFAITEMENT LISIBLE** |
+| 6,0 u | 12,58° | **PARFAITEMENT LISIBLE** |
+| 10,0 u | 20,40° | tour B sort du cadre superieur (voir plus bas) |
+| 16,0 u / 24,0 u | — | tour B passe DERRIERE la camera (`is_position_behind` vrai) — non mesurable dans cette pose camera |
+
+**Le defaut ne se reproduit dans AUCUNE configuration testable avec la
+camera standard du hub**, y compris a pente nulle — le cas que la
+premisse du brief attendait le plus mauvais. Trois rendus (delta=0,0 ;
+3,0 ; 6,0) montres a Mathieu confirment un fil jaune parfaitement net sur
+toute sa longueur, sans aucune zone ou il se confond avec le degrade de
+fond.
+
+⚠️ **La metrique de contraste automatisee ecrite pour cette sonde
+(WCAG-style, meme convention que le seuil 3,0:1 documente dans
+`CLAUDE.md`) a echoue son propre blind check et n'est PAS fiable pour du
+fil fin en diagonale** : a delta=0,0 elle rapporte 1,01:1 ("perdu dans le
+brouillard") alors que le rendu montre un fil parfaitement net — le point
+de fond echantillonne (40 px au-dessus du milieu ecran) tombe LUI AUSSI
+sur le fil (fin et proche de la verticale a l'ecran), donc la mesure se
+compare a elle-meme. A delta=10,0 la meme metrique rapporte a nouveau
+1,00:1, mais cette fois parce que le point B se projette tres au-dessus du
+cadre (y=-2720 px) et que le milieu ecran calcule par simple moyenne
+lineaire des deux points projetes ne tombe plus sur le trace reel du fil
+(projection perspective non lineaire) — echantillonnage du fond des deux
+cotes, pas du tout un signal de brouillard. **Cette metrique ne doit pas
+etre reutilisee sans etre re-ecrite pour echantillonner perpendiculairement
+a la direction ecran du fil** ; les verdicts ci-dessus viennent de
+l'inspection directe des trois PNG, pas de ce nombre.
+
+**Consequence pratique** : rien dans la geometrie du brouillard de ce
+projet (purement exponentiel par DISTANCE, `fog_height_enabled` absent des
+deux scenes verifiees) ne justifie une bande de distance "lisible" ou un
+seuil de pente — la distance A<->B (26,89 u, fixe, independante de la
+hauteur des tours) est ce que le brouillard voit ; la hauteur des tours ne
+change que l'angle d'affichage a l'ecran, pas l'attenuation. A la lumiere
+de ce mecanisme et des trois rendus obtenus, **aucune pente minimale n'est
+necessaire pour la lisibilite** — 0,00° (le defaut naturel du sol plat deja
+identifie en PARTIE 3) est deja lisible. Une pente reste un choix
+stylistique libre, pas une necessite technique.
+
+### POINT 2 — les deux conflits de clairance, chiffres a l'appui (recalcules en direct contre l'arbre AABB reellement construit)
+
+#### Conflit 1 — point A vs poteau du DivingBoard (baseline 3,2802 u, deficit 0,22 u seulement)
+
+| option | detail | resultat |
+|---|---|---|
+| **A — deplacer l'ancrage A** de 1,0 u dans la direction opposee au poteau (XZ = -0,726 ; 0,688) | | clairance -> **4,2802 u** (clear), nouvelle distance A<->B = **26,1699 u** (delta -0,7167 u sur 26,89 u, negligeable) ; pas de nouvel obstacle rencontre |
+| idem, 1,5 u | | clairance -> 4,7802 u, distance -> 25,8186 u (delta -1,0680 u) |
+| idem, 2,0 u | | clairance -> 5,2802 u, distance -> 25,4723 u (delta -1,4143 u) ; obstacle le plus proche devient une couronne d'arbre a 5,2449 u (toujours large marge) |
+| **B — reduire le rayon de structure** | de 3,5 u a **3,2802 u** (deficit reel de seulement 0,22 u) | zero deplacement d'ancrage ; rayon quasiment inchange, deja tres proche du seuil propose |
+| C — deplacer le DivingBoard | non chiffre ici (le plongeoir est un prop integre avec sa propre chaine CH15, deplacer son poteau a plus d'implications que deplacer un point d'ancrage pas encore construit) | **non recommande sans une raison forte** — l'option A ou B suffit a un cout bien moindre |
+
+**Ce conflit est mineur** : le deficit est de 0,22 u seulement, et un nudge
+de 1,0 u (moins de 3% de la distance totale) le resout confortablement.
+
+#### Conflit 2 — point B vs hibou decor (baseline 1,7677 u, deficit 1,73 u — la moitie du rayon propose)
+
+| option | detail | resultat |
+|---|---|---|
+| **A — deplacer l'ancrage B**, +1,0 u (direction XZ = 0,620 ; 0,785) | | clairance -> 2,7677 u, **toujours SOUS 3,5 u** ; distance A<->B -> 27,6451 u (delta +0,7586 u) |
+| idem, +1,5 u | | clairance au hibou -> 3,2677 u, **toujours sous le seuil** — ET un NOUVEL obstacle (couronne d'arbre) apparait a 3,1793 u, lui aussi sous le seuil : ce palier ne resout rien |
+| idem, **+2,0 u** | | clairance au hibou -> 3,7677 u (clear, marge fine +0,27 u) ; nouvel obstacle le plus proche = Rock[3] a 3,5717 u (clear, marge fine +0,07 u) — **les deux clairances passent tout juste**, marge etroite |
+| idem, +3,0 u | | clairance au hibou -> 4,7677 u ; obstacle le plus proche = Rock[3] a 4,3568 u — marge confortable des deux cotes |
+| **B — reduire le rayon de structure** | de 3,5 u a **1,7677 u** | reduction de moitie, tres agressif pour un pied d'escalier — reduit aussi la marge de tap, deja signale par CH21 comme peu souhaitable |
+| **C — deplacer le hibou decor** | prop purement decoratif (0 skin, aucun accesseur nomme, aucun autre systeme ne le lit — confirme par la table PARTIE 2 de ce fichier) ; un deplacement de layout de quelques u est un edit isole, sans couplage ailleurs | **option la moins couteuse en risque** si Mathieu prefere ne pas toucher a la geometrie de la tyrolienne elle-meme |
+
+**Ce conflit est plus serieux** : un nudge minimal ne suffit pas
+(1,0-1,5 u restent sous le seuil, voire rencontrent un second obstacle a
+1,5 u) ; il faut au moins +2,0 u pour clairer, avec une marge fine des deux
+cotes a ce palier — +3,0 u est plus confortable. L'option C (deplacer le
+hibou, prop non couple) reste la plus simple si le rayon de structure et
+la position de B sont a preserver tels quels.
+
+### POINT 3 — grand lac et landmarks du grand lac
+
+#### 3.1 — distance du point A au grand lac (accessseur `HubRegion.lakes()`, jamais recopie)
+
+Le grand lac est en realite DEUX lobes publies par `HubRegion.lakes()` :
+
+| lobe | centre | rayon | distance(A, centre) | clairance a la rive |
+|---|---|---|---|---|
+| lobe principal (`GREATLAKE_WATER_RADIUS`) | (15.5, -19) | 16,0000 | 15,7590 | **-0,2410 u — POINT A EST DANS LE CERCLE D'EAU** |
+| lobe cote spawn (`SPAWN_LAKE_WATER_RADIUS`) | (-12, -19.5) | 10,0000 | 13,2703 | 3,2703 u (marge large) |
+
+⚠️ **Resultat inattendu et confirme par rendu** (voir 3.2) : le point A,
+tel que Mathieu l'a annote sur sa capture (fraction ecran 0,52 ; 0,24,
+raycast identique a chaque tap du jeu), tombe **A L'INTERIEUR** du cercle
+d'eau du lobe principal du grand lac, de 0,24 u. Ce n'est pas la petite
+mare deja verifiee par `pond_centre()`/`POND_WATER_RADIUS` en PARTIE 3
+(clairance 18,8656 u, large marge, toujours valable) — c'est un second
+corps d'eau, non verifie par la sonde precedente faute d'accesseur demande
+a l'epoque. **Le pied de la tour A, tel que mesure aujourd'hui, ne peut
+pas etre pose sans deplacement** : soit l'ancrage A est nudge vers la terre
+ferme (la fourche entre les deux lobes, visible sur le rendu 3.2, est a
+quelques u de la, cote securise cote petit lac deja mesure a 18,87 u de
+marge), soit la geometrie de la rive est revue localement.
+
+#### 3.2 — capture depuis la position de jeu reelle
+
+Keepy place EXACTEMENT au point A (pas au spawn), camera a l'offset
+HubCamera reel depuis cette position (`Vector3(A.x,0,A.z) + HubCamera.OFFSET`,
+rotation figee de la scene — la meme pose que le joueur aurait reellement
+en marchant jusque-la). Le rendu confirme visuellement le chiffre 3.1 :
+**Keepy se tient a la pointe exacte de la fourche entre les deux plans
+d'eau turquoise, qui l'entourent des deux cotes** — ni "a la base d'un
+pilier" ni clairement sur la berge, un a-pic vers l'eau immediatement
+visible des deux flancs.
+
+#### 3.3 — identification des landmarks, PAR LE CODE (`variant` de layout), pas par un rendu synthetique
+
+`resources/hub/hub_layout.tres` declare 3 variantes de landmark
+(`_make_landmark()` dans `HubBuilder.gd`) : **0=spire** (aiguille fine,
+seule), **1=cairn** (masse empilee, seule), **2=slabs** (DEUX barres
+verticales inegales — le seul variant qui correspond litteralement a
+"plusieurs hauts piliers... (totems)" au pluriel). Quatre landmarks du
+grand lac tombent a moins de 25 u du point A :
+
+| variant | position | distance a A |
+|---|---|---|
+| 0 (spire) | (2.668, -33.895) | **10,2267 u** |
+| 1 (cairn) | (6.836, -20.528) | **7,1572 u — LE PLUS PROCHE** |
+| 0 (spire) | (17.372, -12.464) | 20,3631 u |
+| 2 (slabs, "totems") | (19.884, -25.496) | 19,4291 u |
+
+**Le landmark le plus proche du point A n'est PAS la paire de dalles
+("totems")** — c'est le CAIRN (variant 1, masse grise empilee unique),
+a 7,16 u. Confirme par rendu rapproche : une masse grise anguleuse et
+etagee, coherente avec la description du code ("blocky stacked mass...
+grey rather than green"), pas deux barres separees. La spire fine visible
+au loin sur les rendus 3.2/standard-view (celle que CH21 avait deja
+repere a l'oeil) est le variant 0 a 10,23 u — une AIGUILLE UNIQUE, pas des
+"totems" non plus. La vraie paire de dalles (variant 2) existe bien sur ce
+lac, mais a 19,43 u de A — sensiblement plus loin que le cairn, et
+comparable a la distance de la seconde spire (20,36 u).
+
+**Verdict** : la capture d'origine de Mathieu montrant "plusieurs hauts
+piliers d'ecorce grise (totems)" ne correspond ni a l'objet le plus proche
+du point A (le cairn, silhouette non-plurielle), ni a l'objet visible en
+arriere-plan sur le rendu standard (la spire, silhouette non plurielle
+non plus) — le seul landmark qui correspond litteralement a une paire de
+piliers est a 19,43 u de A, pas immediatement a cote. **A verifier
+directement avec Mathieu quel landmark sa capture montrait reellement**
+avant de fixer le pied de la tour A dessus ou a proximite.
+
+### Sonde jetable (suivi)
+
+`scripts/dev/CorridorFollowupProbe.gd`/`.tscn` — memes garanties que
+`ZiplineReconProbe` (mesure/rendu seulement, aucune assertion, scene
+HubWorld instanciee separement). Rendus PNG sauvegardes localement
+(`user://corridor_*.png`, non commits, hors budget de taille du depot).
