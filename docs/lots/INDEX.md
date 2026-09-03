@@ -46,8 +46,12 @@
 | CH18 | Cabane et navigation multi-niveaux | [CH18_CABANE_NAV.md](CH18_CABANE_NAV.md) | 13 | 3026 | 28 → 31 août 2026 | `main` |
 | CH19 | Pie, baiser et hotspot du lit | [CH19_PIE.md](CH19_PIE.md) | 11 | 2244 | 31 août → 1 sept 2026 | `main` |
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [CH20_OURS.md](CH20_OURS.md) | 7 | 1256 | 1 → 2 sept 2026 | `staging` |
+| CH21 | Tyrolienne — recon géométrie, candidats animaux, suppression du blaireau | [CH21_TYROLIENNE.md](CH21_TYROLIENNE.md) | 1 | — | 3 sept 2026 | — |
 
-**Total chantiers : 118 sections, 23 830 lignes.**
+**Total chantiers (CH01-CH20) : 118 sections, 23 830 lignes.** CH21 est une
+recon pure ajoutée après ce décompte du LOT H ; non inclus dans la
+comptabilité de non-perte ci-dessous, qui documente exclusivement le
+découpage d'origine de `CLAUDE.md`.
 
 ⚠️ **CH20 contient DEUX sections écrites rétroactivement par le LOT H**
 (LOT A — identification de l'ours par rendu ; LOT F — orientation de l'ours
