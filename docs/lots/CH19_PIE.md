@@ -2715,3 +2715,67 @@ methode et tous les chiffres sont ci-dessus pour la refaire a l'identique.
 Sondes permanentes relancees apres le fix : `CabinProbe` **0 failure**,
 `ProbeTimeoutAudit` **PASSED** (60 scenes de sonde, 1 sonde `--script`),
 `AssetContractAudit` exit 0.
+
+### DEPLOIEMENT STAGING VERIFIE SUR LE SERVICE (2 septembre 2026, meme jour)
+
+CI run #380 (id 33683925028, head_sha b4e32a2 = tip de `staging`) :
+`completed` / `SUCCESS`, termine 21:19:47 UTC. `[PRODUCTION -- main]`
+correctement SKIPPED.
+
+⚠️ **L'API GitHub a servi un etat perime pendant la lecture** :
+`status: in_progress` avec `updated_at` fige a 21:13:35, alors que le run
+etait deja termine. C'est le SECOND SIGNAL independant (CACHE_VERSION
+reellement servi) qui a tranche en premier ; `get_workflow_run` relu
+ensuite a confirme `completed`/`success`. Piege deja documente,
+re-rencontre tel quel.
+
+Fenetre de l'etape `Export Web build` : **21:18:59 -> 21:19:06**.
+
+**Marqueur 1 — CACHE_VERSION.** Servi : `1788383945|5950550`, soit
+**21:19:05 UTC**, a l'INTERIEUR de la fenetre Export. Lu a
+`x-vercel-cache: MISS`, `age: 0`.
+
+⚠️ **Premiere lecture rejetee** : `HIT` avec `age: 3064`, portant encore
+l'epoch `1788379007` (19:56:47, le build precedent). Un `?bust=` seul ne
+l'avait pas fait sauter ; il a fallu changer reellement la valeur du
+parametre pour obtenir un `MISS`. Le piege documente plus haut dans ce
+fichier de CLAUDE.md, rencontre a l'identique.
+
+**Le second champ de CACHE_VERSION n'est PAS une taille**, verifie plutot
+que suppose : il est passe de `5219952` a `5950550` (+730598) entre les
+deux derniers runs, ce qui ressemblait a une hausse de payload. Le log de
+build donne `index.pck = 43296256` pour ce run, sans rapport avec ce
+chiffre. C'est un compteur de ticks (microsecondes) d'uptime de
+l'exportateur -- ~5,95 s contre ~5,22 s -- donc du bruit inter-run, pas une
+mesure de poids. Question fermee par la mesure plutot que laissee ouverte.
+
+**Marqueur 2 — index.wasm.** `35 376 909` octets, empreinte permanente
+« aucun code moteur touche » confirmee. `index.js` egalement identique
+(`331 495` octets).
+
+**Delta de payload attribue.** `index.pck` : `43 294 384` (run #379, avant
+ce lot) -> `43 296 256` (run #380, apres) = **+1 872 octets**, exactement
+le poids du GDScript ajoute par ce lot (`_lid_transforms()` +
+`_lid_texture()` + les constantes mesurees). Aucune regression de payload
+imputable a ce lot.
+
+Le `.pck` pese aujourd'hui 43,3 Mo au total, loin des 4,23 Mo documentes
+plus haut dans ce fichier apres l'exclusion des originaux Meshy bruts.
+Verifie : ce n'est PAS une regression du filtre -- `exclude_filter` dans
+`export_presets.cfg` couvre toujours `scripts/dev/*,assets_source/*,
+docs/*,web/*,firebase.json` intact, et `assets_source/` (595 Mo sur disque)
+reste hors pack. La croissance vient des assets reellement livres depuis
+cette mesure-la (`assets/` pese 76 Mo sur disque aujourd'hui : cabin_decor
+13,4 Mo + ses deux maps 6,8 et 6,1 Mo, bear_walker 10,2 Mo, owl_decor
+8,4 Mo, ...). **Sujet reel, mais explicitement HORS PERIMETRE de ce lot**
+-- Mathieu tranchera separement s'il ouvre un chantier de retrait des
+normal/metallic maps sur les assets deja unlit (l'importeur glTF ne les
+lie de toute facon jamais sur un materiau UNLIT, regle deja etablie plus
+haut dans ce fichier).
+
+### PALIER 2 -- MERGE EN PRODUCTION (2 septembre 2026, meme jour)
+
+Validation device de Mathieu sur `keepy-staging.vercel.app` : **yeux
+fermes bien cales, confirmee** ; la bulle "Zzz" **inchangee et toujours
+bonne** (non retestee, comme prevu -- elle etait deja actee). Feu vert
+explicite donne pour le palier 2.
