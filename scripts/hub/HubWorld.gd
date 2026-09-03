@@ -339,6 +339,20 @@ const BEAR_SCENE: PackedScene = preload("res://assets/models/keepy_bear_walker.g
 ## undercounts a hundredfold. See `BearAnimSpike.gd` for the full account.
 const BEAR_SCALE: float = 1.130876
 
+## The bear rig's rest-pose height at scale 1, Lot B's own measurement,
+## restated here as a named constant for the SAME reason `BADGER_REST_SPAN`
+## below is one: `BADGER_SCALE` is derived FROM the bear's drawn height, and
+## a literal 1.671335 typed a second time there is exactly the "recopied
+## fact" this file's own doctrine bans (see `KEEPY_DRAWN_HEIGHT`'s users).
+## Re-measured on the badger lot's own bench and read back 1.671344 against
+## this figure -- 9 micro-units apart, standing to publish, not redo.
+const BEAR_REST_SPAN: float = 1.671335
+
+## The bear's drawn height. Published so nothing that reasons about the
+## three-actor cast (Keepy, badger, bear) has to multiply the two facts
+## above back together.
+const BEAR_DRAWN_HEIGHT: float = BEAR_SCALE * BEAR_REST_SPAN
+
 ## Where the bear stands when nothing is happening.
 ##
 ## CHOSEN BY SCANNING THE LAYOUT, not by eye. On the seesaw's own local Z
@@ -1638,32 +1652,64 @@ const KEEPY_DRAWN_HEIGHT: float = 1.3501
 ## scale on its Armature.
 const BADGER_REST_SPAN: float = 1.660387
 
-## ⚠️ DERIVED, NOT CHOSEN, and the derivation has no free parameter.
+## ⚠️ SUPERSEDED 3 SEPTEMBRE 2026 -- Mathieu's device feedback (screenshots
+## attached) read the shipped badger as too small next to Keepy. The
+## original reasoning kept here for the record: on the zipline the two
+## riders hang from ONE bar side by side, and a badger the same height as
+## Keepy reads as a matched pair rather than one of them dangling. That
+## reasoning is real, but it optimised the one screen where the badger and
+## Keepy are both in the air, at the cost of every OTHER screen where the
+## badger stands or walks beside Keepy on the ground -- which is most of
+## its screen time, and the one Mathieu's screenshots showed. Overridden by
+## his explicit call: the badger reads bigger than Keepy now, full stop.
 ##
-## The two riders hang from ONE bar, side by side, half a metre apart on a
-## screen six inches across. Two bodies of different heights hanging off
-## one handle read as one of them dangling; the same height reads as a
-## pair. So the badger's drawn height IS Keepy's, and the scale falls out:
+## DERIVED, NOT CHOSEN, and the derivation still has no free parameter --
+## only the TARGET changed. Three actors share this screen -- Keepy, the
+## badger, the bear -- and `BEAR_DRAWN_HEIGHT` (1.890073) is already
+## visibly bigger than `KEEPY_DRAWN_HEIGHT` (1.3501), a ratio of 1.399950.
+## Rather than pick a badger height by eye, the badger is placed at the
+## GEOMETRIC MEAN of the two: the step Keepy -> badger and the step badger
+## -> bear are then the SAME multiplicative jump, so neither gap on screen
+## reads as an afterthought next to the other -- one is not "clearly a
+## step up" while the other is "hard to tell":
 ##
-##     BADGER_SCALE = KEEPY_DRAWN_HEIGHT / BADGER_REST_SPAN
-##                  = 1.3501 / 1.660387 = 0.813125
+##     k      = sqrt(BEAR_DRAWN_HEIGHT / KEEPY_DRAWN_HEIGHT)
+##            = sqrt(1.890073 / 1.3501) = sqrt(1.399950) = 1.183195
+##     BADGER_DRAWN_HEIGHT = k * KEEPY_DRAWN_HEIGHT = 1.597431
+##     BADGER_SCALE        = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
+##                         = 1.597431 / 1.660387 = 0.962085
 ##
-## Written as the division rather than as its result so it cannot drift
-## from either half. It also lands the badger visibly SMALLER than the bear
-## (1.8901 drawn), which is what keeps the two animals apart on screen --
-## CH20 LOT K restored this asset precisely because it is a different model
-## and not a second copy of the bear.
-const BADGER_SCALE: float = KEEPY_DRAWN_HEIGHT / BADGER_REST_SPAN
+## Verified: k * k = 1.399950 = BEAR_DRAWN_HEIGHT / KEEPY_DRAWN_HEIGHT to
+## six figures, i.e. the badger is +18.3% over Keepy and the bear is a
+## further +18.3% over the badger -- the SAME step twice, not two
+## different-looking ones. The badger is STILL visibly smaller than the
+## bear (1.597431 < 1.890073, an 18.3% gap of its own), so the two animals
+## stay apart on screen exactly as the superseded reasoning intended --
+## that half of the old reasoning was never wrong, only the anchor was.
+##
+## Written as the formula rather than as its result, the same rule
+## `KEEPY_DRAWN_HEIGHT`'s other users follow, so this cannot drift from
+## `BEAR_SCALE`/`BEAR_REST_SPAN` on one side or `BADGER_REST_SPAN` on the
+## other.
+const BADGER_DRAWN_HEIGHT: float = sqrt(BEAR_DRAWN_HEIGHT / KEEPY_DRAWN_HEIGHT) * KEEPY_DRAWN_HEIGHT
+const BADGER_SCALE: float = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
 
 ## How far to the side of the stair foot the badger waits, along the
 ## tower's own lateral axis.
 ##
 ## ⚠️ BESIDE THE STAIR AND NOT ON IT. The stringers span
-## `ZIPLINE_STRINGER_HALF_SPAN` 0.42 either side of the flight, and the
-## badger is 0.6 across at its drawn scale, so 0.95 puts its near flank
-## 0.23 clear of the near rail -- it stands next to the steps rather than
-## in front of them, and Keepy's own walk up to the foot never has to go
-## through it.
+## `ZIPLINE_STRINGER_HALF_SPAN` 0.42 either side of the flight. At the
+## OLD `BADGER_SCALE` the badger was 0.6 across, and 0.95 put its near
+## flank 0.23 clear of the near rail.
+##
+## RE-CHECKED AFTER THE 3 SEPTEMBRE 2026 RESCALE, not left on the old
+## number: a uniform scale widens the rig on every axis by the same factor
+## it grew on, `BADGER_SCALE_new / BADGER_SCALE_old` = 1.183195, so the
+## badger is now 0.6 * 1.183195 = 0.710 u across. Near flank at the SAME
+## 0.95 offset: 0.95 - 0.710/2 = 0.595, still 0.595 - 0.42 = +0.175 u clear
+## of the rail -- tighter than the 0.23 u it had, but not a conflict, so
+## the offset is left at its measured value rather than re-tuned for a
+## margin nothing asked for.
 const BADGER_SIDE_OFFSET: float = 0.95
 
 ## How long the trolley takes to cross.
@@ -1816,10 +1862,20 @@ func _badger_facing(index: int) -> Vector3:
 ##
 ##     cable_height - bar_drop - hang_clearance - height
 ##
-## which for both riders (they are the same height by construction, see
-## BADGER_SCALE) is 2.0 - 0.24 - 0.05 - 1.3501 = 0.3599 in world terms.
+## which for Keepy is 2.0 - 0.24 - 0.05 - 1.3501 = 0.3599 in world terms.
 ## The deck is at 0.90, so boarding is a step off the platform and a
 ## 0.54 u drop onto the handle -- which is what a zipline is.
+##
+## ⚠️ THE TWO RIDERS ARE NO LONGER THE SAME HEIGHT (3 septembre 2026 rescale,
+## see `BADGER_SCALE`), and this formula is exactly why that is safe rather
+## than a new defect to chase: `height` cancels out of the CROWN position --
+## `feet + height = (cable_height - bar_drop - hang_clearance - height) +
+## height = cable_height - bar_drop - hang_clearance` -- so both crowns sit
+## at the SAME 1.71 u regardless of body height, fixed by the bar the hands
+## hold. Only the FEET move: Keepy's land at 0.3599, the taller badger's
+## (height 1.597431) at 2.0 - 0.24 - 0.05 - 1.597431 = 0.112569 -- still off
+## the ground and still under the 0.90 deck, so its boarding drop is simply
+## a longer one, not a broken one.
 ##
 ## `sign` is -1 for the near-side seat and +1 for the far one; nothing here
 ## decides WHICH rider takes which, that is the caller's.
@@ -1920,7 +1976,7 @@ func _badger_follow_zipline() -> void:
 	var carrier: Node3D = _zipline.get("carrier")
 	if carrier == null or not is_instance_valid(carrier):
 		return
-	_badger.global_position = carrier.to_global(_zip_seat(1.0, KEEPY_DRAWN_HEIGHT))
+	_badger.global_position = carrier.to_global(_zip_seat(1.0, BADGER_DRAWN_HEIGHT))
 	# Facing the way the trolley travels, read off the carrier's own basis
 	# -- the same one fact Keepy's `follow_zipline` reads, so the two riders
 	# cannot end up looking different ways along one wire.
