@@ -181,6 +181,22 @@ func accepts_boarding_tap(point: Vector3) -> bool:
 		return false
 	return Vector3(point.x, 0.0, point.z).distance_to(rider_position()) <= BOARD_TAP_RADIUS
 
+## Marks the badger away from BOTH ends, or back at one of them, without a
+## cable trip -- CH24's campfire detour. Reuses the exact gate a trip
+## already relies on rather than adding a second flag: `accepts_boarding_tap`
+## refuses whenever `_at_end < 0`, which is already the "in transit" reading
+## `set_riding(true)` writes, so setting `_at_end` to -1 here withdraws the
+## badger channel on the SAME terms, and setting it back to a real index
+## reopens it -- exactly HubTapInput's boat pattern (a withdrawal through a
+## node, never a flag `HubTapInput` itself has to know a second name for).
+##
+## ⚠️ `_riding` IS DELIBERATELY LEFT ALONE. Walking away to the campfire
+## does not touch the cable, so `accepts_structure_tap`'s solo channel --
+## which only reads `is_available()`, i.e. `not _riding` -- stays exactly as
+## available as it already was. Only the badger's own boarding disc closes.
+func set_badger_at(index: int) -> void:
+	_at_end = index
+
 ## Called by HubWorld at the start and end of a trip. The end is handed in
 ## on the way back so that the door and the actor cannot disagree about
 ## where the pair came to rest: one write, from the site that moved them.
