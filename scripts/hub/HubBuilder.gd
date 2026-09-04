@@ -359,11 +359,19 @@ const GREATLAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
 ## Clearing it needs the centre at x >= 18, which is a different placement
 ## than the one that was chosen.
 const GREATLAKE_BANK_MARGIN: float = 1.30
-## 96 segments: sized against facet deviation r(1-cos(pi/n)), which grows
-## with r. At the shipped radius of 20 that is 0.0107; at 16 it is 0.0086,
-## flatter still. Left at 96 -- the disc did not get coarser by getting
-## smaller, and a segment count is not worth a rendered change to re-tune.
-const GREATLAKE_SEGMENTS: int = 96
+## 56 segments (A2, CH22 audit). Sized against facet deviation
+## r(1-cos(pi/n)), which is ABSOLUTE and grows with r -- so a count is only
+## ever right for a radius. The reference is not a round number but the
+## coarseness the repo has ALREADY ACCEPTED on screen: the pond runs 24
+## segments at r = 3.2, i.e. 0.027 u of sagitta. At the bank radius of 17.3
+## that same 0.027 costs 56 segments, and 56 is what this is.
+##
+## 96 was the old value and it bought 0.0093 u -- three times finer than a
+## disc already judged good, on a shape that is a flat horizontal circle.
+## Cost of that finesse, MEASURED: 6n triangles per disc, 4 discs (two
+## lakes x water + bank), 4 x (576 - 336) = 960 triangles, 1.6% of the hub,
+## for a silhouette change no azimuth can resolve.
+const GREATLAKE_SEGMENTS: int = 56
 
 ## Slab thickness and centre height, ONE ROW PER LOBE, in HubRegion.lakes()
 ## order. Two rows since SPAWN-LAKE-1, and the second row is not cosmetic:
