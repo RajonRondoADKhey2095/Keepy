@@ -196,3 +196,212 @@ nécessaire ou inutile.
 Recon uniquement. Aucun code de jeu modifié par cette session — seul ce
 fichier et les deux tables d'index (`CLAUDE.md`, `docs/lots/INDEX.md`) sont
 touchés. Le lot d'implémentation qui suit reprend ce découpage tel quel.
+
+## LOT 1 — implémentation
+
+Branche `claude/bear-campfire-sync-js1zzj`, repartie de `origin/main`
+(`da5035f`, le dernier merge palier 2 -- CH24 interactif). Reprend le
+découpage de la recon point par point ; rien n'a été pris pour acquis sans
+être rejoué.
+
+### Reprouvé indépendamment (RECON 4/5, avant tout code)
+
+Script Python hors moteur (aucun binaire `godot4`/`godot` dans ce sandbox,
+même constat que la recon et que CH24 -- `which`/`find /` : rien), écrit
+sans lire le script de la recon, seulement ses constantes publiées et la
+géométrie déjà dans le dépôt (`hub_layout.tres`, `HubBuilder._build_zipline_
+tower`, `HubCampfire.SITE`).
+
+- **Relèvement direct `BEAR_REST → SITE` (149,76°) : RECONFIRMÉ MAUVAIS.**
+  Segment complet contre TOUT le fichier de props (213 entrées, aucune
+  restriction à une boîte -- plus large que la recon, qui bornait à
+  x∈[-4,26] z∈[20,40]) : pire dégagement décor 0,2125 u contre l'arbre
+  échelle 0,719 à (6,643 ; 32,682), sous `KEEPY_CLEARANCE` (0,66).
+  ⚠️ **Le chiffre diffère de celui de la recon (0,385 u) sans se
+  contredire** : 0,2125 + le rayon PROPRE de cet arbre à cette échelle
+  (`FOOTPRINT_RADIUS[&"tree"]` 0,24 × 0,719 = 0,1726) = 0,3851 -- la recon
+  a mesuré la distance au CENTRE du prop, ce lot mesure la distance à sa
+  SURFACE (centre moins son propre rayon). Les deux méthodes condamnent le
+  même candidat pour la même raison ; celle de ce lot est la plus
+  conservatrice des deux.
+- ⚠️ **Correction d'une affirmation reprise sans vérification par la
+  recon** (et par le commentaire déjà présent dans `_setup_campfire()`
+  pour le blaireau) : « les props décoratifs batchés n'ont AUCUNE entrée
+  dans `HubBuilder.FOOTPRINT_RADIUS` ». Faux, vérifié par lecture directe
+  du dict (`&"tree": 0.24, &"rock": 0.44, &"bush": 0.71, &"flower": 0.22,
+  &"stump": 0.44`) : ces entrées EXISTENT. Ce qui est vrai, et qui est tout
+  ce que la conclusion utilisée nécessitait, c'est que `HubActorWalker`
+  (grep exhaustif) n'appelle jamais `ground_footprints()` -- seul
+  `KeepyHopper` (atterrissage de saut) le fait. Un acteur qui MARCHE en
+  continu ne consulte donc aucun de ces rayons, quels qu'ils soient ; c'est
+  la raison structurelle, pas une case vide dans un dictionnaire qui, en
+  fait, ne l'est pas. Sans conséquence sur le candidat retenu (même rayon
+  utilisé comme proxy des deux côtés), mais un chiffre à ne plus recopier.
+- **Balayage 3600 pas, indépendant, rejoué sur les 213 props (pas une
+  boîte) : bande valide 45,7°-116,4°** (la recon, restreinte à sa propre
+  boîte de 13 props, trouvait 45,7°-130,2° -- même borne basse, borne haute
+  différente parce qu'un prop hors de sa boîte referme le haut de la bande
+  dans ce script-ci ; les deux bandes contiennent largement le candidat
+  retenu, donc la conclusion ne dépend pas de laquelle est exacte).
+  **Meilleur point par marge, indépendamment retrouvé identique à celui de
+  la recon** : azimut 65,20°, **(20,818 ; 27,387)**. Marge décor (surface)
+  0,9628 u (même arbre, même réconciliation de méthode que ci-dessus :
+  0,9628 + 0,1726 = 1,1354 ≈ 1,135 u publié par la recon), séparation
+  (corde) avec le point du blaireau 2,1779 u. **Deux sweeps indépendants,
+  deux méthodes de mesure de marge légèrement différentes, un seul et même
+  point gagnant** -- c'est ce qui rend ce point committable plutôt que
+  coïncident. `BEAR_CAMPFIRE_AZIMUTH_DEG = 65.2` et `_bear_campfire_point`
+  livrés dans `HubWorld.gd`.
+- **`BEAR_CAMPFIRE_WALK_RATE` calculé, pas choisi** : distance aller du
+  blaireau (`_badger_rest(0)` → `_campfire_point`) 19,2577 u à
+  `CAMPFIRE_WALK_RATE` 2,5 → 10,1947 s de trajet. Distance aller de l'ours
+  (`BEAR_REST` → `_bear_campfire_point`) 22,9304 u ; le taux qui couvre
+  cette distance dans le même temps est 2,9768 -- sous le plafond 3,0 déjà
+  vérifié pour ce même mécanisme (le taux du blaireau lui-même, dont 3,0
+  était le plafond testé et refusé pour être trop rapide). Écart résiduel
+  mesuré en le rejouant : 0,0001 s -- gaté par un `assert()` dans
+  `_setup_campfire()` (seuil 1,0 s), pas seulement documenté.
+
+### Le piège de glissement de pieds -- trouvé, pas contourné
+
+`HubActorWalker._ready()` ne lit `walk_rate` qu'UNE fois pour fixer
+`AnimationPlayer.speed_scale` ; `ground_speed()` le relit à CHAQUE frame
+pour la position. Tant qu'un acteur n'a jamais qu'un seul taux pour toute
+sa vie (blaireau: `CAMPFIRE_WALK_RATE` seul ; ours jusqu'ici:
+`BEAR_WALK_RATE` seul), cette asymétrie ne se voit jamais. L'ours de ce
+lot est le PREMIER acteur à avoir deux taux légitimes (le sien pour la
+balançoire, un dédié pour le feu) : écrire `BEAR_CAMPFIRE_WALK_RATE` sur
+`_bear.walk_rate` avant son `walk_to()` du feu, SANS toucher le script
+générique, aurait déplacé le CORPS au nouveau taux en laissant le CLIP
+jouer à l'ancien -- exactement le glissement de pieds que le commentaire
+de `CAMPFIRE_WALK_RATE` (CH24) décrit déjà en théorie sans que rien, avant
+ce lot, ne l'ait jamais déclenché en pratique.
+
+Corrigé À LA RACINE plutôt que contourné dans `HubWorld.gd` : `HubActor
+Walker.walk_to()` réapplique désormais `speed_scale` depuis `walk_rate`
+à CHAQUE appel (une ligne), pas seulement dans `_ready()`. No-op pour
+tout appelant à taux unique déjà shippé (blaireau, et l'approche
+balançoire de l'ours elle-même) -- vérifié par lecture, aucun des deux ne
+change jamais `walk_rate` après l'avoir posé une fois, donc cette
+réapplication réécrit chaque fois la MÊME valeur. C'est la correction
+générique demandée par le brief plutôt qu'un contournement local : un
+troisième acteur à taux multiples futur en bénéficie sans rien écrire.
+
+### Découpage livré
+
+1. **Gate balançoire, DANS LES DEUX SENS** -- `_on_seesaw_mounted()` refuse
+   (patron bateau, retrait actif écrit à la main, aucune porte façon
+   `ZiplineDoor`) tant que `_bear_campfire_leg != &""`, exactement comme
+   demandé. **Trouvé en écrivant ce gate, pas anticipé par la recon** : le
+   sens INVERSE n'était pas fermé -- rien n'empêchait un tap sur le feu de
+   détourner un ours DÉJÀ assis sur la planche, et `_apply_tilt()` continue
+   d'appeler `_bear_follow_seesaw()` à chaque tic de bascule tant que
+   `_bear_pivot` reste non-null, ce qui aurait combattu l'écriture de
+   position du `walk_to()` du feu sur le MÊME nœud -- un tic replaçant
+   l'ours sur son siège, l'autre essayant de l'en faire sortir. Fermé par
+   `_evict_bear_from_seesaw()`, factorisée hors de `_on_seesaw_dismounted()`
+   (même nettoyage, sans le walk-to-home qui ne convient qu'au vrai
+   débarquement de Keepy) et appelée en tête du départ de l'ours dans
+   `_on_tapped_campfire`.
+2. **État de l'ours** -- `_bear_campfire_leg` (mêmes quatre valeurs que le
+   blaireau), `_bear_campfire_point` (calculé une fois dans
+   `_setup_campfire()`, gaté par l'assert de synchronisation ci-dessus).
+3. **Synchronisation par état partagé** -- `_campfire_guests`
+   (`&""`/`&"transit"`/`&"out"`), lu par `_on_tapped_campfire` et LUI SEUL ;
+   `_badger_campfire_leg`/`_bear_campfire_leg` restent chacun la propriété
+   de leur propre gestionnaire d'arrivée (`_on_badger_arrived`/
+   `_on_bear_campfire_arrived`, ce dernier appelé en tête de
+   `_on_bear_arrived`), qui ne font qu'annoncer leur propre progression à
+   `_maybe_advance_campfire_guests()`. **Décision explicite sur le cas
+   vitesses asynchrones** : un retap n'est accepté que lorsque les DEUX
+   invités sont effectivement `at_fire` (`_campfire_guests` ne passe à
+   `&"out"` qu'à ce moment-là, jamais au premier des deux) ; un tap reçu
+   pendant que l'un des deux marche encore (`&"transit"`) ne fait rien de
+   nouveau -- même forme que le no-op déjà existant du blaireau seul sur un
+   tap en cours de trajet. L'alternative (accepter dès le premier arrivé,
+   ou interrompre le trajet en cours) a été écartée : la première
+   réintroduit exactement le risque de désaccord entre deux drapeaux
+   indépendants que cet état partagé existe pour fermer ; la seconde est le
+   patron ÉCHELLE, banni.
+   **Factorisation vs duplication, tranchée** : dupliqué plutôt que
+   factorisé. Les deux acteurs partagent l'ÉTAT partagé (`_campfire_guests`)
+   et le patron (mêmes quatre valeurs de jambe, même séquence face-puis-
+   walk_to au retour), mais leurs corps de code restent deux blocs
+   distincts dans `_on_tapped_campfire` et deux fonctions distinctes pour
+   l'arrivée (`_on_badger_arrived` / `_on_bear_campfire_arrived`) plutôt
+   qu'une fonction paramétrée par acteur : les deux acteurs divergent sur
+   des détails non triviaux à chaque étape (le blaireau retire un CANAL DE
+   TAP, l'ours n'en a pas et se contente d'un garde interne ; le blaireau
+   revient vers l'une de DEUX tours selon `_badger_campfire_return_end`,
+   l'ours revient toujours vers `BEAR_REST` seul ; le blaireau ne touche
+   jamais `walk_rate`, l'ours en change deux fois par trajet). Une fonction
+   générique aurait dû prendre en paramètre au moins six valeurs
+   différentes (canal à retirer ou non, destination retour à un ou deux
+   choix, taux à écrire ou non...) pour un gain de lignes marginal --
+   exactement le genre de paramétrage qui rend une fonction plus dure à
+   lire que les deux blocs qu'elle remplace. Dupliqué, donc, sur le PATRON
+   -- jamais sur l'ÉTAT, qui reste la seule chose que ce lot devait unifier.
+4. **`turn_to()` au retour** -- `_bear.face(BEAR_REST - _bear.global_
+   position)` avant le `walk_to()` retour (empêche la marche arrière
+   perçue le temps que l'ease rattrape, même défaut que LOT 3/4 CH24 sur
+   le blaireau) et `_bear.turn_to(_bear_rest_facing)` après l'arrivée
+   (corrige l'écart de face mesuré par la recon, -59,76° à -65,21° selon
+   le candidat -- non re-rendu ici, `HubActorWalker.turn_to()` est déjà
+   générique et gaté par CH24 LOT 4, aucun nouveau code de lissage écrit).
+   Le départ (`to_fire`) n'a PAS reçu de `face()` explicite avant son
+   `walk_to()`, sur le même précédent que l'aller du blaireau (jamais
+   pré-orienté non plus) -- signalé, non confirmé par rendu, à vérifier
+   sur device en priorité si le départ lit comme une marche arrière.
+5. **Vérification géométrique** -- voir la section "Reprouvé
+   indépendamment" ci-dessus. Aucun binaire Godot dans ce sandbox (même
+   constat que la recon) : calcul analytique seul, aucune sonde rouge-
+   avant-vert exécutée dans le moteur. Le "rouge avant vert" a néanmoins
+   été appliqué à l'outil de mesure lui-même : le script de ce lot a
+   d'abord été vérifié capable de FAIRE ÉCHOUER le candidat par relèvement
+   direct (0,2125 u < 0,66, rouge) avant d'être cru sur le candidat retenu
+   (0,9628 u > 0,66, vert) -- l'équivalent, hors moteur, du blind check que
+   ce dépôt exige de toute assertion d'absence/égalité.
+
+### Fichiers touchés
+
+- `scripts/hub/HubWorld.gd` -- constantes `BEAR_CAMPFIRE_WALK_RATE`,
+  `BEAR_CAMPFIRE_AZIMUTH_DEG` ; champs `_bear_campfire_point`,
+  `_bear_campfire_leg`, `_campfire_guests` ; `_setup_campfire()` étendu
+  (point/disc de l'ours, assert de synchronisation) ; `_on_seesaw_mounted()`
+  gaté ; `_on_tapped_campfire()` réécrit sur l'état partagé ;
+  `_on_badger_arrived()` inchangé sur le fond, annonce sa progression au
+  nouvel arbitre ; `_on_bear_arrived()` délègue en tête à la nouvelle
+  `_on_bear_campfire_arrived()` ; nouvelle `_maybe_advance_campfire_guests()` ;
+  nouvelle `_evict_bear_from_seesaw()`, factorisée hors de
+  `_on_seesaw_dismounted()` (comportement inchangé pour ce dernier) et
+  réutilisée par `_on_tapped_campfire()` pour le cas trouvé ci-dessus.
+- `scripts/hub/HubActorWalker.gd` -- `walk_to()` réapplique `speed_scale`
+  depuis `walk_rate` à chaque appel (correctif générique, voir section
+  dédiée ci-dessus).
+- `docs/lots/CH25_OURS_FEU.md` (ce fichier), `docs/lots/INDEX.md`,
+  `CLAUDE.md` -- lignes d'index mises à jour en additif.
+
+### Hors scope, non touché
+
+Blaireau (CH24) : logique interne inchangée, seul son point d'ancrage dans
+`_on_tapped_campfire`/`_on_badger_arrived` a été adapté pour annoncer sa
+progression à l'état partagé -- strict nécessaire au câblage commun,
+comme demandé. Dette CH23 (emprise du feu), `INDEX.md` CH24 périmé :
+toujours hors scope.
+
+### NEXT STEPS
+
+- **Test device obligatoire avant tout merge `main`**, comme pour CH24 :
+  aucun rendu n'a validé (a) que le départ de l'ours sans `face()`
+  explicite ne lit pas comme une marche de travers, (b) que la marge
+  décor de 0,9628 u au point retenu est réellement suffisante à l'écran
+  (silhouette, pas seulement dégagement de marche -- ce moteur ne bloque
+  aucun des deux), (c) que le taux 2,9768 ne produit aucun glissement de
+  pieds résiduel visible malgré le correctif générique (le correctif
+  ferme l'écart de PRINCIPE ; seul un rendu confirme qu'aucun autre
+  chemin ne l'a réintroduit).
+- Si un binaire Godot devient disponible dans une session future : sonde
+  headless reprenant RECON 4/5 en moteur (segment complet, pas
+  l'extrémité seule), rouge-avant-vert sur l'assert de synchronisation et
+  sur le gate balançoire (neutraliser `_bear_campfire_leg != &""`,
+  vérifier que la sonde le voit, restaurer byte-identique).
