@@ -132,6 +132,22 @@ signal tapped_cabin(point: Vector3)
 ## rule: a tap is a climb or a destination, never both.
 signal tapped_ladder(point: Vector3)
 
+## Emitted INSTEAD of tapped_ground when the finger landed close enough to
+## the CAMPFIRE to mean "send the badger there" (or, on the next tap, "bring
+## it back"), on the same world-units terms the boat, owl and cabin are
+## picked out on. Same one-tap-one-signal rule.
+##
+## NO WITHDRAWAL ON THIS SIGNAL, unlike the badger's own zipline channel --
+## and that omission is deliberate, on the cabin's pattern rather than the
+## boat's: a tap on the campfire always MEANS the campfire, whichever leg
+## the badger is on, because HubWorld decides here (send / recall / ignore
+## mid-transit) rather than this file refusing to say the tap landed there
+## at all. What withdraws instead is `tapped_zipline_badger`, through
+## `ZiplineDoor` -- see HubWorld.gd's campfire wiring -- because THAT channel
+## has a second meaning (walk to the badger's tower) that a tap must not
+## accidentally trigger while the badger is away from both ends.
+signal tapped_campfire(point: Vector3)
+
 ## The three nodes this needs, as scene-authored paths.
 ##
 ## NodePath and not a typed node export (`@export var camera: Camera3D`),
@@ -223,6 +239,16 @@ var owl_available: bool = true
 ## No availability flag beside them -- see the signal's own comment.
 var cabin_doors: Array[Vector3] = []
 var cabin_radius: float = 0.0
+
+## The campfire's tap point(s), flat, and how close a tap has to land to
+## mean one. Empty until HubWorld hands over the built campfire, so a
+## layout with no campfire simply never emits tapped_campfire.
+##
+## A LIST from the first commit, on the table doctrine every other prop
+## registry here already follows -- CH23's fire is one instance today, but a
+## second one is not this file's business to have ruled out.
+var campfire_points: Array[Vector3] = []
+var campfire_radius: float = 0.0
 
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
@@ -369,6 +395,17 @@ func _handle_point(screen_point: Vector2) -> void:
 		for door in cabin_doors:
 			if cabin_flat.distance_to(door) <= cabin_radius:
 				tapped_cabin.emit(destination)
+				return
+	# THE CAMPFIRE, asked on the identical world-unit terms and, like the
+	# cabin, NOT gated on a withdrawal here -- see the signal's own comment.
+	# Ordered after the cabin only because the cabin was here first; the two
+	# sites are metres apart, so the order between them can never actually
+	# decide anything.
+	if campfire_radius > 0.0:
+		var campfire_flat := aim
+		for spot in campfire_points:
+			if campfire_flat.distance_to(spot) <= campfire_radius:
+				tapped_campfire.emit(destination)
 				return
 	# THE LADDER, asked after the boat and on the same terms: a world-unit
 	# radius on the ground point, so the target does not shrink with
