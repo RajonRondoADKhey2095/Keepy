@@ -400,6 +400,30 @@ const BEAR_APPROACH_Z: float = 0.8
 ## re-tune gameplay to suit scenery.
 const BEAR_WALK_RATE: float = 2.0
 
+## Same knob, `_badger.walk_rate` ONLY -- never `walk_speed` (shared with
+## `_bear`, and touching it would also change the bear's walk to the
+## seesaw) and never `_bear.walk_rate` (`BEAR_WALK_RATE` above is its own,
+## unrelated timing budget). RECON 4 (CH24) measured the campfire round
+## trip at rate 1.0: 25.49 s from the near tower, 14.72 s from the far one
+## -- both read as "too long" against a device tap. 2.5, Mathieu's call
+## from that recon's table (3.0 was the ceiling checked -- half again past
+## the only other rate this project has shipped, `BEAR_WALK_RATE` 2.0 --
+## and even that does not reach 4 s in the worst case; a closer arrival
+## point was costed and rejected because it would reopen the ring-clearance
+## sweep the campfire's own arrival point already needed one fix for).
+##
+## Set once, BEFORE `_world.add_child(_badger)` in `_setup_zipline()`, on
+## the bear's own reason: `HubActorWalker._ready()` reads `walk_rate` into
+## `AnimationPlayer.speed_scale` a single time, so a value written after
+## that call would speed up the FEET (`ground_speed()` re-reads `walk_rate`
+## every frame) without speeding up the CLIP -- foot-slide, the exact
+## defect the shared knob exists to rule out. `walk_to()` is never called
+## on `_badger` outside the campfire detour (verified by grep, not
+## assumed), so this is the badger's only walking speed full stop -- there
+## is no "restore afterwards" to do, because there is no other rate it
+## ever walked at.
+const CAMPFIRE_WALK_RATE: float = 2.5
+
 ## `false`  -- the bear stays where it arrived and waits for next time.
 ## `true`   -- the bear walks back to BEAR_REST when the rider steps off.
 ##
@@ -1961,7 +1985,9 @@ func _setup_zipline() -> void:
 	_badger.model_scale = BADGER_SCALE
 	# BEFORE add_child, for the bear's reason: the walker builds its rig in
 	# _ready(), and a scale written afterwards would be a rig drawn once at
-	# the wrong size.
+	# the wrong size. Ground speed AND clip playback together -- see
+	# CAMPFIRE_WALK_RATE.
+	_badger.walk_rate = CAMPFIRE_WALK_RATE
 	_badger.position = _badger_rest(0)
 	_world.add_child(_badger)
 	_badger.face(_badger_facing(0))
@@ -2057,6 +2083,21 @@ const CAMPFIRE_ARRIVE_MARGIN: float = KEEPY_CLEARANCE
 ## exception the moment it has a tower to measure from.
 var _campfire_point: Vector3 = Vector3.ZERO
 
+## The proximity marker at `_campfire_point` -- the exact tap point/radius
+## pair `_tap.campfire_points`/`campfire_radius` already use, on the cabin
+## doorstep's own rule: a marker is drawn AT the point it marks, never beside
+## it or at a second size, so the ring a player sees and the disc
+## `HubTapInput` tests stay the same number. `HUB_GRASS`, the portals' amber
+## ink, for the reason `_build_cabin_markers()` gives beside CABIN_TAP_RADIUS:
+## this is the fourth thing on the plateau proper that a tap sends the
+## badger somewhere, and the other three (Quizz/Battle/Chased) already look
+## like this.
+##
+## Pulse only -- RECON 4 (CH24): the tap stays the direct one already wired
+## in `_on_tapped_campfire`/`_tap.campfire_points`, unchanged by this marker.
+## No label: the brief asked for a proximity cue, not a new piece of prose.
+var _campfire_marker: CabinMarker = null
+
 ## Which leg of the detour the badger is on: &"" (at its zipline rest, the
 ## default), &"to_fire", &"at_fire", or &"to_rest". Read by
 ## `_on_tapped_campfire` to decide what a tap means and by `_on_badger_arrived`
@@ -2124,6 +2165,11 @@ func _setup_campfire() -> void:
 	_tap.campfire_radius = CAMPFIRE_TAP_RADIUS
 	_badger.arrived.connect(_on_badger_arrived)
 
+	_campfire_marker = CabinMarker.new()
+	_campfire_marker.setup(CAMPFIRE_TAP_RADIUS, "", CabinMarker.Surface.HUB_GRASS)
+	_campfire_marker.position = _campfire_point
+	_builder.add_child(_campfire_marker)
+
 ## A tap on the campfire. Toggles the badger's detour; a tap that lands
 ## mid-transit (already WALKING either way) is not lost, it simply means
 ## nothing new until the leg already under way resolves -- the same
@@ -2151,8 +2197,24 @@ func _on_tapped_campfire(_point: Vector3) -> void:
 			# return leg too -- reopened only on arrival, in
 			# `_on_badger_arrived` -- so a tap on the badger's empty tower
 			# mid-walk-back still falls through to the ground.
+			var home: Vector3 = _badger_rest(_badger_campfire_return_end)
+			# RECON 4 (CH24): faced explicitly BEFORE walk_to(), rather than
+			# left to `_process()`'s own `lerp_angle`. The badger's heading
+			# is still whatever the outbound leg left it at (the walk there
+			# is near-straight, so it converges fast and stays there) --
+			# returning to the SAME tower is then a 180 degree turn, the
+			# worst case a finite-speed ease can hit, while `move_toward`
+			# already has the body moving at full ground speed from frame
+			# one: measured -20.93 degrees facing the fire against 159.07
+			# degrees required home, a dead-on reversal that reads as
+			# walking backwards for the ~0.5-1 s the ease needs to catch up.
+			# Facing the ACTUAL home direction here (not a guessed bearing)
+			# is exact for both legs -- the return to the OTHER tower
+			# (measured 30.6 degrees, already near-imperceptible) gets the
+			# same instant, correct heading, not a new one.
+			_badger.face(home - _badger.global_position)
 			_badger_campfire_leg = &"to_rest"
-			_badger.walk_to(_badger_rest(_badger_campfire_return_end))
+			_badger.walk_to(home)
 		_:
 			pass
 
@@ -2645,6 +2707,7 @@ func _process(_delta: float) -> void:
 	for portal in _portals:
 		portal.set_proximity(here)
 	_pulse_cabin_markers(here)
+	_pulse_campfire_marker(here)
 	_mooring.update(here)
 	if DEBUG_POSITION_OVERLAY:
 		_position_label.text = "x %.1f | z %.1f" % [here.x, here.z]
@@ -2664,6 +2727,25 @@ func _pulse_cabin_markers(here: Vector3) -> void:
 			marker.set_near(true)
 		elif d >= CABIN_TAP_RADIUS * HubPortal.NEAR_RELEASE:
 			marker.set_near(false)
+
+## The campfire's own approach cue, `_pulse_cabin_markers()`'s twin and NOT
+## folded into that function or `_cabin_markers` -- CAMPFIRE_TAP_RADIUS
+## (1.8) is not CABIN_TAP_RADIUS (1.30), and `_pulse_cabin_markers()` reads
+## the cabin's constant for every entry in its array by construction. Mixing
+## the campfire in there would breathe it at the wrong distance. Same
+## hysteresis, same HubPortal thresholds -- one rule about what "near" means
+## on this plateau, restated at this marker's own radius rather than a
+## shared one that does not apply to it.
+func _pulse_campfire_marker(here: Vector3) -> void:
+	if _campfire_marker == null:
+		return
+	var flat := Vector2(_campfire_marker.position.x - here.x,
+			_campfire_marker.position.z - here.z)
+	var d: float = flat.length()
+	if d <= CAMPFIRE_TAP_RADIUS * HubPortal.NEAR_FACTOR:
+		_campfire_marker.set_near(true)
+	elif d >= CAMPFIRE_TAP_RADIUS * HubPortal.NEAR_RELEASE:
+		_campfire_marker.set_near(false)
 
 func _on_tapped_ground(point: Vector3) -> void:
 	# A tap while either overlay is up is a tap on the overlay, not on the

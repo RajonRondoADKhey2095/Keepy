@@ -344,3 +344,124 @@ comme unique entrée.
 Aucune sonde, aucun rendu offscreen (toujours pas de binaire Godot dans ce
 sandbox) -- recon purement analytique (lecture de code + calcul Python hors
 moteur), comme RECON 3 et le lot 1.
+
+---
+
+# LOT 2 -- Vitesse, rotation au retour, marqueur de proximité (4 septembre 2026)
+
+> Reprend les 3 next steps de RECON 4 point par point, sur décisions actées
+> par Mathieu (`CAMPFIRE_WALK_RATE = 2.5`, tap existant conservé comme seul
+> déclencheur, marqueur en pulse visuel seul). Base réelle de ce lot :
+> `origin/staging` ne portait pas encore RECON 4 (`da4603f` vit sur la
+> branche `claude/ch24-feu-interactif-recon-icucmq`, pas mergée) -- la
+> branche d'implémentation attribuée à cette tâche était en réalité un clone
+> de `main` sans même le LOT 1 (`tapped_campfire` absent au grep). Repartie
+> depuis `da4603f` après vérification par ARBRE (`merge-base --is-ancestor`),
+> plutôt que codée en aveugle sur la prémisse du brief.
+
+## 1. Vitesse
+
+`CAMPFIRE_WALK_RATE = 2.5` ajoutée en `const` dédiée à côté de
+`BEAR_WALK_RATE`, et écrite sur `_badger.walk_rate` UNIQUEMENT (jamais
+`walk_speed`, jamais `_bear`), dans `_setup_zipline()`, **avant**
+`_world.add_child(_badger)` -- même règle que `_bear.walk_rate =
+BEAR_WALK_RATE` juste au-dessus dans le fichier, et pour la même raison
+structurelle : `HubActorWalker._ready()` lit `walk_rate` dans
+`AnimationPlayer.speed_scale` UNE SEULE FOIS ; l'écrire après coup
+accélérerait les pieds (`ground_speed()` relit `walk_rate` à chaque frame)
+sans accélérer le clip -- glissement de pied, exactement ce que le knob
+partagé existe pour empêcher.
+
+Vérifié avant d'écrire, pas supposé : `walk_to()` n'est appelé sur `_badger`
+nulle part ailleurs que dans le détour du feu (grep sur `scripts/hub/*.gd`,
+deux occurrences, toutes deux dans `_on_tapped_campfire`). Il n'y a donc
+**aucune valeur à restaurer au retour** -- la clause conditionnelle du brief
+("si `walk_rate` est réutilisé ailleurs") ne s'applique pas : c'est la seule
+vitesse de marche que le blaireau ait jamais eue, posée une fois à sa
+construction plutôt que basculée à l'aller et au retour. `_bear` non touché.
+
+## 2. Rotation au retour
+
+Dans `_on_tapped_campfire()`, branche `&"at_fire"` : le point `home` est
+maintenant calculé d'abord, puis `_badger.face(home - _badger.global_position)`
+est appelé explicitement AVANT `_badger.walk_to(home)`. Le cap visé est la
+direction RÉELLE (mesurée sur la position courante du blaireau), pas un
+relèvement deviné -- exact pour les deux bouts, donc le cas "retour vers
+l'autre bout" (30,6° mesuré par RECON 4, déjà imperceptible) reçoit le même
+traitement instantané et n'est pas dégradé : `face()` pose exactement le cap
+que `_process()` aurait calculé de toute façon pour un trajet en ligne
+droite, l'appel ne fait qu'éliminer le retard de `lerp_angle` sur le cas à
+180°.
+
+## 3. Marqueur de proximité
+
+Confirmation du composant : **`CabinMarker`**, pas `HubPortal`. `HubPortal`
+est une scène `Area3D` autonome (signal + collision propre), utilisée par
+les 3 vrais portails du hub et par rien d'autre côté tap -- l'instancier ici
+aurait ajouté un SECOND mécanisme de déclenchement en parallèle du canal
+`tapped_campfire`/`_tap.campfire_points` déjà câblé (LOT 1), sur le même
+patron array-based que les portes de cabane. `CabinMarker` est le `Node3D`
+purement visuel (pad + anneau + `Label3D` optionnel, aucun signal, aucune
+collision) déjà utilisé en `Surface.HUB_GRASS` pour le marqueur de porte de
+cabane -- exactement le composant que RECON 4 désignait.
+
+Instancié dans `_setup_campfire()`, juste après le câblage du canal de tap :
+position = `_campfire_point` (le point de tap RÉEL, pas `HubCampfire.SITE`
+-- même règle que la porte de cabane : le marqueur est dessiné AU point qu'il
+marque, jamais à une position ou une taille inventées à côté), rayon =
+`CAMPFIRE_TAP_RADIUS` (1,8), `Surface.HUB_GRASS` (encre ambre des 3
+portails), texte vide (pas de `Label3D` créé -- "pulse visuel seul", rien de
+plus).
+
+Pulsé par une fonction DÉDIÉE, `_pulse_campfire_marker()`, appelée depuis
+`_process()` à côté de `_pulse_cabin_markers()` -- **pas fusionnée** avec
+elle ni ajoutée à `_cabin_markers` : `_pulse_cabin_markers()` lit
+`CABIN_TAP_RADIUS` (1,30) en dur pour CHAQUE entrée de son tableau, un rayon
+différent de `CAMPFIRE_TAP_RADIUS` (1,8) -- les y mélanger aurait fait
+respirer le marqueur du feu à la mauvaise distance. Même hystérésis, mêmes
+seuils `HubPortal.NEAR_FACTOR`/`NEAR_RELEASE`, juste réécrite au rayon du
+feu plutôt que partagée à tort.
+
+Le tap direct sur le prop 3D (canal `tapped_campfire`, LOT 1) est **conservé
+tel quel** -- décision de Mathieu, actée dans le brief ("le tap reste le
+déclencheur réel") : ce lot n'y touche pas, le marqueur n'ajoute qu'un pulse.
+
+**Zéro `Control`, zéro `Button`, zéro HUD** -- confirmé en relisant le code
+ajouté : `CabinMarker` est un `Node3D` (`MeshInstance3D`/`Label3D` enfants),
+la clause Opus/HUD du brief ne s'applique pas.
+
+## Validation statique
+
+Toujours aucun binaire `godot4`/`godot` dans ce sandbox (`which` : rien,
+comme RECON 3, CH23 lot 7 et LOT 1). `gdtoolkit` installé via `pip` pour ce
+lot (absent du sandbox jusqu'ici) :
+
+* `gdlint` : 102 problèmes après édition contre 100 avant (baseline) --
+  différence de 2, toutes deux de la même catégorie `class-definitions-order`
+  déjà omniprésente dans ce fichier avant tout changement de ce lot (100
+  occurrences pré-existantes, convention du fichier que ce lot ne corrige
+  pas -- hors scope). Aucune AUTRE catégorie de problème (retours multiples,
+  ligne trop longue, fichier trop long, espace de fin) n'a bougé en nombre
+  NI en contenu par rapport à la baseline -- vérifié par diff des deux
+  sorties filtrées hors `class-definitions-order`, lignes strictement
+  identiques une fois l'offset d'insertion pris en compte.
+* `gdformat --diff` : le fichier entier diverge déjà du style par défaut de
+  `gdformat` avant ce lot (un saut de ligne entre fonctions au lieu de deux,
+  entre autres -- convention du projet, pas appliquée par ce lot). Le diff
+  autour des trois zones éditées ne montre que cette même divergence
+  cosmétique pré-existante, aucun problème de fond.
+* Pas de sonde `.gd` ajoutée à `scripts/dev/` : sans binaire Godot, une
+  sonde ajoutée ici n'aurait pu être ni passée au rouge ni au vert -- même
+  raison que RECON 3, RECON 4 et le LOT 1. Reste en NEXT STEPS pour CI/device
+  (rouge-avant-vert sur les trois comportements neufs : vitesse mesurable
+  par chrono, absence de dos tourné au retour vers le bout 0, pulse du
+  marqueur qui s'allume/s'éteint aux deux seuils).
+
+## Statut
+
+Implémentation livrée (code + doc), scope strictement limité aux 3 items de
+RECON 4 : aucune constante partagée touchée hors `_badger.walk_rate`,
+`_bear` intact, aucun `Control`/HUD, aucun changement à
+`ground_footprints()` ni au déclenchement (tap conservé). Palier `staging`
+poussé pour que la CI fasse la vérification build/sondes non faisable dans
+ce sandbox.
