@@ -50,6 +50,35 @@ class_name ZiplineDoor
 ## be drawn, and both towers are drawn small and far apart. The radius is
 ## measured on the GROUND POINT the tap resolves to, which is the same
 ## quantity a hop destination is.
+##
+## =====================================================================
+## ⚠️ 4 SEPTEMBRE 2026 (tier 3) -- DOCTRINE CHANGE ON THE STAIR, BY EXPLICIT
+## REQUEST, NOT A REVERSAL DISCOVERED IN ERROR.
+##
+## RECON 1 read "the only tappable thing at a tower is the badger" as a
+## permanent rule; it was a description of tier 1's shape, and Mathieu has
+## since asked, in so many words, for a second tap target ON the structure
+## itself, so Keepy can ride ALONE in either direction without the badger.
+## What RECON 1 actually settled -- and what still holds, unchanged -- is
+## narrower than "the stair carries nothing": a tap channel must never be
+## the LADDER PATTERN, an unconditional emit whose listener drops it. A
+## structure channel that withdraws on the boat's own terms is not that
+## pattern; it is a second boat moored at the same dock. See
+## docs/lots/CH21_TYROLIENNE.md for the doctrine note in full.
+##
+## THE TWO DISCS AT END 0 ARE NOT DISJOINT, AND THAT IS DECIDED IN CODE, NOT
+## BY DISTANCE. The badger's disc (radius 1.8, generous by the reasoning
+## below) is centred 2.0165 u from the tower's own centre -- a geometry
+## measured from BADGER_SIDE_OFFSET and the stair's own run, not supposed --
+## so no structure disc big enough to cover the visible tower could also
+## clear the badger's disc by geometry alone: 2.0165 - 1.8 leaves 0.2165 u,
+## a target under 22 cm across and nobody could hit it. `accepts_structure_tap` therefore
+## EXCLUDES, by construction, any point the badger's own disc would also
+## accept at the end where a badger stands -- so the two channels can never
+## agree on the same tap regardless of which order a caller asks them in.
+## The player-facing result: a tap ON the badger rides with it; a tap
+## anywhere else on the tower or its stair goes alone. At the far end there
+## is no badger to exclude, so the whole structure disc is the solo target.
 
 ## Ground radius, in world units, within which a tap means "ride" rather
 ## than "walk there".
@@ -61,6 +90,19 @@ class_name ZiplineDoor
 ## nobody has another reason to aim at, and the two discs are 25.9 u apart,
 ## so no tap can ever be inside both.
 const BOARD_TAP_RADIUS: float = 1.8
+
+## Ground radius, in world units, within which a tap on the STRUCTURE
+## itself -- tower, deck or stair, at either end -- means "ride alone".
+##
+## 2.0, chosen to cover `ZiplineStructureProbe.STRUCTURE_RADIUS_BUDGET`
+## (1.932, the measured worst emprise of a tower's drawn parts) with a
+## small margin, so the whole visible structure is inside the disc rather
+## than a liseré of ground around it that reads as empty. `_ends` already
+## holds the tower centres this is measured from -- the same points the
+## badger's own waiting position and every clearance check in
+## ZiplineStructureProbe are built off, so this cannot drift from what is
+## actually drawn.
+const STRUCTURE_TAP_RADIUS: float = 2.0
 
 ## The two ends, flat, in the order `HubBuilder.ziplines()` published them
 ## (near end first). Empty until HubWorld hands the built zipline over, so
@@ -148,3 +190,39 @@ func set_riding(riding: bool, arrived_at: int = -1) -> void:
 		_at_end = -1
 	elif arrived_at >= 0:
 		_at_end = arrived_at
+
+## =====================================================================
+## THE STRUCTURE CHANNEL -- a tap on the tower itself, for a SOLO ride.
+##
+## Shares `_riding` with the badger channel (one cable, one trip at a
+## time), and asks nothing about `_at_end`: unlike the badger, the
+## structure is standing at BOTH ends always, so a tap on either tower
+## means "ride away from here" whenever the cable is idle. Which way is
+## decided later, at the moment of boarding, from wherever Keepy is
+## actually standing -- the same rule the badger's own boarding already
+## follows, and for the same reason: a remembered index could go stale
+## between the tap and the walk it starts.
+
+## The end index a structure tap at `point` means, or -1 when the point is
+## not on either tower, the cable is riding, or the point belongs to the
+## badger's own disc at the end it is waiting.
+func accepts_structure_tap(point: Vector3) -> int:
+	if not is_available():
+		return -1
+	var flat := Vector3(point.x, 0.0, point.z)
+	for i in _ends.size():
+		if flat.distance_to(_ends[i] as Vector3) > STRUCTURE_TAP_RADIUS:
+			continue
+		if i == _at_end and accepts_boarding_tap(point):
+			continue
+		return i
+	return -1
+
+## The two tower centres, flat, in the order `_ends` carries them --
+## `HubWorld` uses this to work out which end Keepy is actually standing
+## beside at the moment of boarding, the same way it reads the badger's
+## live position rather than a remembered tap.
+func structure_point(index: int) -> Vector3:
+	if index < 0 or index >= _ends.size():
+		return Vector3.ZERO
+	return _ends[index]

@@ -2187,3 +2187,152 @@ Si 0,1886 u de dégagement **lit** comme un blaireau debout à côté de son
 escalier sur un écran de six pouces, ou si le corps déplacé de 0,15 u vers
 l'extérieur change quelque chose au cadrage. Aucune sonde ne score ça.
 C'est le gate device, et il reste.
+
+## LOT — TIER 3 : LE TRAJET SOLO, ET LE CHANGEMENT DE DOCTRINE SUR L'ESCALIER (4 septembre 2026)
+
+> **Ce lot part de `staging` (464a08c inclus). Changement de doctrine
+> ASSUMÉ, pas une incohérence : voir ci-dessous.**
+
+### Le changement de doctrine, en un mot
+
+RECON 1, en tête de ce fichier, a réglé une question précise et l'a réglée
+correctement : le patron ÉCHELLE interdit est **un mécanisme de routage de
+tap** — un canal émis inconditionnellement et jeté par son écouteur — et
+non « un escalier ne peut jamais porter de hotspot ». Le PALIER 2 a ensuite
+lu cette conclusion plus large qu'elle ne l'était : « le seul objet
+tapable à une tour est le blaireau ». C'était une description de la forme
+du palier 2, pas une règle permanente.
+
+Mathieu a demandé explicitement, pour ce lot, un second hotspot **sur la
+STRUCTURE elle-même** (tour/escalier), aux deux extrémités, pour un trajet
+**solo** dans le sens opposé à l'accompagné. Ce n'est **pas** une reprise du
+patron ÉCHELLE : le nouveau canal (`tapped_zipline_solo`,
+`ZiplineDoor.accepts_structure_tap`) se retire exactement sur les termes du
+bateau — `_riding` partagé, faux pour tout le trajet, aux deux bouts, dans
+les deux sens — donc un tap pendant un trajet retombe sur `tapped_ground`
+au lieu d'être avalé. Le patron ÉCHELLE nommait un canal **sans** ce
+retrait ; en avoir un ici est exactement ce qui en fait un second bateau et
+non une échelle. `ZiplineDoor.gd` porte la note de doctrine complète dans
+son en-tête, et `ZiplineStructureProbe.gd` PHASE F a été réécrite dans le
+même sens plutôt que supprimée : ce qui reste interdit est un canal **sans
+retrait**, pas la présence d'un canal sur l'escalier.
+
+**CLAUDE.md vérifié** : la règle « aucun hotspot sur l'escalier » n'y a
+jamais été promue en doctrine générale — elle n'existe que dans ce fichier
+de chantier (RECON 1, PALIER 2, `ZiplineDoor.gd`, `HubTapInput.gd`). Aucune
+correction n'est donc nécessaire dans `CLAUDE.md`.
+
+### Le nouveau design
+
+1. **Trajet accompagné** (inchangé dans son déclenchement) : un tap sur le
+   blaireau, toujours au sud au repos, walk + boarding + trajet vers
+   l'autre bout.
+2. **⚠️ NOUVEAU COMPORTEMENT DE RETOUR — le blaireau ne s'arrête plus jamais
+   au nord.** Dès que le trajet accompagné arrive à l'extrémité qui n'est
+   pas `BADGER_HOME_END` (0, le sud), `HubWorld._on_zip_trip_finished`
+   **enchaîne automatiquement** une seconde étape, blaireau seul, retour
+   vers le sud — sans que la porte ne se rouvre entre les deux : `_riding`
+   reste vrai du premier embarquement jusqu'à ce que cette seconde étape
+   se termine. Keepy, lui, descend normalement à la fin de la PREMIÈRE
+   étape (son `leave_zipline` ne dépend pas de ce que fait le blaireau
+   ensuite).
+3. **Trajet solo (nouveau)** : un tap sur la structure d'une tour — le
+   point publié par `ZiplineDoor.structure_point(index)`, le centre de la
+   tour tel que construit, PAS le point où se tient le blaireau — envoie
+   Keepy **seul** vers l'autre bout. Disponible aux **deux** extrémités dès
+   que le câble est libre ; au nord c'est le SEUL moyen de déclencher un
+   trajet, puisque le blaireau n'y stationne plus jamais.
+
+### Pourquoi les deux disques ne peuvent PAS être géométriquement disjoints
+
+Mesuré, pas supposé, avant de choisir un rayon : le point où le blaireau
+attend est à **2,0165 u** du centre de la tour
+(`sqrt((ZIPLINE_DECK_HALF+run)² + BADGER_SIDE_OFFSET²)`, avec
+`run = ZIPLINE_STEP_DEPTH × ZIPLINE_STEP_COUNT = 1,04`). Le disque du
+blaireau (`BOARD_TAP_RADIUS = 1,8`, un chiffre déjà posé et validé device,
+pas retouché ici) laisse donc au maximum **0,2165 u** de rayon disponible
+pour un disque structure qui l'éviterait par la seule distance — une cible
+de moins de 22 cm, invisible à l'échelle de ce plateau.
+
+**Choix retenu : l'exclusion se fait en CODE, pas par la géométrie.**
+`ZiplineDoor.accepts_structure_tap(point)` teste chaque tour (rayon
+`STRUCTURE_TAP_RADIUS = 2,0`, choisi pour couvrir
+`ZiplineStructureProbe.STRUCTURE_RADIUS_BUDGET` 1,932 avec une marge) et,
+**seulement à l'extrémité où un blaireau attend**, exclut tout point que le
+canal blaireau accepterait déjà. Résultat pour le joueur : taper
+directement sur le blaireau embarque avec lui ; taper ailleurs sur la tour
+ou l'escalier embarque seul. À l'extrémité nord, sans blaireau, tout le
+disque est la cible solo.
+
+⚠️ **Piège rencontré en écrivant la sonde de cette exclusion** : le point
+même où se tient le blaireau (2,0165 u du centre) est déjà **hors** du
+rayon structure (2,0) — donc un premier jet de `PHASE F2` qui testait
+l'exclusion sur ce point précis restait vert **même après avoir supprimé la
+ligne d'exclusion**, parce que le filtre de rayon suffisait seul à refuser
+ce point. Un point choisi **dans la lentille de recouvrement réelle**
+(mesuré à 1,0 u du blaireau vers la tour : 1,0165 u de la tour, 1,0 u du
+blaireau, dans les deux disques) a été nécessaire pour que la sonde puisse
+réellement échouer quand l'exclusion est retirée — encore un cas du blind
+check qui n'était pas optionnel.
+
+### La carte doit être re-parquée avant chaque embarquement, pas supposée en place
+
+Le blaireau n'embarque jamais que depuis l'extrémité où il attend, donc
+`_try_zip_badger` pouvait jusqu'ici supposer la nacelle déjà à la bonne
+ancre. Un trajet solo casse cette hypothèse : Keepy peut taper la structure
+nord alors que la nacelle a été laissée au sud par un trajet précédent (ou
+l'inverse). `HubWorld._park_carrier_at(end_index)` — nouvelle fonction
+partagée — replace explicitement la nacelle sur l'ancre demandée **avant**
+`board_zipline`, dans les deux `_try_zip_*`, plutôt que de faire confiance à
+sa dernière position : `board_zipline` lit la position de la nacelle **au
+moment de l'appel** pour viser l'arc d'embarquement, donc une nacelle mal
+placée aurait fait arquer Keepy vers du vide.
+
+### Sondes
+
+`ZiplineDoor.gd` gagne `accepts_structure_tap`, `structure_point`, et le
+const `STRUCTURE_TAP_RADIUS`. `HubTapInput.gd` renomme
+`tapped_zipline` → `tapped_zipline_badger` et ajoute `tapped_zipline_solo`,
+tous deux retirés sur les mêmes termes du bateau. `HubWorld.gd` renomme
+`_on_tapped_zipline`/`_try_zip` → `_on_tapped_zipline_badger`/
+`_try_zip_badger`, ajoute `_on_tapped_zipline_solo`/`_try_zip_solo`, un
+flag jumeau `_zipping_solo`, `BADGER_HOME_END`, `_park_carrier_at`, et la
+logique de chaînage du retour automatique dans `_on_zip_trip_finished`.
+`_apply_zip` lit désormais `_zip_trip["keepy"]`/`["badger"]` plutôt que de
+supposer les deux corps toujours présents.
+
+**`ZiplineRideProbe.gd`** (headless, sans lecture de pixels ni de
+MultiMesh) : `PHASE SOLO SOUTH` (nouvelle, sud → nord solo, blaireau
+inchangé pendant tout le trajet, échantillonné à chaque frame), `PHASE
+TRIP` étendue (exclusion des quatre hotspots pendant le trajet accompagné),
+`PHASE ARRIVAL` étendue (le retour automatique du blaireau observé pendant
+qu'il tourne — porte fermée aux quatre canaux, `_zip_trip` badger-only
+1 → 0 — puis attente de la réouverture réelle avant de vérifier le
+blaireau au repos au sud), `PHASE RETURN` repensée en trajet solo nord →
+sud (le seul moyen de revenir puisque le blaireau ne stationne plus au
+nord). Total : **126 OK / 0 FAIL**.
+
+**`ZiplineStructureProbe.gd`** : PHASE F réécrite (le canal structure existe
+et se retire ; seul un canal SANS retrait reste interdit) et **PHASE F2**
+nouvelle (l'exclusion des deux disques, blind check inclus). Total :
+**102 OK / 0 FAIL**.
+
+**ROUGE AVANT VERT, sur les deux mécanismes neufs.** Chaînage du retour
+désactivé (`if false and had_badger …`) : **5 échecs**, tous dans les
+assertions qui existent pour ça (porte fermée pendant le retour, trajet
+badger-only, blaireau jamais revenu). Ligne d'exclusion retirée de
+`accepts_structure_tap` : **exactement 1 échec**, celui de la lentille de
+recouvrement. Les deux fichiers restaurés et vérifiés **byte-identiques**
+au `cmp`.
+
+### Build
+
+`godot4 4.3.stable` téléchargé dans ce bac à sable pour ce lot (absent par
+défaut ici, contrairement au poste habituel documenté ailleurs dans ce
+fichier) — taille vérifiée contre le `Content-Length` (50 276 070 octets,
+`.zip` éditeur) et contre le `.tpz` des templates d'export
+(1 073 228 327 octets), les deux déjà publiés dans `CLAUDE.md`. Import
+complet, export Web relancé de bout en bout : `index.wasm`
+**35 376 909 octets**, md5 `af4a8fc2925d992348eb30deeeb54360` ; `index.js`
+md5 `4e08904b1b7107858246af44b602067b` — les deux identiques aux empreintes
+déjà publiées pour un lot qui ne touche pas le code moteur.
