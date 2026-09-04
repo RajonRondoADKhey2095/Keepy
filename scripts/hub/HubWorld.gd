@@ -80,8 +80,6 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _router: HubRouter = $Router
 @onready var _fallback_menu: Control = $FallbackMenu
 @onready var _fallback_button: Button = $FallbackButton
-@onready var _position_overlay: PanelContainer = $PositionOverlay
-@onready var _position_label: Label = $PositionOverlay/PositionLabel
 @onready var _world_env: WorldEnvironment = $WorldViewport/SubViewport/World/WorldEnvironment
 @onready var _fallback_close: Button = $FallbackMenu/Panel/VBoxContainer/CloseButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
@@ -534,17 +532,6 @@ const OWL_LOOP_HEADING_DEG: float = -35.0
 
 const KEEPY_CLEARANCE: float = 0.66
 
-## Debug-only readout of Keepy's world position, bottom-left, so Mathieu can
-## walk to a spot in-game and read its coordinates off the screen instead of
-## a capture being annotated by guesswork.
-##
-## ONE CONSTANT, top of file: this is the whole toggle. Flipping it to
-## `false` hides $PositionOverlay in _ready() and stops _process() from
-## touching its label -- nothing else in this file reads either node, so
-## turning it back off later is a one-line change and, if the overlay is
-## ever cut from the scene entirely, a one-line change here too.
-const DEBUG_POSITION_OVERLAY: bool = true
-
 
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
@@ -553,8 +540,6 @@ func _ready() -> void:
 	# a UI screen letterboxed at Chased's 9:16 would only gain black bars.
 	SafeArea.set_default()
 	SafeArea.fill_screen()
-
-	_position_overlay.visible = DEBUG_POSITION_OVERLAY
 
 	_apply_swamp_palette()
 
@@ -2317,8 +2302,6 @@ func _process(_delta: float) -> void:
 		portal.set_proximity(here)
 	_pulse_cabin_markers(here)
 	_mooring.update(here)
-	if DEBUG_POSITION_OVERLAY:
-		_position_label.text = "x %.1f | z %.1f" % [here.x, here.z]
 
 ## The doorstep marks' approach cue, on HubPortal's own two thresholds.
 ##
