@@ -1856,12 +1856,7 @@ func _batch_spec(key: StringName) -> Array:
 			crown.rings = 5
 			return [crown, CROWN_COLOR]
 		&"Rock":
-			var rock := SphereMesh.new()
-			rock.radius = 0.6
-			rock.height = 0.8
-			rock.radial_segments = 8
-			rock.rings = 4
-			return [rock, ROCK_COLOR]
+			return [rock_mesh(), ROCK_COLOR]
 		&"Bush":
 			var bush := SphereMesh.new()
 			bush.radius = 0.5
@@ -1934,6 +1929,30 @@ func _batch_spec(key: StringName) -> Array:
 			petal.radial_segments = 8
 			petal.rings = 3
 			return [petal, FLOWER_PETAL_COLORS[tint]]
+
+## The scatter rock's mesh, PUBLISHED rather than retyped.
+##
+## CH23 lot 6 stood a ring of stones around the campfire and had to draw it
+## out of the same rock the plateau is already made of. A second literal
+## `SphereMesh` with the same four numbers in HubCampfire.gd would have been
+## the "un fait est publie une fois, jamais recopie" defect this repo has
+## already paid for on the cabin doorstep and on two homonymous lake radii:
+## the two copies drift, nothing raises, and the ring stops being made of
+## the hub's rock the day someone re-tessellates the scatter.
+##
+## A NEW instance per call, deliberately -- _batch_spec() has always built
+## one mesh per batch key and a shared Mesh resource handed to two
+## MultiMeshes would couple their tessellation for ever.
+##
+## The COLOUR is not published here because it already is: ROCK_COLOR is a
+## public const, and the turnstile base and seesaw fulcrum read it that way.
+static func rock_mesh() -> SphereMesh:
+	var rock := SphereMesh.new()
+	rock.radius = 0.6
+	rock.height = 0.8
+	rock.radial_segments = 8
+	rock.rings = 4
+	return rock
 
 ## Turns every filled batch into one MultiMeshInstance3D.
 func _flush_batches() -> void:
