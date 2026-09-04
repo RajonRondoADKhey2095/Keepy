@@ -91,6 +91,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _mooring: BoatMooring = $Mooring
 @onready var _zipline_door: ZiplineDoor = $ZiplineDoor
 @onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
+@onready var _campfire: HubCampfire = $WorldViewport/SubViewport/World/Campfires
 
 ## The 3D root, and the ONE reason this path is held: the impact splash is
 ## parented HERE and never under Props.
@@ -591,6 +592,11 @@ func _ready() -> void:
 	_tap.tapped_zipline_badger.connect(_on_tapped_zipline_badger)
 	_tap.tapped_zipline_solo.connect(_on_tapped_zipline_solo)
 	_keepy.zipline_mounted.connect(_on_zipline_mounted)
+	# AFTER _setup_zipline(): the campfire hotspot's arrival point is derived
+	# from the badger's own home tower (see _setup_campfire), and the
+	# round-trip toggle needs a live badger to send anywhere.
+	_setup_campfire()
+	_tap.tapped_campfire.connect(_on_tapped_campfire)
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -2005,6 +2011,168 @@ func _badger_facing(index: int) -> Vector3:
 	if to_tower.length_squared() < 1.0e-8:
 		return Vector3.FORWARD
 	return to_tower
+
+## =====================================================================
+## CH24 -- THE CAMPFIRE DETOUR. A tap on the fire sends the badger to sit by
+## it; a second tap brings it home. Round trip, BOAT PATTERN (RECON 1 /
+## docs/lots/CH21_TYROLIENNE.md): the LADDER pattern -- an unconditional
+## emit whose listener drops it -- is banned, so the badger's OWN zipline
+## channel actively withdraws for the whole detour (see ZiplineDoor.set_badger_at),
+## exactly the way the boat's mooring and the badger's own boarding disc
+## already withdraw for the whole of a ride.
+##
+## No new state on HubActorWalker: IDLE/WALKING/ARRIVED plus `walk_to()`
+## already say everything this needs. The only state kept here is WHICH LEG
+## the badger is on, because `arrived` fires identically at the end of
+## either leg and the two need different handling.
+## =====================================================================
+
+## How close a tap has to land to the campfire to mean "send/recall the
+## badger", in world units. 1.8, the boat/owl/badger-boarding number and for
+## their exact reason: the prop is small and far from the camera, and the
+## ground around it is not aimed at for any other purpose (the nearest other
+## hotspot -- the zipline's near tower -- is ~20 u away, see the arrival
+## point derivation below).
+const CAMPFIRE_TAP_RADIUS: float = 1.8
+
+## The stone ring's own WORST-CASE outer bound, in world units --
+## `STONE_RING_RADIUS * SCALE` plus the largest stone's own drawn radius,
+## measured by `CampfireStoneRecon` (CH23 lot 6) and published as prose in
+## HubCampfire.gd's own STONE_RING_RADIUS comment ("bord exterieur 1,529 u
+## au pire"). Quoted from THAT measurement, not re-derived: the per-stone
+## RNG walk that produced it lives in HubCampfire._make_stone_ring and this
+## file has no business re-running it.
+const CAMPFIRE_STONE_RING_OUTER: float = 1.529
+
+## Margin beyond the stone ring's outer bound the badger's arrival point
+## keeps clear, before it stops walking. `KEEPY_CLEARANCE` and not a new
+## number: the same "room to manoeuvre beside a prop, not a rim that just
+## barely avoids it" reasoning HubRegion already applies to every other
+## footprint on this plateau.
+const CAMPFIRE_ARRIVE_MARGIN: float = KEEPY_CLEARANCE
+
+## The badger's arrival point at the campfire, flat. Computed once, in
+## `_setup_campfire()`, and cached here -- every other hotspot on this
+## plateau reads a point that was built, never a literal, and this one is no
+## exception the moment it has a tower to measure from.
+var _campfire_point: Vector3 = Vector3.ZERO
+
+## Which leg of the detour the badger is on: &"" (at its zipline rest, the
+## default), &"to_fire", &"at_fire", or &"to_rest". Read by
+## `_on_tapped_campfire` to decide what a tap means and by `_on_badger_arrived`
+## to decide what an arrival means -- `HubActorWalker.arrived` fires
+## identically at the end of either leg, so this is the only thing that
+## tells the two apart.
+var _badger_campfire_leg: StringName = &""
+
+## Which zipline end to walk the badger back to, captured the moment it
+## leaves for the fire -- never assumed to be end 0: the badger may have
+## ridden the cable since it last stood still, and `ZiplineDoor.waiting_end()`
+## is the one live reading of where it actually was.
+var _badger_campfire_return_end: int = -1
+
+## Builds the campfire's tap point and hands it to HubTapInput, on the
+## cabin/owl pattern: a list of points plus a world-unit radius, wired
+## exactly once. No-ops when there is no badger to send -- a layout without
+## a zipline has nothing to detour, and the campfire stays purely decorative.
+##
+## ⚠️ THE ARRIVAL POINT IS DERIVED, NEVER A LITERAL COORDINATE, and NOT
+## along the bearing to either tower -- that was the first version of this
+## function and it was WRONG, caught by the segment check the brief asked
+## for rather than assumed clean from the endpoint alone. Placed on the
+## bearing straight from the fire to `_badger_rest(0)`, the walk HOME from
+## the OTHER tower (end 1, `_badger_rest(1)`) cuts the corner: the segment's
+## closest approach to `HubCampfire.SITE` measured 1.409 u -- inside the
+## stone ring's own published 1.529 u outer bound, a real clip, and short of
+## even that bound alone before `CAMPFIRE_ARRIVE_MARGIN` is added.
+##
+## The fix keeps the same two published numbers (`CAMPFIRE_STONE_RING_OUTER`,
+## `CAMPFIRE_ARRIVE_MARGIN`) but changes the DIRECTION: the point sits along
+## the near tower's own SIDE axis -- the identical `Vector3(forward.z, 0,
+## -forward.x)` `_badger_rest()` already reads off the tower's "forward" to
+## stand the badger beside its stair, not a fresh vector invented here.
+## Swept numerically (a 3600-step scan over every bearing at this radius,
+## scripted outside the engine since no Godot binary was available in this
+## sandbox -- see CH24's report), that axis sits in the middle of a ~28
+## degree band where BOTH approaches -- from end 0 and from end 1 -- clear
+## the ring by the full published margin (2.189 u, both, to the millimetre);
+## the direct bearing to either tower is the WORST choice, not a safe
+## default, because it is exactly the angle at which the OTHER tower's
+## approach cuts closest.
+##
+## Decorative batched props (rock/tree/bush/stump/flower) carry no entry in
+## `HubBuilder.FOOTPRINT_RADIUS` at all -- this engine does not treat them as
+## a walking obstacle for any existing actor, badger included -- so they
+## were checked by hand against the layout (closest: a stump 0.84 u from the
+## tower-0 leg) rather than by the engine's own logic, and their
+## SILHOUETTE overlap (as opposed to a blocked walk) could not be confirmed
+## by an `xvfb`/`opengl3` render in this sandbox. Left as a NEXT STEPS item
+## for CI/device, not assumed clean -- see CH24's report.
+func _setup_campfire() -> void:
+	if _badger == null or _campfire == null:
+		return
+	if _zipline.is_empty():
+		return
+	var site := Vector3(HubCampfire.SITE.x, 0.0, HubCampfire.SITE.y)
+	var near_tower: Dictionary = (_zipline["towers"] as Array)[0]
+	var forward: Vector3 = near_tower["forward"]
+	var side := Vector3(forward.z, 0.0, -forward.x)
+	_campfire_point = site + side * (CAMPFIRE_STONE_RING_OUTER + CAMPFIRE_ARRIVE_MARGIN)
+
+	var points: Array[Vector3] = [_campfire_point]
+	_tap.campfire_points = points
+	_tap.campfire_radius = CAMPFIRE_TAP_RADIUS
+	_badger.arrived.connect(_on_badger_arrived)
+
+## A tap on the campfire. Toggles the badger's detour; a tap that lands
+## mid-transit (already WALKING either way) is not lost, it simply means
+## nothing new until the leg already under way resolves -- the same
+## "a re-tap re-states the same destination" shape `hop_to()` already has.
+func _on_tapped_campfire(_point: Vector3) -> void:
+	if _badger == null:
+		return
+	if not _zip_trip.is_empty():
+		# A cable trip is driving the badger's position every frame
+		# (`_badger_follow_zipline`); redirecting it here would fight that
+		# write on the same node. No-op, the same refusal
+		# `_on_tapped_zipline_badger` already gives a tap mid-ride.
+		return
+	match _badger_campfire_leg:
+		&"":
+			# AT REST -- the outbound leg. `waiting_end()` before the
+			# withdrawal, never after: `set_badger_at(-1)` is what makes it
+			# stop answering.
+			_badger_campfire_return_end = _zipline_door.waiting_end()
+			_zipline_door.set_badger_at(-1)
+			_badger_campfire_leg = &"to_fire"
+			_badger.walk_to(_campfire_point)
+		&"at_fire":
+			# THE ROUND TRIP. The channel stays withdrawn for the whole
+			# return leg too -- reopened only on arrival, in
+			# `_on_badger_arrived` -- so a tap on the badger's empty tower
+			# mid-walk-back still falls through to the ground.
+			_badger_campfire_leg = &"to_rest"
+			_badger.walk_to(_badger_rest(_badger_campfire_return_end))
+		_:
+			pass
+
+## `HubActorWalker.arrived` fires identically whichever leg just ended;
+## `_badger_campfire_leg` is the only thing that says which one it was.
+func _on_badger_arrived() -> void:
+	match _badger_campfire_leg:
+		&"to_fire":
+			_badger_campfire_leg = &"at_fire"
+		&"to_rest":
+			_badger_campfire_leg = &""
+			_zipline_door.set_badger_at(_badger_campfire_return_end)
+			_badger_campfire_return_end = -1
+		_:
+			# An arrival unrelated to the detour. Nothing else ever calls
+			# `_badger.walk_to()`, so this should not happen -- left as a
+			# no-op rather than an error, on the same terms `_arrive()`
+			# already tolerates a caller who asked for a walk it was
+			# already standing at the end of.
+			pass
 
 ## Where a body whose crown sits `crown_above_origin` over its own node
 ## origin hangs on the trolley, in the TROLLEY's own frame:

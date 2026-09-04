@@ -1187,6 +1187,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH21 | Tyrolienne — recon : patron de tap, cadre caméra, rig à deux corps | [`CH21_TYROLIENNE.md`](docs/lots/CH21_TYROLIENNE.md) | 1 | 369 | 3 sept |
 | CH22 | Audit visuel du hub — recon pure, puis application de la liste A (A1/A2/A3/A6) et mesure de la pire frame | [`CH22_HUB_VISUEL.md`](docs/lots/CH22_HUB_VISUEL.md) | 2 | 1147 | 4 sept |
 | CH23 | Feu de camp — recon VFX, objet définitif (sprite E + bûcher), revert de couleur, puis cercle de pierres | [`CH23_FEU_VFX.md`](docs/lots/CH23_FEU_VFX.md) | 6 | 1505 | 4 sept |
+| CH24 | Feu de camp interactif — recon puis LOT 1 : canal de tap `tapped_campfire`, aller-retour du blaireau, point d'arrivée de la recon rejoué sur le segment complet et corrigé après un croisement trouvé avec l'anneau de pierres | [`CH24_FEU_INTERACTIF.md`](docs/lots/CH24_FEU_INTERACTIF.md) | 12 | 222 | 4 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,
