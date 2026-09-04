@@ -835,14 +835,24 @@ func _phase_arrival() -> void:
 	# THE CHANNELS, PER END, exactly the way HubTapInput reads them --
 	# point 5 of this lot's brief: a tap at the now-empty south tower must
 	# NOT read as the badger, because it genuinely is not there any more.
+	#
+	# ⚠️ THE BADGER'S POINT IS `rider_position()`, NEVER P1/P2. P1 and P2 are
+	# the TOWER CENTRES, and ZiplineDoor's own header measures the badger's
+	# waiting point at 2.0165 u off that centre -- outside BOARD_TAP_RADIUS
+	# (1.8), by design (see "WHY THE TWO DISCS AT END 0 ARE NOT DISJOINT").
+	# The first draft of this phase asserted `accepts_boarding_tap(P2)`, and
+	# it failed the moment it ran: exactly this same mistake, caught by the
+	# probe it was written for rather than by review.
 	_check(_door.is_available_at(1) and not _door.is_available_at(0),
 		"end 1 accepts boarding and end 0 does not -- the badger followed its own trip, it did not come home")
-	_check(_door.accepts_boarding_tap(P2) and not _door.accepts_boarding_tap(P1),
-		"a tap at the badger's OWN end reads as it; the same point at the now-empty end does not")
+	_check(_door.accepts_boarding_tap(_door.rider_position()) and not _door.accepts_boarding_tap(P1),
+		"a tap at the badger's OWN point reads as it; a tower-centre point at the now-empty end does not")
 	_check(_door.accepts_structure_tap(P1) == 0,
 		"at the empty south tower, ONLY the structure channel answers a tap")
-	_check(_door.accepts_structure_tap(P2) < 0,
-		"while at north the structure channel still excludes the badger's own disc, same as it always has")
+	_check(_door.accepts_structure_tap(_door.rider_position()) < 0,
+		"while at north, a tap ON THE BADGER's own point is still excluded from the structure channel")
+	_check(_door.accepts_structure_tap(P2) == 1,
+		"but the north TOWER CENTRE itself -- 2.0165 u off the badger, outside its disc -- opens the structure channel")
 
 # ------------------------------------------------------------ solo return
 ## THE STRUCTURE CHANNEL AT THE NOW-EMPTY END: with the badger having
