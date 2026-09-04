@@ -894,3 +894,254 @@ Nommées pour qu'elles ne soient pas confondues avec des résultats :
 `ProbeTimeoutAudit` retrouve donc son chiffre de baseline. Aucun fichier de
 `scripts/hub/`, `scripts/world/`, `scenes/`, `resources/` ni `assets/` n'a
 été touché, et **aucun fichier n'a été supprimé.**
+
+---
+
+# LOT BATCH LISTE A — application des corrections (4 septembre 2026)
+
+Ce lot **applique** une partie de la liste A ci-dessus et mesure le chiffre
+que l'audit avait nommément laissé ouvert (« Prochaines mesures que ce lot
+n'a PAS faites », point 1 : la pire frame). Il n'entame **pas** la liste B :
+aucun asset créé, aucun importé, aucune fiche Meshy touchée.
+
+**Écriture additive.** Rien au-dessus de cette ligne n'a été modifié,
+condensé ni corrigé. Là où ce lot contredit une mesure de l'audit, il le
+dit ici plutôt que de réécrire là-bas.
+
+## Ce qui a été appliqué, et ce qui a été écarté
+
+Le tri suit quatre critères posés par le brief : ne crée aucun asset,
+n'augmente pas les triangles, n'est signalée ni risquée ni non recommandée
+par l'audit, ne dépend d'aucun élément marqué « non mesuré ».
+
+| # | verdict | critère décisif |
+|---|---|---|
+| A1 | **APPLIQUÉE** | nommée non négociable par le brief |
+| A2 | **APPLIQUÉE** | nommée non négociable par le brief |
+| A3 | **APPLIQUÉE** | risque « faible », 0 triangle, problème mesuré |
+| A4 | **ÉCARTÉE** | critère 3 — l'audit dit « **risque réel et non trivial** », une masse près des portails pouvant casser le cadrage du tap |
+| A5 | **ÉCARTÉE** | critère 3 — l'audit dit « **le vrai coût est là** » et exige une sonde de containment ; risque moyen |
+| A6 | **APPLIQUÉE** | risque « faible », 0 triangle, problème mesuré |
+| A7 | **NON TOUCHÉE** | exclue par le brief, et l'audit ne la recommande pas |
+
+La ligne de coupure entre A3/A6 et A4/A5 est celle du **récapitulatif de
+la liste A lui-même** : risque *faible* d'un côté, *moyen* de l'autre.
+
+## A1 — ce qui a bougé, et ce qui n'a délibérément pas bougé
+
+**Une seule** des trois familles est montée, parce que l'audit l'interdit
+explicitement pour les trois : le sol est à `L = 0,1035`, et porter
+buissons, houppiers **et** rochers au-dessus de `0,41` ferait du sol le
+point le plus sombre du hub.
+
+| famille | albédo avant | ratio avant | albédo après | ratio après |
+|---|---|---|---|---|
+| `Bush` (68) | `(0,21 ; 0,39 ; 0,16)` | **1,03:1** | *inchangé* | **1,03:1** |
+| `TreeCrown` (44) | `(0,17 ; 0,34 ; 0,13)` | **1,24:1** | *inchangé* | **1,24:1** |
+| `Rock` (48) | `(0,26 ; 0,27 ; 0,24)` | **1,43:1** | `(0,69 ; 0,69 ; 0,67)` | **3,14:1** |
+
+**MESURÉ** sous `xvfb-run --rendering-driver opengl3`, WCAG sur l'albédo
+que le slot **dessine** (pas sur la constante qui vient d'être écrite), et
+la sonde a d'abord reproduit le `L = 0,1035` du sol publié par l'audit
+avant qu'un seul autre chiffre soit cru.
+
+`Rock` franchit le plancher hub `L ≥ 0,4104` (`L = 0,4319`). La bande basse
+reste inaccessible, comme l'audit l'a établi : il faudrait `L ≤ 0,0012`.
+L'émission n'a pas été tentée — tout est unlit, elle est inerte.
+
+⚠️ **Portée réelle : 3 nœuds, pas 1.** `TURNSTILE_BASE_COLOR` et
+`SEESAW_FULCRUM_COLOR` **lisent** `ROCK_COLOR` plutôt que de la retaper.
+La base du tourniquet et le pivot de la balançoire montent donc avec les
+rochers. C'est conforme à « un fait est publié une fois » et c'est assumé,
+mais l'audit annonçait « 1 constante » et la conséquence n'y était pas
+écrite.
+
+## A2 — le gain, mesuré des deux côtés
+
+`GREATLAKE_SEGMENTS` **96 → 56**, calé non sur un nombre rond mais sur la
+grossièreté que le dépôt **accepte déjà à l'écran** : le bassin tourne à
+24 segments pour un rayon 3,2, soit 0,027 u de sagitta ; à 17,3 u ce même
+0,027 coûte 56 segments.
+
+**Triangles de scène : 61 161 → 60 201.** Soit **−960 exactement**, la
+prévision de l'audit au triangle près. Les comptes de nœuds sont
+inchangés : 138 `MeshInstance3D`, 16 `MultiMeshInstance3D`, 154 au total.
+
+## A3 — la prémisse de l'audit, confirmée par une passe rouge
+
+L'audit affirmait que le `rotation_y` de 116 props ne change aucun pixel.
+**Vérifié, pas cru** : correction neutralisée, la sonde lit une ovalité XZ
+de **1,0000** et **48/48** puis **68/68** instances parfaitement rondes.
+La rotation était bien un no-op géométrique complet.
+
+La passe ROUGE a produit **exactement les deux échecs attendus** et aucun
+autre — le compte d'échecs faisait partie de l'assertion — puis le fichier
+a été restauré et vérifié **byte-identique** (`cmp` + md5).
+
+⚠️ **L'ordre de composition EST la correction.** `Transform3D.scaled()`
+échelonne sur les axes **monde** : une sphère tournée puis aplatie en monde
+est aplatie identiquement quel que soit son yaw, donc la rotation resterait
+le no-op qu'on prétend corriger. Seul `scaled_local()` — écraser dans le
+repère du **modèle**, puis tourner — produit une variation réelle. C'est
+pourquoi la sonde publie l'écart comme un **nombre** au lieu d'asserter que
+« les silhouettes diffèrent » : cette forme-là passe gratuitement contre un
+mécanisme jamais câblé.
+
+Les deux risques que l'audit signalait sont **mesurés**, pas argumentés :
+
+* **enfouissement.** Le lift (0,28 pour `Rock` ; 0,30 et 0,20 pour les deux
+  lobes de `Bush`) passe par `translated_local`, donc par le **même**
+  facteur Y local que le mesh. Fraction enterrée constante à **3 · 10⁻⁸**
+  dans chaque lobe. Aucune moitié de somme n'a été recopiée.
+* **emprise.** XZ est plafonné à 1,0, donc un prop ne peut que rétrécir.
+  Demi-emprise monde la plus large : `Rock` **0,8202 → 0,7811**, `Bush`
+  **0,6675 → 0,6371**. Toute garde qui réserve `FOOTPRINT_RADIUS × scale`
+  reste un **majorant**.
+
+⚠️ **Une assertion a échoué sur du code correct, et elle n'a pas été
+filtrée.** La première version exigeait une fraction d'enfouissement unique
+pour `Bush` ; il en a **deux**, parce que `Bush` pose deux lobes à deux
+hauteurs (0,0714 et 0,2143 — exactement les deux valeurs lues). L'assertion
+a été **reposée par lobe**, avec le nombre de groupes attendu comme partie
+de l'assertion, plutôt que rendue muette.
+
+## A6 — balayé, jamais calculé, et deux méthodes fausses avant la bonne
+
+L'eau est à alpha 0,95 et `CLAUDE.md` interdit de prédire un rendu d'alpha
+par forme fermée. Sept candidats ont donc été **écrits sur les slots
+vivants**, la berge re-rendue à travers la **caméra livrée** à chaque fois,
+et le contraste lu sur des **pixels**.
+
+| albédo `v` | L albédo | berge RENDUE | eau/berge RENDU |
+|---|---|---|---|
+| **0,22 (avant)** | 0,0358 | **0,0655** | **3,04:1** |
+| 0,38 | 0,1067 | 0,1167 | 2,14:1 |
+| 0,42 | 0,1316 | 0,1169 | 2,22:1 |
+| **0,44 (retenu)** | **0,1452** | **0,1243** | **2,13:1** |
+| 0,46 | 0,1596 | 0,1425 | 1,88:1 |
+| 0,50 | 0,1908 | 0,1481 | 1,90:1 |
+
+La luminance **rendue** de l'anneau double quasiment (0,0655 → 0,1243), il
+cesse de lire comme un trait noir, et l'eau reste la surface la plus claire
+avec 2,13:1 sur lui. Les **quatre** berges partagent cette constante et
+bougent ensemble — bassin, petit lac, deux lobes du grand lac.
+
+⚠️ **Deux mesures fausses ont précédé celle-ci, et c'est ce qui donne du
+poids à la troisième :**
+
+1. **Une FENÊTRE projetée** a rendu `bank L` et `water L` **égaux
+   (0,0832)** pour six couleurs de berge différentes. Cause : le grand lac
+   a **deux lobes de rayons différents** (20 et 16), et un `look_at`
+   plongeant à la verticale a un vecteur *up* **dégénéré** — le cadrage
+   n'était même pas stable d'un tir à l'autre. Un chiffre identique pour
+   six entrées différentes n'est pas un résultat, c'est une fenêtre
+   contaminée.
+2. **La passe de masque est ensuite revenue VIDE** depuis 45–60 u : le fog
+   du hub atténue avec la distance, donc un magenta pur n'arrive pas pur.
+   `CLAUDE.md` prescrit l'identification **fog coupé** ; c'est fait.
+
+Et la mesure a été ramenée à la **distance de jeu** (`HubCamera.OFFSET`,
+11,7 u) : lire cette berge depuis 60 u de haut mesurait le fog, pas la
+berge. Le masque final identifie **14 484 px de berge et 63 675 px d'eau**.
+
+## LA PIRE FRAME — le chiffre que l'audit avait laissé ouvert
+
+**MESURÉ**, `RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME`, sous xvfb +
+`opengl3`, sur la **caméra livrée** : Keepy posé sur chacune des **225**
+stations marchables d'une grille de 5 u, caméra à `HubCamera.OFFSET` avec
+le pitch −34° de la scène. Ce n'est pas un survol, c'est ce qu'un joueur
+voit.
+
+| | avant | après |
+|---|---|---|
+| **PIRE frame** | **48 972** | **48 012** |
+| médiane | 26 899 | 26 419 |
+| meilleure | 15 977 | 15 497 |
+| scène entière (majorant) | 61 161 | 60 201 |
+
+**Position de la pire frame** : Keepy en **(−5,0 ; 35,0)**, caméra en
+**(−5,0 ; 7,6 ; 43,9)** — le bord nord du plateau, regardant vers le sud à
+travers tout le hub. Les cinq pires stations sont toutes dans le quart
+nord-ouest, entre `z = 25` et `z = 35`.
+
+**Blind check armé et passé** : 33 782 primitives sur le plateau contre
+**460** dos tourné à `z = +300`. Le compteur suit réellement ce qui est à
+l'écran.
+
+⚠️ **La première version de ce blind check a échoué, et c'est elle qui
+avait raison.** Elle plaçait la caméra sous le plateau, visant vers le
+haut, et lisait **plus** de primitives (53 894 contre 33 782) — parce que
+ce n'est pas une frame vide, c'est le hub entier vu de dessous. Le blind
+check a attrapé son propre auteur.
+
+Une seule passe : le hub ne porte **aucune** `DirectionalLight3D`, donc pas
+de passe d'ombre à double-compter.
+
+### Le plafond de 50 000 est un budget de FRAME — le document le dit
+
+Tranché par lecture, pas par choix. `docs/MESHY_SPEC.md` §7 ouvre sur
+**« Frame target: 50,000 triangles »**, et §7.2 (« What the frame actually
+draws ») compare explicitement à « the **WORST** frame » gardée par
+`TrackPropsAudit` phase 1. C'est un plafond **par frame**, sans ambiguïté.
+
+Conséquence, livrée comme chiffre et **sans arbitrage de la liste B**, qui
+n'appartient pas à ce lot :
+
+* la **scène** du hub reste au-dessus du plafond — 60 201, soit **120 %** ;
+* la **pire frame** est **en dessous** — 48 012, soit **96 %**, avec
+  **1 988 primitives de marge** (1 028 avant ce lot).
+
+⚠️ **Trois réserves à porter avec ce chiffre.** (a) Le plafond a été
+justifié sur le renderer (`gl_compatibility`, WebGL2 Safari mobile) et non
+sur le contenu de Chased, mais il n'a jamais été re-justifié pour le hub.
+(b) La mesure est faite sous **llvmpipe**, pas sur device : ce qui
+transporte est la **direction**, pas l'absolu. (c) La grille est à 5 u ;
+une station intermédiaire pourrait lire un peu plus haut.
+
+## Captures avant / après
+
+Onze cadrages par run, deux runs, **au même azimut et à la même position
+d'œil** — les cadrages de l'audit, rejoués. Toutes les moyennes RGB sont
+non nulles et **diffèrent entre elles** : la garde anti-DUMMY est passée
+réellement, pas gratuitement. Toutes montent légèrement après, ce qui est
+la signature attendue de 48 rochers plus clairs.
+
+| cadrage | moyenne RGB avant | moyenne RGB après |
+|---|---|---|
+| `azimut_000` | (0,112 ; 0,216 ; 0,087) | (0,113 ; 0,217 ; 0,088) |
+| `azimut_090` | (0,109 ; 0,223 ; 0,098) | (0,111 ; 0,225 ; 0,100) |
+| `azimut_180` | (0,111 ; 0,235 ; 0,118) | (0,115 ; 0,239 ; 0,121) |
+| `azimut_270` | (0,110 ; 0,222 ; 0,097) | (0,112 ; 0,224 ; 0,099) |
+| `rasante_sud` | (0,175 ; 0,273 ; 0,134)\* | (0,145 ; 0,263 ; 0,108) |
+| `berge_lac` | (0,154 ; 0,346 ; 0,203) | (0,164 ; 0,355 ; 0,210) |
+
+\* La valeur `rasante_sud` avant provient du premier run, dont le blind
+check de la phase 4 était encore faux ; le run de comparaison retenu donne
+(0,143 ; 0,261 ; 0,106). **Les deux sont publiées plutôt qu'une seule
+choisie.**
+
+**Les captures ne sont pas commitées**, pour la raison que l'audit a déjà
+fixée : les conserver au dépôt demanderait `docs/renders/`, et c'est une
+décision de Mathieu.
+
+## Ce que ce lot a écrit
+
+* `scripts/hub/HubBuilder.gd` — quatre constantes et une fonction,
+  **un commit atomique par correction** (A1, A2, A3, A6), chacun revertable
+  sans toucher aux trois autres.
+* Cette section.
+
+**Aucun asset créé ni importé. La liste B n'est pas entamée.** La sonde
+jetable a été supprimée avant le commit ; `ProbeTimeoutAudit` retrouve sa
+baseline — **64 sondes, PASSED**.
+
+## Ce que ce lot n'a PAS mesuré
+
+1. **Le device.** Rien ici n'a tourné ailleurs que sous llvmpipe. A1
+   change l'identité visuelle du hub et l'audit le signalait déjà comme
+   risque artistique élevé : la validation device est **obligatoire**, à
+   plusieurs azimuts.
+2. **La séparation par la teinte**, toujours pas mesurée par aucune sonde
+   du dépôt — c'est elle qui travaille à l'intérieur d'une bande.
+3. **A4 et A5**, écartées ici, restent ouvertes et non instruites.
+4. **La pire frame entre deux stations de la grille de 5 u.**

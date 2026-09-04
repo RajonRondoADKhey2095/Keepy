@@ -120,7 +120,35 @@ class_name HubBuilder
 
 const TRUNK_COLOR: Color = Color(0.20, 0.13, 0.08)
 const CROWN_COLOR: Color = Color(0.17, 0.34, 0.13)
-const ROCK_COLOR: Color = Color(0.26, 0.27, 0.24)
+## A1 (CH22 audit). ONE of the three big decor families is carried into the
+## readable band, and only one -- the hub ground sits at L = 0.1035, so
+## lifting bushes, crowns AND rocks together would invert the hierarchy and
+## leave the ground as the darkest thing on the plateau.
+##
+## Rock is the defensible candidate because (0.26, 0.27, 0.24) was already
+## NEUTRAL: raising it is a mineral grey, not a repaint of the swamp.
+##
+## MEASURED, WCAG relative luminance on the albedo, against the ground:
+##   before  (0.26, 0.27, 0.24)  L = 0.0575  ->  1.43:1
+##   after   (0.69, 0.69, 0.67)  L = 0.4319  ->  3.14:1
+## The hub-local floor is L >= 0.4104 (CH22 4d), not the 0.549 CLAUDE.md
+## carries over from Chased -- that one is Chased's ground, and it stays
+## valid only as a safer target.
+##
+## ⚠️ THE LOW BAND DOES NOT EXIST HERE. Clearing 3.0:1 downwards would need
+## L <= 0.0012, a near-absolute black no usable colour reaches; the darkest
+## thing in the hub today (spruce trunk, L = 0.0117) tops out at 2.49:1.
+## Anything that must separate from this ground goes UP or not at all.
+##
+## ⚠️ Emission is NOT an option and was not tried: every hub material is
+## unlit, so the emission half of a material is inert (CLAUDE.md). Albedo
+## is the only channel that carries signal here.
+##
+## ⚠️ This constant is also the turnstile base and the seesaw fulcrum
+## (TURNSTILE_BASE_COLOR, SEESAW_FULCRUM_COLOR read it rather than retyping
+## it). They move with it BY DESIGN -- they borrow "the hub's mineral
+## colour", and one fact is published once. 3 nodes in total, not 1.
+const ROCK_COLOR: Color = Color(0.69, 0.69, 0.67)
 const BUSH_COLOR: Color = Color(0.21, 0.39, 0.16)
 
 ## Flower colours, LOCAL to the hub on purpose. SwampPalette.gd carries the
@@ -192,7 +220,30 @@ const _FLOWER_PETAL_KEYS: Array[StringName] = [
 ## This body: a=0.95 -- 0.90 reaches 2.99:1 in its own view, a hair under,
 ## and 0.95 reaches 3.22:1.
 const POND_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
-const POND_BANK_COLOR: Color = Color(0.22, 0.21, 0.15)
+## A6 (CH22 audit). The bank ring read as a hard black line: L = 0.0358
+## against water at L = 0.5895 in albedo. Lifted to L = 0.1452 -- up, but
+## deliberately NOT into the high band, which would put the bank in
+## competition with the water it is supposed to frame.
+##
+## ⚠️ NOT SOLVED IN CLOSED FORM, AND IT MAY NOT BE. The water sits at alpha
+## 0.95 and CLAUDE.md is categorical that the render is not affine in alpha
+## (a two-point fit underestimated four water bodies). So this was SWEPT:
+## seven candidates written onto the live bank slots, the shore re-rendered
+## through the SHIPPED camera each time, and the contrast read off pixels
+## identified by a fog-cut mask pass -- not off a window, and not from 60 u
+## up where the fog is what gets measured.
+##
+## MEASURED at the shipped camera distance, water/bank as RENDERED:
+##   v=0.22 (before) bank L 0.0655 -> 3.04:1     v=0.42 bank L 0.1169 -> 2.22:1
+##   v=0.38          bank L 0.1167 -> 2.14:1     v=0.44 bank L 0.1243 -> 2.13:1
+##   v=0.46          bank L 0.1425 -> 1.88:1     v=0.50 bank L 0.1481 -> 1.90:1
+## v=0.44 is the pick: the ring's RENDERED luminance nearly doubles
+## (0.0655 -> 0.1243), so it stops reading as a black trait, while the
+## water still holds 2.13:1 over it and stays the brighter surface.
+##
+## The four bank slots (pond, small lake, two great-lake lobes) share this
+## one constant on purpose -- a bank is a bank. All four move.
+const POND_BANK_COLOR: Color = Color(0.44, 0.42, 0.30)
 const POND_WATER_RADIUS: float = 3.2
 const POND_BANK_RADIUS: float = 3.62
 const POND_SEGMENTS: int = 24
@@ -359,11 +410,19 @@ const GREATLAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
 ## Clearing it needs the centre at x >= 18, which is a different placement
 ## than the one that was chosen.
 const GREATLAKE_BANK_MARGIN: float = 1.30
-## 96 segments: sized against facet deviation r(1-cos(pi/n)), which grows
-## with r. At the shipped radius of 20 that is 0.0107; at 16 it is 0.0086,
-## flatter still. Left at 96 -- the disc did not get coarser by getting
-## smaller, and a segment count is not worth a rendered change to re-tune.
-const GREATLAKE_SEGMENTS: int = 96
+## 56 segments (A2, CH22 audit). Sized against facet deviation
+## r(1-cos(pi/n)), which is ABSOLUTE and grows with r -- so a count is only
+## ever right for a radius. The reference is not a round number but the
+## coarseness the repo has ALREADY ACCEPTED on screen: the pond runs 24
+## segments at r = 3.2, i.e. 0.027 u of sagitta. At the bank radius of 17.3
+## that same 0.027 costs 56 segments, and 56 is what this is.
+##
+## 96 was the old value and it bought 0.0093 u -- three times finer than a
+## disc already judged good, on a shape that is a flat horizontal circle.
+## Cost of that finesse, MEASURED: 6n triangles per disc, 4 discs (two
+## lakes x water + bank), 4 x (576 - 336) = 960 triangles, 1.6% of the hub,
+## for a silhouette change no azimuth can resolve.
+const GREATLAKE_SEGMENTS: int = 56
 
 ## Slab thickness and centre height, ONE ROW PER LOBE, in HubRegion.lakes()
 ## order. Two rows since SPAWN-LAKE-1, and the second row is not cosmetic:
@@ -1693,11 +1752,13 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 			_instance(&"TreeTrunk", placement.translated_local(Vector3(0.0, 0.75, 0.0)))
 			_instance(&"TreeCrown", placement.translated_local(Vector3(0.0, 2.0, 0.0)))
 		&"rock":
-			_instance(&"Rock", placement.translated_local(Vector3(0.0, 0.28, 0.0)))
+			var rock_at := _distorted(placement, entry)
+			_instance(&"Rock", rock_at.translated_local(Vector3(0.0, 0.28, 0.0)))
 		&"bush":
 			# Two lobes, ONE mesh: two instances of a single batch.
-			_instance(&"Bush", placement.translated_local(Vector3(0.0, 0.3, 0.0)))
-			_instance(&"Bush", placement.translated_local(Vector3(0.42, 0.2, 0.18)))
+			var bush_at := _distorted(placement, entry)
+			_instance(&"Bush", bush_at.translated_local(Vector3(0.0, 0.3, 0.0)))
+			_instance(&"Bush", bush_at.translated_local(Vector3(0.42, 0.2, 0.18)))
 		&"pontoon":
 			# A deck, batched: every pontoon is the same plank slab at a
 			# different angle, which is precisely what one MultiMesh is for.
@@ -1711,6 +1772,56 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 		_:
 			return false
 	return true
+
+## A3 (CH22 audit). Rock and Bush are SPHERES OF REVOLUTION, so the layout's
+## rotation_y -- which ranges 2.9 to 350.8 degrees across 116 instances --
+## changes not one pixel on them. The only real variation those props ever
+## had was the uniform scale. This gives the yaw something to turn.
+##
+## ⚠️ THE ORDER IS THE WHOLE CORRECTION, and getting it wrong reproduces the
+## exact no-op it is meant to fix. Transform3D.scaled() pre-multiplies, i.e.
+## it scales along WORLD axes: a sphere yawed and THEN squashed in world X/Y
+## is squashed identically whatever its yaw, so the yaw stays a no-op and
+## the probe would read "varied" off a mechanism that never ran. It has to
+## be scaled_local() -- squash in the MODEL's frame, then turn -- which is
+## why the probe blind-checks that the silhouettes actually differ before it
+## is allowed to assert anything about them.
+##
+## ⚠️ XZ IS CAPPED AT 1.0 ON PURPOSE. ground_footprints() reserves
+## FOOTPRINT_RADIUS[type] * uniform for walkability; letting a prop stretch
+## PAST that would silently make the declared footprint a lower bound
+## instead of a bound. Shrinking only keeps every existing guard
+## conservative, and Y is free to grow because nothing reserves height.
+##
+## Burial rides along for free rather than needing a second sum: the 0.28
+## lift is applied with translated_local, so it passes through the same
+## local Y factor as the mesh does, and the buried FRACTION is unchanged.
+## MEASURED by the probe rather than argued here -- copying one half of a
+## sum is precisely the defect CLAUDE.md records.
+const PROP_DISTORT_XZ_MIN: float = 0.80
+const PROP_DISTORT_XZ_MAX: float = 1.00
+const PROP_DISTORT_Y_MIN: float = 0.80
+const PROP_DISTORT_Y_MAX: float = 1.30
+
+## The layout entry's own placement, with a per-instance non-uniform squash
+## written into the MODEL frame. Deterministic: seeded off the prop's own
+## authored position, so the plateau is identical run to run and a layout
+## edit moves only the prop it edited.
+func _distorted(placement: Transform3D, entry: Dictionary) -> Transform3D:
+	# Transform3D.scaled_local, not Basis.scaled_local -- the latter does not
+	# exist in 4.3 and is a Parse Error, which is the loud kind of wrong.
+	# This one post-multiplies by the scale (basis * S) and leaves origin
+	# alone: squash in the model frame, then the yaw turns the squash.
+	return placement.scaled_local(_prop_distortion(entry))
+
+func _prop_distortion(entry: Dictionary) -> Vector3:
+	var where: Vector3 = entry.get("position", Vector3.ZERO)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2(snappedf(where.x, 0.001), snappedf(where.z, 0.001)))
+	var sx: float = rng.randf_range(PROP_DISTORT_XZ_MIN, PROP_DISTORT_XZ_MAX)
+	var sy: float = rng.randf_range(PROP_DISTORT_Y_MIN, PROP_DISTORT_Y_MAX)
+	var sz: float = rng.randf_range(PROP_DISTORT_XZ_MIN, PROP_DISTORT_XZ_MAX)
+	return Vector3(sx, sy, sz)
 
 func _instance(key: StringName, xform: Transform3D) -> void:
 	if not _batches.has(key):
