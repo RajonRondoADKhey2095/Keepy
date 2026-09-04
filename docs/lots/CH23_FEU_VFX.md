@@ -1114,3 +1114,87 @@ Validation VISUELLE finale : device, comme toujours pour ce prop.
 Sonde jetable `CampfireImmersionProbe.gd`/`.tscn` supprimée avant ce
 commit, comme `ProbeTimeoutAudit` le confirme (64 scènes, baseline
 inchangée).
+
+## LOT 5 — revert de `LOG_COLOUR`, l'éclaircissement du lot 4 était une demande erronée
+
+Validation device (Mathieu, Safari iPhone, `keepy-staging.vercel.app`) de
+l'imbrication flamme/bûches du lot 4 : **bonne**. Ce que Mathieu avait pris
+au lot 4 pour un défaut de matériau (le rendu sombre de `TRUNK_COLOR`) était
+en réalité le défaut d'imbrication lui-même, déjà corrigé au lot 4 par la
+géométrie seule (bûcher bas/étalé + `flame_sink`). L'éclaircissement de
+`LOG_COLOUR` demandé au lot 4 était donc une correction pour la mauvaise
+cause. Verdict sur le résultat clair : mauvais. **Retour pur et simple** à
+`HubBuilder.TRUNK_COLOR` — pas de compromis, pas de teinte intermédiaire.
+
+Aucun plancher de contraste n'est appliqué : le seuil 3,0:1 documenté dans
+ce fichier (WCAG, HUD/dangers) ne couvre pas un prop décoratif, et toute
+mesure de contraste sur les bûches est explicitement hors sujet dans ce
+lot — écrit ici pour qu'un futur lot ne tente pas de la reproduire.
+
+### Nettoyage — une seule instance, aucune étiquette
+
+L'arbitrage PRUDENT/IMMERGE du lot 4 est tranché : **IMMERGE**, seule
+variante conservée. `VARIANT_PRUDENT`, `SITE_ALT` et les deux `Label3D`
+(`SITE IMMERGE (RECOMMANDE)` / `ALT PRUDENT`) sont retirés de
+`scripts/hub/HubCampfire.gd` — `_build_campfire()` ne construit plus de
+`Label3D` du tout. Il ne reste qu'un feu, sans étiquette, au site
+(19,9 ; 25,4). Géométrie (8 rondins, `ring_radius=0,42`, `apex_height=0,22`,
+`base_height=0,04`) et `flame_sink=0,08` **inchangés** depuis le lot 4.
+
+### Recette d'imbrication rejouée après le revert de couleur
+
+Sonde jetable (méthode du lot 4 à l'identique : rendu d'isolement
+masque-blanc, bande mesurée `v<0,12` dans l'espace UV de la flamme, 8
+azimuts × 3 distances 2,5/8,0/16,0 u, vraie `HubCamera` — position
+construite depuis `HubCamera.OFFSET` + point au sol, rotation fixe de la
+caméra jamais touchée) sur la seule instance IMMERGE restante, couleur
+revertée :
+
+**Rouge avant vert** : la même sonde rejoue d'abord la géométrie CASSÉE du
+lot 3 (6 rondins fins, anneau 0,30, apex 0,44, sans `flame_sink`) sur
+l'instance réelle — **127 px de fuite sur les 24 vues**, preuve que la
+sonde sait voir une fuite avant de croire son verdict sur la géométrie
+livrée.
+
+| geométrie | fuites sur 24 vues |
+|---|---|
+| LOT3-BROKEN (contrôle, doit fuir) | **127 — fuite confirmée** |
+| IMMERGE, géométrie lot 4 + couleur revertée (livrée) | **0 — PASS** |
+
+Le retour à une teinte sombre ne fait pas réapparaître de fuite : la
+géométrie du bûcher/`flame_sink`, seule responsable de l'imbrication, est
+restée strictement inchangée par ce lot.
+
+### Le coût — `ProbeTimeoutAudit` et l'export
+
+`ProbeTimeoutAudit` : **64 scènes, PASSED** — vérifié identique à la
+baseline d'`origin/staging` avant ce lot, constatée (pas supposée), et
+inchangée après (sonde jetable de ce lot supprimée avant ce commit).
+
+Export release réel (`godot4 --export-release "Web"`, templates
+4.3-stable, `.godot`/`build` nettoyés puis ré-importés de zéro) : exit 0,
+aucune erreur GDScript ni shader. `index.wasm` = **35 376 909 octets**, md5
+`af4a8fc2925d992348eb30deeeb54360` ; `index.js` md5
+`4e08904b1b7107858246af44b602067b` — les deux empreintes documentées pour
+un lot qui ne touche pas le code moteur, confirmées au byte/octet près.
+278 lignes `Storing File:` au total, 0 fuite de `scripts/dev/*`,
+`assets_source/*`, `docs/*`, `web/*` ou `firebase.json`.
+
+### Ce que ce lot n'a PAS mesuré
+
+Aucune nouvelle mesure de contraste sur les bûches (explicitement hors
+sujet, voir plus haut). Pas de capture PNG offscreen comparative jointe —
+la sonde jetable a été supprimée avant le commit ; le verdict repose sur
+le comptage de pixels de fuite, pas sur une image. Validation visuelle
+finale : device, comme toujours pour ce prop.
+
+### Ce que ce lot a écrit
+
+* `scripts/hub/HubCampfire.gd` — modifié : `LOG_COLOUR` revertée à
+  `HubBuilder.TRUNK_COLOR` ; `VARIANT_PRUDENT`, `SITE_ALT` et les deux
+  `Label3D` retirés ; `_build_campfire()` ne prend plus de `label_text`.
+* Ce document.
+
+Sonde jetable `CampfireColourRevertProbe.gd`/`.tscn` supprimée avant ce
+commit, comme `ProbeTimeoutAudit` le confirme (64 scènes, baseline
+inchangée).

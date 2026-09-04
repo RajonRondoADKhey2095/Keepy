@@ -39,11 +39,6 @@ class_name HubCampfire
 ## =====================================================================
 const SITE: Vector2 = Vector2(19.9, 25.4)
 
-## 3 u west of SITE -- unchanged since lot 2/3 (roomier neighbour, and
-## re-measured in this lot with the new, wider log footprint -- see the
-## clearance table in docs/lots/CH23_FEU_VFX.md lot 4).
-const SITE_ALT: Vector2 = Vector2(16.9, 25.4)
-
 ## Echelle x1.6 is Mathieu's already-settled call from lot 3 (NOT reopened
 ## here) -- ONE scale now, shared by both variants below. What lot 4 puts
 ## up for arbitration is no longer scale, it is how far the flame sinks
@@ -83,54 +78,23 @@ const LOG_RADIUS_TOP: float = 0.075
 const LOG_RADIUS_BOTTOM: float = 0.12
 const LOG_RADIAL_SEGMENTS: int = 6
 
-## Lighter brown -- HubBuilder.TRUNK_COLOR (0.20, 0.13, 0.08) is the value
-## every tree trunk in the hub draws and reads fine THERE against green
-## foliage/canopy, but on its own, unshaded, close to camera, it rendered
-## as near-black on device -- Mathieu's own report, and its relative
-## luminance is ~0.019 by the WCAG formula, nowhere near separated from
-## the hub ground (L=0.0799 rendered). This is a DELIBERATE departure
-## from "un fait publié une fois" (CLAUDE.md): the trunk colour is correct
-## for trunks, not for a small, isolated, close-up wood pile that needs
-## its own contrast budget. The raw albedo below is deliberately BRIGHTER
-## than a naive WCAG-on-albedo calculation would call for -- fog mixing on
-## this camera measured a ~27% luminance loss between raw albedo and the
-## actually rendered pixel (0.82,0.60,0.38 raw L=0.372 rendered to
-## L=0.272), so the published colour is chosen from the RENDERED contrast,
-## not the albedo alone. A first candidate (0.95, 0.74, 0.50) rendered at
-## 3.130:1 (SITE) / 3.016:1 (ALT) -- both cleared 3.0:1 but ALT's margin
-## was thin enough that a second, independent renderer (WebGL2 on device,
-## CLAUDE.md's own warning about GL-vs-WebGL2 divergence on transparency
-## and colour) could plausibly drop it under. Bumped once more for margin.
-## See the contrast table in docs/lots/CH23_FEU_VFX.md lot 4.
-const LOG_COLOUR: Color = Color(1.0, 0.80, 0.56)
+## Revert LOT 5 (CH23) : l'éclaircissement du lot 4 était une demande
+## erronée de Mathieu, pas un défaut constaté -- le rendu sombre qu'il
+## avait pris pour un problème de matériau était en réalité le défaut
+## d'imbrication flamme/bûches, corrigé au lot 4 par la géométrie seule
+## (bûcher bas/étalé, flame_sink). Retour au matériau des troncs du hub,
+## tel qu'il était avant le lot 4. Aucun plancher de contraste ne
+## s'applique à ce prop décoratif (CLAUDE.md, hors sujet pour un feu).
+const LOG_COLOUR: Color = HubBuilder.TRUNK_COLOR
 
 ## =====================================================================
-## TWO VARIANTS, SAME SCALE, DIFFERENT IMMERSION -- ARBITRAGE TO MATHIEU
+## UNE SEULE INSTANCE -- LOT 5 (CH23) retire la variante ALT/PRUDENT
+## (arbitrage tranché par Mathieu en faveur d'IMMERGE) et son Label3D,
+## ainsi que le Label3D d'IMMERGE : plus aucune étiquette sur ce prop.
 ##
-## Both share x1.6 and the new lighter log colour. What differs is how far
-## the log pile spreads/lowers and how far the flame sinks into it:
-##
-## VARIANT_PRUDENT   -- wider, lower pile (ring 0.40, apex 0.28 nominal)
-##   with NO flame sink: the flame's own hard cut still sits exactly on
-##   the ground plane, same as lot 3, but the pile alone is now wide and
-##   low enough to nest the flame's fast-flaring base end to end.
-## VARIANT_IMMERGE (RECOMMENDED) -- even wider, lower pile (ring 0.45,
-##   apex 0.24) PLUS a 0.06 u (nominal) flame sink: the flame's literal
-##   cut is pushed below y=0, hidden behind the opaque Ground plane as a
-##   second guarantee independent of the logs, and the row that lands
-##   exactly at y=0 is already partway up the texture's flare (wider,
-##   softer transition) rather than its narrowest pixel.
-##
-## Published ONCE as typed dictionaries, read by both _build() and the
-## probe that measured this lot's numbers -- never retyped.
+## Géométrie et flame_sink inchangés depuis le lot 4 (validés device) :
+## ring 0.42, apex 0.22, flame_sink 0.08 (nominal, pré-échelle).
 ## =====================================================================
-const VARIANT_PRUDENT: Dictionary = {
-	"label": "PRUDENT",
-	"ring_radius": 0.38,
-	"base_height": 0.05,
-	"apex_height": 0.26,
-	"flame_sink": 0.0,
-}
 const VARIANT_IMMERGE: Dictionary = {
 	"label": "IMMERGE (RECOMMANDE)",
 	"ring_radius": 0.42,
@@ -148,10 +112,7 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	_campfires[&"immerge"] = _build_campfire(
-		Vector3(SITE.x, 0.0, SITE.y), VARIANT_IMMERGE, "SITE  IMMERGE (RECOMMANDE)")
-	_campfires[&"prudent"] = _build_campfire(
-		Vector3(SITE_ALT.x, 0.0, SITE_ALT.y), VARIANT_PRUDENT, "ALT  PRUDENT")
+	_campfires[&"immerge"] = _build_campfire(Vector3(SITE.x, 0.0, SITE.y), VARIANT_IMMERGE)
 
 
 ## Published for a probe that needs to switch one instance off and
@@ -167,12 +128,12 @@ func flame_texture() -> Texture2D:
 	return _flame_texture
 
 
-## One full campfire: a scaled root, six logs at the variant's own
+## One full campfire: a scaled root, eight logs at the variant's own
 ## nominal geometry, the flame billboard sunk by the variant's own
 ## nominal amount. Logs and flame are built at NOMINAL size and the whole
 ## root is uniformly scaled by SCALE -- so every ratio below is
 ## scale-invariant by construction.
-func _build_campfire(origin: Vector3, variant: Dictionary, label_text: String) -> Node3D:
+func _build_campfire(origin: Vector3, variant: Dictionary) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Campfire_%s" % String(variant["label"]).split(" ")[0]
 	root.position = origin
@@ -188,10 +149,6 @@ func _build_campfire(origin: Vector3, variant: Dictionary, label_text: String) -
 		root.add_child(_make_log(i, ring_radius, base_height, apex_height))
 
 	root.add_child(_make_flame(sink))
-
-	var label := _make_label(label_text)
-	label.position = origin + Vector3(0.0, (FLAME_HEIGHT + apex_height) * SCALE + 0.35, 0.0)
-	add_child(label)
 
 	return root
 
@@ -308,19 +265,3 @@ func _unshaded(colour: Color) -> StandardMaterial3D:
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.albedo_color = colour
 	return material
-
-
-func _make_label(text: String) -> Label3D:
-	var label := Label3D.new()
-	label.name = "Label"
-	label.text = text
-	label.font_size = 96
-	label.pixel_size = 0.0013
-	label.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-	label.shaded = false
-	label.double_sided = true
-	label.no_depth_test = true
-	label.modulate = Color(1.0, 0.94, 0.72)
-	label.outline_modulate = Color(0.03, 0.05, 0.02, 1.0)
-	label.outline_size = 18
-	return label
