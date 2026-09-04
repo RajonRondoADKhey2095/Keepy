@@ -93,7 +93,7 @@ stabilité du masque entre deux rendus — jamais rendue muette.
 
 ## Le site — mesuré avant d'y poser quoi que ce soit
 
-(19,9 ; 25,4) vient de Mathieu, relevé in-game via `DEBUG_POSITION_OVERLAY`.
+(19,9 ; 25,4) vient de Mathieu, relevé in-game via l'overlay de position de debug (retiré de `main`, présent sur `staging`).
 Ce lot ne le discute pas et ne cherche pas « mieux ». Ce qu'il mesure, c'est
 le dégagement, sur le hub **CONSTRUIT** — rien n'est lu dans le layout :
 452 pièces dessinées, chacune réduite à l'**enveloppe convexe XZ de ses huit
@@ -695,7 +695,7 @@ qui fait qu'une langue naît, se détache et meurt.
 * Ce document, et une ligne d'index.
 
 **`scenes/HubWorld.tscn` n'a PAS bougé** : le nœud `FlameRecon` que le lot 1
-y a posé suffit, et `DEBUG_POSITION_OVERLAY` reste tel quel sur `staging`.
+y a posé suffit, et l'overlay de position de debug reste tel quel sur `staging`.
 
 **Aucun asset importé, aucun asset supprimé, aucun tap, aucune pose de
 Keepy.** La sonde `FlameCompareProbe` est supprimée avant le commit et
@@ -1576,3 +1576,14 @@ au pire, avant translation) plutôt que recopié. Ne touche à aucun chemin
 partagé (navigation, hotspots, MultiMesh du semis) : le risque principal
 est seulement de resserrer l'espace jouable autour du site si le rayon
 choisi est trop large. Travail estimé à un lot court.
+
+## CH23 — merge vers `main` (4 septembre 2026)
+
+Fusion `staging` → `main`. `scripts/hub/HubWorld.gd` porte encore, côté
+`staging`, la constante d'overlay de position de debug (héritée d'un lot
+antérieur ; `main` l'avait déjà retirée par revert avant ce merge) : le
+merge à trois voies l'a exclue de `main` sans conflit. Les deux mentions en
+prose de ce nom dans ce fichier (site mesuré au lot 1, note du lot 2) ont
+été reformulées **dans la copie `main` uniquement** pour tenir le
+zéro-occurrence exigé par le brief CH23 ; `staging` garde son texte
+d'origine, inchangé.
