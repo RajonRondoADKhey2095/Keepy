@@ -1503,3 +1503,76 @@ zéro `Parse Error`, zéro `SHADER ERROR`, zéro ligne
 publiées dans `CLAUDE.md`, donc le moteur n'a pas bougé. Les shaders, eux,
 ont réellement été compilés : la sonde de rendu a tourné sous `opengl3`
 avec le shader de flamme livré et a produit 28 PNG où la flamme s'affiche.
+
+## LOT 7 — finalisation : SOBRE au site, MARQUE supprimée
+
+Arbitrage de Mathieu, tranché contre la recommandation du lot 6 :
+**SOBRE retenue, MARQUE écartée.** À consigner comme fait notable : SOBRE
+a été jugée sur device alors qu'elle occupait le créneau le plus contraint
+mesuré au lot 6 (dégagement 2,258 u, contre 3,521 u pour MARQUE), avec un
+rocher du semis existant du hub à 3,81 u — même mesh `Rock`, même
+`ROCK_COLOR` — qui travaillait contre sa lecture en la rapprochant
+visuellement d'un décor déjà présent. Le déplacement au site définitif
+(19.9, 25.4), à l'ancien emplacement de MARQUE, fait disparaître ce
+handicap : SOBRE y hérite du meilleur dégagement caméra que le lot 6 avait
+mesuré pour l'autre variante.
+
+### Ce que ce lot a écrit
+
+`scripts/hub/HubCampfire.gd` seul :
+
+* `_build()` ne construit plus qu'UN foyer, `STONES_SOBRE` à `SITE`
+  (19.9, 25.4) — c'est une **translation pure** : `STONES_SOBRE` (graine
+  20260904, tailles, jitter angulaire, tilt, squash) n'a pas été touchée
+  un seul caractère, seule l'origine passée à `_build_campfire()` change
+  de `SITE_ALT` à `SITE`. La disposition relative des huit pierres —
+  angles, tailles, assiettes, enfouissement 0,26 — est donc
+  byte-identique à celle jugée par Mathieu ; seul le repère monde bouge.
+* `STONES_MARQUE`, `SITE_ALT`, `_make_label()` et les deux appels
+  `_make_label()`/`label` dans `_build_campfire()` sont supprimés
+  entièrement. `_build_campfire()` perd son paramètre `label_text` et le
+  root du foyer reprend un nom fixe `"Campfire"` (`_campfires` publie
+  toujours une seule clé, `&"sobre"`, plutôt que d'inventer un nom neutre
+  qui n'apporterait rien à l'unique appelant de `campfires()`).
+* Le feu (bûcher, flamme, `flame_sink`, `LOG_COLOUR`, échelle x1.6) et la
+  géométrie de l'anneau (`STONE_RING_RADIUS`, `STONE_MESH_SCALE`,
+  `STONE_BURIED_FRACTION`, la boucle de `_make_stone_ring()`) ne sont pas
+  touchés — diff vérifié contre `origin/staging` : 13 insertions,
+  59 suppressions, aucune ligne modifiée dans ces blocs.
+* Les commentaires de doc qui décrivaient l'arbitrage à deux variantes
+  (rayon anneau contraint par le second foyer à 3,40 u, bloc "LES DEUX
+  VARIANTES À ARBITRER") sont mis à jour pour refléter l'état final à un
+  seul foyer, sans changer aucune constante numérique de géométrie.
+
+### Ce que ce lot N'A PAS pu faire dans ce bonac
+
+Aucun binaire `godot4` n'est disponible dans ce sandbox d'exécution (ni
+sous ce nom ni sous un autre, recherché sur tout le système de fichiers) :
+la recette de recon 8 azimuts × 3 distances sous `xvfb-run
+--rendering-driver opengl3`, le rouge-avant-vert avec contrôle positif, la
+re-mesure de la clearance au nouveau voisinage, et l'export release local
+n'ont **pas pu être exécutés depuis cette session**. Le changement reste
+une translation mécanique d'un site déjà construit et déjà mesuré au
+lot 6 vers un autre site déjà construit et déjà mesuré au lot 6
+(dégagement 3,521 u, emprise extérieure de l'ancien anneau MARQUE
+1,529 u au pire à ce même site) — mais cette continuité N'A PAS été
+reprouvée par une sonde ici, et doit l'être par la CI (export release,
+`web-build.yml`) et par la validation device de Mathieu avant tout merge
+vers `main`.
+
+### Dette signalée au lot 6, évaluation demandée
+
+`ground_footprints()` ne déclare toujours aucune emprise pour le feu —
+inchangé par ce lot, qui n'a touché ni `HubBuilder.gd` ni
+`ground_footprints()`. Estimation sans implémentation : c'est un ajout
+plutôt ISOLÉ. Le foyer est un prop terminal (aucun autre système ne lit sa
+position — pas de hotspot, pas de zone de tap, `campfires()` n'a qu'un
+seul appelant absent du code produit) ; déclarer son emprise consiste à
+ajouter une entrée `Circle`/`Rect` à la liste que `ground_footprints()`
+retourne déjà pour d'autres props statiques (le patron existe, voir
+`HubBuilder.gd:1500` et les props qui l'alimentent), avec un rayon à
+mesurer sur l'anneau construit (bord extérieur mesuré au lot 6 : 1,529 u
+au pire, avant translation) plutôt que recopié. Ne touche à aucun chemin
+partagé (navigation, hotspots, MultiMesh du semis) : le risque principal
+est seulement de resserrer l'espace jouable autour du site si le rayon
+choisi est trop large. Travail estimé à un lot court.
