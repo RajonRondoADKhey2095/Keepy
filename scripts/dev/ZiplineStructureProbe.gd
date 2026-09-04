@@ -73,6 +73,8 @@ var _failures: int = 0
 var _props: HubBuilder = null
 var _consts: Dictionary = {}
 var _hub_consts: Dictionary = {}
+## The Hub scene root, kept because PHASE I needs the live badger off it.
+var _hub_root: Node = null
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "ZIPLINE STRUCTURE PROBE")
@@ -82,6 +84,7 @@ func _ready() -> void:
 	print("")
 
 	var hub: Node = (load(_HUB_WORLD_SCENE) as PackedScene).instantiate()
+	_hub_root = hub
 	add_child(hub)
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -118,6 +121,8 @@ func _ready() -> void:
 	_phase_g_draw_nodes(_props)
 	dl.abort_if_exceeded()
 	_phase_h_p2_lobe()
+	dl.abort_if_exceeded()
+	_phase_i_badger_stand()
 
 	print("")
 	print("--- %d failure(s) ---" % _failures)
@@ -781,6 +786,313 @@ func _phase_h_p2_lobe() -> void:
 	_check(north_gap > 0.0,
 		"the P2 lobe and the existing north lobe are disjoint (rim gap %.3f u)" % north_gap)
 	print("")
+
+
+## PHASE I -- THE WAITING BADGER STANDS BESIDE THE STAIR, NOT INSIDE IT.
+##
+## ⚠️ THIS PHASE EXISTS BECAUSE A DERIVED NUMBER SHIPPED AND WAS WRONG.
+## `BADGER_SIDE_OFFSET` carried a comment claiming "+0.050 u clear of the
+## rail", arrived at by multiplying a lateral extent recorded at one rig
+## scale by the ratio of two later ones. Measured instead against the
+## DRAWN stair on 4 septembre 2026, the true clearance at that offset was
+## 0.0428 u -- a body all but touching a stringer -- and an earlier pass,
+## run under `--headless`, had reported "comfortable" against four
+## stringers all reading at the world origin. Both failures are of the
+## same kind: a clearance nobody measured on the geometry a player sees.
+##
+## SO THIS PHASE MEASURES, and it measures the two things the derivation
+## could not:
+##
+##   * the badger's SKINNED SILHOUETTE, ~10 000 vertices posed by the live
+##     rig, not a width copied from a previous lot;
+##   * against every DRAWN part near either stair foot -- the batched
+##     stringers and treads (whence opengl3, per this file's header) AND
+##     the layout's own decor, which is what actually caps the offset:
+##     a bush at (29.869, 7.138) closes in from the far side, so the free
+##     window at end 0 is bounded on BOTH sides and the best offset is an
+##     argmax rather than "as far from the stair as you like".
+##
+## The gate is 0.15 u. Measured argmax is 0.1886 u at the shipped 1.10, so
+## the threshold is a real 21 % cushion under the as-built figure and not a
+## line drawn under it; and it rejects the old 0.95 by a factor of 4.4,
+## which is what the blind pass below proves it can actually see.
+const BADGER_STAND_CLEARANCE_MIN: float = 0.15
+
+func _phase_i_badger_stand() -> void:
+	print("PHASE I -- the waiting badger clears the drawn stair and its decor")
+	var badger: Node3D = _hub_root._badger as Node3D
+	_check(badger != null, "the badger is in the scene")
+	if badger == null:
+		print("")
+		return
+	var cloud: PackedVector3Array = _skinned_cloud(badger)
+	# BLIND CHECK FIRST: an unread silhouette makes every distance below
+	# infinite, and the phase would pass for free at any offset whatever.
+	_check(cloud.size() > 1000,
+		"BLIND CHECK: %d skinned vertices actually read off the live rig" % cloud.size())
+	if cloud.is_empty():
+		print("")
+		return
+
+	var offset: float = float(_hub_consts.get("BADGER_SIDE_OFFSET", 0.0))
+	_check(offset > 0.0, "read HubWorld.BADGER_SIDE_OFFSET (%.3f)" % offset)
+	var worst: float = INF
+	var worst_where: String = ""
+	for index in 2:
+		var xf: Transform3D = _badger_stand_xform(badger, index, offset)
+		var parts: Array = _parts_near(_props, badger, xf.origin, 8.0)
+		_check(parts.size() > 4,
+			"end %d: %d drawn parts stand within 8 u of the badger -- an empty list would pass this for free"
+				% [index, parts.size()])
+		var row: Array = _nearest_part(cloud, xf, parts, 0.0)
+		print("      end %d: nearest drawn part %s at %.4f u" % [index, row[0], row[1]])
+		if float(row[1]) < worst:
+			worst = float(row[1])
+			worst_where = "end %d, %s" % [index, row[0]]
+	_check(worst >= BADGER_STAND_CLEARANCE_MIN,
+		"the waiting badger clears every drawn part by %.4f u (worst: %s), gate %.2f"
+			% [worst, worst_where, BADGER_STAND_CLEARANCE_MIN])
+
+	# BLIND CHECK: the test must be able to SEE a body inside the stair.
+	# Fatten the silhouette past the measured margin and the same test has
+	# to report an intersection -- an assertion that has never failed
+	# proves nothing, and this is the equality-shaped assertion CLAUDE.md
+	# names as the one that passes for free.
+	var fat: float = worst + 0.20
+	var blind: float = INF
+	for index in 2:
+		var xf: Transform3D = _badger_stand_xform(badger, index, offset)
+		blind = minf(blind, float(_nearest_part(cloud, xf,
+			_parts_near(_props, badger, xf.origin, 8.0), fat)[1]))
+	_check(blind <= 0.0,
+		"BLIND CHECK: with the silhouette %.3f u fatter the same test reports %.4f u -- it can see a body inside the stair"
+			% [fat, blind])
+
+	# ---- THE TAP DISC AGAINST THE REGION CLAMP, at both ends.
+	#
+	# ⚠️ THIS IS THE HALF OF "MOVE THE BADGER" THAT IS SILENT. The disc is
+	# asked on `aim`, UNCLAMPED, exactly as the funnel rule requires -- but
+	# what HubTapInput then EMITS is the CLAMPED destination, and _try_zip
+	# re-tests that landing against the same radius. So a tap the disc
+	# ACCEPTS can still walk Keepy to a clamped point too far from the
+	# badger to board: yes from the disc, no boarding, and no error
+	# anywhere.
+	#
+	# ⚠️ AND IT ALREADY HAPPENS, AT END 1, AND IT IS NOT THIS LOT'S DOING.
+	# End 1 stands 1.68 u past the plateau edge on a structure lobe of
+	# radius 3.0, so part of its disc hangs over ground the clamp has to
+	# drag back. Measured across the whole offset range on 4 septembre
+	# 2026, with the shipped 1.80 radius:
+	#
+	#     offset   end 0 worst / lost      end 1 worst / lost
+	#      0.95     1.8000 / ~0 %           2.4020 / 3.56 %   <- was shipped
+	#      1.10     1.8000 / ~0 %           2.3925 / 3.88 %   <- ships now
+	#      1.32     1.8000 / ~0 %           2.3785 / 4.75 %
+	#
+	# The defect is nearly flat in the offset and predates every value in
+	# that table; end 0 is clean (its "lost" count is float noise at
+	# exactly the radius). Fixing it means widening the P2 structure lobe
+	# or narrowing the disc, which is a region change nobody asked this lot
+	# for -- so it is REPORTED here rather than quietly gated green, and
+	# what IS gated is that moving the badger does not make it worse.
+	var worst_pull: float = 0.0
+	var worst_pull_at: String = ""
+	var base_pull: float = 0.0
+	for index in 2:
+		var towers: Array = _zipline()["towers"] as Array
+		var pull: float = _clamped_disc_reach(
+			_stand_point(towers[index], offset), ZiplineDoor.BOARD_TAP_RADIUS)
+		# The same reading at the offset this constant carried before
+		# 4 septembre 2026, recomputed live rather than typed in as a
+		# remembered number.
+		var was: float = _clamped_disc_reach(
+			_stand_point(towers[index], 0.95), ZiplineDoor.BOARD_TAP_RADIUS)
+		print("      end %d: furthest post-clamp landing %.4f u (was %.4f at offset 0.95), radius %.2f"
+			% [index, pull, was, ZiplineDoor.BOARD_TAP_RADIUS])
+		if pull > worst_pull:
+			worst_pull = pull
+			worst_pull_at = "end %d" % index
+		base_pull = maxf(base_pull, was)
+	_check(worst_pull <= base_pull + 0.001,
+		"moving the badger does not widen the pre-existing end-1 clamp gap (%.4f u now, %.4f u at the old 0.95; worst end %s)"
+			% [worst_pull, base_pull, worst_pull_at])
+
+	# BLIND CHECK: an inequality that has never failed proves nothing.
+	# Stand the same disc far out over the void, where the clamp HAS to
+	# drag taps back, and the same helper must report a pull well past the
+	# radius.
+	var void_stand := Vector3(HubRegion.PLATEAU_HALF_EXTENT + 40.0, 0.0,
+		-HubRegion.PLATEAU_HALF_EXTENT - 40.0)
+	var void_pull: float = _clamped_disc_reach(void_stand, ZiplineDoor.BOARD_TAP_RADIUS)
+	_check(void_pull > ZiplineDoor.BOARD_TAP_RADIUS,
+		"BLIND CHECK: the same test reports %.3f u for a disc out over the void -- it can see a clamp that breaks boarding"
+			% void_pull)
+	print("")
+
+## The furthest a point inside the boarding disc ends up from `centre`
+## AFTER HubRegion.clamp_to. Equal to the radius when the whole disc is on
+## walkable ground; larger when the clamp drags part of it away, which is
+## the case that breaks boarding silently.
+func _clamped_disc_reach(centre: Vector3, radius: float) -> float:
+	var worst: float = 0.0
+	for a in 72:
+		var ang: float = TAU * float(a) / 72.0
+		var dir := Vector3(cos(ang), 0.0, sin(ang))
+		for r in 12:
+			var aim: Vector3 = centre + dir * (radius * float(r + 1) / 12.0)
+			worst = maxf(worst, centre.distance_to(HubRegion.clamp_to(aim)))
+	return worst
+
+## The badger's stand transform at `index` for an arbitrary offset, built
+## as a DELTA off the live body rather than restated from scratch: the rig
+## scale and whatever facing convention HubActorWalker.face() uses come
+## along untouched, and at the shipped offset and end 0 this IS the live
+## transform. Restating them here would be the "a fact is published once,
+## never retyped" failure in a probe.
+func _badger_stand_xform(badger: Node3D, index: int, offset: float) -> Transform3D:
+	var towers: Array = _zipline()["towers"] as Array
+	var live_to: Vector3 = (towers[0]["position"] as Vector3) - badger.global_position
+	live_to.y = 0.0
+	var pos: Vector3 = _stand_point(towers[index] as Dictionary, offset)
+	var to_tower: Vector3 = (towers[index]["position"] as Vector3) - pos
+	to_tower.y = 0.0
+	var delta: float = atan2(to_tower.x, to_tower.z) - atan2(live_to.x, live_to.z)
+	return Transform3D(Basis(Vector3.UP, delta) * badger.global_transform.basis, pos)
+
+## HubWorld._badger_rest with the constant lifted out, so the sweep and the
+## gate move the SAME body the game places.
+func _stand_point(tower: Dictionary, offset: float) -> Vector3:
+	var forward: Vector3 = tower["forward"]
+	var side := Vector3(forward.z, 0.0, -forward.x)
+	var foot: Vector3 = tower["stair_foot"]
+	return Vector3(foot.x, 0.0, foot.z) + side * offset
+
+## Every drawn part within `reach` of `centre`, flat: individual meshes and
+## each MultiMesh INSTANCE separately. The badger itself and the ground
+## plane are excluded; nothing else is, because the cap on this offset
+## turned out to be decor rather than the prop's own stair.
+func _parts_near(n: Node, badger: Node3D, centre: Vector3, reach: float) -> Array:
+	var out: Array = []
+	_walk_near(n, badger, Vector3(centre.x, 0.0, centre.z), reach, out)
+	return out
+
+func _walk_near(n: Node, badger: Node3D, centre: Vector3, reach: float, out: Array) -> void:
+	if n == badger or String(n.name).begins_with("Ground") \
+			or String(n.name).begins_with("Water") or String(n.name).begins_with("Plateau"):
+		return
+	if n is MeshInstance3D and (n as MeshInstance3D).mesh != null \
+			and (n as MeshInstance3D).skin == null:
+		_keep_near(String(n.name), (n as MeshInstance3D).global_transform,
+			(n as MeshInstance3D).mesh.get_aabb(), centre, reach, out)
+	elif n is MultiMeshInstance3D:
+		var mm: MultiMesh = (n as MultiMeshInstance3D).multimesh
+		if mm != null and mm.mesh != null:
+			for i in mm.instance_count:
+				_keep_near("%s#%d" % [n.name, i],
+					(n as MultiMeshInstance3D).global_transform * mm.get_instance_transform(i),
+					mm.mesh.get_aabb(), centre, reach, out)
+	for c in n.get_children():
+		_walk_near(c, badger, centre, reach, out)
+
+func _keep_near(label: String, xform: Transform3D, aabb: AABB, centre: Vector3,
+		reach: float, out: Array) -> void:
+	var flat: Vector3 = xform * aabb.get_center()
+	flat.y = 0.0
+	if centre.distance_to(flat) - (xform.basis * aabb.size).length() * 0.5 > reach:
+		return
+	out.append([label, xform, aabb])
+
+## Nearest drawn part to the silhouette placed at `xf`, as [label, distance].
+## `fatten` grows the body, for the blind check.
+##
+## ⚠️ VERTEX AGAINST BOX, and a second channel was tried and dropped. Box
+## CORNERS tested against the badger's own AABB reported 0.0000 for every
+## part at every offset out to 2.05 u: an animated body's bounding box is
+## mostly empty air, so a corner inside it is no evidence of a corner
+## inside the body. It could not reproduce the 0.1198 u already on file for
+## ZiplineStep#0 either, which is what exposed it.
+func _nearest_part(cloud: PackedVector3Array, xf: Transform3D, parts: Array,
+		fatten: float) -> Array:
+	var best: float = INF
+	var label: String = "-"
+	for part in parts:
+		var px: Transform3D = part[1]
+		var aabb: AABB = part[2]
+		var into: Transform3D = px.affine_inverse() * xf
+		var bmin: Vector3 = aabb.position
+		var bmax: Vector3 = aabb.position + aabb.size
+		var here: float = INF
+		for v in cloud:
+			var p: Vector3 = into * v
+			var d := Vector3(
+				maxf(maxf(bmin.x - p.x, p.x - bmax.x), 0.0),
+				maxf(maxf(bmin.y - p.y, p.y - bmax.y), 0.0),
+				maxf(maxf(bmin.z - p.z, p.z - bmax.z), 0.0))
+			here = minf(here, d.length())
+			if here <= fatten:
+				break
+		here = maxf(here - fatten, 0.0) if here > fatten else 0.0
+		if here < best:
+			best = here
+			label = String(part[0])
+	return [label, best]
+
+## The badger's drawn silhouette in its OWN NODE frame, skinned off the
+## live rig.
+##
+## ⚠️ IN THE NODE'S FRAME, NOT THE SKELETON'S. CLAUDE.md's rig-scale trap
+## is that a scale carried on the node gets counted TWICE when a
+## measurement goes through skel.global_transform and is then re-multiplied
+## by that scale; composing straight into the node frame cannot make that
+## mistake.
+func _skinned_cloud(badger: Node3D) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var to_node: Transform3D = badger.global_transform.affine_inverse()
+	for mi in _skinned_meshes(badger):
+		var skel: Skeleton3D = mi.get_node_or_null(mi.skeleton) as Skeleton3D
+		if skel == null:
+			continue
+		var binds: Array[Transform3D] = []
+		for b in mi.skin.get_bind_count():
+			var idx: int = mi.skin.get_bind_bone(b)
+			var nm: StringName = mi.skin.get_bind_name(b)
+			if nm != &"":
+				idx = skel.find_bone(nm)
+			binds.append(Transform3D.IDENTITY if idx < 0
+				else skel.get_bone_global_pose(idx) * mi.skin.get_bind_pose(b))
+		var into: Transform3D = to_node * skel.global_transform
+		for surf in mi.mesh.get_surface_count():
+			var arrays: Array = mi.mesh.surface_get_arrays(surf)
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+			var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+			if verts.is_empty() or bones.is_empty():
+				continue
+			var per: int = bones.size() / verts.size()
+			for v in verts.size():
+				var acc := Vector3.ZERO
+				var total: float = 0.0
+				for k in per:
+					var w: float = weights[v * per + k]
+					if w <= 0.0:
+						continue
+					var bi: int = bones[v * per + k]
+					if bi < 0 or bi >= binds.size():
+						continue
+					acc += binds[bi] * verts[v] * w
+					total += w
+				if total > 0.0:
+					out.append(into * (acc / total))
+	return out
+
+func _skinned_meshes(n: Node) -> Array:
+	var out: Array = []
+	if n is MeshInstance3D and (n as MeshInstance3D).mesh != null \
+			and (n as MeshInstance3D).skin != null:
+		out.append(n)
+	for c in n.get_children():
+		out.append_array(_skinned_meshes(c))
+	return out
 
 ## The region AS IT SHIPPED BEFORE the structure lobes: square, north lobe,
 ## shore pad. Spelled out rather than reached through a switch in
