@@ -700,3 +700,201 @@ y a posé suffit, et `DEBUG_POSITION_OVERLAY` reste tel quel sur `staging`.
 **Aucun asset importé, aucun asset supprimé, aucun tap, aucune pose de
 Keepy.** La sonde `FlameCompareProbe` est supprimée avant le commit et
 `ProbeTimeoutAudit` est revenu à **64, PASSED**.
+
+---
+
+# Feu de camp — LOT 3 : l'objet définitif (4 septembre 2026)
+
+> **FIN DE LA PHASE RECON.** Ce lot pose l'objet pour de bon : plus de
+> comparaison, plus d'étiquette D1/D2/E. Le verdict de Mathieu (device,
+> 4 septembre 2026) retient **candidat E** — le PNG de référence sur un
+> billboard animé par shader. Toujours `staging` uniquement.
+
+## Le verdict, et ce qui disparaît avec lui
+
+D1 et D2 (la flamme procédurale, quatre paliers durs) sont **retirés
+entièrement** de `scripts/hub/HubFlameRecon.gd` — qui n'existe plus : le
+fichier est supprimé, remplacé par `scripts/hub/HubCampfire.gd`, un script
+de PROP et non plus de recon. Ce que le lot 2 avait déjà mesuré et publié
+tient toujours et n'est pas refait : le procédural n'a jamais atteint la
+silhouette voulue (un contour lisse à goutte unique, jamais des aplats de
+type clipart), et le PNG de Mathieu est un dégradé continu que la
+quantification en 4 paliers ne pouvait imiter qu'en réécrivant l'art
+source. **C'est un résultat utile, publié en LOT 2, pas un échec qu'on
+efface** — cette ligne du brief est respectée à la lettre : rien n'est
+réécrit dans la section LOT 2 ci-dessus, ce lot ajoute seulement la sienne.
+
+`scripts/hub/HubCampfire.gd` reprend le shader de candidat E **byte pour
+byte** (billboard Y-locked écrit à la main, `blend_mix`, pulsation
+d'échelle + ondulation croissante vers le haut + variation de luminosité,
+les trois fréquences 0,83 / 0,61 / 1,37 Hz non commensurables) : le lot ne
+retouche pas ce que le device a déjà validé.
+
+## Les bûches — géométrie réelle, jamais un billboard
+
+Six cylindres bas-poly (`CylinderMesh`, `radial_segments = 6`) en
+matériau **`HubBuilder.TRUNK_COLOR`** lu par accesseur statique
+(`HubBuilder` porte un `class_name`, donc `HubBuilder.TRUNK_COLOR` se lit
+directement — aucune couleur retapée à la main, doctrine « un fait est
+publié une fois »). Disposition en teepee : une base sur un cercle de
+rayon 0,30 u, convergeant vers un point commun à 0,44 u de hauteur — la
+forme qui enveloppe la base de la flamme sur la quasi-totalité de
+l'azimut, contrairement à deux bûches en croix simple qui n'auraient
+couvert que deux côtés opposés.
+
+**Pourquoi jamais un billboard** : un billboard de bûche pivoterait avec la
+caméra exactement comme la flamme, et une bûche qui tourne trahit le
+dessin dès que l'angle change — la flamme s'en sort parce que le feu n'a
+structurellement aucune orientation propre, une bûche en a une. Chaque
+bûche est donc une géométrie réelle, orientée une fois par un
+`Basis(Quaternion(Vector3.UP, dir))`, jamais retournée vers quoi que ce
+soit après.
+
+## Coupe basse — vérifiée par rendu, pas supposée
+
+La coupe nette du PNG (opaque jusqu'à sa dernière rangée, aucun fondu) est
+à l'origine de la flamme (`y = 0`, même hauteur que la base des bûches).
+Le brief demandait une vérification empirique, pas un raisonnement
+géométrique sur le papier ; la sonde jetable `CampfireProbe.gd` (supprimée
+avant ce commit) a rendu une passe d'isolation masque-blanc à **8 azimuts
+× 3 distances (2,5 / 8,0 / 16,0 u)** pour chaque instance, sur la vraie
+caméra `HubCamera` (position construite depuis `HubCamera.OFFSET`, exactement
+comme le jeu la calcule) :
+
+| instance | pixels de coupe non couverts par une bûche, sur 24 vues |
+|---|---|
+| SITE (échelle 1,6) | **0 / 0 — PASS** |
+| ALT (échelle 1,2) | **0 / 0 — PASS** |
+
+Méthode : un shader d'isolement dédié (`CUT_BAND_SHADER`) peint en blanc
+pur uniquement la bande `v < 0,06` de la flamme (la coupe elle-même, pas
+tout le corps), fond noir, tout le reste de la scène caché ; un second
+rendu peint les bûches en blanc de la même façon ; tout pixel blanc du
+premier rendu qui n'est PAS blanc dans le second est une fuite. Zéro fuite
+mesurée aux 24 combinaisons — la coupe ne perce jamais.
+
+## Clearance — bûches comprises, mesurée contre TOUT ce qui est dessiné
+
+Pas la formule du lot 1/2 (flamme seule) : la sonde jetable a parcouru le
+sous-arbre `Props` en entier — chaque `MeshInstance3D` individuel et
+chaque instance de chaque `MultiMeshInstance3D` — et calculé la distance
+minimale entre le point le plus proche de CHAQUE pièce dessinée et le
+centre du feu, moins le rayon propre du feu (mesuré sur ses propres
+enfants réels : bûches + flamme, jamais supposé) :
+
+| instance | position | rayon propre | voisin le plus proche | clearance |
+|---|---|---|---|---|
+| SITE | (19,9 ; 25,4) | 0,746 u | `TreeCrown[36]` @ 3,560 u | **2,815 u** |
+| ALT | (16,9 ; 25,4) | 0,559 u | `TreeCrown[24]` @ 2,625 u | **2,066 u** |
+
+Les deux clearances sont positives et confortables — aucun chevauchement
+avec le décor existant, bûches comprises. ALT est légèrement plus serré
+(comme prévu : le lot 2 avait déjà mesuré le côté ouest comme le plus
+dégagé, mais moins que le site lui-même).
+
+## Échelle — DEUX instances posées, recommandation motivée, arbitrage à Mathieu
+
+Comme demandé, le lot ne tranche pas seul :
+
+* **SITE, x1,6 (RECOMMANDÉ)** — hauteur de flamme 1,84 u (1,15 × 1,6), plus
+  le bûcher (0,44 u). Keepy mesure ≈ 1,55 u au sommet du crâne (capsule
+  corps : rayon 0,4, hauteur 1,3, décalée de 0,9). Raisonnement : un feu de
+  camp censé être l'élément central du campement doit rivaliser avec cette
+  silhouette plutôt que rester à hauteur de genou — le turnstile, la
+  balançoire et le plongeoir du même hub dépassent tous 1,6 u. À x1,0 (ce
+  que le device a vu au lot 2, sans bûches), le brief prédit lui-même que
+  l'ajout des bûches va faire lire l'ensemble comme trop petit ; x1,6 est
+  la réponse à cette prédiction.
+* **ALT, x1,2** — hausse conservatrice depuis x1,0, à 3 u à l'ouest du
+  site. Sert de point de comparaison direct : si x1,6 lit comme
+  excessif sur device, x1,2 est l'alternative la plus proche de ce qui a
+  déjà été validé.
+
+Le site exact (19,9 ; 25,4) porte l'instance recommandée (x1,6) ; l'autre
+est à côté. Le lot 4 ne garde qu'une des deux et supprime ce comparatif,
+par les NEXT STEPS du brief lui-même.
+
+## L'écart de baseline — un TROISIÈME chiffre, toujours pas isolé, mais mieux cerné
+
+Rappel : lot 1 a publié **34 846**, lot 2 **35 134** (+288, 0,83 %) sur une
+géométrie identique au byte près. Ce lot ajoute un troisième point de
+mesure, sur un process totalement neuf (import complet depuis zéro,
+`godot4 --headless --import`, aucun résidu d'un run précédent) :
+
+**baseline mesurée ici : 34 674** — un TROISIÈME nombre, différent des
+deux précédents, alors que `scripts/hub`, `scenes/HubWorld.tscn`,
+`resources/hub` et `scripts/world` ne portent, pour la partie baseline
+(nœud `Campfires` caché), **aucune différence de comportement** vis-à-vis
+du lot 2 : les deux flammes ajoutées par ce lot sont masquées pendant la
+mesure baseline exactement comme `FlameRecon` l'était au lot 2.
+
+Ce que ce lot ferme, que les deux précédents n'avaient pas : **la lecture
+est parfaitement stable À L'INTÉRIEUR d'un même process.** Deux lectures
+successives du même run (`baseline read 1` et `read 2`, même frame worst-of
+60, aucun redémarrage entre les deux) rendent **34 674 et 34 674 — spread
+0**. Ce n'est donc PAS un bruit d'échantillonnage entre deux frames du
+pire cas, exactement comme le lot 2 l'avait déjà établi pour sa propre
+paire de lectures.
+
+**Ce que ça implique, sans le prouver totalement** : la variance est
+cross-PROCESS (trois lancements de `godot4`, trois nombres différents :
+34 846 / 35 134 / 34 674) mais nulle intra-process. Le candidat le plus
+probable est un état dépendant de l'heure de lancement réelle plutôt que
+du code — les acteurs animés du hub (chouette, ours, blaireau...) avancent
+sur `TIME`, dont la phase au moment où la frame « pire cas sur N » est
+échantillonnée dépend de l'instant de boot du process, ce qui peut faire
+entrer ou sortir un acteur du frustum de justesse à la frame retenue. Ce
+lot n'a **pas** isolé ce mécanisme expérimentalement (il faudrait geler
+l'horloge des acteurs et rejouer plusieurs process pour le confirmer) —
+il est donc rapporté comme **probable, non prouvé**, plutôt que présenté
+comme la cause. Ce que ça ne change pas : chaque delta publié dans ce
+document reste pris contre la baseline DE SON PROPRE RUN, donc rien de
+cet écart ne contamine les deltas.
+
+### Primitives — le vrai coût des bûches, mesuré
+
+Toujours worst-of-60, site (19,9 ; 25,4), caméra réelle :
+
+| état | primitives | delta |
+|---|---|---|
+| baseline (feux cachés), lecture 1 | 34 674 | +0 |
+| baseline (feux cachés), lecture 2 | 34 674 | +0 (spread intra-process : 0) |
+| SITE + ALT visibles (2 feux, 12 bûches, 2 flammes) | **35 218** | **+544** |
+
+Marge contre le plafond de 50 000 : **14 782 primitives**. Bien au-dessus
+du plancher lot 2 (+2 par billboard nu) : chaque bûche est une géométrie
+réelle, ~272 primitives en moyenne par feu complet (6 bûches + 1 quad),
+et la marge encaisse ça sans discussion.
+
+## Escalade — non déclenchée
+
+Le chemin de placement du décor procédural n'a pas résisté : `Campfires`
+est un `Node3D` frère de `Props` dans `scenes/HubWorld.tscn`, exactement
+comme l'était `FlameRecon`, et ne touche ni `HubBuilder.gd` ni aucun
+`MultiMeshInstance3D` partagé. Aucune bascule sur Opus nécessaire à ce
+lot.
+
+## Ce que ce lot a écrit
+
+* `scripts/hub/HubCampfire.gd` — nouveau, remplace
+  `scripts/hub/HubFlameRecon.gd` (supprimé). Deux instances complètes
+  (flamme + 6 bûches chacune), échelles 1,6 (site, recommandé) et 1,2
+  (alt, 3 u à l'ouest), étiquetées.
+* `scenes/HubWorld.tscn` — le nœud `FlameRecon` renommé `Campfires`,
+  `ext_resource id="17"` repointé vers `HubCampfire.gd`. Rien d'autre n'a
+  bougé.
+* Ce document.
+
+Aucun asset touché — `assets/textures/props/campfire_flame.png` et son
+`.import` restent ceux du lot 2. La sonde jetable `CampfireProbe.gd` (et
+sa scène) et la sonde de boot `HubBootCheck.gd` sont supprimées avant ce
+commit ; `ProbeTimeoutAudit` revient à **65 scènes de sonde, PASSED**
+(65, pas 64 : le compte affiché dans le brief du lot 3 datait d'avant ce
+lot et n'a jamais été un chiffre gaté par la sonde elle-même — elle ne
+vérifie qu'une propriété par sonde, jamais un total fixe).
+
+Build vérifié par un export release réel (`godot4 --export-release
+"Web"`, templates 4.3-stable, exit 0, aucune erreur GDScript ni erreur de
+shader) : `index.wasm` fait **35 376 909 octets**, la valeur que
+`CLAUDE.md` documente pour tout lot qui ne touche pas le code moteur —
+confirmé, ce lot ne touche que du contenu.

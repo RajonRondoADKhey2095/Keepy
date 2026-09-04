@@ -8,7 +8,7 @@
 [ext_resource type="Script" path="res://scripts/hub/HubRouter.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/hub/BoatMooring.gd" id="12"]
 [ext_resource type="Script" path="res://scripts/hub/ZiplineDoor.gd" id="16"]
-[ext_resource type="Script" path="res://scripts/hub/HubFlameRecon.gd" id="17"]
+[ext_resource type="Script" path="res://scripts/hub/HubCampfire.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -126,7 +126,7 @@ owl_scene = ExtResource("13")
 cabin_scene = ExtResource("14")
 magpie_scene = ExtResource("15")
 
-[node name="FlameRecon" type="Node3D" parent="WorldViewport/SubViewport/World"]
+[node name="Campfires" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("17")
 
 [node name="Keepy" type="Node3D" parent="WorldViewport/SubViewport/World"]
