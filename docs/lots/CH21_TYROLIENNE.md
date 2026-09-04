@@ -1765,3 +1765,254 @@ keepy_badger_side_by_side.png`.
 contrat permanent existant, pas une sonde neuve. Rien d'autre n'entre dans
 `scripts/dev/` pour ce lot ; le spike de rendu (`BadgerRescale16xSpike.
 {gd,tscn}`) a été supprimé avant ce commit, per la règle sonde-jetable.
+
+## LOT — SUSPENSION PAR CORPS, ET UN INSTRUMENT CHANGÉ EN COURS DE LOT (4 septembre 2026)
+
+> Suite directe du Sujet 4 du lot précédent, qui avait mesuré le défaut et
+> l'avait explicitement laissé ouvert en attente d'une décision de Mathieu.
+> Décision reçue : **donner au blaireau une pose de suspension DISTINCTE de
+> celle de Keepy**, plutôt que de partager `bar_drop`/`hang_clearance`.
+> Doctrine permanente : voir `CLAUDE.md`. Index : `docs/lots/INDEX.md`.
+
+### Le point de départ, reproduit avant d'être touché
+
+`ZiplineRideProbe` relancée sur la base (`27461ac`, branche
+`claude/badger-rescale-1-6x-aq4vxk`, non mergée) : **88 OK, 2 FAIL**, les
+deux lignes exactes que le lot précédent avait publiées —
+`FAIL the badger's feet are off the ground (-0.4502)` et
+`FAIL both are genuinely off the ground (0.360 > 0.180 / -0.450 > -0.225)`.
+Rien re-diagnostiqué : le défaut était au dossier, il a été reproduit puis
+corrigé.
+
+### Pourquoi `bar_drop`/`hang_clearance` RESTENT partagés
+
+La barre est **un objet physique unique**. Les deux constantes décrivent la
+ligne de crown que le chariot tend aux deux passagers —
+`cable_height - bar_drop - hang_clearance` = 1,71 — et le trajet de Keepy
+est validé device dessus. Elles n'ont pas bougé d'un micro-unité et le
+`_zip_seat` de Keepy est appelé **avec exactement le même argument
+qu'avant** (`KEEPY_DRAWN_HEIGHT`), donc sa géométrie est strictement
+inchangée : la sonde le remesure et lit toujours 0,3599 / 1,7100.
+
+Ce qui devient **par corps**, c'est la POSE accrochée à cette ligne.
+
+### Le défaut avait DEUX moitiés, et le brief n'en nommait qu'une
+
+**Moitié 1 — la hauteur debout n'est pas l'étendue suspendue.**
+`_badger_follow_zipline` passait `BADGER_DRAWN_HEIGHT` (2,160160, la
+*rest span* du rig) comme offset de crown. Or le blaireau n'est pas debout
+sur la tyrolienne : il est figé sur `Running` @ 0,351302 et incliné. Son
+crown réel au-dessus de son nœud n'a jamais valu 2,16.
+
+**Moitié 2 — le nœud n'est pas la semelle.** Keepy pend droit : son nœud
+EST sous ses pieds, donc l'ancienne formule était juste *par accident* de
+son côté. Le blaireau, incliné, a son point le plus bas **au-dessus** de
+son nœud. Deux erreurs qui se composaient.
+
+D'où trois constantes là où Keepy n'en demande aucune :
+
+    BADGER_HANG_PITCH_DEG   40.0        (était 12.0)
+    BADGER_HANG_CROWN        1.444291   crown au-dessus du nœud, pose de vol
+    BADGER_HANG_SOLE         0.138760   os le plus bas au-dessus du nœud
+    BADGER_HANG_DRAWN_SOLE  -0.019240   SURFACE la plus basse, sous le nœud
+
+### ⚠️ LE LEAN EST LE SEUL LEVIER, ET C'EST DE L'ARITHMÉTIQUE
+
+La barre pend à `ZIPLINE_CABLE_HEIGHT - ZIPLINE_TROLLEY_STEM` = **1,76 du
+sol**. À 12°, l'étendue suspendue DESSINÉE du blaireau mesure **1,984**.
+Un corps dont l'étendue suspendue dépasse la hauteur de la barre au-dessus
+du sol **ne peut pas** avoir son crown sous cette barre et ses pieds en
+l'air : aucune valeur de `hang_clearance` ne referme ça, parce que le
+déficit est entre le corps et **le SOL**, pas entre le corps et la barre.
+
+Le lean est la seule variable qui raccourcit l'étendue VERTICALE d'un corps
+sans déplacer la barre de Keepy. **Et il est libre ici, ce qui a été mesuré
+et non supposé** : la mi-main de la pose est déjà à **0,932 u de la barre à
+12°**, donc ce rig n'a jamais tenu la poignée et un lean plus fort ne casse
+aucun contrat main-sur-barre. (Cet écart est réel et pré-existant ; il est
+signalé ici et délibérément non poursuivi — ce n'était pas le sujet.)
+
+**Le lean NÉGATIF a été mesuré aussi, et il est pire** : le nez en l'air
+fait descendre les pieds (ils sont en avant du pivot dans la pose de
+course). Semelle dessinée à -25° : **-0,588** ; à -55° : **-0,308**. Aucun
+angle négatif ne sort du sol. Le sens positif n'est donc pas un choix.
+
+### ⚠️ L'INSTRUMENT A CHANGÉ EN COURS DE LOT, ET ÇA A DÉPLACÉ LA RÉPONSE DE 10°
+
+Premier balayage, lu sur les **OS** (`get_bone_global_pose`, l'instrument
+qui a servi à `BADGER_REST_SPAN`) : 30° ressortait comme le lean le plus
+faible avec une marge réelle, **+0,184**.
+
+Second balayage, lu sur les **VERTICES SKINNÉS** — la silhouette qu'un
+joueur voit : le MÊME 30° laisse **+0,019**, deux centimètres. Parce que la
+semelle DESSINÉE de ce rig pend **0,158 u sous son os le plus bas** dans
+cette pose. C'est le piège de la mauvaise métrique que ce dépôt documente,
+commis et rattrapé à l'intérieur d'un seul lot.
+
+Le balayage qui a tranché, sur pixels, nœud placé pour que le crown-os
+tombe sur le 1,71 partagé :
+
+| lean | semelle dessinée | crown dessiné | dégagement à la barre |
+|---|---|---|---|
+| 12° | **-0,258** (sous le sol) | 1,726 | — |
+| 30° | +0,019 | 1,774 | — |
+| 35° | +0,128 | 1,795 | — |
+| **40°** | **+0,246** | **1,817** | **0,358** |
+| 45° | +0,376 | 1,838 | — |
+
+**40° est le lean le plus faible dont les semelles DESSINÉES dégagent le
+sol d'une marge du même ordre que les 0,360 de Keepy**, dont le crown
+dessiné reste sous le câble à 2,0, et dont le vertex le plus proche dégage
+encore la poignée de 0,358 u — rien du blaireau ne traverse la barre qu'il
+tient. Il pend encore **16 % plus long que Keepy** (1,571 dessiné contre
+1,350), donc le rescale 1,6x lit toujours sur le seul écran où les deux
+sont en l'air côte à côte.
+
+Le banc s'est prouvé avant de publier : il a remesuré la rest span à
+**2,160081** contre les **2,160160** au dossier — 79 micro-unités d'écart —
+avant de sortir un seul chiffre neuf. 10 047 vertices skinnés à la main
+(`Skin.get_bind_pose()` composé avec la pose globale de chaque os), portés
+en monde et ramenés dans le repère de l'ACTEUR **une seule fois**.
+
+### Le résultat, en monde
+
+| passager | offset de crown | y du nœud | semelle dessinée | semelle en monde |
+|---|---|---|---|---|
+| Keepy | 1,350100 | 0,359900 | 0,000000 | **0,359900** |
+| blaireau | 1,444291 | 0,265709 | -0,019240 | **0,246469** |
+
+Les deux crowns toujours sur **1,71**, les deux semelles en l'air, les deux
+sous le pont à 0,90 : l'embarquement du blaireau est simplement une chute
+plus longue, pas une chute cassée.
+
+### Les deux riders toujours écrits dans le MÊME appel
+
+Vérifié, non supposé : `_apply_zip()` écrit le chariot, puis
+`_keepy.follow_zipline()`, puis `_badger_follow_zipline()`, dans le même
+appel de `tween_method`. Rien n'a été ajouté sur un `_process` ni sur un
+signal. La sonde le gate toujours et lit **0,000000 u** de retard pour les
+deux — le patron de la balançoire (12° d'erreur au pic pour un rider en
+retard d'une frame) est intact.
+
+### ⚠️ ROUGE AVANT VERT — TROIS passes, chacune sur une moitié différente
+
+| neutralisation | rouges | ce qu'elle prouve |
+|---|---|---|
+| **A** — site d'appel remis à `BADGER_DRAWN_HEIGHT` | **7 FAIL** | la sonde voit un mauvais argument au site d'appel : semelle vive à **-0,469**, et les trois constantes ne matchent plus le rig |
+| **B** — constantes de pose remises au modèle pré-fix (crown = hauteur debout, semelles = 0) | **9 FAIL** | reproduit **verbatim les deux lignes d'origine** (`-0.4502` et `0.360 > 0.180 / -0.450 > -0.225`) : la nouvelle suite SUBSUME l'ancienne et ajoute sept lignes |
+| **C** — lean seul remis à 12° | **5 FAIL** | le lean est porteur, pas décoratif : le crown dessiné monte à **2,315**, à travers le câble |
+
+Restauration **byte-identique** (`cmp`) après chacune, et vert de contrôle
+relancé après les trois : sortie ligne-à-ligne identique au vert précédent.
+
+### BLIND CHECKS — deux ajoutés, parce que la nouvelle assertion passait GRATUITEMENT
+
+« Les pieds du blaireau sont en l'air » est satisfait **pour rien** par une
+sonde qui oublie l'offset de semelle : avec la semelle lue à 0, le NŒUD du
+blaireau est à +0,0071, positif, vert, pendant que le rig dessiné est
+ailleurs. Deux gardes permanentes ajoutées :
+
+* la sonde rejoue **l'état livré-et-cassé** (`BADGER_DRAWN_HEIGHT` passé
+  comme offset de crown) et exige que la même mesure sorte **négative**
+  (-0,4694) — elle prouve qu'elle sait voir un corps enterré ;
+* elle exige que la semelle DESSINÉE et la semelle-os **soient différentes**
+  (0,1580 u d'écart), sans quoi la troisième constante serait décorative et
+  le lot suivant regaterait la mauvaise.
+
+Plus une garde d'échantillonnage : le compte de frames réellement lues (90)
+et le compte de vertices réellement skinnés (10 047) sont eux-mêmes assertés,
+parce qu'un rig jamais lu ferait passer tout le bloc pour rien.
+
+### Ce que la sonde mesure maintenant sur le RIG VIVANT
+
+Les os sur **chaque** frame échantillonnée du trajet (90) — ce qu'une sonde
+gatée peut s'offrir 90 fois — et la **silhouette skinnée une fois en plein
+vol**, qui est la lecture sur laquelle le dégagement au sol est jugé. Les
+trois constantes typées sont recomparées au rig à chaque run :
+
+    BADGER_HANG_DRAWN_SOLE  -0.019240 mesuré vs -0.019240 typé
+    BADGER_HANG_SOLE         0.138760 mesuré vs  0.138760 typé
+    BADGER_HANG_CROWN        1.444291 mesuré vs  1.444291 typé
+
+`ZiplineRideProbe` : **99 OK, 0 FAIL** (était 88 OK / 2 FAIL).
+`ZiplineStructureProbe` (sœur, sous `opengl3` per son propre en-tête) :
+**82 OK, 0 FAIL**. `ProbeTimeoutAudit` : **64 scènes de sonde**, revenu à
+sa baseline après suppression des bancs jetables.
+
+### PREUVE PAR RENDU — cinq instants, deux caméras
+
+`docs/renders/badger_suspension/`, sous `xvfb-run --rendering-driver
+opengl3` (le rect du conteneur est **asserté** non dégénéré, 1080x1920, et
+la sonde échoue bruyamment sinon). Cinq instants du trajet — t = 0, 40, 80,
+120, 155 frames — donc **pas seulement départ et arrivée**. Semelle
+dessinée mesurée **+0,246469 aux cinq**, le câble étant de niveau.
+
+Deux caméras par instant, délibérément :
+
+* `player_t*.png` — la **HubCamera livrée**, ce qu'un joueur voit
+  réellement : les deux corps glissent le long du fil, nettement en l'air
+  au-dessus du plateau, le blaireau visiblement le plus gros des deux ;
+* `elevation_t*.png` — une **élévation latérale** perpendiculaire au câble,
+  où la ligne de sol est sans ambiguïté. Une vue trois-quarts ne peut pas
+  trancher « ce pied est-il au-dessus du sol ou devant lui », qui est
+  exactement la question.
+
+⚠️ **Et les deux vues ne disent PAS la même chose sur la POSE.** En
+élévation, le lean à 40° lit comme un blaireau qui pique du nez. Dans le
+cadrage livré — caméra très plongeante, rotation fixe — il lit comme un
+corps aligné sur le fil, et pas du tout comme une chute. **C'est le cadrage
+livré qui décide**, l'élévation n'est qu'un instrument de mesure. Signalé
+parce qu'un futur lot qui regarderait l'élévation seule conclurait à un
+défaut qui n'existe pas à l'écran.
+
+### ⚠️ CLEARANCE ESCALIER — REMESURÉE, ET LA VALEUR PUBLIÉE EST FAUSSE : IL Y A INTERSECTION
+
+Le brief demandait de remesurer les **+0,050 u** publiés au lot précédent
+et de signaler si ça avait bougé. Ça n'a pas bougé : **ça n'a jamais été
+juste**.
+
+Les +0,050 venaient d'une DÉRIVATION de largeur (0,710 u à l'échelle
+0,962085 → 0,738 à l'échelle 1 → 0,960 à 1,300998), c'est-à-dire d'un
+nombre **recopié d'un lot antérieur** — précisément ce dont `CLAUDE.md`
+dit qu'il mérite plus de défiance qu'un nombre mesuré sur place.
+
+Mesuré cette fois sur la **silhouette skinnée dans le hub livré** (10 047
+vertices) contre la **géométrie DESSINÉE de l'escalier** :
+
+    ZiplineStringer#1   distance 0.0000 u   <- INTERSECTION
+    ZiplineStep#0       distance 0.1198 u
+    ZiplineStep#1       distance 0.2052 u
+    Bush#62             distance 0.1721 u
+
+Le corps du blaireau **traverse le limon proche**. Contre l'axe de
+l'escalier : flanc proche à **0,142555** du centre, rail à 0,42, soit
+**-0,277 u** au lieu des +0,050 annoncés.
+
+⚠️ **ET CETTE MESURE EXIGE `opengl3`.** Sous `--headless`, les transforms
+de `MultiMesh` rendent l'identité — les quatre `ZiplineStringer` lisaient
+tous à l'origine du monde et sortaient du filtre de proximité, donnant un
+premier rapport « dégagement confortable » contre **rien du tout**. Le
+piège est au dossier depuis longtemps ; il s'est encore payé ici.
+
+**NON CORRIGÉ, ET DÉLIBÉRÉMENT.** Le remède tient en une constante —
+`BADGER_SIDE_OFFSET` 0,95 → **~1,32** met le flanc proche à 0,46 + 0,05 de
+marge hors de la face externe du rail — mais il **déplace le blaireau sur
+le plateau** : c'est un choix de placement visible, il touche le disque de
+tap, le point de repos des deux extrémités et la région marchable, et rien
+dans ce brief ne le demandait. Le sujet de ce lot est la SUSPENSION, pas la
+station debout. Chiffré, signalé, laissé à Mathieu.
+
+### Sondes
+
+`ZiplineRideProbe` modifiée (contrat permanent existant). Trois bancs
+jetables écrits et **supprimés avant ce commit** per la règle
+sonde-jetable : `BadgerHangBench`, `ZiplineRideRenderSpike`,
+`StairClearanceBench`. `ProbeTimeoutAudit` revenu à sa baseline, vérifié
+des deux côtés (66 scènes bancs présents → 64 après suppression).
+
+### Ce que ce lot NE peut PAS trancher
+
+Si un blaireau incliné à 40° sur un fil **lit** comme un passager de
+tyrolienne sur un écran de six pouces. Aucune sonde de ce dépôt ne score
+ça, et l'élévation et le cadrage livré donnent deux lectures différentes.
+C'est le gate device, et c'est celui qui reste.

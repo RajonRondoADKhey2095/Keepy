@@ -1753,7 +1753,91 @@ const BADGER_HANG_TIME: float = 0.351302
 ## -- written as its own constant rather than shared because the two rigs
 ## have different pivots and a shared number would be a coincidence, not a
 ## fact.
-const BADGER_HANG_PITCH_DEG: float = 12.0
+##
+## ⚠️ 12.0 UNTIL 4 SEPTEMBRE 2026, AND THE CHANGE IS ARITHMETIC RATHER THAN
+## TASTE. `ZiplineRideProbe` measured the badger's feet at -0.4502 -- UNDER
+## the ground -- for the whole 4 s crossing, and the cause survives any
+## clearance you care to pick: the grab bar hangs at
+## `ZIPLINE_CABLE_HEIGHT - ZIPLINE_TROLLEY_STEM` = 1.76 above the ground,
+## and at a 12 deg lean this rig's DRAWN hanging extent measures 1.984. A
+## body whose hanging extent EXCEEDS the bar's own height off the ground
+## cannot have its crown under that bar and its feet off the ground at the
+## same time; no `hang_clearance` closes that, because the deficit is
+## between the body and the GROUND.
+##
+## The lean is the only lever that shortens a body's VERTICAL extent
+## without moving the bar Keepy hangs from -- and it is FREE HERE, which
+## was measured rather than assumed: the pose's mid-hand sits 0.932 u from
+## the bar at 12 deg already, so this rig has never been holding the handle
+## and a bigger lean breaks no hand-on-bar contract. (That gap is real and
+## pre-existing; it is reported in CH21 and deliberately not chased here.)
+##
+## ⚠️ AND THE SWEEP THAT PICKED 40 DEG WAS RUN TWICE, BECAUSE THE FIRST ONE
+## USED THE WRONG INSTRUMENT. Read on BONE JOINTS, 30 deg looked like the
+## shallowest lean with a real margin (+0.184). Re-read on the SKINNED
+## VERTICES -- the silhouette a player actually sees -- the same 30 deg
+## leaves +0.019, two centimetres, because this rig's drawn sole hangs
+## 0.164 u below its lowest JOINT. That is the repo's own wrong-metric
+## trap, made and caught inside one lot. The sweep that decided, on drawn
+## pixels, with the node placed so the bone crown lands on the shared 1.71:
+##
+##     lean    drawn sole   drawn crown   clearance to the grab bar
+##     12 deg    -0.258        1.726        (soles under the ground)
+##     30 deg    +0.019        1.774
+##     35 deg    +0.128        1.795
+##     40 deg    +0.246        1.817          0.358        <-- this
+##     45 deg    +0.376        1.838
+##
+## 40 deg is the shallowest lean whose DRAWN soles clear the ground by a
+## margin of the same order as Keepy's own 0.360, its drawn crown still
+## sits under the 2.0 cable, and its closest vertex still clears the grab
+## bar by 0.358 u -- so nothing of the badger passes through the handle it
+## rides on. It still hangs 16 % longer than Keepy (1.571 drawn against his
+## 1.350), so the 1.6x rescale still reads on the one screen where the two
+## are side by side in the air.
+const BADGER_HANG_PITCH_DEG: float = 40.0
+
+## THE BADGER'S OWN SUSPENSION POSE, and the reason it needs three
+## constants where Keepy needs none.
+##
+## ⚠️ A BODY'S STANDING HEIGHT IS NOT ITS HANGING EXTENT, and reading the
+## second off the first is the wrong-metric failure CLAUDE.md names. Keepy
+## hangs upright, so his crown is exactly `KEEPY_DRAWN_HEIGHT` above the
+## node he is written to and his soles are exactly ON it -- the seat maths
+## can use his standing height and be right by accident. The badger is
+## frozen on `Running` and leaned 40 deg: its crown is 1.444291 above its
+## node and its lowest JOINT is 0.138760 above it. Feeding
+## `BADGER_DRAWN_HEIGHT` (2.160160, the REST span) into the seat was
+## therefore wrong twice over -- it over-stated the extent by 0.72 u AND
+## pretended the node was at the soles.
+##
+## ⚠️ THREE AND NOT TWO, BECAUSE JOINTS ARE NOT THE SILHOUETTE. On this rig
+## the drawn surface hangs 0.158 u BELOW its lowest joint in this pose
+## (fur, foot, the mesh past the ankle), so a contract written on
+## `BADGER_HANG_SOLE` alone would gate a body 16 cm higher than the one on
+## screen. `BADGER_HANG_DRAWN_SOLE` is that surface, and it is what the
+## ground clearance is actually judged on; the joint reading is kept beside
+## it because it is what a per-frame probe can afford to sample.
+##
+## MEASURED THE WAY `BADGER_REST_SPAN` WAS, and by a bench that proved
+## itself first: the same pass re-measured the rest span at 2.160081
+## against the 2.160160 on file, 79 micro-units apart, before publishing
+## anything new. Joints from `Skeleton3D.get_bone_global_pose()` over all
+## 24 bones; the surface from all 10 047 vertices SKINNED BY HAND against
+## the live pose (`Skin.get_bind_pose()` composed with each bone's global
+## pose), because a skinned mesh's `get_aabb()` is the rest box and this
+## pipeline's 0.01 Armature scale makes it read a hundredfold low anyway --
+## the trap Lot B published. Carried to world and back through the ACTOR's
+## own transform exactly ONCE, never through `skel.global_transform` and
+## then multiplied by the scale again, which is Lot B's other bug.
+##
+## RE-MEASURED AGAINST THE LIVE RIG BY `ZiplineRideProbe` ON EVERY RUN --
+## joints on every sampled frame of the crossing, the skinned silhouette
+## once mid-flight -- and a drift fails there rather than silently
+## re-burying the badger.
+const BADGER_HANG_CROWN: float = 1.444291
+const BADGER_HANG_SOLE: float = 0.138760
+const BADGER_HANG_DRAWN_SOLE: float = -0.019240
 
 ## The one zipline the layout ships, as BUILT -- towers, cable, carrier and
 ## the three ride facts. Empty when the layout carries none, and every
@@ -1854,10 +1938,25 @@ func _badger_facing(index: int) -> Vector3:
 		return Vector3.FORWARD
 	return to_tower
 
-## Where a body of `height` hangs on the trolley, in the TROLLEY's own
-## frame: `(lateral, height, abscissa)`, which is the shape RECON 4 asked
-## for and the shape `RIDE_SEAT_Y` -- a bare float with no notion of an
-## occupant -- could not take.
+## Where a body whose crown sits `crown_above_origin` over its own node
+## origin hangs on the trolley, in the TROLLEY's own frame:
+## `(lateral, height, abscissa)`, which is the shape RECON 4 asked for and
+## the shape `RIDE_SEAT_Y` -- a bare float with no notion of an occupant --
+## could not take.
+##
+## ⚠️ THE ARGUMENT IS A CROWN OFFSET AND NOT A BODY HEIGHT, and the two
+## stopped being the same thing on 4 septembre 2026. What this function
+## returns is where a rider's NODE goes; what the bar fixes is where his
+## CROWN goes; the step between them is the crown's height above that node
+## IN THE POSE HE IS HELD IN. For Keepy those coincide -- he hangs upright,
+## so `KEEPY_DRAWN_HEIGHT` is both -- and passing his height here is
+## unchanged and stays correct. For the badger they do NOT: it is frozen on
+## a running frame and leaned, so its crown is `BADGER_HANG_CROWN` over its
+## node and its drawn soles are `BADGER_HANG_DRAWN_SOLE` from it rather
+## than on it. Passing `BADGER_DRAWN_HEIGHT` here put its feet 0.45 u UNDER
+## the ground
+## for the whole crossing -- measured by `ZiplineRideProbe`, not reasoned
+## about.
 ##
 ## ⚠️ THE HEIGHT IS MEASURED DOWN FROM THE GRAB BAR, NOT FROM THE CABLE,
 ## and that is arithmetic rather than taste. A rider hangs BY THE HANDS, so
@@ -1872,24 +1971,35 @@ func _badger_facing(index: int) -> Vector3:
 ## The deck is at 0.90, so boarding is a step off the platform and a
 ## 0.54 u drop onto the handle -- which is what a zipline is.
 ##
-## ⚠️ THE TWO RIDERS ARE NO LONGER THE SAME HEIGHT (3 septembre 2026 rescale,
-## see `BADGER_SCALE`), and this formula is exactly why that is safe rather
-## than a new defect to chase: `height` cancels out of the CROWN position --
-## `feet + height = (cable_height - bar_drop - hang_clearance - height) +
-## height = cable_height - bar_drop - hang_clearance` -- so both crowns sit
-## at the SAME 1.71 u regardless of body height, fixed by the bar the hands
-## hold. Only the FEET move: Keepy's land at 0.3599, the taller badger's
-## (height 1.597431) at 2.0 - 0.24 - 0.05 - 1.597431 = 0.112569 -- still off
-## the ground and still under the 0.90 deck, so its boarding drop is simply
-## a longer one, not a broken one.
+## ⚠️ THE BAR IS SHARED AND THE POSE IS NOT, which is the whole shape of
+## the 4 septembre 2026 fix. `bar_drop` and `hang_clearance` describe ONE
+## PHYSICAL OBJECT -- the crown line 1.71 u up that the trolley hands both
+## riders -- so they stay shared and stay exactly where Keepy's device-
+## validated trip left them. What is now per-body is the POSE hung off that
+## line: the crown offset passed in here, and the sole offset its owner
+## publishes beside it. `crown_above_origin` still cancels out of the CROWN
+## position -- `crown = (cable_height - bar_drop - hang_clearance -
+## crown_above_origin) + crown_above_origin` -- so BOTH crowns still land
+## on the same 1.71 regardless of who is hanging, and only the node, and
+## with it the soles, moves per rider.
+##
+## The two riders that ship, in world terms:
+##
+##     rider    crown offset   node y     drawn sole   soles land at
+##     Keepy      1.350100     0.359900     0.000000       0.359900
+##     badger     1.444291     0.265709    -0.019240       0.246469
+##
+## Both soles off the ground, both under the 0.90 deck, both crowns on
+## 1.71: the badger's boarding drop is simply a longer one.
 ##
 ## `sign` is -1 for the near-side seat and +1 for the far one; nothing here
 ## decides WHICH rider takes which, that is the caller's.
-func _zip_seat(sign: float, height: float) -> Vector3:
+func _zip_seat(sign: float, crown_above_origin: float) -> Vector3:
 	if _zipline.is_empty():
 		return Vector3.ZERO
 	var lateral: float = sign * float(_zipline["rider_lateral"])
-	var drop: float = float(_zipline["bar_drop"]) + float(_zipline["hang_clearance"]) + height
+	var drop: float = float(_zipline["bar_drop"]) + float(_zipline["hang_clearance"]) \
+		+ crown_above_origin
 	return Vector3(lateral, -drop, 0.0)
 
 ## A tap on the waiting badger. ONE tap buys the whole thing -- the hop
@@ -1982,7 +2092,10 @@ func _badger_follow_zipline() -> void:
 	var carrier: Node3D = _zipline.get("carrier")
 	if carrier == null or not is_instance_valid(carrier):
 		return
-	_badger.global_position = carrier.to_global(_zip_seat(1.0, BADGER_DRAWN_HEIGHT))
+	# ITS OWN CROWN OFFSET, NOT ITS STANDING HEIGHT. `BADGER_DRAWN_HEIGHT`
+	# here is what put this body under the ground for a whole crossing --
+	# see `_zip_seat` and `BADGER_HANG_CROWN`.
+	_badger.global_position = carrier.to_global(_zip_seat(1.0, BADGER_HANG_CROWN))
 	# Facing the way the trolley travels, read off the carrier's own basis
 	# -- the same one fact Keepy's `follow_zipline` reads, so the two riders
 	# cannot end up looking different ways along one wire.
