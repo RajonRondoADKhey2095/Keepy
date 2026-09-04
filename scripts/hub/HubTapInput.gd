@@ -73,11 +73,28 @@ signal tapped_boat(point: Vector3)
 ## bool cannot express and two bools would be free to disagree about --
 ## see ZiplineDoor.gd.
 ##
-## ⚠️ THE STAIRS CARRY NOTHING. RECON 1 (docs/lots/CH21_TYROLIENNE.md)
-## settled that a stair with a hotspot that emits whatever the body is
-## doing is the LADDER PATTERN this repo banned. The only tappable thing at
-## a tower is the badger, and it withdraws.
-signal tapped_zipline(point: Vector3)
+## ⚠️ RENAMED 4 SEPTEMBRE 2026 (tier 3), FROM `tapped_zipline`. RECON 1
+## (docs/lots/CH21_TYROLIENNE.md) settled that a stair with a hotspot that
+## emits whatever the body is doing is the banned LADDER PATTERN; it did
+## NOT settle that the stair must forever carry nothing, and Mathieu has
+## since asked for exactly that -- see `tapped_zipline_solo` below and the
+## doctrine note in ZiplineDoor.gd. This channel keeps the ORIGINAL
+## behaviour, name changed only to sit beside its sibling without either
+## one reading as the general case.
+signal tapped_zipline_badger(point: Vector3)
+
+## Emitted INSTEAD of tapped_ground when the finger landed close enough to
+## the STRUCTURE of a zipline tower -- deck, mast or stair, at EITHER end --
+## to mean "ride across alone", on the same world-units terms the badger
+## channel is picked out on. Same one-tap-one-signal rule.
+##
+## ⚠️ THE DOCTRINE CHANGE, NAMED. `ZiplineDoor.accepts_structure_tap`
+## withdraws on the boat's own terms (false for the whole of a trip, at
+## both ends) and EXCLUDES the badger's own disc where a badger is
+## currently waiting, so a tap can never mean both channels at once -- see
+## that file's header for why the two discs cannot be made geometrically
+## disjoint and are kept unambiguous in code instead.
+signal tapped_zipline_solo(point: Vector3)
 
 ## Emitted INSTEAD of tapped_ground when the finger landed close enough to
 ## an OWL PERCH to mean "fly with it", on the same world-units terms the
@@ -308,7 +325,16 @@ func _handle_point(screen_point: Vector2) -> void:
 	# funnel -- the cabin's measured defect, written once for every prop
 	# because being near an edge is what causes it, not being a cabin.
 	if zipline != null and zipline.accepts_boarding_tap(aim):
-		tapped_zipline.emit(destination)
+		tapped_zipline_badger.emit(destination)
+		return
+	# THE STRUCTURE, asked right after the badger and on the same `aim`
+	# terms, for the same edge-funnel reason. Checked SECOND so a tap
+	# landing in the small lens where the two discs geometrically
+	# overlap (see ZiplineDoor.gd) would in principle read as the badger
+	# first -- though `accepts_structure_tap` already excludes that lens
+	# on its own, so this order cannot actually change the answer.
+	if zipline != null and zipline.accepts_structure_tap(aim) >= 0:
+		tapped_zipline_solo.emit(destination)
 		return
 	# THE OWL, asked after the boat and before the ladder, on the same
 	# world-unit terms both of them use. The order between the owl and the
