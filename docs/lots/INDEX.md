@@ -46,8 +46,10 @@
 | CH18 | Cabane et navigation multi-niveaux | [CH18_CABANE_NAV.md](CH18_CABANE_NAV.md) | 13 | 3026 | 28 → 31 août 2026 | `main` |
 | CH19 | Pie, baiser et hotspot du lit | [CH19_PIE.md](CH19_PIE.md) | 11 | 2244 | 31 août → 1 sept 2026 | `main` |
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [CH20_OURS.md](CH20_OURS.md) | 7 | 1256 | 1 → 2 sept 2026 | `staging` |
+| CH21 | Tyrolienne — recon, palier 1 (structure/câble), palier 2 (blaireau/porte/nacelle), retouche échelle blaireau + diagnostic point nord, station debout dégagée de l'escalier | [CH21_TYROLIENNE.md](CH21_TYROLIENNE.md) | 16 | 2189 | 3 → 4 sept 2026 | `staging` |
+| CH22 | Audit visuel du hub 3D — recon pure, lecture seule : inventaire mesuré des 154 nœuds de dessin, budget 61 161 triangles, ancrage, densité XZ, palette (20 albédos sur 25 en bande morte), liste A (7 corrections sans asset) et liste B (5 fiches Meshy), arbitrage des deux décimateurs ; puis lot batch appliquant A1/A2/A3/A6 (61 161 → 60 201 triangles, `Rock` 1,43:1 → 3,14:1) et mesurant la **pire frame** laissée ouverte par la recon — 48 012 primitives, sous le plafond de frame de 50 000 | [CH22_HUB_VISUEL.md](CH22_HUB_VISUEL.md) | 2 | 1147 | 4 sept 2026 | `staging` |
 
-**Total chantiers : 118 sections, 23 830 lignes.**
+**Total chantiers : 128 sections, 24 752 lignes.**
 
 ⚠️ **CH20 contient DEUX sections écrites rétroactivement par le LOT H**
 (LOT A — identification de l'ours par rendu ; LOT F — orientation de l'ours

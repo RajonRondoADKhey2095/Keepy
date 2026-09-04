@@ -80,6 +80,8 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _router: HubRouter = $Router
 @onready var _fallback_menu: Control = $FallbackMenu
 @onready var _fallback_button: Button = $FallbackButton
+@onready var _position_overlay: PanelContainer = $PositionOverlay
+@onready var _position_label: Label = $PositionOverlay/PositionLabel
 @onready var _world_env: WorldEnvironment = $WorldViewport/SubViewport/World/WorldEnvironment
 @onready var _fallback_close: Button = $FallbackMenu/Panel/VBoxContainer/CloseButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
@@ -87,6 +89,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
 @onready var _battle_button: Button = $FallbackMenu/Panel/VBoxContainer/BattleButton
 @onready var _mooring: BoatMooring = $Mooring
+@onready var _zipline_door: ZiplineDoor = $ZiplineDoor
 @onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
 
 ## The 3D root, and the ONE reason this path is held: the impact splash is
@@ -336,6 +339,22 @@ const BEAR_SCENE: PackedScene = preload("res://assets/models/keepy_bear_walker.g
 ## undercounts a hundredfold. See `BearAnimSpike.gd` for the full account.
 const BEAR_SCALE: float = 1.130876
 
+## The bear rig's rest-pose height at scale 1, Lot B's own measurement,
+## restated here as a named constant for the SAME reason `BADGER_REST_SPAN`
+## below is one: this figure is quoted by comments comparing the badger's
+## height to the bear's, and a literal 1.671335 typed a second time there
+## is exactly the "recopied fact" this file's own doctrine bans (see
+## `KEEPY_DRAWN_HEIGHT`'s users). `BADGER_SCALE` itself is derived from
+## `KEEPY_DRAWN_HEIGHT`, not from this constant -- see its own comment.
+## Re-measured on the badger lot's own bench and read back 1.671344 against
+## this figure -- 9 micro-units apart, standing to publish, not redo.
+const BEAR_REST_SPAN: float = 1.671335
+
+## The bear's drawn height. Published so nothing that reasons about the
+## three-actor cast (Keepy, badger, bear) has to multiply the two facts
+## above back together.
+const BEAR_DRAWN_HEIGHT: float = BEAR_SCALE * BEAR_REST_SPAN
+
 ## Where the bear stands when nothing is happening.
 ##
 ## CHOSEN BY SCANNING THE LAYOUT, not by eye. On the seesaw's own local Z
@@ -515,6 +534,17 @@ const OWL_LOOP_HEADING_DEG: float = -35.0
 
 const KEEPY_CLEARANCE: float = 0.66
 
+## Debug-only readout of Keepy's world position, bottom-left, so Mathieu can
+## walk to a spot in-game and read its coordinates off the screen instead of
+## a capture being annotated by guesswork.
+##
+## ONE CONSTANT, top of file: this is the whole toggle. Flipping it to
+## `false` hides $PositionOverlay in _ready() and stops _process() from
+## touching its label -- nothing else in this file reads either node, so
+## turning it back off later is a one-line change and, if the overlay is
+## ever cut from the scene entirely, a one-line change here too.
+const DEBUG_POSITION_OVERLAY: bool = true
+
 
 func _ready() -> void:
 	# Both inherited from the screen this replaces, for the same reasons:
@@ -523,6 +553,8 @@ func _ready() -> void:
 	# a UI screen letterboxed at Chased's 9:16 would only gain black bars.
 	SafeArea.set_default()
 	SafeArea.fill_screen()
+
+	_position_overlay.visible = DEBUG_POSITION_OVERLAY
 
 	_apply_swamp_palette()
 
@@ -555,6 +587,9 @@ func _ready() -> void:
 	_setup_bear()
 	_keepy.seesaw_mounted.connect(_on_seesaw_mounted)
 	_keepy.seesaw_dismounted.connect(_on_seesaw_dismounted)
+	_setup_zipline()
+	_tap.tapped_zipline.connect(_on_tapped_zipline)
+	_keepy.zipline_mounted.connect(_on_zipline_mounted)
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -698,11 +733,12 @@ func _setup_owls() -> void:
 func _on_tapped_owl(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
 		return
 	_boarding = false
 	_climbing = false
 	_flying = true
+	_zipping = false
 	_keepy.hop_to(point)
 	# Already standing at the perch: nothing to walk, so take off on the
 	# spot rather than waiting for a landing that will never come.
@@ -906,11 +942,12 @@ func _build_cabin_markers() -> void:
 func _on_tapped_cabin(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
 		return
 	_boarding = false
 	_climbing = false
 	_flying = false
+	_zipping = false
 	_entering = true
 	_keepy.hop_to(point)
 	# Already standing at the door: nothing to walk, so go in on the spot
@@ -1564,6 +1601,683 @@ func _ride_exit_point(entry: Dictionary) -> Vector3:
 	# never being let off a roundabout is a stuck screen.
 	return fallback
 
+# =====================================================================
+# THE ZIPLINE -- TIER 2: THE BADGER, THE TAP DOOR AND THE TRIP
+# (3 septembre 2026, docs/lots/CH21_TYROLIENNE.md)
+#
+# A two-way shortcut. The badger waits at one end; a tap on IT walks Keepy
+# to the stair foot, both take the trolley, and the pair arrives at the
+# other end -- where the badger stays, so the next tap sends them back.
+#
+# ⚠️ THE THREE DOORS, EACH ONE SEPARATELY (RECON 1)
+#
+#   1. APPROACH.  `tapped_zipline`, withdrawn by `ZiplineDoor` on the
+#      boat's exact terms. During the walk Keepy is in ordinary HOPPING,
+#      so any tap falls to `tapped_ground` and CANCELS `_zipping` -- the
+#      same line that already cancels a boarding walk. Full exit, at any
+#      moment.
+#   2. THE TRIP.  The body is owned (`State.ON_ZIPLINE`) and a tap is
+#      dropped in `_on_tapped_ground`'s state branch. That rejection is
+#      legitimate ONLY because the trip is BOUNDED by a tween that always
+#      ends at a known point -- the owl's licence, and RECON 1 is explicit
+#      that this is what "a plank whose only other meaning is handled by
+#      state" really means. It is NOT extended to any unbounded phase.
+#   3. ARRIVAL.  The door is handed back with the end that was reached,
+#      and `leave_zipline` follows `leave_ride`: the tapped destination
+#      SURVIVES the drop, so one tap buys the trip AND the walk on.
+#
+# No state in this chain has no way out, which is the whole of the ladder
+# pattern's ban.
+
+## The badger. Restored asset (CH20 LOT K), and the FIRST scene reference
+## it has ever had -- it was in the repo unreferenced, so this integration
+## is what puts it in the .pck.
+const BADGER_SCENE: PackedScene = preload("res://assets/models/keepy_badger_walker.glb")
+
+## Keepy's drawn height, already on file (CabinProbe gates it, HubBuilder
+## and the waterline both quote it). Restated here as a named constant
+## because BADGER_SCALE is DERIVED from it below rather than from a number
+## typed twice.
+const KEEPY_DRAWN_HEIGHT: float = 1.3501
+
+## The badger rig's rest-pose height at scale 1, measured this lot the way
+## Lot B measured the bear's: `Skeleton3D.get_bone_global_pose()` over all
+## 24 joints, in the RIG's own space (`rig.global_transform.affine_inverse()`
+## -- measuring through `skel.global_transform` and then multiplying by the
+## scale applies it TWICE, which is the bug Lot B made and published).
+##
+## ⚠️ THE BENCH WAS PROVED BEFORE THE NUMBER WAS BELIEVED. The same pass
+## re-measured the BEAR and read 1.671344 against the 1.671335 on file --
+## 9 micro-units apart, so the bench reproduces a figure already in the
+## dossier and has standing to publish a new one. An AABB would have read
+## a hundredfold low here: the glb authors a 1.7-unit mesh and puts a 0.01
+## scale on its Armature.
+const BADGER_REST_SPAN: float = 1.660387
+
+## ⚠️ SUPERSEDED 3 SEPTEMBRE 2026 (first rescale) -- Mathieu's device
+## feedback (screenshots attached) read the shipped badger as too small
+## next to Keepy. The reasoning from that pass is kept here for the
+## record: on the zipline the two riders hang from ONE bar side by side,
+## and a badger the same height as Keepy reads as a matched pair rather
+## than one of them dangling. That reasoning is real, but it optimised the
+## one screen where the badger and Keepy are both in the air, at the cost
+## of every OTHER screen where the badger stands or walks beside Keepy on
+## the ground -- which is most of its screen time, and the one Mathieu's
+## screenshots showed. Overridden by his explicit call at the time: the
+## badger reads bigger than Keepy, full stop. That first pass placed the
+## badger at the GEOMETRIC MEAN of Keepy and the bear (k = sqrt(1.890073 /
+## 1.3501) = 1.183195), giving BADGER_DRAWN_HEIGHT = 1.597431 and
+## BADGER_SCALE = 0.962085.
+##
+## ⚠️ SUPERSEDED AGAIN, SAME DAY -- Mathieu asked for an EXACT ratio
+## instead: the badger's drawn height is 1.6x Keepy's, not the geometric
+## mean of Keepy and the bear. The geometric-mean reasoning above is no
+## longer what this constant computes; it is kept only as the record of
+## what shipped first. The formula is now:
+##
+##     BADGER_DRAWN_HEIGHT = 1.6 * KEEPY_DRAWN_HEIGHT
+##                         = 1.6 * 1.3501 = 2.16016
+##     BADGER_SCALE        = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
+##                         = 2.16016 / 1.660387 = 1.300998
+##
+## Written as the formula rather than as its result, the same rule
+## `KEEPY_DRAWN_HEIGHT`'s other users follow, so this cannot drift from
+## `BADGER_REST_SPAN`.
+##
+## ⚠️ CONSEQUENCE, FLAGGED AND LEFT AS-IS -- at 2.16016 the badger is now
+## TALLER than the bear (`BEAR_DRAWN_HEIGHT` 1.890073, +14.3%), reversing
+## the Keepy < badger < bear size order the first rescale established.
+## Mathieu was informed of this before the change was made and did not ask
+## for `BEAR_SCALE` to move; it is untouched. The inversion is real and
+## visible in game, not merely a comment -- see CH21_TYROLIENNE.md.
+const BADGER_DRAWN_HEIGHT: float = 1.6 * KEEPY_DRAWN_HEIGHT
+const BADGER_SCALE: float = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
+
+## How far to the side of the stair foot the badger waits, along the
+## tower's own lateral axis.
+##
+## ⚠️ BESIDE THE STAIR AND NOT ON IT. The stringers span
+## `ZIPLINE_STRINGER_HALF_SPAN` 0.42 either side of the flight. At the
+## ORIGINAL (pre-3-September) `BADGER_SCALE` the badger was 0.6 across,
+## and 0.95 put its near flank 0.23 clear of the near rail.
+##
+## RE-CHECKED AFTER EACH RESCALE, not left on the old number. The first
+## 3 September rescale (geometric-mean anchor) widened the rig to 0.6 *
+## 1.183195 = 0.710 u across; near flank at the same 0.95 offset:
+## 0.95 - 0.710/2 = 0.595, 0.595 - 0.42 = +0.175 u clear of the rail --
+## tighter than the 0.23 u it had, but not a conflict.
+##
+## RE-CHECKED AGAIN after the SAME-DAY 1.6x-exact rescale: the rig's own
+## lateral extent at scale 1 (0.710 / 0.962085 = 0.738) times the new
+## `BADGER_SCALE` (1.300998) gives 0.960 u across. Near flank at the same
+## 0.95 offset: 0.95 - 0.960/2 = 0.470, 0.470 - 0.42 = +0.050 u clear of
+## the rail -- STILL positive, i.e. still not a real conflict, but down
+## from +0.175 u to a fifth of that margin. Flagged rather than silently
+## carried: the next badger rescale, if any, may need this offset re-tuned
+## rather than left at 0.95. Left as-is for now because +0.050 u is a
+## real margin, not zero or negative, and nothing asked for a re-tune.
+##
+## =====================================================================
+## ⚠️ 0.95 UNTIL 4 SEPTEMBRE 2026, AND EVERY NUMBER ABOVE THIS LINE WAS
+## DERIVED RATHER THAN MEASURED. THE MEASUREMENT DOES NOT AGREE.
+##
+## The whole chain above -- 0.23, then +0.175, then +0.050 -- multiplies a
+## lateral extent recorded at one rig scale by the ratio of two later ones
+## and calls the product a clearance. Measured instead against the DRAWN
+## stair, on the badger's SKINNED silhouette (10 047 vertices posed by the
+## live rig) under `xvfb-run --rendering-driver opengl3`:
+##
+##     ZiplineStringer#1 (end 0)   0.0428 u      not +0.050
+##     ZiplineStringer#3 (end 1)   0.0428 u
+##     ZiplineStep#0               0.1260 u
+##
+## Two ways of getting this wrong were both paid for. The DERIVATION is one
+## -- it is a copied half-fact, and a body 0.6 across at one scale is not
+## 0.960 across at another once the rig faces its tower on the diagonal, so
+## the extent that matters is not a width at all. `--headless` is the other:
+## the stringers are BATCHED, the dummy driver returns the IDENTITY for
+## MultiMesh instance transforms, and a first pass that way put all four
+## rails at the world origin, filtered them out by proximity, and reported
+## a comfortable clearance against nothing whatever.
+##
+## 1.10 IS AN ARGMAX AND NOT "FURTHER FROM THE STAIR". The free window at
+## end 0 is bounded on BOTH sides: the stringer recedes as the offset grows
+## and the layout's own bush at (29.869, 7.138) closes in from beyond it.
+## Swept at 0.005 over [0.90, 1.40] on the drawn geometry:
+##
+##     offset   nearest drawn part            clearance
+##      0.950   ZiplineStringer#1               0.0428
+##      1.000   ZiplineStringer#1               0.0888
+##      1.100   ZiplineStringer#1               0.1886   <- shipped
+##      1.200   Bush#62                         0.0923
+##      1.320   Bush#62                         0.0014   <- the indicative
+##      1.350   Bush#62                         0.0000      value, measured
+##
+## ⚠️ SO THE ~1.32 THE PREVIOUS LOT OFFERED AS INDICATIVE IS A WORSE PLACE
+## TO STAND THAN 0.95, and it was right to call it indicative: it was
+## derived from the rail alone, and at 1.32 the badger is 0.0014 u off a
+## bush it INTERSECTS by 1.35. Copying it would have traded a stringer the
+## badger touches for a bush the badger stands in.
+##
+## At 1.100 the two constraints all but balance -- stringer 0.1886, bush
+## 0.1916 -- which is the signature of a real argmax rather than of a value
+## picked and then justified. Both ends read 0.1886: the two towers carry
+## the same stair, and end 1 has no bush at all (its clearance keeps rising
+## past 1.40), so the shared constant is capped by end 0 alone.
+##
+## 0.1886 u is 4.4x the margin it replaces and it is the MOST this constant
+## can buy. Anything more needs that bush moved, which is a decor edit this
+## lot was not asked for and did not make. Gated by `ZiplineStructureProbe`
+## PHASE I at 0.15 u, which rejects the old 0.95 by a factor of 4.4 and was
+## proved able to fail before it was believed on its pass.
+const BADGER_SIDE_OFFSET: float = 1.10
+
+## How long the trolley takes to cross.
+##
+## ⚠️ FLOORED BY `KeepyHopper.RIDE_SPEED_FLOOR`, NOT PICKED. That constant
+## is this screen's measured "a carried body slower than this reads as
+## drifting" -- the boat's own number. The span is 25.921 u, so anything
+## above 4.446 s would be under the floor. 4.0 s puts the trolley at
+## 6.480 u/s, 11.2 % clear of it, and is the shortest duration that still
+## lets a player watch the pair leave one tower and reach the other rather
+## than blink and find them moved.
+const ZIPLINE_RIDE_S: float = 4.0
+
+## The badger's hanging pose: a clip and a time in it.
+##
+## ⚠️ THE FRAME IS MEASURED, NOT GUESSED, and the clip is NOT the one RECON
+## 3 expected. That recon proposed seeking `Walking` to the frame where the
+## arms are highest. Measured over 129 samples of each clip, mid-hand
+## height above the hips, in the rig's own space:
+##
+##     Walking   best at t = 0.718 s   lift = +0.036 u
+##     Running   best at t = 0.351 s   lift = +0.289 u
+##
+## `Walking` swings the arms at the sides -- its best frame is barely above
+## the hips, and on the BEAR the same measurement is NEGATIVE (-0.023),
+## i.e. the hands never rise above the hips at all. `Running` at 0.351 s is
+## the only pose either rig ships with the arms genuinely up, so that is
+## the pose, and this is a case of a recon premise falling to its own
+## measurement rather than of the recon being followed.
+const BADGER_HANG_CLIP: StringName = &"Running"
+const BADGER_HANG_TIME: float = 0.351302
+
+## The badger's backward lean while hanging, in degrees. Positive is a lean
+## AWAY from travel, the same reading as `KeepyHopper.ZIPLINE_HANG_PITCH_DEG`
+## -- written as its own constant rather than shared because the two rigs
+## have different pivots and a shared number would be a coincidence, not a
+## fact.
+##
+## ⚠️ 12.0 UNTIL 4 SEPTEMBRE 2026, AND THE CHANGE IS ARITHMETIC RATHER THAN
+## TASTE. `ZiplineRideProbe` measured the badger's feet at -0.4502 -- UNDER
+## the ground -- for the whole 4 s crossing, and the cause survives any
+## clearance you care to pick: the grab bar hangs at
+## `ZIPLINE_CABLE_HEIGHT - ZIPLINE_TROLLEY_STEM` = 1.76 above the ground,
+## and at a 12 deg lean this rig's DRAWN hanging extent measures 1.984. A
+## body whose hanging extent EXCEEDS the bar's own height off the ground
+## cannot have its crown under that bar and its feet off the ground at the
+## same time; no `hang_clearance` closes that, because the deficit is
+## between the body and the GROUND.
+##
+## The lean is the only lever that shortens a body's VERTICAL extent
+## without moving the bar Keepy hangs from -- and it is FREE HERE, which
+## was measured rather than assumed: the pose's mid-hand sits 0.932 u from
+## the bar at 12 deg already, so this rig has never been holding the handle
+## and a bigger lean breaks no hand-on-bar contract. (That gap is real and
+## pre-existing; it is reported in CH21 and deliberately not chased here.)
+##
+## ⚠️ AND THE SWEEP THAT PICKED 40 DEG WAS RUN TWICE, BECAUSE THE FIRST ONE
+## USED THE WRONG INSTRUMENT. Read on BONE JOINTS, 30 deg looked like the
+## shallowest lean with a real margin (+0.184). Re-read on the SKINNED
+## VERTICES -- the silhouette a player actually sees -- the same 30 deg
+## leaves +0.019, two centimetres, because this rig's drawn sole hangs
+## 0.164 u below its lowest JOINT. That is the repo's own wrong-metric
+## trap, made and caught inside one lot. The sweep that decided, on drawn
+## pixels, with the node placed so the bone crown lands on the shared 1.71:
+##
+##     lean    drawn sole   drawn crown   clearance to the grab bar
+##     12 deg    -0.258        1.726        (soles under the ground)
+##     30 deg    +0.019        1.774
+##     35 deg    +0.128        1.795
+##     40 deg    +0.246        1.817          0.358        <-- this
+##     45 deg    +0.376        1.838
+##
+## 40 deg is the shallowest lean whose DRAWN soles clear the ground by a
+## margin of the same order as Keepy's own 0.360, its drawn crown still
+## sits under the 2.0 cable, and its closest vertex still clears the grab
+## bar by 0.358 u -- so nothing of the badger passes through the handle it
+## rides on. It still hangs 16 % longer than Keepy (1.571 drawn against his
+## 1.350), so the 1.6x rescale still reads on the one screen where the two
+## are side by side in the air.
+const BADGER_HANG_PITCH_DEG: float = 40.0
+
+## THE BADGER'S OWN SUSPENSION POSE, and the reason it needs three
+## constants where Keepy needs none.
+##
+## ⚠️ A BODY'S STANDING HEIGHT IS NOT ITS HANGING EXTENT, and reading the
+## second off the first is the wrong-metric failure CLAUDE.md names. Keepy
+## hangs upright, so his crown is exactly `KEEPY_DRAWN_HEIGHT` above the
+## node he is written to and his soles are exactly ON it -- the seat maths
+## can use his standing height and be right by accident. The badger is
+## frozen on `Running` and leaned 40 deg: its crown is 1.444291 above its
+## node and its lowest JOINT is 0.138760 above it. Feeding
+## `BADGER_DRAWN_HEIGHT` (2.160160, the REST span) into the seat was
+## therefore wrong twice over -- it over-stated the extent by 0.72 u AND
+## pretended the node was at the soles.
+##
+## ⚠️ THREE AND NOT TWO, BECAUSE JOINTS ARE NOT THE SILHOUETTE. On this rig
+## the drawn surface hangs 0.158 u BELOW its lowest joint in this pose
+## (fur, foot, the mesh past the ankle), so a contract written on
+## `BADGER_HANG_SOLE` alone would gate a body 16 cm higher than the one on
+## screen. `BADGER_HANG_DRAWN_SOLE` is that surface, and it is what the
+## ground clearance is actually judged on; the joint reading is kept beside
+## it because it is what a per-frame probe can afford to sample.
+##
+## MEASURED THE WAY `BADGER_REST_SPAN` WAS, and by a bench that proved
+## itself first: the same pass re-measured the rest span at 2.160081
+## against the 2.160160 on file, 79 micro-units apart, before publishing
+## anything new. Joints from `Skeleton3D.get_bone_global_pose()` over all
+## 24 bones; the surface from all 10 047 vertices SKINNED BY HAND against
+## the live pose (`Skin.get_bind_pose()` composed with each bone's global
+## pose), because a skinned mesh's `get_aabb()` is the rest box and this
+## pipeline's 0.01 Armature scale makes it read a hundredfold low anyway --
+## the trap Lot B published. Carried to world and back through the ACTOR's
+## own transform exactly ONCE, never through `skel.global_transform` and
+## then multiplied by the scale again, which is Lot B's other bug.
+##
+## RE-MEASURED AGAINST THE LIVE RIG BY `ZiplineRideProbe` ON EVERY RUN --
+## joints on every sampled frame of the crossing, the skinned silhouette
+## once mid-flight -- and a drift fails there rather than silently
+## re-burying the badger.
+const BADGER_HANG_CROWN: float = 1.444291
+const BADGER_HANG_SOLE: float = 0.138760
+const BADGER_HANG_DRAWN_SOLE: float = -0.019240
+
+## The one zipline the layout ships, as BUILT -- towers, cable, carrier and
+## the three ride facts. Empty when the layout carries none, and every
+## branch below checks it rather than assuming.
+var _zipline: Dictionary = {}
+
+## The badger. Parented under `World/` beside Keepy and the bear rather
+## than under `World/Props`, for the bear's reason: a prop, in this file's
+## vocabulary, is something the builder places once from the layout, and
+## this actor rides across the plateau. That parenting is also why its
+## draw cost -- ONE MeshInstance3D, the rig's single skinned mesh -- is
+## published in the report instead of riding the `World/Props` node budget
+## the probe trio gates, which structurally cannot see it.
+var _badger: HubActorWalker = null
+
+## Set by a tap on the badger and cleared the moment the walk to the tower
+## reaches it, is cancelled, or runs out. THE SAME SHAPE as `_boarding`,
+## `_climbing`, `_flying` and `_entering`, and cleared in the same three
+## places, so a zipline intent cannot outlive its walk any more than
+## theirs can.
+var _zipping: bool = false
+
+## The trip in progress: the published zipline entry plus the end index it
+## is travelling TO. Empty when nothing is crossing.
+var _zip_trip: Dictionary = {}
+
+## Builds the badger, parks it at the near tower and opens the door.
+##
+## END 0 AND NOT A CHOICE. `ziplines()` publishes its towers in layout
+## order -- near end first -- and the layout's near end is P1 (27.7 / 9.2),
+## the end RECON 5 measured as the one a player can actually see from. The
+## far end P2 is invisible from P1 and Mathieu accepted that asymmetry; the
+## side that is reachable first is therefore the side the badger starts on.
+func _setup_zipline() -> void:
+	var lines: Array[Dictionary] = _builder.ziplines()
+	if lines.is_empty():
+		return
+	if lines.size() > 1:
+		# One zipline is the layout this ships. A second would need a door
+		# each and a badger each, which is a shape this file does not have
+		# -- said out loud rather than silently carrying the first.
+		push_error("HubWorld: %d ziplines in the layout; tier 2 wires exactly one." % lines.size())
+	_zipline = lines[0]
+
+	_badger = HubActorWalker.new()
+	_badger.model_scene = BADGER_SCENE
+	_badger.model_scale = BADGER_SCALE
+	# BEFORE add_child, for the bear's reason: the walker builds its rig in
+	# _ready(), and a scale written afterwards would be a rig drawn once at
+	# the wrong size.
+	_badger.position = _badger_rest(0)
+	_world.add_child(_badger)
+	_badger.face(_badger_facing(0))
+
+	_zipline_door.setup(_zipline_ends(), _badger, 0)
+	# The tap node resolved its own path in _ready(); this only checks that
+	# it found the same object, because a door nobody asks is a door that
+	# never withdraws -- and that failure is silent.
+	if _tap.zipline != _zipline_door:
+		push_error("HubWorld: HubTapInput.zipline_path does not resolve to this ZiplineDoor; the tap channel is dead.")
+
+## The two towers' ground points, in the order they were published.
+func _zipline_ends() -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	if _zipline.is_empty():
+		return out
+	for tower in (_zipline["towers"] as Array):
+		out.append(tower["position"] as Vector3)
+	return out
+
+## Where the badger waits at end `index`: beside the stair foot, on the
+## tower's own lateral axis.
+##
+## READ OFF THE BUILT TOWER, never off the layout. `stair_foot` and
+## `forward` are published by the pass that DREW the stair, so the actor
+## stands next to the steps a player can see rather than next to where a
+## recomputation thinks they are -- the doorstep-that-did-not-scale
+## failure this repo has already paid for.
+func _badger_rest(index: int) -> Vector3:
+	if _zipline.is_empty():
+		return Vector3.ZERO
+	var tower: Dictionary = (_zipline["towers"] as Array)[index]
+	var forward: Vector3 = tower["forward"]
+	var side := Vector3(forward.z, 0.0, -forward.x)
+	var foot: Vector3 = tower["stair_foot"]
+	return Vector3(foot.x, 0.0, foot.z) + side * BADGER_SIDE_OFFSET
+
+## Which way the badger looks while waiting: at the tower it is standing
+## beside, so it reads as somebody waiting to go up rather than as scenery
+## facing the void.
+func _badger_facing(index: int) -> Vector3:
+	if _zipline.is_empty():
+		return Vector3.FORWARD
+	var tower: Dictionary = (_zipline["towers"] as Array)[index]
+	var to_tower: Vector3 = (tower["position"] as Vector3) - _badger_rest(index)
+	to_tower.y = 0.0
+	if to_tower.length_squared() < 1.0e-8:
+		return Vector3.FORWARD
+	return to_tower
+
+## Where a body whose crown sits `crown_above_origin` over its own node
+## origin hangs on the trolley, in the TROLLEY's own frame:
+## `(lateral, height, abscissa)`, which is the shape RECON 4 asked for and
+## the shape `RIDE_SEAT_Y` -- a bare float with no notion of an occupant --
+## could not take.
+##
+## ⚠️ THE ARGUMENT IS A CROWN OFFSET AND NOT A BODY HEIGHT, and the two
+## stopped being the same thing on 4 septembre 2026. What this function
+## returns is where a rider's NODE goes; what the bar fixes is where his
+## CROWN goes; the step between them is the crown's height above that node
+## IN THE POSE HE IS HELD IN. For Keepy those coincide -- he hangs upright,
+## so `KEEPY_DRAWN_HEIGHT` is both -- and passing his height here is
+## unchanged and stays correct. For the badger they do NOT: it is frozen on
+## a running frame and leaned, so its crown is `BADGER_HANG_CROWN` over its
+## node and its drawn soles are `BADGER_HANG_DRAWN_SOLE` from it rather
+## than on it. Passing `BADGER_DRAWN_HEIGHT` here put its feet 0.45 u UNDER
+## the ground
+## for the whole crossing -- measured by `ZiplineRideProbe`, not reasoned
+## about.
+##
+## ⚠️ THE HEIGHT IS MEASURED DOWN FROM THE GRAB BAR, NOT FROM THE CABLE,
+## and that is arithmetic rather than taste. A rider hangs BY THE HANDS, so
+## his crown sits just under the bar; measuring from the cable instead put
+## Keepy's head 0.19 u ABOVE the bar he is supposed to be holding. The bar
+## is `bar_drop` below the cable and the crown `hang_clearance` below the
+## bar, so the FEET land at
+##
+##     cable_height - bar_drop - hang_clearance - height
+##
+## which for Keepy is 2.0 - 0.24 - 0.05 - 1.3501 = 0.3599 in world terms.
+## The deck is at 0.90, so boarding is a step off the platform and a
+## 0.54 u drop onto the handle -- which is what a zipline is.
+##
+## ⚠️ THE BAR IS SHARED AND THE POSE IS NOT, which is the whole shape of
+## the 4 septembre 2026 fix. `bar_drop` and `hang_clearance` describe ONE
+## PHYSICAL OBJECT -- the crown line 1.71 u up that the trolley hands both
+## riders -- so they stay shared and stay exactly where Keepy's device-
+## validated trip left them. What is now per-body is the POSE hung off that
+## line: the crown offset passed in here, and the sole offset its owner
+## publishes beside it. `crown_above_origin` still cancels out of the CROWN
+## position -- `crown = (cable_height - bar_drop - hang_clearance -
+## crown_above_origin) + crown_above_origin` -- so BOTH crowns still land
+## on the same 1.71 regardless of who is hanging, and only the node, and
+## with it the soles, moves per rider.
+##
+## The two riders that ship, in world terms:
+##
+##     rider    crown offset   node y     drawn sole   soles land at
+##     Keepy      1.350100     0.359900     0.000000       0.359900
+##     badger     1.444291     0.265709    -0.019240       0.246469
+##
+## Both soles off the ground, both under the 0.90 deck, both crowns on
+## 1.71: the badger's boarding drop is simply a longer one.
+##
+## `sign` is -1 for the near-side seat and +1 for the far one; nothing here
+## decides WHICH rider takes which, that is the caller's.
+func _zip_seat(sign: float, crown_above_origin: float) -> Vector3:
+	if _zipline.is_empty():
+		return Vector3.ZERO
+	var lateral: float = sign * float(_zipline["rider_lateral"])
+	var drop: float = float(_zipline["bar_drop"]) + float(_zipline["hang_clearance"]) \
+		+ crown_above_origin
+	return Vector3(lateral, -drop, 0.0)
+
+## A tap on the waiting badger. ONE tap buys the whole thing -- the hop
+## chain walks to the tower and `_on_hop_landed` boards on arrival --
+## because that is exactly how a tap on the boat, the ladder and the perch
+## already behave.
+func _on_tapped_zipline(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = true
+	_keepy.hop_to(point)
+	# Already standing at the tower: nothing to walk, so board on the spot
+	# rather than waiting for a landing that will never come. THE
+	# ZERO-LENGTH WALK, which this repo shipped a bug on once: `_advance()`
+	# ends a walk shorter than ARRIVE_EPSILON with `became_idle` and NEVER
+	# with `hop_landed`, so a hotspot wired only to the landing does
+	# nothing at all when the player is already there.
+	if not _keepy.is_hopping():
+		_try_zip(_keepy.global_position)
+
+## Boards if the landing is close enough to the waiting badger. Returns
+## true when the step onto the handle started, so the caller can stop
+## looking at that landing.
+##
+## The proximity test is the SAME radius the tap used, for the reason the
+## boat's and the ladder's are: a player who tapped the badger and walked
+## to it cannot arrive and be told they are not there yet.
+##
+## ⚠️ AND THE INTENT SURVIVES A LANDING THAT HAS NOT ARRIVED YET. That was
+## the boarding walk's own measured defect, green for a whole batch because
+## the arrival happened to fall inside the radius on hop one. The walk from
+## anywhere on the plateau to x ~ +26 is many hops.
+func _try_zip(position: Vector3) -> bool:
+	if _zipline.is_empty() or not _zipline_door.is_available():
+		_zipping = false
+		return false
+	var flat := Vector3(position.x, 0.0, position.z)
+	if flat.distance_to(_zipline_door.rider_position()) > ZiplineDoor.BOARD_TAP_RADIUS:
+		return false
+	var carrier: Node3D = _zipline.get("carrier")
+	if carrier == null or not is_instance_valid(carrier):
+		_zipping = false
+		return false
+	var from_end: int = _zipline_door.waiting_end()
+	var to_end: int = _zipline_door.far_end()
+	if from_end < 0 or to_end < 0:
+		_zipping = false
+		return false
+	# The trolley is parked at whichever end the pair last arrived at, so
+	# nothing needs moving here -- asserted rather than re-placed, because
+	# a silent re-park would hide a trip that ended somewhere unexpected.
+	if not _keepy.board_zipline(carrier, _zip_seat(-1.0, KEEPY_DRAWN_HEIGHT)):
+		return false
+	_zipping = false
+	# BOTH ENDS CLOSE HERE, before a single frame of travel. The withdrawal
+	# starts at the step onto the handle and not at the arrival, so the
+	# window in which a second tap could start a second trip is empty.
+	_zipline_door.set_riding(true)
+	_zip_trip = {"from": from_end, "to": to_end}
+	# The badger takes its seat at the same instant, and SNAPS: the rig
+	# ships a walk and a run and no climb, so there is nothing to play
+	# between standing and hanging. It is the bear's own documented snap,
+	# and it happens on the frame Keepy leaves the ground rather than on
+	# arrival, so the pair is never seen half-boarded.
+	_badger_take_seat()
+	return true
+
+## Puts the badger on its side of the handle and holds the measured hang
+## pose. The pose is taken BEFORE the first placement so the rig is never
+## drawn one frame mid-stride at handle height.
+func _badger_take_seat() -> void:
+	if _badger == null or _zipline.is_empty():
+		return
+	_badger.freeze_at(BADGER_HANG_CLIP, BADGER_HANG_TIME)
+	_badger.set_model_pitch(BADGER_HANG_PITCH_DEG)
+	_badger_follow_zipline()
+
+## Writes the badger onto its seat on the trolley. Position AND facing, the
+## same two things `follow_zipline` writes for Keepy, in the same frame the
+## carrier was written.
+func _badger_follow_zipline() -> void:
+	if _badger == null or _zipline.is_empty():
+		return
+	var carrier: Node3D = _zipline.get("carrier")
+	if carrier == null or not is_instance_valid(carrier):
+		return
+	# ITS OWN CROWN OFFSET, NOT ITS STANDING HEIGHT. `BADGER_DRAWN_HEIGHT`
+	# here is what put this body under the ground for a whole crossing --
+	# see `_zip_seat` and `BADGER_HANG_CROWN`.
+	_badger.global_position = carrier.to_global(_zip_seat(1.0, BADGER_HANG_CROWN))
+	# Facing the way the trolley travels, read off the carrier's own basis
+	# -- the same one fact Keepy's `follow_zipline` reads, so the two riders
+	# cannot end up looking different ways along one wire.
+	_badger.face(carrier.global_transform.basis * Vector3.BACK)
+
+## Keepy has taken the handle: the trolley starts moving.
+##
+## Hung off the MOUNT signal and not off `_try_zip`, because boarding is an
+## arc: starting the trip when the tap resolved would have run the cable
+## out from under a body still in the air over the deck.
+func _on_zipline_mounted() -> void:
+	if _zip_trip.is_empty() or _zipline.is_empty():
+		return
+	# WRITTEN AT t = 0 STRAIGHT AWAY, before the tween exists. A Tween's
+	# first step lands on the NEXT frame, and on a RETURN trip the trolley
+	# still carries the heading of the outbound run until that step -- so
+	# without this, one frame of every return would draw two riders facing
+	# backwards up their own wire. Caught by the probe rather than reasoned
+	# about, and it is the same "placed straight away rather than waiting
+	# for the next step" the bear's mount already does for its own frame.
+	_apply_zip(0.0)
+	var trip: Tween = _build_zip_trip()
+	if trip == null:
+		return
+	trip.finished.connect(_on_zip_trip_finished, CONNECT_ONE_SHOT)
+
+## Builds and starts the trolley's tween, and returns it.
+##
+## `tween_method` on a NORMALISED t, for the turnstile's measured reason:
+## both riders are written in the same call as the carrier, so neither can
+## be a frame behind the handle they are holding -- see `_apply_zip`.
+##
+## LINEAR, deliberately. A zipline is a body released onto a level wire; it
+## has no reason to ease in or out, and the two ends are the two towers'
+## own anchors, so the trip starts and finishes exactly where the cable is
+## drawn rather than near it. An ease here would also be a second speed
+## curve laid over `ZIPLINE_RIDE_S`, which is already floored against
+## `RIDE_SPEED_FLOOR`.
+func _build_zip_trip() -> Tween:
+	var carrier: Node3D = _zipline.get("carrier")
+	if carrier == null or not is_instance_valid(carrier):
+		return null
+	var tween := carrier.create_tween()
+	tween.set_trans(Tween.TRANS_LINEAR)
+	tween.tween_method(_apply_zip, 0.0, 1.0, ZIPLINE_RIDE_S)
+	return tween
+
+## Moves the trolley to its place on the cable at `t`, and -- in the SAME
+## call, immediately after -- moves BOTH riders.
+##
+## ⚠️ THE TWO RIDERS ARE WRITTEN HERE AND NOWHERE ELSE. Not in the badger's
+## own `_process`, not on a signal: a rider that reads its carrier on its
+## own callback was MEASURED a full frame behind on the turnstile (12.0 deg
+## at the peak of the shove), and `process_priority` did not move it,
+## because Tween steps land after every node's `_process`. That was 12
+## degrees on a prop turning in place; this carrier crosses 25.9 u in 4 s,
+## so one frame is 10.8 cm of visible slip between a body and the handle it
+## is holding.
+##
+## The interpolation is between the two ANCHORS the builder published, not
+## between the two tower positions: the anchor is where the cable is
+## actually strung, and re-deriving it here would be a second answer to
+## "where does the wire run".
+func _apply_zip(t: float) -> void:
+	if _zipline.is_empty() or _zip_trip.is_empty():
+		return
+	var carrier: Node3D = _zipline.get("carrier")
+	if carrier == null or not is_instance_valid(carrier):
+		return
+	var cable: Dictionary = _zipline["cable"]
+	var from_anchor: Vector3 = cable["from"] if int(_zip_trip["from"]) == 0 else cable["to"]
+	var to_anchor: Vector3 = cable["to"] if int(_zip_trip["from"]) == 0 else cable["from"]
+	carrier.global_position = from_anchor.lerp(to_anchor, t)
+	# The trolley's basis is the builder's -- +Z along the span -- so a
+	# return trip has to turn it round. Written every step for the reason
+	# the position is: one call owns the carrier's whole transform.
+	var travel: Vector3 = to_anchor - from_anchor
+	travel.y = 0.0
+	if travel.length_squared() > 0.000001:
+		carrier.global_rotation_degrees.y = rad_to_deg(atan2(travel.x, travel.z))
+	# Only the riders of THIS trip, and only while they are aboard.
+	if _keepy.is_on_zipline():
+		_keepy.follow_zipline()
+	_badger_follow_zipline()
+
+## The trolley has arrived. Both riders come off, the badger stays as the
+## far end's new tap target, and the door opens again -- at that end.
+func _on_zip_trip_finished() -> void:
+	if _zip_trip.is_empty() or _zipline.is_empty():
+		return
+	var arrived: int = int(_zip_trip["to"])
+	_zip_trip = {}
+	var towers: Array = _zipline["towers"]
+	var carrier: Node3D = _zipline.get("carrier")
+	# Parked EXPLICITLY on the anchor rather than left wherever the last
+	# tween step wrote it. The lerp closes exactly, so this is a no-op to
+	# the float -- which is precisely why it is cheap, and why a trip cut
+	# short (a tween killed, a scene torn down mid-cable) still leaves the
+	# trolley on a tower rather than stranded over the plateau.
+	if carrier != null and is_instance_valid(carrier):
+		var cable: Dictionary = _zipline["cable"]
+		carrier.global_position = cable["to"] if arrived == 1 else cable["from"]
+
+	# THE BADGER LANDS FIRST, and its rest point is the one the door will
+	# be handed: it IS the tap target, so a door opened around a body still
+	# at handle height would put the disc in the air.
+	if _badger != null:
+		_badger.set_model_pitch(0.0)
+		_badger.global_position = _badger_rest(arrived)
+		_badger.face(_badger_facing(arrived))
+		_badger.freeze_at(&"Walking", 0.0)
+
+	# The door re-opens AT THE END REACHED, in one write from the site that
+	# moved the pair -- so the door and the actor cannot disagree about
+	# where they came to rest.
+	_zipline_door.set_riding(false, arrived)
+
+	if not _keepy.is_on_zipline():
+		return
+	# The same ring every other prop drops him clear on, and the same
+	# function: it reads "position" and "radius" and knows nothing about
+	# what kind of prop it is looking at.
+	var landing: Vector3 = _ride_exit_point({
+		"position": towers[arrived]["position"],
+		"radius": float(_zipline["clear_radius"]),
+	})
+	_keepy.leave_zipline(landing)
+
 func _apply_swamp_palette() -> void:
 	var env: Environment = _world_env.environment
 	if env == null:
@@ -1603,6 +2317,8 @@ func _process(_delta: float) -> void:
 		portal.set_proximity(here)
 	_pulse_cabin_markers(here)
 	_mooring.update(here)
+	if DEBUG_POSITION_OVERLAY:
+		_position_label.text = "x %.1f | z %.1f" % [here.x, here.z]
 
 ## The doorstep marks' approach cue, on HubPortal's own two thresholds.
 ##
@@ -1691,6 +2407,27 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# withdrawal -- so this branch is what that fall-through lands in.
 	if _keepy.is_on_owl_flight():
 		return
+	# A tap while the TROLLEY owns the body is intercepted by state like
+	# every carried state above, for the identical reason: the point
+	# arrived resolved on the y = 0 plane, so it must never become
+	# somewhere to walk to while he is hanging off a wire two metres up.
+	#
+	# ⚠️ DROPPED, AND THE LICENCE FOR DROPPING IT IS NARROW. RECON 1: this
+	# is legitimate ONLY because the trip is BOUNDED -- a linear tween of
+	# ZIPLINE_RIDE_S that always ends on the far tower's own anchor, after
+	# which `_on_zip_trip_finished` hands the body back and reopens the
+	# door. It is the owl's licence and it is NOT to be extended to any
+	# phase that could last indefinitely. The seesaw re-pumps and the
+	# turnstile re-shoves because a plank and a roundabout are things you
+	# push again; a wire between two fixed towers is not, and a trip that
+	# could be extended would stop being bounded, which is the only reason
+	# this branch is allowed to exist.
+	#
+	# The tap is not LOST either: the withdrawal is what let it reach the
+	# ground path at all, and the arrival's `leave_zipline` carries the
+	# player's next destination across the drop the way `leave_ride` does.
+	if _keepy.is_on_zipline():
+		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
 	# screen overruling them.
@@ -1698,6 +2435,7 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_climbing = false
 	_flying = false
 	_entering = false
+	_zipping = false
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -1707,11 +2445,12 @@ func _on_tapped_ground(point: Vector3) -> void:
 func _on_tapped_boat(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _route == null:
+	if _keepy.is_riding() or _route == null or _keepy.is_on_zipline():
 		return
 	_boarding = true
 	_climbing = false
 	_flying = false
+	_zipping = false
 	_keepy.hop_to(point)
 	# Already standing at the boat: nothing to walk, so board on the spot
 	# rather than waiting for a landing that will never come.
@@ -1725,11 +2464,12 @@ func _on_tapped_boat(point: Vector3) -> void:
 func _on_tapped_ladder(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
 		return
 	_boarding = false
 	_climbing = true
 	_flying = false
+	_zipping = false
 	_keepy.hop_to(point)
 	# Already standing at the foot: nothing to walk, so climb on the spot
 	# rather than waiting for a landing that will never come.
@@ -1797,6 +2537,14 @@ func _on_hop_landed(position: Vector3) -> void:
 	# being carried into a sub-game by a bird the player was only flying
 	# over it on.
 	if _keepy.is_on_owl_flight():
+		return
+	# NOR WHILE THE TROLLEY HAS HIM. A trip emits no landings either, so
+	# this branch should be as unreachable as the four above -- and it is
+	# written for their reason: "no landing is emitted" is a property of
+	# KeepyHopper that could change, and the failure it would cause is
+	# being carried into a sub-game on a wire the player was crossing the
+	# plateau on.
+	if _keepy.is_on_zipline():
 		return
 
 	# WHERE KEEPY IS, decided before anything about what this landing goes
@@ -1890,6 +2638,13 @@ func _on_hop_landed(position: Vector3) -> void:
 	# the ground it left from, and every branch past this point returns.
 	if _entering and _try_enter_cabin(position):
 		return
+	# And the one that finishes a walk to the waiting badger takes the
+	# handle. Sits with the other four -- after the tint and the impact,
+	# before the portals -- for the reason they do: a landing that goes on
+	# to ride still reports the ground it left from, and every branch past
+	# this point returns.
+	if _zipping and _try_zip(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -1939,6 +2694,7 @@ func _on_keepy_idle() -> void:
 	_climbing = false
 	_flying = false
 	_entering = false
+	_zipping = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches

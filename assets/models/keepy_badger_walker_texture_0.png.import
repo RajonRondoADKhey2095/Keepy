@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cxsfl8iy5hye6"
-path="res://.godot/imported/keepy_hibou_pursuer_Baked_Emit.jpg-e05d7e74ef36a4cd1d6bfa019827844b.ctex"
+uid="uid://c2lunwtgvv2mj"
+path="res://.godot/imported/keepy_badger_walker_texture_0.png-95948e28c00dd1122264f29e8572d6e4.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "c599b071441f7a1676ef384b5701ad93"
+"md5": "502a92a485803bfe2bdd6c6677818222"
 }
 
 [deps]
 
-source_file="res://assets/models/keepy_hibou_pursuer_Baked_Emit.jpg"
-dest_files=["res://.godot/imported/keepy_hibou_pursuer_Baked_Emit.jpg-e05d7e74ef36a4cd1d6bfa019827844b.ctex"]
+source_file="res://assets/models/keepy_badger_walker_texture_0.png"
+dest_files=["res://.godot/imported/keepy_badger_walker_texture_0.png-95948e28c00dd1122264f29e8572d6e4.ctex"]
 
 [params]
 

@@ -465,6 +465,30 @@ par `rig.global_transform.affine_inverse()`.
 **re-mesurée contre le rig vivant à chaque run** et `push_error` en cas de
 dérive. Elle a payé dès le premier boot.
 
+### ⚠️ ET LES OS NE SONT PAS LA SILHOUETTE — 0,164 u d'écart, mesuré
+
+Corollaire du piège ci-dessus, et il coupe dans l'autre sens : une fois
+qu'on a renoncé à `get_aabb()` pour `get_bone_global_pose()`, il reste que
+**les os sont des ARTICULATIONS, pas la surface qu'un joueur voit**. Sur le
+blaireau en pose de suspension, la semelle DESSINÉE pend **0,158 u sous
+l'os le plus bas** (0,164 mesuré en pose de repos) : fourrure, pied,
+maillage au-delà de la cheville.
+
+Ce que ça a coûté, à l'intérieur d'un seul lot : un balayage d'angle lu sur
+les os a désigné 30° comme « la marge la plus faible qui soit réelle,
++0,184 » ; le MÊME 30° relu sur les vertices skinnés laissait **+0,019**,
+deux centimètres. La réponse a bougé de 10°.
+
+**Règle** : un contrat qui porte sur ce qu'un joueur VOIT (dégagement au
+sol, silhouette, chevauchement) se mesure sur les **VERTICES SKINNÉS À LA
+MAIN** contre la pose vivante — `Skin.get_bind_pose()` composé avec
+`get_bone_global_pose()` de chaque os, pondéré par `ARRAY_WEIGHTS`. Les os
+restent le bon instrument pour ce qu'une sonde gatée doit échantillonner à
+chaque frame (c'est bon marché) ; la silhouette se lit **une fois**, au bon
+moment, et c'est elle qui gate. Publier les DEUX, et asserter qu'elles
+**diffèrent** — sans quoi la seconde constante est décorative et le lot
+suivant regatera la mauvaise.
+
 ### ⚠️ Un `@export` de NOEUD TYPÉ écrit à la main dans un `.tscn` NE SE RÉSOUT PAS
 
 `@export var camera: Camera3D` avec `camera = NodePath("...")` rend **`null`
@@ -601,6 +625,30 @@ le multiplier par une échelle que l'original ne multiplie pas, a enterré le
 personnage sous **68 % de sa taille**. Une moitié de somme se lit comme un
 nombre complet et **ne se signale jamais**.
 
+### ⚠️ UN CHIFFRE FANTÔME SURVIT AUX SESSIONS — le rayon de structure est 1,932 u
+
+Un « **4,03 u**, déjà mesuré sur `DivingBoard` » a été transporté de brief en
+brief pendant **plusieurs sessions**, présenté comme un acquis. **Grep
+exhaustif du dépôt — `.gd`, `.md`, `.tscn`, `.json` : ZÉRO occurrence.** Il
+n'a jamais existé nulle part. Le seul rayon jamais publié pour cette famille
+est **1,932 u**, mesuré sur l'arbre construit, deux fois, dans deux sessions
+différentes.
+
+Ce que le fantôme aurait coûté : au point P1 de la tyrolienne, une emprise de
+4,03 u mordait de **1,9 u** dans le décor voisin — et rien dans ce moteur ne
+se plaint qu'un prop en chevauche un autre. Le premier symptôme aurait été
+une capture d'écran sur device.
+
+**Un chiffre qui n'a pas de SOURCE dans le dépôt n'a pas de valeur, quel que
+soit le nombre de briefs qui le répètent.** Un chiffre répété est un chiffre
+répété, pas un chiffre mesuré : le grep qui le cherche coûte une commande, et
+le seul chiffre utilisable est celui qu'on peut rouvrir à l'endroit où il a
+été mesuré. Corollaire du même lot : une expression fermée « évidente » pour
+un rayon circonscrit s'est révélée fausse de **3 cm** parce qu'elle oubliait
+qu'une pièce INCLINÉE pose au sol un coin plus reculé que sa projection
+droite — trouvé par une sonde qui mesure les **huit coins transformés** de
+chaque pièce dessinée, jamais par relecture de la formule.
+
 ### ⚠️ LA MÉTRIQUE PEUT ÊTRE LA MAUVAISE, ET LE CHIFFRE VERT AVEC
 
 Deux fois au moins, un plafond gaté mesurait autre chose que la propriété
@@ -660,6 +708,28 @@ neutraliser le retrait fait échouer 3 assertions dont « un tap SUR le seuil a
 terminé la visite », avec le personnage **toujours dedans 240 frames plus
 tard**.
 
+⚠️ **ET SA PORTÉE EST EXACTEMENT LE ROUTAGE DU TAP — RIEN D'AUTRE**
+(recon tyrolienne, 3 septembre 2026, ambiguïté levée sur demande). Le patron
+ÉCHELLE nomme **un canal de tap dédié, émis inconditionnellement, dont
+l'écouteur jette le signal**. L'interdiction atteint donc **ce qui possède un
+canal de tap**, et seulement cela : un escalier, une passerelle, une rampe
+que le personnage GRAVIT dans une chorégraphie n'émet aucun signal, n'a pas
+d'`is_available()` à mal câbler, et **ne peut pas être un patron ÉCHELLE** —
+c'est la même classe que les barreaux du plongeoir, de la géométrie le long
+de laquelle un corps est ÉCRIT.
+
+⚠️ **MAIS UNE INTERACTION MULTI-TEMPS REFAIT LE SYMPTÔME SANS LE NOM.**
+Tourniquet, balançoire et hibou partagent « taps pendant : interceptés,
+jamais une destination ». Reprendre ça sur une séquence de plusieurs
+secondes (marcher jusqu'au pied → monter → attendre un second acteur →
+voyager) rend au joueur une fenêtre entière où **chaque tap est jeté**.
+**Le rejet n'est légitime que quand le trajet est BORNÉ par un tween qui se
+termine toujours à un point connu** — c'est ce que « une planche dont le seul
+autre sens est déjà traité par état » dit réellement, et c'est la seule
+raison pour laquelle la branche hibou a le droit de ne rien faire. Toute
+phase NON bornée (une marche d'approche) doit rester une phase où le tap
+retombe et **annule l'intention**.
+
 ### ⚠️ UNE MARCHE DE LONGUEUR NULLE N'ÉMET PAS D'ATTERRISSAGE
 
 `_advance()` termine une marche plus courte qu'`ARRIVE_EPSILON` (0,45) par
@@ -693,6 +763,107 @@ déclenchement dupliqué entre le disque testé et le disque dessiné.
 repère PARTAGÉ qu'on publie** (unités modèle), pas une position monde — sinon
 un rapport d'échelle 7/11 se recopie faux et ne se voit jamais, les deux vues
 n'étant **jamais à l'écran ensemble**.
+
+### ⚠️ LE CADRE DU HUB EST ÉTROIT, ET C'EST LUI QUI DÉCIDE OÙ UN PROP VA
+
+`HubWorld.tscn` pose `keep_aspect = 0` (**KEEP_WIDTH**) et `fov = 45` : les
+45° sont donc l'angle **HORIZONTAL**, demi-angle 22,5°, sur une surface
+1080×1920. Conséquence mesurée : **un prop planté à plus de ~3 u de côté de
+Keepy au spawn n'est PAS à l'écran.** Un site choisi sur le seul dégagement
+au sol est sorti à l'écran **(1316, 1046) sur 1080 de large** — hors cadre,
+sans que rien ne le signale.
+
+**Tout placement de prop destiné à être VU depuis une position donnée se
+vérifie par `unproject_position()` sur la vraie caméra**, jamais par un
+balayage de dégagement seul. Et le balayage doit porter le terme de cadre
+comme une contrainte, pas comme une vérification a posteriori.
+
+⚠️ **COROLLAIRE SUR LES TRAJETS : la caméra ne tourne JAMAIS**, donc elle ne
+peut pas tenir les deux bouts d'une longue course. Avec `fog_density = 0.016`
+exponentiel, une arrivée à 38 u est déjà à **45,6 %** d'occlusion
+(`1 − exp(−38×0,016)`), et une chute de 3,6 u sur 38 u donne **5,4°** de
+pente — à l'image, un fil horizontal en haut du cadre. **Mesuré par rendu,
+pas déduit** : trois courses au corridor parfaitement vert ont été refusées
+sur cette seule base. La bande où une descente LIT comme une descente sur ce
+plateau est de l'ordre de **14 à 22 u**, à une pente de 13° et plus.
+
+⚠️ **ET UN JEU DE CONTRAINTES DE DÉGAGEMENT NE VOIT PAS UNE OCCULTATION.**
+Le site retenu par le balayage était à 2,358 u au sol du portail Quizz, et
+son mât passe pourtant **devant l'anneau et le label** de ce portail : les
+deux sont sur la même ligne de caméra. Un dégagement est une distance au
+SOL ; « qu'est-ce que ça cache » est une question d'IMAGE, et seul un rendu
+y répond.
+
+### ⚠️ UNE STRUCTURE POSÉE SUR UN BORD DÉBORDE — ça se répare dans la RÉGION
+
+Un prop dont le layout fixe le centre **exactement sur** la limite du monde
+jouable met fatalement des parties de lui-même **au-delà**, et personne
+n'est prévenu : ni erreur, ni sonde rouge, ni build cassé. Sur device ça ne
+se lit même pas comme un bug — c'est une structure dont on ne peut pas faire
+le tour, parce que chaque tap derrière elle est rabattu sur le bord.
+
+Mesuré sur la tour nord de la tyrolienne (P2 pile sur `PLATEAU_HALF_EXTENT`) :
+l'escalier débordait de **1,682 u**, et **même les jambes arrière** de
+**0,547 u** — cinq points au sol, **zéro** dans la région.
+
+**La réparation va dans la RÉGION, pas dans le bâtisseur.** Réorienter la
+seule structure fautive casse la symétrie « un bâtisseur, N instances, une
+règle de facing » ET ne règle que la partie la plus visible du débord.
+
+Le patron, et il est réutilisable tel quel :
+
+1. **Un lobe DÉDIÉ centré sur la structure**, uni à la région — pas un
+   élargissement du lobe de bord existant, qui peut être à des dizaines
+   d'unités (le lobe nord était à 25,2 u pour un rayon 12).
+2. **Une TABLE dès la première entrée**, jamais un second scalaire.
+3. **Le rayon est MESURÉ contre les parties AU SOL telles que construites**,
+   et il vise la MARGE, pas le minimum : viser l'emprise circonscrite laisse
+   un liseré, pas de la place pour manœuvrer. Compter au moins un
+   `KEEPY_CLEARANCE` au-delà de la partie la plus large.
+4. **La traversée pire cas est RE-MARCHÉE, pas déduite.** L'argument « un
+   lobe sur un bord n'allonge aucune diagonale entre coins » est vrai et
+   reste **à vérifier à chaque fois** : la cible est le point du disque le
+   plus éloigné **DU COIN OPPOSÉ**, jamais sa pointe — viser la pointe
+   mesure un trajet plus court et l'appelle le pire.
+5. **Le centre est une seconde orthographe du layout** (la région ne peut pas
+   lire le layout : le bâtisseur lui demande `contains()` PENDANT qu'il
+   construit). Régime des centres de lacs : littéral **gaté** contre l'objet
+   réellement construit, jamais littéral cru.
+6. **Blind check obligatoire** : « tout est couvert » est une assertion de
+   COUVERTURE, qui passe gratuitement. Rejouer l'ANCIENNE région dans la
+   sonde et exiger qu'elle échoue d'abord — et l'y réécrire à la main plutôt
+   que d'ajouter un interrupteur dans la région, parce qu'une sonde capable
+   d'éteindre la région livrée est une sonde capable de la laisser éteinte.
+
+⚠️ **Et regarder ce que la région débloque AILLEURS.** Le même lobe a réparé
+un défaut que personne n'avait cherché : l'anneau de dépôt de fin de trajet
+(`_ride_exit_point`, qui **jette** tout candidat hors région) avait tout son
+arc nord amputé à P2 — un rider ne pouvait être déposé que côté plateau.
+
+### ⚠️ UN APPUI PARTAGÉ NE VEUT PAS DIRE UNE POSE PARTAGÉE
+
+Deux corps accrochés au MÊME objet physique partagent la géométrie de cet
+objet, et **rien d'autre**. Sur la tyrolienne, `bar_drop` et
+`hang_clearance` décrivent une barre unique — la ligne de crown à 1,71 que
+le chariot tend aux deux passagers — et elles restent partagées. Ce qui est
+**par corps**, c'est la POSE accrochée à cette ligne, et il en faut DEUX
+nombres par passager, pas un :
+
+* **où est son crown au-dessus de son propre nœud**, DANS LA POSE OÙ IL EST
+  TENU — jamais sa hauteur DEBOUT. Les deux coïncident pour un corps qui
+  pend droit (Keepy), ce qui rend la formule juste **par accident** de son
+  côté et masque le défaut jusqu'au premier passager incliné ;
+* **où est son point le plus bas par rapport à ce nœud**, qui n'est zéro
+  que pour ce même corps droit.
+
+Mesuré : passer la hauteur debout d'un corps incliné comme offset de crown
+l'a enterré **0,45 u sous le sol pendant les 4 s du trajet**, sans erreur
+ni crash. Une sonde qui lit le NŒUD au lieu de la SEMELLE ne le voit pas —
+le nœud était à +0,007, positif, vert.
+
+**Corollaire pour un troisième passager** : il apporte ses deux offsets,
+la barre n'en apporte aucun, et la fonction de siège prend un **offset de
+crown** — jamais une hauteur de corps.
 
 ### ⚠️ UNE TABLE EST UNE LISTE DÈS LE PREMIER COMMIT
 
@@ -917,6 +1088,8 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH18 | Cabane et navigation multi-niveaux | [`CH18_CABANE_NAV.md`](docs/lots/CH18_CABANE_NAV.md) | 13 | 3026 | 28 → 31 août |
 | CH19 | Pie, baiser et hotspot du lit | [`CH19_PIE.md`](docs/lots/CH19_PIE.md) | 11 | 2244 | 31 août → 1 sept |
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [`CH20_OURS.md`](docs/lots/CH20_OURS.md) | 7 | 1256 | 1 → 2 sept |
+| CH21 | Tyrolienne — recon : patron de tap, cadre caméra, rig à deux corps | [`CH21_TYROLIENNE.md`](docs/lots/CH21_TYROLIENNE.md) | 1 | 369 | 3 sept |
+| CH22 | Audit visuel du hub — recon pure, puis application de la liste A (A1/A2/A3/A6) et mesure de la pire frame | [`CH22_HUB_VISUEL.md`](docs/lots/CH22_HUB_VISUEL.md) | 2 | 1147 | 4 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

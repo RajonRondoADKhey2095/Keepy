@@ -61,6 +61,25 @@ signal tapped_ground(point: Vector3)
 signal tapped_boat(point: Vector3)
 
 ## Emitted INSTEAD of tapped_ground when the finger landed close enough to
+## the BADGER waiting at one end of the zipline to mean "ride across with
+## it", on the same world-units terms the boat is picked out on. Same
+## one-tap-one-signal rule.
+##
+## THE BOAT'S WITHDRAWAL, THROUGH A NODE RATHER THAN A FLAG. `ZiplineDoor`
+## answers false for the whole of a trip AT BOTH ENDS and in either
+## direction, so a tap made meanwhile falls through to tapped_ground.
+## `owl_available` is a bare bool because a perch is one place; a zipline
+## has two boarding points and one shared trip, which is a state a single
+## bool cannot express and two bools would be free to disagree about --
+## see ZiplineDoor.gd.
+##
+## ⚠️ THE STAIRS CARRY NOTHING. RECON 1 (docs/lots/CH21_TYROLIENNE.md)
+## settled that a stair with a hotspot that emits whatever the body is
+## doing is the LADDER PATTERN this repo banned. The only tappable thing at
+## a tower is the badger, and it withdraws.
+signal tapped_zipline(point: Vector3)
+
+## Emitted INSTEAD of tapped_ground when the finger landed close enough to
 ## an OWL PERCH to mean "fly with it", on the same world-units terms the
 ## boat is picked out on. Same one-tap-one-signal rule.
 ##
@@ -114,10 +133,23 @@ signal tapped_ladder(point: Vector3)
 ## resolves this to null and every tap is a ground tap, exactly as before.
 @export var mooring_path: NodePath
 
+## The zipline's door, asked -- before any destination is resolved --
+## whether the tap was on the badger waiting to ride. Optional, exactly as
+## the mooring is: a plateau whose layout carries no zipline resolves this
+## to null and every tap is a ground tap.
+##
+## A scene path and not a code-set property, unlike the owl perches and the
+## ladder feet, because this one carries STATE rather than a table: the
+## withdrawal that keeps a trip from swallowing taps lives in it, and a
+## node the scene owns is a node a probe can reach without going through
+## HubWorld's 2000 lines.
+@export var zipline_path: NodePath
+
 var camera: Camera3D = null
 var container: SubViewportContainer = null
 var viewport: SubViewport = null
 var mooring: BoatMooring = null
+var zipline: ZiplineDoor = null
 
 ## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
@@ -180,6 +212,7 @@ func _ready() -> void:
 	container = get_node_or_null(container_path) as SubViewportContainer
 	viewport = get_node_or_null(viewport_path) as SubViewport
 	mooring = get_node_or_null(mooring_path) as BoatMooring
+	zipline = get_node_or_null(zipline_path) as ZiplineDoor
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
@@ -259,6 +292,23 @@ func _handle_point(screen_point: Vector2) -> void:
 	# an eject. One tap, one signal, either way.
 	if mooring != null and mooring.accepts_boarding_tap(aim):
 		tapped_boat.emit(destination)
+		return
+	# THE ZIPLINE, asked on the boat's exact terms and for the boat's exact
+	# reason: `accepts_boarding_tap()` is false for the whole of a trip AT
+	# BOTH ENDS, so a tap then falls through to tapped_ground and reaches
+	# the state branch that owns it. One tap, one signal, either way.
+	#
+	# Ordered after the boat only because the boat was here first. The
+	# hull sails the stream at the west of the plateau and the badger waits
+	# at x ~ +26, twenty-odd units away, so the order between them can
+	# never actually decide anything.
+	#
+	# Asked on `aim` like every prop above and below, not on `destination`:
+	# a disc read off the CLAMPED point turns the plateau's edge into a
+	# funnel -- the cabin's measured defect, written once for every prop
+	# because being near an edge is what causes it, not being a cabin.
+	if zipline != null and zipline.accepts_boarding_tap(aim):
+		tapped_zipline.emit(destination)
 		return
 	# THE OWL, asked after the boat and before the ladder, on the same
 	# world-unit terms both of them use. The order between the owl and the
