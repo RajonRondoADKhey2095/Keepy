@@ -416,6 +416,46 @@ trois autres rendent `(0,0,0)` avec `fmt=0`. **Le poser en PREMIÈRE ligne.**
 **Et écrire `custom_aabb` explicitement** : une AABB fausse ou périmée fait
 disparaître **tout un batch** quand la camera tourne, **sans aucune erreur**.
 
+### ⚠️ AGRANDIR `instance_count` EFFACE TOUTES LES TRANSFORMS DÉJÀ ÉCRITES
+
+Mesuré (CH23 lot 6, sous xvfb + `opengl3`) sur le batch `Rock` du hub :
+porter `instance_count` de **48 à 49** rend **0 transform sur 48**
+survivantes — le buffer est réalloué et remis à zéro — et `custom_aabb` ne
+suit pas. Aucune erreur, aucun avertissement.
+
+**Conséquence de conception** : on n'« ajoute » pas une instance à un batch
+partagé depuis l'extérieur. Il faudrait ré-écrire tout le contenu du batch
+et lui recalculer son AABB, c'est-à-dire posséder les données de celui qui
+l'a rempli. Un prop qui veut de la géométrie répétée porte **son propre
+`MultiMesh`**, en réutilisant le mesh et le matériau publiés (patron déjà
+documenté pour les barres du tourniquet).
+
+⚠️ **Et une sonde qui teste ça se corrompt elle-même si elle ne sauvegarde
+qu'une transform** : la première version l'a fait, et toutes ses phases
+suivantes ont mesuré 48 rochers empilés à l'origine. **Seul le blind check
+l'a vu** (un point censé être À L'INTÉRIEUR d'un rocher a rapporté 1,942 u
+au lieu de 0,000).
+
+### ⚠️ L'AABB D'UNE AABB TRANSFORMÉE N'EST PAS UNE MESURE DE LA FORME
+
+Une **BOÎTE** tournée à 45° a une boîte englobante plus grande — même quand
+le corps à l'intérieur est une **sphère**. Toute mesure de silhouette,
+d'emprise ou de hauteur prise sur `xform * mesh.get_aabb()` porte donc
+cette inflation, qui grandit avec l'assiette et ne se signale jamais.
+
+Mesuré trois fois dans un seul lot (CH23 lot 6) : un blind check
+« une sphère à échelle uniforme yawée 8 fois a UNE silhouette » sorti à
+**0,2006 de dispersion d'artefact pur** (0,0000 une fois refait sur les
+sommets) ; une emprise d'anneau lue **1,752 u** contre **1,487 u** réels ;
+et surtout un **enfouissement calculé dans le CONSTRUCTEUR** qui donnait
+0,162 à 0,257 au lieu des 0,26 demandés — une profondeur fausse et
+différente pour chaque pièce, variant avec son inclinaison.
+
+**Règle** : tout ce qui porte sur ce qu'un joueur VOIT ou sur la façon dont
+une pièce POSE au sol se mesure sur les **sommets réels transformés**
+(`Mesh.get_faces()`), jamais sur une AABB transformée. L'AABB reste bonne
+pour un `custom_aabb` de batch — où elle doit justement être conservatrice.
+
 ### ⚠️ Le canal alpha d'`albedo_color` est IGNORÉ tant que `transparency` reste `DISABLED`
 
 Une surface d'eau rendrait en turquoise **opaque plat**, sans aucune erreur
@@ -1146,7 +1186,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [`CH20_OURS.md`](docs/lots/CH20_OURS.md) | 7 | 1256 | 1 → 2 sept |
 | CH21 | Tyrolienne — recon : patron de tap, cadre caméra, rig à deux corps | [`CH21_TYROLIENNE.md`](docs/lots/CH21_TYROLIENNE.md) | 1 | 369 | 3 sept |
 | CH22 | Audit visuel du hub — recon pure, puis application de la liste A (A1/A2/A3/A6) et mesure de la pire frame | [`CH22_HUB_VISUEL.md`](docs/lots/CH22_HUB_VISUEL.md) | 2 | 1147 | 4 sept |
-| CH23 | Feu de camp — recon VFX : trois flammes candidates étiquetées au point relevé sur device | [`CH23_FEU_VFX.md`](docs/lots/CH23_FEU_VFX.md) | 1 | 305 | 4 sept |
+| CH23 | Feu de camp — recon VFX, objet définitif (sprite E + bûcher), revert de couleur, puis cercle de pierres | [`CH23_FEU_VFX.md`](docs/lots/CH23_FEU_VFX.md) | 6 | 1505 | 4 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,
