@@ -155,18 +155,25 @@ func _phase_registry() -> void:
 			% [off_axis, HubBuilder.ZIPLINE_STRINGER_HALF_SPAN])
 	# 3 septembre 2026: no longer "the badger is drawn at Keepy's own
 	# height" -- Mathieu's device feedback overrode that, and the badger is
-	# now DELIBERATELY taller (geometric-mean rescale, see HubWorld's own
-	# BADGER_SCALE docblock). What still has to hold is the ORDERING: the
-	# badger reads bigger than Keepy but still smaller than the bear, or the
-	# three-actor cast collapses into two animals the same size.
+	# now DELIBERATELY taller than Keepy. First pass that same day used a
+	# geometric-mean anchor that also kept the badger under the bear; a
+	# SECOND pass the same day replaced it with an EXACT 1.6x-of-Keepy
+	# ratio (see HubWorld's own BADGER_SCALE docblock), which pushes the
+	# badger PAST the bear (2.16016 > 1.890073). Mathieu was informed of
+	# that inversion before asking for the 1.6x ratio and did not ask for
+	# BEAR_SCALE to move, so the ordering this probe gates is now
+	# Keepy < bear < badger, not Keepy < badger < bear -- asserting the OLD
+	# ordering here would gate every future lot against a relationship
+	# Mathieu has already overridden, which is exactly the stale-assertion
+	# trap this file's own doctrine (CLAUDE.md) warns about.
 	var scale_drawn: float = HubWorld.BADGER_REST_SPAN * HubWorld.BADGER_SCALE
 	_check(absf(scale_drawn - HubWorld.BADGER_DRAWN_HEIGHT) < 0.0005,
 		"the badger is drawn at its own published height, %.4f (derived, not typed)" % scale_drawn)
 	_check(scale_drawn > HubWorld.KEEPY_DRAWN_HEIGHT,
 		"and it is TALLER than Keepy (%.4f > %.4f) -- the device defect this rescale fixes"
 			% [scale_drawn, HubWorld.KEEPY_DRAWN_HEIGHT])
-	_check(scale_drawn < HubWorld.BEAR_DRAWN_HEIGHT,
-		"while staying SHORTER than the bear (%.4f < %.4f), so the two animals stay apart on screen"
+	_check(scale_drawn > HubWorld.BEAR_DRAWN_HEIGHT,
+		"and now TALLER than the bear too (%.4f > %.4f) -- Keepy < badger < bear is INVERTED by design"
 			% [scale_drawn, HubWorld.BEAR_DRAWN_HEIGHT])
 
 	# THE DOOR. A door nobody asks never withdraws, and that failure is
@@ -193,10 +200,10 @@ func _phase_seats() -> void:
 	var bar_drop: float = float(zip["bar_drop"])
 	var clearance: float = float(zip["hang_clearance"])
 	var height: float = HubWorld.KEEPY_DRAWN_HEIGHT
-	var badger_height: float = HubWorld.BADGER_DRAWN_HEIGHT
+	var badger_crown: float = HubWorld.BADGER_HANG_CROWN
 
 	var keepy_seat: Vector3 = _hub._zip_seat(-1.0, height)
-	var badger_seat: Vector3 = _hub._zip_seat(1.0, badger_height)
+	var badger_seat: Vector3 = _hub._zip_seat(1.0, badger_crown)
 	_check(absf(keepy_seat.x + badger_seat.x) < 1.0e-6,
 		"the two seats are mirror images across the trolley (%.3f / %.3f)"
 			% [keepy_seat.x, badger_seat.x])
@@ -204,11 +211,11 @@ func _phase_seats() -> void:
 		"and they are genuinely APART -- a lateral of 0 would be two bodies in one place")
 	# 3 septembre 2026: the badger is no longer scaled to Keepy's own
 	# height (device feedback overrode that, see HubWorld's BADGER_SCALE),
-	# so the two feet no longer hang level. What the shared bar STILL
+	# so the two nodes no longer sit level. What the shared bar STILL
 	# guarantees is that both CROWNS do -- see `_zip_seat`'s own docblock
-	# for why `height` cancels out of that half of the formula.
-	_check(absf((keepy_seat.y - badger_seat.y) - (badger_height - height)) < 1.0e-6,
-		"the feet differ by exactly the height gap (%.4f / %.4f), not by chance"
+	# for why the crown offset cancels out of that half of the formula.
+	_check(absf((keepy_seat.y - badger_seat.y) - (badger_crown - height)) < 1.0e-6,
+		"the two nodes differ by exactly the crown-offset gap (%.4f / %.4f), not by chance"
 			% [keepy_seat.y, badger_seat.y])
 	_check(absf(keepy_seat.x) < HubBuilder.ZIPLINE_TROLLEY_BAR_HALF_SPAN,
 		"each rider hangs FROM the bar (%.2f) and not off its end (%.2f)"
@@ -221,31 +228,68 @@ func _phase_seats() -> void:
 	# exactly the kind of claim this repo's doctrine measures instead of
 	# trusting.
 	var bar_y: float = cable_h - bar_drop
-	for pair in [["Keepy", keepy_seat, height], ["the badger", badger_seat, badger_height]]:
-		var who: String = pair[0]
-		var seat: Vector3 = pair[1]
-		var h: float = pair[2]
-		var feet_y: float = cable_h + seat.y
-		var crown_y: float = feet_y + h
+	# ⚠️ A RIDER'S NODE IS NOT HIS SOLES, and reading the second off the
+	# first is what buried the badger for a whole crossing (4 septembre
+	# 2026). Each body now declares TWO offsets from the node `_zip_seat`
+	# writes: where its crown is, and where its LOWEST point is. Keepy's
+	# are (KEEPY_DRAWN_HEIGHT, 0.0) because he hangs upright -- which is
+	# exactly why his half of this used to be right by accident, and why
+	# the badger's, hung in a leaned running pose, was not.
+	for row in [["Keepy", keepy_seat, height, 0.0],
+			["the badger", badger_seat, badger_crown, HubWorld.BADGER_HANG_DRAWN_SOLE]]:
+		var who: String = row[0]
+		var seat: Vector3 = row[1]
+		var crown_off: float = row[2]
+		var sole_off: float = row[3]
+		var node_y: float = cable_h + seat.y
+		var crown_y: float = node_y + crown_off
+		var sole_y: float = node_y + sole_off
 		_check(crown_y <= bar_y + 1.0e-6,
 			"%s's crown (%.4f) is UNDER the grab bar (%.4f) -- measuring from the cable put it %.3f u above"
 				% [who, crown_y, bar_y, (cable_h - clearance) + 0.0 - bar_y])
 		_check(crown_y < cable_h,
 			"%s is therefore under the cable itself (%.4f < %.4f)" % [who, crown_y, cable_h])
-		_check(feet_y > 0.0, "%s's feet are off the ground (%.4f)" % [who, feet_y])
-		_check(feet_y < HubBuilder.ZIPLINE_DECK_HEIGHT,
+		_check(sole_y > 0.0, "%s's feet are off the ground (%.4f)" % [who, sole_y])
+		_check(sole_y < HubBuilder.ZIPLINE_DECK_HEIGHT,
 			"and %s is BELOW the deck (%.4f < %.4f), so boarding is a step off it and a drop"
-				% [who, feet_y, HubBuilder.ZIPLINE_DECK_HEIGHT])
-	_check(absf((cable_h + keepy_seat.y + height) - (cable_h + badger_seat.y + badger_height)) < 1.0e-6,
-		"and the two crowns land on the SAME height regardless of the badger's own, taller, height")
+				% [who, sole_y, HubBuilder.ZIPLINE_DECK_HEIGHT])
+	_check(absf((cable_h + keepy_seat.y + height)
+			- (cable_h + badger_seat.y + badger_crown)) < 1.0e-6,
+		"and the two crowns land on the SAME height regardless of the badger's own, taller, pose")
 
-	# BLIND CHECK. "The crown is under the bar" is satisfied for free by a
-	# seat function that ignores its height argument. Feed it a taller body
-	# and the seat must move DOWN by exactly that much.
+	# BLIND CHECK 1. "The crown is under the bar" is satisfied for free by a
+	# seat function that ignores its argument. Feed it a taller body and the
+	# seat must move DOWN by exactly that much.
 	var taller: Vector3 = _hub._zip_seat(-1.0, height + 0.5)
 	_check(absf((keepy_seat.y - taller.y) - 0.5) < 1.0e-6,
-		"BLIND CHECK: a body 0.5 u taller hangs 0.5 u lower (%.6f), so the height argument is read"
+		"BLIND CHECK: a body 0.5 u taller hangs 0.5 u lower (%.6f), so the argument is read"
 			% (keepy_seat.y - taller.y))
+
+	# ⚠️ BLIND CHECK 2, AND IT IS THE ONE THIS PHASE WOULD OTHERWISE PASS
+	# FOR FREE. "The badger's feet are off the ground" is ALSO satisfied by
+	# a probe that forgets the sole offset entirely: with the sole read as
+	# 0 the badger's own NODE sits at +0.0071, still positive, still green,
+	# and the rig still drawn 0.18 u higher than the number being tested.
+	# So the test is made to look at the state it exists to catch -- the
+	# shipped-and-broken one, `BADGER_DRAWN_HEIGHT` fed in as if a standing
+	# height were a crown offset -- and it must go RED there.
+	var buried: Vector3 = _hub._zip_seat(1.0, HubWorld.BADGER_DRAWN_HEIGHT)
+	var buried_sole: float = cable_h + buried.y + HubWorld.BADGER_HANG_DRAWN_SOLE
+	_check(buried_sole < 0.0,
+		"BLIND CHECK: the pre-fix seat (standing height as a crown offset) puts the same soles at %.4f -- this phase CAN see a buried rider"
+			% buried_sole)
+	_check(HubWorld.BADGER_HANG_CROWN > 0.0 and HubWorld.BADGER_HANG_SOLE > 0.0
+			and absf(HubWorld.BADGER_HANG_DRAWN_SOLE) > 0.0,
+		"and the badger publishes a genuinely non-zero pose (crown %.6f / joint sole %.6f / drawn sole %.6f), not three silent zeroes"
+			% [HubWorld.BADGER_HANG_CROWN, HubWorld.BADGER_HANG_SOLE,
+				HubWorld.BADGER_HANG_DRAWN_SOLE])
+	# ⚠️ AND THE TWO SOLES MUST DISAGREE, which is the whole reason there
+	# are two. A rig whose surface coincided with its lowest joint would
+	# make `BADGER_HANG_DRAWN_SOLE` decorative, and the next lot would
+	# quietly gate the wrong one again.
+	_check(HubWorld.BADGER_HANG_DRAWN_SOLE < HubWorld.BADGER_HANG_SOLE,
+		"and its DRAWN sole hangs %.4f u below its lowest joint -- joints are not the silhouette"
+			% (HubWorld.BADGER_HANG_SOLE - HubWorld.BADGER_HANG_DRAWN_SOLE))
 
 # ---------------------------------------------------------------- corridor
 ## What the two hanging bodies actually sweep, against everything else that
@@ -320,9 +364,12 @@ func _corridor_rows(fatten: float) -> Array:
 	# has to reach down to WHICHEVER foot is lowest, or a part that only
 	# grazes the badger's dangling legs would be missed.
 	var seat: Vector3 = _hub._zip_seat(-1.0, HubWorld.KEEPY_DRAWN_HEIGHT)
-	var badger_seat: Vector3 = _hub._zip_seat(1.0, HubWorld.BADGER_DRAWN_HEIGHT)
+	var badger_seat: Vector3 = _hub._zip_seat(1.0, HubWorld.BADGER_HANG_CROWN)
 	var crown: float = float(zip["cable_height"]) + seat.y + HubWorld.KEEPY_DRAWN_HEIGHT
-	var feet: float = float(zip["cable_height"]) + minf(seat.y, badger_seat.y)
+	# The SOLES, per body -- the badger's node is 0.177 above its own lowest
+	# bone, so the node is not the bottom of the swept band for it.
+	var feet: float = float(zip["cable_height"]) + minf(seat.y,
+		badger_seat.y + HubWorld.BADGER_HANG_DRAWN_SOLE)
 	var reach: float = float(zip["rider_lateral"]) + HubWorld.KEEPY_CLEARANCE + fatten
 	var rows: Array = []
 	_corridor_walk(_props, flat_a, flat_b, feet, crown, reach, rows)
@@ -438,7 +485,15 @@ func _phase_trip() -> void:
 	var travelled: float = 0.0
 	var previous: Vector3 = carrier.global_position
 	var keepy_seat: Vector3 = _hub._zip_seat(-1.0, HubWorld.KEEPY_DRAWN_HEIGHT)
-	var badger_seat: Vector3 = _hub._zip_seat(1.0, HubWorld.BADGER_DRAWN_HEIGHT)
+	var badger_seat: Vector3 = _hub._zip_seat(1.0, HubWorld.BADGER_HANG_CROWN)
+	# ⚠️ THE SOLE IS SAMPLED OFF THE LIVE RIG, EVERY FRAME, AND NOT COMPUTED.
+	# `PHASE SEATS` gates the arithmetic; this gates the BODY THAT IS DRAWN,
+	# in flight, mid-crossing -- which is the only thing a player sees, and
+	# the only reading that catches a typed pose constant drifting from the
+	# rig it claims to describe (the bear's own published bug).
+	var lowest_badger: float = INF
+	var highest_badger: float = -INF
+	var sampled: int = 0
 	for i in 90:
 		await get_tree().process_frame
 		if not _keepy.is_on_zipline():
@@ -447,6 +502,11 @@ func _phase_trip() -> void:
 			_keepy.global_position.distance_to(carrier.to_global(keepy_seat)))
 		worst_badger = maxf(worst_badger,
 			badger.global_position.distance_to(carrier.to_global(badger_seat)))
+		var band: Vector2 = _badger_bone_band(badger)
+		if band.y > band.x:
+			lowest_badger = minf(lowest_badger, band.x)
+			highest_badger = maxf(highest_badger, band.y)
+			sampled += 1
 		travelled += previous.distance_to(carrier.global_position)
 		previous = carrier.global_position
 	# BLIND CHECK, and for the reason the owl's has one: "he is exactly on
@@ -466,10 +526,62 @@ func _phase_trip() -> void:
 	# SEATS' own formula) is the honest floor, at half of it -- comfortably
 	# above a rider resting at y=0, comfortably below the real value.
 	var keepy_floor: float = 0.5 * (float(zip["cable_height"]) + keepy_seat.y)
-	var badger_floor: float = 0.5 * (float(zip["cable_height"]) + badger_seat.y)
-	_check(_keepy.global_position.y > keepy_floor and badger.global_position.y > badger_floor,
+	var badger_floor: float = 0.5 * (float(zip["cable_height"]) + badger_seat.y
+		+ HubWorld.BADGER_HANG_DRAWN_SOLE)
+	# ⚠️ SOLE AGAINST SOLE, NOT NODE AGAINST SOLE. Keepy's node IS his soles;
+	# the badger's is 0.177 under them, so putting its raw `global_position`
+	# against a floor derived from the soles compares two different things
+	# -- which is the wrong-metric failure this file gates elsewhere, made
+	# here by the very lot that split the two apart.
+	var badger_sole_now: float = badger.global_position.y + HubWorld.BADGER_HANG_DRAWN_SOLE
+	_check(_keepy.global_position.y > keepy_floor and badger_sole_now > badger_floor,
 		"both are genuinely off the ground (%.3f > %.3f / %.3f > %.3f)"
-			% [_keepy.global_position.y, keepy_floor, badger.global_position.y, badger_floor])
+			% [_keepy.global_position.y, keepy_floor, badger_sole_now, badger_floor])
+
+	# ---- THE LIVE RIG, sampled across the crossing rather than at its ends.
+	_check(sampled > 30,
+		"BLIND CHECK: the badger's own bones were read on %d frames of the crossing -- an unsampled rig would pass every line below for free"
+			% sampled)
+	_check(lowest_badger > 0.0,
+		"and its LOWEST BONE never went under the ground: worst %.4f over those frames"
+			% lowest_badger)
+	_check(highest_badger <= (float(zip["cable_height"]) - float(zip["bar_drop"])) + 1.0e-3,
+		"while its highest stayed under the grab bar (%.4f <= %.4f)"
+			% [highest_badger, float(zip["cable_height"]) - float(zip["bar_drop"])])
+	# ---- THE DRAWN SILHOUETTE, read ONCE, mid-flight.
+	#
+	# ⚠️ JOINTS ARE NOT THE SILHOUETTE, and this lot made that mistake before
+	# catching it: at a 30 deg lean the badger's lowest JOINT cleared the
+	# ground by 0.184 while its drawn surface cleared it by 0.019. Every
+	# per-frame line above is a joint reading, which is what a probe can
+	# afford 90 times; this one skins all 10 047 vertices against the live
+	# pose, once, and it is the reading the ground clearance is judged on.
+	#
+	# `mesh.get_aabb()` is NOT an alternative: it is the rest box, and this
+	# pipeline's 0.01 Armature scale makes it read a hundredfold low.
+	var drawn: Vector2 = _badger_drawn_band(badger)
+	_check(drawn.y > drawn.x,
+		"BLIND CHECK: the badger's %d-vertex silhouette was actually skinned -- an unread mesh would pass the next line for free"
+			% _badger_vertex_count(badger))
+	_check(drawn.x > 0.0,
+		"and its DRAWN SOLE is off the ground mid-crossing (%.6f), not merely its lowest joint"
+			% drawn.x)
+	_check(drawn.y < float(zip["cable_height"]),
+		"while its drawn crown stays under the cable (%.6f < %.6f)"
+			% [drawn.y, float(zip["cable_height"])])
+
+	# THE TYPED POSE AGAINST THE LIVE ONE. A constant that no longer
+	# describes the rig is the failure this repo has already published once.
+	var node_y: float = float(zip["cable_height"]) + badger_seat.y
+	_check(absf((drawn.x - node_y) - HubWorld.BADGER_HANG_DRAWN_SOLE) < 0.0005,
+		"BADGER_HANG_DRAWN_SOLE still matches the live rig (%.6f measured vs %.6f typed)"
+			% [drawn.x - node_y, HubWorld.BADGER_HANG_DRAWN_SOLE])
+	_check(absf((lowest_badger - node_y) - HubWorld.BADGER_HANG_SOLE) < 0.0005,
+		"BADGER_HANG_SOLE still matches the live rig (%.6f measured vs %.6f typed)"
+			% [lowest_badger - node_y, HubWorld.BADGER_HANG_SOLE])
+	_check(absf((highest_badger - node_y) - HubWorld.BADGER_HANG_CROWN) < 0.0005,
+		"BADGER_HANG_CROWN still matches the live rig (%.6f measured vs %.6f typed)"
+			% [highest_badger - node_y, HubWorld.BADGER_HANG_CROWN])
 
 	# A tap mid-trip reaches the ground path and is dropped there -- the
 	# bounded-tween licence. What must NOT happen is a second trip or a
@@ -486,6 +598,95 @@ func _phase_trip() -> void:
 	_hub._on_hop_landed(Vector3(-5.4, 0.0, -4.6))
 	_check(not _hub._confirm.is_open() and fired == 0,
 		"a landing at a portal centre mid-trip opens nothing")
+
+## The badger's drawn vertical band in WORLD terms, as [lowest, highest]
+## bone. Returns a degenerate band when there is no rig to read, so the
+## caller can tell "not sampled" from "sampled at zero".
+##
+## ⚠️ BONES AND NOT AN AABB. A `.glb` from this pipeline puts a 0.01 scale
+## on its Armature, so `get_aabb()` through it reads a HUNDREDFOLD low --
+## the trap Lot B published and this repo has paid for twice.
+func _badger_bone_band(badger: Node3D) -> Vector2:
+	var skel: Skeleton3D = _find_skeleton(badger)
+	if skel == null:
+		return Vector2(1.0, -1.0)
+	var lo: float = INF
+	var hi: float = -INF
+	for i in skel.get_bone_count():
+		var y: float = (skel.global_transform * skel.get_bone_global_pose(i).origin).y
+		lo = minf(lo, y)
+		hi = maxf(hi, y)
+	return Vector2(lo, hi)
+
+## The badger's DRAWN vertical band in world terms, as [lowest, highest]
+## skinned vertex. Degenerate when there is nothing to skin, so the caller
+## can tell "not read" from "read as zero".
+func _badger_drawn_band(badger: Node3D) -> Vector2:
+	var lo: float = INF
+	var hi: float = -INF
+	for mi in _skinned_meshes(badger):
+		var skel: Skeleton3D = mi.get_node_or_null(mi.skeleton) as Skeleton3D
+		if skel == null:
+			continue
+		var binds: Array[Transform3D] = []
+		for b in mi.skin.get_bind_count():
+			var idx: int = mi.skin.get_bind_bone(b)
+			var nm: StringName = mi.skin.get_bind_name(b)
+			if nm != &"":
+				idx = skel.find_bone(nm)
+			binds.append(Transform3D.IDENTITY if idx < 0
+				else skel.get_bone_global_pose(idx) * mi.skin.get_bind_pose(b))
+		for surf in mi.mesh.get_surface_count():
+			var arrays: Array = mi.mesh.surface_get_arrays(surf)
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+			var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+			if verts.is_empty() or bones.is_empty():
+				continue
+			var per: int = bones.size() / verts.size()
+			for v in verts.size():
+				var acc := Vector3.ZERO
+				var total: float = 0.0
+				for k in per:
+					var w: float = weights[v * per + k]
+					if w <= 0.0:
+						continue
+					var bi: int = bones[v * per + k]
+					if bi < 0 or bi >= binds.size():
+						continue
+					acc += binds[bi] * verts[v] * w
+					total += w
+				if total <= 0.0:
+					continue
+				var y: float = (skel.global_transform * (acc / total)).y
+				lo = minf(lo, y)
+				hi = maxf(hi, y)
+	return Vector2(lo, hi)
+
+func _badger_vertex_count(badger: Node3D) -> int:
+	var n: int = 0
+	for mi in _skinned_meshes(badger):
+		for surf in mi.mesh.get_surface_count():
+			n += (mi.mesh.surface_get_arrays(surf)[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+	return n
+
+func _skinned_meshes(n: Node) -> Array:
+	var out: Array = []
+	if n is MeshInstance3D and (n as MeshInstance3D).mesh != null \
+			and (n as MeshInstance3D).skin != null:
+		out.append(n)
+	for c in n.get_children():
+		out.append_array(_skinned_meshes(c))
+	return out
+
+func _find_skeleton(n: Node) -> Skeleton3D:
+	if n is Skeleton3D:
+		return n
+	for c in n.get_children():
+		var s: Skeleton3D = _find_skeleton(c)
+		if s != null:
+			return s
+	return null
 
 # ----------------------------------------------------------------- arrival
 ## DOOR 3: the pair arrives, the badger becomes the far end's tap target,

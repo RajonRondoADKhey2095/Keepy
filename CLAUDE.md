@@ -465,6 +465,30 @@ par `rig.global_transform.affine_inverse()`.
 **re-mesurée contre le rig vivant à chaque run** et `push_error` en cas de
 dérive. Elle a payé dès le premier boot.
 
+### ⚠️ ET LES OS NE SONT PAS LA SILHOUETTE — 0,164 u d'écart, mesuré
+
+Corollaire du piège ci-dessus, et il coupe dans l'autre sens : une fois
+qu'on a renoncé à `get_aabb()` pour `get_bone_global_pose()`, il reste que
+**les os sont des ARTICULATIONS, pas la surface qu'un joueur voit**. Sur le
+blaireau en pose de suspension, la semelle DESSINÉE pend **0,158 u sous
+l'os le plus bas** (0,164 mesuré en pose de repos) : fourrure, pied,
+maillage au-delà de la cheville.
+
+Ce que ça a coûté, à l'intérieur d'un seul lot : un balayage d'angle lu sur
+les os a désigné 30° comme « la marge la plus faible qui soit réelle,
++0,184 » ; le MÊME 30° relu sur les vertices skinnés laissait **+0,019**,
+deux centimètres. La réponse a bougé de 10°.
+
+**Règle** : un contrat qui porte sur ce qu'un joueur VOIT (dégagement au
+sol, silhouette, chevauchement) se mesure sur les **VERTICES SKINNÉS À LA
+MAIN** contre la pose vivante — `Skin.get_bind_pose()` composé avec
+`get_bone_global_pose()` de chaque os, pondéré par `ARRAY_WEIGHTS`. Les os
+restent le bon instrument pour ce qu'une sonde gatée doit échantillonner à
+chaque frame (c'est bon marché) ; la silhouette se lit **une fois**, au bon
+moment, et c'est elle qui gate. Publier les DEUX, et asserter qu'elles
+**diffèrent** — sans quoi la seconde constante est décorative et le lot
+suivant regatera la mauvaise.
+
 ### ⚠️ Un `@export` de NOEUD TYPÉ écrit à la main dans un `.tscn` NE SE RÉSOUT PAS
 
 `@export var camera: Camera3D` avec `camera = NodePath("...")` rend **`null`
@@ -815,6 +839,31 @@ Le patron, et il est réutilisable tel quel :
 un défaut que personne n'avait cherché : l'anneau de dépôt de fin de trajet
 (`_ride_exit_point`, qui **jette** tout candidat hors région) avait tout son
 arc nord amputé à P2 — un rider ne pouvait être déposé que côté plateau.
+
+### ⚠️ UN APPUI PARTAGÉ NE VEUT PAS DIRE UNE POSE PARTAGÉE
+
+Deux corps accrochés au MÊME objet physique partagent la géométrie de cet
+objet, et **rien d'autre**. Sur la tyrolienne, `bar_drop` et
+`hang_clearance` décrivent une barre unique — la ligne de crown à 1,71 que
+le chariot tend aux deux passagers — et elles restent partagées. Ce qui est
+**par corps**, c'est la POSE accrochée à cette ligne, et il en faut DEUX
+nombres par passager, pas un :
+
+* **où est son crown au-dessus de son propre nœud**, DANS LA POSE OÙ IL EST
+  TENU — jamais sa hauteur DEBOUT. Les deux coïncident pour un corps qui
+  pend droit (Keepy), ce qui rend la formule juste **par accident** de son
+  côté et masque le défaut jusqu'au premier passager incliné ;
+* **où est son point le plus bas par rapport à ce nœud**, qui n'est zéro
+  que pour ce même corps droit.
+
+Mesuré : passer la hauteur debout d'un corps incliné comme offset de crown
+l'a enterré **0,45 u sous le sol pendant les 4 s du trajet**, sans erreur
+ni crash. Une sonde qui lit le NŒUD au lieu de la SEMELLE ne le voit pas —
+le nœud était à +0,007, positif, vert.
+
+**Corollaire pour un troisième passager** : il apporte ses deux offsets,
+la barre n'en apporte aucun, et la fonction de siège prend un **offset de
+crown** — jamais une hauteur de corps.
 
 ### ⚠️ UNE TABLE EST UNE LISTE DÈS LE PREMIER COMMIT
 
