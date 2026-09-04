@@ -47,6 +47,7 @@
 | CH19 | Pie, baiser et hotspot du lit | [CH19_PIE.md](CH19_PIE.md) | 11 | 2244 | 31 août → 1 sept 2026 | `main` |
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [CH20_OURS.md](CH20_OURS.md) | 7 | 1256 | 1 → 2 sept 2026 | `staging` |
 | CH21 | Tyrolienne — recon, palier 1 (structure/câble), palier 2 (blaireau/porte/nacelle), retouche échelle blaireau + diagnostic point nord, station debout dégagée de l'escalier | [CH21_TYROLIENNE.md](CH21_TYROLIENNE.md) | 16 | 2189 | 3 → 4 sept 2026 | `staging` |
+| CH22 | Audit visuel du hub 3D — recon pure, lecture seule : inventaire mesuré des 154 nœuds de dessin, budget 61 161 triangles, ancrage, densité XZ, palette (20 albédos sur 25 en bande morte), liste A (7 corrections sans asset) et liste B (5 fiches Meshy), arbitrage des deux décimateurs | [CH22_HUB_VISUEL.md](CH22_HUB_VISUEL.md) | 1 | 896 | 4 sept 2026 | `staging` |
 
 **Total chantiers : 128 sections, 24 752 lignes.**
 
