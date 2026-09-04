@@ -2160,14 +2160,39 @@ func _setup_campfire() -> void:
 	var side := Vector3(forward.z, 0.0, -forward.x)
 	_campfire_point = site + side * (CAMPFIRE_STONE_RING_OUTER + CAMPFIRE_ARRIVE_MARGIN)
 
-	var points: Array[Vector3] = [_campfire_point]
+	# ⚠️ TWO DISCS, AND THE HEARTH IS THE ONE THAT WAS MISSING.
+	#
+	# Until this lot this array held `_campfire_point` ALONE -- the badger's
+	# ARRIVAL point, which sits `CAMPFIRE_STONE_RING_OUTER +
+	# CAMPFIRE_ARRIVE_MARGIN` = 2.189 u out from the hearth. MEASURED
+	# (CampfireFacingProbe PHASE C): with CAMPFIRE_TAP_RADIUS at 1.8 that
+	# left the centre of the fire 2.189 u from the only disc that answered,
+	# i.e. OUTSIDE it -- so a tap ON the campfire did nothing at all, and
+	# the detour could only be started by tapping a patch of lawn beside it.
+	#
+	# The hearth is ADDED and not substituted: the disc around the arrival
+	# point is also the disc over the badger once it is sitting there, so
+	# dropping it would take away "tap the badger to send it home".
+	# `HubTapInput` already loops over this array -- it was an Array from
+	# its first commit, on this repo's own rule that a table is a list
+	# before it has two entries -- so the union costs nothing.
+	var points: Array[Vector3] = [site, _campfire_point]
 	_tap.campfire_points = points
 	_tap.campfire_radius = CAMPFIRE_TAP_RADIUS
 	_badger.arrived.connect(_on_badger_arrived)
 
 	_campfire_marker = CabinMarker.new()
 	_campfire_marker.setup(CAMPFIRE_TAP_RADIUS, "", CabinMarker.Surface.HUB_GRASS)
-	_campfire_marker.position = _campfire_point
+	# ⚠️ ON THE HEARTH, NOT ON `_campfire_point`, AND THE TWO STAY DISTINCT.
+	#
+	# LOT 2 drew this ring at the badger's arrival point and argued it was
+	# "AT the point it marks". That was true of the DISC and false of the
+	# FIRE: the device screenshot showed an amber ring 2.189 u off the
+	# hearth, overlapping the stone ring's edge, marking lawn. What a player
+	# is being invited to tap is the CAMPFIRE, so the ring is drawn on the
+	# campfire; `_campfire_point` keeps its own separate job -- where the
+	# badger STANDS -- and is never re-read for anything visual.
+	_campfire_marker.position = site
 	_builder.add_child(_campfire_marker)
 
 ## A tap on the campfire. Toggles the badger's detour; a tap that lands
