@@ -2070,14 +2070,6 @@ func _zip_seat(sign: float, crown_above_origin: float) -> Vector3:
 		+ crown_above_origin
 	return Vector3(lateral, -drop, 0.0)
 
-## The end the badger waits at whenever the cable is idle -- ALWAYS south,
-## by Mathieu's explicit call (tier 3, 4 septembre 2026): the badger never
-## stays at the far end. `_on_zip_trip_finished` enforces this by chaining
-## an unaccompanied return leg onto every accompanied trip that lands
-## anywhere else, so this constant is read wherever the door's per-end
-## state is written -- never a second hand-typed 0.
-const BADGER_HOME_END: int = 0
-
 ## A tap on the waiting badger. ONE tap buys the whole thing -- the hop
 ## chain walks to the tower and `_on_hop_landed` boards on arrival --
 ## because that is exactly how a tap on the boat, the ladder and the perch
@@ -2166,12 +2158,13 @@ func _try_zip_badger(position: Vector3) -> bool:
 	if from_end < 0 or to_end < 0:
 		_zipping = false
 		return false
-	# The trolley is parked at whichever end the badger is waiting -- always
-	# BADGER_HOME_END between trips now that a solo ride can leave the
-	# carrier at either anchor -- but re-parked explicitly rather than
-	# trusted, for the reason `_try_zip_solo` re-parks: a silent mismatch
-	# between "where the badger stands" and "where the handle actually is"
-	# would put Keepy's boarding arc at the wrong tower.
+	# The trolley is parked at whichever end the badger is CURRENTLY waiting
+	# -- which may be either tower now that it no longer walks itself home
+	# after a trip (4 septembre 2026, tier 3 revision -- see the doctrine
+	# note above `_on_zip_trip_finished`) -- but re-parked explicitly rather
+	# than trusted, for the reason `_try_zip_solo` re-parks: a silent
+	# mismatch between "where the badger stands" and "where the handle
+	# actually is" would put Keepy's boarding arc at the wrong tower.
 	_park_carrier_at(from_end)
 	if not _keepy.board_zipline(carrier, _zip_seat(-1.0, KEEPY_DRAWN_HEIGHT)):
 		return false
@@ -2229,11 +2222,16 @@ func _try_zip_solo(position: Vector3) -> bool:
 	# the moment it is called, to aim Keepy's boarding arc -- a stale
 	# carrier would arc him towards empty air at the wrong tower.
 	_park_carrier_at(from_end)
+	# Read BEFORE `set_riding(true)` clears it: a solo trip never touches the
+	# badger, so the door has to reopen at whichever end it was ALREADY
+	# waiting at, not at either end this trip actually visits. See the
+	# "badger_at" read in `_on_zip_trip_finished`.
+	var badger_at: int = _zipline_door.waiting_end()
 	if not _keepy.board_zipline(carrier, _zip_seat(0.0, KEEPY_DRAWN_HEIGHT)):
 		return false
 	_zipping_solo = false
 	_zipline_door.set_riding(true)
-	_zip_trip = {"from": from_end, "to": to_end, "keepy": true, "badger": false}
+	_zip_trip = {"from": from_end, "to": to_end, "keepy": true, "badger": false, "badger_at": badger_at}
 	return true
 
 ## Puts the trolley on the anchor for `end_index`, regardless of where it
@@ -2370,33 +2368,41 @@ func _apply_zip(t: float) -> void:
 	if bool(_zip_trip.get("badger", false)):
 		_badger_follow_zipline()
 
-## The trolley has arrived. Whoever it carried comes off or, for the
-## badger, may instead be sent straight back -- see the header note below
-## -- and the door opens again only once the badger is truly home.
+## The trolley has arrived. Whoever it carried comes off, and the door opens
+## again at the end it just arrived at.
 ##
-## ⚠️ THE BADGER NEVER WAITS AT THE FAR END (tier 3, 4 septembre 2026,
-## Mathieu's explicit call). Every accompanied trip therefore ends in ONE
-## of two ways:
+## ⚠️ REVERSAL, 4 SEPTEMBRE 2026 (tier 3, later the same day it shipped) --
+## Mathieu's explicit call, made after testing the automatic-return build on
+## device. The PREVIOUS lot ("solo zipline ride on the structure + badger's
+## automatic return home", commit 2b3c3b9 / merge 7938317) had the badger
+## walk itself back to a fixed `BADGER_HOME_END` (south) at the end of every
+## accompanied trip, by chaining an unaccompanied return leg onto the trip
+## that had just landed elsewhere. That chain is REMOVED here: the badger no
+## longer has a home end at all. It simply stays, mounted and idle, at
+## whichever end an accompanied trip actually delivered it to, until the
+## NEXT accompanied trip -- launched from THAT end -- moves it again.
 ##
-##   * it arrived at BADGER_HOME_END (south) -- which cannot happen for the
-##     FIRST leg of an accompanied trip, since that only ever launches from
-##     home, but is exactly what the SECOND leg below arrives at;
-##   * it arrived anywhere else -- in which case this function immediately
-##     CHAINS an unaccompanied return leg, badger only, back to
-##     BADGER_HOME_END, and returns without reopening the door. `_riding`
-##     was set true once, at the very first boarding, and nothing here
-##     clears it until that chained leg's own call to this same function
-##     falls into the first case.
+## Nothing else about the shape changes: `ZiplineDoor` was already built to
+## read the badger's position live rather than off a remembered constant
+## (see its header, "WHY THE TAP TARGET IS THE BADGER AND NOT THE STAIR",
+## and `rider_position()`), and `_try_zip_badger` already reads
+## `waiting_end()` rather than a hand-typed end index -- so dropping the
+## chain is the whole of the change; no other function needed to become
+## end-aware, because none of them assumed a fixed end to begin with.
 ##
-## A SOLO trip (`"badger": false`) never enters the chain at all: the
-## badger was never touched, so there is nothing to send home, and the door
-## reopens on the same frame the trip ends -- exactly as it always has.
+## A SOLO trip (`"badger": false`) never touched the badger and never did --
+## the door simply reopens on the same frame the trip ends, at the end it
+## arrived at, exactly as it always has.
 func _on_zip_trip_finished() -> void:
 	if _zip_trip.is_empty() or _zipline.is_empty():
 		return
 	var arrived: int = int(_zip_trip["to"])
 	var had_keepy: bool = bool(_zip_trip.get("keepy", false))
 	var had_badger: bool = bool(_zip_trip.get("badger", false))
+	# Only meaningful for a solo trip -- the end the badger was ALREADY
+	# waiting at before this trip, which never touched it, and which
+	# `set_riding(true)` overwrote to -1 the moment boarding started.
+	var badger_at: int = int(_zip_trip.get("badger_at", -1))
 	_zip_trip = {}
 	var towers: Array = _zipline["towers"]
 	# Parked EXPLICITLY on the anchor rather than left wherever the last
@@ -2420,34 +2426,18 @@ func _on_zip_trip_finished() -> void:
 		})
 		_keepy.leave_zipline(landing)
 
-	if had_badger and arrived != BADGER_HOME_END:
-		# THE CHAIN. Door stays shut -- `_riding` is untouched -- and the
-		# badger keeps its seat: `_zip_trip` here is written directly rather
-		# than through `_try_zip_badger`, because there is no tap, no
-		# boarding arc and no Keepy to seat for this leg.
-		_zip_trip = {"from": arrived, "to": BADGER_HOME_END, "keepy": false, "badger": true}
-		var trip: Tween = _build_zip_trip()
-		if trip != null:
-			trip.finished.connect(_on_zip_trip_finished, CONNECT_ONE_SHOT)
-			return
-		# The trolley went away mid-return. Fall through and settle the
-		# badger where it actually is rather than leaving the door shut
-		# forever over a reference that no longer resolves.
-		_zip_trip = {}
-		arrived = BADGER_HOME_END
-		_park_carrier_at(arrived)
-
 	if had_badger:
 		_badger.set_model_pitch(0.0)
 		_badger.global_position = _badger_rest(arrived)
 		_badger.face(_badger_facing(arrived))
 		_badger.freeze_at(&"Walking", 0.0)
 
-	# The door re-opens with the badger's end ALWAYS named as
-	# BADGER_HOME_END -- true whether this leg carried the badger home just
-	# now or never touched it at all, because the invariant this whole
-	# function exists to keep is that the badger is idle only at home.
-	_zipline_door.set_riding(false, BADGER_HOME_END)
+	# The door re-opens at wherever the badger ACTUALLY is: this trip's own
+	# arrival when it rode along, or the end it was already waiting at
+	# (read before boarding, above) when this was a solo trip that never
+	# touched it -- never `arrived`, which for a solo trip names where
+	# KEEPY went, not the badger.
+	_zipline_door.set_riding(false, arrived if had_badger else badger_at)
 
 func _apply_swamp_palette() -> void:
 	var env: Environment = _world_env.environment
