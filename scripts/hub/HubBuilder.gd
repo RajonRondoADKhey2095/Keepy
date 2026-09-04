@@ -120,7 +120,35 @@ class_name HubBuilder
 
 const TRUNK_COLOR: Color = Color(0.20, 0.13, 0.08)
 const CROWN_COLOR: Color = Color(0.17, 0.34, 0.13)
-const ROCK_COLOR: Color = Color(0.26, 0.27, 0.24)
+## A1 (CH22 audit). ONE of the three big decor families is carried into the
+## readable band, and only one -- the hub ground sits at L = 0.1035, so
+## lifting bushes, crowns AND rocks together would invert the hierarchy and
+## leave the ground as the darkest thing on the plateau.
+##
+## Rock is the defensible candidate because (0.26, 0.27, 0.24) was already
+## NEUTRAL: raising it is a mineral grey, not a repaint of the swamp.
+##
+## MEASURED, WCAG relative luminance on the albedo, against the ground:
+##   before  (0.26, 0.27, 0.24)  L = 0.0575  ->  1.43:1
+##   after   (0.69, 0.69, 0.67)  L = 0.4319  ->  3.14:1
+## The hub-local floor is L >= 0.4104 (CH22 4d), not the 0.549 CLAUDE.md
+## carries over from Chased -- that one is Chased's ground, and it stays
+## valid only as a safer target.
+##
+## ⚠️ THE LOW BAND DOES NOT EXIST HERE. Clearing 3.0:1 downwards would need
+## L <= 0.0012, a near-absolute black no usable colour reaches; the darkest
+## thing in the hub today (spruce trunk, L = 0.0117) tops out at 2.49:1.
+## Anything that must separate from this ground goes UP or not at all.
+##
+## ⚠️ Emission is NOT an option and was not tried: every hub material is
+## unlit, so the emission half of a material is inert (CLAUDE.md). Albedo
+## is the only channel that carries signal here.
+##
+## ⚠️ This constant is also the turnstile base and the seesaw fulcrum
+## (TURNSTILE_BASE_COLOR, SEESAW_FULCRUM_COLOR read it rather than retyping
+## it). They move with it BY DESIGN -- they borrow "the hub's mineral
+## colour", and one fact is published once. 3 nodes in total, not 1.
+const ROCK_COLOR: Color = Color(0.69, 0.69, 0.67)
 const BUSH_COLOR: Color = Color(0.21, 0.39, 0.16)
 
 ## Flower colours, LOCAL to the hub on purpose. SwampPalette.gd carries the
