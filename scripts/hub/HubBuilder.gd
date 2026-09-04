@@ -220,7 +220,30 @@ const _FLOWER_PETAL_KEYS: Array[StringName] = [
 ## This body: a=0.95 -- 0.90 reaches 2.99:1 in its own view, a hair under,
 ## and 0.95 reaches 3.22:1.
 const POND_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
-const POND_BANK_COLOR: Color = Color(0.22, 0.21, 0.15)
+## A6 (CH22 audit). The bank ring read as a hard black line: L = 0.0358
+## against water at L = 0.5895 in albedo. Lifted to L = 0.1452 -- up, but
+## deliberately NOT into the high band, which would put the bank in
+## competition with the water it is supposed to frame.
+##
+## ⚠️ NOT SOLVED IN CLOSED FORM, AND IT MAY NOT BE. The water sits at alpha
+## 0.95 and CLAUDE.md is categorical that the render is not affine in alpha
+## (a two-point fit underestimated four water bodies). So this was SWEPT:
+## seven candidates written onto the live bank slots, the shore re-rendered
+## through the SHIPPED camera each time, and the contrast read off pixels
+## identified by a fog-cut mask pass -- not off a window, and not from 60 u
+## up where the fog is what gets measured.
+##
+## MEASURED at the shipped camera distance, water/bank as RENDERED:
+##   v=0.22 (before) bank L 0.0655 -> 3.04:1     v=0.42 bank L 0.1169 -> 2.22:1
+##   v=0.38          bank L 0.1167 -> 2.14:1     v=0.44 bank L 0.1243 -> 2.13:1
+##   v=0.46          bank L 0.1425 -> 1.88:1     v=0.50 bank L 0.1481 -> 1.90:1
+## v=0.44 is the pick: the ring's RENDERED luminance nearly doubles
+## (0.0655 -> 0.1243), so it stops reading as a black trait, while the
+## water still holds 2.13:1 over it and stays the brighter surface.
+##
+## The four bank slots (pond, small lake, two great-lake lobes) share this
+## one constant on purpose -- a bank is a bank. All four move.
+const POND_BANK_COLOR: Color = Color(0.44, 0.42, 0.30)
 const POND_WATER_RADIUS: float = 3.2
 const POND_BANK_RADIUS: float = 3.62
 const POND_SEGMENTS: int = 24
