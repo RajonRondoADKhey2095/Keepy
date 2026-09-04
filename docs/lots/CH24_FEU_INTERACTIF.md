@@ -614,3 +614,90 @@ ne marche jamais de travers en rentrant », « l'anneau est dessiné sur le
 feu ») et porte le blind check qui empêche le premier de passer gratuitement.
 `ProbeTimeoutAudit` la voit et **PASSE** (65 scènes de sonde, `arm()` +
 `deadline()`).
+
+# LOT 4 -- Demi-tour à l'arrivée au repos (4 septembre 2026)
+
+Décision de Mathieu, actée en brief : le « dos tourné » au retour (LOT 3) est
+de la géométrie de caméra, pas un bug -- rien à corriger sur le trajet. Ce
+qui restait à faire : que le blaireau, une fois REVENU à son point de repos
+tyrolienne, pivote pour retrouver l'orientation qu'il avait avant ce
+chantier, plutôt que de rester figé sur le cap de trajet retour.
+
+## Check 1 -- le cap de repos canonique n'est PAS un degré, c'est un accesseur
+
+Le brief prévenait à raison que le cap de TRAJET retour (+159,07°, LOT 3)
+et le cap de REPOS pourraient être deux nombres différents -- ne pas les
+supposer identiques. Ils le sont : `HubWorld._badger_facing(index)` (CH21,
+inchangée depuis) publie déjà LE cap de repos canonique -- pas un littéral,
+un **accesseur** qui lit `_badger_rest(index)` et la position de la tour
+construite, et répond « la direction vers la tour, pour lire comme quelqu'un
+qui attend d'y monter ». C'est cette même fonction que `_ready()` (spawn) et
+`_on_zip_trip_finished()` (arrivée après une traversée) appellent déjà pour
+poser l'orientation de repos -- **aucun troisième site ne la recalcule**.
+
+Aucun littéral en degrés n'a donc été introduit : recopier un chiffre à la
+place de cet accesseur aurait été exactement le piège « chiffre fantôme »
+que ce fichier documente déjà (rayon 4,03 u qui n'existait nulle part) --
+la valeur dépend de la tour ET de l'extrémité (`_badger_campfire_return_end`),
+et seule la tour construite la connaît. Sans binaire Godot dans ce sandbox
+(voir BUILD), aucun degré numérique n'a pu être lu sur l'arbre réel ; ce
+n'est pas nécessaire ici puisque le code demande l'accesseur et jamais un
+nombre recopié.
+
+## Check 2 -- patron de virage : réutilisé, rien de neuf inventé
+
+Grep exhaustif de `pivot|turn_to|rotate_to|spin_to` sur `scripts/` : les
+seuls virages en place existants (tourniquet, balançoire) tournent un PROP
+autour d'un pivot, jamais un ACTEUR sur son propre yaw -- aucun patron
+directement réutilisable pour « faire pivoter le blaireau sur place ».
+
+En revanche `HubActorWalker._process()` fait déjà exactement ce lissage --
+`lerp_angle(_yaw, wanted, 1 - exp(-turn_lambda * delta))` -- mais seulement
+pendant l'état WALKING. Plutôt qu'un mécanisme neuf, LOT 4 étend ce même
+`_process()` pour aussi lisser vers une nouvelle cible `_turn_target` à
+l'ARRÊT (`turn_to()`), sur le même `turn_lambda`. Aucune animation Meshy
+neuve : la pose gelée `Walking` (`_freeze()`, déjà en place à l'arrivée) est
+conservée pendant le virage.
+
+Points de fond couverts, chacun un mode de défaillance concret sinon :
+
+* `walk_to()` efface `_turn_target` en entrée -- sinon un second tap sur le
+  feu pendant le virage laisserait le virage reprendre au premier
+  atterrissage suivant, sur une cible périmée.
+* `face()` (écriture instantanée, cf. sa propre doc -- "placer, pas animer")
+  efface aussi `_turn_target` -- sinon `_badger_follow_zipline()`, qui
+  rappelle `face()` à CHAQUE frame d'une traversée, se ferait défaire son
+  cap la frame suivante par un virage encore actif si le joueur relance une
+  traversée dans la fenêtre du virage (~0,6 s après l'arrivée au repos).
+
+## Seuil de fin de virage -- 5°, calculé hors moteur
+
+`TURN_SETTLE_EPSILON = 5°` (pas 0°, une égalité sur flottant ne finit
+jamais) : ce dépôt traite déjà un résidu sous ~30° comme imperceptible (LOT
+3, cas de l'autre tour à 30,6°), 5° laisse une marge large en dessous de ce
+seuil. **Calcul Python hors moteur** (aucun binaire disponible, voir BUILD),
+rejouant la formule EXACTE de `_process()` :
+
+```
+départ 159,07° -> pire cas balayé sur toutes les cibles 0-355° : 0,600 s
+inversion pure à 180°                                         : 0,600 s
+virage court (cas "autre tour", 30,6°)                        : 0,317 s
+```
+
+Les trois tombent dans la fenêtre 0,3-0,6 s du brief, y compris le pire cas
+théorique (retournement complet) -- sans second réglage, `turn_lambda`
+(6,0, déjà éprouvé sur le trajet retour) suffit.
+
+⚠️ **Ce calcul vérifie la FORMULE, pas le comportement en moteur.** Il ne
+prouve pas que `_badger_facing(_badger_campfire_return_end)` est bien
+appelée au bon moment ni que rien ne l'écrase -- seulement que, si elle
+l'est, le temps de convergence tient la fenêtre demandée.
+
+## Ce qui n'a PAS été touché
+
+Le trajet retour lui-même (cap, vitesse) : intact, `_badger.face(home - ...)`
+et `walk_to(home)` dans `_on_tapped_campfire` n'ont pas été modifiés. Le
+virage est ajouté exclusivement dans `_on_badger_arrived()`, branche
+`&"to_rest"`, donc seulement à l'arrivée au REPOS -- jamais à l'arrivée au
+feu (`&"to_fire"`, non touchée). Position du marqueur/tap (LOT 3) : non
+touchée.

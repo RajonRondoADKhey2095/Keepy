@@ -2047,10 +2047,15 @@ func _badger_facing(index: int) -> Vector3:
 ## exactly the way the boat's mooring and the badger's own boarding disc
 ## already withdraw for the whole of a ride.
 ##
-## No new state on HubActorWalker: IDLE/WALKING/ARRIVED plus `walk_to()`
-## already say everything this needs. The only state kept here is WHICH LEG
-## the badger is on, because `arrived` fires identically at the end of
-## either leg and the two need different handling.
+## No new STATE on HubActorWalker for the round trip itself:
+## IDLE/WALKING/ARRIVED plus `walk_to()` already say everything that needs.
+## The only state kept here is WHICH LEG the badger is on, because `arrived`
+## fires identically at the end of either leg and the two need different
+## handling.
+##
+## LOT 4 adds one small capability to the actor, not a state: `turn_to()`,
+## a turn-in-place for the moment `to_rest` lands home facing the travel
+## bearing rather than the tower it is meant to wait beside.
 ## =====================================================================
 
 ## How close a tap has to land to the campfire to mean "send/recall the
@@ -2252,6 +2257,19 @@ func _on_badger_arrived() -> void:
 		&"to_rest":
 			_badger_campfire_leg = &""
 			_zipline_door.set_badger_at(_badger_campfire_return_end)
+			# LOT 4: face the CH21 canonical rest heading, not whatever the
+			# travel bearing home left the yaw at. `_badger_facing()` is the
+			# same accessor `_ready()` and `_on_zip_trip_finished()`
+			# already read for this -- a published fact, not a new literal
+			# (CLAUDE.md's own "chiffre fantome" warning) -- so it is asked
+			# for here rather than a degree constant guessed from LOT 3's
+			# travel-heading numbers, which describe a different thing (the
+			# BEARING to the fire, not the tower-facing rest pose) and are
+			# not assumed identical to it.
+			#
+			# Turned AFTER arrival, on the spot -- `walk_to()`'s own facing
+			# (the LOT 2/3 fix) still owns the return leg itself, untouched.
+			_badger.turn_to(_badger_facing(_badger_campfire_return_end))
 			_badger_campfire_return_end = -1
 		_:
 			# An arrival unrelated to the detour. Nothing else ever calls

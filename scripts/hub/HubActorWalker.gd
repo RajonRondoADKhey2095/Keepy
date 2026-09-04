@@ -87,6 +87,18 @@ enum State { IDLE, WALKING, ARRIVED }
 ## for equality on a float never ends at all.
 @export var arrive_epsilon: float = 0.05
 
+## How close a turn-in-place (`turn_to()`) has to land before it is done.
+## 5 degrees, not 0: this project's own doctrine (CH24, the 30.6-degree
+## return case) already treats a residual under ~30 degrees as visually
+## imperceptible, and 5 degrees leaves a wide margin under that. Chosen so
+## the worst case -- a full 180-degree reversal -- settles at
+## `-ln(5/180)/turn_lambda` =~ 0.60 s under the default `turn_lambda`,
+## inside the brief's 0.3-0.6 s target without a second tunable.
+## Radians, not a `deg_to_rad()` call: a `const` initialiser has to be a
+## constant expression, and this project has no precedent anywhere of a
+## function call surviving one -- literal arithmetic on `PI` only.
+const TURN_SETTLE_EPSILON: float = 5.0 * PI / 180.0
+
 ## The rig to draw. Supplied by the caller so this script stays an actor and
 ## not one particular animal.
 @export var model_scene: PackedScene
@@ -104,6 +116,10 @@ signal arrived
 var _state: int = State.IDLE
 var _target: Vector3 = Vector3.ZERO
 var _yaw: float = 0.0
+## NAN when no turn-in-place is under way. Set by `turn_to()`, eased by
+## `_process()` on the same `turn_lambda` curve the WALKING facing already
+## uses, and cleared once within `TURN_SETTLE_EPSILON` of itself.
+var _turn_target: float = NAN
 var _model: Node3D = null
 var _player: AnimationPlayer = null
 ## The name the actor plays. NOT `walk_anim`: the clip is duplicated into
@@ -160,6 +176,11 @@ func _ready() -> void:
 ## number living in here is how this stops being an actor and becomes one
 ## prop's animation.
 func walk_to(point: Vector3) -> void:
+	# A pending turn-in-place is superseded by an actual walk -- the
+	# travel-facing block in `_process()` owns `_yaw` from here, and a
+	# stale `_turn_target` left set would otherwise resume easing toward it
+	# the moment this walk arrives and re-enables `_process()` for that.
+	_turn_target = NAN
 	_target = Vector3(point.x, 0.0, point.z)
 	if _flat().distance_to(_target) <= arrive_epsilon:
 		# Already there. Arriving is still the honest answer -- a caller
@@ -212,9 +233,57 @@ func face(direction: Vector3) -> void:
 		return
 	_yaw = atan2(direction.x, direction.z)
 	rotation.y = _yaw
+	# A caller placing the actor overrides a pending turn_to() outright,
+	# same as it overrides any other stale heading -- otherwise a ride
+	# started within a turn's ~0.6 s window would have this frame's face()
+	# immediately fought by next frame's turn-in-place ease, e.g. the
+	# zipline mount's own per-frame `face()` in `_badger_follow_zipline()`
+	# against a campfire-return turn still settling.
+	if not is_nan(_turn_target):
+		_turn_target = NAN
+		if _state != State.WALKING:
+			set_process(false)
+
+
+## Eases the actor's facing to `direction` over a fraction of a second,
+## WITHOUT walking -- for an actor already ARRIVED that needs to turn on
+## the spot, which `face()` (instant, no ease -- see its own doc) and
+## `walk_to()` (moves the body) do not cover between them.
+##
+## Reuses `_process()`'s own WALKING-facing curve (`lerp_angle` at
+## `turn_lambda`) rather than a second easing scheme: a turn has the same
+## "no cadence to disagree with" shape whether or not the feet are moving,
+## so the same constant that already reads right for the return leg's
+## worst-case 180-degree reversal (CH24 LOT 3) reads right here too.
+##
+## No-op while WALKING: the travel-facing block below already owns `_yaw`
+## in that state, and a caller that wants a turn once the actor stops
+## should call this again from `arrived`, not race it here.
+func turn_to(direction: Vector3) -> void:
+	if _state == State.WALKING:
+		return
+	var flat := Vector2(direction.x, direction.z)
+	if flat.length_squared() < 1.0e-8:
+		return
+	_turn_target = atan2(direction.x, direction.z)
+	set_process(true)
 
 
 func _process(delta: float) -> void:
+	if _state != State.WALKING:
+		if not is_nan(_turn_target):
+			var weight: float = 1.0 - exp(-turn_lambda * delta)
+			_yaw = lerp_angle(_yaw, _turn_target, weight)
+			rotation.y = _yaw
+			if absf(angle_difference(_yaw, _turn_target)) < TURN_SETTLE_EPSILON:
+				_yaw = _turn_target
+				rotation.y = _yaw
+				_turn_target = NAN
+				set_process(false)
+			return
+		set_process(false)
+		return
+
 	var here: Vector3 = _flat()
 	var to_target: Vector3 = _target - here
 	var dist: float = to_target.length()
