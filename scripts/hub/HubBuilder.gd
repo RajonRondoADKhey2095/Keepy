@@ -1729,11 +1729,13 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 			_instance(&"TreeTrunk", placement.translated_local(Vector3(0.0, 0.75, 0.0)))
 			_instance(&"TreeCrown", placement.translated_local(Vector3(0.0, 2.0, 0.0)))
 		&"rock":
-			_instance(&"Rock", placement.translated_local(Vector3(0.0, 0.28, 0.0)))
+			var rock_at := _distorted(placement, entry)
+			_instance(&"Rock", rock_at.translated_local(Vector3(0.0, 0.28, 0.0)))
 		&"bush":
 			# Two lobes, ONE mesh: two instances of a single batch.
-			_instance(&"Bush", placement.translated_local(Vector3(0.0, 0.3, 0.0)))
-			_instance(&"Bush", placement.translated_local(Vector3(0.42, 0.2, 0.18)))
+			var bush_at := _distorted(placement, entry)
+			_instance(&"Bush", bush_at.translated_local(Vector3(0.0, 0.3, 0.0)))
+			_instance(&"Bush", bush_at.translated_local(Vector3(0.42, 0.2, 0.18)))
 		&"pontoon":
 			# A deck, batched: every pontoon is the same plank slab at a
 			# different angle, which is precisely what one MultiMesh is for.
@@ -1747,6 +1749,56 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 		_:
 			return false
 	return true
+
+## A3 (CH22 audit). Rock and Bush are SPHERES OF REVOLUTION, so the layout's
+## rotation_y -- which ranges 2.9 to 350.8 degrees across 116 instances --
+## changes not one pixel on them. The only real variation those props ever
+## had was the uniform scale. This gives the yaw something to turn.
+##
+## ⚠️ THE ORDER IS THE WHOLE CORRECTION, and getting it wrong reproduces the
+## exact no-op it is meant to fix. Transform3D.scaled() pre-multiplies, i.e.
+## it scales along WORLD axes: a sphere yawed and THEN squashed in world X/Y
+## is squashed identically whatever its yaw, so the yaw stays a no-op and
+## the probe would read "varied" off a mechanism that never ran. It has to
+## be scaled_local() -- squash in the MODEL's frame, then turn -- which is
+## why the probe blind-checks that the silhouettes actually differ before it
+## is allowed to assert anything about them.
+##
+## ⚠️ XZ IS CAPPED AT 1.0 ON PURPOSE. ground_footprints() reserves
+## FOOTPRINT_RADIUS[type] * uniform for walkability; letting a prop stretch
+## PAST that would silently make the declared footprint a lower bound
+## instead of a bound. Shrinking only keeps every existing guard
+## conservative, and Y is free to grow because nothing reserves height.
+##
+## Burial rides along for free rather than needing a second sum: the 0.28
+## lift is applied with translated_local, so it passes through the same
+## local Y factor as the mesh does, and the buried FRACTION is unchanged.
+## MEASURED by the probe rather than argued here -- copying one half of a
+## sum is precisely the defect CLAUDE.md records.
+const PROP_DISTORT_XZ_MIN: float = 0.80
+const PROP_DISTORT_XZ_MAX: float = 1.00
+const PROP_DISTORT_Y_MIN: float = 0.80
+const PROP_DISTORT_Y_MAX: float = 1.30
+
+## The layout entry's own placement, with a per-instance non-uniform squash
+## written into the MODEL frame. Deterministic: seeded off the prop's own
+## authored position, so the plateau is identical run to run and a layout
+## edit moves only the prop it edited.
+func _distorted(placement: Transform3D, entry: Dictionary) -> Transform3D:
+	# Transform3D.scaled_local, not Basis.scaled_local -- the latter does not
+	# exist in 4.3 and is a Parse Error, which is the loud kind of wrong.
+	# This one post-multiplies by the scale (basis * S) and leaves origin
+	# alone: squash in the model frame, then the yaw turns the squash.
+	return placement.scaled_local(_prop_distortion(entry))
+
+func _prop_distortion(entry: Dictionary) -> Vector3:
+	var where: Vector3 = entry.get("position", Vector3.ZERO)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2(snappedf(where.x, 0.001), snappedf(where.z, 0.001)))
+	var sx: float = rng.randf_range(PROP_DISTORT_XZ_MIN, PROP_DISTORT_XZ_MAX)
+	var sy: float = rng.randf_range(PROP_DISTORT_Y_MIN, PROP_DISTORT_Y_MAX)
+	var sz: float = rng.randf_range(PROP_DISTORT_XZ_MIN, PROP_DISTORT_XZ_MAX)
+	return Vector3(sx, sy, sz)
 
 func _instance(key: StringName, xform: Transform3D) -> void:
 	if not _batches.has(key):
