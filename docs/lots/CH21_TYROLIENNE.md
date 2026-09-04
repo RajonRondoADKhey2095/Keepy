@@ -2336,3 +2336,158 @@ complet, export Web relancé de bout en bout : `index.wasm`
 **35 376 909 octets**, md5 `af4a8fc2925d992348eb30deeeb54360` ; `index.js`
 md5 `4e08904b1b7107858246af44b602067b` — les deux identiques aux empreintes
 déjà publiées pour un lot qui ne touche pas le code moteur.
+
+## LOT BADGER_ENDPOINT_POSITION — le retour automatique du blaireau est RETIRÉ, sur demande explicite après test device (4 septembre 2026)
+
+### ⚠️ RENVERSEMENT DE DÉCISION ASSUMÉ — pas une incohérence, un revirement normal
+
+Le lot précédent (« solo zipline ride on the structure + badger's automatic
+return home », commit `2b3c3b9`, mergé en `7938317`) implémentait
+**explicitement**, sur demande de Mathieu au tour d'avant : « le blaireau
+revient toujours au sud après un trajet accompagné ». `BADGER_HOME_END`
+(constante à 0, le sud), le chaînage dans `_on_zip_trip_finished` et
+`_park_carrier_at` en étaient la mécanique.
+
+Mathieu a testé ce comportement sur device et a tranché l'inverse : **le
+blaireau ne doit plus revenir automatiquement**. Ce lot traite ça comme un
+revirement de design ordinaire — la même chose qui a déjà eu lieu pour la
+taille du blaireau (voir `CH20_OURS.md` / `ZiplineRideProbe.gd` PHASE
+REGISTRY, deux rescales le même jour) — et non comme une erreur à
+documenter comme telle. Rien dans le lot précédent n'était un bug : la
+mécanique de retour automatique fonctionnait exactement comme spécifiée.
+C'est la spécification elle-même que Mathieu a changée après l'avoir vue
+tourner en vrai.
+
+### Le nouveau comportement
+
+Le blaireau n'a plus de position « domicile ». Après un trajet accompagné,
+il reste physiquement — monté, visible, à l'arrêt — à l'extrémité
+**d'arrivée**, jusqu'au prochain trajet accompagné, qui part nécessairement
+de **cette** extrémité (puisque c'est la seule où le blaireau se trouve).
+
+### Ce qui a dû changer, et ce qui n'en avait pas besoin
+
+**Retiré de `HubWorld.gd`** : la constante `BADGER_HOME_END`, et tout le
+bloc dans `_on_zip_trip_finished` qui, à l'arrivée d'un trajet accompagné à
+une extrémité autre que `BADGER_HOME_END`, réécrivait `_zip_trip` avec
+`{"from": arrived, "to": BADGER_HOME_END, "keepy": false, "badger": true}`
+et enchaînait un second `Tween` sans rouvrir la porte entre les deux
+étapes. Le corps de `_on_zip_trip_finished` se réduit maintenant à :
+poser le blaireau (s'il était du trajet) à l'extrémité `arrived`, puis
+rouvrir la porte — `_zipline_door.set_riding(false, arrived if had_badger
+else badger_at)` — sur cette même extrémité, sans aucune deuxième étape.
+
+**`badger_at`, la correction que la suppression naïve du chaînage aurait
+manquée** : `_zipline_door.set_riding(false, BADGER_HOME_END)` était
+correct pour TOUT trajet, accompagné ou solo, précisément parce que
+`BADGER_HOME_END` était une constante — un trajet solo qui n'avait jamais
+touché le blaireau pouvait quand même rouvrir la porte sur sa position
+connue. Une fois la constante retirée, remplacer naïvement par
+`set_riding(false, arrived)` aurait été **faux pour un trajet solo** :
+`arrived` y nomme où KEEPY est allé, pas où le blaireau se trouve. Un
+trajet solo lancé depuis la tour où le blaireau n'est pas aurait alors
+réécrit la porte sur la mauvaise extrémité, silencieusement — jusqu'au
+prochain tap sur le blaireau, introuvable là où la porte le disait. Fixé
+en lisant `_zipline_door.waiting_end()` **avant** que `set_riding(true)`
+ne l'écrase à -1 au début d'un trajet solo (`_try_zip_solo`), et en le
+transportant dans `_zip_trip["badger_at"]` jusqu'à la réouverture.
+
+**Rien d'autre n'a eu besoin de changer.** Point 3 du brief demandait de
+vérifier — pas de supposer — que le canal de tap du blaireau
+(`tapped_zipline_badger`) suit sa position réelle. Vérifié en lisant le
+code plutôt qu'en le devinant : `ZiplineDoor.rider_position()` lit
+`_rider.global_position` en direct (jamais un point mémorisé),
+`accepts_boarding_tap` teste contre ce point live, et `_try_zip_badger`
+lit `_zipline_door.waiting_end()` pour décider `from_end` plutôt qu'un
+index câblé. Cette dynamique existait déjà **avant** ce lot — nécessaire
+dès le tier 2 pour que le blaireau puisse traverser dans les deux sens —
+donc retirer le chaînage de retour est la totalité du changement de
+comportement ; aucune fonction n'a eu besoin de « devenir » sensible à
+l'extrémité, elle l'était déjà.
+
+### Le cas du point 5 du brief, et comment il est gaté
+
+« Si le blaireau est au nord et Keepy au sud, Keepy ne doit voir/taper
+AUCUN hotspot blaireau au sud — seul le hotspot structure reste
+disponible. » `ZiplineDoor.accepts_structure_tap` exclut déjà un point
+seulement `if i == _at_end and accepts_boarding_tap(point)` — c'est-à-dire
+seulement à l'extrémité où le blaireau attend **réellement**. Une fois
+`_at_end` correctement mis à jour sur l'extrémité d'arrivée (ce que ce lot
+corrige), cette règle produit le comportement demandé **sans modification
+supplémentaire** : au sud (vide), `accepts_structure_tap` n'exclut plus
+rien et `accepts_boarding_tap` refuse tout point (aucun `_rider` proche) —
+donc seul le canal structure répond. `ZiplineRideProbe.gd` PHASE ARRIVAL
+gate exactement ça après le premier trajet.
+
+### Sondes — `ZiplineRideProbe.gd`
+
+**PHASE ARRIVAL réécrite en totalité.** L'ancienne version gatait le
+chaînage automatique (porte fermée pendant tout le retour, `_zip_trip`
+badger-only 1→0, attente de la réouverture réelle, blaireau retrouvé au
+sud). La nouvelle gate l'absence de chaînage : réouverture immédiate,
+`_zip_trip` vidé (pas seulement réécrit), blaireau enregistré et
+physiquement présent à l'extrémité d'arrivée (nord), et — le point 5 du
+brief — les quatre combinaisons de canal par extrémité (`is_available_at`,
+`accepts_boarding_tap`, `accepts_structure_tap`) au sud vide et au nord
+occupé.
+
+**PHASE RETURN adaptée** : testait déjà un trajet solo nord → sud sur le
+canal structure (c'était déjà, avant ce lot, le seul moyen de revenir
+depuis le nord puisque tier 3 y avait déjà retiré tout blaireau
+stationnaire — RECON de ce même fichier). Seul changement : le blaireau
+que ce trajet doit voir NE PAS bouger est maintenant celui posé au nord
+(`_badger_rest(1)`), pas un blaireau « déjà rentré » au sud.
+
+**PHASE RETURN ACCOMPANIED, nouvelle.** Aucune phase de ce fichier n'avait
+jamais fait démarrer un trajet accompagné depuis l'extrémité 1 — les trois
+tiers précédents ne l'exerçaient que depuis l'extrémité 0, où le blaireau
+attendait par construction au démarrage de la sonde. Ce lot ajoute
+exactement ce cas : un second tap sur le blaireau, maintenant au nord,
+qui doit démarrer un trajet 1→0, arriver, et reposer la porte sur
+l'extrémité 0 sans chaîner de troisième étape — la symétrie que ce lot
+prétend avoir livrée, effectivement mesurée plutôt que supposée par
+architecture.
+
+⚠️ **Piège rencontré en écrivant PHASE ARRIVAL, et laissé dans le
+commentaire du fichier pour la prochaine session** : le premier jet
+testait `_door.accepts_boarding_tap(P2)` en croyant tester « un tap sur le
+point du blaireau ». `P1`/`P2` sont les **centres de tour**, pas la
+position du blaireau — qui se tient mesurément à 2,0165 u du centre
+(`ZiplineDoor.gd`, doctrine du tier 3), hors du rayon `BOARD_TAP_RADIUS`
+(1,8). La sonde a échoué dès la première exécution (2 FAIL) exactement là
+où elle aurait dû échouer si elle testait la bonne chose pour la mauvaise
+raison — sauf qu'ici c'est le test lui-même qui confondait le centre de
+tour et le point réel du blaireau. Corrigé en lisant
+`_door.rider_position()` pour le point réel, et en corrigeant du même coup
+l'assertion symétrique : le centre de tour, à 2,0165 u du blaireau, est
+**hors** du disque d'exclusion et donc **accepté** par le canal structure
+(`accepts_structure_tap(P2) == 1`), pas refusé comme le premier jet le
+supposait.
+
+**ROUGE AVANT VERT.** L'ancien `HubWorld.gd` (celui de `7938317`, avec
+`BADGER_HOME_END` et le chaînage) restauré temporairement par-dessus le
+fichier corrigé, sonde relancée contre lui : **18 échecs**, tous dans
+PHASE ARRIVAL (les neuf assertions « pas de chaîne ») et en cascade dans
+PHASE RETURN / PHASE RETURN ACCOMPANIED (qui supposent toutes deux un
+blaireau déjà au nord après le premier trajet — faux sous l'ancien
+comportement, où il est déjà reparti vers le sud). Fichier restauré depuis
+la copie de travail et vérifié **byte-identique** au `cmp` contre la
+version commitée. Sonde relancée une dernière fois contre le code
+définitif : **137 OK / 0 FAIL**.
+
+**`ZiplineStructureProbe.gd`** (partage `HubWorld.gd` mais ne teste rien
+du chaînage) : relancée sans modification pour confirmer l'absence de
+régression. **102 OK / 0 FAIL**, inchangé du lot précédent.
+
+### Build
+
+`godot4 4.3.stable` et les templates d'export (absents par défaut dans ce
+bac à sable, comme pour le lot précédent — retéléchargés, tailles
+vérifiées contre les mêmes `Content-Length` déjà publiés dans ce fichier :
+50 276 070 octets éditeur, 1 073 228 327 octets `.tpz`). `.godot/imported`
+compté aux deux bouts (38 `.scn`, stable entre le premier import et le
+réimport post-nettoyage `build/.godot`) pour écarter un import tronqué.
+Export Web complet : `index.wasm` **35 376 909 octets**, md5
+`af4a8fc2925d992348eb30deeeb54360` ; `index.js` md5
+`4e08904b1b7107858246af44b602067b` — identiques aux empreintes déjà
+publiées, confirmant qu'aucun code moteur n'est touché par ce lot.
