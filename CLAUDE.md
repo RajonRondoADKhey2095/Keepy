@@ -1089,7 +1089,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH19 | Pie, baiser et hotspot du lit | [`CH19_PIE.md`](docs/lots/CH19_PIE.md) | 11 | 2244 | 31 août → 1 sept |
 | CH20 | Ours — lots A à F, du rig animé au siège de balançoire | [`CH20_OURS.md`](docs/lots/CH20_OURS.md) | 7 | 1256 | 1 → 2 sept |
 | CH21 | Tyrolienne — recon : patron de tap, cadre caméra, rig à deux corps | [`CH21_TYROLIENNE.md`](docs/lots/CH21_TYROLIENNE.md) | 1 | 369 | 3 sept |
-| CH22 | Audit visuel du hub — recon pure : inventaire mesuré, budget triangles, palette, listes A/B | [`CH22_HUB_VISUEL.md`](docs/lots/CH22_HUB_VISUEL.md) | 1 | 896 | 4 sept |
+| CH22 | Audit visuel du hub — recon pure, puis application de la liste A (A1/A2/A3/A6) et mesure de la pire frame | [`CH22_HUB_VISUEL.md`](docs/lots/CH22_HUB_VISUEL.md) | 2 | 1147 | 4 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,
