@@ -77,9 +77,11 @@ func _ready() -> void:
 	_phase_seats()
 	_phase_corridor()
 	await _phase_cancel()
+	await _phase_solo_south()
 	await _phase_trip()
 	await _phase_arrival()
 	await _phase_return()
+	await _phase_return_accompanied()
 	_phase_untouched()
 	dl.abort_if_exceeded()
 
@@ -422,6 +424,9 @@ func _seg_distance(p: Vector3, a: Vector3, b: Vector3) -> float:
 ## CANCEL the intent. A walk that arrived anyway would be the screen
 ## overruling the player, and it is the half of the pattern that keeps a
 ## multi-second approach from being a window where taps do nothing.
+##
+## ⚠️ RENAMED CALL (tier 3): `_on_tapped_zipline` is now
+## `_on_tapped_zipline_badger` -- see HubTapInput.gd and HubWorld.gd.
 func _phase_cancel() -> void:
 	print("")
 	print("--- PHASE CANCEL (door 1: the approach) ---")
@@ -430,7 +435,7 @@ func _phase_cancel() -> void:
 		return
 	_keepy.global_position = Vector3(18.0, 0.0, 9.0)
 	await get_tree().process_frame
-	_hub._on_tapped_zipline(_door.rider_position())
+	_hub._on_tapped_zipline_badger(_door.rider_position())
 	_check(_hub._zipping, "the tap armed the ride intent")
 	_check(_keepy.is_hopping(), "and started a walk (he is 9 u away, so this is many hops)")
 	# One ordinary tap somewhere else.
@@ -444,6 +449,83 @@ func _phase_cancel() -> void:
 		"and the walk that followed did NOT board (%d frames)" % guard)
 	_check(_door.is_available_at(0), "the door never closed, because no trip ever started")
 
+# -------------------------------------------------------------- solo south
+## TIER 3, NEW -- the STRUCTURE channel, run BEFORE the accompanied trip so
+## the badger is still untouched at its setup position (end 0) when this
+## starts and "it never moved" actually means something.
+func _phase_solo_south() -> void:
+	print("")
+	print("--- PHASE SOLO SOUTH (structure channel, P1 -> P2) ---")
+	var zip: Dictionary = _zip()
+	if zip.is_empty():
+		return
+	var carrier: Node3D = zip["carrier"]
+	var badger: HubActorWalker = _badger()
+	var rest0_before: Vector3 = _hub._badger_rest(0)
+
+	# BLIND CHECK: a tap ON THE BADGER must NOT open the structure channel
+	# -- the exclusion ZiplineStructureProbe gates on the door alone,
+	# re-checked here through the live actor's own position.
+	_check(_door.accepts_structure_tap(_door.rider_position()) < 0,
+		"BLIND CHECK: a tap on the badger's own point is refused by the structure channel")
+
+	_keepy.global_position = Vector3(24.0, 0.0, 6.0)
+	await get_tree().process_frame
+	_hub._on_tapped_zipline_solo(_door.structure_point(0))
+	_check(_hub._zipping_solo, "the tap armed the SOLO intent, not the badger's")
+	_check(not _hub._zipping, "and NOT the badger's own flag -- the two are siblings, never both true")
+	var guard: int = 0
+	while not _keepy.is_on_zipline() and guard < 2400:
+		guard += 1
+		await get_tree().process_frame
+	_check(_keepy.is_on_zipline(), "he walked to the structure and took the handle ALONE (%d frames)" % guard)
+	if not _keepy.is_on_zipline():
+		return
+	_check(int(_hub._zip_trip["from"]) == 0 and int(_hub._zip_trip["to"]) == 1,
+		"the trip runs 0 -> 1")
+	_check(not bool(_hub._zip_trip.get("badger", false)) and bool(_hub._zip_trip.get("keepy", false)),
+		"and it carries Keepy WITHOUT the badger")
+
+	# MUTUAL EXCLUSION, all four hotspots, mid-trip.
+	_check(not _door.is_available(), "the door withdrew for the solo trip")
+	_check(not _door.accepts_boarding_tap(P1) and not _door.accepts_boarding_tap(P2),
+		"the badger channel is refused at both ends")
+	_check(_door.accepts_structure_tap(P1) < 0 and _door.accepts_structure_tap(P2) < 0,
+		"and so is the structure channel, at both ends")
+
+	# THE BADGER NEVER MOVES on a solo trip -- sampled every frame of it.
+	var moved: bool = false
+	guard = 0
+	while _keepy.is_on_zipline() and guard < 2400:
+		guard += 1
+		await get_tree().process_frame
+		if badger.global_position.distance_to(rest0_before) > 0.001:
+			moved = true
+	_check(not _keepy.is_on_zipline(), "the solo trip ended (%d frames)" % guard)
+	_check(not moved, "and the badger never left its rest point at any sampled frame of it")
+	_check(badger.global_position.distance_to(rest0_before) < 0.001,
+		"it is still exactly there afterwards")
+
+	# THE DOOR REOPENS IMMEDIATELY -- no chained leg on a solo trip.
+	_check(_door.is_available(), "the door reopened as soon as the solo trip ended, no chain")
+	_check(_door.waiting_end() == 0,
+		"and still names end 0 for the badger -- a solo trip cannot move what it never touched")
+	var cable: Dictionary = zip["cable"]
+	_check(carrier.global_position.distance_to(cable["to"] as Vector3) < 0.001,
+		"the trolley is parked on the FAR anchor after a solo trip too")
+
+	# WAIT FOR THE DISMOUNT ARC, exactly as the badger's own arrival does:
+	# `is_on_zipline()` turns false the instant `leave_zipline` is called,
+	# well before the drop it starts has actually landed him.
+	guard = 0
+	while _keepy.is_hopping() and guard < 1200:
+		guard += 1
+		await get_tree().process_frame
+	var landed := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+	_check(absf(_keepy.global_position.y) < 0.001,
+		"he came down at the north end (y = %.4f)" % _keepy.global_position.y)
+	_check(HubRegion.contains(landed), "onto walkable ground %s" % landed)
+
 # -------------------------------------------------------------------- trip
 ## DOOR 2: a real tap, a real walk, a real boarding and a real trip --
 ## through the shipped signal chain rather than by calling `board_zipline`
@@ -451,7 +533,7 @@ func _phase_cancel() -> void:
 ## below one of `_on_hop_landed`'s five early returns.
 func _phase_trip() -> void:
 	print("")
-	print("--- PHASE TRIP (door 2: the crossing) ---")
+	print("--- PHASE TRIP (door 2: the crossing, accompanied) ---")
 	var zip: Dictionary = _zip()
 	if zip.is_empty():
 		return
@@ -460,7 +542,7 @@ func _phase_trip() -> void:
 
 	_keepy.global_position = Vector3(23.0, 0.0, 9.0)
 	await get_tree().process_frame
-	_hub._on_tapped_zipline(_door.rider_position())
+	_hub._on_tapped_zipline_badger(_door.rider_position())
 	var guard: int = 0
 	while not _keepy.is_on_zipline() and guard < 2400:
 		guard += 1
@@ -470,12 +552,14 @@ func _phase_trip() -> void:
 		return
 
 	# THE WITHDRAWAL, and it is the brief's rule in full: BOTH ends, in
-	# either direction, for the whole of the trip.
+	# either direction, for the whole of the trip -- and now BOTH CHANNELS.
 	_check(not _door.is_available(), "the door withdrew for the trip")
 	_check(not _door.is_available_at(0) and not _door.is_available_at(1),
 		"BOTH ends are closed, not just the one departed from")
 	_check(not _door.accepts_boarding_tap(P1) and not _door.accepts_boarding_tap(P2),
-		"and a tap at either tower is refused, so it falls through to the ground path")
+		"and a tap at either tower on the badger channel is refused, so it falls through to the ground path")
+	_check(_door.accepts_structure_tap(P1) < 0 and _door.accepts_structure_tap(P2) < 0,
+		"and the STRUCTURE channel is refused at both ends too -- one cable, one trip at a time")
 
 	# THE ONE-FRAME LAG, which is the measured defect the whole
 	# write-both-riders-in-one-call shape exists to avoid. Sampled across
@@ -588,7 +672,8 @@ func _phase_trip() -> void:
 	# body walking off the wire.
 	_hub._on_tapped_ground(Vector3(0.0, 0.0, 0.0))
 	_check(_keepy.is_on_zipline(), "a tap mid-trip did not walk him off the wire")
-	_check(_hub._zip_trip.size() == 2, "and did not start a second trip")
+	_check(bool(_hub._zip_trip.get("badger", false)) and int(_hub._zip_trip["to"]) == 1,
+		"and did not start a second trip (still the SAME badger 0 -> 1 leg)")
 
 	# No portal can fire while the wire has him.
 	var fired: int = 0
@@ -689,12 +774,21 @@ func _find_skeleton(n: Node) -> Skeleton3D:
 	return null
 
 # ----------------------------------------------------------------- arrival
-## DOOR 3: the pair arrives, the badger becomes the far end's tap target,
-## and Keepy is put down on ground he can stand on and OUTSIDE the disc he
-## would otherwise re-board from.
+## DOOR 3: the pair arrives, Keepy is put down on ground he can stand on
+## and OUTSIDE the disc he would otherwise re-board from.
+##
+## ⚠️ REVERSAL, 4 SEPTEMBRE 2026 -- this phase used to gate the badger's
+## AUTOMATIC RETURN, chained onto every accompanied leg that landed away
+## from `BADGER_HOME_END` (south). Mathieu tested that build on device and
+## reversed the call: the badger now simply STAYS at whichever end an
+## accompanied trip delivers it to. See the doctrine note above
+## `HubWorld._on_zip_trip_finished` for the reasoning in full, and
+## docs/lots/CH21_TYROLIENNE.md for the dated record of the reversal. This
+## phase now gates the opposite of what it used to: NO chain, an immediate
+## reopen, and the badger's tap channel following it to its new end.
 func _phase_arrival() -> void:
 	print("")
-	print("--- PHASE ARRIVAL (door 3) ---")
+	print("--- PHASE ARRIVAL (door 3, and the badger STAYING at the far end) ---")
 	var zip: Dictionary = _zip()
 	if zip.is_empty():
 		return
@@ -704,20 +798,11 @@ func _phase_arrival() -> void:
 	while _keepy.is_on_zipline() and guard < 2400:
 		guard += 1
 		await get_tree().process_frame
-	_check(not _keepy.is_on_zipline(), "the trip ended and he let go (%d frames)" % guard)
+	_check(not _keepy.is_on_zipline(), "the leg ended and he let go (%d frames)" % guard)
 	var cable: Dictionary = zip["cable"]
 	_check(carrier.global_position.distance_to(cable["to"] as Vector3) < 0.001,
-		"the trolley is parked on the FAR anchor, to %.6f u"
+		"the trolley is on the FAR anchor the instant Keepy lands, to %.6f u"
 			% carrier.global_position.distance_to(cable["to"] as Vector3))
-
-	var rest1: Vector3 = _hub._badger_rest(1)
-	_check(badger.global_position.distance_to(rest1) < 0.001,
-		"the badger is standing at end 1's rest point %s" % rest1)
-	_check(absf(badger.global_position.y) < 0.001,
-		"back on the ground (y = %.4f), not still at handle height" % badger.global_position.y)
-	_check(_door.waiting_end() == 1, "the door now names end 1")
-	_check(_door.is_available_at(1) and not _door.is_available_at(0),
-		"end 1 accepts boarding and end 0 no longer does -- the target MOVED with the actor")
 
 	guard = 0
 	while _keepy.is_hopping() and guard < 1200:
@@ -730,40 +815,77 @@ func _phase_arrival() -> void:
 	_check(landed.distance_to(P2) > float(zip["clear_radius"]),
 		"clear of the far tower's own footprint (%.2f u vs %.2f)"
 			% [landed.distance_to(P2), float(zip["clear_radius"])])
-	# NO STATE WITH NO WAY OUT: an ordinary tap has to work again.
-	_hub._on_tapped_ground(Vector3(20.0, 0.0, 30.0))
-	_check(_keepy.is_hopping() or _keepy.global_position.distance_to(Vector3(20.0, 0.0, 30.0)) < 1.0,
-		"and an ordinary tap moves him again")
-	guard = 0
-	while _keepy.is_hopping() and guard < 1200:
-		guard += 1
-		await get_tree().process_frame
 
-# ------------------------------------------------------------------ return
-## THE OTHER DIRECTION, which is the whole reason the door carries an END
-## rather than a bool: a shortcut you can only take one way is a one-way
-## door, and Mathieu's decision was a bidirectional one.
+	# ⚠️ NO CHAIN. The door reopens on the SAME frame the trip ends -- there
+	# is no second leg to wait for any more.
+	_check(_door.is_available(),
+		"the door reopened IMMEDIATELY -- no automatic return leg chained onto this one")
+	_check(not _hub._zip_trip.has("from"),
+		"and `_zip_trip` was actually cleared, not left describing a leg that never started")
+	_check(_door.waiting_end() == 1,
+		"the badger is registered waiting at end 1 -- the ARRIVAL end, not end 0")
+	var rest1: Vector3 = _hub._badger_rest(1)
+	_check(badger.global_position.distance_to(rest1) < 0.001,
+		"and it is standing at end 1's OWN rest point %s -- it never walked anywhere after arriving" % rest1)
+	_check(absf(badger.global_position.y) < 0.001,
+		"back on the ground (y = %.4f), not still at handle height" % badger.global_position.y)
+	_check(carrier.global_position.distance_to(cable["to"] as Vector3) < 0.001,
+		"and the trolley stayed parked on the FAR anchor -- nothing sent it back")
+
+	# THE CHANNELS, PER END, exactly the way HubTapInput reads them --
+	# point 5 of this lot's brief: a tap at the now-empty south tower must
+	# NOT read as the badger, because it genuinely is not there any more.
+	#
+	# ⚠️ THE BADGER'S POINT IS `rider_position()`, NEVER P1/P2. P1 and P2 are
+	# the TOWER CENTRES, and ZiplineDoor's own header measures the badger's
+	# waiting point at 2.0165 u off that centre -- outside BOARD_TAP_RADIUS
+	# (1.8), by design (see "WHY THE TWO DISCS AT END 0 ARE NOT DISJOINT").
+	# The first draft of this phase asserted `accepts_boarding_tap(P2)`, and
+	# it failed the moment it ran: exactly this same mistake, caught by the
+	# probe it was written for rather than by review.
+	_check(_door.is_available_at(1) and not _door.is_available_at(0),
+		"end 1 accepts boarding and end 0 does not -- the badger followed its own trip, it did not come home")
+	_check(_door.accepts_boarding_tap(_door.rider_position()) and not _door.accepts_boarding_tap(P1),
+		"a tap at the badger's OWN point reads as it; a tower-centre point at the now-empty end does not")
+	_check(_door.accepts_structure_tap(P1) == 0,
+		"at the empty south tower, ONLY the structure channel answers a tap")
+	_check(_door.accepts_structure_tap(_door.rider_position()) < 0,
+		"while at north, a tap ON THE BADGER's own point is still excluded from the structure channel")
+	_check(_door.accepts_structure_tap(P2) == 1,
+		"but the north TOWER CENTRE itself -- 2.0165 u off the badger, outside its disc -- opens the structure channel")
+
+# ------------------------------------------------------------ solo return
+## THE STRUCTURE CHANNEL AT THE NOW-EMPTY END: with the badger having
+## stayed at end 1 (north) rather than walking itself home, the only way
+## back from the SOUTH tower -- for a solo rider, or before anyone taps the
+## badger again -- is this channel. There is no badger standing there to
+## tap at all.
 func _phase_return() -> void:
 	print("")
-	print("--- PHASE RETURN (the other direction) ---")
+	print("--- PHASE RETURN (structure channel, P2 -> P1, solo, badger stays put at north) ---")
 	var zip: Dictionary = _zip()
 	if zip.is_empty():
 		return
 	var carrier: Node3D = zip["carrier"]
+	var badger: HubActorWalker = _badger()
+	var rest1: Vector3 = _hub._badger_rest(1)
 	_keepy.global_position = Vector3(24.0, 0.0, 33.0)
 	await get_tree().process_frame
-	_hub._on_tapped_zipline(_door.rider_position())
+	_hub._on_tapped_zipline_solo(_door.structure_point(1))
+	_check(_hub._zipping_solo, "the tap at END 1's structure armed the solo intent")
 	var guard: int = 0
 	while not _keepy.is_on_zipline() and guard < 2400:
 		guard += 1
 		await get_tree().process_frame
-	_check(_keepy.is_on_zipline(), "a tap at END 1 boarded him (%d frames)" % guard)
+	_check(_keepy.is_on_zipline(), "a tap on the structure at END 1 boarded him ALONE (%d frames)" % guard)
 	if not _keepy.is_on_zipline():
 		return
 	_check(int(_hub._zip_trip["from"]) == 1 and int(_hub._zip_trip["to"]) == 0,
 		"and the trip runs 1 -> 0, the other way down the same wire")
+	_check(not bool(_hub._zip_trip.get("badger", false)), "the badger is NOT part of this trip")
+
 	# The trolley must face the way it is going on the way back too: a
-	# carrier that kept its build basis would carry two riders backwards.
+	# carrier that kept its build basis would carry a rider backwards.
 	var forward: Vector3 = carrier.global_transform.basis * Vector3.BACK
 	var travel: Vector3 = (zip["cable"]["from"] as Vector3) - (zip["cable"]["to"] as Vector3)
 	forward.y = 0.0
@@ -772,19 +894,79 @@ func _phase_return() -> void:
 		"the trolley turned round: its +Z now points down the return run (dot %.4f)"
 			% forward.normalized().dot(travel.normalized()))
 
+	# THE BADGER NEVER MOVES on this solo trip -- it is sitting at end 1
+	# throughout, untouched, exactly as it stayed after arriving there.
+	var moved: bool = false
 	guard = 0
 	while _keepy.is_on_zipline() and guard < 2400:
 		guard += 1
 		await get_tree().process_frame
-	_check(_door.waiting_end() == 0, "the pair is back at end 0 and the door says so")
-	_check(_badger().global_position.distance_to(_hub._badger_rest(0)) < 0.001,
-		"with the badger on end 0's rest point again")
+		if badger.global_position.distance_to(rest1) > 0.001:
+			moved = true
+	_check(not moved, "the badger never left end 1 during the solo return")
+	_check(_door.waiting_end() == 1, "the door still names end 1 for the badger, untouched throughout")
+	_check(badger.global_position.distance_to(rest1) < 0.001,
+		"and it is still exactly on end 1's rest point")
 	_check(carrier.global_position.distance_to(zip["cable"]["from"] as Vector3) < 0.001,
-		"and the trolley parked back on the near anchor")
+		"the trolley parked back on the near anchor")
 	guard = 0
 	while _keepy.is_hopping() and guard < 1200:
 		guard += 1
 		await get_tree().process_frame
+
+# ------------------------------------------------------- return, accompanied
+## THE SYMMETRIC CASE THE REVERSAL EXISTS TO PROVE: a SECOND accompanied
+## trip, tapped from wherever the badger actually is NOW (end 1, north) --
+## never a hand-typed end 0 -- landing at end 0 with, again, no chain
+## sending it any further. `ZiplineDoor` and `_try_zip_badger` read the
+## badger's live end throughout (see their own headers); this is the first
+## time this file has ever asked them to do it starting from end 1, which
+## every earlier tier only ever tested starting from end 0.
+func _phase_return_accompanied() -> void:
+	print("")
+	print("--- PHASE RETURN ACCOMPANIED (badger's own channel, now live at end 1) ---")
+	var zip: Dictionary = _zip()
+	if zip.is_empty():
+		return
+	var carrier: Node3D = zip["carrier"]
+	var badger: HubActorWalker = _badger()
+	_check(_door.waiting_end() == 1, "setup: the badger is still at end 1 before this trip starts")
+	_keepy.global_position = Vector3(24.0, 0.0, 32.0)
+	await get_tree().process_frame
+	_hub._on_tapped_zipline_badger(_door.rider_position())
+	_check(_hub._zipping, "a tap on the badger, now at end 1, armed the ride intent -- not the structure's")
+	var guard: int = 0
+	while not _keepy.is_on_zipline() and guard < 2400:
+		guard += 1
+		await get_tree().process_frame
+	_check(_keepy.is_on_zipline(),
+		"he walked to end 1's tower and took the handle WITH the badger (%d frames)" % guard)
+	if not _keepy.is_on_zipline():
+		return
+	_check(int(_hub._zip_trip["from"]) == 1 and int(_hub._zip_trip["to"]) == 0,
+		"the trip runs 1 -> 0 -- launched from the badger's ACTUAL end, not a hand-typed home")
+	_check(bool(_hub._zip_trip.get("badger", false)), "and it carries the badger, same as any accompanied leg")
+	guard = 0
+	while _keepy.is_on_zipline() and guard < 2400:
+		guard += 1
+		await get_tree().process_frame
+	_check(not _keepy.is_on_zipline(), "the leg ended (%d frames)" % guard)
+	guard = 0
+	while _keepy.is_hopping() and guard < 1200:
+		guard += 1
+		await get_tree().process_frame
+
+	# NO CHAIN, again: the door reopens on the same frame this leg ends.
+	_check(_door.is_available(), "the door reopened immediately -- no leg chained onto this one either")
+	_check(_door.waiting_end() == 0,
+		"the badger is now registered at end 0 -- it rode there, it did not walk itself any further")
+	_check(badger.global_position.distance_to(_hub._badger_rest(0)) < 0.001,
+		"and it is standing at end 0's rest point %s" % _hub._badger_rest(0))
+	_check(_door.is_available_at(0) and not _door.is_available_at(1),
+		"end 0 accepts boarding again and end 1 does not -- symmetric with the very first leg of this run")
+	_check(carrier.global_position.distance_to(zip["cable"]["from"] as Vector3) < 0.001,
+		"the trolley is parked on the near anchor again")
+
 
 # --------------------------------------------------------------- untouched
 ## The props this batch shares files with. HubTapInput, KeepyHopper,

@@ -118,6 +118,8 @@ func _ready() -> void:
 	dl.abort_if_exceeded()
 	_phase_f_tap_channel()
 	dl.abort_if_exceeded()
+	_phase_f2_channel_exclusion()
+	dl.abort_if_exceeded()
 	_phase_g_draw_nodes(_props)
 	dl.abort_if_exceeded()
 	_phase_h_p2_lobe()
@@ -401,23 +403,28 @@ func _phase_e_clearance() -> void:
 		_check(HubRegion.contains(centre), "the tower at %s is inside the walkable region" % centre)
 	print("")
 
-## PHASE F -- THE TAP CHANNEL, AND THE ONE THING THAT MUST STILL BE ABSENT.
+## PHASE F -- THE TAP CHANNELS, AND WHY THE STAIR IS NO LONGER THE THING
+## THAT MUST STAY ABSENT.
 ##
-## ⚠️ THIS PHASE WAS INVERTED ON 3 SEPTEMBRE 2026 (tier 2). It used to
-## assert that HubWorld, HubTapInput and KeepyHopper mention no zipline at
-## all -- correct while tier 1 shipped structure only, and now false by
-## design: tier 2 wires a `tapped_zipline` channel through all three.
+## ⚠️ THIS PHASE WAS INVERTED ON 3 SEPTEMBRE 2026 (tier 2), AND ITS DOCTRINE
+## CHANGED AGAIN ON 4 SEPTEMBRE 2026 (tier 3) -- BY EXPLICIT REQUEST, NOT A
+## REGRESSION SLIPPING PAST THIS PROBE.
 ##
-## What survives the inversion is the half that was ever about doctrine.
-## RECON 1 settled that the banned LADDER PATTERN is a hotspot on the
-## STAIRS: a channel that emits whatever the body is doing, dropped by its
-## listener, leaving a player on the steps with no way to say anything. So
-## the assertion is now that the channel exists, that it goes through a
-## WITHDRAWING door, and that the stair still carries nothing -- source
-## text, because a hotspot that does not exist has no runtime symptom to
-## measure.
+## Tier 1 shipped structure only, and this phase asserted no zipline tap
+## channel existed anywhere. Tier 2 wired `tapped_zipline` for the badger
+## and this phase inverted to assert THAT channel exists while the STAIR
+## still carried nothing. Tier 3 is Mathieu asking, in so many words, for a
+## second channel ON the structure itself -- see ZiplineDoor.gd's own
+## header and docs/lots/CH21_TYROLIENNE.md for the doctrine note in full.
+##
+## What survives every rewrite is the half that was ever about doctrine:
+## RECON 1's LADDER PATTERN is a channel that emits whatever the body is
+## doing and is dropped by its listener, leaving a player with no way to
+## say anything -- NOT "a tap target on the stair" by itself. So this phase
+## now asserts that BOTH channels exist, that BOTH withdraw on the boat's
+## own terms, and that the two can never agree on the same tap.
 func _phase_f_tap_channel() -> void:
-	print("PHASE F -- the tier 2 channel is wired, through a door that withdraws")
+	print("PHASE F -- both tap channels are wired, each through a door that withdraws")
 	var world: String = FileAccess.get_file_as_string("res://scripts/hub/HubWorld.gd")
 	var tap: String = FileAccess.get_file_as_string("res://scripts/hub/HubTapInput.gd")
 	var hopper: String = FileAccess.get_file_as_string("res://scripts/hub/KeepyHopper.gd")
@@ -426,31 +433,128 @@ func _phase_f_tap_channel() -> void:
 			["KeepyHopper.gd", hopper], ["ZiplineDoor.gd", door]]:
 		_check(not String(pair[1]).is_empty(), "%s is readable" % pair[0])
 
-	_check(tap.findn("signal tapped_zipline") >= 0,
-		"HubTapInput declares the tapped_zipline channel")
+	_check(tap.findn("signal tapped_zipline_badger") >= 0,
+		"HubTapInput declares the badger channel")
 	_check(tap.findn("zipline.accepts_boarding_tap") >= 0,
 		"and it asks the DOOR before emitting -- the boat's withdrawal, not the ladder's unconditional emit")
+	_check(tap.findn("signal tapped_zipline_solo") >= 0,
+		"HubTapInput ALSO declares the structure channel (tier 3)")
+	_check(tap.findn("zipline.accepts_structure_tap") >= 0,
+		"and it asks the DOOR before emitting THAT one too")
 	_check(door.findn("func is_available_at") >= 0 and door.findn("_riding") >= 0,
-		"the door carries a per-end question AND a shared riding flag")
-	_check(world.findn("_on_tapped_zipline") >= 0 and world.findn("set_riding(true)") >= 0,
-		"HubWorld handles the channel and closes the door for the trip")
+		"the door carries a per-end question for the badger AND a shared riding flag")
+	_check(door.findn("func accepts_structure_tap") >= 0,
+		"and a SECOND question for the structure, sharing that same flag")
+	_check(world.findn("_on_tapped_zipline_badger") >= 0 and world.findn("set_riding(true)") >= 0,
+		"HubWorld handles the badger channel and closes the door for the trip")
+	_check(world.findn("_on_tapped_zipline_solo") >= 0,
+		"and handles the structure channel too")
 	_check(hopper.findn("func leave_zipline") >= 0,
 		"KeepyHopper carries a leave_zipline on the leave_ride model, so a destination survives the drop")
 
-	# THE ONE THING THAT MUST STAY ABSENT. No stair, tread or stringer may
-	# ever become a tap target: that is the ladder pattern by another name,
-	# and it is the failure RECON 1 was written to prevent.
-	for needle in ["stair_feet", "stair_radius", "tapped_stair", "tapped_ladder_zipline"]:
+	# THE ONE THING THAT MUST STILL STAY ABSENT: a channel with no
+	# withdrawal at all -- the LADDER PATTERN, unconditionally emitting
+	# whatever the body is doing. It is not "a tap target on the stair"
+	# that must be absent any more; it is a stair tap that DROPS instead of
+	# routing through the door. Both channels route through
+	# `ZiplineDoor.accepts_*`, checked above, so this searches for the
+	# specific failure shape rather than for the stair's mere existence as
+	# a target.
+	for needle in ["tapped_ladder_zipline", "tapped_stair_unconditional"]:
 		_check(tap.findn(needle) < 0 and world.findn(needle) < 0,
-			"nothing anywhere makes the stair a tap target (\"%s\")" % needle)
+			"no channel emits unconditionally, ladder-pattern style (\"%s\")" % needle)
 
-	# The published facts tier 2 reads. Their absence would mean the ride
-	# re-derives the cable from the layout, which is the failure this repo
-	# has paid for on a doorstep and on two lake radii.
+	# The published facts both channels read. Their absence would mean the
+	# ride re-derives the cable from the layout, which is the failure this
+	# repo has paid for on a doorstep and on two lake radii.
 	var zip: Dictionary = _zipline()
 	for key in ["towers", "cable", "cable_height", "rider_drop", "clear_radius",
 			"carrier", "bar_drop", "rider_lateral", "hang_clearance"]:
 		_check(zip.has(key), "ziplines() publishes \"%s\"" % key)
+	print("")
+
+## PHASE F2 -- THE TWO DISCS AT END 0 CANNOT AGREE ON THE SAME TAP.
+##
+## Geometry alone cannot separate them (see ZiplineDoor.gd's header: the
+## badger's disc is centred under 2.02 u from the tower, and its own
+## radius is 1.8), so `accepts_structure_tap` EXCLUDES the badger's disc in
+## code. This phase proves it does, with a BLIND CHECK first: an exclusion
+## that had never been exercised would pass "the two disagree" for free.
+func _phase_f2_channel_exclusion() -> void:
+	print("PHASE F2 -- the badger and structure discs never agree")
+	var zip: Dictionary = _zipline()
+	if zip.is_empty():
+		_check(false, "a zipline was built at all")
+		print("")
+		return
+	var towers: Array = zip["towers"]
+	var door := ZiplineDoor.new()
+	var ends: Array[Vector3] = []
+	for tower in towers:
+		ends.append(tower["position"] as Vector3)
+	# THE RIDER STANDS AT ITS OWN OFFSET POINT, not on the tower centre --
+	# `_hub_root._badger_rest(0)` is the SAME as-built stand point HubWorld
+	# actually parks the badger on (stair foot plus BADGER_SIDE_OFFSET), so
+	# this reuses the real geometry rather than retyping a wrong stand-in
+	# that would make "genuinely outside the badger's disc" true by
+	# construction instead of by measurement.
+	var rider := Node3D.new()
+	add_child(rider)
+	rider.global_position = _hub_root._badger_rest(0)
+	door.setup(ends, rider, 0)
+
+	# BLIND CHECK: the badger's OWN waiting point must itself register on
+	# the badger channel, or the exclusion below would be excluding nothing.
+	var badger_point: Vector3 = rider.global_position
+	_check(door.accepts_boarding_tap(badger_point),
+		"BLIND CHECK: the badger channel actually accepts a tap on the badger's own point")
+
+	# ⚠️ THE BADGER'S OWN POINT IS THE WRONG POINT TO TEST THE EXCLUSION ON.
+	# Measured: it sits 2.0165 u from the tower centre, just OUTSIDE
+	# STRUCTURE_TAP_RADIUS (2.0) -- so `accepts_structure_tap` refuses it by
+	# the plain radius test alone, before the exclusion line is ever
+	# reached. Removing that line entirely was tried and changed NOTHING
+	# here, which is exactly the free pass CLAUDE.md's blind-check doctrine
+	# warns about. The two discs DO overlap -- the badger's own disc
+	# reaches back to 2.0165 - 1.8 = 0.2165 u from the tower, well inside
+	# the structure radius -- so the point that actually exercises the
+	# exclusion is one INSIDE THAT LENS, not the badger's own centre.
+	var overlap_point: Vector3 = badger_point + (ends[0] - badger_point).normalized() * 1.0
+	_check(overlap_point.distance_to(ends[0] as Vector3) <= ZiplineDoor.STRUCTURE_TAP_RADIUS,
+		"BLIND CHECK SETUP: the lens point is genuinely inside the structure's own radius (%.4f u from the tower)"
+			% overlap_point.distance_to(ends[0] as Vector3))
+	_check(overlap_point.distance_to(badger_point) <= ZiplineDoor.BOARD_TAP_RADIUS,
+		"BLIND CHECK SETUP: and genuinely inside the badger's own disc too (%.4f u from it)"
+			% overlap_point.distance_to(badger_point))
+	_check(door.accepts_boarding_tap(overlap_point),
+		"BLIND CHECK: the badger channel accepts this lens point")
+	_check(door.accepts_structure_tap(overlap_point) < 0,
+		"THE EXCLUSION: the SAME lens point is refused by the structure channel (badger wins) -- this is the line the removed guard actually protects")
+
+	# A point on the tower but genuinely outside the badger's disc must
+	# still open the structure channel -- the exclusion must not have
+	# swallowed the whole end.
+	var tower_only: Vector3 = ends[0]
+	_check(tower_only.distance_to(badger_point) > ZiplineDoor.BOARD_TAP_RADIUS,
+		"the tower centre itself is genuinely outside the badger's own disc (%.4f u away)"
+			% tower_only.distance_to(badger_point))
+	_check(door.accepts_structure_tap(tower_only) == 0,
+		"and the tower centre DOES open the structure channel, at end 0")
+
+	# End 1 carries no badger at all, so the exclusion has nothing to do
+	# there and the whole disc is the solo target.
+	_check(door.accepts_structure_tap(ends[1]) == 1,
+		"end 1's tower centre opens the structure channel too, at end 1 -- no badger to exclude there")
+
+	# BOTH CLOSE TOGETHER, the shared `_riding` flag: a trip in progress
+	# refuses every channel at every end, badger or structure.
+	door.set_riding(true)
+	_check(not door.accepts_boarding_tap(badger_point) and door.accepts_structure_tap(badger_point) < 0
+			and door.accepts_structure_tap(ends[1]) < 0,
+		"mid-trip, every channel at every end is refused")
+	door.set_riding(false, 0)
+	rider.queue_free()
+	door.queue_free()
 	print("")
 
 ## PHASE G -- the draw-node budget, itemised.
