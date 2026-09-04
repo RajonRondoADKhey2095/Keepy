@@ -303,3 +303,400 @@ de 0,42 u.
 Keepy.** Les quatre sondes (`FlameParticleViability`, `FlameGlowProbe`,
 `FlameSiteProbe`, `FlameCostProbe`) et la capture (`FlameShot`) sont
 supprimées avant le commit ; `ProbeTimeoutAudit` retrouve sa baseline.
+
+---
+
+# Feu de camp — LOT 2 : comparatif de rendu de flamme (4 septembre 2026)
+
+> **RECON encore.** Aucune implémentation définitive, aucun tap, aucune
+> interaction, aucun feu de camp. Le livrable est un build `staging`
+> comparatif — trois flammes candidates étiquetées, au point que Mathieu a
+> relevé sur device — plus les mesures qui doivent survivre au lot 3.
+> **Le verdict visuel appartient à Mathieu, sur Safari iPhone.** La sonde
+> qui a produit les chiffres ci-dessous est jetable et supprimée avant le
+> commit ; `ProbeTimeoutAudit` est revenu à **64, PASSED**.
+
+## L'ACQUIS DU LOT 1, ÉCRIT ICI POUR NE PLUS ÊTRE REDEMANDÉ
+
+⚠️ **`GPUParticles3D` EST FONCTIONNEL EN RENDERER `Compatibility` SUR
+SAFARI iOS / WebGL2.** Vérifié **par Mathieu, sur device, le 4 septembre
+2026**. Ce n'est pas une mesure sandbox : c'est un fait de device, et il
+vaut **pour tout le projet**, pas seulement pour le feu. Toute session
+future qui hésite à poser un `GPUParticles3D` dans ce jeu a sa réponse ici
+et n'a **rien à re-prouver**.
+
+Ce que ce fait ne dit pas : que les particules soient la bonne réponse au
+feu de camp. Elles ne le sont pas — voir juste en dessous.
+
+## Les trois candidats du lot 1 sont ÉCARTÉS, et retirés du fichier
+
+`A GPU`, `B CPU`, `C SHEET` **ne produisent pas le style voulu**. Aucun des
+trois n'est en cause techniquement : les trois dessinaient, les trois
+tenaient le budget. Ils échouent sur la CIBLE ARTISTIQUE — flamme illustrée,
+aplats francs façon clipart — et un candidat qui ne peut pas y arriver
+occupe un créneau d'attention de Mathieu pour rien.
+
+Ils sont **supprimés de `scripts/hub/HubFlameRecon.gd`** dans ce lot. Ce qui
+leur survit est la mesure de dégagement du site, réutilisée telle quelle,
+jamais re-marchée.
+
+## Ce que le lot 2 met sur le plateau
+
+| slot | position | dégagement (lot 1) | candidat | étiquette |
+|---|---|---|---|---|
+| OUEST | (17,9 ; 25,4) | **3,575 u** | procédural, peu turbulent | `D1 UNIE` |
+| CENTRE | (19,9 ; 25,4) | **3,521 u** | le PNG de Mathieu, animé | `E SPRITE` |
+| EST | (21,9 ; 25,4) | **1,676 u** | procédural, très turbulent | `D2 NERVEUSE` |
+
+⚠️ **LE FOND N'EST PAS LE MÊME POUR LES TROIS, ET C'EST `D2` QUI TIRE LA
+COURTE PAILLE.** Le slot EST est à **1,676 u** d'un `TreeCrown`, contre
+~3,5 u pour les deux autres : `D2` est lu contre un fond **plus proche et
+plus chargé**. C'est un biais du comparatif, il ne peut pas être retiré sans
+déplacer le site que Mathieu a choisi, donc il est **déclaré**.
+
+Le placement de `D2` là est **délibéré** : c'est le candidat dont toute la
+prétention est que ses langues QUITTENT le corps de la flamme, donc c'est
+celui qui a le plus besoin d'être vu contre un fond proche. Mettre le
+candidat le plus sage au créneau difficile aurait caché le mode de
+défaillance que le comparatif existe pour trouver.
+
+## L'axe qui sépare D1 de D2 — nommé, parce que le brief le demande
+
+**Ce n'est PAS la vitesse. C'est jusqu'où le bruit a le droit de CASSER la
+SILHOUETTE.** C'est la seule chose qu'une flamme procédurale sait faire
+qu'un billboard ne peut structurellement pas : une langue qui naît, se
+détache, monte seule et meurt. La vitesse suit — une langue détachée qui ne
+voyage pas se lit comme un bug de rendu, pas comme du feu — mais la
+**fragmentation** est la variable.
+
+| | `turbulence` | `rise` | ce que ça donne |
+|---|---|---|---|
+| `D1` | 0,34 | 0,42 | le larme reste **UN corps**, le bruit ne grignote que le contour haut |
+| `D2` | 0,82 | 0,86 | les langues se **séparent** réellement et montent seules |
+
+Tout le reste — palette, taille, nombre de paliers, seuil de coupe, le
+shader lui-même — est **identique au byte près**. Deux uniformes diffèrent.
+
+## La palette est MESURÉE sur la référence de Mathieu, pas inventée
+
+`assets/textures/props/campfire_flame.png`, 512×512 RGBA, **120 301 pixels
+opaques** (45,9 % de l'image), décodé pixel par pixel. Les quatre paliers de
+`D1`/`D2` sont les quatre bacs dominants d'un cube de quantification 16 :
+
+| palier | hex | part des opaques | L relative | contraste vs sol du hub (L = 0,0799) |
+|---|---|---|---|---|
+| `STEP_CORE` | `#FEF175` | 3,4 % | 0,8527 | **6,95:1** |
+| `STEP_HOT` | `#FED847` | 6,6 % | 0,7064 | **5,82:1** |
+| `STEP_MID` | `#FD9625` | 9,5 % | 0,4283 | **3,68:1** |
+| `STEP_EDGE` | `#F95B25` | **19,8 %** (le plus courant) | 0,2776 | **2,52:1** ❌ |
+
+**La teinte est donc TENUE CONSTANTE entre les trois candidats** : `D1` et
+`D2` quantifient les couleurs du PNG, `E` dessine le PNG. Ce qui reste
+différent entre eux est ce que le comparatif est censé arbitrer.
+
+⚠️ **`STEP_EDGE` ne franchit PAS 3,0:1 contre le sol du hub.** C'est une
+propriété de l'art de référence, pas d'une décision prise ici, et elle est
+**publiée plutôt que corrigée en douce** : la corriger voudrait dire que `D`
+ne correspond plus au PNG que `E` dessine, c'est-à-dire casser la seule
+chose qui tient ce comparatif ensemble.
+
+## ⚠️ UN CONFONDANT SURVIT, ET IL FAUT LE DIRE À MATHIEU AVANT QU'IL ARBITRE
+
+**Le PNG de référence est un DÉGRADÉ CONTINU.** Mesuré : **10 200 couleurs
+opaques distinctes**, chauffant régulièrement de `#F75C2C` en haut à
+`#FDD850` en bas (profil vertical par bandes de 64 lignes). Ce n'est pas du
+clipart à aplats au niveau du pixel — c'est une illustration lissée.
+
+Or la cible artistique du brief dit « **PAS de dégradé continu** ». `D1`/`D2`
+quantifient en quatre paliers parce que le brief le demande ; `E` ne le peut
+pas, parce que ce serait réécrire l'asset de Mathieu — ce que ce lot
+n'a pas le droit de faire.
+
+**Donc deux questions arrivent dans UNE seule image :**
+
+1. *aplats francs* contre *dégradé continu* — et la réponse est déjà décidée
+   par la SOURCE, pas par la technique ;
+2. *silhouette procédurale* contre *silhouette fixe* — la vraie question du
+   comparatif.
+
+Ce document ne prétendra pas qu'un verdict unique répond aux deux. Si
+Mathieu préfère `E`, la question « et si on quantifiait aussi le PNG ? »
+reste **ouverte et non mesurée**.
+
+## Le coût — trois chiffres, et deux d'entre eux ne discriminent pas
+
+Banc : `xvfb` + `--rendering-driver opengl3`, flags moteur **avant** le
+`--`, `--fixed-fps 60`, à travers le `SubViewport`, la caméra et
+l'`Environment` livrés.
+
+### 1. Primitives — mesurées, et elles ne disent RIEN
+
+`RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME`, pire frame sur 120, Keepy en
+(19,9 ; 25,4). Le site projette en **(540, 1058) sur 1080×1920** — le même
+chiffre que le lot 1 a publié, donc le même cadrage.
+
+| état | primitives | delta |
+|---|---|---|
+| baseline, candidats cachés | **35 134** | +0 |
+| baseline, nœud `FlameRecon` **RETIRÉ de l'arbre** | **35 134** | +0 |
+| `D1` seule (étiquette off) | 35 136 | **+2** |
+| `E` seule (étiquette off) | 35 136 | **+2** |
+| `D2` seule (étiquette off) | 35 136 | **+2** |
+| les trois + étiquettes | 35 232 | +98 |
+
+Marge contre le plafond de 50 000 : **14 768 primitives**.
+
+**+2 partout, parce que chaque candidat est UN quad.** Le compteur de
+primitives dit donc que les trois sont identiques. Ils ne le sont pas : un
+shader de bruit s'exécute **par pixel**, et aucune primitive ne le voit.
+C'est exactement l'angle mort que le brief demandait de ne pas supposer
+négligeable.
+
+⚠️ **Le nœud caché coûte EXACTEMENT ce que coûte le nœud absent (+0).**
+Mesuré, pas supposé : la baseline « cachée » et la baseline « retiré de
+l'arbre » sortent au même entier.
+
+⚠️ **ET LA BASELINE NE REPRODUIT PAS CELLE DU LOT 1 : 35 134 contre
+34 846, soit +288 (0,83 %).** Ce qui a été vérifié, et qui ferme les
+explications faciles :
+
+* la géométrie du plateau est **identique au byte près** entre la pointe du
+  lot 1 et cette branche — `git diff` sur `scripts/hub`, `scenes/HubWorld.tscn`,
+  `resources/hub`, `scripts/world` est **VIDE** ;
+* le chiffre est **parfaitement stable dans ce banc** : trois échantillons
+  worst-of-120 donnent **35 134..35 134, spread 0**. Ce n'est donc pas une
+  phase d'échantillonnage contre les acteurs animés du hub ;
+* le cachage n'y est pour rien (+0, ci-dessus).
+
+**La cause n'est PAS isolée**, et ce lot le dit plutôt que de l'habiller.
+Ce que ça ne contamine pas : **tous les deltas publiés ici sont pris contre
+la baseline DE LEUR PROPRE RUN**, donc un décalage de banc ne peut pas
+fuir dedans. Ce que ça coûte : le droit d'écrire « ce banc reproduit le
+chiffre au dossier ». Il ne le reproduit pas, à 0,83 % près, et le lot 3
+devrait rouvrir ça avant de s'appuyer sur un absolu du lot 1.
+
+### 2. Coût ALU par fragment — la mesure que ce lot existe pour prendre
+
+Viewport dédié 512×512 = **262 144 fragments**, quad couvrant exactement le
+cadre, wall-clock sur 60 frames × **3 passes**.
+
+⚠️ **DEUX VERSIONS DE CE BANC ONT DONNÉ DES COÛTS NÉGATIFS AVANT QUE LE
+CONTRÔLE SOIT BON.** Le récit vaut plus que le chiffre :
+
+* **v1** : contre un quad `StandardMaterial3D` plat, `D1` et `D2` sortaient
+  **0,27 ms PLUS RAPIDES** que le contrôle. Cause : les deux shaders
+  `discard` la moitié de leur quad, donc ils ombraient **moins de
+  fragments**. Le banc comparait de la **COUVERTURE**, pas du coût de
+  shader — et il flattait précisément le candidat à la silhouette la plus
+  découpée.
+* **v2** : discards neutralisés textuellement dans la source livrée →
+  toujours **−0,12 ms**. Donc ce n'était pas la couverture. Cause :
+  `StandardMaterial3D` compile le programme spatial COMPLET de Godot,
+  alors que les candidats sont des shaders `unshaded` minimaux. **Le
+  contrôle était un AUTRE PROGRAMME, pas « la même chose sans les
+  maths ».** Un coût négatif, c'est à quoi ressemble un mauvais contrôle.
+* **v3** : le contrôle est construit **DEPUIS LA SOURCE LIVRÉE** — le vrai
+  shader, corps de `fragment()` remplacé par une écriture constante. Même
+  `render_mode`, même `vertex()` billboard, mêmes uniformes. Le delta est
+  alors **exactement les maths**.
+
+| passe | ms/frame | spread | maths seules |
+|---|---|---|---|
+| viewport vide | 7,244 | 0,390 | — |
+| contrôle `D` (boilerplate, zéro maths) | 7,651 | 0,430 | — |
+| contrôle `E` (boilerplate, zéro maths) | 7,994 | 0,712 | — |
+| **`D1`** 2 octaves de bruit | 8,709 | 0,264 | **+1,058** |
+| **`D2`** 2 octaves de bruit | 8,899 | 0,568 | **+1,248** |
+| **`E`** 1 fetch de texture | 9,616 | 0,455 | **+1,622** |
+
+Plancher de bruit du banc (pire spread) : **0,712 ms**.
+
+**Ce que ces chiffres disent :** les trois shaders coûtent quelque chose de
+**mesurable** — +1,0 à +1,6 ms pour 262 144 fragments, soit ~4 à 6 ns par
+fragment sous llvmpipe. Le coût par pixel n'est **pas** négligeable dans
+l'absolu.
+
+**Ce qu'ils ne disent PAS :** un classement. Les écarts ENTRE candidats
+(0,19 et 0,37 ms) sont **à l'intérieur du plancher de bruit de 0,712 ms**.
+Les deux contrôles diffèrent eux-mêmes de 0,344 ms. **Ce banc sépare les
+shaders du contrôle, il ne sépare pas les shaders entre eux.** Publié comme
+tel, comme au lot 1, plutôt que présenté comme un ordre.
+
+⚠️ **Et le sens apparent est CONTRE-INTUITIF ET NON TRANSPORTABLE.** `E`,
+le simple fetch de texture, sort **le plus cher** ici. C'est cohérent avec
+llvmpipe : un rasteriseur LOGICIEL paye un échantillonnage trilinéaire sur
+une texture de 512² en cache misses CPU, alors qu'un GPU le fait presque
+gratuitement et paye au contraire le bruit ALU. **Ce banc sur-estime `E` et
+sous-estime `D` par rapport à un iPhone. L'ordre ne transporte pas.**
+
+### 3. Couverture — combien de son quad chaque shader GARDE
+
+Les discards remis, sur le même viewport 512² :
+
+| candidat | fragments gardés | part du quad |
+|---|---|---|
+| `D1` | 119 770 | **45,7 %** |
+| `D2` | 116 723 | **44,5 %** |
+| `E` | 123 372 | **47,1 %** |
+
+Les trois se tiennent en 2,6 points. **Turbulence change la FORME de la
+silhouette, pas son aire** : `D1` et `D2` sont à 1,2 point l'un de l'autre.
+
+### 4. Le coût réel, dérivé — et il est minuscule
+
+Le coût ALU se paye × la surface RÉELLEMENT peinte, pas × 262 144. À la
+station NEAR, chaque flamme peint entre 2 560 et 3 306 pixels :
+
+| candidat | maths | px peints | coût par frame |
+|---|---|---|---|
+| `D1` | +1,058 ms / 262 144 frag | 3 306 | **0,0133 ms** |
+| `D2` | +1,248 ms / 262 144 frag | 3 292 | **0,0157 ms** |
+| `E` | +1,622 ms / 262 144 frag | 2 560 | **0,0158 ms** |
+
+Contre les **36 à 41 ms** de frame que le lot 1 a mesurés sur ce même
+sandbox : **~0,04 % de la frame**. La réponse à « le shader de bruit
+est-il négligeable ? » est donc **oui, mais pas parce que le shader est
+bon marché** — il ne l'est pas — **parce que la flamme couvre 0,16 % de
+l'écran**. Une flamme plein cadre serait une tout autre facture.
+
+## Lisibilité — et la mesure qui tranche le comparatif
+
+⚠️ **PREMIÈRE VERSION DE CETTE PHASE : FAUSSE, ET SPECTACULAIREMENT.** Elle
+plaçait Keepy AU site, c'est-à-dire **debout à l'intérieur du candidat `E`**
+qui occupe le créneau central. `E` peignait alors **50 pixels** contre
+3 916 pour `D1`, ce qui se lit exactement comme « `E` est invisible à
+distance de jeu ». C'était le corps de Keepy qui l'occultait. Les deux
+stations placent désormais Keepy **AU SUD de la rangée**.
+
+⚠️ **ET « DE PRÈS » CONTRE « À DISTANCE DE JEU » N'EST PAS UN AXE DE
+DISTANCE CAMÉRA SUR CE PLATEAU.** `HubCamera.OFFSET` est une **CONSTANTE**
+`(0 ; 7,6 ; 8,9)` : la caméra est à **11,703 u des pieds de Keepy et n'en
+bouge JAMAIS**. Marcher vers le feu ne zoome pas dessus — ça fait glisser
+le feu vers le BAS du cadre pendant que la caméra garde sa distance. Les
+deux stations diffèrent donc par la place dans le cadre et par le fog
+traversé, **pas par le grossissement**.
+
+| station | Keepy | caméra → flamme | quad à l'écran |
+|---|---|---|---|
+| FAR | 8,0 u au sud | **18,302 u** | **78,8 px** de haut |
+| NEAR | 1,6 u au sud | **12,633 u** | **98,7 px** de haut |
+
+### La quantification, mesurée — c'est LE chiffre du lot
+
+Nombre de couleurs distinctes dans les pixels **réellement peints** par
+chaque candidat (différence contre la même frame, candidat caché — jamais
+une fenêtre fixe, que `CLAUDE.md` documente comme dérivant) :
+
+| candidat | FAR | NEAR |
+|---|---|---|
+| `D1` | **6** | **8** |
+| `D2` | **6** | **7** |
+| `E` | **2 050** | **1 626** |
+
+**Un facteur ~250.** C'est « aplats francs » contre « dégradé continu »,
+chiffré. `D1`/`D2` sortent 6 à 8 couleurs et non 4 exactement parce que le
+fog exponentiel du hub (`fog_density = 0,016`) mélange chaque palier vers
+la couleur de brume selon la profondeur — les couleurs supplémentaires sont
+des voisines à 1/255 près (`#DE841F` et `#DF841F`), pas des paliers de plus.
+
+### Contraste contre le sol du hub (L rendue = 0,0799)
+
+| candidat | station | pire contraste | couleur dominante |
+|---|---|---|---|
+| `D1` | FAR | 2,00:1 | `#DE841F` 31,1 % → 2,86:1 |
+| `D2` | FAR | 2,00:1 | `#DFBE3E` 39,0 % → **4,45:1** |
+| `E` | FAR | **1,04:1** | `#F45B23` 0,3 % → 2,45:1 |
+| `D1` | NEAR | 2,14:1 | `#E8C540` 31,2 % → **4,81:1** |
+| `D2` | NEAR | 2,14:1 | `#E8C540` 35,6 % → **4,81:1** |
+| `E` | NEAR | **1,01:1** | `#DE5120` 0,5 % → 2,04:1 |
+
+⚠️ **Le pire pixel de `E` est un VERT** (`#2C571F`, `#2E5B20`) à **1,01:1**.
+Ce n'est pas une couleur du feu : c'est la frange **alpha douce** du PNG qui
+se mélange au feuillage derrière. `D1`/`D2` `discard` net, donc n'ont pas de
+frange et leur pire pixel est leur propre `STEP_EDGE` traversé par le fog.
+
+⚠️ **Le nombre de pixels peints n'est PAS un score de lisibilité et ne doit
+pas être lu comme tel.** `E` peint 2 951 px en FAR contre 1 863 pour `D1`,
+et l'inverse en NEAR — parce que la frange alpha de `E` fait bouger des
+pixels que l'œil ne voit pas, pendant que `D` a un bord franc. C'est une
+EMPREINTE, pas une visibilité. Les deux signaux qui portent sont le nombre
+de couleurs et le contraste, ci-dessus.
+
+## Aliasing de `E` — la question est CLOSE, et pas dans le sens attendu
+
+Densité de texels : texels source par pixel écran, sur la hauteur du quad.
+Au-dessus de 1, l'image est **minifiée** (les mipmaps la portent) ; au-
+dessous, elle est **AGRANDIE** et aucun mipmap n'aide — les 512 px sources
+sont étirés et le filtre linéaire transforme un dessin net en bouillie.
+
+| station | densité mesurée |
+|---|---|
+| FAR (18,302 u) | **6,50 texels/px** |
+| NEAR (12,633 u) | **5,19 texels/px** |
+
+La densité ne croise 1,0 qu'à une distance caméra de **2,93 u**. Or
+`HubCamera.OFFSET` est **constante** : la caméra est à 11,703 u de Keepy et
+**ne s'approche jamais**. La flamme n'est donc jamais à moins de ~11,3 u de
+l'objectif.
+
+**`E` NE PEUT PAS PIXELISER DANS CE HUB.** Le risque réel est l'inverse — le
+**scintillement de minification** à 5-6,5 texels/px sur une caméra qui suit
+un personnage qui saute. C'est pour ça que
+`assets/textures/props/campfire_flame.png.import` passe à
+`mipmaps/generate=true` dans ce lot, et que `detect_3d/compress_to` passe à
+`0` pour figer l'import (l'éditeur réécrit sinon ce fichier au premier
+usage 3D, et la CI n'aurait pas le même import que le poste).
+
+**L'asset lui-même n'est pas touché** — un `.import` est un sidecar dérivé,
+pas l'asset. Payload : le `.ctex` généré pèse **182 392 octets**, et il est
+bien packé (`Storing File: res://.godot/imported/campfire_flame.png-*.ctex`).
+
+## Le shader — deux décisions qui ne sont pas des détails
+
+### `blend_mix`, et NON `blend_add`
+
+Les candidats du lot 1 étaient **additifs**, ce qui est le choix flatteur
+pour du feu et le **mauvais** ici : un blend additif SOMME la flamme dans ce
+qu'il y a derrière, donc un « aplat franc » cesse d'être franc dès que le
+fond change de luminosité, et deux des quatre paliers virent vers le blanc.
+La cible demande des aplats. **Seul un blend alpha peut poser une couleur
+mesurée à l'écran et faire qu'elle SOIT encore cette couleur.** `E` est
+alpha-blendée pour la même raison.
+
+### Aucun `smoothstep` sous la ligne de coupe
+
+Un `smoothstep` **EST** le dégradé continu que le brief exclut. Les quatre
+paliers sont posés par des `if` durs sur la valeur de chaleur, et le bruit
+est porté **MULTIPLICATIVEMENT** : là où le bruit plonge, la flamme ne se
+contente pas de s'assombrir — elle passe sous la coupe et **le corps se
+SCINDE**. Un bruit additif n'aurait fait que la nuancer. C'est le mécanisme
+qui fait qu'une langue naît, se détache et meurt.
+
+## Ce que ce lot n'a PAS mesuré
+
+1. **Safari iOS.** Rien ici n'a tourné ailleurs que sous llvmpipe. Le
+   verdict est celui de Mathieu, navigation privée, sur
+   `keepy-staging.vercel.app`.
+2. **Un classement de coût entre les trois** — le banc ne les sépare pas, et
+   l'ordre apparent est un artefact de rasteriseur logiciel.
+3. **La cause des +288 primitives** contre la baseline du lot 1, sur une
+   géométrie pourtant identique au byte près.
+4. **`E` quantifiée.** Si Mathieu retient `E` mais veut des aplats, il faut
+   quantifier le PNG dans le shader — non écrit, non mesuré.
+5. **Le glow**, toujours disponible et toujours non chiffré (lot 1).
+6. **Le décor de camp** — bûches, cercle de pierres — hors périmètre.
+
+## Ce que ce lot a écrit
+
+* `scripts/hub/HubFlameRecon.gd` — réécrit : `A`/`B`/`C` supprimés, `D1`,
+  `D2` et `E` posés, la palette mesurée sur le PNG, deux shaders.
+* `assets/textures/props/campfire_flame.png.import` — sidecar d'import,
+  mipmaps activés, `detect_3d` figé. **Le PNG lui-même n'est pas touché.**
+* Ce document, et une ligne d'index.
+
+**`scenes/HubWorld.tscn` n'a PAS bougé** : le nœud `FlameRecon` que le lot 1
+y a posé suffit, et `DEBUG_POSITION_OVERLAY` reste tel quel sur `staging`.
+
+**Aucun asset importé, aucun asset supprimé, aucun tap, aucune pose de
+Keepy.** La sonde `FlameCompareProbe` est supprimée avant le commit et
+`ProbeTimeoutAudit` est revenu à **64, PASSED**.

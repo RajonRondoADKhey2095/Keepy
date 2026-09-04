@@ -649,6 +649,43 @@ qu'une pièce INCLINÉE pose au sol un coin plus reculé que sa projection
 droite — trouvé par une sonde qui mesure les **huit coins transformés** de
 chaque pièce dessinée, jamais par relecture de la formule.
 
+### ⚠️ UN COÛT MESURÉ NÉGATIF N'EST PAS DU BRUIT — C'EST UN CONTRÔLE FAUX
+
+Un banc qui rend une charge de travail **plus rapide que son témoin** ne
+mesure pas ce qu'il croit. Deux versions consécutives d'un banc de coût de
+shader l'ont fait, avec **deux causes différentes**, et c'est le signe
+négatif qui a livré les deux :
+
+1. **Le témoin ombrait plus de fragments que le candidat.** Les shaders
+   mesurés `discard` la moitié de leur quad, le témoin couvrait tout : le
+   banc comparait de la **COUVERTURE**, pas du coût — et flattait
+   précisément le candidat à la silhouette la plus découpée. Parade :
+   neutraliser les `discard` **dans la source livrée** (remplacement
+   textuel), pour que toutes les passes ombrent le même nombre de
+   fragments.
+2. **Le témoin était un AUTRE PROGRAMME.** Un `StandardMaterial3D` compile
+   le programme spatial complet de Godot ; un candidat écrit en
+   `shader_type spatial; render_mode unshaded` est un programme minimal.
+   « Le même dessin sans les maths » n'était donc pas le même dessin.
+   Parade : **construire le témoin DEPUIS la source livrée** — le vrai
+   shader, corps de `fragment()` remplacé par une écriture constante,
+   mêmes `render_mode`, même `vertex()`, mêmes uniformes. Le delta est
+   alors exactement les maths.
+
+**Et publier le SPREAD à côté de la moyenne.** Trois passes par candidat :
+le plancher de bruit du banc est la seule chose qui dise si un écart entre
+deux candidats est un effet ou un artefact. Mesuré une fois : des maths de
++1,058 / +1,248 / +1,622 ms séparées du témoin, mais **PAS séparables
+entre elles** derrière un plancher de 0,712 ms. Un classement aurait été
+inventé ; « ce banc ne les sépare pas » est le résultat.
+
+⚠️ **Et un coût par fragment ne devient un coût par frame qu'une fois
+multiplié par la COUVERTURE RÉELLE.** Le même shader à 4-6 ns/fragment
+coûte **0,015 ms** sur un prop qui occupe 0,16 % de l'écran et serait une
+tout autre facture en plein cadre. Publier les deux, jamais le premier
+seul : « le shader est cher » et « le prop est cher » ne sont pas la même
+phrase.
+
 ### ⚠️ LA MÉTRIQUE PEUT ÊTRE LA MAUVAISE, ET LE CHIFFRE VERT AVEC
 
 Deux fois au moins, un plafond gaté mesurait autre chose que la propriété
@@ -786,6 +823,25 @@ pente — à l'image, un fil horizontal en haut du cadre. **Mesuré par rendu,
 pas déduit** : trois courses au corridor parfaitement vert ont été refusées
 sur cette seule base. La bande où une descente LIT comme une descente sur ce
 plateau est de l'ordre de **14 à 22 u**, à une pente de 13° et plus.
+
+⚠️ **ET LA CAMÉRA NE S'APPROCHE JAMAIS : `HubCamera.OFFSET` EST UNE
+CONSTANTE `(0 ; 7,6 ; 8,9)`.** Elle est à **11,703 u des pieds de Keepy**
+et n'en bouge pas d'un pouce — marcher vers un prop ne zoome pas dessus, ça
+le fait glisser vers le BAS du cadre pendant que la caméra garde sa
+distance. **Il n'existe donc AUCUN axe « de près / de loin » sur ce
+plateau** : une question de lisibilité « à distance » y est une question de
+place dans le cadre et de fog traversé, jamais de grossissement. Payé au
+lot CH23-2, où « lisibilité de près » a d'abord été lu comme un axe de
+distance caméra : les deux stations mesurées sont sorties à **12,633 u et
+18,302 u de la flamme**, et la densité de texels d'un billboard n'y bouge
+que de 5,19 à 6,50 — un asset texturé de ce hub ne peut donc **jamais** être
+agrandi, il est toujours minifié, et son seul risque est le scintillement.
+
+⚠️ **Corollaire de station** : ne jamais planter le point d'observation
+**SUR** le prop mesuré. Une passe de lisibilité a posé Keepy exactement au
+site, donc **DEBOUT DANS** le candidat du créneau central, qui a peint
+**50 pixels** contre 3 916 pour son voisin — lisible comme « ce candidat
+est invisible », en réalité « son propre personnage l'occulte ».
 
 ⚠️ **ET UN JEU DE CONTRAINTES DE DÉGAGEMENT NE VOIT PAS UNE OCCULTATION.**
 Le site retenu par le balayage était à 2,358 u au sol du portail Quizz, et
