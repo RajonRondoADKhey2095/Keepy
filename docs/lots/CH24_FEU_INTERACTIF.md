@@ -465,3 +465,152 @@ RECON 4 : aucune constante partagée touchée hors `_badger.walk_rate`,
 `ground_footprints()` ni au déclenchement (tap conservé). Palier `staging`
 poussé pour que la CI fasse la vérification build/sondes non faisable dans
 ce sandbox.
+
+# LOT 3 -- Rotation retour : le fix du LOT 2 était bon, le défaut n'en était pas un ; marqueur remis sur le foyer (4 septembre 2026)
+
+⚠️ **Premier lot de ce chantier mesuré avec un VRAI binaire Godot dans le
+sandbox.** Les lots précédents ont travaillé par lecture de code sur la foi
+d'un « pas de Godot ici » jamais retesté. L'éditeur 4.3 se télécharge et
+s'exécute : `Godot_v4.3-stable_linux.x86_64.zip`, **50 276 070 octets**
+(exactement le `Content-Length` que CLAUDE.md publie -- vérifié avant
+extraction, piège de la troncature silencieuse), import complet du projet en
+~5 min, **38 `.scn`**, zéro `Cannot open file`. C'est ce qui a permis de
+répondre au brief par une trace frame par frame au lieu d'une troisième
+relecture du même diff.
+
+## Sujet A -- rotation au retour : LE FIX DU LOT 2 EST CORRECT, ET LE DÉFAUT N'EN EST PAS UN
+
+### Ce que le brief demandait de vérifier, et ce que la mesure a répondu
+
+Le brief posait comme hypothèse première un recalcul par-frame qui
+écraserait le `face()` du LOT 2. **L'hypothèse est vraie sur le mécanisme et
+fausse sur la conséquence**, et c'est exactement le genre d'écart qu'une
+relecture ne tranche pas.
+
+`HubActorWalker._process()` **recalcule bien** le cap à chaque frame
+(lignes 231-234 : `wanted = atan2(to_target.x, to_target.z)` →
+`lerp_angle(_yaw, wanted, weight)` → `rotation.y = _yaw`). Mais ce recalcul
+converge vers **le cap du déplacement**, c'est-à-dire vers la valeur même
+que `face()` vient de poser : `_yaw == wanted` dès la première frame, donc
+`lerp_angle` ne bouge pas. Un `face()` en amont **n'est pas écrasé** ici,
+il est *confirmé*.
+
+### La trace demandée, cas retour bout 0 (le pire cas, 180°)
+
+`CampfireFacingProbe`, headless (transforms seulement -- surtout pas xvfb),
+`--fixed-fps 60` **avant** le `--` :
+
+```
+BEFORE le tap :  rotation.y  -20.93   _yaw  -20.93  | cap requis +159.07  (err -180.00)
+  [BLIND CHECK] l'écart AVANT vaut bien 180.00° -- sans lui, « il regarde
+                la maison après » passerait gratuitement
+AFTER le tap, MÊME frame, aucun _process encore exécuté :
+                 rotation.y +159.07   _yaw +159.07  | err +0.00
+frame  rotation.y     wanted     err
+    1    +159.07    +159.07    +0.00
+    2    +159.07    +159.07    +0.00
+   ...        ...        ...      ...
+   60    +159.07    +159.07    +0.00
+PIRE écart de cap sur tout le retour tracé : 0.00° (frame 45)
+```
+
+**Qui fixe `rotation.y`, à quelle frame, avec quelle valeur** -- la réponse
+noir sur blanc que le brief exigeait :
+
+| instant | fonction | valeur écrite |
+|---|---|---|
+| frame N, dans le handler du tap | `HubActorWalker.face()` (appelé par `_on_tapped_campfire`, branche `at_fire`) | `_yaw` **et** `rotation.y` ← **+159,07°** |
+| frame N+1 et suivantes | `HubActorWalker._process()` | `lerp_angle(159,07 ; 159,07 ; w)` = **+159,07°**, inchangé |
+
+Aucune autre fonction n'écrit l'orientation du blaireau pendant ce trajet
+(`grep` exhaustif sur `_badger` : `ZiplineDoor` ne fait que LIRE,
+`_badger_follow_zipline` et `_zip_arrive` sont gardés derrière `_zip_trip`
+non vide, et `_on_tapped_campfire` sort tôt dans ce cas).
+
+### Alors pourquoi le device voit-il encore un dos ? PARCE QUE C'EST LA GÉOMÉTRIE
+
+**PHASE D.** La caméra du hub ne tourne jamais (`HubCamera.OFFSET`
+constante), sa direction de vue à plat est donc une propriété fixe du
+plateau : mesurée **(−0,000 ; −1,000)**, soit plein −Z.
+
+| trajet | cap | `dot` avec l'axe de vue | ce que le joueur voit |
+|---|---|---|---|
+| aller (tour → feu) | −20,93° | **−0,934** (159,1° d'écart) | il vient VERS la caméra → **face** |
+| retour (feu → tour) | +159,07° | **+0,934** (20,9° d'écart) | il s'éloigne → **dos** |
+
+Le retour part du feu (22,079 ; 25,611) vers la tour (28,958 ; 7,624) :
+**19,23 u dont −17,99 en Z**. Il s'éloigne de la caméra à 20,9° de son axe
+de vue. **Un personnage qui marche à l'opposé de la caméra montre son dos ;
+c'est correct, et aucun réglage de rotation ne peut le changer.** Le vrai
+défaut que RECON 4 avait identifié -- la fenêtre de 0,5 à 1 s où le corps
+avançait pendant que le modèle finissait un demi-tour -- **a bien été fermé
+par le LOT 2** : elle vaut 0,00° aujourd'hui.
+
+⚠️ **AUCUN CODE DE ROTATION N'A DONC ÉTÉ TOUCHÉ PAR CE LOT**, et c'est le
+résultat, pas un renoncement. Le brief interdisait de repatcher en aveugle
+après un deuxième échec ; la mesure dit qu'il n'y a rien à patcher. Si le
+souhait est de VOIR le blaireau de face au retour, c'est une décision de
+mise en scène (faire demi-tour à l'arrivée, ou un trajet retour qui ne
+s'aligne pas sur l'axe caméra), pas un correctif de `face()`.
+
+### PHASE E -- le double dispatch tactile, écarté par mesure et non par raisonnement
+
+`emulate_mouse_from_touch` est laissé à son défaut `true` (vérifié dans
+`project.godot`), donc **un doigt réel produit DEUX événements** là où ce
+sandbox n'en appelait qu'un -- le seul écart connu entre la sonde et le
+device. Rejoué en tapant deux fois dans la même frame sur les deux jambes :
+un seul trajet démarre à chaque fois (la machine à états retombe dans `_:`),
+et le cap reste **+0,00°** d'erreur, stable sur 30 frames. Hypothèse fermée.
+
+## Sujet B -- le marqueur était sur le point d'arrivée du blaireau, et le tap aussi
+
+**Coordonnée fautive confirmée, et elle n'est pas celle du brief.** Le brief
+annonçait `(20.90, 0, 23.44)` d'après RECON 4 ; la mesure donne
+**(22,079 ; 25,611)** -- le site du feu a bougé au CH23 lot 7 et le chiffre
+du brief est périmé. Le mécanisme, lui, est bien celui qu'il décrivait :
+
+```
+_campfire_point = site + side * (CAMPFIRE_STONE_RING_OUTER 1,529 + KEEPY_CLEARANCE 0,66)
+```
+
+soit **2,189 u du foyer** (19,900 ; 25,400) -- et le `CabinMarker` était
+instancié sur `_campfire_point`. D'où l'anneau ambre décalé du foyer et
+chevauchant le bord du cercle de pierres, exactement comme le screenshot.
+
+⚠️ **PRÉMISSE DE BRIEF TOMBÉE, ET ELLE CHANGE LE CORRECTIF.** Le brief
+demandait de ne changer que l'instanciation du marqueur, « la même référence
+que le tap 3D `tapped_campfire` lui-même ». **Il n'existe pas de tap 3D sur
+le prop** : `HubTapInput` (l. 404-408) ne teste qu'un **disque plat** autour
+de `campfire_points`, et ce tableau ne contenait que `_campfire_point`.
+Conséquence mesurée : avec `CAMPFIRE_TAP_RADIUS = 1,8` et un foyer à
+2,189 u du centre du disque, **taper sur le feu ne déclenchait rien** -- il
+fallait taper la pelouse à côté. Déplacer le seul marqueur aurait donc
+produit pire : un anneau visible dont le centre n'est pas tappable.
+
+Correctif appliqué, les deux points restant logiquement distincts :
+
+* `_campfire_marker.position = site` -- l'anneau est dessiné **sur le
+  foyer**, la chose que le joueur est invité à toucher ;
+* `campfire_points = [site, _campfire_point]` -- le foyer est **ajouté** et
+  non substitué, parce que le disque autour du point d'arrivée est aussi
+  celui qui couvre le blaireau une fois assis : le retirer supprimerait
+  « taper le blaireau pour le renvoyer ». `HubTapInput` boucle déjà sur ce
+  tableau, `Array` dès son premier commit ;
+* `_campfire_point` garde son unique rôle -- **où le blaireau se tient** --
+  et n'est plus relu par quoi que ce soit de visuel ;
+* **`CAMPFIRE_TAP_RADIUS` (1,8) et `CAMPFIRE_WALK_RATE` (2,5) intacts**,
+  conformément au hors-scope.
+
+**ROUGE AVANT VERT, acquis sans neutralisation** : PHASE C a été mesurée
+**FAIL à 2,189 u du foyer** sur l'arbre d'origine, avant tout patch, puis
+**OK à 0,000 u** après. L'assertion a échoué sur le code réel avant de
+réussir sur le code corrigé.
+
+## Sonde livrée
+
+`scripts/dev/CampfireFacingProbe.{gd,tscn}` -- **conservée**, pas jetable :
+elle gate deux contrats permanents que rien d'autre ne défend (« le blaireau
+ne marche jamais de travers en rentrant », « l'anneau est dessiné sur le
+feu ») et porte le blind check qui empêche le premier de passer gratuitement.
+`ProbeTimeoutAudit` la voit et **PASSE** (65 scènes de sonde, `arm()` +
+`deadline()`).
