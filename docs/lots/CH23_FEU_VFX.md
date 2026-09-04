@@ -898,3 +898,219 @@ Build vérifié par un export release réel (`godot4 --export-release
 shader) : `index.wasm` fait **35 376 909 octets**, la valeur que
 `CLAUDE.md` documente pour tout lot qui ne touche pas le code moteur —
 confirmé, ce lot ne touche que du contenu.
+
+## LOT 4 — imbrication flamme/bûches, la métrique du lot 3 était la mauvaise
+
+Défaut constaté par Mathieu sur device (iPhone Safari,
+`keepy-staging.vercel.app`) : la flamme se lit comme POSÉE DERRIÈRE les
+bûches, pas comme jaillissant d'elles. Ce lot mesure la cause, corrige, et
+pose deux variantes d'enfoncement pour arbitrage — même patron que
+l'échelle au lot 3.
+
+### La cause dominante — chiffrée, pas déduite
+
+Lot 3 avait mesuré « 0 fuite sur 24 vues » et concluait à raison sur ce
+qu'il mesurait : la coupe nette du PNG (la toute dernière rangée de
+pixels opaques, `v < 0,06`, ~0,08 u de large à l'échelle x1,6) ne perce
+jamais derrière les bûches. C'était vrai, et c'était la MAUVAISE
+question — le défaut de Mathieu n'a jamais porté sur ce fil quasi
+ponctuel.
+
+Mesure directe sur `assets/textures/props/campfire_flame.png` (415x512
+opaque, PIL, comptage de largeur par rangée) : la texture passe de
+**0,079 u à 0,705 u de large entre y=0 et y=0,10 u** (post-échelle
+x1,6) — elle FLARE presque instantanément. Or l'ancien bûcher (lot 3)
+avait son apex à `LOG_APEX_HEIGHT=0,44` nominal, **0,70 u** à l'échelle
+x1,6 — c'est-à-dire exactement la hauteur où la flamme est déjà proche de
+son ventre le plus large (~1,0-1,1 u), et où les bûches, elles,
+convergent déjà vers zéro. Les deux formes se croisaient tout en haut du
+tas plutôt que de rester imbriquées sur toute sa hauteur : sur la quasi
+totalité de la hauteur du bûcher, la flamme était déjà PLUS LARGE que le
+bois censé la cacher. **C'est la cause dominante, chiffrée** : ce n'est
+pas un problème de coupe (la coupe ne fuit jamais), c'est un problème de
+PROPORTION entre la vitesse d'évasement de la texture et la hauteur du
+tas.
+
+Confirmé une seconde fois par une sonde jetable (`CampfireImmersionProbe.gd`,
+supprimée avant ce commit) qui étend exactement la méthode du lot 3 (rendu
+d'isolement masque-blanc, 8 azimuts x 3 distances 2,5/8,0/16,0 u, sur la
+vraie `HubCamera`) à une bande MESURÉE (`_MUST_COVER_WORLD_Y`) au lieu de
+la bande littérale du lot 3 :
+
+| bande | immerge | prudent |
+|---|---|---|
+| coupe littérale (`v<0,06`, méthode lot 3) | 0/12 fuites (les deux étaient déjà bonnes) | 0/12 fuites (avec la géométrie finale — 3/12 avec la géométrie thin/sparse de départ) |
+| bande mesurée (`y<0,12 u`, ~2x plus large) | **0/12 fuites (géométrie finale)** | **0/12 fuites (géométrie finale)** |
+
+Sur la géométrie de PREMIER essai (bûches thin/sparse, 6 rondins fins hérités
+du lot 3, juste repositionnés plus bas/plus étalés sur la seule base d'un
+modèle 2D continu sur papier) : **19 fuites sur 24 vues testées** sur la
+bande mesurée, RÉPARTIES SUR TOUS LES AZIMUTS (pas seulement entre deux
+rondins) — preuve que la deuxième cause candidate du brief (des rondins
+individuels trop fins, donc des vides angulaires entre eux qu'un modèle
+d'enveloppe 2D continue ne voit pas) est une cause RÉELLE et SECONDAIRE,
+mesurée séparément de la cause dominante ci-dessus. La troisième cause
+candidate du brief (décalage caméra dû au pitch) n'a PAS été retenue : le
+rendu par isolement mesure directement en pixels, sans hypothèse
+géométrique intermédiaire, et le motif des fuites (quasi tous azimuts, pas
+seulement ceux alignés avec le pitch) ne correspond pas à un artefact de
+projection.
+
+### Le correctif — bûcher bas/étalé, huit rondins épais, flamme engagée
+
+`scripts/hub/HubCampfire.gd`, deux volets :
+
+1. **Bûcher plus bas, plus étalé, plus dense** — `LOG_COUNT` 6→8,
+   `LOG_RADIUS_TOP` 0,045→0,075, `LOG_RADIUS_BOTTOM` 0,065→0,12 (nominal),
+   pour fermer les vides angulaires mesurés ci-dessus ; apex abaissé
+   (0,44→0,22-0,26 nominal selon variante, soit 0,35-0,42 u à l'échelle
+   x1,6 contre 0,70 u avant) et rayon d'anneau monté (0,30→0,38-0,42
+   nominal) pour rester DANS la plage de hauteur où la texture n'a pas
+   encore atteint son ventre.
+2. **Flamme engagée** — un nouveau paramètre `flame_sink` (par variante)
+   pousse la base du quad SOUS y=0 (nominal, avant échelle), enterrée
+   derrière le plan Ground opaque (occlusion vérifiée par le rendu même,
+   pas supposée sur le papier) — deuxième garantie indépendante des
+   bûches, et la rangée qui tombe pile à y=0 est déjà partie dans
+   l'évasement de la texture plutôt que son pixel le plus étroit.
+
+### Deux variantes, échelle x1,6 partagée, degré d'enfoncement différent
+
+| | PRUDENT (SITE_ALT) | IMMERGE — RECOMMANDÉ (SITE) |
+|---|---|---|
+| `ring_radius` nominal | 0,38 | 0,42 |
+| `apex_height` nominal | 0,26 | 0,22 |
+| `base_height` nominal | 0,05 | 0,04 |
+| `flame_sink` nominal | 0,0 (coupe au ras du sol, comme le lot 3) | 0,08 (coupe enterrée sous le sol) |
+
+Les deux partagent `SCALE=1,6` (décision de Mathieu au lot 3, non
+rouverte), `LOG_COUNT/RADIUS_TOP/RADIUS_BOTTOM` et `LOG_COLOUR`. SITE
+(19,9 ; 25,4) porte IMMERGE ; SITE_ALT (16,9 ; 25,4), 3 u à l'ouest, porte
+PRUDENT — mêmes deux points déjà mesurés dégagés au lot 3. L'ancienne
+comparaison d'échelle (x1,6 vs x1,2, ALT) et ses labels sont
+**supprimés** : il ne reste que ces deux variantes, chacune à x1,6,
+étiquetées par leur `Label3D` (`SITE IMMERGE (RECOMMANDE)` / `ALT
+PRUDENT`).
+
+**Recommandation : IMMERGE.** Les deux passent 0 fuite sur les deux
+bandes (littérale et mesurée) aux 24 vues combinées, mais IMMERGE ajoute
+la garantie indépendante de l'enterrement sous le plan Ground — un lot
+futur qui retoucherait la géométrie des bûches sans y penser ne peut pas
+faire réapparaître la coupe nette d'IMMERGE aussi facilement que celle de
+PRUDENT, qui reste au ras du sol et dépend entièrement des bûches. Le
+contraste bûches est aussi légèrement meilleur côté IMMERGE (3,499:1
+contre 3,376:1, le site a un sol légèrement plus sombre que l'alt — voir
+plus bas), sans que ce soit le facteur décisif.
+
+### Contraste bûches — mesuré par rendu réel, pas par l'albédo seul
+
+`HubBuilder.TRUNK_COLOR` (0,20 ; 0,13 ; 0,08), la couleur de tous les
+troncs du hub, rendait quasi noir en isolation sur ce prop — L relative
+WCAG ≈ 0,019 sur l'albédo brut, confirmé par la sonde en mode neutralisé
+(rouge, voir plus bas) : L rendue mesurée 0,0553 (immerge) / 0,0523
+(prudent) contre un sol à L≈0,084-0,087, soit un contraste de 1,27:1 /
+1,33:1 — illisible, exactement le rapport de Mathieu.
+
+Méthode masque-blanc (CLAUDE.md, « masque, pas fenêtre ») : un rendu
+d'isolement peint les pixels bûches en blanc pur (tout le reste caché,
+fond noir), un second rendu RÉEL (matériaux/fog/éclairage tels que
+livrés) est échantillonné aux mêmes coordonnées — jamais l'albédo brut
+seul, parce que le fog (`fog_density=0,016`) mesure une perte de
+luminance d'environ 27% entre albédo et rendu à ~8 u de distance
+(0,82;0,60;0,38 → L brute 0,372, L rendue 0,272).
+
+Trois itérations avant stabilisation :
+
+| couleur (albédo) | L rendue (immerge / prudent) | contraste vs sol rendu |
+|---|---|---|
+| `HubBuilder.TRUNK_COLOR` (0,20;0,13;0,08) | 0,0553 / 0,0523 | 1,27:1 / 1,33:1 — ROUGE, doctrine |
+| première tentative (0,82;0,60;0,38) | 0,2716 / 0,2632 | 3,130:1 / **3,016:1** — vert, marge trop fine côté prudent |
+| **couleur finale (1,0;0,80;0,56)** | **0,4225 / 0,4144** | **3,499:1 / 3,376:1** — vert, marge confortable |
+
+Le sol lui-même a été re-mesuré en rendu réel à cette occasion (pas
+seulement repris de CLAUDE.md) : L=0,0850 (site) / L=0,0876 (alt), cohérent
+avec le L=0,0799 déjà documenté (l'écart tient à la position caméra/fog
+spécifique à ce prop, pas à une contradiction).
+
+`LOG_COLOUR` est désormais publiée séparément de `HubBuilder.TRUNK_COLOR`
+— dérogation délibérée et documentée dans le fichier lui-même à la règle
+« un fait publié une fois » : la couleur des troncs reste correcte pour
+les troncs, elle ne l'est pas pour un petit tas de bois isolé, proche
+caméra, sans éclairage directionnel pour le sculpter.
+
+### Clearance — re-mesurée, l'emprise a grandi comme prévu
+
+Sonde jetable, même méthode que le lot 3 (rayon propre mesuré sur les
+enfants réels — bûches ET flamme, jamais supposé — puis distance minimale
+à CHAQUE pièce dessinée du sous-arbre `Props`, individuelle et par
+instance de `MultiMeshInstance3D`) :
+
+| instance | rayon propre (avant) | rayon propre (après) | voisin le plus proche | clearance |
+|---|---|---|---|---|
+| SITE / IMMERGE | 0,746 u | **0,772 u** | `TreeCrown[36]` @ 3,144 u | **2,372 u** (contre 2,815 u au lot 3) |
+| ALT / PRUDENT | 0,559 u | **0,746 u** | `TreeCrown[24]` @ 2,443 u | **1,697 u** (contre 2,066 u au lot 3) |
+
+L'emprise a grandi comme annoncé (bûches plus étalées + plus épaisses),
+la clearance a donc rétréci en proportion — mais reste positive et
+confortable aux deux sites, aucun chevauchement avec le décor existant.
+ALT/PRUDENT reste la plus serrée, comme au lot 3.
+
+### Rouge avant vert
+
+Deux volets neutralisés séparément dans le même run, puis restaurés et
+vérifiés `cmp` byte-identiques à la version finale :
+
+1. **Couleur seule** neutralisée (`LOG_COLOUR` → `HubBuilder.TRUNK_COLOR`)
+   avec la géométrie déjà corrigée : 2 échecs (les deux contrastes), 0
+   fuite de bande (la géométrie, elle, était déjà bonne) — confirme que
+   les deux volets du correctif sont mesurés indépendamment l'un de
+   l'autre.
+2. **Géométrie ET couleur** neutralisées ensemble (retour aux
+   `LOG_COUNT=6`, rayons 0,045/0,065 du lot 3, sur les nouveaux
+   `ring_radius/apex_height/base_height` par ailleurs plus bas/étalés que
+   le lot 3) : **5 échecs sur 10** — 2 bandes de fuite (immerge et
+   prudent sur la bande mesurée, plus prudent sur la bande littérale — la
+   géométrie amaigrie perd même la garantie du lot 3), 2 contrastes,
+   clearance inchangée (n'a jamais dépendu de la couleur ni du rayon des
+   rondins dans cette combinaison). Restauration vérifiée : `cmp` sur
+   `scripts/hub/HubCampfire.gd`, identique au byte près (md5
+   `30fe11ad7a39416b77f2dd34a3c21009` des deux côtés).
+
+### Le coût — ProbeTimeoutAudit et le pack
+
+`ProbeTimeoutAudit` : **64 scènes de sonde, PASSED** — vérifié identique
+sur `origin/staging` AVANT ce lot (le chiffre de 65 publié au lot 3
+n'était déjà plus exact, comme prévenu par ce même document : « jamais un
+chiffre gaté par la sonde elle-même »). La sonde jetable
+`CampfireImmersionProbe.gd`/`.tscn` de ce lot est supprimée avant ce
+commit ; le compte revient donc à sa baseline réelle sans delta.
+
+Export release réel (`godot4 --export-release "Web"`, templates
+4.3-stable, sur un `.godot` ré-importé de zéro, `build/` nettoyé avant
+export) : exit 0, aucune erreur GDScript ni shader. `index.wasm` =
+**35 376 909 octets**, md5 `af4a8fc2925d992348eb30deeeb54360` ; `index.js`
+md5 `4e08904b1b7107858246af44b602067b` — les deux empreintes documentées
+par `CLAUDE.md` pour un lot qui ne touche pas le code moteur, confirmées
+au byte/octet près. Aucune fuite de `scripts/dev/*`, `assets_source/*` ni
+`docs/*` dans le pack (0 ligne `Storing File:` sur ces préfixes,
+278 lignes au total). `campfire_flame.png` packé une seule fois, comme au
+lot 3 — cet asset n'a pas été touché.
+
+### Ce que ce lot n'a PAS mesuré
+
+Pas de capture PNG offscreen comparative avant/après jointe à ce document
+(la sonde jetable a été supprimée avant le commit, doctrine oblige) — le
+verdict repose sur les chiffres d'isolement en pixels, pas sur une image.
+Validation VISUELLE finale : device, comme toujours pour ce prop.
+
+### Ce que ce lot a écrit
+
+* `scripts/hub/HubCampfire.gd` — modifié : bûcher bas/étalé/dense (8
+  rondins), `flame_sink` par variante, `LOG_COLOUR` propre et claire, deux
+  variantes PRUDENT/IMMERGE à x1,6 partagé remplaçant l'ancien comparatif
+  d'échelle x1,6/x1,2.
+* Ce document.
+
+Sonde jetable `CampfireImmersionProbe.gd`/`.tscn` supprimée avant ce
+commit, comme `ProbeTimeoutAudit` le confirme (64 scènes, baseline
+inchangée).
