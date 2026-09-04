@@ -172,10 +172,10 @@ const STONE_COUNT: int = 8
 ##   - dedans : l'emprise XZ réelle du feu construit vaut 0,772 u en
 ##     MONDE (lot 4, reproduite par la sonde du lot 6 au millième). Les
 ##     pierres doivent l'englober SANS LA TOUCHER.
-##   - dehors : le second foyer d'arbitrage est à 3,40 u, au meilleur
-##     créneau de MÊME PROFONDEUR CAMÉRA disponible (dégagement 2,258 u),
-##     donc l'emprise extérieure de l'anneau doit rester nettement sous
-##     1,70 u pour que les deux anneaux ne se rejoignent pas.
+##   - dehors : l'ancien second foyer d'arbitrage du lot 6 (à 3,40 u)
+##     n'existe plus depuis le lot 7 -- un seul foyer reste, au site
+##     définitif. L'emprise extérieure de l'anneau reste publiée pour
+##     mémoire, sans contrainte de voisinage avec un second anneau.
 ## 0,7625 nominal = 1,220 u monde : bord intérieur 0,911 u au pire
 ## (0,139 u de jeu sur le feu), bord extérieur 1,529 u au pire.
 const STONE_RING_RADIUS: float = 0.7625
@@ -190,12 +190,12 @@ const STONE_MESH_SCALE: float = 0.2552
 const STONE_BURIED_FRACTION: float = 0.26
 
 ## =====================================================================
-## LES DEUX VARIANTES À ARBITRER -- elles diffèrent SEULEMENT par le
-## DEGRÉ d'irrégularité. Même compte, même rayon, même mesh, même
-## couleur, même enfouissement.
-##
-## Le lot 7 conserve celle que Mathieu retient et supprime l'autre ainsi
-## que les deux Label3D.
+## LOT 7 (CH23) -- FINALISATION. Mathieu a retenu SOBRE (contre la
+## recommandation du lot 6) : la variante MARQUE, STONES_MARQUE, SITE_ALT
+## et les deux Label3D d'arbitrage sont supprimés. SOBRE est translatée
+## du site d'arbitrage (16.5, 25.4) au site définitif SITE (19.9, 25.4) --
+## disposition relative (graine, tailles, écarts angulaires, rotations,
+## enfouissement) strictement inchangée, seule l'origine bouge.
 ## =====================================================================
 const STONES_SOBRE: Dictionary = {
 	"seed": 20260904,
@@ -208,25 +208,6 @@ const STONES_SOBRE: Dictionary = {
 	"squash_y_max": 1.06,
 }
 
-const STONES_MARQUE: Dictionary = {
-	"seed": 20260906,
-	"size_min": 0.74,
-	"size_max": 1.26,
-	"angle_jitter_deg": 12.0,
-	"tilt_max_deg": 11.0,
-	"squash_xz_min": 0.76,
-	"squash_y_min": 0.72,
-	"squash_y_max": 1.14,
-}
-
-## Le second site d'arbitrage. 3,40 u à l'ouest du site, sur le MÊME z --
-## la caméra ne tourne jamais et le brouillard est exponentiel en
-## distance, donc deux foyers à des profondeurs différentes ne sont pas
-## comparables. Balayé (72 azimuts x 6 distances de 3,40 à 3,90 u,
-## `HubRegion.contains` compris) : c'est le point de même profondeur au
-## meilleur dégagement, 2,258 u contre 3,521 u au site.
-const SITE_ALT: Vector2 = Vector2(16.5, 25.4)
-
 var _flame_texture: Texture2D = null
 var _campfires: Dictionary = {}
 
@@ -236,10 +217,8 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	_campfires[&"marque"] = _build_campfire(
-		Vector3(SITE.x, 0.0, SITE.y), VARIANT_IMMERGE, STONES_MARQUE, "MARQUE")
 	_campfires[&"sobre"] = _build_campfire(
-		Vector3(SITE_ALT.x, 0.0, SITE_ALT.y), VARIANT_IMMERGE, STONES_SOBRE, "SOBRE")
+		Vector3(SITE.x, 0.0, SITE.y), VARIANT_IMMERGE, STONES_SOBRE)
 
 
 ## Published for a probe that needs to switch one instance off and
@@ -260,10 +239,9 @@ func flame_texture() -> Texture2D:
 ## nominal amount. Logs and flame are built at NOMINAL size and the whole
 ## root is uniformly scaled by SCALE -- so every ratio below is
 ## scale-invariant by construction.
-func _build_campfire(origin: Vector3, variant: Dictionary, stones: Dictionary,
-		label_text: String) -> Node3D:
+func _build_campfire(origin: Vector3, variant: Dictionary, stones: Dictionary) -> Node3D:
 	var root := Node3D.new()
-	root.name = "Campfire_%s" % label_text
+	root.name = "Campfire"
 	root.position = origin
 	root.scale = Vector3.ONE * SCALE
 	add_child(root)
@@ -278,13 +256,6 @@ func _build_campfire(origin: Vector3, variant: Dictionary, stones: Dictionary,
 
 	root.add_child(_make_flame(sink))
 	root.add_child(_make_stone_ring(stones))
-
-	# LOT 6 only, for the arbitration. The label hangs off THIS node, not
-	# off the scaled root, so its size does not ride SCALE -- same shape
-	# lot 3/4 used. The lot 7 that keeps one variant deletes both.
-	var label := _make_label(label_text)
-	label.position = origin + Vector3(0.0, (FLAME_HEIGHT + apex_height) * SCALE + 0.35, 0.0)
-	add_child(label)
 
 	return root
 
@@ -385,23 +356,6 @@ func _make_stone_ring(stones: Dictionary) -> MultiMeshInstance3D:
 	node.material_override = _unshaded(HubBuilder.ROCK_COLOR)
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return node
-
-
-## LOT 6 only -- the two arbitration labels. Removed by lot 7.
-func _make_label(text: String) -> Label3D:
-	var label := Label3D.new()
-	label.name = "Label"
-	label.text = text
-	label.font_size = 96
-	label.pixel_size = 0.0013
-	label.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-	label.shaded = false
-	label.double_sided = true
-	label.no_depth_test = true
-	label.modulate = Color(1.0, 0.94, 0.72)
-	label.outline_modulate = Color(0.03, 0.05, 0.02, 1.0)
-	label.outline_size = 18
-	return label
 
 
 func _make_log(index: int, ring_radius: float, base_height: float, apex_height: float) -> MeshInstance3D:
