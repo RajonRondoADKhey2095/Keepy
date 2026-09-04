@@ -1716,7 +1716,61 @@ const BADGER_SCALE: float = BADGER_DRAWN_HEIGHT / BADGER_REST_SPAN
 ## carried: the next badger rescale, if any, may need this offset re-tuned
 ## rather than left at 0.95. Left as-is for now because +0.050 u is a
 ## real margin, not zero or negative, and nothing asked for a re-tune.
-const BADGER_SIDE_OFFSET: float = 0.95
+##
+## =====================================================================
+## ⚠️ 0.95 UNTIL 4 SEPTEMBRE 2026, AND EVERY NUMBER ABOVE THIS LINE WAS
+## DERIVED RATHER THAN MEASURED. THE MEASUREMENT DOES NOT AGREE.
+##
+## The whole chain above -- 0.23, then +0.175, then +0.050 -- multiplies a
+## lateral extent recorded at one rig scale by the ratio of two later ones
+## and calls the product a clearance. Measured instead against the DRAWN
+## stair, on the badger's SKINNED silhouette (10 047 vertices posed by the
+## live rig) under `xvfb-run --rendering-driver opengl3`:
+##
+##     ZiplineStringer#1 (end 0)   0.0428 u      not +0.050
+##     ZiplineStringer#3 (end 1)   0.0428 u
+##     ZiplineStep#0               0.1260 u
+##
+## Two ways of getting this wrong were both paid for. The DERIVATION is one
+## -- it is a copied half-fact, and a body 0.6 across at one scale is not
+## 0.960 across at another once the rig faces its tower on the diagonal, so
+## the extent that matters is not a width at all. `--headless` is the other:
+## the stringers are BATCHED, the dummy driver returns the IDENTITY for
+## MultiMesh instance transforms, and a first pass that way put all four
+## rails at the world origin, filtered them out by proximity, and reported
+## a comfortable clearance against nothing whatever.
+##
+## 1.10 IS AN ARGMAX AND NOT "FURTHER FROM THE STAIR". The free window at
+## end 0 is bounded on BOTH sides: the stringer recedes as the offset grows
+## and the layout's own bush at (29.869, 7.138) closes in from beyond it.
+## Swept at 0.005 over [0.90, 1.40] on the drawn geometry:
+##
+##     offset   nearest drawn part            clearance
+##      0.950   ZiplineStringer#1               0.0428
+##      1.000   ZiplineStringer#1               0.0888
+##      1.100   ZiplineStringer#1               0.1886   <- shipped
+##      1.200   Bush#62                         0.0923
+##      1.320   Bush#62                         0.0014   <- the indicative
+##      1.350   Bush#62                         0.0000      value, measured
+##
+## ⚠️ SO THE ~1.32 THE PREVIOUS LOT OFFERED AS INDICATIVE IS A WORSE PLACE
+## TO STAND THAN 0.95, and it was right to call it indicative: it was
+## derived from the rail alone, and at 1.32 the badger is 0.0014 u off a
+## bush it INTERSECTS by 1.35. Copying it would have traded a stringer the
+## badger touches for a bush the badger stands in.
+##
+## At 1.100 the two constraints all but balance -- stringer 0.1886, bush
+## 0.1916 -- which is the signature of a real argmax rather than of a value
+## picked and then justified. Both ends read 0.1886: the two towers carry
+## the same stair, and end 1 has no bush at all (its clearance keeps rising
+## past 1.40), so the shared constant is capped by end 0 alone.
+##
+## 0.1886 u is 4.4x the margin it replaces and it is the MOST this constant
+## can buy. Anything more needs that bush moved, which is a decor edit this
+## lot was not asked for and did not make. Gated by `ZiplineStructureProbe`
+## PHASE I at 0.15 u, which rejects the old 0.95 by a factor of 4.4 and was
+## proved able to fail before it was believed on its pass.
+const BADGER_SIDE_OFFSET: float = 1.10
 
 ## How long the trolley takes to cross.
 ##

@@ -2016,3 +2016,174 @@ Si un blaireau incliné à 40° sur un fil **lit** comme un passager de
 tyrolienne sur un écran de six pouces. Aucune sonde de ce dépôt ne score
 ça, et l'élévation et le cadrage livré donnent deux lectures différentes.
 C'est le gate device, et c'est celui qui reste.
+
+## LOT — la station debout du blaireau dégagée de l'escalier (4 septembre 2026)
+
+Suite directe du lot précédent, qui avait mesuré l'intersection et l'avait
+**laissée** parce que la corriger déplace un corps sur le plateau. Mathieu a
+tranché : corriger. Ce lot ne re-diagnostique donc pas, il dérive la valeur
+par mesure et remonte ce que la mesure trouve en chemin — ce qui inclut le
+fait que **la valeur indicative du rapport précédent est mauvaise**.
+
+### ⚠️ ~1,32 EST UN PIRE ENDROIT QUE 0,95, ET LE BANC L'A DIT AVANT QU'ON L'ÉCRIVE
+
+Le rapport précédent proposait `BADGER_SIDE_OFFSET` 0,95 → **~1,32** « à
+affiner ». Le brief demandait explicitement de ne pas le recopier sans
+vérifier qu'il dégage vraiment le limon. Il ne le dégage pas : il met le
+blaireau **dans un buisson**.
+
+`~1,32` était dérivé du RAIL SEUL — 0,46 de face externe plus 0,05 de marge.
+Le rail n'est pas la seule chose autour du pied de l'escalier. La fenêtre
+libre à l'extrémité 0 est bornée **des deux côtés** : le limon recule quand
+l'offset grandit, et le buisson du layout centré en **(29,869 ; 7,138)**
+avance à sa rencontre. Balayé au pas 0,005 sur la géométrie DESSINÉE :
+
+| offset | partie la plus proche | dégagement |
+|---|---|---|
+| 0,950 | `ZiplineStringer#1` | **0,0428** (livré avant ce lot) |
+| 1,000 | `ZiplineStringer#1` | 0,0888 |
+| **1,100** | `ZiplineStringer#1` | **0,1886** ← livré |
+| 1,200 | `Bush#62` | 0,0923 |
+| 1,320 | `Bush#62` | **0,0014** ← la valeur indicative |
+| 1,350 | `Bush#62` | 0,0000 (intersection) |
+| 2,050 | `Bush#62` | 0,0000 |
+
+**Donc l'offset se choisit par ARGMAX, pas par « plus loin de l'escalier ».**
+À 1,100 les deux contraintes s'équilibrent presque — limon 0,1886, buisson
+0,1916 — ce qui est la signature d'un vrai maximum de fenêtre et non d'une
+valeur choisie puis justifiée. Le croisement exact tombe vers 1,1015 ; le
+gain sur 1,100 vaut 1,5 mm, sous ce qui compte.
+
+**Les deux extrémités lisent 0,1886 u**, et pas par chance : les deux tours
+portent le même escalier, et l'extrémité 1 n'a **aucun buisson** — sa courbe
+continue de monter au-delà (0,2911 à 1,20, 0,4985 à 1,40). C'est donc
+l'extrémité 0 seule qui plafonne la constante partagée.
+
+**0,1886 u est 4,4× la marge remplacée, et c'est le MAXIMUM que cette
+constante peut acheter.** Aller au-delà exige de déplacer ce buisson —
+une édition de décor que ce lot n'a pas demandée et n'a pas faite.
+
+### ⚠️ LA MESURE FILÉE À 0,0000 SE REPRODUIT À 0,0428, ET L'ÉCART EST RAPPORTÉ PLUTÔT QUE LISSÉ
+
+Le banc reproduit `ZiplineStep#0` à **0,1260** contre les **0,1198** au
+dossier — accord à 6 mm, ce qui lui donne qualité à publier un chiffre neuf
+per la règle « reproduire d'abord un chiffre déjà au dossier ». Mais il
+reproduit `ZiplineStringer#1` à **0,0428** et non à 0,0000 : **frôlement
+extrême, pas intersection stricte** sur la frame mesurée. La conclusion du
+lot précédent tient entièrement (une marge de 4 cm sous un corps de 2,2 u de
+haut n'est pas une marge), mais le nombre exact diffère et il est écrit ici
+tel que mesuré plutôt qu'aligné sur le rapport antérieur.
+
+⚠️ **Et un second canal de mesure a été essayé puis JETÉ, ce qui vaut
+d'être nommé parce qu'il avait l'air plus rigoureux que le premier** : les
+8 coins de chaque boîte testés contre l'AABB propre du blaireau, pour
+attraper une arête qui traverse entre deux vertices. Il a rapporté
+**0,0000 pour TOUTES les parties à TOUS les offsets jusqu'à 2,05** — l'AABB
+d'un corps animé est surtout de l'air, donc un coin dedans ne prouve rien
+d'un coin dans le corps. Ce qui l'a démasqué : il était **incapable de
+reproduire le 0,1198 filé**. Le canal gardé est vertex-contre-boîte, celui
+sur lequel les nombres au dossier ont été pris.
+
+### LA POSE NE RESPIRE PAS — vérifié avant de croire une lecture d'une frame
+
+Une clearance lue sur une frame est une loterie si l'idle bouge. Mesuré sur
+**40 frames consécutives** : 0,0428 .. 0,0428, **écart 0,0000 u**. Le rig au
+repos est statique, la lecture d'une frame est donc légitime. Vérifié plutôt
+que supposé, parce que l'échec aurait été silencieux et vert.
+
+### RÉPERCUSSIONS — les trois qu'on demandait, plus une quatrième trouvée
+
+**1. `BADGER_SIDE_OFFSET` est ISOLÉ à la tyrolienne.** Un seul site de
+lecture dans tout le dépôt (`HubWorld._badger_rest`), lui-même appelé au
+spawn (extrémité 0), pour l'orientation, et à l'arrivée d'un trajet. Aucun
+point de repos hors tyrolienne ne le partage. Vérifié par recherche, pas
+supposé.
+
+**2. Le disque de tap suit le corps — mais le CLAMP ne suit pas, et c'était
+déjà cassé.** `ZiplineDoor.rider_position()` lit l'acteur vivant, donc le
+disque se recentre tout seul. Le trou est ailleurs, et il est silencieux :
+le disque est interrogé sur `aim` **non clampé** (règle anti-entonnoir),
+mais ce que `HubTapInput` **émet** est la destination **clampée**, que
+`_try_zip` re-teste contre le même rayon. Un tap accepté peut donc envoyer
+Keepy sur un point clampé **hors de portée d'embarquement** : oui du disque,
+pas d'embarquement, aucune erreur. Mesuré sur tout l'intervalle d'offsets,
+rayon 1,80 :
+
+| offset | extrémité 0 pire / perdu | extrémité 1 pire / perdu |
+|---|---|---|
+| 0,95 | 1,8000 / ~0 % | **2,4020 / 3,56 %** |
+| 1,10 | 1,8000 / ~0 % | **2,3925 / 3,88 %** |
+| 1,32 | 1,8000 / ~0 % | 2,3785 / 4,75 % |
+
+⚠️ **LE DÉFAUT EST PRÉEXISTANT ET QUASI PLAT EN OFFSET.** L'extrémité 1 se
+tient 1,68 u au-delà du bord du plateau, sur un lobe de structure de rayon
+3,0 : une part de son disque surplombe du sol que le clamp doit rapatrier.
+Ça ne vient pas de ce lot, et le déplacement **améliore** le pire cas
+(2,4020 → 2,3925). L'extrémité 0 est saine (son « perdu » est du bruit
+flottant exactement au rayon). Le réparer demande d'élargir le lobe P2 ou
+de rétrécir le disque — un changement de région que personne n'a demandé
+ici. **Rapporté, et ce qui est GATÉ est la non-régression**, pas une valeur
+absolue que ce lot n'a pas cassée.
+
+**3. La région marchable reste confortable aux deux bouts.** `contains()`
+vrai, `clamp_to()` ne déplace rien, marge au bord mesurée par recherche
+radiale sur 72 azimuts : **≈ 6,0 u** à l'extrémité 0 et **≈ 0,95 u** à
+l'extrémité 1 (contre 6,19 et 1,06 à 0,95 — le blaireau se rapproche du
+bord de 0,15 u, ce qui est le déplacement lui-même et rien de plus).
+
+**4. Trouvée en chemin : le lot précédent croyait le buisson à 0,1721 u.**
+Le banc le lit à **0,3221 u** à l'offset 0,95. La divergence est du même
+ordre que celle sur le limon et de la même origine — deux passes, deux
+définitions du corps mesuré.
+
+### Sondes
+
+`ZiplineStructureProbe` gagne une **PHASE I** (contrat permanent, sous
+`opengl3` per son propre en-tête, qui est exactement pourquoi elle et non
+`ZiplineRideProbe` : les limons et les marches sont batchés) :
+
+* la silhouette **skinnée** du blaireau (10 047 vertices, posée par le rig
+  vivant) contre chaque partie **dessinée** à moins de 8 u, aux **deux**
+  extrémités, gate **0,15 u** — 21 % de coussin sous le 0,1886 tel que
+  construit, et un facteur 4,4 au-dessus du 0,95 rejeté ;
+* la **non-régression** du disque de tap face au clamp de région, la
+  référence à 0,95 étant **recalculée en direct** plutôt que recopiée ;
+* trois **blind checks** : une silhouette non lue rendrait toute distance
+  infinie ; un corps grossi de 0,20 u au-delà de la marge doit faire
+  rapporter une intersection ; le même test de disque planté au-dessus du
+  vide doit rapporter 56,569 u.
+
+**ROUGE AVANT VERT, sur la version définitive de la phase.** Constante
+remise à 0,95 : **exactement UNE** assertion échoue, celle attendue
+(`0,0428 u, gate 0,15`), les blind checks restant verts — le nombre d'échecs
+attendus faisait partie de l'assertion. Fichier restauré et vérifié
+**byte-identique** au `cmp`.
+
+Totaux : `ZiplineStructureProbe` **91 OK / 0 FAIL** (82 en baseline
+reproduite + 9 neuves), `ZiplineRideProbe` **99 OK / 0 FAIL** inchangée,
+`ProbeTimeoutAudit` **64 scènes**, revenu à sa baseline après suppression
+des trois bancs jetables (`BadgerOffsetBench`, `DiscReachBench`,
+`BadgerOffsetRenderBench`).
+
+### Preuve par rendu
+
+`docs/renders/badger_offset/`, sous `xvfb-run --rendering-driver opengl3`,
+le rect du conteneur **asserté** non dégénéré (1080x1920) et chaque capture
+gatée sur sa fraction de pixels non-fond — un rendu du driver dummy est une
+valeur plate et sortirait à 0.
+
+Huit images : les **deux extrémités** × les **deux offsets**, donc un
+avant/après et pas seulement un après, × **deux caméras**. La HubCamera
+livrée (`player_*.png`) montre ce qu'un joueur voit — le blaireau debout
+près de l'escalier, Keepy à côté, la tour et le câble derrière. La vue en
+plan orthographique (`plan_*.png`) est un **instrument** et non une image du
+jeu : elle seule tranche « à côté du rail » contre « par-dessus le rail »,
+et c'est elle qui montre à 0,95 la patte avant du blaireau **posée sur le
+limon**, et à 1,100 la même patte **à côté**.
+
+### Ce que ce lot ne tranche pas
+
+Si 0,1886 u de dégagement **lit** comme un blaireau debout à côté de son
+escalier sur un écran de six pouces, ou si le corps déplacé de 0,15 u vers
+l'extérieur change quelque chose au cadrage. Aucune sonde ne score ça.
+C'est le gate device, et il reste.
