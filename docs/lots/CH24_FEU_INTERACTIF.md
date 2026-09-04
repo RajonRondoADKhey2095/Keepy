@@ -220,3 +220,248 @@ Implémentation livrée (code + doc). Build et sondes **non vérifiés dans ce
 sandbox** faute de binaire Godot -- palier `staging` poussé pour que la CI
 fasse cette vérification, conformément à la consigne du brief de laisser ce
 point en NEXT STEPS plutôt que de le supposer propre.
+
+## RECON 4 -- vitesse du trajet, rotation retour, mécanisme de proximité (recon pure, aucun code touché)
+
+### Sujet A -- vitesse
+
+Distance retenue du lot 1 (`_campfire_point` = (22,079 ; 25,611), PAS le
+(20,90 ; 23,44) de RECON 3) : **19,258 u** depuis `_badger_rest(0)`
+(28,958 ; 7,624) -- position de repos par défaut du blaireau au boot, avant
+toute traversée de câble -- et **11,122 u** depuis `_badger_rest(1)`
+(23,942 ; 36,576) si le blaireau a déjà traversé. Les deux distances sont
+identiques à l'aller et au retour (même segment, sens opposé).
+
+`walk_speed` (0,7556 u/s, `HubActorWalker.gd`) est un `@export` de la
+classe de base, PARTAGÉ entre `_bear` et `_badger` -- aucune instance ne le
+redéfinit, seul `walk_rate` est par-instance (`_bear.walk_rate =
+BEAR_WALK_RATE` 2.0 ; `_badger.walk_rate` n'est écrit NULLE PART, reste au
+défaut 1.0). Ne jamais toucher `walk_speed` : ça changerait aussi la marche
+de l'ours au tourniquet.
+
+`walk_rate` multiplie DÉJÀ vitesse ET `speed_scale` de l'`AnimationPlayer`
+ensemble (un seul knob, structurel -- commentaire `HubActorWalker.gd:64-79`) :
+accélérer ne glisse pas, quelle que soit la valeur. Le risque n'est donc pas
+le moonwalk mais un pas visuellement trop rapide pour lire comme une marche.
+
+Temps actuel (rate 1.0) : **25,49 s** (bout 0) / **14,72 s** (bout 1) --
+confirme le ressenti "trop long". Vitesse requise pour <=4s : 4,8145 u/s
+(bout 0, **facteur x6,37**) ou 2,7805 u/s (bout 1, **facteur x3,68**).
+
+**4s non atteignable proprement.** Le seul précédent chiffré du dépôt
+(`BEAR_WALK_RATE` = 2,0, déjà expédié/validé) donne, à titre de comparaison
+raisonnable :
+
+| rate | bout 0 (19,258 u) | bout 1 (11,122 u) |
+|---|---|---|
+| 1.0 (actuel) | 25,49 s | 14,72 s |
+| 2.0 (= BEAR_WALK_RATE) | 12,75 s | 7,36 s |
+| 3.0 (50% au-delà du seul précédent) | 8,49 s | 4,91 s |
+
+Même x3 (déjà au-delà de ce que ce dépôt a validé une fois) ne descend pas
+sous 4s dans le pire cas (bout 0). Proposition : une constante DÉDIÉE
+`CAMPFIRE_WALK_RATE` sur `_badger.walk_rate` SEULEMENT (jamais sur la classe
+ni sur `_bear`), posée une fois à la construction du blaireau -- `walk_to()`
+n'est jamais appelé sur `_badger` ailleurs que pour ce détour, donc pas de
+bascule à gérer entre deux usages. Valeur autour de x2,0-x2,5, temps ~13-8s
+(bout 0) / ~7-6s (bout 1) : réduction réelle, sans sortir du seul rate déjà
+validé sur device pour ce projet.
+
+Alternative "point d'arrivée plus proche" écartée par le calcul : à rate
+1,5 il faudrait un point à <=4,53 u du repos -- soit quasiment au pied de la
+tour, très loin du site (~19-20 u) -- ce qui viderait le détour de son sens
+et rouvrirait la géométrie de dégagement anneau/segment validée au lot 1
+sans nouveau balayage. Non proposée pour implémentation sans accord exprès.
+
+### Sujet B -- rotation au retour
+
+`HubActorWalker._process()` recalcule le cap à CHAQUE frame par
+`atan2(to_target.x, to_target.z)` puis `lerp_angle` (turn_lambda 6.0) --
+IDENTIQUE aller/retour, aucune inversion de signe. Le bug n'est pas dans
+cette formule mais dans son AMORÇAGE : à l'arrivée au feu, rien n'appelle
+`_badger.face()` -- l'orientation reste figée sur le cap de l'aller (converge
+vite car trajet rectiligne, donc quasi constant tout du long).
+
+Mesuré : cap figé à l'arrivée au feu = **-20,93°**. Cap requis pour le
+retour vers le MÊME bout (cas le plus courant, blaireau n'ayant pas roulé
+depuis) = **159,07°** -- écart exactement **180,0°**, le pire cas possible
+pour un `lerp_angle` de vitesse finie. Pendant que le corps avance déjà en
+ligne droite à pleine vitesse (`move_toward`, indépendant du yaw), le
+modèle met ~0,5-1s à finir sa rotation : le dos est tourné vers la maison
+pendant cette fenêtre, visible dès les premières frames du retour -- pile ce
+que le screenshot montre. Retour vers l'AUTRE bout (si le blaireau a roulé
+entre-temps) ne demande que **30,6°**, imperceptible -- ce qui explique
+pourquoi le défaut ne se voit QUE dans le cas courant. Cause identifiée,
+rien corrigé.
+
+### Sujet C -- mécanisme de proximité (correctif de lecture)
+
+Le mécanisme cité (bisous pie) N'EST PAS un bouton CTA d'UI. Grep exhaustif
+`Button` sur `scripts/cabin/` et `scripts/hub/` : zéro résultat lié aux
+hotspots (les seuls `Button` du dépôt sont `HubWorld._fallback_button` --
+menu de secours -- et `HubConfirmDialog` -- popup avant Chased/Quizz/Battle
+-- deux mécanismes SANS RAPPORT).
+
+Ce qui existe réellement : `CabinMarker.gd`, un `Node3D` (pad + anneau +
+`Label3D`, PAS un `Control`), copié VERBATIM du `HubPortal.tscn` du
+plateau lui-même -- la classe déclare déjà un `enum Surface {CABIN_FLOOR,
+HUB_GRASS}` et sert TANT la cabine QUE le plateau (les 3 portails Quizz/
+Battle/Chased l'utilisent en HUB_GRASS). La proximité (`HubWorld._pulse_if_near`
+/ `CabinInterior._pulse_if_near`, seuils `NEAR_FACTOR`/`NEAR_RELEASE`
+partagés avec `HubPortal`) ne fait QUE piloter un pulse visuel (anneau qui
+respire) sur un point déjà tapable en permanence -- le déclencheur reste un
+TAP DIRECT sur ce point 3D, par le même canal que toute autre hotspot du hub
+(`HubTapInput`), jamais un widget 2D qui apparaît/disparaît.
+
+Transposition au feu : quasi mécanique. `HubWorld` a DÉJÀ ce pattern pour
+ses 3 portails (ligne ~2652-2665) -- il suffit d'instancier un `HubPortal`
+(ou un `CabinMarker` en `HUB_GRASS`) au site du feu et de le câbler dans
+`_setup_campfire()` sur le même `_pulse_if_near`, exactement comme
+`_tap.campfire_points`/`campfire_radius` le sont déjà. **Zéro `Control`,
+zéro HUD, zéro `Button` en jeu** -- tout ce travail est du `Node3D` dans
+`HubWorld.gd`. La clause du brief sur un lot HUD à faire par Opus 4.8 NE
+S'APPLIQUE PAS ici : rien de cette transposition ne touche la mise en page
+écran. Reste à trancher (mais sans HUD) : garder ou retirer le tap direct
+sur le prop 3D lui-même une fois le marqueur posé à côté (le brief le juge
+"peu lisible") -- probablement à retirer, pour ne laisser que le marqueur
+comme unique entrée.
+
+### Next steps proposés (lot d'implémentation)
+
+1. Vitesse : `CAMPFIRE_WALK_RATE` dédiée sur `_badger.walk_rate` (~x2,0-x2,5),
+   jamais sur `walk_speed` ni sur `_bear`.
+2. Rotation : `_badger.face(...)` vers l'axe de retour explicite à l'entrée
+   de `to_rest` (dans `_on_tapped_campfire`, avant `walk_to()`), pour que le
+   yaw de départ soit correct avant que le corps ne bouge -- pas seulement
+   laisser `lerp_angle` rattraper.
+3. Proximité : instancier un marqueur (`HubPortal` ou `CabinMarker`
+   `HUB_GRASS`) au site du feu, câblé sur `_pulse_if_near` comme les 3
+   portails existants ; retirer ou garder le tap direct sur le prop selon
+   arbitrage device. Aucune part HUD/Control -- reste Sonnet, pas Opus.
+4. Les trois sont indépendants et peuvent être livrés dans le même lot ou
+   séparément.
+
+Aucune sonde, aucun rendu offscreen (toujours pas de binaire Godot dans ce
+sandbox) -- recon purement analytique (lecture de code + calcul Python hors
+moteur), comme RECON 3 et le lot 1.
+
+---
+
+# LOT 2 -- Vitesse, rotation au retour, marqueur de proximité (4 septembre 2026)
+
+> Reprend les 3 next steps de RECON 4 point par point, sur décisions actées
+> par Mathieu (`CAMPFIRE_WALK_RATE = 2.5`, tap existant conservé comme seul
+> déclencheur, marqueur en pulse visuel seul). Base réelle de ce lot :
+> `origin/staging` ne portait pas encore RECON 4 (`da4603f` vit sur la
+> branche `claude/ch24-feu-interactif-recon-icucmq`, pas mergée) -- la
+> branche d'implémentation attribuée à cette tâche était en réalité un clone
+> de `main` sans même le LOT 1 (`tapped_campfire` absent au grep). Repartie
+> depuis `da4603f` après vérification par ARBRE (`merge-base --is-ancestor`),
+> plutôt que codée en aveugle sur la prémisse du brief.
+
+## 1. Vitesse
+
+`CAMPFIRE_WALK_RATE = 2.5` ajoutée en `const` dédiée à côté de
+`BEAR_WALK_RATE`, et écrite sur `_badger.walk_rate` UNIQUEMENT (jamais
+`walk_speed`, jamais `_bear`), dans `_setup_zipline()`, **avant**
+`_world.add_child(_badger)` -- même règle que `_bear.walk_rate =
+BEAR_WALK_RATE` juste au-dessus dans le fichier, et pour la même raison
+structurelle : `HubActorWalker._ready()` lit `walk_rate` dans
+`AnimationPlayer.speed_scale` UNE SEULE FOIS ; l'écrire après coup
+accélérerait les pieds (`ground_speed()` relit `walk_rate` à chaque frame)
+sans accélérer le clip -- glissement de pied, exactement ce que le knob
+partagé existe pour empêcher.
+
+Vérifié avant d'écrire, pas supposé : `walk_to()` n'est appelé sur `_badger`
+nulle part ailleurs que dans le détour du feu (grep sur `scripts/hub/*.gd`,
+deux occurrences, toutes deux dans `_on_tapped_campfire`). Il n'y a donc
+**aucune valeur à restaurer au retour** -- la clause conditionnelle du brief
+("si `walk_rate` est réutilisé ailleurs") ne s'applique pas : c'est la seule
+vitesse de marche que le blaireau ait jamais eue, posée une fois à sa
+construction plutôt que basculée à l'aller et au retour. `_bear` non touché.
+
+## 2. Rotation au retour
+
+Dans `_on_tapped_campfire()`, branche `&"at_fire"` : le point `home` est
+maintenant calculé d'abord, puis `_badger.face(home - _badger.global_position)`
+est appelé explicitement AVANT `_badger.walk_to(home)`. Le cap visé est la
+direction RÉELLE (mesurée sur la position courante du blaireau), pas un
+relèvement deviné -- exact pour les deux bouts, donc le cas "retour vers
+l'autre bout" (30,6° mesuré par RECON 4, déjà imperceptible) reçoit le même
+traitement instantané et n'est pas dégradé : `face()` pose exactement le cap
+que `_process()` aurait calculé de toute façon pour un trajet en ligne
+droite, l'appel ne fait qu'éliminer le retard de `lerp_angle` sur le cas à
+180°.
+
+## 3. Marqueur de proximité
+
+Confirmation du composant : **`CabinMarker`**, pas `HubPortal`. `HubPortal`
+est une scène `Area3D` autonome (signal + collision propre), utilisée par
+les 3 vrais portails du hub et par rien d'autre côté tap -- l'instancier ici
+aurait ajouté un SECOND mécanisme de déclenchement en parallèle du canal
+`tapped_campfire`/`_tap.campfire_points` déjà câblé (LOT 1), sur le même
+patron array-based que les portes de cabane. `CabinMarker` est le `Node3D`
+purement visuel (pad + anneau + `Label3D` optionnel, aucun signal, aucune
+collision) déjà utilisé en `Surface.HUB_GRASS` pour le marqueur de porte de
+cabane -- exactement le composant que RECON 4 désignait.
+
+Instancié dans `_setup_campfire()`, juste après le câblage du canal de tap :
+position = `_campfire_point` (le point de tap RÉEL, pas `HubCampfire.SITE`
+-- même règle que la porte de cabane : le marqueur est dessiné AU point qu'il
+marque, jamais à une position ou une taille inventées à côté), rayon =
+`CAMPFIRE_TAP_RADIUS` (1,8), `Surface.HUB_GRASS` (encre ambre des 3
+portails), texte vide (pas de `Label3D` créé -- "pulse visuel seul", rien de
+plus).
+
+Pulsé par une fonction DÉDIÉE, `_pulse_campfire_marker()`, appelée depuis
+`_process()` à côté de `_pulse_cabin_markers()` -- **pas fusionnée** avec
+elle ni ajoutée à `_cabin_markers` : `_pulse_cabin_markers()` lit
+`CABIN_TAP_RADIUS` (1,30) en dur pour CHAQUE entrée de son tableau, un rayon
+différent de `CAMPFIRE_TAP_RADIUS` (1,8) -- les y mélanger aurait fait
+respirer le marqueur du feu à la mauvaise distance. Même hystérésis, mêmes
+seuils `HubPortal.NEAR_FACTOR`/`NEAR_RELEASE`, juste réécrite au rayon du
+feu plutôt que partagée à tort.
+
+Le tap direct sur le prop 3D (canal `tapped_campfire`, LOT 1) est **conservé
+tel quel** -- décision de Mathieu, actée dans le brief ("le tap reste le
+déclencheur réel") : ce lot n'y touche pas, le marqueur n'ajoute qu'un pulse.
+
+**Zéro `Control`, zéro `Button`, zéro HUD** -- confirmé en relisant le code
+ajouté : `CabinMarker` est un `Node3D` (`MeshInstance3D`/`Label3D` enfants),
+la clause Opus/HUD du brief ne s'applique pas.
+
+## Validation statique
+
+Toujours aucun binaire `godot4`/`godot` dans ce sandbox (`which` : rien,
+comme RECON 3, CH23 lot 7 et LOT 1). `gdtoolkit` installé via `pip` pour ce
+lot (absent du sandbox jusqu'ici) :
+
+* `gdlint` : 102 problèmes après édition contre 100 avant (baseline) --
+  différence de 2, toutes deux de la même catégorie `class-definitions-order`
+  déjà omniprésente dans ce fichier avant tout changement de ce lot (100
+  occurrences pré-existantes, convention du fichier que ce lot ne corrige
+  pas -- hors scope). Aucune AUTRE catégorie de problème (retours multiples,
+  ligne trop longue, fichier trop long, espace de fin) n'a bougé en nombre
+  NI en contenu par rapport à la baseline -- vérifié par diff des deux
+  sorties filtrées hors `class-definitions-order`, lignes strictement
+  identiques une fois l'offset d'insertion pris en compte.
+* `gdformat --diff` : le fichier entier diverge déjà du style par défaut de
+  `gdformat` avant ce lot (un saut de ligne entre fonctions au lieu de deux,
+  entre autres -- convention du projet, pas appliquée par ce lot). Le diff
+  autour des trois zones éditées ne montre que cette même divergence
+  cosmétique pré-existante, aucun problème de fond.
+* Pas de sonde `.gd` ajoutée à `scripts/dev/` : sans binaire Godot, une
+  sonde ajoutée ici n'aurait pu être ni passée au rouge ni au vert -- même
+  raison que RECON 3, RECON 4 et le LOT 1. Reste en NEXT STEPS pour CI/device
+  (rouge-avant-vert sur les trois comportements neufs : vitesse mesurable
+  par chrono, absence de dos tourné au retour vers le bout 0, pulse du
+  marqueur qui s'allume/s'éteint aux deux seuils).
+
+## Statut
+
+Implémentation livrée (code + doc), scope strictement limité aux 3 items de
+RECON 4 : aucune constante partagée touchée hors `_badger.walk_rate`,
+`_bear` intact, aucun `Control`/HUD, aucun changement à
+`ground_footprints()` ni au déclenchement (tap conservé). Palier `staging`
+poussé pour que la CI fasse la vérification build/sondes non faisable dans
+ce sandbox.
