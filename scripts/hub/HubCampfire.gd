@@ -78,13 +78,15 @@ const LOG_RADIUS_TOP: float = 0.075
 const LOG_RADIUS_BOTTOM: float = 0.12
 const LOG_RADIAL_SEGMENTS: int = 6
 
-## Revert LOT 5 (CH23) : l'éclaircissement du lot 4 était une demande
-## erronée de Mathieu, pas un défaut constaté -- le rendu sombre qu'il
-## avait pris pour un problème de matériau était en réalité le défaut
-## d'imbrication flamme/bûches, corrigé au lot 4 par la géométrie seule
-## (bûcher bas/étalé, flame_sink). Retour au matériau des troncs du hub,
-## tel qu'il était avant le lot 4. Aucun plancher de contraste ne
-## s'applique à ce prop décoratif (CLAUDE.md, hors sujet pour un feu).
+## Revert LOT 5 (CH23), attribution rectifiée au LOT 6 : l'éclaircissement
+## du lot 4 ne venait PAS de Mathieu -- il n'a jamais rien demandé sur la
+## couleur des bûches. C'était une correction ESTHÉTIQUE NON DEMANDÉE,
+## glissée dans un correctif technique, lui, réellement demandé
+## (l'imbrication flamme/bûches). Le rendu sombre n'était pas un défaut de
+## matériau : c'était le défaut d'imbrication, corrigé au lot 4 par la
+## géométrie seule (bûcher bas/étalé, flame_sink). Retour au matériau des
+## troncs du hub, tel qu'il était avant le lot 4. Aucun plancher de
+## contraste ne s'applique à ce prop décoratif (CLAUDE.md, hors sujet).
 const LOG_COLOUR: Color = HubBuilder.TRUNK_COLOR
 
 ## =====================================================================
@@ -103,6 +105,128 @@ const VARIANT_IMMERGE: Dictionary = {
 	"flame_sink": 0.08,
 }
 
+## =====================================================================
+## LOT 6 (CH23) -- LE CERCLE DE PIERRES
+##
+## Le feu lui-même est CLOS et validé device : rien au-dessus de cette
+## ligne n'est touché par ce lot. L'anneau s'ajoute AUTOUR.
+##
+## ⚠️ COMMENT LES ROCHERS DU HUB SONT POSÉS -- MESURÉ, PAS SUPPOSÉ
+## (CampfireStoneRecon, sonde jetable du lot 6, sous xvfb + opengl3) :
+## les 48 rochers gris sont UN MultiMesh partagé `Rock` accroché à
+## `Props`, TRANSFORM_3D, `SphereMesh` r=0,6 h=0,8 seg=8 rings=4,
+## `material_override` = `HubBuilder.ROCK_COLOR` unshaded. ZÉRO nœud
+## individuel ne dessine ce mesh (les deux seuls nœuds à ROCK_COLOR sont
+## le socle du tourniquet et le pivot de la balançoire).
+##
+## ⚠️ ET ON NE PEUT PAS AJOUTER D'INSTANCES À CE BATCH PARTAGÉ.
+## Mesuré, pas raisonné : porter `instance_count` de 48 à 49 a rendu
+## **0 transform sur 48** survivantes -- le buffer est réalloué et remis
+## à zéro -- et `custom_aabb` ne suit pas. Un appelant extérieur devrait
+## donc ré-écrire tout le semis procédural de HubBuilder et lui
+## recalculer son AABB : c'est-à-dire posséder ses données.
+##
+## D'où le choix retenu : l'anneau porte SON PROPRE MultiMesh, avec le
+## MESH et la COULEUR du rocher du hub (`HubBuilder.rock_mesh()` et
+## `HubBuilder.ROCK_COLOR`, lus, jamais retapés), parenté sous la racine
+## du feu. C'est exactement le patron déjà documenté dans HubLayout.gd
+## pour les barres du tourniquet -- « un MultiMesh à lui, jamais un batch
+## partagé » -- et les batches `Bars` (n=4) et `Grips` (n=2) relevés par
+## la recon en sont la preuve vivante.
+##
+## ⚠️ IRRÉGULIER NE VEUT PAS DIRE ALÉATOIRE. Décision de Mathieu : un
+## foyer est un objet FAIT MAIN, donc ça reste un CERCLE. Varient la
+## TAILLE, l'ESPACEMENT angulaire, la ROTATION et l'ASSIETTE de chaque
+## pierre. Le RAYON, lui, est STRICTEMENT constant -- pas « à peu près »,
+## littéralement le même nombre pour les huit pierres des deux variantes,
+## et la sonde l'assert à 0,000 u de variance. Une pierre plus loin ou
+## plus près donnerait un semis, pas un foyer.
+##
+## ⚠️ UNE SPHÈRE DE RÉVOLUTION NE TOURNE PAS. Le mesh du rocher est une
+## `SphereMesh` : un yaw seul n'y change PAS UN PIXEL -- c'est la leçon
+## A3 de l'audit CH22, déjà payée sur le semis. Chaque pierre reçoit donc
+## une compression NON UNIFORME écrite dans le repère du MODÈLE, puis
+## l'assiette, puis le yaw -- via `Transform3D.scaled_local()`, qui
+## post-multiplie (basis * S). L'ordre EST la correction : un
+## `Transform3D.scaled()` pré-multiplierait, écraserait selon les axes
+## MONDE, et le yaw redeviendrait un no-op silencieux.
+##
+## ⚠️ DÉTERMINISTE, JAMAIS DE RNG AU RUNTIME LIBRE. Chaque variante a sa
+## graine entière fixe et tire dans un ordre fixe : le foyer est
+## identique à chaque chargement, comme `_prop_distortion()` le fait déjà
+## pour le semis.
+##
+## Les pierres REPOSENT AU SOL, partiellement enfoncées : l'enfouissement
+## est une FRACTION de la hauteur réellement dessinée de chaque pierre,
+## calculée sur son AABB une fois l'assiette et la compression
+## appliquées -- pas un offset copié, parce que ce dépôt a déjà enterré
+## un personnage sous 68 % de sa taille en recopiant une moitié de somme.
+## =====================================================================
+
+const STONE_COUNT: int = 8
+
+## Nominal (pré-SCALE), comme toute la géométrie de ce fichier.
+##
+## Le rayon est CONTRAINT PAR LES DEUX BOUTS, et les deux bornes sont
+## mesurées :
+##   - dedans : l'emprise XZ réelle du feu construit vaut 0,772 u en
+##     MONDE (lot 4, reproduite par la sonde du lot 6 au millième). Les
+##     pierres doivent l'englober SANS LA TOUCHER.
+##   - dehors : le second foyer d'arbitrage est à 3,40 u, au meilleur
+##     créneau de MÊME PROFONDEUR CAMÉRA disponible (dégagement 2,258 u),
+##     donc l'emprise extérieure de l'anneau doit rester nettement sous
+##     1,70 u pour que les deux anneaux ne se rejoignent pas.
+## 0,7625 nominal = 1,220 u monde : bord intérieur 0,911 u au pire
+## (0,139 u de jeu sur le feu), bord extérieur 1,529 u au pire.
+const STONE_RING_RADIUS: float = 0.7625
+
+## Facteur appliqué au mesh du rocher du hub (rayon 0,6). 0,2552 nominal
+## donne une pierre de 0,245 u de rayon en monde, soit 0,49 u de large --
+## un galet, pas un bloc : le sommet reste sous l'apex du bûcher
+## (0,352 u monde), pour que les pierres n'avalent pas le bois.
+const STONE_MESH_SCALE: float = 0.2552
+
+## Part de la hauteur dessinée de chaque pierre qui passe sous y = 0.
+const STONE_BURIED_FRACTION: float = 0.26
+
+## =====================================================================
+## LES DEUX VARIANTES À ARBITRER -- elles diffèrent SEULEMENT par le
+## DEGRÉ d'irrégularité. Même compte, même rayon, même mesh, même
+## couleur, même enfouissement.
+##
+## Le lot 7 conserve celle que Mathieu retient et supprime l'autre ainsi
+## que les deux Label3D.
+## =====================================================================
+const STONES_SOBRE: Dictionary = {
+	"seed": 20260904,
+	"size_min": 0.92,
+	"size_max": 1.08,
+	"angle_jitter_deg": 3.5,
+	"tilt_max_deg": 4.0,
+	"squash_xz_min": 0.88,
+	"squash_y_min": 0.86,
+	"squash_y_max": 1.06,
+}
+
+const STONES_MARQUE: Dictionary = {
+	"seed": 20260906,
+	"size_min": 0.74,
+	"size_max": 1.26,
+	"angle_jitter_deg": 12.0,
+	"tilt_max_deg": 11.0,
+	"squash_xz_min": 0.76,
+	"squash_y_min": 0.72,
+	"squash_y_max": 1.14,
+}
+
+## Le second site d'arbitrage. 3,40 u à l'ouest du site, sur le MÊME z --
+## la caméra ne tourne jamais et le brouillard est exponentiel en
+## distance, donc deux foyers à des profondeurs différentes ne sont pas
+## comparables. Balayé (72 azimuts x 6 distances de 3,40 à 3,90 u,
+## `HubRegion.contains` compris) : c'est le point de même profondeur au
+## meilleur dégagement, 2,258 u contre 3,521 u au site.
+const SITE_ALT: Vector2 = Vector2(16.5, 25.4)
+
 var _flame_texture: Texture2D = null
 var _campfires: Dictionary = {}
 
@@ -112,7 +236,10 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	_campfires[&"immerge"] = _build_campfire(Vector3(SITE.x, 0.0, SITE.y), VARIANT_IMMERGE)
+	_campfires[&"marque"] = _build_campfire(
+		Vector3(SITE.x, 0.0, SITE.y), VARIANT_IMMERGE, STONES_MARQUE, "MARQUE")
+	_campfires[&"sobre"] = _build_campfire(
+		Vector3(SITE_ALT.x, 0.0, SITE_ALT.y), VARIANT_IMMERGE, STONES_SOBRE, "SOBRE")
 
 
 ## Published for a probe that needs to switch one instance off and
@@ -133,9 +260,10 @@ func flame_texture() -> Texture2D:
 ## nominal amount. Logs and flame are built at NOMINAL size and the whole
 ## root is uniformly scaled by SCALE -- so every ratio below is
 ## scale-invariant by construction.
-func _build_campfire(origin: Vector3, variant: Dictionary) -> Node3D:
+func _build_campfire(origin: Vector3, variant: Dictionary, stones: Dictionary,
+		label_text: String) -> Node3D:
 	var root := Node3D.new()
-	root.name = "Campfire_%s" % String(variant["label"]).split(" ")[0]
+	root.name = "Campfire_%s" % label_text
 	root.position = origin
 	root.scale = Vector3.ONE * SCALE
 	add_child(root)
@@ -149,8 +277,131 @@ func _build_campfire(origin: Vector3, variant: Dictionary) -> Node3D:
 		root.add_child(_make_log(i, ring_radius, base_height, apex_height))
 
 	root.add_child(_make_flame(sink))
+	root.add_child(_make_stone_ring(stones))
+
+	# LOT 6 only, for the arbitration. The label hangs off THIS node, not
+	# off the scaled root, so its size does not ride SCALE -- same shape
+	# lot 3/4 used. The lot 7 that keeps one variant deletes both.
+	var label := _make_label(label_text)
+	label.position = origin + Vector3(0.0, (FLAME_HEIGHT + apex_height) * SCALE + 0.35, 0.0)
+	add_child(label)
 
 	return root
+
+
+## The ring of stones, as ONE MultiMesh of its own carrying the hub's own
+## rock mesh and colour. Parented under the campfire root, so it rides
+## SCALE exactly like the logs and the flame do and every number below
+## stays nominal.
+func _make_stone_ring(stones: Dictionary) -> MultiMeshInstance3D:
+	var mesh: SphereMesh = HubBuilder.rock_mesh()
+	var local_aabb: AABB = mesh.get_aabb()
+	# The drawn surface, for the burial below -- an AABB is the wrong
+	# instrument for a body that is tilted and squashed, see _make_stone_ring's
+	# note. Read once, outside the loop.
+	var verts: PackedVector3Array = mesh.get_faces()
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(stones["seed"])
+	var size_min: float = stones["size_min"]
+	var size_max: float = stones["size_max"]
+	var jitter: float = stones["angle_jitter_deg"]
+	var tilt_max: float = stones["tilt_max_deg"]
+	var squash_xz_min: float = stones["squash_xz_min"]
+	var squash_y_min: float = stones["squash_y_min"]
+	var squash_y_max: float = stones["squash_y_max"]
+
+	var xforms: Array[Transform3D] = []
+	for i in STONE_COUNT:
+		# Drawn in a FIXED order from a FIXED seed: the foyer is identical
+		# at every load, and adding a draw here would reshuffle every
+		# stone after it -- which is why the order is not rearranged
+		# casually.
+		var angle: float = TAU * float(i) / float(STONE_COUNT) \
+			+ deg_to_rad(rng.randf_range(-jitter, jitter))
+		var size: float = rng.randf_range(size_min, size_max)
+		var fx: float = rng.randf_range(squash_xz_min, 1.0)
+		var fz: float = rng.randf_range(squash_xz_min, 1.0)
+		var fy: float = rng.randf_range(squash_y_min, squash_y_max)
+		var yaw: float = rng.randf_range(0.0, TAU)
+		var tilt_axis: float = rng.randf_range(0.0, TAU)
+		var tilt: float = deg_to_rad(rng.randf_range(0.0, tilt_max))
+
+		# ⚠️ XZ IS CAPPED AT 1.0, like HubBuilder's own prop distortion:
+		# the outer emprise this file publishes is size * STONE_MESH_SCALE,
+		# and letting a stone stretch PAST that would turn a declared
+		# bound into a lower bound, silently.
+		var factor: float = STONE_MESH_SCALE * size
+		var squash := Vector3(factor * fx, factor * fy, factor * fz)
+
+		# yaw * tilt, then scaled_local post-multiplies the squash ->
+		# squash in the MODEL frame, tilted, then turned. Basis has no
+		# scaled_local() in 4.3 (it is a Parse Error), which is why this
+		# goes through Transform3D.
+		var basis := Basis(Vector3.UP, yaw) \
+			* Basis(Vector3(cos(tilt_axis), 0.0, sin(tilt_axis)).normalized(), tilt)
+		var at := Vector3(cos(angle) * STONE_RING_RADIUS, 0.0, sin(angle) * STONE_RING_RADIUS)
+		var xform := Transform3D(basis, at).scaled_local(squash)
+
+		# Settle it into the ground on ITS OWN drawn height.
+		#
+		# ⚠️ ON THE REAL VERTICES, NOT ON A TRANSFORMED AABB. The first
+		# version of this line took the AABB of the transformed AABB, and
+		# the probe measured what that costs: a BOX tilted 11 degrees has
+		# a taller bounding box than the body inside it, so the burial
+		# came out at 0.162 to 0.257 instead of the 0.26 asked for -- a
+		# different, wrong depth for every stone, and none of them the
+		# intended one. Nothing raises on that; the stones simply sit a
+		# little high, by an amount that varies with their tilt.
+		var lo: float = INF
+		for v in verts:
+			lo = minf(lo, (Transform3D(xform.basis, Vector3.ZERO) * v).y)
+		var hi: float = -INF
+		for v in verts:
+			hi = maxf(hi, (Transform3D(xform.basis, Vector3.ZERO) * v).y)
+		xform.origin.y = -lo - STONE_BURIED_FRACTION * (hi - lo)
+		xforms.append(xform)
+
+	var multi := MultiMesh.new()
+	# ⚠️ FIRST LINE, ALWAYS. The 4.3 default is TRANSFORM_2D, which throws
+	# away every transform written to it and draws the whole batch at the
+	# origin -- here, eight stones stacked inside the fire.
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = mesh
+	multi.instance_count = xforms.size()
+
+	var bounds := AABB()
+	for i in xforms.size():
+		multi.set_instance_transform(i, xforms[i])
+		var box: AABB = xforms[i] * local_aabb
+		bounds = box if i == 0 else bounds.merge(box)
+	# Written explicitly: a stale or wrong custom_aabb makes the whole
+	# batch VANISH when the camera turns, with no error attached.
+	multi.custom_aabb = bounds
+
+	var node := MultiMeshInstance3D.new()
+	node.name = "StoneRing"
+	node.multimesh = multi
+	node.material_override = _unshaded(HubBuilder.ROCK_COLOR)
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return node
+
+
+## LOT 6 only -- the two arbitration labels. Removed by lot 7.
+func _make_label(text: String) -> Label3D:
+	var label := Label3D.new()
+	label.name = "Label"
+	label.text = text
+	label.font_size = 96
+	label.pixel_size = 0.0013
+	label.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	label.shaded = false
+	label.double_sided = true
+	label.no_depth_test = true
+	label.modulate = Color(1.0, 0.94, 0.72)
+	label.outline_modulate = Color(0.03, 0.05, 0.02, 1.0)
+	label.outline_size = 18
+	return label
 
 
 func _make_log(index: int, ring_radius: float, base_height: float, apex_height: float) -> MeshInstance3D:

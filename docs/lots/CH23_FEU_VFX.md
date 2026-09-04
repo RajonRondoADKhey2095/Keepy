@@ -1115,16 +1115,28 @@ Sonde jetable `CampfireImmersionProbe.gd`/`.tscn` supprimée avant ce
 commit, comme `ProbeTimeoutAudit` le confirme (64 scènes, baseline
 inchangée).
 
-## LOT 5 — revert de `LOG_COLOUR`, l'éclaircissement du lot 4 était une demande erronée
+## LOT 5 — revert de `LOG_COLOUR` : l'éclaircissement du lot 4 n'avait jamais été demandé par Mathieu
 
 Validation device (Mathieu, Safari iPhone, `keepy-staging.vercel.app`) de
-l'imbrication flamme/bûches du lot 4 : **bonne**. Ce que Mathieu avait pris
-au lot 4 pour un défaut de matériau (le rendu sombre de `TRUNK_COLOR`) était
-en réalité le défaut d'imbrication lui-même, déjà corrigé au lot 4 par la
-géométrie seule (bûcher bas/étalé + `flame_sink`). L'éclaircissement de
-`LOG_COLOUR` demandé au lot 4 était donc une correction pour la mauvaise
-cause. Verdict sur le résultat clair : mauvais. **Retour pur et simple** à
-`HubBuilder.TRUNK_COLOR` — pas de compromis, pas de teinte intermédiaire.
+l'imbrication flamme/bûches du lot 4 : **bonne**. Le rendu sombre des bûches
+n'était pas un défaut de matériau : c'était le défaut d'imbrication
+lui-même, déjà corrigé au lot 4 par la géométrie seule (bûcher bas/étalé +
+`flame_sink`). Verdict sur le résultat clair : mauvais. **Retour pur et
+simple** à `HubBuilder.TRUNK_COLOR` — pas de compromis, pas de teinte
+intermédiaire.
+
+⚠️ **Rectification faite au lot 6 — l'éclaircissement de `LOG_COLOUR` ne
+venait PAS de Mathieu.** Une formulation antérieure de cette section parlait
+d'« une demande erronée de Mathieu » : c'est faux, et l'attribution comptait.
+Mathieu n'a jamais rien demandé sur la couleur des bûches ; la demande venait
+de l'assistant de cadrage. **L'enseignement réel à conserver** : au lot 4,
+une **correction esthétique NON DEMANDÉE** (éclaircir `LOG_COLOUR`) s'était
+glissée à l'intérieur d'un **correctif technique, lui, réellement demandé**
+(l'imbrication). Le lot 5 n'a pas corrigé une erreur de jugement de
+l'utilisateur — il a retiré un changement que personne n'avait commandé, et
+qui a survécu un lot entier parce qu'il voyageait dans le même commit qu'un
+travail légitime. Un lot futur doit lire cette section comme un avertissement
+sur le **périmètre** d'un correctif, pas comme un désaccord de goût.
 
 Aucun plancher de contraste n'est appliqué : le seuil 3,0:1 documenté dans
 ce fichier (WCAG, HUD/dangers) ne couvre pas un prop décoratif, et toute
@@ -1198,3 +1210,296 @@ finale : device, comme toujours pour ce prop.
 Sonde jetable `CampfireColourRevertProbe.gd`/`.tscn` supprimée avant ce
 commit, comme `ProbeTimeoutAudit` le confirme (64 scènes, baseline
 inchangée).
+
+## LOT 6 — le cercle de pierres, et ce que la recon a démenti
+
+Le feu est **clos et validé device** : ce lot n'y touche pas. La seule
+ligne de `HubCampfire.gd` qui concerne le feu et que ce lot modifie est un
+**commentaire** — la rectification d'attribution décrite au LOT 5
+ci-dessus, qui vivait aussi en clair dans le code. Le diff sur la
+géométrie, la couleur, le shader et les paramètres du feu est **vide**, et
+la sonde le regate en le lisant sur l'arbre CONSTRUIT (8 rondins, anneau
+0,42, apex 0,22, `flame_sink` 0,08, `LOG_COLOUR` = `TRUNK_COLOR`, échelle
+×1,6, quad 0,9321 × 1,1500) plutôt que sur les constantes.
+
+### RECON BLOQUANTE — comment les rochers du hub sont posés
+
+Mesurée sous `xvfb` + `--rendering-driver opengl3`, jamais `--headless`
+seul : les transforms de `MultiMesh` reviennent à l'identité sous le
+driver dummy, et une recon qui conclurait « le batch ne contient aucun
+semis » l'aurait conclu d'un artefact de driver. PHASE 0 asserte le
+contraire avant tout le reste.
+
+| relevé | valeur |
+|---|---|
+| `MeshInstance3D` individuels sous `Props` | **134** |
+| … portant `ROCK_COLOR` | **2** — socle du tourniquet, pivot de la balançoire |
+| … dessinant le mesh du rocher | **0** |
+| `MultiMeshInstance3D` sous `Props` | **16** |
+| batch `Rock` | **n = 48**, `fmt = 1` (TRANSFORM_3D), `SphereMesh` r=0,600 h=0,800 seg=8 rings=4, albedo (0,69 ; 0,69 ; 0,67) unshaded |
+| le batch EST le semis autorisé | 48 entrées `&"rock"` du layout, **pire écart 0,00000 u** |
+| distorsion par instance | lift Y 0,1664 … 0,4382 ; échelle d'axe 0,5390 … 1,5651 |
+
+**Issue (a) écartée PAR LA MESURE** : aucun nœud individuel ne dessine ce
+mesh.
+
+⚠️ **ET L'ISSUE (b), TELLE QUE LE BRIEF LA FORMULE, EST FAUSSE — MESURÉE,
+PAS RAISONNÉE.** Porter `instance_count` de 48 à 49 sur le batch partagé a
+rendu **0 transform sur 48** survivantes : le buffer est réalloué et remis
+à zéro, sans une ligne d'erreur. `custom_aabb`, lui, ne suit pas du tout.
+Un appelant extérieur qui voudrait « ajouter une instance » devrait donc
+**ré-écrire tout le semis procédural de HubBuilder et lui recalculer son
+AABB** — c'est-à-dire posséder ses données.
+
+⚠️ **ET CETTE MESURE A CORROMPU LA SONDE QUI L'A FAITE.** La première
+version de la phase ne sauvegardait qu'**une** transform avant de tester,
+donc les phases suivantes ont tourné contre 48 rochers empilés à l'origine
+du monde. Ce n'est pas passé inaperçu **uniquement parce que le blind
+check était là** : le point censé être À L'INTÉRIEUR d'un rocher a
+rapporté **1,942 u** au lieu de 0,000. Sans lui, la table de dégagement du
+lot serait sortie verte et fausse.
+
+**Verdict : ni (a), ni (c).** Aucun refactor du chemin de placement partagé
+n'est nécessaire. L'anneau porte **son propre `MultiMesh`**, avec le
+**mesh et la couleur du rocher du hub** (`HubBuilder.rock_mesh()` et
+`HubBuilder.ROCK_COLOR`, lus, jamais retapés), parenté sous la racine du
+feu. C'est exactement le patron que `HubLayout.gd` documente déjà pour les
+barres du tourniquet — « un `MultiMesh` à lui, jamais un batch partagé » —
+et les batches `Bars` (n=4) et `Grips` (n=2) relevés par la recon en sont
+la preuve vivante.
+
+`HubBuilder.rock_mesh()` est **neuf** : le mesh était un littéral enfoui
+dans `_batch_spec()`, et le recopier dans `HubCampfire.gd` aurait
+reconstruit le défaut « un fait est publié une fois, jamais recopié » que
+ce dépôt a déjà payé sur le pas de porte de la cabane. Une nouvelle
+instance à chaque appel, délibérément : deux `MultiMesh` partageant une
+`Mesh` coupleraient leur tessellation pour toujours.
+
+### L'anneau — irrégulier en TAILLE, ESPACEMENT et ROTATION, jamais en RAYON
+
+Le rayon est **strictement** constant, pas « sensiblement » : la sonde le
+lit à **0,000000 u de dispersion** sur les huit pierres des deux
+variantes, et il vaut littéralement `STONE_RING_RADIUS`. Une pierre plus
+loin ou plus près donnerait un semis, pas un foyer — décision de Mathieu,
+regatée plutôt que reformulée.
+
+⚠️ **UNE SPHÈRE DE RÉVOLUTION NE TOURNE PAS** — leçon A3 de l'audit CH22,
+déjà payée sur le semis, et qui frappe ici à l'identique. Chaque pierre
+reçoit donc une compression NON UNIFORME écrite dans le repère du MODÈLE,
+puis l'assiette, puis le yaw, via `Transform3D.scaled_local()` qui
+post-multiplie. Le blind check mesure la valeur du mécanisme : yaw seul sur
+une pierre à échelle uniforme donne un aspect **1,0000 à 1,0000, dispersion
+0,0000** — exactement zéro, parce que la section octogonale d'un
+`SphereMesh` à 8 segments a la même boîte englobante à tous les yaws.
+
+| | MARQUE (site) | SOBRE (alt) |
+|---|---|---|
+| pierres | 8 | 8 |
+| rayon (dispersion) | 0,7625 nominal / 1,220 u monde (**0,000000**) | idem (**0,000000**) |
+| taille dessinée | 0,2159 … 0,3381 (**×1,57**) | 0,2756 … 0,2937 (**×1,07**) |
+| écart angulaire | **29,8° … 59,8°** | **39,9° … 51,1°** |
+| aspect (silhouette) | 0,8114 … 1,0188 (**0,2074**) | 0,9329 … 1,0803 (**0,1474**) |
+| bord intérieur | **0,959 u** (feu à 0,772 → **0,187 u** de jeu) | **0,989 u** (**0,217 u** de jeu) |
+| emprise extérieure | **1,487 u** (borne AABB lâche 1,752) | **1,454 u** (borne lâche 1,663) |
+| couronne la plus haute | 0,311 u (apex du bûcher 0,352 u) | 0,245 u |
+| dégagement de la pierre la plus serrée | `TreeCrown[36]` à **1,926 u** | `TreeCrown[24]` à **0,912 u** |
+
+Enfouissement : **26 % de la hauteur RÉELLEMENT DESSINÉE de chaque
+pierre**, identique pour les seize, quelles que soient sa taille et son
+assiette. Déterminisme : une graine entière fixe par variante, tirages dans
+un ordre fixe — le foyer est identique à chaque chargement, aucun RNG libre
+au runtime.
+
+Coût : **2 nœuds de dessin** pour 16 pierres (1 par foyer), 80 triangles
+par instance, **1 280 triangles** au total sur les deux foyers. Le lot 7
+en supprimera la moitié.
+
+### Le second site — 3,40 u, MÊME PROFONDEUR CAMÉRA, et le biais qui va avec
+
+Balayage de 72 azimuts × 6 distances (3,40 à 3,90 u), `HubRegion.contains`
+compris, sur le hub CONSTRUIT — 452 pièces dessinées, chacune réduite à
+l'enveloppe convexe XZ de ses huit coins transformés, la métrique du lot 1
+reproduite (site à **3,521 u**, chiffre déjà au dossier, restitué avant
+qu'un chiffre neuf soit publié).
+
+La caméra ne tourne jamais et le brouillard est exponentiel en distance :
+deux foyers à des profondeurs différentes ne sont pas comparables. À `z`
+constant, le corridor ouest est le seul disponible, et il est **plus
+serré** :
+
+| slot | dégagement | choisi |
+|---|---|---|
+| site (19,9 ; 25,4) | **3,521 u** | MARQUE |
+| (16,5 ; 25,4) — 3,40 u ouest | **2,258 u** | SOBRE |
+| (16,3 / 16,1 / 16,0 ; 25,4) | 2,078 / 1,903 / 1,818 u | — |
+| (19,9 ; 29,0) — 3,60 u nord | 5,579 u | écarté : autre profondeur |
+| (23,5 ; 25,4) — est | 0,748 u | écarté : trop serré |
+
+Les deux foyers sont à **3,400 u**, au même `z`, avec **0,459 u de sol nu**
+entre les emprises des deux anneaux.
+
+⚠️ **BIAIS DE FOND, À DÉCLARER ET À ESCOMPTER** : les deux variantes ne
+sont pas sur le même voisinage. **SOBRE occupe le slot le plus
+contraint** — 2,258 u contre 3,521 u — et, pire pour elle, le **rocher du
+semis existant le plus proche est à 3,81 u de son centre**, dans le MÊME
+matériau et la MÊME couleur que ses pierres : il entre dans le cadre et
+travaille contre la lecture « anneau délibéré ». Ce biais joue **contre
+SOBRE, donc en faveur de la variante que ce rapport recommande**. Il faut
+le savoir en regardant les deux sur device.
+
+⚠️ **Et l'appairage lui-même produit le défaut que le brief redoute** : à
+16 u, les deux anneaux à 3,40 u se lisent comme **un seul semis de galets**
+plutôt que comme deux foyers. C'est un artefact du dispositif
+d'arbitrage — le lot 7 en supprime un — pas un défaut de l'un ou l'autre
+anneau.
+
+### Recommandation — MARQUE, et pourquoi
+
+**MARQUE**, déjà posée au site exact (19,9 ; 25,4), pour que le lot 7 soit
+une suppression pure.
+
+À la distance de jeu réelle (11,7015 u, la caméra livrée), SOBRE se lit
+comme **huit galets identiques sur un cercle parfait** : sa variation
+(×1,07 en taille, 39,9°–51,1° d'écart) est en dessous de ce que l'œil
+distingue à 1080 px de large, et le résultat lit comme *posé à la machine*
+— exactement ce qu'un foyer fait main n'est pas. MARQUE (×1,57, 29,8°–59,8°)
+reste franchement un CERCLE — le rayon y est le même nombre à la sixième
+décimale — tout en donnant la lecture « quelqu'un a ramassé des pierres ».
+
+Un détail de rendu tranche dans le même sens : dans SOBRE, la pierre à
+12 h tombe pile derrière la flamme et se fait manger par elle ; le jitter
+angulaire de MARQUE la déporte.
+
+### RECETTE — 8 azimuts × 3 distances, rendu d'isolement
+
+Vraie `HubCamera` : le basis AUTORISÉ est capturé une fois et seulement
+**yawé** autour du foyer, donc les rendus sont pris au pitch réel
+**−34,00°** mesuré, et la vue à az 0 / 11,7015 u **EST** la caméra livrée.
+Le script de suivi est coupé, sans quoi chaque rendu serait celui du spawn.
+
+Rendu d'isolement : monde noirci, flamme dessinée **OPAQUE avec son propre
+UV encodé dans la couleur** (r = 1, g = 1 − v), même seuil de `discard` et
+même construction de billboard que le shader livré — un masque qui
+divergerait du matériau réel serait le défaut « fixture qui diverge du réel
+sur l'axe qui compte ». Les `Label3D` sont **cachés** et non noircis : leur
+`modulate` (1,00 ; 0,94 ; 0,72) a précisément le canal rouge que le
+comptage lit comme « flamme ». Le second foyer est caché pendant le
+balayage du premier.
+
+Les pierres étant **noires sur fond noir** dans cette passe, la seule façon
+dont l'image « anneau visible » peut différer de l'image « anneau caché »
+est qu'une pierre ait pris un pixel de flamme. La comparaison passe donc
+par `Image.compute_image_metrics()`, côté C++ ; le comptage pixel à pixel
+n'est fait que là où elle a trouvé quelque chose.
+
+| | résultat |
+|---|---|
+| vues comparées | **48** (2 foyers × 8 azimuts × 3 distances 2,5 / 8,0 / 16,0 u) |
+| vues sans un seul pixel de flamme | **0** — aucune vue ne passe gratuitement |
+| vues perdant un pixel de flamme | **0** |
+| pixels de bande basse (v < 0,12) perdus | **0** |
+| **blind check** | anneau traîné sur la flamme : **156 627 → 130 784**, soit **25 843 px** perdus |
+
+Le blind check est obligatoire ici : « aucune occultation » est une
+assertion d'ABSENCE, et une vue où la flamme serait hors cadre la rendrait
+verte pour rien. Chaque vue est donc d'abord vérifiée NON VIDE contre une
+image noire, et le pouvoir de détection est prouvé sur une occultation
+fabriquée.
+
+Géométriquement, ce zéro n'est pas une chance : à −34° de plongée, la
+ligne de visée qui atteint un point à hauteur `h` au centre du feu passe
+`0,85 u` plus haut au droit d'une pierre du côté caméra, et la couronne la
+plus haute mesure 0,311 u.
+
+### ROUGE AVANT VERT — trois neutralisations, dont deux ont trouvé un vrai bug
+
+1. **La métrique de silhouette (première version)** lisait l'AABB de
+   l'AABB transformée. Le blind control « une pierre à échelle uniforme
+   yawée 8 fois n'a QU'UNE silhouette » est sorti à **0,2006 de
+   dispersion** — d'artefact pur : une BOÎTE tournée à 45° a une boîte
+   englobante plus grande même quand le corps dedans est une sphère.
+   Réécrit sur les **vrais sommets transformés** (`Mesh.get_faces()`),
+   le contrôle tombe à **0,0000**. C'est le cas d'école « la métrique peut
+   être la mauvaise » attrapé par le blind check lui-même.
+2. **L'enfouissement**, écrit de la même façon fautive dans le
+   CONSTRUCTEUR, donnait **0,1624 … 0,2574** (marque) et **0,2410 …
+   0,2569** (sobre) au lieu des 0,26 demandés — une profondeur différente
+   et fausse pour chaque pierre, variant avec son assiette, sans que rien
+   ne se plaigne. **Exactement 2 assertions** sont tombées, celles
+   attendues. Corrigé sur les vrais sommets : **0,2600 … 0,2600** des deux
+   côtés.
+3. **`scaled_local()` → `scaled()`**, le piège nommé dans `HubBuilder.gd` :
+   **6 échecs**, et pas ceux qu'on aurait parié. La pré-multiplication
+   écrase aussi l'ORIGINE, donc c'est la PHASE du RAYON qui tombe (rayon
+   dispersé, bord intérieur à **−0,710 u** et **−0,700 u**, l'anneau
+   traverse le feu) — **PHASE C, elle, reste verte** : un aspect mesuré sur
+   les axes MONDE varie tout autant. **Le garde contre le mauvais opérateur
+   est le test de rayon, pas le test de silhouette.** Restauration vérifiée
+   `cmp` byte-identique.
+
+### LE RISQUE SIGNALÉ PAR MATHIEU — vérifié, et voici la réponse franche
+
+Mesuré au rendu réel, à la distance de jeu, sur les pixels classés :
+
+| | luminance relative WCAG |
+|---|---|
+| pierres | **0,360** |
+| sol | **0,086** |
+| bûcher | **0,016** |
+
+soit **pierres/bûcher 6,2:1**, **sol/bûcher 2,06:1**. *(Diagnostic, pas
+une mesure de contraste gatée : aucun seuil HUD n'est appliqué à ce prop
+décoratif — c'est l'erreur du lot 4, elle n'est pas refaite.)*
+
+**Le risque est réel dans son mécanisme, et faux dans sa conclusion.** Le
+bûcher EST l'objet le plus sombre du cadre, de loin, et l'entourer de
+l'objet le plus clair du cadre creuse cet écart : la masse paraît plus
+sombre avec l'anneau que sans. Mais **elle ne se lit pas comme un TROU** :
+sur les rendus comparatifs anneau ON / anneau OFF, l'éventail des huit
+rondins reste parfaitement lisible — on distingue les entailles entre
+rondins et le V de la base — et la flamme sort d'un cran au sommet du tas,
+pas d'un vide. Ce qui est perdu, c'est la lecture « du BOIS » : le tas est
+une silhouette plate et non éclairée, sans arête interne, et il l'était
+déjà **avant** l'anneau. L'anneau change le degré, pas la nature.
+
+**Rien n'a été corrigé unilatéralement** : le feu est validé, on n'y
+touche pas. Si Mathieu veut fermer l'écart, le levier qui ne touche pas au
+feu est la couleur des pierres — mais elle est aujourd'hui `ROCK_COLOR`
+par exigence du brief (réutiliser le matériau des rochers du hub), et
+l'en écarter est une décision, pas un correctif.
+
+### Dette connue, non traitée ici
+
+* Le feu n'a **jamais** déclaré d'emprise à `ground_footprints()` : Keepy
+  traverse le bûcher. L'anneau hérite de cette propriété et l'étend à
+  1,53 u. Pré-existant, hors périmètre de ce lot, signalé.
+* Les valeurs de la baseline de primitives au site restent instables d'un
+  run à l'autre sur géométrie identique, cause non isolée — **aucun delta
+  inter-run n'est publié ici**, conformément au brief.
+
+### Ce que ce lot a écrit
+
+* `scripts/hub/HubBuilder.gd` — `rock_mesh()` publié en `static`,
+  `_batch_spec(&"Rock")` le lit au lieu de retaper le littéral.
+* `scripts/hub/HubCampfire.gd` — l'anneau (`_make_stone_ring()`), les deux
+  recettes `STONES_SOBRE` / `STONES_MARQUE`, `SITE_ALT`, `_make_label()`
+  réintroduit pour l'arbitrage, `_build_campfire()` reprend un
+  `label_text` ; **plus la rectification d'attribution du LOT 5** en
+  commentaire.
+* Ce document.
+
+Sondes jetables `CampfireStoneRecon`, `CampfireStoneProbe` et
+`CampfireStoneRender` (`.gd` + `.tscn`) supprimées avant ce commit :
+`ProbeTimeoutAudit` relevé à **67 scènes** avec elles et **64** après,
+c'est-à-dire la baseline réelle d'`origin/staging` **constatée** avant le
+lot, pas supposée.
+
+Export release réel (`godot4 --export-release "Web"`, templates
+4.3-stable, `build/` nettoyé avant) : **exit 0**, zéro `SCRIPT ERROR`,
+zéro `Parse Error`, zéro `SHADER ERROR`, zéro ligne
+`Storing File: res://build`. `index.wasm` **35 376 909** octets, md5
+`af4a8fc2925d992348eb30deeeb54360` ; `index.js` md5
+`4e08904b1b7107858246af44b602067b` — les deux valeurs d'identité moteur
+publiées dans `CLAUDE.md`, donc le moteur n'a pas bougé. Les shaders, eux,
+ont réellement été compilés : la sonde de rendu a tourné sous `opengl3`
+avec le shader de flamme livré et a produit 28 PNG où la flamme s'affiche.
