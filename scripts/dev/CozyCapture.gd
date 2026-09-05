@@ -43,6 +43,20 @@ var _ride_positions: Array = []
 ## --ball taps the parked ball on frame 10 then walks to --walk on frame 200.
 var _balloon: int = -1
 var _ball: bool = false
+## V7: --kart taps the parked kart on frame 10 (HubWorld's own channel);
+## --steer=X writes that steer into the touch writer every frame after
+## the mount, so a capture at --frames shows the chase camera in a bend.
+var _kart: bool = false
+var _steer: float = 0.0
+## V6: --critter=KIND taps that inhabitant on frame 10 (the channel HubWorld
+## listens to), so a capture at --frames shows the ride, the dig or the
+## dismount. --weather still applies first.
+var _critter: String = ""
+## --nocritters frees the Critters node at boot: the before/after of the
+## same tree, for the perf line of the journal.
+var _nocritters: bool = false
+## --at=cat: Keepy 2.4 u south of the cat's hiding pile, wherever it is.
+var _at_cat: bool = false
 
 func _ready() -> void:
 	# FIRST statement, per ProbeWatchdog's contract. The default 900s
@@ -54,6 +68,8 @@ func _ready() -> void:
 			var parts := arg.substr(5).split(",")
 			if parts.size() == 2:
 				_at = Vector3(float(parts[0]), 0.0, float(parts[1]))
+			elif arg == "--at=cat":
+				_at_cat = true
 		elif arg.begins_with("--out="):
 			_out = arg.substr(6)
 		elif arg.begins_with("--frames="):
@@ -73,13 +89,37 @@ func _ready() -> void:
 			_balloon = int(arg.substr(10))
 		elif arg == "--ball":
 			_ball = true
+		elif arg == "--kart":
+			_kart = true
+		elif arg.begins_with("--steer="):
+			_steer = float(arg.substr(8))
+		elif arg.begins_with("--critter="):
+			_critter = arg.substr(10)
+		elif arg == "--nocritters":
+			_nocritters = true
+		elif arg == "--grant":
+			# The ranger's price, so a capture can show the trade.
+			WorldSave.add_resource(&"truffle", 1)
+			WorldSave.add_resource(&"hazelnut", 1)
+			WorldSave.add_resource(&"flower", 1)
 		elif arg.begins_with("--ride="):
 			# "auto" taps wherever the mooring parked the boat at boot.
 			_ride = Vector3.ZERO
 	var packed: PackedScene = load("res://scenes/HubWorld.tscn")
 	_hub = packed.instantiate()
+	if _nocritters:
+		var cr: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Critters")
+		if cr != null:
+			cr.get_parent().remove_child(cr)
+			cr.free()
 	add_child(_hub)
 	var keepy: Node3D = _hub.get_node_or_null("WorldViewport/SubViewport/World/Keepy")
+	if _at_cat:
+		var crit: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Critters")
+		if crit != null:
+			var pile: Vector3 = crit.cat.look_point(crit.cat.hidden_site())
+			_at = pile + Vector3(0.0, 0.0, 2.4)
+			print("AT_CAT pile %s -> at %s" % [pile, _at])
 	if keepy:
 		keepy.global_position = _at
 	var cam: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Camera3D")
@@ -111,6 +151,20 @@ func _process(_delta: float) -> void:
 		w.call("force", _weather_force)
 		for i in 400:
 			w.call("_process", 0.05)
+	if _frames == 10 and _critter != "":
+		var cr: Node = _hub.get_node("WorldViewport/SubViewport/World/Critters")
+		var at: Vector3 = Vector3.ZERO
+		var index: int = 0
+		if _critter == "boar":
+			at = cr.boar.position_flat()
+		elif _critter == "catpile":
+			# The cat's own pile: the find.
+			index = cr.cat.hidden_site()
+			at = cr.cat.look_point(index)
+		elif _critter == "beaver":
+			at = cr.beaver.position_flat()
+		print("CRITTER_TAP %s at %s index %d" % [_critter, at, index])
+		_hub.get_node("TapInput").emit_signal("tapped_critter", at, StringName(_critter), index)
 	if _frames == 10 and _walk != Vector3.INF and not _ball:
 		_hub.get_node("TapInput").emit_signal("tapped_ground", _walk)
 	if _walk != Vector3.INF and _frames % 60 == 0:
@@ -128,6 +182,15 @@ func _process(_delta: float) -> void:
 		var trb: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
 		var bl: Node3D = trb.call("balloon", _balloon)
 		_ride_positions.append([_frames, snappedf(kb.global_position.x, 0.01), snappedf(kb.global_position.y, 0.01), snappedf(kb.global_position.z, 0.01), kb.call("is_on_carrier"), snappedf(bl.global_position.y, 0.01), trb.call("balloon_at", _balloon)])
+	if _frames == 10 and _kart:
+		var karting: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Karting")
+		if karting != null:
+			var kart: Node3D = karting.call("player_kart")
+			_hub.call("_on_tapped_kart", Vector3(kart.global_position.x, 0.0, kart.global_position.z))
+	if _kart and _frames > 10:
+		var karting2: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Karting")
+		if karting2 != null and karting2.call("is_driving"):
+			karting2.get("touch").get("input").set("steer", _steer)
 	if _frames == 10 and _ball:
 		var trk: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
 		var bp: Vector3 = trk.call("ball_position")

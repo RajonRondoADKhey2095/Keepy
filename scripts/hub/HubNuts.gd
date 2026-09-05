@@ -31,6 +31,15 @@ class_name HubNuts
 const ACORN_GLB: String = "acorn_0"
 const HAZELNUT_GLB: String = "hazelnut_0"
 const LADYBUG_GLB: String = "ladybug_0"
+## V6: the truffle the boar digs up -- pebble_0 in dark brown (a tint
+## MULTIPLIES the pale pebble down to soil, which is exactly what a tint
+## can do; it cannot shift a hue, CLAUDE.md).
+const TRUFFLE_GLB: String = "pebble_0"
+const TRUFFLE_TINT: Color = Color(0.30, 0.20, 0.14)
+const TRUFFLE_SCALE: float = 0.55
+## V6: the flower the fawn drops -- the decor's own flower_0, as it is.
+const FLOWER_GLB: String = "flower_0"
+const FLOWER_SCALE: float = 1.3
 ## Two leaf sets: the hollow's autumn oranges and (v5) the plateau's greens
 ## -- tinting one into the other gave olive-brown lozenges on capture.
 const LEAF_SETS: Dictionary = {"leaf": ["leaf_0", "leaf_1", "leaf_2"], "greenleaf": ["greenleaf_0", "greenleaf_1", "greenleaf_2"]}
@@ -82,6 +91,11 @@ var _ladybug: Mesh = null
 var _leaf_meshes: Dictionary = {}
 var _material: Material = null
 var _gold: Material = null
+var _truffle: Mesh = null
+var _truffle_material: Material = null
+var _flower: Mesh = null
+## For probes: trade flights started.
+var flights_total: int = 0
 var _rest_dirty: bool = false
 var _time: float = 0.0
 
@@ -108,6 +122,13 @@ func _ready() -> void:
 		_leaf_meshes[set_name] = meshes
 	_material = CozyPalette.decor_material()
 	_gold = CozyPalette.decor_material_tinted(GOLD_TINT)
+	_truffle = CozyPalette.glb_mesh(CozyPalette.decor_path(TRUFFLE_GLB))
+	if _truffle == null:
+		push_error("HubNuts: pebble_0.glb missing")
+	_truffle_material = CozyPalette.decor_material_tinted(TRUFFLE_TINT)
+	_flower = CozyPalette.glb_mesh(CozyPalette.decor_path(FLOWER_GLB))
+	if _flower == null:
+		push_error("HubNuts: flower_0.glb missing")
 
 func setup(keepy: Node3D) -> void:
 	_keepy = keepy
@@ -132,6 +153,10 @@ func mesh_for(kind: StringName) -> Mesh:
 	match kind:
 		&"hazelnut":
 			return _hazelnut
+		&"truffle":
+			return _truffle if _truffle != null else _hazelnut
+		&"flower":
+			return _flower if _flower != null else _hazelnut
 		&"ladybug":
 			return _ladybug if _ladybug != null else _hazelnut
 		_:
@@ -140,9 +165,13 @@ func mesh_for(kind: StringName) -> Mesh:
 func _spawn(kind: StringName, at: Vector3, velocity: Vector3) -> Dictionary:
 	var node := MeshInstance3D.new()
 	node.mesh = mesh_for(kind)
-	node.material_override = _gold if kind == &"golden" else _material
+	node.material_override = _gold if kind == &"golden" else (_truffle_material if kind == &"truffle" else _material)
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	node.position = at
+	if kind == &"truffle":
+		node.scale = Vector3.ONE * TRUFFLE_SCALE
+	elif kind == &"flower":
+		node.scale = Vector3.ONE * FLOWER_SCALE
 	add_child(node)
 	var nut := {"node": node, "kind": kind, "pos": at, "vel": velocity, "bounces": 0,
 		"resting": false, "spin": Vector3(randf_range(-4.0, 4.0), randf_range(-3.0, 3.0), randf_range(-4.0, 4.0)),
@@ -151,6 +180,33 @@ func _spawn(kind: StringName, at: Vector3, velocity: Vector3) -> Dictionary:
 		"heading": randf() * TAU, "escaping": false}
 	_nuts.append(nut)
 	return nut
+
+## V6: one thing of `kind` flying from `from` to `to` (a trade), drawn
+## for the flight only -- it is never a nut on the ground and never picked.
+func fly_between(kind: StringName, from: Vector3, to: Vector3) -> void:
+	var node := MeshInstance3D.new()
+	node.mesh = mesh_for(kind)
+	node.material_override = _gold if kind == &"golden" else (_truffle_material if kind == &"truffle" else _material)
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.position = from
+	if kind == &"truffle":
+		node.scale = Vector3.ONE * TRUFFLE_SCALE
+	elif kind == &"flower":
+		node.scale = Vector3.ONE * FLOWER_SCALE
+	add_child(node)
+	var tween := create_tween()
+	tween.tween_property(node, "position", to, FLY_S * 1.6).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+	tween.parallel().tween_property(node, "rotation", Vector3(1.5, 2.5, 0.0), FLY_S * 1.6)
+	tween.tween_property(node, "scale", Vector3.ONE * 0.05, 0.12)
+	tween.tween_callback(node.queue_free)
+	flights_total += 1
+
+## V6: one thing of `kind` released at a world point with a velocity --
+## what an inhabitant digs up or drops. Same body as a nut from a tree:
+## it falls, bounces, rolls, rests, and is picked by walking.
+func drop_at(kind: StringName, at: Vector3, velocity: Vector3) -> void:
+	_spawn(kind, at, velocity)
+	dropped_total += 1
 
 ## Shakes `count` nuts of `kinds` out of `tree` (a Node3D whose local
 ## frame is the family's), at a random point of the wreath, thrown a
@@ -204,6 +260,12 @@ func _settle(nut: Dictionary) -> void:
 		&"acorn", &"golden":
 			p.y = ACORN_LIE_Y
 			node.rotation = Vector3(0.0, nut["yaw"], PI * 0.5)
+		&"truffle":
+			p.y = 0.0
+			node.rotation = Vector3(deg_to_rad(randf_range(-20.0, 20.0)), nut["yaw"], deg_to_rad(randf_range(-20.0, 20.0)))
+		&"flower":
+			p.y = 0.0
+			node.rotation = Vector3(deg_to_rad(randf_range(-10.0, 10.0)), nut["yaw"], deg_to_rad(randf_range(-10.0, 10.0)))
 		&"ladybug":
 			# On its feet, facing the way it will walk; the wander starts
 			# after a beat of stillness (STILL_S), which is the tell.
@@ -246,6 +308,20 @@ func ladybug_position() -> Vector3:
 
 func leaf_count() -> int:
 	return _leaves.size()
+
+## For probes: things of `kind` lying at rest, and where the first is.
+func resting_kind_count(kind: StringName) -> int:
+	var n: int = 0
+	for nut in _nuts:
+		if nut["kind"] == kind and nut["resting"] and not nut["flying"]:
+			n += 1
+	return n
+
+func resting_kind_position(kind: StringName) -> Vector3:
+	for nut in _nuts:
+		if nut["kind"] == kind and nut["resting"] and not nut["flying"]:
+			return nut["pos"]
+	return Vector3.INF
 
 func _process(delta: float) -> void:
 	_time += delta

@@ -67,6 +67,19 @@ class NutIcon extends Control:
 			draw_line(c + Vector2(0, -6), c + Vector2(0, 3), Color(0.10, 0.07, 0.08), 1.5)
 			for spot in [Vector2(-5, -1), Vector2(5, -1), Vector2(-3, -5), Vector2(3, -5)]:
 				draw_circle(c + spot, 1.7, Color(0.10, 0.07, 0.08))
+		elif kind == &"truffle":
+			# V6: a dark knobbly lump with a few pale warts.
+			for bump in [Vector2(-4, 2), Vector2(4, 3), Vector2(0, -4), Vector2(5, -3), Vector2(-5, -3)]:
+				draw_circle(c + bump, 6.0, Color(0.26, 0.17, 0.12))
+			draw_circle(c, 7.5, Color(0.30, 0.20, 0.14))
+			for wart in [Vector2(-3, -1), Vector2(3, 1), Vector2(0, 4)]:
+				draw_circle(c + wart, 1.4, Color(0.55, 0.42, 0.30))
+		elif kind == &"flower":
+			# V6: five pink petals round a gold heart.
+			for i in 5:
+				var a := TAU * float(i) / 5.0 - PI * 0.5
+				draw_circle(c + Vector2(cos(a), sin(a)) * 6.5, 4.6, Color(0.96, 0.58, 0.72))
+			draw_circle(c, 3.6, Color(0.98, 0.84, 0.36))
 		else:
 			draw_circle(c + Vector2(0, 1), 9.5, Color(0.62, 0.40, 0.20))
 			draw_circle(c + Vector2(-3, -2), 3.2, Color(0.80, 0.58, 0.34))
@@ -126,7 +139,7 @@ func _refresh() -> void:
 
 ## v5: the rare kinds only appear once the player holds one -- the HUD
 ## stays two counters wide until the world has shown it has more to give.
-const APPEARS_WHEN_HELD: Array[StringName] = [&"ladybug", &"golden"]
+const APPEARS_WHEN_HELD: Array[StringName] = [&"ladybug", &"golden", &"truffle", &"flower"]
 var _icons: Dictionary = {}
 
 func _apply_visibility() -> void:
@@ -143,6 +156,11 @@ func _on_resources_changed(kind: StringName, total: int, delta: int) -> void:
 	_wake()
 	if delta > 0:
 		_punch()
+
+## V6: something outside a pickup wants the counters looked at (the
+## ranger refusing a trade).
+func wake() -> void:
+	_wake()
 
 func _wake() -> void:
 	_awake_left = AWAKE_S

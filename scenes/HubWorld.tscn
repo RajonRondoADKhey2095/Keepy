@@ -1,4 +1,4 @@
-[gd_scene load_steps=30 format=3]
+[gd_scene load_steps=33 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -16,6 +16,9 @@
 [ext_resource type="Script" path="res://scripts/hub/WorldHud.gd" id="22"]
 [ext_resource type="Script" path="res://scripts/hub/HubTrees.gd" id="23"]
 [ext_resource type="Script" path="res://scripts/hub/HubNuts.gd" id="24"]
+[ext_resource type="Script" path="res://scripts/hub/HubCritters.gd" id="25"]
+[ext_resource type="Script" path="res://scripts/hub/HubKarting.gd" id="26"]
+[ext_resource type="Script" path="res://scripts/hub/kart/KartHud.gd" id="27"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -142,6 +145,12 @@ script = ExtResource("23")
 [node name="Nuts" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("24")
 
+[node name="Critters" type="Node3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("25")
+
+[node name="Karting" type="Node3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("26")
+
 [node name="CozyScatter" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("18")
 
@@ -195,6 +204,14 @@ grow_horizontal = 0
 mouse_filter = 2
 script = ExtResource("22")
 
+[node name="KartHud" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("27")
+
 [node name="TapInput" type="Node" parent="."]
 script = ExtResource("5")
 camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
@@ -204,6 +221,8 @@ mooring_path = NodePath("../Mooring")
 zipline_path = NodePath("../ZiplineDoor")
 transport_path = NodePath("../WorldViewport/SubViewport/World/Transport")
 trees_path = NodePath("../WorldViewport/SubViewport/World/Trees")
+critters_path = NodePath("../WorldViewport/SubViewport/World/Critters")
+karting_path = NodePath("../WorldViewport/SubViewport/World/Karting")
 
 [node name="Mooring" type="Node" parent="."]
 script = ExtResource("12")

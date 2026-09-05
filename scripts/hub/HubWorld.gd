@@ -96,6 +96,11 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 ## v4: the climbable trees.
 @onready var _trees: HubTrees = $WorldViewport/SubViewport/World/Trees
 @onready var _nuts: HubNuts = $WorldViewport/SubViewport/World/Nuts
+## V6: the new inhabitants (boar, cat, fawn, beaver), one coordinator.
+@onready var _critters: HubCritters = $WorldViewport/SubViewport/World/Critters
+## v7: the karting coordinator and its HUD.
+@onready var _karting: HubKarting = $WorldViewport/SubViewport/World/Karting
+@onready var _kart_hud: KartHud = $KartHud
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
 ## v4: the resource counter (always shown -- it is part of the game) and
 ## the save reset (behind DevTools.enabled()).
@@ -710,6 +715,8 @@ func _ready() -> void:
 	_setup_world_hud()
 	_setup_transport()
 	_setup_trees()
+	_setup_critters()
+	_setup_karting()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -3237,6 +3244,8 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_ballooning = -1
 	_balloon_wait = -1
 	_mounting_ball = false
+	_critters.cancel_intents()
+	_karting.cancel_intent()
 	# v3: a tap on HIMSELF while standing still on the ball is "get off".
 	if _keepy.is_on_vehicle() and not _keepy.is_hopping():
 		var me := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
@@ -3257,17 +3266,20 @@ const CORRIDOR_GATE: Vector3 = Vector3(-28.0, 0.0, -38.5)
 ## v3: the second gate, between the hollow and the moor (corridor
 ## x in [6, 18], z in [-86, -78] -- its midpoint).
 const MOOR_GATE: Vector3 = Vector3(12.0, 0.0, -82.0)
+## v7: the third gate, between the moor and the circuit (corridor
+## x in [-14, -2], z in [-134, -126] -- its midpoint).
+const CIRCUIT_GATE: Vector3 = Vector3(-8.0, 0.0, -130.0)
 const GATE_NEAR: float = 1.5
 ## Remaining waypoints of a cross-zone walk, and the one being walked to.
 var _via_queue: Array[Vector3] = []
 var _via_expect: Vector3 = Vector3.INF
 
 ## The gates a walk from zone `a` to zone `b` has to pass, in order.
-## Zones are 0 plateau, 1 hollow, 2 moor, and the map is a chain
-## 0 -- 1 -- 2, so the list is the gates between them, walked forward or
-## backward. Still not a planner; a fourth zone off the chain needs one.
+## Zones are 0 plateau, 1 hollow, 2 moor, 3 circuit, and the map is a
+## chain 0 -- 1 -- 2 -- 3, so the list is the gates between them, walked
+## forward or backward. Still not a planner; a zone OFF the chain needs one.
 static func _gates_between(a: int, b: int) -> Array[Vector3]:
-	var chain: Array[Vector3] = [CORRIDOR_GATE, MOOR_GATE]
+	var chain: Array[Vector3] = [CORRIDOR_GATE, MOOR_GATE, CIRCUIT_GATE]
 	var out: Array[Vector3] = []
 	if a < b:
 		for i in range(a, b):
@@ -3524,6 +3536,15 @@ func _on_hop_landed(position: Vector3) -> void:
 		return
 	if _mounting_ball and _try_mount_ball(position):
 		return
+	# V6: the landing that finishes a walk to an inhabitant mounts it. On
+	# the same terms as the seven above: after the tint and the impact,
+	# before the portals.
+	if _critters.on_landing(position):
+		return
+	# V7: the landing that finishes a walk to the kart mounts it, on the
+	# inhabitants' exact terms.
+	if _karting.on_landing(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -3588,6 +3609,8 @@ func _on_keepy_idle() -> void:
 	_climbing_tree = -1
 	_ballooning = -1
 	_mounting_ball = false
+	_critters.cancel_intents()
+	_karting.cancel_intent()
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches
@@ -3709,6 +3732,7 @@ func _on_tapped_balloon(point: Vector3) -> void:
 	_zipping_solo = false
 	_climbing_tree = -1
 	_mounting_ball = false
+	_critters.cancel_intents()
 	_balloon_wait = -1
 	_ballooning = line
 	_keepy.hop_to(point)
@@ -3778,6 +3802,7 @@ func _on_tapped_vehicle(point: Vector3) -> void:
 	_climbing_tree = -1
 	_ballooning = -1
 	_balloon_wait = -1
+	_critters.cancel_intents()
 	_mounting_ball = true
 	_keepy.hop_to(point)
 	if not _keepy.is_hopping():
@@ -3790,7 +3815,80 @@ func _try_mount_ball(position: Vector3) -> bool:
 	if here.distance_to(_transport.ball_position()) > HubTransport.BALL_TAP_RADIUS:
 		return false
 	_mounting_ball = false
+	_critters.cancel_intents()
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
+
+## ---- V7: karting ----------------------------------------------------------
+## One coordinator (HubKarting) owns the track, the karts and the mode
+## switch; this file only wires the tap channel, the landing hook and the
+## intent reset -- the shape the transport and the inhabitants have.
+func _setup_karting() -> void:
+	_karting.setup(_keepy, _camera, _kart_hud)
+	_tap.tapped_kart.connect(_on_tapped_kart)
+
+## A tap on the parked kart. ONE tap buys the whole thing: walk there
+## (through the corridor gates) and climb in on arrival; the zero-length
+## walk is tried on the spot.
+func _on_tapped_kart(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_owl_flight():
+		return
+	if _keepy.is_on_tree():
+		_keepy.leave_tree(point)
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = false
+	_critters.cancel_intents()
+	_keepy.dismount_vehicle()
+	var target: Vector3 = _karting.arm()
+	_hop_via_corridor(target)
+	if not _keepy.is_hopping():
+		_karting.on_landing(_keepy.global_position)
+
+## ---- V6: the new inhabitants --------------------------------------------
+## One coordinator (HubCritters) owns the animals; this file only wires the
+## tap channel, the landing hook and the intent reset -- the shape the
+## transport and the trees already have.
+func _setup_critters() -> void:
+	var scatter: Node = get_node_or_null("WorldViewport/SubViewport/World/CozyScatter")
+	_critters.setup(_keepy, _weather, _nuts, scatter, _builder.ground_footprints(), _world_hud)
+	_tap.tapped_critter.connect(_on_tapped_critter)
+
+## A tap on an inhabitant. ONE tap buys the whole thing: walk there
+## (through the corridor gates if it is in another zone) and mount on
+## arrival; the zero-length walk is tried on the spot by the coordinator.
+func _on_tapped_critter(point: Vector3, kind: StringName, index: int) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_owl_flight():
+		return
+	if _keepy.is_on_tree():
+		_keepy.leave_tree(point)
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = false
+	var target: Vector3 = _critters.arm(kind, index, point)
+	_hop_via_corridor(target)
+	# Already standing beside it: the zero-length walk emits no landing.
+	if not _keepy.is_hopping():
+		_critters.on_landing(_keepy.global_position)
 
 ## ---- v4 P1: the climbable trees -----------------------------------------
 ## Intent on the boat's model: set by the tap, tried on every landing AND
@@ -3865,6 +3963,7 @@ func _on_tapped_tree(point: Vector3, index: int) -> void:
 	_ballooning = -1
 	_balloon_wait = -1
 	_mounting_ball = false
+	_critters.cancel_intents()
 	_climbing_tree = index
 	_hop_via_corridor(_trees.foot_point(index))
 	if not _keepy.is_hopping():

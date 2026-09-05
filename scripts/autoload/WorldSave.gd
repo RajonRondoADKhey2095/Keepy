@@ -59,7 +59,10 @@ const TREE_RECHARGE_S: float = 120.0
 
 ## v5: the ladybug (falls, scurries, flees -- caught or gone) and the golden
 ## acorn (the rare one, paced by the shake count).
-const KINDS: Array[StringName] = [&"acorn", &"hazelnut", &"ladybug", &"golden"]
+## V6: the truffle (dug up by the boar) and the flower (given by the fawn).
+## Additive: an older save simply reads 0 for them (_sanitise defaults
+## every kind), no schema bump.
+const KINDS: Array[StringName] = [&"acorn", &"hazelnut", &"ladybug", &"golden", &"truffle", &"flower"]
 const FLUSH_DELAY_S: float = 0.4
 const GROUND_CAP: int = 40
 
@@ -159,6 +162,44 @@ func tree_take(id: String) -> bool:
 	_mark()
 	return true
 
+## V6: one more of a named stat (the inhabitants' counters). Keys are
+## listed in STAT_KEYS so _sanitise keeps them; an unknown key is refused
+## rather than invented.
+const STAT_KEYS: Array[String] = ["climbs", "shakes", "picked", "cat_found", "boar_digs", "fawn_nuzzles", "beaver_trades", "kart_laps"]
+
+## ---- v7: karting ---------------------------------------------------------
+## Best lap per TRACK ID, in milliseconds (an int survives JSON exactly; a
+## float would not). Keyed by track so a second circuit is a second key,
+## not a second field. Additive to schema v1 like the v5 reserved fields:
+## no existing field changes meaning, an older build ignores the key.
+signal kart_best_changed(track_id: String, best_ms: int)
+
+func kart_best_ms(track_id: String) -> int:
+	var kart: Dictionary = _data.get("kart", {})
+	var best: Dictionary = kart.get("best_ms", {})
+	return _as_int(best.get(track_id, 0), 0)
+
+## Records `lap_ms` if it beats the stored best (or there is none). Returns
+## true when it did -- the HUD's "nouveau record" reads this, never
+## re-compares.
+func kart_offer_lap(track_id: String, lap_ms: int) -> bool:
+	if lap_ms <= 0:
+		return false
+	var current: int = kart_best_ms(track_id)
+	if current > 0 and lap_ms >= current:
+		return false
+	_data["kart"]["best_ms"][track_id] = lap_ms
+	_mark()
+	kart_best_changed.emit(track_id, lap_ms)
+	return true
+
+func note(key: String) -> void:
+	if not STAT_KEYS.has(key):
+		push_error("WorldSave.note: unknown stat %s" % key)
+		return
+	_data["stats"][key] = int(_data["stats"].get(key, 0)) + 1
+	_mark()
+
 func note_climb() -> void:
 	_data["stats"]["climbs"] = int(_data["stats"].get("climbs", 0)) + 1
 	_mark()
@@ -202,7 +243,7 @@ func _defaults() -> Dictionary:
 		"resources": res,
 		"trees": {},
 		"ground": [],
-		"stats": {"climbs": 0, "shakes": 0, "picked": 0},
+		"stats": {"climbs": 0, "shakes": 0, "picked": 0, "cat_found": 0, "boar_digs": 0, "fawn_nuzzles": 0, "beaver_trades": 0},
 		# v5: RESERVED for the objects a player will one day PLACE (plants,
 		# craft): a stable id for each, generated from this counter, and
 		# the list itself. Nothing reads or writes them tonight; they exist
@@ -211,6 +252,8 @@ func _defaults() -> Dictionary:
 		# No schema bump: the meaning of no existing field changes.
 		"next_id": 1,
 		"placed": [],
+		# v7: karting. best_ms is {track_id: int ms}.
+		"kart": {"best_ms": {}},
 	}
 
 func _mark() -> void:
@@ -316,7 +359,7 @@ func _sanitise(raw: Dictionary) -> Dictionary:
 				break
 	var stats: Variant = raw.get("stats", {})
 	if stats is Dictionary:
-		for key in ["climbs", "shakes", "picked"]:
+		for key in STAT_KEYS:
 			out["stats"][key] = maxi(_as_int(stats.get(key, 0), 0), 0)
 	out["saved_at"] = maxi(_as_int(raw.get("saved_at", 0), 0), 0)
 	# v5 reserved fields: a counter that never goes below 1, a list that
@@ -327,6 +370,16 @@ func _sanitise(raw: Dictionary) -> Dictionary:
 		for item in placed:
 			if item is Dictionary:
 				out["placed"].append(item)
+	# v7: a best lap is a positive int keyed by a non-empty track id;
+	# anything else is dropped, never the whole table.
+	var kart: Variant = raw.get("kart", {})
+	if kart is Dictionary:
+		var best: Variant = kart.get("best_ms", {})
+		if best is Dictionary:
+			for id in best.keys():
+				var ms: int = _as_int(best[id], 0)
+				if String(id) != "" and ms > 0:
+					out["kart"]["best_ms"][String(id)] = ms
 	return out
 
 static func _as_int(value: Variant, fallback: int) -> int:

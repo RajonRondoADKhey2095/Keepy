@@ -608,3 +608,297 @@ Une première mesure du rayon haut « sur l'anneau du sommet » lisait 0,47-0,50
 | P1 | `9737003` (push 10:55:08) | `1788605974` → 10:59:34 | 11:09:24, `x-vercel-cache: MISS`, `age: 0` |
 | P2 | `c681947` (push 11:21:04) | `1788607539` → 11:25:39 | 11:27:07, `x-vercel-cache: MISS`, `age: 0` |
 | journal (récolte + preuves) | ce commit | même arbre de jeu (doc seule) | — |
+
+---
+
+# V6 — cinq nouveaux habitants, chacun avec une raison d'être
+
+Branche jetable `claude/keepy-five-new-characters-cfhap6`, jamais mergée. Append seulement.
+
+## Ouverture V6
+
+- **Base** : `4213c16` (`origin/main` HEAD au fetch de 14:24 UTC, 5 sept 2026, arbre `c8e8071`, byte-identique — vérifié par `rev-parse ^{tree}` des deux côtés). `origin/staging` (`3d4128f`) est un ancêtre de `main` : pas de divergence. Aucune branche distante ne porte un nom voisin (« five », « perso », « animal » : zéro), donc pas de session concurrente détectée au début.
+- **Preview** : **`https://keepy-habitants.vercel.app`** — alias dédié posé par `web-build.yml` sur cette branche seule (même mécanisme que `keepy-staging` : deploy preview + `vercel alias set`) ; ni `keepy-staging` ni `keepy-ten` touchés (leurs steps sont conditionnés sur leur `ref_name` et sont sortis `skipped` sur ce run).
+- **PREUVE** (14:30 UTC) : run `33971739428` `conclusion: success` (`completed_at` renseigné, fenêtre `Export Web build` 14:29:51 → 14:29:58, step preview 14:30:13 → 14:30:26). `GET /index.service.worker.js` → `CACHE_VERSION = '1788618597|5641980'`, soit **14:29:57 UTC, à l'intérieur de la fenêtre d'export**, lu en `x-vercel-cache: MISS`, `age: 0` (14:30:54). `GET /` → 200, `MISS`, `age: 0`, corps = `index.html` Godot (`index.pck` 31 470 384, `index.wasm` 35 376 909 — l'identité moteur inchangée). Une lecture par déploiement, pas de polling.
+- **Accès à la preview — voie (b), et elle a deux moitiés.** Le shell HTML (`web/html_shell.html`) ne route le proxy `/__/auth/*` que pour les hôtes listés dans `KNOWN_AUTH_HOSTS` ; sur tout autre hôte il retombe sur l'`authDomain` cross-origin historique, c'est-à-dire **exactement le mode de panne ITP que le proxy avait fermé** (CH07). Donc : (1) **j'ai ajouté `keepy-habitants.vercel.app` à `KNOWN_AUTH_HOSTS`** — une entrée de plus dans une liste de déploiement, aucun changement du flux lui-même (`Auth.gd`, `LoginScreen.gd` intouchés ; la diff du shell est ces sept lignes), **dette à retirer avec la branche** ; (2) **Mathieu doit ajouter `keepy-habitants.vercel.app` dans Firebase → Authentication → Settings → Authorized domains** (deux minutes, action manuelle). Sans (2), l'écran Google bloque en `auth/unauthorized-domain` ; sans (1), il bloque en silence. Pas de mode invité réintroduit : le lot de cadrage CH26 vient de le retirer et `Auth.gd` reste byte-identique à `main`.
+- **Outillage sandbox** : éditeur 4.3 (50 276 070 octets, conforme), templates **1 073 228 327 octets au premier essai** (contrôle de taille contre le `Content-Length` avant `unzip`), `pillow` 12.3 pour la préparation des textures ; import du projet lancé en arrière-plan (surveillé par PID, jamais par `pgrep -f`).
+
+### Les cinq GLB, MESURÉS (pas lus dans le nom de fichier)
+
+Le brief annonçait `assets_source/perso/` ; le chemin réel est **`assets_source/openworld/perso/`**, et le commit `c8afa61` « new_characters » n'y a déposé que **quatre** fichiers (castor, faon, chat, sanglier) — **le hérisson y est depuis le 28 août** (`Meshy_AI_Hedgehog_Adventurer_0828132004_texture (1).glb`, 23,2 Mo), à côté de l'owlet et de la pie déjà intégrés. Cinq sujets distincts, cinq payloads distincts (md5 tous différents), tous **un seul nœud, un seul mesh, zéro skin, zéro animation, un matériau PBR** avec `Baked_BaseColor` 2048² + `Baked_MetallicRoughness` 4096² (+ `normal` 2048² sur le hérisson) — aucun ne déclare `KHR_materials_unlit`, comme tous les Meshy du dépôt.
+
+| sujet | source | tris | étendue brute (x × y × z) |
+|---|---|---|---|
+| sanglier | `Meshy_AI_Scout_Boar_0905120555_texture.glb` | 4 726 | 1,08 × 1,90 × 0,93 |
+| faon | `Meshy_AI_Cozy_Keykeeper_Fawn_0905115406_texture.glb` | 4 281 | 1,28 × 1,90 × 0,94 |
+| chat | `Meshy_AI_Detective_Cat_0905120305_texture.glb` | 5 573 | 1,45 × 1,90 × 1,10 |
+| hérisson | `Meshy_AI_Hedgehog_Adventurer_…(1).glb` | 7 262 | 1,89 × 1,59 × 1,55 |
+| castor | `Meshy_AI_Beaver_Ranger_0905115329_texture.glb` | 5 710 | 1,34 × 1,90 × 1,16 |
+
+Tous centrés à l'origine (y de −0,95 à +0,95) : chaque modèle sera **levé de 0,95 × échelle** pour poser ses pieds sur y = 0, et son axe avant sera **mesuré au rendu** (le hérisson, plus large que haut, est manifestement en boule ou en pose d'aventurier — à voir).
+
+**Préparation** (`docs/carte_blanche/tools/prep_character_glb.py`, jamais le fichier source) : le traitement du héros et du blaireau, sans variante — `KHR_materials_unlit` posé, `MetallicRoughness` et `normal` **retirés** (l'importeur ne les lie jamais sur un matériau unlit, prouvé au pixel en CH21), albédo redimensionné en **1024² JPEG q88** (le héros expédie du 1024² JPEG à 178 Ko ; l'owlet a gardé du 2048² PNG, ce qui est le bon niveau pour un GLB qui remplit le cadre, pas pour cinq petits corps). Résultat : **13,4–23,2 Mo → 0,48–0,84 Mo par sujet**, cinq fichiers `assets/models/keepy_<animal>_npc.glb`. Sources byte-identiques après coup (md5 revérifiés).
+
+### Échelles — cohérence avec l'existant
+
+Keepy dessiné : 1,3501. Blaireau : **1,6 ×** Keepy (ratio exact, CH21). Ours : 1,89 (≈ 1,4 ×). Rapport visé, en hauteur dessinée / Keepy : **sanglier 1,45 ×** (imposant, sous l'ours), **faon 1,15 ×** (fin, plus haut sur pattes que lui), **castor 0,85 ×**, **chat 0,75 ×**, **hérisson 0,42 ×** (petit, à hauteur de ses genoux). Les valeurs finales sont posées après mesure de chaque étendue importée, jamais copiées d'ici.
+
+### LE PLAN — quel animal, où, quelle mécanique, pourquoi là, dans quel ordre
+
+Règle du brief : un personnage intégré = une mécanique que le joueur déclenche, avec animation, feedback et raison d'être à cet endroit. Un GLB laissé intouché est un résultat. L'ordre est celui de la valeur / risque, et chaque animal est un checkpoint déployé.
+
+**Ce que le monde a et n'a pas, après cinq sessions** : le plateau est dense (huit rides, feu, cabane, 53 arbres) ; **le Vallon d'automne** a le grimper, deux docks et la barque, mais **aucun habitant** ; **la Lande aux Moulins** n'a que le paysage (moulin, hameau, ruches, lavande) et un dock — **rien n'y réagit au joueur**. Les trois animaux les plus riches vont donc aux deux zones vides, et deux d'entre eux se répondent pour que le Vallon ait une **boucle** et pas deux props.
+
+1. **SANGLIER — « la fouille aux truffes », Vallon d'automne.** Le sanglier est lourd et fouisseur : il fait ce que Keepy ne peut pas, creuser. Tap sur lui → Keepy marche jusqu'à lui et **monte sur son dos** (`mount_carrier`, le rail de la montgolfière : porteur écrit d'abord, passager dans le même appel) → il trotte, lourd, jusqu'à un **site de fouille** de sa table (sous les feuilles du Vallon, parce que c'est là que poussent les truffes et là que le décor a des tas de feuilles et des citrouilles) → il **creuse** : museau au sol, secousse, mottes qui giclent (le canal feuilles de `HubNuts`, teinté terre) → une **truffe** saute de terre (nouvelle ressource `truffle`, mesh `pebble_0` teinté brun sombre, icône HUD) → Keepy est déposé à côté (`leave_carrier` sur l'anneau de sortie) et la ramasse en marchant → le sanglier rentre à son repos. Un site fouillé se **recharge à l'horloge** (le patron `tree_stock`), donc une raison de revenir. **Patron barque** : le sanglier se retire du tap dès la montée ; un tap pendant l'approche annule l'intention ; le trajet est un tween borné qui finit toujours au site ; un tap pendant est jeté (licence tyrolienne, trajet borné). **Météo** : pluie/orage → il s'abrite sous le houppier de l'Arbre-Mère (patron `BEAR_SHELTER`), tapable de là ; neige → il frissonne (oscillation), creuse quand même.
+2. **HÉRISSON — « cache-cache », Vallon d'automne.** Petit et discret : il **se cache dans un tas de feuilles** (≈ 65 `leafpile` semés par `CozyScatter`, publiés comme les arbres le sont — `climb_trees()` est le précédent). Le tas occupé **frémit** (la secousse d'instance de v5, en tout petit) : c'est l'indice. Tap sur un tas (canal `tapped_leafpile`, sur `aim`) → Keepy y marche → s'il y est, il **jaillit** (bond, gerbe de feuilles, couinement = punch d'échelle), lâche la **noisette qu'il cachait** (ressource existante, « il thésaurise »), puis **roule en boule** jusqu'à un autre tas loin de Keepy et s'y enfouit (gerbe) ; sinon le tas souffle trois feuilles (« rien ici »). Compteur `hedgehog_found` dans `WorldSave` (additif, sanitisé). **Météo** : pluie → il sort et reste en boule **à découvert** près de son tas (facile à trouver, réaction visible) ; neige → il ne frémit plus (difficile). Rien n'est jamais bloqué : Keepy ne monte sur rien, tout tap reste une marche.
+3. **CHAT — « le détective », l'indice qui mène au hérisson.** Un « Detective Cat » sait où se cache le hérisson. Posé au **débouché du couloir du Vallon** (côté Vallon, près de la lanterne), pour que le joueur le rencontre en entrant. Tap → Keepy le rejoint → le chat **enquête** (museau au sol, pivote, s'étire), puis **trotte** vers le tas occupé et s'assoit à ~3 u, face au tas ; s'il distance Keepy de plus de 10 u, il **attend** (assis, regarde en arrière), et repart quand Keepy approche. Un guide, donc, pas un décor : la boucle Vallon devient chat → hérisson → noisette → truffe. **Météo** : pluie → il s'assoit sous un champignon géant de la clairière (les `bigshroom` de l'anneau) et le tap l'en fait sortir quand même ; neige → queue qui bat.
+4. **FAON — « l'approche », Lande aux Moulins.** Craintif et rapide : il broute dans la lavande. **Tout atterrissage de Keepy à moins de 4,5 u le fait bondir** (deux ou trois bonds bornés loin de Keepy, dans la région) ; **si Keepy reste immobile à moins de 7 u pendant 2,5 s, il s'approche** pas à pas, le touche du museau (câlin, pétales roses = feuilles teintées), lâche une **fleur** (nouvelle ressource `flower`) et **le suit** ensuite à deux pas, jusqu'à un bond trop proche ou une sortie de zone. C'est le seul verbe neuf de la session — *attendre* — et la Lande est la zone où il n'y avait rien à faire. **Météo** : pluie/orage → sous un olivier, inapprochable ; neige → il reste dehors et frissonne.
+5. **CASTOR — décidé en dernier, après mesure du ruisseau.** L'eau est **traversable à pied** ici (un atterrissage dans l'eau est une marche ordinaire), donc « un barrage-pont » n'apporterait aucune navigation. Candidats : un **puits de ressources** (le castor construit son barrage contre des noisettes — premier usage des compteurs), ou un **bac** sur le grand lac. Si aucun ne mérite d'exister au moment où j'y arrive, **il reste intouché**, et c'est dit.
+
+**Ce que tous partagent** : un `HubCritter` (Node3D porteur VIDE + modèle enfant scalé/levé, animation procédurale — trot = bob + roulis + tangage, tourner = `lerp_angle` de `HubActorWalker`, sans skin), un module par animal (`HubBoar`, `HubHedgehog`, `HubCat`, `HubFawn`) câblé par `HubWorld` comme `HubTransport` et `HubTrees` — pas 1 500 lignes de plus dans un coordinateur qui en fait 4 383. Tap toujours sur `aim`, destination clampée à part. Chaque module publie ses emprises pour le scatter. Une sonde `V6CrittersProbe` gatée, bornée par `ProbeWatchdog`, rouge-avant-vert sur chaque assertion d'égalité.
+
+**Ordre d'attaque** : sanglier (le plus riche, il fonde `HubCritter` et la ressource) → hérisson (fonde la publication des tas) → chat (dépend du hérisson) → faon → castor. Je m'arrête de moi-même quand la qualité baisserait, et je dis lesquels ne sont pas faits.
+
+### ⚠️ PRÉMISSE DU BRIEF TOMBÉE À LA MESURE — il n'y a PAS de hérisson
+
+Rendu sous xvfb + `opengl3` de chaque GLB seul, trois vues (sonde jetable `CritterInspect`, supprimée avant commit) : **`Meshy_AI_Hedgehog_Adventurer_…(1).glb` est une CABANE DANS UN ARBRE** — un houppier rond fruité, une maisonnette avec porte, fenêtre et enseigne dans le tronc, 1,89 u de large pour 1,59 de haut. Ce n'est pas un personnage, et aucun hérisson n'existe dans le dépôt. Le nom de fichier mentait, comme le brief le prévoyait (« le contenu réel est à MESURER »). Les quatre autres sont bien des personnages **debout, anthropomorphes, face +Z** (la convention de Keepy et de l'ours) : sanglier scout (gilet bleu, casquette), faon « Keykeeper » (écharpe, **clé** en pendentif), chat détective (casquette, loupe, trousseau de clés), castor ranger (bonnet vert, sac à dos, queue plate). Fichiers importés avec `unshaded=true` vérifié sur le matériau du mesh.
+
+**Conséquence sur le plan** : le cache-cache passe au **CHAT** — c'est lui qui se cache dans les tas de feuilles (un chat dans un tas de feuilles est plus juste qu'un chat qui indique un hérisson), avec la même mécanique (tas publiés, frémissement comme indice, jaillissement, noisette « qu'il cachait », roulade vers un autre tas). Le rôle « guide » disparaît. La **cabane-arbre** n'est pas un PNJ : elle ne sera posée que si une mécanique en a besoin (candidate : la station du castor ranger), sinon elle reste intouchée et c'est dit. Ordre révisé : sanglier → chat → faon → castor.
+
+**Échelles retenues** (étendue importée 1,90 pour les quatre, mesurée sur les sommets) : sanglier **0,958** (1,82 dessiné, 1,35 × Keepy — sous l'ours à 1,89, pour ne pas reproduire l'inversion de taille signalée en CH21), faon **0,817** (1,55), castor **0,603** (1,15), chat **0,533** (1,01). Pieds posés à y = 0 par un lift de `0,95 × échelle` (modèles centrés à l'origine).
+
+## Checkpoint 1 — SANGLIER : la fouille aux truffes (Vallon d'automne)
+
+- **Mécanique** : tap sur le sanglier → Keepy marche jusqu'à lui (via le couloir s'il est sur le plateau : `_hop_via_corridor`) → monte sur ses épaules (`mount_carrier`, siège `(0 ; 1,32 ; −0,12)` en unités Keepy, porteur SANS échelle) → trot à 4,2 u/s vers un **site de fouille ripe** (un tas de feuilles du Vallon, publié par `CozyScatter.instances("leafpile")`, jamais re-dérivé ; 12 sites retenus sur 46 tas, à 5–26 u du repos, hors emprises, hors racines de l'Arbre-Mère (r 6,5), **visibles de la caméra** — voir le test d'occlusion ci-dessous) → il s'arrête 0,95 u avant le tas, museau au sol 2,6 s (pitch 34°, crouch 0,86, pattes à 5 Hz), deux gerbes de mottes (le canal feuilles de `HubNuts` teinté terre), **le tas s'affaisse à 55 %** (`set_instance_transform` sur le seul slot, relu sous opengl3 — le driver dummy rend l'identité, donc ce check est **gaté sur le driver** et l'annonce en `[skip]` en headless) → une **truffe** saute (`pebble_0` teinté brun sombre, nouvelle ressource `truffle`, icône HUD) → Keepy déposé à 0,7 u sur le flanc (`leave_carrier`), la ramasse en marchant (0,15 u de l'atterrissage mesuré) → le sanglier rentre à 2,4 u/s. Un site se recharge en **150 s** d'horloge murale (session seulement, pas persisté : dit ici, pas caché) et le tas regonfle avec.
+- **Emplacement** : repos `(−8,5 ; −55,5)`, bord ouest de la clairière de l'Arbre-Mère, à 4 u du bout de la route d'automne, face à la route. Abri pluie/orage `(4,9 ; −59,6)` sous le houppier, à un azimut ENTRE deux champignons de l'anneau (0,45 rad). Neige : frisson (jitter 47 Hz + roulis 1,5°).
+- **Patrons** : barque (retrait de `accepts_tap` du mount au retour ; un tap pendant l'approche annule l'intention — `HubWorld` remet `_critters.cancel_intents()` à côté de chaque `_mounting_ball = false`, 6 sites ; un tap pendant le ride tombe dans la branche `is_on_carrier()` de `_on_tapped_ground` et est jeté sous la licence tyrolienne : trajet **borné** — marche à vitesse constante vers un point fixe, minuteur, saut de descente). Porteur-puis-porté dans le MÊME appel (`HubBoar._process` : `critter.step(delta)` puis `follow_carrier()` ; **`HubCritter` n'a pas de `_process`**, l'owner le pilote). Marche de longueur nulle : `on_landing` tenté sur place après `hop_to`. Refus si aucun site ripe : grognement (punch d'échelle), l'intention est dépensée, **jamais un mount qui finit où il commence**.
+- **Fondation partagée** : `HubCritter` (Node3D porteur vide + modèle enfant scalé/levé, démarche procédurale phasée par la DISTANCE PARCOURUE — un corps qui s'arrête arrête de bobber —, souffle, frisson, poses d'owner), `HubCritters` (un coordinateur, un canal de tap `tapped_critter(point, kind, index)` demandé sur `aim` après les arbres, un crochet d'atterrissage, un reset d'intention). `HubWorld` reçoit 30 lignes, pas 1 500.
+- **Métriques** : spawn (0,0), soleil, `gpu` **68 325 prims / 187 calls avant → 68 325 / 187 après** (identique, reproduit deux fois) — avec `visibility_range_end = 52 u` (fade `DISABLED`) sur les modèles ; à 82 u (la laisse du scatter) le sanglier, à 65 u de la caméra du spawn et 65 % dans le brouillard, coûtait ses **4 726 tris entiers** (73 051). Dans le Vallon, à côté de lui : 55 744 prims / 83 calls. `index.wasm` **35 376 909** inchangé ; `.pck` local 41,9 Mo avant le parquage des GLB non intégrés (voir « payload » en fermeture).
+- **Sonde** : `V6CrittersProbe` (headless, `--fixed-fps 60`, `ProbeWatchdog` en première instruction, sauvegarde sur un chemin jetable) — 5 phases sanglier, 48 checks verts headless ET sous opengl3 (le check du tas). **Rouge-avant-vert** : `follow_carrier()` et le retrait neutralisés → **exactement 3 rouges** (siège 6,205 u d'écart, retrait, canal) et aucun autre ; fichier restauré byte-identique (`cmp`). Blind check : un siège décalé de 0,5 u lit comme une différence avant que « 0,00000 » soit cru.
+- **Captures** (xvfb + opengl3) : repos près de la route (lisible, échelle juste sous l'ours), ride (Keepy sur les épaules — au premier siège `(0 ; 1,22 ; −0,05)` sa queue cachait la tête du sanglier sur la sortie, d'où le siège relevé/reculé), fouille contre un arbre rouge.
+- **Fragile** : la truffe peut rebondir à > 0,85 u si le tas est en pente de décor (la sonde tape alors dessus, un joueur aussi) ; la recharge non persistée ; le refus n'a pas de texte (grognement seul).
+
+## Checkpoint 2 — CHAT DÉTECTIVE : cache-cache (Vallon d'automne)
+
+- **Mécanique** : le chat est **caché dans un tas de feuilles** (13 tas candidats : les tas que le sanglier ne creuse pas, hors racines, à ≥ 2,5 u des repos, **visibles**). Le tas occupé **frémit** toutes les ~2,4 s (0,55 s, tilt 5°, gonflement 7 %, `set_instance_transform` restauré exactement) : l'indice. Tap sur n'importe quel tas candidat (canal `catpile`, rayon 1,35 u sur `aim`) → marche → s'il y est : gerbe de 9 feuilles, il **jaillit** (bond 0,9 u, **décalé de 0,75 u vers la caméra** — au premier essai il sortait sous les pieds de Keepy, invisible), fait face, lâche la **noisette qu'il cachait**, salue 1,1 s, puis **roule en boule** (squash 0,72, 900°/s, 6,5 u/s) vers un tas à 11–30 u de Keepy (ligne droite gardée à 3,4 u du tronc de l'Arbre-Mère ; repli : le tas le plus loin, sinon n'importe quel autre — **jamais le même**, trouvé par la sonde), s'y enfouit (gerbe). Sinon : 3 feuilles (« rien ici ») et **le vrai tas frémit fort** (chaud/froid). `cat_found` dans `WorldSave.stats` (nouveau `note(key)` sur une liste blanche `STAT_KEYS`).
+- **Aucun état porté, aucun canal qui avale** : Keepy ne monte sur rien, chaque tap reste une marche ; le roulement est borné.
+- **Météo** : pluie/orage → il **sort** et s'assoit en boule à 0,95 u de son tas, visible (un tap sur lui vaut son tas) ; neige → caché, **plus de frémissement** (un frémissement en cours est coupé net et le tas restauré — sans ça `rustle_active()` restait vrai tout l'hiver, trouvé par le blind check) ; soleil → caché, frémissant.
+- **Sonde** : 4 phases, 30 checks (layout avec blind check « il a frémi au soleil » AVANT « il ne frémit pas dans la neige », raté, trouvaille, pluie). **Rouge** : gate neige + réaction météo neutralisés → 3 rouges attendus (neige, sort sous la pluie, à côté du tas) ; le check « un tap sur le chat vaut son tas » ne discrimine pas cette neutralisation (caché, il EST sur son tas) — noté, pas réécrit.
+- **Captures** : `cap_cat_pop3` — le chat surgit devant Keepy, casquette et loupe lisibles ; sous la pluie assis près du tas.
+
+### ⚠️ Trouvé par capture, pas par raisonnement : l'OCCLUSION est anisotrope
+
+Le premier chat a surgi **sous le chapeau d'un champignon géant** et n'a jamais été vu ; un second tas était **dans les racines de l'Arbre-Mère**. Un dégagement au sol ne dit rien de l'image (doctrine CLAUDE.md) — mais un disque d'exclusion isotrope autour de chaque occulteur a ramené les tas candidats de 46 à **7** et les sites du sanglier à 10 : tout le Vallon devenait interdit. La réponse est un **test d'image** : la caméra regarde vers −z à 40°, donc un corps de rayon r et de bande verticale [h0, h1] cache le sol sur `x ± r`, `z ∈ [zc − r − 1,19·h1 ; zc + r − 1,19·h0]` (1,19 = 1/tan 40°). `HubCritters.hidden_at()` + `crowded_at()` (bigshroom 1,3/1,4–2,4 ; autumn_tree 1,7/1,5–3,9 ; olive 1,3/1,3–2,5 ; log, pumpkin, palerock au sol) → 13 tas et 12 sites, tous vus. Un tas à un mètre AU SUD d'un champignon est en pleine vue ; le même à un mètre au nord est sous le chapeau.
+
+## Checkpoint 3 — FAON : l'approche (Lande aux Moulins)
+
+- **Mécanique** : le faon broute au bord est du champ de lavande ouest (5 spots, chacun **nudgé** de 1,6–3,2 u s'il tombe sur un `palerock` ou un olivier — 2 sur 5 l'ont été ; la constante est l'intention, le scatter décide du dernier mètre). **Tout atterrissage de Keepy à ≤ 4,5 u le fait bondir** (2 bonds de 4 u à 7,5 u/s, gait « bond » : bob 0,42, foulée 2,6 ; cible clampée région ET Lande, glissée de côté si le bond sortait — un faon qui fuit par le couloir est perdu). **Immobile à ≤ 7 u pendant 2,5 s** (mesuré sur sa position vivante, la seule façon qu'a le faon de le savoir) → il **s'approche** à 1,3 u/s jusqu'à 0,95 u, **câline** (lean 16°, 1,5 s), lâche une **fleur** (`flower_0`, nouvelle ressource `flower`, icône HUD), `fawn_nuzzles` +1, puis **suit** à 1,7 u derrière (3,2 u/s, re-visé chaque frame) pendant 75 s, ou jusqu'à ce qu'il quitte la Lande ou soit porté. **Pas de canal de tap** : taper le faon, c'est sauter vers lui, donc le faire fuir — et c'est le message.
+- **Trouvé par la sonde** : la première version fuyait aussi d'un atterrissage à ≤ 1,3 u pendant qu'il SUIT — la marche « je fais demi-tour » de la sonde passait à travers lui et le faisait fuir à chaque fois. Un compagnon est traversé tout le temps ; retiré, il s'écarte (le but est re-visé).
+- **Météo** : pluie/orage → sous l'olivier le plus proche du champ (pied à 1,4 u du tronc côté champ), inapprochable ; soleil → brouter ; neige → broute en frissonnant.
+- **Sonde** : 4 phases, 27 checks. **Rouge** : fuite et gate d'immobilité neutralisés → 7 rouges — et la passe rouge a montré que le blind check « pas d'approche pendant qu'il saute » passait GRATUITEMENT (le faon avait déjà approché, câliné et suivait) : resserré en « ni approche, ni câlin, ni compagnie, ni `nuzzles_total` ».
+- **Captures** : brouter au bord de la lavande, câlin museau contre museau (échelle 1,15 × Keepy juste).
+
+## Checkpoint 4 — CASTOR RANGER : le troc, et la cabane-arbre posée (Lande)
+
+- **Pourquoi lui, et là** : l'eau est traversable à pied ici, un barrage n'apporte rien ; un « ranger » avec sac à dos tient une **station**. La cabane-arbre (le GLB « hedgehog ») EST une station de ranger : posée à `(21,5 ; −93,5)`, échelle 2,6 (4,9 u de large, 4,1 de haut — sous la croisière des montgolfières), porte vers la route, à l'est de la route du moulin, au nord du champ de lavande est. Le castor à sa porte `(20 ; −90,2)`.
+- **Mécanique — le premier PUITS de ressources** : il veut **une truffe (sanglier) + une noisette (chat / arbres) + une fleur (faon)**. Tap → marche → s'il tient les trois : elles **volent** de Keepy vers lui une à une (`HubNuts.fly_between`, 0,45 s d'écart), il s'incline (22°, 0,9 s) et au creux de la révérence un **gland doré** tombe de son sac (le rare de v5, autrement cadencé sur les secousses). S'il manque quelque chose : il secoue la tête (0,8 s) et **le compteur HUD se réveille** (`WorldHud.wake()`) pour montrer ce qu'on tient. `beaver_trades` compté. La boucle se ferme : **trois zones, une raison de faire les trois**.
+- **Patrons** : retrait du tap pendant l'échange (borné : trois vols + une révérence) ; aucun état porté. Météo : pluie/orage → sous le porche `(21,5 ; −91,4)`, tapable ; neige → piétine.
+- **Trouvé par la sonde, corrigé au sanglier aussi** : `_on_weather_changed` retournait tôt « s'il marche » — un changement de ciel arrivé **une foulée avant** qu'il atteigne le porche était perdu, et il restait sous le porche au soleil. Les deux marches sont bornées à cible fixe : on re-vise, on ne gate plus.
+- **Sonde** : 4 phases, 23 checks (refus sans ressources, échange avec décrément immédiat des trois compteurs, 3 vols puis révérence, gland ramassé → `golden` +1, porche).
+- **Captures** : la cabane-arbre est un vrai repère de la Lande (fruits, lanterne, escalier), le ranger en bonnet vert à sa porte lisible depuis la route.
+
+### Payload — mesuré sur le `.pck` local, pas sur le filtre
+
+`all_resources` embarque **tout** : le premier export local avec les cinq GLB préparés sous `assets/models/` a donné **41 924 048 octets** contre 31 470 384 servis — +10,5 Mo, dont quatre sujets pas encore intégrés. Réponse en deux temps : (1) les GLB non intégrés sont **parqués hors de l'arbre** jusqu'à leur intégration (le castor et la cabane-arbre y sont revenus au checkpoint 4 ; le fichier `keepy_hedgehog_npc.glb` préparé n'existe plus que sous le nom `keepy_treehouse_prop.glb`) ; (2) les textures extraites (`*_Baked_BaseColor.jpg`, 1024²) s'importaient en **lossless** (`compress/mode=0`, ~1,7–2,2 Mo de `.ctex` chacune). Passées à `compress/mode=1` (**Lossy WebP q0,85**, 265–442 Ko) ; le mode 2 (VRAM S3TC, 699 Ko) a été essayé et **refusé** — le projet n'importe pas d'ETC2 et S3TC n'existe pas sous WebGL2 iOS, ce qui aurait été un rendu noir sur device, pas dans ce sandbox. Résultat : **34 323 184 octets** (+2,85 Mo pour 4 personnages + la cabane : ~1,1 Mo de `.scn`, ~1,7 Mo de textures). `index.wasm` **35 376 909 / md5 af4a8fc2925d992348eb30deeeb54360** aux trois exports — le moteur n'est pas touché. Zéro `Storing File: res://build`, zéro `hedgehog` dans le pack.
+
+## Fermeture V6
+
+**Livrés (quatre personnages + un prop, tous avec une raison d'être)** :
+
+| sujet | zone | mécanique | ressource | météo |
+|---|---|---|---|---|
+| sanglier scout | Vallon d'automne | ride sur ses épaules → fouille d'un tas de feuilles → truffe | `truffle` (nouvelle) | abri sous l'Arbre-Mère, frisson |
+| chat détective | Vallon d'automne | cache-cache dans les tas (frémissement = indice), jaillit, roule ailleurs | `hazelnut` (existante) + stat `cat_found` | sort en boule sous la pluie, muet dans la neige |
+| faon Keykeeper | Lande aux Moulins | fuit un atterrissage proche, s'approche de qui reste immobile, câline, suit | `flower` (nouvelle) + stat `fawn_nuzzles` | sous un olivier, frisson |
+| castor ranger | Lande aux Moulins | troc truffe + noisette + fleur → gland doré (premier puits) | `golden` (rare de v5) + stat `beaver_trades` | porche, piétine |
+| cabane-arbre (le GLB « hérisson ») | Lande aux Moulins | la station du ranger, repère de la zone | — | — |
+
+**Intouché** : aucun des cinq fichiers sources. **Il n'y a pas de hérisson dans le dépôt** — le fichier qui en porte le nom est une cabane dans un arbre (mesuré au rendu, journal ci-dessus), intégrée comme prop de la station du ranger. Si Mathieu veut un hérisson, c'est un GLB à générer ; la mécanique cache-cache écrite pour lui vit maintenant chez le chat et s'y sent bien.
+
+**Ce que la session suivante devrait faire, dans cet ordre** :
+1. **Validation device** des quatre (checklist du rapport). Les réglages à lire sur iPhone, pas ici : `SEAT` du sanglier (1,32 / −0,12 — sa tête doit dépasser sous Keepy), `RUSTLE_*` du chat (le frémissement est-il vu ou faut-il l'amplifier ?), `FLEE_R` 4,5 / `CALM_S` 2,5 du faon (trop nerveux ? trop lent ?), `HOUSE_SCALE` 2,6 de la cabane.
+2. **La persistance des sites de fouille** (recharge 150 s en session seulement) via le patron `tree_stock` de `WorldSave` — vingt lignes, et un joueur qui revient le lendemain retrouve ses truffes.
+3. **Un son** par mécanique (aucun dans tout le monde cozy depuis v1).
+4. **Le castor et l'eau** : le troc est un bon premier rôle, mais un « Ranger » castor avec le ruisseau à 90 u de lui reste une occasion — un lot « barrage » n'a de sens que si l'eau devient un obstacle de navigation, ce qui est une décision d'architecture (l'eau est traversable à pied aujourd'hui), pas un lot de nuit.
+5. **Le lot vers `staging`** : comme pour CH26, un rejeu cadré — `HubCritter` + `HubCritters` + les quatre modules + la publication du scatter + les deux ressources + la sonde, sans `CozyCapture --grant/--critter/--at=cat` qui sont des affordances de nuit à garder ou jeter avec la branche.
+
+**Doctrine candidate pour `CLAUDE.md`** (non écrite dans `CLAUDE.md` par cette session, conformément à sa règle) : *l'occlusion depuis la caméra du hub est ANISOTROPE* — un occulteur cache le sol derrière lui (vers −z) sur 1,19 × sa hauteur, et rien devant lui ; un disque d'exclusion isotrope interdit tout le Vallon (46 → 7 tas) là où le test d'image en garde 13 et voit tout.
+
+## Preuves de déploiement V6 sur le service (une lecture par déploiement, jamais de polling)
+
+| checkpoint | sha | `CACHE_VERSION` servi (epoch → UTC) | fenêtre `Export Web build` du run | lecture |
+|---|---|---|---|---|
+| 0 — preview prouvée | `8fcdc02` (push 14:24:52) | `1788618597` → 14:29:57 | 14:29:51 → 14:29:58 (run `33971739428`) | 14:30:54, `x-vercel-cache: MISS`, `age: 0` ; `GET /` 200 MISS age 0, `index.pck` 31 470 384 |
+| journal + shell auth | `f9b3b21` (push 14:34) | run `33972227050` `success` (même arbre de jeu + 7 lignes de shell) | 14:40:31 | non relu (doc + shell seuls) |
+| 1–4 — les quatre habitants | `6fd7467` (push 15:38:27) | `1788623010` → **15:43:30** | **15:43:24 → 15:43:31** (run `33975419099`, `completed_at` 15:44:00) | 15:46:44, `MISS`, `age: 0` ; `GET /` 200 MISS age 0 à 15:46:57, `index.pck` **34 323 216** (local 34 323 184 — la variance de compression VRAM connue), `index.wasm` **35 376 909** |
+
+## Rides existants — rejoués sur la branche ET sur une baseline `origin/main` importée à part (16:00 UTC)
+
+Un worktree `origin/main` importé de zéro (127 `.scn`, comptés avant de comparer ; la branche en a 133 = 127 + les six scènes GLB neuves), mêmes commandes des deux côtés.
+
+| sonde | mode | `main` | branche | verdict |
+|---|---|---|---|---|
+| `V4SaveProbe` | headless | — | **PASS** | le contrat `WorldSave` tient avec les deux kinds et les stats ajoutés |
+| `V4ClimbProbe` | headless `--fixed-fps 60` | — | **PASS** | grimper + récolte intacts |
+| `CampfireFacingProbe` | headless | — | **PASS** | |
+| `OwlFlightProbe` | headless | — | **PASS** | |
+| `StreamRideProbe` | **opengl3** | PASS | **PASS** | la barque et le canal de tap au sol intacts (headless : 2 rouges identiques des deux côtés — la sonde exige un viewport, doctrine `--headless` = 0×0) |
+| `SeesawProbe` | headless | FAIL 157 ≠ 144 draw nodes | FAIL 157 ≠ 144 | **identique sur `main`** : le compte de draw nodes date d'avant le monde cozy |
+| `TurnstileProbe` | headless | FAIL aabb + 144 | FAIL aabb + 144 | **identique sur `main`** |
+| `CabinProbe` | headless | FAIL « 2 marks, 1 cabins » | FAIL « 2 marks, 1 cabins » | **identique sur `main`** (le marqueur du feu compte comme un marqueur de cabane) |
+| `ZiplineRideProbe` | opengl3 | FAIL corridor −0,158 u (`@MeshInstance3D@47`) | FAIL corridor −0,158 u (`@MeshInstance3D@47`) | **identique sur `main`**, au millième et au même nœud |
+
+Aucune régression introduite par V6 ; quatre sondes du dépôt sont rouges **sur `main`** depuis le monde cozy (CH26) — signalé, non corrigé (hors périmètre, et un compte de draw nodes n'est pas une mécanique cassée). `V6CrittersProbe` : **128 checks headless, 129 sous opengl3, 0 échec**, quatre passes rouges (3, 3, 7, 4 échecs attendus, fichiers restaurés byte-identiques).
+
+# V7 — KARTING LOT 1
+
+Branche `claude/karting-circuit-lot-1-4oumpr`, travail DIRECT vers `staging` (nouveau workflow : plus d'alias jetable, plus de bypass, `DevTools.enabled()` seul gate). Append seulement.
+
+## Ouverture V7
+
+- **Base** : `5fa8f29` (`origin/staging` HEAD au fetch de 17:34 UTC, 5 sept 2026, arbre `7ea8996`). `origin/main` (`4213c16`, arbre `c8e8071`) est un **ancêtre** de `staging` (`merge-base --is-ancestor` vrai) : pas de divergence, `main` n'est pas en avance (aucun `.glb` brut déposé). Ma branche distante pointait encore sur `main` ; remise sur `staging` par `reset --hard`, aucun commit à conserver (même arbre que `main`). Aucune branche distante voisine (« kart », « circuit » : zéro hors la mienne) : pas de session concurrente détectée.
+- **Staging avant le lot** : `CACHE_VERSION = '1788628521|5859025'` (17:15:21 UTC) lu sur `keepy-staging.vercel.app` à 17:41 — c'est la valeur que le premier checkpoint devra avoir REMPLACÉE.
+- **Outillage** : éditeur 4.3 (50 276 070 octets, conforme), templates 1 073 228 327 octets **au premier essai** (taille contrôlée contre le `Content-Length` avant `unzip`), import du projet lancé en fond (PID, jamais `pgrep -f`), `bpy` en cours d'installation (timebox 15 min, repli procédural Godot prévu — voir le checkpoint circuit).
+
+### Le schéma de contrôle tactile — choisi AVANT de coder, et pourquoi
+
+**Accélérateur automatique + direction par glissement horizontal du pouce, ancrée là où le doigt se pose.** Une seule touche, n'importe où sur l'écran (hors les deux boutons du HUD) :
+
+1. le doigt se pose → ce point devient l'**ancre** ; aucune zone à viser, le pouce reste où il est déjà (bas de l'écran en tenue à une main, mais rien ne l'impose) ;
+2. le doigt glisse à gauche / à droite → `steer = clamp((x − ancre.x) / 130 px, −1, 1)`, avec une zone morte de 10 px ; proportionnel, donc un braquage léger existe (le tout-ou-rien des zones gauche/droite n'en a pas) ;
+3. le doigt se lève → roues droites, le kart continue (accélérateur automatique) ;
+4. **un second doigt posé = frein** (puis marche arrière si arrêté) — rare dans un jeu cozy, mais nécessaire pour se sortir d'un mur de pneus ;
+5. **Sortir du kart = un bouton HUD explicite**, jamais un geste : la bascule de mode doit être infaillible, et un geste interprété est exactement ce qui la rendrait ambiguë.
+
+Ce que j'ai écarté, et pourquoi : l'**inclinaison** (DeviceOrientation exige sur iOS 13+ une permission par geste utilisateur et se comporte différemment en PWA — un schéma qui peut ne pas fonctionner du tout n'est pas un schéma) ; les **zones gauche/droite** (binaire : le kart oscille en ligne droite, et la direction proportionnelle est ce qui rend une conduite « pardonnante ») ; le **joystick virtuel à position fixe** (impose de viser un cercle de 120 px avec le pouce tout en regardant la piste) ; **direction au tap** (c'est le tap-to-move avec un autre nom, et c'est précisément ce que Mathieu a refusé). L'ancre flottante horizontale est la forme la plus proche du geste naturel « je pousse le volant du côté où je veux aller », et `touch-action: none` est déjà posé dans le shell HTML : aucun conflit avec le scroll Safari.
+
+**Une seule source d'entrées, abstraite dès la première ligne** : `KartInput` (steer / throttle / brake) est un objet que le kart LIT ; `KartTouchInput` le REMPLIT depuis l'écran (et le clavier hors web). Un pilote IA remplira le même objet — c'est le contrat qui rend le lot 2 possible sans réécriture.
+
+### L'architecture, décidée avant de coder
+
+| pièce | rôle | déjà générique pour N karts ? |
+|---|---|---|
+| `KartInput` | steer / throttle / brake, source indifférente | oui |
+| `KartBody` | physique arcade sur le plan (vitesse, grip latéral, rayon de braquage, châssis qui roule/tangue, roues) ; n'a **aucune idée** de qui le pilote | oui |
+| `KartTrack` | le tracé : spine fermée publiée (`ideal_line()`), `progress_at(p)` (abscisse le long du tour), `on_track(p)`, ligne de départ, clôture souple | oui |
+| `KartLap` | tours et checkpoints d'UN coureur (un tour compte quand les 3 checkpoints ont été passés dans l'ordre), temps au tour | oui, une instance par coureur |
+| `HubKarting` | le module (comme `HubTransport`, `HubCritters`) : construit la zone, possède `racers: Array` **dès le premier commit** (une entrée), branche le joueur (tap → marche → `mount_carrier` → mode conduite), la caméra, le HUD, `WorldSave` | la liste existe ; le joueur est l'entrée 0 |
+| `HubCamera` | mode conduite : caméra de poursuite derrière le kart, transition tweenée dans les deux sens, **hors conduite byte-identique** à aujourd'hui | — |
+| `KartHud` | chrono, meilleur, dernier tour, bouton « Descendre », fantôme de l'ancre | — |
+
+Le kart est un **porteur** au sens de `mount_carrier` / `follow_carrier` (le rail de la montgolfière et du sanglier) : Keepy est en `ON_CARRIER` pendant toute la conduite, ce qui ferme d'office tous les autres taps du hub par état (les gardes `is_on_carrier()` existent déjà partout). Le kart se retire du tap dès la montée (patron bateau) ; la sortie est le bouton, qui pose Keepy à côté du kart par `leave_carrier` sur un point **clampé à la région** — la zone circuit EST de la région, à la même altitude que tout le reste.
+
+**La zone** : quatrième zone au SUD de la Lande (z de −134 à −196, x ±46), couloir depuis le bout de la route de la Lande, chaîne 0—1—2—3 (une troisième porte, `_gates_between` la prend sans planificateur). Visible depuis la Lande : le portique de départ (6 u, bannière à damier, fanions) sur le bord nord du circuit, à ~40 u de la fin de la route — dans la brume mais en silhouette, et le sol change de couleur (pelouse tondue à bandes) avant la haie.
+
+## Checkpoint 1 — conduite + circuit + chrono, d'un seul tenant (18:05 UTC)
+
+Tout ce qui suit est sur la branche puis sur `staging` en un seul checkpoint : la conduite ne se juge pas sans piste, la piste ne se juge pas sans kart, et le chrono est la seule progression du lot.
+
+**Ce qui est fait.**
+- **`HubRegion`** : quatrième zone `CIRCUIT` (x ±50, z −200 → −134) + couloir (x −14 → −2, z −134 → −126), `zone_of()` rend 3, `contains()`/`clamp_to()` la prennent comme un rectangle de plus. `HubWorld._gates_between` : chaîne 0—1—2—3 avec `CIRCUIT_GATE (−8, −130)`, aucun planificateur (la zone est sur la chaîne).
+- **`KartTrack`** : Catmull-Rom fermée sur 20 waypoints (dessinés et mesurés en Python AVANT le code : 230,7 u, rayon mini 3,40 u à l'oméga), ruban 7 u + liserés crème + bordures rouge/blanc là où la courbure dépasse 1/16 (85 échantillons), damier de départ, chevrons tous les 24 u. Publie `ideal_line()`, `progress_at(p, hint)` (abscisse depuis la ligne, latéral signé, tangente, recherche locale par indice), `on_track()`, `start_pose(i)` (grille en quinconce), `fence()`, `start_line_offset()`. Cinq `MeshInstance3D`, `visibility_range_end` 125 u.
+- **`KartBody`** : vitesse vers une cible (13 u/s piste, 5,5 herbe) par constante de temps ; direction = taux de lacet × gain(vitesse) avec relâchement à haute vitesse (0,72 au max) ; **grip** : la vitesse est un vecteur MONDE, le virage lui donne une composante latérale dans le nouveau repère, que le grip (6,5/s piste, 2,4/s herbe) éteint — la glisse EST ça, et elle scrub (0,55). Frein 15 u/s², marche arrière 3,5. Clôture souple : réflexion à 0,35. Châssis : roulis avec l'accélération latérale (≤ 9°), tangage (≤ 5°), roues qui tournent, roues avant braquées, bob + secousse au mur. ~700 triangles de primitives à tessellation explicite, `SEAT (0 ; 0,42 ; −0,18)` publié.
+- **`KartInput` / `KartTouchInput`** : le schéma de l'ouverture, tel quel. Événements souris émulés (device −1) ignorés ; clavier hors doigt. **Tenue d'accélérateur 1,2 s au montage** (`MOUNT_HOLD_S`) : le kart part d'un cadre déjà « conduite », pas pendant le fondu caméra.
+- **`KartLap`** : 3 checkpoints ordonnés, tour compté seulement au franchissement AVANT avec les trois passés, franchissement arrière = checkpoints perdus, chrono démarré au premier passage, `wrong_way` tenu 1,2 s.
+- **`HubKarting`** : `racers: Array` dès le premier commit (une entrée), même boucle pour tous ; joueur = tap → marche via les portes → `mount_carrier(chassis, SEAT)` ; sortie = bouton → arrêt, `leave_carrier` sur un point clampé à côté. Invariant `driving == ON_CARRIER == touch.enabled == camera.is_driving() == hud.visible`, gaté.
+- **`HubCamera`** mode conduite : fondu 0,9 s vers une poursuite (7,6 derrière, 4,4 au-dessus, `look_at` licencié parce qu'un kart ne saute pas), cap qui traîne (λ 3,6) pour voir le nez tourner, fov 45 → 60, **`far` 4000 → 120** ; base restaurée **byte-identique** à la sortie (gaté). Hors kart : `_process` inchangé.
+- **`KartHud`** : chrono / meilleur / dernier, « DEMI-TOUR », « NOUVEAU RECORD », bouton « Descendre » (STOP) en haut à gauche, fantôme de l'ancre dessiné.
+- **`WorldSave`** : `kart.best_ms[track_id]` additif (pas de bump de schéma, sanitisé), `kart_offer_lap()`, stat `kart_laps`.
+- **Décor (`KartDecor`)** : portique à damier 12×3 sur la ligne, 4 mâts à fanions, piles de pneus colorées à l'EXTÉRIEUR de chaque virage à bordures (signe de la courbure), guirlandes le long de la ligne droite, chapiteau rayé + panneau au paddock. `CozyScatter` : bande « pelouse tondue » à rayures dans le shader sol (4ᵉ bande, bord z −132), 14 arbres ronds / 16 buissons / 78 fleurs hors piste (`HubKarting.blocks`), haie 3 (moor/circuit, 42 arbres, trou au couloir), mur reculé à z −210, collines sud (anneau 236–262 u), route du paddock depuis la fin de la route de la Lande.
+
+**Sonde `KartProbe`** (headless, `--fixed-fps 60`, `ProbeWatchdog` en première instruction, sauvegarde jetable) : **99 checks, 0 échec**, cinq phases. Trois passes rouge-avant-vert, fichiers restaurés byte-identiques (`cmp`) : (1) `KartLap` sans checkpoints → **d'abord 0 rouge** : l'assertion « pas de tour sans checkpoints » était VACANTE (le premier franchissement ne compte jamais, chrono éteint) — réécrite sur un SECOND franchissement chrono en marche → **1 rouge exact** ; (2) `exit_kart` sans `camera.exit_drive()` → **3 rouges exacts** (mode, base, fov) ; (3) grip infini → **1 rouge** (glisse), et « le virage coûte de la vitesse » reste vert parce que la projection dans le nouveau cap coûte à elle seule — l'assertion a été renommée pour dire ce qu'elle mesure. Le pilote de test `KartLineInput` (pure pursuit, `scripts/dev`, hors export) boucle **2 tours en 21,75 s / 21,48 s** sur les vraies physique et piste : c'est littéralement le point de départ du lot 2, et il est resté hors du pack exprès.
+
+**Un faux rouge à mon compte** : l'assertion « normale du premier triangle vers le haut » (règle de la main droite) est sortie rouge sur un ruban que la capture montrait dessiné. Godot tient les faces HORAIRES pour avant, donc un ruban visible a une normale main-droite vers le **bas** — c'est l'exemple même de `CLAUDE.md`, lu à l'envers. Assertion corrigée, contrôle ajouté : les chemins de terre livrés (`CozyScatter/Paths`) portent le même signe.
+
+**Métriques (opengl3 sous xvfb, ligne `engine_prims` = « gpu »).**
+
+| vue | gpu | note |
+|---|---|---|
+| spawn, avant le lot (brief) | ~68 000 | |
+| spawn, après | **69 551** | +1,5 k : la haie 3 et les collines sud sont dans le cadre lointain |
+| Lande, fin de route (−6, −112) | 46 789 | le circuit visible derrière la haie (capture `cap_moor_view`) |
+| paddock (−7, −139) | 36 767 | |
+| conduite, ligne droite, `far` 4000 | **123 515** | la poursuite regarde l'horizon : Lande + deux haies + mur dans le frustum |
+| conduite, `far` 120 | **35 201** | ×0,28 — la brume avait déjà dissous 93 % à cette distance |
+
+`index.pck` **34 374 864** (staging 34 323 216, +51 Ko), `index.wasm` 35 376 909 / `af4a8fc2…` (moteur inchangé), 0 `SCRIPT ERROR` à l'export, `scripts/dev/*` exclu (0 `Storing File`).
+
+**Pas fait / à régler sur device** : `STEER_SPAN` 150 px logiques (≈ 1 cm sur iPhone) et `DEAD_ZONE` 12 ; `STEER_RATE` 2,1 / `STEER_HIGH_SPEED_KEEP` 0,72 (l'oméga à r = 3,4 se prend à mi-vitesse, c'est voulu) ; `GRIP_ON_TRACK` 6,5 (une glisse de ~0,15 s par virage) ; `MOUNT_HOLD_S` 1,2 ; la hauteur des mâts (le pied d'un mât coupe le cadre du paddock — réduit à 6,4 u, pas re-capturé). Aucun son. `bpy` installé (5.0.1) mais **pas utilisé** : le kart et le décor sont des primitives Godot à tessellation explicite, le repli que la skill prévoit — j'ai jugé qu'un GLB de kart n'aurait pas payé sa demi-heure contre la conduite.
+
+## LOT 2 — ce que l'architecture prévoit pour les adversaires (écrit avant la fermeture, c'est le livrable qui compte)
+
+**Ce qui est déjà prêt, tel quel, sans réécriture.**
+
+| besoin du lot 2 | où c'est | état |
+|---|---|---|
+| un second kart | `HubKarting.add_racer(name, colour, player=false)` : crée le `KartBody`, le pose sur la grille (`KartTrack.start_pose(i)`, quinconce, 3 u par slot), lui donne son `KartLap` et son `KartInput` | **prêt** — c'est la fonction qui crée le kart du joueur ; la seule différence est `player=false`, qui laisse l'`input` sans écrivain |
+| une IA de conduite | un écrivain de `KartInput` : `KartLineInput` (pure pursuit sur `ideal_line()`, avance 6,5 u, ralentit à 0,62 si le cap à 14 u tourne de plus de 0,55 rad) tourne **aujourd'hui** dans `scripts/dev` et boucle 21,5 s | **prêt à déplacer** sous `scripts/hub/kart/`, puis `racers[i]["input"]` lui appartient et `HubKarting._physics_process` l'appelle avant `kart.drive()` — quatre lignes |
+| la trajectoire idéale | `KartTrack.ideal_line()` (copie), `point_at(s)`, `tangent_at(s)`, `progress_at(p, hint)` (abscisse, latéral signé, tangente, indice) | **prêt** ; une trajectoire de course (corde) sera une seconde liste publiée à côté, pas une modification de la spine — la spine est ce que le chrono et les checkpoints lisent |
+| tours et checkpoints par coureur | `KartLap` par entrée de `racers`, même `update()` pour tous dans la même boucle | **prêt** ; `on_lap` est un `Callable` par coureur |
+| classement | `racers[i]["lap"].lap_count` + `progress_at(...)["s"]` : le rang est le tri par `(lap_count, s)` | **à écrire** (une fonction `standings()` de dix lignes — non écrite cette nuit, sur consigne) |
+| la physique partagée | `KartBody.drive(delta, input, on_track, fence)` ne sait pas qui le pilote | **prêt** |
+| la caméra | suit `racers[_player]` ; une IA n'a pas de caméra | rien à faire |
+
+**Ce qu'il faudra AJOUTER, et ce que ça coûte.**
+
+1. **Le départ.** Aujourd'hui un kart part quand son pilote s'assoit. Une course a un feu : compte à rebours 3-2-1 pendant lequel tous les `input.throttle` sont tenus à 0 (`KartTouchInput.hold_throttle()` existe déjà pour le joueur ; une IA lit un drapeau `race_started`). Un état `Race` dans `HubKarting` (`IDLE` / `COUNTDOWN` / `RUNNING` / `FINISHED`), N tours fixés, et l'entrée du joueur dans le kart ne lance plus la course : elle la PROPOSE (le HUD demande « contre-la-montre ou course ? »). Coût : ~150 lignes + HUD.
+2. **Les collisions entre karts.** Aucune aujourd'hui (un seul kart). Deux corps sur le même ruban DOIVENT se toucher, sinon les IA traversent le joueur. Recommandation : **disques 2D sur le plan**, résolution par séparation + échange partiel de vitesse (comme la clôture souple : réflexion à 0,35), jamais un `PhysicsBody3D` — ce hub n'a pas de physique et n'en veut pas (doctrine HubTapInput). Coût : ~80 lignes dans `HubKarting._physics_process`, une passe O(N²) sur N ≤ 6.
+3. **L'IA au-delà du suiveur.** Le pure pursuit tient la ligne mais ne « court » pas : il ne double pas, ne freine pas avant le joueur, ne se décale pas. Il faut (a) un **décalage latéral cible** par coureur (± 1,5 u, changé quand un kart est devant à moins de 6 u), (b) un **profil de vitesse par abscisse** précalculé depuis la courbure de la spine (`KartTrack._curvature(i)` existe : v_max(s) = sqrt(a_lat_max / κ)), lu au lieu de la règle « 0,62 si ça tourne », (c) une **personnalité** par animal : ours lent et large, chat rapide et nerveux, castor régulier — trois constantes (v_max, agressivité de décalage, bruit de direction). Les personnages n'étant pas riggés, un pilote animal est un `HubCritter`-like posé sur `KartBody.SEAT` par `mount_carrier` — le rail existe, l'ours l'a déjà emprunté sur la balançoire.
+4. **Le rubber-banding cozy.** Une course dont on perd ne se rejoue pas. Un facteur 0,92–1,06 sur `v_max` de l'IA selon son écart au joueur (`progress` relatif, une ligne).
+5. **Le chrono multi-karts.** `WorldSave.kart.best_ms[track_id]` reste le meilleur tour du joueur ; les résultats de course (rang, N tours) vont dans un `kart.results` additif — pas un bump de schéma.
+6. **Ce qui manque le plus pour que le karting devienne un vrai morceau du jeu, avis franc** : pas les adversaires — **la sensation à l'écran**. Trois choses, dans l'ordre : (a) le **son** (moteur qui monte avec la vitesse, crissement dans la glisse, passage de ligne) — le monde cozy n'a aucun son depuis v1, et un kart muet est un jouet ; (b) une **poussière / traînée** derrière les roues sur l'herbe et dans la glisse (le patron `MultiMesh` + shader des papillons, 2 triangles par bouffée), qui rend la glisse LISIBLE — aujourd'hui elle est mesurée (2,53 u/s latéral) mais on ne la voit que par le roulis ; (c) le **schéma de contrôle validé sur un vrai pouce** : rien de ce qui précède ne vaut si `STEER_SPAN` est trop court ou trop long pour la main de Mathieu, et c'est la première chose à tester (checklist du rapport, étape « piloter un tour »).
+
+**Ce qui ne bougera PAS quand les adversaires arriveront** (et c'est le contrat de ce lot) : `KartBody`, `KartTrack`, `KartLap`, `KartInput`, le mode caméra, la bascule marche ↔ conduite. Si le lot 2 doit toucher l'un de ces cinq fichiers pour autre chose qu'une constante, c'est que ce lot-ci a raté quelque chose, et il faudra le dire ici.
+
+## Preuves de déploiement V7 sur le service (une lecture par déploiement, jamais de polling)
+
+| checkpoint | sha (`staging`) | push | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|---|
+| 1 — conduite + circuit + chrono + décor | `e77ba90` (merge `--no-ff` de `dcaca73`) | 18:04:48 | `1788631811` → **18:10:11** | 18:11:50, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 18:11:50 ; la lecture précédente (18:07:55) portait encore `1788628521` en `HIT`/`age 3094` — c'est la copie de bord, pas une mesure, et elle a été refusée comme telle |
+
+| 2 — suivi caméra byte-identique hors conduite (régression `CabinProbe`) | `846fb44` (merge `--no-ff` de `eea6a60`, arbre `26c898b`) | 18:15:08 | `1788632485` → **18:21:25** | 18:23:24, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 18:23:24 ; une lecture à 18:20:54 rendait encore `1788631811` en `HIT`/`age 543` — ma PROPRE lecture de 18:11:50 avait rempli ce cache, refusée comme mesure |
+
+Aucun appel à l'API GitHub Actions : le seul signal est la valeur servie, lue AVANT le lot (`1788628521`, 17:41) et APRÈS chaque checkpoint. Le commit de journal qui suit cette ligne ne change aucune ressource Godot (arbre de jeu identique à `26c898b`) : son run CI n'est pas relu, c'est assumé.
+
+## Rides existants — rejoués sur la branche (18:06 → 18:12 UTC)
+
+Mêmes sondes que la table de la fermeture V6, mêmes modes, sur l'arbre `dcaca73` importé de zéro (132 `.scn`).
+
+| sonde | mode | résultat | verdict |
+|---|---|---|---|
+| `V4SaveProbe` | headless | **PASS** (45) | `WorldSave` tient avec `kart.best_ms` et `kart_laps` ajoutés |
+| `V4ClimbProbe` | headless `--fixed-fps 60` | **PASS** | grimper + récolte intacts |
+| `CampfireFacingProbe` | headless | **PASS** | |
+| `OwlFlightProbe` | headless | **PASS** | |
+| `V6CrittersProbe` | headless | **PASS** (128) | sanglier, chat, faon, castor intacts |
+| `StreamRideProbe` | opengl3 | **PASS** (37) | la barque et le tap au sol intacts |
+| `SeesawProbe` | headless | FAIL 157 ≠ 144 draw nodes | **identique à V6/`main`** |
+| `TurnstileProbe` | headless | FAIL aabb + 144 | **identique à V6/`main`** |
+| `CabinProbe` | headless | FAIL « 2 marks, 1 cabins » + 5 rouges de taps de seuil (phases T/F) | « 2 marks » identique à V6 ; les 5 autres : **comparés à une référence `5fa8f29` importée à part** — voir la ligne ci-dessous |
+| `CabinProbe` vs référence `5fa8f29` (worktree importé à part, 132 `.scn` des deux côtés) | headless | référence : **1** rouge (« 2 marks ») ; branche : **6** | **RÉGRESSION RÉELLE, corrigée** — voir ci-dessous |
+
+### La régression que seule la référence a vue (18:13 UTC)
+
+`CabinProbe` phases T et F : cinq taps de seuil lus comme un signal VIDE (`[]`) sur la branche, un seul rouge sur la référence. Cause : le mode conduite de `HubCamera` lissait une variable privée `_hub_position` et la recopiait dans `global_position` — la même trajectoire, SAUF pour qui écrit `global_position` de l'extérieur. `CabinProbe` le fait (elle gare la caméra au-dessus du seuil et laisse le suivi la tenir là) ; avec l'ombre, le suivi ramenait la caméra depuis le spawn, le seuil se projetait hors du conteneur et `_handle_point` jetait le point. C'est exactement un changement du comportement de la caméra HORS conduite, la chose que le brief interdit — et rien dans `KartProbe` ne pouvait le voir, puisque la sonde du lot ne gare jamais la caméra à la main.
+
+Correction : hors kart, `global_position` est lissé lui-même (les deux lignes d'origine) et `_hub_position` ne fait que le refléter ; le lissage séparé n'existe qu'en conduite. `CabinProbe` revient à **1 rouge, le même que la référence** ; `KartProbe` reste à 99/99. Leçon au dossier : « la sonde du lot est verte » ne dit rien du reste du hub — la table des rides existants se joue sur les DEUX arbres, et c'est la comparaison, pas la couleur, qui a trouvé celle-ci.
+
+## Fermeture V7 (18:20 UTC)
+
+**Livré, sur `staging`** : la quatrième zone (« le Circuit ») accessible à pied depuis la fin de la route de la Lande ; un kart en conduite LIBRE au pouce (ancre horizontale, accélérateur automatique, second doigt = frein, bouton « Descendre ») ; une caméra de poursuite licenciée pour la seule durée de la conduite et restaurée byte-identique à la sortie ; un circuit de 230,7 u à six virages de caractères différents (sweeper, épingle large, chicane, épingle serrée, oméga, retour) avec bordures, damier, chevrons ; un chrono au tour avec meilleur temps persistant (`user://`, schéma additif) ; le décor de la zone (portique, mâts, pneus, guirlandes, chapiteau, pelouse tondue, haie, collines) ; une sonde de 99 checks et un pilote de test qui boucle en 21,5 s.
+
+**Pas fait, dit clairement** : aucun son ; aucun effet de glisse visible (poussière) ; pas de GLB Blender (primitives Godot partout — `bpy` installé et non utilisé, choix assumé au profit de la conduite) ; pas de compte à rebours ni de « course » (contre-la-montre seul, sur consigne) ; les constantes de conduite et le `STEER_SPAN` n'ont jamais rencontré un pouce réel.
+
+**Avis franc — ce qui manque le plus pour que le karting devienne un vrai morceau du jeu** : voir la section LOT 2 ci-dessus, point 6. En une phrase : la MÉCANIQUE est là et généralisable (la boucle des `racers` ne sait pas qui est le joueur), c'est la SENSATION qui manque — son, poussière, et surtout la validation du geste sur iPhone, qui est la première chose à faire et la seule que ce sandbox ne peut pas faire.
+
+**Doctrine candidate pour `CLAUDE.md`** (non écrite dans `CLAUDE.md` par cette session, conformément à sa règle) : *une variable-ombre d'une propriété de nœud est un changement de comportement pour quiconque écrit la propriété de l'extérieur* — lisser `global_position` et lisser une copie que l'on recopie ne sont pas la même chose dès qu'une sonde, un autre nœud ou un `snap` écrit la propriété ; et *la sonde d'un lot ne voit pas les régressions des autres lots* — la table des rides se rejoue sur les deux arbres, et c'est la comparaison qui tranche (payé ici : 5 rouges invisibles à `KartProbe`).
