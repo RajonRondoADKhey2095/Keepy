@@ -22,6 +22,7 @@ Auth="*res://scripts/autoload/Auth.gd"
 Quizz="*res://scripts/autoload/Quizz.gd"
 BattleStats="*res://scripts/autoload/BattleStats.gd"
 SafeArea="*res://scripts/autoload/SafeArea.gd"
+WorldSave="*res://scripts/autoload/WorldSave.gd"
 
 [display]
 

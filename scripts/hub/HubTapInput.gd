@@ -148,6 +148,28 @@ signal tapped_ladder(point: Vector3)
 ## accidentally trigger while the badger is away from both ends.
 signal tapped_campfire(point: Vector3)
 
+## Carte-blanche v3. Emitted INSTEAD of tapped_ground when the finger
+## landed on a balloon DOCK (either dock of a line, balloon present or
+## not), on the boat's world-unit terms. `HubTransport.accepts_balloon_tap`
+## is false for the whole of a trip at BOTH docks -- the boat's withdrawal
+## through a node -- so a tap then falls through to tapped_ground.
+signal tapped_balloon(point: Vector3)
+
+## Carte-blanche v3. Emitted INSTEAD of tapped_ground when the finger
+## landed on the parked hoppity ball. Withdrawn while it is ridden, so a
+## tap then is an ordinary hop -- the vehicle is a hop modifier, and the
+## channel only exists to climb on.
+signal tapped_vehicle(point: Vector3)
+
+## Carte-blanche v4. Emitted INSTEAD of tapped_ground when the finger
+## landed on a climbable tree (`aim` in its ground disc, or -- v5 -- the
+## camera ray through its crown or trunk: HubTrees.tree_hit). `index` is
+## the tree. The tree he is ON withdraws for the whole of the ride
+## (tree_hit answers -1 for it), so a tap on it meanwhile falls through
+## to tapped_ground -- with the tree's own foot as the point when the ray
+## hit its crown -- where HubWorld reads it BY STATE: shake, or come down.
+signal tapped_tree(point: Vector3, index: int)
+
 ## The three nodes this needs, as scene-authored paths.
 ##
 ## NodePath and not a typed node export (`@export var camera: Camera3D`),
@@ -178,11 +200,20 @@ signal tapped_campfire(point: Vector3)
 ## HubWorld's 2000 lines.
 @export var zipline_path: NodePath
 
+## Carte-blanche v3: the transport network (docks, balloons, the ball),
+## asked on the same terms as the mooring and the zipline door. Optional.
+@export var transport_path: NodePath
+## Carte-blanche v4: the climbable trees. Optional; withdraws the one he
+## is on through its node (HubTrees.accepts_tap), never through a flag.
+@export var trees_path: NodePath
+
 var camera: Camera3D = null
 var container: SubViewportContainer = null
 var viewport: SubViewport = null
 var mooring: BoatMooring = null
 var zipline: ZiplineDoor = null
+var transport: HubTransport = null
+var trees: HubTrees = null
 
 ## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
@@ -256,6 +287,8 @@ func _ready() -> void:
 	viewport = get_node_or_null(viewport_path) as SubViewport
 	mooring = get_node_or_null(mooring_path) as BoatMooring
 	zipline = get_node_or_null(zipline_path) as ZiplineDoor
+	transport = get_node_or_null(transport_path) as HubTransport
+	trees = get_node_or_null(trees_path) as HubTrees
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
@@ -362,6 +395,31 @@ func _handle_point(screen_point: Vector2) -> void:
 	if zipline != null and zipline.accepts_structure_tap(aim) >= 0:
 		tapped_zipline_solo.emit(destination)
 		return
+	# THE BALLOON DOCKS and THE BALL (v3), asked on `aim` like everything
+	# else and withdrawn through their node for the whole of a trip / a
+	# ride. Ordered here only because the zipline came first; the docks and
+	# the park are metres from every other disc, so the order cannot decide.
+	if transport != null and transport.accepts_balloon_tap(aim) >= 0:
+		tapped_balloon.emit(destination)
+		return
+	if transport != null and transport.accepts_vehicle_tap(aim):
+		tapped_vehicle.emit(destination)
+		return
+	# THE CLIMBABLE TREES (v4), on `aim` like everything else -- and (v5)
+	# on the RAY, because a crown is what the player taps and a crown at
+	# 3 u projects onto the ground 3.5 u south of its trunk. The perchoirs'
+	# discs are metres from every other prop's (V4SiteProbe); the decor
+	# trees' discs are a trunk plus a hand, so a path beside one stays a
+	# path. The occupied tree answers only through the ground channel, at
+	# its own foot, which is how the seat's shake is asked for.
+	if trees != null:
+		var tree: int = trees.tree_hit(aim, origin, direction, true)
+		if tree >= 0:
+			if tree == trees.occupied():
+				tapped_ground.emit(trees.position_of(tree))
+			else:
+				tapped_tree.emit(destination, tree)
+			return
 	# THE OWL, asked after the boat and before the ladder, on the same
 	# world-unit terms both of them use. The order between the owl and the
 	# ladder can never actually decide anything -- the perch is by the

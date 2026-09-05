@@ -219,7 +219,7 @@ const _FLOWER_PETAL_KEYS: Array[StringName] = [
 ##
 ## This body: a=0.95 -- 0.90 reaches 2.99:1 in its own view, a hair under,
 ## and 0.95 reaches 3.22:1.
-const POND_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
+const POND_WATER_COLOR: Color = CozyPalette.WATER
 ## A6 (CH22 audit). The bank ring read as a hard black line: L = 0.0358
 ## against water at L = 0.5895 in albedo. Lifted to L = 0.1452 -- up, but
 ## deliberately NOT into the high band, which would put the bank in
@@ -243,7 +243,7 @@ const POND_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
 ##
 ## The four bank slots (pond, small lake, two great-lake lobes) share this
 ## one constant on purpose -- a bank is a bank. All four move.
-const POND_BANK_COLOR: Color = Color(0.44, 0.42, 0.30)
+const POND_BANK_COLOR: Color = CozyPalette.BANK
 const POND_WATER_RADIUS: float = 3.2
 const POND_BANK_RADIUS: float = 3.62
 const POND_SEGMENTS: int = 24
@@ -268,7 +268,7 @@ const POND_SEGMENTS: int = 24
 ## 3.04:1, the tightest clearance of the five. It also drops a hair from the
 ## shipped 0.96, which the WATER-HUE-2 report had already flagged as far
 ## enough toward opaque to cost the body its depth.
-const LAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
+const LAKE_WATER_COLOR: Color = CozyPalette.WATER
 
 ## 2.5x the pond on both discs (3.2 -> 8.0, 3.62 -> 9.05), so the rim keeps
 ## the same proportion rather than becoming a hairline on a much bigger disc.
@@ -394,7 +394,7 @@ const LAKE_SEGMENTS: int = 40
 ## gets a say, and it does the same to every opaque thing at that range.
 ## Pushing to 1.00 buys a failure AND costs the translucency that makes a
 ## lake read as a hole in the ground rather than a mark on it.
-const GREATLAKE_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.95)
+const GREATLAKE_WATER_COLOR: Color = CozyPalette.WATER
 ## Bank margin, NOT the pond's 0.42 scaled up. It was sized when the two
 ## lakes touched: proportional scaling would have put the ring at 22.625
 ## and pushed its inner edge 2.0 further into the small lake. LAKE-MOVE
@@ -464,7 +464,7 @@ const GREATLAKE_WATER_SLABS: Array[Vector2] = [
 ## as a HOLE in the water rather than as land standing in it. A shingle
 ## light enough to sit above the water's own value fixes it, and it is the
 ## only islet colour this file has ever had reason to want.
-const ISLET_COLOR: Color = Color(0.46, 0.43, 0.31)
+const ISLET_COLOR: Color = CozyPalette.ISLET
 const ISLET_RADIUS: float = 3.2
 const ISLET_SEGMENTS: int = 24
 const ISLET_THICKNESS: float = 0.030
@@ -548,7 +548,7 @@ const DIVINGBOARD_DIVE_REACH: float = 2.20
 const DIVINGBOARD_DECK_COLOR: Color = PONTOON_COLOR
 const DIVINGBOARD_FRAME_COLOR: Color = BOAT_HULL_COLOR
 
-const STREAM_WATER_COLOR: Color = Color(0.2510, 0.8784, 0.8157, 0.90)
+const STREAM_WATER_COLOR: Color = CozyPalette.STREAM_WATER
 
 ## 1.2 units across. Half of that -- 0.6 -- is the number the trace was
 ## routed against: every prop's GROUND footprint clears the water's edge by
@@ -562,6 +562,11 @@ const STREAM_WIDTH: float = 1.2
 ## it covers the rim rather than leaving a gap, and it never overlaps an
 ## alpha surface with another alpha surface.
 const STREAM_SURFACE_Y: float = 0.095
+## Carte-blanche v2: the sand bank drawn under the stream ribbon -- how far
+## it shows beyond the water on each side, and its height (above the dirt
+## paths at 0.03, below the water at 0.095). Visual only.
+const STREAM_BANK_EXTRA: float = 0.42
+const STREAM_BANK_Y: float = 0.055
 
 ## Samples per control-point span. 8 gives 89 samples over the shipped
 ## 12-point trace, i.e. 176 triangles for the whole watercourse -- less
@@ -1180,12 +1185,12 @@ const FOOTPRINT_RADIUS: Dictionary = {
 	&"zipline": ZIPLINE_FOOTPRINT_RADIUS,
 }
 
-const LANDMARK_SPIRE_TRUNK: Color = Color(0.15, 0.10, 0.06)
-const LANDMARK_SPIRE_CROWN: Color = Color(0.38, 0.58, 0.30)
-const LANDMARK_CAIRN_STONE: Color = Color(0.44, 0.45, 0.40)
-const LANDMARK_CAIRN_CAP: Color = Color(0.56, 0.56, 0.50)
-const LANDMARK_SLAB_STONE: Color = Color(0.36, 0.44, 0.32)
-const LANDMARK_SLAB_BASE: Color = Color(0.26, 0.30, 0.23)
+const LANDMARK_SPIRE_TRUNK: Color = CozyPalette.LANDMARK_SPIRE_TRUNK
+const LANDMARK_SPIRE_CROWN: Color = CozyPalette.LANDMARK_SPIRE_CROWN
+const LANDMARK_CAIRN_STONE: Color = CozyPalette.LANDMARK_CAIRN_STONE
+const LANDMARK_CAIRN_CAP: Color = CozyPalette.LANDMARK_CAIRN_CAP
+const LANDMARK_SLAB_STONE: Color = CozyPalette.LANDMARK_SLAB_STONE
+const LANDMARK_SLAB_BASE: Color = CozyPalette.LANDMARK_SLAB_BASE
 
 var _portals: Array[HubPortal] = []
 
@@ -1749,26 +1754,34 @@ func _build() -> void:
 func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) -> bool:
 	match type:
 		&"tree":
-			_instance(&"TreeTrunk", placement.translated_local(Vector3(0.0, 0.75, 0.0)))
-			_instance(&"TreeCrown", placement.translated_local(Vector3(0.0, 2.0, 0.0)))
+			# Carte-blanche: one Blender-built GLB per tree (trunk and canopy
+			# in one mesh, vertex-coloured), variant picked from the entry's
+			# own position so a layout edit moves only the tree it edited.
+			var tree_key := _cozy_tree_key(entry)
+			# The conifer GLB stands 4.9 u against 3.4-3.9 for the round ones;
+			# scaled down so a layout entry keeps roughly the height it had.
+			var tree_file: String = COZY_TREE_FILES[int(String(tree_key).substr(8))]
+			var tree_scale: float = COZY_TREE_SCALE * (0.72 if tree_file == "tree_4_conifer" else 1.0)
+			var tree_xform: Transform3D = placement.scaled_local(Vector3.ONE * tree_scale)
+			_instance(tree_key, tree_xform)
+			# v5: published for the climb (HubTrees), never re-derived there.
+			_cozy_trees.append({"at": Vector3(placement.origin.x, 0.0, placement.origin.z), "xform": tree_xform,
+				"glb": tree_file, "key": tree_key, "index": _batches[tree_key]["xforms"].size() - 1})
 		&"rock":
 			var rock_at := _distorted(placement, entry)
-			_instance(&"Rock", rock_at.translated_local(Vector3(0.0, 0.28, 0.0)))
+			_instance(_cozy_key("CozyRock", entry, COZY_ROCK_VARIANTS), rock_at)
 		&"bush":
-			# Two lobes, ONE mesh: two instances of a single batch.
 			var bush_at := _distorted(placement, entry)
-			_instance(&"Bush", bush_at.translated_local(Vector3(0.0, 0.3, 0.0)))
-			_instance(&"Bush", bush_at.translated_local(Vector3(0.42, 0.2, 0.18)))
+			_instance(_cozy_key("CozyBush", entry, COZY_BUSH_VARIANTS), bush_at)
 		&"pontoon":
 			# A deck, batched: every pontoon is the same plank slab at a
 			# different angle, which is precisely what one MultiMesh is for.
 			_instance(&"Pontoon", placement.translated_local(Vector3(0.0, PONTOON_CENTRE_Y, 0.0)))
 		&"flower":
-			_instance(&"FlowerStem", placement.translated_local(Vector3(0.0, 0.21, 0.0)))
 			var variant: int = entry.get("variant", 0)
-			if variant < 0 or variant >= FLOWER_PETAL_COLORS.size():
+			if variant < 0 or variant >= COZY_FLOWER_VARIANTS:
 				variant = 0
-			_instance(_FLOWER_PETAL_KEYS[variant], placement.translated_local(Vector3(0.0, 0.44, 0.0)))
+			_instance(StringName("CozyFlower%d" % variant), placement.scaled_local(Vector3.ONE * COZY_FLOWER_SCALE))
 		_:
 			return false
 	return true
@@ -1827,9 +1840,56 @@ func _instance(key: StringName, xform: Transform3D) -> void:
 	if not _batches.has(key):
 		var spec: Array = _batch_spec(key)
 		var xforms: Array[Transform3D] = []
-		_batches[key] = {"mesh": spec[0], "colour": spec[1], "xforms": xforms}
+		_batches[key] = {"mesh": spec[0], "colour": spec[1], "xforms": xforms,
+			"material": spec[2] if spec.size() > 2 else null}
 		_batch_order.append(key)
 	_batches[key]["xforms"].append(xform)
+
+## =====================================================================
+## CARTE-BLANCHE DECOR (branch claude/carte-blanche-cozy)
+##
+## The scatter props are Blender-built GLBs under assets/models/decor/,
+## vertex-coloured, drawn through CozyPalette.decor_material() (toon bands,
+## rim, hand-written haze). A batch spec may carry a THIRD element, the
+## material, and _flush_batches uses it in place of _unshaded(colour).
+const COZY_TREE_SCALE: float = 0.80
+const COZY_FLOWER_SCALE: float = 1.6
+const COZY_ROCK_VARIANTS: int = 4
+const COZY_BUSH_VARIANTS: int = 3
+const COZY_FLOWER_VARIANTS: int = 4
+## Tree GLB per key, weighted toward the round silhouette.
+const COZY_TREE_FILES: Array[String] = [
+	"tree_7_hi", "tree_8_hi", "tree_9_hi", "tree_10_hi",
+	"tree_7_hi", "tree_9_hi", "tree_3_tall", "tree_4_conifer",
+]
+
+func _cozy_key(prefix: String, entry: Dictionary, variants: int) -> StringName:
+	var where: Vector3 = entry.get("position", Vector3.ZERO)
+	var h: int = hash(Vector2(snappedf(where.x, 0.001), snappedf(where.z, 0.001)))
+	return StringName("%s%d" % [prefix, posmod(h, variants)])
+
+func _cozy_tree_key(entry: Dictionary) -> StringName:
+	return _cozy_key("CozyTree", entry, COZY_TREE_FILES.size())
+
+## v5 -- every layout tree as drawn: {"at" (ground, world), "xform" (the
+## instance's world transform, scale included), "glb", "key" (the batch),
+## "index" (its slot in that batch), "node" (the MultiMeshInstance3D, once
+## flushed). THE one reading of "where are the trees and how are they
+## drawn": HubTrees climbs from it and writes the shake back through it.
+var _cozy_trees: Array = []
+
+func cozy_trees() -> Array:
+	for t in _cozy_trees:
+		if not t.has("node"):
+			t["node"] = get_node_or_null(String(t["key"]))
+	return _cozy_trees
+
+func _cozy_spec(file: String, wind: float = 0.0, wind_height: float = 1.0) -> Array:
+	var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path(file))
+	if mesh == null:
+		return [SphereMesh.new(), Color.MAGENTA]
+	var material: ShaderMaterial = CozyPalette.decor_material_wind(wind, wind_height) if wind > 0.0 else CozyPalette.decor_material()
+	return [mesh, Color.WHITE, material]
 
 ## The (mesh, colour) pair a batch key stands for. Built once per key, on
 ## first use -- the whole point of a MultiMesh is that 39 trees share one
@@ -1919,6 +1979,15 @@ func _batch_spec(key: StringName) -> Array:
 				sqrt(run * run + ZIPLINE_DECK_HEIGHT * ZIPLINE_DECK_HEIGHT))
 			return [stringer, ZIPLINE_FRAME_COLOR]
 		_:
+			var name := String(key)
+			if name.begins_with("CozyTree"):
+				return _cozy_spec(COZY_TREE_FILES[int(name.substr(8))], 0.05, 3.2)
+			if name.begins_with("CozyRock"):
+				return _cozy_spec("rock_%s" % name.substr(8))
+			if name.begins_with("CozyBush"):
+				return _cozy_spec("bush_%s" % name.substr(8), 0.02, 0.8)
+			if name.begins_with("CozyFlower"):
+				return _cozy_spec("flower_%s" % name.substr(10), 0.02, 0.3)
 			var tint: int = _FLOWER_PETAL_KEYS.find(key)
 			if tint < 0:
 				push_error("HubBuilder: no mesh known for batch key '%s'." % key)
@@ -1962,8 +2031,12 @@ func _flush_batches() -> void:
 		if xforms.is_empty():
 			continue
 		var mesh: Mesh = batch["mesh"]
+		var cozy: Material = batch.get("material", null)
 		var multi := MultiMesh.new()
 		multi.transform_format = MultiMesh.TRANSFORM_3D
+		# BEFORE mesh / instance_count: flipping use_colors afterwards
+		# reallocates the buffer and drops every transform written so far.
+		multi.use_colors = cozy != null
 		multi.mesh = mesh
 		multi.instance_count = xforms.size()
 		var bounds := AABB()
@@ -1971,8 +2044,12 @@ func _flush_batches() -> void:
 		for i in xforms.size():
 			var xform: Transform3D = xforms[i]
 			multi.set_instance_transform(i, xform)
+			if cozy != null:
+				multi.set_instance_color(i, CozyPalette.tint(hash(String(key)) + i * 7919, 0.07))
 			var box: AABB = xform * local_aabb
 			bounds = box if i == 0 else bounds.merge(box)
+		if cozy != null:
+			bounds = bounds.grow(0.15)
 		# A MultiMesh derives an AABB of its own, and a wrong or stale one
 		# makes the entire batch vanish when the camera turns -- a failure
 		# with no error attached to it, on a screen no one can look at
@@ -1986,7 +2063,7 @@ func _flush_batches() -> void:
 		# material_override rather than a material on the mesh: the mesh is
 		# shared by every instance in the batch, and this keeps the colour
 		# on the node that draws it, next to the instances it applies to.
-		node.material_override = _unshaded(batch["colour"])
+		node.material_override = cozy if cozy != null else _unshaded(batch["colour"])
 		add_child(node)
 
 func _make_portal(entry: Dictionary, index: int) -> Node3D:
@@ -2170,14 +2247,19 @@ func _furnish_cabin(root: Node3D, cabin_uniform: float) -> void:
 ## the camera, at -34 degrees and 7.6 units up, sees almost edge-on.
 func _make_stump() -> Node3D:
 	var root := Node3D.new()
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = 0.34
-	mesh.bottom_radius = 0.44
-	mesh.height = 0.55
-	mesh.radial_segments = 8
-	mesh.rings = 1
-	root.add_child(_mesh_node(mesh, TRUNK_COLOR, Vector3(0.0, 0.275, 0.0)))
+	# Carte-blanche: a Blender stump with visible growth rings, toon-shaded.
+	# Two GLB variants, alternated by build order.
+	_stump_count += 1
+	var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("stump_%d" % (_stump_count % 2)))
+	if mesh == null:
+		return root
+	var node := MeshInstance3D.new()
+	node.mesh = mesh
+	node.material_override = CozyPalette.decor_material()
+	root.add_child(node)
 	return root
+
+var _stump_count: int = 0
 
 ## Standing water, far out in the outer ring, as somewhere to go.
 ##
@@ -2219,11 +2301,10 @@ func _make_water_body(water_radius: float, bank_radius: float, segments: int, wa
 	water.radial_segments = segments
 	water.rings = 1
 	var surface := _mesh_node(water, water_colour, Vector3(0.0, water_slab.y, 0.0))
-	var material := surface.get_surface_override_material(0) as StandardMaterial3D
-	# Alpha blending, and it has to be asked for: albedo_color's alpha
-	# channel is ignored entirely while transparency stays at DISABLED, so
-	# the water would render as flat opaque teal with no error to say so.
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# Carte-blanche: the flat alpha disc becomes the rippling cozy water
+	# shader; `water_radius` is the model-space radius its foam rim reads.
+	# Alpha-blended like the material it replaces (the bank shows through).
+	surface.set_surface_override_material(0, CozyPalette.water_material(water_radius))
 	root.add_child(surface)
 	return root
 
@@ -2366,22 +2447,58 @@ func _make_stream(entry: Dictionary) -> Node3D:
 		left.append(Vector3(middle.x - side.x, STREAM_SURFACE_Y, middle.z - side.z))
 		right.append(Vector3(middle.x + side.x, STREAM_SURFACE_Y, middle.z + side.z))
 
+	# Carte-blanche v2 (P0): the ribbon is wound CLOCKWISE seen from above.
+	# Godot's front face is clockwise, and the cozy water shader culls back
+	# faces; the previous (counter-clockwise) order was invisible under it
+	# -- the old StandardMaterial3D drew with culling off, so nothing had
+	# ever noticed. Measured: tri0 normal (0,1,0) by right-hand rule, i.e.
+	# CCW, and a capture at (0,20) with no water in it. UV.x carries the
+	# lateral coordinate (0 left bank, 1 right bank) for the foam rim.
 	var tool := SurfaceTool.new()
 	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for i in spine.size() - 1:
-		for vertex in [left[i], right[i], right[i + 1], left[i], right[i + 1], left[i + 1]]:
+		for pair in [[left[i], 0.0], [right[i + 1], 1.0], [right[i], 1.0], [left[i], 0.0], [left[i + 1], 0.0], [right[i + 1], 1.0]]:
 			tool.set_normal(Vector3.UP)
-			tool.add_vertex(vertex)
+			tool.set_uv(Vector2(pair[1], 0.0))
+			tool.add_vertex(pair[0])
 
 	var node := MeshInstance3D.new()
 	node.mesh = tool.commit()
+	# A sand bank under and beside the water, the way the ponds have a bank
+	# disc: STREAM_BANK_EXTRA wider each side, between the paths (0.03) and
+	# the water (0.095). Purely visual -- nothing reads it.
+	var bank := SurfaceTool.new()
+	bank.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var bank_left: Array = []
+	var bank_right: Array = []
+	for i in spine.size():
+		var middle: Vector3 = spine[i]
+		var to_left := Vector3(left[i].x - middle.x, 0.0, left[i].z - middle.z)
+		var stretch: float = (half + STREAM_BANK_EXTRA) / maxf(half, 0.001)
+		bank_left.append(Vector3(middle.x + to_left.x * stretch, STREAM_BANK_Y, middle.z + to_left.z * stretch))
+		bank_right.append(Vector3(middle.x - to_left.x * stretch, STREAM_BANK_Y, middle.z - to_left.z * stretch))
+	for i in spine.size() - 1:
+		for vertex in [bank_left[i], bank_right[i + 1], bank_right[i], bank_left[i], bank_left[i + 1], bank_right[i + 1]]:
+			bank.set_normal(Vector3.UP)
+			bank.add_vertex(vertex)
+	var bank_node := MeshInstance3D.new()
+	bank_node.name = "StreamBank"
+	bank_node.mesh = bank.commit()
+	bank_node.material_override = CozyPalette.decor_material_tinted(CozyPalette.BANK)
+	bank_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.add_child(bank_node)
 	var material := _unshaded(STREAM_WATER_COLOR)
+	# Carte-blanche: the ribbon gets the cozy water shader too (ribbon
+	# mode: the foam rim reads UV.x); the StandardMaterial3D below is kept
+	# as the documented fallback and simply not assigned.
+	node.set_surface_override_material(0, CozyPalette.water_material(0.0, true))
 	# Same trap the ponds hit: albedo_color's alpha is ignored entirely
 	# while transparency stays DISABLED, and the stream would render as
 	# flat opaque cyan with no error to say so.
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	node.set_surface_override_material(0, material)
+	if node.get_surface_override_material(0) == null:
+		node.set_surface_override_material(0, material)
 	return node
 
 ## An open nutshell, floating in the stream.
@@ -2558,7 +2675,7 @@ func _make_landmark_spire() -> Node3D:
 	trunk.height = 5.2
 	trunk.radial_segments = 8
 	trunk.rings = 1
-	root.add_child(_mesh_node(trunk, LANDMARK_SPIRE_TRUNK, Vector3(0.0, 2.6, 0.0)))
+	root.add_child(_toon_node(trunk, LANDMARK_SPIRE_TRUNK, Vector3(0.0, 2.6, 0.0)))
 	# Cones are CylinderMesh with a zero top radius; three stacked ones
 	# give the stepped conifer edge a single cone cannot.
 	var tiers: Array = [[1.25, 2.4, 5.0], [0.95, 2.1, 6.3], [0.62, 1.8, 7.55]]
@@ -2569,45 +2686,70 @@ func _make_landmark_spire() -> Node3D:
 		cone.height = tier[1]
 		cone.radial_segments = 8
 		cone.rings = 1
-		root.add_child(_mesh_node(cone, LANDMARK_SPIRE_CROWN, Vector3(0.0, tier[2], 0.0)))
+		root.add_child(_toon_node(cone, LANDMARK_SPIRE_CROWN, Vector3(0.0, tier[2], 0.0)))
 	return root
 
 ## Variant 1 -- a blocky stacked mass. The opposite read to the spire:
 ## wide, stepped, and grey rather than green.
 func _make_landmark_cairn() -> Node3D:
 	var root := Node3D.new()
+	# Carte-blanche: the four boxes become four of the plateau's own rocks
+	# (vertex-coloured GLBs, moss on top), stacked and yawed; the silhouette
+	# stays a stepped mass, the read stops being "concrete". Each rock GLB
+	# is ~1.3 u wide and 0.55 u tall at scale 1, so the scales below are
+	# the old block sizes divided by that.
 	var blocks: Array = [
-		[Vector3(2.60, 1.50, 2.40), 0.75, 0.0, LANDMARK_CAIRN_STONE],
-		[Vector3(2.10, 1.70, 1.90), 2.30, 22.0, LANDMARK_CAIRN_STONE],
-		[Vector3(1.55, 1.90, 1.45), 4.00, -18.0, LANDMARK_CAIRN_STONE],
-		[Vector3(1.05, 1.50, 0.95), 5.60, 35.0, LANDMARK_CAIRN_CAP],
+		["rock_0", Vector3(2.0, 2.7, 1.85), 0.75, 0.0],
+		["rock_1", Vector3(1.6, 3.1, 1.45), 2.30, 22.0],
+		["rock_2", Vector3(1.2, 3.4, 1.1), 4.00, -18.0],
+		["rock_3", Vector3(0.8, 2.7, 0.75), 5.60, 35.0],
 	]
 	for block in blocks:
-		var box := BoxMesh.new()
-		box.size = block[0]
-		root.add_child(_mesh_node(box, block[3], Vector3(0.0, block[1], 0.0), Vector3(0.0, block[2], 0.0)))
-	var spike := CylinderMesh.new()
-	spike.top_radius = 0.0
-	spike.bottom_radius = 0.55
-	spike.height = 2.2
-	spike.radial_segments = 6
-	spike.rings = 1
-	root.add_child(_mesh_node(spike, LANDMARK_CAIRN_CAP, Vector3(0.0, 7.3, 0.0)))
+		var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path(block[0]))
+		if mesh == null:
+			continue
+		var node := MeshInstance3D.new()
+		node.mesh = mesh
+		node.position = Vector3(0.0, block[2], 0.0)
+		node.rotation_degrees = Vector3(0.0, block[3], 0.0)
+		node.scale = block[1]
+		node.material_override = CozyPalette.decor_material()
+		root.add_child(node)
+	var spike: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("rock_1"))
+	if spike != null:
+		var tip := MeshInstance3D.new()
+		tip.mesh = spike
+		tip.position = Vector3(0.0, 7.0, 0.0)
+		tip.rotation_degrees = Vector3(0.0, 60.0, 0.0)
+		tip.scale = Vector3(0.55, 3.2, 0.5)
+		tip.material_override = CozyPalette.decor_material()
+		root.add_child(tip)
 	return root
 
 ## Variant 2 -- two standing slabs of unequal height. Reads as a pair of
 ## vertical bars, which neither of the other two can be mistaken for.
 func _make_landmark_slabs() -> Node3D:
 	var root := Node3D.new()
-	var rubble := BoxMesh.new()
-	rubble.size = Vector3(2.90, 0.70, 1.90)
-	root.add_child(_mesh_node(rubble, LANDMARK_SLAB_BASE, Vector3(0.0, 0.35, 0.0), Vector3(0.0, 6.0, 0.0)))
-	var tall := BoxMesh.new()
-	tall.size = Vector3(1.15, 8.00, 0.60)
-	root.add_child(_mesh_node(tall, LANDMARK_SLAB_STONE, Vector3(-0.85, 4.00, 0.10), Vector3(0.0, 12.0, -4.0)))
-	var short := BoxMesh.new()
-	short.size = Vector3(0.95, 6.60, 0.50)
-	root.add_child(_mesh_node(short, LANDMARK_SLAB_STONE, Vector3(0.90, 3.30, -0.15), Vector3(0.0, -18.0, 5.0)))
+	# Carte-blanche: rubble and two standing stones drawn from the rock
+	# GLBs (their flattened base becomes the foot of a menhir when the
+	# rock is stretched tall). Same positions, heights and tilts as the
+	# boxes they replace.
+	var pieces: Array = [
+		["rock_3", Vector3(2.2, 1.3, 1.45), Vector3(0.0, 0.35, 0.0), Vector3(0.0, 6.0, 0.0)],
+		["rock_0", Vector3(0.9, 14.5, 0.45), Vector3(-0.85, 4.00, 0.10), Vector3(0.0, 12.0, -4.0)],
+		["rock_2", Vector3(0.75, 12.0, 0.4), Vector3(0.90, 3.30, -0.15), Vector3(0.0, -18.0, 5.0)],
+	]
+	for piece in pieces:
+		var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path(piece[0]))
+		if mesh == null:
+			continue
+		var node := MeshInstance3D.new()
+		node.mesh = mesh
+		node.scale = piece[1]
+		node.position = piece[2]
+		node.rotation_degrees = piece[3]
+		node.material_override = CozyPalette.decor_material()
+		root.add_child(node)
 	return root
 
 ## Scratch for the board just built, handed to _build so it can enforce
@@ -3283,6 +3425,17 @@ func _placed(mesh: Mesh, colour: Color, basis: Basis, origin: Vector3) -> MeshIn
 	node.mesh = mesh
 	node.transform = Transform3D(basis, origin)
 	node.set_surface_override_material(0, _unshaded(colour))
+	return node
+
+## Carte-blanche: the same node as _mesh_node but drawn through the cozy
+## toon shader with `colour` as its tint (the primitive carries no vertex
+## colour, so COLOR reads white and the tint IS the albedo).
+func _toon_node(mesh: Mesh, colour: Color, offset: Vector3, rotation_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
+	var node := MeshInstance3D.new()
+	node.mesh = mesh
+	node.position = offset
+	node.rotation_degrees = rotation_deg
+	node.material_override = CozyPalette.decor_material_tinted(colour)
 	return node
 
 func _mesh_node(mesh: Mesh, colour: Color, offset: Vector3, rotation_deg: Vector3 = Vector3.ZERO) -> MeshInstance3D:
