@@ -422,6 +422,86 @@ const BEAR_WALK_RATE: float = 2.0
 ## ever walked at.
 const CAMPFIRE_WALK_RATE: float = 2.5
 
+## CH25: the bear's OWN rate for its half of the campfire round trip --
+## never `BEAR_WALK_RATE` (the seesaw's separate timing budget, see that
+## constant's own note) and never `CAMPFIRE_WALK_RATE` (the badger's, a
+## different rig walking a different distance). The brief asked for the
+## two guests to arrive "a peu pres en meme temps", and CALCULATED rather
+## than picked: the badger's own outbound leg (`_badger_rest(0)` to
+## `_campfire_point`, 19.2577 u at `CAMPFIRE_WALK_RATE` 2.5) takes 10.1947 s
+## of travel; the bear's own outbound leg (`BEAR_REST` to
+## `_bear_campfire_point`, 22.9304 u -- longer, because the bear starts
+## further from the fire) needs 2.9768 to cover that same distance in the
+## same time, at the same shared `walk_speed` (0.7556) neither actor
+## overrides. Reproduced independently in this lot's own script (not
+## copied from CH25's recon), which is why the figure carries five, not
+## three, significant digits.
+##
+## ⚠️ THIS IS NOT `BEAR_WALK_RATE`, AND SETTING IT ON THE SAME NODE IS THE
+## EXACT FOOT-SLIDE TRAP `CAMPFIRE_WALK_RATE`'S OWN NOTE WARNS ABOUT.
+## `HubActorWalker._ready()` used to read `walk_rate` into
+## `AnimationPlayer.speed_scale` ONCE, at spawn -- so writing a second rate
+## onto `_bear.walk_rate` later would have sped up the FEET
+## (`ground_speed()` re-reads `walk_rate` every frame) without speeding up
+## the CLIP, exactly the defect the badger's shared knob exists to rule
+## out. Fixed at the root in `HubActorWalker.walk_to()` itself (re-applies
+## `speed_scale` from whatever `walk_rate` is at the moment THAT walk
+## starts, not only at `_ready()`), rather than worked around here: a
+## generic actor that only ever supports ONE rate for its whole lifetime is
+## a limitation nothing before this lot needed, and the fix is a single
+## line that is a no-op for every existing single-rate caller (verified:
+## neither the badger nor the bear's own seesaw approach ever changes
+## `walk_rate` after it is set once, so `speed_scale` is re-applied to the
+## SAME value every time for both of them -- this constant is the first
+## caller that makes the re-application do anything).
+##
+## Set immediately before EACH of the bear's two campfire `walk_to()`
+## calls in `_on_tapped_campfire` (both legs use it, since it is one round
+## trip); reset to `BEAR_WALK_RATE` the moment the bear is home again, in
+## `_on_bear_arrived()`'s `&"to_rest"` branch -- so a seesaw approach
+## started any time afterwards still gets the seesaw's own budget, and the
+## `_bear_campfire_leg` gate (see `_on_seesaw_mounted()`) already rules out
+## the two ever being wanted on the same frame.
+const BEAR_CAMPFIRE_WALK_RATE: float = 2.9768
+
+## Site-centric azimuth (degrees, measured from +X, atan2(dz, dx) --
+## `HubActorWalker`'s own yaw convention rotated 90 degrees to a bearing
+## FROM the fire rather than a heading) of the bear's own arrival point
+## around `HubCampfire.SITE`, at the same radius `R` = `CAMPFIRE_STONE_
+## RING_OUTER` + `CAMPFIRE_ARRIVE_MARGIN` the badger's own point already
+## sits at.
+##
+## THE DIRECT BEARING FROM `BEAR_REST` IS NOT PROPER, and this lot found
+## the SAME shape of defect CH24 LOT 1 found on the badger's own arrival
+## point, on a different axis: a candidate placed on the straight bearing
+## `BEAR_REST -> SITE` (149.76 degrees on this convention) puts the SEGMENT
+## `BEAR_REST -> candidate` within 0.21 u of a scale-0.719 tree at
+## (6.643, 32.682) -- under `KEEPY_CLEARANCE` (0.66), a near-certain visual
+## clip, checked against the segment WHOLE rather than trusted from the
+## endpoint alone (this file's own standing rule since that same LOT 1).
+##
+## Found by a 3600-step sweep of this azimuth at the fixed radius `R`,
+## keeping only candidates whose FULL segment from `BEAR_REST` (a) stays
+## >= `CAMPFIRE_STONE_RING_OUTER` from the hearth at every point, (b) stays
+## >= `KEEPY_CLEARANCE` from every decorative prop in the layout (tree,
+## rock, bush, stump, flower -- read at each one's own `HubBuilder.
+## FOOTPRINT_RADIUS * scale`, the same proxy CH24 used, since this engine
+## does not treat these as a walking obstacle for `HubActorWalker` and so
+## enforces none of this itself), and (c) stays >= 1.5 u (chord) from the
+## badger's own `_campfire_point`, so the two guests do not converge on
+## the same patch of ground. A valid band exists, 45.7-116.4 degrees; this
+## is the best-margin point in it, 0.9628 u clear of that same tree (the
+## binding constraint both ends of the band), 2.1779 u from the badger's
+## point. Reproduced independently in this lot (own script, own full prop
+## list, no size restricted to a bounding box) against CH25's recon, which
+## proposed the identical point (20.818, 27.387) by a box-restricted sweep
+## of 13 corridor props and slightly different margin figures (1.135 u /
+## 130.2 degrees upper band edge) -- the different margins are down to a
+## different prop subset, not a different conclusion: both sweeps agree on
+## the SAME best point at the SAME azimuth, which is what makes it safe to
+## commit rather than a coincidence to distrust.
+const BEAR_CAMPFIRE_AZIMUTH_DEG: float = 65.2
+
 ## `false`  -- the bear stays where it arrived and waits for next time.
 ## `true`   -- the bear walks back to BEAR_REST when the rider steps off.
 ##
@@ -1399,6 +1479,17 @@ func _setup_bear() -> void:
 func _on_seesaw_mounted() -> void:
 	if _bear == null:
 		return
+	# CH25 RECON 3: the campfire detour has NO tap channel of its own to
+	# withdraw the way `ZiplineDoor.set_badger_at()` does for the badger --
+	# the seesaw's mount is driven by a landing signal, not a tap, so there
+	# is no channel here to answer false. BOAT PATTERN all the same: this
+	# call site refuses directly rather than letting an unconditional
+	# `_bear.walk_to()` hijack the bear mid-detour, which would leave
+	# `_bear_campfire_leg` pointing at a leg nothing would ever resolve
+	# (the walk it describes was just overwritten) and the shared
+	# `_campfire_guests` arbitration permanently stuck on `&"transit"`.
+	if _bear_campfire_leg != &"":
+		return
 	# Unreachable while a dismount always precedes the next mount, and kept
 	# because the failure it prevents is silent: a bear still seated would
 	# walk its approach AT seat height, through the air.
@@ -1444,15 +1535,25 @@ func _on_seesaw_mounted() -> void:
 ## approach takes about a second and a re-pump or an early dismount can
 ## land inside it. Mounting a settled empty plank would strand the bear on
 ## scenery with no tilt to follow and no dismount coming.
+##
+## ⚠️ CH25: `_on_bear_campfire_arrived()` IS CHECKED FIRST, and this is no
+## longer the only other caller of `walk_to()` on this actor -- the
+## campfire round trip is. That function returns `true` only when
+## `_bear_campfire_leg` was actually one of the four detour values, in
+## which case it has already done everything this arrival means and there
+## is nothing further to check here; `false` means this arrival is the
+## seesaw's, exactly as before.
 func _on_bear_arrived() -> void:
+	if _on_bear_campfire_arrived():
+		return
 	if _bear_pending.is_empty():
 		# Not an approach: this is the walk home finishing (BEAR_RETURNS_HOME
-		# is the only other caller of walk_to on this actor), and unlike the
-		# seesaw approach -- overwritten in the same frame by
-		# _bear_follow_seesaw() -- nothing else re-orients it. Left alone it
-		# keeps whichever heading the last step of the walk home happened to
-		# face, which is AWAY from the seesaw whenever that walk moved in -Z
-		# -- see _bear_rest_facing.
+		# is the other caller of walk_to on this actor OUTSIDE the campfire
+		# detour), and unlike the seesaw approach -- overwritten in the same
+		# frame by _bear_follow_seesaw() -- nothing else re-orients it. Left
+		# alone it keeps whichever heading the last step of the walk home
+		# happened to face, which is AWAY from the seesaw whenever that walk
+		# moved in -Z -- see _bear_rest_facing.
 		_bear.face(_bear_rest_facing)
 		return
 	var pending: Dictionary = _bear_pending
@@ -1482,6 +1583,40 @@ func _bear_follow_seesaw() -> void:
 	# basis so the tilt carries the heading with it.
 	_bear.face(_bear_pivot.global_transform.basis * Vector3(-_bear_seat.x, 0.0, 0.0))
 
+## Frees the bear from whatever plank it is currently seated on OR still
+## approaching, snapping it to flat ground beside the plank if it was
+## seated. Factored out of `_on_seesaw_dismounted()` (CH25) so the exact
+## same eviction can run from `_on_tapped_campfire()` too: a campfire tap
+## can arrive while the bear is seated on a rocking plank, and nothing
+## about that plank's own dismount signal (Keepy's own) fires in that
+## case -- `_apply_tilt()` calls `_bear_follow_seesaw()` every tilt tick
+## for as long as `_bear_pivot` stays non-null, which would otherwise fight
+## the campfire walk's own per-frame position write on the same node, one
+## snapping it back onto the seat every tick the other is trying to move
+## it away. Leaves `_bear_pivot`/`_bear_seat` cleared and `_bear_pending`
+## emptied either way; does NOT send the bear anywhere -- the caller
+## decides that (home, for a real dismount; the campfire, for a tap).
+## No-op when the bear does not exist or was never on/heading to a plank.
+func _evict_bear_from_seesaw() -> void:
+	if _bear == null:
+		return
+	_bear_pending = {}
+	if _bear_pivot == null or not is_instance_valid(_bear_pivot):
+		return
+	var root: Node3D = _bear_pivot.get_parent() as Node3D
+	var ground: Vector3 = _bear.global_position
+	if root != null:
+		# Back down beside the plank -- the point it walked up to, which
+		# is already known clear of the swing. Through the ROOT and not
+		# the pivot: the pivot is left tilted at whatever angle the rock
+		# settled on, and a point taken through it would be off the floor.
+		var local: Vector3 = root.to_local(_bear.global_position)
+		var near_z: float = 1.0 if local.z >= 0.0 else -1.0
+		ground = root.to_global(Vector3(_bear_seat.x, 0.0, near_z * BEAR_APPROACH_Z))
+	_bear.global_position = Vector3(ground.x, 0.0, ground.z)
+	_bear_pivot = null
+	_bear_seat = Vector3.ZERO
+
 ## Keepy has stepped off, so the bear does too -- the same beat, off the
 ## same signal, rather than a second timer that could drift from it.
 func _on_seesaw_dismounted() -> void:
@@ -1491,24 +1626,8 @@ func _on_seesaw_dismounted() -> void:
 	# across the plateau -- so the ride is closed wherever a dismount is
 	# observed, not only where one is issued.
 	_seesaw_ride = {}
-	if _bear == null:
-		return
-	_bear_pending = {}
-	if _bear_pivot != null and is_instance_valid(_bear_pivot):
-		var root: Node3D = _bear_pivot.get_parent() as Node3D
-		var ground: Vector3 = _bear.global_position
-		if root != null:
-			# Back down beside the plank -- the point it walked up to, which
-			# is already known clear of the swing. Through the ROOT and not
-			# the pivot: the pivot is left tilted at whatever angle the rock
-			# settled on, and a point taken through it would be off the floor.
-			var local: Vector3 = root.to_local(_bear.global_position)
-			var near_z: float = 1.0 if local.z >= 0.0 else -1.0
-			ground = root.to_global(Vector3(_bear_seat.x, 0.0, near_z * BEAR_APPROACH_Z))
-		_bear.global_position = Vector3(ground.x, 0.0, ground.z)
-	_bear_pivot = null
-	_bear_seat = Vector3.ZERO
-	if BEAR_RETURNS_HOME:
+	_evict_bear_from_seesaw()
+	if _bear != null and BEAR_RETURNS_HOME:
 		_bear.walk_to(BEAR_REST)
 
 ## The seesaw `flat` is standing on, or {}. Same radius test `_rock_near`
@@ -2102,6 +2221,50 @@ var _badger_campfire_leg: StringName = &""
 ## is the one live reading of where it actually was.
 var _badger_campfire_return_end: int = -1
 
+## The bear's own arrival point at the campfire, flat -- the badger's
+## `_campfire_point` field, mirrored. Computed once in `_setup_campfire()`
+## from `HubCampfire.SITE` and `BEAR_CAMPFIRE_AZIMUTH_DEG`, cached here for
+## the same reason: every hotspot on this plateau reads a point that was
+## built, never a literal re-typed at each use site.
+var _bear_campfire_point: Vector3 = Vector3.ZERO
+
+## Which leg of the detour the bear is on -- same four values, same job as
+## `_badger_campfire_leg`, kept as its OWN field rather than shared with it
+## because the two arrive and leave independently (CH25: synced by a
+## dedicated `walk_rate`, not by lockstep) and each needs its own answer to
+## "what does MY next arrival mean". Read by `_on_tapped_campfire` and by
+## `_on_bear_arrived`; also the gate `_on_seesaw_mounted()` checks before
+## detouring the bear onto the plank (RECON 3, CH25: no tap channel to
+## withdraw the way `ZiplineDoor.set_badger_at()` does for the badger, so
+## the seesaw's own call site is guarded directly instead -- BOAT pattern,
+## an active refusal, never the banned LADDER shape).
+var _bear_campfire_leg: StringName = &""
+
+## THE SHARED STATE A TAP ON THE FIRE ACTUALLY READS -- &"" (both guests
+## home, a tap sends both out), &"transit" (at least one of them is
+## walking, either direction -- a tap means nothing new, the same no-op
+## shape a mid-walk tap already had for the badger alone), or &"out" (BOTH
+## guests have arrived and are sitting at the fire -- a tap calls both
+## home).
+##
+## CH25's decision, written down rather than left to be reverse-engineered
+## from the code: a re-tap is accepted ONLY once EVERY guest has actually
+## arrived (`&"out"`, set by `_maybe_advance_campfire_guests()` the moment
+## the SECOND of the two per-actor legs reaches `at_fire`), never mid-walk
+## for either one. `_badger_campfire_leg`/`_bear_campfire_leg` keep tracking
+## each actor's own leg -- `_on_badger_arrived()`/`_on_bear_arrived()` still
+## need to know which of THEIRS just ended -- but the TAP HANDLER never
+## reads either of those two fields directly, exactly so the two cannot
+## silently disagree about what a tap means if one guest's own timing ever
+## drifts from the other's (a future rate/point tweak on either actor,
+## made without touching this file's own arbitration). The alternative --
+## accepting a retap the instant either guest arrives, or interrupting
+## whichever is still mid-walk -- was considered and rejected: the first
+## reintroduces exactly the two-flags-can-disagree risk this field exists
+## to close, and the second is the banned LADDER shape (a tap that cancels
+## a trip already under way, with nothing to show the player for it).
+var _campfire_guests: StringName = &""
+
 ## Builds the campfire's tap point and hands it to HubTapInput, on the
 ## cabin/owl pattern: a list of points plus a world-unit radius, wired
 ## exactly once. No-ops when there is no badger to send -- a layout without
@@ -2167,6 +2330,44 @@ func _setup_campfire() -> void:
 	# its first commit, on this repo's own rule that a table is a list
 	# before it has two entries -- so the union costs nothing.
 	var points: Array[Vector3] = [site, _campfire_point]
+
+	# CH25: the bear's OWN arrival point and disc, on the same "the disc
+	# is also the seat" rule the badger's own point already lives by. Built
+	# straight off `site` and `BEAR_CAMPFIRE_AZIMUTH_DEG` -- see that
+	# constant's own note for why THIS azimuth and not the direct bearing
+	# from `BEAR_REST` (rejected: 0.21 u from a tree, under
+	# `KEEPY_CLEARANCE`). Guarded on `_bear` rather than assumed present --
+	# a layout with a zipline but no seesaw would have a badger and no
+	# bear, and this file already treats "no bear" as a legal plateau
+	# everywhere else (`_on_seesaw_mounted()`, `_setup_bear()`'s own callers).
+	if _bear != null:
+		var bear_az: float = deg_to_rad(BEAR_CAMPFIRE_AZIMUTH_DEG)
+		var bear_axis := Vector3(cos(bear_az), 0.0, sin(bear_az))
+		_bear_campfire_point = site + bear_axis * (CAMPFIRE_STONE_RING_OUTER + CAMPFIRE_ARRIVE_MARGIN)
+		points.append(_bear_campfire_point)
+
+		# ⚠️ RED-BEFORE-GREEN'S OWN COUSIN: an assertion that the sync this
+		# lot was asked for actually holds, checked once at setup rather than
+		# trusted from the arithmetic in BEAR_CAMPFIRE_WALK_RATE's comment.
+		# Both distances are read off the SAME points `_on_tapped_campfire`
+		# will actually walk to, not re-derived; `_badger.ground_speed()` is
+		# already `walk_speed * CAMPFIRE_WALK_RATE` because `_setup_zipline()`
+		# (which runs before this) already set that rate on it. The bear's
+		# own `walk_rate` is still `BEAR_WALK_RATE` at this point in _ready()
+		# (the campfire rate is only written immediately before each
+		# campfire `walk_to()`, see `_on_tapped_campfire`), so the bear's
+		# side of this check reads `BEAR_CAMPFIRE_WALK_RATE` directly rather
+		# than `_bear.ground_speed()`, which would answer the seesaw's
+		# question instead of this one.
+		var badger_dist: float = _badger.global_position.distance_to(_campfire_point)
+		var badger_time: float = badger_dist / _badger.ground_speed()
+		var bear_dist: float = _bear.global_position.distance_to(_bear_campfire_point)
+		var bear_time: float = bear_dist / (_bear.walk_speed * BEAR_CAMPFIRE_WALK_RATE)
+		var drift: float = absf(bear_time - badger_time)
+		var drift_msg: String = ("HubWorld: BEAR_CAMPFIRE_WALK_RATE no longer syncs the " +
+			"bear's campfire arrival with the badger's own (%.2f s apart).") % drift
+		assert(drift < 1.0, drift_msg)
+
 	_tap.campfire_points = points
 	_tap.campfire_radius = CAMPFIRE_TAP_RADIUS
 	_badger.arrived.connect(_on_badger_arrived)
@@ -2185,10 +2386,14 @@ func _setup_campfire() -> void:
 	_campfire_marker.position = site
 	_builder.add_child(_campfire_marker)
 
-## A tap on the campfire. Toggles the badger's detour; a tap that lands
-## mid-transit (already WALKING either way) is not lost, it simply means
-## nothing new until the leg already under way resolves -- the same
-## "a re-tap re-states the same destination" shape `hop_to()` already has.
+## A tap on the campfire. Toggles BOTH guests' detour at once (CH25: the
+## bear rides along with the badger on the same tap) -- a tap that lands
+## mid-transit (either guest still WALKING, either direction) is not lost,
+## it simply means nothing new until BOTH legs already under way resolve,
+## same "a re-tap re-states the same destination" shape `hop_to()` already
+## has, generalised from one traveller to two. See `_campfire_guests`'s own
+## note for why the arbitration reads THAT shared field and neither
+## per-actor leg directly.
 func _on_tapped_campfire(_point: Vector3) -> void:
 	if _badger == null:
 		return
@@ -2198,21 +2403,46 @@ func _on_tapped_campfire(_point: Vector3) -> void:
 		# write on the same node. No-op, the same refusal
 		# `_on_tapped_zipline_badger` already gives a tap mid-ride.
 		return
-	match _badger_campfire_leg:
+	match _campfire_guests:
 		&"":
-			# AT REST -- the outbound leg. `waiting_end()` before the
-			# withdrawal, never after: `set_badger_at(-1)` is what makes it
-			# stop answering.
+			# AT REST -- the outbound leg, both guests at once.
+			# `waiting_end()` before the withdrawal, never after:
+			# `set_badger_at(-1)` is what makes it stop answering.
 			_badger_campfire_return_end = _zipline_door.waiting_end()
 			_zipline_door.set_badger_at(-1)
 			_badger_campfire_leg = &"to_fire"
 			_badger.walk_to(_campfire_point)
-		&"at_fire":
-			# THE ROUND TRIP. The channel stays withdrawn for the whole
-			# return leg too -- reopened only on arrival, in
-			# `_on_badger_arrived` -- so a tap on the badger's empty tower
-			# mid-walk-back still falls through to the ground.
-			var home: Vector3 = _badger_rest(_badger_campfire_return_end)
+
+			# CH25: the bear's own rate is set HERE, immediately before ITS
+			# walk_to() -- never earlier -- so `HubActorWalker.walk_to()`'s
+			# own `speed_scale` re-sync (see `BEAR_CAMPFIRE_WALK_RATE`'s
+			# note) picks it up for this specific walk rather than for
+			# whatever `_bear.walk_rate` happened to be left at. Guarded on
+			# `_bear` for the same reason `_setup_campfire()` is: a layout
+			# without a seesaw is legal and has no bear to send.
+			if _bear != null:
+				# EVICTED FIRST, even though the seesaw gate (`_on_seesaw_
+				# mounted()`) already refuses the OTHER direction: the bear
+				# can still be sitting on a plank right now (nothing about
+				# the campfire tap depends on the seesaw being idle). Left
+				# seated, `_apply_tilt()` would keep calling
+				# `_bear_follow_seesaw()` every tilt tick and fight this
+				# walk's own position write on the same node, one snapping
+				# the bear back onto the seat every tick the other tries to
+				# move it toward the fire.
+				_evict_bear_from_seesaw()
+				_bear.walk_rate = BEAR_CAMPFIRE_WALK_RATE
+				_bear_campfire_leg = &"to_fire"
+				_bear.walk_to(_bear_campfire_point)
+
+			_campfire_guests = &"transit"
+		&"out":
+			# THE ROUND TRIP, both guests at once. The badger's zipline
+			# channel stays withdrawn for the whole return leg too --
+			# reopened only on arrival, in `_on_badger_arrived` -- so a tap
+			# on its empty tower mid-walk-back still falls through to the
+			# ground.
+			var badger_home: Vector3 = _badger_rest(_badger_campfire_return_end)
 			# RECON 4 (CH24): faced explicitly BEFORE walk_to(), rather than
 			# left to `_process()`'s own `lerp_angle`. The badger's heading
 			# is still whatever the outbound leg left it at (the walk there
@@ -2227,10 +2457,27 @@ func _on_tapped_campfire(_point: Vector3) -> void:
 			# is exact for both legs -- the return to the OTHER tower
 			# (measured 30.6 degrees, already near-imperceptible) gets the
 			# same instant, correct heading, not a new one.
-			_badger.face(home - _badger.global_position)
+			_badger.face(badger_home - _badger.global_position)
 			_badger_campfire_leg = &"to_rest"
-			_badger.walk_to(home)
+			_badger.walk_to(badger_home)
+
+			# CH25 RECON 5: the bear's own return leg reverses a near-
+			# straight outbound walk the same way the badger's worst case
+			# does (measured: outbound travel bearing ~114.79 degrees,
+			# required return ~-65.21 degrees -- a ~180 degree difference,
+			# the same "reads as walking backwards" shape), so it gets the
+			# identical fix, on the SAME pattern and for the SAME reason.
+			if _bear != null:
+				_bear.walk_rate = BEAR_CAMPFIRE_WALK_RATE
+				_bear.face(BEAR_REST - _bear.global_position)
+				_bear_campfire_leg = &"to_rest"
+				_bear.walk_to(BEAR_REST)
+
+			_campfire_guests = &"transit"
 		_:
+			# &"transit" -- at least one guest is still walking either leg.
+			# No-op: the same "a tap mid-transit means nothing new until the
+			# leg already under way resolves" shape the badger alone had.
 			pass
 
 ## `HubActorWalker.arrived` fires identically whichever leg just ended;
@@ -2239,6 +2486,7 @@ func _on_badger_arrived() -> void:
 	match _badger_campfire_leg:
 		&"to_fire":
 			_badger_campfire_leg = &"at_fire"
+			_maybe_advance_campfire_guests()
 		&"to_rest":
 			_badger_campfire_leg = &""
 			_zipline_door.set_badger_at(_badger_campfire_return_end)
@@ -2256,6 +2504,7 @@ func _on_badger_arrived() -> void:
 			# (the LOT 2/3 fix) still owns the return leg itself, untouched.
 			_badger.turn_to(_badger_facing(_badger_campfire_return_end))
 			_badger_campfire_return_end = -1
+			_maybe_advance_campfire_guests()
 		_:
 			# An arrival unrelated to the detour. Nothing else ever calls
 			# `_badger.walk_to()`, so this should not happen -- left as a
@@ -2263,6 +2512,60 @@ func _on_badger_arrived() -> void:
 			# already tolerates a caller who asked for a walk it was
 			# already standing at the end of.
 			pass
+
+## The bear's own half of the same arrival, CH25's mirror of
+## `_on_badger_arrived()` above -- same match on the same four leg values,
+## same reason (`arrived` fires identically for either leg, the field is
+## the only thing that tells them apart).
+func _on_bear_campfire_arrived() -> bool:
+	match _bear_campfire_leg:
+		&"to_fire":
+			_bear_campfire_leg = &"at_fire"
+			_maybe_advance_campfire_guests()
+			return true
+		&"to_rest":
+			_bear_campfire_leg = &""
+			# RECON 5 (CH25): turned AFTER arrival, on the spot, to the
+			# canonical rest heading the bear was built with -- exactly
+			# `_badger.turn_to(_badger_facing(...))`'s own reasoning, and
+			# the SAME field `_setup_bear()` already computed for the
+			# seesaw's own "walk home" arrival, so this is not a second
+			# fact: it is the one this file already had, read a second time.
+			_bear.turn_to(_bear_rest_facing)
+			# Restore the seesaw's own timing budget now that the detour is
+			# over -- see `BEAR_CAMPFIRE_WALK_RATE`'s own note on why this
+			# reset has to happen before any later seesaw `walk_to()`, and
+			# why the `_bear_campfire_leg` gate on `_on_seesaw_mounted()`
+			# already rules out the two ever racing on the same frame.
+			_bear.walk_rate = BEAR_WALK_RATE
+			_maybe_advance_campfire_guests()
+			return true
+		_:
+			return false
+
+## Once BOTH guests have reported the same half of the round trip, the
+## shared arbitration `_on_tapped_campfire` reads is advanced -- never
+## before, which is the whole of CH25's answer to "what if one arrives
+## before the other": a retap is accepted only once EVERY guest is
+## actually `at_fire`, and the detour is considered fully closed only once
+## every guest is back `home` (&""). See `_campfire_guests`'s own note for
+## the alternatives this rejected.
+##
+## A null `_bear` (a layout with a zipline but no seesaw, see
+## `_setup_campfire()`'s own guard) is treated as a guest who is always
+## wherever the badger needs it to be -- `_bear_campfire_leg` never moves
+## off `&""` for a bear that does not exist, so testing it literally would
+## wedge this at `&"transit"` forever the first time the badger alone
+## finished a leg.
+func _maybe_advance_campfire_guests() -> void:
+	if _campfire_guests != &"transit":
+		return
+	var bear_at_fire: bool = _bear == null or _bear_campfire_leg == &"at_fire"
+	var bear_home: bool = _bear == null or _bear_campfire_leg == &""
+	if _badger_campfire_leg == &"at_fire" and bear_at_fire:
+		_campfire_guests = &"out"
+	elif _badger_campfire_leg == &"" and bear_home:
+		_campfire_guests = &""
 
 ## Where a body whose crown sits `crown_above_origin` over its own node
 ## origin hangs on the trolley, in the TROLLEY's own frame:
