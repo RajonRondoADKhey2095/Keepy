@@ -450,3 +450,43 @@ Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
 **Métriques** (`gpu`, spawn, soleil) : P1 67 649 → **67 873** (+224 : 15 fruits suspendus, 20-56 tri chacun, partiellement en cadre). `index.pck` 31 425 472 → **31 433 376**.
 
 **Non fait, assumé** : pas de secousse depuis le SOL (le brief disait « depuis le sol OU depuis le houppier » ; la secousse est la récompense de la montée, ce qui fait de P1 le cœur de la boucle — un tap sur l'arbre depuis le sol est déjà pris par « grimper », et un second sens pour le même tap aurait exigé un état d'attente au pied) ; pas de son ; aucun PNJ ne réagit.
+
+## Polissage (09:10 UTC)
+
+Les oiseaux de la cime passent à ×1,4 (deux triangles à 2,6 u de la caméra la plus proche lisaient comme des confettis). Rien d'autre : le temps restant est allé aux preuves de service et à cette récolte, pas à une quatrième mécanique.
+
+## RÉCOLTE v4 — ce qui mérite un lot cadré vers `staging`, ce qui est à jeter, et l'avis franc sur le schéma
+
+**Ce que je rejouerais EN PREMIER de la v4 : `WorldSave` tel quel.** ~280 lignes, zéro dépendance, zéro fichier figé touché, une sonde de 39 assertions (positif d'abord, corruption, schéma futur, champs malformés, migration, reset), une passe rouge qui a trouvé que le clamp du sanitiseur était masqué par celui de la lecture. C'est la fondation ; tout le reste de la nuit s'y branche par deux appels (`tree_stock` / `tree_take`, `add_resource`). Lot cadré : le rejouer sur `main` AVANT toute mécanique, avec la sonde, et brancher le bouton de reset derrière le même gate que l'overlay perf.
+
+**À rejouer proprement, par ordre de valeur / risque.**
+1. **`WorldSave` + `WorldHud`** (ci-dessus). Le HUD dessine ses icônes ; si Mathieu veut des glyphes, c'est une police à embarquer, pas un `Label`.
+2. **Le ride vertical `ON_TREE`** (~330 lignes dans `KeepyHopper`, aucune modification des autres états ; `hop_to` refuse déjà pendant). Le lot cadré doit rejouer `V4ClimbProbe` en trois scénarios ET une capture de profil — **la pose a été fausse trois fois sur capture avant d'être juste**, et aucune relecture ne l'aurait vu. À régler sur device : `TREE_CLIMB_S` 1,6 s (peut-être 0,2 s de trop), `TREE_PULLS` 5, l'amplitude du roulis.
+3. **La famille `climbtree.py`** : 794 tri par arbre, c'est le plus lourd de toutes les familles Blender de la branche — un lot cadré devrait sortir un LOD à ~300 tri (lobes subdiv 1) pour les arbres hors du plateau, et supprimer `climbtree_2` si un quatrième site ne s'impose pas.
+4. **`HubTrees` + `HubNuts`** : additifs, un seul point de contact (`_shake_tree`, `_on_tapped_tree`, l'interception par état dans `_on_tapped_ground`). Le risque device est le ramassage par proximité (0,85 u) pendant un bond du Sautillon (pieds à 1,02 : exclu par `PICK_FEET_MAX_Y` 0,45 — donc **le ballon ne ramasse pas**, choix à valider).
+5. **Les sites** : `(6, 0)` masque le label Battle depuis son pied. Un lot cadré vers `staging` devrait soit reculer ces deux arbres de 1 u vers le sud (à re-mesurer contre le chemin du dock, qui bloque `(6, 2)`), soit accepter.
+
+**À jeter ou à refaire autrement.**
+- **Les oiseaux** : deux triangles, pas de corps ; une vraie version est un GLB de 20 tri avec un battement en vertex shader (famille papillons).
+- **`seat_sway`** reproduit la somme du shader avec `Time.get_ticks_msec()` comme `TIME` — jamais prouvé au pixel. Si les pieds flottent sous l'orage sur device, couper le vent des arbres-perchoirs (wind 0) plutôt que régler la phase.
+- **Le rejet « depuis le sol »** de la secousse : si Mathieu veut secouer sans grimper, le geste propre est un DOUBLE tap sur l'arbre depuis le pied (le premier marche, le second, arrivé, secoue) — pas un nouveau canal.
+- **`V4SiteProbe`** est une sonde de nuit (elle imprime, ne gate rien) ; à supprimer avec la branche ou à convertir en « aucun site ne chevauche un occupant ».
+
+**L'avis franc : la persistance locale tiendra-t-elle quand plantation, pêche et craft arriveront, ou faut-il repenser le schéma maintenant ?**
+
+**Elle tient, à trois conditions, et il n'y a rien à repenser cette nuit.**
+1. **Le format tient** : un dictionnaire JSON versionné avec un sanitiseur par champ absorbe n'importe quel champ neuf (`"plants": {...}`, `"fish": {...}`, `"recipes": [...]`) SANS bump de schéma — un champ absent lit sa valeur par défaut. Le bump ne sert qu'à CHANGER le sens d'un champ existant, et le crochet `_migrate` est là pour ça. Le mécanisme « recharge sur l'horloge murale, paresseux, une entrée par objet touché » est exactement celui d'une plante qui pousse ou d'un poisson qui revient : `{stock, at}` devient `{stage, at}` et la fonction de lecture change, pas le schéma.
+2. **Ce qui NE tient PAS : le plafond de taille et la stratégie « tout dans un fichier ».** À 40 fruits au sol, 5 arbres, deux compteurs, le document fait ~600 octets. À 200 plantes avec un état chacune, ~15 Ko : toujours rien pour IndexedDB, mais **chaque `save_now()` réécrit TOUT** et une rafale de ramassages en écrit un toutes les 0,4 s. Le jour où le monde porte des centaines d'objets, il faut soit des écritures partielles (un fichier par système : `world_trees.json`, `world_plants.json`), soit un debounce plus long — pas un autre format. À décider quand le premier système à 100+ objets arrive, pas avant.
+3. **Ce qui doit être décidé AVANT la plantation, et qui n'est pas du schéma : l'identité des objets.** Un arbre-perchoir est identifié par sa position de layout snappée — ça marche parce qu'il est FIXE. Une plante que le joueur POSE n'a pas de position de layout : il lui faut un identifiant généré à la création (compteur `next_id` dans la sauvegarde, ou un hash position+timestamp) et une liste d'objets **créés par le joueur**, distincte des objets du layout modifiés. C'est un champ de plus, pas une refonte — mais si on le fait après coup, les premières plantes n'auront pas d'id stable. **Donc : ajouter `"next_id"` et `"placed": []` au schéma v1 AVANT la première plante**, même vides.
+4. **Le vrai risque n'est pas le schéma, c'est la SOURCE DE VÉRITÉ.** Tout est local, sans compte : un joueur qui change de téléphone perd son monde, et le leaderboard (Firestore) et le monde (IndexedDB) vivront dans deux univers. Si un jour l'état du monde doit suivre le compte, il faut un `saved_at` comparé et une fusion par objet — et là, oui, le document unique devient une collection. Mais c'est une décision produit (le monde est-il un cloud save ?), pas une dette technique de cette nuit, et le schéma actuel (un dictionnaire, des timestamps par objet) est la forme qui se fusionne le mieux.
+
+**Recommandation** : garder le schéma v1, y ajouter `next_id` / `placed` avant la plantation, découper en fichiers par système au premier système à 100+ objets, et ne PAS faire de cloud save tant que le mode invité est le mode principal.
+
+## Preuves de déploiement v4 sur le service (une lecture par checkpoint, jamais de polling)
+
+| checkpoint | sha | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|
+| P0 | `a116b95` (push 08:37:44) | `1788597739` → 08:42:19 | 08:57:31, `x-vercel-cache: MISS`, `age: 0` |
+| P1 | `e085d21` (push 08:58:54) | `1788599001` → 09:03:21 | 09:06:37, `MISS`, `age: 0` (run 33956727607 `success` 08:58:59 → 09:03:59) |
+| P2 | `baa7e2b` (push 09:04:27) | run 33956986951 lancé 09:04:32, **annulé par le push du commit de polissage** (`cancel-in-progress`) — le commit suivant construit le même arbre de jeu + les oiseaux ×1,4 | preuve : ligne suivante |
+| polissage + récolte | ce commit | à lire dans le rapport final | — |

@@ -72,7 +72,7 @@ signal shake_finished(index: int)
 ## triangles per bird, tinted decor material, moved from this node's
 ## _process only while a tree is occupied.
 const BIRD_COUNT: int = 3
-const BIRD_ORBIT_R: float = 2.7
+const BIRD_ORBIT_R: float = 2.6
 const BIRD_ORBIT_Y: float = 1.35
 const BIRD_ORBIT_RATE: float = 1.05
 const BIRD_FLAP_HZ: float = 4.5
@@ -193,7 +193,7 @@ func _update_birds(delta: float) -> void:
 		# Facing the tangent of the circle (counter-clockwise seen from above).
 		var tangent := Vector3(-sin(phase), 0.0, cos(phase))
 		bird.rotation.y = atan2(tangent.x, tangent.z)
-		var s: float = _bird_scale * (0.85 + 0.15 * float(i % 2))
+		var s: float = _bird_scale * 1.4 * (0.85 + 0.15 * float(i % 2))
 		bird.scale = Vector3.ONE * s
 		var flap: float = deg_to_rad(38.0) * sin(_bird_t * TAU * BIRD_FLAP_HZ + float(i) * 1.3)
 		bird.get_node("WingL").rotation.z = -flap
