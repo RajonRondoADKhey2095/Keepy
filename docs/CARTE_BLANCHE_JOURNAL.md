@@ -381,3 +381,32 @@ Reste +12 k au spawn contre P1 : la bande proche du mur (195 arbres, cyprès/oli
 | P2 | `a848cbf` (push 07:06:58) | `1788592296` → 07:11:36 | 07:15:36, `MISS`, `age: 0` |
 
 Une lecture intermédiaire (07:03:23) est venue en `HIT` avec `age: 176` — c'était ma propre lecture précédente figée en bord, écartée comme mesure (doctrine CLAUDE.md). Chaque `CACHE_VERSION` tombe à l'intérieur de la fenêtre d'export du run de SON push.
+
+---
+
+# V4 — le monde devient interactif : persistance, grimper, secouer
+
+Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
+
+## Ouverture V4
+
+- **Hash de départ (point de retour v3)** : `c080baf` (HEAD de `origin/claude/carte-blanche-cozy-02o8dm` au fetch de 08:20 UTC, 5 sept 2026). Pas de tag (proxy git). Outillage reposé dans un sandbox neuf : éditeur 4.3 (50 276 070 octets), templates 1 073 228 327 octets — **le premier `.tpz` est arrivé tronqué à 856 489 984 octets avec un exit 0**, exactement le piège documenté, retéléchargé avec contrôle de taille ; `bpy` 5.0.1 ; import complet 126 `.scn`, zéro erreur.
+- **Le schéma de persistance, en dix lignes** (la décision la plus lourde de la nuit, à contester au réveil) :
+  1. **Un autoload `WorldSave`** (`scripts/autoload/WorldSave.gd`), seul écrivain d'**un fichier JSON** `user://keepy_world.json` (IndexedDB en export Web). Rien vers Firestore, rien d'authentifié : l'état du monde est local à l'appareil, comme une cartouche.
+  2. **Schéma versionné dès le premier octet** : `"schema": 1` sur chaque écriture. Un schéma **plus récent** que le binaire est **jeté** (on ne lit pas ce qu'on ne connaît pas), un schéma plus ancien passe par `_migrate()` (v1 est la première : le crochet existe, il est vide), un fichier absent/corrompu/non-dictionnaire repart à zéro **en silence**. `boot_status` publie ce qui s'est passé (`fresh / loaded / corrupt / future / migrated`) pour les sondes et pour ce journal.
+  3. **Sanitiseur typé champ par champ** : une valeur malformée coûte CE champ, jamais la sauvegarde (une entrée d'arbre cassée perd la mémoire de cet arbre, pas les compteurs du joueur). Prouvé par `V4SaveProbe` (39 assertions, positif d'abord : écrire puis relire depuis une instance NEUVE du script — la lecture est le seul témoin de l'écriture).
+  4. **Contenu** : `resources {acorn, hazelnut}`, `trees {id → {stock, at}}`, `ground [[x, z, kind]]` (les fruits tombés non ramassés, plafonné à 40), `stats {climbs, shakes, picked}`, `saved_at`.
+  5. **Rechargement des arbres SUR L'HORLOGE MURALE, paresseux** : un arbre stocke son stock à son dernier changement et QUAND ; `tree_stock()` ajoute un fruit par `TREE_RECHARGE_S = 120 s` écoulées, plafonné à `TREE_CAPACITY = 3`. **Aucun timer ne tourne**, le monde se repeuple pendant que la page est fermée, et un arbre jamais touché n'a pas d'entrée (il lit plein). Prendre un fruit conserve la progression déjà accumulée (le timestamp n'avance que par périodes entières). Une horloge qui recule compte comme « rien ne s'est écoulé » — conservateur, jamais négatif.
+  6. **Identité d'un arbre** = sa position de layout snappée (`"x_z"`), la même astuce que le choix de variante ; déplacer un arbre dans le layout en fait un arbre neuf (plein). Assumé pour une preview.
+  7. **Écritures débouncées** (dirty → flush 0,4 s plus tard) et **forcées** sur `WM_CLOSE_REQUEST`, `APPLICATION_PAUSED`, `FOCUS_OUT`, `GO_BACK_REQUEST` : une rafale de ramassages coûte une écriture ; un onglet fermé en pleine rafale garde ce qu'il avait. Sur Web, c'est la **fermeture du fichier** qui déclenche la synchro IDBFS — d'où un open/close à chaque flush, jamais un handle gardé.
+  8. **`SAVE_PATH_OVERRIDE`** : une sonde vise un fichier jetable, jamais celui du joueur.
+  9. **HUD** `WorldHud` (haut droite, sous le bouton Menu — la première capture l'avait mis DESSUS le bouton) : deux compteurs à icônes DESSINÉES (`_draw`, pas de glyphe de police — un glyphe absent est un carré sur la première frame iOS), pastille sombre translucide + texte pâle (la seule paire qui survit aux quatre météos, vérifié sous neige), pleine opacité 4 s après un changement puis fantôme à 0,42, punch d'échelle au ramassage. Ne lit que `WorldSave`.
+  10. **Remise à zéro** : bouton « Sauvegarde (preview) : zéro » dans le menu, même gate que la ligne météo et l'overlay perf (`Auth.is_untrusted_preview_domain()` ou hors web) — invisible sur staging/prod par construction.
+
+## Checkpoint P0 — persistance et compteur (08:40 UTC)
+
+**Passe rouge** : neutraliser le clamp du sanitiser n'a fait tomber AUCUNE assertion — parce que `tree_stock()` re-clampe à la lecture et masque le sanitiseur. Le clamp de lecture neutralisé, lui, fait tomber `B.capped` et ses deux dépendants ; fichier restauré byte-identique (`cmp`). Conséquence : le clamp du sanitiseur est de la défense en profondeur, pas un contrat testé — noté plutôt que caché.
+
+**Export headless** : zéro `SCRIPT ERROR`, `index.pck` 31 405 712 (les 7 GLB de P1 déjà dans l'arbre, non commités), `index.wasm` 35 376 909 (identique).
+
+**Preuve sur le service** : voir le tableau en fin de V4.

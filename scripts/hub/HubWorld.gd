@@ -92,6 +92,9 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 ## v3: the transport network (balloon lines + the ball).
 @onready var _transport: HubTransport = $WorldViewport/SubViewport/World/Transport
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
+## v4: the resource counter and the preview-only save reset.
+@onready var _world_hud: WorldHud = $WorldHud
+@onready var _save_reset_button: Button = $FallbackMenu/Panel/VBoxContainer/SaveResetButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -707,6 +710,7 @@ func _ready() -> void:
 	_tap.tapped_campfire.connect(_on_tapped_campfire)
 	_setup_weather()
 	_setup_perf()
+	_setup_world_hud()
 	_setup_transport()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
@@ -3766,6 +3770,21 @@ func _setup_perf() -> void:
 	_perf_button.visible = show
 	_perf_button.text = "Perf (preview) : ON" if show else "Perf (preview) : OFF"
 	_perf_button.pressed.connect(_on_perf_toggled)
+
+## ---- v4 P0: the world save and its counter --------------------------------
+## The reset row sits behind the SAME gate as the weather row and the perf
+## overlay (untrusted preview hostname, or off-web): it exists so a first
+## launch can be replayed on device, and nowhere else. The HUD itself is
+## always shown -- it is part of the game, not of the preview.
+func _setup_world_hud() -> void:
+	var show: bool = Auth.is_untrusted_preview_domain() or not OS.has_feature("web")
+	_save_reset_button.visible = show
+	_save_reset_button.pressed.connect(_on_save_reset)
+
+func _on_save_reset() -> void:
+	WorldSave.reset()
+	_save_reset_button.text = "Sauvegarde (preview) : remise à zéro"
+	_fallback_menu.visible = false
 
 func _on_perf_toggled() -> void:
 	_perf.visible = not _perf.visible

@@ -1,4 +1,4 @@
-[gd_scene load_steps=27 format=3]
+[gd_scene load_steps=28 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -13,6 +13,7 @@
 [ext_resource type="Script" path="res://scripts/hub/CozyWeather.gd" id="19"]
 [ext_resource type="Script" path="res://scripts/hub/HubPerfOverlay.gd" id="20"]
 [ext_resource type="Script" path="res://scripts/hub/HubTransport.gd" id="21"]
+[ext_resource type="Script" path="res://scripts/hub/WorldHud.gd" id="22"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -188,6 +189,19 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
 color = Color(0, 0, 0, 0)
+
+[node name="WorldHud" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -240.0
+offset_top = 132.0
+offset_right = -32.0
+offset_bottom = 180.0
+grow_horizontal = 0
+mouse_filter = 2
+script = ExtResource("22")
 
 [node name="TapInput" type="Node" parent="."]
 script = ExtResource("5")
@@ -370,6 +384,18 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
 text = "Perf (preview) : ON"
+
+[node name="SaveResetButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(320, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Sauvegarde (preview) : zéro"
 
 [node name="CloseButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
 layout_mode = 2
