@@ -163,7 +163,10 @@ func _ready() -> void:
 	_clip_length = clip.length
 	# The other half of `walk_rate`. Written on the PLAYER, never on the clip:
 	# a speed baked into an Animation would be a shared-resource write, the
-	# same trap the duplicate above exists to close.
+	# same trap the duplicate above exists to close. Re-applied again at the
+	# top of every `walk_to()` (CH25) -- this first write only covers the
+	# window between `_ready()` and the first walk, which the frozen pose
+	# `_freeze()` draws in the meantime does not need it for anyway.
 	_player.speed_scale = maxf(walk_rate, 0.0001)
 	_yaw = rotation.y
 	_freeze()
@@ -175,7 +178,26 @@ func _ready() -> void:
 ## ⚠️ THE DESTINATION IS AN ARGUMENT AND NEVER A CONSTANT. A seesaw-shaped
 ## number living in here is how this stops being an actor and becomes one
 ## prop's animation.
+##
+## ⚠️ CH25: `speed_scale` IS RE-APPLIED HERE, NOT ONLY IN `_ready()`. Until
+## this lot every actor set `walk_rate` exactly once, before its first
+## `walk_to()`, and never touched it again -- so reading it once in
+## `_ready()` and never again was indistinguishable from reading it live.
+## The hub's bear is the first caller with TWO legitimate rates (its own
+## seesaw budget, and a dedicated one for the campfire round trip -- see
+## `HubWorld.BEAR_CAMPFIRE_WALK_RATE`), and a caller that wrote a second
+## rate onto `walk_rate` under the OLD code would have moved the BODY at
+## the new rate (`ground_speed()` already re-reads `walk_rate` every frame)
+## while the CLIP kept playing at the first one it was ever given -- the
+## exact foot-slide `walk_rate`'s own doc warns a split knob would cause.
+## Re-applying it here, at the top of every walk, closes that gap at the
+## root instead of asking each multi-rate caller to remember to. A no-op
+## for every single-rate actor that existed before this lot (badger, and
+## the bear's own seesaw approach): `walk_rate` there is the same value
+## `_ready()` already wrote, so this simply writes it again.
 func walk_to(point: Vector3) -> void:
+	if _player != null:
+		_player.speed_scale = maxf(walk_rate, 0.0001)
 	# A pending turn-in-place is superseded by an actual walk -- the
 	# travel-facing block in `_process()` owns `_yaw` from here, and a
 	# stale `_turn_target` left set would otherwise resume easing toward it
