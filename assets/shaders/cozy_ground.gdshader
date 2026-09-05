@@ -33,6 +33,21 @@ uniform float autumn_edge_w = 7.0;
 uniform vec3 autumn_a : source_color = vec3(0.80, 0.54, 0.28);
 uniform vec3 autumn_b : source_color = vec3(0.66, 0.40, 0.20);
 uniform vec3 autumn_c : source_color = vec3(0.90, 0.68, 0.32);
+// Carte-blanche v3: the moor beyond the hollow. Heather in three mauves,
+// and lavender ROWS painted straight into the ground inside the field
+// rectangles (xmin, zmin, xmax, zmax) -- rows are what a lavender field
+// is from this camera, and painting them costs nothing.
+uniform float moor_edge_z = -84.0;
+uniform float moor_edge_w = 6.0;
+uniform vec3 moor_a : source_color = vec3(0.66, 0.58, 0.76);
+uniform vec3 moor_b : source_color = vec3(0.54, 0.46, 0.66);
+uniform vec3 moor_c : source_color = vec3(0.82, 0.76, 0.60);
+uniform vec3 row_violet : source_color = vec3(0.50, 0.32, 0.72);
+uniform vec3 row_soil : source_color = vec3(0.78, 0.70, 0.54);
+uniform vec4 field_0 = vec4(0.0, 0.0, 0.0, 0.0);
+uniform vec4 field_1 = vec4(0.0, 0.0, 0.0, 0.0);
+uniform vec4 field_2 = vec4(0.0, 0.0, 0.0, 0.0);
+uniform float row_pitch = 2.4;
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
 uniform float haze_density = 0.018;
 uniform float haze_start = 6.0;
@@ -65,6 +80,26 @@ void fragment() {
 	vec3 leaf = mix(autumn_b, autumn_a, smoothstep(0.35, 0.52, big));
 	leaf = mix(leaf, autumn_c, smoothstep(0.56, 0.72, big));
 	col = mix(col, leaf, autumn);
+	// A tighter wobble than the autumn edge's: the hedge band is 5 u and
+	// the first capture showed leaf litter blotches 8 u INTO the moor.
+	float moor = smoothstep(moor_edge_z, moor_edge_z - moor_edge_w, world_pos.z + (big - 0.5) * 5.0);
+	vec3 heath = mix(moor_b, moor_a, smoothstep(0.35, 0.52, big));
+	heath = mix(heath, moor_c, smoothstep(0.58, 0.74, big));
+	// Lavender rows inside the fields: a soft stripe along x, every
+	// row_pitch in z, feathered at the field edges by the big noise.
+	float rows = 0.0;
+	for (int i = 0; i < 3; i++) {
+		vec4 f = (i == 0) ? field_0 : ((i == 1) ? field_1 : field_2);
+		if (f.z > f.x) {
+			float inside = step(f.x, p.x) * step(p.x, f.z) * step(f.y, p.y) * step(p.y, f.w);
+			float edge = smoothstep(0.0, 1.5, min(min(p.x - f.x, f.z - p.x), min(p.y - f.y, f.w - p.y)) + (small - 0.5) * 2.0);
+			rows = max(rows, inside * edge);
+		}
+	}
+	float stripe = smoothstep(0.30, 0.42, abs(fract(p.y / row_pitch) - 0.5));
+	vec3 rowcol = mix(row_violet * (0.92 + 0.16 * small), row_soil, stripe);
+	heath = mix(heath, rowcol, rows);
+	col = mix(col, heath, moor);
 	col *= 1.0 + (small - 0.5) * 2.0 * detail_amount;
 	// Fine mottle (grass clumps) close to the camera; mipmapped away far.
 	float fine = texture(noise_tex, p / 1.7 + vec2(0.13, 0.91)).r;

@@ -284,3 +284,90 @@ Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
 **Conséquence pour le plafond de 50 000** : la frame réelle au spawn est à ~52 k primitives opaques rendues, soit au plafond — pas à 175 k. Le débat « justifier ou invalider le plafond » doit se tenir sur la ligne `gpu` (celle que le device affichera), avec `lod0 cadre` comme borne haute. Le chiffre sandbox (12 FPS sous llvmpipe 1080×1920) n'est PAS le chiffre device ; l'overlay existe pour que Mathieu lise le vrai au réveil.
 
 **Preuve sur le service** : voir le tableau de preuves en fin de section P1 (une seule lecture Vercel par checkpoint, jamais de polling).
+
+## Checkpoint P1 — transport : la ligne « Or » et le Sautillon (06:57 UTC)
+
+**Preuve du P0 sur le service** : déploiement CI `dpl_ALhhH9wzqp2CVNkxy1QkcLwoSwhU` (`gitRootDirectory = build/web`, sha `a977e23`, `READY`, 06:26:50 UTC) ; `GET https://keepy-cozy.vercel.app/index.service.worker.js` à 07:00:27 → `x-vercel-cache: MISS`, `age: 0`, `CACHE_VERSION = 1788589585` (06:26:25 UTC, à l'intérieur de l'export de CE run). Le déploiement natif (branchAlias) coexiste, sans l'alias, sans effet.
+
+**Ce qui est fait.**
+- **Famille A — `HubTransport`** (nœud sous `World`, entre `Props` et `CozyScatter` pour que le scatter lise ses emprises) : docks (GLB `dock_0`, deck r 1,9 + marche), panneau-flèche `docksign_0` posé SUR LE CÔTÉ du deck et pointant le jumeau (une première pose côté jumeau était cachée derrière la montgolfière depuis cette caméra — capture `capture_v3_p1_dock.png`), fanion `BoxMesh` teinté à la couleur de la ligne, montgolfière `balloon_0` (396 tri, gores or/crème, nacelle, cordes). **Vol** : `tween_method` normalisé, horizontale en cosinus, verticale en plateau (`sin(πt)·1,45` clampé), vitesse 13 u/s + 2,4 s de montée/descente → 7,8 s pour 69,5 u ; tangage, lacet et dérive latérale ∝ `wind` du look météo ; le porté est écrit dans le MÊME appel que le porteur (`follow_carrier`), y compris à la frame d'arrivée. Montgolfière posée : bob de 6 cm et gîte ∝ vent en `_process`. **Croisière 4,0 u, mesurée et pas choisie** : à 5,2 u la capture de vol montrait une nacelle sous une corde, l'enveloppe entière hors cadre (rien n'est visible au-dessus de y ≈ 8 à l'aplomb de Keepy : rayon haut à +2,4° sur 8,9 u depuis 7,6 u) ; à 4,0 nacelle, jupe et moitié basse de l'enveloppe restent dans l'image, au-dessus de toute canopée sur la ligne (arbres du layout ×0,8 ≈ 4,5 u, haie et arbres d'automne ≈ 5 u ; plancher de nacelle à 4,16). Ça reste un compromis de caméra figée, pas une solution.
+- **Portes** : `HubTapInput.tapped_balloon` (les DEUX docks d'une ligne, montgolfière présente ou non ; `accepts_balloon_tap` rend −1 pendant tout un trajet) et `tapped_vehicle` (le ballon garé ; retiré tant qu'il est monté). Tous deux lus sur `aim`, jamais sur la destination clampée. `HubWorld` : intention `_ballooning` (marche, puis `_try_balloon` à chaque atterrissage ET immédiatement), `_balloon_wait` (survit à `became_idle` : attendre EST être à l'arrêt ; annulé par tout autre tap), `_on_balloon_trip_finished` → `leave_carrier(_ride_exit_point(dock, 2,6))` — l'anneau de sortie du tourniquet, inchangé. Un tap pendant le vol est jeté dans `_on_tapped_ground` sur la licence tyrolienne (tween borné, atterrissage sur un dock connu). Re-amarrage : `HubTransport.update(here)` depuis `_process` de `HubWorld`, à côté de `_mooring.update`.
+- **Famille B — le Sautillon** (`hopball_0`, 360 tri, garé à `(0,5 ; 4,4)`) : `KeepyHopper.mount_vehicle(node, lift)` / `dismount_vehicle()` — pas un état : `_begin_hop` prend 2,7 u / 1,15 u / 0,34 s au lieu de 1,5 / 0,6 / 0,28, `_apply_hop` et `_on_hop_finished` ajoutent `_vehicle_lift` (1,02) et écrivent le ballon sous lui avec son squash. **Les six entrées de state porté (`board`, `mount_turnstile`, `mount_seesaw`, `mount_owl`, `board_zipline`, `climb_board`) appellent `dismount_vehicle()` en première ligne** : aucun ride existant ne voit jamais le ballon. Tap sur soi à l'arrêt (< 0,9 u) = descendre ; re-parking sur la règle barque ; `_set_keepy_wet` ignoré tant qu'il est perché.
+- **Emplacement du ballon, mesuré contre le cadre** : le premier candidat `(−6,5 ; 0,5)` (dégagement 2,17 u, à gauche du hibou) était **hors cadre au spawn** — à la profondeur de Keepy, l'image ne fait que ~7 u de large. `(0,5 ; 4,4)` est juste derrière lui, dans le bas du cadre (sol visible jusqu'à z ≈ 6,2), entre le chemin de la cabane et le nouveau chemin du dock.
+- **Docks, mesurés au dégagement** (script Python sur le layout + lacs + chemins + ruisseau + repos des acteurs) : le plateau n'a AUCUN point à ≥ 2,6 u de dégagement qui soit à la fois près du spawn et dans le cadre au spawn — une montgolfière de 7 u posée devant un portail l'aurait occulté (la nacelle est PLUS PRÈS de la caméra que l'anneau). `(10,5 ; 14,5)` : dégagement 3,2 u, à 18 u au sud-est de la plaza, découvert en marchant ; `(11 ; −55)` : bord est de la clairière de l'Arbre-Mère (13 u du tronc, 3,5 u hors de la clairière). `CozyScatter._blocked` / `_autumn_blocked` lisent `HubTransport.footprints()` (r 2,9) ; un chemin de terre part de la plaza vers le dock.
+
+**Preuves (headless, `--fixed-fps 60`, traces toutes les 30 frames).**
+
+| test | résultat |
+|---|---|
+| `--at=10.5,11 --balloon=0` | monte à la frame 30 (y 0,36 = deck + siège + bob), croisière y 5,41 (avant le passage à 4,0), `is_on_carrier` vrai de 30 à 480, `balloon_at` −1 puis 1, dépose à `(11 ; 0 ; −58,45)` à la frame 510 (anneau de sortie, FORWARD = nord), montgolfière posée y 0,10-0,22 (bob) |
+| `--at=0,0 --ball --walk=10,-3` | grimpe à la frame ~50 (y 1,02), 16,9 u en 150 frames (**7,35 u/s contre 5,36 à pied, ×1,4**), y 1,02 à l'arrêt, ballon sous lui à chaque échantillon |
+| `--ride=auto` (barque, régression) | trace byte-identique à la v2 : monte à la frame 210 (`y 0,14`), débarque après 390 |
+| `--at=-10,-10 --walk=-6,-56` (couloir, régression) | passe `(−26,7 ; −39,5)` à 420, arrive à 780 — identique à la v2 |
+
+**Deux défauts de ma propre passe, trouvés par la trace et pas par relecture** : (1) `_on_hop_finished` n'avait PAS reçu le `+ _vehicle_lift` (le remplacement textuel a raté un commentaire entre les lignes) → Keepy à y = 0 sur le ballon à l'arrêt ; (2) `_begin_hop` n'avait pas reçu les constantes véhicule → 5,2 u/s « sur le ballon », soit la marche. Les deux visibles à la première trace, invisibles à la première relecture.
+
+**Métriques** (`CozyCapture`, opengl3 sous xvfb, overlay P0).
+
+| | P2 (v2) | **P1 (v3)** |
+|---|---|---|
+| triangles scène | 175 559 | **176 624** (+1 065 : 2 docks, 2 panneaux, montgolfière, ballon) |
+| nœuds visuels | 336 | 343 |
+| `gpu` au spawn | 52 472 | **52 648** |
+| `lod0 cadre` au spawn | 102 803 | 102 430 |
+| `gpu` au dock `(8 ; 20)` | — | 56 133 (181 calls) |
+| `gpu` en vol au-dessus du grand lac | — | 37 473 (105 calls) |
+| `gpu` au dock du vallon | — | 22 469 (31 calls) |
+| `index.pck` | 31 025 904 | **31 201 888** (+176 Ko : 6 GLB transport + 14 GLB Provence déjà dans l'arbre) |
+
+Sandbox : 12 FPS sous llvmpipe 1080×1920 — ce n'est pas le chiffre device.
+
+**Captures** : `capture_v3_p1_dock.png` (dock Or depuis le sud), `capture_v3_p1_flight.png` (en vol à 4,0 u au-dessus du grand lac), `capture_v3_p1_spawn_ball.png` (le Sautillon derrière Keepy au spawn), `capture_v3_p1_hollow_dock.png` (arrivée au vallon).
+
+**Non fait, assumé** : pas de son ; la montgolfière n'a pas de flamme ni d'ombre portée (l'ombre du héros suit, rétrécie, sur le sol — lisible comme la sienne) ; l'appel à vide n'a pas de « voyant » (le joueur voit la montgolfière venir, c'est l'indicateur) ; pas de PNJ aux stations.
+
+## Checkpoint P2 — la troisième map : « la Lande aux Moulins », et la ligne « Ciel » (07:25 UTC)
+
+**Direction, en cinq lignes.**
+1. **Où** : au-delà du vallon, `z ∈ [−126 ; −86]`, `x ∈ [−38 ; 38]`, couloir `x ∈ [6 ; 18] × z ∈ [−86 ; −78]` à l'est de l'axe de l'Arbre-Mère. Même altitude, même navigation, région étendue de deux rectangles (`HubRegion.MOOR_*`), un trou pour le pied du moulin. **Nord encore, et pas à l'est** : mesuré sur la caméra, une zone latérale n'est JAMAIS dans le cadre avant qu'on y soit (±22,5° de demi-angle horizontal ; à z = −60 le bord du cadre est à x ≈ 28 depuis le spawn) — seule la bande haute de l'image, dans l'axe, peut « suggérer de loin ». Le vallon y était pour cette raison ; la lande est derrière lui.
+2. **Quoi** : un registre PROVENCE — lande mauve (trois teintes `MOOR_A/B/C`), **champs de lavande en RANGS PEINTS DANS LE SOL** (trois rectangles `LAVENDER_FIELDS` partagés par le shader et le scatter, rayures violet/terre au pas de 2,4 u) avec des touffes 3D clairsemées SUR les rangs, cyprès sombres en files, oliviers, murets de pierre sèche au bord des champs, roches blanchies, un puits et quatre ruches au coude de la route. Contraste de TEINTE avec le plateau (vert) ET le vallon (orange) : violet / crème / vert-noir.
+3. **Repère** : **le moulin** `(14 ; −106)` — tour blanche 7,5 u + toit rouge, quatre ailes de 4,6 u (GLB séparé `sails_0`, tournées en `_process` à 0,35 rad/s × (0,6 + 0,4 × `wind` météo) : elles tournent plus vite dans l'orage). Depuis la clairière de l'Arbre-Mère, il est dans l'axe de la route, au-dessus de la trouée de la haie (`capture_v3_p2_from_hollow.png`) ; depuis le spawn, une silhouette blanche à 87 % de haze, à droite de l'Arbre-Mère (`capture_v3_p2_spawn.png`) — « suggéré », pas plus, et c'est tout ce que cette caméra permet.
+4. **Accès** : la route (`MOOR_ROAD`, Catmull-Rom, même extrusion) contourne la clairière par l'est, franchit le couloir, passe le hameau et finit au pied du moulin. **Navigation à deux portes** : `_hop_via_corridor` est généralisé — `HubRegion.zone_of()` (0 plateau, 1 vallon, 2 lande), `_gates_between(a, b)` rend la liste ordonnée des portes de la chaîne 0–1–2, `_via_queue` les enchaîne sur `became_idle`. Mesuré (headless, `--walk=0,-108` depuis le spawn) : porte 1 `(−27,5 ; −37,8)` à la frame 540, porte 2 `(11 ; −84)` à 1260, arrivée `(0,06 ; −107,9)` à 1620 — 27 s de marche, contre ~17 s par Or + marche + Ciel.
+5. **Desserte** : ligne « Ciel » (`balloon_1`, bleu/crème) `(−14 ; −50)` à l'ouest de la clairière → `(−6 ; −110)` aux champs de l'ouest. Prouvée : monte à la frame 30, croisière 4,21 u, `(−10,8 ; 4,2 ; −73,7)` à la frame 210 (`capture_v3_p2_ciel_flight.png` — la haie d'automne dessous, les rangs violets devant).
+
+**La haie n° 2** (bande `z ∈ [−85,5 ; −80,5]`, hors couloir ± 1,5 u) : automne côté vallon, cyprès/olivier côté lande (36 arbres). Le mur de forêt descend à `z = −140` et devient cyprès/olivier en bande proche sous `z < −84` ; les collines du secteur `z < −95` reculent à `r ≥ 168`.
+
+**⚠️ Le coût, mesuré par l'overlay, et ce qui a été coupé.**
+
+| frame au spawn (`gpu`) | valeur |
+|---|---|
+| P1 (avant la lande) | 52 648 |
+| lande brute | **103 283** (+50 k, pour des pixels dissous à 87 % par le haze — la lande est dans l'axe de la caméra, à 95+ u) |
+| + `visibility_range_end` sur tous les batches du scatter sauf mur et haies (82 u ; 95 u pour les familles d'automne, parce que la bande orange derrière les lacs fait partie du cadre du spawn par conception v2), `visibility_range_fade_mode = DISABLED` (culling CPU pur, fonctionne en Compatibility) | 79 555 |
+| + mur lointain de la lande en `tree_6_far` (72 tri) au lieu de `cypress_1` (140), `WALL_FAR_Z` −150 → −140 | **65 005** |
+
+Reste +12 k au spawn contre P1 : la bande proche du mur (195 arbres, cyprès/oliviers à 140-164 tri) et la haie n° 2 — c'est l'horizon, il est gardé. Première version de la bordure : des taches de litière d'automne jusqu'à 8 u DANS la lande (`autumn` = 1 partout sous z < −46, et le fondu `moor` ondulait de ± 4,5 u) → bord `−82` / largeur 3 / ondulation ± 2,5 (`capture_v3_p2_hamlet.png` après).
+
+**Autres frames** (`gpu` / calls) : hameau `(6 ; −90)` 42 909 / 35 ; champs `(−20 ; −90)` 55 103 / 39 ; clairière vers le nord `(8 ; −64)` 64 175 / 69 ; en vol Ciel 57 934 / 47. Scène entière **235 852** (+59 k sur P1 — le mur étendu et la lande ; la frame ne les voit jamais tous). `index.pck` : **31202048** (export local ; +160 octets sur P1 pour 14 GLB Provence déjà comptés, donc surtout les 3 lavandes refaites et les captures ne comptent pas — `docs/*` est exclu).
+
+**Assets** : famille Blender `provence.py` (planche `docs/carte_blanche/provence_sheet.png`) — 14 GLB de 20 à 252 tri, 3 à 19 Ko. Deux pièges payés dans le script : une boucle géométrique sur le rayon des étages du cyprès qui ne convergeait jamais vers la hauteur demandée (processus infini, tué par PID — `pkill -f` a tué mon propre shell deux fois, exactement comme CLAUDE.md le dit), et une tour de moulin ROUGE parce que le sommet de son cylindre à deux anneaux partageait le y de l'anneau du toit : la couleur interpolait sur toute la hauteur. Lavande refaite à 124-176 tri (monticule subdiv 0, 4-6 épis) parce que 126 touffes à 300 tri auraient coûté 38 k.
+
+**Non fait, assumé** : pas de PNJ dans la lande ; pas de son du moulin ; les touffes de lavande lisent comme des galettes vertes à épis (les rangs peints font le travail de loin, les touffes sont à repeindre en gris-mauve) ; la lande n'a pas de point d'eau (choix : le contraste avec les cinq eaux du plateau).
+
+## RÉCOLTE v3 — ce qui mérite un lot cadré vers `staging`, ce qui est à jeter, et ce que je rejouerais EN PREMIER
+
+**Ce que je rejouerais EN PREMIER de toute la branche v1 + v2 + v3 : l'overlay de performance (P0).** Ce n'est pas le plus beau, c'est le seul lot qui rend les autres DÉCIDABLES : il a déjà réfuté un chiffre de ce journal (175 k « triangles scène » sont 52 k primitives rendues, LOD compris), attrapé un +50 k invisible dès la première frame de la lande, et il mettra le vrai FPS iPhone sous les yeux de Mathieu au réveil. ~200 lignes, zéro dépendance, gaté par hostname ; sa seule dette est le message d'aide (« gpu / lod0 / scene ») à documenter dans le menu. **Lot cadré : ajouter la ligne au `docs/PROBE_AUDIT.md` et faire de `gpu` le chiffre du plafond.**
+
+**À rejouer proprement, par ordre de valeur / risque.**
+1. **L'overlay** (ci-dessus).
+2. **`ON_CARRIER` + `HubTransport` (montgolfières)** : ~450 lignes additives, aucune modification des rides existants (les six entrées de state appellent seulement `dismount_vehicle()`), portes sur le patron barque, trajets bornés. Lot cadré : une seule ligne d'abord, preuve device des trois gestes (embarquer / appeler / tap pendant le vol jeté), PUIS le re-amarrage hors cadre. À régler sur device : `CRUISE_HEIGHT` (4,0 est un compromis de caméra figée), `FLIGHT_SPEED` 13, et le rayon de tap 2,6.
+3. **Le Sautillon (véhicule)** : 90 lignes dans `KeepyHopper`, le modificateur le plus simple possible et le plus amusant à l'écran. Risque réel : l'interaction avec `_on_hop_landed` (portails, tourniquet, balançoire) n'est prouvée que par les traces des rides existants, pas par un tour complet sur device. À prouver en premier sur iPhone : descendre par un tap sur soi, monter un tourniquet depuis le ballon (il doit rester au sol).
+4. **La navigation à N portes** (`zone_of`, `_gates_between`, `_via_queue`) : 40 lignes, remplace le pansement v2. Mais c'est toujours une chaîne 0–1–2 : la quatrième zone hors chaîne exige `HubRegion.route(a, b)`.
+5. **La lande** : shader (masque + rangs peints : gratuit et c'est ce qui fait le champ), famille `provence.py`, `_moor()` ; le poste cher est le mur étendu. **Le `visibility_range_end` sur les batches du scatter est à garder même sans la lande** : il vaut sur le plateau vu depuis le vallon.
+
+**À jeter ou à refaire autrement.**
+- **L'appel à vide** de la montgolfière : correct mais sans feedback (le joueur attend 8 s sans rien à l'écran s'il regarde ailleurs). Une vraie version anime le fanion ou fait sonner une cloche au dock.
+- **Le panneau-flèche** : 38 tri, lisible en capture, jamais prouvé lisible sur iPhone à cette distance de caméra. Si Mathieu ne le voit pas, la couleur des fanions doit porter seule la lecture « où ça mène ».
+- **Les touffes de lavande 3D** : à repeindre (monticule gris-mauve) ou à retirer au profit des rangs peints seuls.
+- **`CozyCapture`** a encore grossi (`--balloon`, `--ball`) : c'est définitivement une sonde de nuit ; à découper en trois sondes gatées (capture, ride, nav) ou à supprimer avec la branche.
+- **Doctrine à consigner si un lot cadré passe** (CLAUDE.md non touché ici) : (a) `viewport_get_render_info` ne compte que la liste OPAQUE et applique les LOD auto des GLB importés — c'est LE chiffre du plafond, pas le compte de scène ; (b) à la profondeur de Keepy le cadre fait ~7 u de large et rien au-dessus de y ≈ 8 à son aplomb n'est visible — tout prop « près du spawn » ou « porté en l'air » se vérifie par `unproject_position` avant d'être placé ; (c) `visibility_range_end` fonctionne en Compatibility comme culling CPU et coupe ce que le haze a déjà effacé ; (d) `pkill -f` / `pgrep -f` tuent le shell qui les lance dès que le motif apparaît dans le heredoc de la même commande — tuer par PID lu dans `ps`.

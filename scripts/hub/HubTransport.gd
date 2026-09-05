@@ -38,6 +38,11 @@ class_name HubTransport
 const LINES: Array = [
 	{"name": "or", "glb": "balloon_0", "colour": Color(0.98, 0.76, 0.22),
 		"docks": [Vector3(10.5, 0.0, 14.5), Vector3(11.0, 0.0, -55.0)]},
+	# v3 P2: the sky line, from the west of the Mother Tree clearing to the
+	# moor's western fields -- the second leg of the chain, so a rider who
+	# arrives on the gold balloon sees the blue one 25 u across the clearing.
+	{"name": "ciel", "glb": "balloon_1", "colour": Color(0.40, 0.70, 0.96),
+		"docks": [Vector3(-14.0, 0.0, -50.0), Vector3(-6.0, 0.0, -110.0)]},
 ]
 
 ## Where the hoppity ball is parked on the plateau: just south of the

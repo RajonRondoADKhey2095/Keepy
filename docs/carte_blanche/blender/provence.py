@@ -33,7 +33,9 @@ def lavender(seed, spikes, hue):
     """A low grey-green mound with violet spikes standing out of it."""
     rnd = random.Random(seed)
     bm = bmesh.new()
-    blob(bm, (0, 0.16, 0), 0.34, subdiv=1, squash=(1.15, 0.55, 1.15), noise=0.15, seed=seed)
+    # subdiv 0 mound and few spikes: ~130 tris, because a field is a
+    # hundred of these and the ROWS are painted into the ground anyway.
+    blob(bm, (0, 0.16, 0), 0.36, subdiv=0, squash=(1.2, 0.55, 1.2), noise=0.15, seed=seed)
     tops = []
     for i in range(spikes):
         a = rnd.uniform(0, 6.28); r = rnd.uniform(0.0, 0.26)
@@ -285,7 +287,7 @@ if __name__ == "__main__":
     reset()
     mat = flat_material()
     families = {
-        "lavender": [lavender(1, 9, (0.58, 0.40, 0.82)), lavender(2, 11, (0.50, 0.34, 0.76)), lavender(3, 8, (0.66, 0.48, 0.88))],
+        "lavender": [lavender(1, 5, (0.58, 0.40, 0.82)), lavender(2, 6, (0.50, 0.34, 0.76)), lavender(3, 4, (0.66, 0.48, 0.88))],
         "cypress": [cypress(11, 4.2), cypress(12, 3.4)],
         "olive": [olive(21)],
         "windmill": [windmill_tower(31)],

@@ -33,6 +33,22 @@ const AUTUMN_B: Color = Color(0.66, 0.40, 0.20)
 const AUTUMN_C: Color = Color(0.90, 0.68, 0.32)
 const AUTUMN_EDGE_Z: float = -39.0
 const AUTUMN_EDGE_W: float = 7.0
+## v3: the moor. Heather mauves, lavender-row colours, and the three
+## field rectangles (xmin, zmin, xmax, zmax) painted into the ground and
+## planted by CozyScatter -- ONE table for both.
+const MOOR_A: Color = Color(0.66, 0.58, 0.76)
+const MOOR_B: Color = Color(0.54, 0.46, 0.66)
+const MOOR_C: Color = Color(0.82, 0.76, 0.60)
+const MOOR_EDGE_Z: float = -82.0
+const MOOR_EDGE_W: float = 3.0
+const ROW_VIOLET: Color = Color(0.50, 0.32, 0.72)
+const ROW_SOIL: Color = Color(0.78, 0.70, 0.54)
+const ROW_PITCH: float = 2.4
+const LAVENDER_FIELDS: Array[Vector4] = [
+	Vector4(-32.0, -120.0, -8.0, -100.0),
+	Vector4(-30.0, -97.0, -10.0, -89.0),
+	Vector4(22.0, -122.0, 36.0, -98.0),
+]
 
 ## Toon lighting shared by every decor batch.
 const SUN_DIR: Vector3 = Vector3(0.35, 0.80, 0.45)
@@ -219,6 +235,16 @@ static func ground_material() -> ShaderMaterial:
 		mat.set_shader_parameter("haze_color", HAZE)
 		mat.set_shader_parameter("haze_density", HAZE_DENSITY)
 		mat.set_shader_parameter("haze_start", HAZE_START)
+		mat.set_shader_parameter("moor_edge_z", MOOR_EDGE_Z)
+		mat.set_shader_parameter("moor_edge_w", MOOR_EDGE_W)
+		mat.set_shader_parameter("moor_a", MOOR_A)
+		mat.set_shader_parameter("moor_b", MOOR_B)
+		mat.set_shader_parameter("moor_c", MOOR_C)
+		mat.set_shader_parameter("row_violet", ROW_VIOLET)
+		mat.set_shader_parameter("row_soil", ROW_SOIL)
+		mat.set_shader_parameter("row_pitch", ROW_PITCH)
+		for k in 3:
+			mat.set_shader_parameter("field_%d" % k, LAVENDER_FIELDS[k])
 		_ground = mat
 	return _ground
 

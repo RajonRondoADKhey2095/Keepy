@@ -27,7 +27,7 @@ const COVER_MAX: Vector2 = Vector2(37.0, 47.0)
 ## dropped so no canopy hangs over a place Keepy can walk to.
 const WALL_OUTER: float = 62.0
 ## v2: the wall box now runs to z = -100 to close the hollow's far side.
-const WALL_FAR_Z: float = -100.0
+const WALL_FAR_Z: float = -140.0
 const HEDGE_PER_U2: float = 0.10
 const WALL_CLEARANCE: float = 2.0
 const WALL_NEAR_BAND: float = 8.0
@@ -68,9 +68,11 @@ func _ready() -> void:
 	_portal_beds()
 	_scatter_ground_cover()
 	_autumn()
+	_moor()
 	_forest_wall()
 	_flush()
 	_mother_tree()
+	_windmill()
 	_blob_shadows()
 	_hills()
 	_clouds()
@@ -270,6 +272,141 @@ func _autumn() -> void:
 		lanterns += 1
 	_stats["lantern"] = lanterns
 
+## ---- v3: the moor ("la Lande aux Moulins") ---------------------------
+const MOOR_SEED: int = SEED + 202
+const MOOR_HAMLET: Vector3 = Vector3(9.0, 0.0, -97.0)
+
+func _in_moor(p: Vector3) -> bool:
+	return HubRegion.in_moor(p) and HubRegion.contains(p)
+
+func _moor_blocked(p: Vector3, own_radius: float) -> bool:
+	for fp in HubTransport.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
+	if _on_path(p, own_radius):
+		return true
+	if p.distance_to(HubRegion.WINDMILL_AT) < HubRegion.WINDMILL_RADIUS + own_radius + 1.2:
+		return true
+	if p.distance_to(MOOR_HAMLET) < 2.6 + own_radius:
+		return true
+	return false
+
+func _moor_place(family: String, mesh: String, p: Vector3, sc: float, yaw: float, wind: float, wind_h: float) -> void:
+	_add(family, mesh, _batch_cell(family, p), Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * sc), p), wind, wind_h)
+
+func _moor() -> void:
+	_rng.seed = MOOR_SEED
+	# Lavender clumps ON the painted rows (the shader's stripe is centred
+	# on z = pitch * (k + 0.5)), one every ~3 u so the rows read as planted
+	# without a hundred-thousand-triangle field.
+	var lavender := 0
+	for f in CozyPalette.LAVENDER_FIELDS:
+		var k0 := int(floor(f.y / CozyPalette.ROW_PITCH))
+		var k1 := int(ceil(f.w / CozyPalette.ROW_PITCH))
+		for k in range(k0, k1 + 1):
+			var z := CozyPalette.ROW_PITCH * (float(k) + 0.5)
+			if z < f.y + 0.6 or z > f.w - 0.6:
+				continue
+			var x := f.x + _rng.randf_range(0.6, 2.4)
+			while x < f.z - 0.6:
+				var p := Vector3(x + _rng.randf_range(-0.2, 0.2), 0.0, z + _rng.randf_range(-0.15, 0.15))
+				if _in_moor(p) and not _moor_blocked(p, 0.3):
+					_moor_place("lavender", "lavender_%d" % _rng.randi_range(0, 2), p, _rng.randf_range(1.5, 1.9), _rng.randf_range(0.0, TAU), 0.05, 0.6)
+					lavender += 1
+				x += _rng.randf_range(2.6, 3.4)
+	_stats["lavender"] = lavender
+	# Cypresses: a file along the road's west side, and along the field
+	# edges -- the vertical notes of the register.
+	var cypress := 0
+	for i in range(2, _moor_road.size() - 2, 6):
+		var c: Vector3 = _moor_road[i]
+		if c.z > -86.0:
+			continue
+		var tan: Vector3 = (_moor_road[i + 1] - _moor_road[i - 1]).normalized()
+		var side := Vector3(-tan.z, 0.0, tan.x)
+		var p := c + side * (PATH_HALF + 1.4)
+		if _in_moor(p) and not _moor_blocked(p, 0.5):
+			_moor_place("cypress", "cypress_%d" % (i % 2), p, _rng.randf_range(1.2, 1.7), _rng.randf_range(0.0, TAU), 0.03, 4.0)
+			cypress += 1
+	for f in CozyPalette.LAVENDER_FIELDS:
+		var x := f.x - 1.6
+		var z := f.y - 1.4
+		while z < f.w + 1.4:
+			var p := Vector3(x, 0.0, z)
+			if _in_moor(p) and not _moor_blocked(p, 0.5):
+				_moor_place("cypress", "cypress_%d" % _rng.randi_range(0, 1), p, _rng.randf_range(1.1, 1.6), _rng.randf_range(0.0, TAU), 0.03, 4.0)
+				cypress += 1
+			z += 4.2
+	_stats["cypress"] = cypress
+	# Olives, walls, rocks, beehives: sprinkled where nothing else is.
+	var olives := 0
+	for i in 40:
+		if olives >= 7:
+			break
+		var p := Vector3(_rng.randf_range(HubRegion.MOOR_MIN.x + 3.0, HubRegion.MOOR_MAX.x - 3.0), 0.0, _rng.randf_range(HubRegion.MOOR_MIN.y + 3.0, HubRegion.MOOR_MAX.y - 3.0))
+		if not _in_moor(p) or _moor_blocked(p, 1.6) or _in_field(p, 2.0):
+			continue
+		_moor_place("olive", "olive_0", p, _rng.randf_range(1.1, 1.5), _rng.randf_range(0.0, TAU), 0.04, 2.5)
+		olives += 1
+	_stats["olive"] = olives
+	var walls := 0
+	for f in CozyPalette.LAVENDER_FIELDS:
+		# A dry-stone wall along the field's south edge, in 3 u segments.
+		var x := f.x + 1.5
+		while x < f.z - 1.5:
+			var p := Vector3(x, 0.0, f.w + 1.3)
+			if _in_moor(p) and not _moor_blocked(p, 0.4):
+				_moor_place("wall", "wall_0", p, 1.0, 0.0, 0.0, 1.0)
+				walls += 1
+			x += 3.0
+	_stats["wall"] = walls
+	var rocks := 0
+	for i in 60:
+		var p := Vector3(_rng.randf_range(HubRegion.MOOR_MIN.x + 1.0, HubRegion.MOOR_MAX.x - 1.0), 0.0, _rng.randf_range(HubRegion.MOOR_MIN.y + 1.0, HubRegion.MOOR_MAX.y - 1.0))
+		if not _in_moor(p) or _moor_blocked(p, 0.6) or _in_field(p, 0.5):
+			continue
+		_moor_place("palerock", "palerock_%d" % (i % 2), p, _rng.randf_range(0.8, 1.6), _rng.randf_range(0.0, TAU), 0.0, 1.0)
+		rocks += 1
+	_stats["palerock"] = rocks
+	# The hamlet: a well at the road's bend and a row of beehives beside it.
+	_moor_place("well", "well_0", MOOR_HAMLET + Vector3(-2.2, 0.0, 0.4), 1.0, 0.4, 0.0, 1.0)
+	for i in 4:
+		_moor_place("beehive", "beehive_0", MOOR_HAMLET + Vector3(2.6 + 1.1 * i, 0.0, -1.8 + 0.3 * (i % 2)), 1.0, 0.1 * i, 0.0, 1.0)
+	_stats["hamlet"] = 5
+
+func _in_field(p: Vector3, margin: float) -> bool:
+	for f in CozyPalette.LAVENDER_FIELDS:
+		if p.x > f.x - margin and p.x < f.z + margin and p.z > f.y - margin and p.z < f.w + margin:
+			return true
+	return false
+
+var _sails: MeshInstance3D = null
+const SAIL_RPM: float = 0.35
+func _windmill() -> void:
+	var tower_mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("windmill_0"))
+	var sails_mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("sails_0"))
+	if tower_mesh == null or sails_mesh == null:
+		push_error("CozyScatter: windmill GLBs missing")
+		return
+	var tower := MeshInstance3D.new()
+	tower.name = "Windmill"
+	tower.mesh = tower_mesh
+	tower.position = HubRegion.WINDMILL_AT
+	# Door (+z) toward the road: it comes from the south-west.
+	tower.rotation.y = 0.35
+	tower.material_override = CozyPalette.decor_material()
+	tower.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(tower)
+	_sails = MeshInstance3D.new()
+	_sails.name = "Sails"
+	_sails.mesh = sails_mesh
+	# The axle stub in windmill_0 ends at (0, H - 0.9, 1.75), H = 7.5.
+	_sails.position = Vector3(0.0, 6.6, 1.75)
+	_sails.material_override = CozyPalette.decor_material()
+	_sails.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	tower.add_child(_sails)
+	_stats["windmill"] = 1
+
 var _mother: MeshInstance3D = null
 func _mother_tree() -> void:
 	var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("mother_tree"))
@@ -290,6 +427,8 @@ func _forest_wall() -> void:
 	var near_kinds := ["tree_0_round", "tree_1_round", "tree_2_round", "tree_5_round", "tree_3_tall", "tree_4_conifer"]
 	var autumn_kinds := ["autumn_tree_0", "autumn_tree_1", "autumn_tree_2", "autumn_tree_0", "autumn_tree_3", "autumn_tree_1"]
 	var far_kind := "tree_6_far"
+	# v3: past the moor's edge the wall is cypress and olive.
+	var moor_kinds := ["cypress_0", "cypress_1", "olive_0", "cypress_0", "cypress_1", "tree_4_conifer"]
 	var placed_near := 0
 	var placed_far := 0
 	var box_area := (2.0 * WALL_OUTER) * (50.0 - WALL_FAR_Z)
@@ -304,12 +443,16 @@ func _forest_wall() -> void:
 		var yaw := _rng.randf_range(0.0, TAU)
 		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
 		var autumn := p.z < AUTUMN_WALL_Z
+		var moor := p.z < MOOR_WALL_Z
 		if near:
 			# Denser near band: every candidate lands, plus extra throws.
-			_add("wall_near", _wall_kind(p, autumn_kinds if autumn else near_kinds), _wall_sector(p), xform, 0.04, 3.0)
+			_add("wall_near", _wall_kind(p, moor_kinds if moor else (autumn_kinds if autumn else near_kinds)), _wall_sector(p), xform, 0.04, 3.0)
 			placed_near += 1
 		else:
-			_add("wall_far", ("autumn_tree_%d" % (4 + (i % 2))) if autumn else far_kind, _wall_sector(p), xform, 0.0, 3.0)
+			# The moor's FAR wall is the 72-tri far blob too, not a cypress:
+			# measured at spawn, 174 far cypresses at 140 tris were 24 k
+			# primitives for a silhouette the haze had dissolved at 87 %.
+			_add("wall_far", (("autumn_tree_%d" % (4 + (i % 2))) if (autumn and not moor) else far_kind), _wall_sector(p), xform, 0.0, 3.0)
 			placed_far += 1
 	# Second pass to thicken the near band to WALL_NEAR_PER_U2.
 	for i in int(box_area * (WALL_NEAR_PER_U2 - WALL_FAR_PER_U2)):
@@ -321,8 +464,23 @@ func _forest_wall() -> void:
 		var s := _rng.randf_range(0.9, 1.35)
 		var yaw := _rng.randf_range(0.0, TAU)
 		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
-		_add("wall_near", _wall_kind(p, autumn_kinds if p.z < AUTUMN_WALL_Z else near_kinds), _wall_sector(p), xform, 0.04, 3.0)
+		_add("wall_near", _wall_kind(p, moor_kinds if p.z < MOOR_WALL_Z else (autumn_kinds if p.z < AUTUMN_WALL_Z else near_kinds)), _wall_sector(p), xform, 0.04, 3.0)
 		placed_near += 1
+	# v3: the second hedge, between the hollow and the moor, either side of
+	# the moor corridor: autumn on the hollow side, cypress on the moor side.
+	var hedge2 := 0
+	for i in int(76.0 * 5.0 * HEDGE_PER_U2):
+		var p := Vector3(_rng.randf_range(-38.0, 38.0), 0.0, _rng.randf_range(-85.5, -80.5))
+		if HubRegion.contains(p) or _blocked(p, 0.8):
+			continue
+		if p.x > HubRegion.MOOR_CORRIDOR_MIN.x - 1.5 and p.x < HubRegion.MOOR_CORRIDOR_MAX.x + 1.5:
+			continue
+		var s := _rng.randf_range(0.85, 1.25)
+		var yaw := _rng.randf_range(0.0, TAU)
+		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
+		_add("wall_near", _wall_kind(p, moor_kinds if p.z < -83.0 else autumn_kinds), "hedge2", xform, 0.04, 3.0)
+		hedge2 += 1
+	_stats["hedge2"] = hedge2
 	# The HEDGE between the two zones: the 6 u band the region leaves
 	# outside itself east of the corridor. The wall passes above only
 	# sample it thinly (2 u clearance on each side eats 4 of the 6 u), so
@@ -344,6 +502,7 @@ func _forest_wall() -> void:
 
 const WALL_SECTORS: int = 6
 const AUTUMN_WALL_Z: float = -40.0
+const MOOR_WALL_Z: float = -84.0
 
 func _wall_sector(p: Vector3) -> String:
 	return "wall_%d" % posmod(int(floor(atan2(p.z, p.x) / TAU * WALL_SECTORS)), WALL_SECTORS)
@@ -434,6 +593,13 @@ func _paths() -> void:
 	_extrude_path(road, st, 1.3)
 	_autumn_road = road
 	built += 1
+	# v3: the road on to the moor -- round the east of the clearing, through
+	# the second corridor, past the well to the windmill's foot.
+	var moor_road := _catmull_rom(MOOR_ROAD, 7)
+	_path_lines.append(moor_road)
+	_extrude_path(moor_road, st, 2.1)
+	_moor_road = moor_road
+	built += 1
 	var mesh := st.commit()
 	var node := MeshInstance3D.new()
 	node.name = "Paths"
@@ -450,6 +616,12 @@ const AUTUMN_ROAD: Array[Vector3] = [
 	Vector3(-5.6, 0.0, -58.4),
 ]
 var _autumn_road: Array = []
+const MOOR_ROAD: Array[Vector3] = [
+	Vector3(4.0, 0.0, -68.0), Vector3(9.5, 0.0, -73.0), Vector3(12.0, 0.0, -82.0),
+	Vector3(12.5, 0.0, -90.0), Vector3(9.0, 0.0, -97.0), Vector3(4.0, 0.0, -103.0),
+	Vector3(-2.0, 0.0, -107.0),
+]
+var _moor_road: Array = []
 
 ## Ribbon extrusion shared by the Bezier paths and the autumn road: one
 ## normal per SAMPLE, shared edge vertices (the hatching fix of v1 cp 4).
@@ -618,13 +790,16 @@ func _hills() -> void:
 	while xforms.size() < HILL_COUNT and tries < HILL_COUNT * 20:
 		tries += 1
 		var a := rng.randf_range(0.0, TAU)
-		var r := rng.randf_range(78.0, 140.0)
+		var r := rng.randf_range(78.0, 176.0)
 		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
 		if p.z > 50.0:
 			continue
 		# v2: the hollow runs to z = -78; a hill's skirt (up to 20 u) must
 		# not sit on its floor.
 		if p.z < -55.0 and r < 126.0:
+			continue
+		# v3: the moor runs to z = -126.
+		if p.z < -95.0 and r < 168.0:
 			continue
 		var sx := rng.randf_range(22.0, 40.0)
 		var sy := rng.randf_range(7.0, 13.0)
@@ -815,6 +990,12 @@ func _hero_shadow() -> void:
 	set_process(true)
 
 func _process(delta: float) -> void:
+	if _sails != null:
+		var wind: float = 1.0
+		var w: Node = get_parent().get_node_or_null("CozyWeather")
+		if w != null and w.has_method("current_look"):
+			wind = float((w.call("current_look") as Dictionary).get("wind", 1.0))
+		_sails.rotation.z -= delta * SAIL_RPM * (0.6 + 0.4 * wind)
 	if _cloud_node != null:
 		# Whole layer drifts along +x; the AABB was grown to cover it.
 		_cloud_node.position.x = fmod(_cloud_node.position.x + CLOUD_DRIFT * delta + 30.0, 60.0) - 30.0
@@ -880,6 +1061,20 @@ func _flush() -> void:
 		var wind: float = batch["wind"]
 		node.material_override = CozyPalette.decor_material_wind(wind, float(batch["wind_height"])) if wind > 0.0 else CozyPalette.decor_material()
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# v3: DISTANCE CULLING on everything that is not the horizon. The
+		# moor sits 95+ u from the spawn camera, straight down the axis it
+		# looks along, so without this every lavender clump and cypress was
+		# rendered from the plaza (MEASURED with the P0 overlay: gpu 52 648
+		# -> 103 283 at spawn the moment the moor existed, for pixels the
+		# haze had already dissolved at 87 %). The wall sectors and the
+		# hedges stay: they ARE the horizon. Autumn props get a longer leash
+		# than the rest because the orange band behind the lakes is part of
+		# the spawn frame by design (v2).
+		var family: String = batch["family"]
+		if not family.begins_with("wall") and family != "hedge":
+			node.visibility_range_end = 95.0 if family.begins_with("autumn") or family in ["fern", "leafpile", "bigshroom", "log", "pumpkin", "lantern"] else 82.0
+			node.visibility_range_end_margin = 4.0
+			node.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 		add_child(node)
 		nodes += 1
 		instances += xforms.size()

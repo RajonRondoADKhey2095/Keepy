@@ -3232,16 +3232,47 @@ func _on_tapped_ground(point: Vector3) -> void:
 ## corridor gate, then on to the target. Nothing about same-zone taps or
 ## the plateau's own navigation changes.
 const CORRIDOR_GATE: Vector3 = Vector3(-28.0, 0.0, -38.5)
-var _via_target: Vector3 = Vector3.INF
+## v3: the second gate, between the hollow and the moor (corridor
+## x in [6, 18], z in [-86, -78] -- its midpoint).
+const MOOR_GATE: Vector3 = Vector3(12.0, 0.0, -82.0)
+const GATE_NEAR: float = 1.5
+## Remaining waypoints of a cross-zone walk, and the one being walked to.
+var _via_queue: Array[Vector3] = []
+var _via_expect: Vector3 = Vector3.INF
+
+## The gates a walk from zone `a` to zone `b` has to pass, in order.
+## Zones are 0 plateau, 1 hollow, 2 moor, and the map is a chain
+## 0 -- 1 -- 2, so the list is the gates between them, walked forward or
+## backward. Still not a planner; a fourth zone off the chain needs one.
+static func _gates_between(a: int, b: int) -> Array[Vector3]:
+	var chain: Array[Vector3] = [CORRIDOR_GATE, MOOR_GATE]
+	var out: Array[Vector3] = []
+	if a < b:
+		for i in range(a, b):
+			out.append(chain[i])
+	else:
+		for i in range(a - 1, b - 1, -1):
+			out.append(chain[i])
+	return out
 
 func _hop_via_corridor(point: Vector3) -> void:
 	var here: Vector3 = _keepy.global_position
 	var target: Vector3 = HubRegion.clamp_to(point)
-	if HubRegion.in_autumn(here) != HubRegion.in_autumn(target) and Vector2(here.x - CORRIDOR_GATE.x, here.z - CORRIDOR_GATE.z).length() > 1.5:
-		_via_target = target
-		_keepy.hop_to(CORRIDOR_GATE)
-		return
-	_via_target = Vector3.INF
+	_via_queue.clear()
+	_via_expect = Vector3.INF
+	var za: int = HubRegion.zone_of(here)
+	var zb: int = HubRegion.zone_of(target)
+	if za != zb:
+		var gates: Array[Vector3] = _gates_between(za, zb)
+		while not gates.is_empty() and Vector2(here.x - gates[0].x, here.z - gates[0].z).length() <= GATE_NEAR:
+			gates.pop_front()
+		if not gates.is_empty():
+			_via_expect = gates[0]
+			for i in range(1, gates.size()):
+				_via_queue.append(gates[i])
+			_via_queue.append(target)
+			_keepy.hop_to(gates[0])
+			return
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -3508,13 +3539,16 @@ func _try_board(toward: Vector3) -> bool:
 ## The chain ran out without reaching the hull. Drops the intent rather
 ## than leaving it armed: a later, unrelated landing must not board.
 func _on_keepy_idle() -> void:
-	if _via_target != Vector3.INF:
-		var onward: Vector3 = _via_target
-		_via_target = Vector3.INF
+	if _via_expect != Vector3.INF:
+		var reached: Vector3 = _via_expect
 		var here: Vector3 = _keepy.global_position
-		if Vector2(here.x - CORRIDOR_GATE.x, here.z - CORRIDOR_GATE.z).length() < 1.5:
+		_via_expect = Vector3.INF
+		if not _via_queue.is_empty() and Vector2(here.x - reached.x, here.z - reached.z).length() < GATE_NEAR:
+			var onward: Vector3 = _via_queue.pop_front()
+			_via_expect = onward if not _via_queue.is_empty() else Vector3.INF
 			_keepy.hop_to(onward)
 			return
+		_via_queue.clear()
 	_boarding = false
 	_climbing = false
 	_flying = false

@@ -472,8 +472,18 @@ const CORRIDOR_MAX: Vector2 = Vector2(-23.0, -33.0)
 ## candidate, so a tap inside the trunk lands on the nearest bark.
 const MOTHER_TREE_AT: Vector3 = Vector3(0.0, 0.0, -62.0)
 const MOTHER_TREE_TRUNK_RADIUS: float = 2.7
+## Carte-blanche v3 -- the third map beyond the hollow ("la Lande aux
+## Moulins"), joined to it by a corridor east of the Mother Tree's axis.
+## Same ground height again. The windmill's base is a hole like the trunk.
+const MOOR_MIN: Vector2 = Vector2(-38.0, -126.0)
+const MOOR_MAX: Vector2 = Vector2(38.0, -86.0)
+const MOOR_CORRIDOR_MIN: Vector2 = Vector2(6.0, -86.0)
+const MOOR_CORRIDOR_MAX: Vector2 = Vector2(18.0, -78.0)
+const WINDMILL_AT: Vector3 = Vector3(14.0, 0.0, -106.0)
+const WINDMILL_RADIUS: float = 2.1
 static var _holes: Array[Dictionary] = [
 	{"centre": MOTHER_TREE_AT, "radius": MOTHER_TREE_TRUNK_RADIUS},
+	{"centre": WINDMILL_AT, "radius": WINDMILL_RADIUS},
 ]
 
 static func _in_rect(flat: Vector3, lo: Vector2, hi: Vector2) -> bool:
@@ -488,6 +498,21 @@ static func in_autumn(point: Vector3) -> bool:
 	var flat := _flat(point)
 	return _in_rect(flat, AUTUMN_MIN, AUTUMN_MAX) or _in_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX)
 
+## True inside the moor or its corridor (painted zone, holes included).
+static func in_moor(point: Vector3) -> bool:
+	var flat := _flat(point)
+	return _in_rect(flat, MOOR_MIN, MOOR_MAX) or _in_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX)
+
+## Which zone a point paints as: 0 the plateau, 1 the autumn hollow, 2 the
+## moor. The corridors belong to the zone they lead INTO, so a walk that
+## crosses a corridor changes zone once, at the gate.
+static func zone_of(point: Vector3) -> int:
+	if in_moor(point):
+		return 2
+	if in_autumn(point):
+		return 1
+	return 0
+
 static func in_hole(point: Vector3) -> bool:
 	var flat := _flat(point)
 	for hole in _holes:
@@ -500,6 +525,8 @@ static func contains(point: Vector3) -> bool:
 	if in_hole(flat):
 		return false
 	if _in_rect(flat, AUTUMN_MIN, AUTUMN_MAX) or _in_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX):
+		return true
+	if _in_rect(flat, MOOR_MIN, MOOR_MAX) or _in_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX):
 		return true
 	if absf(flat.x) <= PLATEAU_HALF_EXTENT and absf(flat.z) <= PLATEAU_HALF_EXTENT:
 		return true
@@ -559,6 +586,8 @@ static func clamp_to(point: Vector3) -> Vector3:
 	candidates.append(lobe)
 	candidates.append(_clamp_rect(flat, AUTUMN_MIN, AUTUMN_MAX))
 	candidates.append(_clamp_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX))
+	candidates.append(_clamp_rect(flat, MOOR_MIN, MOOR_MAX))
+	candidates.append(_clamp_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX))
 	for hole in _holes:
 		var hc: Vector3 = hole["centre"]
 		var away := flat - hc
