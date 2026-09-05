@@ -59,7 +59,10 @@ const TREE_RECHARGE_S: float = 120.0
 
 ## v5: the ladybug (falls, scurries, flees -- caught or gone) and the golden
 ## acorn (the rare one, paced by the shake count).
-const KINDS: Array[StringName] = [&"acorn", &"hazelnut", &"ladybug", &"golden"]
+## V6: the truffle (dug up by the boar) and the flower (given by the fawn).
+## Additive: an older save simply reads 0 for them (_sanitise defaults
+## every kind), no schema bump.
+const KINDS: Array[StringName] = [&"acorn", &"hazelnut", &"ladybug", &"golden", &"truffle", &"flower"]
 const FLUSH_DELAY_S: float = 0.4
 const GROUND_CAP: int = 40
 
@@ -159,6 +162,18 @@ func tree_take(id: String) -> bool:
 	_mark()
 	return true
 
+## V6: one more of a named stat (the inhabitants' counters). Keys are
+## listed in STAT_KEYS so _sanitise keeps them; an unknown key is refused
+## rather than invented.
+const STAT_KEYS: Array[String] = ["climbs", "shakes", "picked", "cat_found", "boar_digs", "fawn_nuzzles", "beaver_trades"]
+
+func note(key: String) -> void:
+	if not STAT_KEYS.has(key):
+		push_error("WorldSave.note: unknown stat %s" % key)
+		return
+	_data["stats"][key] = int(_data["stats"].get(key, 0)) + 1
+	_mark()
+
 func note_climb() -> void:
 	_data["stats"]["climbs"] = int(_data["stats"].get("climbs", 0)) + 1
 	_mark()
@@ -202,7 +217,7 @@ func _defaults() -> Dictionary:
 		"resources": res,
 		"trees": {},
 		"ground": [],
-		"stats": {"climbs": 0, "shakes": 0, "picked": 0},
+		"stats": {"climbs": 0, "shakes": 0, "picked": 0, "cat_found": 0, "boar_digs": 0, "fawn_nuzzles": 0, "beaver_trades": 0},
 		# v5: RESERVED for the objects a player will one day PLACE (plants,
 		# craft): a stable id for each, generated from this counter, and
 		# the list itself. Nothing reads or writes them tonight; they exist
@@ -316,7 +331,7 @@ func _sanitise(raw: Dictionary) -> Dictionary:
 				break
 	var stats: Variant = raw.get("stats", {})
 	if stats is Dictionary:
-		for key in ["climbs", "shakes", "picked"]:
+		for key in STAT_KEYS:
 			out["stats"][key] = maxi(_as_int(stats.get(key, 0), 0), 0)
 	out["saved_at"] = maxi(_as_int(raw.get("saved_at", 0), 0), 0)
 	# v5 reserved fields: a counter that never goes below 1, a list that
