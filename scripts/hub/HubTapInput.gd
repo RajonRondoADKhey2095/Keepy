@@ -169,6 +169,11 @@ signal tapped_vehicle(point: Vector3)
 ## to tapped_ground -- with the tree's own foot as the point when the ray
 ## hit its crown -- where HubWorld reads it BY STATE: shake, or come down.
 signal tapped_tree(point: Vector3, index: int)
+## V6: a tap on one of the new inhabitants (`kind` names which: &"boar"
+## ...). Withdrawn by each animal's own module for the length of its ride
+## (the boat's terms), so a tap meanwhile falls through to tapped_ground
+## and reaches the state branch that owns it.
+signal tapped_critter(point: Vector3, kind: StringName, index: int)
 
 ## The three nodes this needs, as scene-authored paths.
 ##
@@ -206,6 +211,7 @@ signal tapped_tree(point: Vector3, index: int)
 ## Carte-blanche v4: the climbable trees. Optional; withdraws the one he
 ## is on through its node (HubTrees.accepts_tap), never through a flag.
 @export var trees_path: NodePath
+@export var critters_path: NodePath
 
 var camera: Camera3D = null
 var container: SubViewportContainer = null
@@ -214,6 +220,7 @@ var mooring: BoatMooring = null
 var zipline: ZiplineDoor = null
 var transport: HubTransport = null
 var trees: HubTrees = null
+var critters: HubCritters = null
 
 ## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
@@ -289,6 +296,7 @@ func _ready() -> void:
 	zipline = get_node_or_null(zipline_path) as ZiplineDoor
 	transport = get_node_or_null(transport_path) as HubTransport
 	trees = get_node_or_null(trees_path) as HubTrees
+	critters = get_node_or_null(critters_path) as HubCritters
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
@@ -419,6 +427,15 @@ func _handle_point(screen_point: Vector2) -> void:
 				tapped_ground.emit(trees.position_of(tree))
 			else:
 				tapped_tree.emit(destination, tree)
+			return
+	# THE INHABITANTS (V6), on `aim` like everything else, each module
+	# withdrawing on its own terms for the length of its ride. Asked after
+	# the trees: the boar rests in the hollow, metres from any crown, so
+	# the order between them cannot decide anything.
+	if critters != null:
+		var critter_hit: Dictionary = critters.accepts_tap(aim)
+		if not critter_hit.is_empty():
+			tapped_critter.emit(destination, critter_hit["kind"], int(critter_hit["index"]))
 			return
 	# THE OWL, asked after the boat and before the ladder, on the same
 	# world-unit terms both of them use. The order between the owl and the

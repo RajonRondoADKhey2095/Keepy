@@ -1043,6 +1043,11 @@ func _add(family: String, mesh_name: String, cell: String, xform: Transform3D, w
 	if family in CLIMB_FAMILIES:
 		_climb_trees.append({"at": Vector3(xform.origin.x, 0.0, xform.origin.z), "xform": xform, "glb": mesh_name,
 			"key": key.replace("|", "_"), "index": _batches[key]["xforms"].size() - 1})
+	if family in PUBLISHED_FAMILIES:
+		if not _published.has(family):
+			_published[family] = []
+		_published[family].append({"at": Vector3(xform.origin.x, 0.0, xform.origin.z), "xform": xform, "glb": mesh_name,
+			"key": key.replace("|", "_"), "index": _batches[key]["xforms"].size() - 1})
 
 ## v5 -- the scatter's trees INSIDE the region (the hollow's autumn trees,
 ## the moor's olives), published as HubBuilder.cozy_trees() publishes the
@@ -1057,6 +1062,20 @@ func climb_trees() -> Array:
 		if not t.has("node"):
 			t["node"] = get_node_or_null(String(t["key"]))
 	return _climb_trees
+
+## V6 -- other families an inhabitant may want to NAME an instance of (the
+## boar digs a leaf pile, the cat hides in one), published on the trees'
+## exact shape: transform, glb, batch key and slot, node resolved lazily.
+## Never re-derived by a reader.
+const PUBLISHED_FAMILIES: Array[String] = ["leafpile", "bigshroom", "log", "pumpkin", "palerock"]
+var _published: Dictionary = {}
+
+func instances(family: String) -> Array:
+	var list: Array = _published.get(family, [])
+	for t in list:
+		if not t.has("node"):
+			t["node"] = get_node_or_null(String(t["key"]))
+	return list
 
 func _flush() -> void:
 	var nodes := 0
