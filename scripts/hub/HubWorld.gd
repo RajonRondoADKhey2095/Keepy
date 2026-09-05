@@ -90,6 +90,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _zipline_door: ZiplineDoor = $ZiplineDoor
 @onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
 @onready var _campfire: HubCampfire = $WorldViewport/SubViewport/World/Campfires
+@onready var _guest_badge: Control = $GuestBadge
 
 ## The 3D root, and the ONE reason this path is held: the impact splash is
 ## parented HERE and never under Props.
@@ -645,6 +646,14 @@ func _ready() -> void:
 	# a UI screen letterboxed at Chased's 9:16 would only gain black bars.
 	SafeArea.set_default()
 	SafeArea.fill_screen()
+
+	# Guest-preview bypass (5 sept 2026): LoginScreen.gd is the only place
+	# that ever calls Auth.enter_guest_mode(), and only on a throwaway
+	# *.vercel.app preview where Google sign-in is known broken. This badge
+	# is the only visible trace of that state -- nothing here changes what
+	# Leaderboard.gd / Quizz.gd / BattleStats.gd send, since those still
+	# gate on Auth.is_signed_in(), untouched by guest mode.
+	_guest_badge.visible = Auth.is_guest_mode()
 
 	_apply_swamp_palette()
 
