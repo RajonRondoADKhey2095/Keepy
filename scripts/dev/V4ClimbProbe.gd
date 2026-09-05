@@ -12,7 +12,9 @@ extends Node
 ##   --at=X,Z       where Keepy starts (default 0,0)
 ##   --tree=I       which tree to tap (default 0)
 ##   --exit=F       frame at which a ground tap is made (default 0 = none)
-##   --exit_at=X,Z  where that tap lands (default: 3 u south of the foot)
+##   --exit_at=X,Z  where that tap lands (default: 3 u south of the foot);
+##                  "nut" aims at the first nut resting on the ground
+##   --shake=F      frame at which the seated tree is tapped (a shake)
 ##   --shots=a,b,c  frames to capture (needs a real driver)
 ##   --out=DIR      capture directory (default /tmp)
 ##   --frames=N     total frames (default 600)
@@ -38,6 +40,11 @@ var _max_y: float = 0.0
 var _seat_samples: Array = []
 var _phases_seen: Dictionary = {}
 var _exit_phase: int = -1
+var _shake_frame: int = 0
+var _exit_nut: bool = false
+var _stock_before: int = -1
+var _acorns_before: int = 0
+var _hazel_before: int = 0
 
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
@@ -48,9 +55,13 @@ func _ready() -> void:
 			_tree = int(arg.substr(7))
 		elif arg.begins_with("--exit="):
 			_exit_frame = int(arg.substr(7))
+		elif arg == "--exit_at=nut":
+			_exit_nut = true
 		elif arg.begins_with("--exit_at="):
 			var p := arg.substr(10).split(",")
 			_exit_at = Vector3(float(p[0]), 0.0, float(p[1]))
+		elif arg.begins_with("--shake="):
+			_shake_frame = int(arg.substr(8))
 		elif arg.begins_with("--shots="):
 			for f in arg.substr(8).split(","):
 				_shots.append(int(f))
@@ -58,6 +69,8 @@ func _ready() -> void:
 			_out = arg.substr(6)
 		elif arg.begins_with("--frames="):
 			_frames_total = int(arg.substr(9))
+	# A known save: this runs in the sandbox's own user://, never a device.
+	WorldSave.reset()
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(_hub)
 	_keepy = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
@@ -78,8 +91,21 @@ func _process(_delta: float) -> void:
 		var at: Vector3 = _trees.call("position_of", _tree)
 		print("TREE_TAP tree %d at %s foot %s" % [_tree, at, _trees.call("foot_point", _tree)])
 		_hub.get_node("TapInput").emit_signal("tapped_tree", at)
+	if _shake_frame > 0 and _frames == _shake_frame:
+		_stock_before = WorldSave.tree_stock(_trees.call("tree_id", _tree))
+		_acorns_before = WorldSave.resource(&"acorn")
+		_hazel_before = WorldSave.resource(&"hazelnut")
+		print("SHAKE_TAP at frame %d (phase %d, stock %d)" % [_frames, _keepy.call("tree_phase"), _stock_before])
+		_hub.get_node("TapInput").emit_signal("tapped_ground", _trees.call("position_of", _tree))
 	if _exit_frame > 0 and _frames == _exit_frame:
 		var target: Vector3 = _exit_at
+		if _exit_nut:
+			var nuts: Node = _hub.call("nuts")
+			for nut in nuts._nuts:
+				if nut["resting"]:
+					target = Vector3(nut["pos"].x, 0.0, nut["pos"].z)
+					break
+			print("EXIT_AT_NUT resting=%d airborne=%d target=%s" % [nuts.call("resting_count"), nuts.call("airborne_count"), target])
 		if target == Vector3.INF:
 			var foot: Vector3 = _trees.call("foot_point", _tree)
 			target = foot + Vector3(0.0, 0.0, 3.0)
@@ -148,6 +174,17 @@ func _finish() -> void:
 		_check("reached_exit_tap", d < 0.6, "%.2f u from %s" % [d, _exit_at])
 	else:
 		_check("still_seated_at_end", _keepy.call("is_seated_on_tree"))
+	if _shake_frame > 0:
+		var nuts: Node = _hub.call("nuts")
+		var id: String = _trees.call("tree_id", _tree)
+		_check("shake_dropped_two", int(nuts.dropped_total) == 2, str(nuts.dropped_total))
+		_check("shake_took_stock", WorldSave.tree_stock(id) == _stock_before - 1, "%d -> %d" % [_stock_before, WorldSave.tree_stock(id)])
+		_check("nuts_settled", int(nuts.call("airborne_count")) == 0, "airborne %d" % nuts.call("airborne_count"))
+		if _exit_nut:
+			_check("nut_picked", int(nuts.picked_total) >= 1, str(nuts.picked_total))
+			var gained: int = WorldSave.resource(&"acorn") - _acorns_before + WorldSave.resource(&"hazelnut") - _hazel_before
+			_check("counter_grew", gained >= 1, "gained %d" % gained)
+			_check("ground_saved", WorldSave.ground_nuts().size() == int(nuts.call("resting_count")), "%d saved vs %d resting" % [WorldSave.ground_nuts().size(), nuts.call("resting_count")])
 	print("V4ClimbProbe: %d failed" % _fails.size())
 	for f in _fails:
 		print("  FAILED: " + f)

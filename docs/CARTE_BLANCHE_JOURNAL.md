@@ -430,3 +430,23 @@ Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
 **Métriques** (`gpu` de l'overlay, soleil) : spawn 65 005 → **67 649** (+2,6 k : les deux arbres flanquants, 794 tri chacun, partiellement en cadre) ; au pied de l'arbre `(6, 0)` : 59 456. `index.pck` 31 405 712 → **31 425 472**.
 
 **Non fait, assumé** : le balancement du coussin sous le vent est reproduit pour le siège (`seat_sway`, même somme que le shader, `TIME` ≈ ticks) mais non prouvé au pixel ; pas de son ; aucun PNJ ne regarde grimper.
+
+## Checkpoint P2 — secouer et récolter (09:20 UTC)
+
+**La boucle** ACTION → ANIMATION → FEEDBACK → RÉCOMPENSE, telle qu'elle est câblée :
+- **Action** : assis dans la couronne, un tap SUR le même arbre (il s'est retiré du canal `tapped_tree`, le tap retombe au sol et `HubWorld` le lit par état) = secouer. Un tap ailleurs = descendre.
+- **Animation** : `HubTrees.shake()` — l'arbre ENTIER oscille autour de son pied (3,6° crête, 4,2 Hz, amorti en 0,9 s, axe perpendiculaire au flanc grimpé pour que la caméra voie la cime hocher d'avant en arrière). Keepy est PORTÉ par l'oscillation (`to_global` du siège) et s'y ajoute une compression-détente amortie (`bounce_on_tree`). Les fruits suspendus oscillent avec l'arbre, étant ses enfants.
+- **Feedback** : 0,16 s après le début, deux fruits quittent la couronne (`HubNuts.drop_from_tree`, point aléatoire de l'anneau, lancés vers l'extérieur). **Pas de moteur physique** (le plateau n'en a pas ; en ajouter un pour six glands serait une seconde simulation) : intégrateur maison — gravité 8,6, sol y = 0, **deux rebonds** amortis (0,34), roulé à décroissance exponentielle, repos quand la vitesse passe sous 0,12 u/s ; un gland se couche sur le flanc, une noisette reste debout. Temps de chute + rebonds + roulé mesuré : **~2,2 s** (la sonde qui visait un fruit 2,0 s après la secousse n'en a trouvé aucun au repos — corrigé dans la sonde, pas dans le jeu).
+- **Récompense** : marcher à moins de 0,85 u d'un fruit au repos (pieds à moins de 0,45 u du sol, hors ride) le ramasse — il vole vers la poitrine en rétrécissant (0,28 s), PUIS le compteur monte et le HUD punche. Un fruit, un temps.
+
+**Lecture du stock sans UI** : `TREE_CAPACITY` (3) fruits **suspendus sous les lobes** de chaque couronne (enfants du nœud, `refresh_stock` toutes les 2 s depuis `WorldSave.tree_stock` — le rechargement mural se VOIT réapparaître — et juste après une secousse). Une secousse consomme une unité de stock et lâche DEUX fruits (deux glands et une noisette par arbre, la noisette tournant avec l'index de l'arbre). **Arbre vide** : il oscille quand même, à 45 %, et rien ne tombe — c'est le feedback de « vide », en plus de la couronne nue.
+
+**Persistance** : seuls les fruits AU REPOS sont sauvés (`WorldSave.set_ground_nuts`, à chaque changement de repos, plafond 40) et respawnés au boot (`HubNuts.setup`) ; un fruit en l'air au rechargement n'existe pas — c'est le stock de l'arbre, déjà décrémenté, qui porte ce que le joueur a gagné. `reset()` vide aussi les fruits au sol.
+
+**Prouvé** (`V4ClimbProbe --shake=300 --exit=480 --exit_at=nut`, headless) : 2 fruits lâchés, stock 3 → 2, 0 en l'air à la fin, descente vers le premier fruit au repos, **1 ramassé, compteur +1, liste sauvée = fruits au repos** (2 sauvés / 2 au repos avant le ramassage). Captures xvfb (`shake_strip.png`, scratchpad) : fruits suspendus, arbre et Keepy inclinés ensemble, gland en chute, deux glands au repos avec 2 suspendus restants, Keepy en marche vers eux.
+
+**Régressions, rejouées après P2** (`CozyCapture`, headless, `--fixed-fps 60`) : barque `--ride=auto` (y = 0,14, `is_riding` de 240 à 360, débarque), montgolfière `--balloon=0` (`is_on_carrier`, croisière 4,21, descente à 450), Sautillon `--ball --walk=10,-3` (y 1,02 à l'arrêt, 1,8 en vol, ballon sous lui) — identiques aux traces v3. `V4SaveProbe` 39/39.
+
+**Métriques** (`gpu`, spawn, soleil) : P1 67 649 → **67 873** (+224 : 15 fruits suspendus, 20-56 tri chacun, partiellement en cadre). `index.pck` 31 425 472 → **31 433 376**.
+
+**Non fait, assumé** : pas de secousse depuis le SOL (le brief disait « depuis le sol OU depuis le houppier » ; la secousse est la récompense de la montée, ce qui fait de P1 le cœur de la boucle — un tap sur l'arbre depuis le sol est déjà pris par « grimper », et un second sens pour le même tap aurait exigé un état d'attente au pied) ; pas de son ; aucun PNJ ne réagit.

@@ -93,6 +93,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _transport: HubTransport = $WorldViewport/SubViewport/World/Transport
 ## v4: the climbable trees.
 @onready var _trees: HubTrees = $WorldViewport/SubViewport/World/Trees
+@onready var _nuts: HubNuts = $WorldViewport/SubViewport/World/Nuts
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
 ## v4: the resource counter and the preview-only save reset.
 @onready var _world_hud: WorldHud = $WorldHud
@@ -3803,6 +3804,8 @@ const TREE_ARRIVE: float = 1.0
 
 func _setup_trees() -> void:
 	_trees.setup(_keepy, _weather)
+	_nuts.setup(_keepy)
+	_trees.shake_finished.connect(func(_i): _trees.refresh_stock(_i))
 	_tap.tapped_tree.connect(_on_tapped_tree)
 	_keepy.tree_dismounted.connect(_on_tree_dismounted)
 
@@ -3857,12 +3860,36 @@ func _try_climb_tree(position: Vector3) -> bool:
 func _on_tree_dismounted() -> void:
 	_trees.release()
 
-## A shake from the seat (v4 P2 fills this in: the nuts).
+## A shake from the seat. ACTION -> ANIMATION -> FEEDBACK -> REWARD: the
+## wreath wobbles and he bounces with it (carried), the nuts leave the
+## lobes a beat later, they fall, bounce and roll, and picking them up is
+## the reward the descent leads to. One unit of stock is TWO nuts (the
+## climb has to pay); a spent tree still wobbles -- smaller, and nothing
+## falls: that IS the feedback that it is empty, on top of the bare
+## wreath.
+const NUTS_PER_SHAKE: int = 2
+const NUT_RELEASE_DELAY_S: float = 0.16
+
 func _shake_tree() -> void:
 	var index: int = _trees.occupied()
 	if index < 0 or _trees.is_shaking(index):
 		return
+	var id: String = _trees.tree_id(index)
+	if WorldSave.tree_stock(id) <= 0:
+		_trees.shake(index, 0.45)
+		return
+	var kinds: Array = _trees.kinds_for_shake(index, NUTS_PER_SHAKE)
+	if not WorldSave.tree_take(id):
+		return
 	_trees.shake(index)
+	_trees.refresh_stock(index)
+	get_tree().create_timer(NUT_RELEASE_DELAY_S).timeout.connect(func():
+		if is_instance_valid(_nuts):
+			_nuts.drop_from_tree(_trees.node(index), kinds))
+
+## For probes.
+func nuts() -> HubNuts:
+	return _nuts
 
 ## ---- v3 P0: performance overlay ---------------------------------------
 ## Same gate as the weather row and the guest bypass: an untrusted preview

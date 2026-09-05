@@ -78,6 +78,15 @@ const BIRD_ORBIT_RATE: float = 1.05
 const BIRD_FLAP_HZ: float = 4.5
 const BIRD_COLOURS: Array = [Color(0.36, 0.55, 0.92), Color(0.95, 0.72, 0.30), Color(0.92, 0.45, 0.50)]
 var _birds: Array[Node3D] = []
+## The nuts HANGING in each wreath: one per unit of stock, so a full tree
+## and a spent one are told apart with no UI. Children of the tree node,
+## so they wobble with it. Refreshed from WorldSave on a slow clock (the
+## recharge is wall-clock, lazy) and right after a shake.
+var _hanging: Array = []
+var _stock_clock: float = 0.0
+const HANG_RING_R: float = 1.22
+const HANG_Y: float = 2.62
+const HANG_REFRESH_S: float = 2.0
 var _bird_t: float = 0.0
 var _bird_scale: float = 0.0
 
@@ -93,6 +102,49 @@ func _ready() -> void:
 	for i in TREES.size():
 		_build(i)
 	_build_birds()
+	for i in TREES.size():
+		_build_hanging(i)
+
+## The kind of nut hanging slot `slot` of tree `index` gives: two acorns
+## and a hazelnut per tree, the odd slot rotating with the tree.
+func nut_kind(index: int, slot: int) -> StringName:
+	return &"hazelnut" if (index + slot) % 3 == 1 else &"acorn"
+
+func _build_hanging(index: int) -> void:
+	var slots: Array = []
+	var tree: Node3D = _nodes[index]
+	for k in WorldSave.TREE_CAPACITY:
+		var kind: StringName = nut_kind(index, k)
+		var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("hazelnut_0" if kind == &"hazelnut" else "acorn_0"))
+		var node := MeshInstance3D.new()
+		node.name = "Hang%d" % k
+		node.mesh = mesh
+		node.material_override = CozyPalette.decor_material()
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var a: float = TAU * (float(k) + 0.5 + 0.37 * float(index)) / float(WorldSave.TREE_CAPACITY)
+		node.position = Vector3(cos(a) * HANG_RING_R, HANG_Y + 0.08 * float(k % 2), sin(a) * HANG_RING_R)
+		# Hanging: upside down, the cap at the top against the leaves.
+		node.rotation = Vector3(PI, a, 0.0)
+		node.scale = Vector3.ONE * 0.9
+		tree.add_child(node)
+		slots.append(node)
+	_hanging.append(slots)
+	refresh_stock(index)
+
+## Shows as many hanging nuts as the tree holds right now.
+func refresh_stock(index: int) -> void:
+	var stock: int = WorldSave.tree_stock(tree_id(index))
+	var slots: Array = _hanging[index]
+	for k in slots.size():
+		slots[k].visible = k < stock
+
+## The kinds a shake drops: the topmost `count` hanging slots' kinds.
+func kinds_for_shake(index: int, count: int) -> Array:
+	var stock: int = WorldSave.tree_stock(tree_id(index))
+	var out: Array = []
+	for k in range(stock - 1, maxi(stock - 1 - count, -1), -1):
+		out.append(nut_kind(index, k))
+	return out
 
 func _build_birds() -> void:
 	for i in BIRD_COUNT:
@@ -179,6 +231,7 @@ func _build(index: int) -> void:
 	_nodes.append(node)
 	_faces.append(Vector3(1, 0, 0).rotated(Vector3.UP, -yaw))
 	_shake_t.append(-1.0)
+	_shake_strength.append(1.0)
 	_shake_axis.append(Vector3.RIGHT)
 	# Contract check against the mesh actually imported.
 	var aabb: AABB = mesh.get_aabb()
@@ -275,10 +328,13 @@ func release() -> void:
 ## Starts the wobble on tree `index`. The tilt axis is horizontal and
 ## perpendicular to the climbed face, so from the camera the wreath is
 ## seen nodding toward and away, the reading with the most pixels.
-func shake(index: int) -> void:
+var _shake_strength: Array[float] = []
+
+func shake(index: int, strength: float = 1.0) -> void:
 	if index < 0 or index >= _nodes.size():
 		return
 	_shake_t[index] = 0.0
+	_shake_strength[index] = strength
 	var f: Vector3 = _nodes[index].global_transform.basis * _faces[index]
 	_shake_axis[index] = Vector3(f.z, 0.0, -f.x).normalized()
 	if index == _occupied and _keepy != null:
@@ -305,13 +361,18 @@ func _process(delta: float) -> void:
 				node.rotation = Vector3(0.0, yaw, 0.0)
 				shake_finished.emit(i)
 			else:
-				var tilt: float = deg_to_rad(SHAKE_TILT_DEG) * sin(u * TAU * SHAKE_HZ * SHAKE_S) * pow(1.0 - u, 1.4)
+				var tilt: float = deg_to_rad(SHAKE_TILT_DEG) * _shake_strength[i] * sin(u * TAU * SHAKE_HZ * SHAKE_S) * pow(1.0 - u, 1.4)
 				var basis := Basis(Vector3.UP, yaw).rotated(_shake_axis[i], tilt)
 				node.transform.basis = basis
 	# Carried AFTER the carrier, in the same call.
 	if _occupied >= 0 and _keepy != null:
 		_keepy.follow_tree(delta, seat_sway(_occupied))
 	_update_birds(delta)
+	_stock_clock += delta
+	if _stock_clock >= HANG_REFRESH_S:
+		_stock_clock = 0.0
+		for i in _nodes.size():
+			refresh_stock(i)
 
 ## The wreath's wind sway at the seat, in the tree's LOCAL space -- the
 ## same sum the decor shader adds to every vertex (cozy_decor.gdshader),
