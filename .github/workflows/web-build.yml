@@ -2,7 +2,10 @@ name: Web build & deploy
 
 on:
   push:
-    branches: [main, staging]
+    # claude/carte-blanche-cozy-02o8dm: throwaway visual-quality branch (never
+    # merged). It deploys to its own preview alias so it can be played on
+    # device without touching keepy-staging or keepy-ten.
+    branches: [main, staging, claude/carte-blanche-cozy-02o8dm]
   workflow_dispatch: {}
 
 concurrency:
@@ -168,3 +171,19 @@ jobs:
           # ID but resolves the team directly (same form `vercel deploy`
           # already uses via VERCEL_ORG_ID), without that /user call.
           vercel alias set "$DEPLOY_URL" keepy-staging.vercel.app -T "$VERCEL_ORG_ID" --token="$VERCEL_TOKEN"
+
+      - name: "Deploy to Vercel [PREVIEW -- claude/carte-blanche-cozy-02o8dm]"
+        if: github.ref_name == 'claude/carte-blanche-cozy-02o8dm'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          # Same mechanism as staging: a plain preview deploy on a throwaway
+          # URL, then a stable alias of its own (keepy-cozy) so the preview
+          # URL never changes between pushes. Neither keepy-staging nor
+          # keepy-ten is touched by this step.
+          DEPLOY_URL=$(vercel deploy build/web --yes --token="$VERCEL_TOKEN")
+          echo "Preview deployment: $DEPLOY_URL"
+          vercel alias set "$DEPLOY_URL" keepy-cozy.vercel.app -T "$VERCEL_ORG_ID" --token="$VERCEL_TOKEN"
