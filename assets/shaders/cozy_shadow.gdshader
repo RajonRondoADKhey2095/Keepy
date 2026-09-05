@@ -6,7 +6,7 @@ render_mode unshaded, blend_mix, depth_draw_never, cull_back, shadows_disabled;
 // a tree, a rock or a bush read as STANDING ON the ground rather than
 // floating on a flat colour. No light, no shadow map, one alpha quad.
 
-uniform vec4 colour : source_color = vec4(0.16, 0.30, 0.12, 0.34);
+uniform vec4 colour : source_color = vec4(0.14, 0.28, 0.10, 0.40);
 uniform float edge = 0.55;
 
 void fragment() {

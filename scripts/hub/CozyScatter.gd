@@ -66,6 +66,9 @@ func _ready() -> void:
 	_flush()
 	_blob_shadows()
 	_hills()
+	_clouds()
+	_butterflies()
+	_hero_shadow()
 
 ## Swaps the flat ground material for the cozy ground shader. The Ground
 ## node is a sibling owned by HubWorld.tscn; only its material changes.
@@ -222,10 +225,13 @@ func _wall_kind(p: Vector3, kinds: Array) -> String:
 ## offset a little away from the sun so they read as cast rather than
 ## painted.
 const SHADOW_RADIUS: Dictionary = {
-	&"tree": 1.25, &"bush": 0.80, &"rock": 0.75, &"stump": 0.55, &"landmark": 1.7,
+	&"tree": 1.3, &"bush": 1.0, &"rock": 0.9, &"stump": 0.7, &"landmark": 1.8,
 }
 const SHADOW_Y: float = 0.02
-const SHADOW_OFFSET: Vector2 = Vector2(-0.22, -0.28)
+## Mostly UNDER the prop, nudged toward the camera (+z): a disc pushed
+## away from the sun lands behind a bush from this camera and is never
+## seen (measured on capture 6, where only the trees showed one).
+const SHADOW_OFFSET: Vector2 = Vector2(-0.06, 0.12)
 
 var _shadow_xforms: Array[Transform3D] = []
 
@@ -253,8 +259,8 @@ func _blob_shadows() -> void:
 		match family:
 			"wall_near": radius = 1.25
 			"wall_far": radius = 1.25
-			"bush": radius = 0.8
-			"rock": radius = 0.75
+			"bush": radius = 1.0
+			"rock": radius = 0.9
 			_: continue
 		for xform in batch["xforms"]:
 			var t: Transform3D = xform
@@ -327,6 +333,151 @@ func _hills() -> void:
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(node)
 	_stats["hills"] = xforms.size()
+
+## Clouds: a few puffs of squashed spheres high and far, drifting slowly
+## in _process. They fill the sliver of sky the camera pitch leaves at
+## the top of the frame. Not hazed (see CozyPalette.cloud_material).
+const CLOUD_COUNT: int = 9
+const CLOUD_DRIFT: float = 0.6
+var _cloud_node: MultiMeshInstance3D = null
+
+func _clouds() -> void:
+	var sphere := SphereMesh.new()
+	sphere.radius = 1.0
+	sphere.height = 2.0
+	sphere.radial_segments = 12
+	sphere.rings = 6
+	var multi := MultiMesh.new()
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = sphere
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 13
+	var xforms: Array[Transform3D] = []
+	var tries := 0
+	while xforms.size() < CLOUD_COUNT * 3 and tries < 400:
+		tries += 1
+		var a := rng.randf_range(0.0, TAU)
+		var r := rng.randf_range(150.0, 200.0)
+		# LOW: the camera pitch leaves ~2.5 degrees of sky above the
+		# horizon, so a cloud has to sit almost on it (y ~ 10-18 at 150+ u)
+		# to be in frame at all -- measured, the first pass at y 30-48 was
+		# entirely above the frame.
+		var centre := Vector3(cos(a) * r, rng.randf_range(9.0, 17.0), sin(a) * r)
+		if centre.z > 30.0:
+			continue
+		# Three lobes per cloud: one wide, two smaller riding on it.
+		var w := rng.randf_range(14.0, 24.0)
+		xforms.append(Transform3D(Basis().scaled(Vector3(w, w * 0.32, w * 0.55)), centre))
+		xforms.append(Transform3D(Basis().scaled(Vector3(w * 0.55, w * 0.30, w * 0.4)), centre + Vector3(w * 0.35, w * 0.12, 0.0)))
+		xforms.append(Transform3D(Basis().scaled(Vector3(w * 0.45, w * 0.26, w * 0.38)), centre + Vector3(-w * 0.3, w * 0.10, w * 0.1)))
+	multi.instance_count = xforms.size()
+	var bounds := AABB()
+	for i in xforms.size():
+		multi.set_instance_transform(i, xforms[i])
+		var box := xforms[i] * sphere.get_aabb()
+		bounds = box if i == 0 else bounds.merge(box)
+	multi.custom_aabb = bounds.grow(40.0)
+	_cloud_node = MultiMeshInstance3D.new()
+	_cloud_node.name = "Clouds"
+	_cloud_node.multimesh = multi
+	_cloud_node.material_override = CozyPalette.cloud_material()
+	_cloud_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_cloud_node)
+	_stats["clouds"] = xforms.size() / 3
+
+## Butterflies: the "small permanent animation" of the brief. One
+## MultiMesh per colour, every flap and circuit computed in the vertex
+## shader from per-instance custom data (phase, radius, direction, flap
+## rate). Centres are drawn near the flowers this file placed, so they
+## hover where a player expects them.
+const BUTTERFLY_COUNT: int = 21
+
+func _butterflies() -> void:
+	var centres: Array[Vector3] = []
+	for key in _batch_order:
+		var batch: Dictionary = _batches[key]
+		if batch["family"] != "flower":
+			continue
+		for xform in batch["xforms"]:
+			centres.append((xform as Transform3D).origin)
+	if centres.is_empty():
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 11
+	var per_kind: Array = [[], [], []]
+	for i in BUTTERFLY_COUNT:
+		var c: Vector3 = centres[rng.randi_range(0, centres.size() - 1)]
+		var at := Vector3(c.x + rng.randf_range(-1.0, 1.0), rng.randf_range(0.7, 1.4), c.z + rng.randf_range(-1.0, 1.0))
+		var custom := Color(rng.randf(), rng.randf_range(0.5, 1.6), rng.randf(), rng.randf())
+		per_kind[i % 3].append([at, custom])
+	var placed := 0
+	for kind in 3:
+		var items: Array = per_kind[kind]
+		if items.is_empty():
+			continue
+		var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("butterfly_%d" % kind))
+		if mesh == null:
+			continue
+		var multi := MultiMesh.new()
+		multi.transform_format = MultiMesh.TRANSFORM_3D
+		# use_colors too: without it COLOR reads black in the shader, and
+		# the butterflies drew as dark specks (measured on capture 6).
+		multi.use_colors = true
+		multi.use_custom_data = true
+		multi.mesh = mesh
+		multi.instance_count = items.size()
+		var bounds := AABB()
+		for i in items.size():
+			var at: Vector3 = items[i][0]
+			var xform := Transform3D(Basis(), at)
+			multi.set_instance_transform(i, xform)
+			multi.set_instance_color(i, Color.WHITE)
+			multi.set_instance_custom_data(i, items[i][1])
+			var box := AABB(at - Vector3(2.0, 1.2, 2.0), Vector3(4.0, 2.4, 4.0))
+			bounds = box if i == 0 else bounds.merge(box)
+		multi.custom_aabb = bounds
+		var node := MultiMeshInstance3D.new()
+		node.name = "Butterflies%d" % kind
+		node.multimesh = multi
+		node.material_override = CozyPalette.butterfly_material()
+		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(node)
+		placed += items.size()
+	_stats["butterflies"] = placed
+
+## A blob shadow that follows Keepy's ground position. Reads his position
+## only -- nothing about him is touched -- and shrinks a little while he is
+## in the air, which is what sells the hop.
+var _hero: Node3D = null
+var _hero_shadow_node: MeshInstance3D = null
+const HERO_SHADOW_RADIUS: float = 0.78
+
+func _hero_shadow() -> void:
+	_hero = get_parent().get_node_or_null("Keepy") as Node3D
+	if _hero == null:
+		return
+	var quad := PlaneMesh.new()
+	quad.size = Vector2(1.0, 1.0)
+	_hero_shadow_node = MeshInstance3D.new()
+	_hero_shadow_node.name = "HeroShadow"
+	_hero_shadow_node.mesh = quad
+	_hero_shadow_node.material_override = CozyPalette.shadow_material()
+	_hero_shadow_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_hero_shadow_node)
+	set_process(true)
+
+func _process(delta: float) -> void:
+	if _cloud_node != null:
+		# Whole layer drifts along +x; the AABB was grown to cover it.
+		_cloud_node.position.x = fmod(_cloud_node.position.x + CLOUD_DRIFT * delta + 30.0, 60.0) - 30.0
+	if _hero == null or _hero_shadow_node == null:
+		return
+	var p := _hero.global_position
+	var lift: float = clampf(p.y, 0.0, 1.5)
+	var r: float = HERO_SHADOW_RADIUS * (1.0 - lift * 0.25)
+	_hero_shadow_node.global_transform = Transform3D(
+		Basis().scaled(Vector3(r * 2.0, 1.0, r * 2.0)),
+		Vector3(p.x, SHADOW_Y + 0.005, p.z + 0.18))
 
 ## True when any point within `radius` of p is walkable: eight samples on
 ## the circle plus the centre. Cheap, and conservative enough for a wall.

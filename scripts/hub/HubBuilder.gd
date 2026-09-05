@@ -2639,38 +2639,63 @@ func _make_landmark_spire() -> Node3D:
 ## wide, stepped, and grey rather than green.
 func _make_landmark_cairn() -> Node3D:
 	var root := Node3D.new()
+	# Carte-blanche: the four boxes become four of the plateau's own rocks
+	# (vertex-coloured GLBs, moss on top), stacked and yawed; the silhouette
+	# stays a stepped mass, the read stops being "concrete". Each rock GLB
+	# is ~1.3 u wide and 0.55 u tall at scale 1, so the scales below are
+	# the old block sizes divided by that.
 	var blocks: Array = [
-		[Vector3(2.60, 1.50, 2.40), 0.75, 0.0, LANDMARK_CAIRN_STONE],
-		[Vector3(2.10, 1.70, 1.90), 2.30, 22.0, LANDMARK_CAIRN_STONE],
-		[Vector3(1.55, 1.90, 1.45), 4.00, -18.0, LANDMARK_CAIRN_STONE],
-		[Vector3(1.05, 1.50, 0.95), 5.60, 35.0, LANDMARK_CAIRN_CAP],
+		["rock_0", Vector3(2.0, 2.7, 1.85), 0.75, 0.0],
+		["rock_1", Vector3(1.6, 3.1, 1.45), 2.30, 22.0],
+		["rock_2", Vector3(1.2, 3.4, 1.1), 4.00, -18.0],
+		["rock_3", Vector3(0.8, 2.7, 0.75), 5.60, 35.0],
 	]
 	for block in blocks:
-		var box := BoxMesh.new()
-		box.size = block[0]
-		root.add_child(_toon_node(box, block[3], Vector3(0.0, block[1], 0.0), Vector3(0.0, block[2], 0.0)))
-	var spike := CylinderMesh.new()
-	spike.top_radius = 0.0
-	spike.bottom_radius = 0.55
-	spike.height = 2.2
-	spike.radial_segments = 6
-	spike.rings = 1
-	root.add_child(_toon_node(spike, LANDMARK_CAIRN_CAP, Vector3(0.0, 7.3, 0.0)))
+		var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path(block[0]))
+		if mesh == null:
+			continue
+		var node := MeshInstance3D.new()
+		node.mesh = mesh
+		node.position = Vector3(0.0, block[2], 0.0)
+		node.rotation_degrees = Vector3(0.0, block[3], 0.0)
+		node.scale = block[1]
+		node.material_override = CozyPalette.decor_material()
+		root.add_child(node)
+	var spike: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("rock_1"))
+	if spike != null:
+		var tip := MeshInstance3D.new()
+		tip.mesh = spike
+		tip.position = Vector3(0.0, 7.0, 0.0)
+		tip.rotation_degrees = Vector3(0.0, 60.0, 0.0)
+		tip.scale = Vector3(0.55, 3.2, 0.5)
+		tip.material_override = CozyPalette.decor_material()
+		root.add_child(tip)
 	return root
 
 ## Variant 2 -- two standing slabs of unequal height. Reads as a pair of
 ## vertical bars, which neither of the other two can be mistaken for.
 func _make_landmark_slabs() -> Node3D:
 	var root := Node3D.new()
-	var rubble := BoxMesh.new()
-	rubble.size = Vector3(2.90, 0.70, 1.90)
-	root.add_child(_toon_node(rubble, LANDMARK_SLAB_BASE, Vector3(0.0, 0.35, 0.0), Vector3(0.0, 6.0, 0.0)))
-	var tall := BoxMesh.new()
-	tall.size = Vector3(1.15, 8.00, 0.60)
-	root.add_child(_toon_node(tall, LANDMARK_SLAB_STONE, Vector3(-0.85, 4.00, 0.10), Vector3(0.0, 12.0, -4.0)))
-	var short := BoxMesh.new()
-	short.size = Vector3(0.95, 6.60, 0.50)
-	root.add_child(_toon_node(short, LANDMARK_SLAB_STONE, Vector3(0.90, 3.30, -0.15), Vector3(0.0, -18.0, 5.0)))
+	# Carte-blanche: rubble and two standing stones drawn from the rock
+	# GLBs (their flattened base becomes the foot of a menhir when the
+	# rock is stretched tall). Same positions, heights and tilts as the
+	# boxes they replace.
+	var pieces: Array = [
+		["rock_3", Vector3(2.2, 1.3, 1.45), Vector3(0.0, 0.35, 0.0), Vector3(0.0, 6.0, 0.0)],
+		["rock_0", Vector3(0.9, 14.5, 0.45), Vector3(-0.85, 4.00, 0.10), Vector3(0.0, 12.0, -4.0)],
+		["rock_2", Vector3(0.75, 12.0, 0.4), Vector3(0.90, 3.30, -0.15), Vector3(0.0, -18.0, 5.0)],
+	]
+	for piece in pieces:
+		var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path(piece[0]))
+		if mesh == null:
+			continue
+		var node := MeshInstance3D.new()
+		node.mesh = mesh
+		node.scale = piece[1]
+		node.position = piece[2]
+		node.rotation_degrees = piece[3]
+		node.material_override = CozyPalette.decor_material()
+		root.add_child(node)
 	return root
 
 ## Scratch for the board just built, handed to _build so it can enforce

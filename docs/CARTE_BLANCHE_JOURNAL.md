@@ -73,3 +73,27 @@ Dépassement du plafond de 50 000 assumé et visible : ×2,2 sur la scène enti�
 | `index.pck` | 30 543 984 | 30 705 072 | **30831840** |
 
 **Fragile / à regarder sur device.** L'eau (alpha + `TIME`) est le shader le plus exposé aux différences WebGL2 ; les ombres sont alpha-blended et triées comme un objet unique contre l'eau (elles n'y sont jamais dessus, par construction). Les captures de contrôle ne peuvent pas montrer le vent ni l'animation de l'eau.
+
+## Checkpoint 3 — papillons, ombre du héros, cairns en pierres, nuages (01:20 UTC)
+
+**Preuve du checkpoint 2 sur le service** : run `33935026373` `success` (01:09:15).
+
+**Ce qui est fait.**
+- **Papillons** (`cozy_butterfly.gdshader`, 3 GLB de 10 triangles) : 21 papillons, **tout est dans le vertex shader** (battement d'ailes par pliage des sommets |x| > 0,02 autour de l'axe du corps, circuit circulaire à hauteur ondulante, orientation tangente) à partir d'`INSTANCE_CUSTOM` (phase, rayon, sens, cadence) — un draw call par couleur, zéro script par frame. Centrés sur les fleurs posées par `CozyScatter`. **Piège payé** : sans `use_colors = true` sur le MultiMesh, `COLOR` lit noir dans le shader même quand le mesh porte des couleurs de sommets — première capture : des taches noires.
+- **Ombre du héros** : un quad alpha suit la position au sol de Keepy (lecture seule de `global_position`, rien de Keepy n'est touché), rétrécit en l'air.
+- **Ombres portées** repositionnées : un disque décalé à l'opposé du soleil tombe DERRIÈRE un buisson depuis cette caméra et ne se voit jamais (capture 6 : seuls les arbres en montraient) → disque surtout sous l'objet, poussé de 0,12 r vers la caméra, rayon buisson/rocher élargi, alpha 0,40.
+- **Cairn et dalles** : les boîtes grises deviennent des pierres GLB empilées (mêmes hauteurs, mêmes inclinaisons, mousse sur le dessus par les couleurs de sommets) — la silhouette d'orientation est conservée, la lecture « béton » disparaît.
+- **Nuages** : 9 nuages de 3 lobes chacun, matériau toon sans haze. **Piège payé** : posés à y = 30–48 ils étaient entièrement HORS CADRE — la caméra ne laisse que ~2,5° de ciel au-dessus de l'horizon ; ramenés à y = 9–17 à 150–200 u, ils affleurent l'horizon derrière les collines. Dérive lente en `_process`.
+- **Mouvement prouvé** : diff pixel entre deux captures (frames 40 et 100) → 31 599 pixels changent (herbe, eau, papillons), zéro en l'absence d'animation.
+
+**Métriques.**
+
+| | baseline | cp 2 | **cp 3** |
+|---|---|---|---|
+| triangles scène | 61 107 | 135 187 | **140 165** |
+| MultiMeshInstance3D | 17 | 112 | 116 |
+| MeshInstance3D | 149 | 149 | 150 |
+| draw calls estimés | 166 | 261 | **266** |
+| `index.pck` | 30 543 984 | 30 831 840 | **30 844 480** |
+
+**À regarder sur device.** Les papillons (INSTANCE_CUSTOM en Compatibility/WebGL2), la dérive des nuages, l'ombre de Keepy pendant un bond.

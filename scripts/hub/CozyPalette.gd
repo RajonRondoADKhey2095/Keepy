@@ -56,6 +56,7 @@ const DECOR_SHADER: Shader = preload("res://assets/shaders/cozy_decor.gdshader")
 const GROUND_SHADER: Shader = preload("res://assets/shaders/cozy_ground.gdshader")
 const WATER_SHADER: Shader = preload("res://assets/shaders/cozy_water.gdshader")
 const SHADOW_SHADER: Shader = preload("res://assets/shaders/cozy_shadow.gdshader")
+const BUTTERFLY_SHADER: Shader = preload("res://assets/shaders/cozy_butterfly.gdshader")
 const WATER_SHALLOW: Color = Color(0.50, 0.82, 0.88, 0.80)
 const WATER_DEEP: Color = Color(0.38, 0.74, 0.85, 0.86)
 const WATER_FOAM: Color = Color(0.96, 0.99, 1.0)
@@ -63,10 +64,12 @@ const WATER_FOAM: Color = Color(0.96, 0.99, 1.0)
 static var _decor_static: ShaderMaterial = null
 static var _decor_wind: Dictionary = {}
 static var _decor_tinted: Dictionary = {}
+static var _cloud: ShaderMaterial = null
 static var _ground: ShaderMaterial = null
 static var _noise: NoiseTexture2D = null
 static var _water: Dictionary = {}
 static var _shadow: ShaderMaterial = null
+static var _butterfly: ShaderMaterial = null
 static var _meshes: Dictionary = {}
 
 ## The decor material without wind. One instance shared by every batch.
@@ -92,6 +95,17 @@ static func decor_material_tinted(colour: Color) -> ShaderMaterial:
 		mat.set_shader_parameter("tint", colour)
 		_decor_tinted[key] = mat
 	return _decor_tinted[key]
+
+## Clouds: the decor toon look with NO haze (they sit 100+ u out, where
+## the haze would dissolve them into the sky they are meant to sit in).
+static func cloud_material() -> ShaderMaterial:
+	if _cloud == null:
+		_cloud = _make_decor(0.0, 1.0)
+		_cloud.set_shader_parameter("tint", Color(0.985, 0.99, 1.0))
+		_cloud.set_shader_parameter("haze_density", 0.0)
+		_cloud.set_shader_parameter("shade", 0.86)
+		_cloud.set_shader_parameter("rim_strength", 0.0)
+	return _cloud
 
 static func _make_decor(wind_amount: float, wind_height: float) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
@@ -146,6 +160,15 @@ static func water_material(radius: float, two_sided: bool = false) -> ShaderMate
 		mat.set_shader_parameter("haze_start", HAZE_START)
 		_water[key] = mat
 	return _water[key]
+
+static func butterfly_material() -> ShaderMaterial:
+	if _butterfly == null:
+		_butterfly = ShaderMaterial.new()
+		_butterfly.shader = BUTTERFLY_SHADER
+		_butterfly.set_shader_parameter("haze_color", HAZE)
+		_butterfly.set_shader_parameter("haze_density", HAZE_DENSITY)
+		_butterfly.set_shader_parameter("haze_start", HAZE_START)
+	return _butterfly
 
 static func shadow_material() -> ShaderMaterial:
 	if _shadow == null:
