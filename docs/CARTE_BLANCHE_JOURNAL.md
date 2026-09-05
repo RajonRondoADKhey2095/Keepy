@@ -834,3 +834,69 @@ Tout ce qui suit est sur la branche puis sur `staging` en un seul checkpoint : l
 `index.pck` **34 374 864** (staging 34 323 216, +51 Ko), `index.wasm` 35 376 909 / `af4a8fc2…` (moteur inchangé), 0 `SCRIPT ERROR` à l'export, `scripts/dev/*` exclu (0 `Storing File`).
 
 **Pas fait / à régler sur device** : `STEER_SPAN` 150 px logiques (≈ 1 cm sur iPhone) et `DEAD_ZONE` 12 ; `STEER_RATE` 2,1 / `STEER_HIGH_SPEED_KEEP` 0,72 (l'oméga à r = 3,4 se prend à mi-vitesse, c'est voulu) ; `GRIP_ON_TRACK` 6,5 (une glisse de ~0,15 s par virage) ; `MOUNT_HOLD_S` 1,2 ; la hauteur des mâts (le pied d'un mât coupe le cadre du paddock — réduit à 6,4 u, pas re-capturé). Aucun son. `bpy` installé (5.0.1) mais **pas utilisé** : le kart et le décor sont des primitives Godot à tessellation explicite, le repli que la skill prévoit — j'ai jugé qu'un GLB de kart n'aurait pas payé sa demi-heure contre la conduite.
+
+## LOT 2 — ce que l'architecture prévoit pour les adversaires (écrit avant la fermeture, c'est le livrable qui compte)
+
+**Ce qui est déjà prêt, tel quel, sans réécriture.**
+
+| besoin du lot 2 | où c'est | état |
+|---|---|---|
+| un second kart | `HubKarting.add_racer(name, colour, player=false)` : crée le `KartBody`, le pose sur la grille (`KartTrack.start_pose(i)`, quinconce, 3 u par slot), lui donne son `KartLap` et son `KartInput` | **prêt** — c'est la fonction qui crée le kart du joueur ; la seule différence est `player=false`, qui laisse l'`input` sans écrivain |
+| une IA de conduite | un écrivain de `KartInput` : `KartLineInput` (pure pursuit sur `ideal_line()`, avance 6,5 u, ralentit à 0,62 si le cap à 14 u tourne de plus de 0,55 rad) tourne **aujourd'hui** dans `scripts/dev` et boucle 21,5 s | **prêt à déplacer** sous `scripts/hub/kart/`, puis `racers[i]["input"]` lui appartient et `HubKarting._physics_process` l'appelle avant `kart.drive()` — quatre lignes |
+| la trajectoire idéale | `KartTrack.ideal_line()` (copie), `point_at(s)`, `tangent_at(s)`, `progress_at(p, hint)` (abscisse, latéral signé, tangente, indice) | **prêt** ; une trajectoire de course (corde) sera une seconde liste publiée à côté, pas une modification de la spine — la spine est ce que le chrono et les checkpoints lisent |
+| tours et checkpoints par coureur | `KartLap` par entrée de `racers`, même `update()` pour tous dans la même boucle | **prêt** ; `on_lap` est un `Callable` par coureur |
+| classement | `racers[i]["lap"].lap_count` + `progress_at(...)["s"]` : le rang est le tri par `(lap_count, s)` | **à écrire** (une fonction `standings()` de dix lignes — non écrite cette nuit, sur consigne) |
+| la physique partagée | `KartBody.drive(delta, input, on_track, fence)` ne sait pas qui le pilote | **prêt** |
+| la caméra | suit `racers[_player]` ; une IA n'a pas de caméra | rien à faire |
+
+**Ce qu'il faudra AJOUTER, et ce que ça coûte.**
+
+1. **Le départ.** Aujourd'hui un kart part quand son pilote s'assoit. Une course a un feu : compte à rebours 3-2-1 pendant lequel tous les `input.throttle` sont tenus à 0 (`KartTouchInput.hold_throttle()` existe déjà pour le joueur ; une IA lit un drapeau `race_started`). Un état `Race` dans `HubKarting` (`IDLE` / `COUNTDOWN` / `RUNNING` / `FINISHED`), N tours fixés, et l'entrée du joueur dans le kart ne lance plus la course : elle la PROPOSE (le HUD demande « contre-la-montre ou course ? »). Coût : ~150 lignes + HUD.
+2. **Les collisions entre karts.** Aucune aujourd'hui (un seul kart). Deux corps sur le même ruban DOIVENT se toucher, sinon les IA traversent le joueur. Recommandation : **disques 2D sur le plan**, résolution par séparation + échange partiel de vitesse (comme la clôture souple : réflexion à 0,35), jamais un `PhysicsBody3D` — ce hub n'a pas de physique et n'en veut pas (doctrine HubTapInput). Coût : ~80 lignes dans `HubKarting._physics_process`, une passe O(N²) sur N ≤ 6.
+3. **L'IA au-delà du suiveur.** Le pure pursuit tient la ligne mais ne « court » pas : il ne double pas, ne freine pas avant le joueur, ne se décale pas. Il faut (a) un **décalage latéral cible** par coureur (± 1,5 u, changé quand un kart est devant à moins de 6 u), (b) un **profil de vitesse par abscisse** précalculé depuis la courbure de la spine (`KartTrack._curvature(i)` existe : v_max(s) = sqrt(a_lat_max / κ)), lu au lieu de la règle « 0,62 si ça tourne », (c) une **personnalité** par animal : ours lent et large, chat rapide et nerveux, castor régulier — trois constantes (v_max, agressivité de décalage, bruit de direction). Les personnages n'étant pas riggés, un pilote animal est un `HubCritter`-like posé sur `KartBody.SEAT` par `mount_carrier` — le rail existe, l'ours l'a déjà emprunté sur la balançoire.
+4. **Le rubber-banding cozy.** Une course dont on perd ne se rejoue pas. Un facteur 0,92–1,06 sur `v_max` de l'IA selon son écart au joueur (`progress` relatif, une ligne).
+5. **Le chrono multi-karts.** `WorldSave.kart.best_ms[track_id]` reste le meilleur tour du joueur ; les résultats de course (rang, N tours) vont dans un `kart.results` additif — pas un bump de schéma.
+6. **Ce qui manque le plus pour que le karting devienne un vrai morceau du jeu, avis franc** : pas les adversaires — **la sensation à l'écran**. Trois choses, dans l'ordre : (a) le **son** (moteur qui monte avec la vitesse, crissement dans la glisse, passage de ligne) — le monde cozy n'a aucun son depuis v1, et un kart muet est un jouet ; (b) une **poussière / traînée** derrière les roues sur l'herbe et dans la glisse (le patron `MultiMesh` + shader des papillons, 2 triangles par bouffée), qui rend la glisse LISIBLE — aujourd'hui elle est mesurée (2,53 u/s latéral) mais on ne la voit que par le roulis ; (c) le **schéma de contrôle validé sur un vrai pouce** : rien de ce qui précède ne vaut si `STEER_SPAN` est trop court ou trop long pour la main de Mathieu, et c'est la première chose à tester (checklist du rapport, étape « piloter un tour »).
+
+**Ce qui ne bougera PAS quand les adversaires arriveront** (et c'est le contrat de ce lot) : `KartBody`, `KartTrack`, `KartLap`, `KartInput`, le mode caméra, la bascule marche ↔ conduite. Si le lot 2 doit toucher l'un de ces cinq fichiers pour autre chose qu'une constante, c'est que ce lot-ci a raté quelque chose, et il faudra le dire ici.
+
+## Preuves de déploiement V7 sur le service (une lecture par déploiement, jamais de polling)
+
+| checkpoint | sha (`staging`) | push | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|---|
+| 1 — conduite + circuit + chrono + décor | `e77ba90` (merge `--no-ff` de `dcaca73`) | 18:04:48 | `1788631811` → **18:10:11** | 18:11:50, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 18:11:50 ; la lecture précédente (18:07:55) portait encore `1788628521` en `HIT`/`age 3094` — c'est la copie de bord, pas une mesure, et elle a été refusée comme telle |
+
+Aucun appel à l'API GitHub Actions : le seul signal est la valeur servie, lue AVANT le lot (`1788628521`, 17:41) et APRÈS.
+
+## Rides existants — rejoués sur la branche (18:06 → 18:12 UTC)
+
+Mêmes sondes que la table de la fermeture V6, mêmes modes, sur l'arbre `dcaca73` importé de zéro (132 `.scn`).
+
+| sonde | mode | résultat | verdict |
+|---|---|---|---|
+| `V4SaveProbe` | headless | **PASS** (45) | `WorldSave` tient avec `kart.best_ms` et `kart_laps` ajoutés |
+| `V4ClimbProbe` | headless `--fixed-fps 60` | **PASS** | grimper + récolte intacts |
+| `CampfireFacingProbe` | headless | **PASS** | |
+| `OwlFlightProbe` | headless | **PASS** | |
+| `V6CrittersProbe` | headless | **PASS** (128) | sanglier, chat, faon, castor intacts |
+| `StreamRideProbe` | opengl3 | **PASS** (37) | la barque et le tap au sol intacts |
+| `SeesawProbe` | headless | FAIL 157 ≠ 144 draw nodes | **identique à V6/`main`** |
+| `TurnstileProbe` | headless | FAIL aabb + 144 | **identique à V6/`main`** |
+| `CabinProbe` | headless | FAIL « 2 marks, 1 cabins » + 5 rouges de taps de seuil (phases T/F) | « 2 marks » identique à V6 ; les 5 autres : **comparés à une référence `5fa8f29` importée à part** — voir la ligne ci-dessous |
+| `CabinProbe` vs référence `5fa8f29` (worktree importé à part, 132 `.scn` des deux côtés) | headless | référence : **1** rouge (« 2 marks ») ; branche : **6** | **RÉGRESSION RÉELLE, corrigée** — voir ci-dessous |
+
+### La régression que seule la référence a vue (18:13 UTC)
+
+`CabinProbe` phases T et F : cinq taps de seuil lus comme un signal VIDE (`[]`) sur la branche, un seul rouge sur la référence. Cause : le mode conduite de `HubCamera` lissait une variable privée `_hub_position` et la recopiait dans `global_position` — la même trajectoire, SAUF pour qui écrit `global_position` de l'extérieur. `CabinProbe` le fait (elle gare la caméra au-dessus du seuil et laisse le suivi la tenir là) ; avec l'ombre, le suivi ramenait la caméra depuis le spawn, le seuil se projetait hors du conteneur et `_handle_point` jetait le point. C'est exactement un changement du comportement de la caméra HORS conduite, la chose que le brief interdit — et rien dans `KartProbe` ne pouvait le voir, puisque la sonde du lot ne gare jamais la caméra à la main.
+
+Correction : hors kart, `global_position` est lissé lui-même (les deux lignes d'origine) et `_hub_position` ne fait que le refléter ; le lissage séparé n'existe qu'en conduite. `CabinProbe` revient à **1 rouge, le même que la référence** ; `KartProbe` reste à 99/99. Leçon au dossier : « la sonde du lot est verte » ne dit rien du reste du hub — la table des rides existants se joue sur les DEUX arbres, et c'est la comparaison, pas la couleur, qui a trouvé celle-ci.
+
+## Fermeture V7 (18:20 UTC)
+
+**Livré, sur `staging`** : la quatrième zone (« le Circuit ») accessible à pied depuis la fin de la route de la Lande ; un kart en conduite LIBRE au pouce (ancre horizontale, accélérateur automatique, second doigt = frein, bouton « Descendre ») ; une caméra de poursuite licenciée pour la seule durée de la conduite et restaurée byte-identique à la sortie ; un circuit de 230,7 u à six virages de caractères différents (sweeper, épingle large, chicane, épingle serrée, oméga, retour) avec bordures, damier, chevrons ; un chrono au tour avec meilleur temps persistant (`user://`, schéma additif) ; le décor de la zone (portique, mâts, pneus, guirlandes, chapiteau, pelouse tondue, haie, collines) ; une sonde de 99 checks et un pilote de test qui boucle en 21,5 s.
+
+**Pas fait, dit clairement** : aucun son ; aucun effet de glisse visible (poussière) ; pas de GLB Blender (primitives Godot partout — `bpy` installé et non utilisé, choix assumé au profit de la conduite) ; pas de compte à rebours ni de « course » (contre-la-montre seul, sur consigne) ; les constantes de conduite et le `STEER_SPAN` n'ont jamais rencontré un pouce réel.
+
+**Avis franc — ce qui manque le plus pour que le karting devienne un vrai morceau du jeu** : voir la section LOT 2 ci-dessus, point 6. En une phrase : la MÉCANIQUE est là et généralisable (la boucle des `racers` ne sait pas qui est le joueur), c'est la SENSATION qui manque — son, poussière, et surtout la validation du geste sur iPhone, qui est la première chose à faire et la seule que ce sandbox ne peut pas faire.
+
+**Doctrine candidate pour `CLAUDE.md`** (non écrite dans `CLAUDE.md` par cette session, conformément à sa règle) : *une variable-ombre d'une propriété de nœud est un changement de comportement pour quiconque écrit la propriété de l'extérieur* — lisser `global_position` et lisser une copie que l'on recopie ne sont pas la même chose dès qu'une sonde, un autre nœud ou un `snap` écrit la propriété ; et *la sonde d'un lot ne voit pas les régressions des autres lots* — la table des rides se rejoue sur les deux arbres, et c'est la comparaison qui tranche (payé ici : 5 rouges invisibles à `KartProbe`).
