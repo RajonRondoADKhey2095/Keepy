@@ -32,23 +32,48 @@ class_name KartBody
 ## `MAX_SPEED` sets the pace of the whole zone: 13 u/s on a 230 u lap is a
 ## ~25 s lap for a clean drive, which is the length a cozy time trial can
 ## be repeated at without becoming a chore.
+##
+## =====================================================================
+## V7b -- ACCELERATOR (boost) and STEERING PRESETS
+##
+## Retour 1 (Mathieu, device): the accelerator was fully automatic, no way
+## to push. Kept the cruise exactly as it was (the kart still drives
+## itself, CLAUDE.md's "esprit du schema actuel") and added a BOOST on top
+## -- KartInput.boost, 0..1, raises the speed CAP toward BOOST_MAX_SPEED.
+## The cruise pace (MAX_SPEED, unboosted) and every existing lap time are
+## therefore untouched; boost only ever makes the kart faster than before.
+##
+## Retour 2: STEER_RATE is no longer a literal here. A measured diagnosis
+## (KartTuning.gd, journal "V7b -- reglage conduite") found GRIP was NOT
+## the source of the "10/10 brutal" feel -- it governs how long a slide
+## lingers, not how hard a turn hits -- so it is fixed once, low, for every
+## preset. STEER_RATE (and the touch mapping in KartTouchInput) IS the
+## real lever, and it is read live from KartTuning so Mathieu can compare
+## three presets without leaving the kart.
 
 const MAX_SPEED: float = 13.0
 const MAX_SPEED_OFF_TRACK: float = 5.5
 const REVERSE_SPEED: float = 3.5
+## Top speed at full boost (input.boost == 1.0); a ~27 % push over cruise,
+## on and off track alike (BOOST_SPEED_RATIO scales whichever cap applies).
+const BOOST_MAX_SPEED: float = 16.5
+const BOOST_SPEED_RATIO: float = BOOST_MAX_SPEED / MAX_SPEED
 ## Time constants (1/s) for speed approaching its target.
 const ACCEL_LAMBDA: float = 0.85
 const COAST_LAMBDA: float = 0.30
 const OFF_TRACK_LAMBDA: float = 1.6
 const BRAKE_DECEL: float = 15.0
-## rad/s at full lock, at STEER_FULL_SPEED and below the high-speed ease.
-const STEER_RATE: float = 2.1
 const STEER_FULL_SPEED: float = 4.5
 ## Fraction of the steer rate kept at MAX_SPEED (1.0 = no easing).
 const STEER_HIGH_SPEED_KEEP: float = 0.72
-## Lateral velocity decay (1/s).
-const GRIP_ON_TRACK: float = 6.5
-const GRIP_OFF_TRACK: float = 2.4
+## Lateral velocity decay (1/s). V7b: lowered once from the shipped 6.5/2.4
+## (measured to add a touch of carry-over on every correction -- CLAUDE.md
+## GRIP doc below is now historical, drive() no longer reads a "6.5") --
+## and then left FIXED across every steering preset: the diagnosis found
+## grip is not what made direction feel brutal, so it does not need to
+## scale with the 8/7/6 axis.
+const GRIP_ON_TRACK: float = 5.0
+const GRIP_OFF_TRACK: float = 1.8
 ## Forward speed lost per unit of lateral speed per second.
 const SCRUB: float = 0.55
 ## Soft fence: velocity into the wall is reflected and scaled by this.
@@ -129,7 +154,7 @@ func drive(delta: float, input: KartInput, on_track: bool, fence: Rect2) -> void
 	var gain: float = ratio * ease
 	if v_fwd < -0.05:
 		gain = -gain * 0.7
-	rotation.y -= input.steer * STEER_RATE * gain * delta
+	rotation.y -= input.steer * KartTuning.steer_rate() * gain * delta
 	fwd = forward()
 	var rgt := right()
 	# ---- decompose the (unchanged) world velocity in the NEW frame: the
@@ -142,6 +167,10 @@ func drive(delta: float, input: KartInput, on_track: bool, fence: Rect2) -> void
 	v_fwd = move_toward(v_fwd, 0.0, absf(v_lat) * SCRUB * delta)
 	# ---- throttle / brake.
 	var cap: float = MAX_SPEED if on_track else MAX_SPEED_OFF_TRACK
+	# V7b accelerator: cruise is untouched (boost defaults to 0 for every
+	# writer that predates it -- KartLineInput, the probe); pushing raises
+	# the cap toward BOOST_MAX_SPEED, never the cruise pace itself.
+	cap *= lerpf(1.0, BOOST_SPEED_RATIO, clampf(input.boost, 0.0, 1.0))
 	if input.brake:
 		if v_fwd > 0.3:
 			v_fwd = maxf(v_fwd - BRAKE_DECEL * delta, 0.0)

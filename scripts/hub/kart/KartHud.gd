@@ -9,6 +9,14 @@ class_name KartHud
 ## through (MOUSE_FILTER_IGNORE); only the button stops one -- a full-rect
 ## Control left at the default STOP would swallow the steering (the
 ## measured HubTapInput failure, in the other direction).
+##
+## V7b adds two things, both stopping a tap on purpose: a small "Direction
+## (dev)" preset row (8/7/6, KartTuning), built only behind
+## DevTools.enabled() so a normal player never sees or builds it; and a
+## permanent one-line hint under the chrono for the new accelerator push
+## (retour 1), shown to every driver. `_draw()`'s ghost also grew a
+## vertical half for the same reason: the push has to be discoverable, not
+## just documented in a journal nobody driving reads.
 
 signal exit_pressed
 
@@ -27,6 +35,9 @@ var _flash_left: float = 0.0
 var _ghost_anchor: Vector2 = Vector2.ZERO
 var _ghost_finger: Vector2 = Vector2.ZERO
 var _ghost_active: bool = false
+## V7b dev-only steering preset row (DevTools.enabled()): empty for a
+## normal player, so nothing is built or drawn for them.
+var _preset_buttons: Array[Button] = []
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -104,7 +115,13 @@ func _ready() -> void:
 	_exit_button.add_theme_color_override("font_hover_color", Color(0.25, 0.18, 0.10))
 	_exit_button.pressed.connect(func(): exit_pressed.emit())
 	add_child(_exit_button)
+	# V7b: the hint for the new accelerator (retour 1) -- always shown,
+	# unlike the preset row below, since every player gets the boost.
+	var hint := _label(box, 16, Color(0.85, 0.80, 0.68))
+	hint.text = "↑  pousser le pouce pour foncer"
 	set_times(0, 0, 0, 0, false)
+	if DevTools.enabled():
+		_build_preset_row()
 
 func _label(parent: Control, size: int, colour: Color) -> Label:
 	var label := Label.new()
@@ -150,7 +167,51 @@ func _draw() -> void:
 	if not _ghost_active:
 		return
 	var a := _ghost_anchor
-	var dx: float = clampf(_ghost_finger.x - a.x, -KartTouchInput.STEER_SPAN, KartTouchInput.STEER_SPAN)
-	draw_line(a + Vector2(-KartTouchInput.STEER_SPAN, 0.0), a + Vector2(KartTouchInput.STEER_SPAN, 0.0), Color(1.0, 1.0, 1.0, 0.22), 6.0)
+	# Steering: horizontal half of the drag, span from the active preset.
+	var span: float = KartTuning.steer_span()
+	var dx: float = clampf(_ghost_finger.x - a.x, -span, span)
+	draw_line(a + Vector2(-span, 0.0), a + Vector2(span, 0.0), Color(1.0, 1.0, 1.0, 0.22), 6.0)
 	draw_circle(a, 22.0, Color(1.0, 1.0, 1.0, 0.25))
 	draw_circle(a + Vector2(dx, 0.0), 30.0, Color(1.0, 0.95, 0.80, 0.55))
+	# V7b accelerator: the vertical half of the SAME drag, previously
+	# unused (drawn so the push is discoverable, not just documented).
+	var boost_span: float = KartTouchInput.BOOST_SPAN
+	var dy: float = clampf(a.y - _ghost_finger.y, 0.0, boost_span)
+	draw_line(a, a + Vector2(0.0, -boost_span), Color(1.0, 1.0, 1.0, 0.14), 6.0)
+	var boost_t: float = clampf((dy - KartTouchInput.BOOST_DEAD_ZONE) / (boost_span - KartTouchInput.BOOST_DEAD_ZONE), 0.0, 1.0)
+	draw_circle(a + Vector2(0.0, -dy), 24.0, Color(1.0, 0.55, 0.20, 0.22 + 0.5 * boost_t))
+
+## ---- V7b dev-only steering presets (DevTools.enabled()) -----------------
+
+func _build_preset_row() -> void:
+	var col := VBoxContainer.new()
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.position = Vector2(32.0, TOP + 84.0 + 10.0)
+	add_child(col)
+	var caption := Label.new()
+	caption.text = "Direction (dev)"
+	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	caption.add_theme_font_size_override("font_size", 16)
+	caption.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.75))
+	col.add_child(caption)
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(row)
+	for i in KartTuning.PRESETS.size():
+		var b := Button.new()
+		b.text = String(KartTuning.PRESETS[i]["label"])
+		b.mouse_filter = Control.MOUSE_FILTER_STOP
+		b.toggle_mode = true
+		b.custom_minimum_size = Vector2(64.0, 56.0)
+		b.pressed.connect(_on_preset_pressed.bind(i))
+		row.add_child(b)
+		_preset_buttons.append(b)
+	_refresh_preset_row()
+
+func _on_preset_pressed(i: int) -> void:
+	KartTuning.set_index(i)
+	_refresh_preset_row()
+
+func _refresh_preset_row() -> void:
+	for i in _preset_buttons.size():
+		_preset_buttons[i].button_pressed = (i == KartTuning.index())

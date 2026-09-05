@@ -8,8 +8,9 @@ class_name KartTouchInput
 ##
 ##   * the accelerator is AUTOMATIC: while driving, throttle is 1;
 ##   * the FIRST finger down becomes the ANCHOR, wherever it lands. Sliding
-##     it left / right of the anchor steers, proportionally, over
-##     STEER_SPAN px with a DEAD_ZONE; lifting it straightens the wheels;
+##     it left / right of the anchor steers, proportionally, over a span
+##     set by the active KartTuning preset, with a dead zone; lifting it
+##     straightens the wheels;
 ##   * a SECOND finger, anywhere, is the BRAKE (reverse once stopped);
 ##   * the keyboard (arrows / A-D, down / S) does the same off-web, so a
 ##     probe or the editor can drive without a touchscreen.
@@ -18,6 +19,24 @@ class_name KartTouchInput
 ## down or up, and a position is either left or right of where it started.
 ## That is what makes it reliable under a moving thumb, and it is why the
 ## exit is a HUD button and not a swipe.
+##
+## =====================================================================
+## V7b -- THE ACCELERATOR (Mathieu's retour 1)
+##
+## The cruise (automatic throttle = 1) is UNCHANGED, on purpose (CLAUDE.md
+## brief: "l'accelerateur ne doit pas rendre le pilotage plus exigeant").
+## What was added is a BOOST layered on top, and it reuses the vertical
+## half of the SAME steering drag rather than a new touch zone or the
+## already-taken second finger (brake): the horizontal offset from the
+## anchor was already the only thing read from `finger`, the vertical
+## offset was sitting there unused. Pushing the anchor finger UP the
+## screen (away from the body, like a lever) commands boost, over
+## BOOST_SPAN px with BOOST_DEAD_ZONE; pushing down or not moving does
+## nothing -- there is no way to go SLOWER than cruise from this gesture,
+## only faster, so it cannot be mistaken for the brake. Diagonal drags
+## (steer + push) work naturally since both axes come from one drag event.
+## Keyboard gets the matching, unclaimed key: UP / W, alongside the
+## existing LEFT-RIGHT/A-D steer and DOWN/S brake -- nothing reassigned.
 ##
 ## =====================================================================
 ## WHO SEES THE TOUCH
@@ -34,8 +53,12 @@ class_name KartTouchInput
 ## causes). Synthesised events carry device DEVICE_ID_EMULATION and are
 ## ignored here, so a finger is one finger.
 
-const STEER_SPAN: float = 150.0
-const DEAD_ZONE: float = 12.0
+## V7b: the steer span/dead zone/curve are no longer literals here -- they
+## come live from the active KartTuning preset (see KartTuning.gd for the
+## measured diagnosis). The accelerator's push span is NOT part of that
+## preset scale (a separate retour, a separate axis) and stays fixed.
+const BOOST_SPAN: float = 150.0
+const BOOST_DEAD_ZONE: float = 24.0
 
 var input: KartInput = KartInput.new()
 var enabled: bool = false:
@@ -81,6 +104,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				finger = touch.position
 				steering_active = true
 				input.steer = 0.0
+				input.boost = 0.0
 			elif _brake_index < 0 and touch.index != _steer_index:
 				_brake_index = touch.index
 				input.brake = true
@@ -89,6 +113,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_steer_index = -1
 				steering_active = false
 				input.steer = 0.0
+				input.boost = 0.0
 			elif touch.index == _brake_index:
 				_brake_index = -1
 				input.brake = false
@@ -99,6 +124,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if drag.index == _steer_index:
 			finger = drag.position
 			input.steer = _steer_from(finger.x - anchor.x)
+			input.boost = _boost_from(anchor.y - finger.y)
 		get_viewport().set_input_as_handled()
 		return
 	# Mouse (desktop only -- emulated ones were dropped above): the left
@@ -114,6 +140,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			else:
 				steering_active = false
 			input.steer = 0.0
+			input.boost = 0.0
 			get_viewport().set_input_as_handled()
 		elif click.button_index == MOUSE_BUTTON_RIGHT:
 			input.brake = click.pressed
@@ -123,11 +150,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	if motion and _mouse_down:
 		finger = motion.position
 		input.steer = _steer_from(finger.x - anchor.x)
+		input.boost = _boost_from(anchor.y - finger.y)
 		get_viewport().set_input_as_handled()
 
+## Linear offset -> [0, 1] fraction of the active preset's span, then
+## reshaped by its curve exponent (>1: a small offset buys proportionally
+## less steer, full offset still reaches 1.0) -- V7b, see KartTuning.gd.
 func _steer_from(dx: float) -> float:
-	var mag: float = maxf(absf(dx) - DEAD_ZONE, 0.0)
-	return clampf(signf(dx) * mag / (STEER_SPAN - DEAD_ZONE), -1.0, 1.0)
+	var span: float = KartTuning.steer_span()
+	var dead: float = KartTuning.dead_zone()
+	var mag: float = maxf(absf(dx) - dead, 0.0)
+	var u: float = clampf(mag / (span - dead), 0.0, 1.0)
+	return signf(dx) * pow(u, KartTuning.curve_exp())
+
+## Positive-only: pushing the anchor finger UP the screen (dy > 0) buys
+## boost linearly over BOOST_SPAN; pushing down or not moving buys none.
+func _boost_from(dy: float) -> float:
+	var mag: float = maxf(dy - BOOST_DEAD_ZONE, 0.0)
+	return clampf(mag / (BOOST_SPAN - BOOST_DEAD_ZONE), 0.0, 1.0)
 
 ## Keyboard, polled: only when no finger / mouse is steering, so a probe
 ## and a thumb never fight over the same value.
@@ -147,5 +187,6 @@ func _physics_process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
 		axis += 1.0
 	input.steer = axis
+	input.boost = 1.0 if (Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W)) else 0.0
 	if _brake_index < 0:
 		input.brake = Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_SPACE)
