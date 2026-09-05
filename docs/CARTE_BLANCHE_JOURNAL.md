@@ -249,3 +249,5 @@ Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
 - **La haie entre zones** : sa densité est une constante posée à l'œil ; à dériver de la largeur de la bande.
 - **`CozyCapture`** a grossi (ride, walk, nav, weather, root) : c'est une sonde de nuit multi-usages, pas une sonde gatée. À découper ou à supprimer.
 - **Le flash d'éclair par overlay** : lisible mais brutal ; une vraie version passerait par le ciel + `weather_tint` sur 3 frames avec une courbe, et un son.
+
+**Preuve du P2 sur le service** (04:50 UTC) : déploiement CI `dpl_D9tEPfnmr4z2tKXy4FbNpzrc5GJW` (`gitRootDirectory = build/web`, sha `d94b51f`, `READY`) ; `GET https://keepy-cozy.vercel.app/index.service.worker.js` → 200, `x-vercel-cache: MISS`, `age: 0`, `CACHE_VERSION = 1788583791` (04:49:51 UTC, après le push de 04:45:40 — donc l'export de CE commit). Tag `cozy-v1` : local seulement, le push d'un tag est refusé par le proxy git de ce sandbox (`remote end hung up`) ; le hash `20986d1` suffit.
