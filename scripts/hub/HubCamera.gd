@@ -156,15 +156,26 @@ func snap_to_target() -> void:
 	if _drive_target == null:
 		global_position = _hub_position
 
+## ⚠️ OUTSIDE THE KART, `global_position` ITSELF is what is smoothed --
+## the two lines the hub has always had -- and `_hub_position` merely
+## mirrors it. The first version smoothed a private `_hub_position` and
+## copied it out, which is the same motion EXCEPT for anyone who writes
+## `global_position` from outside: CabinProbe does (it parks the camera
+## over the doorstep and lets the follow hold it there), and with the
+## shadow variable the follow dragged the camera back from where the
+## probe had put it. Five taps projected off the container and every one
+## read as an empty signal -- a regression against the pre-lot baseline,
+## caught only by running the same probe on both trees. Hors conduite,
+## this function is byte-identical in effect to what shipped.
 func _process(delta: float) -> void:
 	if target == null:
 		return
 	var weight: float = 1.0 - exp(-FOLLOW_LAMBDA * delta)
-	_hub_position = _hub_position.lerp(_wanted(), weight)
 	if _drive_target == null:
-		# The hub, exactly as before the drive mode existed.
-		global_position = _hub_position
+		global_position = global_position.lerp(_wanted(), weight)
+		_hub_position = global_position
 		return
+	_hub_position = _hub_position.lerp(_wanted(), weight)
 	if not is_instance_valid(_drive_target):
 		_on_drive_exited()
 		return
