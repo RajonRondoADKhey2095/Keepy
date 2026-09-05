@@ -160,6 +160,13 @@ func note_climb() -> void:
 	_data["stats"]["climbs"] = int(_data["stats"].get("climbs", 0)) + 1
 	_mark()
 
+## v5: the reserved fields, read-only until the placing session.
+func next_id() -> int:
+	return int(_data.get("next_id", 1))
+
+func placed() -> Array:
+	return _data.get("placed", []).duplicate()
+
 func stats() -> Dictionary:
 	return _data["stats"].duplicate()
 
@@ -193,6 +200,14 @@ func _defaults() -> Dictionary:
 		"trees": {},
 		"ground": [],
 		"stats": {"climbs": 0, "shakes": 0, "picked": 0},
+		# v5: RESERVED for the objects a player will one day PLACE (plants,
+		# craft): a stable id for each, generated from this counter, and
+		# the list itself. Nothing reads or writes them tonight; they exist
+		# so the first placed object ever saved already has an id -- the
+		# one thing the v4 harvest said could not be added after the fact.
+		# No schema bump: the meaning of no existing field changes.
+		"next_id": 1,
+		"placed": [],
 	}
 
 func _mark() -> void:
@@ -300,6 +315,14 @@ func _sanitise(raw: Dictionary) -> Dictionary:
 		for key in ["climbs", "shakes", "picked"]:
 			out["stats"][key] = maxi(_as_int(stats.get(key, 0), 0), 0)
 	out["saved_at"] = maxi(_as_int(raw.get("saved_at", 0), 0), 0)
+	# v5 reserved fields: a counter that never goes below 1, a list that
+	# keeps only dictionaries (the future reader decides their shape).
+	out["next_id"] = maxi(_as_int(raw.get("next_id", 1), 1), 1)
+	var placed: Variant = raw.get("placed", [])
+	if placed is Array:
+		for item in placed:
+			if item is Dictionary:
+				out["placed"].append(item)
 	return out
 
 static func _as_int(value: Variant, fallback: int) -> int:

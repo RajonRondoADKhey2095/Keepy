@@ -1040,6 +1040,23 @@ func _add(family: String, mesh_name: String, cell: String, xform: Transform3D, w
 		_batches[key] = {"mesh": mesh_name, "xforms": [], "wind": wind, "wind_height": wind_height, "family": family}
 		_batch_order.append(key)
 	_batches[key]["xforms"].append(xform)
+	if family in CLIMB_FAMILIES:
+		_climb_trees.append({"at": Vector3(xform.origin.x, 0.0, xform.origin.z), "xform": xform, "glb": mesh_name,
+			"key": key.replace("|", "_"), "index": _batches[key]["xforms"].size() - 1})
+
+## v5 -- the scatter's trees INSIDE the region (the hollow's autumn trees,
+## the moor's olives), published as HubBuilder.cozy_trees() publishes the
+## layout's: HubTrees climbs from this list and never re-derives a site.
+## Wall and hedge trees are outside the region by construction and are not
+## listed; cypresses have no crown to sit on and are not either.
+const CLIMB_FAMILIES: Array[String] = ["autumn_tree", "olive"]
+var _climb_trees: Array = []
+
+func climb_trees() -> Array:
+	for t in _climb_trees:
+		if not t.has("node"):
+			t["node"] = get_node_or_null(String(t["key"]))
+	return _climb_trees
 
 func _flush() -> void:
 	var nodes := 0

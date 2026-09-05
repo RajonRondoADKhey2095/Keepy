@@ -162,11 +162,13 @@ signal tapped_balloon(point: Vector3)
 signal tapped_vehicle(point: Vector3)
 
 ## Carte-blanche v4. Emitted INSTEAD of tapped_ground when the finger
-## landed on a climbable tree's disc (`aim`, world units). The tree he is
-## ON withdraws for the whole of the ride (HubTrees.accepts_tap answers -1
-## for it), so a tap on it meanwhile falls through to tapped_ground, where
-## HubWorld reads it BY STATE: shake, or come down.
-signal tapped_tree(point: Vector3)
+## landed on a climbable tree (`aim` in its ground disc, or -- v5 -- the
+## camera ray through its crown or trunk: HubTrees.tree_hit). `index` is
+## the tree. The tree he is ON withdraws for the whole of the ride
+## (tree_hit answers -1 for it), so a tap on it meanwhile falls through
+## to tapped_ground -- with the tree's own foot as the point when the ray
+## hit its crown -- where HubWorld reads it BY STATE: shake, or come down.
+signal tapped_tree(point: Vector3, index: int)
 
 ## The three nodes this needs, as scene-authored paths.
 ##
@@ -403,12 +405,21 @@ func _handle_point(screen_point: Vector2) -> void:
 	if transport != null and transport.accepts_vehicle_tap(aim):
 		tapped_vehicle.emit(destination)
 		return
-	# THE CLIMBABLE TREES (v4), on `aim` like everything else. Their discs
-	# are metres from every other prop's (V4SiteProbe), so the order here
-	# cannot decide anything.
-	if trees != null and trees.accepts_tap(aim) >= 0:
-		tapped_tree.emit(destination)
-		return
+	# THE CLIMBABLE TREES (v4), on `aim` like everything else -- and (v5)
+	# on the RAY, because a crown is what the player taps and a crown at
+	# 3 u projects onto the ground 3.5 u south of its trunk. The perchoirs'
+	# discs are metres from every other prop's (V4SiteProbe); the decor
+	# trees' discs are a trunk plus a hand, so a path beside one stays a
+	# path. The occupied tree answers only through the ground channel, at
+	# its own foot, which is how the seat's shake is asked for.
+	if trees != null:
+		var tree: int = trees.tree_hit(aim, origin, direction, true)
+		if tree >= 0:
+			if tree == trees.occupied():
+				tapped_ground.emit(trees.position_of(tree))
+			else:
+				tapped_tree.emit(destination, tree)
+			return
 	# THE OWL, asked after the boat and before the ladder, on the same
 	# world-unit terms both of them use. The order between the owl and the
 	# ladder can never actually decide anything -- the perch is by the

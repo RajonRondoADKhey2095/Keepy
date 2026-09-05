@@ -18,6 +18,9 @@ extends Node
 ##   --shots=a,b,c  frames to capture (needs a real driver)
 ##   --out=DIR      capture directory (default /tmp)
 ##   --frames=N     total frames (default 600)
+##   --list         v5: print every climbable tree (perchoirs first, then
+##                  the decor trees HubTrees adopted) and every exclusion,
+##                  then quit 0 -- the recon of the general climb
 ##
 ## Exit 0 = every assertion held.
 
@@ -45,6 +48,7 @@ var _exit_nut: bool = false
 var _stock_before: int = -1
 var _acorns_before: int = 0
 var _hazel_before: int = 0
+var _list: bool = false
 
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
@@ -69,6 +73,8 @@ func _ready() -> void:
 			_out = arg.substr(6)
 		elif arg.begins_with("--frames="):
 			_frames_total = int(arg.substr(9))
+		elif arg == "--list":
+			_list = true
 	# A known save: this runs in the sandbox's own user://, never a device.
 	WorldSave.reset()
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
@@ -87,10 +93,14 @@ func _check(name: String, ok: bool, detail: String = "") -> void:
 
 func _process(_delta: float) -> void:
 	_frames += 1
+	if _list and _frames == 3:
+		_print_list()
+		get_tree().quit(0 if _fails.is_empty() else 1)
+		return
 	if _frames == 5:
 		var at: Vector3 = _trees.call("position_of", _tree)
-		print("TREE_TAP tree %d at %s foot %s" % [_tree, at, _trees.call("foot_point", _tree)])
-		_hub.get_node("TapInput").emit_signal("tapped_tree", at)
+		print("TREE_TAP tree %d at %s foot %s spec %s" % [_tree, at, _trees.call("foot_point", _tree), _trees.call("climb_spec", _tree)])
+		_hub.get_node("TapInput").emit_signal("tapped_tree", at, _tree)
 	if _shake_frame > 0 and _frames == _shake_frame:
 		_stock_before = WorldSave.tree_stock(_trees.call("tree_id", _tree))
 		_acorns_before = WorldSave.resource(&"acorn")
@@ -144,7 +154,7 @@ func _finish() -> void:
 	set_process(false)
 	for row in _trace:
 		print("  trace %s" % [row])
-	var seat_y: float = _trees.SEAT_Y
+	var seat_y: float = _trees.call("seat_height", _tree)
 	var tree_at: Vector3 = _trees.call("position_of", _tree)
 	# A tap DURING the ascent starts the descent the instant he is seated,
 	# so the seat lasts no sampled frame: that case asserts the descent
@@ -189,3 +199,42 @@ func _finish() -> void:
 	for f in _fails:
 		print("  FAILED: " + f)
 	get_tree().quit(0 if _fails.is_empty() else 1)
+
+## v5: the registry as HubTrees built it from the live scene.
+func _print_list() -> void:
+	var n: int = _trees.call("count")
+	var zones := {"plateau": 0, "vallon": 0, "lande": 0}
+	for i in n:
+		var at: Vector3 = _trees.call("position_of", i)
+		var zone: String = "vallon" if HubRegion.in_autumn(at) else ("lande" if HubRegion.in_moor(at) else "plateau")
+		zones[zone] += 1
+		var spec: Dictionary = _trees.call("climb_spec", i)
+		print("TREE %d %s %s at (%.1f, %.1f) seat %.2f trunk %.2f r %.2f/%.2f lean %s pulls %s foot %s" % [i, zone, "perch" if _trees.call("is_perch", i) else "decor", at.x, at.z, _trees.call("seat_height", i), spec["trunk_h"], spec["r_base"], spec["r_top"], spec.get("lean", Vector3.ZERO), spec.get("pulls", 5), _trees.call("foot_point", i)])
+	for e in _trees.call("excluded"):
+		print("EXCLUDED %s at (%.1f, %.1f): %s" % [e["glb"], e["at"].x, e["at"].z, e["why"]])
+	print("LIST climbable %d (perchoirs %d, decor %d) plateau %d vallon %d lande %d excluded %d" % [n, n - int(_trees.call("decor_count")), _trees.call("decor_count"), zones["plateau"], zones["vallon"], zones["lande"], (_trees.call("excluded") as Array).size()])
+	# v5: the ray test, pure maths (no viewport needed). POSITIVE FIRST:
+	# a ray from the camera's offset through a decor tree's crown centre
+	# must name that tree; then the refusals -- the same ray 3 u aside
+	# names nothing, and the occupied tree withdraws.
+	if n > 5:
+		var i: int = 5
+		var at: Vector3 = _trees.call("position_of", i)
+		var spec: Dictionary = _trees.call("climb_spec", i)
+		var crown: Vector3 = at + Vector3(0.0, (spec["trunk_h"] + spec["seat"].y) * 0.5, 0.0)
+		var cam: Vector3 = at + Vector3(0.0, 7.6, 8.9)
+		var hit: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (crown - cam).normalized(), false)
+		_check("ray_crown_hits_tree", hit == i, "hit %d" % hit)
+		var aside: Vector3 = crown + Vector3(3.5, 0.0, 0.0)
+		var miss: int = _trees.call("tree_hit", Vector3(at.x + 3.5, 0.0, at.z + 4.0), cam, (aside - cam).normalized(), false)
+		_check("ray_aside_misses", miss != i, "hit %d" % miss)
+		var trunk_pt: Vector3 = at + Vector3(0.0, spec["trunk_h"] * 0.5, 0.0)
+		var thit: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 1.0), cam, (trunk_pt - cam).normalized(), false)
+		_check("ray_trunk_hits_tree", thit == i, "hit %d" % thit)
+		_trees.call("set_occupied", i)
+		var withdrawn: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (crown - cam).normalized(), false)
+		_check("occupied_withdraws", withdrawn != i, "hit %d" % withdrawn)
+		var incl: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (crown - cam).normalized(), true)
+		_check("occupied_answers_when_included", incl == i, "hit %d" % incl)
+		_trees.call("release")
+		print("V4ClimbProbe --list: %d failed" % _fails.size())

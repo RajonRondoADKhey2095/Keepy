@@ -3803,22 +3803,53 @@ var _climbing_tree: int = -1
 const TREE_ARRIVE: float = 1.0
 
 func _setup_trees() -> void:
-	_trees.setup(_keepy, _weather)
+	# v5: every decor tree the builder and the scatter publish is offered
+	# to HubTrees, which keeps the ones whose seat and foot point pass.
+	var published: Array = []
+	published.append_array(_builder.cozy_trees())
+	var scatter: Node = get_node_or_null("WorldViewport/SubViewport/World/CozyScatter")
+	if scatter != null and scatter.has_method("climb_trees"):
+		published.append_array(scatter.call("climb_trees"))
+	_trees.setup(_keepy, _weather, published, _tree_foot_problem)
 	_nuts.setup(_keepy)
 	_trees.shake_finished.connect(func(_i): _trees.refresh_stock(_i))
 	_tap.tapped_tree.connect(_on_tapped_tree)
 	_keepy.tree_dismounted.connect(_on_tree_dismounted)
+	_keepy.tree_leaves_entered.connect(func(): _trees.rustle(_trees.occupied()))
+
+## v5: why a decor tree's foot point (`foot`, for the tree at `at`) is not
+## a place to stand -- empty when it is. The world's own answers: the
+## region, the water, every portal's disc (a landing there would open a
+## game), every other prop's footprint. Written here because this is where
+## those facts live; HubTrees only asks.
+const TREE_FOOT_PORTAL_MARGIN: float = 0.6
+const TREE_FOOT_PROP_MARGIN: float = 0.35
+
+func _tree_foot_problem(foot: Vector3, at: Vector3) -> String:
+	if not HubRegion.contains(foot):
+		return "outside region"
+	if _water != null and _water.contains(foot):
+		return "in water"
+	for portal in _portals:
+		if portal.landed_within(foot) or portal._ground_distance(foot) <= portal._radius + TREE_FOOT_PORTAL_MARGIN:
+			return "portal disc"
+	for fp in _builder.ground_footprints():
+		var c: Vector3 = fp["position"]
+		if Vector2(c.x - at.x, c.z - at.z).length() < 0.01:
+			continue
+		if Vector2(c.x - foot.x, c.z - foot.z).length() < float(fp["radius"]) + TREE_FOOT_PROP_MARGIN:
+			return "prop footprint"
+	return ""
 
 ## A tap on a climbable tree. ONE tap buys the whole thing: walk to its
 ## foot point (through the corridor gates if it is in another zone), grip,
 ## climb, sit.
-func _on_tapped_tree(point: Vector3) -> void:
+func _on_tapped_tree(point: Vector3, index: int) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
 	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_owl_flight():
 		return
-	var index: int = _trees.accepts_tap(point)
-	if index < 0:
+	if index < 0 or index >= _trees.count() or index == _trees.occupied():
 		_hop_via_corridor(point)
 		return
 	if _keepy.is_on_tree():
@@ -3883,9 +3914,10 @@ func _shake_tree() -> void:
 		return
 	_trees.shake(index)
 	_trees.refresh_stock(index)
+	var geometry: Array = _trees.drop_geometry(index)
 	get_tree().create_timer(NUT_RELEASE_DELAY_S).timeout.connect(func():
 		if is_instance_valid(_nuts):
-			_nuts.drop_from_tree(_trees.node(index), kinds))
+			_nuts.drop_from_tree(_trees.node(index), kinds, geometry[0], geometry[1]))
 
 ## For probes.
 func nuts() -> HubNuts:

@@ -58,6 +58,9 @@ func _ready() -> void:
 	_check("A.reload_tree", b.tree_stock("t1") == SaveScript.TREE_CAPACITY - 1, str(b.tree_stock("t1")))
 	_check("A.reload_ground", b.ground_nuts().size() == 2 and b.ground_nuts()[0][2] == "acorn", str(b.ground_nuts()))
 	_check("A.untouched_tree_full", b.tree_stock("never") == SaveScript.TREE_CAPACITY)
+	# v5: the reserved fields round-trip with their defaults.
+	_check("A.reserved_next_id", b.next_id() == 1, str(b.next_id()))
+	_check("A.reserved_placed_empty", b.placed().is_empty(), str(b.placed()))
 
 	# ---- PHASE B: recharge on the wall clock, lazily.
 	var c := _fresh()
@@ -119,6 +122,20 @@ func _ready() -> void:
 	_check("C.partial_tree_bad_dropped", g.tree_stock("bad") == SaveScript.TREE_CAPACITY)
 	_check("C.partial_tree_big_clamped", g.tree_stock("big") == SaveScript.TREE_CAPACITY, str(g.tree_stock("big")))
 	_check("C.partial_ground_one", g.ground_nuts().size() == 1, str(g.ground_nuts()))
+	# v5: reserved fields sanitised -- a bad counter floors at 1, a list
+	# keeps its dictionaries only.
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"schema": 1, "next_id": -3, "placed": [{"id": 1}, "junk", 4, {"id": 2}]}))
+	f.close()
+	var g2 := _fresh(); g2.SAVE_PATH_OVERRIDE = path; g2._load()
+	_check("C.reserved_next_id_floor", g2.next_id() == 1, str(g2.next_id()))
+	_check("C.reserved_placed_dicts", g2.placed().size() == 2, str(g2.placed()))
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"schema": 1, "next_id": 42, "placed": "nope"}))
+	f.close()
+	var g3 := _fresh(); g3.SAVE_PATH_OVERRIDE = path; g3._load()
+	_check("C.reserved_next_id_kept", g3.next_id() == 42, str(g3.next_id()))
+	_check("C.reserved_placed_not_array", g3.placed().is_empty(), str(g3.placed()))
 	# Pre-versioned (no schema key): migrated to empty.
 	f = FileAccess.open(path, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"resources": {"acorn": 3}}))

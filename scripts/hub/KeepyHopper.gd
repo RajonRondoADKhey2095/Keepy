@@ -1731,6 +1731,9 @@ func _place_vehicle(ground: Vector3, height: float, squash: Vector3) -> void:
 signal tree_mounted
 signal tree_seated
 signal tree_dismounted
+## v5: he is about to spring THROUGH the crown (up onto the dome, or down
+## off it) -- the tree rustles its leaves on it.
+signal tree_leaves_entered
 
 enum TreePhase { NONE, MOUNT, ASCEND, TOP_HOP, SEATED, DROP_HOP, DESCEND, DISMOUNT }
 
@@ -1800,10 +1803,39 @@ func tree_phase() -> int:
 func tree_node() -> Node3D:
 	return _tree
 
-## Trunk radius at height `y` (local): the family's trunk tapers linearly.
+## Radius of the surface he grips at height `y` (carrier units): the
+## trunk's linear taper, and (v5, decor trees) the crown's ellipsoid
+## above it -- the larger of the two where they meet, so the profile
+## never jumps inward at the crown's bottom pole.
 func _tree_r(y: float) -> float:
 	var h: float = float(_tree_spec.get("trunk_h", 3.3))
-	return lerpf(float(_tree_spec.get("r_base", 0.3)), float(_tree_spec.get("r_top", 0.21)), clampf(y / h, 0.0, 1.0))
+	var trunk: float = lerpf(float(_tree_spec.get("r_base", 0.3)), float(_tree_spec.get("r_top", 0.21)), clampf(y / h, 0.0, 1.0))
+	if y <= h or not _tree_spec.has("crown"):
+		return trunk
+	return maxf(trunk, _tree_crown_r(y))
+
+func _tree_crown_r(y: float) -> float:
+	var crown: Dictionary = _tree_spec["crown"]
+	var u: float = clampf((y - float(crown["cy"])) / float(crown["b"]), -1.0, 1.0)
+	return float(crown["a"]) * sqrt(maxf(1.0 - u * u, 0.0))
+
+## v5: how far the crown's flank leans back from the vertical at height
+## `y`, in degrees -- the body lies along it (nose over the dome) instead
+## of standing off it. 0 on a trunk and at the crown's equator.
+func _tree_surface_tilt_deg(y: float) -> float:
+	if not _tree_spec.has("crown") or y <= float(_tree_spec.get("trunk_h", 3.3)):
+		return 0.0
+	var crown: Dictionary = _tree_spec["crown"]
+	var a: float = crown["a"]
+	var b: float = crown["b"]
+	var r: float = maxf(_tree_crown_r(y), 0.05)
+	var slope: float = a * a * (y - float(crown["cy"])) / (b * b * r)
+	# Capped low on purpose: captured at 58 deg his head went INTO the
+	# leaves and only the tail showed; at ~20 deg he leans over the dome
+	# and stays readable. The feet sink a little into the leaves instead.
+	return clampf(rad_to_deg(atan(absf(slope))) * 0.5, 0.0, TREE_SURFACE_TILT_MAX_DEG)
+
+const TREE_SURFACE_TILT_MAX_DEG: float = 20.0
 
 func _tree_face() -> Vector3:
 	return _tree_spec.get("face", Vector3(0, 0, 1))
@@ -1814,9 +1846,32 @@ func _tree_right() -> Vector3:
 
 ## Local point of the grip at height `y`, `side` in -1..1 for the sway.
 func _tree_grip(y: float, side: float) -> Vector3:
-	return _tree_face() * (_tree_r(y) + TREE_GRIP_GAP) + _tree_right() * (TREE_SWAY * side) + Vector3(0.0, y, 0.0)
+	return _tree_face() * (_tree_r(y) + TREE_GRIP_GAP) + _tree_right() * (TREE_SWAY * side) + Vector3(0.0, y, 0.0) + _tree_lean(y)
+
+## v5: the trunk's lean at height `y` -- the families bend as t^2 (measured
+## by HubTrees.measure_kind, zero for the straight perchoirs), so a grip
+## follows the bark instead of the axis.
+func _tree_lean(y: float) -> Vector3:
+	var lean: Vector3 = _tree_spec.get("lean", Vector3.ZERO)
+	if lean == Vector3.ZERO:
+		return Vector3.ZERO
+	var t: float = clampf(y / float(_tree_spec.get("trunk_h", 3.3)), 0.0, 1.0)
+	return lean * (t * t)
+
+## v5: the rhythm, per tree -- the perchoir's constants unless the spec
+## says otherwise (a short trunk is fewer pulls in less time).
+func _tree_pull_count() -> int:
+	return int(_tree_spec.get("pulls", TREE_PULLS))
+
+func _tree_climb_s() -> float:
+	return float(_tree_spec.get("climb_s", TREE_CLIMB_S))
+
+func _tree_descend_s() -> float:
+	return float(_tree_spec.get("descend_s", TREE_DESCEND_S))
 
 func _tree_top_y() -> float:
+	if _tree_spec.has("top_y"):
+		return float(_tree_spec["top_y"])
 	return float(_tree_spec.get("trunk_h", 3.3)) - TREE_GRIP_TOP_MARGIN
 
 ## Where he stands to start (and lands to finish), on the ground, in WORLD.
@@ -1879,14 +1934,14 @@ func _on_tree_mount_finished() -> void:
 	_hop_from_y = 0.0
 	_hop_to_y = 0.0
 	_tree_tween = create_tween()
-	_tree_tween.tween_method(_apply_tree_ascend, 0.0, 1.0, TREE_CLIMB_S)
+	_tree_tween.tween_method(_apply_tree_ascend, 0.0, 1.0, _tree_climb_s())
 	_tree_tween.finished.connect(_on_tree_ascend_finished, CONNECT_ONE_SHOT)
 
 ## Linear t -> a ladder of TREE_PULLS reaches. Returns [progress 0..1,
 ## reach intensity 0..1 (1 at the middle of a rise, 0 while gripping),
 ## side -1..1 (which hand is up)].
 func _tree_pulls(t: float) -> Array:
-	var n: float = float(TREE_PULLS)
+	var n: float = float(_tree_pull_count())
 	var k: float = floor(t * n)
 	var frac: float = t * n - k
 	var rise: float = smoothstep(0.0, TREE_PULL_RISE, frac)
@@ -1906,7 +1961,7 @@ func _apply_tree_ascend(t: float) -> void:
 	var y: float = lerpf(TREE_GRIP_Y0, _tree_top_y(), pull[0])
 	global_position = _tree.to_global(_tree_grip(y, pull[2]))
 	_tree_face_yaw(true)
-	_body.rotation_degrees.x = _base_pitch + TREE_HUG_PITCH_DEG - TREE_PULL_PITCH_DEG * pull[1]
+	_body.rotation_degrees.x = _base_pitch + TREE_HUG_PITCH_DEG - TREE_PULL_PITCH_DEG * pull[1] + _tree_surface_tilt_deg(y)
 	_body.rotation_degrees.z = TREE_ROLL_DEG * pull[2]
 	var stretch: float = 1.0 + TREE_REACH_STRETCH * pull[1]
 	_body.scale = _base_scale * Vector3(1.0 - 0.35 * (stretch - 1.0), stretch, 1.0 - 0.35 * (stretch - 1.0))
@@ -1928,8 +1983,17 @@ func _on_tree_ascend_finished() -> void:
 	_hop_to_y = seat.y
 	_hop_height = TREE_TOP_HOP_HEIGHT
 	_tree_tween = create_tween()
-	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, TREE_TOP_HOP_S)
+	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, _tree_top_hop_s(seat.y - from.y))
 	_tree_tween.finished.connect(_on_tree_top_hop_finished, CONNECT_ONE_SHOT)
+	if _tree_spec.get("through_leaves", false):
+		tree_leaves_entered.emit()
+
+## v5: the spring from the last grip to the seat. On a perchoir it rises
+## 0.30 u onto the pad (TREE_TOP_HOP_S, unchanged); on a decor tree it
+## goes THROUGH the crown onto the dome, up to ~2 u, and gets up to 1.8x
+## the time so the pop-out reads as a pop-out and not a teleport.
+func _tree_top_hop_s(rise: float) -> float:
+	return TREE_TOP_HOP_S * clampf(rise / 0.9, 1.0, 1.8)
 
 func _on_tree_top_hop_finished() -> void:
 	if _state != State.ON_TREE:
@@ -2011,8 +2075,10 @@ func _begin_tree_descent() -> void:
 	if _tree_tween and _tree_tween.is_valid():
 		_tree_tween.kill()
 	_tree_tween = create_tween()
-	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, TREE_TOP_HOP_S * 0.8)
+	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, _tree_top_hop_s(seat.y - grip.y) * 0.8)
 	_tree_tween.finished.connect(_on_tree_drop_hop_finished, CONNECT_ONE_SHOT)
+	if _tree_spec.get("through_leaves", false):
+		tree_leaves_entered.emit()
 
 func _on_tree_drop_hop_finished() -> void:
 	if _state != State.ON_TREE:
@@ -2022,7 +2088,7 @@ func _on_tree_drop_hop_finished() -> void:
 	_hop_from_y = 0.0
 	_hop_to_y = 0.0
 	_tree_tween = create_tween()
-	_tree_tween.tween_method(_apply_tree_descend, 0.0, 1.0, TREE_DESCEND_S)
+	_tree_tween.tween_method(_apply_tree_descend, 0.0, 1.0, _tree_descend_s())
 	_tree_tween.finished.connect(_on_tree_descend_finished, CONNECT_ONE_SHOT)
 
 func _apply_tree_descend(t: float) -> void:
@@ -2033,7 +2099,9 @@ func _apply_tree_descend(t: float) -> void:
 	var y: float = lerpf(_tree_top_y(), TREE_GRIP_Y0, pull[0])
 	global_position = _tree.to_global(_tree_grip(y, pull[2]))
 	_tree_face_yaw(true)
-	_body.rotation_degrees.x = _base_pitch + TREE_HUG_PITCH_DEG + TREE_PULL_PITCH_DEG * pull[1]
+	# Head first (rolled 180 deg), the same lean reads with the opposite
+	# sign: captured with + the head was buried in the crown, tail up.
+	_body.rotation_degrees.x = _base_pitch + TREE_HUG_PITCH_DEG + TREE_PULL_PITCH_DEG * pull[1] - _tree_surface_tilt_deg(y)
 	_body.rotation_degrees.z = TREE_HEADFIRST_ROLL_DEG - TREE_ROLL_DEG * pull[2]
 	var stretch: float = 1.0 + TREE_REACH_STRETCH * 0.8 * pull[1]
 	_body.scale = _base_scale * Vector3(1.0 - 0.35 * (stretch - 1.0), stretch, 1.0 - 0.35 * (stretch - 1.0))

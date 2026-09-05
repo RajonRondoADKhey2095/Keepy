@@ -1760,8 +1760,13 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 			var tree_key := _cozy_tree_key(entry)
 			# The conifer GLB stands 4.9 u against 3.4-3.9 for the round ones;
 			# scaled down so a layout entry keeps roughly the height it had.
-			var tree_scale: float = COZY_TREE_SCALE * (0.72 if COZY_TREE_FILES[int(String(tree_key).substr(8))] == "tree_4_conifer" else 1.0)
-			_instance(tree_key, placement.scaled_local(Vector3.ONE * tree_scale))
+			var tree_file: String = COZY_TREE_FILES[int(String(tree_key).substr(8))]
+			var tree_scale: float = COZY_TREE_SCALE * (0.72 if tree_file == "tree_4_conifer" else 1.0)
+			var tree_xform: Transform3D = placement.scaled_local(Vector3.ONE * tree_scale)
+			_instance(tree_key, tree_xform)
+			# v5: published for the climb (HubTrees), never re-derived there.
+			_cozy_trees.append({"at": Vector3(placement.origin.x, 0.0, placement.origin.z), "xform": tree_xform,
+				"glb": tree_file, "key": tree_key, "index": _batches[tree_key]["xforms"].size() - 1})
 		&"rock":
 			var rock_at := _distorted(placement, entry)
 			_instance(_cozy_key("CozyRock", entry, COZY_ROCK_VARIANTS), rock_at)
@@ -1865,6 +1870,19 @@ func _cozy_key(prefix: String, entry: Dictionary, variants: int) -> StringName:
 
 func _cozy_tree_key(entry: Dictionary) -> StringName:
 	return _cozy_key("CozyTree", entry, COZY_TREE_FILES.size())
+
+## v5 -- every layout tree as drawn: {"at" (ground, world), "xform" (the
+## instance's world transform, scale included), "glb", "key" (the batch),
+## "index" (its slot in that batch), "node" (the MultiMeshInstance3D, once
+## flushed). THE one reading of "where are the trees and how are they
+## drawn": HubTrees climbs from it and writes the shake back through it.
+var _cozy_trees: Array = []
+
+func cozy_trees() -> Array:
+	for t in _cozy_trees:
+		if not t.has("node"):
+			t["node"] = get_node_or_null(String(t["key"]))
+	return _cozy_trees
 
 func _cozy_spec(file: String, wind: float = 0.0, wind_height: float = 1.0) -> Array:
 	var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path(file))

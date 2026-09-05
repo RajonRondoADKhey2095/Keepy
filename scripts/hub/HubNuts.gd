@@ -86,11 +86,13 @@ func _spawn(kind: StringName, at: Vector3, velocity: Vector3) -> Dictionary:
 ## Shakes `count` nuts of `kinds` out of `tree` (a Node3D whose local
 ## frame is the family's), at a random point of the wreath, thrown a
 ## little outward so they clear the trunk and land where he can walk.
-func drop_from_tree(tree: Node3D, kinds: Array) -> void:
+## v5: `ring_r` / `drop_y` let a decor tree (HubTrees.drop_geometry) name
+## its own crown rim; the defaults are the perchoir wreath's.
+func drop_from_tree(tree: Node3D, kinds: Array, ring_r: float = DROP_RING_R, drop_y: float = DROP_Y) -> void:
 	for kind in kinds:
 		var a: float = randf() * TAU
-		var r: float = DROP_RING_R * randf_range(0.9, 1.15)
-		var local := Vector3(cos(a) * r, DROP_Y + randf_range(-0.15, 0.15), sin(a) * r)
+		var r: float = ring_r * randf_range(0.9, 1.15)
+		var local := Vector3(cos(a) * r, drop_y + randf_range(-0.15, 0.15), sin(a) * r)
 		var world: Vector3 = tree.to_global(local)
 		var out := Vector3(world.x - tree.global_position.x, 0.0, world.z - tree.global_position.z).normalized()
 		var vel: Vector3 = out * randf_range(0.9, 1.7) + Vector3(randf_range(-0.4, 0.4), randf_range(0.2, 0.9), randf_range(-0.4, 0.4))

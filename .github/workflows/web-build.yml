@@ -5,7 +5,7 @@ on:
     # claude/carte-blanche-cozy-02o8dm: throwaway visual-quality branch (never
     # merged). It deploys to its own preview alias so it can be played on
     # device without touching keepy-staging or keepy-ten.
-    branches: [main, staging, claude/carte-blanche-cozy-02o8dm]
+    branches: [main, staging, claude/carte-blanche-cozy-02o8dm, claude/carte-blanche-v5-grimper-9qlhci]
   workflow_dispatch: {}
 
 concurrency:
@@ -173,7 +173,7 @@ jobs:
           vercel alias set "$DEPLOY_URL" keepy-staging.vercel.app -T "$VERCEL_ORG_ID" --token="$VERCEL_TOKEN"
 
       - name: "Deploy to Vercel [PREVIEW -- claude/carte-blanche-cozy-02o8dm]"
-        if: github.ref_name == 'claude/carte-blanche-cozy-02o8dm'
+        if: github.ref_name == 'claude/carte-blanche-cozy-02o8dm' || github.ref_name == 'claude/carte-blanche-v5-grimper-9qlhci'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
