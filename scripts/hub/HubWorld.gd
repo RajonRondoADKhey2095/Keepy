@@ -87,6 +87,9 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _weather_overlay: ColorRect = $WeatherOverlay
 @onready var _weather_label: Label = $FallbackMenu/Panel/VBoxContainer/WeatherLabel
 @onready var _weather_row: HBoxContainer = $FallbackMenu/Panel/VBoxContainer/WeatherRow
+## v3 P0: the performance overlay (preview only) and its menu toggle.
+@onready var _perf: HubPerfOverlay = $PerfOverlay
+@onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -701,6 +704,7 @@ func _ready() -> void:
 	_setup_campfire()
 	_tap.tapped_campfire.connect(_on_tapped_campfire)
 	_setup_weather()
+	_setup_perf()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -3574,6 +3578,26 @@ func _on_weather_changed(kind: int) -> void:
 
 func _on_fallback_toggled() -> void:
 	_fallback_menu.visible = not _fallback_menu.visible
+
+## ---- v3 P0: performance overlay ---------------------------------------
+## Same gate as the weather row and the guest bypass: an untrusted preview
+## hostname, or off-web (sandbox captures). Shown by default there -- the
+## whole point is that the device reports its numbers without being asked
+## -- and the menu button hides it.
+func _setup_perf() -> void:
+	var show: bool = Auth.is_untrusted_preview_domain() or not OS.has_feature("web")
+	_perf.visible = show
+	_perf_button.visible = show
+	_perf_button.text = "Perf (preview) : ON" if show else "Perf (preview) : OFF"
+	_perf_button.pressed.connect(_on_perf_toggled)
+
+func _on_perf_toggled() -> void:
+	_perf.visible = not _perf.visible
+	_perf_button.text = "Perf (preview) : ON" if _perf.visible else "Perf (preview) : OFF"
+
+## For probes: the overlay's current readings.
+func perf_snapshot() -> Dictionary:
+	return _perf.snapshot()
 
 func _on_fallback_chased() -> void:
 	_router.route(&"chased")

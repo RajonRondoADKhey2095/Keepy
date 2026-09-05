@@ -1,4 +1,4 @@
-[gd_scene load_steps=24 format=3]
+[gd_scene load_steps=26 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://scripts/hub/HubCampfire.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/hub/CozyScatter.gd" id="18"]
 [ext_resource type="Script" path="res://scripts/hub/CozyWeather.gd" id="19"]
+[ext_resource type="Script" path="res://scripts/hub/HubPerfOverlay.gd" id="20"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -80,6 +81,17 @@ corner_radius_top_left = 18
 corner_radius_top_right = 18
 corner_radius_bottom_left = 18
 corner_radius_bottom_right = 18
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_perf"]
+bg_color = Color(0.03, 0.05, 0.02, 0.72)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_left = 10
+corner_radius_bottom_right = 10
+content_margin_left = 14.0
+content_margin_top = 8.0
+content_margin_right = 14.0
+content_margin_bottom = 8.0
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_guest_badge"]
 bg_color = Color(0.55, 0.1, 0.07, 0.88)
@@ -342,6 +354,18 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
 text = "Auto"
 
+[node name="PerfButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(320, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Perf (preview) : ON"
+
 [node name="CloseButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 4
@@ -368,6 +392,30 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 20
 theme_override_colors/font_color = Color(1, 0.95, 0.85, 1)
 text = "INVITE - PREVIEW"
+
+[node name="PerfOverlay" type="PanelContainer" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 0
+offset_left = 24.0
+offset_top = 80.0
+offset_right = 700.0
+offset_bottom = 200.0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_perf")
+script = ExtResource("20")
+viewport_path = NodePath("../WorldViewport/SubViewport")
+camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
+world_path = NodePath("../WorldViewport/SubViewport/World")
+weather_path = NodePath("../WorldViewport/SubViewport/World/CozyWeather")
+label_path = NodePath("Text")
+
+[node name="Text" type="Label" parent="PerfOverlay"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_font_sizes/font_size = 22
+theme_override_colors/font_color = Color(0.9, 1, 0.85, 1)
+text = "perf"
 
 [node name="ConfirmDialog" parent="." instance=ExtResource("11")]
 visible = false

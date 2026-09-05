@@ -140,6 +140,9 @@ func _extras(stats: Dictionary) -> void:
 		stats["ground_tint"] = str((gm as ShaderMaterial).get_shader_parameter("weather_tint"))
 		stats["ground_wet"] = (gm as ShaderMaterial).get_shader_parameter("wet")
 	stats["overlay"] = str((_hub.get_node("WeatherOverlay") as ColorRect).color)
+	# v3: the perf overlay's own readings (engine counters + frustum replay).
+	if _hub.has_method("perf_snapshot"):
+		stats["perf"] = _hub.call("perf_snapshot")
 
 static func _surface_tris(mesh: Mesh) -> int:
 	var tris := 0
