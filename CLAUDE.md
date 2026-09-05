@@ -1135,6 +1135,41 @@ littéralement celle qui s'affiche » : depuis la suppression du grade plein
 sonde de mesure ponctuelle n'entre pas dans le dépôt ; une sonde qui gate un
 contrat permanent y entre et compte.
 
+### ⚠️ UNE VARIABLE-OMBRE D'UNE PROPRIÉTÉ DE NŒUD N'EST PAS LA PROPRIÉTÉ
+
+Lisser une propriété de nœud (`global_position`) et lisser une **copie**
+privée qu'on recopie ensuite dedans (`_hub_position` → `global_position`)
+produisent la MÊME trajectoire tant que personne d'autre n'écrit cette
+propriété — et divergent net dès que quelqu'un le fait : une sonde qui gare
+la caméra à la main, un autre nœud, un `snap`. Trouvé sur `HubCamera` en
+mode conduite (V7 karting) : `CabinProbe` posait la caméra au-dessus d'un
+seuil et laissait le suivi la tenir là ; avec la variable-ombre, le suivi
+ramenait la caméra depuis le spawn à chaque frame, le seuil se projetait
+hors du conteneur et cinq taps de seuil étaient jetés — **aucune erreur**,
+juste un signal vide. C'est exactement un changement de comportement hors
+du mode qui l'a introduit, et rien dans la sonde du mode lui-même ne pouvait
+le voir (elle ne gare jamais la caméra à la main).
+
+**Règle** : si un lissage doit rester local à un mode, isoler la variable
+d'ombre à CE mode et laisser la propriété réelle lissée directement partout
+ailleurs — jamais l'inverse (propriété toujours recopiée depuis l'ombre).
+
+### ⚠️ LA SONDE D'UN LOT NE VOIT PAS LES RÉGRESSIONS DES AUTRES LOTS
+
+Une sonde écrite pour le lot en cours mesure ce que CE lot fait ; elle ne
+rejoue pas les usages des lots précédents, et un chiffre vert dessus ne dit
+rien du reste du hub. La régression `HubCamera` ci-dessus (99/99 sur
+`KartProbe`, verte) n'a été trouvée qu'en rejouant la table des rides
+existants — les mêmes sondes que la fermeture du lot précédent — sur DEUX
+arbres : la branche du lot et une référence `origin/staging` importée à
+part. Le compte de rouges a divergé (1 sur la référence, 6 sur la branche) ;
+c'est la COMPARAISON qui a tranché, pas la couleur d'une sonde isolée.
+
+**Règle** : avant de fermer un lot qui touche un mode partagé (caméra,
+sauvegarde, entrée), rejouer la table des rides/sondes existants sur les
+DEUX arbres (branche et référence importée à part), jamais sur la branche
+seule.
+
 ## Piège payload — `export_filter="all_resources"` embarque TOUT
 
 **Toute ressource du projet part dans le build, qu'une scène la référence ou
