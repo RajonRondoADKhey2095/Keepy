@@ -174,7 +174,20 @@ func _phase_track() -> void:
 	var g0: Dictionary = track.start_pose(0)
 	var g1: Dictionary = track.start_pose(1)
 	_check("grid slot 0 is on track, short of the line", track.on_track(g0["position"]) and float(track.progress_at(g0["position"])["s"]) > track.length() - 8.0)
-	_check("grid slot 1 is on track, the other lane, further back", track.on_track(g1["position"]) and (g1["position"] as Vector3).distance_to(g0["position"]) > 3.5)
+	# V8 P3: four abreast. Slot 1 is another lane (>= 2 u sideways), a
+	# hint of stagger behind (< 1 u along), and all four slots are on the
+	# widened ribbon with a kart's width of ribbon still outside them.
+	var s0: float = float(track.progress_at(g0["position"])["s"])
+	var s1: float = float(track.progress_at(g1["position"])["s"])
+	_check("grid slot 1 is on track, another lane, abreast (stagger < 1 u)", track.on_track(g1["position"]) and absf(float(track.progress_at(g1["position"])["lateral"]) - float(track.progress_at(g0["position"])["lateral"])) >= 2.0 and absf(s0 - s1) < 1.0, "%.2f / %.2f" % [s0, s1])
+	var grid_ok := true
+	for gi in 4:
+		var g: Dictionary = track.start_pose(gi)
+		var lat: float = absf(float(track.progress_at(g["position"])["lateral"]))
+		if not track.on_track(g["position"]) or lat + 0.7 > KartTrack.HALF_WIDTH:
+			grid_ok = false
+	_check("four grid slots on the ribbon, a kart's half-width inside the edge", grid_ok)
+	_check("V8 P3: the ribbon is 10 u wide", absf(KartTrack.HALF_WIDTH - 5.0) < 0.001)
 	# Hinted search agrees with the full search along the whole lap.
 	var hint := -1
 	var disagree := 0
@@ -509,6 +522,13 @@ func _phase_race() -> void:
 			straight = i
 	_check("cat faster than the boar at the tightest bend", cat_driver.vmax_at(tight) > boar_driver.vmax_at(tight), "%.2f vs %.2f" % [cat_driver.vmax_at(tight), boar_driver.vmax_at(tight)])
 	_check("boar faster than the cat on the straight", boar_driver.vmax_at(straight) > cat_driver.vmax_at(straight), "%.2f vs %.2f" % [boar_driver.vmax_at(straight), cat_driver.vmax_at(straight)])
+	# The side, read off the driver and not off a comment (the V7 "right
+	# of travel" is the LEFT -- measured by capture, see lane_goal_at):
+	# the outside of the tightest bend is the side OPPOSITE its curvature
+	# sign in lateral units (right bend -> outside = +lateral).
+	var out_sign: float = signf(track.signed_curvature(tight))
+	_check("the boar's lane at the tightest bend is on the OUTSIDE", boar_driver.lane_goal_at(tight) * out_sign > 0.5, "%.2f (k sign %.0f)" % [boar_driver.lane_goal_at(tight), out_sign])
+	_check("the cat's lane at the tightest bend is on the INSIDE", cat_driver.lane_goal_at(tight) * out_sign < -0.5, "%.2f" % cat_driver.lane_goal_at(tight))
 	_check("the profile brakes before the bend: v_max is lower 3 samples before the omega than 12 before", cat_driver.vmax_at(tight - 3) < cat_driver.vmax_at(tight - 12), "%.2f < %.2f" % [cat_driver.vmax_at(tight - 3), cat_driver.vmax_at(tight - 12)])
 	# Collisions, blind: overlap two karts by hand, one frame of _collide.
 	var a: KartBody = _karting.racers[1]["kart"]

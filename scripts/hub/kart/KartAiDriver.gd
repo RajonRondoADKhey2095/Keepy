@@ -17,8 +17,8 @@ class_name KartAiDriver
 ## HOW IT DRIVES -- three ideas
 ##
 ##  1. LINE. Pure pursuit: aim at the spine point `lookahead` ahead,
-##     offset sideways by `_lane` -- a lateral target (u, positive = right
-##     of travel) the driver EASES toward. The lane is the personality's
+##     offset sideways by `_lane` -- a lateral target (u, positive = the
+##     driver's LEFT, see lane_goal_at) the driver EASES toward. The lane is the personality's
 ##     natural line, biased toward the inside or the outside of a bend
 ##     (`corner_bias` x signed curvature), and pushed to the freer side
 ##     when another kart is close ahead (the overtake). A lane is never
@@ -78,7 +78,7 @@ const K_FLOOR: float = 0.004
 ##   top          boost the driver is willing to hold on a straight (0..1)
 ##   brake_margin speed over the profile before the brake is pressed (u/s)
 ##   a_brake      deceleration assumed by the backward pass (u/s2)
-##   corner_bias  lane offset per unit of signed curvature x 10 (u): + = outside
+##   corner_bias  lane offset per unit of signed curvature x 10 (u): + = outside, - = inside
 ##   lane         natural lateral offset on the straights (u)
 ##   wobble_amp   steer noise amplitude (0..1 of full lock)
 ##   wobble_hz    steer noise frequency
@@ -160,6 +160,24 @@ func _build_profile() -> void:
 			var allowed: float = sqrt(_vmax[nxt] * _vmax[nxt] + 2.0 * a_brake * maxf(ds, 0.01))
 			_vmax[i] = minf(_vmax[i], allowed)
 
+## The lane this personality wants at spine sample `i`, before any
+## overtake or fault: its natural offset plus the corner bias.
+##
+## ⚠️ SIDE CONVENTION, MEASURED BY CAPTURE (V8 P3, journal): a positive
+## lateral -- KartTrack's side_at(), "(tan.z, 0, -tan.x)", the +x side of
+## a body facing +z -- is the driver's LEFT under this camera, not the
+## right the V7 comments say. A RIGHT bend has positive signed curvature
+## (yaw decreasing), so its OUTSIDE is the left, i.e. POSITIVE lateral:
+## corner_bias > 0 (the boar) adds +bias x k, corner_bias < 0 (the cat)
+## subtracts it and hugs the inside. The first version had the sign the
+## other way round, on the strength of the V7 wording; the grid capture
+## (slot 0, lane -3.6, drawn on the RIGHT kerb) is what settled it, and
+## KartProbe now reads the side off this function rather than trusting
+## a comment.
+func lane_goal_at(i: int) -> float:
+	var k_signed: float = _track.signed_curvature(i)
+	return float(profile["lane"]) + float(profile["corner_bias"]) * k_signed * 10.0
+
 ## The profile at spine sample `i` (for probes and the journal).
 func vmax_at(i: int) -> float:
 	return _vmax[posmod(i, _vmax.size())] if _vmax.size() > 0 else 0.0
@@ -184,11 +202,7 @@ func drive(kart: KartBody, input: KartInput, delta: float = 1.0 / 60.0, others: 
 	var v: float = kart.speed()
 	# ---- the lane: natural line, corner bias, overtake, fault.
 	var i: int = _hint
-	var k_signed: float = _track.signed_curvature((i + 3) % _track.sample_count())
-	# Outside of a bend = the side opposite its sign (right bend, positive
-	# curvature: outside is left, negative lateral); corner_bias > 0 goes
-	# there, < 0 hugs the inside.
-	var goal: float = float(profile["lane"]) - float(profile["corner_bias"]) * k_signed * 10.0
+	var goal: float = lane_goal_at((i + 3) % _track.sample_count())
 	for o in others:
 		var ds: float = fposmod(float(o["s"]) - s, _track.length())
 		if ds > 0.2 and ds < OVERTAKE_RANGE and absf(float(o["lateral"]) - _lane) < OVERTAKE_LATERAL:

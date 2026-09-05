@@ -34,7 +34,14 @@ const WAYPOINTS: Array[Vector3] = [
 	Vector3(-22.0, 0.0, -152.0), Vector3(-19.0, 0.0, -145.0),
 ]
 const PER_SPAN: int = 10
-const HALF_WIDTH: float = 3.5
+## V8 (lot 2, P3): 3.5 -> 5.0. Four karts abreast on the grid (GRID_LANES)
+## and room to pass without a corridor. The CENTRELINE is untouched, so
+## a lap time stays a lap on the same 230.7 u -- but a wider ribbon lets
+## a driver cut wider, so the persistent best is "comparable, not
+## identical" (journal V8). The outermost sample (x = -41.1) now carries
+## its kerb to x = -47.1: inside HubRegion's rectangle (-50) and inside
+## the fence (FENCE_INSET below was loosened for it).
+const HALF_WIDTH: float = 5.0
 ## Beyond the edge line, still "on track" -- the kerbs and a hand.
 const ON_TRACK_MARGIN: float = 0.6
 const EDGE_LINE: float = 0.22
@@ -48,8 +55,17 @@ const Y_TOP: float = 0.046
 ## Where the start line sits on the spine (the first waypoint is the
 ## start of the straight; the line is a little further along it).
 const START_S: float = 10.0
-## How far the fence sits inside HubRegion's rectangle.
-const FENCE_INSET: float = 2.5
+## How far the fence sits inside HubRegion's rectangle. V8: 2.5 -> 1.5,
+## so the widened ribbon's outer kerb (x = -47.1 at the omega) keeps a
+## hand between itself and the fence (-48.5).
+const FENCE_INSET: float = 1.5
+## V8: the grid, four abreast. Lateral offsets (u, right of travel
+## positive) per slot, and the stagger per slot along the lap (a hint of
+## echelon so "who is ahead" reads at the lights, not a real handicap:
+## 0.6 u is a tenth of a kart length).
+const GRID_LANES: Array[float] = [-3.6, -1.2, 1.2, 3.6]
+const GRID_STAGGER: float = 0.6
+const GRID_AHEAD_OF_LINE: float = 5.0
 
 var _spine: Array[Vector3] = []
 var _tangent: Array[Vector3] = []
@@ -113,8 +129,13 @@ func signed_curvature(i: int) -> float:
 	var cross: float = t0.x * t1.z - t0.z * t1.x
 	return _curvature(i) * (1.0 if cross > 0.0 else -1.0)
 
-## Unit vector to the RIGHT of travel at spine abscissa `s` -- the axis
-## progress_at()'s `lateral` is measured on.
+## The axis progress_at()'s `lateral` is measured on: "(tan.z, 0,
+## -tan.x)", the +x side of a body facing +z. ⚠️ V7 called this the RIGHT
+## of travel; a V8 grid capture (slot 0 at lane -3.6 drawn on the RIGHT
+## kerb, chase camera behind the kart) shows it is the driver's LEFT
+## under this camera. The number is unchanged everywhere -- only the
+## word was wrong -- and every reader that needs a real side (the AI's
+## corner bias) is gated on the measured convention, not on this text.
 func side_at(s: float) -> Vector3:
 	var tan: Vector3 = tangent_at(s)
 	return Vector3(tan.z, 0.0, -tan.x)
@@ -168,13 +189,16 @@ func progress_at(p: Vector3, hint: int = -1) -> Dictionary:
 func on_track(p: Vector3, hint: int = -1) -> bool:
 	return absf(float(progress_at(p, hint)["lateral"])) <= HALF_WIDTH + ON_TRACK_MARGIN
 
-## Grid slot `index`: 5 u short of the line for slot 0, staggered 3 u
-## further back per slot, alternating right / left of the centreline.
+## Grid slot `index`: GRID_AHEAD_OF_LINE u short of the line, four
+## abreast on GRID_LANES (a fifth kart would start a second row), each
+## slot GRID_STAGGER further back than the previous one.
 func start_pose(index: int) -> Dictionary:
-	var s: float = _cum[_start_index] - 5.0 - 3.0 * float(index)
+	var n: int = GRID_LANES.size()
+	var row: int = index / n
+	var s: float = _cum[_start_index] - GRID_AHEAD_OF_LINE - GRID_STAGGER * float(index) - 4.0 * float(row)
 	var tan: Vector3 = tangent_at(s)
 	var side := Vector3(tan.z, 0.0, -tan.x)
-	var lane: float = 1.4 if index % 2 == 0 else -1.4
+	var lane: float = GRID_LANES[index % n]
 	var at: Vector3 = point_at(s) + side * lane
 	return {"position": Vector3(at.x, 0.0, at.z), "yaw": atan2(tan.x, tan.z)}
 
