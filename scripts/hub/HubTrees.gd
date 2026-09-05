@@ -640,6 +640,17 @@ func climb_spec(index: int) -> Dictionary:
 ## is still a flank (r = 0.53 a) and the spring to the apex is short.
 const CROWN_STOP: float = 0.85
 
+## v5: which leaves this tree sheds -- [set, tint]: the hollow's autumn
+## oranges in the hollow, the green set elsewhere, greyed on an olive.
+func leaf_style(index: int) -> Array:
+	var site: Dictionary = _sites[index]
+	var at: Vector3 = site["at"]
+	if HubRegion.in_autumn(at):
+		return ["leaf", Color.WHITE]
+	if String(site["glb"]).begins_with("olive"):
+		return ["greenleaf", Color(0.88, 0.92, 0.86)]
+	return ["greenleaf", Color.WHITE]
+
 ## Where the nuts leave this tree, in the carrier's space: [ring radius,
 ## height]. Perchoirs: HubNuts' own constants (the wreath). Decor: the
 ## crown's underside rim, where they hang.

@@ -3900,6 +3900,30 @@ func _on_tree_dismounted() -> void:
 ## wreath.
 const NUTS_PER_SHAKE: int = 2
 const NUT_RELEASE_DELAY_S: float = 0.16
+## v5 -- what ELSE a shake drops, and how rare. Leaves every time (the
+## feedback that the crown moved; no counter). A LADYBUG on about one
+## shake in three (LADYBUG_CHANCE), never on the very first shake of a
+## save, so the first lesson is the nuts. The GOLDEN acorn is PACED, not
+## rolled: shake number GOLDEN_FIRST, then every GOLDEN_EVERY -- a roll
+## makes "rare" a lottery a player can hit twice running, a pace makes it
+## an event that is always coming.
+const LEAVES_PER_SHAKE_MIN: int = 6
+const LEAVES_PER_SHAKE_MAX: int = 9
+const LADYBUG_CHANCE: float = 0.3
+const GOLDEN_FIRST: int = 12
+const GOLDEN_EVERY: int = 19
+## For probes: a roll forced into [0, 1) replaces randf() for the ladybug.
+var force_ladybug_roll: float = -1.0
+
+## The extra kinds shake number `shakes` (after counting this one) drops,
+## given `roll` in [0, 1). Pure, so a probe can walk the pacing.
+static func shake_extras(shakes: int, roll: float) -> Array:
+	var out: Array = []
+	if shakes >= 2 and roll < LADYBUG_CHANCE:
+		out.append(&"ladybug")
+	if shakes >= GOLDEN_FIRST and (shakes - GOLDEN_FIRST) % GOLDEN_EVERY == 0:
+		out.append(&"golden")
+	return out
 
 func _shake_tree() -> void:
 	var index: int = _trees.occupied()
@@ -3915,9 +3939,15 @@ func _shake_tree() -> void:
 	_trees.shake(index)
 	_trees.refresh_stock(index)
 	var geometry: Array = _trees.drop_geometry(index)
+	# v5: the extras, decided now (the roll is consumed once per shake).
+	var roll: float = force_ladybug_roll if force_ladybug_roll >= 0.0 else randf()
+	kinds.append_array(shake_extras(int(WorldSave.stats().get("shakes", 0)), roll))
+	var leaves: int = randi_range(LEAVES_PER_SHAKE_MIN, LEAVES_PER_SHAKE_MAX)
+	var style: Array = _trees.leaf_style(index)
 	get_tree().create_timer(NUT_RELEASE_DELAY_S).timeout.connect(func():
 		if is_instance_valid(_nuts):
-			_nuts.drop_from_tree(_trees.node(index), kinds, geometry[0], geometry[1]))
+			_nuts.drop_from_tree(_trees.node(index), kinds, geometry[0], geometry[1])
+			_nuts.drop_leaves(_trees.node(index), leaves, geometry[0], geometry[1], style[0], style[1]))
 
 ## For probes.
 func nuts() -> HubNuts:

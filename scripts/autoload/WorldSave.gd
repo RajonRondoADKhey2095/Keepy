@@ -56,7 +56,9 @@ const SCHEMA_VERSION: int = 1
 const TREE_CAPACITY: int = 3
 const TREE_RECHARGE_S: float = 120.0
 
-const KINDS: Array[StringName] = [&"acorn", &"hazelnut"]
+## v5: the ladybug (falls, scurries, flees -- caught or gone) and the golden
+## acorn (the rare one, paced by the shake count).
+const KINDS: Array[StringName] = [&"acorn", &"hazelnut", &"ladybug", &"golden"]
 const FLUSH_DELAY_S: float = 0.4
 const GROUND_CAP: int = 40
 

@@ -44,6 +44,29 @@ class NutIcon extends Control:
 				cap.append(c + Vector2(cos(a) * 10.0, sin(a) * 6.0 - 2.0))
 			draw_colored_polygon(cap, Color(0.45, 0.28, 0.14))
 			draw_rect(Rect2(c + Vector2(-1.0, -13.0), Vector2(2.0, 5.0)), Color(0.45, 0.28, 0.14))
+		elif kind == &"golden":
+			# v5: the acorn again, in gold, with a glint.
+			draw_circle(c + Vector2(0, 3), 9.0, Color(0.98, 0.80, 0.30))
+			draw_circle(c + Vector2(-3, 1), 3.0, Color(1.0, 0.96, 0.72))
+			var gcap := PackedVector2Array()
+			for i in 13:
+				var a := PI + PI * float(i) / 12.0
+				gcap.append(c + Vector2(cos(a) * 10.0, sin(a) * 6.0 - 2.0))
+			draw_colored_polygon(gcap, Color(0.78, 0.56, 0.16))
+			draw_rect(Rect2(c + Vector2(-1.0, -13.0), Vector2(2.0, 5.0)), Color(0.78, 0.56, 0.16))
+			draw_line(c + Vector2(9, -9), c + Vector2(13, -13), Color(1.0, 0.98, 0.85), 2.0)
+			draw_line(c + Vector2(13, -9), c + Vector2(9, -13), Color(1.0, 0.98, 0.85), 2.0)
+		elif kind == &"ladybug":
+			# v5: a red dome, a black head, spots and a seam.
+			draw_circle(c + Vector2(0, 5), 4.5, Color(0.10, 0.07, 0.08))
+			var dome := PackedVector2Array()
+			for i in 15:
+				var a := PI + PI * float(i) / 14.0
+				dome.append(c + Vector2(cos(a) * 10.0, sin(a) * 9.0 + 3.0))
+			draw_colored_polygon(dome, Color(0.90, 0.18, 0.16))
+			draw_line(c + Vector2(0, -6), c + Vector2(0, 3), Color(0.10, 0.07, 0.08), 1.5)
+			for spot in [Vector2(-5, -1), Vector2(5, -1), Vector2(-3, -5), Vector2(3, -5)]:
+				draw_circle(c + spot, 1.7, Color(0.10, 0.07, 0.08))
 		else:
 			draw_circle(c + Vector2(0, 1), 9.5, Color(0.62, 0.40, 0.20))
 			draw_circle(c + Vector2(-3, -2), 3.2, Color(0.80, 0.58, 0.34))
@@ -79,6 +102,8 @@ func _ready() -> void:
 		label.custom_minimum_size = Vector2(36, 0)
 		_row.add_child(label)
 		_labels[kind] = label
+		_icons[kind] = icon
+	_apply_visibility()
 	WorldSave.resources_changed.connect(_on_resources_changed)
 	WorldSave.reset_done.connect(_refresh)
 	# Anchored top-right by hand; the scene may not know our size yet.
@@ -96,11 +121,25 @@ func _process(delta: float) -> void:
 func _refresh() -> void:
 	for kind in _labels.keys():
 		_labels[kind].text = str(WorldSave.resource(kind))
+	_apply_visibility()
 	_wake()
+
+## v5: the rare kinds only appear once the player holds one -- the HUD
+## stays two counters wide until the world has shown it has more to give.
+const APPEARS_WHEN_HELD: Array[StringName] = [&"ladybug", &"golden"]
+var _icons: Dictionary = {}
+
+func _apply_visibility() -> void:
+	for kind in _labels.keys():
+		var show: bool = not APPEARS_WHEN_HELD.has(kind) or WorldSave.resource(kind) > 0
+		_labels[kind].visible = show
+		if _icons.has(kind):
+			_icons[kind].visible = show
 
 func _on_resources_changed(kind: StringName, total: int, delta: int) -> void:
 	if _labels.has(kind):
 		_labels[kind].text = str(total)
+	_apply_visibility()
 	_wake()
 	if delta > 0:
 		_punch()
