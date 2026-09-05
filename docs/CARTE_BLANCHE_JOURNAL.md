@@ -866,7 +866,9 @@ Tout ce qui suit est sur la branche puis sur `staging` en un seul checkpoint : l
 |---|---|---|---|---|
 | 1 — conduite + circuit + chrono + décor | `e77ba90` (merge `--no-ff` de `dcaca73`) | 18:04:48 | `1788631811` → **18:10:11** | 18:11:50, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 18:11:50 ; la lecture précédente (18:07:55) portait encore `1788628521` en `HIT`/`age 3094` — c'est la copie de bord, pas une mesure, et elle a été refusée comme telle |
 
-Aucun appel à l'API GitHub Actions : le seul signal est la valeur servie, lue AVANT le lot (`1788628521`, 17:41) et APRÈS.
+| 2 — suivi caméra byte-identique hors conduite (régression `CabinProbe`) | `846fb44` (merge `--no-ff` de `eea6a60`, arbre `26c898b`) | 18:15:08 | `1788632485` → **18:21:25** | 18:23:24, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 18:23:24 ; une lecture à 18:20:54 rendait encore `1788631811` en `HIT`/`age 543` — ma PROPRE lecture de 18:11:50 avait rempli ce cache, refusée comme mesure |
+
+Aucun appel à l'API GitHub Actions : le seul signal est la valeur servie, lue AVANT le lot (`1788628521`, 17:41) et APRÈS chaque checkpoint. Le commit de journal qui suit cette ligne ne change aucune ressource Godot (arbre de jeu identique à `26c898b`) : son run CI n'est pas relu, c'est assumé.
 
 ## Rides existants — rejoués sur la branche (18:06 → 18:12 UTC)
 
