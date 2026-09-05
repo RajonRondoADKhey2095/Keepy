@@ -35,7 +35,16 @@ class_name HubCat
 const SCENE: PackedScene = preload("res://assets/models/keepy_cat_npc.glb")
 const MODEL_SPAN: float = 1.9017
 const MODEL_LOW: float = 0.9522
-const DRAWN_HEIGHT: float = 0.75 * 1.3501
+## V8 (karting lot 2, P2 -- Mathieu: "a la meme taille que Keepy"):
+## MEASURED on the live scene before touching anything (throwaway probe,
+## vertex extents through the drawn transform): Keepy is 1.350 u tall and
+## 1.320 u WIDE; this animal was 1.020 x 0.773 u at 0.75 x. "Same size" is therefore not "same
+## height" -- the fawn was already taller than Keepy and still read small,
+## because it carries half his mass. Chosen (option D, journal V8): a
+## drawn height of 1.20 x Keepy's 1.3501, the boar (1.837 u) staying the
+## tallest. Every constant below that is a distance to THIS body was
+## re-read and re-gated (V6CrittersProbe + captures), not just scaled.
+const DRAWN_HEIGHT: float = 1.20 * 1.3501
 const SCALE: float = DRAWN_HEIGHT / MODEL_SPAN
 const LIFT: float = MODEL_LOW * SCALE
 
@@ -44,9 +53,9 @@ const PILE_TAP_RADIUS: float = 1.35
 ## A landing this close to the pile is "there" (a walk ends ~0.4 short).
 const FIND_RADIUS: float = 1.7
 ## The cat sitting in the open (rain) answers a tap this close.
-const CAT_TAP_RADIUS: float = 1.4
+const CAT_TAP_RADIUS: float = 1.7
 ## Where it sits beside its pile when out.
-const OPEN_OFFSET: float = 0.95
+const OPEN_OFFSET: float = 1.25
 ## The rustle: period, length, tilt and swell of the occupied pile.
 const RUSTLE_EVERY_S: float = 2.4
 const RUSTLE_S: float = 0.55
@@ -54,8 +63,13 @@ const RUSTLE_TILT_DEG: float = 5.0
 const RUSTLE_SWELL: float = 1.07
 const HINT_STRENGTH: float = 2.2
 ## The pop: rise and time; the pause facing him; the roll.
-const POP_HEIGHT: float = 0.9
-const POP_TOWARD_CAMERA: float = 0.75
+const POP_HEIGHT: float = 1.1
+const POP_TOWARD_CAMERA: float = 1.2
+## V8 P2: and a step ASIDE, away from Keepy's side of the pile -- at 1.62 u
+## the cat's body (r ~0.6) plus Keepy's (r ~0.66) no longer fit in the 1 u
+## a straight pop toward the camera leaves when he arrived from the south
+## (capture p2_catpop: the two bodies drawn through each other).
+const POP_ASIDE: float = 1.0
 const POP_S: float = 0.55
 const GREET_S: float = 1.1
 const ROLL_SPEED: float = 6.5
@@ -226,7 +240,9 @@ func _found() -> void:
 		# A hand toward the camera (+z): he is standing on the pile by
 		# now, and a cat that pops out exactly under him is a cat nobody
 		# sees (capture cap_cat_greet3).
-		_critter.global_position = at + Vector3(0.0, 0.0, POP_TOWARD_CAMERA)
+		var dx: float = _keepy.global_position.x - at.x if _keepy != null else 0.0
+		var aside: float = -1.0 if dx > 0.05 else 1.0
+		_critter.global_position = at + Vector3(aside * POP_ASIDE, 0.0, POP_TOWARD_CAMERA)
 	_critter.visible = true
 	_critter.pose_squash = 1.0
 	_critter.pose_pitch_deg = 0.0

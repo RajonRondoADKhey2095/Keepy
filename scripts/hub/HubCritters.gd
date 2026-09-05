@@ -139,7 +139,7 @@ func arm(kind: StringName, index: int, destination: Vector3) -> Vector3:
 	if kind == &"catpile":
 		return cat.look_point(index)
 	if kind == &"beaver":
-		return beaver.position_flat()
+		return beaver.approach_point(_keepy.global_position if _keepy != null else destination)
 	return destination
 
 ## A landing: the armed intent gets its try. True when the landing was

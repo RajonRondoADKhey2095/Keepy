@@ -33,7 +33,16 @@ const SCENE: PackedScene = preload("res://assets/models/keepy_beaver_npc.glb")
 const HOUSE_SCENE: PackedScene = preload("res://assets/models/keepy_treehouse_prop.glb")
 const MODEL_SPAN: float = 1.9024
 const MODEL_LOW: float = 0.9527
-const DRAWN_HEIGHT: float = 0.85 * 1.3501
+## V8 (karting lot 2, P2 -- Mathieu: "a la meme taille que Keepy"):
+## MEASURED on the live scene before touching anything (throwaway probe,
+## vertex extents through the drawn transform): Keepy is 1.350 u tall and
+## 1.320 u WIDE; this animal was 1.156 x 0.845 u at 0.85 x. "Same size" is therefore not "same
+## height" -- the fawn was already taller than Keepy and still read small,
+## because it carries half his mass. Chosen (option D, journal V8): a
+## drawn height of 1.20 x Keepy's 1.3501, the boar (1.837 u) staying the
+## tallest. Every constant below that is a distance to THIS body was
+## re-read and re-gated (V6CrittersProbe + captures), not just scaled.
+const DRAWN_HEIGHT: float = 1.20 * 1.3501
 const SCALE: float = DRAWN_HEIGHT / MODEL_SPAN
 const LIFT: float = MODEL_LOW * SCALE
 ## The tree-house: 1.8929 x 1.5901 x 1.5461 on the imported vertices,
@@ -53,9 +62,9 @@ const HOUSE_AT: Vector3 = Vector3(21.5, 0.0, -93.5)
 const REST: Vector3 = Vector3(20.0, 0.0, -90.2)
 const REST_FACING: Vector3 = Vector3(-0.7, 0.0, 0.7)
 const PORCH: Vector3 = Vector3(21.5, 0.0, -91.4)
-const FOOTPRINT: float = 0.9
-const TAP_RADIUS: float = 1.8
-const NEAR: float = 1.0
+const FOOTPRINT: float = 1.1
+const TAP_RADIUS: float = 2.0
+const NEAR: float = 1.25
 
 ## What a trade costs and pays.
 const PRICE: Dictionary = {&"truffle": 1, &"hazelnut": 1, &"flower": 1}
@@ -136,6 +145,19 @@ func phase() -> int:
 func position_flat() -> Vector3:
 	return _critter.flat()
 
+## V8 P2: where Keepy WALKS for a trade -- a hand (NEAR) short of the
+## ranger on Keepy's own side, never his feet. The V6 walk targeted the
+## feet themselves (a landing ends ~0.4 u short, which a 1.16 u ranger
+## hid behind Keepy already; at 1.62 u the capture p2_beaver showed the
+## ranger drawn INSIDE him). try_trade's TAP_RADIUS (2.0) still accepts
+## the landing.
+func approach_point(from: Vector3) -> Vector3:
+	var feet: Vector3 = _critter.flat()
+	var dir: Vector3 = Vector3(from.x - feet.x, 0.0, from.z - feet.z)
+	if dir.length() < 0.05:
+		dir = -REST_FACING
+	return feet + dir.normalized() * NEAR
+
 ## True when Keepy holds the whole price.
 static func can_pay() -> bool:
 	for kind in PRICE:
@@ -186,7 +208,7 @@ func _process(delta: float) -> void:
 			if _next_flight <= 0.0 and not _flights_left.is_empty():
 				var kind: StringName = _flights_left.pop_front()
 				if _nuts != null and _keepy != null:
-					_nuts.fly_between(kind, _keepy.global_position + Vector3(0.0, 0.9, 0.0), _critter.global_position + Vector3(0.0, 0.8, 0.0))
+					_nuts.fly_between(kind, _keepy.global_position + Vector3(0.0, 0.9, 0.0), _critter.global_position + Vector3(0.0, 1.1, 0.0))
 				_critter.punch = 0.6
 				_next_flight = FLY_EVERY_S
 			if _flights_left.is_empty() and _next_flight <= 0.0:
@@ -202,7 +224,7 @@ func _process(delta: float) -> void:
 				_critter.punch = 1.0
 				if _nuts != null:
 					var toward: Vector3 = _critter.facing()
-					_nuts.drop_at(PAYS, _critter.global_position + Vector3(0.0, 1.0, 0.0) - toward * 0.2, toward * 1.3 + Vector3(0.0, 2.0, 0.0))
+					_nuts.drop_at(PAYS, _critter.global_position + Vector3(0.0, 1.4, 0.0) - toward * 0.2, toward * 1.3 + Vector3(0.0, 2.0, 0.0))
 				traded.emit()
 			if u >= 1.0:
 				_critter.pose_pitch_deg = 0.0

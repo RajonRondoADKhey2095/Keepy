@@ -33,7 +33,16 @@ class_name HubFawn
 const SCENE: PackedScene = preload("res://assets/models/keepy_fawn_npc.glb")
 const MODEL_SPAN: float = 1.9000
 const MODEL_LOW: float = 0.9512
-const DRAWN_HEIGHT: float = 1.15 * 1.3501
+## V8 (karting lot 2, P2 -- Mathieu: "a la meme taille que Keepy"):
+## MEASURED on the live scene before touching anything (throwaway probe,
+## vertex extents through the drawn transform): Keepy is 1.350 u tall and
+## 1.320 u WIDE; this animal was 1.565 x 0.649 u at 1.15 x. "Same size" is therefore not "same
+## height" -- the fawn was already taller than Keepy and still read small,
+## because it carries half his mass. Chosen (option D, journal V8): a
+## drawn height of 1.35 x Keepy's 1.3501, the boar (1.837 u) staying the
+## tallest. Every constant below that is a distance to THIS body was
+## re-read and re-gated (V6CrittersProbe + captures), not just scaled.
+const DRAWN_HEIGHT: float = 1.35 * 1.3501
 const SCALE: float = DRAWN_HEIGHT / MODEL_SPAN
 const LIFT: float = MODEL_LOW * SCALE
 
@@ -46,7 +55,7 @@ const GRAZE_SPOTS: Array[Vector3] = [
 	Vector3(-11.5, 0.0, -88.5), Vector3(-6.0, 0.0, -94.5),
 ]
 const HOME_FACING: Vector3 = Vector3(1.0, 0.0, 0.35)
-const FOOTPRINT: float = 0.9
+const FOOTPRINT: float = 1.0
 
 ## The heart of it: a landing this close scares; standing this close and
 ## this long calms.
@@ -62,10 +71,10 @@ const BOUND_LEN: float = 4.0
 const BOUND_SPEED: float = 7.5
 const APPROACH_SPEED: float = 1.3
 const FOLLOW_SPEED: float = 3.2
-const FOLLOW_GAP: float = 1.7
+const FOLLOW_GAP: float = 1.9
 const FOLLOW_SLACK: float = 2.4
 const NUZZLE_S: float = 1.5
-const NUZZLE_REACH: float = 0.95
+const NUZZLE_REACH: float = 1.1
 const GRAZE_WANDER_EVERY_S: float = 11.0
 const GRAZE_DIP_EVERY_S: float = 3.6
 const GRAZE_DIP_S: float = 1.3
@@ -391,7 +400,7 @@ func _finish_nuzzle() -> void:
 	_critter.pose_pitch_deg = 0.0
 	if _nuts != null:
 		var side: Vector3 = _critter.facing().rotated(Vector3.UP, 0.9)
-		_nuts.drop_at(&"flower", _critter.global_position + Vector3(0.0, 0.9, 0.0), side * 1.1 + Vector3(0.0, 1.8, 0.0))
+		_nuts.drop_at(&"flower", _critter.global_position + Vector3(0.0, 1.05, 0.0), side * 1.1 + Vector3(0.0, 1.8, 0.0))
 	nuzzled.emit()
 	_state = State.FOLLOW
 	_t = 0.0
