@@ -3825,6 +3825,13 @@ func _try_mount_ball(position: Vector3) -> bool:
 func _setup_karting() -> void:
 	_karting.setup(_keepy, _camera, _kart_hud)
 	_tap.tapped_kart.connect(_on_tapped_kart)
+	# V8 P0: the resource counter (WorldHud, top-right) has nothing to say
+	# during a drive -- nothing is picked up from a kart -- and on device it
+	# sat behind the clipped chrono panel, adding to the clutter Mathieu
+	# reported. Hidden for the length of the drive, shown again on exit;
+	# it keeps counting underneath (WorldSave signals still reach it), so
+	# a trade or a pickup right after a drive reads correctly.
+	_karting.driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
 
 ## A tap on the parked kart. ONE tap buys the whole thing: walk there
 ## (through the corridor gates) and climb in on arrival; the zero-length

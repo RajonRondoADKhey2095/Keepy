@@ -21,6 +21,7 @@ class_name KartHud
 signal exit_pressed
 
 const TOP: float = 150.0
+const PANEL_WIDTH: float = 380.0
 const RECORD_FLASH_S: float = 2.6
 
 var _panel: PanelContainer = null
@@ -56,9 +57,18 @@ func _ready() -> void:
 	style.content_margin_top = 10
 	style.content_margin_bottom = 12
 	_panel.add_theme_stylebox_override("panel", style)
+	# V8 P0: anchored CENTER_TOP, so `position` is an OFFSET FROM THE
+	# ANCHOR (the canvas' horizontal middle), not a canvas coordinate. The
+	# V7 build wrote the canvas coordinate (540 - 190) here, which put the
+	# panel's left edge at 540 + 350 = 890 px on a 1080 px canvas: 190 px
+	# visible, 190 px clipped by the right edge -- Mathieu's device capture
+	# ("TOUR / MEILLEUR / DERNIER coupes"). The right offset is -190, and
+	# the panel is then centred whatever the canvas width (SafeArea's
+	# EXPAND aspect grows the canvas vertically only, so the middle is
+	# always x = width / 2).
 	_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	_panel.position = Vector2(540.0 - 190.0, TOP)
-	_panel.custom_minimum_size = Vector2(380.0, 0.0)
+	_panel.position = Vector2(-PANEL_WIDTH * 0.5, TOP)
+	_panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0.0)
 	add_child(_panel)
 	var box := VBoxContainer.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -76,8 +86,12 @@ func _ready() -> void:
 	_wrong_label.add_theme_color_override("font_outline_color", Color(0.2, 0.1, 0.05, 0.9))
 	_wrong_label.add_theme_constant_override("outline_size", 8)
 	_wrong_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# Same anchor rule (V8 P0): PRESET_CENTER makes `position` an offset
+	# from the canvas centre, so the V7 (320, 700) put this label at
+	# x = 860..1300 -- clipped like the panel. Centred now, 260 px above
+	# the middle of the screen.
 	_wrong_label.set_anchors_preset(Control.PRESET_CENTER)
-	_wrong_label.position = Vector2(540.0 - 220.0, 700.0)
+	_wrong_label.position = Vector2(-220.0, -260.0)
 	_wrong_label.size = Vector2(440.0, 60.0)
 	_wrong_label.visible = false
 	add_child(_wrong_label)

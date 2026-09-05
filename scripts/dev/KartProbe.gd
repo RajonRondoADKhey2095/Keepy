@@ -273,6 +273,27 @@ func _phase_mode() -> void:
 	_check("Keepy is ON_CARRIER", _keepy.is_on_carrier())
 	_check("touch writer enabled", _karting.touch.enabled)
 	_check("HUD shown", _hud.visible)
+	# V8 P0: the chrono panel must sit INSIDE the canvas. The V7 build
+	# anchored it CENTER_TOP and wrote a canvas coordinate into `position`
+	# (an offset from the anchor), which put it at x = 890..1270 on a 1080
+	# canvas -- clipped on device. Red-before-green: with the V7 line
+	# restored this check reads end.x = 1270 and fails.
+	# The headless window is 1920 x 1920 (CLAUDE.md), so "inside the
+	# canvas" is measured against the SHIPPED width: the 1080 px band
+	# centred on the canvas middle (SafeArea's EXPAND aspect only ever
+	# grows the canvas vertically, so the band is the narrowest canvas a
+	# device shows).
+	var canvas: Vector2 = _hud.get_viewport_rect().size
+	var design_w: float = float(ProjectSettings.get_setting("display/window/size/viewport_width"))
+	var design_h: float = float(ProjectSettings.get_setting("display/window/size/viewport_height"))
+	var band_l: float = canvas.x * 0.5 - design_w * 0.5
+	var band_r: float = canvas.x * 0.5 + design_w * 0.5
+	var panel_rect: Rect2 = _hud._panel.get_global_rect()
+	_check("chrono panel inside the shipped 1080 px band", panel_rect.position.x >= band_l and panel_rect.end.x <= band_r, "%s, band [%.0f, %.0f]" % [panel_rect, band_l, band_r])
+	_check("chrono panel centred (|centre - width/2| < 2 px)", absf(panel_rect.get_center().x - canvas.x * 0.5) < 2.0, "%.1f" % panel_rect.get_center().x)
+	var wrong_rect: Rect2 = _hud._wrong_label.get_global_rect()
+	_check("wrong-way label inside the shipped band", wrong_rect.position.x >= band_l and wrong_rect.end.x <= band_r and wrong_rect.position.y >= 0.0 and wrong_rect.end.y <= design_h, str(wrong_rect))
+	_check("resource counter hidden while driving", not _hub._world_hud.visible)
 	_check("camera in drive mode", _camera.is_driving())
 	_check("kart withdrew from the tap", not _karting.accepts_tap(park))
 	await _frames(60)
@@ -310,6 +331,7 @@ func _phase_mode() -> void:
 	_check("exit: not driving", not _karting.is_driving())
 	_check("exit: writer disabled, input cleared", not _karting.touch.enabled and input.throttle == 0.0)
 	_check("exit: HUD hidden", not _hud.visible)
+	_check("exit: resource counter shown again", _hub._world_hud.visible)
 	_check("exit: kart stopped", kart.velocity.length() < 0.001)
 	_check("exit: Keepy hopping off (HOPPING)", _keepy.is_hopping())
 	for i in 120:
