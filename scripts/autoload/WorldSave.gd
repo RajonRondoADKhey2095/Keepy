@@ -165,7 +165,7 @@ func tree_take(id: String) -> bool:
 ## V6: one more of a named stat (the inhabitants' counters). Keys are
 ## listed in STAT_KEYS so _sanitise keeps them; an unknown key is refused
 ## rather than invented.
-const STAT_KEYS: Array[String] = ["climbs", "shakes", "picked", "cat_found", "boar_digs", "fawn_nuzzles", "beaver_trades", "kart_laps"]
+const STAT_KEYS: Array[String] = ["climbs", "shakes", "picked", "cat_found", "boar_digs", "fawn_nuzzles", "beaver_trades", "kart_laps", "kart_races", "kart_wins"]
 
 ## ---- v7: karting ---------------------------------------------------------
 ## Best lap per TRACK ID, in milliseconds (an int survives JSON exactly; a
@@ -192,6 +192,28 @@ func kart_offer_lap(track_id: String, lap_ms: int) -> bool:
 	_mark()
 	kart_best_changed.emit(track_id, lap_ms)
 	return true
+
+## ---- V8 (karting lot 2): the last race result ----------------------------
+## Additive to schema v1 like best_ms: `kart.last` is one dictionary
+## {track_id, rank, racers, total_ms, best_lap_ms}, replaced on every
+## finished race; the counts live in stats (kart_races, kart_wins). An
+## older build ignores the key, a newer one reads what _sanitise kept.
+signal kart_result_changed(result: Dictionary)
+
+func kart_last_result() -> Dictionary:
+	var kart: Dictionary = _data.get("kart", {})
+	var last: Variant = kart.get("last", {})
+	return (last as Dictionary).duplicate() if last is Dictionary else {}
+
+func kart_record_result(track_id: String, rank: int, racers: int, total_ms: int, best_lap_ms: int) -> void:
+	if not _data.has("kart"):
+		_data["kart"] = {"best_ms": {}}
+	_data["kart"]["last"] = {"track_id": track_id, "rank": rank, "racers": racers, "total_ms": total_ms, "best_lap_ms": best_lap_ms}
+	_data["stats"]["kart_races"] = int(_data["stats"].get("kart_races", 0)) + 1
+	if rank == 1:
+		_data["stats"]["kart_wins"] = int(_data["stats"].get("kart_wins", 0)) + 1
+	_mark()
+	kart_result_changed.emit(kart_last_result())
 
 func note(key: String) -> void:
 	if not STAT_KEYS.has(key):
@@ -380,6 +402,18 @@ func _sanitise(raw: Dictionary) -> Dictionary:
 				var ms: int = _as_int(best[id], 0)
 				if String(id) != "" and ms > 0:
 					out["kart"]["best_ms"][String(id)] = ms
+		# V8: the last race result -- ints, positive rank, or nothing.
+		var last: Variant = kart.get("last", {})
+		if last is Dictionary and String(last.get("track_id", "")) != "":
+			var rank: int = _as_int(last.get("rank", 0), 0)
+			if rank > 0:
+				out["kart"]["last"] = {
+					"track_id": String(last.get("track_id", "")),
+					"rank": rank,
+					"racers": maxi(_as_int(last.get("racers", 0), 0), rank),
+					"total_ms": maxi(_as_int(last.get("total_ms", 0), 0), 0),
+					"best_lap_ms": maxi(_as_int(last.get("best_lap_ms", 0), 0), 0),
+				}
 	return out
 
 static func _as_int(value: Variant, fallback: int) -> int:

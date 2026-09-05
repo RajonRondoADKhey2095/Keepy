@@ -10,7 +10,7 @@ extends Node
 ## Exit 0 = every assertion held; 1 = at least one failed;
 ## ProbeWatchdog.EXIT_TIMEOUT = inconclusive.
 ##
-## Args after `--`: --only=region|track|physics|mode|lap|all
+## Args after `--`: --only=region|track|physics|mode|lap|race|all
 
 var _hub: Node = null
 var _keepy: KeepyHopper = null
@@ -51,6 +51,8 @@ func _run() -> void:
 		await _phase_mode()
 	if _only == "all" or _only == "lap":
 		await _phase_lap()
+	if _only == "all" or _only == "race":
+		await _phase_race()
 	print("")
 	print("KART PROBE: %d checks, %d failures -> %s" % [_checks, _failures, "PASS" if _failures == 0 else "FAIL"])
 	get_tree().quit(0 if _failures == 0 else 1)
@@ -305,7 +307,18 @@ func _phase_mode() -> void:
 	var behind: Vector3 = _flat(kart.global_position) - kart.forward() * HubCamera.DRIVE_BACK
 	_check("drive camera sits behind the kart", _flat(cam_drive).distance_to(behind) < 0.3, str(_flat(cam_drive).distance_to(behind)))
 	_check("and above it", absf(cam_drive.y - HubCamera.DRIVE_UP) < 0.3)
+	# V8: the mount opens a COUNTDOWN (mount hold + 3 s of lights); the
+	# accelerator engages at GO, not before. Blind: still parked at the
+	# end of the old 1.5 s window, moving within a second of GO.
 	await _frames(30)
+	_check("V8: still parked 1.5 s after the mount (countdown)", _flat(kart.global_position).distance_to(park) < 0.05 and _karting.race_state == HubKarting.Race.COUNTDOWN, "%.3f" % _flat(kart.global_position).distance_to(park))
+	_check("V8: lights shown during the countdown", _hud._lights_box.visible)
+	for i in 400:
+		await get_tree().process_frame
+		if _karting.race_state == HubKarting.Race.RUNNING:
+			break
+	_check("V8: GO within (hold + 3 s) of the mount", _karting.race_state == HubKarting.Race.RUNNING)
+	await _frames(60)
 	_check("then the accelerator engages on its own", _flat(kart.global_position).distance_to(park) > 0.3, "%.3f" % _flat(kart.global_position).distance_to(park))
 	# Drive 2 s with a scripted input and watch Keepy ride.
 	var input: KartInput = _karting.touch.input
@@ -373,22 +386,26 @@ func _phase_lap() -> void:
 	_check("mounted for the lap", _karting.is_driving())
 	_check("no lap yet, not timing", lap.lap_count == 0 and not lap.timing)
 	_check("no best saved yet", WorldSave.kart_best_ms(KartTrack.TRACK_ID) == 0)
-	var driver := KartLineInput.new()
-	driver.setup(track)
+	var driver := KartAiDriver.new()
+	driver.setup(track, "probe")
+	# The opponents race too; the timing contract below is the player's.
+	# They are parked for the wrong-way section (a bump there would be
+	# noise, not a measurement).
 	var input: KartInput = _karting.touch.input
 	var laps_seen: Array = []
 	lap.on_lap = func(ms: int): laps_seen.append(ms); _karting._on_lap(0, ms)
 	var frames := 0
 	var timing_started_at := -1
 	var checkpoints_max := 0
-	while frames < 60 * 90 and laps_seen.size() < 2:
+	var hold_frames: int = int(ceil((HubKarting.MOUNT_HOLD_S + HubKarting.COUNTDOWN_S) * 60.0))
+	while frames < 60 * 90 + hold_frames and laps_seen.size() < 2:
 		driver.drive(kart, input)
 		await get_tree().process_frame
 		frames += 1
 		checkpoints_max = maxi(checkpoints_max, lap.next_checkpoint())
 		if lap.timing and timing_started_at < 0:
 			timing_started_at = frames
-	_check("timing started at the first crossing (within 4 s)", timing_started_at > 0 and timing_started_at < 240, str(timing_started_at))
+	_check("timing started at the first crossing (within countdown + 4 s)", timing_started_at > 0 and timing_started_at < hold_frames + 240, str(timing_started_at))
 	_check("two laps driven by the line follower in 90 s", laps_seen.size() == 2, str(laps_seen))
 	if laps_seen.size() >= 1:
 		var ms: int = laps_seen[0]
@@ -410,6 +427,9 @@ func _phase_lap() -> void:
 	_check("a faster lap is taken", WorldSave.kart_offer_lap(KartTrack.TRACK_ID, best - 1000) and WorldSave.kart_best_ms(KartTrack.TRACK_ID) == best - 1000)
 	# Wrong way: turn the kart round on the straight and drive.
 	input.set_all(0.0, 0.0, false)
+	for i in _karting.racers.size():
+		if not _karting.racers[i]["player"]:
+			_karting.racers[i]["active"] = false
 	var s_line: float = track.start_line_offset()
 	var back_tan: Vector3 = -track.tangent_at(s_line + 6.0)
 	kart.place(track.point_at(s_line + 6.0), atan2(back_tan.x, back_tan.z))
@@ -445,3 +465,188 @@ func _phase_lap() -> void:
 	for i in 90:
 		await get_tree().process_frame
 	_check("exited cleanly after the laps", not _karting.is_driving() and not _keepy.is_on_carrier() and not _keepy.is_hopping())
+
+## ---- PHASE RACE (V8) ------------------------------------------------------
+
+func _phase_race() -> void:
+	print("\nPHASE RACE")
+	var track: KartTrack = _karting.track
+	var kart: KartBody = _karting.player_kart()
+	var lap: KartLap = _karting.player_lap()
+	# The grid.
+	_check("four racers: the player and three opponents", _karting.racers.size() == 4 and _karting.opponent_count() == 3, str(_karting.racers.size()))
+	var profiles: Array = []
+	var colours: Array = []
+	var riders_ok: bool = true
+	for r in _karting.racers:
+		colours.append((r["kart"] as KartBody).body_colour)
+		if r["player"]:
+			continue
+		var driver: KartAiDriver = r["driver"]
+		profiles.append(driver.profile_id if driver != null else "")
+		var rider: HubCritter = r["rider"]
+		if rider == null or rider.model() == null or rider.get_parent() != (r["kart"] as KartBody).chassis() or rider.position != KartBody.SEAT:
+			riders_ok = false
+	_check("three distinct driver profiles (cat / beaver / boar)", profiles.size() == 3 and profiles.has("cat") and profiles.has("beaver") and profiles.has("boar"), str(profiles))
+	_check("four distinct kart colours", colours[0] != colours[1] and colours[0] != colours[2] and colours[0] != colours[3] and colours[1] != colours[2] and colours[1] != colours[3] and colours[2] != colours[3])
+	_check("each opponent has a rider on the seat, in the chassis", riders_ok)
+	var cat_driver: KartAiDriver = null
+	var boar_driver: KartAiDriver = null
+	for r in _karting.racers:
+		if r["driver"] != null and (r["driver"] as KartAiDriver).profile_id == "cat":
+			cat_driver = r["driver"]
+		if r["driver"] != null and (r["driver"] as KartAiDriver).profile_id == "boar":
+			boar_driver = r["driver"]
+	# The profiles differ where it counts: at the omega (tightest bend)
+	# the cat's v_max is above the boar's; on the straight the boar's is
+	# above the cat's.
+	var tight: int = 0
+	var straight: int = 0
+	for i in track.sample_count():
+		if track.curvature(i) > track.curvature(tight):
+			tight = i
+		if track.curvature(i) < track.curvature(straight):
+			straight = i
+	_check("cat faster than the boar at the tightest bend", cat_driver.vmax_at(tight) > boar_driver.vmax_at(tight), "%.2f vs %.2f" % [cat_driver.vmax_at(tight), boar_driver.vmax_at(tight)])
+	_check("boar faster than the cat on the straight", boar_driver.vmax_at(straight) > cat_driver.vmax_at(straight), "%.2f vs %.2f" % [boar_driver.vmax_at(straight), cat_driver.vmax_at(straight)])
+	_check("the profile brakes before the bend: v_max is lower 3 samples before the omega than 12 before", cat_driver.vmax_at(tight - 3) < cat_driver.vmax_at(tight - 12), "%.2f < %.2f" % [cat_driver.vmax_at(tight - 3), cat_driver.vmax_at(tight - 12)])
+	# Collisions, blind: overlap two karts by hand, one frame of _collide.
+	var a: KartBody = _karting.racers[1]["kart"]
+	var b: KartBody = _karting.racers[2]["kart"]
+	var a_pose: Vector3 = a.global_position
+	var b_pose: Vector3 = b.global_position
+	_karting.racers[1]["active"] = true
+	_karting.racers[2]["active"] = true
+	a.global_position = Vector3(0.0, 0.0, -150.0)
+	b.global_position = Vector3(0.5, 0.0, -150.0)
+	a.velocity = Vector3(4.0, 0.0, 0.0)
+	b.velocity = Vector3(-2.0, 0.0, 0.0)
+	_karting._collide()
+	var d: float = _flat(a.global_position).distance_to(_flat(b.global_position))
+	_check("(blind) overlapping karts are pushed apart to 2 R", absf(d - 2.0 * HubKarting.KART_RADIUS) < 0.01, "%.3f" % d)
+	_check("the closing speed is exchanged softly (a slower than before, b pushed right)", a.velocity.x < 4.0 and b.velocity.x > -2.0, "%s %s" % [a.velocity, b.velocity])
+	_check("both chassis jolted", a._bump > 0.0 and b._bump > 0.0)
+	a.place(a_pose, a.rotation.y)
+	b.place(b_pose, b.rotation.y)
+	_karting.racers[1]["active"] = false
+	_karting.racers[2]["active"] = false
+	var far_a: Vector3 = a.global_position
+	_karting._collide()
+	_check("(blind) parked karts on their slots do not touch", a.global_position == far_a)
+	# Rubber band, on the published numbers alone.
+	_karting.rubber_band_enabled = true
+	var pi: int = _karting.player_index()
+	_karting.race_state = HubKarting.Race.RUNNING
+	# Progress counts line crossings: both laps reset so only `s` speaks.
+	(_karting.racers[pi]["lap"] as KartLap).reset()
+	(_karting.racers[1]["lap"] as KartLap).reset()
+	_karting.racers[pi]["s"] = 50.0
+	_karting.racers[1]["s"] = 50.0 + HubKarting.RUBBER_DEAD - 1.0
+	_check("rubber band inert inside the dead band", _karting.rubber_band_for(1) == 1.0, str(_karting.rubber_band_for(1)))
+	_karting.racers[1]["s"] = 50.0 + HubKarting.RUBBER_DEAD + HubKarting.RUBBER_SPAN + 10.0
+	_check("an opponent far ahead is leashed to RUBBER_MIN", absf(_karting.rubber_band_for(1) - HubKarting.RUBBER_MIN) < 0.001, str(_karting.rubber_band_for(1)))
+	_karting.racers[1]["s"] = 50.0 - HubKarting.RUBBER_DEAD - HubKarting.RUBBER_SPAN - 10.0
+	_check("an opponent far behind is let go to RUBBER_MAX", absf(_karting.rubber_band_for(1) - HubKarting.RUBBER_MAX) < 0.001, str(_karting.rubber_band_for(1)))
+	_karting.racers[1]["s"] = 0.0
+	_karting.racers[pi]["s"] = 0.0
+	_karting.race_state = HubKarting.Race.IDLE
+	# A whole race. Mount on the spot; the probe driver drives the player.
+	_put_keepy(_flat(kart.global_position) + Vector3(0.0, 0.0, 1.0))
+	await _frames(2)
+	_hub._on_tapped_kart(_flat(kart.global_position))
+	for i in 120:
+		await get_tree().process_frame
+		if _karting.is_driving():
+			break
+	_check("mounted for the race", _karting.is_driving() and _karting.race_state == HubKarting.Race.COUNTDOWN)
+	var grid_ok: bool = true
+	var parked: Array = []
+	for i in _karting.racers.size():
+		var r: Dictionary = _karting.racers[i]
+		var pose: Dictionary = track.start_pose(i)
+		parked.append(_flat((r["kart"] as KartBody).global_position))
+		if _flat((r["kart"] as KartBody).global_position).distance_to(pose["position"]) > 0.05 or not r["active"]:
+			grid_ok = false
+	_check("all four on their grid slots and active", grid_ok)
+	await _frames(int((HubKarting.MOUNT_HOLD_S + HubKarting.COUNTDOWN_S) * 60.0) - 20)
+	var held: bool = true
+	for i in _karting.racers.size():
+		if _flat((_karting.racers[i]["kart"] as KartBody).global_position).distance_to(parked[i]) > 0.05:
+			held = false
+	_check("(blind) every kart held on the grid through the countdown", held and _karting.race_state == HubKarting.Race.COUNTDOWN)
+	_check("HUD: position label reads x / 4", _hud._position_label.visible and _hud._position_label.text.ends_with("/ 4"), _hud._position_label.text)
+	_check("HUD: four standings rows", _hud._standings_rows.size() == 4 and _hud._standings_box.visible)
+	for i in 100:
+		await get_tree().process_frame
+		if _karting.race_state == HubKarting.Race.RUNNING:
+			break
+	_check("GO", _karting.race_state == HubKarting.Race.RUNNING)
+	var driver := KartAiDriver.new()
+	driver.setup(track, "probe")
+	var input: KartInput = _karting.touch.input
+	for i in 120:
+		driver.drive(kart, input)
+		await get_tree().process_frame
+	var moved_all: bool = true
+	for i in _karting.racers.size():
+		if _flat((_karting.racers[i]["kart"] as KartBody).global_position).distance_to(parked[i]) < 1.0:
+			moved_all = false
+	_check("two seconds after GO all four karts have left the grid", moved_all)
+	var order: Array[int] = _karting.standings()
+	_check("standings are consistent with progress", _karting.progress_of(order[0]) >= _karting.progress_of(order[1]) and _karting.progress_of(order[1]) >= _karting.progress_of(order[2]) and _karting.progress_of(order[2]) >= _karting.progress_of(order[3]))
+	var frames := 0
+	var finished := false
+	var min_gap := INF
+	while frames < 60 * 130:
+		driver.drive(kart, input)
+		await get_tree().process_frame
+		frames += 1
+		for i in 4:
+			for j in range(i + 1, 4):
+				min_gap = minf(min_gap, _flat((_karting.racers[i]["kart"] as KartBody).global_position).distance_to(_flat((_karting.racers[j]["kart"] as KartBody).global_position)))
+		if int(_karting.racers[pi]["finish_ms"]) >= 0:
+			finished = true
+			break
+	_check("the player finished three laps within 130 s", finished, "%d frames" % frames)
+	_check("race FINISHED for the player", _karting.race_state == HubKarting.Race.FINISHED)
+	_check("no two karts ever interpenetrated below 2 R - 0.15", min_gap >= 2.0 * HubKarting.KART_RADIUS - 0.15, "%.3f" % min_gap)
+	var rows: Array = _karting.results()
+	_check("results: four rows, ranks 1..4", rows.size() == 4 and int(rows[0]["rank"]) == 1 and int(rows[3]["rank"]) == 4)
+	var my_rank: int = _karting.rank_of(pi)
+	_check("results panel shown", _hud.results_visible())
+	var last: Dictionary = WorldSave.kart_last_result()
+	_check("result recorded in WorldSave (rank, 4 racers, total > 0)", int(last.get("rank", 0)) == my_rank and int(last.get("racers", 0)) == 4 and int(last.get("total_ms", 0)) > 0, str(last))
+	_check("kart_races stat noted", WorldSave.stats().get("kart_races", 0) == 1)
+	_check("player's lap count is LAPS", lap.lap_count >= HubKarting.LAPS)
+	var ai_lapped: bool = true
+	var ai_best: Array = []
+	for r in _karting.racers:
+		if r["player"]:
+			continue
+		var l: KartLap = r["lap"]
+		ai_best.append(l.best_lap_ms)
+		if l.lap_count < 1 or l.best_lap_ms < 15000 or l.best_lap_ms > 60000:
+			ai_lapped = false
+	_check("each opponent lapped the real track (best lap 15..60 s)", ai_lapped, str(ai_best))
+	print("  race: player rank %d, total %d ms, AI best laps %s, faults %s" % [my_rank, int(_karting.racers[pi]["finish_ms"]), str(ai_best), str([(_karting.racers[1]["driver"] as KartAiDriver).faults_total, (_karting.racers[2]["driver"] as KartAiDriver).faults_total, (_karting.racers[3]["driver"] as KartAiDriver).faults_total])])
+	# Persistence of the result.
+	WorldSave.save_now()
+	WorldSave._data = WorldSave._defaults()
+	WorldSave._load()
+	_check("result survives a reload", int(WorldSave.kart_last_result().get("rank", 0)) == my_rank)
+	# Exit: the opponents go back to the grid, the race is IDLE.
+	input.set_all(0.0, 0.0, false)
+	_karting.exit_kart()
+	for i in 90:
+		await get_tree().process_frame
+	_check("exit: race IDLE", _karting.race_state == HubKarting.Race.IDLE and not _karting.is_driving())
+	var regridded: bool = true
+	for i in _karting.racers.size():
+		var r: Dictionary = _karting.racers[i]
+		if r["player"]:
+			continue
+		if _flat((r["kart"] as KartBody).global_position).distance_to(track.start_pose(i)["position"]) > 0.05 or r["active"] or (r["kart"] as KartBody).velocity.length() > 0.001:
+			regridded = false
+	_check("exit: opponents parked on the grid, inactive", regridded)
+	_check("exit: results panel hidden", not _hud.results_visible())
+	_check("exit: Keepy off the kart", not _keepy.is_on_carrier() and not _keepy.is_hopping())

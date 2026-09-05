@@ -86,6 +86,39 @@ func point_at(s: float) -> Vector3:
 func tangent_at(s: float) -> Vector3:
 	return _tangent[_segment_at(s)]
 
+## ---- V8 (lot 2): what a racing driver reads, published once -------------
+## The AI's speed profile is built from the spine's curvature per sample.
+## These accessors expose the sample space (index <-> spine abscissa) and
+## the curvature the kerbs already use, so KartAiDriver never re-derives a
+## geometry this file owns (CLAUDE.md: a fact is published once).
+
+func sample_count() -> int:
+	return _spine.size()
+
+## Spine abscissa (point_at space) of sample `i`.
+func sample_s(i: int) -> float:
+	return _cum[posmod(i, _spine.size())]
+
+## Unsigned curvature (1/u) at sample `i` -- the kerb test's own number.
+func curvature(i: int) -> float:
+	return _curvature(i)
+
+## Signed curvature at sample `i`: positive where the track bends RIGHT
+## of travel (yaw decreasing), negative where it bends left. The sign is
+## the cross product of the incoming and outgoing tangents, on the plane.
+func signed_curvature(i: int) -> float:
+	var n: int = _spine.size()
+	var t0: Vector3 = _tangent[posmod(i - 1, n)]
+	var t1: Vector3 = _tangent[posmod(i, n)]
+	var cross: float = t0.x * t1.z - t0.z * t1.x
+	return _curvature(i) * (1.0 if cross > 0.0 else -1.0)
+
+## Unit vector to the RIGHT of travel at spine abscissa `s` -- the axis
+## progress_at()'s `lateral` is measured on.
+func side_at(s: float) -> Vector3:
+	var tan: Vector3 = tangent_at(s)
+	return Vector3(tan.z, 0.0, -tan.x)
+
 func _segment_at(s: float) -> int:
 	var w: float = fposmod(s, _length)
 	var lo: int = 0

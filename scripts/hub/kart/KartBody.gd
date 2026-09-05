@@ -260,6 +260,14 @@ func _apply_chassis(abs_speed: float) -> void:
 
 var _steer_visual: float = 0.0
 
+## V8 (lot 2): a jolt from outside -- a kart-to-kart bump resolved by the
+## coordinator. Same channel the soft fence uses (`_bump`), so a contact
+## reads exactly like a wall touch: a short lift of the chassis, decaying.
+## The ONE addition to this file for lot 2 beyond constants, noted in
+## CH27 as the contract asks.
+func bump(strength: float = 1.0) -> void:
+	_bump = maxf(_bump, clampf(strength, 0.0, 1.0))
+
 ## The last steer the driver asked for, for the front wheels. Written by
 ## the coordinator after drive() so the body needs no reference to the
 ## input it was driven with.

@@ -39,6 +39,16 @@ var _ghost_active: bool = false
 ## V7b dev-only steering preset row (DevTools.enabled()): empty for a
 ## normal player, so nothing is built or drawn for them.
 var _preset_buttons: Array[Button] = []
+## V8 race widgets: the lights, the position, the standings, the results.
+var _lights: Array[ColorRect] = []
+var _lights_box: HBoxContainer = null
+var _go_label: Label = null
+var _position_label: Label = null
+var _standings_box: VBoxContainer = null
+var _standings_rows: Array[Dictionary] = []
+var _results_panel: PanelContainer = null
+var _results_box: VBoxContainer = null
+var _clock_label: Label = null
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -134,8 +144,238 @@ func _ready() -> void:
 	var hint := _label(box, 16, Color(0.85, 0.80, 0.68))
 	hint.text = "↑  pousser le pouce pour foncer"
 	set_times(0, 0, 0, 0, false)
+	_build_race_widgets()
 	if DevTools.enabled():
 		_build_preset_row()
+
+## ---- V8: the race widgets --------------------------------------------------
+## All anchored by OFFSET FROM THE ANCHOR (P0's lesson): a canvas
+## coordinate written after set_anchors_preset() is a clipped widget.
+## Everything here passes taps through (IGNORE); nothing is a button.
+
+const LIGHT_SIZE: float = 74.0
+const LIGHT_OFF: Color = Color(0.20, 0.16, 0.14, 0.85)
+const LIGHT_RED: Color = Color(0.95, 0.24, 0.20, 1.0)
+const LIGHT_GREEN: Color = Color(0.36, 0.90, 0.40, 1.0)
+const STANDINGS_WIDTH: float = 250.0
+
+func _build_race_widgets() -> void:
+	# The lights: three discs in a row, centred, above the middle of the
+	# screen, lit one by one through the countdown, all green at GO.
+	_lights_box = HBoxContainer.new()
+	_lights_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lights_box.add_theme_constant_override("separation", 26)
+	_lights_box.set_anchors_preset(Control.PRESET_CENTER)
+	var row_w: float = 3.0 * LIGHT_SIZE + 2.0 * 26.0
+	_lights_box.position = Vector2(-row_w * 0.5, -420.0)
+	_lights_box.visible = false
+	add_child(_lights_box)
+	for i in 3:
+		var light := ColorRect.new()
+		light.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		light.custom_minimum_size = Vector2(LIGHT_SIZE, LIGHT_SIZE)
+		light.color = LIGHT_OFF
+		_lights_box.add_child(light)
+		_lights.append(light)
+	_go_label = Label.new()
+	_go_label.text = "GO !"
+	_go_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_go_label.add_theme_font_size_override("font_size", 96)
+	_go_label.add_theme_color_override("font_color", Color(0.55, 1.0, 0.55))
+	_go_label.add_theme_color_override("font_outline_color", Color(0.05, 0.25, 0.08, 0.95))
+	_go_label.add_theme_constant_override("outline_size", 12)
+	_go_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_go_label.set_anchors_preset(Control.PRESET_CENTER)
+	_go_label.position = Vector2(-250.0, -330.0)
+	_go_label.size = Vector2(500.0, 120.0)
+	_go_label.visible = false
+	add_child(_go_label)
+	# The position: big, under the exit button, left.
+	_position_label = Label.new()
+	_position_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_position_label.add_theme_font_size_override("font_size", 64)
+	_position_label.add_theme_color_override("font_color", Color(1.0, 0.96, 0.86))
+	_position_label.add_theme_color_override("font_outline_color", Color(0.15, 0.10, 0.06, 0.9))
+	_position_label.add_theme_constant_override("outline_size", 8)
+	_position_label.position = Vector2(36.0, TOP + 84.0 + 96.0)
+	_position_label.visible = false
+	add_child(_position_label)
+	# The standings: four rows of a colour chip and a name, top-right
+	# under the Menu button, in the column the resource counter leaves
+	# free while driving.
+	_standings_box = VBoxContainer.new()
+	_standings_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_standings_box.add_theme_constant_override("separation", 6)
+	_standings_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_standings_box.position = Vector2(-STANDINGS_WIDTH - 24.0, TOP + 4.0)
+	_standings_box.custom_minimum_size = Vector2(STANDINGS_WIDTH, 0.0)
+	_standings_box.visible = false
+	add_child(_standings_box)
+	# The race clock, under the standings.
+	_clock_label = Label.new()
+	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_clock_label.add_theme_font_size_override("font_size", 22)
+	_clock_label.add_theme_color_override("font_color", Color(0.92, 0.88, 0.78))
+	_clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_clock_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_clock_label.position = Vector2(-STANDINGS_WIDTH - 24.0, TOP + 4.0 + 4.0 * 46.0 + 8.0)
+	_clock_label.size = Vector2(STANDINGS_WIDTH, 30.0)
+	_clock_label.visible = false
+	add_child(_clock_label)
+	# The results: a centred panel, one row per racer, shown at the flag.
+	_results_panel = PanelContainer.new()
+	_results_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.13, 0.10, 0.08, 0.80)
+	style.set_corner_radius_all(22)
+	style.content_margin_left = 34
+	style.content_margin_right = 34
+	style.content_margin_top = 18
+	style.content_margin_bottom = 20
+	_results_panel.add_theme_stylebox_override("panel", style)
+	_results_panel.set_anchors_preset(Control.PRESET_CENTER)
+	_results_panel.position = Vector2(-260.0, -80.0)
+	_results_panel.custom_minimum_size = Vector2(520.0, 0.0)
+	_results_panel.visible = false
+	add_child(_results_panel)
+	_results_box = VBoxContainer.new()
+	_results_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_results_box.add_theme_constant_override("separation", 8)
+	_results_panel.add_child(_results_box)
+
+func _standings_row(index: int) -> Dictionary:
+	while _standings_rows.size() <= index:
+		var row := HBoxContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_theme_constant_override("separation", 10)
+		var rank := Label.new()
+		rank.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rank.add_theme_font_size_override("font_size", 24)
+		rank.add_theme_color_override("font_color", Color(1.0, 0.96, 0.86))
+		rank.custom_minimum_size = Vector2(34.0, 0.0)
+		row.add_child(rank)
+		var chip := ColorRect.new()
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.custom_minimum_size = Vector2(22.0, 22.0)
+		chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(chip)
+		var name_label := Label.new()
+		name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		name_label.add_theme_font_size_override("font_size", 24)
+		name_label.add_theme_color_override("font_color", Color(1.0, 0.96, 0.86))
+		name_label.add_theme_color_override("font_outline_color", Color(0.1, 0.08, 0.05, 0.9))
+		name_label.add_theme_constant_override("outline_size", 6)
+		row.add_child(name_label)
+		_standings_box.add_child(row)
+		_standings_rows.append({"row": row, "rank": rank, "chip": chip, "name": name_label})
+	return _standings_rows[index]
+
+static func ordinal(rank: int) -> String:
+	return "1er" if rank == 1 else "%de" % rank
+
+## The race widgets, once per frame from HubKarting. `rows` are the
+## standings, leader first: {name, colour, player, finished}.
+func set_race(state: int, countdown_left: float, rank: int, racers: int, lap_count: int, laps: int, rows: Array, clock_s: float) -> void:
+	var racing: bool = state != HubKarting.Race.IDLE
+	_standings_box.visible = racing
+	_position_label.visible = racing
+	_clock_label.visible = state == HubKarting.Race.RUNNING or state == HubKarting.Race.FINISHED
+	if state == HubKarting.Race.COUNTDOWN:
+		_lights_box.visible = true
+		_go_label.visible = false
+		# The lights come on over the LAST three seconds: countdown_left is
+		# the time to GO (the mount hold is already taken off by the caller).
+		var lit: int = 0
+		if countdown_left <= 3.0:
+			lit = clampi(3 - int(ceil(countdown_left)) + 1, 0, 3)
+		for i in 3:
+			_lights[i].color = LIGHT_RED if i < lit else LIGHT_OFF
+	elif state == HubKarting.Race.RUNNING:
+		for i in 3:
+			_lights[i].color = LIGHT_GREEN
+		# Lights and GO linger for the first second and a half of the race.
+		_lights_box.visible = clock_s < 1.5
+		_go_label.visible = clock_s < 1.5
+	else:
+		_lights_box.visible = false
+		_go_label.visible = false
+	if racing:
+		_position_label.text = "%s / %d" % [ordinal(rank), racers]
+		_lap_count_label.text = "TOUR %d / %d" % [clampi(lap_count + 1, 1, laps), laps] if state != HubKarting.Race.FINISHED else "ARRIVÉE"
+		for i in rows.size():
+			var r: Dictionary = _standings_row(i)
+			(r["row"] as HBoxContainer).visible = true
+			(r["rank"] as Label).text = str(i + 1)
+			(r["chip"] as ColorRect).color = rows[i]["colour"]
+			var label: Label = r["name"]
+			label.text = String(rows[i]["name"]) + ("  ✓" if bool(rows[i]["finished"]) else "")
+			label.add_theme_color_override("font_color", Color(1.0, 0.86, 0.30) if bool(rows[i]["player"]) else Color(1.0, 0.96, 0.86))
+		for i in range(rows.size(), _standings_rows.size()):
+			(_standings_rows[i]["row"] as HBoxContainer).visible = false
+		_clock_label.text = KartLap.format_ms(int(round(clock_s * 1000.0)))
+
+## The results table at the flag: {name, colour, rank, finish_ms,
+## best_lap_ms, player}, finishing order.
+func show_results(rows: Array) -> void:
+	for c in _results_box.get_children():
+		c.queue_free()
+	var title := Label.new()
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title.add_theme_font_size_override("font_size", 40)
+	title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.30))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var mine: int = 0
+	for r in rows:
+		if bool(r["player"]):
+			mine = int(r["rank"])
+	title.text = "★  VICTOIRE  ★" if mine == 1 else "%s place" % ordinal(mine)
+	_results_box.add_child(title)
+	for r in rows:
+		var row := HBoxContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_theme_constant_override("separation", 12)
+		var rank := Label.new()
+		rank.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		rank.text = ordinal(int(r["rank"]))
+		rank.add_theme_font_size_override("font_size", 28)
+		rank.add_theme_color_override("font_color", Color(1.0, 0.96, 0.86))
+		rank.custom_minimum_size = Vector2(70.0, 0.0)
+		row.add_child(rank)
+		var chip := ColorRect.new()
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.custom_minimum_size = Vector2(24.0, 24.0)
+		chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		chip.color = r["colour"]
+		row.add_child(chip)
+		var name_label := Label.new()
+		name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		name_label.text = String(r["name"])
+		name_label.add_theme_font_size_override("font_size", 28)
+		name_label.add_theme_color_override("font_color", Color(1.0, 0.86, 0.30) if bool(r["player"]) else Color(1.0, 0.96, 0.86))
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(name_label)
+		var time_label := Label.new()
+		time_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var ms: int = int(r["finish_ms"])
+		time_label.text = KartLap.format_ms(ms) if ms > 0 else "…"
+		time_label.add_theme_font_size_override("font_size", 26)
+		time_label.add_theme_color_override("font_color", Color(0.92, 0.88, 0.78))
+		row.add_child(time_label)
+		_results_box.add_child(row)
+	var hint := Label.new()
+	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hint.text = "roule encore, ou Descendre pour une nouvelle course"
+	hint.add_theme_font_size_override("font_size", 18)
+	hint.add_theme_color_override("font_color", Color(0.85, 0.80, 0.68))
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_results_box.add_child(hint)
+	_results_panel.visible = true
+
+func set_results_visible(on: bool) -> void:
+	_results_panel.visible = on
+
+func results_visible() -> bool:
+	return _results_panel.visible
 
 func _label(parent: Control, size: int, colour: Color) -> Label:
 	var label := Label.new()
