@@ -283,7 +283,13 @@ window.keepySignInWithGoogle = function () {
 	// Every domain that serves this app needs BOTH this entry AND a matching
 	// entry in Firebase's Authorized domains list -- the two are independent
 	// checks and either one missing breaks sign-in on that host.
-	const KNOWN_AUTH_HOSTS = ['keepy-ten.vercel.app', 'keepy-staging.vercel.app'];
+	// keepy-habitants.vercel.app: the carte-blanche V6 preview alias
+	// (branch claude/keepy-five-new-characters-cfhap6, never merged). Listed
+	// here so the SAME /__/auth/* proxy path the two real hosts use is
+	// taken on the preview (vercel.json ships with every deployment of this
+	// project); Firebase's own Authorized-domains list is the second,
+	// independent half. DEBT: drop this entry with the branch.
+	const KNOWN_AUTH_HOSTS = ['keepy-ten.vercel.app', 'keepy-staging.vercel.app', 'keepy-habitants.vercel.app'];
 	const DEFAULT_AUTH_DOMAIN = 'keepy-8df91.firebaseapp.com';
 
 	function publish(patch) {
