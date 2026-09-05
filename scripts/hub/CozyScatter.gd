@@ -27,7 +27,8 @@ const COVER_MAX: Vector2 = Vector2(37.0, 47.0)
 ## dropped so no canopy hangs over a place Keepy can walk to.
 const WALL_OUTER: float = 62.0
 ## v2: the wall box now runs to z = -100 to close the hollow's far side.
-const WALL_FAR_Z: float = -140.0
+## v7: and to z = -210 to close the circuit's.
+const WALL_FAR_Z: float = -210.0
 const HEDGE_PER_U2: float = 0.10
 const WALL_CLEARANCE: float = 2.0
 const WALL_NEAR_BAND: float = 8.0
@@ -46,6 +47,9 @@ const SPAWN_CLEAR_RADIUS: float = 2.2
 const MARGIN: float = 0.35
 
 var _builder: HubBuilder = null
+## v7: the karting coordinator, a sibling built BEFORE this node so the
+## track and the grid exist when the ground cover is sown.
+var _karting: HubKarting = null
 var _footprints: Array = []
 var _water: Array = []
 var _spine: Array = []
@@ -60,6 +64,7 @@ func _ready() -> void:
 	if _builder == null:
 		push_error("CozyScatter: no HubBuilder sibling named Props.")
 		return
+	_karting = get_parent().get_node_or_null("Karting") as HubKarting
 	_rng.seed = SEED
 	_footprints = _builder.ground_footprints()
 	_collect_water()
@@ -69,6 +74,7 @@ func _ready() -> void:
 	_scatter_ground_cover()
 	_autumn()
 	_moor()
+	_circuit()
 	_forest_wall()
 	_flush()
 	_mother_tree()
@@ -104,6 +110,9 @@ func _collect_water() -> void:
 	_spine_half = _builder.stream_half_width()
 
 func _blocked(p: Vector3, own_radius: float) -> bool:
+	# v7: the circuit's ribbon, grid and decor.
+	if _karting != null and HubRegion.in_circuit(p) and _karting.blocks(p, own_radius):
+		return true
 	# v3: the transport docks and the ball's park are kept clear.
 	for fp in HubTransport.footprints():
 		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
@@ -384,6 +393,48 @@ func _moor() -> void:
 		_moor_place("beehive", "beehive_0", MOOR_HAMLET + Vector3(2.6 + 1.1 * i, 0.0, -1.8 + 0.3 * (i % 2)), 1.0, 0.1 * i, 0.0, 1.0)
 	_stats["hamlet"] = 5
 
+## ---- v7: the circuit ("le Circuit") ----------------------------------
+## The lawn is painted; what is sown is what a race meeting leaves on a
+## lawn: a few round trees and bushes on the run-off (never on the
+## ribbon, never on the grid), flowers by the paddock, and the infield's
+## clumps. Light on purpose -- the track is the composition here.
+const CIRCUIT_SEED: int = SEED + 303
+
+func _in_circuit(p: Vector3) -> bool:
+	return HubRegion.in_circuit(p) and HubRegion.contains(p)
+
+func _circuit() -> void:
+	_rng.seed = CIRCUIT_SEED
+	var trees := 0
+	for i in 120:
+		if trees >= 14:
+			break
+		var p := Vector3(_rng.randf_range(HubRegion.CIRCUIT_MIN.x + 2.0, HubRegion.CIRCUIT_MAX.x - 2.0), 0.0, _rng.randf_range(HubRegion.CIRCUIT_MIN.y + 2.0, HubRegion.CIRCUIT_MAX.y - 2.0))
+		if not _in_circuit(p) or _blocked(p, 2.2):
+			continue
+		var kind: String = ["tree_0_round", "tree_1_round", "tree_2_round", "tree_5_round"][i % 4]
+		_moor_place("tree", kind, p, _rng.randf_range(0.9, 1.25), _rng.randf_range(0.0, TAU), 0.04, 3.0)
+		trees += 1
+	_stats["circuit_tree"] = trees
+	var bushes := 0
+	for i in 80:
+		if bushes >= 16:
+			break
+		var p := Vector3(_rng.randf_range(HubRegion.CIRCUIT_MIN.x + 1.5, HubRegion.CIRCUIT_MAX.x - 1.5), 0.0, _rng.randf_range(HubRegion.CIRCUIT_MIN.y + 1.5, HubRegion.CIRCUIT_MAX.y - 1.5))
+		if not _in_circuit(p) or _blocked(p, 1.0):
+			continue
+		_moor_place("bush", "bush_%d" % (i % 3), p, _rng.randf_range(0.8, 1.2), _rng.randf_range(0.0, TAU), 0.03, 1.2)
+		bushes += 1
+	_stats["circuit_bush"] = bushes
+	var flowers := 0
+	for i in 160:
+		var p := Vector3(_rng.randf_range(HubRegion.CIRCUIT_MIN.x + 1.0, HubRegion.CIRCUIT_MAX.x - 1.0), 0.0, _rng.randf_range(HubRegion.CIRCUIT_MIN.y + 1.0, HubRegion.CIRCUIT_MAX.y - 1.0))
+		if not _in_circuit(p) or _blocked(p, 0.4):
+			continue
+		_moor_place("flower", "flower_%d" % (i % 4), p, _rng.randf_range(0.9, 1.3), _rng.randf_range(0.0, TAU), 0.05, 0.5)
+		flowers += 1
+	_stats["circuit_flower"] = flowers
+
 func _in_field(p: Vector3, margin: float) -> bool:
 	for f in CozyPalette.LAVENDER_FIELDS:
 		if p.x > f.x - margin and p.x < f.z + margin and p.z > f.y - margin and p.z < f.w + margin:
@@ -454,9 +505,10 @@ func _forest_wall() -> void:
 		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
 		var autumn := p.z < AUTUMN_WALL_Z
 		var moor := p.z < MOOR_WALL_Z
+		var circuit := p.z < CIRCUIT_WALL_Z
 		if near:
 			# Denser near band: every candidate lands, plus extra throws.
-			_add("wall_near", _wall_kind(p, moor_kinds if moor else (autumn_kinds if autumn else near_kinds)), _wall_sector(p), xform, 0.04, 3.0)
+			_add("wall_near", _wall_kind(p, near_kinds if circuit else (moor_kinds if moor else (autumn_kinds if autumn else near_kinds))), _wall_sector(p), xform, 0.04, 3.0)
 			placed_near += 1
 		else:
 			# The moor's FAR wall is the 72-tri far blob too, not a cypress:
@@ -474,7 +526,7 @@ func _forest_wall() -> void:
 		var s := _rng.randf_range(0.9, 1.35)
 		var yaw := _rng.randf_range(0.0, TAU)
 		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
-		_add("wall_near", _wall_kind(p, moor_kinds if p.z < MOOR_WALL_Z else (autumn_kinds if p.z < AUTUMN_WALL_Z else near_kinds)), _wall_sector(p), xform, 0.04, 3.0)
+		_add("wall_near", _wall_kind(p, near_kinds if p.z < CIRCUIT_WALL_Z else (moor_kinds if p.z < MOOR_WALL_Z else (autumn_kinds if p.z < AUTUMN_WALL_Z else near_kinds))), _wall_sector(p), xform, 0.04, 3.0)
 		placed_near += 1
 	# v3: the second hedge, between the hollow and the moor, either side of
 	# the moor corridor: autumn on the hollow side, cypress on the moor side.
@@ -491,6 +543,22 @@ func _forest_wall() -> void:
 		_add("wall_near", _wall_kind(p, moor_kinds if p.z < -83.0 else autumn_kinds), "hedge2", xform, 0.04, 3.0)
 		hedge2 += 1
 	_stats["hedge2"] = hedge2
+	# v7: the third hedge, between the moor and the circuit, either side
+	# of the circuit corridor: cypress on the moor side, round green trees
+	# on the circuit side (the lawn's register is the plateau's).
+	var hedge3 := 0
+	for i in int(100.0 * 5.0 * HEDGE_PER_U2):
+		var p := Vector3(_rng.randf_range(-50.0, 50.0), 0.0, _rng.randf_range(-133.5, -128.5))
+		if HubRegion.contains(p) or _blocked(p, 0.8):
+			continue
+		if p.x > HubRegion.CIRCUIT_CORRIDOR_MIN.x - 1.5 and p.x < HubRegion.CIRCUIT_CORRIDOR_MAX.x + 1.5:
+			continue
+		var s := _rng.randf_range(0.85, 1.25)
+		var yaw := _rng.randf_range(0.0, TAU)
+		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
+		_add("wall_near", _wall_kind(p, near_kinds if p.z < -131.0 else moor_kinds), "hedge3", xform, 0.04, 3.0)
+		hedge3 += 1
+	_stats["hedge3"] = hedge3
 	# The HEDGE between the two zones: the 6 u band the region leaves
 	# outside itself east of the corridor. The wall passes above only
 	# sample it thinly (2 u clearance on each side eats 4 of the 6 u), so
@@ -513,6 +581,9 @@ func _forest_wall() -> void:
 const WALL_SECTORS: int = 6
 const AUTUMN_WALL_Z: float = -40.0
 const MOOR_WALL_Z: float = -84.0
+## v7: past the circuit's hedge the wall is the plateau's round trees
+## again -- the circuit is a lawn, not a heath.
+const CIRCUIT_WALL_Z: float = -131.0
 
 func _wall_sector(p: Vector3) -> String:
 	return "wall_%d" % posmod(int(floor(atan2(p.z, p.x) / TAU * WALL_SECTORS)), WALL_SECTORS)
@@ -610,6 +681,12 @@ func _paths() -> void:
 	_extrude_path(moor_road, st, 2.1)
 	_moor_road = moor_road
 	built += 1
+	# v7: the road on to the circuit -- from the moor road's end past the
+	# windmill's west, through the third corridor, to the paddock.
+	var circuit_road := _catmull_rom(CIRCUIT_ROAD, 7)
+	_path_lines.append(circuit_road)
+	_extrude_path(circuit_road, st, 0.7)
+	built += 1
 	var mesh := st.commit()
 	var node := MeshInstance3D.new()
 	node.name = "Paths"
@@ -632,6 +709,10 @@ const MOOR_ROAD: Array[Vector3] = [
 	Vector3(-2.0, 0.0, -107.0),
 ]
 var _moor_road: Array = []
+const CIRCUIT_ROAD: Array[Vector3] = [
+	Vector3(-2.0, 0.0, -107.0), Vector3(-5.5, 0.0, -114.0), Vector3(-8.0, 0.0, -122.0),
+	Vector3(-8.0, 0.0, -130.0), Vector3(-7.0, 0.0, -136.0),
+]
 
 ## Ribbon extrusion shared by the Bezier paths and the autumn road: one
 ## normal per SAMPLE, shared edge vertices (the hatching fix of v1 cp 4).
@@ -804,6 +885,11 @@ func _hills() -> void:
 		tries += 1
 		var a := rng.randf_range(0.0, TAU)
 		var r := rng.randf_range(78.0, 176.0)
+		# v7: one throw in three goes to the far south ring, the
+		# circuit's own horizon (sin(a) < 0 there).
+		if tries % 3 == 0:
+			r = rng.randf_range(236.0, 262.0)
+			a = rng.randf_range(PI + 0.45, TAU - 0.45)
 		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
 		if p.z > 50.0:
 			continue
@@ -813,6 +899,10 @@ func _hills() -> void:
 			continue
 		# v3: the moor runs to z = -126.
 		if p.z < -95.0 and r < 168.0:
+			continue
+		# v7: the circuit runs to z = -196; nothing south of the moor
+		# nearer than its far edge plus a skirt.
+		if p.z < -130.0 and r < 236.0:
 			continue
 		var sx := rng.randf_range(22.0, 40.0)
 		var sy := rng.randf_range(7.0, 13.0)

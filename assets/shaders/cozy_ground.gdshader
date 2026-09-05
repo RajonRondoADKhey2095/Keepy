@@ -48,6 +48,16 @@ uniform vec4 field_0 = vec4(0.0, 0.0, 0.0, 0.0);
 uniform vec4 field_1 = vec4(0.0, 0.0, 0.0, 0.0);
 uniform vec4 field_2 = vec4(0.0, 0.0, 0.0, 0.0);
 uniform float row_pitch = 2.4;
+// Carte-blanche v7: the circuit beyond the moor. A mown lawn in two
+// greens, with MOWING STRIPES (alternating bands along x) that say
+// "kept ground" the way the lavender rows said "planted ground" --
+// and read the direction of the straight from 40 u away. Painted
+// straight into the ground for the same reason: rows cost nothing.
+uniform float circuit_edge_z = -132.0;
+uniform float circuit_edge_w = 3.0;
+uniform vec3 lawn_a : source_color = vec3(0.58, 0.82, 0.40);
+uniform vec3 lawn_b : source_color = vec3(0.50, 0.75, 0.35);
+uniform float lawn_stripe = 6.0;
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
 uniform float haze_density = 0.018;
 uniform float haze_start = 6.0;
@@ -100,6 +110,13 @@ void fragment() {
 	vec3 rowcol = mix(row_violet * (0.92 + 0.16 * small), row_soil, stripe);
 	heath = mix(heath, rowcol, rows);
 	col = mix(col, heath, moor);
+	// v7: the circuit's lawn takes over past the moor's far hedge. A
+	// tight wobble like the moor's (the hedge band is 8 u wide).
+	float circuit = smoothstep(circuit_edge_z, circuit_edge_z - circuit_edge_w, world_pos.z + (big - 0.5) * 4.0);
+	float mow = smoothstep(0.42, 0.58, abs(fract(p.x / lawn_stripe) - 0.5) * 2.0);
+	vec3 lawn = mix(lawn_a, lawn_b, mow);
+	lawn *= 1.0 + (big - 0.5) * 0.10;
+	col = mix(col, lawn, circuit);
 	col *= 1.0 + (small - 0.5) * 2.0 * detail_amount;
 	// Fine mottle (grass clumps) close to the camera; mipmapped away far.
 	float fine = texture(noise_tex, p / 1.7 + vec2(0.13, 0.91)).r;

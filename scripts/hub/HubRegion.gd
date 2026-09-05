@@ -481,6 +481,19 @@ const MOOR_CORRIDOR_MIN: Vector2 = Vector2(6.0, -86.0)
 const MOOR_CORRIDOR_MAX: Vector2 = Vector2(18.0, -78.0)
 const WINDMILL_AT: Vector3 = Vector3(14.0, 0.0, -106.0)
 const WINDMILL_RADIUS: float = 2.1
+## Carte-blanche v7 -- the fourth map, south of the moor: the karting
+## circuit ("le Circuit"), joined to the moor by a corridor at the end of
+## the moor road, west of the windmill's axis. Same ground height (the
+## kart drives on y = 0 like everyone walks on it); the relief is props.
+## The rectangle is generous on purpose: the track needs room to be a
+## track, and the kart needs run-off to be forgiving (KartTrack's soft
+## fence sits INSIDE this rectangle, never on its edge -- see the
+## structure-lobe doctrine in CLAUDE.md: a thing centred on a boundary
+## sticks out of it).
+const CIRCUIT_MIN: Vector2 = Vector2(-50.0, -200.0)
+const CIRCUIT_MAX: Vector2 = Vector2(50.0, -134.0)
+const CIRCUIT_CORRIDOR_MIN: Vector2 = Vector2(-14.0, -134.0)
+const CIRCUIT_CORRIDOR_MAX: Vector2 = Vector2(-2.0, -126.0)
 static var _holes: Array[Dictionary] = [
 	{"centre": MOTHER_TREE_AT, "radius": MOTHER_TREE_TRUNK_RADIUS},
 	{"centre": WINDMILL_AT, "radius": WINDMILL_RADIUS},
@@ -503,10 +516,17 @@ static func in_moor(point: Vector3) -> bool:
 	var flat := _flat(point)
 	return _in_rect(flat, MOOR_MIN, MOOR_MAX) or _in_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX)
 
+## True inside the circuit or its corridor (painted zone).
+static func in_circuit(point: Vector3) -> bool:
+	var flat := _flat(point)
+	return _in_rect(flat, CIRCUIT_MIN, CIRCUIT_MAX) or _in_rect(flat, CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX)
+
 ## Which zone a point paints as: 0 the plateau, 1 the autumn hollow, 2 the
-## moor. The corridors belong to the zone they lead INTO, so a walk that
-## crosses a corridor changes zone once, at the gate.
+## moor, 3 the circuit. The corridors belong to the zone they lead INTO,
+## so a walk that crosses a corridor changes zone once, at the gate.
 static func zone_of(point: Vector3) -> int:
+	if in_circuit(point):
+		return 3
 	if in_moor(point):
 		return 2
 	if in_autumn(point):
@@ -527,6 +547,8 @@ static func contains(point: Vector3) -> bool:
 	if _in_rect(flat, AUTUMN_MIN, AUTUMN_MAX) or _in_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX):
 		return true
 	if _in_rect(flat, MOOR_MIN, MOOR_MAX) or _in_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX):
+		return true
+	if _in_rect(flat, CIRCUIT_MIN, CIRCUIT_MAX) or _in_rect(flat, CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX):
 		return true
 	if absf(flat.x) <= PLATEAU_HALF_EXTENT and absf(flat.z) <= PLATEAU_HALF_EXTENT:
 		return true
@@ -588,6 +610,8 @@ static func clamp_to(point: Vector3) -> Vector3:
 	candidates.append(_clamp_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX))
 	candidates.append(_clamp_rect(flat, MOOR_MIN, MOOR_MAX))
 	candidates.append(_clamp_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX))
+	candidates.append(_clamp_rect(flat, CIRCUIT_MIN, CIRCUIT_MAX))
+	candidates.append(_clamp_rect(flat, CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX))
 	for hole in _holes:
 		var hc: Vector3 = hole["centre"]
 		var away := flat - hc

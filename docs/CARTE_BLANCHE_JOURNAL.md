@@ -759,3 +759,78 @@ Un worktree `origin/main` importé de zéro (127 `.scn`, comptés avant de compa
 | `ZiplineRideProbe` | opengl3 | FAIL corridor −0,158 u (`@MeshInstance3D@47`) | FAIL corridor −0,158 u (`@MeshInstance3D@47`) | **identique sur `main`**, au millième et au même nœud |
 
 Aucune régression introduite par V6 ; quatre sondes du dépôt sont rouges **sur `main`** depuis le monde cozy (CH26) — signalé, non corrigé (hors périmètre, et un compte de draw nodes n'est pas une mécanique cassée). `V6CrittersProbe` : **128 checks headless, 129 sous opengl3, 0 échec**, quatre passes rouges (3, 3, 7, 4 échecs attendus, fichiers restaurés byte-identiques).
+
+# V7 — KARTING LOT 1
+
+Branche `claude/karting-circuit-lot-1-4oumpr`, travail DIRECT vers `staging` (nouveau workflow : plus d'alias jetable, plus de bypass, `DevTools.enabled()` seul gate). Append seulement.
+
+## Ouverture V7
+
+- **Base** : `5fa8f29` (`origin/staging` HEAD au fetch de 17:34 UTC, 5 sept 2026, arbre `7ea8996`). `origin/main` (`4213c16`, arbre `c8e8071`) est un **ancêtre** de `staging` (`merge-base --is-ancestor` vrai) : pas de divergence, `main` n'est pas en avance (aucun `.glb` brut déposé). Ma branche distante pointait encore sur `main` ; remise sur `staging` par `reset --hard`, aucun commit à conserver (même arbre que `main`). Aucune branche distante voisine (« kart », « circuit » : zéro hors la mienne) : pas de session concurrente détectée.
+- **Staging avant le lot** : `CACHE_VERSION = '1788628521|5859025'` (17:15:21 UTC) lu sur `keepy-staging.vercel.app` à 17:41 — c'est la valeur que le premier checkpoint devra avoir REMPLACÉE.
+- **Outillage** : éditeur 4.3 (50 276 070 octets, conforme), templates 1 073 228 327 octets **au premier essai** (taille contrôlée contre le `Content-Length` avant `unzip`), import du projet lancé en fond (PID, jamais `pgrep -f`), `bpy` en cours d'installation (timebox 15 min, repli procédural Godot prévu — voir le checkpoint circuit).
+
+### Le schéma de contrôle tactile — choisi AVANT de coder, et pourquoi
+
+**Accélérateur automatique + direction par glissement horizontal du pouce, ancrée là où le doigt se pose.** Une seule touche, n'importe où sur l'écran (hors les deux boutons du HUD) :
+
+1. le doigt se pose → ce point devient l'**ancre** ; aucune zone à viser, le pouce reste où il est déjà (bas de l'écran en tenue à une main, mais rien ne l'impose) ;
+2. le doigt glisse à gauche / à droite → `steer = clamp((x − ancre.x) / 130 px, −1, 1)`, avec une zone morte de 10 px ; proportionnel, donc un braquage léger existe (le tout-ou-rien des zones gauche/droite n'en a pas) ;
+3. le doigt se lève → roues droites, le kart continue (accélérateur automatique) ;
+4. **un second doigt posé = frein** (puis marche arrière si arrêté) — rare dans un jeu cozy, mais nécessaire pour se sortir d'un mur de pneus ;
+5. **Sortir du kart = un bouton HUD explicite**, jamais un geste : la bascule de mode doit être infaillible, et un geste interprété est exactement ce qui la rendrait ambiguë.
+
+Ce que j'ai écarté, et pourquoi : l'**inclinaison** (DeviceOrientation exige sur iOS 13+ une permission par geste utilisateur et se comporte différemment en PWA — un schéma qui peut ne pas fonctionner du tout n'est pas un schéma) ; les **zones gauche/droite** (binaire : le kart oscille en ligne droite, et la direction proportionnelle est ce qui rend une conduite « pardonnante ») ; le **joystick virtuel à position fixe** (impose de viser un cercle de 120 px avec le pouce tout en regardant la piste) ; **direction au tap** (c'est le tap-to-move avec un autre nom, et c'est précisément ce que Mathieu a refusé). L'ancre flottante horizontale est la forme la plus proche du geste naturel « je pousse le volant du côté où je veux aller », et `touch-action: none` est déjà posé dans le shell HTML : aucun conflit avec le scroll Safari.
+
+**Une seule source d'entrées, abstraite dès la première ligne** : `KartInput` (steer / throttle / brake) est un objet que le kart LIT ; `KartTouchInput` le REMPLIT depuis l'écran (et le clavier hors web). Un pilote IA remplira le même objet — c'est le contrat qui rend le lot 2 possible sans réécriture.
+
+### L'architecture, décidée avant de coder
+
+| pièce | rôle | déjà générique pour N karts ? |
+|---|---|---|
+| `KartInput` | steer / throttle / brake, source indifférente | oui |
+| `KartBody` | physique arcade sur le plan (vitesse, grip latéral, rayon de braquage, châssis qui roule/tangue, roues) ; n'a **aucune idée** de qui le pilote | oui |
+| `KartTrack` | le tracé : spine fermée publiée (`ideal_line()`), `progress_at(p)` (abscisse le long du tour), `on_track(p)`, ligne de départ, clôture souple | oui |
+| `KartLap` | tours et checkpoints d'UN coureur (un tour compte quand les 3 checkpoints ont été passés dans l'ordre), temps au tour | oui, une instance par coureur |
+| `HubKarting` | le module (comme `HubTransport`, `HubCritters`) : construit la zone, possède `racers: Array` **dès le premier commit** (une entrée), branche le joueur (tap → marche → `mount_carrier` → mode conduite), la caméra, le HUD, `WorldSave` | la liste existe ; le joueur est l'entrée 0 |
+| `HubCamera` | mode conduite : caméra de poursuite derrière le kart, transition tweenée dans les deux sens, **hors conduite byte-identique** à aujourd'hui | — |
+| `KartHud` | chrono, meilleur, dernier tour, bouton « Descendre », fantôme de l'ancre | — |
+
+Le kart est un **porteur** au sens de `mount_carrier` / `follow_carrier` (le rail de la montgolfière et du sanglier) : Keepy est en `ON_CARRIER` pendant toute la conduite, ce qui ferme d'office tous les autres taps du hub par état (les gardes `is_on_carrier()` existent déjà partout). Le kart se retire du tap dès la montée (patron bateau) ; la sortie est le bouton, qui pose Keepy à côté du kart par `leave_carrier` sur un point **clampé à la région** — la zone circuit EST de la région, à la même altitude que tout le reste.
+
+**La zone** : quatrième zone au SUD de la Lande (z de −134 à −196, x ±46), couloir depuis le bout de la route de la Lande, chaîne 0—1—2—3 (une troisième porte, `_gates_between` la prend sans planificateur). Visible depuis la Lande : le portique de départ (6 u, bannière à damier, fanions) sur le bord nord du circuit, à ~40 u de la fin de la route — dans la brume mais en silhouette, et le sol change de couleur (pelouse tondue à bandes) avant la haie.
+
+## Checkpoint 1 — conduite + circuit + chrono, d'un seul tenant (18:05 UTC)
+
+Tout ce qui suit est sur la branche puis sur `staging` en un seul checkpoint : la conduite ne se juge pas sans piste, la piste ne se juge pas sans kart, et le chrono est la seule progression du lot.
+
+**Ce qui est fait.**
+- **`HubRegion`** : quatrième zone `CIRCUIT` (x ±50, z −200 → −134) + couloir (x −14 → −2, z −134 → −126), `zone_of()` rend 3, `contains()`/`clamp_to()` la prennent comme un rectangle de plus. `HubWorld._gates_between` : chaîne 0—1—2—3 avec `CIRCUIT_GATE (−8, −130)`, aucun planificateur (la zone est sur la chaîne).
+- **`KartTrack`** : Catmull-Rom fermée sur 20 waypoints (dessinés et mesurés en Python AVANT le code : 230,7 u, rayon mini 3,40 u à l'oméga), ruban 7 u + liserés crème + bordures rouge/blanc là où la courbure dépasse 1/16 (85 échantillons), damier de départ, chevrons tous les 24 u. Publie `ideal_line()`, `progress_at(p, hint)` (abscisse depuis la ligne, latéral signé, tangente, recherche locale par indice), `on_track()`, `start_pose(i)` (grille en quinconce), `fence()`, `start_line_offset()`. Cinq `MeshInstance3D`, `visibility_range_end` 125 u.
+- **`KartBody`** : vitesse vers une cible (13 u/s piste, 5,5 herbe) par constante de temps ; direction = taux de lacet × gain(vitesse) avec relâchement à haute vitesse (0,72 au max) ; **grip** : la vitesse est un vecteur MONDE, le virage lui donne une composante latérale dans le nouveau repère, que le grip (6,5/s piste, 2,4/s herbe) éteint — la glisse EST ça, et elle scrub (0,55). Frein 15 u/s², marche arrière 3,5. Clôture souple : réflexion à 0,35. Châssis : roulis avec l'accélération latérale (≤ 9°), tangage (≤ 5°), roues qui tournent, roues avant braquées, bob + secousse au mur. ~700 triangles de primitives à tessellation explicite, `SEAT (0 ; 0,42 ; −0,18)` publié.
+- **`KartInput` / `KartTouchInput`** : le schéma de l'ouverture, tel quel. Événements souris émulés (device −1) ignorés ; clavier hors doigt. **Tenue d'accélérateur 1,2 s au montage** (`MOUNT_HOLD_S`) : le kart part d'un cadre déjà « conduite », pas pendant le fondu caméra.
+- **`KartLap`** : 3 checkpoints ordonnés, tour compté seulement au franchissement AVANT avec les trois passés, franchissement arrière = checkpoints perdus, chrono démarré au premier passage, `wrong_way` tenu 1,2 s.
+- **`HubKarting`** : `racers: Array` dès le premier commit (une entrée), même boucle pour tous ; joueur = tap → marche via les portes → `mount_carrier(chassis, SEAT)` ; sortie = bouton → arrêt, `leave_carrier` sur un point clampé à côté. Invariant `driving == ON_CARRIER == touch.enabled == camera.is_driving() == hud.visible`, gaté.
+- **`HubCamera`** mode conduite : fondu 0,9 s vers une poursuite (7,6 derrière, 4,4 au-dessus, `look_at` licencié parce qu'un kart ne saute pas), cap qui traîne (λ 3,6) pour voir le nez tourner, fov 45 → 60, **`far` 4000 → 120** ; base restaurée **byte-identique** à la sortie (gaté). Hors kart : `_process` inchangé.
+- **`KartHud`** : chrono / meilleur / dernier, « DEMI-TOUR », « NOUVEAU RECORD », bouton « Descendre » (STOP) en haut à gauche, fantôme de l'ancre dessiné.
+- **`WorldSave`** : `kart.best_ms[track_id]` additif (pas de bump de schéma, sanitisé), `kart_offer_lap()`, stat `kart_laps`.
+- **Décor (`KartDecor`)** : portique à damier 12×3 sur la ligne, 4 mâts à fanions, piles de pneus colorées à l'EXTÉRIEUR de chaque virage à bordures (signe de la courbure), guirlandes le long de la ligne droite, chapiteau rayé + panneau au paddock. `CozyScatter` : bande « pelouse tondue » à rayures dans le shader sol (4ᵉ bande, bord z −132), 14 arbres ronds / 16 buissons / 78 fleurs hors piste (`HubKarting.blocks`), haie 3 (moor/circuit, 42 arbres, trou au couloir), mur reculé à z −210, collines sud (anneau 236–262 u), route du paddock depuis la fin de la route de la Lande.
+
+**Sonde `KartProbe`** (headless, `--fixed-fps 60`, `ProbeWatchdog` en première instruction, sauvegarde jetable) : **99 checks, 0 échec**, cinq phases. Trois passes rouge-avant-vert, fichiers restaurés byte-identiques (`cmp`) : (1) `KartLap` sans checkpoints → **d'abord 0 rouge** : l'assertion « pas de tour sans checkpoints » était VACANTE (le premier franchissement ne compte jamais, chrono éteint) — réécrite sur un SECOND franchissement chrono en marche → **1 rouge exact** ; (2) `exit_kart` sans `camera.exit_drive()` → **3 rouges exacts** (mode, base, fov) ; (3) grip infini → **1 rouge** (glisse), et « le virage coûte de la vitesse » reste vert parce que la projection dans le nouveau cap coûte à elle seule — l'assertion a été renommée pour dire ce qu'elle mesure. Le pilote de test `KartLineInput` (pure pursuit, `scripts/dev`, hors export) boucle **2 tours en 21,75 s / 21,48 s** sur les vraies physique et piste : c'est littéralement le point de départ du lot 2, et il est resté hors du pack exprès.
+
+**Un faux rouge à mon compte** : l'assertion « normale du premier triangle vers le haut » (règle de la main droite) est sortie rouge sur un ruban que la capture montrait dessiné. Godot tient les faces HORAIRES pour avant, donc un ruban visible a une normale main-droite vers le **bas** — c'est l'exemple même de `CLAUDE.md`, lu à l'envers. Assertion corrigée, contrôle ajouté : les chemins de terre livrés (`CozyScatter/Paths`) portent le même signe.
+
+**Métriques (opengl3 sous xvfb, ligne `engine_prims` = « gpu »).**
+
+| vue | gpu | note |
+|---|---|---|
+| spawn, avant le lot (brief) | ~68 000 | |
+| spawn, après | **69 551** | +1,5 k : la haie 3 et les collines sud sont dans le cadre lointain |
+| Lande, fin de route (−6, −112) | 46 789 | le circuit visible derrière la haie (capture `cap_moor_view`) |
+| paddock (−7, −139) | 36 767 | |
+| conduite, ligne droite, `far` 4000 | **123 515** | la poursuite regarde l'horizon : Lande + deux haies + mur dans le frustum |
+| conduite, `far` 120 | **35 201** | ×0,28 — la brume avait déjà dissous 93 % à cette distance |
+
+`index.pck` **34 374 864** (staging 34 323 216, +51 Ko), `index.wasm` 35 376 909 / `af4a8fc2…` (moteur inchangé), 0 `SCRIPT ERROR` à l'export, `scripts/dev/*` exclu (0 `Storing File`).
+
+**Pas fait / à régler sur device** : `STEER_SPAN` 150 px logiques (≈ 1 cm sur iPhone) et `DEAD_ZONE` 12 ; `STEER_RATE` 2,1 / `STEER_HIGH_SPEED_KEEP` 0,72 (l'oméga à r = 3,4 se prend à mi-vitesse, c'est voulu) ; `GRIP_ON_TRACK` 6,5 (une glisse de ~0,15 s par virage) ; `MOUNT_HOLD_S` 1,2 ; la hauteur des mâts (le pied d'un mât coupe le cadre du paddock — réduit à 6,4 u, pas re-capturé). Aucun son. `bpy` installé (5.0.1) mais **pas utilisé** : le kart et le décor sont des primitives Godot à tessellation explicite, le repli que la skill prévoit — j'ai jugé qu'un GLB de kart n'aurait pas payé sa demi-heure contre la conduite.
