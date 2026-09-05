@@ -258,3 +258,89 @@ static func tint(seed_value: int, amount: float = 0.08) -> Color:
 	var b: float = 1.0 + rng.randf_range(-amount, amount)
 	var warm: float = rng.randf_range(-amount * 0.5, amount * 0.5)
 	return Color(b + warm, b, b - warm * 0.5, 1.0)
+
+
+## ---- v2: weather ------------------------------------------------------
+## One look per state. Everything the weather can change lives here, and
+## apply_weather() below is the only writer of the materials this file
+## caches. Colours are what the ground/sky READ, not albedos.
+static func weather_look(kind: int) -> Dictionary:
+	match kind:
+		1: # RAIN
+			return {"kind": 1, "sky": Color(0.60, 0.68, 0.76), "haze": Color(0.64, 0.70, 0.76), "density": 0.034,
+				"tint": Color(0.80, 0.84, 0.92), "wind": 1.8, "lean": Vector2(0.10, 0.04), "rain": 1.0, "snow": 0.0,
+				"overlay": Color(0.30, 0.38, 0.55, 0.16), "shadow": 0.35, "hidden": 1.0, "cloud": Color(0.72, 0.74, 0.80)}
+		2: # STORM
+			return {"kind": 2, "sky": Color(0.36, 0.40, 0.50), "haze": Color(0.42, 0.46, 0.54), "density": 0.045,
+				"tint": Color(0.58, 0.62, 0.74), "wind": 3.0, "lean": Vector2(0.26, 0.10), "rain": 1.0, "snow": 0.0,
+				"overlay": Color(0.12, 0.14, 0.28, 0.30), "shadow": 0.15, "hidden": 1.0, "cloud": Color(0.45, 0.47, 0.55)}
+		3: # SNOW
+			return {"kind": 3, "sky": Color(0.84, 0.87, 0.92), "haze": Color(0.88, 0.90, 0.94), "density": 0.040,
+				"tint": Color(0.92, 0.94, 1.0), "wind": 0.8, "lean": Vector2(0.0, 0.0), "rain": 0.0, "snow": 1.0,
+				"overlay": Color(0.85, 0.90, 1.0, 0.10), "shadow": 0.5, "hidden": 1.0, "cloud": Color(0.95, 0.96, 0.98)}
+		_: # SUN
+			return {"kind": 0, "sky": SKY, "haze": HAZE, "density": HAZE_DENSITY,
+				"tint": Color(1.0, 1.0, 1.0), "wind": 1.0, "lean": Vector2(0.0, 0.0), "rain": 0.0, "snow": 0.0,
+				"overlay": Color(0.0, 0.0, 0.0, 0.0), "shadow": 1.0, "hidden": 0.0, "cloud": Color(0.985, 0.99, 1.0)}
+
+static func blend_looks(a: Dictionary, b: Dictionary, t: float) -> Dictionary:
+	var out := {}
+	for key in b.keys():
+		var vb = b[key]
+		var va = a.get(key, vb)
+		if vb is Color:
+			out[key] = (va as Color).lerp(vb, t)
+		elif vb is Vector2:
+			out[key] = (va as Vector2).lerp(vb, t)
+		elif vb is float:
+			out[key] = lerpf(float(va), vb, t)
+		else:
+			out[key] = vb
+	return out
+
+static func _set_common(mat: ShaderMaterial, look: Dictionary, tint: Color) -> void:
+	mat.set_shader_parameter("weather_tint", Vector3(tint.r, tint.g, tint.b))
+	mat.set_shader_parameter("haze_color", look["haze"])
+	mat.set_shader_parameter("haze_density", look["density"])
+
+static func apply_weather(look: Dictionary) -> void:
+	var flash: float = look.get("flash", 0.0)
+	var base: Color = look["tint"]
+	var tint := base.lerp(Color(1.55, 1.55, 1.65), flash)
+	var decor: Array = [_decor_static]
+	decor.append_array(_decor_wind.values())
+	decor.append_array(_decor_tinted.values())
+	for mat in decor:
+		if mat == null:
+			continue
+		_set_common(mat, look, tint)
+		mat.set_shader_parameter("wind_scale", look["wind"])
+		mat.set_shader_parameter("lean", look["lean"])
+		mat.set_shader_parameter("snow", look["snow"])
+	if _cloud != null:
+		_cloud.set_shader_parameter("tint", look["cloud"])
+		_cloud.set_shader_parameter("weather_tint", Vector3(tint.r, tint.g, tint.b))
+	if _ground != null:
+		_set_common(_ground, look, tint)
+		_ground.set_shader_parameter("wet", look.get("wet", 0.0))
+		_ground.set_shader_parameter("snow", look["snow"])
+	for mat in _water.values():
+		_set_common(mat, look, tint)
+		mat.set_shader_parameter("rain", look["rain"])
+	if _butterfly != null:
+		_set_common(_butterfly, look, tint)
+		_butterfly.set_shader_parameter("hidden", look["hidden"])
+	if _shadow != null:
+		_shadow.set_shader_parameter("strength", look["shadow"])
+	if _precip != null:
+		_precip.set_shader_parameter("rain", look["rain"])
+		_precip.set_shader_parameter("snow", look["snow"])
+		_precip.set_shader_parameter("weather_tint", Vector3(tint.r, tint.g, tint.b))
+
+static var _precip: ShaderMaterial = null
+const PRECIP_SHADER: Shader = preload("res://assets/shaders/cozy_precip.gdshader")
+static func precip_material() -> ShaderMaterial:
+	if _precip == null:
+		_precip = ShaderMaterial.new()
+		_precip.shader = PRECIP_SHADER
+	return _precip

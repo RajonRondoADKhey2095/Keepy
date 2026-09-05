@@ -76,6 +76,7 @@ func _ready() -> void:
 	_clouds()
 	_butterflies()
 	_hero_shadow()
+	_precipitation()
 
 ## Swaps the flat ground material for the cozy ground shader. The Ground
 ## node is a sibling owned by HubWorld.tscn; only its material changes.
@@ -748,6 +749,42 @@ func _butterflies() -> void:
 ## A blob shadow that follows Keepy's ground position. Reads his position
 ## only -- nothing about him is touched -- and shrinks a little while he is
 ## in the air, which is what sells the hop.
+## ---- v2: rain and snow ---------------------------------------------
+## One MultiMesh of PRECIP_COUNT unit quads; every instance sits at the
+## node's origin and the vertex shader (cozy_precip.gdshader) places it
+## from INSTANCE_CUSTOM and TIME, so nothing is written per frame except
+## this node's position, which follows Keepy. Timeboxed WebGL2 territory:
+## no GPUParticles3D on purpose.
+const PRECIP_COUNT: int = 900
+const PRECIP_HALF: float = 7.0
+const PRECIP_HEIGHT: float = 9.0
+var _precip_node: MultiMeshInstance3D = null
+
+func _precipitation() -> void:
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1.0, 1.0)
+	var multi := MultiMesh.new()
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.use_custom_data = true
+	multi.mesh = quad
+	multi.instance_count = PRECIP_COUNT
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 23
+	for i in PRECIP_COUNT:
+		multi.set_instance_transform(i, Transform3D(Basis(), Vector3.ZERO))
+		multi.set_instance_custom_data(i, Color(rng.randf(), rng.randf(), rng.randf(), rng.randf_range(0.7, 1.3)))
+	multi.custom_aabb = AABB(Vector3(-PRECIP_HALF - 1.0, -0.5, -PRECIP_HALF - 1.0), Vector3(PRECIP_HALF * 2.0 + 2.0, PRECIP_HEIGHT + 1.0, PRECIP_HALF * 2.0 + 2.0))
+	_precip_node = MultiMeshInstance3D.new()
+	_precip_node.name = "Precipitation"
+	_precip_node.multimesh = multi
+	var mat := CozyPalette.precip_material()
+	mat.set_shader_parameter("box_half", PRECIP_HALF)
+	mat.set_shader_parameter("box_height", PRECIP_HEIGHT)
+	_precip_node.material_override = mat
+	_precip_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_precip_node)
+	_stats["precip"] = PRECIP_COUNT
+
 var _hero: Node3D = null
 var _hero_shadow_node: MeshInstance3D = null
 const HERO_SHADOW_RADIUS: float = 0.78
@@ -773,6 +810,8 @@ func _process(delta: float) -> void:
 	if _hero == null or _hero_shadow_node == null:
 		return
 	var p := _hero.global_position
+	if _precip_node != null:
+		_precip_node.position = Vector3(p.x, 0.0, p.z)
 	var lift: float = clampf(p.y, 0.0, 1.5)
 	var r: float = HERO_SHADOW_RADIUS * (1.0 - lift * 0.25)
 	_hero_shadow_node.global_transform = Transform3D(

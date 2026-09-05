@@ -1,4 +1,4 @@
-[gd_scene load_steps=23 format=3]
+[gd_scene load_steps=24 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://scripts/hub/ZiplineDoor.gd" id="16"]
 [ext_resource type="Script" path="res://scripts/hub/HubCampfire.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/hub/CozyScatter.gd" id="18"]
+[ext_resource type="Script" path="res://scripts/hub/CozyWeather.gd" id="19"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -135,6 +136,9 @@ magpie_scene = ExtResource("15")
 [node name="CozyScatter" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("18")
 
+[node name="CozyWeather" type="Node" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("19")
+
 [node name="Campfires" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("17")
 
@@ -160,6 +164,14 @@ keep_aspect = 0
 fov = 45.0
 script = ExtResource("4")
 target_path = NodePath("../Keepy")
+
+[node name="WeatherOverlay" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+color = Color(0, 0, 0, 0)
 
 [node name="TapInput" type="Node" parent="."]
 script = ExtResource("5")
@@ -266,6 +278,69 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
 text = "Keepy Battle"
+
+[node name="WeatherLabel" type="Label" parent="FallbackMenu/Panel/VBoxContainer"]
+visible = false
+layout_mode = 2
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 22
+text = "Météo (preview) :"
+
+[node name="WeatherRow" type="HBoxContainer" parent="FallbackMenu/Panel/VBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_constants/separation = 10
+
+[node name="SunButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer/WeatherRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(104, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Soleil"
+
+[node name="RainButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer/WeatherRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(104, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Pluie"
+
+[node name="StormButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer/WeatherRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(104, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Orage"
+
+[node name="SnowButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer/WeatherRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(104, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Neige"
+
+[node name="AutoButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer/WeatherRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(104, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Auto"
 
 [node name="CloseButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
 layout_mode = 2

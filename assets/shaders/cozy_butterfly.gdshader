@@ -17,6 +17,9 @@ uniform float flap_hz = 7.0;
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
 uniform float haze_density = 0.018;
 uniform float haze_start = 6.0;
+// v2 weather: butterflies hide in rain and snow (collapsed to a point).
+uniform vec3 weather_tint = vec3(1.0, 1.0, 1.0);
+uniform float hidden = 0.0;
 
 varying vec3 view_pos;
 
@@ -41,7 +44,7 @@ void vertex() {
 	vec3 tangent = normalize(vec3(-sin(t), 0.0, cos(t)) * dir);
 	vec3 right = vec3(tangent.z, 0.0, -tangent.x);
 	mat3 face = mat3(right, vec3(0.0, 1.0, 0.0), tangent);
-	VERTEX = face * VERTEX + offset;
+	VERTEX = (face * VERTEX) * (1.0 - hidden) + offset;
 	NORMAL = face * NORMAL;
 
 	view_pos = (MODELVIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -52,5 +55,5 @@ void fragment() {
 	float haze = 1.0 - exp(-d * haze_density);
 	// Wings lit from above: the underside a touch darker.
 	float under = FRONT_FACING ? 1.0 : 0.85;
-	ALBEDO = mix(COLOR.rgb * under, haze_color, haze);
+	ALBEDO = mix((COLOR.rgb * under) * weather_tint, haze_color, haze);
 }

@@ -45,6 +45,13 @@ uniform float haze_start = 6.0;
 uniform float wind_amount = 0.0;
 uniform float wind_height = 1.0;
 uniform float wind_speed = 1.1;
+// v2 weather (written by CozyPalette.apply_weather every frame): a global
+// albedo multiplier (light), a wind multiplier, a constant lean in world
+// xz for storm-flattened grass, and snow settling on upward faces.
+uniform vec3 weather_tint = vec3(1.0, 1.0, 1.0);
+uniform float wind_scale = 1.0;
+uniform vec2 lean = vec2(0.0, 0.0);
+uniform float snow = 0.0;
 
 varying vec3 view_pos;
 varying vec3 world_normal;
@@ -62,7 +69,8 @@ void vertex() {
 		// do not move in lockstep. No inverse(): a mat4 inverse per vertex
 		// is exactly what a mobile GPU should not be asked for.
 		float model_scale = max(length(MODEL_MATRIX[0].xyz), 0.001);
-		VERTEX.xz += vec2(sway, sway * 0.6) * (wind_amount * w / model_scale);
+		VERTEX.xz += vec2(sway, sway * 0.6) * (wind_amount * wind_scale * w / model_scale);
+		VERTEX.xz += lean * (w * min(wind_amount * 6.0, 1.0) / model_scale);
 	}
 	world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	// View-space POSITION, not distance: a distance interpolated across a
@@ -77,6 +85,9 @@ void fragment() {
 		n = -n;
 	}
 	vec3 base = COLOR.rgb * tint;
+	if (snow > 0.0) {
+		base = mix(base, vec3(0.94, 0.96, 1.0), snow * smoothstep(0.25, 0.75, n.y));
+	}
 
 	float ndl = dot(n, normalize(sun_dir));
 	float band = smoothstep(-band_softness, band_softness, ndl - 0.1);
@@ -90,5 +101,5 @@ void fragment() {
 
 	float d = max(length(view_pos) - haze_start, 0.0);
 	float haze = 1.0 - exp(-d * haze_density);
-	ALBEDO = mix(shaded, haze_color, haze);
+	ALBEDO = mix(shaded * weather_tint, haze_color, haze);
 }

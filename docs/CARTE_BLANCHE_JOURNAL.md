@@ -197,3 +197,55 @@ Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
 **Ce qui coûtera le plus cher à rejouer vers `staging`** : la région en L et le détour par la porte (deux fichiers de la navigation, `HubRegion` et `HubWorld`, qui portent des sondes gatées à refaire passer — `LevelNavProbe`, les sondes de clamp), et la haie, dont la densité dépend d'une constante posée à l'œil sur une capture llvmpipe. Le shader sol et la route sont gratuits. Le mur à 208 + 135 arbres est le poste GPU à mesurer sur device.
 
 **Non fait, assumé** : pas de son ; le couloir est le seul accès (un tap sur le vallon depuis le spawn traverse le lac de spawn à la nage vers la porte — c'est déjà le comportement du plateau pour tout tap derrière un lac) ; aucun PNJ n'habite encore le vallon (les PNJ sont figés hors météo).
+
+**Preuve du P1 sur le service** : déploiement CI `dpl_HwhijEYBRac9A9YCskdLfDgXPMKM` (`gitRootDirectory = build/web`, sha `6f43fd4`, `READY`, 04:30 UTC).
+
+## Checkpoint P2 — météo vivante (04:52 UTC)
+
+**Architecture** (ordre imposé respecté : état + cycle + forçage + lumière d'abord, réactions ensuite, précipitations en dernier).
+- **`CozyWeather.gd`** (nœud sous `World`) : cycle `SOLEIL 70 s → PLUIE 40 s → ORAGE 30 s → SOLEIL 50 s → NEIGE 40 s` (3 min 50 s la boucle), **fondu 6 s** entre deux états par interpolation d'un « look » complet (dictionnaire), mémoire d'humidité qui sèche en 25 s après la pluie, éclairs à l'orage (flash 1 → 0 en ~0,15 s, toutes les 2,5–7 s, seed fixe). `force(kind)` / `force_auto()`. Signal `weather_changed`.
+- **Un seul lieu pour la palette** : `CozyPalette.weather_look(kind)` porte les 4 looks (ciel, haze + densité, teinte globale, vent, couché d'herbe, pluie, neige, overlay, force des ombres, papillons cachés, teinte des nuages) ; `CozyPalette.apply_weather(look)` est l'**unique écrivain** des matériaux qu'elle cache (décor statique / vent / teintés, nuages, sol, eaux, papillons, ombres, précipitations). `CozyWeather` ne touche que le ciel du `WorldEnvironment` et l'overlay.
+- **Lumière** = teinte d'albédo `weather_tint` dans chaque shader (haze recalculé avec) **+ un `ColorRect` 2D `WeatherOverlay`** au-dessus du viewport monde (`mouse_filter = IGNORE`) : c'est lui qui teinte aussi les six GLB Meshy (matériaux figés, unlit, donc hors d'atteinte de toute lumière) et qui porte le flash d'éclair (blanc α 0,35 sur 2-3 frames). Mesuré (pixels, sonde `--root`) : herbe `165,206,104` soleil → `96,136,54` pluie → `70,100,43` orage → `218,228,250` neige ; eau `150,205,213` → `98,116,136` orage.
+- **Forçage** : ligne « Météo (preview) : Soleil / Pluie / Orage / Neige / Auto » dans le menu existant, visible **uniquement** sous `Auth.is_untrusted_preview_domain()` (même test de hostname que le bypass invité — invisible sur staging/prod par construction) ou hors web (captures).
+
+**Le monde réagit.**
+- **PNJ — l'ours** : sur `weather_changed`, s'il est IDLE à son repos et hors trajet (pas de pivot balançoire, pas de `_bear_pending`, pas de trajet feu), il marche (`HubActorWalker.walk_to`, le marcheur déjà prouvé par les lots balançoire/feu) jusque **sous l'arbre voisin** `(5,3 ; 33,7)` ; au retour du soleil, s'il est IDLE à l'abri, il rentre à `BEAR_REST`. Mesuré (headless, pluie forcée, 700 frames) : ours à `(5,30 ; 33,70)`. **Aucun déplacement autonome ailleurs** : le badger et le hibou ne bougent pas (le retour automatique du blaireau a déjà été retiré par un lot précédent — `b4afe5d` — et je n'ai pas réintroduit de trajet non gaté ; l'ours n'a que deux points et ne part que d'un état IDLE vérifié).
+- **Eau** (shader seulement) : sous la pluie vitesse ×4, échelle des rides ÷1,7, mélange vers un gris-bleu opaque (α 0,95 — l'eau « pleine », lue comme montée), **anneaux de gouttes** (troisième octave rapide seuillée), liseré d'écume élargi. Géométrie, `STREAM_SURFACE_Y`, `RIDE_SEAT_Y` : intouchés.
+- **Végétation** : `wind_scale` ×1,8 pluie / ×3 orage, **`lean`** (couché constant en xz proportionnel à la hauteur, orage `(0,26 ; 0,10)`) sur tout ce qui a du vent (herbe, fleurs, houppiers), **neige** posée sur les faces vers le haut (`n.y`), sol enneigé par seuil de bruit, sol **humide** (assombri, saturé ×1,35) pendant et 25 s après la pluie.
+- **Papillons** : `hidden` → sommets écrasés sur leur centre (aucun script, aucune visibilité à basculer), 1,0 dès que la pluie/neige domine, reviennent au soleil.
+- **Ombres portées** : force 0,35 pluie / 0,15 orage / 0,5 neige.
+
+**Précipitations (timebox 45 min, 04:43 → 04:50, 7 min).** `cozy_precip.gdshader` + un MultiMesh de **900 quads** (`CozyScatter._precipitation`) qui suit Keepy (seule écriture par frame : la position du nœud). Tout est dans le vertex shader depuis `INSTANCE_CUSTOM` (phase, jitter x/z, taille) : chute par `fract(phase + TIME × vitesse / hauteur)` dans une boîte 14 × 9 u, goutte = trait vertical 0,018 × 0,55 u à 9 u/s, flocon = carré 0,07 u à 1,1 u/s avec dérive sinusoïdale, quad orienté face caméra par `INV_VIEW_MATRIX[0]`, collapsé à zéro quand ni pluie ni neige. Première capture propre, aucune retouche. **Même famille que les papillons v1 (INSTANCE_CUSTOM sous Compatibility) : à prouver sur Safari, comme eux.**
+
+**Captures** : `capture_v2_p2_rain.png`, `capture_v2_p2_snow.png` (fenêtre complète, overlay inclus), `capture_v2_p2_storm_3d.png` (viewport 3D seul — l'overlay et le flash ne sont pas dedans).
+
+**Métriques** (spawn, pluie forcée, scène entière).
+
+| | P1 | **P2** |
+|---|---|---|
+| triangles scène | 173 759 | **175 559** (+1 800 : les 900 quads) |
+| MultiMeshInstance3D | 182 | **183** |
+| MeshInstance3D | 153 | 153 |
+| draw calls estimés | 335 | **336** |
+| `index.pck` | 31 011 632 | **31025904** |
+
+**Ce qui coûtera le plus cher à rejouer vers `staging`** : rien de structurel — `CozyWeather` + `apply_weather` sont additifs, et le seul point de contact avec le jeu existant est `_on_weather_changed` (20 lignes, gaté sur l'état IDLE de l'ours). Le vrai coût est la **preuve device** : trois shaders reçoivent des uniforms mis à jour chaque frame (coût CPU nul mais 10+ `set_shader_parameter` par frame sur ~30 matériaux — à mesurer sur iPhone), et l'overlay 2D en alpha plein écran est un coût de fillrate mobile à confirmer.
+
+**Non fait, assumé** : pas de son ; le hibou, la pie et le blaireau ne réagissent pas ; les chemins et berges restent sable sous la neige (lisibilité du chemin, choix assumé après capture) ; la pluie/neige ne tombe que dans une boîte de 14 u autour de Keepy (invisible au loin, par construction).
+
+## RÉCOLTE v2 — ce qui mérite un lot cadré vers `staging`, ce qui est à jeter
+
+**Si Mathieu ne devait garder QU'UNE chose de toute la branche (v1 + v2) : le système météo** — `CozyWeather` + `weather_look`/`apply_weather` + les uniforms `weather_tint`/`wind_scale`/`lean`/`snow`/`wet`/`rain` + l'overlay. C'est le rapport valeur/risque le plus fort de la nuit : ~350 lignes additives, zéro géométrie, zéro fichier figé touché, un seul point de contact (l'ours, gaté), et c'est ce qui fait que le monde a l'air VIVANT plutôt que joli. Il se rejoue sur la palette actuelle de `main` (les uniforms se posent sur n'importe quel shader du hub) ; les looks sont à re-régler sur le sol sombre, pas à reconcevoir.
+
+**À rejouer proprement, par ordre de valeur / risque.**
+1. **Météo** (ci-dessus). Lot cadré : d'abord état + cycle + overlay + forçage, preuve device des 4 états, puis les réactions une par une.
+2. **Le ruisseau visible** (P0) : correctif d'enroulement de 6 lignes, vaut pour tout ruban `SurfaceTool` du dépôt sous un shader `cull_back` — **doctrine à consigner** : Godot tient les faces HORAIRES pour faces avant ; un ruban CCW sous `cull_back` disparaît sans erreur.
+3. **Le Vallon d'automne** : la partie chère est la **région en L** (`HubRegion` + détour `_hop_via_corridor`), à rejouer avec ses sondes de clamp (`LevelNavProbe`, blind check « la haie refuse ») ; la partie gratuite est le shader sol à masque + la famille Blender `autumn.py` + la route Catmull-Rom. Le mur/haie à 208 + 135 + 26 arbres est le poste GPU à mesurer sur device AVANT de fixer les densités.
+4. **Les 17 GLB automne** : réutilisables tels quels (contrat v1), l'Arbre-Mère (1 024 tri, 86 Ko) est un landmark prêt à l'emploi.
+
+**À jeter ou à refaire autrement.**
+- **Le détour par une porte unique** : c'est un pansement sur l'absence de planificateur ; deux zones de plus et il faut un vrai graphe de waypoints. À refaire en `HubRegion.route(a, b)` qui rend une liste de points.
+- **Les tas de feuilles** : trois versions pour un résultat moyen ; la bonne réponse est probablement un decal sol (un disque texturé alpha) plutôt qu'un mesh.
+- **La haie entre zones** : sa densité est une constante posée à l'œil ; à dériver de la largeur de la bande.
+- **`CozyCapture`** a grossi (ride, walk, nav, weather, root) : c'est une sonde de nuit multi-usages, pas une sonde gatée. À découper ou à supprimer.
+- **Le flash d'éclair par overlay** : lisible mais brutal ; une vraie version passerait par le ciel + `weather_tint` sur 3 frames avec une courbe, et un son.

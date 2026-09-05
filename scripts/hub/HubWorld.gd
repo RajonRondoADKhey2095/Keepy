@@ -82,6 +82,11 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _fallback_button: Button = $FallbackButton
 @onready var _world_env: WorldEnvironment = $WorldViewport/SubViewport/World/WorldEnvironment
 @onready var _fallback_close: Button = $FallbackMenu/Panel/VBoxContainer/CloseButton
+## v2 weather: the forcing row (preview only) and the system it drives.
+@onready var _weather: CozyWeather = $WorldViewport/SubViewport/World/CozyWeather
+@onready var _weather_overlay: ColorRect = $WeatherOverlay
+@onready var _weather_label: Label = $FallbackMenu/Panel/VBoxContainer/WeatherLabel
+@onready var _weather_row: HBoxContainer = $FallbackMenu/Panel/VBoxContainer/WeatherRow
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -695,6 +700,7 @@ func _ready() -> void:
 	# round-trip toggle needs a live badger to send anywhere.
 	_setup_campfire()
 	_tap.tapped_campfire.connect(_on_tapped_campfire)
+	_setup_weather()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -3529,6 +3535,42 @@ func _on_confirm_accepted(game_id: StringName) -> void:
 ## never asked for. The next tap takes them wherever they aim.
 func _on_confirm_cancelled() -> void:
 	pass
+
+## ---- v2 weather --------------------------------------------------------
+## Where the bear shelters from rain: under the layout tree at
+## (6.643, 32.682) beside its rest, 1.5 u from the trunk on the rest side.
+const BEAR_SHELTER: Vector3 = Vector3(5.3, 0.0, 33.7)
+const BEAR_SHELTER_NEAR: float = 1.2
+
+func _setup_weather() -> void:
+	_weather.set_overlay(_weather_overlay)
+	_weather.weather_changed.connect(_on_weather_changed)
+	# The forcing row is for device validation on the throwaway preview;
+	# the same hostname test that gates the guest bypass hides it on
+	# staging / prod. Also shown off-web (editor / sandbox captures).
+	var show: bool = Auth.is_untrusted_preview_domain() or not OS.has_feature("web")
+	_weather_label.visible = show
+	_weather_row.visible = show
+	_weather_row.get_node("SunButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.SUN))
+	_weather_row.get_node("RainButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.RAIN))
+	_weather_row.get_node("StormButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.STORM))
+	_weather_row.get_node("SnowButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.SNOW))
+	_weather_row.get_node("AutoButton").pressed.connect(func(): _weather.force_auto())
+
+## The bear takes shelter under the tree beside its rest when the sky
+## turns, and comes back out in the sun -- only when it is IDLE at one of
+## the two spots, so a seesaw or campfire trip is never interrupted (those
+## walk it from wherever it stands, and it goes home to BEAR_REST after,
+## where the next weather change picks it up again).
+func _on_weather_changed(kind: int) -> void:
+	if _bear == null or _bear.is_walking() or _bear_pivot != null or not _bear_pending.is_empty() or _bear_campfire_leg != &"":
+		return
+	var here: Vector3 = _bear.global_position
+	var bad: bool = kind != CozyWeather.Kind.SUN
+	if bad and Vector2(here.x - BEAR_REST.x, here.z - BEAR_REST.z).length() < BEAR_SHELTER_NEAR:
+		_bear.walk_to(BEAR_SHELTER)
+	elif not bad and Vector2(here.x - BEAR_SHELTER.x, here.z - BEAR_SHELTER.z).length() < BEAR_SHELTER_NEAR:
+		_bear.walk_to(BEAR_REST)
 
 func _on_fallback_toggled() -> void:
 	_fallback_menu.visible = not _fallback_menu.visible

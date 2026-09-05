@@ -36,6 +36,11 @@ uniform vec3 autumn_c : source_color = vec3(0.90, 0.68, 0.32);
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
 uniform float haze_density = 0.018;
 uniform float haze_start = 6.0;
+// v2 weather: global light, wetness (darker, more saturated, for a while
+// after rain) and snow cover.
+uniform vec3 weather_tint = vec3(1.0, 1.0, 1.0);
+uniform float wet = 0.0;
+uniform float snow = 0.0;
 
 varying vec3 world_pos;
 varying vec3 view_pos;
@@ -71,7 +76,16 @@ void fragment() {
 		float d = smoothstep(0.62, 0.72, texture(noise_tex, p / (patch_scale * 0.7) + vec2(0.8, 0.2)).r);
 		col = mix(col, dirt, d * dirt_amount);
 	}
+	if (wet > 0.0) {
+		float lum = dot(col, vec3(0.3, 0.55, 0.15));
+		vec3 sat = mix(vec3(lum), col, 1.35);
+		col = mix(col, sat * 0.74, wet);
+	}
+	if (snow > 0.0) {
+		float cover = snow * smoothstep(0.2, 0.6, small * 0.5 + fine * 0.5 + snow * 0.4);
+		col = mix(col, vec3(0.93, 0.95, 0.98), cover);
+	}
 	float dist = max(length(view_pos) - haze_start, 0.0);
 	float haze = 1.0 - exp(-dist * haze_density);
-	ALBEDO = mix(col, haze_color, haze);
+	ALBEDO = mix(col * weather_tint, haze_color, haze);
 }
