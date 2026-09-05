@@ -710,3 +710,52 @@ Le premier chat a surgi **sous le chapeau d'un champignon géant** et n'a jamais
 ### Payload — mesuré sur le `.pck` local, pas sur le filtre
 
 `all_resources` embarque **tout** : le premier export local avec les cinq GLB préparés sous `assets/models/` a donné **41 924 048 octets** contre 31 470 384 servis — +10,5 Mo, dont quatre sujets pas encore intégrés. Réponse en deux temps : (1) les GLB non intégrés sont **parqués hors de l'arbre** jusqu'à leur intégration (le castor et la cabane-arbre y sont revenus au checkpoint 4 ; le fichier `keepy_hedgehog_npc.glb` préparé n'existe plus que sous le nom `keepy_treehouse_prop.glb`) ; (2) les textures extraites (`*_Baked_BaseColor.jpg`, 1024²) s'importaient en **lossless** (`compress/mode=0`, ~1,7–2,2 Mo de `.ctex` chacune). Passées à `compress/mode=1` (**Lossy WebP q0,85**, 265–442 Ko) ; le mode 2 (VRAM S3TC, 699 Ko) a été essayé et **refusé** — le projet n'importe pas d'ETC2 et S3TC n'existe pas sous WebGL2 iOS, ce qui aurait été un rendu noir sur device, pas dans ce sandbox. Résultat : **34 323 184 octets** (+2,85 Mo pour 4 personnages + la cabane : ~1,1 Mo de `.scn`, ~1,7 Mo de textures). `index.wasm` **35 376 909 / md5 af4a8fc2925d992348eb30deeeb54360** aux trois exports — le moteur n'est pas touché. Zéro `Storing File: res://build`, zéro `hedgehog` dans le pack.
+
+## Fermeture V6
+
+**Livrés (quatre personnages + un prop, tous avec une raison d'être)** :
+
+| sujet | zone | mécanique | ressource | météo |
+|---|---|---|---|---|
+| sanglier scout | Vallon d'automne | ride sur ses épaules → fouille d'un tas de feuilles → truffe | `truffle` (nouvelle) | abri sous l'Arbre-Mère, frisson |
+| chat détective | Vallon d'automne | cache-cache dans les tas (frémissement = indice), jaillit, roule ailleurs | `hazelnut` (existante) + stat `cat_found` | sort en boule sous la pluie, muet dans la neige |
+| faon Keykeeper | Lande aux Moulins | fuit un atterrissage proche, s'approche de qui reste immobile, câline, suit | `flower` (nouvelle) + stat `fawn_nuzzles` | sous un olivier, frisson |
+| castor ranger | Lande aux Moulins | troc truffe + noisette + fleur → gland doré (premier puits) | `golden` (rare de v5) + stat `beaver_trades` | porche, piétine |
+| cabane-arbre (le GLB « hérisson ») | Lande aux Moulins | la station du ranger, repère de la zone | — | — |
+
+**Intouché** : aucun des cinq fichiers sources. **Il n'y a pas de hérisson dans le dépôt** — le fichier qui en porte le nom est une cabane dans un arbre (mesuré au rendu, journal ci-dessus), intégrée comme prop de la station du ranger. Si Mathieu veut un hérisson, c'est un GLB à générer ; la mécanique cache-cache écrite pour lui vit maintenant chez le chat et s'y sent bien.
+
+**Ce que la session suivante devrait faire, dans cet ordre** :
+1. **Validation device** des quatre (checklist du rapport). Les réglages à lire sur iPhone, pas ici : `SEAT` du sanglier (1,32 / −0,12 — sa tête doit dépasser sous Keepy), `RUSTLE_*` du chat (le frémissement est-il vu ou faut-il l'amplifier ?), `FLEE_R` 4,5 / `CALM_S` 2,5 du faon (trop nerveux ? trop lent ?), `HOUSE_SCALE` 2,6 de la cabane.
+2. **La persistance des sites de fouille** (recharge 150 s en session seulement) via le patron `tree_stock` de `WorldSave` — vingt lignes, et un joueur qui revient le lendemain retrouve ses truffes.
+3. **Un son** par mécanique (aucun dans tout le monde cozy depuis v1).
+4. **Le castor et l'eau** : le troc est un bon premier rôle, mais un « Ranger » castor avec le ruisseau à 90 u de lui reste une occasion — un lot « barrage » n'a de sens que si l'eau devient un obstacle de navigation, ce qui est une décision d'architecture (l'eau est traversable à pied aujourd'hui), pas un lot de nuit.
+5. **Le lot vers `staging`** : comme pour CH26, un rejeu cadré — `HubCritter` + `HubCritters` + les quatre modules + la publication du scatter + les deux ressources + la sonde, sans `CozyCapture --grant/--critter/--at=cat` qui sont des affordances de nuit à garder ou jeter avec la branche.
+
+**Doctrine candidate pour `CLAUDE.md`** (non écrite dans `CLAUDE.md` par cette session, conformément à sa règle) : *l'occlusion depuis la caméra du hub est ANISOTROPE* — un occulteur cache le sol derrière lui (vers −z) sur 1,19 × sa hauteur, et rien devant lui ; un disque d'exclusion isotrope interdit tout le Vallon (46 → 7 tas) là où le test d'image en garde 13 et voit tout.
+
+## Preuves de déploiement V6 sur le service (une lecture par déploiement, jamais de polling)
+
+| checkpoint | sha | `CACHE_VERSION` servi (epoch → UTC) | fenêtre `Export Web build` du run | lecture |
+|---|---|---|---|---|
+| 0 — preview prouvée | `8fcdc02` (push 14:24:52) | `1788618597` → 14:29:57 | 14:29:51 → 14:29:58 (run `33971739428`) | 14:30:54, `x-vercel-cache: MISS`, `age: 0` ; `GET /` 200 MISS age 0, `index.pck` 31 470 384 |
+| journal + shell auth | `f9b3b21` (push 14:34) | run `33972227050` `success` (même arbre de jeu + 7 lignes de shell) | 14:40:31 | non relu (doc + shell seuls) |
+| 1–4 — les quatre habitants | `6fd7467` (push 15:38:27) | `1788623010` → **15:43:30** | **15:43:24 → 15:43:31** (run `33975419099`, `completed_at` 15:44:00) | 15:46:44, `MISS`, `age: 0` ; `GET /` 200 MISS age 0 à 15:46:57, `index.pck` **34 323 216** (local 34 323 184 — la variance de compression VRAM connue), `index.wasm` **35 376 909** |
+
+## Rides existants — rejoués sur la branche ET sur une baseline `origin/main` importée à part (16:00 UTC)
+
+Un worktree `origin/main` importé de zéro (127 `.scn`, comptés avant de comparer ; la branche en a 133 = 127 + les six scènes GLB neuves), mêmes commandes des deux côtés.
+
+| sonde | mode | `main` | branche | verdict |
+|---|---|---|---|---|
+| `V4SaveProbe` | headless | — | **PASS** | le contrat `WorldSave` tient avec les deux kinds et les stats ajoutés |
+| `V4ClimbProbe` | headless `--fixed-fps 60` | — | **PASS** | grimper + récolte intacts |
+| `CampfireFacingProbe` | headless | — | **PASS** | |
+| `OwlFlightProbe` | headless | — | **PASS** | |
+| `StreamRideProbe` | **opengl3** | PASS | **PASS** | la barque et le canal de tap au sol intacts (headless : 2 rouges identiques des deux côtés — la sonde exige un viewport, doctrine `--headless` = 0×0) |
+| `SeesawProbe` | headless | FAIL 157 ≠ 144 draw nodes | FAIL 157 ≠ 144 | **identique sur `main`** : le compte de draw nodes date d'avant le monde cozy |
+| `TurnstileProbe` | headless | FAIL aabb + 144 | FAIL aabb + 144 | **identique sur `main`** |
+| `CabinProbe` | headless | FAIL « 2 marks, 1 cabins » | FAIL « 2 marks, 1 cabins » | **identique sur `main`** (le marqueur du feu compte comme un marqueur de cabane) |
+| `ZiplineRideProbe` | opengl3 | FAIL corridor −0,158 u (`@MeshInstance3D@47`) | FAIL corridor −0,158 u (`@MeshInstance3D@47`) | **identique sur `main`**, au millième et au même nœud |
+
+Aucune régression introduite par V6 ; quatre sondes du dépôt sont rouges **sur `main`** depuis le monde cozy (CH26) — signalé, non corrigé (hors périmètre, et un compte de draw nodes n'est pas une mécanique cassée). `V6CrittersProbe` : **128 checks headless, 129 sous opengl3, 0 échec**, quatre passes rouges (3, 3, 7, 4 échecs attendus, fichiers restaurés byte-identiques).
