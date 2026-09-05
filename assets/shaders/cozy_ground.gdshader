@@ -14,6 +14,9 @@ render_mode unshaded, cull_back, depth_draw_opaque, shadows_disabled;
 // WebGL2, Godot #97875 / #92019).
 
 uniform sampler2D noise_tex : filter_linear_mipmap, repeat_enable;
+uniform sampler2D cell_tex : filter_linear_mipmap, repeat_enable;
+uniform float cell_scale = 2.6;
+uniform float cell_amount = 0.05;
 uniform vec3 grass_a : source_color = vec3(0.56, 0.78, 0.36);
 uniform vec3 grass_b : source_color = vec3(0.44, 0.70, 0.32);
 uniform vec3 grass_c : source_color = vec3(0.66, 0.82, 0.40);
@@ -48,6 +51,9 @@ void fragment() {
 	// Fine mottle (grass clumps) close to the camera; mipmapped away far.
 	float fine = texture(noise_tex, p / 1.7 + vec2(0.13, 0.91)).r;
 	col *= 1.0 + (fine - 0.5) * 0.12;
+	// Clover carpet: cellular cells, a few percent, gone with distance.
+	float cells = texture(cell_tex, p / cell_scale).r;
+	col *= 1.0 + (cells - 0.5) * 2.0 * cell_amount;
 	if (dirt_amount > 0.0) {
 		float d = smoothstep(0.62, 0.72, texture(noise_tex, p / (patch_scale * 0.7) + vec2(0.8, 0.2)).r);
 		col = mix(col, dirt, d * dirt_amount);

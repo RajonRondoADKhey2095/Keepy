@@ -61,6 +61,8 @@ func _ready() -> void:
 	_footprints = _builder.ground_footprints()
 	_collect_water()
 	_paint_ground()
+	_paths()
+	_portal_beds()
 	_scatter_ground_cover()
 	_forest_wall()
 	_flush()
@@ -94,6 +96,8 @@ func _collect_water() -> void:
 	_spine_half = _builder.stream_half_width()
 
 func _blocked(p: Vector3, own_radius: float) -> bool:
+	if _on_path(p, own_radius):
+		return true
 	for w in _water:
 		if p.distance_to(w["centre"]) < float(w["radius"]) + own_radius + MARGIN:
 			return true
@@ -217,6 +221,128 @@ func _wall_kind(p: Vector3, kinds: Array) -> String:
 	var base: int = posmod(hash(_wall_sector(p)), kinds.size())
 	var pick: int = (base + (_rng.randi_range(0, 1) * 3)) % kinds.size()
 	return kinds[pick]
+
+## Dirt paths from the spawn to the three portals and to the cabin door:
+## the plateau gets a composition, and the player a hint of where to go.
+## Flat ribbons just above the ground (below the water banks), sampled
+## along a bent curve with wavy edges so they read hand-worn. Ground
+## cover is kept off them (see _blocked).
+const PATH_HALF: float = 0.85
+const PATH_Y: float = 0.03
+const PATH_SAMPLES: int = 22
+const PATH_STOP: float = 1.6
+const PLAZA_RADIUS: float = 2.3
+var _path_lines: Array = []
+
+func _paths() -> void:
+	var targets: Array[Vector3] = []
+	for portal in _builder.portals():
+		targets.append((portal as Node3D).global_position)
+	for cabin in _builder.cabins():
+		targets.append(cabin["door"])
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 17
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# A worn disc at the spawn the paths leave from. Slightly LOWER than
+	# the ribbons so the join never z-fights (measured on capture 11: four
+	# coplanar ribbons overlapping at the spawn drew as hatched spikes).
+	var plaza_segments := 24
+	for i in plaza_segments:
+		var a0 := TAU * i / plaza_segments
+		var a1 := TAU * (i + 1) / plaza_segments
+		var r0 := PLAZA_RADIUS * (1.0 + 0.06 * sin(a0 * 3.0))
+		var r1 := PLAZA_RADIUS * (1.0 + 0.06 * sin(a1 * 3.0))
+		# Winding matches the ribbons' (front face up): the reverse order
+		# drew the disc back-facing, i.e. in the shader's shade band.
+		st.set_normal(Vector3.UP)
+		st.add_vertex(Vector3(0.0, PATH_Y - 0.004, 0.0))
+		st.set_normal(Vector3.UP)
+		st.add_vertex(Vector3(cos(a0) * r0, PATH_Y - 0.004, sin(a0) * r0))
+		st.set_normal(Vector3.UP)
+		st.add_vertex(Vector3(cos(a1) * r1, PATH_Y - 0.004, sin(a1) * r1))
+	var built := 0
+	for target in targets:
+		var a := Vector3.ZERO
+		var b := Vector3(target.x, 0.0, target.z)
+		var dir := (b - a)
+		if dir.length() < PATH_STOP + PLAZA_RADIUS + 1.0:
+			continue
+		var length := dir.length()
+		dir = dir / length
+		b = b - dir * PATH_STOP
+		a = a + dir * (PLAZA_RADIUS - 0.5)
+		var side := Vector3(-dir.z, 0.0, dir.x)
+		var mid := (a + b) * 0.5 + side * rng.randf_range(-0.10, 0.10) * length
+		var samples: Array[Vector3] = []
+		for i in PATH_SAMPLES + 1:
+			var t := float(i) / PATH_SAMPLES
+			var q := a.lerp(mid, t).lerp(mid.lerp(b, t), t)
+			samples.append(q)
+		_path_lines.append(samples)
+		var phase := rng.randf_range(0.0, TAU)
+		# Per-SAMPLE edge points, shared by the two quads that meet there.
+		# A per-segment normal gave every joint two different edge vertices,
+		# so on every bend consecutive quads overlapped as coplanar
+		# triangles and z-fought in thin hatch lines (captures 11-14).
+		var left: Array[Vector3] = []
+		var right: Array[Vector3] = []
+		for i in PATH_SAMPLES + 1:
+			var prev: Vector3 = samples[max(i - 1, 0)]
+			var next: Vector3 = samples[min(i + 1, PATH_SAMPLES)]
+			var tan := (next - prev).normalized()
+			var n := Vector3(-tan.z, 0.0, tan.x)
+			var w := PATH_HALF * (1.0 + 0.14 * sin(i * 0.55 + phase))
+			var c: Vector3 = samples[i]
+			left.append(Vector3(c.x + n.x * w, PATH_Y, c.z + n.z * w))
+			right.append(Vector3(c.x - n.x * w, PATH_Y, c.z - n.z * w))
+		for i in PATH_SAMPLES:
+			for v in [left[i], right[i], left[i + 1], right[i + 1], left[i + 1], right[i]]:
+				st.set_normal(Vector3.UP)
+				st.add_vertex(v)
+		built += 1
+	var mesh := st.commit()
+	var node := MeshInstance3D.new()
+	node.name = "Paths"
+	node.mesh = mesh
+	node.material_override = CozyPalette.decor_material_tinted(CozyPalette.PATH)
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(node)
+	_stats["paths"] = built
+
+func _on_path(p: Vector3, own_radius: float) -> bool:
+	if Vector2(p.x, p.z).length() < PLAZA_RADIUS * 1.1 + own_radius:
+		return true
+	for line in _path_lines:
+		var samples: Array = line
+		for i in samples.size() - 1:
+			var q := Geometry3D.get_closest_point_to_segment(Vector3(p.x, 0.0, p.z), samples[i], samples[i + 1])
+			if Vector2(q.x, q.z).distance_to(Vector2(p.x, p.z)) < PATH_HALF * 1.2 + own_radius:
+				return true
+	return false
+
+## Flower beds around the three portals: a ring of flowers just outside
+## each ring's footprint, one colour per portal.
+const BED_RADIUS: float = 2.05
+const BED_COUNT: int = 13
+
+func _portal_beds() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 19
+	var index := 0
+	for portal in _builder.portals():
+		var c: Vector3 = (portal as Node3D).global_position
+		var variant := index % 4
+		for k in BED_COUNT:
+			var a := TAU * k / BED_COUNT + rng.randf_range(-0.12, 0.12)
+			var r := BED_RADIUS + rng.randf_range(-0.15, 0.15)
+			var p := Vector3(c.x + cos(a) * r, 0.0, c.z + sin(a) * r)
+			if _on_path(p, 0.2) or HubRegion.in_lake_water(p):
+				continue
+			var s := rng.randf_range(1.5, 1.9)
+			var xform := Transform3D(Basis.from_euler(Vector3(0.0, rng.randf_range(0.0, TAU), 0.0)).scaled(Vector3.ONE * s), p)
+			_add("bed", "flower_%d" % variant, "portal_%d" % index, xform, 0.02, 0.3)
+		index += 1
 
 ## Blob shadows under everything that stands: the layout's trees, bushes,
 ## rocks, stumps and landmarks (read from the layout, the same reading

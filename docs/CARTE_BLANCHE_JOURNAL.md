@@ -97,3 +97,42 @@ Dépassement du plafond de 50 000 assumé et visible : ×2,2 sur la scène enti�
 | `index.pck` | 30 543 984 | 30 831 840 | **30 844 480** |
 
 **À regarder sur device.** Les papillons (INSTANCE_CUSTOM en Compatibility/WebGL2), la dérive des nuages, l'ombre de Keepy pendant un bond.
+
+## Checkpoint 4 — chemins, parterres de portail, moucheté cellulaire (01:27 UTC)
+
+**Preuve du checkpoint 3 sur le service** : à lire dans le rapport final (run lancé 01:11).
+
+**Ce qui est fait.**
+- **Chemins de terre** : un disque usé au spawn (rayon 2,3) et quatre rubans (spawn → les trois portails, spawn → porte de la cabane, cette dernière lue dans `HubBuilder.cabins()["door"]`, jamais recopiée), courbe de Bézier à contrôle latéral, bords ondulés lisses, matériau toon teinté `PATH`. Le couvre-sol les évite (`_on_path` dans `_blocked`). Trois pièges payés en quatre captures : (1) quatre rubans coplanaires qui se chevauchaient au spawn → étoile de hachures, réglé par le disque de plaza 4 mm plus bas et des départs hors plaza ; (2) le disque enroulé dans le mauvais sens dessinait en face arrière, donc dans la bande d'ombre du toon (gris) ; (3) **des hachures le long de chaque ruban courbé** — diagnostic z-fight sol → faux (persistait à y = 0,15) ; cause réelle : une normale PAR SEGMENT donnait deux sommets de bord différents à chaque jointure, donc des triangles coplanaires se recouvrant à chaque virage. Normales par ÉCHANTILLON, sommets partagés → propre.
+- **Parterres** : 13 fleurs en anneau (r = 2,05) autour de chaque portail, une couleur par portail (jaune Quizz, rose Chased, violet Battle).
+- **Sol** : texture cellulaire seamless (Voronoi `RETURN_DISTANCE2_SUB`) à 2,6 u, ±5 %, pour un tapis de trèfle près de la caméra.
+- **Arbres du layout ramenés à 0,80×** (0,92 avant) : les houppiers HD sont 1,6× plus larges que les anciennes sphères et masquaient Keepy derrière un arbre depuis la caméra fixe (capture nw2). À 0,80 la parité d'emprise est approchée ; l'occlusion reste possible et n'est pas résolue (voir RÉCOLTE).
+
+**Métriques.**
+
+| | baseline | cp 3 | **cp 4** |
+|---|---|---|---|
+| triangles scène | 61 107 | 140 165 | **139 878** |
+| MultiMeshInstance3D | 17 | 116 | 119 |
+| MeshInstance3D | 149 | 150 | 151 |
+| draw calls estimés | 166 | 266 | **270** |
+| `index.pck` | 30 543 984 | 30 844 480 | **30 849 552** (+306 Ko sur la nuit) |
+
+## RÉCOLTE — ce qui mérite un lot cadré vers `staging`, et ce qui est à jeter
+
+**Verdict d'ensemble.** La voie A tient : la palette claire réconcilie enfin le décor avec les six GLB texturés, et le hub lit comme un jeu au premier regard (captures `docs/carte_blanche/capture_cp4_spawn.png` contre `capture_baseline_spawn.png`). Rien de ceci n'est validé device : tout ce qui suit est classé sur ce que les captures llvmpipe prouvent, pas sur ce que Safari fera.
+
+**À rejouer proprement, par ordre de valeur / risque.**
+1. **Le pipeline Blender → GLB vertex-coloré unlit** (`docs/carte_blanche/blender/`). C'est l'acquis structurel de la nuit : une famille = un script, N variantes, aucune texture, 1,5–50 Ko par asset, et il remplace Meshy pour tout ce qui est décor géométrique simple. À intégrer avec une sonde qui gate COLOR_0 + `KHR_materials_unlit` à l'import (`CozyGlbInspect` en est l'embryon). **Doctrine à consigner** (CLAUDE.md non touché, comme demandé) : construire en Y-haut puis `stand()` avant export, sinon tout sort couché ; `use_colors` avant `instance_count` ; sans `use_colors`, COLOR lit noir.
+2. **Le shader décor** (toon 2 bandes + rim + haze manuel + vent). Il ne dépend d'aucune lumière ni du fog moteur, donc il est exactement aussi prévisible sur WebGL2 que les matériaux unlit actuels. Le lot cadré doit d'abord le prouver sur device avec UN batch (les arbres du layout), pas tout d'un coup.
+3. **Sol shader + chemins + ombres portées** : le trio qui ancre les objets. Coût quasi nul (un quad, un mesh de chemins, un MultiMesh de quads alpha). Les chemins doivent partir du layout dans un lot propre (ici ils sont dérivés à la volée des portails et de la porte).
+4. **CozyScatter** (couvre-sol, mur de forêt, collines, nuages, papillons). À rejouer AVEC un budget : le mur (309 arbres) et l'herbe (898 touffes) sont les deux gros postes ; un lot cadré doit mesurer la frame sur device et fixer `CELL`, `WALL_*_PER_U2`, `GRASS_PER_U2` en conséquence. Les papillons (`INSTANCE_CUSTOM`) sont à prouver sur device avant d'être gardés.
+5. **Eau** : le shader est simple et remplace un disque plat ; garder, mais **régler l'alpha par balayage device** (doctrine CLAUDE.md : le rendu n'est pas affine en alpha), et vérifier à plusieurs azimuts puisque c'est de la transparence.
+
+**À jeter ou à refaire autrement.**
+- **Les 44 arbres du layout à leur position actuelle** : ils ont été placés pour des houppiers de r = 0,95 ; avec des houppiers ronds ils masquent parfois Keepy. Le vrai lot doit soit re-placer les arbres avec un test `unproject_position` d'occlusion, soit garder un rayon de houppier ≤ 1,0 u, soit ajouter un fondu d'occlusion. Ce n'est pas résolu ici.
+- **Les landmarks en pierres empilées** : lisibles, mais la variante « aiguille » (tronc + trois cônes) reste une primitive ; un vrai lot les remplacerait par des GLB Blender dédiés (un grand conifère, un menhir, un cairn) au lieu de rochers étirés.
+- **Le placement des papillons et des parterres dérivé des fleurs du scatter** : fragile (un changement de seed les déplace). À ancrer sur le layout.
+- **`CozyCapture`** est une sonde de nuit : elle ne gate rien. À convertir en sonde gatée (pixel centre non-ciel, compte de batches, budget) ou à supprimer.
+- **La ligne `fog_enabled = false` dans `HubWorld._apply_swamp_palette`** est la seule modification hors de mes fichiers avec la scène ; elle doit être portée par un vrai `HubPalette` si la voie A est retenue, et retirée sinon.
+- **Écart figé noté, non corrigé** : les disques intérieurs des portails (vert sombre) lisent comme des trous dans le sol clair ; le sol s'adapte, pas le portail (hors périmètre).

@@ -67,6 +67,7 @@ static var _decor_tinted: Dictionary = {}
 static var _cloud: ShaderMaterial = null
 static var _ground: ShaderMaterial = null
 static var _noise: NoiseTexture2D = null
+static var _cells: NoiseTexture2D = null
 static var _water: Dictionary = {}
 static var _shadow: ShaderMaterial = null
 static var _butterfly: ShaderMaterial = null
@@ -142,6 +143,24 @@ static func noise_texture() -> NoiseTexture2D:
 		_noise = tex
 	return _noise
 
+## A seamless cellular texture for the ground's clover-carpet mottle.
+static func cell_texture() -> NoiseTexture2D:
+	if _cells == null:
+		var noise := FastNoiseLite.new()
+		noise.noise_type = FastNoiseLite.TYPE_CELLULAR
+		noise.seed = 4242
+		noise.frequency = 0.045
+		noise.cellular_return_type = FastNoiseLite.RETURN_DISTANCE2_SUB
+		var tex := NoiseTexture2D.new()
+		tex.width = 256
+		tex.height = 256
+		tex.seamless = true
+		tex.noise = noise
+		_cells = tex
+	return _cells
+
+const PATH: Color = Color(0.84, 0.74, 0.52)
+
 ## Water material for a disc of model-space `radius` (foam rim), or a
 ## ribbon when 0. `two_sided` for the stream, whose ribbon is one-sided
 ## geometry the old material drew with culling off.
@@ -181,6 +200,7 @@ static func ground_material() -> ShaderMaterial:
 		var mat := ShaderMaterial.new()
 		mat.shader = GROUND_SHADER
 		mat.set_shader_parameter("noise_tex", noise_texture())
+		mat.set_shader_parameter("cell_tex", cell_texture())
 		mat.set_shader_parameter("grass_a", GRASS_A)
 		mat.set_shader_parameter("grass_b", GRASS_B)
 		mat.set_shader_parameter("grass_c", GRASS_C)

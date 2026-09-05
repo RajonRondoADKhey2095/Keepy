@@ -1842,7 +1842,7 @@ func _instance(key: StringName, xform: Transform3D) -> void:
 ## vertex-coloured, drawn through CozyPalette.decor_material() (toon bands,
 ## rim, hand-written haze). A batch spec may carry a THIRD element, the
 ## material, and _flush_batches uses it in place of _unshaded(colour).
-const COZY_TREE_SCALE: float = 0.92
+const COZY_TREE_SCALE: float = 0.80
 const COZY_FLOWER_SCALE: float = 1.6
 const COZY_ROCK_VARIANTS: int = 4
 const COZY_BUSH_VARIANTS: int = 3
