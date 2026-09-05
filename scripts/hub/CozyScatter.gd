@@ -102,6 +102,10 @@ func _collect_water() -> void:
 	_spine_half = _builder.stream_half_width()
 
 func _blocked(p: Vector3, own_radius: float) -> bool:
+	# v3: the transport docks and the ball's park are kept clear.
+	for fp in HubTransport.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
 	if _on_path(p, own_radius):
 		return true
 	for w in _water:
@@ -191,6 +195,9 @@ func _in_hollow(p: Vector3) -> bool:
 	return HubRegion.in_autumn(p) and HubRegion.contains(p)
 
 func _autumn_blocked(p: Vector3, own_radius: float) -> bool:
+	for fp in HubTransport.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
 	if _on_path(p, own_radius):
 		return true
 	if p.distance_to(HubRegion.MOTHER_TREE_AT) < HubRegion.MOTHER_TREE_TRUNK_RADIUS + own_radius + 0.6:
@@ -366,6 +373,10 @@ func _paths() -> void:
 		targets.append((portal as Node3D).global_position)
 	for cabin in _builder.cabins():
 		targets.append(cabin["door"])
+	# v3: a worn path from the plaza to the plateau's balloon dock(s).
+	for dock in HubTransport.dock_points():
+		if absf(dock.x) <= HubRegion.PLATEAU_HALF_EXTENT and absf(dock.z) <= HubRegion.PLATEAU_HALF_EXTENT:
+			targets.append(dock)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = SEED + 17
 	var st := SurfaceTool.new()

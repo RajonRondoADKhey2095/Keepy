@@ -89,6 +89,8 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _weather_row: HBoxContainer = $FallbackMenu/Panel/VBoxContainer/WeatherRow
 ## v3 P0: the performance overlay (preview only) and its menu toggle.
 @onready var _perf: HubPerfOverlay = $PerfOverlay
+## v3: the transport network (balloon lines + the ball).
+@onready var _transport: HubTransport = $WorldViewport/SubViewport/World/Transport
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
@@ -705,6 +707,7 @@ func _ready() -> void:
 	_tap.tapped_campfire.connect(_on_tapped_campfire)
 	_setup_weather()
 	_setup_perf()
+	_setup_transport()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -848,7 +851,7 @@ func _setup_owls() -> void:
 func _on_tapped_owl(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier():
 		return
 	_boarding = false
 	_climbing = false
@@ -1058,7 +1061,7 @@ func _build_cabin_markers() -> void:
 func _on_tapped_cabin(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier():
 		return
 	_boarding = false
 	_climbing = false
@@ -2661,7 +2664,7 @@ func _zip_seat(sign: float, crown_above_origin: float) -> Vector3:
 func _on_tapped_zipline_badger(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier():
 		return
 	_boarding = false
 	_climbing = false
@@ -2691,7 +2694,7 @@ func _on_tapped_zipline_badger(point: Vector3) -> void:
 func _on_tapped_zipline_solo(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier():
 		return
 	_boarding = false
 	_climbing = false
@@ -3065,6 +3068,7 @@ func _process(_delta: float) -> void:
 	_pulse_cabin_markers(here)
 	_pulse_campfire_marker(here)
 	_mooring.update(here)
+	_transport.update(here)
 
 ## The doorstep marks' approach cue, on HubPortal's own two thresholds.
 ##
@@ -3193,6 +3197,12 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# player's next destination across the drop the way `leave_ride` does.
 	if _keepy.is_on_zipline():
 		return
+	# v3: a tap while the BALLOON carries him is dropped on the zipline's
+	# exact licence -- the trip is a bounded tween that always ends on a
+	# dock, after which `_on_balloon_trip_finished` hands the body back --
+	# and it reaches this branch at all only because both docks withdrew.
+	if _keepy.is_on_carrier():
+		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
 	# screen overruling them.
@@ -3202,6 +3212,15 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_entering = false
 	_zipping = false
 	_zipping_solo = false
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = false
+	# v3: a tap on HIMSELF while standing still on the ball is "get off".
+	if _keepy.is_on_vehicle() and not _keepy.is_hopping():
+		var me := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+		if me.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
+			_keepy.dismount_vehicle()
+			return
 	_hop_via_corridor(point)
 
 ## Carte-blanche v2 -- the autumn hollow hangs off the plateau by a
@@ -3232,7 +3251,7 @@ func _hop_via_corridor(point: Vector3) -> void:
 func _on_tapped_boat(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _route == null or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _route == null or _keepy.is_on_zipline() or _keepy.is_on_carrier():
 		return
 	_boarding = true
 	_climbing = false
@@ -3252,7 +3271,7 @@ func _on_tapped_boat(point: Vector3) -> void:
 func _on_tapped_ladder(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier():
 		return
 	_boarding = false
 	_climbing = true
@@ -3343,7 +3362,7 @@ func _on_hop_landed(position: Vector3) -> void:
 	# tint placed after them would simply stop updating on the landings that
 	# do something -- silently, and only sometimes.
 	var in_water: bool = _water != null and _water.contains(position)
-	_set_keepy_wet(in_water)
+	_set_keepy_wet(in_water and not _keepy.is_on_vehicle())
 
 	# THE IMPACT, and it is consumed here for two reasons that both matter.
 	#
@@ -3440,6 +3459,10 @@ func _on_hop_landed(position: Vector3) -> void:
 	# it left from, and every branch past this point returns.
 	if _zipping_solo and _try_zip_solo(position):
 		return
+	if _ballooning >= 0 and _try_balloon(position):
+		return
+	if _mounting_ball and _try_mount_ball(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -3498,6 +3521,8 @@ func _on_keepy_idle() -> void:
 	_entering = false
 	_zipping = false
 	_zipping_solo = false
+	_ballooning = -1
+	_mounting_ball = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches
@@ -3578,6 +3603,123 @@ func _on_weather_changed(kind: int) -> void:
 
 func _on_fallback_toggled() -> void:
 	_fallback_menu.visible = not _fallback_menu.visible
+
+## ---- v3 P1: transport -- balloon lines and the hoppity ball ------------
+## Intents on the boat's model: set by the tap, tried on every landing AND
+## immediately (a zero-length walk emits no landing), cleared by any other
+## tap and when the chain runs out.
+var _ballooning: int = -1
+## The line whose balloon has been CALLED (or is in flight) while Keepy
+## waits at a dock. Survives `became_idle`: the wait IS standing still.
+var _balloon_wait: int = -1
+var _mounting_ball: bool = false
+
+func _setup_transport() -> void:
+	_transport.setup(_keepy, _camera, _weather)
+	_tap.tapped_balloon.connect(_on_tapped_balloon)
+	_tap.tapped_vehicle.connect(_on_tapped_vehicle)
+	_transport.trip_finished.connect(_on_balloon_trip_finished)
+
+## A tap on a dock. ONE tap buys the whole thing: walk there, board if the
+## balloon waits here, call it if it waits at the twin dock, wait for it if
+## it is in the air.
+func _on_tapped_balloon(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_owl_flight():
+		return
+	var line: int = _transport.accepts_balloon_tap(point)
+	if line < 0:
+		_hop_via_corridor(point)
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_mounting_ball = false
+	_balloon_wait = -1
+	_ballooning = line
+	_keepy.hop_to(point)
+	if not _keepy.is_hopping():
+		_try_balloon(_keepy.global_position)
+
+## Boards / calls if the landing is on the dock. The intent SURVIVES a
+## landing that is not there yet (the boat's measured defect).
+func _try_balloon(position: Vector3) -> bool:
+	if _ballooning < 0:
+		return false
+	var line: int = _ballooning
+	var dock: int = _transport.nearest_dock(line, position)
+	var here := Vector3(position.x, 0.0, position.z)
+	if here.distance_to(_transport.dock_position(line, dock)) > HubTransport.DOCK_TAP_RADIUS:
+		return false
+	_ballooning = -1
+	if not _transport.is_line_idle(line):
+		_balloon_wait = line
+		return true
+	if _transport.balloon_at(line) == dock:
+		_board_balloon(line, dock)
+		return true
+	# It waits at the twin dock: call it over, empty, and wait here.
+	_transport.depart(line, _transport.balloon_at(line), false)
+	_balloon_wait = line
+	return true
+
+func _board_balloon(line: int, dock: int) -> bool:
+	if not _keepy.mount_carrier(_transport.balloon(line), HubTransport.SEAT):
+		return false
+	return _transport.depart(line, dock, true)
+
+## A trip ended at `dock`. The rider steps off onto the ring round the
+## dock (the turnstile's exit search, unchanged); a waiting Keepy boards.
+func _on_balloon_trip_finished(line: int, dock: int, empty: bool) -> void:
+	var at: Vector3 = _transport.dock_position(line, dock)
+	if not empty and _keepy.is_on_carrier():
+		_keepy.leave_carrier(_ride_exit_point({"position": at, "radius": HubTransport.DOCK_TAP_RADIUS}))
+		return
+	if _balloon_wait != line:
+		return
+	_balloon_wait = -1
+	if _keepy.is_hopping() or _keepy.is_on_carrier() or _keepy.is_riding() or _keepy.is_on_board():
+		return
+	var here := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+	if here.distance_to(at) <= HubTransport.DOCK_TAP_RADIUS:
+		_board_balloon(line, dock)
+	elif here.distance_to(_transport.dock_position(line, 1 - dock)) <= HubTransport.DOCK_TAP_RADIUS:
+		# It landed at the wrong end for him (called from the other dock
+		# while it was already flying there): call it once more.
+		_transport.depart(line, dock, false)
+		_balloon_wait = line
+
+## A tap on the parked ball: walk to it and climb on.
+func _on_tapped_vehicle(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_owl_flight():
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = true
+	_keepy.hop_to(point)
+	if not _keepy.is_hopping():
+		_try_mount_ball(_keepy.global_position)
+
+func _try_mount_ball(position: Vector3) -> bool:
+	if not _mounting_ball:
+		return false
+	var here := Vector3(position.x, 0.0, position.z)
+	if here.distance_to(_transport.ball_position()) > HubTransport.BALL_TAP_RADIUS:
+		return false
+	_mounting_ball = false
+	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
 
 ## ---- v3 P0: performance overlay ---------------------------------------
 ## Same gate as the weather row and the guest bypass: an untrusted preview

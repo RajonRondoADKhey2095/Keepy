@@ -34,6 +34,10 @@ var _weather_force: int = -1
 ## --root captures the window (2D overlay included) instead of the SubViewport.
 var _root: bool = false
 var _ride_positions: Array = []
+## v3: --balloon=LINE taps the dock nearest Keepy of that line on frame 10;
+## --ball taps the parked ball on frame 10 then walks to --walk on frame 200.
+var _balloon: int = -1
+var _ball: bool = false
 
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
@@ -56,6 +60,10 @@ func _ready() -> void:
 		elif arg == "--nav":
 			for q in [Vector3(0, 0, -62), Vector3(-28, 0, -38), Vector3(0, 0, -38), Vector3(0, 0, -60), Vector3(-34, 0, -38), Vector3(-25, 0, -33.5), Vector3(0, 0, -79)]:
 				print("NAV %s contains=%s clamp=%s" % [q, HubRegion.contains(q), HubRegion.clamp_to(q)])
+		elif arg.begins_with("--balloon="):
+			_balloon = int(arg.substr(10))
+		elif arg == "--ball":
+			_ball = true
 		elif arg.begins_with("--ride="):
 			# "auto" taps wherever the mooring parked the boat at boot.
 			_ride = Vector3.ZERO
@@ -82,11 +90,34 @@ func _process(_delta: float) -> void:
 		w.call("force", _weather_force)
 		for i in 400:
 			w.call("_process", 0.05)
-	if _frames == 10 and _walk != Vector3.INF:
+	if _frames == 10 and _walk != Vector3.INF and not _ball:
 		_hub.get_node("TapInput").emit_signal("tapped_ground", _walk)
 	if _walk != Vector3.INF and _frames % 60 == 0:
 		var kw: Node3D = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
 		_ride_positions.append([_frames, snappedf(kw.global_position.x, 0.01), snappedf(kw.global_position.y, 0.01), snappedf(kw.global_position.z, 0.01)])
+	if _frames == 10 and _balloon >= 0:
+		var tr: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
+		var kp: Node3D = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
+		var dock: int = tr.call("nearest_dock", _balloon, kp.global_position)
+		var at: Vector3 = tr.call("dock_position", _balloon, dock)
+		print("BALLOON_TAP line %d dock %d at %s balloon_at=%d" % [_balloon, dock, at, tr.call("balloon_at", _balloon)])
+		_hub.get_node("TapInput").emit_signal("tapped_balloon", at)
+	if _balloon >= 0 and _frames % 30 == 0:
+		var kb: Node3D = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
+		var trb: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
+		var bl: Node3D = trb.call("balloon", _balloon)
+		_ride_positions.append([_frames, snappedf(kb.global_position.x, 0.01), snappedf(kb.global_position.y, 0.01), snappedf(kb.global_position.z, 0.01), kb.call("is_on_carrier"), snappedf(bl.global_position.y, 0.01), trb.call("balloon_at", _balloon)])
+	if _frames == 10 and _ball:
+		var trk: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
+		var bp: Vector3 = trk.call("ball_position")
+		print("BALL_TAP at %s" % bp)
+		_hub.get_node("TapInput").emit_signal("tapped_vehicle", bp)
+	if _ball and _frames == 200 and _walk != Vector3.INF:
+		_hub.get_node("TapInput").emit_signal("tapped_ground", _walk)
+	if _ball and _frames % 30 == 0:
+		var kv: Node3D = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
+		var trv: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
+		_ride_positions.append([_frames, snappedf(kv.global_position.x, 0.01), snappedf(kv.global_position.y, 0.01), snappedf(kv.global_position.z, 0.01), kv.call("is_on_vehicle"), str(trv.call("ball_position"))])
 	if _frames == 10 and _ride != Vector3.INF:
 		_ride = _hub.get_node("Mooring").call("boat_position")
 		print("RIDE_TAP at %s" % _ride)

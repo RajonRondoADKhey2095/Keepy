@@ -379,7 +379,7 @@ var _has_target: bool = false
 ## hop_landed, so portal detection is silent for their whole duration. A
 ## board planted 9 u from the portal row would otherwise carry a diver into
 ## a sub-game they were only passing over.
-enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT, ON_ZIPLINE }
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT, ON_ZIPLINE, ON_CARRIER }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -590,6 +590,7 @@ func is_standing_on_board() -> bool:
 func board(route: HubStreamRoute, half_width: float, toward: Vector3) -> void:
 	if route == null or not route.is_valid() or _state == State.RIDING:
 		return
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -638,6 +639,7 @@ func mount_turnstile(pivot: Node3D, deck_y: float, radius: float, bars: int) -> 
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -766,6 +768,7 @@ func mount_seesaw(pivot: Node3D, seat_y: float, ride_x: float) -> bool:
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -885,6 +888,7 @@ func mount_owl(carrier: Node3D, seat_y: float) -> bool:
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -999,6 +1003,7 @@ func board_zipline(carrier: Node3D, seat: Vector3) -> bool:
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 
 	var handle: Vector3 = carrier.to_global(seat)
 	var here := Vector3(global_position.x, 0.0, global_position.z)
@@ -1203,6 +1208,7 @@ func leave_ride(toward: Vector3, blocked: Array) -> void:
 func climb_board(board: Dictionary) -> void:
 	if board.is_empty() or _state != State.IDLE:
 		return
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 	_board = board
@@ -1443,12 +1449,13 @@ func _advance() -> void:
 	_begin_hop(here, delta)
 
 func _begin_hop(here: Vector3, delta: Vector3) -> void:
-	_hop_height = HOP_HEIGHT
+	# v3: on the vehicle the hop is longer, higher and a touch slower.
+	_hop_height = VEHICLE_HOP_HEIGHT if _vehicle != null else HOP_HEIGHT
 	# Reset alongside the height, and for the same reason: a sloped arc
 	# left over from a dive must not leak into the ordinary hop after it.
 	_hop_from_y = 0.0
 	_hop_to_y = 0.0
-	var step: float = minf(HOP_DISTANCE, delta.length())
+	var step: float = minf(VEHICLE_HOP_DISTANCE if _vehicle != null else HOP_DISTANCE, delta.length())
 	_hop_from = here
 	_hop_to = here + delta.normalized() * step
 
@@ -1465,7 +1472,7 @@ func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	# which a property tween can express. Position, scale and pitch are all
 	# written from the same t, so they cannot drift apart.
 	_hop_tween = create_tween()
-	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, VEHICLE_HOP_DURATION if _vehicle != null else HOP_DURATION)
 	_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
 
 func _face(direction: Vector3) -> void:
@@ -1491,9 +1498,13 @@ func _apply_hop(t: float) -> void:
 	# ends, so the arc cannot leave Keepy hovering on a rounding error --
 	# it lands exactly ON the base line, whatever that line is.
 	var height: float = _hop_height * 4.0 * t * (1.0 - t)
-	global_position = Vector3(ground.x, base + height, ground.z)
+	global_position = Vector3(ground.x, base + height + _vehicle_lift, ground.z)
 	_body.scale = _squash_at(t)
 	_body.rotation_degrees.x = _base_pitch - PITCH_DEG * sin(PI * t)
+	# The vehicle is written in the SAME call as its rider (carrier-then-
+	# carried discipline, the turnstile's measurement): under his feet, on
+	# the ground arc, squashing with him.
+	_place_vehicle(ground, base + height, _squash_at(t))
 
 func _squash_at(t: float) -> Vector3:
 	# Four segments: compress off the ground, extend into the apex, relax
@@ -1514,7 +1525,9 @@ func _on_hop_finished() -> void:
 	# every plateau hop, where that line is flat at zero; for the dive it
 	# is what puts the feet on the water surface instead of teleporting
 	# them from wherever the tween's last frame happened to fall.
-	global_position = Vector3(_hop_to.x, _hop_to_y, _hop_to.z)
+	# v3: plus the vehicle's lift while he rides it, the ball under him.
+	global_position = Vector3(_hop_to.x, _hop_to_y + _vehicle_lift, _hop_to.z)
+	_place_vehicle(Vector3(_hop_to.x, 0.0, _hop_to.z), _hop_to_y, Vector3.ONE)
 	_hop_from_y = 0.0
 	_hop_to_y = 0.0
 	_body.rotation_degrees.x = _base_pitch
@@ -1530,3 +1543,150 @@ func _on_hop_finished() -> void:
 	# starts, so a portal reached on this landing routes away instead of
 	# being overrun by a queued destination beyond it.
 	_advance()
+
+
+## =====================================================================
+## CARTE-BLANCHE V3 -- THE CARRIER (balloon) AND THE VEHICLE (hoppity ball)
+##
+## Two new ways of being moved, both written on patterns this file already
+## proved rather than on new ones:
+##
+##   * ON_CARRIER is the OWL FLIGHT generalised: a Node3D moves, and the
+##     thing that moves it writes the rider in the SAME call, immediately
+##     after (`follow_carrier()`), never from a _process of his own -- the
+##     turnstile's one-frame-lag measurement. A carrier trip is BOUNDED by
+##     a tween that always ends at a known dock, which is the zipline's
+##     licence for dropping taps meanwhile; the balloon's dock withdraws on
+##     the boat's terms so those taps reach the ground path at all.
+##   * The VEHICLE is NOT a state. It is a modifier on the ordinary hop
+##     chain: while mounted, hops are longer, higher and a touch slower per
+##     hop (net faster), the body is lifted by the ball's height, and the
+##     ball is written under him in `_apply_hop`. Every other carried state
+##     drops the vehicle first, so nothing else in this file ever sees it.
+
+signal carrier_mounted
+signal carrier_dismounted
+signal vehicle_mounted
+signal vehicle_dismounted
+
+var _carrier: Node3D = null
+var _carrier_seat: Vector3 = Vector3.ZERO
+
+var _vehicle: Node3D = null
+var _vehicle_lift: float = 0.0
+
+## Hop geometry while on the vehicle: 2.7 u per hop in 0.34 s is 7.9 u/s
+## against 5.4 u/s on foot (x1.48), with an arc almost twice as tall -- the
+## bounce IS the ride.
+const VEHICLE_HOP_DISTANCE: float = 2.7
+const VEHICLE_HOP_HEIGHT: float = 1.15
+const VEHICLE_HOP_DURATION: float = 0.34
+
+func is_on_carrier() -> bool:
+	return _state == State.ON_CARRIER
+
+func is_on_vehicle() -> bool:
+	return _vehicle != null
+
+## Puts Keepy on `carrier` at `seat` (carrier-local) and hands the body
+## over. Refused from any state but IDLE, on mount_owl's terms.
+func mount_carrier(carrier: Node3D, seat: Vector3) -> bool:
+	if carrier == null or not is_instance_valid(carrier):
+		return false
+	if _state != State.IDLE:
+		return false
+	dismount_vehicle()
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_carrier = carrier
+	_carrier_seat = seat
+	_has_target = false
+	_state = State.ON_CARRIER
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	follow_carrier()
+	carrier_mounted.emit()
+	return true
+
+## Writes Keepy at the seat for the carrier's CURRENT pose. Called by
+## whatever moves the carrier, in the same call, never from _process().
+func follow_carrier() -> void:
+	if _carrier == null or not is_instance_valid(_carrier):
+		_carrier = null
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		return
+	global_position = _carrier.to_global(_carrier_seat)
+	_yaw.rotation_degrees.y = _carrier.global_rotation_degrees.y
+
+## Steps off the carrier onto `landing` -- the generalised arc from the
+## seat height down to the ground, exactly as leave_owl does.
+func leave_carrier(landing: Vector3) -> void:
+	if _state != State.ON_CARRIER:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_carrier = null
+	_carrier_seat = Vector3.ZERO
+	_has_target = false
+	var delta := target - here
+	if delta.length() < 0.001:
+		_state = State.IDLE
+		global_position = here
+		carrier_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_carrier_dismount_finished, CONNECT_ONE_SHOT)
+
+func _on_carrier_dismount_finished() -> void:
+	_on_hop_finished()
+	carrier_dismounted.emit()
+
+## Climbs onto `vehicle` (a Node3D drawn by someone else) and rides it from
+## here on: every hop carries it. `lift` is how high its top is above the
+## ground -- his feet stand there. Refused unless he is standing still.
+func mount_vehicle(vehicle: Node3D, lift: float) -> bool:
+	if vehicle == null or not is_instance_valid(vehicle):
+		return false
+	if _state != State.IDLE or _vehicle != null:
+		return false
+	_vehicle = vehicle
+	_vehicle_lift = maxf(lift, 0.0)
+	var ground := Vector3(global_position.x, 0.0, global_position.z)
+	global_position = ground + Vector3(0.0, _vehicle_lift, 0.0)
+	_place_vehicle(ground, 0.0, Vector3.ONE)
+	vehicle_mounted.emit()
+	return true
+
+## Leaves the vehicle where he stands. Safe to call when not mounted.
+func dismount_vehicle() -> void:
+	if _vehicle == null:
+		return
+	var ground := Vector3(global_position.x, 0.0, global_position.z)
+	_place_vehicle(ground, 0.0, Vector3.ONE)
+	_vehicle = null
+	_vehicle_lift = 0.0
+	if _state == State.IDLE:
+		global_position = ground
+	vehicle_dismounted.emit()
+
+func _place_vehicle(ground: Vector3, height: float, squash: Vector3) -> void:
+	if _vehicle == null or not is_instance_valid(_vehicle):
+		_vehicle = null
+		_vehicle_lift = 0.0
+		return
+	_vehicle.global_position = Vector3(ground.x, height, ground.z)
+	_vehicle.rotation_degrees.y = _yaw.rotation_degrees.y
+	_vehicle.scale = squash

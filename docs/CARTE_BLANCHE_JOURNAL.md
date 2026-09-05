@@ -251,3 +251,36 @@ Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
 - **Le flash d'éclair par overlay** : lisible mais brutal ; une vraie version passerait par le ciel + `weather_tint` sur 3 frames avec une courbe, et un son.
 
 **Preuve du P2 sur le service** (04:50 UTC) : déploiement CI `dpl_D9tEPfnmr4z2tKXy4FbNpzrc5GJW` (`gitRootDirectory = build/web`, sha `d94b51f`, `READY`) ; `GET https://keepy-cozy.vercel.app/index.service.worker.js` → 200, `x-vercel-cache: MISS`, `age: 0`, `CACHE_VERSION = 1788583791` (04:49:51 UTC, après le push de 04:45:40 — donc l'export de CE commit). Tag `cozy-v1` : local seulement, le push d'un tag est refusé par le proxy git de ce sandbox (`remote end hung up`) ; le hash `20986d1` suffit.
+
+---
+
+# V3 — transport rapide et troisième map
+
+Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
+
+## Ouverture V3
+
+- **Hash de départ (point de retour v2)** : `f50960e` (HEAD de `origin/claude/carte-blanche-cozy-02o8dm` au fetch de 06:05 UTC, 5 sept 2026). Aucun tag (le push d'un tag est refusé par le proxy git du sandbox, constaté en v2, pas retenté). Outillage reposé dans un sandbox neuf : Godot 4.3 éditeur 50 276 070 octets, templates 1 073 228 327 octets (vérifiés contre `Content-Length`), `bpy` 5.0.1 ; import complet 584 fichiers, 92 `.scn`, zéro erreur.
+- **Le réseau de transport, en cinq lignes.**
+  1. **Famille A — des LIGNES DE MONTGOLFIÈRE** : une ligne = deux docks + une montgolfière qui attend à l'un des deux. Un tap sur le dock où elle attend embarque et vole jusqu'au dock jumeau ; un tap sur le dock VIDE l'appelle (elle traverse à vide, se pose, et repart avec Keepy). Les deux docks se retirent du tap pendant tout un trajet (patron barque, par un nœud `HubTransport`, jamais un flag) ; un trajet est borné par un tween qui finit toujours sur un dock (licence tyrolienne pour jeter les taps entre-temps). Re-amarrage sur la règle de la barque : loin des deux docks et les deux hors cadre, la montgolfière est déplacée sans animation vers le dock le plus proche.
+  2. **Où** : ligne « Or » `(10,5 ; 14,5)` — à 18 u au sud-est de la plaza, seul dégagement ≥ 3 u du plateau qui ne masque ni un portail ni Keepy (une montgolfière de 7 u de haut posée devant un portail l'aurait occulté depuis cette caméra fixe) — vers `(11 ; −55)` au bord est de la clairière de l'Arbre-Mère. Une deuxième ligne desservira la troisième map (P2). Un chemin de terre part de la plaza vers le dock, un panneau-flèche au bord de chaque dock pointe le jumeau, un fanion à la couleur de la ligne : c'est toute la « signalétique ».
+  3. **Famille B — le « Sautillon », un ballon sauteur** garé à `(−6,5 ; 0,5)` à gauche de la plaza. Un tap dessus : Keepy marche et grimpe ; ensuite CHAQUE tap-to-move ordinaire devient un bond plus long et plus haut (2,7 u / 0,34 s contre 1,5 u / 0,28 s : ×1,4), aucun nouveau contrôle. Ce n'est pas un état de `KeepyHopper` mais un MODIFICATEUR du hop ; toute interaction de prop (barque, échelle, hibou, tyrolienne, tourniquet, balançoire, montgolfière) dépose le ballon là où il se tenait ; un tap sur soi-même à l'arrêt le dépose aussi ; règle de re-parking de la barque.
+  4. **Pourquoi des montgolfières et pas des rails** : aucun chemin de géométrie à tracer (un ruban de 70 u à travers lacs et haie aurait coûté un lot à lui seul), le trajet SE VOIT (5,2 u de croisière, dans le cadre pour cette caméra à +2,4°), il dure 7-9 s, il survole ce que la marche contourne, et la météo s'y applique (tangage et dérive proportionnels au `wind` du look courant).
+  5. **Ce qui ne bouge pas** : aucun ride existant modifié ; `KeepyHopper` gagne un état `ON_CARRIER` (copie du vol du hibou : porteur puis porté dans le MÊME appel) et le modificateur véhicule ; `HubTapInput` gagne deux canaux (`tapped_balloon`, `tapped_vehicle`) sur les termes de la barque (`aim`, jamais la destination clampée).
+
+## Checkpoint P0 — overlay de performance (06:22 UTC, déployé seul)
+
+**Ce qui est fait.** `HubPerfOverlay` (PanelContainer + Label, `mouse_filter = IGNORE`, sous le badge invité), visible par défaut sous `Auth.is_untrusted_preview_domain()` ou hors web, bouton « Perf (preview) : ON/OFF » dans le menu (même gate que la ligne météo). Quatre lignes : FPS (courant, min glissant 3 s) ; TRI `gpu` / `lod0 cadre` / `scene` ; DRAW `calls` / `obj` moteur, batches en cadre / total, instances en cadre ; METEO. `CozyCapture` écrit le snapshot de l'overlay dans `COZY_STATS.perf`.
+
+**Deux lectures indépendantes de la même frame, et elles ne disent pas la même chose — mesuré, puis lu dans la source de Godot 4.3** (`drivers/gles3/rasterizer_scene_gles3.cpp`, `_fill_render_list`) :
+
+| lecture | spawn, soleil | ce que c'est |
+|---|---|---|
+| `gpu` (`viewport_get_render_info … PRIMITIVES_IN_FRAME`) | **52 472** | ce que le renderer a compté : liste OPAQUE seulement (l'eau, les ombres, la pluie, les papillons sont dans la liste alpha et ne sont PAS comptés), et **au LOD que le moteur a choisi** — les GLB importés portent des LOD automatiques, et à 11,7 u de caméra le moteur en sert un plus grossier |
+| `lod0 cadre` (replay AABB × frustum, LOD0, × instances) | **102 803** | ce que ce script demande au GPU si aucun LOD ne s'applique : le même test de culling que Godot (`AABB::intersects_convex_shape`), toutes listes |
+| `scene` | 175 559 | le chiffre de tous les tableaux précédents de ce journal |
+| draw calls moteur / objets | 138 / 138 | contre 132 nœuds en cadre par le replay (les 6 de plus : Label3D des portails et le sol, hors du replay) |
+
+**Conséquence pour le plafond de 50 000** : la frame réelle au spawn est à ~52 k primitives opaques rendues, soit au plafond — pas à 175 k. Le débat « justifier ou invalider le plafond » doit se tenir sur la ligne `gpu` (celle que le device affichera), avec `lod0 cadre` comme borne haute. Le chiffre sandbox (12 FPS sous llvmpipe 1080×1920) n'est PAS le chiffre device ; l'overlay existe pour que Mathieu lise le vrai au réveil.
+
+**Preuve sur le service** : voir le tableau de preuves en fin de section P1 (une seule lecture Vercel par checkpoint, jamais de polling).
