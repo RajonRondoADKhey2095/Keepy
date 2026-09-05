@@ -3192,6 +3192,27 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_entering = false
 	_zipping = false
 	_zipping_solo = false
+	_hop_via_corridor(point)
+
+## Carte-blanche v2 -- the autumn hollow hangs off the plateau by a
+## corridor, so the walkable region is no longer convex: a straight hop
+## from the plateau into the hollow cuts through the hedge (measured: a
+## walk (-25,-30) -> (-6,-56) passed (-19.3, -37.8), outside the region).
+## KeepyHopper hops in straight lines and clamps only its DESTINATION, so
+## the detour lives here: a tap that changes zone first walks to the
+## corridor gate, then on to the target. Nothing about same-zone taps or
+## the plateau's own navigation changes.
+const CORRIDOR_GATE: Vector3 = Vector3(-28.0, 0.0, -38.5)
+var _via_target: Vector3 = Vector3.INF
+
+func _hop_via_corridor(point: Vector3) -> void:
+	var here: Vector3 = _keepy.global_position
+	var target: Vector3 = HubRegion.clamp_to(point)
+	if HubRegion.in_autumn(here) != HubRegion.in_autumn(target) and Vector2(here.x - CORRIDOR_GATE.x, here.z - CORRIDOR_GATE.z).length() > 1.5:
+		_via_target = target
+		_keepy.hop_to(CORRIDOR_GATE)
+		return
+	_via_target = Vector3.INF
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -3454,6 +3475,13 @@ func _try_board(toward: Vector3) -> bool:
 ## The chain ran out without reaching the hull. Drops the intent rather
 ## than leaving it armed: a later, unrelated landing must not board.
 func _on_keepy_idle() -> void:
+	if _via_target != Vector3.INF:
+		var onward: Vector3 = _via_target
+		_via_target = Vector3.INF
+		var here: Vector3 = _keepy.global_position
+		if Vector2(here.x - CORRIDOR_GATE.x, here.z - CORRIDOR_GATE.z).length() < 1.5:
+			_keepy.hop_to(onward)
+			return
 	_boarding = false
 	_climbing = false
 	_flying = false

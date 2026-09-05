@@ -26,6 +26,13 @@ uniform float patch_scale = 26.0;
 uniform float detail_scale = 5.5;
 uniform float detail_amount = 0.10;
 uniform float dirt_amount = 0.0;
+// Carte-blanche v2: the autumn hollow. World z where the leaf litter takes
+// over (going toward -z), the width of the blend, and its three tones.
+uniform float autumn_edge_z = -39.0;
+uniform float autumn_edge_w = 7.0;
+uniform vec3 autumn_a : source_color = vec3(0.80, 0.54, 0.28);
+uniform vec3 autumn_b : source_color = vec3(0.66, 0.40, 0.20);
+uniform vec3 autumn_c : source_color = vec3(0.90, 0.68, 0.32);
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
 uniform float haze_density = 0.018;
 uniform float haze_start = 6.0;
@@ -47,6 +54,12 @@ void fragment() {
 	// big in [0,1]: below 0.45 -> grass_b, around 0.5 -> grass_a, above 0.6 -> grass_c
 	vec3 col = mix(grass_b, grass_a, smoothstep(0.35, 0.52, big));
 	col = mix(col, grass_c, smoothstep(0.56, 0.72, big));
+	// Autumn mask: a z threshold wobbled by the big noise so the edge is a
+	// ragged line under the hedge, never a ruler.
+	float autumn = smoothstep(autumn_edge_z, autumn_edge_z - autumn_edge_w, world_pos.z + (big - 0.5) * 9.0);
+	vec3 leaf = mix(autumn_b, autumn_a, smoothstep(0.35, 0.52, big));
+	leaf = mix(leaf, autumn_c, smoothstep(0.56, 0.72, big));
+	col = mix(col, leaf, autumn);
 	col *= 1.0 + (small - 0.5) * 2.0 * detail_amount;
 	// Fine mottle (grass clumps) close to the camera; mipmapped away far.
 	float fine = texture(noise_tex, p / 1.7 + vec2(0.13, 0.91)).r;

@@ -26,6 +26,9 @@ const COVER_MAX: Vector2 = Vector2(37.0, 47.0)
 ## the region: a candidate closer than WALL_CLEARANCE to walkable ground is
 ## dropped so no canopy hangs over a place Keepy can walk to.
 const WALL_OUTER: float = 62.0
+## v2: the wall box now runs to z = -100 to close the hollow's far side.
+const WALL_FAR_Z: float = -100.0
+const HEDGE_PER_U2: float = 0.10
 const WALL_CLEARANCE: float = 2.0
 const WALL_NEAR_BAND: float = 8.0
 ## Densities, per square unit of eligible ground.
@@ -64,8 +67,10 @@ func _ready() -> void:
 	_paths()
 	_portal_beds()
 	_scatter_ground_cover()
+	_autumn()
 	_forest_wall()
 	_flush()
+	_mother_tree()
 	_blob_shadows()
 	_hills()
 	_clouds()
@@ -121,7 +126,7 @@ func _on_islet(p: Vector3) -> bool:
 
 ## Families with a handful of pieces are one batch for the whole plateau;
 ## the numerous ones are split per cell so a cell out of frame costs nothing.
-const GLOBAL_FAMILIES: Array[String] = ["bush", "rock", "mushroom"]
+const GLOBAL_FAMILIES: Array[String] = ["bush", "rock", "mushroom", "bigshroom", "log", "pumpkin", "lantern"]
 
 func _cell_key(p: Vector3) -> String:
 	return "%d_%d" % [floori(p.x / CELL), floori(p.z / CELL)]
@@ -172,14 +177,116 @@ func _sprinkle(family: String, variants: int, count: int, own_radius: float,
 ## the wall meets the plateau, and a far band of the cheap LOD behind it.
 ## South of z = 50 nothing is placed: the camera sits north of Keepy
 ## looking south (toward -z), so that side is never in frame.
+## ---- v2: the autumn hollow ------------------------------------------
+const AUTUMN_SEED: int = SEED + 101
+const AUTUMN_TREE_PER_U2: float = 0.014
+const FERN_PER_U2: float = 0.055
+const LEAFPILE_PER_U2: float = 0.022
+const PUMPKIN_PATCHES: int = 5
+const MOTHER_CLEARING: float = 9.5
+const LANTERN_EVERY: int = 5
+
+func _in_hollow(p: Vector3) -> bool:
+	return HubRegion.in_autumn(p) and HubRegion.contains(p)
+
+func _autumn_blocked(p: Vector3, own_radius: float) -> bool:
+	if _on_path(p, own_radius):
+		return true
+	if p.distance_to(HubRegion.MOTHER_TREE_AT) < HubRegion.MOTHER_TREE_TRUNK_RADIUS + own_radius + 0.6:
+		return true
+	return false
+
+func _autumn_sprinkle(family: String, variants: int, count: int, own_radius: float,
+		scale_min: float, scale_max: float, wind: float, wind_height: float, keep_clearing: bool) -> void:
+	var placed := 0
+	var lo := HubRegion.AUTUMN_MIN
+	var hi := HubRegion.CORRIDOR_MAX
+	for i in count:
+		var p := Vector3(_rng.randf_range(lo.x, HubRegion.AUTUMN_MAX.x), 0.0, _rng.randf_range(lo.y, hi.y))
+		if not _in_hollow(p) or _autumn_blocked(p, own_radius):
+			continue
+		if keep_clearing and p.distance_to(HubRegion.MOTHER_TREE_AT) < MOTHER_CLEARING:
+			continue
+		var variant := _rng.randi_range(0, variants - 1)
+		var sc := _rng.randf_range(scale_min, scale_max)
+		var yaw := _rng.randf_range(0.0, TAU)
+		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * sc), p)
+		_add(family, "%s_%d" % [family, variant], _batch_cell(family, p), xform, wind, wind_height)
+		placed += 1
+	_stats[family] = placed
+
+func _autumn() -> void:
+	_rng.seed = AUTUMN_SEED
+	var area := (HubRegion.AUTUMN_MAX.x - HubRegion.AUTUMN_MIN.x) * (HubRegion.CORRIDOR_MAX.y - HubRegion.AUTUMN_MIN.y)
+	_autumn_sprinkle("autumn_tree", 4, int(area * AUTUMN_TREE_PER_U2), 1.1, 0.9, 1.35, 0.05, 3.2, true)
+	_autumn_sprinkle("fern", 2, int(area * FERN_PER_U2), 0.0, 0.9, 1.5, 0.05, 0.5, false)
+	_autumn_sprinkle("leafpile", 2, int(area * LEAFPILE_PER_U2), 0.2, 0.6, 1.05, 0.0, 1.0, false)
+	_autumn_sprinkle("bigshroom", 2, 9, 0.9, 0.7, 1.15, 0.0, 1.0, true)
+	_autumn_sprinkle("log", 1, 5, 1.3, 0.9, 1.2, 0.0, 1.0, true)
+	# Pumpkin patches: a few clusters, not a sprinkle.
+	var pumpkins := 0
+	for k in PUMPKIN_PATCHES:
+		var c := Vector3(_rng.randf_range(-28.0, 28.0), 0.0, _rng.randf_range(-74.0, -46.0))
+		if not _in_hollow(c) or _autumn_blocked(c, 1.5) or c.distance_to(HubRegion.MOTHER_TREE_AT) < MOTHER_CLEARING:
+			continue
+		for j in _rng.randi_range(4, 7):
+			var p := c + Vector3(_rng.randf_range(-1.4, 1.4), 0.0, _rng.randf_range(-1.4, 1.4))
+			if _autumn_blocked(p, 0.3):
+				continue
+			var sc := _rng.randf_range(1.0, 1.7)
+			_add("pumpkin", "pumpkin_%d" % (j % 2), "all", Transform3D(Basis.from_euler(Vector3(0.0, _rng.randf_range(0.0, TAU), 0.0)).scaled(Vector3.ONE * sc), p), 0.0, 1.0)
+			pumpkins += 1
+	_stats["pumpkin"] = pumpkins
+	# A ring of giant mushrooms around the Mother Tree, the clearing's edge.
+	for k in 7:
+		var a := TAU * k / 7.0 + _rng.randf_range(-0.15, 0.15)
+		var r := MOTHER_CLEARING - 2.0 + _rng.randf_range(-0.6, 0.6)
+		var p := HubRegion.MOTHER_TREE_AT + Vector3(cos(a) * r, 0.0, sin(a) * r)
+		if _on_path(p, 0.9):
+			continue
+		var sc := _rng.randf_range(1.0, 1.35)
+		_add("bigshroom", "bigshroom_%d" % (k % 2), "all", Transform3D(Basis.from_euler(Vector3(0.0, _rng.randf_range(0.0, TAU), 0.0)).scaled(Vector3.ONE * sc), p), 0.0, 1.0)
+	# Lanterns along the road, right-hand side, from the corridor onward.
+	var lanterns := 0
+	for i in range(0, _autumn_road.size(), LANTERN_EVERY):
+		var c: Vector3 = _autumn_road[i]
+		if c.z > -28.0 or i + 1 >= _autumn_road.size():
+			continue
+		var tan: Vector3 = (_autumn_road[i + 1] - _autumn_road[max(i - 1, 0)]).normalized()
+		var side := Vector3(-tan.z, 0.0, tan.x)
+		var p := c - side * (PATH_HALF + 0.55)
+		if not HubRegion.contains(p):
+			p = c + side * (PATH_HALF + 0.55)
+		var yaw := atan2(side.x, side.z)
+		_add("lantern", "lantern_0", "all", Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * 1.35), p), 0.0, 1.0)
+		lanterns += 1
+	_stats["lantern"] = lanterns
+
+var _mother: MeshInstance3D = null
+func _mother_tree() -> void:
+	var mesh: Mesh = CozyPalette.glb_mesh(CozyPalette.decor_path("mother_tree"))
+	if mesh == null:
+		push_error("CozyScatter: mother_tree.glb missing")
+		return
+	_mother = MeshInstance3D.new()
+	_mother.name = "MotherTree"
+	_mother.mesh = mesh
+	_mother.position = HubRegion.MOTHER_TREE_AT
+	_mother.rotation.y = 0.6
+	_mother.material_override = CozyPalette.decor_material_wind(0.10, 16.0)
+	_mother.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_mother)
+	_stats["mother_tree"] = 1
+
 func _forest_wall() -> void:
 	var near_kinds := ["tree_0_round", "tree_1_round", "tree_2_round", "tree_5_round", "tree_3_tall", "tree_4_conifer"]
+	var autumn_kinds := ["autumn_tree_0", "autumn_tree_1", "autumn_tree_2", "autumn_tree_0", "autumn_tree_3", "autumn_tree_1"]
 	var far_kind := "tree_6_far"
 	var placed_near := 0
 	var placed_far := 0
-	var box_area := (2.0 * WALL_OUTER) * (2.0 * WALL_OUTER)
+	var box_area := (2.0 * WALL_OUTER) * (50.0 - WALL_FAR_Z)
 	for i in int(box_area * WALL_FAR_PER_U2):
-		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(-WALL_OUTER, 50.0))
+		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, 50.0))
 		if HubRegion.contains(p) or _near_region(p, WALL_CLEARANCE):
 			continue
 		if _blocked(p, 1.2):
@@ -188,16 +295,17 @@ func _forest_wall() -> void:
 		var s := _rng.randf_range(0.9, 1.35)
 		var yaw := _rng.randf_range(0.0, TAU)
 		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
+		var autumn := p.z < AUTUMN_WALL_Z
 		if near:
 			# Denser near band: every candidate lands, plus extra throws.
-			_add("wall_near", _wall_kind(p, near_kinds), _wall_sector(p), xform, 0.04, 3.0)
+			_add("wall_near", _wall_kind(p, autumn_kinds if autumn else near_kinds), _wall_sector(p), xform, 0.04, 3.0)
 			placed_near += 1
 		else:
-			_add("wall_far", far_kind, _wall_sector(p), xform, 0.0, 3.0)
+			_add("wall_far", ("autumn_tree_%d" % (4 + (i % 2))) if autumn else far_kind, _wall_sector(p), xform, 0.0, 3.0)
 			placed_far += 1
 	# Second pass to thicken the near band to WALL_NEAR_PER_U2.
 	for i in int(box_area * (WALL_NEAR_PER_U2 - WALL_FAR_PER_U2)):
-		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(-WALL_OUTER, 50.0))
+		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, 50.0))
 		if HubRegion.contains(p) or _near_region(p, WALL_CLEARANCE) or not _near_region(p, WALL_NEAR_BAND):
 			continue
 		if _blocked(p, 1.2):
@@ -205,12 +313,29 @@ func _forest_wall() -> void:
 		var s := _rng.randf_range(0.9, 1.35)
 		var yaw := _rng.randf_range(0.0, TAU)
 		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
-		_add("wall_near", _wall_kind(p, near_kinds), _wall_sector(p), xform, 0.04, 3.0)
+		_add("wall_near", _wall_kind(p, autumn_kinds if p.z < AUTUMN_WALL_Z else near_kinds), _wall_sector(p), xform, 0.04, 3.0)
 		placed_near += 1
+	# The HEDGE between the two zones: the 6 u band the region leaves
+	# outside itself east of the corridor. The wall passes above only
+	# sample it thinly (2 u clearance on each side eats 4 of the 6 u), so
+	# it gets its own dense pass -- green on the plateau side, autumn on
+	# the hollow side, so the colour turns WITH the trees.
+	var hedge := 0
+	for i in int((36.0 - (-21.5)) * 5.0 * HEDGE_PER_U2):
+		var p := Vector3(_rng.randf_range(-21.5, 36.0), 0.0, _rng.randf_range(-41.5, -36.5))
+		if HubRegion.contains(p) or _blocked(p, 0.8):
+			continue
+		var s := _rng.randf_range(0.85, 1.2)
+		var yaw := _rng.randf_range(0.0, TAU)
+		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
+		_add("wall_near", _wall_kind(p, autumn_kinds if p.z < -39.0 else near_kinds), "hedge", xform, 0.04, 3.0)
+		hedge += 1
+	_stats["hedge"] = hedge
 	_stats["wall_near"] = placed_near
 	_stats["wall_far"] = placed_far
 
 const WALL_SECTORS: int = 6
+const AUTUMN_WALL_Z: float = -40.0
 
 func _wall_sector(p: Vector3) -> String:
 	return "wall_%d" % posmod(int(floor(atan2(p.z, p.x) / TAU * WALL_SECTORS)), WALL_SECTORS)
@@ -280,27 +405,23 @@ func _paths() -> void:
 			var q := a.lerp(mid, t).lerp(mid.lerp(b, t), t)
 			samples.append(q)
 		_path_lines.append(samples)
-		var phase := rng.randf_range(0.0, TAU)
 		# Per-SAMPLE edge points, shared by the two quads that meet there.
 		# A per-segment normal gave every joint two different edge vertices,
 		# so on every bend consecutive quads overlapped as coplanar
 		# triangles and z-fought in thin hatch lines (captures 11-14).
-		var left: Array[Vector3] = []
-		var right: Array[Vector3] = []
-		for i in PATH_SAMPLES + 1:
-			var prev: Vector3 = samples[max(i - 1, 0)]
-			var next: Vector3 = samples[min(i + 1, PATH_SAMPLES)]
-			var tan := (next - prev).normalized()
-			var n := Vector3(-tan.z, 0.0, tan.x)
-			var w := PATH_HALF * (1.0 + 0.14 * sin(i * 0.55 + phase))
-			var c: Vector3 = samples[i]
-			left.append(Vector3(c.x + n.x * w, PATH_Y, c.z + n.z * w))
-			right.append(Vector3(c.x - n.x * w, PATH_Y, c.z - n.z * w))
-		for i in PATH_SAMPLES:
-			for v in [left[i], right[i], left[i + 1], right[i + 1], left[i + 1], right[i]]:
-				st.set_normal(Vector3.UP)
-				st.add_vertex(v)
+		_extrude_path(samples, st, rng.randf_range(0.0, TAU))
 		built += 1
+	# v2: the road to the autumn hollow -- a polyline (Catmull-Rom) that
+	# leaves the plaza west-south-west, threads between the Chased portal's
+	# bed, the stump/board-3 pair and the spawn lake's bank, follows the
+	# west strip, crosses the hedge at the corridor and bends toward the
+	# Mother Tree. Every waypoint was checked against the layout by hand
+	# (distances in the journal); nothing in the layout moved.
+	var road := _catmull_rom(AUTUMN_ROAD, 7)
+	_path_lines.append(road)
+	_extrude_path(road, st, 1.3)
+	_autumn_road = road
+	built += 1
 	var mesh := st.commit()
 	var node := MeshInstance3D.new()
 	node.name = "Paths"
@@ -309,6 +430,51 @@ func _paths() -> void:
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(node)
 	_stats["paths"] = built
+
+const AUTUMN_ROAD: Array[Vector3] = [
+	Vector3(-2.2, 0.0, -0.9), Vector3(-8.0, 0.0, -6.5), Vector3(-16.9, 0.0, -6.8),
+	Vector3(-21.6, 0.0, -11.6), Vector3(-25.0, 0.0, -19.5), Vector3(-25.4, 0.0, -28.0),
+	Vector3(-27.5, 0.0, -39.5), Vector3(-22.0, 0.0, -50.0), Vector3(-12.0, 0.0, -57.5),
+	Vector3(-5.6, 0.0, -58.4),
+]
+var _autumn_road: Array = []
+
+## Ribbon extrusion shared by the Bezier paths and the autumn road: one
+## normal per SAMPLE, shared edge vertices (the hatching fix of v1 cp 4).
+func _extrude_path(samples: Array, st: SurfaceTool, phase: float) -> void:
+	var count := samples.size()
+	var left: Array[Vector3] = []
+	var right: Array[Vector3] = []
+	for i in count:
+		var prev: Vector3 = samples[max(i - 1, 0)]
+		var next: Vector3 = samples[min(i + 1, count - 1)]
+		var tan: Vector3 = (next - prev).normalized()
+		var n := Vector3(-tan.z, 0.0, tan.x)
+		var w := PATH_HALF * (1.0 + 0.14 * sin(i * 0.55 + phase))
+		var c: Vector3 = samples[i]
+		left.append(Vector3(c.x + n.x * w, PATH_Y, c.z + n.z * w))
+		right.append(Vector3(c.x - n.x * w, PATH_Y, c.z - n.z * w))
+	for i in count - 1:
+		for v in [left[i], right[i], left[i + 1], right[i + 1], left[i + 1], right[i]]:
+			st.set_normal(Vector3.UP)
+			st.add_vertex(v)
+
+func _catmull_rom(points: Array, per_span: int) -> Array:
+	var out: Array = []
+	var n := points.size()
+	for i in n - 1:
+		var p0: Vector3 = points[max(i - 1, 0)]
+		var p1: Vector3 = points[i]
+		var p2: Vector3 = points[i + 1]
+		var p3: Vector3 = points[min(i + 2, n - 1)]
+		for k in per_span:
+			var t := float(k) / per_span
+			var t2 := t * t
+			var t3 := t2 * t
+			var q: Vector3 = 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+			out.append(Vector3(q.x, 0.0, q.z))
+	out.append(points[n - 1])
+	return out
 
 func _on_path(p: Vector3, own_radius: float) -> bool:
 	if Vector2(p.x, p.z).length() < PLAZA_RADIUS * 1.1 + own_radius:
@@ -387,10 +553,14 @@ func _blob_shadows() -> void:
 			"wall_far": radius = 1.25
 			"bush": radius = 1.0
 			"rock": radius = 0.9
+			"autumn_tree": radius = 1.25
+			"bigshroom": radius = 1.0
+			"log": radius = 1.0
 			_: continue
 		for xform in batch["xforms"]:
 			var t: Transform3D = xform
 			_shadow_at(t.origin, radius * t.basis.get_scale().x)
+	_shadow_at(HubRegion.MOTHER_TREE_AT, 7.0)
 	if _shadow_xforms.is_empty():
 		return
 	var quad := PlaneMesh.new()
@@ -436,9 +606,13 @@ func _hills() -> void:
 	while xforms.size() < HILL_COUNT and tries < HILL_COUNT * 20:
 		tries += 1
 		var a := rng.randf_range(0.0, TAU)
-		var r := rng.randf_range(78.0, 118.0)
+		var r := rng.randf_range(78.0, 140.0)
 		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
 		if p.z > 50.0:
+			continue
+		# v2: the hollow runs to z = -78; a hill's skirt (up to 20 u) must
+		# not sit on its floor.
+		if p.z < -55.0 and r < 126.0:
 			continue
 		var sx := rng.randf_range(22.0, 40.0)
 		var sy := rng.randf_range(7.0, 13.0)

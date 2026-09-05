@@ -459,8 +459,48 @@ static func _lake_holding(flat: Vector3) -> int:
 ## existed -- a square, unioned with the shore pad -- and no water body
 ## anywhere on the plateau removes ground from it. See in_lake_water()'s
 ## docblock for what still reads the great lake's geometry and why.
+## Carte-blanche v2 -- the autumn hollow beyond the great lakes ("le Vallon
+## d'automne") and the corridor that joins it to the plateau square, on the
+## only strip of land between the spawn lake and the west edge. Same ground
+## height as everything else: the region grows, nothing in it changes.
+const AUTUMN_MIN: Vector2 = Vector2(-33.0, -78.0)
+const AUTUMN_MAX: Vector2 = Vector2(33.0, -42.0)
+const CORRIDOR_MIN: Vector2 = Vector2(-33.0, -42.0)
+const CORRIDOR_MAX: Vector2 = Vector2(-23.0, -33.0)
+## Solid discs a walker must not stand in (the Mother Tree's trunk). A hole
+## is checked FIRST in contains(), and clamp_to() offers its rim as a
+## candidate, so a tap inside the trunk lands on the nearest bark.
+const MOTHER_TREE_AT: Vector3 = Vector3(0.0, 0.0, -62.0)
+const MOTHER_TREE_TRUNK_RADIUS: float = 2.7
+static var _holes: Array[Dictionary] = [
+	{"centre": MOTHER_TREE_AT, "radius": MOTHER_TREE_TRUNK_RADIUS},
+]
+
+static func _in_rect(flat: Vector3, lo: Vector2, hi: Vector2) -> bool:
+	return flat.x >= lo.x and flat.x <= hi.x and flat.z >= lo.y and flat.z <= hi.y
+
+static func _clamp_rect(flat: Vector3, lo: Vector2, hi: Vector2) -> Vector3:
+	return Vector3(clampf(flat.x, lo.x, hi.x), 0.0, clampf(flat.z, lo.y, hi.y))
+
+## True inside the hollow or its corridor (holes included -- this is the
+## painted zone, not the walkable one).
+static func in_autumn(point: Vector3) -> bool:
+	var flat := _flat(point)
+	return _in_rect(flat, AUTUMN_MIN, AUTUMN_MAX) or _in_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX)
+
+static func in_hole(point: Vector3) -> bool:
+	var flat := _flat(point)
+	for hole in _holes:
+		if flat.distance_to(hole["centre"] as Vector3) < float(hole["radius"]):
+			return true
+	return false
+
 static func contains(point: Vector3) -> bool:
 	var flat := _flat(point)
+	if in_hole(flat):
+		return false
+	if _in_rect(flat, AUTUMN_MIN, AUTUMN_MAX) or _in_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX):
+		return true
 	if absf(flat.x) <= PLATEAU_HALF_EXTENT and absf(flat.z) <= PLATEAU_HALF_EXTENT:
 		return true
 	if flat.distance_to(_north_lobe) <= NORTH_LOBE_RADIUS:
@@ -517,6 +557,14 @@ static func clamp_to(point: Vector3) -> Vector3:
 	candidates.append(square)
 	candidates.append(pad)
 	candidates.append(lobe)
+	candidates.append(_clamp_rect(flat, AUTUMN_MIN, AUTUMN_MAX))
+	candidates.append(_clamp_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX))
+	for hole in _holes:
+		var hc: Vector3 = hole["centre"]
+		var away := flat - hc
+		if away.length() < 0.001:
+			away = Vector3(1.0, 0.0, 0.0)
+		candidates.append(hc + away.normalized() * (float(hole["radius"]) + 0.02))
 	# Each structure lobe contributes its own nearest-point candidate, so a
 	# tap just past the P2 tower resolves onto the ground BESIDE it rather
 	# than being dragged back to the square edge 1.7 u away.

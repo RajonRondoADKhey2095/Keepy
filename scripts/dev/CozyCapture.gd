@@ -16,7 +16,7 @@ extends Node
 ##   --out=PATH    PNG path (default /tmp/cozy_capture.png)
 ##   --frames=N    frames to wait before capturing (default 40)
 
-const MAX_FRAMES: int = 600
+const MAX_FRAMES: int = 2400
 
 var _hub: Node = null
 var _frames: int = 0
@@ -27,6 +27,9 @@ var _done: bool = false
 ## v2: --ride=x,z taps the boat at that point on frame 10; --frames is then
 ## the capture frame during the ride. Keepy's live position is reported.
 var _ride: Vector3 = Vector3.INF
+## v2: --walk=x,z taps the ground there on frame 10 (headless-safe: only
+## transforms are read) and --nav prints HubRegion answers for the hollow.
+var _walk: Vector3 = Vector3.INF
 var _ride_positions: Array = []
 
 func _ready() -> void:
@@ -39,6 +42,13 @@ func _ready() -> void:
 			_out = arg.substr(6)
 		elif arg.begins_with("--frames="):
 			_wait = int(arg.substr(9))
+		elif arg.begins_with("--walk="):
+			var wp := arg.substr(7).split(",")
+			if wp.size() == 2:
+				_walk = Vector3(float(wp[0]), 0.0, float(wp[1]))
+		elif arg == "--nav":
+			for q in [Vector3(0, 0, -62), Vector3(-28, 0, -38), Vector3(0, 0, -38), Vector3(0, 0, -60), Vector3(-34, 0, -38), Vector3(-25, 0, -33.5), Vector3(0, 0, -79)]:
+				print("NAV %s contains=%s clamp=%s" % [q, HubRegion.contains(q), HubRegion.clamp_to(q)])
 		elif arg.begins_with("--ride="):
 			# "auto" taps wherever the mooring parked the boat at boot.
 			_ride = Vector3.ZERO
@@ -60,6 +70,11 @@ func _process(_delta: float) -> void:
 		push_error("CozyCapture: watchdog fired at %d frames" % _frames)
 		get_tree().quit(2)
 		return
+	if _frames == 10 and _walk != Vector3.INF:
+		_hub.get_node("TapInput").emit_signal("tapped_ground", _walk)
+	if _walk != Vector3.INF and _frames % 60 == 0:
+		var kw: Node3D = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
+		_ride_positions.append([_frames, snappedf(kw.global_position.x, 0.01), snappedf(kw.global_position.y, 0.01), snappedf(kw.global_position.z, 0.01)])
 	if _frames == 10 and _ride != Vector3.INF:
 		_ride = _hub.get_node("Mooring").call("boat_position")
 		print("RIDE_TAP at %s" % _ride)

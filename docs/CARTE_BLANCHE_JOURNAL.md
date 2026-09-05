@@ -167,3 +167,33 @@ Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
 **Preuve du ride** (`CozyCapture --ride=auto`, xvfb + opengl3 + `--fixed-fps 60`) : tap sur la barque amarrée à l'ouest `(−18,54, −0,73)` ; trace de Keepy toutes les 30 frames : `y = 0,140` (= `RIDE_SEAT_Y`) et `is_riding = true` de la frame 30 à la frame 300, arrivée `(17,52, 0,24, 6,61)` à la frame 330, `is_riding = false` (débarqué). Ouest → est complet, gate de retrait intacte (`BoatMooring.set_riding`).
 
 ⚠️ **Piège de sonde payé** : `_setup_ride()` amarre la barque à l'extrémité la plus PROCHE de Keepy au boot (ouest depuis le spawn : 18,5 u contre 18,8), pas à la position du layout. Un premier essai qui tapait la position du layout `(17,58, 6,67)` a fait marcher Keepy jusqu'à une barque absente — `_boarding` relâché par `became_idle`, aucun ride, et rien ne le dit. `--ride=auto` lit maintenant `Mooring.boat_position()`.
+
+**Preuve du P0 sur le service** (04:22 UTC) : déploiement CI `dpl_AoviAqAyrjdUb15KBAa3kmXAmutK` (`gitRootDirectory = build/web`, sha `44a683a`, `READY`) ; `GET https://keepy-cozy.vercel.app/` → 200, `x-vercel-cache: MISS`, `age: 0`, `fileSizes` : `index.pck` 30 852 224 (export local 30 852 208 — les 16 octets de variance documentés), `index.wasm` 35 376 909 (identique). Le déploiement natif (`branchAlias`) existe aussi, sans l'alias `keepy-cozy`, sans effet.
+
+## Checkpoint P1 — le Vallon d'automne (04:35 UTC)
+
+**Ce qui est fait.**
+- **Famille Blender `autumn.py`** (`docs/carte_blanche/blender/`, planche `docs/carte_blanche/autumn_sheet.png`) : 17 GLB — 4 arbres d'automne (orange / rouge / or / rouille, 190 tri), 2 LOD lointains (72 tri), **l'Arbre-Mère** (1 024 tri, 18,5 u de haut, houppier ~16 u, contreforts de racines), 2 fougères (35 tri), 2 champignons géants (190 tri, à pois / brun), 2 citrouilles (247 tri), 1 tronc creux (160), 2 tas de feuilles (80), 1 lanterne sur poteau (48). Même contrat que v1 : COLOR_0 + `KHR_materials_unlit`, 3 à 86 Ko pièce. Vérifiés à l'import par `CozyGlbInspect` (AABB, couleurs).
+- **`HubRegion`** : rectangle `x ∈ [−33, 33] × z ∈ [−78, −42]` + couloir `x ∈ [−33, −23] × z ∈ [−42, −33]` (recouvre le carré du plateau à `z ≥ −35`, donc connexe), **un trou** (tronc de l'Arbre-Mère, r = 2,7) refusé par `contains()` et dont `clamp_to()` propose le bord. Sondé : `(0, −60)` → `(0, −59,28)` ; `(0, −38)` (haie) → `(0, −35)` ; `(−34, −38)` → `(−33, −38)` ; `(0, −79)` → `(0, −78)`. Le plateau existant n'a pas changé d'un point.
+- **Sol** : masque automne dans `cozy_ground.gdshader` (seuil `z = −39`, fondu 7 u, bord déchiqueté par le bruit à grande échelle), trois ocres `AUTUMN_A/B/C` dans `CozyPalette` — un seul quad, zéro géométrie ajoutée.
+- **Route** (`CozyScatter.AUTUMN_ROAD`, Catmull-Rom, même extrusion que les chemins v1, refactorisée en `_extrude_path`) : plaza → entre le parterre Chased et l'arbre `(−9,87, −4,07)` → entre la souche `(−15,6, −5,2)` et le plongeoir 3 → longe la rive du lac de spawn (`x = −25`, rive à `−23,3`) entre les arbres `(−21,9, −25,5)` et `(−28,5, −27,8)` → couloir → Arbre-Mère. Premier tracé refusé en capture : il frôlait l'arbre du layout `(−30,4, −23,6)` et une lanterne était plantée dedans. 6 lanternes côté droit à partir de `z < −28`.
+- **Scatter automne** : 22 arbres (hors clairière r = 9,5 et hors route), 131 fougères, 47 tas de feuilles, 20 citrouilles en 4 potagers, 7 + 7 champignons géants (dont un anneau au bord de la clairière), 2 troncs creux, l'Arbre-Mère en `MeshInstance3D` avec un vent lent. **Haie** dédiée entre les deux zones (bande `z ∈ [−41,5, −36,5]`, `x > −21,5`, 26 arbres : verts côté plateau, automne côté vallon) parce que le mur générique n'y met presque rien (2 u de dégagement de chaque côté d'une bande de 6 u). Le mur de forêt descend jusqu'à `z = −100` et devient automne sous `z = −40` ; les collines du secteur `z < −55` reculent à `r ≥ 126` — la jupe d'une colline (jusqu'à 40 u) enterrait les troncs du mur lointain et laissait une **canopée flottante** à l'horizon (capture 1).
+- **Tas de feuilles refaits deux fois** : lumpy + facettes plates + 4 couleurs saturées sous le toon → **lisaient comme des rochers de lave** (capture 1) ; aplatis, lissés, dégradé centre/bord, échelle 0,6–1,05 → des amas.
+- **Navigation trans-zone** (`HubWorld._hop_via_corridor`, 20 lignes) : la région n'est plus convexe, et `KeepyHopper` saute en ligne droite en ne clampant que sa DESTINATION. Mesuré avant : une marche `(−25, −30) → (−6, −56)` passait par `(−19,3, −37,8)`, dans la haie. Un tap qui change de zone marche d'abord jusqu'à la **porte du couloir** `(−28, −38,5)`, puis repart vers la cible sur `became_idle`. Mesuré après (headless, `--walk`) : `(−10, −10) → (−6, −56)` passe par `(−26,7, −39,5)` à la frame 420 et arrive à la frame 780. Les taps intra-zone sont inchangés.
+
+**Depuis le spawn** (`docs/carte_blanche/capture_v2_p1_spawn.png`) : l'Arbre-Mère dépasse du mur de forêt pile au-dessus du portail Quizz, la bande orange se lit derrière les lacs. Couloir : `capture_v2_p1_corridor.png`. Vallon : `capture_v2_p1_hollow.png`.
+
+**Métriques** (`CozyCapture` au spawn, scène entière).
+
+| | cp 4 (v1) | **P1** |
+|---|---|---|
+| triangles scène | 139 878 | **173 759** (+34 k : Arbre-Mère 1 k, mur automne + haie ~18 k, scatter ~15 k) |
+| MultiMeshInstance3D | 119 | **182** |
+| MeshInstance3D | 151 | **153** |
+| draw calls estimés | 270 | **335** |
+| instances MultiMesh | 2 194 | 2 573 |
+| `index.pck` | 30 849 552 | **31011632** (+~161 Ko, les 17 GLB) |
+
+**Ce qui coûtera le plus cher à rejouer vers `staging`** : la région en L et le détour par la porte (deux fichiers de la navigation, `HubRegion` et `HubWorld`, qui portent des sondes gatées à refaire passer — `LevelNavProbe`, les sondes de clamp), et la haie, dont la densité dépend d'une constante posée à l'œil sur une capture llvmpipe. Le shader sol et la route sont gratuits. Le mur à 208 + 135 arbres est le poste GPU à mesurer sur device.
+
+**Non fait, assumé** : pas de son ; le couloir est le seul accès (un tap sur le vallon depuis le spawn traverse le lac de spawn à la nage vers la porte — c'est déjà le comportement du plateau pour tout tap derrière un lac) ; aucun PNJ n'habite encore le vallon (les PNJ sont figés hors météo).

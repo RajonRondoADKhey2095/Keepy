@@ -27,6 +27,12 @@ const HAZE_START: float = 8.0
 const GRASS_A: Color = Color(0.55, 0.78, 0.36)
 const GRASS_B: Color = Color(0.44, 0.69, 0.32)
 const GRASS_C: Color = Color(0.66, 0.83, 0.41)
+## v2 -- the autumn hollow's leaf-litter ground, three tones like the grass.
+const AUTUMN_A: Color = Color(0.80, 0.54, 0.28)
+const AUTUMN_B: Color = Color(0.66, 0.40, 0.20)
+const AUTUMN_C: Color = Color(0.90, 0.68, 0.32)
+const AUTUMN_EDGE_Z: float = -39.0
+const AUTUMN_EDGE_W: float = 7.0
 
 ## Toon lighting shared by every decor batch.
 const SUN_DIR: Vector3 = Vector3(0.35, 0.80, 0.45)
@@ -205,6 +211,11 @@ static func ground_material() -> ShaderMaterial:
 		mat.set_shader_parameter("grass_a", GRASS_A)
 		mat.set_shader_parameter("grass_b", GRASS_B)
 		mat.set_shader_parameter("grass_c", GRASS_C)
+		mat.set_shader_parameter("autumn_a", AUTUMN_A)
+		mat.set_shader_parameter("autumn_b", AUTUMN_B)
+		mat.set_shader_parameter("autumn_c", AUTUMN_C)
+		mat.set_shader_parameter("autumn_edge_z", AUTUMN_EDGE_Z)
+		mat.set_shader_parameter("autumn_edge_w", AUTUMN_EDGE_W)
 		mat.set_shader_parameter("haze_color", HAZE)
 		mat.set_shader_parameter("haze_density", HAZE_DENSITY)
 		mat.set_shader_parameter("haze_start", HAZE_START)
