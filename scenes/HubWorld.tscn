@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3]
+[gd_scene load_steps=22 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://scripts/hub/BoatMooring.gd" id="12"]
 [ext_resource type="Script" path="res://scripts/hub/ZiplineDoor.gd" id="16"]
 [ext_resource type="Script" path="res://scripts/hub/HubCampfire.gd" id="17"]
+[ext_resource type="Script" path="res://scripts/hub/CozyScatter.gd" id="18"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -114,6 +115,9 @@ portal_scene = ExtResource("9")
 owl_scene = ExtResource("13")
 cabin_scene = ExtResource("14")
 magpie_scene = ExtResource("15")
+
+[node name="CozyScatter" type="Node3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("18")
 
 [node name="Campfires" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("17")

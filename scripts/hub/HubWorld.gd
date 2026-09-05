@@ -3004,11 +3004,17 @@ func _apply_swamp_palette() -> void:
 	var env: Environment = _world_env.environment
 	if env == null:
 		return
-	env.background_color = _PALETTE.sky_shallow
+	# Carte-blanche (voie A): the hub has its own light palette. The sky
+	# comes from CozyPalette, and the engine fog is switched OFF -- it is
+	# not functional on WebGL2 (Godot #97875 / #92019) and the decor and
+	# ground shaders write their own haze toward the same colour, so a
+	# device that DID fog would otherwise haze twice.
+	env.background_color = CozyPalette.SKY
 	env.ambient_light_color = _PALETTE.ambient_light_color
 	env.ambient_light_energy = _PALETTE.ambient_light_energy
-	env.fog_light_color = _PALETTE.hub_fog_light_color
-	env.fog_density = _PALETTE.hub_fog_density
+	env.fog_enabled = false
+	env.fog_light_color = CozyPalette.HAZE
+	env.fog_density = 0.0
 
 ## Hands the ride its geometry, once, after the build. The route is made
 ## from HubBuilder's OWN spine rather than re-derived from the layout's
