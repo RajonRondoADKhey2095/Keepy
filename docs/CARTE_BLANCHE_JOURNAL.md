@@ -371,3 +371,13 @@ Reste +12 k au spawn contre P1 : la bande proche du mur (195 arbres, cyprès/oli
 - **Les touffes de lavande 3D** : à repeindre (monticule gris-mauve) ou à retirer au profit des rangs peints seuls.
 - **`CozyCapture`** a encore grossi (`--balloon`, `--ball`) : c'est définitivement une sonde de nuit ; à découper en trois sondes gatées (capture, ride, nav) ou à supprimer avec la branche.
 - **Doctrine à consigner si un lot cadré passe** (CLAUDE.md non touché ici) : (a) `viewport_get_render_info` ne compte que la liste OPAQUE et applique les LOD auto des GLB importés — c'est LE chiffre du plafond, pas le compte de scène ; (b) à la profondeur de Keepy le cadre fait ~7 u de large et rien au-dessus de y ≈ 8 à son aplomb n'est visible — tout prop « près du spawn » ou « porté en l'air » se vérifie par `unproject_position` avant d'être placé ; (c) `visibility_range_end` fonctionne en Compatibility comme culling CPU et coupe ce que le haze a déjà effacé ; (d) `pkill -f` / `pgrep -f` tuent le shell qui les lance dès que le motif apparaît dans le heredoc de la même commande — tuer par PID lu dans `ps`.
+
+## Preuves de déploiement v3 sur le service (une lecture par checkpoint, jamais de polling)
+
+| checkpoint | sha | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|
+| P0 | `a977e23` (push 06:22:07) | `1788589585` → 06:26:25 | 07:00:27, `x-vercel-cache: MISS`, `age: 0` ; déploiement `dpl_ALhhH9wzqp2CVNkxy1QkcLwoSwhU`, `gitRootDirectory = build/web`, `READY` |
+| P1 | `691f604` (push 06:57:47) | `1788591792` → 07:03:12 | 07:12:01, `MISS`, `age: 0` |
+| P2 | `a848cbf` (push 07:06:58) | `1788592296` → 07:11:36 | 07:15:36, `MISS`, `age: 0` |
+
+Une lecture intermédiaire (07:03:23) est venue en `HIT` avec `age: 176` — c'était ma propre lecture précédente figée en bord, écartée comme mesure (doctrine CLAUDE.md). Chaque `CACHE_VERSION` tombe à l'intérieur de la fenêtre d'export du run de SON push.
