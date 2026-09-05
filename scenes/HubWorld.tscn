@@ -97,22 +97,6 @@ content_margin_top = 8.0
 content_margin_right = 14.0
 content_margin_bottom = 8.0
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_guest_badge"]
-bg_color = Color(0.55, 0.1, 0.07, 0.88)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.98, 0.78, 0.35, 1)
-corner_radius_top_left = 14
-corner_radius_top_right = 14
-corner_radius_bottom_left = 14
-corner_radius_bottom_right = 14
-content_margin_left = 18.0
-content_margin_top = 8.0
-content_margin_right = 18.0
-content_margin_bottom = 8.0
-
 [node name="HubWorld" type="Control"]
 anchors_preset = 15
 anchor_right = 1.0
@@ -324,7 +308,7 @@ visible = false
 layout_mode = 2
 horizontal_alignment = 1
 theme_override_font_sizes/font_size = 22
-text = "Météo (preview) :"
+text = "Météo (dev) :"
 
 [node name="WeatherRow" type="HBoxContainer" parent="FallbackMenu/Panel/VBoxContainer"]
 visible = false
@@ -392,7 +376,7 @@ theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
 theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
-text = "Perf (preview) : ON"
+text = "Perf (dev) : ON"
 
 [node name="SaveResetButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
 visible = false
@@ -404,7 +388,7 @@ theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
 theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
-text = "Sauvegarde (preview) : zéro"
+text = "Sauvegarde (dev) : zéro"
 
 [node name="CloseButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
 layout_mode = 2
@@ -416,22 +400,6 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
 text = "Retour"
-
-[node name="GuestBadge" type="PanelContainer" parent="."]
-visible = false
-layout_mode = 1
-anchors_preset = 0
-offset_left = 24.0
-offset_top = 24.0
-offset_right = 280.0
-offset_bottom = 64.0
-theme_override_styles/panel = SubResource("StyleBoxFlat_guest_badge")
-
-[node name="Label" type="Label" parent="GuestBadge"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 20
-theme_override_colors/font_color = Color(1, 0.95, 0.85, 1)
-text = "INVITE - PREVIEW"
 
 [node name="PerfOverlay" type="PanelContainer" parent="."]
 visible = false

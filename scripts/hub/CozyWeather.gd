@@ -10,7 +10,7 @@ class_name CozyWeather
 ## the 2D overlay. Reactions that need a decision (the bear taking
 ## shelter) listen to `weather_changed`.
 ##
-## Forcing: force(kind) pins a state (the preview menu), force_auto()
+## Forcing: force(kind) pins a state (the dev menu row), force_auto()
 ## resumes the cycle where it was.
 
 enum Kind { SUN, RAIN, STORM, SNOW }

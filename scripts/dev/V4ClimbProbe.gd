@@ -29,7 +29,12 @@ extends Node
 ##                  the decor trees HubTrees adopted) and every exclusion,
 ##                  then quit 0 -- the recon of the general climb
 ##
-## Exit 0 = every assertion held.
+## Exit 0 = every assertion held, 1 = at least one did not,
+## ProbeWatchdog.EXIT_TIMEOUT = INCONCLUSIVE (ran out of wall clock).
+##
+## Touches NO real save: WorldSave is pointed at a throw-away path before
+## anything is written, and the shake counter is advanced through the
+## public tree_take() rather than by reaching into WorldSave._data.
 
 var _hub: Node = null
 var _keepy: Node = null
@@ -58,7 +63,6 @@ var _hazel_before: int = 0
 var _list: bool = false
 var _p2: bool = false
 var _chase: bool = false
-var _showcase: bool = false
 var _exit_bug: bool = false
 var _bug_first: Vector3 = Vector3.INF
 var _bug_moved: float = 0.0
@@ -67,6 +71,11 @@ var _ladybug_before: int = 0
 var _golden_before: int = 0
 
 func _ready() -> void:
+	# FIRST statement, per ProbeWatchdog's contract: a watchdog armed after
+	# the thing that hangs is not a watchdog. 240s, not the 900s default --
+	# this probe simulates at most a few hundred fixed-fps frames, so ten
+	# times its real runtime is already generous.
+	ProbeWatchdog.arm(self, "V4 CLIMB PROBE", 240.0)
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--at="):
 			var p := arg.substr(5).split(",")
@@ -97,22 +106,50 @@ func _ready() -> void:
 			_p2 = true
 		elif arg == "--chase":
 			_chase = true
-		elif arg == "--showcase":
-			_showcase = true
-	# A known save: this runs in the sandbox's own user://, never a device.
+	# A known save, on a throw-away path. The override goes on FIRST: with
+	# it empty this would reset() and then write the player's real
+	# user://keepy_world.json, which on a developer machine is a save
+	# someone may care about.
+	WorldSave.SAVE_PATH_OVERRIDE = "user://v4_climb_probe_world.json"
 	WorldSave.reset()
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(_hub)
 	if _p2:
-		# The next shake is the save's 12th (GOLDEN_FIRST) and the roll is 0.
-		WorldSave._data["stats"]["shakes"] = _hub.GOLDEN_FIRST - 1
-		_hub.force_ladybug_roll = 0.0
+		# The next shake must be the save's 12th (GOLDEN_FIRST) and its
+		# ladybug draw must come in under LADYBUG_CHANCE.
+		#
+		# BOTH are set through the shipped path, not by writing into
+		# WorldSave._data or forcing an outcome on HubWorld:
+		#   * the counter is advanced by real tree_take() calls, one per
+		#     throw-away tree id, which is the only thing that increments
+		#     "shakes" for a player either;
+		#   * the draw is fixed by SEEDING HubWorld's extras RNG, and the
+		#     seed is FOUND rather than picked -- scanned until its first
+		#     draw is one the shipped LADYBUG_CHANCE would accept. A seed
+		#     cannot make the pacing say anything it would not say on its
+		#     own, which a forced roll could.
+		for i in _hub.GOLDEN_FIRST - 1:
+			WorldSave.tree_take("v4probe_%d" % i)
+		var got: int = int(WorldSave.stats().get("shakes", 0))
+		if got != _hub.GOLDEN_FIRST - 1:
+			_fails.append("p2.setup_shakes expected %d got %d" % [_hub.GOLDEN_FIRST - 1, got])
+		var rng := RandomNumberGenerator.new()
+		var seed_found: int = -1
+		for candidate in range(1, 10000):
+			rng.seed = candidate
+			if rng.randf() < _hub.LADYBUG_CHANCE:
+				seed_found = candidate
+				break
+		if seed_found < 0:
+			_fails.append("p2.setup_seed no seed under LADYBUG_CHANCE in 10000")
+		else:
+			print("P2_SEED %d (first draw under LADYBUG_CHANCE=%.2f)" % [seed_found, _hub.LADYBUG_CHANCE])
+			_hub.set_extras_seed(seed_found)
 	_keepy = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
 	_trees = _hub.get_node("WorldViewport/SubViewport/World/Trees")
 	_keepy.global_position = _at
 	var cam: Node = _hub.get_node("WorldViewport/SubViewport/World/Camera3D")
 	cam.call("snap_to_target")
-	get_tree().create_timer(240.0).timeout.connect(func(): print("V4ClimbProbe: TIMEOUT"); get_tree().quit(9))
 
 func _check(name: String, ok: bool, detail: String = "") -> void:
 	if not ok:
@@ -124,25 +161,6 @@ func _process(_delta: float) -> void:
 	if _list and _frames == 3:
 		_print_list()
 		get_tree().quit(0 if _fails.is_empty() else 1)
-		return
-	if _showcase and _frames == 5:
-		# v5: what falls, laid out in front of Keepy for a look (xvfb): an
-		# acorn, a hazelnut, the golden acorn, the ladybug (kept still by
-		# a long STILL), and a handful of leaves already on the ground.
-		var nuts: Node = _hub.call("nuts")
-		var k: int = 0
-		for kind in [&"acorn", &"hazelnut", &"golden", &"ladybug"]:
-			var nut: Dictionary = nuts._spawn(kind, _at + Vector3(-2.4 + 1.6 * k, 0.0, -2.8), Vector3.ZERO)
-			nut["still"] = 999.0
-			nuts._settle(nut)
-			k += 1
-		nuts.drop_leaves(_keepy, 8, 1.4, 0.3, "greenleaf")
-		return
-	if _showcase:
-		if _shots.has(_frames):
-			_shot(_frames)
-		if _frames >= _frames_total:
-			get_tree().quit(0)
 		return
 	if _frames == 5:
 		var at: Vector3 = _trees.call("position_of", _tree)

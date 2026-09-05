@@ -9,6 +9,18 @@ extends Node
 ##
 ## Prints the best candidates per zone; the choice is made by a human
 ## reading (and a capture), not by this script.
+##
+## KEPT past the branch that wrote it, although it asserts nothing, for the
+## reason CLAUDE.md gives for keeping any measuring instrument: the tree
+## sites shipped in HubTrees.gd cite THIS probe as where their clearance
+## numbers came from (see its SITES table and HubTapInput's tap radii). A
+## number whose source has been deleted is the "chiffre fantôme" that file
+## documents -- repeated from brief to brief with nothing left to reopen.
+## Deleting this script would turn three shipped constants into exactly
+## that, and re-deriving them would cost a lot more than the file does.
+##
+## Exit 0 always (it is a recon, not a gate);
+## ProbeWatchdog.EXIT_TIMEOUT = INCONCLUSIVE (ran out of wall clock).
 
 const CAM_OFFSET: Vector3 = Vector3(0.0, 7.6, 8.9)
 const CAM_PITCH_COS: float = 0.82904
@@ -24,7 +36,10 @@ var _hub: Node = null
 var _frames: int = 0
 
 func _ready() -> void:
-	get_tree().create_timer(120.0).timeout.connect(func(): print("V4SiteProbe: TIMEOUT"); get_tree().quit(9))
+	# FIRST statement, per ProbeWatchdog's contract. 300s, not the 900s
+	# default: the grid walk is four zones at 0.5 u and finishes in well
+	# under a minute; there is no simulation here to be legitimately slow.
+	ProbeWatchdog.arm(self, "V4 SITE PROBE", 300.0)
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(_hub)
 

@@ -556,6 +556,72 @@ d'un garde côté logique — la panne couverte est silencieuse.
 ⚠️ **`iframe.onload` se déclenche AUSSI quand COEP a bloqué l'embed** —
 aucune exception, aucune erreur console. Inutilisable comme signal de santé.
 
+### ⚠️ GODOT TIENT LES FACES HORAIRES POUR FACES AVANT — un ruban CCW disparaît
+
+Mesuré, pas déduit (carte blanche v2) : le ruban du ruisseau était enroulé
+en **anti-horaire vu de dessus** (normale du premier triangle `(0, 1, 0)`
+par la règle de la main droite). Tant qu'il était dessiné par un
+`StandardMaterial3D` en `CULL_DISABLED`, personne ne l'avait jamais vu. Le
+premier shader en `cull_back` a fait disparaître **le ruban entier** :
+nœud visible dans l'arbre, AABB juste, matériau juste, **zéro pixel**, et
+**aucune erreur d'aucune sorte**.
+
+**Règle** : tout ruban construit à la main (`SurfaceTool`, `ArrayMesh`,
+tout `PackedVector3Array` d'indices écrit par du code) est enroulé
+**HORAIRE vu de la face qu'on veut voir**. Le contrôle coûte une sonde
+jetable de dix lignes : lire la normale du premier triangle et la comparer
+au côté attendu.
+
+⚠️ **Et ce piège se cache derrière `CULL_DISABLED`.** Un ruban CCW qui
+« marche » aujourd'hui ne prouve rien : il marche parce que rien ne cull.
+Le jour où un lot lui donne un shader — et `CLAUDE.md` documente déjà
+pourquoi un shader finit par arriver sur toute surface d'eau — il devient
+invisible d'un coup, et le symptôme ne ressemble pas à un problème
+d'enroulement.
+
+### ⚠️ LE COMPTEUR DU MOTEUR NE COMPTE QUE L'OPAQUE, ET AU LOD QU'IL A CHOISI
+
+`RenderingServer.viewport_get_render_info(..., PRIMITIVES_IN_FRAME)` n'est
+pas « le nombre de triangles de la scène ». Mesuré au spawn du hub cozy,
+trois chiffres pour la MÊME frame :
+
+| lecture | valeur | ce qu'elle compte |
+|---|---|---|
+| `gpu` (compteur moteur) | **52 472** | la liste **OPAQUE seulement** — l'eau, les ombres, la pluie, les papillons sont dans la liste alpha et n'y sont **PAS** — et **au LOD que le moteur a choisi** (les GLB importés portent des LOD automatiques, et à 11,7 u de caméra il en sert un plus grossier) |
+| `lod0 cadre` (replay AABB × frustum) | **102 803** | ce qui serait demandé au GPU si aucun LOD ne s'appliquait, toutes listes |
+| `scene` | **175 000** environ | tous les triangles de la scène, cadre ou pas |
+
+**Ce chiffre a réfuté une ligne déjà écrite dans ce dépôt** : un « 175 k
+triangles » cité comme la charge de la frame était en réalité **52 k
+primitives rendues**. Un plafond de perf gaté sur le mauvais des trois est
+un plafond qui ne défend rien.
+
+**Règle** : un plafond de charge se gate sur la ligne **`gpu`** — celle que
+le device affichera — avec le replay LOD0 comme borne haute et le compte de
+scène comme information seulement. Publier les trois, jamais un seul :
+« le shader est cher », « le prop est cher » et « la scène est grosse » ne
+sont pas la même phrase, exactement comme pour le coût par fragment.
+
+⚠️ **Et un 0 sur cette ligne se PUBLIE comme un 0.** Le backend
+Compatibility remplit ces compteurs sur GL de bureau ; rien ne garantit
+qu'il le fasse sous WebGL2. Un overlay qui masquerait un 0 laisserait
+croire à une frame gratuite.
+
+### ⚠️ `visibility_range_end` FONCTIONNE en Compatibility — mais seulement en `DISABLED`
+
+Utile et non évident : le renderer Compatibility n'implémente pas le fondu
+de LOD, ce qui donne l'impression que `visibility_range` n'y sert à rien.
+Il sert : avec **`visibility_range_fade_mode = DISABLED`**, c'est du
+**culling CPU pur**, et il fonctionne. Mesuré sur les batches du scatter :
+poser `visibility_range_end` à 82 u (95 u pour les familles d'automne, dont
+la bande orange fait partie du cadre du spawn par conception) a coupé la
+frame de la lande de **plus de 20 000 primitives**.
+
+Le bon réglage est celui que **le brouillard a déjà effacé** : avec
+`fog_density = 0.016` exponentiel, 82 u valent 73 % d'occlusion. Couper
+plus près se voit ; couper là où le fog a déjà tout mangé ne se voit pas et
+se paie en frame.
+
 ### ⚠️ Autres pièges d'API mesurés
 
 * **`Object.get("UNE_CONST")` rend `null`** — une constante GDScript n'est
@@ -983,6 +1049,86 @@ tourne).
 les batches nichés** — trou trouvé quand deux sondes se sont contredites
 (124 contre 123).
 
+### ⚠️ UN RIDE VERTICAL COÛTE UN ÉTAT ; UNE MIGRATION MULTI-ALTITUDE COÛTE LA NAVIGATION
+
+Question posée à chaque fois que le monde doit gagner de la hauteur —
+grimper un arbre, une tour, une falaise. Les deux réponses ne sont pas du
+même ordre de grandeur, et ce dépôt a maintenant les deux au dossier.
+
+**La migration multi-altitude** (`CH18` cabane) change ce que « le sol »
+veut dire : la région, le clamp, le test de prop, la caméra et chaque
+hotspot doivent tous apprendre qu'il existe plusieurs plans. C'est un
+chantier entier, et il a coûté treize sections.
+
+**Le ride vertical** ne change rien de tout ça. Le personnage est **écrit le
+long d'une géométrie** dans l'espace LOCAL du porteur et relu par
+`to_global()` ; le sol reste un seul plan, la région reste plate, aucun
+autre état n'est touché. `ON_TREE` fait 8 phases et ~330 lignes dans
+`KeepyHopper`, et les cinq perchoirs d'origine sont sortis **14 assertions
+sur 14 identiques** après la généralisation à 53 arbres.
+
+**Règle** : tant que ce qu'on veut est « le personnage MONTE et redescend »,
+c'est un ride, pas une altitude. On ne paie la navigation multi-altitude que
+lorsque le joueur doit **se déplacer librement** en haut.
+
+⚠️ **Et c'est la CAMÉRA qui plafonne un ride vertical, pas la géométrie.**
+`HubCamera` suit le point SOL de Keepy et ne monte jamais (voir
+`HubCamera.OFFSET`) : le rayon haut du cadre croise son aplomb à
+**y = 6,96 u**. Avec la tête à 1,7 u au-dessus du siège, un siège à plus de
+**4,85 u** sort la tête du cadre. Huit arbres pourtant grimpables ont été
+exclus pour cette seule raison, et la réponse à « je veux ceux-là aussi »
+est une caméra qui monte — c'est-à-dire un autre lot.
+
+### ⚠️ UN NOEUD PORTEUR NE PORTE JAMAIS L'ÉCHELLE DE L'INSTANCE QU'IL REPRÉSENTE
+
+Corollaire du patron ci-dessus, et il mord silencieusement. Adopter une
+instance de `MultiMesh` pour la rendre interactive se fait par un `Node3D`
+**VIDE** qui reprend **rotation et translation, jamais l'échelle**.
+
+La raison est que toute constante de chorégraphie est en **unités
+personnage** — écart de prise 0,28, balancement 0,07, dégagement au pied
+0,42 — et qu'elles traversent `to_global()`. Sur un décor dont les
+instances vont de l'échelle **0,40 à 1,50**, un porteur qui porterait
+l'échelle multiplierait chacune de ces constantes par elle : la même
+chorégraphie serait ratatinée sur un petit arbre et démesurée sur un grand,
+sans une seule erreur pour le dire. La géométrie de l'instance, elle, est
+multipliée par l'échelle **explicitement**, une fois, là où elle est
+mesurée.
+
+### ⚠️ LE TRONC D'UN ARBRE À HOUPPIER PLEIN EST INVISIBLE DEPUIS LA CAMÉRA DU HUB
+
+Trouvé **par capture, pas par raisonnement**, et c'est le point : une
+première version faisait grimper Keepy le long du tronc puis sauter à
+travers la couronne. À l'image, il **disparaissait 1,3 seconde** (frames 70
+à 110) et réapparaissait assis au sommet. La couronne (r ≈ 1,3 u dès
+y ≈ 1,3) recouvre entièrement le tronc pour tout rayon qui monte à 40° vers
++z, ce qui est exactement l'assiette de cette caméra.
+
+**Règle** : toute chorégraphie écrite « sur le tronc » d'un sujet à
+houppier plein est une chorégraphie **hors champ**. La montée passe par le
+**flanc de la couronne**, en profil. Et la vérification est un **rendu**,
+jamais une relecture : la pose a été fausse trois fois de suite sur capture
+— inclinaison du corps sur la pente qui enfouissait la tête dans les
+feuilles, puis le même signe qui l'enterrait en descente tête en bas —
+avant d'être juste, et aucune de ces trois erreurs n'était visible dans le
+code.
+
+### ⚠️ UN `tint` QUI MULTIPLIE LA COULEUR DE SOMMET NE PEUT PAS RECOLORER
+
+Un uniforme de teinte appliqué en multiplication sur `COLOR` **assombrit ou
+éclaircit dans la teinte du sommet** — il ne la déplace pas. Mesuré deux
+fois dans la même nuit : teinter des feuilles d'automne vers le vert a
+produit des **losanges olive-brun** illisibles, et il a fallu trois GLB
+verts ; à l'inverse, un or obtenu avec des composantes **supérieures à 1**
+(1,9 ; 1,7 ; 0,45) fonctionne, parce qu'il ÉCLAIRCIT un brun vers le jaune
+au lieu de le déplacer.
+
+**Règle** : une couleur qui doit changer de TEINTE change de `.glb`. Un
+`tint` multiplicatif sert à faire varier une même famille, pas à en fonder
+une autre. (Même famille de piège que « la couleur qu'un `.glb` porte est
+littéralement celle qui s'affiche » : depuis la suppression du grade plein
+écran, rien ne post-traite la frame.)
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
@@ -1189,6 +1335,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH23 | Feu de camp — recon VFX, objet définitif (sprite E + bûcher), revert de couleur, puis cercle de pierres | [`CH23_FEU_VFX.md`](docs/lots/CH23_FEU_VFX.md) | 6 | 1505 | 4 sept |
 | CH24 | Feu de camp interactif — recon puis LOT 1 : canal de tap `tapped_campfire`, aller-retour du blaireau, point d'arrivée de la recon rejoué sur le segment complet et corrigé après un croisement trouvé avec l'anneau de pierres | [`CH24_FEU_INTERACTIF.md`](docs/lots/CH24_FEU_INTERACTIF.md) | 12 | 222 | 4 sept |
 | CH25 | L'ours rejoint le blaireau au feu — recon puis LOT 1 : recon reprouvée par un second script indépendant (même candidat d'arrivée, même conclusion sur le relèvement direct écarté), `BEAR_CAMPFIRE_WALK_RATE` calculé pour synchroniser l'arrivée des deux acteurs, ce qui a débusqué et corrigé à la racine un glissement de pieds de principe dans `HubActorWalker` (un seul taux par acteur pour toute sa vie, avant ce lot), gate balançoire et synchronisation des deux acteurs par un état partagé unique câblés | [`CH25_OURS_FEU.md`](docs/lots/CH25_OURS_FEU.md) | 9 | 407 | 4 sept |
+| CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

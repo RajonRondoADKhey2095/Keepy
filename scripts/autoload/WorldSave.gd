@@ -5,7 +5,8 @@ extends Node
 ## writer (this autoload), one schema version stamped on every write. It
 ## carries what the player has gathered and what they have changed in the
 ## world -- never anything that belongs to the leaderboard, to Firestore or
-## to an account: the preview runs as a guest with no account at all.
+## to an account. The two are deliberately independent: this file works
+## the same whether or not anyone is signed in, and it never reads Auth.
 ##
 ## =====================================================================
 ## SCHEMA v1
@@ -51,8 +52,8 @@ const SCHEMA_VERSION: int = 1
 ## How many nuts a climbable tree holds when full, and the wall-clock
 ## seconds it takes to grow ONE back. Two minutes: long enough that a tree
 ## reads as "spent" after a shake, short enough that a player who walks to
-## the next map and back finds it refilled -- tuned for a preview, not for
-## retention.
+## the next map and back finds it refilled -- tuned for the rhythm of one
+## session, not for retention.
 const TREE_CAPACITY: int = 3
 const TREE_RECHARGE_S: float = 120.0
 
@@ -229,8 +230,9 @@ func save_now() -> void:
 	file.store_string(JSON.stringify(_data))
 	file.close()
 
-## Wipes the save and the in-memory state. The preview menu's "remise à
-## zéro": a first launch, reproducible.
+## Wipes the save and the in-memory state. Behind DevTools.enabled() in
+## the menu ("Sauvegarde (dev) : zéro"), and unreachable for a player: a
+## first launch, reproducible, for whoever is validating one.
 func reset() -> void:
 	_data = _defaults()
 	_dirty = false

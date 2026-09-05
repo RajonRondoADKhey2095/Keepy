@@ -7,7 +7,8 @@ extends Node
 ## lazy recharge with a clock the probe controls, and reset().
 ##
 ## Runs against a throw-away path so it never touches the player's save.
-## Exit 0 = every assertion held; 1 = at least one failed (listed).
+## Exit 0 = every assertion held; 1 = at least one failed (listed);
+## ProbeWatchdog.EXIT_TIMEOUT = INCONCLUSIVE (ran out of wall clock).
 
 const SaveScript := preload("res://scripts/autoload/WorldSave.gd")
 var _fails: Array[String] = []
@@ -32,7 +33,11 @@ func _fresh() -> FakeClock:
 	return s
 
 func _ready() -> void:
-	get_tree().create_timer(20.0).timeout.connect(func(): print("V4SaveProbe: TIMEOUT"); get_tree().quit(9))
+	# FIRST statement, per ProbeWatchdog's contract. 60s, not the 900s
+	# default: this probe does no simulation at all -- it is file I/O and
+	# arithmetic, and it finishes in under a second. Anything approaching
+	# a minute here is a hang, not a slow machine.
+	ProbeWatchdog.arm(self, "V4 SAVE PROBE", 60.0)
 	var path := "user://v4_probe_world.json"
 	if FileAccess.file_exists(path):
 		DirAccess.remove_absolute(path)

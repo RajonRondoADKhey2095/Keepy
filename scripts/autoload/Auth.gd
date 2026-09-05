@@ -131,23 +131,6 @@ var _debug_boot_at := 0.0
 var _js_callback: JavaScriptObject = null
 var _poll_accum := 0.0
 
-## Set once by LoginScreen.gd when it takes the guest-preview bypass below
-## instead of waiting on a Google session. Never set any other way, and
-## never cleared: entering guest mode is a per-boot, one-way decision for
-## the lifetime of this tab. `is_signed_in()` is UNCHANGED by this flag on
-## purpose -- Leaderboard.gd / Quizz.gd / BattleStats.gd all gate their
-## Firestore writes on is_signed_in()/get_current_uid()/get_id_token(),
-## and a guest never has any of the three, so none of them attempt an
-## authenticated write. This flag exists only so a screen can show that a
-## guest is not the same thing as "not yet signed in".
-var _guest_mode := false
-
-## Domains where a Google session is expected to actually work and the
-## guest bypass below must therefore never trigger -- mirrors
-## KNOWN_AUTH_HOSTS in web/html_shell.html's resolveAuthDomain(). Anything
-## else that ends in ".vercel.app" is a throwaway preview deploy.
-const PROTECTED_HOSTS := ["keepy-staging.vercel.app", "keepy-ten.vercel.app"]
-
 func _ready() -> void:
 	if not OS.has_feature("web"):
 		# Desktop editor or any headless probe. Nothing below is meaningful
@@ -229,38 +212,6 @@ func get_id_token() -> String:
 
 func get_current_uid() -> String:
 	return _uid
-
-## True once LoginScreen.gd has taken the guest-preview bypass. See the
-## member above for why this never affects is_signed_in().
-func is_guest_mode() -> bool:
-	return _guest_mode
-
-## Marks this session as a guest. LoginScreen.gd is the only caller.
-func enter_guest_mode() -> void:
-	_guest_mode = true
-
-## True only on a "*.vercel.app" host that is neither keepy-staging nor
-## keepy-ten -- i.e. a throwaway preview deploy, never staging or
-## production. Reads the REAL runtime hostname through JavaScriptBridge on
-## every call, exactly like resolveAuthDomain() on the JS side; there is no
-## build-time flag anywhere in this decision, so the exact same exported
-## .pck answers false by itself if it is ever served from staging or prod.
-##
-## False off-web (`_available` is only set inside the `OS.has_feature("web")`
-## branch of _ready() -- see the file header), so this can never fire in the
-## editor or a desktop run either.
-func is_untrusted_preview_domain() -> bool:
-	if not _available:
-		return false
-	var raw = JavaScriptBridge.eval("window.location.hostname", true)
-	if raw == null:
-		return false
-	var hostname := str(raw).to_lower()
-	if hostname.is_empty():
-		return false
-	if not hostname.ends_with(".vercel.app"):
-		return false
-	return not PROTECTED_HOSTS.has(hostname)
 
 ## True once the browser side has settled, whether signed in or not.
 ## Off-web this stays false for ever, which is what keeps the login screen

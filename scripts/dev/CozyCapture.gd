@@ -8,8 +8,13 @@ extends Node
 ## `xvfb-run ... --rendering-driver opengl3` (never --headless: the dummy
 ## driver renders black and places every MultiMesh at the origin).
 ##
-## Own watchdog, no dependency on scripts/dev/ProbeWatchdog: a hard
-## quit after MAX_FRAMES whatever happens, plus the shell's `timeout`.
+## Bounded by ProbeWatchdog like everything else in this folder -- a wall
+## clock budget rendering INCONCLUSIVE (ProbeWatchdog.EXIT_TIMEOUT), not a
+## verdict -- AND by a frame ceiling of its own. The two catch different
+## things: the frame ceiling catches a capture that never comes because a
+## condition it waits for is never met, the wall clock catches a run that
+## stops producing frames at all (which under llvmpipe is the likelier of
+## the two).
 ##
 ## Args (after `--`):
 ##   --at=X,Z      put Keepy at (X, 0, Z) before capturing (default 0,0)
@@ -40,6 +45,10 @@ var _balloon: int = -1
 var _ball: bool = false
 
 func _ready() -> void:
+	# FIRST statement, per ProbeWatchdog's contract. The default 900s
+	# budget: this renders the whole hub under llvmpipe, which is the
+	# slowest thing this folder does.
+	ProbeWatchdog.arm(self, "COZY CAPTURE")
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--at="):
 			var parts := arg.substr(5).split(",")
@@ -82,8 +91,20 @@ func _process(_delta: float) -> void:
 	if _done:
 		return
 	if _frames >= MAX_FRAMES:
-		push_error("CozyCapture: watchdog fired at %d frames" % _frames)
-		get_tree().quit(2)
+		# Same WORD and same EXIT CODE as the wall-clock watchdog, on
+		# purpose: a caller must not have to learn two shapes of "this
+		# produced no result". Not routed through
+		# ProbeWatchdog.report_inconclusive() because that sentence is
+		# denominated in seconds and this ceiling is denominated in
+		# frames -- reusing it would print a wall-clock budget that was
+		# never the thing that expired.
+		print("")
+		print("COZY CAPTURE INCONCLUSIVE: %d frames without reaching the capture it" % _frames)
+		print("  was asked for (frame ceiling %d), and was stopped rather than left" % MAX_FRAMES)
+		print("  running. Nothing was captured, and nothing was refuted.")
+		print("")
+		push_error("CozyCapture: %d frames without a capture" % _frames)
+		get_tree().quit(ProbeWatchdog.EXIT_TIMEOUT)
 		return
 	if _frames == 2 and _weather_force >= 0:
 		var w: Node = _hub.get_node("WorldViewport/SubViewport/World/CozyWeather")

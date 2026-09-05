@@ -1,6 +1,6 @@
 extends PanelContainer
 class_name HubPerfOverlay
-## Carte-blanche v3 P0 -- the performance overlay of the preview build.
+## Carte-blanche v3 P0 -- what the DEVICE is doing, on the device.
 ##
 ## Shows, every frame, what the DEVICE is actually doing: FPS, the
 ## triangles and draw calls the SubViewport really rendered this frame,
@@ -22,8 +22,13 @@ class_name HubPerfOverlay
 ##
 ## The scene-wide total (`scene`) is the number every journal table so far
 ## has quoted; the frame numbers beside it are what this lot was asked to
-## replace it with. Display is gated by HubWorld on the same hostname test
-## as the guest bypass, so it never exists on staging or prod.
+## replace it with.
+##
+## Display is gated by HubWorld on DevTools.enabled(). That gate is what
+## keeps this file worth having past the branch that wrote it: the overlay
+## is reachable on staging AND on production, against the build that
+## actually shipped, by someone who asks for it in the URL -- and by no
+## one else. Measuring the device rather than the sandbox was the point.
 
 @export var viewport_path: NodePath
 @export var camera_path: NodePath

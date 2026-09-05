@@ -82,12 +82,14 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _fallback_button: Button = $FallbackButton
 @onready var _world_env: WorldEnvironment = $WorldViewport/SubViewport/World/WorldEnvironment
 @onready var _fallback_close: Button = $FallbackMenu/Panel/VBoxContainer/CloseButton
-## v2 weather: the forcing row (preview only) and the system it drives.
+## v2 weather: the forcing row (behind DevTools.enabled()) and the system
+## it drives, which runs for everyone.
 @onready var _weather: CozyWeather = $WorldViewport/SubViewport/World/CozyWeather
 @onready var _weather_overlay: ColorRect = $WeatherOverlay
 @onready var _weather_label: Label = $FallbackMenu/Panel/VBoxContainer/WeatherLabel
 @onready var _weather_row: HBoxContainer = $FallbackMenu/Panel/VBoxContainer/WeatherRow
-## v3 P0: the performance overlay (preview only) and its menu toggle.
+## v3 P0: the performance overlay (behind DevTools.enabled()) and its
+## menu toggle.
 @onready var _perf: HubPerfOverlay = $PerfOverlay
 ## v3: the transport network (balloon lines + the ball).
 @onready var _transport: HubTransport = $WorldViewport/SubViewport/World/Transport
@@ -95,7 +97,8 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _trees: HubTrees = $WorldViewport/SubViewport/World/Trees
 @onready var _nuts: HubNuts = $WorldViewport/SubViewport/World/Nuts
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
-## v4: the resource counter and the preview-only save reset.
+## v4: the resource counter (always shown -- it is part of the game) and
+## the save reset (behind DevTools.enabled()).
 @onready var _world_hud: WorldHud = $WorldHud
 @onready var _save_reset_button: Button = $FallbackMenu/Panel/VBoxContainer/SaveResetButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
@@ -106,7 +109,6 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _zipline_door: ZiplineDoor = $ZiplineDoor
 @onready var _camera: HubCamera = $WorldViewport/SubViewport/World/Camera3D
 @onready var _campfire: HubCampfire = $WorldViewport/SubViewport/World/Campfires
-@onready var _guest_badge: Control = $GuestBadge
 
 ## The 3D root, and the ONE reason this path is held: the impact splash is
 ## parented HERE and never under Props.
@@ -662,14 +664,6 @@ func _ready() -> void:
 	# a UI screen letterboxed at Chased's 9:16 would only gain black bars.
 	SafeArea.set_default()
 	SafeArea.fill_screen()
-
-	# Guest-preview bypass (5 sept 2026): LoginScreen.gd is the only place
-	# that ever calls Auth.enter_guest_mode(), and only on a throwaway
-	# *.vercel.app preview where Google sign-in is known broken. This badge
-	# is the only visible trace of that state -- nothing here changes what
-	# Leaderboard.gd / Quizz.gd / BattleStats.gd send, since those still
-	# gate on Auth.is_signed_in(), untouched by guest mode.
-	_guest_badge.visible = Auth.is_guest_mode()
 
 	_apply_swamp_palette()
 
@@ -3645,10 +3639,14 @@ const BEAR_SHELTER_NEAR: float = 1.2
 func _setup_weather() -> void:
 	_weather.set_overlay(_weather_overlay)
 	_weather.weather_changed.connect(_on_weather_changed)
-	# The forcing row is for device validation on the throwaway preview;
-	# the same hostname test that gates the guest bypass hides it on
-	# staging / prod. Also shown off-web (editor / sandbox captures).
-	var show: bool = Auth.is_untrusted_preview_domain() or not OS.has_feature("web")
+	# KEPT, and re-gated on DevTools.enabled() rather than on a preview
+	# hostname. Weather is a shipped mechanic whose whole cycle takes
+	# minutes of real time to come round; without a way to force it, the
+	# only device check available is to sit and wait for a sky that may
+	# never turn during the session. That is worth having on staging and
+	# on production -- but only for someone who typed the flag, never for
+	# a player who did not.
+	var show: bool = DevTools.enabled()
 	_weather_label.visible = show
 	_weather_row.visible = show
 	_weather_row.get_node("SunButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.SUN))
@@ -3912,8 +3910,25 @@ const LEAVES_PER_SHAKE_MAX: int = 9
 const LADYBUG_CHANCE: float = 0.3
 const GOLDEN_FIRST: int = 12
 const GOLDEN_EVERY: int = 19
-## For probes: a roll forced into [0, 1) replaces randf() for the ladybug.
-var force_ladybug_roll: float = -1.0
+## The draw behind the extras, in its OWN generator rather than the global
+## randf(). A RandomNumberGenerator seeds itself from the OS at creation,
+## so a player still gets an unpredictable ladybug; `set_extras_seed()`
+## makes the SAME draw repeatable for a probe.
+##
+## This replaces the `force_ladybug_roll` handle the carte-blanche branch
+## carried, and the difference is not cosmetic: that handle let a caller
+## dictate the OUTCOME, so a probe could make the shipped pacing say
+## something it would never say for a player. A seed cannot -- it only
+## fixes which draw the player would have got anyway, and every assertion
+## about the pacing itself goes through `shake_extras()`, which is static
+## and pure and takes the roll as an argument.
+var _extras_rng := RandomNumberGenerator.new()
+
+## Makes the extras draw repeatable from a known seed. See above for why
+## this is the whole of the injection: there is no way in here to force a
+## ladybug that LADYBUG_CHANCE would not have given.
+func set_extras_seed(value: int) -> void:
+	_extras_rng.seed = value
 
 ## The extra kinds shake number `shakes` (after counting this one) drops,
 ## given `roll` in [0, 1). Pure, so a probe can walk the pacing.
@@ -3940,7 +3955,7 @@ func _shake_tree() -> void:
 	_trees.refresh_stock(index)
 	var geometry: Array = _trees.drop_geometry(index)
 	# v5: the extras, decided now (the roll is consumed once per shake).
-	var roll: float = force_ladybug_roll if force_ladybug_roll >= 0.0 else randf()
+	var roll: float = _extras_rng.randf()
 	kinds.append_array(shake_extras(int(WorldSave.stats().get("shakes", 0)), roll))
 	var leaves: int = randi_range(LEAVES_PER_SHAKE_MIN, LEAVES_PER_SHAKE_MAX)
 	var style: Array = _trees.leaf_style(index)
@@ -3954,35 +3969,49 @@ func nuts() -> HubNuts:
 	return _nuts
 
 ## ---- v3 P0: performance overlay ---------------------------------------
-## Same gate as the weather row and the guest bypass: an untrusted preview
-## hostname, or off-web (sandbox captures). Shown by default there -- the
-## whole point is that the device reports its numbers without being asked
-## -- and the menu button hides it.
+## KEPT past the branch that introduced it: FPS / draw calls / primitives
+## on the real device against the real build is a standing gap in this
+## project, not a carte-blanche convenience, and CLAUDE.md's own rule that
+## a number is measured rather than copied applies to frame cost as much
+## as to geometry. Behind DevTools.enabled() it is reachable on staging
+## AND production -- which is where the numbers that matter live -- and
+## invisible to anyone who did not ask for it.
+##
+## Shown by DEFAULT once the gate is open, because the point is that the
+## device reports its numbers without being asked; the menu button hides
+## it again.
 func _setup_perf() -> void:
-	var show: bool = Auth.is_untrusted_preview_domain() or not OS.has_feature("web")
+	var show: bool = DevTools.enabled()
 	_perf.visible = show
 	_perf_button.visible = show
-	_perf_button.text = "Perf (preview) : ON" if show else "Perf (preview) : OFF"
+	_perf_button.text = "Perf (dev) : ON" if show else "Perf (dev) : OFF"
 	_perf_button.pressed.connect(_on_perf_toggled)
 
 ## ---- v4 P0: the world save and its counter --------------------------------
-## The reset row sits behind the SAME gate as the weather row and the perf
-## overlay (untrusted preview hostname, or off-web): it exists so a first
-## launch can be replayed on device, and nowhere else. The HUD itself is
-## always shown -- it is part of the game, not of the preview.
+## KEPT behind the SAME gate, and it is the one of the three whose cost of
+## being wrong is real: reset() wipes the player's world, irreversibly.
+## What earns it a place anyway is that replaying a FIRST LAUNCH on device
+## is otherwise impossible -- a browser save cannot be cleared from inside
+## the game any other way, and "delete site data" also takes the Google
+## session with it. Behind DevTools.enabled() no player can reach the
+## button at all, which is a stronger guarantee than the confirmation
+## dialog a visible version of it would have needed.
+##
+## The HUD itself is always shown: it is part of the game, not of the
+## developer tools.
 func _setup_world_hud() -> void:
-	var show: bool = Auth.is_untrusted_preview_domain() or not OS.has_feature("web")
+	var show: bool = DevTools.enabled()
 	_save_reset_button.visible = show
 	_save_reset_button.pressed.connect(_on_save_reset)
 
 func _on_save_reset() -> void:
 	WorldSave.reset()
-	_save_reset_button.text = "Sauvegarde (preview) : remise à zéro"
+	_save_reset_button.text = "Sauvegarde (dev) : remise à zéro"
 	_fallback_menu.visible = false
 
 func _on_perf_toggled() -> void:
 	_perf.visible = not _perf.visible
-	_perf_button.text = "Perf (preview) : ON" if _perf.visible else "Perf (preview) : OFF"
+	_perf_button.text = "Perf (dev) : ON" if _perf.visible else "Perf (dev) : OFF"
 
 ## For probes: the overlay's current readings.
 func perf_snapshot() -> Dictionary:

@@ -82,20 +82,6 @@ func _ready() -> void:
 	if Auth.is_signed_in():
 		_go_to_hub()
 		return
-
-	if Auth.is_untrusted_preview_domain():
-		# Guest-preview bypass (5 sept 2026): signInWithRedirect() is known
-		# broken on a throwaway *.vercel.app preview -- storage partitioning
-		# strips the redirect result on the way back through the
-		# firebaseapp.com iframe, so is_signed_in() would never become true
-		# here no matter how long this screen waits. Auth.gd already refuses
-		# this on keepy-staging.vercel.app and keepy-ten.vercel.app by
-		# reading the real hostname each time, so this branch is unreachable
-		# there by construction, not by convention.
-		Auth.enter_guest_mode()
-		_go_to_hub()
-		return
-
 	_refresh_from_auth()
 
 func _on_auth_state_changed(signed_in: bool) -> void:
