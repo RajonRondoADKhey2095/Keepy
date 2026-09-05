@@ -579,3 +579,32 @@ Une première mesure du rayon haut « sur l'anneau du sommet » lisait 0,47-0,50
 **Coût** : rien au repos (les feuilles vivent ~6 s, la coccinelle ≤ 12 s) ; +5 GLB pour 20 Ko dans le `.pck`.
 
 **Non fait, assumé** : pas de son ; la coccinelle ne fuit pas les autres acteurs (ours, blaireau) ; une coccinelle qu'on arrête de chasser oublie qu'elle a eu peur (la fuite est une fonction de la distance, sans mémoire) ; le gland doré n'a pas d'usage — c'est une pièce de collection, jusqu'au craft.
+
+## RÉCOLTE v5 — ce qui mérite un lot cadré vers `staging`, ce qui est à jeter, et l'avis franc sur la prochaine session
+
+**Ce que je rejouerais EN PREMIER de la v5 : le registre publié + `measure_kind`.** Trois lignes dans `HubBuilder._batch_prop`, trois dans `CozyScatter._add`, et une fonction statique de 60 lignes qui lit un GLB comme un objet grimpable (tronc, conicité, inclinaison, dôme, rayon de couronne). C'est ce qui a transformé « 5 props spéciaux » en « une capacité du personnage » sans un seul nœud dessiné de plus, et c'est réutilisable tel quel pour tout ce qui voudra un jour désigner une instance de MultiMesh (poser une plante au pied d'un arbre, cueillir sur un buisson, un oiseau qui se pose). Le lot cadré doit rejouer `V4ClimbProbe --list` (registre + rayon) et **une capture de flanc** — la montée a été fausse deux fois sur capture avant d'être juste, et aucune relecture ne l'aurait vu.
+
+**À rejouer proprement, par ordre de valeur / risque.**
+1. **Le registre + `measure_kind` + les gates** (ci-dessus). À régler sur device : `SEAT_MAX_Y` 4,85 (la tête à 0,4 u du bord haut du cadre), `DECOR_TAP_MARGIN` 0,55 (un tap sur le chemin à côté d'un tronc doit rester une marche).
+2. **Le tap par rayon** (`tree_hit`, 40 lignes de maths pures + 5 assertions). C'est la première fois dans ce dépôt qu'un prop est visé par ce que le joueur VOIT plutôt que par la projection au sol de son doigt ; la doctrine CLAUDE.md « le tap lit `aim` » reste vraie (le rayon EST l'aim, en 3D). Risque device : un tap sur la couronne d'un arbre qui masque un portail derrière lui grimpe l'arbre — c'est voulu (on tape ce qu'on voit), à confirmer.
+3. **La montée sur le flanc de couronne** (`_tree_r` ellipsoïde, `_tree_surface_tilt_deg`, `top_y` par spec). ~40 lignes dans KeepyHopper, aucun état nouveau, le perchoir inchangé (14/14 identiques). À régler sur device : `TREE_SURFACE_TILT_MAX_DEG` 20 et `CROWN_STOP` 0,85.
+4. **Les noisettes batchées par cellule** (+14 calls, +472 prims au spawn) — le patron « slots cachés garés sous terre à l'échelle 0,001 » vaut pour tout MultiMesh dont l'effectif varie sans réallocation.
+5. **La coccinelle** : 90 lignes dans HubNuts, un GLB, un compteur. C'est la mécanique la plus « jeu » de la branche depuis la secousse : une chose qui réagit au joueur. À régler sur device : `LADYBUG_FLEE` 2,6 (trop lent = pas de chasse, trop vite = frustration) et `LADYBUG_LIFE_S` 9.
+6. **Les feuilles et le gland doré** : gratuits, additifs, rien à décider.
+
+**À jeter ou à refaire autrement.**
+- **Les cinq perchoirs** gardent leurs noisettes en nœuds enfants (15 `MeshInstance3D`) pendant que 48 arbres les ont en batch : deux chemins pour une chose. Un lot cadré doit basculer les perchoirs dans les batches aussi (ou l'inverse), pas garder les deux.
+- **Le pas caché sous le surplomb** (0,3 s au pied d'un arbre rond, Keepy invisible derrière la couronne depuis cette caméra) : accepté ce soir, mais si Mathieu le lit comme un trou, la réponse est de faire partir la montée du flanc dès le pied (première prise à l'équateur, sans tronc) — pas de bouger la caméra.
+- **`force_ladybug_roll`** et `WorldSave._data["stats"]["shakes"]` écrits en direct par la sonde : deux poignées de test dans du code livré. Le lot cadré les remplace par un `RandomNumberGenerator` injecté.
+- **`--showcase`** de `V4ClimbProbe` : une sonde de nuit (elle ne gate rien). À supprimer avec la branche.
+- **Doctrine à consigner si un lot cadré passe** (CLAUDE.md non touché) : (a) *un `Node3D` porteur ne porte JAMAIS l'échelle de l'instance qu'il représente* — tout offset en unités personnage (gap, sway, pied) serait multiplié par elle à travers `to_global` ; (b) *le tronc d'un arbre rond est invisible depuis la caméra du hub* (la couronne le recouvre pour tout rayon montant à 40°) — toute chorégraphie « sur le tronc » d'un arbre à houppier plein est une chorégraphie hors champ ; (c) *un `tint` de shader qui multiplie la couleur de sommet ne peut pas recolorer vers une autre teinte* — il assombrit ou éclaircit dans la teinte du sommet, d'où des GLB par couleur.
+
+**L'avis franc sur la prochaine session.** Pas la plantation, pas la pêche : **un lot vers `staging`**. La branche cozy porte maintenant cinq nuits (palette, météo, trois maps, transport, sauvegarde, grimper, récolte) dont **rien** n'a été validé autrement que sur la preview, et chaque nuit rend le rejeu plus cher — la v5 s'appuie sur la v4 qui s'appuie sur la v3. Le premier lot cadré devrait être le TRONC, dans cet ordre : `WorldSave` + `WorldHud` (39 → 45 assertions déjà écrites) → l'overlay de perf (qui rend tout le reste décidable) → `ON_TREE` + le registre + la secousse + les fruits (V4ClimbProbe, 3 scénarios + capture de flanc) — sans la palette ni la météo, qui sont des décisions de direction artistique à prendre à part. Si Mathieu préfère continuer sur la preview, alors **la plantation avant la pêche** : le schéma est prêt (`next_id`/`placed` réservés ce soir), le patron « horloge murale paresseuse » de `tree_stock` est exactement celui d'une plante qui pousse (`{stage, at}`), et le registre d'instances de ce soir donne déjà « poser au pied de cet arbre ». La pêche, elle, exige une interaction avec l'eau qui n'existe pas et un nouveau patron de ride.
+
+## Preuves de déploiement v5 sur le service (une lecture par checkpoint, jamais de polling)
+
+| checkpoint | sha | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|
+| P1 | `9737003` (push 10:55:08) | `1788605974` → 10:59:34 | 11:09:24, `x-vercel-cache: MISS`, `age: 0` |
+| P2 | `c681947` (push 11:21:04) | `1788607539` → 11:25:39 | 11:27:07, `x-vercel-cache: MISS`, `age: 0` |
+| journal (récolte + preuves) | ce commit | même arbre de jeu (doc seule) | — |
