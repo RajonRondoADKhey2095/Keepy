@@ -44,6 +44,18 @@ const MOOR_EDGE_W: float = 3.0
 const ROW_VIOLET: Color = Color(0.50, 0.32, 0.72)
 const ROW_SOIL: Color = Color(0.78, 0.70, 0.54)
 const ROW_PITCH: float = 2.4
+## v7: the circuit's lawn (the ground shader's fourth band) and the
+## colours the track builder reads. Warm packed earth for the ribbon --
+## asphalt would be the one dark plane in a VOIE A world -- red/white
+## kerbs on the corners, and a cream line. All albedo, all unlit.
+const CIRCUIT_EDGE_Z: float = -132.0
+const CIRCUIT_EDGE_W: float = 3.0
+const LAWN_A: Color = Color(0.58, 0.82, 0.40)
+const LAWN_B: Color = Color(0.50, 0.75, 0.35)
+const TRACK: Color = Color(0.74, 0.60, 0.44)
+const TRACK_EDGE: Color = Color(0.93, 0.90, 0.80)
+const KERB_RED: Color = Color(0.90, 0.30, 0.26)
+const KERB_WHITE: Color = Color(0.96, 0.95, 0.90)
 const LAVENDER_FIELDS: Array[Vector4] = [
 	Vector4(-32.0, -120.0, -8.0, -100.0),
 	Vector4(-30.0, -97.0, -10.0, -89.0),
@@ -245,6 +257,10 @@ static func ground_material() -> ShaderMaterial:
 		mat.set_shader_parameter("row_pitch", ROW_PITCH)
 		for k in 3:
 			mat.set_shader_parameter("field_%d" % k, LAVENDER_FIELDS[k])
+		mat.set_shader_parameter("circuit_edge_z", CIRCUIT_EDGE_Z)
+		mat.set_shader_parameter("circuit_edge_w", CIRCUIT_EDGE_W)
+		mat.set_shader_parameter("lawn_a", LAWN_A)
+		mat.set_shader_parameter("lawn_b", LAWN_B)
 		_ground = mat
 	return _ground
 

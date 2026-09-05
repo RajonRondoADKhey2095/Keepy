@@ -174,6 +174,8 @@ signal tapped_tree(point: Vector3, index: int)
 ## (the boat's terms), so a tap meanwhile falls through to tapped_ground
 ## and reaches the state branch that owns it.
 signal tapped_critter(point: Vector3, kind: StringName, index: int)
+## v7: the parked kart. Withdrawn through HubKarting for the drive.
+signal tapped_kart(point: Vector3)
 
 ## The three nodes this needs, as scene-authored paths.
 ##
@@ -212,6 +214,10 @@ signal tapped_critter(point: Vector3, kind: StringName, index: int)
 ## is on through its node (HubTrees.accepts_tap), never through a flag.
 @export var trees_path: NodePath
 @export var critters_path: NodePath
+## Carte-blanche v7: the karting coordinator. Optional. Withdraws the kart
+## for the length of a drive, and while it drives NO point is handled
+## here at all -- the touch belongs to KartTouchInput.
+@export var karting_path: NodePath
 
 var camera: Camera3D = null
 var container: SubViewportContainer = null
@@ -221,6 +227,7 @@ var zipline: ZiplineDoor = null
 var transport: HubTransport = null
 var trees: HubTrees = null
 var critters: HubCritters = null
+var karting: HubKarting = null
 
 ## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
@@ -297,10 +304,15 @@ func _ready() -> void:
 	transport = get_node_or_null(transport_path) as HubTransport
 	trees = get_node_or_null(trees_path) as HubTrees
 	critters = get_node_or_null(critters_path) as HubCritters
+	karting = get_node_or_null(karting_path) as HubKarting
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
 func _unhandled_input(event: InputEvent) -> void:
+	# v7: while the kart is driven the screen is a steering wheel, not a
+	# map. Not handled, so KartTouchInput sees it whichever runs first.
+	if karting != null and karting.is_driving():
+		return
 	var touch := event as InputEventScreenTouch
 	if touch:
 		if not touch.pressed:
@@ -432,6 +444,11 @@ func _handle_point(screen_point: Vector2) -> void:
 	# withdrawing on its own terms for the length of its ride. Asked after
 	# the trees: the boar rests in the hollow, metres from any crown, so
 	# the order between them cannot decide anything.
+	# v7: the kart, on `aim`, before the inhabitants (the grid is in the
+	# circuit, metres from every animal; the order cannot decide).
+	if karting != null and karting.accepts_tap(aim):
+		tapped_kart.emit(destination)
+		return
 	if critters != null:
 		var critter_hit: Dictionary = critters.accepts_tap(aim)
 		if not critter_hit.is_empty():
