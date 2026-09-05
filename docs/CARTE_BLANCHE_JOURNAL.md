@@ -1028,3 +1028,13 @@ Le feu de camp : 3 rouges au premier passage, 9 au second (machine chargée par 
 **Avis franc sur la prochaine session** : ne pas ajouter de mécanique. Faire tester Mathieu, lire ses trois chiffres (rang moyen sur 3 courses, tour le plus rapide, ressenti du rappel), et régler `PROFILES` + `RUBBER_*` sur ces chiffres — c'est un lot d'une heure, pas d'une nuit. Le son vient ensuite, avant toute quatrième zone.
 
 **Doctrine candidate pour `CLAUDE.md`** — écrite dans `CLAUDE.md` cette fois (deux pièges silencieux, chacun payé sur device ou par capture) : *après `set_anchors_preset()`, `position` est un offset depuis l'ancre* ; *un mot de convention de côté (« droite de la marche ») ne vaut rien tant qu'une capture ne l'a pas lu*.
+
+## Preuves de déploiement V8 sur le service (une lecture par déploiement, jamais de polling)
+
+| checkpoint | sha (`staging`) | push | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|---|
+| P0 — HUD | `3f0d755` | 20:43:05 | `1788641254` → **20:47:34** | 20:56:13, `MISS`, `age: 0` (avant : `1788637649` / 19:54, V7b) |
+| P1+P3 — adversaires + piste | `dd9e3b5` | 21:14:11 | run **annulé** par le push P2 six minutes plus tard (`cancel-in-progress`, doctrine) — jamais servi seul, assumé | lectures 21:15–21:21 : encore `1788641254` en `HIT` (copie de bord remplie par ma propre lecture P0) — refusées comme mesure |
+| P2 — échelle (arbre final `151c73a`) | `8e08530` | ~21:20 | `1788643519` → **21:25:19** | 21:27:13, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 21:27:13 |
+
+Le commit de documentation qui suit (journal, `CLAUDE.md`, index) ne change aucune ressource Godot : son run n'est pas relu, c'est assumé.
