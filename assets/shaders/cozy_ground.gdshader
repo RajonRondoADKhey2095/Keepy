@@ -45,6 +45,9 @@ void fragment() {
 	vec3 col = mix(grass_b, grass_a, smoothstep(0.35, 0.52, big));
 	col = mix(col, grass_c, smoothstep(0.56, 0.72, big));
 	col *= 1.0 + (small - 0.5) * 2.0 * detail_amount;
+	// Fine mottle (grass clumps) close to the camera; mipmapped away far.
+	float fine = texture(noise_tex, p / 1.7 + vec2(0.13, 0.91)).r;
+	col *= 1.0 + (fine - 0.5) * 0.12;
 	if (dirt_amount > 0.0) {
 		float d = smoothstep(0.62, 0.72, texture(noise_tex, p / (patch_scale * 0.7) + vec2(0.8, 0.2)).r);
 		col = mix(col, dirt, d * dirt_amount);

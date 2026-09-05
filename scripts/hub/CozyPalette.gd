@@ -33,14 +33,15 @@ const SUN_DIR: Vector3 = Vector3(0.35, 0.80, 0.45)
 const LIT: float = 1.06
 const SHADE: float = 0.78
 const SHADE_TINT: Color = Color(0.84, 0.91, 1.0)
+const BAND_SOFTNESS: float = 0.28
 const RIM_STRENGTH: float = 0.20
 const RIM_COLOR: Color = Color(1.0, 0.97, 0.85)
 
 ## Landmark recolours (their shapes stay: they are orientation cues).
 const LANDMARK_SPIRE_TRUNK: Color = Color(0.42, 0.29, 0.19)
 const LANDMARK_SPIRE_CROWN: Color = Color(0.30, 0.62, 0.42)
-const LANDMARK_CAIRN_STONE: Color = Color(0.72, 0.70, 0.64)
-const LANDMARK_CAIRN_CAP: Color = Color(0.84, 0.82, 0.74)
+const LANDMARK_CAIRN_STONE: Color = Color(0.66, 0.60, 0.52)
+const LANDMARK_CAIRN_CAP: Color = Color(0.76, 0.70, 0.60)
 const LANDMARK_SLAB_STONE: Color = Color(0.66, 0.72, 0.60)
 const LANDMARK_SLAB_BASE: Color = Color(0.56, 0.60, 0.48)
 
@@ -53,11 +54,19 @@ const ISLET: Color = Color(0.86, 0.78, 0.56)
 
 const DECOR_SHADER: Shader = preload("res://assets/shaders/cozy_decor.gdshader")
 const GROUND_SHADER: Shader = preload("res://assets/shaders/cozy_ground.gdshader")
+const WATER_SHADER: Shader = preload("res://assets/shaders/cozy_water.gdshader")
+const SHADOW_SHADER: Shader = preload("res://assets/shaders/cozy_shadow.gdshader")
+const WATER_SHALLOW: Color = Color(0.50, 0.82, 0.88, 0.80)
+const WATER_DEEP: Color = Color(0.38, 0.74, 0.85, 0.86)
+const WATER_FOAM: Color = Color(0.96, 0.99, 1.0)
 
 static var _decor_static: ShaderMaterial = null
 static var _decor_wind: Dictionary = {}
 static var _decor_tinted: Dictionary = {}
 static var _ground: ShaderMaterial = null
+static var _noise: NoiseTexture2D = null
+static var _water: Dictionary = {}
+static var _shadow: ShaderMaterial = null
 static var _meshes: Dictionary = {}
 
 ## The decor material without wind. One instance shared by every batch.
@@ -91,6 +100,7 @@ static func _make_decor(wind_amount: float, wind_height: float) -> ShaderMateria
 	mat.set_shader_parameter("lit", LIT)
 	mat.set_shader_parameter("shade", SHADE)
 	mat.set_shader_parameter("shade_tint", SHADE_TINT)
+	mat.set_shader_parameter("band_softness", BAND_SOFTNESS)
 	mat.set_shader_parameter("rim_strength", RIM_STRENGTH)
 	mat.set_shader_parameter("rim_color", RIM_COLOR)
 	mat.set_shader_parameter("haze_color", HAZE)
@@ -100,8 +110,11 @@ static func _make_decor(wind_amount: float, wind_height: float) -> ShaderMateria
 	mat.set_shader_parameter("wind_height", wind_height)
 	return mat
 
-static func ground_material() -> ShaderMaterial:
-	if _ground == null:
+## One seamless 256x256 simplex texture, shared by the ground and the
+## water: a texture fetch is what a mobile GPU is fast at, a procedural
+## noise in the fragment shader is not.
+static func noise_texture() -> NoiseTexture2D:
+	if _noise == null:
 		var noise := FastNoiseLite.new()
 		noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 		noise.seed = 20260905
@@ -112,9 +125,39 @@ static func ground_material() -> ShaderMaterial:
 		tex.height = 256
 		tex.seamless = true
 		tex.noise = noise
+		_noise = tex
+	return _noise
+
+## Water material for a disc of model-space `radius` (foam rim), or a
+## ribbon when 0. `two_sided` for the stream, whose ribbon is one-sided
+## geometry the old material drew with culling off.
+static func water_material(radius: float, two_sided: bool = false) -> ShaderMaterial:
+	var key := "%0.3f/%s" % [radius, two_sided]
+	if not _water.has(key):
+		var mat := ShaderMaterial.new()
+		mat.shader = WATER_SHADER
+		mat.set_shader_parameter("noise_tex", noise_texture())
+		mat.set_shader_parameter("shallow", WATER_SHALLOW)
+		mat.set_shader_parameter("deep", WATER_DEEP)
+		mat.set_shader_parameter("foam", WATER_FOAM)
+		mat.set_shader_parameter("radius", radius)
+		mat.set_shader_parameter("haze_color", HAZE)
+		mat.set_shader_parameter("haze_density", HAZE_DENSITY)
+		mat.set_shader_parameter("haze_start", HAZE_START)
+		_water[key] = mat
+	return _water[key]
+
+static func shadow_material() -> ShaderMaterial:
+	if _shadow == null:
+		_shadow = ShaderMaterial.new()
+		_shadow.shader = SHADOW_SHADER
+	return _shadow
+
+static func ground_material() -> ShaderMaterial:
+	if _ground == null:
 		var mat := ShaderMaterial.new()
 		mat.shader = GROUND_SHADER
-		mat.set_shader_parameter("noise_tex", tex)
+		mat.set_shader_parameter("noise_tex", noise_texture())
 		mat.set_shader_parameter("grass_a", GRASS_A)
 		mat.set_shader_parameter("grass_b", GRASS_B)
 		mat.set_shader_parameter("grass_c", GRASS_C)

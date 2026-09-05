@@ -26,7 +26,7 @@ uniform vec3 sun_dir = vec3(0.35, 0.80, 0.45);
 // blend between them (0 = hard edge).
 uniform float lit = 1.06;
 uniform float shade = 0.80;
-uniform float band_softness = 0.08;
+uniform float band_softness = 0.28;
 // Ambient sky tint for the shadow side (a touch of cool in the shade is
 // what makes a flat colour read as a lit form).
 uniform vec3 shade_tint : source_color = vec3(0.86, 0.92, 1.0);

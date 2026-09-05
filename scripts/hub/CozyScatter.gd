@@ -64,6 +64,8 @@ func _ready() -> void:
 	_scatter_ground_cover()
 	_forest_wall()
 	_flush()
+	_blob_shadows()
+	_hills()
 
 ## Swaps the flat ground material for the cozy ground shader. The Ground
 ## node is a sibling owned by HubWorld.tscn; only its material changes.
@@ -212,6 +214,119 @@ func _wall_kind(p: Vector3, kinds: Array) -> String:
 	var base: int = posmod(hash(_wall_sector(p)), kinds.size())
 	var pick: int = (base + (_rng.randi_range(0, 1) * 3)) % kinds.size()
 	return kinds[pick]
+
+## Blob shadows under everything that stands: the layout's trees, bushes,
+## rocks, stumps and landmarks (read from the layout, the same reading
+## ground_footprints() makes) and this file's own wall trees and extra
+## bushes / rocks. One MultiMesh of 2-triangle quads, alpha-blended,
+## offset a little away from the sun so they read as cast rather than
+## painted.
+const SHADOW_RADIUS: Dictionary = {
+	&"tree": 1.25, &"bush": 0.80, &"rock": 0.75, &"stump": 0.55, &"landmark": 1.7,
+}
+const SHADOW_Y: float = 0.02
+const SHADOW_OFFSET: Vector2 = Vector2(-0.22, -0.28)
+
+var _shadow_xforms: Array[Transform3D] = []
+
+func _shadow_at(p: Vector3, radius: float) -> void:
+	var basis := Basis().scaled(Vector3(radius * 2.0, 1.0, radius * 2.0))
+	var origin := Vector3(p.x + SHADOW_OFFSET.x * radius, SHADOW_Y, p.z + SHADOW_OFFSET.y * radius)
+	_shadow_xforms.append(Transform3D(basis, origin))
+
+func _blob_shadows() -> void:
+	if _builder.layout != null:
+		for entry in _builder.layout.props:
+			var type: StringName = entry.get("type", &"")
+			if not SHADOW_RADIUS.has(type):
+				continue
+			var where: Vector3 = entry.get("position", Vector3.ZERO)
+			# Islet landmarks stand on water: their disc would float on the
+			# lake. Landmarks flagged offshore are skipped.
+			if entry.get("offshore", false):
+				continue
+			_shadow_at(Vector3(where.x, 0.0, where.z), float(SHADOW_RADIUS[type]) * float(entry.get("scale", 1.0)))
+	for key in _batch_order:
+		var batch: Dictionary = _batches[key]
+		var family: String = batch["family"]
+		var radius := 0.0
+		match family:
+			"wall_near": radius = 1.25
+			"wall_far": radius = 1.25
+			"bush": radius = 0.8
+			"rock": radius = 0.75
+			_: continue
+		for xform in batch["xforms"]:
+			var t: Transform3D = xform
+			_shadow_at(t.origin, radius * t.basis.get_scale().x)
+	if _shadow_xforms.is_empty():
+		return
+	var quad := PlaneMesh.new()
+	quad.size = Vector2(1.0, 1.0)
+	var multi := MultiMesh.new()
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = quad
+	multi.instance_count = _shadow_xforms.size()
+	var bounds := AABB()
+	for i in _shadow_xforms.size():
+		multi.set_instance_transform(i, _shadow_xforms[i])
+		var box := _shadow_xforms[i] * quad.get_aabb()
+		bounds = box if i == 0 else bounds.merge(box)
+	multi.custom_aabb = bounds.grow(0.1)
+	var node := MultiMeshInstance3D.new()
+	node.name = "BlobShadows"
+	node.multimesh = multi
+	node.material_override = CozyPalette.shadow_material()
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(node)
+	_stats["shadows"] = _shadow_xforms.size()
+
+## Distant rounded hills behind the forest wall: the horizon band at the
+## top of the frame reads as a landscape instead of a flat sky colour.
+## Squashed spheres, toon-tinted, mostly dissolved by the haze -- what is
+## left is a soft silhouette, which is the point. South of z = 50 nothing.
+const HILL_COUNT: int = 26
+const HILL_COLOR: Color = Color(0.60, 0.80, 0.50)
+
+func _hills() -> void:
+	var sphere := SphereMesh.new()
+	sphere.radius = 1.0
+	sphere.height = 2.0
+	sphere.radial_segments = 14
+	sphere.rings = 7
+	var multi := MultiMesh.new()
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = sphere
+	var xforms: Array[Transform3D] = []
+	var rng := RandomNumberGenerator.new()
+	rng.seed = SEED + 7
+	var tries := 0
+	while xforms.size() < HILL_COUNT and tries < HILL_COUNT * 20:
+		tries += 1
+		var a := rng.randf_range(0.0, TAU)
+		var r := rng.randf_range(78.0, 118.0)
+		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
+		if p.z > 50.0:
+			continue
+		var sx := rng.randf_range(22.0, 40.0)
+		var sy := rng.randf_range(7.0, 13.0)
+		var sz := rng.randf_range(18.0, 34.0)
+		var basis := Basis.from_euler(Vector3(0.0, rng.randf_range(0.0, TAU), 0.0)).scaled(Vector3(sx, sy, sz))
+		xforms.append(Transform3D(basis, Vector3(p.x, -sy * 0.35, p.z)))
+	multi.instance_count = xforms.size()
+	var bounds := AABB()
+	for i in xforms.size():
+		multi.set_instance_transform(i, xforms[i])
+		var box := xforms[i] * sphere.get_aabb()
+		bounds = box if i == 0 else bounds.merge(box)
+	multi.custom_aabb = bounds
+	var node := MultiMeshInstance3D.new()
+	node.name = "Hills"
+	node.multimesh = multi
+	node.material_override = CozyPalette.decor_material_tinted(HILL_COLOR)
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(node)
+	_stats["hills"] = xforms.size()
 
 ## True when any point within `radius` of p is walkable: eight samples on
 ## the circle plus the centre. Cheap, and conservative enough for a wall.

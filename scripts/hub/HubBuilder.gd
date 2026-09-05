@@ -1752,7 +1752,11 @@ func _batch_prop(type: StringName, entry: Dictionary, placement: Transform3D) ->
 			# Carte-blanche: one Blender-built GLB per tree (trunk and canopy
 			# in one mesh, vertex-coloured), variant picked from the entry's
 			# own position so a layout edit moves only the tree it edited.
-			_instance(_cozy_tree_key(entry), placement.scaled_local(Vector3.ONE * COZY_TREE_SCALE))
+			var tree_key := _cozy_tree_key(entry)
+			# The conifer GLB stands 4.9 u against 3.4-3.9 for the round ones;
+			# scaled down so a layout entry keeps roughly the height it had.
+			var tree_scale: float = COZY_TREE_SCALE * (0.72 if COZY_TREE_FILES[int(String(tree_key).substr(8))] == "tree_4_conifer" else 1.0)
+			_instance(tree_key, placement.scaled_local(Vector3.ONE * tree_scale))
 		&"rock":
 			var rock_at := _distorted(placement, entry)
 			_instance(_cozy_key("CozyRock", entry, COZY_ROCK_VARIANTS), rock_at)
@@ -1845,8 +1849,8 @@ const COZY_BUSH_VARIANTS: int = 3
 const COZY_FLOWER_VARIANTS: int = 4
 ## Tree GLB per key, weighted toward the round silhouette.
 const COZY_TREE_FILES: Array[String] = [
-	"tree_0_round", "tree_1_round", "tree_2_round", "tree_5_round",
-	"tree_0_round", "tree_2_round", "tree_3_tall", "tree_4_conifer",
+	"tree_7_hi", "tree_8_hi", "tree_9_hi", "tree_10_hi",
+	"tree_7_hi", "tree_9_hi", "tree_3_tall", "tree_4_conifer",
 ]
 
 func _cozy_key(prefix: String, entry: Dictionary, variants: int) -> StringName:
@@ -2274,11 +2278,10 @@ func _make_water_body(water_radius: float, bank_radius: float, segments: int, wa
 	water.radial_segments = segments
 	water.rings = 1
 	var surface := _mesh_node(water, water_colour, Vector3(0.0, water_slab.y, 0.0))
-	var material := surface.get_surface_override_material(0) as StandardMaterial3D
-	# Alpha blending, and it has to be asked for: albedo_color's alpha
-	# channel is ignored entirely while transparency stays at DISABLED, so
-	# the water would render as flat opaque teal with no error to say so.
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# Carte-blanche: the flat alpha disc becomes the rippling cozy water
+	# shader; `water_radius` is the model-space radius its foam rim reads.
+	# Alpha-blended like the material it replaces (the bank shows through).
+	surface.set_surface_override_material(0, CozyPalette.water_material(water_radius))
 	root.add_child(surface)
 	return root
 
@@ -2431,12 +2434,17 @@ func _make_stream(entry: Dictionary) -> Node3D:
 	var node := MeshInstance3D.new()
 	node.mesh = tool.commit()
 	var material := _unshaded(STREAM_WATER_COLOR)
+	# Carte-blanche: the ribbon gets the cozy water shader too (radius 0 =
+	# no foam rim); the StandardMaterial3D below is kept as the documented
+	# fallback and simply not assigned.
+	node.set_surface_override_material(0, CozyPalette.water_material(0.0, true))
 	# Same trap the ponds hit: albedo_color's alpha is ignored entirely
 	# while transparency stays DISABLED, and the stream would render as
 	# flat opaque cyan with no error to say so.
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	node.set_surface_override_material(0, material)
+	if node.get_surface_override_material(0) == null:
+		node.set_surface_override_material(0, material)
 	return node
 
 ## An open nutshell, floating in the stream.
