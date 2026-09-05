@@ -154,3 +154,12 @@ lot de fusion).
 le mode caméra et la bascule marche↔conduite ne bougent pas. Si le lot 2
 doit toucher l'un de ces cinq fichiers pour autre chose qu'une constante,
 c'est que ce lot-ci a raté quelque chose — à consigner ici si ça arrive.
+
+## LOT 2 (V8, 5 sept 2026) — ce que le contrat a réellement coûté
+
+Le lot 2 a touché deux des cinq fichiers du contrat au-delà d'une constante, et c'est consigné ici comme demandé :
+
+* **`KartBody`** : `bump(strength)`, 12 lignes — expose le canal `_bump` que la clôture souple utilisait déjà, pour qu'une collision kart-kart (résolue par le coordinateur) produise la même secousse qu'un contact de mur. Rien d'autre.
+* **`KartTrack`** : `sample_count()`, `sample_s(i)`, `curvature(i)`, `signed_curvature(i)`, `side_at(s)` — des accesseurs qui publient ce que les bordures lisaient en privé (`_curvature`), pour que le profil de vitesse de `KartAiDriver` ne re-dérive pas la géométrie.
+
+`KartInput`, `KartLap`, le mode caméra et la bascule marche↔conduite sont intouchés. `KartLineInput` (`scripts/dev/`) est devenu `scripts/hub/kart/KartAiDriver.gd` (profils `cat`/`beaver`/`boar`/`probe`) ; le récit du lot est dans le journal, section « V8 — KARTING LOT 2 ».
