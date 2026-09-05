@@ -622,6 +622,30 @@ Le bon réglage est celui que **le brouillard a déjà effacé** : avec
 plus près se voit ; couper là où le fog a déjà tout mangé ne se voit pas et
 se paie en frame.
 
+### ⚠️ APRÈS `set_anchors_preset()`, `position` EST UN OFFSET DEPUIS L'ANCRE
+
+Un `Control` ancré en `PRESET_CENTER_TOP` puis écrit `position =
+Vector2(540 − 190, 150)` ne se pose pas à x = 350 : il se pose à
+**540 + 350 = 890** sur un canvas de 1080, et sa moitié droite est
+coupée par le bord — **sans erreur, sans warning, et invisible en
+headless** (le canvas y fait 1920 de large, donc tout « tient »). Payé
+sur device (V7, panneau chrono du kart lu coupé par Mathieu) et vu par
+personne en sandbox pendant deux lots. Écrire l'offset (`−largeur / 2`),
+et gater le rect **contre la bande de 1080 px centrée sur le milieu du
+canvas**, jamais contre le canvas headless nu.
+
+### ⚠️ UN MOT DE CONVENTION DE CÔTÉ NE VAUT RIEN SANS UNE CAPTURE
+
+`(tan.z, 0, −tan.x)` est le côté +x d'un corps face à +z. V7 l'a appelé
+« droite de la marche » ; la capture de la grille du kart (voie −3,6
+dessinée sur le kerb DROIT, caméra derrière le kart) a montré que c'est
+la **GAUCHE** sous cette caméra. Le nombre n'a jamais été faux (grille,
+`on_track`, `lateral`, tout est symétrique), le MOT l'était — et l'IA du
+lot 2 l'avait cru : biais de virage inversé, sanglier à l'intérieur,
+chat à l'extérieur, aucune sonde rouge. Toute constante qui a un SENS
+(intérieur/extérieur, devant/derrière, gauche/droite) se gate sur une
+lecture du côté réel, jamais sur le commentaire qui le nomme.
+
 ### ⚠️ Autres pièges d'API mesurés
 
 * **`Object.get("UNE_CONST")` rend `null`** — une constante GDScript n'est
@@ -1372,6 +1396,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH23 | Feu de camp — recon VFX, objet définitif (sprite E + bûcher), revert de couleur, puis cercle de pierres | [`CH23_FEU_VFX.md`](docs/lots/CH23_FEU_VFX.md) | 6 | 1505 | 4 sept |
 | CH24 | Feu de camp interactif — recon puis LOT 1 : canal de tap `tapped_campfire`, aller-retour du blaireau, point d'arrivée de la recon rejoué sur le segment complet et corrigé après un croisement trouvé avec l'anneau de pierres | [`CH24_FEU_INTERACTIF.md`](docs/lots/CH24_FEU_INTERACTIF.md) | 12 | 222 | 4 sept |
 | CH25 | L'ours rejoint le blaireau au feu — recon puis LOT 1 : recon reprouvée par un second script indépendant (même candidat d'arrivée, même conclusion sur le relèvement direct écarté), `BEAR_CAMPFIRE_WALK_RATE` calculé pour synchroniser l'arrivée des deux acteurs, ce qui a débusqué et corrigé à la racine un glissement de pieds de principe dans `HubActorWalker` (un seul taux par acteur pour toute sa vie, avant ce lot), gate balançoire et synchronisation des deux acteurs par un état partagé unique câblés | [`CH25_OURS_FEU.md`](docs/lots/CH25_OURS_FEU.md) | 9 | 407 | 4 sept |
+| CH27 | Karting — lot 1 (circuit, conduite libre, chrono) et **lot 2** (V8 : HUD conduite centré, trois adversaires IA à personnalités, course à feux, classement, collisions, piste à 10 u, chat/castor/faon à la masse de Keepy — récit dans `docs/CARTE_BLANCHE_JOURNAL.md`, section « V8 — KARTING LOT 2 ») | [`CH27_KARTING_LOT1.md`](docs/lots/CH27_KARTING_LOT1.md) | 8 | 170 | 5 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
