@@ -60,3 +60,4 @@ Thumbs.db
 # reach the pack -- tracking them would be noise in every plate commit.
 # Scoped to docs/ on purpose: assets/**/*.import IS tracked and must stay so.
 docs/**/*.import
+docs/carte_blanche/out/

@@ -82,6 +82,25 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _fallback_button: Button = $FallbackButton
 @onready var _world_env: WorldEnvironment = $WorldViewport/SubViewport/World/WorldEnvironment
 @onready var _fallback_close: Button = $FallbackMenu/Panel/VBoxContainer/CloseButton
+## v2 weather: the forcing row (behind DevTools.enabled()) and the system
+## it drives, which runs for everyone.
+@onready var _weather: CozyWeather = $WorldViewport/SubViewport/World/CozyWeather
+@onready var _weather_overlay: ColorRect = $WeatherOverlay
+@onready var _weather_label: Label = $FallbackMenu/Panel/VBoxContainer/WeatherLabel
+@onready var _weather_row: HBoxContainer = $FallbackMenu/Panel/VBoxContainer/WeatherRow
+## v3 P0: the performance overlay (behind DevTools.enabled()) and its
+## menu toggle.
+@onready var _perf: HubPerfOverlay = $PerfOverlay
+## v3: the transport network (balloon lines + the ball).
+@onready var _transport: HubTransport = $WorldViewport/SubViewport/World/Transport
+## v4: the climbable trees.
+@onready var _trees: HubTrees = $WorldViewport/SubViewport/World/Trees
+@onready var _nuts: HubNuts = $WorldViewport/SubViewport/World/Nuts
+@onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
+## v4: the resource counter (always shown -- it is part of the game) and
+## the save reset (behind DevTools.enabled()).
+@onready var _world_hud: WorldHud = $WorldHud
+@onready var _save_reset_button: Button = $FallbackMenu/Panel/VBoxContainer/SaveResetButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -686,6 +705,11 @@ func _ready() -> void:
 	# round-trip toggle needs a live badger to send anywhere.
 	_setup_campfire()
 	_tap.tapped_campfire.connect(_on_tapped_campfire)
+	_setup_weather()
+	_setup_perf()
+	_setup_world_hud()
+	_setup_transport()
+	_setup_trees()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -829,13 +853,14 @@ func _setup_owls() -> void:
 func _on_tapped_owl(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree():
 		return
 	_boarding = false
 	_climbing = false
 	_flying = true
 	_zipping = false
 	_zipping_solo = false
+	_climbing_tree = -1
 	_keepy.hop_to(point)
 	# Already standing at the perch: nothing to walk, so take off on the
 	# spot rather than waiting for a landing that will never come.
@@ -1039,13 +1064,14 @@ func _build_cabin_markers() -> void:
 func _on_tapped_cabin(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree():
 		return
 	_boarding = false
 	_climbing = false
 	_flying = false
 	_zipping = false
 	_zipping_solo = false
+	_climbing_tree = -1
 	_entering = true
 	_keepy.hop_to(point)
 	# Already standing at the door: nothing to walk, so go in on the spot
@@ -2642,7 +2668,7 @@ func _zip_seat(sign: float, crown_above_origin: float) -> Vector3:
 func _on_tapped_zipline_badger(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree():
 		return
 	_boarding = false
 	_climbing = false
@@ -2650,6 +2676,7 @@ func _on_tapped_zipline_badger(point: Vector3) -> void:
 	_entering = false
 	_zipping = true
 	_zipping_solo = false
+	_climbing_tree = -1
 	_keepy.hop_to(point)
 	# Already standing at the tower: nothing to walk, so board on the spot
 	# rather than waiting for a landing that will never come. THE
@@ -2672,7 +2699,7 @@ func _on_tapped_zipline_badger(point: Vector3) -> void:
 func _on_tapped_zipline_solo(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree():
 		return
 	_boarding = false
 	_climbing = false
@@ -2756,6 +2783,7 @@ func _try_zip_badger(position: Vector3) -> bool:
 func _try_zip_solo(position: Vector3) -> bool:
 	if _zipline.is_empty() or not _zipline_door.is_available():
 		_zipping_solo = false
+		_climbing_tree = -1
 		return false
 	var towers: Array = _zipline["towers"]
 	var flat := Vector3(position.x, 0.0, position.z)
@@ -2774,6 +2802,7 @@ func _try_zip_solo(position: Vector3) -> bool:
 	var carrier: Node3D = _zipline.get("carrier")
 	if carrier == null or not is_instance_valid(carrier):
 		_zipping_solo = false
+		_climbing_tree = -1
 		return false
 	# THE TROLLEY MUST BE AT THIS END BEFORE BOARDING STARTS, and it cannot
 	# be trusted to already be there: unlike the badger, which only ever
@@ -2791,6 +2820,7 @@ func _try_zip_solo(position: Vector3) -> bool:
 	if not _keepy.board_zipline(carrier, _zip_seat(0.0, KEEPY_DRAWN_HEIGHT)):
 		return false
 	_zipping_solo = false
+	_climbing_tree = -1
 	_zipline_door.set_riding(true)
 	_zip_trip = {"from": from_end, "to": to_end, "keepy": true, "badger": false, "badger_at": badger_at}
 	return true
@@ -3004,11 +3034,17 @@ func _apply_swamp_palette() -> void:
 	var env: Environment = _world_env.environment
 	if env == null:
 		return
-	env.background_color = _PALETTE.sky_shallow
+	# Carte-blanche (voie A): the hub has its own light palette. The sky
+	# comes from CozyPalette, and the engine fog is switched OFF -- it is
+	# not functional on WebGL2 (Godot #97875 / #92019) and the decor and
+	# ground shaders write their own haze toward the same colour, so a
+	# device that DID fog would otherwise haze twice.
+	env.background_color = CozyPalette.SKY
 	env.ambient_light_color = _PALETTE.ambient_light_color
 	env.ambient_light_energy = _PALETTE.ambient_light_energy
-	env.fog_light_color = _PALETTE.hub_fog_light_color
-	env.fog_density = _PALETTE.hub_fog_density
+	env.fog_enabled = false
+	env.fog_light_color = CozyPalette.HAZE
+	env.fog_density = 0.0
 
 ## Hands the ride its geometry, once, after the build. The route is made
 ## from HubBuilder's OWN spine rather than re-derived from the layout's
@@ -3040,6 +3076,7 @@ func _process(_delta: float) -> void:
 	_pulse_cabin_markers(here)
 	_pulse_campfire_marker(here)
 	_mooring.update(here)
+	_transport.update(here)
 
 ## The doorstep marks' approach cue, on HubPortal's own two thresholds.
 ##
@@ -3168,6 +3205,25 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# player's next destination across the drop the way `leave_ride` does.
 	if _keepy.is_on_zipline():
 		return
+	# v3: a tap while the BALLOON carries him is dropped on the zipline's
+	# exact licence -- the trip is a bounded tween that always ends on a
+	# dock, after which `_on_balloon_trip_finished` hands the body back --
+	# and it reaches this branch at all only because both docks withdrew.
+	if _keepy.is_on_carrier():
+		return
+	# v4: a tap while the TREE carries him is read BY STATE, and it is NOT
+	# dropped -- the ride has an unbounded phase (the seat), so a held
+	# body needs a way out (the seesaw's rule, not the owl's). On the same
+	# tree while seated it is a SHAKE; anywhere else it is "come down and
+	# go there" -- remembered during the ascent, re-aimed during the
+	# descent (KeepyHopper.leave_tree). It reaches this branch at all only
+	# because the occupied tree withdrew from the tap (HubTrees.accepts_tap).
+	if _keepy.is_on_tree():
+		if _trees.is_on_occupied(point) and _keepy.is_seated_on_tree():
+			_shake_tree()
+		else:
+			_keepy.leave_tree(point)
+		return
 	# Any ordinary tap cancels a boarding walk in progress: the player
 	# aimed somewhere else, and arriving at the boat anyway would be the
 	# screen overruling them.
@@ -3177,6 +3233,68 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_entering = false
 	_zipping = false
 	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = false
+	# v3: a tap on HIMSELF while standing still on the ball is "get off".
+	if _keepy.is_on_vehicle() and not _keepy.is_hopping():
+		var me := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+		if me.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
+			_keepy.dismount_vehicle()
+			return
+	_hop_via_corridor(point)
+
+## Carte-blanche v2 -- the autumn hollow hangs off the plateau by a
+## corridor, so the walkable region is no longer convex: a straight hop
+## from the plateau into the hollow cuts through the hedge (measured: a
+## walk (-25,-30) -> (-6,-56) passed (-19.3, -37.8), outside the region).
+## KeepyHopper hops in straight lines and clamps only its DESTINATION, so
+## the detour lives here: a tap that changes zone first walks to the
+## corridor gate, then on to the target. Nothing about same-zone taps or
+## the plateau's own navigation changes.
+const CORRIDOR_GATE: Vector3 = Vector3(-28.0, 0.0, -38.5)
+## v3: the second gate, between the hollow and the moor (corridor
+## x in [6, 18], z in [-86, -78] -- its midpoint).
+const MOOR_GATE: Vector3 = Vector3(12.0, 0.0, -82.0)
+const GATE_NEAR: float = 1.5
+## Remaining waypoints of a cross-zone walk, and the one being walked to.
+var _via_queue: Array[Vector3] = []
+var _via_expect: Vector3 = Vector3.INF
+
+## The gates a walk from zone `a` to zone `b` has to pass, in order.
+## Zones are 0 plateau, 1 hollow, 2 moor, and the map is a chain
+## 0 -- 1 -- 2, so the list is the gates between them, walked forward or
+## backward. Still not a planner; a fourth zone off the chain needs one.
+static func _gates_between(a: int, b: int) -> Array[Vector3]:
+	var chain: Array[Vector3] = [CORRIDOR_GATE, MOOR_GATE]
+	var out: Array[Vector3] = []
+	if a < b:
+		for i in range(a, b):
+			out.append(chain[i])
+	else:
+		for i in range(a - 1, b - 1, -1):
+			out.append(chain[i])
+	return out
+
+func _hop_via_corridor(point: Vector3) -> void:
+	var here: Vector3 = _keepy.global_position
+	var target: Vector3 = HubRegion.clamp_to(point)
+	_via_queue.clear()
+	_via_expect = Vector3.INF
+	var za: int = HubRegion.zone_of(here)
+	var zb: int = HubRegion.zone_of(target)
+	if za != zb:
+		var gates: Array[Vector3] = _gates_between(za, zb)
+		while not gates.is_empty() and Vector2(here.x - gates[0].x, here.z - gates[0].z).length() <= GATE_NEAR:
+			gates.pop_front()
+		if not gates.is_empty():
+			_via_expect = gates[0]
+			for i in range(1, gates.size()):
+				_via_queue.append(gates[i])
+			_via_queue.append(target)
+			_keepy.hop_to(gates[0])
+			return
 	_keepy.hop_to(point)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
@@ -3186,13 +3304,14 @@ func _on_tapped_ground(point: Vector3) -> void:
 func _on_tapped_boat(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _route == null or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _route == null or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree():
 		return
 	_boarding = true
 	_climbing = false
 	_flying = false
 	_zipping = false
 	_zipping_solo = false
+	_climbing_tree = -1
 	_keepy.hop_to(point)
 	# Already standing at the boat: nothing to walk, so board on the spot
 	# rather than waiting for a landing that will never come.
@@ -3206,13 +3325,14 @@ func _on_tapped_boat(point: Vector3) -> void:
 func _on_tapped_ladder(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
-	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline():
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree():
 		return
 	_boarding = false
 	_climbing = true
 	_flying = false
 	_zipping = false
 	_zipping_solo = false
+	_climbing_tree = -1
 	_keepy.hop_to(point)
 	# Already standing at the foot: nothing to walk, so climb on the spot
 	# rather than waiting for a landing that will never come.
@@ -3289,6 +3409,10 @@ func _on_hop_landed(position: Vector3) -> void:
 	# plateau on.
 	if _keepy.is_on_zipline():
 		return
+	# NOR WHILE THE TREE HAS HIM (v4): the ride emits no landings until the
+	# dismount hop, whose landing is on the ground and IS ordinary.
+	if _keepy.is_on_tree():
+		return
 
 	# WHERE KEEPY IS, decided before anything about what this landing goes
 	# on to TRIGGER. A landing in a portal still updates the tint on its way
@@ -3297,7 +3421,7 @@ func _on_hop_landed(position: Vector3) -> void:
 	# tint placed after them would simply stop updating on the landings that
 	# do something -- silently, and only sometimes.
 	var in_water: bool = _water != null and _water.contains(position)
-	_set_keepy_wet(in_water)
+	_set_keepy_wet(in_water and not _keepy.is_on_vehicle())
 
 	# THE IMPACT, and it is consumed here for two reasons that both matter.
 	#
@@ -3394,6 +3518,12 @@ func _on_hop_landed(position: Vector3) -> void:
 	# it left from, and every branch past this point returns.
 	if _zipping_solo and _try_zip_solo(position):
 		return
+	if _ballooning >= 0 and _try_balloon(position):
+		return
+	if _climbing_tree >= 0 and _try_climb_tree(position):
+		return
+	if _mounting_ball and _try_mount_ball(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -3439,12 +3569,25 @@ func _try_board(toward: Vector3) -> bool:
 ## The chain ran out without reaching the hull. Drops the intent rather
 ## than leaving it armed: a later, unrelated landing must not board.
 func _on_keepy_idle() -> void:
+	if _via_expect != Vector3.INF:
+		var reached: Vector3 = _via_expect
+		var here: Vector3 = _keepy.global_position
+		_via_expect = Vector3.INF
+		if not _via_queue.is_empty() and Vector2(here.x - reached.x, here.z - reached.z).length() < GATE_NEAR:
+			var onward: Vector3 = _via_queue.pop_front()
+			_via_expect = onward if not _via_queue.is_empty() else Vector3.INF
+			_keepy.hop_to(onward)
+			return
+		_via_queue.clear()
 	_boarding = false
 	_climbing = false
 	_flying = false
 	_entering = false
 	_zipping = false
 	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_mounting_ball = false
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches
@@ -3487,8 +3630,392 @@ func _on_confirm_accepted(game_id: StringName) -> void:
 func _on_confirm_cancelled() -> void:
 	pass
 
+## ---- v2 weather --------------------------------------------------------
+## Where the bear shelters from rain: under the layout tree at
+## (6.643, 32.682) beside its rest, 1.5 u from the trunk on the rest side.
+const BEAR_SHELTER: Vector3 = Vector3(5.3, 0.0, 33.7)
+const BEAR_SHELTER_NEAR: float = 1.2
+
+func _setup_weather() -> void:
+	_weather.set_overlay(_weather_overlay)
+	_weather.weather_changed.connect(_on_weather_changed)
+	# KEPT, and re-gated on DevTools.enabled() rather than on a preview
+	# hostname. Weather is a shipped mechanic whose whole cycle takes
+	# minutes of real time to come round; without a way to force it, the
+	# only device check available is to sit and wait for a sky that may
+	# never turn during the session. That is worth having on staging and
+	# on production -- but only for someone who typed the flag, never for
+	# a player who did not.
+	var show: bool = DevTools.enabled()
+	_weather_label.visible = show
+	_weather_row.visible = show
+	_weather_row.get_node("SunButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.SUN))
+	_weather_row.get_node("RainButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.RAIN))
+	_weather_row.get_node("StormButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.STORM))
+	_weather_row.get_node("SnowButton").pressed.connect(func(): _weather.force(CozyWeather.Kind.SNOW))
+	_weather_row.get_node("AutoButton").pressed.connect(func(): _weather.force_auto())
+
+## The bear takes shelter under the tree beside its rest when the sky
+## turns, and comes back out in the sun -- only when it is IDLE at one of
+## the two spots, so a seesaw or campfire trip is never interrupted (those
+## walk it from wherever it stands, and it goes home to BEAR_REST after,
+## where the next weather change picks it up again).
+func _on_weather_changed(kind: int) -> void:
+	if _bear == null or _bear.is_walking() or _bear_pivot != null or not _bear_pending.is_empty() or _bear_campfire_leg != &"":
+		return
+	var here: Vector3 = _bear.global_position
+	var bad: bool = kind != CozyWeather.Kind.SUN
+	if bad and Vector2(here.x - BEAR_REST.x, here.z - BEAR_REST.z).length() < BEAR_SHELTER_NEAR:
+		_bear.walk_to(BEAR_SHELTER)
+	elif not bad and Vector2(here.x - BEAR_SHELTER.x, here.z - BEAR_SHELTER.z).length() < BEAR_SHELTER_NEAR:
+		_bear.walk_to(BEAR_REST)
+
 func _on_fallback_toggled() -> void:
 	_fallback_menu.visible = not _fallback_menu.visible
+
+## ---- v3 P1: transport -- balloon lines and the hoppity ball ------------
+## Intents on the boat's model: set by the tap, tried on every landing AND
+## immediately (a zero-length walk emits no landing), cleared by any other
+## tap and when the chain runs out.
+var _ballooning: int = -1
+## The line whose balloon has been CALLED (or is in flight) while Keepy
+## waits at a dock. Survives `became_idle`: the wait IS standing still.
+var _balloon_wait: int = -1
+var _mounting_ball: bool = false
+
+func _setup_transport() -> void:
+	_transport.setup(_keepy, _camera, _weather)
+	_tap.tapped_balloon.connect(_on_tapped_balloon)
+	_tap.tapped_vehicle.connect(_on_tapped_vehicle)
+	_transport.trip_finished.connect(_on_balloon_trip_finished)
+
+## A tap on a dock. ONE tap buys the whole thing: walk there, board if the
+## balloon waits here, call it if it waits at the twin dock, wait for it if
+## it is in the air.
+func _on_tapped_balloon(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree() or _keepy.is_on_owl_flight():
+		return
+	var line: int = _transport.accepts_balloon_tap(point)
+	if line < 0:
+		_hop_via_corridor(point)
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_climbing_tree = -1
+	_mounting_ball = false
+	_balloon_wait = -1
+	_ballooning = line
+	_keepy.hop_to(point)
+	if not _keepy.is_hopping():
+		_try_balloon(_keepy.global_position)
+
+## Boards / calls if the landing is on the dock. The intent SURVIVES a
+## landing that is not there yet (the boat's measured defect).
+func _try_balloon(position: Vector3) -> bool:
+	if _ballooning < 0:
+		return false
+	var line: int = _ballooning
+	var dock: int = _transport.nearest_dock(line, position)
+	var here := Vector3(position.x, 0.0, position.z)
+	if here.distance_to(_transport.dock_position(line, dock)) > HubTransport.DOCK_TAP_RADIUS:
+		return false
+	_ballooning = -1
+	if not _transport.is_line_idle(line):
+		_balloon_wait = line
+		return true
+	if _transport.balloon_at(line) == dock:
+		_board_balloon(line, dock)
+		return true
+	# It waits at the twin dock: call it over, empty, and wait here.
+	_transport.depart(line, _transport.balloon_at(line), false)
+	_balloon_wait = line
+	return true
+
+func _board_balloon(line: int, dock: int) -> bool:
+	if not _keepy.mount_carrier(_transport.balloon(line), HubTransport.SEAT):
+		return false
+	return _transport.depart(line, dock, true)
+
+## A trip ended at `dock`. The rider steps off onto the ring round the
+## dock (the turnstile's exit search, unchanged); a waiting Keepy boards.
+func _on_balloon_trip_finished(line: int, dock: int, empty: bool) -> void:
+	var at: Vector3 = _transport.dock_position(line, dock)
+	if not empty and _keepy.is_on_carrier():
+		_keepy.leave_carrier(_ride_exit_point({"position": at, "radius": HubTransport.DOCK_TAP_RADIUS}))
+		return
+	if _balloon_wait != line:
+		return
+	_balloon_wait = -1
+	if _keepy.is_hopping() or _keepy.is_on_carrier() or _keepy.is_on_tree() or _keepy.is_riding() or _keepy.is_on_board():
+		return
+	var here := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+	if here.distance_to(at) <= HubTransport.DOCK_TAP_RADIUS:
+		_board_balloon(line, dock)
+	elif here.distance_to(_transport.dock_position(line, 1 - dock)) <= HubTransport.DOCK_TAP_RADIUS:
+		# It landed at the wrong end for him (called from the other dock
+		# while it was already flying there): call it once more.
+		_transport.depart(line, dock, false)
+		_balloon_wait = line
+
+## A tap on the parked ball: walk to it and climb on.
+func _on_tapped_vehicle(point: Vector3) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree() or _keepy.is_on_owl_flight():
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = true
+	_keepy.hop_to(point)
+	if not _keepy.is_hopping():
+		_try_mount_ball(_keepy.global_position)
+
+func _try_mount_ball(position: Vector3) -> bool:
+	if not _mounting_ball:
+		return false
+	var here := Vector3(position.x, 0.0, position.z)
+	if here.distance_to(_transport.ball_position()) > HubTransport.BALL_TAP_RADIUS:
+		return false
+	_mounting_ball = false
+	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
+
+## ---- v4 P1: the climbable trees -----------------------------------------
+## Intent on the boat's model: set by the tap, tried on every landing AND
+## immediately, cleared by any other tap and when the chain runs out.
+var _climbing_tree: int = -1
+## Within this of the foot point a landing counts as "there": a walk ends
+## ~0.4 u short of its target by ARRIVE_EPSILON, and climb_tree() snaps.
+const TREE_ARRIVE: float = 1.0
+
+func _setup_trees() -> void:
+	# v5: every decor tree the builder and the scatter publish is offered
+	# to HubTrees, which keeps the ones whose seat and foot point pass.
+	var published: Array = []
+	published.append_array(_builder.cozy_trees())
+	var scatter: Node = get_node_or_null("WorldViewport/SubViewport/World/CozyScatter")
+	if scatter != null and scatter.has_method("climb_trees"):
+		published.append_array(scatter.call("climb_trees"))
+	_trees.setup(_keepy, _weather, published, _tree_foot_problem)
+	_nuts.setup(_keepy)
+	_trees.shake_finished.connect(func(_i): _trees.refresh_stock(_i))
+	_tap.tapped_tree.connect(_on_tapped_tree)
+	_keepy.tree_dismounted.connect(_on_tree_dismounted)
+	_keepy.tree_leaves_entered.connect(func(): _trees.rustle(_trees.occupied()))
+
+## v5: why a decor tree's foot point (`foot`, for the tree at `at`) is not
+## a place to stand -- empty when it is. The world's own answers: the
+## region, the water, every portal's disc (a landing there would open a
+## game), every other prop's footprint. Written here because this is where
+## those facts live; HubTrees only asks.
+const TREE_FOOT_PORTAL_MARGIN: float = 0.6
+const TREE_FOOT_PROP_MARGIN: float = 0.35
+
+func _tree_foot_problem(foot: Vector3, at: Vector3) -> String:
+	if not HubRegion.contains(foot):
+		return "outside region"
+	if _water != null and _water.contains(foot):
+		return "in water"
+	for portal in _portals:
+		if portal.landed_within(foot) or portal._ground_distance(foot) <= portal._radius + TREE_FOOT_PORTAL_MARGIN:
+			return "portal disc"
+	for fp in _builder.ground_footprints():
+		var c: Vector3 = fp["position"]
+		if Vector2(c.x - at.x, c.z - at.z).length() < 0.01:
+			continue
+		if Vector2(c.x - foot.x, c.z - foot.z).length() < float(fp["radius"]) + TREE_FOOT_PROP_MARGIN:
+			return "prop footprint"
+	return ""
+
+## A tap on a climbable tree. ONE tap buys the whole thing: walk to its
+## foot point (through the corridor gates if it is in another zone), grip,
+## climb, sit.
+func _on_tapped_tree(point: Vector3, index: int) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_owl_flight():
+		return
+	if index < 0 or index >= _trees.count() or index == _trees.occupied():
+		_hop_via_corridor(point)
+		return
+	if _keepy.is_on_tree():
+		# From the seat of one tree to another: come down and go there.
+		_climbing_tree = index
+		_keepy.leave_tree(_trees.foot_point(index))
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = false
+	_climbing_tree = index
+	_hop_via_corridor(_trees.foot_point(index))
+	if not _keepy.is_hopping():
+		_try_climb_tree(_keepy.global_position)
+
+## Grips if the landing is at the foot point. The intent SURVIVES a
+## landing that is not there yet (the boat's measured defect).
+func _try_climb_tree(position: Vector3) -> bool:
+	if _climbing_tree < 0:
+		return false
+	var index: int = _climbing_tree
+	var here := Vector3(position.x, 0.0, position.z)
+	if here.distance_to(_trees.foot_point(index)) > TREE_ARRIVE:
+		return false
+	_climbing_tree = -1
+	if not _keepy.climb_tree(_trees.node(index), _trees.climb_spec(index)):
+		return false
+	_trees.set_occupied(index)
+	WorldSave.note_climb()
+	return true
+
+func _on_tree_dismounted() -> void:
+	_trees.release()
+
+## A shake from the seat. ACTION -> ANIMATION -> FEEDBACK -> REWARD: the
+## wreath wobbles and he bounces with it (carried), the nuts leave the
+## lobes a beat later, they fall, bounce and roll, and picking them up is
+## the reward the descent leads to. One unit of stock is TWO nuts (the
+## climb has to pay); a spent tree still wobbles -- smaller, and nothing
+## falls: that IS the feedback that it is empty, on top of the bare
+## wreath.
+const NUTS_PER_SHAKE: int = 2
+const NUT_RELEASE_DELAY_S: float = 0.16
+## v5 -- what ELSE a shake drops, and how rare. Leaves every time (the
+## feedback that the crown moved; no counter). A LADYBUG on about one
+## shake in three (LADYBUG_CHANCE), never on the very first shake of a
+## save, so the first lesson is the nuts. The GOLDEN acorn is PACED, not
+## rolled: shake number GOLDEN_FIRST, then every GOLDEN_EVERY -- a roll
+## makes "rare" a lottery a player can hit twice running, a pace makes it
+## an event that is always coming.
+const LEAVES_PER_SHAKE_MIN: int = 6
+const LEAVES_PER_SHAKE_MAX: int = 9
+const LADYBUG_CHANCE: float = 0.3
+const GOLDEN_FIRST: int = 12
+const GOLDEN_EVERY: int = 19
+## The draw behind the extras, in its OWN generator rather than the global
+## randf(). A RandomNumberGenerator seeds itself from the OS at creation,
+## so a player still gets an unpredictable ladybug; `set_extras_seed()`
+## makes the SAME draw repeatable for a probe.
+##
+## This replaces the `force_ladybug_roll` handle the carte-blanche branch
+## carried, and the difference is not cosmetic: that handle let a caller
+## dictate the OUTCOME, so a probe could make the shipped pacing say
+## something it would never say for a player. A seed cannot -- it only
+## fixes which draw the player would have got anyway, and every assertion
+## about the pacing itself goes through `shake_extras()`, which is static
+## and pure and takes the roll as an argument.
+var _extras_rng := RandomNumberGenerator.new()
+
+## Makes the extras draw repeatable from a known seed. See above for why
+## this is the whole of the injection: there is no way in here to force a
+## ladybug that LADYBUG_CHANCE would not have given.
+func set_extras_seed(value: int) -> void:
+	_extras_rng.seed = value
+
+## The extra kinds shake number `shakes` (after counting this one) drops,
+## given `roll` in [0, 1). Pure, so a probe can walk the pacing.
+static func shake_extras(shakes: int, roll: float) -> Array:
+	var out: Array = []
+	if shakes >= 2 and roll < LADYBUG_CHANCE:
+		out.append(&"ladybug")
+	if shakes >= GOLDEN_FIRST and (shakes - GOLDEN_FIRST) % GOLDEN_EVERY == 0:
+		out.append(&"golden")
+	return out
+
+func _shake_tree() -> void:
+	var index: int = _trees.occupied()
+	if index < 0 or _trees.is_shaking(index):
+		return
+	var id: String = _trees.tree_id(index)
+	if WorldSave.tree_stock(id) <= 0:
+		_trees.shake(index, 0.45)
+		return
+	var kinds: Array = _trees.kinds_for_shake(index, NUTS_PER_SHAKE)
+	if not WorldSave.tree_take(id):
+		return
+	_trees.shake(index)
+	_trees.refresh_stock(index)
+	var geometry: Array = _trees.drop_geometry(index)
+	# v5: the extras, decided now (the roll is consumed once per shake).
+	var roll: float = _extras_rng.randf()
+	kinds.append_array(shake_extras(int(WorldSave.stats().get("shakes", 0)), roll))
+	var leaves: int = randi_range(LEAVES_PER_SHAKE_MIN, LEAVES_PER_SHAKE_MAX)
+	var style: Array = _trees.leaf_style(index)
+	get_tree().create_timer(NUT_RELEASE_DELAY_S).timeout.connect(func():
+		if is_instance_valid(_nuts):
+			_nuts.drop_from_tree(_trees.node(index), kinds, geometry[0], geometry[1])
+			_nuts.drop_leaves(_trees.node(index), leaves, geometry[0], geometry[1], style[0], style[1]))
+
+## For probes.
+func nuts() -> HubNuts:
+	return _nuts
+
+## ---- v3 P0: performance overlay ---------------------------------------
+## KEPT past the branch that introduced it: FPS / draw calls / primitives
+## on the real device against the real build is a standing gap in this
+## project, not a carte-blanche convenience, and CLAUDE.md's own rule that
+## a number is measured rather than copied applies to frame cost as much
+## as to geometry. Behind DevTools.enabled() it is reachable on staging
+## AND production -- which is where the numbers that matter live -- and
+## invisible to anyone who did not ask for it.
+##
+## Shown by DEFAULT once the gate is open, because the point is that the
+## device reports its numbers without being asked; the menu button hides
+## it again.
+func _setup_perf() -> void:
+	var show: bool = DevTools.enabled()
+	_perf.visible = show
+	_perf_button.visible = show
+	_perf_button.text = "Perf (dev) : ON" if show else "Perf (dev) : OFF"
+	_perf_button.pressed.connect(_on_perf_toggled)
+
+## ---- v4 P0: the world save and its counter --------------------------------
+## KEPT behind the SAME gate, and it is the one of the three whose cost of
+## being wrong is real: reset() wipes the player's world, irreversibly.
+## What earns it a place anyway is that replaying a FIRST LAUNCH on device
+## is otherwise impossible -- a browser save cannot be cleared from inside
+## the game any other way, and "delete site data" also takes the Google
+## session with it. Behind DevTools.enabled() no player can reach the
+## button at all, which is a stronger guarantee than the confirmation
+## dialog a visible version of it would have needed.
+##
+## The HUD itself is always shown: it is part of the game, not of the
+## developer tools.
+func _setup_world_hud() -> void:
+	var show: bool = DevTools.enabled()
+	_save_reset_button.visible = show
+	_save_reset_button.pressed.connect(_on_save_reset)
+
+func _on_save_reset() -> void:
+	WorldSave.reset()
+	_save_reset_button.text = "Sauvegarde (dev) : remise à zéro"
+	_fallback_menu.visible = false
+
+func _on_perf_toggled() -> void:
+	_perf.visible = not _perf.visible
+	_perf_button.text = "Perf (dev) : ON" if _perf.visible else "Perf (dev) : OFF"
+
+## For probes: the overlay's current readings.
+func perf_snapshot() -> Dictionary:
+	return _perf.snapshot()
 
 func _on_fallback_chased() -> void:
 	_router.route(&"chased")

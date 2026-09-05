@@ -379,7 +379,7 @@ var _has_target: bool = false
 ## hop_landed, so portal detection is silent for their whole duration. A
 ## board planted 9 u from the portal row would otherwise carry a diver into
 ## a sub-game they were only passing over.
-enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT, ON_ZIPLINE }
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT, ON_ZIPLINE, ON_CARRIER, ON_TREE }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -590,6 +590,7 @@ func is_standing_on_board() -> bool:
 func board(route: HubStreamRoute, half_width: float, toward: Vector3) -> void:
 	if route == null or not route.is_valid() or _state == State.RIDING:
 		return
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -638,6 +639,7 @@ func mount_turnstile(pivot: Node3D, deck_y: float, radius: float, bars: int) -> 
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -766,6 +768,7 @@ func mount_seesaw(pivot: Node3D, seat_y: float, ride_x: float) -> bool:
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -885,6 +888,7 @@ func mount_owl(carrier: Node3D, seat_y: float) -> bool:
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 
@@ -999,6 +1003,7 @@ func board_zipline(carrier: Node3D, seat: Vector3) -> bool:
 		return false
 	if _state != State.IDLE:
 		return false
+	dismount_vehicle()
 
 	var handle: Vector3 = carrier.to_global(seat)
 	var here := Vector3(global_position.x, 0.0, global_position.z)
@@ -1203,6 +1208,7 @@ func leave_ride(toward: Vector3, blocked: Array) -> void:
 func climb_board(board: Dictionary) -> void:
 	if board.is_empty() or _state != State.IDLE:
 		return
+	dismount_vehicle()
 	if _hop_tween and _hop_tween.is_valid():
 		_hop_tween.kill()
 	_board = board
@@ -1443,12 +1449,13 @@ func _advance() -> void:
 	_begin_hop(here, delta)
 
 func _begin_hop(here: Vector3, delta: Vector3) -> void:
-	_hop_height = HOP_HEIGHT
+	# v3: on the vehicle the hop is longer, higher and a touch slower.
+	_hop_height = VEHICLE_HOP_HEIGHT if _vehicle != null else HOP_HEIGHT
 	# Reset alongside the height, and for the same reason: a sloped arc
 	# left over from a dive must not leak into the ordinary hop after it.
 	_hop_from_y = 0.0
 	_hop_to_y = 0.0
-	var step: float = minf(HOP_DISTANCE, delta.length())
+	var step: float = minf(VEHICLE_HOP_DISTANCE if _vehicle != null else HOP_DISTANCE, delta.length())
 	_hop_from = here
 	_hop_to = here + delta.normalized() * step
 
@@ -1465,7 +1472,7 @@ func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	# which a property tween can express. Position, scale and pitch are all
 	# written from the same t, so they cannot drift apart.
 	_hop_tween = create_tween()
-	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, VEHICLE_HOP_DURATION if _vehicle != null else HOP_DURATION)
 	_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
 
 func _face(direction: Vector3) -> void:
@@ -1491,9 +1498,13 @@ func _apply_hop(t: float) -> void:
 	# ends, so the arc cannot leave Keepy hovering on a rounding error --
 	# it lands exactly ON the base line, whatever that line is.
 	var height: float = _hop_height * 4.0 * t * (1.0 - t)
-	global_position = Vector3(ground.x, base + height, ground.z)
+	global_position = Vector3(ground.x, base + height + _vehicle_lift, ground.z)
 	_body.scale = _squash_at(t)
 	_body.rotation_degrees.x = _base_pitch - PITCH_DEG * sin(PI * t)
+	# The vehicle is written in the SAME call as its rider (carrier-then-
+	# carried discipline, the turnstile's measurement): under his feet, on
+	# the ground arc, squashing with him.
+	_place_vehicle(ground, base + height, _squash_at(t))
 
 func _squash_at(t: float) -> Vector3:
 	# Four segments: compress off the ground, extend into the apex, relax
@@ -1514,7 +1525,9 @@ func _on_hop_finished() -> void:
 	# every plateau hop, where that line is flat at zero; for the dive it
 	# is what puts the feet on the water surface instead of teleporting
 	# them from wherever the tween's last frame happened to fall.
-	global_position = Vector3(_hop_to.x, _hop_to_y, _hop_to.z)
+	# v3: plus the vehicle's lift while he rides it, the ball under him.
+	global_position = Vector3(_hop_to.x, _hop_to_y + _vehicle_lift, _hop_to.z)
+	_place_vehicle(Vector3(_hop_to.x, 0.0, _hop_to.z), _hop_to_y, Vector3.ONE)
 	_hop_from_y = 0.0
 	_hop_to_y = 0.0
 	_body.rotation_degrees.x = _base_pitch
@@ -1530,3 +1543,624 @@ func _on_hop_finished() -> void:
 	# starts, so a portal reached on this landing routes away instead of
 	# being overrun by a queued destination beyond it.
 	_advance()
+
+
+## =====================================================================
+## CARTE-BLANCHE V3 -- THE CARRIER (balloon) AND THE VEHICLE (hoppity ball)
+##
+## Two new ways of being moved, both written on patterns this file already
+## proved rather than on new ones:
+##
+##   * ON_CARRIER is the OWL FLIGHT generalised: a Node3D moves, and the
+##     thing that moves it writes the rider in the SAME call, immediately
+##     after (`follow_carrier()`), never from a _process of his own -- the
+##     turnstile's one-frame-lag measurement. A carrier trip is BOUNDED by
+##     a tween that always ends at a known dock, which is the zipline's
+##     licence for dropping taps meanwhile; the balloon's dock withdraws on
+##     the boat's terms so those taps reach the ground path at all.
+##   * The VEHICLE is NOT a state. It is a modifier on the ordinary hop
+##     chain: while mounted, hops are longer, higher and a touch slower per
+##     hop (net faster), the body is lifted by the ball's height, and the
+##     ball is written under him in `_apply_hop`. Every other carried state
+##     drops the vehicle first, so nothing else in this file ever sees it.
+
+signal carrier_mounted
+signal carrier_dismounted
+signal vehicle_mounted
+signal vehicle_dismounted
+
+var _carrier: Node3D = null
+var _carrier_seat: Vector3 = Vector3.ZERO
+
+var _vehicle: Node3D = null
+var _vehicle_lift: float = 0.0
+
+## Hop geometry while on the vehicle: 2.7 u per hop in 0.34 s is 7.9 u/s
+## against 5.4 u/s on foot (x1.48), with an arc almost twice as tall -- the
+## bounce IS the ride.
+const VEHICLE_HOP_DISTANCE: float = 2.7
+const VEHICLE_HOP_HEIGHT: float = 1.15
+const VEHICLE_HOP_DURATION: float = 0.34
+
+func is_on_carrier() -> bool:
+	return _state == State.ON_CARRIER
+
+func is_on_vehicle() -> bool:
+	return _vehicle != null
+
+## Puts Keepy on `carrier` at `seat` (carrier-local) and hands the body
+## over. Refused from any state but IDLE, on mount_owl's terms.
+func mount_carrier(carrier: Node3D, seat: Vector3) -> bool:
+	if carrier == null or not is_instance_valid(carrier):
+		return false
+	if _state != State.IDLE:
+		return false
+	dismount_vehicle()
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_carrier = carrier
+	_carrier_seat = seat
+	_has_target = false
+	_state = State.ON_CARRIER
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	follow_carrier()
+	carrier_mounted.emit()
+	return true
+
+## Writes Keepy at the seat for the carrier's CURRENT pose. Called by
+## whatever moves the carrier, in the same call, never from _process().
+func follow_carrier() -> void:
+	if _carrier == null or not is_instance_valid(_carrier):
+		_carrier = null
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		return
+	global_position = _carrier.to_global(_carrier_seat)
+	_yaw.rotation_degrees.y = _carrier.global_rotation_degrees.y
+
+## Steps off the carrier onto `landing` -- the generalised arc from the
+## seat height down to the ground, exactly as leave_owl does.
+func leave_carrier(landing: Vector3) -> void:
+	if _state != State.ON_CARRIER:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_carrier = null
+	_carrier_seat = Vector3.ZERO
+	_has_target = false
+	var delta := target - here
+	if delta.length() < 0.001:
+		_state = State.IDLE
+		global_position = here
+		carrier_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_carrier_dismount_finished, CONNECT_ONE_SHOT)
+
+func _on_carrier_dismount_finished() -> void:
+	_on_hop_finished()
+	carrier_dismounted.emit()
+
+## Climbs onto `vehicle` (a Node3D drawn by someone else) and rides it from
+## here on: every hop carries it. `lift` is how high its top is above the
+## ground -- his feet stand there. Refused unless he is standing still.
+func mount_vehicle(vehicle: Node3D, lift: float) -> bool:
+	if vehicle == null or not is_instance_valid(vehicle):
+		return false
+	if _state != State.IDLE or _vehicle != null:
+		return false
+	_vehicle = vehicle
+	_vehicle_lift = maxf(lift, 0.0)
+	var ground := Vector3(global_position.x, 0.0, global_position.z)
+	global_position = ground + Vector3(0.0, _vehicle_lift, 0.0)
+	_place_vehicle(ground, 0.0, Vector3.ONE)
+	vehicle_mounted.emit()
+	return true
+
+## Leaves the vehicle where he stands. Safe to call when not mounted.
+func dismount_vehicle() -> void:
+	if _vehicle == null:
+		return
+	var ground := Vector3(global_position.x, 0.0, global_position.z)
+	_place_vehicle(ground, 0.0, Vector3.ONE)
+	_vehicle = null
+	_vehicle_lift = 0.0
+	if _state == State.IDLE:
+		global_position = ground
+	vehicle_dismounted.emit()
+
+func _place_vehicle(ground: Vector3, height: float, squash: Vector3) -> void:
+	if _vehicle == null or not is_instance_valid(_vehicle):
+		_vehicle = null
+		_vehicle_lift = 0.0
+		return
+	_vehicle.global_position = Vector3(ground.x, height, ground.z)
+	_vehicle.rotation_degrees.y = _yaw.rotation_degrees.y
+	_vehicle.scale = squash
+
+
+## =====================================================================
+## CARTE-BLANCHE V4 -- THE TREE: A VERTICAL RIDE
+##
+## Climbing is NOT a second navigation model. The plateau stays single-
+## altitude (HubRegion throws Y away, taps resolve on y = 0) and the tree
+## CARRIES Keepy the way the owl, the trolley and the balloon do: from the
+## moment he grips the bark to the moment his feet touch the foot point
+## again, every transform he has is written in the TREE'S LOCAL SPACE and
+## read back through `to_global()` -- so a tree that wobbles (the shake)
+## moves him with it by construction, not by tuning. No `_process` of his
+## own: the ascent, the descent and the two hops are BOUNDED tweens, and
+## the seated pose is written by `follow_tree()`, which the tree calls
+## right after it writes itself (carrier-then-carried, the turnstile's
+## measurement).
+##
+## THE MOVEMENT IS A LADDER OF PULLS, never a lift. `_tree_pulls()` turns
+## the tween's linear t into TREE_PULLS reaches: each one rises fast for
+## 62% of its slot and HOLDS for the rest, so the body visibly grips,
+## pulls, settles. Riding on that: an alternating lateral sway (left hand,
+## right hand), a body roll in the same rhythm, a stretch on every pull
+## (the reach) and a pitch that breathes -- the levers the brief names,
+## with the model's single rigid mesh. The descent is HEAD FIRST, the way
+## a squirrel actually comes down a trunk, at the same rhythm.
+##
+## EXIT IS AS RELIABLE AS ENTRY, whatever the player taps and whenever:
+##   * during the approach walk HubWorld cancels the intent (boat pattern:
+##     the tree withdraws from the tap only once he is ON it);
+##   * during the ascent a tap is REMEMBERED (`_tree_exit_pending`) and
+##     the descent starts the instant he is seated -- the ascent is
+##     bounded, so this never waits more than one climb;
+##   * seated, a tap anywhere starts the descent toward it;
+##   * during the descent a tap re-aims the landing.
+## The last hop puts him on the foot point ON THE GROUND and hands the body
+## back to the ordinary chain with the tapped point as its target, exactly
+## as `leave_ride` carries the eject's destination.
+
+signal tree_mounted
+signal tree_seated
+signal tree_dismounted
+## v5: he is about to spring THROUGH the crown (up onto the dome, or down
+## off it) -- the tree rustles its leaves on it.
+signal tree_leaves_entered
+
+enum TreePhase { NONE, MOUNT, ASCEND, TOP_HOP, SEATED, DROP_HOP, DESCEND, DISMOUNT }
+
+var _tree: Node3D = null
+## The family's contract, in the tree's LOCAL space: "trunk_h", "r_base",
+## "r_top", "seat" (Vector3), "face" (unit xz vector toward the climbed
+## side), "foot_gap".
+var _tree_spec: Dictionary = {}
+var _tree_phase: int = TreePhase.NONE
+var _tree_tween: Tween = null
+var _tree_landing: Vector3 = Vector3.INF
+var _tree_exit_pending: bool = false
+var _tree_seated_t: float = 0.0
+var _tree_shake_t: float = -1.0
+
+## Ascent / descent durations, and the number of reaches in each.
+const TREE_CLIMB_S: float = 1.6
+const TREE_DESCEND_S: float = 1.3
+const TREE_PULLS: int = 5
+## Fraction of a pull spent rising; the rest is the grip.
+const TREE_PULL_RISE: float = 0.62
+## Height of the first grip above the ground, and how far under the wreath
+## the last one stops.
+const TREE_GRIP_Y0: float = 0.34
+const TREE_GRIP_TOP_MARGIN: float = 0.18
+## Distance of the body's node from the bark: the belly touches, the
+## model's half-depth is ~0.22.
+const TREE_GRIP_GAP: float = 0.28
+## Body pitch about its own lateral axis. MEASURED on captures, not
+## deduced from a comment: a POSITIVE x rotation turns the nose DOWN
+## (toward the bark when he faces the trunk). A first pass at -62 laid
+## him on his back with his head toward the camera; a second at +22 put
+## his muzzle -- 0.45 u ahead of his axis -- THROUGH the trunk, which
+## read as a body lying across it. A climbing squirrel looks UP the
+## trunk: nose slightly raised, belly on the bark, head clear of it.
+const TREE_HUG_PITCH_DEG: float = -12.0
+## Head-first descent is a ROLL of a half turn, not a pitch: rolling
+## about his own forward axis keeps the belly on the bark while the head
+## goes down; pitching him over (the first pass) put his belly to the
+## camera. The same lean into the bark rides on top.
+const TREE_HEADFIRST_ROLL_DEG: float = 180.0
+const TREE_PULL_PITCH_DEG: float = 10.0
+const TREE_SWAY: float = 0.07
+const TREE_ROLL_DEG: float = 10.0
+const TREE_REACH_STRETCH: float = 0.08
+const TREE_MOUNT_HOP_HEIGHT: float = 0.32
+const TREE_MOUNT_HOP_S: float = 0.26
+const TREE_TOP_HOP_HEIGHT: float = 0.45
+const TREE_TOP_HOP_S: float = 0.34
+## Seated: a slow look-around and a breath.
+const TREE_LOOK_DEG: float = 26.0
+const TREE_LOOK_PERIOD_S: float = 5.4
+const TREE_BREATH_HZ: float = 0.9
+## The bounce when the wreath is shaken from the seat.
+const TREE_SHAKE_S: float = 0.9
+
+func is_on_tree() -> bool:
+	return _state == State.ON_TREE
+
+func is_seated_on_tree() -> bool:
+	return _state == State.ON_TREE and _tree_phase == TreePhase.SEATED
+
+func tree_phase() -> int:
+	return _tree_phase
+
+## The tree he is on, for the caller that asks "the same one?".
+func tree_node() -> Node3D:
+	return _tree
+
+## Radius of the surface he grips at height `y` (carrier units): the
+## trunk's linear taper, and (v5, decor trees) the crown's ellipsoid
+## above it -- the larger of the two where they meet, so the profile
+## never jumps inward at the crown's bottom pole.
+func _tree_r(y: float) -> float:
+	var h: float = float(_tree_spec.get("trunk_h", 3.3))
+	var trunk: float = lerpf(float(_tree_spec.get("r_base", 0.3)), float(_tree_spec.get("r_top", 0.21)), clampf(y / h, 0.0, 1.0))
+	if y <= h or not _tree_spec.has("crown"):
+		return trunk
+	return maxf(trunk, _tree_crown_r(y))
+
+func _tree_crown_r(y: float) -> float:
+	var crown: Dictionary = _tree_spec["crown"]
+	var u: float = clampf((y - float(crown["cy"])) / float(crown["b"]), -1.0, 1.0)
+	return float(crown["a"]) * sqrt(maxf(1.0 - u * u, 0.0))
+
+## v5: how far the crown's flank leans back from the vertical at height
+## `y`, in degrees -- the body lies along it (nose over the dome) instead
+## of standing off it. 0 on a trunk and at the crown's equator.
+func _tree_surface_tilt_deg(y: float) -> float:
+	if not _tree_spec.has("crown") or y <= float(_tree_spec.get("trunk_h", 3.3)):
+		return 0.0
+	var crown: Dictionary = _tree_spec["crown"]
+	var a: float = crown["a"]
+	var b: float = crown["b"]
+	var r: float = maxf(_tree_crown_r(y), 0.05)
+	var slope: float = a * a * (y - float(crown["cy"])) / (b * b * r)
+	# Capped low on purpose: captured at 58 deg his head went INTO the
+	# leaves and only the tail showed; at ~20 deg he leans over the dome
+	# and stays readable. The feet sink a little into the leaves instead.
+	return clampf(rad_to_deg(atan(absf(slope))) * 0.5, 0.0, TREE_SURFACE_TILT_MAX_DEG)
+
+const TREE_SURFACE_TILT_MAX_DEG: float = 20.0
+
+func _tree_face() -> Vector3:
+	return _tree_spec.get("face", Vector3(0, 0, 1))
+
+func _tree_right() -> Vector3:
+	var f: Vector3 = _tree_face()
+	return Vector3(f.z, 0.0, -f.x)
+
+## Local point of the grip at height `y`, `side` in -1..1 for the sway.
+func _tree_grip(y: float, side: float) -> Vector3:
+	return _tree_face() * (_tree_r(y) + TREE_GRIP_GAP) + _tree_right() * (TREE_SWAY * side) + Vector3(0.0, y, 0.0) + _tree_lean(y)
+
+## v5: the trunk's lean at height `y` -- the families bend as t^2 (measured
+## by HubTrees.measure_kind, zero for the straight perchoirs), so a grip
+## follows the bark instead of the axis.
+func _tree_lean(y: float) -> Vector3:
+	var lean: Vector3 = _tree_spec.get("lean", Vector3.ZERO)
+	if lean == Vector3.ZERO:
+		return Vector3.ZERO
+	var t: float = clampf(y / float(_tree_spec.get("trunk_h", 3.3)), 0.0, 1.0)
+	return lean * (t * t)
+
+## v5: the rhythm, per tree -- the perchoir's constants unless the spec
+## says otherwise (a short trunk is fewer pulls in less time).
+func _tree_pull_count() -> int:
+	return int(_tree_spec.get("pulls", TREE_PULLS))
+
+func _tree_climb_s() -> float:
+	return float(_tree_spec.get("climb_s", TREE_CLIMB_S))
+
+func _tree_descend_s() -> float:
+	return float(_tree_spec.get("descend_s", TREE_DESCEND_S))
+
+func _tree_top_y() -> float:
+	if _tree_spec.has("top_y"):
+		return float(_tree_spec["top_y"])
+	return float(_tree_spec.get("trunk_h", 3.3)) - TREE_GRIP_TOP_MARGIN
+
+## Where he stands to start (and lands to finish), on the ground, in WORLD.
+func tree_foot_point(tree: Node3D, spec: Dictionary) -> Vector3:
+	var face: Vector3 = spec.get("face", Vector3(0, 0, 1))
+	var local: Vector3 = face * (float(spec.get("r_base", 0.3)) * 1.35 + float(spec.get("foot_gap", 0.42)))
+	var world: Vector3 = tree.to_global(local)
+	return Vector3(world.x, 0.0, world.z)
+
+## Face the trunk (into the face direction) or away from it (out toward
+## the camera side), from wherever he is.
+func _tree_face_yaw(inward: bool) -> void:
+	var dir: Vector3 = _tree.global_transform.basis * _tree_face()
+	_face(-dir if inward else dir)
+
+## Grips `tree` and climbs it. Refused unless he is standing still (every
+## entry point's rule) -- the caller walks him to the foot point first and
+## asks on the landing, AND immediately (a zero-length walk emits none).
+func climb_tree(tree: Node3D, spec: Dictionary) -> bool:
+	if tree == null or not is_instance_valid(tree):
+		return false
+	if _state != State.IDLE:
+		return false
+	dismount_vehicle()
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_tree = tree
+	_tree_spec = spec
+	_tree_landing = Vector3.INF
+	_tree_exit_pending = false
+	_tree_shake_t = -1.0
+	_has_target = false
+	_state = State.ON_TREE
+	_tree_phase = TreePhase.MOUNT
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	_body.rotation_degrees.z = 0.0
+	# Snap to the foot point: a walk ends NEAR its target, never on it
+	# (0.401 u short, measured), and the mount arc must start from one
+	# known place or the grip lands a hand off the bark.
+	global_position = tree_foot_point(tree, spec)
+	_tree_face_yaw(true)
+	var grip: Vector3 = _tree.to_global(_tree_grip(TREE_GRIP_Y0, 0.0))
+	_hop_from = Vector3(global_position.x, 0.0, global_position.z)
+	_hop_to = Vector3(grip.x, 0.0, grip.z)
+	_hop_from_y = 0.0
+	_hop_to_y = grip.y
+	_hop_height = TREE_MOUNT_HOP_HEIGHT
+	_tree_tween = create_tween()
+	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, TREE_MOUNT_HOP_S)
+	_tree_tween.finished.connect(_on_tree_mount_finished, CONNECT_ONE_SHOT)
+	tree_mounted.emit()
+	return true
+
+func _on_tree_mount_finished() -> void:
+	if _state != State.ON_TREE:
+		return
+	_tree_phase = TreePhase.ASCEND
+	_hop_height = HOP_HEIGHT
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
+	_tree_tween = create_tween()
+	_tree_tween.tween_method(_apply_tree_ascend, 0.0, 1.0, _tree_climb_s())
+	_tree_tween.finished.connect(_on_tree_ascend_finished, CONNECT_ONE_SHOT)
+
+## Linear t -> a ladder of TREE_PULLS reaches. Returns [progress 0..1,
+## reach intensity 0..1 (1 at the middle of a rise, 0 while gripping),
+## side -1..1 (which hand is up)].
+func _tree_pulls(t: float) -> Array:
+	var n: float = float(_tree_pull_count())
+	var k: float = floor(t * n)
+	var frac: float = t * n - k
+	var rise: float = smoothstep(0.0, TREE_PULL_RISE, frac)
+	var progress: float = clampf((k + rise) / n, 0.0, 1.0)
+	var reach: float = sin(clampf(frac / TREE_PULL_RISE, 0.0, 1.0) * PI)
+	var side: float = 1.0 if int(k) % 2 == 0 else -1.0
+	# The sway crosses over DURING the rise, so a hand is never seen to
+	# teleport: blend toward the next side as the reach completes.
+	var sway: float = lerpf(side, -side, smoothstep(0.35, 1.0, frac)) if frac > 0.35 else side
+	return [progress, reach, sway]
+
+func _apply_tree_ascend(t: float) -> void:
+	if _tree == null or not is_instance_valid(_tree):
+		_tree_lost()
+		return
+	var pull: Array = _tree_pulls(t)
+	var y: float = lerpf(TREE_GRIP_Y0, _tree_top_y(), pull[0])
+	global_position = _tree.to_global(_tree_grip(y, pull[2]))
+	_tree_face_yaw(true)
+	_body.rotation_degrees.x = _base_pitch + TREE_HUG_PITCH_DEG - TREE_PULL_PITCH_DEG * pull[1] + _tree_surface_tilt_deg(y)
+	_body.rotation_degrees.z = TREE_ROLL_DEG * pull[2]
+	var stretch: float = 1.0 + TREE_REACH_STRETCH * pull[1]
+	_body.scale = _base_scale * Vector3(1.0 - 0.35 * (stretch - 1.0), stretch, 1.0 - 0.35 * (stretch - 1.0))
+
+func _on_tree_ascend_finished() -> void:
+	if _state != State.ON_TREE:
+		return
+	_tree_phase = TreePhase.TOP_HOP
+	_body.rotation_degrees.z = 0.0
+	_body.scale = _base_scale
+	# Turn to the camera side before the hop, never in the air (the
+	# commit rule): from the last grip he springs onto the pad facing out.
+	_face(Vector3(0.0, 0.0, 1.0))
+	var from: Vector3 = _tree.to_global(_tree_grip(_tree_top_y(), 0.0))
+	var seat: Vector3 = _tree.to_global(_tree_spec.get("seat", Vector3(0, 3.42, 0)))
+	_hop_from = Vector3(from.x, 0.0, from.z)
+	_hop_to = Vector3(seat.x, 0.0, seat.z)
+	_hop_from_y = from.y
+	_hop_to_y = seat.y
+	_hop_height = TREE_TOP_HOP_HEIGHT
+	_tree_tween = create_tween()
+	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, _tree_top_hop_s(seat.y - from.y))
+	_tree_tween.finished.connect(_on_tree_top_hop_finished, CONNECT_ONE_SHOT)
+	if _tree_spec.get("through_leaves", false):
+		tree_leaves_entered.emit()
+
+## v5: the spring from the last grip to the seat. On a perchoir it rises
+## 0.30 u onto the pad (TREE_TOP_HOP_S, unchanged); on a decor tree it
+## goes THROUGH the crown onto the dome, up to ~2 u, and gets up to 1.8x
+## the time so the pop-out reads as a pop-out and not a teleport.
+func _tree_top_hop_s(rise: float) -> float:
+	return TREE_TOP_HOP_S * clampf(rise / 0.9, 1.0, 1.8)
+
+func _on_tree_top_hop_finished() -> void:
+	if _state != State.ON_TREE:
+		return
+	_tree_phase = TreePhase.SEATED
+	_tree_seated_t = 0.0
+	_hop_height = HOP_HEIGHT
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
+	_body.rotation_degrees.x = _base_pitch
+	_body.scale = _base_scale
+	follow_tree(0.0)
+	tree_seated.emit()
+	if _tree_exit_pending:
+		_tree_exit_pending = false
+		_begin_tree_descent()
+
+## Writes the seated pose for the tree's CURRENT transform. Called by the
+## tree every frame, right after it writes itself -- the only place a seat
+## touches his transform while he is up there.
+func follow_tree(delta: float, sway: Vector3 = Vector3.ZERO) -> void:
+	if _state != State.ON_TREE or _tree_phase != TreePhase.SEATED:
+		return
+	if _tree == null or not is_instance_valid(_tree):
+		_tree_lost()
+		return
+	_tree_seated_t += delta
+	var seat: Vector3 = _tree_spec.get("seat", Vector3(0, 3.42, 0))
+	global_position = _tree.to_global(seat + sway)
+	# Seated he faces the CAMERA side (world +z), whatever flank he came
+	# up: the seat is the one place the player gets to see his face.
+	_yaw.rotation_degrees.y = TREE_LOOK_DEG * sin(_tree_seated_t * TAU / TREE_LOOK_PERIOD_S)
+	var breath: float = 1.0 + 0.012 * sin(_tree_seated_t * TAU * TREE_BREATH_HZ)
+	var squash: float = 1.0
+	if _tree_shake_t >= 0.0:
+		# The bounce: he compresses with the wreath's dip and springs
+		# back, damped over the shake's length.
+		var u: float = clampf(_tree_shake_t / TREE_SHAKE_S, 0.0, 1.0)
+		squash = 1.0 - 0.16 * sin(u * TAU * 3.0) * (1.0 - u)
+		_tree_shake_t += delta
+		if _tree_shake_t > TREE_SHAKE_S:
+			_tree_shake_t = -1.0
+	_body.scale = _base_scale * Vector3(1.0 / sqrt(squash), breath * squash, 1.0 / sqrt(squash))
+	_body.rotation_degrees.x = _base_pitch
+
+## The seat's bounce, started by the tree when the wreath is shaken.
+func bounce_on_tree() -> void:
+	if is_seated_on_tree():
+		_tree_shake_t = 0.0
+
+## Asks to come down and go to `landing`. Safe in every phase: remembered
+## during the ascent, started when seated, re-aimed during the descent.
+func leave_tree(landing: Vector3) -> void:
+	if _state != State.ON_TREE:
+		return
+	_tree_landing = Vector3(landing.x, 0.0, landing.z)
+	match _tree_phase:
+		TreePhase.MOUNT, TreePhase.ASCEND, TreePhase.TOP_HOP:
+			_tree_exit_pending = true
+		TreePhase.SEATED:
+			_begin_tree_descent()
+		_:
+			pass
+
+func _begin_tree_descent() -> void:
+	_tree_phase = TreePhase.DROP_HOP
+	_tree_shake_t = -1.0
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	# Turn to the trunk on the pad, then spring down onto the top grip.
+	_tree_face_yaw(true)
+	var seat: Vector3 = _tree.to_global(_tree_spec.get("seat", Vector3(0, 3.42, 0)))
+	var grip: Vector3 = _tree.to_global(_tree_grip(_tree_top_y(), 0.0))
+	_hop_from = Vector3(seat.x, 0.0, seat.z)
+	_hop_to = Vector3(grip.x, 0.0, grip.z)
+	_hop_from_y = seat.y
+	_hop_to_y = grip.y
+	_hop_height = TREE_TOP_HOP_HEIGHT * 0.6
+	if _tree_tween and _tree_tween.is_valid():
+		_tree_tween.kill()
+	_tree_tween = create_tween()
+	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, _tree_top_hop_s(seat.y - grip.y) * 0.8)
+	_tree_tween.finished.connect(_on_tree_drop_hop_finished, CONNECT_ONE_SHOT)
+	if _tree_spec.get("through_leaves", false):
+		tree_leaves_entered.emit()
+
+func _on_tree_drop_hop_finished() -> void:
+	if _state != State.ON_TREE:
+		return
+	_tree_phase = TreePhase.DESCEND
+	_hop_height = HOP_HEIGHT
+	_hop_from_y = 0.0
+	_hop_to_y = 0.0
+	_tree_tween = create_tween()
+	_tree_tween.tween_method(_apply_tree_descend, 0.0, 1.0, _tree_descend_s())
+	_tree_tween.finished.connect(_on_tree_descend_finished, CONNECT_ONE_SHOT)
+
+func _apply_tree_descend(t: float) -> void:
+	if _tree == null or not is_instance_valid(_tree):
+		_tree_lost()
+		return
+	var pull: Array = _tree_pulls(t)
+	var y: float = lerpf(_tree_top_y(), TREE_GRIP_Y0, pull[0])
+	global_position = _tree.to_global(_tree_grip(y, pull[2]))
+	_tree_face_yaw(true)
+	# Head first (rolled 180 deg), the same lean reads with the opposite
+	# sign: captured with + the head was buried in the crown, tail up.
+	_body.rotation_degrees.x = _base_pitch + TREE_HUG_PITCH_DEG + TREE_PULL_PITCH_DEG * pull[1] - _tree_surface_tilt_deg(y)
+	_body.rotation_degrees.z = TREE_HEADFIRST_ROLL_DEG - TREE_ROLL_DEG * pull[2]
+	var stretch: float = 1.0 + TREE_REACH_STRETCH * 0.8 * pull[1]
+	_body.scale = _base_scale * Vector3(1.0 - 0.35 * (stretch - 1.0), stretch, 1.0 - 0.35 * (stretch - 1.0))
+
+func _on_tree_descend_finished() -> void:
+	if _state != State.ON_TREE:
+		return
+	_tree_phase = TreePhase.DISMOUNT
+	_body.rotation_degrees.z = 0.0
+	_body.scale = _base_scale
+	var grip: Vector3 = _tree.to_global(_tree_grip(TREE_GRIP_Y0, 0.0))
+	var foot: Vector3 = tree_foot_point(_tree, _tree_spec)
+	# Land facing the way he is about to go, decided on the ground before
+	# the hop, never in the air.
+	var onward: Vector3 = _tree_landing if _tree_landing != Vector3.INF else foot
+	var dir: Vector3 = onward - foot
+	if dir.length() > 0.05:
+		_face(dir)
+	else:
+		_tree_face_yaw(false)
+	_hop_from = Vector3(grip.x, 0.0, grip.z)
+	_hop_to = foot
+	_hop_from_y = grip.y
+	_hop_to_y = 0.0
+	_hop_height = TREE_MOUNT_HOP_HEIGHT
+	_tree_tween = create_tween()
+	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, TREE_MOUNT_HOP_S)
+	_tree_tween.finished.connect(_on_tree_dismount_finished, CONNECT_ONE_SHOT)
+
+## Feet on the ground: the body is handed back to the ordinary chain with
+## the tapped point as its target, the way every other dismount does.
+func _on_tree_dismount_finished() -> void:
+	if _state != State.ON_TREE:
+		return
+	var landing: Vector3 = _tree_landing
+	_tree = null
+	_tree_spec = {}
+	_tree_phase = TreePhase.NONE
+	_tree_landing = Vector3.INF
+	_tree_exit_pending = false
+	_body.rotation_degrees.z = 0.0
+	if landing != Vector3.INF:
+		_target = landing
+		_has_target = true
+	_on_hop_finished()
+	tree_dismounted.emit()
+
+## The tree went away under him (unreachable while HubWorld owns both;
+## written down rather than assumed, as every carrier does).
+func _tree_lost() -> void:
+	if _tree_tween and _tree_tween.is_valid():
+		_tree_tween.kill()
+	_tree = null
+	_tree_spec = {}
+	_tree_phase = TreePhase.NONE
+	_state = State.IDLE
+	_body.rotation_degrees.x = _base_pitch
+	_body.rotation_degrees.z = 0.0
+	_body.scale = _base_scale
+	global_position = Vector3(global_position.x, 0.0, global_position.z)
+	tree_dismounted.emit()
+	became_idle.emit()
