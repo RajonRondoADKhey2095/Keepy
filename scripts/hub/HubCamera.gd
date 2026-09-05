@@ -37,7 +37,24 @@ func _ready() -> void:
 	if target == null:
 		push_error("HubCamera: target_path does not resolve to a Node3D.")
 	else:
-		global_position = _wanted()
+		snap_to_target()
+
+## Puts the camera at its resting offset IMMEDIATELY, with no smoothing.
+##
+## ⚠️ PUBLIC BECAUSE _ready() IS TOO EARLY FOR ONE CALLER. Children are
+## readied before their parent, so this node snaps to wherever Keepy is
+## authored in the scene -- the origin -- and HubWorld._ready() only moves
+## him afterwards, when he is coming back to a door rather than to the
+## spawn. Without a second snap the camera would spend its first seconds
+## sliding across the plateau from the origin to where the player actually
+## is, which reads as the screen catching up rather than as a return.
+##
+## Nothing else may call this per frame: the smoothing in _process is the
+## whole reason the horizon does not jump, and a snap is a cut.
+func snap_to_target() -> void:
+	if target == null:
+		return
+	global_position = _wanted()
 
 func _process(delta: float) -> void:
 	if target == null:

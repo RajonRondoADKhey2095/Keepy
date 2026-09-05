@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3]
+[gd_scene load_steps=21 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -7,11 +7,16 @@
 [ext_resource type="Script" path="res://scripts/hub/HubTapInput.gd" id="5"]
 [ext_resource type="Script" path="res://scripts/hub/HubRouter.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/hub/BoatMooring.gd" id="12"]
+[ext_resource type="Script" path="res://scripts/hub/ZiplineDoor.gd" id="16"]
+[ext_resource type="Script" path="res://scripts/hub/HubCampfire.gd" id="17"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
 [ext_resource type="PackedScene" path="res://assets/models/keepy_squirrel_hero.glb" id="10"]
 [ext_resource type="PackedScene" path="res://scenes/HubConfirmDialog.tscn" id="11"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_owl_decor.glb" id="13"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_cabin_decor.glb" id="14"]
+[ext_resource type="PackedScene" path="res://assets/models/keepy_magpie_prop.glb" id="15"]
 
 [sub_resource type="Environment" id="Environment_Hub"]
 background_mode = 1
@@ -106,6 +111,12 @@ surface_material_override/0 = SubResource("StandardMaterial3D_Ground")
 script = ExtResource("2")
 layout = ExtResource("8")
 portal_scene = ExtResource("9")
+owl_scene = ExtResource("13")
+cabin_scene = ExtResource("14")
+magpie_scene = ExtResource("15")
+
+[node name="Campfires" type="Node3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("17")
 
 [node name="Keepy" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("3")
@@ -136,10 +147,14 @@ camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
 container_path = NodePath("../WorldViewport")
 viewport_path = NodePath("../WorldViewport/SubViewport")
 mooring_path = NodePath("../Mooring")
+zipline_path = NodePath("../ZiplineDoor")
 
 [node name="Mooring" type="Node" parent="."]
 script = ExtResource("12")
 camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
+
+[node name="ZiplineDoor" type="Node" parent="."]
+script = ExtResource("16")
 
 [node name="Router" type="Node" parent="."]
 script = ExtResource("6")

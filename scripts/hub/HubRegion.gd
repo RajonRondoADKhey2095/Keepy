@@ -24,10 +24,102 @@ class_name HubRegion
 ## owner.
 ##
 ## =====================================================================
-## THE REGION -- square OR shore pad, NO SUBTRACTION, since 26 aout 2026
+## THE REGION -- square OR shore pad OR north lobe OR a structure lobe,
+## NO SUBTRACTION
 ##
-##   ( square(+-PLATEAU_HALF_EXTENT)  OR  shore pad )
+##   ( square(+-PLATEAU_HALF_EXTENT)  OR  shore pad  OR  north lobe
+##     OR any structure lobe )
 ##
+## THE NORTH LOBE (28 aout 2026) is the shape argument above, used for the
+## first time on purpose rather than on water. Mathieu's decision, taken on
+## the recon that measured it: a disc of radius 12 centred on the MIDDLE OF
+## THE NORTH EDGE, (0, +35), unioned in. Only its outer half is new ground
+## -- the inner half is already square -- so it is written as a full disc
+## because the two spellings are the same region and a disc is the one this
+## file already knows how to clamp to.
+##
+##   new walkable ground   pi * 12^2 / 2  =  226.195 u2   (+4.616% of 4900)
+##   worst crossing        UNCHANGED, and that is the whole point
+##
+## Radius 12 was the most conservative of the four sizes the recon measured.
+## +Z rather than any other azimuth because the recon found the outer half
+## EMPTY: the layout's largest |z| is 33.895, so nothing at all stands past
+## the north edge and the lobe costs no prop a relocation. It sits BEHIND
+## the spawn -- HubCamera never yaws, so the player only ever sees what is
+## at lower z than Keepy -- which Mathieu accepted when he picked the
+## azimuth, on the same terms as the turnstile before it.
+##
+## =====================================================================
+## THE STRUCTURE LOBES (3 septembre 2026) -- the same shape argument, used
+## for a POINT rather than for an edge.
+##
+## The north lobe above answers "the middle of the +Z edge should have more
+## room". This table answers a different question: a STRUCTURE the layout
+## stands ON an edge puts parts of itself PAST that edge, and the ground
+## those parts stand on has to be walkable or the prop is unusable from the
+## side it is built on.
+##
+## The zipline's north tower is the first. MEASURED on the built tree, not
+## inferred from the layout:
+##
+##   P2 tower position          (25.2, 0, 35.0)   EXACTLY on the half-extent
+##   P2 stair_foot              (25.037, 0, 36.682)   1.682 u past the edge
+##   stringer feet              1.7414 u from P2, deepest z = 36.7226
+##   rear legs                  0.7778 u from P2, z = 35.600 / 35.494
+##   contains() on all five     FALSE, before this table existed
+##
+## WHY THE STAIR RUNS THAT WAY, and why it is not a bug to fix at the
+## builder: `_build_zipline_tower` runs each tower's stair BEHIND it
+## relative to that tower's own `forward` ("toward the other tower"). At
+## P1 that points inward; at P2 the same rule points further north. One
+## builder, two towers, one facing rule -- the symmetry `_make_zipline()`
+## documents as deliberate. Re-orienting the north stair alone would break
+## that symmetry AND still leave the rear legs outside, so the region is
+## where this is answered.
+##
+## RADIUS 3.0, and the margin is the point rather than the minimum. The
+## furthest thing the tower puts on the ground is 1.7414 u from P2 and the
+## published circumscribed footprint is 1.78308 u, so 3.0 leaves 1.2169 u
+## of walkable ground beyond the widest part of the prop -- nearly two
+## KEEPY_CLEARANCE (0.66) of room to manoeuvre, not a rim that just barely
+## admits the stair.
+##
+## WHAT IT COSTS, measured on the real hopper at --fixed-fps 60 BEFORE the
+## table was added (a recon spike, deleted with the batch that acted on it)
+## rather than argued from the geometry:
+##
+##   square diagonal (published)                66 hops   18.700 s
+##   far corner -> P2 lobe tip, r = 2.0         63 hops   17.850 s
+##   far corner -> P2 lobe tip, r = 3.0         64 hops   18.133 s   <- shipped
+##   far corner -> P2 lobe tip, r = 5.0         65 hops   18.417 s
+##
+## The diagonal is STILL the hub's worst walk at every radius swept, which
+## is the same reason the north lobe was affordable: a lobe bolted near an
+## EDGE adds no length to a diagonal between CORNERS. Gated, not assumed --
+## SeesawProbe's PHASE CROSSING walks the P2 row alongside the diagonal.
+##
+## THE NEW GROUND IS EMPTY, measured on the shipped layout: sweeping every
+## prop footprint and both great-lake discs, NOTHING reaches within 5.0 u
+## of P2 except the zipline tower itself, and the existing north lobe's rim
+## is 13.200 u away -- the two discs do not touch, so neither can shadow
+## the other.
+##
+## A TABLE AND NOT A SECOND SCALAR, from the first entry. This repo has
+## already paid for the other choice: the diving board shipped a generic
+## geometry behind a singleton, and a second board was drawn and never
+## climbable. A second structure on an edge is a row here and nothing else.
+##
+## ⚠️ THE CENTRE IS A SECOND SPELLING OF THE LAYOUT'S "far_end", exactly as
+## the lake centres are a second spelling of theirs, and it is gated the
+## same way rather than trusted: ZiplineStructureProbe's PHASE H checks
+## this table against the tower the builder actually stood there.
+##
+## WHY UNION AND NOT A SEPARATE ZONE: every site that asks this file a
+## question keeps asking the same one. contains() and clamp_to() are the
+## only two entry points, and neither grew a case for the lobe that the
+## square and the pad did not already need -- which is what "option A" was
+## chosen for, and is measured by SeesawProbe's PHASE LOBE rather than
+## assumed.
 ## Water is a PLACE, not a hole. Mathieu's explicit decision: Keepy must be
 ## able to walk into all five water bodies on the plateau -- the pond, the
 ## small lake, the stream, and both great-lake lobes -- and this file no
@@ -199,6 +291,50 @@ const SPAWN_LAKE_WATER_RADIUS: float = 10.0
 ## number to say the same thing; changing it now would change nothing.
 const SHORE_PAD_RADIUS: float = 20.0
 
+## The north lobe: a disc unioned onto the middle of the +Z edge.
+##
+## THE CENTRE IS ON THE EDGE, NOT PAST IT. Half the disc therefore lies
+## inside the square and contributes nothing, which is deliberate: a lobe
+## whose centre sat outside would either leave a notch where it meets the
+## edge or need a second term to fill one, and the union of a square with a
+## disc that straddles its boundary has neither problem.
+##
+## RADIUS 12, the most conservative of the four the recon measured, and the
+## reason a lobe is affordable at all where a wider square is not: the
+## square's corner-to-corner diagonal is what sets the worst crossing
+## (18.700 s at half-extent 35, measured on the shipped hopper), and a lobe
+## bolted onto an EDGE adds no length to a diagonal between CORNERS. The
+## number is gated rather than argued -- SeesawProbe walks the region's
+## worst pair on the real hopper and checks the diagonal is still it.
+const NORTH_LOBE_RADIUS: float = 12.0
+
+## Radius of every structure lobe. ONE number for the family rather than a
+## per-row float: the rule this table encodes is "a structure standing on
+## an edge gets room to be walked around", and that room is a property of
+## KEEPY_CLEARANCE and of how wide these props get, not of which prop it
+## is. A row that genuinely needed its own radius would be a different
+## rule, and would say so by growing a "radius" key here.
+##
+## 3.0 is measured, not chosen -- see the header for the five as-built
+## points it has to cover and the crossing sweep that shows it costs the
+## worst case nothing.
+const STRUCTURE_LOBE_RADIUS: float = 3.0
+
+## Every structure lobe, in layout order. PLURAL FROM THE FIRST ENTRY, on
+## the same terms as `_lakes` and for the reason the diving board taught
+## this repo: a singleton that later needs a second entry costs its own
+## batch to undo.
+##
+## Written as a table of centres rather than derived from the layout
+## because this file cannot read the layout -- HubBuilder asks contains()
+## WHILE it builds. That makes the centre a second spelling, and a second
+## spelling is only safe when something gates it: ZiplineStructureProbe's
+## PHASE H compares this row to the tower as built, so the two cannot
+## drift apart in silence.
+static var _structure_lobes: Array[Dictionary] = [
+	{"centre": Vector3(25.2, 0.0, 35.0), "radius": STRUCTURE_LOBE_RADIUS},
+]
+
 ## The centre, and the two things every other rule here is built from.
 ## static var and not const because a const initialiser cannot call
 ## normalized() or atan2() -- writing the results as literals instead would
@@ -206,6 +342,12 @@ const SHORE_PAD_RADIUS: float = 20.0
 static var _lake_centre: Vector3 = Vector3(LAKE_CENTRE_X, 0.0, LAKE_CENTRE_Z)
 static var _axis: Vector3 = _lake_centre.normalized()
 static var _near_bank: Vector3 = _axis * (_lake_centre.length() - GREATLAKE_WATER_RADIUS)
+
+## Centre of the north lobe: the midpoint of the +Z edge, DERIVED from the
+## half-extent rather than written as a literal 35. The lobe is defined as
+## "on the north edge", so if the square ever moves the lobe has to move
+## with it, and a literal is how the two would stop agreeing.
+static var _north_lobe: Vector3 = Vector3(0.0, 0.0, PLATEAU_HALF_EXTENT)
 
 ## Every great-lake disc, in the order the layout states them. No longer
 ## SUBTRACTS anything since 26 aout 2026 (see contains()'s docblock) -- this
@@ -228,6 +370,19 @@ static var _lakes: Array[Dictionary] = [
 static var LAKE_CENTRE_DISTANCE: float = _lake_centre.length()
 static var LAKE_AZIMUTH_DEG: float = fposmod(
 	rad_to_deg(atan2(LAKE_CENTRE_X, -LAKE_CENTRE_Z)), 360.0)
+
+## Centre of the north lobe, in world units. Published so a probe and a
+## layout author can both aim at the lobe without restating where the north
+## edge is.
+static func north_lobe_centre() -> Vector3:
+	return _north_lobe
+
+## Every structure lobe, centre and radius, in layout order. Published so a
+## probe can gate each row against the prop it exists for, and so a future
+## caller asking "is this point in the room around a structure" reads the
+## one table rather than restating a centre.
+static func structure_lobes() -> Array[Dictionary]:
+	return _structure_lobes
 
 ## Unit vector from the plateau centre toward the lake centre.
 static func lake_axis() -> Vector3:
@@ -308,6 +463,13 @@ static func contains(point: Vector3) -> bool:
 	var flat := _flat(point)
 	if absf(flat.x) <= PLATEAU_HALF_EXTENT and absf(flat.z) <= PLATEAU_HALF_EXTENT:
 		return true
+	if flat.distance_to(_north_lobe) <= NORTH_LOBE_RADIUS:
+		return true
+	# One more disc per structure lobe, and no new KIND of case -- the same
+	# property that made the north lobe a union term rather than a zone.
+	for lobe in _structure_lobes:
+		if flat.distance_to(lobe["centre"] as Vector3) <= float(lobe["radius"]):
+			return true
 	return flat.distance_to(_near_bank) <= SHORE_PAD_RADIUS
 
 ## The nearest point of the region to `point`, on the ground plane.
@@ -331,10 +493,11 @@ static func contains(point: Vector3) -> bool:
 ## this commit removes, so keeping them would have been dead code with
 ## nothing left to call it.
 ##
-## Candidates rather than a closed form: the region is still a union of a
-## square and a disc (the shore pad), so its nearest point is on one of a
-## handful of features (the square's boundary, the pad's boundary, or a
-## corner where the two meet). Generating those and taking the closest that
+## Candidates rather than a closed form: the region is a union of a square
+## and two discs (the shore pad and the north lobe), so its nearest point
+## is on one of a
+## handful of features (the square's boundary, either disc's boundary, or
+## a corner where two of them meet). Generating those and taking the closest that
 ## actually passes contains() is both shorter and harder to get subtly
 ## wrong than case-splitting the geometry by hand.
 static func clamp_to(point: Vector3) -> Vector3:
@@ -347,8 +510,19 @@ static func clamp_to(point: Vector3) -> Vector3:
 		clampf(flat.x, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT), 0.0,
 		clampf(flat.z, -PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT))
 	var pad := _near_bank + (flat - _near_bank).limit_length(SHORE_PAD_RADIUS)
+	# The lobe is one more disc, so it is one more candidate and no new kind
+	# of case -- the reason contains() and this function both took the union
+	# without growing a branch shaped like "the north lobe".
+	var lobe := _north_lobe + (flat - _north_lobe).limit_length(NORTH_LOBE_RADIUS)
 	candidates.append(square)
 	candidates.append(pad)
+	candidates.append(lobe)
+	# Each structure lobe contributes its own nearest-point candidate, so a
+	# tap just past the P2 tower resolves onto the ground BESIDE it rather
+	# than being dragged back to the square edge 1.7 u away.
+	for entry in _structure_lobes:
+		var centre: Vector3 = entry["centre"]
+		candidates.append(centre + (flat - centre).limit_length(float(entry["radius"])))
 
 	var best := Vector3.ZERO
 	var best_distance := INF

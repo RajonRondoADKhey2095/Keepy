@@ -565,3 +565,96 @@ unshaded primitives are close to the cheapest thing that can be added here.
 ⚠️ **The FPS band is NOT comparable to the rows above it.** Those were taken
 on other machines in other sessions; only the BEFORE/AFTER pair inside one
 block shares hardware. llvmpipe under xvfb, as ever. **Device judgement.**
+
+---
+
+## 28 aout 2026 -- the north lobe and the seesaw
+
+The walkable hub grew by SHAPE for the first time (a disc of radius 12
+unioned onto the middle of the +Z edge, +224.89 u2 measured on the shipped
+`contains()`), and the plateau gained its second prop that answers a
+landing. BEFORE is `origin/main` (`b00fa1d`) in a separate worktree with a
+verified-complete import; both sides measured in ONE session on an idle
+machine, three runs each, nothing else running.
+
+| | BEFORE | AFTER |
+|---|---|---|
+| draw nodes, HubBuilder only (excl. portals) | **124 / 124 / 124** | **127 / 127 / 127** |
+| draw nodes, total (incl. portals) | 130 | 133 |
+| construction, `instantiate()` + `_ready()` | 49.61 / 50.17 / 57.78 ms | 51.84 / 59.49 / 50.48 ms |
+| simulated FPS, mean | 15.8 / 15.2 / 14.9 | 14.7 / 14.4 / 15.0 |
+| simulated FPS, min | 12.7 / 11.1 / 12.6 | 11.9 / 12.0 / 13.2 |
+| layout entries | 208 | 215 |
+
+**+3 draw nodes, ITEMISED**: the seesaw's fulcrum, its plank, and ONE
+`MultiMeshInstance3D` carrying both grips. Margin under the 260 ceiling
+goes 136 -> 133.
+
+**THE LOBE'S OWN DECOR COSTS ZERO NODES.** Its six scatter entries are
+`rock`/`bush`/`flower`, all already batched, so they are six more instances
+in batches that existed -- which is exactly the property the MultiMesh
+refactor was done to buy, used here for the first time to add ground
+without adding draw calls.
+
+⚠️ **Nothing about the cost is detectable, and the RANGES say so rather
+than the means.** Construction 49.61-57.78 against 50.48-59.49
+(overlapping), FPS mean 14.9-15.8 against 14.4-15.0 (overlapping), FPS min
+11.1-12.7 against 11.9-13.2 (overlapping). The claim these support is the
+narrow one: **no cost is measurable**, never that anything got faster.
+
+⚠️ **The FPS band is NOT comparable to the rows above it.** Those were
+taken on other machines in other sessions; only the BEFORE/AFTER pair
+inside one block shares hardware. llvmpipe under xvfb, as ever. **Device
+judgement.**
+
+---
+
+## 28 aout 2026 -- the first non-Keepy Meshy model on the plateau (owl, decorative)
+
+The first hub prop drawn from an imported .glb rather than built from
+primitives in `HubBuilder.gd`. One static, unshaded, unanimated owl
+(`assets/models/keepy_owl_decor.glb`, converted from
+`assets_source/openworld/perso/Meshy_AI_Ember_Eyed_Owlet_0828125359_texture.glb`
+by adding `KHR_materials_unlit`), placed beside the Quizz portal. No new
+prop TYPE for the batching system to reach -- it is not batched, there is
+only one. BEFORE is `origin/main` (`2ae7901`) in a separate worktree with a
+verified-complete import (34 `.scn`, against 35 on this branch -- +1 for
+the owl); both sides measured in ONE session on an idle machine, three
+runs each, nothing else running.
+
+| | BEFORE | AFTER |
+|---|---|---|
+| draw nodes, HubBuilder only (excl. portals) | **127 / 127 / 127** | **128 / 128 / 128** |
+| draw nodes, total (incl. portals) | 133 | 134 |
+| construction, `instantiate()` + `_ready()` | 51.84 / 51.61 / 51.71 ms | 51.31 / 55.23 / 52.30 ms |
+| simulated FPS, mean | 14.1 / 15.2 / 15.2 | 13.8 / 14.2 / 14.0 |
+| simulated FPS, min | 9.7 / 12.6 / 13.1 | 10.4 / 8.5 / 8.5 |
+| layout entries | 215 | 216 |
+
+**+1 draw node, exactly**: the owl's own single `MeshInstance3D` (the .glb
+carries one node, one mesh, one primitive -- measured in recon, not
+assumed), under a wrapping, non-drawing `Node3D`. Margin under the 260
+ceiling goes 133 -> 132.
+
+⚠️ **The FPS band OVERLAPS but sits on the low side of BEFORE, and that
+is reported rather than smoothed over.** Mean 13.8-14.2 against
+14.1-15.2, min 8.5-10.4 against 9.7-13.1: the two ranges touch (14.1-14.2
+is common ground) but AFTER's worst frames (8.5 fps twice) are lower than
+anything BEFORE produced in this block. Construction time overlaps more
+comfortably (51.31-55.23 against 51.61-51.84). This is ONE new draw call
+plus a 2048x2048 base-colour texture, a 2048x2048 normal map and a
+4096x4096 metallic-roughness map now resident in VRAM (the last of which
+has zero effect on an unshaded material -- see the lot's report for why it
+was kept anyway, matching `keepy_hibou_pursuer.glb`'s own precedent)
+against a background that was already at 127 draw nodes. Whether that
+shows up as a real frame-time cost on a phone GPU, where texture bandwidth
+and fill rate behave nothing like llvmpipe's software rasteriser, is not
+something this sandbox can answer.
+
+⚠️ **NONE OF THIS IS A DEVICE MEASUREMENT.** Every number above comes from
+`llvmpipe` (a CPU software rasteriser) under `xvfb`, driven through
+Godot's `opengl3` compatibility backend on a shared cloud sandbox with no
+GPU. The actual build ships as WebGL2 and is judged on Safari iOS. This
+table exists to say "here is what changed, and by how much, on this one
+bench" -- not to predict, guarantee, or rule out a real frame-time cost on
+a phone. **Device judgement**, same as every batch before this one.

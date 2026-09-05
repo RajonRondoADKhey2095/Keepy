@@ -306,6 +306,25 @@ signal board_dismounted()
 signal turnstile_mounted()
 signal turnstile_dismounted()
 
+## Emitted when a seesaw ride starts and when it ends, the turnstile pair's
+## twins. The dismount fires AFTER the landing, so a listener sees the
+## ground he arrived on rather than the plank he left.
+signal seesaw_mounted
+signal seesaw_dismounted
+
+## Keepy has been put on the owl's back, and has been let off it again.
+signal owl_flight_mounted
+signal owl_flight_dismounted
+
+## Keepy has taken hold of the zipline trolley, and has let go of it again.
+##
+## `zipline_mounted` fires at the END of the step off the deck, not at the
+## tap: boarding is an arc up off the stair foot and there is nothing to
+## carry until it lands on the handle. HubWorld starts the trip on this
+## signal, so a trip can never begin under a body that is still in the air.
+signal zipline_mounted
+signal zipline_dismounted
+
 ## Yaw carrier. Kept separate from this node so world position (written by
 ## the hop) and facing (written by the turn) never contend for one
 ## transform, and separate from the model slot so pitch stays body-local.
@@ -360,7 +379,7 @@ var _has_target: bool = false
 ## hop_landed, so portal detection is silent for their whole duration. A
 ## board planted 9 u from the portal row would otherwise carry a diver into
 ## a sub-game they were only passing over.
-enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE }
+enum State { IDLE, HOPPING, RIDING, CLIMBING, ON_BOARD, DIVING, ON_TURNSTILE, ON_SEESAW, ON_OWL_FLIGHT, ON_ZIPLINE }
 
 var _state: State = State.IDLE
 var _hop_from: Vector3 = Vector3.ZERO
@@ -423,6 +442,48 @@ var _ride_half_width: float = 0.0
 var _turnstile: Node3D = null
 var _turnstile_seat: Vector3 = Vector3.ZERO
 
+## The seesaw pivot Keepy is riding and where he sits IN THAT PIVOT'S OWN
+## LOCAL SPACE. Both null/zero whenever _state is not ON_SEESAW.
+##
+## ⚠️ THE SAME LOCAL-OFFSET-AND-to_global RULE the turnstile states above,
+## and it carries MORE here for free. A seesaw tilts, so the seat's world
+## HEIGHT changes as well as its position -- and because the offset is
+## local and the transform is the plank's own, the height comes out of the
+## same multiply the plank is drawn with. A rider whose Y was advanced on a
+## clock of its own would be a second number turning at the same rate,
+## which is the definition of the thing that drifts.
+var _seesaw: Node3D = null
+var _seesaw_seat: Vector3 = Vector3.ZERO
+
+## The owl currently carrying him, and where on it he sits -- in that
+## node's own local space, so a seat written once stays put through every
+## yaw and every metre of the loop.
+var _owl: Node3D = null
+var _owl_seat: Vector3 = Vector3.ZERO
+
+## The zipline trolley currently carrying him, and where on it he hangs --
+## in that node's own local space, so the seat is `(lateral, height,
+## abscissa)` in the CARRIER's frame and never a world point.
+##
+## ⚠️ THIS IS THE SHAPE `RIDE_SEAT_Y` COULD NOT TAKE, and RECON 4 measured
+## why. That constant is a bare float with ONE reader, written straight
+## onto this body: it has no notion of an occupant, no lateral offset, and
+## therefore no path at all for a SECOND rider. A trolley carries two, so
+## the seat has to be a vector in the carrier's frame -- which is also what
+## lets the badger's seat be the same fact with the opposite sign.
+var _zipline: Node3D = null
+var _zipline_seat: Vector3 = Vector3.ZERO
+
+## Backward lean while hanging, in degrees. `_apply_hop` subtracts to pitch
+## FORWARD into an arc, so a positive number here leans the body back --
+## the pose of somebody being pulled along by their hands.
+const ZIPLINE_HANG_PITCH_DEG: float = 12.0
+
+## How high the arc off the stair foot rises above the straight line to the
+## handle. Small: it is a step off a platform onto a grip a third of a unit
+## below it, not a leap.
+const ZIPLINE_BOARD_HOP_HEIGHT: float = 0.28
+
 func _ready() -> void:
 	_base_scale = _body.scale
 	_base_pitch = _body.rotation_degrees.x
@@ -478,6 +539,23 @@ func is_riding() -> bool:
 ## which is a load-bearing job for a query that was never given it.
 func is_on_turnstile() -> bool:
 	return _state == State.ON_TURNSTILE
+
+## True while a seesaw owns the body. Like ON_TURNSTILE it emits no
+## landings, so portal detection, boarding and climbing all go quiet for the
+## whole ride without any of them needing a line about seesaws.
+func is_on_seesaw() -> bool:
+	return _state == State.ON_SEESAW
+
+## True while the owl is carrying him round its loop.
+func is_on_owl_flight() -> bool:
+	return _state == State.ON_OWL_FLIGHT
+
+## True while the trolley owns the body -- from the handle being taken to
+## the drop at the far end. Like every other carried state it emits no
+## landings, so portal detection, boarding and climbing all go quiet for
+## the whole trip without any of them needing a line about ziplines.
+func is_on_zipline() -> bool:
+	return _state == State.ON_ZIPLINE
 
 ## True from the first rung to the moment the feet hit the water: the whole
 ## span in which the body belongs to the board rather than to the plateau.
@@ -666,6 +744,404 @@ func leave_turnstile(landing: Vector3) -> void:
 func _on_turnstile_dismount_finished() -> void:
 	_on_hop_finished()
 	turnstile_dismounted.emit()
+
+## Puts Keepy on a seesaw plank, at the end he arrived at.
+##
+## `pivot` is the node that tilts, `seat_y` the TOP of the plank and
+## `ride_x` how far out along it a rider sits -- all three in the pivot's
+## own local space, all three published by HubBuilder from the pass that
+## drew them. Nothing here re-derives any of them, for the reason
+## mount_turnstile states: the plank a rider stands on and the plank that
+## was drawn have to be one fact.
+##
+## THE END IS THE ONE HE CAME FROM, which is the seesaw's version of the
+## turnstile snapping its seat to the nearest gap. A rider teleported to the
+## far end the instant he arrives is the jolt that rule exists to avoid, and
+## on a two-ended prop "nearest" is simply the sign of his local x.
+##
+## Refused, quietly, unless he is standing still -- the same overlap every
+## other entry point on this file refuses.
+func mount_seesaw(pivot: Node3D, seat_y: float, ride_x: float) -> bool:
+	if pivot == null or not is_instance_valid(pivot):
+		return false
+	if _state != State.IDLE:
+		return false
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+
+	# Where he is standing, expressed in the pivot's frame, so the end is
+	# chosen against the plank as it is turned RIGHT NOW rather than against
+	# the layout's idea of which way it points.
+	var local: Vector3 = pivot.to_local(global_position)
+	var side: float = 1.0 if local.x >= 0.0 else -1.0
+
+	_seesaw = pivot
+	_seesaw_seat = Vector3(side * ride_x, seat_y, 0.0)
+	_has_target = false
+	_state = State.ON_SEESAW
+	# Rest pose, as every state that takes the body over sets it: a squash
+	# left over from the landing that mounted him would ride with him.
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	follow_seesaw()
+	seesaw_mounted.emit()
+	return true
+
+## Writes Keepy at the seat for the plank's CURRENT tilt. The ONE place a
+## seesaw ride touches a transform.
+##
+## ⚠️ CALLED BY WHATEVER TILTS THE PIVOT, NEVER FROM _process(). This is not
+## a precaution copied across from the turnstile -- it is that file's
+## MEASUREMENT: a rider who sampled the pivot on his own per-frame callback
+## was a full frame behind it, 12.0 deg at the peak of the shove, and
+## process_priority did not move it because Tween steps land after every
+## node's _process whatever the priority says. So the caller that writes the
+## angle writes the rider too, in that order.
+func follow_seesaw() -> void:
+	if _seesaw == null or not is_instance_valid(_seesaw):
+		# The prop went away underneath him. Put the body back on the ground
+		# rather than leaving it parked in mid-air on a dead reference: this
+		# is unreachable while HubWorld owns both, which is exactly why it is
+		# written down instead of assumed.
+		_seesaw = null
+		_seesaw_seat = Vector3.ZERO
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		return
+	global_position = _seesaw.to_global(_seesaw_seat)
+	# Facing along the plank, INWARD toward the fulcrum. Outward is what the
+	# turnstile does because a roundabout rider faces the way he is flung;
+	# a seesaw rider faces the middle, which is also the pose that keeps him
+	# side-on to a camera that never yaws instead of showing it his back.
+	var inward: Vector3 = _seesaw.global_transform.basis * Vector3(-_seesaw_seat.x, 0.0, 0.0)
+	inward.y = 0.0
+	if inward.length_squared() > 0.000001:
+		_yaw.rotation_degrees.y = rad_to_deg(atan2(inward.x, inward.z))
+
+## Steps off the seesaw onto `landing`, which the caller has already
+## measured to be clear ground outside the prop.
+##
+## Reuses the generalised arc -- from the seat height down to zero -- rather
+## than writing a fourth way down off something, exactly as the dive, the
+## boat eject and the turnstile dismount already do. The seat height is READ
+## OFF THE BODY rather than recomputed, because the plank may be at any
+## tilt when the rock ends and the height he actually leaves from is the one
+## the arc has to start at.
+func leave_seesaw(landing: Vector3) -> void:
+	if _state != State.ON_SEESAW:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_seesaw = null
+	_seesaw_seat = Vector3.ZERO
+	_has_target = false
+
+	var delta := target - here
+	if delta.length() < 0.001:
+		# Degenerate: the caller aimed at the seat. Set him down rather than
+		# tweening a zero-length arc.
+		_state = State.IDLE
+		global_position = here
+		seesaw_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_seesaw_dismount_finished, CONNECT_ONE_SHOT)
+
+## The dismount lands and the body is handed straight back to the ordinary
+## chain, the way the turnstile's and the dive's do.
+func _on_seesaw_dismount_finished() -> void:
+	_on_hop_finished()
+	seesaw_dismounted.emit()
+
+## Puts Keepy on the owl's back.
+##
+## `carrier` is the node a flight MOVES and `seat_y` where on it he sits,
+## both published by HubBuilder from the pass that drew the prop. Nothing
+## here re-derives either, for the reason mount_seesaw and mount_turnstile
+## both state: the back the player sees and the back a rider is written
+## onto have to be one fact.
+##
+## NO SIDE TO CHOOSE, unlike the seesaw's two ends and the turnstile's gaps
+## between bars: an owl has one back, so the seat is simply it. The seat is
+## Y-only, which is what makes it survive the yaw the loop turns him
+## through -- an X or Z offset would swing out sideways as the bird banks.
+##
+## Refused, quietly, unless he is standing still -- the same overlap every
+## other entry point on this file refuses.
+func mount_owl(carrier: Node3D, seat_y: float) -> bool:
+	if carrier == null or not is_instance_valid(carrier):
+		return false
+	if _state != State.IDLE:
+		return false
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+
+	_owl = carrier
+	_owl_seat = Vector3(0.0, seat_y, 0.0)
+	_has_target = false
+	_state = State.ON_OWL_FLIGHT
+	# Rest pose, as every state that takes the body over sets it: a squash
+	# left over from the landing that mounted him would ride with him.
+	_body.scale = _base_scale
+	_body.rotation_degrees.x = _base_pitch
+	follow_owl()
+	owl_flight_mounted.emit()
+	return true
+
+## Writes Keepy at the seat for the owl's CURRENT pose. The ONE place a
+## flight touches his transform.
+##
+## ⚠️ CALLED BY WHATEVER MOVES THE OWL, NEVER FROM _process(). This is not
+## a precaution copied across from the seesaw -- it is the TURNSTILE'S
+## MEASUREMENT: a rider who sampled his carrier on his own per-frame
+## callback was a full frame behind it, 12.0 deg at the peak of the shove,
+## and process_priority did not move it because Tween steps land after
+## every node's _process whatever the priority says. A flight covers metres
+## rather than degrees, so the same one-frame lag would be a Keepy visibly
+## trailing the bird he is sitting on. The caller that writes the owl
+## writes the rider too, in that order.
+func follow_owl() -> void:
+	if _owl == null or not is_instance_valid(_owl):
+		# The prop went away underneath him. Put the body back on the
+		# ground rather than leaving it parked in mid-air on a dead
+		# reference: unreachable while HubWorld owns both, which is exactly
+		# why it is written down instead of assumed.
+		_owl = null
+		_owl_seat = Vector3.ZERO
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		return
+	global_position = _owl.to_global(_owl_seat)
+	# Facing where the owl faces: a passenger on a bird's back looks the
+	# way the bird is flying, and the owl's own yaw is already the tangent
+	# of the loop -- so this is one fact read, not a second one computed.
+	_yaw.rotation_degrees.y = _owl.global_rotation_degrees.y
+
+## Steps off the owl onto `landing`, which the caller has already measured
+## to be clear ground outside the perch.
+##
+## Reuses the generalised arc -- from the seat height down to zero -- rather
+## than writing a fifth way down off something, exactly as the dive, the
+## boat eject, the turnstile dismount and the seesaw dismount already do.
+## The seat height is READ OFF THE BODY rather than recomputed: the flight
+## ends with the owl back on its perch, so the height he actually leaves
+## from is the one the arc has to start at whatever the loop did.
+func leave_owl(landing: Vector3) -> void:
+	if _state != State.ON_OWL_FLIGHT:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_owl = null
+	_owl_seat = Vector3.ZERO
+	_has_target = false
+
+	var delta := target - here
+	if delta.length() < 0.001:
+		# Degenerate: the caller aimed at the seat. Set him down rather
+		# than tweening a zero-length arc.
+		_state = State.IDLE
+		global_position = here
+		owl_flight_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_owl_dismount_finished, CONNECT_ONE_SHOT)
+
+## The dismount lands and the body is handed straight back to the ordinary
+## chain, the way the turnstile's, the seesaw's and the dive's do.
+func _on_owl_dismount_finished() -> void:
+	_on_hop_finished()
+	owl_flight_dismounted.emit()
+
+## Steps off the tower's deck onto the trolley handle, and takes hold of it.
+##
+## ⚠️ AN ARC AND NOT A SNAP, and the reason is the geometry rather than the
+## polish. The deck stands at `ZIPLINE_DECK_HEIGHT` 0.90 and the handle
+## hangs at `cable - clearance - his own height` = 0.5999, so boarding is a
+## step off a platform and a 0.30 u drop onto a grip -- which is what a
+## zipline is. A body teleported onto the handle would read as the deck
+## having no purpose at all.
+##
+## The arc is the SAME generalised one the dive, the boat eject and the
+## three dismounts use, run in the other direction: `_hop_from_y` is the
+## ground he leaves and `_hop_to_y` the seat he arrives at. There is no
+## fifth way up onto something in this file, exactly as there is no fifth
+## way down off one.
+##
+## Refused from any state but IDLE, on `mount_owl`'s terms: HubWorld asks
+## once, on a landing, and a body already carried by something else has no
+## business being asked twice.
+func board_zipline(carrier: Node3D, seat: Vector3) -> bool:
+	if carrier == null or not is_instance_valid(carrier):
+		return false
+	if _state != State.IDLE:
+		return false
+
+	var handle: Vector3 = carrier.to_global(seat)
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(handle.x, 0.0, handle.z)
+	_zipline = carrier
+	_zipline_seat = seat
+	_has_target = false
+
+	var delta := target - here
+	if delta.length() >= 0.001:
+		_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = global_position.y
+	_hop_to_y = handle.y
+	_hop_height = ZIPLINE_BOARD_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_zipline_board_finished, CONNECT_ONE_SHOT)
+	return true
+
+## The step lands on the handle: the body is handed to the trolley and the
+## ride is announced.
+##
+## ⚠️ NOT ROUTED THROUGH `_on_hop_finished()`, unlike every DISMOUNT in
+## this file. That handler puts the state back to IDLE and advances the hop
+## chain towards `_target` -- correct for an arc that ends on the ground,
+## and exactly wrong for one that ends thirty centimetres up on a grip: it
+## would walk him off the handle in the same frame he took it.
+func _on_zipline_board_finished() -> void:
+	if _zipline == null or not is_instance_valid(_zipline):
+		# The trolley went away mid-step. Put him back on the ground rather
+		# than leaving the body parked in the air on a dead reference --
+		# unreachable while HubWorld owns both, which is why it is written
+		# down instead of assumed.
+		_zipline = null
+		_zipline_seat = Vector3.ZERO
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		_body.scale = _base_scale
+		_body.rotation_degrees.x = _base_pitch
+		became_idle.emit()
+		return
+	_state = State.ON_ZIPLINE
+	# Rest scale, as every state that takes the body over sets it: a squash
+	# left over from the step that boarded him would ride across with him.
+	_body.scale = _base_scale
+	follow_zipline()
+	zipline_mounted.emit()
+
+## Writes Keepy at his place on the trolley for its CURRENT pose. The ONE
+## place a trip touches his transform.
+##
+## ⚠️ CALLED BY WHATEVER MOVES THE TROLLEY, NEVER FROM _process(). Not a
+## precaution copied across -- it is the turnstile's MEASUREMENT, restated
+## by RECON 4: a rider who sampled his carrier on his own per-frame
+## callback was a full frame behind it, 12.0 deg at the peak of the shove,
+## and `process_priority` did not move it because Tween steps land after
+## every node's _process whatever the priority says. This carrier crosses
+## 25.9 u, so a one-frame lag would be a Keepy visibly trailing the handle
+## he is holding.
+func follow_zipline() -> void:
+	if _zipline == null or not is_instance_valid(_zipline):
+		# The trolley went away underneath him. Put the body back on the
+		# ground rather than leaving it parked in mid-air on a dead
+		# reference -- follow_owl's own guard, for its own reason.
+		_zipline = null
+		_zipline_seat = Vector3.ZERO
+		_state = State.IDLE
+		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		_body.rotation_degrees.x = _base_pitch
+		return
+	global_position = _zipline.to_global(_zipline_seat)
+	# Facing the way the trolley travels -- its own local +Z, which the
+	# builder set to the span direction. One fact read, not a second one
+	# computed from the two ends.
+	var forward: Vector3 = _zipline.global_transform.basis * Vector3.BACK
+	forward.y = 0.0
+	if forward.length_squared() > 0.000001:
+		_yaw.rotation_degrees.y = rad_to_deg(atan2(forward.x, forward.z))
+	# Leaning back off the handle. Written every step rather than once at
+	# the mount so a tween that replaced the body's pitch mid-trip could
+	# not leave him upright without anything saying so.
+	_body.rotation_degrees.x = _base_pitch + ZIPLINE_HANG_PITCH_DEG
+
+## Lets go of the handle onto `landing`, which the caller has already
+## measured to be clear ground outside the far tower.
+##
+## Reuses the generalised arc -- from the handle height down to zero --
+## rather than writing a sixth way down off something, exactly as the dive,
+## the boat eject and the three other dismounts do. The height is READ OFF
+## THE BODY rather than recomputed: the trip ends wherever the tween left
+## the trolley, so the height he actually leaves from is the one the arc
+## has to start at.
+##
+## ⚠️ THE DESTINATION SURVIVES THE DROP, which is `leave_ride`'s rule and
+## the reason this is a `leave_*` and not a bare dismount: one tap buys the
+## drop AND the walk on to where it pointed. HubWorld hands `hop_to` the
+## tapped point straight after calling this, and the arc's own
+## `_on_hop_finished` picks it up.
+func leave_zipline(landing: Vector3) -> void:
+	if _state != State.ON_ZIPLINE:
+		return
+	var seat_y: float = global_position.y
+	var here := Vector3(global_position.x, 0.0, global_position.z)
+	var target := Vector3(landing.x, 0.0, landing.z)
+	_zipline = null
+	_zipline_seat = Vector3.ZERO
+	_has_target = false
+	# The lean goes with the handle: a body that landed still tilted back
+	# reads as a bug, which is the same rule PITCH_DEG states for the hop.
+	_body.rotation_degrees.x = _base_pitch
+
+	var delta := target - here
+	if delta.length() < 0.001:
+		# Degenerate: the caller aimed at the handle itself. Set him down
+		# rather than tweening a zero-length arc.
+		_state = State.IDLE
+		global_position = here
+		zipline_dismounted.emit()
+		became_idle.emit()
+		return
+	_face(delta)
+	if _hop_tween and _hop_tween.is_valid():
+		_hop_tween.kill()
+	_state = State.HOPPING
+	_hop_from = here
+	_hop_to = target
+	_hop_from_y = seat_y
+	_hop_to_y = 0.0
+	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
+	_hop_tween = create_tween()
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
+	_hop_tween.finished.connect(_on_zipline_dismount_finished, CONNECT_ONE_SHOT)
+
+## The drop lands and the body is handed straight back to the ordinary
+## chain, the way the turnstile's, the seesaw's and the owl's do.
+func _on_zipline_dismount_finished() -> void:
+	_on_hop_finished()
+	zipline_dismounted.emit()
 
 ## Leaves the boat: one taller-than-usual leap to the bank on the side the
 ## player tapped, and then the ordinary hop chain on towards the tap.

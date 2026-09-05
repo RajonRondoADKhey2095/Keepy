@@ -78,7 +78,44 @@ const _HUB_WORLD_SCENE: String = "res://scenes/HubWorld.tscn"
 ## grip bars -- four bars, one node, which is what the batch is for.
 ## Measured on the shipped tree before and after in one session: 120 -> 124
 ## excluding portals, 126 -> 130 including them.
-const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 124
+## 124 -> 127 on 28 aout 2026, ITEMISED rather than nudged: the seesaw adds
+## a fulcrum, a plank, and ONE MultiMeshInstance3D for however many grips it
+## has. Raised here rather than left to fail, and written down rather than
+## absorbed -- a draw-node constant that drifts quietly is a budget nobody
+## is watching.
+## 127 -> 128 on 28 aout 2026: the first Meshy model on this plateau, one
+## static, decorative owl -- ONE MeshInstance3D (the .glb's own mesh) under
+## a wrapping, non-drawing Node3D. Not batched: there is only one.
+## 128 -> 129 on 28 aout 2026: the cabin, the second Meshy model on this
+## plateau -- ONE MeshInstance3D (the .glb's own mesh) under a wrapping,
+## non-drawing Node3D, on the owl's terms. Not batched: there is only one,
+## and nothing about it is ever animated.
+## 129 -> 131 on 29 aout 2026: the cabin's DOORSTEP MARK out on the lawn,
+## the fourth ring on this plateau that means "a tap takes you elsewhere".
+## +2 and not +3: a CabinMarker builds a pad, a ring and a Label3D, and a
+## Label3D is not a MeshInstance3D nor a MultiMesh, so this counter -- by
+## its own definition, see _count_draw -- never saw the sign. One mark per
+## cabin, and the layout ships one cabin.
+## 131 -> 132 on 31 aout 2026: THE MAGPIE, drawn inside the cabin's cutaway
+## view so the plateau shows the same living room the interior does -- ONE
+## MeshInstance3D (the .glb carries one node, one mesh, one primitive,
+## measured off the file) under the cabin's own root. Not batched: there is
+## only one, and it is pure scenery -- no hotspot, no tap radius, nothing
+## registered.
+## 132 -> 141 on 3 septembre 2026, ITEMISED on the same terms: the
+## zipline's TIER 1 structure. FIVE MeshInstance3D of its own -- a deck and
+## a head beam at each of the two towers, plus the ONE cable between them
+## -- and FOUR shared MultiMeshInstance3D: legs, masts, treads and
+## stringers, one node each for however many towers the layout ships. That
+## batching is the whole difference between +9 and +25: eight legs, four
+## masts, eight treads and four stringers cost four nodes between them.
+## 141 -> 144 on 3 septembre 2026, ITEMISED on the same terms: the
+## zipline's TIER 2 trolley. THREE MeshInstance3D -- a pulley on the wire,
+## a stem, and the grab bar the two riders hang from. The badger that rides
+## it is NOT in this count and cannot be: it lives under `World/` beside
+## Keepy and the bear, not under `World/Props`, so this budget structurally
+## cannot see it.
+const _EXPECTED_DRAW_NODES_EXCL_PORTALS: int = 144
 
 var _failures: int = 0
 var _ride_landings: int = 0
