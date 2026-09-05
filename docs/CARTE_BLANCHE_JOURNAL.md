@@ -995,3 +995,46 @@ Branche `claude/karting-lot2-racers-cjarl4`, travail direct vers `staging` (merg
   * **faon** (approche) : `FOOTPRINT` 0,9 → 1,0 ; `FOLLOW_GAP` 1,7 → 1,9 ; `NUZZLE_REACH` 0,95 → 1,1 ; hauteur de la fleur 0,9 → 1,05. `FLEE_R`/`CALM_R`/`CALM_S` sont des distances de comportement, pas de corps : inchangées. Capture `p2_fawn` : câlin museau contre museau, le faon à la masse de Keepy.
   * **sanglier** : intouché (1,35 × Keepy, `SEAT` (0 ; 1,32 ; −0,12)). Capture `p2_boar` : Keepy sur ses épaules sous un arbre rouge, cohérent — il reste le plus grand des quatre, de peu devant le faon.
 - **Sonde** : `V6CrittersProbe` (headless, `--fixed-fps 60`) **128 checks, 0 échec**, deux fois (avant et après le pas de côté du chat et le point d'approche du castor). Les riders des karts (mêmes `SCENE`/`SCALE`/`LIFT` publiés) grandissent avec — capture de grille refaite.
+
+## Rides existants — rejoués sur la branche ET sur une référence `4f6b25b` importée à part (21:05 UTC)
+
+Worktree de référence importé de zéro (132 `.scn` des deux côtés, comptés avant de comparer).
+
+| sonde | mode | référence | branche | verdict |
+|---|---|---|---|---|
+| `V4SaveProbe` | headless | — | **PASS** | `kart.last` + stats `kart_races`/`kart_wins` additifs |
+| `V4ClimbProbe` | headless `--fixed-fps 60` | — | **PASS** | |
+| `OwlFlightProbe` | headless | — | **PASS** | |
+| `V6CrittersProbe` | headless `--fixed-fps 60` | — | **PASS** 128/128 (avant ET après P2) | |
+| `StreamRideProbe` | opengl3 `--fixed-fps 60` | — | **PASS** | |
+| `CampfireFacingProbe` | headless **sans** `--fixed-fps` | **FAIL 9** | **FAIL 9** (identiques, mêmes lignes) | **faux rouge de mode**, pas une régression |
+| `CampfireFacingProbe` | headless `--fixed-fps 60` | **PASS** | **PASS** | |
+| `KartProbe` | headless `--fixed-fps 60` | 99 (V7b) | **145 checks, 0 échec** | |
+
+Le feu de camp : 3 rouges au premier passage, 9 au second (machine chargée par un import concurrent), 9 identiques sur la référence — la sonde ne fixe pas son pas de temps et V7 l'avait jouée nue sur une machine moins chargée. C'est la doctrine « `--fixed-fps` fabrique des faux rouges » une fois de plus ; la comparaison sur deux arbres est ce qui l'a tranchée en une commande.
+
+## Fermeture V8 (21:25 UTC)
+
+**Livré, sur `staging` (`8e08530`)** : le HUD de conduite centré et le compteur de ressources masqué en conduite (P0, déployé seul et prouvé) ; trois adversaires — le chat, le castor, le sanglier — avec leur pilote `KartAiDriver` (profil de vitesse depuis la courbure, freinage avant le virage, voie et biais de virage, dépassement, bruit de direction, fautes), leur personnage assis dans un kart de couleur propre, une course à feux 3-2-1-GO sur 3 tours, classement temps réel, panneau de résultats, résultat persistant, collisions douces, rubber-band borné (P1) ; la piste à 10 u avec grille de front (P3) ; chat, castor et faon à la masse visuelle de Keepy, mécaniques re-gatées et recapturées (P2). Les GLB sont intouchés, `KartInput`/`KartLap`/caméra/bascule intouchés, `KartBody` +`bump()`, `KartTrack` +5 accesseurs.
+
+**Ce qui manque encore pour que le karting soit un vrai morceau du jeu** :
+1. **La validation au pouce** — la difficulté des trois profils, le rubber-band (0,93..1,05) et 3 tours n'ont rencontré qu'un pilote-sonde neutre, qui finit 2e à 4e. Un humain qui boost sur les lignes droites devrait gagner ; s'il gagne trop facilement, `top` du castor et du chat montent (0,55 / 0,35) avant tout autre réglage.
+2. **Le son** (moteur, feux, drapeau) — toujours rien depuis v1 ; un kart muet reste un jouet.
+3. **La poussière de glisse et de sortie de piste** — les fautes du sanglier se voient au chrono, pas à l'image.
+4. **Le meilleur temps persistant** : comparable mais pas identique après l'élargissement (voir P3). Si Mathieu veut repartir de zéro : un `track_id` `circuit_1b` dans `KartTrack.TRACK_ID`, aucune migration.
+5. **Les riders disparaissent à 52 u** (`HubCritter.CULL_DISTANCE`, hérité du hub) alors que la caméra de conduite porte à 120 u : un kart adverse loin devant roule sans pilote pendant quelques secondes, dans 68 % de brouillard. Une constante à monter pour les riders seuls (pas pour les habitants), à mesurer sur device avant.
+6. **Un vrai podium / une récompense** : `kart_wins` est compté, rien ne le montre ni ne le paie (un gland doré pour une victoire fermerait la boucle avec le ranger).
+
+**Avis franc sur la prochaine session** : ne pas ajouter de mécanique. Faire tester Mathieu, lire ses trois chiffres (rang moyen sur 3 courses, tour le plus rapide, ressenti du rappel), et régler `PROFILES` + `RUBBER_*` sur ces chiffres — c'est un lot d'une heure, pas d'une nuit. Le son vient ensuite, avant toute quatrième zone.
+
+**Doctrine candidate pour `CLAUDE.md`** — écrite dans `CLAUDE.md` cette fois (deux pièges silencieux, chacun payé sur device ou par capture) : *après `set_anchors_preset()`, `position` est un offset depuis l'ancre* ; *un mot de convention de côté (« droite de la marche ») ne vaut rien tant qu'une capture ne l'a pas lu*.
+
+## Preuves de déploiement V8 sur le service (une lecture par déploiement, jamais de polling)
+
+| checkpoint | sha (`staging`) | push | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|---|
+| P0 — HUD | `3f0d755` | 20:43:05 | `1788641254` → **20:47:34** | 20:56:13, `MISS`, `age: 0` (avant : `1788637649` / 19:54, V7b) |
+| P1+P3 — adversaires + piste | `dd9e3b5` | 21:14:11 | run **annulé** par le push P2 six minutes plus tard (`cancel-in-progress`, doctrine) — jamais servi seul, assumé | lectures 21:15–21:21 : encore `1788641254` en `HIT` (copie de bord remplie par ma propre lecture P0) — refusées comme mesure |
+| P2 — échelle (arbre final `151c73a`) | `8e08530` | ~21:20 | `1788643519` → **21:25:19** | 21:27:13, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 21:27:13 |
+
+Le commit de documentation qui suit (journal, `CLAUDE.md`, index) ne change aucune ressource Godot : son run n'est pas relu, c'est assumé.
