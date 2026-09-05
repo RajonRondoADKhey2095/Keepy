@@ -1152,6 +1152,8 @@ règle existe pour fermer ce trou-là.
 
 ## Index des chantiers
 
+Skill disponible : [`blender-cozy-keepy`](.claude/skills/blender-cozy-keepy/SKILL.md) — direction artistique et pipeline Blender (bpy headless) pour l'environnement 3D de Keepy.
+
 Le récit intégral de chaque lot vit sous `docs/lots/`. **Rien n'y a été
 résumé** : les fichiers ci-dessous contiennent les sections d'origine
 verbatim, dans leur ordre chronologique. Table détaillée avec les statuts :
