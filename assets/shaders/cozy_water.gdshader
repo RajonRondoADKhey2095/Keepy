@@ -14,6 +14,9 @@ uniform vec4 shallow : source_color = vec4(0.56, 0.86, 0.90, 0.80);
 uniform vec4 deep : source_color = vec4(0.34, 0.72, 0.84, 0.86);
 uniform vec3 foam : source_color = vec3(0.96, 0.99, 1.0);
 uniform float radius = 0.0;
+// 1.0 for the stream ribbon: the foam rim reads the lateral UV.x (0 = left
+// bank, 1 = right bank) instead of a disc radius.
+uniform float ribbon = 0.0;
 uniform float ripple_scale = 11.0;
 uniform float speed = 0.025;
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
@@ -23,11 +26,13 @@ uniform float haze_start = 6.0;
 varying vec3 world_pos;
 varying vec3 model_pos;
 varying vec3 view_pos;
+varying float lateral;
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	model_pos = VERTEX;
 	view_pos = (MODELVIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	lateral = UV.x;
 }
 
 void fragment() {
@@ -44,6 +49,11 @@ void fragment() {
 		float r = length(model_pos.xz) / radius + (n - 0.5) * 0.05;
 		float rim = smoothstep(0.90, 0.985, r);
 		col.rgb = mix(col.rgb, foam, rim * 0.75);
+		col.a = mix(col.a, 0.92, rim);
+	} else if (ribbon > 0.5) {
+		float e = abs(lateral * 2.0 - 1.0) + (n - 0.5) * 0.10;
+		float rim = smoothstep(0.72, 0.96, e);
+		col.rgb = mix(col.rgb, foam, rim * 0.70);
 		col.a = mix(col.a, 0.92, rim);
 	}
 	float dist = max(length(view_pos) - haze_start, 0.0);

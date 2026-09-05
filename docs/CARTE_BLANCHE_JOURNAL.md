@@ -136,3 +136,34 @@ Dépassement du plafond de 50 000 assumé et visible : ×2,2 sur la scène enti�
 - **`CozyCapture`** est une sonde de nuit : elle ne gate rien. À convertir en sonde gatée (pixel centre non-ciel, compte de batches, budget) ou à supprimer.
 - **La ligne `fog_enabled = false` dans `HubWorld._apply_swamp_palette`** est la seule modification hors de mes fichiers avec la scène ; elle doit être portée par un vrai `HubPalette` si la voie A est retenue, et retirée sinon.
 - **Écart figé noté, non corrigé** : les disques intérieurs des portails (vert sombre) lisent comme des trous dans le sol clair ; le sol s'adapte, pas le portail (hors périmètre).
+
+---
+
+# V2 — deuxième map et météo vivante
+
+Même branche jetable, même preview `keepy-cozy.vercel.app`, append seulement.
+
+## Ouverture V2
+
+- **Tag `cozy-v1` posé sur `20986d1`** (bypass auth preview, HEAD de `origin/claude/carte-blanche-cozy-02o8dm` au fetch de 03:45 UTC). Point de retour si la v2 part en vrille : `git checkout cozy-v1`.
+- **Hash de départ** : `20986d1`. Outillage reposé dans un sandbox neuf (Godot 4.3 éditeur 50 276 070 octets, templates 1 073 228 327 octets vérifiés contre `Content-Length` au premier essai, `bpy` 5.0.1) ; import complet mesuré à 534 `.scn`, zéro erreur.
+- **Direction de la deuxième map — « le Vallon d'automne »**, en cinq lignes :
+  1. **Où** : au-delà des deux grands lacs, `z ≤ −42` (la direction que la caméra regarde depuis le spawn : c'est la bande haute du cadre, au-dessus des lacs, la seule place où « une silhouette au loin » est physiquement dans l'image avec cette caméra fixe à +2,4° au-dessus de l'horizon).
+  2. **Quoi** : un biome d'AUTOMNE — sol ocre/rouille couvert de feuilles mortes, arbres orange / rouge / or, fougères et champignons géants, citrouilles, aucune eau. Le contraste avec le plateau (vert printemps, cinq plans d'eau) est un contraste de TEINTE sur toute l'image, pas une variation de densité.
+  3. **Repère** : un arbre géant (« l'Arbre-Mère ») planté sur l'axe du spawn à `(0, −62)`, houppier orange de ~14 u de large : depuis le spawn il dépasse au-dessus du mur de forêt, pile au-dessus du portail Quizz.
+  4. **Accès** : la seule terre entre les lacs et le bord (`x ∈ [−35, −22]`, 13 u de large à l'ouest du lac de spawn) porte un chemin de terre qui perce le mur de forêt à `z ≈ −38` ; le mur reste fermé partout ailleurs entre les deux zones (bande `z ∈ [−42, −36]` pour `x > −22`).
+  5. **Même altitude, même navigation** : la région reçoit un rectangle et un couloir (`HubRegion`), aucune falaise ni escalier ; la zone existante n'est pas touchée.
+
+## Checkpoint P0 — le ruisseau est de retour, la barque navigue dessus
+
+**Cause mesurée, pas supposée.** Le ruban du ruisseau est enroulé en ANTI-HORAIRE vu de dessus (normale du premier triangle `(0, 1, 0)` par la règle de la main droite, sonde headless jetable `CozyStreamProbe`, supprimée avant commit). **Godot 4 tient les faces HORAIRES pour faces avant.** L'ancien `StandardMaterial3D` dessinait avec `CULL_DISABLED`, donc personne ne l'avait jamais vu ; le shader cozy est `cull_back`, et le ruban entier était culled — nœud visible, dans l'arbre, AABB juste, matériau juste, zéro pixel. Capture avant/après à Keepy `(0, 20)` : aucune eau dans la bande `z ≈ 10` avant, le ruisseau complet après.
+
+**Ce qui est fait** (`HubBuilder._make_stream`, `cozy_water.gdshader`, `CozyPalette.water_material`) :
+- ruban ré-enroulé en horaire ; `UV.x` porte la coordonnée latérale (0 rive gauche, 1 rive droite) ;
+- mode `ribbon` du shader d'eau : liseré d'écume sur les deux rives lu dans `UV.x` (le disque lit son rayon, le ruban lit son UV — même shader, même famille que le lac) ;
+- **rive de sable** sous le ruban (`StreamBank`, +0,42 u de chaque côté, y = 0,055 : au-dessus des chemins à 0,03, sous l'eau à 0,095), purement visuelle, même matériau toon teinté `BANK` que les berges des lacs.
+- **Tracé, largeur (1,2), `STREAM_SURFACE_Y`, `RIDE_SEAT_Y` : INTOUCHÉS.** J'ai regardé élargir le ruban et refusé : `KeepyHopper` dérive le point de débarquement de `_ride_half_width + BANK_MARGIN`, donc changer la largeur déplace la fin du ride de quelques centimètres — « ride exact » prime.
+
+**Preuve du ride** (`CozyCapture --ride=auto`, xvfb + opengl3 + `--fixed-fps 60`) : tap sur la barque amarrée à l'ouest `(−18,54, −0,73)` ; trace de Keepy toutes les 30 frames : `y = 0,140` (= `RIDE_SEAT_Y`) et `is_riding = true` de la frame 30 à la frame 300, arrivée `(17,52, 0,24, 6,61)` à la frame 330, `is_riding = false` (débarqué). Ouest → est complet, gate de retrait intacte (`BoatMooring.set_riding`).
+
+⚠️ **Piège de sonde payé** : `_setup_ride()` amarre la barque à l'extrémité la plus PROCHE de Keepy au boot (ouest depuis le spawn : 18,5 u contre 18,8), pas à la position du layout. Un premier essai qui tapait la position du layout `(17,58, 6,67)` a fait marcher Keepy jusqu'à une barque absente — `_boarding` relâché par `became_idle`, aucun ride, et rien ne le dit. `--ride=auto` lit maintenant `Mooring.boat_position()`.

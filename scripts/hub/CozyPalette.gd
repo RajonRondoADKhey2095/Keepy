@@ -174,6 +174,7 @@ static func water_material(radius: float, two_sided: bool = false) -> ShaderMate
 		mat.set_shader_parameter("deep", WATER_DEEP)
 		mat.set_shader_parameter("foam", WATER_FOAM)
 		mat.set_shader_parameter("radius", radius)
+		mat.set_shader_parameter("ribbon", 1.0 if two_sided else 0.0)
 		mat.set_shader_parameter("haze_color", HAZE)
 		mat.set_shader_parameter("haze_density", HAZE_DENSITY)
 		mat.set_shader_parameter("haze_start", HAZE_START)

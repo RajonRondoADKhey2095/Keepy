@@ -562,6 +562,11 @@ const STREAM_WIDTH: float = 1.2
 ## it covers the rim rather than leaving a gap, and it never overlaps an
 ## alpha surface with another alpha surface.
 const STREAM_SURFACE_Y: float = 0.095
+## Carte-blanche v2: the sand bank drawn under the stream ribbon -- how far
+## it shows beyond the water on each side, and its height (above the dirt
+## paths at 0.03, below the water at 0.095). Visual only.
+const STREAM_BANK_EXTRA: float = 0.42
+const STREAM_BANK_Y: float = 0.055
 
 ## Samples per control-point span. 8 gives 89 samples over the shipped
 ## 12-point trace, i.e. 176 triangles for the whole watercourse -- less
@@ -2424,19 +2429,50 @@ func _make_stream(entry: Dictionary) -> Node3D:
 		left.append(Vector3(middle.x - side.x, STREAM_SURFACE_Y, middle.z - side.z))
 		right.append(Vector3(middle.x + side.x, STREAM_SURFACE_Y, middle.z + side.z))
 
+	# Carte-blanche v2 (P0): the ribbon is wound CLOCKWISE seen from above.
+	# Godot's front face is clockwise, and the cozy water shader culls back
+	# faces; the previous (counter-clockwise) order was invisible under it
+	# -- the old StandardMaterial3D drew with culling off, so nothing had
+	# ever noticed. Measured: tri0 normal (0,1,0) by right-hand rule, i.e.
+	# CCW, and a capture at (0,20) with no water in it. UV.x carries the
+	# lateral coordinate (0 left bank, 1 right bank) for the foam rim.
 	var tool := SurfaceTool.new()
 	tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for i in spine.size() - 1:
-		for vertex in [left[i], right[i], right[i + 1], left[i], right[i + 1], left[i + 1]]:
+		for pair in [[left[i], 0.0], [right[i + 1], 1.0], [right[i], 1.0], [left[i], 0.0], [left[i + 1], 0.0], [right[i + 1], 1.0]]:
 			tool.set_normal(Vector3.UP)
-			tool.add_vertex(vertex)
+			tool.set_uv(Vector2(pair[1], 0.0))
+			tool.add_vertex(pair[0])
 
 	var node := MeshInstance3D.new()
 	node.mesh = tool.commit()
+	# A sand bank under and beside the water, the way the ponds have a bank
+	# disc: STREAM_BANK_EXTRA wider each side, between the paths (0.03) and
+	# the water (0.095). Purely visual -- nothing reads it.
+	var bank := SurfaceTool.new()
+	bank.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var bank_left: Array = []
+	var bank_right: Array = []
+	for i in spine.size():
+		var middle: Vector3 = spine[i]
+		var to_left := Vector3(left[i].x - middle.x, 0.0, left[i].z - middle.z)
+		var stretch: float = (half + STREAM_BANK_EXTRA) / maxf(half, 0.001)
+		bank_left.append(Vector3(middle.x + to_left.x * stretch, STREAM_BANK_Y, middle.z + to_left.z * stretch))
+		bank_right.append(Vector3(middle.x - to_left.x * stretch, STREAM_BANK_Y, middle.z - to_left.z * stretch))
+	for i in spine.size() - 1:
+		for vertex in [bank_left[i], bank_right[i + 1], bank_right[i], bank_left[i], bank_left[i + 1], bank_right[i + 1]]:
+			bank.set_normal(Vector3.UP)
+			bank.add_vertex(vertex)
+	var bank_node := MeshInstance3D.new()
+	bank_node.name = "StreamBank"
+	bank_node.mesh = bank.commit()
+	bank_node.material_override = CozyPalette.decor_material_tinted(CozyPalette.BANK)
+	bank_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	node.add_child(bank_node)
 	var material := _unshaded(STREAM_WATER_COLOR)
-	# Carte-blanche: the ribbon gets the cozy water shader too (radius 0 =
-	# no foam rim); the StandardMaterial3D below is kept as the documented
-	# fallback and simply not assigned.
+	# Carte-blanche: the ribbon gets the cozy water shader too (ribbon
+	# mode: the foam rim reads UV.x); the StandardMaterial3D below is kept
+	# as the documented fallback and simply not assigned.
 	node.set_surface_override_material(0, CozyPalette.water_material(0.0, true))
 	# Same trap the ponds hit: albedo_color's alpha is ignored entirely
 	# while transparency stays DISABLED, and the stream would render as
