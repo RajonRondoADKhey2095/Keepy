@@ -1,4 +1,4 @@
-[gd_scene load_steps=28 format=3]
+[gd_scene load_steps=29 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -14,6 +14,7 @@
 [ext_resource type="Script" path="res://scripts/hub/HubPerfOverlay.gd" id="20"]
 [ext_resource type="Script" path="res://scripts/hub/HubTransport.gd" id="21"]
 [ext_resource type="Script" path="res://scripts/hub/WorldHud.gd" id="22"]
+[ext_resource type="Script" path="res://scripts/hub/HubTrees.gd" id="23"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
@@ -150,6 +151,9 @@ magpie_scene = ExtResource("15")
 [node name="Transport" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("21")
 
+[node name="Trees" type="Node3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("23")
+
 [node name="CozyScatter" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("18")
 
@@ -211,6 +215,7 @@ viewport_path = NodePath("../WorldViewport/SubViewport")
 mooring_path = NodePath("../Mooring")
 zipline_path = NodePath("../ZiplineDoor")
 transport_path = NodePath("../WorldViewport/SubViewport/World/Transport")
+trees_path = NodePath("../WorldViewport/SubViewport/World/Trees")
 
 [node name="Mooring" type="Node" parent="."]
 script = ExtResource("12")

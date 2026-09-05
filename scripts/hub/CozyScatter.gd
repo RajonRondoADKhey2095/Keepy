@@ -108,6 +108,10 @@ func _blocked(p: Vector3, own_radius: float) -> bool:
 	for fp in HubTransport.footprints():
 		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
 			return true
+	# v4: the climbable trees, same terms.
+	for fp in HubTrees.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
 	if _on_path(p, own_radius):
 		return true
 	for w in _water:
@@ -197,6 +201,9 @@ func _in_hollow(p: Vector3) -> bool:
 	return HubRegion.in_autumn(p) and HubRegion.contains(p)
 
 func _autumn_blocked(p: Vector3, own_radius: float) -> bool:
+	for fp in HubTrees.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
 	for fp in HubTransport.footprints():
 		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
 			return true
@@ -280,6 +287,9 @@ func _in_moor(p: Vector3) -> bool:
 	return HubRegion.in_moor(p) and HubRegion.contains(p)
 
 func _moor_blocked(p: Vector3, own_radius: float) -> bool:
+	for fp in HubTrees.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
 	for fp in HubTransport.footprints():
 		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
 			return true
@@ -745,6 +755,9 @@ func _blob_shadows() -> void:
 			var t: Transform3D = xform
 			_shadow_at(t.origin, radius * t.basis.get_scale().x)
 	_shadow_at(HubRegion.MOTHER_TREE_AT, 7.0)
+	# v4: the climbable trees' wreaths.
+	for fp in HubTrees.footprints():
+		_shadow_at(fp["position"], 1.5)
 	if _shadow_xforms.is_empty():
 		return
 	var quad := PlaneMesh.new()

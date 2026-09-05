@@ -161,6 +161,13 @@ signal tapped_balloon(point: Vector3)
 ## channel only exists to climb on.
 signal tapped_vehicle(point: Vector3)
 
+## Carte-blanche v4. Emitted INSTEAD of tapped_ground when the finger
+## landed on a climbable tree's disc (`aim`, world units). The tree he is
+## ON withdraws for the whole of the ride (HubTrees.accepts_tap answers -1
+## for it), so a tap on it meanwhile falls through to tapped_ground, where
+## HubWorld reads it BY STATE: shake, or come down.
+signal tapped_tree(point: Vector3)
+
 ## The three nodes this needs, as scene-authored paths.
 ##
 ## NodePath and not a typed node export (`@export var camera: Camera3D`),
@@ -194,6 +201,9 @@ signal tapped_vehicle(point: Vector3)
 ## Carte-blanche v3: the transport network (docks, balloons, the ball),
 ## asked on the same terms as the mooring and the zipline door. Optional.
 @export var transport_path: NodePath
+## Carte-blanche v4: the climbable trees. Optional; withdraws the one he
+## is on through its node (HubTrees.accepts_tap), never through a flag.
+@export var trees_path: NodePath
 
 var camera: Camera3D = null
 var container: SubViewportContainer = null
@@ -201,6 +211,7 @@ var viewport: SubViewport = null
 var mooring: BoatMooring = null
 var zipline: ZiplineDoor = null
 var transport: HubTransport = null
+var trees: HubTrees = null
 
 ## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
@@ -275,6 +286,7 @@ func _ready() -> void:
 	mooring = get_node_or_null(mooring_path) as BoatMooring
 	zipline = get_node_or_null(zipline_path) as ZiplineDoor
 	transport = get_node_or_null(transport_path) as HubTransport
+	trees = get_node_or_null(trees_path) as HubTrees
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
@@ -390,6 +402,12 @@ func _handle_point(screen_point: Vector2) -> void:
 		return
 	if transport != null and transport.accepts_vehicle_tap(aim):
 		tapped_vehicle.emit(destination)
+		return
+	# THE CLIMBABLE TREES (v4), on `aim` like everything else. Their discs
+	# are metres from every other prop's (V4SiteProbe), so the order here
+	# cannot decide anything.
+	if trees != null and trees.accepts_tap(aim) >= 0:
+		tapped_tree.emit(destination)
 		return
 	# THE OWL, asked after the boat and before the ladder, on the same
 	# world-unit terms both of them use. The order between the owl and the
