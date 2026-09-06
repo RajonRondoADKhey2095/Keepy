@@ -143,6 +143,13 @@ func _ready() -> void:
 	track.name = "Track"
 	add_child(track)
 	touch = KartTouchInput.new()
+	# CH31: the kart's own accelerator mapping. The sand yacht's second
+	# KartTouchInput (HubTransport) is deliberately NOT configured and
+	# keeps the shipped V7b numbers, so its sheeting gesture -- validated
+	# on device in CH30 -- is byte-identical to what it was.
+	touch.boost_span = KartTouchInput.KART_BOOST_SPAN
+	touch.boost_dead_zone = KartTouchInput.KART_BOOST_DEAD_ZONE
+	touch.boost_release_s = KartTouchInput.KART_BOOST_RELEASE_S
 	touch.name = "Touch"
 	add_child(touch)
 	_player = add_racer("Keepy", PLAYER_COLOUR, true)
@@ -156,21 +163,47 @@ func _ready() -> void:
 ## Adds a kart to the grid at the next slot. Returns its index. The
 ## player's is the one whose input KartTouchInput writes; any other
 ## racer's input is left for its own writer.
+## CH31 -- WHERE A RACER STARTS, and it is no longer its index.
+##
+## The player is entry 0 because it is added first, and KartTrack's grid
+## puts slot 0 FURTHEST FORWARD (GRID_AHEAD_OF_LINE minus GRID_STAGGER x
+## slot). So the player had pole, 1.8 u ahead of the last opponent, on
+## every race -- measured in CH31 phase 0, and it is half of "je double
+## les trois adversaires des le premier virage". The other half was the
+## opponents' pace, fixed in KartAiDriver.
+##
+## The field is reversed here rather than in KartTrack: the grid geometry
+## is the track's fact and the seating order is the race's. Published as
+## an accessor so a probe reads the mapping instead of assuming identity
+## (KartProbe did assume it, and now asks).
+func grid_slot(index: int) -> int:
+	return maxi(field_size() - 1 - index, 0)
+
+## How many entries the grid is laid out for. A constant of the race, not
+## of `racers`, because add_racer() needs it before the field is complete.
+func field_size() -> int:
+	return 1 + OPPONENTS.size()
+
 func add_racer(racer_name: String, colour: Color, player: bool) -> int:
 	var kart := KartBody.new()
 	kart.name = "Kart_%d" % racers.size()
 	kart.racer_name = racer_name
 	kart.body_colour = colour
 	add_child(kart)
-	var pose: Dictionary = track.start_pose(racers.size())
+	var pose: Dictionary = track.start_pose(grid_slot(racers.size()))
 	kart.place(pose["position"], pose["yaw"])
 	var lap := KartLap.new()
 	lap.setup(track.length())
 	var index: int = racers.size()
 	lap.on_lap = func(ms: int): _on_lap(index, ms)
 	var input: KartInput = touch.input if player else KartInput.new()
+	# CH31: the last four fields are the DEV READOUT's raw material --
+	# what a race actually did, per racer, so a retour can be a table of
+	# numbers instead of an impression (brief). They are written by the
+	# loop and by _collide(), and reset by _grid_all().
 	racers.append({"kart": kart, "input": input, "lap": lap, "hint": -1, "active": false, "player": player,
-		"driver": null, "rider": null, "finish_ms": -1, "s": 0.0, "lateral": 0.0, "laps_ms": []})
+		"driver": null, "rider": null, "finish_ms": -1, "s": 0.0, "lateral": 0.0, "laps_ms": [],
+		"top_speed": 0.0, "contact_s": 0.0, "off_s": 0.0, "in_contact": false})
 	return index
 
 ## V8: an opponent = a racer whose input a KartAiDriver writes, with the
@@ -373,12 +406,13 @@ func _set_race_state(state: int) -> void:
 func _grid_all() -> void:
 	for i in racers.size():
 		var r: Dictionary = racers[i]
-		var pose: Dictionary = track.start_pose(i)
+		var pose: Dictionary = track.start_pose(grid_slot(i))
 		(r["kart"] as KartBody).place(pose["position"], pose["yaw"])
 		(r["lap"] as KartLap).reset()
 		r["hint"] = -1
 		r["finish_ms"] = -1
 		(r["laps_ms"] as Array).clear()
+		_clear_telemetry(r)
 		var driver: KartAiDriver = r["driver"]
 		if driver != null:
 			driver.setup(track, driver.profile_id, _seed + i * 7919)
@@ -393,12 +427,13 @@ func _reset_race(player_too: bool) -> void:
 		if r["player"] and not player_too:
 			r["active"] = false
 			continue
-		var pose: Dictionary = track.start_pose(i)
+		var pose: Dictionary = track.start_pose(grid_slot(i))
 		(r["kart"] as KartBody).place(pose["position"], pose["yaw"])
 		(r["lap"] as KartLap).reset()
 		r["hint"] = -1
 		r["finish_ms"] = -1
 		(r["laps_ms"] as Array).clear()
+		_clear_telemetry(r)
 		r["active"] = false
 		var driver: KartAiDriver = r["driver"]
 		if driver != null:
@@ -407,6 +442,13 @@ func _reset_race(player_too: bool) -> void:
 	_set_race_state(Race.IDLE)
 	countdown_left = 0.0
 	race_clock_s = 0.0
+
+## CH31: the dev readout's per-race counters, back to zero.
+static func _clear_telemetry(r: Dictionary) -> void:
+	r["top_speed"] = 0.0
+	r["contact_s"] = 0.0
+	r["off_s"] = 0.0
+	r["in_contact"] = false
 
 func _go() -> void:
 	race_clock_s = 0.0
@@ -457,9 +499,19 @@ func results() -> Array:
 		var i: int = order[rank]
 		var r: Dictionary = racers[i]
 		var kart: KartBody = r["kart"]
+		var laps_ms: Array = (r["laps_ms"] as Array).duplicate()
+		var sum_ms: float = 0.0
+		for ms in laps_ms:
+			sum_ms += float(ms)
 		rows.append({"name": kart.racer_name, "colour": kart.body_colour, "rank": rank + 1,
 			"finish_ms": int(r["finish_ms"]), "best_lap_ms": (r["lap"] as KartLap).best_lap_ms, "player": bool(r["player"]),
-			"laps_ms": (r["laps_ms"] as Array).duplicate(), "profile": _profile_of(i)})
+			"laps_ms": laps_ms, "profile": _profile_of(i),
+			# CH31 dev readout: mean lap, the top speed REALLY reached (a
+			# driver that never reaches its cap is limited by the circuit,
+			# not by its cap), time spent touching another kart, and time
+			# spent off the ribbon.
+			"mean_lap_ms": int(round(sum_ms / maxf(float(laps_ms.size()), 1.0))),
+			"top_speed": float(r["top_speed"]), "contact_s": float(r["contact_s"]), "off_s": float(r["off_s"])})
 	return rows
 
 ## The driver profile racing in entry `i` ("" for the player). Published
@@ -518,6 +570,17 @@ func _physics_process(delta: float) -> void:
 		var on_track: bool = absf(float(progress["lateral"])) <= KartTrack.HALF_WIDTH + KartTrack.ON_TRACK_MARGIN
 		kart.drive(delta, input, on_track, fence)
 		kart.show_steer(input.steer)
+		# CH31 telemetry. `in_contact` is set by _collide() LAST frame and
+		# consumed here, so a contact is counted once per frame it lasted
+		# rather than once per pair -- three karts in a heap is still one
+		# frame of contact for each of them.
+		if race_state == Race.RUNNING or race_state == Race.FINISHED:
+			r["top_speed"] = maxf(float(r["top_speed"]), absf(kart.speed()))
+			if not on_track:
+				r["off_s"] = float(r["off_s"]) + delta
+			if bool(r["in_contact"]):
+				r["contact_s"] = float(r["contact_s"]) + delta
+		r["in_contact"] = false
 		var rider: HubCritter = r["rider"]
 		if rider != null:
 			rider.step(delta)
@@ -538,6 +601,11 @@ func _physics_process(delta: float) -> void:
 	if _driving and _hud != null:
 		_refresh_hud()
 		_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
+		# CH31: the accelerator gauge. It is fed every frame whether or not
+		# a finger is down -- that is the whole point, see KartHud._draw.
+		var me: KartBody = player_kart()
+		_hud.set_drive_readout(touch.input.boost, absf(me.speed()) if me != null else 0.0,
+			KartBody.MAX_SPEED * KartBody.BOOST_SPEED_RATIO)
 
 ## Discs on the plane: separate, exchange the closing speed along the
 ## normal with restitution, jolt both chassis. O(N^2) on N = 4.
@@ -570,6 +638,9 @@ func _collide() -> void:
 				b.velocity += normal * ((mean + half) - vb)
 				a.bump(clampf(closing / 6.0, 0.25, 1.0))
 				b.bump(clampf(closing / 6.0, 0.25, 1.0))
+			# CH31: a touch, whether or not it exchanged any speed.
+			racers[i]["in_contact"] = true
+			racers[j]["in_contact"] = true
 
 func _refresh_hud() -> void:
 	var lap: KartLap = player_lap()

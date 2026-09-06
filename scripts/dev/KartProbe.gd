@@ -640,7 +640,7 @@ func _phase_race() -> void:
 	var parked: Array = []
 	for i in _karting.racers.size():
 		var r: Dictionary = _karting.racers[i]
-		var pose: Dictionary = track.start_pose(i)
+		var pose: Dictionary = track.start_pose(_karting.grid_slot(i))
 		parked.append(_flat((r["kart"] as KartBody).global_position))
 		if _flat((r["kart"] as KartBody).global_position).distance_to(pose["position"]) > 0.05 or not r["active"]:
 			grid_ok = false
@@ -722,7 +722,7 @@ func _phase_race() -> void:
 		var r: Dictionary = _karting.racers[i]
 		if r["player"]:
 			continue
-		if _flat((r["kart"] as KartBody).global_position).distance_to(track.start_pose(i)["position"]) > 0.05 or r["active"] or (r["kart"] as KartBody).velocity.length() > 0.001:
+		if _flat((r["kart"] as KartBody).global_position).distance_to(track.start_pose(_karting.grid_slot(i))["position"]) > 0.05 or r["active"] or (r["kart"] as KartBody).velocity.length() > 0.001:
 			regridded = false
 	_check("exit: opponents parked on the grid, inactive", regridded)
 	_check("exit: results panel hidden", not _hud.results_visible())
