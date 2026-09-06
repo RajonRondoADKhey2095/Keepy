@@ -167,15 +167,23 @@ func _phase_drive() -> void:
 	# driven), so the contract is read on the BRAKE curve instead: the
 	# brief's "ne s'arrete pas net" is checked as "does not stop in one
 	# frame", which a snap-to-zero model would fail immediately.
-	_transport.sailboat().place(Vector3(20.0, 0.0, -110.0), PI / 2.0)
+	# In the sea, well off the shore -- (20, -110) was on dry land far from
+	# the cove (first run of this phase measured 0.34 u/s there and never
+	# reached a real cruise), not a defect this lot's code has to answer for.
+	_transport.sailboat().place(Vector3(90.0, 0.0, -110.0), PI / 2.0)
 	_keepy.call("follow_carrier")
 	for i in 180:
 		await get_tree().physics_frame
 	var rolling: float = _transport.sailboat().speed()
 	_check("(blind) it is rolling before the brake is tried", rolling > 4.0, "%.2f u/s" % rolling)
-	_transport.touch.input.brake = true
 	var stopped_at: int = -1
 	for i in 120:
+		# Reasserted every frame: KartTouchInput._physics_process resets
+		# `brake` to the keyboard's state (false, headless) whenever no
+		# second finger is tracked, so a `true` set once outside this loop
+		# is undone before the vehicle ever reads it (CoveProbe's yacht
+		# brake test sets it the same way, inside the loop).
+		_transport.touch.input.brake = true
 		await get_tree().physics_frame
 		if stopped_at < 0 and absf(_transport.sailboat().speed()) <= 0.05:
 			stopped_at = i
@@ -229,10 +237,11 @@ func _phase_ground() -> void:
 	# ---- THE REVERSIBILITY CONTRACT: full reverse from the grounded spot
 	# must bring the boat back to open water. This is the assertion that
 	# was run against the grounding drag neutralised first (see docblock).
-	_transport.touch.input.brake = true
 	var recovered: bool = false
 	var frames_to_recover: int = -1
 	for i in 900:
+		# Reasserted every frame -- see the brake note in _phase_drive().
+		_transport.touch.input.brake = true
 		await get_tree().physics_frame
 		if HubRegion.shore_distance(boat.flat_position()) <= -SailBoat.GROUND_FREE_MARGIN:
 			recovered = true
