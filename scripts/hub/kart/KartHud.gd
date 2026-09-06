@@ -40,6 +40,7 @@ var _ghost_active: bool = false
 ## normal player, so nothing is built or drawn for them.
 var _preset_buttons: Array[Button] = []
 var _difficulty_buttons: Array[Button] = []
+var _preset_row: Control = null
 ## V8 race widgets: the lights, the position, the standings, the results.
 var _lights: Array[ColorRect] = []
 var _lights_box: HBoxContainer = null
@@ -277,6 +278,10 @@ static func ordinal(rank: int) -> String:
 ## The race widgets, once per frame from HubKarting. `rows` are the
 ## standings, leader first: {name, colour, player, finished}.
 func set_race(state: int, countdown_left: float, rank: int, racers: int, lap_count: int, laps: int, rows: Array, clock_s: float) -> void:
+	# CH30: a HUD lent to the yacht never shows race furniture, whatever
+	# the karting coordinator is doing behind it.
+	if _vehicle_mode:
+		return
 	var racing: bool = state != HubKarting.Race.IDLE
 	_standings_box.visible = racing
 	_position_label.visible = racing
@@ -406,6 +411,41 @@ func _append_dev_readout(rows: Array) -> void:
 		line.add_theme_color_override("font_color", Color(0.88, 0.84, 0.74))
 		_results_box.add_child(line)
 
+## CH30 -- VEHICLE MODE. The sand yacht is driven with the same thumb and
+## the same writer as the kart, so it wants the same two widgets: the
+## exit button and the steering ghost. Everything the RACE owns -- the
+## lap panel, the lights, the standings, the clock, the results, the
+## wrong-way banner, the two dev preset rows -- is hidden, rather than a
+## second HUD scene existing to hold one button.
+##
+## The mode is a property of this node and not of the caller, so leaving
+## either vehicle restores the race widgets and nothing has to remember
+## which one it was.
+var _vehicle_mode: bool = false
+
+func set_vehicle_mode(on: bool) -> void:
+	_vehicle_mode = on
+	_panel.visible = not on
+	_wrong_label.visible = false
+	_record_label.visible = false
+	if _lights_box != null:
+		_lights_box.visible = false
+	if _go_label != null:
+		_go_label.visible = false
+	if _position_label != null:
+		_position_label.visible = false
+	if _standings_box != null:
+		_standings_box.visible = false
+	if _clock_label != null:
+		_clock_label.visible = false
+	if _results_panel != null:
+		_results_panel.visible = false
+	if _preset_row != null:
+		_preset_row.visible = not on
+
+func vehicle_mode() -> bool:
+	return _vehicle_mode
+
 func set_results_visible(on: bool) -> void:
 	_results_panel.visible = on
 
@@ -474,6 +514,7 @@ func _draw() -> void:
 
 func _build_preset_row() -> void:
 	var col := VBoxContainer.new()
+	_preset_row = col
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.position = Vector2(32.0, TOP + 84.0 + 10.0)
 	add_child(col)
