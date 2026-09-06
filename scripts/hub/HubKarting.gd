@@ -16,7 +16,7 @@ class_name HubKarting
 ##      "hint": int, "active": bool, "player": bool,
 ##      "driver": KartAiDriver or null, "rider": HubCritter or null,
 ##      "finish_ms": int (-1 until the chequered flag), "s": float,
-##      "lateral": float}
+##      "lateral": float, "laps_ms": Array[int] (CH30, the dev readout)}
 ##
 ## Every racer is DRIVEN the same way, in the same loop below: the kart
 ## reads its input, the track judges its surface, the lap reads its
@@ -96,7 +96,11 @@ const COUNTDOWN_S: float = 3.0
 ## before they push, which is the soft feel wanted.
 const KART_RADIUS: float = 0.95
 const BUMP_RESTITUTION: float = 0.30
-## Rubber band, see the header.
+## Rubber band, see the header. CH30: the two BOUNDS moved onto the
+## difficulty preset (KartDifficulty.rubber_min / rubber_max) -- the dead
+## band and the span are geometry of the leash and stay here. The
+## constants below are kept as the x1 preset's values and as what every
+## reader that predates CH30 (KartProbe) still compares against.
 const RUBBER_DEAD: float = 25.0
 const RUBBER_SPAN: float = 60.0
 const RUBBER_MIN: float = 0.93
@@ -166,7 +170,7 @@ func add_racer(racer_name: String, colour: Color, player: bool) -> int:
 	lap.on_lap = func(ms: int): _on_lap(index, ms)
 	var input: KartInput = touch.input if player else KartInput.new()
 	racers.append({"kart": kart, "input": input, "lap": lap, "hint": -1, "active": false, "player": player,
-		"driver": null, "rider": null, "finish_ms": -1, "s": 0.0, "lateral": 0.0})
+		"driver": null, "rider": null, "finish_ms": -1, "s": 0.0, "lateral": 0.0, "laps_ms": []})
 	return index
 
 ## V8: an opponent = a racer whose input a KartAiDriver writes, with the
@@ -361,6 +365,7 @@ func _grid_all() -> void:
 		(r["lap"] as KartLap).reset()
 		r["hint"] = -1
 		r["finish_ms"] = -1
+		(r["laps_ms"] as Array).clear()
 		var driver: KartAiDriver = r["driver"]
 		if driver != null:
 			driver.setup(track, driver.profile_id, _seed + i * 7919)
@@ -380,6 +385,7 @@ func _reset_race(player_too: bool) -> void:
 		(r["lap"] as KartLap).reset()
 		r["hint"] = -1
 		r["finish_ms"] = -1
+		(r["laps_ms"] as Array).clear()
 		r["active"] = false
 		var driver: KartAiDriver = r["driver"]
 		if driver != null:
@@ -439,8 +445,16 @@ func results() -> Array:
 		var r: Dictionary = racers[i]
 		var kart: KartBody = r["kart"]
 		rows.append({"name": kart.racer_name, "colour": kart.body_colour, "rank": rank + 1,
-			"finish_ms": int(r["finish_ms"]), "best_lap_ms": (r["lap"] as KartLap).best_lap_ms, "player": bool(r["player"])})
+			"finish_ms": int(r["finish_ms"]), "best_lap_ms": (r["lap"] as KartLap).best_lap_ms, "player": bool(r["player"]),
+			"laps_ms": (r["laps_ms"] as Array).duplicate(), "profile": _profile_of(i)})
 	return rows
+
+## The driver profile racing in entry `i` ("" for the player). Published
+## for the CH30 dev readout so a row can name WHICH personality set that
+## lap time without the HUD reaching into the driver.
+func _profile_of(i: int) -> String:
+	var driver: KartAiDriver = racers[i]["driver"]
+	return driver.profile_id if driver != null else ""
 
 ## The rubber band for opponent `i`: the leash of the header.
 func rubber_band_for(i: int) -> float:
@@ -450,9 +464,9 @@ func rubber_band_for(i: int) -> float:
 		return 1.0
 	var gap: float = progress_of(i) - progress_of(_player)
 	if gap > RUBBER_DEAD:
-		return lerpf(1.0, RUBBER_MIN, clampf((gap - RUBBER_DEAD) / RUBBER_SPAN, 0.0, 1.0))
+		return lerpf(1.0, KartDifficulty.rubber_min(), clampf((gap - RUBBER_DEAD) / RUBBER_SPAN, 0.0, 1.0))
 	if gap < -RUBBER_DEAD:
-		return lerpf(1.0, RUBBER_MAX, clampf((-gap - RUBBER_DEAD) / RUBBER_SPAN, 0.0, 1.0))
+		return lerpf(1.0, KartDifficulty.rubber_max(), clampf((-gap - RUBBER_DEAD) / RUBBER_SPAN, 0.0, 1.0))
 	return 1.0
 
 ## ---- the loop --------------------------------------------------------
@@ -559,6 +573,9 @@ func _refresh_hud() -> void:
 
 func _on_lap(index: int, ms: int) -> void:
 	var r: Dictionary = racers[index]
+	# CH30: every racer's lap times, in order, for the dev readout -- the
+	# thing that turns "je gagne large" into a number Mathieu can send back.
+	(r["laps_ms"] as Array).append(ms)
 	if r["player"]:
 		WorldSave.note("kart_laps")
 		if WorldSave.kart_offer_lap(KartTrack.TRACK_ID, ms) and _hud != null:

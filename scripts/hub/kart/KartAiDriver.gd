@@ -48,7 +48,22 @@ class_name KartAiDriver
 ##
 ## RUBBER BAND. `speed_scale` is written by HubKarting from the gap to the
 ## player (see HubKarting.rubber_band_for). It multiplies the profile's
-## v_max, and it is bounded there (0.93 .. 1.05) -- a leash, not a magnet.
+## v_max, and it is bounded there -- a leash, not a magnet. CH30 moved
+## those bounds onto the difficulty preset (KartDifficulty.rubber_min /
+## rubber_max) and moved them in ONE direction as difficulty rises: the
+## leash on a LEADING opponent is released toward 1.0, so a leader is
+## never held back and can never read as waiting.
+##
+## =====================================================================
+## CH30 -- DIFFICULTY
+##
+## `profile` is no longer PROFILES[id] verbatim for the three racers: it
+## is that table scaled by the live KartDifficulty preset (see setup()).
+## The personality -- which side of the bend, how wide, how noisy relative
+## to the others -- is the table's and never moves; the PACE is the
+## preset's. Two profiles are explicitly NOT scaled ("probe" and
+## "human_ref"): they are the yardsticks the calibration is measured
+## against, and a yardstick that moves with what it measures is useless.
 
 ## Steer gain per radian of heading error (KartLineInput's own).
 const STEER_GAIN: float = 1.0 / 0.55
@@ -83,17 +98,45 @@ const K_FLOOR: float = 0.004
 ##   wobble_amp   steer noise amplitude (0..1 of full lock)
 ##   wobble_hz    steer noise frequency
 ##   fault_rate   faults per minute of racing
+##   raced        true for the three OPPONENTS: their numbers are scaled by
+##                the live KartDifficulty preset (CH30). The two reference
+##                profiles below are NOT scaled -- a yardstick that moves
+##                with what it measures is not a yardstick.
 const PROFILES: Dictionary = {
 	"cat": {"a_lat": 7.2, "top": 0.35, "brake_margin": 1.3, "a_brake": 9.0, "corner_bias": -0.9, "lane": -0.6,
-		"wobble_amp": 0.10, "wobble_hz": 2.6, "fault_rate": 0.9},
+		"wobble_amp": 0.10, "wobble_hz": 2.6, "fault_rate": 0.9, "raced": true},
 	"beaver": {"a_lat": 5.6, "top": 0.55, "brake_margin": 0.5, "a_brake": 7.0, "corner_bias": 0.0, "lane": 0.0,
-		"wobble_amp": 0.03, "wobble_hz": 0.8, "fault_rate": 0.25},
+		"wobble_amp": 0.03, "wobble_hz": 0.8, "fault_rate": 0.25, "raced": true},
 	"boar": {"a_lat": 4.6, "top": 1.0, "brake_margin": 1.6, "a_brake": 11.0, "corner_bias": 1.1, "lane": 0.7,
-		"wobble_amp": 0.07, "wobble_hz": 0.5, "fault_rate": 1.6},
+		"wobble_amp": 0.07, "wobble_hz": 0.5, "fault_rate": 1.6, "raced": true},
 	# The probe's driver: no boost, no noise, no faults -- the V7 test
 	# driver's behaviour, kept so the lap-timing contract is measured on
 	# a deterministic drive.
 	"probe": {"a_lat": 6.0, "top": 0.0, "brake_margin": 0.8, "a_brake": 8.0, "corner_bias": 0.0, "lane": 0.0,
+		"wobble_amp": 0.0, "wobble_hz": 0.0, "fault_rate": 0.0},
+	# CH30 -- THE REFERENCE PLAYER, and the only honest way to answer "is
+	# it too easy". A difficulty target stated as "x1.5 of adversity" is a
+	# ratio against SOMETHING, and that something cannot be a thumb: a
+	# sandbox cannot hold one. This profile is a clean, quick, mistake-free
+	# drive that uses the boost on the straights -- what Mathieu does when
+	# he wins large -- and it is deterministic, so the gap it measures is
+	# repeatable across runs and across trees. Probe-only: nothing in the
+	# game ever instantiates it, and difficulty never scales it.
+	"human_ref": {"a_lat": 6.6, "top": 1.0, "brake_margin": 1.0, "a_brake": 9.5, "corner_bias": -0.4, "lane": -0.3,
+		"wobble_amp": 0.0, "wobble_hz": 0.0, "fault_rate": 0.0},
+	# CH30 -- THE FLOOR. A driver whose tyres never give up: `a_lat` far
+	# above anything the circuit asks, full boost, no noise, no faults. It
+	# does NOT lap infinitely fast -- MEASURED, and this is the finding
+	# that reshaped the whole difficulty axis: at the omega the binding
+	# limit is not the tyres but the STEERING (v_steer = steer_rate /
+	# (k * headroom + steer_rate * e), 4.17 u/s at the tightest sample for
+	# the 7/10 preset), so above a_lat ~= 5.1 the bend simply stops caring.
+	# That makes this profile the fastest lap the vehicle can physically
+	# turn on this track, and therefore the honest DENOMINATOR for "x1.5
+	# of adversity": an opponent's deficit is its lap minus this one, and
+	# a difficulty preset is calibrated on how much of that deficit it
+	# removes. Probe-only, never scaled.
+	"limit_ref": {"a_lat": 40.0, "top": 1.0, "brake_margin": 1.2, "a_brake": 12.0, "corner_bias": -0.5, "lane": -0.4,
 		"wobble_amp": 0.0, "wobble_hz": 0.0, "fault_rate": 0.0},
 }
 
@@ -121,7 +164,12 @@ var _noise_walk: float = 0.0
 func setup(track: KartTrack, id: String = "probe", seed_value: int = 1) -> void:
 	_track = track
 	profile_id = id if PROFILES.has(id) else "probe"
-	profile = PROFILES[profile_id]
+	# CH30: the personality is the table's; the PACE is the live
+	# difficulty preset's. Read at setup(), which HubKarting calls on every
+	# grid-up, so switching a preset from the HUD takes effect on the next
+	# race rather than mid-corner.
+	var base: Dictionary = PROFILES[profile_id]
+	profile = KartDifficulty.apply(base) if bool(base.get("raced", false)) else base
 	_rng.seed = seed_value
 	_hint = -1
 	_lane = float(profile["lane"])
