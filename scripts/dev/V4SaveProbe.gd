@@ -115,7 +115,7 @@ func _ready() -> void:
 	# Malformed fields inside a valid v1: the bad piece is dropped, the
 	# rest is kept.
 	f = FileAccess.open(path, FileAccess.WRITE)
-	f.store_string(JSON.stringify({"schema": 1, "resources": {"acorn": "7", "hazelnut": -4},
+	f.store_string(JSON.stringify({"schema": SaveScript.SCHEMA_VERSION, "resources": {"acorn": "7", "hazelnut": -4},
 		"trees": {"ok": {"stock": 1, "at": 10}, "bad": "x", "big": {"stock": 99, "at": "nope"}},
 		"ground": [[1, 2, "acorn"], "junk", [1, 2, "gold"], [1]], "stats": 12}))
 	f.close()
@@ -130,13 +130,13 @@ func _ready() -> void:
 	# v5: reserved fields sanitised -- a bad counter floors at 1, a list
 	# keeps its dictionaries only.
 	f = FileAccess.open(path, FileAccess.WRITE)
-	f.store_string(JSON.stringify({"schema": 1, "next_id": -3, "placed": [{"id": 1}, "junk", 4, {"id": 2}]}))
+	f.store_string(JSON.stringify({"schema": SaveScript.SCHEMA_VERSION, "next_id": -3, "placed": [{"id": 1}, "junk", 4, {"id": 2}]}))
 	f.close()
 	var g2 := _fresh(); g2.SAVE_PATH_OVERRIDE = path; g2._load()
 	_check("C.reserved_next_id_floor", g2.next_id() == 1, str(g2.next_id()))
 	_check("C.reserved_placed_dicts", g2.placed().size() == 2, str(g2.placed()))
 	f = FileAccess.open(path, FileAccess.WRITE)
-	f.store_string(JSON.stringify({"schema": 1, "next_id": 42, "placed": "nope"}))
+	f.store_string(JSON.stringify({"schema": SaveScript.SCHEMA_VERSION, "next_id": 42, "placed": "nope"}))
 	f.close()
 	var g3 := _fresh(); g3.SAVE_PATH_OVERRIDE = path; g3._load()
 	_check("C.reserved_next_id_kept", g3.next_id() == 42, str(g3.next_id()))
