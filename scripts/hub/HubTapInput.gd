@@ -325,6 +325,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if transport != null and transport.is_driving_yacht():
 		return
+	# CH33: and the same for the sailboat, the third vehicle driven by the
+	# same writer -- one condition per DRIVEN VEHICLE, not per vehicle.
+	if transport != null and transport.is_driving_sailboat():
+		return
 	var touch := event as InputEventScreenTouch
 	if touch:
 		if not touch.pressed:

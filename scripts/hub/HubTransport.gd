@@ -115,6 +115,32 @@ const YACHT_GLIDE_S: float = 0.30
 const YACHT_WIND_MIN: float = 0.85
 const YACHT_WIND_MAX: float = 1.25
 
+## CH33 -- FAMILY B, THIRD VEHICLE: the sailboat, on the sea CH29 already
+## built. Same door as the ball and the yacht (tap it, walk, climb on),
+## same coordinator shape as the yacht (this file mounts/exits/drives it;
+## SailBoat.gd owns its own numbers and its grounding). It is driven by
+## the SAME touch writer and watched by the SAME chase camera as the
+## other two -- CLAUDE.md's doctrine for a shared mode (CH30) applies here
+## without a new exception to debate.
+##
+## NO PERSISTENCE (brief CH33, explicit): unlike the yacht, this vehicle
+## has no WorldSave field. It is always found at SAILBOAT_MOORING at the
+## next session, however it was left.
+const VEHICLE_SAILBOAT: int = 2
+## Just off the cove's beach, inside the sea (HubRegion.in_sea/shore_distance
+## both agree, checked by SailBoatProbe) and close enough to shore that a
+## walk from any part of the beach reaches the tap radius below -- HubRegion
+## already treats this water as walkable ground up to COVE_MAX.x, so no new
+## rule is needed for Keepy to wade to it.
+const SAILBOAT_MOORING: Vector3 = Vector3(65.0, 0.0, -110.0)
+## Deck top: authored ONCE in SailBoat (itself reusing SandYacht.SEAT_Y,
+## the same hull GLB), republished here for every reader that predates it.
+const SAILBOAT_SEAT_Y: float = SailBoat.SEAT_Y
+const SAILBOAT_TAP_RADIUS: float = 1.8
+const SAILBOAT_FOOTPRINT: float = 2.0
+const SAILBOAT_WIND_MIN: float = 0.85
+const SAILBOAT_WIND_MAX: float = 1.25
+
 const DECK_TOP: float = 0.16
 ## Ground radius the scatter keeps clear around a dock (deck 1.9 + step
 ## 0.38 + a margin to walk round it).
@@ -150,39 +176,56 @@ signal trip_finished(line: int, dock: int, empty: bool)
 var _lines: Array[Dictionary] = []
 var _ball: Node3D = null
 var _yacht: SandYacht = null
+var _sailboat: SailBoat = null
 var _keepy: Node3D = null
 var _camera: Camera3D = null
 var _weather: Node = null
+## CH33: the wet test, handed in by setup() -- the one instance HubWorld
+## already builds (HubWater.new()), never a second one over the same
+## bodies. Read once per driven frame for on_surface; null is legal (a
+## world without it simply always answers "not on sea", the safe default).
+var _water: HubWater = null
 var _time: float = 0.0
 ## CH30 -- the drive mode. `touch` is this vehicle's writer, the same
 ## class the kart uses; `_driving` is the one flag, and every other fact
 ## (the rider is ON_CARRIER, the camera is chasing, the HUD is up) is
-## turned on and off with it in the same two functions.
+## turned on and off with it in the same two functions. CH33 adds
+## `_driving_sailboat` alongside it rather than folding it in: mutual
+## exclusion between the two is enforced explicitly in both mount
+## functions below, so a reader never has to infer which flag a shared
+## `touch`/camera/HUD currently belongs to.
 var touch: KartTouchInput = null
 var _hud: KartHud = null
 var _driving: bool = false
+var _driving_sailboat: bool = false
 
 signal yacht_driving_changed(driving: bool)
+signal sailboat_driving_changed(driving: bool)
 
 func _ready() -> void:
 	for i in LINES.size():
 		_build_line(i)
 	_build_ball()
 	_build_yacht()
+	_build_sailboat()
 	touch = KartTouchInput.new()
 	touch.name = "YachtTouch"
 	add_child(touch)
 
 ## Handed the nodes this needs, once, by HubWorld. `hud` is the kart's
 ## HUD in its vehicle mode (one exit button and the steering ghost): a
-## second HUD would be a second copy of the same two widgets.
-func setup(keepy: Node3D, camera: Camera3D, weather: Node, hud: KartHud = null) -> void:
+## second HUD would be a second copy of the same two widgets. `water` is
+## CH33's wet test (HubWater), read every driven frame for the sailboat's
+## on_surface; optional so a caller that predates it still resolves.
+func setup(keepy: Node3D, camera: Camera3D, weather: Node, hud: KartHud = null, water: HubWater = null) -> void:
 	_keepy = keepy
 	_camera = camera
 	_weather = weather
 	_hud = hud
+	_water = water
 	if _hud != null:
 		_hud.exit_pressed.connect(exit_yacht)
+		_hud.exit_pressed.connect(exit_sailboat)
 	if _keepy.has_signal("vehicle_dismounted"):
 		_keepy.connect("vehicle_dismounted", _on_vehicle_dismounted)
 	if _keepy.has_signal("vehicle_mounted"):
@@ -269,6 +312,19 @@ func _build_yacht() -> void:
 	# the yaw is rewritten by the first drive anyway.
 	_yacht.place(Vector3(at.x, 0.0, at.z), PI / 2.0)
 
+## CH33: a SailBoat node -- same GLB pair as the land yacht (yacht_hull_0,
+## yacht_sail_0: brief's asset rule, no new model), no saved position (the
+## brief's "aucune persistance"), so it is placed at SAILBOAT_MOORING
+## every time, facing out to sea (+x).
+func _build_sailboat() -> void:
+	_sailboat = SailBoat.new()
+	_sailboat.name = "SailBoat"
+	add_child(_sailboat)
+	_sailboat.build(
+		CozyPalette.glb_mesh(CozyPalette.decor_path("yacht_hull_0")), CozyPalette.decor_material(),
+		CozyPalette.glb_mesh(CozyPalette.decor_path("yacht_sail_0")), CozyPalette.decor_material_wind(0.10, 2.6))
+	_sailboat.place(SAILBOAT_MOORING, PI / 2.0)
+
 ## ---- what the scatter and the tap need -----------------------------
 
 ## Ground discs nothing should be sown in: every dock and the ball's park.
@@ -279,6 +335,7 @@ static func footprints() -> Array:
 			out.append({"position": Vector3(d.x, 0.0, d.z), "radius": DOCK_FOOTPRINT})
 	out.append({"position": BALL_PARK, "radius": BALL_FOOTPRINT})
 	out.append({"position": YACHT_PARK, "radius": YACHT_FOOTPRINT})
+	out.append({"position": SAILBOAT_MOORING, "radius": SAILBOAT_FOOTPRINT})
 	return out
 
 ## Every dock, flat, for the path builder.
@@ -341,27 +398,30 @@ func ball_position() -> Vector3:
 func accepts_vehicle_tap(point: Vector3) -> bool:
 	return vehicle_at(point) >= 0
 
-## CH29: WHICH vehicle a tap at `point` means -- VEHICLE_BALL, VEHICLE_YACHT
-## or -1 -- on accepts_vehicle_tap's exact terms. The ball is asked first
-## (it is the older channel); the two parks are 120 u apart so the order
-## can only ever decide when the player dropped one on the other.
+## CH29/CH33: WHICH vehicle a tap at `point` means -- VEHICLE_BALL,
+## VEHICLE_YACHT, VEHICLE_SAILBOAT or -1 -- on accepts_vehicle_tap's exact
+## terms. The ball is asked first (it is the older channel), then the
+## yacht, then the sailboat; the three parks are far enough apart that the
+## order can only ever decide when the player dropped one on another.
 func vehicle_at(point: Vector3) -> int:
-	# Only the vehicle he RIDES withdraws: a tap on the other one while
+	# Only the vehicle he RIDES withdraws: a tap on another one while
 	# mounted means "swap" (HubWorld drops the first where he stands), so a
-	# player who bounced up to the yacht on the ball is not asked to step
-	# off first. Nobody mounted: both answer.
+	# player who bounced up to a vehicle on another is not asked to step
+	# off first. Nobody mounted: all three answer.
 	var riding: Node3D = null
 	if _keepy != null and _keepy.has_method("vehicle_node"):
 		riding = _keepy.call("vehicle_node")
 	var flat := Vector3(point.x, 0.0, point.z)
 	if riding != _ball and flat.distance_to(ball_position()) <= BALL_TAP_RADIUS:
 		return VEHICLE_BALL
-	# CH30: the yacht WITHDRAWS from the tap for the length of a drive
-	# (the boat's pattern, the kart's `accepts_tap`), so a tap made while
-	# driving falls through to the ground path and is refused there by
-	# ON_CARRIER -- never swallowed by the thing being driven.
+	# CH30/CH33: a driven vehicle WITHDRAWS from the tap for the length of
+	# its drive (the boat's pattern, the kart's `accepts_tap`), so a tap
+	# made meanwhile falls through to the ground path and is refused there
+	# by ON_CARRIER -- never swallowed by the thing being driven.
 	if _yacht != null and not _driving and flat.distance_to(yacht_position()) <= YACHT_TAP_RADIUS:
 		return VEHICLE_YACHT
+	if _sailboat != null and not _driving_sailboat and flat.distance_to(sailboat_position()) <= SAILBOAT_TAP_RADIUS:
+		return VEHICLE_SAILBOAT
 	return -1
 
 func yacht_node() -> Node3D:
@@ -376,17 +436,43 @@ func yacht_position() -> Vector3:
 func is_driving_yacht() -> bool:
 	return _driving
 
+func sailboat_node() -> Node3D:
+	return _sailboat
+
+func sailboat() -> SailBoat:
+	return _sailboat
+
+func sailboat_position() -> Vector3:
+	return _sailboat.flat_position()
+
+func is_driving_sailboat() -> bool:
+	return _driving_sailboat
+
 func vehicle_position(kind: int) -> Vector3:
-	return yacht_position() if kind == VEHICLE_YACHT else ball_position()
+	if kind == VEHICLE_YACHT:
+		return yacht_position()
+	if kind == VEHICLE_SAILBOAT:
+		return sailboat_position()
+	return ball_position()
 
 func vehicle_tap_radius(kind: int) -> float:
-	return YACHT_TAP_RADIUS if kind == VEHICLE_YACHT else BALL_TAP_RADIUS
+	if kind == VEHICLE_YACHT:
+		return YACHT_TAP_RADIUS
+	if kind == VEHICLE_SAILBOAT:
+		return SAILBOAT_TAP_RADIUS
+	return BALL_TAP_RADIUS
 
 ## The wind's multiplier on the yacht's pace: 0.85 in snow, 1.0 in the
 ## sun, 1.12 in rain, 1.25 (the cap) in a storm. Read by _process and
 ## pushed into KeepyHopper every frame he rides.
 func yacht_speed_factor() -> float:
 	return clampf(0.85 + 0.15 * _wind(), YACHT_WIND_MIN, YACHT_WIND_MAX)
+
+## Same shape for the sailboat -- its own constants, so a future lot that
+## makes one vehicle more wind-sensitive than the other moves one pair of
+## numbers, not a shared formula.
+func sailboat_speed_factor() -> float:
+	return clampf(0.85 + 0.15 * _wind(), SAILBOAT_WIND_MIN, SAILBOAT_WIND_MAX)
 
 func _on_vehicle_mounted() -> void:
 	pass
@@ -407,7 +493,7 @@ func _on_vehicle_dismounted() -> void:
 ## yacht somehow sits where it may not drive (a defence in depth over the
 ## build-time refusal: a yacht there could not be driven off it).
 func mount_yacht() -> bool:
-	if _driving or _keepy == null or _yacht == null:
+	if _driving or _driving_sailboat or _keepy == null or _yacht == null:
 		return false
 	if not SandYacht.drivable(yacht_position()):
 		_yacht.place(YACHT_PARK, PI / 2.0)
@@ -455,12 +541,64 @@ func exit_yacht() -> void:
 	WorldSave.cove_set_yacht(at)
 	yacht_driving_changed.emit(false)
 
+## CH33: climbs aboard the sailboat. The yacht's mount_yacht() shape
+## exactly, minus the drivable-ground refusal (a boat has no "may not be
+## here" the way a land vehicle does -- the grounding in SailBoat.gd is a
+## drag, not a place it is forbidden to occupy) and minus any WorldSave
+## write (brief: no persistence for this vehicle).
+func mount_sailboat() -> bool:
+	if _driving or _driving_sailboat or _keepy == null or _sailboat == null:
+		return false
+	if not _keepy.call("mount_carrier", _sailboat.deck(), SailBoat.SEAT):
+		return false
+	_driving_sailboat = true
+	_sailboat.velocity = Vector3.ZERO
+	touch.enabled = true
+	touch.hold_throttle(MOUNT_HOLD_S)
+	_keepy.call("follow_carrier")
+	if _camera != null and _camera.has_method("enter_drive"):
+		_camera.call("enter_drive", _sailboat)
+	if _hud != null:
+		_hud.set_vehicle_mode(true)
+		_hud.visible = true
+	sailboat_driving_changed.emit(true)
+	return true
+
+## The HUD button, for the sailboat. Stops it where it is and gives the
+## body back beside it -- exactly exit_yacht()'s shape, minus the
+## WorldSave write (no persistence, brief CH33): the boat is simply left
+## where the drive stopped it, and the NEXT SESSION starts it back at
+## SAILBOAT_MOORING regardless.
+func exit_sailboat() -> void:
+	if not _driving_sailboat:
+		return
+	touch.enabled = false
+	touch.input.reset()
+	_sailboat.velocity = Vector3.ZERO
+	_driving_sailboat = false
+	if _camera != null and _camera.has_method("exit_drive"):
+		_camera.call("exit_drive")
+	if _hud != null:
+		_hud.visible = false
+		_hud.set_ghost(Vector2.ZERO, Vector2.ZERO, false)
+		_hud.set_vehicle_mode(false)
+	var at: Vector3 = sailboat_position()
+	var landing: Vector3 = _step_off(at + _sailboat.right() * EXIT_SIDE, at)
+	if landing.distance_to(at) < 0.8:
+		landing = _step_off(at - _sailboat.right() * EXIT_SIDE, at)
+	_keepy.call("leave_carrier", landing)
+	sailboat_driving_changed.emit(false)
+
 ## A landing point for the step-off: the region's own clamp, refused back
-## to the yacht's own position if it lands where the yacht may not be
-## (the corridor mouths are the only place that can happen).
-func _step_off(wanted: Vector3) -> Vector3:
+## to `fallback` (the vehicle's own position) if it lands where the
+## vehicle may not be (the corridor mouths are the only place that can
+## happen for the yacht; for the sailboat, mid-sea if the region's wading
+## limit is somehow exceeded).
+func _step_off(wanted: Vector3, fallback: Vector3 = Vector3.INF) -> Vector3:
 	var landing: Vector3 = HubRegion.clamp_to(wanted)
-	return landing if HubRegion.contains(landing) else yacht_position()
+	if HubRegion.contains(landing):
+		return landing
+	return fallback if fallback != Vector3.INF else yacht_position()
 
 ## ---- flying -----------------------------------------------------------
 
@@ -551,6 +689,8 @@ func _process(delta: float) -> void:
 	# glide and the cloth answer to ONE reading of the weather.
 	if _yacht != null:
 		_yacht.breathe(wind, _time)
+	if _sailboat != null:
+		_sailboat.breathe(wind, _time)
 	for i in _lines.size():
 		var entry: Dictionary = _lines[i]
 		if entry["riding"]:
@@ -565,16 +705,24 @@ func _process(delta: float) -> void:
 		if entry["rider"] and _keepy != null and _keepy.call("is_on_carrier"):
 			_keepy.call("follow_carrier")
 
-## CH30: the yacht's own physics step. Carrier first, carried immediately
-## after in the SAME call -- the turnstile's one-frame-lag measurement,
-## and the reason the rider never trails the deck by a frame.
+## CH30/CH33: the driven vehicle's own physics step. Carrier first,
+## carried immediately after in the SAME call -- the turnstile's
+## one-frame-lag measurement, and the reason the rider never trails the
+## deck by a frame. At most one of the two branches runs (mount_yacht()
+## and mount_sailboat() refuse each other), so `touch.input` is never read
+## by both in the same frame.
 func _physics_process(delta: float) -> void:
-	if not _driving or _yacht == null:
-		return
-	_yacht.drive(delta, touch.input, yacht_speed_factor())
-	_keepy.call("follow_carrier")
-	if _hud != null:
-		_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
+	if _driving and _yacht != null:
+		_yacht.drive(delta, touch.input, yacht_speed_factor())
+		_keepy.call("follow_carrier")
+		if _hud != null:
+			_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
+	elif _driving_sailboat and _sailboat != null:
+		var on_sea: bool = _water != null and _water.body_at(_sailboat.flat_position()) == &"sea"
+		_sailboat.drive(delta, touch.input, sailboat_speed_factor(), on_sea)
+		_keepy.call("follow_carrier")
+		if _hud != null:
+			_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
 
 ## The boat's re-mooring rule, for every idle balloon and for the parked
 ## ball: far from every dock (or the park) AND every one of them off
