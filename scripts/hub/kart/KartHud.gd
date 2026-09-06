@@ -39,6 +39,8 @@ var _ghost_active: bool = false
 ## V7b dev-only steering preset row (DevTools.enabled()): empty for a
 ## normal player, so nothing is built or drawn for them.
 var _preset_buttons: Array[Button] = []
+var _difficulty_buttons: Array[Button] = []
+var _preset_row: Control = null
 ## V8 race widgets: the lights, the position, the standings, the results.
 var _lights: Array[ColorRect] = []
 var _lights_box: HBoxContainer = null
@@ -276,6 +278,10 @@ static func ordinal(rank: int) -> String:
 ## The race widgets, once per frame from HubKarting. `rows` are the
 ## standings, leader first: {name, colour, player, finished}.
 func set_race(state: int, countdown_left: float, rank: int, racers: int, lap_count: int, laps: int, rows: Array, clock_s: float) -> void:
+	# CH30: a HUD lent to the yacht never shows race furniture, whatever
+	# the karting coordinator is doing behind it.
+	if _vehicle_mode:
+		return
 	var racing: bool = state != HubKarting.Race.IDLE
 	_standings_box.visible = racing
 	_position_label.visible = racing
@@ -362,6 +368,8 @@ func show_results(rows: Array) -> void:
 		time_label.add_theme_color_override("font_color", Color(0.92, 0.88, 0.78))
 		row.add_child(time_label)
 		_results_box.add_child(row)
+	if DevTools.enabled():
+		_append_dev_readout(rows)
 	var hint := Label.new()
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint.text = "roule encore, ou Descendre pour une nouvelle course"
@@ -370,6 +378,73 @@ func show_results(rows: Array) -> void:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_results_box.add_child(hint)
 	_results_panel.visible = true
+
+## CH30 -- THE DEV READOUT (?keepydev=1). Every racer's lap times and the
+## gap at the flag, under the results panel, so a retour can be a table of
+## numbers instead of "je gagne large". It is behind DevTools like the
+## preset rows -- a player is shown the finishing order, not a timing
+## sheet -- and it reads ONLY what HubKarting.results() already publishes.
+func _append_dev_readout(rows: Array) -> void:
+	var sep := Label.new()
+	sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sep.text = "— dev: tours & ecart (difficulte %s) —" % String(KartDifficulty.current()["label"])
+	sep.add_theme_font_size_override("font_size", 16)
+	sep.add_theme_color_override("font_color", Color(0.75, 0.72, 0.62))
+	sep.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_results_box.add_child(sep)
+	var winner_ms: int = 0
+	for r in rows:
+		var f: int = int(r["finish_ms"])
+		if f > 0 and (winner_ms == 0 or f < winner_ms):
+			winner_ms = f
+	for r in rows:
+		var line := Label.new()
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var laps: Array = r.get("laps_ms", [])
+		var texts: PackedStringArray = PackedStringArray()
+		for ms in laps:
+			texts.append("%.2f" % (float(int(ms)) / 1000.0))
+		var f2: int = int(r["finish_ms"])
+		var gap: String = "--" if (f2 <= 0 or winner_ms <= 0) else "%+.2f" % (float(f2 - winner_ms) / 1000.0)
+		line.text = "%-12s %s  |  %s  |  ecart %s s" % [String(r["name"]), String(r.get("profile", "")), " ".join(texts), gap]
+		line.add_theme_font_size_override("font_size", 17)
+		line.add_theme_color_override("font_color", Color(0.88, 0.84, 0.74))
+		_results_box.add_child(line)
+
+## CH30 -- VEHICLE MODE. The sand yacht is driven with the same thumb and
+## the same writer as the kart, so it wants the same two widgets: the
+## exit button and the steering ghost. Everything the RACE owns -- the
+## lap panel, the lights, the standings, the clock, the results, the
+## wrong-way banner, the two dev preset rows -- is hidden, rather than a
+## second HUD scene existing to hold one button.
+##
+## The mode is a property of this node and not of the caller, so leaving
+## either vehicle restores the race widgets and nothing has to remember
+## which one it was.
+var _vehicle_mode: bool = false
+
+func set_vehicle_mode(on: bool) -> void:
+	_vehicle_mode = on
+	_panel.visible = not on
+	_wrong_label.visible = false
+	_record_label.visible = false
+	if _lights_box != null:
+		_lights_box.visible = false
+	if _go_label != null:
+		_go_label.visible = false
+	if _position_label != null:
+		_position_label.visible = false
+	if _standings_box != null:
+		_standings_box.visible = false
+	if _clock_label != null:
+		_clock_label.visible = false
+	if _results_panel != null:
+		_results_panel.visible = false
+	if _preset_row != null:
+		_preset_row.visible = not on
+
+func vehicle_mode() -> bool:
+	return _vehicle_mode
 
 func set_results_visible(on: bool) -> void:
 	_results_panel.visible = on
@@ -439,6 +514,7 @@ func _draw() -> void:
 
 func _build_preset_row() -> void:
 	var col := VBoxContainer.new()
+	_preset_row = col
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.position = Vector2(32.0, TOP + 84.0 + 10.0)
 	add_child(col)
@@ -460,12 +536,41 @@ func _build_preset_row() -> void:
 		b.pressed.connect(_on_preset_pressed.bind(i))
 		row.add_child(b)
 		_preset_buttons.append(b)
+	# CH30: the difficulty row, on exactly the V7b pattern above -- same
+	# column, same button size, switchable mid-session. It takes effect on
+	# the NEXT race (KartAiDriver reads the preset in setup(), which
+	# HubKarting calls on every grid-up), so a tap here is never a change
+	# of pace in the middle of a corner.
+	var caption2 := Label.new()
+	caption2.text = "Difficulte (dev)"
+	caption2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	caption2.add_theme_font_size_override("font_size", 16)
+	caption2.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.75))
+	col.add_child(caption2)
+	var row2 := HBoxContainer.new()
+	row2.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_child(row2)
+	for i in KartDifficulty.PRESETS.size():
+		var b := Button.new()
+		b.text = String(KartDifficulty.PRESETS[i]["label"])
+		b.mouse_filter = Control.MOUSE_FILTER_STOP
+		b.toggle_mode = true
+		b.custom_minimum_size = Vector2(76.0, 56.0)
+		b.pressed.connect(_on_difficulty_pressed.bind(i))
+		row2.add_child(b)
+		_difficulty_buttons.append(b)
 	_refresh_preset_row()
 
 func _on_preset_pressed(i: int) -> void:
 	KartTuning.set_index(i)
 	_refresh_preset_row()
 
+func _on_difficulty_pressed(i: int) -> void:
+	KartDifficulty.set_index(i)
+	_refresh_preset_row()
+
 func _refresh_preset_row() -> void:
 	for i in _preset_buttons.size():
 		_preset_buttons[i].button_pressed = (i == KartTuning.index())
+	for i in _difficulty_buttons.size():
+		_difficulty_buttons[i].button_pressed = (i == KartDifficulty.index())

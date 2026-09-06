@@ -59,6 +59,18 @@ func _run() -> void:
 
 ## ---- helpers ------------------------------------------------------------
 
+## Mean v_max over the samples whose curvature is above (`above`) or below
+## the threshold `k`. CH30; see the note at its call site.
+func _mean_vmax(d: KartAiDriver, ks: Array, k: float, above: bool) -> float:
+	var sum: float = 0.0
+	var n: int = 0
+	for i in ks.size():
+		var c: float = float(ks[i])
+		if (c >= k) if above else (c <= k):
+			sum += d.vmax_at(i)
+			n += 1
+	return sum / maxf(float(n), 1.0)
+
 func _check(label: String, ok: bool, detail: String = "") -> void:
 	_checks += 1
 	if not ok:
@@ -520,8 +532,35 @@ func _phase_race() -> void:
 			tight = i
 		if track.curvature(i) < track.curvature(straight):
 			straight = i
-	_check("cat faster than the boar at the tightest bend", cat_driver.vmax_at(tight) > boar_driver.vmax_at(tight), "%.2f vs %.2f" % [cat_driver.vmax_at(tight), boar_driver.vmax_at(tight)])
-	_check("boar faster than the cat on the straight", boar_driver.vmax_at(straight) > cat_driver.vmax_at(straight), "%.2f vs %.2f" % [boar_driver.vmax_at(straight), cat_driver.vmax_at(straight)])
+	# ⚠️ CH30 -- NOT AT THE SINGLE TIGHTEST SAMPLE ANY MORE, and the reason
+	# is a measurement, not a convenience. At the omega the binding limit
+	# is the STEERING, not the tyres: v_steer = steer_rate / (k * headroom
+	# + steer_rate * e) = 4.17 u/s at the 7/10 preset, so EVERY profile
+	# above a_lat ~= 5.1 is pinned to the same number there. The cat is
+	# already pinned at difficulty x1; raise the difficulty and the boar
+	# joins it, and this check went red on personalities that were intact
+	# everywhere else on the lap ("4.17 vs 4.17").
+	#
+	# The property wanted -- "you can tell them apart by WATCHING" -- lives
+	# over a whole bend and a whole straight, so it is read over the
+	# curviest and the straightest quarter of the spine. Same contract,
+	# measured where it is not saturated. RaceBalanceProbe re-asserts it at
+	# each of the three difficulty presets.
+	var ks: Array = []
+	for i in track.sample_count():
+		ks.append(track.curvature(i))
+	var sorted_k: Array = ks.duplicate()
+	sorted_k.sort()
+	var q_hi: float = float(sorted_k[int(sorted_k.size() * 0.75)])
+	var q_lo: float = float(sorted_k[int(sorted_k.size() * 0.25)])
+	var cat_curvy: float = _mean_vmax(cat_driver, ks, q_hi, true)
+	var boar_curvy: float = _mean_vmax(boar_driver, ks, q_hi, true)
+	var cat_flat: float = _mean_vmax(cat_driver, ks, q_lo, false)
+	var boar_flat: float = _mean_vmax(boar_driver, ks, q_lo, false)
+	_check("cat faster than the boar over the curviest quarter", cat_curvy > boar_curvy, "%.3f vs %.3f" % [cat_curvy, boar_curvy])
+	_check("boar faster than the cat over the straightest quarter", boar_flat > cat_flat, "%.3f vs %.3f" % [boar_flat, cat_flat])
+	# (blind) the two quarters really are different stretches of track.
+	_check("(blind) the curviest and straightest quarters differ", q_hi > q_lo * 1.5, "%.4f vs %.4f" % [q_hi, q_lo])
 	# The side, read off the driver and not off a comment (the V7 "right
 	# of travel" is the LEFT -- measured by capture, see lane_goal_at):
 	# the outside of the tightest bend is the side OPPOSITE its curvature
@@ -564,9 +603,27 @@ func _phase_race() -> void:
 	_karting.racers[1]["s"] = 50.0 + HubKarting.RUBBER_DEAD - 1.0
 	_check("rubber band inert inside the dead band", _karting.rubber_band_for(1) == 1.0, str(_karting.rubber_band_for(1)))
 	_karting.racers[1]["s"] = 50.0 + HubKarting.RUBBER_DEAD + HubKarting.RUBBER_SPAN + 10.0
-	_check("an opponent far ahead is leashed to RUBBER_MIN", absf(_karting.rubber_band_for(1) - HubKarting.RUBBER_MIN) < 0.001, str(_karting.rubber_band_for(1)))
+	# CH30: the two BOUNDS are the live difficulty preset's, not the
+	# constants -- the leash on a LEADING opponent is released toward 1.0
+	# as difficulty rises, so a leader never reads as waiting. The dead
+	# band and the span are geometry and stayed on HubKarting.
+	_check("an opponent far ahead is leashed to the preset's floor", absf(_karting.rubber_band_for(1) - KartDifficulty.rubber_min()) < 0.001,
+		"%.3f vs %.3f (%s)" % [_karting.rubber_band_for(1), KartDifficulty.rubber_min(), String(KartDifficulty.current()["label"])])
 	_karting.racers[1]["s"] = 50.0 - HubKarting.RUBBER_DEAD - HubKarting.RUBBER_SPAN - 10.0
-	_check("an opponent far behind is let go to RUBBER_MAX", absf(_karting.rubber_band_for(1) - HubKarting.RUBBER_MAX) < 0.001, str(_karting.rubber_band_for(1)))
+	_check("an opponent far behind is let go to the preset's ceiling", absf(_karting.rubber_band_for(1) - KartDifficulty.rubber_max()) < 0.001,
+		"%.3f vs %.3f" % [_karting.rubber_band_for(1), KartDifficulty.rubber_max()])
+	# And the direction the CH30 scale moves them in, asserted rather than
+	# assumed: harder never means a slower leader.
+	var mins: Array = []
+	var maxs: Array = []
+	var keep: int = KartDifficulty.index()
+	for i in KartDifficulty.PRESETS.size():
+		KartDifficulty.set_index(i)
+		mins.append(KartDifficulty.rubber_min())
+		maxs.append(KartDifficulty.rubber_max())
+	KartDifficulty.set_index(keep)
+	_check("the leash on a LEADING opponent is released as difficulty rises", float(mins[0]) < float(mins[1]) and float(mins[1]) <= float(mins[2]) and float(mins[2]) <= 1.0, str(mins))
+	_check("the tow on a TRAILING opponent is let out as difficulty rises", float(maxs[0]) < float(maxs[1]) and float(maxs[1]) < float(maxs[2]), str(maxs))
 	_karting.racers[1]["s"] = 0.0
 	_karting.racers[pi]["s"] = 0.0
 	_karting.race_state = HubKarting.Race.IDLE

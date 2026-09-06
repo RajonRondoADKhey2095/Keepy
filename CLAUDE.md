@@ -755,6 +755,33 @@ le multiplier par une échelle que l'original ne multiplie pas, a enterré le
 personnage sous **68 % de sa taille**. Une moitié de somme se lit comme un
 nombre complet et **ne se signale jamais**.
 
+### ⚠️ UN `float` GDSCRIPT EST UN FLOAT64, `rotation.y` EST UN FLOAT32
+
+Trouvé au CH30 en extrayant la cinématique du kart dans un composant
+partagé, sur une extraction qui devait être — et qui est — un
+**déplacement pur**. Les statements étaient les mêmes, dans le même
+ordre, sur les mêmes valeurs. La trace divergeait quand même : dernier
+chiffre imprimé dès la frame 30, **0,070 u à la frame 1200**, et 17 ms sur
+trois tours.
+
+La cause n'est pas un algorithme, c'est un **TYPE**. `rotation.y` est une
+composante de `Vector3`, donc un **float32** dans un build simple
+précision (celui de Godot officiel, et celui du web) : `rotation.y -= x`
+**tronque à 32 bits à chaque frame physique**, et l'a toujours fait. Un
+`float` GDScript est un **float64**. Porter la même valeur dans une
+variable locale garde donc silencieusement 29 bits que le code livré
+n'avait jamais eus.
+
+Sur une boucle qui reboucle (une poursuite pure : le braquage écrit la
+trajectoire, la trajectoire écrit le braquage), ce bit se voit en trente
+frames. **Parade** : écrire la valeur à travers une composante de
+`Vector3` (`_yaw32.y = ...; yaw = _yaw32.y`), qui tronque exactement là
+où le nœud le fait.
+
+⚠️ **Et c'est pourquoi une extraction se prouve par TRACE et jamais par
+relecture de diff.** Aucune lecture du patch ne pouvait montrer ça : la
+question n'était pas dans la source, elle était dans le moteur.
+
 ### ⚠️ UN CHIFFRE FANTÔME SURVIT AUX SESSIONS — le rayon de structure est 1,932 u
 
 Un « **4,03 u**, déjà mesuré sur `DivingBoard` » a été transporté de brief en
@@ -953,6 +980,37 @@ pente — à l'image, un fil horizontal en haut du cadre. **Mesuré par rendu,
 pas déduit** : trois courses au corridor parfaitement vert ont été refusées
 sur cette seule base. La bande où une descente LIT comme une descente sur ce
 plateau est de l'ordre de **14 à 22 u**, à une pente de 13° et plus.
+
+### ⚠️ QUELLE CAMÉRA POUR QUOI — UN CRITÈRE UNIQUE, PLUS UNE PILE D'EXCEPTIONS
+
+Écrit au CH30, sur décision de Mathieu, **en remplacement de l'empilement
+d'exceptions** (« le kart est la seule exception licenciée », puis « le
+char à voile est la deuxième exception assumée »). Deux exceptions
+nommées, c'est déjà une règle qui n'a pas été écrite ; la voici, et elle
+s'étend au véhicule suivant sans nouvelle autorisation :
+
+| ce que le joueur fait | caméra |
+|---|---|
+| il **PILOTE en continu** un véhicule (appui maintenu, direction au pouce) | **POURSUITE** — `HubCamera.enter_drive()` |
+| il se **DÉPLACE À PIED** (tap-to-move) | **FIGÉE** — `HubCamera.OFFSET` |
+| il fait un **RIDE À TRAJET FIXE** (montgolfière, tyrolienne, plongeoir, manège, hibou, arbre) | **FIGÉE** |
+
+Le critère est **le pilotage continu**, pas le véhicule : ce qui décide
+est « le joueur choisit la direction frame par frame », et c'est
+exactement la condition sous laquelle un cadre figé devient illisible —
+le trajet sort du cadre et le joueur pilote de mémoire. Un ride borné par
+un tween qui finit toujours à un point connu n'a pas ce problème : sa
+trajectoire est écrite, donc cadrable.
+
+**Corollaire, et c'est là que le prochain lot paiera** : une caméra de
+poursuite montre le décor sous des azimuts que le cadre figé n'a jamais
+montrés, et TOUT ce que ce dépôt a calibré l'a été pour le cadre figé.
+Tout véhicule nouvellement piloté en continu doit donc passer un audit du
+type `ChaseAudit` (CH30) : enroulement des rubans construits à la main,
+`visibility_range_end` contre la portée réelle de la poursuite, luminance
+des assets vus de PRÈS, et un balayage rendu par zone × azimut × météo.
+Le CH30 y a trouvé deux défauts réels dans un hub que deux audits
+visuels antérieurs avaient déclaré sain.
 
 ⚠️ **ET LA CAMÉRA NE S'APPROCHE JAMAIS : `HubCamera.OFFSET` EST UNE
 CONSTANTE `(0 ; 7,6 ; 8,9)`.** Elle est à **11,703 u des pieds de Keepy**
@@ -1471,6 +1529,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH25 | L'ours rejoint le blaireau au feu — recon puis LOT 1 : recon reprouvée par un second script indépendant (même candidat d'arrivée, même conclusion sur le relèvement direct écarté), `BEAR_CAMPFIRE_WALK_RATE` calculé pour synchroniser l'arrivée des deux acteurs, ce qui a débusqué et corrigé à la racine un glissement de pieds de principe dans `HubActorWalker` (un seul taux par acteur pour toute sa vie, avant ce lot), gate balançoire et synchronisation des deux acteurs par un état partagé unique câblés | [`CH25_OURS_FEU.md`](docs/lots/CH25_OURS_FEU.md) | 9 | 407 | 4 sept |
 | CH27 | Karting — lot 1 (circuit, conduite libre, chrono) et **lot 2** (V8 : HUD conduite centré, trois adversaires IA à personnalités, course à feux, classement, collisions, piste à 10 u, chat/castor/faon à la masse de Keepy — récit dans `docs/CARTE_BLANCHE_JOURNAL.md`, section « V8 — KARTING LOT 2 ») | [`CH27_KARTING_LOT1.md`](docs/lots/CH27_KARTING_LOT1.md) | 8 | 170 | 5 sept |
 | CH29 | La Crique — cinquième zone à l'est de la Lande (couloir piéton, porte (41, −96)), mer, phare, châteaux de sable qui fondent sous la pluie, phare qui s'allume, ligne de montgolfière Corail plateau → Crique, **char à voile** (glisse libre au sol, vitesse au vent), `WorldSave` schéma 2 avec migration, graphe des zones en arbre, terrier + `ModelSlot` inerte pour un futur habitant | [`CH29_CRIQUE.md`](docs/lots/CH29_CRIQUE.md) | 1 | — | 5 → 6 sept |
+| CH30 | Conduite unifiée — la difficulté du karting **mesurée** avant d'être touchée (`RaceBalanceProbe` : la laisse est inerte, `a_lat` sature sur la limite de braquage, l'échelle est compressive), trois presets `KartDifficulty` calibrés sur un plancher mesuré et commutables derrière `?keepydev=1`, relevé dev des tours ; extraction de `VehicleDrive` prouvée **byte-identique** par `KartTraceProbe` sur les deux arbres ; **char à voile piloté en continu** avec la caméra de poursuite, garde circuit ; `ChaseAudit` (160 frames, 5 zones × 8 azimuts × 4 météos) et les deux défauts qu'il a trouvés | [`CH30_CONDUITE.md`](docs/lots/CH30_CONDUITE.md) | 5 | 431 | 6 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés

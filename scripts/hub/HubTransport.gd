@@ -68,30 +68,48 @@ const LINES: Array = [
 const BALL_PARK: Vector3 = Vector3(0.5, 0.0, 4.4)
 
 ## CH29 -- FAMILY B, SECOND VEHICLE: the sand yacht ("char a voile"), the
-## cove's own. Same door as the ball (tap it, walk, climb on) and the
-## same hop-modifier model in KeepyHopper -- but a GLIDE, not a bounce:
-## each hop is flat, long and unsquashed, so a chain of them reads as a
-## continuous roll across the ground, and its pace follows the weather's
-## `wind` (a sail). Free and continuous on the ground: the one kind of
-## trip neither the balloon (fixed points) nor the ball (a bounce) offers.
+## cove's own. Same door as the ball (tap it, walk, climb on).
+##
+## =====================================================================
+## CH30 -- IT IS NOW DRIVEN, NOT HOPPED
+##
+## CH29 made it a hop modifier: each tap on the ground was one flat glide.
+## Mathieu's retour is that it must be driven like the kart -- a finger
+## held down, direction under the thumb. It is: the yacht is a SandYacht
+## node driven by the SAME KartTouchInput writing the SAME KartInput into
+## the SAME VehicleDrive the kart uses, watched by the SAME chase camera,
+## and the rider is carried by mount_carrier() exactly as he is in the
+## kart. Nothing here is a second copy of anything there; this file is the
+## COORDINATOR (mount, drive, exit), the way HubKarting is the kart's.
+##
+## The yacht's own numbers -- pace, grip, heel, and the one place it may
+## not go -- live in SandYacht.gd. This file owns the door and the mode.
 ##
 ## It is NOT re-parked by the off-screen rule. Where the player leaves it
 ## is where it stays, across sessions (WorldSave.cove_yacht): a vehicle
 ## whose point is to cross the map must not walk home on its own.
 ##
-## The seat is authored ONCE, here, on RIDE_SEAT_Y's terms (the boat
-## pattern: one constant for where a rider sits, read by whoever mounts).
 const VEHICLE_BALL: int = 0
 const VEHICLE_YACHT: int = 1
 const YACHT_PARK: Vector3 = Vector3(48.0, 0.0, -112.0)
 ## Deck top of yacht_hull_0 (the box at y 0.35..0.65 plus its cushion): his
-## feet stand there.
-const YACHT_SEAT_Y: float = 0.66
+## feet stand there. CH30: authored ONCE, in SandYacht, and republished
+## here for every reader that predates the move.
+const YACHT_SEAT_Y: float = SandYacht.SEAT_Y
 const YACHT_TAP_RADIUS: float = 1.8
+## Where the driver steps off, and how long the accelerator waits for the
+## camera blend. Both are the kart's numbers (HubKarting.EXIT_SIDE,
+## MOUNT_HOLD_S): the two vehicles are boarded and left the same way, and
+## a second pair of literals would be two numbers to keep in step.
+const EXIT_SIDE: float = 1.8
+const MOUNT_HOLD_S: float = 1.2
 const YACHT_FOOTPRINT: float = 2.0
-## Glide geometry: 3.2 u per 0.30 s is 10.7 u/s in the sun (x2.0 on foot,
-## x1.35 the ball), scaled by the wind factor below -- capped so a storm
-## run (13.3 u/s) stays at the balloon's proven 13 u/s under this camera.
+## CH29's glide geometry, kept as the AUTHORED PACE of the drive: 3.2 u
+## per 0.30 s is 10.7 u/s in the sun (x2.0 on foot, x1.35 the ball), and
+## SandYacht.BASE_SPEED is that same number, so CH30 changed how the
+## vehicle is controlled and not how fast it crosses the map. The wind
+## still scales it, capped so a storm run (13.3 u/s) stays at the
+## balloon's proven 13 u/s under this camera.
 const YACHT_GLIDE_DISTANCE: float = 3.2
 const YACHT_GLIDE_S: float = 0.30
 const YACHT_WIND_MIN: float = 0.85
@@ -131,24 +149,40 @@ signal trip_finished(line: int, dock: int, empty: bool)
 
 var _lines: Array[Dictionary] = []
 var _ball: Node3D = null
-var _yacht: Node3D = null
-var _yacht_sail: MeshInstance3D = null
+var _yacht: SandYacht = null
 var _keepy: Node3D = null
 var _camera: Camera3D = null
 var _weather: Node = null
 var _time: float = 0.0
+## CH30 -- the drive mode. `touch` is this vehicle's writer, the same
+## class the kart uses; `_driving` is the one flag, and every other fact
+## (the rider is ON_CARRIER, the camera is chasing, the HUD is up) is
+## turned on and off with it in the same two functions.
+var touch: KartTouchInput = null
+var _hud: KartHud = null
+var _driving: bool = false
+
+signal yacht_driving_changed(driving: bool)
 
 func _ready() -> void:
 	for i in LINES.size():
 		_build_line(i)
 	_build_ball()
 	_build_yacht()
+	touch = KartTouchInput.new()
+	touch.name = "YachtTouch"
+	add_child(touch)
 
-## Handed the three nodes this needs, once, by HubWorld.
-func setup(keepy: Node3D, camera: Camera3D, weather: Node) -> void:
+## Handed the nodes this needs, once, by HubWorld. `hud` is the kart's
+## HUD in its vehicle mode (one exit button and the steering ghost): a
+## second HUD would be a second copy of the same two widgets.
+func setup(keepy: Node3D, camera: Camera3D, weather: Node, hud: KartHud = null) -> void:
 	_keepy = keepy
 	_camera = camera
 	_weather = weather
+	_hud = hud
+	if _hud != null:
+		_hud.exit_pressed.connect(exit_yacht)
 	if _keepy.has_signal("vehicle_dismounted"):
 		_keepy.connect("vehicle_dismounted", _on_vehicle_dismounted)
 	if _keepy.has_signal("vehicle_mounted"):
@@ -215,26 +249,25 @@ func _build_ball() -> void:
 	_ball.position = BALL_PARK
 	add_child(_ball)
 
-## The yacht is an EMPTY Node3D (what KeepyHopper writes: position, yaw,
-## and a scale it leaves at ONE for a glide) carrying the hull and, as a
-## separate mesh, the sail -- which takes the WIND material so its cloth
-## bellies with the weather on its own, and is leaned by _process.
+## CH30: a SandYacht node -- the hull and the sail on a heeling deck, and
+## the driving model with them. The GLB lookups stay here (this file owns
+## the palette calls); the vehicle owns what it does with them.
 func _build_yacht() -> void:
-	_yacht = Node3D.new()
+	_yacht = SandYacht.new()
 	_yacht.name = "Yacht"
-	var hull := _glb_node("Hull", "yacht_hull_0", CozyPalette.decor_material())
-	_yacht.add_child(hull)
-	_yacht_sail = _glb_node("Sail", "yacht_sail_0", CozyPalette.decor_material_wind(0.10, 2.6))
-	_yacht.add_child(_yacht_sail)
-	var saved: Vector3 = WorldSave.cove_yacht()
-	if saved != Vector3.INF and HubRegion.contains(saved):
-		_yacht.position = Vector3(saved.x, 0.0, saved.z)
-	else:
-		_yacht.position = YACHT_PARK
-	# Nose toward the sea at the park; a saved yacht keeps only its place,
-	# the yaw is rewritten by the first glide anyway.
-	_yacht.rotation.y = PI / 2.0
 	add_child(_yacht)
+	_yacht.build(
+		CozyPalette.glb_mesh(CozyPalette.decor_path("yacht_hull_0")), CozyPalette.decor_material(),
+		CozyPalette.glb_mesh(CozyPalette.decor_path("yacht_sail_0")), CozyPalette.decor_material_wind(0.10, 2.6))
+	var saved: Vector3 = WorldSave.cove_yacht()
+	# ⚠️ `drivable`, not `contains`: a save written before CH30 can hold a
+	# yacht parked ON THE KARTING GRID (Mathieu did exactly that), and the
+	# refusal has to survive a reload or the guard would only cover the
+	# session that added it.
+	var at: Vector3 = saved if (saved != Vector3.INF and SandYacht.drivable(saved)) else YACHT_PARK
+	# Nose toward the sea at the park; a saved yacht keeps only its place,
+	# the yaw is rewritten by the first drive anyway.
+	_yacht.place(Vector3(at.x, 0.0, at.z), PI / 2.0)
 
 ## ---- what the scatter and the tap need -----------------------------
 
@@ -323,15 +356,25 @@ func vehicle_at(point: Vector3) -> int:
 	var flat := Vector3(point.x, 0.0, point.z)
 	if riding != _ball and flat.distance_to(ball_position()) <= BALL_TAP_RADIUS:
 		return VEHICLE_BALL
-	if _yacht != null and riding != _yacht and flat.distance_to(yacht_position()) <= YACHT_TAP_RADIUS:
+	# CH30: the yacht WITHDRAWS from the tap for the length of a drive
+	# (the boat's pattern, the kart's `accepts_tap`), so a tap made while
+	# driving falls through to the ground path and is refused there by
+	# ON_CARRIER -- never swallowed by the thing being driven.
+	if _yacht != null and not _driving and flat.distance_to(yacht_position()) <= YACHT_TAP_RADIUS:
 		return VEHICLE_YACHT
 	return -1
 
 func yacht_node() -> Node3D:
 	return _yacht
 
+func yacht() -> SandYacht:
+	return _yacht
+
 func yacht_position() -> Vector3:
-	return Vector3(_yacht.global_position.x, 0.0, _yacht.global_position.z)
+	return _yacht.flat_position()
+
+func is_driving_yacht() -> bool:
+	return _driving
 
 func vehicle_position(kind: int) -> Vector3:
 	return yacht_position() if kind == VEHICLE_YACHT else ball_position()
@@ -346,14 +389,78 @@ func yacht_speed_factor() -> float:
 	return clampf(0.85 + 0.15 * _wind(), YACHT_WIND_MIN, YACHT_WIND_MAX)
 
 func _on_vehicle_mounted() -> void:
-	if _keepy != null and _keepy.has_method("vehicle_node") and _keepy.call("vehicle_node") == _yacht:
-		WorldSave.note("yacht_rides")
+	pass
 
-## Where the yacht stands when he steps off is where it will be next
-## session (the save is the one memory of that).
+## CH29's hook, kept for the BALL: dropping a vehicle no longer touches
+## the yacht's save (CH30 writes it in exit_yacht, where stepping off the
+## yacht actually happens).
 func _on_vehicle_dismounted() -> void:
-	if _yacht != null:
-		WorldSave.cove_set_yacht(yacht_position())
+	pass
+
+## ---- CH30: the drive mode ----------------------------------------------
+## The kart's shape exactly (HubKarting._mount / exit_kart), and the
+## invariant it is gated on is the same one: driving == the rider is
+## ON_CARRIER on THIS deck == touch.enabled == the camera is chasing ==
+## the HUD is up. One function turns them all on, one turns them all off.
+
+## Climbs aboard. Refused unless he is standing still, and refused if the
+## yacht somehow sits where it may not drive (a defence in depth over the
+## build-time refusal: a yacht there could not be driven off it).
+func mount_yacht() -> bool:
+	if _driving or _keepy == null or _yacht == null:
+		return false
+	if not SandYacht.drivable(yacht_position()):
+		_yacht.place(YACHT_PARK, PI / 2.0)
+		return false
+	if not _keepy.call("mount_carrier", _yacht.deck(), SandYacht.SEAT):
+		return false
+	_driving = true
+	_yacht.velocity = Vector3.ZERO
+	touch.enabled = true
+	# The accelerator waits for the camera blend, exactly as the kart's
+	# does, so the yacht does not leave under a camera still swinging.
+	touch.hold_throttle(MOUNT_HOLD_S)
+	_keepy.call("follow_carrier")
+	if _camera != null and _camera.has_method("enter_drive"):
+		_camera.call("enter_drive", _yacht)
+	if _hud != null:
+		_hud.set_vehicle_mode(true)
+		_hud.visible = true
+	WorldSave.note("yacht_rides")
+	yacht_driving_changed.emit(true)
+	return true
+
+## The HUD button. Stops the yacht where it is, gives the body back to a
+## point BESIDE it clamped to ground it could itself have driven on, and
+## re-opens it to the tap.
+func exit_yacht() -> void:
+	if not _driving:
+		return
+	touch.enabled = false
+	touch.input.reset()
+	_yacht.velocity = Vector3.ZERO
+	_driving = false
+	if _camera != null and _camera.has_method("exit_drive"):
+		_camera.call("exit_drive")
+	if _hud != null:
+		_hud.visible = false
+		_hud.set_ghost(Vector2.ZERO, Vector2.ZERO, false)
+		_hud.set_vehicle_mode(false)
+	var at: Vector3 = yacht_position()
+	var landing: Vector3 = _step_off(at + _yacht.right() * EXIT_SIDE)
+	if landing.distance_to(at) < 0.8:
+		landing = _step_off(at - _yacht.right() * EXIT_SIDE)
+	_keepy.call("leave_carrier", landing)
+	# Where he steps off is where the yacht will be next session.
+	WorldSave.cove_set_yacht(at)
+	yacht_driving_changed.emit(false)
+
+## A landing point for the step-off: the region's own clamp, refused back
+## to the yacht's own position if it lands where the yacht may not be
+## (the corridor mouths are the only place that can happen).
+func _step_off(wanted: Vector3) -> Vector3:
+	var landing: Vector3 = HubRegion.clamp_to(wanted)
+	return landing if HubRegion.contains(landing) else yacht_position()
 
 ## ---- flying -----------------------------------------------------------
 
@@ -442,10 +549,8 @@ func _process(delta: float) -> void:
 	# CH29: the sail leans with the wind and flutters; the rider's pace
 	# follows the same number, pushed into the hopper here so that the
 	# glide and the cloth answer to ONE reading of the weather.
-	if _yacht_sail != null:
-		_yacht_sail.rotation.z = deg_to_rad(-7.0 * wind) * (0.75 + 0.25 * sin(_time * 2.3))
-	if _keepy != null and _keepy.has_method("vehicle_node") and _keepy.call("vehicle_node") == _yacht:
-		_keepy.call("set_vehicle_speed", yacht_speed_factor())
+	if _yacht != null:
+		_yacht.breathe(wind, _time)
 	for i in _lines.size():
 		var entry: Dictionary = _lines[i]
 		if entry["riding"]:
@@ -459,6 +564,17 @@ func _process(delta: float) -> void:
 		balloon.rotation.z = deg_to_rad(2.5 * wind) * sin(_time * 0.9 + phase)
 		if entry["rider"] and _keepy != null and _keepy.call("is_on_carrier"):
 			_keepy.call("follow_carrier")
+
+## CH30: the yacht's own physics step. Carrier first, carried immediately
+## after in the SAME call -- the turnstile's one-frame-lag measurement,
+## and the reason the rider never trails the deck by a frame.
+func _physics_process(delta: float) -> void:
+	if not _driving or _yacht == null:
+		return
+	_yacht.drive(delta, touch.input, yacht_speed_factor())
+	_keepy.call("follow_carrier")
+	if _hud != null:
+		_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
 
 ## The boat's re-mooring rule, for every idle balloon and for the parked
 ## ball: far from every dock (or the park) AND every one of them off

@@ -109,6 +109,28 @@ var _bob_t: float = 0.0
 var _last_velocity: Vector3 = Vector3.ZERO
 var _bump: float = 0.0
 var _on_track: bool = true
+## CH30: this kart's copy of the shared driving model, loaded once with
+## the constants above. One per body, so a second vehicle can hold its
+## own without either reaching into the other's.
+var _motion: VehicleDrive = _make_motion()
+
+static func _make_motion() -> VehicleDrive:
+	var m := VehicleDrive.new()
+	m.max_speed = MAX_SPEED
+	m.max_speed_off = MAX_SPEED_OFF_TRACK
+	m.reverse_speed = REVERSE_SPEED
+	m.boost_speed_ratio = BOOST_SPEED_RATIO
+	m.accel_lambda = ACCEL_LAMBDA
+	m.coast_lambda = COAST_LAMBDA
+	m.off_lambda = OFF_TRACK_LAMBDA
+	m.brake_decel = BRAKE_DECEL
+	m.steer_full_speed = STEER_FULL_SPEED
+	m.steer_high_speed_keep = STEER_HIGH_SPEED_KEEP
+	m.grip_on = GRIP_ON_TRACK
+	m.grip_off = GRIP_OFF_TRACK
+	m.scrub = SCRUB
+	m.fence_bounce = FENCE_BOUNCE
+	return m
 
 func _ready() -> void:
 	_build()
@@ -144,86 +166,23 @@ func place(at: Vector3, yaw: float) -> void:
 
 ## One physics step. `on_track` is the track's verdict on the kart's
 ## position; `fence` is the rectangle the kart is kept inside (x/z).
+##
+## CH30: the kinematics moved to VehicleDrive (a pure move -- same
+## statements, same order, proved by comparing lap times and sampled
+## trajectories against origin/staging, journal CH30). What is left here
+## is what a BODY owns: reading the live steering preset, writing its own
+## transform once, and the chassis animation.
 func drive(delta: float, input: KartInput, on_track: bool, fence: Rect2) -> void:
 	_on_track = on_track
-	var fwd := forward()
-	var v_fwd: float = velocity.dot(fwd)
-	# ---- steering: rotate the HEADING; the velocity stays in the world.
-	var ratio: float = clampf(absf(v_fwd) / STEER_FULL_SPEED, 0.0, 1.0)
-	var ease: float = 1.0 - (1.0 - STEER_HIGH_SPEED_KEEP) * clampf(absf(v_fwd) / MAX_SPEED, 0.0, 1.0)
-	var gain: float = ratio * ease
-	if v_fwd < -0.05:
-		gain = -gain * 0.7
-	rotation.y -= input.steer * KartTuning.steer_rate() * gain * delta
-	fwd = forward()
-	var rgt := right()
-	# ---- decompose the (unchanged) world velocity in the NEW frame: the
-	# turn just gave the kart a lateral component, which grip now eats.
-	v_fwd = velocity.dot(fwd)
-	var v_lat: float = velocity.dot(rgt)
-	var grip: float = GRIP_ON_TRACK if on_track else GRIP_OFF_TRACK
-	v_lat *= exp(-grip * delta)
-	# Sliding scrubs pace.
-	v_fwd = move_toward(v_fwd, 0.0, absf(v_lat) * SCRUB * delta)
-	# ---- throttle / brake.
-	var cap: float = MAX_SPEED if on_track else MAX_SPEED_OFF_TRACK
-	# V7b accelerator: cruise is untouched (boost defaults to 0 for every
-	# writer that predates it -- KartLineInput, the probe); pushing raises
-	# the cap toward BOOST_MAX_SPEED, never the cruise pace itself.
-	cap *= lerpf(1.0, BOOST_SPEED_RATIO, clampf(input.boost, 0.0, 1.0))
-	if input.brake:
-		if v_fwd > 0.3:
-			v_fwd = maxf(v_fwd - BRAKE_DECEL * delta, 0.0)
-		else:
-			v_fwd = move_toward(v_fwd, -REVERSE_SPEED, BRAKE_DECEL * 0.4 * delta)
-	else:
-		var target: float = cap * input.throttle
-		var lambda: float
-		if v_fwd > cap:
-			lambda = OFF_TRACK_LAMBDA
-		elif target > v_fwd:
-			lambda = ACCEL_LAMBDA
-		else:
-			lambda = COAST_LAMBDA
-		if v_fwd < 0.0 and input.throttle > 0.0:
-			# Reversing and the throttle comes back: brake the reverse
-			# firmly, then the ordinary curve takes over.
-			v_fwd = move_toward(v_fwd, 0.0, BRAKE_DECEL * delta)
-		else:
-			v_fwd = lerpf(v_fwd, target, 1.0 - exp(-lambda * delta))
-	velocity = fwd * v_fwd + rgt * v_lat
-	global_position += velocity * delta
-	global_position.y = 0.0
-	_fence(fence)
+	var out: Dictionary = _motion.step(global_position, rotation.y, velocity, delta, input,
+		on_track, fence, KartTuning.steer_rate())
+	rotation.y = float(out["yaw"])
+	velocity = out["velocity"]
+	global_position = out["position"]
+	if bool(out["hit_fence"]):
+		_bump = 1.0
 	_animate(delta)
 	_last_velocity = velocity
-
-func _fence(fence: Rect2) -> void:
-	var p := global_position
-	var hit := false
-	if p.x < fence.position.x:
-		p.x = fence.position.x
-		if velocity.x < 0.0:
-			velocity.x = -velocity.x * FENCE_BOUNCE
-			hit = true
-	elif p.x > fence.end.x:
-		p.x = fence.end.x
-		if velocity.x > 0.0:
-			velocity.x = -velocity.x * FENCE_BOUNCE
-			hit = true
-	if p.z < fence.position.y:
-		p.z = fence.position.y
-		if velocity.z < 0.0:
-			velocity.z = -velocity.z * FENCE_BOUNCE
-			hit = true
-	elif p.z > fence.end.y:
-		p.z = fence.end.y
-		if velocity.z > 0.0:
-			velocity.z = -velocity.z * FENCE_BOUNCE
-			hit = true
-	global_position = p
-	if hit:
-		_bump = 1.0
 
 ## ---- the body ----------------------------------------------------------
 

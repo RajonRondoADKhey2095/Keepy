@@ -319,7 +319,11 @@ func _ready() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	# v7: while the kart is driven the screen is a steering wheel, not a
 	# map. Not handled, so KartTouchInput sees it whichever runs first.
+	# CH30: and the same for the sand yacht, which is driven by the same
+	# writer -- one condition per DRIVEN VEHICLE, not per vehicle.
 	if karting != null and karting.is_driving():
+		return
+	if transport != null and transport.is_driving_yacht():
 		return
 	var touch := event as InputEventScreenTouch
 	if touch:

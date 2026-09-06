@@ -1348,3 +1348,110 @@ servi tombe dedans. Une lecture GitHub, une lecture Vercel, aucun poll.
 Export local du même arbre : `index.wasm` 35 376 909 / md5 `af4a8fc2…`
 (identité moteur inchangée), 572 fichiers packés, zéro `SCRIPT ERROR`,
 zéro `Storing File` hors filtre. `main` intouché.
+
+---
+
+# CH30 — CONDUITE UNIFIÉE (6 septembre 2026, lot cadré vers `staging`)
+
+> Récit cadré complet : [`docs/lots/CH30_CONDUITE.md`](lots/CH30_CONDUITE.md).
+> Cette section-ci est le **journal de session** que le brief demande :
+> chaque arbitrage pris seul, chaque piste abandonnée et pourquoi, et les
+> mesures dans l'ordre où elles sont tombées.
+
+## Départ (03:44 UTC)
+
+`git fetch --all --prune`. La branche de travail était sur `ef005da`, qui
+est **`origin/main`** (CH27 lot 1) et non `origin/staging` : le prompt
+décrivait un état que le dépôt ne portait pas. `origin/staging` est à
+`06d9107` (CH29 la Crique). Arbre de `main` (`0290e1d`) ≠ arbre de
+`staging` (`af62915`). Branche repartie de `origin/staging`.
+
+Aucune session concurrente : la branche distante la plus récente
+(`claude/hub-fifth-zone-transport-3nkix4`, 02:53) est **déjà mergée** dans
+`staging` (`merge-base --is-ancestor` vrai). Comparé par ARBRE et par
+ancestralité, jamais par nom.
+
+Godot n'était pas installé dans ce bac à sable. Éditeur 4.3-stable
+téléchargé et **vérifié contre le `Content-Length` avant d'extraire**
+(50 276 070 octets, exactement le chiffre au dossier). Deux imports lancés
+en parallèle, un par arbre : 154 `.scn` des deux côtés, **comptés avant de
+comparer quoi que ce soit**.
+
+## Arbitrages pris seul
+
+1. **Le dénominateur de « ×1,5 d'adversité ».** Une session ne peut pas
+   tenir le pouce de Mathieu, donc le rapport ne peut pas être « le niveau
+   de Mathieu ». Choisi : le **tour le plus rapide que le véhicule peut
+   tourner ici** (21,633 s), mesuré avec un pilote dont les pneus ne
+   lâchent jamais. Un preset ×N divise le déficit à ce plancher par N.
+   C'est stable, mesurable, et ça ne bouge pas quand le joueur progresse.
+2. **Le troisième preset s'appelle x2.5 et non x2.** L'échelle est
+   compressive (le plancher n'est qu'à 2,7 s) : un x2 se serait posé à
+   0,45 s/tour du défaut, dans la dispersion du peloton. Nommer x2 une
+   marche qu'on ne sent pas aurait été un mensonge d'étiquette.
+3. **Le rubber-band ne devient pas le levier**, malgré qu'il soit le
+   suspect naturel : mesuré inerte (0,1 s sur 75 s). Ses bornes bougent
+   quand même, mais dans un seul sens — la laisse sur un adversaire en
+   tête est relâchée vers 1,0.
+4. **La garde circuit est une propriété du sol conduisible**, pas un
+   repositionnement au départ de course. Moins intrusif, et c'est la seule
+   des deux options qui survive à un rechargement (la sauvegarde de
+   Mathieu contient un char sur la grille).
+5. **Le char reste libre de rouler dans les cinq zones.** Le restreindre à
+   la crique aurait divisé par cinq le risque de l'audit visuel — et aurait
+   été une régression fonctionnelle : CH29 dit explicitement que son intérêt
+   est de traverser la carte.
+6. **Le HUD du kart est prêté au char** dans un mode « véhicule » plutôt
+   qu'un second HUD. Deux widgets (bouton de sortie, fantôme de direction)
+   ne justifient pas une seconde scène qui dériverait.
+7. **Le cyprès est corrigé au rendu, pas dans le `.glb`.** L'asset est
+   celui de Mathieu ; le gain est révocable en une ligne, l'export ne
+   l'est pas.
+8. **Les critters qui marchent dans le hub gardent leur cull à 52 u.**
+   Les monter aurait aggravé la frame du spawn, déjà au-dessus de son
+   plafond. Documenté comme limite acceptée, pas corrigé.
+
+## Pistes abandonnées
+
+* **Mettre `a_lat` à l'échelle fort** (première table : ×1,40 à x2). La
+  mesure a montré que le virage le plus serré est tenu par la limite de
+  **braquage** (4,17 u/s) et pas par les pneus : au-delà de `a_lat ≈ 5,1`
+  la marche n'achète rien et **aplatit les personnalités** — chat et
+  sanglier lisaient exactement le même chiffre à l'oméga. `top` porte
+  désormais l'essentiel de chaque marche.
+* **Lire la séparation des personnalités à l'échantillon le plus serré**
+  (le contrat de `KartProbe`). Rejeté pour la même raison : c'est
+  précisément le point où tout le monde sature. Relu sur le quart le plus
+  tortueux et le quart le plus droit.
+* **Porter le cap de conduite dans une variable locale** lors de
+  l'extraction. Marche parfaitement et donne une AUTRE conduite : un
+  `float` GDScript est un float64, `rotation.y` un float32. Voir
+  `CLAUDE.md`.
+* **Mesurer l'allure du char dans la crique.** 30 u de large : le char
+  tape le mur est après 26 u et une voile à 0,55/s n'est encore qu'à 89 %
+  de sa vitesse après quatre secondes. Lu 9,52 u/s pour une allure
+  autorisée de 10,67. Refait sur la ligne droite de la lande (76 u), à
+  z = −98 pour dégager le trou du moulin.
+* **Le premier mur du char.** Séparé par axe, il a **bloqué le véhicule à
+  vie** contre le trou du moulin. Repris.
+* **Le premier prédicat d'enroulement** de `ChaseAudit`, signe inversé,
+  déclarait cassés les huit rubans du hub. Repris, avec une ancre.
+* **Le premier échantillon de ciel** de `ChaseAudit`, pris au pixel du
+  haut au centre, était le mât du portique de départ à un mètre. Médiane
+  de trois.
+
+## Mesures, dans l'ordre
+
+| | |
+|---|---|
+| plancher du circuit (`limit_ref`) | **21,633 s** |
+| meilleur tour adverse — x1 / x1.5 / x2.5 | **24,350 / 23,350 / 22,733 s** |
+| déficit au plancher | 2,700 / 1,700 / 1,083 s |
+| rapport au déficit x1 (cible 1/1,5 = 0,667) | 1,000 / **0,630** / 0,401 |
+| part du rubber-band sur une arrivée | **≤ 0,15 s sur 75 s** |
+| trace du kart, branche vs `origin/staging` | **byte-identique**, 180 échantillons |
+| allure du char, soleil / orage | **10,40 / 12,99 u/s** (rapport 1,249 ; vent 1,250) |
+| freinage du char depuis 10,4 u/s | 58 frames (0,97 s) |
+| cyprès, luminance de vertex → effective | 0,0692 → **0,3045** |
+| pilotes de kart cullés sous la bande lisible | 3 → **0** |
+| pire frame de poursuite (`gpu`) | 94 055 → **100 520** |

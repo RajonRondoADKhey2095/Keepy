@@ -3761,10 +3761,19 @@ var _mounting_ball: bool = false
 var _mount_kind: int = HubTransport.VEHICLE_BALL
 
 func _setup_transport() -> void:
-	_transport.setup(_keepy, _camera, _weather)
+	# CH30: the kart's HUD is lent to the yacht in its vehicle mode (one
+	# exit button and the steering ghost). It is a scene node, readied
+	# before this function runs, so the setup order of the two
+	# coordinators does not matter -- each connects to `exit_pressed`
+	# independently and each refuses the press unless it is the one
+	# driving.
+	_transport.setup(_keepy, _camera, _weather, _kart_hud)
 	_tap.tapped_balloon.connect(_on_tapped_balloon)
 	_tap.tapped_vehicle.connect(_on_tapped_vehicle)
 	_transport.trip_finished.connect(_on_balloon_trip_finished)
+	# The world HUD steps aside for a driven yacht exactly as it does for
+	# a driven kart -- one line each, and neither knows about the other.
+	_transport.yacht_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
 
 ## A tap on a dock. ONE tap buys the whole thing: walk there, board if the
 ## balloon waits here, call it if it waits at the twin dock, wait for it if
@@ -3884,9 +3893,12 @@ func _try_mount_ball(position: Vector3) -> bool:
 	# the ball here (the off-screen rule takes it home later), and vice
 	# versa -- the mount below refuses while another vehicle is held.
 	_keepy.dismount_vehicle()
+	# CH30: the yacht is no longer a hop modifier. Climbing aboard hands
+	# the body to the transport coordinator, which puts him ON_CARRIER on
+	# the deck and turns on the writer, the chase camera and the HUD --
+	# the kart's mode switch, through the kart's own pieces.
 	if _mount_kind == HubTransport.VEHICLE_YACHT:
-		return _keepy.mount_vehicle(_transport.yacht_node(), HubTransport.YACHT_SEAT_Y,
-			HubTransport.YACHT_GLIDE_DISTANCE, HubTransport.YACHT_GLIDE_S)
+		return _transport.mount_yacht()
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
 
 ## ---- CH29: the cove -- sandcastle spots -----------------------------------
