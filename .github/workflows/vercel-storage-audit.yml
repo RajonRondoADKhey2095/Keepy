@@ -67,16 +67,29 @@ concurrency:
 env:
   PROJECT_ID: prj_OikxKVaLr5nmu1P2944CdQVE4tkh
   TEAM_ID: team_ev0yJWnUwGjtuJpAIVpCP3hZ
-  SOURCE_RUN_ID: "34055644263"
-  # Valeurs MESUREES par la Phase A (run 34055644263, 2026-09-06T19:41Z).
+  # Phase A COURANTE, dont la liste est reellement consommee.
+  SOURCE_RUN_ID: "34058004828"
+  SOURCE_ARTIFACT: keepy-vercel-audit-34058004828
+  # Phase A d'ORIGINE, celle relue et validee. Sa liste n'est pas consommee :
+  # elle sert de REFERENCE a une comparaison octet a octet (G2b). C'est ce
+  # qui transforme "la liste n'a pas change" d'une supposition en une mesure.
+  REF_RUN_ID: "34055644263"
+  REF_ARTIFACT: keepy-vercel-audit
+  # Valeurs MESUREES par la Phase A du run 34058004828 (2026-09-06T20:27Z).
   # Ecrites en dur DELIBEREMENT : c'est contre elles que le controle live G4
   # compare. Les recalculer depuis l'API ferait comparer l'API a elle-meme,
   # ce qui passe toujours.
+  #
+  # Historique de derive, garde ici parce qu'il explique pourquoi G4 existe :
+  # la Phase A de 19:41Z avait resolu ten/prod -> dpl_3723Zajz6bFwdxKyqBfbk2PuGx3P
+  # et staging -> dpl_8jwzZfwwBHc1t7L3DP5UTHboy8S8. Un deploiement CI de main
+  # (19:42:14Z) puis un de staging (19:52:35Z) ont deplace les trois. Le
+  # dry-run 34057739469 l'a attrape et a refuse de purger.
   EXPECTED_COUNT: "704"
   EXPECTED_BYTES: "23232"
-  EXPECTED_TEN: dpl_3723Zajz6bFwdxKyqBfbk2PuGx3P
-  EXPECTED_STAGING: dpl_8jwzZfwwBHc1t7L3DP5UTHboy8S8
-  EXPECTED_PROD: dpl_3723Zajz6bFwdxKyqBfbk2PuGx3P
+  EXPECTED_TEN: dpl_8egXQki8ijy9HQMU3Pm1khqyJLSq
+  EXPECTED_STAGING: dpl_3AfEm46yWPJog1xNT6AAHYinqCxN
+  EXPECTED_PROD: dpl_8egXQki8ijy9HQMU3Pm1khqyJLSq
 
 jobs:
   # ==========================================================================
@@ -331,25 +344,37 @@ jobs:
           echo "VERCEL_TOKEN present (valeur jamais echo). MODE=$MODE"
 
       # ---- G1 : l'artefact de la Phase A, tel quel, sans transcription -----
-      - name: "G1 - Download Phase A artifact"
+      - name: "G1a - Download current Phase A artifact"
         uses: actions/download-artifact@v4
         with:
-          name: keepy-vercel-audit
+          name: ${{ env.SOURCE_ARTIFACT }}
           run-id: ${{ env.SOURCE_RUN_ID }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: audit-in
 
+      - name: "G1b - Download reference Phase A artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.REF_ARTIFACT }}
+          run-id: ${{ env.REF_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: audit-ref
+
       - name: "G1 - Artifact contents"
         run: |
           set -euo pipefail
-          ls -la audit-in/
+          ls -la audit-in/ audit-ref/
           for F in keepy_candidates.txt keepy_protected.json; do
             if [ ! -s "audit-in/$F" ]; then
               echo "::error::audit-in/$F absent ou vide. La liste Phase A n'est pas exploitable."
               exit 1
             fi
           done
-          echo "G1 OK - artefact du run ${SOURCE_RUN_ID} recupere."
+          if [ ! -s audit-ref/keepy_candidates.txt ]; then
+            echo "::error::audit-ref/keepy_candidates.txt absent ou vide. Pas de reference a comparer."
+            exit 1
+          fi
+          echo "G1 OK - artefacts des runs ${SOURCE_RUN_ID} (courant) et ${REF_RUN_ID} (reference) recuperes."
 
       # ---- G2 : le compte, la taille, et la FORME de chaque ligne ----------
       - name: "G2 - Candidate list integrity"
@@ -381,6 +406,36 @@ jobs:
             exit 1
           fi
           echo "G2 OK - ${EXPECTED_COUNT} IDs uniques, bien formes, ${EXPECTED_BYTES} octets."
+
+      # ---- G2b : la liste consommee EST la liste relue et validee ----------
+      # Un compte egal ne prouve pas une liste egale : 704 IDs peuvent etre
+      # 704 AUTRES IDs. `cmp` sur les octets est la seule lecture qui tranche.
+      # Et un blind check d'abord, parce qu'une comparaison d'EGALITE passe
+      # gratuitement si l'outil ne sait pas voir une difference.
+      - name: "G2b - Candidate list byte-identical to the reviewed one"
+        run: |
+          set -euo pipefail
+          A=audit-in/keepy_candidates.txt
+          B=audit-ref/keepy_candidates.txt
+          echo "courant   : $(wc -c < "$A" | tr -d ' ') octets, $(wc -l < "$A" | tr -d ' ') lignes  (run ${SOURCE_RUN_ID})"
+          echo "reference : $(wc -c < "$B" | tr -d ' ') octets, $(wc -l < "$B" | tr -d ' ') lignes  (run ${REF_RUN_ID})"
+
+          # Blind check : cmp sait-il seulement RENDRE une difference ?
+          printf 'dpl_0000000000000000000000000000\n' > /tmp/blind.txt
+          cat "$B" >> /tmp/blind.txt
+          if cmp -s "$B" /tmp/blind.txt; then
+            echo "::error::Blind check echoue : cmp declare identiques deux fichiers qui different d'une ligne."
+            echo "::error::La comparaison ci-dessous ne vaudrait RIEN. ARRET."
+            exit 1
+          fi
+          echo "  blind check OK - cmp voit bien une difference d'une ligne."
+
+          if ! cmp -s "$A" "$B"; then
+            echo "::error::La liste courante DIFFERE de la liste relue et validee. ARRET, aucune suppression."
+            diff <(sort "$B") <(sort "$A") | head -40 || true
+            exit 1
+          fi
+          echo "G2b OK - la liste consommee est OCTET POUR OCTET celle du run ${REF_RUN_ID}."
 
       # ---- G3 : les proteges ne sont PAS dans la liste ---------------------
       # grep -F -x -q : chaine litterale, ligne ENTIERE. Un grep non ancre
@@ -494,7 +549,7 @@ jobs:
             echo "# Phase B - purge des deploiements natifs Vercel (projet keepy)"
             echo "# run          : ${GITHUB_RUN_ID} (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
             echo "# commit       : ${GITHUB_SHA} (ref ${GITHUB_REF_NAME})"
-            echo "# liste source : run ${SOURCE_RUN_ID}, artefact keepy-vercel-audit"
+            echo "# liste source : run ${SOURCE_RUN_ID} (${SOURCE_ARTIFACT}), octet a octet = run ${REF_RUN_ID}"
             echo "# candidats    : $(wc -l < "$C" | tr -d ' ')"
             echo "# mode         : ${MODE}"
             echo "# debut        : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -572,7 +627,7 @@ jobs:
             echo "| champ | valeur |"
             echo "|---|---|"
             echo "| mode | \`${MODE}\` |"
-            echo "| liste source | run \`${SOURCE_RUN_ID}\`, artefact \`keepy-vercel-audit\` |"
+            echo "| liste source | run \`${SOURCE_RUN_ID}\` — octet a octet = run \`${REF_RUN_ID}\` |"
             echo "| commit | \`${GITHUB_SHA}\` (ref \`${GITHUB_REF_NAME}\`) |"
             echo "| traites | **${{ steps.purge.outputs.processed }}** |"
             echo "| succes (200/204) | **${{ steps.purge.outputs.ok }}** |"
