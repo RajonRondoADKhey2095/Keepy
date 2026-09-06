@@ -737,6 +737,14 @@ lecture du côté réel, jamais sur le commentaire qui le nomme.
 * **Toute sonde qui joue un cue audio puis quitte** doit attendre en temps
   RÉEL avant de sortir, sinon elle s'ajoute `ObjectDB instances leaked at
   exit` **après** son propre verdict et casse la comparaison byte-identique.
+* **`KartTouchInput.input.brake` posé UNE FOIS hors boucle ne tient pas** :
+  `_physics_process` le réécrit CHAQUE frame sur l'état du clavier
+  (`_brake_index < 0` → faux en headless, aucune touche pressée), donc un
+  `touch.input.brake = true` posé avant une boucle d'attente est défait
+  avant que le véhicule ne le lise. CH33, sur `SailBoatProbe` — deux
+  assertions de frein sorties fausses avant correction. Le poser DANS la
+  boucle, à chaque itération, avant l'`await` (`CoveProbe`'s propre test
+  de frein du char à voile le fait déjà ainsi).
 
 ## Doctrine de conception — ce que ce dépôt a appris en payant
 

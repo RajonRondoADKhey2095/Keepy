@@ -1580,3 +1580,51 @@ Build : export `--export-release Web` propre, `index.wasm`
 **35 376 909 / `af4a8fc2…`**, `index.js` **`4e08904b…`** byte-identiques à
 la référence publiée (moteur non touché). Un seul fichier de code modifié :
 `scripts/dev/WaterTintProbe.gd` (une ligne).
+
+# CH33 — VOILIER (6 septembre 2026, lot cadré vers `staging`)
+
+Récit complet : [`docs/lots/CH33_VOILIER.md`](lots/CH33_VOILIER.md).
+
+Troisième véhicule coordonné par `HubTransport` (`VEHICLE_SAILBOAT`),
+pilotable sur la mer que CH29 a déjà construite. `SEA_RADIUS`/`SEA_CENTRE`
+non touchés (grep de preuve dans le rapport de lot) ; agrandissement de la
+mer en lot séparé, après validation iPhone.
+
+`SailBoat.gd` calque `SandYacht.gd`/CH30 : `VehicleDrive.step()` non
+modifié (`git diff` vide sur ce fichier), même `KartTouchInput`, même
+`HubCamera.enter_drive()`. Coque/voile réutilisent `yacht_hull_0.glb` /
+`yacht_sail_0.glb`, aucun asset créé ni supprimé.
+
+**L'échouage** remplace le mur dur du char à voile par une traînée
+continue sur la vélocité (`ground_factor_at()`, lue sur
+`HubRegion.shore_distance`), appliquée APRÈS que `VehicleDrive.step()` a
+déjà déplacé la coque — jamais un clamp de position. Rouge-avant-vert en
+deux passes : mécanisme neutralisé (1 échec, la friction), puis
+`GROUND_DRAG_LAMBDA` porté à 500 (les 3 assertions d'échouage tombent, dont
+la réversibilité — c'est cette passe qui prouve que l'assertion sait
+échouer). Mesuré sur la valeur livrée : une marche arrière ramène le
+bateau à l'eau en 295 frames depuis échoué.
+
+Mouillage fixe (`SAILBOAT_MOORING`), aucune persistance — pas de champ
+`WorldSave`, contrairement au char à voile.
+
+`SailBoatProbe` neuve, 42 checks, 0 échec — après correction de DEUX bugs
+dans la sonde elle-même (pas dans le jeu) : le frein doit être réaffirmé
+chaque frame physique (`KartTouchInput` le remet au clavier sinon), et un
+point de test placé par erreur hors de la mer.
+
+`WaterTintProbe` et `CoveProbe` rejouées sous `xvfb-run -a godot4
+--rendering-driver opengl3 --fixed-fps 60`. Les 9 échecs de
+`WaterTintProbe` (PHASE G pixels, PHASE E 157/144 nœuds) et
+l'INCONCLUSIVE de `CoveProbe` (horloge gelée, budget 840 s épuisé) sont
+reproduits À L'IDENTIQUE sur `origin/staging` non modifié, rejoué dans un
+`git worktree` séparé — donc pré-existants, aucune régression de ce lot.
+
+Aucun binaire Godot n'était présent dans ce sandbox : éditeur 4.3-stable
+et templates d'export Web provisionnés en session, tailles vérifiées
+byte-exactes contre les références déjà publiées dans `CLAUDE.md`
+(50 276 070 et 1 073 228 327 octets).
+
+Dette signalée, non corrigée (hors scope explicite du brief) :
+`CoveProbe` gate le disque de la mer contre les constantes
+`HubRegion.SEA_*` elles-mêmes plutôt qu'une mesure indépendante.
