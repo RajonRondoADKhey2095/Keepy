@@ -1690,3 +1690,71 @@ untouched. ComboAudit's matched-duration criterion is the clean example:
 the 25% target read +22 / +24 / +22 % on three seeds at the old size and
 reads +26 to +37 % on all eight at the new one. The design target holds;
 the bar never moved.
+
+## CH32 (6 September 2026) -- WaterTintProbe's stale disc count, and five INCONCLUSIVE probes read for real
+
+Two findings from the post-promotion reliability lot, added because this
+file's stated job is exactly to catch a probe whose contract fell out of
+date with the mechanic it tests.
+
+### WaterTintProbe asserted four HubWater discs; CH29 built a fifth
+
+`HubWater._init()` (`scripts/hub/HubWater.gd`) has added a `sea` disc since
+CH29 -- five discs total: pond, small lake, both great-lake lobes, sea.
+`WaterTintProbe.gd`'s own membership assertion still read
+`water.discs().size() == 4`, a contract frozen before CH29. Fixed to `== 5`.
+Red-before-green: removing the `sea` disc from `HubWater._init()` made the
+corrected assertion fail (10 failures instead of 9, exactly the disc it
+lost), then the file was restored and verified byte-identical to
+`origin/staging` via `cmp`. `HubWater` has exactly one instantiation site in
+`scripts/dev/` -- `WaterTintProbe.gd` itself -- so no sibling probe carries
+the same stale contract.
+
+### Five probes reported INCONCLUSIVE at a promotion replay -- reproduced, and diagnosed
+
+`CoveProbe`, `LakeZoneProbe`, `SeesawProbe`, `V6CrittersProbe` and
+`SubstituteModel` came back inconclusive or frozen at a full promotion
+replay. Each was rerun in isolation, in the mode its own header declares
+(headless or `xvfb-run -a godot4 --rendering-driver opengl3 --fixed-fps 60`):
+
+- **`CoveProbe`** (headless): **PASS, 179 checks, 0 failures.** Did not
+  reproduce the hang standalone -- consistent with resource contention
+  during a full concurrent/sequential sweep, not a defect in the probe.
+- **`LakeZoneProbe`** (xvfb): its own `ProbeWatchdog` fired cleanly at its
+  900 s budget, but only after 7 of ~10 planned trips in PHASE CROSSING
+  completed correctly (the published 66-hop / 18.700 s square diagonal
+  reproduced exactly, three lake crossings, three portal marches, all
+  green). `ps` showed 175-196% CPU the whole time and the log kept growing
+  until seconds before the cutoff -- the signature of real, slow rendering,
+  not a stopped clock or a deadlock (either of which would show near-0% CPU
+  and a log frozen from the start of the stall). Cause: this sandbox has no
+  hardware GPU: `--rendering-driver opengl3` under xvfb lands on Mesa
+  llvmpipe (software rasterisation), and a phase that walks the shipped
+  `KeepyHopper` through ~10 real, rendered multi-second journeys does not
+  fit in 900 s of software-rendered frames. Environment limit, not a
+  defect; `ProbeWatchdog` behaved exactly as designed.
+- **`V6CrittersProbe`** (xvfb): same shape, own budget (`arm(..., 600.0)`)
+  -- INCONCLUSIVE at exactly 600 s, after dozens of green checks across
+  several phases (boar layout/ride/cancel/refusal/weather, then a second
+  critter's approach/nuzzle). Same cause as `LakeZoneProbe`.
+- **`SeesawProbe`** (headless): did **not** reproduce as inconclusive at
+  all -- completes quickly with a known, deterministic FAIL (157 vs 144
+  draw nodes), already on record since CH26 (the cozy world) on both
+  `origin/main` and every branch since. Not a freeze; a pre-existing,
+  already-scoped-out regression.
+- **`SubstituteModel`**: not a probe. `SubstituteModel.tscn` is a bare
+  `Node3D` fixture with no attached script (the `AssetContractAudit`
+  stand-in mesh) -- `ProbeTimeoutAudit.gd:61` already excludes it by name
+  ("a dev ASSET ... not a probe"). Launched as a main scene it loops
+  forever (`timeout 20` -> exit 124, no output, confirmed): nothing ever
+  calls `get_tree().quit()`. This is a scene-selection defect in whatever
+  tooling ran the promotion replay (globbing every `.tscn` under
+  `scripts/dev/` without consulting `ProbeTimeoutAudit`'s own exclusion
+  list), not a probe or game defect.
+
+No game code was changed to reach these diagnoses, and none is warranted:
+there is no deadlock, no infinite wait on a signal, and no cross-cutting
+freeze. Two of the five "inconclusive" reports are the watchdog doing its
+one job correctly under a sandbox with no GPU; one is a known, unrelated,
+already-accepted red; one did not reproduce standalone; and one was never
+a probe to begin with.
