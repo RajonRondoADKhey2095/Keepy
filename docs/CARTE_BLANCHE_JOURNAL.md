@@ -1333,3 +1333,18 @@ les trois sondes jetables (`CoveRecon`, `CoveSheet`, `WalkTimeProbe`) ont
 | `ZiplineReconProbe` | xvfb | vert | vert |
 | `ZiplineRideProbe` | xvfb | ROUGE | ROUGE |
 | `ZiplineStructureProbe` | xvfb | ROUGE | ROUGE |
+
+## Fermeture CH29 et preuve de déploiement sur le service (02:53 UTC)
+
+Merge `--no-ff` `f93d5cf` sur `staging` (arbre `e7381ab…`, byte-identique à
+la branche, `git diff --stat` vide), push 02:47:06 UTC. Lecture AVANT
+(01:45:45) : `CACHE_VERSION = 1788643911` (05/09 21:31:51, le V8) en
+`MISS`/`age 0`. Lecture APRÈS, une seule (02:53:15) :
+`GET https://keepy-staging.vercel.app/index.service.worker.js` →
+**`CACHE_VERSION = 1788663129` → 02:52:09 UTC**, `x-vercel-cache: MISS`,
+`age: 0`, `last-modified` 02:53:15. Run `34007368125` (n° 459, `staging`,
+sha `f93d5cf`) : `completed` / `success`, 02:47:11 → 02:52:39 — l'epoch
+servi tombe dedans. Une lecture GitHub, une lecture Vercel, aucun poll.
+Export local du même arbre : `index.wasm` 35 376 909 / md5 `af4a8fc2…`
+(identité moteur inchangée), 572 fichiers packés, zéro `SCRIPT ERROR`,
+zéro `Storing File` hors filtre. `main` intouché.
