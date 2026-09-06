@@ -1549,3 +1549,34 @@ trois tours. Les deux ne peuvent pas être vrais.
 | croisière, plafond de boost | 13,0 → **15,0** ; 16,5 → **19,05** |
 | borne de lisibilité mesurée | **16 u/s** (croisement) |
 | trace du char, branche vs `origin/staging` | **byte-identique**, 24 lignes |
+
+# CH32 — FIABILITÉ DES SONDES APRÈS LA PROMOTION PALIER 2 (6 septembre 2026, lot cadré vers `staging`)
+
+Lot de diagnostic pur, sans changement de gameplay, ouvert après la
+promotion palier 2 (V7b/V8/CH29/CH30/CH31 sur `main`). Récit complet :
+[`docs/lots/CH32_SONDES_FIABILITE.md`](lots/CH32_SONDES_FIABILITE.md).
+
+**SUJET 1** : `WaterTintProbe` comptait encore 4 disques d'eau alors que
+`HubWater` en construit 5 depuis CH29 (`sea`). Corrigé, rouge-avant-vert
+prouvé (disque neutralisé → 10 échecs au lieu de 9, restauré `cmp`
+byte-identique). Aucune autre sonde ne porte ce contrat.
+
+**SUJET 2** : cinq sondes rapportées « inconcluantes » à un rejeu de
+promotion, rejouées isolément dans ce sandbox (Godot 4.3 téléchargé dans
+la session). `CoveProbe` **PASS 179/0**, ne reproduit pas. `LakeZoneProbe`
+et `V6CrittersProbe` rendent une **INCONCLUSIVE propre** à leur propre
+budget (900 s / 600 s) après une progression réelle (CPU 175-196 %, log
+qui grandit jusqu'au bout) — ce sandbox n'a pas de GPU matériel, le rendu
+sous `xvfb` retombe sur Mesa llvmpipe, trop lent pour les phases qui font
+marcher le hopper réel. `ProbeWatchdog` fonctionne exactement comme conçu.
+`SeesawProbe` **FAIL déterministe et rapide**, pré-existant depuis CH26,
+pas une inconclusion. `SubstituteModel.tscn` n'est **pas un probe** (fixture
+sans script, déjà exclue par `ProbeTimeoutAudit.gd`) — lancée comme scène
+elle boucle indéfiniment, défaut de sélection de scènes du rejeu, pas du
+code.
+
+Aucune régression de jeu trouvée. Aucune escalade Opus recommandée.
+Build : export `--export-release Web` propre, `index.wasm`
+**35 376 909 / `af4a8fc2…`**, `index.js` **`4e08904b…`** byte-identiques à
+la référence publiée (moteur non touché). Un seul fichier de code modifié :
+`scripts/dev/WaterTintProbe.gd` (une ligne).

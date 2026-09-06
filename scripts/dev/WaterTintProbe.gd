@@ -179,7 +179,7 @@ func _check(ok: bool, label: String) -> void:
 func _phase_a_membership(water: HubWater, props: HubBuilder, route: HubStreamRoute) -> void:
 	print("--- PHASE A: five-body membership ---")
 	_check(water.has_stream(), "the stream was found and is being tested")
-	_check(water.discs().size() == 4, "four discs: pond, small lake, both great-lake lobes")
+	_check(water.discs().size() == 5, "five discs: pond, small lake, both great-lake lobes, sea")
 
 	for disc in water.discs():
 		var name: StringName = disc["name"]
