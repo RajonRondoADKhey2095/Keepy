@@ -43,6 +43,18 @@ const LINES: Array = [
 	# arrives on the gold balloon sees the blue one 25 u across the clearing.
 	{"name": "ciel", "glb": "balloon_1", "colour": Color(0.40, 0.70, 0.96),
 		"docks": [Vector3(-14.0, 0.0, -50.0), Vector3(-6.0, 0.0, -110.0)]},
+	# CH29: the coral line, DIRECT from the plateau to the cove -- the
+	# longest walk on the map (spawn -> fifth zone, four gates) is the one
+	# a line has to close, and a chain of three flights would not. The
+	# plateau dock stands on the plateau's SOUTH edge, IN THE SPAWN FRAME
+	# (the only side the camera ever shows): CoveRecon scanned the whole
+	# plateau on a 1 u grid for ground that is region, dry, off every path
+	# and clear of every footprint -- behind the spawn, where the gold dock
+	# is, nothing clears more than 1.7 u; (-13, -33) clears 2.90 u and is
+	# framed from the plaza. The cove dock is by the corridor mouth so a
+	# rider steps off with the lighthouse framed ahead (same recon).
+	{"name": "corail", "glb": "balloon_2", "colour": Color(0.96, 0.52, 0.70),
+		"docks": [Vector3(-13.0, 0.0, -33.0), Vector3(52.0, 0.0, -98.0)]},
 ]
 
 ## Where the hoppity ball is parked on the plateau: just south of the
@@ -54,6 +66,36 @@ const LINES: Array = [
 ## z ~ 6.2) and x = 0.5 is centred, so the ball is the first thing behind
 ## Keepy on the first frame.
 const BALL_PARK: Vector3 = Vector3(0.5, 0.0, 4.4)
+
+## CH29 -- FAMILY B, SECOND VEHICLE: the sand yacht ("char a voile"), the
+## cove's own. Same door as the ball (tap it, walk, climb on) and the
+## same hop-modifier model in KeepyHopper -- but a GLIDE, not a bounce:
+## each hop is flat, long and unsquashed, so a chain of them reads as a
+## continuous roll across the ground, and its pace follows the weather's
+## `wind` (a sail). Free and continuous on the ground: the one kind of
+## trip neither the balloon (fixed points) nor the ball (a bounce) offers.
+##
+## It is NOT re-parked by the off-screen rule. Where the player leaves it
+## is where it stays, across sessions (WorldSave.cove_yacht): a vehicle
+## whose point is to cross the map must not walk home on its own.
+##
+## The seat is authored ONCE, here, on RIDE_SEAT_Y's terms (the boat
+## pattern: one constant for where a rider sits, read by whoever mounts).
+const VEHICLE_BALL: int = 0
+const VEHICLE_YACHT: int = 1
+const YACHT_PARK: Vector3 = Vector3(48.0, 0.0, -112.0)
+## Deck top of yacht_hull_0 (the box at y 0.35..0.65 plus its cushion): his
+## feet stand there.
+const YACHT_SEAT_Y: float = 0.66
+const YACHT_TAP_RADIUS: float = 1.8
+const YACHT_FOOTPRINT: float = 2.0
+## Glide geometry: 3.2 u per 0.30 s is 10.7 u/s in the sun (x2.0 on foot,
+## x1.35 the ball), scaled by the wind factor below -- capped so a storm
+## run (13.3 u/s) stays at the balloon's proven 13 u/s under this camera.
+const YACHT_GLIDE_DISTANCE: float = 3.2
+const YACHT_GLIDE_S: float = 0.30
+const YACHT_WIND_MIN: float = 0.85
+const YACHT_WIND_MAX: float = 1.25
 
 const DECK_TOP: float = 0.16
 ## Ground radius the scatter keeps clear around a dock (deck 1.9 + step
@@ -89,6 +131,8 @@ signal trip_finished(line: int, dock: int, empty: bool)
 
 var _lines: Array[Dictionary] = []
 var _ball: Node3D = null
+var _yacht: Node3D = null
+var _yacht_sail: MeshInstance3D = null
 var _keepy: Node3D = null
 var _camera: Camera3D = null
 var _weather: Node = null
@@ -98,12 +142,17 @@ func _ready() -> void:
 	for i in LINES.size():
 		_build_line(i)
 	_build_ball()
+	_build_yacht()
 
 ## Handed the three nodes this needs, once, by HubWorld.
 func setup(keepy: Node3D, camera: Camera3D, weather: Node) -> void:
 	_keepy = keepy
 	_camera = camera
 	_weather = weather
+	if _keepy.has_signal("vehicle_dismounted"):
+		_keepy.connect("vehicle_dismounted", _on_vehicle_dismounted)
+	if _keepy.has_signal("vehicle_mounted"):
+		_keepy.connect("vehicle_mounted", _on_vehicle_mounted)
 
 ## ---- building --------------------------------------------------------
 
@@ -166,6 +215,27 @@ func _build_ball() -> void:
 	_ball.position = BALL_PARK
 	add_child(_ball)
 
+## The yacht is an EMPTY Node3D (what KeepyHopper writes: position, yaw,
+## and a scale it leaves at ONE for a glide) carrying the hull and, as a
+## separate mesh, the sail -- which takes the WIND material so its cloth
+## bellies with the weather on its own, and is leaned by _process.
+func _build_yacht() -> void:
+	_yacht = Node3D.new()
+	_yacht.name = "Yacht"
+	var hull := _glb_node("Hull", "yacht_hull_0", CozyPalette.decor_material())
+	_yacht.add_child(hull)
+	_yacht_sail = _glb_node("Sail", "yacht_sail_0", CozyPalette.decor_material_wind(0.10, 2.6))
+	_yacht.add_child(_yacht_sail)
+	var saved: Vector3 = WorldSave.cove_yacht()
+	if saved != Vector3.INF and HubRegion.contains(saved):
+		_yacht.position = Vector3(saved.x, 0.0, saved.z)
+	else:
+		_yacht.position = YACHT_PARK
+	# Nose toward the sea at the park; a saved yacht keeps only its place,
+	# the yaw is rewritten by the first glide anyway.
+	_yacht.rotation.y = PI / 2.0
+	add_child(_yacht)
+
 ## ---- what the scatter and the tap need -----------------------------
 
 ## Ground discs nothing should be sown in: every dock and the ball's park.
@@ -175,6 +245,7 @@ static func footprints() -> Array:
 		for d in spec["docks"]:
 			out.append({"position": Vector3(d.x, 0.0, d.z), "radius": DOCK_FOOTPRINT})
 	out.append({"position": BALL_PARK, "radius": BALL_FOOTPRINT})
+	out.append({"position": YACHT_PARK, "radius": YACHT_FOOTPRINT})
 	return out
 
 ## Every dock, flat, for the path builder.
@@ -231,13 +302,58 @@ func ball_node() -> Node3D:
 func ball_position() -> Vector3:
 	return Vector3(_ball.global_position.x, 0.0, _ball.global_position.z)
 
-## True when the tap means "climb on the ball": it is parked (nobody on
-## it) and the point is on it. Withdrawn while ridden, so a tap then is an
-## ordinary hop -- which is the whole idea.
+## True when the tap means "climb on a vehicle" (the ball or, CH29, the
+## yacht): the point is on one he is not already riding. The ridden one
+## withdraws, so a tap on it is an ordinary hop -- which is the whole idea.
 func accepts_vehicle_tap(point: Vector3) -> bool:
-	if _keepy != null and _keepy.has_method("is_on_vehicle") and _keepy.call("is_on_vehicle"):
-		return false
-	return Vector3(point.x, 0.0, point.z).distance_to(ball_position()) <= BALL_TAP_RADIUS
+	return vehicle_at(point) >= 0
+
+## CH29: WHICH vehicle a tap at `point` means -- VEHICLE_BALL, VEHICLE_YACHT
+## or -1 -- on accepts_vehicle_tap's exact terms. The ball is asked first
+## (it is the older channel); the two parks are 120 u apart so the order
+## can only ever decide when the player dropped one on the other.
+func vehicle_at(point: Vector3) -> int:
+	# Only the vehicle he RIDES withdraws: a tap on the other one while
+	# mounted means "swap" (HubWorld drops the first where he stands), so a
+	# player who bounced up to the yacht on the ball is not asked to step
+	# off first. Nobody mounted: both answer.
+	var riding: Node3D = null
+	if _keepy != null and _keepy.has_method("vehicle_node"):
+		riding = _keepy.call("vehicle_node")
+	var flat := Vector3(point.x, 0.0, point.z)
+	if riding != _ball and flat.distance_to(ball_position()) <= BALL_TAP_RADIUS:
+		return VEHICLE_BALL
+	if _yacht != null and riding != _yacht and flat.distance_to(yacht_position()) <= YACHT_TAP_RADIUS:
+		return VEHICLE_YACHT
+	return -1
+
+func yacht_node() -> Node3D:
+	return _yacht
+
+func yacht_position() -> Vector3:
+	return Vector3(_yacht.global_position.x, 0.0, _yacht.global_position.z)
+
+func vehicle_position(kind: int) -> Vector3:
+	return yacht_position() if kind == VEHICLE_YACHT else ball_position()
+
+func vehicle_tap_radius(kind: int) -> float:
+	return YACHT_TAP_RADIUS if kind == VEHICLE_YACHT else BALL_TAP_RADIUS
+
+## The wind's multiplier on the yacht's pace: 0.85 in snow, 1.0 in the
+## sun, 1.12 in rain, 1.25 (the cap) in a storm. Read by _process and
+## pushed into KeepyHopper every frame he rides.
+func yacht_speed_factor() -> float:
+	return clampf(0.85 + 0.15 * _wind(), YACHT_WIND_MIN, YACHT_WIND_MAX)
+
+func _on_vehicle_mounted() -> void:
+	if _keepy != null and _keepy.has_method("vehicle_node") and _keepy.call("vehicle_node") == _yacht:
+		WorldSave.note("yacht_rides")
+
+## Where the yacht stands when he steps off is where it will be next
+## session (the save is the one memory of that).
+func _on_vehicle_dismounted() -> void:
+	if _yacht != null:
+		WorldSave.cove_set_yacht(yacht_position())
 
 ## ---- flying -----------------------------------------------------------
 
@@ -323,6 +439,13 @@ func _wind() -> float:
 func _process(delta: float) -> void:
 	_time += delta
 	var wind: float = _wind()
+	# CH29: the sail leans with the wind and flutters; the rider's pace
+	# follows the same number, pushed into the hopper here so that the
+	# glide and the cloth answer to ONE reading of the weather.
+	if _yacht_sail != null:
+		_yacht_sail.rotation.z = deg_to_rad(-7.0 * wind) * (0.75 + 0.25 * sin(_time * 2.3))
+	if _keepy != null and _keepy.has_method("vehicle_node") and _keepy.call("vehicle_node") == _yacht:
+		_keepy.call("set_vehicle_speed", yacht_speed_factor())
 	for i in _lines.size():
 		var entry: Dictionary = _lines[i]
 		if entry["riding"]:
