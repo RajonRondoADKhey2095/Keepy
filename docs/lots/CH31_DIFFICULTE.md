@@ -232,16 +232,19 @@ l'autre. Un contrat d'ordonnancement ne se décide pas sur un coup de dé.
 
 | | x1 | x1.5 (défaut) | x2.5 |
 |---|---|---|---|
-| Le Chat | **21,917** — 23,133 / 21,933 / 21,917 | **20,000** — 22,033 / 20,467 / 20,000 | **19,467** — 20,833 / 20,683 / 19,467 |
-| Le Castor | **24,867** — 25,117 / 25,167 / 24,867 | **21,833** — 22,467 / 21,833 / 21,917 | **20,100** — 20,667 / 20,133 / 20,100 |
-| Le Sanglier | **24,900** — 24,950 / 26,100 / 24,900 | **21,500** — 22,333 / 21,500 / 22,183 | **20,717** — 20,800 / 20,717 / 20,867 |
-| pointes réelles | 15,43 / 15,84 / 17,09 | 16,28 / 16,58 / 17,31 | 16,67 / 17,53 / 17,25 |
-| arrivée de l'étalon | 68,800 (**2ᵉ**) | 65,317 (**4ᵉ**) | 63,650 (**4ᵉ**) |
-| écart entre presets | — | **1,917 s/tour** | **0,533 s/tour** |
+| Le Chat | **21,850** — 23,117 / 21,850 / 22,033 | **20,233** — 22,317 / 21,450 / 20,233 | **19,300** — 20,983 / 20,600 / 19,300 |
+| Le Castor | **25,017** — 25,100 / 25,333 / 25,017 | **21,967** — 22,017 / 22,000 / 21,967 | **20,100** — 20,550 / 20,167 / 20,100 |
+| Le Sanglier | **24,900** — 24,900 / 25,300 / 25,033 | **21,450** — 22,233 / 21,450 / 21,967 | **20,583** — 20,933 / 20,583 / 21,050 |
+| pointes réelles | 15,42 / 15,67 / 16,97 | 16,14 / 16,19 / 17,15 | 16,53 / 17,33 / 17,28 |
+| arrivée de l'étalon / du vainqueur | 69,117 / **68,117** | 65,200 / **65,083** | 63,250 / **61,767** |
+| place de l'étalon | **2ᵉ** | **2ᵉ**, battu de **0,117 s** | **3ᵉ** |
+| rang de l'étalon à 6 s | 3ᵉ | 4ᵉ | 4ᵉ |
+| écart entre presets | — | **1,617 s/tour** | **0,933 s/tour** |
 
-Contre CH30 (23,350 / 25,667 / 25,733 au défaut), le défaut gagne **3,3 à
-4,2 s au tour** selon l'adversaire, soit une dizaine de secondes sur trois
-tours. **L'étalon finit 4ᵉ au preset par défaut** : la victoire se mérite.
+Contre CH30 (23,350 / 25,667 / 25,733 au défaut), le défaut gagne **3,1 à
+4,3 s au tour** selon l'adversaire, soit une dizaine de secondes sur trois
+tours. **Au preset par défaut, l'étalon est battu de 0,117 s sur une course
+de 65 s** : la victoire se mérite, et elle se joue au dernier tour.
 
 ### Le départ ne sera plus gratuit
 
@@ -324,9 +327,9 @@ vainqueur. `HubKarting` accumule ces compteurs pendant la course
 (`top_speed`, `contact_s`, `off_s`, remis à zéro à chaque mise en grille) et
 `results()` les publie. Un retour de Mathieu peut être un tableau.
 
-## Ce que la sonde gate — 22 checks, et deux d'entre eux ont été réécrits
+## Ce que la sonde gate — 25 checks, et deux d'entre eux ont été réécrits
 
-`RaceBalanceProbe` : blind A (le bouton change la course), **blind B (la
+`RaceBalanceProbe`, **25 checks, 0 échec à n = 320** : blind A (le bouton change la course), **blind B (la
 latence est câblée)**, blind C (le plancher est bien sous chaque tour
 adverse), D1 (au défaut, le meilleur adversaire tourne à moins de 1,20 s de
 la médiane de l'étalon — mesuré à **−0,117 s**), D2 (ordonnés et séparés
@@ -367,6 +370,38 @@ seul ne le voit pas. x2.5 a été ramené à `pace` 1,45 / `headroom` 0,95 /
 `top` 2,10, et D6 gate désormais la part hors-piste de chaque adversaire à
 1,5 % de sa course (mesurée à **0,00 %** aux trois presets).
 
+## Rejeu de TOUTES les sondes, sur les DEUX arbres
+
+78 scènes de `scripts/dev/` lancées sur la branche et sur un worktree de
+`origin/staging` importé à part (154 `.scn` des deux côtés, comptés avant
+toute comparaison). **76 comparables, 60 sorties byte-identiques.** Les 16
+écarts, tous expliqués :
+
+| sonde | écart | verdict |
+|---|---|---|
+| **KartProbe** | rc **1** contre 0 | **RÉGRESSION RÉELLE, trouvée par ce rejeu et corrigée** — même métrique devenue fausse qu'en D3 ; 150/150 vert des deux côtés après correction |
+| **RaceBalanceProbe** | rc 124 contre 0 | le budget de 200 s du lanceur contre un Monte-Carlo n = 320 de ~15 min ; relancée seule : **25 checks, 0 échec** |
+| KartTraceProbe | sortie | **attendu** : la croisière passe de 13 à 15 u/s, la trace DOIT bouger |
+| ChaseAudit | 6 lignes | seulement `circuit` aux azimuts 225 et 315, parce que l'ordre de grille est inversé ; **frame la plus lourde identique, gpu 100 520**, 13/13 des deux côtés |
+| HubPerfBaseline | 6 lignes | horodatages seuls (`instantiate()` 673 contre 667 ms, fps moyen) |
+| SplashSheetProbe, CozyCapture | 2 lignes / 0 | le **chemin** du worktree ; 0 ligne d'écart après normalisation |
+| DecorParallaxProbe, StrikeContrastAudit, StomperAudit, SwampIdentityAudit, TrackPropsAudit, TracksidePropCensus, V4ClimbProbe | sortie | **non déterministes sur UN SEUL arbre** — vérifié en les lançant deux fois sur la branche : l'écart est du bruit, pas une régression |
+| StrikeFatalContrastAudit (rc 1), LiveRunProbe (rc 124) | identiques des deux côtés | limites d'environnement déjà au dossier |
+
+⚠️ **C'est le rejeu qui a trouvé la seule vraie régression du lot**, et
+aucune sonde du lot ne pouvait la voir : `KartProbe` gardait « le sanglier
+est plus rapide que le chat sur le quart le plus droit », exactement la
+métrique que `RaceBalanceProbe` avait dû retirer une couche plus haut pour
+la même raison mesurée. Elle est repointée sur le **plafond au sommet le
+plus plat** (ce que « rapide en ligne droite » veut dire), la valeur par
+quart reste publiée non gatée, et la nouvelle assertion a été vérifiée
+capable d'échouer (`top` du sanglier à 0,20 → rouge sur cette ligne seule).
+
+⚠️ **Et le contrôle de déterminisme n'est pas une formalité** : sept
+sondes sur seize « divergeaient » sans qu'aucune ligne de ce lot ne les
+touche. Comparer deux arbres sans d'abord demander à UN arbre s'il se
+reproduit lui-même fabrique des régressions qui n'existent pas.
+
 ## Mesures, dans l'ordre
 
 | | |
@@ -378,10 +413,10 @@ seul ne le voit pas. x2.5 a été ramené à `pace` 1,45 / `headroom` 0,95 /
 | plein gaz sur 230,711 u | 12,111 s |
 | étalon réparé, n = 320 — sans boost / avec boost | p50 **21,633 s** / **20,350 s** |
 | effet de la latence sur la médiane (blind B) | **1,383 s** |
-| meilleur tour adverse x1 / x1.5 / x2.5 | **21,917 / 20,000 / 19,467 s** |
-| gain du défaut contre CH30, par adversaire | **3,3 à 4,2 s au tour** |
-| écart au tour entre presets | **1,917 s** puis **0,533 s** |
-| déficit du dernier adversaire au drapeau (défaut) | **0,075 tour** (gate 0,80) |
+| meilleur tour adverse x1 / x1.5 / x2.5 | **21,850 / 20,233 / 19,300 s** |
+| gain du défaut contre CH30, par adversaire | **3,1 à 4,3 s au tour** |
+| écart au tour entre presets | **1,617 s** puis **0,933 s** |
+| déficit du dernier adversaire au drapeau (défaut) | **0,072 tour** (gate 0,80) |
 | coût du peloton / de la laisse | **≤ 0,117 s** / **≤ 0,13 s** |
 | croisière et plafond de boost | 13,0 → **15,0** ; 16,5 → **19,05** |
 | borne de lisibilité mesurée | **16 u/s** (le pilote qui pousse devient plus lent) |

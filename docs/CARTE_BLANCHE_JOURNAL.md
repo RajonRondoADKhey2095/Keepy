@@ -1542,9 +1542,10 @@ trois tours. Les deux ne peuvent pas être vrais.
 | plein gaz sur 230,711 u | 12,111 s |
 | étalon réparé, n = 320 — sans / avec boost | p50 **21,633** / **20,350 s** |
 | effet de la latence sur la médiane (blind B) | **1,383 s** |
-| meilleur tour adverse x1 / x1.5 / x2.5 | **21,917 / 20,000 / 19,467 s** |
-| gain du défaut contre CH30 | **3,3 à 4,2 s au tour** |
-| déficit du dernier au drapeau (défaut) | **0,075 tour** (gate 0,80) |
+| meilleur tour adverse x1 / x1.5 / x2.5 | **21,850 / 20,233 / 19,300 s** |
+| gain du défaut contre CH30 | **3,1 à 4,3 s au tour** |
+| déficit du dernier au drapeau (défaut) | **0,072 tour** (gate 0,80) |
+| place de l'étalon au preset par défaut | **2ᵉ**, battu de **0,117 s** |
 | croisière, plafond de boost | 13,0 → **15,0** ; 16,5 → **19,05** |
 | borne de lisibilité mesurée | **16 u/s** (croisement) |
 | trace du char, branche vs `origin/staging` | **byte-identique**, 24 lignes |
