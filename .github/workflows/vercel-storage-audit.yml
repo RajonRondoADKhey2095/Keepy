@@ -1,20 +1,54 @@
 name: Vercel storage audit (Phase A, read-only)
 
 # ============================================================================
-#  AUDIT LECTURE SEULE DES DEPLOIEMENTS VERCEL -- projet "keepy"
+#  VERCEL STORAGE -- PHASE A (lecture seule) ET PHASE B (SUPPRESSION)
 # ============================================================================
 #
-#  Pourquoi ce workflow existe : le sandbox agentique n'a AUCUN acces reseau
-#  sortant vers api.vercel.com (connect_rejected, re-teste et pas suppose),
-#  alors que ce runner en a un -- web-build.yml y deploie deja avec les memes
-#  secrets. Ce workflow est donc le seul canal disponible pour executer la
-#  PHASE A de scripts/dev/vercel_native_purge.sh.
+#  ⚠️  POURQUOI LA PHASE B VIT DANS CE FICHIER, ET PAS DANS LE SIEN
 #
-#  ⚠️  PHASE B (suppression) N'EST PAS EXECUTEE ICI, ET NE DOIT PAS L'ETRE.
-#      Elle reste commentee dans le script, et rien dans ce workflow ne la
-#      decommente, ne la reecrit, ni ne l'appelle. Une suppression Vercel est
-#      irreversible (le deploiement disparait aussi de l'historique de
-#      rollback) : elle exigera une autorisation explicite et un autre canal.
+#  GitHub n'enregistre un workflow -- donc ne le rend dispatchable -- que
+#  s'il existe sur la BRANCHE PAR DEFAUT. Mesure, pas supposition : un
+#  fichier .github/workflows/vercel-storage-purge.yml pousse sur une branche
+#  de feature a rendu `404 Not Found` au POST .../dispatches. Et pousser sur
+#  `main` est interdit a une session agentique (CLAUDE.md, palier 2 gate).
+#
+#  Ce chemin-ci est le SEUL canal dispatchable disponible pour ce chantier.
+#  La Phase A n'est ni supprimee ni reecrite : elle reste accessible, en
+#  entier, via le mode `phase-a`.
+#
+#  ⚠️  AUCUN `inputs` N'EST DECLARE, DELIBEREMENT. La definition de ce
+#      workflow sur `main` est `workflow_dispatch: {}` : un dispatch portant
+#      des inputs risquerait d'etre valide contre CETTE definition-la et non
+#      contre celle de la ref. Le mode est donc lu dans un FICHIER COMMITTE,
+#      scripts/dev/PHASE_B_MODE -- auditable dans l'historique git plutot que
+#      dans un champ de formulaire.
+#
+#      contenu de scripts/dev/PHASE_B_MODE  ->  ce qui tourne
+#        phase-a          ->  PHASE A, lecture seule (comportement d'origine)
+#        dry              ->  PHASE B, 4 gates + parcours des 704 IDs,
+#                             AUCUN DELETE emis (defaut)
+#        SUPPRIMER-704    ->  PHASE B, SUPPRESSION REELLE ET IRREVERSIBLE
+#
+#  ---------------------------------------------------------------------
+#  PHASE A -- inventaire, read-only, rejouable sans aucun effet de bord.
+#
+#  PHASE B -- DESTRUCTIVE. Un deploiement supprime chez Vercel ne se restaure
+#  pas : il disparait aussi de l'historique de rollback.
+#
+#  La Phase B NE TRIE RIEN et n'invente AUCUN critere : elle consomme la
+#  liste deja produite par la Phase A (run 34055644263, artefact
+#  "keepy-vercel-audit", fichier keepy_candidates.txt, 704 IDs). Regenerer
+#  une liste ici reviendrait a purger sur un tri que personne n'a relu.
+#
+#  QUATRE GATES, TOUTES EN FAIL-FAST AVANT LE PREMIER DELETE :
+#    G1  l'artefact du run Phase A existe et porte keepy_candidates.txt
+#    G2  704 lignes exactement, 23232 octets, 704 IDs uniques, bien formes
+#    G3  les 3 IDs proteges sont hors liste -- avec un blind check qui fait
+#        d'abord TROUVER au grep un ID present, sans quoi les assertions
+#        d'ABSENCE passeraient gratuitement contre un grep casse
+#    G4  controle LIVE des deux alias et de la prod courante contre les
+#        valeurs mesurees en Phase A ; une resolution VIDE est traitee comme
+#        un echec, jamais comme "inchange"
 #
 #  Declenchement MANUEL uniquement : pas de `push`, pas de `schedule`.
 # ============================================================================
@@ -24,13 +58,70 @@ on:
 
 permissions:
   contents: read
+  actions: read   # necessaire pour telecharger l'artefact d'un AUTRE run
 
 concurrency:
   group: vercel-storage-audit
   cancel-in-progress: false
 
+env:
+  PROJECT_ID: prj_OikxKVaLr5nmu1P2944CdQVE4tkh
+  TEAM_ID: team_ev0yJWnUwGjtuJpAIVpCP3hZ
+  SOURCE_RUN_ID: "34055644263"
+  # Valeurs MESUREES par la Phase A (run 34055644263, 2026-09-06T19:41Z).
+  # Ecrites en dur DELIBEREMENT : c'est contre elles que le controle live G4
+  # compare. Les recalculer depuis l'API ferait comparer l'API a elle-meme,
+  # ce qui passe toujours.
+  EXPECTED_COUNT: "704"
+  EXPECTED_BYTES: "23232"
+  EXPECTED_TEN: dpl_3723Zajz6bFwdxKyqBfbk2PuGx3P
+  EXPECTED_STAGING: dpl_8jwzZfwwBHc1t7L3DP5UTHboy8S8
+  EXPECTED_PROD: dpl_3723Zajz6bFwdxKyqBfbk2PuGx3P
+
 jobs:
+  # ==========================================================================
+  #  MODE -- lu dans un fichier committe, pas dans un input de formulaire.
+  # ==========================================================================
+  mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.read.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          set -euo pipefail
+          F=scripts/dev/PHASE_B_MODE
+          if [ ! -s "$F" ]; then
+            echo "::error::$F absent ou vide. Rien ne tourne."
+            exit 1
+          fi
+          M=$(tr -d '[:space:]' < "$F")
+          case "$M" in
+            phase-a|dry|SUPPRIMER-704) ;;
+            *) echo "::error::Mode inconnu '$M'. Attendu : phase-a | dry | SUPPRIMER-704."; exit 1 ;;
+          esac
+          echo "mode=$M" >> "$GITHUB_OUTPUT"
+          echo "MODE = $M"
+          {
+            echo "## Mode"
+            echo
+            echo "\`scripts/dev/PHASE_B_MODE\` = **$M** (commit \`${GITHUB_SHA}\`, ref \`${GITHUB_REF_NAME}\`)"
+            echo
+            case "$M" in
+              phase-a)       echo "> PHASE A seule, lecture seule. Rien n'est supprime." ;;
+              dry)           echo "> PHASE B a blanc : les 4 gates tournent, la boucle parcourt les IDs, **aucun DELETE n'est emis**." ;;
+              SUPPRIMER-704) echo "> ⚠️ **PHASE B REELLE — SUPPRESSION IRREVERSIBLE.**" ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  #  PHASE A -- inchangee, lecture seule.
+  # ==========================================================================
   audit:
+    needs: mode
+    if: needs.mode.outputs.mode == 'phase-a'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -93,7 +184,6 @@ jobs:
             echo
             echo "- Commit : \`${GITHUB_SHA}\` (ref \`${GITHUB_REF_NAME}\`)"
             echo "- Script : \`scripts/dev/vercel_native_purge.sh\` — **Phase A seule**"
-            echo "- Phase B (suppression) : **NON EXECUTEE**, reste commentee dans le script."
             echo "- Code de sortie Phase A : \`${RC:-inconnu}\`"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
@@ -180,8 +270,7 @@ jobs:
             cat /tmp/keepy_phase_a.log 2>/dev/null | tail -n 60
             echo '```'
             echo
-            echo "> ⚠️ Rien n'a ete supprime. La Phase B reste commentee et"
-            echo "> n'est appelee par aucune etape de ce workflow."
+            echo "> ⚠️ Rien n'a ete supprime dans ce mode."
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Le resume est AUSSI recopie sur stdout : l'API GitHub Actions
@@ -208,7 +297,311 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: keepy-vercel-audit
+          name: keepy-vercel-audit-${{ github.run_id }}
           path: audit-out
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ==========================================================================
+  #  PHASE B -- SUPPRESSION. Quatre gates en fail-fast avant le premier DELETE.
+  # ==========================================================================
+  purge:
+    needs: mode
+    if: needs.mode.outputs.mode == 'dry' || needs.mode.outputs.mode == 'SUPPRIMER-704'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MODE: ${{ needs.mode.outputs.mode }}
+    steps:
+      - name: Ensure jq is present
+        run: |
+          set -euo pipefail
+          command -v jq >/dev/null 2>&1 || { sudo apt-get update; sudo apt-get install -y --no-install-recommends jq; }
+          jq --version
+
+      - name: Check secrets
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ]; then
+            echo "::error::VERCEL_TOKEN absent. Rien n'est supprime."
+            exit 1
+          fi
+          echo "VERCEL_TOKEN present (valeur jamais echo). MODE=$MODE"
+
+      # ---- G1 : l'artefact de la Phase A, tel quel, sans transcription -----
+      - name: "G1 - Download Phase A artifact"
+        uses: actions/download-artifact@v4
+        with:
+          name: keepy-vercel-audit
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: audit-in
+
+      - name: "G1 - Artifact contents"
+        run: |
+          set -euo pipefail
+          ls -la audit-in/
+          for F in keepy_candidates.txt keepy_protected.json; do
+            if [ ! -s "audit-in/$F" ]; then
+              echo "::error::audit-in/$F absent ou vide. La liste Phase A n'est pas exploitable."
+              exit 1
+            fi
+          done
+          echo "G1 OK - artefact du run ${SOURCE_RUN_ID} recupere."
+
+      # ---- G2 : le compte, la taille, et la FORME de chaque ligne ----------
+      - name: "G2 - Candidate list integrity"
+        run: |
+          set -euo pipefail
+          C=audit-in/keepy_candidates.txt
+          N=$(wc -l < "$C" | tr -d ' ')
+          B=$(wc -c < "$C" | tr -d ' ')
+          U=$(sort -u "$C" | wc -l | tr -d ' ')
+          BAD=$(grep -cvE '^dpl_[0-9A-Za-z]{28}$' "$C" || true)
+
+          echo "lignes=$N  octets=$B  uniques=$U  lignes_mal_formees=$BAD"
+
+          if [ "$N" != "${EXPECTED_COUNT}" ]; then
+            echo "::error::Compte de candidats = $N, attendu ${EXPECTED_COUNT}. ARRET, aucune suppression."
+            exit 1
+          fi
+          if [ "$B" != "${EXPECTED_BYTES}" ]; then
+            echo "::error::Taille = $B octets, attendu ${EXPECTED_BYTES} (${EXPECTED_COUNT} x 33). ARRET."
+            exit 1
+          fi
+          if [ "$U" != "${EXPECTED_COUNT}" ]; then
+            echo "::error::Seulement $U IDs uniques sur $N lignes. ARRET."
+            exit 1
+          fi
+          if [ "$BAD" != "0" ]; then
+            echo "::error::$BAD ligne(s) ne sont pas des IDs Vercel bien formes. ARRET."
+            grep -nvE '^dpl_[0-9A-Za-z]{28}$' "$C" | head -20
+            exit 1
+          fi
+          echo "G2 OK - ${EXPECTED_COUNT} IDs uniques, bien formes, ${EXPECTED_BYTES} octets."
+
+      # ---- G3 : les proteges ne sont PAS dans la liste ---------------------
+      # grep -F -x -q : chaine litterale, ligne ENTIERE. Un grep non ancre
+      # matcherait un prefixe et rendrait un faux positif dans les deux sens.
+      - name: "G3 - Protected IDs absent from candidates"
+        run: |
+          set -euo pipefail
+          C=audit-in/keepy_candidates.txt
+          echo "keepy_protected.json (Phase A) :"
+          cat audit-in/keepy_protected.json
+
+          FAIL=0
+          for ID in "${EXPECTED_TEN}" "${EXPECTED_STAGING}" "${EXPECTED_PROD}"; do
+            if grep -F -x -q "$ID" "$C"; then
+              echo "::error::L'ID PROTEGE $ID figure dans la liste de candidats. INCOHERENCE. ARRET TOTAL."
+              FAIL=1
+            else
+              echo "  absent des candidats (OK) : $ID"
+            fi
+          done
+          [ "$FAIL" -eq 0 ] || exit 1
+
+          # Blind check : le grep sait-il seulement TROUVER quelque chose ?
+          # Une assertion d'ABSENCE passe gratuitement si le grep est casse
+          # (mauvais fichier, mauvaise option). On lui fait donc trouver un ID
+          # dont on sait qu'il EST dans la liste, et on exige qu'il le trouve.
+          PROBE=$(head -1 "$C")
+          if ! grep -F -x -q "$PROBE" "$C"; then
+            echo "::error::Blind check echoue : grep ne retrouve pas $PROBE, pourtant premiere ligne du fichier."
+            echo "::error::Les assertions d'absence ci-dessus ne valent donc RIEN. ARRET."
+            exit 1
+          fi
+          echo "  blind check OK - grep retrouve bien $PROBE."
+
+          # Et les IDs proteges attendus doivent etre EXACTEMENT ceux que la
+          # Phase A a ecrits, sinon on protege autre chose que ce qu'elle a
+          # exclu du tri.
+          for ID in "${EXPECTED_TEN}" "${EXPECTED_STAGING}"; do
+            if ! jq -e --arg i "$ID" 'index($i) != null' audit-in/keepy_protected.json >/dev/null; then
+              echo "::error::$ID n'est pas dans keepy_protected.json de la Phase A. ARRET."
+              exit 1
+            fi
+          done
+          echo "G3 OK - les 3 IDs proteges sont hors liste, et conformes a la Phase A."
+
+      # ---- G4 : controle LIVE, independant du fichier statique -------------
+      - name: "G4 - Live alias and production target unchanged"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -euo pipefail
+          api() { curl -sf -H "Authorization: Bearer $VERCEL_TOKEN" "$1"; }
+
+          TEN=$(api "https://api.vercel.com/v4/aliases/keepy-ten.vercel.app?teamId=$TEAM_ID" | jq -r '.deploymentId // empty')
+          STG=$(api "https://api.vercel.com/v4/aliases/keepy-staging.vercel.app?teamId=$TEAM_ID" | jq -r '.deploymentId // empty')
+          PRD=$(api "https://api.vercel.com/v9/projects/$PROJECT_ID?teamId=$TEAM_ID" | jq -r '.targets.production.id // empty')
+
+          echo "LIVE keepy-ten.vercel.app      -> ${TEN:-<vide>}   (attendu ${EXPECTED_TEN})"
+          echo "LIVE keepy-staging.vercel.app  -> ${STG:-<vide>}   (attendu ${EXPECTED_STAGING})"
+          echo "LIVE prod courante             -> ${PRD:-<vide>}   (attendu ${EXPECTED_PROD})"
+
+          # Une resolution VIDE n'est pas "inchange" : c'est "je n'ai rien lu".
+          # La garde d'attente qui compare sur une chaine vide est un mode de
+          # panne deja paye sur ce depot -- on echoue explicitement dessus.
+          for PAIR in "TEN:$TEN:$EXPECTED_TEN" "STG:$STG:$EXPECTED_STAGING" "PRD:$PRD:$EXPECTED_PROD"; do
+            K=${PAIR%%:*}; REST=${PAIR#*:}; GOT=${REST%%:*}; WANT=${REST#*:}
+            if [ -z "$GOT" ]; then
+              echo "::error::$K n'a rien resolu (reponse vide). On ne purge pas sans savoir qui sert le site. ARRET."
+              exit 1
+            fi
+            if [ "$GOT" != "$WANT" ]; then
+              echo "::error::$K a change de cible depuis la Phase A : $GOT != $WANT."
+              echo "::error::La liste de candidats est potentiellement obsolete. ARRET, aucune suppression."
+              exit 1
+            fi
+          done
+
+          # Derniere ceinture : la cible live doit AUSSI etre hors candidats.
+          for ID in "$TEN" "$STG" "$PRD"; do
+            if grep -F -x -q "$ID" audit-in/keepy_candidates.txt; then
+              echo "::error::La cible LIVE $ID figure dans les candidats. ARRET TOTAL."
+              exit 1
+            fi
+          done
+          echo "G4 OK - les 2 alias et la prod courante pointent vers les memes IDs qu'en Phase A."
+
+      # ---- SUPPRESSION -----------------------------------------------------
+      - name: "Phase B - delete"
+        id: purge
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -uo pipefail
+          C=audit-in/keepy_candidates.txt
+          mkdir -p purge-out
+          LOG=purge-out/keepy_phase_b.log
+          FAILED=purge-out/keepy_phase_b_failures.txt
+
+          {
+            echo "# Phase B - purge des deploiements natifs Vercel (projet keepy)"
+            echo "# run          : ${GITHUB_RUN_ID} (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+            echo "# commit       : ${GITHUB_SHA} (ref ${GITHUB_REF_NAME})"
+            echo "# liste source : run ${SOURCE_RUN_ID}, artefact keepy-vercel-audit"
+            echo "# candidats    : $(wc -l < "$C" | tr -d ' ')"
+            echo "# mode         : ${MODE}"
+            echo "# debut        : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "#"
+            printf '# timestamp_utc\tdeployment_id\thttp_code\n'
+          } > "$LOG"
+          : > "$FAILED"
+
+          OK=0; KO=0; I=0
+          TOTAL=$(wc -l < "$C" | tr -d ' ')
+
+          while IFS= read -r D; do
+            [ -n "$D" ] || continue
+            I=$((I+1))
+
+            if [ "$MODE" != "SUPPRIMER-704" ]; then
+              CODE="DRY"
+            else
+              CODE=$(curl -s -X DELETE \
+                       -H "Authorization: Bearer $VERCEL_TOKEN" \
+                       "https://api.vercel.com/v13/deployments/$D?teamId=$TEAM_ID" \
+                       -o /dev/null -w "%{http_code}")
+              # 429 = rate limit : une seule reprise, apres une vraie pause.
+              if [ "$CODE" = "429" ]; then
+                sleep 10
+                CODE=$(curl -s -X DELETE \
+                         -H "Authorization: Bearer $VERCEL_TOKEN" \
+                         "https://api.vercel.com/v13/deployments/$D?teamId=$TEAM_ID" \
+                         -o /dev/null -w "%{http_code}")
+              fi
+            fi
+
+            # Ecrit AU FUR ET A MESURE (>>), pas en fin de boucle : si le job
+            # est interrompu, le log dit exactement ou ca s'est arrete.
+            printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$D" "$CODE" >> "$LOG"
+
+            case "$CODE" in
+              200|204|DRY) OK=$((OK+1)) ;;
+              *)           KO=$((KO+1)); printf '%s\t%s\n' "$D" "$CODE" >> "$FAILED" ;;
+            esac
+
+            if [ $((I % 50)) -eq 0 ]; then
+              echo "  ... $I / $TOTAL  (ok=$OK  ko=$KO)"
+            fi
+            sleep 0.25
+          done < "$C"
+
+          {
+            echo "#"
+            echo "# fin          : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "# traites      : $I"
+            echo "# succes       : $OK"
+            echo "# echecs       : $KO"
+          } >> "$LOG"
+
+          echo "processed=$I" >> "$GITHUB_OUTPUT"
+          echo "ok=$OK"       >> "$GITHUB_OUTPUT"
+          echo "ko=$KO"       >> "$GITHUB_OUTPUT"
+
+          echo "TRAITES $I / $TOTAL - SUCCES $OK - ECHECS $KO"
+          if [ "$KO" -gt 0 ]; then
+            echo "----- ECHECS (id, code HTTP) -----"
+            cat "$FAILED"
+          fi
+
+      - name: Write Job Summary
+        if: always()
+        run: |
+          set -uo pipefail
+          LOG=purge-out/keepy_phase_b.log
+          FAILED=purge-out/keepy_phase_b_failures.txt
+          {
+            echo "# Vercel storage purge — Phase B"
+            echo
+            echo "| champ | valeur |"
+            echo "|---|---|"
+            echo "| mode | \`${MODE}\` |"
+            echo "| liste source | run \`${SOURCE_RUN_ID}\`, artefact \`keepy-vercel-audit\` |"
+            echo "| commit | \`${GITHUB_SHA}\` (ref \`${GITHUB_REF_NAME}\`) |"
+            echo "| traites | **${{ steps.purge.outputs.processed }}** |"
+            echo "| succes (200/204) | **${{ steps.purge.outputs.ok }}** |"
+            echo "| echecs | **${{ steps.purge.outputs.ko }}** |"
+            echo
+            if [ -s "$FAILED" ]; then
+              echo "## Echecs"
+              echo
+              echo '```'
+              cat "$FAILED"
+              echo '```'
+            else
+              echo "_Aucun echec._"
+            fi
+            echo
+            echo "## Log (30 premieres lignes)"
+            echo '```'
+            head -30 "$LOG" 2>/dev/null || echo "(pas de log)"
+            echo '```'
+            echo
+            echo "## Log (20 dernieres lignes)"
+            echo '```'
+            tail -20 "$LOG" 2>/dev/null || echo "(pas de log)"
+            echo '```'
+            echo
+            echo "> L'API deployments n'expose **aucun champ de taille** : le gain reel"
+            echo "> se lit uniquement dans Vercel Dashboard > Usage > Deployment Storage."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Recopie sur stdout : l'API Actions n'expose aucun endpoint pour
+          # relire un $GITHUB_STEP_SUMMARY (meme raison qu'en Phase A).
+          echo "----- DEBUT DU JOB SUMMARY (copie stdout) -----"
+          cat "$GITHUB_STEP_SUMMARY"
+          echo "----- FIN DU JOB SUMMARY -----"
+
+      - name: Upload purge log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepy-vercel-purge-log-${{ github.run_id }}
+          path: purge-out
           if-no-files-found: warn
           retention-days: 7
