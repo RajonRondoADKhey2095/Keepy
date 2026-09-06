@@ -442,26 +442,37 @@ jobs:
           echo "LIVE keepy-staging.vercel.app  -> ${STG:-<vide>}   (attendu ${EXPECTED_STAGING})"
           echo "LIVE prod courante             -> ${PRD:-<vide>}   (attendu ${EXPECTED_PROD})"
 
+          # --- G4a : resolution non vide -------------------------------------
           # Une resolution VIDE n'est pas "inchange" : c'est "je n'ai rien lu".
           # La garde d'attente qui compare sur une chaine vide est un mode de
           # panne deja paye sur ce depot -- on echoue explicitement dessus.
-          for PAIR in "TEN:$TEN:$EXPECTED_TEN" "STG:$STG:$EXPECTED_STAGING" "PRD:$PRD:$EXPECTED_PROD"; do
-            K=${PAIR%%:*}; REST=${PAIR#*:}; GOT=${REST%%:*}; WANT=${REST#*:}
+          for PAIR in "TEN:$TEN" "STG:$STG" "PRD:$PRD"; do
+            K=${PAIR%%:*}; GOT=${PAIR#*:}
             if [ -z "$GOT" ]; then
               echo "::error::$K n'a rien resolu (reponse vide). On ne purge pas sans savoir qui sert le site. ARRET."
               exit 1
             fi
-            if [ "$GOT" != "$WANT" ]; then
-              echo "::error::$K a change de cible depuis la Phase A : $GOT != $WANT."
-              echo "::error::La liste de candidats est potentiellement obsolete. ARRET, aucune suppression."
-              exit 1
-            fi
           done
 
-          # Derniere ceinture : la cible live doit AUSSI etre hors candidats.
+          # --- G4b : LA question de surete, et elle passe AVANT la derive -----
+          # Ordre corrige apres le dry-run du run 34057739469 : la comparaison
+          # de derive y a fait exit AVANT ce test-ci, donc le seul controle qui
+          # dise vraiment "on est sur le point de tuer le site" n'a jamais
+          # tourne. La derive n'est qu'un PROXY de fraicheur ; ceci est le fait.
           for ID in "$TEN" "$STG" "$PRD"; do
             if grep -F -x -q "$ID" audit-in/keepy_candidates.txt; then
               echo "::error::La cible LIVE $ID figure dans les candidats. ARRET TOTAL."
+              exit 1
+            fi
+            echo "  cible live hors candidats (OK) : $ID"
+          done
+
+          # --- G4c : derive depuis la Phase A ---------------------------------
+          for PAIR in "TEN:$TEN:$EXPECTED_TEN" "STG:$STG:$EXPECTED_STAGING" "PRD:$PRD:$EXPECTED_PROD"; do
+            K=${PAIR%%:*}; REST=${PAIR#*:}; GOT=${REST%%:*}; WANT=${REST#*:}
+            if [ "$GOT" != "$WANT" ]; then
+              echo "::error::$K a change de cible depuis la Phase A : $GOT != $WANT."
+              echo "::error::La liste de candidats est potentiellement obsolete. ARRET, aucune suppression."
               exit 1
             fi
           done
