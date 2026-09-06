@@ -152,6 +152,15 @@ Ce qu'elle implique, et qui n'est pas négociable :
 une divergence alarmante** : c'est le plus souvent un dépôt de `.glb` bruts.
 Le vérifier (`git diff --stat` sur la plage) avant de s'arrêter.
 
+### Historique des promotions palier 2
+
+Journal court, un dépôt par promotion — le récit complet de chaque lot reste
+dans `docs/lots/`, ceci n'en est jamais un résumé.
+
+| date | lots promus | autorisation |
+|---|---|---|
+| 6 sept 2026 | V7b, V8 (karting lot 2), CH29 (la Crique), CH30 (conduite unifiée), CH31 (rebalance difficulté) | Mathieu, après validation device sur `keepy-staging.vercel.app` |
+
 ## Vérifier un déploiement SUR LE SERVICE, jamais dans le log CI seul
 
 Un log CI vert dit que la CI a réussi ; il ne dit pas quel build l'alias
