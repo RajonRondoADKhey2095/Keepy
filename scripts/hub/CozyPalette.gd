@@ -56,6 +56,25 @@ const TRACK: Color = Color(0.74, 0.60, 0.44)
 const TRACK_EDGE: Color = Color(0.93, 0.90, 0.80)
 const KERB_RED: Color = Color(0.90, 0.30, 0.26)
 const KERB_WHITE: Color = Color(0.96, 0.95, 0.90)
+## CH29: the cove ("la Crique"). Pale warm sand in two tones plus the wet
+## strip, and the two sea-bed tones the water's alpha shows through. The
+## painted rectangle is (xmin, zmin, xmax, zmax) and runs far past the
+## walkable cove (HubRegion.COVE_MIN/MAX) on purpose: everything under the
+## sea disc has to be sand or bed, never lawn -- see cozy_ground.gdshader.
+## The sea's centre and radius are NOT restated here: ground_material()
+## reads HubRegion.SEA_CENTRE / SEA_RADIUS, the one owner of that disc.
+const SAND_A: Color = Color(0.93, 0.85, 0.62)
+const SAND_B: Color = Color(0.86, 0.77, 0.55)
+const SAND_WET: Color = Color(0.74, 0.64, 0.46)
+const SEA_BED: Color = Color(0.24, 0.52, 0.60)
+const SEA_SHALLOW_BED: Color = Color(0.62, 0.80, 0.70)
+const SEA_SHALLOW: Color = Color(0.46, 0.84, 0.86, 0.72)
+const SEA_DEEP: Color = Color(0.26, 0.66, 0.82, 0.86)
+## zmin -200: from the beach the camera looks south (-z), and the circuit's
+## mown stripes ran under the haze past z = -150 (capture "sea", first
+## pass) -- the whole east flank is sand down to the wall's box edge.
+const COVE_RECT: Vector4 = Vector4(44.0, -200.0, 180.0, -86.0)
+const COVE_EDGE_W: float = 3.0
 const LAVENDER_FIELDS: Array[Vector4] = [
 	Vector4(-32.0, -120.0, -8.0, -100.0),
 	Vector4(-30.0, -97.0, -10.0, -89.0),
@@ -198,16 +217,19 @@ const PATH: Color = Color(0.84, 0.74, 0.52)
 ## Water material for a disc of model-space `radius` (foam rim), or a
 ## ribbon when 0. `two_sided` for the stream, whose ribbon is one-sided
 ## geometry the old material drew with culling off.
-static func water_material(radius: float, two_sided: bool = false) -> ShaderMaterial:
-	var key := "%0.3f/%s" % [radius, two_sided]
+## CH29: `rim_width` is the foam rim's share of the radius (default = what
+## every lake drew); `tones` overrides the shallow/deep pair (the sea's).
+static func water_material(radius: float, two_sided: bool = false, rim_width: float = 0.10, tones: Array = []) -> ShaderMaterial:
+	var key := "%0.3f/%s/%0.3f/%d" % [radius, two_sided, rim_width, tones.size()]
 	if not _water.has(key):
 		var mat := ShaderMaterial.new()
 		mat.shader = WATER_SHADER
 		mat.set_shader_parameter("noise_tex", noise_texture())
-		mat.set_shader_parameter("shallow", WATER_SHALLOW)
-		mat.set_shader_parameter("deep", WATER_DEEP)
+		mat.set_shader_parameter("shallow", tones[0] if tones.size() == 2 else WATER_SHALLOW)
+		mat.set_shader_parameter("deep", tones[1] if tones.size() == 2 else WATER_DEEP)
 		mat.set_shader_parameter("foam", WATER_FOAM)
 		mat.set_shader_parameter("radius", radius)
+		mat.set_shader_parameter("rim_width", rim_width)
 		mat.set_shader_parameter("ribbon", 1.0 if two_sided else 0.0)
 		mat.set_shader_parameter("haze_color", HAZE)
 		mat.set_shader_parameter("haze_density", HAZE_DENSITY)
@@ -261,6 +283,16 @@ static func ground_material() -> ShaderMaterial:
 		mat.set_shader_parameter("circuit_edge_w", CIRCUIT_EDGE_W)
 		mat.set_shader_parameter("lawn_a", LAWN_A)
 		mat.set_shader_parameter("lawn_b", LAWN_B)
+		# CH29: the cove.
+		mat.set_shader_parameter("cove_rect", COVE_RECT)
+		mat.set_shader_parameter("cove_edge_w", COVE_EDGE_W)
+		mat.set_shader_parameter("sand_a", SAND_A)
+		mat.set_shader_parameter("sand_b", SAND_B)
+		mat.set_shader_parameter("sand_wet", SAND_WET)
+		mat.set_shader_parameter("sea_bed", SEA_BED)
+		mat.set_shader_parameter("sea_shallow_bed", SEA_SHALLOW_BED)
+		mat.set_shader_parameter("sea_centre", Vector2(HubRegion.SEA_CENTRE.x, HubRegion.SEA_CENTRE.z))
+		mat.set_shader_parameter("sea_radius", HubRegion.SEA_RADIUS)
 		_ground = mat
 	return _ground
 

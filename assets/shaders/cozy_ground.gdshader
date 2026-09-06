@@ -58,6 +58,24 @@ uniform float circuit_edge_w = 3.0;
 uniform vec3 lawn_a : source_color = vec3(0.58, 0.82, 0.40);
 uniform vec3 lawn_b : source_color = vec3(0.50, 0.75, 0.35);
 uniform float lawn_stripe = 6.0;
+// CH29: the cove. A sand band inside a rectangle (xmin, zmin, xmax, zmax)
+// feathered by the big noise like the other bands, with wind ripples
+// (soft diagonal stripes) so a wide flat beach is not one flat colour;
+// wet sand toward the waterline; and under the sea disc the ground turns
+// into a sea BED that darkens from the shore outward, so the alpha water
+// above reads shallow at the beach and deep further out -- the gradient
+// every beach in this register is drawn with. Sand under the water is
+// what the water's alpha shows through; a green lawn there would tint the
+// whole sea, which is why the rectangle runs far past the walkable cove.
+uniform vec4 cove_rect = vec4(0.0, 0.0, 0.0, 0.0);
+uniform float cove_edge_w = 3.0;
+uniform vec3 sand_a : source_color = vec3(0.93, 0.85, 0.62);
+uniform vec3 sand_b : source_color = vec3(0.86, 0.77, 0.55);
+uniform vec3 sand_wet : source_color = vec3(0.74, 0.64, 0.46);
+uniform vec3 sea_bed : source_color = vec3(0.24, 0.52, 0.60);
+uniform vec3 sea_shallow_bed : source_color = vec3(0.62, 0.80, 0.70);
+uniform vec2 sea_centre = vec2(0.0, 0.0);
+uniform float sea_radius = 0.0;
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
 uniform float haze_density = 0.018;
 uniform float haze_start = 6.0;
@@ -117,6 +135,23 @@ void fragment() {
 	vec3 lawn = mix(lawn_a, lawn_b, mow);
 	lawn *= 1.0 + (big - 0.5) * 0.10;
 	col = mix(col, lawn, circuit);
+	// CH29: the cove's sand and sea bed, after the lawn (they never meet:
+	// the sand starts at x = 44, the lawn stops at x = 50 but z < -134).
+	if (cove_rect.z > cove_rect.x) {
+		float inside = min(min(p.x - cove_rect.x, cove_rect.z - p.x), min(p.y - cove_rect.y, cove_rect.w - p.y));
+		float cove = smoothstep(0.0, cove_edge_w, inside + (big - 0.5) * 5.0);
+		float ripple = smoothstep(0.35, 0.65, 0.5 + 0.5 * sin((p.x * 0.9 + p.y * 0.25) * 2.2 + (small - 0.5) * 4.0));
+		vec3 sand = mix(sand_a, sand_b, ripple * 0.55 + (0.5 - big) * 0.3);
+		if (sea_radius > 0.0) {
+			float d = length(p - sea_centre) - sea_radius;
+			float wetness = 1.0 - smoothstep(0.0, 3.5, d + (small - 0.5) * 1.0);
+			sand = mix(sand, sand_wet, wetness * 0.85);
+			float depth = smoothstep(0.0, 9.0, -d);
+			vec3 bed = mix(sea_shallow_bed, sea_bed, depth);
+			sand = mix(sand, bed, 1.0 - smoothstep(-0.6, 0.6, d));
+		}
+		col = mix(col, sand, cove);
+	}
 	col *= 1.0 + (small - 0.5) * 2.0 * detail_amount;
 	// Fine mottle (grass clumps) close to the camera; mipmapped away far.
 	float fine = texture(noise_tex, p / 1.7 + vec2(0.13, 0.91)).r;

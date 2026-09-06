@@ -1038,3 +1038,298 @@ Le feu de camp : 3 rouges au premier passage, 9 au second (machine chargée par 
 | P2 — échelle (arbre final `151c73a`) | `8e08530` | ~21:20 | `1788643519` → **21:25:19** | 21:27:13, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 21:27:13 |
 
 Le commit de documentation qui suit (journal, `CLAUDE.md`, index) ne change aucune ressource Godot : son run n'est pas relu, c'est assumé.
+
+# CH29 — LA CRIQUE : cinquième zone, réseau étendu, char à voile (nuit du 5 au 6 septembre 2026)
+
+## Ouverture (00:30 UTC)
+
+Session carte blanche nocturne, seule sur le dépôt. `git fetch --all --prune`
+au début : `origin/staging` = `05fd142` (V8 karting lot 2), `origin/main` =
+`ef005da`, `main` ancêtre de `staging` (12 commits d'écart, tous karting/doc).
+Aucune branche distante plus récente que `staging` elle-même — pas de session
+concurrente. Branche de travail `claude/hub-fifth-zone-transport-3nkix4`
+recréée sur `origin/staging` ; merge sur `staging` en fin de lot (palier 1,
+non gaté), `main` intouché.
+
+Outillage : ni `godot4` ni Blender dans le sandbox. Éditeur Godot 4.3-stable
+et templates d'export téléchargés (taille du `.tpz` vérifiée contre le
+`Content-Length` : 1 073 228 327 octets, complet du premier coup), `bpy 4.2.0`
+installé par pip. **Le rendu Blender (EEVEE/Workbench) est impossible ici** :
+`libEGL.so.1` absent et `apt` sans réseau. Conséquence : la planche de rendu
+des assets se fait **dans Godot** (sonde jetable sous `xvfb + opengl3`), ce
+qui est de toute façon le seul rendu qui compte.
+
+## Recon topologie (ce qui est réellement là)
+
+Quatre zones en CHAÎNE le long de −z, toutes à y = 0 (`HubRegion`) :
+
+| zone | rect x | rect z | porte (HubWorld) |
+|---|---|---|---|
+| 0 plateau | ±35 | ±35 (+ lobe nord r 12) | — |
+| 1 Vallon d'automne | −33..33 | −78..−42 | `CORRIDOR_GATE` (−28, −38.5), couloir x −33..−23 |
+| 2 Lande aux Moulins | −38..38 | −126..−86 | `MOOR_GATE` (12, −82), couloir x 6..18 |
+| 3 Circuit | −50..50 | −200..−134 | `CIRCUIT_GATE` (−8, −130), couloir x −14..−2 |
+
+Transport : ligne Or (10.5, 14.5) → (11, −55) [plateau → vallon], ligne Ciel
+(−14, −50) → (−6, −110) [vallon → lande], Sautillon garé (0.5, 4.4). Vitesse
+à pied 5,36 u/s (`HOP_DISTANCE 1.5 / HOP_DURATION 0.28`, jamais touchée).
+Montgolfière 13 u/s + 2,4 s. Le Circuit n'est desservi par rien.
+
+`_gates_between(a, b)` est une CHAÎNE linéaire (`[CORRIDOR, MOOR, CIRCUIT]`)
+et son commentaire le dit : « a zone OFF the chain needs one [planner] ». La
+5e zone est la première hors chaîne.
+
+## Arbitrages pris seul
+
+1. **Jonction : la Lande aux Moulins, côté EST (x = 38).** Le Vallon est
+   déjà dense (Arbre-Mère, sanglier, tas du chat, deux docks) ; la Lande est
+   le carrefour du réseau lointain (dock Ciel + couloir Circuit). Couloir
+   x 38..44, z −100..−92 ; porte `COVE_GATE` (41, −96). La station du castor
+   (21.5, −93.5) est à 16 u à l'ouest, le champ de lavande 3 (x 22..36,
+   z −122..−98) touche le bord est mais pas le couloir.
+2. **Thème : « la Crique »** — sable pâle chaud, mer turquoise à l'est, phare
+   rouge et blanc (le repère), palmiers, parasols, transats, bouées. Se
+   distingue nettement des trois registres existants (prairie verte, litière
+   d'automne, lande mauve) et du gazon du Circuit, tout en restant VOIE A.
+   Rect x 44..82, z −130..−90 ; mer = disque r 48 centré (116, −110), rive à
+   x ≈ 68 (milieu) / 72,4 (bords) — une rive concave, c'est-à-dire une crique.
+3. **Interaction propre : les CHÂTEAUX DE SABLE.** Trois emplacements de
+   sable mouillé ; un tap → Keepy y marche → un château sort du sable ; un
+   second tap l'agrandit (3 étapes, drapeau au dernier). Sous la pluie et
+   l'orage, les châteaux FONDENT (échelle → 0, puis disparition). Aucun
+   personnage, une phrase sans texte, et la météo n'est pas inerte.
+4. **Réaction météo supplémentaire** : la lampe du phare s'allume et son
+   faisceau tourne sous pluie/orage ; les bouées tanguent avec le `wind` ;
+   la mer réutilise le shader d'eau (paramètre `rain` déjà câblé).
+5. **Réseau existant étendu : une 3e ligne de montgolfière « Corail »**
+   (le `balloon_2.glb` rose déjà dans le dépôt, jamais utilisé), directe
+   PLATEAU → CRIQUE. Choix contre « prolonger la chaîne depuis la Lande » :
+   le trajet le plus long de la carte est spawn → 5e zone, et une ligne
+   directe le ramène sous 15 s là où la chaîne Or+Ciel+X ferait trois vols.
+6. **Nouveau transport : le CHAR À VOILE.** Déplacement LIBRE et CONTINU au
+   sol (le créneau non couvert) : monté comme le Sautillon (tap, marche,
+   monte), mais chaque tap devient une GLISSADE rectiligne sans arc ni
+   squash, plus rapide, et sa vitesse suit le `wind` de la météo (voile).
+   Nature distincte des deux existants : trajet fixe (montgolfière), bond
+   (Sautillon), glisse continue (char). Caméra figée du hub, inchangée.
+   Implémenté comme un second « véhicule » du modificateur de hop de
+   `KeepyHopper` (aucun nouvel état), donc borné par la région par
+   construction : il ne peut ni sortir de la carte ni déposer Keepy hors sol.
+   Siège : constante `YACHT_SEAT_Y` posée une fois dans `HubTransport`.
+7. **Persistance** : `WorldSave` passe en **schéma 2** avec `_migrate(1→2)`
+   qui ajoute le bloc `cove` (position du char, châteaux par emplacement,
+   visite) ; une sauvegarde v1 se charge en `migrated` et garde tout.
+8. **Pas de GPUParticles3D** : le brief les dit validés, le dépôt n'en
+   contient AUCUN (`grep` : zéro occurrence, et `CozyScatter` documente
+   « no GPUParticles3D on purpose »). Je ne fonde pas un effet sur un acquis
+   que le dépôt contredit ; les bouffées de sable sont des `MeshInstance3D`
+   tweenés.
+9. **P2 (terrier + ModelSlot)** : un terrier de dune (ouverture sombre,
+   linteau de bois flotté, serviette pliée, seau et pelle) au coin sud-ouest
+   de la plage, avec un `ModelSlot` inerte devant. Fait si le temps le
+   permet après P0/P1.
+
+## Recon mesurée — le cadre décide de tout (00:55 UTC)
+
+`CoveRecon` (jetable, xvfb + opengl3, `unproject_position` sur la vraie
+caméra) : depuis la Lande est (30, −96) **rien** de la Crique n'est dans
+l'image (phare de 9 u à x écran 1513/1080) ; depuis l'embouchure du couloir
+(44, −96) le phare est à (989, 424) — cadré — et le char à (907, 561) ;
+depuis le dock (52, −98) le phare est à (697, 441). **La mer, centrée
+(116, −110), était hors cadre depuis toutes ces stations** (x écran 1628 à
+2000). Déplacée à (108, −110) : rive à x = 60 ; depuis le dock l'eau entre
+dans l'image à droite. Une plage dont l'eau n'est jamais dans l'image est
+un parking.
+
+Balayage du plateau pour le dock Corail (grille 1 u, région, sec, hors
+chemins, dégagement de toute emprise) : derrière le spawn rien ne dégage
+plus de 1,7 u (le miroir du dock Or, (−10,5 ; 14,5), dégage 0,26) ;
+(−13, −33) dégage 2,90 u et est dans le cadre du spawn. Dégagements des
+docks existants, mêmes termes : Or 3,20 / Or-vallon 2,61 / Ciel-vallon 6,68 /
+Ciel-lande 10,42.
+
+## Ce que les sondes ont trouvé (01:00 → 01:40 UTC)
+
+`CoveProbe`, neuf phases, `ProbeWatchdog.arm` en première ligne. Ce que la
+première passe a attrapé, dans l'ordre :
+
+1. **Emprises qui se chevauchent** (4) : le spot 2 des châteaux mordait
+   dans l'emprise du phare, la chaise du maître-nageur dans le spot 1, et
+   les transats dans leurs parasols (voulu — la sonde exempte désormais les
+   paires parasol/transat, et dit pourquoi).
+2. **La route passait dans le repos du castor** (`HubBeaver.REST (20,
+   −90,2)`, r 1,1) et finissait sous le deck du dock. Tracé refait au nord
+   du repos, arrêté à la marche du dock.
+3. **Le 2e tap sur un château ne construisait rien** : marche de longueur
+   nulle → `became_idle` synchrone dans `hop_to()` → `_on_keepy_idle`
+   efface l'intention AVANT le `_try_castle()` immédiat. Intention armée
+   après `hop_to()`. Doctrine ajoutée à `CLAUDE.md`.
+4. **La phase char montait sur rien** : ma station de départ (43, −110)
+   était dans la BANDE DE HAIE, hors région, lue zone 0, et le tap routait
+   vers la porte du plateau (−28, −38,5). Défaut de sonde, pas de jeu — mais
+   il dit qu'un point hors région à l'est de la Lande lit « plateau ».
+5. **Le char a roulé 130 u hors carte** : `_hop_via_corridor` passait le
+   point BRUT à `hop_to()` dans le cas intra-zone ; tous les appelants
+   clampent avant, la sonde appelait en direct. Durci : le monde clampe
+   lui-même. Une glisse vers (400, −110) s'arrête maintenant sur x = 74.
+6. **L'échange balle → char** ne passait pas : `vehicle_at()` se retirait
+   dès qu'il était sur UN véhicule. Seul le véhicule monté se retire.
+7. **En run complet, la montgolfière Corail n'attendait plus au dock 0** :
+   en headless `is_position_in_frustum` est toujours faux, la règle de
+   re-mouillage tire à chaque frame, et la phase balloon supposait un état
+   que les phases précédentes avaient défait (0 rouge par phase, 1 en run
+   complet). Garée explicitement. Doctrine ajoutée.
+
+Rouge-avant-vert, cinq neutralisations, fichiers restaurés byte-identiques
+(`cmp`) : `SCHEMA_VERSION` = 1 → 4 rouges ; `_show_castle` retiré du build →
+9 rouges ; `is_gliding()` faux → 7 rouges ; fonte à zéro → 5 rouges ;
+`BRANCH_OF` vide → 4 rouges. À chaque fois les rouges sont exactement les
+assertions qui mesurent la chose neutralisée, et pas d'autres.
+
+Verdict par phase : region 21/21, geometry 39/39, save 17/17, walk 8/8,
+castle 20/20, weather 12/12, yacht 32/32, balloon 10/10, times 4/4 ; run
+complet 163 checks.
+
+## Mesures
+
+**Temps de trajet** (headless, `--fixed-fps 60`, hopper réel ; la marche
+n'a pas changé — références mesurées sur `origin/staging` importé à part) :
+
+| trajet | à pied | avec le lot |
+|---|---|---|
+| spawn → centre Crique (56, −110) | 30,60 s (réf. spawn → (36, −96) : 25,78 s) | 6,52 (marche au dock) + 10,05 (vol Corail) + 1,70 = **18,27 s** |
+| Crique → porte Circuit | 15,30 s | char **7,53 s** |
+| Lande centre → Crique | 11,90 s | char **5,90 s** |
+| porte Circuit → Lande centre | ~10,5 s (réf.) | char **2,38 s** |
+| spawn → dock Ciel (réf.) | 26,63 s | — |
+| spawn → Circuit centre (réf.) | 37,12 s | — |
+
+Vol Corail seul, tap → pieds sur le sable : 636 frames = 10,60 s (118 u).
+Glisse : 10,59 u/s soleil (10,67 attendu), 12,71 u/s orage (facteur 1,20
+mesuré pour 1,25 : le dernier segment court et le premier hop non retimé).
+
+**Triangles `gpu`** (`RenderingServer`, liste opaque, LOD moteur ; captures
+`CozyCapture`, 1080×1920) :
+
+| station | `origin/staging` | branche |
+|---|---|---|
+| spawn (0, 0) | 70 801 | 73 861 (77 135 avant `visibility_range_end = 95` sur les palmiers) |
+| Lande est (30, −100) | 44 525 | 51 803 |
+| couloir (44, −96) | — | 51 799 |
+| dock Crique (52, −98) | — | 48 350 |
+| plage (56, −110) | — | 37 605 |
+
+Le plafond de 50 k est déjà dépassé au spawn sur `staging`. Le +3 060 au
+spawn est le dock Corail, son panneau et la montgolfière rose, DANS le cadre
+par choix.
+
+## Captures — trois corrections après rendu, aucune après relecture
+
+1. **Le phare rendait tout rouge** : une tour d'un seul cylindre peinte en
+   bandes par `y` n'a que deux anneaux à interpoler. Quatre segments.
+2. **Une couronne de palmier plein cadre depuis le couloir** : la ligne de
+   palmiers du bord nord (dedans, puis dehors à 2,2 u) se tenait entre la
+   caméra (8,9 u au nord de Keepy) et lui. Ligne nord supprimée, bande
+   caméra (x 36..66, z −92..−79) interdite à tout arbre du semis et du mur.
+3. **Un parasol plein cadre depuis le dock** : même cause, 1,4 u dans le
+   bord nord. Déplacé à (49,5 ; −107,5). Doctrine ajoutée à `CLAUDE.md`.
+
+Et une quatrième, à la mesure : les rayures tondues du Circuit passaient
+sous la brume au sud de z = −150 depuis la plage ; `COVE_RECT` court à
+z = −200.
+
+**Blender ne rend pas ici** (`libEGL.so.1` absent, `apt` sans réseau) : la
+planche de la famille (22 GLB) est une sonde Godot jetable (`CoveSheet`),
+SubViewport 1800×1000, quatre azimuts/élévations, brume coupée. Et de toute
+façon c'est le rendu du moteur qui compte.
+
+## Rejeu de TOUTES les sondes du dépôt — branche ET `origin/staging` importé à part (01:05 → 02:45 UTC)
+
+73 scènes de `scripts/dev/`, chacune lancée sur les deux arbres avec les
+mêmes flags (`--fixed-fps 60` ; xvfb + `opengl3` pour les 29 sondes qui
+lisent un pixel, une instance de `MultiMesh` ou un point d'écran, headless
+pour les autres), 2 processus en parallèle par arbre sur 4 cœurs, budget
+900 s par sonde. Verdict : **l'ensemble des sondes non vertes est
+IDENTIQUE sur les deux arbres, assertion pour assertion** (même texte de
+`FAIL`, mêmes nombres : « draw nodes 157, expected 144 », « −0,158 u »,
+« 15/16 taps »…), à une exception près, `JumpDodgeRewardAudit` (Chased),
+rouge sur la référence et vert sur la branche — une sonde de gameplay
+tirée au hasard, sans lien avec ce lot. **Zéro régression introduite.**
+Les cinq `timeout 900 s` sont les mêmes des deux côtés et sont de la
+famine CPU sous llvmpipe (« NOT STUCK, JUST SLOW »), pas des blocages ; ils
+n'ont pas été rejoués isolément cette nuit (une heure de plus chacun).
+`ProbeTimeoutAudit` vert : `CoveProbe` compte parmi les sondes armées, et
+les trois sondes jetables (`CoveRecon`, `CoveSheet`, `WalkTimeProbe`) ont
+été supprimées avant le commit.
+
+| sonde | mode | `origin/staging` | branche |
+|---|---|---|---|
+| `ActorWalkerProbe` | headless | vert | vert |
+| `AirEnemyLandingLaneAudit` | headless | vert | vert |
+| `AirHazardAudit` | headless | vert | vert |
+| `AlarmRampAudit` | headless | vert | vert |
+| `AntiFrustrationAudit` | headless | vert | vert |
+| `AssetContractAudit` | headless | vert | vert |
+| `BattleContractProbe` | headless | vert | vert |
+| `BattleDefenseProbe` | headless | vert | vert |
+| `BattleReadabilityProbe` | headless | vert | vert |
+| `BattleStatsProbe` | headless | vert | vert |
+| `CabinProbe` | xvfb | ROUGE | ROUGE |
+| `CampfireFacingProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `ChargerAudit` | headless | vert | vert |
+| `ChargerShapeProbe` | headless | vert | vert |
+| `ComboAudit` | headless | vert | vert |
+| `ComboContrastAudit` | xvfb | vert | vert |
+| `CoveProbe` | headless | — | vert |
+| `DarkPaletteAudit` | xvfb | vert | vert |
+| `DeathModelAudit` | headless | vert | vert |
+| `DecorParallaxProbe` | headless | vert | vert |
+| `DecorStabilityAudit` | xvfb | vert | vert |
+| `DivingBoardProbe` | headless | vert | vert |
+| `EnemyLaneAudit` | headless | vert | vert |
+| `HubPerfBaseline` | xvfb | vert | vert |
+| `JumpDodgeRewardAudit` | headless | ROUGE | vert |
+| `KartProbe` | headless | vert | vert |
+| `LakeMoveCaptureProbe` | xvfb | vert | vert |
+| `LakeMoveReconProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `LakeZoneProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `LakeZoneReconProbe` | xvfb | vert | vert |
+| `LaneFillAudit` | headless | vert | vert |
+| `LevelNavProbe` | xvfb | ROUGE | ROUGE |
+| `LiveRunProbe` | headless | timeout 900 s | timeout 900 s |
+| `OwlFlightProbe` | headless | vert | vert |
+| `OwlProbe` | headless | vert | vert |
+| `PacingAudit` | headless | vert | vert |
+| `ProbeTimeoutAudit` | headless | vert | vert |
+| `PursuerAudit` | headless | vert | vert |
+| `PursuerContrastAudit` | xvfb | vert | vert |
+| `PursuerFramingAudit` | xvfb | timeout 900 s | timeout 900 s |
+| `PursuerPushbackAudit` | headless | vert | vert |
+| `RushFrustrationAudit` | headless | vert | vert |
+| `SeesawProbe` | headless | ROUGE | ROUGE |
+| `ShrinkAudit` | headless | vert | vert |
+| `SpawnLakeCaptureProbe` | xvfb | vert | vert |
+| `SpawnLakeReconProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `SplashSheetProbe` | xvfb | vert | vert |
+| `StomperAudit` | headless | vert | vert |
+| `StomperConflictAudit` | headless | vert | vert |
+| `StreamGeometryProbe` | headless | vert | vert |
+| `StreamRideProbe` | xvfb | vert | vert |
+| `StrikeAudit` | headless | ROUGE | ROUGE |
+| `StrikeContrastAudit` | xvfb | vert | vert |
+| `StrikeFatalContrastAudit` | xvfb | ROUGE | ROUGE |
+| `SwampIdentityAudit` | xvfb | vert | vert |
+| `TrackPropsAudit` | headless | vert | vert |
+| `TracksidePropCensus` | headless | vert | vert |
+| `TurnstileProbe` | headless | ROUGE | ROUGE |
+| `TyrolienneFixedPointsProbe` | xvfb | vert | vert |
+| `V4ClimbProbe` | xvfb | INCONCLUSIVE | INCONCLUSIVE |
+| `V4SaveProbe` | headless | vert | vert |
+| `V4SiteProbe` | headless | vert | vert |
+| `V6CrittersProbe` | xvfb | INCONCLUSIVE | INCONCLUSIVE |
+| `WaterImpactProbe` | xvfb | ROUGE | ROUGE |
+| `WaterTintProbe` | xvfb | ROUGE | ROUGE |
+| `WaterlineOrientationProbe` | xvfb | vert | vert |
+| `ZiplineReconProbe` | xvfb | vert | vert |
+| `ZiplineRideProbe` | xvfb | ROUGE | ROUGE |
+| `ZiplineStructureProbe` | xvfb | ROUGE | ROUGE |

@@ -100,6 +100,8 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _critters: HubCritters = $WorldViewport/SubViewport/World/Critters
 ## v7: the karting coordinator and its HUD.
 @onready var _karting: HubKarting = $WorldViewport/SubViewport/World/Karting
+## CH29: the cove module (sea, lighthouse, sandcastles, burrow slot).
+@onready var _cove: HubCove = $WorldViewport/SubViewport/World/Cove
 @onready var _kart_hud: KartHud = $KartHud
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
 ## v4: the resource counter (always shown -- it is part of the game) and
@@ -714,6 +716,7 @@ func _ready() -> void:
 	_setup_perf()
 	_setup_world_hud()
 	_setup_transport()
+	_setup_cove()
 	_setup_trees()
 	_setup_critters()
 	_setup_karting()
@@ -3084,6 +3087,11 @@ func _process(_delta: float) -> void:
 	_pulse_campfire_marker(here)
 	_mooring.update(here)
 	_transport.update(here)
+	# CH29: the first step onto the cove's sand is remembered (a stat and
+	# a flag WorldSave keeps; nothing gates on it tonight).
+	if not _cove_visited and HubRegion.in_cove(here):
+		_cove_visited = true
+		WorldSave.cove_note_visit()
 
 ## The doorstep marks' approach cue, on HubPortal's own two thresholds.
 ##
@@ -3244,6 +3252,7 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_ballooning = -1
 	_balloon_wait = -1
 	_mounting_ball = false
+	_building_castle = -1
 	_critters.cancel_intents()
 	_karting.cancel_intent()
 	# v3: a tap on HIMSELF while standing still on the ball is "get off".
@@ -3269,6 +3278,14 @@ const MOOR_GATE: Vector3 = Vector3(12.0, 0.0, -82.0)
 ## v7: the third gate, between the moor and the circuit (corridor
 ## x in [-14, -2], z in [-134, -126] -- its midpoint).
 const CIRCUIT_GATE: Vector3 = Vector3(-8.0, 0.0, -130.0)
+## CH29: the fourth gate, between the moor and the cove (corridor
+## x in [38, 44], z in [-100, -92] -- its midpoint). The first gate OFF
+## the chain: see _gates_between.
+const COVE_GATE: Vector3 = Vector3(41.0, 0.0, -96.0)
+## CH29: which chain zone each off-chain zone hangs from. One row today;
+## a table from the first entry (the diving-board lesson).
+const BRANCH_OF: Dictionary = {4: 2}
+const BRANCH_GATE: Dictionary = {4: COVE_GATE}
 const GATE_NEAR: float = 1.5
 ## Remaining waypoints of a cross-zone walk, and the one being walked to.
 var _via_queue: Array[Vector3] = []
@@ -3277,14 +3294,39 @@ var _via_expect: Vector3 = Vector3.INF
 ## The gates a walk from zone `a` to zone `b` has to pass, in order.
 ## Zones are 0 plateau, 1 hollow, 2 moor, 3 circuit, and the map is a
 ## chain 0 -- 1 -- 2 -- 3, so the list is the gates between them, walked
-## forward or backward. Still not a planner; a zone OFF the chain needs one.
+## forward or backward.
+##
+## CH29: the map became a TREE -- the cove (4) hangs off the moor (2) by
+## its own gate. Still not a general planner, but the one shape a tree
+## with one branch needs: a walk that starts in a branch zone first steps
+## through that zone's gate onto its chain zone; a walk that ends in one
+## walks the chain to the branch's chain zone, then through its gate. A
+## second branch is a row in BRANCH_OF / BRANCH_GATE and nothing else.
 static func _gates_between(a: int, b: int) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	if a == b:
+		return out
+	var from: int = a
+	var to: int = b
+	if BRANCH_OF.has(a):
+		out.append(BRANCH_GATE[a])
+		from = int(BRANCH_OF[a])
+	var tail: Array[Vector3] = []
+	if BRANCH_OF.has(b):
+		tail.append(BRANCH_GATE[b])
+		to = int(BRANCH_OF[b])
+	out.append_array(_chain_gates(from, to))
+	out.append_array(tail)
+	return out
+
+## The chain part of _gates_between: gates between two ON-chain zones.
+static func _chain_gates(a: int, b: int) -> Array[Vector3]:
 	var chain: Array[Vector3] = [CORRIDOR_GATE, MOOR_GATE, CIRCUIT_GATE]
 	var out: Array[Vector3] = []
 	if a < b:
 		for i in range(a, b):
 			out.append(chain[i])
-	else:
+	elif a > b:
 		for i in range(a - 1, b - 1, -1):
 			out.append(chain[i])
 	return out
@@ -3307,7 +3349,12 @@ func _hop_via_corridor(point: Vector3) -> void:
 			_via_queue.append(target)
 			_keepy.hop_to(gates[0])
 			return
-	_keepy.hop_to(point)
+	# CH29: the CLAMPED target, not the raw point. Every caller already
+	# hands a clamped destination (HubTapInput clamps before it emits), so
+	# this changes nothing a player can reach -- it closes the one path by
+	# which a raw point could become a destination, which CoveProbe took
+	# (a direct call with (400, -110)) and rode the yacht 130 u off the map.
+	_keepy.hop_to(target)
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
 ## walks to the water and _on_hop_landed boards on arrival -- because that
@@ -3536,6 +3583,9 @@ func _on_hop_landed(position: Vector3) -> void:
 		return
 	if _mounting_ball and _try_mount_ball(position):
 		return
+	# CH29: the landing that finishes a walk to a sandcastle spot builds.
+	if _building_castle >= 0 and _try_castle(position):
+		return
 	# V6: the landing that finishes a walk to an inhabitant mounts it. On
 	# the same terms as the seven above: after the tint and the impact,
 	# before the portals.
@@ -3609,6 +3659,7 @@ func _on_keepy_idle() -> void:
 	_climbing_tree = -1
 	_ballooning = -1
 	_mounting_ball = false
+	_building_castle = -1
 	_critters.cancel_intents()
 	_karting.cancel_intent()
 
@@ -3705,6 +3756,9 @@ var _ballooning: int = -1
 ## waits at a dock. Survives `became_idle`: the wait IS standing still.
 var _balloon_wait: int = -1
 var _mounting_ball: bool = false
+## CH29: which vehicle the walk is toward (HubTransport.VEHICLE_BALL or
+## VEHICLE_YACHT); meaningful only while _mounting_ball is set.
+var _mount_kind: int = HubTransport.VEHICLE_BALL
 
 func _setup_transport() -> void:
 	_transport.setup(_keepy, _camera, _weather)
@@ -3732,6 +3786,7 @@ func _on_tapped_balloon(point: Vector3) -> void:
 	_zipping_solo = false
 	_climbing_tree = -1
 	_mounting_ball = false
+	_building_castle = -1
 	_critters.cancel_intents()
 	_balloon_wait = -1
 	_ballooning = line
@@ -3787,12 +3842,19 @@ func _on_balloon_trip_finished(line: int, dock: int, empty: bool) -> void:
 		_transport.depart(line, dock, false)
 		_balloon_wait = line
 
-## A tap on the parked ball: walk to it and climb on.
+## A tap on the parked ball (or, CH29, the parked yacht): walk to it and
+## climb on. Which one is read off the same `aim` the channel fired on.
 func _on_tapped_vehicle(point: Vector3) -> void:
 	if _fallback_menu.visible or _confirm.is_open():
 		return
 	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree() or _keepy.is_on_owl_flight():
 		return
+	var kind: int = _transport.vehicle_at(point)
+	if kind < 0:
+		_hop_via_corridor(point)
+		return
+	_mount_kind = kind
+	_building_castle = -1
 	_boarding = false
 	_climbing = false
 	_flying = false
@@ -3804,7 +3866,9 @@ func _on_tapped_vehicle(point: Vector3) -> void:
 	_balloon_wait = -1
 	_critters.cancel_intents()
 	_mounting_ball = true
-	_keepy.hop_to(point)
+	# CH29: the yacht lives in the cove, so the walk to it may cross a
+	# gate; the ball is on the plateau and this changes nothing for it.
+	_hop_via_corridor(point)
 	if not _keepy.is_hopping():
 		_try_mount_ball(_keepy.global_position)
 
@@ -3812,11 +3876,71 @@ func _try_mount_ball(position: Vector3) -> bool:
 	if not _mounting_ball:
 		return false
 	var here := Vector3(position.x, 0.0, position.z)
-	if here.distance_to(_transport.ball_position()) > HubTransport.BALL_TAP_RADIUS:
+	if here.distance_to(_transport.vehicle_position(_mount_kind)) > _transport.vehicle_tap_radius(_mount_kind):
 		return false
 	_mounting_ball = false
 	_critters.cancel_intents()
+	# CH29: one vehicle at a time. Arriving at the yacht on the ball drops
+	# the ball here (the off-screen rule takes it home later), and vice
+	# versa -- the mount below refuses while another vehicle is held.
+	_keepy.dismount_vehicle()
+	if _mount_kind == HubTransport.VEHICLE_YACHT:
+		return _keepy.mount_vehicle(_transport.yacht_node(), HubTransport.YACHT_SEAT_Y,
+			HubTransport.YACHT_GLIDE_DISTANCE, HubTransport.YACHT_GLIDE_S)
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
+
+## ---- CH29: the cove -- sandcastle spots -----------------------------------
+## Intent on the boat's model, like the ball's: set by the tap, tried on
+## every landing AND immediately, cleared by any other tap and when the
+## chain runs out. The building itself is HubCove's (a bounded tween).
+var _building_castle: int = -1
+var _cove_visited: bool = false
+
+func _setup_cove() -> void:
+	_cove.setup(_keepy, _weather)
+	_tap.tapped_castle.connect(_on_tapped_castle)
+	_cove_visited = WorldSave.cove_visited()
+
+func _on_tapped_castle(point: Vector3, index: int) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_tree() or _keepy.is_on_owl_flight():
+		return
+	if index < 0 or index >= _cove.spot_count():
+		_hop_via_corridor(point)
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = false
+	_critters.cancel_intents()
+	_karting.cancel_intent()
+	# The intent is armed AFTER the hop is issued, not before: a walk of
+	# zero length (he already stands at the approach point -- the second
+	# and third taps on a castle) emits `became_idle` synchronously inside
+	# hop_to(), and _on_keepy_idle clears every intent. Armed first, the
+	# intent died before the immediate try below could read it; CoveProbe's
+	# "second tap: stage 2" is what found it.
+	_hop_via_corridor(_cove.approach_point(index))
+	_building_castle = index
+	if not _keepy.is_hopping():
+		_try_castle(_keepy.global_position)
+
+## Builds if the landing is within reach of the spot; the intent SURVIVES
+## a landing that is not there yet (the boat's measured defect).
+func _try_castle(position: Vector3) -> bool:
+	if _building_castle < 0:
+		return false
+	if not _cove.build_castle(_building_castle, position):
+		return false
+	_building_castle = -1
+	return true
 
 ## ---- V7: karting ----------------------------------------------------------
 ## One coordinator (HubKarting) owns the track, the karts and the mode
@@ -3854,6 +3978,7 @@ func _on_tapped_kart(point: Vector3) -> void:
 	_ballooning = -1
 	_balloon_wait = -1
 	_mounting_ball = false
+	_building_castle = -1
 	_critters.cancel_intents()
 	_keepy.dismount_vehicle()
 	var target: Vector3 = _karting.arm()
@@ -3891,6 +4016,7 @@ func _on_tapped_critter(point: Vector3, kind: StringName, index: int) -> void:
 	_ballooning = -1
 	_balloon_wait = -1
 	_mounting_ball = false
+	_building_castle = -1
 	var target: Vector3 = _critters.arm(kind, index, point)
 	_hop_via_corridor(target)
 	# Already standing beside it: the zero-length walk emits no landing.
@@ -3970,6 +4096,7 @@ func _on_tapped_tree(point: Vector3, index: int) -> void:
 	_ballooning = -1
 	_balloon_wait = -1
 	_mounting_ball = false
+	_building_castle = -1
 	_critters.cancel_intents()
 	_climbing_tree = index
 	_hop_via_corridor(_trees.foot_point(index))

@@ -1450,12 +1450,16 @@ func _advance() -> void:
 
 func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	# v3: on the vehicle the hop is longer, higher and a touch slower.
-	_hop_height = VEHICLE_HOP_HEIGHT if _vehicle != null else HOP_HEIGHT
+	# CH29: on a GLIDING vehicle it is flat, and its length and pace are
+	# the vehicle's own.
+	var gliding: bool = is_gliding()
+	_hop_height = 0.0 if gliding else (VEHICLE_HOP_HEIGHT if _vehicle != null else HOP_HEIGHT)
 	# Reset alongside the height, and for the same reason: a sloped arc
 	# left over from a dive must not leak into the ordinary hop after it.
 	_hop_from_y = 0.0
 	_hop_to_y = 0.0
-	var step: float = minf(VEHICLE_HOP_DISTANCE if _vehicle != null else HOP_DISTANCE, delta.length())
+	var reach: float = _vehicle_glide_step if gliding else (VEHICLE_HOP_DISTANCE if _vehicle != null else HOP_DISTANCE)
+	var step: float = minf(reach, delta.length())
 	_hop_from = here
 	_hop_to = here + delta.normalized() * step
 
@@ -1472,7 +1476,14 @@ func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	# which a property tween can express. Position, scale and pitch are all
 	# written from the same t, so they cannot drift apart.
 	_hop_tween = create_tween()
-	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, VEHICLE_HOP_DURATION if _vehicle != null else HOP_DURATION)
+	var seconds: float = HOP_DURATION
+	if gliding:
+		# A short last segment keeps the glide's SPEED, not its duration:
+		# 0.3 s for 0.2 u would read as a stall at the finish line.
+		seconds = _vehicle_glide_s * (step / _vehicle_glide_step) / _vehicle_speed
+	elif _vehicle != null:
+		seconds = VEHICLE_HOP_DURATION
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, maxf(seconds, 0.02))
 	_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
 
 func _face(direction: Vector3) -> void:
@@ -1499,6 +1510,14 @@ func _apply_hop(t: float) -> void:
 	# it lands exactly ON the base line, whatever that line is.
 	var height: float = _hop_height * 4.0 * t * (1.0 - t)
 	global_position = Vector3(ground.x, base + height + _vehicle_lift, ground.z)
+	if is_gliding():
+		# CH29: a glide has no arc, so no squash and no pitch either -- a
+		# body that squashed on a flat roll would read as bouncing on the
+		# spot. The vehicle keeps its own shape for the same reason.
+		_body.scale = _base_scale
+		_body.rotation_degrees.x = _base_pitch
+		_place_vehicle(ground, base, Vector3.ONE)
+		return
 	_body.scale = _squash_at(t)
 	_body.rotation_degrees.x = _base_pitch - PITCH_DEG * sin(PI * t)
 	# The vehicle is written in the SAME call as its rider (carrier-then-
@@ -1574,6 +1593,14 @@ var _carrier_seat: Vector3 = Vector3.ZERO
 
 var _vehicle: Node3D = null
 var _vehicle_lift: float = 0.0
+## CH29: a GLIDING vehicle (the sand yacht). When `_vehicle_glide_step` is
+## set, every hop is flat (no arc, no squash, no pitch), `_vehicle_glide_step`
+## long and `_vehicle_glide_s / _vehicle_speed` short -- a chain of them is
+## a continuous roll. The numbers are the vehicle's, handed in at mount;
+## the speed factor is pushed in per frame by whoever reads the weather.
+var _vehicle_glide_step: float = 0.0
+var _vehicle_glide_s: float = 0.0
+var _vehicle_speed: float = 1.0
 
 ## Hop geometry while on the vehicle: 2.7 u per hop in 0.34 s is 7.9 u/s
 ## against 5.4 u/s on foot (x1.48), with an arc almost twice as tall -- the
@@ -1587,6 +1614,20 @@ func is_on_carrier() -> bool:
 
 func is_on_vehicle() -> bool:
 	return _vehicle != null
+
+## CH29: true while the mounted vehicle glides rather than bounces.
+func is_gliding() -> bool:
+	return _vehicle != null and _vehicle_glide_step > 0.0
+
+## CH29: the vehicle node he rides, or null.
+func vehicle_node() -> Node3D:
+	return _vehicle
+
+## CH29: the wind's multiplier on a glide's pace (1.0 = the authored pace).
+## Ignored by a bouncing vehicle. Takes effect on the NEXT hop: a hop in
+## flight is one tween and is never retimed mid-air (the commit rule).
+func set_vehicle_speed(factor: float) -> void:
+	_vehicle_speed = clampf(factor, 0.25, 4.0)
 
 ## Puts Keepy on `carrier` at `seat` (carrier-local) and hands the body
 ## over. Refused from any state but IDLE, on mount_owl's terms.
@@ -1657,13 +1698,16 @@ func _on_carrier_dismount_finished() -> void:
 ## Climbs onto `vehicle` (a Node3D drawn by someone else) and rides it from
 ## here on: every hop carries it. `lift` is how high its top is above the
 ## ground -- his feet stand there. Refused unless he is standing still.
-func mount_vehicle(vehicle: Node3D, lift: float) -> bool:
+func mount_vehicle(vehicle: Node3D, lift: float, glide_step: float = 0.0, glide_s: float = 0.0) -> bool:
 	if vehicle == null or not is_instance_valid(vehicle):
 		return false
 	if _state != State.IDLE or _vehicle != null:
 		return false
 	_vehicle = vehicle
 	_vehicle_lift = maxf(lift, 0.0)
+	_vehicle_glide_step = maxf(glide_step, 0.0) if glide_s > 0.0 else 0.0
+	_vehicle_glide_s = maxf(glide_s, 0.0)
+	_vehicle_speed = 1.0
 	var ground := Vector3(global_position.x, 0.0, global_position.z)
 	global_position = ground + Vector3(0.0, _vehicle_lift, 0.0)
 	_place_vehicle(ground, 0.0, Vector3.ONE)
@@ -1678,6 +1722,9 @@ func dismount_vehicle() -> void:
 	_place_vehicle(ground, 0.0, Vector3.ONE)
 	_vehicle = null
 	_vehicle_lift = 0.0
+	_vehicle_glide_step = 0.0
+	_vehicle_glide_s = 0.0
+	_vehicle_speed = 1.0
 	if _state == State.IDLE:
 		global_position = ground
 	vehicle_dismounted.emit()

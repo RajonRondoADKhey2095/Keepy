@@ -1,4 +1,4 @@
-[gd_scene load_steps=33 format=3]
+[gd_scene load_steps=34 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -20,6 +20,7 @@
 [ext_resource type="Script" path="res://scripts/hub/HubKarting.gd" id="26"]
 [ext_resource type="Script" path="res://scripts/hub/kart/KartHud.gd" id="27"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
+[ext_resource type="Script" path="res://scripts/hub/HubCove.gd" id="28"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
 [ext_resource type="PackedScene" path="res://assets/models/keepy_squirrel_hero.glb" id="10"]
@@ -139,6 +140,9 @@ magpie_scene = ExtResource("15")
 [node name="Transport" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("21")
 
+[node name="Cove" type="Node3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("28")
+
 [node name="Trees" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("23")
 
@@ -223,6 +227,7 @@ transport_path = NodePath("../WorldViewport/SubViewport/World/Transport")
 trees_path = NodePath("../WorldViewport/SubViewport/World/Trees")
 critters_path = NodePath("../WorldViewport/SubViewport/World/Critters")
 karting_path = NodePath("../WorldViewport/SubViewport/World/Karting")
+cove_path = NodePath("../WorldViewport/SubViewport/World/Cove")
 
 [node name="Mooring" type="Node" parent="."]
 script = ExtResource("12")

@@ -20,6 +20,17 @@ extends Node
 ##     "stats": {"climbs": int, "shakes": int, "picked": int}
 ##   }
 ##
+## SCHEMA v2 (CH29, 6 septembre 2026) -- the first real bump. Adds ONE
+## block, and changes the meaning of nothing that v1 carried:
+##
+##     "cove": {"yacht": [x, z] | null, "castles": {"<spot>": stage}, "visited": bool}
+##
+## `_migrate(1 -> 2)` writes the block's defaults into a v1 document; every
+## v1 field is kept as it was. A v1 save therefore boots as "migrated" with
+## its counts intact and an empty cove -- CoveProbe writes a real v1 file
+## and asserts exactly that (V4SaveProbe's fixtures name SCHEMA_VERSION
+## rather than a literal, so they follow the bump).
+##
 ## Tree stock RECHARGES ON THE WALL CLOCK, lazily: a tree entry stores the
 ## stock it had the last time it changed and WHEN, and `tree_stock()` adds
 ## one nut per TREE_RECHARGE_S elapsed since, capped at TREE_CAPACITY. A
@@ -47,7 +58,7 @@ var SAVE_PATH_OVERRIDE: String = ""
 
 func _path() -> String:
 	return SAVE_PATH if SAVE_PATH_OVERRIDE.is_empty() else SAVE_PATH_OVERRIDE
-const SCHEMA_VERSION: int = 1
+const SCHEMA_VERSION: int = 2
 
 ## How many nuts a climbable tree holds when full, and the wall-clock
 ## seconds it takes to grow ONE back. Two minutes: long enough that a tree
@@ -165,7 +176,61 @@ func tree_take(id: String) -> bool:
 ## V6: one more of a named stat (the inhabitants' counters). Keys are
 ## listed in STAT_KEYS so _sanitise keeps them; an unknown key is refused
 ## rather than invented.
-const STAT_KEYS: Array[String] = ["climbs", "shakes", "picked", "cat_found", "boar_digs", "fawn_nuzzles", "beaver_trades", "kart_laps", "kart_races", "kart_wins"]
+const STAT_KEYS: Array[String] = ["climbs", "shakes", "picked", "cat_found", "boar_digs", "fawn_nuzzles", "beaver_trades", "kart_laps", "kart_races", "kart_wins", "castles_built", "yacht_rides", "cove_visits"]
+
+## ---- CH29 (schema 2): the cove -------------------------------------------
+## The yacht's resting place (INF when it has never left its park), the
+## castle stage per spot (0..3, 0 = empty, written as an int keyed by the
+## spot index as a string -- JSON keys are strings), and whether the cove
+## was ever entered. Melting progress is NOT stored: see HubCove.
+signal cove_changed()
+
+func cove_yacht() -> Vector3:
+	var cove: Dictionary = _data.get("cove", {})
+	var at: Variant = cove.get("yacht", null)
+	if at is Array and (at as Array).size() >= 2:
+		return Vector3(float(at[0]), 0.0, float(at[1]))
+	return Vector3.INF
+
+func cove_set_yacht(at: Vector3) -> void:
+	_cove_block()["yacht"] = [snappedf(at.x, 0.01), snappedf(at.z, 0.01)]
+	_mark()
+	cove_changed.emit()
+
+func cove_castles() -> Dictionary:
+	var cove: Dictionary = _data.get("cove", {})
+	return (cove.get("castles", {}) as Dictionary).duplicate()
+
+func cove_castle_stage(spot: int) -> int:
+	return int(cove_castles().get(str(spot), 0))
+
+## Stage 0 removes the entry rather than storing a zero.
+func cove_set_castle(spot: int, stage: int) -> void:
+	var castles: Dictionary = _cove_block()["castles"]
+	if stage <= 0:
+		castles.erase(str(spot))
+	else:
+		castles[str(spot)] = clampi(stage, 1, 3)
+	_mark()
+	cove_changed.emit()
+
+func cove_visited() -> bool:
+	return bool(_data.get("cove", {}).get("visited", false))
+
+func cove_note_visit() -> void:
+	if not cove_visited():
+		_cove_block()["visited"] = true
+		_data["stats"]["cove_visits"] = int(_data["stats"].get("cove_visits", 0)) + 1
+		_mark()
+		cove_changed.emit()
+
+func _cove_block() -> Dictionary:
+	if not (_data.get("cove", null) is Dictionary):
+		_data["cove"] = _cove_defaults()
+	return _data["cove"]
+
+static func _cove_defaults() -> Dictionary:
+	return {"yacht": null, "castles": {}, "visited": false}
 
 ## ---- v7: karting ---------------------------------------------------------
 ## Best lap per TRACK ID, in milliseconds (an int survives JSON exactly; a
@@ -265,7 +330,7 @@ func _defaults() -> Dictionary:
 		"resources": res,
 		"trees": {},
 		"ground": [],
-		"stats": {"climbs": 0, "shakes": 0, "picked": 0, "cat_found": 0, "boar_digs": 0, "fawn_nuzzles": 0, "beaver_trades": 0},
+		"stats": {"climbs": 0, "shakes": 0, "picked": 0, "cat_found": 0, "boar_digs": 0, "fawn_nuzzles": 0, "beaver_trades": 0, "castles_built": 0, "yacht_rides": 0, "cove_visits": 0},
 		# v5: RESERVED for the objects a player will one day PLACE (plants,
 		# craft): a stable id for each, generated from this counter, and
 		# the list itself. Nothing reads or writes them tonight; they exist
@@ -276,6 +341,8 @@ func _defaults() -> Dictionary:
 		"placed": [],
 		# v7: karting. best_ms is {track_id: int ms}.
 		"kart": {"best_ms": {}},
+		# CH29 (schema 2): the cove.
+		"cove": _cove_defaults(),
 	}
 
 func _mark() -> void:
@@ -350,6 +417,11 @@ func _migrate(raw: Dictionary, from_schema: int) -> Dictionary:
 		# Pre-versioned (no "schema" key at all): nothing this file ever
 		# wrote, so treat as empty.
 		out = {}
+	if from_schema < 2:
+		# v1 -> v2 (CH29): the cove block did not exist. Its defaults are
+		# written in; nothing v1 carried is touched or reinterpreted.
+		out["cove"] = _cove_defaults()
+		out["schema"] = 2
 	return out
 
 ## Every field typed and defaulted. A malformed piece is dropped, never the
@@ -414,6 +486,21 @@ func _sanitise(raw: Dictionary) -> Dictionary:
 					"total_ms": maxi(_as_int(last.get("total_ms", 0), 0), 0),
 					"best_lap_ms": maxi(_as_int(last.get("best_lap_ms", 0), 0), 0),
 				}
+	# CH29 (schema 2): the cove. A yacht position is two finite numbers or
+	# nothing; a castle stage is 1..3 keyed by a spot index, else dropped.
+	var cove: Variant = raw.get("cove", {})
+	if cove is Dictionary:
+		var at: Variant = cove.get("yacht", null)
+		if at is Array and (at as Array).size() >= 2 and (at[0] is float or at[0] is int) and (at[1] is float or at[1] is int) \
+				and not is_nan(float(at[0])) and not is_nan(float(at[1])) and not is_inf(float(at[0])) and not is_inf(float(at[1])):
+			out["cove"]["yacht"] = [float(at[0]), float(at[1])]
+		var castles: Variant = cove.get("castles", {})
+		if castles is Dictionary:
+			for spot in castles.keys():
+				var stage: int = _as_int(castles[spot], 0)
+				if String(spot).is_valid_int() and stage >= 1 and stage <= 3:
+					out["cove"]["castles"][String(spot)] = stage
+		out["cove"]["visited"] = bool(cove.get("visited", false)) if cove.get("visited", false) is bool else false
 	return out
 
 static func _as_int(value: Variant, fallback: int) -> int:

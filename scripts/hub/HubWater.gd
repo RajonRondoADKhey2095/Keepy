@@ -163,6 +163,8 @@ func _init(builder: HubBuilder, route: HubStreamRoute = null) -> void:
 			StringName("great_lake_%d" % i),
 			lakes[i]["centre"] as Vector3,
 			float(lakes[i]["radius"]))
+	# CH29: the sea, from the same owner (HubRegion) as the lakes.
+	_add_disc(&"sea", HubRegion.SEA_CENTRE, HubRegion.SEA_RADIUS)
 	if route != null and route.is_valid() and _stream_half_width > 0.0:
 		_route = route
 

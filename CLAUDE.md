@@ -1194,6 +1194,79 @@ sauvegarde, entrée), rejouer la table des rides/sondes existants sur les
 DEUX arbres (branche et référence importée à part), jamais sur la branche
 seule.
 
+### ⚠️ LA CAMÉRA SE TIENT 8,9 u AU NORD DE KEEPY — RIEN DE HAUT DANS CETTE BANDE
+
+Corollaire de `HubCamera.OFFSET (0 ; 7,6 ; 8,9)` que le dépôt n'avait
+jamais écrit : tout ce qui est planté **entre 0 et ~10 u au NORD (+z) d'un
+sol marchable** se retrouve **entre l'objectif et le corps** dès que le
+joueur s'approche de ce bord, et remplit le cadre. Mesuré trois fois sur
+la Crique (CH29) : une ligne de palmiers 1,3 u dans le bord nord, puis la
+même ligne 2,2 u au-delà du bord, puis un parasol 1,4 u dans le bord — les
+trois ont rendu une couronne ou une toile **plein cadre** sur capture
+(« corridor », « dock »). Et cette bande n'est **jamais** dans l'image :
+la caméra ne montre que des z inférieurs au sien.
+
+**Règle** : tout prop plus haut que l'herbe se pose à **≥ 10 u au sud** du
+bord nord d'une zone (ou d'un couloir) ; le semis y est interdit
+(`CozyScatter.COVE_CAMERA_BAND`). Un couloir qui débouche vers l'est ou
+l'ouest est le pire cas : le joueur y marche à z constant, la caméra
+balaie toute la bande.
+
+### ⚠️ UNE ZONE LATÉRALE N'EST VISIBLE QUE DEPUIS SON ENTRÉE
+
+La caméra ne tourne pas et le cadre fait ~7 u de large au z de Keepy
+(demi-angle 22,5°, `0,414 × D`). Mesuré (`CoveRecon`, `unproject_position`
+sur la vraie caméra) : depuis la Lande à 22 u de côté, **rien** de la
+Crique n'est dans l'image, phare de 9 u compris ; depuis l'embouchure du
+couloir, le phare l'est parce qu'il est à **12 u de côté pour 28 u
+devant**. Et la mer, centrée 8 u trop à l'est, était hors cadre **depuis
+la plage elle-même** — déplacée après mesure, pas après relecture.
+
+**Règle** : le repère d'une zone hors chaîne se place à moins de
+**0,4 × (distance devant + 8,9)** de côté par rapport à l'axe d'approche,
+et le contenu de la zone (l'eau, ici) à moins de ~8 u du point où le
+joueur se tiendra. Le « macro » d'une zone latérale est son entrée.
+
+### ⚠️ UNE MARCHE DE LONGUEUR NULLE ÉMET `became_idle` — ET CE SIGNAL EFFACE
+
+Pendant de la doctrine « une marche de longueur nulle n'émet pas
+d'atterrissage » : elle émet `became_idle` **synchroniquement, dans
+`hop_to()` même**, et `_on_keepy_idle` efface toutes les intentions. Une
+intention **armée avant** `hop_to()` est donc morte avant le `_try_*()`
+immédiat qui la suit. Payé sur les châteaux de sable (CH29) : le 2e tap,
+fait depuis le point d'approche, ne construisait rien, et seule la sonde
+l'a vu (0,620 au lieu de 0,84). **Armer l'intention APRÈS `hop_to()`**,
+puis tenter immédiatement — dans cet ordre, pour tout hotspot.
+
+### ⚠️ EN HEADLESS, `is_position_in_frustum` EST TOUJOURS FAUX — les règles hors-champ tirent en continu
+
+Le viewport 0×0 du driver dummy (déjà documenté pour `unproject`) a un
+second effet : toute règle « loin ET hors champ » (re-mouillage des
+montgolfières, re-garage de la balle) se déclenche **à chaque frame**.
+Une sonde à phases qui suppose « la montgolfière attend au dock 0 » est
+vraie phase par phase et fausse en un seul run (`CoveProbe`, 163 checks :
+1 rouge en run complet, 0 par phase). **Garer explicitement** ce que la
+phase suppose garé, ou lire l'état au lieu de le supposer.
+
+### ⚠️ LES COULEURS DE SOMMET S'INTERPOLENT ENTRE ANNEAUX
+
+Un cylindre de 6 u avec deux anneaux de sommets (bas, haut) peint « en
+bandes » rouge/blanc par une fonction de `y` rend **entièrement rouge** :
+il n'y a que deux couleurs à interpoler. Le phare de la Crique l'a payé
+sur planche (Godot, première passe). **Une bande de couleur exige ses
+propres anneaux** — un segment de cylindre par bande.
+
+### ⚠️ LE GRAPHE DES ZONES N'EST PLUS UNE CHAÎNE
+
+`HubWorld._gates_between` était une liste `[CORRIDOR, MOOR, CIRCUIT]`
+indexée par numéro de zone, et son propre commentaire annonçait qu'une
+zone hors chaîne exigerait autre chose. La Crique (zone 4) pend de la
+Lande (2) : deux **tables** (`BRANCH_OF`, `BRANCH_GATE`) et une règle
+(porte de la branche d'abord si on en part, en dernier si on y va). Un
+second embranchement est une ligne ; **une zone qui pendrait d'une
+branche** demanderait un vrai parcours d'arbre, et c'est là que la table
+cesse de suffire.
+
 ## Piège payload — `export_filter="all_resources"` embarque TOUT
 
 **Toute ressource du projet part dans le build, qu'une scène la référence ou
@@ -1397,6 +1470,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH24 | Feu de camp interactif — recon puis LOT 1 : canal de tap `tapped_campfire`, aller-retour du blaireau, point d'arrivée de la recon rejoué sur le segment complet et corrigé après un croisement trouvé avec l'anneau de pierres | [`CH24_FEU_INTERACTIF.md`](docs/lots/CH24_FEU_INTERACTIF.md) | 12 | 222 | 4 sept |
 | CH25 | L'ours rejoint le blaireau au feu — recon puis LOT 1 : recon reprouvée par un second script indépendant (même candidat d'arrivée, même conclusion sur le relèvement direct écarté), `BEAR_CAMPFIRE_WALK_RATE` calculé pour synchroniser l'arrivée des deux acteurs, ce qui a débusqué et corrigé à la racine un glissement de pieds de principe dans `HubActorWalker` (un seul taux par acteur pour toute sa vie, avant ce lot), gate balançoire et synchronisation des deux acteurs par un état partagé unique câblés | [`CH25_OURS_FEU.md`](docs/lots/CH25_OURS_FEU.md) | 9 | 407 | 4 sept |
 | CH27 | Karting — lot 1 (circuit, conduite libre, chrono) et **lot 2** (V8 : HUD conduite centré, trois adversaires IA à personnalités, course à feux, classement, collisions, piste à 10 u, chat/castor/faon à la masse de Keepy — récit dans `docs/CARTE_BLANCHE_JOURNAL.md`, section « V8 — KARTING LOT 2 ») | [`CH27_KARTING_LOT1.md`](docs/lots/CH27_KARTING_LOT1.md) | 8 | 170 | 5 sept |
+| CH29 | La Crique — cinquième zone à l'est de la Lande (couloir piéton, porte (41, −96)), mer, phare, châteaux de sable qui fondent sous la pluie, phare qui s'allume, ligne de montgolfière Corail plateau → Crique, **char à voile** (glisse libre au sol, vitesse au vent), `WorldSave` schéma 2 avec migration, graphe des zones en arbre, terrier + `ModelSlot` inerte pour un futur habitant | [`CH29_CRIQUE.md`](docs/lots/CH29_CRIQUE.md) | 1 | — | 5 → 6 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
