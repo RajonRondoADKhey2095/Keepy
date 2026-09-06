@@ -292,6 +292,42 @@ différente**. Le watchdog le dit lui-même (« NOT STUCK, JUST SLOW »).
 Rencontré au moins quatre fois, sur des lots différents. Un banc de traversée
 sans ce flag ne mesure pas le jeu, il mesure la machine.
 
+### ⚠️ UN VERDICT `INCONCLUSIVE` PROPRE N'EST PAS UN GEL -- `ps` ET LE LOG TRANCHENT
+
+CH32 (6 septembre 2026) : `LakeZoneProbe` et `V6CrittersProbe`, relancées
+isolément après un rejeu de promotion qui les avait rapportées
+« inconcluantes », ont produit exactement le message `INCONCLUSIVE` que
+`ProbeWatchdog` est censé produire -- à leur propre budget pile (900 s et
+600 s), après une progression RÉELLE et continue (dizaines de checks verts
+sur plusieurs phases, la diagonale publiée à 66 hops / 18,700 s reproduite
+au chiffre près). `ps` montrait tout ce temps un CPU réel (175-196 %, deux
+threads), et le log continuait de grandir jusqu'à quelques secondes avant
+la coupure.
+
+Ce n'est PAS le signe d'un défaut : c'est ce sandbox qui n'a pas de GPU
+matériel. `--rendering-driver opengl3` sous `xvfb-run` retombe sur Mesa
+llvmpipe (rasterisation logicielle), et une phase qui fait marcher le
+`KeepyHopper` réel sur ~10 trajets rendus de plusieurs secondes chacun ne
+tient simplement pas dans le budget. `ProbeWatchdog` a fait exactement ce
+pour quoi il existe.
+
+**Règle de diagnostic, avant de soupçonner un défaut** : un vrai gel (clock
+figé, deadlock, attente infinie sur un signal) montre un CPU proche de 0 %
+et un log qui s'arrête NET, souvent dès le début de la phase en cause. Une
+sonde simplement trop lente pour ce sandbox montre un CPU actif et un log
+qui continue de grandir jusqu'au bout du budget. Les deux ne se distinguent
+qu'en relisant `ps` et la queue du log AVANT de conclure -- jamais à la
+seule lecture du mot `INCONCLUSIVE` ou `timeout`.
+
+⚠️ **Et un `.tscn` de `scripts/dev/` sans script attaché n'est pas un
+probe.** `SubstituteModel.tscn` (fixture nue pour `AssetContractAudit`,
+explicitement exclue par `ProbeTimeoutAudit.gd`) boucle indéfiniment si on
+la lance comme scène principale -- rien n'y appelle jamais
+`get_tree().quit()`. Un outillage qui énumère les sondes d'un dossier par
+un glob de `.tscn` doit consulter la même liste d'exclusion que
+`ProbeTimeoutAudit`, sous peine de compter une fixture pour une sonde
+gelée.
+
 ### ⚠️ Une sonde dont le SCRIPT ne PARSE pas ne tombe pas vite : elle traîne jusqu'au timeout
 
 Une erreur de parse GDScript empêche la scène de se charger, donc
