@@ -18,75 +18,105 @@ class_name KartDifficulty
 ## to either is visible in the other's terms.
 ##
 ## =====================================================================
-## WHAT EACH LEVER ACTUALLY BUYS -- MEASURED, see docs/lots/CH30_*.md
+## CH31 -- THE SCALE WAS REBUILT, NOT SHIFTED, AND HERE IS WHY
 ##
-##   a_lat      the lateral acceleration a driver accepts in a bend. It is
-##              the DOMINANT lever on this circuit: the omega's 3.40 u
-##              minimum radius means most of the lap is curvature-limited,
-##              not power-limited, so sqrt(a_lat / k) is what sets the lap.
-##   top        how much of the 0..1 boost the driver holds where the
-##              profile allows it: raises the cap toward BOOST_MAX_SPEED
-##              (16.5 u/s) on the straights only. Second lever, and the
-##              one that shows on the long straight where a player watches
-##              the mirrors.
-##   a_brake    the deceleration the backward pass assumes. Higher = the
-##              driver stays on the power later before a bend.
-##   wobble     steer noise. Lower = a tidier line, which is worth real
-##              time because a wobble scrubs speed through SCRUB.
+## CH30 calibrated this table against a "floor" of 21.633 s, described as
+## the fastest lap this vehicle can physically turn here. It was not.
+## RaceReconProbe (CH31) took the three hypotheses of the brief in turn:
+##
+##   (c) REFUTED. The bench loads the live HubWorld.tscn, circuit_1,
+##       230.711 u, the same four entries with the same profiles.
+##   (b) REFUTED. The same opponent alone and in the pack differs by at
+##       most 0.117 s of best lap, and the leash by at most 0.13 s.
+##   (a) CONFIRMED, and it was a yardstick problem. CH30's reference
+##       player and its "floor" were BOTH KartAiDriver profiles -- the
+##       same controller as the opponents, with the same spine-built
+##       speed profile. Its reference lapped 24.400 s, SLOWER than the
+##       cat it was measuring. A bench cannot see that a field is slow
+##       when its yardstick is a member of that field.
+##
+## Two things were repaired before a single number below was touched:
+##
+##   1. THE CEILING. KartAiDriver built its speed profile on the SPINE's
+##      curvature while driving a line up to 3.9 u off it, so at the omega
+##      every driver was pinned to 4.17 u/s. It is now built on the
+##      curvature and the arc length of the line actually planned.
+##   2. THE YARDSTICK. HumanRefDriver (scripts/dev) replaces the
+##      `human_ref` profile: limited preview, gaussian aim and steer
+##      noise, a thumb latency drawn per run, and NO global speed profile
+##      -- a model that can be wrong, measured over n >= 300 runs and
+##      published as a distribution.
+##
+## The scale below is written against THAT reference, and its levers are
+## the ones RaceReconProbe measured to move a lap time.
+##
+## =====================================================================
+## WHAT EACH LEVER BUYS -- and PACE and AGGRESSION are separate on purpose
+##
+##   pace       CH31, and it is the DOMINANT one: a straight multiplier on
+##              the finished speed profile. Measured by DRIVING (the pace
+##              sweep, RaceReconProbe phase B): the same driver holds the
+##              ribbon up to about x1.6 and runs wide at x1.8 -- a lever
+##              with a measured ceiling rather than a guess.
+##   headroom   how much steering authority the driver keeps in hand at
+##              its profile speed. Lower = later, tighter, more committed.
+##              AGGRESSION, not pace.
+##   bias       multiplies the personality's corner_bias: a tighter line
+##              through a bend. Aggression, and it changes what a player
+##              SEES, not only what the clock says.
+##   a_brake    the deceleration the backward pass assumes: higher = on
+##              the power later into a bend. Aggression.
+##   a_lat      the lateral acceleration accepted in a bend. It SATURATES
+##              (below) and is now a minor lever.
+##   top        how much of the boost the driver holds where the profile
+##              allows it.
+##   wobble     steer noise. Lower = a tidier line, worth real time
+##              because a wobble scrubs speed through SCRUB.
 ##   faults     the Poisson trip onto the grass. Lower = fewer gifts.
 ##
 ## The rubber band's bounds are here too, and they move in ONE direction
-## as difficulty rises (brief, CH30): the LEASH on a leading opponent is
-## released (rubber_min -> 1.0, an AI that leads is never held back so it
-## can never read as "waiting"), while the tow on a trailing one is let
-## out further (rubber_max). Assistance to the player is not a lever this
-## file has.
+## as difficulty rises (CH30, unchanged): the LEASH on a leading opponent
+## is released (rubber_min -> 1.0) so an AI in front is never held back,
+## while the tow on a trailing one is let out further (rubber_max).
+## MEASURED INERT twice -- CH30, and again in CH31 phase D at <= 0.13 s of
+## finish over a 75 s race. It is kept honest, and it is NOT sold as a
+## lever: the brief asked for that to be said plainly rather than dressed
+## up, and this is it.
+##
+## ⚠️ a_lat SATURATES. At the omega the binding limit is the STEERING,
+## not the tyres, so above a_lat ~= 5.1 the tightest bend stops caring.
+## Scaling it hard flattens the personalities without buying a lap --
+## measured in CH30, still true, and it is why `pace` exists.
 
-## THE SCALE, AND WHAT ITS NUMBERS MEAN
+## THE THREE PRESETS, and every number is measured (RaceBalanceProbe).
 ##
-## Named for what each one does to ADVERSITY, on Mathieu's own words
-## ("environ x1,5"). "Adversity xN" is written here as something that can
-## be measured and can fail: an opponent's DEFICIT is its best lap minus
-## THE FLOOR -- the fastest lap this vehicle can physically turn on this
-## circuit, measured with a driver whose tyres never give up
-## (KartAiDriver's `limit_ref`, 21.633 s) -- and preset xN divides that
-## deficit by N. It is a ratio against a fixed measured quantity rather
-## than against a guess at how fast Mathieu drives, which is the only
-## kind of denominator a sandbox can honestly supply.
-##
-## CALIBRATION (RaceBalanceProbe, seed 20260905, three laps, rubber band
-## on, KartTuning preset 7/10; every number below is measured, not aimed):
-##
-##   floor (limit_ref)         21.633 s per lap
-##   x1    best opponent lap   24.350 s   deficit 2.717 s   -- staging
-##   x1.5  best opponent lap   ~23.44 s   deficit ~1.81 s   -- the default
-##   x2.5  best opponent lap   ~22.72 s   deficit ~1.09 s
-##
-## ⚠️ THE SCALE IS COMPRESSIVE AT THE TOP, and the third preset is named
-## x2.5 rather than x2 because of it. The floor is only 2.7 s away at x1,
-## so every further step buys less: an x2 preset would sit 0.45 s per lap
-## from x1.5 -- inside the run-to-run spread of a field that still makes
-## mistakes, and not something a thumb can feel. x2.5 is ~0.7 s per lap
-## clear of the default, about two seconds over a three-lap race, which
-## is a difference rather than a rounding.
-##
-## ⚠️ AND a_lat SATURATES, which is why `top` carries most of each step.
-## At the omega the binding limit is the STEERING, not the tyres
-## (v_steer = 4.17 u/s at the 7/10 preset), so above a_lat ~= 5.1 the
-## tightest bend stops caring -- the cat is ALREADY steering-limited
-## there at x1. Scaling a_lat therefore buys time in the MEDIUM bends
-## only, and scaling it hard flattens the personalities at the omega
-## without buying a lap. Measured, and it is what killed the first
-## version of this table.
+## ⚠️ `top` CARRIES THE BIGGEST SCALE, and that is not a taste: `top` is a
+## HARD CAP applied after everything else (KartAiDriver._build_profile
+## takes min(top, ...)), so a personality with a low `top` cannot be made
+## quicker by any amount of `pace`. Measured, and it is what killed the
+## first CH31 table: the cat's base top is 0.35, so taking pace from 1.20
+## to 1.38 moved its lap by -0.05 s -- nothing, because it was pinned at
+## its cap the whole way. The scale below lifts the CAP first and the
+## corner speed second, which is the order the arithmetic imposes.
 const PRESETS: Array[Dictionary] = [
 	{"id": "x1", "label": "x1",
+		"pace": 1.05, "headroom": 1.00, "bias": 1.00,
 		"a_lat": 1.00, "top": 1.00, "a_brake": 1.00, "wobble": 1.00, "fault": 1.00,
 		"rubber_min": 0.93, "rubber_max": 1.05},
 	{"id": "x15", "label": "x1.5",
-		"a_lat": 1.12, "top": 1.25, "a_brake": 1.08, "wobble": 0.83, "fault": 0.75,
+		"pace": 1.30, "headroom": 0.96, "bias": 1.05,
+		"a_lat": 1.12, "top": 1.60, "a_brake": 1.12, "wobble": 0.72, "fault": 0.55,
 		"rubber_min": 0.97, "rubber_max": 1.08},
+	# ⚠️ x2.5 WAS PULLED BACK from pace 1.55 / headroom 0.92 / top 2.30, and
+	# the reason is a gate rather than a taste: at those numbers the cat
+	# turned an 18.467 s lap while spending 131 frames (2.2 s) OFF THE
+	# RIBBON. An opponent that beats the circuit's driven floor by driving
+	# on the grass is not a harder opponent, it is a broken one -- it reads
+	# as cheating on device and it is invisible in a lap time. D6 now
+	# asserts it, and these numbers are what keeps it green.
 	{"id": "x25", "label": "x2.5",
-		"a_lat": 1.22, "top": 1.46, "a_brake": 1.15, "wobble": 0.69, "fault": 0.54,
+		"pace": 1.45, "headroom": 0.95, "bias": 1.10,
+		"a_lat": 1.22, "top": 2.10, "a_brake": 1.25, "wobble": 0.55, "fault": 0.35,
 		"rubber_min": 1.00, "rubber_max": 1.11},
 ]
 ## Mathieu's stated target: the median. Index into PRESETS, not an id.
@@ -120,7 +150,9 @@ static func rubber_max() -> float:
 
 ## The personality of `base` raced at the current difficulty. `top` is a
 ## 0..1 fraction, so it is CLAMPED after scaling rather than left to run
-## past full boost; every other lever is a plain multiplier.
+## past full boost; `headroom` is scaled DOWN by aggression and floored at
+## 1.0 (below 1 the profile would claim steering the body does not have);
+## every other lever is a plain multiplier.
 static func apply(base: Dictionary) -> Dictionary:
 	var out: Dictionary = base.duplicate()
 	out["a_lat"] = float(base["a_lat"]) * scale_of("a_lat")
@@ -128,4 +160,7 @@ static func apply(base: Dictionary) -> Dictionary:
 	out["a_brake"] = float(base["a_brake"]) * scale_of("a_brake")
 	out["wobble_amp"] = float(base["wobble_amp"]) * scale_of("wobble")
 	out["fault_rate"] = float(base["fault_rate"]) * scale_of("fault")
+	out["corner_bias"] = float(base["corner_bias"]) * scale_of("bias")
+	out["pace"] = float(base.get("pace", 1.0)) * scale_of("pace")
+	out["headroom"] = maxf(float(base.get("headroom", KartAiDriver.STEER_HEADROOM)) * scale_of("headroom"), 1.0)
 	return out
