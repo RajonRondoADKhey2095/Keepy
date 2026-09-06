@@ -194,11 +194,24 @@ func add_opponent(racer_name: String, colour: Color, profile: String) -> int:
 		racers[index]["rider"] = rider
 	return index
 
+## CH30 -- HOW FAR A RIDER IS DRAWN. The hub critter's own cull is 52 u,
+## measured against the FIXED hub camera 11.7 u away. The chase camera is
+## a different instrument: 7.6 u back, 60 deg fov, a 120 u far plane, and
+## it looks down the track. At 52 u an opponent's kart still drew and its
+## RIDER did not -- a headless kart, on the one screen where three of them
+## are in shot at once. ChaseAudit measured it and gates it.
+##
+## 120 u is the chase camera's own far plane, so a rider is drawn exactly
+## as long as anything else the camera keeps. It costs the SPAWN frame
+## nothing: these three sit on the circuit, ~100 u away, and the hub's
+## walking critters keep their 52 u.
+const RIDER_CULL: float = HubCamera.DRIVE_FAR
+
 ## The published model of each inhabitant (scene, scale, lift live on
-## its module and nowhere else). The critter's own distance cull (52 u)
-## applies to the rider as to the walker.
+## its module and nowhere else).
 func _make_rider(profile: String) -> HubCritter:
 	var rider := HubCritter.new()
+	rider.cull_distance = RIDER_CULL
 	match profile:
 		"cat":
 			rider.setup_model(HubCat.SCENE, HubCat.SCALE, HubCat.LIFT)

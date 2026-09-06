@@ -140,6 +140,54 @@ static func decor_material_wind(amount: float, height: float) -> ShaderMaterial:
 		_decor_wind[key] = _make_decor(amount, height)
 	return _decor_wind[key]
 
+## CH30 -- FAMILY GAIN: a per-GLB brightness multiplier on the decor
+## shader's `tint`, for an asset whose vertex colours are simply too dark
+## to read. It LIGHTENS, it never recolours: CLAUDE.md's rule is that a
+## multiplicative tint cannot move a hue, only its value, and a uniform
+## multiplier moves nothing but the value.
+##
+## MEASURED (ChaseAudit's asset phase, mean vertex colour over the whole
+## mesh, all these families share one material and one lighting model):
+##
+##   tree_4_conifer   lum 0.3159      olive_0  lum 0.2787
+##   bush_0           lum 0.2542      palm_0   lum 0.1868
+##   cypress_0 / _1   lum 0.0692   <-- FOUR TIMES darker than any of them
+##
+## The cypress reads as a BLACK silhouette at close range: the hub ground
+## renders at L = 0.0799, so the tree and the ground it stands on are
+## 1.09:1 apart -- inside CLAUDE.md's "aucun ton MOYEN ne passe" band, and
+## indistinguishable. Under the FIXED hub camera nothing is ever nearer
+## than 11.7 u and the haze hid it; the chase camera drives past these at
+## two metres, which is how it was finally seen (ChaseAudit, sun/moor/0).
+##
+## 4.4 is arithmetic, not taste: 0.0692 x 4.4 = 0.305, which lands the
+## cypress between the olive and the conifer, and the multiplier being
+## UNIFORM means (0.025, 0.086, 0.037) becomes (0.110, 0.378, 0.163) --
+## the same hue, exactly, four and a half times brighter.
+##
+## ⚠️ The GLB is NOT touched. It is Mathieu's asset (CLAUDE.md: never
+## delete, never rewrite an imported asset -- signal it), so the value
+## correction lives in the renderer where it can be reverted in one line,
+## and the asset itself is reported for him to re-export if he prefers.
+const FAMILY_GAIN: Dictionary = {"cypress_0": 4.4, "cypress_1": 4.4}
+
+static func family_gain(mesh_name: String) -> float:
+	return float(FAMILY_GAIN.get(mesh_name, 1.0))
+
+## A decor material with wind AND a uniform brightness gain (see
+## FAMILY_GAIN). One instance per (amount, height, gain), so a family that
+## needs no gain keeps the material it has always had -- byte-identical,
+## because gain 1.0 returns decor_material_wind() itself.
+static func decor_material_wind_gained(amount: float, height: float, gain: float) -> ShaderMaterial:
+	if absf(gain - 1.0) < 0.0005:
+		return decor_material_wind(amount, height)
+	var key := "%0.3f/%0.3f/g%0.3f" % [amount, height, gain]
+	if not _decor_wind.has(key):
+		var mat := _make_decor(amount, height)
+		mat.set_shader_parameter("tint", Color(gain, gain, gain))
+		_decor_wind[key] = mat
+	return _decor_wind[key]
+
 ## A decor material for a primitive with no vertex colours: `colour`
 ## becomes the albedo through the shader's tint uniform. One per colour.
 static func decor_material_tinted(colour: Color) -> ShaderMaterial:

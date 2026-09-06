@@ -1370,7 +1370,13 @@ func _flush() -> void:
 		node.name = key.replace("|", "_")
 		node.multimesh = multi
 		var wind: float = batch["wind"]
-		node.material_override = CozyPalette.decor_material_wind(wind, float(batch["wind_height"])) if wind > 0.0 else CozyPalette.decor_material()
+		# CH30: a per-GLB brightness gain for an asset that is too dark to
+		# read (CozyPalette.FAMILY_GAIN -- today the cypress, and only it).
+		# Gain 1.0 returns the exact material this line always returned, so
+		# every other batch is untouched.
+		var gain: float = CozyPalette.family_gain(String(batch["mesh"]))
+		node.material_override = CozyPalette.decor_material_wind_gained(wind, float(batch["wind_height"]), gain) if wind > 0.0 \
+			else (CozyPalette.decor_material() if gain == 1.0 else CozyPalette.decor_material_wind_gained(0.0, 1.0, gain))
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		# v3: DISTANCE CULLING on everything that is not the horizon. The
 		# moor sits 95+ u from the spawn camera, straight down the axis it
