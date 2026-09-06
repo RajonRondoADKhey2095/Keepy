@@ -184,6 +184,15 @@ jobs:
             echo "> n'est appelee par aucune etape de ce workflow."
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Le resume est AUSSI recopie sur stdout : l'API GitHub Actions
+          # n'expose aucun endpoint pour relire un $GITHUB_STEP_SUMMARY, donc
+          # sans ce cat une session agentique ne peut pas restituer ce que
+          # Mathieu lit dans l'interface -- elle devrait le reconstituer, et
+          # un chiffre reconstitue n'est pas un chiffre mesure.
+          echo "----- DEBUT DU JOB SUMMARY (copie stdout) -----"
+          cat "$GITHUB_STEP_SUMMARY"
+          echo "----- FIN DU JOB SUMMARY -----"
+
       - name: Collect artifacts
         if: always()
         run: |
