@@ -902,3 +902,650 @@ Correction : hors kart, `global_position` est lissé lui-même (les deux lignes 
 **Avis franc — ce qui manque le plus pour que le karting devienne un vrai morceau du jeu** : voir la section LOT 2 ci-dessus, point 6. En une phrase : la MÉCANIQUE est là et généralisable (la boucle des `racers` ne sait pas qui est le joueur), c'est la SENSATION qui manque — son, poussière, et surtout la validation du geste sur iPhone, qui est la première chose à faire et la seule que ce sandbox ne peut pas faire.
 
 **Doctrine candidate pour `CLAUDE.md`** (non écrite dans `CLAUDE.md` par cette session, conformément à sa règle) : *une variable-ombre d'une propriété de nœud est un changement de comportement pour quiconque écrit la propriété de l'extérieur* — lisser `global_position` et lisser une copie que l'on recopie ne sont pas la même chose dès qu'une sonde, un autre nœud ou un `snap` écrit la propriété ; et *la sonde d'un lot ne voit pas les régressions des autres lots* — la table des rides se rejoue sur les deux arbres, et c'est la comparaison qui tranche (payé ici : 5 rouges invisibles à `KartProbe`).
+
+## V7b — réglage conduite (accélérateur + douceur de direction)
+
+Deux retours de Mathieu après test au pouce sur iPhone du karting V7 : pas d'accélérateur, et une direction jugée 10/10 en réactivité contre une cible ~7/10. Aucune autre fonctionnalité, pas de lot 2.
+
+**Diagnostic AVANT réglage (mesuré, pas supposé) — le suspect nommé (GRIP) est innocenté par simulation.** Réplique Python frame-exacte de `KartBody.drive()` (60 fps), sur un geste de pouce FIXE (glissement 40 px « micro » et 100 px « délibéré », tenu 0,25 s) : diviser `GRIP_ON_TRACK` par deux ne change RIEN au taux de lacet de pointe ni au virage de cap total (17,6 puis 55,8 °/s dans les deux cas, au dixième près) — le grip ne gouverne QUE la durée de vie de la glisse latérale après le virage, pas la force du virage lui-même. Les deux vrais leviers sont `STEER_RATE` (le taux de lacet à plein braquage) et le mapping tactile de `KartTouchInput` : `STEER_SPAN` valait 150 px (~1 cm sur iPhone, déjà noté au lot 1) avec une réponse strictement LINÉAIRE — un tremblement de pouce involontaire de 3 mm commandait déjà ~20 % de braquage. C'est ça, la vraie source du « chaque mouvement a une conséquence trop forte ». Élargir le span, agrandir un peu la zone morte et surtout passer la courbe à un exposant > 1 (le plein braquage reste atteignable à pleine course, mais un petit geste achète proportionnellement beaucoup moins) réduit la réponse à une correction PETITE bien plus qu'à une correction délibérée — exactement « moins abrupt sans devenir mou ». Verdict : GRIP est baissé UNE fois, modestement (6,5 → 5,0 u/s sur piste, 2,4 → 1,8 hors piste), pour la touche de glisse que Mathieu décrit lui-même, puis **FIXÉ à cette valeur pour les trois presets** — il n'a pas besoin de suivre l'échelle 8/7/6, ce n'est pas lui le levier de brutalité.
+
+**Accélérateur — famille (b) retenue : croisière automatique conservée + boost par-dessus.** Le kart continue d'avancer seul (rien ne change tant qu'on ne pousse pas) ; un boost (`KartInput.boost`, 0..1) relève le plafond de vitesse vers `BOOST_MAX_SPEED = 16,5` (contre `MAX_SPEED = 13`, soit +27 % maxi). Aucun geste réassigné, aucune nouvelle zone de tap : le boost réutilise la moitié VERTICALE du glissement à un seul doigt déjà utilisé pour la direction — seule la composante horizontale (`finger.x - anchor.x`) était lue jusqu'ici, la verticale ne servait à rien. Pousser le doigt-ancre vers le HAUT de l'écran (loin du corps, comme un levier) commande le boost ; pousser vers le bas ou ne pas bouger ne fait rien — impossible d'aller plus lentement que la croisière avec ce geste, donc aucune confusion possible avec le frein (resté au second doigt, inchangé). Clavier : `UP`/`W` ajoutés à côté de `LEFT-RIGHT`/`A-D` (direction) et `DOWN`/`S` (frein) existants — rien de réassigné. Écarté : la famille (a) explicite (le kart s'arrête sans action) contredit littéralement le brief (« ne doit pas rendre le pilotage plus exigeant »).
+
+**Les trois presets (`KartTuning.gd`), sélectionnables en jeu sans quitter le kart, derrière `DevTools.enabled()` :**
+
+| preset | `STEER_RATE` | `GRIP_ON/OFF` (fixe) | `STEER_SPAN` | `DEAD_ZONE` | courbe | micro 40px vs 10/10 | délibéré 100px | plein verrou (span propre) |
+|---|---|---|---|---|---|---|---|---|
+| 8/10 | 1,75 | 5,0 / 1,8 | 190 | 14 | 1,25 | 38 % | 53 % | 83 % |
+| **7/10 (défaut)** | 1,55 | 5,0 / 1,8 | 210 | 16 | 1,4 | 19 % | 36 % | 73 % |
+| 6/10 | 1,35 | 5,0 / 1,8 | 230 | 18 | 1,55 | 10 % | 23 % | 64 % |
+
+(10/10 = V7 tel que livré : `STEER_RATE` 2,1, `GRIP_ON_TRACK` 6,5, `SPAN` 150, `DEAD` 12, courbe linéaire.) Le 7/10 est la valeur par défaut au boot (la cible que Mathieu a annoncée) ; les trois s'appliquent immédiatement, un petit bandeau « Direction (dev) » sous le bouton Descendre bascule entre elles sans recharger la page.
+
+**Validation, sur le vrai moteur (Godot 4.3 téléchargé dans cette session — pas préinstallé ici) :** import complet 132 `.scn` (identique au lot 1). `KartProbe` **99 checks, 0 échec** — les deux valeurs mesurées par le moteur réel confirment la simulation Python au millième près (`steer right decreases yaw -- -0.572`, `turning at speed leaves a lateral slide -- 2.412`, contre -0,572/2,412 prédits pour le preset 7/10). Rejeu des rides existants sur le même arbre : `V4SaveProbe` 45/45, `V4ClimbProbe` 0 échec, `CampfireFacingProbe` 0 échec, `OwlFlightProbe` 0 échec, `V6CrittersProbe` 128/128, `StreamRideProbe` 37/37 — aucune régression (aucun fichier touché hors `scripts/hub/kart/`). Export `--export-release Web` propre, 0 `SCRIPT ERROR` : `index.wasm` **35 376 909 / `af4a8fc2…`** et `index.js` **`4e08904b…`** byte-identiques à la référence (moteur non touché) ; `index.pck` **34 378 496** (base V7 34 374 864, +3 632 o — le seul code ajouté) ; `scripts/dev/*` toujours exclu du pack (seul `scripts/DevTools.gd`, hors `dev/`, apparaît — normal).
+
+**Pas fait, sur consigne** : pas de son au boost, pas de traînée de poussière au freinage/glisse (déjà noté manquant au lot 1) ; les cinq nombres par preset restent des estimations simulées + un seul run moteur — la validation qui compte est celle de Mathieu au pouce sur `keepy-staging.vercel.app`, ce qu'aucun sandbox ne peut faire à sa place.
+
+# V8 — KARTING LOT 2 : la vraie course
+
+Branche `claude/karting-lot2-racers-cjarl4`, travail direct vers `staging` (merge automatique par défaut, `main` gaté). Append seulement.
+
+## Ouverture V8
+
+- **Base** : `4f6b25b` (`origin/staging` HEAD au fetch de 20:30 UTC, 5 sept 2026, arbre `87334b5`). `origin/main` (`ef005da`) est un **ancêtre** de `staging` (0 commit de `main` absent de `staging`, 2 commits V7b en avance : accélérateur + presets) — la branche part de `staging`, pas de `main`, pour porter V7b. Aucune branche distante au nom voisin (« lot2 », « racer », « adversaire » : zéro) → pas de session concurrente détectée au début.
+- **Outillage sandbox** : Godot 4.3 non préinstallé ; éditeur téléchargé (**50 276 070** octets, conforme), templates **1 073 228 327** octets au premier essai (taille contrôlée contre le `Content-Length` avant `unzip`). Import lancé en arrière-plan, suivi par PID.
+- **P0 diagnostiqué à la lecture, avant tout run** : `KartHud` ancre le panneau chrono en `PRESET_CENTER_TOP` puis écrit `position = (540 − 190, 150)` — or après un preset d'ancres, `position` est un **offset depuis l'ancre** (le milieu du canvas), pas une coordonnée canvas. Le panneau commençait donc à x = 540 + 350 = **890 px** sur un canvas de 1080 : 190 px visibles, 190 px coupés par le bord droit. C'est exactement la capture de Mathieu (« en haut à droite, coupé »). Même faute sur le label « DEMI-TOUR » (`PRESET_CENTER` + `(320, 700)` → x = 860..1300). Aucune sonde ne le voyait : `KartProbe` vérifiait `hud.visible`, jamais un rect. Correctif : offset `−largeur/2`, et deux checks gatés (rect du panneau dans le canvas, centré à 2 px près ; rect du label dans le canvas). Le compteur de ressources (`WorldHud`, haut droit) est **masqué pendant la conduite** : rien ne se ramasse depuis un kart, et il s'empilait derrière le panneau sur la capture. Il continue de compter dessous et réapparaît à la descente.
+
+### Conception de l'IA — écrite avant de coder
+
+**Ce qui ne bouge pas** : `KartBody.drive()` est la seule physique, pour les quatre karts. Un adversaire est une entrée de `racers` dont l'`input` est écrit par `KartAiDriver` (le `KartLineInput` de `scripts/dev/` déplacé sous `scripts/hub/kart/` et étendu) au lieu de `KartTouchInput`. Même `KartLap`, même `progress_at`, même boucle `HubKarting._physics_process`.
+
+**Le pilote (`KartAiDriver`)** :
+1. **Trajectoire** : pure pursuit sur la spine (`point_at(s + avance)`) avec un **décalage latéral cible** (`lane`) que le pilote poursuit : sa voie « naturelle » (par personnalité), déviée vers le côté libre quand un kart est devant à moins de ~7 u (dépassement), et vers l'extérieur d'un virage quand la personnalité le veut (le sanglier prend large).
+2. **Vitesse** : un **profil `v_max(s)`** précalculé par sample depuis `KartTrack._curvature(i)` — `v = sqrt(a_lat / κ)` puis une passe arrière de freinage `v[i] = min(v[i], sqrt(v[i+1]² + 2·a_brake·ds))` — lu à une avance qui dépend de la vitesse. Throttle/boost si la vitesse est sous la cible, frein si elle la dépasse d'une marge (`brake_margin`). C'est ce qui donne « freiner AVANT le virage » au lieu de « ralentir quand ça tourne ».
+3. **Personnalité** = cinq nombres : `a_lat` (agressivité en virage), `top` (plafond de boost, 0..1 sur `BOOST_MAX_SPEED`), `brake_margin` (freine tôt ou tard), `wobble` (bruit de direction, amplitude et fréquence), `fault_rate` (fautes par minute : une sortie large dans un virage, ~1 s, qui coûte de la vitesse sur l'herbe).
+4. **Rubber-band** : OUI, doux et **borné** — facteur 0,93..1,05 sur le plafond de vitesse selon l'écart de progression au joueur (au-delà de ±25 u). Justification : trois IA à personnalités fixes sans rappel donnent une course décidée au premier virage sur un circuit de 230 u ; un rappel de ±5–7 % garde la meute à portée sans « aimant » lisible (le facteur n'agit pas sous 25 u d'écart, donc jamais dans une lutte roue contre roue).
+
+**Les trois profils** :
+
+| pilote | `a_lat` | `top` | `brake_margin` | `wobble` | `fault_rate` | ce qu'on doit voir |
+|---|---|---|---|---|---|---|
+| LE CHAT | haut (rapide en virage) | bas (pas le plus rapide en ligne droite) | tard (freine au dernier moment) | vif, haute fréquence | moyen | nerveux, colle aux cordes, gagne dans l'oméga et la chicane, se fait reprendre sur la longue droite |
+| LE CASTOR | moyen | moyen | tôt | faible, lent | bas | régulier, la même ligne à chaque tour, rarement en faute — le « métronome » |
+| LE SANGLIER | bas (large en virage) | haut (boost à fond en ligne droite) | tard + freinage lourd | lent mais ample | haut | fonce, prend large, sort de piste de temps en temps, revient fort |
+
+**Course** : **3 tours** (≈ 70–80 s à 22–25 s/tour : assez pour un renversement, pas assez pour lasser au pouce). Départ : monter dans le kart re-grille les quatre (le joueur en slot 0, de front — la piste est élargie pour ça, P3), feu 3-2-1-GO sur le HUD (3 s après le blend caméra), tous les `throttle` tenus à 0 jusqu'au GO. Classement temps réel = tri par `(lap_count, s)` ; arrivée = 3e passage de ligne compté par `KartLap` ; panneau de résultats (rang, temps total, meilleur tour) ; le joueur continue en roue libre (le chrono du lot 1 reste) jusqu'à la descente, qui remet tout sur la grille. **Collisions** : disques 2D (r ≈ 0,95) avec séparation et échange partiel de la composante normale (restitution 0,3) + secousse de châssis — jamais un `PhysicsBody3D`.
+
+**Pilotes dans les karts** : instances SUPPLÉMENTAIRES (`HubCritter` + le `SCENE`/`SCALE`/`LIFT` publiés par `HubCat`/`HubBeaver`/`HubBoar`), posées sur `KartBody.SEAT` dans l'espace du châssis ; les habitants du hub et leurs mécaniques ne bougent pas. Le faon n'est pas pilote.
+
+**Échelle (P2)** — prémisse à mesurer avant d'agir : par les constantes, chat = 0,75 × Keepy, castor = 0,85 ×, mais **faon = 1,15 ×** (déjà plus grand que Keepy par la métrique « étendue du modèle »). Si Mathieu le voit trop petit, c'est que la métrique (étendue verticale du GLB, clé et oreilles comprises) n'est pas ce que l'œil compare. Décision : captures côte à côte avec Keepy AVANT de toucher une constante, et question à Mathieu avec les images.
+
+## Checkpoint HUD (P0) — déployé seul (20:45 UTC)
+
+- **Cause** : offset d'ancre écrit comme une coordonnée canvas (voir l'ouverture). **Correctif** : `KartHud` panneau `position = (−190, 150)` sous `PRESET_CENTER_TOP`, label DEMI-TOUR `(−220, −260)` sous `PRESET_CENTER` ; `WorldHud` masqué pendant la conduite (`driving_changed`), réaffiché à la descente. Aucun autre fichier de jeu touché.
+- **Sonde** : `KartProbe` phase MODE passe de 34 à 39 checks (panneau dans la bande de 1080 px centrée sur le milieu du canvas — le canvas headless fait 1920 × 1920, doctrine CLAUDE.md, donc « dans le canvas » nu ne discriminait pas ; panneau centré à 2 px ; label dans la bande ; compteur masqué en conduite ; compteur réaffiché après). **Rouge-avant-vert** : les deux lignes V7 restaurées → **exactement 3 rouges** (panneau à x = 1310..1690 pour une bande 420..1500, centre 1500 ≠ 960, label à 1280..1720) ; fichier restauré byte-identique (`cmp`) ; vert 39/39.
+- **Capture** (xvfb + opengl3, `CozyCapture --kart --root --frames=230`) : panneau chrono centré en haut, « Descendre » à gauche, Menu à droite, compteur absent. `cap_hud_p0.png`.
+- **Export** (arbre P0 seul, WIP lot 2 stashé) : 0 `SCRIPT ERROR`, `index.wasm` 35 376 909 / `af4a8fc2…` (moteur inchangé), `index.pck` 34 378 480 (V7b : 34 378 496, −16 o = la variance VRAM connue).
+- **PREUVE de déploiement** : merge `3f0d755` sur `staging`, push 20:43:05 UTC. Lecture AVANT : `CACHE_VERSION = 1788637649` (19:54:09, V7b) en `HIT`/`age 3081` à 20:42. Lecture APRÈS (20:56:13) : **`1788641254` → 20:47:34 UTC**, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 20:56:13. Aucun poll GitHub Actions.
+
+## Checkpoint ADVERSAIRES (P1) — trois pilotes, une course (21:10 UTC)
+
+- **Livré** : `KartAiDriver` (`scripts/hub/kart/`, l'ex-`KartLineInput` de `scripts/dev/` déplacé et étendu — le fichier `dev` est supprimé, `KartProbe` roule avec le profil `probe`) ; trois adversaires créés par `HubKarting.add_opponent()` (même `add_racer()` que le joueur, `player=false`, un `KartAiDriver` par entrée) avec un `HubCritter` assis sur `KartBody.SEAT` dans l'espace du châssis (modèle/échelle/lift **publiés** par `HubCat`/`HubBeaver`/`HubBoar`, jamais recopiés — les habitants du hub ne bougent pas) ; état de course `IDLE/COUNTDOWN/RUNNING/FINISHED`, grille remise à chaque montée, feu 3-2-1-GO sur le HUD, tous les `throttle` tenus à 0 jusqu'au GO (`hold_throttle` du joueur, `released` des IA), **3 tours**, classement temps réel (`standings()` = tri par crossings × longueur + s, un arrivé classé par son temps devant tout non-arrivé), résultats au drapeau (panneau : rang, temps, ✓), `WorldSave.kart_record_result` (`kart.last` additif + stats `kart_races`/`kart_wins`, sanitisés), le joueur continue en roue libre (chrono lot 1 intact) ; collisions par disques (r 0,95, restitution 0,30, secousse `KartBody.bump()`) ; rubber-band borné 0,93..1,05 inerte sous 25 u d'écart.
+- **Contrat CH27, les cinq fichiers** : `KartInput`, `KartLap`, caméra, bascule marche↔conduite **intouchés**. `KartBody` : +`bump()` (12 lignes, expose le canal `_bump` que la clôture utilise déjà) ; `KartTrack` : +4 accesseurs (`sample_count`, `sample_s`, `curvature`, `signed_curvature`, `side_at`) qui publient ce que les bordures lisaient en privé. Consigné dans `CH27_KARTING_LOT1.md` comme le contrat le demande.
+- **Mesuré, sonde `KartProbe`** (headless, `--fixed-fps 60`) : **143 checks, 0 échec** (99 → 143 ; nouvelle phase RACE de 36 checks). Une course complète, joueur piloté par le profil `probe` (sans boost, sans bruit) : **joueur 2e sur 4 en 79,8 s**, meilleurs tours IA **chat 25,50 s / castor 26,63 s / sanglier 25,85 s**, fautes **1 / 0 / 3** (le sanglier sort trois fois, le castor jamais — les personnalités se lisent dans les chiffres avant l'image). Profils discriminés sur le circuit réel : le chat plus rapide que le sanglier à l'oméga, le sanglier plus rapide sur la ligne droite, le profil freine AVANT le virage (v_max 3 samples avant l'oméga < 12 samples avant). Plus petit écart entre deux karts pendant la course ≥ 2R − 0,15.
+- **Rouge-avant-vert** : `_collide()` neutralisé → **exactement 4 rouges** (les 3 blind checks de collision + « aucune interpénétration en course » à 0,450 u — ce dernier prouve que les karts se RENCONTRENT vraiment) ; fichier restauré byte-identique. Piège rencontré : un `class_name` neuf est invisible avant ré-import (doctrine) — la sonde a tourné à vide sans watchdog jusqu'au `pkill`, ré-import 132 `.scn`, puis vert.
+- **Captures** (xvfb + opengl3, `--kart --root`) : frame 262 (feux rouges, grille, « 1er / 4 », classement des quatre couleurs), 330 (feux verts + GO !), 600 (course, bordures, riders lisibles dans les karts). **Perf** : `gpu` **53 070** prims / 122 calls sur la grille (P0, un seul kart : 39 811 / 83), **47 414** en course à 5,8 s ; les trois riders (4,7–5,7 k tris chacun) sont l'essentiel du +13 k. Sous les 52 k du spawn du hub.
+- **Export** : 0 `SCRIPT ERROR`, `index.wasm` 35 376 909 / `af4a8fc2…`, `index.pck` **34 400 304** (P0 : 34 378 480, +21,8 Ko de code), `scripts/dev/*` absent du pack.
+- **Rubber-band, décision** : gardé, borné, inerte sous 25 u ; à valider au pouce — c'est le réglage le plus « ressenti » du lot.
+
+## Checkpoint PISTE (P3) — 7 → 10 u, grille de front (21:40 UTC)
+
+- **Fait** : `KartTrack.HALF_WIDTH` 3,5 → **5,0** (ruban 10 u + liserés + bordures), `FENCE_INSET` 2,5 → 1,5 (le kerb extérieur de l'oméga tombe à x = −47,1, clôture à −48,5, région à −50), grille **quatre de front** (`GRID_LANES` −3,6 / −1,2 / +1,2 / +3,6, échelon de 0,6 u par slot — un dixième de kart, pour que « qui est devant » se lise aux feux ; une cinquième entrée ferait une seconde rangée). **La spine est intouchée** (230,7 u, mêmes waypoints, mêmes checkpoints) : un tour reste un tour, mais un ruban plus large autorise une corde plus large — le meilleur temps persistant de Mathieu est **comparable, pas identique**. Pas de remise à zéro faite (le schéma le permettrait : `kart.best_ms` est une table par `track_id`, un `circuit_1b` suffirait) — à décider par Mathieu après avoir roulé.
+- **Sonde** : `KartProbe` **145 checks, 0 échec** (grille : 4 slots sur le ruban avec une demi-largeur de kart de marge, slot 1 dans une autre voie à moins de 1 u d'échelon ; largeur gatée).
+- **Trouvé par la CAPTURE de la grille, pas par relecture — la convention de côté de V7 est à l'envers.** Le slot 0 (voie « −3,6 », censée être à gauche) est dessiné sur le kerb DROIT, caméra de poursuite derrière le kart. Le côté `(tan.z, 0, −tan.x)` est +x, et +x est la GAUCHE d'un corps face à +z sous cette caméra. Le nombre n'a jamais été faux (grille, `on_track`, `lateral`, tout est symétrique) ; le MOT l'était, et l'IA l'avait cru : le biais de virage envoyait le sanglier à l'INTÉRIEUR et le chat à l'EXTÉRIEUR. Corrigé (`lane_goal_at()`), commenté aux deux endroits, et **gaté sur le côté réel** : « la voie du sanglier à l'oméga est à l'extérieur » / « celle du chat à l'intérieur », lues sur le pilote et pas sur un commentaire. Avant/après sur la course de la sonde : meilleurs tours IA chat/castor/sanglier **25,50 / 26,58 / 25,62 s** (biais inversé) → **23,85 / 26,57 / 27,07 s** (corrigé) — les personnalités se lisent enfin dans l'ordre voulu : le chat, agile, mène ; le sanglier, large et fautif (3 fautes), ferme. Joueur-sonde (profil neutre, sans boost) : 3e sur 4.
+- **Captures** (`p3_grid.png`, `p3_race.png`) : quatre karts de front sous les feux, ruban large ; `gpu` **49 372** prims sur la grille (P1 grille étroite : 53 070 — même ordre, la largeur ne coûte rien).
+- **Export** : 0 `SCRIPT ERROR`, `index.wasm` inchangé, `index.pck` 34 400 464.
+
+## Checkpoint ÉCHELLE (P2) — chat, castor, faon à la masse de Keepy (21:20 UTC)
+
+- **Mesuré avant d'agir** (sonde jetable `HeightMeasure`, supprimée avant commit : étendue des sommets à travers la transform dessinée, dans la scène vivante) : **Keepy 1,350 × 1,320 u** (haut × large), **chat 1,020 × 0,773**, **castor 1,156 × 0,845**, **faon 1,565 × 0,649**, sanglier 1,837 × 0,891. La prémisse « ils sont plus petits que Keepy » est vraie pour le chat et le castor, **fausse en hauteur pour le faon** — déjà plus haut que Keepy de 16 %, il lit petit parce qu'il porte la moitié de sa masse (Keepy est aussi large que haut). « Même taille » = même masse visuelle, pas même hauteur ; l'option A (hauteur = 1,35) aurait RÉTRÉCI le faon.
+- **Question posée à Mathieu avec captures côte à côte** (`scale_compare.jpg`, options A / C / D). Sans réponse au moment d'attaquer P2 : **option D prise, comme annoncé** — chat **1,20 ×** (1,02 → 1,62 u), castor **1,20 ×** (1,16 → 1,62 u), faon **1,35 ×** (1,56 → 1,82 u, juste sous le sanglier à 1,84 u, qui reste le plus imposant). Fichiers GLB intouchés : seule `DRAWN_HEIGHT` change dans chaque module.
+- **Constantes réajustées, mécanique par mécanique** :
+  * **chat** (cache-cache) : `CAT_TAP_RADIUS` 1,4 → 1,7 ; `OPEN_OFFSET` 0,95 → 1,25 (assis à côté du tas sous la pluie, sans le chevaucher) ; `POP_HEIGHT` 0,9 → 1,1 ; `POP_TOWARD_CAMERA` 0,75 → 1,2 **plus un pas de côté `POP_ASIDE` 1,0 opposé au côté de Keepy** — la première capture (`p2_catpop`) montrait les deux corps dessinés l'un dans l'autre : à 1,62 u, chat (r ≈ 0,6) + Keepy (r ≈ 0,66) ne tiennent plus dans le mètre qu'un jaillissement droit vers la caméra laisse quand il arrive du sud. Recapture : chat devant-droite, distinct.
+  * **castor** (troc) : `FOOTPRINT` 0,9 → 1,1 ; `TAP_RADIUS` 1,8 → 2,0 ; `NEAR` 1,0 → 1,25 ; hauteurs des vols de ressources 0,8 → 1,1 et de la chute du gland doré 1,0 → 1,4. **Et un point d'approche** (`approach_point()`, `HubCritters.arm`) : V6 faisait marcher Keepy sur les PIEDS du ranger (atterrissage 0,4 u court), ce qu'un castor de 1,16 u cachait déjà derrière Keepy et qu'un castor de 1,62 u a rendu flagrant (`p2_beaver` : le ranger dessiné DANS Keepy). Keepy s'arrête maintenant à `NEAR` du ranger, de son côté ; `try_trade` accepte toujours (rayon 2,0). Recapture : face à face, lisible.
+  * **faon** (approche) : `FOOTPRINT` 0,9 → 1,0 ; `FOLLOW_GAP` 1,7 → 1,9 ; `NUZZLE_REACH` 0,95 → 1,1 ; hauteur de la fleur 0,9 → 1,05. `FLEE_R`/`CALM_R`/`CALM_S` sont des distances de comportement, pas de corps : inchangées. Capture `p2_fawn` : câlin museau contre museau, le faon à la masse de Keepy.
+  * **sanglier** : intouché (1,35 × Keepy, `SEAT` (0 ; 1,32 ; −0,12)). Capture `p2_boar` : Keepy sur ses épaules sous un arbre rouge, cohérent — il reste le plus grand des quatre, de peu devant le faon.
+- **Sonde** : `V6CrittersProbe` (headless, `--fixed-fps 60`) **128 checks, 0 échec**, deux fois (avant et après le pas de côté du chat et le point d'approche du castor). Les riders des karts (mêmes `SCENE`/`SCALE`/`LIFT` publiés) grandissent avec — capture de grille refaite.
+
+## Rides existants — rejoués sur la branche ET sur une référence `4f6b25b` importée à part (21:05 UTC)
+
+Worktree de référence importé de zéro (132 `.scn` des deux côtés, comptés avant de comparer).
+
+| sonde | mode | référence | branche | verdict |
+|---|---|---|---|---|
+| `V4SaveProbe` | headless | — | **PASS** | `kart.last` + stats `kart_races`/`kart_wins` additifs |
+| `V4ClimbProbe` | headless `--fixed-fps 60` | — | **PASS** | |
+| `OwlFlightProbe` | headless | — | **PASS** | |
+| `V6CrittersProbe` | headless `--fixed-fps 60` | — | **PASS** 128/128 (avant ET après P2) | |
+| `StreamRideProbe` | opengl3 `--fixed-fps 60` | — | **PASS** | |
+| `CampfireFacingProbe` | headless **sans** `--fixed-fps` | **FAIL 9** | **FAIL 9** (identiques, mêmes lignes) | **faux rouge de mode**, pas une régression |
+| `CampfireFacingProbe` | headless `--fixed-fps 60` | **PASS** | **PASS** | |
+| `KartProbe` | headless `--fixed-fps 60` | 99 (V7b) | **145 checks, 0 échec** | |
+
+Le feu de camp : 3 rouges au premier passage, 9 au second (machine chargée par un import concurrent), 9 identiques sur la référence — la sonde ne fixe pas son pas de temps et V7 l'avait jouée nue sur une machine moins chargée. C'est la doctrine « `--fixed-fps` fabrique des faux rouges » une fois de plus ; la comparaison sur deux arbres est ce qui l'a tranchée en une commande.
+
+## Fermeture V8 (21:25 UTC)
+
+**Livré, sur `staging` (`8e08530`)** : le HUD de conduite centré et le compteur de ressources masqué en conduite (P0, déployé seul et prouvé) ; trois adversaires — le chat, le castor, le sanglier — avec leur pilote `KartAiDriver` (profil de vitesse depuis la courbure, freinage avant le virage, voie et biais de virage, dépassement, bruit de direction, fautes), leur personnage assis dans un kart de couleur propre, une course à feux 3-2-1-GO sur 3 tours, classement temps réel, panneau de résultats, résultat persistant, collisions douces, rubber-band borné (P1) ; la piste à 10 u avec grille de front (P3) ; chat, castor et faon à la masse visuelle de Keepy, mécaniques re-gatées et recapturées (P2). Les GLB sont intouchés, `KartInput`/`KartLap`/caméra/bascule intouchés, `KartBody` +`bump()`, `KartTrack` +5 accesseurs.
+
+**Ce qui manque encore pour que le karting soit un vrai morceau du jeu** :
+1. **La validation au pouce** — la difficulté des trois profils, le rubber-band (0,93..1,05) et 3 tours n'ont rencontré qu'un pilote-sonde neutre, qui finit 2e à 4e. Un humain qui boost sur les lignes droites devrait gagner ; s'il gagne trop facilement, `top` du castor et du chat montent (0,55 / 0,35) avant tout autre réglage.
+2. **Le son** (moteur, feux, drapeau) — toujours rien depuis v1 ; un kart muet reste un jouet.
+3. **La poussière de glisse et de sortie de piste** — les fautes du sanglier se voient au chrono, pas à l'image.
+4. **Le meilleur temps persistant** : comparable mais pas identique après l'élargissement (voir P3). Si Mathieu veut repartir de zéro : un `track_id` `circuit_1b` dans `KartTrack.TRACK_ID`, aucune migration.
+5. **Les riders disparaissent à 52 u** (`HubCritter.CULL_DISTANCE`, hérité du hub) alors que la caméra de conduite porte à 120 u : un kart adverse loin devant roule sans pilote pendant quelques secondes, dans 68 % de brouillard. Une constante à monter pour les riders seuls (pas pour les habitants), à mesurer sur device avant.
+6. **Un vrai podium / une récompense** : `kart_wins` est compté, rien ne le montre ni ne le paie (un gland doré pour une victoire fermerait la boucle avec le ranger).
+
+**Avis franc sur la prochaine session** : ne pas ajouter de mécanique. Faire tester Mathieu, lire ses trois chiffres (rang moyen sur 3 courses, tour le plus rapide, ressenti du rappel), et régler `PROFILES` + `RUBBER_*` sur ces chiffres — c'est un lot d'une heure, pas d'une nuit. Le son vient ensuite, avant toute quatrième zone.
+
+**Doctrine candidate pour `CLAUDE.md`** — écrite dans `CLAUDE.md` cette fois (deux pièges silencieux, chacun payé sur device ou par capture) : *après `set_anchors_preset()`, `position` est un offset depuis l'ancre* ; *un mot de convention de côté (« droite de la marche ») ne vaut rien tant qu'une capture ne l'a pas lu*.
+
+## Preuves de déploiement V8 sur le service (une lecture par déploiement, jamais de polling)
+
+| checkpoint | sha (`staging`) | push | `CACHE_VERSION` servi (epoch → UTC) | lecture |
+|---|---|---|---|---|
+| P0 — HUD | `3f0d755` | 20:43:05 | `1788641254` → **20:47:34** | 20:56:13, `MISS`, `age: 0` (avant : `1788637649` / 19:54, V7b) |
+| P1+P3 — adversaires + piste | `dd9e3b5` | 21:14:11 | run **annulé** par le push P2 six minutes plus tard (`cancel-in-progress`, doctrine) — jamais servi seul, assumé | lectures 21:15–21:21 : encore `1788641254` en `HIT` (copie de bord remplie par ma propre lecture P0) — refusées comme mesure |
+| P2 — échelle (arbre final `151c73a`) | `8e08530` | ~21:20 | `1788643519` → **21:25:19** | 21:27:13, `x-vercel-cache: MISS`, `age: 0`, `last-modified` 21:27:13 |
+
+Le commit de documentation qui suit (journal, `CLAUDE.md`, index) ne change aucune ressource Godot : son run n'est pas relu, c'est assumé.
+
+# CH29 — LA CRIQUE : cinquième zone, réseau étendu, char à voile (nuit du 5 au 6 septembre 2026)
+
+## Ouverture (00:30 UTC)
+
+Session carte blanche nocturne, seule sur le dépôt. `git fetch --all --prune`
+au début : `origin/staging` = `05fd142` (V8 karting lot 2), `origin/main` =
+`ef005da`, `main` ancêtre de `staging` (12 commits d'écart, tous karting/doc).
+Aucune branche distante plus récente que `staging` elle-même — pas de session
+concurrente. Branche de travail `claude/hub-fifth-zone-transport-3nkix4`
+recréée sur `origin/staging` ; merge sur `staging` en fin de lot (palier 1,
+non gaté), `main` intouché.
+
+Outillage : ni `godot4` ni Blender dans le sandbox. Éditeur Godot 4.3-stable
+et templates d'export téléchargés (taille du `.tpz` vérifiée contre le
+`Content-Length` : 1 073 228 327 octets, complet du premier coup), `bpy 4.2.0`
+installé par pip. **Le rendu Blender (EEVEE/Workbench) est impossible ici** :
+`libEGL.so.1` absent et `apt` sans réseau. Conséquence : la planche de rendu
+des assets se fait **dans Godot** (sonde jetable sous `xvfb + opengl3`), ce
+qui est de toute façon le seul rendu qui compte.
+
+## Recon topologie (ce qui est réellement là)
+
+Quatre zones en CHAÎNE le long de −z, toutes à y = 0 (`HubRegion`) :
+
+| zone | rect x | rect z | porte (HubWorld) |
+|---|---|---|---|
+| 0 plateau | ±35 | ±35 (+ lobe nord r 12) | — |
+| 1 Vallon d'automne | −33..33 | −78..−42 | `CORRIDOR_GATE` (−28, −38.5), couloir x −33..−23 |
+| 2 Lande aux Moulins | −38..38 | −126..−86 | `MOOR_GATE` (12, −82), couloir x 6..18 |
+| 3 Circuit | −50..50 | −200..−134 | `CIRCUIT_GATE` (−8, −130), couloir x −14..−2 |
+
+Transport : ligne Or (10.5, 14.5) → (11, −55) [plateau → vallon], ligne Ciel
+(−14, −50) → (−6, −110) [vallon → lande], Sautillon garé (0.5, 4.4). Vitesse
+à pied 5,36 u/s (`HOP_DISTANCE 1.5 / HOP_DURATION 0.28`, jamais touchée).
+Montgolfière 13 u/s + 2,4 s. Le Circuit n'est desservi par rien.
+
+`_gates_between(a, b)` est une CHAÎNE linéaire (`[CORRIDOR, MOOR, CIRCUIT]`)
+et son commentaire le dit : « a zone OFF the chain needs one [planner] ». La
+5e zone est la première hors chaîne.
+
+## Arbitrages pris seul
+
+1. **Jonction : la Lande aux Moulins, côté EST (x = 38).** Le Vallon est
+   déjà dense (Arbre-Mère, sanglier, tas du chat, deux docks) ; la Lande est
+   le carrefour du réseau lointain (dock Ciel + couloir Circuit). Couloir
+   x 38..44, z −100..−92 ; porte `COVE_GATE` (41, −96). La station du castor
+   (21.5, −93.5) est à 16 u à l'ouest, le champ de lavande 3 (x 22..36,
+   z −122..−98) touche le bord est mais pas le couloir.
+2. **Thème : « la Crique »** — sable pâle chaud, mer turquoise à l'est, phare
+   rouge et blanc (le repère), palmiers, parasols, transats, bouées. Se
+   distingue nettement des trois registres existants (prairie verte, litière
+   d'automne, lande mauve) et du gazon du Circuit, tout en restant VOIE A.
+   Rect x 44..82, z −130..−90 ; mer = disque r 48 centré (116, −110), rive à
+   x ≈ 68 (milieu) / 72,4 (bords) — une rive concave, c'est-à-dire une crique.
+3. **Interaction propre : les CHÂTEAUX DE SABLE.** Trois emplacements de
+   sable mouillé ; un tap → Keepy y marche → un château sort du sable ; un
+   second tap l'agrandit (3 étapes, drapeau au dernier). Sous la pluie et
+   l'orage, les châteaux FONDENT (échelle → 0, puis disparition). Aucun
+   personnage, une phrase sans texte, et la météo n'est pas inerte.
+4. **Réaction météo supplémentaire** : la lampe du phare s'allume et son
+   faisceau tourne sous pluie/orage ; les bouées tanguent avec le `wind` ;
+   la mer réutilise le shader d'eau (paramètre `rain` déjà câblé).
+5. **Réseau existant étendu : une 3e ligne de montgolfière « Corail »**
+   (le `balloon_2.glb` rose déjà dans le dépôt, jamais utilisé), directe
+   PLATEAU → CRIQUE. Choix contre « prolonger la chaîne depuis la Lande » :
+   le trajet le plus long de la carte est spawn → 5e zone, et une ligne
+   directe le ramène sous 15 s là où la chaîne Or+Ciel+X ferait trois vols.
+6. **Nouveau transport : le CHAR À VOILE.** Déplacement LIBRE et CONTINU au
+   sol (le créneau non couvert) : monté comme le Sautillon (tap, marche,
+   monte), mais chaque tap devient une GLISSADE rectiligne sans arc ni
+   squash, plus rapide, et sa vitesse suit le `wind` de la météo (voile).
+   Nature distincte des deux existants : trajet fixe (montgolfière), bond
+   (Sautillon), glisse continue (char). Caméra figée du hub, inchangée.
+   Implémenté comme un second « véhicule » du modificateur de hop de
+   `KeepyHopper` (aucun nouvel état), donc borné par la région par
+   construction : il ne peut ni sortir de la carte ni déposer Keepy hors sol.
+   Siège : constante `YACHT_SEAT_Y` posée une fois dans `HubTransport`.
+7. **Persistance** : `WorldSave` passe en **schéma 2** avec `_migrate(1→2)`
+   qui ajoute le bloc `cove` (position du char, châteaux par emplacement,
+   visite) ; une sauvegarde v1 se charge en `migrated` et garde tout.
+8. **Pas de GPUParticles3D** : le brief les dit validés, le dépôt n'en
+   contient AUCUN (`grep` : zéro occurrence, et `CozyScatter` documente
+   « no GPUParticles3D on purpose »). Je ne fonde pas un effet sur un acquis
+   que le dépôt contredit ; les bouffées de sable sont des `MeshInstance3D`
+   tweenés.
+9. **P2 (terrier + ModelSlot)** : un terrier de dune (ouverture sombre,
+   linteau de bois flotté, serviette pliée, seau et pelle) au coin sud-ouest
+   de la plage, avec un `ModelSlot` inerte devant. Fait si le temps le
+   permet après P0/P1.
+
+## Recon mesurée — le cadre décide de tout (00:55 UTC)
+
+`CoveRecon` (jetable, xvfb + opengl3, `unproject_position` sur la vraie
+caméra) : depuis la Lande est (30, −96) **rien** de la Crique n'est dans
+l'image (phare de 9 u à x écran 1513/1080) ; depuis l'embouchure du couloir
+(44, −96) le phare est à (989, 424) — cadré — et le char à (907, 561) ;
+depuis le dock (52, −98) le phare est à (697, 441). **La mer, centrée
+(116, −110), était hors cadre depuis toutes ces stations** (x écran 1628 à
+2000). Déplacée à (108, −110) : rive à x = 60 ; depuis le dock l'eau entre
+dans l'image à droite. Une plage dont l'eau n'est jamais dans l'image est
+un parking.
+
+Balayage du plateau pour le dock Corail (grille 1 u, région, sec, hors
+chemins, dégagement de toute emprise) : derrière le spawn rien ne dégage
+plus de 1,7 u (le miroir du dock Or, (−10,5 ; 14,5), dégage 0,26) ;
+(−13, −33) dégage 2,90 u et est dans le cadre du spawn. Dégagements des
+docks existants, mêmes termes : Or 3,20 / Or-vallon 2,61 / Ciel-vallon 6,68 /
+Ciel-lande 10,42.
+
+## Ce que les sondes ont trouvé (01:00 → 01:40 UTC)
+
+`CoveProbe`, neuf phases, `ProbeWatchdog.arm` en première ligne. Ce que la
+première passe a attrapé, dans l'ordre :
+
+1. **Emprises qui se chevauchent** (4) : le spot 2 des châteaux mordait
+   dans l'emprise du phare, la chaise du maître-nageur dans le spot 1, et
+   les transats dans leurs parasols (voulu — la sonde exempte désormais les
+   paires parasol/transat, et dit pourquoi).
+2. **La route passait dans le repos du castor** (`HubBeaver.REST (20,
+   −90,2)`, r 1,1) et finissait sous le deck du dock. Tracé refait au nord
+   du repos, arrêté à la marche du dock.
+3. **Le 2e tap sur un château ne construisait rien** : marche de longueur
+   nulle → `became_idle` synchrone dans `hop_to()` → `_on_keepy_idle`
+   efface l'intention AVANT le `_try_castle()` immédiat. Intention armée
+   après `hop_to()`. Doctrine ajoutée à `CLAUDE.md`.
+4. **La phase char montait sur rien** : ma station de départ (43, −110)
+   était dans la BANDE DE HAIE, hors région, lue zone 0, et le tap routait
+   vers la porte du plateau (−28, −38,5). Défaut de sonde, pas de jeu — mais
+   il dit qu'un point hors région à l'est de la Lande lit « plateau ».
+5. **Le char a roulé 130 u hors carte** : `_hop_via_corridor` passait le
+   point BRUT à `hop_to()` dans le cas intra-zone ; tous les appelants
+   clampent avant, la sonde appelait en direct. Durci : le monde clampe
+   lui-même. Une glisse vers (400, −110) s'arrête maintenant sur x = 74.
+6. **L'échange balle → char** ne passait pas : `vehicle_at()` se retirait
+   dès qu'il était sur UN véhicule. Seul le véhicule monté se retire.
+7. **En run complet, la montgolfière Corail n'attendait plus au dock 0** :
+   en headless `is_position_in_frustum` est toujours faux, la règle de
+   re-mouillage tire à chaque frame, et la phase balloon supposait un état
+   que les phases précédentes avaient défait (0 rouge par phase, 1 en run
+   complet). Garée explicitement. Doctrine ajoutée.
+
+Rouge-avant-vert, cinq neutralisations, fichiers restaurés byte-identiques
+(`cmp`) : `SCHEMA_VERSION` = 1 → 4 rouges ; `_show_castle` retiré du build →
+9 rouges ; `is_gliding()` faux → 7 rouges ; fonte à zéro → 5 rouges ;
+`BRANCH_OF` vide → 4 rouges. À chaque fois les rouges sont exactement les
+assertions qui mesurent la chose neutralisée, et pas d'autres.
+
+Verdict par phase : region 21/21, geometry 39/39, save 17/17, walk 8/8,
+castle 20/20, weather 12/12, yacht 32/32, balloon 10/10, times 4/4 ; run
+complet 163 checks.
+
+## Mesures
+
+**Temps de trajet** (headless, `--fixed-fps 60`, hopper réel ; la marche
+n'a pas changé — références mesurées sur `origin/staging` importé à part) :
+
+| trajet | à pied | avec le lot |
+|---|---|---|
+| spawn → centre Crique (56, −110) | 30,60 s (réf. spawn → (36, −96) : 25,78 s) | 6,52 (marche au dock) + 10,05 (vol Corail) + 1,70 = **18,27 s** |
+| Crique → porte Circuit | 15,30 s | char **7,53 s** |
+| Lande centre → Crique | 11,90 s | char **5,90 s** |
+| porte Circuit → Lande centre | ~10,5 s (réf.) | char **2,38 s** |
+| spawn → dock Ciel (réf.) | 26,63 s | — |
+| spawn → Circuit centre (réf.) | 37,12 s | — |
+
+Vol Corail seul, tap → pieds sur le sable : 636 frames = 10,60 s (118 u).
+Glisse : 10,59 u/s soleil (10,67 attendu), 12,71 u/s orage (facteur 1,20
+mesuré pour 1,25 : le dernier segment court et le premier hop non retimé).
+
+**Triangles `gpu`** (`RenderingServer`, liste opaque, LOD moteur ; captures
+`CozyCapture`, 1080×1920) :
+
+| station | `origin/staging` | branche |
+|---|---|---|
+| spawn (0, 0) | 70 801 | 73 861 (77 135 avant `visibility_range_end = 95` sur les palmiers) |
+| Lande est (30, −100) | 44 525 | 51 803 |
+| couloir (44, −96) | — | 51 799 |
+| dock Crique (52, −98) | — | 48 350 |
+| plage (56, −110) | — | 37 605 |
+
+Le plafond de 50 k est déjà dépassé au spawn sur `staging`. Le +3 060 au
+spawn est le dock Corail, son panneau et la montgolfière rose, DANS le cadre
+par choix.
+
+## Captures — trois corrections après rendu, aucune après relecture
+
+1. **Le phare rendait tout rouge** : une tour d'un seul cylindre peinte en
+   bandes par `y` n'a que deux anneaux à interpoler. Quatre segments.
+2. **Une couronne de palmier plein cadre depuis le couloir** : la ligne de
+   palmiers du bord nord (dedans, puis dehors à 2,2 u) se tenait entre la
+   caméra (8,9 u au nord de Keepy) et lui. Ligne nord supprimée, bande
+   caméra (x 36..66, z −92..−79) interdite à tout arbre du semis et du mur.
+3. **Un parasol plein cadre depuis le dock** : même cause, 1,4 u dans le
+   bord nord. Déplacé à (49,5 ; −107,5). Doctrine ajoutée à `CLAUDE.md`.
+
+Et une quatrième, à la mesure : les rayures tondues du Circuit passaient
+sous la brume au sud de z = −150 depuis la plage ; `COVE_RECT` court à
+z = −200.
+
+**Blender ne rend pas ici** (`libEGL.so.1` absent, `apt` sans réseau) : la
+planche de la famille (22 GLB) est une sonde Godot jetable (`CoveSheet`),
+SubViewport 1800×1000, quatre azimuts/élévations, brume coupée. Et de toute
+façon c'est le rendu du moteur qui compte.
+
+## Rejeu de TOUTES les sondes du dépôt — branche ET `origin/staging` importé à part (01:05 → 02:45 UTC)
+
+73 scènes de `scripts/dev/`, chacune lancée sur les deux arbres avec les
+mêmes flags (`--fixed-fps 60` ; xvfb + `opengl3` pour les 29 sondes qui
+lisent un pixel, une instance de `MultiMesh` ou un point d'écran, headless
+pour les autres), 2 processus en parallèle par arbre sur 4 cœurs, budget
+900 s par sonde. Verdict : **l'ensemble des sondes non vertes est
+IDENTIQUE sur les deux arbres, assertion pour assertion** (même texte de
+`FAIL`, mêmes nombres : « draw nodes 157, expected 144 », « −0,158 u »,
+« 15/16 taps »…), à une exception près, `JumpDodgeRewardAudit` (Chased),
+rouge sur la référence et vert sur la branche — une sonde de gameplay
+tirée au hasard, sans lien avec ce lot. **Zéro régression introduite.**
+Les cinq `timeout 900 s` sont les mêmes des deux côtés et sont de la
+famine CPU sous llvmpipe (« NOT STUCK, JUST SLOW »), pas des blocages ; ils
+n'ont pas été rejoués isolément cette nuit (une heure de plus chacun).
+`ProbeTimeoutAudit` vert : `CoveProbe` compte parmi les sondes armées, et
+les trois sondes jetables (`CoveRecon`, `CoveSheet`, `WalkTimeProbe`) ont
+été supprimées avant le commit.
+
+| sonde | mode | `origin/staging` | branche |
+|---|---|---|---|
+| `ActorWalkerProbe` | headless | vert | vert |
+| `AirEnemyLandingLaneAudit` | headless | vert | vert |
+| `AirHazardAudit` | headless | vert | vert |
+| `AlarmRampAudit` | headless | vert | vert |
+| `AntiFrustrationAudit` | headless | vert | vert |
+| `AssetContractAudit` | headless | vert | vert |
+| `BattleContractProbe` | headless | vert | vert |
+| `BattleDefenseProbe` | headless | vert | vert |
+| `BattleReadabilityProbe` | headless | vert | vert |
+| `BattleStatsProbe` | headless | vert | vert |
+| `CabinProbe` | xvfb | ROUGE | ROUGE |
+| `CampfireFacingProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `ChargerAudit` | headless | vert | vert |
+| `ChargerShapeProbe` | headless | vert | vert |
+| `ComboAudit` | headless | vert | vert |
+| `ComboContrastAudit` | xvfb | vert | vert |
+| `CoveProbe` | headless | — | vert |
+| `DarkPaletteAudit` | xvfb | vert | vert |
+| `DeathModelAudit` | headless | vert | vert |
+| `DecorParallaxProbe` | headless | vert | vert |
+| `DecorStabilityAudit` | xvfb | vert | vert |
+| `DivingBoardProbe` | headless | vert | vert |
+| `EnemyLaneAudit` | headless | vert | vert |
+| `HubPerfBaseline` | xvfb | vert | vert |
+| `JumpDodgeRewardAudit` | headless | ROUGE | vert |
+| `KartProbe` | headless | vert | vert |
+| `LakeMoveCaptureProbe` | xvfb | vert | vert |
+| `LakeMoveReconProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `LakeZoneProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `LakeZoneReconProbe` | xvfb | vert | vert |
+| `LaneFillAudit` | headless | vert | vert |
+| `LevelNavProbe` | xvfb | ROUGE | ROUGE |
+| `LiveRunProbe` | headless | timeout 900 s | timeout 900 s |
+| `OwlFlightProbe` | headless | vert | vert |
+| `OwlProbe` | headless | vert | vert |
+| `PacingAudit` | headless | vert | vert |
+| `ProbeTimeoutAudit` | headless | vert | vert |
+| `PursuerAudit` | headless | vert | vert |
+| `PursuerContrastAudit` | xvfb | vert | vert |
+| `PursuerFramingAudit` | xvfb | timeout 900 s | timeout 900 s |
+| `PursuerPushbackAudit` | headless | vert | vert |
+| `RushFrustrationAudit` | headless | vert | vert |
+| `SeesawProbe` | headless | ROUGE | ROUGE |
+| `ShrinkAudit` | headless | vert | vert |
+| `SpawnLakeCaptureProbe` | xvfb | vert | vert |
+| `SpawnLakeReconProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `SplashSheetProbe` | xvfb | vert | vert |
+| `StomperAudit` | headless | vert | vert |
+| `StomperConflictAudit` | headless | vert | vert |
+| `StreamGeometryProbe` | headless | vert | vert |
+| `StreamRideProbe` | xvfb | vert | vert |
+| `StrikeAudit` | headless | ROUGE | ROUGE |
+| `StrikeContrastAudit` | xvfb | vert | vert |
+| `StrikeFatalContrastAudit` | xvfb | ROUGE | ROUGE |
+| `SwampIdentityAudit` | xvfb | vert | vert |
+| `TrackPropsAudit` | headless | vert | vert |
+| `TracksidePropCensus` | headless | vert | vert |
+| `TurnstileProbe` | headless | ROUGE | ROUGE |
+| `TyrolienneFixedPointsProbe` | xvfb | vert | vert |
+| `V4ClimbProbe` | xvfb | INCONCLUSIVE | INCONCLUSIVE |
+| `V4SaveProbe` | headless | vert | vert |
+| `V4SiteProbe` | headless | vert | vert |
+| `V6CrittersProbe` | xvfb | INCONCLUSIVE | INCONCLUSIVE |
+| `WaterImpactProbe` | xvfb | ROUGE | ROUGE |
+| `WaterTintProbe` | xvfb | ROUGE | ROUGE |
+| `WaterlineOrientationProbe` | xvfb | vert | vert |
+| `ZiplineReconProbe` | xvfb | vert | vert |
+| `ZiplineRideProbe` | xvfb | ROUGE | ROUGE |
+| `ZiplineStructureProbe` | xvfb | ROUGE | ROUGE |
+
+## Fermeture CH29 et preuve de déploiement sur le service (02:53 UTC)
+
+Merge `--no-ff` `f93d5cf` sur `staging` (arbre `e7381ab…`, byte-identique à
+la branche, `git diff --stat` vide), push 02:47:06 UTC. Lecture AVANT
+(01:45:45) : `CACHE_VERSION = 1788643911` (05/09 21:31:51, le V8) en
+`MISS`/`age 0`. Lecture APRÈS, une seule (02:53:15) :
+`GET https://keepy-staging.vercel.app/index.service.worker.js` →
+**`CACHE_VERSION = 1788663129` → 02:52:09 UTC**, `x-vercel-cache: MISS`,
+`age: 0`, `last-modified` 02:53:15. Run `34007368125` (n° 459, `staging`,
+sha `f93d5cf`) : `completed` / `success`, 02:47:11 → 02:52:39 — l'epoch
+servi tombe dedans. Une lecture GitHub, une lecture Vercel, aucun poll.
+Export local du même arbre : `index.wasm` 35 376 909 / md5 `af4a8fc2…`
+(identité moteur inchangée), 572 fichiers packés, zéro `SCRIPT ERROR`,
+zéro `Storing File` hors filtre. `main` intouché.
+
+---
+
+# CH30 — CONDUITE UNIFIÉE (6 septembre 2026, lot cadré vers `staging`)
+
+> Récit cadré complet : [`docs/lots/CH30_CONDUITE.md`](lots/CH30_CONDUITE.md).
+> Cette section-ci est le **journal de session** que le brief demande :
+> chaque arbitrage pris seul, chaque piste abandonnée et pourquoi, et les
+> mesures dans l'ordre où elles sont tombées.
+
+## Départ (03:44 UTC)
+
+`git fetch --all --prune`. La branche de travail était sur `ef005da`, qui
+est **`origin/main`** (CH27 lot 1) et non `origin/staging` : le prompt
+décrivait un état que le dépôt ne portait pas. `origin/staging` est à
+`06d9107` (CH29 la Crique). Arbre de `main` (`0290e1d`) ≠ arbre de
+`staging` (`af62915`). Branche repartie de `origin/staging`.
+
+Aucune session concurrente : la branche distante la plus récente
+(`claude/hub-fifth-zone-transport-3nkix4`, 02:53) est **déjà mergée** dans
+`staging` (`merge-base --is-ancestor` vrai). Comparé par ARBRE et par
+ancestralité, jamais par nom.
+
+Godot n'était pas installé dans ce bac à sable. Éditeur 4.3-stable
+téléchargé et **vérifié contre le `Content-Length` avant d'extraire**
+(50 276 070 octets, exactement le chiffre au dossier). Deux imports lancés
+en parallèle, un par arbre : 154 `.scn` des deux côtés, **comptés avant de
+comparer quoi que ce soit**.
+
+## Arbitrages pris seul
+
+1. **Le dénominateur de « ×1,5 d'adversité ».** Une session ne peut pas
+   tenir le pouce de Mathieu, donc le rapport ne peut pas être « le niveau
+   de Mathieu ». Choisi : le **tour le plus rapide que le véhicule peut
+   tourner ici** (21,633 s), mesuré avec un pilote dont les pneus ne
+   lâchent jamais. Un preset ×N divise le déficit à ce plancher par N.
+   C'est stable, mesurable, et ça ne bouge pas quand le joueur progresse.
+2. **Le troisième preset s'appelle x2.5 et non x2.** L'échelle est
+   compressive (le plancher n'est qu'à 2,7 s) : un x2 se serait posé à
+   0,45 s/tour du défaut, dans la dispersion du peloton. Nommer x2 une
+   marche qu'on ne sent pas aurait été un mensonge d'étiquette.
+3. **Le rubber-band ne devient pas le levier**, malgré qu'il soit le
+   suspect naturel : mesuré inerte (0,1 s sur 75 s). Ses bornes bougent
+   quand même, mais dans un seul sens — la laisse sur un adversaire en
+   tête est relâchée vers 1,0.
+4. **La garde circuit est une propriété du sol conduisible**, pas un
+   repositionnement au départ de course. Moins intrusif, et c'est la seule
+   des deux options qui survive à un rechargement (la sauvegarde de
+   Mathieu contient un char sur la grille).
+5. **Le char reste libre de rouler dans les cinq zones.** Le restreindre à
+   la crique aurait divisé par cinq le risque de l'audit visuel — et aurait
+   été une régression fonctionnelle : CH29 dit explicitement que son intérêt
+   est de traverser la carte.
+6. **Le HUD du kart est prêté au char** dans un mode « véhicule » plutôt
+   qu'un second HUD. Deux widgets (bouton de sortie, fantôme de direction)
+   ne justifient pas une seconde scène qui dériverait.
+7. **Le cyprès est corrigé au rendu, pas dans le `.glb`.** L'asset est
+   celui de Mathieu ; le gain est révocable en une ligne, l'export ne
+   l'est pas.
+8. **Les critters qui marchent dans le hub gardent leur cull à 52 u.**
+   Les monter aurait aggravé la frame du spawn, déjà au-dessus de son
+   plafond. Documenté comme limite acceptée, pas corrigé.
+
+## Pistes abandonnées
+
+* **Mettre `a_lat` à l'échelle fort** (première table : ×1,40 à x2). La
+  mesure a montré que le virage le plus serré est tenu par la limite de
+  **braquage** (4,17 u/s) et pas par les pneus : au-delà de `a_lat ≈ 5,1`
+  la marche n'achète rien et **aplatit les personnalités** — chat et
+  sanglier lisaient exactement le même chiffre à l'oméga. `top` porte
+  désormais l'essentiel de chaque marche.
+* **Lire la séparation des personnalités à l'échantillon le plus serré**
+  (le contrat de `KartProbe`). Rejeté pour la même raison : c'est
+  précisément le point où tout le monde sature. Relu sur le quart le plus
+  tortueux et le quart le plus droit.
+* **Porter le cap de conduite dans une variable locale** lors de
+  l'extraction. Marche parfaitement et donne une AUTRE conduite : un
+  `float` GDScript est un float64, `rotation.y` un float32. Voir
+  `CLAUDE.md`.
+* **Mesurer l'allure du char dans la crique.** 30 u de large : le char
+  tape le mur est après 26 u et une voile à 0,55/s n'est encore qu'à 89 %
+  de sa vitesse après quatre secondes. Lu 9,52 u/s pour une allure
+  autorisée de 10,67. Refait sur la ligne droite de la lande (76 u), à
+  z = −98 pour dégager le trou du moulin.
+* **Le premier mur du char.** Séparé par axe, il a **bloqué le véhicule à
+  vie** contre le trou du moulin. Repris.
+* **Le premier prédicat d'enroulement** de `ChaseAudit`, signe inversé,
+  déclarait cassés les huit rubans du hub. Repris, avec une ancre.
+* **Le premier échantillon de ciel** de `ChaseAudit`, pris au pixel du
+  haut au centre, était le mât du portique de départ à un mètre. Médiane
+  de trois.
+
+## Mesures, dans l'ordre
+
+| | |
+|---|---|
+| plancher du circuit (`limit_ref`) | **21,633 s** |
+| meilleur tour adverse — x1 / x1.5 / x2.5 | **24,350 / 23,350 / 22,733 s** |
+| déficit au plancher | 2,700 / 1,700 / 1,083 s |
+| rapport au déficit x1 (cible 1/1,5 = 0,667) | 1,000 / **0,630** / 0,401 |
+| part du rubber-band sur une arrivée | **≤ 0,15 s sur 75 s** |
+| trace du kart, branche vs `origin/staging` | **byte-identique**, 180 échantillons |
+| allure du char, soleil / orage | **10,40 / 12,99 u/s** (rapport 1,249 ; vent 1,250) |
+| freinage du char depuis 10,4 u/s | 58 frames (0,97 s) |
+| cyprès, luminance de vertex → effective | 0,0692 → **0,3045** |
+| pilotes de kart cullés sous la bande lisible | 3 → **0** |
+| pire frame de poursuite (`gpu`) | 94 055 → **100 520** |
+
+# CH31 — LA COURSE CESSE D'ÊTRE GAGNÉE D'AVANCE (6 septembre 2026, lot cadré vers `staging`)
+
+> Branche `claude/keepy-difficulty-rebalance-merrvy`, repartie du HEAD réel
+> de `origin/staging` (`e02b155`). Récit intégral :
+> [`docs/lots/CH31_DIFFICULTE.md`](lots/CH31_DIFFICULTE.md).
+
+## Départ
+
+La branche pointait sur l'arbre de `origin/main` (`0290e1d`) et non sur
+celui de `origin/staging` (`cee2c41`). Constaté **par comparaison
+d'ARBRES** avant la première ligne de code, comme le brief le demandait et
+comme `CLAUDE.md` le documente depuis quatre incidents.
+
+Le brief posait une contradiction plutôt qu'une tâche : CH30 publie un
+plancher de circuit de 21,633 s, et Mathieu prend un tour d'avance sur
+trois tours. Les deux ne peuvent pas être vrais.
+
+## Ce que la recon a trouvé, dans l'ordre
+
+* **(c) réfutée** — le banc charge bien la scène, le circuit et le plateau
+  réels. Un fait est tombé au passage : le joueur partait **en pole**.
+* **(b) réfutée** — le peloton coûte ≤ 0,117 s, la laisse ≤ 0,13 s.
+* **(a) confirmée** — et c'était un problème d'ÉTALON, pas de réglage.
+  `human_ref`, le « pilote humain » du banc CH30, est un profil de
+  `KartAiDriver` : le même contrôleur, le même profil de vitesse, que les
+  adversaires qu'il mesure. **Il tournait 24,400 s contre les 23,350 s du
+  chat.** Un banc dont l'étalon est membre du peloton ne peut pas voir que
+  le peloton est lent, et c'est pourquoi toutes les tables de CH30 étaient
+  vertes pendant que la course se gagnait d'un tour.
+
+## Arbitrages pris seul
+
+* **Ne pas décaler le barème, le reconstruire.** Le brief l'ordonnait, et
+  la mesure l'a justifié : `top` est un plafond dur, donc une personnalité
+  à `top` bas ne peut pas être accélérée par `pace`. Le chat n'a pas bougé
+  de 0,05 s entre `pace` 1,20 et 1,38.
+* **Monter la CROISIÈRE, pas le plafond de boost.** Balayé : le plafond
+  seul déplace la médiane de +0,10 s dans le mauvais sens en doublant le
+  hors-piste. La croisière passe à 15,0 u/s, et la borne est à 16 où le
+  pilote qui pousse devient plus lent que le discipliné.
+* **Rendre le mappage de l'accélérateur PAR INSTANCE.** C'était la seule
+  façon de réparer le kart sans toucher au char à voile, que le brief gèle.
+
+## Pistes abandonnées
+
+* **La ligne de courbure minimale relaxée dans le couloir**, comme
+  plancher de circuit. `Σ|Δ²P|²` pondère un virage par `ds⁴`, et `ds` est
+  le plus petit là où le virage est le plus serré : 12 000 balayages ont
+  déplacé le rayon minimal **dans le mauvais sens** (3,396 → 3,371 u).
+  Remplacée par un plancher **piloté** — le plus grand facteur d'allure qui
+  tient encore le ruban.
+* **Le premier gradient de cette relaxation**, monté au lieu de descendre :
+  longueur de ligne 443 u pour un circuit de 230 u, saturée sur ses bornes.
+  Deux fois, à deux endroits.
+
+## Ce qui a été trouvé en essayant de le casser
+
+* **D5 passait GRATUITEMENT.** Sa première forme — « l'étalon n'est pas en
+  tête six secondes après les feux » — est restée verte avec le joueur
+  remis en pole : les IA sont parfaites au feu vert et ce modèle ne l'est
+  pas, donc il est quatrième depuis n'importe quel slot. Le check ne
+  distinguait pas les deux grilles. Réécrit sur le fait structurel ; le
+  rang à six secondes est publié, non gaté, avec la raison à côté.
+* **D6 est né d'un échec de blind C.** x2.5 à `pace` 1,55 faisait tourner
+  au chat un 18,467 s — **sous le plancher piloté** — en passant 131 frames
+  hors du ruban. Un adversaire qui achète son temps sur l'herbe n'est pas
+  plus fort, il est cassé, et un temps au tour seul ne le voit pas.
+* **Deux tâches de fond se sont disputé `KartBody.gd`** pendant un
+  balayage de vitesse : deux `sed` sur le même fichier, un run mesuré au
+  milieu. Exactement le hasard de concurrence que `CLAUDE.md` documente,
+  et reproduit ici à l'intérieur d'une seule session. Restauré et remesuré.
+* **Une vérification « le process est mort » qui était fausse** : le
+  binaire est lancé par le symlink `godot4`, et je greppais `[G]odot`.
+  Trois runs ont été relancés pour rien.
+
+## Mesures, dans l'ordre
+
+| | |
+|---|---|
+| hypothèse retenue | **(a)**, l'étalon était membre du peloton |
+| étalon CH30 contre le chat qu'il mesurait | **24,400 s contre 23,350 s** |
+| borne dure à l'oméga, tout profil confondu | **4,17 u/s** |
+| plancher CH30 → plancher **piloté** | 21,633 s → **18,583 s** |
+| plein gaz sur 230,711 u | 12,111 s |
+| étalon réparé, n = 320 — sans / avec boost | p50 **21,633** / **20,350 s** |
+| effet de la latence sur la médiane (blind B) | **1,383 s** |
+| meilleur tour adverse x1 / x1.5 / x2.5 | **21,850 / 20,233 / 19,300 s** |
+| gain du défaut contre CH30 | **3,1 à 4,3 s au tour** |
+| déficit du dernier au drapeau (défaut) | **0,072 tour** (gate 0,80) |
+| place de l'étalon au preset par défaut | **2ᵉ**, battu de **0,117 s** |
+| croisière, plafond de boost | 13,0 → **15,0** ; 16,5 → **19,05** |
+| borne de lisibilité mesurée | **16 u/s** (croisement) |
+| trace du char, branche vs `origin/staging` | **byte-identique**, 24 lignes |

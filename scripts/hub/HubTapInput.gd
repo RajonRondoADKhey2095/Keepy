@@ -176,6 +176,10 @@ signal tapped_tree(point: Vector3, index: int)
 signal tapped_critter(point: Vector3, kind: StringName, index: int)
 ## v7: the parked kart. Withdrawn through HubKarting for the drive.
 signal tapped_kart(point: Vector3)
+## CH29: a sandcastle spot in the cove (`index` names which). Withdrawn by
+## HubCove while that spot's castle is rising (the boat's terms), so a tap
+## meanwhile falls through to tapped_ground and cancels the intent.
+signal tapped_castle(point: Vector3, index: int)
 
 ## The three nodes this needs, as scene-authored paths.
 ##
@@ -218,6 +222,8 @@ signal tapped_kart(point: Vector3)
 ## for the length of a drive, and while it drives NO point is handled
 ## here at all -- the touch belongs to KartTouchInput.
 @export var karting_path: NodePath
+## CH29: the cove module (the castle spots). Optional.
+@export var cove_path: NodePath
 
 var camera: Camera3D = null
 var container: SubViewportContainer = null
@@ -228,6 +234,7 @@ var transport: HubTransport = null
 var trees: HubTrees = null
 var critters: HubCritters = null
 var karting: HubKarting = null
+var cove: HubCove = null
 
 ## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
@@ -305,13 +312,18 @@ func _ready() -> void:
 	trees = get_node_or_null(trees_path) as HubTrees
 	critters = get_node_or_null(critters_path) as HubCritters
 	karting = get_node_or_null(karting_path) as HubKarting
+	cove = get_node_or_null(cove_path) as HubCove
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
 func _unhandled_input(event: InputEvent) -> void:
 	# v7: while the kart is driven the screen is a steering wheel, not a
 	# map. Not handled, so KartTouchInput sees it whichever runs first.
+	# CH30: and the same for the sand yacht, which is driven by the same
+	# writer -- one condition per DRIVEN VEHICLE, not per vehicle.
 	if karting != null and karting.is_driving():
+		return
+	if transport != null and transport.is_driving_yacht():
 		return
 	var touch := event as InputEventScreenTouch
 	if touch:
@@ -425,6 +437,14 @@ func _handle_point(screen_point: Vector2) -> void:
 	if transport != null and transport.accepts_vehicle_tap(aim):
 		tapped_vehicle.emit(destination)
 		return
+	# THE SANDCASTLE SPOTS (CH29), on `aim`, right after the vehicles: the
+	# yacht can be dropped anywhere, a castle spot included, and a body on
+	# a spot beats the spot (the boar's rule over the pile).
+	if cove != null:
+		var spot: int = cove.accepts_castle_tap(aim)
+		if spot >= 0:
+			tapped_castle.emit(destination, spot)
+			return
 	# THE CLIMBABLE TREES (v4), on `aim` like everything else -- and (v5)
 	# on the RAY, because a crown is what the player taps and a crown at
 	# 3 u projects onto the ground 3.5 u south of its trunk. The perchoirs'

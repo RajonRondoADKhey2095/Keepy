@@ -75,6 +75,7 @@ func _ready() -> void:
 	_autumn()
 	_moor()
 	_circuit()
+	_cove()
 	_forest_wall()
 	_flush()
 	_mother_tree()
@@ -115,6 +116,10 @@ func _blocked(p: Vector3, own_radius: float) -> bool:
 		return true
 	# v3: the transport docks and the ball's park are kept clear.
 	for fp in HubTransport.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
+	# CH29: the cove's fixed props (lighthouse, castle spots, parasols...).
+	for fp in HubCove.footprints():
 		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
 			return true
 	# v4: the climbable trees, same terms.
@@ -435,6 +440,118 @@ func _circuit() -> void:
 		flowers += 1
 	_stats["circuit_flower"] = flowers
 
+## ---- CH29: the cove ("la Crique") -----------------------------------------
+## The sand, the wet strip and the sea bed are painted (cozy_ground); what
+## is sown is what a beach carries: palms along both dune lines (INSIDE
+## the region, decor a walk passes through like the hollow's autumn
+## trees), two at the corridor mouth so the zone is announced the moment
+## it is entered, marram grass on the dry back of the beach, shells and
+## starfish toward the water, pale rocks and driftwood. Nothing is sown
+## under the sea or on the wet strip but the castle spots' own discs.
+const COVE_SEED: int = SEED + 404
+## Palms stop this far from the waterline (roots in the sea read wrong).
+const COVE_PALM_SHORE_MARGIN: float = 3.0
+## Where the hub camera stands for a body in the corridor or on the north
+## half of the beach (8.9 u north of it): x 36..66, z -92..-79. No tree of
+## any family is sown there -- see _cove() and _forest_wall().
+const COVE_CAMERA_BAND_MIN: Vector2 = Vector2(36.0, -92.0)
+const COVE_CAMERA_BAND_MAX: Vector2 = Vector2(66.0, -79.0)
+
+static func _in_cove_camera_band(p: Vector3) -> bool:
+	return p.x > COVE_CAMERA_BAND_MIN.x and p.x < COVE_CAMERA_BAND_MAX.x and p.z > COVE_CAMERA_BAND_MIN.y and p.z < COVE_CAMERA_BAND_MAX.y
+const COVE_PALM_X_STOP: float = 62.0
+const COVE_SHELL_COUNT: int = 44
+const COVE_STAR_COUNT: int = 9
+const COVE_GRASS_COUNT: int = 90
+const COVE_ROCK_COUNT: int = 9
+
+func _in_cove_sand(p: Vector3, shore_margin: float) -> bool:
+	return HubRegion.in_cove(p) and HubRegion.contains(p) and HubRegion.shore_distance(p) > shore_margin
+
+func _cove() -> void:
+	_rng.seed = COVE_SEED
+	var palms := 0
+	# ONE in-region palm line, along the SOUTH edge only. The camera sits
+	# 8.9 u north of Keepy: a line along the north edge stood between the
+	# lens and the body for anyone on the beach's north half, and filled
+	# the frame with a crown (capture "corridor", first pass). The south
+	# line is ahead of everyone in the cove -- a backdrop, never a blind.
+	for edge in [HubRegion.COVE_MIN.y + 1.3]:
+		var x: float = HubRegion.COVE_MIN.x + 2.0
+		while x < COVE_PALM_X_STOP:
+			var p := Vector3(x + _rng.randf_range(-0.6, 0.6), 0.0, float(edge) + _rng.randf_range(-0.5, 0.5))
+			if _in_cove_sand(p, COVE_PALM_SHORE_MARGIN) and not _blocked(p, 1.0):
+				_moor_place("palm", "palm_%d" % _rng.randi_range(0, 2), p, _rng.randf_range(0.85, 1.15), _rng.randf_range(0.0, TAU), 0.06, 4.5)
+				palms += 1
+			x += _rng.randf_range(4.2, 5.8)
+	# One palm at the corridor mouth, on its SOUTH lip (ahead of a body
+	# walking in; the north lip is where the camera is): the first thing
+	# framed when the corridor is entered.
+	for p in [Vector3(45.2, 0.0, -102.0)]:
+		if _in_cove_sand(p, COVE_PALM_SHORE_MARGIN) and not _blocked(p, 0.8):
+			_moor_place("palm", "palm_1", p, 1.1, _rng.randf_range(0.0, TAU), 0.06, 4.5)
+			palms += 1
+	# The dunes OUTSIDE the region: a palm line on the far side of the SOUTH
+	# dune edge (the forest wall's box stops at x = 62, so past it nothing
+	# else closes the beach), and a loose palm fringe on the sand plain
+	# south of the cove, which the haze eats past ~40 u. NOTHING tall north
+	# of the cove within COVE_CAMERA_BAND: the camera of anyone on the
+	# beach's north half or in the corridor stands in that band, looking
+	# south -- a palm there is a crown across the whole frame (captures
+	# "corridor", passes one and two), and the band itself is never in the
+	# picture (the camera only ever shows lower z than its own).
+	for edge in [HubRegion.COVE_MIN.y - 2.2]:
+		var x: float = HubRegion.COVE_MIN.x + 1.0
+		while x < 66.0:
+			var p := Vector3(x + _rng.randf_range(-0.8, 0.8), 0.0, float(edge) + _rng.randf_range(-0.8, 0.8))
+			if not HubRegion.contains(p) and not HubRegion.in_sea(p) and HubRegion.shore_distance(p) > 2.0 and not _blocked(p, 0.8):
+				_moor_place("palm", "palm_%d" % _rng.randi_range(0, 2), p, _rng.randf_range(0.9, 1.25), _rng.randf_range(0.0, TAU), 0.06, 4.5)
+				palms += 1
+			x += _rng.randf_range(3.4, 5.0)
+	for i in 14:
+		var p := Vector3(_rng.randf_range(50.0, 86.0), 0.0, _rng.randf_range(-150.0, -134.0))
+		if HubRegion.contains(p) or HubRegion.in_sea(p) or HubRegion.shore_distance(p) < 2.5 or _blocked(p, 1.0):
+			continue
+		_moor_place("palm", "palm_%d" % _rng.randi_range(0, 2), p, _rng.randf_range(0.9, 1.3), _rng.randf_range(0.0, TAU), 0.06, 4.5)
+		palms += 1
+	_stats["palm"] = palms
+	# Marram grass on the dry back of the beach and on the dunes.
+	var grass := 0
+	for i in COVE_GRASS_COUNT:
+		var p := Vector3(_rng.randf_range(HubRegion.COVE_MIN.x - 3.0, HubRegion.COVE_MIN.x + 20.0), 0.0, _rng.randf_range(HubRegion.COVE_MIN.y - 3.0, HubRegion.COVE_MAX.y + 3.0))
+		if HubRegion.in_sea(p) or HubRegion.shore_distance(p) < 8.0 or _blocked(p, 0.3):
+			continue
+		if HubRegion.in_moor(p) or (HubRegion.contains(p) and not HubRegion.in_cove(p)):
+			continue
+		_moor_place("dunegrass", "dunegrass_%d" % (i % 2), p, _rng.randf_range(0.9, 1.4), _rng.randf_range(0.0, TAU), 0.07, 0.9)
+		grass += 1
+	_stats["dunegrass"] = grass
+	# Shells and starfish, denser toward the water but never on the wet
+	# strip (the castles' ground) and never under the sea.
+	var shells := 0
+	for i in COVE_SHELL_COUNT + COVE_STAR_COUNT:
+		var p := Vector3(_rng.randf_range(HubRegion.COVE_MIN.x + 3.0, HubRegion.COVE_MAX.x), 0.0, _rng.randf_range(HubRegion.COVE_MIN.y + 1.0, HubRegion.COVE_MAX.y - 1.0))
+		if not _in_cove_sand(p, 3.6) or _blocked(p, 0.2):
+			continue
+		if _rng.randf() > 0.35 + 0.65 * clampf(1.0 - (HubRegion.shore_distance(p) - 3.6) / 14.0, 0.0, 1.0):
+			continue
+		if i < COVE_SHELL_COUNT:
+			_moor_place("shell", "shell_%d" % (i % 2), p, _rng.randf_range(0.9, 1.5), _rng.randf_range(0.0, TAU), 0.0, 1.0)
+		else:
+			_moor_place("starfish", "starfish_0", p, _rng.randf_range(1.0, 1.4), _rng.randf_range(0.0, TAU), 0.0, 1.0)
+		shells += 1
+	_stats["shell"] = shells
+	var rocks := 0
+	for i in 40:
+		if rocks >= COVE_ROCK_COUNT:
+			break
+		var p := Vector3(_rng.randf_range(HubRegion.COVE_MIN.x + 1.0, HubRegion.COVE_MAX.x), 0.0, _rng.randf_range(HubRegion.COVE_MIN.y + 1.0, HubRegion.COVE_MAX.y - 1.0))
+		if not _in_cove_sand(p, 2.2) or _blocked(p, 0.9):
+			continue
+		_moor_place("palerock", "palerock_%d" % (i % 2), p, _rng.randf_range(0.7, 1.3), _rng.randf_range(0.0, TAU), 0.0, 1.0)
+		rocks += 1
+	_stats["cove_rock"] = rocks
+
 func _in_field(p: Vector3, margin: float) -> bool:
 	for f in CozyPalette.LAVENDER_FIELDS:
 		if p.x > f.x - margin and p.x < f.z + margin and p.z > f.y - margin and p.z < f.w + margin:
@@ -490,6 +607,10 @@ func _forest_wall() -> void:
 	var far_kind := "tree_6_far"
 	# v3: past the moor's edge the wall is cypress and olive.
 	var moor_kinds := ["cypress_0", "cypress_1", "olive_0", "cypress_0", "cypress_1", "tree_4_conifer"]
+	# CH29: east of the moor the wall is palms and pale rock -- and never
+	# in the sea (the wall's box reaches x = 62, the waterline starts at 68,
+	# but the sea disc curves back to x ~ 72 on the cove's edges).
+	var cove_kinds := ["palm_0", "palm_1", "palm_2", "palm_0", "palerock_0", "palm_1"]
 	var placed_near := 0
 	var placed_far := 0
 	var box_area := (2.0 * WALL_OUTER) * (50.0 - WALL_FAR_Z)
@@ -497,7 +618,7 @@ func _forest_wall() -> void:
 		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, 50.0))
 		if HubRegion.contains(p) or _near_region(p, WALL_CLEARANCE):
 			continue
-		if _blocked(p, 1.2):
+		if _blocked(p, 1.2) or HubRegion.in_sea(p) or HubRegion.shore_distance(p) < 2.0 or _in_cove_camera_band(p):
 			continue
 		var near := _near_region(p, WALL_NEAR_BAND)
 		var s := _rng.randf_range(0.9, 1.35)
@@ -506,9 +627,10 @@ func _forest_wall() -> void:
 		var autumn := p.z < AUTUMN_WALL_Z
 		var moor := p.z < MOOR_WALL_Z
 		var circuit := p.z < CIRCUIT_WALL_Z
+		var cove := _is_cove_wall(p)
 		if near:
 			# Denser near band: every candidate lands, plus extra throws.
-			_add("wall_near", _wall_kind(p, near_kinds if circuit else (moor_kinds if moor else (autumn_kinds if autumn else near_kinds))), _wall_sector(p), xform, 0.04, 3.0)
+			_add("wall_near", _wall_kind(p, cove_kinds if cove else (near_kinds if circuit else (moor_kinds if moor else (autumn_kinds if autumn else near_kinds)))), _wall_sector(p), xform, 0.04, 3.0)
 			placed_near += 1
 		else:
 			# The moor's FAR wall is the 72-tri far blob too, not a cypress:
@@ -521,12 +643,12 @@ func _forest_wall() -> void:
 		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, 50.0))
 		if HubRegion.contains(p) or _near_region(p, WALL_CLEARANCE) or not _near_region(p, WALL_NEAR_BAND):
 			continue
-		if _blocked(p, 1.2):
+		if _blocked(p, 1.2) or HubRegion.in_sea(p) or HubRegion.shore_distance(p) < 2.0 or _in_cove_camera_band(p):
 			continue
 		var s := _rng.randf_range(0.9, 1.35)
 		var yaw := _rng.randf_range(0.0, TAU)
 		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
-		_add("wall_near", _wall_kind(p, near_kinds if p.z < CIRCUIT_WALL_Z else (moor_kinds if p.z < MOOR_WALL_Z else (autumn_kinds if p.z < AUTUMN_WALL_Z else near_kinds))), _wall_sector(p), xform, 0.04, 3.0)
+		_add("wall_near", _wall_kind(p, cove_kinds if _is_cove_wall(p) else (near_kinds if p.z < CIRCUIT_WALL_Z else (moor_kinds if p.z < MOOR_WALL_Z else (autumn_kinds if p.z < AUTUMN_WALL_Z else near_kinds)))), _wall_sector(p), xform, 0.04, 3.0)
 		placed_near += 1
 	# v3: the second hedge, between the hollow and the moor, either side of
 	# the moor corridor: autumn on the hollow side, cypress on the moor side.
@@ -559,6 +681,23 @@ func _forest_wall() -> void:
 		_add("wall_near", _wall_kind(p, near_kinds if p.z < -131.0 else moor_kinds), "hedge3", xform, 0.04, 3.0)
 		hedge3 += 1
 	_stats["hedge3"] = hedge3
+	# CH29: the fourth hedge, between the moor and the cove, either side of
+	# the cove corridor: cypress on the moor side, palms on the cove side.
+	var hedge4 := 0
+	for i in int(42.0 * 5.0 * HEDGE_PER_U2):
+		var p := Vector3(_rng.randf_range(38.5, 43.5), 0.0, _rng.randf_range(-129.0, -87.0))
+		if HubRegion.contains(p) or _blocked(p, 0.8):
+			continue
+		# The gap is wider NORTH of the corridor than south: the camera of a
+		# body in the corridor sits 8.9 u north of it, inside that band.
+		if p.z > HubRegion.COVE_CORRIDOR_MIN.y - 1.5 or _in_cove_camera_band(p):
+			continue
+		var s := _rng.randf_range(0.85, 1.25)
+		var yaw := _rng.randf_range(0.0, TAU)
+		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
+		_add("wall_near", _wall_kind(p, cove_kinds if p.x > 41.0 else moor_kinds), "hedge4", xform, 0.04, 3.0)
+		hedge4 += 1
+	_stats["hedge4"] = hedge4
 	# The HEDGE between the two zones: the 6 u band the region leaves
 	# outside itself east of the corridor. The wall passes above only
 	# sample it thinly (2 u clearance on each side eats 4 of the 6 u), so
@@ -579,6 +718,11 @@ func _forest_wall() -> void:
 	_stats["wall_far"] = placed_far
 
 const WALL_SECTORS: int = 6
+## CH29: the wall east of the moor's edge and south of the hollow belongs
+## to the cove -- palms, from the moor's hedge line to the sand plain.
+static func _is_cove_wall(p: Vector3) -> bool:
+	return p.x > 40.0 and p.z < -80.0 and p.z > -156.0
+
 const AUTUMN_WALL_Z: float = -40.0
 const MOOR_WALL_Z: float = -84.0
 ## v7: past the circuit's hedge the wall is the plateau's round trees
@@ -687,6 +831,15 @@ func _paths() -> void:
 	_path_lines.append(circuit_road)
 	_extrude_path(circuit_road, st, 0.7)
 	built += 1
+	# CH29: the road east to the cove -- leaves the moor road by the
+	# hamlet, passes NORTH of the ranger's house (the field's dry-stone
+	# wall runs at z = -96.7 south of it, so the lane between was too
+	# narrow), bends down to the corridor and ends a few steps onto the
+	# sand, where a path would be invisible anyway.
+	var cove_road := _catmull_rom(COVE_ROAD, 7)
+	_path_lines.append(cove_road)
+	_extrude_path(cove_road, st, 1.9)
+	built += 1
 	var mesh := st.commit()
 	var node := MeshInstance3D.new()
 	node.name = "Paths"
@@ -712,6 +865,15 @@ var _moor_road: Array = []
 const CIRCUIT_ROAD: Array[Vector3] = [
 	Vector3(-2.0, 0.0, -107.0), Vector3(-5.5, 0.0, -114.0), Vector3(-8.0, 0.0, -122.0),
 	Vector3(-8.0, 0.0, -130.0), Vector3(-7.0, 0.0, -136.0),
+]
+## The bend at (20.5, -88.3) passes NORTH of the ranger's resting spot
+## (HubBeaver.REST (20, -90.2), r 1.1) -- the first trace ran through it,
+## found by CoveProbe's road check, not by reading the layout. The road
+## stops at the cove dock's step (footprint 2.9) rather than under its deck.
+const COVE_ROAD: Array[Vector3] = [
+	Vector3(11.5, 0.0, -95.0), Vector3(15.5, 0.0, -91.5), Vector3(20.5, 0.0, -88.3),
+	Vector3(26.5, 0.0, -89.0), Vector3(33.5, 0.0, -93.2), Vector3(41.0, 0.0, -96.0),
+	Vector3(46.5, 0.0, -97.2), Vector3(49.0, 0.0, -98.6),
 ]
 
 ## Ribbon extrusion shared by the Bezier paths and the autumn road: one
@@ -909,6 +1071,16 @@ func _hills() -> void:
 		var sz := rng.randf_range(18.0, 34.0)
 		var basis := Basis.from_euler(Vector3(0.0, rng.randf_range(0.0, TAU), 0.0)).scaled(Vector3(sx, sy, sz))
 		xforms.append(Transform3D(basis, Vector3(p.x, -sy * 0.35, p.z)))
+	# CH29: no hill on the cove's sand or out on its sea -- the horizon
+	# there is open water into the haze. Filtered AFTER the roll so the
+	# random sequence, and every other hill, is exactly what it was.
+	var kept: Array[Transform3D] = []
+	for xf in xforms:
+		var o: Vector3 = xf.origin
+		if o.x > 30.0 and o.z < -55.0 and o.z > -215.0:
+			continue
+		kept.append(xf)
+	xforms = kept
 	multi.instance_count = xforms.size()
 	var bounds := AABB()
 	for i in xforms.size():
@@ -1198,7 +1370,13 @@ func _flush() -> void:
 		node.name = key.replace("|", "_")
 		node.multimesh = multi
 		var wind: float = batch["wind"]
-		node.material_override = CozyPalette.decor_material_wind(wind, float(batch["wind_height"])) if wind > 0.0 else CozyPalette.decor_material()
+		# CH30: a per-GLB brightness gain for an asset that is too dark to
+		# read (CozyPalette.FAMILY_GAIN -- today the cypress, and only it).
+		# Gain 1.0 returns the exact material this line always returned, so
+		# every other batch is untouched.
+		var gain: float = CozyPalette.family_gain(String(batch["mesh"]))
+		node.material_override = CozyPalette.decor_material_wind_gained(wind, float(batch["wind_height"]), gain) if wind > 0.0 \
+			else (CozyPalette.decor_material() if gain == 1.0 else CozyPalette.decor_material_wind_gained(0.0, 1.0, gain))
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		# v3: DISTANCE CULLING on everything that is not the horizon. The
 		# moor sits 95+ u from the spawn camera, straight down the axis it
@@ -1210,8 +1388,17 @@ func _flush() -> void:
 		# than the rest because the orange band behind the lakes is part of
 		# the spawn frame by design (v2).
 		var family: String = batch["family"]
-		if not family.begins_with("wall") and family != "hedge":
-			node.visibility_range_end = 95.0 if family.begins_with("autumn") or family in ["fern", "leafpile", "bigshroom", "log", "pumpkin", "lantern"] else 82.0
+		# CH29: palms are the cove's wall AND its dunes, and the most
+		# expensive tree in the wall (330 tri against the cypress's 140);
+		# from the spawn they sit 110+ u away, 91 % hazed, and cost 6 300
+		# primitives (measured: 70 801 -> 77 135 at spawn before this line).
+		# The cove's own horizon is 30 u from anyone standing in it.
+		if String(batch["mesh"]).begins_with("palm"):
+			node.visibility_range_end = 95.0
+			node.visibility_range_end_margin = 4.0
+			node.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
+		elif not family.begins_with("wall") and family != "hedge":
+			node.visibility_range_end = 95.0 if family.begins_with("autumn") or family in ["fern", "leafpile", "bigshroom", "log", "pumpkin", "lantern", "palm"] else 82.0
 			node.visibility_range_end_margin = 4.0
 			node.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 		add_child(node)

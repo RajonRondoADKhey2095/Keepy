@@ -389,6 +389,11 @@ d'un `mkdir -p build/web`.
 
 * **`grep -E '\t'` ne veut pas dire TAB** — GNU `grep -E` traite `\t` comme
   un `t` littéral. Utiliser `awk -F'\t'` et comparer les champs.
+* **Vérifier qu'un process est mort par le MAUVAIS NOM.** Le binaire est
+  souvent lancé par un symlink (`godot4` → `Godot_v4.3-stable_linux.x86_64`) :
+  un `ps | grep "[G]odot"` rend alors **zéro** sur un process bien vivant, et
+  « c'est fini » se lit exactement comme « c'est mort ». Grepper le nom
+  RÉELLEMENT invoqué, ou mieux `pgrep -x`.
 * **Le `cd` d'une commande précédente PERSISTE** : une sonde a tourné avec
   `--path .` depuis `build/web`, donc sans `project.godot` — **20 minutes à
   ne rien mesurer, sans une seule ligne d'erreur**. Chemins absolus.
@@ -622,6 +627,30 @@ Le bon réglage est celui que **le brouillard a déjà effacé** : avec
 plus près se voit ; couper là où le fog a déjà tout mangé ne se voit pas et
 se paie en frame.
 
+### ⚠️ APRÈS `set_anchors_preset()`, `position` EST UN OFFSET DEPUIS L'ANCRE
+
+Un `Control` ancré en `PRESET_CENTER_TOP` puis écrit `position =
+Vector2(540 − 190, 150)` ne se pose pas à x = 350 : il se pose à
+**540 + 350 = 890** sur un canvas de 1080, et sa moitié droite est
+coupée par le bord — **sans erreur, sans warning, et invisible en
+headless** (le canvas y fait 1920 de large, donc tout « tient »). Payé
+sur device (V7, panneau chrono du kart lu coupé par Mathieu) et vu par
+personne en sandbox pendant deux lots. Écrire l'offset (`−largeur / 2`),
+et gater le rect **contre la bande de 1080 px centrée sur le milieu du
+canvas**, jamais contre le canvas headless nu.
+
+### ⚠️ UN MOT DE CONVENTION DE CÔTÉ NE VAUT RIEN SANS UNE CAPTURE
+
+`(tan.z, 0, −tan.x)` est le côté +x d'un corps face à +z. V7 l'a appelé
+« droite de la marche » ; la capture de la grille du kart (voie −3,6
+dessinée sur le kerb DROIT, caméra derrière le kart) a montré que c'est
+la **GAUCHE** sous cette caméra. Le nombre n'a jamais été faux (grille,
+`on_track`, `lateral`, tout est symétrique), le MOT l'était — et l'IA du
+lot 2 l'avait cru : biais de virage inversé, sanglier à l'intérieur,
+chat à l'extérieur, aucune sonde rouge. Toute constante qui a un SENS
+(intérieur/extérieur, devant/derrière, gauche/droite) se gate sur une
+lecture du côté réel, jamais sur le commentaire qui le nomme.
+
 ### ⚠️ Autres pièges d'API mesurés
 
 * **`Object.get("UNE_CONST")` rend `null`** — une constante GDScript n'est
@@ -680,6 +709,65 @@ accesseur a produit **UN seul** rouge là où DEUX étaient attendus, ce qui a
 révélé qu'un champ était lu **en direct** à un endroit et **par l'accesseur**
 à l'autre — un vrai défaut, trouvé par la passe rouge et pas par relecture.
 
+### ⚠️ UN ÉTALON QUI PARTAGE LE CONTRÔLEUR DE CE QU'IL MESURE NE MESURE RIEN
+
+Le banc de difficulté du karting a été vert pendant tout un lot sur une
+course que Mathieu gagnait d'un tour. La cause n'était ni un seuil, ni une
+constante : le « pilote humain de référence » contre lequel la difficulté
+était calibrée était **un profil du même contrôleur que les adversaires**,
+avec le même profil de vitesse, tiré de la même table. Mesuré : il tournait
+**24,400 s contre les 23,350 s de l'adversaire qu'il mesurait**.
+
+Un dénominateur pris DANS la population qu'il évalue ne peut pas voir que
+cette population est lente — il bouge avec elle. Le banc ne mentait sur
+aucun de ses chiffres ; il répondait à une autre question que celle posée.
+
+**Règle** : un étalon de difficulté, de performance ou de confort est
+construit **contre un modèle qui ne partage pas le mécanisme évalué**, et
+on le vérifie en le faisant tourner sur le même banc que la population :
+s'il se classe au milieu, il n'est pas un étalon, il est un concurrent.
+Corollaire du même lot : un « plancher physique » dérivé de ce même
+contrôleur n'était pas le plancher du CIRCUIT mais celui du MODÈLE DE
+CONDUITE — 21,633 s annoncés contre 18,583 s réellement pilotés, et
+12,111 s de plein gaz géométrique. **Un plancher se PILOTE, il ne se
+déduit pas** : le plus grand facteur d'allure qui tienne encore la piste.
+
+### ⚠️ UNE SIMULATION À LATENCE PARFAITE MENT, ET ELLE MENT DANS LE BON SENS
+
+Un modèle de joueur qui décide à 60 Hz et dont les commandes arrivent au
+même frame n'est pas un joueur lent-mais-propre : c'est un **asservissement
+sans retard**, et un retard dans une boucle de contre-réaction est ce qui
+produit la sur-correction qu'un vrai pouce produit. Mesuré : couper la
+ligne à retard du même modèle déplace la médiane de **1,383 s au tour** et
+supprime complètement le louvoiement.
+
+**Règle** : tout modèle de joueur porte une latence et un bruit gaussien,
+la latence est tirée **une fois par RUN** (c'est une propriété des mains et
+du téléphone ; la re-tirer chaque frame la moyenne et la fait disparaître),
+et le résultat se publie en **DISTRIBUTION** sur n ≥ 300, jamais en un
+tour. Et le banc **prouve d'abord que la latence est câblée** — une
+population témoin à latence nulle doit sortir mesurablement plus rapide —
+sans quoi chaque chiffre produit par cet étalon passe gratuitement contre
+une ligne à retard jamais branchée.
+
+### ⚠️ UN PROFIL CALCULÉ SUR UNE GÉOMÉTRIE QUE L'ACTEUR NE SUIT PAS
+
+Le profil de vitesse des adversaires était bâti sur la courbure de l'axe du
+circuit pendant qu'ils roulaient sur une ligne décalée jusqu'à 3,9 u — sur
+un ruban de 10 u. Conséquence mesurée : **tout le plateau était épinglé au
+même 4,17 u/s** au virage le plus serré, y compris le profil dont les pneus
+ne lâchent jamais. Aucune erreur, aucun avertissement : juste un plafond
+partagé que personne n'avait cherché.
+
+**Règle** : une limite dérivée d'une géométrie (courbure, longueur d'arc,
+pente) se calcule sur **la géométrie effectivement parcourue**, et le plan
+qui la définit doit être **atteignable** par le taux auquel l'acteur peut
+s'y rendre — sinon le profil promet un rayon qui n'existe pas. Corollaire
+payé dans le même lot : un paramètre de trajectoire réglé à l'époque où le
+profil ignorait la ligne devient **faux** dès que le profil la regarde (un
+balancement de ligne était gratuit, il ne l'est plus), et il inverse la
+personnalité qu'il était censé porter.
+
 ### ⚠️ BLIND CHECK — une assertion d'ÉGALITÉ ou d'ABSENCE doit d'abord prouver qu'elle sait VOIR
 
 « Rien n'a bougé », « aucun anneau n'est apparu », « ces deux rendus sont
@@ -730,6 +818,33 @@ Keepy est `0,9` (le slot) `+ (-0,2246)` (l'offset). Copier le second seul, et
 le multiplier par une échelle que l'original ne multiplie pas, a enterré le
 personnage sous **68 % de sa taille**. Une moitié de somme se lit comme un
 nombre complet et **ne se signale jamais**.
+
+### ⚠️ UN `float` GDSCRIPT EST UN FLOAT64, `rotation.y` EST UN FLOAT32
+
+Trouvé au CH30 en extrayant la cinématique du kart dans un composant
+partagé, sur une extraction qui devait être — et qui est — un
+**déplacement pur**. Les statements étaient les mêmes, dans le même
+ordre, sur les mêmes valeurs. La trace divergeait quand même : dernier
+chiffre imprimé dès la frame 30, **0,070 u à la frame 1200**, et 17 ms sur
+trois tours.
+
+La cause n'est pas un algorithme, c'est un **TYPE**. `rotation.y` est une
+composante de `Vector3`, donc un **float32** dans un build simple
+précision (celui de Godot officiel, et celui du web) : `rotation.y -= x`
+**tronque à 32 bits à chaque frame physique**, et l'a toujours fait. Un
+`float` GDScript est un **float64**. Porter la même valeur dans une
+variable locale garde donc silencieusement 29 bits que le code livré
+n'avait jamais eus.
+
+Sur une boucle qui reboucle (une poursuite pure : le braquage écrit la
+trajectoire, la trajectoire écrit le braquage), ce bit se voit en trente
+frames. **Parade** : écrire la valeur à travers une composante de
+`Vector3` (`_yaw32.y = ...; yaw = _yaw32.y`), qui tronque exactement là
+où le nœud le fait.
+
+⚠️ **Et c'est pourquoi une extraction se prouve par TRACE et jamais par
+relecture de diff.** Aucune lecture du patch ne pouvait montrer ça : la
+question n'était pas dans la source, elle était dans le moteur.
 
 ### ⚠️ UN CHIFFRE FANTÔME SURVIT AUX SESSIONS — le rayon de structure est 1,932 u
 
@@ -929,6 +1044,37 @@ pente — à l'image, un fil horizontal en haut du cadre. **Mesuré par rendu,
 pas déduit** : trois courses au corridor parfaitement vert ont été refusées
 sur cette seule base. La bande où une descente LIT comme une descente sur ce
 plateau est de l'ordre de **14 à 22 u**, à une pente de 13° et plus.
+
+### ⚠️ QUELLE CAMÉRA POUR QUOI — UN CRITÈRE UNIQUE, PLUS UNE PILE D'EXCEPTIONS
+
+Écrit au CH30, sur décision de Mathieu, **en remplacement de l'empilement
+d'exceptions** (« le kart est la seule exception licenciée », puis « le
+char à voile est la deuxième exception assumée »). Deux exceptions
+nommées, c'est déjà une règle qui n'a pas été écrite ; la voici, et elle
+s'étend au véhicule suivant sans nouvelle autorisation :
+
+| ce que le joueur fait | caméra |
+|---|---|
+| il **PILOTE en continu** un véhicule (appui maintenu, direction au pouce) | **POURSUITE** — `HubCamera.enter_drive()` |
+| il se **DÉPLACE À PIED** (tap-to-move) | **FIGÉE** — `HubCamera.OFFSET` |
+| il fait un **RIDE À TRAJET FIXE** (montgolfière, tyrolienne, plongeoir, manège, hibou, arbre) | **FIGÉE** |
+
+Le critère est **le pilotage continu**, pas le véhicule : ce qui décide
+est « le joueur choisit la direction frame par frame », et c'est
+exactement la condition sous laquelle un cadre figé devient illisible —
+le trajet sort du cadre et le joueur pilote de mémoire. Un ride borné par
+un tween qui finit toujours à un point connu n'a pas ce problème : sa
+trajectoire est écrite, donc cadrable.
+
+**Corollaire, et c'est là que le prochain lot paiera** : une caméra de
+poursuite montre le décor sous des azimuts que le cadre figé n'a jamais
+montrés, et TOUT ce que ce dépôt a calibré l'a été pour le cadre figé.
+Tout véhicule nouvellement piloté en continu doit donc passer un audit du
+type `ChaseAudit` (CH30) : enroulement des rubans construits à la main,
+`visibility_range_end` contre la portée réelle de la poursuite, luminance
+des assets vus de PRÈS, et un balayage rendu par zone × azimut × météo.
+Le CH30 y a trouvé deux défauts réels dans un hub que deux audits
+visuels antérieurs avaient déclaré sain.
 
 ⚠️ **ET LA CAMÉRA NE S'APPROCHE JAMAIS : `HubCamera.OFFSET` EST UNE
 CONSTANTE `(0 ; 7,6 ; 8,9)`.** Elle est à **11,703 u des pieds de Keepy**
@@ -1170,6 +1316,79 @@ sauvegarde, entrée), rejouer la table des rides/sondes existants sur les
 DEUX arbres (branche et référence importée à part), jamais sur la branche
 seule.
 
+### ⚠️ LA CAMÉRA SE TIENT 8,9 u AU NORD DE KEEPY — RIEN DE HAUT DANS CETTE BANDE
+
+Corollaire de `HubCamera.OFFSET (0 ; 7,6 ; 8,9)` que le dépôt n'avait
+jamais écrit : tout ce qui est planté **entre 0 et ~10 u au NORD (+z) d'un
+sol marchable** se retrouve **entre l'objectif et le corps** dès que le
+joueur s'approche de ce bord, et remplit le cadre. Mesuré trois fois sur
+la Crique (CH29) : une ligne de palmiers 1,3 u dans le bord nord, puis la
+même ligne 2,2 u au-delà du bord, puis un parasol 1,4 u dans le bord — les
+trois ont rendu une couronne ou une toile **plein cadre** sur capture
+(« corridor », « dock »). Et cette bande n'est **jamais** dans l'image :
+la caméra ne montre que des z inférieurs au sien.
+
+**Règle** : tout prop plus haut que l'herbe se pose à **≥ 10 u au sud** du
+bord nord d'une zone (ou d'un couloir) ; le semis y est interdit
+(`CozyScatter.COVE_CAMERA_BAND`). Un couloir qui débouche vers l'est ou
+l'ouest est le pire cas : le joueur y marche à z constant, la caméra
+balaie toute la bande.
+
+### ⚠️ UNE ZONE LATÉRALE N'EST VISIBLE QUE DEPUIS SON ENTRÉE
+
+La caméra ne tourne pas et le cadre fait ~7 u de large au z de Keepy
+(demi-angle 22,5°, `0,414 × D`). Mesuré (`CoveRecon`, `unproject_position`
+sur la vraie caméra) : depuis la Lande à 22 u de côté, **rien** de la
+Crique n'est dans l'image, phare de 9 u compris ; depuis l'embouchure du
+couloir, le phare l'est parce qu'il est à **12 u de côté pour 28 u
+devant**. Et la mer, centrée 8 u trop à l'est, était hors cadre **depuis
+la plage elle-même** — déplacée après mesure, pas après relecture.
+
+**Règle** : le repère d'une zone hors chaîne se place à moins de
+**0,4 × (distance devant + 8,9)** de côté par rapport à l'axe d'approche,
+et le contenu de la zone (l'eau, ici) à moins de ~8 u du point où le
+joueur se tiendra. Le « macro » d'une zone latérale est son entrée.
+
+### ⚠️ UNE MARCHE DE LONGUEUR NULLE ÉMET `became_idle` — ET CE SIGNAL EFFACE
+
+Pendant de la doctrine « une marche de longueur nulle n'émet pas
+d'atterrissage » : elle émet `became_idle` **synchroniquement, dans
+`hop_to()` même**, et `_on_keepy_idle` efface toutes les intentions. Une
+intention **armée avant** `hop_to()` est donc morte avant le `_try_*()`
+immédiat qui la suit. Payé sur les châteaux de sable (CH29) : le 2e tap,
+fait depuis le point d'approche, ne construisait rien, et seule la sonde
+l'a vu (0,620 au lieu de 0,84). **Armer l'intention APRÈS `hop_to()`**,
+puis tenter immédiatement — dans cet ordre, pour tout hotspot.
+
+### ⚠️ EN HEADLESS, `is_position_in_frustum` EST TOUJOURS FAUX — les règles hors-champ tirent en continu
+
+Le viewport 0×0 du driver dummy (déjà documenté pour `unproject`) a un
+second effet : toute règle « loin ET hors champ » (re-mouillage des
+montgolfières, re-garage de la balle) se déclenche **à chaque frame**.
+Une sonde à phases qui suppose « la montgolfière attend au dock 0 » est
+vraie phase par phase et fausse en un seul run (`CoveProbe`, 163 checks :
+1 rouge en run complet, 0 par phase). **Garer explicitement** ce que la
+phase suppose garé, ou lire l'état au lieu de le supposer.
+
+### ⚠️ LES COULEURS DE SOMMET S'INTERPOLENT ENTRE ANNEAUX
+
+Un cylindre de 6 u avec deux anneaux de sommets (bas, haut) peint « en
+bandes » rouge/blanc par une fonction de `y` rend **entièrement rouge** :
+il n'y a que deux couleurs à interpoler. Le phare de la Crique l'a payé
+sur planche (Godot, première passe). **Une bande de couleur exige ses
+propres anneaux** — un segment de cylindre par bande.
+
+### ⚠️ LE GRAPHE DES ZONES N'EST PLUS UNE CHAÎNE
+
+`HubWorld._gates_between` était une liste `[CORRIDOR, MOOR, CIRCUIT]`
+indexée par numéro de zone, et son propre commentaire annonçait qu'une
+zone hors chaîne exigerait autre chose. La Crique (zone 4) pend de la
+Lande (2) : deux **tables** (`BRANCH_OF`, `BRANCH_GATE`) et une règle
+(porte de la branche d'abord si on en part, en dernier si on y va). Un
+second embranchement est une ligne ; **une zone qui pendrait d'une
+branche** demanderait un vrai parcours d'arbre, et c'est là que la table
+cesse de suffire.
+
 ## Piège payload — `export_filter="all_resources"` embarque TOUT
 
 **Toute ressource du projet part dans le build, qu'une scène la référence ou
@@ -1372,6 +1591,9 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH23 | Feu de camp — recon VFX, objet définitif (sprite E + bûcher), revert de couleur, puis cercle de pierres | [`CH23_FEU_VFX.md`](docs/lots/CH23_FEU_VFX.md) | 6 | 1505 | 4 sept |
 | CH24 | Feu de camp interactif — recon puis LOT 1 : canal de tap `tapped_campfire`, aller-retour du blaireau, point d'arrivée de la recon rejoué sur le segment complet et corrigé après un croisement trouvé avec l'anneau de pierres | [`CH24_FEU_INTERACTIF.md`](docs/lots/CH24_FEU_INTERACTIF.md) | 12 | 222 | 4 sept |
 | CH25 | L'ours rejoint le blaireau au feu — recon puis LOT 1 : recon reprouvée par un second script indépendant (même candidat d'arrivée, même conclusion sur le relèvement direct écarté), `BEAR_CAMPFIRE_WALK_RATE` calculé pour synchroniser l'arrivée des deux acteurs, ce qui a débusqué et corrigé à la racine un glissement de pieds de principe dans `HubActorWalker` (un seul taux par acteur pour toute sa vie, avant ce lot), gate balançoire et synchronisation des deux acteurs par un état partagé unique câblés | [`CH25_OURS_FEU.md`](docs/lots/CH25_OURS_FEU.md) | 9 | 407 | 4 sept |
+| CH27 | Karting — lot 1 (circuit, conduite libre, chrono) et **lot 2** (V8 : HUD conduite centré, trois adversaires IA à personnalités, course à feux, classement, collisions, piste à 10 u, chat/castor/faon à la masse de Keepy — récit dans `docs/CARTE_BLANCHE_JOURNAL.md`, section « V8 — KARTING LOT 2 ») | [`CH27_KARTING_LOT1.md`](docs/lots/CH27_KARTING_LOT1.md) | 8 | 170 | 5 sept |
+| CH29 | La Crique — cinquième zone à l'est de la Lande (couloir piéton, porte (41, −96)), mer, phare, châteaux de sable qui fondent sous la pluie, phare qui s'allume, ligne de montgolfière Corail plateau → Crique, **char à voile** (glisse libre au sol, vitesse au vent), `WorldSave` schéma 2 avec migration, graphe des zones en arbre, terrier + `ModelSlot` inerte pour un futur habitant | [`CH29_CRIQUE.md`](docs/lots/CH29_CRIQUE.md) | 1 | — | 5 → 6 sept |
+| CH30 | Conduite unifiée — la difficulté du karting **mesurée** avant d'être touchée (`RaceBalanceProbe` : la laisse est inerte, `a_lat` sature sur la limite de braquage, l'échelle est compressive), trois presets `KartDifficulty` calibrés sur un plancher mesuré et commutables derrière `?keepydev=1`, relevé dev des tours ; extraction de `VehicleDrive` prouvée **byte-identique** par `KartTraceProbe` sur les deux arbres ; **char à voile piloté en continu** avec la caméra de poursuite, garde circuit ; `ChaseAudit` (160 frames, 5 zones × 8 azimuts × 4 météos) et les deux défauts qu'il a trouvés | [`CH30_CONDUITE.md`](docs/lots/CH30_CONDUITE.md) | 5 | 431 | 6 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés

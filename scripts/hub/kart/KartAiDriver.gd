@@ -1,0 +1,423 @@
+extends RefCounted
+class_name KartAiDriver
+## An OPPONENT's writer of a KartInput -- carte-blanche V8, karting lot 2.
+##
+## =====================================================================
+## WHAT IT IS, AND WHAT IT IS NOT
+##
+## The V7 test driver (scripts/dev/KartLineInput.gd, pure pursuit on the
+## spine, "0.62 throttle when the far heading turns") moved here and grew
+## into a racer. It still writes the SAME KartInput a thumb writes, and
+## the kart it drives is the SAME KartBody with the SAME drive(): there is
+## no AI physics, only an AI source of steer / throttle / brake / boost.
+## KartProbe drives the PLAYER's kart with one of these (profile "probe")
+## to lap the real track, exactly as it did with KartLineInput.
+##
+## =====================================================================
+## HOW IT DRIVES -- three ideas
+##
+##  1. LINE. Pure pursuit: aim at the spine point `lookahead` ahead,
+##     offset sideways by `_lane` -- a lateral target (u, positive = the
+##     driver's LEFT, see lane_goal_at) the driver EASES toward. The lane is the personality's
+##     natural line, biased toward the inside or the outside of a bend
+##     (`corner_bias` x signed curvature), and pushed to the freer side
+##     when another kart is close ahead (the overtake). A lane is never
+##     a teleport: it moves at LANE_RATE u/s, which is what makes an
+##     overtake read as a swerve and a fault as a drift.
+##
+##  2. SPEED PROFILE. Once per race (setup()), a v_max per spine sample:
+##     the slower of "what the tyres allow" (sqrt(a_lat / curvature)) and
+##     "what the steering allows" (the yaw rate KartBody.drive() gives at
+##     that speed, with STEER_HEADROOM in hand for corrections), then a
+##     BACKWARD pass so v[i] <= sqrt(v[i+1]^2 + 2 a_brake ds): the kart
+##     brakes BEFORE the bend, at a distance that depends on how fast it
+##     arrives -- not "slows down when it is already turning". The driver
+##     reads the profile one sample ahead and steers throttle / boost /
+##     brake toward it. Boost (KartInput.boost) is how an opponent goes
+##     faster than the cruise, exactly like the player's push.
+##
+##  3. PERSONALITY = the profile's numbers + a WOBBLE (steer noise, an
+##     amplitude and a frequency) + FAULTS (a Poisson event per minute:
+##     the lane is thrown outside the track for ~1 s and the brake is
+##     ignored, so the kart runs wide onto the grass and pays for it in
+##     the body's own off-track cap). Three profiles, chosen so they are
+##     told apart by WATCHING, not by reading a top speed: the cat is
+##     quick in the bends and slow on the straight, the beaver drives the
+##     same line every lap, the boar boosts down the straights, takes the
+##     bends wide and runs off now and then.
+##
+## RUBBER BAND. `speed_scale` is written by HubKarting from the gap to the
+## player (see HubKarting.rubber_band_for). It multiplies the profile's
+## v_max, and it is bounded there -- a leash, not a magnet. CH30 moved
+## those bounds onto the difficulty preset (KartDifficulty.rubber_min /
+## rubber_max) and moved them in ONE direction as difficulty rises: the
+## leash on a LEADING opponent is released toward 1.0, so a leader is
+## never held back and can never read as waiting.
+##
+## =====================================================================
+## CH30 -- DIFFICULTY
+##
+## `profile` is no longer PROFILES[id] verbatim for the three racers: it
+## is that table scaled by the live KartDifficulty preset (see setup()).
+## The personality -- which side of the bend, how wide, how noisy relative
+## to the others -- is the table's and never moves; the PACE is the
+## preset's. Two profiles are explicitly NOT scaled ("probe" and
+## "human_ref"): they are the yardsticks the calibration is measured
+## against, and a yardstick that moves with what it measures is useless.
+
+## Steer gain per radian of heading error (KartLineInput's own).
+const STEER_GAIN: float = 1.0 / 0.55
+## Headroom kept on the steering limit when deriving v_max from the yaw
+## rate (>1: the kart can still correct a wobble at the profile's speed).
+##
+## ⚠️ CH31 -- THIS CONSTANT WAS THE CEILING, and it was applied to the
+## WRONG CURVATURE. See _build_profile: the profile used to be built on
+## the SPINE's curvature, so at the omega (spine radius 3.396 u) every
+## driver in the field was pinned to the same 4.17 u/s -- a number no
+## line inside a 10 u ribbon has to accept. It is now built on the
+## curvature of the line the driver actually plans to drive, and the
+## headroom is a per-preset lever (KartDifficulty "headroom") rather
+## than one literal for the whole field.
+const STEER_HEADROOM: float = 1.15
+## CH31 -- how far the PLANNED line is smoothed, in Laplacian passes over
+## the sample spacing (~1.15 u). The plan must be reachable: the live lane
+## moves at LANE_RATE u/s, so a plan that stepped from one lane to another
+## between two samples would promise a radius the driver can never hold,
+## and the profile would be a lie in the driver's favour. Measured: with
+## no smoothing the field ran wide at the omega; PLAN_SMOOTH_PASSES = 40
+## is a smoothing length of ~7 u, about what LANE_RATE buys in a corner
+## approach at racing speed.
+##
+## MEASURED, not chosen (RaceReconProbe phase D, best opponent lap):
+##   0 passes  -> 31.150 s   the plan zigzags sample to sample; the driver
+##                           cannot follow it and the profile promises a
+##                           radius that does not exist
+##   12 passes -> 22.767 s   the best of the three
+##   40 passes -> 23.250 s   the corner offset is smeared into the approach
+const PLAN_SMOOTH_PASSES: int = 12
+## How fast the lateral target moves (u/s).
+const LANE_RATE: float = 2.6
+## Lookahead in u: a base plus a fraction of the speed.
+const LOOKAHEAD_BASE: float = 3.6
+const LOOKAHEAD_PER_SPEED: float = 0.32
+const LOOKAHEAD_MAX: float = 9.0
+## A kart this far ahead (u along the lap) and within OVERTAKE_LATERAL of
+## the lane is something to pass.
+const OVERTAKE_RANGE: float = 8.0
+const OVERTAKE_LATERAL: float = 1.7
+const OVERTAKE_SHIFT: float = 2.1
+## The lane stays this far inside the edge line, except during a fault.
+const LANE_MARGIN: float = 1.1
+const FAULT_S: float = 0.95
+## Minimum curvature considered (a straight): keeps sqrt(a / k) finite.
+const K_FLOOR: float = 0.004
+
+## The three racers, plus the probe's neutral profile. Every number is
+## in world units and seconds:
+##   a_lat        lateral acceleration the driver accepts in a bend (u/s2)
+##   top          boost the driver is willing to hold on a straight (0..1)
+##   brake_margin speed over the profile before the brake is pressed (u/s)
+##   a_brake      deceleration assumed by the backward pass (u/s2)
+##   corner_bias  lane offset per unit of signed curvature x 10 (u): + = outside, - = inside
+##   lane         natural lateral offset on the straights (u)
+##   wobble_amp   steer noise amplitude (0..1 of full lock)
+##   wobble_hz    steer noise frequency
+##   fault_rate   faults per minute of racing
+##   raced        true for the three OPPONENTS: their numbers are scaled by
+##                the live KartDifficulty preset (CH30). The two reference
+##                profiles below are NOT scaled -- a yardstick that moves
+##                with what it measures is not a yardstick.
+const PROFILES: Dictionary = {
+	# ⚠️ CH31 -- corner_bias RETUNED, and it is a consequence of the profile
+	# moving onto the driven line. Under the old spine-built profile a lane
+	# swing was free: the speed profile never saw it. It is not free now --
+	# a lane that swings hard with local curvature puts curvature into the
+	# line even where the SPINE is straight, and the driver then slows for
+	# its own weaving. Measured: with the boar at 1.1 it read SLOWER than
+	# the cat over the straightest quarter of the lap (15.516 vs 16.139),
+	# which inverts its whole personality. The signs and the ordering are
+	# unchanged -- the cat still hugs the inside, the boar still runs wide,
+	# by 2.5 to 3 u of lane -- the swing is simply no longer a slalom.
+	"cat": {"a_lat": 7.2, "top": 0.35, "brake_margin": 1.3, "a_brake": 9.0, "corner_bias": -0.75, "lane": -0.6,
+		"wobble_amp": 0.10, "wobble_hz": 2.6, "fault_rate": 0.9, "raced": true},
+	"beaver": {"a_lat": 5.6, "top": 0.55, "brake_margin": 0.5, "a_brake": 7.0, "corner_bias": 0.0, "lane": 0.0,
+		"wobble_amp": 0.03, "wobble_hz": 0.8, "fault_rate": 0.25, "raced": true},
+	# CH31: a_lat 4.6 -> 5.2. Still the lowest of the three (the boar is the
+	# one that cannot lean on a bend, and that is its personality), but the
+	# line-based profile propagates a low a_lat further than the spine one
+	# did -- the backward pass now runs on the boar's own wide line -- and
+	# at 4.6 it was 3.4 s a lap off the cat instead of the 2.1 s CH30 had.
+	"boar": {"a_lat": 5.2, "top": 1.0, "brake_margin": 1.6, "a_brake": 11.0, "corner_bias": 0.70, "lane": 0.7,
+		"wobble_amp": 0.07, "wobble_hz": 0.5, "fault_rate": 1.6, "raced": true},
+	# The probe's driver: no boost, no noise, no faults -- the V7 test
+	# driver's behaviour, kept so the lap-timing contract is measured on
+	# a deterministic drive.
+	"probe": {"a_lat": 6.0, "top": 0.0, "brake_margin": 0.8, "a_brake": 8.0, "corner_bias": 0.0, "lane": 0.0,
+		"wobble_amp": 0.0, "wobble_hz": 0.0, "fault_rate": 0.0},
+	# CH30 -- THE REFERENCE PLAYER, and the only honest way to answer "is
+	# it too easy". A difficulty target stated as "x1.5 of adversity" is a
+	# ratio against SOMETHING, and that something cannot be a thumb: a
+	# sandbox cannot hold one. This profile is a clean, quick, mistake-free
+	# drive that uses the boost on the straights -- what Mathieu does when
+	# he wins large -- and it is deterministic, so the gap it measures is
+	# repeatable across runs and across trees. Probe-only: nothing in the
+	# game ever instantiates it, and difficulty never scales it.
+	"human_ref": {"a_lat": 6.6, "top": 1.0, "brake_margin": 1.0, "a_brake": 9.5, "corner_bias": -0.4, "lane": -0.3,
+		"wobble_amp": 0.0, "wobble_hz": 0.0, "fault_rate": 0.0},
+	# CH30 -- THE FLOOR. A driver whose tyres never give up: `a_lat` far
+	# above anything the circuit asks, full boost, no noise, no faults. It
+	# does NOT lap infinitely fast -- MEASURED, and this is the finding
+	# that reshaped the whole difficulty axis: at the omega the binding
+	# limit is not the tyres but the STEERING (v_steer = steer_rate /
+	# (k * headroom + steer_rate * e), 4.17 u/s at the tightest sample for
+	# the 7/10 preset), so above a_lat ~= 5.1 the bend simply stops caring.
+	# That makes this profile the fastest lap the vehicle can physically
+	# turn on this track, and therefore the honest DENOMINATOR for "x1.5
+	# of adversity": an opponent's deficit is its lap minus this one, and
+	# a difficulty preset is calibrated on how much of that deficit it
+	# removes. Probe-only, never scaled.
+	"limit_ref": {"a_lat": 40.0, "top": 1.0, "brake_margin": 1.2, "a_brake": 12.0, "corner_bias": -0.5, "lane": -0.4,
+		"wobble_amp": 0.0, "wobble_hz": 0.0, "fault_rate": 0.0},
+}
+
+var profile_id: String = "probe"
+var profile: Dictionary = PROFILES["probe"]
+## Rubber band, written by the coordinator each frame. 1 = the profile.
+var speed_scale: float = 1.0
+## False until the lights go out: the driver then holds everything at 0.
+var released: bool = true
+## True while a fault is being driven (for probes and the journal).
+var faulting: bool = false
+var faults_total: int = 0
+
+var _track: KartTrack = null
+var _hint: int = -1
+var _vmax: PackedFloat32Array = PackedFloat32Array()
+## CH31: the PLANNED line (one lateral offset per spine sample) and the
+## geometry it implies -- the curvature the speed profile is built on, and
+## the arc length the backward pass integrates. Published by accessors so
+## a probe reads what the driver drives, never a re-derivation.
+var _plan: PackedFloat32Array = PackedFloat32Array()
+var _line_k: PackedFloat32Array = PackedFloat32Array()
+var _line_ds: PackedFloat32Array = PackedFloat32Array()
+var _lane: float = 0.0
+var _lane_goal: float = 0.0
+var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
+var _time: float = 0.0
+var _fault_left: float = 0.0
+var _fault_side: float = 1.0
+var _noise_walk: float = 0.0
+
+func setup(track: KartTrack, id: String = "probe", seed_value: int = 1) -> void:
+	_track = track
+	profile_id = id if PROFILES.has(id) else "probe"
+	# CH30: the personality is the table's; the PACE is the live
+	# difficulty preset's. Read at setup(), which HubKarting calls on every
+	# grid-up, so switching a preset from the HUD takes effect on the next
+	# race rather than mid-corner.
+	var base: Dictionary = PROFILES[profile_id]
+	profile = KartDifficulty.apply(base) if bool(base.get("raced", false)) else base
+	_rng.seed = seed_value
+	_hint = -1
+	_lane = float(profile["lane"])
+	_lane_goal = _lane
+	_time = 0.0
+	_fault_left = 0.0
+	faulting = false
+	faults_total = 0
+	speed_scale = 1.0
+	_build_profile()
+
+## CH31 -- THE PLANNED LINE, then the speed profile ON IT.
+##
+## Before this lot the profile was built on the SPINE's curvature while
+## the driver drove a line offset by up to 3.9 u from it. On a 10 u ribbon
+## that is not a small approximation: at the omega the spine bends at
+## 3.396 u of radius and every profile in the field -- the cat's inside
+## line and the boar's outside one alike -- was told it could hold
+## 4.17 u/s there. Measured (RaceReconProbe, CH31): that single bound is
+## what made the whole field slow, and it is why CH30's "floor" came out
+## 7.6 s above what this vehicle can physically do here.
+##
+## The plan is the personality's own lane goal, smoothed so it is
+## reachable at LANE_RATE, and the profile is built on the curvature and
+## the arc length of THAT polyline.
+func _build_line() -> void:
+	var n: int = _track.sample_count()
+	_plan.resize(n)
+	_line_k.resize(n)
+	_line_ds.resize(n)
+	var limit: float = KartTrack.HALF_WIDTH - LANE_MARGIN
+	for i in n:
+		_plan[i] = clampf(lane_goal_at(i), -limit, limit)
+	for _pass in PLAN_SMOOTH_PASSES:
+		var next := PackedFloat32Array()
+		next.resize(n)
+		for i in n:
+			next[i] = clampf(0.25 * _plan[posmod(i - 1, n)] + 0.5 * _plan[i] + 0.25 * _plan[(i + 1) % n], -limit, limit)
+		_plan = next
+	var pts: Array[Vector3] = []
+	for i in n:
+		pts.append(_track.point_at(_track.sample_s(i)) + _track.side_at(_track.sample_s(i)) * _plan[i])
+	for i in n:
+		_line_ds[i] = pts[i].distance_to(pts[(i + 1) % n])
+		# Menger curvature of the three consecutive line points -- the same
+		# formula KartTrack uses on the spine, on the line instead.
+		var a: Vector3 = pts[posmod(i - 1, n)]
+		var b: Vector3 = pts[i]
+		var c: Vector3 = pts[(i + 1) % n]
+		var ab: float = a.distance_to(b)
+		var bc: float = b.distance_to(c)
+		var ca: float = c.distance_to(a)
+		var sp: float = (ab + bc + ca) * 0.5
+		var area: float = sqrt(maxf(sp * (sp - ab) * (sp - bc) * (sp - ca), 0.0))
+		_line_k[i] = 0.0 if (area < 0.0001 or ab * bc * ca < 1e-9) else 4.0 * area / (ab * bc * ca)
+
+## The speed profile, one v_max per spine sample, built on the PLANNED
+## line (above). Recomputed at every setup() because the steering limit
+## reads the LIVE KartTuning preset and the pace reads the LIVE difficulty.
+func _build_profile() -> void:
+	_build_line()
+	var n: int = _track.sample_count()
+	_vmax.resize(n)
+	var top: float = KartBody.MAX_SPEED * lerpf(1.0, KartBody.BOOST_SPEED_RATIO, float(profile["top"]))
+	var a_lat: float = float(profile["a_lat"])
+	var steer_rate: float = KartTuning.steer_rate()
+	var headroom: float = maxf(float(profile.get("headroom", STEER_HEADROOM)), 1.0)
+	var pace: float = maxf(float(profile.get("pace", 1.0)), 0.01)
+	for i in n:
+		var k: float = maxf(_line_k[i], K_FLOOR)
+		var v_tyres: float = sqrt(a_lat / k)
+		# The body's yaw rate at speed v is steer_rate * (1 - 0.28 v / 13)
+		# once above STEER_FULL_SPEED; the curvature it can hold is that
+		# over v. Solving rate (1 - e v / M) = k' v for v, k' = k * headroom.
+		var e: float = (1.0 - KartBody.STEER_HIGH_SPEED_KEEP) / KartBody.MAX_SPEED
+		var v_steer: float = steer_rate / (k * headroom + steer_rate * e)
+		_vmax[i] = minf(top, minf(v_tyres, v_steer) * pace)
+	# Backward pass, twice round the loop so the wrap is consistent. On the
+	# LINE's arc length, not the spine's: an inside line is shorter, and a
+	# braking distance measured on the wrong length brakes in the wrong place.
+	var a_brake: float = float(profile["a_brake"])
+	for _pass in 2:
+		for j in range(n - 1, -1, -1):
+			var i: int = j
+			var nxt: int = (i + 1) % n
+			var allowed: float = sqrt(_vmax[nxt] * _vmax[nxt] + 2.0 * a_brake * maxf(_line_ds[i], 0.01))
+			_vmax[i] = minf(_vmax[i], allowed)
+
+## The planned lateral offset at sample `i` -- what the driver aims for
+## before any overtake or fault, and what its speed profile was built on.
+func plan_at(i: int) -> float:
+	return _plan[posmod(i, _plan.size())] if _plan.size() > 0 else 0.0
+
+## The curvature (1/u) of the PLANNED line at sample `i`. Published so a
+## probe can compare it with the spine's without rebuilding either.
+func line_curvature_at(i: int) -> float:
+	return _line_k[posmod(i, _line_k.size())] if _line_k.size() > 0 else 0.0
+
+## The lane this personality wants at spine sample `i`, before any
+## overtake or fault: its natural offset plus the corner bias.
+##
+## ⚠️ SIDE CONVENTION, MEASURED BY CAPTURE (V8 P3, journal): a positive
+## lateral -- KartTrack's side_at(), "(tan.z, 0, -tan.x)", the +x side of
+## a body facing +z -- is the driver's LEFT under this camera, not the
+## right the V7 comments say. A RIGHT bend has positive signed curvature
+## (yaw decreasing), so its OUTSIDE is the left, i.e. POSITIVE lateral:
+## corner_bias > 0 (the boar) adds +bias x k, corner_bias < 0 (the cat)
+## subtracts it and hugs the inside. The first version had the sign the
+## other way round, on the strength of the V7 wording; the grid capture
+## (slot 0, lane -3.6, drawn on the RIGHT kerb) is what settled it, and
+## KartProbe now reads the side off this function rather than trusting
+## a comment.
+func lane_goal_at(i: int) -> float:
+	var k_signed: float = _track.signed_curvature(i)
+	return float(profile["lane"]) + float(profile["corner_bias"]) * k_signed * 10.0
+
+## The profile at spine sample `i` (for probes and the journal).
+func vmax_at(i: int) -> float:
+	return _vmax[posmod(i, _vmax.size())] if _vmax.size() > 0 else 0.0
+
+func lane() -> float:
+	return _lane
+
+## One frame. `others` is the list of other racers' {kart, s, lateral} on
+## the track (the coordinator publishes it once per frame); `delta` is
+## the physics step.
+func drive(kart: KartBody, input: KartInput, delta: float = 1.0 / 60.0, others: Array = []) -> void:
+	if _track == null:
+		return
+	_time += delta
+	if not released:
+		input.set_all(0.0, 0.0, false, 0.0)
+		return
+	var progress: Dictionary = _track.progress_at(kart.global_position, _hint)
+	_hint = int(progress["index"])
+	var s: float = float(progress["s"])
+	var spine_s: float = _track.start_line_offset() + s
+	var v: float = kart.speed()
+	# ---- the lane: natural line, corner bias, overtake, fault.
+	var i: int = _hint
+	# CH31: the PLAN, not a fresh lane_goal_at. The speed profile was built
+	# on the planned line; aiming somewhere else would make the profile a
+	# promise about a radius the driver is not on.
+	var goal: float = plan_at(i + 3)
+	for o in others:
+		var ds: float = fposmod(float(o["s"]) - s, _track.length())
+		if ds > 0.2 and ds < OVERTAKE_RANGE and absf(float(o["lateral"]) - _lane) < OVERTAKE_LATERAL:
+			# Pass on the side with more room; the boar pushes right.
+			var their: float = float(o["lateral"])
+			var go_left: bool = their > 0.0
+			goal = their + (-OVERTAKE_SHIFT if go_left else OVERTAKE_SHIFT)
+			break
+	var limit: float = KartTrack.HALF_WIDTH - LANE_MARGIN
+	goal = clampf(goal, -limit, limit)
+	_tick_fault(delta)
+	if faulting:
+		goal = _fault_side * (KartTrack.HALF_WIDTH + 1.4)
+	_lane = move_toward(_lane, goal, LANE_RATE * delta)
+	# ---- the line: pure pursuit on the offset point.
+	var lookahead: float = minf(LOOKAHEAD_BASE + LOOKAHEAD_PER_SPEED * absf(v), LOOKAHEAD_MAX)
+	var target_s: float = spine_s + lookahead
+	var target: Vector3 = _track.point_at(target_s) + _track.side_at(target_s) * _lane
+	var to: Vector3 = target - kart.global_position
+	var want_yaw: float = atan2(to.x, to.z)
+	var err: float = wrapf(want_yaw - kart.rotation.y, -PI, PI)
+	# steer > 0 turns RIGHT, i.e. yaw DECREASES (KartBody.drive).
+	var steer: float = -err * STEER_GAIN
+	var amp: float = float(profile["wobble_amp"])
+	if amp > 0.0:
+		_noise_walk = clampf(_noise_walk + _rng.randf_range(-1.0, 1.0) * delta * 2.0, -1.0, 1.0)
+		steer += amp * (sin(_time * TAU * float(profile["wobble_hz"])) * 0.6 + _noise_walk * 0.4)
+	input.steer = clampf(steer, -1.0, 1.0)
+	# ---- the speed: read the profile a sample ahead, chase it.
+	var v_target: float = _vmax[(i + 1) % _vmax.size()] * speed_scale
+	if faulting:
+		v_target = maxf(v_target, KartBody.MAX_SPEED)
+	var boost: float = clampf((v_target / KartBody.MAX_SPEED - 1.0) / (KartBody.BOOST_SPEED_RATIO - 1.0), 0.0, 1.0)
+	var cap: float = KartBody.MAX_SPEED * lerpf(1.0, KartBody.BOOST_SPEED_RATIO, boost)
+	var throttle: float = 1.0 if v < v_target - 1.0 else clampf(v_target / cap, 0.0, 1.0)
+	var brake: bool = (not faulting) and v > v_target + float(profile["brake_margin"])
+	input.set_all(input.steer, throttle, brake, boost)
+
+func _tick_fault(delta: float) -> void:
+	if faulting:
+		_fault_left -= delta
+		if _fault_left <= 0.0:
+			faulting = false
+		return
+	var rate: float = float(profile["fault_rate"])
+	if rate <= 0.0:
+		return
+	if _rng.randf() < rate / 60.0 * delta:
+		faulting = true
+		faults_total += 1
+		_fault_left = FAULT_S
+		_fault_side = 1.0 if _rng.randf() < 0.5 else -1.0
+
+## Probes: force a fault now (the blind check that a fault changes the
+## drive before "no fault happened" is believed).
+func force_fault(side: float = 1.0) -> void:
+	faulting = true
+	faults_total += 1
+	_fault_left = FAULT_S
+	_fault_side = signf(side) if side != 0.0 else 1.0

@@ -23,13 +23,20 @@ var steer: float = 0.0
 var throttle: float = 0.0
 ## Brake while moving forward, reverse once stopped.
 var brake: bool = false
+## V7b: 0..1, how hard the player is PUSHING for extra pace on top of the
+## automatic cruise (KartBody.BOOST_MAX_SPEED). Defaults to 0, so every
+## writer that predates the accelerator retour (KartLineInput, KartProbe's
+## direct set_all calls) drives exactly as before.
+var boost: float = 0.0
 
 func reset() -> void:
 	steer = 0.0
 	throttle = 0.0
 	brake = false
+	boost = 0.0
 
-func set_all(new_steer: float, new_throttle: float, new_brake: bool) -> void:
+func set_all(new_steer: float, new_throttle: float, new_brake: bool, new_boost: float = 0.0) -> void:
 	steer = clampf(new_steer, -1.0, 1.0)
 	throttle = clampf(new_throttle, 0.0, 1.0)
 	brake = new_brake
+	boost = clampf(new_boost, 0.0, 1.0)

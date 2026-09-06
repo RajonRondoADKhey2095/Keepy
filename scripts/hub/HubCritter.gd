@@ -48,6 +48,18 @@ const TURN_SETTLE_EPSILON: float = 5.0 * PI / 180.0
 ## whole 4 726-tri mesh -- gpu 68 325 -> 73 051. At 52 u the fog has eaten
 ## 56 % of it and it pops in as a faint silhouette.
 const CULL_DISTANCE: float = 52.0
+## CH30: the range this instance actually uses, so a critter that is seen
+## from a CHASE camera can be given a longer leash than one walking the
+## hub under the fixed one. Written by the owner BEFORE setup_model();
+## default is the hub's own number, so nothing that predates CH30 moves.
+##
+## ⚠️ IT IS PER INSTANCE AND NOT A NEW GLOBAL, deliberately. The 52 u
+## above was measured against the SPAWN FRAME and the hub's triangle
+## budget is already over its plafond there (73 861 gpu); raising it for
+## every critter would aggravate exactly the frame that cannot afford it.
+## The kart's riders are on the circuit, 100 u from the spawn, so their
+## longer leash costs the spawn nothing.
+var cull_distance: float = CULL_DISTANCE
 
 ## The gait: one cycle per `gait_stride` units of ground covered.
 var gait_stride: float = 1.1
@@ -98,7 +110,7 @@ func setup_model(scene: PackedScene, scale: float, lift: float) -> void:
 	# works in Compatibility as pure CPU culling with the fade DISABLED):
 	# an animal 80 u away is behind 72 % of fog and costs its whole mesh.
 	for mi in _meshes(_model):
-		mi.visibility_range_end = CULL_DISTANCE
+		mi.visibility_range_end = cull_distance
 		mi.visibility_range_end_margin = 4.0
 		mi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_DISABLED
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
