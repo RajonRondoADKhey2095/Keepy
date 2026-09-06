@@ -23,7 +23,16 @@ class_name KartTrack
 ## tightest point, x in [-41.1, 40.6], z in [-190.1, -141.6], all inside
 ## HubRegion's circuit rectangle with 5 u to spare on every side.
 
-const TRACK_ID: String = "circuit_1"
+## ⚠️ CH31 -- "circuit_1" -> "circuit_1b", and the SHAPE did not change.
+## The persistent best lap is keyed on this string (WorldSave.kart_best_ms,
+## a dictionary per track), so bumping it starts a fresh record instead of
+## leaving a 13 u/s time standing next to 15 u/s ones -- CH31 raised
+## KartBody.MAX_SPEED and a record set under the old pace is not comparable
+## with one set under the new. Nothing is invalidated: the old key stays in
+## the save, untouched, and an older build reading it is unaffected. The
+## suffix rather than a new number because it is the same circuit, driven
+## faster (the "circuit_1b" pattern proposed in the CH31 brief).
+const TRACK_ID: String = "circuit_1b"
 const WAYPOINTS: Array[Vector3] = [
 	Vector3(-12.0, 0.0, -142.0), Vector3(4.0, 0.0, -142.0), Vector3(26.0, 0.0, -142.0),
 	Vector3(35.0, 0.0, -147.0), Vector3(40.0, 0.0, -157.0), Vector3(40.0, 0.0, -172.0),
