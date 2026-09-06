@@ -29,9 +29,43 @@ class_name KartBody
 ##     fast costs pace, gently.
 ##
 ## Every constant is in world units and seconds and lives here, once.
-## `MAX_SPEED` sets the pace of the whole zone: 13 u/s on a 230 u lap is a
-## ~25 s lap for a clean drive, which is the length a cozy time trial can
-## be repeated at without becoming a chore.
+## `MAX_SPEED` sets the pace of the whole zone.
+##
+## =====================================================================
+## CH31 -- THE BASE PACE WENT UP, AND THE BOUND IS MEASURED
+##
+## Mathieu asked for more speed for the excitement, as a lever separate
+## from the opponents' difficulty. It is separate: this constant moves the
+## PLAYER and the AI alike (the AI's profile is capped by MAX_SPEED and
+## BOOST_SPEED_RATIO), and difficulty is a multiplier on top.
+##
+## Swept with the reference player model (RaceBalanceProbe --only=ref,
+## n = 40 runs per point, latency and jitter drawn per run). The two
+## populations are a DISCIPLINED drive (no boost) and a PUSHING one:
+##
+##   cruise / boost   disciplined p50 (off %)   pushing p50 (off %)
+##   13.0 / 16.51     22.750 s (0.00 %)         20.033 s ( 9.20 %)
+##   14.5 / 18.41     22.317 s (5.02 %)         20.533 s (20.21 %)
+##   15.0 / 19.05     21.700 s (5.05 %)         20.620 s (21.63 %)
+##   16.0 / 20.32     20.467 s (6.86 %)         20.917 s (25.88 %)
+##
+## ⚠️ THE BOUND IS AT 16 u/s, AND IT IS VISIBLE AS A CROSSING. At 16.0 the
+## PUSHING driver laps SLOWER than the disciplined one (20.917 vs 20.467)
+## and spends a quarter of the lap off the ribbon: past that point the
+## extra speed is no longer being converted into lap time, it is being
+## spent running wide. 15.0 is the last value where pushing still pays and
+## the disciplined band stays tight (sd 0.529 s).
+##
+## Raising the BOOST CEILING alone was measured too, and it is NOT a pace
+## lever: at cruise 13.0, taking the ceiling from 16.51 to 18.20 moved the
+## pushing p50 by +0.10 s (the wrong way) while doubling the off-track
+## share, 9.20 % -> 18.79 %. The kart already cannot use 16.5 everywhere,
+## so a bigger number on top of it buys nothing. The ratio is therefore
+## kept where V7b left it and the CRUISE is what moved.
+##
+## The persistent best lap is keyed on KartTrack.TRACK_ID, which changed
+## in the same lot for exactly this reason: a record set at 13 u/s is not
+## comparable with one set at 15.
 ##
 ## =====================================================================
 ## V7b -- ACCELERATOR (boost) and STEERING PRESETS
@@ -51,12 +85,15 @@ class_name KartBody
 ## real lever, and it is read live from KartTuning so Mathieu can compare
 ## three presets without leaving the kart.
 
-const MAX_SPEED: float = 13.0
+const MAX_SPEED: float = 15.0
 const MAX_SPEED_OFF_TRACK: float = 5.5
 const REVERSE_SPEED: float = 3.5
 ## Top speed at full boost (input.boost == 1.0); a ~27 % push over cruise,
 ## on and off track alike (BOOST_SPEED_RATIO scales whichever cap applies).
-const BOOST_MAX_SPEED: float = 16.5
+## CH31: 16.5 -> 19.05, which is the SAME 1.27 ratio over the new cruise.
+## The ratio was measured not to be a lever on its own (see above); this
+## moves with MAX_SPEED so the boost keeps costing and buying what it did.
+const BOOST_MAX_SPEED: float = 19.05
 const BOOST_SPEED_RATIO: float = BOOST_MAX_SPEED / MAX_SPEED
 ## Time constants (1/s) for speed approaching its target.
 const ACCEL_LAMBDA: float = 0.85

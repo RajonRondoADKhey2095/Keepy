@@ -1455,3 +1455,97 @@ comparer quoi que ce soit**.
 | cyprès, luminance de vertex → effective | 0,0692 → **0,3045** |
 | pilotes de kart cullés sous la bande lisible | 3 → **0** |
 | pire frame de poursuite (`gpu`) | 94 055 → **100 520** |
+
+# CH31 — LA COURSE CESSE D'ÊTRE GAGNÉE D'AVANCE (6 septembre 2026, lot cadré vers `staging`)
+
+> Branche `claude/keepy-difficulty-rebalance-merrvy`, repartie du HEAD réel
+> de `origin/staging` (`e02b155`). Récit intégral :
+> [`docs/lots/CH31_DIFFICULTE.md`](lots/CH31_DIFFICULTE.md).
+
+## Départ
+
+La branche pointait sur l'arbre de `origin/main` (`0290e1d`) et non sur
+celui de `origin/staging` (`cee2c41`). Constaté **par comparaison
+d'ARBRES** avant la première ligne de code, comme le brief le demandait et
+comme `CLAUDE.md` le documente depuis quatre incidents.
+
+Le brief posait une contradiction plutôt qu'une tâche : CH30 publie un
+plancher de circuit de 21,633 s, et Mathieu prend un tour d'avance sur
+trois tours. Les deux ne peuvent pas être vrais.
+
+## Ce que la recon a trouvé, dans l'ordre
+
+* **(c) réfutée** — le banc charge bien la scène, le circuit et le plateau
+  réels. Un fait est tombé au passage : le joueur partait **en pole**.
+* **(b) réfutée** — le peloton coûte ≤ 0,117 s, la laisse ≤ 0,13 s.
+* **(a) confirmée** — et c'était un problème d'ÉTALON, pas de réglage.
+  `human_ref`, le « pilote humain » du banc CH30, est un profil de
+  `KartAiDriver` : le même contrôleur, le même profil de vitesse, que les
+  adversaires qu'il mesure. **Il tournait 24,400 s contre les 23,350 s du
+  chat.** Un banc dont l'étalon est membre du peloton ne peut pas voir que
+  le peloton est lent, et c'est pourquoi toutes les tables de CH30 étaient
+  vertes pendant que la course se gagnait d'un tour.
+
+## Arbitrages pris seul
+
+* **Ne pas décaler le barème, le reconstruire.** Le brief l'ordonnait, et
+  la mesure l'a justifié : `top` est un plafond dur, donc une personnalité
+  à `top` bas ne peut pas être accélérée par `pace`. Le chat n'a pas bougé
+  de 0,05 s entre `pace` 1,20 et 1,38.
+* **Monter la CROISIÈRE, pas le plafond de boost.** Balayé : le plafond
+  seul déplace la médiane de +0,10 s dans le mauvais sens en doublant le
+  hors-piste. La croisière passe à 15,0 u/s, et la borne est à 16 où le
+  pilote qui pousse devient plus lent que le discipliné.
+* **Rendre le mappage de l'accélérateur PAR INSTANCE.** C'était la seule
+  façon de réparer le kart sans toucher au char à voile, que le brief gèle.
+
+## Pistes abandonnées
+
+* **La ligne de courbure minimale relaxée dans le couloir**, comme
+  plancher de circuit. `Σ|Δ²P|²` pondère un virage par `ds⁴`, et `ds` est
+  le plus petit là où le virage est le plus serré : 12 000 balayages ont
+  déplacé le rayon minimal **dans le mauvais sens** (3,396 → 3,371 u).
+  Remplacée par un plancher **piloté** — le plus grand facteur d'allure qui
+  tient encore le ruban.
+* **Le premier gradient de cette relaxation**, monté au lieu de descendre :
+  longueur de ligne 443 u pour un circuit de 230 u, saturée sur ses bornes.
+  Deux fois, à deux endroits.
+
+## Ce qui a été trouvé en essayant de le casser
+
+* **D5 passait GRATUITEMENT.** Sa première forme — « l'étalon n'est pas en
+  tête six secondes après les feux » — est restée verte avec le joueur
+  remis en pole : les IA sont parfaites au feu vert et ce modèle ne l'est
+  pas, donc il est quatrième depuis n'importe quel slot. Le check ne
+  distinguait pas les deux grilles. Réécrit sur le fait structurel ; le
+  rang à six secondes est publié, non gaté, avec la raison à côté.
+* **D6 est né d'un échec de blind C.** x2.5 à `pace` 1,55 faisait tourner
+  au chat un 18,467 s — **sous le plancher piloté** — en passant 131 frames
+  hors du ruban. Un adversaire qui achète son temps sur l'herbe n'est pas
+  plus fort, il est cassé, et un temps au tour seul ne le voit pas.
+* **Deux tâches de fond se sont disputé `KartBody.gd`** pendant un
+  balayage de vitesse : deux `sed` sur le même fichier, un run mesuré au
+  milieu. Exactement le hasard de concurrence que `CLAUDE.md` documente,
+  et reproduit ici à l'intérieur d'une seule session. Restauré et remesuré.
+* **Une vérification « le process est mort » qui était fausse** : le
+  binaire est lancé par le symlink `godot4`, et je greppais `[G]odot`.
+  Trois runs ont été relancés pour rien.
+
+## Mesures, dans l'ordre
+
+| | |
+|---|---|
+| hypothèse retenue | **(a)**, l'étalon était membre du peloton |
+| étalon CH30 contre le chat qu'il mesurait | **24,400 s contre 23,350 s** |
+| borne dure à l'oméga, tout profil confondu | **4,17 u/s** |
+| plancher CH30 → plancher **piloté** | 21,633 s → **18,583 s** |
+| plein gaz sur 230,711 u | 12,111 s |
+| étalon réparé, n = 320 — sans / avec boost | p50 **21,633** / **20,350 s** |
+| effet de la latence sur la médiane (blind B) | **1,383 s** |
+| meilleur tour adverse x1 / x1.5 / x2.5 | **21,850 / 20,233 / 19,300 s** |
+| gain du défaut contre CH30 | **3,1 à 4,3 s au tour** |
+| déficit du dernier au drapeau (défaut) | **0,072 tour** (gate 0,80) |
+| place de l'étalon au preset par défaut | **2ᵉ**, battu de **0,117 s** |
+| croisière, plafond de boost | 13,0 → **15,0** ; 16,5 → **19,05** |
+| borne de lisibilité mesurée | **16 u/s** (croisement) |
+| trace du char, branche vs `origin/staging` | **byte-identique**, 24 lignes |

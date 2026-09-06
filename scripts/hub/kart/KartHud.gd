@@ -36,6 +36,12 @@ var _flash_left: float = 0.0
 var _ghost_anchor: Vector2 = Vector2.ZERO
 var _ghost_finger: Vector2 = Vector2.ZERO
 var _ghost_active: bool = false
+## CH31 -- the accelerator gauge. Written every frame while driving, so it
+## is drawn whether or not a finger is on the screen.
+var _boost: float = 0.0
+var _speed: float = 0.0
+var _speed_max: float = 1.0
+var _gauge_live: bool = false
 ## V7b dev-only steering preset row (DevTools.enabled()): empty for a
 ## normal player, so nothing is built or drawn for them.
 var _preset_buttons: Array[Button] = []
@@ -237,7 +243,7 @@ func _build_race_widgets() -> void:
 	_results_panel.add_theme_stylebox_override("panel", style)
 	_results_panel.set_anchors_preset(Control.PRESET_CENTER)
 	_results_panel.position = Vector2(-260.0, -80.0)
-	_results_panel.custom_minimum_size = Vector2(520.0, 0.0)
+	_results_panel.custom_minimum_size = Vector2(520.0, 0.0)  # CH31: the dev rows below set their own font small enough to fit
 	_results_panel.visible = false
 	add_child(_results_panel)
 	_results_box = VBoxContainer.new()
@@ -387,7 +393,7 @@ func show_results(rows: Array) -> void:
 func _append_dev_readout(rows: Array) -> void:
 	var sep := Label.new()
 	sep.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	sep.text = "— dev: tours & ecart (difficulte %s) —" % String(KartDifficulty.current()["label"])
+	sep.text = "— dev: tours, moyenne, pointe, contact (difficulte %s) —" % String(KartDifficulty.current()["label"])
 	sep.add_theme_font_size_override("font_size", 16)
 	sep.add_theme_color_override("font_color", Color(0.75, 0.72, 0.62))
 	sep.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -406,7 +412,13 @@ func _append_dev_readout(rows: Array) -> void:
 			texts.append("%.2f" % (float(int(ms)) / 1000.0))
 		var f2: int = int(r["finish_ms"])
 		var gap: String = "--" if (f2 <= 0 or winner_ms <= 0) else "%+.2f" % (float(f2 - winner_ms) / 1000.0)
-		line.text = "%-12s %s  |  %s  |  ecart %s s" % [String(r["name"]), String(r.get("profile", "")), " ".join(texts), gap]
+		# CH31: mean lap, the top speed REALLY reached and the time spent
+		# touching another kart, so a retour can be a table rather than an
+		# impression (brief). Every field comes from HubKarting.results().
+		line.text = "%-11s %-7s | %s | moy %.2f | pointe %.1f | contact %.1fs | ecart %s" % [
+			String(r["name"]), String(r.get("profile", "")).substr(0, 7), " ".join(texts),
+			float(int(r.get("mean_lap_ms", 0))) / 1000.0, float(r.get("top_speed", 0.0)),
+			float(r.get("contact_s", 0.0)), gap]
 		line.add_theme_font_size_override("font_size", 17)
 		line.add_theme_color_override("font_color", Color(0.88, 0.84, 0.74))
 		_results_box.add_child(line)
@@ -425,6 +437,7 @@ var _vehicle_mode: bool = false
 
 func set_vehicle_mode(on: bool) -> void:
 	_vehicle_mode = on
+	_gauge_live = false
 	_panel.visible = not on
 	_wrong_label.visible = false
 	_record_label.visible = false
@@ -478,6 +491,16 @@ func flash_record() -> void:
 	_flash_left = RECORD_FLASH_S
 	_record_label.visible = true
 
+## CH31 -- what the drive is DOING, for the accelerator gauge: the live
+## boost 0..1, the speed, and the speed at full boost. Called every frame
+## by HubKarting while the player is in the kart.
+func set_drive_readout(boost: float, speed: float, speed_max: float) -> void:
+	_boost = clampf(boost, 0.0, 1.0)
+	_speed = speed
+	_speed_max = maxf(speed_max, 0.01)
+	_gauge_live = true
+	queue_redraw()
+
 func set_ghost(anchor: Vector2, finger: Vector2, active: bool) -> void:
 	_ghost_anchor = anchor
 	_ghost_finger = finger
@@ -492,7 +515,20 @@ func _process(delta: float) -> void:
 			_record_label.visible = false
 			_record_label.modulate.a = 1.0
 
+## CH31 -- THE GAUGE IS DRAWN BEFORE THE GHOST, AND WITHOUT IT.
+##
+## The V7b ghost only existed while a finger was down (`_ghost_active`),
+## so the accelerator's only permanent trace on screen was one 16 px line
+## of text. Mathieu drove the kart and did not know the command existed.
+## The gauge below is drawn for the whole drive: empty it is an invitation,
+## full it is feedback, and it needs no sentence to explain it.
+const GAUGE_W: float = 26.0
+const GAUGE_H: float = 260.0
+const GAUGE_MARGIN: float = 34.0
+
 func _draw() -> void:
+	if _gauge_live and not _vehicle_mode:
+		_draw_boost_gauge()
 	if not _ghost_active:
 		return
 	var a := _ghost_anchor
@@ -502,13 +538,47 @@ func _draw() -> void:
 	draw_line(a + Vector2(-span, 0.0), a + Vector2(span, 0.0), Color(1.0, 1.0, 1.0, 0.22), 6.0)
 	draw_circle(a, 22.0, Color(1.0, 1.0, 1.0, 0.25))
 	draw_circle(a + Vector2(dx, 0.0), 30.0, Color(1.0, 0.95, 0.80, 0.55))
-	# V7b accelerator: the vertical half of the SAME drag, previously
-	# unused (drawn so the push is discoverable, not just documented).
-	var boost_span: float = KartTouchInput.BOOST_SPAN
+	# V7b accelerator: the vertical half of the SAME drag, drawn so the
+	# push is discoverable at the thumb as well as at the gauge.
+	var boost_span: float = _touch_boost_span()
 	var dy: float = clampf(a.y - _ghost_finger.y, 0.0, boost_span)
 	draw_line(a, a + Vector2(0.0, -boost_span), Color(1.0, 1.0, 1.0, 0.14), 6.0)
-	var boost_t: float = clampf((dy - KartTouchInput.BOOST_DEAD_ZONE) / (boost_span - KartTouchInput.BOOST_DEAD_ZONE), 0.0, 1.0)
-	draw_circle(a + Vector2(0.0, -dy), 24.0, Color(1.0, 0.55, 0.20, 0.22 + 0.5 * boost_t))
+	draw_circle(a + Vector2(0.0, -dy), 24.0, Color(1.0, 0.55, 0.20, 0.22 + 0.5 * _boost))
+	# An arrow head at the top of the push track: it points where the thumb
+	# has to go, and it is the only part of this that is a HINT rather than
+	# a readout. It fades out as the push arrives, so it stops nagging.
+	var tip: Vector2 = a + Vector2(0.0, -boost_span)
+	var hint_a: float = 0.42 * (1.0 - _boost)
+	if hint_a > 0.01:
+		draw_colored_polygon(PackedVector2Array([tip + Vector2(0.0, -14.0), tip + Vector2(-13.0, 8.0), tip + Vector2(13.0, 8.0)]),
+			Color(1.0, 0.72, 0.30, hint_a))
+
+## The push span of the KART's touch input. Read through the instance the
+## HUD is actually serving rather than the class constant: the yacht keeps
+## the V7b numbers and the kart does not (KartTouchInput, CH31).
+func _touch_boost_span() -> float:
+	return KartTouchInput.KART_BOOST_SPAN
+
+## A vertical bar on the right: how much of the accelerator is being held,
+## with the current speed under it. Bottom-anchored so a phone's notch and
+## the lap panel are both out of its way.
+func _draw_boost_gauge() -> void:
+	var vp: Vector2 = size
+	var x: float = vp.x - GAUGE_MARGIN - GAUGE_W
+	var y: float = vp.y * 0.5 - GAUGE_H * 0.5
+	var track_rect := Rect2(x, y, GAUGE_W, GAUGE_H)
+	draw_rect(track_rect, Color(0.10, 0.09, 0.08, 0.42), true)
+	draw_rect(track_rect, Color(1.0, 0.96, 0.86, 0.28), false, 2.0)
+	# The FILL is the speed, not the boost: a bar that only moved when the
+	# thumb moved would say "you are pushing", and what a driver wants to
+	# read is "you are going faster". The boost is the bright cap on top.
+	var t: float = clampf(_speed / _speed_max, 0.0, 1.0)
+	var h: float = GAUGE_H * t
+	draw_rect(Rect2(x, y + GAUGE_H - h, GAUGE_W, h), Color(1.0, 0.72, 0.30, 0.55 + 0.35 * _boost), true)
+	# Where cruise ends and the push begins: the one tick a player needs.
+	var cruise_t: float = clampf(1.0 / maxf(KartBody.BOOST_SPEED_RATIO, 1.0001), 0.0, 1.0)
+	var cy: float = y + GAUGE_H * (1.0 - cruise_t)
+	draw_line(Vector2(x - 6.0, cy), Vector2(x + GAUGE_W + 6.0, cy), Color(1.0, 0.96, 0.86, 0.55), 2.0)
 
 ## ---- V7b dev-only steering presets (DevTools.enabled()) -----------------
 

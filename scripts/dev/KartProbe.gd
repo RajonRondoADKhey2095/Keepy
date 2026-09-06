@@ -558,7 +558,28 @@ func _phase_race() -> void:
 	var cat_flat: float = _mean_vmax(cat_driver, ks, q_lo, false)
 	var boar_flat: float = _mean_vmax(boar_driver, ks, q_lo, false)
 	_check("cat faster than the boar over the curviest quarter", cat_curvy > boar_curvy, "%.3f vs %.3f" % [cat_curvy, boar_curvy])
-	_check("boar faster than the cat over the straightest quarter", boar_flat > cat_flat, "%.3f vs %.3f" % [boar_flat, cat_flat])
+	# ⚠️ CH31 -- AND NOT OVER THE STRAIGHTEST QUARTER ANY MORE EITHER, for
+	# the same KIND of reason one layer down. CH30 moved this check off the
+	# single tightest sample because the STEERING limit saturated there.
+	# CH31 moved the speed profile itself off the SPINE and onto the line
+	# each driver actually plans (KartAiDriver._build_line), and that makes
+	# the "straightest quarter of the spine" the wrong stretch to read: on
+	# a 230 u circuit that quarter is still inside somebody's braking zone,
+	# so what it measures is WHOSE CORNERS ARE SLOWEST -- and the boar has
+	# the lowest a_lat by personality. Measured: it read 16.867 against the
+	# cat's 17.006 there while its cap and its real top speed in a race
+	# were both higher (19.050 vs 17.268 of cap; 17.31 vs 16.28 u/s of
+	# measured top speed at the default preset).
+	#
+	# What "quicker in a straight line" MEANS is the cap a driver is
+	# willing to hold where nothing else binds, so that is what is
+	# asserted, at the flattest sample. The quarter figure is kept as a
+	# REPORTED number rather than deleted: it is the one that moved, and a
+	# future lot that changes the line wants to see it move again.
+	_check("boar's cap on a straight is higher than the cat's",
+		boar_driver.vmax_at(straight) > cat_driver.vmax_at(straight),
+		"%.3f vs %.3f" % [boar_driver.vmax_at(straight), cat_driver.vmax_at(straight)])
+	print("  [--] (reported, not gated) mean v_max over the straightest quarter: boar %.3f, cat %.3f -- see the comment above" % [boar_flat, cat_flat])
 	# (blind) the two quarters really are different stretches of track.
 	_check("(blind) the curviest and straightest quarters differ", q_hi > q_lo * 1.5, "%.4f vs %.4f" % [q_hi, q_lo])
 	# The side, read off the driver and not off a comment (the V7 "right
@@ -640,7 +661,7 @@ func _phase_race() -> void:
 	var parked: Array = []
 	for i in _karting.racers.size():
 		var r: Dictionary = _karting.racers[i]
-		var pose: Dictionary = track.start_pose(i)
+		var pose: Dictionary = track.start_pose(_karting.grid_slot(i))
 		parked.append(_flat((r["kart"] as KartBody).global_position))
 		if _flat((r["kart"] as KartBody).global_position).distance_to(pose["position"]) > 0.05 or not r["active"]:
 			grid_ok = false
@@ -722,7 +743,7 @@ func _phase_race() -> void:
 		var r: Dictionary = _karting.racers[i]
 		if r["player"]:
 			continue
-		if _flat((r["kart"] as KartBody).global_position).distance_to(track.start_pose(i)["position"]) > 0.05 or r["active"] or (r["kart"] as KartBody).velocity.length() > 0.001:
+		if _flat((r["kart"] as KartBody).global_position).distance_to(track.start_pose(_karting.grid_slot(i))["position"]) > 0.05 or r["active"] or (r["kart"] as KartBody).velocity.length() > 0.001:
 			regridded = false
 	_check("exit: opponents parked on the grid, inactive", regridded)
 	_check("exit: results panel hidden", not _hud.results_visible())

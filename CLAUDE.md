@@ -389,6 +389,11 @@ d'un `mkdir -p build/web`.
 
 * **`grep -E '\t'` ne veut pas dire TAB** — GNU `grep -E` traite `\t` comme
   un `t` littéral. Utiliser `awk -F'\t'` et comparer les champs.
+* **Vérifier qu'un process est mort par le MAUVAIS NOM.** Le binaire est
+  souvent lancé par un symlink (`godot4` → `Godot_v4.3-stable_linux.x86_64`) :
+  un `ps | grep "[G]odot"` rend alors **zéro** sur un process bien vivant, et
+  « c'est fini » se lit exactement comme « c'est mort ». Grepper le nom
+  RÉELLEMENT invoqué, ou mieux `pgrep -x`.
 * **Le `cd` d'une commande précédente PERSISTE** : une sonde a tourné avec
   `--path .` depuis `build/web`, donc sans `project.godot` — **20 minutes à
   ne rien mesurer, sans une seule ligne d'erreur**. Chemins absolus.
@@ -703,6 +708,65 @@ trouvé un défaut dans la sonde elle-même.
 accesseur a produit **UN seul** rouge là où DEUX étaient attendus, ce qui a
 révélé qu'un champ était lu **en direct** à un endroit et **par l'accesseur**
 à l'autre — un vrai défaut, trouvé par la passe rouge et pas par relecture.
+
+### ⚠️ UN ÉTALON QUI PARTAGE LE CONTRÔLEUR DE CE QU'IL MESURE NE MESURE RIEN
+
+Le banc de difficulté du karting a été vert pendant tout un lot sur une
+course que Mathieu gagnait d'un tour. La cause n'était ni un seuil, ni une
+constante : le « pilote humain de référence » contre lequel la difficulté
+était calibrée était **un profil du même contrôleur que les adversaires**,
+avec le même profil de vitesse, tiré de la même table. Mesuré : il tournait
+**24,400 s contre les 23,350 s de l'adversaire qu'il mesurait**.
+
+Un dénominateur pris DANS la population qu'il évalue ne peut pas voir que
+cette population est lente — il bouge avec elle. Le banc ne mentait sur
+aucun de ses chiffres ; il répondait à une autre question que celle posée.
+
+**Règle** : un étalon de difficulté, de performance ou de confort est
+construit **contre un modèle qui ne partage pas le mécanisme évalué**, et
+on le vérifie en le faisant tourner sur le même banc que la population :
+s'il se classe au milieu, il n'est pas un étalon, il est un concurrent.
+Corollaire du même lot : un « plancher physique » dérivé de ce même
+contrôleur n'était pas le plancher du CIRCUIT mais celui du MODÈLE DE
+CONDUITE — 21,633 s annoncés contre 18,583 s réellement pilotés, et
+12,111 s de plein gaz géométrique. **Un plancher se PILOTE, il ne se
+déduit pas** : le plus grand facteur d'allure qui tienne encore la piste.
+
+### ⚠️ UNE SIMULATION À LATENCE PARFAITE MENT, ET ELLE MENT DANS LE BON SENS
+
+Un modèle de joueur qui décide à 60 Hz et dont les commandes arrivent au
+même frame n'est pas un joueur lent-mais-propre : c'est un **asservissement
+sans retard**, et un retard dans une boucle de contre-réaction est ce qui
+produit la sur-correction qu'un vrai pouce produit. Mesuré : couper la
+ligne à retard du même modèle déplace la médiane de **1,383 s au tour** et
+supprime complètement le louvoiement.
+
+**Règle** : tout modèle de joueur porte une latence et un bruit gaussien,
+la latence est tirée **une fois par RUN** (c'est une propriété des mains et
+du téléphone ; la re-tirer chaque frame la moyenne et la fait disparaître),
+et le résultat se publie en **DISTRIBUTION** sur n ≥ 300, jamais en un
+tour. Et le banc **prouve d'abord que la latence est câblée** — une
+population témoin à latence nulle doit sortir mesurablement plus rapide —
+sans quoi chaque chiffre produit par cet étalon passe gratuitement contre
+une ligne à retard jamais branchée.
+
+### ⚠️ UN PROFIL CALCULÉ SUR UNE GÉOMÉTRIE QUE L'ACTEUR NE SUIT PAS
+
+Le profil de vitesse des adversaires était bâti sur la courbure de l'axe du
+circuit pendant qu'ils roulaient sur une ligne décalée jusqu'à 3,9 u — sur
+un ruban de 10 u. Conséquence mesurée : **tout le plateau était épinglé au
+même 4,17 u/s** au virage le plus serré, y compris le profil dont les pneus
+ne lâchent jamais. Aucune erreur, aucun avertissement : juste un plafond
+partagé que personne n'avait cherché.
+
+**Règle** : une limite dérivée d'une géométrie (courbure, longueur d'arc,
+pente) se calcule sur **la géométrie effectivement parcourue**, et le plan
+qui la définit doit être **atteignable** par le taux auquel l'acteur peut
+s'y rendre — sinon le profil promet un rayon qui n'existe pas. Corollaire
+payé dans le même lot : un paramètre de trajectoire réglé à l'époque où le
+profil ignorait la ligne devient **faux** dès que le profil la regarde (un
+balancement de ligne était gratuit, il ne l'est plus), et il inverse la
+personnalité qu'il était censé porter.
 
 ### ⚠️ BLIND CHECK — une assertion d'ÉGALITÉ ou d'ABSENCE doit d'abord prouver qu'elle sait VOIR
 
