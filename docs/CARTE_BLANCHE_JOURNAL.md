@@ -1242,3 +1242,94 @@ z = −200.
 planche de la famille (22 GLB) est une sonde Godot jetable (`CoveSheet`),
 SubViewport 1800×1000, quatre azimuts/élévations, brume coupée. Et de toute
 façon c'est le rendu du moteur qui compte.
+
+## Rejeu de TOUTES les sondes du dépôt — branche ET `origin/staging` importé à part (01:05 → 02:45 UTC)
+
+73 scènes de `scripts/dev/`, chacune lancée sur les deux arbres avec les
+mêmes flags (`--fixed-fps 60` ; xvfb + `opengl3` pour les 29 sondes qui
+lisent un pixel, une instance de `MultiMesh` ou un point d'écran, headless
+pour les autres), 2 processus en parallèle par arbre sur 4 cœurs, budget
+900 s par sonde. Verdict : **l'ensemble des sondes non vertes est
+IDENTIQUE sur les deux arbres, assertion pour assertion** (même texte de
+`FAIL`, mêmes nombres : « draw nodes 157, expected 144 », « −0,158 u »,
+« 15/16 taps »…), à une exception près, `JumpDodgeRewardAudit` (Chased),
+rouge sur la référence et vert sur la branche — une sonde de gameplay
+tirée au hasard, sans lien avec ce lot. **Zéro régression introduite.**
+Les cinq `timeout 900 s` sont les mêmes des deux côtés et sont de la
+famine CPU sous llvmpipe (« NOT STUCK, JUST SLOW »), pas des blocages ; ils
+n'ont pas été rejoués isolément cette nuit (une heure de plus chacun).
+`ProbeTimeoutAudit` vert : `CoveProbe` compte parmi les sondes armées, et
+les trois sondes jetables (`CoveRecon`, `CoveSheet`, `WalkTimeProbe`) ont
+été supprimées avant le commit.
+
+| sonde | mode | `origin/staging` | branche |
+|---|---|---|---|
+| `ActorWalkerProbe` | headless | vert | vert |
+| `AirEnemyLandingLaneAudit` | headless | vert | vert |
+| `AirHazardAudit` | headless | vert | vert |
+| `AlarmRampAudit` | headless | vert | vert |
+| `AntiFrustrationAudit` | headless | vert | vert |
+| `AssetContractAudit` | headless | vert | vert |
+| `BattleContractProbe` | headless | vert | vert |
+| `BattleDefenseProbe` | headless | vert | vert |
+| `BattleReadabilityProbe` | headless | vert | vert |
+| `BattleStatsProbe` | headless | vert | vert |
+| `CabinProbe` | xvfb | ROUGE | ROUGE |
+| `CampfireFacingProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `ChargerAudit` | headless | vert | vert |
+| `ChargerShapeProbe` | headless | vert | vert |
+| `ComboAudit` | headless | vert | vert |
+| `ComboContrastAudit` | xvfb | vert | vert |
+| `CoveProbe` | headless | — | vert |
+| `DarkPaletteAudit` | xvfb | vert | vert |
+| `DeathModelAudit` | headless | vert | vert |
+| `DecorParallaxProbe` | headless | vert | vert |
+| `DecorStabilityAudit` | xvfb | vert | vert |
+| `DivingBoardProbe` | headless | vert | vert |
+| `EnemyLaneAudit` | headless | vert | vert |
+| `HubPerfBaseline` | xvfb | vert | vert |
+| `JumpDodgeRewardAudit` | headless | ROUGE | vert |
+| `KartProbe` | headless | vert | vert |
+| `LakeMoveCaptureProbe` | xvfb | vert | vert |
+| `LakeMoveReconProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `LakeZoneProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `LakeZoneReconProbe` | xvfb | vert | vert |
+| `LaneFillAudit` | headless | vert | vert |
+| `LevelNavProbe` | xvfb | ROUGE | ROUGE |
+| `LiveRunProbe` | headless | timeout 900 s | timeout 900 s |
+| `OwlFlightProbe` | headless | vert | vert |
+| `OwlProbe` | headless | vert | vert |
+| `PacingAudit` | headless | vert | vert |
+| `ProbeTimeoutAudit` | headless | vert | vert |
+| `PursuerAudit` | headless | vert | vert |
+| `PursuerContrastAudit` | xvfb | vert | vert |
+| `PursuerFramingAudit` | xvfb | timeout 900 s | timeout 900 s |
+| `PursuerPushbackAudit` | headless | vert | vert |
+| `RushFrustrationAudit` | headless | vert | vert |
+| `SeesawProbe` | headless | ROUGE | ROUGE |
+| `ShrinkAudit` | headless | vert | vert |
+| `SpawnLakeCaptureProbe` | xvfb | vert | vert |
+| `SpawnLakeReconProbe` | xvfb | timeout 900 s | timeout 900 s |
+| `SplashSheetProbe` | xvfb | vert | vert |
+| `StomperAudit` | headless | vert | vert |
+| `StomperConflictAudit` | headless | vert | vert |
+| `StreamGeometryProbe` | headless | vert | vert |
+| `StreamRideProbe` | xvfb | vert | vert |
+| `StrikeAudit` | headless | ROUGE | ROUGE |
+| `StrikeContrastAudit` | xvfb | vert | vert |
+| `StrikeFatalContrastAudit` | xvfb | ROUGE | ROUGE |
+| `SwampIdentityAudit` | xvfb | vert | vert |
+| `TrackPropsAudit` | headless | vert | vert |
+| `TracksidePropCensus` | headless | vert | vert |
+| `TurnstileProbe` | headless | ROUGE | ROUGE |
+| `TyrolienneFixedPointsProbe` | xvfb | vert | vert |
+| `V4ClimbProbe` | xvfb | INCONCLUSIVE | INCONCLUSIVE |
+| `V4SaveProbe` | headless | vert | vert |
+| `V4SiteProbe` | headless | vert | vert |
+| `V6CrittersProbe` | xvfb | INCONCLUSIVE | INCONCLUSIVE |
+| `WaterImpactProbe` | xvfb | ROUGE | ROUGE |
+| `WaterTintProbe` | xvfb | ROUGE | ROUGE |
+| `WaterlineOrientationProbe` | xvfb | vert | vert |
+| `ZiplineReconProbe` | xvfb | vert | vert |
+| `ZiplineRideProbe` | xvfb | ROUGE | ROUGE |
+| `ZiplineStructureProbe` | xvfb | ROUGE | ROUGE |

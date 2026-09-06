@@ -340,9 +340,13 @@ depuis toutes ses stations ; la Lande est à 51,8 k depuis son bord est.
   faux → 7 rouges (arc, squash, allure, facteur orage, échange) ; fonte
   neutralisée → 5 rouges ; `BRANCH_OF` vidé → 4 rouges (les quatre
   routages vers/depuis la Crique, la chaîne restant verte).
-* Table complète des sondes du dépôt rejouée sur les DEUX arbres (branche
-  et `origin/staging` importé à part) : voir le journal pour les verdicts
-  ligne à ligne.
+* Table complète des 73 sondes du dépôt rejouée sur les DEUX arbres
+  (branche et `origin/staging` importé à part, mêmes flags) : **l'ensemble
+  des sondes non vertes est identique des deux côtés, assertion pour
+  assertion** (19 rouges/inconclusives/timeouts pré-existants sur
+  `staging`, les mêmes sur la branche ; `JumpDodgeRewardAudit`, Chased,
+  rouge sur la référence seulement — tirage aléatoire). Zéro régression.
+  Tableau ligne à ligne dans le journal.
 
 ## Ce qui n'a pas été fait, et pourquoi
 
