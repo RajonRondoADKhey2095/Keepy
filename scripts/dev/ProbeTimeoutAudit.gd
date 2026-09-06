@@ -59,6 +59,7 @@ const NOT_PROBES := {
 	"ProbeWatchdog.gd": "the timeout mechanism itself",
 	"ProbeDeadline.gd": "the timeout mechanism itself",
 	"SubstituteModel.tscn": "a dev ASSET (stand-in mesh for AssetContractAudit), not a probe",
+	"HumanRefDriver.gd": "CH31 reference-player MODEL, RefCounted -- a driver a probe instantiates, no run of its own",
 }
 
 var _failures: Array[String] = []
