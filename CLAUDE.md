@@ -152,6 +152,15 @@ Ce qu'elle implique, et qui n'est pas négociable :
 une divergence alarmante** : c'est le plus souvent un dépôt de `.glb` bruts.
 Le vérifier (`git diff --stat` sur la plage) avant de s'arrêter.
 
+### Historique des promotions palier 2
+
+Journal court, un dépôt par promotion — le récit complet de chaque lot reste
+dans `docs/lots/`, ceci n'en est jamais un résumé.
+
+| date | lots promus | autorisation |
+|---|---|---|
+| 6 sept 2026 | V7b, V8 (karting lot 2), CH29 (la Crique), CH30 (conduite unifiée), CH31 (rebalance difficulté) | Mathieu, après validation device sur `keepy-staging.vercel.app` |
+
 ## Vérifier un déploiement SUR LE SERVICE, jamais dans le log CI seul
 
 Un log CI vert dit que la CI a réussi ; il ne dit pas quel build l'alias
@@ -728,6 +737,14 @@ lecture du côté réel, jamais sur le commentaire qui le nomme.
 * **Toute sonde qui joue un cue audio puis quitte** doit attendre en temps
   RÉEL avant de sortir, sinon elle s'ajoute `ObjectDB instances leaked at
   exit` **après** son propre verdict et casse la comparaison byte-identique.
+* **`KartTouchInput.input.brake` posé UNE FOIS hors boucle ne tient pas** :
+  `_physics_process` le réécrit CHAQUE frame sur l'état du clavier
+  (`_brake_index < 0` → faux en headless, aucune touche pressée), donc un
+  `touch.input.brake = true` posé avant une boucle d'attente est défait
+  avant que le véhicule ne le lise. CH33, sur `SailBoatProbe` — deux
+  assertions de frein sorties fausses avant correction. Le poser DANS la
+  boucle, à chaque itération, avant l'`await` (`CoveProbe`'s propre test
+  de frein du char à voile le fait déjà ainsi).
 
 ## Doctrine de conception — ce que ce dépôt a appris en payant
 
