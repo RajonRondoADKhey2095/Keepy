@@ -17,6 +17,11 @@ uniform float radius = 0.0;
 // 1.0 for the stream ribbon: the foam rim reads the lateral UV.x (0 = left
 // bank, 1 = right bank) instead of a disc radius.
 uniform float ribbon = 0.0;
+// CH29: how much of the disc's radius the foam rim covers. 0.10 is what
+// every lake always drew (the default keeps them byte-identical); the sea
+// passes 0.035 so a 48 u disc gets a 1.7 u surf line instead of a 4.8 u
+// white apron.
+uniform float rim_width = 0.10;
 uniform float ripple_scale = 11.0;
 uniform float speed = 0.025;
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
@@ -60,7 +65,7 @@ void fragment() {
 	col.rgb = mix(col.rgb, foam, spark * 0.22);
 	if (radius > 0.0) {
 		float r = length(model_pos.xz) / radius + (n - 0.5) * 0.05;
-		float rim = smoothstep(0.90 - rain * 0.10, 0.985, r);
+		float rim = smoothstep((1.0 - rim_width) - rain * rim_width, 0.985, r);
 		col.rgb = mix(col.rgb, foam, rim * 0.75);
 		col.a = mix(col.a, 0.92, rim);
 	} else if (ribbon > 0.5) {

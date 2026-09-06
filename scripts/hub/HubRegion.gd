@@ -494,9 +494,37 @@ const CIRCUIT_MIN: Vector2 = Vector2(-50.0, -200.0)
 const CIRCUIT_MAX: Vector2 = Vector2(50.0, -134.0)
 const CIRCUIT_CORRIDOR_MIN: Vector2 = Vector2(-14.0, -134.0)
 const CIRCUIT_CORRIDOR_MAX: Vector2 = Vector2(-2.0, -126.0)
+## CH29 (6 septembre 2026) -- the fifth map, EAST of the moor: the cove
+## ("la Crique"). The first zone OFF the north-south chain: it hangs off
+## the moor's east edge (x = 38) by a corridor at z -100..-92, so a walk
+## from anywhere else passes the moor first (HubWorld._gates_between
+## routes through zone 2 for it). Same ground height. The rectangle runs
+## into the sea on purpose: the water is a PLACE here as everywhere else
+## on this plateau (Mathieu's decision of 26 aout 2026), so Keepy can wade
+## a dozen units out before the region stops him. The lighthouse base is a
+## hole like the trunk and the windmill.
+##
+## THE SEA IS A DISC, and its centre is a second spelling of what
+## HubCove draws -- gated by CoveProbe against the built disc, never
+## trusted. Radius 48 centred at (108, -110) puts the waterline at
+## x = 60.0 on the cove's mid line and at 64.4 on its north and south
+## edges: a shore that curves INTO the land, which is what a cove is.
+## MEASURED, not chosen: with the centre 8 u further east the sea was out
+## of frame from the dock and the corridor (CoveRecon, unproject on the
+## real camera: the frame is ~7 u wide at Keepy's own z and only widens
+## ahead), and a beach whose water is never in the picture is a car park.
+const COVE_MIN: Vector2 = Vector2(44.0, -130.0)
+const COVE_MAX: Vector2 = Vector2(74.0, -90.0)
+const COVE_CORRIDOR_MIN: Vector2 = Vector2(38.0, -100.0)
+const COVE_CORRIDOR_MAX: Vector2 = Vector2(44.0, -92.0)
+const SEA_CENTRE: Vector3 = Vector3(108.0, 0.0, -110.0)
+const SEA_RADIUS: float = 48.0
+const LIGHTHOUSE_AT: Vector3 = Vector3(56.0, 0.0, -124.0)
+const LIGHTHOUSE_RADIUS: float = 1.9
 static var _holes: Array[Dictionary] = [
 	{"centre": MOTHER_TREE_AT, "radius": MOTHER_TREE_TRUNK_RADIUS},
 	{"centre": WINDMILL_AT, "radius": WINDMILL_RADIUS},
+	{"centre": LIGHTHOUSE_AT, "radius": LIGHTHOUSE_RADIUS},
 ]
 
 static func _in_rect(flat: Vector3, lo: Vector2, hi: Vector2) -> bool:
@@ -521,10 +549,34 @@ static func in_circuit(point: Vector3) -> bool:
 	var flat := _flat(point)
 	return _in_rect(flat, CIRCUIT_MIN, CIRCUIT_MAX) or _in_rect(flat, CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX)
 
+## CH29: true inside the cove or its corridor (painted zone, hole included).
+static func in_cove(point: Vector3) -> bool:
+	var flat := _flat(point)
+	return _in_rect(flat, COVE_MIN, COVE_MAX) or _in_rect(flat, COVE_CORRIDOR_MIN, COVE_CORRIDOR_MAX)
+
+## CH29: is this flat point under the sea's disc. The sea is walkable (the
+## region includes it up to COVE_MAX.x); this answers "is he wet", the
+## question HubWater asks, and "is this sand or water", the one the
+## scatter asks. Nothing here refuses a tap.
+static func in_sea(point: Vector3) -> bool:
+	var flat := _flat(point)
+	return flat.distance_to(SEA_CENTRE) < SEA_RADIUS
+
+## Signed distance from the shoreline: positive on the sand (dry side),
+## negative under the water. What the castles' "wet sand" test and the
+## probe's shoreline gate both read, so the waterline is one number.
+static func shore_distance(point: Vector3) -> float:
+	return _flat(point).distance_to(SEA_CENTRE) - SEA_RADIUS
+
 ## Which zone a point paints as: 0 the plateau, 1 the autumn hollow, 2 the
-## moor, 3 the circuit. The corridors belong to the zone they lead INTO,
-## so a walk that crosses a corridor changes zone once, at the gate.
+## moor, 3 the circuit, 4 (CH29) the cove. The corridors belong to the
+## zone they lead INTO, so a walk that crosses a corridor changes zone
+## once, at the gate. The cove is asked FIRST: its corridor starts at the
+## moor's own edge (x = 38), and a point on that shared line must read as
+## the corridor it opens into, not as the moor it leaves.
 static func zone_of(point: Vector3) -> int:
+	if in_cove(point):
+		return 4
 	if in_circuit(point):
 		return 3
 	if in_moor(point):
@@ -549,6 +601,8 @@ static func contains(point: Vector3) -> bool:
 	if _in_rect(flat, MOOR_MIN, MOOR_MAX) or _in_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX):
 		return true
 	if _in_rect(flat, CIRCUIT_MIN, CIRCUIT_MAX) or _in_rect(flat, CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX):
+		return true
+	if _in_rect(flat, COVE_MIN, COVE_MAX) or _in_rect(flat, COVE_CORRIDOR_MIN, COVE_CORRIDOR_MAX):
 		return true
 	if absf(flat.x) <= PLATEAU_HALF_EXTENT and absf(flat.z) <= PLATEAU_HALF_EXTENT:
 		return true
@@ -612,6 +666,8 @@ static func clamp_to(point: Vector3) -> Vector3:
 	candidates.append(_clamp_rect(flat, MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX))
 	candidates.append(_clamp_rect(flat, CIRCUIT_MIN, CIRCUIT_MAX))
 	candidates.append(_clamp_rect(flat, CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX))
+	candidates.append(_clamp_rect(flat, COVE_MIN, COVE_MAX))
+	candidates.append(_clamp_rect(flat, COVE_CORRIDOR_MIN, COVE_CORRIDOR_MAX))
 	for hole in _holes:
 		var hc: Vector3 = hole["centre"]
 		var away := flat - hc
