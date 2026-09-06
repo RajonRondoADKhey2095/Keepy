@@ -27,6 +27,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # assets_source/ (369 MB of raw Meshy source assets) is never read
+          # at build time -- export_presets.cfg already excludes it from the
+          # .pck via exclude_filter, and the two GDScript comments mentioning
+          # it are provenance notes, not load()/preload() paths. Non-cone
+          # mode is required to express "everything except one directory";
+          # cone mode only supports listing directories to *include*.
+          # actions/checkout automatically sets `--filter=blob:none` on the
+          # fetch whenever `sparse-checkout` is set, so this also skips
+          # downloading assets_source/'s blobs, not just their checkout.
+          sparse-checkout: |
+            /*
+            !/assets_source/
+          sparse-checkout-cone-mode: false
 
       - name: Install Linux runtime dependencies for headless Godot
         run: |
