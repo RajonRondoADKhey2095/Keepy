@@ -605,7 +605,7 @@ func _physics_process(delta: float) -> void:
 		# a finger is down -- that is the whole point, see KartHud._draw.
 		var me: KartBody = player_kart()
 		_hud.set_drive_readout(touch.input.boost, absf(me.speed()) if me != null else 0.0,
-			KartBody.MAX_SPEED * KartBody.BOOST_SPEED_RATIO)
+			KartBody.MAX_SPEED * KartBody.BOOST_SPEED_RATIO, touch.input.reverse)
 
 ## Discs on the plane: separate, exchange the closing speed along the
 ## normal with restitution, jolt both chassis. O(N^2) on N = 4.
