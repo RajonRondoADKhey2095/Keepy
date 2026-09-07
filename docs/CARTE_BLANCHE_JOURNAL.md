@@ -1822,8 +1822,58 @@ pente — le relief se lit par silhouette » (celle-ci mesurée au CH35-C, avec
 sa conséquence de layout : 30° marchable, 45° flancs courts, > 55° interdit,
 et un sommet jamais dans le cadre figé).
 
+## CH38 — LOT 2 ZONE MONTAGNE, PARTIE A : le relief nu (7 septembre 2026)
+
+Le premier domaine réel de `HubSurface` : la **crête ouest**, rectangle
+x ∈ [−63, −35], z ∈ [−12, 18], boulonné sur le bord ouest du plateau. Rien
+dessus — pas un semis, pas un prop, pas une goutte d'eau : le lot existe
+pour que Mathieu lise un FPS device contre un delta triangle connu, avant
+qu'on plante quoi que ce soit.
+
+L'emplacement vient de sa direction (« au-delà des arbres visibles depuis
+(−34,6 ; 35) ») et de **huit dégagements mesurés** sur le layout livré, dont
+le plus serré est la berge du petit lac à 0,85 u. Le périmètre est à
+**exactement 0** — deux cosinus surélevés à support compact, donc un raccord
+C1 et pas seulement le C0 exigé — si bien qu'une marche franchit x = −35
+sans la moindre marche : ni porte, ni couloir, ni numéro de zone.
+
+Trois choses que ce lot a payées pour apprendre :
+
+**La largeur est fixée par la TRAVERSÉE, pas par le relief.** L'en-tête de
+`HubRegion` dit qu'un lobe centré SUR un bord n'allonge aucune diagonale
+entre coins ; un **rectangle** boulonné sur un bord, lui, l'allonge. La
+pire paire marchée sort à **20,967 s** contre les 22 s que le hub se tient,
+et la version à x = −71 — celle qu'on voulait, plus généreuse — sort à
+**22,383 s** en passe rouge. C'est ça, et pas le goût, qui cape le sommet à
+4,5 u : 28 u de portée à 30° n'admettent rien de plus.
+
+**Deux bosses qui se recouvrent additionnent leurs gradients.** Trois
+versions de la forme ont mesuré **33,0°** avec deux bosses individuellement
+à 23° et 17°. La seconde a fini écartée à 12,04 u de la première.
+
+**Le banc reproduit d'abord un chiffre au dossier.** `MountainProbe`
+PHASE F marche la diagonale livrée dans le même run : 1 122 frames,
+**18,700 s**, la valeur publiée à la frame près.
+
+Budget gaté **dès le premier commit** (doctrine CH35-B Q7) : **+1 744**
+primitives au pire sur 8 stations × 2 caméras, plafond 10 000 — et un delta
+**NET** de **−21 à +1 023** mesuré sur DEUX ARBRES, parce que rendre le
+rectangle marchable écarte aussi les arbres du mur de forêt qui s'y
+trouvaient. `MountainProbe` : 7 phases, ALL GREEN, blind check en tête, et
+**cinq passes rouge-avant-vert** restaurées byte-identiques par `cmp`.
+
+Une doctrine déposée dans `CLAUDE.md` (les deux points ci-dessus sur la
+traversée et sur les gradients), et une station signalée sans être
+maquillée : au pied nord, à 11 u du sommet, le versant occupe ~90 % du
+cadre. Il a bien une crête contre le ciel, donc il n'enfreint pas la
+contrainte — mais c'est la vue à regarder en premier sur device, et ce qui
+lui manque est du décor, c'est-à-dire la PARTIE B.
+
 ## Suite
 
-Lot 2 ZONE MONTAGNE (relief réel, emplacement à trancher par Mathieu),
-la mesure device de CH35-B tâche 4 toujours en attente, lot 3 véhicule sur
-surface, lot 4 luge.
+Mathieu teste le terrain nu sur iPhone (`?keepydev=1`, overlay POS + BUILD
++ TRI) **avant toute suite** : c'est le seul moment où le pari « on saute la
+mesure device complète » se vérifie. Si le FPS tient, lot 2 PARTIE B (semis,
+props, atmosphère) ; sinon lot 0b assainissement, gaté sur ce même
+protocole. La mesure device de CH35-B tâche 4 reste en attente ; lot 3
+véhicule sur surface et lot 4 luge restent après.

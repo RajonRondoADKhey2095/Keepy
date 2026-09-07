@@ -130,7 +130,13 @@ func _ready() -> void:
 			_at = pile + Vector3(0.0, 0.0, 2.4)
 			print("AT_CAT pile %s -> at %s" % [pile, _at])
 	if keepy:
-		keepy.global_position = _at
+		# CH38: THE GROUND POINT, not the flat one. `--at` names an (x, z);
+		# with a domain registered the ground there is not y = 0, and a
+		# capture that planted him at 0 buried him inside the relief -- the
+		# first ridge captures came back with his ears at ground level. The
+		# spelling is HubSurface.ground(), the one every other writer of a
+		# ground y uses since CH37.
+		keepy.global_position = HubSurface.ground(_at)
 	var cam: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Camera3D")
 	if cam and cam.has_method("snap_to_target"):
 		cam.call("snap_to_target")
