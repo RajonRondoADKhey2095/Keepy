@@ -59,6 +59,12 @@ class_name SailBoat
 const BASE_SPEED: float = 9.5
 const OFF_SPEED: float = 3.0
 const REVERSE_SPEED: float = 2.6
+## CH42 -- the reverse gear's ramp, u/s^2. The gentlest of the four on
+## purpose: a hull backs water, it does not shift into reverse, and the
+## sea has no wall to be pinned against (SailBoat has no _wall() at all --
+## see this file's header). It is still nearly double the 2.2 the brake
+## branch used, which was slow enough to read as nothing happening.
+const REVERSE_ACCEL: float = 4.0
 const ACCEL_LAMBDA: float = 0.40
 ## Low on purpose: this is the number that reads as "way carries on".
 const COAST_LAMBDA: float = 0.10
@@ -132,6 +138,7 @@ func _ready() -> void:
 	_motion.max_speed = BASE_SPEED
 	_motion.max_speed_off = OFF_SPEED
 	_motion.reverse_speed = REVERSE_SPEED
+	_motion.reverse_accel = REVERSE_ACCEL
 	_motion.accel_lambda = ACCEL_LAMBDA
 	_motion.coast_lambda = COAST_LAMBDA
 	_motion.off_lambda = OVER_LAMBDA

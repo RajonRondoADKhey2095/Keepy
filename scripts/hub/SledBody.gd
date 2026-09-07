@@ -64,6 +64,14 @@ const SLOPE_GAIN: float = 2.6
 ## Today the wall means this is never reached.
 const OFF_SPEED: float = 3.4
 const REVERSE_SPEED: float = 2.2
+## CH42 -- the reverse gear's ramp, u/s^2, and THE ONE OF THE FOUR THAT IS
+## NOT A FEEL NUMBER: see reverse_authority() below. A sled asked to back
+## UP a flank is fighting the same gravity the motor fights going forward,
+## and a ramp under that force does not reverse slowly -- it does not
+## reverse at all, and the vehicle sits on the hillside with no steering,
+## which is the lock-up ACCEL_LAMBDA's docblock describes from the other
+## side.
+const REVERSE_ACCEL: float = 13.0
 ## Thumb up the screen (the kart's boost gesture) buys 15 %.
 const BOOST_RATIO: float = 1.15
 
@@ -106,6 +114,17 @@ const BRAKE_DECEL: float = 12.0
 ## a hill the sled can be trapped on.
 static func climb_authority() -> float:
 	return MAX_SPEED_FLAT * ACCEL_LAMBDA
+
+## CH42 -- the SAME relation, for the gear that goes the other way.
+##
+## Reversing with the nose pointing DOWNHILL is climbing backwards, and
+## the reverse branch answers the slope with a plain u/s^2 ramp rather
+## than with an exponential approach: the pull it can offer IS
+## REVERSE_ACCEL, flat, at any speed. So the inequality is even simpler
+## than climb_authority()'s -- if the slope pushes harder than this, the
+## gear cannot back the sled up its own hill and SledProbe says so.
+static func reverse_authority() -> float:
+	return REVERSE_ACCEL
 
 ## The slope force, in u/s^2, on ground tilted by `gradient` (dh/dx, dh/dz).
 ## Reads SurfaceDrive rather than restating its formula: one publisher.
@@ -216,6 +235,7 @@ func _ready() -> void:
 	m.max_speed = MAX_SPEED_FLAT
 	m.max_speed_off = OFF_SPEED
 	m.reverse_speed = REVERSE_SPEED
+	m.reverse_accel = REVERSE_ACCEL
 	m.boost_speed_ratio = BOOST_RATIO
 	m.accel_lambda = ACCEL_LAMBDA
 	m.coast_lambda = COAST_LAMBDA
