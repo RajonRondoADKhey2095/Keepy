@@ -11,7 +11,11 @@ class_name KartTouchInput
 ##     it left / right of the anchor steers, proportionally, over a span
 ##     set by the active KartTuning preset, with a dead zone; lifting it
 ##     straightens the wheels;
-##   * a SECOND finger, anywhere, is the BRAKE (reverse once stopped);
+##   * a SECOND finger, anywhere, is the REVERSE GEAR: it stops the
+##     vehicle if it is rolling, then backs it out. CH42 gave that finger
+##     its own field (KartInput.reverse) instead of the AI's `brake`, so
+##     the two intents stopped sharing one bool -- the gesture and the
+##     deceleration a player feels are unchanged, see KartInput.reverse;
 ##   * the keyboard (arrows / A-D, down / S) does the same off-web, so a
 ##     probe or the editor can drive without a touchscreen.
 ##
@@ -117,7 +121,7 @@ var _hold_s: float = 0.0
 ## >0 while a lifted push is bleeding away.
 var _boost_decay: float = 0.0
 var _steer_index: int = -1
-var _brake_index: int = -1
+var _reverse_index: int = -1
 var _mouse_down: bool = false
 
 func hold_throttle(seconds: float) -> void:
@@ -136,7 +140,7 @@ func _clear() -> void:
 	_hold_s = 0.0
 	_boost_decay = 0.0
 	_steer_index = -1
-	_brake_index = -1
+	_reverse_index = -1
 	_mouse_down = false
 	steering_active = false
 	input.reset()
@@ -156,18 +160,18 @@ func _unhandled_input(event: InputEvent) -> void:
 				steering_active = true
 				input.steer = 0.0
 				input.boost = 0.0
-			elif _brake_index < 0 and touch.index != _steer_index:
-				_brake_index = touch.index
-				input.brake = true
+			elif _reverse_index < 0 and touch.index != _steer_index:
+				_reverse_index = touch.index
+				input.reverse = 1.0
 		else:
 			if touch.index == _steer_index:
 				_steer_index = -1
 				steering_active = false
 				input.steer = 0.0
 				_release_boost()
-			elif touch.index == _brake_index:
-				_brake_index = -1
-				input.brake = false
+			elif touch.index == _reverse_index:
+				_reverse_index = -1
+				input.reverse = 0.0
 		get_viewport().set_input_as_handled()
 		return
 	var drag := event as InputEventScreenDrag
@@ -179,7 +183,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	# Mouse (desktop only -- emulated ones were dropped above): the left
-	# button is the finger, the right button is the brake.
+	# button is the finger, the right button is the reverse gear.
 	var click := event as InputEventMouseButton
 	if click:
 		if click.button_index == MOUSE_BUTTON_LEFT:
@@ -197,7 +201,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_release_boost()
 			get_viewport().set_input_as_handled()
 		elif click.button_index == MOUSE_BUTTON_RIGHT:
-			input.brake = click.pressed
+			input.reverse = 1.0 if click.pressed else 0.0
 			get_viewport().set_input_as_handled()
 		return
 	var motion := event as InputEventMouseMotion
@@ -247,5 +251,6 @@ func _physics_process(delta: float) -> void:
 		axis += 1.0
 	input.steer = axis
 	input.boost = 1.0 if (Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W)) else 0.0
-	if _brake_index < 0:
-		input.brake = Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_SPACE)
+	if _reverse_index < 0:
+		input.reverse = 1.0 if (Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S)
+			or Input.is_key_pressed(KEY_SPACE)) else 0.0

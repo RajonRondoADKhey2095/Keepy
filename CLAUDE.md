@@ -1067,6 +1067,54 @@ qu'il prétendait défendre :
 MÉTRIQUE avant de re-régler la valeur** — et produire des **rendus offscreen
 comparatifs**, la méthode qui a fermé les deux cas.
 
+### ⚠️ UN BRAQUAGE TENU DESSINE UN CERCLE, ET UN CERCLE FINIT OÙ IL COMMENCE
+
+Écrit au CH42, et c'est une mesure de « est-il bloqué ? » qui a fabriqué
+**quatre fausses épingles** avant d'être vue. La sonde notait « bloqué » par
+la **distance au point de départ après 600 frames**. Tracé : l'échantillon
+qui « a parcouru 0,570 u en 10 s » passe 4,7 s sur son mur, se dégage,
+parcourt une boucle de **36,7 u à 352,7° de braquage tenu**, et **revient
+exactement d'où il part**. Un véhicule libre et un véhicule épinglé rendent
+alors le même chiffre.
+
+**Règle** : un run se note sur la **PREMIÈRE FRAME où il atteint un rayon
+d'échappement** — le plus loin qu'il soit allé et en combien de temps —
+jamais sur l'endroit où il se trouve quand le chronomètre s'arrête. La
+famille est plus large que le braquage : toute trajectoire bouclée (orbite,
+va-et-vient, pendule) a cette propriété, et une position finale ne distingue
+pas « il n'a pas bougé » de « il est revenu ».
+
+⚠️ **Et le corollaire a coûté deux versions de la même phase** : une moyenne
+qui décrit un ÉTAT (« sur le mur ») doit être prise **sur la fenêtre où cet
+état tient**, jamais sur le run entier. Moyennée sur tout le run — donc
+majoritairement sur la boucle libre à 6 u/s — la vitesse avant donnait un
+gain de braquage de **0,59 à 0,67**, un nombre qui dit que le véhicule braque
+parfaitement bien, pris sur les secondes où il n'est pas bloqué. **Une cause
+mesurée sur des frames qui ne sont pas une instance de l'effet n'est pas une
+cause.**
+
+### ⚠️ LE GAIN DE BRAQUAGE EST PROPORTIONNEL À `v_fwd`, DONC UN MUR SUPPRIME LA DIRECTION
+
+`VehicleDrive` fait tourner le cap à `|v_fwd| / steer_full_speed` de la
+vitesse de lacet pleine — **`v_fwd`, la composante AVANT, pas la vitesse**.
+Contre un mur, la composante avant est exactement ce que le mur mange : le
+véhicule peut glisser le long du bord à 1 u/s en n'ayant que 0,08 u/s
+d'avant, et **braque alors à 2,8 % du braquage à fond**. Mesuré au CH42 sur
+la crête ouest : 600 frames de braquage à fond, excursion maximale **1,04 u**,
+contre **59 frames** pour parcourir 4 u en terrain libre.
+
+Ce n'est **pas** un défaut de mur — le prédicat de bornage a été vérifié
+correct sur 28/28 points intérieurs et 28/28 points extérieurs — et ce n'est
+pas non plus un coin étroit : le coin est inéchappable **parce que le lacet
+y est nul**. Rien ne le signale : ni erreur, ni sonde rouge.
+
+**Conséquence permanente** : tout véhicule de ce dépôt a besoin d'un input
+qui produise une vitesse **NÉGATIVE** — c'est la seule commande qui rende de
+l'autorité de braquage contre un mur. C'est la troisième fois que ce dépôt
+paie la même arithmétique (`SandYacht._wall` étape 3, l'ordre force/`step()`
+du CH41, et ceci) ; les deux premières fois elle a été traitée comme un
+accident local.
+
 ### ⚠️ NE JAMAIS FAIRE TAIRE UNE ASSERTION QUI ÉCHOUE SUR DU CODE « CORRECT »
 
 `CabinProbe` PHASE T avait **trouvé** l'entonnoir du clamp, et le raisonnement

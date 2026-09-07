@@ -88,6 +88,11 @@ class_name KartBody
 const MAX_SPEED: float = 15.0
 const MAX_SPEED_OFF_TRACK: float = 5.5
 const REVERSE_SPEED: float = 3.5
+## CH42 -- how briskly the reverse gear builds that speed, u/s^2. 6.0 is
+## BRAKE_DECEL * 0.4 to the digit, which is the rate the brake branch has
+## always reversed this kart at: the player's second finger therefore
+## backs the kart out exactly as it did before the gear was separated.
+const REVERSE_ACCEL: float = 6.0
 ## Top speed at full boost (input.boost == 1.0); a ~27 % push over cruise,
 ## on and off track alike (BOOST_SPEED_RATIO scales whichever cap applies).
 ## CH31: 16.5 -> 19.05, which is the SAME 1.27 ratio over the new cruise.
@@ -156,6 +161,7 @@ static func _make_motion() -> VehicleDrive:
 	m.max_speed = MAX_SPEED
 	m.max_speed_off = MAX_SPEED_OFF_TRACK
 	m.reverse_speed = REVERSE_SPEED
+	m.reverse_accel = REVERSE_ACCEL
 	m.boost_speed_ratio = BOOST_SPEED_RATIO
 	m.accel_lambda = ACCEL_LAMBDA
 	m.coast_lambda = COAST_LAMBDA

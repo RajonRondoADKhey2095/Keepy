@@ -2068,3 +2068,65 @@ de chaque jambe.
 
 `SledProbe` : 11 phases, **ALL GREEN 0 red**, **six neutralisations** (huit runs) rouge-avant-vert,
 restaurées **byte-identiques**.
+
+## CH42 — LE BLOCAGE FALAISE, ET LA MARCHE ARRIÈRE DES QUATRE VÉHICULES (7 sept 2026)
+
+Deux sujets, dans l'ordre que le brief imposait : **diagnostic d'abord**.
+
+**Les quatre hypothèses, mesurées.** Le mur : **écarté** — 28/28 points
+intérieurs `drivable`, 28/28 points à 1 u au-delà refusés, sur les trois
+vrais murs de la crête. La pente : **écartée** — un bord de crête est **plat
+par contrat**, `HubSurface` refusant un domaine dont le périmètre n'est pas
+à 0 ; pire échantillon 0,0865, soit **2,19 u/s² contre 13,60** d'autorité de
+montée. Le coin mort : **confirmé, pour les coins seulement** — 4 runs sur 56
+ne s'éloignent **jamais** de 4 u en 10 s.
+
+**Et la cause n'était dans aucune des quatre.** `VehicleDrive` fait tourner
+le cap à `|v_fwd| / steer_full_speed`, et **`v_fwd` est exactement ce qu'un
+mur mange**. Pire épingle **(−62 ; 17,7)** : 600 frames de braquage à fond,
+vitesse avant moyenne **0,0851 u/s**, gain **0,0284 — 2,8 %**, excursion
+maximale **1,04 u**. Le même braquage en terrain libre : **59 frames** pour
+4 u. Le coin est inéchappable **parce que le lacet y est nul**, pas parce
+qu'il est étroit. **Aucun correctif de mur n'est donc nécessaire** —
+`HubRegion.gd`, `HubSurface.gd` et `SandYacht._wall` ne sont pas touchés.
+
+⚠️ **Quinzième faux-signal du dépôt, et c'était la MÉTRIQUE.** « Bloqué »
+mesuré par la distance au départ après 600 frames a rendu **quatre fausses
+épingles** : un braquage tenu dessine un **cercle de 36,7 u à 352,7°** qui
+revient d'où il part. La même erreur moyennait la cause sur tout le run —
+donc majoritairement sur la boucle libre à 6 u/s — et publiait un gain de
+braquage de **0,59 à 0,67**, deux versions durant. Fermé en notant chaque run
+sur la **première frame** où il atteint un rayon d'échappement, et en
+moyennant un état **sur la fenêtre où l'état tient**.
+
+**La marche arrière.** `KartInput.reverse`, float tenu, **à côté** de
+`throttle` et non dessus. `VehicleDrive.gd` : **une branche `elif`**, et le
+fichier est une **addition pure — 40 lignes, zéro retirée**. Sa moitié
+« encore lancé vers l'avant » est l'arithmétique du frein **énoncé pour
+énoncé**, donc le freinage reste le même float ; le braquage n'est pas touché
+parce que la ligne `v_fwd < -0.05` lisait déjà la **vélocité** et non l'input.
+`REVERSE_ACCEL` par véhicule : kart **6,00** (= `BRAKE_DECEL × 0,4` : il
+recule exactement comme avant), char **6,00**, voilier **4,00**, luge
+**13,00** — et pour la luge ce n'est pas un nombre de feeling, reculer nez à
+l'aval **c'est monter** : `reverse_authority()` est gaté contre `slope_force`,
+**10,5312 contre 13,0000, 81 % utilisés**.
+
+**Ce que ça achète**, sur 112 épingles : temps moyen pour s'éloigner de 4 u
+**439,1 → 119,7 frames**, pire cas **jamais → 143 frames**, et le coin mort
+**1,04 u en 10 s → 4 u en 118 frames**.
+
+**Byte-identité, sur deux arbres.** `KartTraceProbe` : 186 lignes identiques,
+trois tours. Trace de mouvement char/voilier/luge sur 900 frames avec gaz,
+boost, balayage de braquage et deux appuis frein : **identique** — et le
+blind check le prouve capable de voir (`BRAKE_DECEL` +0,001 fait bouger
+**36 lignes**). `YachtTraceProbe` diffère sur **2 lignes sur 54** : la colonne
+`brake` au frame 240, c'est-à-dire exactement la séparation d'input que le
+lot opère. `SledProbe` ALL GREEN 0 red sous xvfb+opengl3, `SailBoatProbe`
+42/0, `KartProbe` 150/0.
+
+`ReverseProbe` : 7 phases, **ALL GREEN**, passe rouge **19 rouges attendus,
+19 obtenus, aucun autre**, fichier restauré byte-identique.
+
+⚠️ **Dette explicite** : le second doigt écrit désormais `reverse`, et **rien
+ne l'annonce** — ni HUD, ni jauge, ni ligne d'aide. C'est le défaut CH31 de
+l'accélérateur qui se rejoue, et il est hors brief ici.
