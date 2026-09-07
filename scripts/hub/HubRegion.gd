@@ -308,6 +308,41 @@ const SHORE_PAD_RADIUS: float = 20.0
 ## worst pair on the real hopper and checks the diagonal is still it.
 const NORTH_LOBE_RADIUS: float = 12.0
 
+## CH38: THE WEST RIDGE -- a rectangle unioned onto the plateau's west
+## edge, and the first walkable ground in this file that is not flat.
+##
+## It is a UNION TERM and not a zone, for the reason the north lobe was
+## one: it shares an EDGE with the square (its x = -35 IS the plateau's
+## west edge) and HubMountain's perimeter height is exactly 0 there, so a
+## walk crosses the seam with no step at all and `zone_of` keeps answering
+## 0. A zone number would have bought a gate, a corridor and a row in the
+## zone tree for a boundary the player cannot feel.
+##
+## THE RECTANGLE IS MEASURED, not picked -- HubMountain's header lists the
+## eight things it has to clear and by how much (the tightest is the small
+## lake's bank, 0.85 u). It is stated HERE rather than in HubMountain
+## because this file is where every other walkable AABB is stated, and a
+## second spelling of a play-area limit is exactly how two of them drift
+## apart. HubMountain READS these two constants; it never restates them.
+##
+## ⚠️ ITS WIDTH IS SET BY THE WORST CROSSING, not by the relief. The hub
+## holds itself to 22 s corner to corner (the header's sweep: half-extent
+## 40 costs 21.533 s, 41 costs 22.100 s and was refused), and the shipped
+## diagonal (-35,-35) -> (35,35) is 98.995 u for 66 hops / 18.700 s --
+## 0.18890 s/u. A rectangle bolted onto the WEST edge does lengthen the
+## worst pair, unlike a lobe centred ON an edge, so the two new corner
+## pairs were priced before the shape was drawn:
+##
+##   (35, 35)  -> (-63, -12)   108.69 u   ~20.53 s
+##   (35, -35) -> (-63,  18)   111.41 u   ~21.05 s
+##
+## x = -63 is the westernmost edge that keeps both under 22 s with room to
+## spare, and it is what caps the relief at 4.5 u: a 28 u span at 30 deg
+## admits no more (see HubMountain.BUMPS). MountainProbe PHASE CROSSING
+## WALKS that pair on the real hopper rather than trusting the ratio here.
+const MOUNTAIN_MIN: Vector2 = Vector2(-63.0, -12.0)
+const MOUNTAIN_MAX: Vector2 = Vector2(-35.0, 18.0)
+
 ## Radius of every structure lobe. ONE number for the family rather than a
 ## per-row float: the rule this table encodes is "a structure standing on
 ## an edge gets room to be walked around", and that room is a property of
@@ -606,6 +641,9 @@ static func contains(point: Vector3) -> bool:
 		return true
 	if absf(flat.x) <= PLATEAU_HALF_EXTENT and absf(flat.z) <= PLATEAU_HALF_EXTENT:
 		return true
+	# CH38: the west ridge, one more rectangle and no new kind of case.
+	if _in_rect(flat, MOUNTAIN_MIN, MOUNTAIN_MAX):
+		return true
 	if flat.distance_to(_north_lobe) <= NORTH_LOBE_RADIUS:
 		return true
 	# One more disc per structure lobe, and no new KIND of case -- the same
@@ -668,6 +706,7 @@ static func clamp_to(point: Vector3) -> Vector3:
 	candidates.append(_clamp_rect(flat, CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX))
 	candidates.append(_clamp_rect(flat, COVE_MIN, COVE_MAX))
 	candidates.append(_clamp_rect(flat, COVE_CORRIDOR_MIN, COVE_CORRIDOR_MAX))
+	candidates.append(_clamp_rect(flat, MOUNTAIN_MIN, MOUNTAIN_MAX))
 	for hole in _holes:
 		var hc: Vector3 = hole["centre"]
 		var away := flat - hc
