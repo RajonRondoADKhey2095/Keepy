@@ -141,6 +141,29 @@ const SAILBOAT_FOOTPRINT: float = 2.0
 const SAILBOAT_WIND_MIN: float = 0.85
 const SAILBOAT_WIND_MAX: float = 1.25
 
+## CH41 -- FAMILY B, FOURTH VEHICLE: the electric sled, and the first one
+## on this map that drives on a SURFACE. Same door as the other three (tap
+## it, walk, climb on), same coordinator shape (this file mounts/exits/
+## drives it; SledBody.gd owns its numbers, its body and its wall), same
+## touch writer, same chase camera, same HUD. What is new is entirely
+## inside SledBody: SurfaceDrive rebases it onto HubSurface and pushes it
+## down a slope.
+##
+## NO PERSISTENCE (brief CH41, explicit, like the sailboat): no WorldSave
+## field, no schema bump. It is found at SLED_PARK at every start, however
+## it was left.
+const VEHICLE_SLED: int = 3
+## THE SUMMIT of the west ridge, and it is the summit BY CONSTRUCTION:
+## HubMountain.BUMPS[0] is a raised cosine centred here, so its peak is
+## this point and no second measurement is needed. Its y is deliberately
+## 0 -- SledBody.place() reads the height off HubSurface, and a y typed
+## here would be a second spelling of a fact the grid already owns.
+const SLED_PARK: Vector3 = Vector3(-49.0, 0.0, 3.0)
+## Deck top: authored ONCE in SledBody, republished here for the readers
+## that ask this file rather than the vehicle.
+const SLED_SEAT_Y: float = SledBody.SEAT_Y
+const SLED_TAP_RADIUS: float = 1.8
+
 const DECK_TOP: float = 0.16
 ## Ground radius the scatter keeps clear around a dock (deck 1.9 + step
 ## 0.38 + a margin to walk round it).
@@ -177,6 +200,7 @@ var _lines: Array[Dictionary] = []
 var _ball: Node3D = null
 var _yacht: SandYacht = null
 var _sailboat: SailBoat = null
+var _sled: SledBody = null
 var _keepy: Node3D = null
 var _camera: Camera3D = null
 var _weather: Node = null
@@ -198,9 +222,11 @@ var touch: KartTouchInput = null
 var _hud: KartHud = null
 var _driving: bool = false
 var _driving_sailboat: bool = false
+var _driving_sled: bool = false
 
 signal yacht_driving_changed(driving: bool)
 signal sailboat_driving_changed(driving: bool)
+signal sled_driving_changed(driving: bool)
 
 func _ready() -> void:
 	for i in LINES.size():
@@ -208,6 +234,7 @@ func _ready() -> void:
 	_build_ball()
 	_build_yacht()
 	_build_sailboat()
+	_build_sled()
 	touch = KartTouchInput.new()
 	touch.name = "YachtTouch"
 	add_child(touch)
@@ -226,6 +253,7 @@ func setup(keepy: Node3D, camera: Camera3D, weather: Node, hud: KartHud = null, 
 	if _hud != null:
 		_hud.exit_pressed.connect(exit_yacht)
 		_hud.exit_pressed.connect(exit_sailboat)
+		_hud.exit_pressed.connect(exit_sled)
 	if _keepy.has_signal("vehicle_dismounted"):
 		_keepy.connect("vehicle_dismounted", _on_vehicle_dismounted)
 	if _keepy.has_signal("vehicle_mounted"):
@@ -325,6 +353,18 @@ func _build_sailboat() -> void:
 		CozyPalette.glb_mesh(CozyPalette.decor_path("yacht_sail_0")), CozyPalette.decor_material_wind(0.10, 2.6))
 	_sailboat.place(SAILBOAT_MOORING, PI / 2.0)
 
+## CH41: a SledBody node -- a PROCEDURAL mesh (the brief forbids
+## generating an asset, and the decor inventory holds nothing sled-shaped)
+## under a chassis that tilts onto the ground. Parked at the summit with
+## its nose pointing down the long east flank, which is the way a player
+## coming up from the plateau meets it.
+func _build_sled() -> void:
+	_sled = SledBody.new()
+	_sled.name = "Sled"
+	add_child(_sled)
+	_sled.build()
+	_sled.place(SLED_PARK, PI / 2.0)
+
 ## ---- what the scatter and the tap need -----------------------------
 
 ## Ground discs nothing should be sown in: every dock and the ball's park.
@@ -422,6 +462,8 @@ func vehicle_at(point: Vector3) -> int:
 		return VEHICLE_YACHT
 	if _sailboat != null and not _driving_sailboat and flat.distance_to(sailboat_position()) <= SAILBOAT_TAP_RADIUS:
 		return VEHICLE_SAILBOAT
+	if _sled != null and not _driving_sled and flat.distance_to(sled_position()) <= SLED_TAP_RADIUS:
+		return VEHICLE_SLED
 	return -1
 
 func yacht_node() -> Node3D:
@@ -448,11 +490,25 @@ func sailboat_position() -> Vector3:
 func is_driving_sailboat() -> bool:
 	return _driving_sailboat
 
+func sled_node() -> Node3D:
+	return _sled
+
+func sled() -> SledBody:
+	return _sled
+
+func sled_position() -> Vector3:
+	return _sled.flat_position()
+
+func is_driving_sled() -> bool:
+	return _driving_sled
+
 func vehicle_position(kind: int) -> Vector3:
 	if kind == VEHICLE_YACHT:
 		return yacht_position()
 	if kind == VEHICLE_SAILBOAT:
 		return sailboat_position()
+	if kind == VEHICLE_SLED:
+		return sled_position()
 	return ball_position()
 
 func vehicle_tap_radius(kind: int) -> float:
@@ -460,6 +516,8 @@ func vehicle_tap_radius(kind: int) -> float:
 		return YACHT_TAP_RADIUS
 	if kind == VEHICLE_SAILBOAT:
 		return SAILBOAT_TAP_RADIUS
+	if kind == VEHICLE_SLED:
+		return SLED_TAP_RADIUS
 	return BALL_TAP_RADIUS
 
 ## The wind's multiplier on the yacht's pace: 0.85 in snow, 1.0 in the
@@ -588,6 +646,63 @@ func exit_sailboat() -> void:
 		landing = _step_off(at - _sailboat.right() * EXIT_SIDE, at)
 	_keepy.call("leave_carrier", landing)
 	sailboat_driving_changed.emit(false)
+
+## CH41: climbs aboard the sled. mount_yacht()'s shape exactly, including
+## its drivable-ground refusal (a sled is a LAND vehicle, so a sled that
+## somehow sat where it may not drive could not be driven off it), and
+## minus any WorldSave write (brief: no persistence).
+##
+## Mutual exclusion with the other three is the yacht's own: the guard
+## refuses while any drive flag is up, and _try_mount_ball drops a held
+## vehicle before it gets here.
+func mount_sled() -> bool:
+	if _driving or _driving_sailboat or _driving_sled or _keepy == null or _sled == null:
+		return false
+	if not SledBody.drivable(sled_position()):
+		_sled.place(SLED_PARK, PI / 2.0)
+		return false
+	if not _keepy.call("mount_carrier", _sled.deck(), SledBody.SEAT):
+		return false
+	_driving_sled = true
+	_sled.velocity = Vector3.ZERO
+	touch.enabled = true
+	touch.hold_throttle(MOUNT_HOLD_S)
+	_keepy.call("follow_carrier")
+	if _camera != null and _camera.has_method("enter_drive"):
+		_camera.call("enter_drive", _sled)
+	if _hud != null:
+		_hud.set_vehicle_mode(true)
+		_hud.visible = true
+	sled_driving_changed.emit(true)
+	return true
+
+## The HUD button, for the sled. exit_yacht()'s shape, minus the WorldSave
+## write. The landing is taken BESIDE it and clamped to ground it could
+## itself have driven on -- and the step-off arc reads its own ground
+## height, so stepping off on a hillside lands on the hillside
+## (KeepyHopper.leave_carrier takes _hop_to_y off HubSurface).
+func exit_sled() -> void:
+	if not _driving_sled:
+		return
+	touch.enabled = false
+	touch.input.reset()
+	_sled.velocity = Vector3.ZERO
+	_driving_sled = false
+	if _camera != null and _camera.has_method("exit_drive"):
+		_camera.call("exit_drive")
+	if _hud != null:
+		_hud.visible = false
+		_hud.set_ghost(Vector2.ZERO, Vector2.ZERO, false)
+		_hud.set_vehicle_mode(false)
+	var at: Vector3 = sled_position()
+	var landing: Vector3 = _step_off(at + _sled.right() * EXIT_SIDE, at)
+	if landing.distance_to(at) < 0.8:
+		landing = _step_off(at - _sled.right() * EXIT_SIDE, at)
+	# The flat landing, exactly as the yacht hands it over: leave_carrier
+	# reads the height off HubSurface itself, so a y written here would be
+	# a second spelling of it.
+	_keepy.call("leave_carrier", landing)
+	sled_driving_changed.emit(false)
 
 ## A landing point for the step-off: the region's own clamp, refused back
 ## to `fallback` (the vehicle's own position) if it lands where the
@@ -720,6 +835,13 @@ func _physics_process(delta: float) -> void:
 	elif _driving_sailboat and _sailboat != null:
 		var on_sea: bool = _water != null and _water.body_at(_sailboat.flat_position()) == &"sea"
 		_sailboat.drive(delta, touch.input, sailboat_speed_factor(), on_sea)
+		_keepy.call("follow_carrier")
+		if _hud != null:
+			_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
+	elif _driving_sled and _sled != null:
+		# CH41: no wind and no wet test -- the ground under it is the only
+		# thing this vehicle answers to, and SledBody reads that itself.
+		_sled.drive(delta, touch.input)
 		_keepy.call("follow_carrier")
 		if _hud != null:
 			_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)

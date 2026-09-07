@@ -3775,6 +3775,8 @@ func _setup_transport() -> void:
 	# The world HUD steps aside for a driven yacht exactly as it does for
 	# a driven kart -- one line each, and neither knows about the other.
 	_transport.yacht_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
+	# CH41: and for the sled, on the same terms.
+	_transport.sled_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
 	# CH33: same rule, for the sailboat.
 	_transport.sailboat_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
 
@@ -3904,6 +3906,8 @@ func _try_mount_ball(position: Vector3) -> bool:
 		return _transport.mount_yacht()
 	if _mount_kind == HubTransport.VEHICLE_SAILBOAT:
 		return _transport.mount_sailboat()
+	if _mount_kind == HubTransport.VEHICLE_SLED:
+		return _transport.mount_sled()
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
 
 ## ---- CH29: the cove -- sandcastle spots -----------------------------------

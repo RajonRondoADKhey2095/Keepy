@@ -63,9 +63,32 @@ class_name HubSurface
 ##     it, and a bicolour slope reads as two terraces. The band constants
 ##     are READ from CozyPalette here, never retyped.
 ##
-## normal_at is deliberately absent: the hop is an arc drawn on a base
-## LINE (KeepyHopper._apply_hop), so nothing in the hub needs a surface
-## normal yet. It arrives with the lot that tilts a body, or not at all.
+## =====================================================================
+## THE SLOPE, AND WHY IT IS PUBLISHED HERE AND NOWHERE ELSE
+##
+## CH37 wrote, above this line, that `normal_at` was "deliberately absent
+## -- it arrives with the lot that tilts a body, or not at all". CH41 is
+## that lot: the sled tilts on the ground and is pushed down it, and both
+## questions are the SAME derivative of the SAME grid.
+##
+## `gradient_at` is the primitive and `normal_at` is derived from it, so
+## there is one differentiation in this repo and not two. It is the
+## ANALYTIC derivative of `_sample` -- constant inside a triangle, because
+## `_sample` is linear inside a triangle -- which makes it EXACTLY the
+## face normal of the drawn mesh rather than an approximation of it. A
+## finite difference across the pitch would have been a second opinion of
+## the surface, and this file's own docblock explains what those cost.
+##
+## ⚠️ IT IS THEREFORE FACETED, AND A CONSUMER MUST SMOOTH IT ITSELF.
+## Adjacent triangles on the west ridge differ by up to 11.168 deg of
+## tilt -- MEASURED off this grid by SledProbe's own sweep, which is twice
+## what the raised cosine predicts on paper (A = 4.5, R = 14, pitch 1.0):
+## the diagonal split makes the worst pair of neighbours a diagonal one.
+## A chassis written straight from this would SNAP once per metre. SurfaceDrive
+## smooths the CHASSIS with a lambda and leaves the geometry exact -- the
+## same split SandYacht uses for its heel. Do not smooth it here: a
+## smoothed normal would no longer be the drawn triangle's, and "the feet
+## land on the triangle the player sees" is this file's whole contract.
 
 ## Half-widths, in world units, used to keep a domain clear of a palette
 ## band. Read off CozyPalette rather than retyped -- the shader wobbles
@@ -111,6 +134,24 @@ static func domain_at(flat: Vector3) -> int:
 ## THE GROUND POINT. The single spelling every writer of a ground y uses.
 static func ground(flat: Vector3) -> Vector3:
 	return Vector3(flat.x, height_at(flat), flat.z)
+
+## The surface's slope at (x, z) as (dh/dx, dh/dz) -- EXACTLY ZERO outside
+## every domain, on height_at's own contract, so a flat hub answers a flat
+## slope and nothing that reads this changes behaviour there.
+static func gradient_at(flat: Vector3) -> Vector2:
+	if _domains.is_empty():
+		return Vector2.ZERO
+	var i: int = domain_at(flat)
+	if i < 0:
+		return Vector2.ZERO
+	return _slope(_domains[i], flat.x, flat.z)
+
+## The unit normal of the drawn surface at (x, z). EXACTLY Vector3.UP
+## outside every domain. Derived from gradient_at rather than sampled a
+## second time: one differentiation, one surface.
+static func normal_at(flat: Vector3) -> Vector3:
+	var g: Vector2 = gradient_at(flat)
+	return Vector3(-g.x, 1.0, -g.y).normalized()
 
 ## Where a ray meets the ground, or null when it never does.
 ##
@@ -217,6 +258,38 @@ static func clear_domains() -> void:
 
 static func _height_xz(x: float, z: float) -> float:
 	return height_at(Vector3(x, 0.0, z))
+
+## The gradient of `_sample` -- the SAME cell, the SAME diagonal, and the
+## derivative taken by hand rather than by finite difference so it is the
+## drawn triangle's own plane and not a chord across two of them.
+##
+##   lower triangle (u + v <= 1): h = ha + u(hb - ha) + v(hc - ha)
+##       dh/dx = (hb - ha) / pitch      dh/dz = (hc - ha) / pitch
+##   upper triangle:              h = hd + (1 - u)(hc - hd) + (1 - v)(hb - hd)
+##       dh/dx = (hd - hc) / pitch      dh/dz = (hd - hb) / pitch
+##
+## The cell and the clamps are `_sample`'s, line for line: a point on the
+## edge of a domain reads the edge cell's plane, exactly as its height
+## reads that cell's height.
+static func _slope(d: Dictionary, x: float, z: float) -> Vector2:
+	var pitch: float = d["pitch"]
+	var origin: Vector2 = d["origin"]
+	var cols: int = d["cols"]
+	var rows: int = d["rows"]
+	var grid: PackedFloat32Array = d["grid"]
+	var fx: float = (x - origin.x) / pitch
+	var fz: float = (z - origin.y) / pitch
+	var c: int = clampi(int(floorf(fx)), 0, cols - 2)
+	var r: int = clampi(int(floorf(fz)), 0, rows - 2)
+	var u: float = clampf(fx - float(c), 0.0, 1.0)
+	var v: float = clampf(fz - float(r), 0.0, 1.0)
+	var ha: float = grid[r * cols + c]
+	var hb: float = grid[r * cols + c + 1]
+	var hc: float = grid[(r + 1) * cols + c]
+	var hd: float = grid[(r + 1) * cols + c + 1]
+	if u + v <= 1.0:
+		return Vector2((hb - ha) / pitch, (hc - ha) / pitch)
+	return Vector2((hd - hc) / pitch, (hd - hb) / pitch)
 
 ## Barycentric on the FIXED triangulation: cell corners a(0,0) b(1,0)
 ## c(0,1) d(1,1), split on the b-c diagonal into (a, b, c) and (b, d, c).
