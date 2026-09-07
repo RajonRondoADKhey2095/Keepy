@@ -133,6 +133,7 @@ func _run() -> void:
 	await _phase_c()
 	await _phase_d()
 	await _phase_tap()
+	await _phase_e()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -350,7 +351,23 @@ func _phase_c() -> void:
 	_check(absf(mid_y - want) < 1.0e-4,
 		"mid-hop y = %.4f = lerp(%.4f, %.4f) + arc %.4f = %.4f"
 			% [mid_y, from_y, to_y, peak, want])
+	_settle(keepy)
 	HubSurface.clear_domains()
+
+## Puts the body back in a known resting state between phases.
+##
+## ⚠️ NOT COSMETIC. Phase C3 kills the hop tween by hand to read the arc
+## at t = 0.5, which leaves the state HOPPING and a destination still
+## armed. Phase E then asked him to mount a vehicle and was refused by
+## the "is anything else writing the body" guard, and phase D found him
+## walking away mid-measurement -- five reds, none of them about the
+## surface. A fixture left dirty between phases is a probe measuring its
+## own leftovers.
+func _settle(keepy: KeepyHopper) -> void:
+	if keepy._hop_tween and keepy._hop_tween.is_valid():
+		keepy._hop_tween.kill()
+	keepy._has_target = false
+	keepy._state = KeepyHopper.State.IDLE
 
 func _on_land(pos: Vector3) -> void:
 	_land_count += 1
@@ -366,8 +383,9 @@ func _phase_d() -> void:
 	if idx < 0:
 		_check(false, "phase D could not register its domain")
 		return
-	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as Node3D
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as KeepyHopper
 	var cam := _hub.get_node("WorldViewport/SubViewport/World/Camera3D") as HubCamera
+	_settle(keepy)
 	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
 	var h: float = _blind(summit, "camera target")
 	keepy.global_position = HubSurface.ground(summit)
@@ -420,8 +438,9 @@ func _phase_tap() -> void:
 		_check(false, "phase TAP could not register its domain")
 		return
 	var tap := _hub.get_node("TapInput")
-	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as Node3D
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as KeepyHopper
 	var cam := _hub.get_node("WorldViewport/SubViewport/World/Camera3D") as HubCamera
+	_settle(keepy)
 	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
 	_blind(summit, "tap station")
 	keepy.global_position = HubSurface.ground(summit)
@@ -470,3 +489,58 @@ func _phase_tap() -> void:
 func _on_tap(point: Vector3) -> void:
 	_tapped = point
 	_tap_seen += 1
+
+
+## PHASE E (wave 4) -- the returns to the ground that are NOT part of a
+## hop chain, and the grep-gate CH35-C names as this wave's proof.
+func _phase_e() -> void:
+	print("-- PHASE E: returns to the ground, and the grep-gate --")
+	# The gate first: it is a statement about the whole file, and it is
+	# what stops a later lot quietly re-introducing a flat ground write.
+	var src: String = FileAccess.get_file_as_string("res://scripts/hub/KeepyHopper.gd")
+	var lines: PackedStringArray = src.split("\n")
+	var flats: Array[String] = []
+	var writes: Array[String] = []
+	for i in lines.size():
+		var line: String = lines[i]
+		if not line.contains("Vector3(global_position.x, 0.0, global_position.z)"):
+			continue
+		flats.append("%d" % (i + 1))
+		var body: String = line.strip_edges()
+		# A READ declares a local (the delta's own xz origin, or the flat
+		# end of an arc whose height rides in _hop_from_y). A WRITE assigns
+		# global_position, and none may survive.
+		if not (body.begins_with("var here :=") or body.begins_with("_hop_from =")):
+			writes.append("%d: %s" % [i + 1, body])
+	_check(writes.is_empty(),
+		"no flat ground WRITE survives in KeepyHopper (%d offenders: %s)"
+			% [writes.size(), ", ".join(writes)])
+	_check(flats.size() == 9,
+		"the %d remaining flat spellings are all delta reads, at lines %s"
+			% [flats.size(), ", ".join(flats)])
+
+	# And the behaviour, on the two sites a probe can actually drive.
+	HubSurface.clear_domains()
+	var idx: int = HubSurface.register_domain(_spec(&"probe_bump", DOMAIN_CENTRE, 0.0))
+	if idx < 0:
+		_check(false, "phase E could not register its domain")
+		return
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as KeepyHopper
+	_settle(keepy)
+	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
+	var h: float = _blind(summit, "mount station")
+	keepy.global_position = HubSurface.ground(summit)
+	var ball := Node3D.new()
+	_hub.add_child(ball)
+	var lift: float = 0.35
+	_check(keepy.mount_vehicle(ball, lift), "he mounts the test vehicle")
+	_check(absf(keepy.global_position.y - (h + lift)) < 1.0e-4,
+		"mounted, he stands at h + lift = %.4f + %.4f = %.4f (read %.4f)"
+			% [h, lift, h + lift, keepy.global_position.y])
+	_check(absf(ball.global_position.y - h) < 1.0e-4,
+		"and the vehicle sits ON the ground at %.4f (h = %.4f)" % [ball.global_position.y, h])
+	keepy.dismount_vehicle()
+	_check(absf(keepy.global_position.y - h) < 1.0e-4,
+		"dismounted, he is back on the ground at %.4f" % keepy.global_position.y)
+	ball.queue_free()
+	HubSurface.clear_domains()

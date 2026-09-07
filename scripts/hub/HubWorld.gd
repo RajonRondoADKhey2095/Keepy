@@ -762,7 +762,7 @@ func _consume_return_spawn() -> void:
 	if not HubSpawn.has_pending():
 		return
 	var where: Vector3 = HubSpawn.take()
-	_keepy.global_position = Vector3(where.x, 0.0, where.z)
+	_keepy.global_position = HubSurface.ground(where)
 	_camera.snap_to_target()
 
 ## Repaints this screen's atmosphere from the shared palette.
@@ -1530,7 +1530,7 @@ func _on_seesaw_mounted() -> void:
 	# because the failure it prevents is silent: a bear still seated would
 	# walk its approach AT seat height, through the air.
 	if _bear_pivot != null:
-		_bear.global_position = Vector3(_bear.global_position.x, 0.0, _bear.global_position.z)
+		_bear.global_position = HubSurface.ground(_bear.global_position)
 		_bear_pivot = null
 		_bear_seat = Vector3.ZERO
 	var entry: Dictionary = _seesaw_under(_keepy.global_position)
@@ -1649,7 +1649,7 @@ func _evict_bear_from_seesaw() -> void:
 		var local: Vector3 = root.to_local(_bear.global_position)
 		var near_z: float = 1.0 if local.z >= 0.0 else -1.0
 		ground = root.to_global(Vector3(_bear_seat.x, 0.0, near_z * BEAR_APPROACH_Z))
-	_bear.global_position = Vector3(ground.x, 0.0, ground.z)
+	_bear.global_position = HubSurface.ground(ground)
 	_bear_pivot = null
 	_bear_seat = Vector3.ZERO
 
@@ -2163,7 +2163,7 @@ func _badger_rest(index: int) -> Vector3:
 	var forward: Vector3 = tower["forward"]
 	var side := Vector3(forward.z, 0.0, -forward.x)
 	var foot: Vector3 = tower["stair_foot"]
-	return Vector3(foot.x, 0.0, foot.z) + side * BADGER_SIDE_OFFSET
+	return HubSurface.ground(Vector3(foot.x, 0.0, foot.z) + side * BADGER_SIDE_OFFSET)
 
 ## Which way the badger looks while waiting: at the tower it is standing
 ## beside, so it reads as somebody waiting to go up rather than as scenery

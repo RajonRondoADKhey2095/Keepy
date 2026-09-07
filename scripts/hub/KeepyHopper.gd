@@ -692,7 +692,7 @@ func follow_turnstile() -> void:
 		_turnstile = null
 		_turnstile_seat = Vector3.ZERO
 		_state = State.IDLE
-		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		global_position = HubSurface.ground(global_position)
 		return
 	global_position = _turnstile.to_global(_turnstile_seat)
 	# Facing OUTWARD: the seat offset IS the outward direction, flattened.
@@ -723,7 +723,7 @@ func leave_turnstile(landing: Vector3) -> void:
 		# Degenerate: the caller aimed at the seat. Set him down rather than
 		# tweening a zero-length arc.
 		_state = State.IDLE
-		global_position = here
+		global_position = HubSurface.ground(here)
 		turnstile_dismounted.emit()
 		became_idle.emit()
 		return
@@ -809,7 +809,7 @@ func follow_seesaw() -> void:
 		_seesaw = null
 		_seesaw_seat = Vector3.ZERO
 		_state = State.IDLE
-		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		global_position = HubSurface.ground(global_position)
 		return
 	global_position = _seesaw.to_global(_seesaw_seat)
 	# Facing along the plank, INWARD toward the fulcrum. Outward is what the
@@ -845,7 +845,7 @@ func leave_seesaw(landing: Vector3) -> void:
 		# Degenerate: the caller aimed at the seat. Set him down rather than
 		# tweening a zero-length arc.
 		_state = State.IDLE
-		global_position = here
+		global_position = HubSurface.ground(here)
 		seesaw_dismounted.emit()
 		became_idle.emit()
 		return
@@ -925,7 +925,7 @@ func follow_owl() -> void:
 		_owl = null
 		_owl_seat = Vector3.ZERO
 		_state = State.IDLE
-		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		global_position = HubSurface.ground(global_position)
 		return
 	global_position = _owl.to_global(_owl_seat)
 	# Facing where the owl faces: a passenger on a bird's back looks the
@@ -957,7 +957,7 @@ func leave_owl(landing: Vector3) -> void:
 		# Degenerate: the caller aimed at the seat. Set him down rather
 		# than tweening a zero-length arc.
 		_state = State.IDLE
-		global_position = here
+		global_position = HubSurface.ground(here)
 		owl_flight_dismounted.emit()
 		became_idle.emit()
 		return
@@ -1045,7 +1045,7 @@ func _on_zipline_board_finished() -> void:
 		_zipline = null
 		_zipline_seat = Vector3.ZERO
 		_state = State.IDLE
-		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		global_position = HubSurface.ground(global_position)
 		_body.scale = _base_scale
 		_body.rotation_degrees.x = _base_pitch
 		became_idle.emit()
@@ -1076,7 +1076,7 @@ func follow_zipline() -> void:
 		_zipline = null
 		_zipline_seat = Vector3.ZERO
 		_state = State.IDLE
-		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		global_position = HubSurface.ground(global_position)
 		_body.rotation_degrees.x = _base_pitch
 		return
 	global_position = _zipline.to_global(_zipline_seat)
@@ -1125,7 +1125,7 @@ func leave_zipline(landing: Vector3) -> void:
 		# Degenerate: the caller aimed at the handle itself. Set him down
 		# rather than tweening a zero-length arc.
 		_state = State.IDLE
-		global_position = here
+		global_position = HubSurface.ground(here)
 		zipline_dismounted.emit()
 		became_idle.emit()
 		return
@@ -1670,7 +1670,7 @@ func follow_carrier() -> void:
 	if _carrier == null or not is_instance_valid(_carrier):
 		_carrier = null
 		_state = State.IDLE
-		global_position = Vector3(global_position.x, 0.0, global_position.z)
+		global_position = HubSurface.ground(global_position)
 		return
 	global_position = _carrier.to_global(_carrier_seat)
 	_yaw.rotation_degrees.y = _carrier.global_rotation_degrees.y
@@ -1689,7 +1689,7 @@ func leave_carrier(landing: Vector3) -> void:
 	var delta := target - here
 	if delta.length() < 0.001:
 		_state = State.IDLE
-		global_position = here
+		global_position = HubSurface.ground(here)
 		carrier_dismounted.emit()
 		became_idle.emit()
 		return
@@ -1723,9 +1723,9 @@ func mount_vehicle(vehicle: Node3D, lift: float, glide_step: float = 0.0, glide_
 	_vehicle_glide_step = maxf(glide_step, 0.0) if glide_s > 0.0 else 0.0
 	_vehicle_glide_s = maxf(glide_s, 0.0)
 	_vehicle_speed = 1.0
-	var ground := Vector3(global_position.x, 0.0, global_position.z)
+	var ground := HubSurface.ground(global_position)
 	global_position = ground + Vector3(0.0, _vehicle_lift, 0.0)
-	_place_vehicle(ground, 0.0, Vector3.ONE)
+	_place_vehicle(ground, ground.y, Vector3.ONE)
 	vehicle_mounted.emit()
 	return true
 
@@ -1733,8 +1733,8 @@ func mount_vehicle(vehicle: Node3D, lift: float, glide_step: float = 0.0, glide_
 func dismount_vehicle() -> void:
 	if _vehicle == null:
 		return
-	var ground := Vector3(global_position.x, 0.0, global_position.z)
-	_place_vehicle(ground, 0.0, Vector3.ONE)
+	var ground := HubSurface.ground(global_position)
+	_place_vehicle(ground, ground.y, Vector3.ONE)
 	_vehicle = null
 	_vehicle_lift = 0.0
 	_vehicle_glide_step = 0.0
@@ -2223,6 +2223,6 @@ func _tree_lost() -> void:
 	_body.rotation_degrees.x = _base_pitch
 	_body.rotation_degrees.z = 0.0
 	_body.scale = _base_scale
-	global_position = Vector3(global_position.x, 0.0, global_position.z)
+	global_position = HubSurface.ground(global_position)
 	tree_dismounted.emit()
 	became_idle.emit()
