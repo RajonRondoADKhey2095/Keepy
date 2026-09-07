@@ -175,3 +175,70 @@ asset créé, supprimé, renommé ou dédupliqué. `ChargerAudit` et
 `AirEnemyLandingLaneAudit` non lancés. `LakeZoneProbe` /
 `V6CrittersProbe` non rouverts. Toute mesure offscreen sous
 `xvfb-run --rendering-driver opengl3`, jamais `--headless` seul.
+
+### Les gates de non-fuite — et les DEUX que le plan prescrivait qui n'en sont pas
+
+Rejoués sur deux arbres : la branche (worktree figé sur le commit final) et
+`origin/staging` importé à part. **154 `.scn` des deux côtés, comptés avant
+toute comparaison.**
+
+| gate | résultat |
+|---|---|
+| table des rides, 12 sondes | **12/12 comptes de rouges identiques** |
+| `SeesawProbe` (rouge ATTENDU) | `draw nodes 157, expected 144` — la même ligne, le même nombre, des deux côtés |
+| `WaterTintProbe` (rouge ATTENDU) | **9 rouges des deux côtés** |
+| `TurnstileProbe` / `StreamRideProbe` / `ZiplineRideProbe` | 2 / 2 / 1 rouges pré-existants, identiques des deux côtés |
+| `KartTraceProbe` | **byte-identique**, 335 lignes de trace |
+| `YachtTraceProbe` (le char) | **byte-identique** |
+| `ChaseAudit` | **verdict identique : 13 checks, 0 failures → PASS** |
+| `CozyCapture` 5 stations × SUN/RAIN | **10/10 `COZY_STATS` strictement identiques** hors champs d'acteur (voir ci-dessous) |
+| `ProbeTimeoutAudit` | 78 → **79**, PASSED |
+| export Web | 0 `SCRIPT ERROR` ; **`index.wasm` 35 376 909 o / md5 `af4a8fc2925d992348eb30deeeb54360`** et `index.js` md5 `4e08904b1b7107858246af44b602067b` — les deux valeurs d'identité publiées dans `CLAUDE.md` ; 582 `Storing File`, **0** sous `scripts/dev/`, `assets_source/`, `docs/`, `web/` |
+
+#### ⚠️ `CabinProbe` a divergé — 8 rouges contre 2 — et c'était la MACHINE
+
+Premier passage : **8 rouges sur la référence, 2 sur la branche**. Les six
+de plus étaient la séquence du baiser (`her face stays clear`, `the lean is
+undone`, `every heart frees itself (6 left)`), et les deux runs avaient
+partagé la machine avec d'autres sondes.
+
+Rejouée **SEULE sur chaque arbre**, l'une après l'autre, rien d'autre en
+cours : **2 rouges des deux côtés, littéralement les mêmes deux lignes avec
+les mêmes nombres** (`every heart frees itself (1 left)`, `one mark per
+cabin (2 marks, 1 cabins)`). La divergence était de la contention, pas du
+code — et elle n'aurait pas été tranchée en relisant le diff.
+
+#### ⚠️ LE `md5` D'UNE CAPTURE NE GATE RIEN ICI, ET LE PLAN LE PRESCRIVAIT
+
+Les 10 `md5` de `CozyCapture` divergent entre les deux arbres — **10 sur
+10**. Avant d'appeler ça une fuite, la métrique a été retournée contre
+elle-même : **deux runs du MÊME arbre, mêmes arguments**, rendent
+`7951f559…` et `9f2e076f…` — deux md5 différents, et tous deux différents
+du run précédent sur ce même arbre. **Un md5 de capture ne peut pas
+distinguer deux arbres puisqu'il ne distingue pas deux runs d'un seul.**
+Idem pour le relevé chiffré de `ChaseAudit` : **170 lignes divergent sur le
+même arbre**, contre 272 entre les deux — le même ordre de grandeur, pendant
+que le VERDICT (13/0 PASS) est stable des deux côtés.
+
+La cause est nommable, et c'est le hub lui-même : **depuis le CH25 l'ours
+MARCHE** vers le feu de camp. Sa pose dépend du nombre de frames réellement
+simulées avant la capture, donc de la charge de la machine — et sa pose
+colore `centre_pixel` et tous les compteurs de frame. Mesuré : entre deux
+runs de la même référence l'ours se déplace de **1,27 u**, contre **0,17 u**
+entre les deux arbres. **Le bruit est plus grand que le signal.**
+
+Le gate a donc été remplacé par une métrique qui, elle, décrit la SCÈNE et
+pas les pixels : le `COZY_STATS` que `CozyCapture` imprime déjà. Hors des
+champs que la mesure de bruit désigne (`bear`, `centre_pixel`, `perf.*`),
+**les 10 stations sont STRICTEMENT IDENTIQUES** — les 350 batches de
+`per_multimesh`, les 4 572 instances, les 341 029 triangles, `mesh_nodes`,
+`tris_mesh`, `tris_multimesh`, `keepy_at`, `keepy_now`, `ground_tint`,
+`ground_wet`, `overlay`, `draw_calls_est`, `viewport`. Si ce lot avait
+déplacé quoi que ce soit du décor, de la caméra ou du corps, ces 350 batches
+l'auraient dit.
+
+**Ce qui reste non prouvé, et il faut le lire comme tel** : les pixels
+eux-mêmes ne sont pas comparés (ni PIL ni numpy dans ce sandbox), et
+llvmpipe ne prouve de toute façon pas le shading WebGL2 de Safari iOS. La
+mesure device de CH35-B tâche 4 reste préalable à la montagne, comme le
+CH35-C le disait déjà.

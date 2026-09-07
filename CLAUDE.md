@@ -1201,6 +1201,38 @@ distance caméra : les deux stations mesurées sont sorties à **12,633 u et
 que de 5,19 à 6,50 — un asset texturé de ce hub ne peut donc **jamais** être
 agrandi, il est toujours minifié, et son seul risque est le scintillement.
 
+### ⚠️ UN GATE DE CAPTURE NE GATE RIEN DANS UN MONDE QUI CONTIENT UN ACTEUR EN MARCHE
+
+Mesuré au CH37, sur un gate que le plan du lot prescrivait explicitement
+(« `CozyCapture` 5 stations × SUN/RAIN : md5 identiques »). Les dix md5
+ont divergé entre les deux arbres — dix sur dix. Ce n'était pas une fuite :
+**deux runs du MÊME arbre, mêmes arguments, rendent deux md5 différents**,
+et le relevé chiffré de `ChaseAudit` fait pareil (**170 lignes divergent
+sur un seul arbre**, contre 272 entre deux, pendant que son VERDICT 13/0
+PASS ne bouge pas).
+
+La cause est le hub : **depuis le CH25 l'ours MARCHE** vers le feu. Sa pose
+dépend du nombre de frames réellement simulées avant la capture, donc de la
+CHARGE DE LA MACHINE, et sa pose colore le pixel central et tous les
+compteurs de frame. Mesuré : entre deux runs de la même référence l'ours se
+déplace de **1,27 u**, contre **0,17 u** entre les deux arbres — **le bruit
+est plus grand que le signal**.
+
+**Règle** : avant de lire une divergence de capture comme une régression,
+**retourner la métrique contre elle-même** — deux runs du même arbre, dans
+les mêmes conditions de charge. Un gate qui ne se reproduit pas sur un seul
+arbre ne peut rien dire de deux. Et le repli existe et est bon marché :
+`CozyCapture` imprime déjà `COZY_STATS`, qui décrit la SCÈNE (350 batches,
+4 572 instances, 341 029 triangles, la pose de Keepy, le teint du sol) et
+non les pixels — hors des champs pilotés par l'acteur en marche, il est
+**strictement déterministe**, et c'est lui qu'il faut comparer.
+
+⚠️ **Le même piège a fait diverger `CabinProbe` de 8 rouges à 2** au CH37,
+pour la seule raison que les deux runs avaient partagé la machine. Rejouée
+SEULE sur chaque arbre : **2 rouges des deux côtés, les mêmes lignes, les
+mêmes nombres.** Une sonde à séquence temporelle se rejoue à charge
+comparable, ou son verdict n'est pas comparable.
+
 ⚠️ **Corollaire de station** : ne jamais planter le point d'observation
 **SUR** le prop mesuré. Une passe de lisibilité a posé Keepy exactement au
 site, donc **DEBOUT DANS** le candidat du créneau central, qui a peint
