@@ -85,9 +85,11 @@ const BALL_PARK: Vector3 = Vector3(0.5, 0.0, 4.4)
 ## The yacht's own numbers -- pace, grip, heel, and the one place it may
 ## not go -- live in SandYacht.gd. This file owns the door and the mode.
 ##
-## It is NOT re-parked by the off-screen rule. Where the player leaves it
-## is where it stays, across sessions (WorldSave.cove_yacht): a vehicle
-## whose point is to cross the map must not walk home on its own.
+## It is NOT re-parked by the off-screen rule: where the player leaves it
+## is where it stays for the rest of THIS session -- a vehicle whose point
+## is to cross the map must not walk home on its own. CH45: it no longer
+## survives a reload. It always respawns at YACHT_PARK, because Mathieu
+## lost it once and had no way to find it again.
 ##
 const VEHICLE_BALL: int = 0
 const VEHICLE_YACHT: int = 1
@@ -330,15 +332,9 @@ func _build_yacht() -> void:
 	_yacht.build(
 		CozyPalette.glb_mesh(CozyPalette.decor_path("yacht_hull_0")), CozyPalette.decor_material(),
 		CozyPalette.glb_mesh(CozyPalette.decor_path("yacht_sail_0")), CozyPalette.decor_material_wind(0.10, 2.6))
-	var saved: Vector3 = WorldSave.cove_yacht()
-	# ⚠️ `drivable`, not `contains`: a save written before CH30 can hold a
-	# yacht parked ON THE KARTING GRID (Mathieu did exactly that), and the
-	# refusal has to survive a reload or the guard would only cover the
-	# session that added it.
-	var at: Vector3 = saved if (saved != Vector3.INF and SandYacht.drivable(saved)) else YACHT_PARK
-	# Nose toward the sea at the park; a saved yacht keeps only its place,
-	# the yaw is rewritten by the first drive anyway.
-	_yacht.place(Vector3(at.x, 0.0, at.z), PI / 2.0)
+	# CH45: no saved position (removed -- Mathieu lost the yacht mid-session
+	# and had no way to find it again). Always the park, nose toward the sea.
+	_yacht.place(YACHT_PARK, PI / 2.0)
 
 ## CH33: a SailBoat node -- same GLB pair as the land yacht (yacht_hull_0,
 ## yacht_sail_0: brief's asset rule, no new model), no saved position (the
@@ -595,8 +591,6 @@ func exit_yacht() -> void:
 	if landing.distance_to(at) < 0.8:
 		landing = _step_off(at - _yacht.right() * EXIT_SIDE)
 	_keepy.call("leave_carrier", landing)
-	# Where he steps off is where the yacht will be next session.
-	WorldSave.cove_set_yacht(at)
 	yacht_driving_changed.emit(false)
 
 ## CH33: climbs aboard the sailboat. The yacht's mount_yacht() shape
