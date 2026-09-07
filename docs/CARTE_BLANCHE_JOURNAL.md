@@ -1877,3 +1877,55 @@ mesure device complète » se vérifie. Si le FPS tient, lot 2 PARTIE B (semis,
 props, atmosphère) ; sinon lot 0b assainissement, gaté sur ce même
 protocole. La mesure device de CH35-B tâche 4 reste en attente ; lot 3
 véhicule sur surface et lot 4 luge restent après.
+
+## CH39 — LE RELIEF INVISIBLE : DIAGNOSTIC, PUIS CAUSE (7 septembre 2026)
+
+Mathieu rapporte depuis l'iPhone deux stations à quatre unités l'une de
+l'autre : à (−46,4 ; 13,0) un dôme net découpé contre les arbres, à
+(−50,4 ; 5,8) **plus aucun relief**, sol parfaitement plat. `MountainProbe`
+ALL GREEN, 0 rouge, sept phases. Le lot est un **diagnostic** : rien n'a
+été touché avant que la cause soit prouvée.
+
+Les deux images ont d'abord été **reproduites en sandbox** aux coordonnées
+exactes, caméra figée du jeu, `xvfb-run --rendering-driver opengl3`. Puis
+les cinq hypothèses du brief sont tombées une par une, chacune avec sa
+preuve : le mesh et `height_at` s'accordent à **8 × 10⁻⁶ u** (chute de
+rayon Möller–Trumbore, instrument indépendant de `_sample`) ; masquer le
+plan y = 0 ne change **rien** au compte de pixels de la crête ; les
+sommets en monde sont **exactement** le rectangle déclaré ; et Keepy
+était bien à **3,9484 u de haut**, marché et non téléporté — avec la
+caméra à 7,600 u au-dessus du sol local **aux deux stations**, parce que
+`HubCamera` suit la surface.
+
+La cause s'est prouvée à **variable unique**, `cull_back` contre
+`cull_disabled` sur le même cadre : **14 pixels contre 317 646**. Le
+treillis était enroulé à l'envers. Godot tient les faces horaires à
+l'écran pour faces avant ; un produit vectoriel main droite +Y se lit
+anti-horaire depuis toute caméra au-dessus, donc c'est la face arrière, et
+`cull_back` la jetait. **Les seuls survivants étaient les triangles qui
+tournaient le dos à l'œil** : le flanc lointain, vu à travers le flanc
+proche invisible — le « dôme net » de la première station était l'arrière
+de la colline vu par transparence, ce qui explique qu'il ait validé la
+forme et disparu dès qu'on montait dessus.
+
+Le faux-vert est le **dixième** de ce dépôt et le mieux fourni : PHASE C
+assertait la convention **mathématique** en citant la convention **moteur**
+dans son propre commentaire (verte 1 680 fois sur 1 680) ; PHASE D et F
+raycastent et marchent la **grille**, qui ne sait rien d'un côté de
+triangle ; et PHASE E compte les primitives **soumises** — le back-face
+culling est en aval du compteur, donc la colline payait ses 1 680
+triangles à chaque frame sans en dessiner un seul, et la ligne « the ridge
+DOES cost something » était vraie en signifiant l'inverse.
+
+`MountainProbe` gagne **PHASE G** : passe d'identification masquée, blind
+check d'abord, et un gate **sans seuil** — le test de face ne doit rien
+jeter. Rouge avant vert : enroulement d'origine remis, **5 rouges,
+exactement PHASE C et PHASE G**, fichier restauré byte-identique ; avec le
+correctif, ALL GREEN 0 red et la diagonale publiée reproduite à 18,700 s.
+
+Deux choses trouvées et **non corrigées**, parce qu'elles sont la partie B
+et pas ce lot : la crête est **chauve** (le semis s'arrête à x = −37, le
+domaine commence à −35) et le sol unlit ne porte **aucun signal de pente**
+(Pearson r = +0,098 / −0,342 entre la pente et la luminance livrée) — le
+relief lit par silhouette et occultation, exactement comme CH35-C l'avait
+posé.
