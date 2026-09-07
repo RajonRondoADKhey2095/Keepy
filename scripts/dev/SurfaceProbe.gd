@@ -135,6 +135,7 @@ func _run() -> void:
 	await _phase_tap()
 	await _phase_gate()
 	await _phase_e()
+	await _phase_g()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -595,3 +596,59 @@ func _phase_e() -> void:
 		"and standing STILL on a %.1f u hill does not: %.4f (full %.4f)"
 			% [h, shadow.scale.x, full])
 	HubSurface.clear_domains()
+
+
+## PHASE G -- the negative, and the one that says CH37 ships a no-op.
+##
+## Everything the six phases above measured is re-measured with NO domain
+## registered, and every one of them must read ZERO. That is the proof
+## that h is what drives them -- and it is also the shape the game ships
+## in, so this phase is the hub as the player will get it.
+func _phase_g() -> void:
+	print("-- PHASE G: with no domain, every one of them is back to zero --")
+	HubSurface.clear_domains()
+	_check(HubSurface.domains().is_empty(), "the domain table is empty")
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as KeepyHopper
+	var cam := _hub.get_node("WorldViewport/SubViewport/World/Camera3D") as HubCamera
+	var scatter := _hub.get_node("WorldViewport/SubViewport/World/CozyScatter")
+	_settle(keepy)
+	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
+	# The INVERSE of a blind check: here zero is the answer, so what is
+	# asserted first is that the accessor really is flat rather than that
+	# a phase forgot to register.
+	_check(HubSurface.height_at(summit) == 0.0, "height_at at the old summit is exactly 0.0")
+	_check(HubSurface.ground(summit) == summit, "ground() is the identity on a flat point")
+
+	keepy.global_position = HubSurface.ground(summit)
+	_land_count = 0
+	_land_worst = 0.0
+	keepy.hop_landed.connect(_on_land)
+	keepy.hop_to(Vector3(DOMAIN_CENTRE.x + 4.0, 0.0, DOMAIN_CENTRE.y))
+	var guard: int = 0
+	while guard < 1200 and (keepy.is_hopping() or keepy._has_target):
+		guard += 1
+		await get_tree().process_frame
+	keepy.hop_landed.disconnect(_on_land)
+	_check(_land_count >= 2, "the flat walk still took %d hops" % _land_count)
+	_check(_land_worst == 0.0, "every landing was at exactly y = 0 (worst %.8f)" % _land_worst)
+	_check(keepy.global_position.y == 0.0,
+		"and he rests at exactly 0.0 (read %.8f)" % keepy.global_position.y)
+
+	# The camera is an exponential follow, so "back at OFFSET.y" is a limit
+	# it approaches rather than a value it snaps to. Coming down 3 u it
+	# needs more than the 60 frames the other checks use: at 60 it still
+	# read 7.6003, which is the smoothing doing its job, not a leak.
+	for _i in 300:
+		await get_tree().process_frame
+	_check(absf(cam.global_position.y - HubCamera.OFFSET.y) < 1.0e-4,
+		"the camera settles back at OFFSET.y = %.4f (read %.6f)"
+			% [HubCamera.OFFSET.y, cam.global_position.y])
+	var precip := scatter.get_node_or_null("Precipitation") as Node3D
+	var shadow: Node3D = scatter.get("_hero_shadow_node")
+	if precip != null:
+		_check(precip.global_position.y == 0.0,
+			"the rain column is back at exactly 0.0 (read %.8f)" % precip.global_position.y)
+	if shadow != null:
+		_check(absf(shadow.global_position.y - 0.025) < 1.0e-6,
+			"the shadow is back at SHADOW_Y + 0.005 = 0.025 (read %.6f)"
+				% shadow.global_position.y)
