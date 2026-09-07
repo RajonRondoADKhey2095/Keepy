@@ -1277,13 +1277,19 @@ func _process(delta: float) -> void:
 	if _hero == null or _hero_shadow_node == null:
 		return
 	var p := _hero.global_position
+	# The two things that follow Keepy everywhere follow the GROUND under
+	# him, not sea level. The rain column stands on it; the shadow lies on
+	# it; and the lift that shrinks the shadow is his height ABOVE it --
+	# read as p.y - h, because on a hill p.y alone would read as a
+	# permanent hop and keep the shadow shrunk while he stands still.
+	var h: float = HubSurface.height_at(p)
 	if _precip_node != null:
-		_precip_node.position = Vector3(p.x, 0.0, p.z)
-	var lift: float = clampf(p.y, 0.0, 1.5)
+		_precip_node.position = HubSurface.ground(p)
+	var lift: float = clampf(p.y - h, 0.0, 1.5)
 	var r: float = HERO_SHADOW_RADIUS * (1.0 - lift * 0.25)
 	_hero_shadow_node.global_transform = Transform3D(
 		Basis().scaled(Vector3(r * 2.0, 1.0, r * 2.0)),
-		Vector3(p.x, SHADOW_Y + 0.005, p.z + 0.18))
+		Vector3(p.x, h + SHADOW_Y + 0.005, p.z + 0.18))
 
 ## True when any point within `radius` of p is walkable: eight samples on
 ## the circle plus the centre. Cheap, and conservative enough for a wall.

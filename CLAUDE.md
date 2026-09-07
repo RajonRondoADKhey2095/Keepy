@@ -1075,6 +1075,65 @@ repère PARTAGÉ qu'on publie** (unités modèle), pas une position monde — si
 un rapport d'échelle 7/11 se recopie faux et ne se voit jamais, les deux vues
 n'étant **jamais à l'écran ensemble**.
 
+### ⚠️ UN POINT SOL S'ÉCRIT `(x, h, z)`, ET IL A UNE SEULE ORTHOGRAPHE
+
+Corollaire direct de la règle ci-dessus, écrit au CH37 quand le hub a
+cessé de supposer que le sol est à `y = 0`. `HubSurface.ground(flat)`
+publie le point sol ; **aucun site ne compose `height_at` avec un
+`Vector3(x, h, z)` écrit à la main**, pas plus qu'on ne recopie un rayon.
+La règle est uniforme et sans exception utile : **aucun littéral `0.0` de
+ligne de base ne survit** dans un fichier qui écrit une position au sol —
+y compris là où la valeur est morte aujourd'hui, parce que c'est
+exactement le littéral qu'un lot ultérieur oubliera.
+
+⚠️ **Et un point sol N'EST PAS un vecteur de déplacement.** Le premier
+plan de bascule gardait `_target` porteur de sa hauteur et `here` plat, en
+appelant leur différence « un delta XZ ». Ça ne tient pas : le delta gagne
+un `y`, le pas se raccourcit sur une pente — or `HOP_DISTANCE`, la
+diagonale à 66 hops et toutes les mesures de traversée de ce dépôt sont
+des distances **XZ** — et surtout **le test d'arrivée cesse de
+fonctionner** : `here` étant plat, une cible 3 u plus haut garde un
+`delta.y` de 3 pour toujours et la marche **ne se termine jamais**. Un
+delta se prend entre deux points de la MÊME nature, et une composante
+verticale qu'on ne veut pas se jette **explicitement**, jamais par
+omission. Le défaut est **inerte tant que `h ≡ 0`** : c'est précisément
+ce qui le rend invisible au lot qui l'introduit.
+
+### ⚠️ UN SOL UNLIT N'A PAS DE PENTE — le relief se lit par SILHOUETTE
+
+Mesuré au CH35-C sur 50 captures offscreen (4 buttes de même empreinte,
+15° / 30° / 45° / 48,5°, plus une mesa, SUN et RAIN). Deux résultats qui
+vont contre l'intuition :
+
+* **l'étirement 1/cos des textures est INVISIBLE à 15°, 30° et 45°** —
+  toutes les textures du sol sont des bruits ISOTROPES (patch 26 u,
+  détail 5,5, mottle 1,7, cellules 2,6), et un ×1,41 sur un bruit isotrope
+  ne se lit pas. Il devient visible vers 60-66° et gênant à 80° (rideau
+  strié) ;
+* **le vrai défaut est l'absence d'ombrage.** L'asset est unlit et rien ne
+  post-traite la frame, donc **un flanc n'a AUCUN indice de pente** : une
+  pente uniforme de 35° face caméra est indiscernable d'un sol plat, à
+  ceci près que l'horizon devient une règle droite en haut du cadre — un
+  « mur vert ».
+
+Le relief ne se lit donc QUE par (a) une crête qui se découpe sur un
+fond, (b) l'occlusion des props, (c) l'horizon qui monte. **Conséquences
+de conception, permanentes** : chaque station marchable doit voir une
+crête contre un fond ; **30° pour tout sol MARCHABLE**, 45° toléré sur des
+flancs NON marchables et courts (< 8 u de dénivelé), **> 55° INTERDIT**
+avec `cozy_ground` (une falaise exige un autre matériau ou un habillage de
+props) ; et **aucune bande de couleur ne traverse un versant** — sans
+ombrage cette ligne serait le SEUL trait du flanc, et un versant bicolore
+lit comme deux terrasses (`HubSurface.register_domain` refuse une AABB qui
+coupe une bande `CozyPalette`).
+
+⚠️ **Et le cadre figé plafonne tout ça** : à 30 u devant Keepy le plafond
+vaut ≈ 9,2 u, un sommet de 12 u n'entre dans le cadre qu'à ≈ 97 u où le
+haze est à 88 %. **Avec cette caméra, un sommet de montagne n'est JAMAIS à
+l'image** ; la masse lisible depuis un pied est de **≤ 9 u de dénivelé à
+30 u**. Et llvmpipe prouve la GÉOMÉTRIE et le CADRAGE, pas le shading
+WebGL2 de Safari iOS : les planches restent à confronter sur device.
+
 ### ⚠️ LE CADRE DU HUB EST ÉTROIT, ET C'EST LUI QUI DÉCIDE OÙ UN PROP VA
 
 `HubWorld.tscn` pose `keep_aspect = 0` (**KEEP_WIDTH**) et `fov = 45` : les
@@ -1141,6 +1200,38 @@ distance caméra : les deux stations mesurées sont sorties à **12,633 u et
 18,302 u de la flamme**, et la densité de texels d'un billboard n'y bouge
 que de 5,19 à 6,50 — un asset texturé de ce hub ne peut donc **jamais** être
 agrandi, il est toujours minifié, et son seul risque est le scintillement.
+
+### ⚠️ UN GATE DE CAPTURE NE GATE RIEN DANS UN MONDE QUI CONTIENT UN ACTEUR EN MARCHE
+
+Mesuré au CH37, sur un gate que le plan du lot prescrivait explicitement
+(« `CozyCapture` 5 stations × SUN/RAIN : md5 identiques »). Les dix md5
+ont divergé entre les deux arbres — dix sur dix. Ce n'était pas une fuite :
+**deux runs du MÊME arbre, mêmes arguments, rendent deux md5 différents**,
+et le relevé chiffré de `ChaseAudit` fait pareil (**170 lignes divergent
+sur un seul arbre**, contre 272 entre deux, pendant que son VERDICT 13/0
+PASS ne bouge pas).
+
+La cause est le hub : **depuis le CH25 l'ours MARCHE** vers le feu. Sa pose
+dépend du nombre de frames réellement simulées avant la capture, donc de la
+CHARGE DE LA MACHINE, et sa pose colore le pixel central et tous les
+compteurs de frame. Mesuré : entre deux runs de la même référence l'ours se
+déplace de **1,27 u**, contre **0,17 u** entre les deux arbres — **le bruit
+est plus grand que le signal**.
+
+**Règle** : avant de lire une divergence de capture comme une régression,
+**retourner la métrique contre elle-même** — deux runs du même arbre, dans
+les mêmes conditions de charge. Un gate qui ne se reproduit pas sur un seul
+arbre ne peut rien dire de deux. Et le repli existe et est bon marché :
+`CozyCapture` imprime déjà `COZY_STATS`, qui décrit la SCÈNE (350 batches,
+4 572 instances, 341 029 triangles, la pose de Keepy, le teint du sol) et
+non les pixels — hors des champs pilotés par l'acteur en marche, il est
+**strictement déterministe**, et c'est lui qu'il faut comparer.
+
+⚠️ **Le même piège a fait diverger `CabinProbe` de 8 rouges à 2** au CH37,
+pour la seule raison que les deux runs avaient partagé la machine. Rejouée
+SEULE sur chaque arbre : **2 rouges des deux côtés, les mêmes lignes, les
+mêmes nombres.** Une sonde à séquence temporelle se rejoue à charge
+comparable, ou son verdict n'est pas comparable.
 
 ⚠️ **Corollaire de station** : ne jamais planter le point d'observation
 **SUR** le prop mesuré. Une passe de lisibilité a posé Keepy exactement au
@@ -1668,6 +1759,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH29 | La Crique — cinquième zone à l'est de la Lande (couloir piéton, porte (41, −96)), mer, phare, châteaux de sable qui fondent sous la pluie, phare qui s'allume, ligne de montgolfière Corail plateau → Crique, **char à voile** (glisse libre au sol, vitesse au vent), `WorldSave` schéma 2 avec migration, graphe des zones en arbre, terrier + `ModelSlot` inerte pour un futur habitant | [`CH29_CRIQUE.md`](docs/lots/CH29_CRIQUE.md) | 1 | — | 5 → 6 sept |
 | CH30 | Conduite unifiée — la difficulté du karting **mesurée** avant d'être touchée (`RaceBalanceProbe` : la laisse est inerte, `a_lat` sature sur la limite de braquage, l'échelle est compressive), trois presets `KartDifficulty` calibrés sur un plancher mesuré et commutables derrière `?keepydev=1`, relevé dev des tours ; extraction de `VehicleDrive` prouvée **byte-identique** par `KartTraceProbe` sur les deux arbres ; **char à voile piloté en continu** avec la caméra de poursuite, garde circuit ; `ChaseAudit` (160 frames, 5 zones × 8 azimuts × 4 météos) et les deux défauts qu'il a trouvés | [`CH30_CONDUITE.md`](docs/lots/CH30_CONDUITE.md) | 5 | 431 | 6 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
+| CH37 | Socle multi-altitude, LOT 1 SURFACE — `HubSurface` publié (requête pure au patron `HubWater`), `ground(flat)` comme orthographe unique du point sol, grille float32 refusée sinon, raccord C0 exact au périmètre, AABB disjointes, aucune bande `CozyPalette` traversante ; six vagues branchées (marche, caméra, tap, retours au sol, pluie/ombre) et **zéro domaine enregistré en jeu**, donc un no-op arithmétique prouvé sur les deux arbres ; `SurfaceProbe` phases A → G avec blind check en tête de chaque phase | [`CH37_SURFACE.md`](docs/lots/CH37_SURFACE.md) | 1 | — | 7 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,
