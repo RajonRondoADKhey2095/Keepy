@@ -20,7 +20,25 @@ const SEED: int = 20260905
 const CELL: float = 28.0
 ## Plateau bounds to cover with ground cover: the walkable square plus the
 ## north lobe, i.e. every place Keepy can stand.
-const COVER_MIN: Vector2 = Vector2(-37.0, -37.0)
+##
+## ⚠️ CH40: -37 WAS SHORT OF THE WEST RIDGE BY 26 u, AND THE RIDGE WAS
+## BALD. HubRegion.MOUNTAIN_MIN.x is -63 and this bound stopped at -37, so
+## the two rectangles overlapped by exactly 2 u at the ridge's east rim:
+## CH39 measured 21 surviving instances in the whole domain, every one of
+## them where the relief is already flat. Nothing on the hillside had a
+## known size, so nothing could say the ground was tilted -- and an unlit
+## ground says nothing about a slope by itself (CH35-C, re-measured by
+## CH39 at r^2 = 0.010 and 0.117 between slope and delivered luminance).
+##
+## The bound is the region's, read off HubRegion rather than retyped: a
+## third spelling of -63 is exactly the ghost number this repo has paid
+## for. The z bounds already reach past the domain (-37 <= -12, 47 >= 18).
+##
+## The candidate count is `area * density`, so growing the rectangle keeps
+## the density per eligible square unit EXACTLY where it was everywhere
+## else; the throws that land west of the plateau and outside the ridge
+## are refused by HubRegion.contains() as they always were.
+const COVER_MIN: Vector2 = Vector2(HubRegion.MOUNTAIN_MIN.x, -37.0)
 const COVER_MAX: Vector2 = Vector2(37.0, 47.0)
 ## Forest wall annulus around the square. Inner radius is measured from
 ## the region: a candidate closer than WALL_CLEARANCE to walkable ground is
@@ -57,6 +75,13 @@ var _spine_half: float = 0.0
 var _rng := RandomNumberGenerator.new()
 var _batches: Dictionary = {}
 var _batch_order: Array[String] = []
+## The names of the MultiMeshInstance3D nodes _flush built, published for
+## the same reason every other fact in this repo is: a reader that had to
+## RECOGNISE a ground-decor batch would need a list of the nodes that are
+## NOT one (Windmill, Sails, MotherTree, Paths, BlobShadows, Hills,
+## Clouds, Butterflies0..2, Precipitation, HeroShadow), and a list like
+## that is wrong the day someone adds the twelfth.
+var _batch_nodes: Array[String] = []
 var _stats: Dictionary = {}
 
 func _ready() -> void:
@@ -193,7 +218,14 @@ func _sprinkle(family: String, variants: int, count: int, own_radius: float,
 		var name := "%s_%d" % [family, variant]
 		var s := _rng.randf_range(scale_min, scale_max)
 		var yaw := _rng.randf_range(0.0, TAU)
-		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
+		# ⚠️ THE GROUND POINT, and it is taken LAST on purpose. Every test
+		# above (water discs, footprints, the stream spine, the spawn) is
+		# written against a FLAT p and compares 3D distances to centres at
+		# y = 0: lifting p before them would inflate each of those distances
+		# by the height of the hill and quietly loosen every one of them.
+		# Off a domain HubSurface.ground() returns p unchanged, so this is
+		# the same transform the plateau has always had.
+		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), HubSurface.ground(p))
 		_add(family, name, _batch_cell(family, p), xform, wind, 0.45 if family == "grass" else 0.3)
 		placed += 1
 	_stats[family] = placed
@@ -965,6 +997,13 @@ const SHADOW_OFFSET: Vector2 = Vector2(-0.06, 0.12)
 var _shadow_xforms: Array[Transform3D] = []
 
 func _shadow_at(p: Vector3, radius: float) -> void:
+	# ⚠️ CH40: NO BLOB ON A RELIEF. This disc is a FLAT horizontal quad at
+	# a fixed y; on a hillside it either floats over the downhill half or
+	# buries itself in the uphill one, and at 28 deg with a 1 u radius that
+	# is 0.27 u of each. There is no correct height for it, so the domain
+	# gets none rather than a wrong one. A no-op off a domain.
+	if HubSurface.domain_at(p) >= 0:
+		return
 	var basis := Basis().scaled(Vector3(radius * 2.0, 1.0, radius * 2.0))
 	var origin := Vector3(p.x + SHADOW_OFFSET.x * radius, SHADOW_Y, p.z + SHADOW_OFFSET.y * radius)
 	_shadow_xforms.append(Transform3D(basis, origin))
@@ -1374,6 +1413,7 @@ func _flush() -> void:
 		multi.custom_aabb = bounds
 		var node := MultiMeshInstance3D.new()
 		node.name = key.replace("|", "_")
+		_batch_nodes.append(String(node.name))
 		node.multimesh = multi
 		var wind: float = batch["wind"]
 		# CH30: a per-GLB brightness gain for an asset that is too dark to
@@ -1416,3 +1456,8 @@ func _flush() -> void:
 
 func stats() -> Dictionary:
 	return _stats
+
+## Every ground-decor batch node _flush built, by name. Read by
+## MountainProbe; nothing in the game needs it.
+func batch_nodes() -> Array[String]:
+	return _batch_nodes
