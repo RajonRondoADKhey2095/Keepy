@@ -135,8 +135,9 @@ const SEAT: Vector3 = Vector3(0.0, SEAT_Y, 0.0)
 ##
 ## ⚠️ IT MUST BE SMOOTHED AND HubSurface SAYS WHY: the normal it publishes
 ## is the DRAWN TRIANGLE's, exact and therefore FACETED, and adjacent
-## triangles on the ridge differ by up to ~6 deg. Written straight into
-## the chassis it would snap once per metre. The geometry stays exact; the
+## triangles on the ridge differ by up to 11.168 deg -- MEASURED off the
+## grid by SledProbe, not the ~6 deg a raised cosine predicts on paper.
+## Written straight into the chassis it would snap once per metre. The geometry stays exact; the
 ## body lags it, the way SandYacht's heel lags its lateral acceleration.
 const CHASSIS_LAMBDA: float = 7.0
 ## A rectangle wide enough to contain every region rectangle, so

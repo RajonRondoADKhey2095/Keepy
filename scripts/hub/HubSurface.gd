@@ -80,9 +80,11 @@ class_name HubSurface
 ## the surface, and this file's own docblock explains what those cost.
 ##
 ## ⚠️ IT IS THEREFORE FACETED, AND A CONSUMER MUST SMOOTH IT ITSELF.
-## Adjacent triangles on the west ridge differ by up to ~6 deg of tilt
-## (raised cosine, A = 4.5, R = 14, pitch 1.0), so a chassis written
-## straight from this would SNAP once per metre travelled. SurfaceDrive
+## Adjacent triangles on the west ridge differ by up to 11.168 deg of
+## tilt -- MEASURED off this grid by SledProbe's own sweep, which is twice
+## what the raised cosine predicts on paper (A = 4.5, R = 14, pitch 1.0):
+## the diagonal split makes the worst pair of neighbours a diagonal one.
+## A chassis written straight from this would SNAP once per metre. SurfaceDrive
 ## smooths the CHASSIS with a lambda and leaves the geometry exact -- the
 ## same split SandYacht uses for its heel. Do not smooth it here: a
 ## smoothed normal would no longer be the drawn triangle's, and "the feet
