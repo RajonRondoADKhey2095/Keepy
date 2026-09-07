@@ -32,6 +32,13 @@ var _done: bool = false
 ## v2: --ride=x,z taps the boat at that point on frame 10; --frames is then
 ## the capture frame during the ride. Keepy's live position is reported.
 var _ride: Vector3 = Vector3.INF
+## CH36: --climb=INDEX seats Keepy in HubTrees site INDEX before the
+## capture, so a re-admitted tree can be SHOWN inside the frame rather
+## than argued for from a number. Keepy is put at the tree's own foot
+## first and the camera snapped there, because the camera frames his
+## GROUND point: capturing him seated with the camera still parked at the
+## spawn would prove nothing about the tree he is in.
+var _climb: int = -1
 ## v2: --walk=x,z taps the ground there on frame 10 (headless-safe: only
 ## transforms are read) and --nav prints HubRegion answers for the hollow.
 var _walk: Vector3 = Vector3.INF
@@ -105,6 +112,8 @@ func _ready() -> void:
 		elif arg.begins_with("--ride="):
 			# "auto" taps wherever the mooring parked the boat at boot.
 			_ride = Vector3.ZERO
+		elif arg.begins_with("--climb="):
+			_climb = int(arg.substr(8))
 	var packed: PackedScene = load("res://scenes/HubWorld.tscn")
 	_hub = packed.instantiate()
 	if _nocritters:
@@ -202,6 +211,16 @@ func _process(_delta: float) -> void:
 		var kv: Node3D = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
 		var trv: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
 		_ride_positions.append([_frames, snappedf(kv.global_position.x, 0.01), snappedf(kv.global_position.y, 0.01), snappedf(kv.global_position.z, 0.01), kv.call("is_on_vehicle"), str(trv.call("ball_position"))])
+	if _frames == 4 and _climb >= 0:
+		var trees: HubTrees = _hub.get_node("WorldViewport/SubViewport/World/Trees")
+		var kc: KeepyHopper = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
+		var cam2: Node = _hub.get_node("WorldViewport/SubViewport/World/Camera3D")
+		var site: Vector3 = trees.position_of(_climb)
+		kc.global_position = site
+		cam2.call("snap_to_target")
+		var ok: bool = kc.climb_tree(trees.node(_climb), trees.climb_spec(_climb))
+		print("CLIMB index %d at (%.2f, %.2f) seat %.3f -> %s"
+			% [_climb, site.x, site.z, trees.seat_height(_climb), str(ok)])
 	if _frames == 10 and _ride != Vector3.INF:
 		_ride = _hub.get_node("Mooring").call("boat_position")
 		print("RIDE_TAP at %s" % _ride)
@@ -236,6 +255,18 @@ func _capture() -> void:
 	stats["keepy_at"] = [_at.x, _at.z]
 	var keepy_now: Node3D = _hub.get_node("WorldViewport/SubViewport/World/Keepy")
 	stats["keepy_now"] = [snappedf(keepy_now.global_position.x, 0.001), snappedf(keepy_now.global_position.y, 0.001), snappedf(keepy_now.global_position.z, 0.001)]
+	if _climb >= 0:
+		var trees2: HubTrees = _hub.get_node("WorldViewport/SubViewport/World/Trees")
+		var cam3: Camera3D = _hub.get_node("WorldViewport/SubViewport/World/Camera3D")
+		# The head is the seat plus HEAD_ABOVE_SEAT; where it lands on
+		# SCREEN is the whole point of the capture, so publish it.
+		var head := Vector3(keepy_now.global_position.x,
+			keepy_now.global_position.y + HubTrees.HEAD_ABOVE_SEAT, keepy_now.global_position.z)
+		stats["climb_index"] = _climb
+		stats["climb_seat"] = snappedf(trees2.seat_height(_climb), 0.001)
+		stats["climb_seated"] = keepy_now.call("is_seated_on_tree") if keepy_now.has_method("is_seated_on_tree") else null
+		stats["head_screen_y"] = snappedf(cam3.unproject_position(head).y, 0.1)
+		stats["frame_ceiling"] = HubCamera.FRAME_TOP_AT_APLOMB
 	_extras(stats)
 	# Blind check that the frame is not the dummy driver's black.
 	var sample := image.get_pixel(rect.x / 2, rect.y / 2)
