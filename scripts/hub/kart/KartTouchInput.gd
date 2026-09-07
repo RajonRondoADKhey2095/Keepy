@@ -11,13 +11,11 @@ class_name KartTouchInput
 ##     it left / right of the anchor steers, proportionally, over a span
 ##     set by the active KartTuning preset, with a dead zone; lifting it
 ##     straightens the wheels;
-##   * a SECOND finger, anywhere, is the REVERSE GEAR: it stops the
-##     vehicle if it is rolling, then backs it out. CH42 gave that finger
-##     its own field (KartInput.reverse) instead of the AI's `brake`, so
-##     the two intents stopped sharing one bool -- the gesture and the
-##     deceleration a player feels are unchanged, see KartInput.reverse;
-##   * the keyboard (arrows / A-D, down / S) does the same off-web, so a
-##     probe or the editor can drive without a touchscreen.
+##   * sliding the SAME anchor finger UP the screen asks for more pace and
+##     sliding it DOWN asks to go backwards -- ONE axis, CH43, and the
+##     second finger CH42 used for the gear no longer exists;
+##   * the keyboard (arrows / A-D, up / W, down / S) does the same off-web,
+##     so a probe or the editor can drive without a touchscreen.
 ##
 ## Nothing here is a gesture that has to be RECOGNISED: a finger is either
 ## down or up, and a position is either left or right of where it started.
@@ -35,12 +33,47 @@ class_name KartTouchInput
 ## anchor was already the only thing read from `finger`, the vertical
 ## offset was sitting there unused. Pushing the anchor finger UP the
 ## screen (away from the body, like a lever) commands boost, over
-## BOOST_SPAN px with BOOST_DEAD_ZONE; pushing down or not moving does
-## nothing -- there is no way to go SLOWER than cruise from this gesture,
-## only faster, so it cannot be mistaken for the brake. Diagonal drags
-## (steer + push) work naturally since both axes come from one drag event.
-## Keyboard gets the matching, unclaimed key: UP / W, alongside the
-## existing LEFT-RIGHT/A-D steer and DOWN/S brake -- nothing reassigned.
+## BOOST_SPAN px with BOOST_DEAD_ZONE. Diagonal drags (steer + push) work
+## naturally since both axes come from one drag event. Keyboard gets the
+## matching, unclaimed key: UP / W, alongside the existing LEFT-RIGHT/A-D
+## steer and DOWN/S brake -- nothing reassigned.
+##
+## =====================================================================
+## CH43 -- THE DOWN HALF OF THAT SAME AXIS IS THE REVERSE
+##
+## Mathieu drove CH42's gear on device and refused the gesture: a second
+## finger is a thing to LEARN, and nothing else in this game asks for one.
+## His decision, and it is not re-argued here -- ONE axis, the one the
+## thumb is already on: up is forward, down is backward.
+##
+## So the vertical offset is now SIGNED. `dy > 0` buys boost exactly as
+## V7b/CH31 did, over the same span with the same dead zone; `dy < 0` buys
+## `input.reverse` over the MIRROR of that span, so the travel that reaches
+## full pace one way reaches full gear the other. Nothing about a KartInput
+## changed: the two fields CH42 separated are still two fields, still read
+## by the same VehicleDrive branches. What changed is the WRITER, which is
+## the whole point -- the physics of the gear (REVERSE_SPEED,
+## REVERSE_ACCEL, SledBody.reverse_authority()) is CH42's and is untouched.
+##
+## ⚠️ WHY IT IS TWO FIELDS AND NOT ONE SIGNED `throttle`. A fused axis was
+## the other option the brief allowed, and it was measured against the
+## blast radius rather than the elegance: `throttle` is held at 1.0 by this
+## file (the automatic cruise) and written 0..1 by KartAiDriver, by
+## KartLineInput and by every probe's `set_all` -- a sign on it would reach
+## all of them for one gesture's sake. The gesture is a property of a
+## THUMB; `throttle` is a contract between three writers and one body.
+## Fusing them would put a UX retour inside a shared component, which is
+## the shape of defect CLAUDE.md's "un fait est publie une fois" section
+## exists to stop.
+##
+## ⚠️ AND THE GEAR IS NOT THE BRAKE, EVEN THOUGH DOWN FEELS LIKE ONE. The
+## guard-rail Mathieu asked for -- a downward slide on a vehicle still
+## rolling forward BRAKES and does not slam into reverse -- is not written
+## here at all. It is VehicleDrive.REVERSE_ENGAGE_SPEED, where it has been
+## since CH42, and this file would be the wrong place for it: an input
+## writer cannot see a speed. Naming it there is what CH43 added; the value
+## is CH42's 0.3 to the digit and ReverseProbe PHASE THRESHOLD measures it
+## off the vehicle rather than reading it back.
 ##
 ## =====================================================================
 ## WHO SEES THE TOUCH
@@ -121,7 +154,6 @@ var _hold_s: float = 0.0
 ## >0 while a lifted push is bleeding away.
 var _boost_decay: float = 0.0
 var _steer_index: int = -1
-var _reverse_index: int = -1
 var _mouse_down: bool = false
 
 func hold_throttle(seconds: float) -> void:
@@ -130,7 +162,15 @@ func hold_throttle(seconds: float) -> void:
 
 ## CH31: the finger has gone; the push bleeds away over `boost_release_s`
 ## instead of vanishing. A release of 0 reproduces V7b exactly.
-func _release_boost() -> void:
+##
+## ⚠️ CH43 -- THE GEAR IS RELEASED HARD, AND THE ASYMMETRY IS DELIBERATE.
+## CH31's decay exists because lifting the thumb on a STRAIGHT is the
+## natural gesture and it was killing the boost. Nothing about that is true
+## downhill of the anchor: a gear that kept backing the vehicle up for
+## 0.45 s after the thumb left is a vehicle reversing into whatever the
+## player just lifted their thumb to avoid. Up decays, down stops.
+func _release_axis() -> void:
+	input.reverse = 0.0
 	if boost_release_s <= 0.0:
 		input.boost = 0.0
 	else:
@@ -140,7 +180,6 @@ func _clear() -> void:
 	_hold_s = 0.0
 	_boost_decay = 0.0
 	_steer_index = -1
-	_reverse_index = -1
 	_mouse_down = false
 	steering_active = false
 	input.reset()
@@ -160,18 +199,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				steering_active = true
 				input.steer = 0.0
 				input.boost = 0.0
-			elif _reverse_index < 0 and touch.index != _steer_index:
-				_reverse_index = touch.index
-				input.reverse = 1.0
+				input.reverse = 0.0
 		else:
 			if touch.index == _steer_index:
 				_steer_index = -1
 				steering_active = false
 				input.steer = 0.0
-				_release_boost()
-			elif touch.index == _reverse_index:
-				_reverse_index = -1
-				input.reverse = 0.0
+				_release_axis()
 		get_viewport().set_input_as_handled()
 		return
 	var drag := event as InputEventScreenDrag
@@ -179,11 +213,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		if drag.index == _steer_index:
 			finger = drag.position
 			input.steer = _steer_from(finger.x - anchor.x)
-			input.boost = _boost_from(anchor.y - finger.y)
+			_apply_axis(anchor.y - finger.y)
 		get_viewport().set_input_as_handled()
 		return
 	# Mouse (desktop only -- emulated ones were dropped above): the left
-	# button is the finger, the right button is the reverse gear.
+	# button is the finger, and it drives the same two axes a thumb does.
+	# CH43 removed the right button with the second finger it stood in for:
+	# a desktop tester who reached for it would be testing a scheme the
+	# phone no longer has, which is worse than having no shortcut at all.
 	var click := event as InputEventMouseButton
 	if click:
 		if click.button_index == MOUSE_BUTTON_LEFT:
@@ -197,18 +234,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			input.steer = 0.0
 			if click.pressed:
 				input.boost = 0.0
+				input.reverse = 0.0
 			else:
-				_release_boost()
-			get_viewport().set_input_as_handled()
-		elif click.button_index == MOUSE_BUTTON_RIGHT:
-			input.reverse = 1.0 if click.pressed else 0.0
+				_release_axis()
 			get_viewport().set_input_as_handled()
 		return
 	var motion := event as InputEventMouseMotion
 	if motion and _mouse_down:
 		finger = motion.position
 		input.steer = _steer_from(finger.x - anchor.x)
-		input.boost = _boost_from(anchor.y - finger.y)
+		_apply_axis(anchor.y - finger.y)
 		get_viewport().set_input_as_handled()
 
 ## Linear offset -> [0, 1] fraction of the active preset's span, then
@@ -221,11 +256,35 @@ func _steer_from(dx: float) -> float:
 	var u: float = clampf(mag / (span - dead), 0.0, 1.0)
 	return signf(dx) * pow(u, KartTuning.curve_exp())
 
-## Positive-only: pushing the anchor finger UP the screen (dy > 0) buys
-## boost linearly over BOOST_SPAN; pushing down or not moving buys none.
-func _boost_from(dy: float) -> float:
+## CH43 -- THE ONE AXIS. `dy` is the offset of the finger from its anchor,
+## POSITIVE UP the screen, and it writes both halves of the gesture:
+##
+##   dy > 0   boost  = fraction of the span, reverse = 0   (V7b/CH31, exact)
+##   dy < 0   reverse = fraction of the span, boost   = 0   (CH43)
+##
+## The same span and the same dead zone serve both directions, so the
+## travel that buys full pace one way buys full gear the other -- which is
+## what "exactement symetrique du geste d'avancer" means as an arithmetic
+## and not as an intention. `_fraction` is the V7b mapping, unchanged, and
+## calling it on |dy| is what makes the two halves provably the same shape.
+##
+## ⚠️ EXCLUSIVE, and it has to be: a thumb cannot ask for both, and letting
+## a stale boost survive a downward slide would leave VehicleDrive raising
+## its speed cap (`cap *= lerpf(1, boost_speed_ratio, boost)`) for a
+## vehicle the player is trying to stop.
+func _apply_axis(dy: float) -> void:
 	_boost_decay = 0.0
-	var mag: float = maxf(dy - boost_dead_zone, 0.0)
+	if dy >= 0.0:
+		input.boost = _fraction(dy)
+		input.reverse = 0.0
+	else:
+		input.boost = 0.0
+		input.reverse = _fraction(-dy)
+
+## Linear offset -> [0, 1] over the span, past the dead zone. V7b's
+## `_boost_from` body to the digit; only its name and its callers changed.
+func _fraction(mag_px: float) -> float:
+	var mag: float = maxf(mag_px - boost_dead_zone, 0.0)
 	return clampf(mag / maxf(boost_span - boost_dead_zone, 1.0), 0.0, 1.0)
 
 ## Keyboard, polled: only when no finger / mouse is steering, so a probe
@@ -251,6 +310,8 @@ func _physics_process(delta: float) -> void:
 		axis += 1.0
 	input.steer = axis
 	input.boost = 1.0 if (Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W)) else 0.0
-	if _reverse_index < 0:
-		input.reverse = 1.0 if (Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S)
-			or Input.is_key_pressed(KEY_SPACE)) else 0.0
+	# CH43: the keyboard was ALREADY one axis -- UP/W and DOWN/S are the two
+	# ends of the same row of keys. Only the guard on the second finger's
+	# index is gone, because there is no second finger to defer to.
+	input.reverse = 1.0 if (Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S)
+		or Input.is_key_pressed(KEY_SPACE)) else 0.0
