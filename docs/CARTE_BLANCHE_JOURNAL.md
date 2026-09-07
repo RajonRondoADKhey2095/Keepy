@@ -1742,3 +1742,47 @@ ligne FPS que cet overlay existe pour mesurer.
 Le dépôt documentaire CH35 (dossier CONCEPTION + complément B) : les deux
 textes n'existent dans **aucune ref** du dépôt et n'ont pas été fournis
 avec le brief. Rien n'a été inventé ; le dépôt fidèle attend les textes.
+
+---
+
+# CH35 — DÉPÔT DOCUMENTAIRE DU SOCLE MULTI-ALTITUDE (7 septembre 2026, lot doc, commit additionnel CH36 vers `staging`)
+
+## Départ
+
+CH36 avait tout livré sauf une chose : les trois dossiers CH35 n'existaient
+dans **aucune ref** du dépôt (CH35-B le disait déjà, et le journal CH36
+l'a redit : « rien n'a été inventé ; le dépôt fidèle attend les textes »).
+Mathieu les a collés dans cette session, tous les trois — CH35-CONCEPTION,
+CH35-B, CH35-C — et ce lot ne fait que les déposer.
+
+## Ce qui a été déposé
+
+`docs/lots/CH35_MULTI_ALTITUDE.md` : un en-tête de fichier, puis les
+**trois dossiers sur trois**, dans l'ordre de leur production, chacun sous
+son propre titre d'origine. Dépôt **fidèle** : aucune réécriture, aucun
+résumé, aucune correction de style, aucune mise à jour de chiffre — y
+compris là où CH36 a depuis tranché (le plafond de cadre 6,96 → 7,968 u
+figure dans CH35-CONCEPTION comme une incertitude, dans CH35-B comme une
+mesure ; les deux états sont conservés tels quels, parce que ce sont des
+sources de vérité historiques et que la doctrine « chiffre sans source »
+vaut aussi pour un chiffre corrigé dont on aurait effacé l'origine).
+
+`docs/lots/INDEX.md` : une ligne CH35, rien d'autre — le fichier est
+périmé depuis CH24 LOT 1 (aucune ligne CH36 non plus), et le réparer n'est
+pas ce lot.
+
+## Ce qui n'a PAS été touché
+
+Aucun fichier de code : `git diff --stat` ne montre que des `.md`. Rien de
+ce que CH36 a livré (`FRAME_TOP_AT_APLOMB`, `SEAT_MAX_Y`,
+`FrameCeilingProbe`, overlay POS + BUILD, `CLAUDE.md`) n'est retouché.
+Aucun export, aucune sonde lancée. Ni le lot 1 SURFACE, ni le lot 0b, ni
+la montagne ne sont ouverts.
+
+## Suite
+
+La série de mesure device par Mathieu (protocole CH35-B tâche 4, avec
+`?keepydev=1`), la vérification device des six arbres re-admis par CH36
+(arbre 42 en priorité, marge 0,417 u), le lot 0b conditionnel au verdict,
+puis le lot 1 SURFACE selon le plan en six vagues de CH35-C — après le
+verdict device, jamais avant.
