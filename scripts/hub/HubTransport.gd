@@ -288,6 +288,9 @@ func _build_line(index: int) -> void:
 		var dock := _glb_node("Dock_%d_%d" % [index, d], "dock_0", CozyPalette.decor_material())
 		dock.position = Vector3(here.x, 0.0, here.z)
 		dock.rotation.y = float(d) * 1.1 + float(index) * 0.4
+		# CH46: a dock is a PLACE on the map -- six of them, and they are
+		# the only reason a player walks to the far corners of the plateau.
+		MinimapMarkers.mark(dock, MinimapMarkers.PLACE)
 		add_child(dock)
 		# The arrow sign stands just outside the deck on the side of the
 		# twin dock and points AT it -- the only "where does this go" the
@@ -312,6 +315,9 @@ func _build_line(index: int) -> void:
 		flag.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		add_child(flag)
 	var balloon := _glb_node("Balloon_%d" % index, spec["glb"], CozyPalette.decor_material())
+	# CH46: a balloon is a VEHICLE -- it carries Keepy and it MOVES, which
+	# is the whole reason a marker is worth a frame of work.
+	MinimapMarkers.mark(balloon, MinimapMarkers.VEHICLE)
 	add_child(balloon)
 	entry["balloon"] = balloon
 	_lines.append(entry)
@@ -320,6 +326,9 @@ func _build_line(index: int) -> void:
 func _build_ball() -> void:
 	_ball = _glb_node("HopBall", "hopball_0", CozyPalette.decor_material())
 	_ball.position = BALL_PARK
+	# CH46: the hop ball rides and re-garages itself out of frame, which is
+	# exactly the thing a player cannot find without a map.
+	MinimapMarkers.mark(_ball, MinimapMarkers.VEHICLE)
 	add_child(_ball)
 
 ## CH30: a SandYacht node -- the hull and the sail on a heeling deck, and

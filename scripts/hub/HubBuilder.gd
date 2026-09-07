@@ -1746,6 +1746,8 @@ func _build() -> void:
 					push_error("HubBuilder: a second &\"boat\" entry at %d; the ride owns one hull, the extra is drawn but never moored." % index)
 				else:
 					_boat = node
+					# CH46: the stream boat is a VEHICLE on the map.
+					MinimapMarkers.mark(_boat, MinimapMarkers.VEHICLE)
 	_flush_batches()
 
 ## Files a scatter prop into its batches. Returns false for a type that
@@ -2154,6 +2156,10 @@ func _make_cabin(index: int) -> Node3D:
 	model.position = CABIN_MODEL_OFFSET
 	var root := Node3D.new()
 	root.name = "Cabin"
+	# CH46: the cabin is a PLACE. The magpie inside it is deliberately NOT
+	# marked -- it lives at the cabin's own coordinates, so a second marker
+	# there would say nothing and hide the first.
+	MinimapMarkers.mark(root, MinimapMarkers.PLACE)
 	root.add_child(model)
 	# Re-derived rather than threaded in from _build(): _build applies the
 	# entry's own "scale" to the ROOT this function returns, AFTER this

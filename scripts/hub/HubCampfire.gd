@@ -242,6 +242,8 @@ func flame_texture() -> Texture2D:
 func _build_campfire(origin: Vector3, variant: Dictionary, stones: Dictionary) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Campfire"
+	# CH46: the campfire is a PLACE -- where the bear and the badger meet.
+	MinimapMarkers.mark(root, MinimapMarkers.PLACE)
 	root.position = origin
 	root.scale = Vector3.ONE * SCALE
 	add_child(root)

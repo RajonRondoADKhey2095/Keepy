@@ -130,6 +130,9 @@ var _clip_length: float = 0.0
 
 
 func _ready() -> void:
+	# CH46: on the minimap, as a hub animal. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	MinimapMarkers.mark(self, MinimapMarkers.NPC)
 	set_process(false)
 	if model_scene == null:
 		push_error("HubActorWalker: no model_scene set; nothing to draw.")
