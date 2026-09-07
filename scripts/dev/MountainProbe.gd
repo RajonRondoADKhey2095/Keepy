@@ -48,6 +48,19 @@ extends Node
 ##          hopper (HubRegion's header prices it at ~21.05 s against the
 ##          22 s the hub holds itself to)
 ##
+## CH40 lot 2 part B -- the dressing:
+##
+##   H      THE RIDGE IS NO LONGER BALD. CozyScatter.COVER_MIN stopped at
+##          x = -37 while the domain starts at -63, so the two rectangles
+##          overlapped by 2 u and CH39 counted 21 instances on the whole
+##          hill, all of them where it is already flat. Gated on SPREAD,
+##          not on a total: every cell of a 4 x 4 grid over the domain
+##          has to hold something, which a 2 u strip cannot fake
+##   I      NOTHING FLOATS AND NOTHING IS BURIED. Every instance standing
+##          on the domain sits at HubSurface.height_at of its own (x, z),
+##          and every instance off it still sits at 0 -- the second half
+##          is what proves the ground lift is the no-op it claims to be
+##
 ## Exit 0 all green, 1 any red, ProbeWatchdog.EXIT_TIMEOUT = INCONCLUSIVE.
 
 const VP_SIZE: Vector2i = Vector2i(1080, 1920)
@@ -72,6 +85,7 @@ var _ridge: MeshInstance3D = null
 var _keepy: Node3D = null
 var _camera: Camera3D = null
 var _sub: SubViewport = null
+var _scatter: Node3D = null
 ## PHASE F's landing flag. A MEMBER and not a captured local: a GDScript
 ## lambda captures a local BY VALUE, so a loop waiting on one never sees
 ## it change -- this repo has paid for that at least three times.
@@ -86,6 +100,7 @@ func _ready() -> void:
 	_keepy = _hub.get_node("WorldViewport/SubViewport/World/Keepy") as Node3D
 	_camera = _hub.get_node("WorldViewport/SubViewport/World/Camera3D") as Camera3D
 	_sub = _hub.get_node("WorldViewport/SubViewport") as SubViewport
+	_scatter = _hub.get_node("WorldViewport/SubViewport/World/CozyScatter") as Node3D
 
 func _check(ok: bool, what: String) -> void:
 	if not ok:
@@ -118,6 +133,8 @@ func _run() -> void:
 	await _phase_d()
 	await _phase_e()
 	await _phase_g()
+	_phase_h()
+	_phase_i()
 	await _phase_f()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -605,6 +622,196 @@ func _ident_pixels(mat: Material) -> int:
 			if c.r > 0.999 and c.g < 0.001 and c.b > 0.999:
 				n += 1
 	return n
+
+## =====================================================================
+## CH40 -- THE DRESSING
+##
+## Every MultiMesh instance of ground decor, as {node, index, origin}.
+##
+## The set of decor batches is taken from CozyScatter.batch_nodes(), which
+## is the list _flush actually built -- NOT a blacklist of the nodes that
+## are something else. A blacklist was written first and was wrong on its
+## first run: it said "Butterflies" and the node is "Butterflies1", so a
+## swarm flying at 1.06 u over the hill was counted as buried decor. A
+## reader that has to recognise its subject is a reader that will be wrong
+## the day a twelfth hand-built node appears.
+##
+## The transforms are read off the LIVE MultiMesh -- what the engine will
+## draw -- and never off anything CozyScatter kept in a variable.
+func _decor_instances() -> Array:
+	var out: Array = []
+	for name_of in (_scatter.call("batch_nodes") as Array):
+		var mmi := _scatter.get_node_or_null(NodePath(String(name_of))) as MultiMeshInstance3D
+		if mmi == null or mmi.multimesh == null:
+			continue
+		for i in mmi.multimesh.instance_count:
+			out.append({
+				"node": String(mmi.name),
+				"index": i,
+				"origin": mmi.multimesh.get_instance_transform(i).origin,
+			})
+	return out
+
+static func _in_domain(p: Vector3) -> bool:
+	return p.x >= HubRegion.MOUNTAIN_MIN.x and p.x <= HubRegion.MOUNTAIN_MAX.x \
+		and p.z >= HubRegion.MOUNTAIN_MIN.y and p.z <= HubRegion.MOUNTAIN_MAX.y
+
+## How the domain is diced for the spread gate. 4 x 4 over 28 x 30 u is
+## 7.0 x 7.5 u cells -- wider than the 2 u strip the old bound left, which
+## is the whole point: a count floor could be met by piling everything in
+## that strip, and a spread gate cannot.
+const COVER_CELLS: int = 4
+## And a floor on the total, so "one tuft per cell" cannot pass for cover.
+const COVER_FLOOR: int = 40
+
+## PHASE H -- the ridge is no longer bald.
+##
+## ⚠️ WHAT WAS WRONG. CozyScatter.COVER_MIN.x was -37 and
+## HubRegion.MOUNTAIN_MIN.x is -63: the cover rectangle and the domain
+## overlapped by exactly 2 u at the ridge's east rim. CH39 measured 21
+## instances on the whole 840 u2 domain, every one of them in that strip,
+## where the relief is already at h = 0. An unlit ground carries no shading
+## on a slope (CH35-C; CH39 measured r^2 = 0.010 and 0.117 between slope
+## and delivered luminance), so an object of KNOWN SIZE standing on the
+## hillside is not decoration here -- it is the only instrument the player
+## has for reading that the ground is tilted.
+func _phase_h() -> void:
+	print("-- PHASE H: the domain is covered, and covered EVENLY --")
+	var all: Array = _decor_instances()
+	var on_domain: int = 0
+	var grid: Array[int] = []
+	grid.resize(COVER_CELLS * COVER_CELLS)
+	grid.fill(0)
+	var w: float = (HubRegion.MOUNTAIN_MAX.x - HubRegion.MOUNTAIN_MIN.x) / float(COVER_CELLS)
+	var h: float = (HubRegion.MOUNTAIN_MAX.y - HubRegion.MOUNTAIN_MIN.y) / float(COVER_CELLS)
+	# BLIND FIRST, and it is a real absence: the great lake's own water is
+	# inside the cover rectangle and inside the region, and the scatter
+	# refuses it. An instrument that cannot report zero cannot report N.
+	var blind: int = 0
+	var lake: Vector3 = HubRegion.lakes()[0]["centre"]
+	for e in all:
+		var p: Vector3 = e["origin"]
+		if Vector2(p.x - lake.x, p.z - lake.z).length() < float(HubRegion.lakes()[0]["radius"]) - 2.0:
+			blind += 1
+		if not _in_domain(p):
+			continue
+		on_domain += 1
+		var cx: int = clampi(int((p.x - HubRegion.MOUNTAIN_MIN.x) / w), 0, COVER_CELLS - 1)
+		var cz: int = clampi(int((p.z - HubRegion.MOUNTAIN_MIN.y) / h), 0, COVER_CELLS - 1)
+		grid[cz * COVER_CELLS + cx] += 1
+	_check(blind == 0, "BLIND: the counter reads %d instances inside the great lake" % blind)
+	_check(all.size() > 0, "there is ground decor to count at all (%d instances)" % all.size())
+	var empty: int = 0
+	var line: String = ""
+	for cz in COVER_CELLS:
+		for cx in COVER_CELLS:
+			var n: int = grid[cz * COVER_CELLS + cx]
+			line += "%5d" % n
+			if n == 0:
+				empty += 1
+		line += " |"
+	print("     %d x %d cell counts: %s" % [COVER_CELLS, COVER_CELLS, line])
+	print("     %d instances on the domain (%.4f per u2)"
+		% [on_domain, float(on_domain) / 840.0])
+	_check(on_domain >= COVER_FLOOR,
+		"the domain carries %d instances (floor %d; it carried 21 with the old bound)"
+		% [on_domain, COVER_FLOOR])
+	_check(empty == 0, "%d of the %d cells of the domain are EMPTY"
+		% [empty, COVER_CELLS * COVER_CELLS])
+	# The bound is the region's, not a second spelling of -63.
+	_check(is_equal_approx(CozyScatter.COVER_MIN.x, HubRegion.MOUNTAIN_MIN.x),
+		"COVER_MIN.x %.1f is the region's own MOUNTAIN_MIN.x %.1f"
+		% [CozyScatter.COVER_MIN.x, HubRegion.MOUNTAIN_MIN.x])
+
+## How far an instance may sit off the surface under it. A MultiMesh
+## transform is float32 and the grid is float32, so this is rounding and
+## nothing else.
+const GROUND_TOL: float = 1.0e-3
+
+## PHASE I -- nothing floats, nothing is buried, and the lift is a no-op
+## everywhere else.
+##
+## Both halves matter. The first is CH35-C's constraint on this lot: a
+## prop planted at a supposed y on a 4.5 u hill is either hanging in the
+## air or sunk in it, and neither reads as an object standing on ground.
+## The second is the proof that taking HubSurface.ground() inside
+## _sprinkle changed NOTHING off the domain -- height_at is 0 there by
+## contract, and this walks every instance in the hub to say so rather
+## than quoting the contract.
+func _phase_i() -> void:
+	print("-- PHASE I: every instance stands ON the surface under it --")
+	var all: Array = _decor_instances()
+	var worst_on: float = 0.0
+	var worst_off: float = 0.0
+	var where: String = ""
+	var n_on: int = 0
+	for e in all:
+		var p: Vector3 = e["origin"]
+		if _in_domain(p):
+			n_on += 1
+			var d: float = absf(p.y - HubSurface.height_at(p))
+			if d > worst_on:
+				worst_on = d
+				where = "%s[%d] at (%.2f, %.2f) y %.4f vs surface %.4f" \
+					% [e["node"], e["index"], p.x, p.z, p.y, HubSurface.height_at(p)]
+		else:
+			worst_off = maxf(worst_off, absf(p.y))
+	_check(n_on > 0, "there are instances on the domain to check (%d)" % n_on)
+	_check(worst_on <= GROUND_TOL,
+		"worst gap to the surface on the domain %.6f u (tolerance %.6f)%s"
+		% [worst_on, GROUND_TOL, "" if where == "" else " -- worst: " + where])
+	_check(worst_off <= GROUND_TOL,
+		"off the domain every one of %d instances is still at y = 0 (worst %.6f)"
+		% [all.size() - n_on, worst_off])
+	# AND NO BLOB SHADOW ON THE RELIEF. _blob_shadows draws FLAT horizontal
+	# quads at a fixed y; there is no correct height for one on a 28 deg
+	# slope, so CozyScatter refuses to emit any on a domain rather than
+	# emitting a wrong one. Counted here because the shadow batch is not a
+	# decor batch and every count above skips it.
+	var blobs: MultiMeshInstance3D = _scatter.get_node_or_null("BlobShadows") as MultiMeshInstance3D
+	var on_relief: int = 0
+	var blob_total: int = 0
+	if blobs != null and blobs.multimesh != null:
+		blob_total = blobs.multimesh.instance_count
+		for i in blob_total:
+			if _in_domain(blobs.multimesh.get_instance_transform(i).origin):
+				on_relief += 1
+	_check(blob_total > 0, "there are blob shadows at all (%d) -- a 0 would pass the next line for free" % blob_total)
+	_check(on_relief == 0, "%d of the %d blob shadows stand on the relief" % [on_relief, blob_total])
+	# BLIND: the gap test must be able to SAY NO. One instance is lifted by
+	# half a unit in the LIVE MultiMesh, re-read through the same accessor,
+	# and put back -- an assertion that has never been seen to fail is not
+	# an assertion. Restored and re-read rather than assumed restored.
+	var victim: MultiMeshInstance3D = null
+	var v_index: int = -1
+	for child in _scatter.get_children():
+		var mmi := child as MultiMeshInstance3D
+		if mmi == null or mmi.multimesh == null:
+			continue
+		if not (String(mmi.name) in (_scatter.call("batch_nodes") as Array)):
+			continue
+		for i in mmi.multimesh.instance_count:
+			if _in_domain(mmi.multimesh.get_instance_transform(i).origin):
+				victim = mmi
+				v_index = i
+				break
+		if victim != null:
+			break
+	if victim == null:
+		_check(false, "BLIND: no instance on the domain to lift")
+		return
+	var kept: Transform3D = victim.multimesh.get_instance_transform(v_index)
+	var lifted := kept
+	lifted.origin.y += 0.5
+	victim.multimesh.set_instance_transform(v_index, lifted)
+	var seen: Vector3 = victim.multimesh.get_instance_transform(v_index).origin
+	var flagged: bool = absf(seen.y - HubSurface.height_at(seen)) > GROUND_TOL
+	victim.multimesh.set_instance_transform(v_index, kept)
+	var back: Vector3 = victim.multimesh.get_instance_transform(v_index).origin
+	_check(flagged, "BLIND: a 0.5 u lift on %s[%d] IS caught by the same test"
+		% [victim.name, v_index])
+	_check(back.distance_to(kept.origin) < 1.0e-6,
+		"BLIND: and the instance is back where it was (%.9f u)" % back.distance_to(kept.origin))
 
 ## PHASE F -- the worst crossing, WALKED.
 ##
