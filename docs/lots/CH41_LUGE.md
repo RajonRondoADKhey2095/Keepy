@@ -122,6 +122,15 @@ le même partage que le gîte du char à voile. Lisser dans `HubSurface` aurait
 détruit son contrat (« les pieds se posent sur le triangle que le joueur
 voit »).
 
+Mesuré : marche pire cas entre facettes voisines **11,168°** ; à l'arrêt le
+châssis EST la normale à **0,000000°** près ; en descente à **13,533 u/s**
+sur un sol incliné à **19,810°**, il reste **3,881° derrière** — soit un
+tiers d'une marche de facette. La sonde gate contre **la marche mesurée sur
+le relief**, jamais contre une tolérance choisie : la première version
+utilisait 0,5° fixe, et une passe rouge qui ne changeait que la VITESSE du
+véhicule l'a promenée à 1,67 — une tolérance qui bouge avec ce qu'elle ne
+mesure pas.
+
 ## CH41-4 — Le mesh : procédural, 60 triangles, et l'inventaire d'abord
 
 **Aucun asset n'a été généré, supprimé, renommé ni dédupliqué.** Inventaire
@@ -168,8 +177,21 @@ relire la même frame, **contre le tremblement propre du compteur**.
 | lecture | valeur |
 |---|---|
 | triangles du mesh | **60** |
-| pire ajout mesuré, 8 stations × 2 caméras | voir `SledProbe` PHASE I |
+| ajout mesuré aux **11 stations sur 16 où le compteur est immobile** | **exactement +60** quand elle est au cadre, **0** hors cadre |
+| pire delta brut, station bruyante | +640 à (−44,8 ; −1,2) caméra haute, **tremblement propre 340** |
 | marge publiée par CH40 | 125 triangles |
+
+⚠️ **ET LA MOITIÉ MANQUANTE DE LA DOCTRINE CH40 EST ICI.** « Un delta sans
+son plancher de bruit ne vaut rien » — et **un delta SOUS son plancher n'en
+vaut pas plus**. Ce hub dérive de quelques centaines de primitives entre
+deux frames intouchées (papillons, précipitations, critters) : une balance
+aussi bruyante ne peut pas peser 60 triangles, et le +640 de la station la
+plus bruyante est presque entièrement sa propre dérive. Le coût se lit donc
+**là où l'instrument est immobile**, le gate est **par station** contre le
+tremblement **de cette station**, et les cinq stations bruyantes sont
+**imprimées et laissées hors du gate**, avec la raison écrite dans la sonde.
+Un gate global (pire delta contre pire tremblement) aurait été soit gratuit,
+soit faux — il l'a été : il a d'abord échoué à 640 contre 60.
 
 **Aucune révision de budget n'est demandée**, et c'est une conclusion, pas
 un contournement : 60 ≤ 125, donc la luge tiendrait dans la marge de CH40
@@ -201,9 +223,16 @@ descente, le sol derrière est **plus haut** que celui sous elle : le
 dégagement vaut `DRIVE_UP` moins la montée sur 7,6 u, et sur un flanc à
 27,8° cette montée fait **4,01 u contre un `DRIVE_UP` de 4,40**.
 
-`SledProbe` PHASE J balaie tout le réseau du domaine × 8 caps
-(> 5 000 paires) et publie le pire dégagement, avec un blind check : le même
-balayage 4 u plus bas **doit** trouver du sol.
+`SledProbe` PHASE J balaie tout le réseau du domaine × 8 caps —
+**7 192 paires** — et publie le pire dégagement : **1,0243 u**, à
+(−49,0 ; −8,0) cap 180°. Blind check : le même balayage 4 u plus bas trouve
+bien du sol (**−2,9757 u**), donc le balayage sait échouer.
+
+**La marge est réelle mais mince, et c'est une conclusion utilisable** : à
+0,39 u près sur le papier, elle vaut 1,02 u mesurée parce que la pente
+maximale n'est pas soutenue sur 7,6 u entiers. Tout relief futur plus raide
+ou plus long **doit rejouer cette phase** — c'est `DRIVE_UP` qui plafonne,
+pas la géométrie du terrain.
 
 ## CH41-7 — Ce que ce lot laisse ouvert
 
