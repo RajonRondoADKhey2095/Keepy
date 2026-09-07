@@ -620,6 +620,54 @@ static func zone_of(point: Vector3) -> int:
 		return 1
 	return 0
 
+## CH46 -- THE AXIS-ALIGNED BOX THAT CONTAINS EVERY POINT contains()
+## ADMITS, on the ground plane, in world units.
+##
+## The minimap needs a frame, and CH44 axe 2 established that no such
+## constant existed anywhere in the repo: the extent had to be SWEPT
+## (0.5 u, 270 000 samples) to be known at all, and a sweep is not
+## something a widget can do at _ready(). This is the same answer in
+## closed form -- the SAME thirteen union terms as contains(), written in
+## the same order, and nothing else.
+##
+## ⚠️ IT IS A SECOND SPELLING OF contains(), AND THAT IS THE RISK IT
+## CARRIES: a term added there and forgotten here is a box that clips its
+## own region, silently, with no error. MinimapProbe gates it by sweeping
+## contains() at 0.5 u and asserting the box is tight on all four sides
+## -- tight, not merely containing, because a box that is only containing
+## passes gratis if a term is dropped.
+##
+## The three holes are deliberately absent: a hole removes interior
+## points, it can never move an outer edge.
+static func walkable_bounds() -> Rect2:
+	var terms: Array[Rect2] = [
+		_span(AUTUMN_MIN, AUTUMN_MAX),
+		_span(CORRIDOR_MIN, CORRIDOR_MAX),
+		_span(MOOR_MIN, MOOR_MAX),
+		_span(MOOR_CORRIDOR_MIN, MOOR_CORRIDOR_MAX),
+		_span(CIRCUIT_MIN, CIRCUIT_MAX),
+		_span(CIRCUIT_CORRIDOR_MIN, CIRCUIT_CORRIDOR_MAX),
+		_span(COVE_MIN, COVE_MAX),
+		_span(COVE_CORRIDOR_MIN, COVE_CORRIDOR_MAX),
+		_span(Vector2(-PLATEAU_HALF_EXTENT, -PLATEAU_HALF_EXTENT),
+			Vector2(PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT)),
+		_span(MOUNTAIN_MIN, MOUNTAIN_MAX),
+		_disc_span(_north_lobe, NORTH_LOBE_RADIUS),
+		_disc_span(_near_bank, SHORE_PAD_RADIUS),
+	]
+	for lobe in _structure_lobes:
+		terms.append(_disc_span(lobe["centre"] as Vector3, float(lobe["radius"])))
+	var out: Rect2 = terms[0]
+	for i in range(1, terms.size()):
+		out = out.merge(terms[i])
+	return out
+
+static func _span(lo: Vector2, hi: Vector2) -> Rect2:
+	return Rect2(lo, hi - lo)
+
+static func _disc_span(centre: Vector3, radius: float) -> Rect2:
+	return Rect2(centre.x - radius, centre.z - radius, 2.0 * radius, 2.0 * radius)
+
 static func in_hole(point: Vector3) -> bool:
 	var flat := _flat(point)
 	for hole in _holes:
