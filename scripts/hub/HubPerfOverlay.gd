@@ -233,6 +233,9 @@ func _format(d: Dictionary) -> String:
 	# LOD0 = this script's frustum replay at full detail; scene = everything.
 	lines.append("TRI gpu %s   lod0 cadre %s   scene %s" % [_thousands(int(d.get("engine_prims", 0))), _thousands(int(d.get("tris_frame", 0))), _thousands(int(d.get("tris_scene", 0)))])
 	lines.append("DRAW calls %d  obj %d   cadre %d/%d  inst %s" % [int(d.get("engine_calls", 0)), int(d.get("engine_objects", 0)), int(d.get("nodes_frame", 0)), int(d.get("nodes_scene", 0)), _thousands(int(d.get("instances_frame", 0)))])
+	# CH45: TOTAL = every viewport, 3D "TRI gpu" above included -- the only
+	# line any 2D layer (HUD, overlay, a future minimap) shows up in at all.
+	lines.append("TOTAL tri %s  calls %d" % [_thousands(int(d.get("engine_total_prims", 0))), int(d.get("engine_total_calls", 0))])
 	lines.append("METEO %s" % str(d.get("weather", "?")))
 	if _keepy != null:
 		var at: Vector3 = _keepy.global_position
