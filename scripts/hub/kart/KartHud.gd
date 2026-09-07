@@ -39,6 +39,8 @@ var _ghost_active: bool = false
 ## CH31 -- the accelerator gauge. Written every frame while driving, so it
 ## is drawn whether or not a finger is on the screen.
 var _boost: float = 0.0
+## CH43: the down half of the same axis, for the ghost's cool marker.
+var _reverse: float = 0.0
 var _speed: float = 0.0
 var _speed_max: float = 1.0
 var _gauge_live: bool = false
@@ -149,8 +151,13 @@ func _ready() -> void:
 	add_child(_exit_button)
 	# V7b: the hint for the new accelerator (retour 1) -- always shown,
 	# unlike the preset row below, since every player gets the boost.
+	#
+	# CH43: it names BOTH ends of the axis now. CH31's whole diagnosis was
+	# that a command nobody is told about is a command that does not exist
+	# -- and the gear is the half a player has no reason to guess at, since
+	# an accelerator that also reverses is not what a pedal does.
 	var hint := _label(box, 16, Color(0.85, 0.80, 0.68))
-	hint.text = "↑  pousser le pouce pour foncer"
+	hint.text = "↑  pousser pour foncer      ↓  tirer pour reculer"
 	set_times(0, 0, 0, 0, false)
 	_build_race_widgets()
 	if DevTools.enabled():
@@ -494,7 +501,11 @@ func flash_record() -> void:
 ## CH31 -- what the drive is DOING, for the accelerator gauge: the live
 ## boost 0..1, the speed, and the speed at full boost. Called every frame
 ## by HubKarting while the player is in the kart.
-func set_drive_readout(boost: float, speed: float, speed_max: float) -> void:
+## CH43: `reverse` defaults to 0, so a caller that predates the axis draws
+## exactly the ghost it always drew.
+func set_drive_readout(boost: float, speed: float, speed_max: float,
+		reverse: float = 0.0) -> void:
+	_reverse = clampf(reverse, 0.0, 1.0)
 	_boost = clampf(boost, 0.0, 1.0)
 	_speed = speed
 	_speed_max = maxf(speed_max, 0.01)
@@ -538,20 +549,40 @@ func _draw() -> void:
 	draw_line(a + Vector2(-span, 0.0), a + Vector2(span, 0.0), Color(1.0, 1.0, 1.0, 0.22), 6.0)
 	draw_circle(a, 22.0, Color(1.0, 1.0, 1.0, 0.25))
 	draw_circle(a + Vector2(dx, 0.0), 30.0, Color(1.0, 0.95, 0.80, 0.55))
-	# V7b accelerator: the vertical half of the SAME drag, drawn so the
-	# push is discoverable at the thumb as well as at the gauge.
+	# V7b accelerator, CH43 axis: the vertical half of the SAME drag, drawn
+	# so both ends of it are discoverable at the thumb as well as at the
+	# gauge. The track now runs THROUGH the anchor -- up is pace, down is
+	# the gear -- because a track that stopped at the anchor was drawing the
+	# scheme CH42 shipped and not the one CH43 does.
 	var boost_span: float = _touch_boost_span()
-	var dy: float = clampf(a.y - _ghost_finger.y, 0.0, boost_span)
-	draw_line(a, a + Vector2(0.0, -boost_span), Color(1.0, 1.0, 1.0, 0.14), 6.0)
-	draw_circle(a + Vector2(0.0, -dy), 24.0, Color(1.0, 0.55, 0.20, 0.22 + 0.5 * _boost))
-	# An arrow head at the top of the push track: it points where the thumb
-	# has to go, and it is the only part of this that is a HINT rather than
-	# a readout. It fades out as the push arrives, so it stops nagging.
-	var tip: Vector2 = a + Vector2(0.0, -boost_span)
-	var hint_a: float = 0.42 * (1.0 - _boost)
-	if hint_a > 0.01:
-		draw_colored_polygon(PackedVector2Array([tip + Vector2(0.0, -14.0), tip + Vector2(-13.0, 8.0), tip + Vector2(13.0, 8.0)]),
-			Color(1.0, 0.72, 0.30, hint_a))
+	var dy: float = clampf(a.y - _ghost_finger.y, -boost_span, boost_span)
+	draw_line(a + Vector2(0.0, boost_span), a + Vector2(0.0, -boost_span),
+		Color(1.0, 1.0, 1.0, 0.14), 6.0)
+	# The marker takes the colour of the half it is in: warm for pace, cool
+	# for the gear. `_reverse` and `_boost` are exclusive at the writer
+	# (KartTouchInput._apply_axis), so this reads one of them, never a mix.
+	var warm: bool = dy >= 0.0
+	var lit: float = _boost if warm else _reverse
+	var tint := Color(1.0, 0.55, 0.20, 0.22 + 0.5 * lit) if warm else Color(0.45, 0.72, 1.0, 0.22 + 0.5 * lit)
+	draw_circle(a + Vector2(0.0, -dy), 24.0, tint)
+	# An arrow head at each end of the track: it points where the thumb has
+	# to go, and it is the only part of this that is a HINT rather than a
+	# readout. Each fades out as its own half arrives, so it stops nagging.
+	_draw_axis_arrow(a + Vector2(0.0, -boost_span), -1.0, 0.42 * (1.0 - _boost),
+		Color(1.0, 0.72, 0.30))
+	_draw_axis_arrow(a + Vector2(0.0, boost_span), 1.0, 0.42 * (1.0 - _reverse),
+		Color(0.62, 0.82, 1.0))
+
+## One end of the push track. `dir` is -1 up / +1 down, so the head points
+## away from the anchor on both halves without a second spelling of it.
+func _draw_axis_arrow(tip: Vector2, dir: float, alpha: float, rgb: Color) -> void:
+	if alpha <= 0.01:
+		return
+	draw_colored_polygon(PackedVector2Array([
+		tip + Vector2(0.0, 14.0 * dir),
+		tip + Vector2(-13.0, -8.0 * dir),
+		tip + Vector2(13.0, -8.0 * dir)]),
+		Color(rgb.r, rgb.g, rgb.b, alpha))
 
 ## The push span of the KART's touch input. Read through the instance the
 ## HUD is actually serving rather than the class constant: the yacht keeps

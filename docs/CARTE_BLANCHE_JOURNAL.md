@@ -2130,3 +2130,60 @@ lot opère. `SledProbe` ALL GREEN 0 red sous xvfb+opengl3, `SailBoatProbe`
 ⚠️ **Dette explicite** : le second doigt écrit désormais `reverse`, et **rien
 ne l'annonce** — ni HUD, ni jauge, ni ligne d'aide. C'est le défaut CH31 de
 l'accélérateur qui se rejoue, et il est hors brief ici.
+
+## CH43 — UN SEUL GESTE : LA MARCHE ARRIÈRE REJOINT L'AXE DE L'ACCÉLÉRATEUR (7 sept 2026)
+
+Mathieu a essayé le deuxième doigt de CH42 sur iPhone et l'a refusé : un
+second doigt est une chose à **apprendre**, et rien d'autre dans ce jeu n'en
+demande un. Sa décision — un seul axe, haut = avancer, bas = reculer, et la
+marche arrière **uniquement depuis l'arrêt** — n'a pas été rediscutée.
+
+**Ce que le lot a coûté est étroit, et c'est le résultat.** Le geste vit dans
+un seul fichier : `KartTouchInput.gd` est le seul écrivain tactile du dépôt et
+il n'en existe que deux instances. Les quatre véhicules ont reçu le nouveau
+geste sans une ligne de leur côté, et `VehicleDrive.gd` n'a eu **aucun
+changement de comportement** — seulement un nom, `REVERSE_ENGAGE_SPEED`, posé
+sur le `0.3` que CH42 avait laissé en littéral dans ses deux branches d'entrée.
+
+**Deux champs plutôt qu'un `throttle` signé**, et c'est un choix de rayon
+d'explosion et non d'élégance : `throttle` est écrit par le pouce, par
+`KartAiDriver`, par `KartLineInput` et par chaque `set_all` de sonde. Le geste
+est une propriété d'un pouce ; `throttle` est un contrat entre trois écrivains
+et un corps.
+
+**Le seuil a été mesuré sur le véhicule, jamais relu dans la constante.**
+Trente lancements par véhicule, chaque frame classée par l'arithmétique que la
+branche a réellement produite : encadrement des quatre **(0,298670 ;
+0,303540]**, large de 0,004870. La constante n'est ouverte qu'à la fin, pour
+demander si l'encadrement la contient — et la passe rouge le justifie : branche
+gatée à 0,9 avec la constante lisant toujours 0,3, l'encadrement **mesuré s'est
+déplacé à 0,9**.
+
+**Et une leçon qui vaut au-delà de ce lot.** La passe rouge qui supprime
+entièrement le garde-fou laisse l'assertion « aucune vitesse négative avant
+l'arrêt » **VERTE** : sans garde-fou le véhicule ne passe toujours pas négatif
+avant la bande, il décélère simplement à la rampe au lieu du frein. Un test de
+SIGNE ne peut pas voir quelle BRANCHE a tourné. Ce qui l'a attrapé est la
+classification par arithmétique, sur les quatre véhicules — et c'est la
+doctrine que `CLAUDE.md` a reçue.
+
+**Seizième faux-signal, et il était dans la sonde.** La dernière assertion
+souris relisait un `reverse` que la vérification du bouton droit avait laissé à
+1,0 : elle relisait l'assertion précédente, et elle passait verte contre
+l'écrivain de CH42 restauré verbatim. Trouvée par la passe rouge, pas par
+relecture.
+
+**Une prémisse est tombée en cours de route, comme presque à chaque lot** : la
+luge lue à `SLED_PARK` rendait une rampe de 14,4159 contre les 13,0000
+publiées. Ce n'était pas un défaut — `SurfaceDrive` injecte la pente **après**
+`VehicleDrive`, et `SLED_PARK` est au milieu de la crête. C'était la mauvaise
+question pour une phase portant sur la branche partagée. Les trois phases
+physiques conduisent donc la luge à plat, avec la station plate **gatée contre**
+la station en pente et l'obligation qu'elles diffèrent, pour que PHASE SLOPE de
+CH42 ne devienne pas une tautologie.
+
+**Aucune trace CH42 ne diverge** — là où CH42 avait dû expliquer 2 lignes sur
+le voilier, CH43 n'a rien à expliquer. Et la dette que CH42 laissait ouverte
+(« le second doigt écrit `reverse` et rien ne l'annonce ») est refermée : le
+rail de poussée passe désormais à travers l'ancre, avec une flèche à chaque
+bout et une ligne d'aide qui nomme les deux directions.
