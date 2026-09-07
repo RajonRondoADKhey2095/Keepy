@@ -303,7 +303,7 @@ func _phase_save() -> void:
 	_check("v1 stats kept", a.stats().get("climbs", 0) == 3 and a.stats().get("kart_laps", 0) == 2)
 	_check("v1 kart best kept", a.kart_best_ms("circuit") == 41000)
 	_check("v1 reserved fields kept", a.next_id() == 7 and a.placed().size() == 1)
-	_check("v1 has an empty cove", a.cove_castles().is_empty() and a.cove_yacht() == Vector3.INF and not a.cove_visited())
+	_check("v1 has an empty cove", a.cove_castles().is_empty() and not a.cove_visited())
 	a.save_now()
 	var b := _fresh()
 	b.SAVE_PATH_OVERRIDE = path
@@ -312,7 +312,6 @@ func _phase_save() -> void:
 	# Positive: the cove block round-trips.
 	b.cove_set_castle(1, 2)
 	b.cove_set_castle(2, 3)
-	b.cove_set_yacht(Vector3(48.25, 0.0, -112.5))
 	b.cove_note_visit()
 	b.cove_note_visit()
 	b.save_now()
@@ -320,10 +319,23 @@ func _phase_save() -> void:
 	c.SAVE_PATH_OVERRIDE = path
 	c._load()
 	_check("castles round-trip", c.cove_castle_stage(1) == 2 and c.cove_castle_stage(2) == 3 and c.cove_castle_stage(0) == 0, str(c.cove_castles()))
-	_check("yacht round-trips", c.cove_yacht().distance_to(Vector3(48.25, 0.0, -112.5)) < 0.02, str(c.cove_yacht()))
 	_check("visit round-trips, counted once", c.cove_visited() and c.stats().get("cove_visits", 0) == 1, str(c.stats()))
 	c.cove_set_castle(2, 0)
 	_check("stage 0 erases the entry", not c.cove_castles().has("2"))
+	# CH45: a save written before this lot carries a "cove.yacht" position
+	# (schema 2, never bumped for this removal). Loading it must not choke,
+	# and yacht_rides -- a STAT, not a position -- must survive untouched
+	# beside the now-orphan key.
+	f = FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(JSON.stringify({"schema": 2, "resources": {"acorn": 4},
+		"stats": {"yacht_rides": 7}, "cove": {"yacht": [48.25, -112.5], "castles": {"1": 2}, "visited": true}}))
+	f.close()
+	var g := _fresh()
+	g.SAVE_PATH_OVERRIDE = path
+	g._load()
+	_check("CH45: a schema-2 save carrying orphan cove.yacht still loads", g.boot_status == "loaded" and g.resource(&"acorn") == 4, g.boot_status)
+	_check("CH45: yacht_rides (a stat) survives the orphan cove.yacht key", g.stats().get("yacht_rides", 0) == 7, str(g.stats()))
+	_check("CH45: castles and visited beside the orphan key still round-trip", g.cove_castle_stage(1) == 2 and g.cove_visited())
 	# Malformed cove pieces are dropped, never the document.
 	f = FileAccess.open(path, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"schema": 2, "resources": {"acorn": 9},
@@ -333,7 +345,6 @@ func _phase_save() -> void:
 	d.SAVE_PATH_OVERRIDE = path
 	d._load()
 	_check("malformed cove: document still loads", d.boot_status == "loaded" and d.resource(&"acorn") == 9, d.boot_status)
-	_check("malformed cove: bad yacht dropped", d.cove_yacht() == Vector3.INF)
 	_check("malformed cove: only valid castles kept", d.cove_castle_stage(1) == 2 and d.cove_castle_stage(2) == 0 and d.cove_castle_stage(0) == 3 and d.cove_castles().size() == 2, str(d.cove_castles()))
 	_check("malformed cove: non-bool visited reads false", not d.cove_visited())
 	f = FileAccess.open(path, FileAccess.WRITE)
@@ -691,14 +702,9 @@ func _phase_yacht() -> void:
 		touch.steering_active = false
 	_check("driving at the circuit for 21 s never enters it", inside == 0, "%d frames inside, closest approach %.2f u" % [inside, closest])
 	_check("(blind) the run really reached the mouth", closest < 1.5, "%.2f u" % closest)
-	# A save written before CH30 can hold a yacht ON the grid.
-	WorldSave.cove_set_yacht(_karting_grid_point())
-	var t_poison := HubTransport.new()
-	add_child(t_poison)
-	await _frames(1)
-	_check("a yacht saved on the karting grid comes back to its park",
-		t_poison.yacht_position().distance_to(park) < 0.01, str(t_poison.yacht_position()))
-	t_poison.queue_free()
+	# CH45: there is no more save to poison -- the drivable guard this block
+	# used to exercise (a save holding a yacht ON the grid) was removed with
+	# the persistence it defended against, not adapted.
 	# ---- the exit.
 	_transport.yacht().place(Vector3(56.0, 0.0, -110.0), 0.0)
 	_keepy.call("follow_carrier")
@@ -719,16 +725,18 @@ func _phase_yacht() -> void:
 		not _transport.touch.enabled and not _camera.is_driving() and not _hud.visible and not _hud.vehicle_mode())
 	_check("the world HUD came back", _hub._world_hud.visible)
 	_check("the yacht stays where he stepped off", _transport.yacht_position().distance_to(left_at) < 0.01)
-	_check("saved: the yacht's place", WorldSave.cove_yacht().distance_to(left_at) < 0.02, str(WorldSave.cove_yacht()))
 	_check("it accepts a tap again", _transport.vehicle_at(left_at) == HubTransport.VEHICLE_YACHT)
 	# Not re-parked by the off-screen rule.
 	_put_keepy(Vector3(0.0, 0.0, 0.0))
 	await _frames(120)
 	_check("the yacht is not re-parked when abandoned", _transport.yacht_position().distance_to(left_at) < 0.01, str(_transport.yacht_position()))
+	# CH45: no longer where it was left -- a fresh transport (a reload)
+	# always resets the yacht to its park, regardless of where it stood.
 	var t2 := HubTransport.new()
 	add_child(t2)
 	await _frames(1)
-	_check("a fresh transport puts the yacht where it was left", t2.yacht_position().distance_to(left_at) < 0.02 and left_at.distance_to(park) > 5.0, str(t2.yacht_position()))
+	_check("CH45: a fresh transport always resets the yacht to its park",
+		t2.yacht_position().distance_to(park) < 0.01 and left_at.distance_to(park) > 5.0, str(t2.yacht_position()))
 	t2.queue_free()
 	# Ball and yacht are exclusive: on the ball, a walk to the yacht drops
 	# the ball and takes the yacht.
@@ -749,7 +757,6 @@ func _phase_yacht() -> void:
 	await _settle(200)
 	_check("off again", not _transport.is_driving_yacht())
 	ball.global_position = HubTransport.BALL_PARK
-	WorldSave.cove_set_yacht(park)
 	_transport.yacht().place(park, PI / 2.0)
 
 ## The centre of the karting grid, read off the track rather than typed.
@@ -894,4 +901,3 @@ func _phase_times() -> void:
 	await _settle(200)
 	_keepy.dismount_vehicle()
 	_transport.yacht().place(HubTransport.YACHT_PARK, PI / 2.0)
-	WorldSave.cove_set_yacht(HubTransport.YACHT_PARK)
