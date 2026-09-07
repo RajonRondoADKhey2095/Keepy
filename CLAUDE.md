@@ -882,6 +882,49 @@ ressort de la passe transparente » — contre un mécanisme qui n'avait jamais
 optionnel.** Ordonner les phases en conséquence : le POSITIF d'abord, les
 refus ensuite.
 
+### ⚠️ UN DELTA « AVEC / SANS » NE VAUT RIEN SANS LE PLANCHER DE BRUIT DU BANC
+
+Onzième faux-vert du dépôt (CH40), et c'est le **complément exact** du blind
+check : celui-là ferme les assertions d'ÉGALITÉ et d'ABSENCE, celui-ci ferme
+les assertions de PRÉSENCE mesurées par une DIFFÉRENCE.
+
+La forme est partout dans ce dépôt : « cacher l'objet, relire la MÊME frame,
+la différence est son coût ». Mesuré : avec la passe qui plante les props
+neutralisée, la liste des nœuds à cacher était **VIDE**, donc l'étape
+« cacher » ne cachait **rien** — et le compteur bougeait quand même de
+**+64 primitives** entre deux lectures. L'assertion « l'objet coûte quelque
+chose (un 0 voudrait dire qu'il n'a jamais été dessiné) » est donc revenue
+**VERTE sur une colline nue**. Le compteur n'était pas faux ; il n'était
+simplement **branché sur rien**.
+
+Deux gardes, et il faut les deux :
+
+1. **Asserter qu'il y a quelque chose à éteindre** — `nodes.size() > 0` — au
+   même titre qu'on asserte qu'un compteur est rempli.
+2. **Publier le plancher de bruit du banc** : deux lectures de plus au même
+   poste, **rien touché**, et exiger que le delta le dépasse. Mesuré ici
+   jusqu'à **140 primitives** d'écart à la caméra haute contre un signal de
+   1 854 — sans ce chiffre, aucun delta inférieur à 140 n'est un résultat.
+
+C'est la même exigence que « publier le SPREAD à côté de la moyenne » pour
+un banc de coût de shader, et pour la même raison : **le plancher de bruit
+est la seule chose qui dise si un écart est un effet ou un artefact.**
+
+### ⚠️ UNE LISTE DE CE QUI N'EST PAS LE SUJET EST FAUSSE AU PREMIER NOM OUBLIÉ
+
+Corollaire de « un fait est publié une fois, jamais recopié », côté LECTEUR.
+Une sonde qui devait compter le décor au sol a d'abord listé les nœuds qui
+**ne sont pas** du décor pour compter tous les autres. Elle disait
+`"Butterflies"` ; le nœud s'appelle `"Butterflies1"`. Un essaim volant à
+1,06 u au-dessus de la colline a donc été compté comme du décor **enterré**,
+et la sonde est sortie rouge sur du code correct.
+
+**Le producteur publie ce qu'il a construit ; le lecteur ne le reconnaît
+jamais.** Ici `CozyScatter.batch_nodes()` rend la liste que `_flush` a
+réellement bâtie. Une liste d'exclusion est un pari sur l'exhaustivité d'un
+inventaire fait ailleurs, et elle a tort le jour où quelqu'un ajoute le
+douzième nœud — silencieusement, et dans le sens qui invente une régression.
+
 ### ⚠️ UN FIXTURE QUI DIVERGE DU RÉEL SUR UN AXE NE PROTÈGE PAS DE CET AXE
 
 `SubstituteModel.tscn` imitait un modèle importé par sa STRUCTURE DE NŒUDS

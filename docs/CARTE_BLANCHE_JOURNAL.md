@@ -1929,3 +1929,69 @@ domaine commence à −35) et le sol unlit ne porte **aucun signal de pente**
 (Pearson r = +0,098 / −0,342 entre la pente et la luminance livrée) — le
 relief lit par silhouette et occultation, exactement comme CH35-C l'avait
 posé.
+
+## CH40 — La crête s'habille : conifères, pierre pâle, et un tapis aminci
+
+7 septembre 2026. Lot 2 partie B. CH39 avait laissé deux constats sans les
+corriger : la crête est **chauve**, et le sol unlit ne porte **aucun signal
+de pente**. Ce lot reprend les deux, et le second dicte la forme du premier.
+
+**L'étape 0 était un inventaire, et rien n'a été généré.** Le dépôt
+possédait déjà toute la montagne. Ce qui rend le thème distinct est
+mesurable, pas ressenti : le conifère est en vert-**bleu** (0,06 ; 0,24 ;
+**0,10**) là où l'arbre rond du plateau est en vert-**jaune** (0,07 ; 0,25 ;
+**0,04**) — même luminance, autre teinte, donc un autre bois. Et
+`palerock_0/1` est la **seule pierre du dépôt qui ne soit pas vert-mousse**.
+Le gain de 4,4 dont le cyprès a besoin est déjà dans `FAMILY_GAIN` et clé
+sur le nom de **mesh** : les nouveaux batches en héritent sans une ligne.
+
+**La borne était fausse de 26 u** : `COVER_MIN.x = −37` pour un domaine qui
+commence à −63, donc 2 u de recouvrement, **20 instances** sur 840 u² et
+**12 des 16 cases** d'une grille 4 × 4 vides. Deux corrections
+l'accompagnent, et ce sont elles qui la rendent juste : `_sprinkle` pose sur
+`HubSurface.ground(p)` **pris en dernier** — tous les tests au-dessus
+comparent des distances **3D** à des centres à y = 0, et lever `p` avant eux
+relâcherait silencieusement chaque garde — et `_shadow_at` n'émet **aucun
+blob sur un domaine**, parce qu'un quad horizontal plat sur une pente à 28°
+flotte de 0,27 u d'un côté et s'enterre d'autant de l'autre : il n'y a pas
+de bonne hauteur pour lui.
+
+**La composition n'est pas un semis.** Une pente unlit ne se lit que par
+silhouette et par des objets de taille connue, donc c'est le **layout** qui
+répond : une couronne de neuf sur un anneau de 5 u pour que le dôme se
+termine en ligne dentelée, un conifère sur l'épaule pour que la silhouette à
+deux sommets se lise comme deux, quatre flèches en bande médiane comme
+échelle de perspective, et **douze blocs pâles biaisés au nord** — le
+versant que CH38 avait lui-même désigné comme la lecture la plus faible.
+⚠️ La couronne a eu besoin de sa **propre** séparation : neuf pièces sur un
+anneau de 5 u sont à 3,42 u l'une de l'autre et la règle en réservait 4,2,
+donc l'anneau s'est refusé lui-même — 4 conifères sur 5, la ligne de crête
+avec un trou dedans.
+
+**La densité est publiée** : habillage 0,0571/u² = 0,75× le semis plateau
+hors herbe et 0,63× les props du vallon ; total du domaine 0,1643/u² = 0,37×
+le plateau, grâce à un tapis hérité amincí au quart. La seule ligne plus
+dense est l'arbre (1,19× le vallon), délibérément : il est la seule pièce
+qui fasse une silhouette.
+
+**Le budget a taillé la conception, pas l'inverse.** 44 043 primitives lues
+sur device à la crête + 6 000 = 50 043, la cible du hub à l'arrondi près.
+Mesuré : 5 875 triangles soumis, +1 854 pire cas mesuré, et un delta **net
+sur deux arbres** de +2 971 et +4 436 contre +5 721 et +7 984 si le tapis
+était resté à densité pleine.
+
+⚠️ **Et la passe rouge a trouvé un faux-vert dans la sonde elle-même — le
+onzième du dépôt.** Avec la passe d'habillage arrêtée, la liste des nœuds à
+cacher est **vide** : « les cacher et relire » ne cachait rien, et le
+compteur bougeait quand même de **+64** entre deux lectures. « The dressing
+costs something » est donc revenue **verte sur une colline nue**, ce qui est
+exactement la famille CH39 — une assertion de présence répondue par un
+instrument jamais branché sur son sujet. Fermé par un **plancher de bruit
+mesuré** (jusqu'à 140 primitives à la caméra haute) et par une assertion
+préalable qu'il y a des batches à cacher. La même passe rejouée rend alors
+7 rouges au lieu de 5. Un delta obtenu en éteignant quelque chose ne vaut
+rien tant que le banc n'a pas publié ce qu'il rend quand on n'éteint rien.
+
+`MountainProbe` : 11 phases, 78 assertions, ALL GREEN 0 red, sept passes
+rouge-avant-vert restaurées byte-identiques — et PHASE F restitue toujours
+la pire paire à 20,967 s et la diagonale livrée à 18,700 s, à la frame près.
