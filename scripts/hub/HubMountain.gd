@@ -201,9 +201,27 @@ static func build_mesh() -> ArrayMesh:
 		for c in cols:
 			verts[r * cols + c] = Vector3(origin.x + float(c) * pitch, grid[r * cols + c], z)
 
-	# (a, c, b) then (b, c, d): the b-c diagonal HubSurface._sample splits
-	# on, and the winding whose cross product points at +Y. Both halves are
-	# checked by MountainProbe rather than left to this comment.
+	# (a, b, c) then (b, d, c): the b-c diagonal HubSurface._sample splits
+	# on, in the winding GODOT calls front.
+	#
+	# ⚠️ CH39 SHIPPED THE OTHER ONE, AND THE WHOLE HILL WAS INVISIBLE.
+	# Godot takes CLOCKWISE-ON-SCREEN for the front face, and the ground
+	# shader is `cull_back`. A lattice triangle whose right-hand cross
+	# product points at +Y reads COUNTER-CLOCKWISE from any camera above
+	# it -- that is the BACK face, and every such triangle is discarded
+	# with no error of any kind. Measured at Mathieu's own two stations:
+	# with the shipped winding the ridge covered 14 pixels of a 1080x1920
+	# frame from a station standing on it; the same frame with the face
+	# test switched off covered 317 646. The only survivors were the
+	# triangles facing AWAY from the eye -- the far flank, showing through
+	# the invisible near one, which is the "clean dome" the ridge appeared
+	# to be from further off.
+	#
+	# So the right-hand normal of a walkable top surface here is -Y, and
+	# that is not a sign convention to tidy up: it is the engine's. The
+	# arithmetic normal is checked by MountainProbe PHASE C, and PHASE G
+	# checks the RENDER, because PHASE C is exactly the assertion that was
+	# green through all of this.
 	var indices := PackedInt32Array()
 	indices.resize((cols - 1) * (n_rows - 1) * 6)
 	var k: int = 0
@@ -214,11 +232,11 @@ static func build_mesh() -> ArrayMesh:
 			var cc: int = a + cols
 			var d: int = cc + 1
 			indices[k] = a
-			indices[k + 1] = cc
-			indices[k + 2] = b
+			indices[k + 1] = b
+			indices[k + 2] = cc
 			indices[k + 3] = b
-			indices[k + 4] = cc
-			indices[k + 5] = d
+			indices[k + 4] = d
+			indices[k + 5] = cc
 			k += 6
 
 	var arrays: Array = []

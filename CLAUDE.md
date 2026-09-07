@@ -629,6 +629,32 @@ pourquoi un shader finit par arriver sur toute surface d'eau — il devient
 invisible d'un coup, et le symptôme ne ressemble pas à un problème
 d'enroulement.
 
+⚠️ **ET LE CONTRÔLE « lire la normale et la comparer au côté attendu » NE
+SUFFIT PAS — le côté attendu se prend dans le MOTEUR, jamais dans les
+maths.** Payé au CH39, sur un terrain et pas un ruban. `MountainProbe`
+PHASE C vérifiait l'enroulement des **1 680** triangles de la crête ouest,
+sur chacun, avec le bon commentaire au-dessus (« Godot takes CLOCKWISE
+faces for FRONT faces ») — et le code exigeait `n.y > 0` pour
+`n = (b−a) × (c−a)`, c'est-à-dire la convention **MATHÉMATIQUE** du haut,
+qui est la **négation exacte** de la règle citée. Verte 1 680 fois sur 1 680
+sur une colline que Godot jetait entièrement.
+
+**Le produit vectoriel main droite d'une surface de SOL marchable vaut
+−Y dans ce moteur**, parce qu'une face avant est horaire vue de l'œil et
+que l'œil est au-dessus. Une assertion d'orientation ne se relit donc pas :
+elle se **rend**. Le contrôle qui tranche est `cull_back` contre
+`cull_disabled` sur le même cadre — **s'ils ne couvrent pas les mêmes
+pixels, le maillage est retourné** — et il n'a aucun seuil à régler, donc
+il vaut à toute station sur toute forme. Mesuré : 14 pixels contre
+317 646 depuis une station debout sur la colline.
+
+⚠️ **Le symptôme ne ressemble pas non plus à un enroulement, et il MENT
+DANS LE BON SENS** : les seuls triangles qui survivent sont ceux qui
+tournent le **DOS** à l'œil, c'est-à-dire le flanc lointain, vu **à travers**
+le flanc proche invisible. De trente unités ça se lit comme un dôme propre
+et ça valide la forme ; debout dessus, il n'y a plus rien. Une session qui
+n'a regardé que la vue de loin conclut que le relief marche.
+
 ### ⚠️ LE COMPTEUR DU MOTEUR NE COMPTE QUE L'OPAQUE, ET AU LOD QU'IL A CHOISI
 
 `RenderingServer.viewport_get_render_info(..., PRIMITIVES_IN_FRAME)` n'est
@@ -656,6 +682,27 @@ sont pas la même phrase, exactement comme pour le coût par fragment.
 Compatibility remplit ces compteurs sur GL de bureau ; rien ne garantit
 qu'il le fasse sous WebGL2. Un overlay qui masquerait un 0 laisserait
 croire à une frame gratuite.
+
+⚠️ **ET IL COMPTE CE QUI EST SOUMIS, PAS CE QUI EST DESSINÉ — un objet
+entièrement CULLÉ y pèse son plein tarif.** Le back-face culling est en
+aval de ce compteur. Au CH39, la crête ouest soumettait ses **1 680**
+triangles à chaque frame, en payait le coût, et n'en dessinait **aucun** :
+la ligne de sonde « and the ridge DOES cost something (a 0 would mean it
+never drew) » était **vraie** et signifiait **l'inverse** de ce qu'on y
+lisait. Un delta de primitives prouve donc qu'un objet est SOUMIS ; il ne
+prouve jamais qu'il est VISIBLE.
+
+⚠️ **Corollaire, et c'est la leçon du lot** : un objet **VISUEL** ne se gate
+pas sur de la géométrie et un compteur. Sept phases — containment,
+raccord C0, sommets, triangulation, pentes, ligne de vue, budget, traversée
+marchée — sont sorties ALL GREEN sur un relief invisible, chacune pour sa
+propre raison : celles qui raycastent lisent la **grille** (une requête ne
+sait rien du côté d'un triangle qui fait face à l'œil), celles qui comptent
+lisent le **soumis**. **Toute sonde d'un objet destiné à être VU doit lire
+au moins un PIXEL**, par une passe d'identification masquée (la cible dans
+une couleur que rien d'autre ne porte, `fog_disabled`, appartenance ssi la
+couleur revient exactement) — jamais une fenêtre, et jamais un seuil qu'il
+faudrait re-régler à chaque station.
 
 ### ⚠️ `visibility_range_end` FONCTIONNE en Compatibility — mais seulement en `DISABLED`
 
@@ -1798,6 +1845,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH27 | Karting — lot 1 (circuit, conduite libre, chrono) et **lot 2** (V8 : HUD conduite centré, trois adversaires IA à personnalités, course à feux, classement, collisions, piste à 10 u, chat/castor/faon à la masse de Keepy — récit dans `docs/CARTE_BLANCHE_JOURNAL.md`, section « V8 — KARTING LOT 2 ») | [`CH27_KARTING_LOT1.md`](docs/lots/CH27_KARTING_LOT1.md) | 8 | 170 | 5 sept |
 | CH29 | La Crique — cinquième zone à l'est de la Lande (couloir piéton, porte (41, −96)), mer, phare, châteaux de sable qui fondent sous la pluie, phare qui s'allume, ligne de montgolfière Corail plateau → Crique, **char à voile** (glisse libre au sol, vitesse au vent), `WorldSave` schéma 2 avec migration, graphe des zones en arbre, terrier + `ModelSlot` inerte pour un futur habitant | [`CH29_CRIQUE.md`](docs/lots/CH29_CRIQUE.md) | 1 | — | 5 → 6 sept |
 | CH30 | Conduite unifiée — la difficulté du karting **mesurée** avant d'être touchée (`RaceBalanceProbe` : la laisse est inerte, `a_lat` sature sur la limite de braquage, l'échelle est compressive), trois presets `KartDifficulty` calibrés sur un plancher mesuré et commutables derrière `?keepydev=1`, relevé dev des tours ; extraction de `VehicleDrive` prouvée **byte-identique** par `KartTraceProbe` sur les deux arbres ; **char à voile piloté en continu** avec la caméra de poursuite, garde circuit ; `ChaseAudit` (160 frames, 5 zones × 8 azimuts × 4 météos) et les deux défauts qu'il a trouvés | [`CH30_CONDUITE.md`](docs/lots/CH30_CONDUITE.md) | 5 | 431 | 6 sept |
+| CH39 | Le relief invisible — diagnostic avant correctif : les cinq hypothèses du brief tranchées une par une, puis la **cause prouvée à variable unique** (le treillis de la crête était enroulé à l'envers, `cull_back` jetait toute la colline, 14 pixels contre 317 646), le **dixième faux-vert** nommé sur cinq mécanismes empilés, et `MountainProbe` PHASE G — un gate de PIXELS sans seuil | [`CH39_RELIEF_DIAGNOSTIC.md`](docs/lots/CH39_RELIEF_DIAGNOSTIC.md) | 1 | 181 | 7 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 | CH37 | Socle multi-altitude, LOT 1 SURFACE — `HubSurface` publié (requête pure au patron `HubWater`), `ground(flat)` comme orthographe unique du point sol, grille float32 refusée sinon, raccord C0 exact au périmètre, AABB disjointes, aucune bande `CozyPalette` traversante ; six vagues branchées (marche, caméra, tap, retours au sol, pluie/ombre) et **zéro domaine enregistré en jeu**, donc un no-op arithmétique prouvé sur les deux arbres ; `SurfaceProbe` phases A → G avec blind check en tête de chaque phase | [`CH37_SURFACE.md`](docs/lots/CH37_SURFACE.md) | 1 | — | 7 sept |
 
