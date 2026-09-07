@@ -868,6 +868,68 @@ profil ignorait la ligne devient **faux** dès que le profil la regarde (un
 balancement de ligne était gratuit, il ne l'est plus), et il inverse la
 personnalité qu'il était censé porter.
 
+### ⚠️ UN TEST DE SIGNE NE VOIT PAS QUELLE BRANCHE A TOURNÉ
+
+Mesuré au CH43, sur la passe rouge d'un garde-fou. Le contrat était « un
+glissement vers le bas sur un véhicule lancé FREINE, il ne bascule pas en
+marche arrière », et l'assertion évidente — « aucune vitesse négative avant
+l'arrêt » — est restée **VERTE sur du code dont le garde-fou avait été
+entièrement supprimé**.
+
+La raison est arithmétique et elle se généralise : les deux branches
+descendaient toutes les deux, simplement à des taux différents (le frein à
+15,0 u/s², la rampe de marche arrière à 6,0). Un véhicule sans garde-fou ne
+passe **toujours pas** négatif avant d'avoir traversé la bande — il met
+seulement deux fois et demie plus longtemps. Le SIGNE de la valeur ne
+distingue donc rien du tout, et il n'y avait rien de faux dans la mesure : elle
+répondait à une autre question que celle posée.
+
+Ce qui l'a attrapé : prédire, pour chaque frame, ce que **chacune** des deux
+branches aurait produit à partir de la vitesse d'entrée, et exiger que la
+sortie corresponde à l'une d'elles à 1e-4 près — donc classer la frame par
+l'ARITHMÉTIQUE et non par le résultat. Le même instrument encadre alors le
+seuil gratuitement (la dernière frame d'une branche et la première de l'autre),
+ce qui est comment CH43 a mesuré `REVERSE_ENGAGE_SPEED` sur le véhicule au lieu
+de le relire dans la constante — et la passe rouge le prouve : branche gatée à
+0,9 avec la constante lisant toujours 0,3, l'encadrement mesuré **s'est déplacé
+à 0,9**.
+
+**Règle** : quand ce qu'on veut prouver est « c'est CE chemin qui a tourné »,
+gater sur la valeur observable (un signe, un minimum, une distance) est un
+proxy, et un proxy qui passe gratuitement dès que les deux chemins partagent la
+direction du résultat. Prédire les deux et exiger la correspondance. Corollaire
+de sûreté : la classification doit pouvoir répondre **« ni l'un ni l'autre »**
+(compter ces frames et gater à zéro), et refuser de classer quand les deux
+prédictions sont plus proches que le bruit — sans quoi un jour où deux taux
+coïncident, chaque verdict devient un tirage au sort publié comme une mesure.
+
+### ⚠️ UNE ASSERTION SUR UNE VALEUR TENUE PEUT RELIRE L'ASSERTION PRÉCÉDENTE
+
+Seizième faux-signal du dépôt, CH43, et il vivait **dans la sonde**. Un
+`KartInput` est une valeur TENUE par conception (personne ne l'efface entre
+deux événements), et une phase qui vérifie une suite de gestes sur un même
+écrivain hérite donc, à chaque assertion, de ce que la précédente a laissé.
+La dernière vérification souris lisait un `reverse` que la vérification du
+bouton droit, deux lignes plus haut, avait laissé à 1,0 — elle est passée
+VERTE contre l'écrivain qu'elle était censée refuser.
+
+**Règle** : toute assertion sur un état TENU (un input, un drapeau de mode, un
+registre de sauvegarde) porte son propre remise à zéro **gatée** — écrire zéro
+ne suffit pas, il faut asserter qu'on l'a lu à zéro — juste avant le geste qui
+doit l'écrire. Et c'est la **passe rouge** qui a trouvé celui-ci, pas une
+relecture : une neutralisation ne teste pas seulement le correctif, elle teste
+la sonde.
+
+### ⚠️ `%e` N'EST PAS UNE CONVERSION `%` DE GDSCRIPT, ET L'ÉCHEC EST SILENCIEUX CÔTÉ APPELANT
+
+`"%.2e" % x` pousse `unsupported format character` sur **stderr** et rend une
+chaîne qui n'est pas celle qu'on a écrite — mesuré au CH43 : deux assertions
+ont imprimé le message d'une AUTRE assertion, avec leur booléen pourtant
+correct. Un rouge portant le libellé d'un autre contrôle est pire qu'un rouge
+muet : il envoie diagnostiquer la mauvaise chose. Les conversions sûres sont
+`%d`, `%f`/`%.Nf`, `%s`, `%x` — et une sortie de sonde se relit une fois pour
+vérifier que chaque libellé correspond à son test.
+
 ### ⚠️ BLIND CHECK — une assertion d'ÉGALITÉ ou d'ABSENCE doit d'abord prouver qu'elle sait VOIR
 
 « Rien n'a bougé », « aucun anneau n'est apparu », « ces deux rendus sont
