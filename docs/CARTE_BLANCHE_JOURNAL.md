@@ -1995,3 +1995,76 @@ rien tant que le banc n'a pas publié ce qu'il rend quand on n'éteint rien.
 `MountainProbe` : 11 phases, 78 assertions, ALL GREEN 0 red, sept passes
 rouge-avant-vert restaurées byte-identiques — et PHASE F restitue toujours
 la pire paire à 20,967 s et la diagonale livrée à 18,700 s, à la frame près.
+
+## CH41 — LA LUGE ÉLECTRIQUE : LE PREMIER VÉHICULE SUR SURFACE (7 sept 2026)
+
+Lot 3 de la série multi-altitude. Ce n'est **pas** une descente sur rails :
+c'est un **quatrième véhicule**, tapé, monté et piloté au pouce comme le
+kart et le char, libre d'aller partout sur la carte, dont la seule
+différence est qu'**une pente le pousse**. Garé au sommet de la crête ouest
+(`SLED_PARK` = le centre de `HubMountain.BUMPS[0]`, donc son pic par
+construction). Aucune persistance, aucun champ `WorldSave`.
+
+**LE VERROU : `VehicleDrive.gd` N'A PAS ÉTÉ OUVERT**, et c'est une mesure et
+non une prudence. CH35 Q2 autorisait son ouverture « si le rappel
+`off_lambda` se sent ». Il ne se sent pas, pour deux raisons distinctes,
+mesurées dans le même run : (1) `off_lambda` est un **amortissement**, pas
+un plafond — plafond laissé plat, la descente atteint **10,358 u/s contre
+`MAX_SPEED_FLAT` 8,50** toute seule ; (2) `max_speed` est une variable
+d'instance que `SailBoat` module déjà, et la luge lève la sienne avec la
+pente : **15,253 u/s, +47,3 % sur l'amortissement seul, ×1,79 le cap
+moteur**. Les quatre fichiers de conduite existants sont **byte-identiques**
+à `origin/staging`, `KartBody.gd:218` compris.
+
+⚠️ **MAIS CH35 Q2 SE TROMPAIT SUR L'ORDRE, ET ÇA GÈLE LE VÉHICULE.** Le
+dossier prescrivait d'injecter la force **AVANT** `step()`. Mesuré :
+**0,000 u/s, 0,00 u en 240 frames**, à l'arrêt face au flanc le plus raide.
+La force rend `v_fwd` négatif avant que le modèle ne le regarde ;
+`VehicleDrive` prend sa branche « reversing and the throttle comes back »
+qui ramène le recul à **exactement zéro et jamais au-delà** ; la branche
+d'accélération n'est jamais atteinte ; et à vitesse nulle il n'y a **aucune
+autorité de braquage**. C'est le blocage de `SandYacht._wall` étape 3,
+atteint par l'ordre des opérations. Corrigé en injectant **APRÈS**, comme
+`SailBoat` le fait déjà pour son échouage : la luge grimpe alors au pas
+(2,109 u à 1,236 u/s) au lieu de coller. Le coût est une frame de retard,
+soit 0,17 u/s sur le sol le plus raide de cette carte.
+
+**`HubSurface.normal_at` arrive, exactement comme CH37 l'avait annoncé**
+(« il arrive avec le lot qui incline un corps »). `gradient_at` est la
+primitive, dérivée **analytiquement** de `_sample` : donc exactement la
+normale de face du mesh dessiné, vérifiée face par face sur les **1 680
+triangles committés** (pire écart **1,2 × 10⁻⁴**, blind à 9,2 × 10⁻³).
+Elle est **facettée** et le consommateur la lisse : marches de **11,168°**
+entre facettes voisines, et le châssis reste **3,881° derrière à 13,533 u/s sur un sol incliné à 19,810°**.
+
+**Budget** : mesh **procédural** (aucun asset généré, inventaire fait
+d'abord — le dépôt n'a rien de forme luge), **60 triangles**, et la luge
+n'entre **pas** dans `RIDGE_TRIANGLE_BUDGET` : cette ligne comptable
+parcourt les batches de `CozyScatter` et un `Node3D` s'annule des deux
+frames du delta mesuré. Coût propre relu à 8 stations × 2 caméras :
+**exactement +60 primitives** aux onze stations sur seize où le compteur est
+immobile, 0 hors cadre. 60 ≤ **125**, la marge publiée par CH40 — elle
+tiendrait même si elle y était comptée.
+
+**Caméra de poursuite en pente, exercée pour la première fois** : pire
+dégagement **1,0243 u** sur 7 192 paires (point × cap), blind à −2,976.
+
+⚠️ **ET LA PASSE ROUGE A TROUVÉ DEUX FAUX-SIGNAUX DANS LA SONDE — les
+douzième et treizième du dépôt.** (1) Le test d'enroulement, mené contre le
+centre de masse de l'assemblage, a déclaré **46 triangles sur 60** mal
+enroulés sur un mesh que le rendu venait de prouver juste au pixel
+(`cull_back` et `cull_disabled` : **mêmes 13 190 pixels**) — cinq boîtes
+côte à côte ne sont pas un corps convexe. (2) **Avec `slope_gain` mis à
+ZÉRO, « DESCENT IS FASTER » est restée VERTE** à 12,891 contre 8,081 : à
+plein gaz, le plafond relevé portait tout le résultat et la phase ne savait
+pas séparer les deux mécanismes. Fermé par une **paire en roue libre**,
+gaz coupé, gatée sur le **SIGNE** de l'avance : **+8,89 u vers l'avant en
+descente, −5,35 u vers l'arrière en montée** — la gravité, et rien d'autre.
+
+Et une jambe de mesure trop longue avait rendu la **montée plus rapide que
+la descente** (19,597 u/s) : en 4 s elle franchissait le sommet et dévalait
+l'autre versant. Le signe de la pente est désormais gaté **aux deux bouts**
+de chaque jambe.
+
+`SledProbe` : 11 phases, **ALL GREEN 0 red**, **six neutralisations** (huit runs) rouge-avant-vert,
+restaurées **byte-identiques**.

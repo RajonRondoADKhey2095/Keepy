@@ -1569,6 +1569,101 @@ une autre. (Même famille de piège que « la couleur qu'un `.glb` porte est
 littéralement celle qui s'affiche » : depuis la suppression du grade plein
 écran, rien ne post-traite la frame.)
 
+### ⚠️ UNE FORCE INJECTÉE AVANT `step()` GÈLE LE VÉHICULE FACE À LA MONTÉE
+
+Trouvé au CH41 sur le premier véhicule à rouler sur une pente, et c'est une
+**correction mesurée** à ce que `docs/lots/CH35_MULTI_ALTITUDE.md` Q2
+prescrivait noir sur blanc (« pente = force injectée dans `velocity` AVANT
+step »). Mesuré : **0,000 u/s et 0,00 u parcourus en 240 frames**, à l'arrêt
+face au flanc le plus raide.
+
+Le mécanisme n'est dans aucune constante. La force rend `v_fwd` **négatif**
+avant que `VehicleDrive` ne le regarde ; le modèle prend alors sa branche
+« reversing and the throttle comes back » — `move_toward(v_fwd, 0.0,
+brake_decel * delta)` — qui ramène le recul à **exactement zéro et jamais
+au-delà** ; la branche d'accélération n'est **jamais atteinte** ; et à
+vitesse nulle ce modèle ne donne **aucune autorité de braquage** (son
+`ratio`). Un joueur garé sur un flanc, sans direction et sans sortie :
+**c'est le blocage de `SandYacht._wall` étape 3, atteint par l'ordre des
+opérations au lieu d'un mur.**
+
+**Règle** : une force extérieure se compose **APRÈS** `step()`, dans la
+vélocité que le modèle vient d'écrire — ce que `SailBoat` fait déjà pour son
+échouage (« appliquée à la vélocité APRÈS step(), jamais un clamp de
+position »). Rien d'autre ne bouge : la vitesse terminale reste
+`cap + force / off_lambda` dans les deux ordres, et le coût est **une frame
+de retard**, soit 0,17 u/s sur le sol le plus raide de cette carte.
+
+⚠️ **Corollaire, et il se gate** : au repos le modèle offre
+`cap × accel_lambda` d'accélération et la pente pousse
+`gain × g·sinθ·cosθ`. Si la seconde l'emporte, le véhicule ne peut pas
+quitter l'arrêt en montée **quel que soit l'ordre**. Les deux se publient
+par accesseur et l'inégalité se gate sur la pente la plus raide que la
+surface possède réellement (`SledBody.climb_authority()` / `slope_force()` :
+10,53 contre 13,60, 77 % utilisés). Un réglage de feeling qui la casse
+échoue bruyamment au lieu d'expédier une colline piège.
+
+### ⚠️ UNE JAMBE DE MESURE A/B CHANGE DE RÉGIME EN COURS DE ROUTE
+
+Une comparaison symétrique (descente contre montée, avec contre sans) est
+juste **tant que chaque jambe reste dans le régime qu'elle prétend
+mesurer**. Mesuré au CH41 : la jambe « montée » à 240 frames a rendu
+**19,597 u/s, PLUS RAPIDE que la descente**. Le chiffre n'était pas faux —
+en 4 s la luge avait grimpé le flanc, **franchi le sommet** et dévalait
+l'autre versant. La lecture était honnête et répondait à une autre question.
+
+**Règle** : toute jambe d'un couple A/B publie la grandeur qui la définit
+**aux DEUX bouts**, et la phase gate que son SIGNE n'a pas basculé. Sortir
+du régime par le bas (atteindre le plat) n'est pas un basculement ; devenir
+l'autre régime en est un. Sans ce garde, un banc symétrique peut rendre
+exactement l'inverse de son résultat et rester crédible.
+
+### ⚠️ UN DELTA SOUS SON PLANCHER DE BRUIT N'EST PAS UNE MESURE NON PLUS
+
+Moitié manquante de la doctrine CH40 (« un delta sans son plancher ne vaut
+rien »). Mesuré au CH41 : un prop de **60 triangles** relu par la méthode
+« cacher et relire » rend **+640 primitives** à une station dont le
+tremblement propre vaut **340** — et **exactement +60** aux onze stations
+sur seize où le compteur est **parfaitement immobile**. Le hub dérive de
+quelques centaines de primitives entre deux frames intouchées (papillons,
+précipitations, critters) : une balance aussi bruyante ne peut pas peser 60
+triangles.
+
+**Règle** : le coût se lit **là où l'instrument est immobile**, la mesure
+est gatée **par station** contre le tremblement **de cette station**, et les
+stations bruyantes sont **imprimées et laissées en dehors du gate** — avec
+la raison écrite. Un gate global (pire delta contre pire tremblement) est
+soit gratuit, soit faux.
+
+### ⚠️ UN TEST D'ENROULEMENT CONTRE UN CENTRE DE MASSE SUPPOSE LA CONVEXITÉ
+
+« La normale sortante est celle qui s'éloigne du milieu » est vraie d'une
+pièce convexe et **fausse d'un assemblage**. Mesuré au CH41 : la première
+sonde a déclaré **46 triangles sur 60** mal enroulés sur un mesh que le
+rendu venait de prouver juste au pixel (`cull_back` et `cull_disabled`
+couvrant les **mêmes 13 190 pixels**) — le dessous de la plate-forme et les
+flancs intérieurs des patins pointent tous vers le milieu de l'assemblage.
+
+**Règle** : chaque **pièce convexe** est testée contre **son propre** centre,
+et le groupement est **publié par le constructeur** (`PIECE_TRIS`,
+`PIECE_COUNT`) puis **asserté** par la sonde, jamais deviné. Et le rendu
+`cull_back` contre `cull_disabled` reste le juge : c'est lui qui a tranché
+ici, parce que le shader décor est `cull_disabled` et qu'une coque à
+l'envers y serait **invisible en tant que défaut**, en sandbox comme sur
+device.
+
+### ⚠️ UN DÉMONTAGE DE PORTEUR QUI SAUTE N'ÉMET NI `became_idle` NI `carrier_dismounted`
+
+`KeepyHopper.leave_carrier()` pose `_has_target = false`, et `_advance()` —
+seul émetteur de `became_idle` — **sort à sa première ligne** quand il n'y a
+pas de cible. Un démontage qui parcourt une distance n'émet donc que
+`hop_landed` ; `carrier_dismounted` n'est émis que par la branche de
+**distance nulle**. Une sonde qui attend `became_idle` après un
+`leave_carrier` **expire** pendant que le personnage est bel et bien revenu
+sur ses pieds. Constaté au CH41 ; partagé par le char à voile et le voilier,
+**signalé et non corrigé** (le changer toucherait deux conduites validées
+device). Lire l'ÉTAT (`is_on_carrier` / `is_hopping`), pas le signal.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
