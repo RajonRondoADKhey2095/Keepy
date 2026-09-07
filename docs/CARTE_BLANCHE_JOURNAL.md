@@ -1786,3 +1786,44 @@ La série de mesure device par Mathieu (protocole CH35-B tâche 4, avec
 (arbre 42 en priorité, marge 0,417 u), le lot 0b conditionnel au verdict,
 puis le lot 1 SURFACE selon le plan en six vagues de CH35-C — après le
 verdict device, jamais avant.
+
+# CH37 — LOT 1 SURFACE : le socle multi-altitude, sans un mètre de relief (7 septembre 2026)
+
+Le plan de CH35-C exécuté vague par vague, dans l'ordre, chacune fermée
+avant d'ouvrir la suivante. `HubSurface` est publié, les six familles de
+sites qui écrivaient un `y` de sol sont branchées dessus, et **le jeu
+n'enregistre aucun domaine** : `height_at` vaut `0.0` partout, tout le lot
+est un no-op arithmétique, et la montagne est le lot suivant.
+
+Ce que le lot a réellement appris, en plus de ce qu'il a livré :
+
+**Une phase de sonde est passée verte contre le correctif neutralisé.** La
+première version de la phase TAP restait VERTE avec `HubSurface` remis à
+un `Plane` nu — la neuvième fois que ce dépôt rencontre ce mode. Deux
+causes : `tapped_ground` porte LA POSITION D'UN ARBRE quand le tap en
+frôle un, et comparer une passe « à plat » à une passe « avec relief »
+déplace AUSSI la caméra, si bien que les deux effets se compensent (0,143 u
+de différence, contre 5,673 u pour la comparaison honnête). D'où une pose
+de caméra gelée et un balayage de sept pixels.
+
+**Un point sol n'est pas un vecteur de déplacement.** Le plan gardait
+`_target` porteur de sa hauteur et `here` plat en appelant leur différence
+« un delta XZ ». Sous relief, `ARRIVE_EPSILON` ne termine alors jamais une
+marche en pente. Inerte tant que `h ≡ 0` — c'est ce qui rend le défaut
+invisible au lot qui l'introduit.
+
+**Une sonde à phases mesure ses propres restes si elle ne nettoie pas.**
+La phase C tue un tween à la main pour lire l'arc à mi-course ; deux
+phases plus loin, cinq rouges dont pas un ne parlait de la surface.
+
+Deux doctrines déposées dans `CLAUDE.md` : « un point sol s'écrit
+`(x, h, z)`, et il a une seule orthographe » et « un sol unlit n'a pas de
+pente — le relief se lit par silhouette » (celle-ci mesurée au CH35-C, avec
+sa conséquence de layout : 30° marchable, 45° flancs courts, > 55° interdit,
+et un sommet jamais dans le cadre figé).
+
+## Suite
+
+Lot 2 ZONE MONTAGNE (relief réel, emplacement à trancher par Mathieu),
+la mesure device de CH35-B tâche 4 toujours en attente, lot 3 véhicule sur
+surface, lot 4 luge.
