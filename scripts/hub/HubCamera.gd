@@ -20,6 +20,32 @@ class_name HubCamera
 ## Checked at 1080x1920 and at 1170x2532.
 const OFFSET: Vector3 = Vector3(0.0, 7.6, 8.9)
 
+## CH36 -- WHERE THE TOP OF THE FRAME CROSSES KEEPY'S APLOMB, in world
+## units. This camera NEVER RISES (it is a constant offset from Keepy's
+## GROUND point, and its rotation is FIXED -- see above), so the column
+## straight above him is cut by the top edge of the picture at one height
+## and one only, and nothing published above it is on screen. Everything
+## that asks "can the player see the top of this" -- HubTrees' SEAT_MAX_Y
+## first -- derives from HERE rather than re-deriving its own angle.
+##
+## ⚠️ MEASURED, NEVER COMPUTED FROM AN ANGLE. The number this replaces
+## (6.96 u) came from a closed form written as if the camera LOOKED AT
+## Keepy's ground point -- atan(7.6 / 8.9) = 40.5 deg. It does not: the
+## scene authors the pitch, 34.0 deg (HubWorld.tscn's Camera3D basis,
+## asin(0.55919)), and 34.0 is SMALLER than the vertical half-angle, so
+## the top ray leaves the lens going UP, not down, and the sign of the
+## whole term flips. The formula's answer was 1.008 u too low and no
+## probe gated it, so it survived two lots and cost eight trees their
+## climb (CH26's SEAT_MAX_Y).
+##
+## What this value IS: at 1080x1920 with keep_aspect KEEP_WIDTH and
+## fov 45 (so 22.5 deg HORIZONTAL half-angle, 36.37 deg vertical), the
+## ray through the top edge of the picture, read back off the LIVE camera
+## by unproject_position bisection and confirmed independently by
+## project_position to 1e-4. FrameCeilingProbe re-reads it every run and
+## fails if the scene's camera ever stops agreeing.
+const FRAME_TOP_AT_APLOMB: float = 7.968
+
 ## Seconds-ish smoothing constant. Frame-rate independent via the
 ## exponential form below, so a 30fps phone and a 60fps one settle at the
 ## same rate rather than the phone lagging twice as far behind.

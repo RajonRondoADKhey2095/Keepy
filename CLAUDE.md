@@ -1273,10 +1273,30 @@ lorsque le joueur doit **se déplacer librement** en haut.
 ⚠️ **Et c'est la CAMÉRA qui plafonne un ride vertical, pas la géométrie.**
 `HubCamera` suit le point SOL de Keepy et ne monte jamais (voir
 `HubCamera.OFFSET`) : le rayon haut du cadre croise son aplomb à
-**y = 6,96 u**. Avec la tête à 1,7 u au-dessus du siège, un siège à plus de
-**4,85 u** sort la tête du cadre. Huit arbres pourtant grimpables ont été
-exclus pour cette seule raison, et la réponse à « je veux ceux-là aussi »
-est une caméra qui monte — c'est-à-dire un autre lot.
+**y = 7,968 u** (`HubCamera.FRAME_TOP_AT_APLOMB`, mesuré). Avec la tête à
+1,7 u au-dessus du siège et 0,4 u de marge, un siège à plus de **5,868 u**
+sort la tête du cadre — et la réponse à « je veux plus haut que ça » reste
+une caméra qui monte, c'est-à-dire un autre lot.
+
+⚠️ **CE PLAFOND A VALU 6,96 u PENDANT DEUX LOTS, ET C'ÉTAIT FAUX DE
+1,008 u** (corrigé au CH36, mesuré deux fois). La ligne disait
+`y = 7,6 − 8,9 · tan(40,5° − 36,4°)`, où 40,5° = `atan(7,6/8,9)` est le
+tangage qu'aurait une caméra qui **REGARDE** le point-sol de Keepy.
+`HubCamera` est à **rotation FIXE** et la scène lui donne **34,0°**
+(`asin(0,55919)`, `HubWorld.tscn`) : 34,0° est **plus petit** que le
+demi-angle vertical (36,37° à 1080×1920 en `KEEP_WIDTH`), donc le rayon
+haut sort de l'objectif **vers le haut** et le signe du terme s'inverse.
+Le `SEAT_MAX_Y` qui en dérivait excluait **6 arbres** parfaitement
+cadrables (11, 15, 41, 42, 45, 47 — re-admis au CH36, rendus à l'appui).
+
+**Règle** : une constante de cadrage se **RELIT sur la caméra livrée**
+(`unproject_position` en bissection, confirmée par `project_position`),
+jamais recalculée depuis un angle écrit à la main — une forme fermée qui
+suppose un `look_at` inexistant est juste au signe près et **ne se
+signale jamais**. Et une constante que rien ne relit survit aux lots :
+celle-ci n'était gatée par **aucune** sonde. `FrameCeilingProbe` la relit
+désormais à chaque run, et gate au passage la tête de chaque arbre
+grimpable.
 
 ### ⚠️ UN NOEUD PORTEUR NE PORTE JAMAIS L'ÉCHELLE DE L'INSTANCE QU'IL REPRÉSENTE
 

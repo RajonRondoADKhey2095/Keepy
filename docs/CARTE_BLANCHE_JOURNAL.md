@@ -1628,3 +1628,117 @@ byte-exactes contre les références déjà publiées dans `CLAUDE.md`
 Dette signalée, non corrigée (hors scope explicite du brief) :
 `CoveProbe` gate le disque de la mer contre les constantes
 `HubRegion.SEA_*` elles-mêmes plutôt qu'une mesure indépendante.
+
+---
+
+# CH36 — LE PLAFOND DE CADRE ÉTAIT FAUX DE 1,008 u (7 septembre 2026, lot cadré vers `staging`)
+
+## Départ
+
+Un fait rapporté par Mathieu, mesuré deux fois de son côté
+(`unproject_position` et `project_position`, concordance 1e-4) : le
+plafond de cadre à l'aplomb vaut **7,968 u**, pas les **6,96 u** que
+`HubTrees.gd` portait en commentaire et dont `SEAT_MAX_Y = 4,85` dérivait.
+Ce lot ne fait que vérifier ce fait avec l'instrument du dépôt, en tirer
+les conséquences, et le mettre sous sonde.
+
+## Ce que la mesure a donné
+
+`FrameCeilingProbe` (neuve, headless, viewport forcé 1080×1920 avec
+`stretch = false` sur le conteneur et le rect **asserté** non dégénéré) :
+
+| lecture | valeur |
+|---|---|
+| `unproject_position`, bissection sur le signe de l'y écran | **7,967946 u** |
+| `project_position`, rayon du pixel haut-centre coupé par la colonne | **7,967946 u** |
+| écart entre les deux | **2 · 10⁻⁷** |
+| constante publiée `HubCamera.FRAME_TOP_AT_APLOMB` | 7,968 (écart 5,4 · 10⁻⁵) |
+| plafond re-lu à 3 autres positions au sol | 7,967946 / 7,967946 / 7,967947 |
+
+La formule fautive était `y = 7,6 − 8,9 · tan(40,5° − 36,4°)`. Les 40,5°
+sont `atan(7,6/8,9)` — le tangage d'une caméra qui **regarde** le
+point-sol. `HubCamera` est à rotation FIXE et la scène lui donne
+**33,9998°** (lu sur la base au run, pas dans le `.tscn`). 34° étant
+**plus petit** que le demi-angle vertical (36,37°), le rayon haut sort de
+l'objectif **vers le haut** : le signe du terme s'inverse.
+
+## Le piège que la première version de la sonde s'est fabriqué
+
+La bissection montait jusqu'à y = 60. Or une caméra piquée de 34° a son
+propre plan de vue qui coupe la colonne verticale : **au-dessus de
+y = 20,79 le point est DERRIÈRE l'objectif**, et `unproject_position`
+rend alors un y écran **grand et POSITIF** (mesuré : 3839,2 à y = 60 ;
+6923,8 à y = 30) — la projection passe par l'infini. Le bracket lisait
+« même signe aux deux bouts » et refusait de bissecter, ce qui est
+l'échec inoffensif ; le dangereux serait un bracket qui **enjambe** le
+repli et bissecte dessus. Parade : bracket 0 → 12 u, **et** une garde
+`is_position_behind` explicite qui rend `NAN` au lieu d'un nombre
+plausible.
+
+## Les arbres re-admis — SIX, pas huit
+
+`SEAT_MAX_Y` passe de 4,85 à **5,868**, dérivé (`FRAME_TOP_AT_APLOMB −
+HEAD_ABOVE_SEAT 1,7 − FRAME_MARGIN 0,4`), jamais retapé. Le total
+d'arbres grimpables passe de **53 à 59** — mesuré des deux côtés par la
+même sonde, pas compté à la main :
+
+| index | position | siège | tête (siège + 1,7) | y écran de la tête |
+|---|---|---|---|---|
+| 11 | (−9,87 ; −4,07) | 5,217 | 6,917 | 219,0 px |
+| 15 | (−9,08 ; 4,98) | 5,255 | 6,955 | 211,7 px |
+| 41 | (−27,73 ; −45,77) | 4,929 | 6,629 | 273,5 px |
+| 42 | (−17,86 ; −45,92) | **5,851** | **7,551** | **91,2 px** |
+| 45 | (30,05 ; −66,02) | 5,240 | 6,940 | 214,6 px |
+| 47 | (−25,76 ; −76,88) | 5,407 | 7,107 | 182,0 px |
+
+Le brief en annonçait huit ; la mesure en rend **six**. Trois arbres
+restent exclus par leur siège (6,04 / 6,53 / 6,61) et le restent : leur
+tête sortirait à 8,23 et 8,31 pour deux d'entre eux — au-dessus du vrai
+plafond. La marge n'a pas été élargie pour les faire passer.
+
+Les six sont livrés avec un **rendu offscreen chacun** (`CozyCapture
+--climb=INDEX`, xvfb + `opengl3`, Keepy assis, caméra figée du jeu),
+`climb_seated = true` sur les six. Ces rendus prouvent le **CADRAGE** ;
+ils ne prouvent rien du shading WebGL2 sous Safari.
+
+## La marge, et ce qui la ronge
+
+La tête admise la plus haute est celle de l'arbre 42 : **7,5506 u**, soit
+**0,4174 u** de cadre au-dessus. C'est au-dessus du seuil de 0,2 u
+au-delà duquel le brief demandait de le dire — mais la valeur de 1,7 u
+« tête au-dessus du siège » vient d'une mesure v4 prise sur les **OS** et
+jamais re-vérifiée sur les vertices skinnés. `CLAUDE.md` documente
+0,164 u d'écart os/silhouette sur le blaireau : si le même écart existe
+ici, il reste 0,25 u. `HEAD_ABOVE_SEAT` et `FRAME_MARGIN` sont donc
+publiées **séparément** dans `HubTrees`, pas seulement leur somme, pour
+que le lot qui re-mesurera la silhouette n'ait qu'un nombre à toucher.
+
+## Rouge-avant-vert
+
+Deux passes, chacune restaurée et vérifiée byte-identique par `cmp` :
+
+* **plafond remis à 6,96** → **1 seul rouge**, sur l'assertion attendue
+  (« la constante publiée correspond à la caméra vivante », écart
+  1,007946), et le total d'arbres retombe de 59 à 53 — c'est ce run qui
+  **prouve** le chiffre de six ;
+* **gate desserré à `SEAT_MAX_Y = 8,0`** (donc au-delà du plafond) →
+  **4 rouges** : les arbres dont la tête sort réellement (8,306 et
+  8,232 contre 7,968), l'assertion de dérivation, et la tête la plus
+  haute passée à **−0,338 u** de cadre. La PHASE 3 sait donc échouer.
+
+## Overlay device
+
+`HubPerfOverlay` gagne deux lignes derrière le gate existant
+`DevTools.enabled()` / `?keepydev=1` (aucun bypass, aucune détection de
+hostname) : **POS** (x, z, zone `HubRegion.zone_of`) via un `NodePath` —
+jamais un export de nœud typé, qui ne se résout pas dans un `.tscn` écrit
+à la main — et **BUILD**, la valeur de `CACHE_VERSION` lue dans
+`index.service.worker.js`. Lecture **asynchrone** vers un global `window`
+puis relue à chaque rafraîchissement : un XHR synchrone corromprait la
+ligne FPS que cet overlay existe pour mesurer.
+
+## Ce qui n'a PAS été fait
+
+Le dépôt documentaire CH35 (dossier CONCEPTION + complément B) : les deux
+textes n'existent dans **aucune ref** du dépôt et n'ont pas été fournis
+avec le brief. Rien n'a été inventé ; le dépôt fidèle attend les textes.
