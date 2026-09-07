@@ -37,6 +37,13 @@ extends Node
 ##          -- a crest you cannot see is not a crest
 ##   E      the triangle budget, measured as the delta between the ridge
 ##          drawn and the ridge hidden, at 8 stations x 2 camera heights
+##   G      THE PIXELS. Every phase above reads geometry or a counter, and
+##          CH39 is what that costs: the ridge shipped wound inside out,
+##          Godot discarded all but its far flank, and this file was ALL
+##          GREEN over it. PHASE G renders the hill through an
+##          identification pass and gates on the face test discarding
+##          NOTHING -- which is the one question no amount of arithmetic
+##          about a cross product can answer.
 ##   F      the worst crossing this rectangle creates, WALKED on the real
 ##          hopper (HubRegion's header prices it at ~21.05 s against the
 ##          22 s the hub holds itself to)
@@ -110,6 +117,7 @@ func _run() -> void:
 	_phase_c()
 	await _phase_d()
 	await _phase_e()
+	await _phase_g()
 	await _phase_f()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -291,9 +299,23 @@ func _phase_c() -> void:
 		worst_v = maxf(worst_v, absf(HubSurface.height_at(Vector3(v.x, 0.0, v.z)) - v.y))
 	_check(worst_v < 1.0e-6, "every drawn vertex is on height_at (worst %.9f)" % worst_v)
 
-	# WINDING. Godot takes CLOCKWISE faces for FRONT faces and the ground
-	# shader is cull_back: a ribbon wound the other way is invisible with
-	# no error of any kind. Checked on every triangle, not just the first.
+	# WINDING. Godot takes CLOCKWISE-ON-SCREEN faces for FRONT faces and
+	# the ground shader is cull_back: a lattice wound the other way is
+	# invisible with no error of any kind.
+	#
+	# ⚠️ CH39: THIS ASSERTION SHIPPED BACKWARDS AND WAS GREEN 1 680 TIMES
+	# OUT OF 1 680 ON A HILL GODOT WAS THROWING ENTIRELY AWAY. It required
+	# the right-hand cross product to point at +Y, which is the MATHS
+	# convention for "up" and the exact negation of the ENGINE convention
+	# the comment above it names: a triangle whose right-hand normal is +Y
+	# reads COUNTER-CLOCKWISE from any camera above it, which is the BACK
+	# face. So a walkable top surface here must carry a right-hand normal
+	# of -Y, and that is what is checked.
+	#
+	# The arithmetic below can only ever restate a convention. PHASE G is
+	# the one that reads PIXELS, and it is not optional: no assertion in
+	# this file that predates it could tell a drawn hill from a discarded
+	# one.
 	var wrong: int = 0
 	var worst_deg: float = 0.0
 	var worst_at := Vector3.ZERO
@@ -304,7 +326,7 @@ func _phase_c() -> void:
 		var b: Vector3 = verts[idx[t + 1]]
 		var c: Vector3 = verts[idx[t + 2]]
 		var n: Vector3 = (b - a).cross(c - a)
-		if n.y <= 0.0:
+		if n.y >= 0.0:
 			wrong += 1
 		var deg: float = rad_to_deg(acos(clampf(absf(n.y) / n.length(), 0.0, 1.0)))
 		if deg > worst_deg:
@@ -315,7 +337,9 @@ func _phase_c() -> void:
 		var mid: Vector3 = (a + b + c) / 3.0
 		sample_worst = maxf(sample_worst, absf(HubSurface.height_at(Vector3(mid.x, 0.0, mid.z)) - mid.y))
 		t += 3
-	_check(wrong == 0, "every triangle's normal points at +Y (%d wound the other way)" % wrong)
+	_check(wrong == 0,
+		"every triangle is CLOCKWISE from above -- Godot's front face, right-hand normal -Y (%d wound the other way)"
+		% wrong)
 	_check(sample_worst < 1.0e-5,
 		"and height_at INSIDE each triangle is on its plane (worst %.9f) -- same triangulation" % sample_worst)
 	_check(worst_deg <= MAX_WALKABLE_DEG,
@@ -456,6 +480,131 @@ func _prims() -> int:
 	return RenderingServer.viewport_get_render_info(
 		_sub.get_viewport_rid(), RenderingServer.VIEWPORT_RENDER_INFO_TYPE_VISIBLE,
 		RenderingServer.VIEWPORT_RENDER_INFO_PRIMITIVES_IN_FRAME)
+
+## PHASE G -- THE PIXELS, and the reason this file exists in this shape.
+##
+## ⚠️ WHAT WENT WRONG WITHOUT IT. CH38 shipped the ridge wound so that its
+## right-hand normals pointed at +Y. Godot's front face is CLOCKWISE on
+## screen, so every one of those triangles was a BACK face to a camera
+## above them, and `cull_back` on the ground shader discarded them. What
+## survived was the far flank -- the triangles facing AWAY -- showing
+## through the invisible near one, which from thirty units off looks
+## exactly like a clean dome and from a station standing ON it looks like
+## nothing at all. Measured at the two points Mathieu reported: 13 898 and
+## 14 ridge pixels of a 1080x1920 frame, against 315 181 and 317 646 with
+## the face test switched off.
+##
+## AND EVERY OTHER PHASE WAS GREEN THROUGH IT, each for its own reason:
+##   PHASE C  asserted the winding -- backwards (see its own note)
+##   PHASE D  raycasts height_at, which is the GRID: a query knows
+##            nothing about which side of a triangle faces the eye
+##   PHASE E  reads PRIMITIVES_IN_FRAME, which counts primitives
+##            SUBMITTED. Back-face culling happens downstream of that
+##            counter, so a hill that draws nothing still costs its whole
+##            triangle budget and still reports a positive delta -- the
+##            "and the ridge DOES cost something" line was true and
+##            meant the opposite of what it was read to mean
+##   PHASE F  walks the surface, which is the grid again
+##
+## THE GATE IS NOT A PIXEL COUNT. A threshold would have to be re-tuned
+## for every station and would encode the very thing that was wrong. What
+## is gated is that TURNING THE FACE TEST OFF CHANGES NOTHING: if the
+## lattice is wound the way Godot draws it, `cull_back` and
+## `cull_disabled` cover the same pixels. That holds at any station, on
+## any shape, and it fails loudly on an inside-out mesh.
+const IDENT_ONE_SIDED: String = """
+shader_type spatial;
+render_mode unshaded, cull_back, depth_draw_opaque, shadows_disabled, fog_disabled;
+void fragment() { ALBEDO = vec3(1.0, 0.0, 1.0); }
+"""
+const IDENT_TWO_SIDED: String = """
+shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_opaque, shadows_disabled, fog_disabled;
+void fragment() { ALBEDO = vec3(1.0, 0.0, 1.0); }
+"""
+## How much of the frame the ridge must own from a station standing on it.
+## Deliberately far under the 60.40 % / 20.71 % measured: this is a "the
+## hill is on screen at all" floor, not a framing gate -- the real gate is
+## the face-test line below, which needs no threshold at all. With the
+## inside-out winding the same two stations read 0.00 % and 0.70 %, so a
+## floor of 10 % refuses that by a factor of fourteen at the station that
+## HID the defect, and by everything at the one that did not.
+const MIN_COVERAGE: float = 0.10
+## How far the two face tests may disagree. Not zero: the silhouette is a
+## row of pixels wide and a rasteriser is free to differ by one there.
+const CULL_TOLERANCE: float = 0.01
+
+func _phase_g() -> void:
+	print("-- PHASE G: the pixels, and the face test that must discard nothing --")
+	var one := ShaderMaterial.new()
+	one.shader = Shader.new()
+	one.shader.code = IDENT_ONE_SIDED
+	var two := ShaderMaterial.new()
+	two.shader = Shader.new()
+	two.shader.code = IDENT_TWO_SIDED
+	# The summit is the worst case for an inside-out lattice: standing on
+	# it, every triangle in the frame faces the eye, so a wrong winding
+	# leaves nothing at all. The rim station is the case that HID the
+	# defect for a whole lot -- from there the far flank alone still reads
+	# as a dome.
+	var summit := _summit()
+	var here: Array[Vector3] = [
+		Vector3(summit.x, 0.0, summit.z + 3.0),
+		Vector3(summit.x + 11.0, 0.0, summit.z + 11.0),
+	]
+	var kept: Material = _ridge.get_surface_override_material(0)
+	var total: float = float((VP_SIZE.x / 2) * (VP_SIZE.y / 2))
+	for s in here:
+		_keepy.global_position = HubSurface.ground(s)
+		if _camera.has_method("snap_to_target"):
+			_camera.call("snap_to_target")
+		# BLIND FIRST. "The ridge covers N pixels" is worthless until the
+		# instrument has been seen to answer ZERO -- this repo has watched
+		# three assertions of presence pass against nothing at all.
+		_ridge.visible = false
+		var blind: int = await _ident_pixels(one)
+		_ridge.visible = true
+		var culled: int = await _ident_pixels(one)
+		var uncut: int = await _ident_pixels(two)
+		_ridge.set_surface_override_material(0, kept)
+		_check(blind == 0, "station (%.1f, %.1f): with the ridge hidden the mask reads %d pixels"
+			% [s.x, s.z, blind])
+		_check(float(culled) / total >= MIN_COVERAGE,
+			"station (%.1f, %.1f): the ridge owns %.2f %% of the frame (floor %.0f %%)"
+			% [s.x, s.z, 100.0 * float(culled) / total, 100.0 * MIN_COVERAGE])
+		var gap: float = absf(float(uncut - culled)) / maxf(float(uncut), 1.0)
+		_check(gap <= CULL_TOLERANCE,
+			"station (%.1f, %.1f): cull_back %d vs cull_disabled %d -- the face test discards %.2f %% (ceiling %.0f %%)"
+			% [s.x, s.z, culled, uncut, 100.0 * gap, 100.0 * CULL_TOLERANCE])
+
+## Pixels the ridge owns, by an identification pass. IT CONTAINS AN
+## `await`, so it is a COROUTINE and every call site awaits it: calling
+## one without `await` runs it in PARALLEL with what follows, and this
+## repo has watched two phases measure the same thing that way.
+##: the ridge alone is
+## painted a colour nothing else in this hub carries, fog off, and a pixel
+## belongs to it IFF it comes back EXACTLY that colour. A window would
+## drift onto sky and plateau as the dome moves in the frame; the repo
+## already paid for a window once.
+func _ident_pixels(mat: Material) -> int:
+	_ridge.set_surface_override_material(0, mat)
+	for _k in 6:
+		await get_tree().process_frame
+	var img: Image = _sub.get_texture().get_image()
+	# ASSERT THE SURFACE. A 0x0 image under the dummy driver would make
+	# every count above a free pass, which is the whole family of failure
+	# this phase was added to close.
+	if img.get_width() < VP_SIZE.x or img.get_height() < VP_SIZE.y:
+		push_error("MountainProbe PHASE G: the viewport rendered %dx%d -- run under xvfb with opengl3."
+			% [img.get_width(), img.get_height()])
+		return -1
+	var n: int = 0
+	for y in range(0, img.get_height(), 2):
+		for x in range(0, img.get_width(), 2):
+			var c: Color = img.get_pixel(x, y)
+			if c.r > 0.999 and c.g < 0.001 and c.b > 0.999:
+				n += 1
+	return n
 
 ## PHASE F -- the worst crossing, WALKED.
 ##
