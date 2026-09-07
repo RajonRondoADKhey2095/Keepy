@@ -34,6 +34,39 @@ extends Node
 ##  * PHASE F pairs "the circuit's line is under the circuit's samples"
 ##    with "5 px off the line it is not", because "the map is bright in
 ##    the circuit band" is true of the lawn as well.
+##
+## =====================================================================
+## CH47 -- AND THE ASSERTION CH46 NEVER WROTE
+##
+## CH46 came back 69 green on a map Mathieu could not read. Every one of
+## those assertions was true; not one of them asked whether the four KINDS
+## look different from each other. They could not have: three of the four
+## shared one 14 px disc, and the probe only ever compared a marker to its
+## own tone.
+##
+## So this file gains the missing gate, and it is built the way the clamp
+## test had to be rebuilt in CH46 -- by COVERAGE, not by tone. What
+## separates two icons is not what colour they are, it is HOW MUCH OF THE
+## BOX THEY FILL, and the six pairs of the four kinds are measured against
+## each other on exactly that number (PHASE 9). The matrix is printed in
+## full, because a single "min gap" would hide which pair is the weak one.
+##
+## HOW COVERAGE IS MEASURED, AND WHY IT IS A DIFFERENCE
+##
+## Reading "is this pixel the kind's tone" cannot measure a footprint: the
+## icon is a tone core inside a BLACK outline, so half its ink is not the
+## tone at all, and the plan underneath is a different colour in every
+## band. So each kind is rendered against its OWN baseline: all four groups
+## are lifted off the map, one frame is read (the bare plan), one kind is
+## put back, another frame is read, and a pixel counts as INK when the two
+## differ. That measures the drawn footprint whatever the tone and whatever
+## the band under it.
+##
+## The floor is measured before anything is compared: two baseline frames
+## taken the same number of frames apart, differenced in the same boxes.
+## The plan is drawn at alpha 0.92, so 8 % of a moving 3D scene bleeds
+## through it, and a gap that does not clear that bleed is not a
+## measurement.
 const VP_SIZE: Vector2i = Vector2i(1080, 1920)
 const SWEEP_STEP: float = 0.5
 ## How close a rendered pixel must be to the tone it should be. The marker
@@ -55,6 +88,26 @@ const EDGE_COLUMNS: Array[float] = [-28.0, 12.0, -8.0]
 ## ground shader's own mixing order (grass, autumn, moor, circuit lawn).
 const BAND_BEFORE: Array[Color] = [CozyPalette.GRASS_A, CozyPalette.AUTUMN_A, CozyPalette.MOOR_A]
 const BAND_AFTER: Array[Color] = [CozyPalette.AUTUMN_A, CozyPalette.MOOR_A, CozyPalette.LAWN_A]
+
+## A pixel is INK when the with-marker frame differs from the bare-plan
+## frame by at least this much on some channel. Absolute rather than
+## relative to the icon's own peak: a relative cut would drop the FILL of
+## any kind whose tone happens to be close to the band it stands on, and
+## keep only its outline.
+const INK_EPS: float = 0.06
+## Every glyph measured must reach at least this delta somewhere, or it is
+## not on the plan at all and its coverage would be a measurement of
+## nothing.
+const INK_PEAK_MIN: float = 0.20
+## How far a glyph must be from the nearest OTHER drawn glyph of its own
+## kind before its box can be read: one full box, so no neighbour's ink can
+## enter it. (Other kinds are lifted while a kind is read, so only same-kind
+## neighbours can contaminate.)
+const ISOLATION_PX: float = 25.0
+## The smallest coverage difference this lot is willing to call a
+## separation. Chosen against the measured floor and printed beside it, so
+## "the pair passed" can always be read as a multiple of the noise.
+const SEP_MIN: float = 0.04
 
 var _hub: Node = null
 var _map: HubMinimap = null
@@ -102,6 +155,9 @@ func _run() -> void:
 	await _phase_edges()
 	await _phase_route()
 	await _phase_tap()
+	_phase_ranks()
+	await _phase_separation()
+	_phase_clusters()
 
 	print("")
 	print("=== %d checks, %d red ===" % [_checks, _red])
@@ -175,6 +231,28 @@ func _phase_groups() -> void:
 		if n is HubActorWalker:
 			walkers += 1
 	_check(walkers == 2, "both nameless HubActorWalkers (bear, badger) are on the map (%d)" % walkers)
+	# ⚠️ CH47 -- WHICH NODE CARRIES THE MARKER, AND IT IS NOT THE CONTROLLER.
+	# CH46 wrote `mark(self)` in HubBoar, HubCat, HubFawn and HubBeaver, and
+	# `self` there is an EMPTY CONTROLLER that never leaves the world origin;
+	# the animal is its `critter()` child. MinimapDensityRecon measured the
+	# consequence over 900 simulated frames: four npc markers frozen on
+	# (0, 0, 0), under Keepy's own spawn marker, forever.
+	#
+	# This one is STRUCTURAL and says so. Which node is in a group is not a
+	# drawn property, so no pixel can gate it; what a pixel would see is a
+	# marker in a plausible place, and it was plausible for a whole lot. The
+	# rule it gates is the one that matters: the marker goes on the body that
+	# MOVES, never on the controller that builds it.
+	var carried: int = 0
+	for cls in ["HubBoar", "HubCat", "HubFawn", "HubBeaver"]:
+		for ctrl in _hub.find_children("", cls, true, false):
+			var beast: Node = ctrl.call("critter") as Node
+			var ok: bool = beast != null and beast.is_in_group(MinimapMarkers.NPC) \
+				and not ctrl.is_in_group(MinimapMarkers.NPC)
+			if ok:
+				carried += 1
+			_check(ok, "%s: the marker is on the ANIMAL, not on the controller that never moves" % cls)
+	_check(carried == 4, "all four critter controllers hand their marker to their animal (%d)" % carried)
 
 ## PHASE 3 -- where it sits, and the one property that makes it harmless.
 func _phase_layout() -> void:
@@ -207,6 +285,10 @@ func _phase_markers() -> void:
 	# marker covers the dock's -- an occlusion, not a miss. A probe that
 	# spells the order out a second time is a probe that can disagree with
 	# the thing it measures.
+	# ⚠️ CH47: THE DRAWN LIST IS clusters(), NOT members(). Same-kind markers
+	# that sit on top of each other are ONE glyph now, so a probe walking
+	# members() would look for six kart markers where the widget draws one
+	# and call five of them missing.
 	var pairs: Array = []
 	for kind in HubMinimap.DRAW_ORDER:
 		pairs.append([kind, HubMinimap.tone_of(kind), String(kind).replace("minimap_", "")])
@@ -222,37 +304,54 @@ func _phase_markers() -> void:
 	var order: Array = []
 	var misses: PackedStringArray = []
 	for k in pairs.size():
-		var list: Array[Node3D] = _map.members(pairs[k][0] as StringName)
+		var kind_here: StringName = pairs[k][0]
+		var list: Array[Dictionary] = _map.clusters(kind_here)
 		for i in list.size():
-			order.append({"k": k, "i": i, "at": (_map.project(list[i].global_position)["at"] as Vector2)})
+			var v: int = HubMinimap.variant_of(int(list[i]["count"]), bool(list[i]["clamped"]))
+			order.append({"k": k, "i": i, "at": (list[i]["at"] as Vector2),
+				"reach": _map.reach(kind_here, v)})
 	for k in pairs.size():
 		var group: StringName = pairs[k][0]
 		var tone: Color = pairs[k][1]
 		var hit: int = 0
 		var tried: int = 0
-		var list: Array[Node3D] = _map.members(group)
+		var list: Array[Dictionary] = _map.clusters(group)
 		for i in list.size():
-			var at: Vector2 = _map.project(list[i].global_position)["at"]
+			var at: Vector2 = list[i]["at"]
 			var covered: bool = false
 			for other in order:
 				var later: bool = int(other["k"]) > k or (int(other["k"]) == k and int(other["i"]) > i)
-				if later and (other["at"] as Vector2).distance_to(at) < float(HubMinimap.ICON_PX):
+				# ⚠️ THE OCCLUSION RADIUS IS THE OTHER GLYPH'S OWN INK, NOT
+				# THE CELL. CH46 used ICON_PX because its cell WAS its ink.
+				# Carried over to a 25 px cell, "within one cell of a later
+				# glyph" excluded ALL FOURTEEN place glyphs and this phase
+				# came back 0/0 -- which its own `tried > 0` guard caught,
+				# and which is exactly the empty kind of green CH46 warned
+				# about two comments up.
+				if later and (other["at"] as Vector2).distance_to(at) < float(other["reach"]) + 2.0:
 					covered = true
 			if covered:
 				continue
 			tried += 1
-			var got: Color = img.get_pixelv(Vector2i(origin + at))
-			if _near(got, tone, TONE_EPS):
+			# ⚠️ NOT THE CENTRE PIXEL. A merged glyph is PUNCHED at its
+			# centre -- that hole is its "several" cue -- so a centre probe
+			# would read black on exactly the markers this lot added. What
+			# is asserted is that the kind's tone is PRESENT inside the
+			# glyph's own drawn reach, which is true of all three variants.
+			var variant: int = HubMinimap.variant_of(int(list[i]["count"]), bool(list[i]["clamped"]))
+			var span: float = maxf(_map.reach(group, variant), 3.0)
+			var lit: int = _tone_hits(img, origin + at, tone, span)
+			if lit >= 6:
 				hit += 1
 			else:
-				misses.append("%s at %s reads (%.3f, %.3f, %.3f)"
-					% [list[i].name, at, got.r, got.g, got.b])
-		print("   %-17s %d/%d unoccluded markers render in their own tone" % [pairs[k][2], hit, tried])
+				misses.append("cluster of %d at %s lights only %d px of its tone"
+					% [int(list[i]["count"]), at, lit])
+		print("   %-17s %d/%d unoccluded glyphs carry their own tone" % [pairs[k][2], hit, tried])
 		for m in misses:
 			print("      MISS %s" % m)
 		misses.clear()
-		_check(tried > 0, "at least one %s marker is drawn by nothing else (%d)" % [pairs[k][2], tried])
-		_check(tried > 0 and hit == tried, "every unoccluded %s marker is drawn, in %s" % [pairs[k][2], tone])
+		_check(tried > 0, "at least one %s glyph is drawn by nothing else (%d)" % [pairs[k][2], tried])
+		_check(tried > 0 and hit == tried, "every unoccluded %s glyph is drawn, in %s" % [pairs[k][2], tone])
 	var all: Array[Vector2] = []
 	for entry in order:
 		all.append(entry["at"] as Vector2)
@@ -292,40 +391,39 @@ func _phase_clamp() -> void:
 	for _i in 4:
 		await get_tree().process_frame
 	var shot: Dictionary = _map.project(boat.global_position)
-	var at: Vector2 = shot["at"]
 	_check(bool(shot["clamped"]), "82 u past the frame it IS clamped (x %.1f)" % boat.global_position.x)
-	_check(at.x >= _map.size.x - float(HubMinimap.ICON_PX), "it is pinned to the east border (x %.1f px of %.0f)"
-		% [at.x, _map.size.x])
-	_check(at.x <= _map.size.x - float(HubMinimap.ICON_PX) * 0.5 + 0.01,
+	# ⚠️ THE INSET IS THE CLAMPED GLYPH'S OWN REACH, not half a cell. CH46's
+	# cell WAS its ink; CH47's 25 px cell holds a 7 px place dot, and pulling
+	# that dot half a cell inland would put it 11 world units from the thing
+	# it marks. So the border test is written against the number the widget
+	# actually uses, read from the widget.
+	var pin: float = _map.reach(MinimapMarkers.VEHICLE, HubMinimap.V_CLAMPED)
+	_check(pin > 1.0, "the clamped glyph has a measured reach (%.2f px)" % pin)
+	# The DRAWN position, which is project() asked with the inset the widget
+	# itself uses. Asking with the default 0 -- as the first run of this
+	# phase did -- reads the un-inset border and says 155.0 of 155.
+	var at: Vector2 = _map.project(boat.global_position, pin)["at"]
+	_check(absf(at.x - (_map.size.x - pin)) < 0.01, "it is pinned to the east border (x %.1f of %.0f, inset %.2f)"
+		% [at.x, _map.size.x, pin])
+	_check(at.x + pin <= _map.size.x + 0.01,
 		"and fully inside the widget -- a clamped marker is drawn whole, not half-cut")
 	var img: Image = await _shot()
 	var origin: Vector2 = _map.global_position
-	_check(_near(img.get_pixelv(Vector2i(origin + at)), HubMinimap.VEHICLE_TONE, TONE_EPS),
+	_check(_tone_hits(img, origin + at, HubMinimap.VEHICLE_TONE, 8.0) >= 6,
 		"it still renders in the vehicle tone -- clamping changes the SHAPE, never the kind")
-	# THE SHAPE, FROM PIXELS -- and by COVERAGE, not by an exact tone. The
-	# first run read 1 corner of 4 and it was the test that was wrong: at
-	# (+-3, +-3) the square's own antialiasing puts the nearest texel at
-	# L-infinity 3.5, which is inside its 3.7 fill but only 70 % covered, so
-	# "is this pixel exactly the tone" says no to a pixel that is plainly
-	# filled. What separates the two icons is not the tone, it is how much
-	# of it is there: a disc of radius 3.9 has NOTHING at that offset (its
-	# distance is 4.95), so it reads as the black outline.
-	var square_fill: float = _corner_fill(img, origin + at, HubMinimap.VEHICLE_TONE)
-	print("   clamped icon: corner fill %.3f of the tone" % square_fill)
-	_check(square_fill > 0.50, "its four diagonal corners are filled: this is the SQUARE icon (%.3f)" % square_fill)
-	# ⚠️ BLIND, and it is the whole point of the corner test: the same four
-	# offsets on an IN-FRAME vehicle must be EMPTY, or "the corners are
-	# filled" would be true of every icon in the atlas.
+	# ⚠️ THE SHAPE TEST MOVED TO PHASE 9, AND IT IS NOT A WEAKENING.
+	# CH46 proved square-against-disc by reading the four (+-3, +-3) corners,
+	# because at 14 px both icons were the same size and only the corners
+	# differed. CH47's vehicle is a DIAMOND: its own (+-3, +-3) corners are
+	# inside it, so that exact test would now read "filled" for the in-frame
+	# icon too and the assertion would quietly stop separating anything.
+	# PHASE 9 measures the same fact the same way CH46 finally settled on --
+	# by COVERAGE -- for every kind at once, against a lifted baseline.
 	boat.place(home, PI / 2.0)
 	for _i in 4:
 		await get_tree().process_frame
-	img = await _shot()
-	var round_at: Vector2 = _map.project(boat.global_position)["at"]
-	var round_fill: float = _corner_fill(img, origin + round_at, HubMinimap.VEHICLE_TONE)
-	print("   in-frame icon: corner fill %.3f of the tone" % round_fill)
-	_check(round_fill < 0.30, "back in frame the same four offsets are EMPTY (%.3f): a DOT" % round_fill)
-	_check(square_fill - round_fill > 0.30,
-		"the two shapes are separated by %.3f, well clear of the renderer's noise" % (square_fill - round_fill))
+	var back: Dictionary = _map.project(boat.global_position)
+	_check(not bool(back["clamped"]), "and it is un-clamped again once moored (%s)" % boat.global_position)
 
 ## PHASE 6 -- decision 4, gated: the boundaries drawn are the PAINTED ones.
 func _phase_edges() -> void:
@@ -526,7 +624,347 @@ func _phase_tap() -> void:
 	for arm in arms:
 		tap.disconnect(str(arm["name"]), arm["call"] as Callable)
 
+## PHASE 9 -- THE ASSERTION CH46 NEVER WROTE: THE FOUR KINDS ARE DIFFERENT
+## SHAPES AT DIFFERENT SIZES, MEASURED AS COVERAGE, PAIR BY PAIR.
+##
+## Not by tone. CLAUDE.md: the WCAG scores nothing INSIDE a luminance band,
+## no probe here measures hue, and the swamp ground leaves two usable bands
+## for four kinds -- so a four-way separation by tint was condemned before
+## it was tried. What is gated is the number a tint cannot fake: how much of
+## a 25 px box each kind's glyph inks.
+##
+## Each kind is read against ITS OWN bare-plan baseline. All four groups are
+## lifted, a frame is read, one kind is put back, a frame is read, and a
+## pixel is INK when the two differ. That is what makes the number
+## independent of the tone AND of the painted band underneath -- an
+## absolute-tone test would have measured the ground as much as the marker.
+func _phase_separation() -> void:
+	print("-- PHASE 9: the six pairs, by coverage --")
+	var transport: Node = _hub.get_node("WorldViewport/SubViewport/World/Transport")
+	var boat: SailBoat = transport.call("sailboat")
+	var home: Vector3 = boat.global_position
+	# One vehicle pushed off the map so a CLAMPED glyph exists to be read at
+	# all. Restored at the end of the phase.
+	# ⚠️ NOT PHASE 5's z. Pinned at z -110 the clamped glyph lands 18.2 px
+	# from the yacht's own marker -- inside the box this phase reads, so its
+	# coverage would have been the two of them. Pushed north instead, where
+	# the nearest vehicle glyph is 72 px away, and the isolation is asserted
+	# rather than assumed below.
+	boat.place(Vector3(150.0, 0.0, -20.0), PI / 2.0)
+	# ⚠️ AND ONE PLACE MOVED, FOR THE SAME REASON. The only place cluster the
+	# delivered world offers is the two nearest portals, and its glyph sits
+	# 12.2 px from the third portal -- inside the box this phase reads, so
+	# its coverage would have been a merged glyph plus somebody else's dot.
+	# A dock is parked beside the cabin instead, which makes an ISOLATED
+	# merged place glyph, and it is put back where it was at the end of the
+	# phase with the restoration asserted. Without this the merged place cell
+	# would be the one variant in the atlas that nothing ever reads.
+	var cabin: Node3D = null
+	var dock: Node3D = null
+	for n in _map.members(MinimapMarkers.PLACE):
+		if str(n.name) == "Cabin":
+			cabin = n
+		elif str(n.name) == "Dock_1_1":
+			dock = n
+	_check(cabin != null and dock != null, "the cabin and a dock were found to build a place cluster")
+	var dock_home: Vector3 = Vector3.ZERO
+	if cabin != null and dock != null:
+		dock_home = dock.global_position
+		dock.global_position = cabin.global_position + Vector3(2.0, 0.0, 0.0)
+	var lifted: Dictionary = {}
+	for group in MinimapMarkers.KINDS:
+		var list: Array[Node3D] = _map.members(group)
+		lifted[group] = list
+		for n in list:
+			n.remove_from_group(group)
+	await _settle()
+	var base: Image = await _shot()
+	await _settle()
+	var base_again: Image = await _shot()
+
+	# ⚠️ THE FLOOR FIRST, AND IT IS NOT A FORMALITY. The plan is drawn at
+	# alpha 0.92, so 8 % of a MOVING 3D scene bleeds through it between two
+	# frames. A gap that does not clear that bleed is not a measurement.
+	var floor_max: float = 0.0
+	var floor_n: int = 0
+	for py in range(20, int(_map.size.y) - 20, 37):
+		for px in range(20, int(_map.size.x) - 20, 29):
+			floor_n += 1
+			floor_max = maxf(floor_max, float(_coverage(base_again, base,
+				_map.global_position + Vector2(float(px), float(py)))["cov"]))
+	print("   noise floor: %d empty boxes, worst coverage %.4f" % [floor_n, floor_max])
+	_check(floor_n > 8, "the floor was actually sampled (%d boxes)" % floor_n)
+	_check(floor_max < 0.02, "two untouched frames differ by %.4f of a box -- the floor" % floor_max)
+
+	var cov: Dictionary = {}
+	var peak: Dictionary = {}
+	for group in MinimapMarkers.KINDS:
+		for n in (lifted[group] as Array[Node3D]):
+			n.add_to_group(group)
+		await _settle()
+		var img: Image = await _shot()
+		var label: String = String(group).replace("minimap_", "")
+		# Every drawn glyph of this kind, with its distance to the nearest
+		# OTHER glyph of the same kind: only an ISOLATED one can be read,
+		# because a neighbour's ink inside the box would be counted as this
+		# glyph's own.
+		var drawn: Array[Dictionary] = _map.clusters(group)
+		for variant in HubMinimap.VARIANT_COUNT:
+			var best: Dictionary = {}
+			var best_gap: float = -1.0
+			for i in drawn.size():
+				if HubMinimap.variant_of(int(drawn[i]["count"]), bool(drawn[i]["clamped"])) != variant:
+					continue
+				var gap: float = INF
+				for j in drawn.size():
+					if i == j:
+						continue
+					gap = minf(gap, (drawn[j]["at"] as Vector2).distance_to(drawn[i]["at"] as Vector2))
+				if gap > best_gap:
+					best_gap = gap
+					best = drawn[i]
+			if best.is_empty() or best_gap < ISOLATION_PX:
+				print("   %-8s variant %d : none isolated (best gap %.1f px)" % [label, variant, best_gap])
+				continue
+			var read: Dictionary = _coverage(img, base, _map.global_position + (best["at"] as Vector2))
+			var key: String = "%s/%d" % [label, variant]
+			cov[key] = float(read["cov"])
+			peak[key] = float(read["peak"])
+			print("   %-8s variant %d : coverage %.4f   peak delta %.3f   isolated by %.1f px   members %d"
+				% [label, variant, float(read["cov"]), float(read["peak"]), best_gap, int(best["count"])])
+			_check(float(read["peak"]) >= INK_PEAK_MIN,
+				"%s variant %d is actually on the plan (peak %.3f)" % [label, variant, float(read["peak"])])
+		for n in (lifted[group] as Array[Node3D]):
+			n.remove_from_group(group)
+	for group in MinimapMarkers.KINDS:
+		for n in (lifted[group] as Array[Node3D]):
+			n.add_to_group(group)
+	boat.place(home, PI / 2.0)
+	if cabin != null and dock != null:
+		dock.global_position = dock_home
+	await _settle()
+	if dock != null:
+		_check(dock.global_position.is_equal_approx(dock_home),
+			"the borrowed dock is back where it was (%s)" % dock.global_position)
+
+	# ---- the variants the delivered world CANNOT produce -------------
+	# Said out loud rather than silently skipped. A merged player is
+	# impossible because merge_px(player) is zero by rule (PHASE 10 gates
+	# that); a clamped player is impossible because the region clamps Keepy
+	# before the map ever sees him; a clamped place is impossible because
+	# every place in this world is inside the walkable bounds. Their atlas
+	# cells are baked by the same uniform rule as the others and are NOT
+	# gated at the pixel -- which is a limit of this lot, not a pass.
+	_check(is_zero_approx(_map.merge_px(MinimapMarkers.PLAYER)),
+		"a merged PLAYER is unreachable by rule, not by luck (merge_px %.2f)"
+			% _map.merge_px(MinimapMarkers.PLAYER))
+	var outside_place: int = 0
+	for n in _map.members(MinimapMarkers.PLACE):
+		if bool(_map.project(n.global_position)["clamped"]):
+			outside_place += 1
+	_check(outside_place == 0, "and no place in this world is off the map (%d) -- its clamped cell is never drawn"
+		% outside_place)
+
+	# ---- the matrix, printed in full ---------------------------------
+	var kinds: Array[String] = ["player", "vehicle", "npc", "place"]
+	var have: bool = true
+	for k in kinds:
+		if not cov.has("%s/0" % k):
+			have = false
+	_check(have, "a SIMPLE glyph of all four kinds was isolated and read")
+	if not have:
+		return
+	print("   --- SEPARATION MATRIX, 6 pairs (|coverage difference|) ---")
+	var worst: float = INF
+	var worst_pair: String = ""
+	for a in kinds.size():
+		for b in range(a + 1, kinds.size()):
+			var d: float = absf(float(cov["%s/0" % kinds[a]]) - float(cov["%s/0" % kinds[b]]))
+			print("       %-8s vs %-8s  %.4f" % [kinds[a], kinds[b], d])
+			if d < worst:
+				worst = d
+				worst_pair = "%s/%s" % [kinds[a], kinds[b]]
+			_check(d > SEP_MIN, "%s and %s are separated by coverage (%.4f > %.2f)"
+				% [kinds[a], kinds[b], d, SEP_MIN])
+	print("   weakest pair %s at %.4f, floor %.4f -- %.1fx the floor"
+		% [worst_pair, worst, floor_max, worst / maxf(floor_max, 0.0001)])
+
+	# The ranks read off the same number: rank 1 inks more than rank 2 inks
+	# more than rank 3. This is the salience hierarchy itself, gated.
+	_check(float(cov["player/0"]) > float(cov["vehicle/0"]),
+		"the player out-inks every vehicle (%.4f > %.4f)" % [float(cov["player/0"]), float(cov["vehicle/0"])])
+	_check(float(cov["vehicle/0"]) > float(cov["npc/0"]),
+		"rank 1 out-inks rank 2 (%.4f > %.4f)" % [float(cov["vehicle/0"]), float(cov["npc/0"])])
+	_check(float(cov["npc/0"]) > float(cov["place/0"]),
+		"rank 2 out-inks rank 3 (%.4f > %.4f)" % [float(cov["npc/0"]), float(cov["place/0"])])
+
+	# ---- merged and clamped, against their own simple ----------------
+	for k in kinds:
+		for variant in [1, 2]:
+			var key: String = "%s/%d" % [k, variant]
+			if not cov.has(key):
+				continue
+			var d: float = absf(float(cov[key]) - float(cov["%s/0" % k]))
+			var what: String = "merged" if variant == 1 else "clamped"
+			_check(d > SEP_MIN, "a %s %s glyph is distinguishable from a simple one (%.4f)"
+				% [what, k, d])
+	_check(cov.has("vehicle/1"), "a MERGED glyph existed to be measured at all")
+	_check(cov.has("vehicle/2"), "a CLAMPED glyph existed to be measured at all")
+
+## PHASE 10 -- the clusters: what merged, what did not, and the bound.
+func _phase_clusters() -> void:
+	print("-- PHASE 10: the clusters --")
+	_check(is_zero_approx(_map.merge_px(MinimapMarkers.PLAYER)),
+		"KEEPY NEVER MERGES: merge_px(player) is %.2f" % _map.merge_px(MinimapMarkers.PLAYER))
+	var members_total: int = 0
+	var glyphs_total: int = 0
+	for group in MinimapMarkers.KINDS:
+		var label: String = String(group).replace("minimap_", "")
+		var list: Array[Node3D] = _map.members(group)
+		var drawn: Array[Dictionary] = _map.clusters(group)
+		members_total += list.size()
+		glyphs_total += drawn.size()
+		var n: float = _map.merge_px(group)
+		# ⚠️ MEASURED, NOT WRITTEN DOWN. The threshold is twice the icon's
+		# own drawn reach, read off the baked atlas -- so a radius edited in
+		# the table without touching anything else moves it, and a literal
+		# left behind here would be the silent drift this repo keeps paying.
+		var expect: float = 0.0 if group == MinimapMarkers.PLAYER \
+			else 2.0 * _map.reach(group, HubMinimap.V_SIMPLE)
+		_check(absf(n - expect) < 0.001,
+			"%s: merge_px is twice its own measured reach (%.2f px = %.2f u)"
+				% [label, n, n * _map.frame().size.y / _map.size.y])
+		var names: PackedStringArray = []
+		for c in drawn:
+			if int(c["count"]) < 2:
+				continue
+			var who: PackedStringArray = []
+			for m in (c["members"] as Array[Node3D]):
+				who.append(m.get_class() if m.name.begins_with("@") else str(m.name))
+			names.append("{%s}" % ", ".join(who))
+			# THE BOUND. Leader clustering, so every member is within one
+			# threshold of the glyph that stands for it -- printed in world
+			# units, because that is the error a player would suffer.
+			var far: float = 0.0
+			for m in (c["members"] as Array[Node3D]):
+				far = maxf(far, (_map.project(m.global_position)["at"] as Vector2)
+					.distance_to(c["at"] as Vector2))
+			_check(far <= n + 0.01,
+				"%s: every member of a cluster of %d is within %.2f px of its glyph (worst %.2f)"
+					% [label, int(c["count"]), n, far])
+		print("   %-8s %2d markers -> %2d glyphs   N %5.2f px   %s"
+			% [label, list.size(), drawn.size(), n, " ".join(names)])
+	print("   TOTAL %d markers -> %d glyphs" % [members_total, glyphs_total])
+	_check(members_total == 37, "all 37 markers are still on the map -- nothing was removed (%d)" % members_total)
+	_check(glyphs_total < members_total, "and the plan draws fewer glyphs than markers (%d < %d)"
+		% [glyphs_total, members_total])
+	# The player is one marker and one glyph, always.
+	_check(_map.clusters(MinimapMarkers.PLAYER).size() == _map.members(MinimapMarkers.PLAYER).size(),
+		"the player's markers are drawn one for one")
+
+	# ⚠️ THE BLIND, AND IT IS THE WHOLE PHASE. "Things merged" passes gratis
+	# against a rule that merges EVERYTHING. So a pair that must NOT merge is
+	# named and checked: the two nearest balloons are 19.30 px apart at spawn,
+	# past the 16 px threshold, and they have to come back as TWO glyphs.
+	var seen: Dictionary = {}
+	for c in _map.clusters(MinimapMarkers.VEHICLE):
+		for m in (c["members"] as Array[Node3D]):
+			seen[str(m.name)] = c["at"]
+	var split: bool = seen.has("Balloon_1") and seen.has("Balloon_2") \
+		and (seen["Balloon_1"] as Vector2) != (seen["Balloon_2"] as Vector2)
+	var gap: float = 0.0
+	if seen.has("Balloon_1") and seen.has("Balloon_2"):
+		gap = (seen["Balloon_1"] as Vector2).distance_to(seen["Balloon_2"] as Vector2)
+	_check(split, "BLIND: Balloon_1 and Balloon_2 are %.2f px apart and stay TWO glyphs" % gap)
+	var karts: int = 0
+	for c in _map.clusters(MinimapMarkers.VEHICLE):
+		var all_karts: bool = int(c["count"]) > 1
+		for m in (c["members"] as Array[Node3D]):
+			if not str(m.name).begins_with("Kart_"):
+				all_karts = false
+		if all_karts:
+			karts = int(c["count"])
+	_check(karts == 4, "and the four karts on the starting grid ARE one glyph (%d)" % karts)
+
+## The tints follow the ranks, in LUMINANCE, and the rank-3 icon is
+## decisively the smallest. Neither is the carrier of the distinction --
+## PHASE 9 is -- but a tint table that drifts out of rank order is exactly
+## the kind of thing nothing else in this repo would notice.
+func _phase_ranks() -> void:
+	print("-- PHASE 11: the three ranks --")
+	_check(HubMinimap.rank_of(MinimapMarkers.PLAYER) == 1 and HubMinimap.rank_of(MinimapMarkers.VEHICLE) == 1,
+		"the player and the vehicles are rank 1")
+	_check(HubMinimap.rank_of(MinimapMarkers.NPC) == 2, "the npcs are rank 2")
+	_check(HubMinimap.rank_of(MinimapMarkers.PLACE) == 3, "the places are rank 3")
+	var order: Array[StringName] = [MinimapMarkers.PLAYER, MinimapMarkers.VEHICLE,
+		MinimapMarkers.NPC, MinimapMarkers.PLACE]
+	var prev: float = 2.0
+	for kind in order:
+		var lum: float = _lum(HubMinimap.tone_of(kind))
+		print("   %-17s rank %d   tone %s   luminance %.4f   reach %.2f px"
+			% [kind, HubMinimap.rank_of(kind), HubMinimap.tone_of(kind), lum,
+				_map.reach(kind, HubMinimap.V_SIMPLE)])
+		_check(lum < prev, "%s is darker than the kind above it (%.4f)" % [kind, lum])
+		prev = lum
+	var big: float = minf(minf(_map.reach(MinimapMarkers.PLAYER, HubMinimap.V_SIMPLE),
+		_map.reach(MinimapMarkers.VEHICLE, HubMinimap.V_SIMPLE)),
+		_map.reach(MinimapMarkers.NPC, HubMinimap.V_SIMPLE))
+	var small: float = _map.reach(MinimapMarkers.PLACE, HubMinimap.V_SIMPLE)
+	_check(small < 0.6 * big, "rank 3 is decisively the smallest icon (%.2f px against %.2f)" % [small, big])
+
 ## ---- helpers --------------------------------------------------------
+
+## Three frames, which is what the widget needs to re-bake its cluster list
+## and the renderer to put it on screen.
+func _settle() -> void:
+	for _i in 3:
+		await get_tree().process_frame
+
+## How much of one ICON_PX box `now` differs from `base`, and by how much at
+## its strongest. The difference IS the marker: the baseline frame has the
+## kind lifted off the map, so anything that changed inside the box is the
+## glyph's ink -- outline included, tone-independent, band-independent.
+func _coverage(now: Image, base: Image, centre: Vector2) -> Dictionary:
+	var half: int = HubMinimap.ICON_PX / 2
+	var hits: int = 0
+	var top: float = 0.0
+	var total: int = 0
+	for dy in range(-half, half + 1):
+		for dx in range(-half, half + 1):
+			var at := Vector2i(int(round(centre.x)) + dx, int(round(centre.y)) + dy)
+			if at.x < 0 or at.y < 0 or at.x >= now.get_width() or at.y >= now.get_height():
+				continue
+			total += 1
+			var a: Color = now.get_pixelv(at)
+			var b: Color = base.get_pixelv(at)
+			var d: float = maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)), absf(a.b - b.b))
+			top = maxf(top, d)
+			if d >= INK_EPS:
+				hits += 1
+	return {"cov": float(hits) / maxf(float(total), 1.0), "peak": top}
+
+## How many pixels within `radius` of `centre` read back as `tone`. Used
+## instead of a single centre sample because a MERGED glyph is punched at
+## its centre on purpose.
+func _tone_hits(img: Image, centre: Vector2, tone: Color, radius: float) -> int:
+	var r: int = int(ceil(radius))
+	var n: int = 0
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if float(dx * dx + dy * dy) > radius * radius:
+				continue
+			var at := Vector2i(int(round(centre.x)) + dx, int(round(centre.y)) + dy)
+			if at.x < 0 or at.y < 0 or at.x >= img.get_width() or at.y >= img.get_height():
+				continue
+			if _near(img.get_pixelv(at), tone, TONE_EPS):
+				n += 1
+	return n
+
+## Rec.709 relative luminance of a tint, on the sRGB values as authored --
+## the same arithmetic used everywhere else in this repo when tones are
+## ordered rather than contrast-scored.
+func _lum(c: Color) -> float:
+	return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
 
 func _touch(at: Vector2) -> void:
 	for pressed in [true, false]:
