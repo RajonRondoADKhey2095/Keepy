@@ -54,6 +54,56 @@ class_name HubMinimap
 ## the map by one line at its own construction site.
 ##
 ## =====================================================================
+## CH47 -- THE THREE RANKS, AND THE CLUSTERS
+##
+## Mathieu, on device, after CH46: "je ne comprends rien a cette map, il y
+## a plein de points, on n'arrive pas a distinguer les amis de Keepy des
+## vehicules". That is a READABILITY failure, not a correctness one -- CH46
+## measured 69 green assertions on a map nobody could read, because it
+## never gated the one thing that matters: that the four KINDS look
+## different from each other.
+##
+## THE DEFECT, NAMED. CH46 gave three of its four kinds the SAME 14 px
+## icon: player a disc r 4.2, vehicle a disc r 3.9, npc THE SAME disc
+## r 3.9, place a diamond r 4.2. Vehicle and NPC were byte-identical
+## shapes at byte-identical sizes; only the tint told them apart. And tint
+## is the one channel this repo has documented as unusable for four-way
+## separation (CLAUDE.md: the WCAG scores NOTHING inside a luminance band,
+## and no probe here measures hue).
+##
+## LEVER A -- THREE RANKS OF SALIENCE. Every kind now has its own SHAPE and
+## its own SIZE, ordered by how much of the player's attention it deserves:
+##
+##   rank 1  player   large disc      "where am I"
+##   rank 1  vehicle  large diamond   "what can I drive"
+##   rank 2  npc      triangle        "who is about"
+##   rank 3  place    small dot       map DECOR, not a claim on the eye
+##
+## Nothing was removed -- all 37 markers are still drawn (Mathieu's own
+## decision 1). What changed is that the eye stops processing them at one
+## rank. The tints follow the same order in LUMINANCE (rank 1 lightest,
+## rank 3 darkest) and are asserted to, but the tint is a SECOND cue on top
+## of shape and size, never the carrier.
+##
+## LEVER B -- CLUSTERS. The measured problem was never the total ink: 37
+## markers cover 16 % of a 155 x 280 plan. It is LOCAL agglomeration.
+## MinimapDensityRecon measured, at spawn: SEVEN npcs on ONE pixel (the
+## birds, boar, cat, fawn and beaver all sit on the world origin, under
+## Keepy's own marker), FOUR karts inside 2.80 px on the starting grid, and
+## THREE portals inside 6.78 px. So same-kind markers closer than
+## `merge_px(kind)` are drawn as ONE marker, at the position of a real
+## member of the group, with a punched-out centre that says "several".
+##
+## `merge_px` is MEASURED, not chosen: it is twice the icon's own drawn
+## reach, read back off the baked atlas (`_measure_reach`), so it is
+## exactly "these two icons touch". A literal here would drift the day a
+## radius changes and nothing would say so.
+##
+## KEEPY NEVER MERGES WITH ANYTHING -- decision, and it is enforced by
+## `merge_px(PLAYER) == 0.0` rather than by a special case at the call
+## site, so there is one place to read it.
+##
+## =====================================================================
 ## MOUSE_FILTER_IGNORE IS NOT A DETAIL
 ##
 ## `Control`'s default is STOP, and both `HubTapInput._unhandled_input`
@@ -76,15 +126,32 @@ const MARGIN_X: float = 24.0
 const MARGIN_Y: float = 150.0
 
 ## One atlas cell, in pixels. Every icon is drawn 1:1 at this size, so no
-## icon is ever resampled.
-const ICON_PX: int = 14
+## icon is ever resampled. It is the CELL, not the ink: a place's dot inks
+## 7 px of it and a clamped vehicle inks 19, which is the whole point.
+const ICON_PX: int = 25
 
-## Atlas cell indices. The order is the order they are baked in.
-const ICON_DOT: int = 0
-const ICON_DIAMOND: int = 1
-const ICON_SQUARE: int = 2
-const ICON_PLAYER: int = 3
-const ICON_COUNT: int = 4
+## How far the black outline runs past the white fill, in pixels. One
+## number for every icon, so "hard dark edge" means the same thing at
+## every rank -- and so a small rank-3 dot is not left with a rim as thick
+## as its body.
+const OUTLINE_PX: float = 1.4
+
+## The three states an icon can be in. They are VARIANTS of a kind, never
+## kinds of their own: a clamped vehicle is still orange, a merged place is
+## still a small violet dot. Only the geometry changes.
+const V_SIMPLE: int = 0
+const V_MERGED: int = 1
+const V_CLAMPED: int = 2
+const VARIANT_COUNT: int = 3
+
+## Kind -> column in the atlas strip. The cell is `kind * VARIANT_COUNT +
+## variant`, so the strip reads player/vehicle/npc/place, three cells each.
+const K_PLAYER: int = 0
+const K_VEHICLE: int = 1
+const K_NPC: int = 2
+const K_PLACE: int = 3
+const KIND_COUNT: int = 4
+const ICON_COUNT: int = KIND_COUNT * VARIANT_COUNT
 
 ## Ground alpha inside the walkable world, and the tone everything outside
 ## it is washed with. The shape of the world IS the map's main information:
@@ -106,10 +173,20 @@ const BORDER_TONE: Color = Color(0.09, 0.11, 0.09, 0.95)
 ## blind sweep read two plan pixels as "a player" during a red pass. A
 ## warm yellow is 0.71 away in blue from that line and clear of every
 ## painted band tone as well.
+##
+## ⚠️ CH47 ORDERS THEM BY LUMINANCE, AND THE ORDER IS THE RANK. Rank 1 is
+## the lightest, rank 3 the darkest, so a place reads as map decor even
+## before its shape is resolved. CH46's four tints did NOT do this -- its
+## npc blue (0.577) was LIGHTER than its vehicle orange (0.535), so the
+## animal shouted louder than the kart. MinimapProbe asserts the ordering
+## on the rendered relative luminance, because a tint table that drifts out
+## of rank order is exactly the kind of thing nothing else would notice.
+## The player's tone is NOT re-opened: CH46 measured it against the
+## circuit's own pale line and a warm yellow is what came out of that.
 const PLAYER_TONE: Color = Color(1.00, 0.86, 0.16)
-const VEHICLE_TONE: Color = Color(0.97, 0.44, 0.20)
-const NPC_TONE: Color = Color(0.36, 0.60, 0.98)
-const PLACE_TONE: Color = Color(0.74, 0.44, 0.96)
+const VEHICLE_TONE: Color = Color(1.00, 0.58, 0.28)
+const NPC_TONE: Color = Color(0.30, 0.52, 0.90)
+const PLACE_TONE: Color = Color(0.46, 0.31, 0.62)
 
 ## Painted-zone bands, read off CozyPalette in the SAME ORDER the ground
 ## shader mixes them (cozy_ground.gdshader fragment(): grass, then autumn,
@@ -131,8 +208,10 @@ const _PAINTED_BASE: Color = CozyPalette.GRASS_A
 const DRAW_ORDER: Array[StringName] = [
 	MinimapMarkers.PLACE, MinimapMarkers.NPC, MinimapMarkers.VEHICLE, MinimapMarkers.PLAYER]
 
-## The fill colour of a kind's marker, and the atlas cell it uses. Static so
-## a probe asks for them rather than restating them.
+## The fill colour of a kind's marker, its atlas column, and its rank.
+## Static so a probe asks for them rather than restating them -- CH46 paid
+## for a probe that spelled the draw order out a second time and then
+## disagreed with the widget about what was occluded.
 static func tone_of(kind: StringName) -> Color:
 	if kind == MinimapMarkers.PLAYER:
 		return PLAYER_TONE
@@ -142,12 +221,71 @@ static func tone_of(kind: StringName) -> Color:
 		return NPC_TONE
 	return PLACE_TONE
 
-static func icon_of(kind: StringName) -> int:
+static func column_of(kind: StringName) -> int:
 	if kind == MinimapMarkers.PLAYER:
-		return ICON_PLAYER
-	if kind == MinimapMarkers.PLACE:
-		return ICON_DIAMOND
-	return ICON_DOT
+		return K_PLAYER
+	if kind == MinimapMarkers.VEHICLE:
+		return K_VEHICLE
+	if kind == MinimapMarkers.NPC:
+		return K_NPC
+	return K_PLACE
+
+## The salience rank a kind is drawn at: 1 = the player and what he can
+## drive, 2 = who is about, 3 = map decor. Published because the tone
+## ordering and the sizes both follow it, and a probe gates that they do.
+static func rank_of(kind: StringName) -> int:
+	if kind == MinimapMarkers.PLAYER or kind == MinimapMarkers.VEHICLE:
+		return 1
+	if kind == MinimapMarkers.NPC:
+		return 2
+	return 3
+
+static func cell_of(kind: StringName, variant: int) -> int:
+	return column_of(kind) * VARIANT_COUNT + variant
+
+## ---- the shapes, in one table --------------------------------------
+##
+## `_R_IN` is the WHITE FILL radius in the shape's own metric (a Euclidean
+## radius for a disc, an L1 radius for a diamond, an inradius for the
+## triangle, an L-infinity half-extent for the clamped square). The black
+## outline always runs OUTLINE_PX further, and the drawn REACH that follows
+## from all that is never written down here: it is MEASURED off the baked
+## pixels, because that is the number the merge threshold is built on.
+##
+## The clamped square's half-extent is the kind's own measured reach, so a
+## clamped marker is exactly "this kind's icon, put in a box" -- strictly
+## larger than the icon it replaces, at every rank, which is what makes the
+## coverage test able to tell them apart for a disc as well as for a
+## diamond (a circumscribed square is only 27 % larger in area than its
+## disc; a square built on the reach is 62 % larger).
+const SHAPE_DISC: int = 0
+const SHAPE_DIAMOND: int = 1
+const SHAPE_TRIANGLE: int = 2
+const SHAPE_SQUARE: int = 3
+
+## kind column -> [shape, simple fill radius, merged fill radius, merged
+## punch radius]. The merged glyph is ONE SIZE UP with its centre punched
+## out: bigger, because a cluster is MORE and not less, and hollow, because
+## that is the cue that says "several" without a digit nobody could read at
+## 25 px. The player's row is never used for a merged cell -- Keepy does
+## not cluster -- but it is written out so the table has no hole in it.
+const SHAPES: Array[int] = [SHAPE_DISC, SHAPE_DIAMOND, SHAPE_TRIANGLE, SHAPE_DISC]
+##
+## ⚠️ THE RANK-3 RADIUS IS 2.7 AND NOT 2.3, AND THE PROBE IS WHY. At 2.3 the
+## place dot's fully-opaque core is about nine pixels before the widget's
+## own sub-pixel placement filters it, and MinimapProbe read FOUR pixels of
+## the kind's tone where it wants six. Small is the point of rank 3; four
+## device pixels of tone is smaller than legible, and the failing assertion
+## was right about the art rather than wrong about itself.
+const R_SIMPLE: Array[float] = [7.0, 7.6, 3.0, 2.7]
+const R_MERGED: Array[float] = [7.0, 9.6, 4.4, 4.7]
+const R_PUNCH: Array[float] = [0.0, 2.2, 2.0, 1.7]
+
+## The drawn reach of every atlas cell, in pixels, MEASURED off the baked
+## image (see _measure_reach). Never a literal: `merge_px()` is built on
+## it, and a radius edited above with a threshold left behind is exactly
+## the silent drift this repo keeps paying for.
+var _reach: PackedFloat32Array = PackedFloat32Array()
 
 var _atlas: ImageTexture = null
 var _frame: Rect2 = Rect2()
@@ -217,14 +355,108 @@ func frame() -> Rect2:
 ## so a clamped marker is fully drawn instead of half-cut -- an entity that
 ## is off the map must still be READABLE, or "clamped" and "gone" look the
 ## same.
-func project(world: Vector3) -> Dictionary:
+## ⚠️ CH47: THE INSET IS THE ICON'S OWN REACH, NOT HALF A CELL. CH46 pulled
+## every marker in by ICON_PX / 2 because its cell WAS its ink. A 25 px cell
+## whose place-dot inks 7 px of it would push that dot 12 px inland -- a
+## marker drawn 11 world units from where the thing is. Each caller passes
+## the reach of the glyph it is about to draw, so every icon is drawn whole
+## and none is drawn further in than it has to be.
+func project(world: Vector3, inset: float = 0.0) -> Dictionary:
 	var u: float = (world.x - _frame.position.x) / _frame.size.x
 	var v: float = (_frame.position.y + _frame.size.y - world.z) / _frame.size.y
 	var outside: bool = u < 0.0 or u > 1.0 or v < 0.0 or v > 1.0
-	var half: float = float(ICON_PX) * 0.5
-	var px: float = clampf(u * size.x, half, maxf(half, size.x - half))
-	var py: float = clampf(v * size.y, half, maxf(half, size.y - half))
+	var px: float = clampf(u * size.x, inset, maxf(inset, size.x - inset))
+	var py: float = clampf(v * size.y, inset, maxf(inset, size.y - inset))
 	return {"at": Vector2(px, py), "clamped": outside}
+
+## ---- the clusters ----------------------------------------------------
+
+## The drawn reach of one glyph, in pixels, as measured off the atlas.
+## Returns 0 before the first bake, which is the honest answer.
+func reach(kind: StringName, variant: int) -> float:
+	var cell: int = cell_of(kind, variant)
+	if cell < 0 or cell >= _reach.size():
+		return 0.0
+	return _reach[cell]
+
+## How close two same-kind markers have to be to become one, in widget
+## pixels. TWICE the simple icon's own measured reach -- that is exactly
+## "their ink touches", and it is derived from the size the lot retained
+## rather than picked by eye.
+##
+## ⚠️ KEEPY IS ZERO, AND THAT IS THE WHOLE RULE. The player never merges
+## with anything; writing it as a threshold rather than as an `if` at the
+## call site means there is one place to read it and one place to gate it.
+func merge_px(kind: StringName) -> float:
+	if kind == MinimapMarkers.PLAYER:
+		return 0.0
+	return 2.0 * reach(kind, V_SIMPLE)
+
+## What the map actually DRAWS for `kind`: one entry per glyph, after the
+## same-kind markers that sit on top of each other have been folded into
+## one. Published so MinimapProbe reads the very list the drawing walks --
+## a probe that recomputed the clustering would be free to disagree with
+## it, which is the CH46 draw-order defect all over again.
+##
+## The algorithm is LEADER clustering, not single-link, and the difference
+## is load-bearing: single-link chains, so three markers each 15 px from
+## the next would collapse into one glyph 30 px from a member it claims to
+## stand for. Here every member is within `merge_px` of the LEADER, the
+## glyph is drawn ON the leader -- a real member's own position, never a
+## centroid that may sit on nothing -- and the bound is therefore exact and
+## assertable.
+##
+## Clamped and in-frame markers never merge with each other: they are
+## saying different things, and one of them is "I am not on this map".
+func clusters(kind: StringName) -> Array[Dictionary]:
+	var pts: Array[Dictionary] = []
+	for node in members(kind):
+		var flag: bool = bool(project(node.global_position)["clamped"])
+		var variant: int = V_CLAMPED if flag else V_SIMPLE
+		pts.append({
+			"at": (project(node.global_position, reach(kind, variant))["at"] as Vector2),
+			"clamped": flag, "node": node})
+	# A STABLE order, so the leader of a group does not depend on the order
+	# get_nodes_in_group happened to return: west to east, then north to
+	# south, then by instance id for an exact tie.
+	pts.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var pa: Vector2 = a["at"]
+		var pb: Vector2 = b["at"]
+		if not is_equal_approx(pa.x, pb.x):
+			return pa.x < pb.x
+		if not is_equal_approx(pa.y, pb.y):
+			return pa.y < pb.y
+		return (a["node"] as Node3D).get_instance_id() < (b["node"] as Node3D).get_instance_id())
+	var threshold: float = merge_px(kind)
+	var taken: Array[bool] = []
+	for _i in pts.size():
+		taken.append(false)
+	var out: Array[Dictionary] = []
+	for i in pts.size():
+		if taken[i]:
+			continue
+		taken[i] = true
+		var group: Array[Node3D] = [pts[i]["node"] as Node3D]
+		if threshold > 0.0:
+			for j in range(i + 1, pts.size()):
+				if taken[j] or bool(pts[j]["clamped"]) != bool(pts[i]["clamped"]):
+					continue
+				if (pts[j]["at"] as Vector2).distance_to(pts[i]["at"] as Vector2) > threshold:
+					continue
+				taken[j] = true
+				group.append(pts[j]["node"] as Node3D)
+		out.append({"at": pts[i]["at"], "clamped": pts[i]["clamped"],
+			"count": group.size(), "members": group})
+	return out
+
+## Which cell a cluster is drawn with. CLAMPED WINS OVER MERGED when both
+## apply -- there is no fourth variant, and "this is off the map" is the
+## more urgent of the two things to say. Stated here rather than inline so
+## the probe can read the same rule.
+static func variant_of(count: int, clamped: bool) -> int:
+	if clamped:
+		return V_CLAMPED
+	return V_MERGED if count > 1 else V_SIMPLE
 
 ## ---- what the map draws --------------------------------------------
 
@@ -234,15 +466,15 @@ func _draw() -> void:
 	draw_texture_rect_region(_atlas, Rect2(Vector2.ZERO, size),
 		Rect2(0.0, 0.0, float(_bg_size.x), float(_bg_size.y)), Color(1.0, 1.0, 1.0, 1.0))
 	for kind in DRAW_ORDER:
-		_draw_kind(kind, icon_of(kind), tone_of(kind))
+		_draw_kind(kind, tone_of(kind))
 
-func _draw_kind(group: StringName, icon: int, tone: Color) -> void:
-	for node in members(group):
-		var shot: Dictionary = project(node.global_position)
+func _draw_kind(group: StringName, tone: Color) -> void:
+	for shot in clusters(group):
 		var at: Vector2 = shot["at"]
-		# A clamped marker changes SHAPE, not colour: it keeps saying which
-		# kind it is while saying it is off the map.
-		var cell: int = ICON_SQUARE if bool(shot["clamped"]) else icon
+		# A clamped marker changes SHAPE, not colour, and so does a merged
+		# one: both keep saying which kind they are while saying one more
+		# thing about themselves.
+		var cell: int = cell_of(group, variant_of(int(shot["count"]), bool(shot["clamped"])))
 		draw_texture_rect_region(_atlas,
 			Rect2(at - Vector2(float(ICON_PX), float(ICON_PX)) * 0.5,
 				Vector2(float(ICON_PX), float(ICON_PX))),
@@ -361,39 +593,62 @@ func _bake_border(img: Image) -> void:
 		img.set_pixel(0, py, BORDER_TONE)
 		img.set_pixel(_bg_size.x - 1, py, BORDER_TONE)
 
-## The four icons, WHITE FILL / BLACK OUTLINE, antialiased by coverage.
-## Every one of them is a distinct SHAPE at 14 px, because shape survives a
-## background the colour cannot be chosen against.
+## The twelve icons -- four kinds x three variants -- WHITE FILL / BLACK
+## OUTLINE, antialiased by coverage. Every one of them is a distinct SHAPE
+## at a distinct SIZE, because shape and size survive a background the
+## colour cannot be chosen against, and CH46 shipped three kinds sharing
+## one disc.
+##
+## The pass runs TWICE per cell in effect: the simple and clamped radii
+## come from the table, but the clamped square's half-extent is the SIMPLE
+## cell's measured reach, so the simple cells are baked and measured first
+## and the clamped ones second.
 func _bake_icons(img: Image) -> void:
+	_reach.resize(ICON_COUNT)
+	for k in KIND_COUNT:
+		_paint_icon(img, k * VARIANT_COUNT + V_SIMPLE, SHAPES[k], R_SIMPLE[k], 0.0)
+		_paint_icon(img, k * VARIANT_COUNT + V_MERGED, SHAPES[k], R_MERGED[k], R_PUNCH[k])
+	for k in KIND_COUNT:
+		_paint_icon(img, k * VARIANT_COUNT + V_CLAMPED, SHAPE_SQUARE,
+			_reach[k * VARIANT_COUNT + V_SIMPLE] - OUTLINE_PX, 0.0)
+
+## One cell. `punch` > 0 knocks the fill out of the middle, leaving the
+## outline's black there -- the merged glyph's "several" cue. It only
+## touches the FILL, never the alpha, so a merged marker has exactly the
+## silhouette of an enlarged simple one and the hole reads as a dark pip
+## rather than as a hole in the map.
+func _paint_icon(img: Image, cell: int, shape: int, r_in: float, punch: float) -> void:
 	var c: float = float(ICON_PX) * 0.5 - 0.5
-	for cell in ICON_COUNT:
-		for py in ICON_PX:
-			for px in ICON_PX:
-				var dx: float = float(px) - c
-				var dy: float = float(py) - c
-				var metric: float = 0.0
-				var r_in: float = 0.0
-				var r_out: float = 0.0
-				match cell:
-					ICON_DIAMOND:
-						metric = absf(dx) + absf(dy)
-						r_in = 4.2
-						r_out = 5.8
-					ICON_SQUARE:
-						metric = maxf(absf(dx), absf(dy))
-						r_in = 3.7
-						r_out = 5.1
-					ICON_PLAYER:
-						metric = sqrt(dx * dx + dy * dy)
-						r_in = 4.2
-						r_out = 6.0
-					_:
-						metric = sqrt(dx * dx + dy * dy)
-						r_in = 3.9
-						r_out = 5.3
-				var a_out: float = clampf(r_out + 0.5 - metric, 0.0, 1.0)
-				var a_in: float = clampf(r_in + 0.5 - metric, 0.0, 1.0)
-				img.set_pixel(cell * ICON_PX + px, _bg_size.y + py, Color(a_in, a_in, a_in, a_out))
+	var reach_px: float = 0.0
+	for py in ICON_PX:
+		for px in ICON_PX:
+			var dx: float = float(px) - c
+			var dy: float = float(py) - c
+			var radial: float = sqrt(dx * dx + dy * dy)
+			var metric: float = radial
+			match shape:
+				SHAPE_DIAMOND:
+					metric = absf(dx) + absf(dy)
+				SHAPE_SQUARE:
+					metric = maxf(absf(dx), absf(dy))
+				SHAPE_TRIANGLE:
+					# Up-pointing equilateral, written as the largest of its
+					# three half-plane distances, with the INCENTRE at the
+					# cell's centre. That is deliberate: the incentre of an
+					# equilateral triangle IS its area centroid, so the glyph
+					# is centred on the thing it marks even though its
+					# bounding box is not symmetric about it.
+					metric = maxf(dy, maxf(0.866025 * (-dx) - 0.5 * dy, 0.866025 * dx - 0.5 * dy))
+				_:
+					metric = radial
+			var a_out: float = clampf(r_in + OUTLINE_PX + 0.5 - metric, 0.0, 1.0)
+			var a_in: float = clampf(r_in + 0.5 - metric, 0.0, 1.0)
+			if punch > 0.0:
+				a_in = minf(a_in, clampf(radial - punch + 0.5, 0.0, 1.0))
+			if a_out > 0.5:
+				reach_px = maxf(reach_px, radial)
+			img.set_pixel(cell * ICON_PX + px, _bg_size.y + py, Color(a_in, a_in, a_in, a_out))
+	_reach[cell] = reach_px
 
 ## ---- pixel <-> world -------------------------------------------------
 

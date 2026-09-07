@@ -113,13 +113,20 @@ var found_total: int = 0
 var misses_total: int = 0
 
 func _ready() -> void:
-	# CH46: on the minimap, as a hub animal. One line, at the site that builds it --
-	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
-	MinimapMarkers.mark(self, MinimapMarkers.NPC)
 	_rng.seed = 20260905
 	_critter = HubCritter.new()
 	_critter.name = "Critter"
 	add_child(_critter)
+	# ⚠️ CH47 -- THE MARKER GOES ON THE CRITTER, NOT ON THIS CONTROLLER.
+	# CH46 put it here, on `self`, and MinimapDensityRecon measured what
+	# that costs: this node is an EMPTY CONTROLLER that never leaves the
+	# world origin, so the marker sat on (0, 0, 0) -- under Keepy's own
+	# spawn marker -- for the whole session. Seven of the nine npc markers
+	# were doing it. That is a large part of "il y a plein de points, on
+	# n'arrive pas a distinguer les amis de Keepy": the friends were never
+	# where the map said they were. The animal is the child, so the child
+	# is what joins the group, and it has to exist first.
+	MinimapMarkers.mark(_critter, MinimapMarkers.NPC)
 	_critter.setup_model(SCENE, SCALE, LIFT)
 	_critter.gait_stride = 0.7
 	_critter.gait_bob = 0.05

@@ -1774,6 +1774,69 @@ sur ses pieds. Constaté au CH41 ; partagé par le char à voile et le voilier,
 **signalé et non corrigé** (le changer toucherait deux conduites validées
 device). Lire l'ÉTAT (`is_on_carrier` / `is_hopping`), pas le signal.
 
+### ⚠️ UNE SONDE QUI NE COMPARE CHAQUE CHOSE QU'À ELLE-MÊME NE PEUT PAS VOIR QUE DEUX CHOSES SE RESSEMBLENT
+
+CH46 est sorti **69 assertions vertes** sur une minimap que Mathieu, device
+en main, n'a pas su lire. Les 69 étaient vraies. Le défaut n'était dans
+aucune d'elles : il était dans ce qu'**aucune** ne demandait. Chaque
+marqueur était comparé **à sa propre teinte**, jamais à celle d'un autre
+type — et deux des quatre types partageaient **la même cellule d'atlas**,
+disque de rayon 3,9, au pixel près. Une sonde qui pose à chaque objet la
+question « es-tu bien toi-même ? » répond oui à un jeu d'objets
+identiques.
+
+**Règle** : dès qu'un contrat porte sur le fait que N choses sont
+DISTINCTES — quatre marqueurs, trois états d'un HUD, deux poses — c'est la
+matrice des **N(N−1)/2 paires** qui se gate, et elle se **publie en
+entier**. Un seul « écart minimum » cache quelle paire est la faible, et
+c'est toujours celle-là qui casse la prochaine fois.
+
+⚠️ **Et la séparation se mesure en COUVERTURE, jamais en TON.** Ce dépôt
+documente déjà que le WCAG ne score aucune séparation à l'intérieur d'une
+bande de luminance et qu'aucune sonde d'ici ne mesure la teinte : une
+distinction à quatre par la couleur est condamnée d'avance sur ce sol.
+Ce qui se mesure est **quelle part de sa boîte une icône encre**, lue
+comme une DIFFÉRENCE contre une frame où la chose a été **retirée** de la
+scène — ce qui rend le nombre indépendant du ton de l'objet ET du fond
+sous lui. Un test de ton absolu mesure le fond autant que l'objet.
+
+### ⚠️ UN MARQUEUR POSÉ SUR UN CONTRÔLEUR N'EST PAS POSÉ SUR CE QU'IL REPRÉSENTE
+
+`HubBoar`, `HubCat`, `HubFawn`, `HubBeaver` sont des **nœuds vides** qui
+construisent l'animal et ne bougent jamais de l'origine du monde ; la bête
+est leur enfant `HubCritter`. CH46 y a écrit `mark(self)`. Résultat mesuré
+sur 900 frames simulées : **sept des neuf marqueurs PNJ épinglés sur
+(0, 0, 0)**, sous le marqueur du joueur, pendant toute la session — sans
+erreur, sans sonde rouge, et **au pixel ça ressemble à un marqueur**.
+
+**Règle** : tout enregistrement dans un registre — groupe de carte, liste
+de sauvegarde, table d'émetteurs — qui prend `self` dans un fichier où
+`self` est un contrôleur enregistre **le mauvais nœud**. Inscrire le corps
+qui BOUGE, à son site de construction, et le gater : quel nœud porte
+l'inscription n'est pas une propriété DESSINÉE, donc **aucun pixel ne peut
+la voir** et l'assertion doit être structurelle et se dire structurelle.
+
+⚠️ **Corollaire de méthode** : deux lectures d'un monde **byte-identiques**
+à 900 frames d'écart ne prouvent pas qu'il est stable — elles passent
+gratuitement contre un monde qui n'a jamais tourné. Publier un **témoin**
+(compteur de frames, horloge, état d'un acteur censé bouger) avec les deux
+lectures, sinon « rien n'a bougé » et « rien ne tourne » se lisent pareil.
+
+### ⚠️ UN SEUIL ÉCRIT EN « CELLULES » CESSE DE SÉPARER QUOI QUE CE SOIT LE JOUR OÙ LA CELLULE GRANDIT
+
+CH46 excluait un marqueur de son test de rendu quand un marqueur dessiné
+après lui était « à moins d'`ICON_PX` » — juste, parce que sa cellule
+d'atlas **était** son encre. CH47 a porté la cellule de 14 à 25 px pour y
+loger quatre tailles d'icône : le même seuil a alors exclu **les quatorze**
+marqueurs de lieux, et la phase est sortie **0 sur 0**, c'est-à-dire le vert
+le plus vide qui soit.
+
+**Règle** : un seuil de test s'écrit dans l'unité de **ce qu'il mesure**
+(ici l'encre réellement dessinée, relue sur l'atlas cuit), jamais dans
+celle du conteneur qui la porte. Et tout test « tous ceux qui restent
+passent » se double d'un garde **`tried > 0`** — c'est ce garde, écrit par
+CH46 pour une autre raison, qui a attrapé celui-ci.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
