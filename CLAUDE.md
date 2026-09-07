@@ -1292,6 +1292,46 @@ un défaut que personne n'avait cherché : l'anneau de dépôt de fin de trajet
 (`_ride_exit_point`, qui **jette** tout candidat hors région) avait tout son
 arc nord amputé à P2 — un rider ne pouvait être déposé que côté plateau.
 
+### ⚠️ UN LOBE SUR UN BORD NE COÛTE RIEN ; UN RECTANGLE SUR UN BORD, SI
+
+Précision d'une doctrine déjà écrite, payée au CH38. « Un lobe bolté près
+d'un BORD n'ajoute aucune longueur à une diagonale entre COINS » est vrai
+d'un **disque centré SUR le bord** — la moitié intérieure ne sert à rien,
+et la pointe extérieure reste plus près des coins opposés que ces coins ne
+le sont entre eux. Ce n'est **pas** vrai d'un **rectangle** accolé au même
+bord : ses deux coins extérieurs deviennent la nouvelle pire paire, et le
+coût grandit avec sa largeur, pas avec sa surface.
+
+Mesuré : un rectangle de 28 u accolé au bord ouest du carré porte la pire
+traversée de **18,700 s à 20,967 s** ; le même à 36 u de large sort à
+**22,383 s**, au-dessus des 22 s que le hub se tient. Le plafond de
+traversée est donc ce qui **cape la largeur d'une extension de bord** — et,
+en cascade, la HAUTEUR de tout relief qu'on y pose, une pente marchable
+n'étant qu'un rapport entre les deux.
+
+**Règle** : toute extension de région se price sur ses **coins**, contre le
+coin le plus éloigné de la région existante, avant que sa forme soit
+dessinée — et le chiffre se **marche** ensuite sur le vrai hopper, jamais
+seulement au ratio s/u. Corollaire du même lot : la marche a reproduit la
+diagonale publiée **à la frame près** (1 122 frames, 18,700 s), ce qui est
+la seule chose qui donne au banc le droit de publier le chiffre neuf.
+
+### ⚠️ DEUX BOSSES QUI SE RECOUVRENT ADDITIONNENT LEURS GRADIENTS
+
+Un relief composé de plusieurs bosses ne se gate pas bosse par bosse. Deux
+cosinus surélevés dont les supports se chevauchent additionnent leurs
+**pentes** là où ils se croisent, et le résultat dépasse chacun d'eux :
+mesuré au CH38, une bosse à 23° et une à 17° ont rendu **33,0°** dans leur
+recouvrement — au-dessus du plafond de 30° que CH35-C fixe pour un sol
+unlit, alors que les deux prises isolément passaient largement.
+
+**Règle** : une pente se mesure sur les **triangles réellement dessinés**
+de la grille assemblée, jamais sur la fonction analytique d'une bosse ni
+sur la somme de leurs maxima. Et si la silhouette veut deux sommets, ils
+s'écartent : au CH38 la seconde bosse a fini à 12,04 u de la première, la
+distance à laquelle son gradient ne rencontre plus celui de la grande. Un
+budget de pente dépensé dans un recouvrement n'achète aucune silhouette.
+
 ### ⚠️ UN APPUI PARTAGÉ NE VEUT PAS DIRE UNE POSE PARTAGÉE
 
 Deux corps accrochés au MÊME objet physique partagent la géométrie de cet
