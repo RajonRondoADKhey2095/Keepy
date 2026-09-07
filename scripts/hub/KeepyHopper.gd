@@ -485,6 +485,9 @@ const ZIPLINE_HANG_PITCH_DEG: float = 12.0
 const ZIPLINE_BOARD_HOP_HEIGHT: float = 0.28
 
 func _ready() -> void:
+	# CH46: on the minimap, as the player. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	MinimapMarkers.mark(self, MinimapMarkers.PLAYER)
 	_base_scale = _body.scale
 	_base_pitch = _body.rotation_degrees.x
 	_target = global_position

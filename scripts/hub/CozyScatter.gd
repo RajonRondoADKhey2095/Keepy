@@ -875,6 +875,9 @@ func _windmill() -> void:
 	tower.rotation.y = 0.35
 	tower.material_override = CozyPalette.decor_material()
 	tower.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# CH46: the windmill is a PLACE -- it is the moor's one landmark, and
+	# HubRegion already carves a hole around its foot.
+	MinimapMarkers.mark(tower, MinimapMarkers.PLACE)
 	add_child(tower)
 	_sails = MeshInstance3D.new()
 	_sails.name = "Sails"
@@ -899,6 +902,8 @@ func _mother_tree() -> void:
 	_mother.rotation.y = 0.6
 	_mother.material_override = CozyPalette.decor_material_wind(0.10, 16.0)
 	_mother.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# CH46: the Mother Tree is a PLACE -- the hollow's landmark.
+	MinimapMarkers.mark(_mother, MinimapMarkers.PLACE)
 	add_child(_mother)
 	_stats["mother_tree"] = 1
 

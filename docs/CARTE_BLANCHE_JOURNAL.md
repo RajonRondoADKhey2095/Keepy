@@ -2187,3 +2187,73 @@ le voilier, CH43 n'a rien à expliquer. Et la dette que CH42 laissait ouverte
 (« le second doigt écrit `reverse` et rien ne l'annonce ») est refermée : le
 rail de poussée passe désormais à travers l'ancre, avec une flèche à chaque
 bout et une ligne d'aide qui nomme les deux directions.
+
+## CH46 — LA MINIMAP PERMANENTE (7 septembre 2026)
+
+La recon CH44 dormait sur sa branche depuis la veille sans avoir jamais été
+mergée. **Étape zéro du lot : la merger, après avoir vérifié le diff — le
+fichier de recon plus une ligne d'index, rien d'autre — et vérifié après
+coup que les deux blobs sont byte-identiques à ceux de la branche.** Un
+socle qu'on n'a pas vérifié n'est pas un socle.
+
+**Le cadre n'existait pas et il fallait le créer.** CH44 avait dû *balayer*
+270 000 points pour connaître l'étendue du monde marchable ; un widget ne
+peut pas faire ça à son `_ready()`. `HubRegion.walkable_bounds()` rend la
+même réponse en forme fermée, à partir des treize mêmes termes d'union que
+`contains()` — et c'est **une seconde orthographe**, avec exactement le
+risque que ce dépôt documente. La sonde la gate en balayant `contains()` et
+en exigeant la boîte **SERRÉE des quatre côtés** : une boîte seulement
+contenante passerait gratuitement le jour où un terme saute. La passe rouge
+le prouve, terme montagne retiré : 3 rouges attendus, 3 obtenus.
+
+**Le pari technique du brief était l'atlas, et il a payé au-delà.** CH44
+avait mesuré `draw_circle` à un draw call **par marqueur**. Mesuré ici sur
+le même banc, dans le même run, en ne changeant que le type de commande :
+l'atlas rend **+76 primitives et +1 draw call** pour le fond et les 37
+marqueurs réunis, contre **+2 370 et +38** en cercles. Un seul appel pour
+toute la carte. Le corollaire de conception mérite d'être retenu : **le fond
+va DANS l'atlas**, parce qu'une seconde texture coûterait un batch à elle
+seule.
+
+**Dix-septième faux-vert du dépôt, et il était dans ma propre sonde.** La
+phase des frontières lisait, dans une colonne rendue, le plus grand saut de
+couleur autour du z attendu, le reconvertissait en z monde et sortait des
+chiffres au centième. La passe rouge qui met les bandes peintes sur les
+bords **logiques** — la substitution exacte que la décision de Mathieu
+interdit — est ressortie **ALL GREEN**. Le saut mesuré n'était pas le
+changement de bande : c'était le **trait** sombre tracé séparément au z
+peint, que la neutralisation ne touchait pas. Une frontière est deux choses,
+un trait et le remplissage qu'il sépare, et c'est le second que le joueur
+lit d'un coup d'œil. Refermé par six assertions de plus, et **prouvé par
+deux passes rouges qui ne se recouvrent pas** : l'une rougit le remplissage
+en laissant le trait vert, l'autre l'inverse.
+
+**Deux autres tests étaient faux avant d'être justes, et la mesure l'a dit
+dans les deux cas.** Le test de forme du marqueur clampé demandait « ce
+pixel est-il exactement le ton » et lisait 1 coin sur 4 sur un carré
+parfaitement dessiné : à cet offset l'antialiasing ne couvre que 70 %. Ce
+qui sépare un carré d'un disque n'est pas le ton, c'est la **quantité de ton
+présente**. Et la phase du tap comptait `tapped_ground` seul : elle lisait 2
+événements passés / 0 destination sur neuf points différents, de quoi
+conclure à une interception qui n'existait pas — `HubTapInput` obéit à une
+règle un-tap-un-signal, et un prop sous le rayon prend le signal à la place.
+
+**Le piège du lambda GDScript, re-rencontré alors qu'il est écrit dans
+`CLAUDE.md`.** Le compteur de signaux était `func(_at): ground += 1` : un
+lambda capture une variable locale **par valeur**, il incrémentait sa propre
+copie, et rien n'a jamais bougé. Fermé par un membre de classe, qui est la
+parade déjà prescrite.
+
+**Un ton a dû changer, et c'est le balayage aveugle qui l'a trouvé.** Le
+marqueur du joueur en crème rend à 0,03 du trait du circuit : le joueur posé
+sur le circuit aurait été un point pâle sur un trait pâle. Le contour noir
+des icônes — un blanc teinté par `modulate`, qui multiplie, donc un noir qui
+reste noir sous n'importe quelle couleur — sauve la lisibilité de la FORME,
+pas la lecture du TYPE.
+
+**Et la comparaison sur deux arbres a servi exactement à ce qu'elle sert.**
+`KartProbe` sort 150 checks / 1 échec sur la branche. Sur un worktree de
+`origin/staging` importé à part, arbre vérifié par hash : 150 checks / 1
+échec, **la même assertion et la même valeur au dixième**. Ce n'est pas une
+régression de ce lot, et la couleur d'une sonde isolée ne l'aurait jamais
+dit.

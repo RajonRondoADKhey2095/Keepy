@@ -176,6 +176,9 @@ static func _make_motion() -> VehicleDrive:
 	return m
 
 func _ready() -> void:
+	# CH46: on the minimap, as a vehicle. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE)
 	_build()
 
 ## The node a passenger is parented to (it leans with the kart).

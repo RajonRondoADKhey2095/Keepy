@@ -235,6 +235,9 @@ func _build_birds() -> void:
 	for i in BIRD_COUNT:
 		var bird := Node3D.new()
 		bird.name = "Bird%d" % i
+		# CH46: the tree birds are NPCs on the map -- they move between
+		# perches, which is what makes them worth a marker.
+		MinimapMarkers.mark(bird, MinimapMarkers.NPC)
 		var colour: Color = BIRD_COLOURS[i % BIRD_COLOURS.size()]
 		for side in [-1.0, 1.0]:
 			var wing := MeshInstance3D.new()

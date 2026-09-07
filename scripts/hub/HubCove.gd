@@ -173,6 +173,8 @@ func _build_sea() -> void:
 
 func _build_lighthouse() -> void:
 	var tower := _glb_node("Lighthouse", "lighthouse_0", CozyPalette.decor_material())
+	# CH46: the lighthouse is a PLACE -- the cove's landmark.
+	MinimapMarkers.mark(tower, MinimapMarkers.PLACE)
 	tower.position = HubRegion.LIGHTHOUSE_AT
 	# The door (+z in the GLB) faces the beach, i.e. -x.
 	tower.rotation.y = -PI / 2.0
@@ -291,6 +293,8 @@ func _build_burrow() -> void:
 	var burrow := _glb_node("Burrow", "burrow_0", CozyPalette.decor_material())
 	burrow.position = BURROW_AT
 	burrow.rotation.y = deg_to_rad(BURROW_YAW_DEG)
+	# CH46: the burrow is a PLACE.
+	MinimapMarkers.mark(burrow, MinimapMarkers.PLACE)
 	add_child(burrow)
 	# The slot: an empty ModelSlot on the doorstep. No model tonight, no
 	# behaviour ever from this file -- see the lot doc for the contract.

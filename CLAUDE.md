@@ -1888,6 +1888,83 @@ second embranchement est une ligne ; **une zone qui pendrait d'une
 branche** demanderait un vrai parcours d'arbre, et c'est là que la table
 cesse de suffire.
 
+### ⚠️ `draw_circle` NE SE BATCHE PAS ; UN ATLAS UNIQUE BATCHE TOUT, FOND COMPRIS
+
+CH44 avait mesuré un `Control._draw` de minimap à **+2 619 primitives et
++43 draw calls pour 40 marqueurs** et nommé la cause : `draw_circle` émet
+une commande POLYGONE, et un polygone ne se batche pas — **un draw call PAR
+MARQUEUR**, linéaire en nombre et sans rapport avec la surface couverte.
+
+CH46 a mesuré l'autre bout, sur le même banc et dans le même run (même
+scène, même fond, seul le type de commande change) :
+
+| approche | Δ `engine_total_prims` | Δ `engine_total_calls` |
+|---|---|---|
+| **atlas** — 1 quad de fond + 37 marqueurs en `draw_texture_rect_region`, **une seule texture** | **+76** | **+1** |
+| **cercles** — le même quad de fond + 37 `draw_circle` | **+2 370** | **+38** |
+
+**UN seul draw call pour toute une carte, fond compris.** Le renderer canvas
+coalesce des quads consécutifs qui partagent texture, matériau et type de
+primitive ; le nombre de marqueurs devient gratuit. Le corollaire de
+conception : **le fond va DANS l'atlas**, pas dans une seconde texture — une
+image supplémentaire coûte un batch de plus à elle seule.
+
+⚠️ **Et la teinte par marqueur est gratuite** : l'argument `modulate` de
+`draw_texture_rect_region` est une couleur de SOMMET, il ne casse pas le
+batch. Ce qui le casse, c'est changer de texture, ou insérer un
+`draw_set_transform`.
+
+### ⚠️ `modulate` MULTIPLIE — UN CONTOUR NOIR SURVIT À N'IMPORTE QUELLE TEINTE
+
+Corollaire de l'entrée ci-dessus, et il répond **par construction** à un
+problème que ce fichier documentait comme non gaté (« le WCAG ne score
+AUCUNE séparation À L'INTÉRIEUR d'une bande, et aucune sonde du dépôt ne
+mesure la teinte »).
+
+Une icône cuite en **forme BLANCHE à contour NOIR** et teintée par
+`modulate` rend un remplissage de la couleur voulue **et un contour resté
+noir** : `noir × couleur = noir`, quelle que soit la couleur. Un marqueur
+garde donc une arête sombre franche contre l'herbe, le sable, la bruyère,
+la pelouse ou la mer — sans une seule décision de contraste par type et
+sans table de tons à maintenir.
+
+⚠️ **Ça ne dispense PAS de mesurer les tons entre eux.** Un marqueur joueur
+crème `(1,00 ; 0,99 ; 0,90)` rend à **0,03** du trait de circuit d'une
+minimap `(0,97 ; 0,96 ; 0,87)` : le contour noir sauve la lisibilité de la
+FORME, pas la lecture du TYPE. Trouvé par le balayage aveugle d'une sonde,
+pas par relecture, et corrigé en déplaçant le ton (jaune chaud, 0,71 d'écart
+en bleu).
+
+### ⚠️ UNE FRONTIÈRE EST DEUX CHOSES : UN TRAIT, ET LE REMPLISSAGE QU'IL SÉPARE
+
+**DIX-SEPTIÈME faux-vert du dépôt, CH46, et il était dans la sonde du lot.**
+
+La minimap doit dessiner les frontières de zone **peintes**
+(`CozyPalette.*_EDGE_Z`) et non les **logiques** (`HubRegion.*_MAX.y`), qui
+en diffèrent de 2 à 4 u. La sonde lisait, dans une colonne rendue, le plus
+grand saut de couleur autour du z attendu, le reconvertissait en z monde et
+le comparait aux deux candidats. Verte, précise, avec des chiffres au
+centième.
+
+La passe rouge a réécrit la fonction de teinte pour mélanger ses **bandes**
+sur les bords logiques — la substitution exacte que le contrat interdit — et
+la phase est ressortie **ALL GREEN, 0 rouge**. Parce que le saut mesuré
+n'était pas le changement de bande : c'était le **TRAIT** sombre tracé
+séparément au z peint, que la neutralisation n'avait pas touché.
+
+**Règle** : quand une limite est dessinée à la fois comme un trait et comme
+un changement de remplissage, les deux se gatent **séparément** — et on le
+prouve en neutralisant chacun des deux à son tour, en exigeant que la passe
+rouge de l'un laisse les assertions de l'autre **vertes**. Deux passes qui
+ne se recouvrent pas, c'est la preuve que les deux moitiés sont réellement
+couvertes ; une seule passe qui rougit tout ne distingue rien.
+
+⚠️ **Généralisation, parce que la forme se reverra** : ce que le joueur lit
+d'un coup d'œil est presque toujours le REMPLISSAGE (une aire, une teinte,
+une silhouette), et ce qu'une sonde trouve le plus facilement est le TRAIT
+(un maximum local, un gradient, une arête). Gater le second en croyant tenir
+le premier est un faux-vert qui a l'air d'une mesure fine.
+
 ## Piège payload — `export_filter="all_resources"` embarque TOUT
 
 **Toute ressource du projet part dans le build, qu'une scène la référence ou

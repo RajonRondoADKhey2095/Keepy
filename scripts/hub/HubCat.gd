@@ -113,6 +113,9 @@ var found_total: int = 0
 var misses_total: int = 0
 
 func _ready() -> void:
+	# CH46: on the minimap, as a hub animal. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	MinimapMarkers.mark(self, MinimapMarkers.NPC)
 	_rng.seed = 20260905
 	_critter = HubCritter.new()
 	_critter.name = "Critter"
