@@ -133,6 +133,7 @@ func _run() -> void:
 	await _phase_c()
 	await _phase_d()
 	await _phase_tap()
+	await _phase_gate()
 	await _phase_e()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -491,10 +492,12 @@ func _on_tap(point: Vector3) -> void:
 	_tap_seen += 1
 
 
-## PHASE E (wave 4) -- the returns to the ground that are NOT part of a
-## hop chain, and the grep-gate CH35-C names as this wave's proof.
-func _phase_e() -> void:
-	print("-- PHASE E: returns to the ground, and the grep-gate --")
+## PHASE GATE (wave 4) -- the returns to the ground that are NOT part
+## of a hop chain, and the grep-gate CH35-C names as this wave's proof.
+## Named GATE rather than E because CH35-C reserves E for the rain and
+## the shadow, below.
+func _phase_gate() -> void:
+	print("-- PHASE GATE: returns to the ground, and the grep-gate --")
 	# The gate first: it is a statement about the whole file, and it is
 	# what stops a later lot quietly re-introducing a flat ground write.
 	var src: String = FileAccess.get_file_as_string("res://scripts/hub/KeepyHopper.gd")
@@ -523,7 +526,7 @@ func _phase_e() -> void:
 	HubSurface.clear_domains()
 	var idx: int = HubSurface.register_domain(_spec(&"probe_bump", DOMAIN_CENTRE, 0.0))
 	if idx < 0:
-		_check(false, "phase E could not register its domain")
+		_check(false, "phase GATE could not register its domain")
 		return
 	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as KeepyHopper
 	_settle(keepy)
@@ -543,4 +546,52 @@ func _phase_e() -> void:
 	_check(absf(keepy.global_position.y - h) < 1.0e-4,
 		"dismounted, he is back on the ground at %.4f" % keepy.global_position.y)
 	ball.queue_free()
+	HubSurface.clear_domains()
+
+
+## PHASE E (wave 5) -- the two global followers that are not the camera:
+## the rain column Keepy stands in, and the shadow under his feet.
+func _phase_e() -> void:
+	print("-- PHASE E: rain and shadow follow the surface --")
+	HubSurface.clear_domains()
+	var idx: int = HubSurface.register_domain(_spec(&"probe_bump", DOMAIN_CENTRE, 0.0))
+	if idx < 0:
+		_check(false, "phase E could not register its domain")
+		return
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as KeepyHopper
+	var scatter := _hub.get_node("WorldViewport/SubViewport/World/CozyScatter")
+	_settle(keepy)
+	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
+	var h: float = _blind(summit, "weather station")
+	keepy.global_position = HubSurface.ground(summit)
+	for _i in 60:
+		await get_tree().process_frame
+	var precip := scatter.get_node_or_null("Precipitation") as Node3D
+	var shadow: Node3D = scatter.get("_hero_shadow_node")
+	_check(precip != null, "the precipitation node exists")
+	_check(shadow != null, "the hero shadow node exists")
+	if precip == null or shadow == null:
+		HubSurface.clear_domains()
+		return
+	_check(absf(precip.global_position.y - h) < 1.0e-4,
+		"the rain column stands on the ground at %.4f (h = %.4f)"
+			% [precip.global_position.y, h])
+	_check(absf(shadow.global_position.y - (h + 0.025)) < 1.0e-4,
+		"the shadow lies at h + 0.025 = %.4f (read %.4f)" % [h + 0.025, shadow.global_position.y])
+
+	# The lift, POSITIVE first: a metre off the ground must shrink it.
+	var full: float = shadow.scale.x
+	keepy.global_position = HubSurface.ground(summit) + Vector3(0.0, 1.0, 0.0)
+	await get_tree().process_frame
+	var shrunk: float = shadow.scale.x
+	_check(shrunk < full * 0.9,
+		"a metre above the ground shrinks the shadow: %.4f -> %.4f" % [full, shrunk])
+	# ...and standing ON the hill must NOT. This is the assertion the whole
+	# phase exists for: with the old clampf(p.y, ...) a body at h = 3 would
+	# read as permanently airborne and wear a shrunk shadow for ever.
+	keepy.global_position = HubSurface.ground(summit)
+	await get_tree().process_frame
+	_check(absf(shadow.scale.x - full) < 1.0e-4,
+		"and standing STILL on a %.1f u hill does not: %.4f (full %.4f)"
+			% [h, shadow.scale.x, full])
 	HubSurface.clear_domains()
