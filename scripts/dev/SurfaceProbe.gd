@@ -52,7 +52,6 @@ const BUMP_RADIUS: float = 10.0
 const DOMAIN_CENTRE: Vector2 = Vector2(0.0, 0.0)
 
 const EPS_EXACT: float = 1.0e-6
-const EPS_RAY: float = 1.0e-3
 
 var _hub: Node = null
 var _fails: int = 0
@@ -129,6 +128,7 @@ func _run() -> void:
 	# it, and this repo has already measured two phases trampling each
 	# other that way.
 	await _phase_c()
+	await _phase_d()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -237,8 +237,17 @@ func _phase_b() -> void:
 		var fp: Vector3 = flat_hit
 		var sp: Vector3 = surf_hit
 		_blind(sp, "ray hit")
-		_check(absf(sp.y - HubSurface.height_at(sp)) < EPS_RAY,
-			"the hit sits ON the surface: y %.4f vs height_at %.4f" % [sp.y, HubSurface.height_at(sp)])
+		# The tolerance is the MARCH\'S OWN RESOLUTION, read off HubSurface
+		# rather than picked: a step of RAY_STEP refined RAY_BISECT_ITERS
+		# times cannot place a hit closer than that, and a tighter number
+		# here would only be a number that happens to pass on the slope
+		# this probe drew. (It bit once: wave 2 raised the camera onto the
+		# surface, the ray met a steeper flank, and a 1e-3 tolerance went
+		# red on a hit that was 0.0011 off -- well inside the march.)
+		var march_res: float = HubSurface.RAY_STEP / pow(2.0, float(HubSurface.RAY_BISECT_ITERS))
+		_check(absf(sp.y - HubSurface.height_at(sp)) <= march_res,
+			"the hit sits ON the surface to the march\'s own resolution: |y - h| = %.6f <= %.6f"
+				% [absf(sp.y - HubSurface.height_at(sp)), march_res])
 		var apart: float = Vector2(sp.x - fp.x, sp.z - fp.z).length()
 		_check(apart > 1.0,
 			"and it is NOT where the flat plane answers: %.3f u apart in xz" % apart)
@@ -342,3 +351,37 @@ func _phase_c() -> void:
 func _on_land(pos: Vector3) -> void:
 	_land_count += 1
 	_land_worst = maxf(_land_worst, absf(pos.y - HubSurface.height_at(pos)))
+
+
+## PHASE D -- the camera. It follows the GROUND under Keepy, so its
+## offset keeps its shape over relief instead of sinking into it.
+func _phase_d() -> void:
+	print("-- PHASE D: the camera follows the surface --")
+	HubSurface.clear_domains()
+	var idx: int = HubSurface.register_domain(_spec(&"probe_bump", DOMAIN_CENTRE, 0.0))
+	if idx < 0:
+		_check(false, "phase D could not register its domain")
+		return
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as Node3D
+	var cam := _hub.get_node("WorldViewport/SubViewport/World/Camera3D") as HubCamera
+	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
+	var h: float = _blind(summit, "camera target")
+	keepy.global_position = HubSurface.ground(summit)
+	# 120 frames of the ordinary smoothing -- NOT snap_to_target(). The
+	# follow in _process is the thing under test; a snap would prove the
+	# other function.
+	for _i in 120:
+		await get_tree().process_frame
+	var want: Vector3 = HubSurface.ground(summit) + HubCamera.OFFSET
+	var got: Vector3 = cam.global_position
+	_check(got.distance_to(want) < 1.0e-3,
+		"camera at %s, wanted ground + OFFSET = %s (%.6f u apart)"
+			% [str(got), str(want), got.distance_to(want)])
+	_check(absf(got.y - (HubCamera.OFFSET.y + h)) < 1.0e-3,
+		"its height is OFFSET.y + h = %.4f + %.4f = %.4f (read %.4f)"
+			% [HubCamera.OFFSET.y, h, HubCamera.OFFSET.y + h, got.y])
+	_check(absf(got.y - HubCamera.OFFSET.y) > 1.0,
+		"BLIND: and that is %.4f u above where a flat hub would put it" % (got.y - HubCamera.OFFSET.y))
+	HubSurface.clear_domains()
+
+
