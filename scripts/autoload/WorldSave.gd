@@ -23,13 +23,20 @@ extends Node
 ## SCHEMA v2 (CH29, 6 septembre 2026) -- the first real bump. Adds ONE
 ## block, and changes the meaning of nothing that v1 carried:
 ##
-##     "cove": {"yacht": [x, z] | null, "castles": {"<spot>": stage}, "visited": bool}
+##     "cove": {"castles": {"<spot>": stage}, "visited": bool}
 ##
 ## `_migrate(1 -> 2)` writes the block's defaults into a v1 document; every
 ## v1 field is kept as it was. A v1 save therefore boots as "migrated" with
 ## its counts intact and an empty cove -- CoveProbe writes a real v1 file
 ## and asserts exactly that (V4SaveProbe's fixtures name SCHEMA_VERSION
 ## rather than a literal, so they follow the bump).
+##
+## CH45 (7 septembre 2026): the cove block carried a "yacht" position too,
+## between CH29 and here -- the sand yacht's resting place, written on
+## every step-off. Removed WITHOUT a schema bump: the yacht now always
+## respawns at HubTransport.YACHT_PARK, and a "yacht" key surviving in an
+## existing save is simply never read -- _sanitise drops what it does not
+## know, the same way it always has for a field this file stopped writing.
 ##
 ## Tree stock RECHARGES ON THE WALL CLOCK, lazily: a tree entry stores the
 ## stock it had the last time it changed and WHEN, and `tree_stock()` adds
@@ -179,23 +186,13 @@ func tree_take(id: String) -> bool:
 const STAT_KEYS: Array[String] = ["climbs", "shakes", "picked", "cat_found", "boar_digs", "fawn_nuzzles", "beaver_trades", "kart_laps", "kart_races", "kart_wins", "castles_built", "yacht_rides", "cove_visits"]
 
 ## ---- CH29 (schema 2): the cove -------------------------------------------
-## The yacht's resting place (INF when it has never left its park), the
-## castle stage per spot (0..3, 0 = empty, written as an int keyed by the
-## spot index as a string -- JSON keys are strings), and whether the cove
-## was ever entered. Melting progress is NOT stored: see HubCove.
+## The castle stage per spot (0..3, 0 = empty, written as an int keyed by
+## the spot index as a string -- JSON keys are strings), and whether the
+## cove was ever entered. Melting progress is NOT stored: see HubCove.
+##
+## CH45: the yacht's resting place used to live here too. It never will
+## again -- the yacht always respawns at HubTransport.YACHT_PARK.
 signal cove_changed()
-
-func cove_yacht() -> Vector3:
-	var cove: Dictionary = _data.get("cove", {})
-	var at: Variant = cove.get("yacht", null)
-	if at is Array and (at as Array).size() >= 2:
-		return Vector3(float(at[0]), 0.0, float(at[1]))
-	return Vector3.INF
-
-func cove_set_yacht(at: Vector3) -> void:
-	_cove_block()["yacht"] = [snappedf(at.x, 0.01), snappedf(at.z, 0.01)]
-	_mark()
-	cove_changed.emit()
 
 func cove_castles() -> Dictionary:
 	var cove: Dictionary = _data.get("cove", {})
@@ -230,7 +227,7 @@ func _cove_block() -> Dictionary:
 	return _data["cove"]
 
 static func _cove_defaults() -> Dictionary:
-	return {"yacht": null, "castles": {}, "visited": false}
+	return {"castles": {}, "visited": false}
 
 ## ---- v7: karting ---------------------------------------------------------
 ## Best lap per TRACK ID, in milliseconds (an int survives JSON exactly; a
@@ -486,14 +483,11 @@ func _sanitise(raw: Dictionary) -> Dictionary:
 					"total_ms": maxi(_as_int(last.get("total_ms", 0), 0), 0),
 					"best_lap_ms": maxi(_as_int(last.get("best_lap_ms", 0), 0), 0),
 				}
-	# CH29 (schema 2): the cove. A yacht position is two finite numbers or
-	# nothing; a castle stage is 1..3 keyed by a spot index, else dropped.
+	# CH29 (schema 2): the cove. A castle stage is 1..3 keyed by a spot
+	# index, else dropped. CH45: an orphan "yacht" key from a save written
+	# before this lot is simply never read here -- it is not an error.
 	var cove: Variant = raw.get("cove", {})
 	if cove is Dictionary:
-		var at: Variant = cove.get("yacht", null)
-		if at is Array and (at as Array).size() >= 2 and (at[0] is float or at[0] is int) and (at[1] is float or at[1] is int) \
-				and not is_nan(float(at[0])) and not is_nan(float(at[1])) and not is_inf(float(at[0])) and not is_inf(float(at[1])):
-			out["cove"]["yacht"] = [float(at[0]), float(at[1])]
 		var castles: Variant = cove.get("castles", {})
 		if castles is Dictionary:
 			for spot in castles.keys():
