@@ -58,6 +58,9 @@ var _fails: int = 0
 ## Phase C's landing tally -- members, never lambda captures.
 var _land_count: int = 0
 var _land_worst: float = 0.0
+## Phase TAP's captured destination -- a member, for the lambda reason.
+var _tapped: Vector3 = Vector3.INF
+var _tap_seen: int = 0
 
 func _ready() -> void:
 	# FIRST statement, per ProbeWatchdog's contract.
@@ -129,6 +132,7 @@ func _run() -> void:
 	# other that way.
 	await _phase_c()
 	await _phase_d()
+	await _phase_tap()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -385,3 +389,84 @@ func _phase_d() -> void:
 	HubSurface.clear_domains()
 
 
+## PHASE TAP (wave 3) -- the tap resolves against the SURFACE.
+##
+## ⚠️ THE FIRST VERSION OF THIS PHASE MEASURED THE WRONG THING, and only
+## the red-before-green pass said so: it went GREEN with HubSurface put
+## back to a bare Plane. Two reasons, both worth writing down.
+##   * `tapped_ground` does not always carry the ground point. A tap that
+##     lands near a tree emits THE TREE'S position (HubTapInput:468), so
+##     the numbers being compared were two tree positions.
+##   * comparing a "flat run" against a "relief run" also moves the
+##     CAMERA, because wave 2 put the camera on the surface too. The two
+##     effects partly cancel -- measured at 0.143 u.
+## So the camera is FROZEN to one pose here and the ONLY thing that
+## changes between the two taps is whether a domain is registered; and
+## several pixels are swept, because any single one may route to a prop
+## in both runs and read as "no difference".
+func _phase_tap() -> void:
+	print("-- PHASE TAP: HubTapInput resolves on the surface --")
+	# The source gate first: it is the one check that cannot be fooled by
+	# routing, and it fails loudly if a later lot puts the plane back.
+	var src: String = FileAccess.get_file_as_string("res://scripts/hub/HubTapInput.gd")
+	_check(src.contains("HubSurface.intersect_ray(origin, direction)"),
+		"HubTapInput resolves its ray through HubSurface")
+	_check(not src.contains("Plane(Vector3.UP, 0.0).intersects_ray"),
+		"and no bare ground plane survives in it")
+
+	HubSurface.clear_domains()
+	var idx: int = HubSurface.register_domain(_spec(&"probe_bump", DOMAIN_CENTRE, 0.0))
+	if idx < 0:
+		_check(false, "phase TAP could not register its domain")
+		return
+	var tap := _hub.get_node("TapInput")
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as Node3D
+	var cam := _hub.get_node("WorldViewport/SubViewport/World/Camera3D") as HubCamera
+	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
+	_blind(summit, "tap station")
+	keepy.global_position = HubSurface.ground(summit)
+	cam.snap_to_target()
+	await get_tree().process_frame
+	var box := _hub.get_node("WorldViewport") as SubViewportContainer
+	var rect: Rect2 = box.get_global_rect()
+	_check(rect.size.x > 0.0 and rect.size.y > 0.0,
+		"the tap container is not degenerate: %s" % str(rect.size))
+	# THE CAMERA POSE, taken once and re-imposed before each tap. No await
+	# between writing it and tapping, or the follow would move it back.
+	var pose: Transform3D = cam.global_transform
+
+	tap.tapped_ground.connect(_on_tap)
+	var moved: int = 0
+	var swept: int = 0
+	var worst: float = 0.0
+	for k in 7:
+		var pixel: Vector2 = rect.position + Vector2(rect.size.x * 0.5,
+			rect.size.y * (0.50 + 0.03 * float(k)))
+		HubSurface.clear_domains()
+		HubSurface.register_domain(_spec(&"probe_bump", DOMAIN_CENTRE, 0.0))
+		cam.global_transform = pose
+		_tapped = Vector3.INF
+		tap.call("_handle_point", pixel)
+		var with_relief: Vector3 = _tapped
+		HubSurface.clear_domains()
+		cam.global_transform = pose
+		_tapped = Vector3.INF
+		tap.call("_handle_point", pixel)
+		var flat: Vector3 = _tapped
+		if with_relief == Vector3.INF or flat == Vector3.INF:
+			continue
+		swept += 1
+		var apart: float = Vector2(with_relief.x - flat.x, with_relief.z - flat.z).length()
+		worst = maxf(worst, apart)
+		if apart > 0.5:
+			moved += 1
+	tap.tapped_ground.disconnect(_on_tap)
+	_check(swept >= 5, "%d of 7 swept pixels produced a destination on both runs" % swept)
+	_check(moved >= 1,
+		"the SAME pixel through the SAME camera pose means somewhere else once relief is under it: %d of %d moved, worst %.3f u"
+			% [moved, swept, worst])
+	HubSurface.clear_domains()
+
+func _on_tap(point: Vector3) -> void:
+	_tapped = point
+	_tap_seen += 1
