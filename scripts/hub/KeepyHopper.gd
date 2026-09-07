@@ -510,7 +510,7 @@ func hop_to(point: Vector3) -> void:
 	# for a rider being swung round a pivot is yes.
 	if _state != State.IDLE and _state != State.HOPPING:
 		return
-	_target = Vector3(point.x, 0.0, point.z)
+	_target = HubSurface.ground(point)
 	_has_target = true
 	if _state == State.IDLE:
 		_advance()
@@ -734,7 +734,7 @@ func leave_turnstile(landing: Vector3) -> void:
 	_hop_from = here
 	_hop_to = target
 	_hop_from_y = seat_y
-	_hop_to_y = 0.0
+	_hop_to_y = HubSurface.height_at(target)
 	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
@@ -856,7 +856,7 @@ func leave_seesaw(landing: Vector3) -> void:
 	_hop_from = here
 	_hop_to = target
 	_hop_from_y = seat_y
-	_hop_to_y = 0.0
+	_hop_to_y = HubSurface.height_at(target)
 	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
@@ -968,7 +968,7 @@ func leave_owl(landing: Vector3) -> void:
 	_hop_from = here
 	_hop_to = target
 	_hop_from_y = seat_y
-	_hop_to_y = 0.0
+	_hop_to_y = HubSurface.height_at(target)
 	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
@@ -1136,7 +1136,7 @@ func leave_zipline(landing: Vector3) -> void:
 	_hop_from = here
 	_hop_to = target
 	_hop_from_y = seat_y
-	_hop_to_y = 0.0
+	_hop_to_y = HubSurface.height_at(target)
 	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
@@ -1167,7 +1167,7 @@ func leave_ride(toward: Vector3, blocked: Array) -> void:
 
 	# The destination survives the leap: _advance() picks it up from the
 	# landing, so ONE tap buys the eject AND the walk to where it pointed.
-	_target = Vector3(toward.x, 0.0, toward.z)
+	_target = HubSurface.ground(toward)
 	_has_target = true
 
 	var here := Vector3(global_position.x, 0.0, global_position.z)
@@ -1184,13 +1184,14 @@ func leave_ride(toward: Vector3, blocked: Array) -> void:
 	_hop_from = here
 	_hop_to = landing
 	_hop_height = EJECT_HOP_HEIGHT
-	# Flat, and set here rather than relied on: this is the one tween built
-	# outside _begin_hop, so it is the one place a sloped arc left over from
-	# a dive could leak into. Unreachable today -- every path into a ride
-	# passes a landing, and _on_hop_finished zeroes them -- which is exactly
-	# why it is written down instead of depended on.
-	_hop_from_y = 0.0
-	_hop_to_y = 0.0
+	# On the surface at both ends, and set here rather than relied on: this
+	# is the one tween built outside _begin_hop, so it is the one place a
+	# sloped arc left over from a dive could leak into. Unreachable today
+	# -- every path into a ride passes a landing, and _on_hop_finished
+	# re-reads them -- which is exactly why it is written down instead of
+	# depended on.
+	_hop_from_y = HubSurface.height_at(here)
+	_hop_to_y = HubSurface.height_at(landing)
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
 	_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
@@ -1346,7 +1347,7 @@ func dive(toward: Vector3) -> void:
 	# THE GENERALISED ARC, and the only caller that uses it for anything:
 	# off the deck at one end, on the water surface at the other.
 	_hop_from_y = anchor.y
-	_hop_to_y = 0.0
+	_hop_to_y = HubSurface.height_at(flat_landing)
 	_hop_height = DIVE_HOP_HEIGHT
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, DIVE_DURATION)
@@ -1440,7 +1441,15 @@ func _advance() -> void:
 	if _state != State.IDLE and _state != State.HOPPING:
 		return
 	var here := Vector3(global_position.x, 0.0, global_position.z)
-	var delta := _target - here
+	# ⚠️ THE STEP IS MEASURED ALONG THE GROUND, and this line says so out
+	# loud because `_target` stopped being flat. HOP_DISTANCE, the 66-hop
+	# diagonal and every traversal figure in this repo are XZ distances;
+	# a 3D delta would shorten the stride on a slope and rewrite all of
+	# them silently. Worse, ARRIVE_EPSILON would stop working: `here` is
+	# flat, so a target 3 u up keeps a delta.y of 3 forever and the walk
+	# would never end. The height of the destination is not thrown away
+	# -- _begin_hop reads it back off the surface, below.
+	var delta := Vector3(_target.x - here.x, 0.0, _target.z - here.z)
 	if delta.length() <= ARRIVE_EPSILON:
 		_has_target = false
 		_state = State.IDLE
@@ -1454,14 +1463,17 @@ func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	# the vehicle's own.
 	var gliding: bool = is_gliding()
 	_hop_height = 0.0 if gliding else (VEHICLE_HOP_HEIGHT if _vehicle != null else HOP_HEIGHT)
-	# Reset alongside the height, and for the same reason: a sloped arc
-	# left over from a dive must not leak into the ordinary hop after it.
-	_hop_from_y = 0.0
-	_hop_to_y = 0.0
 	var reach: float = _vehicle_glide_step if gliding else (VEHICLE_HOP_DISTANCE if _vehicle != null else HOP_DISTANCE)
 	var step: float = minf(reach, delta.length())
 	_hop_from = here
 	_hop_to = here + delta.normalized() * step
+	# THE LINE THE ARC IS DRAWN ON, read off the surface at both ends and
+	# written HERE because it needs `_hop_to` to exist. It also does the
+	# job the two zeroes above used to do: a sloped arc left over from a
+	# dive cannot leak into the ordinary hop after it, because both ends
+	# are re-read every time rather than reset.
+	_hop_from_y = HubSurface.height_at(here)
+	_hop_to_y = HubSurface.height_at(_hop_to)
 
 	# Face the direction BEFORE leaving the ground: a body that rotates in
 	# mid-air looks like it is being steered, which is exactly the reading
@@ -1546,9 +1558,12 @@ func _on_hop_finished() -> void:
 	# them from wherever the tween's last frame happened to fall.
 	# v3: plus the vehicle's lift while he rides it, the ball under him.
 	global_position = Vector3(_hop_to.x, _hop_to_y + _vehicle_lift, _hop_to.z)
-	_place_vehicle(Vector3(_hop_to.x, 0.0, _hop_to.z), _hop_to_y, Vector3.ONE)
-	_hop_from_y = 0.0
-	_hop_to_y = 0.0
+	_place_vehicle(HubSurface.ground(_hop_to), _hop_to_y, Vector3.ONE)
+	# Left ON the surface, not at zero: the body standing still between
+	# hops is at ground height, and the next hop that reads these before
+	# _begin_hop overwrites them reads the ground rather than sea level.
+	_hop_from_y = HubSurface.height_at(_hop_to)
+	_hop_to_y = _hop_from_y
 	_body.rotation_degrees.x = _base_pitch
 	# Landing recoil, then back to rest. Started AFTER the hop tween has
 	# finished so it can never be killed by the next hop mid-recoil -- the
@@ -1685,7 +1700,7 @@ func leave_carrier(landing: Vector3) -> void:
 	_hop_from = here
 	_hop_to = target
 	_hop_from_y = seat_y
-	_hop_to_y = 0.0
+	_hop_to_y = HubSurface.height_at(target)
 	_hop_height = TURNSTILE_DISMOUNT_HOP_HEIGHT
 	_hop_tween = create_tween()
 	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, HOP_DURATION)
@@ -1926,7 +1941,7 @@ func tree_foot_point(tree: Node3D, spec: Dictionary) -> Vector3:
 	var face: Vector3 = spec.get("face", Vector3(0, 0, 1))
 	var local: Vector3 = face * (float(spec.get("r_base", 0.3)) * 1.35 + float(spec.get("foot_gap", 0.42)))
 	var world: Vector3 = tree.to_global(local)
-	return Vector3(world.x, 0.0, world.z)
+	return HubSurface.ground(world)
 
 ## Face the trunk (into the face direction) or away from it (out toward
 ## the camera side), from wherever he is.
@@ -1964,7 +1979,7 @@ func climb_tree(tree: Node3D, spec: Dictionary) -> bool:
 	var grip: Vector3 = _tree.to_global(_tree_grip(TREE_GRIP_Y0, 0.0))
 	_hop_from = Vector3(global_position.x, 0.0, global_position.z)
 	_hop_to = Vector3(grip.x, 0.0, grip.z)
-	_hop_from_y = 0.0
+	_hop_from_y = HubSurface.height_at(global_position)
 	_hop_to_y = grip.y
 	_hop_height = TREE_MOUNT_HOP_HEIGHT
 	_tree_tween = create_tween()
@@ -1978,8 +1993,8 @@ func _on_tree_mount_finished() -> void:
 		return
 	_tree_phase = TreePhase.ASCEND
 	_hop_height = HOP_HEIGHT
-	_hop_from_y = 0.0
-	_hop_to_y = 0.0
+	_hop_from_y = HubSurface.height_at(tree_foot_point(_tree, _tree_spec))
+	_hop_to_y = _hop_from_y
 	_tree_tween = create_tween()
 	_tree_tween.tween_method(_apply_tree_ascend, 0.0, 1.0, _tree_climb_s())
 	_tree_tween.finished.connect(_on_tree_ascend_finished, CONNECT_ONE_SHOT)
@@ -2048,8 +2063,8 @@ func _on_tree_top_hop_finished() -> void:
 	_tree_phase = TreePhase.SEATED
 	_tree_seated_t = 0.0
 	_hop_height = HOP_HEIGHT
-	_hop_from_y = 0.0
-	_hop_to_y = 0.0
+	_hop_from_y = HubSurface.height_at(tree_foot_point(_tree, _tree_spec))
+	_hop_to_y = _hop_from_y
 	_body.rotation_degrees.x = _base_pitch
 	_body.scale = _base_scale
 	follow_tree(0.0)
@@ -2132,8 +2147,8 @@ func _on_tree_drop_hop_finished() -> void:
 		return
 	_tree_phase = TreePhase.DESCEND
 	_hop_height = HOP_HEIGHT
-	_hop_from_y = 0.0
-	_hop_to_y = 0.0
+	_hop_from_y = HubSurface.height_at(tree_foot_point(_tree, _tree_spec))
+	_hop_to_y = _hop_from_y
 	_tree_tween = create_tween()
 	_tree_tween.tween_method(_apply_tree_descend, 0.0, 1.0, _tree_descend_s())
 	_tree_tween.finished.connect(_on_tree_descend_finished, CONNECT_ONE_SHOT)
@@ -2172,7 +2187,7 @@ func _on_tree_descend_finished() -> void:
 	_hop_from = Vector3(grip.x, 0.0, grip.z)
 	_hop_to = foot
 	_hop_from_y = grip.y
-	_hop_to_y = 0.0
+	_hop_to_y = HubSurface.height_at(foot)
 	_hop_height = TREE_MOUNT_HOP_HEIGHT
 	_tree_tween = create_tween()
 	_tree_tween.tween_method(_apply_hop, 0.0, 1.0, TREE_MOUNT_HOP_S)

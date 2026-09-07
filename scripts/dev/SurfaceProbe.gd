@@ -56,7 +56,9 @@ const EPS_RAY: float = 1.0e-3
 
 var _hub: Node = null
 var _fails: int = 0
-var _phase: String = ""
+## Phase C's landing tally -- members, never lambda captures.
+var _land_count: int = 0
+var _land_worst: float = 0.0
 
 func _ready() -> void:
 	# FIRST statement, per ProbeWatchdog's contract.
@@ -122,6 +124,11 @@ func _run() -> void:
 	HubSurface.clear_domains()
 	_phase_a()
 	_phase_b()
+	# ⚠️ AWAITED, not called. A phase function that contains an await is a
+	# COROUTINE: calling it bare would run it ALONGSIDE everything after
+	# it, and this repo has already measured two phases trampling each
+	# other that way.
+	await _phase_c()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -258,3 +265,80 @@ func _phase_b() -> void:
 	_check(worst == 0.0,
 		"with no domain, intersect_ray is BYTE-IDENTICAL to the plane on %d rays (worst delta %.9f)"
 			% [checked, worst])
+
+
+## PHASE C -- the walk itself. Every landing, every base line and the
+## resting pose are read off the surface, not off zero.
+##
+## ⚠️ THE LANDING TALLY LIVES ON THE CLASS, and the listener is a NAMED
+## METHOD. A GDScript lambda captures a local BY VALUE: a counter written
+## inside one would be the lambda's own copy, this phase would read zero
+## landings forever, and the trap is silent. Measured in this repo at
+## least three times.
+func _phase_c() -> void:
+	print("-- PHASE C: the chain of hops --")
+	HubSurface.clear_domains()
+	var idx: int = HubSurface.register_domain(_spec(&"probe_bump", DOMAIN_CENTRE, 0.0))
+	if idx < 0:
+		_check(false, "phase C could not register its domain")
+		return
+	var keepy := _hub.get_node("WorldViewport/SubViewport/World/Keepy") as KeepyHopper
+	var start := Vector3(DOMAIN_CENTRE.x + 4.0, 0.0, DOMAIN_CENTRE.y)
+	var summit := Vector3(DOMAIN_CENTRE.x, 0.0, DOMAIN_CENTRE.y)
+	var h_start: float = _blind(start, "walk start")
+	var h_summit: float = _blind(summit, "walk target")
+	_check(absf(h_summit - h_start) > 0.5,
+		"the walk actually climbs: %.4f -> %.4f u" % [h_start, h_summit])
+
+	keepy.global_position = HubSurface.ground(start)
+	_land_count = 0
+	_land_worst = 0.0
+	keepy.hop_landed.connect(_on_land)
+	keepy.hop_to(summit)
+	var guard: int = 0
+	while guard < 1200 and (keepy.is_hopping() or keepy._has_target):
+		guard += 1
+		await get_tree().process_frame
+	keepy.hop_landed.disconnect(_on_land)
+	_check(guard < 1200, "the walk terminated in %d frames" % guard)
+	_check(_land_count >= 2, "the walk took %d hops (needs more than one)" % _land_count)
+	_check(_land_worst < 1.0e-4,
+		"every landing sat ON the surface (worst |y - h| = %.8f over %d)"
+			% [_land_worst, _land_count])
+
+	# C2 -- the resting pose.
+	var rest: Vector3 = keepy.global_position
+	var h_rest: float = _blind(rest, "resting pose")
+	_check(absf(rest.y - h_rest) < 1.0e-4,
+		"at rest y = %.4f, height_at = %.4f" % [rest.y, h_rest])
+	_check(rest.y > 1.0, "and it is well above sea level (%.4f u)" % rest.y)
+
+	# C3 -- mid-hop, read off the arc rather than timed. The tween is
+	# killed and _apply_hop(0.5) called directly: the base line at t = 0.5
+	# must be the LERP of the two ends, plus the arc's own peak.
+	keepy.hop_to(Vector3(DOMAIN_CENTRE.x + 4.0, 0.0, DOMAIN_CENTRE.y))
+	await get_tree().process_frame
+	var from_y: float = keepy._hop_from_y
+	var to_y: float = keepy._hop_to_y
+	var peak: float = keepy._hop_height
+	_check(absf(from_y - HubSurface.height_at(keepy._hop_from)) < 1.0e-4,
+		"the arc STARTS on the surface: base %.4f vs height_at %.4f"
+			% [from_y, HubSurface.height_at(keepy._hop_from)])
+	_check(absf(to_y - HubSurface.height_at(keepy._hop_to)) < 1.0e-4,
+		"the arc ENDS on the surface: base %.4f vs height_at %.4f"
+			% [to_y, HubSurface.height_at(keepy._hop_to)])
+	_check(absf(from_y) > 1.0e-3 or absf(to_y) > 1.0e-3,
+		"BLIND arc: at least one end is off sea level (%.4f, %.4f)" % [from_y, to_y])
+	if keepy._hop_tween and keepy._hop_tween.is_valid():
+		keepy._hop_tween.kill()
+	keepy._apply_hop(0.5)
+	var mid_y: float = keepy.global_position.y
+	var want: float = lerpf(from_y, to_y, 0.5) + peak
+	_check(absf(mid_y - want) < 1.0e-4,
+		"mid-hop y = %.4f = lerp(%.4f, %.4f) + arc %.4f = %.4f"
+			% [mid_y, from_y, to_y, peak, want])
+	HubSurface.clear_domains()
+
+func _on_land(pos: Vector3) -> void:
+	_land_count += 1
+	_land_worst = maxf(_land_worst, absf(pos.y - HubSurface.height_at(pos)))
