@@ -3923,11 +3923,15 @@ func _try_mount_ball(position: Vector3) -> bool:
 	if _mount_kind == HubTransport.VEHICLE_SLED:
 		return _transport.mount_sled()
 	# CH53: the board is the SAUTILLON's path, not the yacht's -- a
-	# bouncing vehicle handed straight to KeepyHopper, no drive mode, no
-	# chase camera, no HUD switch. Every hop after this is 2.7 u long and
-	# 1.15 u high, and that arc is what reaches a module's disc.
+	# vehicle handed straight to KeepyHopper, no drive mode, no chase
+	# camera, no HUD switch.
+	# CH54: and it GLIDES rather than bounces -- CH29's glide shape with
+	# the pace profile (run-up, cruise, run-out) that lot added to it. The
+	# numbers are the board's and live in HubTransport, next to its park.
 	if _mount_kind == HubTransport.VEHICLE_SKATE:
-		return _keepy.mount_vehicle(_transport.board_node(), HubTransport.SKATE_LIFT)
+		return _keepy.mount_vehicle(_transport.board_node(), HubTransport.SKATE_LIFT,
+			HubTransport.SKATE_GLIDE_STEP, HubTransport.SKATE_GLIDE_S,
+			HubTransport.SKATE_ACCEL_U, HubTransport.SKATE_BRAKE_U)
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
 
 ## ---- CH29: the cove -- sandcastle spots -----------------------------------
