@@ -66,6 +66,54 @@ const COVER_MAX: Vector2 = Vector2(37.0, HubRegion.PLATEAU_HALF_EXTENT + HubRegi
 ## the ridge -- and it costs one RNG draw only on a candidate that is on
 ## one, so the stream off the ridge is untouched by it.
 const DOMAIN_COVER_KEEP: float = 0.25
+## =====================================================================
+## CH53 -- THE NORTH GRASS GUARD, AND IT IS THE SKATEPARK'S FINANCING
+##
+## ⚠️ THIS IS HALF OF ONE COMMIT. CH52 section 8.5 measured that the
+## north lobe has ZERO primitives of headroom -- the device already reads
+## 46 FPS at z ~ 62 -- and concluded that the park's geometry has to be
+## BOUGHT, in the same commit, out of something already in that frame.
+## A ceiling added afterwards defends nothing (CH35-B Q7). The two halves
+## are SkateparkProbe PHASE B's whole subject: it gates the park's cost
+## against what this guard gives back, not against a number in a document.
+##
+## SHAPE: DOMAIN_COVER_KEEP's, exactly. A keep fraction, drawn per
+## CANDIDATE, taken ONLY where the guard applies -- so the RNG stream
+## south of the line is byte-identical to what it has always been and no
+## tuft anywhere else in the hub moves. That is why the draw is inside
+## the `if`, not before it.
+##
+## WHY GRASS AND NOT SOMETHING ELSE. CH52 swept two levers. The leash
+## (visibility_range_end) is a STAIRCASE that plateaus at ~7 900 and only
+## reaches it at 30 u, where the fog has erased 38 % against 73 % at the
+## shipped 82 u -- the cut would be visible. The carpet is LINEAR and
+## free in draw calls down to 25 % (405 calls at every step from 100 % to
+## 25 %), because thinning a MultiMesh's instances does not remove the
+## MultiMesh.
+##
+## ⚠️ AND CH52's 7 239 IS NOT THIS NUMBER. That figure is PHASE D's, and
+## PHASE D halved EVERY grass batch in the hub through
+## `visible_instance_count` -- all 1 181 instances, including the carpet
+## at the spawn 60 u to the south. This guard thins only the cells north
+## of NORTH_KEEP_FROM_Z, which is a small fraction of them. What it
+## actually recovers is measured by SkateparkProbe PHASE B on the built
+## world and published there; it is NOT assumed to be 7 239 and the lot
+## does not need it to be, because the park it has to pay for is a few
+## hundred primitives and not six thousand.
+const NORTH_COVER_KEEP: float = 0.5
+## WHICH FAMILIES the guard thins, and it is a LIST rather than a literal
+## because "grass" being the only one is a measurement, not a principle:
+## CH52's group table reads scatter/grass at 14 409 primitives from z = 63
+## against 1 128 for flowers and under 650 for everything else. Thinning
+## anything but the carpet would move a lot of streams to buy a few
+## hundred primitives. A later lot that needs more adds a name here and
+## re-measures; it does not go looking for the throw.
+const NORTH_KEEP_FAMILIES: Array[String] = ["grass"]
+## Where the guard starts. The square's north edge: everything past it is
+## ground CH50 added, so the thinning is confined to the half-disc the
+## skatepark stands in and no frame that existed before CH50 changes at
+## all. DERIVED from the region, never a fourth spelling of 35.
+const NORTH_KEEP_FROM_Z: float = HubRegion.PLATEAU_HALF_EXTENT
 ## Forest wall annulus around the square. Inner radius is measured from
 ## the region: a candidate closer than WALL_CLEARANCE to walkable ground is
 ## dropped so no canopy hangs over a place Keepy can walk to.
@@ -195,6 +243,12 @@ func _blocked(p: Vector3, own_radius: float) -> bool:
 	for fp in HubCove.footprints():
 		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
 			return true
+	# CH53: the skatepark's five modules. Same terms, and STATIC for the
+	# same reason the three above are: this file sows from its own
+	# _ready() and cannot depend on the park node having been built first.
+	for fp in HubSkatepark.footprints():
+		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
+			return true
 	# v4: the climbable trees, same terms.
 	for fp in HubTrees.footprints():
 		if Vector2(p.x - fp["position"].x, p.z - fp["position"].z).length() < float(fp["radius"]) + own_radius:
@@ -232,6 +286,13 @@ func _cell_key(p: Vector3) -> String:
 func _batch_cell(family: String, p: Vector3) -> String:
 	return "all" if family in GLOBAL_FAMILIES else _cell_key(p)
 
+## A deterministic 0..1 draw on a position, consuming nothing from the
+## placement RNG. Quantised to 1/64 u so it is stable against float noise
+## and 10007 is prime so the low bits of the hash do not band.
+static func _keep_hash(p: Vector3) -> float:
+	var key := Vector2i(roundi(p.x * 64.0), roundi(p.z * 64.0))
+	return float(posmod(hash(key), 10007)) / 10007.0
+
 func _cell_variant(p: Vector3, count: int, salt: int) -> int:
 	return posmod(hash(_cell_key(p)) + salt, count)
 
@@ -268,6 +329,26 @@ func _sprinkle(family: String, variants: int, count: int, own_radius: float,
 		# see DOMAIN_COVER_KEEP. The draw is taken ONLY on a candidate that
 		# is on a domain, so the stream off the ridge is what it was.
 		if HubSurface.domain_at(p) >= 0 and _rng.randf() > DOMAIN_COVER_KEEP:
+			continue
+		# CH53: the north guard -- see NORTH_COVER_KEEP.
+		#
+		# ⚠️ IT DOES NOT DRAW FROM `_rng`, AND THAT IS THE WHOLE POINT.
+		# The domain guard above does, and the first version of this one
+		# copied it. MEASURED consequence: consuming one extra randf on a
+		# northern candidate shifts the stream for EVERY candidate after
+		# it, so the carpet at the SPAWN -- sixty units away, in a frame
+		# this lot has no business touching -- was reshuffled and read
+		# +308 primitives against origin/staging. Nothing was wrong with
+		# it; it simply was not the same carpet any more.
+		#
+		# `_keep_hash` is a deterministic draw on the candidate's own
+		# position, the same trick `_cell_variant` already uses to pick a
+		# variant without touching the stream. The south of the plateau
+		# is then BYTE-IDENTICAL to what it was, and the cross-tree table
+		# reads a clean zero at the spawn instead of a number that needs
+		# a paragraph.
+		if family in NORTH_KEEP_FAMILIES and p.z >= NORTH_KEEP_FROM_Z \
+				and _keep_hash(p) > NORTH_COVER_KEEP:
 			continue
 		var s := _rng.randf_range(scale_min, scale_max)
 		var yaw := _rng.randf_range(0.0, TAU)

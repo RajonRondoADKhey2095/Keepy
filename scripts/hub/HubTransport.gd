@@ -166,6 +166,63 @@ const SLED_PARK: Vector3 = Vector3(-49.0, 0.0, 3.0)
 const SLED_SEAT_Y: float = SledBody.SEAT_Y
 const SLED_TAP_RADIUS: float = 1.8
 
+## =====================================================================
+## CH53 -- FAMILY B, FIFTH VEHICLE: the skateboard.
+##
+## The SAUTILLON's pattern exactly, and Mathieu named it that way: tap
+## it, walk to it, `KeepyHopper.mount_vehicle(board, lift)` -- a BOUNCING
+## vehicle, so every ordinary hop becomes VEHICLE_HOP_DISTANCE 2.7 u and
+## VEHICLE_HOP_HEIGHT 1.15 u. Not a gliding one (the yacht's shape) and
+## not a driven one (the yacht, the sailboat and the sled since CH30):
+##
+##   * the brief asks for "session libre, score continu, pas de debut ni
+##     de fin", which is the tap-to-move loop and not a drive;
+##   * a DRIVEN vehicle brings the CHASE camera, and CH52 section 8.5 is
+##     explicit that its whole budget is measured under HubCamera.OFFSET
+##     and "ne vaut pas pour une poursuite". A chase camera over the north
+##     lobe is a lot of its own (a ChaseAudit), not a line in this one;
+##   * and a bounce IS the trick. The board exists so a landing lands
+##     somewhere a walk would not reach.
+##
+## NO PERSISTENCE, and no schema field -- the sailboat's and the sled's
+## precedent. It is found at SKATE_PARK at every start, however it was
+## left. What DOES persist is the park's stock (WorldSave.SKATE_STOCK_ID),
+## because that is the anti-farm guard and a guard that forgets on reload
+## is not one.
+const VEHICLE_SKATE: int = 4
+## ⚠️ THE NORTH END OF THE PARK, AND THAT IS A RENDERED DECISION.
+##
+## The obvious place is the SOUTH lip, on the walk in from the plateau.
+## Rendered, it is the wrong one: HubCamera sits at the player's z + 8.9
+## and never yaws, so a rider who mounts at the south rides AWAY from the
+## lens into a park that is entirely behind it. Mounting at the NORTH he
+## rides southward with the whole park in frame ahead of him -- the same
+## five modules, the same camera, and the opposite reading. See the frame
+## arithmetic in HubSkatepark's header, and the probe run that measured
+## one module in frame out of five before this moved.
+##
+## x = 3 and not 0, and that is a probe finding rather than a choice:
+## parked on the axis at (0, 60) the board sat 4.53 u from the bowl's
+## centre against a required 5.6 -- i.e. ON the bowl's rim, which reads
+## as a board dropped INTO the dish. PHASE G caught it as a footprint
+## clash. (3.0, 60.0) clears every module, keeps 1.62 u of margin to the
+## lobe rim, and still frames all five modules from the mount.
+##
+## The minimap PLACE marker on the park is what makes it findable from
+## the plateau, which is the job a marker exists for (CH46).
+##
+## ⚠️ Flat by construction -- the y is 0 and stays 0 here, and the node is
+## placed through HubSurface like every other ground point in this file's
+## neighbours. A y typed into a park position is the second spelling
+## CLAUDE.md keeps paying for.
+const SKATE_PARK: Vector3 = Vector3(3.0, 0.0, 60.0)
+## The ball's radius, and for the ball's stated reason: the board is drawn
+## small (0.92 u long) and the ground round it is nobody else's target.
+const SKATE_TAP_RADIUS: float = 1.5
+const SKATE_FOOTPRINT: float = 1.2
+## Deck top: authored ONCE in SkateparkMesh, republished here.
+const SKATE_LIFT: float = SkateparkMesh.DECK_TOP
+
 const DECK_TOP: float = 0.16
 ## Ground radius the scatter keeps clear around a dock (deck 1.9 + step
 ## 0.38 + a margin to walk round it).
@@ -203,6 +260,7 @@ var _ball: Node3D = null
 var _yacht: SandYacht = null
 var _sailboat: SailBoat = null
 var _sled: SledBody = null
+var _board: Node3D = null
 var _keepy: Node3D = null
 var _camera: Camera3D = null
 var _weather: Node = null
@@ -234,6 +292,7 @@ func _ready() -> void:
 	for i in LINES.size():
 		_build_line(i)
 	_build_ball()
+	_build_board()
 	_build_yacht()
 	_build_sailboat()
 	_build_sled()
@@ -331,6 +390,33 @@ func _build_ball() -> void:
 	MinimapMarkers.mark(_ball, MinimapMarkers.VEHICLE, &"hopball")
 	add_child(_ball)
 
+## CH53: the skateboard. Built HERE and not by HubSkatepark, because what
+## makes it usable is this file's vehicle door -- `vehicle_at`, the
+## `tapped_vehicle` channel, `_try_mount_ball`'s "one vehicle at a time".
+## A board owned by the park would have to grow a second copy of all of
+## it, and CLAUDE.md's ladder pattern is what a second tap channel turns
+## into when nobody is watching.
+func _build_board() -> void:
+	var builder := SkateparkMesh.new()
+	_board = MeshInstance3D.new()
+	_board.name = "Skateboard"
+	(_board as MeshInstance3D).mesh = builder.skateboard()
+	(_board as MeshInstance3D).material_override = CozyPalette.decor_material()
+	(_board as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_board.position = HubSurface.ground(SKATE_PARK)
+	# A VEHICLE on the map: it carries Keepy, it moves, and it is 46 u
+	# north of the spawn -- exactly the thing CH46 built markers for. No
+	# THUMBS entry, so it draws with the abstract vehicle icon; that is
+	# the documented fallback and it avoids re-baking the atlas.
+	MinimapMarkers.mark(_board, MinimapMarkers.VEHICLE)
+	add_child(_board)
+
+func board_node() -> Node3D:
+	return _board
+
+func board_position() -> Vector3:
+	return Vector3(_board.global_position.x, 0.0, _board.global_position.z)
+
 ## CH30: a SandYacht node -- the hull and the sail on a heeling deck, and
 ## the driving model with them. The GLB lookups stay here (this file owns
 ## the palette calls); the vehicle owns what it does with them.
@@ -381,6 +467,7 @@ static func footprints() -> Array:
 	out.append({"position": BALL_PARK, "radius": BALL_FOOTPRINT})
 	out.append({"position": YACHT_PARK, "radius": YACHT_FOOTPRINT})
 	out.append({"position": SAILBOAT_MOORING, "radius": SAILBOAT_FOOTPRINT})
+	out.append({"position": SKATE_PARK, "radius": SKATE_FOOTPRINT})
 	return out
 
 ## Every dock, flat, for the path builder.
@@ -469,6 +556,11 @@ func vehicle_at(point: Vector3) -> int:
 		return VEHICLE_SAILBOAT
 	if _sled != null and not _driving_sled and flat.distance_to(sled_position()) <= SLED_TAP_RADIUS:
 		return VEHICLE_SLED
+	# CH53: the board, last, and on the ball's exact terms -- only the one
+	# he RIDES withdraws, so a tap on it while riding something else means
+	# "swap" and HubWorld drops the first where he stands.
+	if _board != null and riding != _board and flat.distance_to(board_position()) <= SKATE_TAP_RADIUS:
+		return VEHICLE_SKATE
 	return -1
 
 func yacht_node() -> Node3D:
@@ -514,6 +606,8 @@ func vehicle_position(kind: int) -> Vector3:
 		return sailboat_position()
 	if kind == VEHICLE_SLED:
 		return sled_position()
+	if kind == VEHICLE_SKATE:
+		return board_position()
 	return ball_position()
 
 func vehicle_tap_radius(kind: int) -> float:
@@ -523,6 +617,8 @@ func vehicle_tap_radius(kind: int) -> float:
 		return SAILBOAT_TAP_RADIUS
 	if kind == VEHICLE_SLED:
 		return SLED_TAP_RADIUS
+	if kind == VEHICLE_SKATE:
+		return SKATE_TAP_RADIUS
 	return BALL_TAP_RADIUS
 
 ## The wind's multiplier on the yacht's pace: 0.85 in snow, 1.0 in the

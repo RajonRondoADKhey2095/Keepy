@@ -118,6 +118,7 @@ static var _decor_static: ShaderMaterial = null
 static var _decor_wind: Dictionary = {}
 static var _decor_tinted: Dictionary = {}
 static var _cloud: ShaderMaterial = null
+static var _concrete: ShaderMaterial = null
 static var _ground: ShaderMaterial = null
 static var _noise: NoiseTexture2D = null
 static var _cells: NoiseTexture2D = null
@@ -197,6 +198,52 @@ static func decor_material_tinted(colour: Color) -> ShaderMaterial:
 		mat.set_shader_parameter("tint", colour)
 		_decor_tinted[key] = mat
 	return _decor_tinted[key]
+
+## =====================================================================
+## CH53 -- CONCRETE, THE ONE MATERIAL IN THIS HUB THAT IS NOT ORGANIC
+##
+## Mathieu's brief: "beton realiste (gris, mat, pas de shading organique
+## du reste du hub)". That is a request about the SHADING MODEL, not
+## about a colour -- the greys are baked into SkateparkMesh's vertices
+## (a multiplicative tint cannot recolour, CLAUDE.md), so what is left
+## for a material to decide is how the toon pass treats a flat slab.
+##
+## Four parameters move and every other one is deliberately the decor
+## material's, because a second shader would be a second thing to keep
+## in step with the weather and the haze:
+##
+##   rim_strength 0    the rim light is what makes a bush read as a soft
+##                     round body. On a poured edge it reads as a wet
+##                     highlight and it is the single most "organic" cue
+##                     in this shader. Off, not reduced.
+##   band_softness 0.9 the toon band's hard edge is the second cue. At
+##                     0.9 the two bands blend across the whole normal
+##                     range, so a curved transition reads as a smooth
+##                     gradient rather than as two painted zones.
+##   lit 1.0 / shade 0.88   a matte surface has little swing between its
+##                     lit and shaded faces. 0.80 is what the foliage
+##                     uses; 0.88 keeps a vertical wall readable against
+##                     a deck without painting a contrast the material is
+##                     supposed not to have.
+##   shade_tint        neutral, near-white. The decor's (0.86, 0.92, 1.0)
+##                     is a deliberate cool sky bounce, and cool shadow
+##                     on grey concrete is exactly the organic note the
+##                     brief asks to remove.
+##
+## ⚠️ THE HAZE IS KEPT, and that is not an oversight. Every distance cue
+## in this hub is that exponential haze (CLAUDE.md: a 38 u arrival is
+## already 45.6 % occluded). A module that did not fade with distance
+## would be the one object on the plateau that does not, and it would
+## read as a decal rather than as a thing standing 40 u away.
+static func concrete_material() -> ShaderMaterial:
+	if _concrete == null:
+		_concrete = _make_decor(0.0, 1.0)
+		_concrete.set_shader_parameter("rim_strength", 0.0)
+		_concrete.set_shader_parameter("band_softness", 0.9)
+		_concrete.set_shader_parameter("lit", 1.0)
+		_concrete.set_shader_parameter("shade", 0.88)
+		_concrete.set_shader_parameter("shade_tint", Color(0.97, 0.97, 0.98))
+	return _concrete
 
 ## Clouds: the decor toon look with NO haze (they sit 100+ u out, where
 ## the haze would dissolve them into the sky they are meant to sit in).
@@ -429,7 +476,13 @@ static func apply_weather(look: Dictionary) -> void:
 	var flash: float = look.get("flash", 0.0)
 	var base: Color = look["tint"]
 	var tint := base.lerp(Color(1.55, 1.55, 1.65), flash)
-	var decor: Array = [_decor_static]
+	# ⚠️ CH53: _concrete IS IN THIS LIST, and it has to be. This function
+	# is an ENUMERATION of the materials the weather reaches, which is the
+	# exact shape CLAUDE.md warns about ("une liste ... est fausse au
+	# premier nom oublié"): a material left out of it does not error, it
+	# simply stops fading, stops taking the storm's tint and never
+	# collects snow -- one object on the plateau that ignores the weather.
+	var decor: Array = [_decor_static, _concrete]
 	decor.append_array(_decor_wind.values())
 	decor.append_array(_decor_tinted.values())
 	for mat in decor:

@@ -655,6 +655,29 @@ le flanc proche invisible. De trente unités ça se lit comme un dôme propre
 et ça valide la forme ; debout dessus, il n'y a plus rien. Une session qui
 n'a regardé que la vue de loin conclut que le relief marche.
 
+⚠️ **ET CE CONTRÔLE A UN ANGLE MORT, MESURÉ AU CH53 : UN SOLIDE CONVEXE
+FERMÉ RETOURNÉ COUVRE EXACTEMENT LA MÊME SILHOUETTE.** La passe rouge d'un
+park de cinq modules, convention d'enroulement inversée, a rendu **quatre
+rouges sur cinq attendus** : le survivant était un rail — trois boîtes —
+à **0,9977** de ses pixels conservés. Ce n'est pas un défaut du rail :
+sous `cull_back`, un corps fermé à l'envers montre l'INTÉRIEUR de sa paroi
+lointaine au lieu de l'EXTÉRIEUR de sa paroi proche, et un aplat non
+éclairé ne distingue pas les deux. **Un comptage de pixels est un test de
+SILHOUETTE, et une silhouette ne change pas sous inversion** ; seuls les
+corps OUVERTS (un dessous absent) s'effondrent. C'est la règle « le nombre
+d'échecs attendus fait partie de l'assertion » qui a transformé ça en
+trouvaille au lieu d'un haussement d'épaules.
+
+**Le complément, et il ferme le cas sur toute forme** : un shader encode
+la profondeur en espace vue ; rendu `cull_back` un corps bien enroulé
+montre sa surface **PROCHE**, rendu `cull_front` la **LOINTAINE**, et
+l'inversion échange les deux. La moyenne encodée sous `cull_back` doit
+donc être **plus petite** que sous `cull_front` — un **SIGNE**, sans seuil
+à régler. Re-neutralisé, les **cinq** modules sortent inversés, rail
+compris. Et la garde qui va avec : **asserter que les DEUX passes peignent
+quelque chose**, sinon un corps disparu passe le test de signe faute
+d'échantillons.
+
 ### ⚠️ LE COMPTEUR DU MOTEUR NE COMPTE QUE L'OPAQUE, ET AU LOD QU'IL A CHOISI
 
 `RenderingServer.viewport_get_render_info(..., PRIMITIVES_IN_FRAME)` n'est
@@ -1260,6 +1283,34 @@ sonde était **verte par chance** — jusqu'à ce qu'une marche passe à deux ho
 tout point d'interaction fixe doit **SNAPPER**, sinon l'écart dépend du côté
 d'où l'on arrive.
 
+### ⚠️ UN TIRAGE AJOUTÉ DANS UN FLUX RNG PARTAGÉ DÉPLACE TOUT CE QUI SUIT
+
+CH53, et le symptôme était à soixante unités du code modifié. Une garde de
+densité posée sur les cellules NORD a été écrite sur le patron de la garde
+de domaine voisine — `if ... and _rng.randf() > KEEP: continue`. Correcte,
+bornée au nord, et pourtant la frame du **SPAWN** est sortie à **+308
+primitives** contre la référence.
+
+La cause n'est pas dans ce qui a été rejeté : c'est que **consommer un
+`randf()` de plus sur un candidat déplace le flux pour TOUS les candidats
+suivants**, où qu'ils tombent. Le tapis du sud n'a pas été aminci — il a
+été **rebattu**. Rien n'était faux ; ce n'était simplement plus le même
+tapis, et la comparaison croisée sur laquelle reposait le financement du
+lot était polluée par un terme que personne n'avait demandé.
+
+**Parade** : une décision de garde qui doit rester locale se prend sur un
+**hachage de la position** et ne touche pas le flux — le patron que
+`CozyScatter._cell_variant` utilisait déjà pour choisir une variante.
+Mesuré : le spawn est passé de **+308 à −23** et le sud est redevenu
+byte-identique. Le résidu de −23 vient d'un `footprint` neuf qui rejette
+des candidats (donc leur saute deux tirages), et **ça, c'est irréductible**
+— tout prop ajouté dans ce hub l'a toujours fait.
+
+⚠️ **Corollaire de méthode** : quand un lot mesure un delta entre deux
+arbres, une station **hors du sujet** (ici le spawn) est le témoin qui
+révèle ce genre de fuite. Ne jamais ne mesurer que les stations que le lot
+prétend améliorer.
+
 ### ⚠️ UN FAIT EST PUBLIÉ UNE FOIS, JAMAIS RECOPIÉ
 
 Une position, un rayon, une échelle calculés quelque part sont **publiés par
@@ -1356,6 +1407,32 @@ pente — à l'image, un fil horizontal en haut du cadre. **Mesuré par rendu,
 pas déduit** : trois courses au corridor parfaitement vert ont été refusées
 sur cette seule base. La bande où une descente LIT comme une descente sur ce
 plateau est de l'ordre de **14 à 22 u**, à une pente de 13° et plus.
+
+### ⚠️ OÙ UN VÉHICULE EST GARÉ DÉCIDE DANS QUEL SENS ON ROULE, DONC CE QU'ON VOIT
+
+Corollaire opérationnel de « la caméra ne montre que des z inférieurs au
+sien », et il coûte zéro à appliquer si on y pense au bon moment. Écrit au
+CH53, sur un skatepark.
+
+La place naturelle d'une planche, d'un kart ou d'une luge est **là où le
+joueur arrive**. Rendue, c'est souvent la mauvaise : un joueur qui monte du
+côté de l'arrivée roule **en s'éloignant** de l'objectif, dans un décor
+entièrement derrière lui. Garé de l'AUTRE côté du contenu, il le traverse
+**vers** la caméra et tout est dans le cadre devant lui. Mêmes objets,
+même caméra, lecture opposée — et le seul changement est une constante de
+position.
+
+Mesuré : cinq modules, `unproject_position` sur la caméra livrée. Garé au
+sud, **1 module sur 5** dans le cadre depuis le point de montage et trois
+qui ne peignaient **aucun pixel**. Garé au nord, **5 sur 5**.
+
+⚠️ **Et la borne de largeur n'est pas une règle de pouce.** Avec
+`keep_aspect = 0` (KEEP_WIDTH) et `fov = 45`, les 45° sont l'angle
+**HORIZONTAL**, donc un objet en `z` est dans le cadre depuis un joueur en
+`z_p` ssi `|x| ≤ tan(22,5°) · (z_p + 8,9 − z)` **et** `z < z_p + 8,9`. Au
+z du joueur cela vaut **±3,69 u** exactement. Un contenu qui doit se lire
+d'un coup d'œil est donc **ÉTROIT et LONG**, jamais large — et ça se
+vérifie par `unproject`, pas par un plan dessiné à plat.
 
 ### ⚠️ QUELLE CAMÉRA POUR QUOI — UN CRITÈRE UNIQUE, PLUS UNE PILE D'EXCEPTIONS
 

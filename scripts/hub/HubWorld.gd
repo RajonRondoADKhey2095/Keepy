@@ -102,6 +102,9 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _karting: HubKarting = $WorldViewport/SubViewport/World/Karting
 ## CH29: the cove module (sea, lighthouse, sandcastles, burrow slot).
 @onready var _cove: HubCove = $WorldViewport/SubViewport/World/Cove
+## CH53: the skatepark of the north lobe, and the HUD that reads it.
+@onready var _skatepark: HubSkatepark = $WorldViewport/SubViewport/World/Skatepark
+@onready var _skate_hud: SkateHud = $SkateHud
 @onready var _kart_hud: KartHud = $KartHud
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
 ## v4: the resource counter (always shown -- it is part of the game) and
@@ -720,6 +723,7 @@ func _ready() -> void:
 	_setup_trees()
 	_setup_critters()
 	_setup_karting()
+	_setup_skatepark()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -3505,6 +3509,16 @@ func _on_hop_landed(position: Vector3) -> void:
 		if in_water:
 			_on_water_impact(position)
 
+	# CH53 -- THE SKATEPARK, and it sits with the tint and the impact for
+	# their reason: every branch below this point returns, so a reaction
+	# placed after them would stop scoring on exactly the landings that go
+	# on to do something.
+	#
+	# It is handed the landing and nothing else. Whether it counts is the
+	# PARK's decision (on the board, inside a module's disc, chained or
+	# not) -- this file does not know the rule and must not learn it.
+	_skatepark.note_landing(position)
+
 	# THE SPINNING PROPS, and they sit here for the reason the tint and the
 	# impact above do: every branch below this point returns, so a reaction
 	# placed after them would stop firing on exactly the landings that go on
@@ -3908,6 +3922,12 @@ func _try_mount_ball(position: Vector3) -> bool:
 		return _transport.mount_sailboat()
 	if _mount_kind == HubTransport.VEHICLE_SLED:
 		return _transport.mount_sled()
+	# CH53: the board is the SAUTILLON's path, not the yacht's -- a
+	# bouncing vehicle handed straight to KeepyHopper, no drive mode, no
+	# chase camera, no HUD switch. Every hop after this is 2.7 u long and
+	# 1.15 u high, and that arc is what reaches a module's disc.
+	if _mount_kind == HubTransport.VEHICLE_SKATE:
+		return _keepy.mount_vehicle(_transport.board_node(), HubTransport.SKATE_LIFT)
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
 
 ## ---- CH29: the cove -- sandcastle spots -----------------------------------
@@ -3916,6 +3936,22 @@ func _try_mount_ball(position: Vector3) -> bool:
 ## chain runs out. The building itself is HubCove's (a bounded tween).
 var _building_castle: int = -1
 var _cove_visited: bool = false
+
+## CH53. Three wires and no more: the park needs the hopper (to refuse a
+## score on foot), the HUD needs the park, and a chain has to end when
+## the board is put down.
+##
+## ⚠️ NOTHING HERE CANCELS THE CHAIN ON A TAP, deliberately. Every other
+## coordinator's `cancel_intent()` is called from every tap handler,
+## because a tap means "I meant something else" about a WALK INTENT. A
+## chain is not an intent -- a tap is exactly how a rider aims the next
+## trick, and cancelling on tap would make a chain impossible to build.
+## The chain ends where it should: on a landing that is not on a module
+## (HubSkatepark.note_landing) and when the board is left.
+func _setup_skatepark() -> void:
+	_skatepark.setup(_keepy)
+	_skate_hud.setup(_skatepark)
+	_keepy.vehicle_dismounted.connect(_skatepark.cancel_intent)
 
 func _setup_cove() -> void:
 	_cove.setup(_keepy, _weather)
