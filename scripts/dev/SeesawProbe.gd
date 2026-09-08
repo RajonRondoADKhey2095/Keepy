@@ -131,8 +131,22 @@ func _phase_lobe() -> void:
 	# boundary means anything.
 	_check(HubRegion.contains(Vector3(0.0, 0.0, h + r - 0.05)),
 		"the lobe's far tip IS walkable at z = %.2f, past the square edge" % (h + r - 0.05))
-	_check(not HubRegion.contains(Vector3(0.0, 0.0, h + r + 0.05)),
-		"and one step past the tip is not")
+	# ⚠️ CH50 -- THIS LOBE'S RIM STOPPED BEING THE REGION'S BOUNDARY, and
+	# the assertion below used to read the two as the same thing. The skate
+	# lobe unions a disc of radius 28 onto the SAME centre, so everything
+	# CH16 added is now INTERIOR ground: a point one step past the r=12 tip
+	# is walkable, correctly, and the old wording called that a failure.
+	#
+	# The contract CH16 owns is unchanged and still gated above -- its
+	# ground exists. What moved is WHERE the region ends, so the boundary
+	# question is asked at the radius that actually answers it, and the
+	# lobe's own rim is asserted to be INTERIOR rather than edge, which is
+	# a statement that would break if either radius drifted.
+	var outer: float = maxf(r, HubRegion.SKATE_LOBE_RADIUS)
+	_check(HubRegion.contains(Vector3(0.0, 0.0, h + r + 0.05)),
+		"one step past the CH16 tip is INTERIOR ground since CH50 (outer radius %.1f)" % outer)
+	_check(not HubRegion.contains(Vector3(0.0, 0.0, h + outer + 0.05)),
+		"and one step past the OUTER rim is not walkable (z = %.2f)" % (h + outer + 0.05))
 
 	# Every azimuth, so a lobe that only worked straight ahead is caught.
 	var inside: int = 0
@@ -148,15 +162,52 @@ func _phase_lobe() -> void:
 	# The rim is only OUTSIDE where the square does not already cover it --
 	# the inner half is square, and that is the point of unioning a whole
 	# disc rather than half of one.
-	var covered: int = 0
+	# ⚠️ CH50 -- AND THE SAME SUBSTITUTION HERE, for the same reason. The
+	# exemption used to name the square alone because the square was the
+	# only other term reaching this rim; the skate lobe is a second, so the
+	# sweep is taken at the OUTER radius where the region really stops.
+	# Naming terms one at a time is what CLAUDE.md warns about ("une liste
+	# de ce qui n'est pas le sujet est fausse au premier nom oublie"), so
+	# the CH16 rim is checked for what it now IS -- interior everywhere --
+	# and the boundary is checked once, outside.
+	var interior: int = 0
+	var outer_out: int = 0
 	for i in 721:
 		var a: float = deg_to_rad(float(i) * 0.5)
-		var p: Vector3 = c + Vector3(cos(a), 0.0, sin(a)) * (r + 0.05)
-		if absf(p.x) <= h and absf(p.z) <= h:
+		var d := Vector3(cos(a), 0.0, sin(a))
+		if HubRegion.contains(c + d * (r + 0.05)):
+			interior += 1
+		if not HubRegion.contains(c + d * (outer + 0.05)):
+			outer_out += 1
+	_check(interior == 721,
+		"the CH16 rim is interior at every azimuth since CH50 (%d/721)" % interior)
+	# ⚠️ AND NAMING THE SQUARE ALONE WAS STILL SHORT BY FOUR AZIMUTHS. The
+	# zipline's P2 structure lobe (CH21) sits at (25.2, 35) with radius 3,
+	# so it reaches 28.2 from this centre -- 0.2 u past the outer rim -- and
+	# four samples land in it, outside the square and legitimately walkable.
+	# 355 + 362 = 717 of 721, and the four missing ones were CH21's, not a
+	# leak.
+	#
+	# So the exemption is taken from what HubRegion PUBLISHES, and it is
+	# GATED: the reconstruction has to reproduce contains() on every sample,
+	# which is what turns a list that can be forgotten into one that fails
+	# loudly when the next union term arrives.
+	var covered: int = 0
+	var reconstructed: int = 0
+	for i in 721:
+		var a: float = deg_to_rad(float(i) * 0.5)
+		var p: Vector3 = c + Vector3(cos(a), 0.0, sin(a)) * (outer + 0.05)
+		var elsewhere: bool = _covered_elsewhere(p, c, outer)
+		if HubRegion.contains(p) == (elsewhere or p.distance_to(c) <= outer):
+			reconstructed += 1
+		if elsewhere:
 			covered += 1
-	_check(outside + covered >= 721,
-		"and just outside the rim is unwalkable except where the square already covers it (%d + %d of 721)"
-			% [outside, covered])
+	_check(reconstructed == 721,
+		"the published terms reconstruct contains() on all 721 samples (%d) -- a term added to HubRegion and not here fails HERE"
+			% reconstructed)
+	_check(outer_out + covered >= 721,
+		"and just outside the OUTER rim is unwalkable except where another published term covers it (%d + %d of 721)"
+			% [outer_out, covered])
 
 	# It must not have grown anywhere ELSE. Sampled where the previous batch
 	# gated it, so a fat-fingered term shows up as the square leaking.
@@ -168,22 +219,27 @@ func _phase_lobe() -> void:
 	# The area, measured on the shipped contains() rather than computed from
 	# the radius: the number in the docs has to be the number the region
 	# actually draws.
+	# ⚠️ CH50 -- MEASURED AT THE OUTER RADIUS. Sampled over |x| <= r the
+	# strip north of the edge is now a full RECTANGLE (the bigger disc
+	# covers all of it), so the old half-disc arithmetic reported 288 for a
+	# 226 target and failed on correct ground. The shape gate is the same
+	# gate, taken where the region actually curves.
 	var step: float = 0.1
 	var new_cells: int = 0
-	var x: float = -r
-	while x <= r:
+	var x: float = -outer
+	while x <= outer:
 		var z: float = h
-		while z <= h + r:
+		while z <= h + outer:
 			if HubRegion.contains(Vector3(x, 0.0, z)) and z > h:
 				new_cells += 1
 			z += step
 		x += step
 	var area: float = float(new_cells) * step * step
 	var square_area: float = (2.0 * h) * (2.0 * h)
-	print("    new walkable ground = %.2f u2 = %.3f%% of the %.0f u2 square (analytic half-disc %.2f)"
-		% [area, 100.0 * area / square_area, square_area, PI * r * r * 0.5])
-	_check(absf(area - PI * r * r * 0.5) < 3.0,
-		"and it measures as a half disc, within sampling error")
+	print("    walkable ground north of the edge = %.2f u2 = %.3f%% of the %.0f u2 square (analytic half-disc at r=%.1f: %.2f)"
+		% [area, 100.0 * area / square_area, square_area, outer, PI * outer * outer * 0.5])
+	_check(absf(area - PI * outer * outer * 0.5) < 6.0,
+		"and it measures as a half disc at the outer radius, within sampling error")
 	print("")
 
 ## =====================================================================
@@ -669,3 +725,43 @@ func _count_draw(node: Node) -> int:
 	for child in node.get_children():
 		n += _count_draw(child)
 	return n
+
+## Is `point` inside some published region term OTHER than the disc
+## (`centre`, `radius`) under test. Built from what HubRegion publishes --
+## the square, the mountain rectangle, the zone rectangles and corridors,
+## the north and skate lobes, the shore pad, every structure lobe -- and
+## the caller GATES it against contains() rather than trusting it to stay
+## complete on its own.
+func _covered_elsewhere(point: Vector3, centre: Vector3, radius: float) -> bool:
+	var flat := Vector3(point.x, 0.0, point.z)
+	if HubRegion.in_hole(flat):
+		return false
+	var h: float = HubRegion.PLATEAU_HALF_EXTENT
+	if absf(flat.x) <= h and absf(flat.z) <= h:
+		return true
+	for pair in [[HubRegion.AUTUMN_MIN, HubRegion.AUTUMN_MAX],
+			[HubRegion.CORRIDOR_MIN, HubRegion.CORRIDOR_MAX],
+			[HubRegion.MOOR_MIN, HubRegion.MOOR_MAX],
+			[HubRegion.MOOR_CORRIDOR_MIN, HubRegion.MOOR_CORRIDOR_MAX],
+			[HubRegion.CIRCUIT_MIN, HubRegion.CIRCUIT_MAX],
+			[HubRegion.CIRCUIT_CORRIDOR_MIN, HubRegion.CIRCUIT_CORRIDOR_MAX],
+			[HubRegion.COVE_MIN, HubRegion.COVE_MAX],
+			[HubRegion.COVE_CORRIDOR_MIN, HubRegion.COVE_CORRIDOR_MAX],
+			[HubRegion.MOUNTAIN_MIN, HubRegion.MOUNTAIN_MAX]]:
+		var lo: Vector2 = pair[0]
+		var hi: Vector2 = pair[1]
+		if flat.x >= lo.x and flat.x <= hi.x and flat.z >= lo.y and flat.z <= hi.y:
+			return true
+	for disc in [[HubRegion.north_lobe_centre(), HubRegion.NORTH_LOBE_RADIUS],
+			[HubRegion.skate_lobe_centre(), HubRegion.SKATE_LOBE_RADIUS],
+			[HubRegion.near_bank(), HubRegion.SHORE_PAD_RADIUS]]:
+		var dc: Vector3 = disc[0]
+		var dr: float = disc[1]
+		if dc.distance_to(centre) < 0.001 and absf(dr - radius) < 0.001:
+			continue
+		if flat.distance_to(dc) <= dr:
+			return true
+	for lobe in HubRegion.structure_lobes():
+		if flat.distance_to(lobe["centre"] as Vector3) <= float(lobe["radius"]):
+			return true
+	return false

@@ -13,7 +13,7 @@ class_name HubMinimap
 ## 1. PERMANENT, in a corner. No full-screen map, no button to open it.
 ## 2. NORTH FIXED. The plan never rotates with the camera.
 ## 3. THE FRAME IS THE WALKABLE WORLD ALONE (HubRegion.walkable_bounds(),
-##    137 x 247 u), not the all-vehicle frame. Anything outside -- the
+##    137 x 263 u since CH50), not the all-vehicle frame. Anything outside -- the
 ##    sailboat runs up to 82 u past it in x -- is CLAMPED to the border
 ##    and drawn with a different icon. Nothing ever disappears silently.
 ## 4. THE ZONE BOUNDARIES ARE THE PAINTED ONES (CozyPalette.*_EDGE_Z),
