@@ -807,6 +807,16 @@ lecture du côté réel, jamais sur le commentaire qui le nomme.
 * **Toute sonde qui joue un cue audio puis quitte** doit attendre en temps
   RÉEL avant de sortir, sinon elle s'ajoute `ObjectDB instances leaked at
   exit` **après** son propre verdict et casse la comparaison byte-identique.
+* **Un `Tween` qui finit au milieu d'une frame SNAPPE à sa fin et laisse
+  UNE frame courte** : un segment de 1,6 u à 10 u/s dure 9,6 frames, la
+  10ᵉ ne parcourt que 0,6 frame de distance — lu `6.0` entre des `10.0`
+  sur un roulement plat (CH54). À pied le rebond le cache, et c'est dans
+  les chiffres de traversée publiés (le « ~1,2 % de plus que
+  l'arithmétique » de `HOP_DURATION`). Mesuré : `get_total_elapsed_time()`
+  INCLUT le delta entier de la dernière frame (0,16667 pour 0,16), et
+  `custom_step(over)` sur le tween suivant, dans la MÊME frame, absorbe
+  le dépassement. Le report ne s'applique qu'en glisse : le faire à pied
+  raccourcirait chaque traversée publiée.
 * **`KartTouchInput.input.brake` posé UNE FOIS hors boucle ne tient pas** :
   `_physics_process` le réécrit CHAQUE frame sur l'état du clavier
   (`_brake_index < 0` → faux en headless, aucune touche pressée), donc un
@@ -2152,6 +2162,33 @@ en était déjà un troisième, court de **quatre azimuts sur 721**.
 la moitié qui compte — la sonde **asserte que cette reconstruction reproduit
 `contains()` sur chaque échantillon** (721/721, 360/360). Le prochain terme
 d'union échoue alors **bruyamment là**, au lieu d'être oublié en silence.
+
+### ⚠️ UNE VITESSE N'EST PAS UNE CONDUITE — UN PROFIL L'EST
+
+CH54, sur le skate CH53. Mathieu, device en main : « il est sur le skate
+mais il ne le conduit pas ». Le tracé (`SkateDriveProbe`, taps par le
+vrai canal) a lu **16,0 u à 7,941 u/s dès la frame 1**, arrêt sec, six
+arcs de 1,30 u — le câblage était juste, le véhicule bougeait, et il
+bougeait exactement comme la balle avec une planche dessinée dessous.
+Un multiplicateur de vitesse (× 1,48 la marche) n'a pas suffi à se lire
+comme une conduite ; ce qui se lit est un **profil** : un départ qui
+monte, une croisière propre, un arrêt qui s'étale, une relance après un
+demi-tour. Les trois manquaient, et aucune assertion « il va plus vite
+qu'à pied » ne les aurait vus.
+
+**Règle** : un véhicule se spécifie et se gate sur son profil de vitesse
+(premières frames, frame d'atteinte de la croisière, dernières frames,
+continuité aux frontières de segment), jamais sur sa seule vitesse de
+pointe. Et un tel retour device se tranche **par tracé de position frame
+par frame** avant d'écrire une ligne : H1 (rien ne bouge) et H2 (ça
+bouge sans se lire) ont des correctifs opposés, et la lecture du code ne
+les distingue pas — tout y était correct.
+
+⚠️ **Corollaire mesuré dans le même lot** : une conduite plus lente de
+bout en bout que la chose qu'elle remplace n'est pas une conduite. Les
+rampes coûtent ; la première croisière (9,0) rendait 2,233 s sur 16 u
+contre 2,100 s pour le rebond. Publier le temps DE BOUT EN BOUT à côté de
+la croisière.
 
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
