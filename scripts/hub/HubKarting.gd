@@ -187,6 +187,9 @@ func field_size() -> int:
 func add_racer(racer_name: String, colour: Color, player: bool) -> int:
 	var kart := KartBody.new()
 	kart.name = "Kart_%d" % racers.size()
+	# BEFORE add_child: KartBody._ready() marks itself on the minimap with
+	# this index, and _ready() runs inside add_child().
+	kart.grid_index = racers.size()
 	kart.racer_name = racer_name
 	kart.body_colour = colour
 	add_child(kart)

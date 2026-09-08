@@ -1747,7 +1747,7 @@ func _build() -> void:
 				else:
 					_boat = node
 					# CH46: the stream boat is a VEHICLE on the map.
-					MinimapMarkers.mark(_boat, MinimapMarkers.VEHICLE)
+					MinimapMarkers.mark(_boat, MinimapMarkers.VEHICLE, &"boat")
 	_flush_batches()
 
 ## Files a scatter prop into its batches. Returns false for a type that

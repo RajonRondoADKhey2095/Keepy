@@ -117,7 +117,7 @@ func _ready() -> void:
 	# n'arrive pas a distinguer les amis de Keepy": the friends were never
 	# where the map said they were. The animal is the child, so the child
 	# is what joins the group, and it has to exist first.
-	MinimapMarkers.mark(_critter, MinimapMarkers.NPC)
+	MinimapMarkers.mark(_critter, MinimapMarkers.NPC, &"fawn")
 	_critter.setup_model(SCENE, SCALE, LIFT)
 	_critter.global_position = GRAZE_SPOTS[0]
 	_critter.face(HOME_FACING)
