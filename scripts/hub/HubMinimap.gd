@@ -1,7 +1,10 @@
 extends Control
 class_name HubMinimap
 ## CH46 -- THE PERMANENT MINIMAP: a north-fixed plan of the walkable world,
-## drawn in the bottom-left corner, visible on foot AND in every vehicle.
+## visible on foot AND in every vehicle. Drawn in the bottom-LEFT corner
+## until CH48 moved it to the bottom RIGHT (Mathieu: the left is where his
+## thumb rests) and replaced its four abstract shapes with 22 miniatures of
+## the real models. See the CH48 block below and docs/lots/CH48_*.md.
 ##
 ## =====================================================================
 ## THE FIVE DECISIONS THIS FILE OBEYS (Mathieu, brief CH46) -- not to be
@@ -115,26 +118,191 @@ class_name HubMinimap
 
 ## The plan's height in canvas pixels. The width follows from the world
 ## frame's own aspect, so the map is never stretched.
-const MAP_PX_H: int = 280
+##
+## ⚠️ CH48 DERIVED THIS, IT IS NOT A TASTE. The threshold is CH46's own
+## published number for the shipped map -- "37 markers cover 16 % of a
+## 155 x 280 plan" -- and the sweep (MinimapThumbBake PHASE 3f, the real
+## marker positions at spawn, the shipped leader clustering re-run at each
+## candidate) asks the smallest plan whose glyph ink is back under it with
+## 32 px thumbnails on it:
+##
+##   plan 155 x 280 : 27 glyphs, ink 28.2 %      plan 189 x 340 : 19.1 %
+##   plan 166 x 300 : 24.5 %                     plan 200 x 360 : 17.0 %
+##   plan 177 x 320 : 21.6 %                     plan 211 x 380 : 15.3 %  <--
+##
+## 380 is the first rung at or under 16 %, and the lot ships the first
+## rung: Mathieu asked for "un peu plus grande seulement". It is 1.36x
+## CH47 linearly, 19.5 % of the canvas width where CH47 was 14.4 %.
+const MAP_PX_H: int = 380
 
-## Bottom-left, and how far from the two edges. The bottom margin clears
-## the home indicator (~94 canvas px on an iPhone with the hub's EXPAND
-## scaling); the notch is at the OTHER end of the screen, which is why
-## this corner was chosen at all. CH44 axe 4: the bottom third of the
-## screen is free in both modes.
+## ⚠️ CH48 -- BOTTOM RIGHT, and the margins are the same two numbers. The
+## corner moved on Mathieu's decision 4: the bottom LEFT is where his thumb
+## rests, and a map under the thumb is a map he cannot see. CH44 axe 4
+## measured the occupancy of both modes and the BOTTOM THIRD is free on
+## both sides; the one thing that lives on the right is KartHud's boost
+## gauge, and it is drawn VERTICALLY CENTRED (`y = vp.y * 0.5 - GAUGE_H *
+## 0.5`, KartHud._draw_boost_gauge), not bottom-anchored as its own comment
+## says. On a 1920 canvas it runs y 830..1090 and this widget's top edge is
+## at 1390; MinimapProbe measures both rects and asserts they are disjoint,
+## because "its comment says centred" is not a measurement.
 const MARGIN_X: float = 24.0
 const MARGIN_Y: float = 150.0
 
-## One atlas cell, in pixels. Every icon is drawn 1:1 at this size, so no
-## icon is ever resampled. It is the CELL, not the ink: a place's dot inks
-## 7 px of it and a clamped vehicle inks 19, which is the whole point.
-const ICON_PX: int = 25
+## One atlas cell, in pixels.
+##
+## ⚠️ CH48 DERIVED THIS TOO, and the first method it tried FAILED. The
+## brief asked for the size by COVERAGE, the CH46/CH47 method: bake every
+## thumbnail at a ladder of sizes and find where two of the same rank stop
+## separating. Measured (MinimapThumbBake PHASE 3), the worst same-kind
+## pair reads 0.551 at 16 px and 0.483 at 64 px -- the separation gets
+## WORSE as the icon gets BIGGER, because at 16 px more of the box is edge.
+## A criterion that improves as the picture shrinks cannot name a minimum
+## size, and saying so is part of this lot rather than a gap in it.
+##
+## What does degrade monotonically is how much of the subject survives the
+## downsample (PHASE 3b: downsample to S, blow back up, compare with the
+## reference render). Its return per pixel of cell:
+##
+##   16->20 0.0118/px   24->28 0.0072   32->36 0.0056   44->48 0.0039
+##   20->24 0.0098      28->32 0.0061   36->40 0.0047   48->56 0.0032
+##
+## 32 is the last rung still returning at least half of what the first
+## pixel returned (0.0059). Buying to 64 px would add 0.085 of fidelity and
+## cost a map 60 % wider.
+const ICON_PX: int = 32
 
 ## How far the black outline runs past the white fill, in pixels. One
 ## number for every icon, so "hard dark edge" means the same thing at
 ## every rank -- and so a small rank-3 dot is not left with a rim as thick
 ## as its body.
 const OUTLINE_PX: float = 1.4
+
+## ---- CH48: the thumbnails, and the plate that carries the contrast ----
+##
+## The 22 pictures, baked once by scripts/dev/MinimapThumbBake.gd from the
+## BUILT hub -- the entities the map already marks, photographed in place
+## through their own materials at HubCamera.OFFSET's own distance (11.7034
+## u, the only distance this camera ever has). Straight alpha, 32 px cells,
+## MinimapMarkers.THUMBS order, one row of the sheet per id.
+const THUMB_SHEET: Texture2D = preload("res://assets/textures/ui/minimap_thumbs.png")
+const SHEET_COLS: int = 8
+
+## ⚠️ REAL COLOURS CANNOT SIGN A 3.0:1 CONTRACT, AND THE SWEEP PROVES IT
+## RATHER THAN THE OTHER WAY ROUND. The brief asked for the minimum
+## desaturation of the painted bands that would let the thumbnails reach
+## the 3.0:1 floor. Swept from w = 0.0 to w = 1.0 (MinimapThumbBake PHASE
+## 3d), the WORST subject never gets above 2.6 % of its ink clearing 3.0:1
+## against every band at once -- at ANY desaturation, including bands
+## washed to pure white.
+##
+## That is not the wash failing. A contrast RATIO is one tone against one
+## tone; a badger has white fur and a black mask, and whatever a band's
+## luminance is, one of those two sits near it. 3.0:1 is a contract an
+## ICON's flat fill can sign and a PHOTOGRAPH cannot.
+##
+## So the floor is carried by a DARK PLATE, which is one tone and can sign
+## it. Measured: this plate is L = 0.0070 and its worst ratio against the
+## eight painted band tones is 4.38:1 (against the sea bed, the darkest of
+## them) -- clear of 3.0:1 everywhere with margin, on every band, in every
+## weather the plan is baked for. What the thumbnail then has to clear is
+## THE PLATE, a known fixed tone: measured per subject, between 47.2 %
+## (the boar) and 100 % (the sled, the three birds) of its ink does.
+const PLATE_TONE: Color = Color(0.07, 0.08, 0.09)
+const PLATE_RIM: Color = Color(0.0, 0.0, 0.0)
+const CLAMP_RIM: Color = Color(1.00, 0.96, 0.86)
+const PLATE_R: float = 7.0
+
+## ⚠️ THE RIM CARRIES THE KIND, BECAUSE THE FILL NO LONGER CAN. CH47 said
+## the kind with a SHAPE and a TINT; a portrait has neither to spare -- its
+## silhouette is the model's and its colours are the model's (decision 2).
+## So CH47's rank tints move to the plate's rim, where they multiply
+## nothing: rank 1 warm and light, rank 3 dark, the same luminance order
+## CH47 derived and MinimapProbe still asserts.
+##
+## ⚠️ AND KEEPY'S RIM IS THICKER THAN EVERY OTHER, deliberately and by one
+## number. Mathieu's first need, in his own words, is finding himself among
+## the 37 -- "le marqueur de Keepy doit rester identifiable au premier coup
+## d'oeil". CH47 gave him the largest disc; CH48 cannot, because every
+## portrait is one 32 px plate. A rim 2.4 px wide against everyone else's
+## 1.4 is the cue that survives that, and it is a COVERAGE difference the
+## probe can gate rather than a hue nothing in this repo measures.
+const RIM_PX: float = 2.4
+const PLAYER_RIM_PX: float = 3.2
+const CLAMP_RIM_PX: float = 3.2
+
+## ⚠️ THE KIND'S RING IS A SEPARATE CELL, DRAWN OVER THE PORTRAIT, AND THE
+## FIRST DESIGN BAKED IT IN AND WAS WRONG. Baking the kind's colour into
+## each portrait means reading the groups at BAKE TIME -- and the bake runs
+## on the first frame, while the badger, the sled, the stream boat and the
+## sailboat all join their group after it. All four came out with the
+## fallback BLACK rim, and MinimapProbe PHASE 4 read exactly that: "lights
+## only 0 px of its tone", four glyphs, on a map that was otherwise right.
+## A repaint-on-change was tried first and is the kind of fix that has to be
+## re-earned every time the world's build order moves.
+##
+## The ring is now THREE cells of its own -- ordinary, player, clamped --
+## baked WHITE and drawn over the portrait with the kind's tone as the
+## modulate. The kind is then resolved where it is always correct: at draw
+## time, from the group the glyph came out of. It costs one more quad per
+## glyph, of the SAME texture, so the map is still one draw call.
+const RING_NORMAL: int = 0
+const RING_PLAYER: int = 1
+const RING_CLAMP: int = 2
+const RING_COUNT: int = 3
+
+## ⚠️ AND A BLACK KEYLINE OUTSIDE ALL OF IT, WHICH IS NOT DECORATION.
+## The first cut gave the plate ONE rim, in the kind's tone, and MinimapProbe
+## PHASE 14 -- rebuilt after its own red pass R8 exposed it as a false green
+## -- walked the plate's perimeter against the ground it touches and found
+## 43 of 68 samples under 3.0:1, worst 1.16:1. The cause is arithmetic: the
+## rank-1 tones are LIGHT by CH47's own construction (player L 0.8392,
+## vehicle 0.6476) and the painted bands are light too, so a light rim on a
+## light band is no boundary at all. CH46's rule was right the first time --
+## the thing that survives any background is BLACK -- and CH48 keeps it by
+## putting the kind's colour just INSIDE a black keyline instead of in place
+## of it. 1.2 px buys the contract back and costs the picture nothing it was
+## using.
+const KEYLINE_PX: float = 1.6
+
+## ⚠️ AND KEEPY'S GLYPH IS DRAWN BIGGER, because a thicker ring alone was
+## not enough and the measurement said so. With the ring at 3.2 px against
+## everyone else's 2.4, MinimapProbe counted 184 opaque pixels of Keepy's
+## ring against 176 of a vehicle's -- a 4.5 % difference, which is not a cue
+## anybody finds "au premier coup d'oeil". CH47 had the right instinct and
+## CH48 lost it by giving every portrait one cell: rank 1 was the BIGGEST
+## marker. The cell stays 32 px for everyone (one atlas, one sheet, one
+## bake); the player's is DRAWN into a larger rect, which is a scale at the
+## draw call and costs nothing but a slightly softer picture.
+##
+## Everything downstream reads it through node_reach(), so the clustering
+## bound, the clamp inset and every probe assertion move with it rather
+## than needing to know about it.
+const PLAYER_SCALE: float = 1.28
+
+## ⚠️ AND THE WASH IS NOT THE CONTRAST LEVER -- IT IS THE CHROMA ONE.
+## Desaturating at constant lightness is contrast-NEUTRAL, which is
+## arithmetic and not opinion: WCAG scores relative luminance, and pulling
+## GRASS_A all the way to its own grey moves it from L 0.4717 to L 0.4491.
+## Mathieu's report ("les aplats sont vifs et saturés, ils dominent les
+## marqueurs") is about CHROMA, and chroma is what a wash toward white
+## actually removes -- lerp(c, white, w) leaves a band's chroma at exactly
+## (1 - w) of its own.
+##
+## The minimum is therefore the wash that stops the LOUDEST band
+## out-shouting the markers themselves. Measured: the loudest painted band
+## is AUTUMN at chroma 0.5200, the 22 thumbnails average 0.3442, so
+## w >= 1 - 0.3442/0.5200 = 0.3382. The ceiling is the point where two
+## bands the plan separates BY TONE would stop being separable: the
+## tightest such pair is MOOR/SHALLOW at 0.2315 and the plan's own 8 %
+## alpha bleed is the resolution limit, so w <= 1 - 0.08/0.2315 = 0.6545.
+## The window [0.3382, 0.6545] is non-empty and this ships its FLOOR.
+##
+## ⚠️ GRASS/LAWN (0.0640 apart) WAS ALREADY UNDER THAT BLEED BEFORE THIS
+## LOT, at w = 0. Those two bands were never told apart by tone; the hedge
+## line _bake_zone_edges draws at CIRCUIT_EDGE_Z is what separates them,
+## and it still does. The wash does not create that, and MinimapProbe
+## gates the line rather than the tone there.
+const WASH: float = 0.34
 
 ## The three states an icon can be in. They are VARIANTS of a kind, never
 ## kinds of their own: a clamped vehicle is still orange, a merged place is
@@ -240,8 +408,34 @@ static func rank_of(kind: StringName) -> int:
 		return 2
 	return 3
 
+## The atlas cell for a KIND's abstract icon. Cells 0..11 are the four
+## CH47 shapes x three variants and are the fallback for anything marked
+## without a portrait -- which is every one of the fifteen places, and
+## anything a later lot adds.
 static func cell_of(kind: StringName, variant: int) -> int:
 	return column_of(kind) * VARIANT_COUNT + variant
+
+## The atlas cell for one of the 22 portraits. Cells 12.. are the
+## thumbnails, in MinimapMarkers.THUMBS order, three variants each. The
+## ORDER IS NOT RESTATED HERE: it is read out of MinimapMarkers, the one
+## place it exists, which the baker reads too.
+static func thumb_cell_of(thumb: StringName, variant: int) -> int:
+	var row: int = MinimapMarkers.thumb_row(thumb)
+	if row < 0:
+		return -1
+	return ICON_COUNT + RING_COUNT + row * VARIANT_COUNT + variant
+
+## Which ring a glyph wears: the player's is thicker (Mathieu's first need),
+## a clamped one is cream (it is saying something else entirely).
+static func ring_cell_of(kind: StringName, variant: int) -> int:
+	if variant == V_CLAMPED:
+		return ICON_COUNT + RING_CLAMP
+	return ICON_COUNT + (RING_PLAYER if kind == MinimapMarkers.PLAYER else RING_NORMAL)
+
+## Every cell the atlas carries: the twelve abstract ones, then three per
+## portrait.
+static func atlas_cells() -> int:
+	return ICON_COUNT + RING_COUNT + MinimapMarkers.THUMBS.size() * VARIANT_COUNT
 
 ## ---- the shapes, in one table --------------------------------------
 ##
@@ -303,19 +497,24 @@ func _ready() -> void:
 	_frame = HubRegion.walkable_bounds()
 	var w: int = maxi(1, roundi(float(MAP_PX_H) * _frame.size.x / _frame.size.y))
 	_bg_size = Vector2i(w, MAP_PX_H)
-	_atlas_size = Vector2i(maxi(w, ICON_PX * ICON_COUNT), MAP_PX_H + ICON_PX)
+	# CH48: the icons are a GRID under the plan, not a strip. 78 cells of
+	# 32 px in one row would be 2496 px wide for a 211 px plan; eight columns
+	# make it 256 x 320, and the atlas stays ONE texture -- which is the
+	# whole reason CH46's map costs one draw call and this one still does.
+	var icon_rows: int = int(ceil(float(atlas_cells()) / float(SHEET_COLS)))
+	_atlas_size = Vector2i(maxi(w, ICON_PX * SHEET_COLS), MAP_PX_H + icon_rows * ICON_PX)
 	# ⚠️ ANCHORS AND OFFSETS WRITTEN OUT, NEVER set_anchors_preset() + position.
 	# CLAUDE.md documents the trap and this repo has already paid it once (V7,
 	# the kart's clock panel cut off on device): after a preset, `position` is
 	# an OFFSET FROM THE ANCHOR, so a widget anchored bottom-left and given a
 	# positive y lands off the bottom of the screen. Four offsets against two
 	# anchors say exactly one thing.
-	anchor_left = 0.0
-	anchor_right = 0.0
+	anchor_left = 1.0
+	anchor_right = 1.0
 	anchor_top = 1.0
 	anchor_bottom = 1.0
-	offset_left = MARGIN_X
-	offset_right = MARGIN_X + float(w)
+	offset_left = -(MARGIN_X + float(w))
+	offset_right = -MARGIN_X
 	offset_top = -(MARGIN_Y + float(MAP_PX_H))
 	offset_bottom = -MARGIN_Y
 
@@ -380,9 +579,27 @@ func reach(kind: StringName, variant: int) -> float:
 	return _reach[cell]
 
 ## How close two same-kind markers have to be to become one, in widget
-## pixels. TWICE the simple icon's own measured reach -- that is exactly
-## "their ink touches", and it is derived from the size the lot retained
-## rather than picked by eye.
+## pixels. ONE reach -- centre to centre -- and CH48 changed it from CH47's
+## two, which is a design decision and not a tuning.
+##
+## ⚠️ CH47 MERGED WHEN TWO ICONS TOUCHED (2 x reach), AND THAT RULE EATS
+## THIS LOT. At 8 px of ink "touching" is 16 px; at a 32 px plate it is
+## 29 px, which on this plan is 19 WORLD UNITS. Measured on the delivered
+## world at 2 x reach, the vehicles folded {HopBall, Balloon_0, the stream
+## boat} into ONE glyph 26 px across -- three different vehicles, three
+## different portraits, one picture shown. CH47 could afford that because
+## its glyphs carried no identity beyond their kind; CH48's whole point is
+## that they do, so a merge that hides two of three portraits destroys the
+## thing the lot exists to deliver.
+##
+## ONE reach is the honest threshold, and it is the same criterion the map
+## sizing used: two glyphs fold only when the later one would BURY the
+## earlier one -- centre inside the other's ink, so the covered one is
+## invisible anyway and a stacked plate tells the truth. Above it both are
+## partly visible and folding them would hide what the map could show.
+## Measured after the change: {Yacht, SailBoat} and {HopBall, Balloon_0,
+## boat} stop folding; the four karts on the grid and the three birds on
+## the world origin still do.
 ##
 ## ⚠️ KEEPY IS ZERO, AND THAT IS THE WHOLE RULE. The player never merges
 ## with anything; writing it as a threshold rather than as an `if` at the
@@ -390,7 +607,45 @@ func reach(kind: StringName, variant: int) -> float:
 func merge_px(kind: StringName) -> float:
 	if kind == MinimapMarkers.PLAYER:
 		return 0.0
-	return 2.0 * reach(kind, V_SIMPLE)
+	return kind_reach(kind)
+
+## The cell a NODE is drawn with: its own portrait if it declared one,
+## otherwise its kind's abstract shape. One place decides it, so the
+## drawing, the clustering and the probe cannot disagree about what is on
+## screen -- CH46 paid for exactly that disagreement when the draw order
+## was written down twice.
+func cell_for(node: Node, kind: StringName, variant: int) -> int:
+	var thumb: StringName = MinimapMarkers.thumb_of(node)
+	if thumb != &"":
+		var cell: int = thumb_cell_of(thumb, variant)
+		if cell >= 0:
+			return cell
+	return cell_of(kind, variant)
+
+## The drawn reach of a NODE's own glyph, in pixels, off the baked atlas.
+func node_reach(node: Node, kind: StringName, variant: int) -> float:
+	var cell: int = cell_for(node, kind, variant)
+	if cell < 0 or cell >= _reach.size():
+		return 0.0
+	return _reach[cell] * draw_scale(node, kind)
+
+## How much bigger than its cell a glyph is drawn. One for everything but
+## the player, whose marker is the one a player is looking for.
+func draw_scale(node: Node, kind: StringName) -> float:
+	if kind != MinimapMarkers.PLAYER or MinimapMarkers.thumb_of(node) == &"":
+		return 1.0
+	return PLAYER_SCALE
+
+## The largest simple reach drawn anywhere in `kind`. CH47 could take the
+## kind's one icon; CH48 cannot, because a kind can now mix portraits and
+## shapes (nothing in the delivered world does, but a later lot marking one
+## new vehicle without a portrait would). Taking the MAX keeps the
+## clustering bound true for every member instead of only for most.
+func kind_reach(kind: StringName) -> float:
+	var r: float = reach(kind, V_SIMPLE)
+	for node in members(kind):
+		r = maxf(r, node_reach(node, kind, V_SIMPLE))
+	return r
 
 ## What the map actually DRAWS for `kind`: one entry per glyph, after the
 ## same-kind markers that sit on top of each other have been folded into
@@ -414,7 +669,7 @@ func clusters(kind: StringName) -> Array[Dictionary]:
 		var flag: bool = bool(project(node.global_position)["clamped"])
 		var variant: int = V_CLAMPED if flag else V_SIMPLE
 		pts.append({
-			"at": (project(node.global_position, reach(kind, variant))["at"] as Vector2),
+			"at": (project(node.global_position, node_reach(node, kind, variant))["at"] as Vector2),
 			"clamped": flag, "node": node})
 	# A STABLE order, so the leader of a group does not depend on the order
 	# get_nodes_in_group happened to return: west to east, then north to
@@ -466,19 +721,48 @@ func _draw() -> void:
 	draw_texture_rect_region(_atlas, Rect2(Vector2.ZERO, size),
 		Rect2(0.0, 0.0, float(_bg_size.x), float(_bg_size.y)), Color(1.0, 1.0, 1.0, 1.0))
 	for kind in DRAW_ORDER:
-		_draw_kind(kind, tone_of(kind))
+		_draw_kind(kind)
 
-func _draw_kind(group: StringName, tone: Color) -> void:
+## ⚠️ A PORTRAIT IS DRAWN AT modulate WHITE, AND THAT IS THE POINT.
+## `modulate` MULTIPLIES (CH46's own doctrine, and the reason a black
+## outline survives any tint): tinting a portrait would multiply the
+## model's real colours by the kind's colour and the badger would come out
+## blue. Mathieu's decision 2 is "couleurs REELLES du modele", so a
+## portrait passes through untouched and only the abstract shapes -- the
+## fifteen places, and anything a later lot marks without a portrait --
+## still carry a kind tint.
+func _draw_kind(group: StringName) -> void:
+	var tone: Color = tone_of(group)
 	for shot in clusters(group):
 		var at: Vector2 = shot["at"]
-		# A clamped marker changes SHAPE, not colour, and so does a merged
-		# one: both keep saying which kind they are while saying one more
-		# thing about themselves.
-		var cell: int = cell_of(group, variant_of(int(shot["count"]), bool(shot["clamped"])))
-		draw_texture_rect_region(_atlas,
-			Rect2(at - Vector2(float(ICON_PX), float(ICON_PX)) * 0.5,
-				Vector2(float(ICON_PX), float(ICON_PX))),
-			_icon_region(cell), tone)
+		var lead: Node = shot["members"][0]
+		var cell: int = cell_for(lead, group, variant_of(int(shot["count"]), bool(shot["clamped"])))
+		var variant: int = variant_of(int(shot["count"]), bool(shot["clamped"]))
+		var portrait: bool = cell >= ICON_COUNT + RING_COUNT
+		# ⚠️ SNAPPED TO WHOLE PIXELS, AND CH47 ALREADY PAID FOR THIS ONCE.
+		# Its own note: at radius 2.3 "le coeur pleinement opaque du point
+		# fait neuf pixels AVANT le placement sous-pixel du widget", and the
+		# probe read four. CH48 met it again from the other side -- the
+		# kind's 2 px ring peaked at 0.835 of its tone instead of 1.000 on
+		# glyphs whose cluster position happened to be fractional, so
+		# MinimapProbe's "this glyph carries its kind's tone" read ZERO on
+		# four of them while the ring was plainly there on the capture.
+		#
+		# A whole-pixel origin puts every 1-2 px feature -- this ring AND the
+		# black keyline that signs the contrast contract -- back at full
+		# strength. The cost is at most half a pixel of position, which on
+		# this plan is 0.32 world units.
+		var side: float = float(ICON_PX) * draw_scale(lead, group)
+		var box := Rect2((at - Vector2(side, side) * 0.5).round(), Vector2(side, side))
+		draw_texture_rect_region(_atlas, box, _icon_region(cell),
+			Color(1.0, 1.0, 1.0, 1.0) if portrait else tone)
+		if portrait:
+			# The kind's ring, over the portrait, in the kind's own tone --
+			# resolved HERE, from the group this glyph came out of, which is
+			# the one place that cannot be stale.
+			draw_texture_rect_region(_atlas, box,
+				_icon_region(ring_cell_of(group, variant)),
+				CLAMP_RIM if variant == V_CLAMPED else tone)
 
 ## Every live Node3D of `group`. A member that is not a Node3D has no world
 ## position and cannot be drawn -- said out loud ONCE per group rather than
@@ -498,8 +782,20 @@ func members(group: StringName) -> Array[Node3D]:
 		out.append(spatial)
 	return out
 
+## The baked atlas and where a cell sits in it. Published so a probe reads
+## THE IMAGE THE WIDGET DRAWS FROM rather than re-deriving one -- CH46 paid
+## for a probe that restated the draw order and then disagreed with the
+## widget about what was occluded.
+func atlas_image() -> Image:
+	return null if _atlas == null else _atlas.get_image()
+
+func icon_rect(cell: int) -> Rect2:
+	return _icon_region(cell)
+
 func _icon_region(cell: int) -> Rect2:
-	return Rect2(float(cell * ICON_PX), float(_bg_size.y), float(ICON_PX), float(ICON_PX))
+	return Rect2(float((cell % SHEET_COLS) * ICON_PX),
+		float(_bg_size.y + (cell / SHEET_COLS) * ICON_PX),
+		float(ICON_PX), float(ICON_PX))
 
 ## ---- the atlas ------------------------------------------------------
 
@@ -545,7 +841,13 @@ static func painted_tone(world: Vector3) -> Color:
 			col = CozyPalette.SEA_SHALLOW_BED.lerp(CozyPalette.SEA_BED, clampf(-d / 9.0, 0.0, 1.0))
 		elif d < 3.5:
 			col = CozyPalette.SAND_A.lerp(CozyPalette.SAND_WET, 1.0 - d / 3.5)
-	return col
+	return washed(col)
+
+## CH48: the band as the PLAN paints it -- the world's own tone pulled
+## WASH of the way to white. One function, so the widget and the probe ask
+## the same question and a band tone is never washed twice or not at all.
+static func washed(col: Color) -> Color:
+	return Color(lerpf(col.r, 1.0, WASH), lerpf(col.g, 1.0, WASH), lerpf(col.b, 1.0, WASH), col.a)
 
 ## The three painted hedges (and the cove's painted west edge) as lines, so
 ## a boundary reads as a boundary and not only as a change of tint -- two
@@ -593,30 +895,140 @@ func _bake_border(img: Image) -> void:
 		img.set_pixel(0, py, BORDER_TONE)
 		img.set_pixel(_bg_size.x - 1, py, BORDER_TONE)
 
-## The twelve icons -- four kinds x three variants -- WHITE FILL / BLACK
-## OUTLINE, antialiased by coverage. Every one of them is a distinct SHAPE
-## at a distinct SIZE, because shape and size survive a background the
-## colour cannot be chosen against, and CH46 shipped three kinds sharing
-## one disc.
+## The atlas cells. TWELVE abstract ones first -- the CH47 shapes, still
+## the fallback for anything marked without a portrait, and still what all
+## fifteen places draw -- then THREE per portrait.
 ##
-## The pass runs TWICE per cell in effect: the simple and clamped radii
-## come from the table, but the clamped square's half-extent is the SIMPLE
-## cell's measured reach, so the simple cells are baked and measured first
-## and the clamped ones second.
+## The pass runs in order because two cells are DERIVED from measurements
+## of earlier ones: the clamped abstract square's half-extent is the simple
+## cell's own measured reach.
 func _bake_icons(img: Image) -> void:
-	_reach.resize(ICON_COUNT)
+	_reach.resize(atlas_cells())
 	for k in KIND_COUNT:
 		_paint_icon(img, k * VARIANT_COUNT + V_SIMPLE, SHAPES[k], R_SIMPLE[k], 0.0)
 		_paint_icon(img, k * VARIANT_COUNT + V_MERGED, SHAPES[k], R_MERGED[k], R_PUNCH[k])
 	for k in KIND_COUNT:
 		_paint_icon(img, k * VARIANT_COUNT + V_CLAMPED, SHAPE_SQUARE,
 			_reach[k * VARIANT_COUNT + V_SIMPLE] - OUTLINE_PX, 0.0)
+	_paint_ring(img, ICON_COUNT + RING_NORMAL, RIM_PX)
+	_paint_ring(img, ICON_COUNT + RING_PLAYER, PLAYER_RIM_PX)
+	_paint_ring(img, ICON_COUNT + RING_CLAMP, CLAMP_RIM_PX)
+	var sheet: Image = THUMB_SHEET.get_image()
+	if sheet == null:
+		push_error("HubMinimap: the thumbnail sheet did not load; the map falls back to shapes.")
+		return
+	if sheet.is_compressed():
+		# Said out loud rather than worked around: a VRAM-compressed sheet
+		# would give back approximate colours and a soft alpha, and every
+		# "these are the model's real colours" claim below would be false.
+		sheet.decompress()
+	for row in MinimapMarkers.THUMBS.size():
+		for v in VARIANT_COUNT:
+			_paint_thumb(img, sheet, thumb_cell_of(MinimapMarkers.THUMBS[row], v), row, v)
 
-## One cell. `punch` > 0 knocks the fill out of the middle, leaving the
-## outline's black there -- the merged glyph's "several" cue. It only
-## touches the FILL, never the alpha, so a merged marker has exactly the
-## silhouette of an enlarged simple one and the hole reads as a dark pip
-## rather than as a hole in the map.
+## ⚠️ WHAT A PORTRAIT CELL IS MADE OF, AND WHY IT IS A PLATE.
+##
+## A dark rounded plate, a rim, and the baked picture over it. The plate is
+## the part that signs the 3.0:1 contract against the ground (measured:
+## 4.38:1 at worst, against the sea bed); the picture is the part that says
+## which entity this is. See PLATE_TONE for the sweep that shows a
+## photograph cannot sign that contract itself at any desaturation.
+##
+## The three variants say three things and each is a GEOMETRY change, never
+## a tint -- the CH47 rule, kept, because a portrait is already drawn at
+## `modulate` white and has no tint left to spend:
+##
+##   V_SIMPLE   one plate
+##   V_MERGED   a second plate behind it, down-right, dimmed: a stack
+##   V_CLAMPED  a CREAM rim instead of a black one: "I am off this map"
+## A ring cell: WHITE where the kind's colour goes, transparent everywhere
+## else, so it can be laid over any portrait with the kind's tone as the
+## modulate. Its outer edge is the keyline's inner edge, so a ring never
+## covers the black edge that signs the contrast contract.
+func _paint_ring(img: Image, cell: int, width: float) -> void:
+	var c: float = float(ICON_PX) * 0.5 - 0.5
+	var half: float = float(ICON_PX) * 0.5 - 1.0
+	var reach_px: float = 0.0
+	for py in ICON_PX:
+		for px in ICON_PX:
+			var d: float = _rsq(float(px) - c, float(py) - c, half, PLATE_R)
+			var outer: float = clampf(0.5 - (d + KEYLINE_PX), 0.0, 1.0)
+			var inner: float = clampf(0.5 - (d + KEYLINE_PX + width), 0.0, 1.0)
+			var a: float = clampf(outer - inner, 0.0, 1.0)
+			if a > 0.5:
+				reach_px = maxf(reach_px, maxf(absf(float(px) - c), absf(float(py) - c)))
+			var at: Vector2i = _cell_origin(cell) + Vector2i(px, py)
+			img.set_pixel(at.x, at.y, Color(1.0, 1.0, 1.0, a))
+	_reach[cell] = reach_px
+
+func _paint_thumb(img: Image, sheet: Image, cell: int, row: int, variant: int) -> void:
+	var c: float = float(ICON_PX) * 0.5 - 0.5
+	var half: float = float(ICON_PX) * 0.5 - 1.0
+	# The plate carries a black keyline and nothing else that is per-kind:
+	# the ring is a cell of its own, laid over this one at draw time.
+	var rim_px: float = 0.0
+	var rim_col: Color = PLATE_RIM
+	var front: Vector2 = Vector2(-1.0, -1.0) if variant == V_MERGED else Vector2.ZERO
+	var back: Vector2 = Vector2(3.0, 3.0)
+	var sx: int = (row % SHEET_COLS) * ICON_PX
+	var sy: int = (row / SHEET_COLS) * ICON_PX
+	var reach_px: float = 0.0
+	for py in ICON_PX:
+		for px in ICON_PX:
+			var dx: float = float(px) - c
+			var dy: float = float(py) - c
+			var out_a: float = 0.0
+			var col := Color(0.0, 0.0, 0.0)
+			if variant == V_MERGED:
+				var db: float = _rsq(dx - back.x, dy - back.y, half, PLATE_R)
+				var rb: float = clampf(0.5 - db, 0.0, 1.0)
+				var bb: float = clampf(0.5 - (db + KEYLINE_PX), 0.0, 1.0)
+				out_a = rb
+				col = PLATE_RIM.lerp(PLATE_TONE.darkened(0.35), bb)
+			var d: float = _rsq(dx - front.x, dy - front.y, half, PLATE_R)
+			var rimf: float = clampf(0.5 - d, 0.0, 1.0)
+			# Three shells, outermost first: the BLACK keyline that signs the
+			# contrast contract, the kind's tone inside it, then the plate.
+			var body: float = clampf(0.5 - (d + KEYLINE_PX + rim_px), 0.0, 1.0)
+			var plate: Color = PLATE_RIM.lerp(PLATE_TONE, body)
+			# The picture, straight alpha off the sheet, clipped to the plate's
+			# BODY -- inside both shells. Letting it run out to the keyline
+			# instead was tried and measured: it covers the kind's own ring
+			# wherever the subject is opaque, and PHASE 4 (which reads the
+			# kind's tone under every glyph) dropped below its six-pixel
+			# floor for vehicles and npcs. A cue a picture can cover is not
+			# a cue.
+			var t: Color = sheet.get_pixel(sx + px, sy + py)
+			plate = plate.lerp(Color(t.r, t.g, t.b), minf(t.a, body))
+			col = col.lerp(plate, rimf)
+			out_a = maxf(out_a, rimf)
+			if out_a > 0.5:
+				reach_px = maxf(reach_px, maxf(absf(dx), absf(dy)))
+			var at: Vector2i = _cell_origin(cell) + Vector2i(px, py)
+			img.set_pixel(at.x, at.y, Color(col.r, col.g, col.b, out_a))
+	_reach[cell] = reach_px
+
+## Signed distance to a rounded square of half-extent `half` and corner
+## radius `r`, negative inside. Written out because a plate drawn from four
+## line segments and four arcs is four chances to be off by half a pixel.
+static func _rsq(dx: float, dy: float, half: float, r: float) -> float:
+	var qx: float = absf(dx) - (half - r)
+	var qy: float = absf(dy) - (half - r)
+	return Vector2(maxf(qx, 0.0), maxf(qy, 0.0)).length() + minf(maxf(qx, qy), 0.0) - r
+
+## One abstract cell. `punch` > 0 knocks the fill out of the middle,
+## leaving the outline's black there -- the merged glyph's "several" cue.
+## It only touches the FILL, never the alpha, so a merged marker has
+## exactly the silhouette of an enlarged simple one.
+##
+## ⚠️ CH48 CHANGED WHAT `reach` MEANS, and the reason is the plate. CH47
+## recorded the maximum RADIAL distance still inked, which for a disc is
+## its radius. For a SQUARE plate that is the half-DIAGONAL: 22.6 px for a
+## 32 px cell, so `merge_px` would say two plates touch while they are
+## still six pixels apart. The number recorded is now the half-EXTENT
+## (max |dx|, max |dy|), which is exactly "these two glyphs touch" for a
+## square and is unchanged for a disc or a diamond on their axes. It is
+## still MEASURED off the baked pixels and never written down.
 func _paint_icon(img: Image, cell: int, shape: int, r_in: float, punch: float) -> void:
 	var c: float = float(ICON_PX) * 0.5 - 0.5
 	var reach_px: float = 0.0
@@ -646,9 +1058,13 @@ func _paint_icon(img: Image, cell: int, shape: int, r_in: float, punch: float) -
 			if punch > 0.0:
 				a_in = minf(a_in, clampf(radial - punch + 0.5, 0.0, 1.0))
 			if a_out > 0.5:
-				reach_px = maxf(reach_px, radial)
-			img.set_pixel(cell * ICON_PX + px, _bg_size.y + py, Color(a_in, a_in, a_in, a_out))
+				reach_px = maxf(reach_px, maxf(absf(dx), absf(dy)))
+			var at: Vector2i = _cell_origin(cell) + Vector2i(px, py)
+			img.set_pixel(at.x, at.y, Color(a_in, a_in, a_in, a_out))
 	_reach[cell] = reach_px
+
+func _cell_origin(cell: int) -> Vector2i:
+	return Vector2i((cell % SHEET_COLS) * ICON_PX, _bg_size.y + (cell / SHEET_COLS) * ICON_PX)
 
 ## ---- pixel <-> world -------------------------------------------------
 
