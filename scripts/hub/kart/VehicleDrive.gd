@@ -40,10 +40,44 @@ class_name VehicleDrive
 ## the two forms are numerically the same -- which is what made the
 ## byte-identical comparison above possible in the first place.
 
+## ⚠️ CH43 -- THE SPEED AT OR BELOW WHICH A REVERSE INPUT IS A REVERSE.
+##
+## THE VALUE IS CH42's, TO THE DIGIT. This lot did not choose 0.3, move it,
+## or tune it: it was the bare literal in both reverse-entry branches below
+## since CH42, and CH43 gave it a name because Mathieu's brief asked for
+## the guard-rail to be "defini et nomme". A rename cannot change a lap, and
+## KartTraceProbe / YachtTraceProbe were replayed on both trees to say so
+## rather than to assume it.
+##
+## WHAT IT DOES, in one sentence: above it a held reverse BRAKES, at or
+## below it a held reverse BACKS UP. That is the whole of "la marche
+## arriere ne s'engage QUE depuis l'arret" -- the input never engages the
+## gear on a rolling vehicle, and it never could, because the branch reads
+## the SPEED and not the gesture. CH43 changed which finger writes the
+## input; it changed nothing about this line.
+##
+## ⚠️ AND IT IS NOT A DEAD ZONE ON THE INPUT. A writer-side threshold would
+## be a fifth spelling of a rule three vehicles already obey, and it would
+## be blind to the one case that matters: a vehicle whose forward speed the
+## PLAYER cannot see is still braking. The gate lives where the speed is.
+## ReverseProbe PHASE THRESHOLD measures the breakpoint off a driven
+## vehicle, frame by frame, and brackets it -- it never reads this constant
+## back and calls that a proof.
+const REVERSE_ENGAGE_SPEED: float = 0.3
+
 ## Speed caps and how quickly speed approaches them.
 var max_speed: float = 13.0
 var max_speed_off: float = 5.5
 var reverse_speed: float = 3.5
+## CH42 -- how briskly the REVERSE GEAR builds its speed, u/s^2.
+##
+## Named rather than folded into `brake_decel`: the 0.4 factor in the
+## brake branch below is a property of a pedal that is ALSO the reverse,
+## and `input.reverse` is not that pedal. 6.0 is the kart's own
+## `brake_decel * 0.4` to the digit, which is why the kart's reverse is
+## unchanged by this lot and the other three get a knob their vehicle
+## file names.
+var reverse_accel: float = 6.0
 var boost_speed_ratio: float = 1.0
 var accel_lambda: float = 0.85
 var coast_lambda: float = 0.30
@@ -117,10 +151,41 @@ func step(position: Vector3, yaw: float, velocity: Vector3, delta: float, input:
 	var cap: float = max_speed if on_surface else max_speed_off
 	cap *= lerpf(1.0, boost_speed_ratio, clampf(input.boost, 0.0, 1.0))
 	if input.brake:
-		if v_fwd > 0.3:
+		if v_fwd > REVERSE_ENGAGE_SPEED:
 			v_fwd = maxf(v_fwd - brake_decel * delta, 0.0)
 		else:
 			v_fwd = move_toward(v_fwd, -reverse_speed, brake_decel * 0.4 * delta)
+	elif input.reverse > 0.0:
+		# ---- CH42 -- THE REVERSE GEAR, and it is its own branch.
+		#
+		# Its first half is the brake branch's arithmetic, statement for
+		# statement, on the same REVERSE_ENGAGE_SPEED: a vehicle still rolling
+		# forward when the gear is asked for STOPS the way it has always
+		# stopped. That identity is the point -- "freinage" is named in
+		# CH42's guard-rail, so the deceleration a player feels is the
+		# same float it was.
+		#
+		# The second half is the new thing: it ramps to a FRACTION of
+		# `reverse_speed` set by how hard the gear is held, at
+		# `reverse_accel` rather than at the brake's 0.4 of its own decel.
+		#
+		# ⚠️ IT DOES NOT TOUCH THE STEERING, AND IT MUST NOT. The heading
+		# was already turned above, and the `v_fwd < -0.05` line there
+		# already flips the yaw rate for a vehicle travelling backwards --
+		# which is the "braquage coherent avec la direction du deplacement
+		# reel" this lot was told to get right. It reads the velocity, not
+		# the input, so it was right for the brake's reverse and is right
+		# for this one without a second spelling of the rule.
+		#
+		# ⚠️ AND IT IS ELIF, UNDER `brake`. The AI writes `brake` and never
+		# writes this; the player's second finger writes this and never
+		# writes `brake`. A writer that set both would get the brake, which
+		# is the conservative of the two.
+		if v_fwd > REVERSE_ENGAGE_SPEED:
+			v_fwd = maxf(v_fwd - brake_decel * delta, 0.0)
+		else:
+			v_fwd = move_toward(v_fwd, -reverse_speed * clampf(input.reverse, 0.0, 1.0),
+				reverse_accel * delta)
 	else:
 		var target: float = cap * input.throttle
 		var lambda: float

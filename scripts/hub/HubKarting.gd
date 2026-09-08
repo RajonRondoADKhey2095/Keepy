@@ -187,6 +187,9 @@ func field_size() -> int:
 func add_racer(racer_name: String, colour: Color, player: bool) -> int:
 	var kart := KartBody.new()
 	kart.name = "Kart_%d" % racers.size()
+	# BEFORE add_child: KartBody._ready() marks itself on the minimap with
+	# this index, and _ready() runs inside add_child().
+	kart.grid_index = racers.size()
 	kart.racer_name = racer_name
 	kart.body_colour = colour
 	add_child(kart)
@@ -605,7 +608,7 @@ func _physics_process(delta: float) -> void:
 		# a finger is down -- that is the whole point, see KartHud._draw.
 		var me: KartBody = player_kart()
 		_hud.set_drive_readout(touch.input.boost, absf(me.speed()) if me != null else 0.0,
-			KartBody.MAX_SPEED * KartBody.BOOST_SPEED_RATIO)
+			KartBody.MAX_SPEED * KartBody.BOOST_SPEED_RATIO, touch.input.reverse)
 
 ## Discs on the plane: separate, exchange the closing speed along the
 ## normal with restitution, jolt both chassis. O(N^2) on N = 4.

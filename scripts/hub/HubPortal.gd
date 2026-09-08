@@ -48,6 +48,9 @@ var _near: bool = false
 var _pulse: Tween = null
 
 func _ready() -> void:
+	# CH46: on the minimap, as a place. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	MinimapMarkers.mark(self, MinimapMarkers.PLACE)
 	# Never monitoring: this node deliberately has no physics behaviour.
 	# Leaving it on would cost a broadphase entry per frame for an event
 	# nothing listens to, and would invite a future reader to wire

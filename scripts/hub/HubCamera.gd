@@ -20,6 +20,32 @@ class_name HubCamera
 ## Checked at 1080x1920 and at 1170x2532.
 const OFFSET: Vector3 = Vector3(0.0, 7.6, 8.9)
 
+## CH36 -- WHERE THE TOP OF THE FRAME CROSSES KEEPY'S APLOMB, in world
+## units. This camera NEVER RISES (it is a constant offset from Keepy's
+## GROUND point, and its rotation is FIXED -- see above), so the column
+## straight above him is cut by the top edge of the picture at one height
+## and one only, and nothing published above it is on screen. Everything
+## that asks "can the player see the top of this" -- HubTrees' SEAT_MAX_Y
+## first -- derives from HERE rather than re-deriving its own angle.
+##
+## ⚠️ MEASURED, NEVER COMPUTED FROM AN ANGLE. The number this replaces
+## (6.96 u) came from a closed form written as if the camera LOOKED AT
+## Keepy's ground point -- atan(7.6 / 8.9) = 40.5 deg. It does not: the
+## scene authors the pitch, 34.0 deg (HubWorld.tscn's Camera3D basis,
+## asin(0.55919)), and 34.0 is SMALLER than the vertical half-angle, so
+## the top ray leaves the lens going UP, not down, and the sign of the
+## whole term flips. The formula's answer was 1.008 u too low and no
+## probe gated it, so it survived two lots and cost eight trees their
+## climb (CH26's SEAT_MAX_Y).
+##
+## What this value IS: at 1080x1920 with keep_aspect KEEP_WIDTH and
+## fov 45 (so 22.5 deg HORIZONTAL half-angle, 36.37 deg vertical), the
+## ray through the top edge of the picture, read back off the LIVE camera
+## by unproject_position bisection and confirmed independently by
+## project_position to 1e-4. FrameCeilingProbe re-reads it every run and
+## fails if the scene's camera ever stops agreeing.
+const FRAME_TOP_AT_APLOMB: float = 7.968
+
 ## Seconds-ish smoothing constant. Frame-rate independent via the
 ## exponential form below, so a 30fps phone and a 60fps one settle at the
 ## same rate rather than the phone lagging twice as far behind.
@@ -135,7 +161,7 @@ func _drive_wanted() -> Vector3:
 		return _hub_position
 	var heading := Vector3(sin(_drive_heading), 0.0, cos(_drive_heading))
 	var at: Vector3 = _drive_target.global_position
-	return Vector3(at.x, 0.0, at.z) - heading * DRIVE_BACK + Vector3(0.0, DRIVE_UP, 0.0)
+	return HubSurface.ground(at) - heading * DRIVE_BACK + Vector3(0.0, DRIVE_UP, 0.0)
 
 ## Puts the camera at its resting offset IMMEDIATELY, with no smoothing.
 ##
@@ -183,12 +209,14 @@ func _process(delta: float) -> void:
 	_drive_heading = lerp_angle(_drive_heading, kart.rotation.y, 1.0 - exp(-DRIVE_HEADING_LAMBDA * delta))
 	_drive_position = _drive_position.lerp(_drive_wanted(), 1.0 - exp(-DRIVE_POSITION_LAMBDA * delta))
 	var heading := Vector3(sin(_drive_heading), 0.0, cos(_drive_heading))
-	var look: Vector3 = Vector3(kart.global_position.x, 0.0, kart.global_position.z) + heading * DRIVE_LOOK_AHEAD + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
+	var look: Vector3 = HubSurface.ground(kart.global_position) + heading * DRIVE_LOOK_AHEAD + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
 	var drive_xform := Transform3D(Basis.IDENTITY, _drive_position).looking_at(look, Vector3.UP)
 	var hub_xform := Transform3D(_hub_basis, _hub_position)
 	global_transform = hub_xform.interpolate_with(drive_xform, _blend)
 	fov = lerpf(_hub_fov, DRIVE_FOV, _blend)
 
 func _wanted() -> Vector3:
-	var ground := Vector3(target.global_position.x, 0.0, target.global_position.z)
+	# The ground UNDER him, not sea level under him: the frame holds its
+	# shape over relief because the offset is measured from the surface.
+	var ground := HubSurface.ground(target.global_position)
 	return ground + OFFSET

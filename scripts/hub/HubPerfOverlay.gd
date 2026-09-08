@@ -35,6 +35,10 @@ class_name HubPerfOverlay
 @export var world_path: NodePath
 @export var weather_path: NodePath
 @export var label_path: NodePath
+## CH36 -- Keepy himself, for the POS line. NodePath and not a typed node
+## export, for the reason HubTapInput and HubCamera both give: a typed
+## node export hand-written into a .tscn does not resolve at load.
+@export var keepy_path: NodePath
 
 ## How often (frames) the tree walk and the engine counters are refreshed.
 ## The FPS line is updated every frame; the walk over ~400 nodes is cheap
@@ -48,6 +52,7 @@ var _camera: Camera3D = null
 var _world: Node3D = null
 var _weather: Node = null
 var _label: Label = null
+var _keepy: Node3D = null
 
 var _frame: int = 0
 var _tris_by_mesh: Dictionary = {}
@@ -61,6 +66,8 @@ func _ready() -> void:
 	_world = get_node_or_null(world_path) as Node3D
 	_weather = get_node_or_null(weather_path)
 	_label = get_node_or_null(label_path) as Label
+	_keepy = get_node_or_null(keepy_path) as Node3D
+	_ask_build()
 	if _viewport == null or _camera == null or _world == null or _label == null:
 		push_error("HubPerfOverlay: viewport_path, camera_path, world_path and label_path must all resolve.")
 		set_process(false)
@@ -197,6 +204,28 @@ static func _thousands(n: int) -> String:
 			out = " " + out
 	return out
 
+## CH36 -- WHICH BUILD IS ON SCREEN. CACHE_VERSION is an epoch stamped
+## into index.service.worker.js at export time; CLAUDE.md already uses it
+## as the cheapest discriminator of "which build is Vercel serving". It
+## lived only in a file nobody can read from a phone, so the device
+## measurement had no way to say which build produced its numbers.
+##
+## Read ASYNCHRONOUSLY into a window global and polled, rather than by a
+## synchronous XHR: this runs inside the frame budget the overlay exists
+## to measure, and a blocking fetch would corrupt the very FPS line above
+## it. Off the web there is no JavaScriptBridge at all, so the line says
+## so instead of erroring.
+const BUILD_JS: String = "(function(){if(window.__keepy_build!==undefined)return;window.__keepy_build='...';fetch('index.service.worker.js').then(function(r){return r.text()}).then(function(t){var m=t.match(/CACHE_VERSION\\s*=\\s*[\"']([^\"']+)/);window.__keepy_build=m?m[1]:'absent'}).catch(function(){window.__keepy_build='unreachable'})})()"
+
+func _ask_build() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval(BUILD_JS, true)
+
+func _build_version() -> String:
+	if not OS.has_feature("web"):
+		return "hors-web"
+	return str(JavaScriptBridge.eval("window.__keepy_build", true))
+
 func _format(d: Dictionary) -> String:
 	var lines: PackedStringArray = []
 	lines.append("FPS %d  (min %d)" % [int(d.get("fps", 0)), int(d.get("fps_min", 0))])
@@ -204,5 +233,12 @@ func _format(d: Dictionary) -> String:
 	# LOD0 = this script's frustum replay at full detail; scene = everything.
 	lines.append("TRI gpu %s   lod0 cadre %s   scene %s" % [_thousands(int(d.get("engine_prims", 0))), _thousands(int(d.get("tris_frame", 0))), _thousands(int(d.get("tris_scene", 0)))])
 	lines.append("DRAW calls %d  obj %d   cadre %d/%d  inst %s" % [int(d.get("engine_calls", 0)), int(d.get("engine_objects", 0)), int(d.get("nodes_frame", 0)), int(d.get("nodes_scene", 0)), _thousands(int(d.get("instances_frame", 0)))])
+	# CH45: TOTAL = every viewport, 3D "TRI gpu" above included -- the only
+	# line any 2D layer (HUD, overlay, a future minimap) shows up in at all.
+	lines.append("TOTAL tri %s  calls %d" % [_thousands(int(d.get("engine_total_prims", 0))), int(d.get("engine_total_calls", 0))])
 	lines.append("METEO %s" % str(d.get("weather", "?")))
+	if _keepy != null:
+		var at: Vector3 = _keepy.global_position
+		lines.append("POS x %.1f  z %.1f   zone %d" % [at.x, at.z, HubRegion.zone_of(at)])
+	lines.append("BUILD %s" % _build_version())
 	return "\n".join(lines)

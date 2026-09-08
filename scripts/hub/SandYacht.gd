@@ -64,6 +64,12 @@ const BASE_SPEED: float = 10.67
 ## be soft ground without a new branch.
 const OFF_SPEED: float = 4.6
 const REVERSE_SPEED: float = 2.4
+## CH42 -- the reverse gear's ramp, u/s^2. Faster than the 3.6 the brake
+## branch reversed at (BRAKE_DECEL * 0.4): CH42's diagnostic measured this
+## hull pinned on the ridge's edges with 2 % of its steering, and a gear
+## that takes two thirds of a second to reach 2.4 u/s is a gear a player
+## presses and believes is broken.
+const REVERSE_ACCEL: float = 6.0
 ## Sheeting in: pushing the thumb up the screen (the kart's boost gesture)
 ## buys 18 % over the wind's pace. Modest on purpose -- the wind is what
 ## makes this vehicle fast, and a boost that dwarfed it would make the
@@ -123,10 +129,14 @@ static func drivable(point: Vector3) -> bool:
 	return HubRegion.contains(point) and not HubRegion.in_circuit(point)
 
 func _ready() -> void:
+	# CH46: on the minimap, as a vehicle. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE, &"yacht")
 	_motion = VehicleDrive.new()
 	_motion.max_speed = BASE_SPEED
 	_motion.max_speed_off = OFF_SPEED
 	_motion.reverse_speed = REVERSE_SPEED
+	_motion.reverse_accel = REVERSE_ACCEL
 	_motion.boost_speed_ratio = SHEET_RATIO
 	_motion.accel_lambda = ACCEL_LAMBDA
 	_motion.coast_lambda = COAST_LAMBDA

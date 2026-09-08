@@ -325,6 +325,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if transport != null and transport.is_driving_yacht():
 		return
+	# CH33: and the same for the sailboat, the third vehicle driven by the
+	# same writer -- one condition per DRIVEN VEHICLE, not per vehicle.
+	if transport != null and transport.is_driving_sailboat():
+		return
 	var touch := event as InputEventScreenTouch
 	if touch:
 		if not touch.pressed:
@@ -350,11 +354,16 @@ func _handle_point(screen_point: Vector2) -> void:
 
 	var origin := camera.project_ray_origin(local)
 	var direction := camera.project_ray_normal(local)
-	# A maths plane, not a physics raycast: the ground is a decorative
-	# PlaneMesh with no collider, and giving it one purely so a ray could
-	# hit it would add a physics body to a screen that has no physics.
-	var ground := Plane(Vector3.UP, 0.0)
-	var hit: Variant = ground.intersects_ray(origin, direction)
+	# Maths, not a physics raycast: the ground is a decorative PlaneMesh
+	# with no collider, and giving it one purely so a ray could hit it
+	# would add a physics body to a screen that has no physics.
+	#
+	# HubSurface answers this, not a bare Plane, so a tap lands on the
+	# ground the player can SEE rather than on sea level under it. With no
+	# domain registered it IS the bare Plane -- the same call, not an
+	# approximation of it (SurfaceProbe phase B checks that identity on 20
+	# rays), so today this line is byte-identical to the one it replaces.
+	var hit: Variant = HubSurface.intersect_ray(origin, direction)
 	if hit == null:
 		# Camera looking at or above the horizon. Nothing to aim at.
 		return

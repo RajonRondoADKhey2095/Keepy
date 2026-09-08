@@ -129,7 +129,23 @@ var _clip_name: StringName = &""
 var _clip_length: float = 0.0
 
 
+## `keepy_bear_walker.glb` -> &"bear". Derived from the scene actually set
+## on this instance, so a third actor needs no edit here and no table.
+func _thumb_id() -> StringName:
+	if model_scene == null or model_scene.resource_path == "":
+		return &""
+	return StringName(model_scene.resource_path.get_file().get_basename()
+		.replace("keepy_", "").replace("_walker", ""))
+
 func _ready() -> void:
+	# CH46: on the minimap, as a hub animal. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	# CH48: the thumbnail id comes from the MODEL this walker was given, not
+	# from a name -- these two nodes are the anonymous `@Node3D@228` /
+	# `@Node3D@230` CH46 documented, and the bake tool's first run proved
+	# how easily they collide (both labelled "World/Node3D", one shot
+	# overwriting the other, the pair then reading 0.0000 apart).
+	MinimapMarkers.mark(self, MinimapMarkers.NPC, _thumb_id())
 	set_process(false)
 	if model_scene == null:
 		push_error("HubActorWalker: no model_scene set; nothing to draw.")

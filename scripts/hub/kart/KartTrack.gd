@@ -83,6 +83,10 @@ var _length: float = 0.0
 var _start_index: int = 0
 
 func _ready() -> void:
+	# CH46: the circuit is the one thing the map draws as a LINE rather
+	# than as a marker. It publishes ideal_line() already (the AI reads it);
+	# the map asks the group for that method and never for this class.
+	MinimapMarkers.mark(self, MinimapMarkers.ROUTE)
 	_build_spine()
 	_build_meshes()
 

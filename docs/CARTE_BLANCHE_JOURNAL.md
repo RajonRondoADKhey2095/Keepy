@@ -1549,3 +1549,711 @@ trois tours. Les deux ne peuvent pas être vrais.
 | croisière, plafond de boost | 13,0 → **15,0** ; 16,5 → **19,05** |
 | borne de lisibilité mesurée | **16 u/s** (croisement) |
 | trace du char, branche vs `origin/staging` | **byte-identique**, 24 lignes |
+
+# CH32 — FIABILITÉ DES SONDES APRÈS LA PROMOTION PALIER 2 (6 septembre 2026, lot cadré vers `staging`)
+
+Lot de diagnostic pur, sans changement de gameplay, ouvert après la
+promotion palier 2 (V7b/V8/CH29/CH30/CH31 sur `main`). Récit complet :
+[`docs/lots/CH32_SONDES_FIABILITE.md`](lots/CH32_SONDES_FIABILITE.md).
+
+**SUJET 1** : `WaterTintProbe` comptait encore 4 disques d'eau alors que
+`HubWater` en construit 5 depuis CH29 (`sea`). Corrigé, rouge-avant-vert
+prouvé (disque neutralisé → 10 échecs au lieu de 9, restauré `cmp`
+byte-identique). Aucune autre sonde ne porte ce contrat.
+
+**SUJET 2** : cinq sondes rapportées « inconcluantes » à un rejeu de
+promotion, rejouées isolément dans ce sandbox (Godot 4.3 téléchargé dans
+la session). `CoveProbe` **PASS 179/0**, ne reproduit pas. `LakeZoneProbe`
+et `V6CrittersProbe` rendent une **INCONCLUSIVE propre** à leur propre
+budget (900 s / 600 s) après une progression réelle (CPU 175-196 %, log
+qui grandit jusqu'au bout) — ce sandbox n'a pas de GPU matériel, le rendu
+sous `xvfb` retombe sur Mesa llvmpipe, trop lent pour les phases qui font
+marcher le hopper réel. `ProbeWatchdog` fonctionne exactement comme conçu.
+`SeesawProbe` **FAIL déterministe et rapide**, pré-existant depuis CH26,
+pas une inconclusion. `SubstituteModel.tscn` n'est **pas un probe** (fixture
+sans script, déjà exclue par `ProbeTimeoutAudit.gd`) — lancée comme scène
+elle boucle indéfiniment, défaut de sélection de scènes du rejeu, pas du
+code.
+
+Aucune régression de jeu trouvée. Aucune escalade Opus recommandée.
+Build : export `--export-release Web` propre, `index.wasm`
+**35 376 909 / `af4a8fc2…`**, `index.js` **`4e08904b…`** byte-identiques à
+la référence publiée (moteur non touché). Un seul fichier de code modifié :
+`scripts/dev/WaterTintProbe.gd` (une ligne).
+
+# CH33 — VOILIER (6 septembre 2026, lot cadré vers `staging`)
+
+Récit complet : [`docs/lots/CH33_VOILIER.md`](lots/CH33_VOILIER.md).
+
+Troisième véhicule coordonné par `HubTransport` (`VEHICLE_SAILBOAT`),
+pilotable sur la mer que CH29 a déjà construite. `SEA_RADIUS`/`SEA_CENTRE`
+non touchés (grep de preuve dans le rapport de lot) ; agrandissement de la
+mer en lot séparé, après validation iPhone.
+
+`SailBoat.gd` calque `SandYacht.gd`/CH30 : `VehicleDrive.step()` non
+modifié (`git diff` vide sur ce fichier), même `KartTouchInput`, même
+`HubCamera.enter_drive()`. Coque/voile réutilisent `yacht_hull_0.glb` /
+`yacht_sail_0.glb`, aucun asset créé ni supprimé.
+
+**L'échouage** remplace le mur dur du char à voile par une traînée
+continue sur la vélocité (`ground_factor_at()`, lue sur
+`HubRegion.shore_distance`), appliquée APRÈS que `VehicleDrive.step()` a
+déjà déplacé la coque — jamais un clamp de position. Rouge-avant-vert en
+deux passes : mécanisme neutralisé (1 échec, la friction), puis
+`GROUND_DRAG_LAMBDA` porté à 500 (les 3 assertions d'échouage tombent, dont
+la réversibilité — c'est cette passe qui prouve que l'assertion sait
+échouer). Mesuré sur la valeur livrée : une marche arrière ramène le
+bateau à l'eau en 295 frames depuis échoué.
+
+Mouillage fixe (`SAILBOAT_MOORING`), aucune persistance — pas de champ
+`WorldSave`, contrairement au char à voile.
+
+`SailBoatProbe` neuve, 42 checks, 0 échec — après correction de DEUX bugs
+dans la sonde elle-même (pas dans le jeu) : le frein doit être réaffirmé
+chaque frame physique (`KartTouchInput` le remet au clavier sinon), et un
+point de test placé par erreur hors de la mer.
+
+`WaterTintProbe` et `CoveProbe` rejouées sous `xvfb-run -a godot4
+--rendering-driver opengl3 --fixed-fps 60`. Les 9 échecs de
+`WaterTintProbe` (PHASE G pixels, PHASE E 157/144 nœuds) et
+l'INCONCLUSIVE de `CoveProbe` (horloge gelée, budget 840 s épuisé) sont
+reproduits À L'IDENTIQUE sur `origin/staging` non modifié, rejoué dans un
+`git worktree` séparé — donc pré-existants, aucune régression de ce lot.
+
+Aucun binaire Godot n'était présent dans ce sandbox : éditeur 4.3-stable
+et templates d'export Web provisionnés en session, tailles vérifiées
+byte-exactes contre les références déjà publiées dans `CLAUDE.md`
+(50 276 070 et 1 073 228 327 octets).
+
+Dette signalée, non corrigée (hors scope explicite du brief) :
+`CoveProbe` gate le disque de la mer contre les constantes
+`HubRegion.SEA_*` elles-mêmes plutôt qu'une mesure indépendante.
+
+---
+
+# CH36 — LE PLAFOND DE CADRE ÉTAIT FAUX DE 1,008 u (7 septembre 2026, lot cadré vers `staging`)
+
+## Départ
+
+Un fait rapporté par Mathieu, mesuré deux fois de son côté
+(`unproject_position` et `project_position`, concordance 1e-4) : le
+plafond de cadre à l'aplomb vaut **7,968 u**, pas les **6,96 u** que
+`HubTrees.gd` portait en commentaire et dont `SEAT_MAX_Y = 4,85` dérivait.
+Ce lot ne fait que vérifier ce fait avec l'instrument du dépôt, en tirer
+les conséquences, et le mettre sous sonde.
+
+## Ce que la mesure a donné
+
+`FrameCeilingProbe` (neuve, headless, viewport forcé 1080×1920 avec
+`stretch = false` sur le conteneur et le rect **asserté** non dégénéré) :
+
+| lecture | valeur |
+|---|---|
+| `unproject_position`, bissection sur le signe de l'y écran | **7,967946 u** |
+| `project_position`, rayon du pixel haut-centre coupé par la colonne | **7,967946 u** |
+| écart entre les deux | **2 · 10⁻⁷** |
+| constante publiée `HubCamera.FRAME_TOP_AT_APLOMB` | 7,968 (écart 5,4 · 10⁻⁵) |
+| plafond re-lu à 3 autres positions au sol | 7,967946 / 7,967946 / 7,967947 |
+
+La formule fautive était `y = 7,6 − 8,9 · tan(40,5° − 36,4°)`. Les 40,5°
+sont `atan(7,6/8,9)` — le tangage d'une caméra qui **regarde** le
+point-sol. `HubCamera` est à rotation FIXE et la scène lui donne
+**33,9998°** (lu sur la base au run, pas dans le `.tscn`). 34° étant
+**plus petit** que le demi-angle vertical (36,37°), le rayon haut sort de
+l'objectif **vers le haut** : le signe du terme s'inverse.
+
+## Le piège que la première version de la sonde s'est fabriqué
+
+La bissection montait jusqu'à y = 60. Or une caméra piquée de 34° a son
+propre plan de vue qui coupe la colonne verticale : **au-dessus de
+y = 20,79 le point est DERRIÈRE l'objectif**, et `unproject_position`
+rend alors un y écran **grand et POSITIF** (mesuré : 3839,2 à y = 60 ;
+6923,8 à y = 30) — la projection passe par l'infini. Le bracket lisait
+« même signe aux deux bouts » et refusait de bissecter, ce qui est
+l'échec inoffensif ; le dangereux serait un bracket qui **enjambe** le
+repli et bissecte dessus. Parade : bracket 0 → 12 u, **et** une garde
+`is_position_behind` explicite qui rend `NAN` au lieu d'un nombre
+plausible.
+
+## Les arbres re-admis — SIX, pas huit
+
+`SEAT_MAX_Y` passe de 4,85 à **5,868**, dérivé (`FRAME_TOP_AT_APLOMB −
+HEAD_ABOVE_SEAT 1,7 − FRAME_MARGIN 0,4`), jamais retapé. Le total
+d'arbres grimpables passe de **53 à 59** — mesuré des deux côtés par la
+même sonde, pas compté à la main :
+
+| index | position | siège | tête (siège + 1,7) | y écran de la tête |
+|---|---|---|---|---|
+| 11 | (−9,87 ; −4,07) | 5,217 | 6,917 | 219,0 px |
+| 15 | (−9,08 ; 4,98) | 5,255 | 6,955 | 211,7 px |
+| 41 | (−27,73 ; −45,77) | 4,929 | 6,629 | 273,5 px |
+| 42 | (−17,86 ; −45,92) | **5,851** | **7,551** | **91,2 px** |
+| 45 | (30,05 ; −66,02) | 5,240 | 6,940 | 214,6 px |
+| 47 | (−25,76 ; −76,88) | 5,407 | 7,107 | 182,0 px |
+
+Le brief en annonçait huit ; la mesure en rend **six**. Trois arbres
+restent exclus par leur siège (6,04 / 6,53 / 6,61) et le restent : leur
+tête sortirait à 8,23 et 8,31 pour deux d'entre eux — au-dessus du vrai
+plafond. La marge n'a pas été élargie pour les faire passer.
+
+Les six sont livrés avec un **rendu offscreen chacun** (`CozyCapture
+--climb=INDEX`, xvfb + `opengl3`, Keepy assis, caméra figée du jeu),
+`climb_seated = true` sur les six. Ces rendus prouvent le **CADRAGE** ;
+ils ne prouvent rien du shading WebGL2 sous Safari.
+
+## La marge, et ce qui la ronge
+
+La tête admise la plus haute est celle de l'arbre 42 : **7,5506 u**, soit
+**0,4174 u** de cadre au-dessus. C'est au-dessus du seuil de 0,2 u
+au-delà duquel le brief demandait de le dire — mais la valeur de 1,7 u
+« tête au-dessus du siège » vient d'une mesure v4 prise sur les **OS** et
+jamais re-vérifiée sur les vertices skinnés. `CLAUDE.md` documente
+0,164 u d'écart os/silhouette sur le blaireau : si le même écart existe
+ici, il reste 0,25 u. `HEAD_ABOVE_SEAT` et `FRAME_MARGIN` sont donc
+publiées **séparément** dans `HubTrees`, pas seulement leur somme, pour
+que le lot qui re-mesurera la silhouette n'ait qu'un nombre à toucher.
+
+## Rouge-avant-vert
+
+Deux passes, chacune restaurée et vérifiée byte-identique par `cmp` :
+
+* **plafond remis à 6,96** → **1 seul rouge**, sur l'assertion attendue
+  (« la constante publiée correspond à la caméra vivante », écart
+  1,007946), et le total d'arbres retombe de 59 à 53 — c'est ce run qui
+  **prouve** le chiffre de six ;
+* **gate desserré à `SEAT_MAX_Y = 8,0`** (donc au-delà du plafond) →
+  **4 rouges** : les arbres dont la tête sort réellement (8,306 et
+  8,232 contre 7,968), l'assertion de dérivation, et la tête la plus
+  haute passée à **−0,338 u** de cadre. La PHASE 3 sait donc échouer.
+
+## Overlay device
+
+`HubPerfOverlay` gagne deux lignes derrière le gate existant
+`DevTools.enabled()` / `?keepydev=1` (aucun bypass, aucune détection de
+hostname) : **POS** (x, z, zone `HubRegion.zone_of`) via un `NodePath` —
+jamais un export de nœud typé, qui ne se résout pas dans un `.tscn` écrit
+à la main — et **BUILD**, la valeur de `CACHE_VERSION` lue dans
+`index.service.worker.js`. Lecture **asynchrone** vers un global `window`
+puis relue à chaque rafraîchissement : un XHR synchrone corromprait la
+ligne FPS que cet overlay existe pour mesurer.
+
+## Ce qui n'a PAS été fait
+
+Le dépôt documentaire CH35 (dossier CONCEPTION + complément B) : les deux
+textes n'existent dans **aucune ref** du dépôt et n'ont pas été fournis
+avec le brief. Rien n'a été inventé ; le dépôt fidèle attend les textes.
+
+---
+
+# CH35 — DÉPÔT DOCUMENTAIRE DU SOCLE MULTI-ALTITUDE (7 septembre 2026, lot doc, commit additionnel CH36 vers `staging`)
+
+## Départ
+
+CH36 avait tout livré sauf une chose : les trois dossiers CH35 n'existaient
+dans **aucune ref** du dépôt (CH35-B le disait déjà, et le journal CH36
+l'a redit : « rien n'a été inventé ; le dépôt fidèle attend les textes »).
+Mathieu les a collés dans cette session, tous les trois — CH35-CONCEPTION,
+CH35-B, CH35-C — et ce lot ne fait que les déposer.
+
+## Ce qui a été déposé
+
+`docs/lots/CH35_MULTI_ALTITUDE.md` : un en-tête de fichier, puis les
+**trois dossiers sur trois**, dans l'ordre de leur production, chacun sous
+son propre titre d'origine. Dépôt **fidèle** : aucune réécriture, aucun
+résumé, aucune correction de style, aucune mise à jour de chiffre — y
+compris là où CH36 a depuis tranché (le plafond de cadre 6,96 → 7,968 u
+figure dans CH35-CONCEPTION comme une incertitude, dans CH35-B comme une
+mesure ; les deux états sont conservés tels quels, parce que ce sont des
+sources de vérité historiques et que la doctrine « chiffre sans source »
+vaut aussi pour un chiffre corrigé dont on aurait effacé l'origine).
+
+`docs/lots/INDEX.md` : une ligne CH35, rien d'autre — le fichier est
+périmé depuis CH24 LOT 1 (aucune ligne CH36 non plus), et le réparer n'est
+pas ce lot.
+
+## Ce qui n'a PAS été touché
+
+Aucun fichier de code : `git diff --stat` ne montre que des `.md`. Rien de
+ce que CH36 a livré (`FRAME_TOP_AT_APLOMB`, `SEAT_MAX_Y`,
+`FrameCeilingProbe`, overlay POS + BUILD, `CLAUDE.md`) n'est retouché.
+Aucun export, aucune sonde lancée. Ni le lot 1 SURFACE, ni le lot 0b, ni
+la montagne ne sont ouverts.
+
+## Suite
+
+La série de mesure device par Mathieu (protocole CH35-B tâche 4, avec
+`?keepydev=1`), la vérification device des six arbres re-admis par CH36
+(arbre 42 en priorité, marge 0,417 u), le lot 0b conditionnel au verdict,
+puis le lot 1 SURFACE selon le plan en six vagues de CH35-C — après le
+verdict device, jamais avant.
+
+# CH37 — LOT 1 SURFACE : le socle multi-altitude, sans un mètre de relief (7 septembre 2026)
+
+Le plan de CH35-C exécuté vague par vague, dans l'ordre, chacune fermée
+avant d'ouvrir la suivante. `HubSurface` est publié, les six familles de
+sites qui écrivaient un `y` de sol sont branchées dessus, et **le jeu
+n'enregistre aucun domaine** : `height_at` vaut `0.0` partout, tout le lot
+est un no-op arithmétique, et la montagne est le lot suivant.
+
+Ce que le lot a réellement appris, en plus de ce qu'il a livré :
+
+**Une phase de sonde est passée verte contre le correctif neutralisé.** La
+première version de la phase TAP restait VERTE avec `HubSurface` remis à
+un `Plane` nu — la neuvième fois que ce dépôt rencontre ce mode. Deux
+causes : `tapped_ground` porte LA POSITION D'UN ARBRE quand le tap en
+frôle un, et comparer une passe « à plat » à une passe « avec relief »
+déplace AUSSI la caméra, si bien que les deux effets se compensent (0,143 u
+de différence, contre 5,673 u pour la comparaison honnête). D'où une pose
+de caméra gelée et un balayage de sept pixels.
+
+**Un point sol n'est pas un vecteur de déplacement.** Le plan gardait
+`_target` porteur de sa hauteur et `here` plat en appelant leur différence
+« un delta XZ ». Sous relief, `ARRIVE_EPSILON` ne termine alors jamais une
+marche en pente. Inerte tant que `h ≡ 0` — c'est ce qui rend le défaut
+invisible au lot qui l'introduit.
+
+**Une sonde à phases mesure ses propres restes si elle ne nettoie pas.**
+La phase C tue un tween à la main pour lire l'arc à mi-course ; deux
+phases plus loin, cinq rouges dont pas un ne parlait de la surface.
+
+Deux doctrines déposées dans `CLAUDE.md` : « un point sol s'écrit
+`(x, h, z)`, et il a une seule orthographe » et « un sol unlit n'a pas de
+pente — le relief se lit par silhouette » (celle-ci mesurée au CH35-C, avec
+sa conséquence de layout : 30° marchable, 45° flancs courts, > 55° interdit,
+et un sommet jamais dans le cadre figé).
+
+## CH38 — LOT 2 ZONE MONTAGNE, PARTIE A : le relief nu (7 septembre 2026)
+
+Le premier domaine réel de `HubSurface` : la **crête ouest**, rectangle
+x ∈ [−63, −35], z ∈ [−12, 18], boulonné sur le bord ouest du plateau. Rien
+dessus — pas un semis, pas un prop, pas une goutte d'eau : le lot existe
+pour que Mathieu lise un FPS device contre un delta triangle connu, avant
+qu'on plante quoi que ce soit.
+
+L'emplacement vient de sa direction (« au-delà des arbres visibles depuis
+(−34,6 ; 35) ») et de **huit dégagements mesurés** sur le layout livré, dont
+le plus serré est la berge du petit lac à 0,85 u. Le périmètre est à
+**exactement 0** — deux cosinus surélevés à support compact, donc un raccord
+C1 et pas seulement le C0 exigé — si bien qu'une marche franchit x = −35
+sans la moindre marche : ni porte, ni couloir, ni numéro de zone.
+
+Trois choses que ce lot a payées pour apprendre :
+
+**La largeur est fixée par la TRAVERSÉE, pas par le relief.** L'en-tête de
+`HubRegion` dit qu'un lobe centré SUR un bord n'allonge aucune diagonale
+entre coins ; un **rectangle** boulonné sur un bord, lui, l'allonge. La
+pire paire marchée sort à **20,967 s** contre les 22 s que le hub se tient,
+et la version à x = −71 — celle qu'on voulait, plus généreuse — sort à
+**22,383 s** en passe rouge. C'est ça, et pas le goût, qui cape le sommet à
+4,5 u : 28 u de portée à 30° n'admettent rien de plus.
+
+**Deux bosses qui se recouvrent additionnent leurs gradients.** Trois
+versions de la forme ont mesuré **33,0°** avec deux bosses individuellement
+à 23° et 17°. La seconde a fini écartée à 12,04 u de la première.
+
+**Le banc reproduit d'abord un chiffre au dossier.** `MountainProbe`
+PHASE F marche la diagonale livrée dans le même run : 1 122 frames,
+**18,700 s**, la valeur publiée à la frame près.
+
+Budget gaté **dès le premier commit** (doctrine CH35-B Q7) : **+1 744**
+primitives au pire sur 8 stations × 2 caméras, plafond 10 000 — et un delta
+**NET** de **−21 à +1 023** mesuré sur DEUX ARBRES, parce que rendre le
+rectangle marchable écarte aussi les arbres du mur de forêt qui s'y
+trouvaient. `MountainProbe` : 7 phases, ALL GREEN, blind check en tête, et
+**cinq passes rouge-avant-vert** restaurées byte-identiques par `cmp`.
+
+Une doctrine déposée dans `CLAUDE.md` (les deux points ci-dessus sur la
+traversée et sur les gradients), et une station signalée sans être
+maquillée : au pied nord, à 11 u du sommet, le versant occupe ~90 % du
+cadre. Il a bien une crête contre le ciel, donc il n'enfreint pas la
+contrainte — mais c'est la vue à regarder en premier sur device, et ce qui
+lui manque est du décor, c'est-à-dire la PARTIE B.
+
+## Suite
+
+Mathieu teste le terrain nu sur iPhone (`?keepydev=1`, overlay POS + BUILD
++ TRI) **avant toute suite** : c'est le seul moment où le pari « on saute la
+mesure device complète » se vérifie. Si le FPS tient, lot 2 PARTIE B (semis,
+props, atmosphère) ; sinon lot 0b assainissement, gaté sur ce même
+protocole. La mesure device de CH35-B tâche 4 reste en attente ; lot 3
+véhicule sur surface et lot 4 luge restent après.
+
+## CH39 — LE RELIEF INVISIBLE : DIAGNOSTIC, PUIS CAUSE (7 septembre 2026)
+
+Mathieu rapporte depuis l'iPhone deux stations à quatre unités l'une de
+l'autre : à (−46,4 ; 13,0) un dôme net découpé contre les arbres, à
+(−50,4 ; 5,8) **plus aucun relief**, sol parfaitement plat. `MountainProbe`
+ALL GREEN, 0 rouge, sept phases. Le lot est un **diagnostic** : rien n'a
+été touché avant que la cause soit prouvée.
+
+Les deux images ont d'abord été **reproduites en sandbox** aux coordonnées
+exactes, caméra figée du jeu, `xvfb-run --rendering-driver opengl3`. Puis
+les cinq hypothèses du brief sont tombées une par une, chacune avec sa
+preuve : le mesh et `height_at` s'accordent à **8 × 10⁻⁶ u** (chute de
+rayon Möller–Trumbore, instrument indépendant de `_sample`) ; masquer le
+plan y = 0 ne change **rien** au compte de pixels de la crête ; les
+sommets en monde sont **exactement** le rectangle déclaré ; et Keepy
+était bien à **3,9484 u de haut**, marché et non téléporté — avec la
+caméra à 7,600 u au-dessus du sol local **aux deux stations**, parce que
+`HubCamera` suit la surface.
+
+La cause s'est prouvée à **variable unique**, `cull_back` contre
+`cull_disabled` sur le même cadre : **14 pixels contre 317 646**. Le
+treillis était enroulé à l'envers. Godot tient les faces horaires à
+l'écran pour faces avant ; un produit vectoriel main droite +Y se lit
+anti-horaire depuis toute caméra au-dessus, donc c'est la face arrière, et
+`cull_back` la jetait. **Les seuls survivants étaient les triangles qui
+tournaient le dos à l'œil** : le flanc lointain, vu à travers le flanc
+proche invisible — le « dôme net » de la première station était l'arrière
+de la colline vu par transparence, ce qui explique qu'il ait validé la
+forme et disparu dès qu'on montait dessus.
+
+Le faux-vert est le **dixième** de ce dépôt et le mieux fourni : PHASE C
+assertait la convention **mathématique** en citant la convention **moteur**
+dans son propre commentaire (verte 1 680 fois sur 1 680) ; PHASE D et F
+raycastent et marchent la **grille**, qui ne sait rien d'un côté de
+triangle ; et PHASE E compte les primitives **soumises** — le back-face
+culling est en aval du compteur, donc la colline payait ses 1 680
+triangles à chaque frame sans en dessiner un seul, et la ligne « the ridge
+DOES cost something » était vraie en signifiant l'inverse.
+
+`MountainProbe` gagne **PHASE G** : passe d'identification masquée, blind
+check d'abord, et un gate **sans seuil** — le test de face ne doit rien
+jeter. Rouge avant vert : enroulement d'origine remis, **5 rouges,
+exactement PHASE C et PHASE G**, fichier restauré byte-identique ; avec le
+correctif, ALL GREEN 0 red et la diagonale publiée reproduite à 18,700 s.
+
+Deux choses trouvées et **non corrigées**, parce qu'elles sont la partie B
+et pas ce lot : la crête est **chauve** (le semis s'arrête à x = −37, le
+domaine commence à −35) et le sol unlit ne porte **aucun signal de pente**
+(Pearson r = +0,098 / −0,342 entre la pente et la luminance livrée) — le
+relief lit par silhouette et occultation, exactement comme CH35-C l'avait
+posé.
+
+## CH40 — La crête s'habille : conifères, pierre pâle, et un tapis aminci
+
+7 septembre 2026. Lot 2 partie B. CH39 avait laissé deux constats sans les
+corriger : la crête est **chauve**, et le sol unlit ne porte **aucun signal
+de pente**. Ce lot reprend les deux, et le second dicte la forme du premier.
+
+**L'étape 0 était un inventaire, et rien n'a été généré.** Le dépôt
+possédait déjà toute la montagne. Ce qui rend le thème distinct est
+mesurable, pas ressenti : le conifère est en vert-**bleu** (0,06 ; 0,24 ;
+**0,10**) là où l'arbre rond du plateau est en vert-**jaune** (0,07 ; 0,25 ;
+**0,04**) — même luminance, autre teinte, donc un autre bois. Et
+`palerock_0/1` est la **seule pierre du dépôt qui ne soit pas vert-mousse**.
+Le gain de 4,4 dont le cyprès a besoin est déjà dans `FAMILY_GAIN` et clé
+sur le nom de **mesh** : les nouveaux batches en héritent sans une ligne.
+
+**La borne était fausse de 26 u** : `COVER_MIN.x = −37` pour un domaine qui
+commence à −63, donc 2 u de recouvrement, **20 instances** sur 840 u² et
+**12 des 16 cases** d'une grille 4 × 4 vides. Deux corrections
+l'accompagnent, et ce sont elles qui la rendent juste : `_sprinkle` pose sur
+`HubSurface.ground(p)` **pris en dernier** — tous les tests au-dessus
+comparent des distances **3D** à des centres à y = 0, et lever `p` avant eux
+relâcherait silencieusement chaque garde — et `_shadow_at` n'émet **aucun
+blob sur un domaine**, parce qu'un quad horizontal plat sur une pente à 28°
+flotte de 0,27 u d'un côté et s'enterre d'autant de l'autre : il n'y a pas
+de bonne hauteur pour lui.
+
+**La composition n'est pas un semis.** Une pente unlit ne se lit que par
+silhouette et par des objets de taille connue, donc c'est le **layout** qui
+répond : une couronne de neuf sur un anneau de 5 u pour que le dôme se
+termine en ligne dentelée, un conifère sur l'épaule pour que la silhouette à
+deux sommets se lise comme deux, quatre flèches en bande médiane comme
+échelle de perspective, et **douze blocs pâles biaisés au nord** — le
+versant que CH38 avait lui-même désigné comme la lecture la plus faible.
+⚠️ La couronne a eu besoin de sa **propre** séparation : neuf pièces sur un
+anneau de 5 u sont à 3,42 u l'une de l'autre et la règle en réservait 4,2,
+donc l'anneau s'est refusé lui-même — 4 conifères sur 5, la ligne de crête
+avec un trou dedans.
+
+**La densité est publiée** : habillage 0,0571/u² = 0,75× le semis plateau
+hors herbe et 0,63× les props du vallon ; total du domaine 0,1643/u² = 0,37×
+le plateau, grâce à un tapis hérité amincí au quart. La seule ligne plus
+dense est l'arbre (1,19× le vallon), délibérément : il est la seule pièce
+qui fasse une silhouette.
+
+**Le budget a taillé la conception, pas l'inverse.** 44 043 primitives lues
+sur device à la crête + 6 000 = 50 043, la cible du hub à l'arrondi près.
+Mesuré : 5 875 triangles soumis, +1 854 pire cas mesuré, et un delta **net
+sur deux arbres** de +2 971 et +4 436 contre +5 721 et +7 984 si le tapis
+était resté à densité pleine.
+
+⚠️ **Et la passe rouge a trouvé un faux-vert dans la sonde elle-même — le
+onzième du dépôt.** Avec la passe d'habillage arrêtée, la liste des nœuds à
+cacher est **vide** : « les cacher et relire » ne cachait rien, et le
+compteur bougeait quand même de **+64** entre deux lectures. « The dressing
+costs something » est donc revenue **verte sur une colline nue**, ce qui est
+exactement la famille CH39 — une assertion de présence répondue par un
+instrument jamais branché sur son sujet. Fermé par un **plancher de bruit
+mesuré** (jusqu'à 140 primitives à la caméra haute) et par une assertion
+préalable qu'il y a des batches à cacher. La même passe rejouée rend alors
+7 rouges au lieu de 5. Un delta obtenu en éteignant quelque chose ne vaut
+rien tant que le banc n'a pas publié ce qu'il rend quand on n'éteint rien.
+
+`MountainProbe` : 11 phases, 78 assertions, ALL GREEN 0 red, sept passes
+rouge-avant-vert restaurées byte-identiques — et PHASE F restitue toujours
+la pire paire à 20,967 s et la diagonale livrée à 18,700 s, à la frame près.
+
+## CH41 — LA LUGE ÉLECTRIQUE : LE PREMIER VÉHICULE SUR SURFACE (7 sept 2026)
+
+Lot 3 de la série multi-altitude. Ce n'est **pas** une descente sur rails :
+c'est un **quatrième véhicule**, tapé, monté et piloté au pouce comme le
+kart et le char, libre d'aller partout sur la carte, dont la seule
+différence est qu'**une pente le pousse**. Garé au sommet de la crête ouest
+(`SLED_PARK` = le centre de `HubMountain.BUMPS[0]`, donc son pic par
+construction). Aucune persistance, aucun champ `WorldSave`.
+
+**LE VERROU : `VehicleDrive.gd` N'A PAS ÉTÉ OUVERT**, et c'est une mesure et
+non une prudence. CH35 Q2 autorisait son ouverture « si le rappel
+`off_lambda` se sent ». Il ne se sent pas, pour deux raisons distinctes,
+mesurées dans le même run : (1) `off_lambda` est un **amortissement**, pas
+un plafond — plafond laissé plat, la descente atteint **10,358 u/s contre
+`MAX_SPEED_FLAT` 8,50** toute seule ; (2) `max_speed` est une variable
+d'instance que `SailBoat` module déjà, et la luge lève la sienne avec la
+pente : **15,253 u/s, +47,3 % sur l'amortissement seul, ×1,79 le cap
+moteur**. Les quatre fichiers de conduite existants sont **byte-identiques**
+à `origin/staging`, `KartBody.gd:218` compris.
+
+⚠️ **MAIS CH35 Q2 SE TROMPAIT SUR L'ORDRE, ET ÇA GÈLE LE VÉHICULE.** Le
+dossier prescrivait d'injecter la force **AVANT** `step()`. Mesuré :
+**0,000 u/s, 0,00 u en 240 frames**, à l'arrêt face au flanc le plus raide.
+La force rend `v_fwd` négatif avant que le modèle ne le regarde ;
+`VehicleDrive` prend sa branche « reversing and the throttle comes back »
+qui ramène le recul à **exactement zéro et jamais au-delà** ; la branche
+d'accélération n'est jamais atteinte ; et à vitesse nulle il n'y a **aucune
+autorité de braquage**. C'est le blocage de `SandYacht._wall` étape 3,
+atteint par l'ordre des opérations. Corrigé en injectant **APRÈS**, comme
+`SailBoat` le fait déjà pour son échouage : la luge grimpe alors au pas
+(2,109 u à 1,236 u/s) au lieu de coller. Le coût est une frame de retard,
+soit 0,17 u/s sur le sol le plus raide de cette carte.
+
+**`HubSurface.normal_at` arrive, exactement comme CH37 l'avait annoncé**
+(« il arrive avec le lot qui incline un corps »). `gradient_at` est la
+primitive, dérivée **analytiquement** de `_sample` : donc exactement la
+normale de face du mesh dessiné, vérifiée face par face sur les **1 680
+triangles committés** (pire écart **1,2 × 10⁻⁴**, blind à 9,2 × 10⁻³).
+Elle est **facettée** et le consommateur la lisse : marches de **11,168°**
+entre facettes voisines, et le châssis reste **3,881° derrière à 13,533 u/s sur un sol incliné à 19,810°**.
+
+**Budget** : mesh **procédural** (aucun asset généré, inventaire fait
+d'abord — le dépôt n'a rien de forme luge), **60 triangles**, et la luge
+n'entre **pas** dans `RIDGE_TRIANGLE_BUDGET` : cette ligne comptable
+parcourt les batches de `CozyScatter` et un `Node3D` s'annule des deux
+frames du delta mesuré. Coût propre relu à 8 stations × 2 caméras :
+**exactement +60 primitives** aux onze stations sur seize où le compteur est
+immobile, 0 hors cadre. 60 ≤ **125**, la marge publiée par CH40 — elle
+tiendrait même si elle y était comptée.
+
+**Caméra de poursuite en pente, exercée pour la première fois** : pire
+dégagement **1,0243 u** sur 7 192 paires (point × cap), blind à −2,976.
+
+⚠️ **ET LA PASSE ROUGE A TROUVÉ DEUX FAUX-SIGNAUX DANS LA SONDE — les
+douzième et treizième du dépôt.** (1) Le test d'enroulement, mené contre le
+centre de masse de l'assemblage, a déclaré **46 triangles sur 60** mal
+enroulés sur un mesh que le rendu venait de prouver juste au pixel
+(`cull_back` et `cull_disabled` : **mêmes 13 190 pixels**) — cinq boîtes
+côte à côte ne sont pas un corps convexe. (2) **Avec `slope_gain` mis à
+ZÉRO, « DESCENT IS FASTER » est restée VERTE** à 12,891 contre 8,081 : à
+plein gaz, le plafond relevé portait tout le résultat et la phase ne savait
+pas séparer les deux mécanismes. Fermé par une **paire en roue libre**,
+gaz coupé, gatée sur le **SIGNE** de l'avance : **+8,89 u vers l'avant en
+descente, −5,35 u vers l'arrière en montée** — la gravité, et rien d'autre.
+
+Et une jambe de mesure trop longue avait rendu la **montée plus rapide que
+la descente** (19,597 u/s) : en 4 s elle franchissait le sommet et dévalait
+l'autre versant. Le signe de la pente est désormais gaté **aux deux bouts**
+de chaque jambe.
+
+`SledProbe` : 11 phases, **ALL GREEN 0 red**, **six neutralisations** (huit runs) rouge-avant-vert,
+restaurées **byte-identiques**.
+
+## CH42 — LE BLOCAGE FALAISE, ET LA MARCHE ARRIÈRE DES QUATRE VÉHICULES (7 sept 2026)
+
+Deux sujets, dans l'ordre que le brief imposait : **diagnostic d'abord**.
+
+**Les quatre hypothèses, mesurées.** Le mur : **écarté** — 28/28 points
+intérieurs `drivable`, 28/28 points à 1 u au-delà refusés, sur les trois
+vrais murs de la crête. La pente : **écartée** — un bord de crête est **plat
+par contrat**, `HubSurface` refusant un domaine dont le périmètre n'est pas
+à 0 ; pire échantillon 0,0865, soit **2,19 u/s² contre 13,60** d'autorité de
+montée. Le coin mort : **confirmé, pour les coins seulement** — 4 runs sur 56
+ne s'éloignent **jamais** de 4 u en 10 s.
+
+**Et la cause n'était dans aucune des quatre.** `VehicleDrive` fait tourner
+le cap à `|v_fwd| / steer_full_speed`, et **`v_fwd` est exactement ce qu'un
+mur mange**. Pire épingle **(−62 ; 17,7)** : 600 frames de braquage à fond,
+vitesse avant moyenne **0,0851 u/s**, gain **0,0284 — 2,8 %**, excursion
+maximale **1,04 u**. Le même braquage en terrain libre : **59 frames** pour
+4 u. Le coin est inéchappable **parce que le lacet y est nul**, pas parce
+qu'il est étroit. **Aucun correctif de mur n'est donc nécessaire** —
+`HubRegion.gd`, `HubSurface.gd` et `SandYacht._wall` ne sont pas touchés.
+
+⚠️ **Quinzième faux-signal du dépôt, et c'était la MÉTRIQUE.** « Bloqué »
+mesuré par la distance au départ après 600 frames a rendu **quatre fausses
+épingles** : un braquage tenu dessine un **cercle de 36,7 u à 352,7°** qui
+revient d'où il part. La même erreur moyennait la cause sur tout le run —
+donc majoritairement sur la boucle libre à 6 u/s — et publiait un gain de
+braquage de **0,59 à 0,67**, deux versions durant. Fermé en notant chaque run
+sur la **première frame** où il atteint un rayon d'échappement, et en
+moyennant un état **sur la fenêtre où l'état tient**.
+
+**La marche arrière.** `KartInput.reverse`, float tenu, **à côté** de
+`throttle` et non dessus. `VehicleDrive.gd` : **une branche `elif`**, et le
+fichier est une **addition pure — 40 lignes, zéro retirée**. Sa moitié
+« encore lancé vers l'avant » est l'arithmétique du frein **énoncé pour
+énoncé**, donc le freinage reste le même float ; le braquage n'est pas touché
+parce que la ligne `v_fwd < -0.05` lisait déjà la **vélocité** et non l'input.
+`REVERSE_ACCEL` par véhicule : kart **6,00** (= `BRAKE_DECEL × 0,4` : il
+recule exactement comme avant), char **6,00**, voilier **4,00**, luge
+**13,00** — et pour la luge ce n'est pas un nombre de feeling, reculer nez à
+l'aval **c'est monter** : `reverse_authority()` est gaté contre `slope_force`,
+**10,5312 contre 13,0000, 81 % utilisés**.
+
+**Ce que ça achète**, sur 112 épingles : temps moyen pour s'éloigner de 4 u
+**439,1 → 119,7 frames**, pire cas **jamais → 143 frames**, et le coin mort
+**1,04 u en 10 s → 4 u en 118 frames**.
+
+**Byte-identité, sur deux arbres.** `KartTraceProbe` : 186 lignes identiques,
+trois tours. Trace de mouvement char/voilier/luge sur 900 frames avec gaz,
+boost, balayage de braquage et deux appuis frein : **identique** — et le
+blind check le prouve capable de voir (`BRAKE_DECEL` +0,001 fait bouger
+**36 lignes**). `YachtTraceProbe` diffère sur **2 lignes sur 54** : la colonne
+`brake` au frame 240, c'est-à-dire exactement la séparation d'input que le
+lot opère. `SledProbe` ALL GREEN 0 red sous xvfb+opengl3, `SailBoatProbe`
+42/0, `KartProbe` 150/0.
+
+`ReverseProbe` : 7 phases, **ALL GREEN**, passe rouge **19 rouges attendus,
+19 obtenus, aucun autre**, fichier restauré byte-identique.
+
+⚠️ **Dette explicite** : le second doigt écrit désormais `reverse`, et **rien
+ne l'annonce** — ni HUD, ni jauge, ni ligne d'aide. C'est le défaut CH31 de
+l'accélérateur qui se rejoue, et il est hors brief ici.
+
+## CH43 — UN SEUL GESTE : LA MARCHE ARRIÈRE REJOINT L'AXE DE L'ACCÉLÉRATEUR (7 sept 2026)
+
+Mathieu a essayé le deuxième doigt de CH42 sur iPhone et l'a refusé : un
+second doigt est une chose à **apprendre**, et rien d'autre dans ce jeu n'en
+demande un. Sa décision — un seul axe, haut = avancer, bas = reculer, et la
+marche arrière **uniquement depuis l'arrêt** — n'a pas été rediscutée.
+
+**Ce que le lot a coûté est étroit, et c'est le résultat.** Le geste vit dans
+un seul fichier : `KartTouchInput.gd` est le seul écrivain tactile du dépôt et
+il n'en existe que deux instances. Les quatre véhicules ont reçu le nouveau
+geste sans une ligne de leur côté, et `VehicleDrive.gd` n'a eu **aucun
+changement de comportement** — seulement un nom, `REVERSE_ENGAGE_SPEED`, posé
+sur le `0.3` que CH42 avait laissé en littéral dans ses deux branches d'entrée.
+
+**Deux champs plutôt qu'un `throttle` signé**, et c'est un choix de rayon
+d'explosion et non d'élégance : `throttle` est écrit par le pouce, par
+`KartAiDriver`, par `KartLineInput` et par chaque `set_all` de sonde. Le geste
+est une propriété d'un pouce ; `throttle` est un contrat entre trois écrivains
+et un corps.
+
+**Le seuil a été mesuré sur le véhicule, jamais relu dans la constante.**
+Trente lancements par véhicule, chaque frame classée par l'arithmétique que la
+branche a réellement produite : encadrement des quatre **(0,298670 ;
+0,303540]**, large de 0,004870. La constante n'est ouverte qu'à la fin, pour
+demander si l'encadrement la contient — et la passe rouge le justifie : branche
+gatée à 0,9 avec la constante lisant toujours 0,3, l'encadrement **mesuré s'est
+déplacé à 0,9**.
+
+**Et une leçon qui vaut au-delà de ce lot.** La passe rouge qui supprime
+entièrement le garde-fou laisse l'assertion « aucune vitesse négative avant
+l'arrêt » **VERTE** : sans garde-fou le véhicule ne passe toujours pas négatif
+avant la bande, il décélère simplement à la rampe au lieu du frein. Un test de
+SIGNE ne peut pas voir quelle BRANCHE a tourné. Ce qui l'a attrapé est la
+classification par arithmétique, sur les quatre véhicules — et c'est la
+doctrine que `CLAUDE.md` a reçue.
+
+**Seizième faux-signal, et il était dans la sonde.** La dernière assertion
+souris relisait un `reverse` que la vérification du bouton droit avait laissé à
+1,0 : elle relisait l'assertion précédente, et elle passait verte contre
+l'écrivain de CH42 restauré verbatim. Trouvée par la passe rouge, pas par
+relecture.
+
+**Une prémisse est tombée en cours de route, comme presque à chaque lot** : la
+luge lue à `SLED_PARK` rendait une rampe de 14,4159 contre les 13,0000
+publiées. Ce n'était pas un défaut — `SurfaceDrive` injecte la pente **après**
+`VehicleDrive`, et `SLED_PARK` est au milieu de la crête. C'était la mauvaise
+question pour une phase portant sur la branche partagée. Les trois phases
+physiques conduisent donc la luge à plat, avec la station plate **gatée contre**
+la station en pente et l'obligation qu'elles diffèrent, pour que PHASE SLOPE de
+CH42 ne devienne pas une tautologie.
+
+**Aucune trace CH42 ne diverge** — là où CH42 avait dû expliquer 2 lignes sur
+le voilier, CH43 n'a rien à expliquer. Et la dette que CH42 laissait ouverte
+(« le second doigt écrit `reverse` et rien ne l'annonce ») est refermée : le
+rail de poussée passe désormais à travers l'ancre, avec une flèche à chaque
+bout et une ligne d'aide qui nomme les deux directions.
+
+## CH46 — LA MINIMAP PERMANENTE (7 septembre 2026)
+
+La recon CH44 dormait sur sa branche depuis la veille sans avoir jamais été
+mergée. **Étape zéro du lot : la merger, après avoir vérifié le diff — le
+fichier de recon plus une ligne d'index, rien d'autre — et vérifié après
+coup que les deux blobs sont byte-identiques à ceux de la branche.** Un
+socle qu'on n'a pas vérifié n'est pas un socle.
+
+**Le cadre n'existait pas et il fallait le créer.** CH44 avait dû *balayer*
+270 000 points pour connaître l'étendue du monde marchable ; un widget ne
+peut pas faire ça à son `_ready()`. `HubRegion.walkable_bounds()` rend la
+même réponse en forme fermée, à partir des treize mêmes termes d'union que
+`contains()` — et c'est **une seconde orthographe**, avec exactement le
+risque que ce dépôt documente. La sonde la gate en balayant `contains()` et
+en exigeant la boîte **SERRÉE des quatre côtés** : une boîte seulement
+contenante passerait gratuitement le jour où un terme saute. La passe rouge
+le prouve, terme montagne retiré : 3 rouges attendus, 3 obtenus.
+
+**Le pari technique du brief était l'atlas, et il a payé au-delà.** CH44
+avait mesuré `draw_circle` à un draw call **par marqueur**. Mesuré ici sur
+le même banc, dans le même run, en ne changeant que le type de commande :
+l'atlas rend **+76 primitives et +1 draw call** pour le fond et les 37
+marqueurs réunis, contre **+2 370 et +38** en cercles. Un seul appel pour
+toute la carte. Le corollaire de conception mérite d'être retenu : **le fond
+va DANS l'atlas**, parce qu'une seconde texture coûterait un batch à elle
+seule.
+
+**Dix-septième faux-vert du dépôt, et il était dans ma propre sonde.** La
+phase des frontières lisait, dans une colonne rendue, le plus grand saut de
+couleur autour du z attendu, le reconvertissait en z monde et sortait des
+chiffres au centième. La passe rouge qui met les bandes peintes sur les
+bords **logiques** — la substitution exacte que la décision de Mathieu
+interdit — est ressortie **ALL GREEN**. Le saut mesuré n'était pas le
+changement de bande : c'était le **trait** sombre tracé séparément au z
+peint, que la neutralisation ne touchait pas. Une frontière est deux choses,
+un trait et le remplissage qu'il sépare, et c'est le second que le joueur
+lit d'un coup d'œil. Refermé par six assertions de plus, et **prouvé par
+deux passes rouges qui ne se recouvrent pas** : l'une rougit le remplissage
+en laissant le trait vert, l'autre l'inverse.
+
+**Deux autres tests étaient faux avant d'être justes, et la mesure l'a dit
+dans les deux cas.** Le test de forme du marqueur clampé demandait « ce
+pixel est-il exactement le ton » et lisait 1 coin sur 4 sur un carré
+parfaitement dessiné : à cet offset l'antialiasing ne couvre que 70 %. Ce
+qui sépare un carré d'un disque n'est pas le ton, c'est la **quantité de ton
+présente**. Et la phase du tap comptait `tapped_ground` seul : elle lisait 2
+événements passés / 0 destination sur neuf points différents, de quoi
+conclure à une interception qui n'existait pas — `HubTapInput` obéit à une
+règle un-tap-un-signal, et un prop sous le rayon prend le signal à la place.
+
+**Le piège du lambda GDScript, re-rencontré alors qu'il est écrit dans
+`CLAUDE.md`.** Le compteur de signaux était `func(_at): ground += 1` : un
+lambda capture une variable locale **par valeur**, il incrémentait sa propre
+copie, et rien n'a jamais bougé. Fermé par un membre de classe, qui est la
+parade déjà prescrite.
+
+**Un ton a dû changer, et c'est le balayage aveugle qui l'a trouvé.** Le
+marqueur du joueur en crème rend à 0,03 du trait du circuit : le joueur posé
+sur le circuit aurait été un point pâle sur un trait pâle. Le contour noir
+des icônes — un blanc teinté par `modulate`, qui multiplie, donc un noir qui
+reste noir sous n'importe quelle couleur — sauve la lisibilité de la FORME,
+pas la lecture du TYPE.
+
+**Et la comparaison sur deux arbres a servi exactement à ce qu'elle sert.**
+`KartProbe` sort 150 checks / 1 échec sur la branche. Sur un worktree de
+`origin/staging` importé à part, arbre vérifié par hash : 150 checks / 1
+échec, **la même assertion et la même valeur au dixième**. Ce n'est pas une
+régression de ce lot, et la couleur d'une sonde isolée ne l'aurait jamais
+dit.

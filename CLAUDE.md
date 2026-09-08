@@ -301,6 +301,42 @@ différente**. Le watchdog le dit lui-même (« NOT STUCK, JUST SLOW »).
 Rencontré au moins quatre fois, sur des lots différents. Un banc de traversée
 sans ce flag ne mesure pas le jeu, il mesure la machine.
 
+### ⚠️ UN VERDICT `INCONCLUSIVE` PROPRE N'EST PAS UN GEL -- `ps` ET LE LOG TRANCHENT
+
+CH32 (6 septembre 2026) : `LakeZoneProbe` et `V6CrittersProbe`, relancées
+isolément après un rejeu de promotion qui les avait rapportées
+« inconcluantes », ont produit exactement le message `INCONCLUSIVE` que
+`ProbeWatchdog` est censé produire -- à leur propre budget pile (900 s et
+600 s), après une progression RÉELLE et continue (dizaines de checks verts
+sur plusieurs phases, la diagonale publiée à 66 hops / 18,700 s reproduite
+au chiffre près). `ps` montrait tout ce temps un CPU réel (175-196 %, deux
+threads), et le log continuait de grandir jusqu'à quelques secondes avant
+la coupure.
+
+Ce n'est PAS le signe d'un défaut : c'est ce sandbox qui n'a pas de GPU
+matériel. `--rendering-driver opengl3` sous `xvfb-run` retombe sur Mesa
+llvmpipe (rasterisation logicielle), et une phase qui fait marcher le
+`KeepyHopper` réel sur ~10 trajets rendus de plusieurs secondes chacun ne
+tient simplement pas dans le budget. `ProbeWatchdog` a fait exactement ce
+pour quoi il existe.
+
+**Règle de diagnostic, avant de soupçonner un défaut** : un vrai gel (clock
+figé, deadlock, attente infinie sur un signal) montre un CPU proche de 0 %
+et un log qui s'arrête NET, souvent dès le début de la phase en cause. Une
+sonde simplement trop lente pour ce sandbox montre un CPU actif et un log
+qui continue de grandir jusqu'au bout du budget. Les deux ne se distinguent
+qu'en relisant `ps` et la queue du log AVANT de conclure -- jamais à la
+seule lecture du mot `INCONCLUSIVE` ou `timeout`.
+
+⚠️ **Et un `.tscn` de `scripts/dev/` sans script attaché n'est pas un
+probe.** `SubstituteModel.tscn` (fixture nue pour `AssetContractAudit`,
+explicitement exclue par `ProbeTimeoutAudit.gd`) boucle indéfiniment si on
+la lance comme scène principale -- rien n'y appelle jamais
+`get_tree().quit()`. Un outillage qui énumère les sondes d'un dossier par
+un glob de `.tscn` doit consulter la même liste d'exclusion que
+`ProbeTimeoutAudit`, sous peine de compter une fixture pour une sonde
+gelée.
+
 ### ⚠️ Une sonde dont le SCRIPT ne PARSE pas ne tombe pas vite : elle traîne jusqu'au timeout
 
 Une erreur de parse GDScript empêche la scène de se charger, donc
@@ -593,6 +629,32 @@ pourquoi un shader finit par arriver sur toute surface d'eau — il devient
 invisible d'un coup, et le symptôme ne ressemble pas à un problème
 d'enroulement.
 
+⚠️ **ET LE CONTRÔLE « lire la normale et la comparer au côté attendu » NE
+SUFFIT PAS — le côté attendu se prend dans le MOTEUR, jamais dans les
+maths.** Payé au CH39, sur un terrain et pas un ruban. `MountainProbe`
+PHASE C vérifiait l'enroulement des **1 680** triangles de la crête ouest,
+sur chacun, avec le bon commentaire au-dessus (« Godot takes CLOCKWISE
+faces for FRONT faces ») — et le code exigeait `n.y > 0` pour
+`n = (b−a) × (c−a)`, c'est-à-dire la convention **MATHÉMATIQUE** du haut,
+qui est la **négation exacte** de la règle citée. Verte 1 680 fois sur 1 680
+sur une colline que Godot jetait entièrement.
+
+**Le produit vectoriel main droite d'une surface de SOL marchable vaut
+−Y dans ce moteur**, parce qu'une face avant est horaire vue de l'œil et
+que l'œil est au-dessus. Une assertion d'orientation ne se relit donc pas :
+elle se **rend**. Le contrôle qui tranche est `cull_back` contre
+`cull_disabled` sur le même cadre — **s'ils ne couvrent pas les mêmes
+pixels, le maillage est retourné** — et il n'a aucun seuil à régler, donc
+il vaut à toute station sur toute forme. Mesuré : 14 pixels contre
+317 646 depuis une station debout sur la colline.
+
+⚠️ **Le symptôme ne ressemble pas non plus à un enroulement, et il MENT
+DANS LE BON SENS** : les seuls triangles qui survivent sont ceux qui
+tournent le **DOS** à l'œil, c'est-à-dire le flanc lointain, vu **à travers**
+le flanc proche invisible. De trente unités ça se lit comme un dôme propre
+et ça valide la forme ; debout dessus, il n'y a plus rien. Une session qui
+n'a regardé que la vue de loin conclut que le relief marche.
+
 ### ⚠️ LE COMPTEUR DU MOTEUR NE COMPTE QUE L'OPAQUE, ET AU LOD QU'IL A CHOISI
 
 `RenderingServer.viewport_get_render_info(..., PRIMITIVES_IN_FRAME)` n'est
@@ -620,6 +682,27 @@ sont pas la même phrase, exactement comme pour le coût par fragment.
 Compatibility remplit ces compteurs sur GL de bureau ; rien ne garantit
 qu'il le fasse sous WebGL2. Un overlay qui masquerait un 0 laisserait
 croire à une frame gratuite.
+
+⚠️ **ET IL COMPTE CE QUI EST SOUMIS, PAS CE QUI EST DESSINÉ — un objet
+entièrement CULLÉ y pèse son plein tarif.** Le back-face culling est en
+aval de ce compteur. Au CH39, la crête ouest soumettait ses **1 680**
+triangles à chaque frame, en payait le coût, et n'en dessinait **aucun** :
+la ligne de sonde « and the ridge DOES cost something (a 0 would mean it
+never drew) » était **vraie** et signifiait **l'inverse** de ce qu'on y
+lisait. Un delta de primitives prouve donc qu'un objet est SOUMIS ; il ne
+prouve jamais qu'il est VISIBLE.
+
+⚠️ **Corollaire, et c'est la leçon du lot** : un objet **VISUEL** ne se gate
+pas sur de la géométrie et un compteur. Sept phases — containment,
+raccord C0, sommets, triangulation, pentes, ligne de vue, budget, traversée
+marchée — sont sorties ALL GREEN sur un relief invisible, chacune pour sa
+propre raison : celles qui raycastent lisent la **grille** (une requête ne
+sait rien du côté d'un triangle qui fait face à l'œil), celles qui comptent
+lisent le **soumis**. **Toute sonde d'un objet destiné à être VU doit lire
+au moins un PIXEL**, par une passe d'identification masquée (la cible dans
+une couleur que rien d'autre ne porte, `fog_disabled`, appartenance ssi la
+couleur revient exactement) — jamais une fenêtre, et jamais un seuil qu'il
+faudrait re-régler à chaque station.
 
 ### ⚠️ `visibility_range_end` FONCTIONNE en Compatibility — mais seulement en `DISABLED`
 
@@ -701,6 +784,14 @@ lecture du côté réel, jamais sur le commentaire qui le nomme.
 * **Toute sonde qui joue un cue audio puis quitte** doit attendre en temps
   RÉEL avant de sortir, sinon elle s'ajoute `ObjectDB instances leaked at
   exit` **après** son propre verdict et casse la comparaison byte-identique.
+* **`KartTouchInput.input.brake` posé UNE FOIS hors boucle ne tient pas** :
+  `_physics_process` le réécrit CHAQUE frame sur l'état du clavier
+  (`_brake_index < 0` → faux en headless, aucune touche pressée), donc un
+  `touch.input.brake = true` posé avant une boucle d'attente est défait
+  avant que le véhicule ne le lise. CH33, sur `SailBoatProbe` — deux
+  assertions de frein sorties fausses avant correction. Le poser DANS la
+  boucle, à chaque itération, avant l'`await` (`CoveProbe`'s propre test
+  de frein du char à voile le fait déjà ainsi).
 
 ## Doctrine de conception — ce que ce dépôt a appris en payant
 
@@ -777,6 +868,68 @@ profil ignorait la ligne devient **faux** dès que le profil la regarde (un
 balancement de ligne était gratuit, il ne l'est plus), et il inverse la
 personnalité qu'il était censé porter.
 
+### ⚠️ UN TEST DE SIGNE NE VOIT PAS QUELLE BRANCHE A TOURNÉ
+
+Mesuré au CH43, sur la passe rouge d'un garde-fou. Le contrat était « un
+glissement vers le bas sur un véhicule lancé FREINE, il ne bascule pas en
+marche arrière », et l'assertion évidente — « aucune vitesse négative avant
+l'arrêt » — est restée **VERTE sur du code dont le garde-fou avait été
+entièrement supprimé**.
+
+La raison est arithmétique et elle se généralise : les deux branches
+descendaient toutes les deux, simplement à des taux différents (le frein à
+15,0 u/s², la rampe de marche arrière à 6,0). Un véhicule sans garde-fou ne
+passe **toujours pas** négatif avant d'avoir traversé la bande — il met
+seulement deux fois et demie plus longtemps. Le SIGNE de la valeur ne
+distingue donc rien du tout, et il n'y avait rien de faux dans la mesure : elle
+répondait à une autre question que celle posée.
+
+Ce qui l'a attrapé : prédire, pour chaque frame, ce que **chacune** des deux
+branches aurait produit à partir de la vitesse d'entrée, et exiger que la
+sortie corresponde à l'une d'elles à 1e-4 près — donc classer la frame par
+l'ARITHMÉTIQUE et non par le résultat. Le même instrument encadre alors le
+seuil gratuitement (la dernière frame d'une branche et la première de l'autre),
+ce qui est comment CH43 a mesuré `REVERSE_ENGAGE_SPEED` sur le véhicule au lieu
+de le relire dans la constante — et la passe rouge le prouve : branche gatée à
+0,9 avec la constante lisant toujours 0,3, l'encadrement mesuré **s'est déplacé
+à 0,9**.
+
+**Règle** : quand ce qu'on veut prouver est « c'est CE chemin qui a tourné »,
+gater sur la valeur observable (un signe, un minimum, une distance) est un
+proxy, et un proxy qui passe gratuitement dès que les deux chemins partagent la
+direction du résultat. Prédire les deux et exiger la correspondance. Corollaire
+de sûreté : la classification doit pouvoir répondre **« ni l'un ni l'autre »**
+(compter ces frames et gater à zéro), et refuser de classer quand les deux
+prédictions sont plus proches que le bruit — sans quoi un jour où deux taux
+coïncident, chaque verdict devient un tirage au sort publié comme une mesure.
+
+### ⚠️ UNE ASSERTION SUR UNE VALEUR TENUE PEUT RELIRE L'ASSERTION PRÉCÉDENTE
+
+Seizième faux-signal du dépôt, CH43, et il vivait **dans la sonde**. Un
+`KartInput` est une valeur TENUE par conception (personne ne l'efface entre
+deux événements), et une phase qui vérifie une suite de gestes sur un même
+écrivain hérite donc, à chaque assertion, de ce que la précédente a laissé.
+La dernière vérification souris lisait un `reverse` que la vérification du
+bouton droit, deux lignes plus haut, avait laissé à 1,0 — elle est passée
+VERTE contre l'écrivain qu'elle était censée refuser.
+
+**Règle** : toute assertion sur un état TENU (un input, un drapeau de mode, un
+registre de sauvegarde) porte son propre remise à zéro **gatée** — écrire zéro
+ne suffit pas, il faut asserter qu'on l'a lu à zéro — juste avant le geste qui
+doit l'écrire. Et c'est la **passe rouge** qui a trouvé celui-ci, pas une
+relecture : une neutralisation ne teste pas seulement le correctif, elle teste
+la sonde.
+
+### ⚠️ `%e` N'EST PAS UNE CONVERSION `%` DE GDSCRIPT, ET L'ÉCHEC EST SILENCIEUX CÔTÉ APPELANT
+
+`"%.2e" % x` pousse `unsupported format character` sur **stderr** et rend une
+chaîne qui n'est pas celle qu'on a écrite — mesuré au CH43 : deux assertions
+ont imprimé le message d'une AUTRE assertion, avec leur booléen pourtant
+correct. Un rouge portant le libellé d'un autre contrôle est pire qu'un rouge
+muet : il envoie diagnostiquer la mauvaise chose. Les conversions sûres sont
+`%d`, `%f`/`%.Nf`, `%s`, `%x` — et une sortie de sonde se relit une fois pour
+vérifier que chaque libellé correspond à son test.
+
 ### ⚠️ BLIND CHECK — une assertion d'ÉGALITÉ ou d'ABSENCE doit d'abord prouver qu'elle sait VOIR
 
 « Rien n'a bougé », « aucun anneau n'est apparu », « ces deux rendus sont
@@ -790,6 +943,49 @@ ressort de la passe transparente » — contre un mécanisme qui n'avait jamais
 été câblé. **C'est littéralement pourquoi le blind check n'est pas
 optionnel.** Ordonner les phases en conséquence : le POSITIF d'abord, les
 refus ensuite.
+
+### ⚠️ UN DELTA « AVEC / SANS » NE VAUT RIEN SANS LE PLANCHER DE BRUIT DU BANC
+
+Onzième faux-vert du dépôt (CH40), et c'est le **complément exact** du blind
+check : celui-là ferme les assertions d'ÉGALITÉ et d'ABSENCE, celui-ci ferme
+les assertions de PRÉSENCE mesurées par une DIFFÉRENCE.
+
+La forme est partout dans ce dépôt : « cacher l'objet, relire la MÊME frame,
+la différence est son coût ». Mesuré : avec la passe qui plante les props
+neutralisée, la liste des nœuds à cacher était **VIDE**, donc l'étape
+« cacher » ne cachait **rien** — et le compteur bougeait quand même de
+**+64 primitives** entre deux lectures. L'assertion « l'objet coûte quelque
+chose (un 0 voudrait dire qu'il n'a jamais été dessiné) » est donc revenue
+**VERTE sur une colline nue**. Le compteur n'était pas faux ; il n'était
+simplement **branché sur rien**.
+
+Deux gardes, et il faut les deux :
+
+1. **Asserter qu'il y a quelque chose à éteindre** — `nodes.size() > 0` — au
+   même titre qu'on asserte qu'un compteur est rempli.
+2. **Publier le plancher de bruit du banc** : deux lectures de plus au même
+   poste, **rien touché**, et exiger que le delta le dépasse. Mesuré ici
+   jusqu'à **140 primitives** d'écart à la caméra haute contre un signal de
+   1 854 — sans ce chiffre, aucun delta inférieur à 140 n'est un résultat.
+
+C'est la même exigence que « publier le SPREAD à côté de la moyenne » pour
+un banc de coût de shader, et pour la même raison : **le plancher de bruit
+est la seule chose qui dise si un écart est un effet ou un artefact.**
+
+### ⚠️ UNE LISTE DE CE QUI N'EST PAS LE SUJET EST FAUSSE AU PREMIER NOM OUBLIÉ
+
+Corollaire de « un fait est publié une fois, jamais recopié », côté LECTEUR.
+Une sonde qui devait compter le décor au sol a d'abord listé les nœuds qui
+**ne sont pas** du décor pour compter tous les autres. Elle disait
+`"Butterflies"` ; le nœud s'appelle `"Butterflies1"`. Un essaim volant à
+1,06 u au-dessus de la colline a donc été compté comme du décor **enterré**,
+et la sonde est sortie rouge sur du code correct.
+
+**Le producteur publie ce qu'il a construit ; le lecteur ne le reconnaît
+jamais.** Ici `CozyScatter.batch_nodes()` rend la liste que `_flush` a
+réellement bâtie. Une liste d'exclusion est un pari sur l'exhaustivité d'un
+inventaire fait ailleurs, et elle a tort le jour où quelqu'un ajoute le
+douzième nœud — silencieusement, et dans le sens qui invente une régression.
 
 ### ⚠️ UN FIXTURE QUI DIVERGE DU RÉEL SUR UN AXE NE PROTÈGE PAS DE CET AXE
 
@@ -933,6 +1129,54 @@ qu'il prétendait défendre :
 MÉTRIQUE avant de re-régler la valeur** — et produire des **rendus offscreen
 comparatifs**, la méthode qui a fermé les deux cas.
 
+### ⚠️ UN BRAQUAGE TENU DESSINE UN CERCLE, ET UN CERCLE FINIT OÙ IL COMMENCE
+
+Écrit au CH42, et c'est une mesure de « est-il bloqué ? » qui a fabriqué
+**quatre fausses épingles** avant d'être vue. La sonde notait « bloqué » par
+la **distance au point de départ après 600 frames**. Tracé : l'échantillon
+qui « a parcouru 0,570 u en 10 s » passe 4,7 s sur son mur, se dégage,
+parcourt une boucle de **36,7 u à 352,7° de braquage tenu**, et **revient
+exactement d'où il part**. Un véhicule libre et un véhicule épinglé rendent
+alors le même chiffre.
+
+**Règle** : un run se note sur la **PREMIÈRE FRAME où il atteint un rayon
+d'échappement** — le plus loin qu'il soit allé et en combien de temps —
+jamais sur l'endroit où il se trouve quand le chronomètre s'arrête. La
+famille est plus large que le braquage : toute trajectoire bouclée (orbite,
+va-et-vient, pendule) a cette propriété, et une position finale ne distingue
+pas « il n'a pas bougé » de « il est revenu ».
+
+⚠️ **Et le corollaire a coûté deux versions de la même phase** : une moyenne
+qui décrit un ÉTAT (« sur le mur ») doit être prise **sur la fenêtre où cet
+état tient**, jamais sur le run entier. Moyennée sur tout le run — donc
+majoritairement sur la boucle libre à 6 u/s — la vitesse avant donnait un
+gain de braquage de **0,59 à 0,67**, un nombre qui dit que le véhicule braque
+parfaitement bien, pris sur les secondes où il n'est pas bloqué. **Une cause
+mesurée sur des frames qui ne sont pas une instance de l'effet n'est pas une
+cause.**
+
+### ⚠️ LE GAIN DE BRAQUAGE EST PROPORTIONNEL À `v_fwd`, DONC UN MUR SUPPRIME LA DIRECTION
+
+`VehicleDrive` fait tourner le cap à `|v_fwd| / steer_full_speed` de la
+vitesse de lacet pleine — **`v_fwd`, la composante AVANT, pas la vitesse**.
+Contre un mur, la composante avant est exactement ce que le mur mange : le
+véhicule peut glisser le long du bord à 1 u/s en n'ayant que 0,08 u/s
+d'avant, et **braque alors à 2,8 % du braquage à fond**. Mesuré au CH42 sur
+la crête ouest : 600 frames de braquage à fond, excursion maximale **1,04 u**,
+contre **59 frames** pour parcourir 4 u en terrain libre.
+
+Ce n'est **pas** un défaut de mur — le prédicat de bornage a été vérifié
+correct sur 28/28 points intérieurs et 28/28 points extérieurs — et ce n'est
+pas non plus un coin étroit : le coin est inéchappable **parce que le lacet
+y est nul**. Rien ne le signale : ni erreur, ni sonde rouge.
+
+**Conséquence permanente** : tout véhicule de ce dépôt a besoin d'un input
+qui produise une vitesse **NÉGATIVE** — c'est la seule commande qui rende de
+l'autorité de braquage contre un mur. C'est la troisième fois que ce dépôt
+paie la même arithmétique (`SandYacht._wall` étape 3, l'ordre force/`step()`
+du CH41, et ceci) ; les deux premières fois elle a été traitée comme un
+accident local.
+
 ### ⚠️ NE JAMAIS FAIRE TAIRE UNE ASSERTION QUI ÉCHOUE SUR DU CODE « CORRECT »
 
 `CabinProbe` PHASE T avait **trouvé** l'entonnoir du clamp, et le raisonnement
@@ -1031,6 +1275,65 @@ repère PARTAGÉ qu'on publie** (unités modèle), pas une position monde — si
 un rapport d'échelle 7/11 se recopie faux et ne se voit jamais, les deux vues
 n'étant **jamais à l'écran ensemble**.
 
+### ⚠️ UN POINT SOL S'ÉCRIT `(x, h, z)`, ET IL A UNE SEULE ORTHOGRAPHE
+
+Corollaire direct de la règle ci-dessus, écrit au CH37 quand le hub a
+cessé de supposer que le sol est à `y = 0`. `HubSurface.ground(flat)`
+publie le point sol ; **aucun site ne compose `height_at` avec un
+`Vector3(x, h, z)` écrit à la main**, pas plus qu'on ne recopie un rayon.
+La règle est uniforme et sans exception utile : **aucun littéral `0.0` de
+ligne de base ne survit** dans un fichier qui écrit une position au sol —
+y compris là où la valeur est morte aujourd'hui, parce que c'est
+exactement le littéral qu'un lot ultérieur oubliera.
+
+⚠️ **Et un point sol N'EST PAS un vecteur de déplacement.** Le premier
+plan de bascule gardait `_target` porteur de sa hauteur et `here` plat, en
+appelant leur différence « un delta XZ ». Ça ne tient pas : le delta gagne
+un `y`, le pas se raccourcit sur une pente — or `HOP_DISTANCE`, la
+diagonale à 66 hops et toutes les mesures de traversée de ce dépôt sont
+des distances **XZ** — et surtout **le test d'arrivée cesse de
+fonctionner** : `here` étant plat, une cible 3 u plus haut garde un
+`delta.y` de 3 pour toujours et la marche **ne se termine jamais**. Un
+delta se prend entre deux points de la MÊME nature, et une composante
+verticale qu'on ne veut pas se jette **explicitement**, jamais par
+omission. Le défaut est **inerte tant que `h ≡ 0`** : c'est précisément
+ce qui le rend invisible au lot qui l'introduit.
+
+### ⚠️ UN SOL UNLIT N'A PAS DE PENTE — le relief se lit par SILHOUETTE
+
+Mesuré au CH35-C sur 50 captures offscreen (4 buttes de même empreinte,
+15° / 30° / 45° / 48,5°, plus une mesa, SUN et RAIN). Deux résultats qui
+vont contre l'intuition :
+
+* **l'étirement 1/cos des textures est INVISIBLE à 15°, 30° et 45°** —
+  toutes les textures du sol sont des bruits ISOTROPES (patch 26 u,
+  détail 5,5, mottle 1,7, cellules 2,6), et un ×1,41 sur un bruit isotrope
+  ne se lit pas. Il devient visible vers 60-66° et gênant à 80° (rideau
+  strié) ;
+* **le vrai défaut est l'absence d'ombrage.** L'asset est unlit et rien ne
+  post-traite la frame, donc **un flanc n'a AUCUN indice de pente** : une
+  pente uniforme de 35° face caméra est indiscernable d'un sol plat, à
+  ceci près que l'horizon devient une règle droite en haut du cadre — un
+  « mur vert ».
+
+Le relief ne se lit donc QUE par (a) une crête qui se découpe sur un
+fond, (b) l'occlusion des props, (c) l'horizon qui monte. **Conséquences
+de conception, permanentes** : chaque station marchable doit voir une
+crête contre un fond ; **30° pour tout sol MARCHABLE**, 45° toléré sur des
+flancs NON marchables et courts (< 8 u de dénivelé), **> 55° INTERDIT**
+avec `cozy_ground` (une falaise exige un autre matériau ou un habillage de
+props) ; et **aucune bande de couleur ne traverse un versant** — sans
+ombrage cette ligne serait le SEUL trait du flanc, et un versant bicolore
+lit comme deux terrasses (`HubSurface.register_domain` refuse une AABB qui
+coupe une bande `CozyPalette`).
+
+⚠️ **Et le cadre figé plafonne tout ça** : à 30 u devant Keepy le plafond
+vaut ≈ 9,2 u, un sommet de 12 u n'entre dans le cadre qu'à ≈ 97 u où le
+haze est à 88 %. **Avec cette caméra, un sommet de montagne n'est JAMAIS à
+l'image** ; la masse lisible depuis un pied est de **≤ 9 u de dénivelé à
+30 u**. Et llvmpipe prouve la GÉOMÉTRIE et le CADRAGE, pas le shading
+WebGL2 de Safari iOS : les planches restent à confronter sur device.
+
 ### ⚠️ LE CADRE DU HUB EST ÉTROIT, ET C'EST LUI QUI DÉCIDE OÙ UN PROP VA
 
 `HubWorld.tscn` pose `keep_aspect = 0` (**KEEP_WIDTH**) et `fov = 45` : les
@@ -1098,6 +1401,38 @@ distance caméra : les deux stations mesurées sont sorties à **12,633 u et
 que de 5,19 à 6,50 — un asset texturé de ce hub ne peut donc **jamais** être
 agrandi, il est toujours minifié, et son seul risque est le scintillement.
 
+### ⚠️ UN GATE DE CAPTURE NE GATE RIEN DANS UN MONDE QUI CONTIENT UN ACTEUR EN MARCHE
+
+Mesuré au CH37, sur un gate que le plan du lot prescrivait explicitement
+(« `CozyCapture` 5 stations × SUN/RAIN : md5 identiques »). Les dix md5
+ont divergé entre les deux arbres — dix sur dix. Ce n'était pas une fuite :
+**deux runs du MÊME arbre, mêmes arguments, rendent deux md5 différents**,
+et le relevé chiffré de `ChaseAudit` fait pareil (**170 lignes divergent
+sur un seul arbre**, contre 272 entre deux, pendant que son VERDICT 13/0
+PASS ne bouge pas).
+
+La cause est le hub : **depuis le CH25 l'ours MARCHE** vers le feu. Sa pose
+dépend du nombre de frames réellement simulées avant la capture, donc de la
+CHARGE DE LA MACHINE, et sa pose colore le pixel central et tous les
+compteurs de frame. Mesuré : entre deux runs de la même référence l'ours se
+déplace de **1,27 u**, contre **0,17 u** entre les deux arbres — **le bruit
+est plus grand que le signal**.
+
+**Règle** : avant de lire une divergence de capture comme une régression,
+**retourner la métrique contre elle-même** — deux runs du même arbre, dans
+les mêmes conditions de charge. Un gate qui ne se reproduit pas sur un seul
+arbre ne peut rien dire de deux. Et le repli existe et est bon marché :
+`CozyCapture` imprime déjà `COZY_STATS`, qui décrit la SCÈNE (350 batches,
+4 572 instances, 341 029 triangles, la pose de Keepy, le teint du sol) et
+non les pixels — hors des champs pilotés par l'acteur en marche, il est
+**strictement déterministe**, et c'est lui qu'il faut comparer.
+
+⚠️ **Le même piège a fait diverger `CabinProbe` de 8 rouges à 2** au CH37,
+pour la seule raison que les deux runs avaient partagé la machine. Rejouée
+SEULE sur chaque arbre : **2 rouges des deux côtés, les mêmes lignes, les
+mêmes nombres.** Une sonde à séquence temporelle se rejoue à charge
+comparable, ou son verdict n'est pas comparable.
+
 ⚠️ **Corollaire de station** : ne jamais planter le point d'observation
 **SUR** le prop mesuré. Une passe de lisibilité a posé Keepy exactement au
 site, donc **DEBOUT DANS** le candidat du créneau central, qui a peint
@@ -1156,6 +1491,46 @@ Le patron, et il est réutilisable tel quel :
 un défaut que personne n'avait cherché : l'anneau de dépôt de fin de trajet
 (`_ride_exit_point`, qui **jette** tout candidat hors région) avait tout son
 arc nord amputé à P2 — un rider ne pouvait être déposé que côté plateau.
+
+### ⚠️ UN LOBE SUR UN BORD NE COÛTE RIEN ; UN RECTANGLE SUR UN BORD, SI
+
+Précision d'une doctrine déjà écrite, payée au CH38. « Un lobe bolté près
+d'un BORD n'ajoute aucune longueur à une diagonale entre COINS » est vrai
+d'un **disque centré SUR le bord** — la moitié intérieure ne sert à rien,
+et la pointe extérieure reste plus près des coins opposés que ces coins ne
+le sont entre eux. Ce n'est **pas** vrai d'un **rectangle** accolé au même
+bord : ses deux coins extérieurs deviennent la nouvelle pire paire, et le
+coût grandit avec sa largeur, pas avec sa surface.
+
+Mesuré : un rectangle de 28 u accolé au bord ouest du carré porte la pire
+traversée de **18,700 s à 20,967 s** ; le même à 36 u de large sort à
+**22,383 s**, au-dessus des 22 s que le hub se tient. Le plafond de
+traversée est donc ce qui **cape la largeur d'une extension de bord** — et,
+en cascade, la HAUTEUR de tout relief qu'on y pose, une pente marchable
+n'étant qu'un rapport entre les deux.
+
+**Règle** : toute extension de région se price sur ses **coins**, contre le
+coin le plus éloigné de la région existante, avant que sa forme soit
+dessinée — et le chiffre se **marche** ensuite sur le vrai hopper, jamais
+seulement au ratio s/u. Corollaire du même lot : la marche a reproduit la
+diagonale publiée **à la frame près** (1 122 frames, 18,700 s), ce qui est
+la seule chose qui donne au banc le droit de publier le chiffre neuf.
+
+### ⚠️ DEUX BOSSES QUI SE RECOUVRENT ADDITIONNENT LEURS GRADIENTS
+
+Un relief composé de plusieurs bosses ne se gate pas bosse par bosse. Deux
+cosinus surélevés dont les supports se chevauchent additionnent leurs
+**pentes** là où ils se croisent, et le résultat dépasse chacun d'eux :
+mesuré au CH38, une bosse à 23° et une à 17° ont rendu **33,0°** dans leur
+recouvrement — au-dessus du plafond de 30° que CH35-C fixe pour un sol
+unlit, alors que les deux prises isolément passaient largement.
+
+**Règle** : une pente se mesure sur les **triangles réellement dessinés**
+de la grille assemblée, jamais sur la fonction analytique d'une bosse ni
+sur la somme de leurs maxima. Et si la silhouette veut deux sommets, ils
+s'écartent : au CH38 la seconde bosse a fini à 12,04 u de la première, la
+distance à laquelle son gradient ne rencontre plus celui de la grande. Un
+budget de pente dépensé dans un recouvrement n'achète aucune silhouette.
 
 ### ⚠️ UN APPUI PARTAGÉ NE VEUT PAS DIRE UNE POSE PARTAGÉE
 
@@ -1229,10 +1604,30 @@ lorsque le joueur doit **se déplacer librement** en haut.
 ⚠️ **Et c'est la CAMÉRA qui plafonne un ride vertical, pas la géométrie.**
 `HubCamera` suit le point SOL de Keepy et ne monte jamais (voir
 `HubCamera.OFFSET`) : le rayon haut du cadre croise son aplomb à
-**y = 6,96 u**. Avec la tête à 1,7 u au-dessus du siège, un siège à plus de
-**4,85 u** sort la tête du cadre. Huit arbres pourtant grimpables ont été
-exclus pour cette seule raison, et la réponse à « je veux ceux-là aussi »
-est une caméra qui monte — c'est-à-dire un autre lot.
+**y = 7,968 u** (`HubCamera.FRAME_TOP_AT_APLOMB`, mesuré). Avec la tête à
+1,7 u au-dessus du siège et 0,4 u de marge, un siège à plus de **5,868 u**
+sort la tête du cadre — et la réponse à « je veux plus haut que ça » reste
+une caméra qui monte, c'est-à-dire un autre lot.
+
+⚠️ **CE PLAFOND A VALU 6,96 u PENDANT DEUX LOTS, ET C'ÉTAIT FAUX DE
+1,008 u** (corrigé au CH36, mesuré deux fois). La ligne disait
+`y = 7,6 − 8,9 · tan(40,5° − 36,4°)`, où 40,5° = `atan(7,6/8,9)` est le
+tangage qu'aurait une caméra qui **REGARDE** le point-sol de Keepy.
+`HubCamera` est à **rotation FIXE** et la scène lui donne **34,0°**
+(`asin(0,55919)`, `HubWorld.tscn`) : 34,0° est **plus petit** que le
+demi-angle vertical (36,37° à 1080×1920 en `KEEP_WIDTH`), donc le rayon
+haut sort de l'objectif **vers le haut** et le signe du terme s'inverse.
+Le `SEAT_MAX_Y` qui en dérivait excluait **6 arbres** parfaitement
+cadrables (11, 15, 41, 42, 45, 47 — re-admis au CH36, rendus à l'appui).
+
+**Règle** : une constante de cadrage se **RELIT sur la caméra livrée**
+(`unproject_position` en bissection, confirmée par `project_position`),
+jamais recalculée depuis un angle écrit à la main — une forme fermée qui
+suppose un `look_at` inexistant est juste au signe près et **ne se
+signale jamais**. Et une constante que rien ne relit survit aux lots :
+celle-ci n'était gatée par **aucune** sonde. `FrameCeilingProbe` la relit
+désormais à chaque run, et gate au passage la tête de chaque arbre
+grimpable.
 
 ### ⚠️ UN NOEUD PORTEUR NE PORTE JAMAIS L'ÉCHELLE DE L'INSTANCE QU'IL REPRÉSENTE
 
@@ -1283,6 +1678,314 @@ au lieu de le déplacer.
 une autre. (Même famille de piège que « la couleur qu'un `.glb` porte est
 littéralement celle qui s'affiche » : depuis la suppression du grade plein
 écran, rien ne post-traite la frame.)
+
+### ⚠️ UNE FORCE INJECTÉE AVANT `step()` GÈLE LE VÉHICULE FACE À LA MONTÉE
+
+Trouvé au CH41 sur le premier véhicule à rouler sur une pente, et c'est une
+**correction mesurée** à ce que `docs/lots/CH35_MULTI_ALTITUDE.md` Q2
+prescrivait noir sur blanc (« pente = force injectée dans `velocity` AVANT
+step »). Mesuré : **0,000 u/s et 0,00 u parcourus en 240 frames**, à l'arrêt
+face au flanc le plus raide.
+
+Le mécanisme n'est dans aucune constante. La force rend `v_fwd` **négatif**
+avant que `VehicleDrive` ne le regarde ; le modèle prend alors sa branche
+« reversing and the throttle comes back » — `move_toward(v_fwd, 0.0,
+brake_decel * delta)` — qui ramène le recul à **exactement zéro et jamais
+au-delà** ; la branche d'accélération n'est **jamais atteinte** ; et à
+vitesse nulle ce modèle ne donne **aucune autorité de braquage** (son
+`ratio`). Un joueur garé sur un flanc, sans direction et sans sortie :
+**c'est le blocage de `SandYacht._wall` étape 3, atteint par l'ordre des
+opérations au lieu d'un mur.**
+
+**Règle** : une force extérieure se compose **APRÈS** `step()`, dans la
+vélocité que le modèle vient d'écrire — ce que `SailBoat` fait déjà pour son
+échouage (« appliquée à la vélocité APRÈS step(), jamais un clamp de
+position »). Rien d'autre ne bouge : la vitesse terminale reste
+`cap + force / off_lambda` dans les deux ordres, et le coût est **une frame
+de retard**, soit 0,17 u/s sur le sol le plus raide de cette carte.
+
+⚠️ **Corollaire, et il se gate** : au repos le modèle offre
+`cap × accel_lambda` d'accélération et la pente pousse
+`gain × g·sinθ·cosθ`. Si la seconde l'emporte, le véhicule ne peut pas
+quitter l'arrêt en montée **quel que soit l'ordre**. Les deux se publient
+par accesseur et l'inégalité se gate sur la pente la plus raide que la
+surface possède réellement (`SledBody.climb_authority()` / `slope_force()` :
+10,53 contre 13,60, 77 % utilisés). Un réglage de feeling qui la casse
+échoue bruyamment au lieu d'expédier une colline piège.
+
+### ⚠️ UNE JAMBE DE MESURE A/B CHANGE DE RÉGIME EN COURS DE ROUTE
+
+Une comparaison symétrique (descente contre montée, avec contre sans) est
+juste **tant que chaque jambe reste dans le régime qu'elle prétend
+mesurer**. Mesuré au CH41 : la jambe « montée » à 240 frames a rendu
+**19,597 u/s, PLUS RAPIDE que la descente**. Le chiffre n'était pas faux —
+en 4 s la luge avait grimpé le flanc, **franchi le sommet** et dévalait
+l'autre versant. La lecture était honnête et répondait à une autre question.
+
+**Règle** : toute jambe d'un couple A/B publie la grandeur qui la définit
+**aux DEUX bouts**, et la phase gate que son SIGNE n'a pas basculé. Sortir
+du régime par le bas (atteindre le plat) n'est pas un basculement ; devenir
+l'autre régime en est un. Sans ce garde, un banc symétrique peut rendre
+exactement l'inverse de son résultat et rester crédible.
+
+### ⚠️ UN DELTA SOUS SON PLANCHER DE BRUIT N'EST PAS UNE MESURE NON PLUS
+
+Moitié manquante de la doctrine CH40 (« un delta sans son plancher ne vaut
+rien »). Mesuré au CH41 : un prop de **60 triangles** relu par la méthode
+« cacher et relire » rend **+640 primitives** à une station dont le
+tremblement propre vaut **340** — et **exactement +60** aux onze stations
+sur seize où le compteur est **parfaitement immobile**. Le hub dérive de
+quelques centaines de primitives entre deux frames intouchées (papillons,
+précipitations, critters) : une balance aussi bruyante ne peut pas peser 60
+triangles.
+
+**Règle** : le coût se lit **là où l'instrument est immobile**, la mesure
+est gatée **par station** contre le tremblement **de cette station**, et les
+stations bruyantes sont **imprimées et laissées en dehors du gate** — avec
+la raison écrite. Un gate global (pire delta contre pire tremblement) est
+soit gratuit, soit faux.
+
+### ⚠️ UN TEST D'ENROULEMENT CONTRE UN CENTRE DE MASSE SUPPOSE LA CONVEXITÉ
+
+« La normale sortante est celle qui s'éloigne du milieu » est vraie d'une
+pièce convexe et **fausse d'un assemblage**. Mesuré au CH41 : la première
+sonde a déclaré **46 triangles sur 60** mal enroulés sur un mesh que le
+rendu venait de prouver juste au pixel (`cull_back` et `cull_disabled`
+couvrant les **mêmes 13 190 pixels**) — le dessous de la plate-forme et les
+flancs intérieurs des patins pointent tous vers le milieu de l'assemblage.
+
+**Règle** : chaque **pièce convexe** est testée contre **son propre** centre,
+et le groupement est **publié par le constructeur** (`PIECE_TRIS`,
+`PIECE_COUNT`) puis **asserté** par la sonde, jamais deviné. Et le rendu
+`cull_back` contre `cull_disabled` reste le juge : c'est lui qui a tranché
+ici, parce que le shader décor est `cull_disabled` et qu'une coque à
+l'envers y serait **invisible en tant que défaut**, en sandbox comme sur
+device.
+
+### ⚠️ UN DÉMONTAGE DE PORTEUR QUI SAUTE N'ÉMET NI `became_idle` NI `carrier_dismounted`
+
+`KeepyHopper.leave_carrier()` pose `_has_target = false`, et `_advance()` —
+seul émetteur de `became_idle` — **sort à sa première ligne** quand il n'y a
+pas de cible. Un démontage qui parcourt une distance n'émet donc que
+`hop_landed` ; `carrier_dismounted` n'est émis que par la branche de
+**distance nulle**. Une sonde qui attend `became_idle` après un
+`leave_carrier` **expire** pendant que le personnage est bel et bien revenu
+sur ses pieds. Constaté au CH41 ; partagé par le char à voile et le voilier,
+**signalé et non corrigé** (le changer toucherait deux conduites validées
+device). Lire l'ÉTAT (`is_on_carrier` / `is_hopping`), pas le signal.
+
+### ⚠️ UNE SONDE QUI NE COMPARE CHAQUE CHOSE QU'À ELLE-MÊME NE PEUT PAS VOIR QUE DEUX CHOSES SE RESSEMBLENT
+
+CH46 est sorti **69 assertions vertes** sur une minimap que Mathieu, device
+en main, n'a pas su lire. Les 69 étaient vraies. Le défaut n'était dans
+aucune d'elles : il était dans ce qu'**aucune** ne demandait. Chaque
+marqueur était comparé **à sa propre teinte**, jamais à celle d'un autre
+type — et deux des quatre types partageaient **la même cellule d'atlas**,
+disque de rayon 3,9, au pixel près. Une sonde qui pose à chaque objet la
+question « es-tu bien toi-même ? » répond oui à un jeu d'objets
+identiques.
+
+**Règle** : dès qu'un contrat porte sur le fait que N choses sont
+DISTINCTES — quatre marqueurs, trois états d'un HUD, deux poses — c'est la
+matrice des **N(N−1)/2 paires** qui se gate, et elle se **publie en
+entier**. Un seul « écart minimum » cache quelle paire est la faible, et
+c'est toujours celle-là qui casse la prochaine fois.
+
+⚠️ **Et la séparation se mesure en COUVERTURE, jamais en TON.** Ce dépôt
+documente déjà que le WCAG ne score aucune séparation à l'intérieur d'une
+bande de luminance et qu'aucune sonde d'ici ne mesure la teinte : une
+distinction à quatre par la couleur est condamnée d'avance sur ce sol.
+Ce qui se mesure est **quelle part de sa boîte une icône encre**, lue
+comme une DIFFÉRENCE contre une frame où la chose a été **retirée** de la
+scène — ce qui rend le nombre indépendant du ton de l'objet ET du fond
+sous lui. Un test de ton absolu mesure le fond autant que l'objet.
+
+### ⚠️ UN MARQUEUR POSÉ SUR UN CONTRÔLEUR N'EST PAS POSÉ SUR CE QU'IL REPRÉSENTE
+
+`HubBoar`, `HubCat`, `HubFawn`, `HubBeaver` sont des **nœuds vides** qui
+construisent l'animal et ne bougent jamais de l'origine du monde ; la bête
+est leur enfant `HubCritter`. CH46 y a écrit `mark(self)`. Résultat mesuré
+sur 900 frames simulées : **sept des neuf marqueurs PNJ épinglés sur
+(0, 0, 0)**, sous le marqueur du joueur, pendant toute la session — sans
+erreur, sans sonde rouge, et **au pixel ça ressemble à un marqueur**.
+
+**Règle** : tout enregistrement dans un registre — groupe de carte, liste
+de sauvegarde, table d'émetteurs — qui prend `self` dans un fichier où
+`self` est un contrôleur enregistre **le mauvais nœud**. Inscrire le corps
+qui BOUGE, à son site de construction, et le gater : quel nœud porte
+l'inscription n'est pas une propriété DESSINÉE, donc **aucun pixel ne peut
+la voir** et l'assertion doit être structurelle et se dire structurelle.
+
+⚠️ **Corollaire de méthode** : deux lectures d'un monde **byte-identiques**
+à 900 frames d'écart ne prouvent pas qu'il est stable — elles passent
+gratuitement contre un monde qui n'a jamais tourné. Publier un **témoin**
+(compteur de frames, horloge, état d'un acteur censé bouger) avec les deux
+lectures, sinon « rien n'a bougé » et « rien ne tourne » se lisent pareil.
+
+### ⚠️ UN SEUIL ÉCRIT EN « CELLULES » CESSE DE SÉPARER QUOI QUE CE SOIT LE JOUR OÙ LA CELLULE GRANDIT
+
+CH46 excluait un marqueur de son test de rendu quand un marqueur dessiné
+après lui était « à moins d'`ICON_PX` » — juste, parce que sa cellule
+d'atlas **était** son encre. CH47 a porté la cellule de 14 à 25 px pour y
+loger quatre tailles d'icône : le même seuil a alors exclu **les quatorze**
+marqueurs de lieux, et la phase est sortie **0 sur 0**, c'est-à-dire le vert
+le plus vide qui soit.
+
+**Règle** : un seuil de test s'écrit dans l'unité de **ce qu'il mesure**
+(ici l'encre réellement dessinée, relue sur l'atlas cuit), jamais dans
+celle du conteneur qui la porte. Et tout test « tous ceux qui restent
+passent » se double d'un garde **`tried > 0`** — c'est ce garde, écrit par
+CH46 pour une autre raison, qui a attrapé celui-ci.
+
+### ⚠️ UNE IMAGE MULTICOLORE NE PEUT PAS SIGNER UN CONTRAT DE CONTRASTE — À AUCUNE DÉSATURATION
+
+Écrit au CH48, sur un balayage complet et non sur un raisonnement. Le brief
+demandait la désaturation minimale des aplats qui laisserait des vignettes
+en couleurs réelles atteindre le plancher de 3,0:1. Balayé de w = 0,0 à
+w = 1,0 — bandes lavées jusqu'au **blanc pur** — **la pire vignette ne
+dépasse jamais 2,6 % de son encre au-dessus du plancher.**
+
+Ce n'est pas le lavage qui échoue. **Un RATIO de contraste est un ton contre
+un ton** ; un blaireau a une fourrure blanche ET un masque noir, et quelle
+que soit la luminance d'une bande, l'un des deux en est proche. 3,0:1 est un
+contrat qu'un **aplat** d'icône peut signer et qu'une **photographie** ne
+peut pas.
+
+**Règle** : dès qu'un marqueur porte une IMAGE plutôt qu'un ton, le plancher
+de contraste est porté par une pièce d'un seul ton — un plateau sombre, un
+contour noir — et l'image n'a plus à franchir que **cette pièce**, qui est un
+ton fixe connu. Mesuré au CH48 : plateau `(0,07 ; 0,08 ; 0,09)`, L = 0,0070,
+pire ratio **4,38:1** contre les huit bandes peintes ; de 47,2 % à 100 % de
+l'encre de chaque vignette franchit ce plateau.
+
+⚠️ **Et le contour doit rester NOIR même quand on veut y mettre une couleur
+de rang.** CH48 a d'abord donné au plateau UN liséré, dans le ton du type ;
+les tons de rang 1 sont CLAIRS par construction (0,8392 et 0,6476) et les
+bandes de ce hub aussi, donc **43 échantillons de périmètre sur 68 sont
+tombés sous 3,0:1**. La couleur du rang va **à l'intérieur** d'une keyline
+noire, jamais à sa place.
+
+### ⚠️ DÉSATURER À CLARTÉ CONSTANTE EST NEUTRE EN CONTRASTE — C'EST DE L'ARITHMÉTIQUE
+
+Le WCAG note la **luminance relative**. Tirer une couleur vers son propre
+gris ne la déplace donc quasiment pas : mesuré sur `GRASS_A`, **L 0,4717 à
+saturation pleine, 0,4491 en gris complet**. Une demande de « désaturer pour
+que les marqueurs ressortent » est une demande sur la **CHROMA**, pas sur le
+contraste, et les deux se règlent par deux leviers différents.
+
+**UNE seule opération sert les deux** : un lavage **vers le blanc**.
+`lerp(c, blanc, w)` laisse à une bande exactement **(1 − w)** de sa chroma ET
+lui monte la luminance. Le réglage se dérive alors par deux bornes mesurées :
+
+* **plancher** — la bande la plus criarde ne doit plus crier plus fort que la
+  chroma moyenne des marqueurs (`w ≥ 1 − chroma_marqueurs / chroma_bande`) ;
+* **plafond** — la paire de bandes que le plan sépare PAR LE TON la plus
+  serrée doit rester au-dessus de la limite de résolution du plan (son propre
+  saignement d'alpha : `w ≤ 1 − bleed / d_min`).
+
+Au CH48 : `[0,3382 ; 0,6545]`, et le lot livre le plancher.
+
+⚠️ **Et une paire déjà sous le saignement AVANT le lavage n'est pas de son
+fait** : `GRASS_A`/`LAWN_A` sont à 0,0640 pour un saignement de 0,08 — ces
+deux bandes n'ont **jamais** été séparées par le ton, c'est la haie tracée
+entre elles qui le fait. L'exclure **par son nom** et asserter qu'elle reste
+la plus serrée, sinon une SECONDE paire tombée sous le seuil se cache
+derrière elle.
+
+### ⚠️ UNE MÉTRIQUE D'AIRE NE SÉPARE PAS DEUX IMAGES, ET NE PEUT PAS NOMMER UNE TAILLE
+
+Deux faits mesurés au CH48, sur la métrique que CH46 et CH47 avaient rendue
+canonique (`|couverture(A) − couverture(B)|`) :
+
+1. **Elle lit ~0 pour deux glyphes de même gabarit**, quelles que soient les
+   images dedans — et **0,0000 pour deux glyphes IDENTIQUES, en appelant ça
+   une réussite**. Une aire scalaire ne distingue pas deux images, seulement
+   deux empreintes. La remplacer par une couverture de **DÉSACCORD** : quelle
+   part de la boîte les deux cartes d'encre ne partagent pas, chacune lue
+   contre sa propre ligne de base. Mesuré au CH48 : 0,0230 sur la métrique
+   d'aire contre **0,5721** sur le désaccord, pour la même paire.
+2. **Elle ne dégrade pas avec la taille — elle EMPIRE quand l'icône
+   grandit** (pire paire 0,551 à 16 px contre 0,483 à 64 px : à 16 px une
+   plus grande part de la boîte est du bord, où deux sujets diffèrent).
+   **Un critère qui s'améliore quand l'image rétrécit ne peut pas nommer une
+   taille minimale**, et le dire fait partie du résultat.
+
+Ce qui dégrade monotoniquement, c'est **ce qui survit au
+sous-échantillonnage** : descendre à S, remonter, comparer au rendu de
+référence. Le barreau se choisit alors sans seuil inventé — **le dernier qui
+rende encore au moins la moitié de ce que rendait le premier pixel**.
+
+### ⚠️ UN GLYPHE POSÉ SUR UNE POSITION FRACTIONNAIRE PERD SES DÉTAILS DE 1 À 2 PIXELS
+
+CH47 en connaissait la moitié (« le cœur pleinement opaque du point fait
+neuf pixels AVANT le placement sous-pixel du widget », et sa sonde en a lu
+quatre). CH48 l'a retrouvé par l'autre bout : un anneau de 2 px **culminait
+à 0,835 de son ton au lieu de 1,000** sur les seuls glyphes dont la position
+était fractionnaire, et la sonde a lu **ZÉRO** pixel du ton sur quatre
+d'entre eux alors que l'anneau était parfaitement visible sur la capture.
+
+**Règle** : tout glyphe d'atlas dessiné 1:1 se pose sur un **pixel entier**
+(`.round()` sur l'origine du rect). Le coût est au plus un demi-pixel de
+position ; le gain est que chaque détail de 1 à 2 px — un contour, un
+liséré, la keyline qui porte le contrat de contraste — rend à pleine
+intensité. Sans quoi c'est l'ASSERTION qui est réglée sur l'artefact, et
+c'est le mauvais bout.
+
+### ⚠️ UNE PROPRIÉTÉ LUE AU BAKE EST PÉRIMÉE POUR TOUT CE QUI ARRIVE APRÈS
+
+Un atlas cuit à la première frame ne peut pas porter une information qui
+dépend de l'arbre construit, parce que l'arbre n'a pas fini de se construire.
+Mesuré au CH48 : la couleur de type cuite dans chaque portrait a laissé
+**quatre entités** — celles qui rejoignent leur groupe après le bake — avec
+le liséré NOIR de repli, et la sonde l'a lu comme « 0 px du ton », sur une
+carte par ailleurs juste.
+
+Un repaint-sur-changement referme le symptôme et se re-gagne à chaque fois
+que l'ordre de construction bouge. **La parade est de sortir l'information
+de la cellule** : la cuire en BLANC dans une cellule à elle et la teinter au
+`modulate` **au moment du dessin**, là où la question a toujours une réponse
+juste. Ça coûte un quad de plus par glyphe, de la même texture, donc rien en
+draw calls.
+
+### ⚠️ UN BAKE OFFSCREEN SE HEURTE À TROIS TERMES DE DISTANCE, PAS UN
+
+Photographier une entité du monde construit pour en faire une vignette
+paraît neutre. Au CH48, une seule assertion — « le même sujet vu de 5 u et
+de 9 u est une seule image » — est sortie **ROUGE sur 17 sujets sur 22**, et
+il a fallu **trois** causes distinctes pour la refermer :
+
+1. **le monde n'était pas figé** (les acteurs bougent : deux prises à
+   quatre frames d'écart sont deux poses) ;
+2. **`visibility_range_end` est un cull de DISTANCE** — un sujet
+   photographié au-delà du sien n'est pas une image sombre, c'est **aucune
+   image** ; à lui seul, 16 rouges sont tombés à 6 ;
+3. **`haze` et `rim` sont deux vrais termes de distance du rendu livré**
+   (`rim` reconstruit un vecteur de vue depuis `VIEW`, qui reste positionnel
+   **même sous une caméra orthographique**).
+
+**Règle** : un bake d'entité se prend à la **distance propre de la caméra du
+jeu** (`HubCamera.OFFSET.length()`, 11,7034 u — la seule distance d'où un
+joueur voit quoi que ce soit sur ce plateau), le monde **figé**, les culls de
+distance neutralisés, et ce qu'on choisit de couper est **énoncé** plutôt que
+subi. Corollaire : le `TIME` d'un shader **n'est pas arrêté par
+`SceneTree.paused`** — une voile en mouvement faisait différer deux prises
+d'un canal entier (pic 1,000).
+
+### ⚠️ UN OUTIL QUI ÉTIQUETTE SES SUJETS PAR « PARENT/CLASSE » PEUT SE COLLISIONNER, ET LA COLLISION SE LIT COMME UNE MESURE
+
+CH46 avait déjà noté que cinq des marqueurs du hub n'ont **aucun nom**
+(`@Node3D@228`). Le repli naturel — « parent/classe » — a fait porter à
+l'ours et au blaireau **la même étiquette** ; la seconde prise a écrasé la
+première dans le dictionnaire, et la matrice de séparation a rapporté la
+paire à **0,0000** : deux maillages de 5846 et 5623 triangles déclarés
+identiques parce qu'ils étaient la même image stockée. **Un défaut d'outil
+qui ressemble exactement à une trouvaille.**
+
+**Règle** : tout outil qui indexe des sujets par étiquette **asserte
+l'unicité de ses étiquettes** avant de publier quoi que ce soit, et le repli
+pour un nœud anonyme est son **fichier de scène** (`scene_file_path`), la
+seule identité qu'il porte encore.
+
 
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
@@ -1397,6 +2100,83 @@ Lande (2) : deux **tables** (`BRANCH_OF`, `BRANCH_GATE`) et une règle
 second embranchement est une ligne ; **une zone qui pendrait d'une
 branche** demanderait un vrai parcours d'arbre, et c'est là que la table
 cesse de suffire.
+
+### ⚠️ `draw_circle` NE SE BATCHE PAS ; UN ATLAS UNIQUE BATCHE TOUT, FOND COMPRIS
+
+CH44 avait mesuré un `Control._draw` de minimap à **+2 619 primitives et
++43 draw calls pour 40 marqueurs** et nommé la cause : `draw_circle` émet
+une commande POLYGONE, et un polygone ne se batche pas — **un draw call PAR
+MARQUEUR**, linéaire en nombre et sans rapport avec la surface couverte.
+
+CH46 a mesuré l'autre bout, sur le même banc et dans le même run (même
+scène, même fond, seul le type de commande change) :
+
+| approche | Δ `engine_total_prims` | Δ `engine_total_calls` |
+|---|---|---|
+| **atlas** — 1 quad de fond + 37 marqueurs en `draw_texture_rect_region`, **une seule texture** | **+76** | **+1** |
+| **cercles** — le même quad de fond + 37 `draw_circle` | **+2 370** | **+38** |
+
+**UN seul draw call pour toute une carte, fond compris.** Le renderer canvas
+coalesce des quads consécutifs qui partagent texture, matériau et type de
+primitive ; le nombre de marqueurs devient gratuit. Le corollaire de
+conception : **le fond va DANS l'atlas**, pas dans une seconde texture — une
+image supplémentaire coûte un batch de plus à elle seule.
+
+⚠️ **Et la teinte par marqueur est gratuite** : l'argument `modulate` de
+`draw_texture_rect_region` est une couleur de SOMMET, il ne casse pas le
+batch. Ce qui le casse, c'est changer de texture, ou insérer un
+`draw_set_transform`.
+
+### ⚠️ `modulate` MULTIPLIE — UN CONTOUR NOIR SURVIT À N'IMPORTE QUELLE TEINTE
+
+Corollaire de l'entrée ci-dessus, et il répond **par construction** à un
+problème que ce fichier documentait comme non gaté (« le WCAG ne score
+AUCUNE séparation À L'INTÉRIEUR d'une bande, et aucune sonde du dépôt ne
+mesure la teinte »).
+
+Une icône cuite en **forme BLANCHE à contour NOIR** et teintée par
+`modulate` rend un remplissage de la couleur voulue **et un contour resté
+noir** : `noir × couleur = noir`, quelle que soit la couleur. Un marqueur
+garde donc une arête sombre franche contre l'herbe, le sable, la bruyère,
+la pelouse ou la mer — sans une seule décision de contraste par type et
+sans table de tons à maintenir.
+
+⚠️ **Ça ne dispense PAS de mesurer les tons entre eux.** Un marqueur joueur
+crème `(1,00 ; 0,99 ; 0,90)` rend à **0,03** du trait de circuit d'une
+minimap `(0,97 ; 0,96 ; 0,87)` : le contour noir sauve la lisibilité de la
+FORME, pas la lecture du TYPE. Trouvé par le balayage aveugle d'une sonde,
+pas par relecture, et corrigé en déplaçant le ton (jaune chaud, 0,71 d'écart
+en bleu).
+
+### ⚠️ UNE FRONTIÈRE EST DEUX CHOSES : UN TRAIT, ET LE REMPLISSAGE QU'IL SÉPARE
+
+**DIX-SEPTIÈME faux-vert du dépôt, CH46, et il était dans la sonde du lot.**
+
+La minimap doit dessiner les frontières de zone **peintes**
+(`CozyPalette.*_EDGE_Z`) et non les **logiques** (`HubRegion.*_MAX.y`), qui
+en diffèrent de 2 à 4 u. La sonde lisait, dans une colonne rendue, le plus
+grand saut de couleur autour du z attendu, le reconvertissait en z monde et
+le comparait aux deux candidats. Verte, précise, avec des chiffres au
+centième.
+
+La passe rouge a réécrit la fonction de teinte pour mélanger ses **bandes**
+sur les bords logiques — la substitution exacte que le contrat interdit — et
+la phase est ressortie **ALL GREEN, 0 rouge**. Parce que le saut mesuré
+n'était pas le changement de bande : c'était le **TRAIT** sombre tracé
+séparément au z peint, que la neutralisation n'avait pas touché.
+
+**Règle** : quand une limite est dessinée à la fois comme un trait et comme
+un changement de remplissage, les deux se gatent **séparément** — et on le
+prouve en neutralisant chacun des deux à son tour, en exigeant que la passe
+rouge de l'un laisse les assertions de l'autre **vertes**. Deux passes qui
+ne se recouvrent pas, c'est la preuve que les deux moitiés sont réellement
+couvertes ; une seule passe qui rougit tout ne distingue rien.
+
+⚠️ **Généralisation, parce que la forme se reverra** : ce que le joueur lit
+d'un coup d'œil est presque toujours le REMPLISSAGE (une aire, une teinte,
+une silhouette), et ce qu'une sonde trouve le plus facilement est le TRAIT
+(un maximum local, un gradient, une arête). Gater le second en croyant tenir
+le premier est un faux-vert qui a l'air d'une mesure fine.
 
 ## Piège payload — `export_filter="all_resources"` embarque TOUT
 
@@ -1603,7 +2383,9 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH27 | Karting — lot 1 (circuit, conduite libre, chrono) et **lot 2** (V8 : HUD conduite centré, trois adversaires IA à personnalités, course à feux, classement, collisions, piste à 10 u, chat/castor/faon à la masse de Keepy — récit dans `docs/CARTE_BLANCHE_JOURNAL.md`, section « V8 — KARTING LOT 2 ») | [`CH27_KARTING_LOT1.md`](docs/lots/CH27_KARTING_LOT1.md) | 8 | 170 | 5 sept |
 | CH29 | La Crique — cinquième zone à l'est de la Lande (couloir piéton, porte (41, −96)), mer, phare, châteaux de sable qui fondent sous la pluie, phare qui s'allume, ligne de montgolfière Corail plateau → Crique, **char à voile** (glisse libre au sol, vitesse au vent), `WorldSave` schéma 2 avec migration, graphe des zones en arbre, terrier + `ModelSlot` inerte pour un futur habitant | [`CH29_CRIQUE.md`](docs/lots/CH29_CRIQUE.md) | 1 | — | 5 → 6 sept |
 | CH30 | Conduite unifiée — la difficulté du karting **mesurée** avant d'être touchée (`RaceBalanceProbe` : la laisse est inerte, `a_lat` sature sur la limite de braquage, l'échelle est compressive), trois presets `KartDifficulty` calibrés sur un plancher mesuré et commutables derrière `?keepydev=1`, relevé dev des tours ; extraction de `VehicleDrive` prouvée **byte-identique** par `KartTraceProbe` sur les deux arbres ; **char à voile piloté en continu** avec la caméra de poursuite, garde circuit ; `ChaseAudit` (160 frames, 5 zones × 8 azimuts × 4 météos) et les deux défauts qu'il a trouvés | [`CH30_CONDUITE.md`](docs/lots/CH30_CONDUITE.md) | 5 | 431 | 6 sept |
+| CH39 | Le relief invisible — diagnostic avant correctif : les cinq hypothèses du brief tranchées une par une, puis la **cause prouvée à variable unique** (le treillis de la crête était enroulé à l'envers, `cull_back` jetait toute la colline, 14 pixels contre 317 646), le **dixième faux-vert** nommé sur cinq mécanismes empilés, et `MountainProbe` PHASE G — un gate de PIXELS sans seuil | [`CH39_RELIEF_DIAGNOSTIC.md`](docs/lots/CH39_RELIEF_DIAGNOSTIC.md) | 1 | 181 | 7 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
+| CH37 | Socle multi-altitude, LOT 1 SURFACE — `HubSurface` publié (requête pure au patron `HubWater`), `ground(flat)` comme orthographe unique du point sol, grille float32 refusée sinon, raccord C0 exact au périmètre, AABB disjointes, aucune bande `CozyPalette` traversante ; six vagues branchées (marche, caméra, tap, retours au sol, pluie/ombre) et **zéro domaine enregistré en jeu**, donc un no-op arithmétique prouvé sur les deux arbres ; `SurfaceProbe` phases A → G avec blind check en tête de chaque phase | [`CH37_SURFACE.md`](docs/lots/CH37_SURFACE.md) | 1 | — | 7 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

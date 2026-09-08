@@ -1,4 +1,4 @@
-[gd_scene load_steps=34 format=3]
+[gd_scene load_steps=36 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -21,6 +21,8 @@
 [ext_resource type="Script" path="res://scripts/hub/kart/KartHud.gd" id="27"]
 [ext_resource type="Script" path="res://scripts/world/ModelSlot.gd" id="7"]
 [ext_resource type="Script" path="res://scripts/hub/HubCove.gd" id="28"]
+[ext_resource type="Script" path="res://scripts/hub/HubMountain.gd" id="29"]
+[ext_resource type="Script" path="res://scripts/hub/HubMinimap.gd" id="30"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
 [ext_resource type="PackedScene" path="res://scenes/HubPortal.tscn" id="9"]
 [ext_resource type="PackedScene" path="res://assets/models/keepy_squirrel_hero.glb" id="10"]
@@ -125,6 +127,9 @@ render_target_update_mode = 4
 [node name="WorldEnvironment" type="WorldEnvironment" parent="WorldViewport/SubViewport/World"]
 environment = SubResource("Environment_Hub")
 
+[node name="Mountain" type="MeshInstance3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("29")
+
 [node name="Ground" type="MeshInstance3D" parent="WorldViewport/SubViewport/World"]
 mesh = SubResource("PlaneMesh_Ground")
 surface_material_override/0 = SubResource("StandardMaterial3D_Ground")
@@ -207,6 +212,22 @@ offset_bottom = 180.0
 grow_horizontal = 0
 mouse_filter = 2
 script = ExtResource("22")
+
+[node name="Minimap" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -235.0
+offset_top = -530.0
+offset_right = -24.0
+offset_bottom = -150.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("30")
 
 [node name="KartHud" type="Control" parent="."]
 layout_mode = 1
@@ -432,7 +453,7 @@ anchors_preset = 0
 offset_left = 24.0
 offset_top = 80.0
 offset_right = 700.0
-offset_bottom = 200.0
+offset_bottom = 268.0
 mouse_filter = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_perf")
 script = ExtResource("20")
@@ -441,6 +462,7 @@ camera_path = NodePath("../WorldViewport/SubViewport/World/Camera3D")
 world_path = NodePath("../WorldViewport/SubViewport/World")
 weather_path = NodePath("../WorldViewport/SubViewport/World/CozyWeather")
 label_path = NodePath("Text")
+keepy_path = NodePath("../WorldViewport/SubViewport/World/Keepy")
 
 [node name="Text" type="Label" parent="PerfOverlay"]
 layout_mode = 2

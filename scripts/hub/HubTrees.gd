@@ -24,9 +24,9 @@ class_name HubTrees
 ##
 ## Which trees qualify is decided HERE, from measurement, never from a
 ## hand list: no conifer / cypress / far blob (no crown to sit on), seat
-## between SEAT_MIN_Y and SEAT_MAX_Y (the camera never rises: above 6.96 u
-## at his aplomb nothing is in frame, and his head is 1.7 u over the
-## seat), and a foot point the world accepts (HubWorld's `foot_ok`: in
+## between SEAT_MIN_Y and SEAT_MAX_Y (the camera never rises: above
+## HubCamera.FRAME_TOP_AT_APLOMB at his aplomb nothing is in frame, and
+## his head is 1.7 u over the seat), and a foot point the world accepts (HubWorld's `foot_ok`: in
 ## the region, dry, off every portal disc and prop footprint), on the +x
 ## flank first (a profile from this camera) and the -x flank second.
 ##
@@ -91,11 +91,30 @@ const SHAKE_S: float = 0.9
 
 ## v5: the general climb's gates, all in WORLD units.
 ## Below SEAT_MIN_Y he would sit on a bush; above SEAT_MAX_Y his head
-## (1.7 u over the seat, v4's measurement) leaves the frame: the camera is
-## a constant offset from his GROUND point, so the top ray crosses his
-## aplomb at y = 7.6 - 8.9 * tan(40.5 deg - 36.4 deg) = 6.96 u.
+## leaves the frame: the camera is a constant offset from his GROUND
+## point and never rises, so the top edge of the picture cuts his aplomb
+## at HubCamera.FRAME_TOP_AT_APLOMB and nothing above it is on screen.
+##
+## ⚠️ CH36 -- THE CEILING WAS WRONG BY 1.008 u AND NO PROBE GATED IT.
+## This line used to read `y = 7.6 - 8.9 * tan(40.5 deg - 36.4 deg)
+## = 6.96 u`, a closed form written as if the camera LOOKED AT Keepy's
+## ground point. It does not (HubCamera is a FIXED rotation, and the
+## scene pitches it 34.0 deg, not 40.5): the top ray leaves the lens
+## going UP, so the term's sign flips and the real answer is 7.968 u,
+## re-read off the live camera by FrameCeilingProbe every run. SEAT_MAX_Y
+## is therefore DERIVED here, never retyped -- the number that moved is
+## the ceiling, and a literal 5.87 would be the next chiffre fantome.
+##
+## HEAD_ABOVE_SEAT is v4's 1.7 u, measured on the BONES and never
+## re-checked against the skinned vertices; FRAME_MARGIN is the 0.4 u of
+## picture CH26 asked to keep above his head. The pair leaves the tallest
+## admitted seat 0.4 u of headroom on a 1.7 u figure -- if the 1.7 is
+## itself short by more than that, the margin is spent, which is why this
+## lot published both numbers instead of only their sum.
+const HEAD_ABOVE_SEAT: float = 1.7
+const FRAME_MARGIN: float = 0.4
 const SEAT_MIN_Y: float = 2.0
-const SEAT_MAX_Y: float = 4.85
+const SEAT_MAX_Y: float = HubCamera.FRAME_TOP_AT_APLOMB - HEAD_ABOVE_SEAT - FRAME_MARGIN
 ## Kinds with no crown to sit on.
 const UNCLIMBABLE_KINDS: Array[String] = ["conifer", "cypress", "far"]
 ## The tap disc on the ground around a decor trunk: the trunk plus a hand.
@@ -216,6 +235,9 @@ func _build_birds() -> void:
 	for i in BIRD_COUNT:
 		var bird := Node3D.new()
 		bird.name = "Bird%d" % i
+		# CH46: the tree birds are NPCs on the map -- they move between
+		# perches, which is what makes them worth a marker.
+		MinimapMarkers.mark(bird, MinimapMarkers.NPC, StringName("bird_%d" % i))
 		var colour: Color = BIRD_COLOURS[i % BIRD_COLOURS.size()]
 		for side in [-1.0, 1.0]:
 			var wing := MeshInstance3D.new()

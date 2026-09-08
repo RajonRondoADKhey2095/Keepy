@@ -88,6 +88,11 @@ class_name KartBody
 const MAX_SPEED: float = 15.0
 const MAX_SPEED_OFF_TRACK: float = 5.5
 const REVERSE_SPEED: float = 3.5
+## CH42 -- how briskly the reverse gear builds that speed, u/s^2. 6.0 is
+## BRAKE_DECEL * 0.4 to the digit, which is the rate the brake branch has
+## always reversed this kart at: the player's second finger therefore
+## backs the kart out exactly as it did before the gear was separated.
+const REVERSE_ACCEL: float = 6.0
 ## Top speed at full boost (input.boost == 1.0); a ~27 % push over cruise,
 ## on and off track alike (BOOST_SPEED_RATIO scales whichever cap applies).
 ## CH31: 16.5 -> 19.05, which is the SAME 1.27 ratio over the new cruise.
@@ -134,6 +139,14 @@ const FOOTPRINT: float = 1.4
 var velocity: Vector3 = Vector3.ZERO
 ## The name this kart races under; the HUD and the lot-2 standings read it.
 var racer_name: String = "Keepy"
+
+## CH48 -- WHICH KART THIS IS, for the minimap's thumbnail roster. Written
+## by HubKarting.add_racer BEFORE add_child, because _ready() runs inside
+## that call and the field has to exist by then. NOT read off `name`: CH46
+## measured that node names in this hub move with the instantiation counter
+## and half the markers have none at all, which is the whole reason the map
+## is built on groups and declarations rather than on paths.
+var grid_index: int = 0
 var body_colour: Color = Color(0.93, 0.40, 0.30)
 
 var _chassis: Node3D = null
@@ -156,6 +169,7 @@ static func _make_motion() -> VehicleDrive:
 	m.max_speed = MAX_SPEED
 	m.max_speed_off = MAX_SPEED_OFF_TRACK
 	m.reverse_speed = REVERSE_SPEED
+	m.reverse_accel = REVERSE_ACCEL
 	m.boost_speed_ratio = BOOST_SPEED_RATIO
 	m.accel_lambda = ACCEL_LAMBDA
 	m.coast_lambda = COAST_LAMBDA
@@ -170,6 +184,9 @@ static func _make_motion() -> VehicleDrive:
 	return m
 
 func _ready() -> void:
+	# CH46: on the minimap, as a vehicle. One line, at the site that builds it --
+	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
+	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE, StringName("kart_%d" % grid_index))
 	_build()
 
 ## The node a passenger is parented to (it leans with the kart).

@@ -20,8 +20,42 @@ const SEED: int = 20260905
 const CELL: float = 28.0
 ## Plateau bounds to cover with ground cover: the walkable square plus the
 ## north lobe, i.e. every place Keepy can stand.
-const COVER_MIN: Vector2 = Vector2(-37.0, -37.0)
+##
+## ⚠️ CH40: -37 WAS SHORT OF THE WEST RIDGE BY 26 u, AND THE RIDGE WAS
+## BALD. HubRegion.MOUNTAIN_MIN.x is -63 and this bound stopped at -37, so
+## the two rectangles overlapped by exactly 2 u at the ridge's east rim:
+## CH39 measured 21 surviving instances in the whole domain, every one of
+## them where the relief is already flat. Nothing on the hillside had a
+## known size, so nothing could say the ground was tilted -- and an unlit
+## ground says nothing about a slope by itself (CH35-C, re-measured by
+## CH39 at r^2 = 0.010 and 0.117 between slope and delivered luminance).
+##
+## The bound is the region's, read off HubRegion rather than retyped: a
+## third spelling of -63 is exactly the ghost number this repo has paid
+## for. The z bounds already reach past the domain (-37 <= -12, 47 >= 18).
+##
+## The candidate count is `area * density`, so growing the rectangle keeps
+## the density per eligible square unit EXACTLY where it was everywhere
+## else; the throws that land west of the plateau and outside the ridge
+## are refused by HubRegion.contains() as they always were.
+const COVER_MIN: Vector2 = Vector2(HubRegion.MOUNTAIN_MIN.x, -37.0)
 const COVER_MAX: Vector2 = Vector2(37.0, 47.0)
+## ⚠️ CH40 -- HOW MUCH OF THE CARPET A REGISTERED DOMAIN KEEPS, and this
+## is a DENSITY decision, not a bug fix: the bound above is what made the
+## ridge reachable at all, this is what makes it "moins dense".
+##
+## MEASURED, not chosen. At full plateau rate the domain carried 377
+## instances over 840 u2 -- 0.4488 per u2, the plateau's own figure --
+## which is 6 641 triangles of tuft and clutter before a single conifer is
+## planted, on a hill where the device already reads 44 043 primitives.
+## 0.25 leaves ~94 pieces, 0.112 per u2, and keeps the whole dressing
+## inside the budget below. It also happens to be what a ridge should look
+## like: a lawn is not a mountainside.
+##
+## A no-op anywhere there is no domain -- which today is everywhere but
+## the ridge -- and it costs one RNG draw only on a candidate that is on
+## one, so the stream off the ridge is untouched by it.
+const DOMAIN_COVER_KEEP: float = 0.25
 ## Forest wall annulus around the square. Inner radius is measured from
 ## the region: a candidate closer than WALL_CLEARANCE to walkable ground is
 ## dropped so no canopy hangs over a place Keepy can walk to.
@@ -57,6 +91,13 @@ var _spine_half: float = 0.0
 var _rng := RandomNumberGenerator.new()
 var _batches: Dictionary = {}
 var _batch_order: Array[String] = []
+## The names of the MultiMeshInstance3D nodes _flush built, published for
+## the same reason every other fact in this repo is: a reader that had to
+## RECOGNISE a ground-decor batch would need a list of the nodes that are
+## NOT one (Windmill, Sails, MotherTree, Paths, BlobShadows, Hills,
+## Clouds, Butterflies0..2, Precipitation, HeroShadow), and a list like
+## that is wrong the day someone adds the twelfth.
+var _batch_nodes: Array[String] = []
 var _stats: Dictionary = {}
 
 func _ready() -> void:
@@ -77,6 +118,10 @@ func _ready() -> void:
 	_circuit()
 	_cove()
 	_forest_wall()
+	# CH40 AFTER the wall ON PURPOSE: _forest_wall does not reseed, it
+	# inherits the stream _cove() left. A pass inserted before it would
+	# move every wall tree in the hub for no reason anyone asked for.
+	_mountain()
 	_flush()
 	_mother_tree()
 	_windmill()
@@ -191,9 +236,21 @@ func _sprinkle(family: String, variants: int, count: int, own_radius: float,
 			continue
 		var variant := _rng.randi_range(0, variants - 1) if family in GLOBAL_FAMILIES else _cell_variant(p, variants, hash(family))
 		var name := "%s_%d" % [family, variant]
+		# CH40: a registered domain keeps only a fraction of the carpet --
+		# see DOMAIN_COVER_KEEP. The draw is taken ONLY on a candidate that
+		# is on a domain, so the stream off the ridge is what it was.
+		if HubSurface.domain_at(p) >= 0 and _rng.randf() > DOMAIN_COVER_KEEP:
+			continue
 		var s := _rng.randf_range(scale_min, scale_max)
 		var yaw := _rng.randf_range(0.0, TAU)
-		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), p)
+		# ⚠️ THE GROUND POINT, and it is taken LAST on purpose. Every test
+		# above (water discs, footprints, the stream spine, the spawn) is
+		# written against a FLAT p and compares 3D distances to centres at
+		# y = 0: lifting p before them would inflate each of those distances
+		# by the height of the hill and quietly loosen every one of them.
+		# Off a domain HubSurface.ground() returns p unchanged, so this is
+		# the same transform the plateau has always had.
+		var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * s), HubSurface.ground(p))
 		_add(family, name, _batch_cell(family, p), xform, wind, 0.45 if family == "grass" else 0.3)
 		placed += 1
 	_stats[family] = placed
@@ -558,6 +615,250 @@ func _in_field(p: Vector3, margin: float) -> bool:
 			return true
 	return false
 
+## ---- CH40: the west ridge's dressing ---------------------------------
+##
+## ⚠️ NOT ONE ASSET WAS GENERATED FOR THIS. The brief's step 0 was an
+## INVENTORY, and the repo already held every piece of a mountain:
+##
+##   tree_4_conifer  390 tri, 4.871 u tall, a stepped conifer in blue-green
+##                   (0.06, 0.24, 0.10) -- a different HUE from the round
+##                   trees' yellow-green (0.07, 0.25, 0.04), which is what
+##                   makes it read as another kind of wood rather than as
+##                   more of the same
+##   cypress_0/1     140 tri, 3.985 / 3.177 u, a narrow spire. Nearly black
+##                   on its own (L = 0.005), which is why CozyPalette.
+##                   FAMILY_GAIN already carries 4.4 for it -- keyed on the
+##                   MESH name, so these batches inherit that gain without
+##                   a line of their own
+##   palerock_0/1    20 tri, pale grey-beige (L = 0.113 to 0.222) -- the
+##                   only stone in the repo that is NOT moss-green, and the
+##                   brightest thing that will stand on this hillside
+##   pebble_0/1      20 tri, 0.18 u, grey scree
+##
+## The two rock families and the cypress are already the moor's and the
+## cove's; a GLB costs its payload once, and re-using one is free where a
+## decimated copy would be a file more (CH01). Nothing was deleted,
+## renamed or deduplicated to make room.
+##
+## =====================================================================
+## THE COMPOSITION, AND WHY IT IS NOT A SPRINKLE
+##
+## CH38's own report named the weakest reading of this domain: from the
+## north foot at (-49, 14) the versant fills ~90 % of the frame as "un
+## grand aplat vert sans repere d'echelle". An unlit ground has no shading
+## on a slope (CH35-C, and CH39 measured r^2 = 0.010 / 0.117 between slope
+## and delivered luminance), so the ONLY things that can say "this ground
+## is tilted" are a silhouette against something further away and objects
+## of known size standing on it. That is a LAYOUT problem, and it is
+## answered by where the pieces go, not by how many there are:
+##
+##   THE CROWN     nine pieces on a ring of 5 u around the summit --
+##                 conifers and spires alternating, so the smooth green
+##                 dome is broken by a jagged skyline instead of ending in
+##                 a curve. This is "props sur l'arete": from any station
+##                 below, the crown is what the sky is cut against
+##   THE SHOULDER  one conifer on the second bump, so the two-summit
+##                 silhouette CH38 paid three iterations for reads as two
+##   THE FLANK     four spires in the mid band (0.5 to 2.4 u), spread down
+##                 the slope: a repeated object at four heights is a
+##                 perspective cue the ground itself cannot give
+##   THE BOULDERS  twelve pale rocks biased to the NORTH sector, which is
+##                 exactly the versant CH38 called the weakest. Pale stone
+##                 on dark green is the strongest contrast this palette
+##                 has, and a boulder is the one prop whose size a player
+##                 already knows
+##   THE SCREE     pebbles on the upper slopes only, where a mountainside
+##                 would have them
+##
+## ⚠️ NOTHING GOES ON THE PERIMETER. Every band above needs h > 0, so the
+## rim where the relief meets the flat hub stays bare -- that C0 seam is
+## the one place a prop would sit half on a slope and half on a plane.
+##
+## =====================================================================
+## THE DENSITY, PUBLISHED RATHER THAN FELT
+##
+## Mathieu asked for "moins dense". The dressing is 50 pieces over 840 u2
+## = 0.0595 per u2, against the plateau's own non-grass ground cover
+## (CLUTTER + FLOWER + MUSHROOM + BUSH + ROCK = 0.076 per u2) and the
+## autumn hollow's props (tree + fern + leafpile = 0.091 per u2):
+##
+##   ridge dressing / plateau non-grass cover   0.78x
+##   ridge dressing / autumn hollow props       0.65x
+##
+## And the carpet under it is thinned to a quarter (DOMAIN_COVER_KEEP), so
+## the domain's TOTAL instance density is 0.112 + 0.060 = 0.172 per u2
+## against the plateau's 0.416 -- 0.41x. Said plainly: the ridge carries
+## two fifths of the plateau's decor per square unit.
+##
+## The one line that is NOT smaller: trees. Fourteen conifers and spires
+## over 840 u2 is 0.0167 per u2 against the hollow's 0.014, i.e. 1.19x.
+## That is deliberate and it is the whole point -- the tree is the only
+## piece that makes a SILHOUETTE, and a silhouette is the only cue an
+## unlit slope has. Cutting it to match would spend the saving on the one
+## family that buys the readability this lot exists for.
+const MOUNTAIN_SEED: int = SEED + 505
+## The families this pass owns. Published for MountainProbe, which hides
+## exactly these nodes to price them, and named apart from every existing
+## family ON PURPOSE: "rock" and "bush" pick up a blob shadow in
+## _blob_shadows, and a flat shadow quad on a 28 deg slope is the very
+## thing _shadow_at now refuses.
+const RIDGE_FAMILIES: Array[String] = ["ridge_conifer", "ridge_spire", "ridge_rock", "ridge_scree"]
+## The dressing's OWN triangle ceiling, in the file from the commit that
+## creates the pass -- CH35-B Q7: a ceiling added afterwards defends
+## nothing. It covers EVERYTHING this lot puts on the domain, the thinned
+## carpet included, because that is what a device pays.
+##
+## 6 000 is a proposal and it is arithmetic, not taste. Mathieu's own
+## device reading at the ridge was 44 043 primitives with the bare relief
+## (CH39, station A); 44 043 + 6 000 = 50 043, i.e. the hub's 50 000
+## target to within a rounding error. The hub already exceeds that target
+## elsewhere (55 722 measured at spawn, CH38), and the full device sweep
+## CH35-B task 4 still owes is what will settle whether 50 000 is the
+## right number at all. Until then this is the ceiling the ridge holds
+## itself to, and the design was cut to fit it rather than the reverse.
+const RIDGE_TRIANGLE_BUDGET: int = 6000
+const RIDGE_CROWN_R: float = 5.0
+const RIDGE_CROWN_JITTER: float = 1.1
+## Nine, alternating: the even indices are wide conifers, the odd ones
+## spires. An odd count means the alternation never closes into a pair.
+const RIDGE_CROWN_PIECES: int = 9
+const RIDGE_FLANK_SPIRES: int = 4
+const RIDGE_BOULDERS: int = 12
+const RIDGE_SCREE: int = 22
+const RIDGE_SEP_TREE: float = 2.1
+## ⚠️ THE CROWN NEEDS ITS OWN, AND THE FIRST VERSION MEASURED WHY. Nine
+## pieces on a ring of 5 u sit 2 * 5 * sin(20 deg) = 3.42 u apart, and
+## RIDGE_SEP_TREE reserves 2.1 on each side -- 4.2 u. The ring refused
+## itself: 4 of the 5 conifers and 1 of the 4 spires got through, so the
+## skyline this pass exists to draw came out as five trees with a gap in
+## it. A conifer at 0.7 scale is 0.88 u of trunk-to-tip radius; 1.3 a side
+## is 2.6 u between trunks, which is a grove and not a collision.
+const RIDGE_SEP_CROWN: float = 1.3
+const RIDGE_SEP_ROCK: float = 0.55
+## Scale bands. The conifer is 4.871 u tall and HubBuilder already shrinks
+## it by 0.72 where it stands next to the round trees; on a 4.5 u hill the
+## number that matters is the APEX, because CH36's frame ceiling is 9 u
+## for a foot 30 u away and the camera never tilts. Crown ground is ~3.27 u,
+## so 0.82 * 4.871 = 3.99 puts the tallest crown conifer at 7.26 u. The
+## probe gates the apex on the mesh as built, not on this comment.
+const RIDGE_CONIFER_SCALE: Vector2 = Vector2(0.62, 0.82)
+const RIDGE_SPIRE_SCALE: Vector2 = Vector2(0.85, 1.10)
+## Height bands, in world units of relief, that each population lives in.
+const RIDGE_FLANK_BAND: Vector2 = Vector2(0.5, 2.4)
+const RIDGE_BOULDER_MIN_H: float = 0.30
+const RIDGE_SCREE_MIN_H: float = 0.90
+## How far inside the AABB a piece has to stand. Not decoration: the rim
+## is where h = 0 and the domain meets the flat hub.
+const RIDGE_RIM_MARGIN: float = 1.5
+
+var _ridge_taken: Array = []
+
+func _ridge_free(p: Vector3, sep: float) -> bool:
+	for q in _ridge_taken:
+		var at: Vector3 = q["at"]
+		if Vector2(p.x - at.x, p.z - at.z).length() < sep + float(q["sep"]):
+			return false
+	return true
+
+## Puts one piece down, or says no. EVERY refusal is a real constraint:
+## off the region, off the domain, on top of something the hub already
+## owns, or too close to a piece this pass already placed.
+func _ridge_place(family: String, mesh_name: String, p: Vector3, sc: float, sep: float,
+		wind: float, wind_h: float) -> bool:
+	if p.x < HubRegion.MOUNTAIN_MIN.x + RIDGE_RIM_MARGIN or p.x > HubRegion.MOUNTAIN_MAX.x - RIDGE_RIM_MARGIN:
+		return false
+	if p.z < HubRegion.MOUNTAIN_MIN.y + RIDGE_RIM_MARGIN or p.z > HubRegion.MOUNTAIN_MAX.y - RIDGE_RIM_MARGIN:
+		return false
+	if not HubRegion.contains(p) or HubSurface.domain_at(p) < 0:
+		return false
+	if _blocked(p, sep) or not _ridge_free(p, sep):
+		return false
+	var yaw := _rng.randf_range(0.0, TAU)
+	# THE GROUND POINT, the one spelling. Everything above is decided on a
+	# FLAT p, exactly as _sprinkle does and for the same reason.
+	var xform := Transform3D(Basis.from_euler(Vector3(0.0, yaw, 0.0)).scaled(Vector3.ONE * sc), HubSurface.ground(p))
+	_add(family, mesh_name, "all", xform, wind, wind_h)
+	_ridge_taken.append({"at": p, "sep": sep})
+	return true
+
+func _ridge_candidate() -> Vector3:
+	return Vector3(
+		_rng.randf_range(HubRegion.MOUNTAIN_MIN.x, HubRegion.MOUNTAIN_MAX.x), 0.0,
+		_rng.randf_range(HubRegion.MOUNTAIN_MIN.y, HubRegion.MOUNTAIN_MAX.y))
+
+func _mountain() -> void:
+	var big: Vector4 = HubMountain.BUMPS[0]
+	var top := Vector3(big.x, 0.0, big.y)
+	# No domain, nothing to dress. Not an error: MountainProbe registers by
+	# hand and CozyCapture can run against a flat hub.
+	if HubSurface.domain_at(top) < 0:
+		return
+	_rng.seed = MOUNTAIN_SEED
+	var conifers := 0
+	var spires := 0
+	# THE CROWN. Deliberate, not thrown: this is the skyline.
+	for k in RIDGE_CROWN_PIECES:
+		var a: float = TAU * float(k) / float(RIDGE_CROWN_PIECES) + _rng.randf_range(-0.12, 0.12)
+		var r: float = RIDGE_CROWN_R + _rng.randf_range(-RIDGE_CROWN_JITTER, RIDGE_CROWN_JITTER)
+		var p := top + Vector3(cos(a) * r, 0.0, sin(a) * r)
+		if k % 2 == 0:
+			if _ridge_place("ridge_conifer", "tree_4_conifer", p,
+					_rng.randf_range(RIDGE_CONIFER_SCALE.x, RIDGE_CONIFER_SCALE.y), RIDGE_SEP_CROWN, 0.03, 3.6):
+				conifers += 1
+		elif _ridge_place("ridge_spire", "cypress_%d" % _rng.randi_range(0, 1), p,
+				_rng.randf_range(RIDGE_SPIRE_SCALE.x, RIDGE_SPIRE_SCALE.y), RIDGE_SEP_CROWN, 0.03, 3.2):
+			spires += 1
+	# THE SHOULDER, so the second bump reads as a second summit.
+	var sh: Vector4 = HubMountain.BUMPS[1]
+	for _try in 12:
+		var sp := Vector3(sh.x + _rng.randf_range(-1.6, 1.6), 0.0, sh.y + _rng.randf_range(-1.6, 1.6))
+		if _ridge_place("ridge_conifer", "tree_4_conifer", sp,
+				_rng.randf_range(RIDGE_CONIFER_SCALE.x, RIDGE_CONIFER_SCALE.y), RIDGE_SEP_CROWN, 0.03, 3.6):
+			conifers += 1
+			break
+	# THE FLANK, in the mid band only.
+	var flank := 0
+	var tries := 0
+	while flank < RIDGE_FLANK_SPIRES and tries < 500:
+		tries += 1
+		var p := _ridge_candidate()
+		var h: float = HubSurface.height_at(p)
+		if h < RIDGE_FLANK_BAND.x or h > RIDGE_FLANK_BAND.y:
+			continue
+		if _ridge_place("ridge_spire", "cypress_%d" % _rng.randi_range(0, 1), p,
+				_rng.randf_range(RIDGE_SPIRE_SCALE.x, RIDGE_SPIRE_SCALE.y), RIDGE_SEP_TREE, 0.03, 3.2):
+			flank += 1
+			spires += 1
+	# THE BOULDERS, biased NORTH -- the versant CH38 called the weakest.
+	var rocks := 0
+	tries = 0
+	while rocks < RIDGE_BOULDERS and tries < 900:
+		tries += 1
+		var p := _ridge_candidate()
+		if p.z < top.z + 1.0:
+			continue
+		var d: float = Vector2(p.x - top.x, p.z - top.z).length()
+		if d < 3.0 or d > 12.0 or HubSurface.height_at(p) < RIDGE_BOULDER_MIN_H:
+			continue
+		if _ridge_place("ridge_rock", "palerock_%d" % _rng.randi_range(0, 1), p,
+				_rng.randf_range(0.85, 1.65), 0.95, 0.0, 1.0):
+			rocks += 1
+	# THE SCREE, upper slopes only.
+	var scree := 0
+	tries = 0
+	while scree < RIDGE_SCREE and tries < 900:
+		tries += 1
+		var p := _ridge_candidate()
+		if HubSurface.height_at(p) < RIDGE_SCREE_MIN_H:
+			continue
+		if _ridge_place("ridge_scree", "pebble_%d" % _rng.randi_range(0, 1), p,
+				_rng.randf_range(1.1, 2.2), RIDGE_SEP_ROCK, 0.0, 1.0):
+			scree += 1
+	_stats["ridge_conifer"] = conifers
+	_stats["ridge_spire"] = spires
+	_stats["ridge_rock"] = rocks
+	_stats["ridge_scree"] = scree
+
 var _sails: MeshInstance3D = null
 const SAIL_RPM: float = 0.35
 func _windmill() -> void:
@@ -574,6 +875,9 @@ func _windmill() -> void:
 	tower.rotation.y = 0.35
 	tower.material_override = CozyPalette.decor_material()
 	tower.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# CH46: the windmill is a PLACE -- it is the moor's one landmark, and
+	# HubRegion already carves a hole around its foot.
+	MinimapMarkers.mark(tower, MinimapMarkers.PLACE)
 	add_child(tower)
 	_sails = MeshInstance3D.new()
 	_sails.name = "Sails"
@@ -598,6 +902,8 @@ func _mother_tree() -> void:
 	_mother.rotation.y = 0.6
 	_mother.material_override = CozyPalette.decor_material_wind(0.10, 16.0)
 	_mother.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# CH46: the Mother Tree is a PLACE -- the hollow's landmark.
+	MinimapMarkers.mark(_mother, MinimapMarkers.PLACE)
 	add_child(_mother)
 	_stats["mother_tree"] = 1
 
@@ -965,6 +1271,13 @@ const SHADOW_OFFSET: Vector2 = Vector2(-0.06, 0.12)
 var _shadow_xforms: Array[Transform3D] = []
 
 func _shadow_at(p: Vector3, radius: float) -> void:
+	# ⚠️ CH40: NO BLOB ON A RELIEF. This disc is a FLAT horizontal quad at
+	# a fixed y; on a hillside it either floats over the downhill half or
+	# buries itself in the uphill one, and at 28 deg with a 1 u radius that
+	# is 0.27 u of each. There is no correct height for it, so the domain
+	# gets none rather than a wrong one. A no-op off a domain.
+	if HubSurface.domain_at(p) >= 0:
+		return
 	var basis := Basis().scaled(Vector3(radius * 2.0, 1.0, radius * 2.0))
 	var origin := Vector3(p.x + SHADOW_OFFSET.x * radius, SHADOW_Y, p.z + SHADOW_OFFSET.y * radius)
 	_shadow_xforms.append(Transform3D(basis, origin))
@@ -1277,13 +1590,19 @@ func _process(delta: float) -> void:
 	if _hero == null or _hero_shadow_node == null:
 		return
 	var p := _hero.global_position
+	# The two things that follow Keepy everywhere follow the GROUND under
+	# him, not sea level. The rain column stands on it; the shadow lies on
+	# it; and the lift that shrinks the shadow is his height ABOVE it --
+	# read as p.y - h, because on a hill p.y alone would read as a
+	# permanent hop and keep the shadow shrunk while he stands still.
+	var h: float = HubSurface.height_at(p)
 	if _precip_node != null:
-		_precip_node.position = Vector3(p.x, 0.0, p.z)
-	var lift: float = clampf(p.y, 0.0, 1.5)
+		_precip_node.position = HubSurface.ground(p)
+	var lift: float = clampf(p.y - h, 0.0, 1.5)
 	var r: float = HERO_SHADOW_RADIUS * (1.0 - lift * 0.25)
 	_hero_shadow_node.global_transform = Transform3D(
 		Basis().scaled(Vector3(r * 2.0, 1.0, r * 2.0)),
-		Vector3(p.x, SHADOW_Y + 0.005, p.z + 0.18))
+		Vector3(p.x, h + SHADOW_Y + 0.005, p.z + 0.18))
 
 ## True when any point within `radius` of p is walkable: eight samples on
 ## the circle plus the centre. Cheap, and conservative enough for a wall.
@@ -1368,6 +1687,7 @@ func _flush() -> void:
 		multi.custom_aabb = bounds
 		var node := MultiMeshInstance3D.new()
 		node.name = key.replace("|", "_")
+		_batch_nodes.append(String(node.name))
 		node.multimesh = multi
 		var wind: float = batch["wind"]
 		# CH30: a per-GLB brightness gain for an asset that is too dark to
@@ -1410,3 +1730,8 @@ func _flush() -> void:
 
 func stats() -> Dictionary:
 	return _stats
+
+## Every ground-decor batch node _flush built, by name. Read by
+## MountainProbe; nothing in the game needs it.
+func batch_nodes() -> Array[String]:
+	return _batch_nodes
