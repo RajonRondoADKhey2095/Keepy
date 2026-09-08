@@ -1837,6 +1837,156 @@ celle du conteneur qui la porte. Et tout test « tous ceux qui restent
 passent » se double d'un garde **`tried > 0`** — c'est ce garde, écrit par
 CH46 pour une autre raison, qui a attrapé celui-ci.
 
+### ⚠️ UNE IMAGE MULTICOLORE NE PEUT PAS SIGNER UN CONTRAT DE CONTRASTE — À AUCUNE DÉSATURATION
+
+Écrit au CH48, sur un balayage complet et non sur un raisonnement. Le brief
+demandait la désaturation minimale des aplats qui laisserait des vignettes
+en couleurs réelles atteindre le plancher de 3,0:1. Balayé de w = 0,0 à
+w = 1,0 — bandes lavées jusqu'au **blanc pur** — **la pire vignette ne
+dépasse jamais 2,6 % de son encre au-dessus du plancher.**
+
+Ce n'est pas le lavage qui échoue. **Un RATIO de contraste est un ton contre
+un ton** ; un blaireau a une fourrure blanche ET un masque noir, et quelle
+que soit la luminance d'une bande, l'un des deux en est proche. 3,0:1 est un
+contrat qu'un **aplat** d'icône peut signer et qu'une **photographie** ne
+peut pas.
+
+**Règle** : dès qu'un marqueur porte une IMAGE plutôt qu'un ton, le plancher
+de contraste est porté par une pièce d'un seul ton — un plateau sombre, un
+contour noir — et l'image n'a plus à franchir que **cette pièce**, qui est un
+ton fixe connu. Mesuré au CH48 : plateau `(0,07 ; 0,08 ; 0,09)`, L = 0,0070,
+pire ratio **4,38:1** contre les huit bandes peintes ; de 47,2 % à 100 % de
+l'encre de chaque vignette franchit ce plateau.
+
+⚠️ **Et le contour doit rester NOIR même quand on veut y mettre une couleur
+de rang.** CH48 a d'abord donné au plateau UN liséré, dans le ton du type ;
+les tons de rang 1 sont CLAIRS par construction (0,8392 et 0,6476) et les
+bandes de ce hub aussi, donc **43 échantillons de périmètre sur 68 sont
+tombés sous 3,0:1**. La couleur du rang va **à l'intérieur** d'une keyline
+noire, jamais à sa place.
+
+### ⚠️ DÉSATURER À CLARTÉ CONSTANTE EST NEUTRE EN CONTRASTE — C'EST DE L'ARITHMÉTIQUE
+
+Le WCAG note la **luminance relative**. Tirer une couleur vers son propre
+gris ne la déplace donc quasiment pas : mesuré sur `GRASS_A`, **L 0,4717 à
+saturation pleine, 0,4491 en gris complet**. Une demande de « désaturer pour
+que les marqueurs ressortent » est une demande sur la **CHROMA**, pas sur le
+contraste, et les deux se règlent par deux leviers différents.
+
+**UNE seule opération sert les deux** : un lavage **vers le blanc**.
+`lerp(c, blanc, w)` laisse à une bande exactement **(1 − w)** de sa chroma ET
+lui monte la luminance. Le réglage se dérive alors par deux bornes mesurées :
+
+* **plancher** — la bande la plus criarde ne doit plus crier plus fort que la
+  chroma moyenne des marqueurs (`w ≥ 1 − chroma_marqueurs / chroma_bande`) ;
+* **plafond** — la paire de bandes que le plan sépare PAR LE TON la plus
+  serrée doit rester au-dessus de la limite de résolution du plan (son propre
+  saignement d'alpha : `w ≤ 1 − bleed / d_min`).
+
+Au CH48 : `[0,3382 ; 0,6545]`, et le lot livre le plancher.
+
+⚠️ **Et une paire déjà sous le saignement AVANT le lavage n'est pas de son
+fait** : `GRASS_A`/`LAWN_A` sont à 0,0640 pour un saignement de 0,08 — ces
+deux bandes n'ont **jamais** été séparées par le ton, c'est la haie tracée
+entre elles qui le fait. L'exclure **par son nom** et asserter qu'elle reste
+la plus serrée, sinon une SECONDE paire tombée sous le seuil se cache
+derrière elle.
+
+### ⚠️ UNE MÉTRIQUE D'AIRE NE SÉPARE PAS DEUX IMAGES, ET NE PEUT PAS NOMMER UNE TAILLE
+
+Deux faits mesurés au CH48, sur la métrique que CH46 et CH47 avaient rendue
+canonique (`|couverture(A) − couverture(B)|`) :
+
+1. **Elle lit ~0 pour deux glyphes de même gabarit**, quelles que soient les
+   images dedans — et **0,0000 pour deux glyphes IDENTIQUES, en appelant ça
+   une réussite**. Une aire scalaire ne distingue pas deux images, seulement
+   deux empreintes. La remplacer par une couverture de **DÉSACCORD** : quelle
+   part de la boîte les deux cartes d'encre ne partagent pas, chacune lue
+   contre sa propre ligne de base. Mesuré au CH48 : 0,0230 sur la métrique
+   d'aire contre **0,5721** sur le désaccord, pour la même paire.
+2. **Elle ne dégrade pas avec la taille — elle EMPIRE quand l'icône
+   grandit** (pire paire 0,551 à 16 px contre 0,483 à 64 px : à 16 px une
+   plus grande part de la boîte est du bord, où deux sujets diffèrent).
+   **Un critère qui s'améliore quand l'image rétrécit ne peut pas nommer une
+   taille minimale**, et le dire fait partie du résultat.
+
+Ce qui dégrade monotoniquement, c'est **ce qui survit au
+sous-échantillonnage** : descendre à S, remonter, comparer au rendu de
+référence. Le barreau se choisit alors sans seuil inventé — **le dernier qui
+rende encore au moins la moitié de ce que rendait le premier pixel**.
+
+### ⚠️ UN GLYPHE POSÉ SUR UNE POSITION FRACTIONNAIRE PERD SES DÉTAILS DE 1 À 2 PIXELS
+
+CH47 en connaissait la moitié (« le cœur pleinement opaque du point fait
+neuf pixels AVANT le placement sous-pixel du widget », et sa sonde en a lu
+quatre). CH48 l'a retrouvé par l'autre bout : un anneau de 2 px **culminait
+à 0,835 de son ton au lieu de 1,000** sur les seuls glyphes dont la position
+était fractionnaire, et la sonde a lu **ZÉRO** pixel du ton sur quatre
+d'entre eux alors que l'anneau était parfaitement visible sur la capture.
+
+**Règle** : tout glyphe d'atlas dessiné 1:1 se pose sur un **pixel entier**
+(`.round()` sur l'origine du rect). Le coût est au plus un demi-pixel de
+position ; le gain est que chaque détail de 1 à 2 px — un contour, un
+liséré, la keyline qui porte le contrat de contraste — rend à pleine
+intensité. Sans quoi c'est l'ASSERTION qui est réglée sur l'artefact, et
+c'est le mauvais bout.
+
+### ⚠️ UNE PROPRIÉTÉ LUE AU BAKE EST PÉRIMÉE POUR TOUT CE QUI ARRIVE APRÈS
+
+Un atlas cuit à la première frame ne peut pas porter une information qui
+dépend de l'arbre construit, parce que l'arbre n'a pas fini de se construire.
+Mesuré au CH48 : la couleur de type cuite dans chaque portrait a laissé
+**quatre entités** — celles qui rejoignent leur groupe après le bake — avec
+le liséré NOIR de repli, et la sonde l'a lu comme « 0 px du ton », sur une
+carte par ailleurs juste.
+
+Un repaint-sur-changement referme le symptôme et se re-gagne à chaque fois
+que l'ordre de construction bouge. **La parade est de sortir l'information
+de la cellule** : la cuire en BLANC dans une cellule à elle et la teinter au
+`modulate` **au moment du dessin**, là où la question a toujours une réponse
+juste. Ça coûte un quad de plus par glyphe, de la même texture, donc rien en
+draw calls.
+
+### ⚠️ UN BAKE OFFSCREEN SE HEURTE À TROIS TERMES DE DISTANCE, PAS UN
+
+Photographier une entité du monde construit pour en faire une vignette
+paraît neutre. Au CH48, une seule assertion — « le même sujet vu de 5 u et
+de 9 u est une seule image » — est sortie **ROUGE sur 17 sujets sur 22**, et
+il a fallu **trois** causes distinctes pour la refermer :
+
+1. **le monde n'était pas figé** (les acteurs bougent : deux prises à
+   quatre frames d'écart sont deux poses) ;
+2. **`visibility_range_end` est un cull de DISTANCE** — un sujet
+   photographié au-delà du sien n'est pas une image sombre, c'est **aucune
+   image** ; à lui seul, 16 rouges sont tombés à 6 ;
+3. **`haze` et `rim` sont deux vrais termes de distance du rendu livré**
+   (`rim` reconstruit un vecteur de vue depuis `VIEW`, qui reste positionnel
+   **même sous une caméra orthographique**).
+
+**Règle** : un bake d'entité se prend à la **distance propre de la caméra du
+jeu** (`HubCamera.OFFSET.length()`, 11,7034 u — la seule distance d'où un
+joueur voit quoi que ce soit sur ce plateau), le monde **figé**, les culls de
+distance neutralisés, et ce qu'on choisit de couper est **énoncé** plutôt que
+subi. Corollaire : le `TIME` d'un shader **n'est pas arrêté par
+`SceneTree.paused`** — une voile en mouvement faisait différer deux prises
+d'un canal entier (pic 1,000).
+
+### ⚠️ UN OUTIL QUI ÉTIQUETTE SES SUJETS PAR « PARENT/CLASSE » PEUT SE COLLISIONNER, ET LA COLLISION SE LIT COMME UNE MESURE
+
+CH46 avait déjà noté que cinq des marqueurs du hub n'ont **aucun nom**
+(`@Node3D@228`). Le repli naturel — « parent/classe » — a fait porter à
+l'ours et au blaireau **la même étiquette** ; la seconde prise a écrasé la
+première dans le dictionnaire, et la matrice de séparation a rapporté la
+paire à **0,0000** : deux maillages de 5846 et 5623 triangles déclarés
+identiques parce qu'ils étaient la même image stockée. **Un défaut d'outil
+qui ressemble exactement à une trouvaille.**
+
+**Règle** : tout outil qui indexe des sujets par étiquette **asserte
+l'unicité de ses étiquettes** avant de publier quoi que ce soit, et le repli
+pour un nœud anonyme est son **fichier de scène** (`scene_file_path`), la
+seule identité qu'il porte encore.
+
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
