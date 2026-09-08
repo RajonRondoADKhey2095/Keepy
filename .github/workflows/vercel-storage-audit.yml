@@ -1,0 +1,205 @@
+name: Vercel storage audit (Phase A, read-only)
+
+# ============================================================================
+#  AUDIT LECTURE SEULE DES DEPLOIEMENTS VERCEL -- projet "keepy"
+# ============================================================================
+#
+#  Pourquoi ce workflow existe : le sandbox agentique n'a AUCUN acces reseau
+#  sortant vers api.vercel.com (connect_rejected, re-teste et pas suppose),
+#  alors que ce runner en a un -- web-build.yml y deploie deja avec les memes
+#  secrets. Ce workflow est donc le seul canal disponible pour executer la
+#  PHASE A de scripts/dev/vercel_native_purge.sh.
+#
+#  ⚠️  PHASE B (suppression) N'EST PAS EXECUTEE ICI, ET NE DOIT PAS L'ETRE.
+#      Elle reste commentee dans le script, et rien dans ce workflow ne la
+#      decommente, ne la reecrit, ni ne l'appelle. Une suppression Vercel est
+#      irreversible (le deploiement disparait aussi de l'historique de
+#      rollback) : elle exigera une autorisation explicite et un autre canal.
+#
+#  Declenchement MANUEL uniquement : pas de `push`, pas de `schedule`.
+# ============================================================================
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-storage-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure jq is present
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends jq
+          fi
+          jq --version
+
+      - name: Check Vercel secrets
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_TOKEN:-}" ] || [ -z "${VERCEL_ORG_ID:-}" ] || [ -z "${VERCEL_PROJECT_ID:-}" ]; then
+            echo "::error::Missing one or more of the VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID repository secrets."
+            exit 1
+          fi
+          echo "Secrets present (values not echoed)."
+
+      # Le script est execute TEL QUEL, sans reecriture ni sed : c'est la
+      # seule facon d'etre sur que ce qui tourne ici est bien la Phase A
+      # relue et committee, et pas une transcription. Son code de sortie est
+      # capture pour que l'etape de resume tourne meme en cas d'echec.
+      - name: Run Phase A (read-only inventory)
+        id: phasea
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -uo pipefail
+          chmod +x scripts/dev/vercel_native_purge.sh
+          set +e
+          scripts/dev/vercel_native_purge.sh 2>&1 | tee /tmp/keepy_phase_a.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "phase_a_rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "Phase A exit code: $rc"
+          exit "$rc"
+
+      # Le resume tourne meme si la Phase A a echoue (if: always()), pour que
+      # l'echec soit lisible dans l'interface GitHub sans ouvrir les logs.
+      - name: Write Job Summary
+        if: always()
+        run: |
+          set -uo pipefail
+          ALL=/tmp/keepy_deployments.jsonl
+          CANDIDATES=/tmp/keepy_purge_candidates.txt
+          RC="${{ steps.phasea.outputs.phase_a_rc }}"
+
+          {
+            echo "# Vercel storage audit — Phase A (lecture seule)"
+            echo
+            echo "- Commit : \`${GITHUB_SHA}\` (ref \`${GITHUB_REF_NAME}\`)"
+            echo "- Script : \`scripts/dev/vercel_native_purge.sh\` — **Phase A seule**"
+            echo "- Phase B (suppression) : **NON EXECUTEE**, reste commentee dans le script."
+            echo "- Code de sortie Phase A : \`${RC:-inconnu}\`"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ ! -s "$ALL" ]; then
+            {
+              echo "## ⚠️ Aucun inventaire produit"
+              echo
+              echo "\`$ALL\` est absent ou vide — la Phase A n'a pas atteint la pagination."
+              echo
+              echo '```'
+              tail -n 100 /tmp/keepy_phase_a.log 2>/dev/null || echo "(pas de log)"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          TOTAL=$(wc -l < "$ALL" | tr -d ' ')
+          NCAND=0
+          [ -s "$CANDIDATES" ] && NCAND=$(wc -l < "$CANDIDATES" | tr -d ' ')
+
+          {
+            echo "## Totaux"
+            echo
+            echo "| metrique | valeur |"
+            echo "|---|---|"
+            echo "| deploiements inventories | **$TOTAL** |"
+            echo "| candidats a la purge (source=git, hors proteges) | **$NCAND** |"
+            echo
+            echo "## Repartition par \`source\`"
+            echo
+            echo "| source | n |"
+            echo "|---|---|"
+            jq -s -r 'group_by(.source // "(absent)")
+                      | map({s: (.[0].source // "(absent)"), n: length})
+                      | sort_by(-.n)[]
+                      | "| `\(.s)` | \(.n) |"' "$ALL"
+            echo
+            echo "## Repartition par \`state\`"
+            echo
+            echo "| state | n |"
+            echo "|---|---|"
+            jq -s -r 'group_by(.state // "(absent)")
+                      | map({s: (.[0].state // "(absent)"), n: length})
+                      | sort_by(-.n)[]
+                      | "| `\(.s)` | \(.n) |"' "$ALL"
+            echo
+            echo "## Repartition par \`target\`"
+            echo
+            echo "| target | n |"
+            echo "|---|---|"
+            jq -s -r 'group_by(.target // "(preview/absent)")
+                      | map({s: (.[0].target // "(preview/absent)"), n: length})
+                      | sort_by(-.n)[]
+                      | "| `\(.s)` | \(.n) |"' "$ALL"
+            echo
+            echo "## Taille"
+            echo
+            echo "\`/v6/deployments\` ne renvoie **aucun champ de taille** — ni octets"
+            echo "de build, ni octets servis. La taille par deploiement n'est donc pas"
+            echo "calculable depuis cet inventaire ; ce qui suit est le decompte des"
+            echo "champs reellement presents, pour que le prochain lot n'invente pas un"
+            echo "chiffre absent :"
+            echo
+            echo '```'
+            jq -s -r '[.[] | keys[]] | group_by(.) | map("\(.[0]): \(length)") | .[]' "$ALL"
+            echo '```'
+            echo
+            echo "## 20 premiers IDs candidats"
+            echo
+            if [ "$NCAND" -eq 0 ]; then
+              echo "_Aucun candidat._"
+            else
+              echo '```'
+              head -20 "$CANDIDATES"
+              echo '```'
+              echo
+              echo "Liste complete ($NCAND lignes) : artefact **keepy-vercel-audit**."
+            fi
+            echo
+            echo "## Sortie brute de la Phase A"
+            echo
+            echo '```'
+            cat /tmp/keepy_phase_a.log 2>/dev/null | tail -n 60
+            echo '```'
+            echo
+            echo "> ⚠️ Rien n'a ete supprime. La Phase B reste commentee et"
+            echo "> n'est appelee par aucune etape de ce workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p audit-out
+          cp /tmp/keepy_purge_candidates.txt audit-out/keepy_candidates.txt 2>/dev/null || true
+          cp /tmp/keepy_deployments.jsonl    audit-out/ 2>/dev/null || true
+          cp /tmp/keepy_protected.json       audit-out/ 2>/dev/null || true
+          cp /tmp/keepy_phase_a.log          audit-out/ 2>/dev/null || true
+          ls -la audit-out/
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepy-vercel-audit
+          path: audit-out
+          if-no-files-found: warn
+          retention-days: 7
