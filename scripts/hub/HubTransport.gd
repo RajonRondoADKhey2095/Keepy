@@ -222,6 +222,44 @@ const SKATE_TAP_RADIUS: float = 1.5
 const SKATE_FOOTPRINT: float = 1.2
 ## Deck top: authored ONCE in SkateparkMesh, republished here.
 const SKATE_LIFT: float = SkateparkMesh.DECK_TOP
+## =====================================================================
+## CH54 -- THE BOARD ROLLS. It no longer bounces.
+##
+## SkateDriveProbe measured the CH53 board exactly as Mathieu described it
+## from the device: 7.94 u/s from the first frame to a dead stop, six
+## 2.7 u arcs 1.30 u high -- the Sautillon's bounce with a plank drawn
+## under it. So the board is now a GLIDING vehicle (CH29's shape, the sand
+## yacht's before CH30 drove it) with the pace profile CH54 added to that
+## shape: a run-up over SKATE_ACCEL_U, a cruise at SKATE_CRUISE, a run-out
+## over SKATE_BRAKE_U into the tap, and a push-off again after a reversal.
+##
+## Still tap-to-move, still the fixed camera, still no physics: the
+## brief's guard-rails and CH53's own reasons (a DRIVEN vehicle brings the
+## chase camera, whose north-lobe budget CH52 says is unmeasured). What a
+## rider gets is a speed of his own, a start that builds and a stop that
+## eases -- the three things a bounce at constant pace cannot give.
+##
+## THE NUMBERS. Cruise 10.0 u/s is x1.87 the walk (5.36 u/s measured)
+## and x1.26 the bounce; the yacht's CH29 glide was 10.7 and read fast on
+## device, the park is 10 u long, so a shade under. It was 9.0 first,
+## and SkateDriveProbe measured the 16 u ride from the park at 2.233 s
+## against the bounce's 2.100 s: the ramps cost more than the cruise
+## bought, and a ride that is slower end to end than the thing it
+## replaces is not a ride. Segments of 1.6 u: short enough that a
+## re-tap answers within 0.16 s at cruise and the ramps have three
+## steps, long enough that a roll across the park lands six times rather
+## than twelve (every landing runs HubWorld's whole landing chain).
+## Run-up and run-out of 3.2 u each, i.e. two segments: from rest the
+## first 3.2 u take 0.50 s (about what two walking hops take), so a tap
+## still answers at once -- it just does not leave at cruise. The 16 u
+## ride measures 1.967 s on the board against 2.100 s bouncing and
+## ~3.0 s on foot, the first 3 frames at 3.8 u/s and the last 3 at 3.7
+## (SkateDriveProbe PHASE P, xvfb, fixed-fps 60).
+const SKATE_CRUISE: float = 10.0
+const SKATE_GLIDE_STEP: float = 1.6
+const SKATE_GLIDE_S: float = SKATE_GLIDE_STEP / SKATE_CRUISE
+const SKATE_ACCEL_U: float = 3.2
+const SKATE_BRAKE_U: float = 3.2
 
 const DECK_TOP: float = 0.16
 ## Ground radius the scatter keeps clear around a dock (deck 1.9 + step

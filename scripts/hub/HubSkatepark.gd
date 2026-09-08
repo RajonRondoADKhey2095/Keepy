@@ -170,6 +170,12 @@ const MODULES: Array[Dictionary] = [
 ## i.e. four hops, i.e. 1.36 s of flight plus the tap that aims them.
 ## 3.4 s is that with room for a finger, and it is short enough that a
 ## chain cannot survive a walk across the park.
+##
+## CH54 re-derived it for the ROLL and kept it: the same 10.1 u under
+## HubTransport's profile (run-up 3.2 u, cruise 10.0 u/s, run-out 3.2 u)
+## takes ~1.5 s from rest to rest -- longer than the bounce's 1.36 s,
+## still well inside 3.4 s with a finger. A walk across the park is
+## slower than either and still cannot keep a chain alive.
 const CHAIN_WINDOW_S: float = 3.4
 ## The multiplier a chain of n adds: 1 + CHAIN_STEP * n, capped. Capped
 ## because the ledger's guard is a STOCK (WorldSave.award_from_activity)
@@ -352,6 +358,15 @@ func landed_within(point: Vector3) -> int:
 func note_landing(point: Vector3) -> bool:
 	if _keepy == null or not _keepy.is_on_vehicle():
 		_break_chain()
+		return false
+	# CH54: the board ROLLS, in 1.6 u segments, and every segment end is a
+	# `hop_landed`. A roll across the bowl would otherwise land in its
+	# disc four times -- four "carves" for one pass, and every grass
+	# segment between two modules would break the chain. Only the landing
+	# that ENDS a roll counts: he rode onto the module and stopped there.
+	# A landing in passing is neither a score nor a break; it is not a
+	# landing at all, it is the middle of a roll.
+	if _keepy.is_gliding() and _keepy.roll_remaining() > KeepyHopper.ARRIVE_EPSILON:
 		return false
 	var index := landed_within(point)
 	if index < 0:
