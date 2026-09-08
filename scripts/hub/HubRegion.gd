@@ -28,7 +28,13 @@ class_name HubRegion
 ## NO SUBTRACTION
 ##
 ##   ( square(+-PLATEAU_HALF_EXTENT)  OR  shore pad  OR  north lobe
-##     OR any structure lobe )
+##     OR skate lobe  OR any structure lobe )
+##
+## CH50 (8 septembre 2026) added the SKATE lobe: the same centre as the
+## north lobe, radius 28 instead of 12, so the north edge carries a
+## half-disc of new walkable ground 28 u deep for a skatepark a later lot
+## will stand on it. See SKATE_LOBE_RADIUS for the sweep that picked the
+## centre and for why the r=12 term below is now inert.
 ##
 ## THE NORTH LOBE (28 aout 2026) is the shape argument above, used for the
 ## first time on purpose rather than on water. Mathieu's decision, taken on
@@ -308,6 +314,57 @@ const SHORE_PAD_RADIUS: float = 20.0
 ## worst pair on the real hopper and checks the diagonal is still it.
 const NORTH_LOBE_RADIUS: float = 12.0
 
+## CH50: THE SKATE LOBE -- the SAME disc, on the SAME centre, at the radius
+## the skatepark needs. Not a second lobe somewhere else: a second RADIUS
+## published for the one point this file already calls "the middle of the
+## north edge".
+##
+## ⚠️ WHY IT IS CONCENTRIC, AND THAT IS A MEASURED RESULT RATHER THAN A
+## PREFERENCE. The brief asked for a disc of radius 28 "north, glued to the
+## existing lobe or further north". Swept against the crossing budget and
+## against the lobe it has to join:
+##
+##   centre     reach   worst new pair             seam   swallows r=12
+##   (0, 35)    z 63    106.600 u   20.137 s       56.0 u   yes
+##   (0, 40)    z 68    110.765 u   20.923 s       55.1 u   yes
+##   (0, 45)    z 73    115.321 u   21.784 s       52.3 u   yes
+##   (0, 47)    z 75    117.157 u   22.131 s  <-- OVER 22   yes
+##
+## Two things fall out of that sweep and neither was obvious from the
+## brief. FIRST: a radius-28 disc SWALLOWS the radius-12 lobe at every
+## centre the budget allows -- it takes |dz| > 16 to escape it and the
+## budget caps |dz| at about 12 -- so "a bottleneck between the two discs"
+## is not a shape this lot can draw at all. There is no neck because there
+## are not two lobes: there is one lobe that got bigger. SECOND: the
+## cheapest centre is also the one with the widest seam onto the square
+## (56.0 u of the north edge, x in [-28, 28]), so nothing is traded away
+## by taking it.
+##
+## THE WORST CROSSING IS UNCHANGED, and that is the whole reason this is
+## affordable. The pair this disc creates -- the mountain's south-west
+## corner to the disc's far rim, 106.600 u -- LOSES to the pair CH38
+## already shipped, (35, -35) -> (-63, 18) at 111.414 u / ~21.046 s. So the
+## hub's worst walk is still CH38's, and this lot's disc is second place.
+## WALKED rather than divided: SkateGroundProbe's PHASE CROSSING walks the
+## new pair, the CH38 pair and the published square diagonal on the real
+## hopper in ONE run -- a bench that cannot reproduce 18.700 s has no
+## standing to publish 20.137.
+##
+## WHAT IT LEAVES BEHIND: NORTH_LOBE_RADIUS is now INERT, on exactly the
+## terms SHORE_PAD_RADIUS has been inert since LAKE-MOVE -- contained by a
+## wider term of the same union, kept rather than zeroed because it is a
+## measured number with a published provenance (the CH16 recon's most
+## conservative of four) and because SeesawProbe, LakeZoneProbe and
+## ZiplineStructureProbe all still read it. Its term in contains() and its
+## candidate in clamp_to() are kept for the same reason and are dead by
+## arithmetic, not by accident: same centre, 12 < 28.
+##
+## NO ASSET IS PLACED BY THIS LOT. The skatepark itself is a Meshy lot of
+## its own; this one only makes the ground exist, dresses it with the same
+## carpet as every other square unit of the plateau, and closes the wall
+## behind it.
+const SKATE_LOBE_RADIUS: float = 28.0
+
 ## CH38: THE WEST RIDGE -- a rectangle unioned onto the plateau's west
 ## edge, and the first walkable ground in this file that is not flat.
 ##
@@ -410,6 +467,16 @@ static var LAKE_AZIMUTH_DEG: float = fposmod(
 ## layout author can both aim at the lobe without restating where the north
 ## edge is.
 static func north_lobe_centre() -> Vector3:
+	return _north_lobe
+
+## CH50: centre of the skate lobe. The SAME point as north_lobe_centre(),
+## and returned from the same static var rather than rebuilt, so "the
+## middle of the north edge" has exactly one spelling in this file. Two
+## accessors and one variable is the honest shape here: the two radii are
+## different contracts (CH16's room on the edge, CH50's skatepark ground)
+## that happen to share a centre, and a caller that wants one should not
+## have to know the other exists.
+static func skate_lobe_centre() -> Vector3:
 	return _north_lobe
 
 ## Every structure lobe, centre and radius, in layout order. Published so a
@@ -653,6 +720,9 @@ static func walkable_bounds() -> Rect2:
 			Vector2(PLATEAU_HALF_EXTENT, PLATEAU_HALF_EXTENT)),
 		_span(MOUNTAIN_MIN, MOUNTAIN_MAX),
 		_disc_span(_north_lobe, NORTH_LOBE_RADIUS),
+		# CH50: the skate lobe, and it is the term that actually moves this
+		# box's north edge (35 + 28 = 63, where the r=12 lobe reached 47).
+		_disc_span(_north_lobe, SKATE_LOBE_RADIUS),
 		_disc_span(_near_bank, SHORE_PAD_RADIUS),
 	]
 	for lobe in _structure_lobes:
@@ -692,6 +762,13 @@ static func contains(point: Vector3) -> bool:
 	# CH38: the west ridge, one more rectangle and no new kind of case.
 	if _in_rect(flat, MOUNTAIN_MIN, MOUNTAIN_MAX):
 		return true
+	# CH50: the skate lobe FIRST -- same centre, wider radius, so it is the
+	# term that answers for this disc and the CH16 line below is dead by
+	# arithmetic (12 < 28 at distance 0). The CH16 line is kept anyway, on
+	# the same terms as the shore pad's: a measured term of the union that
+	# costs nothing while contained, and that three probes still read.
+	if flat.distance_to(_north_lobe) <= SKATE_LOBE_RADIUS:
+		return true
 	if flat.distance_to(_north_lobe) <= NORTH_LOBE_RADIUS:
 		return true
 	# One more disc per structure lobe, and no new KIND of case -- the same
@@ -723,9 +800,10 @@ static func contains(point: Vector3) -> bool:
 ## nothing left to call it.
 ##
 ## Candidates rather than a closed form: the region is a union of a square
-## and two discs (the shore pad and the north lobe), so its nearest point
+## and three discs (the shore pad, the north lobe and CH50's skate lobe,
+## the last two concentric), so its nearest point
 ## is on one of a
-## handful of features (the square's boundary, either disc's boundary, or
+## handful of features (the square's boundary, any disc's boundary, or
 ## a corner where two of them meet). Generating those and taking the closest that
 ## actually passes contains() is both shorter and harder to get subtly
 ## wrong than case-splitting the geometry by hand.
@@ -743,9 +821,16 @@ static func clamp_to(point: Vector3) -> Vector3:
 	# of case -- the reason contains() and this function both took the union
 	# without growing a branch shaped like "the north lobe".
 	var lobe := _north_lobe + (flat - _north_lobe).limit_length(NORTH_LOBE_RADIUS)
+	# CH50: the skate lobe's own nearest point. It is the one that ever
+	# wins between the two -- for any point outside the region the r=28
+	# projection is |p - c| - 28 away and the r=12 one is |p - c| - 12, so
+	# the CH16 candidate can never be nearer. Kept beside it rather than
+	# replaced, for the reason its term in contains() is kept.
+	var skate := _north_lobe + (flat - _north_lobe).limit_length(SKATE_LOBE_RADIUS)
 	candidates.append(square)
 	candidates.append(pad)
 	candidates.append(lobe)
+	candidates.append(skate)
 	candidates.append(_clamp_rect(flat, AUTUMN_MIN, AUTUMN_MAX))
 	candidates.append(_clamp_rect(flat, CORRIDOR_MIN, CORRIDOR_MAX))
 	candidates.append(_clamp_rect(flat, MOOR_MIN, MOOR_MAX))

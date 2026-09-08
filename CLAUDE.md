@@ -1987,6 +1987,95 @@ pour un nœud anonyme est son **fichier de scène** (`scene_file_path`), la
 seule identité qu'il porte encore.
 
 
+### ⚠️ « QUI NE LIT AUCUN PIXEL TOURNE EN HEADLESS » EST FAUX — L'AXE EST CE QU'ON RELIT DU MOTEUR
+
+Précision d'une règle déjà écrite, et elle a coûté un faux-vert complet au
+CH50. Ce fichier dit qu'une sonde qui ne lit **que des transforms**
+(`unproject_position`, `PursuerFramingAudit`) doit tourner **en headless**,
+parce que llvmpipe la fait dépasser dix minutes. C'est vrai — et une sonde
+neuve s'en est autorisée pour lire des instances de `MultiMesh`.
+
+`unproject_position` est un **calcul pur** ; `get_instance_transform()` est
+une **relecture du moteur**, et c'est le point 2 de la liste du driver
+dummy. Mesuré sur le hub livré, même arbre, même commande, seul le driver
+change :
+
+| driver | instances | non-identité |
+|---|---|---|
+| `--headless` | 2 743 | **0** |
+| `xvfb` + `--rendering-driver opengl3` | 2 743 | **2 743** |
+
+La sonde a donc compté **zéro** décor sur le sol qu'elle testait, et son
+assertion d'ABSENCE (« rien en dehors ») est sortie **VERTE**, parce que
+zéro la satisfait aussi.
+
+**Règle** : l'axe n'est pas « pixels ou pas », c'est **« qu'est-ce que je
+relis du moteur »**. Une sonde qui relit un `MultiMesh`, un viewport ou un
+shader a besoin d'un vrai driver même sans échantillonner un fragment ; le
+coût llvmpipe se paie en **rétrécissant le `SubViewport`** (96 × 160
+suffit), pas en retombant sur le dummy. Et la parade vit **dans la sonde**,
+jamais dans son en-tête : un **contrôle d'instrument** qui exige que les
+transforms relues soient non-identité, et qui échoue bruyamment au lieu de
+compter un zéro tranquille.
+
+### ⚠️ UNE FAMILLE DE BATCH REMPLIE PAR PLUSIEURS PASSES AUX RÈGLES DIFFÉRENTES
+
+Le mur forestier et les quatre haies partagent la famille `wall_near`, et
+**n'obéissent pas au même filtre** : le mur d'anneau refuse tout candidat à
+moins de `WALL_CLEARANCE` du sol marchable, une haie ne teste rien de tel —
+elle **borde** un bord de couloir, s'en écarter est la seule chose qu'elle
+ne doit pas faire.
+
+Un gate écrit sur la FAMILLE mesure donc la mauvaise population. Au CH50 il
+est sorti **rouge sur 42 arbres**, et l'explication écrite pour ce rouge
+(« le filtre livré échantillonne huit points, un arbre peut passer dessous »)
+était **fausse** : recalculée arbre par arbre, elle montrait que **41 des 42
+auraient été rejetés**. Séparées par la CELLULE de la clé de batch, il en
+restait **1**, et celui-là passait bien le filtre 8 points.
+
+**Règle** : compter chaque passe séparément — et **asserter que la somme est
+le total de la famille**, sans quoi une cellule que le lecteur ne connaît pas
+sort des arbres du gate en silence. Un rouge portant la mauvaise explication
+envoie diagnostiquer la mauvaise chose ; c'est pire qu'un rouge muet.
+
+### ⚠️ UN GATE DE CONTRASTE DONT L'ENCRE EST NOIRE PAR CONSTRUCTION EST UN TEST DU SOL
+
+Dix-huitième faux-signal du dépôt, CH50, et c'est une **loterie publiée
+comme un contrat**. `MinimapProbe` asserte « le bord de la plaque franchit
+3,0:1 tout autour ». Or son échantillon d'encre est le **minimum** sur la
+coque, donc le liséré **NOIR** par construction — la sonde asserte ailleurs
+que chaque cellule en porte un. Contre une encre noire, WCAG vaut
+`(L + 0,05) / 0,05` : **3,0:1 exige que le SOL soit à L ≥ 0,10**, et rien
+d'autre n'entre dans le calcul.
+
+L'assertion mesure donc la luminance du **plan**, en portant le nom du
+marqueur — et elle passe ou échoue selon **où un marqueur atterrit**.
+Balayage du plan rendu : `origin/main` porte **166 px (0,21 %)** de sol peint
+sous L 0,10, le plus sombre à **L 0,0656 = exactement 2,31:1**. Élargir le
+cadre a déplacé une plaque sur cette bande, et la loterie a été perdue.
+
+**Règle** : quand une des deux moitiés d'un ratio est **fixée par
+construction**, le gate porte sur l'autre moitié — le dire, et gater ce qui
+est défendable (*la part du périmètre qui tombe sur du sol inatteignable
+reste petite*) plutôt qu'un seuil que le dessin du marqueur ne peut pas
+atteindre. C'est le pendant de « la métrique peut être la mauvaise, et le
+chiffre vert avec » : ici la métrique est fausse **et le chiffre était vert
+par chance de placement**.
+
+### ⚠️ UNE EXEMPTION « SAUF LÀ OÙ X COUVRE DÉJÀ » SE RECONSTRUIT ET SE GATE
+
+Corollaire opérationnel de « une liste de ce qui n'est pas le sujet est
+fausse au premier nom oublié », côté ASSERTION DE FRONTIÈRE. Deux sondes
+écrivaient « juste en dehors du bord, c'est non marchable **sauf là où le
+CARRÉ couvre déjà** » — vrai tant que le carré était le seul autre terme à
+atteindre ce bord. CH50 en a ajouté un, et le lobe de structure P2 de CH21
+en était déjà un troisième, court de **quatre azimuts sur 721**.
+
+**Règle** : l'exemption se prend dans ce que la région **PUBLIE**, et — c'est
+la moitié qui compte — la sonde **asserte que cette reconstruction reproduit
+`contains()` sur chaque échantillon** (721/721, 360/360). Le prochain terme
+d'union échoue alors **bruyamment là**, au lieu d'être oublié en silence.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
@@ -2386,6 +2475,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH39 | Le relief invisible — diagnostic avant correctif : les cinq hypothèses du brief tranchées une par une, puis la **cause prouvée à variable unique** (le treillis de la crête était enroulé à l'envers, `cull_back` jetait toute la colline, 14 pixels contre 317 646), le **dixième faux-vert** nommé sur cinq mécanismes empilés, et `MountainProbe` PHASE G — un gate de PIXELS sans seuil | [`CH39_RELIEF_DIAGNOSTIC.md`](docs/lots/CH39_RELIEF_DIAGNOSTIC.md) | 1 | 181 | 7 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 | CH37 | Socle multi-altitude, LOT 1 SURFACE — `HubSurface` publié (requête pure au patron `HubWater`), `ground(flat)` comme orthographe unique du point sol, grille float32 refusée sinon, raccord C0 exact au périmètre, AABB disjointes, aucune bande `CozyPalette` traversante ; six vagues branchées (marche, caméra, tap, retours au sol, pluie/ombre) et **zéro domaine enregistré en jeu**, donc un no-op arithmétique prouvé sur les deux arbres ; `SurfaceProbe` phases A → G avec blind check en tête de chaque phase | [`CH37_SURFACE.md`](docs/lots/CH37_SURFACE.md) | 1 | — | 7 sept |
+| CH50 | Extension zone 0 nord — le sol du skatepark : disque r=28 unioné sur le milieu du bord nord (le MÊME centre que le lobe CH16, qu'il avale à tous les centres que le budget autorise, donc « goulot entre les deux disques » n'est pas une forme dessinable), pire paire créée 106,590 u / **20,117 s** qui PERD contre celle de CH38 (111,414 u / 20,967 s) donc pire traversée du hub inchangée, diagonale reproduite à la frame près (1 122 frames / 18,700 s) ; `COVER_MAX.y` 47 → 63 et les TROIS orthographes du littéral 50 du mur unifiées en un `WALL_NEAR_Z` dérivé (68) ; trois passes rouges (9 / 3 / 3) et le couplage tapis-mur prouvé par les deux dernières ; faux-vert du lot : la sonde en `--headless` lisait **2 743 transforms de `MultiMesh` sur 2 743 en identité** et comptait zéro en vert ; table des sondes rejouée sur deux arbres, parité rétablie, plus la trouvaille que le gate de contraste des plaques CH48 est un test du SOL (`origin/main` porte déjà 0,21 % de sol peint sous L 0,10, son plus sombre à 2,31:1 exactement) | [`CH50_ZONE0_NORD.md`](docs/lots/CH50_ZONE0_NORD.md) | 1 | 402 | 8 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

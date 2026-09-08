@@ -39,7 +39,17 @@ const CELL: float = 28.0
 ## else; the throws that land west of the plateau and outside the ridge
 ## are refused by HubRegion.contains() as they always were.
 const COVER_MIN: Vector2 = Vector2(HubRegion.MOUNTAIN_MIN.x, -37.0)
-const COVER_MAX: Vector2 = Vector2(37.0, 47.0)
+## ⚠️ CH50: 47 WAS THE r=12 NORTH LOBE'S REACH, AND THE SKATE LOBE REACHES
+## 63. Same failure mode as CH40's -37 above, on the other axis: the
+## region grew and this rectangle did not, so the whole new half-disc
+## would have been bald -- not a subtle loss of density, NO candidate is
+## ever thrown there at all.
+##
+## DERIVED, not retyped, and that is the actual fix. 47 was a third
+## spelling of "35 + 12" that nothing gated, which is exactly why it did
+## not move when the lobe did. The x bound stays 37: the skate lobe spans
+## x in [-28, 28], well inside it.
+const COVER_MAX: Vector2 = Vector2(37.0, HubRegion.PLATEAU_HALF_EXTENT + HubRegion.SKATE_LOBE_RADIUS)
 ## ⚠️ CH40 -- HOW MUCH OF THE CARPET A REGISTERED DOMAIN KEEPS, and this
 ## is a DENSITY decision, not a bug fix: the bound above is what made the
 ## ridge reachable at all, this is what makes it "moins dense".
@@ -63,6 +73,24 @@ const WALL_OUTER: float = 62.0
 ## v2: the wall box now runs to z = -100 to close the hollow's far side.
 ## v7: and to z = -210 to close the circuit's.
 const WALL_FAR_Z: float = -210.0
+## ⚠️ CH50: THE WALL BOX'S NORTH LIP, and it had THREE spellings of 50.0
+## before this lot -- two in _forest_wall (the box area and the throw) and
+## one in _hills. A literal that appears three times is a literal that
+## moves twice and stays put once.
+##
+## DERIVED from the region for the same reason COVER_MAX now is: the wall
+## exists to close BEHIND walkable ground, so its lip is that ground's
+## northernmost point plus a lip. 5 u rather than the 3 u the old 50 left
+## over the r=12 lobe, because WALL_CLEARANCE eats 2 of them and a 1 u
+## strip is not a band -- at the apex the old number left the wall exactly
+## one unit to stand in.
+##
+## WHY THE WALL IS NEEDED NORTH AT ALL, since HubCamera never yaws and a
+## player on foot never sees anything at a higher z than their own: the
+## CHASE camera does (CH30 -- the kart and the sand yacht), and CH30's own
+## finding was that a chase camera shows the decor from azimuths the fixed
+## frame never showed and that two real defects were hiding there.
+const WALL_NEAR_Z: float = HubRegion.PLATEAU_HALF_EXTENT + HubRegion.SKATE_LOBE_RADIUS + 5.0
 const HEDGE_PER_U2: float = 0.10
 const WALL_CLEARANCE: float = 2.0
 const WALL_NEAR_BAND: float = 8.0
@@ -257,8 +285,10 @@ func _sprinkle(family: String, variants: int, count: int, own_radius: float,
 
 ## Trees outside the region: a near band of full-detail round trees where
 ## the wall meets the plateau, and a far band of the cheap LOD behind it.
-## South of z = 50 nothing is placed: the camera sits north of Keepy
-## looking south (toward -z), so that side is never in frame.
+## Nothing is placed past WALL_NEAR_Z (CH50: 68, and derived -- it was a
+## literal 50 sized for the r=12 north lobe). The fixed camera sits north
+## of Keepy looking south, so that side is never in ITS frame; the chase
+## camera of CH30 is why the wall is built there anyway.
 ## ---- v2: the autumn hollow ------------------------------------------
 const AUTUMN_SEED: int = SEED + 101
 const AUTUMN_TREE_PER_U2: float = 0.014
@@ -919,9 +949,9 @@ func _forest_wall() -> void:
 	var cove_kinds := ["palm_0", "palm_1", "palm_2", "palm_0", "palerock_0", "palm_1"]
 	var placed_near := 0
 	var placed_far := 0
-	var box_area := (2.0 * WALL_OUTER) * (50.0 - WALL_FAR_Z)
+	var box_area := (2.0 * WALL_OUTER) * (WALL_NEAR_Z - WALL_FAR_Z)
 	for i in int(box_area * WALL_FAR_PER_U2):
-		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, 50.0))
+		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, WALL_NEAR_Z))
 		if HubRegion.contains(p) or _near_region(p, WALL_CLEARANCE):
 			continue
 		if _blocked(p, 1.2) or HubRegion.in_sea(p) or HubRegion.shore_distance(p) < 2.0 or _in_cove_camera_band(p):
@@ -946,7 +976,7 @@ func _forest_wall() -> void:
 			placed_far += 1
 	# Second pass to thicken the near band to WALL_NEAR_PER_U2.
 	for i in int(box_area * (WALL_NEAR_PER_U2 - WALL_FAR_PER_U2)):
-		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, 50.0))
+		var p := Vector3(_rng.randf_range(-WALL_OUTER, WALL_OUTER), 0.0, _rng.randf_range(WALL_FAR_Z, WALL_NEAR_Z))
 		if HubRegion.contains(p) or _near_region(p, WALL_CLEARANCE) or not _near_region(p, WALL_NEAR_BAND):
 			continue
 		if _blocked(p, 1.2) or HubRegion.in_sea(p) or HubRegion.shore_distance(p) < 2.0 or _in_cove_camera_band(p):
@@ -1339,7 +1369,7 @@ func _blob_shadows() -> void:
 ## Distant rounded hills behind the forest wall: the horizon band at the
 ## top of the frame reads as a landscape instead of a flat sky colour.
 ## Squashed spheres, toon-tinted, mostly dissolved by the haze -- what is
-## left is a soft silhouette, which is the point. South of z = 50 nothing.
+## left is a soft silhouette, which is the point. Nothing past WALL_NEAR_Z.
 const HILL_COUNT: int = 26
 const HILL_COLOR: Color = Color(0.60, 0.80, 0.50)
 
@@ -1366,7 +1396,10 @@ func _hills() -> void:
 			r = rng.randf_range(236.0, 262.0)
 			a = rng.randf_range(PI + 0.45, TAU - 0.45)
 		var p := Vector3(cos(a) * r, 0.0, sin(a) * r)
-		if p.z > 50.0:
+		# CH50: WALL_NEAR_Z, not a fourth spelling of 50 -- the far
+		# silhouette has to stand behind the wall wherever the wall now is,
+		# or a chase camera looking north finds the crown against flat sky.
+		if p.z > WALL_NEAR_Z:
 			continue
 		# v2: the hollow runs to z = -78; a hill's skirt (up to 20 u) must
 		# not sit on its floor.
