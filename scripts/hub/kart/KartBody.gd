@@ -139,6 +139,14 @@ const FOOTPRINT: float = 1.4
 var velocity: Vector3 = Vector3.ZERO
 ## The name this kart races under; the HUD and the lot-2 standings read it.
 var racer_name: String = "Keepy"
+
+## CH48 -- WHICH KART THIS IS, for the minimap's thumbnail roster. Written
+## by HubKarting.add_racer BEFORE add_child, because _ready() runs inside
+## that call and the field has to exist by then. NOT read off `name`: CH46
+## measured that node names in this hub move with the instantiation counter
+## and half the markers have none at all, which is the whole reason the map
+## is built on groups and declarations rather than on paths.
+var grid_index: int = 0
 var body_colour: Color = Color(0.93, 0.40, 0.30)
 
 var _chassis: Node3D = null
@@ -178,7 +186,7 @@ static func _make_motion() -> VehicleDrive:
 func _ready() -> void:
 	# CH46: on the minimap, as a vehicle. One line, at the site that builds it --
 	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
-	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE)
+	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE, StringName("kart_%d" % grid_index))
 	_build()
 
 ## The node a passenger is parented to (it leans with the kart).

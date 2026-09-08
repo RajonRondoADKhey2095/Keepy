@@ -158,6 +158,12 @@ func _run() -> void:
 	_phase_ranks()
 	await _phase_separation()
 	_phase_clusters()
+	_phase_sheet()
+	await _phase_portraits()
+	await _phase_contrast()
+	await _phase_npc_follow()
+	await _phase_keepy()
+	await _phase_cost()
 
 	print("")
 	print("=== %d checks, %d red ===" % [_checks, _red])
@@ -308,8 +314,15 @@ func _phase_markers() -> void:
 		var list: Array[Dictionary] = _map.clusters(kind_here)
 		for i in list.size():
 			var v: int = HubMinimap.variant_of(int(list[i]["count"]), bool(list[i]["clamped"]))
+			# ⚠️ CH48: THE NODE'S OWN REACH, NOT THE KIND'S. A kind can now
+			# draw a 32 px portrait or a 7 px shape depending on what the
+			# entity declared, and asking the KIND gave the abstract icon's
+			# 7.5 px for a plate 14.5 px wide -- so a place buried under a
+			# portrait read as "drawn but missing its tone" instead of as
+			# occluded. Same class of defect as CH47's own PHASE 4, one
+			# level down.
 			order.append({"k": k, "i": i, "at": (list[i]["at"] as Vector2),
-				"reach": _map.reach(kind_here, v)})
+				"reach": _map.node_reach(list[i]["members"][0], kind_here, v)})
 	for k in pairs.size():
 		var group: StringName = pairs[k][0]
 		var tone: Color = pairs[k][1]
@@ -338,14 +351,20 @@ func _phase_markers() -> void:
 			# would read black on exactly the markers this lot added. What
 			# is asserted is that the kind's tone is PRESENT inside the
 			# glyph's own drawn reach, which is true of all three variants.
+			# ⚠️ CH48: A CLAMPED GLYPH WEARS THE CREAM RIM, NOT ITS KIND'S.
+			# Asking for the kind's tone on it reads 0 px on a map that is
+			# behaving exactly as designed -- which is what the first run of
+			# this phase did on the sailboat pinned to the east border.
 			var variant: int = HubMinimap.variant_of(int(list[i]["count"]), bool(list[i]["clamped"]))
-			var span: float = maxf(_map.reach(group, variant), 3.0)
-			var lit: int = _tone_hits(img, origin + at, tone, span)
+			var want: Color = HubMinimap.CLAMP_RIM if variant == HubMinimap.V_CLAMPED else tone
+			var span: float = maxf(_map.node_reach(list[i]["members"][0], group, variant), 3.0)
+			var lit: int = _tone_hits(img, origin + at, want, span)
 			if lit >= 6:
 				hit += 1
 			else:
-				misses.append("cluster of %d at %s lights only %d px of its tone"
-					% [int(list[i]["count"]), at, lit])
+				misses.append("cluster of %d at %s (thumb '%s', variant %d, span %.1f) lights only %d px of %s"
+					% [int(list[i]["count"]), at, MinimapMarkers.thumb_of(list[i]["members"][0]),
+						variant, span, lit, want])
 		print("   %-17s %d/%d unoccluded glyphs carry their own tone" % [pairs[k][2], hit, tried])
 		for m in misses:
 			print("      MISS %s" % m)
@@ -397,7 +416,7 @@ func _phase_clamp() -> void:
 	# that dot half a cell inland would put it 11 world units from the thing
 	# it marks. So the border test is written against the number the widget
 	# actually uses, read from the widget.
-	var pin: float = _map.reach(MinimapMarkers.VEHICLE, HubMinimap.V_CLAMPED)
+	var pin: float = _map.node_reach(boat, MinimapMarkers.VEHICLE, HubMinimap.V_CLAMPED)
 	_check(pin > 1.0, "the clamped glyph has a measured reach (%.2f px)" % pin)
 	# The DRAWN position, which is project() asked with the inset the widget
 	# itself uses. Asking with the default 0 -- as the first run of this
@@ -409,8 +428,17 @@ func _phase_clamp() -> void:
 		"and fully inside the widget -- a clamped marker is drawn whole, not half-cut")
 	var img: Image = await _shot()
 	var origin: Vector2 = _map.global_position
-	_check(_tone_hits(img, origin + at, HubMinimap.VEHICLE_TONE, 8.0) >= 6,
-		"it still renders in the vehicle tone -- clamping changes the SHAPE, never the kind")
+	# ⚠️ CH48 RE-AIMED THIS, AND THE RE-AIM IS THE POINT. CH47 read the
+	# VEHICLE tone in the glyph's middle, because a clamped vehicle was a
+	# tinted square. A clamped PORTRAIT is drawn at modulate white -- the
+	# model's own colours, decision 2 -- so there is no kind tone in its
+	# middle to find and that assertion would now be false about a map that
+	# is correct. What a clamped glyph says is said by its RIM: cream where
+	# an in-frame one is its kind's colour.
+	_check(_tone_hits(img, origin + at, HubMinimap.CLAMP_RIM, pin + 1.0) >= 6,
+		"the clamped glyph wears the cream rim -- clamping changes the RIM, never the picture")
+	_check(_tone_hits(img, origin + at, HubMinimap.VEHICLE_TONE, pin + 1.0) < 6,
+		"BLIND: and it is NOT wearing the in-frame vehicle rim, so the two are told apart")
 	# ⚠️ THE SHAPE TEST MOVED TO PHASE 9, AND IT IS NOT A WEAKENING.
 	# CH46 proved square-against-disc by reading the four (+-3, +-3) corners,
 	# because at 14 px both icons were the same size and only the corners
@@ -671,6 +699,29 @@ func _phase_separation() -> void:
 	if cabin != null and dock != null:
 		dock_home = dock.global_position
 		dock.global_position = cabin.global_position + Vector3(2.0, 0.0, 0.0)
+	# ⚠️ THE WORLD IS FROZEN FOR THIS PHASE, and CH48 paid for it three times.
+	# The plan is drawn at alpha 0.92, so 8 % of the 3D scene behind it
+	# bleeds through; with the widget moved to the bottom RIGHT that 8 % is
+	# near-camera swaying scatter, and the noise floor -- 0.0000 for CH47 in
+	# the bottom left -- came back 0.3499. Not a different map: a different
+	# patch of moving grass. MinimapThumbBake hit the same wall on its
+	# two-distance check and answered it the same way.
+	#
+	# ⚠️ THE WIDGET IS EXEMPTED FROM THE FREEZE, and that is the second half.
+	# Pausing the tree also stops HubMinimap._process, so it never calls
+	# queue_redraw() and every "one kind put back" frame comes back IDENTICAL
+	# to the baseline: peak 0.000 for every glyph of every kind, a map read
+	# as blank. A freeze has to stop the thing measured AGAINST, never the
+	# thing being measured.
+	#
+	# ⚠️ AND IT WENT INTO THE WRONG PHASE FIRST -- into PHASE 6 as well as
+	# here, because that phase lifts the groups with the same eight lines and
+	# a blind text replacement caught both. The tree then stayed paused from
+	# PHASE 6 to the end of PHASE 9: PHASE 8's taps died (a paused
+	# HubTapInput has no _unhandled_input) and PHASE 6 read a frame drawn
+	# BEFORE its own lift. Six reds, not one of them about the map.
+	get_tree().paused = true
+	_map.process_mode = Node.PROCESS_MODE_ALWAYS
 	var lifted: Dictionary = {}
 	for group in MinimapMarkers.KINDS:
 		var list: Array[Node3D] = _map.members(group)
@@ -698,6 +749,7 @@ func _phase_separation() -> void:
 
 	var cov: Dictionary = {}
 	var peak: Dictionary = {}
+	var inks: Dictionary = {}
 	for group in MinimapMarkers.KINDS:
 		for n in (lifted[group] as Array[Node3D]):
 			n.add_to_group(group)
@@ -730,6 +782,7 @@ func _phase_separation() -> void:
 			var key: String = "%s/%d" % [label, variant]
 			cov[key] = float(read["cov"])
 			peak[key] = float(read["peak"])
+			inks[key] = read["ink"]
 			print("   %-8s variant %d : coverage %.4f   peak delta %.3f   isolated by %.1f px   members %d"
 				% [label, variant, float(read["cov"]), float(read["peak"]), best_gap, int(best["count"])])
 			_check(float(read["peak"]) >= INK_PEAK_MIN,
@@ -739,6 +792,8 @@ func _phase_separation() -> void:
 	for group in MinimapMarkers.KINDS:
 		for n in (lifted[group] as Array[Node3D]):
 			n.add_to_group(group)
+	get_tree().paused = false
+	_map.process_mode = Node.PROCESS_MODE_INHERIT
 	boat.place(home, PI / 2.0)
 	if cabin != null and dock != null:
 		dock.global_position = dock_home
@@ -774,29 +829,58 @@ func _phase_separation() -> void:
 	_check(have, "a SIMPLE glyph of all four kinds was isolated and read")
 	if not have:
 		return
-	print("   --- SEPARATION MATRIX, 6 pairs (|coverage difference|) ---")
+	# ⚠️ CH47'S OWN CRITERION CANNOT SEE CH48'S MARKERS, AND THAT IS THE
+	# FINDING RATHER THAN A GAP IN IT.
+	#
+	# CH47 separated its four kinds by |coverage(A) - coverage(B)| -- how
+	# much of the box each one fills -- and got 0.0960 at worst against a
+	# 0.0000 floor, because its four glyphs were four different SIZES. Every
+	# CH48 portrait is the same 32 px plate, so that number is ~0.02 for
+	# every pair by construction, and carried over unchanged it declares a
+	# correct map broken. Worse, it would read 0.0000 for two IDENTICAL
+	# portraits and call that a pass: a scalar area cannot tell two pictures
+	# apart, only two footprints.
+	#
+	# So the matrix is now DISAGREEMENT coverage: how much of the box the
+	# two glyphs' own ink maps differ on, each read against its own
+	# baseline. It subsumes the CH47 number (two different sizes disagree
+	# over the whole ring between them) and it can actually fail. The CH47
+	# figure is still printed beside it, because "the footprints are the
+	# same size now" is true and worth reading.
+	print("   --- SEPARATION MATRIX, 6 pairs (disagreement | CH47 area delta) ---")
 	var worst: float = INF
 	var worst_pair: String = ""
 	for a in kinds.size():
 		for b in range(a + 1, kinds.size()):
-			var d: float = absf(float(cov["%s/0" % kinds[a]]) - float(cov["%s/0" % kinds[b]]))
-			print("       %-8s vs %-8s  %.4f" % [kinds[a], kinds[b], d])
+			var d: float = _disagree(inks["%s/0" % kinds[a]], inks["%s/0" % kinds[b]])
+			var area: float = absf(float(cov["%s/0" % kinds[a]]) - float(cov["%s/0" % kinds[b]]))
+			print("       %-8s vs %-8s  %.4f  |  %.4f" % [kinds[a], kinds[b], d, area])
 			if d < worst:
 				worst = d
 				worst_pair = "%s/%s" % [kinds[a], kinds[b]]
-			_check(d > SEP_MIN, "%s and %s are separated by coverage (%.4f > %.2f)"
+			_check(d > SEP_MIN, "%s and %s disagree over %.4f of the box (> %.2f)"
 				% [kinds[a], kinds[b], d, SEP_MIN])
 	print("   weakest pair %s at %.4f, floor %.4f -- %.1fx the floor"
 		% [worst_pair, worst, floor_max, worst / maxf(floor_max, 0.0001)])
 
-	# The ranks read off the same number: rank 1 inks more than rank 2 inks
-	# more than rank 3. This is the salience hierarchy itself, gated.
-	_check(float(cov["player/0"]) > float(cov["vehicle/0"]),
-		"the player out-inks every vehicle (%.4f > %.4f)" % [float(cov["player/0"]), float(cov["vehicle/0"])])
-	_check(float(cov["vehicle/0"]) > float(cov["npc/0"]),
-		"rank 1 out-inks rank 2 (%.4f > %.4f)" % [float(cov["vehicle/0"]), float(cov["npc/0"])])
-	_check(float(cov["npc/0"]) > float(cov["place/0"]),
-		"rank 2 out-inks rank 3 (%.4f > %.4f)" % [float(cov["npc/0"]), float(cov["place/0"])])
+	# ⚠️ THE RANKS ARE NO LONGER CARRIED BY SIZE, so they are not gated by
+	# size any more. CH47 ordered them by how much each kind inked; CH48's
+	# top three ranks are all one plate, and what orders them is the RIM --
+	# the kind's own tone, in CH47's luminance order (PHASE 11 gates that),
+	# and thicker on the player than on anyone else. What survives from the
+	# CH47 assertion is the one part still true and still load-bearing:
+	# rank 3 is decisively smaller than the rest.
+	_check(float(cov["npc/0"]) > float(cov["place/0"]) * 1.5,
+		"rank 3 still inks decisively less than rank 2 (%.4f against %.4f)"
+			% [float(cov["place/0"]), float(cov["npc/0"])])
+	# ⚠️ AND RANK 1 IS BIGGER AGAIN. CH48 first gave all three portrait ranks
+	# one 32 px plate and this assertion said so; that turned out to leave
+	# Keepy with a 4.5 % ring-thickness cue as his only distinction, which is
+	# not "au premier coup d'oeil". His glyph is now DRAWN at 1.28x, and what
+	# is gated is the footprint that produces on the plan.
+	_check(float(cov["player/0"]) > float(cov["vehicle/0"]) * 1.1,
+		"the player out-inks every vehicle again (%.4f against %.4f)"
+			% [float(cov["player/0"]), float(cov["vehicle/0"])])
 
 	# ---- merged and clamped, against their own simple ----------------
 	for k in kinds:
@@ -804,9 +888,9 @@ func _phase_separation() -> void:
 			var key: String = "%s/%d" % [k, variant]
 			if not cov.has(key):
 				continue
-			var d: float = absf(float(cov[key]) - float(cov["%s/0" % k]))
+			var d: float = _disagree(inks[key], inks["%s/0" % k])
 			var what: String = "merged" if variant == 1 else "clamped"
-			_check(d > SEP_MIN, "a %s %s glyph is distinguishable from a simple one (%.4f)"
+			_check(d > SEP_MIN, "a %s %s glyph disagrees with a simple one over %.4f of the box"
 				% [what, k, d])
 	_check(cov.has("vehicle/1"), "a MERGED glyph existed to be measured at all")
 	_check(cov.has("vehicle/2"), "a CLAMPED glyph existed to be measured at all")
@@ -825,14 +909,17 @@ func _phase_clusters() -> void:
 		members_total += list.size()
 		glyphs_total += drawn.size()
 		var n: float = _map.merge_px(group)
-		# ⚠️ MEASURED, NOT WRITTEN DOWN. The threshold is twice the icon's
-		# own drawn reach, read off the baked atlas -- so a radius edited in
-		# the table without touching anything else moves it, and a literal
-		# left behind here would be the silent drift this repo keeps paying.
+		# ⚠️ MEASURED, NOT WRITTEN DOWN, and CH48 changed WHICH measurement.
+		# CH47's threshold was TWICE the drawn reach ("their ink touches");
+		# at a 32 px plate that is 19 world units, and it folded three
+		# different vehicles into one portrait. It is now ONE reach --
+		# "the later glyph would bury this one" -- read off the widget's own
+		# largest drawn glyph for the kind, so a size edited anywhere moves
+		# it and no literal is left behind.
 		var expect: float = 0.0 if group == MinimapMarkers.PLAYER \
-			else 2.0 * _map.reach(group, HubMinimap.V_SIMPLE)
+			else _map.kind_reach(group)
 		_check(absf(n - expect) < 0.001,
-			"%s: merge_px is twice its own measured reach (%.2f px = %.2f u)"
+			"%s: merge_px is its own largest measured reach (%.2f px = %.2f u)"
 				% [label, n, n * _map.frame().size.y / _map.size.y])
 		var names: PackedStringArray = []
 		for c in drawn:
@@ -901,16 +988,726 @@ func _phase_ranks() -> void:
 	var prev: float = 2.0
 	for kind in order:
 		var lum: float = _lum(HubMinimap.tone_of(kind))
-		print("   %-17s rank %d   tone %s   luminance %.4f   reach %.2f px"
+		print("   %-17s rank %d   tone %s   luminance %.4f   drawn reach %.2f px"
 			% [kind, HubMinimap.rank_of(kind), HubMinimap.tone_of(kind), lum,
-				_map.reach(kind, HubMinimap.V_SIMPLE)])
+				_map.kind_reach(kind)])
 		_check(lum < prev, "%s is darker than the kind above it (%.4f)" % [kind, lum])
 		prev = lum
-	var big: float = minf(minf(_map.reach(MinimapMarkers.PLAYER, HubMinimap.V_SIMPLE),
-		_map.reach(MinimapMarkers.VEHICLE, HubMinimap.V_SIMPLE)),
-		_map.reach(MinimapMarkers.NPC, HubMinimap.V_SIMPLE))
-	var small: float = _map.reach(MinimapMarkers.PLACE, HubMinimap.V_SIMPLE)
+	# CH48: the DRAWN glyph, which for the top three ranks is a portrait
+	# plate and not the abstract shape any more. Reading the shape here
+	# would gate a cell the delivered world never puts on screen.
+	var big: float = minf(minf(_map.kind_reach(MinimapMarkers.PLAYER),
+		_map.kind_reach(MinimapMarkers.VEHICLE)), _map.kind_reach(MinimapMarkers.NPC))
+	var small: float = _map.kind_reach(MinimapMarkers.PLACE)
 	_check(small < 0.6 * big, "rank 3 is decisively the smallest icon (%.2f px against %.2f)" % [small, big])
+
+## PHASE 12 -- THE SHIPPED SHEET IS THE SHIPPED SHEET.
+##
+## The 22 portraits are a versioned PNG, not something this build made, so
+## what has to be gated is that the file which arrives through Godot's
+## importer is still the file the baker wrote. Not by a checksum constant
+## -- that would be a magic number pasted in by hand from a round trip
+## nobody can re-do -- but by the properties that a lossy import would
+## destroy: the cells still ink, they are still all different, and the
+## alpha is still a hard matte rather than a soft cloud.
+func _phase_sheet() -> void:
+	print("-- PHASE 12: the shipped thumbnail sheet --")
+	var sheet: Image = HubMinimap.THUMB_SHEET.get_image()
+	_check(sheet != null, "the sheet resource loads")
+	if sheet == null:
+		return
+	if sheet.is_compressed():
+		sheet.decompress()
+	var cell: int = HubMinimap.ICON_PX
+	var cols: int = HubMinimap.SHEET_COLS
+	var rows: int = int(ceil(float(MinimapMarkers.THUMBS.size()) / float(cols)))
+	_check(sheet.get_width() == cols * cell and sheet.get_height() == rows * cell,
+		"the sheet is %d x %d as baked (%d x %d)"
+			% [cols * cell, rows * cell, sheet.get_width(), sheet.get_height()])
+	var masks: Array[PackedFloat32Array] = []
+	var fringe_worst: float = 0.0
+	var fringe_who: String = ""
+	for i in MinimapMarkers.THUMBS.size():
+		var ox: int = (i % cols) * cell
+		var oy: int = (i / cols) * cell
+		var m := PackedFloat32Array()
+		var ink: int = 0
+		var fringe: int = 0
+		for y in cell:
+			for x in cell:
+				var c: Color = sheet.get_pixel(ox + x, oy + y)
+				# ⚠️ COLOUR AS WELL AS ALPHA, and the first run is why. Read
+				# on alpha alone the three balloons come back 0.0000 apart --
+				# they ARE one silhouette, differing only in being gold, blue
+				# and coral. A "they all differ" test blind to colour would
+				# have flunked a sheet whose balloons are the most instantly
+				# separable thing on it.
+				m.append(c.r * c.a)
+				m.append(c.g * c.a)
+				m.append(c.b * c.a)
+				m.append(c.a)
+				if c.a > 0.5:
+					ink += 1
+				if c.a > 0.02 and c.a < 0.98:
+					fringe += 1
+		masks.append(m)
+		var cov: float = float(ink) / float(cell * cell)
+		var fr: float = float(fringe) / float(cell * cell)
+		if fr > fringe_worst:
+			fringe_worst = fr
+			fringe_who = String(MinimapMarkers.THUMBS[i])
+		_check(cov > 0.04 and cov < 0.92,
+			"%-10s inks its cell without filling it (%.4f)" % [MinimapMarkers.THUMBS[i], cov])
+	# A VRAM-compressed or resampled sheet turns a hard matte into a cloud
+	# of half-alphas. 25 % is far above the antialiased rim these cells
+	# actually carry and far below what a lossy channel would produce.
+	_check(fringe_worst < 0.25,
+		"the alpha is still a hard matte, not a lossy cloud (worst %.4f on %s)"
+			% [fringe_worst, fringe_who])
+	# ⚠️ AND THE ONE PAIR THAT IS GENUINELY THE SAME PICTURE IS ASSERTED TO
+	# BE, rather than quietly passing a "they all differ" test that it would
+	# fail. The land yacht and the sailboat are built from the SAME two GLBs
+	# (yacht_hull_0 + yacht_sail_0, HubTransport._build_yacht and SailBoat),
+	# so their portraits are identical at every size the ladder tested --
+	# 0.0000 apart at 16 px and at 64 px alike. Nothing in this lot can fix
+	# that and nothing in it pretends to: what is gated is that the fact
+	# stays TRUE, so the day someone gives one of them its own model the
+	# assertion says so.
+	var same: float = _mask_diff(masks[MinimapMarkers.thumb_row(&"yacht")],
+		masks[MinimapMarkers.thumb_row(&"sailboat")])
+	_check(same < 0.01,
+		"KNOWN AND UNFIXED: yacht and sailboat are ONE picture (%.4f apart) -- same two GLBs" % same)
+	var worst: float = 1.0
+	var worst_pair: String = ""
+	for a in masks.size():
+		for b in range(a + 1, masks.size()):
+			if String(MinimapMarkers.THUMBS[a]) == "yacht" and String(MinimapMarkers.THUMBS[b]) == "sailboat":
+				continue
+			var d: float = _mask_diff(masks[a], masks[b])
+			if d < worst:
+				worst = d
+				worst_pair = "%s/%s" % [MinimapMarkers.THUMBS[a], MinimapMarkers.THUMBS[b]]
+	print("   weakest portrait pair (yacht/sailboat excepted): %s at %.4f" % [worst_pair, worst])
+	_check(worst > 0.03, "every other pair of portraits is its own picture (%s, %.4f)"
+		% [worst_pair, worst])
+
+## ⚠️ THE THRESHOLD IS SET BY THE TIGHTEST REAL PAIR IN THE ROSTER, not by
+## eye. The three tree birds are one silhouette in three colours
+## (HubTrees.BIRD_COLOURS); the closest two are the amber and the rose,
+## 0.27 apart on the green channel. A first pass at 0.35 read them
+## IDENTICAL and flunked a sheet whose birds are perfectly distinct. 0.15
+## sits under that real difference and far above the comparison's own
+## noise, which is exactly zero here -- the cells are compared byte for
+## byte out of one image.
+func _mask_diff(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
+	var n: int = mini(a.size(), b.size())
+	var d: int = 0
+	for i in n:
+		if absf(a[i] - b[i]) > 0.15:
+			d += 1
+	return float(d) / maxf(float(n), 1.0)
+
+## PHASE 13 -- THE PORTRAIT ON THE SCREEN IS THE PORTRAIT IN THE ATLAS.
+##
+## CH39/CH40 doctrine: a counter counts what was SUBMITTED. "The widget
+## holds a 78-cell atlas" is a counter. What is gated here is that the
+## PIXELS under Keepy's glyph are his cell and not somebody else's -- and
+## the blind half is that the same comparison against a WRONG cell must
+## come back worse, or the test is only saying "something is drawn there".
+func _phase_portraits() -> void:
+	print("-- PHASE 13: the drawn glyph IS the baked cell --")
+	var atlas: Image = _map.atlas_image()
+	_check(atlas != null, "the runtime atlas reads back")
+	if atlas == null:
+		return
+	var img: Image = await _shot()
+	var groups: Array[StringName] = [MinimapMarkers.PLAYER, MinimapMarkers.VEHICLE, MinimapMarkers.NPC]
+	var tested: int = 0
+	for group in groups:
+		for shot in _map.clusters(group):
+			var lead: Node = shot["members"][0]
+			var id: StringName = MinimapMarkers.thumb_of(lead)
+			if id == &"":
+				continue
+			var v: int = HubMinimap.variant_of(int(shot["count"]), bool(shot["clamped"]))
+			var mine: int = HubMinimap.thumb_cell_of(id, v)
+			# A cell that is NOT this entity's, for the blind half.
+			var other_row: int = (MinimapMarkers.thumb_row(id) + 7) % MinimapMarkers.THUMBS.size()
+			var theirs: int = HubMinimap.thumb_cell_of(MinimapMarkers.THUMBS[other_row], v)
+			# ⚠️ OCCLUDED PIXELS ARE EXCLUDED, NOT OCCLUDED GLYPHS. Skipping
+			# whole glyphs -- the first fix, after the hop ball and a bird
+			# came back matching a stranger's cell better than their own --
+			# left only THREE portraits testable out of sixteen: at spawn
+			# this map is crowded enough that most plates touch another
+			# plate. Three readings is a thin gate. So the comparison drops
+			# the PIXELS another glyph covers and keeps the rest, which is
+			# the same distinction PHASE 4 draws between "hidden" and "gone".
+			var others: Array[Vector2] = _other_glyphs(shot["at"])
+			var here: Vector2 = _map.global_position + (shot["at"] as Vector2)
+			var d_mine: float = _cell_gap(img, atlas, here, mine, others)
+			var d_theirs: float = _cell_gap(img, atlas, here, theirs, others)
+			if d_mine < 0.0 or d_theirs < 0.0:
+				continue
+			tested += 1
+			_check(d_mine < d_theirs, "%-10s screen matches its OWN cell better than cell %d (%.4f < %.4f)"
+				% [id, other_row, d_mine, d_theirs])
+	# MEASURED, not hoped for: at spawn the delivered world leaves this many
+	# portraits standing clear of every other plate. Printed as well as
+	# gated, because a drop here means the map got more crowded, not that
+	# the test got weaker.
+	print("   %d of the drawn portraits stood clear enough to be read" % tested)
+	_check(tested >= 6, "enough portraits were on screen to test (%d)" % tested)
+
+## Every OTHER drawn glyph's centre, in widget pixels. Read off the widget
+## rather than recomputed (the CH46 defect: a probe free to disagree with
+## the thing it measures).
+## ⚠️ EACH NEIGHBOUR CARRIES ITS OWN DRAWN REACH, not a shared half-cell.
+## Keepy's glyph is drawn 1.28x its cell, so a fixed 16 px half-extent
+## under-covers him: six perimeter samples on OTHER plates landed on his and
+## scored 1.23:1 -- one dark plate against another, on a correct map.
+func _other_glyphs(mine_at: Vector2) -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	_other_reach.clear()
+	for kind in HubMinimap.DRAW_ORDER:
+		for other in _map.clusters(kind):
+			var at: Vector2 = other["at"]
+			if at.is_equal_approx(mine_at):
+				continue
+			out.append(at)
+			_other_reach.append(_map.node_reach(other["members"][0], kind,
+				HubMinimap.variant_of(int(other["count"]), bool(other["clamped"]))))
+	return out
+
+var _other_reach: PackedFloat32Array = PackedFloat32Array()
+
+## Mean absolute difference between the rendered patch and an atlas cell,
+## over the cell's OPAQUE pixels only -- the transparent ones show the plan
+## and say nothing about which portrait this is. -1 when the patch runs off
+## the frame.
+func _cell_gap(img: Image, atlas: Image, centre: Vector2, cell: int,
+		others: Array[Vector2]) -> float:
+	var r: Rect2 = _map.icon_rect(cell)
+	var half: int = HubMinimap.ICON_PX / 2
+	var sum: float = 0.0
+	var n: int = 0
+	var bar: float = float(HubMinimap.ICON_PX) * 0.5
+	for dy in HubMinimap.ICON_PX:
+		for dx in HubMinimap.ICON_PX:
+			var src: Color = atlas.get_pixel(int(r.position.x) + dx, int(r.position.y) + dy)
+			if src.a < 0.9:
+				continue
+			var local: Vector2 = centre - _map.global_position + Vector2(float(dx - half), float(dy - half))
+			var hidden: bool = false
+			for oi in others.size():
+				var o: Vector2 = others[oi]
+				if maxf(absf(o.x - local.x), absf(o.y - local.y)) <= _other_reach[oi] + 1.0:
+					hidden = true
+					break
+			if hidden:
+				continue
+			var at := Vector2i(int(round(centre.x)) - half + dx, int(round(centre.y)) - half + dy)
+			if at.x < 0 or at.y < 0 or at.x >= img.get_width() or at.y >= img.get_height():
+				return -1.0
+			var got: Color = img.get_pixelv(at)
+			sum += (absf(src.r - got.r) + absf(src.g - got.g) + absf(src.b - got.b)) / 3.0
+			n += 1
+	return -1.0 if n < 40 else sum / float(n)
+
+## PHASE 14 -- THE CONTRAST FLOOR, ON RENDERED PIXELS, AND THE ONE THING
+## THE THUMBNAILS CANNOT DO.
+func _phase_contrast() -> void:
+	print("-- PHASE 14: 3.0:1 against every painted band --")
+	var img: Image = await _shot()
+	# ⚠️ THE FIRST VERSION OF THIS PHASE WAS A FALSE GREEN, AND ITS OWN RED
+	# PASS IS WHAT SAID SO. It read the DARKEST pixel anywhere inside the
+	# player's glyph and scored that against each band. Red pass R8
+	# lightened PLATE_TONE and PLATE_RIM to a mid grey -- the exact defect
+	# the phase exists to catch -- and the phase came back ALL GREEN: a
+	# portrait has dark pixels of its own (an eye, an outline), so "the
+	# darkest pixel in the box" stays dark however light the plate is. The
+	# assertion was true and about nothing.
+	#
+	# What the contract actually says is that the glyph presents a dark
+	# BOUNDARY all the way round, against whatever band it sits on. So the
+	# perimeter is walked: for each sample, the pixel just INSIDE the
+	# plate's edge against the pixel just OUTSIDE it -- the ground it is
+	# actually touching, not a band tone looked up in a table. The rounded
+	# corners are skipped, because there the square perimeter is off the
+	# plate by construction.
+	var me: Array[Dictionary] = _map.clusters(MinimapMarkers.PLAYER)
+	_check(me.size() == 1, "the player draws exactly one glyph (%d)" % me.size())
+	if me.is_empty():
+		return
+	# ⚠️ THE CONTRACT IS AGAINST THE GROUND, NOT AGAINST A NEIGHBOUR. Keepy's
+	# plate touches the stream boat's on this spawn, and comparing one dark
+	# plate with another dark plate scores 1.0:1 on a map that is correct.
+	# Samples whose OUTSIDE point lands on another glyph are dropped, and
+	# the count that survives is printed so a map crowded enough to leave
+	# too few is visible rather than silently easier.
+	var worst_edge: float = 99.0
+	var tested: int = 0
+	var failed: int = 0
+	var skipped: int = 0
+	var on_wash: int = 0
+	var glyphs: int = 0
+	# ⚠️ EVERY PORTRAIT, NOT ONLY KEEPY'S. Keepy's plate touches the stream
+	# boat's on this spawn, so 74 of his own 76 perimeter samples land on a
+	# neighbour and get dropped -- two readings is not a gate. Walking all
+	# of them gives the contract the sample count it needs and tests it
+	# where it is hardest, on whichever glyph sits on the palest band.
+	for kind in [MinimapMarkers.PLAYER, MinimapMarkers.VEHICLE, MinimapMarkers.NPC]:
+		for shot in _map.clusters(kind):
+			var lead: Node = shot["members"][0]
+			if MinimapMarkers.thumb_of(lead) == &"":
+				continue
+			var variant: int = HubMinimap.variant_of(int(shot["count"]), bool(shot["clamped"]))
+			# ⚠️ A MERGED GLYPH IS DELIBERATELY NOT SYMMETRIC -- it is a
+			# STACK, a second plate 3 px down-right -- so a square walked at
+			# its outer reach passes 3 px OUTSIDE the front plate on the
+			# up-left side and reads the GROUND as "the glyph" (measured:
+			# 0.4159 where the keyline is 0.005). A centred perimeter is the
+			# wrong instrument for it, and deepening the shell until it
+			# happened to pass would have been the wrong answer twice over.
+			# Merged cells get their own assertion, on the ATLAS, below.
+			if variant == HubMinimap.V_MERGED:
+				continue
+			glyphs += 1
+			var reach: float = _map.node_reach(lead, kind, variant)
+			var centre: Vector2 = _map.global_position + (shot["at"] as Vector2).round()
+			var neighbours: Array[Vector2] = _other_glyphs(shot["at"])
+			var corner: float = reach - HubMinimap.PLATE_R
+			# ⚠️ THE SHELL IS DEEP ENOUGH FOR A MERGED GLYPH'S OFFSET. A
+			# merged plate is a STACK -- a second plate 3 px down-right --
+			# so its silhouette is not symmetric about its centre and a
+			# centred square walked at its outer reach misses the front
+			# plate entirely on the up-left side. Measured: 30 samples on
+			# the merged bird glyph read 0.2156 for "the glyph" (the ground
+			# showing between the two plates) instead of the keyline's
+			# 0.005. Five pixels covers the offset; the test still fails on
+			# a light plate, which red pass R8 re-proves.
+			var shell: float = 5.0
+			var outer: float = reach + 4.0
+			for step in 96:
+				var t: float = float(step) / 96.0 * TAU
+				var dir := Vector2(cos(t), sin(t))
+				var k: float = reach / maxf(maxf(absf(dir.x), absf(dir.y)), 0.0001)
+				var edge: Vector2 = dir * k
+				if absf(edge.x) > corner and absf(edge.y) > corner:
+					continue
+				var op: Vector2 = edge.normalized() * (edge.length() + (outer - reach))
+				var local: Vector2 = (centre - _map.global_position) + op
+				if local.x < 1.0 or local.y < 1.0 or local.x > _map.size.x - 2.0 or local.y > _map.size.y - 2.0:
+					skipped += 1
+					continue
+				var on_neighbour: bool = false
+				for oi in neighbours.size():
+					var o: Vector2 = neighbours[oi]
+					if maxf(absf(o.x - local.x), absf(o.y - local.y)) <= _other_reach[oi] + 1.0:
+						on_neighbour = true
+						break
+				if on_neighbour:
+					skipped += 1
+					continue
+				var b: Color = img.get_pixelv(Vector2i(centre + op))
+				# ⚠️ THE WASH OUTSIDE THE WALKABLE WORLD IS NOT A BAND, and a
+				# glyph overhanging it has no edge there -- OUT_TONE renders
+				# at L 0.005 and so does a black keyline, so the two score
+				# 1.0:1 by being the same darkness. That is a real limit of
+				# this design and it is COUNTED and reported rather than
+				# hidden: what the contract is about is the marker against
+				# the GROUND a player walks on.
+				if _near(b, HubMinimap.OUT_TONE, 0.06):
+					on_wash += 1
+					continue
+				var best: float = 9.0
+				for back in range(0, int(shell) + 1):
+					var ip: Vector2 = edge.normalized() * maxf(edge.length() - float(back), 1.0)
+					best = minf(best, _wcag(img.get_pixelv(Vector2i(centre + ip))))
+				var ratio: float = _ratio(best, _wcag(b))
+				tested += 1
+				if ratio < 3.0:
+					failed += 1
+					if failed <= 3:
+						print("      under floor: %s  glyph %.4f  ground %s %.4f  ratio %.2f:1"
+							% [MinimapMarkers.thumb_of(lead), best, b, _wcag(b), ratio])
+				worst_edge = minf(worst_edge, ratio)
+	print("   %d portrait plates walked: %d samples against painted ground (%d on a neighbour, %d on the out-of-world wash), worst %.2f:1, %d under 3.0:1"
+		% [glyphs, tested, skipped, on_wash, worst_edge, failed])
+	_check(tested >= 200, "the perimeters were actually walked (%d samples)" % tested)
+	# The contract the perimeter walk cannot reach: EVERY portrait cell in
+	# the atlas -- merged ones included -- has a near-black outermost ring.
+	# Read on the baked image, so a variant the delivered world never draws
+	# is covered too.
+	var atlas: Image = _map.atlas_image()
+	var worst_edge_l: float = -1.0
+	var worst_cell: String = ""
+	if atlas != null:
+		for id in MinimapMarkers.THUMBS:
+			for v in HubMinimap.VARIANT_COUNT:
+				var l: float = _cell_edge_luminance(atlas, HubMinimap.thumb_cell_of(id, v))
+				if l > worst_edge_l:
+					worst_edge_l = l
+					worst_cell = "%s/%d" % [id, v]
+	print("   the darkest-possible edge every portrait cell can present: worst L %.4f (%s)"
+		% [worst_edge_l, worst_cell])
+	_check(worst_edge_l >= 0.0 and worst_edge_l < 0.0165,
+		"every portrait cell, merged ones included, carries a near-black outer ring (worst L %.4f on %s)"
+			% [worst_edge_l, worst_cell])
+	_check(failed == 0, "the plate's edge clears 3.0:1 ALL THE WAY ROUND (worst %.2f:1)" % worst_edge)
+	# The brightest and darkest the glyph gets, published because they are
+	# what the limit below is about.
+	var dark: float = 9.0
+	var light: float = -1.0
+	var keepy_at: Vector2 = _map.global_position + (me[0]["at"] as Vector2).round()
+	var r: int = int(_map.node_reach(me[0]["members"][0], MinimapMarkers.PLAYER, HubMinimap.V_SIMPLE))
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var l: float = _wcag(img.get_pixelv(Vector2i(int(keepy_at.x) + dx, int(keepy_at.y) + dy)))
+			dark = minf(dark, l)
+			light = maxf(light, l)
+	print("   the glyph spans rendered luminance %.4f .. %.4f" % [dark, light])
+	# ⚠️ THE SAMPLE POINTS ARE FOUND, NOT WRITTEN DOWN, and an earlier run is
+	# why: (-20, 0, -55) was typed as "the autumn hollow" and read back
+	# (0.0667, 0.0784, 0.0863) -- the OUT_TONE wash, because that point is
+	# not in the region at all. A band read outside the world is not a band.
+	# Each band is now located by asking the plan's own painted_tone() where
+	# it is, on a point HubRegion admits and no marker sits on.
+	var spots: Dictionary = _find_band_points()
+	_check(spots.size() >= 5, "a point inside the region was found for %d bands" % spots.size())
+	var band_l: Dictionary = {}
+	for name in spots:
+		var at: Vector2 = _map.global_position + (_map.project(spots[name])["at"] as Vector2)
+		var c: Color = img.get_pixelv(Vector2i(at))
+		band_l[name] = c
+		print("   %-7s rendered %s  L %.4f   vs the plate tone: %.2f:1"
+			% [name, c, _wcag(c), _ratio(_wcag(c), _wcag(HubMinimap.PLATE_TONE))])
+	# ⚠️ THE BLIND HALF, and it is also the honest limit of this lot. The
+	# PICTURE's own highlights -- Mathieu's "couleurs reelles" -- must FAIL
+	# 3.0:1 somewhere, or the perimeter result above would be true of any
+	# patch of anything. They do, and MinimapThumbBake PHASE 3d shows no
+	# desaturation of the bands can fix it: a photograph has both a white
+	# fur and a black mask, and one of them is always near the band.
+	var bright_worst: float = 99.0
+	for name in band_l:
+		bright_worst = minf(bright_worst, _ratio(_wcag(band_l[name]), light))
+	_check(bright_worst < 3.0,
+		"BLIND / KNOWN LIMIT: the PICTURE's own highlights do NOT clear 3.0:1 (worst %.2f:1) -- the plate does the work"
+			% bright_worst)
+	# The bands stay mutually distinct after the wash.
+	var names: Array = band_l.keys()
+	var closest: float = 9.0
+	var pair: String = ""
+	for a in names.size():
+		for b in range(a + 1, names.size()):
+			var d: float = _rgb_dist(band_l[names[a]], band_l[names[b]])
+			if d < closest:
+				closest = d
+				pair = "%s/%s" % [names[a], names[b]]
+	print("   closest rendered band pair after the wash: %s at %.4f" % [pair, closest])
+	# ⚠️ GRASS AND LAWN ARE THE ONE PAIR THE PLAN NEVER SEPARATED BY TONE,
+	# AND THAT PREDATES THIS LOT. Measured on the constants at wash 0 they
+	# are 0.0640 apart, already under the plan's own 8 % alpha bleed; the
+	# wash leaves them at 0.0640 x (1 - 0.34). What separates them on screen
+	# is the hedge line _bake_zone_edges strokes at CIRCUIT_EDGE_Z, and
+	# PHASE 6 gates that line and the FILL on either side of it. Excluded
+	# here by name, asserted below to still be the excluded one, so a
+	# SECOND pair falling under the bleed cannot hide behind it.
+	var second: float = 9.0
+	var second_pair: String = ""
+	for a in names.size():
+		for b in range(a + 1, names.size()):
+			if (names[a] == "grass" and names[b] == "lawn") or (names[a] == "lawn" and names[b] == "grass"):
+				continue
+			var d2: float = _rgb_dist(band_l[names[a]], band_l[names[b]])
+			if d2 < second:
+				second = d2
+				second_pair = "%s/%s" % [names[a], names[b]]
+	_check(pair == "grass/lawn" or pair == "lawn/grass",
+		"the tightest pair is still the KNOWN pre-existing one (%s)" % pair)
+	_check(second > 0.08,
+		"every OTHER band pair is separable by tone (%s, %.4f > 0.08 bleed)" % [second_pair, second])
+
+## PHASE 15 -- CH47'S NPC FIX, RE-PROVEN BY OBSERVED DISPLACEMENT.
+##
+## CH47 moved the four critters' markers off their empty controllers and
+## onto the animals. A non-zero position is NOT proof of that: the
+## controllers sit at the world origin and so, at spawn, do the birds. What
+## proves it is MOVING the animal and watching the glyph move -- and, as
+## the blind half, moving the CONTROLLER and watching it not.
+func _phase_npc_follow() -> void:
+	print("-- PHASE 15: an npc's marker follows the ANIMAL, by displacement --")
+	var boar: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Critters/Boar")
+	if boar == null:
+		for n in _map.members(MinimapMarkers.NPC):
+			if MinimapMarkers.thumb_of(n) == &"boar":
+				boar = n.get_parent()
+	_check(boar != null, "the boar's controller was found")
+	if boar == null:
+		return
+	var critter: Node3D = (boar.call("critter") as Node3D) if boar.has_method("critter") else null
+	_check(critter != null, "and it publishes its animal")
+	if critter == null:
+		return
+	_check(critter.is_in_group(MinimapMarkers.NPC) and not boar.is_in_group(MinimapMarkers.NPC),
+		"the ANIMAL carries the marker, the controller does not")
+	var before: Vector2 = _map.project(critter.global_position)["at"]
+	var home: Vector3 = critter.global_position
+	var ctrl_home: Vector3 = (boar as Node3D).global_position
+	critter.global_position = home + Vector3(22.0, 0.0, 0.0)
+	await _settle()
+	var after: Vector2 = _map.project(critter.global_position)["at"]
+	var moved: float = before.distance_to(after)
+	var want: float = 22.0 * _map.size.x / _map.frame().size.x
+	print("   the animal moved 22.0 u; its glyph moved %.2f px (expected %.2f)" % [moved, want])
+	_check(absf(moved - want) < 2.0, "the glyph moved WITH the animal (%.2f px)" % moved)
+	critter.global_position = home
+	await _settle()
+	# ⚠️ THE BLIND HALF, AND THE FIRST VERSION OF IT WAS WRONG. It moved the
+	# CONTROLLER and expected the glyph to stay put -- but the animal is a
+	# CHILD of the controller, so moving the parent moves the child and the
+	# glyph moved 33.88 px exactly as it should have. That test could never
+	# have separated the two wirings.
+	#
+	# What does: put the marker back where CH46 had it -- on the controller
+	# -- and move the ANIMAL ALONE. A map reading the controller cannot see
+	# that, and the glyph must NOT move. Then it is put back and the
+	# restoration is asserted.
+	critter.remove_from_group(MinimapMarkers.NPC)
+	(boar as Node3D).add_to_group(MinimapMarkers.NPC)
+	await _settle()
+	var wrong_before: Vector2 = _map.project((boar as Node3D).global_position)["at"]
+	critter.global_position = home + Vector3(22.0, 0.0, 0.0)
+	await _settle()
+	var wrong_after: Vector2 = _map.project((boar as Node3D).global_position)["at"]
+	_check(wrong_before.distance_to(wrong_after) < 0.5,
+		"BLIND: marked on the CONTROLLER, the same 22 u move is INVISIBLE (%.2f px) -- the CH46 defect"
+			% wrong_before.distance_to(wrong_after))
+	critter.global_position = home
+	(boar as Node3D).remove_from_group(MinimapMarkers.NPC)
+	critter.add_to_group(MinimapMarkers.NPC)
+	await _settle()
+	_check(critter.is_in_group(MinimapMarkers.NPC) and not (boar as Node3D).is_in_group(MinimapMarkers.NPC),
+		"and the marker is back on the animal")
+	_check(critter.global_position.distance_to(home) < 0.01,
+		"and both are back where they were")
+
+## One admitted, marker-free world point per painted band, located by
+## walking the plan's own rows and asking painted_tone() what it drew.
+func _find_band_points() -> Dictionary:
+	var want: Dictionary = {
+		"grass": HubMinimap.washed(CozyPalette.GRASS_A),
+		"autumn": HubMinimap.washed(CozyPalette.AUTUMN_A),
+		"moor": HubMinimap.washed(CozyPalette.MOOR_A),
+		"lawn": HubMinimap.washed(CozyPalette.LAWN_A),
+		"sand": HubMinimap.washed(CozyPalette.SAND_A)}
+	var out: Dictionary = {}
+	var f: Rect2 = _map.frame()
+	for py in range(4, int(_map.size.y) - 4, 3):
+		for px in range(4, int(_map.size.x) - 4, 3):
+			var world := Vector3(
+				f.position.x + (float(px) + 0.5) / _map.size.x * f.size.x, 0.0,
+				f.position.y + f.size.y - (float(py) + 0.5) / _map.size.y * f.size.y)
+			if not HubRegion.contains(world):
+				continue
+			var near: bool = false
+			for kind in MinimapMarkers.KINDS:
+				for c in _map.clusters(kind):
+					if (c["at"] as Vector2).distance_to(Vector2(float(px), float(py))) < 26.0:
+						near = true
+			if near:
+				continue
+			var tone: Color = HubMinimap.painted_tone(world)
+			for name in want:
+				if out.has(name):
+					continue
+				if _rgb_dist(tone, want[name]) < 0.02:
+					out[name] = world
+	return out
+
+## PHASE 16 -- MATHIEU'S FIRST NEED, GATED: KEEPY AMONG THE THIRTY-SEVEN.
+##
+## "le marqueur de Keepy doit rester identifiable au premier coup d'oeil".
+## CH47 gave him the largest disc; CH48 cannot, because every portrait is
+## one 32 px plate (PHASE 9 asserts that they are). What is left is the
+## RIM: his is his own warm tone AND it is thicker than every other
+## portrait's. Both halves are measured on the baked atlas -- the image the
+## widget draws from -- and then confirmed on the SCREEN.
+func _phase_keepy() -> void:
+	print("-- PHASE 16: Keepy is findable among the 37 --")
+	var atlas: Image = _map.atlas_image()
+	if atlas == null:
+		_check(false, "the runtime atlas reads back")
+		return
+	# ⚠️ THE RING IS ITS OWN CELL NOW, so this counts the cell the widget
+	# actually lays over Keepy against the one it lays over everyone else.
+	var mine: int = _ring_pixels(atlas,
+		HubMinimap.ring_cell_of(MinimapMarkers.PLAYER, HubMinimap.V_SIMPLE))
+	var worst_other: int = 0
+	var worst_id: String = ""
+	for kind in [MinimapMarkers.VEHICLE, MinimapMarkers.NPC, MinimapMarkers.PLACE]:
+		var n: int = _ring_pixels(atlas, HubMinimap.ring_cell_of(kind, HubMinimap.V_SIMPLE))
+		if n > worst_other:
+			worst_other = n
+			worst_id = String(kind)
+	print("   Keepy's ring inks %d px of its cell; the widest other kind's ring inks %d (%s)"
+		% [mine, worst_other, worst_id])
+	_check(mine > worst_other,
+		"Keepy's ring is the thickest on the map (%d px against %d)" % [mine, worst_other])
+	# ⚠️ AND THE SIZE, which is the cue a thicker ring could not carry on its
+	# own: 184 px of ring against 176 is a 4.5 % difference, and CH47's rank
+	# 1 was the BIGGEST marker for a reason. Measured on the DRAWN reach, so
+	# it is the glyph on the plan and not a constant.
+	var big: float = 0.0
+	for shot in _map.clusters(MinimapMarkers.PLAYER):
+		big = maxf(big, _map.node_reach(shot["members"][0], MinimapMarkers.PLAYER,
+			HubMinimap.variant_of(int(shot["count"]), bool(shot["clamped"]))))
+	var rest: float = 0.0
+	var rest_kind: String = ""
+	for kind in [MinimapMarkers.VEHICLE, MinimapMarkers.NPC, MinimapMarkers.PLACE]:
+		for shot in _map.clusters(kind):
+			var r2: float = _map.node_reach(shot["members"][0], kind,
+				HubMinimap.variant_of(int(shot["count"]), bool(shot["clamped"])))
+			if r2 > rest:
+				rest = r2
+				rest_kind = String(kind)
+	print("   Keepy is drawn at reach %.2f px; the largest of the other 36 is %.2f (%s)"
+		% [big, rest, rest_kind])
+	_check(big > rest * 1.15,
+		"and he is decisively the biggest marker on the map (%.2f against %.2f)" % [big, rest])
+	# ⚠️ THE BLIND HALF: the same count on a cell that carries NO ring must
+	# come back near zero, or "Keepy's is thickest" would also be true of a
+	# counter that says yes to everything.
+	var nonsense: int = _ring_pixels(atlas, HubMinimap.thumb_cell_of(&"keepy", HubMinimap.V_SIMPLE))
+	_check(nonsense < 4, "BLIND: the portrait cell itself carries no ring (%d px)" % nonsense)
+	# And on the screen, not only in the atlas.
+	var img: Image = await _shot()
+	var me: Array[Dictionary] = _map.clusters(MinimapMarkers.PLAYER)
+	if me.is_empty():
+		_check(false, "the player has a glyph on screen")
+		return
+	var at: Vector2 = _map.global_position + (me[0]["at"] as Vector2)
+	var lit: int = _tone_hits(img, at, HubMinimap.PLAYER_TONE,
+		_map.node_reach(me[0]["members"][0], MinimapMarkers.PLAYER, HubMinimap.V_SIMPLE) + 1.0)
+	_check(lit >= 12, "and it reaches the screen: %d px of his rim tone under the glyph" % lit)
+
+## How many opaque WHITE pixels a ring cell carries -- its own thickness,
+## read off the baked atlas rather than off the constant it was drawn from.
+func _ring_pixels(atlas: Image, cell: int) -> int:
+	if cell < 0:
+		return 0
+	var r: Rect2 = _map.icon_rect(cell)
+	var n: int = 0
+	for dy in HubMinimap.ICON_PX:
+		for dx in HubMinimap.ICON_PX:
+			var c: Color = atlas.get_pixel(int(r.position.x) + dx, int(r.position.y) + dy)
+			if c.a > 0.9 and c.r > 0.9 and c.g > 0.9 and c.b > 0.9:
+				n += 1
+	return n
+
+## PHASE 17 -- THE COST, ON THE CH38/CH40 BENCH.
+##
+## Same protocol CH44 axe 5, CH46 axe C and CH47 used, so the four numbers
+## are comparable: xvfb + opengl3, 1080 x 1920, the SubViewport forced and
+## its rect asserted, weather sun, Keepy at spawn. The reference is this
+## same build with the widget hidden, measured twice for a floor before
+## anything is compared.
+func _phase_cost() -> void:
+	print("-- PHASE 17: the cost, against a hidden-minimap reference --")
+	var rid: RID = get_viewport().get_viewport_rid()
+	_map.visible = false
+	await _settle()
+	var ref_a: Array = await _render_info(rid)
+	await _settle()
+	var ref_b: Array = await _render_info(rid)
+	print("   reference (no minimap) #1   total_prims %d   total_calls %d" % [ref_a[0], ref_a[1]])
+	print("   reference (no minimap) #2   total_prims %d   total_calls %d" % [ref_b[0], ref_b[1]])
+	_check(ref_a[0] == ref_b[0] and ref_a[1] == ref_b[1],
+		"NOISE FLOOR: two references agree (%d/%d against %d/%d)" % [ref_a[0], ref_a[1], ref_b[0], ref_b[1]])
+	_map.visible = true
+	await _settle()
+	var with: Array = await _render_info(rid)
+	print("   with the CH48 minimap      total_prims %d   total_calls %d" % [with[0], with[1]])
+	print("   DELTA                      %+d prim / %+d calls" % [with[0] - ref_a[0], with[1] - ref_a[1]])
+	print("   CH47 published             +62 prim / +1 call      CH46 published +76 prim / +1 call")
+	_check(with[1] - ref_a[1] <= 1,
+		"STILL ONE DRAW CALL, background included (%+d)" % (with[1] - ref_a[1]))
+	_check(with[0] - ref_a[0] > 0, "and the map is actually being submitted (%+d prim)" % (with[0] - ref_a[0]))
+	var atlas: Image = _map.atlas_image()
+	if atlas != null:
+		print("   the runtime atlas is %d x %d (%d cells); the shipped sheet is %d bytes on disk"
+			% [atlas.get_width(), atlas.get_height(), HubMinimap.atlas_cells(),
+				FileAccess.get_file_as_bytes("res://assets/textures/ui/minimap_thumbs.png").size()])
+
+## ⚠️ THE ENGINE TOTALS, NOT THE VIEWPORT ONES. The first version asked
+## `viewport_get_render_info(... TYPE_VISIBLE ...)` on the root viewport
+## and got 0 / 0 -- which the assertion below caught and published as a
+## zero, per CLAUDE.md's own rule about a 0 on a counter line. A 2D widget
+## is not in a 3D viewport's visible list at all; CH46 and CH47 both
+## published `engine_total_*`, and these are those.
+func _render_info(_rid: RID) -> Array:
+	await RenderingServer.frame_post_draw
+	return [
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME),
+		RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)]
+
+## The luminance of the darkest opaque pixel on a cell's own outer ring --
+## the boundary it can present to the ground, whatever the ground is. Walked
+## on the cell's real silhouette (the outermost opaque pixel of each row and
+## column) rather than on a circle, so an asymmetric merged stack is
+## measured where its edge actually is.
+func _cell_edge_luminance(atlas: Image, cell: int) -> float:
+	if cell < 0:
+		return -1.0
+	var r: Rect2 = _map.icon_rect(cell)
+	var n: int = HubMinimap.ICON_PX
+	var worst: float = -1.0
+	for i in n:
+		for pass_dir in 4:
+			var found: bool = false
+			for k in n:
+				var x: int = i
+				var y: int = k
+				match pass_dir:
+					1: y = n - 1 - k
+					2:
+						x = k
+						y = i
+					3:
+						x = n - 1 - k
+						y = i
+				var c: Color = atlas.get_pixel(int(r.position.x) + x, int(r.position.y) + y)
+				if c.a > 0.9:
+					# The first opaque pixel from this side IS the edge.
+					var best: float = 9.0
+					for depth in 3:
+						var xx: int = x
+						var yy: int = y
+						match pass_dir:
+							0: yy = mini(y + depth, n - 1)
+							1: yy = maxi(y - depth, 0)
+							2: xx = mini(x + depth, n - 1)
+							3: xx = maxi(x - depth, 0)
+						var cc: Color = atlas.get_pixel(int(r.position.x) + xx, int(r.position.y) + yy)
+						if cc.a > 0.9:
+							best = minf(best, _wcag(cc))
+					worst = maxf(worst, best)
+					found = true
+					break
+			if not found:
+				continue
+	return worst
+
+static func _wcag(c: Color) -> float:
+	return 0.2126 * _srgb(c.r) + 0.7152 * _srgb(c.g) + 0.0722 * _srgb(c.b)
+
+static func _srgb(v: float) -> float:
+	return v / 12.92 if v <= 0.04045 else pow((v + 0.055) / 1.055, 2.4)
+
+static func _ratio(a: float, b: float) -> float:
+	return (maxf(a, b) + 0.05) / (minf(a, b) + 0.05)
+
+static func _rgb_dist(a: Color, b: Color) -> float:
+	return Vector3(a.r - b.r, a.g - b.g, a.b - b.b).length()
 
 ## ---- helpers --------------------------------------------------------
 
@@ -929,6 +1726,12 @@ func _coverage(now: Image, base: Image, centre: Vector2) -> Dictionary:
 	var hits: int = 0
 	var top: float = 0.0
 	var total: int = 0
+	# ⚠️ CH48 ALSO RETURNS THE MAP, NOT ONLY THE COUNT. See PHASE 9: two
+	# portraits have the same footprint by construction, so |cov(A)-cov(B)|
+	# cannot separate them and reads near zero for two different pictures.
+	# `ink` is the per-pixel delta against this glyph's own baseline, in
+	# reading order, so a pair can be compared where they actually differ.
+	var ink: PackedFloat32Array = PackedFloat32Array()
 	for dy in range(-half, half + 1):
 		for dx in range(-half, half + 1):
 			var at := Vector2i(int(round(centre.x)) + dx, int(round(centre.y)) + dy)
@@ -939,9 +1742,24 @@ func _coverage(now: Image, base: Image, centre: Vector2) -> Dictionary:
 			var b: Color = base.get_pixelv(at)
 			var d: float = maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)), absf(a.b - b.b))
 			top = maxf(top, d)
+			ink.append(d)
 			if d >= INK_EPS:
 				hits += 1
-	return {"cov": float(hits) / maxf(float(total), 1.0), "peak": top}
+	return {"cov": float(hits) / maxf(float(total), 1.0), "peak": top, "ink": ink}
+
+## How much of the box two glyphs' ink maps DISAGREE about. Both are the
+## per-pixel delta against their own baseline, so the plan tone underneath
+## each one has already been divided out and the number is about the
+## glyphs, not about the band they happen to sit on.
+func _disagree(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
+	var n: int = mini(a.size(), b.size())
+	if n == 0:
+		return 0.0
+	var differ: int = 0
+	for i in n:
+		if absf(a[i] - b[i]) > INK_EPS:
+			differ += 1
+	return float(differ) / float(n)
 
 ## How many pixels within `radius` of `centre` read back as `tone`. Used
 ## instead of a single centre sample because a MERGED glyph is punched at

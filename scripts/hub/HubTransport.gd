@@ -317,7 +317,7 @@ func _build_line(index: int) -> void:
 	var balloon := _glb_node("Balloon_%d" % index, spec["glb"], CozyPalette.decor_material())
 	# CH46: a balloon is a VEHICLE -- it carries Keepy and it MOVES, which
 	# is the whole reason a marker is worth a frame of work.
-	MinimapMarkers.mark(balloon, MinimapMarkers.VEHICLE)
+	MinimapMarkers.mark(balloon, MinimapMarkers.VEHICLE, StringName("balloon_%d" % index))
 	add_child(balloon)
 	entry["balloon"] = balloon
 	_lines.append(entry)
@@ -328,7 +328,7 @@ func _build_ball() -> void:
 	_ball.position = BALL_PARK
 	# CH46: the hop ball rides and re-garages itself out of frame, which is
 	# exactly the thing a player cannot find without a map.
-	MinimapMarkers.mark(_ball, MinimapMarkers.VEHICLE)
+	MinimapMarkers.mark(_ball, MinimapMarkers.VEHICLE, &"hopball")
 	add_child(_ball)
 
 ## CH30: a SandYacht node -- the hull and the sail on a heeling deck, and

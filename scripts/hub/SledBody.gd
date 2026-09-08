@@ -231,7 +231,7 @@ static func drivable(point: Vector3) -> bool:
 func _ready() -> void:
 	# CH46: on the minimap, as a vehicle. One line, at the site that builds it --
 	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
-	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE)
+	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE, &"sled")
 	_drive = SurfaceDrive.new()
 	_drive.slope_gain = SLOPE_GAIN
 	var m: VehicleDrive = _drive.motion

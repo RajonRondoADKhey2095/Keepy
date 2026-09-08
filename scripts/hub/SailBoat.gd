@@ -136,7 +136,7 @@ var _ground_factor: float = 0.0
 func _ready() -> void:
 	# CH46: on the minimap, as a vehicle. One line, at the site that builds it --
 	# the map enumerates the group and knows no path here (MinimapMarkers.gd).
-	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE)
+	MinimapMarkers.mark(self, MinimapMarkers.VEHICLE, &"sailboat")
 	_motion = VehicleDrive.new()
 	_motion.max_speed = BASE_SPEED
 	_motion.max_speed_off = OFF_SPEED
