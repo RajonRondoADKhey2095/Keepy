@@ -980,7 +980,20 @@ func _phase_clusters() -> void:
 		print("   %-8s %2d markers -> %2d glyphs   N %5.2f px   %s"
 			% [label, list.size(), drawn.size(), n, " ".join(names)])
 	print("   TOTAL %d markers -> %d glyphs" % [members_total, glyphs_total])
-	_check(members_total == 37, "all 37 markers are still on the map -- nothing was removed (%d)" % members_total)
+	# ⚠️ A LITERAL INVENTORY, AND IT MOVES EVERY TIME THE WORLD GAINS AN
+	# ENTITY. There is nothing to derive it from -- the roster IS the list
+	# of what the hub builds -- so the number is written with its history
+	# beside it rather than as a bare constant somebody will bump blind:
+	#
+	#   CH46/CH47/CH48 ..... 37  (12 vehicles, 9 NPCs, 15 places, Keepy)
+	#   CH53 ............... 39  (+ the skateboard, + the skatepark site)
+	#
+	# The assertion it carries is "nothing was REMOVED", so it stays an
+	# EQUALITY: a `>=` would let a removal hide behind the next addition.
+	const MARKER_ROSTER: int = 39
+	_check(members_total == MARKER_ROSTER,
+		"all %d markers are still on the map -- nothing was removed (%d)"
+			% [MARKER_ROSTER, members_total])
 	_check(glyphs_total < members_total, "and the plan draws fewer glyphs than markers (%d < %d)"
 		% [glyphs_total, members_total])
 	# The player is one marker and one glyph, always.
@@ -1605,7 +1618,7 @@ func _find_band_points() -> Dictionary:
 ## portrait's. Both halves are measured on the baked atlas -- the image the
 ## widget draws from -- and then confirmed on the SCREEN.
 func _phase_keepy() -> void:
-	print("-- PHASE 16: Keepy is findable among the 37 --")
+	print("-- PHASE 16: Keepy is findable among the roster --")
 	var atlas: Image = _map.atlas_image()
 	if atlas == null:
 		_check(false, "the runtime atlas reads back")
