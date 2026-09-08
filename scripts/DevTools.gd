@@ -25,7 +25,7 @@ extends RefCounted
 ## hostname.
 ##
 ## =====================================================================
-## THE THREE WAYS IN, AND WHY EACH ONE
+## THE FOUR WAYS IN, AND WHY EACH ONE
 ##
 ## 1. OFF-WEB -- the editor, a headless probe, an xvfb capture. Unchanged
 ##    from the branch (`or not OS.has_feature("web")` was already there),
@@ -38,7 +38,7 @@ extends RefCounted
 ##
 ## 3. AN EXPLICIT URL FLAG on a release web build: "keepydev" anywhere in
 ##    the query string or the fragment, e.g.
-##        https://keepy-staging.vercel.app/?keepydev=1
+##        https://keepy-ten.vercel.app/?keepydev=1
 ##    This is the one that makes the overlay useful rather than
 ##    ceremonial -- it works on staging AND on production, on the real
 ##    device, against the exact build that shipped, and a player who never
@@ -46,10 +46,23 @@ extends RefCounted
 ##    the REAL browser location, so no build-time flag decides it and the
 ##    same .pck behaves correctly wherever it is served.
 ##
+## 4. THE STAGING HOST, by default, with no flag needed. Repeated manual
+##    navigation to append "?keepydev=1" on every page load was the actual
+##    complaint this default closes. `keepy-staging.vercel.app` is read
+##    from `window.location.hostname` -- an ALLOW-LIST of one exact host,
+##    the same shape as rule 3, never a deny-list of "everything that is
+##    not production". Production (`keepy-ten.vercel.app`) is untouched:
+##    it still answers false unless rule 3 fires. "keepydev=0" in the URL
+##    overrides this default OFF on staging, for the one time Mathieu wants
+##    to see the screen without the overlay; it is checked before the
+##    staging default and before rule 3, so it also silences an explicit
+##    "keepydev=1" if both were ever present together.
+##
 ## NOT a build-time constant, and NOT an export preset feature tag: there
 ## is ONE "Web" preset and CI exports it once for both staging and
 ## production, so a build-time answer could not tell those two apart even
-## if we wanted it to.
+## if we wanted it to. The staging default in rule 4 is a runtime hostname
+## read for the same reason rule 3 reads the URL at call time.
 ##
 ## =====================================================================
 ## WHAT THIS IS NOT
@@ -67,8 +80,21 @@ extends RefCounted
 ## the hostname deny-list had.
 const URL_FLAG: String = "keepydev"
 
+## The explicit override that turns rule 4 (staging default-on) back off.
+## Checked as its own substring, never derived from URL_FLAG by parsing --
+## a player-supplied "keepydev=0" still contains "keepydev", so the two
+## checks have to be independent tokens, not one flag with a value pulled
+## out of it.
+const URL_FLAG_OFF: String = "keepydev=0"
+
+## The one host that defaults developer affordances on without a flag.
+## An exact allow-listed hostname, not a suffix/prefix guess: production is
+## `keepy-ten.vercel.app`, a different string entirely, so there is no
+## partial match to worry about between the two.
+const STAGING_HOST: String = "keepy-staging.vercel.app"
+
 ## True where developer affordances may be shown. See the header for the
-## three ways this becomes true; every one of them is deliberate.
+## four ways this becomes true; every one of them is deliberate.
 static func enabled() -> bool:
 	if not OS.has_feature("web"):
 		return true
@@ -79,6 +105,11 @@ static func enabled() -> bool:
 	# answer is one more piece of state that can be stale in a way nobody
 	# would notice until the overlay refused to appear on device.
 	var raw = JavaScriptBridge.eval("window.location.search + window.location.hash", true)
-	if raw == null:
+	var query := ("" if raw == null else str(raw)).to_lower()
+	if query.contains(URL_FLAG_OFF):
 		return false
-	return str(raw).to_lower().contains(URL_FLAG)
+	if query.contains(URL_FLAG):
+		return true
+	var host_raw = JavaScriptBridge.eval("window.location.hostname", true)
+	var host := ("" if host_raw == null else str(host_raw)).to_lower()
+	return host == STAGING_HOST
