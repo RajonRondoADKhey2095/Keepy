@@ -163,6 +163,116 @@ func _drive_wanted() -> Vector3:
 	var at: Vector3 = _drive_target.global_position
 	return HubSurface.ground(at) - heading * DRIVE_BACK + Vector3(0.0, DRIVE_UP, 0.0)
 
+## =====================================================================
+## CH62 -- THE RIDE MODE, and it is a much smaller thing than the kart's
+##
+## ⚠️ D6 (une camera de poursuite pour le hub) IS STILL SHUT. What this
+## opens is the narrowest door that answers the device verdict on CH61
+## ("je ne vois pas de difference"): the physics board reaches 1.7 u of
+## air and 10 u/s on a screen where NOTHING moves in response, because
+## OFFSET is a constant and this camera never rises.
+##
+## WHAT THE RIDE MODE DOES NOT DO, and this is the whole of why it is not
+## D6: it does not yaw, it does not look_at, it does not lag a heading,
+## it does not change `far`. The BASIS is untouched -- so the horizon
+## cannot bounce, which is the reason the hub pose is fixed in the first
+## place -- and the pose stays `_wanted() + OFFSET`, exactly as always,
+## with a bounded EXTRA offset added to it. Three terms, all bounded, all
+## published by SkateFeel:
+##
+##   1. a dolly back and up, proportional to `rush()`;
+##   2. a share of the board's height above the surface, so a climb reads
+##      as a climb instead of as the board sliding up the frame;
+##   3. a small fov widening, which is the term that puts more scenery in
+##      motion at the edge of the picture.
+##
+## It runs ONLY while HubTransport is riding the CharacterBody3D board,
+## which exists only under DevTools.physics_enabled(). Walking, the ball,
+## the yacht, the sailboat, the sled and the kart are untouched.
+##
+## ⚠️ AND IT IS AN OFFSET, NOT A SHADOW VARIABLE. The comment on
+## `_process` below is load-bearing: outside the kart, `global_position`
+## ITSELF is what gets smoothed, and a lot that smoothed a private copy
+## and wrote it out broke CabinProbe silently. The ride adds to the
+## TARGET of that same lerp, so an outside writer is still an outside
+## writer.
+const RIDE_BLEND_S: float = 0.7
+
+var _ride_board: SkateBoardBody = null
+var _ride_blend: float = 0.0
+var _ride_tween: Tween = null
+var _ride_rush: float = 0.0
+var _ride_lift: float = 0.0
+
+func is_riding() -> bool:
+	return _ride_board != null
+
+## The two readings, published for the bench: what fraction of the effect
+## is faded in, and what the smoothed rush currently is.
+func ride_blend() -> float:
+	return _ride_blend
+
+func ride_rush() -> float:
+	return _ride_rush
+
+func ride_offset() -> Vector3:
+	return _ride_offset()
+
+func enter_ride(board: SkateBoardBody) -> void:
+	if board == null:
+		return
+	_ride_board = board
+	# Rush and lift start at zero and are smoothed up from there, so
+	# stepping onto a board that is already rolling is still a camera
+	# MOVE and not a cut -- the same reason the kart blends.
+	_ride_rush = 0.0
+	_ride_lift = 0.0
+	_tween_ride(1.0)
+
+func exit_ride() -> void:
+	if _ride_board == null:
+		return
+	_tween_ride(0.0)
+
+func _tween_ride(to: float) -> void:
+	if _ride_tween and _ride_tween.is_valid():
+		_ride_tween.kill()
+	_ride_tween = create_tween()
+	_ride_tween.set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_SINE)
+	_ride_tween.tween_property(self, "_ride_blend", to, RIDE_BLEND_S)
+	if to <= 0.0:
+		_ride_tween.finished.connect(_on_ride_exited, CONNECT_ONE_SHOT)
+
+## The exit restores the hub fov EXACTLY, from the value captured in
+## `_ready()` -- `_on_drive_exited`'s discipline, for the same reason: a
+## fov left a hair off would be a permanent change to every frame the
+## player sees afterwards, and no probe of the ride would ever look at it.
+func _on_ride_exited() -> void:
+	_ride_board = null
+	_ride_blend = 0.0
+	_ride_rush = 0.0
+	_ride_lift = 0.0
+	fov = _hub_fov
+
+func _ride_advance(delta: float) -> void:
+	var wanted_rush: float = 0.0
+	var wanted_lift: float = 0.0
+	if _ride_board != null and is_instance_valid(_ride_board):
+		wanted_rush = SkateFeel.rush(_ride_board.pace())
+		wanted_lift = _ride_board.lift()
+	elif _ride_board != null:
+		# The board went away under the ride (a scene teardown, a probe
+		# freeing its world). Fade out rather than hold the last pose.
+		_ride_board = null
+		_tween_ride(0.0)
+	_ride_rush = SkateFeel.smooth(_ride_rush, wanted_rush, delta)
+	_ride_lift = SkateFeel.smooth(_ride_lift, wanted_lift, delta)
+
+func _ride_offset() -> Vector3:
+	if _ride_blend <= 0.0:
+		return Vector3.ZERO
+	return SkateFeel.camera_offset(_ride_rush, _ride_lift) * _ride_blend
+
 ## Puts the camera at its resting offset IMMEDIATELY, with no smoothing.
 ##
 ## ⚠️ PUBLIC BECAUSE _ready() IS TOO EARLY FOR ONE CALLER. Children are
@@ -198,6 +308,17 @@ func _process(delta: float) -> void:
 		return
 	var weight: float = 1.0 - exp(-FOLLOW_LAMBDA * delta)
 	if _drive_target == null:
+		# CH62: the ride mode, and it is INSIDE the hub branch on purpose
+		# -- it is an OFFSET added to the hub pose, never a second pose.
+		# With no ride running `_ride_board` is null and `_ride_blend` is
+		# 0.0, so the two lines under it are byte-identical to what has
+		# always shipped, and nothing here writes `fov` at all.
+		if _ride_board != null or _ride_blend > 0.0:
+			_ride_advance(delta)
+			global_position = global_position.lerp(_wanted() + _ride_offset(), weight)
+			_hub_position = global_position
+			fov = _hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend
+			return
 		global_position = global_position.lerp(_wanted(), weight)
 		_hub_position = global_position
 		return

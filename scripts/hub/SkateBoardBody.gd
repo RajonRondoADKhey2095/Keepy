@@ -531,6 +531,33 @@ func supported() -> bool:
 func last_step() -> float:
 	return _last_step
 
+## ⚠️ CH62 -- HOW HIGH THE BOARD IS, AND IT IS PUBLISHED ONCE.
+##
+## Height above HubSurface, never below zero. Two readers need it and they
+## would have written it identically: the camera (which climbs a share of
+## it, so a climb reads as a climb) and the blob shadow (which shrinks and
+## fades with it). CLAUDE.md -- un fait est publie une fois, jamais
+## recopie -- and this one is a SUBTRACTION between two spellings of the
+## ground, which is exactly the kind of expression two files drift on.
+##
+## Reads NOTHING this file does not already read: `_hub_floor()` computes
+## the same difference every tick to decide whether something else is
+## holding the board up. This is that number, exposed rather than thrown
+## away.
+func lift() -> float:
+	return maxf(global_position.y - HubSurface.height_at(flat_position()), 0.0)
+
+## True while nothing at all is under the board -- CH62's air reading.
+##
+## The two existing observables answer different questions and neither
+## alone answers this one: `on_module()` is the ENGINE's floor contact,
+## `supported()` is "the body is above HubSurface", which is true BOTH on
+## a module and in mid-air. Air is the second minus the first, and the
+## board could not be in that state at all before CH61 gave it a
+## velocity.
+func airborne() -> bool:
+	return _supported and not _on_module
+
 ## CH61: the pace is no longer a state, it is a reading -- what fraction
 ## of cruise the board is actually doing. Nothing steers on it; the
 ## overlay and the probes print it.
