@@ -140,6 +140,7 @@ func _run() -> void:
 	await _phase_dismount()
 	await _phase_anywhere()
 	await _phase_screen()
+	await _phase_modules()
 	await _phase_traversal()
 	await _phase_off()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
@@ -348,6 +349,232 @@ func _phase_screen() -> void:
 	print("     -> %s ; riding=%s has_target=%s"
 		% ["nothing" if got.is_empty() else str(got[0]),
 			_transport.is_riding_board(), body.has_target()])
+
+# =====================================================================
+# PHASE M -- CH60: THE DESCENT FROM THE HIGH POINT OF EVERY SOLID MODULE
+#
+# CH58's lesson, and the brief's first garde-fou: A BODY THAT LEAVES THE
+# GROUND IS NOT WHERE YOU TAP IT. HubCamera never rises, every tap
+# resolves on HubSurface, so a raised body is DRAWN where the ground
+# under it is not. Measured by PHASE A: 0.133 u on the lawn, 1.501 u on
+# the funbox deck, against a 0.90 u self-tap radius -- which is why the
+# gesture worked on grass and failed on the one module the chantier
+# exists to climb.
+#
+# CH60 makes three more modules solid, and two of them are TALLER than
+# the funbox. So the question is asked again, per module, and it is asked
+# with the numbers rather than about them.
+#
+# ⚠️ AND IT IS ASKED THROUGH THE SCREEN, NOT THROUGH THE SIGNAL. The
+# brief is explicit and CH58 is the reason: CH57 shipped a branch that
+# was unreachable in the delivered game and had 43 green assertions over
+# it, because its bench called the API directly and never once went
+# through the router. `_tap_self` (used everywhere above) enters at
+# `tapped_ground`, one link short of a finger. This phase enters where
+# the finger does -- a CONTAINER PIXEL, through `HubTapInput._handle_point`
+# -- so the projection, the ground ray, the clamp and the branch order
+# are all under test rather than assumed.
+#
+# It therefore needs a real driver, and it SAYS SO instead of passing
+# quietly: under the dummy driver the container rect is degenerate,
+# `_handle_point` returns before projecting anything, and every check
+# here would pass BY NEVER RUNNING (CLAUDE.md's four false greens).
+
+func _phase_modules() -> void:
+	print("-- PHASE M: the descent from the high point of EVERY solid module --")
+	var live: bool = _screen_is_real()
+	if not live:
+		print("     driver %s: the container rect is degenerate, so the SCREEN half of this")
+		print("     phase would pass by never running. Run under xvfb-run --rendering-driver")
+		print("     opengl3 to sign it. The parallax half below is pure transform arithmetic")
+		print("     and is gated either way.")
+	for index in _park.collider_indices():
+		var kind: String = String(_park.module_kind(index))
+		var top: Dictionary = await _ride_to_high_point(index)
+		var reached: float = float(top["y"])
+		print("     [%d] %-12s highest the board reached: y %.3f  (drawn lip %.3f)  supported=%s"
+			% [index, kind, reached, float(top["lip"]), top["supported"]])
+		if not bool(top["climbed"]):
+			# The RAIL. Its beam is 0.12 across and sits at 0.56 with the
+			# board topping out at 0.26: there is no "on top of the rail"
+			# for this body to reach, and saying so is the honest result.
+			# A gate demanding a climb here would be a gate demanding a
+			# defect.
+			print("     [%d] the board never leaves the ground on this module -- see PHASE J:" % index)
+			print("         it passes UNDER the beam and is stopped by a LEG. Its high point is")
+			print("         the lawn, so its parallax is the flat case already gated in PHASE A.")
+			_check(reached < 0.05,
+				"M[%d] %s: the board stays on the ground here (y %.3f), as the geometry requires"
+					% [index, kind, reached])
+			continue
+		# THE PARALLAX AT THAT POINT, and the two numbers that decide
+		# whether the gesture survives it.
+		var parallax: float = _deck_parallax()
+		var shift: float = _clamp_shift()
+		print("     [%d] parallax %.3f u (flat ground %.3f)   clamp shift %.3f u   radius %.2f"
+			% [index, parallax, _flat_parallax, shift, SELF_TAP_RADIUS])
+		_check(parallax > 0.0, "M[%d] INSTRUMENT: the parallax is measurable at all" % index)
+		_check(parallax > _flat_parallax + 0.02,
+			"M[%d] INSTRUMENT: being up on the module really does move the aim (%.3f vs %.3f flat)"
+				% [index, parallax, _flat_parallax])
+		# ⚠️ THE PARALLAX IS PUBLISHED, NOT GATED. It is how far a NAIVE
+		# flat comparison would be wrong, and CH58 already stopped the
+		# shipped code from making that comparison. Gating it would be
+		# gating a number nothing reads. What CAN still break the gesture
+		# on a raised body is the clamp, so that is what is gated -- and
+		# what a finger really produces is gated below, by a finger.
+		_check(shift < SELF_TAP_RADIUS,
+			"M[%d] the clamp does not push the destination off his body (%.3f u < %.2f)"
+				% [index, shift, SELF_TAP_RADIUS])
+		if not live:
+			continue
+		# ⚠️ READ IT BEFORE THE TAP. The first version of this phase took
+		# `here` AFTER `_tap_self_screen`, which awaits eight frames -- by
+		# then he has stepped off and the camera has moved with him, so the
+		# comparison was against a DIFFERENT frame's geometry and reported
+		# 0.97 u where the truth is far smaller. CLAUDE.md, CH43: an
+		# assertion on state that something else has since written is
+		# re-reading the previous assertion's leftovers.
+		var here: Vector3 = _flat(_drawn_ground_of(_keepy.global_position))
+		var seen: Array[Vector3] = []
+		var sink := func(p: Vector3) -> void: seen.append(p)
+		_tap.tapped_ground.connect(sink)
+		var off: bool = await _tap_self_screen()
+		_tap.tapped_ground.disconnect(sink)
+		# ⚠️ THE END-TO-END RESIDUAL, OBSERVED. Everything from the pixel
+		# to the world point is now in the measurement: unproject, the
+		# container-to-viewport scale, the pixel grid, the ground ray and
+		# the clamp. It is the only number here that a computation could
+		# not have produced, which is exactly why it is the one worth
+		# taking.
+		_check(seen.size() > 0, "M[%d] INSTRUMENT: the screen tap produced a ground point at all" % index)
+		if seen.size() > 0:
+			var end_to_end: float = here.distance_to(_flat(seen[0]))
+			print("     [%d] END-TO-END: the finger resolved %s, HubWorld compares against %s -> %.4f u"
+				% [index, str(seen[0].snappedf(0.001)), str(here.snappedf(0.001)), end_to_end])
+			_check(end_to_end < SELF_TAP_RADIUS,
+				"M[%d] a real finger on his drawn body lands %.4f u from what HubWorld compares it to (< %.2f)"
+					% [index, end_to_end, SELF_TAP_RADIUS])
+		_check(off, "M[%d] and a real SCREEN TAP on his drawn body, up on the %s, puts him down"
+			% [index, kind])
+		# The routing is handed back, exactly as PHASE D demands it after a
+		# dismount on flat ground.
+		_tap.tapped_ground.emit(HubRegion.clamp_to(AIM_AWAY))
+		await _settle(4)
+		_check(_keepy.is_hopping(), "M[%d] and the NEXT tap is an ordinary walk again" % index)
+	# ⚠️ HAND THE WORLD BACK AT REST. PHASE T teleports the hopper and
+	# calls `hop_to`; a hopper still IN FLIGHT when that happens finishes
+	# somebody else's walk and reports it as the diagonal -- measured, 25
+	# hops in 421 frames against the published 66 in 1122. A phase that
+	# leaves state behind makes the next phase measure the wrong thing,
+	# and the next phase cannot tell.
+	if _transport.is_riding_board():
+		_transport.leave_board()
+		await _settle(20)
+	_keepy.dismount_vehicle()
+	await _idle_hopper()
+	await _settle(6)
+	_check(not _keepy.is_hopping(),
+		"M the phase hands the world back AT REST (so PHASE T measures its own walk)")
+
+## True when the container and viewport are real enough for
+## `_handle_point` to project anything at all.
+func _screen_is_real() -> bool:
+	if _tap.container == null or _tap.viewport == null or _camera == null:
+		return false
+	var rect: Rect2 = _tap.container.get_global_rect()
+	return rect.size.x > 0.0 and rect.size.y > 0.0 and _tap.viewport.size.x > 0
+
+## ⚠️ THE CLAMP'S CONTRIBUTION, AND IT IS NAMED THAT RATHER THAN CALLED
+## "the residual", because calling it the residual would be a metric that
+## cannot fail. HubWorld compares the tap's DESTINATION -- which is
+## clamped -- against `_drawn_ground_point`, which is NOT. Both are built
+## from the same camera ray, so everything else cancels and what is left
+## is exactly what `HubRegion.clamp_to` moved. It is zero wherever the
+## drawn ground point is inside the region, and it is the ONE way the
+## gesture can still break on a raised body: a module near a border would
+## push the destination off the body it was aimed at.
+##
+## The END-TO-END residual -- what a real finger actually produces
+## against what HubWorld actually compares it to -- cannot be computed;
+## it has to be OBSERVED, and `_tap_self_screen` observes it.
+func _clamp_shift() -> float:
+	if _camera == null:
+		return 1e9
+	var eye: Vector3 = _camera.global_position
+	var hit: Variant = HubSurface.intersect_ray(eye, (_keepy.global_position - eye).normalized())
+	if hit == null:
+		return 1e9
+	return _flat(HubRegion.clamp_to(hit)).distance_to(_flat(hit))
+
+## A tap on the PIXEL his body is drawn on, delivered where a finger
+## delivers it. Returns whether the world put him down.
+##
+## The container-pixel maths is `HubTapInput._handle_point`'s own, run
+## backwards: it maps a container point into viewport space by
+## `(p - rect.position) * viewport.size / rect.size`, so a viewport point
+## comes back out as `rect.position + p * rect.size / viewport.size`.
+func _tap_self_screen() -> bool:
+	_check(_transport.is_riding_board(), "INSTRUMENT: he IS aboard before the screen tap")
+	var rect: Rect2 = _tap.container.get_global_rect()
+	var vp: Vector2 = _camera.unproject_position(_keepy.global_position)
+	var scale := Vector2(rect.size.x / float(_tap.viewport.size.x),
+		rect.size.y / float(_tap.viewport.size.y))
+	var screen: Vector2 = rect.position + vp * scale
+	print("     screen tap at %s (container rect %s, viewport %s)"
+		% [str(screen.round()), str(rect.size), str(_tap.viewport.size)])
+	if not rect.has_point(screen):
+		_check(false, "INSTRUMENT: his drawn body is OFF the container -- nothing to tap")
+		return false
+	_tap._handle_point(screen)
+	await _settle(8)
+	return not _transport.is_riding_board()
+
+## HubWorld's `_drawn_ground_point`, recomputed here by the same rule, so
+## the end-to-end residual above is measured against what the shipped
+## branch actually compares a tap to.
+func _drawn_ground_of(at: Vector3) -> Vector3:
+	if _camera == null:
+		return _flat(at)
+	var eye: Vector3 = _camera.global_position
+	var away: Vector3 = at - eye
+	if away.length() < 0.0001:
+		return _flat(at)
+	var hit: Variant = HubSurface.intersect_ray(eye, away.normalized())
+	return _flat(at) if hit == null else _flat(hit)
+
+## Rides the board up a module until it can go no further, and reports the
+## highest point it reached. The approach is the module's OWN local -Z for
+## a quarterpipe (it arrives at the foot of the transition) and the funbox
+## ride CH57 published; both are read off the node's transform so a yawed
+## module needs no second spelling.
+func _ride_to_high_point(index: int) -> Dictionary:
+	var node := _park.module_node(index)
+	var centre: Vector3 = _park.module_centre(index)
+	var d: Vector3 = node.global_transform.basis * Vector3(0.0, 0.0, 1.0)
+	var dir := Vector3(d.x, 0.0, d.z).normalized()
+	var kind: StringName = _park.module_kind(index)
+	var out_u: float = 6.5 if kind == HubSkatepark.KIND_FUNBOX else -8.0
+	var to_u: float = -5.5 if kind == HubSkatepark.KIND_FUNBOX else 4.0
+	await _remount(centre + dir * out_u)
+	var body := _transport.board_body()
+	_tap.tapped_ground.emit(HubRegion.clamp_to(centre + dir * to_u))
+	var best: float = -1e9
+	for _i in 480:
+		await get_tree().physics_frame
+		best = maxf(best, body.global_position.y)
+		if body.at_rest():
+			break
+	# Let it settle where it stopped, so the tap below is read as a tap and
+	# not as a steer (`board_at_rest()` is what separates the two).
+	for _i in 60:
+		await get_tree().physics_frame
+		if body.at_rest():
+			break
+	var lip: float = float(HubSkatepark.MODULES[index]["size"].y)
+	return {"y": body.global_position.y, "peak": best, "lip": lip,
+		"supported": body.supported(),
+		"climbed": body.global_position.y > 0.05}
 
 # =====================================================================
 # PHASE T -- THE CEILING, RE-WALKED
