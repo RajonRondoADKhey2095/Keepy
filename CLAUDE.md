@@ -998,6 +998,14 @@ dit.
   `custom_step(over)` sur le tween suivant, dans la MÊME frame, absorbe
   le dépassement. Le report ne s'applique qu'en glisse : le faire à pied
   raccourcirait chaque traversée publiée.
+* **`edit/loop_mode=0` dans un `.import` de WAV ne veut PAS dire « pas de
+  boucle »** — il veut dire **« Detect From WAV »**, et un WAV généré sans
+  chunk de boucle retombe alors sur DISABLED. L'énumération de
+  l'importeur 4.3 est `0 Detect From WAV / 1 Disabled / 2 Forward /
+  3 Ping-Pong / 4 Backward` : une boucle demande **2**. Le symptôme est un
+  son en boucle qui s'arrête à la fin du sample, sans erreur. Le code qui
+  joue le sample **asserte** `loop_mode != LOOP_DISABLED` plutôt que de
+  faire confiance au fichier `.import`, qu'un ré-import régénère.
 * **`KartTouchInput.input.brake` posé UNE FOIS hors boucle ne tient pas** :
   `_physics_process` le réécrit CHAQUE frame sur l'état du clavier
   (`_brake_index < 0` → faux en headless, aucune touche pressée), donc un
@@ -2441,6 +2449,104 @@ bout en bout que la chose qu'elle remplace n'est pas une conduite. Les
 rampes coûtent ; la première croisière (9,0) rendait 2,233 s sur 16 u
 contre 2,100 s pour le rebond. Publier le temps DE BOUT EN BOUT à côté de
 la croisière.
+
+### ⚠️ UNE SONDE NE PEUT PAS JUGER UN GAME FEEL — ET UNE PHASE QUI PRÉTEND LE FAIRE EST LE PROCHAIN FAUX-SIGNAL
+
+Écrit au CH62, après un verdict device — « je ne vois pas de différence,
+je n'arrive pas à m'amuser » — rendu sur un build dont **toutes les
+sondes étaient vertes et dont toutes les mesures étaient justes**. CH61
+avait mesuré 0,098 u de montée à 2,98 u/s contre 1,106 u à 8,97 u/s, un
+ordre de grandeur ; la physique faisait exactement ce que les chiffres
+disaient. Rien à l'écran ne la restituait.
+
+**Un banc headless ne voit ni une sensation, ni un plaisir, ni une
+lisibilité.** Ce qu'il peut signer, et c'est déjà beaucoup :
+
+* qu'une réponse est une **COURBE** — bornée, monotone, continue — et
+  **qu'elle BOUGE** (le spread se gate AVANT la monotonie : une constante
+  est monotone, bornée et sans palier) ;
+* qu'un effet est **CÂBLÉ** à cette courbe — en relisant la valeur **sur
+  l'objet vivant** (`camera.fov` tel que le moteur le tient, le
+  `pitch_scale` du player, le `rush` que le nœud va dessiner) pendant que
+  le vrai mécanisme tourne. **Rappeler l'API et la comparer à elle-même
+  est une tautologie qui reste verte sur un effet débranché** — c'est le
+  18e faux-signal du dépôt ;
+* que **rien ne tourne** hors de l'interrupteur ;
+* **ce que ça coûte**, et qu'un effet DESSINÉ dessine réellement des
+  PIXELS (CH39).
+
+Ce qu'il ne peut pas signer se **dit dans le rapport**, à la première
+ligne du fichier de sonde comme à la première ligne du rapport de lot. Un
+feu vert qui sous-entend « c'est agréable » sur un lot de game feel est
+le pire faux-signal possible, parce que le lot d'avant était vert partout
+et faux quand même.
+
+⚠️ **Corollaire de forme** : une géométrie d'overlay écrite en PIXELS
+ABSOLUS n'a pas la même force sur deux écrans. Mesuré au CH62 : le même
+champ de traînées encrait **0,694 %** d'une surface headless de 1920 de
+haut et **1,233 %** de la fenêtre xvfb — deux fois plus fort d'un côté,
+sans rien pour dire lequel le téléphone aurait. Toute dimension d'un
+effet plein cadre est une **FRACTION du contrôle**, et sa couverture est
+publiée comme une constante.
+
+### ⚠️ UNE LECTURE RÉPÉTÉE NE DÉTECTE PAS UNE VALEUR PÉRIMÉE
+
+Complément exact de « un delta sans son plancher ne vaut rien » (CH40) et
+de « le coût se lit là où l'instrument est immobile » (CH41), et il ferme
+le trou que ces deux-là laissent : **les deux se défendent par une
+LECTURE RÉPÉTÉE, et une valeur périmée se répète parfaitement.**
+
+Mesuré au CH62, monde gelé par `get_tree().paused` : le compteur de
+primitives lit **85 812 deux fois de suite, tremblement ZÉRO**. On
+déplace la caméra de 2,3 u et on la remet exactement où elle était : il
+lit **86 127 deux fois de suite, tremblement zéro encore**. **Deux états
+parfaitement stables pour UNE seule pose**, et le premier est faux.
+
+La cause est structurelle : **un moteur ne réévalue pas ce qu'une caméra
+gelée voit tant qu'elle ne BOUGE pas.** Un plancher de bruit pris sur
+deux lectures dos à dos mesure la stabilité du cache, pas celle de la
+scène.
+
+**Parade** : une configuration n'est **jamais lue là où on la trouve**.
+On l'emmène ailleurs, on donne des frames, on la repose sur la
+configuration à mesurer, on redonne des frames, et seulement là on lit —
+deux fois, les deux publiées.
+
+⚠️ **Et même avec ça, le compteur reste DÉPENDANT DU CHEMIN** : la même
+pose lit 86 432 quand c'est le jeu qui a mis la caméra là et 86 133 quand
+c'est le protocole de secousse, les deux se répétant exactement. Un
+compteur de frame gelé se publie donc comme un **ORDRE DE GRANDEUR**,
+jamais comme un chiffre à l'unité — et une décomposition dont les parties
+ne somment pas au tout se **refuse** au lieu de se publier (mesuré :
++203 et +1 460 pour deux termes qui valent +8 165 ensemble).
+
+⚠️ **Corollaire, payé dans le même lot** : un banc qui bascule un objet
+entre deux lectures pendant que le MONDE tourne mesure le monde. Éteindre
+un quad de deux triangles « coûtait » **+5 747 primitives** — la vraie
+mesure était le déplacement de la caméra entre deux captures espacées de
+trois frames. **Geler d'abord**, et se rappeler que `paused` n'arrête pas
+le `TIME` d'un shader (CH48) : un plancher de PIXELS reste nécessaire, et
+il se prend avec un seuil (0,02 pleine échelle a suffi) plutôt qu'en
+inégalité stricte, sinon il vaut 85 % de la surface.
+
+### ⚠️ UN PARCOURS DE BANC QUI NE TIENT PAS DANS LA RÉGION MESURE UN RUN QUI N'A JAMAIS EU LIEU
+
+`HubRegion` est un mur pour tout véhicule de ce dépôt, et le mur
+**REFUSE le pas ET EFFACE LA CIBLE** (`SandYacht._wall`, `SledBody._wall`,
+`SkateBoardBody._fence`). Un banc qui gare son sujet hors région, ou qui
+lui donne une course d'élan qui déborde, ne mesure donc pas un run lent :
+il mesure **l'absence de run**, et toutes ses lectures sont vraies.
+
+Mesuré au CH62 : une approche tapée de 9 u vers un module à (5 ; 54) part
+de z = 63,7, hors du lobe skate (centre (0 ; 35), r 28, qui atteint
+z = 62,55 à x = 5). Sortie : `air ticks 0 | peak lift 0,000 | camera climb
+0,000` — trois zéros qui se lisent exactement comme « l'effet n'est pas
+câblé ».
+
+**Règle** : toute course de banc **vérifie `HubRegion.contains()` sur son
+point de départ** et se raccourcit jusqu'à tenir, puis **gate qu'elle est
+restée assez longue** pour être une instance de ce qu'elle mesure. Un
+départ hors région n'est pas un run court, c'est un run absent.
 
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
