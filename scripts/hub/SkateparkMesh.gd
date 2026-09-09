@@ -302,17 +302,118 @@ func quarterpipe(width: float, height: float) -> ArrayMesh:
 # so a line of the park is a LINE, and its whole read is the pale
 # horizontal streak of the beam against the grass.
 
+## ⚠️ CH60 -- PUBLISHED, because `rail_pieces()` reads these. They were
+## three locals until the rail acquired a collider, and a local is exactly
+## what a second reader retypes.
+const RAIL_BEAM: float = 0.12
+const RAIL_LEG: float = 0.09
+## How far out along the beam each leg stands, as a fraction of the half
+## length.
+const RAIL_LEG_SPAN: float = 0.82
+
 func rail(length: float, height: float) -> ArrayMesh:
-	var beam := 0.12
-	_box(Vector3(0.0, height, 0.0), Vector3(beam, beam, length), COPING, COPING)
+	_box(Vector3(0.0, height, 0.0), Vector3(RAIL_BEAM, RAIL_BEAM, length), COPING, COPING)
 	# TWO legs, one near each end, and not four: the beam is 0.12 across,
 	# so a second leg abreast of the first would be a box inside a box --
 	# geometry nobody can see and a triangle count nobody can defend.
-	var leg := 0.09
 	for s in [-1.0, 1.0]:
-		var z: float = s * length * 0.5 * 0.82
-		_box(Vector3(0.0, height * 0.5, z), Vector3(leg, height, leg), CONCRETE_DARK, CONCRETE_DARK)
+		var z: float = s * length * 0.5 * RAIL_LEG_SPAN
+		_box(Vector3(0.0, height * 0.5, z), Vector3(RAIL_LEG, height, RAIL_LEG), CONCRETE_DARK, CONCRETE_DARK)
 	return _mesh()
+
+## The eight corners of a box, in the same (centre, size) terms `_box`
+## takes. Static and shared by every piece builder below, so "the corners
+## of the box the builder drew" has ONE spelling in this file.
+static func _box_points(centre: Vector3, size: Vector3) -> PackedVector3Array:
+	var h := size * 0.5
+	var out := PackedVector3Array()
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			for sz in [-1.0, 1.0]:
+				out.append(centre + Vector3(sx * h.x, sy * h.y, sz * h.z))
+	return out
+
+## =====================================================================
+## CH60 LOT 3a -- THE RAIL'S COLLISION PIECES
+##
+## The easy half of this lot, and it is easy for a reason worth writing
+## down rather than skipping: the rail is THREE BOXES and nothing else,
+## so its convex decomposition is not an approximation of anything. Three
+## pieces, eight points each, every point a corner the builder above
+## actually drew. There is no fidelity question to answer here, which is
+## why SkatePhysicsProbe can gate it with the same point-set EQUALITY it
+## gates the funbox with -- and why the interesting work of this lot is
+## all in the quarterpipe below.
+##
+## `rail()`'s own signature, argument for argument.
+static func rail_pieces(length: float, height: float) -> Array:
+	var pieces: Array = []
+	pieces.append(_box_points(Vector3(0.0, height, 0.0), Vector3(RAIL_BEAM, RAIL_BEAM, length)))
+	for s in [-1.0, 1.0]:
+		var z: float = s * length * 0.5 * RAIL_LEG_SPAN
+		pieces.append(_box_points(Vector3(0.0, height * 0.5, z), Vector3(RAIL_LEG, height, RAIL_LEG)))
+	return pieces
+
+## =====================================================================
+## CH60 LOT 3a -- THE QUARTERPIPE'S CONVEX DECOMPOSITION, AND WHY IT IS
+## TWELVE PIECES AND NOT FEWER
+##
+## This is the one module in this lot that is genuinely CONCAVE, and D5
+## forbids a trimesh (`backface_collision` is false by default, so a
+## trimesh wound the wrong way is a floor you fall through in silence --
+## CH39 transposed to collision).
+##
+## The cross-section, once the profile above is right, is the region
+## under a CONVEX increasing curve: bounded below by y = 0 from z = 0 to
+## z = height, on the right by the vertical back at z = height, and above
+## by the drawn polyline P0..P12. Its vertices are
+##
+##     B = (z = height, y = 0)      the back-bottom corner
+##     P0..P12                      the profile points
+##
+## and P1..P11 are ALL REFLEX -- eleven of them, because the arc bulges
+## away from the interior at every interior vertex.
+##
+## ⚠️ TWELVE IS NOT A CHOICE, IT IS THE MINIMUM, and the argument is
+## short enough to check. A convex decomposition must resolve every
+## reflex vertex, and a diagonal resolves at most two. But NO diagonal
+## here joins two arc points: the chord between two points on a convex
+## curve lies ABOVE that curve, i.e. OUTSIDE the region. So every
+## diagonal has one end at B (P0 is no good either -- the region is not
+## star-shaped from it: f convex with f(0) = 0 gives f(tz) <= t f(z), the
+## wrong way round), each diagonal resolves exactly ONE reflex vertex,
+## eleven diagonals are needed, and eleven diagonals cut a polygon into
+## twelve pieces. A fan from B is therefore both the simplest and an
+## optimal decomposition, and CH56's price list makes the count a
+## non-question anyway: a convex PIECE costs at most 0.000018 ms/tick.
+##
+## ⚠️ AND IT IS EXACT AGAINST THE DRAWN MESH, not against the ideal arc.
+## The chords P_s -> P_s+1 lie above the true circle, so a fan from B is
+## NOT the quarter-disc -- and that is right, because the mesh is not the
+## quarter-disc either: it is faceted on exactly the same twelve chords.
+## The collider is the drawn solid, to the last vertex. The proof is not
+## this comment: PHASE G asserts the point sets are EQUAL, and PHASE V
+## samples the two solids against each other -- the DRAWN triangles by
+## ray parity, the collider through the PHYSICS SERVER -- and demands
+## they agree on every sample.
+##
+## `quarterpipe()`'s own signature, argument for argument.
+static func quarterpipe_pieces(width: float, height: float) -> Array:
+	var half := width * 0.5
+	var prof: Array[Vector2] = quarterpipe_profile(height)
+	var pieces: Array = []
+	for s in QP_SEGMENTS:
+		var wedge := PackedVector3Array()
+		for sx in [-1.0, 1.0]:
+			var x: float = sx * half
+			# B, the fan apex -- the same point `quarterpipe()` uses as the
+			# apex of its side-wall fan, which is why the union of these
+			# pieces has no point the drawn mesh does not carry.
+			wedge.append(Vector3(x, 0.0, height))
+			wedge.append(Vector3(x, prof[s].y, prof[s].x))
+			wedge.append(Vector3(x, prof[s + 1].y, prof[s + 1].x))
+		pieces.append(wedge)
+	return pieces
 
 # =====================================================================
 # THE FUNBOX
@@ -377,13 +478,10 @@ static func funbox_pieces(width: float, length: float, height: float, ramp: floa
 	var deck_half := length * 0.5
 	var pieces: Array = []
 	# The deck box, exactly `_box`'s eight corners for the same centre and
-	# the same size the builder above is handed.
-	var deck := PackedVector3Array()
-	for sx in [-1.0, 1.0]:
-		for sy in [0.0, 1.0]:
-			for sz in [-1.0, 1.0]:
-				deck.append(Vector3(sx * half_w, sy * height, sz * deck_half))
-	pieces.append(deck)
+	# the same size the builder above is handed. CH60 routed it through
+	# `_box_points` so that "the corners of a box" has one spelling in this
+	# file rather than one per piece builder.
+	pieces.append(_box_points(Vector3(0.0, height * 0.5, 0.0), Vector3(width, height, length)))
 	# The two ramps: the triangular prism whose cross-section is the cheek
 	# the builder draws -- (z0, 0), (z0, height), (z1, 0) -- swept across
 	# the full width. Six points, and four of them are corners of the deck
