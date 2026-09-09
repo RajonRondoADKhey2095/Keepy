@@ -207,18 +207,63 @@ func _box(centre: Vector3, size: Vector3, colour: Color, top_colour: Color) -> v
 
 const QP_SEGMENTS: int = 12
 
+## =====================================================================
+## ⚠️ CH60 -- THE PROFILE WAS INVERTED, AND THE MESH CARRIED ITS OWN
+## WITNESS AGAINST ITSELF FOR SEVEN LOTS
+##
+## The line below used to read
+##
+##     prof.append(Vector2(height - height * cos(a), height * sin(a)))
+##
+## and `prof.x` is the Z of the vertex while `prof.y` is its Y (see the
+## two `_vertex` calls). That spelling puts z = h(1 - cos a) and
+## y = h sin a, whose tangent is dy/dz = cot(a): VERTICAL where the rider
+## arrives and HORIZONTAL at the lip. The exact transpose of a
+## quarterpipe -- a convex hump, not a transition -- and the comment
+## above it described the shape it was not building.
+##
+## ⚠️ AND IT IS NOT AN OPINION ABOUT WHAT THE MODULE SHOULD LOOK LIKE.
+## The VERTEX NORMALS in the very next loop were never changed and are
+## the corrected profile's normals, exactly: `nz` runs (0, 1, 0) at the
+## foot to (0, 0, -1) at the lip, i.e. flat-then-vertical. Measured on
+## the delivered mesh before the fix (QpReconProbe, CH60): the stored
+## normal disagreed with the TRUE face normal by up to 86.25 deg, and the
+## disagreement was an EXACT MIRROR -- the stored normal at facet k was
+## the true normal at facet (25 - k). Two readings of one shape, one of
+## which had been transposed. The decor shader is a toon shader that
+## reads NORMAL (`cozy_decor.gdshader`: ndl = dot(n, sun_dir)), so the
+## park has been SHADED as a quarterpipe while being GEOMETRICALLY a
+## hump. The fix makes the two agree; it does not choose between them.
+##
+## Everything else about the module is untouched by it: the endpoints
+## (0, 0) and (height, height) are the same, so the AABB, the footprint,
+## the side-wall fan apex and the vertical back all stay exactly where
+## they were, and the module's triangle count does not move.
+
+## The profile in the ZY plane -- `x` is Z, `y` is Y -- from the foot,
+## tangent to the ground, up to the vertical lip. Arc of radius `height`
+## centred at (z = 0, y = height).
+##
+## ⚠️ PUBLISHED, because `quarterpipe_pieces()` reads THIS and never a
+## second spelling of it. CLAUDE.md's most expensive recurring defect is
+## a fact retyped somewhere else; the collision pieces below are a second
+## READING of one authored curve, and this function is what makes that
+## true structurally rather than by a comment asking for it.
+static func quarterpipe_profile(height: float) -> Array[Vector2]:
+	var prof: Array[Vector2] = []
+	for s in QP_SEGMENTS + 1:
+		var a: float = float(s) / float(QP_SEGMENTS) * (PI * 0.5)
+		prof.append(Vector2(height * sin(a), height - height * cos(a)))
+	return prof
+
 func quarterpipe(width: float, height: float) -> ArrayMesh:
 	var half := width * 0.5
-	# The profile in the ZY plane, bottom (tangent to the ground) to lip.
-	var prof: Array[Vector2] = []
+	var prof: Array[Vector2] = quarterpipe_profile(height)
 	var norm: Array[Vector2] = []
 	for s in QP_SEGMENTS + 1:
 		var a: float = float(s) / float(QP_SEGMENTS) * (PI * 0.5)
-		# Centre of the arc is at (z = height, y = height): at a = 0 the
-		# point is (0, 0) with the surface horizontal, at a = PI/2 it is
-		# (height, height) with the surface vertical.
-		prof.append(Vector2(height - height * cos(a), height * sin(a)))
-		# Surface normal points back toward the arc centre's opposite side.
+		# Perpendicular to the tangent (cos a, sin a), pointing up and back
+		# toward the rider. Unchanged since CH53 -- see the block above.
 		norm.append(Vector2(-sin(a), cos(a)))
 	# The riding surface.
 	var left: Array[int] = []
