@@ -260,6 +260,18 @@ const SKATE_GLIDE_STEP: float = 1.6
 const SKATE_GLIDE_S: float = SKATE_GLIDE_STEP / SKATE_CRUISE
 const SKATE_ACCEL_U: float = 3.2
 const SKATE_BRAKE_U: float = 3.2
+## CH61: how far a board that stops being pushed at cruise may coast
+## before it stops. NOT a fourth taste -- it is the skatepark's own
+## extent, published by the park and read here, so "a released board
+## comes to rest inside the park it was pushed in" is a property of the
+## layout rather than of a number typed next to three others. Move a
+## module and this follows; retype it here and it does not.
+##
+## A function and not a const because a const cannot call one, and the
+## alternative -- writing the span down -- is the second spelling this
+## whole convention exists to refuse.
+static func skate_coast_u() -> float:
+	return HubSkatepark.park_span()
 
 const DECK_TOP: float = 0.16
 ## Ground radius the scatter keeps clear around a dock (deck 1.9 + step
@@ -458,7 +470,7 @@ func _build_board() -> void:
 		# same three constants HubWorld passes to mount_vehicle when the
 		# switch is down, so the two modes ride the same numbers and any
 		# difference Mathieu feels is the PHYSICS and not a retune.
-		body.configure(SKATE_CRUISE, SKATE_ACCEL_U, SKATE_BRAKE_U)
+		body.configure(SKATE_CRUISE, SKATE_ACCEL_U, SKATE_BRAKE_U, skate_coast_u())
 		_board = body
 	else:
 		_board = visual

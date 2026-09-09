@@ -404,6 +404,31 @@ func setup(keepy: KeepyHopper) -> void:
 ## from its own `_ready()` and cannot depend on this node having been
 ## built first. Same contract as HubTransport.footprints(),
 ## HubCove.footprints() and HubTrees.footprints().
+## =====================================================================
+## ⚠️ CH61 -- THE PARK'S OWN EXTENT, PUBLISHED SO NOBODY RETYPES IT
+##
+## The widest thing a board can be asked to cross without leaving the
+## park: the greatest distance between two module centres, plus the
+## footprint each of those two keeps clear around itself. It is what
+## SkateBoardBody's coast distance is solved from, so that "a released
+## board comes to rest inside the park" is a fact about THIS layout and
+## follows the layout when a module moves.
+##
+## Derived from MODULES and from nothing else -- CLAUDE.md's rule that a
+## reader never rebuilds an inventory the producer already holds. The
+## day a sixth module lands further out, this grows and the board coasts
+## further, with nobody editing a number.
+static func park_span() -> float:
+	var worst: float = 0.0
+	for a in MODULES.size():
+		for b in range(a + 1, MODULES.size()):
+			var pa: Vector2 = MODULES[a]["at"]
+			var pb: Vector2 = MODULES[b]["at"]
+			var d: float = pa.distance_to(pb) \
+				+ float(MODULES[a]["footprint"]) + float(MODULES[b]["footprint"])
+			worst = maxf(worst, d)
+	return worst
+
 static func footprints() -> Array:
 	var out: Array = []
 	for spec in MODULES:

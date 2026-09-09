@@ -71,6 +71,11 @@ const RIDE_FROM: Vector3 = Vector3(0.0, 0.0, 52.0)
 const RIDE_TO: Vector3 = Vector3(0.0, 0.0, 40.0)
 ## The lateral leg: due west along the funbox's own z, which meets the
 ## deck box's vertical east face and no ramp at all.
+## CH61: where the board is carried before its rider is put down. Open
+## lawn well east of the park and clear of every other prop's hotspot --
+## SkateDismountProbe's OPEN_GROUND, and it is the same station for the
+## same reason.
+const NEUTRAL_PARK: Vector3 = Vector3(12.0, 0.0, 52.0)
 const SIDE_FROM: Vector3 = Vector3(6.0, 0.0, 45.5)
 const SIDE_TO: Vector3 = Vector3(-6.0, 0.0, 45.5)
 
@@ -714,6 +719,25 @@ func _climb_reach(height: float) -> Vector2:
 func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) -> Dictionary:
 	var body := _transport.board_body()
 	if _transport.is_riding_board():
+		# ⚠️ CH61 -- HAND THE BOARD BACK ON OPEN LAWN, NOT WHERE THE RIDE
+		# ENDED. `leave_board` steps the rider off with a hop, and a hop
+		# that LANDS is offered to every hotspot HubWorld holds. Before
+		# inertia every ride stopped short of its module and the few
+		# metres they ended in happened to be empty; now the board rides
+		# OVER the funbox and stops at (0, 40), inside the SEESAW's
+		# landing disc. Measured: the seesaw took the rider,
+		# `mount_carrier` refused every mount afterwards -- its one
+		# precondition is `_state == IDLE` -- and PHASE R scored the two
+		# quarterpipes at `path 0.00 u` against a board nobody was on.
+		#
+		# The game is right: a walk landing beside the seesaw is SUPPOSED
+		# to be offered it. The bench was putting its rider down inside
+		# another prop's hotspot.
+		body.clear_target()
+		body.velocity = Vector3.ZERO
+		body.global_position = HubSurface.ground(NEUTRAL_PARK)
+		_keepy.call("follow_carrier")
+		await get_tree().physics_frame
 		_transport.leave_board()
 		for _i in 20:
 			await get_tree().physics_frame
@@ -732,7 +756,7 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) ->
 	var rect: Rect2 = _core_rect(index)
 	var trace := {"mounted": mounted, "max_y": -1e9, "core_min_y": 1e9, "core_max_y": -1e9,
 		"core_ticks": 0, "supported": 0, "under_surface": 0, "rider_off": 0, "path": 0.0,
-		"arrived": false}
+		"arrived": false, "held_max_y": -1e9}
 	var last: Vector3 = body.flat_position()
 	for _t in ticks:
 		await get_tree().physics_frame
@@ -741,6 +765,14 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) ->
 		trace["path"] = float(trace["path"]) + flat.distance_to(last)
 		last = flat
 		trace["max_y"] = maxf(float(trace["max_y"]), y)
+		# ⚠️ CH61 -- THE HIGHEST THE MODULE EVER **HELD** IT, which is not
+		# the highest it ever got. Before inertia the two were the same
+		# thing: the board could not leave a surface, so every height it
+		# reached was a height something was holding it at. Now it can be
+		# thrown clear of a lip, and the two questions come apart. The
+		# phantom test below wants the FIRST of them.
+		if body.on_module():
+			trace["held_max_y"] = maxf(float(trace["held_max_y"]), y)
 		if body.supported():
 			trace["supported"] = int(trace["supported"]) + 1
 		# ⚠️ D1's invariant, checked on EVERY tick and not at the end:
@@ -832,11 +864,45 @@ func _ride_one(ride: Dictionary) -> void:
 	_check(float(t["core_max_y"]) >= reach.y * 0.5,
 		"R[%d] HEIGHT: it CLIMBED the transition (%.3f >= half of the %.3f it can reach)"
 			% [index, float(t["core_max_y"]), reach.y])
-	_check(float(t["core_max_y"]) <= args[1] + 0.05,
-		"R[%d] and never above the lip -- no phantom volume (%.3f <= %.3f)"
-			% [index, float(t["core_max_y"]), args[1]])
-	_check(not bool(t["arrived"]),
-		"R[%d] and the transition STOPPED it: a quarterpipe is not a ramp you drive over" % index)
+	# ⚠️ CH61 REWROTE BOTH OF THE ASSERTIONS BELOW, AND THE REASON IS THAT
+	# EACH OF THEM CONFLATED TWO THINGS THAT ONLY CAME APART WITH INERTIA.
+	#
+	# (1) "never above the lip -- no phantom volume". What it is FOR is a
+	# collider bigger than the drawn solid: a board standing on air. What
+	# it MEASURED is height, and height above a lip now has a second and
+	# entirely legitimate cause -- the board is thrown clear of the top
+	# and is briefly a projectile. Measured on the 1.45 u ramp: 1.551 u,
+	# red, on a collider PHASE V had just proved identical to the drawn
+	# mesh on 1521 samples. So the test is moved onto what it always
+	# meant: nothing may HOLD the board above the lip. Real air is
+	# unsupported by construction and cannot trip it; a phantom volume is
+	# supported by definition and cannot escape it.
+	#
+	# (2) "the transition STOPPED it". True of a body with no stored
+	# elan, and CH60 wrote it as a property of quarterpipes. It is not:
+	# it is a property of the ENERGY against the LIP. At the arrival this
+	# ride produces the board has about v^2/2g = 1.55 u in hand, so the
+	# 2.10 u ramp still stops it and the 1.45 u one does not -- it flies
+	# out of the top, which is the module's own trick name ("air") and is
+	# what a 1.45 u quarterpipe taken at speed does. The gate becomes the
+	# arithmetic instead of the blanket claim, and it says which of the
+	# two outcomes each module is owed.
+	_check(float(t["held_max_y"]) <= args[1] + 0.05,
+		"R[%d] nothing HELD it above the lip -- no phantom volume (held max %.3f <= %.3f)"
+			% [index, float(t["held_max_y"]), args[1]])
+	var lip: float = args[1]
+	if bool(t["arrived"]):
+		_check(float(t["core_max_y"]) > lip,
+			"R[%d] it left by the TOP, over the %.2f u lip (%.3f) -- not through the solid"
+				% [index, lip, float(t["core_max_y"])])
+		_check(lip < 1.60,
+			"R[%d] and only the SHORT ramp is clearable at this arrival (lip %.2f u)" % [index, lip])
+	else:
+		_check(float(t["core_max_y"]) < lip,
+			"R[%d] the transition STOPPED it below its %.2f u lip (%.3f)"
+				% [index, lip, float(t["core_max_y"])])
+		_check(lip > 1.60,
+			"R[%d] and it is the TALL ramp that stops it (lip %.2f u)" % [index, lip])
 
 func _phase_neutralised() -> void:
 	print("-- PHASE N: RED BEFORE GREEN, at runtime -- take each collider off the layer --")
