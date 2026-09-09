@@ -12,7 +12,7 @@ Aucune fonctionnalité dans ce lot. Aucun lot 2. Le défaut, sa cause, sa
 preuve, son correctif, et la sonde permanente qui interdit son retour.
 
 Livrables : `scripts/dev/SkateDismountProbe.gd` + `.tscn` (sonde
-**permanente**, 8 phases, **44 assertions vertes**), deux corrections dans
+**permanente**, 8 phases, **51 assertions vertes**), deux corrections dans
 `scripts/hub/HubWorld.gd`, ce fichier et sa ligne d'index.
 
 ---
@@ -265,6 +265,14 @@ des deux passes.
 | **X** — chaîne complète | depuis une **vraie coordonnée écran** à travers le vrai routeur ; asserte le rect non dégénéré, sinon **skip bruyant** |
 | **T** — plafond | diagonale publiée re-marchée monde physique vivant : **66 hops / 1 123 frames / 18,717 s** contre 66 / 18,700 — à la frame près, sous les 22,0 s |
 | **O** — non-régression | un **second monde** construit interrupteur baissé : la planche n'est pas un corps physique, le mount CH54 passe par `ON_VEHICLE` (une autre porte), et **la descente CH54 marche, inchangée** |
+
+Compte par phase : **I 4, S 3, R 6, D 7, A 19, X 3, T 3, O 6 = 51**.
+
+⚠️ **Le message du commit `1558bab` annonce 44** — chiffre écrit avant que
+la correction « le tap part d'où un doigt le pose » n'ajoute ses
+assertions, et laissé en place plutôt que réécrit : la CI de ce lot a
+tourné sur ce SHA, et réécrire l'historique aurait détaché la preuve de
+build de son commit. Le chiffre exact est **51**, ici et dans l'index.
 
 Le cas (2) mérite d'être nommé : un tap sur soi **en roulement BRAQUE**, il
 n'éjecte pas — c'est la règle de CH57 et elle est conservée. La garantie
