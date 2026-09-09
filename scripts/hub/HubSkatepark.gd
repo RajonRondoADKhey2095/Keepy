@@ -251,48 +251,101 @@ func _build() -> void:
 	add_child(site)
 
 ## =====================================================================
-## CH57 LOT 1 -- THE FUNBOX, AND ONLY THE FUNBOX, BECOMES SOLID
+## CH57 LOT 1 / CH60 LOT 3a -- FOUR MODULES OF FIVE BECOME SOLID
 ##
 ## Behind DevTools.physics_enabled(), which is OFF for every player and
-## OFF in every existing probe (see DevTools). With the switch down this
-## function returns on its first line and the park is byte-for-byte the
-## one CH53 shipped.
+## OFF in every existing probe (see DevTools). With the switch down
+## `_maybe_collide` returns on its first line and the park is
+## byte-for-byte the one CH53 shipped.
 ##
-## ⚠️ ONE MODULE, DELIBERATELY, AND THE BOWL IS THE REASON. CH56 section
-## 12.4: "un bol decompose en hulls convexes est GEOMETRIQUEMENT FAUX --
-## une cuvette ouverte devient un tas de solides pleins", and CH56
-## measured that decomposition's COST without ever checking its
-## correctness. The funbox is the opposite case: a box between two
-## wedges, three exactly convex pieces, no approximation anywhere. It is
-## the only module in the park whose collider can be proved right by
-## looking at it, which is why it is the only one that gets one.
+## CH57 made the FUNBOX solid and said why it was alone: a box between
+## two wedges is three exactly convex pieces, so its collider could be
+## proved right by looking at it. CH60 adds the RAIL (three boxes, the
+## same argument) and the TWO QUARTERPIPES (genuinely concave, twelve
+## exact pieces each -- the argument is in SkateparkMesh).
+##
+## ⚠️ THE BOWL IS STILL OUT, AND IT IS THE SAME REASON, NOT INERTIA.
+## CH56 section 12.4: "un bol decompose en hulls convexes est
+## GEOMETRIQUEMENT FAUX -- une cuvette ouverte devient un tas de solides
+## pleins", and CH56 measured that decomposition's COST without ever
+## checking its correctness. It gets lot 3b. `pieces_for()` returns EMPTY
+## for it, so the perimeter is a published fact and not a list of names a
+## reader has to keep.
 ##
 ## THE SHAPE IS A CHILD OF THE DRAWN NODE, so it inherits the module's
 ## own position and yaw and cannot drift from what the player sees. There
-## is no second spelling of where the funbox is -- CLAUDE.md's most
+## is no second spelling of where a module is -- CLAUDE.md's most
 ## expensive recurring defect, and the one `module_centre()` above
-## already exists to avoid.
+## already exists to avoid. CH60 closed the second half of the same hole:
+## the builder ARGUMENTS are published by `build_args()` and read by both
+## the mesh and the pieces.
 ##
 ## A collider draws NOTHING. CH56 verdict point 3: zero primitives, zero
 ## draw calls, which is exactly the currency CH52 measured none of at the
 ## north rim. SkatePhysicsProbe PHASE B gates that at the five stations
 ## CH53 published.
-var _funbox_body: StaticBody3D = null
-var _funbox_index: int = -1
+## Module index -> the StaticBody3D it carries. A TABLE from the first
+## commit even when CH57 filled it with one row: CLAUDE.md's diving-board
+## lesson is that a generic geometry with a SINGLETON downstream costs its
+## own lot to undo, and CH60 is exactly the lot that would have paid it.
+var _bodies: Dictionary = {}
+
+## =====================================================================
+## CH60 LOT 3a -- THE BUILDER'S ARGUMENTS, SPELLED ONCE
+##
+## CH57 wrote `funbox_pieces(size.x, size.z * 0.55, size.y, size.z * 0.45)`
+## into `_maybe_collide` with a comment asking the reader to keep it in
+## step with `_mesh_for`'s identical expression. That is a second
+## SPELLING of one fact, which is this repo's most expensive recurring
+## defect, and a comment is not a gate. Three modules would have made it
+## three pairs.
+##
+## So the arguments are published HERE, once, and both the mesh builder
+## and the piece builder consume them. Neither can drift from the other
+## because neither owns them.
+static func build_args(spec: Dictionary) -> Array:
+	var size: Vector3 = spec["size"]
+	match StringName(spec["kind"]):
+		KIND_QUARTERPIPE:
+			return [size.x, size.y]
+		KIND_RAIL:
+			return [size.z, size.y]
+		KIND_FUNBOX:
+			return [size.x, size.z * 0.55, size.y, size.z * 0.45]
+		KIND_BOWL:
+			return [size.x * 0.5, size.y]
+	return []
+
+## The convex pieces a module's collider is made of, or EMPTY for a module
+## this chantier has not made solid yet.
+##
+## ⚠️ THE BOWL RETURNS EMPTY, AND THAT IS THE PERIMETER OF THIS LOT SAID
+## IN CODE RATHER THAN IN A COMMENT. CH56 section 12.4: "un bol decompose
+## en hulls convexes est GEOMETRIQUEMENT FAUX -- une cuvette ouverte
+## devient un tas de solides pleins", and CH56 priced that decomposition
+## without ever checking whether it was right. A dish is the one module
+## here whose pieces cannot be read off the drawn mesh by eye, so it gets
+## its own lot (3b) rather than a guess inside this one. A reader asking
+## "which modules are solid" asks THIS, never a list of kinds.
+static func pieces_for(spec: Dictionary) -> Array:
+	var a: Array = build_args(spec)
+	match StringName(spec["kind"]):
+		KIND_QUARTERPIPE:
+			return SkateparkMesh.quarterpipe_pieces(a[0], a[1])
+		KIND_RAIL:
+			return SkateparkMesh.rail_pieces(a[0], a[1])
+		KIND_FUNBOX:
+			return SkateparkMesh.funbox_pieces(a[0], a[1], a[2], a[3])
+	return []
 
 func _maybe_collide(node: MeshInstance3D, index: int, spec: Dictionary) -> void:
 	if not DevTools.physics_enabled():
 		return
-	if StringName(spec["kind"]) != KIND_FUNBOX or _funbox_body != null:
+	var pieces: Array = pieces_for(spec)
+	if pieces.is_empty():
 		return
-	var size: Vector3 = spec["size"]
-	# The SAME four arguments `_mesh_for` hands the builder, in the same
-	# order, so the pieces and the drawn triangles are two readings of one
-	# authored shape. Retyping any of them here is how the repo has bought
-	# itself a second orthography every time it has bought one.
-	var pieces: Array = SkateparkMesh.funbox_pieces(size.x, size.z * 0.55, size.y, size.z * 0.45)
 	var body := StaticBody3D.new()
-	body.name = "FunboxCollider"
+	body.name = "%sCollider" % String(spec["kind"]).capitalize()
 	body.collision_layer = 1 << (SkateBoardBody.LAYER_PARK - 1)
 	# Masks NOTHING: a static body that scans for others is paying
 	# broadphase for a question nobody asks. It is asked ABOUT, never asks.
@@ -304,35 +357,38 @@ func _maybe_collide(node: MeshInstance3D, index: int, spec: Dictionary) -> void:
 		shape.shape = hull
 		body.add_child(shape)
 	node.add_child(body)
-	_funbox_body = body
-	_funbox_index = index
+	_bodies[index] = body
 
-## Which entry of MODULES carries a collider, or -1. Published rather than
-## grepped for by kind: CLAUDE.md, "le producteur publie ce qu'il a
+## Which entries of MODULES carry a collider, ascending. Published rather
+## than grepped for by kind: CLAUDE.md, "le producteur publie ce qu'il a
 ## construit ; le lecteur ne le reconnait jamais" -- a reader that looked
-## for the funbox by name would be wrong the day a second one is laid.
-func collider_index() -> int:
-	return _funbox_index
+## for the solid modules by name would be wrong the day a fifth is laid,
+## and CH60 is the lot where that day arrived.
+func collider_indices() -> Array:
+	var out: Array = _bodies.keys()
+	out.sort()
+	return out
 
-func collider_body() -> StaticBody3D:
-	return _funbox_body
+func collider_body_at(index: int) -> StaticBody3D:
+	return _bodies.get(index, null)
 
-## How many convex pieces the collider actually holds, counted off the
-## tree rather than off the table that asked for them.
-func collider_piece_count() -> int:
-	return 0 if _funbox_body == null else _funbox_body.get_child_count()
+## How many convex pieces a module's collider actually holds, counted off
+## the TREE rather than off the table that asked for them.
+func collider_piece_count_at(index: int) -> int:
+	var body: StaticBody3D = _bodies.get(index, null)
+	return 0 if body == null else body.get_child_count()
 
 func _mesh_for(builder: SkateparkMesh, spec: Dictionary) -> ArrayMesh:
-	var size: Vector3 = spec["size"]
+	var a: Array = build_args(spec)
 	match StringName(spec["kind"]):
 		KIND_QUARTERPIPE:
-			return builder.quarterpipe(size.x, size.y)
+			return builder.quarterpipe(a[0], a[1])
 		KIND_RAIL:
-			return builder.rail(size.z, size.y)
+			return builder.rail(a[0], a[1])
 		KIND_FUNBOX:
-			return builder.funbox(size.x, size.z * 0.55, size.y, size.z * 0.45)
+			return builder.funbox(a[0], a[1], a[2], a[3])
 		KIND_BOWL:
-			return builder.bowl(size.x * 0.5, size.y)
+			return builder.bowl(a[0], a[1])
 	push_error("HubSkatepark: unknown module kind '%s'." % spec["kind"])
 	return builder.rail(1.0, 0.5)
 
