@@ -2548,6 +2548,60 @@ point de départ** et se raccourcit jusqu'à tenir, puis **gate qu'elle est
 restée assez longue** pour être une instance de ce qu'elle mesure. Un
 départ hors région n'est pas un run court, c'est un run absent.
 
+### ⚠️ UN BALAYAGE BORNÉ PAR UNE EMPRISE MESURE AUSSI SES VOISINS
+
+Écrit au CH63, sur une sonde qui devait répondre « ce module a-t-il un
+collider ». Elle échantillonnait le **cylindre d'emprise** du module et
+comptait les touches : **47**, sur un module dont le dépôt affirme depuis
+CH60 qu'il n'a aucun collider. Publié tel quel, ce 47 disait « le rapport
+ment, le bol est solide ».
+
+Il ne mentait pas. Le rayon d'emprise du bol est **4,4** et la masse du
+quarterpipe voisin arrive à **2,9 u** de son centre : **l'emprise d'un
+module contient un morceau de son voisin**. Sur les 47, **41
+appartenaient au quarterpipe [2] et 6 au [3], zéro à un corps du bol**.
+
+**Règle** : une emprise, un footprint, un `tap_radius` sont des rayons de
+DÉGAGEMENT — ils sont dimensionnés pour **contenir de la marge**, donc par
+construction ils débordent sur ce qui est autour. Un balayage borné par
+l'un d'eux ne peut pas répondre à une question de la forme « qu'y a-t-il
+ICI » par un COMPTE. Il y répond en **attribuant chaque échantillon au
+corps qui le porte**, et l'assertion se formule sur cette attribution
+(« aucun échantillon n'appartient à X »), jamais sur le total. Même
+famille que « une liste de ce qui n'est pas le sujet est fausse au premier
+nom oublié » : le producteur nomme ce qu'il a construit, le lecteur ne
+reconnaît rien.
+
+### ⚠️ UN RELEVÉ DE FRAME SE COMPARE À LA MÊME STATION AVANT DE SE COMPARER À LA MÊME VERSION
+
+CH63 est parti d'un rapport device « 39 FPS, contre 55-56 avant » et le
+lot suspecté était celui qui venait d'être livré. Mesuré, compteurs
+moteur, deux lectures par station plus une jetée, tremblement **0**
+partout :
+
+| station | primitives | draw calls |
+|---|---|---|
+| spawn (0 ; 0) | **70 923** | 301 |
+| la station rapportée (−1,9 ; 51,3) | **93 780** | 393 |
+
+**+22 857 primitives, +32,2 %** — et les 55-56 FPS au dossier n'avaient
+**jamais** été lus dans ce lobe. Ils l'avaient été au spawn, là où
+l'overlay se lit d'habitude. **Comparer 39 au bord nord avec 55 au spawn,
+c'est comparer deux STATIONS et l'appeler une régression.** CH52 avait
+d'ailleurs déjà mesuré 46 FPS device à ce bord, avant que le skatepark
+existe, et écrit que le budget y était nul.
+
+**Règle** : avant d'attribuer un écart de frame à un lot, **relire les
+DEUX chiffres à la MÊME station**. Un relevé de frame porte toujours
+deux variables — la version ET le poste — et un rapport device n'en nomme
+spontanément qu'une. Corollaire mesuré dans le même lot : **un terme de
+frustum ne se transporte pas d'une station à une autre.** Le
+« +8 165 primitives » que CH62 publiait pour sa caméra de ride vaut
+**+5 primitives et −3 draw calls** à cette station-ci, objectif pourtant
+ouvert en grand (fov 45,00 → 49,58, recul 11,70 → 13,74 u, les trois
+gatés) : élargir un champ n'admet que ce qui se trouve dans la direction
+où il s'élargit.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
