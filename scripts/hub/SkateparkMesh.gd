@@ -299,6 +299,62 @@ func funbox(width: float, length: float, height: float, ramp: float) -> ArrayMes
 			_tri(p0, p1, p2, facing)
 	return _mesh()
 
+## =====================================================================
+## CH57 -- THE FUNBOX'S COLLISION PIECES, WRITTEN BY HAND
+##
+## D5 (Mathieu, CH55 section 6): convex pieces, never a trimesh. CH56
+## section 6 measured that the arbitration does NOT rest on cost -- a
+## trimesh bowl and its 32 hulls are separated by less than the bench's
+## own noise floor -- and named what it does rest on:
+## `ConcavePolygonShape3D.backface_collision` is FALSE by default, so a
+## trimesh wound the wrong way is a floor you fall through IN SILENCE.
+## That is CH39's invisible hillside transposed to collision, and it is
+## not a defect this repo can afford without a local visual debugger.
+##
+## ⚠️ AND THEY ARE WRITTEN, NOT DECOMPOSED. CH56 section 12.4 is explicit
+## that VHACD's output is only priced here and never checked for
+## correctness -- it returned TWELVE hulls for these twenty triangles,
+## and for a bowl it would return a heap of solids where the drawn mesh
+## is an open dish. A funbox is a box between two wedges; a box and a
+## triangular prism are the two simplest convex solids there are, so the
+## decomposition is EXACT rather than approximate, and it is three pieces
+## rather than twelve.
+##
+## The signature is `funbox()`'s own, argument for argument, because that
+## is what makes this a second READING of one authored shape rather than
+## a second spelling of it: HubSkatepark passes the identical four
+## numbers to both. What proves they agree is not this comment --
+## SkatePhysicsProbe PHASE G asserts that the union of the points below
+## is exactly the set of distinct vertex positions the DRAWN mesh carries,
+## which is a gate against the geometry and not against the formula.
+static func funbox_pieces(width: float, length: float, height: float, ramp: float) -> Array:
+	var half_w := width * 0.5
+	var deck_half := length * 0.5
+	var pieces: Array = []
+	# The deck box, exactly `_box`'s eight corners for the same centre and
+	# the same size the builder above is handed.
+	var deck := PackedVector3Array()
+	for sx in [-1.0, 1.0]:
+		for sy in [0.0, 1.0]:
+			for sz in [-1.0, 1.0]:
+				deck.append(Vector3(sx * half_w, sy * height, sz * deck_half))
+	pieces.append(deck)
+	# The two ramps: the triangular prism whose cross-section is the cheek
+	# the builder draws -- (z0, 0), (z0, height), (z1, 0) -- swept across
+	# the full width. Six points, and four of them are corners of the deck
+	# box above, which is exactly why the union gate below can be an
+	# equality and not an inclusion.
+	for s in [-1.0, 1.0]:
+		var z0: float = s * deck_half
+		var z1: float = s * (deck_half + ramp)
+		var wedge := PackedVector3Array()
+		for sx in [-1.0, 1.0]:
+			wedge.append(Vector3(sx * half_w, 0.0, z0))
+			wedge.append(Vector3(sx * half_w, height, z0))
+			wedge.append(Vector3(sx * half_w, 0.0, z1))
+		pieces.append(wedge)
+	return pieces
+
 # =====================================================================
 # THE BOWL
 #

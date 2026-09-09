@@ -238,6 +238,7 @@ func _build() -> void:
 		add_child(node)
 		_nodes.append(node)
 		_tris += builder.triangle_count()
+		_maybe_collide(node, index, spec)
 	# THE SITE MARKER, and it goes on a node that is AT the site. CH46
 	# pinned seven NPC markers on (0, 0, 0) because `mark(self)` was
 	# called in a file where `self` is a controller that never moves from
@@ -248,6 +249,78 @@ func _build() -> void:
 	site.position = HubSurface.ground(Vector3(PARK_CENTRE.x, 0.0, PARK_CENTRE.y))
 	MinimapMarkers.mark(site, MinimapMarkers.PLACE)
 	add_child(site)
+
+## =====================================================================
+## CH57 LOT 1 -- THE FUNBOX, AND ONLY THE FUNBOX, BECOMES SOLID
+##
+## Behind DevTools.physics_enabled(), which is OFF for every player and
+## OFF in every existing probe (see DevTools). With the switch down this
+## function returns on its first line and the park is byte-for-byte the
+## one CH53 shipped.
+##
+## ⚠️ ONE MODULE, DELIBERATELY, AND THE BOWL IS THE REASON. CH56 section
+## 12.4: "un bol decompose en hulls convexes est GEOMETRIQUEMENT FAUX --
+## une cuvette ouverte devient un tas de solides pleins", and CH56
+## measured that decomposition's COST without ever checking its
+## correctness. The funbox is the opposite case: a box between two
+## wedges, three exactly convex pieces, no approximation anywhere. It is
+## the only module in the park whose collider can be proved right by
+## looking at it, which is why it is the only one that gets one.
+##
+## THE SHAPE IS A CHILD OF THE DRAWN NODE, so it inherits the module's
+## own position and yaw and cannot drift from what the player sees. There
+## is no second spelling of where the funbox is -- CLAUDE.md's most
+## expensive recurring defect, and the one `module_centre()` above
+## already exists to avoid.
+##
+## A collider draws NOTHING. CH56 verdict point 3: zero primitives, zero
+## draw calls, which is exactly the currency CH52 measured none of at the
+## north rim. SkatePhysicsProbe PHASE B gates that at the five stations
+## CH53 published.
+var _funbox_body: StaticBody3D = null
+var _funbox_index: int = -1
+
+func _maybe_collide(node: MeshInstance3D, index: int, spec: Dictionary) -> void:
+	if not DevTools.physics_enabled():
+		return
+	if StringName(spec["kind"]) != KIND_FUNBOX or _funbox_body != null:
+		return
+	var size: Vector3 = spec["size"]
+	# The SAME four arguments `_mesh_for` hands the builder, in the same
+	# order, so the pieces and the drawn triangles are two readings of one
+	# authored shape. Retyping any of them here is how the repo has bought
+	# itself a second orthography every time it has bought one.
+	var pieces: Array = SkateparkMesh.funbox_pieces(size.x, size.z * 0.55, size.y, size.z * 0.45)
+	var body := StaticBody3D.new()
+	body.name = "FunboxCollider"
+	body.collision_layer = 1 << (SkateBoardBody.LAYER_PARK - 1)
+	# Masks NOTHING: a static body that scans for others is paying
+	# broadphase for a question nobody asks. It is asked ABOUT, never asks.
+	body.collision_mask = 0
+	for piece in pieces:
+		var hull := ConvexPolygonShape3D.new()
+		hull.points = piece
+		var shape := CollisionShape3D.new()
+		shape.shape = hull
+		body.add_child(shape)
+	node.add_child(body)
+	_funbox_body = body
+	_funbox_index = index
+
+## Which entry of MODULES carries a collider, or -1. Published rather than
+## grepped for by kind: CLAUDE.md, "le producteur publie ce qu'il a
+## construit ; le lecteur ne le reconnait jamais" -- a reader that looked
+## for the funbox by name would be wrong the day a second one is laid.
+func collider_index() -> int:
+	return _funbox_index
+
+func collider_body() -> StaticBody3D:
+	return _funbox_body
+
+## How many convex pieces the collider actually holds, counted off the
+## tree rather than off the table that asked for them.
+func collider_piece_count() -> int:
+	return 0 if _funbox_body == null else _funbox_body.get_child_count()
 
 func _mesh_for(builder: SkateparkMesh, spec: Dictionary) -> ArrayMesh:
 	var size: Vector3 = spec["size"]
