@@ -329,6 +329,26 @@ func _unhandled_input(event: InputEvent) -> void:
 	# same writer -- one condition per DRIVEN VEHICLE, not per vehicle.
 	if transport != null and transport.is_driving_sailboat():
 		return
+	# CH63 LOT 1: and the same for the board WHEN IT IS BEING DRIVEN, which
+	# under the DRAG scheme it is -- the finger holds a heading frame by
+	# frame, which is CLAUDE.md's own criterion for a piloted vehicle. It
+	# is the fourth condition of the same shape and it is deliberately NOT
+	# a fourth kind of test: `SkateTouchInput.drag_enabled()` is the scheme
+	# and `is_riding_board()` is the vehicle, and both have to hold.
+	#
+	# ⚠️ THIS IS WHAT SHUNTS THE SHIPPED TAP ROUTE, and it has to be HERE
+	# rather than at the board's own branch 100 lines below. That branch
+	# (`is_riding_board()` -> tapped_ground.emit) is the TAP scheme's whole
+	# implementation; leaving it reachable would give one finger two
+	# meanings at once -- a heading here and a destination there -- which
+	# is the double dispatch this lot's red pass exists to prove absent.
+	#
+	# With the TAP scheme selected this line is false and NOTHING below
+	# changes: `_handle_point` and `_on_tapped_ground` are untouched by
+	# this lot, and the ten states and eighteen probes that share them
+	# neither know nor care that a second scheme exists.
+	if transport != null and transport.is_riding_board() and SkateTouchInput.drag_enabled():
+		return
 	var touch := event as InputEventScreenTouch
 	if touch:
 		if not touch.pressed:
