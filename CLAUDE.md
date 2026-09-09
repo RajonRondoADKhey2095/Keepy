@@ -1316,6 +1316,33 @@ ces pixels visaient du sol inexistant, jusqu'à **49,8 u hors carte**.
 clampée.** Écrit une fois pour tous les props, parce que l'entonnoir est une
 propriété du fait d'être **PRÈS D'UN BORD**, pas d'être une cabane.
 
+### ⚠️ UN CORPS QUI QUITTE LE SOL N'EST PLUS LÀ OÙ ON LE TAPE — la parallaxe est mesurée
+
+`HubCamera` ne monte **jamais** (`OFFSET` est une constante et elle suit le
+point SOL) et **tout tap se résout sur `HubSurface`**. Un corps qui se tient
+**au-dessus** du plan de sol est donc **DESSINÉ** là où le sol sous lui n'est
+pas, et l'écart grandit avec la hauteur. Mesuré au CH58 sur la planche :
+
+| station | où se résout un doigt visant ses pieds dessinés |
+|---|---|
+| sol plat | **0,133 u** |
+| deck de la funbox (0,85 u) | **1,501 u** |
+
+contre un rayon de self-tap de **0,90 u**. Donc « taper sur soi pour
+descendre » marchait sur la pelouse et **ne marchait pas sur le seul module
+que le chantier existe pour grimper** — sans erreur, et sans qu'aucune sonde
+le voie, parce que la sonde tapait la position **PLATE**, c'est-à-dire une
+question qu'aucun doigt ne peut poser (la forme exacte du hotspot du lit :
+« la métrique peut être la mauvaise, et le chiffre vert avec »).
+
+**Règle** : tout test « ce tap le désigne LUI » lit le point **DESSINÉ** —
+le rayon caméra à travers sa position réelle, rencontré avec `HubSurface` —
+jamais sa position plate, dès lors que le corps peut se tenir au-dessus du
+sol. C'est la règle AIM appliquée au CAVALIER au lieu d'un prop : seule la
+**destination** reste clampée. Un véhicule qui ne quitte jamais le sol n'en
+a pas besoin (le sautillon lit toujours le plat, délibérément) ; **le jour où
+un véhicule livré peut se tenir sur quelque chose, il y entre.**
+
 ### ⚠️ PATRON BATEAU contre PATRON ÉCHELLE — le second a coûté DEUX bugs
 
 * **Patron BATEAU** : la cible **SE RETIRE** du tap pendant l'interaction
@@ -1353,6 +1380,50 @@ autre sens est déjà traité par état » dit réellement, et c'est la seule
 raison pour laquelle la branche hibou a le droit de ne rien faire. Toute
 phase NON bornée (une marche d'approche) doit rester une phase où le tap
 retombe et **annule l'intention**.
+
+### ⚠️ UN ÉTAT PARTAGÉ N'EST PAS UNE PERMISSION PARTAGÉE — le PATRON ÉCHELLE s'atteint PAR HÉRITAGE
+
+Écrit au CH58, après que le patron interdit ait été **expédié sur device**
+sans que personne ne l'écrive. `ON_CARRIER` a cinq usagers ; la licence de
+**JETER** un tap n'en est pas une propriété. `CLAUDE.md` ne l'accorde qu'à un
+trajet **BORNÉ** — « un tween qui se termine toujours à un point connu » —
+et la montgolfière, la tyrolienne et la boucle du hibou le sont. La planche
+physique du CH57 ne l'est **pas** : elle reste immobile sous le joueur
+jusqu'à ce qu'il en décide. Elle a hérité du `return` de la montgolfière
+**parce qu'elle passe par le même état**, et la branche que CH57 lui avait
+écrite — correcte en elle-même — vivait **quarante-sept lignes plus bas**,
+donc en code mort. Sur device : mount normal, puis **plus un seul tap reçu**,
+aucune erreur, le menu toujours réactif. Sortie par rechargement de page.
+
+**Aucun des deux fichiers lu seul ne le montrait**, et c'est ce qui rend le
+piège général : un `return` correct dans son contexte devient un avaleur de
+taps dès qu'un second usager arrive dans l'état, et le nouvel usager n'a
+aucune raison de relire le garde d'un autre.
+
+**Règle** : tout garde qui JETTE une entrée se teste sur la **LICENCE**, pas
+sur l'ÉTAT — la condition s'écrit avec la propriété qui l'autorise
+(« le trajet est-il borné ? »), et l'exception porte le renvoi croisé vers
+la branche qu'elle débloque. Corollaire de contrôle : quand la branche d'un
+prop est plus bas dans le même `match` d'états qu'un `return` qui peut la
+précéder, **elle est présumée morte jusqu'à ce qu'une sonde la traverse
+par le vrai canal**.
+
+### ⚠️ ET LA SONDE DU LOT NE POUVAIT PAS LE VOIR — elle appelait l'API, jamais le canal
+
+Dix-huitième faux-signal du dépôt, et le complément exact de « un fixture
+qui diverge du réel sur un axe ne protège pas de cet axe ». `SkatePhysicsProbe`
+est sortie **43 assertions vertes** sur une planche dont **aucun tap
+n'arrivait**, parce qu'elle la conduit par `mount_board()` et
+`set_board_target()` **en direct** : le chemin de tap livré — le seul qu'un
+joueur possède — est hors de tout ce qu'elle mesure. L'axe n'était ni la
+géométrie, ni la physique, ni le rendu : c'était le **ROUTAGE**.
+
+**Règle** : une sonde qui gate une INTERACTION entre par le canal du joueur
+— le signal réel sur le nœud réel, et au moins une phase depuis une **vraie
+coordonnée écran** — et n'appelle l'API du prop que pour LIRE le résultat.
+Une sonde qui appelle la fonction qu'un tap aurait appelée mesure la
+fonction, pas l'interaction, et les deux ne tombent jamais en panne
+ensemble.
 
 ### ⚠️ UNE MARCHE DE LONGUEUR NULLE N'ÉMET PAS D'ATTERRISSAGE
 

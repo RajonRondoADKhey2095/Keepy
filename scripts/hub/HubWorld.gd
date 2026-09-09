@@ -3228,7 +3228,36 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# exact licence -- the trip is a bounded tween that always ends on a
 	# dock, after which `_on_balloon_trip_finished` hands the body back --
 	# and it reaches this branch at all only because both docks withdrew.
-	if _keepy.is_on_carrier():
+	#
+	# ⚠️ CH58 -- AND THE BOARD IS EXPLICITLY NOT COVERED BY THAT LICENCE.
+	#
+	# ON_CARRIER is a state, not a permission. Five things use it now, and
+	# the licence to DROP a tap is not a property of the state: CLAUDE.md
+	# grants it only to a BOUNDED trip, "un tween qui se termine toujours
+	# a un point connu". A balloon flight, a zipline trip and an owl loop
+	# are bounded; the physics board (CH57) is NOT -- it stands still
+	# under the player until he says otherwise, which is exactly the
+	# UNBOUNDED phase the seesaw's rule covers, where a held body must
+	# keep a way out.
+	#
+	# ⚠️ THIS COST A SHIPPED BUG, and it is worth naming so the next
+	# carrier does not repeat it. CH57 wrote the board's own branch FORTY-
+	# SEVEN LINES BELOW this return -- correct in itself, and unreachable
+	# while riding, because the board arrives here first as a carrier. On
+	# device the whole gameplay input died the moment Keepy stepped on:
+	# no steer, no dismount, no error, the menu still opening. That is
+	# CLAUDE.md's PATRON ECHELLE -- a player sealed inside a prop that
+	# eats every tap -- reached NOT by writing the banned pattern, but by
+	# inheriting a drop through a state shared with something allowed to
+	# drop. Neither file read alone showed it, and CH57's 43 assertions
+	# were all green over it because its bench called `set_board_target()`
+	# directly and never once went through this listener.
+	#
+	# So the test here is the LICENCE, not the state. A future carrier
+	# whose ride is unbounded belongs in this exception beside the board;
+	# one whose ride is a bounded tween belongs in the drop above it.
+	# SkateDismountProbe gates both halves.
+	if _keepy.is_on_carrier() and not _transport.is_riding_board():
 		return
 	# v4: a tap while the TREE carries him is read BY STATE, and it is NOT
 	# dropped -- the ride has an unbounded phase (the seat), so a held
@@ -3275,14 +3304,69 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# destination, or the dismount -- so the player is never inside a prop
 	# that eats his taps. `board_at_rest()` is what separates the two, so a
 	# tap on himself mid-roll STEERS rather than ejecting him at speed.
+	#
+	# ⚠️ CH58: THIS BRANCH IS ONLY REACHABLE BECAUSE OF THE EXCEPTION
+	# WRITTEN INTO THE ON_CARRIER DROP ABOVE. It shipped unreachable --
+	# riding the board IS an ON_CARRIER ride, and that drop returns first.
+	# The two halves are one rule and have to be read together; do not
+	# "tidy" the compound condition up there back into a bare
+	# `is_on_carrier()` without moving this branch above it.
 	if _transport.is_riding_board():
-		var here := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+		var here: Vector3 = _drawn_ground_point(_keepy.global_position)
 		if _transport.board_at_rest() and here.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
 			_transport.leave_board()
 		else:
 			_transport.set_board_target(point)
 		return
 	_hop_via_corridor(point)
+
+## ⚠️ CH58 -- WHERE A FINGER AIMED AT A RAISED BODY ACTUALLY LANDS, and it
+## is NOT that body's flat position.
+##
+## Every tap on this screen resolves on HubSurface, and `HubCamera` never
+## rises -- OFFSET is a constant and it tracks Keepy's GROUND point. So a
+## body standing ABOVE the ground plane is DRAWN somewhere the ground under
+## it is not: the camera ray through it meets the surface further away, and
+## the gap grows with height. Comparing a tap to the flat position asks a
+## question no finger can ask.
+##
+## MEASURED, on the board, by SkateDismountProbe PHASE A:
+##
+##     on flat ground        0.133 u   -- comfortably inside the 0.9 radius
+##     on the funbox deck    1.501 u   -- outside it, by two thirds again
+##
+## which is why "tap yourself to get off" worked on the lawn and did NOT
+## work on top of the one module this whole chantier exists to climb. The
+## first green pass of that probe passed the deck case anyway, because it
+## tapped the flat position itself -- CLAUDE.md's "la metrique peut etre la
+## mauvaise, et le chiffre vert avec", the bed hotspot's shape exactly.
+##
+## This is CLAUDE.md's AIM rule applied to the rider instead of to a prop:
+## a prop test answers "what did the player MEAN", and what he means by
+## tapping a drawn body is that body. Only the DESTINATION stays clamped.
+##
+## ⚠️ SCOPED TO THE PHYSICS BOARD ON PURPOSE. The ball's own branch above
+## still reads the flat position: it is shipped, device-validated, and it
+## never leaves the ground, so its parallax is the 0.133 case. Widening it
+## would be changing the game every player has, which this lot must not do.
+## The day a shipped vehicle can stand on something, it belongs here too.
+##
+## Falls back to the flat position when there is no camera or the ray finds
+## no ground -- the old behaviour, so a missing camera degrades to what
+## shipped rather than to nothing at all.
+func _drawn_ground_point(at: Vector3) -> Vector3:
+	var flat := Vector3(at.x, 0.0, at.z)
+	if _camera == null:
+		return flat
+	var eye: Vector3 = _camera.global_position
+	var away: Vector3 = at - eye
+	if away.length() < 0.0001:
+		return flat
+	var hit: Variant = HubSurface.intersect_ray(eye, away.normalized())
+	if hit == null:
+		return flat
+	var ground: Vector3 = hit
+	return Vector3(ground.x, 0.0, ground.z)
 
 ## Carte-blanche v2 -- the autumn hollow hangs off the plateau by a
 ## corridor, so the walkable region is no longer convex: a straight hop
