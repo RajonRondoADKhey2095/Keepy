@@ -391,9 +391,28 @@ func _phase_modules() -> void:
 	for index in _park.collider_indices():
 		var kind: String = String(_park.module_kind(index))
 		var top: Dictionary = await _ride_to_high_point(index)
-		var reached: float = float(top["y"])
-		print("     [%d] %-12s highest the board reached: y %.3f  (drawn lip %.3f)  supported=%s"
-			% [index, kind, reached, float(top["lip"]), top["supported"]])
+		var reached: float = float(top["peak"])
+		print("     [%d] %-12s PEAK y %.3f  (drawn lip %.3f)  came to rest at y %.3f  supported=%s"
+			% [index, kind, reached, float(top["lip"]), float(top["y"]), top["supported"]])
+		print("     [%d] AT THE PEAK: parallax %.3f u (flat ground %.3f)   clamp shift %.3f u   radius %.2f"
+			% [index, float(top["peak_parallax"]), _flat_parallax, float(top["peak_shift"]),
+				SELF_TAP_RADIUS])
+		if bool(top["climbed"]):
+			# ⚠️ THE BRIEF'S QUESTION, ASKED AT THE HIGHEST POINT THE BOARD
+			# CAN NOW REACH -- which is what CH61 moved. The parallax is
+			# PUBLISHED and the clamp shift is GATED, for CH58's reason:
+			# the shipped branch already compares against the DRAWN ground
+			# point, so a big parallax is how wrong a naive flat
+			# comparison would be, not how wrong the game is. What can
+			# still break the gesture on a raised body is the clamp.
+			_check(float(top["peak_parallax"]) > 0.0,
+				"M[%d] INSTRUMENT: the parallax at the peak is measurable at all" % index)
+			_check(float(top["peak_parallax"]) > _flat_parallax + 0.02,
+				"M[%d] INSTRUMENT: being up there really does move the aim (%.3f vs %.3f flat)"
+					% [index, float(top["peak_parallax"]), _flat_parallax])
+			_check(float(top["peak_shift"]) < SELF_TAP_RADIUS,
+				"M[%d] at the PEAK the clamp still does not push the destination off his body (%.3f < %.2f)"
+					% [index, float(top["peak_shift"]), SELF_TAP_RADIUS])
 		if not bool(top["climbed"]):
 			# The RAIL. Its beam is 0.12 across and sits at 0.56 with the
 			# board topping out at 0.26: there is no "on top of the rail"
@@ -407,12 +426,32 @@ func _phase_modules() -> void:
 				"M[%d] %s: the board stays on the ground here (y %.3f), as the geometry requires"
 					% [index, kind, reached])
 			continue
-		# THE PARALLAX AT THAT POINT, and the two numbers that decide
-		# whether the gesture survives it.
+		# ⚠️ CH61 -- AND HERE THE TWO KINDS OF MODULE PART COMPANY.
+		#
+		# A DECK is a place to stand: the board stops on it and stays
+		# there, so "tap yourself to get off, up on the module" is a
+		# gesture that can be made at leisure and is gated below exactly
+		# as CH58 and CH60 gate it.
+		#
+		# A TRANSITION is not. With inertia a quarterpipe does what a
+		# quarterpipe does -- the board runs out of speed and comes back
+		# down -- so there is no raised REST from which to tap. Demanding
+		# a dismount from a resting point that physics forbids would be
+		# demanding a defect, exactly as CH60 said of a gate written at
+		# the rail's beam. What is owed there instead is the brief's
+		# actual requirement: the channel must never be SWALLOWED at any
+		# point the board can reach, and the rider must always be at most
+		# one further tap from the ground. That is `_peak_gesture` below.
+		if not bool(top["rests_raised"]):
+			print("     [%d] a transition offers no raised REST -- the board comes back down, which is" % index)
+			print("         what a quarterpipe does. The gesture is therefore tested AT THE PEAK,")
+			print("         where CH58's rule makes it a STEER, and then on the ground it returns to.")
+			await _peak_gesture(index, live)
+			continue
 		var parallax: float = _deck_parallax()
 		var shift: float = _clamp_shift()
-		print("     [%d] parallax %.3f u (flat ground %.3f)   clamp shift %.3f u   radius %.2f"
-			% [index, parallax, _flat_parallax, shift, SELF_TAP_RADIUS])
+		print("     [%d] at its RESTING point: parallax %.3f u (flat ground %.3f)   clamp shift %.3f u"
+			% [index, parallax, _flat_parallax, shift])
 		_check(parallax > 0.0, "M[%d] INSTRUMENT: the parallax is measurable at all" % index)
 		_check(parallax > _flat_parallax + 0.02,
 			"M[%d] INSTRUMENT: being up on the module really does move the aim (%.3f vs %.3f flat)"
@@ -548,7 +587,19 @@ func _drawn_ground_of(at: Vector3) -> Vector3:
 ## a quarterpipe (it arrives at the foot of the transition) and the funbox
 ## ride CH57 published; both are read off the node's transform so a yawed
 ## module needs no second spelling.
-func _ride_to_high_point(index: int) -> Dictionary:
+## ⚠️ CH61 -- ONE SPELLING OF THE STATIONS, READ BY BOTH RIDES.
+##
+## `_peak_gesture` first invented its own approach -- the module's own
+## local -Z at 8 u out -- and for the funbox that is (0, 37.5), which
+## sits inside the SEESAW's landing disc. `leave_board` steps the rider
+## off with a hop, a hop that LANDS is offered to every hotspot HubWorld
+## holds, the seesaw took him, and `mount_carrier` refused every mount
+## afterwards because its one precondition is `_state == IDLE`. Two reds,
+## on a bench, from a station typed twice.
+##
+## CLAUDE.md's rule about a fact having one spelling is usually about
+## numbers in shipped code. It is about benches too.
+func _high_point_ends(index: int) -> Array:
 	var node := _park.module_node(index)
 	var centre: Vector3 = _park.module_centre(index)
 	var d: Vector3 = node.global_transform.basis * Vector3(0.0, 0.0, 1.0)
@@ -556,25 +607,136 @@ func _ride_to_high_point(index: int) -> Dictionary:
 	var kind: StringName = _park.module_kind(index)
 	var out_u: float = 6.5 if kind == HubSkatepark.KIND_FUNBOX else -8.0
 	var to_u: float = -5.5 if kind == HubSkatepark.KIND_FUNBOX else 4.0
-	await _remount(centre + dir * out_u)
+	return [centre + dir * out_u, centre + dir * to_u]
+
+func _ride_to_high_point(index: int) -> Dictionary:
+	var ends: Array = _high_point_ends(index)
+	await _remount(ends[0])
+	_tap.tapped_ground.emit(HubRegion.clamp_to(ends[1]))
 	var body := _transport.board_body()
-	_tap.tapped_ground.emit(HubRegion.clamp_to(centre + dir * to_u))
 	var best: float = -1e9
+	# ⚠️ CH61 -- THE PARALLAX IS READ AT THE PEAK, ON THE TICK OF THE PEAK.
+	#
+	# Before this lot the board STALLED on a transition and stayed there,
+	# so where it came to rest and how high it got were the same place and
+	# one reading served both. With inertia a quarterpipe behaves like a
+	# quarterpipe: the board goes up, runs out of speed and comes back
+	# down, and its RESTING height on a transition is zero. A phase that
+	# went on reading the resting point would report `climbed = false` and
+	# take the RAIL branch -- passing, on a module that had just been
+	# ridden higher than anything in this park has ever been ridden. A
+	# true reading of the wrong moment, which is CLAUDE.md's "la metrique
+	# peut etre la mauvaise, et le chiffre vert avec".
+	#
+	# Both readings are transform arithmetic on the LIVE camera, so
+	# nothing is reconstructed and nothing is teleported into place: they
+	# are simply taken on the frame where the board is highest.
+	var peak_parallax: float = -1.0
+	var peak_shift: float = 1e9
+	# ⚠️ AND "AT REST" IS HELD FOR A WHILE BEFORE IT IS BELIEVED.
+	#
+	# `at_rest()` is "no target and slower than the guard's own idea of
+	# motionless", and a board at the APEX OF A CLIMB satisfies both for
+	# an instant: it has turned round, so its speed passes through zero,
+	# and the stall guard may already have let the target go. Measured on
+	# this very bench -- the 2.10 u quarterpipe reported "came to rest at
+	# y 0.987", which is a point on a 58 deg facet that nothing could
+	# stand on. It was the apex, caught on the tick it turned.
+	#
+	# CH42's rule, again and in a third shape: a run is never scored on
+	# an instant. A rest that is real survives twenty ticks of gravity.
+	var still: int = 0
 	for _i in 480:
 		await get_tree().physics_frame
-		best = maxf(best, body.global_position.y)
-		if body.at_rest():
-			break
-	# Let it settle where it stopped, so the tap below is read as a tap and
-	# not as a steer (`board_at_rest()` is what separates the two).
-	for _i in 60:
-		await get_tree().physics_frame
-		if body.at_rest():
+		if body.global_position.y > best:
+			best = body.global_position.y
+			peak_parallax = _deck_parallax()
+			peak_shift = _clamp_shift()
+		still = still + 1 if body.at_rest() else 0
+		if still >= 20:
 			break
 	var lip: float = float(HubSkatepark.MODULES[index]["size"].y)
 	return {"y": body.global_position.y, "peak": best, "lip": lip,
 		"supported": body.supported(),
-		"climbed": body.global_position.y > 0.05}
+		"peak_parallax": peak_parallax, "peak_shift": peak_shift,
+		# Did the module offer a place to STAND, or only a place to pass
+		# through? A deck does; a transition does not, and the difference
+		# is what decides which gesture is even askable up there.
+		"rests_raised": body.global_position.y > 0.05,
+		"climbed": best > 0.05}
+
+## =====================================================================
+## ⚠️ CH61 -- THE GESTURE AT A POINT THE RIDER CANNOT STAND ON
+##
+## The brief's garde-fou 3: "la descente doit rester possible A TOUTE
+## VITESSE et depuis tout point atteint -- c'est le bug CH58, ne le
+## rouvre pas." CH58's bug was a DEAD CHANNEL: a rider sealed inside a
+## prop that ate every tap, CLAUDE.md's PATRON ECHELLE. The rule that
+## fixed it is not "a self-tap always ejects" -- CH57 deliberately makes
+## a self-tap mid-roll a STEER so a rider is not thrown off a moving
+## board -- it is that every tap PRODUCES something and the rider is
+## never more than one further tap from the ground.
+##
+## So that is what is asked here, at the highest point of a transition,
+## through the real screen where the driver allows it:
+##
+##   1. the tap resolves to a ground point at all (the channel is alive
+##      at speed, above the ground, mid-climb);
+##   2. he is still aboard afterwards -- it STEERED, which is CH58's own
+##      rule and not a regression of it;
+##   3. the board comes to rest, and the NEXT self-tap puts him down.
+##
+## Three assertions, and the third is the one that would have caught the
+## shipped CH57 bug: a swallowed tap never reaches it.
+func _peak_gesture(index: int, live: bool) -> void:
+	var ends: Array = _high_point_ends(index)
+	await _remount(ends[0])
+	var body := _transport.board_body()
+	_tap.tapped_ground.emit(HubRegion.clamp_to(ends[1]))
+	# Ride until the board has topped out: it has climbed past a real
+	# height AND started coming down. Waiting for a fixed tick count
+	# would tap wherever the clock happened to fall.
+	var best: float = -1e9
+	var topped: bool = false
+	for _i in 480:
+		await get_tree().physics_frame
+		var y: float = body.global_position.y
+		best = maxf(best, y)
+		if best > 0.30 and y < best - 0.02:
+			topped = true
+			break
+	print("     [%d] topped out at y %.3f, tapping his drawn body THERE (%s)"
+		% [index, best, "screen" if live else "signal"])
+	_check(topped, "M[%d] INSTRUMENT: the run really topped out on the transition (peak %.3f u)"
+		% [index, best])
+	if not topped:
+		return
+	var seen: Array[Vector3] = []
+	var sink := func(p: Vector3) -> void: seen.append(p)
+	_tap.tapped_ground.connect(sink)
+	if live:
+		await _tap_self_screen()
+	else:
+		_tap.tapped_ground.emit(HubRegion.clamp_to(_finger_at_keepy()))
+		await _settle(8)
+	_tap.tapped_ground.disconnect(sink)
+	_check(seen.size() > 0,
+		"M[%d] the channel is ALIVE at the peak: the tap produced a ground point" % index)
+	_check(_transport.is_riding_board(),
+		"M[%d] and it STEERED rather than ejecting him off a moving board (CH58's rule)" % index)
+	# ...and the ground he comes back to is one tap from a dismount.
+	var settled: bool = false
+	for _i in 40:
+		await _settle(12)
+		if _transport.board_at_rest():
+			settled = true
+			break
+	_check(settled, "M[%d] INSTRUMENT: the board came to rest after the steer" % index)
+	if not settled:
+		return
+	_check(await _tap_self(),
+		"M[%d] and the NEXT tap on himself puts him down -- never more than one tap from the ground"
+			% index)
 
 # =====================================================================
 # PHASE T -- THE CEILING, RE-WALKED
@@ -691,8 +853,32 @@ func _settle(ticks: int) -> void:
 ## return false, and every "he is not aboard" assertion downstream then
 ## passes for free. Measured on the first red pass: three phases were
 ## scored against a rider who had never got on.
+## ⚠️ CH61 -- AND THE DISMOUNT HAPPENS ON OPEN LAWN, NOT WHERE THE RIDE
+## ENDED.
+##
+## `leave_board` steps the rider off BESIDE the board with a hop, and a
+## hop that LANDS is offered to every hotspot HubWorld holds. Before this
+## lot the board stopped short of a module and every ride ended in the
+## same few metres; with inertia it rides OVER the funbox and stops at
+## (0, 40), which is inside the SEESAW's landing disc. Measured: the
+## seesaw took the rider, `mount_carrier` refused every mount afterwards
+## (its one precondition is `_state == IDLE`), and the phase scored a
+## board nobody was riding -- `topped out at y 0.000`.
+##
+## Nothing is wrong with the game: a walk that lands beside the seesaw is
+## SUPPOSED to be offered it. What was wrong is a bench that put its
+## rider down inside another prop's hotspot. `OPEN_GROUND` is this
+## probe's own published empty station, so the fix reads what is already
+## there rather than inventing a second one.
 func _park_board(flat: Vector3) -> void:
 	if _transport.is_riding_board():
+		var carrier := _transport.board_body()
+		if carrier != null:
+			carrier.clear_target()
+			carrier.velocity = Vector3.ZERO
+			carrier.global_position = HubSurface.ground(_flat(OPEN_GROUND))
+			_keepy.call("follow_carrier")
+			await _settle(1)
 		_transport.leave_board()
 		await _settle(20)
 	_keepy.dismount_vehicle()
