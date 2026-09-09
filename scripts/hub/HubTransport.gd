@@ -472,6 +472,13 @@ func _build_board() -> void:
 		# difference Mathieu feels is the PHYSICS and not a retune.
 		body.configure(SKATE_CRUISE, SKATE_ACCEL_U, SKATE_BRAKE_U, skate_coast_u())
 		_board = body
+		# CH62: the rolling loop and the landing cue. Built HERE, in the
+		# same branch and behind the same switch as the body, so "PHYS OFF
+		# is unchanged" is a property of the ONE `if` that already decides
+		# what a board is.
+		_board_audio = SkateAudio.new()
+		_board_audio.setup(body)
+		add_child(_board_audio)
 	else:
 		_board = visual
 	_board.name = "Skateboard"
@@ -507,9 +514,15 @@ func board_position() -> Vector3:
 ## proxy with a real arithmetic classification. This lot measures F; it
 ## does not re-score anything.
 var _riding_board: bool = false
+## CH62. Null with the physics switch down, and never built at all in
+## that case -- see `_build_board`.
+var _board_audio: SkateAudio = null
 
 func board_body() -> SkateBoardBody:
 	return _board as SkateBoardBody
+
+func board_audio() -> SkateAudio:
+	return _board_audio
 
 func is_riding_board() -> bool:
 	return _riding_board
@@ -533,6 +546,8 @@ func mount_board() -> bool:
 	# this file a bare Camera3D still mounts.
 	if _camera != null and _camera.has_method("enter_ride"):
 		_camera.call("enter_ride", body)
+	if _board_audio != null:
+		_board_audio.set_riding(true)
 	return true
 
 ## Steps off beside the board, on the sled's terms: the region's own clamp,
@@ -548,6 +563,8 @@ func leave_board() -> void:
 		body.clear_target()
 	if _camera != null and _camera.has_method("exit_ride"):
 		_camera.call("exit_ride")
+	if _board_audio != null:
+		_board_audio.set_riding(false)
 	var at: Vector3 = board_position()
 	var side := Vector3(cos(_board.rotation.y), 0.0, -sin(_board.rotation.y)) * EXIT_SIDE
 	var landing: Vector3 = _step_off(at + side, at)
