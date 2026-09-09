@@ -528,6 +528,11 @@ func mount_board() -> bool:
 		return false
 	_riding_board = true
 	_keepy.call("follow_carrier")
+	# CH62: the camera starts reacting to the ride. `has_method` for the
+	# same reason the three driven vehicles use it -- a bench that hands
+	# this file a bare Camera3D still mounts.
+	if _camera != null and _camera.has_method("enter_ride"):
+		_camera.call("enter_ride", body)
 	return true
 
 ## Steps off beside the board, on the sled's terms: the region's own clamp,
@@ -541,6 +546,8 @@ func leave_board() -> void:
 	_riding_board = false
 	if body != null:
 		body.clear_target()
+	if _camera != null and _camera.has_method("exit_ride"):
+		_camera.call("exit_ride")
 	var at: Vector3 = board_position()
 	var side := Vector3(cos(_board.rotation.y), 0.0, -sin(_board.rotation.y)) * EXIT_SIDE
 	var landing: Vector3 = _step_off(at + side, at)
