@@ -86,8 +86,8 @@ const PER_SIDE: int = 7
 const SCROLL: float = 1.35
 const LENGTH_MIN: float = 0.080
 const LENGTH_MAX: float = 0.220
-const WIDTH_MIN: float = 0.0055
-const WIDTH_MAX: float = 0.0115
+const WIDTH_MIN: float = 0.0075
+const WIDTH_MAX: float = 0.0165
 ## Warm white, deliberately not pure white.
 const TINT: Color = Color(1.0, 0.97, 0.90)
 ## The feathered strip, baked once. Small on purpose: it is stretched to
@@ -201,6 +201,20 @@ func coverage() -> float:
 		ink += float(lane["width"]) * float(lane["length"])
 	return ink
 
+## ⚠️ HOW FAR THE FIELD HAS SCROLLED, in pixels, unwrapped -- published so
+## a bench can prove the streaks MOVE.
+##
+## That is not a formality. `SCROLL` is in screen HEIGHTS per second and
+## the draw multiplies it by `size.y`; a version that forgot the factor
+## put a number of order one against a span of order two thousand pixels,
+## and the field crept instead of streaming. EVERY assertion this lot's
+## probe makes about the streaks -- they light with the speed, they are
+## bounded, they ink pixels, they are one draw call -- stayed green over
+## it, because none of them asks about MOTION. This is the accessor that
+## does.
+func scroll_travelled(height: float) -> float:
+	return _t * SCROLL * height
+
 func _draw() -> void:
 	if _rush <= 0.0 or _strip == null:
 		return
@@ -217,7 +231,14 @@ func _draw() -> void:
 		# Downward, because the camera sits behind and above: a board
 		# moving away from the player has the ground streaming toward the
 		# bottom of the frame whatever direction it is actually heading.
-		var y: float = fmod(float(lane["phase"]) * span + _t * SCROLL * float(lane["rate"]), span) - length
+		# ⚠️ `SCROLL` IS IN SCREEN HEIGHTS PER SECOND, so it is multiplied
+		# by `size.y` HERE. Written without that factor it is a number of
+		# order one against a span of order two thousand pixels, and the
+		# field creeps instead of streaming -- a bug the wiring probe
+		# cannot see, because the streaks would still light up, still
+		# follow the speed and still be bounded.
+		var y: float = fmod(float(lane["phase"]) * span
+			+ _t * SCROLL * size.y * float(lane["rate"]), span) - length
 		var x: float = float(lane["across"]) * (band_px - width)
 		if float(lane["side"]) > 0.0:
 			x = size.x - band_px + x

@@ -129,11 +129,20 @@ const RUSH_LAMBDA: float = 3.2
 ## it is deliberately the only place it is written. Too low and the lot
 ## repeats the defect it exists to fix -- CH61 was correct, measured and
 ## invisible. Too high and it is the runner-arcade tell the brief bans.
-## 0.20 over an ink coverage the probe measures at about 1.8 % of the
-## frame, in a warm white, moving: legible in the corner of the eye,
-## barely there in a screenshot. If it reads wrong on device, this
-## constant is the whole fix and nothing else changes.
-const STREAK_ALPHA: float = 0.20
+## ⚠️ AND IT WAS MEASURED RATHER THAN PICKED, TWICE. At 0.20 the field
+## brightened the pixels it covers by a MEAN of 0.046 of full scale --
+## about 5 % -- read off two captures of one frozen frame with the
+## streaks shown and hidden. That is under the threshold of casual
+## visibility, and a still frame confirmed it: nothing was there. The lot
+## that exists because CH61 was correct and invisible must not ship its
+## own invisible cue, so the doubt is resolved UPWARD here and only here.
+##
+## 0.28 over an ink coverage the probe measures at about 2.5 % of the
+## frame, in a warm white, moving 1.35 screen-heights a second: legible
+## in the corner of the eye, still soft in a screenshot. If it reads
+## wrong on device, THIS CONSTANT IS THE WHOLE FIX and nothing else
+## changes -- no other file names a streak intensity.
+const STREAK_ALPHA: float = 0.28
 
 ## ---- what the SOUND does with it (effect 3) -------------------------
 ## The rolling loop is pitched and levelled by the RAW pace, not by
@@ -165,10 +174,24 @@ const LAND_DB_HARD: float = -7.0
 ## The blob shrinks and fades with height, which is what makes the gap
 ## read as ALTITUDE rather than as a shadow that came loose. Full size on
 ## the deck, floor size at HEIGHT_FULL and above.
+##
+## ⚠️ THE FADE IS DELIBERATELY SHALLOW, AND THAT IS A CORRECTION TO A
+## FIRST VERSION THAT WAS PHYSICALLY RIGHT AND BACKWARDS AS A CUE.
+## A real contact shadow softens as the body rises, so 0.30 down to 0.09
+## looked like the obvious ramp -- until the blob was located on a
+## captured frame at the top of a real jump (board at screen (540, 912),
+## blob at (540, 1071), 159 px apart, which is the cue working) and read
+## at alpha 0.112 over pale concrete, which is the cue being invisible AT
+## EXACTLY THE MOMENT IT MATTERS MOST. The gap IS the message, and the
+## message has to survive the height that produces the biggest gap.
+##
+## So the pair fades and shrinks enough to read as ALTITUDE -- without
+## which a blob that stayed put would look like a decal that came loose
+## -- and no further.
 const SHADOW_HEIGHT_FULL: float = 2.20
-const SHADOW_SCALE_MIN: float = 0.55
-const SHADOW_ALPHA_NEAR: float = 0.30
-const SHADOW_ALPHA_FAR: float = 0.09
+const SHADOW_SCALE_MIN: float = 0.62
+const SHADOW_ALPHA_NEAR: float = 0.34
+const SHADOW_ALPHA_FAR: float = 0.20
 
 ## THE reading. `pace` is SkateBoardBody.pace() -- speed over cruise --
 ## and the answer is in [0, 1], zero at and below the floor, one at and

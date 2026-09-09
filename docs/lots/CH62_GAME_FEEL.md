@@ -53,7 +53,7 @@ Trois termes, tous bornés, tous publiés par `SkateFeel` :
 | suivi de hauteur | **0,72 × la hauteur de la planche** | qu'une montée LISE comme une montée |
 
 Mesuré sur un vol tapé au-dessus du quarterpipe de 1,45 u : **la caméra
-monte de 0,888 u** pour un pic de planche de 1,966 u au-dessus du sol.
+monte de 0,899 u** pour un pic de planche de 1,966 u au-dessus du sol.
 Sans ce terme elle ne monte de rien du tout — c'est le comportement livré
 avant ce lot.
 
@@ -116,7 +116,7 @@ centre du cadre porte la planche et le rider, que le joueur REGARDE ; le
 mouvement périphérique est ce que l'œil intègre comme vélocité sans qu'on
 le lui pointe. C'est aussi la moitié de l'écran où ce jeu n'a rien.
 
-Trois choses les gardent cozy : **alpha de pointe 0,20**, **aucune arête
+Trois choses les gardent cozy : **alpha de pointe 0,28**, **aucune arête
 franche nulle part** (la bande est feathered en largeur ET en longueur,
 donc une traînée n'a ni bouts ni côtés), et un **blanc CHAUD**, jamais
 cyan.
@@ -171,8 +171,41 @@ disparaîtrait exactement au moment où il sert. D1 est intact : ceci LIT la
 surface, ne l'écrit jamais, et n'autorise aucune seconde orthographe du
 sol.
 
-Mesuré : blob à **1,966 u** de séparation au pic, alpha **0,300 → 0,112**,
-échelle **1,000 → 0,598**.
+Mesuré : blob à **1,966 u** de séparation au pic, alpha **0,340 → 0,215**,
+échelle **1,000 → 0,660** — et le blob est projeté à **(540 ; 1071)** quand la
+planche l'est à **(540 ; 912)**, soit **159 px d'écart à l'écran**, ce qui EST
+le message.
+
+### ⚠️ LES DEUX RÉGLAGES QUI ONT ÉTÉ MESURÉS PLUTÔT QUE CHOISIS, ET LES DEUX ONT BOUGÉ
+
+Une sonde ne peut pas dire si c'est agréable (§4), mais elle peut dire de
+combien un effet change les pixels qu'il couvre — et un **RENDU** peut
+dire si on le voit. `CLAUDE.md` le répète depuis CH23 : la vérification
+est un rendu, jamais une relecture. Un outil de capture jetable a rendu
+trois frames (garée, à la croisière, au sommet d'un vol réel), les a
+comparées à la même frame avec l'effet caché, et a déplacé les deux seuls
+réglages du lot qu'aucun raisonnement ne pouvait fixer.
+
+**Les traînées, 0,20 → 0,28.** À 0,20 le champ éclaircissait les pixels
+qu'il couvre d'une **MOYENNE de 0,046 de pleine échelle**, soit ~5 %, et
+la capture le confirmait : sur une image fixe **il n'y avait rien**. Le
+lot qui existe parce que CH61 était juste et invisible ne pouvait pas
+expédier son propre repère invisible. Le doute est donc tranché **vers le
+haut**, ici et nulle part ailleurs.
+
+**L'ombre, un fondu de 0,30 → 0,09 ramené à 0,34 → 0,20.** La première
+rampe était physiquement juste (une ombre de contact s'adoucit quand le
+corps monte) et **exactement à l'envers comme repère** : localisée sur la
+frame au sommet d'un vrai saut, le blob y était lu à **alpha 0,112 sur du
+béton pâle** — invisible au moment précis où il porte tout le message.
+Mesuré au sommet : la planche est projetée à **(540 ; 912)** et le blob à
+**(540 ; 1071)**, **159 px d'écart à l'écran**. C'est cet écart qu'il faut
+voir ; la valeur qui le rendait illisible a été corrigée.
+
+⚠️ **Et l'outil de capture est SUPPRIMÉ avant le commit** (`CLAUDE.md` :
+une sonde de mesure ponctuelle n'entre pas dans le dépôt).
+`ProbeTimeoutAudit` revient à **94 sondes** — le 93 de CH61 plus la seule
+sonde permanente de ce lot.
 
 ## Section 3 — LE COÛT, EFFET PAR EFFET
 
@@ -211,7 +244,7 @@ Poste : la planche lancée à 10 u/s depuis le park, monde figé,
 * **L'ombre coûte littéralement un quad** : 2 primitives, 1 draw call.
 * **Les traînées coûtent 28 primitives et UN draw call pour les
   QUATORZE.** 28 = 14 × 2 triangles, exactement. Et leur encre est mesurée
-  à **1,718 % du cadre** — le chiffre qui price un effet par fragment.
+  à **2,432 % du cadre** — le chiffre qui price un effet par fragment.
 * **La caméra coûte ~10 % de la frame à ce poste**, et c'est la seule
   ligne chère du lot.
 
@@ -344,7 +377,7 @@ d'un shader n'est pas arrêté par `paused`** (`CLAUDE.md`, CH48), donc
 l'herbe, l'eau et le haze bougent d'un cheveu à chaque frame pour
 toujours. Un cheveu n'est pas ce à quoi ressemble l'un ou l'autre des
 effets de ce lot. Corrigé par un **seuil de 0,02 pleine échelle** sur un
-canal : plancher **≈ 230-400 px**, signal **760-1 124 px**.
+canal : plancher **≈ 300-400 px**, signal **1 074 et 1 421 px**.
 
 ### 5.5 ⚠️ UNE GÉOMÉTRIE ÉCRITE EN PIXELS ABSOLUS N'A PAS LA MÊME FORCE SUR DEUX ÉCRANS
 
@@ -352,7 +385,7 @@ Le champ de traînées, écrit en pixels, encrait **0,694 %** d'une surface
 headless de 1920 de haut et **1,233 %** de la fenêtre xvfb — le MÊME code,
 deux fois plus fort sur un écran que sur l'autre, sans rien pour dire
 lequel le téléphone aurait. Toutes les dimensions sont désormais des
-FRACTIONS du contrôle, et l'encre est une constante (**1,718 %**) que le
+FRACTIONS du contrôle, et l'encre est une constante (**2,432 %**) que le
 banc publie.
 
 ### 5.6 ⚠️ `edit/loop_mode=0` DANS UN `.import` DE WAV NE VEUT PAS DIRE « PAS DE BOUCLE »

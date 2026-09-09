@@ -253,10 +253,16 @@ func _phase_curve() -> void:
 	# The two shadow curves fall with height, which is the OTHER direction
 	# and is gated as such -- a shadow that grew with altitude would pass
 	# a rising monotonicity test and be exactly backwards on screen.
+	# ⚠️ THE SPREAD FLOORS ARE DERIVED FROM THE CONSTANTS, not typed. A
+	# hand-written 0.18 stops being a blind check the day somebody
+	# softens the fade -- it becomes a gate on the OLD design that fails
+	# on a legitimate change, which is how a probe teaches a lot to
+	# silence it.
 	_gate_curve("shadow scale", _sweep(func(h): return SkateFeel.shadow_scale(h * 2.0)),
-		SkateFeel.SHADOW_SCALE_MIN, 1.0, false, 0.40, 0.05)
+		SkateFeel.SHADOW_SCALE_MIN, 1.0, false, (1.0 - SkateFeel.SHADOW_SCALE_MIN) * 0.9, 0.05)
 	_gate_curve("shadow alpha", _sweep(func(h): return SkateFeel.shadow_alpha(h * 2.0)),
-		SkateFeel.SHADOW_ALPHA_FAR, SkateFeel.SHADOW_ALPHA_NEAR, false, 0.18, 0.02)
+		SkateFeel.SHADOW_ALPHA_FAR, SkateFeel.SHADOW_ALPHA_NEAR, false,
+		(SkateFeel.SHADOW_ALPHA_NEAR - SkateFeel.SHADOW_ALPHA_FAR) * 0.9, 0.02)
 	_gate_curve("land dB", _sweep(func(f): return SkateFeel.land_volume_db(f * 8.0)),
 		SkateFeel.LAND_DB_SOFT, SkateFeel.LAND_DB_HARD, true, 14.0, 1.0)
 	_check(not SkateFeel.land_audible(SkateFeel.LAND_FALL_MIN - 0.01),
@@ -557,6 +563,22 @@ func _phase_wired() -> void:
 		"W the fov never exceeds 45 + %.1f" % SkateFeel.CAMERA_FOV)
 	_check(float(fast["streak_alpha"]) <= SkateFeel.STREAK_ALPHA + 1e-6,
 		"W the streaks never exceed alpha %.2f" % SkateFeel.STREAK_ALPHA)
+	# ⚠️ AND THE FIELD HAS TO MOVE. Every other streak assertion in this
+	# phase stayed green over a version whose scroll term was a thousand
+	# times too small -- they all ask whether the field LIGHTS with the
+	# speed, and none of them asks whether it STREAMS. A cue that lights
+	# and does not move is a stain on the screen, not a sense of speed.
+	var travel_a: float = _streaks.scroll_travelled(1920.0)
+	for _i in 30:
+		await get_tree().process_frame
+	var travel_b: float = _streaks.scroll_travelled(1920.0)
+	print("     streak field travel over 30 frames at full rush: %.1f px of a 1920 px frame"
+		% (travel_b - travel_a))
+	_check(travel_b - travel_a > 1920.0 * 0.15,
+		"W the streak field STREAMS (%.1f px in 30 frames, over 15 %% of the frame)"
+			% (travel_b - travel_a))
+	_check(travel_b - travel_a < 1920.0 * 4.0,
+		"W and not faster than four frame-heights in half a second")
 	print("     streak ink coverage at full rush: %.3f %% of the screen"
 		% (_streaks.coverage() * 100.0))
 	_check(_streaks.coverage() > 0.0 and _streaks.coverage() < 0.06,
@@ -1115,6 +1137,8 @@ func _phase_off() -> void:
 	_check(is_zero_approx(worst_fov), "O the fov never leaves 45.0")
 	_check(is_zero_approx(worst_offset), "O the camera never takes a ride offset")
 	_check(is_zero_approx(worst_rush), "O the streaks never light")
+	_check(is_zero_approx(streaks.scroll_travelled(1920.0)),
+		"O and their scroll clock never starts")
 	_check(not camera.is_riding() and is_zero_approx(camera.ride_blend()),
 		"O and the camera never entered the ride mode")
 	off.queue_free()
