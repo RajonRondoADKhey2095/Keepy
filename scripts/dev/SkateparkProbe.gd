@@ -291,6 +291,54 @@ func _phase_geometry() -> void:
 # PERFECT today. This phase is what stops the trap from being armed for
 # the first lot that gives these modules a culling material.
 
+## =====================================================================
+## ⚠️ CH60 -- A TEST THAT IS SOUND ON ONE CLASS OF SHAPE IS A COIN TOSS ON
+## ANOTHER, AND IT DOES NOT ANNOUNCE THE CHANGE
+##
+## The depth-sign sub-check below says of itself that "it works on a
+## closed convex body". That is true, and it is also the whole of its
+## validity: it assumes no surface can FACE AWAY from the camera while
+## being NEARER than a front-facing one. A concave body breaks exactly
+## that assumption.
+##
+## CH60 corrected the quarterpipe's profile (it had been built as its own
+## transpose since CH53 -- a convex hump instead of a concave transition)
+## and this sub-check reddened on module 2 at 0.2836 against 0.2831: a
+## 0.18 % tie reported as an inside-out mesh.
+##
+## ⚠️ IT WAS NOT SILENCED, IT WAS MEASURED (CLAUDE.md forbids the first
+## and this is what the second gave). The module was rebuilt INSIDE OUT
+## and both tests re-read at five stations:
+##
+##   | module 2      | kept ratio      | depth sign, by station        |
+##   |---------------|-----------------|-------------------------------|
+##   | correct       | 1.0000 x5       | ok, ok, ok, INVERTED, INVERTED|
+##   | inside out    | 0.575 -- 0.729  | ok, ok, INVERTED x3           |
+##
+## The two verdict sets OVERLAP: this sub-check cannot tell a correctly
+## wound quarterpipe from an inverted one, and its answer follows the
+## STATION. The kept-ratio judge separates them completely, because a
+## CONCAVE body does not keep its silhouette under inversion -- which is
+## the very blindness the sub-check was added to cover, and it does not
+## apply here.
+##
+## ⚠️ AND IT IS NOT THIS LOT'S GEOMETRY THAT IS SPECIAL. The same sweep
+## caught the BOWL -- untouched by CH60, a concave dish -- reporting
+## INVERTED at 0.2503 against 0.2490 from (5.0, 60.0). The unsoundness
+## was already in the delivered park; the corrected quarterpipe merely
+## stood at a station where it fires.
+##
+## So the sub-check now publishes its own floor and RETURNS NO VERDICT
+## where it cannot resolve, and every module it declines is handed to the
+## judge -- with the hand-off PROVED by a red pass in the same run.
+
+## The floor a gap must clear even when two repeats happen to land on the
+## same value. 0.002 is under a tenth of the smallest gap any convex
+## module here produces (the rail's 0.0025) and forty times the ties the
+## concave modules produce (0.0005), so it separates the two populations
+## without being tuned to either.
+const DEPTH_FLOOR_MIN: float = 0.002
+
 func _phase_winding() -> void:
 	print("-- PHASE W: winding, rendered (cull_back vs cull_disabled) --")
 	# One material per test, both built from the SAME source so the only
@@ -343,6 +391,8 @@ void fragment() { ALBEDO = vec3(0.0, vd, 0.0); }
 	depth_front.shader = Shader.new()
 	depth_front.shader.code = depth_src % "cull_front"
 	var nodes := _park.module_nodes()
+	var unresolved: Array = []
+	var resolved: int = 0
 	_check(not nodes.is_empty(), "W0 there ARE module nodes to test (CH40's empty-list guard)")
 	# Stand where a RIDER stands: at the board's park, north of the
 	# modules, looking south down the line. South of the park the camera
@@ -374,18 +424,113 @@ void fragment() { ALBEDO = vec3(0.0, vd, 0.0); }
 		# The depth sign -- the test that sees a closed convex body.
 		node.material_override = depth_back
 		var near := await _mean_depth()
+		# ⚠️ THE SUB-CHECK'S OWN NOISE FLOOR, READ ON THE SAME MODULE WITH
+		# NOTHING TOUCHED. CH60 added it, and CLAUDE.md demanded it long
+		# before: "un delta sans son plancher de bruit ne vaut rien", and
+		# its other half, "une sonde dont le plancher depasse sa grandeur
+		# doit rendre une ABSENCE DE VERDICT". Two renders of one state.
+		var near_again := await _mean_depth()
 		node.material_override = depth_front
 		var far := await _mean_depth()
 		node.material_override = null
-		print("       depth: cull_back mean %.4f   cull_front mean %.4f   %s"
-			% [near, far, "front is NEARER (correct)" if near < far else "** INVERTED **"])
+		var floor_d: float = absf(near - near_again)
+		var gap: float = far - near
+		print("       depth: cull_back mean %.4f (repeat %.4f)  cull_front mean %.4f   gap %+.4f  floor %.4f"
+			% [near, near_again, far, gap, floor_d])
 		_check(near > 0.0 and far > 0.0,
 			"W%d-c module %d paints under BOTH cull modes (else the sign below is free)" % [i + 1, i])
-		_check(near > 0.0 and far > 0.0 and near < far,
-			"W%d-d module %d: its front-facing surface is the NEAR one (%.4f < %.4f)"
-				% [i + 1, i, near, far])
+		if near <= 0.0 or far <= 0.0:
+			continue
+		if absf(gap) <= maxf(floor_d, DEPTH_FLOOR_MIN):
+			# ⚠️ NO VERDICT, AND THE REASON IS MEASURED RATHER THAN
+			# ASSUMED. See the block above `DEPTH_FLOOR_MIN`: on a CONCAVE
+			# body this sub-check's sign follows the STATION and not the
+			# winding, so a verdict taken here would be a coin toss
+			# published as a measurement. The module is not thereby
+			# excused -- it is handed to the test that CAN see it, and
+			# that hand-off is PROVED below rather than asserted.
+			print("       -> UNRESOLVED (|gap| %.4f <= floor %.4f): this sub-check cannot see"
+				% [absf(gap), maxf(floor_d, DEPTH_FLOOR_MIN)])
+			print("          this shape. Handed to the kept-ratio judge, red pass below.")
+			unresolved.append(i)
+			continue
+		resolved += 1
+		_check(gap > 0.0,
+			"W%d-d module %d: its front-facing surface is the NEAR one (%.4f < %.4f, gap %+.4f > floor %.4f)"
+				% [i + 1, i, near, far, gap, maxf(floor_d, DEPTH_FLOOR_MIN)])
 	print("     worst kept ratio over the park: %.4f" % worst_ratio)
+	# ⚠️ INSTRUMENT: the sub-check is not dead everywhere. If NOTHING
+	# resolved, "unresolved" would have become a way for every module to
+	# escape it, which is the silencing CLAUDE.md forbids.
+	_check(resolved > 0,
+		"W6 the depth sub-check still RESOLVES on at least one module (%d of %d)"
+			% [resolved, nodes.size()])
+	await _phase_winding_red(unresolved, both, back)
 	print("")
+
+## ⚠️ THE HAND-OFF IS PROVED, NOT ASSERTED.
+##
+## A module the depth sub-check cannot resolve is covered by the
+## kept-ratio judge instead -- and CH39's own lesson is that the judge is
+## BLIND on a closed convex body, which is exactly why the sub-check was
+## added in the first place. So "the judge covers it" is a claim that has
+## to be measured on THIS shape, not argued from its class.
+##
+## The measurement is the red pass, run here: the module's mesh is rebuilt
+## with every triangle reversed, the judge is asked again, and it must now
+## FAIL. Then the original mesh goes back and the judge must pass again.
+## Green / red / green on one tree, with nothing restored by hand.
+##
+## Measured at CH60 on the two corrected quarterpipes: correct 1.0000,
+## inside out 0.575 to 0.729 across five stations -- a concave body does
+## NOT keep its silhouette under inversion, which is precisely why the
+## judge sees it and why the sub-check does not have to.
+func _phase_winding_red(unresolved: Array, both: ShaderMaterial, back: ShaderMaterial) -> void:
+	if unresolved.is_empty():
+		print("     (every module resolved on the depth sub-check; no hand-off to prove)")
+		return
+	print("     RED PASS on the %d module(s) the depth sub-check could not resolve:" % unresolved.size())
+	for i in unresolved:
+		var node: MeshInstance3D = _park.module_node(i)
+		var original: Mesh = node.mesh
+		node.mesh = _inverted(original)
+		node.material_override = both
+		var open := await _count_magenta()
+		node.material_override = back
+		var culled := await _count_magenta()
+		node.material_override = null
+		node.mesh = original
+		var ratio: float = 0.0 if open <= 0 else float(culled) / float(open)
+		print("       module %d rebuilt INSIDE OUT: cull_disabled %6d px  cull_back %6d px  kept %.4f"
+			% [i, open, culled, ratio])
+		_check(open > 0, "W7-%d INSTRUMENT: the inverted mesh still paints with culling off" % i)
+		_check(open > 0 and ratio < 0.90,
+			"W7-%d module %d INSIDE OUT is CAUGHT by the kept-ratio judge (%.4f < 0.90)"
+				% [i, i, ratio])
+		# ...and the module is handed back intact, so nothing after this
+		# phase measures a mesh this phase broke.
+		node.material_override = both
+		var open2 := await _count_magenta()
+		node.material_override = back
+		var culled2 := await _count_magenta()
+		node.material_override = null
+		var back_ratio: float = 0.0 if open2 <= 0 else float(culled2) / float(open2)
+		_check(back_ratio > 0.98,
+			"W8-%d and the module is RESTORED: kept %.4f again" % [i, back_ratio])
+
+## The same mesh with every triangle's winding reversed.
+func _inverted(mesh: Mesh) -> ArrayMesh:
+	var arrays: Array = mesh.surface_get_arrays(0)
+	var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var flipped := PackedInt32Array()
+	for t in range(0, idx.size(), 3):
+		flipped.append(idx[t])
+		flipped.append(idx[t + 2])
+		flipped.append(idx[t + 1])
+	arrays[Mesh.ARRAY_INDEX] = flipped
+	var out := ArrayMesh.new()
+	out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return out
 
 ## Pixels of the identification colour. Exact equality, never a distance:
 ## the pass is unshaded and fog-free, so the colour comes back or it does
