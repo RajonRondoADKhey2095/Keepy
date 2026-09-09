@@ -284,6 +284,36 @@ passer gratuitement.
 sous llvmpipe elle dépasse 10 minutes sans finir alors qu'elle rend son
 verdict en secondes.
 
+### ⚠️ ET IL Y A UN TROISIÈME CAS : UNE SONDE QUI MESURE DU **TEMPS CPU** VA EN HEADLESS
+
+Écrit au CH56, contre une consigne de brief et sur une mesure. La règle
+ci-dessus a deux branches (des pixels → `xvfb`, des transforms → headless)
+et le temps n'est ni l'un ni l'autre. Mesuré sur `PhysicsCostProbe` :
+sous `xvfb --rendering-driver opengl3`, llvmpipe redessine une fenêtre
+1080×1920 **vide** à **chaque itération**, pour **~8,5 ms avec ±2 ms de
+tremblement** — alors que la grandeur mesurée (cent corps physiques
+mobiles) vaut **2,1 ms en tout**. Le signe du signal a **changé d'un run à
+l'autre** (+0,2593 puis −3,4524 ms), et deux assertions sont sorties
+ROUGES sur un banc parfaitement sain. En headless, le même signal sort à
+**+0,2266 pour un tremblement de 0,0213**.
+
+Le driver DUMMY ne peut pas tromper une telle sonde **à condition que ses
+témoins n'aient rien à voir avec le rendu** : au CH56 ce sont le registre
+du `PhysicsServer3D` par RID et une requête d'espace vivante, dont aucun
+ne lit un pixel. C'est cette condition qu'il faut énoncer, pas le driver.
+
+⚠️ **ET UN BANC DONT LE PLANCHER DÉPASSE SON SIGNAL DOIT RENDRE UNE
+ABSENCE DE VERDICT, JAMAIS UN ROUGE.** C'est le raisonnement de
+`ProbeWatchdog` pour son code 2 (« un timeout n'est ni 0 ni 1 [...] un
+appelant qui le traiterait comme une assertion échouée rapporterait une
+trouvaille que la sonde n'a jamais faite »), appliqué à une autre absence :
+un banc plus bruyant que ce qu'il mesure n'a **rien vérifié et rien
+réfuté**. La parade est une **phase de RÉSOLUTION en tête** — mesurer le
+plus petit delta qu'on compte publier, le comparer au tremblement de ces
+deux stations, et **sortir sur un code distinct** si la pièce ne le voit
+pas. Elle coûte une minute et elle évite dix minutes de chiffres dont les
+barres d'erreur les recouvrent.
+
 ### ⚠️ L'ORDRE DES FLAGS — les flags moteur AVANT le `--`
 
 ```
