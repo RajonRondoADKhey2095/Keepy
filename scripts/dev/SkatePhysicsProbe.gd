@@ -50,7 +50,9 @@ extends Node
 ## the engine counters, loudly labelled, when a driver happens to be
 ## there. Run it under xvfb once if you want those two numbers signed.
 
-const BUDGET_S: float = 900.0
+## CH60 raised it from 900: the lot went from ONE solid module to FOUR,
+## and every one of them is ridden, neutralised and ridden again.
+const BUDGET_S: float = 2400.0
 const FPS: float = 60.0
 ## Long enough for the 12 u ride at the board's own pace with the run-up
 ## and the run-out, and short enough that four of them fit the budget.
@@ -133,9 +135,11 @@ func _run() -> void:
 		print("=== WORLD FAILED -- nothing physical was built. Stopping. ===")
 		get_tree().quit(1)
 		return
+	await _phase_volume()
 	await _phase_ride()
 	await _phase_neutralised()
 	await _phase_lateral()
+	await _phase_rail()
 	await _phase_traversal()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -218,46 +222,160 @@ func _layers_in(path: String) -> int:
 # pieces built from DIFFERENT arguments must come back DIFFERENT, or
 # "the two sets are equal" is passing against a comparison that cannot
 # see anything.
+#
+# ⚠️ CH60: IT RUNS OVER EVERY MODULE, INCLUDING THE ONE WITH NO PIECES.
+# CH57 hard-coded MODULES[0]. A per-module loop is what makes "the bowl
+# is out of this lot" a MEASURED perimeter -- `pieces_for()` returns
+# empty for it and the phase says so -- instead of a sentence in a
+# comment that the next lot has to be trusted to have read.
+#
+# ⚠️ AND AN EQUALITY OF POINT SETS IS NECESSARY, NOT SUFFICIENT. Twelve
+# wedges that all happened to be the SAME wedge would carry the same 28
+# points. What closes that is PHASE V, which samples the two solids
+# against each other; this phase is the cheap gate that has to pass
+# before the expensive one is worth running.
+
+## How many pieces each kind must decompose into. Written here rather
+## than read off the builder, ON PURPOSE: a count read from the thing
+## under test cannot disagree with it. Twelve is the MINIMUM for a
+## quarterpipe and the argument is in SkateparkMesh -- if a later lot
+## finds a cheaper exact decomposition, this line is where the claim gets
+## re-argued rather than silently followed.
+const EXPECT_PIECES: Dictionary = {
+	&"funbox": 3, &"rail": 3, &"quarterpipe": 12, &"bowl": 0,
+}
 
 func _phase_pieces() -> void:
-	print("-- PHASE G: the collision pieces are a second READING of the drawn funbox --")
-	var spec: Dictionary = HubSkatepark.MODULES[0]
-	_check(StringName(spec["kind"]) == HubSkatepark.KIND_FUNBOX,
-		"MODULES[0] is the funbox (the module this lot makes solid)")
-	var size: Vector3 = spec["size"]
-	var w: float = size.x
-	var l: float = size.z * 0.55
-	var h: float = size.y
-	var r: float = size.z * 0.45
-	var builder := SkateparkMesh.new()
-	var mesh: ArrayMesh = builder.funbox(w, l, h, r)
-	# CH56 restated 468 park triangles and 20 for this module. A bench
-	# that cannot restate a number on file has no standing to publish one.
-	_check(builder.triangle_count() == 20,
-		"the drawn funbox is 20 triangles (CH56 section 3.1: 20)")
-	var drawn := _distinct(mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX])
-	var pieces: Array = SkateparkMesh.funbox_pieces(w, l, h, r)
-	_check(pieces.size() == 3, "three pieces: one deck box, two ramp wedges (got %d)" % pieces.size())
-	var counts: Array = []
-	var union := PackedVector3Array()
-	for piece in pieces:
-		counts.append(piece.size())
-		for p in piece:
-			union.append(p)
-	print("     piece point counts %s   union distinct %d   drawn distinct %d"
-		% [str(counts), _distinct(union).size(), drawn.size()])
-	_check(counts == [8, 6, 6], "8 / 6 / 6 points -- a box and two triangular prisms")
-	_check(_same_set(_distinct(union), drawn),
-		"the union of the pieces IS the set of distinct drawn vertex positions")
-	# The blind check: move ONE argument and the comparison must break.
-	var wrong: Array = SkateparkMesh.funbox_pieces(w, l, h, r + 0.10)
-	var wrong_union := PackedVector3Array()
-	for piece in wrong:
-		for p in piece:
-			wrong_union.append(p)
-	_check(not _same_set(_distinct(wrong_union), drawn),
-		"BLIND CHECK: pieces built from a ramp 0.10 u longer do NOT match the drawn mesh")
+	print("-- PHASE G: the collision pieces are a second READING of each drawn module --")
+	var solid: int = 0
+	for index in HubSkatepark.MODULES.size():
+		var spec: Dictionary = HubSkatepark.MODULES[index]
+		var kind: StringName = StringName(spec["kind"])
+		var args: Array = HubSkatepark.build_args(spec)
+		var builder := SkateparkMesh.new()
+		var mesh: ArrayMesh = _mesh_of(builder, kind, args)
+		var pieces: Array = HubSkatepark.pieces_for(spec)
+		var drawn := _distinct(mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX])
+		var counts: Array = []
+		var union := PackedVector3Array()
+		for piece in pieces:
+			counts.append(piece.size())
+			for point in piece:
+				union.append(point)
+		print("     [%d] %-12s args %s  %3d tri  pieces %s  union %d  drawn %d"
+			% [index, String(kind), str(args), builder.triangle_count(),
+				str(counts), _distinct(union).size(), drawn.size()])
+		_check(pieces.size() == int(EXPECT_PIECES.get(kind, -1)),
+			"G[%d] %s decomposes into %d pieces (got %d)"
+				% [index, String(kind), int(EXPECT_PIECES.get(kind, -1)), pieces.size()])
+		if pieces.is_empty():
+			# The bowl. Its exclusion is the lot's perimeter, and it is
+			# asserted rather than described -- see the header.
+			_check(kind == HubSkatepark.KIND_BOWL,
+				"G[%d] the only module with no pieces is the bowl (CH60 excludes it, lot 3b)" % index)
+			continue
+		solid += 1
+		_check(_same_set(_distinct(union), drawn),
+			"G[%d] %s: the union of the pieces IS the set of distinct drawn vertex positions"
+				% [index, String(kind)])
+	_check(solid == 4, "G: four modules of five carry pieces (got %d)" % solid)
+	# CH56 restated 468 park triangles and 20 for the funbox. A bench that
+	# cannot restate a number on file has no standing to publish one.
+	var fb := SkateparkMesh.new()
+	var fb_args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[0])
+	fb.funbox(fb_args[0], fb_args[1], fb_args[2], fb_args[3])
+	_check(fb.triangle_count() == 20, "G the drawn funbox is 20 triangles (CH56 section 3.1: 20)")
+	# =====================================================================
+	# THE BLIND CHECK, and CH60 owes TWO of them because it added a second
+	# way for the comparison to be blind.
+	#
+	# (1) move an ARGUMENT: the funbox's ramp 0.10 u longer.
+	# (2) move the PROFILE: a quarterpipe built one facet coarser. This is
+	#     the one CH57 could not owe, and it is the one that matters here
+	#     -- a comparison that could not see a changed curve would sign
+	#     any decomposition of any arc.
+	var f_args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[0])
+	var f_drawn := _distinct(SkateparkMesh.new().funbox(
+		f_args[0], f_args[1], f_args[2], f_args[3]).surface_get_arrays(0)[Mesh.ARRAY_VERTEX])
+	_check(not _same_set(_distinct(_flatten(SkateparkMesh.funbox_pieces(
+			f_args[0], f_args[1], f_args[2], f_args[3] + 0.10))), f_drawn),
+		"G BLIND CHECK 1: funbox pieces from a ramp 0.10 u longer do NOT match the drawn mesh")
+	var q_args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[2])
+	var q_drawn := _distinct(SkateparkMesh.new().quarterpipe(
+		q_args[0], q_args[1]).surface_get_arrays(0)[Mesh.ARRAY_VERTEX])
+	_check(_same_set(_distinct(_flatten(SkateparkMesh.quarterpipe_pieces(q_args[0], q_args[1]))), q_drawn),
+		"G the quarterpipe's 12 wedges ARE the drawn quarterpipe, point for point")
+	_check(not _same_set(_distinct(_flatten(SkateparkMesh.quarterpipe_pieces(
+			q_args[0], q_args[1] * 1.02))), q_drawn),
+		"G BLIND CHECK 2: wedges from a curve 2%% taller do NOT match the drawn mesh")
+	# =====================================================================
+	# ⚠️ CH60 -- THE PROFILE ITSELF, GATED, because the bug this lot found
+	# was IN it and nothing in the repo was watching.
+	#
+	# The delivered quarterpipe rose at 86.25 deg where the rider arrives
+	# and lay at 3.75 deg at the lip -- the exact transpose of a
+	# quarterpipe -- for seven lots. What proves the fix is not the shape
+	# looking right: it is that the mesh's OWN VERTEX NORMALS, untouched
+	# since CH53, agree with the geometry again. Measured before the fix:
+	# 86.25 deg of disagreement, in an exact mirror. After: half a facet,
+	# which is what a smooth normal against a flat facet must be.
+	for index in [2, 3]:
+		var spec: Dictionary = HubSkatepark.MODULES[index]
+		var args: Array = HubSkatepark.build_args(spec)
+		var prof: Array[Vector2] = SkateparkMesh.quarterpipe_profile(args[1])
+		var foot: float = rad_to_deg(atan2(prof[1].y - prof[0].y, prof[1].x - prof[0].x))
+		var lip: float = rad_to_deg(atan2(prof[12].y - prof[11].y, prof[12].x - prof[11].x))
+		print("     [%d] quarterpipe profile: foot facet %.2f deg, lip facet %.2f deg" % [index, foot, lip])
+		_check(foot < 10.0, "G[%d] the ramp is TANGENT TO THE GROUND where the rider arrives (%.2f deg)"
+			% [index, foot])
+		_check(lip > 80.0, "G[%d] and VERTICAL at the lip (%.2f deg)" % [index, lip])
+		_check(lip - foot > 70.0, "G[%d] INSTRUMENT: the two ends really are different (%.2f deg apart)"
+			% [index, lip - foot])
+		var worst: float = _normal_disagreement(SkateparkMesh.new().quarterpipe(args[0], args[1]))
+		print("     [%d] worst stored-normal vs true-face-normal: %.2f deg" % [index, worst])
+		_check(worst < 4.0,
+			"G[%d] the mesh's own normals agree with its geometry to within half a facet (%.2f deg)"
+				% [index, worst])
 	await get_tree().process_frame
+
+func _mesh_of(builder: SkateparkMesh, kind: StringName, args: Array) -> ArrayMesh:
+	match kind:
+		HubSkatepark.KIND_QUARTERPIPE:
+			return builder.quarterpipe(args[0], args[1])
+		HubSkatepark.KIND_RAIL:
+			return builder.rail(args[0], args[1])
+		HubSkatepark.KIND_FUNBOX:
+			return builder.funbox(args[0], args[1], args[2], args[3])
+	return builder.bowl(args[0], args[1])
+
+func _flatten(pieces: Array) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	for piece in pieces:
+		for p in piece:
+			out.append(p)
+	return out
+
+## The worst angle between a vertex normal the mesh CARRIES and the true
+## normal of a face that vertex belongs to. Godot's front face is the
+## clockwise one seen from the viewer, so the right-hand cross product of
+## a visible face points AWAY from it -- hence the negation.
+func _normal_disagreement(mesh: ArrayMesh) -> float:
+	var arrays: Array = mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var norms: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var worst: float = -1.0
+	for t in range(0, idx.size(), 3):
+		var a: Vector3 = verts[idx[t]]
+		var b: Vector3 = verts[idx[t + 1]]
+		var c: Vector3 = verts[idx[t + 2]]
+		var face: Vector3 = (b - a).cross(c - a)
+		if face.length() < 1e-9:
+			continue
+		var outward: Vector3 = -face.normalized()
+		for k in 3:
+			worst = maxf(worst, rad_to_deg(acos(clampf(outward.dot(norms[idx[t + k]]), -1.0, 1.0))))
+	return worst
 
 func _distinct(points: PackedVector3Array) -> PackedVector3Array:
 	var out := PackedVector3Array()
@@ -297,18 +415,37 @@ func _phase_world() -> void:
 	print("-- PHASE W: what the physics server actually holds --")
 	var body := _transport.board_body()
 	_check(body != null, "the board is a SkateBoardBody")
-	_check(_park.collider_index() == 0, "the collider is on MODULES[0], the funbox (got %d)" % _park.collider_index())
-	_check(_park.collider_piece_count() == 3, "the funbox body holds 3 shapes (got %d)" % _park.collider_piece_count())
 	_check(_park.module_nodes().size() == HubSkatepark.MODULES.size(),
 		"all five modules are still drawn (%d)" % _park.module_nodes().size())
-	# The one module with a collider, and the four without -- the perimeter
-	# of this lot, asserted rather than described.
-	var bodies: int = 0
-	for node in _park.module_nodes():
+	# The registry the park PUBLISHES, against the tree it actually built.
+	# Two channels for one fact, which is the only reason to read both.
+	var registered: Array = _park.collider_indices()
+	print("     the park publishes colliders on modules %s" % str(registered))
+	_check(registered == [0, 1, 2, 3],
+		"the funbox, the rail and the two quarterpipes carry colliders -- and only they (%s)"
+			% str(registered))
+	var on_tree: Array = []
+	var shapes: int = 0
+	for index in _park.module_count():
+		var node := _park.module_node(index)
 		for child in node.get_children():
 			if child is StaticBody3D:
-				bodies += 1
-	_check(bodies == 1, "exactly ONE module carries a static body (got %d)" % bodies)
+				on_tree.append(index)
+				shapes += child.get_child_count()
+	_check(on_tree == registered,
+		"and the TREE carries exactly the bodies the registry names (%s)" % str(on_tree))
+	for index in registered:
+		var kind: StringName = _park.module_kind(index)
+		var want: int = int(EXPECT_PIECES.get(kind, -1))
+		_check(_park.collider_piece_count_at(index) == want,
+			"     [%d] %s holds %d shapes (got %d)"
+				% [index, String(kind), want, _park.collider_piece_count_at(index)])
+	print("     %d convex shapes over %d bodies" % [shapes, registered.size()])
+	_check(shapes == 30, "30 convex shapes in the park (3 + 3 + 12 + 12), got %d" % shapes)
+	# ⚠️ THE BOWL, ASSERTED ABSENT rather than assumed. CLAUDE.md: an
+	# assertion of ABSENCE passes for free, so it stands next to the four
+	# positives above which prove the same test CAN find a body.
+	_check(_park.collider_body_at(4) == null, "the bowl carries NO body (lot 3b)")
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	var space := body.get_world_3d().direct_space_state
@@ -320,15 +457,261 @@ func _phase_world() -> void:
 	params.collide_with_bodies = true
 	params.collision_mask = 0xFFFFFFFF
 	var hits: Array = space.intersect_shape(params, 64)
-	print("     live space query over the whole hub: %d collision objects" % hits.size())
-	_check(hits.size() >= 2, "the server answers with at least the funbox and the board (%d)" % hits.size())
+	# ⚠️ COUNT THE BODIES THE SERVER HOLDS, not the ones we think we made.
+	# A `rid` appears once per SHAPE in the answer, so the bodies are the
+	# DISTINCT rids -- counting rows would report 31 and call it 5.
+	var rids: Array = []
+	for hit in hits:
+		var rid: RID = hit["rid"]
+		if not rids.has(rid):
+			rids.append(rid)
+	print("     live space query over the whole hub: %d shape rows, %d distinct bodies"
+		% [hits.size(), rids.size()])
+	_check(rids.size() == 5,
+		"the server holds FIVE bodies: four modules and the board (%d)" % rids.size())
+
+# =====================================================================
+# PHASE V -- IS THE COLLIDED SOLID THE DRAWN SOLID?
+#
+# ⚠️ THIS IS THE PHASE THE LOT EXISTS FOR, and PHASE G cannot replace it.
+# An equality of point SETS says the collider is built from the drawn
+# corners; it does not say the pieces TILE the shape. Twelve wedges that
+# were all the same wedge would carry the identical 28 points and pass
+# PHASE G outright -- and would leave eleven twelfths of a ramp as a hole
+# a board falls through.
+#
+# So the two solids are sampled against each other, on a grid over the
+# module's own world AABB, and every disagreement is counted:
+#
+#   * the DRAWN solid, by parity of an UPWARD ray against the module's
+#     own triangles (`get_faces()` -- the geometry, never the formula
+#     that made it). Up, because every module here is open at y = 0 and
+#     closed everywhere a ray going up can leave it.
+#   * the COLLIDED solid, through `intersect_point` on the PHYSICS
+#     SERVER. Not the piece arrays this probe could recompute: the hulls
+#     the engine actually built, epsilons and all. A wedge 0.0124 u thick
+#     at its thinnest is exactly the kind of sliver a hull builder can
+#     quietly drop, and only the server can be asked whether it did.
+#
+# ⚠️ AND IT CARRIES THE TWO GUARDS CLAUDE.md MADE COMPULSORY. An
+# agreement count is an assertion of EQUALITY, which passes for free
+# against an instrument that says "outside" to everything: the phase
+# therefore asserts that BOTH classifiers vote both ways on every module,
+# and it runs a BLIND CHECK -- the same comparison against a module whose
+# body has been taken off the queried layer must produce disagreement on
+# every interior sample.
+
+## Samples per axis. 13 x 9 x 13 = 1521 per module, which is enough to
+## put several samples inside the THINNEST wedge of the smaller
+## quarterpipe (0.0124 u) and cheap enough to run four times.
+const VOL_STEPS: Vector3i = Vector3i(13, 9, 13)
+
+func _phase_volume() -> void:
+	print("-- PHASE V: the collided solid IS the drawn solid, sampled --")
+	for index in _park.collider_indices():
+		var r: Dictionary = await _volume_scan(index, 0xFFFFFFFF)
+		print("     [%d] %-12s samples %d   in-drawn %d   in-server %d   DISAGREE %d (drawn-only %d, server-only %d)"
+			% [index, String(_park.module_kind(index)), int(r["n"]), int(r["a"]), int(r["b"]),
+				int(r["dis"]), int(r["a_only"]), int(r["b_only"])])
+		# The instrument, both ways, before the verdict.
+		_check(int(r["a"]) > 0 and int(r["a"]) < int(r["n"]),
+			"     [%d] INSTRUMENT: the DRAWN classifier votes both ways (%d in of %d)"
+				% [index, int(r["a"]), int(r["n"])])
+		_check(int(r["b"]) > 0 and int(r["b"]) < int(r["n"]),
+			"     [%d] INSTRUMENT: the SERVER classifier votes both ways (%d in of %d)"
+				% [index, int(r["b"]), int(r["n"])])
+		_check(int(r["dis"]) == 0,
+			"     [%d] every sample agrees: the collider is the drawn shape, no hole and no phantom"
+				% index)
+	# =====================================================================
+	# THE BLIND CHECK. Take the tallest quarterpipe off the queried layer
+	# and demand the SAME scan now disagrees on every interior sample. A
+	# zero-disagreement verdict earned against a query that can no longer
+	# see anything is CH40's empty hide-list exactly.
+	var body := _park.collider_body_at(2)
+	var keep: int = body.collision_layer
+	body.collision_layer = 0
+	var blind: Dictionary = await _volume_scan(2, 0xFFFFFFFF)
+	body.collision_layer = keep
+	print("     BLIND: [2] off its layer -> in-drawn %d  in-server %d  DISAGREE %d"
+		% [int(blind["a"]), int(blind["b"]), int(blind["dis"])])
+	_check(int(blind["b"]) == 0, "V BLIND CHECK: with the body off the layer the server finds nothing")
+	_check(int(blind["dis"]) == int(blind["a"]) and int(blind["a"]) > 0,
+		"V BLIND CHECK: and every interior sample becomes a disagreement (%d)" % int(blind["dis"]))
+	# And it comes back, so the verdict above was not measured on a world
+	# this phase then left broken.
+	var back: Dictionary = await _volume_scan(2, 0xFFFFFFFF)
+	_check(int(back["dis"]) == 0, "V and the agreement RETURNS when the layer is restored")
+
+## Samples one module's world AABB and classifies every point twice.
+func _volume_scan(index: int, mask: int) -> Dictionary:
+	var node := _park.module_node(index)
+	var faces: PackedVector3Array = node.mesh.get_faces()
+	var xform: Transform3D = node.global_transform
+	var world := PackedVector3Array()
+	for v in faces:
+		world.append(xform * v)
+	var box: AABB = xform * node.mesh.get_aabb()
+	var n: int = 0
+	var a: int = 0
+	var b: int = 0
+	var a_only: int = 0
+	var b_only: int = 0
+	var params := PhysicsPointQueryParameters3D.new()
+	params.collide_with_bodies = true
+	params.collide_with_areas = false
+	params.collision_mask = mask
+	await get_tree().physics_frame
+	var space := node.get_world_3d().direct_space_state
+	for ix in VOL_STEPS.x:
+		for iy in VOL_STEPS.y:
+			# One physics frame per row keeps the space state fresh and
+			# keeps a scan of 1521 queries off a single frame.
+			await get_tree().physics_frame
+			space = node.get_world_3d().direct_space_state
+			for iz in VOL_STEPS.z:
+				# ⚠️ OFFSET BY AN IRRATIONAL-ISH FRACTION so no sample lands
+				# on a face, an edge or a vertex. A parity test taken on a
+				# boundary is a coin toss published as a measurement.
+				var p := box.position + Vector3(
+					box.size.x * (float(ix) + 0.3183) / float(VOL_STEPS.x),
+					box.size.y * (float(iy) + 0.2718) / float(VOL_STEPS.y),
+					box.size.z * (float(iz) + 0.4142) / float(VOL_STEPS.z))
+				n += 1
+				var ia: bool = _in_drawn(p, world)
+				params.position = p
+				var ib: bool = not space.intersect_point(params, 4).is_empty()
+				if ia:
+					a += 1
+				if ib:
+					b += 1
+				if ia and not ib:
+					a_only += 1
+				if ib and not ia:
+					b_only += 1
+	return {"n": n, "a": a, "b": b, "dis": a_only + b_only, "a_only": a_only, "b_only": b_only}
+
+## Inside the DRAWN mesh, by parity of an upward ray against its own
+## world-space triangles.
+func _in_drawn(p: Vector3, tris: PackedVector3Array) -> bool:
+	if p.y < 0.0:
+		return false
+	var hits: int = 0
+	for t in range(0, tris.size(), 3):
+		if _ray_up_hits(p, tris[t], tris[t + 1], tris[t + 2]):
+			hits += 1
+	return (hits % 2) == 1
+
+func _ray_up_hits(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> bool:
+	var v0 := Vector2(c.x - a.x, c.z - a.z)
+	var v1 := Vector2(b.x - a.x, b.z - a.z)
+	var v2 := Vector2(p.x - a.x, p.z - a.z)
+	var den: float = v0.x * v1.y - v1.x * v0.y
+	if absf(den) < 1e-12:
+		return false
+	var u: float = (v2.x * v1.y - v1.x * v2.y) / den
+	var v: float = (v0.x * v2.y - v2.x * v0.y) / den
+	if u < 0.0 or v < 0.0 or u + v > 1.0:
+		return false
+	return a.y + u * (c.y - a.y) + v * (b.y - a.y) > p.y
 
 # =====================================================================
 # THE RIDE
+#
+# ⚠️ CH60 -- THE APPROACH IS READ OFF THE MODULE, NOT TYPED NEXT TO IT.
+# CH57 could hard-code (0, 52) -> (0, 40) because there was one module
+# and its yaw was zero. There are now four, two of them yawed (0.30 and
+# PI), and a station typed in world coordinates would be a SECOND
+# SPELLING of where a module faces -- the defect this repo pays for most
+# often. So a ride is a signed distance along the module's OWN local +Z,
+# taken from the transform of the node that was built.
+
+## Signed multiples of `_ramp_dir(index)`: where the board starts and
+## where it is aimed, relative to the module's own ground centre.
+##
+##   * the FUNBOX is entered by its local +Z ramp and aimed through to
+##     the far side -- CH57's ride, restated in the module's frame and
+##     gated below against the world coordinates CH57 published.
+##   * a QUARTERPIPE is entered from its LOW side, which is local -Z:
+##     the node's origin sits at the FOOT of the transition (the mesh
+##     runs local z = 0 -> height), so the rider arrives from -Z and
+##     travels up toward +Z. Module 2 is yawed 0 and faces south, module
+##     3 is yawed PI and faces north -- an opposing pair, which is what
+##     those two yaws MEAN now that the profile is the right way round.
+const RIDES: Array[Dictionary] = [
+	{"index": 0, "from": 6.5, "to": -5.5},
+	{"index": 2, "from": -9.0, "to": 4.0},
+	{"index": 3, "from": -8.0, "to": 4.0},
+]
+
+## The direction a rider travels UP a module, in world and flattened: the
+## module's own local +Z, read off the node that carries the mesh.
+func _ramp_dir(index: int) -> Vector3:
+	var d: Vector3 = _park.module_node(index).global_transform.basis * Vector3(0.0, 0.0, 1.0)
+	return Vector3(d.x, 0.0, d.z).normalized()
+
+func _ride_ends(ride: Dictionary) -> Array:
+	var index: int = int(ride["index"])
+	var centre: Vector3 = _park.module_centre(index)
+	var dir: Vector3 = _ramp_dir(index)
+	return [centre + dir * float(ride["from"]), centre + dir * float(ride["to"])]
+
+## The patch of a module the ride is JUDGED over, in the module's own
+## local XZ. Published per kind rather than guessed from the AABB,
+## because the two kinds are judged on OPPOSITE statistics:
+##
+##   * the FUNBOX on the MINIMUM height over its deck core -- "every tick
+##     over the deck was ON it", CH57's gate, which is what separates a
+##     climb from a pass-through.
+##   * a QUARTERPIPE on the MAXIMUM height over its climbable ramp. A
+##     minimum would be meaningless there: the ramp's own height varies
+##     across the patch, so the board is legitimately low at the foot.
+func _core_rect(index: int) -> Rect2:
+	var spec: Dictionary = HubSkatepark.MODULES[index]
+	var args: Array = HubSkatepark.build_args(spec)
+	var size: Vector3 = spec["size"]
+	match StringName(spec["kind"]):
+		HubSkatepark.KIND_FUNBOX:
+			var hx: float = size.x * 0.5 - 0.30
+			var hz: float = args[1] * 0.5 - 0.10
+			return Rect2(-hx, -hz, hx * 2.0, hz * 2.0)
+		HubSkatepark.KIND_QUARTERPIPE:
+			# From just past the foot to the last facet the board can
+			# legally stand on (see `_climb_facet`).
+			var reach: Vector2 = _climb_reach(args[1])
+			return Rect2(-(size.x * 0.5 - 0.30), 0.05, size.x - 0.60, reach.x)
+	# THE RAIL HAS NO SUCH PATCH, and returning an empty rect says so
+	# rather than quietly borrowing another kind's rule. Its contract is
+	# not "how high did it get over a patch" -- it is "blocked here,
+	# through there" -- and PHASE J gates that on positions, never on this.
+	return Rect2()
+
+## ⚠️ HOW HIGH A QUARTERPIPE CAN ACTUALLY BE CLIMBED, AND IT IS NOT THE
+## LIP. `SkateBoardBody` leaves `floor_max_angle` at Godot's 45 deg with a
+## written reason, so every facet steeper than that is a WALL to the
+## engine, not a floor. The profile's facets run 3.75, 11.25, ... 86.25
+## deg, so the last one a body may stand on is the sixth, and the highest
+## point it can reach is P6 -- (0.7071, 0.2929) * height, i.e. 29 % of the
+## module's drawn rise and NOT its 100 %.
+##
+## This is a MEASURED consequence of the module being a real quarterpipe
+## again, and it is the honest ceiling to gate against: a gate written at
+## the lip would demand a climb no kinematic body without stored momentum
+## can make.
+func _climb_facet(height: float) -> int:
+	var prof: Array[Vector2] = SkateparkMesh.quarterpipe_profile(height)
+	var last: int = 0
+	for s in SkateparkMesh.QP_SEGMENTS:
+		if rad_to_deg(atan2(prof[s + 1].y - prof[s].y, prof[s + 1].x - prof[s].x)) <= 45.0:
+			last = s + 1
+	return last
+
+func _climb_reach(height: float) -> Vector2:
+	return SkateparkMesh.quarterpipe_profile(height)[_climb_facet(height)]
 
 ## Places the board, mounts him on it the way HubTransport does, aims it,
 ## and steps `ticks` physics frames while sampling. Returns the trace.
-func _roll(label: String, from: Vector3, to: Vector3, ticks: int) -> Dictionary:
+func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) -> Dictionary:
 	var body := _transport.board_body()
 	if _transport.is_riding_board():
 		_transport.leave_board()
@@ -344,15 +727,12 @@ func _roll(label: String, from: Vector3, to: Vector3, ticks: int) -> Dictionary:
 		await get_tree().physics_frame
 	var mounted: bool = _transport.mount_board()
 	_transport.set_board_target(HubRegion.clamp_to(to))
-	var spec: Dictionary = HubSkatepark.MODULES[0]
-	var centre: Vector3 = _park.module_centre(0)
-	var size: Vector3 = spec["size"]
-	var deck_half_x: float = size.x * 0.5
-	var deck_half_z: float = size.z * 0.55 * 0.5
-	var deck_h: float = size.y
-	var trace := {"mounted": mounted, "max_y": -1e9, "deck_min_y": 1e9, "deck_ticks": 0,
-		"supported": 0, "under_surface": 0, "rider_off": 0, "path": 0.0,
-		"deck_h": deck_h, "arrived": false}
+	var node := _park.module_node(index)
+	var to_local: Transform3D = node.global_transform.affine_inverse()
+	var rect: Rect2 = _core_rect(index)
+	var trace := {"mounted": mounted, "max_y": -1e9, "core_min_y": 1e9, "core_max_y": -1e9,
+		"core_ticks": 0, "supported": 0, "under_surface": 0, "rider_off": 0, "path": 0.0,
+		"arrived": false}
 	var last: Vector3 = body.flat_position()
 	for _t in ticks:
 		await get_tree().physics_frame
@@ -374,57 +754,121 @@ func _roll(label: String, from: Vector3, to: Vector3, ticks: int) -> Dictionary:
 			var want: float = y + SkateparkMesh.DECK_TOP
 			if absf(_keepy.global_position.y - want) > 0.0005:
 				trace["rider_off"] = int(trace["rider_off"]) + 1
-		if absf(flat.x - centre.x) <= deck_half_x - 0.30 and absf(flat.z - centre.z) <= deck_half_z - 0.10:
-			trace["deck_ticks"] = int(trace["deck_ticks"]) + 1
-			trace["deck_min_y"] = minf(float(trace["deck_min_y"]), y)
+		var local: Vector3 = to_local * body.global_position
+		if rect.has_point(Vector2(local.x, local.z)):
+			trace["core_ticks"] = int(trace["core_ticks"]) + 1
+			trace["core_min_y"] = minf(float(trace["core_min_y"]), y)
+			trace["core_max_y"] = maxf(float(trace["core_max_y"]), y)
 		if flat.distance_to(Vector3(to.x, 0.0, to.z)) < 1.0:
 			trace["arrived"] = true
 	trace["end"] = body.flat_position()
-	print("     %-34s path %.2f u   max y %.3f   over-deck ticks %d (min y %s)   supported %d   arrived %s"
-		% [label, trace["path"], trace["max_y"], trace["deck_ticks"],
-			("n/a" if int(trace["deck_ticks"]) == 0 else "%.3f" % float(trace["deck_min_y"])),
+	print("     %-38s path %.2f u   max y %.3f   core %d ticks (y %s .. %s)   supported %d   arrived %s"
+		% [label, trace["path"], trace["max_y"], trace["core_ticks"],
+			("n/a" if int(trace["core_ticks"]) == 0 else "%.3f" % float(trace["core_min_y"])),
+			("n/a" if int(trace["core_ticks"]) == 0 else "%.3f" % float(trace["core_max_y"])),
 			trace["supported"], trace["arrived"]])
 	return trace
 
 func _phase_ride() -> void:
-	print("-- PHASE R: THE POSITIVE -- the board climbs onto the funbox and carries on --")
-	var t: Dictionary = await _roll("with collider", RIDE_FROM, RIDE_TO, RIDE_TICKS)
-	var deck_h: float = float(t["deck_h"])
-	# The instrument first: a ride that never happened would pass every
-	# height test below by never being anywhere.
-	_check(bool(t["mounted"]), "he is aboard (mount_board took him)")
-	_check(float(t["path"]) > 8.0, "INSTRUMENT: the board actually rolled (%.2f u > 8)" % t["path"])
-	_check(int(t["deck_ticks"]) > 0, "INSTRUMENT: the roll crossed the deck footprint (%d ticks)" % t["deck_ticks"])
-	# The two axes, and neither alone would do (see the header).
-	_check(int(t["deck_ticks"]) > 0 and float(t["deck_min_y"]) >= deck_h - 0.03,
-		"HEIGHT: every tick over the deck was ON it (min y %.3f >= %.3f)"
-			% [float(t["deck_min_y"]), deck_h - 0.03])
-	_check(bool(t["arrived"]), "DISTANCE: it reached the far side of the module, it did not stop beside it")
-	_check(int(t["supported"]) > 0, "the module HELD it: supported() was true on %d ticks" % t["supported"])
-	_check(int(t["under_surface"]) == 0, "D1: never below HubSurface, on any tick (%d violations)" % t["under_surface"])
-	_check(int(t["rider_off"]) == 0, "carrier-then-carried: the rider is on the deck every tick (%d off)" % t["rider_off"])
+	print("-- PHASE R: THE POSITIVE -- the board climbs each solid module --")
+	# CH57's published stations, restated from the module's own frame. A
+	# bench that cannot reproduce a number already on file has no standing
+	# to publish a new one.
+	var ends: Array = _ride_ends(RIDES[0])
+	print("     the funbox ride derived from the module: %s -> %s   (CH57 published %s -> %s)"
+		% [str((ends[0] as Vector3).snappedf(0.01)), str((ends[1] as Vector3).snappedf(0.01)),
+			str(RIDE_FROM), str(RIDE_TO)])
+	_check((ends[0] as Vector3).distance_to(RIDE_FROM) < 0.01
+			and (ends[1] as Vector3).distance_to(RIDE_TO) < 0.01,
+		"R the derived funbox ride IS the one CH57 published")
+	for ride in RIDES:
+		await _ride_one(ride)
+
+func _ride_one(ride: Dictionary) -> void:
+	var index: int = int(ride["index"])
+	var kind: StringName = _park.module_kind(index)
+	var ends: Array = _ride_ends(ride)
+	var from: Vector3 = ends[0]
+	var to: Vector3 = ends[1]
+	# The instrument before the ride: a station outside the region would be
+	# refused by `_fence` and the whole case would pass by never happening.
+	_check(HubRegion.contains(from) and HubRegion.contains(to),
+		"R[%d] INSTRUMENT: both ends of the %s ride are inside the region" % [index, String(kind)])
+	var t: Dictionary = await _roll("[%d] %s, with collider" % [index, String(kind)],
+		index, from, to, RIDE_TICKS)
+	_check(bool(t["mounted"]), "R[%d] he is aboard (mount_board took him)" % index)
+	_check(float(t["path"]) > 6.0, "R[%d] INSTRUMENT: the board actually rolled (%.2f u > 6)"
+		% [index, float(t["path"])])
+	_check(int(t["core_ticks"]) > 0, "R[%d] INSTRUMENT: the roll reached the judged patch (%d ticks)"
+		% [index, int(t["core_ticks"])])
+	_check(int(t["under_surface"]) == 0,
+		"R[%d] D1: never below HubSurface, on any tick (%d violations)" % [index, int(t["under_surface"])])
+	_check(int(t["rider_off"]) == 0,
+		"R[%d] carrier-then-carried: the rider is on the deck every tick (%d off)"
+			% [index, int(t["rider_off"])])
+	_check(int(t["supported"]) > 0,
+		"R[%d] the module HELD it: supported() was true on %d ticks" % [index, int(t["supported"])])
+	if kind == HubSkatepark.KIND_FUNBOX:
+		var deck_h: float = float(HubSkatepark.MODULES[index]["size"].y)
+		_check(float(t["core_min_y"]) >= deck_h - 0.03,
+			"R[%d] HEIGHT: every tick over the deck was ON it (min y %.3f >= %.3f)"
+				% [index, float(t["core_min_y"]), deck_h - 0.03])
+		_check(bool(t["arrived"]),
+			"R[%d] DISTANCE: it reached the far side of the module, it did not stop beside it" % index)
+		return
+	# A quarterpipe. Two axes again, and neither alone would do: a height
+	# gate alone passes for a board that climbed a phantom, a "it got
+	# there" gate alone passes for one that rolled straight through.
+	var args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[index])
+	var reach: Vector2 = _climb_reach(args[1])
+	# ⚠️ THE INDEX IS THE MEASURED ONE. The first version of this line
+	# printed QP_SEGMENTS -- the LAST facet -- next to the coordinates of
+	# the SIXTH, which is CLAUDE.md's "%e" defect: a true number under
+	# another control's label sends the next reader to diagnose the wrong
+	# thing.
+	print("     [%d] climbable to P%d of %d = (z %.3f, y %.3f) of a %.2f u lip; reached %.3f"
+		% [index, _climb_facet(args[1]), SkateparkMesh.QP_SEGMENTS,
+			reach.x, reach.y, args[1], float(t["core_max_y"])])
+	_check(float(t["core_max_y"]) >= reach.y * 0.5,
+		"R[%d] HEIGHT: it CLIMBED the transition (%.3f >= half of the %.3f it can reach)"
+			% [index, float(t["core_max_y"]), reach.y])
+	_check(float(t["core_max_y"]) <= args[1] + 0.05,
+		"R[%d] and never above the lip -- no phantom volume (%.3f <= %.3f)"
+			% [index, float(t["core_max_y"]), args[1]])
+	_check(not bool(t["arrived"]),
+		"R[%d] and the transition STOPPED it: a quarterpipe is not a ramp you drive over" % index)
 
 func _phase_neutralised() -> void:
-	print("-- PHASE N: RED BEFORE GREEN, at runtime -- take the collider off the layer --")
-	var wall := _park.collider_body()
-	var keep: int = wall.collision_layer
-	wall.collision_layer = 0
-	var t: Dictionary = await _roll("collider neutralised", RIDE_FROM, RIDE_TO, RIDE_TICKS)
-	_check(float(t["path"]) > 8.0, "INSTRUMENT: the neutralised run rolled too (%.2f u)" % t["path"])
-	_check(int(t["deck_ticks"]) > 0, "INSTRUMENT: it crossed the same footprint (%d ticks)" % t["deck_ticks"])
-	_check(int(t["deck_ticks"]) > 0 and float(t["deck_min_y"]) < 0.05,
-		"WITHOUT the collider it goes THROUGH the funbox (min y %s)"
-			% ("n/a" if int(t["deck_ticks"]) == 0 else "%.3f" % float(t["deck_min_y"])))
-	_check(int(t["supported"]) == 0, "and nothing held it (supported ticks %d)" % t["supported"])
-	wall.collision_layer = keep
-	var back: Dictionary = await _roll("collider restored", RIDE_FROM, RIDE_TO, RIDE_TICKS)
-	_check(int(back["deck_ticks"]) > 0 and float(back["deck_min_y"]) >= float(back["deck_h"]) - 0.03,
-		"and the climb COMES BACK when the layer is restored (min y %s)"
-			% ("n/a" if int(back["deck_ticks"]) == 0 else "%.3f" % float(back["deck_min_y"])))
+	print("-- PHASE N: RED BEFORE GREEN, at runtime -- take each collider off the layer --")
+	for ride in RIDES:
+		var index: int = int(ride["index"])
+		var kind: StringName = _park.module_kind(index)
+		var ends: Array = _ride_ends(ride)
+		var wall := _park.collider_body_at(index)
+		var keep: int = wall.collision_layer
+		wall.collision_layer = 0
+		var t: Dictionary = await _roll("[%d] %s, NEUTRALISED" % [index, String(kind)],
+			index, ends[0], ends[1], RIDE_TICKS)
+		_check(float(t["path"]) > 6.0, "N[%d] INSTRUMENT: the neutralised run rolled too (%.2f u)"
+			% [index, float(t["path"])])
+		_check(int(t["core_ticks"]) > 0, "N[%d] INSTRUMENT: it crossed the same patch (%d ticks)"
+			% [index, int(t["core_ticks"])])
+		_check(int(t["core_ticks"]) > 0 and float(t["core_max_y"]) < 0.05,
+			"N[%d] WITHOUT the collider it goes THROUGH the %s (max y over it %s)"
+				% [index, String(kind),
+					("n/a" if int(t["core_ticks"]) == 0 else "%.3f" % float(t["core_max_y"]))])
+		_check(int(t["supported"]) == 0, "N[%d] and nothing held it (supported ticks %d)"
+			% [index, int(t["supported"])])
+		wall.collision_layer = keep
+		var back: Dictionary = await _roll("[%d] %s, RESTORED" % [index, String(kind)],
+			index, ends[0], ends[1], RIDE_TICKS)
+		_check(int(back["core_ticks"]) > 0 and float(back["core_max_y"]) > 0.10,
+			"N[%d] and the climb COMES BACK when the layer is restored (max y %s)"
+				% [index, ("n/a" if int(back["core_ticks"]) == 0 else "%.3f" % float(back["core_max_y"]))])
 
 func _phase_lateral() -> void:
 	print("-- PHASE L: the other half of D1 -- a vertical face BLOCKS --")
-	var t: Dictionary = await _roll("into the east face", SIDE_FROM, SIDE_TO, RIDE_TICKS)
+	var t: Dictionary = await _roll("into the funbox east face", 0, SIDE_FROM, SIDE_TO, RIDE_TICKS)
 	var centre: Vector3 = _park.module_centre(0)
 	var half_x: float = float(HubSkatepark.MODULES[0]["size"].x) * 0.5
 	var end: Vector3 = t["end"]
@@ -434,6 +878,76 @@ func _phase_lateral() -> void:
 		"it was stopped east of the face (x %.3f, face at %.3f)" % [end.x, centre.x + half_x])
 	_check(not _transport.board_body().has_target(),
 		"and the stall guard dropped the target rather than grinding for ever")
+
+# =====================================================================
+# PHASE J -- THE RAIL, WHICH IS THE ONE MODULE THAT MUST BLOCK IN ONE
+# PLACE AND NOT IN ANOTHER
+#
+# ⚠️ A RAIL CANNOT BE GATED THE WAY A RAMP IS. Its beam is 0.12 across
+# and its underside sits at 0.56, while the board's capsule tops out at
+# 2 * (DECK_WIDTH / 2) = 0.26: the board passes UNDER the beam, and the
+# only thing in the module that can stop it is a LEG. So a gate that only
+# asked "does the rail block the board" would be satisfied by a collider
+# twice the size of the drawn rail, and a gate that only asked "does the
+# board get through" would be satisfied by no collider at all.
+#
+# Both, then, on the SAME instrument and in the same run:
+#
+#   * head-on into a leg   -> STOPPED, and released when neutralised.
+#   * across the gap       -> THROUGH, with the collider fully in place.
+#
+# The second is the one that prices the decomposition: a hull inflated by
+# a hair, or a beam whose box was built from the wrong half-extent, shows
+# up there and nowhere else. It is also this phase's own instrument
+# control -- two opposite verdicts from one bench, so neither is the free
+# kind.
+
+func _phase_rail() -> void:
+	print("-- PHASE J: the rail blocks at a leg and lets the board through between them --")
+	var index: int = 1
+	var node := _park.module_node(index)
+	var args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[index])
+	var length: float = args[0]
+	var leg_z: float = length * 0.5 * SkateparkMesh.RAIL_LEG_SPAN
+	var across: Vector3 = _ramp_dir(index).cross(Vector3.UP).normalized()
+	print("     rail: length %.2f  legs at local z +-%.3f  beam underside %.3f  board top %.3f"
+		% [length, leg_z, args[1] - SkateparkMesh.RAIL_BEAM * 0.5, SkateparkMesh.DECK_WIDTH])
+	_check(SkateparkMesh.DECK_WIDTH < args[1] - SkateparkMesh.RAIL_BEAM * 0.5,
+		"J INSTRUMENT: the board really is short enough to pass under the beam")
+	# (1) HEAD-ON INTO A LEG. The station is the leg's own world position,
+	# read through the node's transform -- never typed.
+	var leg: Vector3 = node.global_transform * Vector3(0.0, 0.0, leg_z)
+	leg = Vector3(leg.x, 0.0, leg.z)
+	var hit: Dictionary = await _roll("[1] rail, head-on into a leg", index,
+		leg + across * 5.0, leg - across * 5.0, RIDE_TICKS)
+	var end_hit: Vector3 = hit["end"]
+	var missed: float = end_hit.distance_to(leg)
+	print("     stopped %.3f u from the leg's axis (started 5.00 u out)" % missed)
+	_check(float(hit["path"]) > 2.0, "J INSTRUMENT: it set off (%.2f u)" % float(hit["path"]))
+	_check(missed < 1.0, "J1 it was STOPPED at the leg (%.3f u from its axis)" % missed)
+	_check(not _transport.board_body().has_target(),
+		"J1 and the stall guard dropped the target rather than grinding for ever")
+	# ...and RED BEFORE GREEN on the same station.
+	var wall := _park.collider_body_at(index)
+	var keep: int = wall.collision_layer
+	wall.collision_layer = 0
+	var thru: Dictionary = await _roll("[1] rail, NEUTRALISED, same station", index,
+		leg + across * 5.0, leg - across * 5.0, RIDE_TICKS)
+	wall.collision_layer = keep
+	var end_thru: Vector3 = thru["end"]
+	_check(end_thru.distance_to(leg - across * 5.0) < 1.0,
+		"J1 WITHOUT the collider it goes straight through the leg to the far side")
+	# (2) ACROSS THE GAP, collider in place: the board must get through.
+	var gap: Vector3 = node.global_transform * Vector3(0.0, 0.0, 0.0)
+	gap = Vector3(gap.x, 0.0, gap.z)
+	var pass_t: Dictionary = await _roll("[1] rail, between the legs", index,
+		gap + across * 5.0, gap - across * 5.0, RIDE_TICKS)
+	var end_pass: Vector3 = pass_t["end"]
+	print("     between the legs it ended %.3f u from the far station" % end_pass.distance_to(gap - across * 5.0))
+	_check(float(pass_t["max_y"]) < 0.05,
+		"J2 it stayed on the ground -- the beam is not a floor (max y %.3f)" % float(pass_t["max_y"]))
+	_check(bool(pass_t["arrived"]),
+		"J2 and it PASSED UNDER the beam: the collider is not fatter than the drawn rail")
 
 # =====================================================================
 # PHASE T -- THE TRAVERSAL, WITH THE SWITCH UP

@@ -708,6 +708,107 @@ compris. Et la garde qui va avec : **asserter que les DEUX passes peignent
 quelque chose**, sinon un corps disparu passe le test de signe faute
 d'échantillons.
 
+### ⚠️ LES NORMALES D'UN MAILLAGE SONT UN TÉMOIN INDÉPENDANT DE SA GÉOMÉTRIE
+
+Écrit au CH60, et le témoin criait depuis **sept lots**. Le quarterpipe du
+skatepark était construit comme sa propre **TRANSPOSÉE** : le profil livré
+montait à **86,25°** là où le rider arrive et s'aplatissait à **3,75°** au
+lip — une bosse convexe, pas une transition — parce que les deux
+composantes d'un `Vector2` de profil étaient consommées à l'envers. Le
+commentaire au-dessus décrivait la forme que le code ne construisait pas,
+et nommait un centre d'arc qui n'était pas celui du cercle paramétré.
+
+**Ce qui l'a prouvé n'est pas une relecture** : ce sont les **normales de
+sommet**, écrites dans la boucle suivante et jamais touchées. Elles sont
+exactement celles du profil CORRIGÉ. Mesuré facette par facette sur le
+maillage livré : **86,25° d'écart** entre la normale stockée et la vraie
+normale de face, **en miroir exact** — la normale stockée de la facette *k*
+est la vraie normale de la facette *25 − k*. Après correction : **3,75°**,
+une demi-facette, c'est-à-dire ce qu'une normale lisse contre une facette
+plate DOIT valoir.
+
+**Règle** : positions et normales d'un maillage construit par code sont
+**deux lectures d'une même forme**, écrites par deux bouts de code
+différents. Les confronter (`(b−a)×(c−a)` contre `ARRAY_NORMAL`, en tenant
+compte de la convention horaire de ce moteur) coûte une boucle et attrape
+une transposition qu'aucune relecture du profil n'attrape. Publier le pire
+écart, et le gater à une **demi-facette** : au-delà, ce n'est pas de
+l'ombrage lisse, c'est un désaccord.
+
+⚠️ **Et le symptôme visuel n'est PAS celui qu'on attend.** Ce projet est
+unlit — mais le shader décor est un **toon shader qui lit `NORMAL`**
+(`ndl = dot(n, sun_dir)`). Le park a donc été **OMBRÉ comme un quarterpipe
+tout en étant DESSINÉ comme une bosse** : la silhouette était plausible,
+l'AABB juste, le compte de triangles juste, et rien ne signalait quoi que
+ce soit. Corriger a coûté **une ligne** et **zéro triangle, zéro primitive,
+zéro draw call** (mesuré des deux côtés) — la seule chose qui bouge est
+0,4 à 0,7 % des pixels de la frame.
+
+### ⚠️ UN TEST VALIDE SUR UNE CLASSE DE FORMES EST UN TIRAGE AU SORT SUR UNE AUTRE, ET IL NE L'ANNONCE PAS
+
+Dix-neuvième faux-signal du dépôt, CH60, et il vivait dans une sonde que
+deux lots avaient déjà signée.
+
+`SkateparkProbe` PHASE W porte un sous-test de **signe de profondeur**
+ajouté au CH53 pour combler une cécité réelle du juge CH39 : un corps
+**fermé CONVEXE** rendu à l'envers couvre **exactement la même
+silhouette**, donc un comptage de pixels ne peut pas le voir. Le sous-test
+dit de lui-même qu'« il marche sur un corps fermé convexe ». C'est vrai —
+et c'est **toute** sa validité : il suppose qu'aucune surface ne peut
+tourner le dos à la caméra tout en étant **plus proche** qu'une surface de
+face. Un corps **concave** casse exactement cette hypothèse.
+
+Le jour où un module est devenu concave, il a rougi à **0,2836 contre
+0,2831** : une égalité à 0,18 % publiée comme un maillage à l'envers.
+
+**Il n'a pas été fait taire — il a été MESURÉ** (le dépôt interdit le
+premier, voici ce que le second donne). Module reconstruit **à l'envers**,
+les deux tests relus à **cinq stations** :
+
+| module concave | ratio conservé | signe de profondeur, par station |
+|---|---|---|
+| correct | **1,0000** ×5 | ok, ok, ok, INVERTED, INVERTED |
+| à l'envers | **0,575 – 0,729** | ok, ok, INVERTED ×3 |
+
+**Les deux ensembles de verdicts SE RECOUVRENT** : le sous-test ne
+distingue pas les deux cas, sa réponse suit la **STATION**. Le juge CH39,
+lui, les sépare complètement — un corps **concave** ne garde pas sa
+silhouette sous inversion, donc la cécité que le sous-test couvrait ne
+s'applique tout simplement pas à cette forme.
+
+⚠️ **Et ce n'était pas la forme neuve qui était spéciale.** Le même
+balayage a pris le **BOL**, une cuvette concave livrée depuis CH53 et que
+le lot ne touchait pas, rapportant `INVERTED` à **0,2503 contre 0,2490**
+depuis une station que la sonde n'utilisait pas. **L'invalidité était déjà
+dans le dépôt** ; la forme neuve s'est seulement trouvée là où elle tire.
+
+**Règle, et elle vaut pour tout test dont la validité repose sur une
+propriété de forme** (convexité, fermeture, monotonie, connexité) :
+
+1. **La propriété se nomme dans le test**, pas seulement dans son
+   commentaire.
+2. **Le test publie son propre plancher** — deux lectures d'un même état,
+   rien touché — et **RETURN AUCUN VERDICT** en dessous. C'est la règle
+   CH56 « une sonde dont le plancher dépasse sa grandeur doit rendre une
+   absence de verdict », appliquée à un signe et pas à une durée.
+3. **Ce qu'il décline est passé à un autre test, et le passage de relais
+   est PROUVÉ dans le même run** par une passe rouge sur cette forme-là.
+   « L'autre test le couvre » est une affirmation sur une CLASSE ; elle se
+   mesure sur l'OBJET.
+4. **Un garde empêche « non résolu » de devenir une porte de sortie** : le
+   test doit encore résoudre sur au moins un sujet, sinon l'exemption
+   devient l'issue de tout le monde et le silence est revenu par la porte
+   de derrière.
+
+⚠️ **Corollaire de gate, tiré du même lot** : un objet **grimpable** ne se
+gate pas sur sa hauteur **DESSINÉE**. `floor_max_angle` (45° par défaut)
+décide de la dernière facette sur laquelle un corps a le droit de se
+tenir : sur un quarterpipe, c'est **P6 sur 12**, soit **29 % de la montée**
+— mesuré 0,582 pour un lip de 2,10 et 0,391 pour un lip de 1,45. Un gate
+écrit au lip exige une performance qu'aucun corps cinématique sans inertie
+stockée ne peut faire, et il n'a pas tort sur la géométrie : il répond à
+une autre question.
+
 ### ⚠️ LE COMPTEUR DU MOTEUR NE COMPTE QUE L'OPAQUE, ET AU LOD QU'IL A CHOISI
 
 `RenderingServer.viewport_get_render_info(..., PRIMITIVES_IN_FRAME)` n'est
