@@ -113,3 +113,70 @@ static func enabled() -> bool:
 	var host_raw = JavaScriptBridge.eval("window.location.hostname", true)
 	var host := ("" if host_raw == null else str(host_raw)).to_lower()
 	return host == STAGING_HOST
+
+## =====================================================================
+## CH57 -- THE PHYSICS SWITCH, AND WHY IT IS A SECOND TOKEN AND NOT A
+## SECOND GATE
+##
+## CH56 section 11 made the whole of lot 1 conditional on one sentence:
+## "Le lot 1 doit livrer DERRIERE UN INTERRUPTEUR (DevTools) de sorte
+## qu'une seule lecture device -- meme station, physique ON puis OFF --
+## mesure F et rende la question definitivement decidable." F is the
+## ratio between this sandbox's Xeon and Mathieu's phone, it is the only
+## unknown left in the cost model, and it cannot be measured by another
+## probe -- only by the same build answering twice.
+##
+## So the switch lives HERE, in the file that already owns every developer
+## affordance, rather than in a parallel gate of its own. It is a SECOND
+## TOKEN under the first, never an independent one:
+##
+##   * `enabled()` must be true first. On production that still needs
+##     "keepydev"; on staging it is true by default (rule 4 above).
+##   * then "keepyphys" must appear in the query string or the fragment.
+##
+## The A/B Mathieu actually performs is therefore two URLs on ONE build:
+##     https://keepy-staging.vercel.app/               -> physics OFF
+##     https://keepy-staging.vercel.app/?keepyphys=1   -> physics ON
+##
+## ⚠️ AND OFF-WEB IT DEFAULTS **OFF**, WHICH IS THE OPPOSITE OF
+## `enabled()`. That inversion is deliberate and it is what keeps the
+## repo's 90 probes honest: `enabled()` answers true in the editor and in
+## every headless probe, so a physics gate written on it alone would have
+## turned physics on inside SkateDriveProbe, SkateparkProbe and
+## SkateTraverseProbe -- three benches whose published figures are the
+## CH54 baseline this lot must leave untouched. A cross-table on two trees
+## would then have compared two different games and called the difference
+## a regression. Off-web the answer is OFF unless something ASKS, and the
+## two things that may ask are the command line (`-- --physics`) and
+## `set_physics_override()`, which is what the physics probe itself calls.
+##
+## Cached after the first answer, unlike `enabled()`: the world is built
+## once from this value, and a world half of which believes in colliders
+## is a failure mode nobody would diagnose. `set_physics_override()`
+## clears the cache, which is the only way it moves.
+const PHYSICS_FLAG: String = "keepyphys"
+## The command-line opt-in for a probe or an editor run: `-- --physics`.
+const PHYSICS_ARG: String = "--physics"
+
+static var _physics_cache: int = -1
+
+## Forces the answer, or (with `null`) hands it back to the rules above.
+## Called by SkatePhysicsProbe, and by nothing that ships.
+static func set_physics_override(value: Variant) -> void:
+	_physics_cache = -1 if value == null else (1 if bool(value) else 0)
+
+## True where the hub builds real colliders and a real moving body.
+## See the header block above for the four ways this can be true and the
+## one reason it defaults false off-web.
+static func physics_enabled() -> bool:
+	if _physics_cache >= 0:
+		return _physics_cache == 1
+	var answer := false
+	if enabled():
+		if OS.has_feature("web"):
+			var raw = JavaScriptBridge.eval("window.location.search + window.location.hash", true)
+			answer = ("" if raw == null else str(raw)).to_lower().contains(PHYSICS_FLAG)
+		else:
+			answer = OS.get_cmdline_user_args().has(PHYSICS_ARG)
+	_physics_cache = 1 if answer else 0
+	return answer

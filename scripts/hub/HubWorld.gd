@@ -3265,6 +3265,23 @@ func _on_tapped_ground(point: Vector3) -> void:
 		if me.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
 			_keepy.dismount_vehicle()
 			return
+	# CH57: the physics board. The SAME two meanings a tap has on the ball
+	# -- "get off" on himself at rest, "go there" anywhere else -- routed
+	# to the carrier instead of to the hopper, because on this board the
+	# hopper is ON_CARRIER and `hop_to` would be refused outright.
+	#
+	# ⚠️ AND THE TAP IS NEVER SWALLOWED. CLAUDE.md's PATRON ECHELLE is
+	# banned: every tap made while riding produces something -- a new
+	# destination, or the dismount -- so the player is never inside a prop
+	# that eats his taps. `board_at_rest()` is what separates the two, so a
+	# tap on himself mid-roll STEERS rather than ejecting him at speed.
+	if _transport.is_riding_board():
+		var here := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
+		if _transport.board_at_rest() and here.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
+			_transport.leave_board()
+		else:
+			_transport.set_board_target(point)
+		return
 	_hop_via_corridor(point)
 
 ## Carte-blanche v2 -- the autumn hollow hangs off the plateau by a
@@ -3928,6 +3945,13 @@ func _try_mount_ball(position: Vector3) -> bool:
 	# CH54: and it GLIDES rather than bounces -- CH29's glide shape with
 	# the pace profile (run-up, cruise, run-out) that lot added to it. The
 	# numbers are the board's and live in HubTransport, next to its park.
+	# CH57: behind DevTools.physics_enabled() the board is a
+	# CharacterBody3D and the mount is the CARRIER contract instead --
+	# HubTransport owns both doors, and the ONE line that chooses between
+	# them is this one. With the switch down nothing below runs and the
+	# call underneath it is CH54's, argument for argument.
+	if _mount_kind == HubTransport.VEHICLE_SKATE and _transport.board_body() != null:
+		return _transport.mount_board()
 	if _mount_kind == HubTransport.VEHICLE_SKATE:
 		return _keepy.mount_vehicle(_transport.board_node(), HubTransport.SKATE_LIFT,
 			HubTransport.SKATE_GLIDE_STEP, HubTransport.SKATE_GLIDE_S,

@@ -796,6 +796,56 @@ chat à l'extérieur, aucune sonde rouge. Toute constante qui a un SENS
 (intérieur/extérieur, devant/derrière, gauche/droite) se gate sur une
 lecture du côté réel, jamais sur le commentaire qui le nomme.
 
+### ⚠️ DEUX FACES COPLANAIRES QUI SE RENCONTRENT PAR LA TRANCHE DONNENT UN CONTACT DÉGÉNÉRÉ — ET SA NORMALE EST HORIZONTALE
+
+Premier collider réel du hub (CH57), et le symptôme ne ressemble pas à sa
+cause. La planche devait monter sur la funbox ; elle s'est arrêtée à
+**3,72 u**, c'est-à-dire **exactement sa propre demi-longueur (0,46)**
+avant le pied de la rampe. Elle ne traversait pas et ne montait pas : elle
+**s'arrêtait à côté** — le troisième des trois résultats possibles, et le
+seul qu'aucune assertion de HAUTEUR seule ne distingue du deuxième.
+
+Le vidage des contacts **par tick** donne la cause en un nombre :
+
+```
+t20  pos (0.000, 0.0000, 48.2809)  floor=false wall=true
+     n=(0, 0, 1) d=0.0009   n=(0, 0, 1) d=0.0001
+```
+
+La normale de contact est **`(0, 0, 1)`** — un **MUR VERTICAL** — contre
+une rampe dont la vraie normale est `(0 ; 0,861164 ; 0,508327)`. Cette
+vraie normale n'est apparue **qu'une frame sur trente**, noyée sous deux
+contacts de mur sur la même frame.
+
+Le mécanisme : la pièce de rampe s'effile en une **arête d'épaisseur nulle
+à y = 0**, et le dessous de la boîte est une **face plate à y = 0**. Les
+deux sont **COPLANAIRES**, donc la direction de translation minimale qui
+les sépare est **horizontale** — et le moteur classe une pente de **30,6°**
+en mur de **90°**. Ni le hull, ni l'enroulement, ni la couche de collision,
+ni `floor_max_angle` n'y étaient pour quelque chose : **c'est la PLANÉITÉ
+du dessous** qui l'était.
+
+**Règle** : un corps censé MONTER une géométrie posée sur le même plan que
+lui **ne peut pas avoir de face inférieure plate à ce plan**. Une capsule
+couchée (ou toute forme dont le dessous est une ligne ou un point) donne
+la vraie normale de pente **dès le premier contact** — mesuré, même
+station, même run : `floor=true` avec `n=(0 ; 0,861164 ; 0,508327)` au
+premier tick, puis 0,047 → 0,881 en quatorze ticks. Bonus non négociable
+au passage : la tangente d'une capsule est à **exactement y = 0** dans
+l'espace du corps, donc un corps posé sur une surface a son **ORIGINE à la
+hauteur de cette surface**, sans facteur de correction — ce qui permet de
+gater le trajet contre la cote **authored** de la pièce et non contre un
+epsilon réglé sur l'artefact.
+
+⚠️ **Et c'est un piège de MOTEUR, donc il ne se relit pas : il se VIDE.**
+L'angle de la rampe était juste, `floor_max_angle` était juste, la sonde
+était juste — et le seul instrument qui l'a nommé est l'impression de
+`get_slide_collision().get_normal()` **à chaque tick**. C'est le pendant
+collision de CH39 (« une assertion d'orientation ne se relit pas, elle se
+rend ») : quand un moteur contredit une géométrie qu'on a vérifiée, ce
+qu'il faut lire est ce que le MOTEUR a calculé, pas ce que la géométrie
+dit.
+
 ### ⚠️ Autres pièges d'API mesurés
 
 * **`Object.get("UNE_CONST")` rend `null`** — une constante GDScript n'est

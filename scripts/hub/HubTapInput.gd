@@ -398,6 +398,27 @@ func _handle_point(screen_point: Vector2) -> void:
 	# see HubRegion for why the difference matters and what it costs.
 	var destination := HubRegion.clamp_to(point)
 
+	# =====================================================================
+	# CH57 -- THE PHYSICS BOARD TAKES EVERY TAP, AND IT IS THE ONLY PROP
+	# THAT DOES
+	#
+	# The three PILOTED vehicles short-circuit `_unhandled_input` above and
+	# the screen stops being a map for the length of the drive. The physics
+	# board is not piloted -- the screen IS still a map -- so its tap has to
+	# be routed rather than dropped, and it has to be routed BEFORE every
+	# prop disc below.
+	#
+	# ⚠️ THE REASON IS CLAUDE.md's PATRON ECHELLE, and without this line the
+	# defect is real: riding the board leaves the hopper ON_CARRIER, from
+	# which `hop_to()` is refused outright. A tap that fell on the boat's
+	# disc, a climbable crown or a critter would reach that prop's handler,
+	# ask for a walk, be refused, and DO NOTHING -- a player inside a prop
+	# that eats his taps, which is exactly the pattern this repo has banned.
+	# Routed here, every tap while riding means one of the board's two
+	# things (steer, or step off), and none is ever swallowed.
+	if transport != null and transport.is_riding_board():
+		tapped_ground.emit(destination)
+		return
 	# THE BOAT WINS, and it is asked BEFORE the ground point becomes a
 	# destination. The radius is in WORLD units and is measured on this
 	# same ground point, so "the boat or the ground behind it" is decided
