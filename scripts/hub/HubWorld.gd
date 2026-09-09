@@ -111,6 +111,9 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 ## the save reset (behind DevTools.enabled()).
 @onready var _world_hud: WorldHud = $WorldHud
 @onready var _save_reset_button: Button = $FallbackMenu/Panel/VBoxContainer/SaveResetButton
+## CH59: the physics switch, reachable from inside the game because
+## `?keepyphys=1` is unreachable on an installed PWA -- see _setup_physics_button().
+@onready var _physics_button: Button = $FallbackMenu/Panel/VBoxContainer/PhysicsButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -718,6 +721,7 @@ func _ready() -> void:
 	_setup_weather()
 	_setup_perf()
 	_setup_world_hud()
+	_setup_physics_button()
 	_setup_transport()
 	_setup_cove()
 	_setup_trees()
@@ -4414,6 +4418,55 @@ func _on_save_reset() -> void:
 func _on_perf_toggled() -> void:
 	_perf.visible = not _perf.visible
 	_perf_button.text = "Perf (dev) : ON" if _perf.visible else "Perf (dev) : OFF"
+
+## ---- CH59: the physics switch reachable from inside the game --------------
+## `DevTools.physics_enabled()` (CH57) is a URL token, "?keepyphys=1" --
+## structurally unreachable from an INSTALLED PWA, which has no address bar
+## to type it into. That is the whole defect this lot closes: physics could
+## be turned on from a desktop browser tab, never from the phone it was
+## actually built to be judged on.
+##
+## Same gate as every other row in this panel (DevTools.enabled()), never
+## DevTools.physics_enabled() itself -- visibility of the SWITCH and the
+## STATE it switches are two different questions, and gating the switch on
+## its own state would hide the OFF -> ON button once physics is off.
+##
+## Same default as the URL token: OFF at load, on staging as everywhere
+## else, so the A/B stays a deliberate two-tap comparison and F is never
+## read against a build that silently started warm.
+func _setup_physics_button() -> void:
+	var show: bool = DevTools.enabled()
+	_physics_button.visible = show
+	_physics_button.text = "Physique (dev) : ON" if DevTools.physics_enabled() else "Physique (dev) : OFF"
+	_physics_button.pressed.connect(_on_physics_toggled)
+
+## Flips the CH57 switch and rebuilds the hub from it.
+##
+## ⚠️ WHY THIS RELOADS THE SCENE INSTEAD OF FLIPPING A LIVE FLAG: the
+## skateboard and the funbox collider are built ONCE, from
+## DevTools.physics_enabled(), the moment HubSkatepark and HubTransport
+## construct the park (see HubSkatepark._maybe_collide and
+## HubTransport._build_board) -- a StaticBody3D or a CharacterBody3D versus
+## a bare MeshInstance3D is a choice made at node-construction time, not a
+## property that can be reassigned on a live node. This lot is the
+## activation path ONLY, per the brief: no new collider, no live-swap
+## machinery. get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
+## is the repo's own convention for re-entering the hub (every sub-game's
+## return button does exactly this) and rebuilds the world from the flipped
+## switch, which is exactly what a physics A/B needs and nothing more.
+##
+## This is a SCENE reload, not a BROWSER reload: no navigation event, no
+## network round trip, no address bar involved -- which is what makes it
+## reachable from an installed PWA at all. It does reset the hub's
+## in-session state (Keepy returns to the plateau's authored spawn rather
+## than wherever he was standing, exactly like every other route back into
+## the hub), which is the honest cost of rebuilding the world and is called
+## out here rather than hidden behind a half-measure that leaves half the
+## world believing the old answer.
+func _on_physics_toggled() -> void:
+	DevTools.set_physics_override(not DevTools.physics_enabled())
+	_fallback_menu.visible = false
+	get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
 
 ## For probes: the overlay's current readings.
 func perf_snapshot() -> Dictionary:

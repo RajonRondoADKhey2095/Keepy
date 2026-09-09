@@ -138,6 +138,16 @@ static func enabled() -> bool:
 ##     https://keepy-staging.vercel.app/               -> physics OFF
 ##     https://keepy-staging.vercel.app/?keepyphys=1   -> physics ON
 ##
+## ⚠️ CH59: THE QUERY STRING IS UNREACHABLE FROM AN INSTALLED PWA. A PWA
+## added to the home screen opens with no address bar, so "type ?keepyphys=1
+## after the URL" is not a real instruction on the one device this switch
+## exists to be judged from -- exactly the defect the staging default in
+## rule 4 above already closed for `enabled()` itself. HubWorld's
+## "Physique (dev)" button (behind `enabled()`, next to Perf and Sauvegarde)
+## is the in-game path to the SAME token, via `set_physics_override()`, and
+## it reloads the hub scene to rebuild the world from the flipped answer.
+## The URL flag keeps working unchanged for a desktop-browser test.
+##
 ## ⚠️ AND OFF-WEB IT DEFAULTS **OFF**, WHICH IS THE OPPOSITE OF
 ## `enabled()`. That inversion is deliberate and it is what keeps the
 ## repo's 90 probes honest: `enabled()` answers true in the editor and in
@@ -161,7 +171,14 @@ const PHYSICS_ARG: String = "--physics"
 static var _physics_cache: int = -1
 
 ## Forces the answer, or (with `null`) hands it back to the rules above.
-## Called by SkatePhysicsProbe, and by nothing that ships.
+## Called by SkatePhysicsProbe to isolate a single tree from the switch, and
+## (CH59) by HubWorld's in-game "Physique (dev)" button -- the flag that
+## makes the actual URL query string reachable from an installed PWA, which
+## has no address bar to type "?keepyphys=1" into. The button flips this
+## override and then reloads the hub scene, so the answer is re-derived by
+## `physics_enabled()`'s normal rules on every OTHER load (including a
+## genuine browser reload): only the in-session toggle uses this override,
+## never a build-time or persisted answer.
 static func set_physics_override(value: Variant) -> void:
 	_physics_cache = -1 if value == null else (1 if bool(value) else 0)
 

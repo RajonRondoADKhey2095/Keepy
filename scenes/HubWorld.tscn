@@ -448,6 +448,18 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
 theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
 text = "Sauvegarde (dev) : zéro"
 
+[node name="PhysicsButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 4
+custom_minimum_size = Vector2(320, 64)
+theme_override_font_sizes/font_size = 22
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/focus = SubResource("StyleBoxFlat_button_hover")
+text = "Physique (dev) : OFF"
+
 [node name="CloseButton" type="Button" parent="FallbackMenu/Panel/VBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 4
