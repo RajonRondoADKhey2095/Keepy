@@ -114,6 +114,10 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 ## CH59: the physics switch, reachable from inside the game because
 ## `?keepyphys=1` is unreachable on an installed PWA -- see _setup_physics_button().
 @onready var _physics_button: Button = $FallbackMenu/Panel/VBoxContainer/PhysicsButton
+## CH63 LOT 1: the skate control scheme, TAP (shipped) or DRAG (new).
+## Behind DevTools.enabled() like every other row of this panel, and --
+## unlike the physics switch above it -- it does NOT reload the scene.
+@onready var _skate_input_button: Button = $FallbackMenu/Panel/VBoxContainer/SkateInputButton
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -722,6 +726,7 @@ func _ready() -> void:
 	_setup_perf()
 	_setup_world_hud()
 	_setup_physics_button()
+	_setup_skate_input_button()
 	_setup_transport()
 	_setup_cove()
 	_setup_trees()
@@ -4467,6 +4472,38 @@ func _on_physics_toggled() -> void:
 	DevTools.set_physics_override(not DevTools.physics_enabled())
 	_fallback_menu.visible = false
 	get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
+
+## ---- CH63 LOT 1: the skate control scheme, TAP or DRAG -------------------
+## Same gate as every other row here (DevTools.enabled()), and the same
+## reason: this is a developer affordance, not a player setting.
+##
+## ⚠️ AND IT DOES **NOT** RELOAD THE SCENE, which the physics switch three
+## lines above deliberately does. The distinction is not a preference:
+## `DevTools.physics_enabled()` decides what KIND OF NODE the board is
+## (a CharacterBody3D or a bare MeshInstance3D), and that is a
+## construction-time choice no live flag can revisit. A control SCHEME
+## decides only which input writer is armed -- `HubTransport.
+## sync_board_input()` flips it on a live world, on the spot, mid-ride if
+## Mathieu wants -- and a reload here would cost him the ride, the
+## position and the A/B's whole point, which is to feel the two schemes
+## back to back at the same place on the same board.
+func _setup_skate_input_button() -> void:
+	var show: bool = DevTools.enabled()
+	_skate_input_button.visible = show
+	_skate_input_button.text = _skate_input_label()
+	_skate_input_button.pressed.connect(_on_skate_input_toggled)
+
+func _skate_input_label() -> String:
+	return "Contrôle skate : DRAG" if SkateTouchInput.drag_enabled() else "Contrôle skate : TAP"
+
+## Flips the scheme and re-arms the writer on the LIVE world. The menu is
+## left OPEN, unlike the physics switch: nothing was rebuilt, so there is
+## nothing to go back and look at, and closing it would make a two-tap A/B
+## into a six-tap one.
+func _on_skate_input_toggled() -> void:
+	SkateTouchInput.set_drag_mode(not SkateTouchInput.drag_enabled())
+	_transport.sync_board_input()
+	_skate_input_button.text = _skate_input_label()
 
 ## For probes: the overlay's current readings.
 func perf_snapshot() -> Dictionary:
