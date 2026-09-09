@@ -434,13 +434,35 @@ func _build_ball() -> void:
 ## A board owned by the park would have to grow a second copy of all of
 ## it, and CLAUDE.md's ladder pattern is what a second tap channel turns
 ## into when nobody is watching.
+## CH57: and behind DevTools.physics_enabled() the same drawing hangs off
+## a CharacterBody3D instead of being the node itself. ONE MeshInstance3D
+## either way, one mesh, one material, one shadow setting -- the draw call
+## and the primitive count are identical, which is what CH56's verdict
+## point 3 promised and what SkatePhysicsProbe PHASE B measures.
 func _build_board() -> void:
 	var builder := SkateparkMesh.new()
-	_board = MeshInstance3D.new()
+	var visual := MeshInstance3D.new()
+	visual.mesh = builder.skateboard()
+	visual.material_override = CozyPalette.decor_material()
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if DevTools.physics_enabled():
+		visual.name = "SkateboardMesh"
+		var body := SkateBoardBody.new()
+		body.add_child(visual)
+		# The board's dimensions are AUTHORED in SkateparkMesh and read
+		# here; the body publishes none of them. Same four numbers the
+		# mesh above was built from, in the same call site, so a lot that
+		# retunes the deck cannot leave the shape behind.
+		body.attach_shape(SkateparkMesh.DECK_WIDTH * 0.5, SkateparkMesh.DECK_LENGTH)
+		# CH54's ride, handed over rather than re-authored. These are the
+		# same three constants HubWorld passes to mount_vehicle when the
+		# switch is down, so the two modes ride the same numbers and any
+		# difference Mathieu feels is the PHYSICS and not a retune.
+		body.configure(SKATE_CRUISE, SKATE_ACCEL_U, SKATE_BRAKE_U)
+		_board = body
+	else:
+		_board = visual
 	_board.name = "Skateboard"
-	(_board as MeshInstance3D).mesh = builder.skateboard()
-	(_board as MeshInstance3D).material_override = CozyPalette.decor_material()
-	(_board as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_board.position = HubSurface.ground(SKATE_PARK)
 	# A VEHICLE on the map: it carries Keepy, it moves, and it is 46 u
 	# north of the spawn -- exactly the thing CH46 built markers for. No
@@ -454,6 +476,80 @@ func board_node() -> Node3D:
 
 func board_position() -> Vector3:
 	return Vector3(_board.global_position.x, 0.0, _board.global_position.z)
+
+## =====================================================================
+## CH57 LOT 1 -- THE BOARD AS A CARRIER
+##
+## Under DevTools.physics_enabled() the board stops being a hop modifier
+## and becomes the fifth CARRIER of this file: mount_carrier / follow_
+## carrier / leave_carrier, the contract already validated on the balloon,
+## the owl, the zipline, the bear and the three driven vehicles.
+##
+## ⚠️ WHAT THIS COSTS, SAID OUT LOUD RATHER THAN DISCOVERED LATER: while
+## he rides it the hopper is ON_CARRIER, and ON_CARRIER emits no
+## `hop_landed`. HubSkatepark.note_landing is therefore NEVER CALLED, so
+## a physics roll SCORES NOTHING. That is not an oversight and it is not
+## a regression of the shipped game (the switch is off for every player):
+## CH55 section 3.3 requires a physics mode to emit no landing at all, on
+## HubPortal's grounds, and CH55's LOT 2 is the lot that replaces the
+## proxy with a real arithmetic classification. This lot measures F; it
+## does not re-score anything.
+var _riding_board: bool = false
+
+func board_body() -> SkateBoardBody:
+	return _board as SkateBoardBody
+
+func is_riding_board() -> bool:
+	return _riding_board
+
+## Climbs aboard. mount_sled()'s shape exactly, minus the drive mode: no
+## `touch.enabled`, no chase camera, no HUD -- see the class header of
+## SkateBoardBody for why a tapped destination is not a piloted vehicle.
+func mount_board() -> bool:
+	var body := board_body()
+	if body == null or _keepy == null:
+		return false
+	if _driving or _driving_sailboat or _driving_sled or _riding_board:
+		return false
+	body.clear_target()
+	if not _keepy.call("mount_carrier", body, body.seat(SKATE_LIFT)):
+		return false
+	_riding_board = true
+	_keepy.call("follow_carrier")
+	return true
+
+## Steps off beside the board, on the sled's terms: the region's own clamp,
+## refused back onto the board's own position if the side lands where he
+## may not stand. The landing is FLAT -- leave_carrier reads its height off
+## HubSurface, so a y written here would be a second spelling of it.
+func leave_board() -> void:
+	if not _riding_board:
+		return
+	var body := board_body()
+	_riding_board = false
+	if body != null:
+		body.clear_target()
+	var at: Vector3 = board_position()
+	var side := Vector3(cos(_board.rotation.y), 0.0, -sin(_board.rotation.y)) * EXIT_SIDE
+	var landing: Vector3 = _step_off(at + side, at)
+	if landing.distance_to(at) < 0.8:
+		landing = _step_off(at - side, at)
+	_keepy.call("leave_carrier", landing)
+
+## The tap, while riding. The point arrives ALREADY CLAMPED by
+## HubTapInput, exactly as a hop destination does.
+func set_board_target(point: Vector3) -> void:
+	var body := board_body()
+	if body == null or not _riding_board:
+		return
+	body.set_target(point)
+
+## True when the board is standing still under him -- what HubWorld asks
+## before reading a tap on Keepy himself as "get off", so a tap made
+## mid-roll steers instead of ejecting.
+func board_at_rest() -> bool:
+	var body := board_body()
+	return body != null and body.at_rest()
 
 ## CH30: a SandYacht node -- the hull and the sail on a heeling deck, and
 ## the driving model with them. The GLB lookups stay here (this file owns
@@ -597,7 +693,13 @@ func vehicle_at(point: Vector3) -> int:
 	# CH53: the board, last, and on the ball's exact terms -- only the one
 	# he RIDES withdraws, so a tap on it while riding something else means
 	# "swap" and HubWorld drops the first where he stands.
-	if _board != null and riding != _board and flat.distance_to(board_position()) <= SKATE_TAP_RADIUS:
+	# CH57: under the physics switch the rider is ON_CARRIER, so
+	# `vehicle_node()` is null and the "only the one he rides withdraws"
+	# test above cannot see him. `_riding_board` is that same withdrawal,
+	# written the way the three driven vehicles write theirs -- without it
+	# a tap on the board he is standing on would re-mount it.
+	if _board != null and riding != _board and not _riding_board \
+			and flat.distance_to(board_position()) <= SKATE_TAP_RADIUS:
 		return VEHICLE_SKATE
 	return -1
 
@@ -982,6 +1084,16 @@ func _physics_process(delta: float) -> void:
 		_keepy.call("follow_carrier")
 		if _hud != null:
 			_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
+	elif _riding_board and _board is SkateBoardBody:
+		# CH57: carrier first, carried immediately after, in the SAME call
+		# -- the discipline the other three branches above are written on,
+		# and the reason the rider never trails the deck by a frame.
+		#
+		# NO `touch.input`, NO HUD, NO chase camera: this board is tapped
+		# to a destination, not piloted frame by frame, so CLAUDE.md's
+		# camera table leaves it on the FIXED camera and D6 stays shut.
+		(_board as SkateBoardBody).drive(delta)
+		_keepy.call("follow_carrier")
 
 ## The boat's re-mooring rule, for every idle balloon and for the parked
 ## ball: far from every dock (or the park) AND every one of them off
