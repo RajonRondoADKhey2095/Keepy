@@ -160,6 +160,8 @@ dans `docs/lots/`, ceci n'en est jamais un résumé.
 | date | lots promus | autorisation |
 |---|---|---|
 | 6 sept 2026 | V7b, V8 (karting lot 2), CH29 (la Crique), CH30 (conduite unifiée), CH31 (rebalance difficulté) | Mathieu, après validation device sur `keepy-staging.vercel.app` |
+| 10 sept 2026 (09:14) | CH64 (skatepark mini-jeu : toggles supprimés, caméra calmée, tricks au cercle, béton) — `b04f292` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
+| 10 sept 2026 (14:35) | CH65 (le toucher de la planche : rampe de throttle, filtre du doigt, plafond de lacet, poussée sur le nez, grip latérale) — `28adc89` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 
 ## Vérifier un déploiement SUR LE SERVICE, jamais dans le log CI seul
 
@@ -2652,6 +2654,47 @@ cornière, garniture) va dans une **seconde surface** du même `ArrayMesh`
 (même matériau, un draw call de plus) : la surface 0 reste le solide, et
 les bancs qui pricent un collider (`PhysicsCostProbe`) ne lisent
 qu'elle. Et `triangle_count()` publie les DEUX comptes, jamais un seul.
+
+### ⚠️ UN GESTE NE SE PROUVE PAS SUR UN POP SYNTHÉTIQUE — IL SE MESURE CONTRE LA FENÊTRE QUE LE JEU LUI OUVRE
+
+Écrit au CH66, après que CH64 ait livré des tricks à **54 assertions
+vertes** que Mathieu n'a jamais vus tirer sur device. Rien n'était faux :
+le reconnaisseur, l'air armé, la coupe à l'atterrissage, le flip, le HUD
+et le son étaient chacun prouvés — sur un `velocity.y = 6,0` posé à la
+main (0,46 s d'air) et un cercle livré **trois points par tick** (une
+boucle en 0,2 s). Mesuré sur la vraie rampe, par le vrai canal : le grand
+quarterpipe sortait la planche à **3,76 u/s**, 0,13 u au-dessus de sa
+lèvre, pour **10 ticks armés — 0,17 s**. Le geste, pricé sur le
+reconnaisseur lui-même, coûte **224,8 px** de pouce (300° à r 40, segments
+de 8 px), soit 0,56 s à 400 px/s, plus ~0,2 s pour VOIR le décollage.
+Aucune assertion ne compare ces deux nombres ; aucune ne pouvait rougir.
+
+**Règle** : toute mécanique déclenchée par un geste DANS une fenêtre
+(un air, un timing, un QTE) se gate sur l'inégalité **fenêtre mesurée sur
+le chemin réel ≥ réaction + coût du geste**, les deux côtés publiés dans
+la même sonde, contre un pouce de référence ÉNONCÉ (rayon, vitesse,
+réaction) et non contre le pouce parfait d'un banc. Le coût du geste se
+prend sur le reconnaisseur livré (nourrir des points jusqu'au tick où il
+tire), jamais sur la formule qu'on croit qu'il implémente. Et une passe de
+bout en bout — vraie rampe, vrai writer, pouce de référence — doit
+produire le trick, avec un NÉGATIF (un pouce plus lent que la fenêtre)
+qui ne le produit pas, sinon le gate est gratuit.
+
+⚠️ **Corollaire de pop** : un impulse « au décollage » n'est un ollie que
+depuis une surface qu'on RIDAIT (n ticks d'appui, tolérant aux
+scintillements de `is_on_floor` aux joints de facettes) et depuis la
+LÈVRE (dernière normale d'appui à moins de 10° de la verticale, la
+dernière facette de la transition et jamais celle du dessous). Mesuré,
+en trois temps : sans garde d'appui, une capsule qui frôle l'arête de la
+lèvre un tick en sortant pope DEUX fois (+10 u/s, pic 5,3 u) ; à 60°,
+une capsule poussée dans une cuvette ne pope plus depuis ses bosses de
+9-45°, mais une planche en roue libre à un mètre sous la lèvre du grand
+quarterpipe (facette de 61°) pope du mur, retombe dans la transition, et
+casse la signature d'énergie de `SkateInertiaProbe` (ratio 2,014 contre
+1,165) ; à 80°, les deux rampes et le bol popent de leur dernière facette
+et de nulle part ailleurs. Une géométrie qui rend un seuil juste
+s'ASSERTE (la dernière facette passe, celle du dessous non), elle ne se
+lit pas dans le commentaire du seuil.
 
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
