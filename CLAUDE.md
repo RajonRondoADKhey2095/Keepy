@@ -1031,6 +1031,67 @@ accesseur a produit **UN seul** rouge là où DEUX étaient attendus, ce qui a
 révélé qu'un champ était lu **en direct** à un endroit et **par l'accesseur**
 à l'autre — un vrai défaut, trouvé par la passe rouge et pas par relecture.
 
+### ⚠️ UN SEUIL QUI NE SÉPARE PAS LE CORRECTIF DE SON ABSENCE REND UNE PASSE ROUGE VERTE
+
+Complément exact de « le nombre d'échecs attendus fait partie de
+l'assertion », et il ferme le trou que celle-là laisse : on peut prédire
+le bon NOMBRE de rouges et n'en obtenir AUCUN, parce que le seuil est
+plus large que l'effet.
+
+Mesuré au CH65, deux fois dans le même lot. Un gate de dérive écrit à
+25° : le correctif mesure 8,9°, sa neutralisation **19,5°** — les deux
+sous le seuil, donc la passe rouge est revenue **ALL GREEN** sur un
+mécanisme entièrement débranché. Un gate de plafond écrit à
+`croisière × 1,02` : neutralisé, la planche atteint **10,011 u/s** contre
+une croisière de 10,0 — le plafond EST franchi, et le gate ne le voit pas.
+
+**Règle** : un seuil se choisit en mesurant la grandeur **des deux
+côtés** — avec le correctif et sans — et il doit tomber **entre les
+deux**, pas au-delà des deux. Un seuil rond choisi avant la passe rouge
+est un seuil choisi sans la seule donnée qui le détermine. Et quand la
+grandeur est un CONTRAT énoncé (« la croisière reste le plafond »), le
+seuil est le contrat **littéralement**, la marge n'étant que du flottant :
+10,011 n'est à l'intérieur d'aucune lecture de « plafond 10,0 ».
+
+⚠️ **Corollaire, et c'est ce que la passe a livré de plus utile** : la
+neutralisation qui revient verte dit aussi **à qui revient le mérite**.
+Ici elle a montré que 75,5 → 19,5° de dérive venait d'un AUTRE changement
+du même lot (la poussée déplacée sur le nez du véhicule) et que le terme
+soupçonné n'achetait que 19,5 → 8,9. Sans elle, le lot aurait crédité une
+constante d'une correction qu'elle n'a pas faite, et le lot suivant aurait
+été surpris par ce que la retirer coûte.
+
+### ⚠️ UN BANC QUI GARE UN CORPS SANS DIRE DANS QUEL SENS MESURE UNE COURBE
+
+Gratuit tant qu'un corps s'oriente instantanément ; faux le jour où
+quelque chose borne son taux de rotation — et ce jour-là il ne se
+signale pas, il rend des chiffres plausibles.
+
+Mesuré au CH65 sur **trois bancs distincts**, tous écrits quand la
+planche prenait le cap du doigt en une frame. `SkateInertiaProbe` gare nez
+au nord et vise le sud : le run-up **authored à 3,20 u** a mesuré
+**9,798 u**, parce que le trajet était devenu un demi-tour de 2,1 s suivi
+d'un arc. `SkatePhysicsProbe` posait `rotation.y = 0` pour toutes ses
+courses : celles qui arrivent par l'est ont lu la face de la funbox à
+**x = −8,03** au lieu de 2,20, et un run neutralisé est passé à **3,009 u**
+d'un volume qu'il devait traverser — deux lectures qui ressemblent
+exactement à des défauts de collider.
+
+**Règle** : un banc qui pose un corps et l'envoie quelque part **dit son
+orientation de départ**, au même titre qu'il dit sa position. Le
+corollaire vaut pour tout ce qui devient une variable le jour où une
+contrainte apparaît : ce qu'un banc n'énonce pas, il l'hérite.
+
+⚠️ **Et sous une caméra de POURSUITE, un doigt tenu à contre-sens n'est
+pas un demi-tour, c'est un CERCLE** — la caméra lace avec le corps, donc
+le cap demandé tourne avec le nez et il n'existe aucun point fixe où
+arriver. Tracé tick par tick au CH65 : (0,0,−1) → (1,0,−1) → (1,0,0) →
+(0,0,1). Un banc qui gate « la distance parcourue à contre-sens » gate un
+ARC, et il a rapporté 10,467 u sur un corps qui faisait exactement ce
+qu'il fallait. Ce qui se gate est la propriété réelle — ici « il ne dépense
+pas sa poussée tant qu'il est pointé ailleurs » — lue sur une fenêtre où
+elle a un sens.
+
 ### ⚠️ UN ÉTALON QUI PARTAGE LE CONTRÔLEUR DE CE QU'IL MESURE NE MESURE RIEN
 
 Le banc de difficulté du karting a été vert pendant tout un lot sur une

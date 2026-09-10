@@ -314,6 +314,166 @@ const REST_STEP: float = 0.004
 ## crawl reads as a bug.
 const COAST_QUADRATIC_SHARE: float = 0.75
 
+## =====================================================================
+## CH65 -- THE BOARD'S OWN YAW CAP, AND WHY IT IS THE HALF CH64 LEFT OUT
+##
+## ⚠️ MEASURED BEFORE IT WAS WRITTEN, and the measurement is the whole
+## argument. CH64 calmed the CHASE CAMERA -- `HubCamera.BOARD_YAW_RATE_MAX`,
+## 110 deg/s -- and left the BOARD's facing written straight from the
+## finger with `rotation.y = atan2(...)`, no rate between them. What that
+## costs, on the shipped tree, through the real writer (CH65 recon):
+##
+##   thumb swept at 150 px/s  ->  worst board yaw   73.4 deg/s
+##   thumb swept at 400 px/s  ->  worst board yaw  163.6 deg/s
+##   thumb swept at 800 px/s  ->  worst board yaw  326.4 deg/s
+##   ONE coalesced drag, straight ahead to full lock -> 90 deg in ONE
+##   frame, i.e. 5400 deg/s
+##
+## So at any thumb speed a player actually uses, the board turns FASTER
+## THAN THE CAMERA IS ALLOWED TO FOLLOW -- by 1.5x at a gentle sweep and
+## by 3x at a brisk one. The frame cannot show where the board went,
+## which is Mathieu's "on n'arrive pas a calculer ses trajectoires" in
+## one number. A cap on the camera that the thing it films may exceed is
+## not a cap on anything.
+##
+## ⚠️ AND IT IS DELIBERATELY BELOW THE CAMERA'S, not equal to it. Two
+## first-order followers capped at the same rate never converge during a
+## sustained turn: the camera spends its whole allowance keeping station
+## and never closes the error. The board is given the smaller number so
+## the camera has headroom, and the INEQUALITY is what a probe gates --
+## `SkateInputProbe` PHASE T asserts `YAW_RATE_MAX < BOARD_YAW_RATE_MAX`,
+## so a later lot that raises this one past what the camera can follow
+## reddens here instead of shipping the defect again.
+##
+## The VALUE is a feel number and this file says so rather than dressing
+## it as a contract (CLAUDE.md CH62: a headless bench cannot sign a game
+## feel). What the bench CAN sign, and does: that the rate is bounded,
+## that it is bounded BELOW the camera's, and that a swept thumb no
+## longer produces a yaw the frame cannot follow. If device says the
+## board is now too slow to turn, this is the one constant to move.
+const YAW_RATE_MAX: float = deg_to_rad(85.0)
+
+## ⚠️ AND THE CAP IS THE **CRUISING** ONE. A STOPPED BOARD TURNS FREELY,
+## AND WITHOUT THAT THIS LOT SHIPPED A NEW COMPLAINT TO CURE AN OLD ONE.
+##
+## The device report is about a board that is too lively AT SPEED -- "il
+## part dans tous les sens", said of a thing that was moving. Nothing in
+## it says a stopped board turns too fast. A flat cap does not know the
+## difference, and the measurement of what that cost is unambiguous: with
+## 85 deg/s at every speed, a board at rest asked to set off the other way
+## spends 180 / 85 = 2.12 s pointing itself, and `align` below quite
+## rightly gives it no push while it is aimed backwards. `SkateDriveProbe`
+## measured the result -- **0.004 u travelled in 90 ticks**, a board that
+## does not answer at all for a second and a half. Mounting a parked board
+## and setting off the other way is not an exotic case; it is most of what
+## a player does in a park this size.
+##
+## It is also what a board does. You can shuffle a stopped deck round
+## under your feet in a moment; at 10 u/s you cannot, and that is the
+## regime the report is about. So the cap is interpolated between the two
+## by the board's own speed, which is bounded, monotone, and continuous --
+## the three things CLAUDE.md (CH62) says a headless bench may actually
+## sign about a response curve. `SkateInputProbe` PHASE T publishes the
+## whole curve and gates that it never passes this ceiling, and that at
+## cruise it is YAW_RATE_MAX and not this.
+##
+## Feel numbers, both of them, and the same rule if device disagrees.
+const PIVOT_RATE_MAX: float = deg_to_rad(240.0)
+
+## ⚠️ THE KNEE IS **BELOW** CRUISE, AND THAT IS TO KILL A FEEDBACK LOOP
+## RATHER THAN TO TASTE. Interpolated all the way to cruise, the cap is a
+## function of a speed that TURNING ITSELF SPENDS: a carve costs a little
+## speed, the lower speed raises the cap, the faster turn costs more
+## speed. Measured with the knee at cruise, a held 90 deg turn settled at
+## **20.6 deg of drift** instead of 5.9 -- it converged, so it was not a
+## runaway, but a 6% change in the cap had moved the drift by 3.5x, which
+## is a loop with its hand on the tiller.
+##
+## ⚠️ AND THE BAND IS NARROW AND LOW, BECAUSE A WIDE ONE LEFT THE LOOP
+## ALIVE WHERE IT MATTERED. With the boost fading only at 0.70 of cruise,
+## `SkateInputProbe` PHASE T -- a full-lock finger held from a standstill,
+## which never gets near cruise -- read **150.2 / 114.3 / 97.2 / 85.0 /
+## 85.0 / 112.1** deg/s: the last window FASTER than the one before,
+## because the carve had spent enough speed to climb back into the ramp.
+## Bounded, but not convergent, and PHASE T gates convergence for the good
+## reason that a rate which climbs run over run is a defect at any taste.
+##
+## The boost is for a board that is MANOEUVRING -- parked, or crawling --
+## and 0.15 to 0.45 of cruise (1.5 to 4.5 u/s) is that band. Anything a
+## player would call riding sits above it on a flat 85 deg/s with no
+## speed term in it at all, so there is no loop left to converge.
+const PIVOT_BOOST_BELOW: float = 0.15
+const PIVOT_BOOST_ABOVE: float = 0.45
+
+## The rate the nose may turn at right now: PIVOT_RATE_MAX stopped,
+## YAW_RATE_MAX from PIVOT_KNEE of cruise upward. Published rather than
+## recomputed, because a bench that spelled this a second time would be
+## gating its own arithmetic instead of the board's.
+func yaw_rate_now() -> float:
+	var v: float = Vector2(velocity.x, velocity.z).length() / maxf(_cruise, 0.01)
+	var t: float = clampf((v - PIVOT_BOOST_BELOW)
+		/ maxf(PIVOT_BOOST_ABOVE - PIVOT_BOOST_BELOW, 0.01), 0.0, 1.0)
+	return lerpf(PIVOT_RATE_MAX, YAW_RATE_MAX, t)
+
+## =====================================================================
+## CH65 -- LATERAL GRIP: WHY A BOARD'S VELOCITY FOLLOWS ITS NOSE
+##
+## ⚠️ THE SECOND HALF OF THE DEVICE REPORT, AND THE MEASUREMENT CONTRADICTS
+## THE WORDS IT CAME IN. Mathieu: "impossible de garder une vitesse stable
+## en tournant". Measured through the real writer on the shipped tree, a
+## held 90 deg turn entered at cruise:
+##
+##   |v| : entered 9.9152, minimum 8.5742 -- 86.5% of entry. It HOLDS.
+##   throttle through the whole turn: min 1.0000, max 1.0000 -- so there
+##   is NO coupling between the heading and the throttle. That hypothesis
+##   is dead, by measurement and not by reading.
+##
+## The speed does not drop. What drops is the component along the way the
+## board POINTS: 9.9152 -> 0.2845 u/s on the first frame, 2.9% of entry,
+## settling at ~2.2. The board was travelling at a STEADY-STATE DRIFT OF
+## 75.5 DEGREES -- very nearly dead sideways, for as long as the finger
+## held the turn -- because nothing in this model ever resisted sideways
+## motion. Wheels do. That is the defect, and "the speed falls in a turn"
+## was the only way it could look from a phone.
+##
+## The term is a first-order decay of the LATERAL component of the
+## horizontal velocity, and it has one property that makes it safe to add
+## to a model marked untouchable: ON A STRAIGHT RUN IT IS IDENTICALLY
+## ZERO. The velocity is then parallel to the facing, the lateral
+## component is the zero vector, and every number CH54 and CH61 published
+## -- the 3.2 u run-up, the 3.2 u run-out, the 18.043 u coast, the 10.0
+## cruise -- is arithmetically untouched. `SkateInertiaProbe` PHASE L
+## re-measures all of them rather than trusting this paragraph.
+##
+## Also a feel number, also a single constant, same rule if device
+## disagrees.
+## ⚠️ AND A RED PASS CORRECTED THIS BLOCK BEFORE IT SHIPPED, SO THE CREDIT
+## IS SHARED HONESTLY. Neutralising GRIP_LAMBDA to 0.0 came back **ALL
+## GREEN** -- a red pass that reddens nothing, which CLAUDE.md says is a
+## question and not a shrug. Measured rather than argued, full-lock carve
+## drift at cruise:
+##
+##   the shipped tree, before CH65 ................ 75.5 deg, 2.9 % kept
+##   CH65 with the push on the NOSE, grip 0.0 ..... 19.5 deg, 94.3 % kept
+##   CH65 with the push on the nose, grip 2.0 ..... 15.6 deg, 96.1 % kept
+##   CH65 with the push on the nose, grip 8.0 ......  8.9 deg, 98.5 % kept   <- shipped
+##   CH65 with the push on the nose, grip 12.0 .....  6.7 deg, 97.4 % kept
+##
+## So MOST of the cure is the push moving onto the nose, not this term:
+## 75.5 -> 19.5 is that change, and 19.5 -> 8.9 is this one. Said plainly
+## because a later lot reading only this constant would credit it with a
+## fix it did not make, and would then be surprised by what removing it
+## costs. `SkateInertiaProbe` PHASE G now gates the carve at 14 deg, which
+## is a threshold that SEPARATES 8.9 from 19.5 -- the first gate was
+## written at 25 and separated nothing, which is why the red pass came
+## back green.
+##
+## 8.0 rather than 12.0 because a board that keeps 6.7 deg through a
+## full-lock carve is on rails, and a skateboard is not; 8.9 deg is a
+## slide a player can see and still a nose he can aim. Rather than 2.0
+## because "calculer ses trajectoires" is the thing being bought.
+const GRIP_LAMBDA: float = 8.0
+
 var _cruise: float = 0.0
 var _accel_u: float = 0.0
 var _brake_u: float = 0.0
@@ -821,9 +981,30 @@ func drive(delta: float) -> void:
 	# velocity is deliberate: a board pushed from a standstill has no
 	# velocity to read a direction from, and one sliding sideways would
 	# be pushed sideways.
-	var aim: Vector3 = _heading
-	if aim == Vector3.ZERO:
-		aim = Vector3(sin(rotation.y), 0.0, cos(rotation.y))
+	# ⚠️ CH65 -- THE PUSH IS ALONG THE **NOSE**, ALWAYS, AND THAT IS A
+	# CORRECTION OF THIS BLOCK RATHER THAN A TWEAK OF IT.
+	#
+	# Before this lot the facing was written straight from the heading, so
+	# "along the heading" and "along the nose" were the same vector and the
+	# distinction cost nothing. The yaw cap makes them differ by as much as
+	# a board can lag its own thumb, and pushing along the one it is NOT
+	# pointing at is a board shoved sideways by its own legs -- which is
+	# both physically wrong (a deck pushes where it points) and exactly the
+	# unpredictability the device report is about.
+	#
+	# MEASURED, and it is why this line moved rather than being reasoned
+	# into place. `SkateInertiaProbe` PHASE L parks the board facing north
+	# and aims it south; with the push on the heading, the board spent the
+	# whole 180 deg reversal being shoved one way while the wheels held it
+	# another, and CH54's authored 3.20 u run-up measured **9.798 u**. With
+	# the push on the nose it is CH54's number again, and the reversal is
+	# an honest 2.1 s curve instead of a fight.
+	#
+	# What `_heading` still does, and all it does: it steers the nose,
+	# below, at no more than YAW_RATE_MAX. ZERO means "keep your own
+	# facing" exactly as before -- the two cases now share one line instead
+	# of agreeing by accident.
+	var aim := Vector3(sin(rotation.y), 0.0, cos(rotation.y))
 
 	# ---- 1-3: the drive model, on the HORIZONTAL velocity ------------
 	# It PERSISTS. Nothing below rewrites it from a profile; every term
@@ -843,9 +1024,68 @@ func drive(delta: float) -> void:
 		# topped out at 10.180 u/s against CH54's 10.00. A cap that a tick
 		# can step over is not a cap, and 0.18 u/s of it is exactly the
 		# kind of number a later lot finds in a table and cannot explain.
+		# ⚠️ CH65 -- AND YOU DO NOT PUSH UNTIL YOU ARE POINTED. `align` is
+		# the cosine between the nose and what the thumb has asked for; the
+		# push is scaled by it, and a nose more than 90 deg from the ask
+		# gets none at all.
+		#
+		# It exists because moving the push onto the nose created a case
+		# that had never existed while the facing snapped: a board AT REST
+		# asked to go the other way accelerated for the ~2.1 s of its own
+		# reversal in the direction it happened to be parked, running away
+		# from the player before coming round. Measured on the benches that
+		# park a board and aim it backwards -- `SkateInertiaProbe` PHASE L
+		# never reached cruise at all (5.544 u/s) and `SkatePhysicsProbe`
+		# rolled 0.55 u where it wanted 6. It is also what a person does on
+		# a board: the foot goes down once the deck points somewhere.
+		#
+		# ⚠️ AND IT IS ARITHMETICALLY ABSENT FROM EVERYTHING THIS REPO HAS
+		# MEASURED. On a straight run the nose IS the ask and `align` is
+		# exactly 1.0; through a carve the nose trails its thumb by the few
+		# degrees the yaw cap costs and `align` is 0.999. It only bites on
+		# a reversal, which is the case it was written for. A heading of
+		# ZERO -- a finger held inside the slop, meaning "straight on" --
+		# is full push by definition, because the nose cannot disagree with
+		# an ask that is its own facing.
+		var align: float = 1.0
+		if _heading != Vector3.ZERO:
+			align = maxf(aim.dot(_heading), 0.0)
 		var along: float = vh.dot(aim)
 		if along < _cruise:
-			vh += aim * minf(_push * n.y * delta * _throttle, _cruise - along)
+			vh += aim * minf(_push * n.y * delta * _throttle * align, _cruise - along)
+			# ⚠️ CH65 -- AND THE **SPEED** IS CAPPED, NOT ONLY ITS COMPONENT.
+			# MEASURED, on flat ground, region and module witnesses both
+			# clean: with the yaw cap above holding the nose back while the
+			# camera keeps turning the commanded heading, the facing lags
+			# the heading by ~46 deg -- so `along` reads |v| cos(46) and
+			# the trim above happily let the board wind up to
+			# 10 / cos(46.6) = 14.56 u/s against a 10.0 cruise. The cap was
+			# measuring the push's own direction and calling it the speed.
+			#
+			# The hole is older than this lot; CH64 simply could not reach
+			# it, because with no lateral grip the board drifted at 75 deg
+			# and `along` never came near the cap at all. Adding the wheels
+			# is what made a latent cap a live one.
+			#
+			# `maxf(was, _cruise)` and not `_cruise`, because a board that
+			# arrives above cruise down a transition keeps what gravity
+			# gave it -- the push may never ADD to that, and may still
+			# REDIRECT it, which is the whole reason the push survives at
+			# speed at all.
+			#
+			# ⚠️ AND IT IS ARITHMETICALLY ABSENT FROM A STRAIGHT RUN. There
+			# `along` is |v| itself, and the trim on the line above already
+			# stops the sum at exactly `_cruise`; this clamp then finds
+			# nothing to clamp. With the push moved onto the nose it is
+			# belt and braces rather than load-bearing -- the drift a
+			# gripped board still carries through a full-lock carve is
+			# 9.4 deg, worth 1.3% of cap -- and it is kept because "cruise is the ceiling"
+			# is a contract and a contract should not rest on a cosine. Every number CH54 and CH61
+			# published is untouched by it, and `SkateInertiaProbe` PHASE L
+			# re-measures them rather than taking that on trust.
+			var ceiling: float = maxf(was, _cruise)
+			if vh.length() > ceiling:
+				vh = vh.normalized() * ceiling
 	elif _throttle < 0.0:
 		# The brake, against the velocity itself rather than along the
 		# heading: a brake that pushed backwards along the aim would turn
@@ -858,6 +1098,16 @@ func drive(delta: float) -> void:
 	# than on a speed equality that would be false in the last decimal.
 	vh -= vh * minf(_drag_k * was * delta, 1.0)
 	vh = vh.move_toward(Vector3.ZERO, _roll_stop * n.y * delta)
+	# ---- CH65: the wheels. See GRIP_LAMBDA. -------------------------
+	# ⚠️ AGAINST THE FACING THE LAST TICK LEFT, which is the same one-tick
+	# lag `n` above is read with and is named for the same reason: the
+	# rotation for THIS tick is written below, after the move model, and
+	# reordering the two to close the lag would move every trace this file
+	# has ever published. On a straight run `lat` is the zero vector and
+	# this line is arithmetically absent.
+	var facing := Vector3(sin(rotation.y), 0.0, cos(rotation.y))
+	var lat: Vector3 = vh - facing * vh.dot(facing)
+	vh -= lat * minf(GRIP_LAMBDA * delta, 1.0)
 	velocity.x = vh.x
 	velocity.z = vh.z
 
@@ -890,7 +1140,20 @@ func drive(delta: float) -> void:
 		# device says it is still too abrupt, a turn RATE is the first
 		# knob and it belongs in a feel lot with a number measured on a
 		# phone, not invented here.
-		rotation.y = atan2(_heading.x, _heading.z)
+		# ⚠️ CH65: RATE-LIMITED, and the comment above is kept because it
+		# is still the reason the facing follows the finger AT ALL. What
+		# it got wrong is the last sentence: it offered a turn rate as
+		# "the first knob if device says it is too abrupt, with a number
+		# measured on a phone". Device said exactly that, the number was
+		# measured on this bench instead (see YAW_RATE_MAX), and here it
+		# is. `angle_difference` takes the short way round, so a heading
+		# reversed under the thumb turns through 180 deg in either
+		# direction rather than unwinding the long way.
+		var want: float = atan2(_heading.x, _heading.z)
+		var rate: float = yaw_rate_now()
+		var turn: float = clampf(angle_difference(rotation.y, want),
+			-rate * delta, rate * delta)
+		rotation.y = wrapf(rotation.y + turn, -PI, PI)
 	move_and_slide()
 	_on_module = is_on_floor()
 	_supported = _hub_floor()

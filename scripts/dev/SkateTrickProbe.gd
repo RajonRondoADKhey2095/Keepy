@@ -114,8 +114,23 @@ func _gesture(points: Array, air: bool) -> Array:
 	_touch._unhandled_input(_press(points[0]))
 	_touch.set_air(air)
 	_wrote_heading = false
+	# ⚠️ CH65 -- ONE WRITER TICK PER POINT, BECAUSE THE HEADING IS A
+	# PER-TICK QUANTITY NOW. The finger is filtered (`SkateTouchInput.
+	# FINGER_LAMBDA`) and an event only MOVES it; the tick turns it into a
+	# heading. A gesture delivered with no clock between its points writes
+	# no heading at all, which read here as "on the ground it was not
+	# steering" -- the opposite of the truth.
+	#
+	# ⚠️ AND THE TRICK ITSELF IS UNAFFECTED BY THE FILTER, WHICH IS THE
+	# WHOLE POINT OF THIS PROBE STILL PASSING: `_trace` walks the RAW
+	# finger. A filtered path is a SHORTER path and turns through the same
+	# angle over fewer segments, so filtering it would have quietly raised
+	# the effective TRICK_SWEEP_DEG and started dropping honest circles.
+	# Every threshold assertion above and below this line is the evidence
+	# that it did not.
 	for k in range(1, points.size()):
 		_touch._unhandled_input(_drag(points[k]))
+		_touch.tick(1.0 / 60.0)
 		if _touch.has_heading():
 			_wrote_heading = true
 	var fired: Array = _tricks.duplicate()
@@ -205,6 +220,11 @@ func _phase_gesture() -> void:
 		_touch.enabled = true
 		_touch._unhandled_input(_press(FINGER))
 		_touch._unhandled_input(_drag(FINGER + SkateTouchInput.screen_offset_for(_camera, h, 140.0)))
+		# CH65: settle the finger filter before reading the heading. 60
+		# ticks is far past it, and no world frame is stepped, so the
+		# camera basis the round trip is taken through does not move.
+		for _t in 60:
+			_touch.tick(1.0 / 60.0)
 		var back: Vector3 = _touch.heading_world(_camera)
 		_touch._unhandled_input(_release(FINGER))
 		_touch.enabled = false
@@ -385,8 +405,11 @@ func _phase_landing() -> void:
 		await get_tree().physics_frame
 	_check(absf(angle_difference(facing_at_takeoff, body.rotation.y)) < 0.0001,
 		"L and twelve ticks on, the board still points where it landed (%.4f) -- no turn on contact" % body.rotation.y)
-	_check(_touch.throttle >= 1.0 and body.driving(),
-		"L and the finger, still down, is still propelling it")
+	# CH65: 0.99 and not 1.0 -- the ramp is first-order and asymptotic, and
+	# by this point in the flight it has long since arrived. PHASE C of
+	# SkateInputProbe is what gates the ramp itself.
+	_check(_touch.throttle >= 0.99 and body.driving(),
+		"L and the finger, still down, is still propelling it (%.4f)" % _touch.throttle)
 	# The negative: an UNARMED hop with the finger held to the side keeps
 	# steering through the hop.
 	_touch._unhandled_input(_drag(_touch.anchor + Vector2(140.0, 0.0)))

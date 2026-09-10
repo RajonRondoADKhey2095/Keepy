@@ -208,6 +208,114 @@ signal trick(clockwise: bool)
 const TRICK_SWEEP_DEG: float = 300.0
 const TRICK_SEG_PX: float = 8.0
 
+## =====================================================================
+## CH65 -- THE THROTTLE RAMPS, AND THE FINGER IS FILTERED
+##
+## Two device complaints, one file, and both are answered HERE rather than
+## in the physics -- deliberately, because the model CH61 solved from
+## CH54's authored distances is the thing this repo has the most measured
+## reasons not to move. What was wrong was never the push; it was that the
+## push arrived as a STEP and that the heading answered a thumb's every
+## tremble.
+##
+## ⚠️ (a) THE RAMP. `throttle` stepped 0 -> 1 on the press, so the board's
+## acceleration went from 0 to the full 17.2165 u/s^2 between two frames:
+## an infinite jerk, which is what "la poussee est trop brutale au
+## demarrage" is. Measured on the shipped tree (CH65 recon, finger held
+## inside the slop from a standstill): +0.2656 u/s on the very first tick,
+## 50% of cruise at 0.333 s, 99% at 0.683 s -- a straight line out of a
+## standstill with no beginning.
+##
+## The ramp is a first-order approach at `THROTTLE_LAMBDA`, so the FORCE
+## starts at zero and builds. It is written as a lambda and not as a fixed
+## time because a lift must fall the same way a press rises, and one
+## constant that does both cannot drift apart.
+##
+## ⚠️ AND THE VALUE IS ANCHORED, NOT TASTED. CH54 authored a run-up
+## DISTANCE of 3.2 u (`HubTransport.SKATE_ACCEL_U`) and CH61 solved the
+## push from it; a ramp lengthens that run-up, and a ramp long enough to
+## move it appreciably would be re-authoring CH54's ride under the name of
+## a feel fix. The constant is the largest one whose run-up stays inside
+## 10% of the authored 3.2 u, which `SkateInertiaProbe` PHASE L measures
+## rather than trusts. What device may still move is the number; what it
+## may not move is that the run-up is re-gated when it does.
+##
+## ⚠️ (b) THE FILTER. The heading is the DIRECTION of the finger's offset,
+## so its angular gain is atan(1 / r) -- inversely proportional to how far
+## the thumb has travelled, and therefore LARGEST exactly where a thumb
+## rests. Measured on the shipped tree, through this writer:
+##
+##   offset  17 px -> 3.3665 deg per pixel of travel
+##   offset 140 px -> 0.4092 deg per pixel
+##   a +-3 px tremble at a 20 px offset swings the commanded heading
+##   through 17.06 deg, peak to peak; +-6 px through 33.40; +-10 px
+##   through 53.13
+##
+## Three pixels is well under a millimetre on Mathieu's phone. "Il part
+## dans tous les sens" is that line. The board's own yaw cap (CH65,
+## `SkateBoardBody.YAW_RATE_MAX`) bounds how fast that can be OBEYED; this
+## filter stops it being ASKED FOR, and the two are complementary rather
+## than alternative -- a cap alone still turns a tremble into a slow,
+## committed lean, because the commanded heading it is chasing is wrong.
+##
+## ⚠️ AND IT FILTERS THE HEADING'S FINGER ONLY, NEVER THE TRICK'S. The
+## circle recogniser walks the RAW finger (`_trace` is still fed from
+## `_move`), because a filtered path is a shorter path and a shorter path
+## turns through the same angle more slowly -- filtering it would silently
+## raise the effective TRICK_SWEEP_DEG and start dropping honest circles.
+## `SkateTrickProbe` gates that the gesture still fires, from both sides.
+const THROTTLE_LAMBDA: float = 9.0
+const FINGER_LAMBDA: float = 14.0
+
+## The filtered finger, in screen pixels: what the HEADING is computed
+## from. Equal to `finger` while nothing is moving, and lagging it while
+## something is.
+var _smooth: Vector2 = Vector2.ZERO
+
+## What the throttle is ramping TOWARD: 1.0 while a finger is down.
+var _throttle_want: float = 0.0
+
+## For the bench: the filtered finger, published rather than recomputed.
+func smooth_finger() -> Vector2:
+	return _smooth
+
+## ⚠️ THE WRITER NOW HAS A TICK, AND CH63 LEFT THE DOOR OPEN FOR IT: "a
+## later lot that wants a pressure or a ramp writes it here without
+## changing a single reader". This is that lot.
+##
+## ⚠️ IT IS CALLED BY ITS READER, NOT BY THE ENGINE, and that is the whole
+## reason it is a method and not a `_physics_process`. This node is a
+## CHILD of HubTransport, so the engine would run the parent's tick first
+## and the reader would spend every frame on the filter's PREVIOUS output
+## -- a one-frame lag that depends on where in the tree somebody put the
+## node. `HubTransport._advance_board` calls this first, on the same delta
+## it then drives the board with, exactly as it already pushes `set_air()`
+## down. Nothing about the answer depends on the tree any more.
+##
+## Both things it advances are per-TICK quantities: a filter stepped on a
+## different clock from its reader is a filter whose output depends on the
+## frame rate.
+func tick(delta: float) -> void:
+	if delta <= 0.0:
+		return
+	throttle = _approach(throttle, _throttle_want, THROTTLE_LAMBDA, delta)
+	if not steering_active:
+		return
+	_smooth = _smooth.lerp(finger, minf(FINGER_LAMBDA * delta, 1.0))
+	_apply_offset()
+
+static func _approach(from: float, to: float, lambda: float, delta: float) -> float:
+	return from + (to - from) * minf(lambda * delta, 1.0)
+
+## The one place the offset becomes a heading, so the event path and the
+## filter path cannot hold two answers to the same question.
+func _apply_offset() -> void:
+	var offset: Vector2 = _smooth - anchor
+	if offset.length() < SLOP_PX:
+		heading_px = Vector2.ZERO
+		return
+	heading_px = offset
+
 var _air: bool = false
 var _path_last: Vector2 = Vector2.ZERO
 var _path_dir: Vector2 = Vector2.ZERO
@@ -241,6 +349,9 @@ func set_air(on: bool) -> void:
 ## tap when the finger finally lifts.
 func rebase() -> void:
 	anchor = finger
+	# CH65: and the filter with it, or the next tick would immediately
+	# write back the heading this call exists to cancel.
+	_smooth = finger
 	heading_px = Vector2.ZERO
 
 func _start_path() -> void:
@@ -306,6 +417,8 @@ func _clear() -> void:
 	_dragged = false
 	steering_active = false
 	throttle = 0.0
+	_throttle_want = 0.0
+	_smooth = Vector2.ZERO
 	heading_px = Vector2.ZERO
 	_air = false
 	_sweep = 0.0
@@ -433,6 +546,11 @@ func _begin(index: int, at: Vector2) -> void:
 	_index = index
 	anchor = at
 	finger = at
+	# ⚠️ THE FILTER STARTS **ON** THE FINGER, not at zero and not where the
+	# last gesture left it. A filter seeded anywhere else would spend its
+	# first frames sweeping the screen from that stale point, and the board
+	# would answer a heading nobody asked for on the press.
+	_smooth = at
 	steering_active = true
 	_dragged = false
 	heading_px = Vector2.ZERO
@@ -444,21 +562,39 @@ func _begin(index: int, at: Vector2) -> void:
 	# throttle opens. One line apart, and swapping them re-creates exactly
 	# the defect the signal exists to avoid.
 	pressed.emit()
-	throttle = 1.0
+	# ⚠️ CH65: THE **TARGET** OPENS ON THE PRESS, and the throttle ramps to
+	# it from whatever it is. The block above is untouched in its reason --
+	# the first millimetre of a gesture must not be dead -- and the only
+	# change is that full push now arrives over THROTTLE_LAMBDA instead of
+	# between two frames.
+	_throttle_want = 1.0
 
 func _move(at: Vector2) -> void:
 	finger = at
 	if _air:
+		# ⚠️ THE RAW FINGER, AND ONLY THE RAW ONE. See FINGER_LAMBDA: a
+		# filtered path is a shorter path, and the recogniser measures the
+		# angle a path turns through per segment of it.
 		_trace(at)
-	var offset: Vector2 = finger - anchor
-	if offset.length() < SLOP_PX:
-		# Back inside the slop: no heading, so the board goes straight on
-		# from wherever it is now. The throttle is untouched -- the finger
-		# is still down, so the board is still being propelled.
-		heading_px = Vector2.ZERO
-		return
-	_dragged = true
-	heading_px = offset
+	# ⚠️ `_dragged` IS LATCHED ON THE RAW OFFSET, NOT THE FILTERED ONE, and
+	# that is the exit gesture's contract rather than an oversight. It
+	# decides only whether a release is a tap, and a thumb that has plainly
+	# travelled 40 px must not read as a tap because a filter had not
+	# caught up when it lifted.
+	if (finger - anchor).length() >= SLOP_PX:
+		_dragged = true
+	# ⚠️ AND THE HEADING IS **NOT** WRITTEN HERE ANY MORE. It is a per-tick
+	# quantity now (see `tick()`), so an event only moves the finger and
+	# the tick decides what that means. Writing it here as well would step
+	# the filter once per EVENT on top of once per FRAME, which makes its
+	# time constant a function of how fast the platform coalesces drags --
+	# a different filter on a phone from the one this bench measures.
+	#
+	# The cost is one frame: a bench that delivers a drag and reads the
+	# heading in the same breath now reads ZERO, and every probe in this
+	# repo that did so has been given its `physics_frame`. That is the
+	# contract, not an accident of it: a thumb cannot ask for a heading
+	# faster than the board can be told about one.
 
 func _end() -> void:
 	var held_s: float = float(Time.get_ticks_msec()) / 1000.0 - _down_at_s
@@ -469,6 +605,13 @@ func _end() -> void:
 	# stops the push; what the board already has, it keeps, and CH61's
 	# coast is what ends the roll. A lift that zeroed the board's velocity
 	# would read on device as a handbrake.
+	#
+	# ⚠️ CH65: IT GOES **AT ONCE**, not down the ramp. The ramp exists so a
+	# push does not arrive as a step; a LIFT that lingered would keep
+	# pushing a board the player has let go of, which is the one thing
+	# neither the old scheme nor the new one may do. The target and the
+	# value are both zeroed, so no tick can put it back.
+	_throttle_want = 0.0
 	throttle = 0.0
 	heading_px = Vector2.ZERO
 	_dragged = false
