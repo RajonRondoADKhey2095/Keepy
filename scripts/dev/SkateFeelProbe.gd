@@ -301,6 +301,7 @@ func _phase_budget() -> void:
 	DevTools.set_physics_override(false)
 	var off_hub: Node = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(off_hub)
+	var off_muted: int = _mute_overlay(off_hub)
 	var off: Dictionary = await _age_and_read(off_hub)
 	var off_again: Dictionary = _census(off_hub)
 	var off_audio: int = _count_audio(off_hub)
@@ -310,6 +311,7 @@ func _phase_budget() -> void:
 	DevTools.set_physics_override(true)
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(_hub)
+	var on_muted: int = _mute_overlay(_hub)
 	var on: Dictionary = await _age_and_read(_hub)
 	var on_again: Dictionary = _census(_hub)
 	_keepy = _hub.find_child("Keepy", true, false) as KeepyHopper
@@ -331,6 +333,27 @@ func _phase_budget() -> void:
 				int(on.get(key, -1)) - int(off.get(key, -1))])
 	print("     audio players in the tree: ON %d   OFF %d" % [_on_audio_players, off_audio])
 	_check(int(on.get("nodes_scene", -1)) > 0, "B INSTRUMENT: the census counted something at all")
+	# ⚠️ AND THE DEBUG OVERLAY IS MUTED ON BOTH WORLDS -- MEASURED, NOT
+	# TIDINESS. `total_prims` counts the whole engine, WHICH INCLUDES THE
+	# PERF OVERLAY'S OWN TEXT: 350 primitives of glyph quads whose first
+	# line reads "FPS 9  (min 1)". One digit fewer in an FPS reading is TWO
+	# primitives fewer, so this counter carries a term that moves with the
+	# MACHINE'S LOAD and with nothing in the game -- and it is worse than
+	# noise, because it is self-referential (the overlay prints the very
+	# number being gated, one frame late).
+	#
+	# It cost a red: a CH63 LOT 2 run read ON 72203 against OFF 72205 and
+	# reported the lot as costing -2 primitives while parked. Two more runs
+	# of the SAME pair of trees put the digit back and went green. The
+	# within-world tremor test below cannot catch it either -- its two
+	# readings are 8 frames apart, which is not long enough for an FPS
+	# digit to turn over.
+	#
+	# Positive first, CLAUDE.md's blind check: the muting must have
+	# REMOVED something, or "the overlay is out of the count" and "the
+	# overlay was never in it" read alike.
+	_check(off_muted > 0 and on_muted > 0,
+		"B INSTRUMENT: the perf overlay's own text was found and muted on both worlds")
 	_check(_on_had_audio and _on_had_shadow,
 		"B INSTRUMENT: the ON world really built both feel nodes")
 	# ⚠️ ZERO IS THE ANSWER, AND ZERO PASSES FOR FREE -- so it is proved
@@ -373,6 +396,24 @@ func _phase_budget() -> void:
 			continue
 		_check(int(on.get(key, -1)) == int(off.get(key, -2)),
 			"B %s unchanged while parked (bench immobile on both worlds)" % key)
+
+## Hides the perf overlay's Label -- the one canvas item in this scene
+## whose primitive count depends on the machine rather than on the game.
+## Returns the number of characters it was drawing, so the caller can
+## assert it actually found one. `snapshot()` is unaffected: the overlay
+## keeps computing and keeps writing `text`, it simply stops drawing it.
+func _mute_overlay(hub: Node) -> int:
+	var perf := hub.find_child("PerfOverlay", true, false) as HubPerfOverlay
+	if perf == null:
+		return 0
+	var muted: int = 0
+	for child in perf.get_children():
+		var label := child as Label
+		if label == null:
+			continue
+		muted += maxi(label.text.length(), 1)
+		label.visible = false
+	return muted
 
 func _age_and_read(hub: Node) -> Dictionary:
 	for _i in WORLD_AGE:
@@ -443,7 +484,7 @@ func _count_audio(hub: Node) -> int:
 func _park_board(flat: Vector3) -> void:
 	var body := _transport.board_body()
 	if _transport.is_riding_board():
-		body.clear_target()
+		body.stop()
 		body.velocity = Vector3.ZERO
 		body.global_position = HubSurface.ground(NEUTRAL)
 		_keepy.call("follow_carrier")
@@ -459,7 +500,7 @@ func _park_board(flat: Vector3) -> void:
 			break
 		await get_tree().physics_frame
 	_keepy.dismount_vehicle()
-	body.clear_target()
+	body.stop()
 	body.velocity = Vector3.ZERO
 	body.global_position = HubSurface.ground(Vector3(flat.x, 0.0, flat.z))
 	body.rotation.y = 0.0
@@ -476,7 +517,7 @@ func _park_board(flat: Vector3) -> void:
 ## whatever pace a run happened to pass through.
 func _hold(v: float) -> Dictionary:
 	var body := _transport.board_body()
-	body.clear_target()
+	body.stop()
 	for _t in HOLD_TICKS:
 		body.velocity = Vector3(0.0, body.velocity.y, -v)
 		await get_tree().physics_frame
@@ -660,7 +701,7 @@ func _phase_height() -> void:
 		# The blob is UNDER the board, always: it is dropped onto what is
 		# below it, so its own y can never be above the board's.
 		worst_gap = maxf(worst_gap, shadow.drawn_y() - body.global_position.y)
-		if not body.has_target() and body.speed() <= body.rest_speed() and shadow.drawn_lift() < 0.02:
+		if not body.driving() and body.speed() <= body.rest_speed() and shadow.drawn_lift() < 0.02:
 			break
 	print("     air ticks %d | peak blob lift %.3f u | blob alpha %.4f -> %.4f | blob scale %.3f"
 		% [air_ticks, peak_lift, alpha_on_ground, alpha_at_peak, scale_at_peak])
@@ -731,7 +772,7 @@ func _phase_audio() -> void:
 	var before: int = audio.land_count()
 	await _park_board(NEUTRAL)
 	_check(_transport.mount_board(), "A INSTRUMENT: aboard for the controlled drop")
-	body.clear_target()
+	body.stop()
 	body.velocity = Vector3.ZERO
 	body.global_position += Vector3(0.0, DROP_U, 0.0)
 	var worst_fall: float = 0.0

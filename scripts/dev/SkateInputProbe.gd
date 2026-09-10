@@ -1,19 +1,41 @@
 extends Node
-## CH63 LOT 1 -- THE CAPTURE, AND THE PROOF THAT THE OLD ROUTE IS SHUT.
+## CH63 LOT 2 -- THE CONTINUOUS THROTTLE, AND THE PROOF THAT THE OLD ROUTE
+## IS SHUT.
+##
+## =====================================================================
+## ⚠️ WHAT LOT 1 GATED, AND WHY HALF OF IT IS GONE
+##
+## LOT 1 gated "a held drag writes a heading, a short tap emits a PUSH",
+## and the push half was a mis-reading of the brief -- Mathieu wants no
+## repeated tapping at all. So every assertion about `pushed` in this file
+## is CADUQUE, and they have been rewritten rather than deleted: the
+## gesture that survives on the same threshold is the EXIT (a short tap
+## gets off), and the propulsion is now the finger's own presence.
+##
+## The contract this probe gates, in four lines:
+##
+##   * a finger DOWN holds `throttle` at 1.0, from the press, before any
+##     heading exists;
+##   * a finger SLID writes a heading that TRACKS it -- including back
+##     inside the slop, where the heading returns to zero and the board
+##     goes straight on;
+##   * a finger LIFTED drops the throttle and leaves the velocity alone;
+##   * a short tap that never left the slop is the EXIT, gated on the
+##     board being at rest.
+##
+## ⚠️ THE EXIT IS NOT A LEFTOVER OF THE PUSH -- IT CLOSES A HOLE LOT 1
+## SHIPPED. HubTapInput short-circuits every point under the drag scheme,
+## and the shipped dismount lives BELOW that short-circuit, so LOT 1 left
+## a rider with no way off the board at all: CLAUDE.md's PATRON ECHELLE,
+## banned outright. PHASE R gates the exit from both sides.
 ##
 ## =====================================================================
 ## WHAT THIS PROBE GATES, AND WHY EACH HALF IS NEEDED
 ##
-## The lot delivers a second control scheme for the physics board: a held
-## drag writes a HEADING, a short tap emits a PUSH. It delivers no change
-## to `SkateBoardBody.drive()` and none to CH61's inertia -- the adapter
-## in HubTransport turns the captured heading into the `set_target()` call
-## the shipped board already understands.
-##
 ## Two things have to be true, and only one of them is about the new code:
 ##
-##   1. THE CAPTURE WORKS -- a drag writes a heading in the direction the
-##      finger actually went, and a tap writes a push and NOT a heading;
+##   1. THE CAPTURE WORKS -- a held finger propels the board in the
+##      direction the finger actually points, and a tap does not;
 ##   2. THE OLD ROUTE IS SHUT WHILE IT DOES -- one finger, one meaning.
 ##      CH57's tap branch in HubWorld._on_tapped_ground is still there and
 ##      still correct; if it stayed REACHABLE under the drag scheme, a
@@ -87,7 +109,8 @@ var _camera: Camera3D = null
 ## Set by the real HubTapInput signal, so "the old route fired" is read
 ## off the shipped channel and not inferred from a side effect.
 var _ground_taps: int = 0
-var _pushes: int = 0
+## Set by the writer's own signal: how many times the EXIT gesture fired.
+var _taps: int = 0
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "SKATE INPUT PROBE", BUDGET_S)
@@ -101,7 +124,7 @@ func _check(ok: bool, what: String) -> void:
 	print("  [%s] %s" % ["OK " if ok else "RED", what])
 
 func _run() -> void:
-	print("=== SKATE INPUT PROBE -- CH63 LOT 1 ===")
+	print("=== SKATE INPUT PROBE -- CH63 LOT 2 ===")
 	print("driver: %s" % DisplayServer.get_name())
 	DevTools.set_physics_override(true)
 	SkateTouchInput.set_drag_mode(false)
@@ -123,7 +146,7 @@ func _run() -> void:
 		get_tree().quit(1)
 		return
 	_tap.tapped_ground.connect(func(_p: Vector3) -> void: _ground_taps += 1)
-	_touch.pushed.connect(func() -> void: _pushes += 1)
+	_touch.tapped.connect(func() -> void: _taps += 1)
 	await _phase_instrument()
 	if _fails > 0:
 		print("=== INSTRUMENT FAILED -- every result below would be worthless. Stopping. ===")
@@ -134,6 +157,7 @@ func _run() -> void:
 	await _phase_shunt()
 	await _phase_emulated()
 	await _phase_drive()
+	await _phase_fence()
 	await _phase_mapping()
 	await _phase_off()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
@@ -175,48 +199,71 @@ func _phase_instrument() -> void:
 	_check(_ground_taps > before,
 		"a screen tap while riding reaches HubTapInput.tapped_ground (the shipped route is LIVE, x%d)"
 			% (_ground_taps - before))
-	_check(_transport.board_body().has_target(),
+	_check(_transport.board_has_destination(),
 		"and the world turned it into a destination for the board")
 
 # =====================================================================
 # PHASE C -- WHAT THE WRITER CAPTURES
 #
-# The two gestures, from both sides of the ONE threshold that separates
-# them. A jitter inside the slop is still a tap; a slide past it is a
-# heading and NOT a tap. Both directions are asserted, because a
+# The throttle, the heading, and the one threshold that separates a drag
+# from the exit tap. Both sides of that threshold are asserted, because a
 # threshold checked from one side only is a threshold that can have
 # drifted to zero or to infinity without anything reporting it.
+#
+# ⚠️ AND THE THROTTLE IS ASSERTED ON THE PRESS, BEFORE ANY HEADING EXISTS.
+# That ordering IS the contract: a scheme that waited for a heading before
+# propelling would make the first millimetre of every gesture dead, and a
+# player who presses and holds without sliding -- which is what "go
+# straight" looks like -- would get nothing at all. An assertion taken
+# after the first drag event could not tell the two apart.
 
 func _phase_capture() -> void:
-	print("-- PHASE C: the writer captures a heading and a push, and tells them apart --")
+	print("-- PHASE C: a held finger is a throttle, a slid finger is a heading --")
 	_touch.enabled = true
 	var at := Vector2(500.0, 900.0)
-	# (1) a slide well past the slop
+	_check(is_zero_approx(_touch.throttle), "INSTRUMENT: no finger, no throttle")
+	# (1) the press alone
 	_touch._unhandled_input(_press(at))
+	_check(_touch.throttle >= 1.0,
+		"the PRESS alone opens the throttle (%.2f), before any heading" % _touch.throttle)
+	_check(not _touch.has_heading(), "and it writes no heading yet")
+	# (2) a slide well past the slop
 	_touch._unhandled_input(_drag(at + Vector2(120.0, 0.0)))
 	_check(_touch.has_heading(), "a 120 px slide writes a heading")
 	_check(_touch.heading_px.x > 0.0 and absf(_touch.heading_px.y) < 0.001,
 		"and the heading is the finger's own offset (%s)" % str(_touch.heading_px))
-	var pushes_before: int = _pushes
-	_touch._unhandled_input(_release(at + Vector2(120.0, 0.0)))
-	_check(_pushes == pushes_before, "releasing after a drag emits NO push")
-	_check(not _touch.has_heading(), "and the heading is dropped with the finger")
-	# (2) a jitter inside the slop
-	pushes_before = _pushes
+	_check(_touch.throttle >= 1.0, "the throttle is still held through the slide")
+	# (3) IT TRACKS -- the LOT 1 latch is gone, and this is the assertion
+	# that says so. A finger swung to the other side must write the other
+	# side, or "la direction suit la position du doigt" is not true.
+	_touch._unhandled_input(_drag(at + Vector2(-120.0, 0.0)))
+	_check(_touch.heading_px.x < 0.0,
+		"swinging the finger the other way writes the OTHER heading (%s) -- it tracks"
+			% str(_touch.heading_px))
+	# (4) and back inside the slop is "straight on", not "stop"
+	_touch._unhandled_input(_drag(at + Vector2(3.0, 2.0)))
+	_check(not _touch.has_heading(),
+		"a finger back inside the %.0f px slop writes NO heading" % SkateTouchInput.SLOP_PX)
+	_check(_touch.throttle >= 1.0,
+		"and the throttle is UNTOUCHED by that -- straight on, not stop (%.2f)" % _touch.throttle)
+	# (5) the release
+	var taps_before: int = _taps
+	_touch._unhandled_input(_release(at + Vector2(3.0, 2.0)))
+	_check(is_zero_approx(_touch.throttle), "the release closes the throttle")
+	_check(not _touch.has_heading(), "and drops the heading with the finger")
+	# ⚠️ (5) IS A DRAG THAT ENDED INSIDE THE SLOP, and it is deliberately
+	# not an exit: `_dragged` latches for the length of the gesture even
+	# though the heading does not. Two different questions, two different
+	# memories, and this is the assertion that proves they are separate.
+	_check(_taps == taps_before,
+		"a gesture that once LEFT the slop is not an exit tap, even if it came back")
+	# (6) the exit gesture itself
+	taps_before = _taps
 	_touch._unhandled_input(_press(at))
 	_touch._unhandled_input(_drag(at + Vector2(4.0, 3.0)))
-	_check(not _touch.has_heading(),
-		"a 5 px jitter writes NO heading (it is inside the %.0f px slop)" % SkateTouchInput.SLOP_PX)
+	_check(not _touch.has_heading(), "a 5 px jitter writes NO heading")
 	_touch._unhandled_input(_release(at + Vector2(4.0, 3.0)))
-	_check(_pushes == pushes_before + 1, "and releasing it emits exactly ONE push")
-	# (3) the latch: a slide that returns through the anchor is still a drag
-	pushes_before = _pushes
-	_touch._unhandled_input(_press(at))
-	_touch._unhandled_input(_drag(at + Vector2(90.0, 0.0)))
-	_touch._unhandled_input(_drag(at))
-	_touch._unhandled_input(_release(at))
-	_check(_pushes == pushes_before,
-		"a slide that comes BACK through the anchor is still a drag, not a push")
+	_check(_taps == taps_before + 1, "and releasing it emits exactly ONE exit tap")
 	_touch.enabled = _transport.is_riding_board() and SkateTouchInput.drag_enabled()
 
 # =====================================================================
@@ -252,49 +299,70 @@ func _phase_arming() -> void:
 #
 # The SAME event that PHASE I proved arrives, delivered on the SAME
 # board, through the SAME pipeline, with only the scheme flipped. The
-# shipped route must produce NOTHING: no tapped_ground, no dismount, no
-# destination from that route. And the finger must instead have been read
-# by the new writer -- an event that reached NEITHER node would satisfy
-# the absence half and mean the capture is dead.
+# shipped route must produce NOTHING: no tapped_ground, no destination
+# from that route. And the finger must instead have been read by the new
+# writer -- an event that reached NEITHER node would satisfy the absence
+# half and mean the capture is dead.
+#
+# ⚠️ AND THE EXIT IS GATED FROM BOTH SIDES HERE, because it is the half of
+# this lot that a player is sealed in without. At rest a tap must GET HIM
+# OFF; mid-roll the same tap must NOT, or every accidental brush of the
+# glass at 10 u/s ejects him. Two runs of one gesture, and the only
+# difference between them is the board's speed.
 
 func _phase_shunt() -> void:
-	print("-- PHASE R: under DRAG, one finger has ONE meaning --")
+	print("-- PHASE R: under DRAG, one finger has ONE meaning -- and there is a way out --")
 	if not _screen_is_real():
 		_check(false, "INSTRUMENT: no real viewport -- this phase cannot run")
 		return
 	_check(SkateTouchInput.drag_enabled() and _touch.enabled,
 		"INSTRUMENT: drag scheme, armed, aboard")
-	_transport.board_body().clear_target()
+	_transport.board_body().stop()
 	await _settle(2)
-	_check(not _transport.board_body().has_target(), "INSTRUMENT: the board holds no destination")
+	_check(not _transport.board_has_destination(), "INSTRUMENT: the board holds no destination")
+	_check(_transport.board_at_rest(), "INSTRUMENT: and it is at rest")
 	await _settle_camera()
 	var taps_before: int = _ground_taps
-	var pushes_before: int = _pushes
+	var exits_before: int = _taps
 	await _screen_tap(_screen_ahead())
 	_check(_ground_taps == taps_before,
 		"the shipped tapped_ground route did NOT fire (no double dispatch)")
-	_check(_transport.is_riding_board(),
-		"and the tap did not eject him through the shipped self-tap branch")
-	# EXACTLY one, and this is where the emulated-event guard earns its
-	# place: the same finger that fires the shipped route twice must fire
-	# this writer once, or a push would be worth two pushes on device.
-	_check(_pushes == pushes_before + 1,
-		"the finger was read by the NEW writer instead -- exactly one push (got %d)"
-			% (_pushes - pushes_before))
-	_check(_transport.board_body().has_target(),
-		"and the push planted a destination (the adapter answered)")
-	# The other half of "no phantom": a tap aimed AT HIMSELF, which under
-	# the tap scheme is the dismount, must not eject him either.
-	await _await_rest()
-	_check(_transport.board_at_rest(), "INSTRUMENT: the board is back at rest before the self-tap")
+	_check(not _transport.board_has_destination(),
+		"and no destination was planted by anything")
+	# EXACTLY one, and this is where the emulated-event guard would earn
+	# its place: the same finger that fires the shipped route twice must
+	# fire this writer once, or one tap would be worth two gestures.
+	_check(_taps == exits_before + 1,
+		"the finger was read by the NEW writer instead -- exactly one exit tap (got %d)"
+			% (_taps - exits_before))
+	_check(not _transport.is_riding_board(),
+		"and AT REST that tap got him OFF the board -- the drag scheme has an exit")
+	# The other side of the same gesture: mid-roll it must not eject him.
+	#
+	# ⚠️ THE CAMERA IS SETTLED **BEFORE** THE BOARD IS SET ROLLING, AND THAT
+	# ORDERING IS A MEASURED FIX. Settling after costs eight seconds -- a
+	# chase camera behind a moving board never stops moving, so the settle
+	# runs to its bound -- and in those eight seconds the board COASTS TO A
+	# STOP. The phase then tapped a stationary board, was dismounted
+	# correctly, and reported "the rest gate does not hold" about a gate
+	# that had just worked. The bench had un-rolled its own premise.
+	#
+	# `_screen_ahead()` needs no settled camera at all: it is a
+	# container-relative pixel, and under DRAG the writer swallows it
+	# whatever it projects onto.
+	await _reset_ride()
 	await _settle_camera()
+	var body := _transport.board_body()
+	body.velocity = Vector3(0.0, 0.0, -HubTransport.SKATE_CRUISE)
+	await _settle(2)
+	_check(body.speed() > body.rest_speed() * 4.0,
+		"INSTRUMENT: the board is genuinely rolling (%.3f u/s)" % body.speed())
+	exits_before = _taps
 	taps_before = _ground_taps
-	var on_himself: Vector2 = _screen_of(_keepy.global_position)
-	_check(_tap.container.get_global_rect().has_point(on_himself),
-		"INSTRUMENT: his drawn body %s is on the container" % str(on_himself.round()))
-	await _screen_tap(on_himself)
+	await _screen_tap(_screen_ahead())
+	_check(_taps > exits_before, "INSTRUMENT: the same gesture was read as an exit tap")
 	_check(_transport.is_riding_board(),
-		"a tap on his OWN drawn body does NOT dismount him under the drag scheme")
+		"but MID-ROLL it did NOT eject him -- the rest gate holds")
 	_check(_ground_taps == taps_before, "and it reached no ground route either")
 
 # =====================================================================
@@ -344,38 +412,62 @@ func _phase_emulated() -> void:
 		"and an engine-delivered DRAG writes a heading (%s)" % str(_touch.heading_px))
 	_check(_touch.heading_px.x > 0.0,
 		"pointing the way the finger went, not the way an emulated pointer did")
-	var pushes_before: int = _pushes
+	_check(_touch.throttle >= 1.0,
+		"and the throttle is held through an engine-delivered gesture (%.2f)" % _touch.throttle)
+	var exits_before: int = _taps
 	Input.parse_input_event(_release(at + Vector2(150.0, 0.0)))
 	await _settle(6)
 	_check(not _touch.steering_active, "the release ends the gesture")
-	_check(_pushes == pushes_before,
-		"and a released DRAG is still not a push, through the engine as well (got %d)"
-			% (_pushes - pushes_before))
+	_check(is_zero_approx(_touch.throttle), "and closes the throttle")
+	_check(_taps == exits_before,
+		"and a released DRAG is still not an exit tap, through the engine as well (got %d)"
+			% (_taps - exits_before))
 
 # =====================================================================
-# PHASE D -- THE ADAPTER DRIVES
+# PHASE D -- THE THROTTLE DRIVES
 #
-# A held heading has to move the board, in the heading's direction, at
-# the speed the shipped model gives it. The speed half is what gates
-# HubTransport.BOARD_DRAG_LEAD: a destination planted INSIDE the run-out
-# would make `drive()` brake, and the board would crawl instead of
-# reaching cruise. The number is not read back -- the PROPERTY it buys is
-# measured, which is the only form of it a later retune cannot fake.
+# A held finger has to move the board, in the direction the finger points,
+# at the speed the shipped model gives it -- and a lifted one has to leave
+# the elan alone.
+#
+# ⚠️ THE FINGER GOES **UP THE SCREEN** HERE, AND THAT IS A CONSEQUENCE OF
+# THE CHASE CAMERA RATHER THAN A CHOICE OF CONVENIENCE. `heading_world()`
+# reads the LIVE camera basis, and the chase basis YAWS with the board:
+# hold the finger to the RIGHT and the board turns right, which turns the
+# camera right, which moves where "right" points -- a steady circle, and
+# exactly what holding a steering input does on every chase-camera vehicle
+# in this repo. Up the screen is the one offset that is a FIXED point of
+# that loop (camera behind the board, screen-up = the way it is already
+# going), so it is the only one against which "it went where the finger
+# pointed" is a statement about the mapping instead of a statement about
+# the camera. The SIDES are gated in PHASE M, on a parked camera, in
+# pixels.
+#
+# ⚠️ AND THE SECOND HALF IS THE HALF LOT 1 COULD NOT HAVE: a finger held
+# INSIDE the slop writes no heading at all, and must STILL propel the
+# board. That is the contract's own edge -- "un doigt pose et tenu veut
+# dire tout droit" -- and it is the case a scheme that waited for a
+# heading before pushing would fail silently.
 
 func _phase_drive() -> void:
-	print("-- PHASE D: a HELD heading rolls the board, at cruise, the right way --")
+	print("-- PHASE D: a HELD finger rolls the board, at cruise, the way it points --")
 	await _reset_ride()
+	await _settle_camera()
 	var body := _transport.board_body()
 	var before: Vector3 = body.flat_position()
 	var at := Vector2(500.0, 900.0)
 	_touch._unhandled_input(_press(at))
-	_touch._unhandled_input(_drag(at + Vector2(140.0, 0.0)))
+	_touch._unhandled_input(_drag(at + Vector2(0.0, -140.0)))
 	var want: Vector3 = _touch.heading_world(_camera)
 	_check(want != Vector3.ZERO, "INSTRUMENT: the held drag maps to a world heading")
+	_check(_touch.throttle >= 1.0, "INSTRUMENT: and the throttle is open")
 	var top: float = 0.0
+	var throttle_held: bool = true
 	for _i in DRAG_FRAMES:
 		await get_tree().physics_frame
 		top = maxf(top, body.speed())
+		if body.throttle() < 1.0:
+			throttle_held = false
 	var moved: Vector3 = body.flat_position() - before
 	print("     travelled %.3f u, top speed %.3f u/s, cruise %.3f"
 		% [moved.length(), top, HubTransport.SKATE_CRUISE])
@@ -384,21 +476,90 @@ func _phase_drive() -> void:
 	# finger. See DRAG_FRAMES for the version of this phase that did.
 	_check(HubRegion.contains(body.flat_position()),
 		"the run stayed inside the region (so `_fence` never touched it)")
+	_check(throttle_held, "the BOARD held full throttle for every tick the finger was down")
 	_check(moved.length() > 1.0, "the board actually moved (%.3f u)" % moved.length())
 	_check(top >= HubTransport.SKATE_CRUISE * 0.95,
-		"and reached cruise -- so the lead sits OUTSIDE the run-out (%.3f >= %.3f)"
-			% [top, HubTransport.SKATE_CRUISE * 0.95])
+		"and reached cruise (%.3f >= %.3f)" % [top, HubTransport.SKATE_CRUISE * 0.95])
 	var cos_err: float = moved.normalized().dot(want)
-	_check(cos_err > 0.98,
+	_check(cos_err > 0.95,
 		"and it went where the finger pointed (cos = %.4f against the mapped heading)" % cos_err)
-	_touch._unhandled_input(_release(at + Vector2(140.0, 0.0)))
+	_touch._unhandled_input(_release(at + Vector2(0.0, -140.0)))
 	# The lift must NOT be a handbrake: the elan CH61 gave the board is
 	# the whole reason it exists, and a scheme that killed it on release
 	# would be a change to the FEEL, which this lot does not make.
 	var at_lift: float = body.speed()
 	await _settle(6)
+	_check(is_zero_approx(body.throttle()), "the lift closed the board's throttle")
 	_check(body.speed() > at_lift * 0.5,
-		"lifting the finger does not stop the board (%.3f -> %.3f u/s)" % [at_lift, body.speed()])
+		"and it did NOT stop the board (%.3f -> %.3f u/s)" % [at_lift, body.speed()])
+	# ---- the slop half ----------------------------------------------
+	await _reset_ride()
+	await _settle_camera()
+	body = _transport.board_body()
+	before = body.flat_position()
+	_touch._unhandled_input(_press(at))
+	_touch._unhandled_input(_drag(at + Vector2(4.0, 3.0)))
+	_check(not _touch.has_heading(), "INSTRUMENT: a finger inside the slop writes no heading")
+	var facing := Vector3(sin(body.rotation.y), 0.0, cos(body.rotation.y))
+	for _i in DRAG_FRAMES:
+		await get_tree().physics_frame
+	var slop_moved: Vector3 = body.flat_position() - before
+	_check(slop_moved.length() > 1.0,
+		"a finger held INSIDE the slop still propels the board (%.3f u)" % slop_moved.length())
+	var cos_facing: float = slop_moved.normalized().dot(facing)
+	_check(cos_facing > 0.95,
+		"and it went STRAIGHT ON, along the board's own facing (cos = %.4f)" % cos_facing)
+	_touch._unhandled_input(_release(at + Vector2(4.0, 3.0)))
+	await _settle(4)
+
+# =====================================================================
+# PHASE F -- THE FENCE TELLS THE ADAPTER, AND IT TELLS IT ON THE TICK
+#
+# ⚠️ THIS PHASE EXISTS BECAUSE A RED PASS CAME BACK GREEN. CH63 LOT 2 moved
+# the destination out of the board and into HubTransport, which left the
+# board's region fence with nobody to tell -- so it emits `fenced` and the
+# adapter drops its destination on that signal. Neutralising the emit was
+# expected to redden something; it reddened NOTHING, on SkatePhysicsProbe
+# and on SkateDismountProbe alike.
+#
+# The reason is not that the wire is pointless: it is that the STALL GUARD
+# reaches the same end state thirty ticks later, so a probe that only asks
+# "did the destination go away eventually" cannot tell the two apart. What
+# separates them is WHEN. So this phase gates the tick.
+#
+# It drives the fence directly rather than steering a board into the
+# border for several seconds: the fence is `drive()`'s own last act, and
+# putting the body outside the region and stepping it once is the whole of
+# the mechanism. The blind check is the same step taken INSIDE the region,
+# which must NOT drop anything -- without it, "the fence dropped it" and
+# "one tick always drops it" read alike.
+
+func _phase_fence() -> void:
+	print("-- PHASE F: the region fence drops the tap destination ON THE TICK --")
+	await _reset_ride()
+	SkateTouchInput.set_drag_mode(false)
+	_transport.sync_board_input()
+	var body := _transport.board_body()
+	# BLIND FIRST: a destination, a legal position, one tick -> still held.
+	body.stop()
+	body.global_position = HubSurface.ground(OPEN_GROUND)
+	_transport.set_board_target(HubRegion.clamp_to(OPEN_GROUND + Vector3(6.0, 0.0, 0.0)))
+	_check(_transport.board_has_destination(), "INSTRUMENT: the tap planted a destination")
+	_check(HubRegion.contains(body.flat_position()), "INSTRUMENT: and the board is inside the region")
+	body.drive(1.0 / 60.0)
+	_check(_transport.board_has_destination(),
+		"BLIND: one tick INSIDE the region does not drop it (so the drop below means something)")
+	# NOW the fence. A point far outside every lobe: the fence refuses the
+	# step, puts the body back, and says so.
+	var outside := Vector3(0.0, 0.0, 900.0)
+	_check(not HubRegion.contains(outside), "INSTRUMENT: (0, 900) is outside the region")
+	body.global_position = HubSurface.ground(outside)
+	body.drive(1.0 / 60.0)
+	_check(not _transport.board_has_destination(),
+		"the fence dropped the destination on the SAME tick (not 30 ticks later, via the stall guard)")
+	body.stop()
+	body.global_position = HubSurface.ground(OPEN_GROUND)
+	await _settle(4)
 
 # =====================================================================
 # PHASE M -- THE MAPPING, IN RENDERED PIXELS
@@ -475,7 +636,7 @@ func _phase_mapping() -> void:
 	await _settle_camera()
 	var board: Node3D = _transport.board_node()
 	var body := _transport.board_body()
-	body.clear_target()
+	body.stop()
 	var mesh: MeshInstance3D = board.find_child("SkateboardMesh", true, false) as MeshInstance3D
 	if mesh == null:
 		mesh = board as MeshInstance3D
@@ -598,6 +759,13 @@ func _mark_centroid(img: Image) -> Vector2:
 func _flat(v: Vector3) -> Vector3:
 	return Vector3(v.x, 0.0, v.z)
 
+## Whether the board is being commanded at all, by either scheme. Named
+## rather than inlined because "it holds a destination" and "it is being
+## pushed" are two different questions and this probe asks both.
+func body_driving() -> bool:
+	var body := _transport.board_body()
+	return body != null and body.driving()
+
 # =====================================================================
 # PHASE O -- THE SHIPPED SCHEME IS UNTOUCHED
 #
@@ -617,11 +785,12 @@ func _phase_off() -> void:
 		return
 	await _settle_camera()
 	var taps_before: int = _ground_taps
-	var pushes_before: int = _pushes
+	var exits_before: int = _taps
 	await _screen_tap(_screen_ahead())
 	_check(_ground_taps > taps_before, "a screen tap reaches tapped_ground again")
-	_check(_pushes == pushes_before, "and the new writer heard nothing at all")
-	_check(_transport.board_body().has_target(), "and the board took the destination")
+	_check(_taps == exits_before, "and the new writer heard nothing at all")
+	_check(_transport.board_has_destination(), "and the board took the destination")
+	_check(body_driving(), "and the tap adapter is actually pushing it")
 	# And the dismount, which is the shipped gesture the drag scheme
 	# suppressed in PHASE R -- proving that suppression was the SCHEME's
 	# doing and not something this lot broke.
@@ -677,13 +846,41 @@ func _screen_ahead() -> Vector2:
 ## off it, so a phase that measured before it settled would be aiming at
 ## where the rider WAS -- which is how the miss above was masked for a
 ## run. Waits for the pose to stop moving rather than for a frame count.
+## ⚠️ CH63 LOT 2 REWROTE THIS, AND THE OLD FORM COST THREE REDS ON CORRECT
+## CODE -- worth writing down, because the failure looked exactly like a
+## broken tap route.
+##
+## The board now enters and leaves the CHASE pose, which is a 0.9 s
+## SINE-EASED blend of two transforms. A settle written as "return as soon
+## as two consecutive frames barely moved" returns during the FIRST frames
+## of such a blend, where an ease-in has barely started: PHASE O then aimed
+## its pixel through a camera still pointing down the chase axis, the ray
+## missed the ground, and `tapped_ground` reported dead on a route that was
+## perfectly alive.
+##
+## So there are three tests now and all three are needed: the blend must
+## have REACHED an end (0 or 1 -- not merely be moving slowly), the origin
+## must be still, and the BASIS must be still. And stillness is asserted
+## over CONSECUTIVE frames rather than one, because one frame of an eased
+## curve says nothing about the next.
+const SETTLE_STABLE_FRAMES: int = 8
+
 func _settle_camera() -> void:
-	var last: Vector3 = _camera.global_position
-	for _i in 240:
+	var last: Transform3D = _camera.global_transform
+	var stable: int = 0
+	for _i in 480:
 		await get_tree().physics_frame
-		var now: Vector3 = _camera.global_position
-		if now.distance_to(last) < 0.0005:
-			return
+		var now: Transform3D = _camera.global_transform
+		var blend: float = _camera.drive_blend()
+		var blended: bool = blend < 0.001 or blend > 0.999
+		if blended and now.origin.distance_to(last.origin) < 0.0005 \
+				and (now.basis.x - last.basis.x).length() < 0.0002 \
+				and (now.basis.z - last.basis.z).length() < 0.0002:
+			stable += 1
+			if stable >= SETTLE_STABLE_FRAMES:
+				return
+		else:
+			stable = 0
 		last = now
 
 ## A tap delivered through the ENGINE, not into a handler. Both nodes get
@@ -741,7 +938,7 @@ func _board_at(where: Vector3) -> void:
 		await _settle(20)
 	_keepy.dismount_vehicle()
 	await _idle_hopper()
-	body.clear_target()
+	body.stop()
 	body.global_position = HubSurface.ground(where)
 	body.velocity = Vector3.ZERO
 	_keepy.global_position = HubSurface.ground(where)
@@ -759,12 +956,13 @@ func _settle(frames: int) -> void:
 ## Waits for the board to actually stop, rather than for a frame count.
 ##
 ## ⚠️ THE FRAME COUNT WAS WRONG AND IT WAS WRONG IN THE DIRECTION THAT
-## LOOKS LIKE A DEFECT. A push plants its destination BOARD_DRAG_LEAD
-## (6.4 u) ahead; covering that at cruise and braking into it takes past
-## 150 frames, and the 60 this probe first waited left the board still
-## rolling -- read as "board_at_rest() is broken" when it was the bench
-## that had not waited. Bounded, so a board that genuinely never settles
-## reddens instead of hanging.
+## LOOKS LIKE A DEFECT. Under LOT 1 a push planted a destination 6.4 u
+## ahead; covering that at cruise and braking into it takes past 150
+## frames, and the 60 this probe first waited left the board still rolling
+## -- read as "board_at_rest() is broken" when it was the bench that had
+## not waited. LOT 2 has no lead and no push, but a released board still
+## COASTS a park span, so the wait is if anything longer. Bounded, so a
+## board that genuinely never settles reddens instead of hanging.
 func _await_rest() -> void:
 	for _i in 600:
 		if _transport.board_at_rest():

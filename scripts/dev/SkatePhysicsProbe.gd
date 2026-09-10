@@ -188,8 +188,17 @@ func _phase_constants() -> void:
 	print("     SkateBoardBody.GRAVITY %.4f   Keepy.GRAVITY %.4f" % [SkateBoardBody.GRAVITY, Keepy.GRAVITY])
 	_check(is_equal_approx(SkateBoardBody.GRAVITY, Keepy.GRAVITY),
 		"the hub's gravity is Chased's gravity (if this reddens, DECIDE -- do not sync)")
-	_check(is_equal_approx(SkateBoardBody.ARRIVE_EPSILON, KeepyHopper.ARRIVE_EPSILON),
-		"arrival epsilon is READ off KeepyHopper (%.4f)" % SkateBoardBody.ARRIVE_EPSILON)
+	# ⚠️ CH63 LOT 2 MOVED THIS CONSTANT RATHER THAN CHANGING IT. The board
+	# holds no destination any more, so it has no arrivals; the tap scheme
+	# still does, and the epsilon went with it to the file that owns a
+	# destination. It is still READ off KeepyHopper and never retyped,
+	# which is the property this line has always gated.
+	_check(is_equal_approx(HubTransport.BOARD_ARRIVE, KeepyHopper.ARRIVE_EPSILON),
+		"arrival epsilon is READ off KeepyHopper (%.4f)" % HubTransport.BOARD_ARRIVE)
+	# And the same for the stall guard's threshold, which moved with it:
+	# it is the board's own definition of motionless, not a second number.
+	_check(is_equal_approx(HubTransport.BOARD_STALL_STEP, SkateBoardBody.REST_STEP),
+		"the tap adapter's stall step IS the board's rest step (%.4f)" % HubTransport.BOARD_STALL_STEP)
 	_check(is_equal_approx(SkateBoardBody.PACE_FLOOR, KeepyHopper.GLIDE_PACE_FLOOR),
 		"rest pace is READ off KeepyHopper (%.4f)" % SkateBoardBody.PACE_FLOOR)
 	# The layers Chased reserved, read off ITS OWN SCENE FILES rather than
@@ -733,7 +742,7 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) ->
 		# The game is right: a walk landing beside the seesaw is SUPPOSED
 		# to be offered it. The bench was putting its rider down inside
 		# another prop's hotspot.
-		body.clear_target()
+		body.stop()
 		body.velocity = Vector3.ZERO
 		body.global_position = HubSurface.ground(NEUTRAL_PARK)
 		_keepy.call("follow_carrier")
@@ -742,7 +751,7 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) ->
 		for _i in 20:
 			await get_tree().physics_frame
 	_keepy.dismount_vehicle()
-	body.clear_target()
+	body.stop()
 	body.velocity = Vector3.ZERO
 	body.global_position = HubSurface.ground(Vector3(from.x, 0.0, from.z))
 	body.rotation.y = 0.0
@@ -942,8 +951,8 @@ func _phase_lateral() -> void:
 	_check(float(t["max_y"]) < 0.05, "it never got on top of the box (max y %.3f)" % t["max_y"])
 	_check(end.x > centre.x + half_x - 0.30,
 		"it was stopped east of the face (x %.3f, face at %.3f)" % [end.x, centre.x + half_x])
-	_check(not _transport.board_body().has_target(),
-		"and the stall guard dropped the target rather than grinding for ever")
+	_check(not _transport.board_has_destination(),
+		"and the stall guard dropped the destination rather than grinding for ever")
 
 # =====================================================================
 # PHASE J -- THE RAIL, WHICH IS THE ONE MODULE THAT MUST BLOCK IN ONE
@@ -991,8 +1000,8 @@ func _phase_rail() -> void:
 	print("     stopped %.3f u from the leg's axis (started 5.00 u out)" % missed)
 	_check(float(hit["path"]) > 2.0, "J INSTRUMENT: it set off (%.2f u)" % float(hit["path"]))
 	_check(missed < 1.0, "J1 it was STOPPED at the leg (%.3f u from its axis)" % missed)
-	_check(not _transport.board_body().has_target(),
-		"J1 and the stall guard dropped the target rather than grinding for ever")
+	_check(not _transport.board_has_destination(),
+		"J1 and the stall guard dropped the destination rather than grinding for ever")
 	# ...and RED BEFORE GREEN on the same station.
 	var wall := _park.collider_body_at(index)
 	var keep: int = wall.collision_layer

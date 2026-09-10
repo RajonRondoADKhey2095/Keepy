@@ -61,15 +61,32 @@ class_name SkateBoardBody
 ##     and strictly greater ONLY while a module holds it up.
 ##
 ## =====================================================================
-## WHAT IT IS NOT: A PILOTED VEHICLE
+## ⚠️ CH63 LOT 2 -- AND NOW IT IS A PILOTED VEHICLE, WHICH REVERSES THE
+## PARAGRAPH THAT STOOD HERE
 ##
-## D6 (the chase camera) is explicitly NOT decided and explicitly outside
-## this lot. CLAUDE.md's camera table keys on CONTINUOUS PILOTING -- "le
-## joueur choisit la direction frame par frame" -- and this board is
-## still tapped to a destination exactly as CH54's is. The camera
-## therefore stays FIXED, no ChaseAudit of the north lobe is owed, and
-## nothing here reads `touch.input`. What changed is HOW the board gets
-## to the destination, not how the player asks for it.
+## What stood here said the opposite, and it was right at the time: "this
+## board is still tapped to a destination exactly as CH54's is, the camera
+## therefore stays FIXED, and no ChaseAudit is owed". CLAUDE.md's camera
+## table keys on CONTINUOUS PILOTING -- "le joueur choisit la direction
+## frame par frame" -- and under the DRAG scheme that is now literally
+## what happens: a held finger writes this board's heading and its
+## throttle, every tick, and nothing between the thumb and the push is a
+## destination any more.
+##
+## So the board takes the fourth seat at the piloted table, beside the
+## kart, the sand yacht and the sled: `HubCamera.enter_drive()` on mount,
+## `exit_drive()` on the step-off, and the ChaseAudit that CLAUDE.md
+## requires WITH a chase camera -- because a chase pose shows the decor at
+## azimuths the fixed frame has never shown, and everything this hub has
+## calibrated was calibrated for the fixed frame. CH30 ran that audit on a
+## hub two visual audits had already called clean and found two real
+## defects.
+##
+## ⚠️ THE TAP SCHEME IS STILL THERE AND STILL A DESTINATION, and that is
+## not a contradiction: it is the A/B. Under TAP the destination lives in
+## HubTransport's adapter, which turns it into the same two fields this
+## file now speaks -- so there is one drive model with two ways of being
+## asked, rather than two drive models.
 ##
 ## =====================================================================
 ## CH61 LOT 3c -- THE PACE PROFILE BECOMES A LAW OF MOTION
@@ -146,9 +163,13 @@ class_name SkateBoardBody
 ##      transition there is nothing left to push against, which is why
 ##      the height reached is a function of the speed ARRIVED WITH and
 ##      not of how long the finger held a target beyond the ramp.
-##   2. THE BRAKE, the same shape, when the target is inside stopping
-##      distance. It aims at zero speed at the ARRIVE_EPSILON boundary,
-##      so the roll ENDS at the tap instead of coasting through it.
+##   2. THE BRAKE, the same shape, when the command asks for one. CH63
+##      LOT 2 made the throttle SIGNED: +1 pushes along the heading, -1
+##      spends `brake` against the velocity the board already has. The
+##      DRAG scheme only ever writes 0 or +1 -- a lifted finger coasts,
+##      it does not brake -- and the TAP adapter in HubTransport is what
+##      writes -1, so that a tapped destination still ENDS at the tap
+##      instead of coasting a whole park span through it.
 ##   3. THE COAST. A quadratic term plus a constant one; the constant one
 ##      is what makes a released board stop in finite time rather than
 ##      asymptote, and CLAUDE.md's "le hub devient une patinoire" is the
@@ -243,49 +264,31 @@ const FLOOR_MAX_ANGLE: float = deg_to_rad(88.0)
 ## board grab a surface it is genuinely airborne above.
 const SNAP_LENGTH: float = 0.3
 
-## Arrival, in the hopper's own units so a physics roll and a tween roll
-## agree on what "there" means. Read, not retyped.
-const ARRIVE_EPSILON: float = KeepyHopper.ARRIVE_EPSILON
 ## Rest pace: what a roll STARTS at, CH54's whole complaint about a board
 ## that left at full speed from a standstill. Read off the file that owns
 ## the profile.
 const PACE_FLOOR: float = KeepyHopper.GLIDE_PACE_FLOOR
 
 ## =====================================================================
-## THE STALL GUARD -- AND CH61 HAD TO CHANGE WHAT IT MEASURES
+## WHAT "NOT MOVING" MEANS, AND WHY IT OUTLIVED THE STALL GUARD
 ##
-## CLAUDE.md, CH42: "le gain de braquage est proportionnel a v_fwd, donc
-## un mur supprime la direction" -- a body pressed into geometry loses the
-## authority to leave it, and every vehicle in this repo has paid that
-## arithmetic at least once. This board has no reverse (it is not
-## piloted), so the guard is the other half of the same answer: a target
-## that stops producing displacement is DROPPED, and the player gets his
-## tap channel back rather than a board grinding into a wall for ever.
+## ⚠️ CH63 LOT 2 DELETED THE STALL GUARD, AND THIS CONSTANT IS WHAT IT
+## LEFT BEHIND. CH57 and CH61 had one because the board was aimed at a
+## DESTINATION nobody was watching: a target that stopped producing
+## progress had to be dropped, or a tap into a wall would grind for ever
+## with the player's tap channel spent. Under a held throttle there is no
+## target to drop and nobody to rescue -- the finger IS the guard, and it
+## lifts. The destination scheme still has one, but it now lives with the
+## destination, in HubTransport's tap adapter, which is the file that owns
+## the concept at all.
 ##
-## ⚠️ CH57 MEASURED PER-TICK FLAT DISPLACEMENT, AND WITH INERTIA THAT
-## READING CONFUSES TWO OPPOSITE THINGS -- the brief's garde-fou 2, and
-## it is right twice over:
-##
-##   * near the lip of a transition the motion is almost VERTICAL, so a
-##     legitimate climb produces almost no FLAT displacement and would be
-##     shot down as a stall;
-##   * a board oscillating at the foot of a ramp it cannot climb -- up,
-##     back, up again -- produces plenty of displacement every tick and
-##     would never be shot down at all, which is the "coince" case the
-##     player actually meets.
-##
-## Displacement is the wrong quantity for both, and it is wrong in
-## CLAUDE.md's own recorded way: CH42's "un braquage tenu dessine un
-## cercle, et un cercle finit ou il commence" says a run is scored on
-## the FURTHEST IT GOT, never on where it is. So the guard now scores
-## PROGRESS TOWARD THE TARGET: the best `remaining` ever achieved. A
-## climb improves it every tick and is never cut; an oscillation and a
-## wall both stop improving it and are both dropped.
-##
-## The threshold and the window are CH57's, unchanged, and they are now
-## in units of progress rather than of travel.
-const STALL_STEP: float = 0.004
-const STALL_TICKS: int = 30
+## What survives is the THRESHOLD, because two other readers need a
+## definition of motionless that does not depend on a guard: `at_rest()`,
+## which is what separates "a tap gets off" from "a tap steers", and every
+## probe that waits for a roll to end. It is a per-tick flat displacement,
+## converted to a speed by the engine's own tick rate in `rest_speed()`.
+## One spelling, so a file cannot hold two answers to "is it moving".
+const REST_STEP: float = 0.004
 
 ## =====================================================================
 ## THE COAST, AND THE ONE NUMBER THIS FILE WOULD OTHERWISE HAVE INVENTED
@@ -321,12 +324,25 @@ var _push: float = 0.0
 var _brake: float = 0.0
 var _drag_k: float = 0.0
 var _roll_stop: float = 0.0
-var _target: Vector3 = Vector3.ZERO
-var _has_target: bool = false
-var _stalled_ticks: int = 0
-## CH61: the best flat distance to the target this push has ever managed.
-## The stall guard's whole state -- see its block above.
-var _best_remaining: float = 1e9
+## =====================================================================
+## CH63 LOT 2 -- THE WHOLE OF THE COMMAND, AND IT IS TWO FIELDS
+##
+## The board no longer holds a destination. It holds a HEADING and a
+## THROTTLE, written by whoever is driving it (the finger, through
+## HubTransport, in DRAG mode; the tap adapter in TAP mode), and it
+## forgets neither and remembers nothing else.
+##
+## `_heading` is flat and unit, or ZERO -- and ZERO is not "stop", it is
+## "keep your own facing". A finger pressed and held still inside the
+## slop writes exactly that, and it has to mean straight on: a scheme
+## where the first millimetre of every gesture did nothing would be a
+## board that ignores the player until he wiggles.
+var _heading: Vector3 = Vector3.ZERO
+## +1 push along the heading, 0 free roll, -1 brake against the velocity.
+## Signed rather than split into two fields for KartInput's own reason: a
+## thumb cannot ask for both, and two fields would let a stale one survive
+## the other.
+var _throttle: float = 0.0
 var _shape: CollisionShape3D = null
 ## Diagnostics the probe and the overlay read. Never a control input.
 var _supported: bool = false
@@ -493,8 +509,20 @@ func seat(deck_top: float) -> Vector3:
 func flat_position() -> Vector3:
 	return Vector3(global_position.x, 0.0, global_position.z)
 
-func has_target() -> bool:
-	return _has_target
+## True while something is actively commanding this board -- pushing it
+## or braking it. It replaces `has_target()`: the question every caller
+## was really asking was "is it being driven", and the destination was
+## only ever how that got expressed.
+func driving() -> bool:
+	return not is_zero_approx(_throttle)
+
+## What is currently commanded. Published so a bench reads the command the
+## board actually holds rather than the one it thinks it wrote.
+func throttle() -> float:
+	return _throttle
+
+func heading() -> Vector3:
+	return _heading
 
 ## ⚠️ CH61 -- "STANDING STILL UNDER HIM" NOW HAS TO MEAN IT.
 ##
@@ -506,19 +534,18 @@ func has_target() -> bool:
 ## speed has to be asked about as well or the rider is ejected off a
 ## moving board.
 ##
-## The threshold is not a new number: it is the stall guard's own
+## The threshold is not a new number: it is `REST_STEP`, this file's one
 ## definition of not moving, converted from a per-tick step to a speed by
-## the engine's own tick rate. A board slower than the guard's idea of
-## motionless IS motionless, and having two different answers to that in
-## one file is how a lot ships a contradiction.
+## the engine's own tick rate. Having two different answers to "is it
+## moving" in one file is how a lot ships a contradiction.
 func rest_speed() -> float:
-	return STALL_STEP * float(Engine.physics_ticks_per_second)
+	return REST_STEP * float(Engine.physics_ticks_per_second)
 
 func speed() -> float:
 	return Vector3(velocity.x, 0.0, velocity.z).length()
 
 func at_rest() -> bool:
-	return not _has_target and speed() <= rest_speed()
+	return _throttle <= 0.0 and speed() <= rest_speed()
 
 ## True on the tick the module held the board above HubSurface -- the
 ## observable that says "it is ON the funbox" without reading a height
@@ -602,30 +629,63 @@ func climb_authority(n: Vector3) -> float:
 	return _push * n.y
 
 # =====================================================================
-# THE TAP
+# THE COMMAND
+#
+# ⚠️ CH63 LOT 2 REPLACED A DESTINATION WITH A HEADING AND A THROTTLE, and
+# reason is a correction of spec rather than a refactor. LOT 1 captured a
+# held finger and expressed it as `set_target(point ahead)` because that
+# was the only vocabulary this file had; Mathieu's contract is that a held
+# finger PROPELS, continuously, and that a lifted one hands the board back
+# to the coast. A destination cannot say that -- it says "go here and
+# stop" -- so the vocabulary changed instead of the gesture being bent to
+# fit it.
+#
+# What went with the destination, and it went for a reason each time:
+#
+#   * THE RUN-OUT on `remaining` -- braking because the target was inside
+#     stopping distance. There is no target to be inside of. The BRAKE
+#     itself survives, as the negative half of the throttle, because the
+#     TAP scheme still needs a roll that ends where it was aimed.
+#   * THE STALL GUARD -- dropping a target that stopped making progress.
+#     See REST_STEP's block: a held throttle has a finger watching it, and
+#     the destination scheme's guard moved to the file that still owns a
+#     destination.
 
-## Rolls toward `point`. The destination is CLAMPED by the caller, exactly
-## as a hop destination is -- CLAUDE.md's AIM vs DESTINATION rule is about
-## what the player MEANT, and nothing about it changes because the mover
-## became a rigid body.
-func set_target(point: Vector3) -> void:
-	_target = Vector3(point.x, 0.0, point.z)
-	_has_target = true
-	_stalled_ticks = 0
-	# The stall guard's window opens fresh on every new push: the best
-	# distance so far is whatever this tap starts from.
-	_best_remaining = flat_position().distance_to(_target)
+## The command, for the next tick and every tick until it is replaced.
+##
+## `heading` is taken flat and normalised; ZERO means "keep your own
+## facing", which is what a finger inside the slop writes. `throttle` is
+## clamped to [-1, +1]: positive pushes ALONG the heading, negative spends
+## the brake against whatever velocity the board has, zero is free roll.
+##
+## ⚠️ IT DOES NOT TOUCH THE VELOCITY, in any of the three cases. That is
+## the whole of what CH61's inertia means and this lot does not spend it:
+## a command changes what the board is being asked for, never what it is
+## already doing.
+func hold(heading_in: Vector3, throttle_in: float) -> void:
+	var flat := Vector3(heading_in.x, 0.0, heading_in.z)
+	_heading = flat.normalized() if flat.length() > 0.0001 else Vector3.ZERO
+	_throttle = clampf(throttle_in, -1.0, 1.0)
 
-## ⚠️ AND IT STILL ZEROES THE VELOCITY. Every caller means "this board is
-## done moving" -- the fence refusing a step out of the region, the stall
-## guard giving up, HubTransport mounting and dismounting a rider. None
-## of them wants a board that keeps its elan across the event, and a
-## dismount that left the board rolling away under the player's feet is
-## the one thing worse than one that stops it too hard.
-func clear_target() -> void:
-	_has_target = false
-	_stalled_ticks = 0
-	_best_remaining = 1e9
+## Hands the board back to the coast: no push, no brake, no heading. The
+## lifted finger, and the tap adapter's arrival, both land here.
+##
+## ⚠️ IT LEAVES THE VELOCITY ALONE, DELIBERATELY -- that is the difference
+## between this and `stop()`, and getting the two the wrong way round
+## would read on device as a handbrake on every lift.
+func release() -> void:
+	_heading = Vector3.ZERO
+	_throttle = 0.0
+
+## ⚠️ AND THIS ONE DOES ZERO THE VELOCITY. Every caller means "this board
+## is done moving" -- the fence refusing a step out of the region,
+## HubTransport mounting and dismounting a rider. None of them wants a
+## board that keeps its elan across the event, and a dismount that left
+## the board rolling away under the player's feet is the one thing worse
+## than one that stops it too hard. It is `clear_target()`'s body under a
+## name that says what it does now that there is no target to clear.
+func stop() -> void:
+	release()
 	velocity = Vector3.ZERO
 
 # =====================================================================
@@ -659,15 +719,16 @@ func drive(delta: float) -> void:
 	_hold_normal = n
 
 	# ---- the aim ----------------------------------------------------
-	var heading := Vector3.ZERO
-	var remaining: float = 0.0
-	if _has_target:
-		var to_target := _target - before
-		remaining = to_target.length()
-		if remaining <= ARRIVE_EPSILON:
-			_has_target = false
-		else:
-			heading = to_target / remaining
+	# ⚠️ A COMMANDED HEADING OF ZERO IS "STRAIGHT ON", NOT "NOWHERE". The
+	# push needs a direction every tick it is asked for, and the board's
+	# own facing is the only honest answer when the finger has not asked
+	# for another one. Reading it off `rotation.y` rather than off the
+	# velocity is deliberate: a board pushed from a standstill has no
+	# velocity to read a direction from, and one sliding sideways would
+	# be pushed sideways.
+	var aim: Vector3 = _heading
+	if aim == Vector3.ZERO:
+		aim = Vector3(sin(rotation.y), 0.0, cos(rotation.y))
 
 	# ---- 1-3: the drive model, on the HORIZONTAL velocity ------------
 	# It PERSISTS. Nothing below rewrites it from a profile; every term
@@ -675,32 +736,27 @@ func drive(delta: float) -> void:
 	# whole of what "inertie" means here.
 	var vh := Vector3(velocity.x, 0.0, velocity.z)
 	var was: float = vh.length()
-	if _has_target:
-		# The run-out, aimed at zero speed AT the arrival boundary rather
-		# than at the target itself -- otherwise the board crosses the
-		# boundary still carrying the speed the brake was going to spend
-		# on the last ARRIVE_EPSILON, `at_rest()` turns true under a
-		# rolling board, and the tap that means "get off" arrives while
-		# it is still moving.
-		var stop_d: float = was * was / (2.0 * maxf(_brake, 0.01)) + ARRIVE_EPSILON
-		if remaining <= stop_d:
-			vh = vh.move_toward(Vector3.ZERO, _brake * n.y * delta)
-		else:
-			# The push. Capped ALONG THE HEADING, so a board already
-			# faster than cruise (down a transition) is not pushed
-			# further, and a board rolling sideways to its target still
-			# gets the full push toward it.
-			#
-			# ⚠️ THE LAST STEP IS TRIMMED TO THE CAP RATHER THAN TAKEN
-			# WHOLE. Measured before it was: a plain `if along < cruise`
-			# lets the final tick add a whole `push * delta` on top, and
-			# the flat run topped out at 10.180 u/s against CH54's 10.00.
-			# A cap that a tick can step over is not a cap, and 0.18 u/s
-			# of it is exactly the kind of number a later lot finds in a
-			# table and cannot explain.
-			var along: float = vh.dot(heading)
-			if along < _cruise:
-				vh += heading * minf(_push * n.y * delta, _cruise - along)
+	if _throttle > 0.0:
+		# The push. Capped ALONG THE HEADING, so a board already faster
+		# than cruise (down a transition) is not pushed further, and a
+		# board rolling sideways to where the finger points still gets the
+		# full push toward it.
+		#
+		# ⚠️ THE LAST STEP IS TRIMMED TO THE CAP RATHER THAN TAKEN WHOLE.
+		# Measured before it was: a plain `if along < cruise` lets the
+		# final tick add a whole `push * delta` on top, and the flat run
+		# topped out at 10.180 u/s against CH54's 10.00. A cap that a tick
+		# can step over is not a cap, and 0.18 u/s of it is exactly the
+		# kind of number a later lot finds in a table and cannot explain.
+		var along: float = vh.dot(aim)
+		if along < _cruise:
+			vh += aim * minf(_push * n.y * delta * _throttle, _cruise - along)
+	elif _throttle < 0.0:
+		# The brake, against the velocity itself rather than along the
+		# heading: a brake that pushed backwards along the aim would turn
+		# a board that is sliding sideways, which is a steering input
+		# wearing a brake's name.
+		vh = vh.move_toward(Vector3.ZERO, _brake * n.y * delta * absf(_throttle))
 	# The coast, always -- a pushed board pays it too, which is why the
 	# terminal speed on the flat is a hair under cruise rather than
 	# exactly it, and why PHASE L gates the run-up on distance rather
@@ -724,26 +780,27 @@ func drive(delta: float) -> void:
 	else:
 		velocity += g * delta
 
-	if heading != Vector3.ZERO:
-		# Set, never tweened, and before the move: KeepyHopper._face's
-		# reason exactly -- a body that rotates while it travels reads as
-		# being steered, and this one is not steered.
-		rotation.y = atan2(heading.x, heading.z)
+	if _heading != Vector3.ZERO:
+		# ⚠️ SET, NOT TWEENED, AND THE REASON IS NOW THE OPPOSITE OF CH57's.
+		# That lot wrote "a body that rotates while it travels reads as
+		# being steered, and this one is not steered". This one IS steered
+		# -- that is the lot -- so the facing is the finger's, directly and
+		# with no rate between them, which is what "la direction suit la
+		# position du doigt en continu" says.
+		#
+		# What keeps that from reading as a snap is not smoothing here:
+		# the VELOCITY is integrated (a reversed heading spends `push`
+		# against the momentum rather than teleporting it) and the chase
+		# camera lags the board's heading by DRIVE_HEADING_LAMBDA. If
+		# device says it is still too abrupt, a turn RATE is the first
+		# knob and it belongs in a feel lot with a number measured on a
+		# phone, not invented here.
+		rotation.y = atan2(_heading.x, _heading.z)
 	move_and_slide()
 	_on_module = is_on_floor()
 	_supported = _hub_floor()
 	_fence(before)
 	_last_step = flat_position().distance_to(before)
-	# ---- the stall guard, on PROGRESS and not on travel --------------
-	if _has_target:
-		var now: float = flat_position().distance_to(_target)
-		if now < _best_remaining - STALL_STEP:
-			_best_remaining = now
-			_stalled_ticks = 0
-		else:
-			_stalled_ticks += 1
-		if _stalled_ticks >= STALL_TICKS:
-			clear_target()
 
 ## HubSurface OVERRULES the engine, and this is the whole of D1's ground
 ## ownership in four lines. Returns true when the body was ABOVE the
@@ -769,16 +826,34 @@ func _hub_floor() -> bool:
 		return false
 	return global_position.y > ground + 0.0005
 
-## The region is the wall, exactly as it is for the three piloted vehicles
-## (SandYacht._wall, SledBody._wall): a refusal that puts the body back
-## where it was rather than a clamp that slides it along an edge. A board
-## that cannot leave the region also cannot be aimed out of it, so the
-## target goes with it -- otherwise the stall guard would be the only
-## thing that ever ended the push.
+## The region is the wall, exactly as it is for the three other piloted
+## vehicles (SandYacht._wall, SledBody._wall): a refusal that puts the
+## body back where it was rather than a clamp that slides it along an
+## edge.
+##
+## ⚠️ IT STOPS THE BOARD AND SAYS SO, AND THE SAYING IS THE NEW HALF. Under
+## the destination scheme the fence cleared the target itself, because the
+## stall guard was otherwise the only thing that could ever end a push into
+## a wall. There is no target here to clear -- so the fence emits, and
+## HubTransport's tap adapter drops its destination when it hears it. The
+## DRAG scheme needs no such rescue and takes none: a finger held into the
+## border keeps commanding a heading, the board is refused every tick, and
+## the player steers away whenever he likes.
+##
+## ⚠️ AND THAT IS ONLY SAFE BECAUSE THE HEADING IS WRITTEN, NOT INTEGRATED.
+## CLAUDE.md's CH42 arithmetic -- "le gain de braquage est proportionnel a
+## v_fwd, donc un mur supprime la direction" -- has cost this repo three
+## vehicles, and it bites a model whose turn rate is scaled by the forward
+## speed a wall is eating. This board's facing comes straight from the
+## thumb, so a board pinned against the region keeps every degree of its
+## steering authority.
+signal fenced
+
 func _fence(before: Vector3) -> void:
 	if HubRegion.contains(flat_position()):
 		return
 	global_position = Vector3(before.x, global_position.y, before.z)
 	velocity.x = 0.0
 	velocity.z = 0.0
-	clear_target()
+	release()
+	fenced.emit()
