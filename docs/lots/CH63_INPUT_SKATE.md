@@ -193,3 +193,242 @@ refactor de `drive()` pour lire un cap plutôt qu'une destination, la
 suppression de l'adaptateur, et le reciblage des quatre sondes skate
 (`SkateDismountProbe`, `SkateInertiaProbe`, `SkateFeelProbe`,
 `SkatePhysicsProbe`) sur le nouveau modèle.
+
+# LOT 2 — LE THROTTLE CONTINU, ET LA PLANCHE PASSE À LA POURSUITE
+
+*10 septembre 2026. Branche `claude/skatepark-throttle-continuous-45swg6`,
+basée sur `origin/staging` (arbre `114891c…`, LOT 1 déjà mergé).*
+
+## Section 1 — L'ERREUR DE SPEC DU LOT 1, DITE EN PREMIER
+
+Le LOT 1 a livré « drag tenu = un cap, tap court = une POUSSÉE ». La
+moitié poussée était une mauvaise lecture du brief : **Mathieu ne veut
+aucune tape répétée**. Le contrat réel est un throttle **tenu** — doigt
+posé, la planche est propulsée en continu ; doigt levé, roue libre et
+l'inertie CH61 prend le relais telle quelle.
+
+Le signal `pushed` **disparaît**. Ce qui le remplace n'est pas un second
+geste, c'est l'**absence** d'un geste : le throttle est l'état du doigt.
+C'est exactement le schéma de `KartTouchInput` (`input.throttle` tenu,
+l'offset du doigt lu comme un axe), copié plutôt que réinventé, avec deux
+différences qui sont des propriétés d'une planche et pas des goûts :
+l'offset écrit un **CAP** (une direction absolue, pas un taux de braquage
+— une planche n'a pas de colonne de direction), et le throttle est la
+**présence** du doigt plutôt qu'un 1.0 permanent, parce qu'une planche
+sans doigt dessus doit rouler libre.
+
+## Section 2 — ⚠️ LE LOT 1 A LIVRÉ UN PATRON ÉCHELLE, ET IL FALLAIT LE FERMER
+
+Trouvé en écrivant ce lot, pas signalé par une sonde. `HubTapInput`
+court-circuite **tout** point pendant qu'une planche en mode DRAG est
+montée — c'est ce qui donne « un doigt, un sens ». Mais le démontage
+livré (« un tap sur son propre corps dessiné, planche à l'arrêt ») vit
+**SOUS** ce court-circuit, dans `HubWorld`. Donc sous le schéma DRAG du
+LOT 1, **il n'existait aucun moyen de descendre de la planche** : un
+joueur enfermé dans un prop qui avale chacun de ses taps, c'est-à-dire
+littéralement le PATRON ÉCHELLE que `CLAUDE.md` bannit.
+
+Le LOT 2 le ferme avec le geste qui ne coûte rien d'autre : **un tap court
+qui n'a jamais quitté la slop = SORTIE** (`signal tapped`). Sous la caméra
+de poursuite il n'existe de toute façon plus de pixel fixe qui veut dire
+« lui », donc c'est un tap **n'importe où**.
+
+⚠️ **ET LE GESTE NE PEUT PAS ÊTRE SON PROPRE ÉTALON.** La porte est gatée
+sur « la planche est à l'arrêt » — la règle du schéma TAP livré, pas une
+nouvelle. Mesuré : le throttle s'ouvre **à l'appui**, donc au moment du
+relâchement un tap a déjà poussé la planche pendant ses deux ou trois
+ticks — **~0,6 u/s contre un seuil de repos de 0,24** — et un tap sur une
+planche parfaitement immobile n'aurait **jamais** démonté. D'où
+`SkateTouchInput.pressed`, émis **avant** que le throttle ne s'ouvre (une
+ligne d'écart, et l'inverser recrée exactement le défaut), et
+`HubTransport` échantillonne le repos **là**.
+
+## Section 3 — CE QUI A QUITTÉ `SkateBoardBody`, ET CE QUI L'A SUIVI
+
+`drive()` lit désormais **un CAP et un THROTTLE**, écrits par
+`hold(heading, throttle)`. Le throttle est **SIGNÉ** : `+1` pousse le long
+du cap, `0` roue libre, `-1` dépense le frein contre la vélocité — un seul
+champ plutôt que deux, pour la raison de `KartInput` (un pouce ne peut pas
+demander les deux, et deux champs laisseraient l'un survivre à l'autre).
+
+Sont partis, chacun pour sa raison :
+
+* **le run-out sur `remaining`** — il n'y a plus de cible à être « dedans » ;
+* **la garde d'immobilisation (stall guard)** — une cible que personne ne
+  regarde devait être lâchée ; un throttle tenu a un doigt qui le regarde,
+  et ce doigt se lève.
+
+⚠️ **MAIS LA DESTINATION N'A PAS DISPARU — ELLE A DÉMÉNAGÉ.** L'A/B
+TAP / DRAG doit rester jouable mid-ride, donc le schéma TAP doit se
+comporter exactement comme CH54/CH57 l'ont livré : taper un point, y
+rouler, s'y arrêter. C'est maintenant un adaptateur **dans l'autre sens**
+(une destination transformée en cap + throttle), et il vit dans
+`HubTransport` parce que c'est le seul fichier qui possède encore le
+concept de destination. **Le run-out et la garde l'ont suivi**, avec
+`BOARD_ARRIVE` (lu sur `KeepyHopper`) et `BOARD_STALL_STEP` (lu sur
+`SkateBoardBody.REST_STEP`) : une seule orthographe des deux nombres.
+
+Il reste **UN modèle de conduite avec DEUX façons d'être interrogé**, pas
+deux modèles.
+
+⚠️ **LA GARDE DE `_fence` A DÛ DEVENIR UN SIGNAL.** La barrière de région
+n'a plus personne à qui parler : elle émet `fenced`, et l'adaptateur lâche
+sa destination dessus. Et c'est **sûr** uniquement parce que le cap est
+**ÉCRIT et pas intégré** : l'arithmétique CH42 (`le gain de braquage est
+proportionnel à v_fwd, donc un mur supprime la direction`) a déjà coûté
+trois véhicules à ce dépôt, et elle mord un modèle dont le taux de virage
+est mis à l'échelle par la vitesse avant qu'un mur mange. Le cap de cette
+planche vient droit du pouce : une planche épinglée contre la région garde
+**tous** ses degrés d'autorité.
+
+## Section 4 — LA CAMÉRA, ET POURQUOI ELLE SUIT LE SCHÉMA ET PAS LE MONTAGE
+
+Option A tranchée par Mathieu : `enter_drive`, le patron des véhicules
+pilotés, **pas** `enter_ride` de CH62 pour la pose.
+
+⚠️ **MAIS ELLE EST DÉCIDÉE PAR `sync_board_input()`, PAS PAR
+`mount_board()`**, et ce n'est pas de l'élargissement de périmètre — c'est
+la règle de `CLAUDE.md` lue honnêtement. La table des caméras se décide
+sur le **PILOTAGE CONTINU**, et *lequel des deux schémas est sélectionné*
+est exactement la question de savoir si cette planche est pilotée en
+continu. Sous DRAG elle l'est → pose de poursuite ; sous TAP elle est
+tapée vers une destination comme celle de CH54 → pose **FIXE**, inchangée
+en tout point. Deux conséquences, dites plutôt que découvertes : l'A/B
+reste un test du **schéma de contrôle** seulement si chaque schéma est
+jugé avec la caméra que `CLAUDE.md` lui donne ; et le bouton mid-ride
+déplace la caméra mid-ride, en **blend** de 0,9 s dans les deux sens, pas
+en coupe.
+
+⚠️ **ET `enter_ride` EST TOUJOURS APPELÉ, POUR UNE SEULE CHOSE.** C'est lui
+qui publie le `rush` lissé, et `SkateStreaks` lit exactement ça
+(`ride_rush() * ride_blend()`) — `CLAUDE.md`, un fait est publié une fois.
+Ses trois termes de **POSE** sont inertes tant qu'une conduite tourne, et
+c'est de l'arithmétique et pas une promesse : `HubCamera._process` prend
+la branche conduite, qui ne lit jamais `_ride_offset()` et n'écrit jamais
+`fov_gain`. Supprimer l'appel aurait tué **silencieusement** les traînées
+de vitesse — un effet livré et validé device — dans un lot qui ne parlait
+pas d'elles.
+
+## Section 5 — LE ChaseAudit, ET LA STATION QU'IL N'AVAIT PAS
+
+`CLAUDE.md` exige cet audit **avec** une caméra de poursuite. Ses cinq
+stations sont les cinq zones où roulent les trois véhicules antérieurs ;
+**aucune** n'est le lobe nord, c'est-à-dire là où ce véhicule-ci vit
+réellement et où CH52 a relevé **zéro budget de frame**. Une sixième
+station a donc été ajoutée, au **skatepark** — littéral **gaté** contre
+`HubSkatepark.PARK_CENTRE` (un initialiseur de `const` de ce moteur ne
+peut pas prendre un membre d'un `const Vector2` d'une autre classe), au
+régime des centres de lacs.
+
+`ChaseAudit` : **14 checks, 0 échec, PASS**, 192 frames
+(6 stations × 8 azimuts × 4 météos), contre 13 checks / 160 frames sur
+la baseline. Ce que le skatepark rend, en primitives sur la ligne `gpu` :
+
+| azimut | 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 |
+|---|---|---|---|---|---|---|---|---|
+| gpu | 16 851 | 17 451 | 20 034 | 55 698 | **85 289** | 61 754 | 31 191 | 18 219 |
+
+Ciel au pire **36,6 %** (aucun trou dans le monde), aucune frame noire.
+Le pire azimut du park (85 289, plein sud, vers le plateau) reste **sous**
+la pire frame du hub entier (**102 478**, storm/cove/270), et sous les
+102 803 que `CLAUDE.md` publie déjà comme borne LOD0 du spawn. Aucun
+enroulement fautif (8 rubans construits à la main, l'ancre StreamBank
+comprise), aucun `visibility_range_end` sous la bande lisible de 73 u,
+aucun arbre sous 0,15 de luminance effective.
+
+## Section 6 — ⚠️ LE FAUX ROUGE DU LOT, ET IL VIVAIT DANS UN COMPTEUR
+
+`SkateFeelProbe` PHASE B est sortie **1 rouge** sur la branche et verte sur
+la baseline : `total_prims` ON 72 203 contre OFF 72 205, **delta −2**,
+reproductible **à l'intérieur du run** (les deux lectures identiques). De
+quoi lire « le lot coûte −2 primitives à l'arrêt », ce qui n'a aucun sens.
+
+Deux relances du **même arbre** ont donné 72 203 / 72 203 → **ALL GREEN**.
+`CLAUDE.md` : *un gate qui ne se reproduit pas sur un seul arbre ne peut
+rien dire de deux.* Mais la cause a été **mesurée** plutôt que supposée,
+par une sonde jetable (supprimée avant le commit) :
+
+```
+label visible=true  chars=241
+FPS 9  (min 1)
+TRI gpu 70 923   lod0 cadre 256 453   scene 346 624
+...
+total_prims  with 72203   without 71853   -> le label vaut 350 primitives
+```
+
+**`total_prims` compte le TEXTE de l'overlay de perf** : 350 primitives de
+quads de glyphes, dont la première ligne est `FPS 9  (min 1)`. **Un chiffre
+de moins dans une lecture de FPS = deux primitives de moins**, et c'est
+pire que du bruit — c'est **auto-référentiel** (l'overlay imprime le
+nombre même qui est gaté, une frame en retard). Le test de tremblement de
+la sonde ne peut pas l'attraper : ses deux lectures sont à 8 frames
+d'écart, ce qui ne suffit pas à faire tourner un chiffre de FPS.
+
+Correctif : la sonde **mute le Label de l'overlay sur les DEUX mondes**
+avant de lire, avec le blind check que `CLAUDE.md` impose (le mute doit
+avoir **retiré** quelque chose, sinon « l'overlay est hors du compte » et
+« l'overlay n'y a jamais été » se lisent pareil). Après : **71 853 des deux
+côtés, delta 0, deux runs de suite**.
+
+## Section 7 — ROUGE AVANT VERT : SIX PASSES, ET UNE EST REVENUE VERTE
+
+| # | neutralisation | rouges attendus | rouges obtenus |
+|---|---|---|---|
+| 1 | le throttle ne s'ouvre jamais (`throttle = 0.0` à l'appui) | le throttle et tout ce qu'il propulse | **12**, tous throttle/déplacement |
+| 2 | `tapped.emit()` supprimé | le geste de sortie, des deux côtés | **4**, exactement les assertions de sortie |
+| 3 | le latch de cap du LOT 1 restauré | le suivi continu du doigt | **1** — « un doigt revenu dans la slop n'écrit aucun cap » |
+| 4 | le run-out de l'adaptateur TAP retiré | la distance d'arrêt du schéma TAP | **1** — « L le roll ENDS at the tap (**17,344 u** de dépassement) » |
+| 5 | la garde d'immobilisation de l'adaptateur retirée | les deux assertions de garde | **2**, sur `SkatePhysicsProbe` |
+| 6 | `fenced.emit()` supprimé | ? | **0** — sur `SkatePhysicsProbe` ET `SkateDismountProbe` |
+
+⚠️ **LA PASSE 6 EST REVENUE VERTE, ET CE N'EST PAS QUE LE FIL EST INUTILE.**
+La garde d'immobilisation atteint le **même état final trente ticks plus
+tard**, donc une sonde qui demande seulement « la destination a-t-elle fini
+par disparaître » ne peut pas les distinguer. Ce qui les sépare, c'est
+**QUAND**. D'où une PHASE F neuve dans `SkateInputProbe`, qui gate le
+**tick** : blind check d'abord (un tick **dans** la région ne lâche rien),
+puis le corps posé hors région et un seul `drive()`. Passe 6 rejouée avec
+la phase en place : **1 rouge**, exactement celui-là.
+
+Chaque fichier neutralisé a été restauré et vérifié **byte-identique**
+(`cmp` + `md5sum`).
+
+## Section 8 — LA TABLE CROISÉE, DEUX ARBRES, MÊME MACHINE, RUNS SÉPARÉS
+
+Import complet vérifié des deux côtés **avant** toute comparaison :
+**154 `.scn` = 154 `.scn`** (`CLAUDE.md` : compter les `.scn` des deux
+côtés avant de comparer quoi que ce soit).
+
+| sonde | branche | baseline `origin/staging` | écart |
+|---|---|---|---|
+| `SkateInputProbe` | **79 / 0 red** | 57 / 0 red *(version LOT 1)* | +22, contrat réécrit + PHASE F |
+| `SkateInertiaProbe` | **86 / 0** | 86 / 0 | identique |
+| `SkatePhysicsProbe` | **122 / 0** | 121 / 0 | +1 (`BOARD_STALL_STEP` = `REST_STEP`) |
+| `SkateDismountProbe` | **90 / 0** | 90 / 0 | identique |
+| `SkateFeelProbe` | **136 / 0** | 135 / 0 | +1 (instrument du mute d'overlay) |
+| `ChaseAudit` | **14 / 0 PASS** | 13 / 0 PASS | +1 (station skatepark) |
+| `ProbeTimeoutAudit` | **95 scènes** | 95 scènes | identique — aucune sonde jetable laissée |
+
+## Section 9 — CE QUE CE LOT NE SIGNE PAS
+
+* **Le RESSENTI.** Les sondes signent qu'un doigt tenu propulse, que le cap
+  suit le doigt, que lever ne freine pas, qu'il existe une sortie et que la
+  route livrée reste fermée pendant un drag et rouverte dès le retour sur
+  TAP. Savoir si c'est **agréable** appartient à Mathieu, sur device.
+* **Le TAUX DE VIRAGE.** Le facing est écrit **directement** depuis le
+  pouce, sans taux entre les deux — c'est la lecture littérale de « la
+  direction suit la position du doigt en continu ». Ce qui l'empêche de
+  lire comme un claquement n'est pas un lissage ici : la **vélocité** est
+  intégrée (un cap inversé dépense `push` contre l'élan au lieu de le
+  téléporter) et la caméra de poursuite retarde le cap de
+  `DRIVE_HEADING_LAMBDA`. **Si device dit que c'est encore trop sec, un
+  taux de virage est le premier bouton** — et il appartient à un lot de
+  feeling avec un nombre mesuré sur un téléphone, pas inventé ici.
+* **Le cercle du doigt tenu de côté.** Sous la poursuite, la base caméra
+  **lace avec la planche** : tenir le doigt à droite fait tourner la
+  planche, ce qui tourne la caméra, ce qui déplace où « droite » pointe —
+  un **cercle régulier**, exactement ce que fait un braquage tenu sur tout
+  véhicule à caméra de poursuite de ce dépôt. « Haut de l'écran » est le
+  point fixe de cette boucle, et c'est le seul offset contre lequel
+  PHASE D peut mesurer le mapping plutôt que la caméra ; **les côtés sont
+  gatés en PIXELS par PHASE M, caméra garée**.

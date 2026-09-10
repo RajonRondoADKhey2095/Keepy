@@ -125,7 +125,10 @@ func is_driving() -> bool:
 func drive_blend() -> float:
 	return _blend
 
-## Starts the chase on `kart` (a KartBody: forward() and global_position).
+## Starts the chase on `kart` -- any Node3D whose `rotation.y` is its
+## heading and whose `global_position` is where it is. CH63 LOT 2 added a
+## fourth: the skateboard, which satisfies both (its facing is written
+## from the commanded heading in `SkateBoardBody.drive()`).
 func enter_drive(kart: Node3D) -> void:
 	_drive_target = kart
 	_drive_heading = kart.rotation.y
@@ -164,13 +167,33 @@ func _drive_wanted() -> Vector3:
 	return HubSurface.ground(at) - heading * DRIVE_BACK + Vector3(0.0, DRIVE_UP, 0.0)
 
 ## =====================================================================
-## CH62 -- THE RIDE MODE, and it is a much smaller thing than the kart's
+## CH62 -- THE RIDE MODE, and CH63 LOT 2 took its POSE away and left it
+## its READING
 ##
-## ⚠️ D6 (une camera de poursuite pour le hub) IS STILL SHUT. What this
-## opens is the narrowest door that answers the device verdict on CH61
-## ("je ne vois pas de difference"): the physics board reaches 1.7 u of
-## air and 10 u/s on a screen where NOTHING moves in response, because
-## OFFSET is a constant and this camera never rises.
+## ⚠️ D6 IS OPEN FOR THE BOARD NOW, AND THAT DEMOTED THIS MODE. CH62 wrote
+## "D6 (une camera de poursuite pour le hub) IS STILL SHUT", and opened
+## the narrowest door it could instead -- a bounded OFFSET on the fixed
+## pose -- because the physics board reached 1.7 u of air and 10 u/s on a
+## screen where nothing moved in response. Mathieu has since tranche
+## option A: the board is piloted continuously under the drag scheme, so
+## it takes the DRIVE pose, which yaws, lags its heading and looks where
+## the board is going. That does all three of the jobs below, better.
+##
+## ⚠️ SO THE THREE POSE TERMS ARE INERT WHILE A DRIVE IS RUNNING, and it is
+## arithmetic rather than a promise: `_process` takes the drive branch
+## when `_drive_target != null`, and that branch never reads
+## `_ride_offset()` and never writes `_hub_fov + fov_gain`. What the ride
+## mode still does, every frame, in EITHER branch, is ADVANCE AND PUBLISH
+## `rush` -- the smoothed reading of the board's pace -- because
+## SkateStreaks reads exactly that (`ride_rush() * ride_blend()`), and
+## CLAUDE.md's "un fait est publie une fois" is why the streaks do not
+## recompute it from the board's speed themselves. Dropping the ride call
+## when the drive pose arrived would have killed a shipped,
+## device-validated effect silently, in a lot that was not about it.
+##
+## What follows describes the pose terms as CH62 wrote them. They still
+## apply to any future rider that enters the ride WITHOUT a drive; today
+## nothing does.
 ##
 ## WHAT THE RIDE MODE DOES NOT DO, and this is the whole of why it is not
 ## D6: it does not yaw, it does not look_at, it does not lag a heading,
@@ -322,6 +345,14 @@ func _process(delta: float) -> void:
 		global_position = global_position.lerp(_wanted(), weight)
 		_hub_position = global_position
 		return
+	# ⚠️ CH63 LOT 2: the ride READING is advanced in this branch too, and
+	# its POSE is not. See the ride block's header: `rush` is what
+	# SkateStreaks draws from, and the board now enters BOTH modes -- the
+	# drive for the pose, the ride for the reading. Nothing below adds
+	# `_ride_offset()`, which is what makes "the three pose terms are
+	# inert under a drive" a fact about this function rather than a claim.
+	if _ride_board != null or _ride_blend > 0.0:
+		_ride_advance(delta)
 	_hub_position = _hub_position.lerp(_wanted(), weight)
 	if not is_instance_valid(_drive_target):
 		_on_drive_exited()

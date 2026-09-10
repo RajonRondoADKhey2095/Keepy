@@ -350,7 +350,7 @@ func _coast_run() -> Dictionary:
 	var from := Vector3(-26.0, 0.0, 30.0)
 	await _park_board(from)
 	var mounted: bool = _transport.mount_board()
-	body.clear_target()
+	body.stop()
 	body.velocity = Vector3(0.0, 0.0, -1.0) * HubTransport.SKATE_CRUISE
 	var started: float = body.speed()
 	var ticks: int = 0
@@ -567,7 +567,7 @@ func _launch(index: int, want: float) -> Dictionary:
 				_keepy.is_on_vehicle(), _transport.is_riding_board(),
 				str(_keepy.global_position.snappedf(0.01)),
 				str(body.global_position.snappedf(0.01))])
-	body.clear_target()
+	body.stop()
 	body.rotation.y = atan2(dir.x, dir.z)
 	body.velocity = dir * want
 	var peak: float = -1e9
@@ -709,7 +709,7 @@ func _phase_stall() -> void:
 		if y > peak:
 			peak = y
 			peak_tick = t
-			target_at_peak = body.has_target()
+			target_at_peak = _transport.board_has_destination()
 		if y > 0.10:
 			climbing_ticks += 1
 	print("     climb: peak y %.3f at tick %d, guard still held the target: %s   (%d ticks off the ground)"
@@ -736,7 +736,7 @@ func _phase_stall() -> void:
 	var dropped_at: int = -1
 	for t in 420:
 		await get_tree().physics_frame
-		if not body.has_target():
+		if not _transport.board_has_destination():
 			dropped = true
 			dropped_at = t
 			break
@@ -786,7 +786,7 @@ func _park_board(flat: Vector3) -> void:
 	if _transport.is_riding_board():
 		# Carry him out to open lawn BEFORE putting him down, so the
 		# step-off lands where no hotspot is listening.
-		body.clear_target()
+		body.stop()
 		body.velocity = Vector3.ZERO
 		body.global_position = HubSurface.ground(NEUTRAL)
 		_keepy.call("follow_carrier")
@@ -811,7 +811,7 @@ func _park_board(flat: Vector3) -> void:
 			break
 		await get_tree().physics_frame
 	_keepy.dismount_vehicle()
-	body.clear_target()
+	body.stop()
 	body.velocity = Vector3.ZERO
 	body.global_position = HubSurface.ground(Vector3(flat.x, 0.0, flat.z))
 	body.rotation.y = 0.0

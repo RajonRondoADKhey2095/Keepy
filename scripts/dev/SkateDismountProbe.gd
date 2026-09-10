@@ -210,10 +210,12 @@ func _phase_steer() -> void:
 	await _remount(OPEN_GROUND)
 	var body := _transport.board_body()
 	_check(body != null, "INSTRUMENT: the board is a physics body (the switch is up)")
-	_check(not body.has_target(), "INSTRUMENT: it starts with no target (else the check below is free)")
+	_check(not _transport.board_has_destination(),
+		"INSTRUMENT: it starts with no destination (else the check below is free)")
 	_tap.tapped_ground.emit(HubRegion.clamp_to(AIM_AWAY))
 	await _settle(4)
-	_check(body.has_target(), "the tap reached the board: it now has a target")
+	_check(_transport.board_has_destination(),
+		"the tap reached the board: the adapter now holds a destination")
 	_check(_transport.is_riding_board(), "and it steered rather than ejecting him at speed")
 	var before: Vector3 = body.flat_position()
 	await _settle(30)
@@ -272,7 +274,7 @@ func _phase_anywhere() -> void:
 	var body := _transport.board_body()
 	_tap.tapped_ground.emit(HubRegion.clamp_to(AIM_AWAY))
 	await _settle(10)
-	_check(body.has_target(), "(2) INSTRUMENT: it is genuinely rolling")
+	_check(_transport.board_has_destination(), "(2) INSTRUMENT: it is genuinely rolling")
 	var ejected: bool = await _tap_self()
 	_check(not ejected, "(2) a tap on himself MID-ROLL steers instead of ejecting him at speed")
 	_check(_transport.is_riding_board(), "(2) and he is still aboard")
@@ -335,7 +337,7 @@ func _phase_screen() -> void:
 		return
 	await _remount(OPEN_GROUND)
 	var body := _transport.board_body()
-	body.clear_target()
+	body.stop()
 	await _settle(2)
 	var got: Array[Vector3] = []
 	var sink := func(p: Vector3) -> void: got.append(p)
@@ -344,11 +346,11 @@ func _phase_screen() -> void:
 	_tap.tapped_ground.disconnect(sink)
 	await _settle(4)
 	_check(got.size() > 0, "a screen point in the middle of the container produced a ground tap")
-	_check(body.has_target() or not _transport.is_riding_board(),
+	_check(_transport.board_has_destination() or not _transport.is_riding_board(),
 		"and the WORLD acted on it -- the tap was not swallowed")
-	print("     -> %s ; riding=%s has_target=%s"
+	print("     -> %s ; riding=%s destination=%s"
 		% ["nothing" if got.is_empty() else str(got[0]),
-			_transport.is_riding_board(), body.has_target()])
+			_transport.is_riding_board(), _transport.board_has_destination()])
 
 # =====================================================================
 # PHASE M -- CH60: THE DESCENT FROM THE HIGH POINT OF EVERY SOLID MODULE
@@ -874,7 +876,7 @@ func _park_board(flat: Vector3) -> void:
 	if _transport.is_riding_board():
 		var carrier := _transport.board_body()
 		if carrier != null:
-			carrier.clear_target()
+			carrier.stop()
 			carrier.velocity = Vector3.ZERO
 			carrier.global_position = HubSurface.ground(_flat(OPEN_GROUND))
 			_keepy.call("follow_carrier")
@@ -885,7 +887,7 @@ func _park_board(flat: Vector3) -> void:
 	await _idle_hopper()
 	var body := _transport.board_body()
 	if body != null:
-		body.clear_target()
+		body.stop()
 		body.velocity = Vector3.ZERO
 		body.global_position = HubSurface.ground(_flat(flat))
 	_keepy.global_position = HubSurface.ground(_flat(flat))

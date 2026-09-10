@@ -26,8 +26,17 @@ extends Node
 ##     kart.
 ##   * DECOR THAT IS ONLY FINISHED ON THE SIDE THE FIXED CAMERA SEES.
 ##
+## ⚠️ CH63 LOT 2 ADDED A SIXTH STATION AND A FOURTH VEHICLE. The
+## skateboard became a continuously piloted vehicle in that lot and took
+## the chase pose with it, so the audit is owed again -- and it is owed at
+## the SKATEPARK, which is not one of the five zones the earlier three
+## vehicles drive in. CH30 ran this audit on a hub that two visual audits
+## had already called clean and found two real defects; the north lobe has
+## never been looked at from a chase pose at all.
+##
 ## So this probe looks. It renders the drive pose at STATIONS across all
-## five zones, at eight azimuths, under all four weathers, and it reports
+## five zones AND the skatepark, at eight azimuths, under all four
+## weathers, and it reports
 ## numbers a diff can compare: primitives on the `gpu` line (CLAUDE.md:
 ## the one a plafond gates on, never `scene`), the fraction of the frame
 ## that is sky, and the darkest and brightest samples. It also audits,
@@ -50,6 +59,19 @@ const STATIONS: Array[Dictionary] = [
 	{"zone": "moor", "at": Vector3(0.0, 0.0, -106.0)},
 	{"zone": "circuit", "at": Vector3(0.0, 0.0, -142.0)},
 	{"zone": "cove", "at": Vector3(56.0, 0.0, -110.0)},
+	# ⚠️ CH63 LOT 2 -- THE SKATEPARK, AND IT IS THE STATION THIS AUDIT DID
+	# NOT HAVE. The board joined the chase-camera table in that lot, and
+	# CLAUDE.md requires this audit WITH a chase camera precisely because
+	# a chase pose shows decor at azimuths the fixed frame never has. The
+	# five stations above are the five zones the three earlier vehicles
+	# drive in; NONE of them is the north lobe, which is where this
+	# vehicle actually lives and where CH52 recorded ZERO frame budget.
+	# ⚠️ A LITERAL, GATED -- not a read. A const initialiser in this engine
+	# cannot take a member off another class's const Vector2, so the
+	# position is spelled here and CHECKED against HubSkatepark.PARK_CENTRE
+	# in PHASE RECT: CLAUDE.md's regime for the lake centres, applied to
+	# the one number this file would otherwise have copied blind.
+	{"zone": "skatepark", "at": Vector3(0.0, 0.0, 50.0)},
 ]
 const AZIMUTHS: int = 8
 ## The chase camera's reach: HubCamera.DRIVE_FAR is 120 u, but a thing is
@@ -121,6 +143,17 @@ func _run() -> void:
 		get_tree().quit(ProbeWatchdog.EXIT_TIMEOUT)
 		return
 	_check("the container rect is not degenerate", _sub.size.x > 16 and _sub.size.y > 16, str(_sub.size))
+	# CH63 LOT 2: the one station spelled as a literal, checked against the
+	# file that authors it. A lot that moves the park reddens here instead
+	# of quietly auditing a field.
+	var park_station := Vector3.ZERO
+	for st in STATIONS:
+		if String(st["zone"]) == "skatepark":
+			park_station = st["at"]
+	_check("the skatepark station IS HubSkatepark.PARK_CENTRE",
+		absf(park_station.x - HubSkatepark.PARK_CENTRE.x) < 0.001
+			and absf(park_station.z - HubSkatepark.PARK_CENTRE.y) < 0.001,
+		"%s vs %s" % [str(park_station), str(HubSkatepark.PARK_CENTRE)])
 	_check("a frame was actually rendered (not the dummy driver's null)", probe != null)
 	var mid: Color = probe.get_pixel(probe.get_width() / 2, probe.get_height() / 2)
 	_check("the frame is not black (blind: the dummy driver renders black)",

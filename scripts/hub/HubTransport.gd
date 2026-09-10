@@ -357,7 +357,8 @@ func _ready() -> void:
 	_board_touch = SkateTouchInput.new()
 	_board_touch.name = "BoardTouch"
 	add_child(_board_touch)
-	_board_touch.pushed.connect(_on_board_pushed)
+	_board_touch.tapped.connect(_on_board_tapped)
+	_board_touch.pressed.connect(_on_board_pressed)
 
 ## Handed the nodes this needs, once, by HubWorld. `hud` is the kart's
 ## HUD in its vehicle mode (one exit button and the steering ghost): a
@@ -480,6 +481,11 @@ func _build_board() -> void:
 		# switch is down, so the two modes ride the same numbers and any
 		# difference Mathieu feels is the PHYSICS and not a retune.
 		body.configure(SKATE_CRUISE, SKATE_ACCEL_U, SKATE_BRAKE_U, skate_coast_u())
+		# CH63 LOT 2: the fence tells this file when it refused a step, so
+		# the tap adapter can drop a destination that is now unreachable.
+		# One connection, made where the body is built, so a board can
+		# never exist with the wire missing.
+		body.fenced.connect(_on_board_fenced)
 		_board = body
 		# CH62: the two responses that need a node of their own. Built
 		# HERE, in the same branch and behind the same switch as the
@@ -533,84 +539,217 @@ var _board_audio: SkateAudio = null
 var _board_shadow: SkateShadow = null
 
 ## =====================================================================
-## CH63 LOT 1 -- THE DRAG SCHEME'S WRITER, AND THE TEMPORARY ADAPTER
+## CH63 LOT 2 -- ONE DRIVE MODEL, TWO WAYS OF BEING ASKED
 ##
-## `_board_touch` captures a gesture (see SkateTouchInput). What it does
-## NOT do is drive: this file turns its two outputs into the one call the
-## shipped board already understands, `set_target()`, and CH61's inertia
-## model is not touched by this lot at all.
+## `_board_touch` captures a gesture (see SkateTouchInput): a held finger
+## writes a THROTTLE and a HEADING, and that is now exactly the vocabulary
+## `SkateBoardBody.hold()` speaks. LOT 1's adapter -- the one that turned a
+## held heading into `set_target(a point out in front)` because the board
+## only understood destinations -- is GONE, and with it the lead constant
+## it needed. Nothing stands between the thumb and the drive model.
 ##
-## ⚠️ THE ADAPTER IS TEMPORARY AND IS LABELLED SO ON PURPOSE. It exists to
-## make the CAPTURE measurable on device without a second lot's worth of
-## change riding along with it. LOT 2 replaces it with a heading the drive
-## model reads directly, and moves the board to the chase camera; until
-## then a held heading is expressed as a destination out in front, which
-## is the only vocabulary `SkateBoardBody.drive()` has.
+## ⚠️ WHAT DID NOT GO IS THE DESTINATION, AND IT MOVED HERE. The TAP/DRAG
+## A/B has to stay performable mid-ride, so the tap scheme must keep
+## behaving exactly as CH54/CH57 shipped it: tap a point, roll to it, stop
+## on it. That is now an adapter in the OTHER direction -- a destination
+## turned into the same heading and throttle -- and it lives in this file
+## because this file is the only one that still owns the concept of a
+## destination at all. The board holds no target, so there is one drive
+## model with two askers rather than two drive models.
+##
+## Two things came with the destination, because they belong to it:
+##
+##   * THE RUN-OUT. A tapped roll brakes into its own arrival, which is
+##     the negative half of the throttle -- otherwise the board would
+##     coast a whole park span past a point 5 u away and the A/B would be
+##     comparing DRAG against a tap scheme nobody has ever ridden.
+##   * THE STALL GUARD. A destination nobody is watching that stops making
+##     progress must be dropped, or a tap into a wall grinds for ever with
+##     the player's tap channel spent (CH42's arithmetic, CH61's fix). A
+##     HELD finger needs none of this: the finger IS the guard, and it
+##     lifts.
 var _board_touch: SkateTouchInput = null
 
-## How far in front of the board the held heading plants its destination.
-##
-## ⚠️ IT IS A MARGIN, NOT A TASTE, and it is the one number this adapter
-## writes down. `drive()` brakes instead of pushing once the target is
-## inside the run-out (`v^2 / 2b + ARRIVE_EPSILON`, which at cruise is
-## SKATE_BRAKE_U + 0.45), so a destination nearer than that would make a
-## held drag decelerate -- a gesture that means "go" producing a stop.
-## Twice the run-out keeps the board outside its own braking window at
-## every speed it can reach, and SkateInputProbe PHASE D gates exactly
-## that property (a held drag on the flat reaches cruise) rather than
-## gating the digit.
-const BOARD_DRAG_LEAD: float = SKATE_BRAKE_U * 2.0
+## The tap scheme's destination, and the guard that ends it. Flat.
+var _board_dest: Vector3 = Vector3.ZERO
+var _board_has_dest: bool = false
+var _board_best: float = 1e9
+var _board_stalled: int = 0
+
+## Arrival, in the hopper's own units so a physics roll and a tween roll
+## agree on what "there" means. Read, not retyped -- it was
+## SkateBoardBody's constant until the board stopped having arrivals.
+const BOARD_ARRIVE: float = KeepyHopper.ARRIVE_EPSILON
+## The guard's window and its threshold, CH57's numbers unchanged, in
+## units of PROGRESS toward the destination (CH61's correction: a climb
+## makes almost no flat displacement and would be shot down as a stall,
+## an oscillation makes plenty and would never be). The step is read off
+## the board's own definition of motionless rather than retyped.
+const BOARD_STALL_STEP: float = SkateBoardBody.REST_STEP
+const BOARD_STALL_TICKS: int = 30
 
 func board_touch() -> SkateTouchInput:
 	return _board_touch
+
+## For a bench: whether the TAP scheme currently holds a destination. It
+## replaces `SkateBoardBody.has_target()`, which no longer exists -- and
+## it is deliberately NOT the same question as `board_body().driving()`,
+## which answers "is it being pushed or braked, by anyone".
+func board_has_destination() -> bool:
+	return _board_has_dest
 
 ## The ONE place the writer is armed or disarmed. mount_board(),
 ## leave_board() and HubWorld's TAP/DRAG button all call this and nothing
 ## else touches `enabled` -- so a ride can never start with the scheme
 ## half-applied, and flipping the scheme mid-ride takes effect on the
 ## spot without a scene rebuild.
-func sync_board_input() -> void:
-	if _board_touch == null:
-		return
-	var want: bool = _riding_board and SkateTouchInput.drag_enabled()
-	if _board_touch.enabled != want:
-		_board_touch.enabled = want
-
-## The tap half of the scheme: relaunch along the heading the board is
-## already pointing. Deliberately NOT a destination under the finger --
-## that is the OTHER scheme, and a push that also aimed would make the two
-## schemes indistinguishable on device, which is the whole thing this A/B
-## is for.
-func _on_board_pushed() -> void:
-	var body := board_body()
-	if body == null or not _riding_board:
-		return
-	var facing := Vector3(sin(body.rotation.y), 0.0, cos(body.rotation.y))
-	if facing.length() < 0.0001:
-		return
-	body.set_target(HubRegion.clamp_to(
-		body.flat_position() + facing.normalized() * BOARD_DRAG_LEAD))
-
-## The drag half: re-plant the destination out in front of wherever the
-## board now is, every physics tick a finger holds a heading.
 ##
-## ⚠️ WHILE A FINGER HOLDS A HEADING, THE STALL GUARD IS THE FINGER. A
-## carrot that moves with the board never lets `remaining` improve, so
-## `set_target()`'s reset is what keeps SkateBoardBody's progress guard
-## from firing half a second into every held drag. That is stated rather
-## than discovered: the guard exists to end a push nobody is watching, and
-## under this scheme somebody is -- they lift. What still ends a drag into
-## a wall is `_fence`, which clears the target itself at the region
-## border and is untouched by this lot.
-func _apply_board_drag() -> void:
+## ⚠️ CH63 LOT 2: IT NOW SYNCS THE CAMERA TOO, AND THAT IS NOT SCOPE CREEP
+## -- IT IS CLAUDE.md's OWN RULE READ HONESTLY. The camera table keys on
+## CONTINUOUS PILOTING, and which of the two schemes is selected is
+## exactly whether this board is continuously piloted. Under DRAG it is,
+## so it takes the chase pose; under TAP it is tapped to a destination
+## like CH54's and stays on the FIXED pose, unchanged in every particular.
+##
+## Two consequences worth stating rather than discovering:
+##
+##   * the A/B stays HONEST as a control-scheme comparison only if each
+##     scheme is judged with the camera CLAUDE.md gives it -- a chase
+##     camera bolted onto the tap scheme would be a third thing nobody
+##     asked for;
+##   * flipping the button mid-ride moves the camera mid-ride, which is a
+##     BLEND in both directions (DRIVE_BLEND_S) and not a cut.
+func sync_board_input() -> void:
+	var want: bool = _riding_board and SkateTouchInput.drag_enabled()
+	if _board_touch != null and _board_touch.enabled != want:
+		_board_touch.enabled = want
+	_sync_board_camera(want)
+
+## Enters or leaves the chase pose for the board, at most once per change.
+## `_board_chase` is this file's memory of what it asked for: without it a
+## leave_board() during another vehicle's drive could call `exit_drive()`
+## on a camera chasing the KART, which is a cross-vehicle bug of exactly
+## the kind CH30's shared-mode regression was.
+var _board_chase: bool = false
+
+func _sync_board_camera(chase: bool) -> void:
+	if chase == _board_chase:
+		return
+	if _camera == null:
+		_board_chase = chase
+		return
+	if chase:
+		var body := board_body()
+		if body == null or not _camera.has_method("enter_drive"):
+			return
+		_camera.call("enter_drive", body)
+		_board_chase = true
+		return
+	if _camera.has_method("exit_drive"):
+		_camera.call("exit_drive")
+	_board_chase = false
+
+## ⚠️ THE EXIT GESTURE, AND IT CLOSES A HOLE LOT 1 SHIPPED. Under the drag
+## scheme HubTapInput short-circuits every point, and the shipped dismount
+## ("a tap on his own drawn body at rest") lives BELOW that short-circuit
+## -- so LOT 1 left a rider with no way off the board at all. That is
+## CLAUDE.md's PATRON ECHELLE, a player sealed inside a prop that eats
+## every tap, and it is banned outright.
+##
+## The gate is `board_at_rest()`, which is the SHIPPED tap scheme's own
+## rule and not a new one: a tap made mid-roll is not an ejection at
+## speed, it is a finger that was down for a few frames and therefore a
+## few frames of push. Under the chase camera there is no fixed pixel that
+## means "him" any more, so the gesture is a tap ANYWHERE rather than a
+## tap on a body.
+##
+## ⚠️ AND THE GATE IS SAMPLED AT THE PRESS, NOT HERE. Measured before it
+## was: the throttle opens on the press, so a tap has pushed the board for
+## its own two or three ticks by the time it ends -- ~0.6 u/s against a
+## rest threshold of 0.24 -- and a tap on a perfectly stationary board
+## would never once dismount. A gesture cannot be its own yardstick. See
+## `SkateTouchInput.pressed`.
+var _board_rest_at_press: bool = false
+
+func _on_board_pressed() -> void:
+	_board_rest_at_press = _riding_board and board_at_rest()
+
+func _on_board_tapped() -> void:
+	if not _riding_board:
+		return
+	if not _board_rest_at_press:
+		return
+	leave_board()
+
+## The fence refused a step out of the region and stopped the board. Under
+## the TAP scheme that has to end the destination too, or the stall guard
+## would be the only thing that ever did -- the board's own comment, moved
+## to the file that now owns the target. Under DRAG nothing here fires
+## that the player has to be rescued from: he keeps steering.
+func _on_board_fenced() -> void:
+	_board_has_dest = false
+
+## =====================================================================
+## THE BOARD'S CONTROL TICK -- one command per physics frame, from
+## whichever scheme is live, and never from both.
+##
+## ⚠️ THE ORDER IS DELIBERATE AND IT IS THE DRAG SCHEME FIRST. Only one of
+## the two can be armed at a time (`sync_board_input`), so this is not a
+## priority so much as a statement that a finger on the glass outranks a
+## destination left over from before the switch was flipped -- flipping to
+## DRAG mid-roll with a tapped destination still live would otherwise
+## leave the board obeying a tap the player has stopped being able to make.
+func _advance_board(_delta: float) -> void:
 	var body := board_body()
-	if body == null or _board_touch == null or not _board_touch.has_heading():
+	if body == null:
 		return
-	var heading: Vector3 = _board_touch.heading_world(_camera)
-	if heading == Vector3.ZERO:
+	if _board_touch != null and _board_touch.enabled and _board_touch.steering_active:
+		_board_has_dest = false
+		# heading_world() reads the LIVE camera basis, and under the chase
+		# camera that basis yaws with the board -- which is the whole
+		# point: "up the screen" means "further along the way you are
+		# already going", on every frame, without the player translating.
+		body.hold(_board_touch.heading_world(_camera), _board_touch.throttle)
 		return
-	body.set_target(HubRegion.clamp_to(
-		body.flat_position() + heading * BOARD_DRAG_LEAD))
+	if _board_has_dest:
+		_advance_board_dest(body)
+		return
+	# No finger, no destination: free roll. `release()` and not `stop()` --
+	# CH61's elan is what a lifted finger is FOR.
+	body.release()
+
+## The tap scheme, expressed in the board's own two fields.
+##
+## ⚠️ THE GUARD READS ONE TICK LATE, AND THAT IS SAID RATHER THAN HIDDEN.
+## This runs BEFORE `drive()`, so `remaining` is the distance the last
+## tick's move produced. Over a 30-tick window that is 3 % of the window
+## and it cannot change a verdict; putting it after `drive()` would split
+## the destination's logic across two call sites, which is worse.
+func _advance_board_dest(body: SkateBoardBody) -> void:
+	var here: Vector3 = body.flat_position()
+	var to_dest: Vector3 = _board_dest - here
+	var remaining: float = to_dest.length()
+	if remaining <= BOARD_ARRIVE:
+		_board_has_dest = false
+		body.release()
+		return
+	var heading: Vector3 = to_dest / remaining
+	# The run-out, aimed at zero speed AT the arrival boundary rather than
+	# at the point itself -- otherwise the board crosses the boundary still
+	# carrying the speed the brake was going to spend on the last
+	# BOARD_ARRIVE, `at_rest()` turns true under a rolling board, and the
+	# tap that means "get off" arrives while it is still moving.
+	var v: float = body.speed()
+	var stop_d: float = v * v / (2.0 * maxf(body.brake_accel(), 0.01)) + BOARD_ARRIVE
+	body.hold(heading, -1.0 if remaining <= stop_d else 1.0)
+	if remaining < _board_best - BOARD_STALL_STEP:
+		_board_best = remaining
+		_board_stalled = 0
+	else:
+		_board_stalled += 1
+	if _board_stalled >= BOARD_STALL_TICKS:
+		_board_has_dest = false
+		body.release()
 
 func board_body() -> SkateBoardBody:
 	return _board as SkateBoardBody
@@ -633,16 +772,19 @@ func _set_ride_feel(riding: bool) -> void:
 func is_riding_board() -> bool:
 	return _riding_board
 
-## Climbs aboard. mount_sled()'s shape exactly, minus the drive mode: no
-## `touch.enabled`, no chase camera, no HUD -- see the class header of
-## SkateBoardBody for why a tapped destination is not a piloted vehicle.
+## Climbs aboard. mount_sled()'s shape, and CH63 LOT 2 closed the last gap
+## between them: under the DRAG scheme the board takes the CHASE camera,
+## because it is then piloted frame by frame and that is CLAUDE.md's own
+## criterion. Under TAP it keeps the fixed pose CH54 shipped. No HUD
+## either way -- the board has nothing to say that a lap counter says.
 func mount_board() -> bool:
 	var body := board_body()
 	if body == null or _keepy == null:
 		return false
 	if _driving or _driving_sailboat or _driving_sled or _riding_board:
 		return false
-	body.clear_target()
+	_board_has_dest = false
+	body.stop()
 	if not _keepy.call("mount_carrier", body, body.seat(SKATE_LIFT)):
 		return false
 	_riding_board = true
@@ -650,9 +792,19 @@ func mount_board() -> bool:
 	# call, the same one leave_board() and the menu button make.
 	sync_board_input()
 	_keepy.call("follow_carrier")
-	# CH62: the camera starts reacting to the ride. `has_method` for the
-	# same reason the three driven vehicles use it -- a bench that hands
-	# this file a bare Camera3D still mounts.
+	# CH62: the camera starts reacting to the ride. This is what publishes
+	# the smoothed `rush` that SkateStreaks draws from, and it is entered
+	# under BOTH schemes -- its POSE terms are the fixed camera's and are
+	# inert while a drive is running (HubCamera._process takes the drive
+	# branch and never adds `_ride_offset()`).
+	#
+	# ⚠️ THE CHASE POSE IS NOT ENTERED HERE. `sync_board_input()` above
+	# owns it, because which pose this board takes is decided by which
+	# CONTROL SCHEME is selected, and that is the one thing that call
+	# already knows and can be flipped mid-ride.
+	#
+	# `has_method` for the same reason the three driven vehicles use it --
+	# a bench that hands this file a bare Camera3D still mounts.
 	if _camera != null and _camera.has_method("enter_ride"):
 		_camera.call("enter_ride", body)
 	_set_ride_feel(true)
@@ -670,8 +822,9 @@ func leave_board() -> void:
 	# CH63 LOT 1: disarm first, so no event delivered during the step-off
 	# can plant a destination on a board nobody is riding.
 	sync_board_input()
+	_board_has_dest = false
 	if body != null:
-		body.clear_target()
+		body.stop()
 	if _camera != null and _camera.has_method("exit_ride"):
 		_camera.call("exit_ride")
 	_set_ride_feel(false)
@@ -684,11 +837,21 @@ func leave_board() -> void:
 
 ## The tap, while riding. The point arrives ALREADY CLAMPED by
 ## HubTapInput, exactly as a hop destination does.
+##
+## ⚠️ IT COMMANDS THE BOARD ON THE SPOT, and not only on the next physics
+## tick. A bench that taps and asks the board what it is doing in the same
+## frame would otherwise read a board doing nothing -- and five probes do
+## exactly that. The tick that follows re-issues the same command from the
+## same destination, so there is no second spelling of the rule.
 func set_board_target(point: Vector3) -> void:
 	var body := board_body()
 	if body == null or not _riding_board:
 		return
-	body.set_target(point)
+	_board_dest = Vector3(point.x, 0.0, point.z)
+	_board_has_dest = true
+	_board_stalled = 0
+	_board_best = body.flat_position().distance_to(_board_dest)
+	_advance_board_dest(body)
 
 ## True when the board is standing still under him -- what HubWorld asks
 ## before reading a tap on Keepy himself as "get off", so a tap made
@@ -1235,19 +1398,13 @@ func _physics_process(delta: float) -> void:
 		# -- the discipline the other three branches above are written on,
 		# and the reason the rider never trails the deck by a frame.
 		#
-		# NO `touch.input`, NO HUD, NO chase camera: this board is tapped
-		# to a destination, not piloted frame by frame, so CLAUDE.md's
-		# camera table leaves it on the FIXED camera and D6 stays shut.
-		#
-		# ⚠️ CH63 LOT 1 -- AND UNDER THE DRAG SCHEME IT *IS* PILOTED FRAME
-		# BY FRAME, so that sentence has an expiry date. The camera is
-		# still FIXED here because moving it is LOT 2's work and CLAUDE.md
-		# requires a ChaseAudit pass with it; what changes today is only
-		# that a held heading re-plants the destination each tick. With
-		# the TAP scheme selected `_board_touch` is disabled, this call
-		# returns on its first line, and the branch is byte-identical in
-		# behaviour to CH57's.
-		_apply_board_drag()
+		# ⚠️ CH63 LOT 2: NO `touch.input` and NO HUD -- the board has its
+		# own writer (SkateTouchInput) rather than the kart's, because it
+		# shares none of VehicleDrive -- but the CHASE CAMERA is now
+		# exactly what the other three branches use, for exactly their
+		# reason. `_advance_board` writes the one command, from whichever
+		# scheme is armed, and `drive()` spends it.
+		_advance_board(delta)
 		(_board as SkateBoardBody).drive(delta)
 		_keepy.call("follow_carrier")
 

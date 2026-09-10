@@ -4500,6 +4500,14 @@ func _skate_input_label() -> String:
 ## left OPEN, unlike the physics switch: nothing was rebuilt, so there is
 ## nothing to go back and look at, and closing it would make a two-tap A/B
 ## into a six-tap one.
+##
+## ⚠️ CH63 LOT 2: THE SAME CALL NOW MOVES THE CAMERA TOO, and that is worth
+## knowing before the button is pressed mid-ride. DRAG is continuous
+## piloting, so it takes the chase pose; TAP is a tapped destination, so it
+## keeps the fixed one. `HubTransport.sync_board_input()` owns both halves
+## -- see its own block for why the camera is decided by the scheme rather
+## than by the mount -- and the move is a 0.9 s blend in each direction,
+## not a cut.
 func _on_skate_input_toggled() -> void:
 	SkateTouchInput.set_drag_mode(not SkateTouchInput.drag_enabled())
 	_transport.sync_board_input()
