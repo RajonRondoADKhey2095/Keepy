@@ -2696,6 +2696,64 @@ et de nulle part ailleurs. Une géométrie qui rend un seuil juste
 s'ASSERTE (la dernière facette passe, celle du dessous non), elle ne se
 lit pas dans le commentaire du seuil.
 
+### ⚠️ LE PROP D'OÙ UNE MARCHE PART N'EST PAS UN OBSTACLE POUR ELLE
+
+Écrit au CH67, et la panne ressemble **exactement** à un site qui ne peut
+pas marcher. Un balayage d'itinéraire qui refuse tout segment passant à
+moins de `KEEPY_CLEARANCE` d'un prop publié échoue à son **PREMIER
+échantillon**, pour **tous** les azimuts, quand l'acteur se repose à 1,5 u
+d'une balançoire dont le rayon d'empreinte publié est 1,80. Le verdict
+sorti est « AUCUN AZIMUT VALIDE » — c'est-à-dire le mot qu'on emploierait
+pour dire « ce site est impossible » — alors que la marche est parfaitement
+propre.
+
+CH25 ne l'avait jamais rencontré parce que son propre balayage listait le
+**décor** et rien d'autre ; le jour où la liste est devenue « tout ce que
+les bâtisseurs PUBLIENT » (ce qui est le bon réflexe, cf. « le producteur
+publie ce qu'il a construit »), le prop de départ y est entré avec.
+
+**Règle** : tout test de trajet exempte ce qui contient déjà son point de
+DÉPART, et **compte les exemptions qu'il accorde** — sans quoi l'exemption
+redevient la porte de sortie de tout le monde. Corollaire de méthode : un
+screening grossier et un test fin qui se **contredisent** ne sont pas deux
+opinions, c'est une mesure et un artefact ; le premier réflexe est de
+chercher ce que le fin voit que le grossier ne voit pas.
+
+### ⚠️ UNE JAMBE QUI FRANCHIT UN SEUIL DE MÉCANISME N'EST PLUS COMPARABLE
+
+Corollaire exact de « une jambe de mesure A/B change de régime en cours de
+route » (CH41), appliqué non plus à une DIRECTION mais à un **mécanisme
+qui s'ajoute**. Mesuré au CH67 sur `SkateInertiaProbe` PHASE E2, dont le
+contrat est « la hauteur atteinte est réglée par l'ÉNERGIE et non par la
+FORME » : les deux lois décrivent une planche qui CONVERTIT son arrivée en
+hauteur sur la transition. Une planche qui atteint la LÈVRE cesse de
+convertir et reçoit `POP_SPEED` **EN PLUS** — un ollie, 5 u/s verticaux
+que l'arrivée n'a pas payés. Son pic ne répond à aucune des deux lois, et
+le ratio calculé à travers ce basculement est sorti à **1,618 contre un
+plafond de 1,25** sur un mécanisme parfaitement sain.
+
+**Règle** : une comparaison entre deux jambes **exclut et PUBLIE** tout
+échelon où l'une des deux a franchi un seuil qui ajoute un terme, et un
+garde exige qu'il reste assez d'échelons pour que la comparaison en soit
+une. Mesuré des deux côtés : sur l'arbre de référence aucun échelon ne
+franchit (4/4 comparables), sur celui qui a bougé un seul le franchit
+(3/4) — c'est cette différence, et non le ratio, qui était la trouvaille.
+
+### ⚠️ UN VERDICT LU SOUS LE MAUVAIS DRIVER N'EST PAS UN VERDICT
+
+Ce fichier documente longuement quel driver une sonde exige. Le CH67 a
+payé le pendant opérationnel : `SkateDriveProbe`, une sonde **xvfb**,
+lancée par erreur en `--headless` dans un lot de table croisée, est sortie
+à **12 rouges** — et ses phases d'instrument, elles, étaient VERTES (« the
+container has a real rect », « the parked board projects inside »), ce qui
+donne à la sortie toute l'apparence d'une régression circonstanciée.
+Relancée sous `xvfb --rendering-driver opengl3` : **ALL GREEN**.
+
+**Règle** : le driver de chaque sonde est une propriété DE LA SONDE et se
+lit dans son en-tête avant de la lancer, jamais après avoir lu son
+verdict. Une table croisée qui mélange les deux publie des rouges qui
+n'existent pas, et c'est le genre de rouge qu'un lot suivant corrige.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
@@ -3096,6 +3154,8 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 | CH37 | Socle multi-altitude, LOT 1 SURFACE — `HubSurface` publié (requête pure au patron `HubWater`), `ground(flat)` comme orthographe unique du point sol, grille float32 refusée sinon, raccord C0 exact au périmètre, AABB disjointes, aucune bande `CozyPalette` traversante ; six vagues branchées (marche, caméra, tap, retours au sol, pluie/ombre) et **zéro domaine enregistré en jeu**, donc un no-op arithmétique prouvé sur les deux arbres ; `SurfaceProbe` phases A → G avec blind check en tête de chaque phase | [`CH37_SURFACE.md`](docs/lots/CH37_SURFACE.md) | 1 | — | 7 sept |
 | CH50 | Extension zone 0 nord — le sol du skatepark : disque r=28 unioné sur le milieu du bord nord (le MÊME centre que le lobe CH16, qu'il avale à tous les centres que le budget autorise, donc « goulot entre les deux disques » n'est pas une forme dessinable), pire paire créée 106,590 u / **20,117 s** qui PERD contre celle de CH38 (111,414 u / 20,967 s) donc pire traversée du hub inchangée, diagonale reproduite à la frame près (1 122 frames / 18,700 s) ; `COVER_MAX.y` 47 → 63 et les TROIS orthographes du littéral 50 du mur unifiées en un `WALL_NEAR_Z` dérivé (68) ; trois passes rouges (9 / 3 / 3) et le couplage tapis-mur prouvé par les deux dernières ; faux-vert du lot : la sonde en `--headless` lisait **2 743 transforms de `MultiMesh` sur 2 743 en identité** et comptait zéro en vert ; table des sondes rejouée sur deux arbres, parité rétablie, plus la trouvaille que le gate de contraste des plaques CH48 est un test du SOL (`origin/main` porte déjà 0,21 % de sol peint sous L 0,10, son plus sombre à 2,31:1 exactement) | [`CH50_ZONE0_NORD.md`](docs/lots/CH50_ZONE0_NORD.md) | 1 | 402 | 8 sept |
+
+| CH67 | Zone navigable du hub — `SKATE_LOBE_RADIUS` 28 → 36 sur un balayage MARCHÉ (38 sort à 22,100 s, le chiffre que le lot D avait déjà refusé), pire traversée du hub qui PASSE au lobe (21,817 s, dit et gaté) ; limite rendue lisible par un liseré peint dans le shader du sol, teinte choisie **en luminance** (le béton pâle évident lit 1,18:1 contre l'herbe claire) et gatée au PIXEL contre son propre plancher de bruit ; balançoire et ours sortis du couloir de course sur un scan à quatre contraintes simultanées, les deux constantes de l'ours re-dérivées ; **le bol construit, prouvé, puis retiré sur une mesure** (il passe sous la retombée du grand quarterpipe et rend le double pop que CH66 avait tué) | [`CH67_ZONE_NAVIGABLE.md`](docs/lots/CH67_ZONE_NAVIGABLE.md) | 8 | 392 | 10 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

@@ -153,9 +153,22 @@ func _phase_control() -> void:
 
 func _phase_crossings() -> void:
 	print("-- PHASE X: the worst published crossings, re-walked with the park in place --")
+	# ⚠️ CH67: THE LOBE'S PAIR IS DERIVED, NOT TYPED. CH50 wrote its worst
+	# target as the literal (22.43, 51.74), which was the r=28 rim; CH67
+	# widened the lobe to r=36 and a literal target would have kept walking
+	# to a point 8 u short of the new edge and called the answer unchanged.
+	# The pair is now COMPUTED from the region -- the hub corner against the
+	# point of the disc FARTHEST FROM IT, never the +Z tip (CLAUDE.md,
+	# CH38: aiming at the tip measures a shorter trip and calls it the
+	# worst one) -- so the day the radius moves again, this walks the pair
+	# that radius actually creates.
+	var lobe_centre: Vector3 = HubRegion.skate_lobe_centre()
+	var lobe_corner := Vector3(-63.0, 0.0, -12.0)
+	var lobe_target: Vector3 = lobe_centre \
+		+ (lobe_centre - lobe_corner).normalized() * HubRegion.SKATE_LOBE_RADIUS
 	var trips: Array = [
 		["CH38 worst  (35,-35) -> (-63,18)", Vector3(35.0, 0.0, -35.0), Vector3(-63.0, 0.0, 18.0), 20.967],
-		["CH50 worst  (-63,-12) -> (22.43,51.74)", Vector3(-63.0, 0.0, -12.0), Vector3(22.43, 0.0, 51.74), 20.117],
+		["CH67 worst  (-63,-12) -> the lobe rim", lobe_corner, lobe_target, 21.817],
 	]
 	for t in trips:
 		var s := await _trip(String(t[0]), t[1], t[2])
@@ -163,6 +176,14 @@ func _phase_crossings() -> void:
 			"X %s stays under the %.0f s budget (%.3f s)" % [t[0], CROSSING_BUDGET_S, s])
 		_check(absf(s - float(t[3])) < 0.002,
 			"X %s is UNCHANGED at %.3f s (published %.3f)" % [t[0], s, float(t[3])])
+	# ⚠️ AND THE HUB'S WORST WALK IS NOW THE LOBE'S, WHICH CH50's WAS NOT.
+	# Said out loud and gated, because it is a real change to the hub's
+	# worst case: CH50 deliberately came SECOND to CH38 (20.117 against
+	# 20.967) and CH67 does not (21.817). What defends the budget is this
+	# line, every run.
+	_check(HubRegion.contains(lobe_target),
+		"X the derived lobe target %s is inside the region"
+			% str(Vector2(snappedf(lobe_target.x, 0.01), snappedf(lobe_target.z, 0.01))))
 	# Straight through the park, south rim to north rim: the crossing this
 	# lot invented, and the one a blocking module would break.
 	var through := await _trip("THROUGH the park  (0,40) -> (0,61)",
