@@ -527,7 +527,8 @@ func _phase_calm() -> void:
 			% [name, int(r["frames"]), int(r["in_band"]), float(r["min_x"]), float(r["max_x"]), float(r["min_y"]), float(r["max_y"]),
 				float(r["orbit_max"]), float(r["yaw_max"]), float(r["yaw_mean"]), float(r["top"])])
 	_check("(blind) the straight run reached cruise", float(straight["top"]) >= HubTransport.SKATE_CRUISE * 0.95, "%.2f" % float(straight["top"]))
-	_check("(blind) the carve really turned the board", float(carve["turned"]) > 90.0, "%.0f deg" % float(carve["turned"]))
+	_check("(blind) the carve really turned the board", float(carve["turned"]) > 90.0,
+		"%.0f deg summed (%.0f end to end)" % [float(carve["turned"]), float(carve["turned_wrapped"])])
 	_check("straight at cruise: the board stays inside the frame's central band on every frame",
 		int(straight["in_band"]) == int(straight["frames"]))
 	_check("full-lock carve: the board stays inside the band on every frame",
@@ -592,6 +593,8 @@ func _calm_record(body: SkateBoardBody, frames: int, carve: bool = false, bench:
 	var last_orbit: float = _camera.drive_heading()
 	var last_yaw: float = _cam_yaw()
 	var start_facing: float = body.rotation.y
+	var last_facing: float = start_facing
+	var turn_sum: float = 0.0
 	var yaw_sum: float = 0.0
 	var last_err: float = 0.0
 	var vp := Vector2(float(_sub.size.x), float(_sub.size.y))
@@ -620,6 +623,8 @@ func _calm_record(body: SkateBoardBody, frames: int, carve: bool = false, bench:
 		r["yaw_max"] = maxf(float(r["yaw_max"]), yrate)
 		yaw_sum += yrate
 		r["top"] = maxf(float(r["top"]), body.speed())
+		turn_sum += absf(rad_to_deg(angle_difference(last_facing, body.rotation.y)))
+		last_facing = body.rotation.y
 		var err: float = rad_to_deg(angle_difference(orbit, body.rotation.y))
 		if f == 0:
 			r["err_first"] = absf(err)
@@ -631,11 +636,17 @@ func _calm_record(body: SkateBoardBody, frames: int, carve: bool = false, bench:
 		last_err = err
 		r["err_last"] = absf(err)
 	r["yaw_mean"] = yaw_sum / float(maxi(frames, 1))
-	r["turned"] = absf(rad_to_deg(angle_difference(start_facing, body.rotation.y)))
-	if carve:
-		# A carve of a full turn and more reads as a small difference; add
-		# the summed absolute turning so a 360 is not a 0.
-		r["turned"] = float(r["turned"]) + 0.0
+	# ⚠️ CH66 -- THE TURNING IS SUMMED FRAME BY FRAME, NOT READ END TO END.
+	# CH64 wrote the comment below and left the addition at `+ 0.0`; with
+	# CH65's 85 deg/s yaw cap a 240-frame full-lock carve turns 340 deg,
+	# which `angle_difference(start, end)` reads as 20 -- and the blind
+	# check "the carve really turned the board" was RED on origin/main
+	# since CH65 shipped, on a board that had turned nearly a full circle.
+	# CLAUDE.md, CH42: "un braquage tenu dessine un cercle, et un cercle
+	# finit ou il commence". The end-to-end difference is kept for the
+	# print; the gate reads the sum.
+	r["turned_wrapped"] = absf(rad_to_deg(angle_difference(start_facing, body.rotation.y)))
+	r["turned"] = turn_sum
 	return r
 
 func _cam_yaw() -> float:

@@ -696,9 +696,15 @@ func _advance_board(delta: float) -> void:
 		# see `SkateTouchInput.tick()`. Same delta, same frame, no ordering
 		# to get wrong.
 		_board_touch.tick(delta)
+		# CH66: the RAW air first (it starts the polyline on the first free
+		# tick), the ARMED air second (it allows the trick to fire).
+		_board_touch.set_free(body.airborne())
 		_board_touch.set_air(body.in_air())
 		if _board_touch.steering_active:
-			var heading: Vector3 = Vector3.ZERO if body.in_air() else _board_touch.heading_world(_camera)
+			# CH66: frozen through an armed air AND through the landing
+			# grace of a circle under way -- `heading_frozen()` is the one
+			# spelling of both.
+			var heading: Vector3 = Vector3.ZERO if _board_touch.heading_frozen() else _board_touch.heading_world(_camera)
 			body.hold(heading, _board_touch.throttle)
 			return
 	# No finger: free roll. `release()` and not `stop()` -- CH61's elan is

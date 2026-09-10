@@ -147,6 +147,8 @@ func _run() -> void:
 		return
 	await _phase_standing()
 	await _phase_volume()
+	await _phase_inventory()
+	await _phase_bowl()
 	await _phase_ride()
 	await _phase_neutralised()
 	await _phase_lateral()
@@ -259,6 +261,28 @@ func _phase_pieces() -> void:
 			# asserted rather than described -- see the header.
 			_check(kind == HubSkatepark.KIND_BOWL,
 				"G[%d] the only module with no pieces is the bowl (CH60 excludes it, lot 3b)" % index)
+			# CH66: the exact ring decomposition EXISTS and is a second
+			# reading of the drawn dish -- every drawn vertex of the
+			# concrete surface is a piece corner, except the floor fan's
+			# centre, which is the LAWN's (D1) and gets no piece.
+			var ring: Array = SkateparkMesh.bowl_pieces(args[0], args[1])
+			var ring_union := _distinct(_flatten(ring))
+			var drawn_less_centre := PackedVector3Array()
+			var centre_seen: int = 0
+			for v in drawn:
+				if v.length() < 0.0005:
+					centre_seen += 1
+				else:
+					drawn_less_centre.append(v)
+			print("     [%d] bowl ring: %d pieces, union %d points, drawn %d (floor centre %d)"
+				% [index, ring.size(), ring_union.size(), drawn.size(), centre_seen])
+			_check(ring.size() == SkateparkMesh.BOWL_AZIMUTH * SkateparkMesh.BOWL_RINGS,
+				"G[%d] the bowl ring decomposes into %d pieces (got %d)" % [index, SkateparkMesh.BOWL_AZIMUTH * SkateparkMesh.BOWL_RINGS, ring.size()])
+			_check(centre_seen == 1, "G[%d] INSTRUMENT: the drawn dish carries exactly one floor-centre vertex (%d)" % [index, centre_seen])
+			_check(_same_set(ring_union, drawn_less_centre),
+				"G[%d] bowl: the union of the ring pieces IS the drawn dish, floor centre apart (lot 3b's geometry, proved)" % index)
+			_check(not _same_set(_distinct(_flatten(SkateparkMesh.bowl_pieces(args[0], args[1] * 1.02))), drawn_less_centre),
+				"G[%d] BLIND CHECK 3: ring pieces from a dish 2%% deeper do NOT match the drawn mesh" % index)
 			continue
 		solid += 1
 		_check(_same_set(_distinct(union), drawn),
@@ -602,6 +626,386 @@ func _ray_up_hits(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> bool:
 	if u < 0.0 or v < 0.0 or u + v > 1.0:
 		return false
 	return a.y + u * (c.y - a.y) + v * (b.y - a.y) > p.y
+
+# =====================================================================
+# CH66 -- PHASE X: THE INVENTORY, AND WHY THE BOWL IS STILL NOT SOLID
+#
+# Mathieu asked for an AUDIT before any collider: what in the park is
+# physical, what is not, measured. The answer is a published inventory
+# (every CollisionObject3D the hub holds, counted off the tree and
+# confirmed on the server by PHASE W), the pairwise overlap of the drawn
+# solids, and the one fact that decides the bowl: its ring overlaps both
+# quarterpipes where the layout stands. The perimeter is therefore gated
+# on the MEASUREMENT -- the bowl stays unwired exactly as long as that
+# overlap exists, and the day a layout lot moves it clear this phase goes
+# red and says so.
+
+const OVERLAP_STEPS: Vector3i = Vector3i(24, 12, 24)
+## A layer nobody else in the hub uses (Chased: 1, 2; park: 3; board: 4).
+const TEMP_LAYER: int = 5
+var _bowl_verbose: bool = false
+var _bowl_contacts: bool = false
+
+func _collision_objects(root: Node, out: Array) -> void:
+	if root is CollisionObject3D:
+		out.append(root)
+	for c in root.get_children():
+		_collision_objects(c, out)
+
+func _phase_inventory() -> void:
+	print("-- PHASE X: the park's physical inventory, and the drawn solids against each other --")
+	var found: Array = []
+	_collision_objects(_hub, found)
+	var areas: int = 0
+	var statics: int = 0
+	var chars: int = 0
+	var shapes_total: int = 0
+	for n in found:
+		var co := n as CollisionObject3D
+		var shapes: int = 0
+		for c in co.get_children():
+			if c is CollisionShape3D and (c as CollisionShape3D).shape != null:
+				shapes += 1
+		shapes_total += shapes
+		if co is Area3D:
+			areas += 1
+		elif co is StaticBody3D:
+			statics += 1
+		elif co is CharacterBody3D:
+			chars += 1
+		print("     %-70s %-16s layer %d mask %d shapes %d" % [_hub.get_path_to(n), co.get_class(), co.collision_layer, co.collision_mask, shapes])
+	print("     inventory: %d areas (portals, inert), %d static bodies (modules), %d character bodies (the board), %d shapes"
+		% [areas, statics, chars, shapes_total])
+	_check(areas == 3 and statics == 4 and chars == 1 and found.size() == 8,
+		"X the hub holds exactly 3 inert portal areas, 4 solid modules and 1 board (%d objects)" % found.size())
+	var want_shapes: int = 1 + 1 + 1 + 1 + 3 + 3 + 12 + 12
+	_check(shapes_total == want_shapes, "X and %d shapes in all (got %d): the bowl adds none" % [want_shapes, shapes_total])
+	_check(_park.collider_indices() == [0, 1, 2, 3], "X the solid modules are 0..3 (%s); the bowl (4) is not" % str(_park.collider_indices()))
+	# The drawn solids against each other. Solid modules may not overlap
+	# one another (a wall inside a ramp); the bowl's overlap is measured
+	# and is the reason it is not solid.
+	var tris: Array = []
+	var boxes: Array = []
+	for index in HubSkatepark.MODULES.size():
+		var node := _park.module_node(index)
+		tris.append(_world_faces(index))
+		boxes.append(node.global_transform * (node.mesh as ArrayMesh).get_aabb())
+	var bowl_overlaps: int = 0
+	var solid_overlaps: int = 0
+	for a in HubSkatepark.MODULES.size():
+		for b in range(a + 1, HubSkatepark.MODULES.size()):
+			var box: AABB = (boxes[a] as AABB).intersection(boxes[b])
+			if box.size.x <= 0.0 or box.size.z <= 0.0:
+				print("     [%d %s] x [%d %s]: AABBs disjoint" % [a, String(_park.module_kind(a)), b, String(_park.module_kind(b))])
+				continue
+			var r: Dictionary = await _overlap_scan(box, a, b, tris)
+			print("     [%d %s] x [%d %s]: AABBs intersect (%.2f x %.2f x %.2f u); %d samples, in BOTH solids %d (%.1f %%), top y %.2f"
+				% [a, String(_park.module_kind(a)), b, String(_park.module_kind(b)), box.size.x, box.size.y, box.size.z,
+					int(r["n"]), int(r["both"]), 100.0 * float(r["both"]) / float(r["n"]), float(r["ymax"])])
+			var bowl_pair: bool = _park.module_kind(a) == HubSkatepark.KIND_BOWL or _park.module_kind(b) == HubSkatepark.KIND_BOWL
+			if bowl_pair:
+				bowl_overlaps += int(r["both"])
+			else:
+				solid_overlaps += int(r["both"])
+	_check(solid_overlaps == 0, "X no two SOLID modules share a sample: no wall inside a ramp (%d)" % solid_overlaps)
+	print("     the bowl's ring shares %d samples with solid modules" % bowl_overlaps)
+	_check((bowl_overlaps > 0) == HubSkatepark.pieces_for(HubSkatepark.MODULES[4]).is_empty(),
+		"X the bowl is unwired IFF its ring overlaps a solid module (overlap %d, wired %s) -- move it clear and this line asks for the collider"
+			% [bowl_overlaps, str(not HubSkatepark.pieces_for(HubSkatepark.MODULES[4]).is_empty())])
+	# The ring classifier's own blind check: a point in the concrete ring
+	# is IN, the dish's centre and a point above the lip are OUT.
+	var centre: Vector3 = _park.module_centre(4)
+	var args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[4])
+	var in_ring: bool = _in_bowl_ring(centre + Vector3(args[0] - 0.05, 0.10, 0.0), 4)
+	var in_dish: bool = _in_bowl_ring(centre + Vector3(0.0, 0.10, 0.0), 4)
+	var above: bool = _in_bowl_ring(centre + Vector3(args[0] - 0.05, args[1] + 0.10, 0.0), 4)
+	_check(in_ring and not in_dish and not above, "X BLIND: the ring classifier sees the concrete (%s) and not the dish (%s) nor the air above the lip (%s)" % [str(in_ring), str(in_dish), str(above)])
+
+func _world_faces(index: int) -> PackedVector3Array:
+	var node := _park.module_node(index)
+	var faces: PackedVector3Array = (node.mesh as ArrayMesh).get_faces()
+	var xf: Transform3D = node.global_transform
+	var out := PackedVector3Array()
+	for v in faces:
+		out.append(xf * v)
+	return out
+
+func _in_solid(p: Vector3, index: int, tris: PackedVector3Array) -> bool:
+	if _park.module_kind(index) == HubSkatepark.KIND_BOWL:
+		return _in_bowl_ring(p, index)
+	return _in_drawn(p, tris)
+
+## Inside the bowl's concrete RING: between the flat floor and the skirt,
+## under the faceted dish profile. The dish itself is open, so a parity
+## test on its faces is not a solid test -- this reads the published
+## profile instead, which is the same curve the pieces are cut from.
+func _in_bowl_ring(p: Vector3, index: int) -> bool:
+	var node := _park.module_node(index)
+	var local: Vector3 = node.global_transform.affine_inverse() * p
+	var args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[index])
+	var prof: Array[Vector2] = SkateparkMesh.bowl_profile(args[0], args[1])
+	# ⚠️ THE RING IS A 24-GON, NOT A CIRCLE. Every ring of the dish is
+	# drawn as BOWL_AZIMUTH chords, so a point's radius is compared to the
+	# profile at the chord's own scale: r_eq = r cos(d) / cos(pi / N),
+	# where d is the angle to the nearest sector centre. Measured before
+	# the line was written: the circular test called 8 samples in the
+	# sliver between chord and arc "in" while the server (rightly) did not.
+	# The vertices sit at k * 2 pi / N and the chords' MIDPOINTS half a
+	# sector further round: the offset that matters is to the nearest
+	# midpoint, where the polygon's radius is R cos(pi / N). (A first
+	# version measured the offset to the nearest VERTEX and disagreed
+	# with the server on 29 samples of 1521, all within one chord's
+	# sagitta of a facet.)
+	var n: float = float(SkateparkMesh.BOWL_AZIMUTH)
+	var half: float = PI / n
+	var theta: float = atan2(local.z, local.x)
+	var sector: float = floor(theta / (2.0 * half))
+	var d: float = theta - (sector + 0.5) * 2.0 * half
+	var r: float = Vector2(local.x, local.z).length() * cos(d) / cos(half)
+	if local.y < 0.0 or r < prof[0].x or r > prof[prof.size() - 1].x:
+		return false
+	for s in prof.size() - 1:
+		if r >= prof[s].x and r <= prof[s + 1].x:
+			var y: float = prof[s].y + (prof[s + 1].y - prof[s].y) * (r - prof[s].x) / maxf(prof[s + 1].x - prof[s].x, 1e-6)
+			return local.y <= y
+	return false
+
+func _overlap_scan(box: AABB, a: int, b: int, tris: Array) -> Dictionary:
+	var n: int = 0
+	var both: int = 0
+	var ymax: float = 0.0
+	for ix in OVERLAP_STEPS.x:
+		await get_tree().process_frame
+		for iy in OVERLAP_STEPS.y:
+			for iz in OVERLAP_STEPS.z:
+				var p := box.position + Vector3(box.size.x * (float(ix) + 0.3183) / float(OVERLAP_STEPS.x),
+					box.size.y * (float(iy) + 0.2718) / float(OVERLAP_STEPS.y),
+					box.size.z * (float(iz) + 0.4142) / float(OVERLAP_STEPS.z))
+				n += 1
+				if _in_solid(p, a, tris[a]) and _in_solid(p, b, tris[b]):
+					both += 1
+					ymax = maxf(ymax, p.y)
+	return {"n": n, "both": both, "ymax": ymax}
+
+# =====================================================================
+# CH66 -- PHASE Y: THE BOWL RIDES, ON A TEMPORARY BODY
+#
+# Lot 3b's brief: prove by probe that a board can ENTER the bowl, ROLL in
+# the dish, CLIMB the wall and come back, and EXIT -- never wedged, never
+# through, never thrown. The ring pieces are hung on a StaticBody3D for
+# the length of this phase and removed after it (the space is scanned
+# empty again, so the phases that follow ride the shipped park).
+
+func _phase_bowl() -> void:
+	print("-- PHASE Y: the bowl's ring collider, hung for the length of the phase, is ridden --")
+	var index: int = 4
+	var node := _park.module_node(index)
+	var args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[index])
+	var radius: float = args[0]
+	var lip: float = args[1]
+	var centre: Vector3 = _park.module_centre(index)
+	var body := _transport.board_body()
+	# hang it
+	# On the PARK layer (so the board collides with it) AND on a layer of
+	# its own (so the scans below ask about it alone -- the bowl's AABB
+	# holds slices of both quarterpipes' solids, and a scan on the park
+	# layer counted 56 of their samples as "the ring").
+	var temp := StaticBody3D.new()
+	temp.name = "TempBowlCollider"
+	temp.collision_layer = (1 << (SkateBoardBody.LAYER_PARK - 1)) | (1 << (TEMP_LAYER - 1))
+	temp.collision_mask = 0
+	for piece in SkateparkMesh.bowl_pieces(radius, lip):
+		var hull := ConvexPolygonShape3D.new()
+		hull.points = piece
+		# The shipped pieces keep Godot's 0.04 margin; the SCAN below is a
+		# point-in-solid parity test, and a margin fattens every face by
+		# 4 cm -- measured as 18 "server-only" samples on 1521. The ride
+		# tests are unaffected by it either way.
+		hull.margin = 0.0
+		var shape := CollisionShape3D.new()
+		shape.shape = hull
+		temp.add_child(shape)
+	node.add_child(temp)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	# (a) the collided ring IS the drawn ring, sampled against the server
+	var scan: Dictionary = await _ring_scan(index, true)
+	print("     ring vs server: %d samples, in ring %d, in server %d, DISAGREE %d (ring-only %d, server-only %d)"
+		% [int(scan["n"]), int(scan["a"]), int(scan["b"]), int(scan["dis"]), int(scan["a_only"]), int(scan["b_only"])])
+	_check(int(scan["a"]) > 0 and int(scan["a"]) < int(scan["n"]) and int(scan["b"]) > 0 and int(scan["b"]) < int(scan["n"]),
+		"Y INSTRUMENT: both classifiers vote both ways")
+	_check(int(scan["dis"]) == 0, "Y every sample agrees: the ring collider is the drawn ring, the dish stays OPEN, the floor stays the lawn")
+	# (b) ENTER: dropped from above the lip onto the dish centre, it lands
+	# on the LAWN (HubSurface), held by no module.
+	await _hand_back()
+	await _park_for_ride(centre)
+	body.global_position.y = lip + 0.6
+	_check(_transport.mount_board(), "Y INSTRUMENT: aboard, above the dish")
+	var landed_y: float = -1.0
+	var landed_tick: int = -1
+	for t in 90:
+		await get_tree().physics_frame
+		if landed_tick < 0 and body.global_position.y <= HubSurface.height_at(body.flat_position()) + 0.0005 and body.velocity.y <= 0.0:
+			landed_tick = t
+			landed_y = body.global_position.y
+	print("     ENTER: landed at tick %d, y %.4f, on_module %s, at r %.2f from the axis"
+		% [landed_tick, landed_y, str(body.on_module()), Vector2(body.global_position.x - centre.x, body.global_position.z - centre.z).length()])
+	_check(landed_tick >= 0 and not body.on_module() and body.global_position.y <= HubSurface.height_at(body.flat_position()) + 0.0005,
+		"Y ENTER: the board drops into the dish and lands on the lawn -- the floor is HubSurface's, no piece under it")
+	# (c) ROLL and CLIMB, slow: pushed at the wall at 4 u/s it climbs the
+	# transition part way, comes BACK to the floor, never crosses the
+	# skirt, is never thrown over the lip.
+	var dir := Vector3(1.0, 0.0, 0.0)
+	body.rotation.y = atan2(dir.x, dir.z)
+	# A free roll at 4 u/s (0.31 u of energy against a 1.35 u wall): this
+	# is the GEOMETRY's test, so the board is given the speed and no
+	# finger -- a finger pushes, and a push up a wall is the next test.
+	body.velocity = dir * 4.0
+	# ⚠️ WHAT THE CONTACT DUMP SAID, so nobody re-reads 0.139 u as a
+	# defect: the roll spends 3.97 -> 3.03 u/s on the lawn (the coast) and
+	# 3.03 -> 2.06 on the 9 deg foot facet, reaches the 27 deg facet with
+	# 0.16 u of energy and climbs 0.139 -- on its FRONT TIP, the capsule
+	# (0.92 u long) bridging a 1.35 u transition. Contact normals read
+	# (-0.16, 0.99) then (-0.45, 0.89): the 9 and 27 deg facets, floors
+	# both. The kinematics are gravity's; nothing catches, nothing kicks.
+	var climb := await _watch_bowl(centre, radius, lip, 90)
+	print("     CLIMB (free roll at 4 u/s): max held y %.3f, max y %.3f, max r %.3f (skirt %.2f), back on the floor at tick %d, pops %d, fenced %d, min speed after peak %.3f"
+		% [float(climb["held_max_y"]), float(climb["max_y"]), float(climb["max_r"]), radius, int(climb["back_at"]), int(climb["pops"]), int(climb["fenced"]), float(climb["min_speed_after"])])
+	_check(float(climb["held_max_y"]) > 0.10 and float(climb["held_max_y"]) < lip * 0.5,
+		"Y CLIMB: the wall HELD the board part way up (%.3f of %.2f) -- it climbed, it was not thrown over" % [float(climb["held_max_y"]), lip])
+	_check(float(climb["max_r"]) < radius + 0.05,
+		"Y CLIMB: it never crossed the skirt (max r %.3f vs %.2f): nothing passes through the ring" % [float(climb["max_r"]), radius])
+	_check(int(climb["back_at"]) > 0, "Y CLIMB: and it came back down to the floor (tick %d): not wedged" % int(climb["back_at"]))
+	_check(int(climb["pops"]) == 0, "Y CLIMB: a climb that does not clear the lip gives no pop (%d)" % int(climb["pops"]))
+	# The same wall with a FINGER held into it (the real channel): the
+	# push climbs while the facet lets it, stalls where it cannot, and the
+	# board comes back. What is gated is that a stall on the wall is not a
+	# launch: no pop, never over the lip, never through, never wedged.
+	await _hand_back()
+	await _park_for_ride(centre)
+	body.rotation.y = atan2(dir.x, dir.z)
+	_check(_transport.mount_board(), "Y INSTRUMENT: aboard for the held climb")
+	_bench.aim(centre + dir * 8.0, KeepyHopper.ARRIVE_EPSILON, 4.0)
+	var held := await _watch_bowl(centre, radius, lip, 240)
+	_bench.release()
+	print("     CLIMB (finger held into the wall, feathered at 4 u/s): max held y %.3f, max y %.3f, max r %.3f, back on the floor at tick %d, pops %d, bench lifted at %d"
+		% [float(held["held_max_y"]), float(held["max_y"]), float(held["max_r"]), int(held["back_at"]), int(held["pops"]), _bench.stalled_at()])
+	_check(float(held["held_max_y"]) > float(climb["held_max_y"]) and float(held["max_y"]) < lip,
+		"Y HELD: the push climbs higher than the free roll (%.3f > %.3f) and still not over the lip (%.3f)" % [float(held["held_max_y"]), float(climb["held_max_y"]), float(held["max_y"])])
+	_check(int(held["pops"]) == 0 and float(held["max_r"]) < radius + 0.05 and int(held["back_at"]) > 0,
+		"Y HELD: a stall on the wall is not a launch -- no pop (%d), not through (r %.3f), came back (tick %d)" % [int(held["pops"]), float(held["max_r"]), int(held["back_at"])])
+	# (d) EXIT at cruise: it climbs the whole transition, leaves over the
+	# lip, and lands OUTSIDE the ring, inside the region.
+	await _hand_back()
+	await _park_for_ride(centre - dir * 2.0)
+	body.rotation.y = atan2(dir.x, dir.z)
+	_check(_transport.mount_board(), "Y INSTRUMENT: aboard for the exit")
+	_bench.aim(HubRegion.clamp_to(centre + dir * 12.0))
+	var exit := await _watch_bowl(centre, radius, lip, 240)
+	_bench.release()
+	var end_r: float = Vector2(body.global_position.x - centre.x, body.global_position.z - centre.z).length()
+	print("     EXIT (cruise): max held y %.3f, max y %.3f, max r %.3f, pops %d, fenced %d, ends at r %.2f, y %.3f, in region %s"
+		% [float(exit["held_max_y"]), float(exit["max_y"]), float(exit["max_r"]), int(exit["pops"]), int(exit["fenced"]), end_r, body.global_position.y, str(HubRegion.contains(body.flat_position()))])
+	# Held into the top of the wall. The ORIGIN's height while held reads
+	# 0.88 to 1.04 from run to run (the capsule's front tip rides the
+	# steep facet ahead of its origin, and the bench's approach shifts
+	# with the chase camera's settle under machine load), so the gate is
+	# the foot of the second-to-last facet; that the exit was from the
+	# LIP facet is what "exactly one pop" proves below (POP_MAX_NORMAL_Y).
+	var prof: Array[Vector2] = SkateparkMesh.bowl_profile(radius, lip)
+	var upper_foot: float = prof[prof.size() - 3].y
+	_check(float(exit["held_max_y"]) >= upper_foot, "Y EXIT: the wall held it into its top two facets (%.3f >= %.3f of a %.2f lip)" % [float(exit["held_max_y"]), upper_foot, lip])
+	_check(end_r > radius + 0.3 and int(exit["fenced"]) == 0 and HubRegion.contains(body.flat_position()),
+		"Y EXIT: it left over the lip and came down OUTSIDE the ring (r %.2f), inside the region" % end_r)
+	_check(int(exit["pops"]) == 1, "Y EXIT: the lip gave exactly ONE pop (%d)" % int(exit["pops"]))
+	_check(float(exit["max_y"]) < lip + 3.0, "Y EXIT: and it was not thrown to the sky (peak %.3f)" % float(exit["max_y"]))
+	# take it down, and prove it is gone
+	await _hand_back()
+	node.remove_child(temp)
+	temp.queue_free()
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var gone: Dictionary = await _ring_scan(index, true)
+	_check(int(gone["b"]) == 0, "Y the temporary body is gone: the server finds nothing in the ring again (%d)" % int(gone["b"]))
+
+func _watch_bowl(centre: Vector3, radius: float, lip: float, ticks: int) -> Dictionary:
+	var body := _transport.board_body()
+	var t := {"held_max_y": 0.0, "max_y": 0.0, "max_r": 0.0, "back_at": -1, "pops": 0, "fenced": 0, "min_speed_after": 1e9}
+	var pops0: int = body.pops()
+	var fenced: int = 0
+	var on_fenced := func() -> void: fenced += 1
+	body.fenced.connect(on_fenced)
+	var peaked: bool = false
+	var last_pops: int = pops0
+	for tick in ticks:
+		await get_tree().physics_frame
+		var y: float = body.global_position.y
+		var r: float = Vector2(body.global_position.x - centre.x, body.global_position.z - centre.z).length()
+		if _bowl_verbose and (y > 0.3 or body.pops() != last_pops or _bowl_contacts):
+			var contacts: String = ""
+			for c in body.get_slide_collision_count():
+				var col: KinematicCollision3D = body.get_slide_collision(c)
+				contacts += " n(%.2f, %.2f, %.2f)" % [col.get_normal().x, col.get_normal().y, col.get_normal().z]
+			print("        t%03d y %.3f r %.3f v (%.2f, %.2f, %.2f) module %s supported %s air_ticks %d pops %d speed %.2f floor %s%s"
+				% [tick, y, r, body.velocity.x, body.velocity.y, body.velocity.z, str(body.on_module()), str(body.supported()), body.air_ticks(), body.pops() - pops0, body.speed(), str(body.is_on_floor()), contacts])
+		last_pops = body.pops()
+		t["max_y"] = maxf(float(t["max_y"]), y)
+		if body.on_module():
+			t["held_max_y"] = maxf(float(t["held_max_y"]), y)
+		if y < lip:
+			t["max_r"] = maxf(float(t["max_r"]), r)
+		if y > 0.10:
+			peaked = true
+		elif peaked and int(t["back_at"]) < 0 and not body.on_module():
+			t["back_at"] = tick
+		if peaked:
+			t["min_speed_after"] = minf(float(t["min_speed_after"]), body.speed())
+	body.fenced.disconnect(on_fenced)
+	t["pops"] = body.pops() - pops0
+	t["fenced"] = fenced
+	return t
+
+## Samples the bowl's AABB and classifies every point by the ring
+## profile and by the physics server.
+func _ring_scan(index: int, _with_server: bool) -> Dictionary:
+	var node := _park.module_node(index)
+	var box: AABB = node.global_transform * (node.mesh as ArrayMesh).get_aabb()
+	var n: int = 0
+	var a: int = 0
+	var b: int = 0
+	var a_only: int = 0
+	var b_only: int = 0
+	var params := PhysicsPointQueryParameters3D.new()
+	params.collide_with_bodies = true
+	params.collide_with_areas = false
+	params.collision_mask = 1 << (TEMP_LAYER - 1)
+	await get_tree().physics_frame
+	var space := node.get_world_3d().direct_space_state
+	for ix in VOL_STEPS.x:
+		for iy in VOL_STEPS.y:
+			await get_tree().physics_frame
+			space = node.get_world_3d().direct_space_state
+			for iz in VOL_STEPS.z:
+				var p := box.position + Vector3(
+					box.size.x * (float(ix) + 0.3183) / float(VOL_STEPS.x),
+					box.size.y * (float(iy) + 0.2718) / float(VOL_STEPS.y),
+					box.size.z * (float(iz) + 0.4142) / float(VOL_STEPS.z))
+				n += 1
+				var ia: bool = _in_bowl_ring(p, index)
+				params.position = p
+				var ib: bool = not space.intersect_point(params, 4).is_empty()
+				if ia:
+					a += 1
+				if ib:
+					b += 1
+				if ia != ib and a_only + b_only < 6:
+					var local: Vector3 = node.global_transform.affine_inverse() * p
+					print("        disagree: ring %s server %s at local (%.3f, %.3f, %.3f) r %.3f" % [str(ia), str(ib), local.x, local.y, local.z, Vector2(local.x, local.z).length()])
+				if ia and not ib:
+					a_only += 1
+				if ib and not ia:
+					b_only += 1
+	return {"n": n, "a": a, "b": b, "dis": a_only + b_only, "a_only": a_only, "b_only": b_only}
 
 # =====================================================================
 # THE RIDE

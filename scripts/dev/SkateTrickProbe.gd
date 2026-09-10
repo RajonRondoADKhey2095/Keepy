@@ -456,8 +456,12 @@ func _phase_flip() -> void:
 		% [most, ticks_to_done, -TAU, seat_drift])
 	_check(body.flip_turns() == turns_before + 1, "F flip() queued one turn")
 	_check(absf(most + TAU) < 0.01, "F the deck rolled exactly one full turn, clockwise sense negative (%.3f)" % most)
-	_check(ticks_to_done > 0 and ticks_to_done <= int(ceil(60.0 / (SkateBoardBody.FLIP_RATE * SkateBoardBody.FLIP_LAND_GAIN / TAU))) + 2,
-		"F on the ground the turn finishes at the landing rate (%d ticks)" % ticks_to_done)
+	# CH66: a flip that STARTS on the ground (the landing grace fires it
+	# there) runs at the AIR rate so it can be seen; the landing gain is
+	# for a turn caught mid-air by the contact, gated below.
+	var air_ticks: int = int(ceil(60.0 * TAU / SkateBoardBody.FLIP_RATE))
+	_check(ticks_to_done >= air_ticks - 2 and ticks_to_done <= air_ticks + 2,
+		"F a flip queued on the ground turns at the AIR rate, visibly (%d ticks, air rate %d)" % [ticks_to_done, air_ticks])
 	_check(seat_drift < 0.0005, "F the rider's seat never moved with the deck (%.4f u)" % seat_drift)
 	# Two in the air: a queued second turn, and a landing mid-turn that
 	# finishes fast rather than stopping crooked.

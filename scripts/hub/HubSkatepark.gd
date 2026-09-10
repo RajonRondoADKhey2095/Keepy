@@ -293,7 +293,9 @@ func _build() -> void:
 ## pleins", and CH56 measured that decomposition's COST without ever
 ## checking its correctness. It gets lot 3b. `pieces_for()` returns EMPTY
 ## for it, so the perimeter is a published fact and not a list of names a
-## reader has to keep.
+## reader has to keep. CH66 (lot 3b) wrote and PROVED the exact ring
+## (`SkateparkMesh.bowl_pieces`) and left it unwired for a measured
+## layout reason -- see `pieces_for()`.
 ##
 ## THE SHAPE IS A CHILD OF THE DRAWN NODE, so it inherits the module's
 ## own position and yaw and cannot drift from what the player sees. There
@@ -350,6 +352,20 @@ static func build_args(spec: Dictionary) -> Array:
 ## here whose pieces cannot be read off the drawn mesh by eye, so it gets
 ## its own lot (3b) rather than a guess inside this one. A reader asking
 ## "which modules are solid" asks THIS, never a list of kinds.
+##
+## ⚠️ CH66 (lot 3b) CLOSED THE GEOMETRY AND STILL RETURNS EMPTY, FOR A
+## REASON THAT IS MEASURED EVERY RUN. `SkateparkMesh.bowl_pieces()` is
+## the exact ring (120 pieces, union == drawn dish, ridden on a temporary
+## body by SkatePhysicsProbe PHASE Y: entered from the air, rolled,
+## climbed, exited, never through, never wedged). What keeps it out of
+## `_maybe_collide` is the LAYOUT: where CH53 stands the bowl, its
+## concrete ring overlaps BOTH quarterpipes' solids (968 samples with
+## the 2.10 -- a 1.35 u wall inside the big ramp's east end -- and 140
+## with the 1.45), and its vertical skirt leaves a solid bowl with no
+## ground entry at all. SkatePhysicsProbe PHASE X gates the perimeter on
+## that measurement: EMPTY here if and only if the ring overlaps a solid
+## module. The lot that moves the bowl clear (and gives it a roll-in)
+## gets a red line telling it to return `bowl_pieces()` from here.
 static func pieces_for(spec: Dictionary) -> Array:
 	var a: Array = build_args(spec)
 	match StringName(spec["kind"]):
