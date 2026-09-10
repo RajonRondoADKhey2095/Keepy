@@ -97,10 +97,13 @@ func _phase_reach() -> void:
 	var centre: Vector3 = HubRegion.skate_lobe_centre()
 	print("     lobe centre %s   radius %.1f   reach on the axis z %.1f"
 		% [str(centre), HubRegion.SKATE_LOBE_RADIUS, centre.z + HubRegion.SKATE_LOBE_RADIUS])
-	var slab_x: float = HubSkatepark.SLAB_WIDTH * 0.5
+	# CH69: the slab's own two edges, not +-half a width. The concrete
+	# stopped being centred on PARK_CENTRE when it grew 0.25 u west for
+	# the bowl, and a station at -SLAB_WIDTH * 0.5 would now be 12 cm
+	# inside the west kerb rather than on it.
 	var park_z: float = HubSkatepark.PARK_CENTRE.y
 	var worst: float = 1e9
-	for x in [-slab_x, -4.2, 0.0, 5.0, slab_x]:
+	for x in [HubSkatepark.SLAB_MIN.x, -4.2, 0.0, 5.0, HubSkatepark.SLAB_MAX.x]:
 		var run: float = _run_north(x, park_z)
 		worst = minf(worst, run)
 		print("     x %6.2f : %6.2f u of free run north of the park's centre (to z %.2f)"

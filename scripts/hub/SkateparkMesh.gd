@@ -625,6 +625,61 @@ static func funbox_pieces(width: float, length: float, height: float, ramp: floa
 const BOWL_AZIMUTH: int = 24
 const BOWL_RINGS: int = 5
 
+## =====================================================================
+## CH69 -- THE ROLL-IN: THE SECTORS OF THE RING THAT ARE NOT THERE
+##
+## CH66 left the bowl unwired for two measured reasons. One was the
+## overlap (a layout question, settled by CH69's slab). The other was
+## that a solid ring with a VERTICAL outer skirt has no ground entry at
+## all: a board reaches the dish only out of the air. The door is cut the
+## way a real bowl's is -- a channel straight through the wall, floor
+## level to floor level -- and here that is simply THREE AZIMUTH SECTORS
+## THAT ARE NEITHER DRAWN NOR SOLID.
+##
+## ⚠️ THREE, AND THE NUMBER IS THE BOARD'S. One sector is 2 pi r / 24 =
+## 0.94 u of arc at the lip against a deck 0.92 u long: a slot a rider
+## cannot aim at, and one he could not turn in once inside. Three give
+## 2.83 u at the lip and 1.77 u at the foot of the dish -- room to enter
+## off-axis and still be pointed somewhere afterwards. (CH67 built and
+## rode exactly this door before the bowl was withdrawn for want of a
+## place to stand; the arc is its number, re-derived here from
+## DECK_LENGTH rather than carried over.)
+##
+## ⚠️ AND IT INTRODUCES NO NEW VERTEX POSITION, which is what keeps
+## SkatePhysicsProbe PHASE G the same test it has always been. The gate
+## REMOVES faces; the two JAMBS that close the cut are fans over the
+## profile polyline from the skirt's foot -- the very fan the collision
+## pieces are cut from -- so every point they draw is already a piece
+## corner. The equality "the union of the pieces IS the drawn concrete"
+## therefore still holds, with 105 pieces instead of 120.
+const BOWL_GATE_SECTORS: int = 3
+
+## Is azimuth SECTOR k (between azimuths k and k+1) part of the roll-in?
+## An open sector is drawn nowhere and solid nowhere.
+static func bowl_sector_open(k: int, gate_first: int, gate_count: int) -> bool:
+	for i in gate_count:
+		if k == wrapi(gate_first + i, 0, BOWL_AZIMUTH):
+			return true
+	return false
+
+## Is the ring VERTEX at azimuth k used by anything that survives? Sector
+## k uses azimuths k and k+1, so the gate's two ENDS are still drawn (the
+## jambs and their neighbours use them) and only the azimuths strictly
+## inside it lose every user. A vertex nothing references would sit in
+## the array and break PHASE G's equality without drawing a pixel.
+static func bowl_azimuth_used(k: int, gate_first: int, gate_count: int) -> bool:
+	for i in range(1, gate_count):
+		if k == wrapi(gate_first + i, 0, BOWL_AZIMUTH):
+			return false
+	return true
+
+## The local azimuth the mouth is centred on, in radians. Published so a
+## probe can gate that the door faces where the layout says it does
+## instead of re-deriving the arithmetic.
+static func bowl_gate_bearing(gate_first: int, gate_count: int) -> float:
+	var step: float = TAU / float(BOWL_AZIMUTH)
+	return fposmod((float(gate_first) + float(gate_count) * 0.5) * step, TAU)
+
 ## The dish profile, from the edge of the flat floor out to the lip. `x`
 ## is the distance from the axis, `y` the height above the floor.
 ##
@@ -648,7 +703,7 @@ static func bowl_profile(radius: float, depth: float) -> Array[Vector2]:
 	return prof
 
 ## =====================================================================
-## CH66 (lot 3b) -- THE BOWL'S CONVEX DECOMPOSITION, EXACT, AND NOT WIRED
+## CH66 (lot 3b) -- THE BOWL'S CONVEX DECOMPOSITION, EXACT. CH69 WIRES IT.
 ##
 ## CH56 section 12.4 refused the bowl a collider because a VHACD
 ## decomposition of an OPEN dish fills the dish -- "un tas de solides
@@ -666,32 +721,35 @@ static func bowl_profile(radius: float, depth: float) -> Array[Vector2]:
 ## its reflex vertices with one piece per profile segment, and sweeping
 ## that fan across ONE azimuth sector gives a prism whose six points are
 ## the triangle at t_k and the same triangle at t_k+1 -- convex, and with
-## planar faces because the two chords at any radius are parallel. So:
-## BOWL_AZIMUTH x BOWL_RINGS = 120 pieces, and their union is the drawn
-## ring to the last vertex (SkatePhysicsProbe PHASE G gates the point
-## sets equal, with the floor fan's centre vertex the one drawn point no
-## piece may carry). ONE sector per piece is the maximum: a hull spanning
-## two sectors would chord across the CONCAVE inner surface and fill the
-## dish -- which is CH56's objection, reappearing at two sectors' width.
+## planar faces because the two chords at any radius are parallel. So one
+## piece per (sector, profile segment). ONE sector per piece is the
+## maximum: a hull spanning two sectors would chord across the CONCAVE
+## inner surface and fill the dish -- which is CH56's objection,
+## reappearing at two sectors' width.
 ##
-## ⚠️ IT IS NOT WIRED AS A COLLIDER, AND THE REASON IS MEASURED, NOT
-## GEOMETRIC. `HubSkatepark.pieces_for` still returns EMPTY for the bowl:
-## where the layout stands (CH53), the bowl's ring overlaps BOTH
-## quarterpipes' solids -- 968 samples in both (14 % of the AABB
-## intersection, up to y 1.18) with the 2.10, 140 (2 %) with the 1.45 --
-## so a solid bowl would put a 1.35 u wall inside the big ramp's east end.
-## And a solid ring with a vertical outer skirt has NO GROUND ENTRY: a
-## board reaches the dish only from the air. Both are layout questions
-## (move the bowl clear, give it a roll-in), and SkatePhysicsProbe gates
-## the perimeter on the MEASUREMENT: the bowl stays unwired exactly as
-## long as it overlaps a solid module, and the day it is moved clear the
-## probe goes red and says "wire it". What this function settles is that
-## lot 3b's hard half -- an exact, rideable bowl collider -- exists and is
-## proved (SkatePhysicsProbe PHASE X rides it on a temporary body).
-static func bowl_pieces(radius: float, depth: float) -> Array:
+## ⚠️ CH69 WIRES IT, AND WHAT CHANGED IS THE LAYOUT, NOT THE GEOMETRY.
+## CH66 left `HubSkatepark.pieces_for` returning EMPTY for two measured
+## reasons: where CH53 stood the bowl its ring overlapped BOTH
+## quarterpipes' solids (968 samples with the 2.10, 140 with the 1.45 --
+## a 1.35 u wall inside the big ramp's east end), and a ring with a
+## vertical skirt had no ground entry. CH69 moves the bowl to a place the
+## sweep says is clear by a deck length and grows the slab under it, and
+## cuts the roll-in above. The perimeter is still gated on the
+## MEASUREMENT rather than on this comment: SkatePhysicsProbe PHASE X
+## asserts the bowl is unwired IF AND ONLY IF its ring shares a sample
+## with a solid module, so a layout that put it back in a ramp would go
+## red here again.
+##
+## With the roll-in open, this returns (BOWL_AZIMUTH - BOWL_GATE_SECTORS)
+## x BOWL_RINGS pieces, and their union is still the drawn concrete to
+## the last vertex -- the floor fan's centre being the one drawn point no
+## piece may carry (SkatePhysicsProbe PHASE G).
+static func bowl_pieces(radius: float, depth: float, gate_first: int, gate_count: int) -> Array:
 	var prof: Array[Vector2] = bowl_profile(radius, depth)
 	var pieces: Array = []
 	for k in BOWL_AZIMUTH:
+		if bowl_sector_open(k, gate_first, gate_count):
+			continue
 		var t0: float = float(k) / float(BOWL_AZIMUTH) * TAU
 		var t1: float = float(k + 1) / float(BOWL_AZIMUTH) * TAU
 		var d0 := Vector3(cos(t0), 0.0, sin(t0))
@@ -707,7 +765,7 @@ static func bowl_pieces(radius: float, depth: float) -> Array:
 			pieces.append(wedge)
 	return pieces
 
-func bowl(radius: float, depth: float) -> ArrayMesh:
+func bowl(radius: float, depth: float, gate_first: int, gate_count: int) -> ArrayMesh:
 	# The profile, from the centre of the floor out to the lip. `r` is the
 	# distance from the axis, `y` the height above the floor. PUBLISHED
 	# above (CH66) so the pieces read the same curve.
@@ -720,6 +778,12 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 		var keep: float = lerpf(FOOT_SHADE, 1.0, prof[p].y / maxf(depth, 0.001))
 		var col := COPING if p >= prof.size() - 1 else _shade(CONCRETE, keep)
 		for k in BOWL_AZIMUTH:
+			# CH69: the roll-in's inner azimuths belong to nothing. A
+			# vertex written here and referenced by no triangle would be a
+			# drawn point with no piece under it.
+			if not bowl_azimuth_used(k, gate_first, gate_count):
+				row.append(-1)
+				continue
 			var t: float = float(k) / float(BOWL_AZIMUTH) * TAU
 			var dir := Vector3(cos(t), 0.0, sin(t))
 			# Inward-and-up normal: the rider is inside the dish.
@@ -729,10 +793,14 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 			row.append(_vertex(dir * prof[p].x + Vector3.UP * prof[p].y, normal, col))
 		ring.append(row)
 	# The flat floor, as a fan from ONE centre vertex (see the profile note
-	# above): BOWL_AZIMUTH triangles instead of a degenerate ring.
+	# above): BOWL_AZIMUTH triangles instead of a degenerate ring. CH69:
+	# the roll-in's sectors are floor too, and the SLAB (3 mm above this
+	# plate, D1) is what the rider actually sees under the door.
 	var floor_ring: Array = ring[0]
 	var centre := _vertex(Vector3.ZERO, Vector3.UP, _shade(CONCRETE, FOOT_SHADE))
 	for k in BOWL_AZIMUTH:
+		if bowl_sector_open(k, gate_first, gate_count):
+			continue
 		var k2: int = (k + 1) % BOWL_AZIMUTH
 		_tri(centre, floor_ring[k], floor_ring[k2], Vector3.UP)
 	# The dish itself, seen from inside and above.
@@ -740,6 +808,8 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 		var a_row: Array = ring[p]
 		var b_row: Array = ring[p + 1]
 		for k in BOWL_AZIMUTH:
+			if bowl_sector_open(k, gate_first, gate_count):
+				continue
 			var k2: int = (k + 1) % BOWL_AZIMUTH
 			var mid := (_v[a_row[k]] + _v[b_row[k2]]) * 0.5
 			# Visible from the axis above the dish: from the centre, up.
@@ -749,15 +819,38 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 	var skirt: Array[int] = []
 	var outer: Array[int] = []
 	for k in BOWL_AZIMUTH:
+		if not bowl_azimuth_used(k, gate_first, gate_count):
+			outer.append(-1)
+			skirt.append(-1)
+			continue
 		var t: float = float(k) / float(BOWL_AZIMUTH) * TAU
 		var dir := Vector3(cos(t), 0.0, sin(t))
 		outer.append(_vertex(dir * prof[prof.size() - 1].x, dir, CONCRETE))
 		skirt.append(_vertex(dir * prof[prof.size() - 1].x + Vector3.UP * prof[prof.size() - 1].y, dir, COPING))
 	for k in BOWL_AZIMUTH:
+		if bowl_sector_open(k, gate_first, gate_count):
+			continue
 		var k2: int = (k + 1) % BOWL_AZIMUTH
 		var t: float = (float(k) + 0.5) / float(BOWL_AZIMUTH) * TAU
 		var facing := Vector3(cos(t), 0.0, sin(t))
 		_quad(outer[k], outer[k2], skirt[k2], skirt[k], facing)
+	# CH69 -- THE TWO JAMBS. The ring is cut, and a cut has a face: the
+	# fan from the skirt's foot over the profile polyline, i.e. the exact
+	# cross-section the collision pieces are built from, so it adds no
+	# vertex position PHASE G has not already seen. The concrete shader is
+	# `cull_disabled`, so a missing jamb would not read as a hole -- it
+	# would read as the far wall's inside, which is worse: the ring would
+	# look like it were made of paper where the door is.
+	var edges: Array = [gate_first, wrapi(gate_first + gate_count, 0, BOWL_AZIMUTH)]
+	for e in edges.size():
+		var a: int = int(edges[e])
+		var t: float = float(a) / float(BOWL_AZIMUTH) * TAU
+		# The face looks INTO the doorway: along +azimuth from the gate's
+		# first edge, along -azimuth from its last.
+		var tangent := Vector3(-sin(t), 0.0, cos(t))
+		var facing: Vector3 = tangent if e == 0 else -tangent
+		for p in prof.size() - 1:
+			_tri(outer[a], ring[p][a], ring[p + 1][a], facing)
 	# No cap is needed at the lip: the dish's last ring and the skirt's top
 	# ring are at the SAME radius and the SAME height, so the two surfaces
 	# meet on one edge.
@@ -768,6 +861,8 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 	var lip_y: float = prof[prof.size() - 1].y - COPING_R * 0.5
 	_decor = true
 	for k in BOWL_AZIMUTH:
+		if bowl_sector_open(k, gate_first, gate_count):
+			continue
 		var t0: float = float(k) / float(BOWL_AZIMUTH) * TAU
 		var t1: float = float(k + 1) / float(BOWL_AZIMUTH) * TAU
 		_tube(Vector3(cos(t0), 0.0, sin(t0)) * lip_r + Vector3.UP * lip_y,

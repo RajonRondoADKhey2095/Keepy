@@ -152,8 +152,56 @@ const MODULES: Array[Dictionary] = [
 	{"kind": KIND_QUARTERPIPE, "at": Vector2(5.0, 54.0), "yaw": PI,
 		"size": Vector3(6.0, 1.45, 1.45), "footprint": 4.0, "tap_radius": 2.4,
 		"trick": &"air", "points": 45},
-	{"kind": KIND_BOWL, "at": Vector2(-0.5, 55.5), "yaw": 0.0,
+	# =================================================================
+	# ⚠️ CH69 -- THE BOWL MOVED, AND THE SWEEP CHOSE THE PLACE
+	#
+	# CH53 stood it at (-0.5, 55.5), where its ring cut 0.693 u into the
+	# big quarterpipe's east lip and 0.685 u into the small one's west
+	# foot (CH66 measured 968 and 140 shared samples; CH68 reproduced the
+	# two distances at 2.907 and 2.915 u). That is why it shipped without
+	# a collider for three chantiers.
+	#
+	# The place below is the MINIMUM-CONCRETE solution of a sweep over
+	# 19 865 candidates against six constraints at once: zero overlap, a
+	# DECK LENGTH of clearance from every solid, the board's parking
+	# footprint at (3, 60), the big quarterpipe's landing at
+	# (-4.20, 57.58), HubRegion on all 36 rim points, and the rim on the
+	# slab within CH68's 0.100 u (the overhang the delivered bowl already
+	# had -- a threshold that condemns the shipped state proves nothing).
+	# It clears the funbox by 0.950 u and costs 0.40 u of concrete.
+	#
+	# ⚠️ AND A SEVENTH CONSTRAINT ARRIVED FROM A PROBE, NOT FROM THE
+	# SWEEP. `landed_within` picks the nearest module whose `tap_radius`
+	# covers a landing, so two scoring discs that overlap make a strip of
+	# ground where WHICH module you scored is an accident of a centimetre
+	# -- SkateparkProbe G5 gates it, and it caught this lot's first answer
+	# (-6.75, 45.75) at -0.209 u against the big quarterpipe. Re-swept with
+	# the discs held KeepyHopper.ARRIVE_EPSILON apart (the distance a roll
+	# ends within, so two discs are never closer than the precision of the
+	# landing itself), the minimum moved 0.75 u south to here, for the same
+	# 0.40 u of concrete and a disc gap of 0.462 u. The intermediate
+	# answer, (-6.75, 45.50), was disjoint by THIRTEEN MILLIMETRES: a gate
+	# standing at its own limit, which is not a gate.
+	#
+	# ⚠️ AND THE PARK'S NORTH HALF WAS MEASURED, NOT ASSUMED AWAY. Keeping
+	# the bowl at z >= 50 is possible -- (-8.75, 57.00), 0.924 u of
+	# clearance -- but it costs 73.88 u2 of slab (20.5 %) and lands the
+	# bowl 8.75 u off the park's axis, where HubCamera can show it from
+	# 2 of 133 standing stations against 29 for the place below. The
+	# camera arithmetic in this file's header is what decides that: the
+	# frame is +-3.69 u wide at the player's own z, so a wide module only
+	# reads from far SOUTH of the player, and there is no far south left
+	# north of the ramps.
+	#
+	# `rollin_aim` is where the rider comes FROM: the mouth of the
+	# roll-in is centred on the bearing to it, so the door faces the gap
+	# between the funbox and the big quarterpipe that a board coming down
+	# from the parking actually threads. It is a POINT and not a sector
+	# index because an index would have to be re-derived by hand the day
+	# the bowl moves again.
+	{"kind": KIND_BOWL, "at": Vector2(-6.75, 45.0), "yaw": 0.0,
 		"size": Vector3(7.2, 1.35, 7.2), "footprint": 4.4, "tap_radius": 3.0,
+		"rollin_aim": Vector2(0.0, 50.0),
 		"trick": &"carve", "points": 80},
 ]
 
@@ -218,11 +266,50 @@ func _process(delta: float) -> void:
 # =====================================================================
 # BUILD
 
-## CH64 -- the slab the park stands on. Its size is the modules' extent
-## plus a margin, spelled here once and read by `footprints()` so the
-## scatter plants nothing on it. PARK_CENTRE is its centre.
-const SLAB_WIDTH: float = 20.0
-const SLAB_DEPTH: float = 18.0
+## =====================================================================
+## CH64 / CH69 -- THE SLAB, AND WHY IT IS A RECTANGLE WITH CORNERS
+##
+## The concrete the park stands on. CH64 wrote it as a WIDTH and a DEPTH
+## centred on PARK_CENTRE, which is the right shape for a pad nobody has
+## to grow. CH69 had to grow it on ONE side, and a size centred on a
+## point cannot do that without moving the park: extending 0.25 u to the
+## west by widening to 20.5 would have put a matching 0.25 u of concrete
+## on the east that nothing asked for and that the scatter would have
+## cleared for no reason.
+##
+## So the slab is its two CORNERS, and the width, the depth and the
+## centre are read off them. Nothing else in the file knows a slab
+## dimension: `footprints()` and the build both go through the accessors.
+##
+## ⚠️ WHAT CH69 BOUGHT WITH 0.40 u OF CONCRETE, and the number is the
+## sweep's, not a taste. With the slab as CH64 left it there IS a legal
+## place for the bowl (zero overlap, rim on the concrete, scoring discs
+## apart): (-6.25, 44.75), and it clears the funbox by 0.450 u. Half a
+## metre between two solids is a gap a 0.92 u deck cannot turn in.
+## Moving the west edge from -10.00 to -10.40 -- 7.20 u2, 2 % more
+## concrete -- moves the best position to (-6.75, 45.00) and the gap to
+## 0.950 u, i.e. one deck length, which is the floor every other gap in
+## this park is measured against.
+##
+## ⚠️ AND THE RIM IS ON THE CONCRETE WITH ROOM, NOT INSIDE A TOLERANCE.
+## CH68 had to set its slab threshold at 0.100 u because the delivered
+## bowl already overhung by exactly that much, and a threshold that
+## condemns the shipped state proves nothing. Once the slab is the LEVER
+## that tolerance is not needed: the rim's westmost point is -10.35
+## against a kerb at -10.40, so the gate reads "every module's concrete
+## is ON the slab" with 0.05 u to spare. SkatePhysicsProbe PHASE X
+## measures it -- until CH69 nothing in the repo read a slab dimension at
+## all, and a constant nothing reads is a constant that outlives its lot.
+const SLAB_MIN: Vector2 = Vector2(-10.40, 41.0)
+const SLAB_MAX: Vector2 = Vector2(10.0, 59.0)
+const SLAB_WIDTH: float = SLAB_MAX.x - SLAB_MIN.x
+const SLAB_DEPTH: float = SLAB_MAX.y - SLAB_MIN.y
+
+## The slab's own middle, which is NOT PARK_CENTRE any more: the site
+## marker, the module layout and the camera arithmetic are all written
+## against PARK_CENTRE and none of them moves when the concrete grows.
+static func slab_centre() -> Vector2:
+	return (SLAB_MIN + SLAB_MAX) * 0.5
 var _slab: MeshInstance3D = null
 var _slab_tris: int = 0
 
@@ -236,7 +323,7 @@ func _build() -> void:
 	_slab.mesh = slab_builder.slab(SLAB_WIDTH, SLAB_DEPTH)
 	_slab.set_surface_override_material(0, concrete)
 	_slab.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_slab.position = HubSurface.ground(Vector3(PARK_CENTRE.x, 0.0, PARK_CENTRE.y))
+	_slab.position = HubSurface.ground(Vector3(slab_centre().x, 0.0, slab_centre().y))
 	add_child(_slab)
 	_slab_tris = slab_builder.triangle_count()
 	for index in MODULES.size():
@@ -274,7 +361,7 @@ func _build() -> void:
 	add_child(site)
 
 ## =====================================================================
-## CH57 LOT 1 / CH60 LOT 3a -- FOUR MODULES OF FIVE BECOME SOLID
+## CH57 LOT 1 / CH60 LOT 3a / CH69 -- ALL FIVE MODULES ARE SOLID
 ##
 ## CH64: UNCONDITIONAL. CH57 put this behind DevTools.physics_enabled()
 ## for the A/B that measured F; the A/B is done and the switch is gone,
@@ -287,15 +374,14 @@ func _build() -> void:
 ## same argument) and the TWO QUARTERPIPES (genuinely concave, twelve
 ## exact pieces each -- the argument is in SkateparkMesh).
 ##
-## ⚠️ THE BOWL IS STILL OUT, AND IT IS THE SAME REASON, NOT INERTIA.
-## CH56 section 12.4: "un bol decompose en hulls convexes est
-## GEOMETRIQUEMENT FAUX -- une cuvette ouverte devient un tas de solides
-## pleins", and CH56 measured that decomposition's COST without ever
-## checking its correctness. It gets lot 3b. `pieces_for()` returns EMPTY
-## for it, so the perimeter is a published fact and not a list of names a
-## reader has to keep. CH66 (lot 3b) wrote and PROVED the exact ring
-## (`SkateparkMesh.bowl_pieces`) and left it unwired for a measured
-## layout reason -- see `pieces_for()`.
+## ⚠️ CH69 ADDS THE BOWL, AND IT TOOK A LAYOUT LOT AND NOT A GEOMETRY
+## ONE. CH56 section 12.4 refused it on the tool's behalf; CH66 wrote the
+## exact ring and rode it on a TEMPORARY body, then left it unwired
+## because where it stood it cut into both quarterpipes and had no ground
+## entry. CH69 moved it (the sweep in MODULES), grew the slab 0.25 u
+## under it and cut a roll-in through its wall, and this is where the
+## 105 hulls now land. `pieces_for()` is still the published perimeter
+## and PHASE X still gates it on the overlap measurement, not on a name.
 ##
 ## THE SHAPE IS A CHILD OF THE DRAWN NODE, so it inherits the module's
 ## own position and yaw and cannot drift from what the player sees. There
@@ -338,34 +424,60 @@ static func build_args(spec: Dictionary) -> Array:
 		KIND_FUNBOX:
 			return [size.x, size.z * 0.55, size.y, size.z * 0.45]
 		KIND_BOWL:
-			return [size.x * 0.5, size.y]
+			return [size.x * 0.5, size.y, bowl_gate_first(spec), SkateparkMesh.BOWL_GATE_SECTORS]
 	return []
 
-## The convex pieces a module's collider is made of, or EMPTY for a module
-## this chantier has not made solid yet.
+## =====================================================================
+## CH69 -- WHICH SECTORS THE ROLL-IN OPENS, DERIVED AND NOT TYPED
 ##
-## ⚠️ THE BOWL RETURNS EMPTY, AND THAT IS THE PERIMETER OF THIS LOT SAID
-## IN CODE RATHER THAN IN A COMMENT. CH56 section 12.4: "un bol decompose
-## en hulls convexes est GEOMETRIQUEMENT FAUX -- une cuvette ouverte
-## devient un tas de solides pleins", and CH56 priced that decomposition
-## without ever checking whether it was right. A dish is the one module
-## here whose pieces cannot be read off the drawn mesh by eye, so it gets
-## its own lot (3b) rather than a guess inside this one. A reader asking
-## "which modules are solid" asks THIS, never a list of kinds.
+## The mouth is centred on the bearing from the bowl to `rollin_aim`,
+## taken IN THE MODULE'S OWN FRAME (the node carries the yaw, so a bowl
+## that were ever turned would turn its door with it). Published here
+## because both the mesh and the pieces need it and neither may own it --
+## the same reason `build_args` exists at all.
+static func bowl_gate_first(spec: Dictionary) -> int:
+	var aim: Vector2 = spec.get("rollin_aim", Vector2.ZERO)
+	var d: Vector2 = aim - (spec["at"] as Vector2)
+	var yaw: float = float(spec["yaw"])
+	# World -> local. A node at rotation.y = yaw maps local (x, z) to
+	# world (x cos + z sin, -x sin + z cos); this is its inverse.
+	var l := Vector2(d.x * cos(yaw) - d.y * sin(yaw), d.x * sin(yaw) + d.y * cos(yaw))
+	var step: float = TAU / float(SkateparkMesh.BOWL_AZIMUTH)
+	var bearing: float = fposmod(atan2(l.y, l.x), TAU)
+	var sector: int = int(floor(bearing / step))
+	return wrapi(sector - (SkateparkMesh.BOWL_GATE_SECTORS - 1) / 2, 0, SkateparkMesh.BOWL_AZIMUTH)
+
+## The bearing the mouth must contain, in the module's local frame --
+## what a probe gates the door's aim against.
+static func bowl_aim_bearing(spec: Dictionary) -> float:
+	var aim: Vector2 = spec.get("rollin_aim", Vector2.ZERO)
+	var d: Vector2 = aim - (spec["at"] as Vector2)
+	var yaw: float = float(spec["yaw"])
+	var l := Vector2(d.x * cos(yaw) - d.y * sin(yaw), d.x * sin(yaw) + d.y * cos(yaw))
+	return fposmod(atan2(l.y, l.x), TAU)
+
+## The convex pieces a module's collider is made of, or EMPTY for a
+## module no chantier has made solid.
 ##
-## ⚠️ CH66 (lot 3b) CLOSED THE GEOMETRY AND STILL RETURNS EMPTY, FOR A
-## REASON THAT IS MEASURED EVERY RUN. `SkateparkMesh.bowl_pieces()` is
-## the exact ring (120 pieces, union == drawn dish, ridden on a temporary
-## body by SkatePhysicsProbe PHASE Y: entered from the air, rolled,
-## climbed, exited, never through, never wedged). What keeps it out of
-## `_maybe_collide` is the LAYOUT: where CH53 stands the bowl, its
-## concrete ring overlaps BOTH quarterpipes' solids (968 samples with
-## the 2.10 -- a 1.35 u wall inside the big ramp's east end -- and 140
-## with the 1.45), and its vertical skirt leaves a solid bowl with no
-## ground entry at all. SkatePhysicsProbe PHASE X gates the perimeter on
-## that measurement: EMPTY here if and only if the ring overlaps a solid
-## module. The lot that moves the bowl clear (and gives it a roll-in)
-## gets a red line telling it to return `bowl_pieces()` from here.
+## ⚠️ CH69 -- THE BOWL IS THE FIFTH, AND THE PERIMETER IS STILL A
+## MEASUREMENT AND NOT A LIST OF NAMES. CH56 section 12.4 refused it
+## ("un bol decompose en hulls convexes est GEOMETRIQUEMENT FAUX -- une
+## cuvette ouverte devient un tas de solides pleins") and priced a
+## decomposition without ever checking whether it was right. CH66 wrote
+## the exact ring instead -- a prism per (azimuth sector, profile
+## segment), union == the drawn dish, ridden on a temporary body -- and
+## still returned EMPTY, because where CH53 stood the bowl the ring cut
+## into both quarterpipes and its vertical skirt left no way in on the
+## ground. CH69 answers both: the sweep in MODULES puts it where nothing
+## is closer than a deck length, the slab grows 0.25 u under it, and
+## SkateparkMesh cuts the roll-in.
+##
+## What did NOT change is the gate. SkatePhysicsProbe PHASE X asserts
+## that the bowl carries pieces IF AND ONLY IF its ring shares no sample
+## with a solid module, so a future layout that pushed it back into a
+## ramp turns this line red instead of shipping a wall inside a
+## transition. A reader asking "which modules are solid" asks THIS, never
+## a list of kinds.
 static func pieces_for(spec: Dictionary) -> Array:
 	var a: Array = build_args(spec)
 	match StringName(spec["kind"]):
@@ -375,6 +487,8 @@ static func pieces_for(spec: Dictionary) -> Array:
 			return SkateparkMesh.rail_pieces(a[0], a[1])
 		KIND_FUNBOX:
 			return SkateparkMesh.funbox_pieces(a[0], a[1], a[2], a[3])
+		KIND_BOWL:
+			return SkateparkMesh.bowl_pieces(a[0], a[1], a[2], a[3])
 	return []
 
 func _maybe_collide(node: MeshInstance3D, index: int, spec: Dictionary) -> void:
@@ -425,7 +539,7 @@ func _mesh_for(builder: SkateparkMesh, spec: Dictionary) -> ArrayMesh:
 		KIND_FUNBOX:
 			return builder.funbox(a[0], a[1], a[2], a[3])
 		KIND_BOWL:
-			return builder.bowl(a[0], a[1])
+			return builder.bowl(a[0], a[1], a[2], a[3])
 	push_error("HubSkatepark: unknown module kind '%s'." % spec["kind"])
 	return builder.rail(1.0, 0.5)
 
@@ -474,7 +588,7 @@ static func footprints() -> Array:
 	# CH64: the slab. A disc that covers its rectangle, so no grass tuft
 	# is planted through the concrete. Measured by SkateparkProbe as a
 	# change in the scatter's north census, like every footprint.
-	out.append({"position": Vector3(PARK_CENTRE.x, 0.0, PARK_CENTRE.y),
+	out.append({"position": Vector3(slab_centre().x, 0.0, slab_centre().y),
 		"radius": Vector2(SLAB_WIDTH, SLAB_DEPTH).length() * 0.5})
 	return out
 
