@@ -1063,6 +1063,52 @@ soupçonné n'achetait que 19,5 → 8,9. Sans elle, le lot aurait crédité une
 constante d'une correction qu'elle n'a pas faite, et le lot suivant aurait
 été surpris par ce que la retirer coûte.
 
+### ⚠️ UN SCAN QUI REND « AUCUNE POSITION » NE DIT PAS QUEL LEVIER TIRER — IL FAUT RETIRER LES CONTRAINTES UNE PAR UNE
+
+Écrit au CH68, et ça a réfuté un angle de brief entier **sans qu'une
+ligne de code soit touchée**.
+
+CH67 avait cherché une place pour le bol du skatepark sous trois
+contraintes simultanées, n'en avait trouvé aucune, et l'avait rapporté
+honnêtement. Le lot suivant a donc hérité d'un ensemble vide — c'est-à-dire
+d'**aucune direction** : rien dans « aucune position » ne dit laquelle des
+trois contraintes est le mur, et le brief de CH68 a naturellement désigné
+la plus spectaculaire (la retombée du grand quarterpipe) comme celle à
+desserrer.
+
+Le même balayage, relancé en **retirant chaque contrainte à son tour**,
+répond en une colonne :
+
+| on retire | positions restantes |
+|---|---|
+| le chevauchement | **2 071** |
+| l'emprise du parking | 56 |
+| **la retombée** | **56** |
+| la région | 56 |
+| **la dalle du park** | **4 489** |
+
+**Retirer la retombée ENTIÈREMENT ne change rien : 56 avant, 56 après.**
+L'angle qui allait coûter un lot — ajuster une trajectoire de pop sans
+casser un modèle validé device — n'ouvrait **pas une seule position**. Ce
+qui contraignait était ailleurs, et la même colonne le nomme.
+
+**Règle** : un balayage sous N contraintes publie **N+1 comptes** — le
+compte global et le compte en retirant chacune. Un ensemble vide est un
+RÉSULTAT ; « laquelle le rend vide » est le résultat UTILE, et il coûte
+une boucle de plus sur des candidats déjà calculés. Corollaires payés dans
+le même lot :
+
+* **une contrainte qui ne retranche rien doit être dite inactive**, sinon
+  elle se transmet de brief en brief comme si elle coûtait quelque chose ;
+* **une contrainte que le lot précédent n'a pas énoncée peut être LE mur**
+  (ici la dalle de béton : 56 avec, 4 489 sans) — donc énumérer d'abord ce
+  que la chose doit satisfaire, et seulement ensuite balayer ;
+* et **un seuil de contrainte se mesure d'abord contre l'ÉTAT LIVRÉ**. La
+  première rédaction de « le bol tient sur sa dalle » **condamnait le bol
+  expédié**, qui déborde déjà de 0,100 u. Un seuil qui refuse ce qui tourne
+  aujourd'hui ne prouve pas moins que rien : il prouve à l'envers, et tout
+  ensemble vide qu'il produit est un artefact.
+
 ### ⚠️ UN BANC QUI GARE UN CORPS SANS DIRE DANS QUEL SENS MESURE UNE COURBE
 
 Gratuit tant qu'un corps s'oriente instantanément ; faux le jour où
@@ -3156,6 +3202,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH50 | Extension zone 0 nord — le sol du skatepark : disque r=28 unioné sur le milieu du bord nord (le MÊME centre que le lobe CH16, qu'il avale à tous les centres que le budget autorise, donc « goulot entre les deux disques » n'est pas une forme dessinable), pire paire créée 106,590 u / **20,117 s** qui PERD contre celle de CH38 (111,414 u / 20,967 s) donc pire traversée du hub inchangée, diagonale reproduite à la frame près (1 122 frames / 18,700 s) ; `COVER_MAX.y` 47 → 63 et les TROIS orthographes du littéral 50 du mur unifiées en un `WALL_NEAR_Z` dérivé (68) ; trois passes rouges (9 / 3 / 3) et le couplage tapis-mur prouvé par les deux dernières ; faux-vert du lot : la sonde en `--headless` lisait **2 743 transforms de `MultiMesh` sur 2 743 en identité** et comptait zéro en vert ; table des sondes rejouée sur deux arbres, parité rétablie, plus la trouvaille que le gate de contraste des plaques CH48 est un test du SOL (`origin/main` porte déjà 0,21 % de sol peint sous L 0,10, son plus sombre à 2,31:1 exactement) | [`CH50_ZONE0_NORD.md`](docs/lots/CH50_ZONE0_NORD.md) | 1 | 402 | 8 sept |
 
 | CH67 | Zone navigable du hub — `SKATE_LOBE_RADIUS` 28 → 36 sur un balayage MARCHÉ (38 sort à 22,100 s, le chiffre que le lot D avait déjà refusé), pire traversée du hub qui PASSE au lobe (21,817 s, dit et gaté) ; limite rendue lisible par un liseré peint dans le shader du sol, teinte choisie **en luminance** (le béton pâle évident lit 1,18:1 contre l'herbe claire) et gatée au PIXEL contre son propre plancher de bruit ; balançoire et ours sortis du couloir de course sur un scan à quatre contraintes simultanées, les deux constantes de l'ours re-dérivées ; **le bol construit, prouvé, puis retiré sur une mesure** (il passe sous la retombée du grand quarterpipe et rend le double pop que CH66 avait tué) | [`CH67_ZONE_NAVIGABLE.md`](docs/lots/CH67_ZONE_NAVIGABLE.md) | 8 | 392 | 10 sept |
+| CH68 | Les deux zones « non physiques » n'en font qu'une — RECON PURE, zero code de jeu. Zone 1 identifiee par enumeration, passe masquee au pixel et balayage de 72 azimuts lances DEUX FOIS (physique et triangles de la surface 0) : **6 azimuts fantomes, tous le bol**, 31 ou physique et dessin sont egaux au millimetre, et le « mur gris » du retour device est le DOS du petit quarterpipe, **solide**. Confirme par le canal du joueur avec blind check : la planche **traverse le bol** (0,199 u de l'axe, zero contact) et le meme geste sur un module solide est ARRETE. **Les deux zones sont le meme objet.** Zone 2 : les deux angles du brief mesures — (a) 56 positions sur la dalle, **0 sur 56** avec 1 u de degagement, 4 489 des qu'on lache la dalle ; **(b) REFUTE — retirer la contrainte de retombee laisse 56 avant, 56 apres** ; le bol n'est pas cable | [`CH68_ZONES_NON_PHYSIQUES.md`](docs/lots/CH68_ZONES_NON_PHYSIQUES.md) | 5 | 336 | 10 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,
