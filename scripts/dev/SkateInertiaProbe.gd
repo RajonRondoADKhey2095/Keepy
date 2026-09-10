@@ -417,6 +417,21 @@ func _phase_energy() -> void:
 			print("     [%d] rail: no riding surface above the ground -- see CH60 PHASE J. Skipped."
 				% index)
 			continue
+		if kind == HubSkatepark.KIND_BOWL:
+			# ⚠️ CH69 -- THE BOWL IS A RAMP RIDDEN FROM THE INSIDE, and
+			# this phase's launch is written for the OUTSIDE: it parks the
+			# board clear of the module and pushes it at the foot. A bowl
+			# has no outside foot -- its transition faces the axis, and
+			# its skirt is a wall -- so every row came back "arrived
+			# 0.00 u/s, peak 0.000" the first time the ring was wired.
+			# That is not a bowl that fails to convert energy, it is a
+			# launch that never happened, and CLAUDE.md is explicit that a
+			# leg which never became an instance of what it measures gets
+			# NO verdict rather than a zero. The bowl's own climb is
+			# gated by SkatePhysicsProbe PHASE Y, from the floor.
+			print("     [%d] bowl: its transition faces the AXIS -- this launch approaches from outside, and there is no outside foot. Skipped (see SkatePhysicsProbe PHASE Y)."
+				% index)
+			continue
 		var lip: float = float(HubSkatepark.MODULES[index]["size"].y)
 		var rows: Array = []
 		for want in ARRIVALS:
@@ -531,17 +546,44 @@ func _phase_signature() -> void:
 		"E2 INSTRUMENT: every row of both tables is a real climb (lowest peak %.3f u > 0.02)" % lowest)
 	if lowest <= 0.02:
 		return
+	# ⚠️ CH69 -- A RUNG THAT CLEARS A LIP HAS LEFT THE REGIME THIS PHASE
+	# MEASURES, and it says so instead of being averaged in.
+	#
+	# The signature is "how high does the RAMP take it". Once the peak
+	# passes the lip the board is a PROJECTILE and its apex is gravity's
+	# answer, not the transition's -- and the two ramps stop being
+	# comparable precisely because one of them has run out. Measured on
+	# the tree that first wired the bowl: the top rung arrived at
+	# 9.17 u/s (CH67 read 8.97 before the bowl moved and 9.09 after; the
+	# coast is solved from HubSkatepark.park_span(), which the layout
+	# widened), and the 1.45 u ramp reached 2.020 -- 139 % of its lip.
+	# The three rungs that stayed on the concrete read 1.090, 1.030 and
+	# 1.091; the ratio the phase used to publish, 1.662, was one leg on
+	# the ramp against one leg in the air.
+	#
+	# CLAUDE.md, CH41: every leg of an A/B publishes the quantity that
+	# defines it at BOTH ends and the phase gates that its regime did not
+	# flip. The guard below is that, plus the `counted > 0` that stops
+	# "nothing was comparable" from becoming the way everybody passes.
 	var worst: float = 0.0
+	var counted: int = 0
 	for i in a.size():
 		var ha: float = float((a[i] as Dictionary)["peak"])
 		var hb: float = float((b[i] as Dictionary)["peak"])
 		var v: float = float((a[i] as Dictionary)["arrival"])
 		var ratio: float = maxf(ha, hb) / maxf(minf(ha, hb), 1e-6)
-		worst = maxf(worst, ratio)
-		print("     arriving at %5.2f u/s:  2.10 u ramp -> %.3f   1.45 u ramp -> %.3f   ratio %.3f"
-			% [v, ha, hb, ratio])
-	print("     worst ratio %.3f   (the lips are %.3f apart, and CH60's heights were %.3f apart)"
-		% [worst, lip_ratio, ch60_ratio])
+		var held: bool = ha <= lip_a and hb <= lip_b
+		if held:
+			worst = maxf(worst, ratio)
+			counted += 1
+		print("     arriving at %5.2f u/s:  2.10 u ramp -> %.3f   1.45 u ramp -> %.3f   ratio %.3f%s"
+			% [v, ha, hb, ratio, "" if held else "   (LEFT THE RAMP -- not comparable, see above)"])
+	print("     worst ratio %.3f over %d rungs of %d that stayed on the concrete   (the lips are %.3f apart, and CH60's heights were %.3f apart)"
+		% [worst, counted, a.size(), lip_ratio, ch60_ratio])
+	_check(counted >= 2,
+		"E2 INSTRUMENT: at least two rungs kept BOTH ramps under their lips (%d of %d)" % [counted, a.size()])
+	if counted < 2:
+		return
 	_check(worst < 1.25,
 		"E2 the same arrival buys the SAME HEIGHT on both ramps (worst ratio %.3f < 1.25)" % worst)
 	_check(worst < lip_ratio - 0.15,
