@@ -156,6 +156,7 @@ func _run() -> void:
 	await _phase_emulated()
 	await _phase_drive()
 	await _phase_turn()
+	await _phase_sweep()
 	await _phase_fence()
 	await _phase_mapping()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
@@ -225,33 +226,75 @@ func _phase_capture() -> void:
 	var at := Vector2(500.0, 900.0)
 	_check(is_zero_approx(_touch.throttle), "INSTRUMENT: no finger, no throttle")
 	# (1) the press alone
+	#
+	# ⚠️ CH65 -- THE THROTTLE IS A RAMP NOW, AND THIS IS WHERE THAT IS
+	# GATED. The press opens the TARGET; the value climbs to it over
+	# THROTTLE_LAMBDA, because a step from 0 to full push is an infinite
+	# jerk and that is what "la poussee est trop brutale au demarrage"
+	# was. So the old `throttle >= 1.0` on the press frame is not merely
+	# stale -- asserting it would be asserting the defect. What is gated
+	# instead is stronger: it starts at zero, it only ever RISES, and it
+	# gets there.
 	_touch._unhandled_input(_press(at))
-	_check(_touch.throttle >= 1.0,
-		"the PRESS alone opens the throttle (%.2f), before any heading" % _touch.throttle)
+	_check(is_zero_approx(_touch.throttle),
+		"the press does NOT slam the throttle open (%.4f on the press frame)" % _touch.throttle)
 	_check(not _touch.has_heading(), "and it writes no heading yet")
+	var rising: bool = true
+	var last_t: float = _touch.throttle
+	var full_at: int = -1
+	for i in 60:
+		_writer_tick(1)
+		if _touch.throttle < last_t - 1e-6:
+			rising = false
+		last_t = _touch.throttle
+		if full_at < 0 and _touch.throttle >= 0.99:
+			full_at = i + 1
+	print("     throttle ramp: full (>=0.99) after %d ticks = %.3f s" % [full_at, float(full_at) / 60.0])
+	_check(rising, "the throttle only ever RISES while the finger is down -- a ramp, not a wobble")
+	_check(full_at > 1, "and it takes more than one tick to get there (%d)" % full_at)
+	_check(full_at > 0 and full_at <= 45,
+		"and it DOES get there, well inside the run-up (%d ticks)" % full_at)
 	# (2) a slide well past the slop
+	#
+	# ⚠️ AND THE HEADING NEEDS A TICK, WHICH IS ALSO THE CONTRACT AND NOT
+	# AN ACCIDENT OF IT. The finger is filtered (SkateTouchInput.
+	# FINGER_LAMBDA) because the raw offset's angular gain is atan(1/r) --
+	# 3.37 deg per pixel at a resting thumb's offset, measured -- so a
+	# tremble wrote tens of degrees of heading. An event now only moves
+	# the finger; the tick decides what it means.
 	_touch._unhandled_input(_drag(at + Vector2(120.0, 0.0)))
-	_check(_touch.has_heading(), "a 120 px slide writes a heading")
+	_check(not _touch.has_heading(),
+		"a slide writes NO heading on the event frame -- the finger is filtered")
+	_writer_tick(20)
+	_check(_touch.has_heading(), "a 120 px slide writes a heading, one tick later")
 	_check(_touch.heading_px.x > 0.0 and absf(_touch.heading_px.y) < 0.001,
 		"and the heading is the finger's own offset (%s)" % str(_touch.heading_px))
-	_check(_touch.throttle >= 1.0, "the throttle is still held through the slide")
+	_check(_touch.throttle >= 0.99, "the throttle is still held through the slide")
 	# (3) IT TRACKS -- the LOT 1 latch is gone, and this is the assertion
 	# that says so. A finger swung to the other side must write the other
 	# side, or "la direction suit la position du doigt" is not true.
 	_touch._unhandled_input(_drag(at + Vector2(-120.0, 0.0)))
+	_writer_tick(60)
 	_check(_touch.heading_px.x < 0.0,
 		"swinging the finger the other way writes the OTHER heading (%s) -- it tracks"
 			% str(_touch.heading_px))
 	# (4) and back inside the slop is "straight on", not "stop"
 	_touch._unhandled_input(_drag(at + Vector2(3.0, 2.0)))
+	_writer_tick(60)
 	_check(not _touch.has_heading(),
 		"a finger back inside the %.0f px slop writes NO heading" % SkateTouchInput.SLOP_PX)
-	_check(_touch.throttle >= 1.0,
+	_check(_touch.throttle >= 0.99,
 		"and the throttle is UNTOUCHED by that -- straight on, not stop (%.2f)" % _touch.throttle)
 	# (5) the release
 	var taps_before: int = _taps
 	_touch._unhandled_input(_release(at + Vector2(3.0, 2.0)))
-	_check(is_zero_approx(_touch.throttle), "the release closes the throttle")
+	# ⚠️ AND THE LIFT DOES **NOT** RAMP: it closes on the event frame. The
+	# ramp exists so a push does not arrive as a step; a lift that lingered
+	# would keep pushing a board the player has let go of, which neither
+	# scheme may do. Gated on the event frame, with no tick, so a ramp that
+	# ever grew a downward half would redden here.
+	_check(is_zero_approx(_touch.throttle),
+		"the release closes the throttle AT ONCE, on the event frame (%.4f)" % _touch.throttle)
 	_check(not _touch.has_heading(), "and drops the heading with the finger")
 	# ⚠️ (5) IS A DRAG THAT ENDED INSIDE THE SLOP, and it is deliberately
 	# not an exit: `_dragged` latches for the length of the gesture even
@@ -259,10 +302,64 @@ func _phase_capture() -> void:
 	# memories, and this is the assertion that proves they are separate.
 	_check(_taps == taps_before,
 		"a gesture that once LEFT the slop is not an exit tap, even if it came back")
+	# =================================================================
+	# ⚠️ THIS BLOCK SITS **BEFORE** THE EXIT GESTURE BELOW, AND IT HAS TO.
+	# Step (6) emits a real exit tap; the rider is aboard and at rest, so
+	# HubTransport takes him off the board and `sync_board_input()`
+	# DISARMS this writer -- `_clear()` wipes the anchor, the filter and
+	# the heading with it. Written after (6), every reading here came back
+	# 0.00 deg, and the BLIND CHECK below is what said so instead of the
+	# tremble gate passing for free on a writer that was switched off.
+	#
+	# (5b) CH65 -- THE TREMBLE, WHICH IS THE DEVICE REPORT IN ONE NUMBER
+	#
+	# The heading is the DIRECTION of the finger's offset, so its angular
+	# gain is atan(1/r): largest exactly where a thumb comes to rest. On
+	# the shipped tree, measured through this writer, one pixel of travel
+	# at a 17 px offset was **3.3665 deg** of commanded heading, and a
+	# +-6 px tremble at a 20 px offset swung it through **33.40 deg**,
+	# peak to peak. Three pixels is under a millimetre on Mathieu's phone.
+	# "Le touch est trop sensible, il part dans tous les sens" is that
+	# line, and `SkateTouchInput.FINGER_LAMBDA` is the answer to it.
+	#
+	# ⚠️ BLIND CHECK FIRST, BECAUSE THIS IS AN ASSERTION THAT A NUMBER
+	# STAYS SMALL. A meter that could not see a heading move at all would
+	# sign it for nothing, so a REAL slide is measured on the same
+	# instrument, in the same units, immediately before.
+	_touch._unhandled_input(_press(at))
+	_touch._unhandled_input(_drag(at + Vector2(20.0, 0.0)))
+	_writer_tick(90)
+	var base_deg: float = rad_to_deg(_touch.heading_px.angle())
+	_touch._unhandled_input(_drag(at + Vector2(20.0, -20.0)))
+	_writer_tick(90)
+	var deliberate: float = absf(rad_to_deg(angle_difference(
+		deg_to_rad(base_deg), _touch.heading_px.angle())))
+	print("     a DELIBERATE 20 px slide moves the commanded heading %.2f deg" % deliberate)
+	_check(deliberate > 30.0,
+		"BLIND CHECK: the heading meter MOVES -- a deliberate slide swings it %.1f deg" % deliberate)
+	_touch._unhandled_input(_drag(at + Vector2(20.0, 0.0)))
+	_writer_tick(90)
+	base_deg = rad_to_deg(_touch.heading_px.angle())
+	var lo: float = 1e9
+	var hi: float = -1e9
+	for i in 120:
+		var phase: float = sin(TAU * 5.0 * float(i) / 60.0)
+		_touch._unhandled_input(_drag(at + Vector2(20.0, -6.0 * phase)))
+		_writer_tick(1)
+		var e: float = rad_to_deg(angle_difference(deg_to_rad(base_deg), _touch.heading_px.angle()))
+		lo = minf(lo, e)
+		hi = maxf(hi, e)
+	_touch._unhandled_input(_release(at + Vector2(20.0, 0.0)))
+	print("     a +-6 px tremble at a 20 px offset swings it %.2f deg peak to peak (shipped tree: 33.40)"
+		% (hi - lo))
+	_check(hi - lo < 25.0,
+		"a resting thumb's TREMBLE does not swing the heading (%.2f deg peak to peak, against 33.40 before CH65)"
+			% (hi - lo))
 	# (6) the exit gesture itself
 	taps_before = _taps
 	_touch._unhandled_input(_press(at))
 	_touch._unhandled_input(_drag(at + Vector2(4.0, 3.0)))
+	_writer_tick(60)
 	_check(not _touch.has_heading(), "a 5 px jitter writes NO heading")
 	_touch._unhandled_input(_release(at + Vector2(4.0, 3.0)))
 	_check(_taps == taps_before + 1, "and releasing it emits exactly ONE exit tap")
@@ -401,13 +498,16 @@ func _phase_emulated() -> void:
 	_check(_touch.steering_active,
 		"an engine-delivered press takes the anchor (and the emulated twin does not steal it)")
 	Input.parse_input_event(_drag(at + Vector2(150.0, 0.0)))
-	await _settle(4)
+	# CH65: 40 frames, not 4 -- the heading is written by the writer's tick
+	# from a filtered finger, and the throttle climbs a ramp. Both need
+	# their own time, and both are gated on their own terms in PHASE C.
+	await _settle(40)
 	_check(_touch.has_heading(),
 		"and an engine-delivered DRAG writes a heading (%s)" % str(_touch.heading_px))
 	_check(_touch.heading_px.x > 0.0,
 		"pointing the way the finger went, not the way an emulated pointer did")
-	_check(_touch.throttle >= 1.0,
-		"and the throttle is held through an engine-delivered gesture (%.2f)" % _touch.throttle)
+	_check(_touch.throttle >= 0.99,
+		"and the throttle is held through an engine-delivered gesture (%.4f)" % _touch.throttle)
 	var exits_before: int = _taps
 	Input.parse_input_event(_release(at + Vector2(150.0, 0.0)))
 	await _settle(6)
@@ -452,15 +552,28 @@ func _phase_drive() -> void:
 	var at := Vector2(500.0, 900.0)
 	_touch._unhandled_input(_press(at))
 	_touch._unhandled_input(_drag(at + Vector2(0.0, -140.0)))
+	# CH65: the writer is ticked by `_advance_board` while a rider is
+	# aboard, so real frames are the clock here. 30 of them is past the
+	# finger filter and past the throttle ramp alike.
+	await _settle(40)
 	var want: Vector3 = _touch.heading_world(_camera)
 	_check(want != Vector3.ZERO, "INSTRUMENT: the held drag maps to a world heading")
-	_check(_touch.throttle >= 1.0, "INSTRUMENT: and the throttle is open")
+	# ⚠️ 0.99 AND NOT 1.0, BECAUSE THE RAMP IS FIRST-ORDER AND ASYMPTOTIC.
+	# It reaches 0.99 in 29 ticks (PHASE C measures it) and approaches 1.0
+	# without ever printing it. A gate written at 1.0 would be a gate on a
+	# limit no float ever holds.
+	_check(_touch.throttle >= 0.99, "INSTRUMENT: and the throttle is open (%.4f)" % _touch.throttle)
 	var top: float = 0.0
+	# ⚠️ CH65 -- "HELD FULL" IS NOW "REACHED FULL AND NEVER FELL BACK", and
+	# the change is the ramp's, not a relaxation. The 30 frames above have
+	# already carried the ramp to 1.0; what this loop still refuses is a
+	# throttle that DROPS while the finger is down, which is the failure
+	# the original assertion was written against.
 	var throttle_held: bool = true
 	for _i in DRAG_FRAMES:
 		await get_tree().physics_frame
 		top = maxf(top, body.speed())
-		if body.throttle() < 1.0:
+		if body.throttle() < 0.99:
 			throttle_held = false
 	var moved: Vector3 = body.flat_position() - before
 	print("     travelled %.3f u, top speed %.3f u/s, cruise %.3f"
@@ -584,6 +697,136 @@ func _phase_turn() -> void:
 		worst = maxf(worst, r)
 	_check(worst <= ceiling * 1.10,
 		"and it never passes the lag ceiling (%.1f <= %.1f deg/s)" % [worst, ceiling * 1.10])
+	# ⚠️ CH65 -- AND THE BOARD'S OWN CAP IS WHAT BOUNDS IT NOW, NOT THE
+	# CAMERA LOOP. Before this lot the facing was written straight from the
+	# finger and this phase read 170.7 / 103 / 110 / 109 / 109 / 110 deg/s
+	# -- the first window OVER the camera's own 110, on a board nothing
+	# limited. It now reads a flat 85.0, which is `SkateBoardBody.
+	# YAW_RATE_MAX`, and the two things that matter are gated as
+	# properties rather than as tastes:
+	# ⚠️ THE CAP IS TWO NUMBERS AND THIS PHASE READS THE WHOLE CURVE. The
+	# board starts this run AT REST, where CH65 deliberately lets the nose
+	# be shuffled round quickly (`PIVOT_RATE_MAX`); it settles into the
+	# cruising cap (`YAW_RATE_MAX`) as it picks up speed. So the first
+	# window is fast BY DESIGN and the last ones are the contract. Gating
+	# the peak against the cruising number would be gating the wrong end
+	# of a curve this lot authored on purpose -- what is gated instead is
+	# the ceiling of the mechanism, and where the curve LANDS.
+	var board_cap: float = rad_to_deg(SkateBoardBody.YAW_RATE_MAX)
+	var pivot_cap: float = rad_to_deg(SkateBoardBody.PIVOT_RATE_MAX)
+	print("     (CH65: pivot cap %.1f deg/s stopped, cruising cap %.1f deg/s; before CH65 this phase read 170.7 / 103 / 110 / 109 / 109 / 110 on a board nothing limited)"
+		% [pivot_cap, board_cap])
+	_check(board_cap < rad_to_deg(HubCamera.BOARD_YAW_RATE_MAX),
+		"the BOARD's cruising cap is below what the camera may follow (%.1f < %.1f deg/s) -- two followers capped alike never converge"
+			% [board_cap, rad_to_deg(HubCamera.BOARD_YAW_RATE_MAX)])
+	_check(worst <= pivot_cap * 1.02,
+		"and nothing a finger can do passes the mechanism's own ceiling (%.1f <= %.1f deg/s)"
+			% [worst, pivot_cap * 1.02])
+	_check(absf(rates[5] - board_cap) < 3.0,
+		"and a board up to speed turns at exactly the cruising cap (%.1f vs %.1f deg/s)"
+			% [rates[5], board_cap])
+	# ⚠️ AND THE CURVE MUST **MOVE**, or a constant would pass every gate
+	# above (CLAUDE.md CH62: the spread is gated before the shape). The
+	# standing pivot has to be measurably faster than the cruising one.
+	_check(rates[0] > board_cap * 1.15,
+		"the standing pivot is genuinely faster than the cruising cap (%.1f > %.1f deg/s) -- the curve is not a constant"
+			% [rates[0], board_cap * 1.15])
+	await _settle(4)
+
+# =====================================================================
+# PHASE W -- CH65: A **SWEPT** THUMB, WHICH IS THE CASE THE LOT EXISTS FOR
+#
+# ⚠️ PHASE T ABOVE HOLDS THE FINGER STILL, AND A STILL FINGER WAS NEVER
+# THE PROBLEM. Its rate is set by the camera feedback loop, so it is
+# bounded at ~110 deg/s with or without a cap on the board -- measured:
+# neutralising `SkateBoardBody.YAW_RATE_MAX` entirely leaves PHASE T
+# reading 110, and only one of its assertions notices. What the board's
+# own cap defends is the case a held finger cannot produce, and it is the
+# case Mathieu described: a thumb that MOVES.
+#
+# On the shipped tree, through this writer, board yaw against thumb speed:
+#
+#   150 px/s  ->   73.9 deg/s
+#   400 px/s  ->  163.6 deg/s     (already half again the camera's cap)
+#   800 px/s  ->  326.4 deg/s     (three times it)
+#   one coalesced drag, straight ahead to full lock
+#             ->  90 deg in ONE FRAME, i.e. 5400 deg/s
+#
+# A camera capped at 110 deg/s filming a board that turns at 5400 cannot
+# show where the board went, and "on n'arrive pas a calculer ses
+# trajectoires" is that arithmetic. This phase gates it, at cruise, where
+# the cruising cap applies.
+#
+# ⚠️ THE BLIND HALF COMES FIRST. "The yaw never exceeds X" passes for free
+# against a board that never turned -- a fence, a refused mount, a dead
+# writer. So the sweep must be shown to TURN the board before its ceiling
+# means anything, and the run's containment is published with it.
+
+func _phase_sweep() -> void:
+	print("-- PHASE W: a SWEPT thumb, and the board's own yaw rate per frame --")
+	await _reset_ride()
+	# ⚠️ PARKED FACING **SOUTH**, AND THE BENCH SAYS SO RATHER THAN
+	# INHERITING IT. OPEN_GROUND is (12, 52), eight units inside the skate
+	# lobe's north rim at that x; a run-up northward reaches the fence
+	# mid-phase, `_fence` calls `stop()`, and the sweep that follows then
+	# measures a STOPPED board -- which reads 240 deg/s, the standing pivot
+	# rate, and looks exactly like a broken cap. Measured before this line
+	# existed: v = 9.915 u/s at tick 60 and 0.000 at tick 89. Southward
+	# there are forty units of square. The INSTRUMENT assertions below are
+	# what caught it, and they stay.
+	var body := _transport.board_body()
+	body.rotation.y = PI
+	await _settle_camera()
+	var at := Vector2(500.0, 900.0)
+	_touch._unhandled_input(_press(at))
+	_touch._unhandled_input(_drag(at + Vector2(0.0, -140.0)))
+	var ran_inside: bool = true
+	for _i in 60:
+		await get_tree().physics_frame
+		if not HubRegion.contains(body.flat_position()):
+			ran_inside = false
+	var entry_speed: float = body.speed()
+	# 800 px/s is a brisk but ordinary thumb: 13.3 px per frame at 60 Hz.
+	var step: float = 800.0 / 60.0
+	var worst: float = 0.0
+	var turned: float = 0.0
+	var yaw: float = body.rotation.y
+	var inside: bool = true
+	for i in 30:
+		_touch._unhandled_input(_drag(at + Vector2(step * float(i + 1), -140.0)))
+		await get_tree().physics_frame
+		var rate: float = absf(rad_to_deg(angle_difference(yaw, body.rotation.y))) * 60.0
+		worst = maxf(worst, rate)
+		turned += rate / 60.0
+		yaw = body.rotation.y
+		if not HubRegion.contains(body.flat_position()):
+			inside = false
+	# And the pathological one: a single coalesced drag, which is what a
+	# fast thumb delivers when a frame runs long.
+	var before_jump: float = body.rotation.y
+	_touch._unhandled_input(_drag(at + Vector2(140.0, 0.0)))
+	await get_tree().physics_frame
+	var jump: float = absf(rad_to_deg(angle_difference(before_jump, body.rotation.y))) * 60.0
+	_touch._unhandled_input(_release(at + Vector2(140.0, 0.0)))
+	var cap: float = rad_to_deg(SkateBoardBody.YAW_RATE_MAX)
+	print("     swept at 800 px/s: worst %.1f deg/s over %.0f deg turned; ONE coalesced drag: %.1f deg/s  [cap %.1f, camera %.1f]"
+		% [worst, turned, jump, cap, rad_to_deg(HubCamera.BOARD_YAW_RATE_MAX)])
+	_check(entry_speed > HubTransport.SKATE_CRUISE * 0.9,
+		"W INSTRUMENT: the board was at cruise when the sweep began (%.3f u/s)" % entry_speed)
+	_check(ran_inside and inside,
+		"W INSTRUMENT: and the whole run stayed inside the region -- a fenced board is stopped, and a stopped board pivots at the standing rate")
+	_check(turned > 30.0,
+		"W BLIND CHECK: the sweep really TURNS the board (%.0f deg) -- a ceiling over a still board is free"
+			% turned)
+	_check(worst <= cap * 1.05,
+		"W a swept thumb cannot turn the board past its cruising cap (%.1f <= %.1f deg/s; the shipped tree read 326.4 here)"
+			% [worst, cap * 1.05])
+	_check(jump <= cap * 1.05,
+		"W and neither can a single coalesced drag (%.1f <= %.1f deg/s; the shipped tree turned 90 deg in ONE FRAME, 5400 deg/s)"
+			% [jump, cap * 1.05])
+	_check(worst <= rad_to_deg(HubCamera.BOARD_YAW_RATE_MAX),
+		"W so the CAMERA can follow what the board does (%.1f <= %.1f deg/s) -- which is what a player has to read a trajectory from"
+			% [worst, rad_to_deg(HubCamera.BOARD_YAW_RATE_MAX)])
 	await _settle(4)
 
 # =====================================================================
@@ -748,6 +991,11 @@ func _phase_mapping() -> void:
 		_touch.enabled = true
 		_touch._unhandled_input(_press(at))
 		_touch._unhandled_input(_drag(at + offset))
+		# CH65: the heading is a per-tick quantity. The rider is NOT
+		# aboard in this phase (the camera has to stay parked for the
+		# pixels to mean anything), so nothing in the tree ticks the
+		# writer and the bench does it -- 40 ticks, well past the filter.
+		_writer_tick(40)
 		var heading: Vector3 = _touch.heading_world(_camera)
 		_touch._unhandled_input(_release(at + offset))
 		_touch.enabled = false
@@ -934,6 +1182,15 @@ func _screen_tap(at: Vector2) -> void:
 	await _settle(2)
 	Input.parse_input_event(_release(at))
 	await _settle(8)
+
+## ⚠️ CH65 -- THE WRITER'S OWN CLOCK, STEPPED BY HAND, AND ONLY WHERE THE
+## TREE HAS NONE. `HubTransport._advance_board` ticks the writer every
+## physics frame while a rider is aboard; the phases that drive it with no
+## rider (PHASE C) have nobody to do that, so they do it themselves. A
+## phase with a rider aboard uses real `physics_frame`s and never this.
+func _writer_tick(n: int) -> void:
+	for _i in n:
+		_touch.tick(1.0 / 60.0)
 
 func _press(at: Vector2) -> InputEventScreenTouch:
 	var e := InputEventScreenTouch.new()

@@ -130,6 +130,7 @@ func _run() -> void:
 	await _phase_energy()
 	await _phase_red()
 	await _phase_stall()
+	await _phase_grip()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -327,7 +328,7 @@ func _flat_run(distance: float) -> Dictionary:
 	var body := _transport.board_body()
 	var from := Vector3(-26.0, 0.0, 30.0)
 	var to := from + Vector3(0.0, 0.0, -1.0) * distance
-	await _park_board(from)
+	await _park_board(from, to - from)
 	var mounted: bool = _transport.mount_board()
 	_bench.aim(HubRegion.clamp_to(to))
 	var top: float = 0.0
@@ -356,7 +357,7 @@ func _flat_run(distance: float) -> Dictionary:
 func _coast_run() -> Dictionary:
 	var body := _transport.board_body()
 	var from := Vector3(-26.0, 0.0, 30.0)
-	await _park_board(from)
+	await _park_board(from, Vector3(0.0, 0.0, -1.0))
 	var mounted: bool = _transport.mount_board()
 	body.stop()
 	body.velocity = Vector3(0.0, 0.0, -1.0) * HubTransport.SKATE_CRUISE
@@ -567,7 +568,7 @@ func _launch(index: int, want: float) -> Dictionary:
 	var centre: Vector3 = _park.module_centre(index)
 	var foot: Vector3 = centre - dir * reach
 	var from: Vector3 = foot - dir * LAUNCH_U
-	await _park_board(from)
+	await _park_board(from, dir)
 	var mounted: bool = _transport.mount_board()
 	if not mounted:
 		print("     !! mount refused: state=%s hopping=%s on_carrier=%s on_vehicle=%s riding_board=%s keepy=%s board=%s"
@@ -704,7 +705,7 @@ func _phase_stall() -> void:
 	var dir := Vector3(d.x, 0.0, d.z).normalized()
 	var centre: Vector3 = _park.module_centre(index)
 	var from: Vector3 = centre - dir * 9.0
-	await _park_board(from)
+	await _park_board(from, dir)
 	_check(_transport.mount_board(), "S INSTRUMENT: the rider is aboard for the climb")
 	_bench.aim(HubRegion.clamp_to(centre + dir * 3.0))
 	var peak: float = -1e9
@@ -742,7 +743,7 @@ func _phase_stall() -> void:
 	var box: Vector3 = _park.module_centre(0)
 	var wall_from := Vector3(box.x + half_x + 5.0, 0.0, box.z)
 	var wall_to := Vector3(box.x - half_x - 5.0, 0.0, box.z)
-	await _park_board(wall_from)
+	await _park_board(wall_from, wall_to - wall_from)
 	_check(_transport.mount_board(), "S INSTRUMENT: the rider is aboard for the wall run")
 	_bench.aim(HubRegion.clamp_to(wall_to))
 	var dropped: bool = false
@@ -765,15 +766,296 @@ func _phase_stall() -> void:
 	# CH42 -- the heading is WRITTEN, not scaled by a forward speed the
 	# wall is eating). Hold the finger AWAY from the face and the board
 	# must leave it under its own push.
+	# ⚠️ CH65 -- 180 TICKS AND NOT 60, AND THE NUMBER IS THE MODEL'S OWN.
+	# The board is pinned nose-INTO the face, and the finger is held the
+	# other way: that is a 180 deg reversal, which since CH65 costs
+	# 180 / YAW_RATE_MAX = 2.12 s of pivot before the push is allowed to
+	# do anything (`SkateBoardBody.align`). At 60 ticks the board had
+	# turned through 85 deg and moved **0.000 u** -- a reading that looks
+	# exactly like lost steering authority and is in fact a stopwatch too
+	# short for the turn.
+	#
+	# The property CH42 and CH64 gate here has NOT changed and is not
+	# being softened: a pinned board still answers a finger held away from
+	# the wall, entirely, under its own push. What changed is that it
+	# takes a stated time to point itself first -- so the turn is now
+	# gated TOO, on the same run, and a board that stopped yawing against
+	# a wall would redden here rather than hide behind the distance.
 	var pinned: Vector3 = body.flat_position()
+	var pinned_yaw: float = body.rotation.y
 	_bench.hold(Vector3(1.0, 0.0, 0.0))
-	for _t in 60:
+	for _t in 180:
 		await get_tree().physics_frame
 	_bench.release()
 	var freed: float = body.flat_position().distance_to(pinned)
-	print("     pinned at x %.3f, a finger held away moved it %.3f u in 60 ticks" % [pinned.x, freed])
+	var came_round: float = absf(rad_to_deg(angle_difference(pinned_yaw, body.rotation.y)))
+	print("     pinned at x %.3f, a finger held away turned it %.1f deg and moved it %.3f u in 180 ticks"
+		% [pinned.x, came_round, freed])
+	_check(came_round > 90.0,
+		"S a board pinned against a wall still YAWS -- the wall eats its speed, not its steering (%.1f deg)"
+			% came_round)
 	_check(freed > 1.0,
-		"S a board pinned against a wall still obeys a finger held away from it (%.3f u)" % freed)
+		"S and it then leaves under its own push (%.3f u)" % freed)
+
+# =====================================================================
+# PHASE G -- CH65: THE WHEELS, THE CEILING, AND THE FOOT THAT WAITS
+#
+# The three things CH65 added to this model, gated where the model lives.
+# Each is a PROPERTY, not a taste: the taste is in the two constants
+# (`SkateBoardBody.GRIP_LAMBDA`, `YAW_RATE_MAX`) and this phase would pass
+# at any sane value of either.
+#
+# ⚠️ AND IT IS A BLIND CHECK BEFORE IT IS A GATE. "The board tracks its
+# nose" is an assertion of near-EQUALITY between two directions, and
+# CLAUDE.md is explicit that such an assertion passes for free against an
+# instrument that cannot see the difference. So the drift is measured on a
+# STRAIGHT run first, where it must be ~0, and then on a full-lock carve,
+# where it must be MEASURABLY MORE -- and only then is the carve's drift
+# gated as small. Without the middle step, a bench whose drift meter was
+# stuck at zero would sign the whole phase.
+#
+# WHAT THE SHIPPED TREE DID BEFORE THIS LOT, for the record and so the
+# numbers below have something to be better than: through the same carve
+# it drifted **75.5 deg**, keeping **2.9%** of its forward speed. There
+# was no lateral resistance in the model at all.
+
+func _phase_grip() -> void:
+	print("-- PHASE G: CH65 -- the board tracks its nose, and cruise is a ceiling --")
+	var body := _transport.board_body()
+	if body == null:
+		_check(false, "G INSTRUMENT: there is no physics board")
+		return
+	print("     grip lambda %.2f | yaw cap %.1f deg/s cruising, %.1f deg/s stopped"
+		% [SkateBoardBody.GRIP_LAMBDA, rad_to_deg(SkateBoardBody.YAW_RATE_MAX),
+			rad_to_deg(SkateBoardBody.PIVOT_RATE_MAX)])
+	# ---- (1) the straight run: the instrument's own zero ---------------
+	var straight: Dictionary = await _carve(0.0)
+	print("     STRAIGHT: drift %.3f deg, |v| top %.3f, forward kept %.1f%%"
+		% [float(straight["drift"]), float(straight["top"]), float(straight["kept"]) * 100.0])
+	_check(bool(straight["mounted"]), "G INSTRUMENT: the rider is aboard for the straight run")
+	_check(float(straight["top"]) > HubTransport.SKATE_CRUISE * 0.9,
+		"G INSTRUMENT: the straight run really ran (%.3f u/s)" % float(straight["top"]))
+	_check(float(straight["drift"]) < 1.0,
+		"G a board going straight has no drift to speak of (%.3f deg) -- the grip term is ABSENT from every number CH54 and CH61 published"
+			% float(straight["drift"]))
+	# ---- (2) the carve: the instrument SEES drift ----------------------
+	var carve: Dictionary = await _carve(140.0)
+	print("     FULL-LOCK CARVE: drift %.3f deg, |v| top %.3f, forward kept %.1f%%"
+		% [float(carve["drift"]), float(carve["top"]), float(carve["kept"]) * 100.0])
+	_check(bool(carve["mounted"]), "G INSTRUMENT: the rider is aboard for the carve")
+	_check(bool(carve["in_region"]),
+		"G INSTRUMENT: the carve stayed inside the region -- a fenced run measures the wall")
+	_check(bool(carve["flat"]),
+		"G INSTRUMENT: and it stayed on the flat -- a run that climbed a module measures gravity")
+	_check(float(carve["drift"]) > float(straight["drift"]) + 2.0,
+		"G BLIND CHECK: the drift meter MOVES -- a carve reads more than a straight run (%.3f vs %.3f deg)"
+			% [float(carve["drift"]), float(straight["drift"])])
+	_check(float(carve["turned"]) > 60.0,
+		"G INSTRUMENT: and the carve really turned the nose through at least a right angle (%.0f deg)"
+			% float(carve["turned"]))
+	# ---- (3) the three properties -------------------------------------
+	# ⚠️ 14 deg AND NOT 25, AND THE FIRST NUMBER WAS THE MISTAKE. A gate at
+	# 25 was passed by a board with `GRIP_LAMBDA` NEUTRALISED TO ZERO --
+	# the red pass came back ALL GREEN, because moving the push onto the
+	# nose had already brought the drift from 75.5 deg to 19.5 on its own.
+	# A threshold that both the fix and its absence satisfy defends
+	# nothing. 14 separates them: 8.9 shipped, 15.6 at grip 2.0, 19.5 at
+	# grip 0.0.
+	_check(float(carve["drift"]) < 14.0,
+		"G the board TRACKS ITS NOSE through a full-lock carve (%.1f deg of drift; 19.5 with the grip term off, 75.5 on the shipped tree)"
+			% float(carve["drift"]))
+	_check(float(carve["kept"]) > 0.97,
+		"G and keeps its forward speed through it (%.1f%% of entry; 94.3%% with the grip term off, 2.9%% on the shipped tree)"
+			% [float(carve["kept"]) * 100.0])
+	# ⚠️ THE CEILING, AND IT IS THE ONE THE BRIEF PROTECTED BY NAME. A
+	# board under push may not pass cruise on the flat, in a turn or out
+	# of it. Measured on an intermediate version of this lot that capped
+	# the push along the COMMANDED heading instead of the speed: the nose
+	# lagged the heading by ~46 deg and the board wound up to 14.56 u/s
+	# against a 10.0 cruise, on ground this phase asserts is flat.
+	# ⚠️ LITERALLY THE CEILING, NOT THE CEILING PLUS TWO PER CENT. Written
+	# at 1.02 first, the gate was passed by a board with the speed clamp
+	# NEUTRALISED -- which reaches 10.011 u/s, over cruise, just not over
+	# 10.2. "Cruise is the ceiling" is the brief's own words and there is
+	# no reading of them under which 10.011 is inside. 0.005 is float
+	# slack, not tolerance: the shipped tree measures 9.915 here.
+	_check(float(carve["top"]) <= HubTransport.SKATE_CRUISE + 0.005,
+		"G and CRUISE IS STILL THE CEILING through the whole carve (%.3f <= %.3f u/s; 10.011 with the speed clamp off, 14.56 when the cap was taken along the commanded heading instead)"
+			% [float(carve["top"]), HubTransport.SKATE_CRUISE + 0.005])
+	# ---- (4) the foot that waits --------------------------------------
+	#
+	# `SkateBoardBody.align`: a board asked to set off the OTHER way points
+	# itself before it pushes, instead of accelerating backwards for the
+	# length of its own reversal. Gated as the property it is -- the board
+	# must not run away from the ask -- and paired with its own positive,
+	# so a board that simply never moved could not pass it.
+	var rev: Dictionary = await _reversal()
+	print("     ASKED TO GO THE OTHER WAY, from rest: nose came round %.0f deg in 30 ticks at a top speed of %.4f u/s, then rode at %.3f u/s"
+		% [float(rev["turned"]), float(rev["while_pivoting"]), float(rev["after"])])
+	_check(bool(rev["mounted"]), "G INSTRUMENT: the rider is aboard for the reversal")
+	_check(float(rev["turned"]) > 90.0,
+		"G a board asked to set off the other way POINTS ITSELF (%.0f deg in half a second)"
+			% float(rev["turned"]))
+	_check(float(rev["after"]) > 5.0,
+		"G INSTRUMENT: and then genuinely rides (%.3f u/s) -- a board that never moved at all would pass the line below for free"
+			% float(rev["after"]))
+	_check(float(rev["while_pivoting"]) < 0.5,
+		"G and it spends NO push while it is pointed away from the ask (%.4f u/s through the pivot; without `align` the same push would have had it at 4 u/s the wrong way)"
+			% float(rev["while_pivoting"]))
+
+## Rides from rest along +z, up to cruise, then holds the finger `px` to
+## the side for 150 ticks. `px` of 0 is the straight control run.
+## Everything is driven through the writer, on a finger, and the run's
+## containment and flatness are published with it.
+func _carve(px: float) -> Dictionary:
+	var body := _transport.board_body()
+	var touch := _transport.board_touch()
+	var from := Vector3(0.0, 0.0, 18.0)
+	await _park_board(from, Vector3(0.0, 0.0, -1.0))
+	var mounted: bool = _transport.mount_board()
+	await _settle_chase()
+	var at := Vector2(500.0, 900.0)
+	touch._unhandled_input(_press_event(at))
+	touch._unhandled_input(_drag_event(at + Vector2(0.0, -140.0)))
+	for _i in 90:
+		await get_tree().physics_frame
+	var entry: float = _fwd_speed(body)
+	touch._unhandled_input(_drag_event(at + Vector2(px, -140.0) if px == 0.0 else Vector2(px, 0.0)))
+	var yaw0: float = body.rotation.y
+	var turned: float = 0.0
+	var last_yaw: float = yaw0
+	var drift: float = 0.0
+	var top: float = 0.0
+	var lowest_fwd: float = 1e9
+	var in_region: bool = true
+	var flat: bool = true
+	for _i in 150:
+		await get_tree().physics_frame
+		top = maxf(top, body.speed())
+		turned += absf(rad_to_deg(angle_difference(last_yaw, body.rotation.y)))
+		last_yaw = body.rotation.y
+		drift = maxf(drift, _drift_deg(body))
+		lowest_fwd = minf(lowest_fwd, _fwd_speed(body))
+		if not HubRegion.contains(body.flat_position()):
+			in_region = false
+		if body.on_module() or absf(body.global_position.y - HubSurface.ground(body.flat_position()).y) > 0.05:
+			flat = false
+	touch._unhandled_input(_release_event(at))
+	for _i in 8:
+		await get_tree().physics_frame
+	return {"drift": drift, "top": top, "turned": turned, "mounted": mounted,
+		"in_region": in_region, "flat": flat,
+		"kept": lowest_fwd / maxf(entry, 1e-6)}
+
+## ⚠️ A HELD BACKWARD FINGER IS A **CIRCLE**, NOT A REVERSAL, AND THE
+## FIRST VERSION OF THIS HELPER DID NOT KNOW THAT. Under the chase pose the
+## camera yaws with the board, so a finger pinned at a fixed screen offset
+## keeps asking for a direction that rotates with the nose: there is no
+## fixed point to arrive at and the board spirals. Traced tick by tick, the
+## commanded heading walked (0,0,-1) -> (1,0,-1) -> (1,0,0) -> (0,0,1),
+## which is what CH64's PHASE T comment already says a held steering input
+## does on every chase-camera vehicle in this repo. Gating "how far it went
+## the wrong way" was therefore gating an arc, and it reported 10.467 u on
+## a board that had done exactly the right thing.
+##
+## What `align` actually promises is narrower and is what is gated here: a
+## board does not SPEND ITS PUSH while it is pointed away from the ask. So
+## the run is read in two windows -- the pivot, where the nose must come
+## round while the speed stays at nothing, and after it, where the board
+## must be genuinely riding.
+func _reversal() -> Dictionary:
+	var body := _transport.board_body()
+	var touch := _transport.board_touch()
+	var from := Vector3(0.0, 0.0, 18.0)
+	await _park_board(from, Vector3(0.0, 0.0, 1.0))
+	var mounted: bool = _transport.mount_board()
+	await _settle_chase()
+	var yaw0: float = body.rotation.y
+	var at := Vector2(500.0, 900.0)
+	touch._unhandled_input(_press_event(at))
+	# Down the screen under the chase pose is "come back toward me".
+	touch._unhandled_input(_drag_event(at + Vector2(0.0, 140.0)))
+	# Window 1 -- the pivot. 30 ticks is half a second, in which a stopped
+	# board turns 120 deg at PIVOT_RATE_MAX and a pushed one would have
+	# reached 4 u/s.
+	var while_pivoting: float = 0.0
+	for _i in 30:
+		await get_tree().physics_frame
+		while_pivoting = maxf(while_pivoting, body.speed())
+	var turned: float = absf(rad_to_deg(angle_difference(yaw0, body.rotation.y)))
+	# Window 2 -- and then it rides.
+	var after: float = 0.0
+	for _i in 120:
+		await get_tree().physics_frame
+		after = maxf(after, body.speed())
+	touch._unhandled_input(_release_event(at))
+	for _i in 8:
+		await get_tree().physics_frame
+	return {"while_pivoting": while_pivoting, "turned": turned, "after": after,
+		"mounted": mounted}
+
+## ⚠️ THE CHASE POSE HAS TO HAVE ARRIVED BEFORE A FINGER MEANS ANYTHING.
+## `heading_world()` reads the LIVE camera basis, and `mount_board()` only
+## STARTS the blend into the chase pose -- so a bench that presses on the
+## next frame is steering by the HUB camera's basis, which points somewhere
+## else entirely. Measured before this existed: the reversal run read
+## "came round 64 deg" on a board that never turned at all, because
+## down-the-screen under the hub camera was +z, which was the way the board
+## already pointed. The run was not a reversal; it was a straight line
+## wearing one's name.
+func _settle_chase() -> void:
+	var cam := _hub.find_child("Camera3D", true, false) as Camera3D
+	if cam == null:
+		_check(false, "G INSTRUMENT: the hub has no Camera3D to settle")
+		return
+	var last: Transform3D = cam.global_transform
+	var stable: int = 0
+	for _i in 480:
+		await get_tree().physics_frame
+		var now: Transform3D = cam.global_transform
+		var blended: bool = true
+		if cam.has_method("drive_blend"):
+			var b: float = cam.call("drive_blend")
+			blended = b < 0.001 or b > 0.999
+		if blended and now.origin.distance_to(last.origin) < 0.0005 \
+				and (now.basis.z - last.basis.z).length() < 0.0002:
+			stable += 1
+			if stable >= 8:
+				return
+		else:
+			stable = 0
+		last = now
+
+func _drift_deg(body: SkateBoardBody) -> float:
+	var vh := Vector3(body.velocity.x, 0.0, body.velocity.z)
+	if vh.length() < 0.5:
+		return 0.0
+	var facing := Vector3(sin(body.rotation.y), 0.0, cos(body.rotation.y))
+	return rad_to_deg(acos(clampf(vh.normalized().dot(facing), -1.0, 1.0)))
+
+func _fwd_speed(body: SkateBoardBody) -> float:
+	var facing := Vector3(sin(body.rotation.y), 0.0, cos(body.rotation.y))
+	return Vector3(body.velocity.x, 0.0, body.velocity.z).dot(facing)
+
+func _press_event(at: Vector2) -> InputEventScreenTouch:
+	var e := InputEventScreenTouch.new()
+	e.index = 0
+	e.pressed = true
+	e.position = at
+	return e
+
+func _release_event(at: Vector2) -> InputEventScreenTouch:
+	var e := InputEventScreenTouch.new()
+	e.index = 0
+	e.pressed = false
+	e.position = at
+	return e
+
+func _drag_event(at: Vector2) -> InputEventScreenDrag:
+	var e := InputEventScreenDrag.new()
+	e.index = 0
+	e.position = at
+	return e
 
 # =====================================================================
 # THE BENCH'S OWN HOUSEKEEPING
@@ -808,7 +1090,20 @@ func _phase_stall() -> void:
 ## run needs.
 const NEUTRAL: Vector3 = Vector3(-26.0, 0.0, 30.0)
 
-func _park_board(flat: Vector3) -> void:
+## ⚠️ CH65 -- `toward` IS NOW PART OF PARKING, AND IT USED TO BE FREE.
+## Before this lot the board's facing was written straight from whatever
+## heading it was handed, on the first tick, so where a bench left it
+## pointing could not matter. Since CH65 the nose is rate-limited and the
+## push waits for it, so a board parked facing north and aimed south now
+## spends 2.1 s reversing -- and PHASE L's flat run-up, which is meant to
+## be CH54's STRAIGHT 3.20 u, measured **4.177 u** of a curve instead. The
+## reversal was never part of what that phase asks; it was an artifact
+## that only became visible once the facing had a cost.
+##
+## So every caller now says which way it means the board to set off, and
+## the run that follows is the run it intended. ZERO leaves the facing
+## alone, for a caller that genuinely does not care.
+func _park_board(flat: Vector3, toward: Vector3 = Vector3.ZERO) -> void:
 	var body := _transport.board_body()
 	if _transport.is_riding_board():
 		# Carry him out to open lawn BEFORE putting him down, so the
@@ -843,5 +1138,8 @@ func _park_board(flat: Vector3) -> void:
 	body.global_position = HubSurface.ground(Vector3(flat.x, 0.0, flat.z))
 	body.rotation.y = 0.0
 	_keepy.global_position = HubSurface.ground(Vector3(flat.x, 0.0, flat.z))
+	var face := Vector3(toward.x, 0.0, toward.z)
+	if face.length() > 0.0001 and body != null:
+		body.rotation.y = atan2(face.x, face.z)
 	for _i in SETTLE:
 		await get_tree().physics_frame

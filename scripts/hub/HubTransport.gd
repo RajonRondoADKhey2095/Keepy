@@ -685,11 +685,17 @@ func _on_board_tapped() -> void:
 ## in mid-flight, and the landing would point it wherever the circle
 ## happened to stop. The throttle is still handed over unchanged -- the
 ## inertia model (CH61) is not this lot's to touch.
-func _advance_board(_delta: float) -> void:
+func _advance_board(delta: float) -> void:
 	var body := board_body()
 	if body == null:
 		return
 	if _board_touch != null and _board_touch.enabled:
+		# ⚠️ CH65: THE WRITER IS TICKED **HERE**, by its reader, before it
+		# is read. It is a child of this node, so leaving it to the engine
+		# would run this tick first and read a filter one frame stale --
+		# see `SkateTouchInput.tick()`. Same delta, same frame, no ordering
+		# to get wrong.
+		_board_touch.tick(delta)
 		_board_touch.set_air(body.in_air())
 		if _board_touch.steering_active:
 			var heading: Vector3 = Vector3.ZERO if body.in_air() else _board_touch.heading_world(_camera)
