@@ -551,6 +551,79 @@ var _air_ticks: int = 0
 var _in_air: bool = false
 
 ## =====================================================================
+## CH66 -- THE POP: WHY A LIP GIVES THE BOARD MORE THAN THE RAMP DID
+##
+## ⚠️ MEASURED BEFORE IT WAS WRITTEN, on the shipped tree, through the
+## real writer (SkateAirProbe, CH66). The big quarterpipe throws the board
+## off its lip at 3.76 u/s UPWARD: 0.13 u above the lip, 15 ticks in the
+## air, 10 of them ARMED -- a 0.17 s window in which to draw a circle that
+## the recogniser itself prices at 225 px of thumb travel (r 40 px, 300
+## deg, 8 px segments). The small one gives 5.5 u/s and 31 armed ticks
+## (0.52 s). A brisk thumb at 400 px/s needs 0.56 s for that circle, and a
+## human needs ~0.2 s to notice the take-off first. Hypothesis (a) of the
+## brief -- the trick works and the gesture cannot fit -- is the measured
+## one, and by a wide margin on the big ramp.
+##
+## What a skater does at a lip is OLLIE: the pop is a vertical impulse the
+## rider adds on top of the speed the transition converted. It is added
+## ONCE, on the tick the board leaves a MODULE face going upward (never
+## the lawn -- D1, the lawn is flat and gives no air; never a deck edge
+## rolled off, whose velocity.y is not a rise). The value is the smallest
+## one for which SkateAirProbe's window gate holds on BOTH ramps with the
+## reference thumb; the probe sweeps it, this file does not taste it.
+##
+## ⚠️ IT DOES NOT TOUCH CH61's LAW. The push, the brake, the coast, the
+## grip, the yaw cap and the cruise cap are byte-identical; the pop is a
+## single vertical addition on one tick, and SkateInertiaProbe's flat
+## figures (3.2 / 3.2 / 18.043 / 10.0) cannot see it because no flat run
+## ever leaves a module going up.
+const POP_SPEED: float = 5.0
+## The smallest upward speed a module exit must already have to be a
+## launch. A roll off the funbox deck leaves at velocity.y <= 0; a roll off
+## the rail's end the same. 1.0 u/s is well under the shallowest lip exit
+## measured (3.76) and well over any floor-flag flicker.
+const POP_MIN_RISE: float = 1.0
+## ⚠️ AND THE MODULE MUST HAVE BEEN RIDDEN, NOT BRUSHED. Measured on the
+## bowl's temporary collider (SkatePhysicsProbe PHASE Y, CH66): a board
+## thrown over a lip can touch the lip's apex for ONE tick on its way
+## out and leave it again going up -- and a pop written on "left a
+## module going up" alone fired TWICE on one exit (+10 u/s, a 5.3 u
+## peak). A rider pops off a surface he is standing on; six ticks of
+## contact (0.1 s, the air dwell's own figure) is what "standing on"
+## means here, and a one-tick brush gives nothing.
+const POP_MIN_HELD_TICKS: int = 6
+## ⚠️ AND IT LEAVES FROM THE LIP, NOT FROM THE WALL BELOW IT. The facet
+## the board was held by on its last tick of contact has to be within
+## 10 deg of vertical: a lip is the LAST facet of a transition, and every
+## last facet in this park is 81 deg (the bowl) or 86.25 deg (the
+## quarterpipes); the facet under it is 78.75 deg and does not qualify.
+## Two measurements wrote this line, in order:
+##
+##   * at 60 deg (normal.y < 0.5) a capsule pushed into the bowl's dish
+##     still HOPPED off its 27-45 deg kinks at up to 1.9 u/s -- refused;
+##     but SkateInertiaProbe PHASE E then showed a board COASTING at
+##     8.97 u/s into the 2.10 ramp, short of the lip by a whole metre
+##     (held 1.106, the 61 deg facet), popping off the wall to 1.866 and
+##     falling back into the transition: a "stall pop", not an ollie, and
+##     it broke the energy signature (the same arrival no longer bought
+##     the same height on both ramps: ratio 2.014 against 1.165 before).
+##   * so the pop is a LIP pop: the rider pops off the coping, and a board
+##     that runs out of speed on the wall comes back down it, exactly as
+##     it did before this lot. SkateAirProbe asserts the geometry that
+##     makes this the right number -- the last facet of each transition
+##     passes, the one under it does not.
+##
+## The funbox's deck (normal.y 1) and its 30.6 deg ramps never qualify, so
+## a roll off the deck stays a roll.
+const POP_MAX_NORMAL_Y: float = cos(deg_to_rad(80.0))
+
+signal popped
+
+var _pops: int = 0
+var _module_ticks: int = 0
+var _flip_slow: bool = false
+
+## =====================================================================
 ## CH64 -- THE FLIP: WHAT A TRICK LOOKS LIKE
 ##
 ## Two tricks, one per direction of the finger's circle: a KICKFLIP
@@ -817,6 +890,13 @@ func air_ticks() -> int:
 func flip(clockwise: bool) -> void:
 	_flip_target += -TAU if clockwise else TAU
 	_flip_turns += 1
+	if not _in_air:
+		_flip_slow = true
+
+## CH66: how many pops the lip has given since the body was built, for the
+## bench -- the pop is measured on the trace, never trusted from here.
+func pops() -> int:
+	return _pops
 
 func flipping() -> bool:
 	return absf(_flip_target - _flip_angle) > 0.0001
@@ -1154,34 +1234,58 @@ func drive(delta: float) -> void:
 		var turn: float = clampf(angle_difference(rotation.y, want),
 			-rate * delta, rate * delta)
 		rotation.y = wrapf(rotation.y + turn, -PI, PI)
+	var was_module: bool = _on_module
 	move_and_slide()
 	_on_module = is_on_floor()
 	_supported = _hub_floor()
 	_fence(before)
 	_last_step = flat_position().distance_to(before)
-	_advance_air(delta)
+	_advance_air(delta, was_module)
 
 ## CH64: the dwell and the two edges, then the flip. Read AFTER the move,
 ## on this tick's own support -- the one place the lagging floor flag is
 ## consulted where its lag cannot fabricate an air (a board that is held
 ## on this tick is not in the air on this tick, whatever last tick said).
-func _advance_air(delta: float) -> void:
+func _advance_air(delta: float, was_module: bool) -> void:
 	var held_now: bool = _on_module or not _supported
 	if held_now:
 		_air_ticks = 0
+		# The ride on a module: counted while it holds, kept through the
+		# one-tick flickers of the floor flag at facet joins (a reset on
+		# every flicker measured NO pop on the bowl's five short facets),
+		# dropped the moment the LAWN holds the board again.
+		if _on_module:
+			_module_ticks += 1
+		else:
+			_module_ticks = 0
 		if _in_air:
 			_in_air = false
 			landed.emit()
 	else:
+		# CH66: THE POP, on the tick the board leaves a module going up --
+		# a module it has been RIDING, not one it brushed for a tick.
+		if was_module and _air_ticks == 0 and _module_ticks >= POP_MIN_HELD_TICKS \
+				and velocity.y > POP_MIN_RISE and _hold_normal.y < POP_MAX_NORMAL_Y:
+			velocity.y += POP_SPEED
+			_pops += 1
+			_module_ticks = 0
+			popped.emit()
 		_air_ticks += 1
 		if not _in_air and _air_ticks >= AIR_ARM_TICKS:
 			_in_air = true
+			_module_ticks = 0
 			took_off.emit()
 	if flipping():
-		var rate: float = FLIP_RATE * (1.0 if _in_air else FLIP_LAND_GAIN)
+		# CH66: a flip that STARTED on the ground (the landing grace, see
+		# SkateTouchInput.GRACE_TICKS) runs at the air rate so it can be
+		# seen; only a flip caught mid-turn by a landing snaps round.
+		var slow: bool = _in_air or _flip_slow
+		var rate: float = FLIP_RATE * (1.0 if slow else FLIP_LAND_GAIN)
 		_flip_angle = move_toward(_flip_angle, _flip_target, rate * delta)
 		if _visual != null:
 			_visual.rotation.z = _flip_angle
+	else:
+		_flip_slow = false
 
 ## HubSurface OVERRULES the engine, and this is the whole of D1's ground
 ## ownership in four lines. Returns true when the body was ABOVE the

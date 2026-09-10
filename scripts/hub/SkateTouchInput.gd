@@ -209,6 +209,37 @@ const TRICK_SWEEP_DEG: float = 300.0
 const TRICK_SEG_PX: float = 8.0
 
 ## =====================================================================
+## CH66 -- THE WINDOW IS WIDENED AT BOTH ENDS, AND EACH END IS A MEASUREMENT
+##
+## SkateAirProbe (CH66) put the two halves of the inequality side by side
+## on the shipped tree: the recogniser prices a 40 px circle at 225 px of
+## travel (0.56 s at a brisk 400 px/s), and the big quarterpipe's armed
+## air lasted 10 ticks (0.17 s), the small one's 31 (0.52 s). Neither fits
+## the gesture, and neither leaves the ~0.2 s a person needs to see the
+## take-off before starting to draw. Three things widen it, and none of
+## them lowers TRICK_SWEEP_DEG (a hook is still not a trick):
+##
+##   1. THE POP (SkateBoardBody.POP_SPEED): more air. Not this file's.
+##   2. THE PATH STARTS ON THE FIRST FREE TICK, not on the sixth. The dwell
+##      (SkateBoardBody.AIR_ARM_TICKS) still decides whether an air is an
+##      air at all; what it no longer does is throw away the first 0.1 s
+##      of a circle drawn during it. `set_free()` is told the RAW airborne
+##      state each tick and starts the polyline on its rising edge; a
+##      trick still cannot FIRE until the air is armed, and a hop that
+##      never arms drops its polyline unfired.
+##   3. THE LANDING GRACE. A circle that is plainly under way at the
+##      landing (at least GRACE_MIN_SWEEP_DEG of turning already drawn)
+##      is allowed GRACE_TICKS more to close -- a skater's trick is
+##      judged when he lands, not cut the frame before. While it runs the
+##      board's heading stays frozen exactly as it is in the air (a
+##      circle's tail must not become a carve), and the anchor is moved
+##      under the finger when it ends, as a landing always did. A landing
+##      with less than that drawn is cut on the spot, as before: a finger
+##      held straight through an air gets its steering back on contact.
+const GRACE_TICKS: int = 15
+const GRACE_MIN_SWEEP_DEG: float = 90.0
+
+## =====================================================================
 ## CH65 -- THE THROTTLE RAMPS, AND THE FINGER IS FILTERED
 ##
 ## Two device complaints, one file, and both are answered HERE rather than
@@ -299,6 +330,10 @@ func tick(delta: float) -> void:
 	if delta <= 0.0:
 		return
 	throttle = _approach(throttle, _throttle_want, THROTTLE_LAMBDA, delta)
+	if _grace > 0:
+		_grace -= 1
+		if _grace == 0:
+			_cut()
 	if not steering_active:
 		return
 	_smooth = _smooth.lerp(finger, minf(FINGER_LAMBDA * delta, 1.0))
@@ -317,6 +352,10 @@ func _apply_offset() -> void:
 	heading_px = offset
 
 var _air: bool = false
+## CH66: the RAW airborne state (no dwell), and whether a polyline is live.
+var _free: bool = false
+var _path_live: bool = false
+var _grace: int = 0
 var _path_last: Vector2 = Vector2.ZERO
 var _path_dir: Vector2 = Vector2.ZERO
 var _sweep: float = 0.0
@@ -329,17 +368,61 @@ func sweep_deg() -> float:
 func in_air() -> bool:
 	return _air
 
-## Told by the reader each tick. Rising edge starts the polyline; falling
-## edge cuts it and re-anchors a finger that has travelled.
+## CH66: ticks of landing grace still running (0 when none).
+func grace_ticks() -> int:
+	return _grace
+
+## CH66: true while a polyline is being traced (raw air, armed air, or
+## the landing grace) -- the WINDOW a circle can be drawn in, for the bench.
+func path_live() -> bool:
+	return _path_live
+
+## CH66: true while the board's heading must stay frozen -- an armed air,
+## or the landing grace of a circle that was under way. HubTransport reads
+## this instead of `in_air()` alone.
+func heading_frozen() -> bool:
+	return _air or _grace > 0
+
+## CH66: told the RAW airborne state each tick, BEFORE `set_air`. The
+## rising edge starts the polyline; a falling edge with the air never
+## armed (a bump) drops it unfired.
+func set_free(on: bool) -> void:
+	if on == _free:
+		return
+	_free = on
+	if on:
+		if not _path_live:
+			_start_path()
+		return
+	if not _air and _grace == 0:
+		_drop_path()
+
+## Told by the reader each tick. Rising edge arms the polyline (started by
+## `set_free`, or here if nobody said so); falling edge is the LANDING:
+## a circle under way gets its grace, anything else is cut on the spot.
 func set_air(on: bool) -> void:
 	if on == _air:
 		return
 	_air = on
 	if on:
-		_start_path()
+		if not _path_live:
+			_start_path()
+		_grace = 0
 		return
+	if steering_active and _path_live and absf(_sweep) >= GRACE_MIN_SWEEP_DEG:
+		_grace = GRACE_TICKS
+		return
+	_cut()
+
+## The landing cut: re-anchor a finger that travelled, forget the path.
+func _cut() -> void:
+	_grace = 0
 	if steering_active and _air_travel >= TRICK_SEG_PX:
 		rebase()
+	_drop_path()
+
+func _drop_path() -> void:
+	_path_live = false
 	_sweep = 0.0
 	_air_travel = 0.0
 	_path_dir = Vector2.ZERO
@@ -355,6 +438,7 @@ func rebase() -> void:
 	heading_px = Vector2.ZERO
 
 func _start_path() -> void:
+	_path_live = true
 	_path_last = finger
 	_path_dir = Vector2.ZERO
 	_sweep = 0.0
@@ -370,10 +454,17 @@ func _trace(at: Vector2) -> void:
 		_sweep += rad_to_deg(_path_dir.angle_to(d))
 	_path_dir = d / len
 	_path_last = at
+	# CH66: a polyline started in the dwell accumulates but may not FIRE
+	# until the air is armed (or the grace is running).
+	if not (_air or _grace > 0):
+		return
 	if absf(_sweep) >= TRICK_SWEEP_DEG:
 		var clockwise: bool = _sweep > 0.0
 		_sweep -= 360.0 if clockwise else -360.0
 		trick.emit(clockwise)
+		if _grace > 0:
+			# The trick the grace was for: hand the steering back now.
+			_cut()
 
 var enabled: bool = false:
 	set(value):
@@ -421,6 +512,9 @@ func _clear() -> void:
 	_smooth = Vector2.ZERO
 	heading_px = Vector2.ZERO
 	_air = false
+	_free = false
+	_path_live = false
+	_grace = 0
 	_sweep = 0.0
 	_air_travel = 0.0
 	_path_dir = Vector2.ZERO
@@ -555,8 +649,11 @@ func _begin(index: int, at: Vector2) -> void:
 	_dragged = false
 	heading_px = Vector2.ZERO
 	_down_at_s = float(Time.get_ticks_msec()) / 1000.0
-	if _air:
+	_grace = 0
+	if _air or _free:
 		_start_path()
+	else:
+		_drop_path()
 	# ⚠️ THE ORDER MATTERS AND IT IS THE ONLY ORDER THAT WORKS: the listener
 	# samples the board's speed on this signal, so it has to run BEFORE the
 	# throttle opens. One line apart, and swapping them re-creates exactly
@@ -571,7 +668,7 @@ func _begin(index: int, at: Vector2) -> void:
 
 func _move(at: Vector2) -> void:
 	finger = at
-	if _air:
+	if _path_live:
 		# ⚠️ THE RAW FINGER, AND ONLY THE RAW ONE. See FINGER_LAMBDA: a
 		# filtered path is a shorter path, and the recogniser measures the
 		# angle a path turns through per segment of it.
@@ -615,8 +712,7 @@ func _end() -> void:
 	throttle = 0.0
 	heading_px = Vector2.ZERO
 	_dragged = false
-	_sweep = 0.0
-	_air_travel = 0.0
-	_path_dir = Vector2.ZERO
+	_grace = 0
+	_drop_path()
 	if was_tap:
 		tapped.emit()
