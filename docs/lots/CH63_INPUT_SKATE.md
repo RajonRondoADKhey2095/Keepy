@@ -401,7 +401,7 @@ côtés avant de comparer quoi que ce soit).
 
 | sonde | branche | baseline `origin/staging` | écart |
 |---|---|---|---|
-| `SkateInputProbe` | **79 / 0 red** | 57 / 0 red *(version LOT 1)* | +22, contrat réécrit + PHASE F |
+| `SkateInputProbe` | **82 / 0 red** | 57 / 0 red *(version LOT 1)* | +25, contrat réécrit + PHASES F et T |
 | `SkateInertiaProbe` | **86 / 0** | 86 / 0 | identique |
 | `SkatePhysicsProbe` | **122 / 0** | 121 / 0 | +1 (`BOARD_STALL_STEP` = `REST_STEP`) |
 | `SkateDismountProbe` | **90 / 0** | 90 / 0 | identique |
