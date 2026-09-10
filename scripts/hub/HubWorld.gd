@@ -111,13 +111,8 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 ## the save reset (behind DevTools.enabled()).
 @onready var _world_hud: WorldHud = $WorldHud
 @onready var _save_reset_button: Button = $FallbackMenu/Panel/VBoxContainer/SaveResetButton
-## CH59: the physics switch, reachable from inside the game because
-## `?keepyphys=1` is unreachable on an installed PWA -- see _setup_physics_button().
-@onready var _physics_button: Button = $FallbackMenu/Panel/VBoxContainer/PhysicsButton
-## CH63 LOT 1: the skate control scheme, TAP (shipped) or DRAG (new).
-## Behind DevTools.enabled() like every other row of this panel, and --
-## unlike the physics switch above it -- it does NOT reload the scene.
-@onready var _skate_input_button: Button = $FallbackMenu/Panel/VBoxContainer/SkateInputButton
+## CH64: the "Physique (dev)" (CH59) and "Contrôle skate" (CH63) rows are
+## gone -- physics is permanent and the finger is the board's only scheme.
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -725,8 +720,6 @@ func _ready() -> void:
 	_setup_weather()
 	_setup_perf()
 	_setup_world_hud()
-	_setup_physics_button()
-	_setup_skate_input_button()
 	_setup_transport()
 	_setup_cove()
 	_setup_trees()
@@ -3303,30 +3296,12 @@ func _on_tapped_ground(point: Vector3) -> void:
 		if me.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
 			_keepy.dismount_vehicle()
 			return
-	# CH57: the physics board. The SAME two meanings a tap has on the ball
-	# -- "get off" on himself at rest, "go there" anywhere else -- routed
-	# to the carrier instead of to the hopper, because on this board the
-	# hopper is ON_CARRIER and `hop_to` would be refused outright.
-	#
-	# ⚠️ AND THE TAP IS NEVER SWALLOWED. CLAUDE.md's PATRON ECHELLE is
-	# banned: every tap made while riding produces something -- a new
-	# destination, or the dismount -- so the player is never inside a prop
-	# that eats his taps. `board_at_rest()` is what separates the two, so a
-	# tap on himself mid-roll STEERS rather than ejecting him at speed.
-	#
-	# ⚠️ CH58: THIS BRANCH IS ONLY REACHABLE BECAUSE OF THE EXCEPTION
-	# WRITTEN INTO THE ON_CARRIER DROP ABOVE. It shipped unreachable --
-	# riding the board IS an ON_CARRIER ride, and that drop returns first.
-	# The two halves are one rule and have to be read together; do not
-	# "tidy" the compound condition up there back into a bare
-	# `is_on_carrier()` without moving this branch above it.
-	if _transport.is_riding_board():
-		var here: Vector3 = _drawn_ground_point(_keepy.global_position)
-		if _transport.board_at_rest() and here.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
-			_transport.leave_board()
-		else:
-			_transport.set_board_target(point)
-		return
+	# CH57 put a board branch here (get off on himself at rest, go there
+	# anywhere else). CH64 removed it: a ridden board is piloted by a held
+	# finger through SkateTouchInput, HubTapInput shunts every point while
+	# riding (the same shape the kart, the yacht and the sailboat use), so
+	# no tap reaches this handler aboard. The ON_CARRIER exception above
+	# stays: it is what lets the shunt, and not this drop, own the ride.
 	_hop_via_corridor(point)
 
 ## ⚠️ CH58 -- WHERE A FINGER AIMED AT A RAISED BODY ACTUALLY LANDS, and it
@@ -4032,23 +4007,11 @@ func _try_mount_ball(position: Vector3) -> bool:
 		return _transport.mount_sailboat()
 	if _mount_kind == HubTransport.VEHICLE_SLED:
 		return _transport.mount_sled()
-	# CH53: the board is the SAUTILLON's path, not the yacht's -- a
-	# vehicle handed straight to KeepyHopper, no drive mode, no chase
-	# camera, no HUD switch.
-	# CH54: and it GLIDES rather than bounces -- CH29's glide shape with
-	# the pace profile (run-up, cruise, run-out) that lot added to it. The
-	# numbers are the board's and live in HubTransport, next to its park.
-	# CH57: behind DevTools.physics_enabled() the board is a
-	# CharacterBody3D and the mount is the CARRIER contract instead --
-	# HubTransport owns both doors, and the ONE line that chooses between
-	# them is this one. With the switch down nothing below runs and the
-	# call underneath it is CH54's, argument for argument.
-	if _mount_kind == HubTransport.VEHICLE_SKATE and _transport.board_body() != null:
-		return _transport.mount_board()
+	# CH53 mounted the board on the SAUTILLON's path (mount_vehicle, a
+	# glide). CH57 made it a CARRIER behind the physics switch, and CH64
+	# removed the switch: the carrier contract is the board's only door.
 	if _mount_kind == HubTransport.VEHICLE_SKATE:
-		return _keepy.mount_vehicle(_transport.board_node(), HubTransport.SKATE_LIFT,
-			HubTransport.SKATE_GLIDE_STEP, HubTransport.SKATE_GLIDE_S,
-			HubTransport.SKATE_ACCEL_U, HubTransport.SKATE_BRAKE_U)
+		return _transport.mount_board()
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
 
 ## ---- CH29: the cove -- sandcastle spots -----------------------------------
@@ -4073,6 +4036,12 @@ func _setup_skatepark() -> void:
 	_skatepark.setup(_keepy)
 	_skate_hud.setup(_skatepark)
 	_keepy.vehicle_dismounted.connect(_skatepark.cancel_intent)
+	# CH64: a trick on the board is shown by the same HUD. The transport
+	# names it; the HUD prints it; neither knows the other exists.
+	_transport.board_trick.connect(_on_board_trick)
+
+func _on_board_trick(trick: StringName, _clockwise: bool) -> void:
+	_skate_hud.flash_trick(trick)
 
 func _setup_cove() -> void:
 	_cove.setup(_keepy, _weather)
@@ -4423,95 +4392,6 @@ func _on_save_reset() -> void:
 func _on_perf_toggled() -> void:
 	_perf.visible = not _perf.visible
 	_perf_button.text = "Perf (dev) : ON" if _perf.visible else "Perf (dev) : OFF"
-
-## ---- CH59: the physics switch reachable from inside the game --------------
-## `DevTools.physics_enabled()` (CH57) is a URL token, "?keepyphys=1" --
-## structurally unreachable from an INSTALLED PWA, which has no address bar
-## to type it into. That is the whole defect this lot closes: physics could
-## be turned on from a desktop browser tab, never from the phone it was
-## actually built to be judged on.
-##
-## Same gate as every other row in this panel (DevTools.enabled()), never
-## DevTools.physics_enabled() itself -- visibility of the SWITCH and the
-## STATE it switches are two different questions, and gating the switch on
-## its own state would hide the OFF -> ON button once physics is off.
-##
-## Same default as the URL token: OFF at load, on staging as everywhere
-## else, so the A/B stays a deliberate two-tap comparison and F is never
-## read against a build that silently started warm.
-func _setup_physics_button() -> void:
-	var show: bool = DevTools.enabled()
-	_physics_button.visible = show
-	_physics_button.text = "Physique (dev) : ON" if DevTools.physics_enabled() else "Physique (dev) : OFF"
-	_physics_button.pressed.connect(_on_physics_toggled)
-
-## Flips the CH57 switch and rebuilds the hub from it.
-##
-## ⚠️ WHY THIS RELOADS THE SCENE INSTEAD OF FLIPPING A LIVE FLAG: the
-## skateboard and the funbox collider are built ONCE, from
-## DevTools.physics_enabled(), the moment HubSkatepark and HubTransport
-## construct the park (see HubSkatepark._maybe_collide and
-## HubTransport._build_board) -- a StaticBody3D or a CharacterBody3D versus
-## a bare MeshInstance3D is a choice made at node-construction time, not a
-## property that can be reassigned on a live node. This lot is the
-## activation path ONLY, per the brief: no new collider, no live-swap
-## machinery. get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
-## is the repo's own convention for re-entering the hub (every sub-game's
-## return button does exactly this) and rebuilds the world from the flipped
-## switch, which is exactly what a physics A/B needs and nothing more.
-##
-## This is a SCENE reload, not a BROWSER reload: no navigation event, no
-## network round trip, no address bar involved -- which is what makes it
-## reachable from an installed PWA at all. It does reset the hub's
-## in-session state (Keepy returns to the plateau's authored spawn rather
-## than wherever he was standing, exactly like every other route back into
-## the hub), which is the honest cost of rebuilding the world and is called
-## out here rather than hidden behind a half-measure that leaves half the
-## world believing the old answer.
-func _on_physics_toggled() -> void:
-	DevTools.set_physics_override(not DevTools.physics_enabled())
-	_fallback_menu.visible = false
-	get_tree().change_scene_to_file("res://scenes/HubWorld.tscn")
-
-## ---- CH63 LOT 1: the skate control scheme, TAP or DRAG -------------------
-## Same gate as every other row here (DevTools.enabled()), and the same
-## reason: this is a developer affordance, not a player setting.
-##
-## ⚠️ AND IT DOES **NOT** RELOAD THE SCENE, which the physics switch three
-## lines above deliberately does. The distinction is not a preference:
-## `DevTools.physics_enabled()` decides what KIND OF NODE the board is
-## (a CharacterBody3D or a bare MeshInstance3D), and that is a
-## construction-time choice no live flag can revisit. A control SCHEME
-## decides only which input writer is armed -- `HubTransport.
-## sync_board_input()` flips it on a live world, on the spot, mid-ride if
-## Mathieu wants -- and a reload here would cost him the ride, the
-## position and the A/B's whole point, which is to feel the two schemes
-## back to back at the same place on the same board.
-func _setup_skate_input_button() -> void:
-	var show: bool = DevTools.enabled()
-	_skate_input_button.visible = show
-	_skate_input_button.text = _skate_input_label()
-	_skate_input_button.pressed.connect(_on_skate_input_toggled)
-
-func _skate_input_label() -> String:
-	return "Contrôle skate : DRAG" if SkateTouchInput.drag_enabled() else "Contrôle skate : TAP"
-
-## Flips the scheme and re-arms the writer on the LIVE world. The menu is
-## left OPEN, unlike the physics switch: nothing was rebuilt, so there is
-## nothing to go back and look at, and closing it would make a two-tap A/B
-## into a six-tap one.
-##
-## ⚠️ CH63 LOT 2: THE SAME CALL NOW MOVES THE CAMERA TOO, and that is worth
-## knowing before the button is pressed mid-ride. DRAG is continuous
-## piloting, so it takes the chase pose; TAP is a tapped destination, so it
-## keeps the fixed one. `HubTransport.sync_board_input()` owns both halves
-## -- see its own block for why the camera is decided by the scheme rather
-## than by the mount -- and the move is a 0.9 s blend in each direction,
-## not a cut.
-func _on_skate_input_toggled() -> void:
-	SkateTouchInput.set_drag_mode(not SkateTouchInput.drag_enabled())
-	_transport.sync_board_input()
-	_skate_input_button.text = _skate_input_label()
 
 ## For probes: the overlay's current readings.
 func perf_snapshot() -> Dictionary:

@@ -353,6 +353,69 @@ var _last_step: float = 0.0
 var _hold_normal: Vector3 = Vector3.UP
 var _held: bool = false
 
+## =====================================================================
+## CH64 -- THE AIR, AS A PREDICATE A TRICK CAN BE ARMED ON
+##
+## `airborne()` (CH62) is `_supported and not _on_module`: above the
+## surface and not on a module floor. It is the right reading for a
+## sound and a shadow, and the WRONG one to arm a gesture on, for a
+## reason CH63 wrote down: `is_on_floor()` describes the move that has
+## already happened, so a board that stops dead on a module deck can
+## read one tick of "not on floor" while going nowhere, and a circle
+## traced over a parked board would fire a trick on the spot.
+##
+## `in_air()` is that reading with a DWELL: the board has to have been
+## without support for AIR_ARM_TICKS consecutive physics ticks before it
+## counts as flying, and it stops counting on the FIRST tick something
+## holds it again. Two consequences, both deliberate and both gated by
+## SkateTrickProbe:
+##
+##   * a one-tick flicker of the floor flag on a resting board never
+##     arms (it is re-held on the next tick, because gravity puts a body
+##     that is going nowhere straight back down);
+##   * a hop shorter than the dwell -- a bump on the lawn -- is not an
+##     air either. At 26 u/s^2 a body needs 0.78 u/s of vertical speed to
+##     stay up 0.1 s; a launch off either quarterpipe at cruise stays up
+##     several times that. The dwell is 6 ticks, 0.1 s.
+##
+## Landing is the transition back, and it is a SIGNAL because two things
+## wait on it: the touch writer (which cuts a circle in progress and
+## re-anchors the finger so the board does not turn on contact) and the
+## flip (which has to finish before the board reads as upright again).
+const AIR_ARM_TICKS: int = 6
+
+signal took_off
+signal landed
+
+var _air_ticks: int = 0
+var _in_air: bool = false
+
+## =====================================================================
+## CH64 -- THE FLIP: WHAT A TRICK LOOKS LIKE
+##
+## Two tricks, one per direction of the finger's circle: a KICKFLIP
+## (clockwise on the glass) rolls the deck one full turn about its long
+## axis one way, a HEELFLIP (anticlockwise) rolls it the other way. The
+## roll is written on the DRAWN deck -- the MeshInstance3D child handed
+## in by `adopt_visual()` -- never on this body: the rider is seated in
+## this body's space, and a body that rolled would hang him upside down.
+##
+## The angle is INTEGRATED, not tweened, and it is the one place a rate
+## lives: `_flip_target` steps by a whole turn per trick (so a second
+## circle in the same air queues a second turn -- "cercles enchaines =
+## trick repete"), and `_flip_angle` chases it at FLIP_RATE, tripled from
+## the tick the board lands (a deck still mid-turn on the ground would
+## read as broken, so it snaps round rather than stopping crooked).
+## A full turn takes 0.33 s in the air; a typical launch off the big
+## quarterpipe stays up ~0.7 s.
+const FLIP_RATE: float = TAU / 0.33
+const FLIP_LAND_GAIN: float = 3.0
+
+var _visual: Node3D = null
+var _flip_angle: float = 0.0
+var _flip_target: float = 0.0
+var _flip_turns: int = 0
+
 func _ready() -> void:
 	collision_layer = 1 << (LAYER_BOARD - 1)
 	collision_mask = 1 << (LAYER_PARK - 1)
@@ -573,6 +636,38 @@ func last_step() -> float:
 ## away.
 func lift() -> float:
 	return maxf(global_position.y - HubSurface.height_at(flat_position()), 0.0)
+
+## The drawn deck, handed in once by HubTransport so a flip has something
+## to roll. Null is legal (a bench that builds a bare body still drives).
+func adopt_visual(visual: Node3D) -> void:
+	_visual = visual
+
+## CH64: the armed air -- see AIR_ARM_TICKS. This is what arms a trick;
+## `airborne()` below is what a shadow and a sound read.
+func in_air() -> bool:
+	return _in_air
+
+## How many consecutive ticks nothing has held the board. Published for
+## the bench so the dwell is measured and not trusted.
+func air_ticks() -> int:
+	return _air_ticks
+
+## One trick: queue a full turn of the deck. `clockwise` is the finger's
+## sense on the glass; the two senses roll opposite ways.
+func flip(clockwise: bool) -> void:
+	_flip_target += -TAU if clockwise else TAU
+	_flip_turns += 1
+
+func flipping() -> bool:
+	return absf(_flip_target - _flip_angle) > 0.0001
+
+## The deck's current roll and how many turns have been asked for since
+## the body was built. Read by the bench and by nothing else.
+func flip_angle() -> float:
+	return _flip_angle
+
+func flip_turns() -> int:
+	return _flip_turns
 
 ## True while nothing at all is under the board -- CH62's air reading.
 ##
@@ -801,6 +896,29 @@ func drive(delta: float) -> void:
 	_supported = _hub_floor()
 	_fence(before)
 	_last_step = flat_position().distance_to(before)
+	_advance_air(delta)
+
+## CH64: the dwell and the two edges, then the flip. Read AFTER the move,
+## on this tick's own support -- the one place the lagging floor flag is
+## consulted where its lag cannot fabricate an air (a board that is held
+## on this tick is not in the air on this tick, whatever last tick said).
+func _advance_air(delta: float) -> void:
+	var held_now: bool = _on_module or not _supported
+	if held_now:
+		_air_ticks = 0
+		if _in_air:
+			_in_air = false
+			landed.emit()
+	else:
+		_air_ticks += 1
+		if not _in_air and _air_ticks >= AIR_ARM_TICKS:
+			_in_air = true
+			took_off.emit()
+	if flipping():
+		var rate: float = FLIP_RATE * (1.0 if _in_air else FLIP_LAND_GAIN)
+		_flip_angle = move_toward(_flip_angle, _flip_target, rate * delta)
+		if _visual != null:
+			_visual.rotation.z = _flip_angle
 
 ## HubSurface OVERRULES the engine, and this is the whole of D1's ground
 ## ownership in four lines. Returns true when the body was ABOVE the

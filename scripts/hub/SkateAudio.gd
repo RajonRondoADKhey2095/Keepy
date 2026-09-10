@@ -52,6 +52,13 @@ class_name SkateAudio
 
 const ROLL_STREAM := "res://assets/audio/skate_roll.wav"
 const LAND_STREAM := "res://assets/audio/skate_land.wav"
+## CH64: the two tricks' pops, generated the way the two above were
+## (22 050 Hz mono 16-bit, 0.18 s): a wood-and-bearings pop whose body
+## sweeps down from 880 Hz (kickflip) or 1 240 Hz (heelflip). Two pitches
+## so the two senses are distinguishable with the eyes closed.
+const FLIP_KICK_STREAM := "res://assets/audio/skate_flip_kick.wav"
+const FLIP_HEEL_STREAM := "res://assets/audio/skate_flip_heel.wav"
+const FLIP_DB: float = -8.0
 
 var _body: SkateBoardBody = null
 var _roll: AudioStreamPlayer = null
@@ -66,6 +73,9 @@ var _was_airborne: bool = false
 ## listening to anything.
 var _last_land_db: float = -1e9
 var _land_count: int = 0
+var _flip: AudioStreamPlayer = null
+var _flip_count: int = 0
+var _last_flip: String = ""
 
 func setup(body: SkateBoardBody) -> void:
 	_body = body
@@ -89,6 +99,25 @@ func setup(body: SkateBoardBody) -> void:
 	_land.name = "SkateLand"
 	_land.stream = load(LAND_STREAM)
 	add_child(_land)
+	_flip = AudioStreamPlayer.new()
+	_flip.name = "SkateFlip"
+	_flip.volume_db = FLIP_DB
+	add_child(_flip)
+
+## CH64: one pop per trick, the stream chosen by the sense.
+func play_trick(clockwise: bool) -> void:
+	if _flip == null:
+		return
+	_last_flip = FLIP_KICK_STREAM if clockwise else FLIP_HEEL_STREAM
+	_flip.stream = load(_last_flip)
+	_flip.play()
+	_flip_count += 1
+
+func flip_count() -> int:
+	return _flip_count
+
+func last_flip_stream() -> String:
+	return _last_flip
 
 ## Called by HubTransport on mount and dismount. The roll only ever plays
 ## while a rider is on the board: a board parked at the far end of the

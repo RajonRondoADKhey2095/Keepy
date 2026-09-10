@@ -126,6 +126,21 @@ func _on_trick_scored(_module: int, trick: StringName, points: int, chain: int) 
 func _on_chain_broken() -> void:
 	_chain_label.visible = false
 
+## CH64: a trick, with no score attached -- the name alone, in the same
+## panel, for the same hold. What makes a mechanic exist for a player is
+## that the screen says it happened (CH53's lesson, CH62's again).
+func flash_trick(trick: StringName) -> void:
+	_trick_label.text = String(trick).to_upper()
+	_chain_label.visible = false
+	_note_label.text = ""
+	_note_label.visible = false
+	_left = HOLD_S + FADE_S
+	visible = true
+	modulate.a = 1.0
+
+func trick_text() -> String:
+	return _trick_label.text if _trick_label != null else ""
+
 func _process(delta: float) -> void:
 	if not visible:
 		return

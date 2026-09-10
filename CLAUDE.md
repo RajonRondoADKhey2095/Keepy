@@ -2548,6 +2548,50 @@ point de départ** et se raccourcit jusqu'à tenir, puis **gate qu'elle est
 restée assez longue** pour être une instance de ce qu'elle mesure. Un
 départ hors région n'est pas un run court, c'est un run absent.
 
+### ⚠️ UN CAP SUR L'ORBITE NE BORNE PAS LE LACET D'UN LOOK-AT
+
+Mesuré au CH64, sur la caméra de poursuite calmée de la planche. Un taux
+de lacet maximal posé sur l'angle d'orbite (`_drive_heading`) a laissé
+passer **170 °/s** la première seconde d'un doigt tenu plein travers : la
+pose est un `look_at`, et un look_at lace avec la POSITION de la cible
+quoi que fasse l'orbite. Un cap qui doit borner ce qu'un joueur VOIT
+s'applique **sur la pose finie**, image par image (lire le lacet du
+transform, le comparer au précédent, ramener au cap par rotation autour
+de Y) — jamais sur une variable intermédiaire dont la pose n'est qu'une
+fonction parmi d'autres.
+
+⚠️ **Et une pose de poursuite près d'un BORD est dans les arbres-murs.**
+`CozyScatter` plante des arbres le long du bord de la région ; une planche
+au bord nord du park face au sud met la caméra 7,6 u derrière elle, HORS
+région, plein cadre de feuillage. La pose se clampe à la région et se tire
+vers la cible — **jamais jusque DESSUS** : à distance nulle le look_at est
+dégénéré et la cible est sous le bord bas du cadre (0 pixel mesuré).
+Garder au moins un demi-unité derrière, et faire converger la visée vers
+la cible quand la distance tenue diminue. Le gate est un rendu : la
+cible peinte, ses pixels EXIGÉS à chaque bord (ChaseAudit PHASE CALM).
+
+### ⚠️ UN BANC DONT LE DOIGT SAUTE FABRIQUE DU VIRAGE
+
+Un reconnaisseur de cercle par NOMBRE DE TOURS (somme des angles signés
+entre segments successifs du doigt) compte honnêtement **tout** segment,
+y compris celui qu'un banc fabrique en téléportant son doigt de « tenu en
+haut » à « départ du cercle » : 140 px d'un coup, soit −170° de virage
+avant la première boucle, et un cercle réel lu comme un crochet. Un banc
+qui dessine un geste part de **là où le doigt EST**, jamais d'une
+constante — un pouce ne se téléporte pas. (CH64, `SkateTrickProbe`, une
+passe rouge devenue verte pour cette raison avant d'être comprise.)
+
+### ⚠️ LE DÉCOR D'UN SOLIDE VA DANS UNE SECONDE SURFACE
+
+`SkatePhysicsProbe` PHASE G gate que l'union des pièces convexes d'un
+module EST l'ensemble de ses sommets dessinés — le gate qui attrape un
+dessiné qui diverge de son solide. Un tube de coping ajouté à la surface 0
+l'a rougi, correctement. Toute géométrie DESSINÉE ET NON SOLIDE (coping,
+cornière, garniture) va dans une **seconde surface** du même `ArrayMesh`
+(même matériau, un draw call de plus) : la surface 0 reste le solide, et
+les bancs qui pricent un collider (`PhysicsCostProbe`) ne lisent
+qu'elle. Et `triangle_count()` publie les DEUX comptes, jamais un seul.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une

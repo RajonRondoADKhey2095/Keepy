@@ -219,6 +219,12 @@ func _phase_geometry() -> void:
 			% [_park.triangle_total(), total])
 	_check(total <= SkateparkMesh.BUDGET_TRIS,
 		"G2 park %d tri <= CH52 ceiling %d" % [total, SkateparkMesh.BUDGET_TRIS])
+	# CH64: the slab is the park's too, and the ceiling is the park's.
+	print("     CH64: the slab adds %d triangles (published by decor_triangles)" % _park.decor_triangles())
+	_check(_park.decor_triangles() > 0 and _park.slab_node() != null,
+		"G3 the slab exists and publishes its own count (%d)" % _park.decor_triangles())
+	_check(total + _park.decor_triangles() <= SkateparkMesh.BUDGET_TRIS,
+		"G4 park + slab %d tri <= CH52 ceiling %d" % [total + _park.decor_triangles(), SkateparkMesh.BUDGET_TRIS])
 	# Containment: every module, plus its footprint, inside the lobe. The
 	# zipline's north tower overhung the world by 1.682 u because nobody
 	# asked this (CLAUDE.md).

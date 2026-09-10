@@ -124,10 +124,8 @@ func _check(ok: bool, what: String) -> void:
 	print("  [%s] %s" % ["OK " if ok else "RED", what])
 
 func _run() -> void:
-	print("=== SKATE INPUT PROBE -- CH63 LOT 2 ===")
+	print("=== SKATE INPUT PROBE -- CH63 LOT 2 / CH64 ===")
 	print("driver: %s" % DisplayServer.get_name())
-	DevTools.set_physics_override(true)
-	SkateTouchInput.set_drag_mode(false)
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(_hub)
 	for _i in 24:
@@ -160,7 +158,6 @@ func _run() -> void:
 	await _phase_turn()
 	await _phase_fence()
 	await _phase_mapping()
-	await _phase_off()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -176,11 +173,14 @@ func _run() -> void:
 # never once went through the listener a finger goes through.
 
 func _phase_instrument() -> void:
-	print("-- PHASE I: with the TAP scheme selected, a screen tap still arrives --")
-	_check(not SkateTouchInput.drag_enabled(), "INSTRUMENT: the probe starts on the SHIPPED scheme")
-	await _board_at(OPEN_GROUND)
-	_check(_transport.is_riding_board(), "INSTRUMENT: he is aboard the physics board")
-	_check(not _touch.enabled, "INSTRUMENT: the drag writer is NOT armed under the tap scheme")
+	print("-- PHASE I: on foot a screen tap arrives; aboard, the writer is armed --")
+	# CH64: there is no TAP scheme to start on. The positive half of this
+	# instrument is the shipped route ON FOOT -- the one every walk uses --
+	# and the aboard half is the writer's own arming.
+	_keepy.dismount_vehicle()
+	await _idle_hopper()
+	_keepy.global_position = HubSurface.ground(OPEN_GROUND)
+	await _settle(8)
 	if not _screen_is_real():
 		_check(false, "INSTRUMENT: no real viewport -- every screen event below would be dropped")
 		return
@@ -195,13 +195,14 @@ func _phase_instrument() -> void:
 	# HubTapInput reads both, so the shipped route fires twice per finger.
 	# That is CLAUDE.md's documented double dispatch, it predates this lot
 	# by years, and gating it here would make this probe fail on shipped
-	# behaviour it is not measuring. What this lot's own writer does about
-	# the same pair IS gated, in PHASE R: exactly one push.
+	# behaviour it is not measuring.
 	_check(_ground_taps > before,
-		"a screen tap while riding reaches HubTapInput.tapped_ground (the shipped route is LIVE, x%d)"
+		"a screen tap ON FOOT reaches HubTapInput.tapped_ground (the shipped route is LIVE, x%d)"
 			% (_ground_taps - before))
-	_check(_transport.board_has_destination(),
-		"and the world turned it into a destination for the board")
+	await _idle_hopper()
+	await _board_at(OPEN_GROUND)
+	_check(_transport.is_riding_board(), "INSTRUMENT: he is aboard the physics board")
+	_check(_touch.enabled, "INSTRUMENT: and the writer is armed by the mount alone")
 
 # =====================================================================
 # PHASE C -- WHAT THE WRITER CAPTURES
@@ -265,7 +266,7 @@ func _phase_capture() -> void:
 	_check(not _touch.has_heading(), "a 5 px jitter writes NO heading")
 	_touch._unhandled_input(_release(at + Vector2(4.0, 3.0)))
 	_check(_taps == taps_before + 1, "and releasing it emits exactly ONE exit tap")
-	_touch.enabled = _transport.is_riding_board() and SkateTouchInput.drag_enabled()
+	_touch.enabled = _transport.is_riding_board()
 
 # =====================================================================
 # PHASE A -- ARMING, AND THE ONE CALL THAT DOES IT
@@ -276,24 +277,19 @@ func _phase_capture() -> void:
 # plant a destination on a board nobody is riding.
 
 func _phase_arming() -> void:
-	print("-- PHASE A: mount / leave / the live toggle all arm the same one flag --")
-	_check(_transport.is_riding_board(), "INSTRUMENT: still aboard from PHASE I")
-	_check(not _touch.enabled, "tap scheme + riding  -> NOT armed")
-	SkateTouchInput.set_drag_mode(true)
-	_transport.sync_board_input()
-	_check(_touch.enabled, "flipping the scheme MID-RIDE arms it, with no rebuild")
-	SkateTouchInput.set_drag_mode(false)
-	_transport.sync_board_input()
-	_check(not _touch.enabled, "and flipping back disarms it, on the spot")
-	SkateTouchInput.set_drag_mode(true)
-	_transport.sync_board_input()
+	print("-- PHASE A: mount and leave arm the same one flag --")
+	# PHASE C ends on the exit gesture, which -- armed and at rest -- is
+	# exactly a dismount. Start aboard again.
+	await _reset_ride()
+	_check(_transport.is_riding_board(), "INSTRUMENT: aboard")
+	_check(_touch.enabled, "riding -> armed")
 	_transport.leave_board()
 	await _settle(20)
 	_check(not _transport.is_riding_board(), "INSTRUMENT: he stepped off")
-	_check(not _touch.enabled, "drag scheme + NOT riding -> NOT armed")
+	_check(not _touch.enabled, "NOT riding -> NOT armed (nothing delivered mid-step-off can command a board nobody rides)")
 	await _idle_hopper()
 	await _board_at(OPEN_GROUND)
-	_check(_touch.enabled, "mounting under the drag scheme arms it")
+	_check(_touch.enabled, "mounting arms it again")
 
 # =====================================================================
 # PHASE R -- THE RED PASS, AND IT IS THE POINT OF THIS PROBE
@@ -312,15 +308,14 @@ func _phase_arming() -> void:
 # difference between them is the board's speed.
 
 func _phase_shunt() -> void:
-	print("-- PHASE R: under DRAG, one finger has ONE meaning -- and there is a way out --")
+	print("-- PHASE R: aboard, one finger has ONE meaning -- and there is a way out --")
 	if not _screen_is_real():
 		_check(false, "INSTRUMENT: no real viewport -- this phase cannot run")
 		return
-	_check(SkateTouchInput.drag_enabled() and _touch.enabled,
-		"INSTRUMENT: drag scheme, armed, aboard")
+	_check(_touch.enabled, "INSTRUMENT: armed, aboard")
 	_transport.board_body().stop()
 	await _settle(2)
-	_check(not _transport.board_has_destination(), "INSTRUMENT: the board holds no destination")
+	_check(not body_driving(), "INSTRUMENT: nobody is commanding the board")
 	_check(_transport.board_at_rest(), "INSTRUMENT: and it is at rest")
 	await _settle_camera()
 	var taps_before: int = _ground_taps
@@ -328,8 +323,6 @@ func _phase_shunt() -> void:
 	await _screen_tap(_screen_ahead())
 	_check(_ground_taps == taps_before,
 		"the shipped tapped_ground route did NOT fire (no double dispatch)")
-	_check(not _transport.board_has_destination(),
-		"and no destination was planted by anything")
 	# EXACTLY one, and this is where the emulated-event guard would earn
 	# its place: the same finger that fires the shipped route twice must
 	# fire this writer once, or one tap would be worth two gestures.
@@ -563,9 +556,17 @@ func _phase_turn() -> void:
 	for r in rates:
 		line += "%.1f  " % r
 	print("     held 90 deg to the side, deg/s per second: %s" % line)
-	print("     (DRIVE_HEADING_LAMBDA %.2f x 90 deg predicts a ceiling of %.1f deg/s)"
-		% [HubCamera.DRIVE_HEADING_LAMBDA, rad_to_deg(HubCamera.DRIVE_HEADING_LAMBDA * PI / 2.0)])
-	var ceiling: float = rad_to_deg(HubCamera.DRIVE_HEADING_LAMBDA * PI / 2.0)
+	# CH64: the board rides the CALM tuning (HubCamera.ChaseTuning.board),
+	# whose orbit is capped at BOARD_YAW_RATE_MAX. The board's heading is
+	# read off the camera BASIS, which the look-at also turns, so the
+	# board can turn a little faster than the orbit cap; the ceiling that
+	# is gated is the larger of the two arithmetics, and the measured rate
+	# is PUBLISHED beside CH63's 106 deg/s so a change in feel is a number.
+	var lag_ceiling: float = rad_to_deg(HubCamera.BOARD_HEADING_LAMBDA * PI / 2.0)
+	var cap: float = rad_to_deg(HubCamera.BOARD_YAW_RATE_MAX)
+	print("     (calm tuning: lambda %.2f x 90 deg = %.1f deg/s, orbit cap %.1f deg/s; CH63 measured ~106 on the kart tuning)"
+		% [HubCamera.BOARD_HEADING_LAMBDA, lag_ceiling, cap])
+	var ceiling: float = maxf(lag_ceiling, cap)
 	_check(rates[0] > 5.0,
 		"INSTRUMENT: a held sideways finger DOES turn the board (%.1f deg/s in the first second)"
 			% rates[0])
@@ -608,28 +609,32 @@ func _phase_turn() -> void:
 # "one tick always drops it" read alike.
 
 func _phase_fence() -> void:
-	print("-- PHASE F: the region fence drops the tap destination ON THE TICK --")
+	print("-- PHASE F: the region fence stops the board and SAYS SO, on the tick --")
 	await _reset_ride()
-	SkateTouchInput.set_drag_mode(false)
-	_transport.sync_board_input()
 	var body := _transport.board_body()
-	# BLIND FIRST: a destination, a legal position, one tick -> still held.
+	var fenced: Array[int] = [0]
+	var counter := func() -> void: fenced[0] += 1
+	body.fenced.connect(counter)
+	# BLIND FIRST: a legal position, one tick -> no emit, throttle intact.
 	body.stop()
 	body.global_position = HubSurface.ground(OPEN_GROUND)
-	_transport.set_board_target(HubRegion.clamp_to(OPEN_GROUND + Vector3(6.0, 0.0, 0.0)))
-	_check(_transport.board_has_destination(), "INSTRUMENT: the tap planted a destination")
-	_check(HubRegion.contains(body.flat_position()), "INSTRUMENT: and the board is inside the region")
+	body.hold(Vector3(1.0, 0.0, 0.0), 1.0)
+	_check(HubRegion.contains(body.flat_position()), "INSTRUMENT: the board is inside the region")
 	body.drive(1.0 / 60.0)
-	_check(_transport.board_has_destination(),
-		"BLIND: one tick INSIDE the region does not drop it (so the drop below means something)")
+	_check(fenced[0] == 0 and body.driving(),
+		"BLIND: one tick INSIDE the region emits nothing and keeps the command (so the emit below means something)")
 	# NOW the fence. A point far outside every lobe: the fence refuses the
-	# step, puts the body back, and says so.
+	# step, puts the body back, releases the command and says so.
 	var outside := Vector3(0.0, 0.0, 900.0)
 	_check(not HubRegion.contains(outside), "INSTRUMENT: (0, 900) is outside the region")
 	body.global_position = HubSurface.ground(outside)
+	body.hold(Vector3(1.0, 0.0, 0.0), 1.0)
 	body.drive(1.0 / 60.0)
-	_check(not _transport.board_has_destination(),
-		"the fence dropped the destination on the SAME tick (not 30 ticks later, via the stall guard)")
+	_check(fenced[0] == 1,
+		"the fence emitted `fenced` on the SAME tick (got %d)" % fenced[0])
+	_check(not body.driving() and body.speed() < 0.001,
+		"and it stopped the board and dropped the command on that tick")
+	body.fenced.disconnect(counter)
 	body.stop()
 	body.global_position = HubSurface.ground(OPEN_GROUND)
 	await _settle(4)
@@ -840,41 +845,6 @@ func body_driving() -> bool:
 	return body != null and body.driving()
 
 # =====================================================================
-# PHASE O -- THE SHIPPED SCHEME IS UNTOUCHED
-#
-# The lot's own claim, gated: with the scheme back on TAP, the board
-# behaves exactly as CH57/CH58 left it. This is the phase that would
-# redden if the short-circuit in HubTapInput were written on the ride
-# alone rather than on the ride AND the scheme.
-
-func _phase_off() -> void:
-	print("-- PHASE O: back on TAP, the shipped route is exactly as it was --")
-	await _reset_ride()
-	SkateTouchInput.set_drag_mode(false)
-	_transport.sync_board_input()
-	_check(not _touch.enabled, "the writer is disarmed by the flip alone")
-	if not _screen_is_real():
-		_check(false, "INSTRUMENT: no real viewport -- this phase cannot run")
-		return
-	await _settle_camera()
-	var taps_before: int = _ground_taps
-	var exits_before: int = _taps
-	await _screen_tap(_screen_ahead())
-	_check(_ground_taps > taps_before, "a screen tap reaches tapped_ground again")
-	_check(_taps == exits_before, "and the new writer heard nothing at all")
-	_check(_transport.board_has_destination(), "and the board took the destination")
-	_check(body_driving(), "and the tap adapter is actually pushing it")
-	# And the dismount, which is the shipped gesture the drag scheme
-	# suppressed in PHASE R -- proving that suppression was the SCHEME's
-	# doing and not something this lot broke.
-	await _await_rest()
-	_check(_transport.board_at_rest(), "INSTRUMENT: the board is at rest")
-	await _settle_camera()
-	await _screen_tap(_screen_of(_keepy.global_position))
-	_check(not _transport.is_riding_board(),
-		"and a tap on his own body dismounts him, exactly as CH58 left it")
-
-# =====================================================================
 # THE BENCH
 
 ## True when the container and viewport are real enough for a screen
@@ -997,7 +967,6 @@ func _reset_ride() -> void:
 		await _settle(20)
 	_keepy.dismount_vehicle()
 	await _idle_hopper()
-	SkateTouchInput.set_drag_mode(true)
 	await _board_at(OPEN_GROUND)
 
 ## Parks the board under Keepy at `where` and mounts him on it.

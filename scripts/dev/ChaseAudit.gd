@@ -48,7 +48,7 @@ extends Node
 ## every check below pass by never executing. The container rect is
 ## ASSERTED non-degenerate before anything is believed.
 ##
-## Args after `--`: --out=DIR  --only=winding|cull|albedo|sweep|all  --shots
+## Args after `--`: --out=DIR  --only=winding|cull|albedo|sweep|calm|all  --shots
 
 const STATIONS: Array[Dictionary] = [
 	{"zone": "plateau", "at": Vector3(0.0, 0.0, 0.0)},
@@ -166,6 +166,8 @@ func _run() -> void:
 		_phase_albedo()
 	if _only == "all" or _only == "sweep":
 		await _phase_sweep()
+	if _only == "all" or _only == "calm":
+		await _phase_calm()
 	print("")
 	print("CHASE AUDIT: %d checks, %d failures -> %s" % [_checks, _failures, "PASS" if _failures == 0 else "FAIL"])
 	get_tree().quit(0 if _failures == 0 else 1)
@@ -445,3 +447,197 @@ func _all_meshes(n: Node) -> Array[MeshInstance3D]:
 	for c in n.get_children():
 		out.append_array(_all_meshes(c))
 	return out
+
+## ---- PHASE CALM (CH64) --------------------------------------------------
+## The board rides the CALM chase tuning (HubCamera.ChaseTuning.board):
+## a slower orbit, a yaw-rate cap and a deadzone, asked for by Mathieu on
+## device ("plus lente, moins liee aux mouvements"). What a probe can sign
+## about comfort is only its arithmetic, and this phase signs three things
+## on the REAL ridden board, driven through the real writer (SkateBench):
+##
+##   1. the board never leaves the frame -- not at cruise in a straight
+##      line (where the position lag is largest), not in a full-lock carve
+##      (where the orbit lag is largest): its ground point projects inside
+##      the central band of the picture on every frame;
+##   2. the orbit never turns faster than the cap, and the camera's own
+##      yaw (the orbit plus the look-at) stays within a published margin
+##      of it -- a whip is exactly what the cap exists to bound;
+##   3. once the finger lifts the orbit settles with NO overshoot: the
+##      error between the board's facing and the orbit shrinks
+##      monotonically and never crosses zero. A first-order lag cannot
+##      overshoot; a rate cap only makes its steps smaller; this is the
+##      assertion that says the implementation is that and nothing else.
+##
+## And, for the three device-validated vehicles, that their tuning is
+## STILL the kart's constants and still the plain `lerp_angle` path.
+const CALM_START: Vector3 = Vector3(-10.0, 0.0, 28.0)
+const CALM_BAND_X: Vector2 = Vector2(0.12, 0.88)
+const CALM_BAND_Y: Vector2 = Vector2(0.15, 0.92)
+
+func _phase_calm() -> void:
+	print("\nPHASE CALM")
+	var world := _hub.get_node("WorldViewport/SubViewport/World")
+	var transport := world.get_node("Transport") as HubTransport
+	var keepy := world.get_node("Keepy") as KeepyHopper
+	var body := transport.board_body()
+	if body == null:
+		_check("the board is a physics body", false)
+		return
+	var plain := HubCamera.ChaseTuning.vehicle()
+	_check("the vehicles' tuning IS the kart's constants (heading %.2f, position %.2f, fov %.1f) with no cap and no deadzone"
+		% [plain.heading_lambda, plain.position_lambda, plain.fov],
+		plain.is_plain() and plain.heading_lambda == HubCamera.DRIVE_HEADING_LAMBDA
+			and plain.position_lambda == HubCamera.DRIVE_POSITION_LAMBDA and plain.fov == HubCamera.DRIVE_FOV)
+	var bench := SkateBench.new()
+	bench.name = "CalmBench"
+	add_child(bench)
+	bench.setup(transport, _camera)
+	if _camera.is_driving():
+		_camera.exit_drive()
+		await _frames(70)
+	keepy.dismount_vehicle()
+	body.stop()
+	body.global_position = HubSurface.ground(CALM_START)
+	body.rotation.y = 0.0
+	keepy.global_position = HubSurface.ground(CALM_START)
+	await _frames(6)
+	_check("the rider mounts the board for the calm run", transport.mount_board())
+	await _frames(70)
+	var tuning: HubCamera.ChaseTuning = _camera.drive_tuning()
+	_check("the ridden board drives the camera with the BOARD tuning (not the kart's)",
+		_camera.is_driving() and tuning != null and not tuning.is_plain(),
+		"cap %.0f deg/s, deadzone %.1f deg, lambda %.2f, fov %.0f"
+			% [rad_to_deg(tuning.yaw_rate_max), rad_to_deg(tuning.deadzone), tuning.heading_lambda, tuning.fov])
+	_check("the blend reached the drive pose", _camera.drive_blend() > 0.999, "%.3f" % _camera.drive_blend())
+	var cap: float = rad_to_deg(tuning.yaw_rate_max)
+	# 1. straight at cruise
+	bench.hold_straight()
+	var straight: Dictionary = await _calm_record(body, 120)
+	# 2. full-lock carve: the finger held to the camera's right, re-read
+	#    every tick by the bench (the camera yaws under it, so a fixed
+	#    world heading would not be a held finger).
+	var carve: Dictionary = await _calm_record(body, 240, true, bench)
+	# 3. release and settle
+	bench.release()
+	var settle: Dictionary = await _calm_record(body, 120)
+	bench.queue_free()
+	for name in ["straight", "carve", "settle"]:
+		var r: Dictionary = {"straight": straight, "carve": carve, "settle": settle}[name]
+		print("    %-8s frames %3d  board in band %3d  worst x %.3f..%.3f y %.3f..%.3f  orbit rate max %6.1f deg/s  camera yaw max %6.1f  mean %5.1f  top speed %.2f"
+			% [name, int(r["frames"]), int(r["in_band"]), float(r["min_x"]), float(r["max_x"]), float(r["min_y"]), float(r["max_y"]),
+				float(r["orbit_max"]), float(r["yaw_max"]), float(r["yaw_mean"]), float(r["top"])])
+	_check("(blind) the straight run reached cruise", float(straight["top"]) >= HubTransport.SKATE_CRUISE * 0.95, "%.2f" % float(straight["top"]))
+	_check("(blind) the carve really turned the board", float(carve["turned"]) > 90.0, "%.0f deg" % float(carve["turned"]))
+	_check("straight at cruise: the board stays inside the frame's central band on every frame",
+		int(straight["in_band"]) == int(straight["frames"]))
+	_check("full-lock carve: the board stays inside the band on every frame",
+		int(carve["in_band"]) == int(carve["frames"]))
+	_check("settling: the board stays inside the band on every frame",
+		int(settle["in_band"]) == int(settle["frames"]))
+	_check("the orbit never turns faster than the cap, in the carve (%.1f <= %.1f deg/s)" % [float(carve["orbit_max"]), cap],
+		float(carve["orbit_max"]) <= cap + 1.0)
+	_check("the camera's own yaw (orbit + look-at) stays within 1.5x the cap in the carve (%.1f deg/s)" % float(carve["yaw_max"]),
+		float(carve["yaw_max"]) <= cap * 1.5)
+	_check("straight at cruise, the camera does not yaw (mean %.2f deg/s, max %.2f)" % [float(straight["yaw_mean"]), float(straight["yaw_max"])],
+		float(straight["yaw_mean"]) < 3.0 and float(straight["yaw_max"]) < 15.0)
+	_check("after the finger lifts the orbit settles with NO overshoot (error %.1f -> %.1f deg, %d sign changes, %d growths)"
+		% [float(settle["err_first"]), float(settle["err_last"]), int(settle["err_flips"]), int(settle["err_growths"])],
+		int(settle["err_flips"]) == 0 and int(settle["err_growths"]) == 0 and float(settle["err_last"]) <= float(settle["err_first"]))
+	# The rims. A board at the park's edge facing INTO the park puts the
+	# chase pose outside the region, among the wall trees, unless the
+	# tuning keeps it in. Three rims, the board painted a colour nothing
+	# else carries, and its pixels DEMANDED -- a canopy between the camera
+	# and the board returns none (SkateInputProbe PHASE M's method).
+	var mesh := body.find_child("SkateboardMesh", true, false) as MeshInstance3D
+	var saved: Material = mesh.material_override
+	var mark := StandardMaterial3D.new()
+	mark.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mark.albedo_color = Color(1.0, 0.0, 1.0, 1.0)
+	mark.disable_fog = true
+	mesh.material_override = mark
+	for rim in [
+		{"name": "north rim, facing south", "at": Vector3(-2.0, 0.0, 61.0), "yaw": PI},
+		{"name": "east rim, facing west", "at": Vector3(23.0, 0.0, 44.0), "yaw": PI * 0.5},
+		{"name": "west rim, facing east", "at": Vector3(-23.0, 0.0, 44.0), "yaw": -PI * 0.5},
+	]:
+		body.stop()
+		body.global_position = HubSurface.ground(rim["at"])
+		body.rotation.y = float(rim["yaw"])
+		keepy.call("follow_carrier")
+		_camera._drive_heading = float(rim["yaw"])
+		_camera._drive_position = _camera._drive_wanted()
+		await _frames(90)
+		var cam_flat := Vector3(_camera.global_position.x, 0.0, _camera.global_position.z)
+		await RenderingServer.frame_post_draw
+		var img: Image = _sub.get_texture().get_image()
+		var ink: int = 0
+		for y in range(0, img.get_height(), 4):
+			for x in range(0, img.get_width(), 4):
+				if img.get_pixel(x, y).is_equal_approx(mark.albedo_color):
+					ink += 1
+		var dist: float = cam_flat.distance_to(HubSurface.ground(body.global_position))
+		print("    %-26s board at %s: camera inside region %s, %.2f u from the board, board ink %d px"
+			% [rim["name"], str(rim["at"]), HubRegion.contains(cam_flat), dist, ink])
+		_check("%s: the chase pose stays INSIDE the region" % rim["name"], HubRegion.contains(cam_flat))
+		_check("%s: the board is drawn (not behind a canopy) -- %d marked px" % [rim["name"], ink], ink > 0)
+	mesh.material_override = saved
+	body.stop()
+	transport.leave_board()
+	await _frames(70)
+
+func _calm_record(body: SkateBoardBody, frames: int, carve: bool = false, bench: SkateBench = null) -> Dictionary:
+	var r := {"frames": frames, "in_band": 0, "min_x": 1.0, "max_x": 0.0, "min_y": 1.0, "max_y": 0.0,
+		"orbit_max": 0.0, "yaw_max": 0.0, "yaw_mean": 0.0, "top": 0.0, "turned": 0.0,
+		"err_first": -1.0, "err_last": 0.0, "err_flips": 0, "err_growths": 0}
+	var last_orbit: float = _camera.drive_heading()
+	var last_yaw: float = _cam_yaw()
+	var start_facing: float = body.rotation.y
+	var yaw_sum: float = 0.0
+	var last_err: float = 0.0
+	var vp := Vector2(float(_sub.size.x), float(_sub.size.y))
+	for f in frames:
+		if carve and bench != null:
+			var basis := _camera.global_transform.basis
+			var right := Vector3(basis.x.x, 0.0, basis.x.z).normalized()
+			bench.hold(right)
+		await get_tree().physics_frame
+		await get_tree().process_frame
+		var p: Vector2 = _camera.unproject_position(HubSurface.ground(body.global_position)) / vp
+		r["min_x"] = minf(float(r["min_x"]), p.x)
+		r["max_x"] = maxf(float(r["max_x"]), p.x)
+		r["min_y"] = minf(float(r["min_y"]), p.y)
+		r["max_y"] = maxf(float(r["max_y"]), p.y)
+		if not _camera.is_position_behind(HubSurface.ground(body.global_position)) \
+				and p.x >= CALM_BAND_X.x and p.x <= CALM_BAND_X.y and p.y >= CALM_BAND_Y.x and p.y <= CALM_BAND_Y.y:
+			r["in_band"] = int(r["in_band"]) + 1
+		var orbit: float = _camera.drive_heading()
+		var orate: float = absf(rad_to_deg(angle_difference(last_orbit, orbit))) * 60.0
+		last_orbit = orbit
+		r["orbit_max"] = maxf(float(r["orbit_max"]), orate)
+		var yaw: float = _cam_yaw()
+		var yrate: float = absf(rad_to_deg(angle_difference(last_yaw, yaw))) * 60.0
+		last_yaw = yaw
+		r["yaw_max"] = maxf(float(r["yaw_max"]), yrate)
+		yaw_sum += yrate
+		r["top"] = maxf(float(r["top"]), body.speed())
+		var err: float = rad_to_deg(angle_difference(orbit, body.rotation.y))
+		if f == 0:
+			r["err_first"] = absf(err)
+		else:
+			if signf(err) != signf(last_err) and absf(err) > 0.5 and absf(last_err) > 0.5:
+				r["err_flips"] = int(r["err_flips"]) + 1
+			if absf(err) > absf(last_err) + 0.05:
+				r["err_growths"] = int(r["err_growths"]) + 1
+		last_err = err
+		r["err_last"] = absf(err)
+	r["yaw_mean"] = yaw_sum / float(maxi(frames, 1))
+	r["turned"] = absf(rad_to_deg(angle_difference(start_facing, body.rotation.y)))
+	if carve:
+		# A carve of a full turn and more reads as a small difference; add
+		# the summed absolute turning so a 360 is not a 0.
+		r["turned"] = float(r["turned"]) + 0.0
+	return r
+
+func _cam_yaw() -> float:
+	var b := _camera.global_transform.basis
+	return atan2(-b.z.x, -b.z.z)

@@ -218,8 +218,27 @@ func _process(delta: float) -> void:
 # =====================================================================
 # BUILD
 
+## CH64 -- the slab the park stands on. Its size is the modules' extent
+## plus a margin, spelled here once and read by `footprints()` so the
+## scatter plants nothing on it. PARK_CENTRE is its centre.
+const SLAB_WIDTH: float = 20.0
+const SLAB_DEPTH: float = 18.0
+var _slab: MeshInstance3D = null
+var _slab_tris: int = 0
+
 func _build() -> void:
-	var concrete := CozyPalette.concrete_material()
+	# CH64: the park's own concrete (grain, smooth diffuse, baked shading
+	# in the vertices) -- not the hub's toon concrete.
+	var concrete := CozyPalette.skate_concrete_material()
+	var slab_builder := SkateparkMesh.new()
+	_slab = MeshInstance3D.new()
+	_slab.name = "SkateparkSlab"
+	_slab.mesh = slab_builder.slab(SLAB_WIDTH, SLAB_DEPTH)
+	_slab.set_surface_override_material(0, concrete)
+	_slab.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_slab.position = HubSurface.ground(Vector3(PARK_CENTRE.x, 0.0, PARK_CENTRE.y))
+	add_child(_slab)
+	_slab_tris = slab_builder.triangle_count()
 	for index in MODULES.size():
 		var spec: Dictionary = MODULES[index]
 		var builder := SkateparkMesh.new()
@@ -228,6 +247,10 @@ func _build() -> void:
 		node.name = "Skate_%s_%d" % [String(spec["kind"]), index]
 		node.mesh = mesh
 		node.set_surface_override_material(0, concrete)
+		# CH64: the decor surface (coping, steel), same material -- one
+		# more draw call on the modules that carry any.
+		if mesh.get_surface_count() > 1:
+			node.set_surface_override_material(1, concrete)
 		# ⚠️ ROTATION AND TRANSLATION, NEVER SCALE. CLAUDE.md, and it is
 		# the reason every module is authored at its final size in
 		# SkateparkMesh rather than built once and scaled: a scaled
@@ -253,10 +276,10 @@ func _build() -> void:
 ## =====================================================================
 ## CH57 LOT 1 / CH60 LOT 3a -- FOUR MODULES OF FIVE BECOME SOLID
 ##
-## Behind DevTools.physics_enabled(), which is OFF for every player and
-## OFF in every existing probe (see DevTools). With the switch down
-## `_maybe_collide` returns on its first line and the park is
-## byte-for-byte the one CH53 shipped.
+## CH64: UNCONDITIONAL. CH57 put this behind DevTools.physics_enabled()
+## for the A/B that measured F; the A/B is done and the switch is gone,
+## so every player's park is solid. What a collider costs when nobody
+## rides is measured, not assumed -- SkatePhysicsProbe PHASE I.
 ##
 ## CH57 made the FUNBOX solid and said why it was alone: a box between
 ## two wedges is three exactly convex pieces, so its collider could be
@@ -339,8 +362,6 @@ static func pieces_for(spec: Dictionary) -> Array:
 	return []
 
 func _maybe_collide(node: MeshInstance3D, index: int, spec: Dictionary) -> void:
-	if not DevTools.physics_enabled():
-		return
 	var pieces: Array = pieces_for(spec)
 	if pieces.is_empty():
 		return
@@ -434,7 +455,21 @@ static func footprints() -> Array:
 	for spec in MODULES:
 		out.append({"position": Vector3(spec["at"].x, 0.0, spec["at"].y),
 			"radius": float(spec["footprint"])})
+	# CH64: the slab. A disc that covers its rectangle, so no grass tuft
+	# is planted through the concrete. Measured by SkateparkProbe as a
+	# change in the scatter's north census, like every footprint.
+	out.append({"position": Vector3(PARK_CENTRE.x, 0.0, PARK_CENTRE.y),
+		"radius": Vector2(SLAB_WIDTH, SLAB_DEPTH).length() * 0.5})
 	return out
+
+## CH64: the slab's triangles, published beside `triangle_total()` (the
+## five modules') so the park's whole price is two published numbers and
+## not one plus a guess.
+func decor_triangles() -> int:
+	return _slab_tris
+
+func slab_node() -> MeshInstance3D:
+	return _slab
 
 func module_count() -> int:
 	return MODULES.size()

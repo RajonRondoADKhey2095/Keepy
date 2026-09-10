@@ -119,6 +119,9 @@ static var _decor_wind: Dictionary = {}
 static var _decor_tinted: Dictionary = {}
 static var _cloud: ShaderMaterial = null
 static var _concrete: ShaderMaterial = null
+## CH64: the skatepark's own concrete -- see skate_concrete.gdshader.
+static var _skate_concrete: ShaderMaterial = null
+const SKATE_CONCRETE_SHADER: Shader = preload("res://assets/shaders/skate_concrete.gdshader")
 static var _ground: ShaderMaterial = null
 static var _noise: NoiseTexture2D = null
 static var _cells: NoiseTexture2D = null
@@ -244,6 +247,22 @@ static func concrete_material() -> ShaderMaterial:
 		_concrete.set_shader_parameter("shade", 0.88)
 		_concrete.set_shader_parameter("shade_tint", Color(0.97, 0.97, 0.98))
 	return _concrete
+
+## CH64 -- the skatepark's concrete: the decor haze and weather, a smooth
+## diffuse instead of the toon bands, and a grain from the ONE noise
+## texture the ground and the water already share. Used by every module
+## and by the slab under them, and by nothing else in the hub: the
+## realism is the park's, deliberately, and it stops at its kerb.
+static func skate_concrete_material() -> ShaderMaterial:
+	if _skate_concrete == null:
+		_skate_concrete = ShaderMaterial.new()
+		_skate_concrete.shader = SKATE_CONCRETE_SHADER
+		_skate_concrete.set_shader_parameter("noise_tex", noise_texture())
+		_skate_concrete.set_shader_parameter("sun_dir", SUN_DIR)
+		_skate_concrete.set_shader_parameter("haze_color", HAZE)
+		_skate_concrete.set_shader_parameter("haze_density", HAZE_DENSITY)
+		_skate_concrete.set_shader_parameter("haze_start", HAZE_START)
+	return _skate_concrete
 
 ## Clouds: the decor toon look with NO haze (they sit 100+ u out, where
 ## the haze would dissolve them into the sky they are meant to sit in).
@@ -499,6 +518,14 @@ static func apply_weather(look: Dictionary) -> void:
 		_set_common(_ground, look, tint)
 		_ground.set_shader_parameter("wet", look.get("wet", 0.0))
 		_ground.set_shader_parameter("snow", look["snow"])
+	# CH64: the skatepark's concrete takes the weather the ground takes --
+	# tint, haze, wet, snow. Listed here for the same reason `_concrete`
+	# is listed above: a material left out of this enumeration does not
+	# error, it just stops answering the sky.
+	if _skate_concrete != null:
+		_set_common(_skate_concrete, look, tint)
+		_skate_concrete.set_shader_parameter("wet", look.get("wet", 0.0))
+		_skate_concrete.set_shader_parameter("snow", look["snow"])
 	for mat in _water.values():
 		_set_common(mat, look, tint)
 		mat.set_shader_parameter("rain", look["rain"])
