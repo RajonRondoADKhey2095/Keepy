@@ -649,6 +649,16 @@ func _volume_scan(index: int, mask: int) -> Dictionary:
 					b_only += 1
 	return {"n": n, "a": a, "b": b, "dis": a_only + b_only, "a_only": a_only, "b_only": b_only}
 
+## The AABB of surface 0 alone, in the mesh's own frame. `Mesh.get_aabb()`
+## spans every surface, and D5's coping stands proud of the concrete on
+## purpose -- a slab test taken on it would be measuring the trim.
+func _solid_aabb(mesh: ArrayMesh) -> AABB:
+	var verts: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var box := AABB(verts[0], Vector3.ZERO)
+	for v in verts:
+		box = box.expand(v)
+	return box
+
 ## The triangles of surface 0 -- the SOLID surface -- in the mesh's own
 ## frame. Built from the index buffer rather than from `get_faces()`,
 ## which flattens every surface into one soup.
@@ -740,6 +750,39 @@ func _phase_inventory() -> void:
 	var want_shapes: int = 1 + 1 + 1 + 1 + 3 + 3 + 12 + 12 + int(EXPECT_PIECES[&"bowl"])
 	_check(shapes_total == want_shapes, "X and %d shapes in all (got %d): the bowl brings %d" % [want_shapes, shapes_total, int(EXPECT_PIECES[&"bowl"])])
 	_check(_park.collider_indices() == [0, 1, 2, 3, 4], "X every module is solid, the bowl included (%s)" % str(_park.collider_indices()))
+	# =================================================================
+	# ⚠️ CH69 -- THE SLAB, AND UNTIL THIS LINE NOTHING READ IT.
+	#
+	# A module drawn half on the grass is not a defect the physics can
+	# see: SLAB_WIDTH and SLAB_DEPTH had ONE reader in the whole repo
+	# (SkateEdgeProbe, for a station's x) and no gate at all. CH69 grows
+	# the concrete for the bowl, so the concrete gets a test -- otherwise
+	# the constant that pays for the bowl's place outlives the reason it
+	# has that value, which is CLAUDE.md's "une constante que rien ne
+	# relit survit aux lots" exactly.
+	#
+	# The claim is the strong one: every module's CONCRETE (surface 0,
+	# the solid one -- D5's coping may hang over) is ON the slab. CH68
+	# had to tolerate 0.100 u of overhang because the delivered bowl had
+	# it; here the slab is the lever, so the tolerance is gone and the
+	# margin is printed.
+	var worst_margin: float = 1e9
+	var worst_who: String = ""
+	for index in HubSkatepark.MODULES.size():
+		var mn := _park.module_node(index)
+		var box: AABB = mn.global_transform * _solid_aabb(mn.mesh as ArrayMesh)
+		var margin: float = minf(minf(box.position.x - HubSkatepark.SLAB_MIN.x, HubSkatepark.SLAB_MAX.x - box.end.x),
+			minf(box.position.z - HubSkatepark.SLAB_MIN.y, HubSkatepark.SLAB_MAX.y - box.end.z))
+		if margin < worst_margin:
+			worst_margin = margin
+			worst_who = "[%d %s]" % [index, String(_park.module_kind(index))]
+		print("     [%d] %-12s concrete x [%7.3f, %7.3f] z [%7.3f, %7.3f]  margin to the slab %+.3f"
+			% [index, String(_park.module_kind(index)), box.position.x, box.end.x, box.position.z, box.end.z, margin])
+	print("     slab x [%.2f, %.2f] z [%.2f, %.2f] = %.2f x %.2f; tightest module %s at %+.3f u"
+		% [HubSkatepark.SLAB_MIN.x, HubSkatepark.SLAB_MAX.x, HubSkatepark.SLAB_MIN.y, HubSkatepark.SLAB_MAX.y,
+			HubSkatepark.SLAB_WIDTH, HubSkatepark.SLAB_DEPTH, worst_who, worst_margin])
+	_check(worst_margin > 0.0,
+		"X every module's concrete stands ON the slab -- tightest %s at %+.3f u" % [worst_who, worst_margin])
 	# The drawn solids against each other. Solid modules may not overlap
 	# one another (a wall inside a ramp); the bowl's overlap is measured
 	# and is the reason it is not solid.
@@ -932,8 +975,14 @@ func _phase_bowl() -> void:
 	_check(float(rolled["min_r"]) < radius - lip,
 		"Y ROLL-IN: the board rolled in at ground level and reached the flat floor (min r %.3f < %.2f)"
 			% [float(rolled["min_r"]), radius - lip])
-	_check(float(rolled["cross_y"]) <= 0.02,
-		"Y ROLL-IN: it crossed the rim ON THE GROUND (y %.4f at r = %.2f), not over the lip" % [float(rolled["cross_y"]), radius])
+	# ⚠️ AND IT HAS TO HAVE CROSSED. The first version reported "y at the
+	# rim 0.0000" for a run that never reached the rim at all, because a
+	# missing crossing defaulted to zero -- an assertion of a VALUE
+	# standing in for an assertion of an EVENT, which is the free pass
+	# CLAUDE.md's blind check exists to close.
+	_check(bool(rolled["crossed"]) and float(rolled["cross_y"]) <= 0.02,
+		"Y ROLL-IN: it crossed the rim (%s) and did so ON THE GROUND (y %.4f at r = %.2f), not over the lip"
+			% [str(rolled["crossed"]), float(rolled["cross_y"]), radius])
 	_check(int(rolled["pops"]) == 0 and int(rolled["fenced"]) == 0,
 		"Y ROLL-IN: nothing popped it and nothing fenced it (pops %d, fenced %d)" % [int(rolled["pops"]), int(rolled["fenced"])])
 	# THE BLIND CHECK, and it is what makes the three above a result: the
@@ -1065,11 +1114,12 @@ func _roll_in(centre: Vector3, radius: float, lip: float, from_dir: Vector3, lab
 		max_y = maxf(max_y, body.global_position.y)
 	_bench.release()
 	body.fenced.disconnect(on_fenced)
-	print("     %-44s: start %s in region %s, mounted %s, min r %.3f, y at the rim %.4f, peak y %.3f, pops %d, fenced %d, bench lifted at %d"
+	print("     %-44s: start %s in region %s, mounted %s, min r %.3f, crossed the rim %s at y %s, peak y %.3f, pops %d, fenced %d, bench lifted at %d"
 		% [label, str(Vector2(start.x, start.z)), str(in_region), str(mounted), min_r,
-			cross_y, max_y, body.pops() - pops0, fenced, _bench.stalled_at()])
+			str(cross_y >= 0.0), ("%.4f" % cross_y) if cross_y >= 0.0 else "--",
+			max_y, body.pops() - pops0, fenced, _bench.stalled_at()])
 	_check(in_region and mounted, "%s INSTRUMENT: the run starts inside the region and aboard" % label)
-	return {"min_r": min_r, "cross_y": cross_y if cross_y >= 0.0 else 0.0, "max_y": max_y,
+	return {"min_r": min_r, "crossed": cross_y >= 0.0, "cross_y": maxf(cross_y, 0.0), "max_y": max_y,
 		"pops": body.pops() - pops0, "fenced": fenced}
 
 func _watch_bowl(centre: Vector3, radius: float, lip: float, ticks: int) -> Dictionary:

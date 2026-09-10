@@ -168,7 +168,20 @@ const MODULES: Array[Dictionary] = [
 	# (-4.20, 57.58), HubRegion on all 36 rim points, and the rim on the
 	# slab within CH68's 0.100 u (the overhang the delivered bowl already
 	# had -- a threshold that condemns the shipped state proves nothing).
-	# It clears the funbox by 0.950 u and costs 0.25 u of concrete.
+	# It clears the funbox by 0.950 u and costs 0.40 u of concrete.
+	#
+	# ⚠️ AND A SEVENTH CONSTRAINT ARRIVED FROM A PROBE, NOT FROM THE
+	# SWEEP. `landed_within` picks the nearest module whose `tap_radius`
+	# covers a landing, so two scoring discs that overlap make a strip of
+	# ground where WHICH module you scored is an accident of a centimetre
+	# -- SkateparkProbe G5 gates it, and it caught this lot's first answer
+	# (-6.75, 45.75) at -0.209 u against the big quarterpipe. Re-swept with
+	# the discs held KeepyHopper.ARRIVE_EPSILON apart (the distance a roll
+	# ends within, so two discs are never closer than the precision of the
+	# landing itself), the minimum moved 0.75 u south to here, for the same
+	# 0.40 u of concrete and a disc gap of 0.462 u. The intermediate
+	# answer, (-6.75, 45.50), was disjoint by THIRTEEN MILLIMETRES: a gate
+	# standing at its own limit, which is not a gate.
 	#
 	# ⚠️ AND THE PARK'S NORTH HALF WAS MEASURED, NOT ASSUMED AWAY. Keeping
 	# the bowl at z >= 50 is possible -- (-8.75, 57.00), 0.924 u of
@@ -186,7 +199,7 @@ const MODULES: Array[Dictionary] = [
 	# from the parking actually threads. It is a POINT and not a sector
 	# index because an index would have to be re-derived by hand the day
 	# the bowl moves again.
-	{"kind": KIND_BOWL, "at": Vector2(-6.75, 45.75), "yaw": 0.0,
+	{"kind": KIND_BOWL, "at": Vector2(-6.75, 45.0), "yaw": 0.0,
 		"size": Vector3(7.2, 1.35, 7.2), "footprint": 4.4, "tap_radius": 3.0,
 		"rollin_aim": Vector2(0.0, 50.0),
 		"trick": &"carve", "points": 80},
@@ -268,16 +281,26 @@ func _process(delta: float) -> void:
 ## centre are read off them. Nothing else in the file knows a slab
 ## dimension: `footprints()` and the build both go through the accessors.
 ##
-## ⚠️ WHAT CH69 BOUGHT WITH 0.25 u OF CONCRETE, and the number is the
+## ⚠️ WHAT CH69 BOUGHT WITH 0.40 u OF CONCRETE, and the number is the
 ## sweep's, not a taste. With the slab as CH64 left it there IS a legal
-## place for the bowl (zero overlap, rim on the slab within CH68's 0.100
-## tolerance): (-6.00, 46.75), and it clears the funbox by 0.150 u. A gap
-## of 15 cm between two solids is a gap a 0.92 u deck cannot turn in.
-## Moving the west edge from -10.00 to -10.25 -- 4.50 u2, 1.25 % more
-## concrete -- moves the best position to (-6.75, 45.75) and the gap to
+## place for the bowl (zero overlap, rim on the concrete, scoring discs
+## apart): (-6.25, 44.75), and it clears the funbox by 0.450 u. Half a
+## metre between two solids is a gap a 0.92 u deck cannot turn in.
+## Moving the west edge from -10.00 to -10.40 -- 7.20 u2, 2 % more
+## concrete -- moves the best position to (-6.75, 45.00) and the gap to
 ## 0.950 u, i.e. one deck length, which is the floor every other gap in
 ## this park is measured against.
-const SLAB_MIN: Vector2 = Vector2(-10.25, 41.0)
+##
+## ⚠️ AND THE RIM IS ON THE CONCRETE WITH ROOM, NOT INSIDE A TOLERANCE.
+## CH68 had to set its slab threshold at 0.100 u because the delivered
+## bowl already overhung by exactly that much, and a threshold that
+## condemns the shipped state proves nothing. Once the slab is the LEVER
+## that tolerance is not needed: the rim's westmost point is -10.35
+## against a kerb at -10.40, so the gate reads "every module's concrete
+## is ON the slab" with 0.05 u to spare. SkatePhysicsProbe PHASE X
+## measures it -- until CH69 nothing in the repo read a slab dimension at
+## all, and a constant nothing reads is a constant that outlives its lot.
+const SLAB_MIN: Vector2 = Vector2(-10.40, 41.0)
 const SLAB_MAX: Vector2 = Vector2(10.0, 59.0)
 const SLAB_WIDTH: float = SLAB_MAX.x - SLAB_MIN.x
 const SLAB_DEPTH: float = SLAB_MAX.y - SLAB_MIN.y
