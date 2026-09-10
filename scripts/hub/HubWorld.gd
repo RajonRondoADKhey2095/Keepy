@@ -102,12 +102,17 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _karting: HubKarting = $WorldViewport/SubViewport/World/Karting
 ## CH29: the cove module (sea, lighthouse, sandcastles, burrow slot).
 @onready var _cove: HubCove = $WorldViewport/SubViewport/World/Cove
+## CH53: the skatepark of the north lobe, and the HUD that reads it.
+@onready var _skatepark: HubSkatepark = $WorldViewport/SubViewport/World/Skatepark
+@onready var _skate_hud: SkateHud = $SkateHud
 @onready var _kart_hud: KartHud = $KartHud
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
 ## v4: the resource counter (always shown -- it is part of the game) and
 ## the save reset (behind DevTools.enabled()).
 @onready var _world_hud: WorldHud = $WorldHud
 @onready var _save_reset_button: Button = $FallbackMenu/Panel/VBoxContainer/SaveResetButton
+## CH64: the "Physique (dev)" (CH59) and "Contrôle skate" (CH63) rows are
+## gone -- physics is permanent and the finger is the board's only scheme.
 @onready var _confirm: HubConfirmDialog = $ConfirmDialog
 @onready var _chased_button: Button = $FallbackMenu/Panel/VBoxContainer/ChasedButton
 @onready var _quizz_button: Button = $FallbackMenu/Panel/VBoxContainer/QuizzButton
@@ -720,6 +725,7 @@ func _ready() -> void:
 	_setup_trees()
 	_setup_critters()
 	_setup_karting()
+	_setup_skatepark()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -3224,7 +3230,36 @@ func _on_tapped_ground(point: Vector3) -> void:
 	# exact licence -- the trip is a bounded tween that always ends on a
 	# dock, after which `_on_balloon_trip_finished` hands the body back --
 	# and it reaches this branch at all only because both docks withdrew.
-	if _keepy.is_on_carrier():
+	#
+	# ⚠️ CH58 -- AND THE BOARD IS EXPLICITLY NOT COVERED BY THAT LICENCE.
+	#
+	# ON_CARRIER is a state, not a permission. Five things use it now, and
+	# the licence to DROP a tap is not a property of the state: CLAUDE.md
+	# grants it only to a BOUNDED trip, "un tween qui se termine toujours
+	# a un point connu". A balloon flight, a zipline trip and an owl loop
+	# are bounded; the physics board (CH57) is NOT -- it stands still
+	# under the player until he says otherwise, which is exactly the
+	# UNBOUNDED phase the seesaw's rule covers, where a held body must
+	# keep a way out.
+	#
+	# ⚠️ THIS COST A SHIPPED BUG, and it is worth naming so the next
+	# carrier does not repeat it. CH57 wrote the board's own branch FORTY-
+	# SEVEN LINES BELOW this return -- correct in itself, and unreachable
+	# while riding, because the board arrives here first as a carrier. On
+	# device the whole gameplay input died the moment Keepy stepped on:
+	# no steer, no dismount, no error, the menu still opening. That is
+	# CLAUDE.md's PATRON ECHELLE -- a player sealed inside a prop that
+	# eats every tap -- reached NOT by writing the banned pattern, but by
+	# inheriting a drop through a state shared with something allowed to
+	# drop. Neither file read alone showed it, and CH57's 43 assertions
+	# were all green over it because its bench called `set_board_target()`
+	# directly and never once went through this listener.
+	#
+	# So the test here is the LICENCE, not the state. A future carrier
+	# whose ride is unbounded belongs in this exception beside the board;
+	# one whose ride is a bounded tween belongs in the drop above it.
+	# SkateDismountProbe gates both halves.
+	if _keepy.is_on_carrier() and not _transport.is_riding_board():
 		return
 	# v4: a tap while the TREE carries him is read BY STATE, and it is NOT
 	# dropped -- the ride has an unbounded phase (the seat), so a held
@@ -3261,7 +3296,61 @@ func _on_tapped_ground(point: Vector3) -> void:
 		if me.distance_to(Vector3(point.x, 0.0, point.z)) < 0.9:
 			_keepy.dismount_vehicle()
 			return
+	# CH57 put a board branch here (get off on himself at rest, go there
+	# anywhere else). CH64 removed it: a ridden board is piloted by a held
+	# finger through SkateTouchInput, HubTapInput shunts every point while
+	# riding (the same shape the kart, the yacht and the sailboat use), so
+	# no tap reaches this handler aboard. The ON_CARRIER exception above
+	# stays: it is what lets the shunt, and not this drop, own the ride.
 	_hop_via_corridor(point)
+
+## ⚠️ CH58 -- WHERE A FINGER AIMED AT A RAISED BODY ACTUALLY LANDS, and it
+## is NOT that body's flat position.
+##
+## Every tap on this screen resolves on HubSurface, and `HubCamera` never
+## rises -- OFFSET is a constant and it tracks Keepy's GROUND point. So a
+## body standing ABOVE the ground plane is DRAWN somewhere the ground under
+## it is not: the camera ray through it meets the surface further away, and
+## the gap grows with height. Comparing a tap to the flat position asks a
+## question no finger can ask.
+##
+## MEASURED, on the board, by SkateDismountProbe PHASE A:
+##
+##     on flat ground        0.133 u   -- comfortably inside the 0.9 radius
+##     on the funbox deck    1.501 u   -- outside it, by two thirds again
+##
+## which is why "tap yourself to get off" worked on the lawn and did NOT
+## work on top of the one module this whole chantier exists to climb. The
+## first green pass of that probe passed the deck case anyway, because it
+## tapped the flat position itself -- CLAUDE.md's "la metrique peut etre la
+## mauvaise, et le chiffre vert avec", the bed hotspot's shape exactly.
+##
+## This is CLAUDE.md's AIM rule applied to the rider instead of to a prop:
+## a prop test answers "what did the player MEAN", and what he means by
+## tapping a drawn body is that body. Only the DESTINATION stays clamped.
+##
+## ⚠️ SCOPED TO THE PHYSICS BOARD ON PURPOSE. The ball's own branch above
+## still reads the flat position: it is shipped, device-validated, and it
+## never leaves the ground, so its parallax is the 0.133 case. Widening it
+## would be changing the game every player has, which this lot must not do.
+## The day a shipped vehicle can stand on something, it belongs here too.
+##
+## Falls back to the flat position when there is no camera or the ray finds
+## no ground -- the old behaviour, so a missing camera degrades to what
+## shipped rather than to nothing at all.
+func _drawn_ground_point(at: Vector3) -> Vector3:
+	var flat := Vector3(at.x, 0.0, at.z)
+	if _camera == null:
+		return flat
+	var eye: Vector3 = _camera.global_position
+	var away: Vector3 = at - eye
+	if away.length() < 0.0001:
+		return flat
+	var hit: Variant = HubSurface.intersect_ray(eye, away.normalized())
+	if hit == null:
+		return flat
+	var ground: Vector3 = hit
+	return Vector3(ground.x, 0.0, ground.z)
 
 ## Carte-blanche v2 -- the autumn hollow hangs off the plateau by a
 ## corridor, so the walkable region is no longer convex: a straight hop
@@ -3504,6 +3593,16 @@ func _on_hop_landed(position: Vector3) -> void:
 		_dive_pending = false
 		if in_water:
 			_on_water_impact(position)
+
+	# CH53 -- THE SKATEPARK, and it sits with the tint and the impact for
+	# their reason: every branch below this point returns, so a reaction
+	# placed after them would stop scoring on exactly the landings that go
+	# on to do something.
+	#
+	# It is handed the landing and nothing else. Whether it counts is the
+	# PARK's decision (on the board, inside a module's disc, chained or
+	# not) -- this file does not know the rule and must not learn it.
+	_skatepark.note_landing(position)
 
 	# THE SPINNING PROPS, and they sit here for the reason the tint and the
 	# impact above do: every branch below this point returns, so a reaction
@@ -3908,6 +4007,11 @@ func _try_mount_ball(position: Vector3) -> bool:
 		return _transport.mount_sailboat()
 	if _mount_kind == HubTransport.VEHICLE_SLED:
 		return _transport.mount_sled()
+	# CH53 mounted the board on the SAUTILLON's path (mount_vehicle, a
+	# glide). CH57 made it a CARRIER behind the physics switch, and CH64
+	# removed the switch: the carrier contract is the board's only door.
+	if _mount_kind == HubTransport.VEHICLE_SKATE:
+		return _transport.mount_board()
 	return _keepy.mount_vehicle(_transport.ball_node(), HubTransport.BALL_LIFT)
 
 ## ---- CH29: the cove -- sandcastle spots -----------------------------------
@@ -3916,6 +4020,28 @@ func _try_mount_ball(position: Vector3) -> bool:
 ## chain runs out. The building itself is HubCove's (a bounded tween).
 var _building_castle: int = -1
 var _cove_visited: bool = false
+
+## CH53. Three wires and no more: the park needs the hopper (to refuse a
+## score on foot), the HUD needs the park, and a chain has to end when
+## the board is put down.
+##
+## ⚠️ NOTHING HERE CANCELS THE CHAIN ON A TAP, deliberately. Every other
+## coordinator's `cancel_intent()` is called from every tap handler,
+## because a tap means "I meant something else" about a WALK INTENT. A
+## chain is not an intent -- a tap is exactly how a rider aims the next
+## trick, and cancelling on tap would make a chain impossible to build.
+## The chain ends where it should: on a landing that is not on a module
+## (HubSkatepark.note_landing) and when the board is left.
+func _setup_skatepark() -> void:
+	_skatepark.setup(_keepy)
+	_skate_hud.setup(_skatepark)
+	_keepy.vehicle_dismounted.connect(_skatepark.cancel_intent)
+	# CH64: a trick on the board is shown by the same HUD. The transport
+	# names it; the HUD prints it; neither knows the other exists.
+	_transport.board_trick.connect(_on_board_trick)
+
+func _on_board_trick(trick: StringName, _clockwise: bool) -> void:
+	_skate_hud.flash_trick(trick)
 
 func _setup_cove() -> void:
 	_cove.setup(_keepy, _weather)

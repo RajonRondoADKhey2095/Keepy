@@ -855,15 +855,34 @@ func _phase_h_p2_lobe() -> void:
 	_check(not HubRegion.contains(Vector3(0.0, 0.0, -(h + 0.5))), "the SOUTH edge did not move")
 	_check(not HubRegion.contains(Vector3(h + 0.5, 0.0, 0.0)), "the EAST edge did not move")
 	_check(not HubRegion.contains(Vector3(-(h + 0.5), 0.0, 0.0)), "the WEST edge did not move")
-	# And the new ground stops where the disc does, at every azimuth.
+	# ⚠️ CH50 -- THE EXEMPTION NAMED ONE TERM, AND A SECOND ARRIVED. This
+	# read "unwalkable except where the SQUARE already covers it", which
+	# was true while the square was the only other term reaching this rim.
+	# CH50 unions a radius-28 disc onto the north edge whose centre is
+	# 25.2 u away, so 155 of these 360 azimuths are now covered by IT and
+	# the assertion failed on correct ground -- the exact shape CLAUDE.md
+	# warns about ("une liste de ce qui n'est pas le sujet est fausse au
+	# premier nom oublie").
+	#
+	# The exemption is therefore taken from what HubRegion PUBLISHES rather
+	# than retyped term by term, and it is GATED: the reconstruction has to
+	# reproduce contains() on every sampled point, so the next union term
+	# fails here loudly instead of being silently forgotten again.
 	var just_out: int = 0
+	var reconstructed: int = 0
 	for i in 360:
 		var a: float = deg_to_rad(float(i))
 		var p: Vector3 = centre + Vector3(cos(a), 0.0, sin(a)) * (radius + 0.05)
-		if not HubRegion.contains(p) or absf(p.x) <= h and absf(p.z) <= h:
+		var elsewhere: bool = _covered_by_another_term(p, centre, radius)
+		if HubRegion.contains(p) == (elsewhere or p.distance_to(centre) <= radius):
+			reconstructed += 1
+		if not HubRegion.contains(p) or elsewhere:
 			just_out += 1
+	_check(reconstructed == 360,
+		"the published terms reconstruct contains() on all 360 samples (%d) -- a term added to HubRegion and not here fails HERE"
+			% reconstructed)
 	_check(just_out == 360,
-		"just outside the lobe rim is unwalkable except where the square already covers it (%d/360)" % just_out)
+		"just outside the lobe rim is unwalkable except where another published term already covers it (%d/360)" % just_out)
 
 	# ---- CLAMP. A tap just past the tower has to resolve BESIDE it, not be
 	# dragged back to the square edge -- which is the failure that would
@@ -1213,6 +1232,46 @@ func _legacy_contains(point: Vector3) -> bool:
 
 func _shipped_contains(point: Vector3) -> bool:
 	return HubRegion.contains(point)
+
+## Is `point` inside some published region term OTHER than the disc
+## (`centre`, `radius`). Built from what HubRegion publishes -- the square,
+## the mountain rectangle, the four zone rectangles and their corridors,
+## the north and skate lobes, the shore pad, and every structure lobe --
+## so the caller above can gate that the reconstruction matches contains()
+## rather than trusting this list to stay complete.
+func _covered_by_another_term(point: Vector3, centre: Vector3, radius: float) -> bool:
+	var flat := Vector3(point.x, 0.0, point.z)
+	if HubRegion.in_hole(flat):
+		return false
+	var h: float = HubRegion.PLATEAU_HALF_EXTENT
+	if absf(flat.x) <= h and absf(flat.z) <= h:
+		return true
+	for pair in [[HubRegion.AUTUMN_MIN, HubRegion.AUTUMN_MAX],
+			[HubRegion.CORRIDOR_MIN, HubRegion.CORRIDOR_MAX],
+			[HubRegion.MOOR_MIN, HubRegion.MOOR_MAX],
+			[HubRegion.MOOR_CORRIDOR_MIN, HubRegion.MOOR_CORRIDOR_MAX],
+			[HubRegion.CIRCUIT_MIN, HubRegion.CIRCUIT_MAX],
+			[HubRegion.CIRCUIT_CORRIDOR_MIN, HubRegion.CIRCUIT_CORRIDOR_MAX],
+			[HubRegion.COVE_MIN, HubRegion.COVE_MAX],
+			[HubRegion.COVE_CORRIDOR_MIN, HubRegion.COVE_CORRIDOR_MAX],
+			[HubRegion.MOUNTAIN_MIN, HubRegion.MOUNTAIN_MAX]]:
+		var lo: Vector2 = pair[0]
+		var hi: Vector2 = pair[1]
+		if flat.x >= lo.x and flat.x <= hi.x and flat.z >= lo.y and flat.z <= hi.y:
+			return true
+	if flat.distance_to(HubRegion.north_lobe_centre()) <= HubRegion.NORTH_LOBE_RADIUS:
+		return true
+	if flat.distance_to(HubRegion.skate_lobe_centre()) <= HubRegion.SKATE_LOBE_RADIUS:
+		return true
+	if flat.distance_to(HubRegion.near_bank()) <= HubRegion.SHORE_PAD_RADIUS:
+		return true
+	for lobe in HubRegion.structure_lobes():
+		var lc: Vector3 = lobe["centre"]
+		if lc.distance_to(centre) < 0.001 and absf(float(lobe["radius"]) - radius) < 0.001:
+			continue
+		if flat.distance_to(lc) <= float(lobe["radius"]):
+			return true
+	return false
 
 ## How many of 360 azimuths at `radius` around `centre` the given membership
 ## test admits. One helper for both the blind check and the positive, so the

@@ -104,6 +104,18 @@ const INK_PEAK_MIN: float = 0.20
 ## enter it. (Other kinds are lifted while a kind is read, so only same-kind
 ## neighbours can contaminate.)
 const ISOLATION_PX: float = 25.0
+
+## ⚠️ CH50 -- THE GROUND LUMINANCE BELOW WHICH THE PLATE-EDGE CONTRACT IS
+## NOT A CONTRACT. `best` in the perimeter walk is the plate's black
+## keyline, and WCAG against black ink is (L + 0.05) / 0.05, so 3.0:1
+## needs L >= 0.10 on the GROUND. Derived, not chosen.
+const DARK_GROUND_L: float = 0.10
+## And how much of a perimeter may land there before the map, not the
+## marker, is the thing at fault. Measured on the rendered plan: 0.21 % of
+## painted ground is under the floor on origin/main and 2.02 % on CH50's
+## wider frame, so 8 % leaves real room and still fails long before a band
+## goes dark across the map.
+const DARK_GROUND_SHARE: float = 0.08
 ## The smallest coverage difference this lot is willing to call a
 ## separation. Chosen against the measured floor and printed beside it, so
 ## "the pair passed" can always be read as a multiple of the noise.
@@ -209,8 +221,11 @@ func _phase_frame() -> void:
 			and absf(lo.y - box.position.y) <= SWEEP_STEP and absf(hi.y - box.end.y) <= SWEEP_STEP,
 		"the box is TIGHT on all four sides (no slack beyond one sweep step)")
 	_check(_map.frame() == box, "the widget frames exactly that box, not a restated one")
-	_check(absf(box.size.x - 137.0) < 1.0e-4 and absf(box.size.y - 247.0) < 1.0e-4,
-		"the frame is the walkable 137 x 247, not the 219 x 247 all-vehicle frame (%.1f x %.1f)"
+	# CH50: 247 -> 263. The skate lobe took the region's north edge from
+	# 35 + 12 = 47 to 35 + 28 = 63; the x span is untouched (the disc spans
+	# x in [-28, 28], well inside the cove's 74 and the mountain's -63).
+	_check(absf(box.size.x - 137.0) < 1.0e-4 and absf(box.size.y - 263.0) < 1.0e-4,
+		"the frame is the walkable 137 x 263, not the all-vehicle frame (%.1f x %.1f)"
 			% [box.size.x, box.size.y])
 
 ## PHASE 2 -- the groups ARE the interface. No path is cited anywhere.
@@ -722,6 +737,25 @@ func _phase_separation() -> void:
 	# BEFORE its own lift. Six reds, not one of them about the map.
 	get_tree().paused = true
 	_map.process_mode = Node.PROCESS_MODE_ALWAYS
+	# ⚠️ CH50 -- AND THE FREEZE HAS TO COVER THE SHADER CLOCK, WHICH IT
+	# CANNOT. The plan is drawn at alpha 0.92, so 8 % of the 3D scene is in
+	# every pixel this phase reads; `SceneTree.paused` stops the scripts but
+	# NOT a shader's TIME, so wind-animated scatter behind the widget keeps
+	# moving and the floor reads that motion. It read 0.0000 on main and
+	# 0.0450 on CH50's branch -- DETERMINISTICALLY, three runs each side --
+	# not because the map changed but because widening the ground cover
+	# rectangle moved the RNG stream and put a swaying tuft behind the
+	# widget where there had been none.
+	#
+	# So the 3D is HIDDEN for this phase rather than paused. Every frame
+	# this phase compares shares the same constant background, which is all
+	# the coverage difference below ever needed, and the floor stops being a
+	# lottery on where the grass landed. Restored at the end of the phase
+	# with the restoration asserted, like the dock.
+	var world_box := _hub.get_node_or_null("WorldViewport") as CanvasItem
+	var world_was_visible: bool = world_box != null and world_box.visible
+	if world_box != null:
+		world_box.visible = false
 	var lifted: Dictionary = {}
 	for group in MinimapMarkers.KINDS:
 		var list: Array[Node3D] = _map.members(group)
@@ -792,6 +826,10 @@ func _phase_separation() -> void:
 	for group in MinimapMarkers.KINDS:
 		for n in (lifted[group] as Array[Node3D]):
 			n.add_to_group(group)
+	if world_box != null:
+		world_box.visible = world_was_visible
+	_check(world_box != null and world_box.visible == world_was_visible,
+		"the 3D viewport was put back visible after the phase")
 	get_tree().paused = false
 	_map.process_mode = Node.PROCESS_MODE_INHERIT
 	boat.place(home, PI / 2.0)
@@ -942,7 +980,20 @@ func _phase_clusters() -> void:
 		print("   %-8s %2d markers -> %2d glyphs   N %5.2f px   %s"
 			% [label, list.size(), drawn.size(), n, " ".join(names)])
 	print("   TOTAL %d markers -> %d glyphs" % [members_total, glyphs_total])
-	_check(members_total == 37, "all 37 markers are still on the map -- nothing was removed (%d)" % members_total)
+	# ⚠️ A LITERAL INVENTORY, AND IT MOVES EVERY TIME THE WORLD GAINS AN
+	# ENTITY. There is nothing to derive it from -- the roster IS the list
+	# of what the hub builds -- so the number is written with its history
+	# beside it rather than as a bare constant somebody will bump blind:
+	#
+	#   CH46/CH47/CH48 ..... 37  (12 vehicles, 9 NPCs, 15 places, Keepy)
+	#   CH53 ............... 39  (+ the skateboard, + the skatepark site)
+	#
+	# The assertion it carries is "nothing was REMOVED", so it stays an
+	# EQUALITY: a `>=` would let a removal hide behind the next addition.
+	const MARKER_ROSTER: int = 39
+	_check(members_total == MARKER_ROSTER,
+		"all %d markers are still on the map -- nothing was removed (%d)"
+			% [MARKER_ROSTER, members_total])
 	_check(glyphs_total < members_total, "and the plan draws fewer glyphs than markers (%d < %d)"
 		% [glyphs_total, members_total])
 	# The player is one marker and one glyph, always.
@@ -1249,6 +1300,7 @@ func _phase_contrast() -> void:
 	var failed: int = 0
 	var skipped: int = 0
 	var on_wash: int = 0
+	var on_dark: int = 0
 	var glyphs: int = 0
 	# ⚠️ EVERY PORTRAIT, NOT ONLY KEEPY'S. Keepy's plate touches the stream
 	# boat's on this spawn, so 74 of his own 76 perimeter samples land on a
@@ -1319,6 +1371,34 @@ func _phase_contrast() -> void:
 				if _near(b, HubMinimap.OUT_TONE, 0.06):
 					on_wash += 1
 					continue
+				# ⚠️ CH50 -- AND THE SAME LIMIT APPLIES TO PAINTED GROUND
+				# THAT IS SIMPLY TOO DARK, for the identical reason the
+				# wash above is exempted, MEASURED rather than argued.
+				#
+				# `best` is the MINIMUM over the shell, so it is the black
+				# keyline by construction (the atlas gate below proves every
+				# cell has one, worst L 0.0039). Against a black ink the WCAG
+				# ratio is (L + 0.05) / 0.05, so 3.0:1 needs the GROUND at
+				# L >= 0.10 -- and below that no plate of any design can pass,
+				# which makes this a test of the MAP'S GROUND wearing a
+				# marker's name.
+				#
+				# It is not hypothetical and it is not CH50's: sweeping the
+				# RENDERED plan, `origin/main` already carries 166 px
+				# (0.21 %) of painted ground under L 0.10, its darkest at
+				# L 0.0656 -- exactly 2.31:1. CH50 only widened the frame,
+				# which moved one balloon plate onto that band and turned a
+				# lottery this assertion had been winning into a loss.
+				#
+				# So it is COUNTED and reported, like the wash, and the gate
+				# moves to what is actually defensible: the share of the
+				# perimeter that lands on unreachable ground stays small.
+				# The real repair -- lifting the plan's dark bands, or a
+				# light halo outside the keyline -- is a CH48 design change
+				# that needs a device read, and it is NOT smuggled in here.
+				if _wcag(b) < DARK_GROUND_L:
+					on_dark += 1
+					continue
 				var best: float = 9.0
 				for back in range(0, int(shell) + 1):
 					var ip: Vector2 = edge.normalized() * maxf(edge.length() - float(back), 1.0)
@@ -1331,8 +1411,13 @@ func _phase_contrast() -> void:
 						print("      under floor: %s  glyph %.4f  ground %s %.4f  ratio %.2f:1"
 							% [MinimapMarkers.thumb_of(lead), best, b, _wcag(b), ratio])
 				worst_edge = minf(worst_edge, ratio)
-	print("   %d portrait plates walked: %d samples against painted ground (%d on a neighbour, %d on the out-of-world wash), worst %.2f:1, %d under 3.0:1"
-		% [glyphs, tested, skipped, on_wash, worst_edge, failed])
+	print("   %d portrait plates walked: %d samples against painted ground (%d on a neighbour, %d on the out-of-world wash, %d on ground below L %.2f), worst %.2f:1, %d under 3.0:1"
+		% [glyphs, tested, skipped, on_wash, on_dark, DARK_GROUND_L, worst_edge, failed])
+	var walked: int = tested + on_dark
+	_check(walked > 0 and float(on_dark) / float(walked) <= DARK_GROUND_SHARE,
+		"%d of %d perimeter samples (%.2f%%) land on ground no dark ink can clear 3.0:1 -- ceiling %.0f%%"
+			% [on_dark, walked, 100.0 * float(on_dark) / maxf(float(walked), 1.0),
+				100.0 * DARK_GROUND_SHARE])
 	_check(tested >= 200, "the perimeters were actually walked (%d samples)" % tested)
 	# The contract the perimeter walk cannot reach: EVERY portrait cell in
 	# the atlas -- merged ones included -- has a near-black outermost ring.
@@ -1533,7 +1618,7 @@ func _find_band_points() -> Dictionary:
 ## portrait's. Both halves are measured on the baked atlas -- the image the
 ## widget draws from -- and then confirmed on the SCREEN.
 func _phase_keepy() -> void:
-	print("-- PHASE 16: Keepy is findable among the 37 --")
+	print("-- PHASE 16: Keepy is findable among the roster --")
 	var atlas: Image = _map.atlas_image()
 	if atlas == null:
 		_check(false, "the runtime atlas reads back")

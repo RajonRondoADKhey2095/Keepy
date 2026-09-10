@@ -1456,6 +1456,12 @@ func _advance() -> void:
 	if delta.length() <= ARRIVE_EPSILON:
 		_has_target = false
 		_state = State.IDLE
+		# CH54: a roll that has come to rest starts its next one from the
+		# floor -- the run-up is what a ride FEELS like, and a board that
+		# left at full pace from a standstill was the whole complaint.
+		_glide_pace = _glide_rest_pace()
+		_glide_heading = Vector3.ZERO
+		_glide_carry = 0.0
 		became_idle.emit()
 		return
 	_begin_hop(here, delta)
@@ -1495,11 +1501,31 @@ func _begin_hop(here: Vector3, delta: Vector3) -> void:
 	if gliding:
 		# A short last segment keeps the glide's SPEED, not its duration:
 		# 0.3 s for 0.2 u would read as a stall at the finish line.
-		seconds = _vehicle_glide_s * (step / _vehicle_glide_step) / _vehicle_speed
+		#
+		# CH54: and the speed is no longer a constant. The segment runs
+		# from the pace the last one ended at to the pace this one earns
+		# (see _glide_segment_pace), so a roll STARTS slow, cruises, and
+		# EASES into its target -- a linear speed ramp inside the segment,
+		# which _apply_hop turns back into a distance fraction. Its
+		# duration is the segment's length over its MEAN pace.
+		_glide_pace = _glide_segment_pace(delta, step)
+		var mean_pace: float = maxf((_glide_pace_from + _glide_pace) * 0.5, 0.01)
+		seconds = _vehicle_glide_s * (step / _vehicle_glide_step) / (_vehicle_speed * mean_pace)
 	elif _vehicle != null:
 		seconds = VEHICLE_HOP_DURATION
-	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, maxf(seconds, 0.02))
+	_hop_seconds = maxf(seconds, 0.02)
+	_hop_tween.tween_method(_apply_hop, 0.0, 1.0, _hop_seconds)
 	_hop_tween.finished.connect(_on_hop_finished, CONNECT_ONE_SHOT)
+	if gliding and _glide_carry > 0.0:
+		# CH54: the previous segment's tween finished PART WAY through a
+		# frame and snapped to its end; the rest of that frame belongs to
+		# this segment. Stepping it here, in the same frame, keeps the
+		# roll continuous -- without it every boundary is one short frame
+		# (measured: 6.0 u/s among 10.0, once per segment), which a flat
+		# glide has nothing to hide under. Glide only: on foot that frame
+		# is part of the published traversal figures and stays.
+		_hop_tween.custom_step(_glide_carry)
+	_glide_carry = 0.0
 
 func _face(direction: Vector3) -> void:
 	var flat := Vector3(direction.x, 0.0, direction.z)
@@ -1515,6 +1541,12 @@ func _face(direction: Vector3) -> void:
 	_yaw.rotation_degrees.y = rad_to_deg(atan2(flat.x, flat.z))
 
 func _apply_hop(t: float) -> void:
+	if is_gliding():
+		# CH54: the tween's t is a fraction of TIME; on a segment whose
+		# speed ramps linearly from one pace to the next, the fraction of
+		# DISTANCE covered is the quadratic below. Identity when both
+		# paces are equal, which is every glide that predates this lot.
+		t = _glide_progress(t)
 	var ground := _hop_from.lerp(_hop_to, t)
 	# The line the arc is drawn ON. Flat for every hop on the plateau
 	# (both ends default to 0.0); sloped only for the dive, which starts
@@ -1555,6 +1587,13 @@ func _squash_at(t: float) -> Vector3:
 func _on_hop_finished() -> void:
 	_state = State.IDLE
 	_hop_height = HOP_HEIGHT
+	# CH54: how far past its duration the tween ran on its last frame
+	# (Tween.get_total_elapsed_time includes that last full delta --
+	# measured 0.16667 for a 0.16 s tween at 60 fps). Read here, spent by
+	# the next glide segment, discarded by everything else.
+	_glide_carry = 0.0
+	if is_gliding() and _hop_tween != null:
+		_glide_carry = maxf(_hop_tween.get_total_elapsed_time() - _hop_seconds, 0.0)
 	# Snapped to the END of the base line, not to zero. Identical for
 	# every plateau hop, where that line is flat at zero; for the dive it
 	# is what puts the feet on the water surface instead of teleporting
@@ -1619,6 +1658,111 @@ var _vehicle_lift: float = 0.0
 var _vehicle_glide_step: float = 0.0
 var _vehicle_glide_s: float = 0.0
 var _vehicle_speed: float = 1.0
+
+## =====================================================================
+## CH54 -- THE GLIDE'S PACE PROFILE (the skateboard)
+##
+## SkateDriveProbe measured the CH53 board through the real tap channel:
+## 7.94 u/s from the first frame to a dead stop, six 2.7 u arcs 1.30 u
+## high -- the Sautillon with a plank under it, which is exactly what
+## Mathieu reported from the device ("il est sur le skate mais il ne le
+## conduit pas"). A ride is not a speed, it is a speed PROFILE: a run-up,
+## a cruise, a run-out into the target, and a push-off again after a
+## reversal. Everything below is that profile, and nothing else -- no
+## physics, no collider, no contact: a glide segment is still one tween
+## from one ground point to the next, and the region still clamps the
+## destination. The profile only decides how long each segment TAKES and
+## how the body progresses along it.
+##
+## The pace is a factor on the vehicle's authored cruise
+## (`_vehicle_glide_step / _vehicle_glide_s`): GLIDE_PACE_FLOOR at rest,
+## climbing by (1 - floor) over `_vehicle_accel_u` units of roll, and
+## easing back to the floor over the last `_vehicle_brake_u` units before
+## the target. Both distances are the vehicle's, handed in at mount; a
+## vehicle that hands in zeros glides at CH29's constant pace, and the
+## trace is byte-identical to what it was (the yacht's licence).
+##
+## A segment's speed ramps LINEARLY from the pace the last one ended at
+## to the pace this one earns, so the profile is continuous in speed at
+## every segment boundary -- a step change there would read as a stutter
+## at 60 fps, and a chain of 1.6 u segments has many boundaries.
+var _vehicle_accel_u: float = 0.0
+var _vehicle_brake_u: float = 0.0
+## The pace the last segment ENDED at (and the next starts from).
+var _glide_pace: float = 1.0
+var _glide_pace_from: float = 1.0
+## The direction the last segment rolled in; zero at rest.
+var _glide_heading: Vector3 = Vector3.ZERO
+## The last segment's tween overshoot, in seconds, spent by the next one.
+var _glide_carry: float = 0.0
+## The current hop tween's duration, so the overshoot can be read.
+var _hop_seconds: float = HOP_DURATION
+## Where a roll starts from, and what it comes back to after a reversal.
+## 0.35 and not 0: a tap should answer at once -- the FIRST segment
+## still moves, it just moves at a third of cruise.
+const GLIDE_PACE_FLOOR: float = 0.35
+## A turn sharper than this (cosine of the angle between two consecutive
+## segments) costs half the pace; a reversal (negative cosine) costs the
+## whole run-up. Free to steer gently, expensive to yank -- the cheapest
+## thing that reads as a board that has to be pushed.
+const GLIDE_TURN_COS: float = 0.5
+const GLIDE_TURN_KEEP: float = 0.5
+
+## The pace this segment must END at. `delta` is the whole remaining
+## run to the target, `step` the length of this segment.
+func _glide_segment_pace(delta: Vector3, step: float) -> float:
+	var heading: Vector3 = delta.normalized()
+	var from: float = _glide_pace
+	# The turn penalty belongs to the PROFILE: a vehicle with no run-up
+	# (CH29's constant glide) has nothing to lose on a turn either.
+	if _glide_heading != Vector3.ZERO and _vehicle_accel_u > 0.0:
+		var turn: float = heading.dot(_glide_heading)
+		if turn < 0.0:
+			from = GLIDE_PACE_FLOOR
+		elif turn < GLIDE_TURN_COS:
+			from = maxf(from * GLIDE_TURN_KEEP, GLIDE_PACE_FLOOR)
+	_glide_pace_from = from
+	_glide_heading = heading
+	# Brake target: what the pace may be with `remaining` still to roll
+	# AFTER this segment. 1.0 until the run-out begins.
+	var remaining: float = maxf(delta.length() - step, 0.0)
+	var brake_cap: float = 1.0
+	if _vehicle_brake_u > 0.0:
+		brake_cap = lerpf(GLIDE_PACE_FLOOR, 1.0, clampf(remaining / _vehicle_brake_u, 0.0, 1.0))
+	# Run-up: the pace may climb by at most this much over this segment.
+	var climbed: float = 1.0
+	if _vehicle_accel_u > 0.0:
+		climbed = minf(from + (1.0 - GLIDE_PACE_FLOOR) * step / _vehicle_accel_u, 1.0)
+	return minf(climbed, brake_cap)
+
+## Where the pace rests: the floor for a vehicle with a run-up, cruise
+## for one without (CH29's glide, unchanged).
+func _glide_rest_pace() -> float:
+	return GLIDE_PACE_FLOOR if _vehicle_accel_u > 0.0 else 1.0
+
+## Time fraction -> distance fraction on a segment whose speed ramps
+## linearly from _glide_pace_from to _glide_pace.
+func _glide_progress(tau: float) -> float:
+	var a: float = _glide_pace_from
+	var b: float = _glide_pace
+	var mean: float = (a + b) * 0.5
+	if mean <= 0.0001 or absf(a - b) < 0.0001:
+		return tau
+	return (a * tau + (b - a) * tau * tau * 0.5) / mean
+
+## CH54: how far the current roll still has to go, along the ground, or
+## 0.0 when nothing is queued. Read by HubSkatepark on a landing -- the
+## landing that ends a roll is the one within ARRIVE_EPSILON of the
+## target, and it is the only one a roll scores on.
+func roll_remaining() -> float:
+	if not _has_target:
+		return 0.0
+	return Vector2(_target.x - global_position.x, _target.z - global_position.z).length()
+
+## The pace the last glide segment was cut to end at (1.0 = cruise). A
+## probe reads this to gate the profile; nothing in the game does.
+func glide_pace() -> float:
+	return _glide_pace
 
 ## Hop geometry while on the vehicle: 2.7 u per hop in 0.34 s is 7.9 u/s
 ## against 5.4 u/s on foot (x1.48), with an arc almost twice as tall -- the
@@ -1716,7 +1860,11 @@ func _on_carrier_dismount_finished() -> void:
 ## Climbs onto `vehicle` (a Node3D drawn by someone else) and rides it from
 ## here on: every hop carries it. `lift` is how high its top is above the
 ## ground -- his feet stand there. Refused unless he is standing still.
-func mount_vehicle(vehicle: Node3D, lift: float, glide_step: float = 0.0, glide_s: float = 0.0) -> bool:
+## CH54: `accel_u` and `brake_u` are the glide's run-up and run-out, in
+## units of roll (see THE GLIDE'S PACE PROFILE). Zero, the default, is
+## CH29's constant-pace glide.
+func mount_vehicle(vehicle: Node3D, lift: float, glide_step: float = 0.0, glide_s: float = 0.0,
+		accel_u: float = 0.0, brake_u: float = 0.0) -> bool:
 	if vehicle == null or not is_instance_valid(vehicle):
 		return false
 	if _state != State.IDLE or _vehicle != null:
@@ -1726,6 +1874,12 @@ func mount_vehicle(vehicle: Node3D, lift: float, glide_step: float = 0.0, glide_
 	_vehicle_glide_step = maxf(glide_step, 0.0) if glide_s > 0.0 else 0.0
 	_vehicle_glide_s = maxf(glide_s, 0.0)
 	_vehicle_speed = 1.0
+	_vehicle_accel_u = maxf(accel_u, 0.0) if _vehicle_glide_step > 0.0 else 0.0
+	_vehicle_brake_u = maxf(brake_u, 0.0) if _vehicle_glide_step > 0.0 else 0.0
+	_glide_pace = _glide_rest_pace()
+	_glide_pace_from = _glide_pace
+	_glide_heading = Vector3.ZERO
+	_glide_carry = 0.0
 	var ground := HubSurface.ground(global_position)
 	global_position = ground + Vector3(0.0, _vehicle_lift, 0.0)
 	_place_vehicle(ground, ground.y, Vector3.ONE)
@@ -1743,6 +1897,12 @@ func dismount_vehicle() -> void:
 	_vehicle_glide_step = 0.0
 	_vehicle_glide_s = 0.0
 	_vehicle_speed = 1.0
+	_vehicle_accel_u = 0.0
+	_vehicle_brake_u = 0.0
+	_glide_pace = 1.0
+	_glide_pace_from = 1.0
+	_glide_heading = Vector3.ZERO
+	_glide_carry = 0.0
 	if _state == State.IDLE:
 		global_position = ground
 	vehicle_dismounted.emit()

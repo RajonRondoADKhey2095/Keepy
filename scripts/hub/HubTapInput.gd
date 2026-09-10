@@ -329,6 +329,21 @@ func _unhandled_input(event: InputEvent) -> void:
 	# same writer -- one condition per DRIVEN VEHICLE, not per vehicle.
 	if transport != null and transport.is_driving_sailboat():
 		return
+	# CH63 / CH64: and the same for the board, the fourth condition of the
+	# same shape. A ridden board is piloted frame by frame by a held finger
+	# (SkateTouchInput), which is CLAUDE.md's own criterion for a piloted
+	# vehicle, so every point made while riding belongs to that writer.
+	#
+	# ⚠️ THIS IS WHAT SHUNTS THE SHIPPED TAP ROUTE while riding, and it has
+	# to be HERE rather than at a board branch in HubWorld: one finger has
+	# ONE meaning, and a second reader of the same point would be the
+	# double dispatch CH63's red pass exists to prove absent. CH64 removed
+	# the TAP scheme (and its `drag_enabled()` half of this test): the
+	# ride alone decides. `_handle_point` and `_on_tapped_ground` are not
+	# touched, and the ten states and eighteen probes that share them
+	# neither know nor care that the board exists.
+	if transport != null and transport.is_riding_board():
+		return
 	var touch := event as InputEventScreenTouch
 	if touch:
 		if not touch.pressed:
@@ -398,6 +413,15 @@ func _handle_point(screen_point: Vector2) -> void:
 	# see HubRegion for why the difference matters and what it costs.
 	var destination := HubRegion.clamp_to(point)
 
+	# =====================================================================
+	# CH57 -- THE PHYSICS BOARD TAKES EVERY TAP, AND IT IS THE ONLY PROP
+	# THAT DOES
+	#
+	# CH58 routed a ridden board's tap here, straight to tapped_ground,
+	# because the board was then a carrier that was NOT piloted -- the
+	# screen was still a map. CH64: it is piloted (SkateTouchInput), so it
+	# joined the shunt in `_unhandled_input` beside the three other driven
+	# vehicles, and no point reaches this function while riding.
 	# THE BOAT WINS, and it is asked BEFORE the ground point becomes a
 	# destination. The radius is in WORLD units and is measured on this
 	# same ground point, so "the boat or the ground behind it" is decided

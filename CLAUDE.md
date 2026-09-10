@@ -284,6 +284,36 @@ passer gratuitement.
 sous llvmpipe elle dépasse 10 minutes sans finir alors qu'elle rend son
 verdict en secondes.
 
+### ⚠️ ET IL Y A UN TROISIÈME CAS : UNE SONDE QUI MESURE DU **TEMPS CPU** VA EN HEADLESS
+
+Écrit au CH56, contre une consigne de brief et sur une mesure. La règle
+ci-dessus a deux branches (des pixels → `xvfb`, des transforms → headless)
+et le temps n'est ni l'un ni l'autre. Mesuré sur `PhysicsCostProbe` :
+sous `xvfb --rendering-driver opengl3`, llvmpipe redessine une fenêtre
+1080×1920 **vide** à **chaque itération**, pour **~8,5 ms avec ±2 ms de
+tremblement** — alors que la grandeur mesurée (cent corps physiques
+mobiles) vaut **2,1 ms en tout**. Le signe du signal a **changé d'un run à
+l'autre** (+0,2593 puis −3,4524 ms), et deux assertions sont sorties
+ROUGES sur un banc parfaitement sain. En headless, le même signal sort à
+**+0,2266 pour un tremblement de 0,0213**.
+
+Le driver DUMMY ne peut pas tromper une telle sonde **à condition que ses
+témoins n'aient rien à voir avec le rendu** : au CH56 ce sont le registre
+du `PhysicsServer3D` par RID et une requête d'espace vivante, dont aucun
+ne lit un pixel. C'est cette condition qu'il faut énoncer, pas le driver.
+
+⚠️ **ET UN BANC DONT LE PLANCHER DÉPASSE SON SIGNAL DOIT RENDRE UNE
+ABSENCE DE VERDICT, JAMAIS UN ROUGE.** C'est le raisonnement de
+`ProbeWatchdog` pour son code 2 (« un timeout n'est ni 0 ni 1 [...] un
+appelant qui le traiterait comme une assertion échouée rapporterait une
+trouvaille que la sonde n'a jamais faite »), appliqué à une autre absence :
+un banc plus bruyant que ce qu'il mesure n'a **rien vérifié et rien
+réfuté**. La parade est une **phase de RÉSOLUTION en tête** — mesurer le
+plus petit delta qu'on compte publier, le comparer au tremblement de ces
+deux stations, et **sortir sur un code distinct** si la pièce ne le voit
+pas. Elle coûte une minute et elle évite dix minutes de chiffres dont les
+barres d'erreur les recouvrent.
+
 ### ⚠️ L'ORDRE DES FLAGS — les flags moteur AVANT le `--`
 
 ```
@@ -655,6 +685,130 @@ le flanc proche invisible. De trente unités ça se lit comme un dôme propre
 et ça valide la forme ; debout dessus, il n'y a plus rien. Une session qui
 n'a regardé que la vue de loin conclut que le relief marche.
 
+⚠️ **ET CE CONTRÔLE A UN ANGLE MORT, MESURÉ AU CH53 : UN SOLIDE CONVEXE
+FERMÉ RETOURNÉ COUVRE EXACTEMENT LA MÊME SILHOUETTE.** La passe rouge d'un
+park de cinq modules, convention d'enroulement inversée, a rendu **quatre
+rouges sur cinq attendus** : le survivant était un rail — trois boîtes —
+à **0,9977** de ses pixels conservés. Ce n'est pas un défaut du rail :
+sous `cull_back`, un corps fermé à l'envers montre l'INTÉRIEUR de sa paroi
+lointaine au lieu de l'EXTÉRIEUR de sa paroi proche, et un aplat non
+éclairé ne distingue pas les deux. **Un comptage de pixels est un test de
+SILHOUETTE, et une silhouette ne change pas sous inversion** ; seuls les
+corps OUVERTS (un dessous absent) s'effondrent. C'est la règle « le nombre
+d'échecs attendus fait partie de l'assertion » qui a transformé ça en
+trouvaille au lieu d'un haussement d'épaules.
+
+**Le complément, et il ferme le cas sur toute forme** : un shader encode
+la profondeur en espace vue ; rendu `cull_back` un corps bien enroulé
+montre sa surface **PROCHE**, rendu `cull_front` la **LOINTAINE**, et
+l'inversion échange les deux. La moyenne encodée sous `cull_back` doit
+donc être **plus petite** que sous `cull_front` — un **SIGNE**, sans seuil
+à régler. Re-neutralisé, les **cinq** modules sortent inversés, rail
+compris. Et la garde qui va avec : **asserter que les DEUX passes peignent
+quelque chose**, sinon un corps disparu passe le test de signe faute
+d'échantillons.
+
+### ⚠️ LES NORMALES D'UN MAILLAGE SONT UN TÉMOIN INDÉPENDANT DE SA GÉOMÉTRIE
+
+Écrit au CH60, et le témoin criait depuis **sept lots**. Le quarterpipe du
+skatepark était construit comme sa propre **TRANSPOSÉE** : le profil livré
+montait à **86,25°** là où le rider arrive et s'aplatissait à **3,75°** au
+lip — une bosse convexe, pas une transition — parce que les deux
+composantes d'un `Vector2` de profil étaient consommées à l'envers. Le
+commentaire au-dessus décrivait la forme que le code ne construisait pas,
+et nommait un centre d'arc qui n'était pas celui du cercle paramétré.
+
+**Ce qui l'a prouvé n'est pas une relecture** : ce sont les **normales de
+sommet**, écrites dans la boucle suivante et jamais touchées. Elles sont
+exactement celles du profil CORRIGÉ. Mesuré facette par facette sur le
+maillage livré : **86,25° d'écart** entre la normale stockée et la vraie
+normale de face, **en miroir exact** — la normale stockée de la facette *k*
+est la vraie normale de la facette *25 − k*. Après correction : **3,75°**,
+une demi-facette, c'est-à-dire ce qu'une normale lisse contre une facette
+plate DOIT valoir.
+
+**Règle** : positions et normales d'un maillage construit par code sont
+**deux lectures d'une même forme**, écrites par deux bouts de code
+différents. Les confronter (`(b−a)×(c−a)` contre `ARRAY_NORMAL`, en tenant
+compte de la convention horaire de ce moteur) coûte une boucle et attrape
+une transposition qu'aucune relecture du profil n'attrape. Publier le pire
+écart, et le gater à une **demi-facette** : au-delà, ce n'est pas de
+l'ombrage lisse, c'est un désaccord.
+
+⚠️ **Et le symptôme visuel n'est PAS celui qu'on attend.** Ce projet est
+unlit — mais le shader décor est un **toon shader qui lit `NORMAL`**
+(`ndl = dot(n, sun_dir)`). Le park a donc été **OMBRÉ comme un quarterpipe
+tout en étant DESSINÉ comme une bosse** : la silhouette était plausible,
+l'AABB juste, le compte de triangles juste, et rien ne signalait quoi que
+ce soit. Corriger a coûté **une ligne** et **zéro triangle, zéro primitive,
+zéro draw call** (mesuré des deux côtés) — la seule chose qui bouge est
+0,4 à 0,7 % des pixels de la frame.
+
+### ⚠️ UN TEST VALIDE SUR UNE CLASSE DE FORMES EST UN TIRAGE AU SORT SUR UNE AUTRE, ET IL NE L'ANNONCE PAS
+
+Dix-neuvième faux-signal du dépôt, CH60, et il vivait dans une sonde que
+deux lots avaient déjà signée.
+
+`SkateparkProbe` PHASE W porte un sous-test de **signe de profondeur**
+ajouté au CH53 pour combler une cécité réelle du juge CH39 : un corps
+**fermé CONVEXE** rendu à l'envers couvre **exactement la même
+silhouette**, donc un comptage de pixels ne peut pas le voir. Le sous-test
+dit de lui-même qu'« il marche sur un corps fermé convexe ». C'est vrai —
+et c'est **toute** sa validité : il suppose qu'aucune surface ne peut
+tourner le dos à la caméra tout en étant **plus proche** qu'une surface de
+face. Un corps **concave** casse exactement cette hypothèse.
+
+Le jour où un module est devenu concave, il a rougi à **0,2836 contre
+0,2831** : une égalité à 0,18 % publiée comme un maillage à l'envers.
+
+**Il n'a pas été fait taire — il a été MESURÉ** (le dépôt interdit le
+premier, voici ce que le second donne). Module reconstruit **à l'envers**,
+les deux tests relus à **cinq stations** :
+
+| module concave | ratio conservé | signe de profondeur, par station |
+|---|---|---|
+| correct | **1,0000** ×5 | ok, ok, ok, INVERTED, INVERTED |
+| à l'envers | **0,575 – 0,729** | ok, ok, INVERTED ×3 |
+
+**Les deux ensembles de verdicts SE RECOUVRENT** : le sous-test ne
+distingue pas les deux cas, sa réponse suit la **STATION**. Le juge CH39,
+lui, les sépare complètement — un corps **concave** ne garde pas sa
+silhouette sous inversion, donc la cécité que le sous-test couvrait ne
+s'applique tout simplement pas à cette forme.
+
+⚠️ **Et ce n'était pas la forme neuve qui était spéciale.** Le même
+balayage a pris le **BOL**, une cuvette concave livrée depuis CH53 et que
+le lot ne touchait pas, rapportant `INVERTED` à **0,2503 contre 0,2490**
+depuis une station que la sonde n'utilisait pas. **L'invalidité était déjà
+dans le dépôt** ; la forme neuve s'est seulement trouvée là où elle tire.
+
+**Règle, et elle vaut pour tout test dont la validité repose sur une
+propriété de forme** (convexité, fermeture, monotonie, connexité) :
+
+1. **La propriété se nomme dans le test**, pas seulement dans son
+   commentaire.
+2. **Le test publie son propre plancher** — deux lectures d'un même état,
+   rien touché — et **RETURN AUCUN VERDICT** en dessous. C'est la règle
+   CH56 « une sonde dont le plancher dépasse sa grandeur doit rendre une
+   absence de verdict », appliquée à un signe et pas à une durée.
+3. **Ce qu'il décline est passé à un autre test, et le passage de relais
+   est PROUVÉ dans le même run** par une passe rouge sur cette forme-là.
+   « L'autre test le couvre » est une affirmation sur une CLASSE ; elle se
+   mesure sur l'OBJET.
+4. **Un garde empêche « non résolu » de devenir une porte de sortie** : le
+   test doit encore résoudre sur au moins un sujet, sinon l'exemption
+   devient l'issue de tout le monde et le silence est revenu par la porte
+   de derrière.
+
+⚠️ **Corollaire de gate, tiré du même lot** : un objet **grimpable** ne se
+gate pas sur sa hauteur **DESSINÉE**. `floor_max_angle` (45° par défaut)
+décide de la dernière facette sur laquelle un corps a le droit de se
+tenir : sur un quarterpipe, c'est **P6 sur 12**, soit **29 % de la montée**
+— mesuré 0,582 pour un lip de 2,10 et 0,391 pour un lip de 1,45. Un gate
+écrit au lip exige une performance qu'aucun corps cinématique sans inertie
+stockée ne peut faire, et il n'a pas tort sur la géométrie : il répond à
+une autre question.
+
 ### ⚠️ LE COMPTEUR DU MOTEUR NE COMPTE QUE L'OPAQUE, ET AU LOD QU'IL A CHOISI
 
 `RenderingServer.viewport_get_render_info(..., PRIMITIVES_IN_FRAME)` n'est
@@ -743,6 +897,56 @@ chat à l'extérieur, aucune sonde rouge. Toute constante qui a un SENS
 (intérieur/extérieur, devant/derrière, gauche/droite) se gate sur une
 lecture du côté réel, jamais sur le commentaire qui le nomme.
 
+### ⚠️ DEUX FACES COPLANAIRES QUI SE RENCONTRENT PAR LA TRANCHE DONNENT UN CONTACT DÉGÉNÉRÉ — ET SA NORMALE EST HORIZONTALE
+
+Premier collider réel du hub (CH57), et le symptôme ne ressemble pas à sa
+cause. La planche devait monter sur la funbox ; elle s'est arrêtée à
+**3,72 u**, c'est-à-dire **exactement sa propre demi-longueur (0,46)**
+avant le pied de la rampe. Elle ne traversait pas et ne montait pas : elle
+**s'arrêtait à côté** — le troisième des trois résultats possibles, et le
+seul qu'aucune assertion de HAUTEUR seule ne distingue du deuxième.
+
+Le vidage des contacts **par tick** donne la cause en un nombre :
+
+```
+t20  pos (0.000, 0.0000, 48.2809)  floor=false wall=true
+     n=(0, 0, 1) d=0.0009   n=(0, 0, 1) d=0.0001
+```
+
+La normale de contact est **`(0, 0, 1)`** — un **MUR VERTICAL** — contre
+une rampe dont la vraie normale est `(0 ; 0,861164 ; 0,508327)`. Cette
+vraie normale n'est apparue **qu'une frame sur trente**, noyée sous deux
+contacts de mur sur la même frame.
+
+Le mécanisme : la pièce de rampe s'effile en une **arête d'épaisseur nulle
+à y = 0**, et le dessous de la boîte est une **face plate à y = 0**. Les
+deux sont **COPLANAIRES**, donc la direction de translation minimale qui
+les sépare est **horizontale** — et le moteur classe une pente de **30,6°**
+en mur de **90°**. Ni le hull, ni l'enroulement, ni la couche de collision,
+ni `floor_max_angle` n'y étaient pour quelque chose : **c'est la PLANÉITÉ
+du dessous** qui l'était.
+
+**Règle** : un corps censé MONTER une géométrie posée sur le même plan que
+lui **ne peut pas avoir de face inférieure plate à ce plan**. Une capsule
+couchée (ou toute forme dont le dessous est une ligne ou un point) donne
+la vraie normale de pente **dès le premier contact** — mesuré, même
+station, même run : `floor=true` avec `n=(0 ; 0,861164 ; 0,508327)` au
+premier tick, puis 0,047 → 0,881 en quatorze ticks. Bonus non négociable
+au passage : la tangente d'une capsule est à **exactement y = 0** dans
+l'espace du corps, donc un corps posé sur une surface a son **ORIGINE à la
+hauteur de cette surface**, sans facteur de correction — ce qui permet de
+gater le trajet contre la cote **authored** de la pièce et non contre un
+epsilon réglé sur l'artefact.
+
+⚠️ **Et c'est un piège de MOTEUR, donc il ne se relit pas : il se VIDE.**
+L'angle de la rampe était juste, `floor_max_angle` était juste, la sonde
+était juste — et le seul instrument qui l'a nommé est l'impression de
+`get_slide_collision().get_normal()` **à chaque tick**. C'est le pendant
+collision de CH39 (« une assertion d'orientation ne se relit pas, elle se
+rend ») : quand un moteur contredit une géométrie qu'on a vérifiée, ce
+qu'il faut lire est ce que le MOTEUR a calculé, pas ce que la géométrie
+dit.
+
 ### ⚠️ Autres pièges d'API mesurés
 
 * **`Object.get("UNE_CONST")` rend `null`** — une constante GDScript n'est
@@ -784,6 +988,24 @@ lecture du côté réel, jamais sur le commentaire qui le nomme.
 * **Toute sonde qui joue un cue audio puis quitte** doit attendre en temps
   RÉEL avant de sortir, sinon elle s'ajoute `ObjectDB instances leaked at
   exit` **après** son propre verdict et casse la comparaison byte-identique.
+* **Un `Tween` qui finit au milieu d'une frame SNAPPE à sa fin et laisse
+  UNE frame courte** : un segment de 1,6 u à 10 u/s dure 9,6 frames, la
+  10ᵉ ne parcourt que 0,6 frame de distance — lu `6.0` entre des `10.0`
+  sur un roulement plat (CH54). À pied le rebond le cache, et c'est dans
+  les chiffres de traversée publiés (le « ~1,2 % de plus que
+  l'arithmétique » de `HOP_DURATION`). Mesuré : `get_total_elapsed_time()`
+  INCLUT le delta entier de la dernière frame (0,16667 pour 0,16), et
+  `custom_step(over)` sur le tween suivant, dans la MÊME frame, absorbe
+  le dépassement. Le report ne s'applique qu'en glisse : le faire à pied
+  raccourcirait chaque traversée publiée.
+* **`edit/loop_mode=0` dans un `.import` de WAV ne veut PAS dire « pas de
+  boucle »** — il veut dire **« Detect From WAV »**, et un WAV généré sans
+  chunk de boucle retombe alors sur DISABLED. L'énumération de
+  l'importeur 4.3 est `0 Detect From WAV / 1 Disabled / 2 Forward /
+  3 Ping-Pong / 4 Backward` : une boucle demande **2**. Le symptôme est un
+  son en boucle qui s'arrête à la fin du sample, sans erreur. Le code qui
+  joue le sample **asserte** `loop_mode != LOOP_DISABLED` plutôt que de
+  faire confiance au fichier `.import`, qu'un ré-import régénère.
 * **`KartTouchInput.input.brake` posé UNE FOIS hors boucle ne tient pas** :
   `_physics_process` le réécrit CHAQUE frame sur l'état du clavier
   (`_brake_index < 0` → faux en headless, aucune touche pressée), donc un
@@ -1203,6 +1425,33 @@ ces pixels visaient du sol inexistant, jusqu'à **49,8 u hors carte**.
 clampée.** Écrit une fois pour tous les props, parce que l'entonnoir est une
 propriété du fait d'être **PRÈS D'UN BORD**, pas d'être une cabane.
 
+### ⚠️ UN CORPS QUI QUITTE LE SOL N'EST PLUS LÀ OÙ ON LE TAPE — la parallaxe est mesurée
+
+`HubCamera` ne monte **jamais** (`OFFSET` est une constante et elle suit le
+point SOL) et **tout tap se résout sur `HubSurface`**. Un corps qui se tient
+**au-dessus** du plan de sol est donc **DESSINÉ** là où le sol sous lui n'est
+pas, et l'écart grandit avec la hauteur. Mesuré au CH58 sur la planche :
+
+| station | où se résout un doigt visant ses pieds dessinés |
+|---|---|
+| sol plat | **0,133 u** |
+| deck de la funbox (0,85 u) | **1,501 u** |
+
+contre un rayon de self-tap de **0,90 u**. Donc « taper sur soi pour
+descendre » marchait sur la pelouse et **ne marchait pas sur le seul module
+que le chantier existe pour grimper** — sans erreur, et sans qu'aucune sonde
+le voie, parce que la sonde tapait la position **PLATE**, c'est-à-dire une
+question qu'aucun doigt ne peut poser (la forme exacte du hotspot du lit :
+« la métrique peut être la mauvaise, et le chiffre vert avec »).
+
+**Règle** : tout test « ce tap le désigne LUI » lit le point **DESSINÉ** —
+le rayon caméra à travers sa position réelle, rencontré avec `HubSurface` —
+jamais sa position plate, dès lors que le corps peut se tenir au-dessus du
+sol. C'est la règle AIM appliquée au CAVALIER au lieu d'un prop : seule la
+**destination** reste clampée. Un véhicule qui ne quitte jamais le sol n'en
+a pas besoin (le sautillon lit toujours le plat, délibérément) ; **le jour où
+un véhicule livré peut se tenir sur quelque chose, il y entre.**
+
 ### ⚠️ PATRON BATEAU contre PATRON ÉCHELLE — le second a coûté DEUX bugs
 
 * **Patron BATEAU** : la cible **SE RETIRE** du tap pendant l'interaction
@@ -1241,6 +1490,50 @@ raison pour laquelle la branche hibou a le droit de ne rien faire. Toute
 phase NON bornée (une marche d'approche) doit rester une phase où le tap
 retombe et **annule l'intention**.
 
+### ⚠️ UN ÉTAT PARTAGÉ N'EST PAS UNE PERMISSION PARTAGÉE — le PATRON ÉCHELLE s'atteint PAR HÉRITAGE
+
+Écrit au CH58, après que le patron interdit ait été **expédié sur device**
+sans que personne ne l'écrive. `ON_CARRIER` a cinq usagers ; la licence de
+**JETER** un tap n'en est pas une propriété. `CLAUDE.md` ne l'accorde qu'à un
+trajet **BORNÉ** — « un tween qui se termine toujours à un point connu » —
+et la montgolfière, la tyrolienne et la boucle du hibou le sont. La planche
+physique du CH57 ne l'est **pas** : elle reste immobile sous le joueur
+jusqu'à ce qu'il en décide. Elle a hérité du `return` de la montgolfière
+**parce qu'elle passe par le même état**, et la branche que CH57 lui avait
+écrite — correcte en elle-même — vivait **quarante-sept lignes plus bas**,
+donc en code mort. Sur device : mount normal, puis **plus un seul tap reçu**,
+aucune erreur, le menu toujours réactif. Sortie par rechargement de page.
+
+**Aucun des deux fichiers lu seul ne le montrait**, et c'est ce qui rend le
+piège général : un `return` correct dans son contexte devient un avaleur de
+taps dès qu'un second usager arrive dans l'état, et le nouvel usager n'a
+aucune raison de relire le garde d'un autre.
+
+**Règle** : tout garde qui JETTE une entrée se teste sur la **LICENCE**, pas
+sur l'ÉTAT — la condition s'écrit avec la propriété qui l'autorise
+(« le trajet est-il borné ? »), et l'exception porte le renvoi croisé vers
+la branche qu'elle débloque. Corollaire de contrôle : quand la branche d'un
+prop est plus bas dans le même `match` d'états qu'un `return` qui peut la
+précéder, **elle est présumée morte jusqu'à ce qu'une sonde la traverse
+par le vrai canal**.
+
+### ⚠️ ET LA SONDE DU LOT NE POUVAIT PAS LE VOIR — elle appelait l'API, jamais le canal
+
+Dix-huitième faux-signal du dépôt, et le complément exact de « un fixture
+qui diverge du réel sur un axe ne protège pas de cet axe ». `SkatePhysicsProbe`
+est sortie **43 assertions vertes** sur une planche dont **aucun tap
+n'arrivait**, parce qu'elle la conduit par `mount_board()` et
+`set_board_target()` **en direct** : le chemin de tap livré — le seul qu'un
+joueur possède — est hors de tout ce qu'elle mesure. L'axe n'était ni la
+géométrie, ni la physique, ni le rendu : c'était le **ROUTAGE**.
+
+**Règle** : une sonde qui gate une INTERACTION entre par le canal du joueur
+— le signal réel sur le nœud réel, et au moins une phase depuis une **vraie
+coordonnée écran** — et n'appelle l'API du prop que pour LIRE le résultat.
+Une sonde qui appelle la fonction qu'un tap aurait appelée mesure la
+fonction, pas l'interaction, et les deux ne tombent jamais en panne
+ensemble.
+
 ### ⚠️ UNE MARCHE DE LONGUEUR NULLE N'ÉMET PAS D'ATTERRISSAGE
 
 `_advance()` termine une marche plus courte qu'`ARRIVE_EPSILON` (0,45) par
@@ -1259,6 +1552,34 @@ sonde était **verte par chance** — jusqu'à ce qu'une marche passe à deux ho
 ⚠️ **Une marche finit PRÈS de sa cible, jamais DESSUS** (0,401 court mesuré) :
 tout point d'interaction fixe doit **SNAPPER**, sinon l'écart dépend du côté
 d'où l'on arrive.
+
+### ⚠️ UN TIRAGE AJOUTÉ DANS UN FLUX RNG PARTAGÉ DÉPLACE TOUT CE QUI SUIT
+
+CH53, et le symptôme était à soixante unités du code modifié. Une garde de
+densité posée sur les cellules NORD a été écrite sur le patron de la garde
+de domaine voisine — `if ... and _rng.randf() > KEEP: continue`. Correcte,
+bornée au nord, et pourtant la frame du **SPAWN** est sortie à **+308
+primitives** contre la référence.
+
+La cause n'est pas dans ce qui a été rejeté : c'est que **consommer un
+`randf()` de plus sur un candidat déplace le flux pour TOUS les candidats
+suivants**, où qu'ils tombent. Le tapis du sud n'a pas été aminci — il a
+été **rebattu**. Rien n'était faux ; ce n'était simplement plus le même
+tapis, et la comparaison croisée sur laquelle reposait le financement du
+lot était polluée par un terme que personne n'avait demandé.
+
+**Parade** : une décision de garde qui doit rester locale se prend sur un
+**hachage de la position** et ne touche pas le flux — le patron que
+`CozyScatter._cell_variant` utilisait déjà pour choisir une variante.
+Mesuré : le spawn est passé de **+308 à −23** et le sud est redevenu
+byte-identique. Le résidu de −23 vient d'un `footprint` neuf qui rejette
+des candidats (donc leur saute deux tirages), et **ça, c'est irréductible**
+— tout prop ajouté dans ce hub l'a toujours fait.
+
+⚠️ **Corollaire de méthode** : quand un lot mesure un delta entre deux
+arbres, une station **hors du sujet** (ici le spawn) est le témoin qui
+révèle ce genre de fuite. Ne jamais ne mesurer que les stations que le lot
+prétend améliorer.
 
 ### ⚠️ UN FAIT EST PUBLIÉ UNE FOIS, JAMAIS RECOPIÉ
 
@@ -1356,6 +1677,32 @@ pente — à l'image, un fil horizontal en haut du cadre. **Mesuré par rendu,
 pas déduit** : trois courses au corridor parfaitement vert ont été refusées
 sur cette seule base. La bande où une descente LIT comme une descente sur ce
 plateau est de l'ordre de **14 à 22 u**, à une pente de 13° et plus.
+
+### ⚠️ OÙ UN VÉHICULE EST GARÉ DÉCIDE DANS QUEL SENS ON ROULE, DONC CE QU'ON VOIT
+
+Corollaire opérationnel de « la caméra ne montre que des z inférieurs au
+sien », et il coûte zéro à appliquer si on y pense au bon moment. Écrit au
+CH53, sur un skatepark.
+
+La place naturelle d'une planche, d'un kart ou d'une luge est **là où le
+joueur arrive**. Rendue, c'est souvent la mauvaise : un joueur qui monte du
+côté de l'arrivée roule **en s'éloignant** de l'objectif, dans un décor
+entièrement derrière lui. Garé de l'AUTRE côté du contenu, il le traverse
+**vers** la caméra et tout est dans le cadre devant lui. Mêmes objets,
+même caméra, lecture opposée — et le seul changement est une constante de
+position.
+
+Mesuré : cinq modules, `unproject_position` sur la caméra livrée. Garé au
+sud, **1 module sur 5** dans le cadre depuis le point de montage et trois
+qui ne peignaient **aucun pixel**. Garé au nord, **5 sur 5**.
+
+⚠️ **Et la borne de largeur n'est pas une règle de pouce.** Avec
+`keep_aspect = 0` (KEEP_WIDTH) et `fov = 45`, les 45° sont l'angle
+**HORIZONTAL**, donc un objet en `z` est dans le cadre depuis un joueur en
+`z_p` ssi `|x| ≤ tan(22,5°) · (z_p + 8,9 − z)` **et** `z < z_p + 8,9`. Au
+z du joueur cela vaut **±3,69 u** exactement. Un contenu qui doit se lire
+d'un coup d'œil est donc **ÉTROIT et LONG**, jamais large — et ça se
+vérifie par `unproject`, pas par un plan dessiné à plat.
 
 ### ⚠️ QUELLE CAMÉRA POUR QUOI — UN CRITÈRE UNIQUE, PLUS UNE PILE D'EXCEPTIONS
 
@@ -1987,6 +2334,264 @@ pour un nœud anonyme est son **fichier de scène** (`scene_file_path`), la
 seule identité qu'il porte encore.
 
 
+### ⚠️ « QUI NE LIT AUCUN PIXEL TOURNE EN HEADLESS » EST FAUX — L'AXE EST CE QU'ON RELIT DU MOTEUR
+
+Précision d'une règle déjà écrite, et elle a coûté un faux-vert complet au
+CH50. Ce fichier dit qu'une sonde qui ne lit **que des transforms**
+(`unproject_position`, `PursuerFramingAudit`) doit tourner **en headless**,
+parce que llvmpipe la fait dépasser dix minutes. C'est vrai — et une sonde
+neuve s'en est autorisée pour lire des instances de `MultiMesh`.
+
+`unproject_position` est un **calcul pur** ; `get_instance_transform()` est
+une **relecture du moteur**, et c'est le point 2 de la liste du driver
+dummy. Mesuré sur le hub livré, même arbre, même commande, seul le driver
+change :
+
+| driver | instances | non-identité |
+|---|---|---|
+| `--headless` | 2 743 | **0** |
+| `xvfb` + `--rendering-driver opengl3` | 2 743 | **2 743** |
+
+La sonde a donc compté **zéro** décor sur le sol qu'elle testait, et son
+assertion d'ABSENCE (« rien en dehors ») est sortie **VERTE**, parce que
+zéro la satisfait aussi.
+
+**Règle** : l'axe n'est pas « pixels ou pas », c'est **« qu'est-ce que je
+relis du moteur »**. Une sonde qui relit un `MultiMesh`, un viewport ou un
+shader a besoin d'un vrai driver même sans échantillonner un fragment ; le
+coût llvmpipe se paie en **rétrécissant le `SubViewport`** (96 × 160
+suffit), pas en retombant sur le dummy. Et la parade vit **dans la sonde**,
+jamais dans son en-tête : un **contrôle d'instrument** qui exige que les
+transforms relues soient non-identité, et qui échoue bruyamment au lieu de
+compter un zéro tranquille.
+
+### ⚠️ UNE FAMILLE DE BATCH REMPLIE PAR PLUSIEURS PASSES AUX RÈGLES DIFFÉRENTES
+
+Le mur forestier et les quatre haies partagent la famille `wall_near`, et
+**n'obéissent pas au même filtre** : le mur d'anneau refuse tout candidat à
+moins de `WALL_CLEARANCE` du sol marchable, une haie ne teste rien de tel —
+elle **borde** un bord de couloir, s'en écarter est la seule chose qu'elle
+ne doit pas faire.
+
+Un gate écrit sur la FAMILLE mesure donc la mauvaise population. Au CH50 il
+est sorti **rouge sur 42 arbres**, et l'explication écrite pour ce rouge
+(« le filtre livré échantillonne huit points, un arbre peut passer dessous »)
+était **fausse** : recalculée arbre par arbre, elle montrait que **41 des 42
+auraient été rejetés**. Séparées par la CELLULE de la clé de batch, il en
+restait **1**, et celui-là passait bien le filtre 8 points.
+
+**Règle** : compter chaque passe séparément — et **asserter que la somme est
+le total de la famille**, sans quoi une cellule que le lecteur ne connaît pas
+sort des arbres du gate en silence. Un rouge portant la mauvaise explication
+envoie diagnostiquer la mauvaise chose ; c'est pire qu'un rouge muet.
+
+### ⚠️ UN GATE DE CONTRASTE DONT L'ENCRE EST NOIRE PAR CONSTRUCTION EST UN TEST DU SOL
+
+Dix-huitième faux-signal du dépôt, CH50, et c'est une **loterie publiée
+comme un contrat**. `MinimapProbe` asserte « le bord de la plaque franchit
+3,0:1 tout autour ». Or son échantillon d'encre est le **minimum** sur la
+coque, donc le liséré **NOIR** par construction — la sonde asserte ailleurs
+que chaque cellule en porte un. Contre une encre noire, WCAG vaut
+`(L + 0,05) / 0,05` : **3,0:1 exige que le SOL soit à L ≥ 0,10**, et rien
+d'autre n'entre dans le calcul.
+
+L'assertion mesure donc la luminance du **plan**, en portant le nom du
+marqueur — et elle passe ou échoue selon **où un marqueur atterrit**.
+Balayage du plan rendu : `origin/main` porte **166 px (0,21 %)** de sol peint
+sous L 0,10, le plus sombre à **L 0,0656 = exactement 2,31:1**. Élargir le
+cadre a déplacé une plaque sur cette bande, et la loterie a été perdue.
+
+**Règle** : quand une des deux moitiés d'un ratio est **fixée par
+construction**, le gate porte sur l'autre moitié — le dire, et gater ce qui
+est défendable (*la part du périmètre qui tombe sur du sol inatteignable
+reste petite*) plutôt qu'un seuil que le dessin du marqueur ne peut pas
+atteindre. C'est le pendant de « la métrique peut être la mauvaise, et le
+chiffre vert avec » : ici la métrique est fausse **et le chiffre était vert
+par chance de placement**.
+
+### ⚠️ UNE EXEMPTION « SAUF LÀ OÙ X COUVRE DÉJÀ » SE RECONSTRUIT ET SE GATE
+
+Corollaire opérationnel de « une liste de ce qui n'est pas le sujet est
+fausse au premier nom oublié », côté ASSERTION DE FRONTIÈRE. Deux sondes
+écrivaient « juste en dehors du bord, c'est non marchable **sauf là où le
+CARRÉ couvre déjà** » — vrai tant que le carré était le seul autre terme à
+atteindre ce bord. CH50 en a ajouté un, et le lobe de structure P2 de CH21
+en était déjà un troisième, court de **quatre azimuts sur 721**.
+
+**Règle** : l'exemption se prend dans ce que la région **PUBLIE**, et — c'est
+la moitié qui compte — la sonde **asserte que cette reconstruction reproduit
+`contains()` sur chaque échantillon** (721/721, 360/360). Le prochain terme
+d'union échoue alors **bruyamment là**, au lieu d'être oublié en silence.
+
+### ⚠️ UNE VITESSE N'EST PAS UNE CONDUITE — UN PROFIL L'EST
+
+CH54, sur le skate CH53. Mathieu, device en main : « il est sur le skate
+mais il ne le conduit pas ». Le tracé (`SkateDriveProbe`, taps par le
+vrai canal) a lu **16,0 u à 7,941 u/s dès la frame 1**, arrêt sec, six
+arcs de 1,30 u — le câblage était juste, le véhicule bougeait, et il
+bougeait exactement comme la balle avec une planche dessinée dessous.
+Un multiplicateur de vitesse (× 1,48 la marche) n'a pas suffi à se lire
+comme une conduite ; ce qui se lit est un **profil** : un départ qui
+monte, une croisière propre, un arrêt qui s'étale, une relance après un
+demi-tour. Les trois manquaient, et aucune assertion « il va plus vite
+qu'à pied » ne les aurait vus.
+
+**Règle** : un véhicule se spécifie et se gate sur son profil de vitesse
+(premières frames, frame d'atteinte de la croisière, dernières frames,
+continuité aux frontières de segment), jamais sur sa seule vitesse de
+pointe. Et un tel retour device se tranche **par tracé de position frame
+par frame** avant d'écrire une ligne : H1 (rien ne bouge) et H2 (ça
+bouge sans se lire) ont des correctifs opposés, et la lecture du code ne
+les distingue pas — tout y était correct.
+
+⚠️ **Corollaire mesuré dans le même lot** : une conduite plus lente de
+bout en bout que la chose qu'elle remplace n'est pas une conduite. Les
+rampes coûtent ; la première croisière (9,0) rendait 2,233 s sur 16 u
+contre 2,100 s pour le rebond. Publier le temps DE BOUT EN BOUT à côté de
+la croisière.
+
+### ⚠️ UNE SONDE NE PEUT PAS JUGER UN GAME FEEL — ET UNE PHASE QUI PRÉTEND LE FAIRE EST LE PROCHAIN FAUX-SIGNAL
+
+Écrit au CH62, après un verdict device — « je ne vois pas de différence,
+je n'arrive pas à m'amuser » — rendu sur un build dont **toutes les
+sondes étaient vertes et dont toutes les mesures étaient justes**. CH61
+avait mesuré 0,098 u de montée à 2,98 u/s contre 1,106 u à 8,97 u/s, un
+ordre de grandeur ; la physique faisait exactement ce que les chiffres
+disaient. Rien à l'écran ne la restituait.
+
+**Un banc headless ne voit ni une sensation, ni un plaisir, ni une
+lisibilité.** Ce qu'il peut signer, et c'est déjà beaucoup :
+
+* qu'une réponse est une **COURBE** — bornée, monotone, continue — et
+  **qu'elle BOUGE** (le spread se gate AVANT la monotonie : une constante
+  est monotone, bornée et sans palier) ;
+* qu'un effet est **CÂBLÉ** à cette courbe — en relisant la valeur **sur
+  l'objet vivant** (`camera.fov` tel que le moteur le tient, le
+  `pitch_scale` du player, le `rush` que le nœud va dessiner) pendant que
+  le vrai mécanisme tourne. **Rappeler l'API et la comparer à elle-même
+  est une tautologie qui reste verte sur un effet débranché** — c'est le
+  18e faux-signal du dépôt ;
+* que **rien ne tourne** hors de l'interrupteur ;
+* **ce que ça coûte**, et qu'un effet DESSINÉ dessine réellement des
+  PIXELS (CH39).
+
+Ce qu'il ne peut pas signer se **dit dans le rapport**, à la première
+ligne du fichier de sonde comme à la première ligne du rapport de lot. Un
+feu vert qui sous-entend « c'est agréable » sur un lot de game feel est
+le pire faux-signal possible, parce que le lot d'avant était vert partout
+et faux quand même.
+
+⚠️ **Corollaire de forme** : une géométrie d'overlay écrite en PIXELS
+ABSOLUS n'a pas la même force sur deux écrans. Mesuré au CH62 : le même
+champ de traînées encrait **0,694 %** d'une surface headless de 1920 de
+haut et **1,233 %** de la fenêtre xvfb — deux fois plus fort d'un côté,
+sans rien pour dire lequel le téléphone aurait. Toute dimension d'un
+effet plein cadre est une **FRACTION du contrôle**, et sa couverture est
+publiée comme une constante.
+
+### ⚠️ UNE LECTURE RÉPÉTÉE NE DÉTECTE PAS UNE VALEUR PÉRIMÉE
+
+Complément exact de « un delta sans son plancher ne vaut rien » (CH40) et
+de « le coût se lit là où l'instrument est immobile » (CH41), et il ferme
+le trou que ces deux-là laissent : **les deux se défendent par une
+LECTURE RÉPÉTÉE, et une valeur périmée se répète parfaitement.**
+
+Mesuré au CH62, monde gelé par `get_tree().paused` : le compteur de
+primitives lit **85 812 deux fois de suite, tremblement ZÉRO**. On
+déplace la caméra de 2,3 u et on la remet exactement où elle était : il
+lit **86 127 deux fois de suite, tremblement zéro encore**. **Deux états
+parfaitement stables pour UNE seule pose**, et le premier est faux.
+
+La cause est structurelle : **un moteur ne réévalue pas ce qu'une caméra
+gelée voit tant qu'elle ne BOUGE pas.** Un plancher de bruit pris sur
+deux lectures dos à dos mesure la stabilité du cache, pas celle de la
+scène.
+
+**Parade** : une configuration n'est **jamais lue là où on la trouve**.
+On l'emmène ailleurs, on donne des frames, on la repose sur la
+configuration à mesurer, on redonne des frames, et seulement là on lit —
+deux fois, les deux publiées.
+
+⚠️ **Et même avec ça, le compteur reste DÉPENDANT DU CHEMIN** : la même
+pose lit 86 432 quand c'est le jeu qui a mis la caméra là et 86 133 quand
+c'est le protocole de secousse, les deux se répétant exactement. Un
+compteur de frame gelé se publie donc comme un **ORDRE DE GRANDEUR**,
+jamais comme un chiffre à l'unité — et une décomposition dont les parties
+ne somment pas au tout se **refuse** au lieu de se publier (mesuré :
++203 et +1 460 pour deux termes qui valent +8 165 ensemble).
+
+⚠️ **Corollaire, payé dans le même lot** : un banc qui bascule un objet
+entre deux lectures pendant que le MONDE tourne mesure le monde. Éteindre
+un quad de deux triangles « coûtait » **+5 747 primitives** — la vraie
+mesure était le déplacement de la caméra entre deux captures espacées de
+trois frames. **Geler d'abord**, et se rappeler que `paused` n'arrête pas
+le `TIME` d'un shader (CH48) : un plancher de PIXELS reste nécessaire, et
+il se prend avec un seuil (0,02 pleine échelle a suffi) plutôt qu'en
+inégalité stricte, sinon il vaut 85 % de la surface.
+
+### ⚠️ UN PARCOURS DE BANC QUI NE TIENT PAS DANS LA RÉGION MESURE UN RUN QUI N'A JAMAIS EU LIEU
+
+`HubRegion` est un mur pour tout véhicule de ce dépôt, et le mur
+**REFUSE le pas ET EFFACE LA CIBLE** (`SandYacht._wall`, `SledBody._wall`,
+`SkateBoardBody._fence`). Un banc qui gare son sujet hors région, ou qui
+lui donne une course d'élan qui déborde, ne mesure donc pas un run lent :
+il mesure **l'absence de run**, et toutes ses lectures sont vraies.
+
+Mesuré au CH62 : une approche tapée de 9 u vers un module à (5 ; 54) part
+de z = 63,7, hors du lobe skate (centre (0 ; 35), r 28, qui atteint
+z = 62,55 à x = 5). Sortie : `air ticks 0 | peak lift 0,000 | camera climb
+0,000` — trois zéros qui se lisent exactement comme « l'effet n'est pas
+câblé ».
+
+**Règle** : toute course de banc **vérifie `HubRegion.contains()` sur son
+point de départ** et se raccourcit jusqu'à tenir, puis **gate qu'elle est
+restée assez longue** pour être une instance de ce qu'elle mesure. Un
+départ hors région n'est pas un run court, c'est un run absent.
+
+### ⚠️ UN CAP SUR L'ORBITE NE BORNE PAS LE LACET D'UN LOOK-AT
+
+Mesuré au CH64, sur la caméra de poursuite calmée de la planche. Un taux
+de lacet maximal posé sur l'angle d'orbite (`_drive_heading`) a laissé
+passer **170 °/s** la première seconde d'un doigt tenu plein travers : la
+pose est un `look_at`, et un look_at lace avec la POSITION de la cible
+quoi que fasse l'orbite. Un cap qui doit borner ce qu'un joueur VOIT
+s'applique **sur la pose finie**, image par image (lire le lacet du
+transform, le comparer au précédent, ramener au cap par rotation autour
+de Y) — jamais sur une variable intermédiaire dont la pose n'est qu'une
+fonction parmi d'autres.
+
+⚠️ **Et une pose de poursuite près d'un BORD est dans les arbres-murs.**
+`CozyScatter` plante des arbres le long du bord de la région ; une planche
+au bord nord du park face au sud met la caméra 7,6 u derrière elle, HORS
+région, plein cadre de feuillage. La pose se clampe à la région et se tire
+vers la cible — **jamais jusque DESSUS** : à distance nulle le look_at est
+dégénéré et la cible est sous le bord bas du cadre (0 pixel mesuré).
+Garder au moins un demi-unité derrière, et faire converger la visée vers
+la cible quand la distance tenue diminue. Le gate est un rendu : la
+cible peinte, ses pixels EXIGÉS à chaque bord (ChaseAudit PHASE CALM).
+
+### ⚠️ UN BANC DONT LE DOIGT SAUTE FABRIQUE DU VIRAGE
+
+Un reconnaisseur de cercle par NOMBRE DE TOURS (somme des angles signés
+entre segments successifs du doigt) compte honnêtement **tout** segment,
+y compris celui qu'un banc fabrique en téléportant son doigt de « tenu en
+haut » à « départ du cercle » : 140 px d'un coup, soit −170° de virage
+avant la première boucle, et un cercle réel lu comme un crochet. Un banc
+qui dessine un geste part de **là où le doigt EST**, jamais d'une
+constante — un pouce ne se téléporte pas. (CH64, `SkateTrickProbe`, une
+passe rouge devenue verte pour cette raison avant d'être comprise.)
+
+### ⚠️ LE DÉCOR D'UN SOLIDE VA DANS UNE SECONDE SURFACE
+
+`SkatePhysicsProbe` PHASE G gate que l'union des pièces convexes d'un
+module EST l'ensemble de ses sommets dessinés — le gate qui attrape un
+dessiné qui diverge de son solide. Un tube de coping ajouté à la surface 0
+l'a rougi, correctement. Toute géométrie DESSINÉE ET NON SOLIDE (coping,
+cornière, garniture) va dans une **seconde surface** du même `ArrayMesh`
+(même matériau, un draw call de plus) : la surface 0 reste le solide, et
+les bancs qui pricent un collider (`PhysicsCostProbe`) ne lisent
+qu'elle. Et `triangle_count()` publie les DEUX comptes, jamais un seul.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
@@ -2386,6 +2991,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH39 | Le relief invisible — diagnostic avant correctif : les cinq hypothèses du brief tranchées une par une, puis la **cause prouvée à variable unique** (le treillis de la crête était enroulé à l'envers, `cull_back` jetait toute la colline, 14 pixels contre 317 646), le **dixième faux-vert** nommé sur cinq mécanismes empilés, et `MountainProbe` PHASE G — un gate de PIXELS sans seuil | [`CH39_RELIEF_DIAGNOSTIC.md`](docs/lots/CH39_RELIEF_DIAGNOSTIC.md) | 1 | 181 | 7 sept |
 | CH26 | Le monde cozy — direction VOIE A, météo, transport, trois zones, persistance locale, grimper universel, récolte ; puis le **lot de cadrage** qui a retiré le bypass d'authentification (`Auth.gd` et `LoginScreen.gd` re-vérifiés byte-identiques à `origin/main`), restauré `web-build.yml`, remplacé les poignées de test par une graine de RNG, re-gaté les trois outils de développement sur `DevTools.enabled()` (liste blanche) au lieu d'un nom d'hôte, et borné les sondes conservées par `ProbeWatchdog` | [`CH26_MONDE_COZY.md`](docs/lots/CH26_MONDE_COZY.md) | 1 | 182 | 4 → 5 sept |
 | CH37 | Socle multi-altitude, LOT 1 SURFACE — `HubSurface` publié (requête pure au patron `HubWater`), `ground(flat)` comme orthographe unique du point sol, grille float32 refusée sinon, raccord C0 exact au périmètre, AABB disjointes, aucune bande `CozyPalette` traversante ; six vagues branchées (marche, caméra, tap, retours au sol, pluie/ombre) et **zéro domaine enregistré en jeu**, donc un no-op arithmétique prouvé sur les deux arbres ; `SurfaceProbe` phases A → G avec blind check en tête de chaque phase | [`CH37_SURFACE.md`](docs/lots/CH37_SURFACE.md) | 1 | — | 7 sept |
+| CH50 | Extension zone 0 nord — le sol du skatepark : disque r=28 unioné sur le milieu du bord nord (le MÊME centre que le lobe CH16, qu'il avale à tous les centres que le budget autorise, donc « goulot entre les deux disques » n'est pas une forme dessinable), pire paire créée 106,590 u / **20,117 s** qui PERD contre celle de CH38 (111,414 u / 20,967 s) donc pire traversée du hub inchangée, diagonale reproduite à la frame près (1 122 frames / 18,700 s) ; `COVER_MAX.y` 47 → 63 et les TROIS orthographes du littéral 50 du mur unifiées en un `WALL_NEAR_Z` dérivé (68) ; trois passes rouges (9 / 3 / 3) et le couplage tapis-mur prouvé par les deux dernières ; faux-vert du lot : la sonde en `--headless` lisait **2 743 transforms de `MultiMesh` sur 2 743 en identité** et comptait zéro en vert ; table des sondes rejouée sur deux arbres, parité rétablie, plus la trouvaille que le gate de contraste des plaques CH48 est un test du SOL (`origin/main` porte déjà 0,21 % de sol peint sous L 0,10, son plus sombre à 2,31:1 exactement) | [`CH50_ZONE0_NORD.md`](docs/lots/CH50_ZONE0_NORD.md) | 1 | 402 | 8 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

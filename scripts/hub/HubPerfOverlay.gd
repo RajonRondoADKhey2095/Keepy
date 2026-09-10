@@ -237,6 +237,27 @@ func _format(d: Dictionary) -> String:
 	# line any 2D layer (HUD, overlay, a future minimap) shows up in at all.
 	lines.append("TOTAL tri %s  calls %d" % [_thousands(int(d.get("engine_total_prims", 0))), int(d.get("engine_total_calls", 0))])
 	lines.append("METEO %s" % str(d.get("weather", "?")))
+	# CH57: the A/B marker. Mathieu measures F -- the ratio between this
+	# repo's Xeon and his phone -- by reading FPS at one station with the
+	# physics switch up and then down, and the ONE thing that reading
+	# needs is to be certain which of the two it is looking at.
+	#
+	# `physMAX` is Performance.TIME_PHYSICS_PROCESS and it is labelled MAX
+	# because CH56 section 2 measured what it actually is: a MAXIMUM
+	# PUBLISHED ONCE A SECOND, not a per-tick cost -- it changed at most 4
+	# times over 600 ticks. It is shown because it is free and it moves
+	# when the mode changes; it is NOT the number F comes from. F comes
+	# from the FPS line at the top.
+	#
+	# Read straight off the engine rather than through snapshot(): that
+	# dictionary is what CozyCapture writes into COZY_STATS, and a new key
+	# there would change a published line for a display-only addition.
+	# CH64: the ON/off marker is gone with the switch -- physics is
+	# permanent, so the line reads the engine's three counters only.
+	lines.append("PHYS bodies %d  pairs %d  physMAX %.2f ms" % [
+		int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
+		int(Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS)),
+		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0])
 	if _keepy != null:
 		var at: Vector3 = _keepy.global_position
 		lines.append("POS x %.1f  z %.1f   zone %d" % [at.x, at.z, HubRegion.zone_of(at)])
