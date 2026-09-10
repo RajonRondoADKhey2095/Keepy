@@ -115,85 +115,19 @@ static func enabled() -> bool:
 	return host == STAGING_HOST
 
 ## =====================================================================
-## CH57 -- THE PHYSICS SWITCH, AND WHY IT IS A SECOND TOKEN AND NOT A
-## SECOND GATE
+## CH64 -- THE PHYSICS SWITCH IS GONE
 ##
-## CH56 section 11 made the whole of lot 1 conditional on one sentence:
-## "Le lot 1 doit livrer DERRIERE UN INTERRUPTEUR (DevTools) de sorte
-## qu'une seule lecture device -- meme station, physique ON puis OFF --
-## mesure F et rende la question definitivement decidable." F is the
-## ratio between this sandbox's Xeon and Mathieu's phone, it is the only
-## unknown left in the cost model, and it cannot be measured by another
-## probe -- only by the same build answering twice.
+## CH57 put the hub's physics (the skatepark colliders and the
+## CharacterBody3D board) behind a second token, "keepyphys", so that ONE
+## build could answer twice and measure F -- the ratio between this
+## sandbox and Mathieu's phone. CH59 made that token reachable from the
+## installed PWA as the "Physique (dev)" button. Both existed for an A/B
+## that has since been performed: the physics board is the board, for
+## every player, unconditionally. There is no `physics_enabled()` any
+## more, no override, no URL token and no button -- a switch that only
+## ever says yes is a switch a later lot trips over.
 ##
-## So the switch lives HERE, in the file that already owns every developer
-## affordance, rather than in a parallel gate of its own. It is a SECOND
-## TOKEN under the first, never an independent one:
-##
-##   * `enabled()` must be true first. On production that still needs
-##     "keepydev"; on staging it is true by default (rule 4 above).
-##   * then "keepyphys" must appear in the query string or the fragment.
-##
-## The A/B Mathieu actually performs is therefore two URLs on ONE build:
-##     https://keepy-staging.vercel.app/               -> physics OFF
-##     https://keepy-staging.vercel.app/?keepyphys=1   -> physics ON
-##
-## ⚠️ CH59: THE QUERY STRING IS UNREACHABLE FROM AN INSTALLED PWA. A PWA
-## added to the home screen opens with no address bar, so "type ?keepyphys=1
-## after the URL" is not a real instruction on the one device this switch
-## exists to be judged from -- exactly the defect the staging default in
-## rule 4 above already closed for `enabled()` itself. HubWorld's
-## "Physique (dev)" button (behind `enabled()`, next to Perf and Sauvegarde)
-## is the in-game path to the SAME token, via `set_physics_override()`, and
-## it reloads the hub scene to rebuild the world from the flipped answer.
-## The URL flag keeps working unchanged for a desktop-browser test.
-##
-## ⚠️ AND OFF-WEB IT DEFAULTS **OFF**, WHICH IS THE OPPOSITE OF
-## `enabled()`. That inversion is deliberate and it is what keeps the
-## repo's 90 probes honest: `enabled()` answers true in the editor and in
-## every headless probe, so a physics gate written on it alone would have
-## turned physics on inside SkateDriveProbe, SkateparkProbe and
-## SkateTraverseProbe -- three benches whose published figures are the
-## CH54 baseline this lot must leave untouched. A cross-table on two trees
-## would then have compared two different games and called the difference
-## a regression. Off-web the answer is OFF unless something ASKS, and the
-## two things that may ask are the command line (`-- --physics`) and
-## `set_physics_override()`, which is what the physics probe itself calls.
-##
-## Cached after the first answer, unlike `enabled()`: the world is built
-## once from this value, and a world half of which believes in colliders
-## is a failure mode nobody would diagnose. `set_physics_override()`
-## clears the cache, which is the only way it moves.
-const PHYSICS_FLAG: String = "keepyphys"
-## The command-line opt-in for a probe or an editor run: `-- --physics`.
-const PHYSICS_ARG: String = "--physics"
-
-static var _physics_cache: int = -1
-
-## Forces the answer, or (with `null`) hands it back to the rules above.
-## Called by SkatePhysicsProbe to isolate a single tree from the switch, and
-## (CH59) by HubWorld's in-game "Physique (dev)" button -- the flag that
-## makes the actual URL query string reachable from an installed PWA, which
-## has no address bar to type "?keepyphys=1" into. The button flips this
-## override and then reloads the hub scene, so the answer is re-derived by
-## `physics_enabled()`'s normal rules on every OTHER load (including a
-## genuine browser reload): only the in-session toggle uses this override,
-## never a build-time or persisted answer.
-static func set_physics_override(value: Variant) -> void:
-	_physics_cache = -1 if value == null else (1 if bool(value) else 0)
-
-## True where the hub builds real colliders and a real moving body.
-## See the header block above for the four ways this can be true and the
-## one reason it defaults false off-web.
-static func physics_enabled() -> bool:
-	if _physics_cache >= 0:
-		return _physics_cache == 1
-	var answer := false
-	if enabled():
-		if OS.has_feature("web"):
-			var raw = JavaScriptBridge.eval("window.location.search + window.location.hash", true)
-			answer = ("" if raw == null else str(raw)).to_lower().contains(PHYSICS_FLAG)
-		else:
-			answer = OS.get_cmdline_user_args().has(PHYSICS_ARG)
-	_physics_cache = 1 if answer else 0
-	return answer
+## What that costs when nobody rides (the reason the switch was ever
+## worth its A/B) is MEASURED rather than assumed: SkatePhysicsProbe
+## PHASE I reads the physics tick at the spawn, with the park's bodies
+## present and then removed, against the bench's own noise floor.

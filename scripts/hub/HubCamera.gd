@@ -98,12 +98,121 @@ const DRIVE_POSITION_LAMBDA: float = 7.0
 const DRIVE_FOV: float = 60.0
 const DRIVE_BLEND_S: float = 0.9
 
+## =====================================================================
+## CH64 -- THE CHASE HAS A TUNING PER VEHICLE, AND THE BOARD'S IS CALM
+##
+## Mathieu, device in hand, on the CH63 build: the board's chase camera
+## "donne mal a la tete et au ventre", "trop dynamique" -- he wants it
+## "plus lente, moins liee aux mouvements". CH63 section 9 had already
+## named the cause: the board's facing is written STRAIGHT from the thumb
+## with no rate between them, and the camera then follows that facing at
+## the kart's DRIVE_HEADING_LAMBDA, i.e. a yaw that answers every wobble
+## of the finger within a third of a second.
+##
+## The kart, the sand yacht and the sled are device-validated on the
+## numbers above and this lot does not touch them: `ChaseTuning.vehicle()`
+## IS those constants, and the drive branch below takes the exact
+## `lerp_angle` path it always took when handed it (a probe gates the
+## equality). The board gets its own tuning, three knobs and a fov:
+##
+##   * `heading_lambda` -- the first-order lag of the orbit angle behind
+##     the board's facing. 1.8 against the kart's 3.6: the time constant
+##     doubles (0.56 s), so the camera arrives where the board is pointing
+##     rather than being there already.
+##   * `yaw_rate_max` -- a hard cap on how fast the camera may YAW. The
+##     kart has none (a 90 deg flick at lambda 3.6 peaks at 324 deg/s).
+##     110 deg/s sits just ABOVE the ~106 deg/s carve CH63 measured under
+##     a finger held full across, so the validated turn is NOT slowed in
+##     its steady state -- what the cap bounds is the TRANSIENT, the whip
+##     the camera does when the finger flicks. It is measured again by
+##     SkateInputProbe PHASE T and published.
+##     ⚠️ IT IS APPLIED TO THE FINISHED POSE, NOT ONLY TO THE ORBIT. The
+##     drive pose is a look-at, and a look-at yaws with the BOARD'S
+##     POSITION whatever the orbit does: measured with the cap on the
+##     orbit alone, a finger flicked full across turned the frame at
+##     170 deg/s in its first second (against ~108 once settled). So the
+##     cap is enforced on the pose's own yaw, frame to frame, by rotating
+##     the finished transform back to the cap -- and the board's heading,
+##     which is read off that basis, is bounded with it.
+##   * `deadzone` -- the smallest error the orbit answers at all, applied
+##     as a SOFT threshold (the error is shortened by it, never gated on
+##     it, so the response is continuous at the edge and the camera
+##     cannot chatter across it). 3 deg: a finger that trembles turns
+##     the board a few degrees and the camera does not follow; a carve
+##     holds 20-30 deg of error and is unaffected.
+##   * `fov` -- 56 against the kart's 60. A wider lens puts more of the
+##     scenery in motion at the edge of the frame, which is exactly the
+##     reading a nauseous player is asking for less of.
+##   * `keep_inside` -- the chase pose is held INSIDE the playable
+##     region, this far in from its edge. Measured on a capture: a board
+##     at the park's north rim facing south puts a camera 7.6 u behind
+##     it OUTSIDE the lobe, in the wall trees CozyScatter plants along
+##     the rim, and the frame was a canopy with the park behind it. The
+##     kart's circuit never nears a wall; the park is bounded by one on
+##     three sides. So the board's pose is clamped to the region and
+##     pulled this far back in, toward the board -- a border makes the
+##     camera come closer, which is what every chase camera does against
+##     a wall. ChaseAudit PHASE CALM renders the board at three rims and
+##     demands its pixels.
+##
+## ⚠️ WHAT THIS CANNOT SIGN. Motion sickness is a sensation; a probe
+## measures a yaw rate and a frame position. ChaseAudit PHASE CALM gates
+## that the board stays in frame under the calm tuning at cruise and in
+## a full-lock carve, that the yaw never exceeds the cap, and that the
+## orbit settles with no overshoot when the finger lifts. Whether it is
+## COMFORTABLE is Mathieu's, on device. If it is still too lively, the
+## knobs are these four numbers, in this file, and a change is a commit
+## -- never a menu toggle (CH64 is the lot that removed those).
+const BOARD_HEADING_LAMBDA: float = 1.8
+const BOARD_POSITION_LAMBDA: float = 4.0
+const BOARD_YAW_RATE_MAX: float = deg_to_rad(110.0)
+const BOARD_DEADZONE: float = deg_to_rad(3.0)
+const BOARD_FOV: float = 56.0
+const BOARD_KEEP_INSIDE: float = 2.5
+
+class ChaseTuning extends RefCounted:
+	var heading_lambda: float = DRIVE_HEADING_LAMBDA
+	var position_lambda: float = DRIVE_POSITION_LAMBDA
+	## Radians per second; INF means no cap.
+	var yaw_rate_max: float = INF
+	## Radians; 0 means the orbit answers every error.
+	var deadzone: float = 0.0
+	var fov: float = DRIVE_FOV
+	## World units in from the region's edge the pose is kept; negative
+	## means the pose may leave the region (the three vehicles).
+	var keep_inside: float = -1.0
+
+	## The three device-validated vehicles: the constants above, verbatim,
+	## and the exact `lerp_angle` arithmetic they shipped with.
+	static func vehicle() -> ChaseTuning:
+		return ChaseTuning.new()
+
+	## The skateboard's calm chase. See the block above.
+	static func board() -> ChaseTuning:
+		var t := ChaseTuning.new()
+		t.heading_lambda = BOARD_HEADING_LAMBDA
+		t.position_lambda = BOARD_POSITION_LAMBDA
+		t.yaw_rate_max = BOARD_YAW_RATE_MAX
+		t.deadzone = BOARD_DEADZONE
+		t.fov = BOARD_FOV
+		t.keep_inside = BOARD_KEEP_INSIDE
+		return t
+
+	## True when the tuning is exactly the shipped vehicle chase, so the
+	## drive branch can take the byte-identical path for the three.
+	func is_plain() -> bool:
+		return deadzone <= 0.0 and yaw_rate_max == INF and keep_inside < 0.0
+
 var _hub_basis: Basis = Basis.IDENTITY
 var _hub_fov: float = 45.0
 var _hub_far: float = 4000.0
 var _hub_position: Vector3 = Vector3.ZERO
 var _drive_target: Node3D = null
+var _tuning: ChaseTuning = ChaseTuning.new()
 var _drive_heading: float = 0.0
+## The finished drive pose's yaw on the last frame, for the cap above.
+var _drive_yaw: float = 0.0
+var _drive_yaw_valid: bool = false
 var _drive_position: Vector3 = Vector3.ZERO
 var _blend: float = 0.0
 var _blend_tween: Tween = null
@@ -122,6 +231,14 @@ func _ready() -> void:
 func is_driving() -> bool:
 	return _drive_target != null
 
+## For a bench: the orbit angle the chase currently holds, and the tuning
+## it holds it with.
+func drive_heading() -> float:
+	return _drive_heading
+
+func drive_tuning() -> ChaseTuning:
+	return _tuning
+
 func drive_blend() -> float:
 	return _blend
 
@@ -129,8 +246,12 @@ func drive_blend() -> float:
 ## heading and whose `global_position` is where it is. CH63 LOT 2 added a
 ## fourth: the skateboard, which satisfies both (its facing is written
 ## from the commanded heading in `SkateBoardBody.drive()`).
-func enter_drive(kart: Node3D) -> void:
+## CH64: `tuning` selects the chase's response; null is the vehicles'
+## own (kart / yacht / sled), the board hands in `ChaseTuning.board()`.
+func enter_drive(kart: Node3D, tuning: ChaseTuning = null) -> void:
 	_drive_target = kart
+	_tuning = tuning if tuning != null else ChaseTuning.vehicle()
+	_drive_yaw_valid = false
 	_drive_heading = kart.rotation.y
 	_drive_position = _drive_wanted()
 	far = DRIVE_FAR
@@ -164,7 +285,25 @@ func _drive_wanted() -> Vector3:
 		return _hub_position
 	var heading := Vector3(sin(_drive_heading), 0.0, cos(_drive_heading))
 	var at: Vector3 = _drive_target.global_position
-	return HubSurface.ground(at) - heading * DRIVE_BACK + Vector3(0.0, DRIVE_UP, 0.0)
+	var ground: Vector3 = HubSurface.ground(at)
+	var flat: Vector3 = ground - heading * DRIVE_BACK
+	if _tuning.keep_inside >= 0.0:
+		# CH64: held inside the region (see ChaseTuning). The clamp is the
+		# region's own; the pull-in is toward the board, never along the
+		# edge, so the pose approaches rather than slides.
+		var probe := Vector3(flat.x, 0.0, flat.z)
+		var inside: Vector3 = HubRegion.clamp_to(probe)
+		if inside.distance_to(probe) > 0.0005:
+			var toward: Vector3 = Vector3(ground.x, 0.0, ground.z) - inside
+			var span: float = toward.length()
+			# Never nearer than half a unit behind the board: a pose ON
+			# the board's ground point looks straight down, which is a
+			# degenerate look-at and a board under the bottom edge of the
+			# frame (measured: 0 board pixels at the park's north rim).
+			if span > 0.0005:
+				inside += toward / span * minf(_tuning.keep_inside, maxf(span - 0.5, 0.0))
+			flat = Vector3(inside.x, flat.y, inside.z)
+	return HubSurface.ground(flat) + Vector3(0.0, DRIVE_UP, 0.0)
 
 ## =====================================================================
 ## CH62 -- THE RIDE MODE, and CH63 LOT 2 took its POSE away and left it
@@ -209,8 +348,8 @@ func _drive_wanted() -> Vector3:
 ##   3. a small fov widening, which is the term that puts more scenery in
 ##      motion at the edge of the picture.
 ##
-## It runs ONLY while HubTransport is riding the CharacterBody3D board,
-## which exists only under DevTools.physics_enabled(). Walking, the ball,
+## It runs ONLY while HubTransport is riding the CharacterBody3D board
+## (permanent since CH64). Walking, the ball,
 ## the yacht, the sailboat, the sled and the kart are untouched.
 ##
 ## ⚠️ AND IT IS AN OFFSET, NOT A SHADOW VARIABLE. The comment on
@@ -358,14 +497,53 @@ func _process(delta: float) -> void:
 		_on_drive_exited()
 		return
 	var kart: Node3D = _drive_target
-	_drive_heading = lerp_angle(_drive_heading, kart.rotation.y, 1.0 - exp(-DRIVE_HEADING_LAMBDA * delta))
-	_drive_position = _drive_position.lerp(_drive_wanted(), 1.0 - exp(-DRIVE_POSITION_LAMBDA * delta))
+	if _tuning.is_plain():
+		# The three vehicles: the line that shipped, untouched.
+		_drive_heading = lerp_angle(_drive_heading, kart.rotation.y, 1.0 - exp(-_tuning.heading_lambda * delta))
+	else:
+		# CH64, the board: the same first-order lag on an error SHORTENED
+		# by the deadzone, and the step capped at the yaw rate. Continuous
+		# at the deadzone's edge (the error is shortened, not gated), and
+		# incapable of overshoot (a first-order step never crosses its
+		# target; a cap only makes it smaller).
+		var err: float = wrapf(kart.rotation.y - _drive_heading, -PI, PI)
+		var eff: float = signf(err) * maxf(absf(err) - _tuning.deadzone, 0.0)
+		var step: float = eff * (1.0 - exp(-_tuning.heading_lambda * delta))
+		var cap: float = _tuning.yaw_rate_max * delta
+		_drive_heading = wrapf(_drive_heading + clampf(step, -cap, cap), -PI, PI)
+	_drive_position = _drive_position.lerp(_drive_wanted(), 1.0 - exp(-_tuning.position_lambda * delta))
 	var heading := Vector3(sin(_drive_heading), 0.0, cos(_drive_heading))
-	var look: Vector3 = HubSurface.ground(kart.global_position) + heading * DRIVE_LOOK_AHEAD + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
+	var ahead: float = DRIVE_LOOK_AHEAD
+	if not _tuning.is_plain():
+		# CH64: a pose held inside the region (ChaseTuning.keep_inside)
+		# can stand much nearer the board than DRIVE_BACK; aimed 5.5 u
+		# past the board from 2.5 u behind it, the frame lost the board
+		# off its bottom edge (measured: 0 board pixels at the park's
+		# north rim). The look-ahead shrinks with the distance actually
+		# held, so a near pose looks AT the board.
+		var kart_ground: Vector3 = HubSurface.ground(kart.global_position)
+		var held: float = Vector2(_drive_position.x - kart_ground.x, _drive_position.z - kart_ground.z).length()
+		ahead = DRIVE_LOOK_AHEAD * clampf(held / DRIVE_BACK, 0.0, 1.0)
+	var look: Vector3 = HubSurface.ground(kart.global_position) + heading * ahead + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
 	var drive_xform := Transform3D(Basis.IDENTITY, _drive_position).looking_at(look, Vector3.UP)
+	if not _tuning.is_plain():
+		# CH64: the cap, on the pose itself. The yaw of the finished
+		# look-at is compared with last frame's and pulled back to the
+		# cap; pitch and position are untouched, so the frame keeps its
+		# height and its distance and only turns more slowly.
+		var yaw_now: float = atan2(-drive_xform.basis.z.x, -drive_xform.basis.z.z)
+		if _drive_yaw_valid:
+			var step: float = angle_difference(_drive_yaw, yaw_now)
+			var cap: float = _tuning.yaw_rate_max * delta
+			if absf(step) > cap:
+				var held: float = _drive_yaw + signf(step) * cap
+				drive_xform.basis = drive_xform.basis.rotated(Vector3.UP, angle_difference(yaw_now, held))
+				yaw_now = held
+		_drive_yaw = yaw_now
+		_drive_yaw_valid = true
 	var hub_xform := Transform3D(_hub_basis, _hub_position)
 	global_transform = hub_xform.interpolate_with(drive_xform, _blend)
-	fov = lerpf(_hub_fov, DRIVE_FOV, _blend)
+	fov = lerpf(_hub_fov, _tuning.fov, _blend)
 
 func _wanted() -> Vector3:
 	# The ground UNDER him, not sea level under him: the frame holds its

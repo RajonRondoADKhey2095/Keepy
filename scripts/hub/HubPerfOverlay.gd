@@ -252,8 +252,9 @@ func _format(d: Dictionary) -> String:
 	# Read straight off the engine rather than through snapshot(): that
 	# dictionary is what CozyCapture writes into COZY_STATS, and a new key
 	# there would change a published line for a display-only addition.
-	lines.append("PHYS %s  bodies %d  pairs %d  physMAX %.2f ms" % [
-		"ON" if DevTools.physics_enabled() else "off",
+	# CH64: the ON/off marker is gone with the switch -- physics is
+	# permanent, so the line reads the engine's three counters only.
+	lines.append("PHYS bodies %d  pairs %d  physMAX %.2f ms" % [
 		int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
 		int(Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS)),
 		Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0])

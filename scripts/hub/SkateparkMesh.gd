@@ -100,6 +100,43 @@ const COPING: Color = Color(0.86, 0.87, 0.88)
 const CONCRETE_DARK: Color = Color(0.47, 0.48, 0.50)
 
 ## =====================================================================
+## CH64 -- THE REALISM IS BAKED INTO THE VERTICES
+##
+## Mathieu wants the park to read like True Skate's concrete rather than
+## like the cartoon hub around it, and accepts the cut. Nothing here is
+## lit (CLAUDE.md), so what a real transition has -- grime and shadow
+## collecting at its foot, a worn steel coping catching the light along
+## the lip, a deck lighter than its wall -- has to be WRITTEN INTO THE
+## VERTEX COLOUR, once, at build time. `_shade()` is that one dial: it
+## scales a concrete tone toward CONCRETE_FOOT, and every builder below
+## calls it with a number it derives from its own geometry (how far up
+## the transition, how far up the wall), never with a literal per vertex.
+##
+## The grain and the smooth diffuse live in skate_concrete.gdshader; the
+## coping tubes, the funbox's steel edges, the slab and its paint are
+## geometry, priced below and gated by SkateparkProbe against CH52's
+## ceiling like every other triangle in this file.
+const CONCRETE_FOOT: Color = Color(0.42, 0.43, 0.45)
+## The slab under the park, its kerb and its paint. Lighter than the
+## modules' concrete so a module still separates from its ground by tone.
+const SLAB: Color = Color(0.60, 0.60, 0.59)
+const SLAB_KERB: Color = Color(0.44, 0.44, 0.46)
+const PAINT: Color = Color(0.93, 0.78, 0.22)
+## The steel coping: a hexagonal tube along a lip. Six sides is the
+## smallest count whose silhouette does not read as a bar; 0.065 u is a
+## 6.5 cm pipe at Keepy's scale, the real thing's diameter.
+const COPING_R: float = 0.065
+const COPING_SIDES: int = 6
+## How dark the foot of a transition and the bottom of a wall go, as the
+## fraction of the tone kept there (1.0 at the lip / the top).
+const FOOT_SHADE: float = 0.72
+
+## A concrete tone darkened toward CONCRETE_FOOT: `keep` is 1.0 for the
+## tone itself and FOOT_SHADE at the foot.
+static func _shade(tone: Color, keep: float) -> Color:
+	return CONCRETE_FOOT.lerp(tone, clampf(keep, 0.0, 1.0))
+
+## =====================================================================
 ## THE BUILDER'S SCRATCH STATE
 ##
 ## An instance, not statics: two builders running at once on shared
@@ -111,7 +148,30 @@ var _n: PackedVector3Array = PackedVector3Array()
 var _c: PackedColorArray = PackedColorArray()
 var _i: PackedInt32Array = PackedInt32Array()
 
+## =====================================================================
+## CH64 -- DECOR GOES IN A SECOND SURFACE, AND THE REASON IS D5
+##
+## The coping tubes and the funbox's steel edges are DRAWN and NOT SOLID:
+## the collision pieces (D5, convex, written by hand) are the concrete
+## and nothing else, and SkatePhysicsProbe PHASE G gates that the union
+## of the pieces IS the set of drawn vertex positions -- the gate that
+## catches a drawn shape drifting from its solid. A tube added to the
+## same surface reddened it, correctly. So decor is built into a SECOND
+## surface of the same ArrayMesh: PHASE G keeps reading surface 0 and its
+## contract is unchanged; the decor costs one draw call per module that
+## carries any (four of five), priced by SkateparkProbe like the rest.
+var _decor: bool = false
+var _dv: PackedVector3Array = PackedVector3Array()
+var _dn: PackedVector3Array = PackedVector3Array()
+var _dc: PackedColorArray = PackedColorArray()
+var _di: PackedInt32Array = PackedInt32Array()
+
 func _vertex(p: Vector3, normal: Vector3, colour: Color) -> int:
+	if _decor:
+		_dv.append(p)
+		_dn.append(normal.normalized())
+		_dc.append(colour)
+		return _dv.size() - 1
 	_v.append(p)
 	_n.append(normal.normalized())
 	_c.append(colour)
@@ -123,11 +183,17 @@ func _vertex(p: Vector3, normal: Vector3, colour: Color) -> int:
 ## points AWAY from the viewer -- see the header. A caller never reasons
 ## about this; it names the side it wants to see and is done.
 func _tri(a: int, b: int, c: int, facing: Vector3) -> void:
-	var cross := (_v[b] - _v[a]).cross(_v[c] - _v[a])
+	var verts: PackedVector3Array = _dv if _decor else _v
+	var cross := (verts[b] - verts[a]).cross(verts[c] - verts[a])
 	if cross.dot(facing) > 0.0:
 		var swap := b
 		b = c
 		c = swap
+	if _decor:
+		_di.append(a)
+		_di.append(b)
+		_di.append(c)
+		return
 	_i.append(a)
 	_i.append(b)
 	_i.append(c)
@@ -146,13 +212,30 @@ func _mesh() -> ArrayMesh:
 	arrays[Mesh.ARRAY_INDEX] = _i
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	if _di.size() > 0:
+		var decor := []
+		decor.resize(Mesh.ARRAY_MAX)
+		decor[Mesh.ARRAY_VERTEX] = _dv
+		decor[Mesh.ARRAY_NORMAL] = _dn
+		decor[Mesh.ARRAY_COLOR] = _dc
+		decor[Mesh.ARRAY_INDEX] = _di
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, decor)
 	return mesh
 
-## Triangles this builder has laid down. Read by HubSkatepark so the park
-## total is COUNTED rather than predicted -- CLAUDE.md: a number that has
-## no source in the repo has no value.
+## Triangles this builder has laid down, BOTH surfaces. Read by
+## HubSkatepark so the park total is COUNTED rather than predicted --
+## CLAUDE.md: a number that has no source in the repo has no value.
 func triangle_count() -> int:
+	return _i.size() / 3 + _di.size() / 3
+
+## The concrete alone (surface 0): what the collision pieces are a
+## second reading of. SkatePhysicsProbe PHASE G gates this one.
+func concrete_triangle_count() -> int:
 	return _i.size() / 3
+
+## The decor alone (surface 1): coping, steel edges. Solid to nothing.
+func decor_triangle_count() -> int:
+	return _di.size() / 3
 
 # =====================================================================
 # A BOX. The workhorse: the rail's beam and legs, the funbox's deck.
@@ -269,7 +352,10 @@ func quarterpipe(width: float, height: float) -> ArrayMesh:
 	var left: Array[int] = []
 	var right: Array[int] = []
 	for s in prof.size():
-		var col := COPING if s >= prof.size() - 2 else CONCRETE
+		# CH64: darker at the foot, the tone itself at the lip -- the
+		# fraction of the transition climbed is the dial.
+		var keep: float = lerpf(FOOT_SHADE, 1.0, float(s) / float(maxi(prof.size() - 3, 1)))
+		var col := COPING if s >= prof.size() - 2 else _shade(CONCRETE, keep)
 		var nz := Vector3(0.0, norm[s].y, norm[s].x)
 		left.append(_vertex(Vector3(-half, prof[s].y, prof[s].x), nz, col))
 		right.append(_vertex(Vector3(half, prof[s].y, prof[s].x), nz, col))
@@ -281,10 +367,11 @@ func quarterpipe(width: float, height: float) -> ArrayMesh:
 	for side in [-1.0, 1.0]:
 		var facing := Vector3(side, 0.0, 0.0)
 		var x: float = side * half
-		var base := _vertex(Vector3(x, 0.0, height), facing, CONCRETE)
-		var prev := _vertex(Vector3(x, prof[0].y, prof[0].x), facing, CONCRETE)
+		var base := _vertex(Vector3(x, 0.0, height), facing, _shade(CONCRETE, FOOT_SHADE))
+		var prev := _vertex(Vector3(x, prof[0].y, prof[0].x), facing, _shade(CONCRETE, FOOT_SHADE))
 		for s in range(1, prof.size()):
-			var cur := _vertex(Vector3(x, prof[s].y, prof[s].x), facing, CONCRETE)
+			var keep: float = lerpf(FOOT_SHADE, 1.0, prof[s].y / maxf(height, 0.001))
+			var cur := _vertex(Vector3(x, prof[s].y, prof[s].x), facing, _shade(CONCRETE, keep))
 			_tri(base, prev, cur, facing)
 			prev = cur
 	# The vertical back, from the ground to the lip.
@@ -293,6 +380,14 @@ func quarterpipe(width: float, height: float) -> ArrayMesh:
 	var b2 := _vertex(Vector3(half, height, height), Vector3.BACK, CONCRETE_DARK)
 	var b3 := _vertex(Vector3(-half, height, height), Vector3.BACK, CONCRETE_DARK)
 	_quad(b0, b1, b2, b3, Vector3.BACK)
+	# CH64: the steel coping along the lip -- the one thing a rider's eye
+	# reads a transition's edge from. Set a little forward of the wall's
+	# top edge so it stands proud of the concrete on both sides. DECOR:
+	# the second surface, solid to nothing (see `_decor`).
+	_decor = true
+	_tube(Vector3(-half, height - COPING_R * 0.5, height - COPING_R * 0.5),
+		Vector3(half, height - COPING_R * 0.5, height - COPING_R * 0.5), COPING_R, COPING, true)
+	_decor = false
 	return _mesh()
 
 # =====================================================================
@@ -430,19 +525,27 @@ func funbox(width: float, length: float, height: float, ramp: float) -> ArrayMes
 		var z0: float = s * deck_half
 		var z1: float = s * (deck_half + ramp)
 		var normal := Vector3(0.0, ramp, s * height).normalized()
+		# CH64: the ramp's foot is its darkest line, the deck edge its
+		# lightest -- baked in the four vertices.
 		var a := _vertex(Vector3(-half_w, height, z0), normal, CONCRETE_DECK)
 		var b := _vertex(Vector3(half_w, height, z0), normal, CONCRETE_DECK)
-		var c := _vertex(Vector3(half_w, 0.0, z1), normal, CONCRETE)
-		var d := _vertex(Vector3(-half_w, 0.0, z1), normal, CONCRETE)
+		var c := _vertex(Vector3(half_w, 0.0, z1), normal, _shade(CONCRETE, FOOT_SHADE))
+		var d := _vertex(Vector3(-half_w, 0.0, z1), normal, _shade(CONCRETE, FOOT_SHADE))
 		_quad(a, b, c, d, normal)
 		# The two triangular cheeks of the ramp.
 		for side in [-1.0, 1.0]:
 			var facing := Vector3(side, 0.0, 0.0)
 			var x: float = side * half_w
-			var p0 := _vertex(Vector3(x, 0.0, z0), facing, CONCRETE)
+			var p0 := _vertex(Vector3(x, 0.0, z0), facing, _shade(CONCRETE, FOOT_SHADE))
 			var p1 := _vertex(Vector3(x, height, z0), facing, CONCRETE)
-			var p2 := _vertex(Vector3(x, 0.0, z1), facing, CONCRETE)
+			var p2 := _vertex(Vector3(x, 0.0, z1), facing, _shade(CONCRETE, FOOT_SHADE))
 			_tri(p0, p1, p2, facing)
+		# CH64: a steel angle along each deck edge, the way a real funbox
+		# has its coping. A thin box, priced at twelve triangles each, in
+		# the DECOR surface (solid to nothing -- see `_decor`).
+		_decor = true
+		_box(Vector3(0.0, height - 0.01, z0), Vector3(width, 0.035, 0.07), COPING, COPING)
+		_decor = false
 	return _mesh()
 
 ## =====================================================================
@@ -540,7 +643,10 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 	var ring: Array = []
 	for p in prof.size():
 		var row: Array[int] = []
-		var col := COPING if p >= prof.size() - 1 else (CONCRETE if p >= 2 else CONCRETE_DARK)
+		# CH64: the dish darkens toward its floor, on the same dial as the
+		# quarterpipe's transition.
+		var keep: float = lerpf(FOOT_SHADE, 1.0, prof[p].y / maxf(depth, 0.001))
+		var col := COPING if p >= prof.size() - 1 else _shade(CONCRETE, keep)
 		for k in BOWL_AZIMUTH:
 			var t: float = float(k) / float(BOWL_AZIMUTH) * TAU
 			var dir := Vector3(cos(t), 0.0, sin(t))
@@ -553,7 +659,7 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 	# The flat floor, as a fan from ONE centre vertex (see the profile note
 	# above): BOWL_AZIMUTH triangles instead of a degenerate ring.
 	var floor_ring: Array = ring[0]
-	var centre := _vertex(Vector3.ZERO, Vector3.UP, CONCRETE_DARK)
+	var centre := _vertex(Vector3.ZERO, Vector3.UP, _shade(CONCRETE, FOOT_SHADE))
 	for k in BOWL_AZIMUTH:
 		var k2: int = (k + 1) % BOWL_AZIMUTH
 		_tri(centre, floor_ring[k], floor_ring[k2], Vector3.UP)
@@ -583,7 +689,110 @@ func bowl(radius: float, depth: float) -> ArrayMesh:
 	# No cap is needed at the lip: the dish's last ring and the skirt's top
 	# ring are at the SAME radius and the SAME height, so the two surfaces
 	# meet on one edge.
+	# CH64: the coping ring on the lip, BOWL_AZIMUTH tubes end to end --
+	# the bowl's biggest single purchase (288 triangles), and the one
+	# feature that makes a dish read as a bowl from the chase camera.
+	var lip_r: float = prof[prof.size() - 1].x
+	var lip_y: float = prof[prof.size() - 1].y - COPING_R * 0.5
+	_decor = true
+	for k in BOWL_AZIMUTH:
+		var t0: float = float(k) / float(BOWL_AZIMUTH) * TAU
+		var t1: float = float(k + 1) / float(BOWL_AZIMUTH) * TAU
+		_tube(Vector3(cos(t0), 0.0, sin(t0)) * lip_r + Vector3.UP * lip_y,
+			Vector3(cos(t1), 0.0, sin(t1)) * lip_r + Vector3.UP * lip_y, COPING_R, COPING)
+	_decor = false
 	return _mesh()
+
+# =====================================================================
+# CH64 -- THE STEEL COPING TUBE
+#
+# A hexagonal prism from `a` to `b`, no end caps (its ends sit inside a
+# wall or against the next segment). Each side is its own quad with its
+# own outward normal, and its winding goes through `_tri` like every
+# other face in this file -- a tube wound by hand is a tube half of
+# which disappears under cull_back (CLAUDE.md, CH39).
+
+func _tube(a: Vector3, b: Vector3, radius: float, colour: Color, caps: bool = false) -> void:
+	var axis: Vector3 = (b - a).normalized()
+	var ref: Vector3 = Vector3.UP if absf(axis.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
+	var u: Vector3 = axis.cross(ref).normalized()
+	var v: Vector3 = axis.cross(u).normalized()
+	if caps:
+		# A fan at each end, facing out along the axis: a tube whose end
+		# is flush with a wall would otherwise show a hexagonal hole.
+		for end in [[a, -axis], [b, axis]]:
+			var centre: Vector3 = end[0]
+			var facing: Vector3 = end[1]
+			var ring: Array[int] = []
+			for k in COPING_SIDES:
+				var t: float = float(k) / float(COPING_SIDES) * TAU
+				ring.append(_vertex(centre + (u * cos(t) + v * sin(t)) * radius, facing, colour))
+			for k in range(1, COPING_SIDES - 1):
+				_tri(ring[0], ring[k], ring[k + 1], facing)
+	for k in COPING_SIDES:
+		var t0: float = float(k) / float(COPING_SIDES) * TAU
+		var t1: float = float(k + 1) / float(COPING_SIDES) * TAU
+		var n0: Vector3 = u * cos(t0) + v * sin(t0)
+		var n1: Vector3 = u * cos(t1) + v * sin(t1)
+		var facing: Vector3 = (n0 + n1).normalized()
+		var i0 := _vertex(a + n0 * radius, n0, colour)
+		var i1 := _vertex(b + n0 * radius, n0, colour)
+		var i2 := _vertex(b + n1 * radius, n1, colour)
+		var i3 := _vertex(a + n1 * radius, n1, colour)
+		_quad(i0, i1, i2, i3, facing)
+
+# =====================================================================
+# CH64 -- THE SLAB
+#
+# The concrete pad the park stands on: a plate a few millimetres above
+# the lawn (HubSurface is still the ground -- D1 -- and the slab has no
+# collider and no height; the board rolls ON HubSurface and the plate is
+# drawn under its wheels), a darker kerb round its edge, and safety
+# paint: a centre line down the middle and a hatched stripe at each end.
+# Eighteen triangles for the whole thing.
+#
+# ⚠️ ITS HEIGHT IS A DEPTH-BUFFER NUMBER, NOT A TASTE. The blob shadow is
+# drawn at LIFT_EPSILON (0.014 u) above HubSurface; the slab and its two
+# painted layers must sit under that or they z-fight -- MEASURED: at
+# 8 / 10 / 12 mm the paint sat 2 mm under the blob and SkateFeelProbe
+# PHASE P read the blob's ink drop from ~1 000 px to 166. At 3 / 5 / 7 mm
+# the blob has 7 mm of air, and the plate still stands 3 mm over the
+# lawn, well above a 24-bit depth buffer's ~0.2 mm at the chase camera's
+# distance.
+const SLAB_LIFT: float = 0.003
+const SLAB_KERB_W: float = 0.45
+const SLAB_PAINT_W: float = 0.10
+
+func slab(width: float, depth: float) -> ArrayMesh:
+	var hw: float = width * 0.5
+	var hd: float = depth * 0.5
+	var y: float = SLAB_LIFT
+	# The plate.
+	_flat_quad(Vector3(-hw, y, -hd), Vector3(hw, y, -hd), Vector3(hw, y, hd), Vector3(-hw, y, hd), SLAB)
+	# The kerb: four strips just above the plate, round the edge.
+	var ky: float = y + 0.002
+	var kw: float = SLAB_KERB_W
+	_flat_quad(Vector3(-hw, ky, -hd), Vector3(hw, ky, -hd), Vector3(hw, ky, -hd + kw), Vector3(-hw, ky, -hd + kw), SLAB_KERB)
+	_flat_quad(Vector3(-hw, ky, hd - kw), Vector3(hw, ky, hd - kw), Vector3(hw, ky, hd), Vector3(-hw, ky, hd), SLAB_KERB)
+	_flat_quad(Vector3(-hw, ky, -hd), Vector3(-hw + kw, ky, -hd), Vector3(-hw + kw, ky, hd), Vector3(-hw, ky, hd), SLAB_KERB)
+	_flat_quad(Vector3(hw - kw, ky, -hd), Vector3(hw, ky, -hd), Vector3(hw, ky, hd), Vector3(hw - kw, ky, hd), SLAB_KERB)
+	# The paint: a centre line, and a stripe inside each kerb.
+	var py: float = y + 0.004
+	var pw: float = SLAB_PAINT_W * 0.5
+	_flat_quad(Vector3(-pw, py, -hd + kw * 2.0), Vector3(pw, py, -hd + kw * 2.0), Vector3(pw, py, hd - kw * 2.0), Vector3(-pw, py, hd - kw * 2.0), PAINT)
+	for s in [-1.0, 1.0]:
+		var z: float = s * (hd - kw * 1.6)
+		_flat_quad(Vector3(-hw + kw * 1.5, py, z - pw), Vector3(hw - kw * 1.5, py, z - pw),
+			Vector3(hw - kw * 1.5, py, z + pw), Vector3(-hw + kw * 1.5, py, z + pw), PAINT)
+	return _mesh()
+
+## A horizontal quad seen from above, in ring order.
+func _flat_quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, colour: Color) -> void:
+	var i0 := _vertex(a, Vector3.UP, colour)
+	var i1 := _vertex(b, Vector3.UP, colour)
+	var i2 := _vertex(c, Vector3.UP, colour)
+	var i3 := _vertex(d, Vector3.UP, colour)
+	_quad(i0, i1, i2, i3, Vector3.UP)
 
 # =====================================================================
 # THE BOARD

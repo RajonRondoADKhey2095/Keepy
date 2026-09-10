@@ -112,31 +112,16 @@ class_name SkateTouchInput
 ## not as a property this lot has proved.
 
 ## =====================================================================
-## THE MODE, AND WHY IT IS A STATIC HERE
+## CH64 -- THERE IS NO MODE ANY MORE
 ##
-## The A/B Mathieu performs is TAP versus DRAG on one build, flipped from
-## the in-game menu with no reload -- so the answer has to be readable by
-## three files (HubTapInput, to short-circuit; HubTransport, to arm the
-## writer; HubWorld, to draw the button) and writable by one. A static on
-## the class that DEFINES the mode is the single publication point
-## CLAUDE.md's "un fait est publie une fois" asks for.
-##
-## NOT on DevTools: that file gates what a developer may SEE, and this is
-## not a visibility question -- it is a control scheme. It is gated BY
-## DevTools.enabled() at the button, which is where the gating belongs.
-##
-## Defaults FALSE: the shipped tap scheme is what a build behaves like
-## until somebody deliberately asks for the other one.
-static var _drag_mode: bool = false
-
-static func drag_enabled() -> bool:
-	return _drag_mode
-
-## Flips the scheme. The caller is responsible for re-arming whatever was
-## armed under the old answer -- HubTransport.sync_board_input() is the
-## one call that does it, and HubWorld's button makes it.
-static func set_drag_mode(on: bool) -> void:
-	_drag_mode = on
+## CH63 kept a TAP / DRAG static here for Mathieu's in-app A/B. The A/B
+## was performed on device and DRAG won: a held finger propels, the
+## heading tracks the finger, a lift coasts, a short tap at rest gets
+## off. That is now the board's ONLY control scheme, and the static, its
+## two accessors and the menu button that flipped it are gone. The writer
+## is armed by exactly one fact -- a rider is aboard (HubTransport.
+## sync_board_input) -- and HubTapInput shunts every point on that same
+## fact alone.
 
 ## How far from the anchor a finger must travel before it is a drag, in
 ## screen pixels. See the block above for why this is one constant and not
@@ -166,6 +151,118 @@ signal tapped
 ## be its own yardstick. So the reader samples "was it at rest" HERE, on the
 ## frame the finger lands, before this file has changed anything.
 signal pressed
+
+## =====================================================================
+## CH64 -- THE TRICK: A CIRCLE, IN THE AIR ONLY, EITHER WAY ROUND
+##
+## Mathieu's gesture, to the letter: the finger STAYS DOWN (the same
+## contact that propels -- no second channel); in the AIR a circle is a
+## trick, on the GROUND the same movement is steering and nothing else;
+## clockwise and anticlockwise are TWO tricks; circles chained while the
+## board is still up repeat the trick.
+##
+## HOW A CIRCLE IS RECOGNISED, AND WHY BY ITS TURNING AND NOT ITS SHAPE.
+## A thumb's circle is not round, not centred on the anchor, not closed.
+## What every loop has, whatever its shape, is a TURNING NUMBER: walk
+## along the path and add up the signed angle the direction of travel
+## turns through, and one loop comes to +-360 deg however lumpy it is.
+## A straight drag turns 0; a zigzag turns +-a, -+a and sums to nothing;
+## a U-turn is 180; a hook is 270. So the recogniser keeps a polyline of
+## the finger's path (a point is kept only once the finger has travelled
+## TRICK_SEG_PX from the last kept one, which is what makes a resting or
+## trembling thumb write NO segment and therefore no turning) and sums the
+## angle between consecutive segments. A trick fires when the sum passes
+## TRICK_SWEEP_DEG, and a full turn is SUBTRACTED from it rather than the
+## sum being cleared -- so a second loop drawn straight on fires again at
+## the same point of its own circle, and a loop and a half fires once.
+##
+## THE THRESHOLD, ARGUED. 300 deg, not 360: a thumb's loop rarely closes
+## exactly and a recogniser that waited for the last 60 deg would miss a
+## good share of honest circles. Not lower: 270 is a hook -- a finger
+## steering hard round a bend on the way up a ramp draws one -- and a
+## trick that fires on a hook is a trick that fires by accident. The gap
+## between 270 and 360 is the margin, and 300 sits inside it on the side
+## of the player. SkateTrickProbe sweeps it from both sides (a lumpy
+## circle with +-4 px of jitter fires; a hook, a half-circle, a zigzag, a
+## straight drag do not). If device says the number is wrong, it is a
+## commit -- there is no dev knob for it, by design.
+##
+## THE SENSE. Screen y points DOWN, so `Vector2.angle_to` is POSITIVE for
+## a turn that a viewer sees as CLOCKWISE (from "moving right" to "moving
+## down"). Positive sweep = clockwise = `trick(true)`. Not a convention
+## read off a comment: the probe draws a circle whose points go right,
+## then down, then left, and asserts which trick it fires.
+##
+## THE AIR/GROUND BOUNDARY IS NOT DECIDED HERE. HubTransport tells this
+## writer `set_air()` each tick from `SkateBoardBody.in_air()` -- the
+## dwelled predicate, see there -- and the polyline only exists while it
+## is true. When it goes false (the LANDING) a circle in progress is cut
+## on the spot, and if the finger travelled during the air the anchor is
+## MOVED UNDER THE FINGER: the offset is zero, the board goes straight on
+## from the facing it landed with, and a finger that stopped at three
+## o'clock does not put the board into a 90 deg turn on contact. A short
+## hop that never armed the air keeps its anchor, so a carve held over a
+## bump on the lawn is not cancelled by it.
+signal trick(clockwise: bool)
+
+const TRICK_SWEEP_DEG: float = 300.0
+const TRICK_SEG_PX: float = 8.0
+
+var _air: bool = false
+var _path_last: Vector2 = Vector2.ZERO
+var _path_dir: Vector2 = Vector2.ZERO
+var _sweep: float = 0.0
+var _air_travel: float = 0.0
+
+## The signed turning accumulated so far, in degrees, for the bench.
+func sweep_deg() -> float:
+	return _sweep
+
+func in_air() -> bool:
+	return _air
+
+## Told by the reader each tick. Rising edge starts the polyline; falling
+## edge cuts it and re-anchors a finger that has travelled.
+func set_air(on: bool) -> void:
+	if on == _air:
+		return
+	_air = on
+	if on:
+		_start_path()
+		return
+	if steering_active and _air_travel >= TRICK_SEG_PX:
+		rebase()
+	_sweep = 0.0
+	_air_travel = 0.0
+	_path_dir = Vector2.ZERO
+
+## Moves the anchor under the finger: no offset, straight on. `_dragged`
+## is left as it is -- a landing must not turn a long drag into an exit
+## tap when the finger finally lifts.
+func rebase() -> void:
+	anchor = finger
+	heading_px = Vector2.ZERO
+
+func _start_path() -> void:
+	_path_last = finger
+	_path_dir = Vector2.ZERO
+	_sweep = 0.0
+	_air_travel = 0.0
+
+func _trace(at: Vector2) -> void:
+	var d: Vector2 = at - _path_last
+	var len: float = d.length()
+	if len < TRICK_SEG_PX:
+		return
+	_air_travel += len
+	if _path_dir != Vector2.ZERO:
+		_sweep += rad_to_deg(_path_dir.angle_to(d))
+	_path_dir = d / len
+	_path_last = at
+	if absf(_sweep) >= TRICK_SWEEP_DEG:
+		var clockwise: bool = _sweep > 0.0
+		_sweep -= 360.0 if clockwise else -360.0
+		trick.emit(clockwise)
 
 var enabled: bool = false:
 	set(value):
@@ -210,6 +307,10 @@ func _clear() -> void:
 	steering_active = false
 	throttle = 0.0
 	heading_px = Vector2.ZERO
+	_air = false
+	_sweep = 0.0
+	_air_travel = 0.0
+	_path_dir = Vector2.ZERO
 
 ## True while a finger is writing a heading. Distinct from
 ## `steering_active` (a finger is DOWN, so the throttle is held): a finger
@@ -260,6 +361,30 @@ func heading_world(camera: Camera3D) -> Vector3:
 	if world.length() < 0.0001:
 		return Vector3.ZERO
 	return world.normalized()
+
+## The INVERSE of `heading_world()`, for a bench: the screen offset (of
+## length `px`) a finger would have to hold, under `camera`, to write
+## `heading`. Pure, static, and the round trip is gated by SkateTrickProbe
+## (heading_world(screen_offset_for(h)) == h to 1e-4), so a bench that
+## drives the board through this writer -- the only writer there is since
+## CH64 -- is steering by the same arithmetic a thumb does and not by a
+## second spelling of it. Vector2.ZERO when the camera has no flat basis.
+static func screen_offset_for(camera: Camera3D, heading: Vector3, px: float) -> Vector2:
+	if camera == null:
+		return Vector2.ZERO
+	var basis := camera.global_transform.basis
+	var right := Vector3(basis.x.x, 0.0, basis.x.z)
+	var forward := Vector3(-basis.z.x, 0.0, -basis.z.z)
+	if right.length() < 0.0001 or forward.length() < 0.0001:
+		return Vector2.ZERO
+	var flat := Vector3(heading.x, 0.0, heading.z)
+	if flat.length() < 0.0001:
+		return Vector2.ZERO
+	flat = flat.normalized()
+	var off := Vector2(flat.dot(right.normalized()), -flat.dot(forward.normalized()))
+	if off.length() < 0.0001:
+		return Vector2.ZERO
+	return off.normalized() * px
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not enabled:
@@ -312,6 +437,8 @@ func _begin(index: int, at: Vector2) -> void:
 	_dragged = false
 	heading_px = Vector2.ZERO
 	_down_at_s = float(Time.get_ticks_msec()) / 1000.0
+	if _air:
+		_start_path()
 	# ⚠️ THE ORDER MATTERS AND IT IS THE ONLY ORDER THAT WORKS: the listener
 	# samples the board's speed on this signal, so it has to run BEFORE the
 	# throttle opens. One line apart, and swapping them re-creates exactly
@@ -321,6 +448,8 @@ func _begin(index: int, at: Vector2) -> void:
 
 func _move(at: Vector2) -> void:
 	finger = at
+	if _air:
+		_trace(at)
 	var offset: Vector2 = finger - anchor
 	if offset.length() < SLOP_PX:
 		# Back inside the slop: no heading, so the board goes straight on
@@ -343,5 +472,8 @@ func _end() -> void:
 	throttle = 0.0
 	heading_px = Vector2.ZERO
 	_dragged = false
+	_sweep = 0.0
+	_air_travel = 0.0
+	_path_dir = Vector2.ZERO
 	if was_tap:
 		tapped.emit()
