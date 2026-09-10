@@ -103,6 +103,8 @@ var _keepy: KeepyHopper = null
 var _park: HubSkatepark = null
 var _transport: HubTransport = null
 var _camera: HubCamera = null
+## CH64: the bench's finger -- see SkateBench.
+var _bench: SkateBench = null
 var _streaks: SkateStreaks = null
 ## Recorded on the ON world so PHASE O's refusals have something positive
 ## to be a refusal OF. CLAUDE.md's blind check, ordered positive-first.
@@ -126,8 +128,6 @@ func _run() -> void:
 	print("driver: %s" % DisplayServer.get_name())
 	print("⚠️ this bench signs WIRING, BOUNDS and COST. It does not and cannot")
 	print("   sign that any of it feels good -- that verdict is device-side.")
-	DevTools.set_physics_override(true)
-	_check(DevTools.physics_enabled(), "the physics switch is UP for this run")
 	_phase_curve()
 	if _fails > 0:
 		print("=== INSTRUMENT FAILED -- every reading below would be worthless. Stopping. ===")
@@ -142,7 +142,6 @@ func _run() -> void:
 	await _phase_audio()
 	await _phase_isolate()
 	await _phase_pixels()
-	await _phase_off()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -298,17 +297,12 @@ func _phase_curve() -> void:
 
 func _phase_budget() -> void:
 	print("-- PHASE B: the lot's standing cost, parked --")
-	DevTools.set_physics_override(false)
-	var off_hub: Node = load("res://scenes/HubWorld.tscn").instantiate()
-	add_child(off_hub)
-	var off_muted: int = _mute_overlay(off_hub)
-	var off: Dictionary = await _age_and_read(off_hub)
-	var off_again: Dictionary = _census(off_hub)
-	var off_audio: int = _count_audio(off_hub)
-	off_hub.queue_free()
-	for _i in 10:
-		await get_tree().process_frame
-	DevTools.set_physics_override(true)
+	# CH64: ONE world. The OFF world this phase used to build no longer
+	# exists (the physics switch is gone), so the standing cost is read
+	# against the world ITSELF: the blob hidden and shown (the blind check
+	# that proves the census can see a feel node at all), and the frame
+	# counters' own tremor, printed as the floor under which no "cost"
+	# is a reading.
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(_hub)
 	var on_muted: int = _mute_overlay(_hub)
@@ -320,45 +314,31 @@ func _phase_budget() -> void:
 	_camera = _hub.find_child("Camera3D", true, false) as HubCamera
 	_streaks = _hub.find_child("SkateStreaks", true, false) as SkateStreaks
 	if _keepy == null or _park == null or _transport == null or _camera == null or _streaks == null:
-		push_error("SkateFeelProbe: the ON hub is missing a node the lot needs.")
+		push_error("SkateFeelProbe: the hub is missing a node the lot needs.")
 		_hub = null
 		return
+	_bench = SkateBench.new()
+	_bench.name = "Bench"
+	add_child(_bench)
+	_bench.setup(_transport, _camera)
 	_on_audio_players = _count_audio(_hub)
 	_on_had_audio = _transport.board_audio() != null
 	_on_had_shadow = _transport.board_shadow() != null
 	for key in ["nodes_scene", "tris_scene", "sub_prims", "sub_calls", "total_prims", "total_calls"]:
-		print("     %-12s ON %8d (repeat %8d)   OFF %8d (repeat %8d)   delta %d"
+		print("     %-12s parked %8d (repeat %8d)   tremor %d"
 			% [key, int(on.get(key, -1)), int(on_again.get(key, -1)),
-				int(off.get(key, -1)), int(off_again.get(key, -1)),
-				int(on.get(key, -1)) - int(off.get(key, -1))])
-	print("     audio players in the tree: ON %d   OFF %d" % [_on_audio_players, off_audio])
+				absi(int(on.get(key, -1)) - int(on_again.get(key, -1)))])
+	print("     audio players in the tree: %d" % _on_audio_players)
 	_check(int(on.get("nodes_scene", -1)) > 0, "B INSTRUMENT: the census counted something at all")
-	# ⚠️ AND THE DEBUG OVERLAY IS MUTED ON BOTH WORLDS -- MEASURED, NOT
-	# TIDINESS. `total_prims` counts the whole engine, WHICH INCLUDES THE
-	# PERF OVERLAY'S OWN TEXT: 350 primitives of glyph quads whose first
-	# line reads "FPS 9  (min 1)". One digit fewer in an FPS reading is TWO
-	# primitives fewer, so this counter carries a term that moves with the
-	# MACHINE'S LOAD and with nothing in the game -- and it is worse than
-	# noise, because it is self-referential (the overlay prints the very
-	# number being gated, one frame late).
-	#
-	# It cost a red: a CH63 LOT 2 run read ON 72203 against OFF 72205 and
-	# reported the lot as costing -2 primitives while parked. Two more runs
-	# of the SAME pair of trees put the digit back and went green. The
-	# within-world tremor test below cannot catch it either -- its two
-	# readings are 8 frames apart, which is not long enough for an FPS
-	# digit to turn over.
-	#
-	# Positive first, CLAUDE.md's blind check: the muting must have
-	# REMOVED something, or "the overlay is out of the count" and "the
-	# overlay was never in it" read alike.
-	_check(off_muted > 0 and on_muted > 0,
-		"B INSTRUMENT: the perf overlay's own text was found and muted on both worlds")
+	_check(on_muted > 0,
+		"B INSTRUMENT: the perf overlay's own text was found and muted (its glyphs are load-dependent)")
 	_check(_on_had_audio and _on_had_shadow,
-		"B INSTRUMENT: the ON world really built both feel nodes")
+		"B INSTRUMENT: the world really built both feel nodes")
+	_check(_on_audio_players >= 3,
+		"B the board's three audio players exist (roll, land, flip), %d players in the tree" % _on_audio_players)
 	# ⚠️ ZERO IS THE ANSWER, AND ZERO PASSES FOR FREE -- so it is proved
 	# in the order CLAUDE.md's blind check demands: POSITIVE FIRST.
-	# The blob is a drawn node that exists in the ON tree and is HIDDEN
+	# The blob is a drawn node that exists in the tree and is HIDDEN
 	# while nobody rides. `HubPerfOverlay` skips what is not visible in
 	# tree, so a census that could not see the blob AT ALL would report
 	# the same zero as a lot that costs nothing. It is therefore SHOWN,
@@ -378,24 +358,18 @@ func _phase_budget() -> void:
 		"B BLIND CHECK: and by exactly TWO triangles (one quad)")
 	_check(int(hidden_again["nodes_scene"]) == int(on["nodes_scene"]),
 		"B BLIND CHECK: and hiding it again puts the census back")
-	# NOW the zero means something.
-	_check(int(on.get("nodes_scene", -1)) == int(off.get("nodes_scene", -2)),
-		"B the parked lot draws NOT ONE node more than the switch-down hub")
-	_check(int(on.get("tris_scene", -1)) == int(off.get("tris_scene", -2)),
-		"B and not one triangle more")
-	_check(_on_audio_players == off_audio + 2,
-		"B two audio players exist with the switch up, %d with it down" % off_audio)
+	_check(not shadow.visible and _streaks.rush() <= 0.0,
+		"B parked, the blob is hidden and the streaks draw nothing (rush %.3f)" % _streaks.rush())
 	if DisplayServer.get_name() == "headless":
 		print("     (frame counters need a real driver -- run under xvfb to sign the rest)")
 		return
 	for key in ["sub_prims", "sub_calls", "total_prims", "total_calls"]:
-		var tremor: int = maxi(absi(int(on.get(key, -1)) - int(on_again.get(key, -1))),
-			absi(int(off.get(key, -1)) - int(off_again.get(key, -1))))
+		var tremor: int = absi(int(on.get(key, -1)) - int(on_again.get(key, -1)))
 		if tremor != 0:
-			print("     (%s left OUT of the gate: the bench moves %d on its own here)" % [key, tremor])
+			print("     (%s moves %d on its own here, parked -- the floor under any cost read at this station)" % [key, tremor])
 			continue
-		_check(int(on.get(key, -1)) == int(off.get(key, -2)),
-			"B %s unchanged while parked (bench immobile on both worlds)" % key)
+		_check(int(on.get(key, -1)) == int(hidden_again.get(key, -2)),
+			"B %s unchanged across the parked readings (bench immobile)" % key)
 
 ## Hides the perf overlay's Label -- the one canvas item in this scene
 ## whose primitive count depends on the machine rather than on the game.
@@ -578,8 +552,14 @@ func _phase_wired() -> void:
 		_check(absf(float(d["cam_rush"]) - wanted) < 0.02,
 			"W [%s] the camera's rush IS the board's pace through the curve (%.4f vs %.4f)"
 				% [row[0], d["cam_rush"], wanted])
-		_check(absf(float(d["fov"]) - (45.0 + SkateFeel.fov_gain(float(d["cam_rush"])))) < 0.05,
-			"W [%s] the engine's fov IS 45 + the curve's gain (%.3f)" % [row[0], d["fov"]])
+		# CH64: the board rides the CHASE pose (HubCamera.ChaseTuning.board),
+		# under which the ride's fov gain is INERT (CH63 section 4: the
+		# drive branch never writes `_hub_fov + fov_gain`). The engine's fov
+		# is therefore the board tuning's, at every speed -- asserted so a
+		# lot that let the two terms stack would redden here.
+		_check(absf(float(d["fov"]) - HubCamera.BOARD_FOV) < 0.05,
+			"W [%s] the engine's fov IS the board chase's %.1f (the ride's gain is inert under a drive: %.3f)"
+				% [row[0], HubCamera.BOARD_FOV, d["fov"]])
 		_check(absf(float(d["cam_back"]) - SkateFeel.camera_offset(float(d["cam_rush"]), 0.0).z) < 0.02,
 			"W [%s] the pose's dolly IS the curve's dolly (%.4f)" % [row[0], d["cam_back"]])
 		_check(absf(float(d["streak_rush"]) - float(d["cam_rush"])) < 0.02,
@@ -592,7 +572,7 @@ func _phase_wired() -> void:
 	_check(float(fast["pace"]) > float(slow["pace"]) + 0.2,
 		"W INSTRUMENT: the two holds really were two different speeds (%.3f vs %.3f)"
 			% [slow["pace"], fast["pace"]])
-	for key in ["cam_rush", "cam_back", "cam_up", "fov", "streak_alpha", "roll_pitch", "roll_db"]:
+	for key in ["cam_rush", "cam_back", "cam_up", "streak_alpha", "roll_pitch", "roll_db"]:
 		_check(float(fast[key]) > float(slow[key]) + 1e-4,
 			"W %s answers the speed (%.4f fast > %.4f slow)" % [key, fast[key], slow[key]])
 	# BOUNDED. The brief's constraint and the budget's: a fov that ran
@@ -600,8 +580,8 @@ func _phase_wired() -> void:
 	_check(float(fast["cam_back"]) <= SkateFeel.CAMERA_BACK + 1e-4
 			and float(fast["cam_up"]) <= SkateFeel.CAMERA_UP + 1e-4,
 		"W the dolly never exceeds its published bounds")
-	_check(float(fast["fov"]) <= 45.0 + SkateFeel.CAMERA_FOV + 1e-3,
-		"W the fov never exceeds 45 + %.1f" % SkateFeel.CAMERA_FOV)
+	_check(absf(float(fast["fov"]) - float(slow["fov"])) < 1e-3,
+		"W and the fov does NOT move with the speed under the chase (%.3f / %.3f)" % [slow["fov"], fast["fov"]])
 	_check(float(fast["streak_alpha"]) <= SkateFeel.STREAK_ALPHA + 1e-6,
 		"W the streaks never exceed alpha %.2f" % SkateFeel.STREAK_ALPHA)
 	# ⚠️ AND THE FIELD HAS TO MOVE. Every other streak assertion in this
@@ -678,9 +658,19 @@ func _phase_height() -> void:
 	_check(run_u >= 5.0, "H INSTRUMENT: the run-up is long enough to reach cruise (%.2f u)" % run_u)
 	await _park_board(foot - dir * run_u)
 	_check(_transport.mount_board(), "H INSTRUMENT: the rider is aboard for the flight")
+	# CH64: the mount BLENDS the camera into the chase pose over 0.9 s; a
+	# height read mid-blend is a height still moving (measured: 6.000
+	# parked, 6.093 peak, both mid-way between the hub's 7.6 and the
+	# drive's 4.4). Wait for the blend to arrive before reading it.
+	for _i in 240:
+		if _camera.drive_blend() > 0.999:
+			break
+		await get_tree().physics_frame
+	for _i in 30:
+		await get_tree().physics_frame
 	var ground_y: float = _camera.global_position.y
 	body.rotation.y = atan2(dir.x, dir.z)
-	_transport.set_board_target(HubRegion.clamp_to(centre + dir * 6.0))
+	_bench.aim(HubRegion.clamp_to(centre + dir * 6.0))
 	var air_ticks: int = 0
 	var peak_lift: float = 0.0
 	var peak_cam: float = ground_y
@@ -718,8 +708,14 @@ func _phase_height() -> void:
 		"H the blob's alpha IS the published curve at that height")
 	_check(worst_gap <= SkateShadow.LIFT_EPSILON + 1e-3,
 		"H the blob is never above the board (worst %.4f u)" % worst_gap)
-	_check(peak_cam - ground_y > 0.20,
-		"H THE CAMERA CLIMBED with the board (%.3f u) -- the whole point of the ride mode"
+	# CH64: under the chase pose the ride's LIFT term is inert too -- the
+	# pose stands DRIVE_UP above the GROUND under the board and does not
+	# bob with a jump (CLAUDE.md: a horizon that bounces with a hop is the
+	# one thing a hub camera must not do). What says "it flew" is the
+	# SHADOW, gated above. The camera's stillness is asserted here so a
+	# lot that let the lift term through would redden.
+	_check(absf(peak_cam - ground_y) < 0.05,
+		"H the chase camera did NOT climb with the board (%.3f u): the ride's lift term is inert under a drive"
 			% (peak_cam - ground_y))
 
 # =====================================================================
@@ -1082,6 +1078,16 @@ func _phase_pixels() -> void:
 		body.velocity = Vector3(0.0, body.velocity.y, -FAST_V)
 		await get_tree().physics_frame
 		await get_tree().process_frame
+	# CH64: the board rides the CHASE pose, which looks at it from behind
+	# and above -- and from there the RIDER covers most of a blob lying
+	# under his own feet (measured: 166 px against an 80 px floor, where
+	# the fixed hub camera read ~1 000). The blob exists to be seen when
+	# the board is UP, so the capture lifts the body one unit (the tree is
+	# paused below; nothing moves it back) and reads the blob where the
+	# player reads it: separated from the deck.
+	body.global_position.y += 1.0
+	_keepy.call("follow_carrier")
+	await get_tree().process_frame
 	# Frozen, for PHASE F's reason: a moving board moves the camera, and
 	# two captures of two different frames are not a comparison.
 	get_tree().paused = true
@@ -1112,74 +1118,3 @@ func _phase_pixels() -> void:
 		"P the streak field is really DRAWN (%d px over a %d px floor)" % [streak_px, root_floor])
 	get_tree().paused = false
 
-# =====================================================================
-# PHASE O -- WITH THE SWITCH DOWN, NOTHING OF THIS LOT EXISTS
-#
-# The brief's hardest line: "PHYS OFF strictement inchange -- camera, son
-# et effets sont EXACTEMENT ceux d'aujourd'hui. Zero difference visible."
-#
-# ⚠️ AND THIS PHASE IS ORDERED LAST FOR A REASON. Every assertion in it
-# is an ABSENCE, and an absence passes for free against a probe looking
-# at nothing at all. What makes them mean something is that the SAME
-# accessors were read as PRESENT on the ON world in PHASE B, and those
-# readings are carried here and re-stated beside the zeros.
-# =====================================================================
-
-func _phase_off() -> void:
-	print("-- PHASE O: the switch down --")
-	if _transport.is_riding_board():
-		await _park_board(NEUTRAL)
-	_hub.queue_free()
-	_hub = null
-	for _i in 10:
-		await get_tree().process_frame
-	DevTools.set_physics_override(false)
-	var off: Node = load("res://scenes/HubWorld.tscn").instantiate()
-	add_child(off)
-	for _i in WORLD_AGE:
-		await get_tree().process_frame
-	var transport := off.find_child("Transport", true, false) as HubTransport
-	var camera := off.find_child("Camera3D", true, false) as HubCamera
-	var streaks := off.find_child("SkateStreaks", true, false) as SkateStreaks
-	var keepy := off.find_child("Keepy", true, false) as KeepyHopper
-	_check(transport != null and camera != null and streaks != null and keepy != null,
-		"O INSTRUMENT: the OFF world built the same nodes")
-	if transport == null or camera == null or streaks == null:
-		return
-	_check(_on_had_audio and _on_had_shadow,
-		"O INSTRUMENT: the same accessors WERE non-null on the ON world")
-	_check(transport.board_body() == null, "O there is no physics body at all")
-	_check(transport.board_audio() == null, "O and no audio node")
-	_check(transport.board_shadow() == null, "O and no blob shadow")
-	_check(_count_audio(off) == _on_audio_players - 2,
-		"O two fewer audio players than the ON world had (%d vs %d)"
-			% [_count_audio(off), _on_audio_players])
-	# Ride the CH54 board -- the shipped, non-physics path -- and check
-	# that not one of the four responses wakes up.
-	var board: Node3D = transport.board_node()
-	keepy.global_position = HubSurface.ground(board.global_position)
-	for _i in 20:
-		await get_tree().process_frame
-	_check(keepy.mount_vehicle(board, HubTransport.SKATE_LIFT,
-			HubTransport.SKATE_GLIDE_STEP, HubTransport.SKATE_GLIDE_S,
-			HubTransport.SKATE_ACCEL_U, HubTransport.SKATE_BRAKE_U),
-		"O INSTRUMENT: the shipped CH54 board still takes a rider")
-	keepy.hop_to(HubRegion.clamp_to(board.global_position + Vector3(0.0, 0.0, -14.0)))
-	var worst_fov: float = 0.0
-	var worst_offset: float = 0.0
-	var worst_rush: float = 0.0
-	for _i in 180:
-		await get_tree().process_frame
-		worst_fov = maxf(worst_fov, absf(camera.fov - 45.0))
-		worst_offset = maxf(worst_offset, camera.ride_offset().length())
-		worst_rush = maxf(worst_rush, streaks.rush())
-	print("     worst over 180 frames of a CH54 ride: fov drift %.6f, ride offset %.6f, streak rush %.6f"
-		% [worst_fov, worst_offset, worst_rush])
-	_check(is_zero_approx(worst_fov), "O the fov never leaves 45.0")
-	_check(is_zero_approx(worst_offset), "O the camera never takes a ride offset")
-	_check(is_zero_approx(worst_rush), "O the streaks never light")
-	_check(is_zero_approx(streaks.scroll_travelled(1920.0)),
-		"O and their scroll clock never starts")
-	_check(not camera.is_riding() and is_zero_approx(camera.ride_blend()),
-		"O and the camera never entered the ride mode")
-	off.queue_free()

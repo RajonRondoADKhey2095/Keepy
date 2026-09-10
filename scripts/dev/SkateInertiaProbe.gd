@@ -87,6 +87,10 @@ var _hub: Node = null
 var _keepy: KeepyHopper = null
 var _park: HubSkatepark = null
 var _transport: HubTransport = null
+## CH64: the bench's finger. The TAP adapter that rolled this board to a
+## point is gone with the TAP scheme; every roll below is commanded
+## through the real writer (see SkateBench).
+var _bench: SkateBench = null
 
 func _ready() -> void:
 	ProbeWatchdog.arm(self, "SKATE INERTIA PROBE", BUDGET_S)
@@ -102,11 +106,6 @@ func _check(ok: bool, what: String) -> void:
 func _run() -> void:
 	print("=== SKATE INERTIA PROBE -- CH61 LOT 3c ===")
 	print("driver: %s" % DisplayServer.get_name())
-	# The switch first and before any world exists -- DevTools caches its
-	# answer on the first call, so a world built half-believing in
-	# colliders would put the cache under test instead of the rule.
-	DevTools.set_physics_override(true)
-	_check(DevTools.physics_enabled(), "the physics switch is UP for this run")
 	_phase_angle()
 	if _fails > 0:
 		print("=== INSTRUMENT FAILED -- every number below would be worthless. Stopping. ===")
@@ -123,6 +122,10 @@ func _run() -> void:
 		push_error("SkateInertiaProbe: hub is missing Keepy / Skatepark / Transport.")
 		get_tree().quit(1)
 		return
+	_bench = SkateBench.new()
+	_bench.name = "Bench"
+	add_child(_bench)
+	_bench.setup(_transport, _hub.find_child("Camera3D", true, false) as Camera3D)
 	await _phase_law()
 	await _phase_energy()
 	await _phase_red()
@@ -287,11 +290,16 @@ func _phase_law() -> void:
 	_check(absf(float(run["accel_u"]) - HubTransport.SKATE_ACCEL_U) < 0.6,
 		"L the run-up is still CH54's %.2f u (measured %.3f u)"
 			% [HubTransport.SKATE_ACCEL_U, float(run["accel_u"])])
-	# ---- the run-out: it stops AT the tap, it does not coast through it.
-	print("     run-out: stopped %.3f u from the tap, %.3f u/s left"
+	# ---- the run-out. CH64: there is no brake into a point any more (the
+	# TAP adapter went with the TAP scheme, and a finger has no brake
+	# gesture); the bench LIFTS the finger at the point and the board
+	# coasts. What is gated is that the coast is the park's own span --
+	# the property CH61 solved `configure()` for -- and not an ice rink.
+	print("     run-out: the finger lifted at the point; stopped %.3f u past it, %.3f u/s left"
 		% [float(run["miss"]), float(run["end_speed"])])
-	_check(float(run["miss"]) < KeepyHopper.ARRIVE_EPSILON + 0.35,
-		"L the roll ENDS at the tap (%.3f u away)" % float(run["miss"]))
+	_check(float(run["miss"]) <= HubSkatepark.park_span() * 1.25,
+		"L the roll ends within one coast of where the finger lifted (%.3f u, park span %.3f)"
+			% [float(run["miss"]), HubSkatepark.park_span()])
 	_check(float(run["end_speed"]) <= body.rest_speed() + 0.01,
 		"L and it is genuinely stopped there (%.4f u/s, rest is %.4f)"
 			% [float(run["end_speed"]), body.rest_speed()])
@@ -321,7 +329,7 @@ func _flat_run(distance: float) -> Dictionary:
 	var to := from + Vector3(0.0, 0.0, -1.0) * distance
 	await _park_board(from)
 	var mounted: bool = _transport.mount_board()
-	_transport.set_board_target(HubRegion.clamp_to(to))
+	_bench.aim(HubRegion.clamp_to(to))
 	var top: float = 0.0
 	var top_at: float = 0.0
 	var accel_u: float = -1.0
@@ -698,7 +706,7 @@ func _phase_stall() -> void:
 	var from: Vector3 = centre - dir * 9.0
 	await _park_board(from)
 	_check(_transport.mount_board(), "S INSTRUMENT: the rider is aboard for the climb")
-	_transport.set_board_target(HubRegion.clamp_to(centre + dir * 3.0))
+	_bench.aim(HubRegion.clamp_to(centre + dir * 3.0))
 	var peak: float = -1e9
 	var peak_tick: int = -1
 	var target_at_peak: bool = false
@@ -709,7 +717,7 @@ func _phase_stall() -> void:
 		if y > peak:
 			peak = y
 			peak_tick = t
-			target_at_peak = _transport.board_has_destination()
+			target_at_peak = _bench.has_destination()
 		if y > 0.10:
 			climbing_ticks += 1
 	print("     climb: peak y %.3f at tick %d, guard still held the target: %s   (%d ticks off the ground)"
@@ -721,8 +729,13 @@ func _phase_stall() -> void:
 	# Guarded by the two instruments above, which the red pass confirmed
 	# go red on a bench where nothing climbed -- this assertion is about
 	# a climb, and a run with no climb must not be allowed to sign it.
+	# CH64: the game's stall guard is gone with the TAP scheme (a finger is
+	# its own guard); what is gated here is the PROGRESS-BASED guard the
+	# bench inherited verbatim from it -- CH61's correction, that a climb
+	# makes almost no flat displacement and must not be shot down as a
+	# stall -- so a bench that aims past a lip is still holding at the top.
 	_check(peak > 0.30 and target_at_peak,
-		"S the guard did NOT cut the climb: the target was still held at the highest point")
+		"S the bench's progress guard did NOT cut the climb: the finger was still down at the highest point")
 	# (2) A WALL. The funbox's east face, head on -- CH57 PHASE L's own
 	# station, which is 90 deg and stops the board dead.
 	var half_x: float = float(HubSkatepark.MODULES[0]["size"].x) * 0.5
@@ -731,22 +744,36 @@ func _phase_stall() -> void:
 	var wall_to := Vector3(box.x - half_x - 5.0, 0.0, box.z)
 	await _park_board(wall_from)
 	_check(_transport.mount_board(), "S INSTRUMENT: the rider is aboard for the wall run")
-	_transport.set_board_target(HubRegion.clamp_to(wall_to))
+	_bench.aim(HubRegion.clamp_to(wall_to))
 	var dropped: bool = false
 	var dropped_at: int = -1
 	for t in 420:
 		await get_tree().physics_frame
-		if not _transport.board_has_destination():
+		if _bench.stalled_out():
 			dropped = true
 			dropped_at = t
 			break
-	print("     wall: the guard dropped the target after %d ticks (board at x %.3f, face at %.3f)"
+	print("     wall: the bench's guard lifted the finger after %d ticks (board at x %.3f, face at %.3f)"
 		% [dropped_at, body.flat_position().x, box.x + half_x])
 	_check(dropped,
-		"S and it STILL catches a wall: the target was dropped rather than ground into for ever")
+		"S and the same guard STILL catches a wall: the finger was lifted rather than held into it for ever")
 	_check(body.flat_position().x > box.x + half_x - 0.40,
 		"S INSTRUMENT: it was stopped AT the face (x %.3f) -- not dropped somewhere else"
 			% body.flat_position().x)
+	# CH64 -- THE GAME'S OWN PROPERTY, now that no guard rescues a player:
+	# a board pinned against a wall keeps its steering authority (CLAUDE.md,
+	# CH42 -- the heading is WRITTEN, not scaled by a forward speed the
+	# wall is eating). Hold the finger AWAY from the face and the board
+	# must leave it under its own push.
+	var pinned: Vector3 = body.flat_position()
+	_bench.hold(Vector3(1.0, 0.0, 0.0))
+	for _t in 60:
+		await get_tree().physics_frame
+	_bench.release()
+	var freed: float = body.flat_position().distance_to(pinned)
+	print("     pinned at x %.3f, a finger held away moved it %.3f u in 60 ticks" % [pinned.x, freed])
+	_check(freed > 1.0,
+		"S a board pinned against a wall still obeys a finger held away from it (%.3f u)" % freed)
 
 # =====================================================================
 # THE BENCH'S OWN HOUSEKEEPING

@@ -746,17 +746,23 @@ func _phase_instrument() -> void:
 		var kind: StringName = StringName(spec["kind"])
 		var builder := SkateparkMesh.new()
 		var mesh: ArrayMesh = park._mesh_for(builder, spec)
-		var tris: int = builder.triangle_count()
+		# CH64: the CONCRETE only (surface 0). The modules now carry a
+		# second, decor surface -- coping tubes, steel edges -- that is
+		# solid to nothing (D5: the pieces are the concrete), so the bench
+		# prices the geometry a collider is a reading of and not the trim.
+		var solid := ArrayMesh.new()
+		solid.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, mesh.surface_get_arrays(0))
+		var tris: int = builder.concrete_triangle_count()
 		total += tris
 		if not _kind_tris.has(kind):
 			_kind_tris[kind] = tris
-			_trimesh[kind] = mesh.create_trimesh_shape()
-			_convex[kind] = _decompose(mesh)
+			_trimesh[kind] = solid.create_trimesh_shape()
+			_convex[kind] = _decompose(solid)
 	park.free()
 	for kind in _kind_tris:
 		_say("     %-12s %3d tris   trimesh 1 shape   convex %d piece(s)" % [
 			String(kind), int(_kind_tris[kind]), (_convex[kind] as Array).size()])
-	_say("     park total %d triangles (on file: %d)" % [total, PARK_TRIS_ON_FILE])
+	_say("     park total %d CONCRETE triangles (on file: %d; decor apart since CH64)" % [total, PARK_TRIS_ON_FILE])
 	_check(total == PARK_TRIS_ON_FILE,
 		"I1 the bench's geometry IS the shipped park's geometry (%d tris)" % PARK_TRIS_ON_FILE)
 	_check(_convex.size() == 4 and _trimesh.size() == 4,

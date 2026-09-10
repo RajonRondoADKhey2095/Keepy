@@ -57,6 +57,15 @@ const FPS: float = 60.0
 ## Long enough for the 12 u ride at the board's own pace with the run-up
 ## and the run-out, and short enough that four of them fit the budget.
 const RIDE_TICKS: int = 420
+## CH64: the speed the bench feathers the throttle under for the phases
+## that meet a WALL or a LEG head-on. The TAP adapter braked into its
+## target, so those phases met their obstacle slowing; a held finger
+## meets it at cruise and a capsule at 10 u/s glances off a 9 cm post
+## (measured: 11.97 u past it). 3 u/s is a player easing up to a rail.
+const SLOW_APPROACH: float = 3.0
+## A flat point `_roll` measures its closest approach to (PHASE J: the
+## leg's axis). Vector3.INF when no phase is watching one.
+var _watch_point: Vector3 = Vector3.INF
 const SETTLE: int = 6
 
 ## CLAUDE.md's published control. A bench that cannot restate it has no
@@ -84,6 +93,8 @@ var _hub: Node = null
 var _keepy: KeepyHopper = null
 var _park: HubSkatepark = null
 var _transport: HubTransport = null
+## CH64: the bench's finger -- see SkateBench.
+var _bench: SkateBench = null
 var _hops: int = 0
 var _idle: bool = false
 
@@ -101,16 +112,6 @@ func _check(ok: bool, what: String) -> void:
 func _run() -> void:
 	print("=== SKATE PHYSICS PROBE -- CH57 LOT 1 ===")
 	print("driver: %s" % DisplayServer.get_name())
-	# THE SWITCH FIRST, AND BEFORE ANY WORLD EXISTS. DevTools caches its
-	# answer on the first call precisely so that a world cannot be built
-	# half-believing in colliders, which means every test of the switch
-	# has to happen before the hub is instantiated -- afterwards the cache
-	# is what would be under test, not the rule.
-	_phase_switch()
-	if _fails > 0:
-		print("=== SWITCH FAILED -- the mode under test is not the mode built. Stopping. ===")
-		get_tree().quit(1)
-		return
 	_phase_constants()
 	await _phase_pieces()
 	if _fails > 0:
@@ -135,11 +136,16 @@ func _run() -> void:
 		push_error("SkatePhysicsProbe: hub is missing Keepy / Skatepark / Transport.")
 		get_tree().quit(1)
 		return
+	_bench = SkateBench.new()
+	_bench.name = "Bench"
+	add_child(_bench)
+	_bench.setup(_transport, _hub.find_child("Camera3D", true, false) as Camera3D)
 	await _phase_world()
 	if _fails > 0:
 		print("=== WORLD FAILED -- nothing physical was built. Stopping. ===")
 		get_tree().quit(1)
 		return
+	await _phase_standing()
 	await _phase_volume()
 	await _phase_ride()
 	await _phase_neutralised()
@@ -148,33 +154,6 @@ func _run() -> void:
 	await _phase_traversal()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
-
-# =====================================================================
-# PHASE S -- THE SWITCH
-#
-# Blind check on the gate itself, POSITIVE FIRST. "Physics is off for a
-# player" is an assertion of ABSENCE and CLAUDE.md is explicit that those
-# pass for free: shown that the switch can say YES, "it says no by
-# default" becomes a result instead of a tautology.
-
-func _phase_switch() -> void:
-	print("-- PHASE S: the switch answers, in both directions --")
-	DevTools.set_physics_override(true)
-	_check(DevTools.physics_enabled(), "forced ON  -> physics_enabled() true")
-	DevTools.set_physics_override(false)
-	_check(not DevTools.physics_enabled(), "forced OFF -> physics_enabled() false")
-	DevTools.set_physics_override(null)
-	# Off-web with no `-- --physics` on the command line. This is THE
-	# assertion that keeps the other 90 probes measuring CH54's game:
-	# DevTools.enabled() is true in here, and a physics gate written on it
-	# alone would have silently turned colliders on inside SkateDriveProbe,
-	# SkateparkProbe and SkateTraverseProbe.
-	var asked: bool = OS.get_cmdline_user_args().has(DevTools.PHYSICS_ARG)
-	_check(DevTools.enabled(), "DevTools.enabled() is TRUE here (so the test below is not vacuous)")
-	_check(DevTools.physics_enabled() == asked,
-		"default off-web follows the command line only (asked=%s, got=%s)"
-			% [asked, DevTools.physics_enabled()])
-	DevTools.set_physics_override(null)
 
 # =====================================================================
 # PHASE C -- THE CONSTANTS, AND THE TWO SPELLINGS THAT ARE GATED RATHER
@@ -188,17 +167,10 @@ func _phase_constants() -> void:
 	print("     SkateBoardBody.GRAVITY %.4f   Keepy.GRAVITY %.4f" % [SkateBoardBody.GRAVITY, Keepy.GRAVITY])
 	_check(is_equal_approx(SkateBoardBody.GRAVITY, Keepy.GRAVITY),
 		"the hub's gravity is Chased's gravity (if this reddens, DECIDE -- do not sync)")
-	# ⚠️ CH63 LOT 2 MOVED THIS CONSTANT RATHER THAN CHANGING IT. The board
-	# holds no destination any more, so it has no arrivals; the tap scheme
-	# still does, and the epsilon went with it to the file that owns a
-	# destination. It is still READ off KeepyHopper and never retyped,
-	# which is the property this line has always gated.
-	_check(is_equal_approx(HubTransport.BOARD_ARRIVE, KeepyHopper.ARRIVE_EPSILON),
-		"arrival epsilon is READ off KeepyHopper (%.4f)" % HubTransport.BOARD_ARRIVE)
-	# And the same for the stall guard's threshold, which moved with it:
-	# it is the board's own definition of motionless, not a second number.
-	_check(is_equal_approx(HubTransport.BOARD_STALL_STEP, SkateBoardBody.REST_STEP),
-		"the tap adapter's stall step IS the board's rest step (%.4f)" % HubTransport.BOARD_STALL_STEP)
+	# CH64: BOARD_ARRIVE and BOARD_STALL_STEP went with the TAP adapter.
+	# The bench that replaced it reads the same two off their owners
+	# (SkateBench.aim's default, SkateBoardBody.REST_STEP) and never
+	# retypes them.
 	_check(is_equal_approx(SkateBoardBody.PACE_FLOOR, KeepyHopper.GLIDE_PACE_FLOOR),
 		"rest pace is READ off KeepyHopper (%.4f)" % SkateBoardBody.PACE_FLOOR)
 	# The layers Chased reserved, read off ITS OWN SCENE FILES rather than
@@ -298,7 +270,9 @@ func _phase_pieces() -> void:
 	var fb := SkateparkMesh.new()
 	var fb_args: Array = HubSkatepark.build_args(HubSkatepark.MODULES[0])
 	fb.funbox(fb_args[0], fb_args[1], fb_args[2], fb_args[3])
-	_check(fb.triangle_count() == 20, "G the drawn funbox is 20 triangles (CH56 section 3.1: 20)")
+	# CH64: the CONCRETE surface. The funbox now also carries a decor
+	# surface (its two steel edges), solid to nothing and counted apart.
+	_check(fb.concrete_triangle_count() == 20, "G the drawn funbox's concrete is 20 triangles (CH56 section 3.1: 20; decor apart: %d)" % fb.decor_triangle_count())
 	# =====================================================================
 	# THE BLIND CHECK, and CH60 owes TWO of them because it added a second
 	# way for the comparison to be blind.
@@ -725,7 +699,7 @@ func _climb_reach(height: float) -> Vector2:
 
 ## Places the board, mounts him on it the way HubTransport does, aims it,
 ## and steps `ticks` physics frames while sampling. Returns the trace.
-func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) -> Dictionary:
+func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int, speed_cap: float = INF) -> Dictionary:
 	var body := _transport.board_body()
 	if _transport.is_riding_board():
 		# ⚠️ CH61 -- HAND THE BOARD BACK ON OPEN LAWN, NOT WHERE THE RIDE
@@ -759,13 +733,17 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) ->
 	for _i in SETTLE:
 		await get_tree().physics_frame
 	var mounted: bool = _transport.mount_board()
-	_transport.set_board_target(HubRegion.clamp_to(to))
+	# CH64: the bench's finger. `speed_cap` feathers the throttle for the
+	# phases that need a SLOW arrival (a leg, a wall) -- the deleted TAP
+	# adapter braked into its target and those phases were written on
+	# that arrival; a finger has no brake, only a lift.
+	_bench.aim(HubRegion.clamp_to(to), KeepyHopper.ARRIVE_EPSILON, speed_cap)
 	var node := _park.module_node(index)
 	var to_local: Transform3D = node.global_transform.affine_inverse()
 	var rect: Rect2 = _core_rect(index)
 	var trace := {"mounted": mounted, "max_y": -1e9, "core_min_y": 1e9, "core_max_y": -1e9,
 		"core_ticks": 0, "supported": 0, "under_surface": 0, "rider_off": 0, "path": 0.0,
-		"arrived": false, "held_max_y": -1e9}
+		"arrived": false, "held_max_y": -1e9, "min_to_watch": 1e9}
 	var last: Vector3 = body.flat_position()
 	for _t in ticks:
 		await get_tree().physics_frame
@@ -773,6 +751,8 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) ->
 		var y: float = body.global_position.y
 		trace["path"] = float(trace["path"]) + flat.distance_to(last)
 		last = flat
+		if _watch_point != Vector3.INF:
+			trace["min_to_watch"] = minf(float(trace["min_to_watch"]), flat.distance_to(_watch_point))
 		trace["max_y"] = maxf(float(trace["max_y"]), y)
 		# ⚠️ CH61 -- THE HIGHEST THE MODULE EVER **HELD** IT, which is not
 		# the highest it ever got. Before inertia the two were the same
@@ -803,6 +783,8 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int) ->
 		if flat.distance_to(Vector3(to.x, 0.0, to.z)) < 1.0:
 			trace["arrived"] = true
 	trace["end"] = body.flat_position()
+	trace["bench_lifted_at"] = _bench.stalled_at()
+	print("        (bench: %d ticks, progress guard lifted the finger at tick %d)" % [_bench.ticks(), _bench.stalled_at()])
 	print("     %-38s path %.2f u   max y %.3f   core %d ticks (y %s .. %s)   supported %d   arrived %s"
 		% [label, trace["path"], trace["max_y"], trace["core_ticks"],
 			("n/a" if int(trace["core_ticks"]) == 0 else "%.3f" % float(trace["core_min_y"])),
@@ -899,19 +881,29 @@ func _ride_one(ride: Dictionary) -> void:
 	_check(float(t["held_max_y"]) <= args[1] + 0.05,
 		"R[%d] nothing HELD it above the lip -- no phantom volume (held max %.3f <= %.3f)"
 			% [index, float(t["held_max_y"]), args[1]])
+	# CH64: THE ARRIVAL CHANGED, AND THE ARITHMETIC WITH IT. The TAP
+	# adapter BRAKED into a target four units behind the wall, so the
+	# board met the foot of every transition already slowing (~1.55 u of
+	# energy in hand: the 2.10 u ramp stopped it at 1.348, the 1.45 u one
+	# let it out). A HELD FINGER meets the foot at cruise -- v^2/2g is
+	# 1.923 u -- and keeps pushing up the transition while the surface
+	# still offers grip, so BOTH quarterpipes are clearable (measured on
+	# this tree: max y 2.191 over the 2.10 u lip). That is a player's
+	# ride, and it is what makes a trick off either ramp reachable at all.
+	# The gate is what it always meant: over the top or stopped below,
+	# never THROUGH the solid -- read on the board's highest point rather
+	# than on the core window, which the board leaves before the lip.
 	var lip: float = args[1]
 	if bool(t["arrived"]):
-		_check(float(t["core_max_y"]) > lip,
-			"R[%d] it left by the TOP, over the %.2f u lip (%.3f) -- not through the solid"
-				% [index, lip, float(t["core_max_y"])])
-		_check(lip < 1.60,
-			"R[%d] and only the SHORT ramp is clearable at this arrival (lip %.2f u)" % [index, lip])
+		_check(float(t["max_y"]) > lip - 0.05,
+			"R[%d] it left by the TOP, over the %.2f u lip (max y %.3f) -- not through the solid"
+				% [index, lip, float(t["max_y"])])
 	else:
-		_check(float(t["core_max_y"]) < lip,
-			"R[%d] the transition STOPPED it below its %.2f u lip (%.3f)"
-				% [index, lip, float(t["core_max_y"])])
-		_check(lip > 1.60,
-			"R[%d] and it is the TALL ramp that stops it (lip %.2f u)" % [index, lip])
+		_check(float(t["max_y"]) < lip + 0.05,
+			"R[%d] the transition STOPPED it below its %.2f u lip (max y %.3f)"
+				% [index, lip, float(t["max_y"])])
+	print("     R[%d] a held finger arrives at cruise: v^2/2g = %.3f u against a %.2f u lip, and pushes on the way up"
+		% [index, HubTransport.SKATE_CRUISE * HubTransport.SKATE_CRUISE / (2.0 * SkateBoardBody.GRAVITY), lip])
 
 func _phase_neutralised() -> void:
 	print("-- PHASE N: RED BEFORE GREEN, at runtime -- take each collider off the layer --")
@@ -943,7 +935,7 @@ func _phase_neutralised() -> void:
 
 func _phase_lateral() -> void:
 	print("-- PHASE L: the other half of D1 -- a vertical face BLOCKS --")
-	var t: Dictionary = await _roll("into the funbox east face", 0, SIDE_FROM, SIDE_TO, RIDE_TICKS)
+	var t: Dictionary = await _roll("into the funbox east face", 0, SIDE_FROM, SIDE_TO, RIDE_TICKS, SLOW_APPROACH)
 	var centre: Vector3 = _park.module_centre(0)
 	var half_x: float = float(HubSkatepark.MODULES[0]["size"].x) * 0.5
 	var end: Vector3 = t["end"]
@@ -951,8 +943,8 @@ func _phase_lateral() -> void:
 	_check(float(t["max_y"]) < 0.05, "it never got on top of the box (max y %.3f)" % t["max_y"])
 	_check(end.x > centre.x + half_x - 0.30,
 		"it was stopped east of the face (x %.3f, face at %.3f)" % [end.x, centre.x + half_x])
-	_check(not _transport.board_has_destination(),
-		"and the stall guard dropped the destination rather than grinding for ever")
+	_check(_bench.stalled_out() or not _bench.is_down(),
+		"and the bench's progress guard lifted the finger rather than holding it into the face for ever")
 
 # =====================================================================
 # PHASE J -- THE RAIL, WHICH IS THE ONE MODULE THAT MUST BLOCK IN ONE
@@ -993,26 +985,45 @@ func _phase_rail() -> void:
 	# read through the node's transform -- never typed.
 	var leg: Vector3 = node.global_transform * Vector3(0.0, 0.0, leg_z)
 	leg = Vector3(leg.x, 0.0, leg.z)
+	# CH64: A PUSHED BOARD SLIDES ROUND A POST, and the gate is the post's
+	# SOLIDITY, not where the board ends. The TAP adapter braked into a
+	# target five units past the leg, so the board reached the leg almost
+	# stopped and stayed there (CH60: 0.506 u from the axis). A finger
+	# keeps pushing, a capsule against a 9 cm post is never centred, and
+	# the board slides round it and on to the target (measured: 7.4 u past
+	# the axis at a 3 u/s approach, 12 u at cruise) -- a legitimate ride,
+	# not a hole in the collider. What a solid post owes is that the board
+	# never OCCUPIES it: its closest approach to the axis stays outside
+	# the capsule's radius plus the post's half-width, and with the layer
+	# off the same run passes THROUGH the axis.
+	var solid_gap: float = SkateparkMesh.DECK_WIDTH * 0.5 + SkateparkMesh.RAIL_LEG * 0.5
+	_watch_point = leg
 	var hit: Dictionary = await _roll("[1] rail, head-on into a leg", index,
-		leg + across * 5.0, leg - across * 5.0, RIDE_TICKS)
+		leg + across * 5.0, leg - across * 5.0, RIDE_TICKS, SLOW_APPROACH)
 	var end_hit: Vector3 = hit["end"]
-	var missed: float = end_hit.distance_to(leg)
-	print("     stopped %.3f u from the leg's axis (started 5.00 u out)" % missed)
+	print("     closest approach to the leg's axis %.3f u (capsule + half post = %.3f); ended %.3f u past it"
+		% [float(hit["min_to_watch"]), solid_gap, end_hit.distance_to(leg)])
 	_check(float(hit["path"]) > 2.0, "J INSTRUMENT: it set off (%.2f u)" % float(hit["path"]))
-	_check(missed < 1.0, "J1 it was STOPPED at the leg (%.3f u from its axis)" % missed)
-	_check(not _transport.board_has_destination(),
-		"J1 and the stall guard dropped the destination rather than grinding for ever")
-	# ...and RED BEFORE GREEN on the same station.
+	_check(float(hit["min_to_watch"]) > solid_gap - 0.03,
+		"J1 the leg is SOLID: the board never came nearer its axis than %.3f u (>= %.3f)"
+			% [float(hit["min_to_watch"]), solid_gap - 0.03])
+	_check(not _bench.is_down(),
+		"J1 and the bench's finger is up (the run ended, by arrival or by its progress guard)")
 	var wall := _park.collider_body_at(index)
 	var keep: int = wall.collision_layer
 	wall.collision_layer = 0
 	var thru: Dictionary = await _roll("[1] rail, NEUTRALISED, same station", index,
-		leg + across * 5.0, leg - across * 5.0, RIDE_TICKS)
+		leg + across * 5.0, leg - across * 5.0, RIDE_TICKS, SLOW_APPROACH)
 	wall.collision_layer = keep
+	_watch_point = Vector3.INF
 	var end_thru: Vector3 = thru["end"]
-	_check(end_thru.distance_to(leg - across * 5.0) < 1.0,
-		"J1 WITHOUT the collider it goes straight through the leg to the far side")
-	# (2) ACROSS THE GAP, collider in place: the board must get through.
+	print("     NEUTRALISED: closest approach %.3f u; ended %.3f u past the axis"
+		% [float(thru["min_to_watch"]), end_thru.distance_to(leg)])
+	_check(float(thru["min_to_watch"]) < solid_gap,
+		"J1 WITHOUT the collider it passes INSIDE the volume a solid post refuses (%.3f u < %.3f)"
+			% [float(thru["min_to_watch"]), solid_gap])
+	_check(bool(thru["arrived"]) and (end_thru - leg).dot(-across) > 0.0,
+		"J1 and on to the far side")
 	var gap: Vector3 = node.global_transform * Vector3(0.0, 0.0, 0.0)
 	gap = Vector3(gap.x, 0.0, gap.z)
 	var pass_t: Dictionary = await _roll("[1] rail, between the legs", index,
@@ -1104,50 +1115,181 @@ const WORLD_AGE: int = 24
 
 func _phase_budget() -> void:
 	print("-- PHASE B: a collider draws nothing --")
-	# OFF first and ON second, each built fresh and read at the same age at
-	# the same station. The ON world is the one kept for every phase after
-	# this: reading it here, before it has been ridden, is the whole point.
-	DevTools.set_physics_override(false)
-	var off_hub: Node = load("res://scenes/HubWorld.tscn").instantiate()
-	add_child(off_hub)
-	var off: Dictionary = await _age_and_read(off_hub)
-	var off_again: Dictionary = _census(off_hub)
-	off_hub.queue_free()
+	# CH64: ONE tree, read twice. The switch-down world this phase used to
+	# build no longer exists, so the A/B is made on a THROWAWAY world: read
+	# it with its colliders, take every StaticBody3D and the board's shape
+	# OUT of it, read it again at the same age and station, and only then
+	# build the world every phase after this one rides. The blind check is
+	# the count of what was removed -- a zero there would make "colliders
+	# draw nothing" and "there were no colliders" read alike.
+	var trial: Node = load("res://scenes/HubWorld.tscn").instantiate()
+	add_child(trial)
+	var with: Dictionary = await _age_and_read(trial)
+	var with_again: Dictionary = _census(trial)
+	# The park's four StaticBody3D, and the board's CollisionShape3D --
+	# never the board NODE itself (HubTransport reads its position every
+	# frame; freeing it under the transport crashed the first version of
+	# this phase), and never the three portal Area3D (CH55: deliberately
+	# inert, and their visuals hang under them).
+	var removed_bodies: int = 0
+	var removed_shapes: int = 0
+	var trial_park := trial.find_child("Skatepark", true, false)
+	for node in trial_park.find_children("*", "StaticBody3D", true, false):
+		removed_shapes += node.get_child_count()
+		removed_bodies += 1
+		node.get_parent().remove_child(node)
+		node.queue_free()
+	var trial_transport := trial.find_child("Transport", true, false) as HubTransport
+	var trial_board := trial_transport.board_body()
+	for node in trial_board.find_children("*", "CollisionShape3D", false, false):
+		removed_shapes += 1
+		trial_board.remove_child(node)
+		node.queue_free()
 	for _i in 10:
 		await get_tree().process_frame
-	DevTools.set_physics_override(true)
+	var without: Dictionary = await _age_and_read(trial)
+	var without_again: Dictionary = _census(trial)
+	trial.queue_free()
+	for _i in 10:
+		await get_tree().process_frame
 	_hub = load("res://scenes/HubWorld.tscn").instantiate()
 	add_child(_hub)
-	var on: Dictionary = await _age_and_read(_hub)
-	var on_again: Dictionary = _census(_hub)
+	for _i in WORLD_AGE:
+		await get_tree().process_frame
+	print("     removed %d collision objects carrying %d shapes from the trial world" % [removed_bodies, removed_shapes])
+	_check(removed_bodies == 4 and removed_shapes == 31,
+		"B BLIND CHECK: there were colliders to remove (4 park bodies, 30 hulls + the board's capsule = 31 shapes)")
 	for key in ["nodes_scene", "tris_scene", "engine_prims", "engine_calls"]:
-		print("     %-13s ON %8d (repeat %8d)   OFF %8d (repeat %8d)   delta %d"
-			% [key, int(on.get(key, -1)), int(on_again.get(key, -1)),
-				int(off.get(key, -1)), int(off_again.get(key, -1)),
-				int(on.get(key, -1)) - int(off.get(key, -1))])
-	_check(int(on.get("nodes_scene", -1)) > 0, "INSTRUMENT: the census counted something at all")
-	# The scene census is transforms: driver-independent and exactly
-	# reproducible, so it is gated on equality with no tolerance at all.
-	_check(int(on.get("nodes_scene", -1)) == int(off.get("nodes_scene", -2)),
-		"the same number of drawn nodes with the switch up as with it down")
-	_check(int(on.get("tris_scene", -1)) == int(off.get("tris_scene", -2)),
-		"and the same number of triangles in the scene")
+		print("     %-13s WITH %8d (repeat %8d)   WITHOUT %8d (repeat %8d)   delta %d"
+			% [key, int(with.get(key, -1)), int(with_again.get(key, -1)),
+				int(without.get(key, -1)), int(without_again.get(key, -1)),
+				int(with.get(key, -1)) - int(without.get(key, -1))])
+	_check(int(with.get("nodes_scene", -1)) > 0, "INSTRUMENT: the census counted something at all")
+	_check(int(with.get("nodes_scene", -1)) == int(without.get("nodes_scene", -2)),
+		"the colliders draw NOT ONE node: the census is the same with and without them")
+	_check(int(with.get("tris_scene", -1)) == int(without.get("tris_scene", -2)),
+		"and not one triangle")
 	if DisplayServer.get_name() == "headless":
 		print("     (engine primitive / draw-call counters need a real driver -- run under xvfb to sign them)")
 		return
-	# The engine's two counters are a FRAME reading, so each is gated only
-	# where its own bench is immobile -- the repeat reading on the same
-	# world, nothing touched. CLAUDE.md, CH41: a noisy station is PRINTED
-	# and left out of the gate, with the reason written, never gated
-	# against a tremor borrowed from somewhere else.
 	for key in ["engine_prims", "engine_calls"]:
-		var tremor: int = maxi(absi(int(on.get(key, -1)) - int(on_again.get(key, -1))),
-			absi(int(off.get(key, -1)) - int(off_again.get(key, -1))))
+		var tremor: int = maxi(absi(int(with.get(key, -1)) - int(with_again.get(key, -1))),
+			absi(int(without.get(key, -1)) - int(without_again.get(key, -1))))
 		if tremor != 0:
 			print("     (%s left OUT of the gate: the bench moves %d on its own here)" % [key, tremor])
 			continue
-		_check(int(on.get(key, -1)) == int(off.get(key, -2)),
-			"%s in frame unchanged (bench immobile on both worlds)" % key)
+		_check(int(with.get(key, -1)) == int(without.get(key, -2)),
+			"%s in frame unchanged (bench immobile on both readings)" % key)
+
+# =====================================================================
+# PHASE I -- WHAT PERMANENT PHYSICS COSTS WHEN NOBODY RIDES
+#
+# CH64 removed the switch, and the brief's own warning is the reason this
+# phase exists: the north lobe already has no frame budget (CH52), and a
+# physics world that ticked for every player everywhere could sink the
+# FPS far from the park. So the tick is MEASURED, at the spawn, on foot,
+# 46 u from the park -- with the park's bodies in the space, then with
+# every one of them taken out of it (PhysicsServer3D.body_set_space to a
+# null space: no node freed, fully reversible), then back in -- and the
+# difference is read against the bench's own floor (two readings of one
+# configuration).
+#
+# Positive first (CLAUDE.md's blind check): with the rider aboard and the
+# finger held, the same instrument must read a cost clearly above the
+# floor, or it cannot see physics at all and the idle zero is worthless.
+#
+# ⚠️ WHAT THIS SIGNS AND WHAT IT DOES NOT. It signs that an IDLE physics
+# world costs this sandbox nothing it can measure; it is a PROXY for the
+# device (CH56's F is the unknown between the two), and the FPS Mathieu
+# reads on his phone is the only number that decides. The reading is
+# wall time per physics frame under --fixed-fps 60 headless, PhysicsCost
+# Probe's own instrument.
+const STANDING_TICKS: int = 240
+## The standing budget, per physics tick on this sandbox: at F = 10
+## (CH56's worst projection) and 50 FPS, 0.10 ms/tick is 1.2 ms of a
+## 20 ms frame, 6 %.
+const STANDING_BUDGET_MS: float = 0.10
+
+func _phase_standing() -> void:
+	print("-- PHASE I: the idle cost of permanent physics, at the spawn --")
+	await _station(_hub, Vector3.ZERO)
+	var bodies: Array = _hub.find_children("*", "PhysicsBody3D", true, false)
+	var space: RID = _transport.board_body().get_world_3d().space
+	var a: float = await _tick_ms(STANDING_TICKS)
+	var a2: float = await _tick_ms(STANDING_TICKS)
+	for b in bodies:
+		PhysicsServer3D.body_set_space((b as CollisionObject3D).get_rid(), RID())
+	var out: float = await _tick_ms(STANDING_TICKS)
+	var out2: float = await _tick_ms(STANDING_TICKS)
+	for b in bodies:
+		PhysicsServer3D.body_set_space((b as CollisionObject3D).get_rid(), space)
+	var back: float = await _tick_ms(STANDING_TICKS)
+	var floor_ms: float = maxf(absf(a - a2), absf(out - out2))
+	var idle_delta: float = (a + a2) * 0.5 - (out + out2) * 0.5
+	print("     %d collision objects   tick with bodies %.4f / %.4f ms   without %.4f / %.4f ms   back in %.4f ms"
+		% [bodies.size(), a, a2, out, out2, back])
+	print("     idle delta %.4f ms/tick against a bench floor of %.4f ms/tick" % [idle_delta, floor_ms])
+	_check(bodies.size() >= 5, "I INSTRUMENT: there were bodies to take out of the space (%d)" % bodies.size())
+	# The positive: a RIDDEN board, finger held, must cost something this
+	# instrument can see.
+	await _park_for_ride(NEUTRAL_PARK)
+	_check(_transport.mount_board(), "I INSTRUMENT: the rider is aboard for the positive")
+	_bench.hold_straight()
+	var riding: float = await _tick_ms(STANDING_TICKS)
+	_bench.release()
+	var ride_delta: float = riding - (out + out2) * 0.5
+	print("     ridden, finger held: %.4f ms/tick -> +%.4f over the empty space" % [riding, ride_delta])
+	_check(ride_delta > floor_ms * 2.0 and ride_delta > 0.02,
+		"I BLIND CHECK: the instrument SEES a ridden board (+%.4f ms/tick, floor %.4f)" % [ride_delta, floor_ms])
+	# Now the number means something. It is NOT gated to zero and not to
+	# a fraction of a ride (a first version asked for a quarter and read
+	# 0.019 then 0.062 ms/tick on two runs of one tree, either side of a
+	# 0.04-0.05 floor -- a gate on a ratio of two numbers this close to a
+	# bench's own noise is a coin toss dressed as a verdict). It is gated
+	# against a BUDGET: STANDING_BUDGET_MS per tick, which at CH56's F = 10
+	# and 50 FPS is 6 % of a 20 ms frame -- and against the ride, which an
+	# idle world must cost less than. The reading is PUBLISHED with its
+	# floor and its projection; the phone's FPS is the verdict.
+	_check(idle_delta <= STANDING_BUDGET_MS,
+		"I the idle park stands under the budget (%.4f <= %.2f ms/tick; floor %.4f)" % [idle_delta, STANDING_BUDGET_MS, floor_ms])
+	_check(idle_delta < ride_delta,
+		"I and costs less than one ride (%.4f vs %.4f ms/tick)" % [idle_delta, ride_delta])
+	if idle_delta <= floor_ms:
+		print("     -> idle cost UNDER the bench floor: not measurable here")
+	else:
+		print("     -> idle cost %.4f ms/tick above floor; at F=10 and 50 FPS that is %.2f %% of a 20 ms frame"
+			% [idle_delta, idle_delta * 10.0 * 1.2 / 20.0 * 100.0])
+	await _hand_back()
+
+func _tick_ms(ticks: int) -> float:
+	for _i in 12:
+		await get_tree().physics_frame
+	var t0: int = Time.get_ticks_usec()
+	for _i in ticks:
+		await get_tree().physics_frame
+	return float(Time.get_ticks_usec() - t0) / 1000.0 / float(ticks)
+
+func _park_for_ride(flat: Vector3) -> void:
+	var body := _transport.board_body()
+	_keepy.dismount_vehicle()
+	body.stop()
+	body.global_position = HubSurface.ground(Vector3(flat.x, 0.0, flat.z))
+	body.rotation.y = 0.0
+	_keepy.global_position = HubSurface.ground(Vector3(flat.x, 0.0, flat.z))
+	for _i in SETTLE:
+		await get_tree().physics_frame
+
+func _hand_back() -> void:
+	var body := _transport.board_body()
+	if _transport.is_riding_board():
+		body.stop()
+		body.global_position = HubSurface.ground(NEUTRAL_PARK)
+		_keepy.call("follow_carrier")
+		await get_tree().physics_frame
+		_transport.leave_board()
+		for _i in 20:
+			await get_tree().physics_frame
+	_keepy.dismount_vehicle()
 
 ## Lets a world live exactly WORLD_AGE frames, parks it at the station and
 ## reads it. Both halves of the comparison go through this one function so
