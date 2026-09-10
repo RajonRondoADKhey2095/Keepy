@@ -31,10 +31,12 @@ class_name HubRegion
 ##     OR skate lobe  OR any structure lobe )
 ##
 ## CH50 (8 septembre 2026) added the SKATE lobe: the same centre as the
-## north lobe, radius 28 instead of 12, so the north edge carries a
-## half-disc of new walkable ground 28 u deep for a skatepark a later lot
-## will stand on it. See SKATE_LOBE_RADIUS for the sweep that picked the
-## centre and for why the r=12 term below is now inert.
+## north lobe, a wider radius instead of 12, so the north edge carries a
+## half-disc of new walkable ground for a skatepark a later lot stands on
+## it. CH67 widened that radius from 28 to 36 after the board met its rim
+## at cruise. See SKATE_LOBE_RADIUS for both sweeps -- CH50's, which
+## picked the centre, and CH67's, which walked the radius -- and for why
+## the r=12 term below is now inert.
 ##
 ## THE NORTH LOBE (28 aout 2026) is the shape argument above, used for the
 ## first time on purpose rather than on water. Mathieu's decision, taken on
@@ -357,13 +359,90 @@ const NORTH_LOBE_RADIUS: float = 12.0
 ## conservative of four) and because SeesawProbe, LakeZoneProbe and
 ## ZiplineStructureProbe all still read it. Its term in contains() and its
 ## candidate in clamp_to() are kept for the same reason and are dead by
-## arithmetic, not by accident: same centre, 12 < 28.
+## arithmetic, not by accident: same centre, 12 < 36.
 ##
 ## NO ASSET IS PLACED BY THIS LOT. The skatepark itself is a Meshy lot of
 ## its own; this one only makes the ground exist, dresses it with the same
 ## carpet as every other square unit of the plateau, and closes the wall
 ## behind it.
-const SKATE_LOBE_RADIUS: float = 28.0
+##
+## =====================================================================
+## ⚠️ CH67: 28 -> 36, AND THE NUMBER IS THE LARGEST ONE THAT WAS WALKED
+## UNDER THE BUDGET -- not the largest one that felt generous.
+##
+## Device verdict (Mathieu, on the board): "il faut etendre la zone [...]
+## je suis bloque parce que la zone s'arrete". Measured on the shipped
+## tree before anything moved, and the two numbers say the same thing:
+##
+##   * the board is PARKED at HubTransport.SKATE_PARK (3, 60), which at
+##     r = 28 sits 2.84 u from the rim. A rider who mounts and holds his
+##     thumb north hits _fence -- which REFUSES the step AND clears the
+##     target -- before the run-up is over;
+##   * from the park centre the free run NORTH was 13.1 u on the axis and
+##     11.2 u at the slab's corners, against 85.1 u to the south. The big
+##     quarterpipe (yaw 0) is ridden NORTHWARD by construction and throws
+##     its landing north again, so the short side is the side the park is
+##     used on.
+##
+## THE SWEEP, WALKED ON THE REAL HOPPER at --fixed-fps 60, every run
+## reproducing the published square diagonal first (66 hops / 18.700 s --
+## a bench that cannot restate a number in the record may not publish a
+## new one). The pair is each hub corner against the point of the disc
+## FARTHEST FROM THAT CORNER, never the +Z tip:
+##
+##   r     reach   worst new pair              walked     verdict
+##   28    z 63    (-63,-12) -> (22.44,51.74)  20.117 s   shipped
+##   32    z 67    (-63,-12) -> (25.65,54.13)  20.967 s   ties CH38 exactly
+##   34    z 69    (-63,-12) -> (27.25,55.33)  21.250 s
+##   36    z 71    (-63,-12) -> (28.85,56.53)  21.817 s   <- taken
+##   38    z 73    (-63,-12) -> (30.46,57.72)  22.100 s   OVER 22, refused
+##
+## 22.100 s is the same figure the lot D recon refused for a half-extent
+## of 41, which is the sanity check on the bench rather than a
+## coincidence. So the ceiling sits between 36 and 38 and 36 is the last
+## round radius under it, with 0.183 s -- one hop -- of margin.
+##
+## ⚠️ WHAT THIS COSTS, AND IT IS NOT NOTHING. The hub's worst walk is no
+## longer CH38's: this disc TAKES the title (21.817 s against 20.967 s),
+## where CH50 deliberately stayed second. That is a real change to the
+## hub's worst case and it is stated rather than buried -- SkateTraverse
+## Probe PHASE X walks it every run and fails at 22 s. The frame cost was
+## measured too, at six stations, and is in CH67's section: +306 MultiMesh
+## instances, +15 375 scene triangles, +3 338 primitives at the park's own
+## station (the spawn moves +745, which is the carpet being RESHUFFLED --
+## `_sprinkle` draws `area x density` candidates from the shared stream,
+## so a wider COVER rect restates every later draw; CLAUDE.md CH53).
+##
+## TWO THINGS FOLLOW THIS CONSTANT AUTOMATICALLY, and that is why they are
+## derived rather than typed: CozyScatter.COVER_MAX.y (the carpet's north
+## edge) and CozyScatter.WALL_NEAR_Z (the tree wall, at +5). Both moved
+## from 63/68 to 71/76 with no edit of their own.
+const SKATE_LOBE_RADIUS: float = 36.0
+
+## CH67: how wide the painted kerb at the lobe's rim is, in units, and how
+## far INSIDE the rim it sits.
+##
+## ⚠️ THE LIMIT HAS TO BE LEGIBLE, AND THAT IS THE OTHER HALF OF THE
+## DEVICE COMPLAINT. A wider region still ends somewhere, and
+## `SkateBoardBody._fence` ends it by refusing the step and clearing the
+## target -- an invisible wall. Every other edge of this hub is read off
+## the tree wall CozyScatter plants past it, but the wall stands
+## WALL_CLEARANCE (2 u) beyond the region and is a random sprinkle, so on
+## the one edge a vehicle meets at cruise there is nothing under the
+## rider's eyes that says "this is the end".
+##
+## The kerb is PAINTED INTO cozy_ground.gdshader, not built: a ring at
+## r = 36 is 113 u of arc, and geometry for it would be hundreds of
+## triangles and a draw call on the frame this lot already loads. Painted,
+## it costs ZERO primitives and ZERO draw calls -- the same argument that
+## put the lavender rows and the circuit's mowing stripes in that shader.
+##
+## Read by CozyPalette.ground_material() from HERE, never restated: the
+## painted line and the boundary that stops the board must be the same
+## circle, and CLAUDE.md's minimap lot is this repo's standing example of
+## what it costs when a drawn edge and a logical edge drift apart.
+const KERB_WIDTH: float = 1.4
+const KERB_INSET: float = 0.5
 
 ## CH38: THE WEST RIDGE -- a rectangle unioned onto the plateau's west
 ## edge, and the first walkable ground in this file that is not flat.
@@ -721,7 +800,7 @@ static func walkable_bounds() -> Rect2:
 		_span(MOUNTAIN_MIN, MOUNTAIN_MAX),
 		_disc_span(_north_lobe, NORTH_LOBE_RADIUS),
 		# CH50: the skate lobe, and it is the term that actually moves this
-		# box's north edge (35 + 28 = 63, where the r=12 lobe reached 47).
+		# box's north edge (35 + SKATE_LOBE_RADIUS, where r=12 reached 47).
 		_disc_span(_north_lobe, SKATE_LOBE_RADIUS),
 		_disc_span(_near_bank, SHORE_PAD_RADIUS),
 	]
@@ -764,7 +843,7 @@ static func contains(point: Vector3) -> bool:
 		return true
 	# CH50: the skate lobe FIRST -- same centre, wider radius, so it is the
 	# term that answers for this disc and the CH16 line below is dead by
-	# arithmetic (12 < 28 at distance 0). The CH16 line is kept anyway, on
+	# arithmetic (12 < 36 at distance 0). The CH16 line is kept anyway, on
 	# the same terms as the shore pad's: a measured term of the union that
 	# costs nothing while contained, and that three probes still read.
 	if flat.distance_to(_north_lobe) <= SKATE_LOBE_RADIUS:
@@ -822,8 +901,8 @@ static func clamp_to(point: Vector3) -> Vector3:
 	# without growing a branch shaped like "the north lobe".
 	var lobe := _north_lobe + (flat - _north_lobe).limit_length(NORTH_LOBE_RADIUS)
 	# CH50: the skate lobe's own nearest point. It is the one that ever
-	# wins between the two -- for any point outside the region the r=28
-	# projection is |p - c| - 28 away and the r=12 one is |p - c| - 12, so
+	# wins between the two -- for any point outside the region the wide
+	# projection is |p - c| - 36 away and the r=12 one is |p - c| - 12, so
 	# the CH16 candidate can never be nearer. Kept beside it rather than
 	# replaced, for the reason its term in contains() is kept.
 	var skate := _north_lobe + (flat - _north_lobe).limit_length(SKATE_LOBE_RADIUS)

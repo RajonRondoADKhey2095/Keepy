@@ -24,6 +24,29 @@ const HAZE_DENSITY: float = 0.022
 const HAZE_START: float = 8.0
 
 ## Ground greens. GRASS_A is the base, B the darker patch, C the lighter.
+## CH67: the skate lobe's painted kerb -- trodden dark earth, the tone the
+## edge of a park actually wears.
+##
+## ⚠️ THE FIRST CHOICE WAS PALE CONCRETE AND THE ARITHMETIC REFUSED IT.
+## CLAUDE.md: the palette is cut in two by luminance and no MIDDLE tone
+## clears anything. Measured against the three grasses this band has to
+## be read on (L 0.4717 / 0.3509 / 0.5628):
+##
+##   pale concrete (0.86, 0.84, 0.78)   L 0.6742   ratios 1.39 / 1.81 / 1.18
+##   near white    (0.93, 0.92, 0.86)   L 0.8235   ratios 1.67 / 2.18 / 1.43
+##   dark earth    (0.36, 0.31, 0.26)   L 0.0826   ratios 3.93 / 3.02 / 4.62
+##
+## A pale kerb reads 1.18:1 against GRASS_C -- i.e. it DISAPPEARS on every
+## light patch of the carpet, which is exactly the "aucune separation a
+## l'interieur d'une bande" this repo keeps paying for. Dark clears 3:1
+## against all three, worst case 3.02.
+##
+## This is an ALBEDO argument and it is not the gate: SkateEdgeProbe reads
+## PIXELS of the rendered frame from a station on the rim, because a tone
+## is a claim about a colour and only a pixel count is a claim about the
+## frame (CLAUDE.md, CH39).
+const LOBE_KERB: Color = Color(0.36, 0.31, 0.26)
+
 const GRASS_A: Color = Color(0.55, 0.78, 0.36)
 const GRASS_B: Color = Color(0.44, 0.69, 0.32)
 const GRASS_C: Color = Color(0.66, 0.83, 0.41)
@@ -407,6 +430,16 @@ static func ground_material() -> ShaderMaterial:
 		mat.set_shader_parameter("sea_shallow_bed", SEA_SHALLOW_BED)
 		mat.set_shader_parameter("sea_centre", Vector2(HubRegion.SEA_CENTRE.x, HubRegion.SEA_CENTRE.z))
 		mat.set_shader_parameter("sea_radius", HubRegion.SEA_RADIUS)
+		# CH67: the skate lobe's kerb. Centre and radius come from
+		# HubRegion, never from a literal here -- the painted line and the
+		# boundary that stops a board have to be the SAME circle, and this
+		# repo's minimap lot is what it costs when a drawn edge and a
+		# logical edge are two spellings free to drift.
+		var lobe: Vector3 = HubRegion.skate_lobe_centre()
+		mat.set_shader_parameter("kerb_centre", Vector2(lobe.x, lobe.z))
+		mat.set_shader_parameter("kerb_radius", HubRegion.SKATE_LOBE_RADIUS - HubRegion.KERB_INSET)
+		mat.set_shader_parameter("kerb_width", HubRegion.KERB_WIDTH)
+		mat.set_shader_parameter("kerb_color", LOBE_KERB)
 		_ground = mat
 	return _ground
 

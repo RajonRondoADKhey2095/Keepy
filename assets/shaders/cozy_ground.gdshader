@@ -76,6 +76,22 @@ uniform vec3 sea_bed : source_color = vec3(0.24, 0.52, 0.60);
 uniform vec3 sea_shallow_bed : source_color = vec3(0.62, 0.80, 0.70);
 uniform vec2 sea_centre = vec2(0.0, 0.0);
 uniform float sea_radius = 0.0;
+// CH67: the skate lobe's painted KERB. The region's north edge is a disc
+// (centre, radius) and the board meets it at cruise, so the ground says
+// where it is: a pale worn band just inside the rim, wobbled by the big
+// noise like every other band here so it never reads as a ruler. Painted
+// rather than built -- 113 u of arc would be hundreds of triangles and a
+// draw call, and this is zero of both, the same argument that put the
+// lavender rows and the mowing stripes in this file.
+//
+// ONLY on the half of the disc that IS the region's edge (z >= the
+// centre's z): south of that the square's edge takes over and the arc
+// runs through open plateau where it would be a circle drawn on a lawn
+// for no reason.
+uniform vec2 kerb_centre = vec2(0.0, 0.0);
+uniform float kerb_radius = 0.0;
+uniform float kerb_width = 1.4;
+uniform vec3 kerb_color : source_color = vec3(0.36, 0.31, 0.26);
 uniform vec3 haze_color : source_color = vec3(0.78, 0.88, 0.94);
 uniform float haze_density = 0.018;
 uniform float haze_start = 6.0;
@@ -151,6 +167,13 @@ void fragment() {
 			sand = mix(sand, bed, 1.0 - smoothstep(-0.6, 0.6, d));
 		}
 		col = mix(col, sand, cove);
+	}
+	// CH67: the kerb, before the fine mottle so the band picks the same
+	// grain up as the grass around it.
+	if (kerb_radius > 0.0 && p.y >= kerb_centre.y) {
+		float dr = abs(length(p - kerb_centre) - kerb_radius + (big - 0.5) * 0.7);
+		float kerb = 1.0 - smoothstep(kerb_width * 0.35, kerb_width * 0.5, dr);
+		col = mix(col, kerb_color * (0.90 + 0.20 * small), kerb * 0.88);
 	}
 	col *= 1.0 + (small - 0.5) * 2.0 * detail_amount;
 	// Fine mottle (grass clumps) close to the camera; mipmapped away far.

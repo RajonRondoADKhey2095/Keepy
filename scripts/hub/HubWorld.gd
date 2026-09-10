@@ -401,7 +401,61 @@ const BEAR_DRAWN_HEIGHT: float = BEAR_SCALE * BEAR_REST_SPAN
 ## once seen aboard. Re-scanned against the layout at the new value: still
 ## 5.374 u clear of the nearest prop (the rock at (-5.18, 0, 38.43)), which
 ## is the same scan the original 35.5 was picked by.
-const BEAR_REST: Vector3 = Vector3(0.0, 0.0, 37.0)
+##
+## =====================================================================
+## ⚠️ CH67: (0, 37) -> (15, 34.5), BECAUSE THE SEESAW MOVED AND THIS POINT
+## IS 1.5 u BEHIND IT BY DEFINITION.
+##
+## Device verdict (Mathieu, riding): "la balancoire et l'ourson bloquent le
+## passage pour faire des tricks". Measured rather than taken on faith --
+## the park's riding corridor is its slab (x [-10, 10], z [41, 59]) grown
+## by the run-up a rider needs, 10 u north and south (CH66's own device
+## protocol asks for ~8 u before the big quarterpipe, which is ridden
+## NORTHWARD, and the big ramp throws its landing north again) and 2 u
+## sideways (the modules span x [-7.7, 8.0]; a rider drifts, he does not
+## cross the lobe). That is x [-12, 12], z [31, 69] -- and the seesaw at
+## (0, 38.5) sat on its centre line with the bear 1.5 u in front of it.
+##
+## THE NEW SITE WAS SCANNED, on the same terms the 35.5 and the 37.0 were,
+## against every footprint the builders PUBLISH (227 of them) rather than
+## against the layout file:
+##
+##   site          in corridor   clear of the nearest published footprint
+##   (0, 38.5)     YES           -- today, and it IS the obstruction
+##   (-16, 38.5)   no            1.669 u   (the cabin reserves 8.8 u)
+##   (-15, 34)     no            -2.443 u  (inside the cabin's own radius)
+##   (13, 42)      no            1.811 u
+##   (16, 38.5)    no            6.250 u
+##   (16, 34)      no            5.591 u
+##   (15, 36)      no            6.840 u
+##   (18, 44)      no            6.744 u   <- taken
+##
+## West is the cabin's, and the cabin reserves 8.8 u. East is open.
+##
+## ⚠️ AND CLEARANCE ALONE PICKED A SITE THAT DOES NOT WORK. (15, 36) scored
+## best on it -- and the bear's campfire sweep from there came back with
+## NO VALID AZIMUTH: every segment to the hearth crossed a prop. This
+## point is not only where the bear STANDS, it is where its walk to the
+## fire STARTS, so the site had to be scanned against all four constraints
+## at once (out of the corridor, clear of every published footprint, in the
+## region for the seesaw AND the bear, and a legal campfire azimuth still
+## reachable). 133 sites pass; 101 of them keep a campfire margin at least
+## as wide as the shipped 0.9628 u, and (18, 44) is the nearest of those
+## with room to spare on both counts -- 6.744 u of clearance and a 1.870 u
+## campfire margin, nearly twice today's.
+##
+## WHAT MOVES WITH IT, and neither is optional: the seesaw's own layout
+## entry (`hub_layout.tres`, the ONE place its position is authored) and
+## the bear's two campfire constants below, both of which are functions of
+## THIS point. SeesawProbe gates that this literal really is 1.5 u behind
+## the fulcrum as built -- the lake-centre regime, a second spelling that
+## is checked rather than trusted.
+const BEAR_REST: Vector3 = Vector3(18.0, 0.0, 42.5)
+
+## How far behind the fulcrum BEAR_REST sits, on the seesaw's own local Z.
+## Published so the probe can gate the literal above against the seesaw the
+## builder actually stood there, instead of comparing two literals.
+const BEAR_REST_BACK: float = 1.5
 
 ## How far to the near side of the plank the bear walks up, in the seesaw's
 ## own frame -- its X is the plank end it will sit on.
@@ -468,6 +522,16 @@ const CAMPFIRE_WALK_RATE: float = 2.5
 ## copied from CH25's recon), which is why the figure carries five, not
 ## three, significant digits.
 ##
+## ⚠️ CH67: 2.9768 -> 1.9957, AND IT IS THE SAME CALCULATION RE-RUN, not a
+## re-tune. This rate is a FUNCTION of BEAR_REST, and CH67 moved that
+## point off the park's riding corridor: the bear's outbound leg fell from
+## 22.9304 u to 15.3734 u (it now starts east of the fire rather than due
+## north of it), so the rate that covers it in the badger's own 10.1947 s
+## fell with it. Re-derived on the built tree, both legs read off the SAME
+## points `_on_tapped_campfire` walks to: drift 0.000000 s. The assertion
+## in `_setup_campfire()` gates it every boot, which is what makes this a
+## calculation rather than a discovery on device.
+##
 ## ⚠️ THIS IS NOT `BEAR_WALK_RATE`, AND SETTING IT ON THE SAME NODE IS THE
 ## EXACT FOOT-SLIDE TRAP `CAMPFIRE_WALK_RATE`'S OWN NOTE WARNS ABOUT.
 ## `HubActorWalker._ready()` used to read `walk_rate` into
@@ -493,7 +557,7 @@ const CAMPFIRE_WALK_RATE: float = 2.5
 ## started any time afterwards still gets the seesaw's own budget, and the
 ## `_bear_campfire_leg` gate (see `_on_seesaw_mounted()`) already rules out
 ## the two ever being wanted on the same frame.
-const BEAR_CAMPFIRE_WALK_RATE: float = 2.9768
+const BEAR_CAMPFIRE_WALK_RATE: float = 1.9957
 
 ## Site-centric azimuth (degrees, measured from +X, atan2(dz, dx) --
 ## `HubActorWalker`'s own yaw convention rotated 90 degrees to a bearing
@@ -531,6 +595,24 @@ const BEAR_CAMPFIRE_WALK_RATE: float = 2.9768
 ## different prop subset, not a different conclusion: both sweeps agree on
 ## the SAME best point at the SAME azimuth, which is what makes it safe to
 ## commit rather than a coincidence to distrust.
+##
+## ⚠️ CH67 MOVED `BEAR_REST` AND THIS AZIMUTH SURVIVED IT -- checked, not
+## assumed. The sweep was re-run from (18, 42.5) with the same three
+## tests: the valid band is now 45.7-227 degrees (it was 45.7-116.4), the
+## best-margin point in it is 127.5 degrees at 4.4741 u, and THIS azimuth
+## reads 3.2600 u -- more than three times the 0.9628 u it was chosen at.
+## Kept rather than re-optimised: 127.5 buys 1.2 u over a constraint
+## already met threefold, and costs a constant and a rendered arrival
+## direction. The margin had to be re-measured; the azimuth did not have
+## to move.
+##
+## ⚠️ THE SWEEP FIRST SAID "NO VALID AZIMUTH" FROM THE NEW POINT, AND THE
+## SWEEP WAS WRONG. The bear rests 1.5 u behind a seesaw whose published
+## footprint radius is 1.80, so a segment test that treats the seesaw as
+## an obstacle fails at its FIRST sample for every azimuth -- the prop a
+## walk STARTS from is not an obstacle to it. CH25 never met this because
+## its own list was decorative props only. Worth writing down because the
+## failure looks exactly like a site that cannot work.
 const BEAR_CAMPFIRE_AZIMUTH_DEG: float = 65.2
 
 ## `false`  -- the bear stays where it arrived and waits for next time.
