@@ -625,21 +625,93 @@ static func funbox_pieces(width: float, length: float, height: float, ramp: floa
 const BOWL_AZIMUTH: int = 24
 const BOWL_RINGS: int = 5
 
-func bowl(radius: float, depth: float) -> ArrayMesh:
-	# The profile, from the centre of the floor out to the lip. `r` is the
-	# distance from the axis, `y` the height above the floor.
+## The dish profile, from the edge of the flat floor out to the lip. `x`
+## is the distance from the axis, `y` the height above the floor.
+##
+## ⚠️ THE FLOOR IS NOT IN THIS PROFILE, and leaving it out is the whole
+## point. A profile that starts at r = 0 gives a first ring of
+## BOWL_AZIMUTH vertices all at the same point, and the quad loop below
+## then lays 48 ZERO-AREA triangles that cost their full price on the
+## primitive counter this lot is gated on and draw nothing at all --
+## CH39's "submitted is not drawn", manufactured on purpose. The floor
+## is a fan from ONE centre vertex, after the loop.
+##
+## CH66: PUBLISHED, for the same reason `quarterpipe_profile` is --
+## `bowl_pieces()` below is a second READING of this one curve, and it
+## must not be a second spelling of it.
+static func bowl_profile(radius: float, depth: float) -> Array[Vector2]:
 	var prof: Array[Vector2] = []
 	var flat := maxf(radius - depth, 0.15)
-	# ⚠️ THE FLOOR IS NOT IN THIS PROFILE, and leaving it out is the whole
-	# point. A profile that starts at r = 0 gives a first ring of
-	# BOWL_AZIMUTH vertices all at the same point, and the quad loop below
-	# then lays 48 ZERO-AREA triangles that cost their full price on the
-	# primitive counter this lot is gated on and draw nothing at all --
-	# CH39's "submitted is not drawn", manufactured on purpose. The floor
-	# is a fan from ONE centre vertex, after the loop.
 	for s in BOWL_RINGS + 1:
 		var a: float = float(s) / float(BOWL_RINGS) * (PI * 0.5)
 		prof.append(Vector2(flat + depth * sin(a), depth * (1.0 - cos(a))))
+	return prof
+
+## =====================================================================
+## CH66 (lot 3b) -- THE BOWL'S CONVEX DECOMPOSITION, EXACT, AND NOT WIRED
+##
+## CH56 section 12.4 refused the bowl a collider because a VHACD
+## decomposition of an OPEN dish fills the dish -- "un tas de solides
+## pleins". That objection is about the tool, not the shape. What the
+## bowl IS, as a solid, is a RING of concrete: the region between the
+## dish surface (the profile above, revolved) and the vertical outer
+## skirt at r = radius, above y = 0. The flat floor inside r = flat is
+## the LAWN -- D1, HubSurface owns it, exactly as it owns the ground the
+## quarterpipes stand on -- so it gets no piece, and the dish stays open.
+##
+## In one azimuth sector the ring's cross-section is the quarterpipe's
+## exactly: the region under a convex increasing curve, bounded by y = 0,
+## the vertical back (here the skirt) and the drawn polyline P0..P5. The
+## same fan from the back-bottom corner B = (r = radius, y = 0) resolves
+## its reflex vertices with one piece per profile segment, and sweeping
+## that fan across ONE azimuth sector gives a prism whose six points are
+## the triangle at t_k and the same triangle at t_k+1 -- convex, and with
+## planar faces because the two chords at any radius are parallel. So:
+## BOWL_AZIMUTH x BOWL_RINGS = 120 pieces, and their union is the drawn
+## ring to the last vertex (SkatePhysicsProbe PHASE G gates the point
+## sets equal, with the floor fan's centre vertex the one drawn point no
+## piece may carry). ONE sector per piece is the maximum: a hull spanning
+## two sectors would chord across the CONCAVE inner surface and fill the
+## dish -- which is CH56's objection, reappearing at two sectors' width.
+##
+## ⚠️ IT IS NOT WIRED AS A COLLIDER, AND THE REASON IS MEASURED, NOT
+## GEOMETRIC. `HubSkatepark.pieces_for` still returns EMPTY for the bowl:
+## where the layout stands (CH53), the bowl's ring overlaps BOTH
+## quarterpipes' solids -- 968 samples in both (14 % of the AABB
+## intersection, up to y 1.18) with the 2.10, 140 (2 %) with the 1.45 --
+## so a solid bowl would put a 1.35 u wall inside the big ramp's east end.
+## And a solid ring with a vertical outer skirt has NO GROUND ENTRY: a
+## board reaches the dish only from the air. Both are layout questions
+## (move the bowl clear, give it a roll-in), and SkatePhysicsProbe gates
+## the perimeter on the MEASUREMENT: the bowl stays unwired exactly as
+## long as it overlaps a solid module, and the day it is moved clear the
+## probe goes red and says "wire it". What this function settles is that
+## lot 3b's hard half -- an exact, rideable bowl collider -- exists and is
+## proved (SkatePhysicsProbe PHASE X rides it on a temporary body).
+static func bowl_pieces(radius: float, depth: float) -> Array:
+	var prof: Array[Vector2] = bowl_profile(radius, depth)
+	var pieces: Array = []
+	for k in BOWL_AZIMUTH:
+		var t0: float = float(k) / float(BOWL_AZIMUTH) * TAU
+		var t1: float = float(k + 1) / float(BOWL_AZIMUTH) * TAU
+		var d0 := Vector3(cos(t0), 0.0, sin(t0))
+		var d1 := Vector3(cos(t1), 0.0, sin(t1))
+		for s in BOWL_RINGS:
+			var wedge := PackedVector3Array()
+			for d in [d0, d1]:
+				# B, the fan apex: the skirt's foot at this azimuth -- the
+				# same point `bowl()` writes for `outer[k]`.
+				wedge.append(d * prof[prof.size() - 1].x)
+				wedge.append(d * prof[s].x + Vector3.UP * prof[s].y)
+				wedge.append(d * prof[s + 1].x + Vector3.UP * prof[s + 1].y)
+			pieces.append(wedge)
+	return pieces
+
+func bowl(radius: float, depth: float) -> ArrayMesh:
+	# The profile, from the centre of the floor out to the lip. `r` is the
+	# distance from the axis, `y` the height above the floor. PUBLISHED
+	# above (CH66) so the pieces read the same curve.
+	var prof: Array[Vector2] = bowl_profile(radius, depth)
 	var ring: Array = []
 	for p in prof.size():
 		var row: Array[int] = []
