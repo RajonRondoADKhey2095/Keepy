@@ -728,7 +728,17 @@ func _roll(label: String, index: int, from: Vector3, to: Vector3, ticks: int, sp
 	body.stop()
 	body.velocity = Vector3.ZERO
 	body.global_position = HubSurface.ground(Vector3(from.x, 0.0, from.z))
-	body.rotation.y = 0.0
+	# ⚠️ CH65 -- PARKED FACING THE RUN, NOT FACING NORTH. `rotation.y = 0`
+	# was free while the facing snapped to whatever heading arrived on the
+	# first tick; since CH65 the nose is rate-limited and the push waits
+	# for it, so a run aimed anywhere but north began with a pivot of up
+	# to 2.1 s and then described a CURVE. Measured on the runs that come
+	# in from the east: the board reached the funbox's face at x = -8.03
+	# instead of x = 2.20, and the neutralised rail run passed 3.009 u
+	# clear of a volume it was supposed to go straight through -- both
+	# reading like collider defects, both an unstated starting facing.
+	var _aim_dir := Vector3(to.x - from.x, 0.0, to.z - from.z)
+	body.rotation.y = atan2(_aim_dir.x, _aim_dir.z) if _aim_dir.length() > 0.0001 else 0.0
 	_keepy.global_position = HubSurface.ground(Vector3(from.x, 0.0, from.z))
 	for _i in SETTLE:
 		await get_tree().physics_frame

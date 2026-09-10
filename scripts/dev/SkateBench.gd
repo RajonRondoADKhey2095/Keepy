@@ -47,6 +47,12 @@ class_name SkateBench
 
 const HOLD_PX: float = 140.0
 const STALL_TICKS: int = 30
+
+## CH65: how close the nose must be to the target's bearing before a
+## pivot stops counting as progress. 0.20 rad is 11.5 deg -- inside the
+## few degrees a moving board trails its own ask, so a board that is
+## running normally is never "still turning" by this test.
+const POINTED_ENOUGH: float = 0.20
 ## Where the bench's finger lands. Any pixel: the writer's mapping is
 ## relative to its anchor, and a bench never projects this point.
 const ANCHOR: Vector2 = Vector2(540.0, 1300.0)
@@ -60,6 +66,9 @@ var _has_dest: bool = false
 var _arrive: float = 0.45
 var _best: float = 1e9
 var _stalled: int = 0
+## CH65: the closest the nose has come to the target's bearing, so a
+## pivot counts as progress. Reset with `_best` in `aim()`.
+var _best_bearing: float = INF
 var _stalled_out: bool = false
 ## Ticks since the current aim() was issued, and the tick at which the
 ## progress guard lifted the finger (-1 if it has not). Published so a
@@ -114,6 +123,7 @@ func aim(point: Vector3, arrive: float = KeepyHopper.ARRIVE_EPSILON, speed_cap: 
 	_has_dest = true
 	_holding = false
 	_stalled = 0
+	_best_bearing = INF
 	_stalled_out = false
 	_ticks = 0
 	_stalled_at = -1
@@ -177,8 +187,39 @@ func _step() -> void:
 		if remaining <= _arrive:
 			release()
 			return
+		# ⚠️ CH65 -- TURNING IS PROGRESS, AND WITHOUT THIS LINE THE GUARD
+		# KILLS EVERY RUN THAT HAS TO POINT ITSELF FIRST. Since CH65 the
+		# board's nose is rate-limited (`SkateBoardBody.YAW_RATE_MAX`) and
+		# it does not push until it is roughly pointed, so a bench that
+		# parks a board facing north and aims it south spends ~2.1 s
+		# pivoting on the spot -- 126 ticks of zero DISTANCE progress
+		# against a 30-tick guard. Measured before the line was written:
+		# PHASE L's flat run reported `reached 0.000 u/s`, a board that
+		# never moved at all, and it read exactly like a dead drive model.
+		#
+		# ⚠️ AND IT IS BOUNDED BY `POINTED_ENOUGH`, BECAUSE THE FIRST
+		# VERSION OF THIS WAS WRONG AND PHASE S SAID SO. That version read
+		# "a wedged board does not turn either -- the wall takes its
+		# velocity, not its yaw", and the claim is simply false: a board
+		# pinned flat against the funbox turns perfectly well, so `turning`
+		# reset the counter for ever and the guard stopped catching walls
+		# at all. Three assertions went red on it, on code the rest of this
+		# lot had just made correct -- which is CLAUDE.md's rule that a
+		# probe failing on code you believe is a QUESTION, working exactly
+		# as advertised.
+		#
+		# Turning is progress only while there is turning left to DO. Once
+		# the nose is within POINTED_ENOUGH of the bearing, a board that
+		# still makes no ground is wedged, whatever its yaw is doing.
+		var bearing: float = absf(angle_difference(body.rotation.y,
+			atan2(to.x / remaining, to.z / remaining)))
+		var turning: bool = bearing > POINTED_ENOUGH and bearing < _best_bearing - 0.002
+		if bearing < _best_bearing:
+			_best_bearing = bearing
 		if remaining < _best - SkateBoardBody.REST_STEP:
 			_best = remaining
+			_stalled = 0
+		elif turning:
 			_stalled = 0
 		else:
 			_stalled += 1

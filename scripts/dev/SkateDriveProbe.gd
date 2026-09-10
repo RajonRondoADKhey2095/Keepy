@@ -236,19 +236,43 @@ func _phase_drive() -> void:
 	Input.parse_input_event(_touch(at, true))
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	_check(body.throttle() >= 1.0, "D1 the press alone opened the board's throttle (%.2f)" % body.throttle())
+	# ⚠️ CH65 -- THE PRESS OPENS A RAMP, NOT A SWITCH. Two frames in, the
+	# board carries 0.15 of its push and climbing; full arrives in 29 ticks
+	# (`SkateInputProbe` PHASE C measures the ramp itself and gates that it
+	# only ever rises). What this phase is for is the ROUTING -- that an
+	# engine-delivered press reaches the board at all -- so what it asks is
+	# that the throttle has come OFF ZERO, which a dead route never would.
+	_check(body.throttle() > 0.0,
+		"D1 the press alone opened the board's throttle (%.4f, ramping)" % body.throttle())
 	# DOWN the screen: the parked board faces north and the lobe's rim is
 	# three units north of it -- a finger held UP ran the first version of
 	# this phase straight into the fence (2.8 u, throttle dropped by the
 	# fence, read as a dead throttle). A finger held down turns the board
 	# south, onto thirty units of open lawn.
 	Input.parse_input_event(_drag(at + Vector2(0.0, 140.0)))
+	# ⚠️ CH65 -- AND THE FIRST 40 TICKS ARE THE **TURN**, NOT THE RIDE.
+	# Down the screen is a REVERSAL under the chase camera, and since CH65
+	# the nose is rate-limited and the push waits for it (`SkateBoardBody.
+	# align`): the board points itself first and rides after. Measured
+	# before this settle existed, on a 90-tick window: 0.004 u travelled
+	# and a top speed of 0.080 u/s -- which reads exactly like a dead drive
+	# model and was a stopwatch started on the wrong event.
+	#
+	# The reversal itself is not skipped, it is ASSERTED: the nose has to
+	# have come round, or a board that simply refused the finger would slip
+	# through this window unnoticed.
+	var yaw_before: float = body.rotation.y
+	for _s in 40:
+		await get_tree().physics_frame
+	var came_round: float = absf(rad_to_deg(angle_difference(yaw_before, body.rotation.y)))
+	_check(came_round > 120.0,
+		"D1b the held finger turned the board round to face it (%.1f deg in 40 ticks)" % came_round)
 	var top: float = 0.0
 	var held: bool = true
 	for _i in HOLD_FRAMES:
 		await get_tree().physics_frame
 		top = maxf(top, body.speed())
-		if body.throttle() < 1.0:
+		if body.throttle() < 0.99:
 			held = false
 	var moved: Vector3 = body.flat_position() - before
 	print("     held %d ticks down the screen (south, open lawn): %.3f u, top %.3f u/s (cruise %.2f)" % [HOLD_FRAMES, moved.length(), top, HubTransport.SKATE_CRUISE])
