@@ -157,6 +157,7 @@ func _run() -> void:
 	await _phase_shunt()
 	await _phase_emulated()
 	await _phase_drive()
+	await _phase_turn()
 	await _phase_fence()
 	await _phase_mapping()
 	await _phase_off()
@@ -510,6 +511,78 @@ func _phase_drive() -> void:
 	_check(cos_facing > 0.95,
 		"and it went STRAIGHT ON, along the board's own facing (cos = %.4f)" % cos_facing)
 	_touch._unhandled_input(_release(at + Vector2(4.0, 3.0)))
+	await _settle(4)
+
+# =====================================================================
+# PHASE T -- WHAT A HELD SIDEWAYS FINGER ACTUALLY DOES, IN DEGREES PER
+# SECOND
+#
+# ⚠️ CLAUDE.md, CH42: "un braquage tenu dessine un cercle, et un cercle
+# finit ou il commence". Under the chase camera the heading mapping is a
+# FEEDBACK LOOP -- the finger writes the board's heading off the camera
+# basis, the camera then lags toward the board's heading -- and a loop
+# whose rate nobody has measured is a loop nobody can predict from device.
+# So this phase measures it and PUBLISHES the number, rather than leaving
+# the first reading of it to a phone.
+#
+# The arithmetic to expect, so the measurement can contradict it: a
+# first-order lag at `DRIVE_HEADING_LAMBDA` holding a steady offset `phi`
+# turns at `omega = lambda * phi`. A finger held straight up is phi = 0
+# and goes straight (PHASE D). A finger held at pure 90 deg is the
+# EXTREME of the family, and what it costs is what this phase prints.
+#
+# ⚠️ WHAT IS GATED IS ONLY THAT IT IS BOUNDED AND THAT IT TURNS AT ALL.
+# The rate is a FEEL number and this lot does not own feel: a threshold
+# invented here would be a taste dressed as a contract. What a lot may
+# gate is that the loop CONVERGES -- a rate that grew run over run would
+# be a runaway, and that is a defect at any taste.
+
+func _phase_turn() -> void:
+	print("-- PHASE T: a held SIDEWAYS finger -- the loop's own turn rate --")
+	await _reset_ride()
+	await _settle_camera()
+	var body := _transport.board_body()
+	var at := Vector2(500.0, 900.0)
+	_touch._unhandled_input(_press(at))
+	_touch._unhandled_input(_drag(at + Vector2(140.0, 0.0)))
+	# ⚠️ SIX WINDOWS AND NOT TWO, AND THE TWO-WINDOW VERSION MIS-READ IT.
+	# It reported 30.2 deg/s then 107.1 and called the loop divergent; the
+	# loop was simply still winding up, because it starts from a board
+	# pointing where the camera points (lag zero) and the lag has to build
+	# before the rate does. A convergence test whose window is shorter than
+	# the transient measures the transient.
+	var rates: Array[float] = []
+	var last: float = body.rotation.y
+	for _w in 6:
+		await _settle(60)
+		var now: float = body.rotation.y
+		rates.append(absf(rad_to_deg(angle_difference(last, now))))
+		last = now
+	_touch._unhandled_input(_release(at + Vector2(140.0, 0.0)))
+	var line: String = ""
+	for r in rates:
+		line += "%.1f  " % r
+	print("     held 90 deg to the side, deg/s per second: %s" % line)
+	print("     (DRIVE_HEADING_LAMBDA %.2f x 90 deg predicts a ceiling of %.1f deg/s)"
+		% [HubCamera.DRIVE_HEADING_LAMBDA, rad_to_deg(HubCamera.DRIVE_HEADING_LAMBDA * PI / 2.0)])
+	var ceiling: float = rad_to_deg(HubCamera.DRIVE_HEADING_LAMBDA * PI / 2.0)
+	_check(rates[0] > 5.0,
+		"INSTRUMENT: a held sideways finger DOES turn the board (%.1f deg/s in the first second)"
+			% rates[0])
+	# The convergence gate, and it is the only one this lot may write: the
+	# LAST window may not be meaningfully faster than the one before it,
+	# and no window may pass the ceiling the lag arithmetic sets. A rate
+	# that kept climbing past that would be a runaway, and a runaway is a
+	# defect at any taste -- while the RATE ITSELF is a feel number this
+	# lot does not own.
+	_check(rates[5] <= rates[4] * 1.20 + 6.0,
+		"the loop CONVERGES -- the last second is not faster than the one before (%.1f vs %.1f)"
+			% [rates[5], rates[4]])
+	var worst: float = 0.0
+	for r in rates:
+		worst = maxf(worst, r)
+	_check(worst <= ceiling * 1.10,
+		"and it never passes the lag ceiling (%.1f <= %.1f deg/s)" % [worst, ceiling * 1.10])
 	await _settle(4)
 
 # =====================================================================

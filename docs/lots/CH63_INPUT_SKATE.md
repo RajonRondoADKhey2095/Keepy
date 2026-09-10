@@ -432,3 +432,41 @@ côtés avant de comparer quoi que ce soit).
   point fixe de cette boucle, et c'est le seul offset contre lequel
   PHASE D peut mesurer le mapping plutôt que la caméra ; **les côtés sont
   gatés en PIXELS par PHASE M, caméra garée**.
+
+## Section 10 — ⚠️ LA BOUCLE A UN TAUX, ET LA PRÉDICTION ÉTAIT FAUSSE D'UN FACTEUR 3
+
+`CLAUDE.md`, CH42 : *un braquage tenu dessine un cercle*. Sous la
+poursuite, le mapping du cap est une **boucle de contre-réaction** (le
+doigt écrit le cap depuis la base caméra, la caméra retarde ensuite vers
+le cap de la planche), et un taux que personne n'a mesuré est un taux que
+personne ne peut prédire depuis un téléphone. PHASE T le mesure et le
+**publie**.
+
+L'arithmétique évidente — un retard du premier ordre à
+`DRIVE_HEADING_LAMBDA` tenant un offset `φ` tourne à `ω = λ·φ` — prédit
+**324 °/s** pour un doigt tenu à 90°. **Mesuré, six fenêtres d'une seconde,
+doigt tenu plein travers :**
+
+```
+30,2   107,1   104,7   105,8   106,5   105,8   deg/s
+```
+
+**~106 °/s**, soit un facteur **3,1 en dessous** de la prédiction : l'offset
+effectif entre l'avant caméra et le cap se stabilise à **~29°** et non à
+90°, parce que la pose de poursuite ne regarde pas le long de
+`_drive_heading` mais **vers un point en avant du véhicule**. Un tour
+complet en **3,4 s**, soit un rayon d'environ **5,4 u** à la croisière —
+c'est un **carve**, pas une toupie. La prédiction aurait fait rejeter le
+schéma sur du papier.
+
+⚠️ **ET LA PREMIÈRE VERSION DE CETTE PHASE A LU L'INVERSE.** Deux fenêtres
+au lieu de six : **30,2 puis 107,1**, et elle a déclaré la boucle
+**divergente**. La boucle montait simplement encore — elle part d'une
+planche qui pointe où la caméra pointe (retard nul) et le retard doit se
+construire avant que le taux ne le fasse. **Un test de convergence dont la
+fenêtre est plus courte que le transitoire mesure le transitoire.**
+
+Ce qui est **gaté** est seulement que la boucle **converge** (la dernière
+seconde n'est pas plus rapide que la précédente) et qu'aucune fenêtre ne
+passe le plafond du retard : le **taux lui-même est un nombre de
+ressenti**, et un seuil inventé ici serait un goût déguisé en contrat.
