@@ -162,12 +162,14 @@ signal tapped_balloon(point: Vector3)
 signal tapped_vehicle(point: Vector3)
 
 ## Carte-blanche v4. Emitted INSTEAD of tapped_ground when the finger
-## landed on a climbable tree (`aim` in its ground disc, or -- v5 -- the
-## camera ray through its crown or trunk: HubTrees.tree_hit). `index` is
-## the tree. The tree he is ON withdraws for the whole of the ride
-## (tree_hit answers -1 for it), so a tap on it meanwhile falls through
-## to tapped_ground -- with the tree's own foot as the point when the ray
-## hit its crown -- where HubWorld reads it BY STATE: shake, or come down.
+## landed on a climbable tree -- v6: strictly the camera ray through the
+## APEX (HubTrees.tree_hit, CLIMB_APEX_R sphere on `top` only; neither
+## the ground disc nor the trunk nor the rest of the crown answer any
+## more). `index` is the tree. The tree he is ON withdraws for the whole
+## of the ride (tree_hit answers -1 for it), so a tap on it meanwhile
+## falls through to tapped_ground -- with the tree's own foot as the
+## point when the ray hit its apex -- where HubWorld reads it BY STATE:
+## shake, or come down.
 signal tapped_tree(point: Vector3, index: int)
 ## V6: a tap on one of the new inhabitants (`kind` names which: &"boar"
 ## ...). Withdrawn by each animal's own module for the length of its ride

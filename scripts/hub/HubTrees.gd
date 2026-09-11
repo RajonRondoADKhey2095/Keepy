@@ -81,6 +81,11 @@ const CONTRACT_TOLERANCE: float = 0.16
 const FOOTPRINT: float = 2.0
 const TAP_RADIUS: float = 1.9
 const FOOT_GAP: float = 0.42
+## Climb hitbox: a sphere centred on the apex ONLY (not crown_lo/top like
+## the old crown sphere). Taste value, tune after playtest -- cf doctrine
+## CH70 -- do not let this get inherited elsewhere without renaming it
+## explicitly.
+const CLIMB_APEX_R: float = 0.6
 ## Wind the wreath sways with: the layout trees' own numbers.
 const WIND_AMOUNT: float = 0.05
 const WIND_HEIGHT: float = 3.2
@@ -616,6 +621,14 @@ func is_perch(index: int) -> bool:
 func seat_height(index: int) -> float:
 	return float(_sites[index]["kind"]["seat_y"]) * float(_sites[index]["scale"])
 
+## The apex point tree_hit() gates the climb on -- the world-space centre
+## of the CLIMB_APEX_R sphere for this site.
+func apex_of(index: int) -> Vector3:
+	var site: Dictionary = _sites[index]
+	var at: Vector3 = site["at"]
+	var top: float = float(site["kind"]["top"]) * float(site["scale"])
+	return at + Vector3(0.0, top, 0.0)
+
 ## Stable identity for the save: the site, snapped. Moving a site in
 ## TREES (or a tree in the layout) makes a new (full) tree, which is what
 ## a layout edit should do.
@@ -715,13 +728,12 @@ func accepts_tap(aim: Vector3) -> int:
 			best = i
 	return best
 
-## v5: which tree the FINGER pointed at -- the ground disc as above, OR
-## the camera ray through the crown (a sphere: the canopy the player
-## sees) or along the trunk (a capsule). A crown at 3 u projects onto the
-## ground plane 3.5 u SOUTH of its trunk, so a disc alone made tapping
-## what one sees miss. Nearest hit along the ray wins; `include_occupied`
-## lets HubTapInput route a tap on the occupied tree to the ground path
-## with the tree's own foot as the point (the shake).
+## Which tree the FINGER pointed at, climb-to-grab: strictly the APEX,
+## a sphere of radius CLIMB_APEX_R centred on `top` only. Neither the
+## ground disc nor the trunk nor the rest of the crown answers -- a tap
+## must land on the very top of the tree. `include_occupied` lets
+## HubTapInput route a tap on the occupied tree to the ground path with
+## the tree's own foot as the point (the shake).
 func tree_hit(aim: Vector3, origin: Vector3, dir: Vector3, include_occupied: bool = false) -> int:
 	var best: int = -1
 	var best_t: float = INF
@@ -732,23 +744,11 @@ func tree_hit(aim: Vector3, origin: Vector3, dir: Vector3, include_occupied: boo
 		var at: Vector3 = site["at"]
 		var kind: Dictionary = site["kind"]
 		var s: float = site["scale"]
-		var t: float = INF
-		# Ground disc: scored by its distance along the ray to the ground.
-		if Vector2(aim.x - at.x, aim.z - at.z).length() <= _tap_radius(i):
-			t = (aim - origin).length() + 0.001
-		# Crown sphere.
-		var lo: float = float(kind["crown_lo"]) * s
+		# Apex sphere only.
 		var top: float = float(kind["top"]) * s
-		var radius: float = maxf(float(kind["crown_r"]) * s * 0.92, (top - lo) * 0.5)
-		var centre := at + Vector3(0.0, (lo + top) * 0.5, 0.0)
-		var ts: float = _ray_sphere(origin, dir, centre, radius)
-		if ts >= 0.0:
-			t = minf(t, ts)
-		# Trunk capsule.
-		var tt: float = _ray_segment(origin, dir, at, at + Vector3(0.0, lo, 0.0), float(kind["r_base"]) * s + 0.25)
-		if tt >= 0.0:
-			t = minf(t, tt)
-		if t < best_t:
+		var centre := at + Vector3(0.0, top, 0.0)
+		var t: float = _ray_sphere(origin, dir, centre, CLIMB_APEX_R)
+		if t >= 0.0 and t < best_t:
 			best_t = t
 			best = i
 	return best
@@ -762,29 +762,6 @@ static func _ray_sphere(origin: Vector3, dir: Vector3, centre: Vector3, radius: 
 		return -1.0
 	var t: float = -b - sqrt(disc)
 	return t if t >= 0.0 else -1.0
-
-## Distance along the ray to the nearest point within `radius` of the
-## segment a-b (a capsule), -1 for a miss. Closest points of a ray and a
-## segment: minimise |w + d t - u s|^2 (w = origin - a), which gives
-## t = ud s - dw and s = (uw - ud dw) / (uu - ud^2), s clamped to the
-## segment, t clamped to the ray.
-static func _ray_segment(origin: Vector3, dir: Vector3, a: Vector3, b: Vector3, radius: float) -> float:
-	var u: Vector3 = b - a
-	var w: Vector3 = origin - a
-	var uu: float = u.dot(u)
-	var ud: float = u.dot(dir)
-	var uw: float = u.dot(w)
-	var dw: float = dir.dot(w)
-	var den: float = uu - ud * ud
-	var s: float = 0.0
-	if absf(den) > 1e-6:
-		s = clampf((uw - ud * dw) / den, 0.0, 1.0)
-	var t: float = ud * s - dw
-	if t < 0.0:
-		return -1.0
-	var closest_on_ray: Vector3 = origin + dir * t
-	var closest_on_seg: Vector3 = a + u * s
-	return t if closest_on_ray.distance_to(closest_on_seg) <= radius else -1.0
 
 ## Is `aim` on the tree he is currently on (the seat's "same tree" test)?
 func is_on_occupied(aim: Vector3) -> bool:
