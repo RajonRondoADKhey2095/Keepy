@@ -335,6 +335,54 @@ signal zipline_dismounted
 ## this is animation, and the two must not fight over one property.
 @onready var _body: ModelSlot = $Yaw/Body
 
+## =====================================================================
+## CH72 -- THE HEAD ANCHOR, and the two reasons it hangs off `_yaw`
+## rather than off the model slot.
+##
+## A POV camera is `head_anchor().global_transform` and nothing else, so
+## whatever this node inherits, the player'"'"'s eyes inherit.
+##
+##   1. `$Yaw` carries the FACING and only the facing. `$Yaw/Body` is
+##      where the hop writes pitch and squash (`_body.rotation_degrees.x`,
+##      `_body.scale`), so an anchor under the slot would roll and pitch
+##      the picture with every bounce and stretch it with every squash --
+##      the surest way to make a POV nauseating, and CH64 already paid for
+##      motion sickness once on the board'"'"'s chase camera.
+##   2. `$Yaw` carries NO SCALE (the slot does, `_base_scale`), so the
+##      offset below is in WORLD units and stays Keepy-sized. That is
+##      CLAUDE.md'"'"'s "un noeud porteur ne porte jamais l'"'"'echelle de
+##      l'"'"'instance", applied to a carrier of the camera instead of a
+##      carrier of Keepy.
+##
+## Everything a carrier does therefore reaches the eyes for free:
+## `follow_carrier()` writes this node'"'"'s position and `_yaw`'"'"'s yaw in one
+## call, so a POV on the coaster looks where the cart goes without the
+## camera knowing a coaster exists.
+
+## Keepy'"'"'s crown over his own origin (his origin is his ground point).
+## THE spelling of that fact in this repo -- `HubTrees.HEAD_ABOVE_SEAT`
+## reads it, and FunfairProbe gates that the two agree, so the "1.7"
+## that three files used to quote has one owner.
+const CROWN_HEIGHT: float = 1.7
+## The eyes sit a little under the crown, and a little forward of the
+## spine so the near plane is clear of his own silhouette.
+const EYE_BELOW_CROWN: float = 0.15
+const EYE_FORWARD: float = 0.12
+
+var _head: Node3D = null
+
+## The node a POV camera copies. Built on demand: a scene that never asks
+## for one never pays for it.
+func head_anchor() -> Node3D:
+	if _head != null and is_instance_valid(_head):
+		return _head
+	_head = Node3D.new()
+	_head.name = "Head"
+	# +Z is forward: the model faces +Z at yaw zero (`_face`, measured).
+	_head.position = Vector3(0.0, CROWN_HEIGHT - EYE_BELOW_CROWN, EYE_FORWARD)
+	_yaw.add_child(_head)
+	return _head
+
 ## The slot drawing Keepy, READ-ONLY, for a caller that needs to recolour
 ## him. The one thing this file exposes about its own art.
 ##

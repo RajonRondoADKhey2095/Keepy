@@ -189,6 +189,22 @@ signal tapped_castle(point: Vector3, index: int)
 ## CLAUDE.md grants a BOUNDED ride, and both of these are.
 signal tapped_funfair(point: Vector3, ride: int)
 
+## CH72: emitted INSTEAD of tapped_ground when a funfair ride is RUNNING
+## and the tap means the RIDER rather than a place -- "switch the point
+## of view". Same one-tap-one-signal rule as every channel above.
+##
+## ⚠️ ASKED ON THE RAY, NOT ON `aim`, AND IT IS THE ONE CHANNEL THAT IS.
+## Every other prop here is a disc on the ground because every other prop
+## IS on the ground. A rider 14 u up is DRAWN where the ground under him
+## is not, and his silhouette smears 8.5 u of ground at the top of the
+## tower (measured) -- there is no disc that means him. See
+## `HubFunfair.accepts_rider_tap` for the whole of it.
+##
+## It does not need a withdrawal, because it IS one: it answers false
+## unless a ride is running, which is exactly when every other funfair
+## door has withdrawn.
+signal tapped_funfair_rider()
+
 ## The three nodes this needs, as scene-authored paths.
 ##
 ## NodePath and not a typed node export (`@export var camera: Camera3D`),
@@ -390,6 +406,27 @@ func _handle_point(screen_point: Vector2) -> void:
 	# domain registered it IS the bare Plane -- the same call, not an
 	# approximation of it (SurfaceProbe phase B checks that identity on 20
 	# rays), so today this line is byte-identical to the one it replaces.
+	# =====================================================================
+	# CH72 -- THE RIDER'S CHANNEL IS ASKED HERE, ABOVE THE HORIZON RETURN,
+	# AND THAT POSITION IS LOAD-BEARING.
+	#
+	# Every question below this block needs a point ON THE GROUND, so they
+	# all sit under the `hit == null` return. This one does not: it is a
+	# toggle, it carries no destination, and it is answered off the RAY.
+	#
+	# ⚠️ ASKED BELOW THAT RETURN IT WOULD HAVE BEEN THE PATRON ECHELLE.
+	# While the POV is running the camera IS the rider's head, and a head
+	# looking level down a coaster rail aims most of the screen AT OR
+	# ABOVE THE HORIZON -- where `HubSurface.intersect_ray` answers null
+	# and this function gives up three lines later. Every one of those
+	# taps would have been swallowed, and the tap that swaps the view back
+	# is the only way out of the POV: a player looking at the sky would
+	# have been sealed inside his own eyes with the menu still working,
+	# which is CH58's shipped defect exactly. Asked here, the way out does
+	# not depend on what he happens to be looking at.
+	if funfair != null and funfair.accepts_rider_tap(origin, direction):
+		tapped_funfair_rider.emit()
+		return
 	var hit: Variant = HubSurface.intersect_ray(origin, direction)
 	if hit == null:
 		# Camera looking at or above the horizon. Nothing to aim at.
@@ -497,6 +534,10 @@ func _handle_point(screen_point: Vector2) -> void:
 	# castles came first; the fair stands on the plateau's east strip,
 	# metres from every other disc, so the order cannot decide.
 	if funfair != null:
+		# CH72: the rider's own channel is NOT asked here -- it is asked
+		# above the horizon return, for the reason written there. A ride
+		# that is running has withdrawn from `accepts_tap`, so the two
+		# questions can never both answer anyway.
 		var ride: int = funfair.accepts_tap(aim)
 		if ride >= 0:
 			tapped_funfair.emit(destination, ride)

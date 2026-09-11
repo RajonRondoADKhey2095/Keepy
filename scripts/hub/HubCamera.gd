@@ -435,6 +435,182 @@ func _ride_offset() -> Vector3:
 		return Vector3.ZERO
 	return SkateFeel.camera_offset(_ride_rush, _ride_lift) * _ride_blend
 
+## =====================================================================
+## CH72 -- THE FUNFAIR: A LIFT ON THE FIXED POSE, AND A POV
+##
+## Two additions, and only one of them is a new POSE. Both are scoped to
+## a funfair ride, which is a BOUNDED trip -- a tween that always ends at
+## a known point -- and both are off, at zero, and arithmetically inert
+## the rest of the time.
+##
+## ---------------------------------------------------------------------
+## 1. THE LIFT, and why it is NOT D6
+##
+## CLAUDE.md: "c'est la CAMERA qui plafonne un ride vertical, pas la
+## geometrie [...] la reponse a 'je veux plus haut que ca' reste une
+## camera qui monte, c'est-a-dire un autre lot". CH72 is that lot, and
+## the door it opens is the NARROWEST one: a bounded vertical OFFSET
+## added to the TARGET of the hub pose's own lerp.
+##
+## It is CH62's ride-mode shape exactly, and it fails every test for a
+## chase camera: it does not yaw, it does not look_at, it does not lag a
+## heading, it does not touch `far`, and `_hub_basis` is never written.
+## The horizon cannot bounce, which is the reason the hub pose is fixed
+## in the first place.
+##
+## ⚠️ AN OFFSET, NOT A SHADOW VARIABLE -- the discipline the ride block
+## above spells out and that a lot once broke. The lift is added to
+## `_wanted()`, inside the same `global_position.lerp(...)` the hub has
+## always had, so an outside writer (CabinProbe parks this camera by
+## hand) is still an outside writer.
+##
+## ⚠️ AND IT IS THE LERP, NOT A SNAP. The gondola falls at 14.1 u/s and
+## the follow's time constant is 1 / FOLLOW_LAMBDA = 0.2 s, so the camera
+## trails the rider by about v / lambda -- he slides DOWN the frame as
+## the drop starts and the camera catches him up. FunfairProbe measures
+## the worst excursion and requires the crown to stay in frame; it is not
+## assumed to be small.
+##
+## Ch72Recon R3 is what made the lift worth writing: lift the camera and
+## the rider by the SAME dy and the crown lands on screen pixel
+## (270, 121) at dy = 0, 3, 6, 10 and 14 -- the framing is invariant, so
+## height costs the picture nothing.
+const FAIR_LIFT_MAX: float = 20.0
+
+var _fair_lift: float = 0.0
+
+## How far above the resting pose the camera is riding. Zero unless a
+## funfair ride is lifting it.
+func fair_lift() -> float:
+	return _fair_lift
+
+## The resting fov, captured at _ready. Published so a bench can check
+## that a mode gave it back EXACTLY, which is the one thing about fov
+## that a probe of the mode itself would never look at.
+func hub_fov() -> float:
+	return _hub_fov
+
+## Asked every frame by the ride that is lifting, and asked with 0.0 the
+## moment it stops. CLAMPED here rather than trusted: a bounded offset
+## that takes whatever it is handed is not bounded.
+func set_fair_lift(y: float) -> void:
+	_fair_lift = clampf(y, 0.0, FAIR_LIFT_MAX)
+
+func _fair_offset() -> Vector3:
+	return Vector3(0.0, _fair_lift, 0.0) if _fair_lift > 0.0 else Vector3.ZERO
+
+## ---------------------------------------------------------------------
+## 2. THE POV, and it IS a new exception to the camera doctrine
+##
+## CLAUDE.md's table reads: pilots continuously -> chase; walks -> fixed;
+## RIDE ON A FIXED TRAJECTORY -> fixed. The funfair is the third row, and
+## this is a second camera for that row, entered and left BY THE PLAYER
+## with a tap. The criterion the table is built on -- "le joueur choisit
+## la direction frame par frame" -- is still false here and the default
+## is still the fixed pose: what the tap buys is a point of VIEW on a
+## trajectory the rider does not steer. The exception is written up in
+## CLAUDE.md; it is not left implicit in this file.
+##
+## THE POSE IS THE HEAD AND NOTHING ELSE: `KeepyHopper.head_anchor()`,
+## whose position and yaw a carrier writes for free. So the POV looks
+## where the cart goes without this file knowing a coaster exists.
+##
+## ⚠️ YAW ONLY, REBUILT HERE. The anchor hangs off Keepy's yaw node and
+## carries no pitch and no roll today, and this function does not trust
+## that: the horizon is reconstructed from the heading alone, so no
+## future writer on that node can tilt the picture. A rolling POV is how
+## a ride becomes nausea, and CH64 already paid for motion sickness once.
+## The only pitch is the ONE the ride authors and hands in -- level on
+## the coaster, tipped down on the tower so the top of it shows the hub
+## rather than the sky.
+##
+## ⚠️ WHAT THIS FILE CANNOT SIGN: whether any of it is comfortable.
+## CLAUDE.md CH62 -- a bench does not judge a game feel. The fov below is
+## a starting point between the hub's 45 and the board's 56, chosen wide
+## enough to read as eyes and narrow enough not to bow the edges; it is
+## Mathieu's to move on device.
+const POV_FOV: float = 58.0
+const POV_BLEND_S: float = 0.45
+const POV_PITCH_MAX_DEG: float = 45.0
+
+var _pov_head: Node3D = null
+var _pov_pitch: float = 0.0
+var _pov_blend: float = 0.0
+var _pov_tween: Tween = null
+
+func is_pov() -> bool:
+	return _pov_head != null
+
+func pov_blend() -> float:
+	return _pov_blend
+
+## Enters the POV on `head`, pitched `pitch_deg` below the horizon.
+func enter_pov(head: Node3D, pitch_deg: float = 0.0) -> void:
+	if head == null or not is_instance_valid(head):
+		return
+	_pov_head = head
+	_pov_pitch = clampf(pitch_deg, -POV_PITCH_MAX_DEG, POV_PITCH_MAX_DEG)
+	_tween_pov(1.0)
+
+func exit_pov() -> void:
+	if _pov_head == null:
+		return
+	_tween_pov(0.0)
+
+func _tween_pov(to: float) -> void:
+	if _pov_tween and _pov_tween.is_valid():
+		_pov_tween.kill()
+	_pov_tween = create_tween()
+	_pov_tween.set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_SINE)
+	_pov_tween.tween_property(self, "_pov_blend", to, POV_BLEND_S)
+	if to <= 0.0:
+		_pov_tween.finished.connect(_on_pov_exited, CONNECT_ONE_SHOT)
+
+## The exit restores the hub fov EXACTLY from the value captured in
+## `_ready()` -- `_on_drive_exited`'s discipline, for its reason: a fov
+## left a hair off is a permanent change to every frame afterwards and no
+## probe of this mode would ever look at it.
+func _on_pov_exited() -> void:
+	_pov_head = null
+	_pov_pitch = 0.0
+	_pov_blend = 0.0
+	fov = _hub_fov
+
+func _pov_wanted() -> Transform3D:
+	var head: Transform3D = _pov_head.global_transform
+	var fwd: Vector3 = head.basis.z
+	var flat := Vector3(fwd.x, 0.0, fwd.z)
+	if flat.length_squared() < 0.000001:
+		flat = Vector3.BACK
+	flat = flat.normalized()
+	# A camera looks down its own -Z and Keepy's model faces +Z, so the
+	# aim point is his position PLUS his facing: the POV looks where he
+	# looks. The pitch is applied to the AIM, which keeps the up vector
+	# vertical and therefore the roll at exactly zero.
+	var aim: Vector3 = head.origin + flat - Vector3.UP * tan(deg_to_rad(_pov_pitch))
+	return Transform3D(Basis.IDENTITY, head.origin).looking_at(aim, Vector3.UP)
+
+## Blends the POV over whatever the hub branch has just written. A NO-OP
+## while none is running -- not "nearly" one: with `_pov_head` null and
+## `_pov_blend` 0 nothing below the first line executes, and `fov` in
+## particular is not written, which is what keeps the plain hub frame
+## byte-identical to what shipped.
+func _apply_pov() -> void:
+	if _pov_head == null and _pov_blend <= 0.0:
+		return
+	if _pov_head != null and not is_instance_valid(_pov_head):
+		_on_pov_exited()
+		return
+	if _pov_blend <= 0.0:
+		return
+	var hub_xform := Transform3D(_hub_basis, global_position)
+	global_transform = hub_xform.interpolate_with(_pov_wanted(), _pov_blend)
+	# The base is RECOMPUTED, never read back off `fov`: lerping the
+	# live value toward POV_FOV every frame would creep it all the way
+	# there at any blend, instead of holding the blend it was given.
+	var base_fov: float = _hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend
+	fov = lerpf(base_fov, POV_FOV, _pov_blend)
+
 ## Puts the camera at its resting offset IMMEDIATELY, with no smoothing.
 ##
 ## ⚠️ PUBLIC BECAUSE _ready() IS TOO EARLY FOR ONE CALLER. Children are
@@ -477,12 +653,16 @@ func _process(delta: float) -> void:
 		# always shipped, and nothing here writes `fov` at all.
 		if _ride_board != null or _ride_blend > 0.0:
 			_ride_advance(delta)
-			global_position = global_position.lerp(_wanted() + _ride_offset(), weight)
+			# CH72: `_fair_offset()` is Vector3.ZERO unless a funfair ride
+			# is lifting, so this line is the shipped one while none is.
+			global_position = global_position.lerp(_wanted() + _ride_offset() + _fair_offset(), weight)
 			_hub_position = global_position
 			fov = _hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend
+			_apply_pov()
 			return
-		global_position = global_position.lerp(_wanted(), weight)
+		global_position = global_position.lerp(_wanted() + _fair_offset(), weight)
 		_hub_position = global_position
+		_apply_pov()
 		return
 	# ⚠️ CH63 LOT 2: the ride READING is advanced in this branch too, and
 	# its POSE is not. See the ride block's header: `rush` is what

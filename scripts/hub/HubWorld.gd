@@ -4136,9 +4136,40 @@ func _setup_skatepark() -> void:
 ## step-off at the end of a ride -- the karting's exact shape, with the
 ## balloon's step-off (leave_carrier onto a flat landing the ride names).
 func _setup_funfair() -> void:
-	_funfair.setup(_keepy)
+	# CH72: the camera goes in too -- the tower LIFTS it (HubCamera's
+	# `set_fair_lift`), which is what lets the ride be taller than the
+	# fixed frame's ceiling.
+	_funfair.setup(_keepy, _camera)
 	_tap.tapped_funfair.connect(_on_tapped_funfair)
+	_tap.tapped_funfair_rider.connect(_on_tapped_funfair_rider)
 	_funfair.ride_finished.connect(_on_funfair_ride_finished)
+
+## ---- CH72: the POV toggle -------------------------------------------
+## A tap on the rider during a ride swaps the fixed third-person frame
+## for his own eyes; a tap anywhere swaps back. The ride itself is
+## untouched -- nothing here starts, stops, pauses or re-times it, so the
+## trip stays the BOUNDED tween that licenses the tap drop below.
+##
+## ⚠️ THE GESTURE IS STAMPED, BECAUSE ONE FINGER ARRIVES TWICE.
+## `emulate_mouse_from_touch` is true by default, so a real tap reaches
+## `_handle_point` as a touch release AND as a synthesised mouse release
+## in the same frame (CLAUDE.md, measured on a real window). A toggle
+## acted on twice is a toggle that never moves. `mark_rider_tap()` spends
+## the gesture and `accepts_rider_tap` refuses the second dispatch, so
+## the channel does not even re-emit.
+func _on_tapped_funfair_rider() -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _camera == null or not _camera.has_method("enter_pov"):
+		return
+	_funfair.mark_rider_tap()
+	if bool(_camera.call("is_pov")):
+		_camera.call("exit_pov")
+		return
+	var ride: int = _funfair.running_ride()
+	if ride < 0:
+		return
+	_camera.call("enter_pov", _keepy.head_anchor(), HubFunfair.pov_pitch_deg(ride))
 
 ## A tap on the station or the tower. ONE tap buys the whole thing: walk
 ## to the ride's stand point (through the corridor gates if needed) and
@@ -4177,6 +4208,13 @@ func _on_tapped_funfair(point: Vector3, ride: int) -> void:
 ## names (its own stand point: the deck, or the tower's apron), which the
 ## fair owns and keeps clear -- no ring search needed.
 func _on_funfair_ride_finished(_ride: int, landing: Vector3) -> void:
+	# CH72: the POV never outlives the ride that opened it. Left on, the
+	# player would walk the plateau from inside his own head -- which is
+	# a camera nobody asked for and which the tap channel, gated on
+	# `is_riding()`, could no longer switch off. The blend tweens back,
+	# so this is a camera MOVE and not a cut.
+	if _camera != null and _camera.has_method("exit_pov"):
+		_camera.call("exit_pov")
 	if _keepy.is_on_carrier():
 		_keepy.leave_carrier(landing)
 

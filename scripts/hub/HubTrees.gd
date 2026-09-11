@@ -111,7 +111,10 @@ const SHAKE_S: float = 0.9
 ## admitted seat 0.4 u of headroom on a 1.7 u figure -- if the 1.7 is
 ## itself short by more than that, the margin is spent, which is why this
 ## lot published both numbers instead of only their sum.
-const HEAD_ABOVE_SEAT: float = 1.7
+## CH72: read from its owner rather than retyped. Same value, same
+## meaning, one spelling -- FunfairProbe gates the equality so a future
+## change to Keepy's height cannot leave this file behind.
+const HEAD_ABOVE_SEAT: float = KeepyHopper.CROWN_HEIGHT
 const FRAME_MARGIN: float = 0.4
 const SEAT_MIN_Y: float = 2.0
 const SEAT_MAX_Y: float = HubCamera.FRAME_TOP_AT_APLOMB - HEAD_ABOVE_SEAT - FRAME_MARGIN
