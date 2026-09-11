@@ -250,6 +250,55 @@ n'est donc pas un échec, et le second construit le même arbre de jeu
 (`CLAUDE.md` n'étant pas une ressource Godot). Pousser la doc **après** la
 fin du run de code, ou l'assumer.
 
+## Installer Godot 4.3 dans un sandbox neuf — la commande qui marche
+
+Godot n'est **jamais préinstallé** dans un sandbox neuf. Des dizaines de lots
+l'ont déjà téléchargé avec succès (CH09, CH11, CH12, CH13, CH14, CH16, CH24,
+CH57, QUIZZ_DESIGN, CARTE_BLANCHE...) ; un run du 11 septembre 2026 l'a
+retrouvé bloqué une fois avant de réussir avec **exactement la même
+commande** — la cause la plus probable est un `curl` sans `-L` (l'asset réel
+est servi en redirection 302 vers `release-assets.githubusercontent.com`,
+jamais directement par `github.com`) ou un timeout ponctuel, pas un blocage
+réseau permanent. **Retenter avec `-fsSL` avant de chercher un contournement
+(API GitHub, `apt`, `snap`) — aucun des trois n'a de paquet Godot 4.3
+utilisable ici.**
+
+Commande éprouvée, verbatim depuis `.github/workflows/web-build.yml`
+(source de vérité — CI et sandbox utilisent la même) :
+
+```bash
+mkdir -p "$HOME/godot-editor"
+curl -fsSL -o /tmp/godot.zip \
+  "https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip"
+unzip -q /tmp/godot.zip -d "$HOME/godot-editor"
+mv "$HOME/godot-editor/Godot_v4.3-stable_linux.x86_64" "$HOME/godot-editor/godot4"
+chmod +x "$HOME/godot-editor/godot4"
+rm /tmp/godot.zip
+echo 'export PATH="$HOME/godot-editor:$PATH"' >> ~/.bashrc
+export PATH="$HOME/godot-editor:$PATH"
+
+# templates d'export (nécessaires seulement pour --export-release, pas pour lancer une sonde) :
+mkdir -p "$HOME/.local/share/godot/export_templates"
+curl -fsSL -o /tmp/templates.tpz \
+  "https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz"
+mkdir -p /tmp/templates_extracted
+unzip -q /tmp/templates.tpz -d /tmp/templates_extracted
+mv /tmp/templates_extracted/templates "$HOME/.local/share/godot/export_templates/4.3.stable"
+rm -rf /tmp/templates.tpz /tmp/templates_extracted
+
+# dépendances runtime pour le rendu headless (xvfb + opengl3) :
+sudo apt-get install -y --no-install-recommends \
+  xvfb libgl1 libglu1-mesa libfontconfig1 \
+  libxcursor1 libxinerama1 libxi6 libxrandr2 libxkbcommon0
+```
+
+**Tailles de référence pour vérifier un téléchargement complet (piège
+« téléchargement tronqué sans erreur `curl` » documenté plus bas) :**
+éditeur `Godot_v4.3-stable_linux.x86_64.zip` = **50 276 070 octets** ;
+templates `Godot_v4.3-stable_export_templates.tpz` = **1 073 228 327
+octets**. Un `curl -fsSL` qui rend un fichier d'une autre taille sans
+erreur signale un téléchargement coupé, pas une nouvelle release.
+
 ## Pièges d'outillage — chacun a coûté au moins un run, plusieurs en ont coûté plusieurs
 
 ### `--headless` FORCE le driver DUMMY, et il produit des FAUX VERTS
