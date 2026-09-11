@@ -3127,6 +3127,172 @@ empreinte qu'un lot ajoute sur le plateau se teste après les tirages,
 jamais dans `_blocked()` — sauf si le lot VEUT rebattre le tapis, et alors
 il le dit.
 
+### ⚠️ UNE ROTATION RIGIDE D'UN RIG DE CAMÉRA REND TROIS PROPRIÉTÉS GRATUITEMENT — ET LA PREMIÈRE EST L'INERTIE AU REPOS
+
+Écrit au CH73, en rendant orientable une pose que ce dépôt tenait pour
+FIXE depuis le premier lot du hub. La forme qui a rendu ça sûr n'est pas
+un réglage : c'est que **les deux moitiés de la pose tournent de la MÊME
+rotation**, autour du point que la caméra suit.
+
+```
+position = ground + R * OFFSET
+basis    = R * _hub_basis
+```
+
+Trois propriétés en tombent, aucune réglée, chacune gatée :
+
+1. **à angle nul R est l'IDENTITÉ**, donc tout le code ajouté est
+   arithmétiquement inerte sur un arbre où personne n'a touché la
+   commande — c'est la forme qui permet d'affirmer « le cadre livré est
+   byte-identique » comme un fait et non comme une promesse. Le corollaire
+   d'écriture est que **chaque site s'en garde explicitement** (`if
+   orbit_is_rest(): return`), sur le patron du no-op de `_apply_pov` :
+   écrire la même valeur est arithmétiquement neutre mais un `slerp`
+   aller-retour dérive sur une longue session ;
+2. **la distance est invariante** — `|R·v| = |v|` pour toute rotation.
+   Quand un brief interdit d'ajouter un zoom, cette forme le rend
+   impossible **par accident** plutôt que par convention ;
+3. **tout désaccord authored entre la position et la visée est
+   TRANSPORTÉ.** `HubCamera` ne regarde pas Keepy (6,5° d'écart entre
+   l'élévation de l'`OFFSET` et le tangage de la scène, CH36), et une
+   rotation rigide préserve ce cadrage à tous les angles — là où un
+   `look_at` recalculé l'aurait effacé.
+
+⚠️ **ET LE ROULIS EST NUL PAR ARITHMÉTIQUE, PAS PAR CLAMP** : si le basis
+authored est une rotation pure autour de X et que le pivot l'est aussi,
+le produit vaut `Ry(lacet) · Rx(−tangage)`, dont le vecteur haut reste
+dans le plan vertical. Mesuré sur toute la bande : pire `|basis.x.y|` =
+**0,000000000**. Un roulis nul par construction vaut mieux qu'un roulis
+clampé, et CH64 a déjà payé la nausée une fois.
+
+⚠️ **LES DEUX MOITIÉS RETARDENT ENSEMBLE OU LE RIG N'EST PLUS RIGIDE.**
+La position du hub est lissée ; un basis qui snapperait viserait où la
+caméra **va être** au lieu d'où elle **est**, et le sujet sortirait du
+cadre pendant un geste rapide pour y revenir après. Même poids, même
+retard, même forme.
+
+⚠️ **Corollaire de bornes, et il a réfuté le critère qu'on cherchait en
+premier** : sous rotation rigide le cadrage est INVARIANT, donc « le
+sujet sort du cadre » ne borne **rien** — mesuré aux quatre-vingt-dix pas
+d'un balayage au degré, la couronne est dans le cadre partout. Et le
+balayage n'a montré **aucun genou** sur la fraction d'écran adressable
+(93,3 % au repos, 66,7 à −22, 40,0 à −40). Une borne se pose alors sur
+une **PROPRIÉTÉ re-mesurable** et pas sur un nombre lu sur une courbe :
+ici le dégagement au sol contre la taille du personnage, le tangage
+encore descendant, et — en haut — le **rayon horizontal non nul**, parce
+qu'au zénith un lacet est une rotation autour d'un axe colinéaire au
+bras et **ne déplace la caméra nulle part**, ce qui rend la commande
+morte sans rien pour le dire au joueur.
+
+### ⚠️ UN SEUIL DE GESTE SE REPREND D'OÙ IL EST PUBLIÉ — MAIS PAS FORCÉMENT TOUT LE JEU DE CONSTANTES
+
+Complément de « un fait est publié une fois, jamais recopié », côté
+INPUT, et il coupe dans les deux sens. Au CH73, `SkateTouchInput` publiait
+déjà `SLOP_PX = 16,0` et `TAP_MAX_S = 0,45` comme réponse du dépôt à « ce
+qui sépare un tap d'un drag ».
+
+**`SLOP_PX` se reprend** : son propre commentaire le justifie en termes de
+**pouce et de téléphone** (« un peu plus d'un millimètre »), pas de
+planche. C'est le même fait, et une seconde orthographe serait un défaut
+qui attend la première passe de réglage.
+
+**`TAP_MAX_S` se refuse**, et c'est la moitié qui compte. Sur la planche,
+un doigt TENU a un **second sens** — c'est l'accélérateur — donc la limite
+de temps sépare deux gestes **réels**. Dans l'écran qui reprenait la
+constante, un doigt tenu n'a aucun autre sens : la limite n'y aurait
+inventé qu'un **troisième résultat** (presser, attendre, lever, RIEN)
+sans aucun retour pour l'expliquer.
+
+**Règle** : on reprend une constante de geste quand la PROPRIÉTÉ
+qu'elle mesure existe dans le nouveau contexte, pas parce qu'elle est
+voisine de celle qu'on reprend. Deux constantes publiées ensemble ne
+forment pas un lot indivisible, et l'argument se prend dans **ce que le
+geste peut vouloir dire d'autre ici**.
+
+⚠️ **ET UNE CONSTANTE EN TEMPS RÉEL REND UN BANC DÉPENDANT DE LA
+CHARGE.** `TAP_MAX_S` se lit sur `Time.get_ticks_msec()` ; `--fixed-fps`
+ne fixe que le pas de **simulation**. Mesuré sous llvmpipe : **une frame
+vaut ~0,14 s de temps réel**, donc le tap de six frames d'une sonde dure
+**0,824 s** et tombe hors d'une fenêtre de 0,450. L'assertion passait ou
+échouait **selon la charge machine**, et a envoyé une passe rouge
+diagnostiquer un défaut inexistant. C'est « une sonde à séquence
+temporelle se rejoue à charge comparable » arrivant par le CODE au lieu
+du banc — et c'est une **preuve** à l'appui d'une décision, jamais sa
+raison : un seuil ne se retire pas parce qu'un banc le gêne.
+
+### ⚠️ UN DOUBLE DISPATCH SE NEUTRALISE PAR L'INTÉGRATION, PAS PAR UNE RÉCLAMATION DE CANAL — ET LA PASSE ROUGE EST CE QUI L'A DIT
+
+Vingtième faux-signal du dépôt, CH73, et il est du genre **« le mécanisme
+crédité n'est pas celui qui travaille »** — la même famille que le CH65
+(« la neutralisation qui revient verte dit à qui revient le mérite »),
+sur un axe d'entrée.
+
+Ce fichier documente que `emulate_mouse_from_touch` fait arriver un doigt
+**deux fois**, et que `HubTapInput` ne peut pas filtrer
+`DEVICE_ID_EMULATION` comme le font `KartTouchInput` et `SkateTouchInput`,
+parce que sur navigateur desktop la classe souris est la **seule**. Un
+geste continu ajouté là est donc exposé à un **gain doublé sur téléphone**.
+
+La parade écrite fut une **réclamation de canal** : le premier appui
+réclame le geste, la classe jumelle est ignorée. Neutralisée, la sonde
+est revenue **ALL GREEN** — zéro rouge pour deux prédits.
+
+**Ce qui neutralise réellement le doublement est la façon d'intégrer.**
+Une commande qui intègre la différence entre échantillons **CONSÉCUTIFS**
+(`at − dernier`) encaisse un jumeau livré au **MÊME pixel** comme un
+delta puis **exactement zéro** : le doublement ne peut pas se produire,
+quelle que soit la réclamation. Une commande écrite en **offset depuis
+l'ancre** double, elle, et bien pire (mesuré : le même pixel deux fois
+sort au **double**, et la sur-intégration fait franchir ±π au lacet, donc
+`wrapf` **inverse le signe**).
+
+Deux règles :
+
+1. **Toute commande continue pilotée au doigt s'intègre par delta entre
+   échantillons consécutifs**, jamais en offset depuis l'ancre — c'est ce
+   qui la rend immune au double dispatch, et au passage ce qui fait qu'un
+   doigt revenu à son point de départ ramène la commande avec lui.
+2. **Un garde qu'une neutralisation ne parvient pas à faire rougir n'est
+   pas gaté**, et le dire vaut mieux que le prétendre (précédent explicite
+   de `SkateTouchInput` sur son propre filtre). Chercher alors ce qu'il
+   achète **vraiment** : ici, que `_dragged` survive au geste par
+   conception (les deux relâchements d'un jumeau doivent lire le même
+   latch) rend une **souris déplacée sans bouton enfoncé** capable de
+   piloter la commande avec un échantillon périmé. **Un survol n'est pas
+   un geste** — un défaut desktop, invisible depuis le téléphone que le
+   garde était censé défendre, et c'est lui qui gate désormais.
+
+⚠️ **Corollaire de latch, et il est contre-intuitif** : un latch de geste
+partagé par deux classes d'événements se remet à zéro sur l'**APPUI qui
+réclame**, jamais sur un relâchement. Effacé au relâchement, il est déjà
+vide pour le jumeau, qui relit alors un drag comme un tap — exactement le
+défaut que le seuil existe pour fermer, rentrant par la porte de derrière.
+
+### ⚠️ UNE ASSERTION DE STABILITÉ PRISE AVANT LA FIN DE LA CONVERGENCE MESURE LA CONVERGENCE
+
+CH73, sur une assertion neuve qui est sortie ROUGE sur du code juste — et
+elle n'a pas été faite taire.
+
+Le contrat était « collant » : la caméra reste exactement où on l'a
+laissée, aucun recentrage, aucune interpolation de retour. Écrit comme
+« la pose 600 frames plus tard est la pose 60 frames après le lever », il
+échoue — parce que la pose était encore en train d'**ARRIVER** : le lissage
+a une constante de temps de 0,2 s, donc un échantillon pris une seconde
+après le geste porte encore `exp(−5) = 0,67 %` de l'erreur.
+
+**Converger vers ce que l'utilisateur a demandé n'est pas un retour**, et
+une assertion incapable de distinguer les deux ne teste pas le contrat.
+Ce qu'un état « collant » interdit est la convergence vers l'état
+**AUTHORED** : les deux distances se mesurent et se **publient**
+(0,00000° de la pose laissée contre 114,51° de la pose d'origine), avec
+un instrument qui exige que les deux références soient réellement
+différentes — sans quoi la seconde moitié passerait à vide.
+
+**Règle** : une assertion « rien ne bouge plus » sur un système lissé
+nomme **vers quoi** il ne doit pas bouger, jamais « il ne bouge plus du
+tout ». La forme se reconnaît à ce qu'elle compare deux échantillons de
+la MÊME grandeur au lieu de comparer la grandeur à ses deux attracteurs.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
@@ -3531,6 +3697,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH70 | **La croisière du skate rouverte sur autorisation explicite, et REFUSÉE PAR LA MESURE.** Réouverture volontaire d'une décision verrouillée depuis CH61 → CH69, sur un retour device répété. Deux prémisses du brief tuées au recon, avant toute ligne de code : (a) `push`/`brake` **ne sont pas des constantes** — `configure()` les résout depuis quatre distances, et l'arithmétique du solveur dit que `drag_k` ne dépend pas de la croisière tandis que `roll_stop`/`push`/`brake` sont en **cruise²**, donc ×0,65 sur la croisière fait **×0,4225** sur les accélérations (ce qui est la BONNE réponse : c'est ce qui conserve les 3,2 u authored de CH54 ; forcer ×0,65 aurait exigé un run-up de **1,844 u**, un départ PLUS sec) ; (b) les baselines `17,2165 / 10,3433` du brief sont celles du `park_span()` **d'avant CH69** — le vrai arbre livré lit **16,4253 / 11,0800**, et `SkateFeelProbe` PHASE W les gatait en littéral, donc **ROUGE depuis CH69** (120 OK / 1 RED sur `origin/staging` intact, la table croisée de CH69 n'incluant pas cette sonde). ⚠️ **Le changement a été fait, mesuré, et non expédié** : à 6,5 la planche culmine à **0,999 u** sur une lèvre de 2,10 et **0,903 u** sur une lèvre de 1,45 — elle n'atteint plus AUCUNE lèvre, la fenêtre CH66 vaut **0,000 s** contre 0,762 exigées, et `SkateAirProbe` sort **18 rouges**. Balayage de huit valeurs : **le premier échelon qui tient le contrat est 10,0, avec 0,055 s de marge** — la croisière ne peut pas baisser du tout sur le park tel qu'il est authored, c'est la PAIRE (croisière, hauteur de lèvre) qui est le paramètre. Livré : la mesure, plus PHASE W refaite en gate **DÉRIVÉ** (planche de référence configurée depuis les entrées publiées + blind check par planche-leurre), passe rouge à **1 rouge sur 1 prédit** et fichier restauré byte-identique. Deux rouges rapportés sans être corrigés (un littéral `8.0` qui voulait dire « près de la croisière », un gate E[3] déjà posé sur sa propre limite) et un troisième identifié **charge machine** et rejoué vert. Table croisée sur deux arbres, **154 `.scn`** des deux côtés. | [`CH70_CROISIERE_SKATE.md`](docs/lots/CH70_CROISIERE_SKATE.md) | 5 | 238 | 11 sept |
 | CH71 | **Le parc d'attractions : une montagne russe et une tour de chute, JOUABLES, sur la lisière est du plateau.** Recon mesurée en jeu autour de l'ancre de Mathieu (35,2 ; 27,7) : dans la région par 0,051 u (le rebord du lobe skate), zone 0, aucun prop de layout à moins de 12 u, mur d'arbres à x ≥ 36,6, budget reproduit (scene 360 849 / TOTAL 62 321, le plafond de 50 k déjà dépassé de 23 %). **Tout construit À L'INTÉRIEUR de la région** (bande x [29,0 ; 35,0]) : aucun lobe, pire traversée inchangée (21,817 s), aucun arbre du mur touché — le lobe alternatif était chiffré (r 10,2 = la pire paire CH67). Boucle Catmull-Rom de 51,165 u, crête à 5,027, montée au treuil vers le NORD (aveugle), descente vers le SUD dans le cadre ; vitesse = PROFIL par phase (treuil 2,2 / énergie à g 9,8 / freinage en gare), **frein au doigt tenu** (−3,0 par unité, plancher 1,2 : trajet BORNÉ, licence de jeter un tap), 9,19 u/s libre contre 5,91 freiné. Tour de 6,6 u : montée 0,9 u/s, 1,6 s, chute libre à −8,33 u/s, frein DÉRIVÉ à 3,04 g. Sièges ≤ 5,868 (couronne + 0,4 sous `FRAME_TOP_AT_APLOMB`), couronne déprojetée à chaque frame. D5 : 37 `BoxShape3D`, un corps. ⚠️ **Un footprint testé APRÈS les tirages RNG ne rebat pas le tapis** (bush 22 → 22 au lieu de 22 → 7 dans `_blocked()`), doctrine ajoutée. `FunfairProbe` 78 / 0 par le vrai canal de tap, passe rouge **5 / 5 prédits**, budget +4 068 aux stations du parc et **+0 au spawn**. Deux recensements littéraux (`SkatePhysicsProbe` « SIX corps », `MinimapProbe` roster 39) faits lire le producteur ; CabinProbe ne se reproduit pas sur un seul arbre (phase baiser). | [`CH71_PARC_ATTRACTION.md`](docs/lots/CH71_PARC_ATTRACTION.md) | 12 | 516 | 11 sept |
 
+| CH73 | **La caméra du hub devient orientable au doigt, à pied, et elle reste où on la laisse.** Recon bloquante, et **deux prémisses du brief tombent**. (a) ⚠️ **Il n'existait AUCUN seuil tap/drag dans `HubTapInput`** — ni temps ni pixels : toute release appelait `_handle_point` inconditionnellement, donc un drag envoyait Keepy là où le doigt se **LEVAIT** (le header du fichier dit l'inverse, et il parle de la *press*). Le seuil est **créé**, en lisant `SkateTouchInput.SLOP_PX` (16 px, justifié par son propre commentaire en termes de **pouce et de téléphone**, pas de planche) ; ⚠️ **son jumeau `TAP_MAX_S` est REFUSÉ** — sur la planche un doigt tenu est l'accélérateur et la limite sépare deux gestes réels, dans le hub elle n'inventerait qu'un troisième résultat (presser, attendre, lever, RIEN) sans aucun retour ; mesuré au passage que la constante est en temps **RÉEL**, donc sous llvmpipe (une frame = ~0,14 s) le tap de six frames d'une sonde dure **0,824 s** et une assertion passait **selon la charge machine**. (b) ⚠️ **La dette du double relâchement interfère dans DEUX sens** (gain **doublé** sur téléphone, et un latch effacé au relâchement fait relire un drag comme un tap par le jumeau) : **non corrigée** (hors scope, le filtre `DEVICE_ID_EMULATION` casserait le desktop) mais neutralisée par la FORME et gatée. Mécanique : **rotation rigide du rig entier** autour du point sol — `position = ground + R·OFFSET`, `basis = R·_hub_basis` — d'où trois propriétés **gratuites et gatées** : identité à angle nul (donc cadre livré byte-identique), **distance invariante** (11,7034 u : un zoom devient impossible à ajouter par accident), et le désaccord authored de 6,5° du CH36 **transporté**, donc le cadrage tient à tous les lacets ; **roulis exactement nul par arithmétique** (pire `\|basis.x.y\|` = 0,000000000). `_hub_basis` **toujours jamais écrit** (lecture dérivée). Bornes **mesurées** par balayage au degré : ⚠️ **la couronne est dans le cadre aux 90 pas** (le cadrage est invariant, donc « il sort du cadre » ne borne rien) et **aucun genou** sur la fraction adressable (93,3 % au repos → 40,0 à −40), donc chaque borne est ancrée sur une **propriété re-mesurable** — basse **−23,0°** (dégagement **3,5183 u**, plus du double de la couronne de 1,7 ; tangage encore **11,0°** descendant), haute **+43,0°** (rayon horizontal **1,3249 u** : au zénith un lacet ne déplace la caméra **nulle part** et la commande serait morte). ⚠️ **Le balayage a réfuté le soupçon du lot** : la caméra vers l'horizon coûte **+3,9 %** (74 538 contre 71 764), pas les 123 515 de la pose de conduite — **`far` n'est PAS touché**. `OrbitCameraProbe` (permanente, xvfb + opengl3, **jamais headless**) : **56 assertions, 7 phases, tout par `Input.parse_input_event`**, `orbit_by` appelé nulle part sauf par le moteur. **Sept passes rouges** — 1/1, **1 pour 1 après qu'une première rédaction soit revenue ALL GREEN**, 5 pour 3, 4/4, 4/4, 3/3, 1/1 — dont deux ont trouvé des défauts **DANS LA SONDE** : la passe 1 a rendu **4 rouges pour 1 prédit** (trois instruments dépendaient d'où Keepy se trouvait), et ⚠️ **la passe 2 est revenue ALL GREEN**, révélant que le doublement est neutralisé par l'**INTÉGRATION PAR DELTA** et non par la réclamation de canal — d'où D5 (le même pixel deux fois vaut un pas) et D4 (**un survol n'est pas un geste** : défaut *desktop*, invisible depuis le téléphone que le garde défendait). ⚠️ Une assertion de stabilité est sortie **ROUGE sur du code juste** et n'a pas été faite taire : la pose **ARRIVAIT** (0,67 % d'erreur résiduelle à 1 s) — réécrite pour nommer **vers quoi** elle ne doit pas converger, elle publie **0,00000° de l'orbite laissée contre 114,51° de la pose authored**. Table croisée deux arbres, **154 `.scn`** des deux côtés, `ProbeTimeoutAudit` **99 → 100** (+1, la sonde de recon jetable supprimée). | [`CH73_CAMERA_ORBITABLE.md`](docs/lots/CH73_CAMERA_ORBITABLE.md) | 9 | 412 | 11 sept |
 | CH67 | Zone navigable du hub — `SKATE_LOBE_RADIUS` 28 → 36 sur un balayage MARCHÉ (38 sort à 22,100 s, le chiffre que le lot D avait déjà refusé), pire traversée du hub qui PASSE au lobe (21,817 s, dit et gaté) ; limite rendue lisible par un liseré peint dans le shader du sol, teinte choisie **en luminance** (le béton pâle évident lit 1,18:1 contre l'herbe claire) et gatée au PIXEL contre son propre plancher de bruit ; balançoire et ours sortis du couloir de course sur un scan à quatre contraintes simultanées, les deux constantes de l'ours re-dérivées ; **le bol construit, prouvé, puis retiré sur une mesure** (il passe sous la retombée du grand quarterpipe et rend le double pop que CH66 avait tué) | [`CH67_ZONE_NAVIGABLE.md`](docs/lots/CH67_ZONE_NAVIGABLE.md) | 8 | 392 | 10 sept |
 | CH68 | Les deux zones « non physiques » n'en font qu'une — RECON PURE, zero code de jeu. Zone 1 identifiee par enumeration, passe masquee au pixel et balayage de 72 azimuts lances DEUX FOIS (physique et triangles de la surface 0) : **6 azimuts fantomes, tous le bol**, 31 ou physique et dessin sont egaux au millimetre, et le « mur gris » du retour device est le DOS du petit quarterpipe, **solide**. Confirme par le canal du joueur avec blind check : la planche **traverse le bol** (0,199 u de l'axe, zero contact) et le meme geste sur un module solide est ARRETE. **Les deux zones sont le meme objet.** Zone 2 : les deux angles du brief mesures — (a) 56 positions sur la dalle, **0 sur 56** avec 1 u de degagement, 4 489 des qu'on lache la dalle ; **(b) REFUTE — retirer la contrainte de retombee laisse 56 avant, 56 apres** ; le bol n'est pas cable | [`CH68_ZONES_NON_PHYSIQUES.md`](docs/lots/CH68_ZONES_NON_PHYSIQUES.md) | 5 | 336 | 10 sept |
 
