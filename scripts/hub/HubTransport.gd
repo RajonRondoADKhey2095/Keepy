@@ -255,6 +255,73 @@ const SKATE_LIFT: float = SkateparkMesh.DECK_TOP
 ## ride measures 1.967 s on the board against 2.100 s bouncing and
 ## ~3.0 s on foot, the first 3 frames at 3.8 u/s and the last 3 at 3.7
 ## (SkateDriveProbe PHASE P, xvfb, fixed-fps 60).
+## =====================================================================
+## ⚠️ CH70 -- ON A ESSAYÉ DE DESCENDRE CETTE CROISIÈRE DE 35 %, ET LA
+## MESURE L'A REFUSÉ. ELLE RESTE À 10,0, ET VOICI POURQUOI.
+##
+## Réouverture explicite et autorisée par Mathieu d'une décision
+## verrouillée depuis quatre chantiers (CH61 -> CH69), sur un retour
+## device RÉPÉTÉ à travers plusieurs sessions (« ça va trop vite en
+## croisière, tout le temps ») et non sur une intuition ponctuelle. Le
+## lot a fait le changement, l'a mesuré, et le rapporte comme une
+## RÉFUTATION plutôt que de l'expédier.
+##
+## ⚠️ CE CHIFFRE N'EST PLUS UN GOÛT DEPUIS CH66 : C'EST LE PLANCHER DU
+## JEU DE TRICKS, ET IL EST SANS MARGE. La montée d'une transition est
+## plafonnée par la croisière (`SkateBoardBody.drive()` : la poussée
+## n'ajoute rien au-delà de `_cruise`), donc la croisière décide si la
+## planche ATTEINT une lèvre. Sans lèvre il n'y a pas de `POP_SPEED`,
+## sans pop pas d'aire, sans aire aucun trick : la couche entière que
+## CH64 a construite et que CH66 a rendue atteignable s'éteint.
+##
+## BALAYÉ SUR `SkateAirProbe` (headless, --fixed-fps 60), huit valeurs,
+## une ligne changée à chaque fois. Le contrat CH66 est 0,762 s de
+## fenêtre (pouce de référence r 40 px à 400 px/s + 0,20 s de réaction) :
+##
+##   croisière | pop 2,10 | pop 1,45 | fenêtre V[2] | fenêtre V[3] | rouges
+##       6,5   |    0     |    0     |   0,000 s    |   0,000 s    |  18
+##       7,0   |    0     |    0     |   0,000 s    |   0,000 s    |  18
+##       7,5   |    0     |    0     |   0,017 s    |   0,000 s    |  18
+##       8,0   |    0     |    0     |   0,000 s    |   0,000 s    |  18
+##       8,5   |    0     |    1     |   0,000 s    |   0,650 s    |   9
+##       9,0   |    0     |    1     |   0,000 s    |   0,783 s    |   7
+##       9,5   |    1     |    1     |   0,700 s    |   0,867 s    |   1
+##      10,0   |    1     |    1     |   0,817 s    |   0,900 s    |   0
+##
+## À 6,5 la planche culmine à **0,999 u** sur une lèvre de 2,10 et à
+## **0,903 u** sur une lèvre de 1,45 : elle n'atteint AUCUNE des deux, la
+## fenêtre vaut 0,000 s contre 0,762 exigées, et `SkateTrickProbe`,
+## `SkateFeelProbe` PHASE H (0 tick d'air) et `SkatePhysicsProbe` PHASE Y
+## (sortie du bol, 0 pop) tombent avec elle. **Le premier échelon qui
+## tient le contrat est 10,0**, et il le tient avec 0,055 s de marge : à
+## 9,5 le grand quarterpipe est déjà court (0,700 s).
+##
+## ⚠️ DONC CE N'EST PAS « 35 % C'EST TROP » : C'EST QUE CETTE CROISIÈRE
+## NE PEUT PAS BAISSER DU TOUT sur le park tel qu'il est authored. Les
+## lèvres (2,10 et 1,45, CH60) ont été dessinées contre une planche à
+## 10,0 u/s, et c'est cette PAIRE qui est le vrai paramètre. Ralentir la
+## planche demande de ré-authorer les rampes -- ou de vendre la vitesse
+## autrement (caméra, `SkateStreaks`, audio : la couche CH62, qui est ce
+## qu'un joueur LIT comme de la vitesse) plutôt que de la retirer.
+##
+## ⚠️ ET LE MODÈLE NE SE PILOTE QUE PAR UN CHIFFRE, ce qu'il faut savoir
+## avant d'essayer : `push` et `brake` ne sont PAS des constantes de ce
+## dépôt, `SkateBoardBody.configure()` les RÉSOUT depuis les quatre
+## distances. `drag_k` ne dépend pas de la croisière (ln 4 / (2 coast_u))
+## et `roll_stop`, `push`, `brake` sont tous en **cruise²**. Une
+## croisière à x0,65 rend donc des accélérations à x0,4225 -- ce qui est
+## la bonne réponse et non une approximation, puisque c'est exactement ce
+## qui CONSERVE les distances authored de CH54 (3,2 u / 3,2 u). Forcer
+## x0,65 sur le push aurait exigé un run-up de 1,844 u au lieu de 3,20,
+## soit un départ PLUS sec : l'inverse de ce que device demande.
+##
+## ⚠️ ET UN CHIFFRE RECOPIÉ HORS DU DÉPÔT SE PÉRIME : le brief citait
+## push 17,2165 / brake 10,3433, qui sont les valeurs d'un `coast_u` de
+## 18,043 u -- le `park_span()` d'AVANT CH69. Sur l'arbre livré elles
+## valent 16,4253 / 11,0800. `SkateFeelProbe` PHASE W en portait deux en
+## littéral et était ROUGE depuis CH69 sans que personne ne la relise ;
+## CH70 l'a refaite en gate DÉRIVÉ. C'est le couplage que CH69 a élucidé
+## (`park_span() -> skate_coast_u() -> configure()`) pris sur le fait.
 const SKATE_CRUISE: float = 10.0
 const SKATE_GLIDE_STEP: float = 1.6
 const SKATE_GLIDE_S: float = SKATE_GLIDE_STEP / SKATE_CRUISE

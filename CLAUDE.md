@@ -2894,6 +2894,53 @@ lit dans son en-tête avant de la lancer, jamais après avoir lu son
 verdict. Une table croisée qui mélange les deux publie des rouges qui
 n'existent pas, et c'est le genre de rouge qu'un lot suivant corrige.
 
+### ⚠️ UN PARAMÈTRE DE GOÛT CESSE D'EN ÊTRE UN DÈS QU'UN AUTRE LOT S'APPUIE DESSUS — ET RIEN NE LE MARQUE
+
+Écrit au CH70, sur une réouverture autorisée qui s'est terminée en
+refus. `HubTransport.SKATE_CRUISE` a été authored au CH54 comme un
+**goût** — « 10,0 u/s est ×1,87 la marche, le park fait 10 u de long,
+donc une nuance en dessous » — et son bloc de commentaire dit
+explicitement que c'est un chiffre de ressenti. Sept lots plus tard, le
+baisser de 35 % **éteint la couche de tricks entière**.
+
+Le mécanisme n'est écrit nulle part parce que personne ne l'a écrit :
+la montée d'une transition est plafonnée par la croisière
+(`SkateBoardBody.drive()` n'ajoute rien au-delà de `_cruise`), donc la
+croisière décide si la planche **ATTEINT une lèvre**. Sans lèvre, pas de
+`POP_SPEED` ; sans pop, pas d'aire ; sans aire, aucun trick. CH66 a
+mesuré la fenêtre requise (**0,762 s**) et l'a rendue atteignable — et
+ce faisant il a transformé, en silence, un goût en **plancher**.
+
+Balayé, huit valeurs, une ligne changée à chaque fois :
+
+| croisière | 6,5 | 7,5 | 8,5 | 9,0 | 9,5 | **10,0** |
+|---|---|---|---|---|---|---|
+| fenêtre, grand quarterpipe | 0,000 | 0,017 | 0,000 | 0,000 | 0,700 | **0,817 s** |
+| rouges `SkateAirProbe` | 18 | 18 | 9 | 7 | 1 | **0** |
+
+**Le premier échelon qui tient le contrat est la valeur livrée, et il le
+tient avec 7 % de marge.** Ce n'est donc pas « 35 % c'est trop » : cette
+constante ne peut pas baisser **du tout**.
+
+**Règle** : avant de rouvrir une constante qu'un lot ancien a posée comme
+un goût, **BALAYER sa plage et publier ce qui rougit à chaque échelon** —
+la question n'est pas « de combien la bouge-t-on » mais « qui s'est
+appuyé dessus depuis ». Un `grep` du nom ne suffit pas : ici aucun
+fichier ne lit `SKATE_CRUISE` pour décider d'une lèvre, le couplage passe
+par la **PHYSIQUE** (un plafond de vitesse contre une hauteur authored) et
+seul un balayage le voit. Corollaires payés dans le même lot :
+
+* **le chiffre de baseline d'un brief est un chiffre recopié**, donc
+  périmé jusqu'à preuve du contraire : `push 17,2165` valait déjà
+  16,4253 depuis CH69, et la sonde qui le gatait en littéral était ROUGE
+  sur l'arbre livré sans que personne ne la relise (la table croisée du
+  lot précédent ne l'incluait pas) ;
+* **une sonde qui gate « près de la croisière » avec un littéral** (ici
+  `speed_at_foot > 8.0`) est une seconde orthographe de la constante, et
+  elle rougit pour la mauvaise raison au premier changement ;
+* et **un balayage qui refuse est un RÉSULTAT** : ce qui est livrable
+  est alors la table, pas le changement.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
@@ -3295,6 +3342,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH37 | Socle multi-altitude, LOT 1 SURFACE — `HubSurface` publié (requête pure au patron `HubWater`), `ground(flat)` comme orthographe unique du point sol, grille float32 refusée sinon, raccord C0 exact au périmètre, AABB disjointes, aucune bande `CozyPalette` traversante ; six vagues branchées (marche, caméra, tap, retours au sol, pluie/ombre) et **zéro domaine enregistré en jeu**, donc un no-op arithmétique prouvé sur les deux arbres ; `SurfaceProbe` phases A → G avec blind check en tête de chaque phase | [`CH37_SURFACE.md`](docs/lots/CH37_SURFACE.md) | 1 | — | 7 sept |
 | CH50 | Extension zone 0 nord — le sol du skatepark : disque r=28 unioné sur le milieu du bord nord (le MÊME centre que le lobe CH16, qu'il avale à tous les centres que le budget autorise, donc « goulot entre les deux disques » n'est pas une forme dessinable), pire paire créée 106,590 u / **20,117 s** qui PERD contre celle de CH38 (111,414 u / 20,967 s) donc pire traversée du hub inchangée, diagonale reproduite à la frame près (1 122 frames / 18,700 s) ; `COVER_MAX.y` 47 → 63 et les TROIS orthographes du littéral 50 du mur unifiées en un `WALL_NEAR_Z` dérivé (68) ; trois passes rouges (9 / 3 / 3) et le couplage tapis-mur prouvé par les deux dernières ; faux-vert du lot : la sonde en `--headless` lisait **2 743 transforms de `MultiMesh` sur 2 743 en identité** et comptait zéro en vert ; table des sondes rejouée sur deux arbres, parité rétablie, plus la trouvaille que le gate de contraste des plaques CH48 est un test du SOL (`origin/main` porte déjà 0,21 % de sol peint sous L 0,10, son plus sombre à 2,31:1 exactement) | [`CH50_ZONE0_NORD.md`](docs/lots/CH50_ZONE0_NORD.md) | 1 | 402 | 8 sept |
 | CH69 | **Le bol devient physique : 0,40 u de dalle, une porte de trois secteurs, et le couplage non elucide de CH67 ELUCIDE.** Balayage de **19 865 candidats** contre SEPT contraintes a la fois -- chevauchement nul, degagement >= `DECK_LENGTH` **0,92 u** (le plancher defendable la ou CH68 s'arretait sur un jugement), empreinte du parking, retombee, region sur 36 points de rim, rim SUR la dalle (K5 passe d'une TOLERANCE de 0,100 u a une MARGE de 0,050 : la dalle etant le levier, la tolerance qui ne condamnait pas le bol livre n'a plus de raison d'etre), et **K6 venu d'une SONDE et pas du balayage** (`SkateparkProbe` G5 a rougi a **-0,209 u** sur la premiere reponse, les disques de score se recouvrant ; re-balaye avec les disques tenus a `ARRIVE_EPSILON` -- la premiere reponse sous un K6 nu etait disjointe de **TREIZE MILLIMETRES**, un gate ne sur sa propre limite). ⚠️ **La dalle n'a PAS besoin de grandir pour que le bol soit legal** (une place a 0 u2 existe, degagement 0,450) : les 0,40 u achetent le DEGAGEMENT, 0,450 -> **0,950 u**. ⚠️ **La moitie NORD a ete mesuree, pas ecartee** : possible a **80,16 u2 (+20,5 %)** pour un bol que la camera montre depuis **2 stations sur 133** contre **30**. Livre : bol a **(-6,75 ; 45,00)**, dalle en deux COINS x[-10,40 ; 10,00] z[41 ; 59] (une taille centree ne sait pas grandir d'un seul cote), **roll-in de trois secteurs ni dessines ni solides** (0,942 u d'arc chacun contre un deck de 0,92 : un est une fente ; trois donnent 2,83 u) qui **n'introduit aucune position de sommet neuve** -- les deux jambages sont l'eventail dont les pieces sont taillees -- donc PHASE G reste le MEME test a 105 pieces au lieu de 120, et le park s'ALLEGE de 65 triangles. `pieces_for` rend l'anneau ; PHASE X gate toujours « sans piece SSI chevauchement ». PHASE Y roule le collider **LIVRE** (corps temporaire supprime, AABB prouvee sans intrus) et gagne la ROULADE PAR LA PORTE au vrai canal du doigt : rim franchi **a y 0,0000**, r 0,030 atteint, 0 pop, 0 fence, contre un blind check **arrete a r 4,035** sur un secteur plein. **CH67 § 4 ferme** : `park_span() -> skate_coast_u() -> configure()`, donc **18,043 -> 23,201 u de roue libre (+28,6 %)**, arrivees +0,22 u/s, retombee deplacee de 1,27 u -- un changement de TOUCHER a valider device. Quatre defauts d'instrument trouves, chacun avec l'allure d'un resultat : `Mesh.get_faces()` aplatit la surface de decor de D5 (4 echantillons faux sur 1 521), une jambe re-garee sans re-montage (max r 0,000 sur un bol qui marche), un **seuil sur une hauteur qui n'existe que si le rim a ete franchi** (valeur par defaut 0,0000 = vert gratuit), et PHASE E qui lancait le bol depuis un pied exterieur qu'il n'a pas. Trois passes rouges (**1 / 2 + arret d'instrument / 9 pour 6 predits**, les trois extras etant le meme chevauchement vu par V[3] et par le blind check de V). Table croisee sur deux arbres, `SeesawProbe` **2 rouges pre-existants en parite exacte**, `ProbeTimeoutAudit` **de retour a 98**. | [`CH69_BOL_PHYSIQUE.md`](docs/lots/CH69_BOL_PHYSIQUE.md) | 8 | 440 | 10 sept |
+| CH70 | **La croisière du skate rouverte sur autorisation explicite, et REFUSÉE PAR LA MESURE.** Réouverture volontaire d'une décision verrouillée depuis CH61 → CH69, sur un retour device répété. Deux prémisses du brief tuées au recon, avant toute ligne de code : (a) `push`/`brake` **ne sont pas des constantes** — `configure()` les résout depuis quatre distances, et l'arithmétique du solveur dit que `drag_k` ne dépend pas de la croisière tandis que `roll_stop`/`push`/`brake` sont en **cruise²**, donc ×0,65 sur la croisière fait **×0,4225** sur les accélérations (ce qui est la BONNE réponse : c'est ce qui conserve les 3,2 u authored de CH54 ; forcer ×0,65 aurait exigé un run-up de **1,844 u**, un départ PLUS sec) ; (b) les baselines `17,2165 / 10,3433` du brief sont celles du `park_span()` **d'avant CH69** — le vrai arbre livré lit **16,4253 / 11,0800**, et `SkateFeelProbe` PHASE W les gatait en littéral, donc **ROUGE depuis CH69** (120 OK / 1 RED sur `origin/staging` intact, la table croisée de CH69 n'incluant pas cette sonde). ⚠️ **Le changement a été fait, mesuré, et non expédié** : à 6,5 la planche culmine à **0,999 u** sur une lèvre de 2,10 et **0,903 u** sur une lèvre de 1,45 — elle n'atteint plus AUCUNE lèvre, la fenêtre CH66 vaut **0,000 s** contre 0,762 exigées, et `SkateAirProbe` sort **18 rouges**. Balayage de huit valeurs : **le premier échelon qui tient le contrat est 10,0, avec 0,055 s de marge** — la croisière ne peut pas baisser du tout sur le park tel qu'il est authored, c'est la PAIRE (croisière, hauteur de lèvre) qui est le paramètre. Livré : la mesure, plus PHASE W refaite en gate **DÉRIVÉ** (planche de référence configurée depuis les entrées publiées + blind check par planche-leurre), passe rouge à **1 rouge sur 1 prédit** et fichier restauré byte-identique. Deux rouges rapportés sans être corrigés (un littéral `8.0` qui voulait dire « près de la croisière », un gate E[3] déjà posé sur sa propre limite) et un troisième identifié **charge machine** et rejoué vert. Table croisée sur deux arbres, **154 `.scn`** des deux côtés. | [`CH70_CROISIERE_SKATE.md`](docs/lots/CH70_CROISIERE_SKATE.md) | 5 | 238 | 11 sept |
 
 | CH67 | Zone navigable du hub — `SKATE_LOBE_RADIUS` 28 → 36 sur un balayage MARCHÉ (38 sort à 22,100 s, le chiffre que le lot D avait déjà refusé), pire traversée du hub qui PASSE au lobe (21,817 s, dit et gaté) ; limite rendue lisible par un liseré peint dans le shader du sol, teinte choisie **en luminance** (le béton pâle évident lit 1,18:1 contre l'herbe claire) et gatée au PIXEL contre son propre plancher de bruit ; balançoire et ours sortis du couloir de course sur un scan à quatre contraintes simultanées, les deux constantes de l'ours re-dérivées ; **le bol construit, prouvé, puis retiré sur une mesure** (il passe sous la retombée du grand quarterpipe et rend le double pop que CH66 avait tué) | [`CH67_ZONE_NAVIGABLE.md`](docs/lots/CH67_ZONE_NAVIGABLE.md) | 8 | 392 | 10 sept |
 | CH68 | Les deux zones « non physiques » n'en font qu'une — RECON PURE, zero code de jeu. Zone 1 identifiee par enumeration, passe masquee au pixel et balayage de 72 azimuts lances DEUX FOIS (physique et triangles de la surface 0) : **6 azimuts fantomes, tous le bol**, 31 ou physique et dessin sont egaux au millimetre, et le « mur gris » du retour device est le DOS du petit quarterpipe, **solide**. Confirme par le canal du joueur avec blind check : la planche **traverse le bol** (0,199 u de l'axe, zero contact) et le meme geste sur un module solide est ARRETE. **Les deux zones sont le meme objet.** Zone 2 : les deux angles du brief mesures — (a) 56 positions sur la dalle, **0 sur 56** avec 1 u de degagement, 4 489 des qu'on lache la dalle ; **(b) REFUTE — retirer la contrainte de retombee laisse 56 avant, 56 apres** ; le bol n'est pas cable | [`CH68_ZONES_NON_PHYSIQUES.md`](docs/lots/CH68_ZONES_NON_PHYSIQUES.md) | 5 | 336 | 10 sept |
