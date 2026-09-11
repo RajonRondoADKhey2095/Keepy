@@ -619,9 +619,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	# BELOW THE SLOP.
 	#
 	# Both classes are read, for the reason the header gives: a desktop
-	# browser produces the mouse class and nothing else. The claim in
-	# `_gesture_begin` is what keeps a phone's twin pair from being
-	# integrated twice.
+	# browser produces the mouse class and nothing else.
+	#
+	# ⚠️ WHAT KEEPS A PHONE'S TWIN PAIR FROM BEING INTEGRATED TWICE IS
+	# THE INTEGRATION, NOT THE CLAIM, and the red pass is what said so.
+	# `_gesture_move` accumulates the difference between CONSECUTIVE
+	# samples, so a twin delivered at the same pixel contributes the
+	# delta once and exactly zero the second time -- removing the claim
+	# entirely left the probe ALL GREEN. The claim earns its place
+	# against a different defect (a hover; see `_orbit_licensed`'s
+	# neighbours and OrbitCameraProbe D4), and crediting it with this one
+	# would be the mistake CLAUDE.md records about attribution.
 	var touch := event as InputEventScreenTouch
 	if touch:
 		if touch.pressed:
