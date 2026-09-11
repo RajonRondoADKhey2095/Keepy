@@ -92,10 +92,34 @@ const TAPPED_RUN_U: float = 9.0
 ## assumed.
 const DROP_U: float = 2.0
 const RUN_TICKS: int = 400
-## CH61's published accelerations, restated so this bench proves it is
-## looking at the same board before it publishes anything new.
-const CH61_PUSH: float = 17.2165
-const CH61_BRAKE: float = 10.3433
+## =====================================================================
+## ⚠️ CH70 -- CE GATE ÉTAIT DEUX LITTÉRAUX, ET ILS ÉTAIENT PÉRIMÉS.
+##
+## `CH61_PUSH = 17.2165` / `CH61_BRAKE = 10.3433` ont été écrits ici au
+## CH62 contre un `park_span()` de 18,043 u. CH69 a porté ce span à
+## 23,201 u, et `push`/`brake` sont des fonctions du coast : la PHASE W
+## est donc passée ROUGE sur l'arbre livré -- 16,4253 / 11,0800 contre
+## deux nombres tapés -- sans que personne ne la relise, la table croisée
+## de CH69 n'incluant pas cette sonde. Trouvé par CH70, par arithmétique,
+## AVANT de lancer quoi que ce soit ; reproduit ensuite (120 OK / 1 RED
+## sur `0ecc4a4`).
+##
+## Ce que ce gate voulait dire est « ce banc regarde la planche que
+## HubTransport a CONFIGURÉE, pas une planche par défaut ». Ça se teste
+## sans retaper un seul chiffre : on configure une planche de RÉFÉRENCE
+## avec les entrées PUBLIÉES (`SKATE_CRUISE`, `SKATE_ACCEL_U`,
+## `SKATE_BRAKE_U`, `skate_coast_u()`) et on exige l'égalité des quatre
+## accélérations. Le solveur reste écrit UNE fois, dans `configure()` --
+## le ré-implémenter ici en ferait une tautologie (CLAUDE.md CH62 :
+## « rappeler l'API et la comparer à elle-même »), et le recopier en ferait
+## la seconde orthographe qu'on vient de payer.
+##
+## ⚠️ ET IL PORTE SON PROPRE BLIND CHECK, parce que « ces deux objets sont
+## égaux » passe GRATUITEMENT contre deux planches également non
+## configurées : une troisième planche, configurée à une croisière
+## DIFFÉRENTE, doit d'abord sortir DIFFÉRENTE. Sans ce positif d'abord,
+## l'égalité ne prouve pas que la comparaison sait voir.
+const DECOY_CRUISE: float = 3.0
 
 var _fails: int = 0
 var _hub: Node = null
@@ -520,10 +544,33 @@ func _phase_wired() -> void:
 	# CLAUDE.md: a bench that cannot restore a figure already on file has
 	# no standing to publish one.
 	var body := _transport.board_body()
-	print("     board: push %.4f  brake %.4f  (CH61 published %.4f / %.4f)"
-		% [body.push_accel(), body.brake_accel(), CH61_PUSH, CH61_BRAKE])
-	_check(absf(body.push_accel() - CH61_PUSH) < 0.01 and absf(body.brake_accel() - CH61_BRAKE) < 0.01,
-		"W INSTRUMENT: this is CH61's board, to the fourth decimal")
+	# CH70: the reference is SOLVED from the published inputs, not typed.
+	var reference := SkateBoardBody.new()
+	reference.configure(HubTransport.SKATE_CRUISE, HubTransport.SKATE_ACCEL_U,
+		HubTransport.SKATE_BRAKE_U, HubTransport.skate_coast_u())
+	# ... and a decoy at a different cruise, so the comparison proves it
+	# can separate two boards before it is trusted to say two are one.
+	var decoy := SkateBoardBody.new()
+	decoy.configure(DECOY_CRUISE, HubTransport.SKATE_ACCEL_U,
+		HubTransport.SKATE_BRAKE_U, HubTransport.skate_coast_u())
+	print("     board: push %.4f  brake %.4f  drag_k %.5f  roll_stop %.4f"
+		% [body.push_accel(), body.brake_accel(), body.drag_k(), body.roll_stop()])
+	print("     solved from the published inputs (cruise %.3f, run-up %.2f u, run-out %.2f u, coast %.3f u): push %.4f  brake %.4f"
+		% [HubTransport.SKATE_CRUISE, HubTransport.SKATE_ACCEL_U, HubTransport.SKATE_BRAKE_U,
+			HubTransport.skate_coast_u(), reference.push_accel(), reference.brake_accel()])
+	_check(body.push_accel() > 0.0 and body.brake_accel() > 0.0,
+		"W INSTRUMENT: the board is configured at all -- an unconfigured body reads 0 (%.4f / %.4f)"
+			% [body.push_accel(), body.brake_accel()])
+	_check(absf(decoy.push_accel() - reference.push_accel()) > 1e-4,
+		"W INSTRUMENT (blind): a board configured at a DIFFERENT cruise reads different (%.4f vs %.4f)"
+			% [decoy.push_accel(), reference.push_accel()])
+	_check(absf(body.push_accel() - reference.push_accel()) < 1e-4
+			and absf(body.brake_accel() - reference.brake_accel()) < 1e-4
+			and absf(body.drag_k() - reference.drag_k()) < 1e-6
+			and absf(body.roll_stop() - reference.roll_stop()) < 1e-4,
+		"W INSTRUMENT: this is the board HubTransport configured, to the fourth decimal")
+	reference.free()
+	decoy.free()
 	await _park_board(NEUTRAL)
 	# Before the mount: everything must be at rest. This is the reset
 	# CLAUDE.md's CH43 rule demands -- an assertion about a HELD value
