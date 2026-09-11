@@ -169,6 +169,9 @@ const BOARD_YAW_RATE_MAX: float = deg_to_rad(110.0)
 const BOARD_DEADZONE: float = deg_to_rad(3.0)
 const BOARD_FOV: float = 56.0
 const BOARD_KEEP_INSIDE: float = 2.5
+## CH75: the Comet's chase (see ChaseTuning.coaster()).
+const COASTER_YAW_RATE_MAX: float = deg_to_rad(150.0)
+const COASTER_FOV: float = 64.0
 
 class ChaseTuning extends RefCounted:
 	var heading_lambda: float = DRIVE_HEADING_LAMBDA
@@ -181,6 +184,15 @@ class ChaseTuning extends RefCounted:
 	## World units in from the region's edge the pose is kept; negative
 	## means the pose may leave the region (the three vehicles).
 	var keep_inside: float = -1.0
+	## CH75: the chase follows a body that LEAVES THE GROUND. The shipped
+	## pose anchors on `HubSurface.ground(at)` -- the ground under the
+	## vehicle -- and looks at that ground point, which is right for a
+	## kart and puts a coaster cart 14 u up entirely out of the picture.
+	## Airborne, the anchor is the body's own origin: 7.6 u behind it
+	## along the lagged heading and 4.4 u above IT, looking at IT. Never
+	## clamped to the region (the rail owns where the cart is; a camera
+	## 4 u over a rail 14 u up has nothing on the ground to hit).
+	var airborne: bool = false
 
 	## The three device-validated vehicles: the constants above, verbatim,
 	## and the exact `lerp_angle` arithmetic they shipped with.
@@ -198,10 +210,23 @@ class ChaseTuning extends RefCounted:
 		t.keep_inside = BOARD_KEEP_INSIDE
 		return t
 
+	## CH75: the Comet's chase -- the kart's lags (3.6 / 7.0, validated
+	## on device three vehicles over), the board's yaw cap so the pose
+	## never whips through a fast turn (150 deg/s, above anything the
+	## rail asks: CometProbe measures the cart's own yaw rate and gates
+	## the cap over it), no deadzone (the rail does not wobble), airborne,
+	## and the widest fov of the four -- a FEEL number, Mathieu's to move.
+	static func coaster() -> ChaseTuning:
+		var t := ChaseTuning.new()
+		t.yaw_rate_max = COASTER_YAW_RATE_MAX
+		t.fov = COASTER_FOV
+		t.airborne = true
+		return t
+
 	## True when the tuning is exactly the shipped vehicle chase, so the
 	## drive branch can take the byte-identical path for the three.
 	func is_plain() -> bool:
-		return deadzone <= 0.0 and yaw_rate_max == INF and keep_inside < 0.0
+		return deadzone <= 0.0 and yaw_rate_max == INF and keep_inside < 0.0 and not airborne
 
 var _hub_basis: Basis = Basis.IDENTITY
 var _hub_fov: float = 45.0
@@ -288,6 +313,9 @@ func _drive_wanted() -> Vector3:
 		return _hub_position
 	var heading := Vector3(sin(_drive_heading), 0.0, cos(_drive_heading))
 	var at: Vector3 = _drive_target.global_position
+	if _tuning.airborne:
+		# CH75: anchored on the body itself, not on the ground under it.
+		return at - heading * DRIVE_BACK + Vector3(0.0, DRIVE_UP, 0.0)
 	var ground: Vector3 = HubSurface.ground(at)
 	var flat: Vector3 = ground - heading * DRIVE_BACK
 	if _tuning.keep_inside >= 0.0:
@@ -961,7 +989,9 @@ func _process(delta: float) -> void:
 		var kart_ground: Vector3 = HubSurface.ground(kart.global_position)
 		var held: float = Vector2(_drive_position.x - kart_ground.x, _drive_position.z - kart_ground.z).length()
 		ahead = DRIVE_LOOK_AHEAD * clampf(held / DRIVE_BACK, 0.0, 1.0)
-	var look: Vector3 = HubSurface.ground(kart.global_position) + heading * ahead + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
+	# CH75: an airborne body is looked AT, not at the ground under it.
+	var anchor: Vector3 = kart.global_position if _tuning.airborne else HubSurface.ground(kart.global_position)
+	var look: Vector3 = anchor + heading * ahead + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
 	var drive_xform := Transform3D(Basis.IDENTITY, _drive_position).looking_at(look, Vector3.UP)
 	if not _tuning.is_plain():
 		# CH64: the cap, on the pose itself. The yaw of the finished
