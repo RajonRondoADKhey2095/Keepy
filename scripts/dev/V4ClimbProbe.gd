@@ -350,28 +350,31 @@ func _print_list() -> void:
 	for e in _trees.call("excluded"):
 		print("EXCLUDED %s at (%.1f, %.1f): %s" % [e["glb"], e["at"].x, e["at"].z, e["why"]])
 	print("LIST climbable %d (perchoirs %d, decor %d) plateau %d vallon %d lande %d excluded %d" % [n, n - int(_trees.call("decor_count")), _trees.call("decor_count"), zones["plateau"], zones["vallon"], zones["lande"], (_trees.call("excluded") as Array).size()])
-	# v5: the ray test, pure maths (no viewport needed). POSITIVE FIRST:
-	# a ray from the camera's offset through a decor tree's crown centre
-	# must name that tree; then the refusals -- the same ray 3 u aside
-	# names nothing, and the occupied tree withdraws.
+	# v6: the ray test, pure maths (no viewport needed). The hitbox is now
+	# the apex sphere ONLY (CLIMB_APEX_R around HubTrees.apex_of) -- a tap
+	# on the crown centre or the trunk is a MISS, and only a ray through
+	# the apex itself is a hit. The occupied tree still withdraws.
 	if n > 5:
 		var i: int = 5
 		var at: Vector3 = _trees.call("position_of", i)
 		var spec: Dictionary = _trees.call("climb_spec", i)
+		var apex: Vector3 = _trees.call("apex_of", i)
 		var crown: Vector3 = at + Vector3(0.0, (spec["trunk_h"] + spec["seat"].y) * 0.5, 0.0)
 		var cam: Vector3 = at + Vector3(0.0, 7.6, 8.9)
-		var hit: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (crown - cam).normalized(), false)
-		_check("ray_crown_hits_tree", hit == i, "hit %d" % hit)
-		var aside: Vector3 = crown + Vector3(3.5, 0.0, 0.0)
+		var hit: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (apex - cam).normalized(), false)
+		_check("ray_apex_hits_tree", hit == i, "hit %d" % hit)
+		var crown_miss: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (crown - cam).normalized(), false)
+		_check("ray_crown_centre_misses", crown_miss != i, "hit %d" % crown_miss)
+		var aside: Vector3 = apex + Vector3(3.5, 0.0, 0.0)
 		var miss: int = _trees.call("tree_hit", Vector3(at.x + 3.5, 0.0, at.z + 4.0), cam, (aside - cam).normalized(), false)
 		_check("ray_aside_misses", miss != i, "hit %d" % miss)
 		var trunk_pt: Vector3 = at + Vector3(0.0, spec["trunk_h"] * 0.5, 0.0)
-		var thit: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 1.0), cam, (trunk_pt - cam).normalized(), false)
-		_check("ray_trunk_hits_tree", thit == i, "hit %d" % thit)
+		var trunk_miss: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 1.0), cam, (trunk_pt - cam).normalized(), false)
+		_check("ray_trunk_misses", trunk_miss != i, "hit %d" % trunk_miss)
 		_trees.call("set_occupied", i)
-		var withdrawn: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (crown - cam).normalized(), false)
+		var withdrawn: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (apex - cam).normalized(), false)
 		_check("occupied_withdraws", withdrawn != i, "hit %d" % withdrawn)
-		var incl: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (crown - cam).normalized(), true)
+		var incl: int = _trees.call("tree_hit", Vector3(at.x, 0.0, at.z + 4.0), cam, (apex - cam).normalized(), true)
 		_check("occupied_answers_when_included", incl == i, "hit %d" % incl)
 		_trees.call("release")
 		print("V4ClimbProbe --list: %d failed" % _fails.size())
