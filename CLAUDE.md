@@ -162,6 +162,7 @@ dans `docs/lots/`, ceci n'en est jamais un résumé.
 | 6 sept 2026 | V7b, V8 (karting lot 2), CH29 (la Crique), CH30 (conduite unifiée), CH31 (rebalance difficulté) | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 | 10 sept 2026 (09:14) | CH64 (skatepark mini-jeu : toggles supprimés, caméra calmée, tricks au cercle, béton) — `b04f292` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 | 10 sept 2026 (14:35) | CH65 (le toucher de la planche : rampe de throttle, filtre du doigt, plafond de lacet, poussée sur le nez, grip latérale) — `28adc89` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
+| 11 sept 2026 | CH74 (grimper aux arbres uniquement au tap sur l'apex) — `d74a45d` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 
 ## Vérifier un déploiement SUR LE SERVICE, jamais dans le log CI seul
 

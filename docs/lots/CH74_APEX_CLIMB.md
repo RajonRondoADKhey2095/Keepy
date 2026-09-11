@@ -77,3 +77,14 @@ doctrine. `staging` restait, avant ce merge, à l'identique de `main`
 
 `web-build.yml` déclenché par le push sur `staging` ; résultat du run
 consigné dans le rapport de ce lot.
+
+Palier 2 (`staging` → `main`, production) : merge `--no-ff` de `staging`
+(`21c1d42`) sur `main` (`b224978`), autorisation explicite de Mathieu après
+validation device sur `keepy-staging.vercel.app`, le 11 septembre 2026.
+Arbre du commit de merge (`d74a45d`) vérifié byte-identique à celui de
+`staging` avant push (`git diff` vide, même hash d'arbre des deux côtés).
+`web-build.yml` déclenché par le push sur `main` (run 34653616260,
+completed/success), déploiement confirmé sur le service : `keepy-ten.
+vercel.app` sert `dpl_GdAaJA67tsTiVV5qv9e7VhMDyu7q`, `readyState=READY`,
+`githubCommitSha=d74a45dde80437888a6289abadeb84813649ca9f` (exact),
+`gitRootDirectory=build/web` (source CI, pas le déploiement natif).
