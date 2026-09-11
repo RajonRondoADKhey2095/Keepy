@@ -176,22 +176,95 @@ const TOWER_AT: Vector3 = Vector3(33.0, 0.0, 8.5)
 const TOWER_STAND: Vector3 = Vector3(33.0, 0.0, 11.0)
 const TOWER_TAP_RADIUS: float = 2.2
 const TOWER_FOOTPRINT: float = 1.9
-const TOWER_HEIGHT: float = 6.6
 const TOWER_HALF_SPAN: float = 1.0
 const TOWER_LEG_THICK: float = 0.16
 const TOWER_MAST_THICK: float = 0.22
 const TOWER_BASE: Vector3 = Vector3(2.6, 0.30, 2.6)
 const TOWER_BRACE_THICK: float = 0.07
-const TOWER_BRACE_LEVELS: Array = [2.2, 4.2, 6.2]
 const TOWER_CAP: Vector3 = Vector3(2.4, 0.25, 2.4)
 const GONDOLA_REST_Y: float = 0.45
-const GONDOLA_TOP_Y: float = 5.10
-const GONDOLA_RISE_SPEED: float = 0.9
-const GONDOLA_HOLD_S: float = 1.6
-## Where the magnetic brake begins on the way down; the decel that stops
-## the gondola at GONDOLA_REST_Y from the speed it reaches there is
-## DERIVED (published by tower_brake_decel()), never typed.
-const GONDOLA_BRAKE_Y: float = 1.6
+
+## =====================================================================
+## CH72 -- HOW HIGH, AND WHAT PAID FOR THE NUMBER
+##
+## CH71 topped the gondola at 5.10 because that is all a FIXED camera can
+## show: `HubCamera.FRAME_TOP_AT_APLOMB` cuts the rider'"'"'s own column at
+## 7.968 u, and a crown 1.7 u over the seat with CLAUDE.md'"'"'s 0.4 u margin
+## caps the seat at 5.868. CLAUDE.md says in as many words that the
+## answer to "je veux plus haut que ca" is "une camera qui monte,
+## c'"'"'est-a-dire un autre lot". THIS is that lot: `HubCamera.set_fair_lift`
+## raises the fixed pose WITH the gondola, and Ch72Recon R3 measured that
+## the framing is then INVARIANT -- lift the camera and the rider by the
+## same dy and the crown lands on screen pixel (270, 121) at dy = 0, 3, 6,
+## 10 and 14, unchanged to four figures. The ceiling stops being a wall.
+##
+## So the height is decided by what it BUYS, and that was rendered, not
+## argued (Ch72Recon R4, a camera at the gondola looking out, three
+## headings, six heights). Two findings, one of which refutes a premise
+## of the brief:
+##
+##   * NOTHING OCCLUDES THE VIEW, at any height. The sky/haze band is
+##     0.0 % of the frame at 5.10 and 1.4 % at 20.0; no near trunk, no
+##     ridge stands in the way. The brief'"'"'s "s'"'"'il y a des arbres/reliefs
+##     qui bouchent la vue" is measured and answered NO -- the site does
+##     not need moving, and it was not moved.
+##   * HEIGHT BUYS REACH, and reach alone. The eye reaches ground at
+##     24.0 u from y 5.10, 34.0 from 8, 44.5 from 11, 55.0 from 14,
+##     65.5 from 17 and 76.0 from 20 -- about 3.5 u of reach per unit of
+##     height. The count of layout props in frame, by contrast, is FLAT
+##     (west 158 -> 160 over the whole sweep): what is in the picture is
+##     decided by the heading, not by the altitude.
+##
+## The ceiling is therefore the HAZE, not the geometry. At
+## `CozyPalette.HAZE_DENSITY` (0.022) a thing at 24 u keeps 59 % of
+## itself, at 44.5 u 38 %, at 55 u 30 %, at 65.5 u 24 %, at 76 u 19 %.
+## Past ~55 u the new ground a taller tower buys is more sky colour than
+## ground. 14.0 is the last height whose reach still lands where a third
+## of the picture survives -- 2.75x CH71'"'"'s ride, 2.35x its structure.
+const GONDOLA_TOP_Y: float = 14.0
+
+## The mast and the cap stand this far over the gondola'"'"'s top, CH71'"'"'s
+## own 1.5 u (6.6 - 5.10). The tower'"'"'s height FOLLOWS the ride rather
+## than being typed beside it: one fact, one spelling.
+const TOWER_TOP_HEADROOM: float = 1.5
+const TOWER_HEIGHT: float = GONDOLA_TOP_Y + TOWER_TOP_HEADROOM
+
+## The lattice: the first ring, the pitch between rings, and the gap the
+## last ring keeps under the cap. CH71 wrote [2.2, 4.2, 6.2] by hand for
+## a 6.6 tower; `tower_brace_levels()` REPRODUCES that list exactly at
+## that height (FunfairProbe gates it) and grows with any other.
+const TOWER_BRACE_FIRST: float = 2.2
+const TOWER_BRACE_PITCH: float = 2.0
+const TOWER_BRACE_UNDER_CAP: float = 0.4
+
+## =====================================================================
+## CH72 -- THE CLIMB IS A DURATION, THE BRAKE IS A g, AND BOTH FOLLOW
+## THE HEIGHT
+##
+## CH71 typed a rise SPEED (0.9 u/s) and a brake HEIGHT (1.6). Both are
+## spellings of a height that has now changed, and left as literals they
+## would have shipped a 15 s climb and a 10.8 g stop. What a player
+## actually feels is a DURATION and a DECELERATION, so those are what
+## this file publishes and the speeds follow.
+##
+## ⚠️ THE RATIO IS NOT INVENTED -- IT IS CH71'"'"'S OWN, READ BACK OUT. With
+## H = TOP - REST and the brake taken over the last d units, energy gives
+## decel = GRAVITY * (H - d) / d. CH71'"'"'s 1.6 on a 4.65 u drop is
+## d = 1.15, so decel / GRAVITY = (4.65 - 1.15) / 1.15 = 3.0435 -- the
+## "3.04 g" its own header quotes. Inverted, d = H / (1 + 3.0435), which
+## returns 1.59999 for CH71'"'"'s height: the derivation reproduces the
+## shipped number to a hundredth of a millimetre, and that is the gate.
+## The stop therefore stays exactly as firm as the one Mathieu validated
+## on device, at any height.
+const TOWER_BRAKE_G: float = 3.0435
+## CH71 climbed 4.65 u at 0.9 u/s = 5.17 s. 13.55 u at that speed is
+## 15.1 s of nothing happening; this is the climb this lot authors, and
+## it is a FEEL number -- Mathieu'"'"'s to move, not a bench'"'"'s.
+const GONDOLA_RISE_S: float = 7.0
+## CH71 held 1.6 s at a top that showed nothing. The whole point of
+## CHANGE 2 is that the top now shows something, so the hold is longer --
+## declared as a judgment tied to that purpose, not smuggled in.
+const GONDOLA_HOLD_S: float = 2.4
 const GONDOLA_SETTLE_S: float = 0.6
 const GONDOLA_SEAT: Vector3 = Vector3(0.0, 0.12, 0.0)
 const GONDOLA_FLOOR: Vector3 = Vector3(1.5, 0.15, 1.5)
@@ -220,6 +293,9 @@ signal ride_started(ride: int)
 signal ride_finished(ride: int, landing: Vector3)
 
 var _keepy: KeepyHopper = null
+## CH72: the hub camera, for the tower's lift. Held the way HubTransport
+## holds it -- a coordinator may drive the camera of the ride it owns.
+var _camera: Node = null
 var _curve: Curve3D = null
 var _length: float = 0.0
 var _crest_s: float = 0.0
@@ -250,8 +326,9 @@ func _ready() -> void:
 	_build_curve()
 	_build()
 
-func setup(keepy: KeepyHopper) -> void:
+func setup(keepy: KeepyHopper, camera: Node = null) -> void:
 	_keepy = keepy
+	_camera = camera
 
 # =====================================================================
 # THE CURVE
@@ -302,13 +379,60 @@ func track_tangent(s: float) -> Vector3:
 	var b: Vector3 = track_point(s + 0.05)
 	return (b - a).normalized()
 
-## The frame at `s`: columns (right, up, forward), origin on the rail top.
+## The SWEEP frame at `s`: columns (right, up, forward), origin on the
+## rail top. Used to lay the rails and the ties down, and for nothing
+## else.
+##
+## ⚠️ CH72 -- THIS BASIS IS MIRRORED (det = -1) AND MUST NEVER BE A NODE
+## TRANSFORM. `t.cross(UP)` is the LEFT of the direction of travel, not
+## its right: with t = +Z it returns (-1, 0, 0), so Basis(right, up, t)
+## has determinant -1. That is harmless here and always has been -- the
+## rails are laid symmetrically about the centre line (-gauge/2 and
+## +gauge/2), so swapping left for right only renames them, and a
+## six-sided tube swept about a flipped radial axis is the same hexagon
+## rotated -- but a mirrored basis handed to a Node3D is not a rotation
+## at all, and the yaw Godot decomposes out of one means nothing.
+## Anything that RIDES the rail takes `ride_frame()` below.
 func track_frame(s: float) -> Transform3D:
 	var p: Vector3 = track_point(s)
 	var t: Vector3 = track_tangent(s)
 	var right: Vector3 = t.cross(Vector3.UP).normalized()
 	var up: Vector3 = right.cross(t).normalized()
 	return Transform3D(Basis(right, up, t), p)
+
+## CH72 -- THE POSE OF ANYTHING THAT RIDES THE RAIL AT `s`: origin on the
+## rail top, and **+Z along the direction of travel**.
+##
+## ⚠️ +Z, NOT -Z, AND THAT IS THE WHOLE OF CHANGE 1. A carrier hands its
+## yaw to its rider verbatim -- `KeepyHopper.follow_carrier()` is
+## `_yaw.rotation_degrees.y = _carrier.global_rotation_degrees.y` -- and
+## Keepy'"'"'s model FACES +Z at yaw zero (`KeepyHopper._face`'"'"'s own comment,
+## measured on the .glb). So the axis a rider looks along is the
+## carrier'"'"'s +Z, and a cart posed by `Basis.looking_at(t, UP)` puts -Z on
+## the tangent (that is what looking_at means) and therefore +Z on -t.
+##
+## MEASURED, not deduced (Ch72Recon R1, 900 frames of a real ride driven
+## through the player'"'"'s own tap channel): the angle between Keepy'"'"'s drawn
+## facing and the direction of travel read **180.00 deg on the first
+## frame, mean 179.90, max 180.00** -- he rode the whole loop backwards,
+## on the lift, through both turns and down the drop.
+##
+## Right-handed by construction, which `track_frame()` above is not:
+## X = Y x Z is the identity Godot'"'"'s own yaw basis satisfies, so
+## `global_rotation_degrees.y` decomposes back to the tangent'"'"'s bearing
+## and the rider is handed the heading the rail actually has. Nothing is
+## hard-coded to this loop: change a control point and the pose follows.
+func ride_frame(s: float) -> Transform3D:
+	var t: Vector3 = track_tangent(s)
+	var right: Vector3 = Vector3.UP.cross(t)
+	# A rail that ever ran dead vertical would make UP x t degenerate.
+	# This one does not (its steepest section is 37.6 deg), but a guard
+	# costs a branch and a silent NaN pose costs a lot more.
+	if right.length_squared() < 0.000001:
+		right = Vector3.RIGHT
+	right = right.normalized()
+	var up: Vector3 = t.cross(right).normalized()
+	return Transform3D(Basis(right, up, t), track_point(s))
 
 # =====================================================================
 # BUILDING
@@ -392,9 +516,10 @@ func _build() -> void:
 	# Braces: at each level a ring of four horizontals between the legs
 	# and one diagonal per side, alternating direction level to level.
 	var ring: Array = [legs[0], legs[1], legs[3], legs[2]]
-	for li in TOWER_BRACE_LEVELS.size():
-		var y: float = float(TOWER_BRACE_LEVELS[li])
-		var below: float = float(TOWER_BRACE_LEVELS[li - 1]) if li > 0 else base_top
+	var levels: Array = tower_brace_levels()
+	for li in levels.size():
+		var y: float = float(levels[li])
+		var below: float = float(levels[li - 1]) if li > 0 else base_top
 		for k in 4:
 			var a: Vector3 = ring[k] + Vector3(0.0, y, 0.0)
 			var b: Vector3 = ring[(k + 1) % 4] + Vector3(0.0, y, 0.0)
@@ -462,9 +587,9 @@ func _park_cart() -> void:
 	_pose_cart()
 
 func _pose_cart() -> void:
-	var p: Vector3 = track_point(_s)
-	var t: Vector3 = track_tangent(_s)
-	_cart.global_transform = Transform3D(Basis.looking_at(t, Vector3.UP), p)
+	# CH72: `ride_frame`, whose +Z IS the direction of travel -- see there
+	# for why `Basis.looking_at(t, UP)` sat the rider backwards.
+	_cart.global_transform = ride_frame(_s)
 
 func _place_gondola() -> void:
 	_gondola.global_position = Vector3(TOWER_AT.x, _gy, TOWER_AT.z)
@@ -559,12 +684,47 @@ func gondola_y() -> float:
 func gondola_speed() -> float:
 	return _gv
 
+## CH72 -- THE THREE NUMBERS THAT FOLLOW THE HEIGHT. Each is published
+## once and read everywhere; none is typed beside the height it depends
+## on. FunfairProbe re-derives all three at CH71's 5.10 and requires
+## CH71's shipped values back.
+
+## How far the gondola falls in all.
+static func tower_drop_height() -> float:
+	return GONDOLA_TOP_Y - GONDOLA_REST_Y
+
+## Where the magnetic brake begins, so that the stop is TOWER_BRAKE_G
+## regardless of how tall the tower is. See that constant for the
+## inversion and for why 3.0435 is CH71's own number and not a new one.
+static func gondola_brake_y() -> float:
+	return GONDOLA_REST_Y + tower_drop_height() / (1.0 + TOWER_BRAKE_G)
+
+## The rise speed that makes the climb last GONDOLA_RISE_S.
+static func gondola_rise_speed() -> float:
+	return tower_drop_height() / GONDOLA_RISE_S
+
+## The rings of the lattice, bottom to top: one every TOWER_BRACE_PITCH
+## from TOWER_BRACE_FIRST up to TOWER_BRACE_UNDER_CAP below the top.
+## Returns exactly [2.2, 4.2, 6.2] at CH71's 6.6 m tower.
+static func tower_brace_levels() -> Array:
+	var out: Array = []
+	var y: float = TOWER_BRACE_FIRST
+	while y <= TOWER_HEIGHT - TOWER_BRACE_UNDER_CAP + 0.0001:
+		out.append(y)
+		y += TOWER_BRACE_PITCH
+	return out
+
 ## The decel the magnetic brake needs, DERIVED from the fall: the speed
-## reached at GONDOLA_BRAKE_Y after a free fall from GONDOLA_TOP_Y, shed
-## over the last GONDOLA_BRAKE_Y - GONDOLA_REST_Y units.
+## reached at the brake height after a free fall from GONDOLA_TOP_Y, shed
+## over the last brake_y - GONDOLA_REST_Y units. Equals
+## TOWER_BRAKE_G * GRAVITY by construction; published as an arithmetic
+## reading of the delivered numbers rather than as that identity, so a
+## future change to either half shows up here instead of being asserted
+## away.
 static func tower_brake_decel() -> float:
-	var v2: float = 2.0 * GRAVITY * (GONDOLA_TOP_Y - GONDOLA_BRAKE_Y)
-	return v2 / (2.0 * (GONDOLA_BRAKE_Y - GONDOLA_REST_Y))
+	var brake_y: float = gondola_brake_y()
+	var v2: float = 2.0 * GRAVITY * (GONDOLA_TOP_Y - brake_y)
+	return v2 / (2.0 * (brake_y - GONDOLA_REST_Y))
 
 func is_riding() -> bool:
 	return _coaster_phase != CoasterPhase.IDLE or _tower_phase != TowerPhase.IDLE
@@ -572,6 +732,36 @@ func is_riding() -> bool:
 ## The stand point of a ride, flat.
 static func stand_point(ride: int) -> Vector3:
 	return STATION_STAND if ride == RIDE_COASTER else TOWER_STAND
+
+# =====================================================================
+# CH72 -- WHAT EACH RIDE ASKS OF THE CAMERA
+
+## How far below the horizon a POV on `ride` looks.
+##
+## LEVEL on the coaster: the rail supplies all the motion there, and a
+## pitch that fought it would be the one term making people ill.
+##
+## TIPPED DOWN on the tower, and this number is the whole of CHANGE 2's
+## payoff. Ch72Recon R4 rendered the view from the gondola with a 0.30
+## rise/run tip -- 16.7 deg -- and measured the eye reaching ground at
+## 55 u from 14.0 with 0.0 to 1.4 % of the frame sky. Level, the picture
+## would be horizon; this is the angle that was actually measured, kept.
+static func pov_pitch_deg(ride: int) -> float:
+	return 0.0 if ride == RIDE_COASTER else TOWER_POV_PITCH_DEG
+const TOWER_POV_PITCH_DEG: float = 16.7
+
+## CH72 -- how far the fixed camera must rise for the tower ride to stay
+## in frame: exactly how far the gondola is off its own rest. Zero
+## whenever the tower is idle, and zero for the coaster, whose whole
+## track was authored under the fixed ceiling and still fits under it.
+func camera_lift() -> float:
+	if _tower_phase == TowerPhase.IDLE:
+		return 0.0
+	return maxf(_gy - (HubSurface.ground(TOWER_AT).y + GONDOLA_REST_Y), 0.0)
+
+func _push_camera_lift() -> void:
+	if _camera != null and is_instance_valid(_camera) and _camera.has_method("set_fair_lift"):
+		_camera.call("set_fair_lift", camera_lift())
 
 # =====================================================================
 # THE TAP DOOR (the boat pattern) AND THE INTENT (the kart's)
@@ -583,6 +773,77 @@ func accepts_tap(aim: Vector3) -> int:
 	if _coaster_phase == CoasterPhase.IDLE and flat.distance_to(Vector3(TRACK_POINTS[0].x, 0.0, TRACK_POINTS[0].z)) <= COASTER_TAP_RADIUS:
 		return RIDE_COASTER
 	if _tower_phase == TowerPhase.IDLE and flat.distance_to(Vector3(TOWER_AT.x, 0.0, TOWER_AT.z)) <= TOWER_TAP_RADIUS:
+		return RIDE_TOWER
+	return -1
+
+# =====================================================================
+# CH72 -- THE RIDER'S OWN TAP CHANNEL (the POV toggle)
+
+## How near the tap RAY must pass the rider's body to mean "him". In
+## world units, on the ray, and NOT a disc around a ground point -- see
+## below for the measurement that rules the ground point out.
+const RIDER_TAP_RADIUS: float = 0.75
+## Two dispatches, one gesture: `emulate_mouse_from_touch` is true by
+## default, so ONE finger produces a touch release AND a synthesised
+## mouse release and `_handle_point` runs TWICE, in the same frame
+## (CLAUDE.md, measured). A toggle read twice is a toggle that never
+## moves, so a second answer inside this many frames is refused.
+const RIDER_TAP_DEBOUNCE_FRAMES: int = 3
+
+var _rider_tap_frame: int = -1000
+
+## True when a tap aimed along (`origin`, `direction`) means the RIDER --
+## i.e. "switch the point of view" -- rather than a place to walk to.
+##
+## ⚠️ ON THE RAY, NOT ON A GROUND DISC, AND THAT IS MEASURED. CLAUDE.md
+## CH58 says a tap on a raised body is tested against its DRAWN ground
+## point, because the camera never rises and a body above the plane is
+## drawn where the ground under it is not. That rule was written for a
+## board 0.85 u up, where the smear is centimetres. On this tower it
+## breaks down completely: at the top of the ride the ray through his
+## feet meets the ground 26.8 u south of him and the ray through his
+## crown 35.3 u south -- his drawn SILHOUETTE covers 8.5 u of ground, and
+## unlifted it covers 71.1. There is no disc that is "him".
+##
+## The perpendicular distance from his body to the tap ray has none of
+## that: a body of radius r is hit exactly when the ray passes within r
+## of it, at any height, under any lift, with no parallax term at all.
+## It is the same instrument `HubTrees.tree_hit` already uses for a
+## crown, in the same tap function.
+##
+## ⚠️ AND IN POV IT IS A TAP ANYWHERE. CH64's board precedent, verbatim:
+## "under the chase camera there is no fixed pixel that means 'him' any
+## more, so the gesture is a tap ANYWHERE rather than a tap on a body".
+## Inside his own head there is no drawn Keepy at all. This is what stops
+## the POV being a room with no door -- CLAUDE.md's PATRON ECHELLE -- and
+## it is why this channel ADDS a meaning to a tap that the ON_CARRIER
+## drop was throwing away, and removes no exit that existed.
+func accepts_rider_tap(origin: Vector3, direction: Vector3) -> bool:
+	if not is_riding() or _keepy == null:
+		return false
+	if Engine.get_process_frames() - _rider_tap_frame < RIDER_TAP_DEBOUNCE_FRAMES:
+		return false
+	if _pov_on():
+		return true
+	var body: Vector3 = _keepy.global_position + Vector3.UP * (KeepyHopper.CROWN_HEIGHT * 0.5)
+	var along: Vector3 = body - origin
+	var perp: Vector3 = along - direction * along.dot(direction)
+	return along.dot(direction) > 0.0 and perp.length() <= RIDER_TAP_RADIUS
+
+## Stamps the gesture as spent, so the second dispatch of the same finger
+## cannot undo it. Called by the listener that acts on the tap.
+func mark_rider_tap() -> void:
+	_rider_tap_frame = Engine.get_process_frames()
+
+func _pov_on() -> bool:
+	return _camera != null and is_instance_valid(_camera) and _camera.has_method("is_pov") and bool(_camera.call("is_pov"))
+
+## Which ride is running, or -1 -- the POV needs to know which pitch to
+## take, and `is_riding()` alone does not say.
+func running_ride() -> int:
+	if _coaster_phase != CoasterPhase.IDLE:
+		return RIDE_COASTER
+	if _tower_phase != TowerPhase.IDLE:
 		return RIDE_TOWER
 	return -1
 
@@ -703,10 +964,10 @@ func _advance_coaster(delta: float) -> void:
 func _advance_tower(delta: float) -> void:
 	var rest: float = HubSurface.ground(TOWER_AT).y + GONDOLA_REST_Y
 	var top: float = HubSurface.ground(TOWER_AT).y + GONDOLA_TOP_Y
-	var brake_y: float = HubSurface.ground(TOWER_AT).y + GONDOLA_BRAKE_Y
+	var brake_y: float = HubSurface.ground(TOWER_AT).y + gondola_brake_y()
 	match _tower_phase:
 		TowerPhase.RISE:
-			_gv = GONDOLA_RISE_SPEED
+			_gv = gondola_rise_speed()
 			_gy = minf(top, _gy + _gv * delta)
 			if _gy >= top:
 				_tower_phase = TowerPhase.HOLD
@@ -739,8 +1000,14 @@ func _advance_tower(delta: float) -> void:
 				_place_gondola()
 				if _keepy != null and _keepy.is_on_carrier():
 					_keepy.follow_carrier()
+				# The lift is dropped BEFORE the signal: a listener that
+				# steps the rider off must not be handed a camera still
+				# riding 13 u of tower. It is already ~0 here (the
+				# gondola is back at rest), so this is not a cut.
+				_push_camera_lift()
 				ride_finished.emit(RIDE_TOWER, TOWER_STAND)
 				return
 	_place_gondola()
+	_push_camera_lift()
 	if _keepy != null and _keepy.is_on_carrier():
 		_keepy.follow_carrier()
