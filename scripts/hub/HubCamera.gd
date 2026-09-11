@@ -276,7 +276,10 @@ func _tween_blend(to: float) -> void:
 func _on_drive_exited() -> void:
 	_drive_target = null
 	_blend = 0.0
-	global_transform = Transform3D(_hub_basis, _hub_position)
+	# CH73: the pose the player LEFT, not the one the scene authored. A
+	# drive that gave back the authored basis would quietly undo an orbit
+	# every time he got into the kart, which is the opposite of sticky.
+	global_transform = Transform3D(_hub_pose_basis(), _hub_position)
 	fov = _hub_fov
 	far = _hub_far
 
@@ -436,6 +439,234 @@ func _ride_offset() -> Vector3:
 	return SkateFeel.camera_offset(_ride_rush, _ride_lift) * _ride_blend
 
 ## =====================================================================
+## CH73 -- THE ORBIT: THE FIXED POSE, TURNED BY A FINGER, AND IT STAYS
+##
+## CLAUDE.md's table reads: pilots continuously -> chase; WALKS -> FIXED;
+## ride on a fixed trajectory -> fixed (CH72's POV is the fourth line).
+## This does NOT move the walking row off "fixed": what it changes is
+## WHICH fixed pose. The camera still never yaws by itself, never looks
+## at Keepy, never approaches and never leaves the sphere it has always
+## sat on -- it simply sits where the player last put it, instead of
+## where the scene author put it.
+##
+## ⚠️ IT IS A RIGID ROTATION OF THE WHOLE RIG ABOUT KEEPY'S GROUND
+## POINT, AND THAT IS THE WHOLE DESIGN. Both halves of the pose turn by
+## the SAME rotation:
+##
+##     position = ground + R * OFFSET
+##     basis    = R * _hub_basis
+##
+## Three properties fall straight out of that, none of them tuned:
+##
+##   1. AT (0, 0) THE ROTATION IS THE IDENTITY, so every line below is
+##      arithmetically inert on a tree where nobody has dragged -- the
+##      shipped frame is byte-identical, which OrbitCameraProbe PHASE I
+##      gates rather than assumes.
+##   2. THE DISTANCE CANNOT CHANGE. |R * OFFSET| == |OFFSET| == 11.7034 u
+##      for any rotation. CH73 was told not to add a zoom; this shape
+##      makes a zoom impossible to add by accident.
+##   3. THE CAMERA STILL DOES NOT LOOK AT KEEPY. The offset's elevation
+##      is 40.4951 deg and the authored basis pitches 34.0 -- a 6.5 deg
+##      disagreement that CH36 measured and that FRAME_TOP_AT_APLOMB is
+##      derived from. A rigid rotation carries that disagreement along
+##      unchanged, so the framing the OFFSET comment describes (Keepy at
+##      124 px, the outer portal pads at 7.8 % and 92.2 %) is preserved
+##      at every yaw.
+##
+## ⚠️ AND THE ROLL IS EXACTLY ZERO, BY ARITHMETIC RATHER THAN BY CLAMP.
+## `_hub_basis` is a pure X rotation (the scene authors pitch and nothing
+## else), the pitch pivot is a pure X rotation, and the yaw is a pure Y
+## rotation, so the product is Ry(yaw) * Rx(-(pitch + 34 deg)) -- a
+## yaw-then-pitch basis whose up vector stays in the vertical plane.
+## CH72's POV block spells out why a rolling view is the term that makes
+## a ride nauseous; a camera the player turns with his thumb has the same
+## exposure and gets the same guarantee.
+##
+## ⚠️ THE PITCH PIVOTS ABOUT THE **SPUN** RIGHT AXIS, not about world X.
+## `spin * pivot` is `Rot(spin * X, -pitch) * spin`, so after a half turn
+## a downward drag still tips the camera down rather than up. Written as
+## a product in that order because the equivalent explicit axis is the
+## same arithmetic with one more chance to get a sign wrong.
+##
+## =====================================================================
+## STICKY, AND THE WORD IS LOAD-BEARING
+##
+## There is no recentring, no delay, no return interpolation and no
+## timer: nothing in this file ever writes `_orbit_yaw` or
+## `_orbit_pitch` back toward zero. A player who turns the camera and
+## walks away keeps that camera for the rest of the session, across
+## hops, rides, drives and scene returns. That is the contract Mathieu
+## asked for in as many words, and it is gated (PHASE S holds the pose
+## for 600 frames and across a walk, and demands bit-for-bit equality).
+##
+## The cost is stated rather than hidden: EVERY constant this repo has
+## derived from the resting frame -- FRAME_TOP_AT_APLOMB and, through
+## it, HubTrees.SEAT_MAX_Y, HubFunfair's seat ceiling, HubSkatepark's
+## reading -- describes the frame AT ORBIT ZERO. Under an orbit they
+## describe a frame the player has chosen to leave. They are still the
+## right numbers to AUTHOR against (a prop must be visible to a player
+## who has not touched the camera); they are not promises about a frame
+## the player has turned.
+
+## The orbit's two angles, in radians. Yaw is free and wraps; pitch is
+## an offset on the resting ELEVATION and is clamped to the band below.
+##
+## ⚠️ NEITHER IS EVER WRITTEN BACK TOWARD ZERO. See the block above.
+var _orbit_yaw: float = 0.0
+var _orbit_pitch: float = 0.0
+
+## The resting elevation of OFFSET above Keepy's ground point, measured
+## from the constant rather than typed: atan2(7.6, 8.9) = 40.4951 deg.
+## Everything below is expressed as a band around it, so moving OFFSET
+## moves the band with it instead of silently changing what the bounds
+## mean -- CLAUDE.md's "un fait est publie une fois, jamais recopie".
+static func rest_elevation() -> float:
+	return atan2(OFFSET.y, Vector2(OFFSET.x, OFFSET.z).length())
+
+## ⚠️ THE TWO BOUNDS ARE MEASURED, NOT PICKED, AND THE GEOMETRIC LIMITS
+## ARE NOT THEM.
+##
+## The geometric limits are easy and useless. The camera reaches the
+## ZENITH at +49.4951 deg of pitch (elevation 90: straight overhead) and
+## reaches KEEPY'S OWN GROUND PLANE at -40.4951 (elevation 0: buried).
+## The brief forbids passing either. Stopping there would ship two
+## degenerate frames, so Ch73Recon swept the band at 1 deg and read
+## three quantities off the LIVE camera at each step:
+##
+##   * the camera's clearance above the surface under it;
+##   * whether Keepy's crown still projects inside the container;
+##   * what fraction of the container's pixels still resolve to a point
+##     on the ground -- i.e. how much of the screen a tap can still
+##     ADDRESS. This is the one that decides the low bound, and it is
+##     CH72's lesson arriving from a new direction: a camera tilted
+##     toward the horizon aims most of the screen AT OR ABOVE it, where
+##     `HubSurface.intersect_ray` answers null and `_handle_point` gives
+##     up. A player there is NOT sealed (a drag is decided before any
+##     ray is cast, so he can always turn back) -- but a screen most of
+##     which means nothing is a screen that reads as broken.
+##
+## ⚠️ THE SWEEP FOUND NO KNEE, AND THAT IS PART OF THE ANSWER. Keepy's
+## crown projects INSIDE the container at all ninety steps -- the rigid
+## rotation preserves the framing, so "he leaves the frame" bounds
+## nothing -- and the addressable fraction falls off smoothly (93.3 % at
+## rest, 80.0 at -12, 66.7 at -22, 40.0 at -40) with no cliff to put a
+## bound on. So each bound is anchored on a PROPERTY that can be
+## re-measured and gated, not on a number read off a graph:
+##
+##   LOW, -23.0 deg (elevation 17.4951). Two things hold there and stop
+##   holding below it. The camera keeps 3.5183 u of clearance over the
+##   surface -- more than TWICE Keepy's 1.7 u crown, so the lens never
+##   descends into the grass layer the scatter plants (clearance reaches
+##   the crown at about -32 and the ground itself at -40.5). And the
+##   camera's OWN pitch is still 11.0 deg DOWNWARD: it reaches level at
+##   -34.0, which is the angle past which the picture is mostly sky and
+##   a tap means nothing over most of it. 60.0 % of the screen still
+##   resolves to a ground point there, against 93.3 % at rest.
+##
+##   HIGH, +43.0 deg (elevation 83.4951). The hard limit is the ZENITH
+##   at +49.4951, where the offset's HORIZONTAL component is zero -- and
+##   a yaw is a rotation about the vertical axis, so at the zenith a
+##   yaw drag moves the camera NOWHERE and the player is left holding a
+##   dead control with nothing to tell him why. The bound keeps
+##   1.3249 u of horizontal radius (11.7034 * cos 83.4951), so a yaw
+##   still visibly turns the view at the very top of the band.
+##
+## ⚠️ WHAT THE SWEEP ALSO REFUTED, and it was this lot's own suspicion:
+## a camera tilted toward the horizon was expected to open the frustum
+## the way the DRIVE pose does (DRIVE_FAR exists because the drive pose
+## measured 123 515 primitives against 69 551 at the spawn). Measured
+## here: 74 538 at the very bottom of the band against 71 764 at rest,
+## +3.9 %. The haze and the scatter's `visibility_range_end` are already
+## doing the work. `far` is NOT touched, and that is a measurement
+## rather than an omission.
+##
+## ⚠️ AND ONE LIMIT IS STATED RATHER THAN FIXED: this camera has never
+## collided with terrain and still does not. At rest it floats 7.6 u up
+## and the question never arose; at the low bound it has 3.5183 u over
+## FLAT ground, so over a steep enough rise it could clip. That is the
+## fixed pose's own pre-existing property with a smaller margin, not a
+## new class of defect, and closing it is a collision shape this lot was
+## not asked for.
+##
+## The full sweep is in docs/lots/CH73_CAMERA_ORBITABLE.md. Both anchor
+## properties are re-measured on the LIVE camera by OrbitCameraProbe
+## PHASE B every run, so a future OFFSET or fov that moved them fails
+## loudly here instead of shipping a frame nobody checked.
+const ORBIT_PITCH_MIN: float = -0.401426  # -23.0 deg: elevation 17.4951
+const ORBIT_PITCH_MAX: float = 0.750492   # +43.0 deg: elevation 83.4951
+
+## How many radians of orbit one pixel of finger travel is worth. One
+## number for both axes: a thumb does not know which way it is moving,
+## and two gains would let the same gesture mean different amounts in
+## two directions with nothing to report it.
+##
+## 0.005 rad/px is 0.2865 deg/px, so a 500 px drag across Mathieu's
+## 1080-wide phone turns the camera 143 deg -- most of the way round in
+## one comfortable thumb sweep, which is the gesture budget a one-handed
+## player actually has. Published and gated (PHASE G reads the yaw a
+## known pixel travel produced) rather than left as an unchecked feel
+## knob.
+const ORBIT_GAIN: float = 0.005
+
+## The orbit, for a bench and for anyone who needs the pose's real
+## shape. Yaw is wrapped to (-PI, PI]; pitch is the clamped offset on
+## the resting elevation.
+func orbit_yaw() -> float:
+	return _orbit_yaw
+
+func orbit_pitch() -> float:
+	return _orbit_pitch
+
+## True while the pose is exactly the one the scene authored -- the state
+## every tree that has never been dragged is in, and the state PHASE I
+## proves byte-identical to what shipped.
+func orbit_is_rest() -> bool:
+	return _orbit_yaw == 0.0 and _orbit_pitch == 0.0
+
+## Turns the camera by a finger's travel, in RADIANS. The only writer of
+## the orbit, and it CLAMPS rather than trusts -- `set_fair_lift`'s own
+## discipline, for its reason: a bounded angle that takes whatever it is
+## handed is not bounded.
+##
+## ⚠️ THIS FILE DOES NOT DECIDE WHEN IT MAY BE CALLED. Whether a finger
+## on the glass is a look-around at all is a question about the GESTURE
+## and about who else wants that finger, and it is answered where the
+## finger arrives -- HubTapInput. Answering it twice is how two answers
+## start to differ.
+func orbit_by(d_yaw: float, d_pitch: float) -> void:
+	if not is_finite(d_yaw) or not is_finite(d_pitch):
+		return
+	_orbit_yaw = wrapf(_orbit_yaw + d_yaw, -PI, PI)
+	_orbit_pitch = clampf(_orbit_pitch + d_pitch, ORBIT_PITCH_MIN, ORBIT_PITCH_MAX)
+
+## The rigid rotation the two angles describe. IDENTITY at rest, which is
+## what makes every call site below inert on an untouched tree.
+func _orbit_rotation() -> Basis:
+	if _orbit_yaw == 0.0 and _orbit_pitch == 0.0:
+		return Basis.IDENTITY
+	return Basis(Vector3.UP, _orbit_yaw) * Basis(Vector3.RIGHT, -_orbit_pitch)
+
+## The hub pose's basis AS THE PLAYER HAS LEFT IT.
+##
+## ⚠️ EVERY READER OF THE RESTING BASIS GOES THROUGH HERE, AND
+## `_hub_basis` ITSELF IS STILL NEVER WRITTEN. The distinction is the one
+## the ride and lift blocks above spell out: the orbit is a DERIVED read
+## of an authored fact, not a mutation of it. A lot that stored the
+## turned basis into `_hub_basis` would have no way back to the authored
+## one, and `_on_drive_exited` restores from it.
+func _hub_pose_basis() -> Basis:
+	if _orbit_yaw == 0.0 and _orbit_pitch == 0.0:
+		return _hub_basis
+	return _orbit_rotation() * _hub_basis
+
+## The resting OFFSET, turned the same way. Same identity at rest, same
+## reason.
+func _orbit_offset() -> Vector3:
+	if _orbit_yaw == 0.0 and _orbit_pitch == 0.0:
+		return OFFSET
+	return _orbit_rotation() * OFFSET
+
+## =====================================================================
 ## CH72 -- THE FUNFAIR: A LIFT ON THE FIXED POSE, AND A POV
 ##
 ## Two additions, and only one of them is a new POSE. Both are scoped to
@@ -590,6 +821,25 @@ func _pov_wanted() -> Transform3D:
 	var aim: Vector3 = head.origin + flat - Vector3.UP * tan(deg_to_rad(_pov_pitch))
 	return Transform3D(Basis.IDENTITY, head.origin).looking_at(aim, Vector3.UP)
 
+## Turns the live basis toward the orbit the player has asked for, at the
+## SAME weight the position is lerped at.
+##
+## ⚠️ THE TWO HALVES LAG TOGETHER OR THE RIG IS NOT RIGID. The position
+## swings around Keepy with a 0.2 s time constant (FOLLOW_LAMBDA); a
+## basis that snapped instead would aim the camera where it is going to
+## be rather than where it is, and Keepy would slide out of frame during
+## a fast drag and come back after it. Same weight, same lag, same shape.
+##
+## ⚠️ AND IT IS A NO-OP AT REST -- not "nearly" one. With the orbit at
+## its authored zero nothing below the first line executes, so the basis
+## is never written on a tree where nobody has dragged and cannot drift
+## through a slerp round-trip over a long session. `_apply_pov`'s own
+## guard, for the same reason.
+func _apply_orbit(weight: float) -> void:
+	if orbit_is_rest():
+		return
+	global_transform.basis = global_transform.basis.slerp(_hub_pose_basis(), weight)
+
 ## Blends the POV over whatever the hub branch has just written. A NO-OP
 ## while none is running -- not "nearly" one: with `_pov_head` null and
 ## `_pov_blend` 0 nothing below the first line executes, and `fov` in
@@ -603,7 +853,7 @@ func _apply_pov() -> void:
 		return
 	if _pov_blend <= 0.0:
 		return
-	var hub_xform := Transform3D(_hub_basis, global_position)
+	var hub_xform := Transform3D(_hub_pose_basis(), global_position)
 	global_transform = hub_xform.interpolate_with(_pov_wanted(), _pov_blend)
 	# The base is RECOMPUTED, never read back off `fov`: lerping the
 	# live value toward POV_FOV every frame would creep it all the way
@@ -629,6 +879,11 @@ func snap_to_target() -> void:
 	_hub_position = _wanted()
 	if _drive_target == null:
 		global_position = _hub_position
+		# CH73: a snap is a snap for BOTH halves of a rigid rig. Guarded
+		# on the orbit being off its rest, so a tree where nobody has
+		# dragged never writes the basis at all.
+		if not orbit_is_rest():
+			global_transform.basis = _hub_pose_basis()
 
 ## ⚠️ OUTSIDE THE KART, `global_position` ITSELF is what is smoothed --
 ## the two lines the hub has always had -- and `_hub_position` merely
@@ -658,10 +913,12 @@ func _process(delta: float) -> void:
 			global_position = global_position.lerp(_wanted() + _ride_offset() + _fair_offset(), weight)
 			_hub_position = global_position
 			fov = _hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend
+			_apply_orbit(weight)
 			_apply_pov()
 			return
 		global_position = global_position.lerp(_wanted() + _fair_offset(), weight)
 		_hub_position = global_position
+		_apply_orbit(weight)
 		_apply_pov()
 		return
 	# ⚠️ CH63 LOT 2: the ride READING is advanced in this branch too, and
@@ -721,7 +978,7 @@ func _process(delta: float) -> void:
 				yaw_now = held
 		_drive_yaw = yaw_now
 		_drive_yaw_valid = true
-	var hub_xform := Transform3D(_hub_basis, _hub_position)
+	var hub_xform := Transform3D(_hub_pose_basis(), _hub_position)
 	global_transform = hub_xform.interpolate_with(drive_xform, _blend)
 	fov = lerpf(_hub_fov, _tuning.fov, _blend)
 
@@ -729,4 +986,8 @@ func _wanted() -> Vector3:
 	# The ground UNDER him, not sea level under him: the frame holds its
 	# shape over relief because the offset is measured from the surface.
 	var ground := HubSurface.ground(target.global_position)
-	return ground + OFFSET
+	# CH73: `_orbit_offset()` IS `OFFSET` until a finger has turned the
+	# camera, so this line is byte-identical to the shipped one on any
+	# tree where nobody has dragged -- and the rotation is rigid, so the
+	# distance it returns is 11.7034 u whatever the player has done.
+	return ground + _orbit_offset()

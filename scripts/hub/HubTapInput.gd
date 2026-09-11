@@ -205,6 +205,103 @@ signal tapped_funfair(point: Vector3, ride: int)
 ## door has withdrawn.
 signal tapped_funfair_rider()
 
+## =====================================================================
+## CH73 -- A FINGER THAT TRAVELS IS A LOOK-AROUND, NOT A DESTINATION
+##
+## ⚠️ THERE WAS NO TAP/DRAG THRESHOLD IN THIS FILE AT ALL, AND THE HEADER
+## ABOVE SAYS SO FROM THE OTHER SIDE. "Only the RELEASE half is acted on
+## [...] a player who touches the screen and drags to look would be sent
+## to wherever their finger first met the glass" -- true of the PRESS,
+## and what shipped instead sent him to wherever his finger LIFTED.
+## Every release called `_handle_point`, unconditionally, however far the
+## finger had travelled. Nothing was wrong with that while there was
+## nothing to drag FOR; CH73 gives the drag a meaning, so the two
+## gestures have to be told apart.
+##
+## ⚠️ THE THRESHOLD IS READ FROM SkateTouchInput, NOT RETYPED HERE.
+## `SLOP_PX` is already this repo's published answer to "how far must a
+## finger travel before it is a drag", and its own comment justifies it
+## in terms of A THUMB AND MATHIEU'S PHONE -- "16 px is a little over a
+## millimetre, large enough that a thumb pressing and lifting registers
+## as a tap" -- not in terms of a skateboard. That makes it the same
+## fact, and CLAUDE.md's "un fait est publie une fois, jamais recopie"
+## says a second spelling of it is a defect waiting for the first tuning
+## pass. If the board's feel ever wants its own number, the split is a
+## deliberate commit, not an accident of two literals.
+##
+## ⚠️ ITS SIBLING `TAP_MAX_S` IS **NOT** TAKEN, and the reason is on
+## `_gesture_was_tap` below. Short version: on the board a held finger
+## is the throttle and the time limit tells two real gestures apart; in
+## the hub a held finger means nothing else, so the limit would only
+## invent a press that does nothing and says nothing.
+##
+## =====================================================================
+## THE DOUBLE DISPATCH IS PRE-EXISTING DEBT, AND THE ORBIT IS BUILT SO
+## IT CANNOT TOUCH IT
+##
+## This file does NOT drop `DEVICE_ID_EMULATION`, unlike KartTouchInput
+## and SkateTouchInput, and that is deliberate and load-bearing: the
+## project sets no `emulate_touch_from_mouse`, so on a desktop browser a
+## click produces a mouse event and NOTHING else. Dropping the emulated
+## class here would leave the plateau unusable outside a phone.
+##
+## The price is the debt CLAUDE.md and SkateInputProbe both record: one
+## real finger arrives TWICE, as `InputEventMouseButton device=-1` FIRST
+## and then as `InputEventScreenTouch device=0`. Harmless for a tap --
+## `hop_to()` is depth-one, so the second call re-states the same
+## destination. NOT harmless for a drag, in two independent ways, and
+## both were found by reading the shipped writers rather than by running
+## into them:
+##
+##   1. A MOTION APPLIED ON BOTH CLASSES TURNS THE CAMERA TWICE AS FAR
+##      on a phone as on a desktop, with nothing to report it.
+##   2. A LATCH CLEARED ON RELEASE IS CLEAR AGAIN BY THE SECOND ONE, so
+##      the twin release would read the drag as a tap and walk Keepy to
+##      wherever the finger lifted -- precisely the defect the threshold
+##      exists to close, re-entering through the back door.
+##
+## CH73 is scoped to the camera and does not touch the debt. It is
+## neutralised by SHAPE instead, and neither half costs anything:
+##
+##   * ONE GESTURE IS CLAIMED BY ONE EVENT CLASS. The first press claims
+##     it; a press of the other class while a gesture is live is the
+##     emulated twin and is ignored whole. Whichever class arrives
+##     first, the motion is integrated ONCE. (Robust to either order on
+##     purpose: the measured order is mouse-first, and a measurement is
+##     not a guarantee about a future engine build.)
+##   * `_dragged` IS CLEARED ON THE CLAIMING PRESS, NEVER ON A RELEASE.
+##     So both releases of one gesture read the same latch and agree,
+##     and the next gesture's press is what starts it over. A tap still
+##     reaches `_handle_point` twice, exactly as it shipped -- this lot
+##     does not change what a tap does.
+##
+## Both are gated, not asserted: OrbitCameraProbe PHASE D delivers a
+## full double-dispatch drag through `Input.parse_input_event` and
+## demands the single-channel yaw and zero `tapped_ground`.
+##
+## =====================================================================
+## WHY THE ORBIT IS ARMED HERE AND NOT IN HubCamera
+##
+## "Is this finger a look-around" is a question about the GESTURE and
+## about who else wants that finger, and every part of the answer is
+## already in this file: the four driven-vehicle shunts at the top of
+## `_unhandled_input`, the container rect, the camera. HubCamera owns the
+## POSE and clamps the angle it is handed; it does not get a second
+## opinion on when it may be turned.
+##
+## ⚠️ THE ARMING IS A LICENCE, NOT A STATE, and CLAUDE.md's CH58 entry is
+## why the distinction is written out. What licenses an orbit is "the
+## camera is in its own resting pose and the player is on his feet" --
+## `_orbit_licensed()` spells that out as a predicate rather than
+## leaving five callers to each remember a different subset of it.
+##
+## ⚠️ AND IT IS NOT THE PATRON ECHELLE. A drag NEVER swallows a tap that
+## would otherwise have meant something: a gesture is a drag only once
+## the finger has PASSED the slop, which is a thing a tap does not do.
+## Below the slop every release goes down the shipped path untouched,
+## whatever the camera is doing. There is no state in which the player
+## has no way to say anything.
+
 ## The three nodes this needs, as scene-authored paths.
 ##
 ## NodePath and not a typed node export (`@export var camera: Camera3D`),
@@ -250,6 +347,11 @@ signal tapped_funfair_rider()
 @export var cove_path: NodePath
 ## CH71: the funfair (coaster station and drop tower), same shape.
 @export var funfair_path: NodePath
+## CH73: Keepy, asked whether he is on his feet -- the state half of the
+## orbit's licence. Optional like every path above: a layout that hands
+## over no hopper never licenses an orbit, and every tap behaves exactly
+## as it always has.
+@export var hopper_path: NodePath
 
 var camera: Camera3D = null
 var container: SubViewportContainer = null
@@ -329,8 +431,147 @@ var cabin_radius: float = 0.0
 var campfire_points: Array[Vector3] = []
 var campfire_radius: float = 0.0
 
+## =====================================================================
+## CH73 -- THE GESTURE'S OWN STATE. See the block at the top of the file.
+
+## Which event class owns the gesture in flight. The emulated twin of a
+## real finger is whichever of the two did NOT claim it, and it is
+## ignored whole for the length of the gesture.
+enum Claim { NONE, MOUSE, TOUCH }
+
+var _claim: int = Claim.NONE
+## Where the claiming press landed, in raw screen pixels, and where the
+## finger was last seen. The orbit integrates the DIFFERENCE between
+## consecutive samples, never the offset from the anchor: an integrated
+## delta means a finger that returns to its anchor returns the camera
+## with it, which is what "the camera follows the finger" means.
+var _anchor: Vector2 = Vector2.ZERO
+var _last: Vector2 = Vector2.ZERO
+## ⚠️ CLEARED ON THE CLAIMING PRESS, NEVER ON A RELEASE -- the whole of
+## the double-dispatch defence. See the file header.
+var _dragged: bool = false
+
+## The hub camera, when the scene's camera is one. `camera` above stays
+## typed `Camera3D` because every ray this file casts only needs that;
+## this is the orbit's writer and nothing else reads it.
+var hub_camera: HubCamera = null
+## Keepy, asked one question: is he on his feet. Optional -- a layout
+## that hands over no hopper simply never licenses an orbit.
+var hopper: KeepyHopper = null
+
+## ⚠️ THE LICENCE, WRITTEN ONCE. Four things have to be true, and a
+## caller that remembered three of them would be the inherited-guard
+## defect CLAUDE.md records against ON_CARRIER.
+##
+##   * there IS a hub camera to turn;
+##   * it is in its OWN pose -- not a chase (a piloted vehicle owns the
+##     frame) and not a POV (CH72: the camera IS the rider's head, and a
+##     finger there already means "give me the third person back");
+##   * Keepy is on his FEET -- walking or standing. Every other state is
+##     a carrier or a ride, where the camera is either somebody else's
+##     or deliberately fixed on an authored trajectory;
+##   * and the gesture reached the glass at all, which the four
+##     driven-vehicle shunts at the top of `_unhandled_input` have
+##     already answered by returning before anything here runs.
+func _orbit_licensed() -> bool:
+	if hub_camera == null or not is_instance_valid(hub_camera):
+		return false
+	if hub_camera.is_driving() or hub_camera.is_pov():
+		return false
+	if hopper == null or not is_instance_valid(hopper):
+		return false
+	return hopper.is_afoot()
+
+## The press half. Claims the gesture, seeds the anchor, clears the latch.
+##
+## ⚠️ IT CLAIMS EVEN WHEN THE ORBIT IS NOT LICENSED, and that is not an
+## oversight. The licence is asked again on every motion, so a gesture
+## that starts while a ride is running and outlives it does not suddenly
+## start turning the camera mid-stroke; what the claim buys here is that
+## the SECOND press of the twin pair never re-seeds an anchor the first
+## one has already set, which is a property of the event pair and has
+## nothing to do with what the camera is doing.
+func _gesture_begin(claim: int, at: Vector2) -> void:
+	if _claim != Claim.NONE:
+		return
+	_claim = claim
+	_anchor = at
+	_last = at
+	_dragged = false
+
+## The motion half. Latches the drag on the RAW travel from the anchor --
+## SkateTouchInput's own rule, for its reason: the latch decides whether
+## a release is a tap, and a thumb that has plainly travelled 40 px must
+## not read as a tap.
+func _gesture_move(claim: int, at: Vector2) -> void:
+	if _claim != claim:
+		return
+	var step: Vector2 = at - _last
+	_last = at
+	if (at - _anchor).length() >= SkateTouchInput.SLOP_PX:
+		_dragged = true
+	if not _dragged:
+		return
+	if not _orbit_licensed():
+		return
+	# ⚠️ THE SIGNS. Dragging RIGHT turns the camera so the world sweeps
+	# left under it -- the camera orbits the way the finger pushes,
+	# which is what every map and every turntable on a phone does.
+	# Dragging DOWN lowers the camera toward the horizon; dragging UP
+	# lifts it toward the overhead view. Both are the gesture of moving
+	# the CAMERA, not of moving the world, and they are gated from a
+	# known pixel travel (PHASE G) rather than left to a reading of
+	# these two minus signs.
+	hub_camera.orbit_by(-step.x * HubCamera.ORBIT_GAIN, -step.y * HubCamera.ORBIT_GAIN)
+
+## The release half. Answers ONE question -- was this a tap -- and the
+## answer is the same for both releases of a twin pair because the latch
+## is not cleared here.
+##
+## ⚠️ THE SLOP, AND **NOT** `TAP_MAX_S`. The board's writer gates on
+## both; this one gates on distance alone, and the divergence is a
+## decision with a reason rather than an omission.
+##
+## On the board a HELD FINGER HAS A SECOND MEANING -- it is the
+## throttle, so a finger pressed and held without sliding is the gesture
+## for "go straight on", and reading it as the exit tap would eject a
+## rider who was asking to accelerate. `TAP_MAX_S` is what tells those
+## two apart, and its own comment says exactly that: "a finger held
+## motionless for a second is not asking to get off".
+##
+## In the hub a held finger has NO second meaning. There are two
+## gestures and one of them is defined by MOVING; a press that never
+## moves can only ever have meant the place under it. Adding a time
+## limit here would invent a third outcome -- press, wait, lift,
+## NOTHING HAPPENS -- with no feedback to explain it, and the player it
+## would catch is the deliberate one resting his thumb before lifting.
+##
+## ⚠️ AND THE LIMIT WAS MEASURED BEFORE IT WAS DECLINED, on a bench that
+## had already been bitten by it. Under llvmpipe one `process_frame` is
+## ~0.14 s of WALL CLOCK (TAP_MAX_S is real time; `--fixed-fps` only
+## fixes the simulation step), so the probe's own six-frame tap lasts
+## 0.824 s and fell outside a 0.450 s window -- which made one assertion
+## pass or fail according to machine load, and sent a red pass chasing a
+## defect that was not there. That is CLAUDE.md's "une sonde a sequence
+## temporelle se rejoue a charge comparable" arriving through the code
+## instead of through the bench. It is the evidence, not the reason:
+## the reason is the paragraph above, and it would hold on a phone that
+## renders at 120 Hz.
+func _gesture_was_tap() -> bool:
+	return not _dragged
+
+## Ends the gesture for the CLAIMING class only, so the twin's release
+## still reads the latch before the next press clears it.
+func _gesture_end(claim: int) -> void:
+	if _claim == claim:
+		_claim = Claim.NONE
+
 func _ready() -> void:
 	camera = get_node_or_null(camera_path) as Camera3D
+	# CH73: the same node, asked for the one thing the orbit needs. Null
+	# on any layout whose camera is a plain Camera3D, which simply means
+	# no orbit -- never an error, on the mooring's optional-node pattern.
+	hub_camera = camera as HubCamera
 	container = get_node_or_null(container_path) as SubViewportContainer
 	viewport = get_node_or_null(viewport_path) as SubViewport
 	mooring = get_node_or_null(mooring_path) as BoatMooring
@@ -341,6 +582,7 @@ func _ready() -> void:
 	karting = get_node_or_null(karting_path) as HubKarting
 	cove = get_node_or_null(cove_path) as HubCove
 	funfair = get_node_or_null(funfair_path) as HubFunfair
+	hopper = get_node_or_null(hopper_path) as KeepyHopper
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
@@ -372,15 +614,58 @@ func _unhandled_input(event: InputEvent) -> void:
 	# neither know nor care that the board exists.
 	if transport != null and transport.is_riding_board():
 		return
+	# =================================================================
+	# CH73 -- THE GESTURE IS READ FIRST, AND THE TAP PATH IS UNCHANGED
+	# BELOW THE SLOP.
+	#
+	# Both classes are read, for the reason the header gives: a desktop
+	# browser produces the mouse class and nothing else.
+	#
+	# ⚠️ WHAT KEEPS A PHONE'S TWIN PAIR FROM BEING INTEGRATED TWICE IS
+	# THE INTEGRATION, NOT THE CLAIM, and the red pass is what said so.
+	# `_gesture_move` accumulates the difference between CONSECUTIVE
+	# samples, so a twin delivered at the same pixel contributes the
+	# delta once and exactly zero the second time -- removing the claim
+	# entirely left the probe ALL GREEN. The claim earns its place
+	# against a different defect (a hover; see `_orbit_licensed`'s
+	# neighbours and OrbitCameraProbe D4), and crediting it with this one
+	# would be the mistake CLAUDE.md records about attribution.
 	var touch := event as InputEventScreenTouch
 	if touch:
-		if not touch.pressed:
+		if touch.pressed:
+			_gesture_begin(Claim.TOUCH, touch.position)
+			# NOT marked handled: the press is not consumed today and
+			# consuming it now would take it from every other reader of
+			# the press half, which is a change this lot has no reason
+			# to make.
+			return
+		var was_tap: bool = _gesture_was_tap()
+		_gesture_end(Claim.TOUCH)
+		if was_tap:
 			_handle_point(touch.position)
-			get_viewport().set_input_as_handled()
+		get_viewport().set_input_as_handled()
+		return
+	var drag := event as InputEventScreenDrag
+	if drag:
+		_gesture_move(Claim.TOUCH, drag.position)
+		return
+	var motion := event as InputEventMouseMotion
+	if motion:
+		# Only while a gesture of the mouse class is live: a mouse moved
+		# with no button down is a hover, and a phone's emulated motion
+		# is the twin of a drag the touch class has already claimed.
+		if _claim == Claim.MOUSE:
+			_gesture_move(Claim.MOUSE, motion.position)
 		return
 	var click := event as InputEventMouseButton
-	if click and click.button_index == MOUSE_BUTTON_LEFT and not click.pressed:
-		_handle_point(click.position)
+	if click and click.button_index == MOUSE_BUTTON_LEFT:
+		if click.pressed:
+			_gesture_begin(Claim.MOUSE, click.position)
+			return
+		var was_tap: bool = _gesture_was_tap()
+		_gesture_end(Claim.MOUSE)
+		if was_tap:
+			_handle_point(click.position)
 		get_viewport().set_input_as_handled()
 
 func _handle_point(screen_point: Vector2) -> void:

@@ -277,6 +277,7 @@ critters_path = NodePath("../WorldViewport/SubViewport/World/Critters")
 karting_path = NodePath("../WorldViewport/SubViewport/World/Karting")
 cove_path = NodePath("../WorldViewport/SubViewport/World/Cove")
 funfair_path = NodePath("../WorldViewport/SubViewport/World/Funfair")
+hopper_path = NodePath("../WorldViewport/SubViewport/World/Keepy")
 
 [node name="Mooring" type="Node" parent="."]
 script = ExtResource("12")
