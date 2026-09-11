@@ -1951,6 +1951,170 @@ distance caméra : les deux stations mesurées sont sorties à **12,633 u et
 que de 5,19 à 6,50 — un asset texturé de ce hub ne peut donc **jamais** être
 agrandi, il est toujours minifié, et son seul risque est le scintillement.
 
+### ⚠️ QUATRIÈME LIGNE DE LA TABLE : UN RIDE À TRAJET FIXE PEUT AVOIR UN **POINT DE VUE**, AU CHOIX DU JOUEUR
+
+Exception écrite au CH72, sur demande explicite, et elle **ne rouvre pas
+D6**. La table plus haut dit « ride à trajet fixe → caméra FIGÉE », et
+c'est toujours le **DÉFAUT** : un trajet du parc d'attractions s'ouvre et
+se ferme sur la pose fixe, inchangée. Ce qu'un tap achète pendant le
+trajet est un **POINT DE VUE**, pas une conduite.
+
+Le critère de la table — « le joueur choisit la direction frame par
+frame » — reste **FAUX** ici : le rail et le mât écrivent la trajectoire,
+le joueur n'en change rien. C'est pourquoi ceci est une quatrième ligne et
+non une troisième exception à la deuxième.
+
+| ce que le joueur fait | caméra |
+|---|---|
+| ride à trajet fixe, **par défaut** | **FIGÉE** |
+| ride à trajet fixe, **après un tap sur lui-même** | **POV** — la tête, lacet seulement |
+
+Ce que l'exception exige, et chaque clause a été payée :
+
+* **La pose est un NŒUD DE TÊTE, jamais une reconstruction.**
+  `KeepyHopper.head_anchor()` pend du nœud de **lacet**, jamais du slot du
+  modèle — le slot porte le tangage du saut, l'écrasement et **l'échelle**.
+  Tout ce qu'un porteur écrit atteint alors les yeux gratuitement, et un
+  POV sur un chariot regarde où va le chariot sans que la caméra sache
+  qu'un chariot existe.
+* **LACET SEULEMENT, et reconstruit dans la caméra.** L'horizon est rebâti
+  depuis le cap, donc aucun futur écrivain sur ce nœud ne peut incliner
+  l'image. Le seul tangage est celui que le ride **AUTORISE**, un nombre
+  publié par ride. Un POV qui roule est le terme qui rend un ride nauséeux,
+  et le CH64 a déjà payé ce prix une fois.
+* **LA SORTIE EST UN TAP N'IMPORTE OÙ**, le précédent CH64 de la planche
+  mot pour mot : sous une caméra où aucun pixel ne veut dire « lui », le
+  geste ne peut pas être un tap sur un corps.
+* **ET CE TAP DOIT ÊTRE INTERROGÉ AU-DESSUS DU RETOUR HORIZON.** Piège
+  fermé au CH72, et il expédiait le **patron ÉCHELLE** : sous un POV la
+  caméra est la tête du rider, la bande haute de l'image vise l'horizon ou
+  au-dessus, `HubSurface.intersect_ray` y rend `null` et
+  `HubTapInput._handle_point` abandonne trois lignes plus loin. Chacun de
+  ces taps est **avalé**, et ce tap est la **seule** sortie : un joueur qui
+  regarde le ciel est enfermé dans ses propres yeux, le menu toujours
+  réactif. Toute question qui n'a pas besoin d'un point au SOL se pose
+  **avant** ce retour, et se gate en tapant **le haut de l'écran** — un tap
+  sur la bande basse passe dans les deux cas.
+* **LE POV NE SURVIT JAMAIS AU TRAJET.** Laissé ouvert, le joueur arpente
+  le plateau depuis l'intérieur de sa tête et le canal de tap, gaté sur
+  « un ride tourne », ne peut plus l'éteindre.
+* **ET LE BANC NE SIGNE PAS LE CONFORT** (CH62). Il signe que la pose est
+  bornée, qu'elle ne roule pas, qu'elle est câblée au vrai canal du doigt,
+  que le trajet continue à travers la bascule, et ce que ça coûte. Le FOV,
+  le tangage et la nausée sont un appel device.
+
+### ⚠️ UN RIDE VERTICAL PEUT DÉPASSER LE PLAFOND DU CADRE — LA CAMÉRA MONTE, EN OFFSET BORNÉ SUR LA POSE FIXE
+
+Ce fichier disait déjà que `HubCamera.FRAME_TOP_AT_APLOMB` plafonne un ride
+vertical et que « la réponse à *je veux plus haut que ça* reste une caméra
+qui monte, c'est-à-dire un autre lot ». **CH72 est ce lot**, et la porte
+qu'il ouvre est la plus étroite possible : un **OFFSET VERTICAL BORNÉ
+ajouté à la CIBLE du lerp de la pose fixe** — la forme du ride mode CH62,
+qui échoue à tous les tests d'une caméra de poursuite (pas de lacet, pas de
+`look_at`, aucun cap retardé, `far` intact, `_hub_basis` jamais écrit).
+L'horizon ne peut pas bouger, qui est la raison d'être de la pose fixe.
+
+**Mesuré, et c'est ce qui rend la chose gratuite** : on lève la caméra et le
+rider du MÊME `dy`, et la tête atterrit au pixel **(270, 121)** à `dy` = 0,
+3, 6, 10 et 14 — **le cadrage est INVARIANT**. La hauteur ne coûte rien à
+l'image.
+
+Trois clauses, chacune payée au CH72 :
+
+1. **C'est un OFFSET, pas une variable d'ombre.** Il s'ajoute à `_wanted()`
+   dans le `global_position.lerp(...)` que le hub a toujours eu, donc un
+   écrivain extérieur reste un écrivain extérieur — la discipline qu'un lot
+   a déjà cassée contre `CabinProbe`.
+2. **Le lerp TRAÎNE, et ça se mesure au lieu d'être supposé petit.** Une
+   nacelle qui tombe à 14,2 u/s contre une constante de temps de 0,2 s
+   laisse **2,398 u** de retard mesuré : le rider glisse vers le bas du
+   cadre et la caméra le rattrape. Gater la tête dans le cadre à **chaque
+   frame**, jamais en moyenne.
+3. **UN GATE « le siège est sous le plafond » DEVIENT FAUX ET SE RÉ-VISE** —
+   il ne se relâche pas et il ne se fait pas taire. La propriété qui survit
+   à la hauteur est **« le ride ne se tient jamais plus haut que le lift
+   qu'il demande »** (`siège − lift ≤ plafond`), ligne **identique à
+   l'ancienne dès que le lift est nul**, donc pour tout ride qui ne monte
+   pas. Et elle se double d'un **blind check à l'exécution** : rejouer le
+   MÊME trajet avec le lift épinglé à zéro et **exiger que la tête sorte** —
+   mesuré 473 frames sur 713.
+
+⚠️ **ET LE LIFT N'EST PAS QU'UN TERME DE CADRAGE : C'EST UN TERME
+D'ATTEIGNABILITÉ.** Trouvé par une passe rouge qui a rendu **7 rouges pour 2
+prédits**, et les cinq extras avaient une cause unique. Un corps hors du
+cadre n'est pas seulement invisible : `unproject_position` le projette
+**hors du conteneur**, et `HubTapInput._handle_point` refuse le tap sur son
+propre test de rect **avant** d'interroger quoi que ce soit. Mesuré : lift
+neutralisé, le rider est **6,152 u au-dessus du bord haut** et devient
+**intapable** — donc toute la bascule POV meurt, pour une raison qui n'a
+rien à voir avec la bascule. **Un lot qui surélève un corps interactif doit
+se demander non seulement « est-il visible » mais « est-il ADRESSABLE ».**
+
+### ⚠️ UNE BASE CONSTRUITE POUR BALAYER UN PROFIL PEUT ÊTRE MIROIR — ET ELLE EST ALORS INUTILISABLE COMME POSE
+
+`t.cross(UP)` est la **GAUCHE** de la marche, pas sa droite :
+`Basis(t.cross(UP), up, t)` a un déterminant de **−1**. Trouvé au CH72 sur
+la frame qui pose les rails du parc depuis CH71.
+
+**C'est inoffensif pour un balayage symétrique et l'a toujours été** — les
+rails sont posés à `−gauge/2` et `+gauge/2` autour de l'axe, donc échanger
+gauche et droite ne fait que les renommer, et un tube à six pans balayé
+autour d'un axe radial retourné est le même hexagone tourné. Mais **une base
+miroir donnée à un `Node3D` n'est pas une rotation**, et le lacet que Godot
+en décompose ne veut rien dire.
+
+La base droitière est `Basis(UP.cross(t), t.cross(UP.cross(t)), t)` —
+`X = Y × Z`, l'identité que la base de lacet de Godot satisfait. **Deux
+frames, deux noms, et la distinction se GATE** (le déterminant de chacune),
+jamais laissée à un commentaire.
+
+### ⚠️ UN PORTEUR REMET SON LACET AU RIDER VERBATIM — DONC LA CONVENTION DE FACE EST CELLE DU RIDER, PAS CELLE DU PORTEUR
+
+`KeepyHopper.follow_carrier()` fait `_yaw.rotation_degrees.y =
+_carrier.global_rotation_degrees.y`, et le modèle regarde **+Z** à lacet
+nul. **L'axe qu'un rider regarde est donc le +Z de son porteur**, et un
+porteur posé par `Basis.looking_at(t, UP)` met **−Z** sur la tangente —
+c'est ce que `looking_at` veut dire — donc le rider regarde `−t`.
+
+Mesuré au CH72 sur 900 frames d'un vrai trajet lancé au vrai canal du
+doigt : **180,00° à la première frame, 179,90 de moyenne, 180,00 au
+maximum**. Il montait la côte, prenait les deux virages et descendait la
+drop entièrement à l'envers, sans une erreur et sans une sonde rouge.
+
+**Règle** : tout porteur qui transmet son lacet se pose avec **+Z sur la
+direction que le rider doit regarder**, et ça se **MESURE** — la facette +Z
+du nœud de lacet du rider contre la direction de marche, à chaque frame —
+jamais relu dans le code qui l'écrit. C'est « une assertion d'orientation ne
+se relit pas : elle se rend », appliquée à un cap plutôt qu'à un enroulement.
+
+⚠️ **Et la frame qui TERMINE un trajet mesure le PAS DE DESCENTE, pas le
+trajet.** `leave_carrier` démarre le saut vers le quai et `_face` y écrit
+déjà le cap de la marche : une lecture prise là a rendu **90,07° sur une
+frame en 900** — exactement l'angle entre la tangente à la gare et la marche
+sur le deck — sur un chariot qui avait regardé droit les 899 autres.
+Ré-interroger l'état **après l'`await`** avant de mesurer.
+
+### ⚠️ UNE SONDE QUI PREND UN PLANCHER DE BRUIT EN PIXELS DOIT ÉPINGLER LA MÉTÉO
+
+Complément direct de « `paused` n'arrête pas le `TIME` d'un shader » (CH48)
+et de « une sonde à séquence temporelle se rejoue à charge comparable »
+(CH37). `CozyWeather.CYCLE` fait 70 s de soleil, 40 de pluie, 30 d'orage,
+50 de soleil, 40 de neige — et la pluie, l'orage et la neige **traversent la
+pause**. Une sonde à qui on ajoute des phases sort donc du soleil
+d'ouverture, et son **plancher de bruit** part avec.
+
+Mesuré au CH72, même station, deux arbres : plancher **347 px** sur la
+baseline, **24 752 px** sur la branche — un facteur **SOIXANTE-DIX**, sur un
+instrument dont le métier est d'être plus silencieux que son sujet. Le sujet
+peignait *plus* de pixels qu'avant (64 511 contre 24 899) ; c'est la RÈGLE
+qui avait molli, et le gate est sorti rouge sur un lot qui avait rendu la
+chose **plus** visible.
+
+**Règle** : toute sonde qui lit des pixels ou des primitives épingle la
+météo (`CozyWeather.force`) en tête de run et attend la transition. Rien
+qu'un tel banc mesure n'est fonction de la météo, et un verdict qui dépend
+de la durée des phases précédentes n'est pas reproductible.
+
 ### ⚠️ UN GATE DE CAPTURE NE GATE RIEN DANS UN MONDE QUI CONTIENT UN ACTEUR EN MARCHE
 
 Mesuré au CH37, sur un gate que le plan du lot prescrivait explicitement
