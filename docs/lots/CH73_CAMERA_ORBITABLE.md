@@ -379,10 +379,51 @@ bien différentes pour que S3b ne soit pas vide.
 | `.scn` importés | **154** | **154** | import complet des deux côtés |
 | `FrameCeilingProbe` | exit 0 | exit 0, plafond relu **7,968** | parité |
 | `ProbeTimeoutAudit` | 99 scènes, PASSED | 100 scènes, PASSED | **+1**, `OrbitCameraProbe` ; la recon jetable est supprimée |
-| `SurfaceProbe` | *(voir rapport)* | | |
-| `SkateDismountProbe` | | | |
-| `FunfairProbe` | | | |
-| `CabinProbe` | | | |
+| `SurfaceProbe` | ALL GREEN, 0 red | ALL GREEN, 0 red | parité |
+| `SkateDismountProbe` | ALL GREEN, 0 red | ALL GREEN, 0 red | parité |
+| `FunfairProbe` | ALL GREEN, 0 red | ALL GREEN, 0 red | parité |
+| `CabinProbe` | **9 échecs** | **8 échecs** | ⚠️ voir 7.1 |
+| `OrbitCameraProbe` | *(n'existe pas)* | **56 ok / 0 RED** | la sonde du lot |
+
+### 7.1 ⚠️ `CabinProbe` NE SE REPRODUIT PAS SUR UN SEUL ARBRE — mesuré, pas supposé
+
+9 échecs sur la référence **intouchée** contre 8 sur la branche : la
+branche en a **moins**, mais les listes diffèrent, donc la comparaison
+n'est pas lisible telle quelle. `CLAUDE.md` dit quoi faire avant de lire
+une divergence de ce genre — **retourner la métrique contre elle-même**.
+
+Deux runs de la **MÊME** référence intouchée, seuls, l'un après l'autre :
+
+| run | échecs |
+|---|---|
+| référence, run 1 | **8** |
+| référence, run 2 | **13** |
+
+**8 et 13 sur un seul arbre**, avec des jeux d'assertions différents. Un
+gate qui ne se reproduit pas sur un arbre ne peut rien dire de deux —
+c'est exactement le CH37, et CH71 l'avait déjà noté (« CabinProbe ne se
+reproduit pas sur un seul arbre »). La sonde est donc **exclue du verdict
+de la table croisée, la mesure publiée** plutôt que passée sous silence.
+
+Ce qui se dit malgré tout, et c'est la déclaration la plus forte
+disponible : le jeu d'échecs de la branche est **byte-identique** à celui
+du run 1 de la référence (`diff` vide sur les huit lignes, mêmes
+libellés, mêmes nombres).
+
+## 7bis. Déploiement — vérifié SUR LE SERVICE, deux marqueurs
+
+Merge palier 1 : `d71f803..1396cc0` sur `staging`, arbres du commit de
+merge et de la branche **byte-identiques** (`edde33c6` des deux côtés,
+`git diff` vide).
+
+| marqueur | lecture |
+|---|---|
+| **CI** | run 522, `conclusion: success`, `completed_at` 16:39:52 ; « Deploy to Vercel [PRODUCTION -- main] » **skipped** |
+| **`CACHE_VERSION`** | `1789144756` = **16:39:16 UTC**, à l'intérieur de la fenêtre de l'étape `Export Web build` (16:39:09 → 16:39:17) |
+| **lecture de l'alias** | `x-vercel-cache: **MISS**`, `age: **0**` — une vraie lecture, pas une copie de bord figée |
+| **`index.wasm`** | **35 376 909** octets — la constante d'identité que `CLAUDE.md` publie pour un lot qui ne touche pas le code moteur ✅ |
+| `index.js` | 331 495 octets |
+| `index.pck` | 34 801 376 octets — marqueur « un nouveau build est servi », **jamais une preuve d'identité** |
 
 ## 8. Ce que ce lot NE peut PAS signer — CH62, dit en premier
 
