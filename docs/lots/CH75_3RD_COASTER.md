@@ -311,9 +311,28 @@ même run, pour que « ×1,5 » soit une comparaison de même banc.
   Divisé par les frames écoulées (`Engine.get_process_frames()`).
 * Et E11 a nommé le défaut de caméra de la section 6, trois fois.
 
-### 7.3 — Rouge avant vert
+### 7.3 — Rouge avant vert : 8 rouges pour 7 prédits, et l'extra a une cause unique
 
-*(rempli en section 8)*
+Trois neutralisations appliquées ENSEMBLE sur `HubFunfair.gd`, rouges
+prédits AVANT le run :
+
+| neutralisation | prédits | obtenus |
+|---|---|---|
+| `GRAVITY` retiré de la loi d'énergie de la Comète | E5, E6, E7, E13 | E5 « 4.99 u/s », E6 « valley 1.20 vs 15.92 », E7 « x0.54 », E13 « entered at 1.21 » |
+| `_sync_comet_camera(true)` jamais demandé | E9, E10 | E9 « 0 / 2120 frames », E10 « 0 out of 0 » |
+| `accepts_tap` sans la condition de phase | E12 | E12 |
+| — | — | **E11 « camera inside a solid 424, rail 69 »** |
+
+L'extra n'est pas un défaut de sonde : **sans la poursuite, la caméra FIXE
+suit le point SOL du rider le long de la boucle**, 8,9 u au nord et 7,6 u
+de haut, et traverse les poteaux du treuil et de la descente pendant 424
+frames. C'est la preuve, par la passe rouge, que la poursuite montée sur
+le rail est ce qui tient la caméra hors de la structure — et que la
+question « est-il visible » (E10) et la question « la caméra est-elle
+dans un poteau » (E11) tombent ensemble quand la caméra ne suit pas le
+corps. Sans gravité, le trajet dure 35,3 s au plancher de 1,2 u/s et
+finit quand même (E16 vert : BORNÉ, même à vide). Fichier restauré,
+**byte-identique au commit** (`git diff --quiet`), `.bak` supprimé.
 
 ---
 
