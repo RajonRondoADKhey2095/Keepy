@@ -352,6 +352,25 @@ func _sprinkle(family: String, variants: int, count: int, own_radius: float,
 			continue
 		var s := _rng.randf_range(scale_min, scale_max)
 		var yaw := _rng.randf_range(0.0, TAU)
+		# CH71: the funfair's deck, tower, low rails and rail posts --
+		# tested AFTER the two draws above, ON PURPOSE, and not in
+		# _blocked() with every other footprint.
+		#
+		# ⚠️ A footprint tested BEFORE the draws makes a rejected candidate
+		# SKIP its scale and yaw, which restates the stream for every
+		# candidate after it (CH53: "+308 primitives at the spawn, sixty
+		# units from the change"). Measured for THIS prop with the test in
+		# _blocked(): 37 fewer grass tufts, 15 fewer bushes, 2 fewer
+		# flowers HUB-WIDE, most of them nowhere near the fair -- the
+		# carpet was reshuffled, not thinned. Tested here, a rejected
+		# candidate has consumed exactly the draws a placed one would, so
+		# the stream is untouched and the carpet everywhere else is
+		# BYTE-IDENTICAL; only what stood inside the fair's discs is gone.
+		# This is `_keep_hash`'s reasoning applied to a footprint: a guard
+		# that must stay local does not touch the stream. FunfairProbe
+		# gates the census at the spawn against the reference tree.
+		if HubFunfair.blocks(p, own_radius):
+			continue
 		# ⚠️ THE GROUND POINT, and it is taken LAST on purpose. Every test
 		# above (water discs, footprints, the stream spine, the spawn) is
 		# written against a FLAT p and compares 3D distances to centres at

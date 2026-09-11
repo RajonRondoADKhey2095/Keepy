@@ -180,6 +180,14 @@ signal tapped_kart(point: Vector3)
 ## HubCove while that spot's castle is rising (the boat's terms), so a tap
 ## meanwhile falls through to tapped_ground and cancels the intent.
 signal tapped_castle(point: Vector3, index: int)
+## CH71: the finger landed on the coaster's station or on the drop tower
+## (`aim` in its disc), on the boat's world-unit terms. `ride` is
+## HubFunfair.RIDE_COASTER or RIDE_TOWER. A ride that is running
+## withdraws through its node (HubFunfair.accepts_tap answers -1) for
+## the length of the trip, so a tap made meanwhile falls through to
+## tapped_ground and is refused there by ON_CARRIER -- the licence
+## CLAUDE.md grants a BOUNDED ride, and both of these are.
+signal tapped_funfair(point: Vector3, ride: int)
 
 ## The three nodes this needs, as scene-authored paths.
 ##
@@ -224,6 +232,8 @@ signal tapped_castle(point: Vector3, index: int)
 @export var karting_path: NodePath
 ## CH29: the cove module (the castle spots). Optional.
 @export var cove_path: NodePath
+## CH71: the funfair (coaster station and drop tower), same shape.
+@export var funfair_path: NodePath
 
 var camera: Camera3D = null
 var container: SubViewportContainer = null
@@ -235,6 +245,7 @@ var trees: HubTrees = null
 var critters: HubCritters = null
 var karting: HubKarting = null
 var cove: HubCove = null
+var funfair: HubFunfair = null
 
 ## THE WALKABLE LIMIT LIVES IN HubRegion, NOT HERE.
 ##
@@ -313,6 +324,7 @@ func _ready() -> void:
 	critters = get_node_or_null(critters_path) as HubCritters
 	karting = get_node_or_null(karting_path) as HubKarting
 	cove = get_node_or_null(cove_path) as HubCove
+	funfair = get_node_or_null(funfair_path) as HubFunfair
 	if camera == null or container == null or viewport == null:
 		push_error("HubTapInput: camera_path, container_path and viewport_path must all resolve.")
 
@@ -477,6 +489,17 @@ func _handle_point(screen_point: Vector2) -> void:
 		var spot: int = cove.accepts_castle_tap(aim)
 		if spot >= 0:
 			tapped_castle.emit(destination, spot)
+			return
+	# THE FUNFAIR (CH71), on `aim`, right after the castle spots and on
+	# the vehicles' exact terms: a ride that is running WITHDRAWS through
+	# its node, so a tap made meanwhile falls through to the ground path
+	# and is dropped there by ON_CARRIER. Ordered here only because the
+	# castles came first; the fair stands on the plateau's east strip,
+	# metres from every other disc, so the order cannot decide.
+	if funfair != null:
+		var ride: int = funfair.accepts_tap(aim)
+		if ride >= 0:
+			tapped_funfair.emit(destination, ride)
 			return
 	# THE CLIMBABLE TREES (v4), on `aim` like everything else -- and (v5)
 	# on the RAY, because a crown is what the player taps and a crown at

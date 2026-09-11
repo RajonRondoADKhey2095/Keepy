@@ -1,4 +1,4 @@
-[gd_scene load_steps=39 format=3]
+[gd_scene load_steps=40 format=3]
 
 [ext_resource type="Script" path="res://scripts/hub/HubWorld.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/hub/HubBuilder.gd" id="2"]
@@ -24,6 +24,7 @@
 [ext_resource type="Script" path="res://scripts/hub/HubMountain.gd" id="29"]
 [ext_resource type="Script" path="res://scripts/hub/HubMinimap.gd" id="30"]
 [ext_resource type="Script" path="res://scripts/hub/HubSkatepark.gd" id="31"]
+[ext_resource type="Script" path="res://scripts/hub/HubFunfair.gd" id="34"]
 [ext_resource type="Script" path="res://scripts/hub/SkateHud.gd" id="32"]
 [ext_resource type="Script" path="res://scripts/hub/SkateStreaks.gd" id="33"]
 [ext_resource type="Resource" path="res://resources/hub/hub_layout.tres" id="8"]
@@ -166,6 +167,9 @@ script = ExtResource("26")
 [node name="Skatepark" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("31")
 
+[node name="Funfair" type="Node3D" parent="WorldViewport/SubViewport/World"]
+script = ExtResource("34")
+
 [node name="CozyScatter" type="Node3D" parent="WorldViewport/SubViewport/World"]
 script = ExtResource("18")
 
@@ -272,6 +276,7 @@ trees_path = NodePath("../WorldViewport/SubViewport/World/Trees")
 critters_path = NodePath("../WorldViewport/SubViewport/World/Critters")
 karting_path = NodePath("../WorldViewport/SubViewport/World/Karting")
 cove_path = NodePath("../WorldViewport/SubViewport/World/Cove")
+funfair_path = NodePath("../WorldViewport/SubViewport/World/Funfair")
 
 [node name="Mooring" type="Node" parent="."]
 script = ExtResource("12")

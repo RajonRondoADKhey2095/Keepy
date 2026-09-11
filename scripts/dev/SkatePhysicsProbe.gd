@@ -514,8 +514,34 @@ func _phase_world() -> void:
 			rids.append(rid)
 	print("     live space query over the whole hub: %d shape rows, %d distinct bodies"
 		% [hits.size(), rids.size()])
-	_check(rids.size() == 6,
-		"the server holds SIX bodies: five modules and the board (%d)" % rids.size())
+	# CH71: THE EXPECTED SET IS PUBLISHED, NOT COUNTED. This used to read
+	# `rids.size() == 6` -- five modules and the board -- and went red the
+	# day the funfair stood its own StaticBody3D on the park layer, then
+	# STOPPED the probe ("nothing physical was built"), which is not what
+	# had happened. The gate's intent is "no body in the server that
+	# nobody published": so the set is built from what the producers
+	# publish (the park's bodies, the board, the fair's body when the
+	# world has one) and compared as a SET, both ways -- an unpublished
+	# body and a missing one both fail, and the next solid a lot adds
+	# must publish itself here rather than bump a literal.
+	var published: Array = []
+	for index in _park.collider_indices():
+		published.append(_park.collider_body_at(index).get_rid())
+	published.append(body.get_rid())
+	var fair: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Funfair")
+	if fair != null and fair.has_method("collider_body"):
+		published.append((fair.call("collider_body") as StaticBody3D).get_rid())
+	var unpublished: int = 0
+	for rid in rids:
+		if not published.has(rid):
+			unpublished += 1
+	var missing: int = 0
+	for rid in published:
+		if not rids.has(rid):
+			missing += 1
+	_check(unpublished == 0 and missing == 0 and rids.size() == published.size(),
+		"the server holds exactly the %d published bodies (five modules, the board%s): %d live, %d unpublished, %d missing"
+			% [published.size(), ", the fair" if fair != null else "", rids.size(), unpublished, missing])
 
 # =====================================================================
 # PHASE V -- IS THE COLLIDED SOLID THE DRAWN SOLID?
@@ -742,13 +768,25 @@ func _phase_inventory() -> void:
 		print("     %-70s %-16s layer %d mask %d shapes %d" % [_hub.get_path_to(n), co.get_class(), co.collision_layer, co.collision_mask, shapes])
 	print("     inventory: %d areas (portals, inert), %d static bodies (modules), %d character bodies (the board), %d shapes"
 		% [areas, statics, chars, shapes_total])
-	_check(areas == 3 and statics == 5 and chars == 1 and found.size() == 9,
-		"X the hub holds exactly 3 inert portal areas, 5 solid modules and 1 board (%d objects)" % found.size())
+	# CH71: the funfair's one static body (its posts, station posts and
+	# tower, all BoxShape3D -- D5) is a solid the park does not own. Its
+	# counts are READ off what it publishes, never typed here: the day
+	# the fair grows a post, this census follows it.
+	var fair: Node = _hub.get_node_or_null("WorldViewport/SubViewport/World/Funfair")
+	var fair_bodies: int = 0
+	var fair_shapes: int = 0
+	if fair != null and fair.has_method("collider_body"):
+		var fb: StaticBody3D = fair.call("collider_body")
+		fair_bodies = 1
+		fair_shapes = fb.get_child_count()
+	_check(areas == 3 and statics == 5 + fair_bodies and chars == 1 and found.size() == 9 + fair_bodies,
+		"X the hub holds exactly 3 inert portal areas, 5 solid modules, 1 board and %d fair body (%d objects)" % [fair_bodies, found.size()])
 	# CH69: the three portal cylinders, the board's capsule, the funbox's
 	# 3, the rail's 3, twelve wedges each for the two quarterpipes, and
 	# the bowl's ring -- spelled as its arithmetic, see EXPECT_PIECES.
-	var want_shapes: int = 1 + 1 + 1 + 1 + 3 + 3 + 12 + 12 + int(EXPECT_PIECES[&"bowl"])
-	_check(shapes_total == want_shapes, "X and %d shapes in all (got %d): the bowl brings %d" % [want_shapes, shapes_total, int(EXPECT_PIECES[&"bowl"])])
+	# CH71: plus the fair's published shapes.
+	var want_shapes: int = 1 + 1 + 1 + 1 + 3 + 3 + 12 + 12 + int(EXPECT_PIECES[&"bowl"]) + fair_shapes
+	_check(shapes_total == want_shapes, "X and %d shapes in all (got %d): the bowl brings %d, the fair %d" % [want_shapes, shapes_total, int(EXPECT_PIECES[&"bowl"]), fair_shapes])
 	_check(_park.collider_indices() == [0, 1, 2, 3, 4], "X every module is solid, the bowl included (%s)" % str(_park.collider_indices()))
 	# =================================================================
 	# ⚠️ CH69 -- THE SLAB, AND UNTIL THIS LINE NOTHING READ IT.

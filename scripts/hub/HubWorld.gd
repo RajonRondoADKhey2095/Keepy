@@ -104,6 +104,7 @@ const _PALETTE: SwampPalette = preload("res://resources/world/swamp_palette.tres
 @onready var _cove: HubCove = $WorldViewport/SubViewport/World/Cove
 ## CH53: the skatepark of the north lobe, and the HUD that reads it.
 @onready var _skatepark: HubSkatepark = $WorldViewport/SubViewport/World/Skatepark
+@onready var _funfair: HubFunfair = $WorldViewport/SubViewport/World/Funfair
 @onready var _skate_hud: SkateHud = $SkateHud
 @onready var _kart_hud: KartHud = $KartHud
 @onready var _perf_button: Button = $FallbackMenu/Panel/VBoxContainer/PerfButton
@@ -808,6 +809,7 @@ func _ready() -> void:
 	_setup_critters()
 	_setup_karting()
 	_setup_skatepark()
+	_setup_funfair()
 
 	_confirm.confirmed.connect(_on_confirm_accepted)
 	_confirm.cancelled.connect(_on_confirm_cancelled)
@@ -3372,6 +3374,7 @@ func _on_tapped_ground(point: Vector3) -> void:
 	_building_castle = -1
 	_critters.cancel_intents()
 	_karting.cancel_intent()
+	_funfair.cancel_intent()
 	# v3: a tap on HIMSELF while standing still on the ball is "get off".
 	if _keepy.is_on_vehicle() and not _keepy.is_hopping():
 		var me := Vector3(_keepy.global_position.x, 0.0, _keepy.global_position.z)
@@ -3776,6 +3779,10 @@ func _on_hop_landed(position: Vector3) -> void:
 	# inhabitants' exact terms.
 	if _karting.on_landing(position):
 		return
+	# CH71: the landing that finishes a walk to the coaster's station or
+	# to the drop tower boards it, on the kart's exact terms.
+	if _funfair.on_landing(position):
+		return
 	# A landing while the dialog is up cannot happen from a plateau tap
 	# (they are refused above), but a hop already in the air when the dialog
 	# opened would still land. Re-opening on top of itself is refused by
@@ -3843,6 +3850,7 @@ func _on_keepy_idle() -> void:
 	_building_castle = -1
 	_critters.cancel_intents()
 	_karting.cancel_intent()
+	_funfair.cancel_intent()
 
 ## The hull follows the rider, and only ever from here: KeepyHopper moves
 ## KEEPY, the boat is decor owned by HubBuilder, and neither file reaches
@@ -4122,6 +4130,56 @@ func _setup_skatepark() -> void:
 	# names it; the HUD prints it; neither knows the other exists.
 	_transport.board_trick.connect(_on_board_trick)
 
+## ---- CH71: the funfair ----------------------------------------------
+## One coordinator (HubFunfair) owns the coaster and the drop tower; this
+## file wires the tap channel, the landing hook, the intent reset and the
+## step-off at the end of a ride -- the karting's exact shape, with the
+## balloon's step-off (leave_carrier onto a flat landing the ride names).
+func _setup_funfair() -> void:
+	_funfair.setup(_keepy)
+	_tap.tapped_funfair.connect(_on_tapped_funfair)
+	_funfair.ride_finished.connect(_on_funfair_ride_finished)
+
+## A tap on the station or the tower. ONE tap buys the whole thing: walk
+## to the ride's stand point (through the corridor gates if needed) and
+## board on arrival; the zero-length walk is tried on the spot.
+func _on_tapped_funfair(point: Vector3, ride: int) -> void:
+	if _fallback_menu.visible or _confirm.is_open():
+		return
+	if _keepy.is_riding() or _keepy.is_on_board() or _keepy.is_on_zipline() or _keepy.is_on_carrier() or _keepy.is_on_owl_flight():
+		return
+	if _keepy.is_on_tree():
+		_keepy.leave_tree(point)
+		return
+	_boarding = false
+	_climbing = false
+	_flying = false
+	_entering = false
+	_zipping = false
+	_zipping_solo = false
+	_climbing_tree = -1
+	_ballooning = -1
+	_balloon_wait = -1
+	_mounting_ball = false
+	_building_castle = -1
+	_critters.cancel_intents()
+	_karting.cancel_intent()
+	_keepy.dismount_vehicle()
+	_hop_via_corridor(HubFunfair.stand_point(ride))
+	# Armed AFTER the hop is issued, the castles' order (CLAUDE.md): a walk
+	# of zero length emits became_idle synchronously inside hop_to() and
+	# _on_keepy_idle clears every intent, this one included.
+	_funfair.arm(ride)
+	if not _keepy.is_hopping():
+		_funfair.on_landing(_keepy.global_position)
+
+## A ride ended. The rider steps off onto the flat landing the ride
+## names (its own stand point: the deck, or the tower's apron), which the
+## fair owns and keeps clear -- no ring search needed.
+func _on_funfair_ride_finished(_ride: int, landing: Vector3) -> void:
+	if _keepy.is_on_carrier():
+		_keepy.leave_carrier(landing)
+
 func _on_board_trick(trick: StringName, _clockwise: bool) -> void:
 	_skate_hud.flash_trick(trick)
 
@@ -4150,6 +4208,7 @@ func _on_tapped_castle(point: Vector3, index: int) -> void:
 	_mounting_ball = false
 	_critters.cancel_intents()
 	_karting.cancel_intent()
+	_funfair.cancel_intent()
 	# The intent is armed AFTER the hop is issued, not before: a walk of
 	# zero length (he already stands at the approach point -- the second
 	# and third taps on a castle) emits `became_idle` synchronously inside
