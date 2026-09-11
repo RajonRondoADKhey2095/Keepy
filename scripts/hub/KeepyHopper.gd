@@ -571,6 +571,31 @@ func hop_to(point: Vector3) -> void:
 func is_hopping() -> bool:
 	return _state == State.HOPPING
 
+## CH73 -- TRUE WHILE HE MOVES BY TAP-TO-DESTINATION ON HIS OWN LEGS.
+##
+## Published here rather than spelled out at each reader, on this repo's
+## "un fait est publie une fois, jamais recopie": there are TWELVE states
+## and the interesting set is two of them, so every caller that wrote the
+## test itself would be one `State` away from disagreeing with the next
+## one. The orbit camera is the first reader; it will not be the last.
+##
+## ⚠️ WHAT IT MEANS IS THE **CONTROL SCHEME**, NOT THE POSTURE. IDLE and
+## HOPPING are exactly the states in which a tap is a DESTINATION and
+## nothing else is writing this body. Every other state is a carrier, a
+## ride or a climb: something else owns where he goes, and for most of
+## them something else owns the camera too.
+##
+## ⚠️ THE HOPPITY BALL IS INSIDE THIS, DELIBERATELY, AND IT IS THE ONE
+## JUDGEMENT CALL HERE. `_vehicle` is a HOP MODIFIER -- it changes the
+## distance and the arc of a hop and nothing else: the state stays
+## IDLE/HOPPING, the tap still names a destination, the camera is still
+## the resting pose. So it satisfies the control-scheme reading above,
+## and answering false for it would carve out a dead zone the player has
+## no way to explain. If a later lot wants the ball excluded, the change
+## is `and _vehicle == null` on this line, once, here.
+func is_afoot() -> bool:
+	return _state == State.IDLE or _state == State.HOPPING
+
 ## True while Keepy is carried by the boat. Read by HubWorld to hold the
 ## mooring off, and -- the load-bearing one -- to keep portal detection
 ## silent for the whole ride.
