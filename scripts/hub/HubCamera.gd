@@ -172,6 +172,7 @@ const BOARD_KEEP_INSIDE: float = 2.5
 ## CH75: the Comet's chase (see ChaseTuning.coaster()).
 const COASTER_YAW_RATE_MAX: float = deg_to_rad(150.0)
 const COASTER_FOV: float = 64.0
+const COASTER_UP: float = 6.2
 
 class ChaseTuning extends RefCounted:
 	var heading_lambda: float = DRIVE_HEADING_LAMBDA
@@ -188,11 +189,34 @@ class ChaseTuning extends RefCounted:
 	## pose anchors on `HubSurface.ground(at)` -- the ground under the
 	## vehicle -- and looks at that ground point, which is right for a
 	## kart and puts a coaster cart 14 u up entirely out of the picture.
-	## Airborne, the anchor is the body's own origin: 7.6 u behind it
-	## along the lagged heading and 4.4 u above IT, looking at IT. Never
-	## clamped to the region (the rail owns where the cart is; a camera
-	## 4 u over a rail 14 u up has nothing on the ground to hit).
+	## Airborne, the drive TARGET is a MOUNT the ride itself trails along
+	## its rail (HubFunfair's comet mount, DRIVE_BACK behind the cart on
+	## the curve), the pose stands `up` straight above that mount, and
+	## the camera looks at `look_target` -- the cart.
+	##
+	## ⚠️ A MOUNT ON THE RAIL, NOT A POINT BEHIND THE CART, AND THAT IS
+	## MEASURED THREE TIMES OVER. (1) DRIVE_BACK behind on the FLAT
+	## heading, cart height + 6: CometProbe E11 read the camera INSIDE
+	## the posts under the drop rail (24 frames) and ON the drop rail (8),
+	## because posts stand on the rail's XZ line and that line climbs 23 u
+	## in the 7.6 u behind a cart on a 72 deg drop. (2) DRIVE_BACK behind
+	## along the cart's LAGGED 3D tangent: still 16 / 15 frames -- as the
+	## tangent swings through the valley the trailing point sweeps across
+	## the concave rail behind. (3) A mount ON the curve, `up` above it:
+	## rails and posts are under the camera by construction, on the lift,
+	## the drop, the camelback and both turns, and the only thing left to
+	## measure is the position lag cutting the inside of the valley
+	## (~0.9 u of a 6.2 u margin).
 	var airborne: bool = false
+	## The body an airborne chase LOOKS AT (the cart); the drive target
+	## is then only where the pose stands.
+	var look_target: Node3D = null
+	## How far above the anchor the pose stands. The ground vehicles use
+	## DRIVE_UP; the Comet stands higher, because 4.4 u over a cart at
+	## the bottom of its camelback put the camera INTO the camelback's
+	## rail on the way round (CometProbe E11: 27 frames inside a rail,
+	## 37 inside a post, before this number existed).
+	var up: float = DRIVE_UP
 
 	## The three device-validated vehicles: the constants above, verbatim,
 	## and the exact `lerp_angle` arithmetic they shipped with.
@@ -216,11 +240,13 @@ class ChaseTuning extends RefCounted:
 	## rail asks: CometProbe measures the cart's own yaw rate and gates
 	## the cap over it), no deadzone (the rail does not wobble), airborne,
 	## and the widest fov of the four -- a FEEL number, Mathieu's to move.
-	static func coaster() -> ChaseTuning:
+	static func coaster(cart: Node3D) -> ChaseTuning:
 		var t := ChaseTuning.new()
 		t.yaw_rate_max = COASTER_YAW_RATE_MAX
 		t.fov = COASTER_FOV
 		t.airborne = true
+		t.up = COASTER_UP
+		t.look_target = cart
 		return t
 
 	## True when the tuning is exactly the shipped vehicle chase, so the
@@ -314,8 +340,9 @@ func _drive_wanted() -> Vector3:
 	var heading := Vector3(sin(_drive_heading), 0.0, cos(_drive_heading))
 	var at: Vector3 = _drive_target.global_position
 	if _tuning.airborne:
-		# CH75: anchored on the body itself, not on the ground under it.
-		return at - heading * DRIVE_BACK + Vector3(0.0, DRIVE_UP, 0.0)
+		# CH75: the target IS the mount on the rail; the pose stands
+		# straight above it.
+		return at + Vector3(0.0, _tuning.up, 0.0)
 	var ground: Vector3 = HubSurface.ground(at)
 	var flat: Vector3 = ground - heading * DRIVE_BACK
 	if _tuning.keep_inside >= 0.0:
@@ -989,9 +1016,11 @@ func _process(delta: float) -> void:
 		var kart_ground: Vector3 = HubSurface.ground(kart.global_position)
 		var held: float = Vector2(_drive_position.x - kart_ground.x, _drive_position.z - kart_ground.z).length()
 		ahead = DRIVE_LOOK_AHEAD * clampf(held / DRIVE_BACK, 0.0, 1.0)
-	# CH75: an airborne body is looked AT, not at the ground under it.
-	var anchor: Vector3 = kart.global_position if _tuning.airborne else HubSurface.ground(kart.global_position)
-	var look: Vector3 = anchor + heading * ahead + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
+	# CH75: an airborne chase looks AT its body (the cart), never at the
+	# ground under the mount it stands on.
+	var look: Vector3 = HubSurface.ground(kart.global_position) + heading * ahead + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
+	if _tuning.airborne and _tuning.look_target != null and is_instance_valid(_tuning.look_target):
+		look = _tuning.look_target.global_position + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
 	var drive_xform := Transform3D(Basis.IDENTITY, _drive_position).looking_at(look, Vector3.UP)
 	if not _tuning.is_plain():
 		# CH64: the cap, on the pose itself. The yaw of the finished

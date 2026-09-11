@@ -314,7 +314,13 @@ const GONDOLA_RAIL_HEIGHT: float = 0.9
 ## 14 u rail past its rim would stand its posts among the wall trees.
 ##
 ## THE LOOP, in riding order, y = rail top. Station on the west leg
-## heading NORTH; the lift climbs straight north at 45 deg; a semicircle
+## heading NORTH; the lift climbs straight north -- gently for 7 u, then
+## at ~60 deg (a two-slope chain, and the knee is where the FIXED camera
+## decided it: the hub pose stands 8.9 u north of the rider at 7.6 u,
+## i.e. over the lift 8.9 u north of the station, and a 45 deg lift put
+## that rail at 8.2 u -- the boarding camera was INSIDE the lift's posts,
+## CometProbe E11's last four frames. The gentle leg keeps the rail at
+## ~4.6 u there, three units under the lens); a semicircle
 ## at 14 u carries the cart east (still on the chain: the crest is at
 ## the END of the turn, so the top is a 4 s crawl over the drop); the
 ## drop falls SOUTH along x 28.5; a camelback; a trim brake on its
@@ -323,31 +329,44 @@ const GONDOLA_RAIL_HEIGHT: float = 0.9
 ## control points (~2 u): a Catmull-Rom through uneven points kinks,
 ## and a kink in the flat heading is a camera whip (measured before
 ## authoring: 0.48 u of turn radius from an uneven end point, 2.8 u
-## with the points spread). Points 10-14 share x = 28.5 EXACTLY, so the
+## with the points spread). Points 9-17 share x = 28.3 EXACTLY, so the
 ## ride frame's yaw on the drop is 180.00 deg and not a wobble read off
-## a tangent whose flat component is tiny.
+## a tangent whose flat component is tiny -- and the top turn FINISHES
+## on the flat (point 9), one control point BEFORE the crest: a first
+## draft ended the turn on the crest itself and the cart's yaw swung
+## 36 deg in the few frames where the tangent tipped over (502 deg/s,
+## CometProbe E24), because a heading read off a tangent that is
+## mostly vertical turns as fast as the tangent tips. Point 9 exists
+## for the same reason: without it the tangent at 10 (the chord 8 -> 11)
+## pointed 40 deg east and the spline bulged past x 28.3 and back (an
+## S, 0.49 u of radius in the replica).
 const COMET_POINTS: Array = [
 	Vector3(23.0, 0.55, 41.5),   # 0  station stop
 	Vector3(23.0, 0.62, 43.2),   # 1  lift foot
-	Vector3(23.0, 1.50, 44.8),
-	Vector3(23.0, 3.60, 46.7),
-	Vector3(23.0, 7.10, 49.5),
-	Vector3(23.0, 10.6, 52.4),
+	Vector3(23.0, 1.30, 45.2),   #    a gentle first leg (see below)
+	Vector3(23.0, 2.60, 47.6),
+	Vector3(23.0, 4.30, 50.0),   # 4  the knee: the chain steepens to ~60 deg
+	Vector3(23.0, 8.50, 52.6),
 	Vector3(23.0, 13.0, 55.2),   # 6  top of the climb, the turn begins
 	Vector3(23.81, 13.4, 57.14),
-	Vector3(25.75, 13.7, 57.95), #    the apex of the turn
-	Vector3(28.3, 13.9, 56.7),
-	Vector3(28.5, 14.0, 55.0),   # 10 crest -- the drop begins
-	Vector3(28.5, 12.3, 53.8),
-	Vector3(28.5, 7.00, 51.8),
-	Vector3(28.5, 2.20, 49.6),
-	Vector3(28.5, 0.90, 47.2),   # 14 valley
-	Vector3(28.5, 5.20, 43.8),   # 15 camelback
-	Vector3(28.5, 1.00, 41.5),   # 16 second valley, the turn begins
-	Vector3(27.69, 0.70, 39.56),
-	Vector3(25.75, 0.60, 38.75), # 18 the south apex
-	Vector3(23.81, 0.60, 39.56),
+	Vector3(25.75, 13.7, 57.95), # 8  the apex of the turn
+	Vector3(27.6, 13.8, 57.3),
+	Vector3(28.3, 13.9, 56.0),   # 10 the turn ends heading south, on the flat
+	Vector3(28.3, 14.0, 54.7),   # 11 crest -- the drop begins, already due south
+	Vector3(28.3, 12.3, 53.5),
+	Vector3(28.3, 7.00, 51.6),
+	Vector3(28.3, 2.20, 49.5),
+	Vector3(28.3, 0.90, 47.6),   # 15 valley (COMET_VALLEY_INDEX)
+	Vector3(28.3, 4.40, 45.0),   # 16 camelback
+	Vector3(28.3, 2.40, 43.2),
+	Vector3(28.3, 1.00, 41.5),   # 18 second valley, the turn begins
+	Vector3(27.52, 0.70, 39.63),
+	Vector3(25.65, 0.60, 38.85), # 20 the south apex
+	Vector3(23.78, 0.60, 39.63),
 ]
+## The index of the valley at the foot of the drop, read by the closed
+## form below and by CometProbe -- never re-counted from the table.
+const COMET_VALLEY_INDEX: int = 15
 ## The chain and the run-out. The lift is the CH71 chain (LIFT_SPEED /
 ## LIFT_ACCEL, shared); GRAVITY and ROLL_FRICTION are shared too, so the
 ## two coasters answer to the same physics and differ ONLY in what is
@@ -359,13 +378,13 @@ const COMET_POINTS: Array = [
 ##     and a 2.75 u semicircle at that speed is a 270 deg/s yaw -- a
 ##     camera whip, not a ride. So the last COMET_BRAKE_RUN_U units are
 ##     a TRIM over the first COMET_TRIM_U (speed falls linearly to
-##     COMET_TURN_SPEED, ~1.7 g -- the magnetic brake a real ride has
+##     COMET_TURN_SPEED, ~1.9 g -- the magnetic brake a real ride has
 ##     there) and then the CH71 sqrt run-out from COMET_TURN_SPEED to a
-##     stop at s = L. 6 u/s through r 2.75 is 125 deg/s, under the
-##     camera's cap.
+##     stop at s = L. CometProbe A12 walks the run-out's own speed law
+##     along the baked turn and gates its yaw under the camera's cap.
 const COMET_BRAKE_RUN_U: float = 13.0
 const COMET_TRIM_U: float = 4.0
-const COMET_TURN_SPEED: float = 6.0
+const COMET_TURN_SPEED: float = 5.0
 ## Rails, ties and posts: the CH71 gauge and radius (one rail is one
 ## rail), a thicker post and a closer pitch because these stand 14 u.
 const COMET_POST_SPACING: float = 1.5
@@ -457,6 +476,12 @@ var _comet_crest_s: float = 0.0
 var _comet_lift_foot_s: float = 0.0
 var _comet_peak_y: float = 0.0
 var _comet_cart: Node3D = null
+## CH75: the chase camera's MOUNT -- a node the fair trails on the rail
+## HubCamera.DRIVE_BACK behind the cart. The camera stands over it and
+## looks at the cart (HubCamera.ChaseTuning.coaster). See the tuning's
+## header for the two poses that were measured inside the structure
+## before this one.
+var _comet_mount: Node3D = null
 var _comet_track_node: MeshInstance3D = null
 var _comet_tris: int = 0
 var _comet_posts: int = 0
@@ -850,6 +875,9 @@ func _build_comet() -> void:
 	_comet_cart.name = "CometCart"
 	add_child(_comet_cart)
 	_draw("CometCartMesh", cart, mat, _comet_cart)
+	_comet_mount = Node3D.new()
+	_comet_mount.name = "CometChaseMount"
+	add_child(_comet_mount)
 	_comet_tris = _tris - before
 	_park_comet()
 
@@ -860,6 +888,10 @@ func _park_comet() -> void:
 
 func _pose_comet() -> void:
 	_comet_cart.global_transform = comet_ride_frame(_cs)
+	_comet_mount.global_transform = comet_ride_frame(_cs - HubCamera.DRIVE_BACK)
+
+func comet_mount_node() -> Node3D:
+	return _comet_mount
 
 # =====================================================================
 # WHAT THE FAIR PUBLISHES
@@ -986,13 +1018,13 @@ func comet_post_count() -> int:
 ## losses included, for a bench to compare the ridden number against:
 ## v^2 = LIFT_SPEED^2 + 2 g (crest - valley) - 2 mu (arc length between).
 func comet_predicted_valley_speed() -> float:
-	var valley_s: float = _comet_curve.get_closest_offset(COMET_POINTS[14])
+	var valley_s: float = _comet_curve.get_closest_offset(COMET_POINTS[COMET_VALLEY_INDEX])
 	var dh: float = _comet_peak_y - comet_point(valley_s).y
 	var v2: float = LIFT_SPEED * LIFT_SPEED + 2.0 * GRAVITY * dh - 2.0 * ROLL_FRICTION * (valley_s - _comet_crest_s)
 	return sqrt(maxf(v2, 0.0))
 
 func comet_valley_s() -> float:
-	return _comet_curve.get_closest_offset(COMET_POINTS[14])
+	return _comet_curve.get_closest_offset(COMET_POINTS[COMET_VALLEY_INDEX])
 
 ## CH72 -- THE THREE NUMBERS THAT FOLLOW THE HEIGHT. Each is published
 ## once and read everywhere; none is typed beside the height it depends
@@ -1245,7 +1277,7 @@ func _sync_comet_camera(chase: bool) -> void:
 	if chase:
 		if not _camera.has_method("enter_drive"):
 			return
-		_camera.call("enter_drive", _comet_cart, HubCamera.ChaseTuning.coaster())
+		_camera.call("enter_drive", _comet_mount, HubCamera.ChaseTuning.coaster(_comet_cart))
 		_comet_chase = true
 		return
 	if _camera.has_method("exit_drive"):

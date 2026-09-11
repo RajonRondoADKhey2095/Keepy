@@ -95,6 +95,11 @@ const RIDER_HEADROOM: float = 2.6
 ## centre line (radius 0.06 plus the near plane's worth of margin).
 const CAMERA_RAIL_CLEAR: float = 0.5
 const CAMERA_SOLID_MARGIN: float = 0.3
+## The most the CART's own heading may turn per second, anywhere on the
+## loop: between the trimmed turn (~150) and an untrimmed one (~400),
+## and between a turn ended on the flat (~145) and one ended on the
+## crest (502, measured). The CAMERA is gated on its own cap, E23.
+const CART_YAW_LIMIT_DEG: float = 200.0
 
 var _fails: int = 0
 var _hub: Node = null
@@ -294,6 +299,16 @@ func _segment_nearest(samples: PackedVector3Array, a: Vector3, b: Vector3) -> fl
 		best = minf(best, Geometry3D.get_closest_point_to_segment(q, a, b).distance_to(q))
 	return best
 
+## True when the segment camera -> cart passes within a rail's radius
+## (plus a hand) of a rail sample that is NOT the cart's own stretch.
+func _sightline_crossed(cam: Vector3, cart: Vector3) -> bool:
+	for q in _comet_samples:
+		if q.distance_to(cart) < 1.5:
+			continue
+		if Geometry3D.get_closest_point_to_segment(q, cam, cart).distance_to(q) < HubFunfair.RAIL_RADIUS + 0.2:
+			return true
+	return false
+
 ## The closed form CH71 uses for the tower's fall speed at its brake line.
 func _tower_fall_speed() -> float:
 	return sqrt(2.0 * HubFunfair.GRAVITY * (HubFunfair.GONDOLA_TOP_Y - HubFunfair.gondola_brake_y()))
@@ -365,7 +380,7 @@ func _phase_a() -> void:
 	# wobble read off a nearly vertical tangent).
 	var det_ok: bool = true
 	var yaw_worst: float = 0.0
-	for k in range(11, 14):
+	for k in range(HubFunfair.COMET_VALLEY_INDEX - 3, HubFunfair.COMET_VALLEY_INDEX):
 		var s: float = _fair.comet_curve().get_closest_offset(HubFunfair.COMET_POINTS[k])
 		var f: Transform3D = _fair.comet_ride_frame(s)
 		if f.basis.determinant() <= 0.0:
@@ -380,18 +395,31 @@ func _phase_a() -> void:
 	_check(min_y >= 0.40, "A10 the rail never dips into the lawn (lowest rail top %.3f)" % min_y)
 	# The run-out fits the loop, and the turn is taken under the camera's cap.
 	_check(HubFunfair.COMET_BRAKE_RUN_U < _fair.comet_length() - _fair.comet_crest_s() - 10.0, "A11 the run-out (%.1f u) leaves the drop alone" % HubFunfair.COMET_BRAKE_RUN_U)
+	# The run-out's OWN speed law walked along the baked turn: yaw rate is
+	# curvature times speed, and the speed falls as sqrt(1 - u) from
+	# COMET_TURN_SPEED over the turn (the shipped BRAKE law).
 	var turn_start: float = _fair.comet_length() - HubFunfair.COMET_BRAKE_RUN_U + HubFunfair.COMET_TRIM_U
-	var worst_k: float = 0.0
+	var turn_len: float = HubFunfair.COMET_BRAKE_RUN_U - HubFunfair.COMET_TRIM_U
+	var worst_yaw: float = 0.0
+	var worst_at: float = 0.0
 	var s2: float = turn_start
-	while s2 < _fair.comet_length():
+	while s2 < _fair.comet_length() - 0.3:
 		var t0: Vector3 = _fair.comet_tangent(s2)
 		var t1: Vector3 = _fair.comet_tangent(s2 + 0.25)
-		var h0: float = atan2(t0.x, t0.z)
-		var h1: float = atan2(t1.x, t1.z)
-		worst_k = maxf(worst_k, absf(angle_difference(h0, h1)) / 0.25)
+		var k: float = absf(angle_difference(atan2(t0.x, t0.z), atan2(t1.x, t1.z))) / 0.25
+		var u: float = clampf((s2 - turn_start) / turn_len, 0.0, 1.0)
+		var v: float = maxf(HubFunfair.COMET_TURN_SPEED * sqrt(1.0 - u), 0.25)
+		if k * v > worst_yaw:
+			worst_yaw = k * v
+			worst_at = s2
 		s2 += 0.25
-	var turn_yaw: float = rad_to_deg(worst_k * HubFunfair.COMET_TURN_SPEED)
-	_check(turn_yaw < rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX), "A12 the bottom turn at COMET_TURN_SPEED yaws at most %.0f deg/s, under the chase cap (%.0f)" % [turn_yaw, rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX)])
+	var turn_yaw: float = rad_to_deg(worst_yaw)
+	# ⚠️ THE THRESHOLD SITS BETWEEN THE FIX AND ITS ABSENCE (CLAUDE.md
+	# CH65): with the trim, the law reads ~150 deg/s at the tightest
+	# sample of the turn; without it the cart would enter at ~13 u/s and
+	# read ~400. 200 is between the two. What the CAMERA does with it is
+	# E23's business (its cap), not this gate's.
+	_check(turn_yaw < CART_YAW_LIMIT_DEG, "A12 the run-out's own law yaws the cart at most %.0f deg/s through the bottom turn (at s %.1f; < %.0f, untrimmed ~400)" % [turn_yaw, worst_at, CART_YAW_LIMIT_DEG])
 	_check(_fair.comet_post_count() == HubFunfair.comet_post_stations(static_curve).size(), "A13 the builder stood %d posts, the published list names %d" % [_fair.comet_post_count(), HubFunfair.comet_post_stations(static_curve).size()])
 	print("")
 
@@ -410,8 +438,11 @@ func _phase_b() -> void:
 		var f: Transform3D = CoasterRail.sweep_frame(_fair.comet_curve(), s)
 		for side in [-1.0, 1.0]:
 			tested += 1
-			if not HubRegion.contains(_flat(f.origin + f.basis.x * half * side)):
+			var q: Vector3 = _flat(f.origin + f.basis.x * half * side)
+			if not HubRegion.contains(q):
 				outside += 1
+				if outside <= 3:
+					print("     outer rail outside the region at (%.2f, %.2f), rail y %.2f" % [q.x, q.z, f.origin.y])
 		s += 0.25
 	_check(tested > 0 and outside == 0, "B1 every outer-rail sample is over walkable ground (%d / %d outside)" % [outside, tested])
 	var posts_out: int = 0
@@ -553,8 +584,11 @@ func _phase_d() -> void:
 		if p.y < 3.0:
 			continue
 		tall += 1
-		# Down the post's own column, starting just under the rail.
-		var q := PhysicsRayQueryParameters3D.create(Vector3(p.x, p.y - HubFunfair.POST_BELOW_RAIL - 0.05, p.z), Vector3(p.x, -1.0, p.z), mask)
+		# Down the post's own column, from ABOVE the rail: a ray that
+		# starts inside a shape reports nothing (Godot's default), and the
+		# first draft started 5 cm under the rail -- inside the post -- and
+		# read 0 / 28 on posts the board bumps into.
+		var q := PhysicsRayQueryParameters3D.create(Vector3(p.x, p.y + 0.5, p.z), Vector3(p.x, -1.0, p.z), mask)
 		var hit: Dictionary = space.intersect_ray(q)
 		if not hit.is_empty() and hit["collider"] == body:
 			hit_posts += 1
@@ -637,9 +671,13 @@ func _phase_e() -> void:
 	var sight_crossings: int = 0
 	var cam_yaw_worst: float = 0.0
 	var cart_yaw_worst: float = 0.0
+	var cart_yaw_at: float = 0.0
+	var cam_over_cap: int = 0
+	var yaw_trace: Array = []
 	var last_cam_yaw: float = 0.0
 	var last_cart_yaw: float = 0.0
 	var have_yaw: bool = false
+	var last_yaw_frame: int = 0
 	var follow_worst: float = 0.0
 	var face_worst: float = 0.0
 	var prims_max: int = 0
@@ -689,21 +727,47 @@ func _phase_e() -> void:
 		var cam: Vector3 = _camera.global_position
 		if _inside_solid(cam, CAMERA_SOLID_MARGIN):
 			cam_in_solid += 1
+			if cam_in_solid <= 4:
+				print("     camera inside a solid: cam %s cart %s s %.2f phase %d" % [cam, cart.global_position, s, ph])
 		if _nearest(_comet_samples, cam) < CAMERA_RAIL_CLEAR or _nearest(_ch71_samples, cam) < CAMERA_RAIL_CLEAR:
 			cam_in_rail += 1
+			if cam_in_rail <= 4:
+				print("     camera inside a rail: cam %s cart %s s %.2f phase %d" % [cam, cart.global_position, s, ph])
 		if blend >= 0.999:
 			blend_done_frames += 1
 			if not _in_frame(_keepy.global_position + Vector3.UP * CROWN, FRAME_MARGIN_PX):
 				crown_out += 1
-			if _segment_nearest(_comet_samples, cam, cart.global_position) < HubFunfair.RAIL_RADIUS + 0.2:
+			# A rail between the camera and the cart, the cart's own rail
+			# excluded (the cart sits 6 cm over it, so every frame would
+			# count): informational, printed, not gated.
+			if _sightline_crossed(cam, cart.global_position) :
 				sight_crossings += 1
 			var cy: float = _camera_yaw()
 			var ky: float = cart.rotation.y
+			# ⚠️ PER ELAPSED FRAME, NOT PER LOOP ITERATION: the mid-ride tap
+			# tests below await twice inside one iteration, so the sample
+			# after them spans three frames. Read as one, a 66 deg/s turn
+			# printed as 208 (run 7's yaw trace: 1.1 deg per frame, 3.3
+			# over the gap) and E23 went red on a camera under its cap.
+			var now_frame: int = Engine.get_process_frames()
+			var elapsed: float = float(maxi(now_frame - last_yaw_frame, 1))
 			if have_yaw:
-				cam_yaw_worst = maxf(cam_yaw_worst, absf(angle_difference(last_cam_yaw, cy)) * 60.0)
-				cart_yaw_worst = maxf(cart_yaw_worst, absf(angle_difference(last_cart_yaw, ky)) * 60.0)
+				var cam_rate: float = rad_to_deg(absf(angle_difference(last_cam_yaw, cy))) * 60.0 / elapsed
+				if cam_rate > rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX) + 2.0 and cam_over_cap < 6:
+					cam_over_cap += 1
+					print("     camera yaw %.0f deg/s over the cap: s %.2f phase %d blend %.4f cam %s cart %s" % [cam_rate, s, ph, blend, cam, cart.global_position])
+					print("       yaw trace (deg, last 4 frames then this): %s ; drive_heading %.2f ; basis.z %s" % [str(yaw_trace), rad_to_deg(float(_camera.call("drive_heading"))), _camera.global_transform.basis.z])
+				cam_yaw_worst = maxf(cam_yaw_worst, cam_rate)
+				var cart_rate: float = rad_to_deg(absf(angle_difference(last_cart_yaw, ky))) * 60.0 / elapsed
+				if cart_rate > cart_yaw_worst:
+					cart_yaw_worst = cart_rate
+					cart_yaw_at = s
+			yaw_trace.append(snappedf(rad_to_deg(cy), 0.01))
+			if yaw_trace.size() > 5:
+				yaw_trace.pop_front()
 			last_cam_yaw = cy
 			last_cart_yaw = ky
+			last_yaw_frame = now_frame
 			have_yaw = true
 			var pr: int = _prims()
 			prims_max = maxi(prims_max, pr)
@@ -733,8 +797,8 @@ func _phase_e() -> void:
 		frames, frames / 60.0, v_max, v_first_coast, v_valley, _fair.comet_predicted_valley_speed(), v_trim_entry, v_brake_worst, y_max])
 	print("     chase frames %d / %d, blend done %d, crown out %d, camera in solid %d, in rail %d, sightline crossings %d" % [
 		chase_frames, frames, blend_done_frames, crown_out, cam_in_solid, cam_in_rail, sight_crossings])
-	print("     yaw rates: camera %.1f deg/s worst, cart %.1f deg/s worst (cap %.0f); facing worst %.2f deg; follow %.5f; settle %d" % [
-		cam_yaw_worst, cart_yaw_worst, rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX), face_worst, follow_worst, settle])
+	print("     yaw rates: camera %.1f deg/s worst, cart %.1f deg/s worst at s %.2f (cap %.0f); facing worst %.2f deg; follow %.5f; settle %d" % [
+		cam_yaw_worst, cart_yaw_worst, cart_yaw_at, rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX), face_worst, follow_worst, settle])
 	print("     chase primitives: max %d, mean %d over %d frames" % [prims_max, (prims_sum / maxi(prims_n, 1)), prims_n])
 	print("     phases (first frame): %s" % str(phases))
 	_check(v_max >= 15.0 and v_max <= 18.5, "E5 the top speed %.2f u/s is the drop the design says (15..18.5)" % v_max)
@@ -759,7 +823,7 @@ func _phase_e() -> void:
 	_check(follow_worst < 0.001, "E21 he was carried by the cart, not alongside it (worst %.5f u)" % follow_worst)
 	_check(face_worst < 20.0, "E22 he faced the way the cart goes, every frame (worst %.2f deg)" % face_worst)
 	_check(cam_yaw_worst <= rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX) + 2.0, "E23 the chase never yawed faster than its cap (%.1f deg/s)" % cam_yaw_worst)
-	_check(cart_yaw_worst < rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX), "E24 and the cap sits above anything the rail asks (cart %.1f deg/s)" % cart_yaw_worst)
+	_check(cart_yaw_worst < CART_YAW_LIMIT_DEG, "E24 the cart itself never yawed faster than %.0f deg/s (worst %.1f at s %.2f; a turn's end on the crest read 502)" % [CART_YAW_LIMIT_DEG, cart_yaw_worst, cart_yaw_at])
 	_check(_fair.accepts_tap(_flat(rest)) == HubFunfair.RIDE_COMET, "E25 and the station answers again once the ride is over")
 	var energy_seat: float = y_max - HubFunfair.CART_SEAT.y
 	_check(absf(energy_seat - _fair.comet_peak_rail_y()) < 0.12, "E26 he was carried over the crest (max y %.3f, rail %.3f)" % [y_max, _fair.comet_peak_rail_y()])

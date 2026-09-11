@@ -3293,6 +3293,67 @@ nomme **vers quoi** il ne doit pas bouger, jamais « il ne bouge plus du
 tout ». La forme se reconnaît à ce qu'elle compare deux échantillons de
 la MÊME grandeur au lieu de comparer la grandeur à ses deux attracteurs.
 
+### ⚠️ UNE POURSUITE « DERRIÈRE » UN CORPS SUR RAIL TRAVERSE LA STRUCTURE — LE POINT DE VUE SE MONTE SUR LE RAIL
+
+Écrit au CH75, sur trois poses mesurées avant la bonne, et chacune
+avait l'air juste en relisant son code. La caméra de poursuite du hub
+(`HubCamera.enter_drive`) se tient `DRIVE_BACK` (7,6 u) **derrière** son
+véhicule le long de son cap lissé et `DRIVE_UP` au-dessus du **sol** :
+juste pour un kart, faux pour tout corps qui **quitte le sol**, et faux
+d'une façon que le kart ne montre jamais.
+
+| pose | ce qu'elle lisait |
+|---|---|
+| 7,6 u derrière sur le **cap plat**, 6,2 u au-dessus du chariot | **24 frames DANS les poteaux** de la descente, **8 sur le rail** lui-même |
+| 7,6 u derrière le long de la **tangente 3D lissée** | **16 / 15** — la pointe balaie le rail concave derrière le chariot pendant que la tangente tourne dans la vallée |
+| une **MONTURE trainée SUR la courbe** 7,6 u derrière, caméra 6,2 u au-dessus | rails et poteaux **sous** la caméra par construction |
+
+Le mécanisme est géométrique : les poteaux se tiennent **sur la ligne XZ
+du rail**, et derrière un chariot sur une pente de 72° ce rail monte de
+**23 u** en 7,6 u. Tout point « derrière » sur le cap plat est donc dans
+la colonne des poteaux, et tout point derrière sur la tangente traverse
+le rail au moment où celle-ci bascule. Un chariot sur rail n'a pas
+d'« arrière » qui ne soit pas le rail lui-même.
+
+**Règle** : une poursuite sur un corps porté par une courbe se **monte
+sur la courbe** — c'est le porteur qui publie une monture (`s − DRIVE_BACK`)
+et la caméra se tient au-dessus d'elle et regarde le corps. Et ça se
+gate **par frame** : la caméra hors de tout solide (boîte + marge) et à
+plus d'un demi-unité de tout échantillon de rail, pendant tout le trajet,
+par le vrai canal du doigt. Le seul terme qui reste est le retard de
+position qui coupe l'intérieur d'une vallée (~0,9 u sur 6,2 de marge).
+
+### ⚠️ UN CATMULL-ROM À POINTS INÉGAUX FAIT UN NŒUD, ET LE CAP D'UNE TANGENTE PRESQUE VERTICALE TOURNE AUSSI VITE QU'ELLE BASCULE
+
+Deux pièges d'un même tracé, CH75, et ils se masquent l'un l'autre.
+
+1. **Les poignées d'une spline cardinale sont `(P[k+1] − P[k−1]) × 0,25`**,
+   donc un point de contrôle suivi d'une corde courte après une longue
+   reçoit une poignée **plus longue que sa corde** : la courbe fait un
+   **S** (mesuré dans la réplique : **0,48 u de rayon** à l'entrée d'une
+   gare, **2,8 u** une fois les points espacés à ~2 u). Les virages d'un
+   rail s'authorent comme des **demi-cercles à points régulièrement
+   espacés**, et la courbure se **relit sur la courbe cuite** (dh/ds sur
+   des échantillons, jamais sur les points).
+2. **Un cap lu sur une tangente presque verticale n'est pas un cap** :
+   sa composante plate est minuscule, donc tout déplacement latéral de
+   la courbe — ou la seule bascule de la tangente au sommet — le fait
+   tourner de dizaines de degrés en quelques frames. Mesuré sur le
+   chariot du CH75 : le virage haut terminé **SUR la crête** a fait
+   lire **502°/s** de lacet au chariot (36° pendant que la tangente
+   basculait), contre **160°/s** une fois le virage terminé **sur le
+   plat, un point de contrôle AVANT la crête**, et les points de la
+   descente **alignés en x exactement** (le cap y vaut 180,00°, pas un
+   tremblement).
+
+**Règle** : sur un rail, ce qui tourne se fait à plat et ce qui descend
+va droit ; un lot qui mêle les deux sur un même segment publie un lacet
+de chariot que la caméra ne peut ni suivre ni plafonner proprement. Et
+la grandeur se gate sur le **chariot** (son `rotation.y` par frame ×60)
+et pas seulement sur la caméra : le plafond de lacet de la caméra
+(150°/s) rend la caméra calme **quoi que fasse le rail**, donc une
+caméra verte ne prouve rien sur le tracé.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
