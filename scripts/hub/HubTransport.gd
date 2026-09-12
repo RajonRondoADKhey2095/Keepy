@@ -57,15 +57,70 @@ const LINES: Array = [
 		"docks": [Vector3(-13.0, 0.0, -33.0), Vector3(52.0, 0.0, -98.0)]},
 ]
 
-## Where the hoppity ball is parked on the plateau: just south of the
-## spawn plaza, between the cabin path and the dock path. MEASURED against
-## the camera, not chosen for clearance alone: at Keepy's own z the frame
-## is only ~7 u wide (half-fov 22.5 deg at 8.9 u), so the first candidate
-## (-6.5, 0.5) -- 2.2 u of clearance, left of the owl -- was simply not in
-## the spawn frame. z = 5.2 is inside the bottom edge (ground visible to
-## z ~ 6.2) and x = 0.5 is centred, so the ball is the first thing behind
-## Keepy on the first frame.
-const BALL_PARK: Vector3 = Vector3(0.5, 0.0, 4.4)
+## Where the hoppity ball is parked on the plateau.
+##
+## ⚠️ CH78 MOVED IT, AND THE MOVE IS THE WHOLE LOT: 4.428 u from the spawn
+## to 33.956 u, on Mathieu's direction that it be parked "plus loin dans
+## la zone 0". Nothing else about the ball changed -- it is the same hop
+## modifier, mounted the same way, re-parked by the same off-screen rule.
+##
+## ITS ORIGINAL REASONING, KEPT because it is what the new site had to
+## satisfy too: at Keepy's own z the frame is only ~7 u wide (half-fov
+## 22.5 deg at 8.9 u), so a park chosen for ground clearance alone is
+## usually not in the spawn frame at all. The shipped (0.5, 4.4) was
+## inside the bottom edge and centred, so the ball was the first thing
+## BEHIND Keepy on the first frame.
+##
+## WHAT THE SWEEP MEASURED (HubParkRecon, 0.5 u grid over the whole
+## walkable bounds, 365 published discs). Five constraints -- region,
+## zone 0, dry, clear of every published disc by KeepyHopper.ARRIVE_EPSILON,
+## off the skatepark slab and the circuit -- keep 13 935 candidates, and
+## the N+1 table says which of them is a lever:
+##
+##   without region ................ 68 466      without dry ....... 17 766
+##   without zone 0 ................ 44 780      without clear ..... 25 179
+##   without slab/circuit .......... 13 935  <-- INACTIVE, and said so
+##
+## ⚠️ THE SLAB/CIRCUIT TERM RETRACTS NOTHING (13 935 with and without):
+## zone 0 already excludes the circuit, and the slab is already a disc in
+## HubSkatepark.footprints(). CLAUDE.md: a constraint that retracts
+## nothing must be called inactive, or it travels from brief to brief as
+## if it cost something.
+##
+## Two more terms then decide the answer, and the SECOND is the binding
+## one:
+##
+##   * the SPAWN FRAME cone (|x| <= 0.414*(8.9 - z)) -- the property the
+##     shipped park was chosen for, kept rather than silently given up;
+##   * the ball's own disc FITTING INSIDE the region with the same margin,
+##     on 16 azimuths. CH21: a prop whose CENTRE is on the border puts
+##     parts of itself past it, and nothing complains -- it just becomes a
+##     thing the player cannot walk round.
+##
+## The fit is what changes the answer, not the cone: furthest framed
+## candidate WITHOUT it is (18, -35) at 39.357 u, sitting exactly on the
+## plateau's south edge; WITH it the answer is this one, and it is the
+## same point whether the cone carries 0 or 1.0 u of margin -- so the cone
+## is not what bounds it and this park is not born on a limit.
+##
+## Measured at the chosen point: 33.956 u from the spawn, 0.560 u clear of
+## the nearest disc (a prop of r 0.26 at (-9.713, -31.58)), and the cone
+## has 9.35 u to spare. It is dead ahead and slightly left on the first
+## frame, on the way south toward the corridor.
+##
+## ⚠️ AND THE SHIPPED PARK WOULD ITSELF FAIL THAT DISC TEST, by 0.363 u
+## against the same kind of small prop. Said out loud because a constraint
+## set that condemns what is already running proves nothing by refusing:
+## the new park is chosen to be BETTER than the old one on that axis, not
+## merely legal by a rule the old one broke.
+##
+## ⚠️ WHAT THE MOVE COSTS, AND IT IS NOT NOTHING: the ball is no longer
+## the first thing behind Keepy, and at 34 u the fog (0.016 exponential)
+## has eaten ~42 % of it. Being inside the frame cone is CONTAINMENT, not
+## legibility. What makes it findable is its minimap marker (CH46,
+## MinimapMarkers.VEHICLE &"hopball"), which is the job a marker exists
+## for; without that marker this move would need a different answer.
+const BALL_PARK: Vector3 = Vector3(-8.0, 0.0, -33.0)
 
 ## CH29 -- FAMILY B, SECOND VEHICLE: the sand yacht ("char a voile"), the
 ## cove's own. Same door as the ball (tap it, walk, climb on).
