@@ -644,10 +644,65 @@ static func _lake_holding(flat: Vector3) -> int:
 ## d'automne") and the corridor that joins it to the plateau square, on the
 ## only strip of land between the spawn lake and the west edge. Same ground
 ## height as everything else: the region grows, nothing in it changes.
-const AUTUMN_MIN: Vector2 = Vector2(-33.0, -78.0)
-const AUTUMN_MAX: Vector2 = Vector2(33.0, -42.0)
-const CORRIDOR_MIN: Vector2 = Vector2(-33.0, -42.0)
-const CORRIDOR_MAX: Vector2 = Vector2(-23.0, -33.0)
+## =====================================================================
+## CH77 (12 septembre 2026) -- ZONES 1 ET 2 ELARGIES DE 10 u PAR COTE.
+##
+## THE MEASUREMENT THAT ASKED FOR IT. The painted ground is ONE 600x600
+## PlaneMesh (HubWorld.tscn) and cozy_ground.gdshader bands the autumn and
+## moor tones off `world_pos.z` ALONE -- there is no x term anywhere in
+## either band. So identical-looking ground runs to the horizon while
+## walking stopped at a rectangle. Swept at 0.5 u over x in [-60, 60]:
+##
+##   painted zone 1 band  z[-78,-42]   1995.2 u2 of 4398.2 REFUSED (45.4%)
+##   painted zone 2 band  z[-126,-86]  1158.5 u2 of 4880.3 REFUSED (23.7%)
+##
+## and the necks were worse: the zone 0 <-> 1 crossing admitted 10 u of
+## 120 painted (84.9% refused) and the zone 1 <-> 2 crossing 12 u of 120
+## (83.9%). Nothing else refused a step -- no collider stands in either
+## zone (all ten CollisionObject3D in the built world are zone 0), no
+## ground footprint is published there (0 of 206), and _advance() never
+## reads a footprint anyway. The rectangle WAS the whole obstacle.
+##
+## WHAT GREW, AND WHAT IS PINNED. Mathieu's arbitration: widen the region
+## AND the sowing, 10 u per side. Six sides take it. THREE ARE PINNED,
+## because +10 there would annex a NEIGHBOURING zone's band and this lot's
+## perimeter is zones 1 and 2:
+##
+##   AUTUMN_MAX.y  -42   PINNED: -32 would reach into the zone 0 square
+##                       (|z| <= 35). Compensated instead by widening
+##                       CORRIDOR below -- a zone 1 constant -- which takes
+##                       the 0 <-> 1 neck from 10 u to 30 u.
+##   MOOR_MIN.y    -126  PINNED: -136 would reach into CIRCUIT_MAX.y
+##                       (-134), i.e. zone 3.
+##   MOOR_MAX.x     38   PINNED: 48 would swallow COVE_CORRIDOR (x[38,44])
+##                       and overlap COVE_MIN.x (44), dissolving the zone
+##                       2 <-> 4 boundary. The moor takes its 10 u on the
+##                       WEST instead, so its span still grows 76 -> 86 u.
+##
+## ⚠️ THE ZONE 1 <-> 2 NECK IS GONE ON PURPOSE. AUTUMN now reaches z=-88
+## and MOOR reaches z=-76, so the two rectangles OVERLAP over z[-88,-76]
+## across x[-43,38]. That is the brief's target stated as geometry: the
+## road is a convenience, not the only way through. The consequence is
+## measured and named rather than discovered later -- CozyScatter's
+## `hedge2` pass plants where contains() is FALSE, so it now places ZERO
+## and the hedge between hollow and moor is gone. The ground shader still
+## turns leaf litter into heather at MOOR_EDGE_Z with a 3 u blend, so the
+## transition is still drawn; it is drawn ON walkable ground now instead
+## of behind a hedge.
+##
+## WHAT IT DOES NOT SPEND: the 22 s crossing ceiling. That is a ZONE 0
+## property and always was -- a gate-routed walk from the spawn to the
+## circuit's far corner already costs 249.6 u / 46.6 s at the published
+## hop rate (HOP_DISTANCE / HOP_DURATION = 5.357 u/s), and the bench that
+## measured it reproduces the square diagonal at 98.99 u / 18.479 s
+## against the published 18.700 s. Said, not assumed.
+const AUTUMN_MIN: Vector2 = Vector2(-43.0, -88.0)
+const AUTUMN_MAX: Vector2 = Vector2(43.0, -42.0)
+## CH77: +10 u on each side, which is the whole of the zone 0 <-> 1 neck
+## fix. It is a ZONE 1 constant -- in_autumn() owns it -- so widening it
+## opens the crossing without moving one number the square owns.
+const CORRIDOR_MIN: Vector2 = Vector2(-43.0, -42.0)
+const CORRIDOR_MAX: Vector2 = Vector2(-13.0, -33.0)
 ## Solid discs a walker must not stand in (the Mother Tree's trunk). A hole
 ## is checked FIRST in contains(), and clamp_to() offers its rim as a
 ## candidate, so a tap inside the trunk lands on the nearest bark.
@@ -656,8 +711,14 @@ const MOTHER_TREE_TRUNK_RADIUS: float = 2.7
 ## Carte-blanche v3 -- the third map beyond the hollow ("la Lande aux
 ## Moulins"), joined to it by a corridor east of the Mother Tree's axis.
 ## Same ground height again. The windmill's base is a hole like the trunk.
-const MOOR_MIN: Vector2 = Vector2(-38.0, -126.0)
-const MOOR_MAX: Vector2 = Vector2(38.0, -86.0)
+const MOOR_MIN: Vector2 = Vector2(-48.0, -126.0)
+const MOOR_MAX: Vector2 = Vector2(38.0, -76.0)
+## CH77: INERT, and kept for the reason the shore pad and the r=12 lobe
+## are kept -- a measured term of the union that costs nothing while
+## contained. AUTUMN now spans z[-88,-42] over x[-43,43], which covers
+## this rectangle whole, so it can no longer admit a point the autumn
+## term does not already admit. Removing it would also shift the draw
+## stream of everything downstream for no gain (CLAUDE.md CH53).
 const MOOR_CORRIDOR_MIN: Vector2 = Vector2(6.0, -86.0)
 const MOOR_CORRIDOR_MAX: Vector2 = Vector2(18.0, -78.0)
 const WINDMILL_AT: Vector3 = Vector3(14.0, 0.0, -106.0)
