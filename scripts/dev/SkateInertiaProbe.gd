@@ -417,6 +417,24 @@ func _phase_energy() -> void:
 			print("     [%d] rail: no riding surface above the ground -- see CH60 PHASE J. Skipped."
 				% index)
 			continue
+		if kind == HubSkatepark.KIND_LEDGE:
+			# ⚠️ CH82 -- A LEDGE IS NOT A TRANSITION, AND THIS PHASE IS
+			# ABOUT TRANSITIONS. Its contract is "the height reached is
+			# set by the ENERGY and not by the FORM", which describes a
+			# board CONVERTING an arrival into a climb. A ledge has no
+			# ramp: a board that arrives at one is CAUGHT (CH82), and
+			# the height it then reaches is the height of whatever line
+			# it ends up on. Measured on this tree before the skip was
+			# written: the 6, 8 and 10 u/s rungs all topped out at
+			# 0.681 -- the RAIL's line, which the ledge's own exit feeds
+			# into -- so the spread collapsed to 0.622 against 0.621 and
+			# the phase reported a flat response on a mechanism that was
+			# working exactly as designed. SkateGrindProbe PHASE E owns
+			# the arrival-to-entry law for these modules, and it gates
+			# it as an EQUALITY rather than as a conversion.
+			print("     [%d] ledge: no transition to convert an arrival into a climb -- a board that arrives is CAUGHT. Skipped (see SkateGrindProbe PHASE E)."
+				% index)
+			continue
 		if kind == HubSkatepark.KIND_BOWL:
 			# ⚠️ CH69 -- THE BOWL IS A RAMP RIDDEN FROM THE INSIDE, and
 			# this phase's launch is written for the OUTSIDE: it parks the
@@ -483,9 +501,34 @@ func _phase_energy() -> void:
 		_check(fast > p6,
 			"E[%d] and it passes the 45 deg iso-slope that was the real ceiling (%.3f > %.3f)"
 				% [index, fast, p6])
-		_check(fast <= lip + 0.60,
-			"E[%d] and it does not sail through a phantom volume (%.3f <= lip %.3f + 0.60)"
-				% [index, fast, lip])
+		# ⚠️ CH82 -- THIS GATE WAS THE OLD FORM OF A CLAIM CH61 HAD
+		# ALREADY CORRECTED **NEXT DOOR**, AND IT WAS STANDING ON ITS
+		# OWN LIMIT.
+		#
+		# CH61 rewrote SkatePhysicsProbe PHASE R's version of exactly
+		# this test and wrote down why: "height above a lip now has a
+		# second and entirely legitimate cause -- the board is thrown
+		# clear of the top and is briefly a projectile", so the test
+		# moved onto what it always meant, that nothing may HOLD the
+		# board above the lip. This copy kept the peak, and kept a
+		# tolerance of 0.60 u picked when the arrival was slower.
+		#
+		# Measured on BOTH trees: `origin/staging` reads 2.023 against
+		# a ceiling of 2.050 -- **27 millimetres** of margin on a 2 u
+		# reading. CH82's layout raises the arrival by 0.10 u/s (the
+		# coast is solved from `park_span`, which grew), the peak goes
+		# to 2.192, and the gate turns red on a board doing exactly
+		# what a 1.45 u quarterpipe taken at speed makes it do. A gate
+		# with 1.3 % of margin is not a gate (CH69), so it is RE-VISED
+		# and not widened: what it always meant is asserted, on the
+		# reading that means it.
+		var held_high: float = float((rows[rows.size() - 1] as Dictionary)["held"])
+		print("     [%d] highest the module ever HELD it: %.3f (peak %.3f, lip %.3f)"
+			% [index, held_high, fast, lip])
+		_check(held_high <= lip + 0.05,
+			"E[%d] nothing HELD it above the lip -- no phantom volume (held %.3f <= %.3f)"
+				% [index, held_high, lip + 0.05])
+
 	await _phase_signature()
 
 # =====================================================================
@@ -622,6 +665,7 @@ func _launch(index: int, want: float) -> Dictionary:
 	body.rotation.y = atan2(dir.x, dir.z)
 	body.velocity = dir * want
 	var peak: float = -1e9
+	var held: float = -1e9
 	var arrival: float = -1.0
 	var reached_foot: bool = false
 	for _t in RUN_TICKS:
@@ -632,11 +676,19 @@ func _launch(index: int, want: float) -> Dictionary:
 			reached_foot = true
 		if reached_foot:
 			peak = maxf(peak, body.global_position.y)
+			# ⚠️ CH82 -- AND THE HIGHEST THE MODULE EVER **HELD** IT,
+			# which is not the highest it ever got. CH61 already split
+			# these two in SkatePhysicsProbe PHASE R and wrote down why;
+			# this file kept the old single reading, and the phantom
+			# gate below was measuring air.
+			if body.on_module():
+				held = maxf(held, body.global_position.y)
 		if reached_foot and body.speed() <= body.rest_speed() and body.global_position.y < 0.02:
 			break
 	return {"arrival": arrival if reached_foot else 0.0,
-		"peak": peak if reached_foot else 0.0, "reached": reached_foot,
-		"mounted": mounted}
+		"peak": peak if reached_foot else 0.0,
+		"held": held if reached_foot and held > -1e8 else 0.0,
+		"reached": reached_foot, "mounted": mounted}
 
 # =====================================================================
 # PHASE R -- RED BEFORE GREEN, AT RUNTIME, AND THE ANSWER IT GAVE WAS

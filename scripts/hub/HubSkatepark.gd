@@ -116,6 +116,26 @@ const KIND_QUARTERPIPE: StringName = &"quarterpipe"
 const KIND_BOWL: StringName = &"bowl"
 const KIND_RAIL: StringName = &"rail"
 const KIND_FUNBOX: StringName = &"funbox"
+## CH82.
+const KIND_LEDGE: StringName = &"ledge"
+
+## =====================================================================
+## ⚠️ CH82 -- THE PARK HAS A DIRECTION, AND IT IS NOW WRITTEN DOWN
+##
+## The header above has said since CH53 that the park "is meant to be
+## ridden SOUTHWARD" and that the board is parked at the north end
+## BECAUSE of that. It was a sentence in a comment; three lots later a
+## layout lot needed it as a VALUE -- every module this lot adds is laid
+## along it, and SkateGrindProbe gates that they are.
+##
+## It is also the axis the auto-grind is built on. `SkateBoardBody`
+## catches a board only when it is travelling roughly ALONG a grind line
+## (GRIND_ALIGN_COS), which is what keeps a rider CROSSING the park from
+## being snatched onto a rail he was only passing -- SkatePhysicsProbe
+## PHASE J2's contract, unchanged, and now protected by the flow rather
+## than by luck. A park whose obstacles all point one way is therefore
+## not a styling choice here: it is what makes the magnetism legible.
+const FLOW: Vector2 = Vector2(0.0, -1.0)
 
 ## =====================================================================
 ## THE MODULES
@@ -203,6 +223,67 @@ const MODULES: Array[Dictionary] = [
 		"size": Vector3(7.2, 1.35, 7.2), "footprint": 4.4, "tap_radius": 3.0,
 		"rollin_aim": Vector2(0.0, 50.0),
 		"trick": &"carve", "points": 80},
+	# =================================================================
+	# ⚠️ CH82 -- THE STREET SECTION, AND IT IS APPENDED AND NEVER
+	# INSERTED
+	#
+	# Six files index this table by NUMBER (SkatePhysicsProbe's RIDES,
+	# PhysicsCostProbe's MODULES[4], SkateInertiaProbe's two lips,
+	# SkateDismountProbe's funbox, SkateAirProbe's two ramps). An insert
+	# would move every one of them silently, so the three below are
+	# indices 5, 6 and 7 and the five above keep theirs.
+	#
+	# WHERE. South of the five, on the slab this lot grows to meet them,
+	# on ground a recon measured EMPTY: inside x [-16, 16] and
+	# z [22, 46] the only published footprints in the whole hub are the
+	# funbox's and the bowl's own. Nothing was moved to make room.
+	#
+	# THE FLOW. All three carry yaw 0.0, i.e. long on Z, i.e. along
+	# `FLOW`. The rider comes off the funbox heading south and meets
+	# them in sequence; the camera never yaws and shows only z below its
+	# own, so content laid SOUTH of the park is content ahead of him
+	# (CH53's arithmetic, re-measured for this lot: from z = 46 the
+	# frame is 7.00 u half-wide at z = 38 and 8.24 at z = 35).
+	#
+	# ⚠️ THE RAIL AT INDEX 1 KEEPS ITS 0.30 rad, and that is a decision
+	# and not an oversight. It stands 17.19 deg off `FLOW` -- measured,
+	# not read off the constant -- which is inside the 40 deg the catch
+	# allows, so it grinds from a straight southward run like the three
+	# below. Turning it would move a module three chantiers have
+	# measured stations against, to buy an alignment the catch does not
+	# need.
+	#
+	# HEIGHTS. 0.30, 0.45, 0.62: a curb, a ledge, a block. The tallest
+	# is the rail's own authored height, so the park's grind lines span
+	# the reachable band rather than clustering. Every one of them is
+	# under SkateBoardBody.GRIND_CATCH_DROP with margin -- gated, and
+	# printed, by SkateGrindProbe PHASE C.
+	#
+	# TAP RADIUS 1.8 and not the 2.4 the ramps carry: a scoring disc is
+	# what `landed_within` picks a module by, and two overlapping discs
+	# make a strip of ground where WHICH module you scored is an
+	# accident of a centimetre (CH69's seventh constraint, gated by
+	# SkateparkProbe G5). A long thin block has no business claiming a
+	# ramp's disc, and 1.8 keeps the tightest pair -- this first one
+	# against the funbox -- 0.46 u apart.
+	# ⚠️ AND THE FIRST ONE IS LAID ON THE RAIL'S OWN LINE, ON PURPOSE.
+	# Measured: the rail's south end stands at (3.313, 45.634) and its
+	# line prolonged south passes x = 3.30 at z = 45. A ledge at x = 3.4
+	# is therefore where a rider who has just ground the rail southward
+	# ARRIVES, and the two catch volumes are 1.44 u apart at the join --
+	# far enough that neither steals the other (GRIND_CATCH_R is 0.46),
+	# close enough that the rail LINKS into it. That link is the whole of
+	# what "un seul sens de parcours" buys, and it is the reason these
+	# three are a line and not a scatter.
+	{"kind": KIND_LEDGE, "at": Vector2(3.4, 41.6), "yaw": 0.0,
+		"size": Vector3(0.55, 0.30, 5.2), "footprint": 3.0, "tap_radius": 1.8,
+		"trick": &"grind", "points": 35},
+	{"kind": KIND_LEDGE, "at": Vector2(1.0, 38.0), "yaw": 0.0,
+		"size": Vector3(0.55, 0.45, 4.4), "footprint": 2.6, "tap_radius": 1.8,
+		"trick": &"grind", "points": 40},
+	{"kind": KIND_LEDGE, "at": Vector2(-1.8, 34.4), "yaw": 0.0,
+		"size": Vector3(0.55, 0.62, 3.4), "footprint": 2.1, "tap_radius": 1.8,
+		"trick": &"grind", "points": 45},
 ]
 
 ## =====================================================================
@@ -300,7 +381,18 @@ func _process(delta: float) -> void:
 ## is ON the slab" with 0.05 u to spare. SkatePhysicsProbe PHASE X
 ## measures it -- until CH69 nothing in the repo read a slab dimension at
 ## all, and a constant nothing reads is a constant that outlives its lot.
-const SLAB_MIN: Vector2 = Vector2(-10.40, 41.0)
+## ⚠️ CH82 -- THE SOUTH EDGE MOVES FROM 41.0 TO 32.0, AND THE CORNERS
+## ARE WHY THAT IS ONE NUMBER AND NOT A RELAYOUT. CH69 turned the slab
+## from a centred size into its two corners precisely so a later lot
+## could grow it on ONE side; this is that lot. The north edge, the two
+## sides and every one of the five modules CH69 placed are untouched --
+## `slab_centre()` moves, and nothing reads it but the build and the
+## footprint.
+##
+## 32.0 and not less: the southmost module's concrete ends at z = 32.70
+## (index 7, half-length 1.70 about z = 34.4), so the kerb clears it by
+## 0.70 u. SkatePhysicsProbe PHASE X prints that margin and gates it.
+const SLAB_MIN: Vector2 = Vector2(-10.40, 32.0)
 const SLAB_MAX: Vector2 = Vector2(10.0, 59.0)
 const SLAB_WIDTH: float = SLAB_MAX.x - SLAB_MIN.x
 const SLAB_DEPTH: float = SLAB_MAX.y - SLAB_MIN.y
@@ -423,6 +515,8 @@ static func build_args(spec: Dictionary) -> Array:
 			return [size.z, size.y]
 		KIND_FUNBOX:
 			return [size.x, size.z * 0.55, size.y, size.z * 0.45]
+		KIND_LEDGE:
+			return [size.z, size.y, size.x]
 		KIND_BOWL:
 			return [size.x * 0.5, size.y, bowl_gate_first(spec), SkateparkMesh.BOWL_GATE_SECTORS]
 	return []
@@ -487,9 +581,85 @@ static func pieces_for(spec: Dictionary) -> Array:
 			return SkateparkMesh.rail_pieces(a[0], a[1])
 		KIND_FUNBOX:
 			return SkateparkMesh.funbox_pieces(a[0], a[1], a[2], a[3])
+		KIND_LEDGE:
+			return SkateparkMesh.ledge_pieces(a[0], a[1], a[2])
 		KIND_BOWL:
 			return SkateparkMesh.bowl_pieces(a[0], a[1], a[2], a[3])
 	return []
+
+## =====================================================================
+## CH82 -- WHERE A MODULE CAN BE GROUND, AND WHO OWNS THE ANSWER
+##
+## ⚠️ ONE BRANCH PER KIND, INCLUDING THE ONES THAT ANSWER "NOWHERE".
+## CH76's defect was a two-branch dispatch on a three-member enum: the
+## third member fell into the `else` and inherited a number measured for
+## something else, silently, and the lot that ARMED it had no reason to
+## re-read a table it did not touch. Four kinds, four branches, and a
+## fifth kind added tomorrow gets a `push_error` instead of a rail's
+## geometry.
+##
+## The LINE ITSELF is the builder's (SkateparkMesh.*_grind_line), for
+## the reason every other number in this pair of files is: the collision
+## pieces and the mesh already come from one place, and a third reading
+## of "where is the top of this thing" would be the second spelling this
+## whole convention exists to refuse.
+static func grind_line_local(spec: Dictionary) -> Array:
+	var a: Array = build_args(spec)
+	match StringName(spec["kind"]):
+		KIND_RAIL:
+			return SkateparkMesh.rail_grind_line(a[0], a[1])
+		KIND_LEDGE:
+			return SkateparkMesh.ledge_grind_line(a[0], a[1])
+		KIND_QUARTERPIPE:
+			# A transition has a COPING, and a coping is a grind in a
+			# real park. It is not one here and the reason is measured,
+			# not stylistic: the lip of the 2.10 stands 1.62 u above
+			# what SkateBoardBody.GRIND_CATCH_DROP reaches, so a rider
+			# could only ever be caught on it out of an air CH66 priced
+			# at 0.762 s of window against 0.817 s of flight. A feature
+			# reachable in five hundredths of a second is a feature
+			# nobody has. Named here rather than left to an `else`.
+			return []
+		KIND_FUNBOX:
+			# Its deck EDGE is grindable in a real park too, and here it
+			# is the deck itself the board rides -- a line along the
+			# edge would fight the surface 3 cm beside it for the same
+			# board. The funbox stays a thing you ride over.
+			return []
+		KIND_BOWL:
+			return []
+	push_error("HubSkatepark: no grind answer for module kind '%s'." % spec["kind"])
+	return []
+
+## The park's grind lines in WORLD space, read off the nodes this file
+## BUILT -- never recomposed from `at` and `yaw`, which would be a second
+## spelling of a placement the tree already holds.
+##
+## Handed to SkateBoardBody once, by HubWorld, at setup. The board does
+## not know the park exists; the park does not know a board does.
+func grind_edges() -> Array:
+	var out: Array = []
+	for index in MODULES.size():
+		var line: Array = grind_line_local(MODULES[index])
+		if line.is_empty():
+			continue
+		var node: MeshInstance3D = _nodes[index]
+		out.append({
+			"module": index,
+			"a": node.global_transform * (line[0] as Vector3),
+			"b": node.global_transform * (line[1] as Vector3),
+		})
+	return out
+
+## The highest grind line the park publishes. Read by SkateGrindProbe,
+## which gates it against the catch's reach: the day a module is laid
+## whose line is out of the board's range, that probe goes red instead of
+## the park quietly growing a rail nobody can get onto.
+func grind_edge_max_height() -> float:
+	var top: float = -1e9
+	for e in grind_edges():
+		top = maxf(top, maxf((e["a"] as Vector3).y, (e["b"] as Vector3).y))
+	return top
 
 func _maybe_collide(node: MeshInstance3D, index: int, spec: Dictionary) -> void:
 	var pieces: Array = pieces_for(spec)
@@ -538,6 +708,8 @@ func _mesh_for(builder: SkateparkMesh, spec: Dictionary) -> ArrayMesh:
 			return builder.rail(a[0], a[1])
 		KIND_FUNBOX:
 			return builder.funbox(a[0], a[1], a[2], a[3])
+		KIND_LEDGE:
+			return builder.ledge(a[0], a[1], a[2])
 		KIND_BOWL:
 			return builder.bowl(a[0], a[1], a[2], a[3])
 	push_error("HubSkatepark: unknown module kind '%s'." % spec["kind"])

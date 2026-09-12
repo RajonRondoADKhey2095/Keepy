@@ -1472,6 +1472,32 @@ C'est la même exigence que « publier le SPREAD à côté de la moyenne » pour
 un banc de coût de shader, et pour la même raison : **le plancher de bruit
 est la seule chose qui dise si un écart est un effet ou un artefact.**
 
+### ⚠️ UN ÉCHANTILLONNEUR BORNÉ À L'AABB DE SON SUJET NE PEUT PAS VOTER « DEHORS » QUAND LE SUJET **EST** SON AABB
+
+Complément de CH40 (« un delta sans son plancher ne vaut rien ») et de
+CH60 (« un test valide sur une classe de formes est un tirage au sort
+sur une autre »), côté INSTRUMENT D'ÉCHANTILLONNAGE. Mesuré au CH82.
+
+`SkatePhysicsProbe` PHASE V compare le solide DESSINÉ au solide du
+serveur de physique sur une grille tendue dans l'AABB du module, et
+porte depuis CH66 la garde obligatoire « les deux classificateurs
+votent dans les deux sens ». Le jour où un module a été une **BOÎTE**,
+les deux ont voté « dedans » **1 521 fois sur 1 521** : une boîte
+REMPLIT son AABB, il n'existait aucun échantillon dehors, et la garde a
+refusé de signer — correctement. Sans elle, l'accord aurait été publié
+comme une mesure.
+
+**Règle** : une grille d'échantillonnage tendue sur l'emprise de son
+sujet doit **déborder** de cette emprise, sinon la classe de formes qui
+remplit son emprise la rend muette. Et le débordement se fait
+**d'exactement une CELLULE, avec le nombre de pas augmenté de deux** :
+`(taille + 2·cellule) / (pas + 2) = cellule`, donc la taille de cellule
+est inchangée et **chaque échantillon intérieur retombe sur le point
+monde qu'il occupait déjà**. Les sujets déjà mesurés gardent leurs
+verdicts à l'échantillon près, et le seul ajout est une coquille d'air
+sur laquelle les deux classificateurs doivent s'accorder — ce qui est
+précisément le vote qui manquait.
+
 ### ⚠️ UNE LISTE DE CE QUI N'EST PAS LE SUJET EST FAUSSE AU PREMIER NOM OUBLIÉ
 
 Corollaire de « un fait est publié une fois, jamais recopié », côté LECTEUR.
@@ -1836,6 +1862,67 @@ coordonnée écran** — et n'appelle l'API du prop que pour LIRE le résultat.
 Une sonde qui appelle la fonction qu'un tap aurait appelée mesure la
 fonction, pas l'interaction, et les deux ne tombent jamais en panne
 ensemble.
+
+### ⚠️ UN VOLUME DE CAPTURE QUI COMMENCE OÙ COMMENCE LE SOLIDE SE DÉCLENCHE APRÈS LA COLLISION
+
+Écrit au CH82, en donnant au skate un accrochage automatique sur les
+rails et les ledges du parc, et le symptôme ne ressemble pas à sa
+cause : la mécanique marchait, et elle commençait par un crash.
+
+Une ledge est un BLOC, donc sa face d'extrémité est un MUR. La capture
+était écrite « le corps est pris quand son CENTRE est à moins de
+`GRIND_CATCH_R` du segment » — c'est-à-dire quand son **NEZ**, une
+demi-longueur devant, a déjà percuté cette face. Vidé tick par tick :
+**8,832 u/s à z 38,386, puis 2,032 u/s quatre ticks plus tard**, puis
+une seconde et demie à contourner le bloc avant que l'aimant ne
+morde. Aucune erreur, aucune sonde rouge — et la fonctionnalité
+annoncée « automatique » s'ouvrait sur un arrêt net.
+
+**Règle** : tout volume de capture, d'aimantation ou d'accrochage
+**devance** la géométrie qu'il sert, d'au moins **la demi-longueur du
+corps plus un pas de simulation** (le corps avance pendant que le test
+attend la frame suivante — à la croisière, 0,167 u par tick sur ce
+projet). Le terme se **dérive du corps**, jamais du décor : au CH82
+c'est `DECK_LENGTH`, dont les deux moitiés sont nommées séparément.
+
+⚠️ **Et le corollaire de forme** : un corps pris AVANT le début de la
+ligne doit être porté **le long de la ligne prolongée**, pas tiré vers
+son extrémité. Le décalage enregistré à la prise est alors
+perpendiculaire par construction, et le corps ne gagne ni ne perd de
+terrain — une première rédaction qui projetait sur le segment borné le
+faisait avancer de 0,92 u en 0,19 s **en plus** de sa propre vitesse,
+c'est-à-dire un à-coup vers l'avant à chaque accrochage.
+
+### ⚠️ UNE TRANSITION ATOMIQUE DONT LA FIN DÉPEND D'UNE GRANDEUR QUI DÉCROÎT PEUT NE JAMAIS FINIR
+
+Corollaire du précédent, trouvé dans le même lot, et c'est un **état
+bloquant** de la famille que ce dépôt a déjà expédiée une fois (CH58 :
+une planche dont chaque tap était avalé, sortie par rechargement de
+page).
+
+Une transition d'accrochage se rend volontiers **ATOMIQUE** — aucune
+sortie tant qu'elle n'est pas finie — et pour une bonne raison : lâcher
+un corps à mi-chemin le laisse potentiellement **à l'intérieur d'un
+solide**, et la dépénétration du moteur l'éjecte à une vitesse que
+personne n'a choisie. Mais si l'état « fini » dépend d'une grandeur qui
+**DÉCROÎT** (une vitesse que la friction mange), un corps qui s'arrête
+avant la fin de la transition n'atteindra jamais la condition de
+sortie, et **rien ne le lâche**.
+
+**Règle, et il en faut les deux moitiés** :
+
+1. **La condition d'ENTRÉE exige de quoi finir.** Au CH82 :
+   `v² ≥ v_min² + 2·a·(ce qu'il reste à parcourir avant la ligne)`,
+   dont le seuil nu `v_min` est le cas « rien à parcourir ». Une règle
+   qu'il faut rattraper est une règle fausse.
+2. **UNE sortie au moins n'est PAS gatée sur la fin de la
+   transition**, et elle repose le corps sur le niveau d'où il a été
+   pris — sa propre coupe transversale de l'approche, qui est hors du
+   solide par construction puisqu'il y roulait l'instant d'avant.
+
+C'est ce qui permet d'écrire « il n'existe aucune sortie de ce
+mécanisme qui puisse ne pas se déclencher » comme un fait et non comme
+un espoir.
 
 ### ⚠️ UNE MARCHE DE LONGUEUR NULLE N'ÉMET PAS D'ATTERRISSAGE
 
@@ -4067,6 +4154,8 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH79 | **Le quad raptor : sixième véhicule, première MONTURE, et la séparation des deux gestes continus prouvée dans les deux sens.** Recon bloquant : le karting est **confiné**, mais ⚠️ **la référence libre existait déjà** (yacht/voilier/luge sur `SandYacht.drivable()`), un véhicule conduit **n'utilise pas le routeur piéton**, et `is_afoot()` bascule gratuitement via `ON_CARRIER` — **rien de neuf à valider**. Bâti sur `SurfaceDrive` (le composite que CH35 Q2-B destine au véhicule NEUF), `VehicleDrive`, `KartTouchInput`, `ChaseTuning.vehicle()` : **zéro patron neuf**. Park mesuré (six contraintes, ⚠️ **deux inactives**, le binding est le dégagement de sortie), placeholder **132 triangles**, croisière **dérivée de la marche** et `PACE_RATIO` **dit être du goût** (CH70). ⚠️ **Deux tables de dispatch à défaut `ball_*` désarmées** (forme CH76) et une dette de garde préalable fermée. `QuadProbe` xvfb **75 assertions / 0 rouge** ; **+132 primitives garée = exactement son compte de triangles** ; **43 891 contre 44 858 pour la LUGE** au même poste — ⚠️ **le KART n'est pas comparable et c'en est un résultat** (zone 3, autre scène). ⚠️ **Trois défauts d'instrument** (le banc conduisait la monture DANS LE MUR puis y mesurait sa croisière). **Quatre passes rouges : 2/2, 1/1, 0/0 prédit, 1/1** — la 3a a produit la doctrine ci-dessus. | [`CH79_QUAD_RAPTOR.md`](docs/lots/CH79_QUAD_RAPTOR.md) | 11 | 335 | 12 sept |
 | CH80 | **Le quad raptor est un ATV, pas un dinosaure — maillage reconstruit, zéro mécanique touchée.** CH79 avait lu « quad raptor » comme une MONTURE À QUATRE PATTES ; « Raptor » est le nom d'un quad Yamaha. ⚠️ **Le périmètre annoncé par CH79 a été MESURÉ avant d'être cru** (CH70 : un chiffre recopié est périmé jusqu'à preuve du contraire) : la surface publique lue par le reste du dépôt est 15 symboles statiques + 10 méthodes, aucun collider n'est dérivé du maillage, aucune assise n'est lue sur une patte — et la preuve est que `QuadProbe` PHASE D rend **les mêmes chiffres au dix-millième sur les deux arbres** (croisière 11,5185, 20,57 u en 2,22 s, arrêt en 363 frames) pour un maillage passé de 132 à **1 104 triangles**. ⚠️ **LE GATE DE MAILLAGE N'A PAS ÉTÉ RELÂCHÉ, LA GÉOMÉTRIE A ÉTÉ CONSTRUITE DANS SA CLASSE** : `SledBody._hexa` (8 coins, 6 quads, 12 triangles) est aussi un **COIN DE CYLINDRE**, donc *n* coins font un cylindre à *2n* côtés — **68 pièces de coque + 24 coins de roue, toutes convexes, toutes à 12 triangles**, roues à 12 côtés comme celles de `KartBody`, et les **75 assertions sont restées vertes sans qu'une ligne de sonde bouge**. Les indices d'enroulement sont les **axes authored** et non le centroïde, sinon le test emploierait son propre critère (tautologie CH62) ; son blind check rend **816/816** sur la géométrie neuve. Traits mesurés : voie **1,820 / 2,065 = 0,881** contre le kart à **0,688**, garde au sol **0,260 = 65 % du rayon arrière** (quad réel ~37 %), barre à **+0,39 u au-dessus de la selle** (le volant du kart est à +0,37), museau **0,50 → 0,22 u**, roues arrière plus grosses **et visiblement plus lentes** (−1,163 contre +1,711 rad après 18,277 u). ⚠️ **Les teintes : la réponse évidente a été mesurée et REFUSÉE** — le turquoise CH79 lit **1,23:1** contre `AUTUMN_A`, il ne perd pas du contraste, il DISPARAÎT ; et ce n'est pas un problème de turquoise, la pire bande est à **L 0,313** donc franchir 3,0:1 exige **L ≤ 0,071** et aucune carrosserie n'est aussi sombre. Le plancher est porté comme au CH48 par une pièce d'UN SEUL TON — pneus **5,87:1**, cadre **3,91:1** — qui ceinture toute la moitié basse, et la carrosserie (bleu Raptor, 218° contre l'herbe) est alors libre. ⚠️ **La pose « assis à califourchon » est HORS PÉRIMÈTRE et le lot le dit** : il n'existe aucune pose assise dans ce dépôt, `mount_carrier()` écrit le rider DEBOUT et six véhicules partagent ce code. Coût : **+972 triangles**, delta **+1 104 EXACTEMENT** au spawn comme au poste de PHASE B (l'assertion de câblage), conduite **44 863 contre 45 830 pour la LUGE** au même poste. Passe rouge **3/3 prédits**, fichier restauré byte-identique. ⚠️ **Deux défauts d'INSTRUMENT** : la station de rendu mettait la **CAMÉRA dans un pommier** (dégagée au sol, 8,9 u plus au nord), et un `_gait` en rad/u aurait fait rougir « à l'arrêt ça ne pédale pas » (**0,060 contre un seuil de 0,05**) sur un mécanisme correct — d'où l'odomètre en UNITÉS, qui est de toute façon la primitive dont les deux tailles de roue dérivent. Deux doctrines nouvelles dans `CLAUDE.md`. | [`CH79_QUAD_RAPTOR.md`](docs/lots/CH79_QUAD_RAPTOR.md) | 9 | 245 | 12 sept |
 | CH81 | **Le kart perd la marche arrière, et lui seul — et le filet a été MESURÉ avant d'être retiré.** La situation est **(b)** : `KartTouchInput` a deux instances, celle du kart et **une seule pour le char à voile, le voilier, la luge et le quad**, donc le retrait est une **quatrième valeur d'instance** (`allows_reverse`, défaut TRUE, moule de `boost_span`) plus **une ligne** dans `HubKarting` — jamais un branchement « si c'est un kart » dans `VehicleDrive`, et jamais `REVERSE_SPEED = 0` (qui aurait fait un maintien-à-zéro et atteint `input.brake`, la branche des trois adversaires). ⚠️ **Ce que le rapport retenait, mesuré sur LA BONNE SCÈNE** : la barrière du kart CLAMPE et RÉFLÉCHIT là où le mur du hub REFUSE le pas — **52/52 stations bloquées 10 s nez au mur à l'arrêt**, 2/12 au contact piloté, **3/12 après stabilisation dont le plein-axe dans LES DEUX SENS**, pour **0,28 % de plein braquage** et **aucun geste pour cesser de pousser** (accélérateur automatique). Signalé, non corrigé, décision Mathieu. Garde lu à trois canaux (pouce, clavier, HUD), aucun redondant ; `ReverseProbe` **129 → 151 / 0 rouge** avec A/B sur le même kart à un booléen d'écart ; **quatre passes rouges dont une a trouvé un vert gratuit DANS la sonde** (un drag « bas » écrit vers le haut, et un `throttle` tenu relu cent frames plus tard) ; traces kart et char **byte-identiques** ; et **un rouge préexistant de `KartProbe` sur `staging`** (panneau chrono à 414 pour un `PANEL_WIDTH` de 380) que ce lot rend vert **par accident**, sans le corriger. Une doctrine nouvelle. | [`CH43_GESTE_UNIQUE.md`](docs/lots/CH43_GESTE_UNIQUE.md) | 8 | — | 12 sept |
+
+| CH82 | **Le skatepark s'étend vers le sud, et la planche s'accroche toute seule.** Recon reproduisant trois chiffres au dossier (`park_span` 23,2008 contre 23,201 publié, `push` 16,4253 / `brake` 11,0800 contre CH70) avant d'en publier un de neuf. ⚠️ **Le sens de « rampe » est tranché par la MESURE** : le rail est le seul élément accrochable, les quarterpipes sont exclus parce que la lèvre du 2,10 se tient **1,62 u au-dessus** de ce que la capture atteint et qu'un rider n'y serait pris qu'en sortant d'un air chiffré par CH66 à 0,762 s exigées contre 0,817 de vol. ⚠️ **Et la planche ne peut pas atteindre le rail toute seule** : son pop culmine à **0,4808 u** contre un dessus de poutre à **0,680** — ce qui est livré est une AIMANTATION, dite comme telle, bornée par `GRIND_CATCH_DROP = POP_SPEED × GRIND_MOUNT_S` de sorte que la montée ne dépasse **jamais** POP_SPEED (mesuré 3,5360 au pire montage). Extension : `FLOW` publié, **trois ledges** (0,30 / 0,45 / 0,62) toutes à **0,0000 deg** de l'axe, dalle poussée d'un seul côté (41,0 → 32,0 — ce pour quoi CH69 l'avait mise en COINS), la première posée **sur la ligne prolongée du rail** de sorte que le parc s'enchaîne (sortie z 44,20, reprise 4 ticks plus tard à 44,69). ⚠️ **Coût publié aux deux bouts** (CH69) : `park_span` **23,2008 → 26,8461** donc `drag_k` 0,029876 → 0,025819, `push` 16,4253 → 16,0519, `brake` 11,0800 → 11,4324 — les distances *authored* ne bougent pas, c'est un changement de TOUCHER à valider device ; et le tapis est **rebattu** (bush 17 → 5, instances 2 689 → 2 602), la parade CH71 refusée avec sa raison écrite. ⚠️ **La portée d'approche est ce sans quoi le lot ne marche pas** : sans elle la planche percute la face de la ledge (**8,832 → 2,032 u/s en quatre ticks**) et la passe rouge rend **10 rouges pour 4 prédits**, les six extras ayant une seule cause — quatre courses sur six ne sont plus accrochées du tout. Entrée = approche à **1e-6** sur quatre approches (écart 4,5195 pour un plancher de banc de **0,000036**), quatre sorties toutes mesurées, et **la sortie par la vitesse n'est pas gatée sur le montage** parce qu'une transition atomique dont la fin dépend d'une vitesse qui décroît peut ne jamais finir. `SkateGrindProbe` **103 assertions / 0 rouge**, quatre neutralisations à l'exécution bornant chaque seuil des deux côtés. ⚠️ **Passe rouge d'alignement : 3 rouges pour 5 prédits**, et les deux manquants sont la trouvaille — J2 reste vert parce que le MUR tient la planche à 0,736 u de la ligne, **hors** du rayon de capture (0,460), donc ce cas n'atteint jamais le test d'alignement. Deux défauts d'instrument dans `SkatePhysicsProbe` : PHASE V ne pouvait pas juger une BOÎTE (1 521 dedans sur 1 521, la garde a refusé de signer) et PHASE N mesurait le grind sur un module neutralisé (108 ticks « supported »). Budget **771 → 879** sur un plafond de 6 000. Trois doctrines nouvelles. | [`CH82_SKATEPARK_GRIND.md`](docs/lots/CH82_SKATEPARK_GRIND.md) | 6 | 389 | 12 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

@@ -416,6 +416,70 @@ func rail(length: float, height: float) -> ArrayMesh:
 		_box(Vector3(0.0, height * 0.5, z), Vector3(RAIL_LEG, height, RAIL_LEG), CONCRETE_DARK, CONCRETE_DARK)
 	return _mesh()
 
+# =====================================================================
+# CH82 -- THE LEDGE
+#
+# A block of concrete with a steel angle down each top edge: the street
+# half of a skatepark, and the cheapest module this file holds. ONE box
+# of solid (twelve triangles, one convex piece, nothing to decompose)
+# plus two decor angles in surface 1 -- the funbox's own idiom, argument
+# for argument, because a coping that is DRAWN and NOT SOLID belongs in
+# the second surface (D5) and SkatePhysicsProbe PHASE G reads surface 0.
+#
+# ⚠️ THE PALE TOP IS THE CONTRACT, NOT DECORATION. The park is unlit and
+# nothing post-processes the frame (CLAUDE.md), so a grey box on grey
+# concrete has no cue at all for "you can grind this". The two COPING
+# angles are that cue, and they run the block's whole length because
+# what a rider has to read is a LINE, not a corner.
+#
+# Local frame: long on Z, which is the park's flow axis -- see
+# HubSkatepark.FLOW. Width on X, height up.
+
+## The steel angle: the funbox's section exactly (0.07 x 0.035), so the
+## two modules read as the same park rather than as two authors.
+const LEDGE_ANGLE_W: float = 0.07
+const LEDGE_ANGLE_H: float = 0.035
+## How far the steel stands proud of the concrete. The funbox's 0.0075
+## (its angle is centred at `height - 0.01` and is 0.035 tall), restated
+## as the number it is rather than left to be re-derived from two others.
+## It must be > 0: two coplanar faces z-fight, and a coping flush with
+## its own concrete is the one way to draw this that cannot work.
+const LEDGE_ANGLE_PROUD: float = 0.0075
+
+func ledge(length: float, height: float, width: float) -> ArrayMesh:
+	_box(Vector3(0.0, height * 0.5, 0.0), Vector3(width, height, length), CONCRETE, CONCRETE_DECK)
+	_decor = true
+	for s in [-1.0, 1.0]:
+		var x: float = s * (width * 0.5 - LEDGE_ANGLE_W * 0.5)
+		var y: float = height + LEDGE_ANGLE_PROUD - LEDGE_ANGLE_H * 0.5
+		_box(Vector3(x, y, 0.0), Vector3(LEDGE_ANGLE_W, LEDGE_ANGLE_H, length), COPING, COPING)
+	_decor = false
+	return _mesh()
+
+## `ledge()`'s own signature, argument for argument. One box, so the
+## "decomposition" is the box -- there is no fidelity question to answer,
+## which is exactly what PHASE G's point-set EQUALITY then proves.
+static func ledge_pieces(length: float, height: float, width: float) -> Array:
+	return [_box_points(Vector3(0.0, height * 0.5, 0.0), Vector3(width, height, length))]
+
+## =====================================================================
+## CH82 -- WHERE A MODULE CAN BE GROUND, IN ITS OWN FRAME
+##
+## Published by the BUILDER, because the line a rider slides along is a
+## reading of the geometry this file lays down and must not become a
+## second spelling of it. Both lines below are the TOP OF THE SOLID --
+## the surface `*_pieces()` hands the physics server -- and not the top
+## of the steel, which stands LEDGE_ANGLE_PROUD above it and is drawn in
+## a surface the collider never sees.
+static func ledge_grind_line(length: float, height: float) -> Array:
+	return [Vector3(0.0, height, -length * 0.5), Vector3(0.0, height, length * 0.5)]
+
+## The rail's beam, whose top is its own half-thickness above the height
+## it is authored at -- the number PHASE J already prints.
+static func rail_grind_line(length: float, height: float) -> Array:
+	var top: float = height + RAIL_BEAM * 0.5
+	return [Vector3(0.0, top, -length * 0.5), Vector3(0.0, top, length * 0.5)]
+
 ## The eight corners of a box, in the same (centre, size) terms `_box`
 ## takes. Static and shared by every piece builder below, so "the corners
 ## of the box the builder drew" has ONE spelling in this file.

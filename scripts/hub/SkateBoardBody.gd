@@ -930,6 +930,18 @@ func pace() -> float:
 ## `supported()`, which only says the board is above HubSurface and is
 ## therefore also true of a board in mid-air over the lawn -- a state
 ## that could not exist before this lot and can now.
+##
+## ⚠️ CH82 WIDENED IT, AND SAYS SO RATHER THAN LETTING A READER FIND
+## OUT. A board on a GRIND LINE is held by this file and not by the
+## engine's floor solver, and it sets this flag anyway -- because every
+## reader of it wants "is something holding the board", and answering
+## "no" would make the air machinery call a grind a flight, fire a
+## take-off, and pop the board off the end of a rail. The cost is that a
+## probe reading it as "the engine's floor contact" now also reads a
+## grind: SkateInertiaProbe PHASE E was measuring exactly that when it
+## reported a ledge HOLDING the board at 0.681 (the rail's line, which
+## the ledge's exit feeds into). `grinding()` is what separates the two,
+## and it is published for that.
 func on_module() -> bool:
 	return _on_module
 
@@ -962,6 +974,211 @@ static func slope_force(n: Vector3) -> float:
 ## without looking at the other ships a hill nothing can leave.
 func climb_authority(n: Vector3) -> float:
 	return _push * n.y
+
+# =====================================================================
+# CH82 -- THE GRIND
+#
+# ⚠️ MATHIEU'S CONTRACT, WORD FOR WORD: "quand Keepy touche un element de
+# grind, il s'accroche AUTOMATIQUEMENT dessus et glisse le long, sans
+# action du joueur pour declencher l'accrochage". No gesture, no button,
+# no window to hit. That is the whole spec and it is the reason none of
+# what follows is a trick: CH66 is this repo's standing measurement that
+# a mechanic gated on a GESTURE inside a WINDOW has to be priced against
+# the window the game actually opens, and the park opens 0.817 s against
+# 0.762 s of thumb. A mechanic that asks for nothing cannot lose that
+# race, and this one asks for nothing.
+#
+# =====================================================================
+# ⚠️ THE BOARD CANNOT REACH THE RAIL ON ITS OWN, AND THAT IS MEASURED
+#
+# Recon, on the delivered park: the rail's beam top stands at y = 0.680,
+# and POP_SPEED under GRAVITY reaches an apex of 0.4808 u from the flat.
+# The rail is 0.1992 u ABOVE everything this board can do by itself. So
+# "he touches it and stays on it" cannot be a collision outcome --
+# SkatePhysicsProbe PHASE J has measured since CH60 that a rolling board
+# passes UNDER that beam (its capsule tops out at 0.26 against a 0.56
+# underside) and only ever meets a LEG.
+#
+# What ships is therefore a MAGNETISM, said plainly rather than dressed
+# up as physics: a board travelling along a published grind line, near
+# enough and fast enough, is TAKEN onto it. Two things keep that from
+# being a licence:
+#
+#   1. THE LIFT IS BOUNDED BY THE BOARD'S OWN POP. `GRIND_CATCH_DROP` is
+#      `POP_SPEED * GRIND_MOUNT_S` exactly, so the mount can never raise
+#      the board faster than POP_SPEED -- the speed it lifts itself at.
+#      Nothing here moves a board in a way the board could not move.
+#   2. IT ONLY CATCHES ALONG THE FLOW. A board crossing a rail is not
+#      grinding, it is crossing, and `GRIND_ALIGN_COS` says so. This is
+#      what leaves PHASE J's two verdicts (a leg is solid; the gap lets
+#      the board through) EXACTLY as CH60 wrote them -- both of its runs
+#      are across the rail, at 90 deg, and neither is a grind.
+#
+# ⚠️ AND A SONDE CANNOT SIGN THE FEEL OF IT. CH62: what this file's
+# bench can prove is that the entry speed IS the approach speed, that
+# the deceleration is the published one, that the lift is bounded, that
+# the exit is clean and that nothing runs when the board is not on a
+# line. Whether being taken onto a rail without asking reads as
+# satisfying or as being grabbed is a device call, and it is written in
+# the report as one.
+
+## The rail's own friction, as a coefficient on gravity rather than as a
+## deceleration typed next to the ground's. Steel under trucks is
+## slipperier than concrete under urethane and that is the whole of what
+## this number says; SkateGrindProbe gates both ends of it -- that a
+## board entering at cruise CLEARS the longest line the park publishes,
+## and that it is below what the ground takes at the same speed.
+##
+## ⚠️ IT IS A FEEL NUMBER AND IT IS DECLARED AS ONE. CH70 is this repo's
+## lesson that a taste stops being one the moment another lot leans on
+## it; nothing leans on this yet, and the day something does, the sweep
+## CH70 describes is owed before it moves.
+const GRIND_MU: float = 0.07
+const GRIND_DECEL: float = GRIND_MU * GRAVITY
+
+## How long the mount takes. The time the board's own ollie takes to
+## reach its apex -- so the one moment this mechanic moves a board by
+## something other than its law of motion lasts exactly as long as the
+## board's own jump does.
+const GRIND_MOUNT_S: float = POP_SPEED / GRAVITY
+
+## ⚠️ HOW FAR BELOW A LINE THE CATCH REACHES, AND WHY IT IS THIS PRODUCT
+## AND NOT A ROUND NUMBER. The mount carries the board through its whole
+## offset in GRIND_MOUNT_S, so the vertical rate is `drop / MOUNT_S`.
+## Setting the drop to `POP_SPEED * GRIND_MOUNT_S` makes that rate
+## exactly POP_SPEED at the worst case and less everywhere else: the
+## board is never lifted faster than it lifts itself. It comes to
+## 0.9615 u, against the park's tallest line at 0.680 -- 0.28 u of
+## margin, printed and gated by SkateGrindProbe PHASE C, with a red pass
+## that puts a line above it and demands the catch refuse.
+const GRIND_CATCH_DROP: float = POP_SPEED * GRIND_MOUNT_S
+## And from above: one board width, so a board dropping onto a rail out
+## of an air is caught and one sailing a metre over it is not.
+const GRIND_CATCH_RISE: float = SkateparkMesh.DECK_WIDTH
+## Sideways: half a deck. The board is taken when its centre is within
+## half its own length of the line.
+const GRIND_CATCH_R: float = SkateparkMesh.DECK_LENGTH * 0.5
+
+## ⚠️ AND LENGTHWISE THE CATCH REACHES ONE DECK PAST EACH END OF THE
+## LINE, WHICH IS NOT A GENEROSITY -- IT IS THE ONLY WAY THE MECHANIC
+## WORKS AT ALL, AND IT WAS MEASURED.
+##
+## A ledge is a BLOCK: its end face is a vertical wall 0.30 to 0.62 u
+## high, and the board's capsule tops out at 0.26. A rider coming down
+## the park's flow meets that face HEAD ON, and the first version of
+## this file caught him only once his centre was inside the segment --
+## by which time his NOSE, half a deck ahead of his centre, had already
+## hit it. The per-tick dump is unambiguous: 8.83 u/s at z 38.39,
+## 2.03 u/s at z 38.56, then a second and a half of scrabbling round the
+## corner before the catch fired at all. Automatic, and it began with a
+## crash.
+##
+## One deck length, and BOTH halves of it are a term: half a deck is the
+## nose itself, and the other half covers the tick the catch runs behind
+## the move (a board at cruise travels 0.167 u in a tick). So the board
+## is taken while its nose is still clear of the thing it is about to
+## grind.
+const GRIND_CATCH_LEAD: float = SkateparkMesh.DECK_LENGTH
+
+## ⚠️ 40 deg, AND IT IS THE CONSTANT THAT PROTECTS THE OLD CONTRACT. The
+## rail stands 17.19 deg off the park's FLOW, so a rider coming straight
+## down the park is inside this and grinds. A rider CROSSING at 90 deg
+## is outside it and passes under the beam exactly as he always has.
+## Measured both sides in SkateGrindProbe PHASE A rather than argued.
+const GRIND_ALIGN_COS: float = cos(deg_to_rad(40.0))
+## And the way off: steer more than 75 deg away from where the line is
+## carrying you. Deliberately much wider than the catch -- a rider
+## correcting his line by a few degrees must not fall off, and one who
+## means to leave has to say so with his thumb.
+const GRIND_BAIL_COS: float = cos(deg_to_rad(75.0))
+
+## Slower than this is not a grind. The speed at which the rail's own
+## friction would stop the board inside one deck length -- i.e. the
+## slowest entry that still SLIDES rather than parks.
+const GRIND_MIN_SPEED: float = sqrt(2.0 * GRIND_DECEL * SkateparkMesh.DECK_LENGTH)
+## And there must be that much line left ahead, or the catch is a snap
+## onto an edge the board is already leaving.
+const GRIND_MIN_RUN: float = SkateparkMesh.DECK_LENGTH
+## After a BAIL, how long before the same line may take the board again:
+## the time it takes to leave the catch radius at the slowest speed the
+## catch accepts. Without it a thumb held sideways would be caught,
+## dropped and caught again every other tick.
+const GRIND_COOLDOWN_S: float = GRIND_CATCH_R / GRIND_MIN_SPEED
+
+## The lines, in world space, handed over once by HubWorld. This file
+## never asks a park for them and never builds one: it is given a list
+## of segments and knows nothing else about the thing they belong to.
+var _grind_edges: Array = []
+var _grind: int = -1
+var _grind_s: float = 0.0
+var _grind_sign: float = 1.0
+var _grind_speed: float = 0.0
+var _grind_entry: float = 0.0
+var _grind_run: float = 0.0
+var _grind_off: Vector3 = Vector3.ZERO
+var _grind_blend: float = 0.0
+var _grind_time: float = 0.0
+var _grind_cool: float = 0.0
+var _grind_last_run: float = 0.0
+var _grind_last_exit: float = 0.0
+var _grind_rides: int = 0
+
+func set_grind_edges(edges: Array) -> void:
+	_grind_edges = edges
+	_release_grind(false)
+
+func grind_edge_count() -> int:
+	return _grind_edges.size()
+
+## The list AS THE BOARD HOLDS IT. A bench that re-asked the park would
+## be reading a second copy, and every neutralisation in SkateGrindProbe
+## PHASE R hands this file a list the park has never seen -- so "which
+## line did it catch" has to be answered against the one in use.
+func grind_edges_view() -> Array:
+	return _grind_edges
+
+func grinding() -> bool:
+	return _grind >= 0
+
+## Which EDGE of the published list, not which module -- the caller that
+## handed the list over is the one that knows what a module is.
+func grind_index() -> int:
+	return _grind
+
+func grind_speed() -> float:
+	return _grind_speed
+
+## What the board was doing on the ground the tick it was taken. The
+## contract Mathieu asked for -- "la vitesse d'entree dans le grind vient
+## de la vitesse au sol au moment du contact" -- is this number being
+## equal to `speed()` on the tick before the catch, and that is what
+## SkateGrindProbe PHASE E gates.
+func grind_entry_speed() -> float:
+	return _grind_entry
+
+func grind_run() -> float:
+	return _grind_run
+
+func grind_last_run() -> float:
+	return _grind_last_run
+
+func grind_last_exit_speed() -> float:
+	return _grind_last_exit
+
+func grind_rides() -> int:
+	return _grind_rides
+
+## How far along the line the board is, u from its `a` end. -1 when it is
+## not on one.
+func grind_offset() -> float:
+	return _grind_s if _grind >= 0 else -1.0
+
+## 0 at the catch, 1 once the board is on the line. Published because it
+## is the one window in which this file writes a position the law of
+## motion did not produce, and a bench that could not see it could not
+## gate the lift.
+func grind_mount() -> float:
+	return _grind_blend
 
 # =====================================================================
 # THE COMMAND
@@ -1022,6 +1239,11 @@ func release() -> void:
 func stop() -> void:
 	release()
 	velocity = Vector3.ZERO
+	# CH82: and it takes the board off a rail. Every caller means "this
+	# board is done moving", and a dismount that left the state machine
+	# sliding along a line nobody is riding is the one way this mechanic
+	# could become a state with no way out.
+	_release_grind(false)
 
 # =====================================================================
 # THE TICK
@@ -1030,6 +1252,17 @@ func drive(delta: float) -> void:
 	if delta <= 0.0:
 		return
 	var before := flat_position()
+	# CH82: the rail's own tick, and it REPLACES the law of motion rather
+	# than adding to it. A board on a line is written along that line;
+	# `move_and_slide`, gravity, the push, the brake, the coast and the
+	# wheels all belong to a board that is on the ground or in the air,
+	# and running any of them against a kinematic write would be two
+	# authors of one transform.
+	if _grind_cool > 0.0:
+		_grind_cool = maxf(0.0, _grind_cool - delta)
+	if _grind >= 0:
+		_advance_grind(delta, before)
+		return
 	# ⚠️ WHAT HOLDS THE BOARD UP IS READ FROM THE PREVIOUS STEP, and that
 	# is the standard one-tick lag of every character controller in this
 	# engine -- `is_on_floor()` and `get_floor_normal()` describe the
@@ -1241,6 +1474,12 @@ func drive(delta: float) -> void:
 	_fence(before)
 	_last_step = flat_position().distance_to(before)
 	_advance_air(delta, was_module)
+	# CH82: LAST, on the position the board actually reached this tick.
+	# The catch therefore costs one tick of latency and it is named here
+	# rather than hidden: this file already reads its floor normal and
+	# its facing one tick behind, and a catch tested BEFORE the move
+	# would be asking about a position the board has not got to.
+	_try_grind()
 
 ## CH64: the dwell and the two edges, then the flip. Read AFTER the move,
 ## on this tick's own support -- the one place the lagging floor flag is
@@ -1286,6 +1525,261 @@ func _advance_air(delta: float, was_module: bool) -> void:
 			_visual.rotation.z = _flip_angle
 	else:
 		_flip_slow = false
+
+# =====================================================================
+# CH82 -- THE RAIL'S OWN TICK
+
+## The point on edge `i` at arc length `s` from its `a` end, and the unit
+## vector along it. One spelling, because the catch, the ride and the
+## exit all need the same two and a second copy of this arithmetic is
+## exactly the defect this repo pays for most often.
+func _grind_frame(i: int) -> Array:
+	var e: Dictionary = _grind_edges[i]
+	var a: Vector3 = e["a"]
+	var ab: Vector3 = (e["b"] as Vector3) - a
+	var span: float = ab.length()
+	return [a, (ab / span if span > 0.0001 else Vector3.FORWARD), span]
+
+func _advance_grind(delta: float, before: Vector3) -> void:
+	var frame: Array = _grind_frame(_grind)
+	var a: Vector3 = frame[0]
+	var dir: Vector3 = frame[1]
+	var span: float = frame[2]
+	var travel: Vector3 = dir * _grind_sign
+	var flat_travel: Vector3 = Vector3(travel.x, 0.0, travel.z).normalized()
+	# ⚠️ THE MOUNT IS ATOMIC, AND THAT IS A SAFETY PROPERTY AND NOT A
+	# NICETY. While `_grind_blend` is under 1 the board is between where
+	# it was caught and the line, which for a ledge means INSIDE the
+	# concrete. Releasing there would hand a penetrating capsule to the
+	# next `move_and_slide`, and Godot's depenetration would throw it out
+	# at a speed nothing in this file chose. So the two voluntary exits
+	# below are tested only once the board is ON the line; the mount
+	# lasts GRIND_MOUNT_S and cannot be extended. The one exit that is
+	# NOT held back by it is the speed floor below, and its block says
+	# why.
+	var mounted: bool = _grind_blend >= 1.0
+	if mounted and _heading != Vector3.ZERO and flat_travel.dot(_heading) < GRIND_BAIL_COS:
+		# The way off: a thumb pointed hard away from where the line is
+		# taking him. CLAUDE.md's patron BATEAU rather than patron
+		# ECHELLE -- the input is not swallowed and not reinterpreted,
+		# it means what it always means, and the rail lets go of it.
+		_drop_grind(travel, true)
+		return
+	_grind_speed = maxf(_grind_speed - GRIND_DECEL * delta, 0.0)
+	if _grind_speed < GRIND_MIN_SPEED:
+		# It ran out of slide. It leaves with what it has left, which is
+		# under a walking pace, and gravity takes it down off the line.
+		#
+		# ⚠️ AND THIS ONE IS NOT GATED ON THE MOUNT, WHICH IS THE ONE
+		# EXCEPTION TO THE ATOMIC MOUNT ABOVE AND THE REASON THERE IS NO
+		# STATE HERE WITH NO WAY OUT. A blend that has not finished is a
+		# board still on its way up; if it stops there, waiting for the
+		# mount is waiting for something that will never happen. It is
+		# put back on the LEVEL IT WAS CAUGHT FROM -- the blend-0
+		# position, its own cross-section of the approach, which is
+		# outside the solid by construction because that is where it was
+		# rolling a moment ago.
+		if _grind_blend < 1.0:
+			global_position = a + dir * _grind_s + _grind_off
+		_drop_grind(travel, true)
+		return
+	_grind_s += _grind_sign * _grind_speed * delta
+	_grind_run += _grind_speed * delta
+	# ⚠️ DIRECTIONAL. The end that ENDS the ride is the one the board is
+	# travelling towards; the other one is where it came in, and a board
+	# caught on the lead -- before the line starts -- is at a negative
+	# `_grind_s` that a symmetric test would read as "already finished".
+	var ran_off: bool = (_grind_s >= span) if _grind_sign > 0.0 else (_grind_s <= 0.0)
+	if ran_off:
+		# The end of the line: the mount is completed first (so the board
+		# leaves from ON it, never from inside it) and it flies off with
+		# the speed it had, which is what makes the end of a rail read as
+		# a launch rather than as a stop.
+		_grind_s = clampf(_grind_s, 0.0, span)
+		_grind_blend = 1.0
+	else:
+		_grind_time += delta
+		# ⚠️ TWO GOVERNORS AND THE SMALLER WINS, and the second one is
+		# what keeps a board from standing at rail height in mid-air
+		# before the rail begins. The first is TIME (GRIND_MOUNT_S, the
+		# board's own ollie). The second is the LEAD: the board is a
+		# fraction of the way up equal to the fraction of the lead it has
+		# covered, so it is exactly at the line's height when it reaches
+		# the line's start -- a rise along its own direction of travel,
+		# which is what an ollie onto a ledge is.
+		#
+		# The POP_SPEED bound survives the second governor for free: the
+		# lead term only becomes the smaller of the two when the board is
+		# slower than GRIND_CATCH_LEAD / GRIND_MOUNT_S, and a slower
+		# board climbs slower.
+		var gap: float = _grind_s if _grind_sign > 0.0 else span - _grind_s
+		var by_lead: float = clampf((gap + GRIND_CATCH_LEAD) / GRIND_CATCH_LEAD, 0.0, 1.0)
+		_grind_blend = minf(minf(1.0, _grind_time / GRIND_MOUNT_S), by_lead)
+	var want: Vector3 = a + dir * _grind_s + _grind_off * (1.0 - _grind_blend)
+	# The region, on the same terms every other vehicle in this hub meets
+	# it: a refusal, not a clamp. Inert while every line stands inside
+	# the park -- and gated by SkateGrindProbe rather than assumed.
+	if not HubRegion.contains(Vector3(want.x, 0.0, want.z)):
+		_drop_grind(travel, true)
+		return
+	global_position = want
+	rotation.y = atan2(travel.x, travel.z)
+	velocity = travel * _grind_speed
+	# What the rest of the file must believe about a board on a rail: it
+	# is HELD, on a level surface, by a module. That is what keeps the
+	# air machinery from calling this a flight, what makes a landing ON
+	# a rail emit `landed`, and what stops the pop from firing when the
+	# board leaves (POP wants a rising velocity off a near-vertical
+	# facet, and this is neither).
+	_hold_normal = Vector3.UP
+	_held = true
+	_supported = true
+	var was_module: bool = _on_module
+	_on_module = true
+	_last_step = flat_position().distance_to(before)
+	_advance_air(delta, was_module)
+	if ran_off:
+		_drop_grind(travel, false)
+
+## Off the line, keeping the velocity it had along it. No cooldown: a
+## board that has run off the END of a line is past it and cannot be
+## caught by it again (GRIND_MIN_RUN sees to that), so two ledges laid
+## nose to tail LINK, which is the whole point of laying them along one
+## flow.
+## ⚠️ THE REASON IS PASSED, NEVER INFERRED. A first version read it back
+## off `_grind_s` ("did it stop short of the end?"), which is right for
+## every case but the one that matters: a bail on the very first tick
+## sits at s = 0, would have been read as "ran off the a end", and would
+## have come back with no cooldown and been caught again immediately.
+## The caller knows which of the four exits it is; it says so.
+func _drop_grind(travel: Vector3, bailed: bool) -> void:
+	velocity = Vector3(travel.x, 0.0, travel.z).normalized() * _grind_speed
+	_release_grind(bailed)
+
+func _release_grind(cooldown: bool) -> void:
+	if _grind >= 0:
+		_grind_last_run = _grind_run
+		_grind_last_exit = _grind_speed
+	_grind = -1
+	_grind_blend = 0.0
+	_grind_time = 0.0
+	_grind_off = Vector3.ZERO
+	_grind_run = 0.0
+	if cooldown:
+		_grind_cool = GRIND_COOLDOWN_S
+
+## =====================================================================
+## THE CATCH
+##
+## Five conditions, and every one of them is a way this could otherwise
+## fire when nobody meant it to:
+##
+##   * FAST ENOUGH  -- a board at a crawl parks on a rail, it does not
+##                     grind it.
+##   * ALONG        -- the flow test. A crossing is a crossing.
+##   * NEAR ENOUGH  -- within half a deck of the line, laterally.
+##   * AT THE RIGHT HEIGHT -- GRIND_CATCH_DROP below it (the magnetism,
+##                     bounded by the board's own pop) to
+##                     GRIND_CATCH_RISE above it (an air coming down).
+##   * WITH LINE LEFT -- a deck length of it, ahead, in the direction of
+##                     travel.
+##
+## Nearest line wins, so two lines whose catch volumes touch cannot both
+## claim a board.
+func _try_grind() -> void:
+	if _grind >= 0 or _grind_cool > 0.0 or _grind_edges.is_empty():
+		return
+	var vh := Vector3(velocity.x, 0.0, velocity.z)
+	var speed: float = vh.length()
+	if speed < GRIND_MIN_SPEED:
+		return
+	var vdir: Vector3 = vh / speed
+	var best: int = -1
+	var best_lateral: float = 1e9
+	var best_s: float = 0.0
+	var best_sign: float = 1.0
+	var best_off := Vector3.ZERO
+	for i in _grind_edges.size():
+		var frame: Array = _grind_frame(i)
+		var a: Vector3 = frame[0]
+		var dir: Vector3 = frame[1]
+		var span: float = frame[2]
+		if span <= 0.0001:
+			continue
+		var flat_dir := Vector3(dir.x, 0.0, dir.z)
+		if flat_dir.length() < 0.0001:
+			continue
+		flat_dir = flat_dir.normalized()
+		var align: float = flat_dir.dot(vdir)
+		if absf(align) < GRIND_ALIGN_COS:
+			continue
+		var sign_along: float = 1.0 if align >= 0.0 else -1.0
+		# ⚠️ THE PROJECTION IS NOT CLAMPED. `along` may be up to
+		# GRIND_CATCH_LEAD before the line or past it, and the point the
+		# board is measured against is on the line's own EXTENSION --
+		# which is what makes the mount below a rise ALONG the direction
+		# of travel instead of a sideways tug toward an endpoint. The
+		# offset it stores is then perpendicular to the line by
+		# construction, and the board never gains or loses ground to the
+		# catch.
+		var along: float = (global_position - a).dot(dir)
+		if along < -GRIND_CATCH_LEAD or along > span + GRIND_CATCH_LEAD:
+			continue
+		var q: Vector3 = a + dir * along
+		var lateral: float = Vector2(global_position.x - q.x, global_position.z - q.z).length()
+		if lateral > GRIND_CATCH_R:
+			continue
+		var dy: float = global_position.y - q.y
+		if dy > GRIND_CATCH_RISE or dy < -GRIND_CATCH_DROP:
+			continue
+		# How much LINE is left ahead -- measured on the segment itself,
+		# never on the extension the lead adds.
+		var on_line: float = clampf(along, 0.0, span)
+		var remaining: float = (span - on_line) if sign_along > 0.0 else on_line
+		if remaining < GRIND_MIN_RUN:
+			continue
+		# ⚠️ AND ENOUGH SPEED TO GET THERE AND SLIDE, WHICH IS NOT THE
+		# SAME TEST AS GRIND_MIN_SPEED AND IS WHY THAT CONSTANT IS NOT
+		# READ HERE DIRECTLY.
+		#
+		# A board caught ON the line needs GRIND_MIN_SPEED -- one deck
+		# length of slide. A board caught on the LEAD, before the line
+		# begins, must first cross what is left of the lead, and the
+		# rail's friction is eating it the whole way. Take that one test
+		# and the other case appears: a board caught at 1.9 u/s with
+		# 0.9 u of lead to cross STOPS before it ever reaches the line,
+		# at a blend that never completes, and nothing lets go of it.
+		# The guard in `_advance_grind` catches that anyway (there is no
+		# exit in this mechanic that can fail to fire), but a rule that
+		# has to be rescued is a rule that is wrong, and this is the
+		# right one: the entry speed is what the board needs to arrive
+		# AND to slide, and GRIND_MIN_SPEED is its `lead_left = 0` case.
+		var lead_left: float = maxf(0.0, -along) if sign_along > 0.0 else maxf(0.0, along - span)
+		if speed * speed < GRIND_MIN_SPEED * GRIND_MIN_SPEED + 2.0 * GRIND_DECEL * lead_left:
+			continue
+		if lateral < best_lateral:
+			best = i
+			best_lateral = lateral
+			best_s = along
+			best_sign = sign_along
+			best_off = global_position - q
+	if best < 0:
+		return
+	_grind = best
+	_grind_s = best_s
+	_grind_sign = best_sign
+	# ⚠️ THE ENTRY SPEED IS THE APPROACH SPEED, FULL STOP. Nothing is
+	# added, nothing is scaled, nothing is clamped: what the board was
+	# doing on the ground is what it carries onto the line. It is the
+	# half of Mathieu's brief that is a MEASUREMENT rather than a feel,
+	# and SkateGrindProbe gates it as an equality.
+	_grind_speed = speed
+	_grind_entry = speed
+	_grind_off = best_off
+	_grind_blend = 0.0
+	_grind_time = 0.0
+	_grind_run = 0.0
+	_grind_rides += 1
 
 ## HubSurface OVERRULES the engine, and this is the whole of D1's ground
 ## ownership in four lines. Returns true when the body was ABOVE the

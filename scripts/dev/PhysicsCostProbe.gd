@@ -765,8 +765,15 @@ func _phase_instrument() -> void:
 	_say("     park total %d CONCRETE triangles (on file: %d; decor apart since CH64)" % [total, PARK_TRIS_ON_FILE])
 	_check(total == PARK_TRIS_ON_FILE,
 		"I1 the bench's geometry IS the shipped park's geometry (%d tris)" % PARK_TRIS_ON_FILE)
-	_check(_convex.size() == 4 and _trimesh.size() == 4,
-		"I2 a shape of each kind was built for both collision forms (4 kinds)")
+	# ⚠️ CH82 -- COUNTED OFF THE TABLE, NOT TYPED. This read `== 4` while
+	# the park held four kinds, which is the same second spelling CH70
+	# names and CH82 found four more of in SkatePhysicsProbe: a layout
+	# lot that lays a FIFTH kind turns it red without anything being
+	# wrong. What the assertion means is "a shape of EVERY kind was
+	# built for BOTH forms", and that is what it now says.
+	var kinds: int = _kind_tris.size()
+	_check(kinds > 0 and _convex.size() == kinds and _trimesh.size() == kinds,
+		"I2 a shape of each kind was built for both collision forms (%d kinds)" % kinds)
 	var multi: int = 0
 	for kind in _convex:
 		if (_convex[kind] as Array).size() > 1:
@@ -781,7 +788,7 @@ func _phase_instrument() -> void:
 	for kind in _trimesh:
 		if _trimesh[kind] is ConcavePolygonShape3D:
 			conc += 1
-	_check(conc == 4, "I5 every trimesh shape is a ConcavePolygonShape3D")
+	_check(conc == kinds, "I5 every trimesh shape is a ConcavePolygonShape3D (%d of %d)" % [conc, kinds])
 	# CH55 section 4.3 and CLAUDE.md's CH39 transposition: backface_collision
 	# false is a floor you fall through in silence. Read, and published.
 	var bf := (_trimesh[_trimesh.keys()[0]] as ConcavePolygonShape3D).backface_collision

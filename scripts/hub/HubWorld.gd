@@ -4190,6 +4190,22 @@ func _setup_skatepark() -> void:
 	# CH64: a trick on the board is shown by the same HUD. The transport
 	# names it; the HUD prints it; neither knows the other exists.
 	_transport.board_trick.connect(_on_board_trick)
+	# =================================================================
+	# CH82 -- THE GRIND LINES, HANDED OVER ONCE, HERE AND NOWHERE ELSE
+	#
+	# The park PUBLISHES where it can be ground (off the nodes it built,
+	# never recomposed from the table); the board CONSUMES a list of
+	# segments and knows nothing about parks. This line is the only
+	# place the two meet, and it is in the coordinator for the same
+	# reason every other pairing in this file is: neither of them may
+	# learn the other's name.
+	#
+	# The park's `_ready()` has run -- it is a child node, and a child's
+	# `_ready` precedes its parent's -- so `grind_edges()` reads built
+	# transforms and not an empty tree.
+	var board := _transport.board_body()
+	if board != null:
+		board.set_grind_edges(_skatepark.grind_edges())
 
 ## ---- CH71: the funfair ----------------------------------------------
 ## One coordinator (HubFunfair) owns the coaster and the drop tower; this
