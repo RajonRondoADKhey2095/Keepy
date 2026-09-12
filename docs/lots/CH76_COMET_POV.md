@@ -376,7 +376,40 @@ Arbre de référence : `origin/staging` `3b6ea62` dans un worktree séparé,
 importé à part. **154 `.scn` des deux côtés** — le compte que CH70, CH72
 et CH73 publient, donc aucun import tronqué d'aucun côté.
 
-*(Résultats : voir le tableau du rapport de fin de lot.)*
+| sonde | driver | branche | `origin/staging` `3b6ea62` | verdict |
+|---|---|---|---|---|
+| `FunfairProbe` (le patron POV de référence : tour + coaster CH71) | xvfb | **116 OK / 0 rouge** | **116 OK / 0 rouge** | parité, tout vert |
+| `OrbitCameraProbe` (CH73) | xvfb | **56 ok / 0 rouge** | **56 ok / 0 rouge** | parité, tout vert |
+| `CabinProbe` (le canari de régression caméra) | xvfb | **8 échecs** | **8 échecs** | **lignes IDENTIQUES** (`diff` vide), préexistants |
+| `KartProbe` (la branche drive) | headless | **150 checks, 1 échec** | **150 checks, 1 échec** | ligne identique (`chrono panel centred -- 977.0`), préexistante |
+| `CometProbe` | xvfb | **99 OK / 0 rouge** (24 assertions neuves) | **73 OK / 0 rouge** (sans PHASE P) | tout vert des deux côtés |
+| `ProbeTimeoutAudit` | headless | **101 scènes** | **101 scènes** | inchangé — aucune sonde neuve, PHASE P vit dans `CometProbe` |
+| `.scn` importés | — | **154** | **154** | aucun import tronqué d'aucun côté |
+
+⚠️ Les 8 rouges de `CabinProbe` et le rouge de `KartProbe` sont
+**préexistants et prouvés tels par la parité**, pas par un jugement : les
+lignes sont byte-identiques des deux côtés. (CH73 avait déjà mesuré que
+`CabinProbe` ne se reproduit pas sur un seul arbre ; ici les deux runs
+sortent le même jeu.)
+
+---
+
+## Section 8 — LE DÉPLOIEMENT, LU SUR LE SERVICE
+
+CI `web-build.yml` run **530**, `conclusion: success`, `completed_at`
+**02:04:03Z**. Étape `Export Web build` : **02:03:24 → 02:03:32Z**, soit
+l'epoch **1789178604 → 1789178612**. Alias posé à 02:04:01 sur
+`keepy-emm886mp2-…`.
+
+**`CACHE_VERSION` servi = `1789178611`** — **à l'intérieur de la fenêtre
+de l'étape d'export**, lu sur `https://keepy-staging.vercel.app` avec
+**`x-vercel-cache: MISS` et `age: 0`**, la seule lecture qui compte. Le
+build servi par l'alias de staging EST celui de ce merge.
+
+`index.wasm` n'a pas été relu : ce lot ne touche aucun code moteur, donc
+la constante d'identité publiée (35 376 909 octets) est **attendue**
+inchangée — attendue, pas mesurée, et c'est dit plutôt que affirmé.
+
 
 Le rayon d'action réel des lignes changées est petit et se lit dans le
 code : la ligne ajoutée à la branche drive sort sur `_pov_idle()` à sa
@@ -388,7 +421,7 @@ l'affirmer.
 
 ---
 
-## Section 8 — CE QUE CE LOT NE PEUT PAS SIGNER (l'appel device)
+## Section 9 — CE QUE CE LOT NE PEUT PAS SIGNER (l'appel device)
 
 Une sonde ne juge pas un game feel (CH62). Rien ici ne dit :
 
