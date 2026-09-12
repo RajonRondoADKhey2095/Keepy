@@ -3438,6 +3438,80 @@ et pas seulement sur la caméra : le plafond de lacet de la caméra
 (150°/s) rend la caméra calme **quoi que fasse le rail**, donc une
 caméra verte ne prouve rien sur le tracé.
 
+### ⚠️ UNE FRONTIÈRE DISSOUTE DANS LA *RÉGION* RESTE REFUSÉE PAR LE *ROUTEUR*
+
+Écrit au CH77, et c'est une contrainte écrite **deux fois, à deux endroits,
+dans deux langages** — une forme et une règle — dont une seule a été
+relâchée.
+
+`HubRegion` dit **où** Keepy a le droit de se tenir.
+`HubWorld._hop_via_corridor` dit **par où** il y va. Le second existe pour
+une raison mesurée et juste : la région n'est pas convexe, donc un saut
+droit entre deux zones pouvait couper du sol qui n'y est pas (la recon qui
+l'a installé a marché (−25,−30) → (−6,−56) en passant par (−19,3 ; −37,8),
+dehors). Mais il était **écrit** en « un changement de zone coûte un point
+de passage », ce qui n'est la même phrase que tant que **chaque** traversée
+EST un goulot de 10 à 12 u.
+
+CH77 a élargi les zones 1 et 2 jusqu'à ce que leurs rectangles **se
+recouvrent** sur z[−88,−76]. La région a cessé de refuser la traversée et
+le routeur a continué. Mesuré par le vrai canal du doigt, marche
+(−30,−74) → (−30,−92), 18 u droit devant :
+
+| | approche la plus proche de `MOOR_GATE` | excursion latérale | frames |
+|---|---|---|---|
+| routeur inchangé | **0,000 u** | **42,000 u** | 985 |
+| routeur relâché | 42,000 u | **0,000 u** | **204** |
+
+**42 u de côté pour un point à 18 u devant, et rien ne le signalait** : la
+marche arrivait, à 0,002 u de la cible, donc toute assertion de point
+d'arrivée passait. C'est le pendant « navigation » de « la métrique peut
+être la mauvaise, et le chiffre vert avec ».
+
+**Règle** : quand un lot déplace une FORME, il doit greper les RÈGLES qui
+encodent la même contrainte — un routeur, une liste de portes, une table de
+voisinage — parce qu'aucune d'elles ne suit la forme toute seule. Et le
+relâchement se rédige comme une **condition de suffisance vérifiée**, jamais
+comme une exception nommée : ici `_line_is_walkable(here, target)` est
+exactement la propriété que le détour existe pour garantir, donc la porte
+reste prise partout où la ligne n'est pas libre, et un goulot qui en est
+encore un — 0↔1, 2↔3, 2↔4 — garde sa porte sans qu'on ait à l'écrire.
+Le pas d'échantillonnage se **dérive** (`KeepyHopper.HOP_DISTANCE`, 1,5,
+soit moins du tiers du plus petit trou de la région) plutôt que de se
+choisir, sinon la ligne peut enjamber un trou et le gate devient un tirage.
+
+### ⚠️ UN BANC QUI TÉLÉPORTE UN CORPS DOIT ATTENDRE LA *CAMÉRA*, PAS UN COMPTE DE FRAMES
+
+Vingt-et-unième faux-signal du dépôt, CH77, et il vivait dans la sonde.
+
+`HubCamera` lisse sa position vers le point qu'elle suit avec une constante
+de temps de 0,2 s. Une sonde qui écrit `_keepy.global_position = X` puis
+attend **six frames** prend donc chaque `unproject_position` **à travers une
+caméra qui est encore à 61 % de la station PRÉCÉDENTE** — et comme
+`HubTapInput._handle_point` jette tout point hors de son propre rect, le tap
+n'est jamais dispatché et le corps ne bouge pas.
+
+**Le symptôme est exactement celui d'un sol refusé** : « 0 stage accepté,
+il n'a pas bougé » se lit comme « cette destination n'est pas marchable ».
+Trois lignes de `ZoneNavProbe` PHASE W ont rapporté du sol neuf comme
+inatteignable alors que le seul défaut était l'instrument. C'est la
+règle CH72 « un corps hors du cadre n'est pas seulement invisible, il est
+INADRESSABLE » retournée contre le banc qui la mesure.
+
+**Règle** : un banc qui repose un corps **gate l'ARRIVÉE de la caméra**
+(`|caméra − (sol + HubCamera.OFFSET)| < ε`) au lieu d'attendre un nombre de
+frames. Un compte de frames est un pari sur une constante de lissage que le
+banc ne possède pas ; une attente sur l'arrivée échoue bruyamment le jour où
+quelqu'un change le lissage, au lieu de rendre des taps silencieusement
+jetés.
+
+⚠️ **Et le corollaire de cadrage, mesuré dans le même lot** : avec
+`keep_aspect = 0` et `fov = 45`, le cadre fait **±3,69 u** à la hauteur de
+Keepy. **Une cible purement LATÉRALE n'est donc pas tapable du tout** — on
+n'atteint un sol de côté qu'en visant en avant-et-en-travers, en plusieurs
+taps, ou en tournant la caméra (CH73). Un banc qui vise droit sur le côté ne
+mesure pas une navigabilité, il mesure une contrainte de cadre.
+
 ### ⚠️ SONDE JETABLE = SUPPRIMÉE AVANT LE COMMIT
 
 `ProbeTimeoutAudit` doit revenir **exactement** à son chiffre de baseline. Une
