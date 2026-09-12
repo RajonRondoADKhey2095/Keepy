@@ -3512,6 +3512,33 @@ func _hop_via_corridor(point: Vector3) -> void:
 	_via_expect = Vector3.INF
 	var za: int = HubRegion.zone_of(here)
 	var zb: int = HubRegion.zone_of(target)
+	# CH77 -- A DETOUR AROUND NOTHING IS NOT A DETOUR.
+	#
+	# The gate exists for ONE measured reason, written above: the walkable
+	# region is not convex, so a straight hop between two zones could cut
+	# through ground that is not in it (the recon that installed it walked
+	# (-25,-30) -> (-6,-56) through (-19.3, -37.8), outside). It was never
+	# "a zone change costs a waypoint" -- that is only how it had to be
+	# spelled while every crossing WAS a 10 to 12 u corridor.
+	#
+	# CH77 widened zones 1 and 2 until their rectangles OVERLAP over
+	# z[-88,-76], so the hollow and the moor now share ground and a
+	# straight line between them is very often entirely inside the region.
+	# Routing that line through MOOR_GATE walks 42 u sideways to reach a
+	# point 18 u ahead -- measured on the real channel, which is how this
+	# was found: the region stopped refusing the crossing and the ROUTER
+	# went on refusing it.
+	#
+	# ⚠️ IT IS A RELAXATION AND IT CANNOT BREAK A ROUTE. The gate is taken
+	# exactly as before whenever the line is not clear; the direct hop is
+	# offered only when every sample of the segment already satisfies
+	# contains(), which is the very property the detour exists to
+	# guarantee. A zone whose crossing is still a narrow neck -- 0 <-> 1,
+	# 2 <-> 3, 2 <-> 4 -- therefore keeps its gate untouched, and
+	# ZoneNavProbe PHASE N gates both halves.
+	if za != zb and _line_is_walkable(here, target):
+		_keepy.hop_to(target)
+		return
 	if za != zb:
 		var gates: Array[Vector3] = _gates_between(za, zb)
 		while not gates.is_empty() and Vector2(here.x - gates[0].x, here.z - gates[0].z).length() <= GATE_NEAR:
@@ -3529,6 +3556,33 @@ func _hop_via_corridor(point: Vector3) -> void:
 	# which a raw point could become a destination, which CoveProbe took
 	# (a direct call with (400, -110)) and rode the yacht 130 u off the map.
 	_keepy.hop_to(target)
+
+## CH77: is the straight segment `a` -> `b` entirely walkable.
+##
+## SAMPLED, not solved. The region is a union of rectangles and discs, so
+## a closed form would be a second spelling of contains() -- the thing
+## this repo has paid for twice (two LAKE_WATER_RADIUS, two path limits).
+## Sampling asks the ONE owner, at a step fine enough that the narrowest
+## feature it must not step over cannot hide between two samples.
+##
+## THE STEP IS DERIVED. The narrowest thing the region has is the zone 2
+## <-> 3 corridor's 12 u width; the smallest hole is the windmill's 2.1 u
+## radius, i.e. 4.2 u across. A step of KeepyHopper.HOP_DISTANCE (1.5) is
+## under a third of that, so no hole and no gap can sit between two
+## consecutive samples. The endpoints are sampled too: `b` is a clamped
+## destination and `a` is where he stands, but a caller that ever hands an
+## unclamped point must not get a free pass on it.
+func _line_is_walkable(a: Vector3, b: Vector3) -> bool:
+	var from := Vector3(a.x, 0.0, a.z)
+	var to := Vector3(b.x, 0.0, b.z)
+	var span := from.distance_to(to)
+	if span < 0.001:
+		return HubRegion.contains(from)
+	var steps: int = int(ceil(span / KeepyHopper.HOP_DISTANCE))
+	for i in steps + 1:
+		if not HubRegion.contains(from.lerp(to, float(i) / float(steps))):
+			return false
+	return true
 
 ## A tap on the moored boat. ONE tap buys the whole thing -- the hop chain
 ## walks to the water and _on_hop_landed boards on arrival -- because that

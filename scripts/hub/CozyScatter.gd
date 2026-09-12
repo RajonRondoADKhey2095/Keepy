@@ -394,7 +394,16 @@ const AUTUMN_SEED: int = SEED + 101
 const AUTUMN_TREE_PER_U2: float = 0.014
 const FERN_PER_U2: float = 0.055
 const LEAFPILE_PER_U2: float = 0.022
-const PUMPKIN_PATCHES: int = 5
+## CH77: the patches follow the hollow's area like every other autumn
+## density, instead of a bare 5 written against the old 66 x 36 rectangle.
+## CALIBRATED ON THE SHIPPED NUMBER: at the old 2970 u2 this gives
+## int(5.049) = 5, the count that shipped; at CH77's 4730 u2 it gives 8.
+const PUMPKIN_PER_U2: float = 0.0017
+## How far inside the hollow a patch centre may be drawn. Was two literals
+## (-28..28, -74..-46) against the old rectangle; kept as the SAME insets,
+## now taken off the region so a patch follows the ground it decorates.
+const PUMPKIN_INSET_X: float = 5.0
+const PUMPKIN_INSET_Z: float = 4.0
 const MOTHER_CLEARING: float = 9.5
 const LANTERN_EVERY: int = 5
 
@@ -443,8 +452,11 @@ func _autumn() -> void:
 	_autumn_sprinkle("log", 1, 5, 1.3, 0.9, 1.2, 0.0, 1.0, true)
 	# Pumpkin patches: a few clusters, not a sprinkle.
 	var pumpkins := 0
-	for k in PUMPKIN_PATCHES:
-		var c := Vector3(_rng.randf_range(-28.0, 28.0), 0.0, _rng.randf_range(-74.0, -46.0))
+	for k in int(area * PUMPKIN_PER_U2):
+		var c := Vector3(
+			_rng.randf_range(HubRegion.AUTUMN_MIN.x + PUMPKIN_INSET_X, HubRegion.AUTUMN_MAX.x - PUMPKIN_INSET_X),
+			0.0,
+			_rng.randf_range(HubRegion.AUTUMN_MIN.y + PUMPKIN_INSET_Z, HubRegion.AUTUMN_MAX.y - PUMPKIN_INSET_Z))
 		if not _in_hollow(c) or _autumn_blocked(c, 1.5) or c.distance_to(HubRegion.MOTHER_TREE_AT) < MOTHER_CLEARING:
 			continue
 		for j in _rng.randi_range(4, 7):
@@ -483,6 +495,28 @@ func _autumn() -> void:
 ## ---- v3: the moor ("la Lande aux Moulins") ---------------------------
 const MOOR_SEED: int = SEED + 202
 const MOOR_HAMLET: Vector3 = Vector3(9.0, 0.0, -97.0)
+## CH77 -- DENSITIES, because the moor rectangle stopped being a constant.
+##
+## These two passes shipped as bare loop counts (`for i in 40`, cap 7, and
+## `for i in 60`) written against a 76 x 40 rectangle. CH77 widens that
+## rectangle to 86 x 50, +41% of ground, and a fixed count over a bigger
+## box is not the same scatter thinned -- it is a different density. The
+## arbitration was "widen the region AND the sowing", so the counts follow
+## the area and the density is what stays put.
+##
+## CALIBRATED ON THE SHIPPED NUMBERS, not chosen: at the old 3040 u2 these
+## rates give int(40.128) = 40 tries / int(7.296) = 7 olives and
+## int(60.19) = 60 rock tries -- the counts that shipped, to the integer.
+## None sits on a knife edge (the nearest is 0.19 of a try from its floor),
+## so a later nudge to the rectangle cannot silently drop one.
+const OLIVE_TRIES_PER_U2: float = 0.0132
+const OLIVE_PER_U2: float = 0.0024
+const PALEROCK_TRIES_PER_U2: float = 0.0198
+
+## The moor rectangle's area, from the region rather than restated. The
+## one reading: both passes below scale off it.
+func _moor_area() -> float:
+	return (HubRegion.MOOR_MAX.x - HubRegion.MOOR_MIN.x) * (HubRegion.MOOR_MAX.y - HubRegion.MOOR_MIN.y)
 
 func _in_moor(p: Vector3) -> bool:
 	return HubRegion.in_moor(p) and HubRegion.contains(p)
@@ -551,8 +585,10 @@ func _moor() -> void:
 	_stats["cypress"] = cypress
 	# Olives, walls, rocks, beehives: sprinkled where nothing else is.
 	var olives := 0
-	for i in 40:
-		if olives >= 7:
+	var moor_area := _moor_area()
+	var olive_cap := int(moor_area * OLIVE_PER_U2)
+	for i in int(moor_area * OLIVE_TRIES_PER_U2):
+		if olives >= olive_cap:
 			break
 		var p := Vector3(_rng.randf_range(HubRegion.MOOR_MIN.x + 3.0, HubRegion.MOOR_MAX.x - 3.0), 0.0, _rng.randf_range(HubRegion.MOOR_MIN.y + 3.0, HubRegion.MOOR_MAX.y - 3.0))
 		if not _in_moor(p) or _moor_blocked(p, 1.6) or _in_field(p, 2.0):
@@ -572,7 +608,7 @@ func _moor() -> void:
 			x += 3.0
 	_stats["wall"] = walls
 	var rocks := 0
-	for i in 60:
+	for i in int(moor_area * PALEROCK_TRIES_PER_U2):
 		var p := Vector3(_rng.randf_range(HubRegion.MOOR_MIN.x + 1.0, HubRegion.MOOR_MAX.x - 1.0), 0.0, _rng.randf_range(HubRegion.MOOR_MIN.y + 1.0, HubRegion.MOOR_MAX.y - 1.0))
 		if not _in_moor(p) or _moor_blocked(p, 0.6) or _in_field(p, 0.5):
 			continue
