@@ -483,9 +483,13 @@ func _phase_d() -> void:
 	for fp in HubFunfair.footprints():
 		if absf(float(fp["radius"]) - HubFunfair.POST_FOOTPRINT) < 0.001:
 			posts += 1
-	print("     %d box shapes: %d rail posts + 2 station posts + tower base, mast and 4 legs = %d expected" % [boxes, posts, posts + 2 + 6])
+	# CH75: the fixed solids (two station posts each for the coaster and
+	# the Comet, the tower's base, mast and four legs) are READ off the
+	# fair (FIXED_SOLIDS), and the Comet's posts are counted through the
+	# same POST_FOOTPRINT discs the CH71 posts are -- one census.
+	print("     %d box shapes: %d rail posts (both coasters) + %d fixed solids = %d expected" % [boxes, posts, HubFunfair.FIXED_SOLIDS, posts + HubFunfair.FIXED_SOLIDS])
 	_check(others == 0, "D2 every shape is a BoxShape3D -- convex, no trimesh (%d others)" % others)
-	_check(boxes == posts + 2 + 6, "D3 the shape count is what the fair publishes")
+	_check(boxes == posts + HubFunfair.FIXED_SOLIDS, "D3 the shape count is what the fair publishes")
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	var space: PhysicsDirectSpaceState3D = _world.get_world_3d().direct_space_state

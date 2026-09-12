@@ -270,6 +270,139 @@ const GONDOLA_SEAT: Vector3 = Vector3(0.0, 0.12, 0.0)
 const GONDOLA_FLOOR: Vector3 = Vector3(1.5, 0.15, 1.5)
 const GONDOLA_RAIL_HEIGHT: float = 0.9
 
+## =====================================================================
+## CH75 -- THE COMET: THE THIRD RIDE, AND THE ONE THAT IS MEANT TO SCARE
+##
+## Brief (carte blanche, 11 sept 2026): a third ride in the fair, "nettement
+## plus effrayant et plus rapide" than the two above, on a fixed rail with
+## no player control, under the CHASE camera. The profile is decided by
+## three measurements, not by taste:
+##
+##   (a) THE NUMBER. The CH71 coaster crests at 5.03 u and reaches
+##       9.19 u/s; the CH72 tower falls at 14.21 u/s. Energy on a rail is
+##       v = sqrt(2 g dh) less losses: a 14.0 u crest (the tower's own
+##       height, the one CH72 rendered and kept) into a 0.9 u valley gives
+##       ~16.1 u/s -- x1.75 the coaster, x1.13 the tower, x1.6 the
+##       board's cruise (10.0). The drop is authored at 65-75 deg where
+##       the coaster's steepest section is 37.6 deg, and the lift is a
+##       45 deg climb where the coaster's is 17.7. CometProbe measures
+##       every one of these on the built curve and on the ridden cart.
+##   (b) UNLIT READABILITY. Nothing in this hub is lit (CLAUDE.md), so a
+##       shape reads by SILHOUETTE alone. A tall lattice against the haze
+##       is exactly what the CH72 tower already is (15.5 u, device-
+##       validated visible); a drop reads as a drop because the rail's
+##       silhouette falls. An INVERSION would not: `KeepyHopper.
+##       follow_carrier` hands a rider the carrier's YAW ONLY (five rides
+##       depend on that contract), so a looping cart would draw Keepy
+##       upright through the loop -- a broken picture, and fixing it
+##       means changing a shared, device-validated component. No loops.
+##   (c) BUDGET. Ch75SiteRecon measured a chase pose at 16 u looking
+##       south at 69 897 opaque primitives against 70 782 for the fixed
+##       pose at the spawn: height buys nothing and costs nothing on this
+##       plateau. The Comet itself is boxes and six-sided tubes,
+##       CometProbe publishes its triangles.
+##
+## WHERE: the north-east wedge of zone 0, north of the CH71 loop (whose
+## north tip is z 37.4), inside the skate lobe (r 36 from (0, 35)).
+## Ch75SiteRecon: flat (h 0.000 everywhere), no layout prop but the
+## seesaw at (18, 44) r 1.8 and the zipline P2 tower at (25.2, 35) r 3
+## (its cable ends at z 34.5), no tall scatter inside the region, and
+## the wall's first trunk at (35.2, 55.1) outside it. Every rail, the
+## OUTER rail included (gauge/2 + radius), and every post is inside the
+## region -- CH71's "nothing overhangs the edge", re-gated by CometProbe
+## with the outer-rail offset, because the lobe is a circle and a
+## 14 u rail past its rim would stand its posts among the wall trees.
+##
+## THE LOOP, in riding order, y = rail top. Station on the west leg
+## heading NORTH; the lift climbs straight north -- gently for 7 u, then
+## at ~60 deg (a two-slope chain, and the knee is where the FIXED camera
+## decided it: the hub pose stands 8.9 u north of the rider at 7.6 u,
+## i.e. over the lift 8.9 u north of the station, and a 45 deg lift put
+## that rail at 8.2 u -- the boarding camera was INSIDE the lift's posts,
+## CometProbe E11's last four frames. The gentle leg keeps the rail at
+## ~4.6 u there, three units under the lens); a semicircle
+## at 14 u carries the cart east (still on the chain: the crest is at
+## the END of the turn, so the top is a 4 s crawl over the drop); the
+## drop falls SOUTH along x 28.5; a camelback; a trim brake on its
+## far side; a semicircle at ground level brings the cart back to the
+## station. The turns are laid as semicircles with EVENLY spaced
+## control points (~2 u): a Catmull-Rom through uneven points kinks,
+## and a kink in the flat heading is a camera whip (measured before
+## authoring: 0.48 u of turn radius from an uneven end point, 2.8 u
+## with the points spread). Points 9-17 share x = 28.3 EXACTLY, so the
+## ride frame's yaw on the drop is 180.00 deg and not a wobble read off
+## a tangent whose flat component is tiny -- and the top turn FINISHES
+## on the flat (point 9), one control point BEFORE the crest: a first
+## draft ended the turn on the crest itself and the cart's yaw swung
+## 36 deg in the few frames where the tangent tipped over (502 deg/s,
+## CometProbe E24), because a heading read off a tangent that is
+## mostly vertical turns as fast as the tangent tips. Point 9 exists
+## for the same reason: without it the tangent at 10 (the chord 8 -> 11)
+## pointed 40 deg east and the spline bulged past x 28.3 and back (an
+## S, 0.49 u of radius in the replica).
+const COMET_POINTS: Array = [
+	Vector3(23.0, 0.55, 41.5),   # 0  station stop
+	Vector3(23.0, 0.62, 43.2),   # 1  lift foot
+	Vector3(23.0, 1.30, 45.2),   #    a gentle first leg (see below)
+	Vector3(23.0, 2.60, 47.6),
+	Vector3(23.0, 4.30, 50.0),   # 4  the knee: the chain steepens to ~60 deg
+	Vector3(23.0, 8.50, 52.6),
+	Vector3(23.0, 13.0, 55.2),   # 6  top of the climb, the turn begins
+	Vector3(23.81, 13.4, 57.14),
+	Vector3(25.75, 13.7, 57.95), # 8  the apex of the turn
+	Vector3(27.6, 13.8, 57.3),
+	Vector3(28.3, 13.9, 56.0),   # 10 the turn ends heading south, on the flat
+	Vector3(28.3, 14.0, 54.7),   # 11 crest -- the drop begins, already due south
+	Vector3(28.3, 12.3, 53.5),
+	Vector3(28.3, 7.00, 51.6),
+	Vector3(28.3, 2.20, 49.5),
+	Vector3(28.3, 0.90, 47.6),   # 15 valley (COMET_VALLEY_INDEX)
+	Vector3(28.3, 4.40, 45.0),   # 16 camelback
+	Vector3(28.3, 2.40, 43.2),
+	Vector3(28.3, 1.00, 41.5),   # 18 second valley, the turn begins
+	Vector3(27.52, 0.70, 39.63),
+	Vector3(25.65, 0.60, 38.85), # 20 the south apex
+	Vector3(23.78, 0.60, 39.63),
+]
+## The index of the valley at the foot of the drop, read by the closed
+## form below and by CometProbe -- never re-counted from the table.
+const COMET_VALLEY_INDEX: int = 15
+## The chain and the run-out. The lift is the CH71 chain (LIFT_SPEED /
+## LIFT_ACCEL, shared); GRAVITY and ROLL_FRICTION are shared too, so the
+## two coasters answer to the same physics and differ ONLY in what is
+## authored -- the height. What is the Comet's own:
+##   * no player brake: the brief says no control, and a held finger
+##     does nothing (the ride is BOUNDED by the rail, the floor and the
+##     run-out, which is the licence to drop a tap -- unchanged);
+##   * a TWO-STAGE run-out. The cart reaches the bottom turn at ~13 u/s
+##     and a 2.75 u semicircle at that speed is a 270 deg/s yaw -- a
+##     camera whip, not a ride. So the last COMET_BRAKE_RUN_U units are
+##     a TRIM over the first COMET_TRIM_U (speed falls linearly to
+##     COMET_TURN_SPEED, ~1.9 g -- the magnetic brake a real ride has
+##     there) and then the CH71 sqrt run-out from COMET_TURN_SPEED to a
+##     stop at s = L. CometProbe A12 walks the run-out's own speed law
+##     along the baked turn and gates its yaw under the camera's cap.
+const COMET_BRAKE_RUN_U: float = 13.0
+const COMET_TRIM_U: float = 4.0
+const COMET_TURN_SPEED: float = 5.0
+## Rails, ties and posts: the CH71 gauge and radius (one rail is one
+## rail), a thicker post and a closer pitch because these stand 14 u.
+const COMET_POST_SPACING: float = 1.5
+const COMET_POST_THICK: float = 0.22
+## Posts taller than this get a diagonal brace to the next one: the
+## lattice is what makes a 14 u structure read as a STRUCTURE by
+## silhouette, which is the only way anything reads here (b above).
+const COMET_BRACE_MIN: float = 3.0
+const COMET_BRACE_THICK: float = 0.09
+## The station: the CH71 deck, one unit west of the rail.
+const COMET_STAND: Vector3 = Vector3(22.0, 0.0, 41.5)
+const COMET_DECK_CENTRE: Vector3 = Vector3(22.0, 0.0, 42.0)
+const COMET_TAP_RADIUS: float = 2.0
+## Solids that are not rail posts, on the fair's one body: the CH71
+## station's 2 posts, the tower's base + mast + 4 legs, the Comet
+## station's 2 posts. FunfairProbe D3 reads this instead of typing 8.
+const FIXED_SOLIDS: int = 2 + 6 + 2
+
 ## ---- colours (vertex colours, unlit) --------------------------------
 const WOOD: Color = Color(0.62, 0.44, 0.26)
 const WOOD_TOP: Color = Color(0.70, 0.52, 0.32)
@@ -280,13 +413,27 @@ const CONCRETE: Color = Color(0.60, 0.60, 0.59)
 const CREAM: Color = Color(0.96, 0.80, 0.25)
 const CREAM_TOP: Color = Color(0.84, 0.66, 0.18)
 const WHEEL: Color = Color(0.22, 0.22, 0.24)
+## CH75 -- the Comet's own: a DARK structure (it is seen against the
+## haze from 14 u up, where a light steel would fade) and a BRIGHT rail
+## (seen against the lawn from the ground, L ~0.65 against the hub's
+## rendered 0.08). A device call like every colour here; distinct from
+## the CH71 wood/steel/cream so the two rides never read as one.
+const COMET_INK: Color = Color(0.30, 0.16, 0.48)
+const COMET_INK_TOP: Color = Color(0.40, 0.24, 0.60)
+const COMET_RAIL: Color = Color(0.98, 0.86, 0.30)
+const COMET_CART: Color = Color(0.85, 0.20, 0.30)
+const COMET_CART_TOP: Color = Color(0.96, 0.40, 0.46)
 
 ## The two rides, by index -- a TABLE from the first entry.
 const RIDE_COASTER: int = 0
 const RIDE_TOWER: int = 1
+## CH75: the Comet.
+const RIDE_COMET: int = 2
 
 enum CoasterPhase { IDLE, DEPART, LIFT, COAST, BRAKE }
 enum TowerPhase { IDLE, RISE, HOLD, FALL, BRAKE, SETTLE }
+## CH75: the Comet's run. TRIM is the first stage of the run-out.
+enum CometPhase { IDLE, DEPART, LIFT, COAST, TRIM, BRAKE }
 
 signal ride_started(ride: int)
 ## `landing` is the flat ground point the rider steps off onto.
@@ -322,9 +469,38 @@ var _gv: float = 0.0
 var _hold_left: float = 0.0
 var _brake_decel: float = 0.0
 
+## CH75: the Comet's curve, cart and run.
+var _comet_curve: Curve3D = null
+var _comet_length: float = 0.0
+var _comet_crest_s: float = 0.0
+var _comet_lift_foot_s: float = 0.0
+var _comet_peak_y: float = 0.0
+var _comet_cart: Node3D = null
+## CH75: the chase camera's MOUNT -- a node the fair trails on the rail
+## HubCamera.DRIVE_BACK behind the cart. The camera stands over it and
+## looks at the cart (HubCamera.ChaseTuning.coaster). See the tuning's
+## header for the two poses that were measured inside the structure
+## before this one.
+var _comet_mount: Node3D = null
+var _comet_track_node: MeshInstance3D = null
+var _comet_tris: int = 0
+var _comet_posts: int = 0
+var _comet_phase: int = CometPhase.IDLE
+var _cs: float = 0.0
+var _cv: float = 0.0
+var _cenergy: float = 0.0
+var _ctrim_entry_v: float = 0.0
+## Whether this file asked the camera for the Comet's chase, so the exit
+## is only ever asked for a chase this file opened (HubTransport's
+## `_board_chase` reasoning: never exit_drive() a camera chasing the
+## kart).
+var _comet_chase: bool = false
+
 func _ready() -> void:
 	_build_curve()
+	_build_comet_curve()
 	_build()
+	_build_comet()
 
 func setup(keepy: KeepyHopper, camera: Node = null) -> void:
 	_keepy = keepy
@@ -333,26 +509,18 @@ func setup(keepy: KeepyHopper, camera: Node = null) -> void:
 # =====================================================================
 # THE CURVE
 
+## CH75: the spline arithmetic lives in CoasterRail, shared with the
+## Comet -- one spelling of "how a closed loop is baked". Same tension,
+## same interval, same crest sampling (0.05 u from s = 0): FunfairProbe
+## PHASE A reads the CH71 numbers back (51.165 u, crest s 17.350 / y
+## 5.027) on both trees, which is what makes this a move and not a change.
 func _build_curve() -> void:
-	_curve = Curve3D.new()
-	_curve.bake_interval = TRACK_BAKE_INTERVAL
-	var n: int = TRACK_POINTS.size()
-	for i in n + 1:
-		var k: int = i % n
-		var prev: Vector3 = TRACK_POINTS[(k - 1 + n) % n]
-		var next: Vector3 = TRACK_POINTS[(k + 1) % n]
-		var handle: Vector3 = (next - prev) * TRACK_TENSION * 0.5
-		_curve.add_point(TRACK_POINTS[k], -handle, handle)
+	_curve = CoasterRail.build_curve(TRACK_POINTS, TRACK_TENSION, TRACK_BAKE_INTERVAL)
 	_length = _curve.get_baked_length()
 	# The crest and the lift foot are MEASURED off the baked curve.
-	_peak_y = -INF
-	var s: float = 0.0
-	while s < _length:
-		var p: Vector3 = _curve.sample_baked(s, true)
-		if p.y > _peak_y:
-			_peak_y = p.y
-			_crest_s = s
-		s += 0.05
+	var top: Dictionary = CoasterRail.crest(_curve)
+	_peak_y = float(top["y"])
+	_crest_s = float(top["s"])
 	_lift_foot_s = _curve.get_closest_offset(TRACK_POINTS[1])
 
 func track_length() -> float:
@@ -372,12 +540,10 @@ func track_curve() -> Curve3D:
 
 ## The rail-top point at arc length `s` (wrapped).
 func track_point(s: float) -> Vector3:
-	return _curve.sample_baked(fposmod(s, _length), true)
+	return CoasterRail.point_at(_curve, s)
 
 func track_tangent(s: float) -> Vector3:
-	var a: Vector3 = track_point(s - 0.05)
-	var b: Vector3 = track_point(s + 0.05)
-	return (b - a).normalized()
+	return CoasterRail.tangent_at(_curve, s)
 
 ## The SWEEP frame at `s`: columns (right, up, forward), origin on the
 ## rail top. Used to lay the rails and the ties down, and for nothing
@@ -394,11 +560,7 @@ func track_tangent(s: float) -> Vector3:
 ## at all, and the yaw Godot decomposes out of one means nothing.
 ## Anything that RIDES the rail takes `ride_frame()` below.
 func track_frame(s: float) -> Transform3D:
-	var p: Vector3 = track_point(s)
-	var t: Vector3 = track_tangent(s)
-	var right: Vector3 = t.cross(Vector3.UP).normalized()
-	var up: Vector3 = right.cross(t).normalized()
-	return Transform3D(Basis(right, up, t), p)
+	return CoasterRail.sweep_frame(_curve, s)
 
 ## CH72 -- THE POSE OF ANYTHING THAT RIDES THE RAIL AT `s`: origin on the
 ## rail top, and **+Z along the direction of travel**.
@@ -423,16 +585,58 @@ func track_frame(s: float) -> Transform3D:
 ## and the rider is handed the heading the rail actually has. Nothing is
 ## hard-coded to this loop: change a control point and the pose follows.
 func ride_frame(s: float) -> Transform3D:
-	var t: Vector3 = track_tangent(s)
-	var right: Vector3 = Vector3.UP.cross(t)
-	# A rail that ever ran dead vertical would make UP x t degenerate.
-	# This one does not (its steepest section is 37.6 deg), but a guard
-	# costs a branch and a silent NaN pose costs a lot more.
-	if right.length_squared() < 0.000001:
-		right = Vector3.RIGHT
-	right = right.normalized()
-	var up: Vector3 = t.cross(right).normalized()
-	return Transform3D(Basis(right, up, t), track_point(s))
+	return CoasterRail.ride_frame(_curve, s)
+
+# ---------------------------------------------------------------------
+# CH75 -- THE COMET'S CURVE, the same arithmetic over its own points
+
+func _build_comet_curve() -> void:
+	_comet_curve = CoasterRail.build_curve(COMET_POINTS, TRACK_TENSION, TRACK_BAKE_INTERVAL)
+	_comet_length = _comet_curve.get_baked_length()
+	var top: Dictionary = CoasterRail.crest(_comet_curve)
+	_comet_peak_y = float(top["y"])
+	_comet_crest_s = float(top["s"])
+	_comet_lift_foot_s = _comet_curve.get_closest_offset(COMET_POINTS[1])
+
+func comet_length() -> float:
+	return _comet_length
+
+func comet_crest_s() -> float:
+	return _comet_crest_s
+
+func comet_lift_foot_s() -> float:
+	return _comet_lift_foot_s
+
+func comet_peak_rail_y() -> float:
+	return _comet_peak_y
+
+func comet_curve() -> Curve3D:
+	return _comet_curve
+
+func comet_point(s: float) -> Vector3:
+	return CoasterRail.point_at(_comet_curve, s)
+
+func comet_tangent(s: float) -> Vector3:
+	return CoasterRail.tangent_at(_comet_curve, s)
+
+func comet_ride_frame(s: float) -> Transform3D:
+	return CoasterRail.ride_frame(_comet_curve, s)
+
+## The arc lengths at which the Comet stands a post: every
+## COMET_POST_SPACING from s = 0 wherever the rail is over
+## POST_MIN_HEIGHT. ONE spelling, read by the builder AND by
+## footprints(): the D3 census (posts = box shapes - FIXED_SOLIDS)
+## only holds if the two agree, and a second loop is how they stop
+## agreeing.
+static func comet_post_stations(curve: Curve3D) -> Array:
+	var out: Array = []
+	var length: float = curve.get_baked_length()
+	var s: float = 0.0
+	while s < length:
+		if curve.sample_baked(s, true).y > POST_MIN_HEIGHT:
+			out.append(s)
+		s += COMET_POST_SPACING
+	return out
 
 # =====================================================================
 # BUILDING
@@ -594,6 +798,101 @@ func _pose_cart() -> void:
 func _place_gondola() -> void:
 	_gondola.global_position = Vector3(TOWER_AT.x, _gy, TOWER_AT.z)
 
+# ---------------------------------------------------------------------
+# CH75 -- BUILDING THE COMET: rails, ties, braced posts, station, cart
+
+func _build_comet() -> void:
+	var mat: ShaderMaterial = CozyPalette.decor_material()
+	var before: int = _tris
+	var track := FunfairMesh.new()
+	var frames_l: Array = []
+	var frames_r: Array = []
+	var samples: int = int(floor(_comet_length / RAIL_SAMPLE))
+	for i in samples:
+		var f: Transform3D = CoasterRail.sweep_frame(_comet_curve, float(i) * RAIL_SAMPLE)
+		var drop: Vector3 = -f.basis.y * RAIL_RADIUS
+		frames_l.append(Transform3D(f.basis, f.origin - f.basis.x * RAIL_GAUGE * 0.5 + drop))
+		frames_r.append(Transform3D(f.basis, f.origin + f.basis.x * RAIL_GAUGE * 0.5 + drop))
+	track.swept_tube(frames_l, RAIL_RADIUS, COMET_RAIL)
+	track.swept_tube(frames_r, RAIL_RADIUS, COMET_RAIL)
+	var s: float = 0.0
+	while s < _comet_length:
+		var f: Transform3D = CoasterRail.sweep_frame(_comet_curve, s)
+		var under: Vector3 = f.origin - f.basis.y * (RAIL_RADIUS * 2.0 + TIE_THICK * 0.5)
+		track.strut(under - f.basis.x * TIE_WIDTH * 0.5, under + f.basis.x * TIE_WIDTH * 0.5, TIE_THICK, COMET_INK)
+		s += TIE_SPACING
+	# Posts, and a diagonal brace from each tall post's foot to the top
+	# of the next tall post, alternating side to side.
+	var stations: Array = comet_post_stations(_comet_curve)
+	_comet_posts = stations.size()
+	var feet: Array = []
+	var tops: Array = []
+	for st in stations:
+		var p: Vector3 = comet_point(float(st))
+		var top: float = p.y - POST_BELOW_RAIL
+		var ground: Vector3 = HubSurface.ground(Vector3(p.x, 0.0, p.z))
+		track.box(Vector3(p.x, (ground.y + top) * 0.5, p.z),
+			Vector3(COMET_POST_THICK, top - ground.y, COMET_POST_THICK), COMET_INK, COMET_INK_TOP, true)
+		feet.append(ground)
+		tops.append(Vector3(p.x, top, p.z))
+	for k in range(feet.size() - 1):
+		var ha: float = tops[k].y - feet[k].y
+		var hb: float = tops[k + 1].y - feet[k + 1].y
+		if ha < COMET_BRACE_MIN or hb < COMET_BRACE_MIN:
+			continue
+		# Only between NEIGHBOURING posts (a gap in the stations -- the
+		# rail dipping under POST_MIN_HEIGHT -- would otherwise be
+		# bridged by a brace across the lawn).
+		if float(stations[k + 1]) - float(stations[k]) > COMET_POST_SPACING * 1.5:
+			continue
+		if k % 2 == 0:
+			track.strut(feet[k] + Vector3(0.0, 0.3, 0.0), tops[k + 1] - Vector3(0.0, 0.3, 0.0), COMET_BRACE_THICK, COMET_INK)
+		else:
+			track.strut(feet[k + 1] + Vector3(0.0, 0.3, 0.0), tops[k] - Vector3(0.0, 0.3, 0.0), COMET_BRACE_THICK, COMET_INK)
+	# The station: the CH71 deck, posts and roof, in the Comet's ink.
+	var deck_ground: Vector3 = HubSurface.ground(COMET_DECK_CENTRE)
+	track.box(Vector3(COMET_DECK_CENTRE.x, deck_ground.y + DECK_LIFT + DECK_SIZE.y * 0.5, COMET_DECK_CENTRE.z),
+		DECK_SIZE, WOOD, WOOD_TOP, false)
+	for dz in [-1.0, 1.0]:
+		var foot := Vector3(COMET_DECK_CENTRE.x - DECK_SIZE.x * 0.5 + STATION_POST_THICK * 0.5, 0.0,
+			COMET_DECK_CENTRE.z + dz * (DECK_SIZE.z * 0.5 - STATION_POST_THICK * 0.5))
+		track.box(Vector3(foot.x, STATION_POST_HEIGHT * 0.5, foot.z),
+			Vector3(STATION_POST_THICK, STATION_POST_HEIGHT, STATION_POST_THICK), COMET_INK, COMET_INK_TOP, true)
+	track.box(Vector3(COMET_DECK_CENTRE.x + 0.35, STATION_POST_HEIGHT + STATION_ROOF.y * 0.5, COMET_DECK_CENTRE.z),
+		STATION_ROOF, COMET_INK, COMET_INK_TOP, false)
+	_comet_track_node = _draw("CometTrack", track, mat)
+	_solids(track)
+	# The cart: the CH71 box and wheels, plus a headrest behind the seat
+	# so its silhouette reads as a seat and not a crate.
+	var cart := FunfairMesh.new()
+	cart.box(Vector3(0.0, CART_BODY_Y, 0.0), CART_BODY, COMET_CART, COMET_CART_TOP, false)
+	cart.box(Vector3(0.0, CART_BODY_Y + CART_BODY.y * 0.5 + 0.16, -CART_BODY.z * 0.5 + 0.10),
+		Vector3(CART_BODY.x * 0.8, 0.32, 0.12), COMET_CART, COMET_CART_TOP, false)
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			cart.box(Vector3(sx * (CART_BODY.x * 0.5 - 0.04), WHEEL_SIZE.y * 0.5, sz * 0.35), WHEEL_SIZE, WHEEL, WHEEL, false)
+	_comet_cart = Node3D.new()
+	_comet_cart.name = "CometCart"
+	add_child(_comet_cart)
+	_draw("CometCartMesh", cart, mat, _comet_cart)
+	_comet_mount = Node3D.new()
+	_comet_mount.name = "CometChaseMount"
+	add_child(_comet_mount)
+	_comet_tris = _tris - before
+	_park_comet()
+
+func _park_comet() -> void:
+	_cs = 0.0
+	_cv = 0.0
+	_pose_comet()
+
+func _pose_comet() -> void:
+	_comet_cart.global_transform = comet_ride_frame(_cs)
+	_comet_mount.global_transform = comet_ride_frame(_cs - HubCamera.DRIVE_BACK)
+
+func comet_mount_node() -> Node3D:
+	return _comet_mount
+
 # =====================================================================
 # WHAT THE FAIR PUBLISHES
 
@@ -633,20 +932,28 @@ static func footprints() -> Array:
 		if p.y > POST_MIN_HEIGHT:
 			out.append({"position": Vector3(p.x, 0.0, p.z), "radius": POST_FOOTPRINT})
 		s += POST_SPACING
+	# CH75: the Comet's deck, low rails and posts, on the same terms. The
+	# posts come from comet_post_stations() -- the builder's own list.
+	out.append({"position": Vector3(COMET_DECK_CENTRE.x, 0.0, COMET_DECK_CENTRE.z), "radius": DECK_FOOTPRINT})
+	var comet := _static_comet_curve()
+	var comet_length: float = comet.get_baked_length()
+	s = 0.0
+	while s < comet_length:
+		var p: Vector3 = comet.sample_baked(s, true)
+		if p.y <= LOW_RAIL_HEIGHT:
+			out.append({"position": Vector3(p.x, 0.0, p.z), "radius": LOW_RAIL_FOOTPRINT})
+		s += 1.0
+	for st in comet_post_stations(comet):
+		var p: Vector3 = comet.sample_baked(float(st), true)
+		out.append({"position": Vector3(p.x, 0.0, p.z), "radius": POST_FOOTPRINT})
 	_footprint_cache = out
 	return out
 
+static func _static_comet_curve() -> Curve3D:
+	return CoasterRail.build_curve(COMET_POINTS, TRACK_TENSION, TRACK_BAKE_INTERVAL)
+
 static func _static_curve() -> Curve3D:
-	var curve := Curve3D.new()
-	curve.bake_interval = TRACK_BAKE_INTERVAL
-	var n: int = TRACK_POINTS.size()
-	for i in n + 1:
-		var k: int = i % n
-		var prev: Vector3 = TRACK_POINTS[(k - 1 + n) % n]
-		var next: Vector3 = TRACK_POINTS[(k + 1) % n]
-		var handle: Vector3 = (next - prev) * TRACK_TENSION * 0.5
-		curve.add_point(TRACK_POINTS[k], -handle, handle)
-	return curve
+	return CoasterRail.build_curve(TRACK_POINTS, TRACK_TENSION, TRACK_BAKE_INTERVAL)
 
 func triangle_total() -> int:
 	return _tris
@@ -683,6 +990,41 @@ func gondola_y() -> float:
 
 func gondola_speed() -> float:
 	return _gv
+
+## CH75: the Comet's readings.
+func comet_node() -> Node3D:
+	return _comet_cart
+
+func comet_track_node() -> MeshInstance3D:
+	return _comet_track_node
+
+func comet_phase() -> int:
+	return _comet_phase
+
+func comet_s() -> float:
+	return _cs
+
+func comet_speed() -> float:
+	return _cv
+
+## Triangles the Comet alone laid down (inside triangle_total()).
+func comet_triangle_total() -> int:
+	return _comet_tris
+
+func comet_post_count() -> int:
+	return _comet_posts
+
+## The speed the energy law predicts at the valley from the crest,
+## losses included, for a bench to compare the ridden number against:
+## v^2 = LIFT_SPEED^2 + 2 g (crest - valley) - 2 mu (arc length between).
+func comet_predicted_valley_speed() -> float:
+	var valley_s: float = _comet_curve.get_closest_offset(COMET_POINTS[COMET_VALLEY_INDEX])
+	var dh: float = _comet_peak_y - comet_point(valley_s).y
+	var v2: float = LIFT_SPEED * LIFT_SPEED + 2.0 * GRAVITY * dh - 2.0 * ROLL_FRICTION * (valley_s - _comet_crest_s)
+	return sqrt(maxf(v2, 0.0))
+
+func comet_valley_s() -> float:
+	return _comet_curve.get_closest_offset(COMET_POINTS[COMET_VALLEY_INDEX])
 
 ## CH72 -- THE THREE NUMBERS THAT FOLLOW THE HEIGHT. Each is published
 ## once and read everywhere; none is typed beside the height it depends
@@ -727,10 +1069,12 @@ static func tower_brake_decel() -> float:
 	return v2 / (2.0 * (brake_y - GONDOLA_REST_Y))
 
 func is_riding() -> bool:
-	return _coaster_phase != CoasterPhase.IDLE or _tower_phase != TowerPhase.IDLE
+	return _coaster_phase != CoasterPhase.IDLE or _tower_phase != TowerPhase.IDLE or _comet_phase != CometPhase.IDLE
 
 ## The stand point of a ride, flat.
 static func stand_point(ride: int) -> Vector3:
+	if ride == RIDE_COMET:
+		return COMET_STAND
 	return STATION_STAND if ride == RIDE_COASTER else TOWER_STAND
 
 # =====================================================================
@@ -746,8 +1090,23 @@ static func stand_point(ride: int) -> Vector3:
 ## rise/run tip -- 16.7 deg -- and measured the eye reaching ground at
 ## 55 u from 14.0 with 0.0 to 1.4 % of the frame sky. Level, the picture
 ## would be horizon; this is the angle that was actually measured, kept.
+## ⚠️ CH76: AND LEVEL ON THE COMET, WHICH THIS FUNCTION USED TO ANSWER
+## WRONG BY DEFAULT. Written as `RIDE_COASTER ? 0 : tower`, it handed
+## the Comet the TOWER's 16.7 deg -- a number measured for a gondola
+## looking down at the hub from 14 u, on a ride that does not look down
+## at anything. It was dead code while `accepts_rider_tap` refused the
+## Comet; opening that door is what would have sprung it, so the test is
+## now one branch per ride and a fourth ride has to answer for itself.
+##
+## The Comet takes the COASTER's answer, and for the coaster's reason:
+## the rail supplies all the motion, and a pitch fighting it is the one
+## term that makes people ill. Measured on the ridden cart rather than
+## assumed -- CometProbe PHASE P reads the eye's own pitch and what the
+## level view contains at each phase of the run.
 static func pov_pitch_deg(ride: int) -> float:
-	return 0.0 if ride == RIDE_COASTER else TOWER_POV_PITCH_DEG
+	if ride == RIDE_COASTER or ride == RIDE_COMET:
+		return 0.0
+	return TOWER_POV_PITCH_DEG
 const TOWER_POV_PITCH_DEG: float = 16.7
 
 ## CH72 -- how far the fixed camera must rise for the tower ride to stay
@@ -774,6 +1133,9 @@ func accepts_tap(aim: Vector3) -> int:
 		return RIDE_COASTER
 	if _tower_phase == TowerPhase.IDLE and flat.distance_to(Vector3(TOWER_AT.x, 0.0, TOWER_AT.z)) <= TOWER_TAP_RADIUS:
 		return RIDE_TOWER
+	# CH75: the Comet's station, withdrawing on the same terms.
+	if _comet_phase == CometPhase.IDLE and flat.distance_to(Vector3(COMET_POINTS[0].x, 0.0, COMET_POINTS[0].z)) <= COMET_TAP_RADIUS:
+		return RIDE_COMET
 	return -1
 
 # =====================================================================
@@ -821,6 +1183,23 @@ var _rider_tap_frame: int = -1000
 func accepts_rider_tap(origin: Vector3, direction: Vector3) -> bool:
 	if not is_riding() or _keepy == null:
 		return false
+	# ⚠️ CH76: THE COMET IS NO LONGER EXCLUDED, AND THE REASON IT WAS IS
+	# THE REASON IT NEED NOT BE. CH75 refused here because "a POV opened
+	# over a running drive would be two writers on one camera" -- true of
+	# a POV that was a second POSE, and the CH72 overlay never was one.
+	# HubCamera._blend_pov now takes the pose the frame has ALREADY
+	# written as its base, so from the chase the POV fades out of the
+	# chase pose: one writer, one blend, no detour through a ground-level
+	# frame the rider is 14 u above.
+	#
+	# The other half of CH75's note stands and is what makes the door
+	# safe: under the chase there is no fixed pixel that means "him". So
+	# the way OUT is a tap ANYWHERE, which is exactly what the `_pov_on()`
+	# line below already grants -- CH64's board precedent, unchanged. The
+	# way IN is a tap on the RAY through his body, and under this chase
+	# that is a reliable gesture rather than a lucky one: the pose is
+	# aimed AT the cart every frame (ChaseTuning.coaster's `look_target`),
+	# so the rider sits near the middle of the picture for the whole ride.
 	if Engine.get_process_frames() - _rider_tap_frame < RIDER_TAP_DEBOUNCE_FRAMES:
 		return false
 	if _pov_on():
@@ -845,6 +1224,8 @@ func running_ride() -> int:
 		return RIDE_COASTER
 	if _tower_phase != TowerPhase.IDLE:
 		return RIDE_TOWER
+	if _comet_phase != CometPhase.IDLE:
+		return RIDE_COMET
 	return -1
 
 ## Arms the walk intent for `ride` and returns where to walk.
@@ -894,7 +1275,42 @@ func board(ride: int) -> bool:
 		_gv = 0.0
 		ride_started.emit(RIDE_TOWER)
 		return true
+	if ride == RIDE_COMET:
+		if _comet_phase != CometPhase.IDLE:
+			return false
+		_park_comet()
+		if not _keepy.mount_carrier(_comet_cart, CART_SEAT):
+			return false
+		_comet_phase = CometPhase.DEPART
+		_cenergy = 0.0
+		_sync_comet_camera(true)
+		ride_started.emit(RIDE_COMET)
+		return true
 	return false
+
+## CH75 -- the Comet's camera is the CHASE, the karting's (the brief:
+## "camera poursuite, comme le karting"), with the airborne tuning
+## (HubCamera.ChaseTuning.coaster()): anchored on the cart, not on the
+## ground under it. Asked for at most once per change, and the exit only
+## for a chase this file opened.
+func _sync_comet_camera(chase: bool) -> void:
+	if chase == _comet_chase:
+		return
+	if _camera == null or not is_instance_valid(_camera):
+		_comet_chase = chase
+		return
+	if chase:
+		if not _camera.has_method("enter_drive"):
+			return
+		_camera.call("enter_drive", _comet_mount, HubCamera.ChaseTuning.coaster(_comet_cart))
+		_comet_chase = true
+		return
+	if _camera.has_method("exit_drive"):
+		_camera.call("exit_drive")
+	_comet_chase = false
+
+func is_comet_chasing() -> bool:
+	return _comet_chase
 
 ## The brake: a held finger anywhere on the screen (touch emulates the
 ## mouse button, CLAUDE.md), or the probe's override.
@@ -916,6 +1332,62 @@ func _process(delta: float) -> void:
 		_advance_coaster(delta)
 	if _tower_phase != TowerPhase.IDLE:
 		_advance_tower(delta)
+	if _comet_phase != CometPhase.IDLE:
+		_advance_comet(delta)
+
+## CH75 -- the Comet's run: the CH71 chain and energy law (dh taken off
+## the table, so the energy is exact whatever the frame), no player
+## brake, and the two-stage run-out described at COMET_BRAKE_RUN_U.
+func _advance_comet(delta: float) -> void:
+	var s0: float = _cs
+	match _comet_phase:
+		CometPhase.DEPART:
+			_cv = minf(LIFT_SPEED, _cv + LIFT_ACCEL * delta)
+			if _cs >= _comet_lift_foot_s:
+				_comet_phase = CometPhase.LIFT
+		CometPhase.LIFT:
+			_cv = LIFT_SPEED
+			if _cs >= _comet_crest_s:
+				_comet_phase = CometPhase.COAST
+				_cenergy = 0.5 * _cv * _cv
+		_:
+			pass
+	var s1: float = s0 + _cv * delta
+	var run_start: float = _comet_length - COMET_BRAKE_RUN_U
+	var turn_start: float = run_start + COMET_TRIM_U
+	if _comet_phase == CometPhase.COAST:
+		var h0: float = comet_point(s0).y
+		var h1: float = comet_point(s1).y
+		var ds: float = s1 - s0
+		_cenergy += -GRAVITY * (h1 - h0) - ROLL_FRICTION * ds
+		_cenergy = maxf(_cenergy, 0.5 * SPEED_FLOOR * SPEED_FLOOR)
+		_cv = sqrt(2.0 * _cenergy)
+		if s1 >= run_start:
+			_comet_phase = CometPhase.TRIM
+			_ctrim_entry_v = _cv
+	if _comet_phase == CometPhase.TRIM:
+		var u: float = clampf((s1 - run_start) / COMET_TRIM_U, 0.0, 1.0)
+		_cv = lerpf(_ctrim_entry_v, COMET_TURN_SPEED, u)
+		if s1 >= turn_start:
+			_comet_phase = CometPhase.BRAKE
+	if _comet_phase == CometPhase.BRAKE:
+		var u: float = clampf((s1 - turn_start) / (COMET_BRAKE_RUN_U - COMET_TRIM_U), 0.0, 1.0)
+		_cv = maxf(COMET_TURN_SPEED * sqrt(1.0 - u), 0.25)
+		if s1 >= _comet_length:
+			_park_comet()
+			_comet_phase = CometPhase.IDLE
+			if _keepy != null and _keepy.is_on_carrier():
+				_keepy.follow_carrier()
+			# The chase is released BEFORE the signal, the karting's
+			# order: the listener steps the rider off under a camera
+			# already blending home.
+			_sync_comet_camera(false)
+			ride_finished.emit(RIDE_COMET, COMET_STAND)
+			return
+	_cs = s1
+	_pose_comet()
+	if _keepy != null and _keepy.is_on_carrier():
+		_keepy.follow_carrier()
 
 func _advance_coaster(delta: float) -> void:
 	var s0: float = _s

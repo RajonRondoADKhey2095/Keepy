@@ -169,6 +169,10 @@ const BOARD_YAW_RATE_MAX: float = deg_to_rad(110.0)
 const BOARD_DEADZONE: float = deg_to_rad(3.0)
 const BOARD_FOV: float = 56.0
 const BOARD_KEEP_INSIDE: float = 2.5
+## CH75: the Comet's chase (see ChaseTuning.coaster()).
+const COASTER_YAW_RATE_MAX: float = deg_to_rad(150.0)
+const COASTER_FOV: float = 64.0
+const COASTER_UP: float = 6.2
 
 class ChaseTuning extends RefCounted:
 	var heading_lambda: float = DRIVE_HEADING_LAMBDA
@@ -181,6 +185,38 @@ class ChaseTuning extends RefCounted:
 	## World units in from the region's edge the pose is kept; negative
 	## means the pose may leave the region (the three vehicles).
 	var keep_inside: float = -1.0
+	## CH75: the chase follows a body that LEAVES THE GROUND. The shipped
+	## pose anchors on `HubSurface.ground(at)` -- the ground under the
+	## vehicle -- and looks at that ground point, which is right for a
+	## kart and puts a coaster cart 14 u up entirely out of the picture.
+	## Airborne, the drive TARGET is a MOUNT the ride itself trails along
+	## its rail (HubFunfair's comet mount, DRIVE_BACK behind the cart on
+	## the curve), the pose stands `up` straight above that mount, and
+	## the camera looks at `look_target` -- the cart.
+	##
+	## ⚠️ A MOUNT ON THE RAIL, NOT A POINT BEHIND THE CART, AND THAT IS
+	## MEASURED THREE TIMES OVER. (1) DRIVE_BACK behind on the FLAT
+	## heading, cart height + 6: CometProbe E11 read the camera INSIDE
+	## the posts under the drop rail (24 frames) and ON the drop rail (8),
+	## because posts stand on the rail's XZ line and that line climbs 23 u
+	## in the 7.6 u behind a cart on a 72 deg drop. (2) DRIVE_BACK behind
+	## along the cart's LAGGED 3D tangent: still 16 / 15 frames -- as the
+	## tangent swings through the valley the trailing point sweeps across
+	## the concave rail behind. (3) A mount ON the curve, `up` above it:
+	## rails and posts are under the camera by construction, on the lift,
+	## the drop, the camelback and both turns, and the only thing left to
+	## measure is the position lag cutting the inside of the valley
+	## (~0.9 u of a 6.2 u margin).
+	var airborne: bool = false
+	## The body an airborne chase LOOKS AT (the cart); the drive target
+	## is then only where the pose stands.
+	var look_target: Node3D = null
+	## How far above the anchor the pose stands. The ground vehicles use
+	## DRIVE_UP; the Comet stands higher, because 4.4 u over a cart at
+	## the bottom of its camelback put the camera INTO the camelback's
+	## rail on the way round (CometProbe E11: 27 frames inside a rail,
+	## 37 inside a post, before this number existed).
+	var up: float = DRIVE_UP
 
 	## The three device-validated vehicles: the constants above, verbatim,
 	## and the exact `lerp_angle` arithmetic they shipped with.
@@ -198,10 +234,25 @@ class ChaseTuning extends RefCounted:
 		t.keep_inside = BOARD_KEEP_INSIDE
 		return t
 
+	## CH75: the Comet's chase -- the kart's lags (3.6 / 7.0, validated
+	## on device three vehicles over), the board's yaw cap so the pose
+	## never whips through a fast turn (150 deg/s, above anything the
+	## rail asks: CometProbe measures the cart's own yaw rate and gates
+	## the cap over it), no deadzone (the rail does not wobble), airborne,
+	## and the widest fov of the four -- a FEEL number, Mathieu's to move.
+	static func coaster(cart: Node3D) -> ChaseTuning:
+		var t := ChaseTuning.new()
+		t.yaw_rate_max = COASTER_YAW_RATE_MAX
+		t.fov = COASTER_FOV
+		t.airborne = true
+		t.up = COASTER_UP
+		t.look_target = cart
+		return t
+
 	## True when the tuning is exactly the shipped vehicle chase, so the
 	## drive branch can take the byte-identical path for the three.
 	func is_plain() -> bool:
-		return deadzone <= 0.0 and yaw_rate_max == INF and keep_inside < 0.0
+		return deadzone <= 0.0 and yaw_rate_max == INF and keep_inside < 0.0 and not airborne
 
 var _hub_basis: Basis = Basis.IDENTITY
 var _hub_fov: float = 45.0
@@ -288,6 +339,10 @@ func _drive_wanted() -> Vector3:
 		return _hub_position
 	var heading := Vector3(sin(_drive_heading), 0.0, cos(_drive_heading))
 	var at: Vector3 = _drive_target.global_position
+	if _tuning.airborne:
+		# CH75: the target IS the mount on the rail; the pose stands
+		# straight above it.
+		return at + Vector3(0.0, _tuning.up, 0.0)
 	var ground: Vector3 = HubSurface.ground(at)
 	var flat: Vector3 = ground - heading * DRIVE_BACK
 	if _tuning.keep_inside >= 0.0:
@@ -801,11 +856,29 @@ func _tween_pov(to: float) -> void:
 ## `_ready()` -- `_on_drive_exited`'s discipline, for its reason: a fov
 ## left a hair off is a permanent change to every frame afterwards and no
 ## probe of this mode would ever look at it.
+##
+## ⚠️ CH76 -- BUT ONLY WHEN THE HUB POSE IS WHAT THE POV IS GIVING BACK
+## TO, AND THAT IS A DEFECT THIS LOT INTRODUCED AND A PROBE CAUGHT.
+## Off a chase this line is CH72's, unchanged. Over one it is wrong: the
+## drive branch owns `fov` while a chase runs and rewrites it every
+## frame, so slamming `_hub_fov` here paints the hub's 45 over the
+## Comet's 64 for however long it takes that branch to run again.
+## Measured rather than reasoned about: CometProbe P12 read exactly
+## 19.00000 of drift on the frame the fade-out finished, and 19.0 is
+## COASTER_FOV - the hub fov to the digit. Left in, it would be a visible
+## fov pop every time a rider tapped out of the POV mid-ride.
+##
+## The guard is on the DRIVE, not on the blend: while `_drive_target` is
+## set the drive branch converges the fov to `_hub_fov` on its own as its
+## blend falls, and `_on_drive_exited` does the same exact restore from
+## the same captured value. So the fov is given back exactly in both
+## cases; what changes is WHO gives it back.
 func _on_pov_exited() -> void:
 	_pov_head = null
 	_pov_pitch = 0.0
 	_pov_blend = 0.0
-	fov = _hub_fov
+	if _drive_target == null:
+		fov = _hub_fov
 
 func _pov_wanted() -> Transform3D:
 	var head: Transform3D = _pov_head.global_transform
@@ -840,25 +913,68 @@ func _apply_orbit(weight: float) -> void:
 		return
 	global_transform.basis = global_transform.basis.slerp(_hub_pose_basis(), weight)
 
-## Blends the POV over whatever the hub branch has just written. A NO-OP
+## True while no POV is running AND none is fading out. Every call site
+## returns on this FIRST, before a single term is computed -- CH72's
+## "a NO-OP, not 'nearly' one", kept as one spelling now that two
+## branches ask it.
+func _pov_idle() -> bool:
+	return _pov_head == null and _pov_blend <= 0.0
+
+## Blends the POV over whatever the HUB branch has just written. A NO-OP
 ## while none is running -- not "nearly" one: with `_pov_head` null and
 ## `_pov_blend` 0 nothing below the first line executes, and `fov` in
 ## particular is not written, which is what keeps the plain hub frame
 ## byte-identical to what shipped.
 func _apply_pov() -> void:
-	if _pov_head == null and _pov_blend <= 0.0:
+	if _pov_idle():
+		return
+	_blend_pov(Transform3D(_hub_pose_basis(), global_position),
+		_hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend)
+
+## =====================================================================
+## CH76 -- THE SAME BLEND, OVER WHICHEVER POSE THE BRANCH HAS JUST
+## WRITTEN
+##
+## CH72 wrote the POV as an overlay on the FIXED pose and called it from
+## the hub branch alone. The Comet (CH75) is the first ride whose
+## DEFAULT camera is the chase, and on it the CH72 pattern was not
+## merely unwired but arithmetically DEAD: `enter_pov` would set a head
+## and tween a blend to 1.0 and nothing would ever read either, because
+## the drive branch returns without calling this. That is why CH75 shut
+## the rider's tap channel on the Comet instead of opening a door onto
+## nothing, and it is the whole of what this lot changes.
+##
+## ⚠️ A BASE, NOT A SECOND POSE. There is still ONE writer (`_process`)
+## and ONE blend; what moves is that the pose the POV fades out of is
+## HANDED IN rather than assumed. From the hub it is the hub pose,
+## exactly as it shipped. From the chase it is the chase pose -- so a
+## tap on the Comet fades from over-the-cart straight into the eyes and
+## back, instead of detouring through a ground-level frame the rider is
+## 14 u above. "Two writers on one camera", CH75's stated reason for the
+## exclusion, is what this shape makes impossible rather than what it
+## risks.
+##
+## ⚠️ AND `base` IS RECOMPUTED, NEVER READ BACK OFF THE LIVE POSE. The
+## fov comment below gives the reason; it holds for the transform just
+## as hard, and a base read back from a pose this function had already
+## written would creep to the POV at any blend instead of holding the
+## one it was given. Both call sites satisfy it: the hub branch lerps
+## `global_position` toward `_wanted()` before calling, and the drive
+## branch hands in the `global_transform` it has just assigned from
+## `_hub_position`, `_drive_position` and `_drive_yaw` -- none of which
+## this function writes.
+func _blend_pov(base: Transform3D, base_fov: float) -> void:
+	if _pov_idle():
 		return
 	if _pov_head != null and not is_instance_valid(_pov_head):
 		_on_pov_exited()
 		return
 	if _pov_blend <= 0.0:
 		return
-	var hub_xform := Transform3D(_hub_pose_basis(), global_position)
-	global_transform = hub_xform.interpolate_with(_pov_wanted(), _pov_blend)
+	global_transform = base.interpolate_with(_pov_wanted(), _pov_blend)
 	# The base is RECOMPUTED, never read back off `fov`: lerping the
 	# live value toward POV_FOV every frame would creep it all the way
 	# there at any blend, instead of holding the blend it was given.
-	var base_fov: float = _hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend
 	fov = lerpf(base_fov, POV_FOV, _pov_blend)
 
 ## Puts the camera at its resting offset IMMEDIATELY, with no smoothing.
@@ -961,7 +1077,11 @@ func _process(delta: float) -> void:
 		var kart_ground: Vector3 = HubSurface.ground(kart.global_position)
 		var held: float = Vector2(_drive_position.x - kart_ground.x, _drive_position.z - kart_ground.z).length()
 		ahead = DRIVE_LOOK_AHEAD * clampf(held / DRIVE_BACK, 0.0, 1.0)
+	# CH75: an airborne chase looks AT its body (the cart), never at the
+	# ground under the mount it stands on.
 	var look: Vector3 = HubSurface.ground(kart.global_position) + heading * ahead + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
+	if _tuning.airborne and _tuning.look_target != null and is_instance_valid(_tuning.look_target):
+		look = _tuning.look_target.global_position + Vector3(0.0, DRIVE_LOOK_UP, 0.0)
 	var drive_xform := Transform3D(Basis.IDENTITY, _drive_position).looking_at(look, Vector3.UP)
 	if not _tuning.is_plain():
 		# CH64: the cap, on the pose itself. The yaw of the finished
@@ -981,6 +1101,10 @@ func _process(delta: float) -> void:
 	var hub_xform := Transform3D(_hub_pose_basis(), _hub_position)
 	global_transform = hub_xform.interpolate_with(drive_xform, _blend)
 	fov = lerpf(_hub_fov, _tuning.fov, _blend)
+	# CH76: and the POV blends over THAT, exactly the way it blends over
+	# the hub pose in the branch above. Inert -- not one line of it runs
+	# -- unless a rider has asked for his own eyes; see `_blend_pov`.
+	_blend_pov(global_transform, fov)
 
 func _wanted() -> Vector3:
 	# The ground UNDER him, not sea level under him: the frame holds its
