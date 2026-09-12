@@ -333,3 +333,248 @@ rien ; un lot qui en retirerait trois casserait tout, et la sonde le dirait.
   modéliser un vrai raptor ». Si l'intention était un **quad (ATV) nommé
   Raptor**, le correctif est `build_mesh()` + les quatre boîtes de patte et
   **rien d'autre** : aucune mécanique ne lit le maillage.
+
+---
+
+# CH80 — Le quad raptor est un ATV, pas un dinosaure
+
+| | |
+|---|---|
+| **date** | 12 septembre 2026 |
+| **branche** | `claude/quad-raptor-mesh-rebuild-2t60hy` |
+| **base** | `origin/staging` (= `0bd0dc0`), après CH78 + CH79 — arbre `94903d7` vérifié des deux côtés |
+| **fichiers touchés** | `scripts/hub/QuadRaptorBody.gd` (maillage, teintes, `SEAT_Y`, l'odomètre), `scripts/hub/HubTransport.gd` (**un commentaire**) |
+| **fichiers neufs** | aucun |
+| **palier** | 1 — `staging` |
+
+## 12. La prémisse de CH79 était fausse, et CH79 l'avait écrit lui-même
+
+Le § 11 ci-dessus se termine sur l'ambiguïté : « quad raptor » avait été
+lu comme une **monture à quatre pattes**, et CH79 signale que si
+l'intention était un **quad (ATV) nommé Raptor**, le correctif est
+`build_mesh()` + les quatre boîtes de patte **et rien d'autre**.
+
+C'était la bonne lecture et c'est le bon périmètre. CH80 l'applique.
+
+**Ce que ce lot a mesuré avant d'écrire une ligne**, parce qu'une
+affirmation de périmètre recopiée d'un lot précédent est un chiffre
+recopié (CH70) : la surface publique de `QuadRaptorBody` lue par le reste
+du dépôt est **exactement** `HULL_PIECES`, `LEG_PIECES`, `PIECE_TRIS`,
+`MAX_SPEED_FLAT`, `SEAT`, `SEAT_Y`, `STEER_RATIO`, `WALK_PACE`,
+`build_mesh`, `leg_mesh`, `climb_authority`, `drivable`, `place`,
+`reverse_authority`, `slope_force`, plus dix méthodes d'instance. Aucun
+collider n'est dérivé du maillage (il n'y a pas de collider : `_wall()`
+est un prédicat), aucune hauteur d'assise n'est lue sur une patte
+(`SEAT_Y` est authored), la caméra vise le **nœud** et pas une pièce.
+**La revendication de CH79 tient.**
+
+La preuve par la mesure, et non par la relecture : `QuadProbe` PHASE D
+rend **les mêmes chiffres au dix-millième sur les deux arbres** — croisière
+11,5185 contre 11,7857 authored, 20,57 u en 2,22 s, 95 % de la croisière
+à la frame 103, arrêt en 363 frames, 2,477 rad de cap en 2 s, pire lacet
+74,4 °/s. Un maillage reconstruit de 132 à 1 104 triangles n'a **pas
+déplacé un seul chiffre de conduite**.
+
+## 13. Ce qui a été construit, et pourquoi chaque trait est là
+
+Référence : Yamaha Raptor 700, lue à **1 u = 1 m** (Keepy fait
+`KeepyHopper.CROWN_HEIGHT` = 1,7 u).
+
+| trait du brief | ce qui le porte | mesuré |
+|---|---|---|
+| **1. voie large / trapu** | essieux à \|x\| 0,62 (avant) et 0,68 (arrière) | **1,820 large × 2,065 long = 0,881**, contre le kart à 1,480 / 2,150 = **0,688** |
+| **2. guidon moto** | colonne inclinée à 10°, tube transversal 6 pans, deux poignées caoutchouc | barre à **y 1,21**, soit **+0,39 u au-dessus de `SEAT_Y`** — la même élévation au-dessus du pilote que le volant de `KartBody` (0,79 − 0,42 = 0,37) |
+| **3. roues, arrière plus grosses** | 12 côtés chacune, comme les pneus de `KartBody` à la même distance caméra | avant r 0,33 / l 0,26, arrière r 0,40 / l 0,38 ; **les deux tailles sont visibles EN MOUVEMENT** (angles lus sur les nœuds après 18,277 u : −1,163 avant, **+1,711** arrière) |
+| **4. garde au sol** | plaque de protection à y 0,26 | **0,260 = 65 % du rayon de la roue arrière** (un quad sport réel : ~37 %) |
+| **5. châssis qui rétrécit** | réservoir tronconique + museau tronconique + plaque avant inclinée à 58° | **0,50 u de large au pilote → 0,22 u au bout du museau** |
+| **6. selle haute et étroite** | deux pièces, plate à `SEAT_Y` là où il se tient, qui plonge vers le réservoir | \|x\| ≤ 0,17, de z −0,54 à z 0,44, sommet **0,82** |
+| **7. garde-boue** | trois plaques par roue, posées sur un arc autour de l'essieu | s'arrêtent **0,01 u en deçà** de la face externe du pneu : la roue n'est jamais carénée |
+| **8. détails** | repose-pieds + nerf bars, bloc moteur, échappement + silencieux cylindrique, pare-chocs tubulaire avant, barre de maintien arrière, deux phares, quatre enjoliveurs | 68 pièces de hull en tout |
+
+**Coût** : **1 104 triangles** (816 de hull + 288 de roues) contre **132**
+pour le placeholder, soit **+972**. Le kart, l'autre véhicule détaillé de
+ce dépôt, en dépense ~700 pour une pièce également unique. Mesuré aux deux
+endroits que le brief demande :
+
+| station | sans le quad | avec | delta |
+|---|---|---|---|
+| **frame de SPAWN** (le quad est garé dans le cône) | 71 380 | 72 484 | **+1 104** |
+| poste ouvert de `QuadProbe` PHASE B | 64 951 | 66 055 | **+1 104** |
+| **en conduite**, caméra de poursuite | — | **44 863** | contre **45 830** pour la LUGE au même poste, même run |
+
+Les deux deltas sont **EXACTEMENT** le compte publié, ce qui est
+l'assertion de câblage de PHASE B (CH62 : une valeur périmée se répète
+parfaitement, un delta qui vaut le maillage au triangle près ne le peut
+pas). Nœuds de dessin : **1 hull + 24 secteurs de roue**, du même ordre
+que les ~24 `MeshInstance3D` du kart.
+
+## 14. La discipline de construction — et pourquoi elle n'a coûté aucune assertion
+
+`QuadProbe` PHASE X découpe le maillage livré en séries de `PIECE_TRIS`
+triangles et score chacune contre **son propre centre** : un test qui
+n'est valide que sur une pièce **CONVEXE**, et le fichier de la sonde le
+dit (`SledProbe` a déjà rendu « 46 triangles sur 60 mal enroulés » sur un
+maillage correct pour avoir oublié cette condition).
+
+Un quad veut des **cylindres**. La tentation était d'affaiblir le test.
+Ce n'était pas nécessaire : **`SledBody._hexa` est huit coins et six
+quads**, donc aussi, coins cisaillés, un tronc, une plaque inclinée —
+et un **COIN DE CYLINDRE** (centre, trois points de jante, extrudé :
+huit sommets, six faces, **douze triangles**, convexe sous 180°). Deux
+segments de jante par coin, donc *n* coins font un cylindre à *2n* côtés.
+
+Résultat : **68 pièces de hull + 24 coins de roue, toutes convexes,
+toutes à 12 triangles**, roues à 12 côtés comprises. Les six assertions
+de maillage sont restées vertes **sans qu'une ligne de sonde bouge**, et
+le blind check interne (le même test appliqué au maillage retourné) rend
+**816/816** sur la géométrie neuve.
+
+⚠️ **Et les indices d'enroulement ne sont PAS pris sur le centroïde.**
+`_solid()` passe à `SledBody._quad` les **axes propres authored** de la
+pièce portés par sa transformation de placement. Si le bâtisseur dérivait
+sa direction sortante du centroïde, il utiliserait exactement le critère
+du test, et PHASE X resterait verte sur n'importe quoi — la tautologie
+CH62. Les hints sont vérifiés positifs pour tout secteur de moins de 90°
+de demi-span ; le test garde un témoin indépendant.
+
+## 15. Les teintes — la réponse évidente a été MESURÉE et refusée
+
+CH79 avait choisi le turquoise « pour qu'une monture verte ne soit pas une
+silhouette sans arête sur la seule surface où elle se tient ». Scoré en
+luminance relative WCAG contre les **neuf bandes de sol** que ce véhicule
+peut fouler :
+
+| ton | pire ratio | contre |
+|---|---|---|
+| **turquoise CH79** `(0,24 ; 0,58 ; 0,62)` | **1,23:1** | `AUTUMN_A` |
+| corail du kart | 1,10:1 | `AUTUMN_A` |
+| rouge de la luge | 1,46:1 | `AUTUMN_A` |
+
+Il ne perd pas du contraste : il **DISPARAÎT**. Et ce n'est pas un
+problème de turquoise — la pire bande est à **L 0,313**, donc franchir
+3,0:1 quelque part sur cette carte exige **L ≤ 0,071**, et aucun ton de
+carrosserie n'est aussi sombre. C'est « la palette est coupée en deux
+bandes par le sol » de `CLAUDE.md`, rencontrée sur les verts du hub.
+
+**Le plancher est donc porté comme CH48 le porte pour un marqueur de
+minimap qui contient une PHOTOGRAPHIE : par une pièce d'UN SEUL TON qui,
+elle, le franchit.** Les pneus (**5,87:1** contre la pire bande) et le
+cadre (**3,91:1**) ceinturent toute la moitié basse de la machine — roues,
+plaque de protection, bras oscillants, guidon, pare-chocs. L'arête de la
+silhouette est la leur, à toutes les stations.
+
+La carrosserie est alors libre, et choisie pour trois choses qu'elle peut
+réellement tenir : **distinctivité de flotte** (le kart est corail, la
+luge crème et rouge ; le bleu n'est possédé par aucun véhicule),
+**distance de teinte** (218° contre l'herbe à 90-120°, et bleu-contre-vert
+est exactement la séparation que le WCAG ne score pas), et c'est la
+couleur de la machine de référence.
+
+| rôle | ton | pire contre le sol | séparation interne |
+|---|---|---|---|
+| carrosserie | `(0,16 ; 0,36 ; 0,72)` | 2,20:1 | — |
+| garde-boue | `(0,28 ; 0,54 ; 0,86)` | 1,72:1 | 1,90:1 / carrosserie |
+| selle | `(0,46 ; 0,39 ; 0,35)` | 3,75:1 | 2,31:1 / carrosserie |
+| cadre, guidon | `(0,22 ; 0,23 ; 0,25)` | **3,91:1** | — |
+| pneus, poignées | `(0,12 ; 0,11 ; 0,11)` | **5,87:1** | 2,67:1 / carrosserie |
+| enjoliveurs, phares | `(0,80 ; 0,82 ; 0,84)` | 1,31:1 | 7,93:1 / pneus |
+
+⚠️ **Aucun de ces chiffres ne dit que ça se lit.** Ce sont des
+arithmétiques sur des albédos authored ; le shader décor est unlit, donc
+ces albédos SONT ce qui s'affiche, mais « est-ce que ça se lit comme un
+quad sur l'herbe » est un appel device et le rapport le nomme comme tel.
+
+## 16. La pose du rider est HORS PÉRIMÈTRE, et le brief demandait qu'on le dise
+
+Le brief demande Keepy **assis à califourchon**, mains vers le guidon.
+**Il n'existe aucune pose assise dans ce dépôt.**
+`KeepyHopper.mount_carrier()` écrit le rider **DEBOUT** au point d'assise
+(`_body.scale = _base_scale`, `_body.rotation_degrees.x = _base_pitch`),
+et le kart, la luge, le char à voile et le voilier montent tous ainsi. La
+poser autrement est un changement de `KeepyHopper` partagé par **six**
+véhicules — une mécanique, donc hors de ce lot.
+
+Ce qui EST dans ce lot, c'est la géométrie autour de l'endroit où il se
+tient : la selle est étroite et longue, le réservoir s'évase de part et
+d'autre de ses pieds, les repose-pieds sont là où ses pieds pendraient, et
+la barre est à +0,39 u au-dessus de la selle — la relation exacte que
+`KartBody` donne à son volant au-dessus de son siège. **Il se lit comme
+étant dessus parce que la machine est construite autour de là où il se
+tient.**
+
+## 17. Ce que la passe rouge a signé
+
+Aucune assertion neuve n'a été écrite (le brief interdit de toucher la
+sonde), donc la passe rouge porte sur la capacité du **contrat de
+maillage existant** à rougir sur la géométrie neuve. **Une pièce de hull
+retirée**, trois rouges prédits, **trois obtenus et pas d'autres** :
+
+| assertion | lu |
+|---|---|
+| `the hull is HULL_PIECES boxes of PIECE_TRIS` | 804 contre 816 |
+| `triangle_count() publishes what the meshes actually carry` | 816 + 288 publiés contre 804 réels |
+| PHASE B `the delta is EXACTLY the triangle count` | **+1 092 contre 1 104 publiés** |
+
+La troisième est la plus utile : elle prouve que le compteur de la frame
+est câblé à ce que la scène dessine réellement, et donc que les 24 nœuds
+de roue sont tous soumis. Fichier restauré et vérifié **byte-identique**
+(`cmp`, md5 `b0927e29730b9b4f12cd78605208a397`).
+
+## 18. Deux défauts d'INSTRUMENT, chacun avec l'allure d'un résultat
+
+**(a) La station de rendu était DANS un arbre.** La sonde de rendu
+jetable a d'abord utilisé le poste « plateau ouvert » de `QuadProbe`
+(−18 ; 18) — parfait pour CONDUIRE, inutilisable pour REGARDER :
+`HubCamera.OFFSET` met l'objectif 8,9 u au nord et 7,6 u au-dessus du
+point suivi, et ce point-là tombe dans une couronne de pommier. Huit
+azimuts de feuilles, nœud visible, sujet au centre du cadre,
+`unproject_position` juste, **et pas un pixel du sujet**. Re-rendu depuis
+le park du quad — dégagé par construction, et l'endroit où un joueur le
+rencontre — les huit azimuts sont propres. ⚠️ **Et la sonde n'assertait
+pas qu'elle avait vu son sujet** : c'est ce qui aurait transformé six
+minutes de diagnostic en une ligne rouge.
+
+**(b) Un seuil de sonde écrit dans les unités de la variable publiée.**
+`_gait` devait devenir l'angle de la roue avant
+(`1 / FRONT_WHEEL_RADIUS` = 3,03 rad/u, la dérivation évidente et celle
+que `KartBody` écrit). PHASE D asserte « à l'arrêt, ça ne pédale pas »
+avec un seuil de **0,05** sur `gait_phase()`, et le fluage résiduel
+mesuré vaut **0,0199 u** en 30 frames : à 3,03 rad/u cela fait **0,060** —
+**rouge sur un mécanisme parfaitement correct**, uniquement parce que le
+seuil avait été écrit pour le 1,25 rad/u du placeholder. `_gait` est donc
+resté un **ODOMÈTRE en unités**, ce qui est de toute façon la meilleure
+décomposition : c'est la primitive dont les DEUX tailles de roue dérivent
+(`ROLL_PER_U`), au lieu d'en privilégier une. Mesuré après changement :
+**0,0199 contre 0,05**, et 18,277 u contre le seuil de 1,0. C'est la règle
+CH47 (« un seuil écrit en cellules cesse de séparer le jour où la cellule
+grandit ») rencontrée côté **publieur** et non côté conteneur.
+
+## 19. La dette de nommage, dite et non payée
+
+`leg_mesh()`, `LEG_PIECES` et `leg_pitch()` sont les noms que CH79 a
+donnés aux quatre pièces mobiles. **Ce sont maintenant des roues.**
+Les renommer casserait la compilation de `QuadProbe`, et le brief de CH80
+interdit de toucher la sonde — pour une bonne raison : un rouge là-bas
+était la preuve que le lot cherchait (une mécanique qui lirait le
+maillage), et la sonde doit rester celle de CH79 pour que la comparaison
+veuille dire quelque chose. Le renommage des trois **avec** la sonde est
+un commit d'un lot qui a le droit de l'éditer. Idem pour le libellé
+`%.3f rad` que PHASE D imprime à côté d'une distance.
+
+## 20. Ce que ce lot n'a PAS touché
+
+Ni la conduite (`PACE_RATIO`, `ACCEL_LAMBDA`, `COAST_LAMBDA`,
+`BRAKE_DECEL`, `SLOPE_GAIN`, `GRIP_ON`, `STEER_*`), ni `_wall()`, ni
+`drivable()`, ni la porte (`mount_quad` / `exit_quad` / `HubTransport`
+au-delà d'un commentaire), ni la caméra, ni le HUD, ni la minimap, ni
+`HubTapInput`, ni `KeepyHopper`, ni `SledBody` (dont `_quad` est
+**appelé**, jamais copié), ni `QuadProbe`.
+
+⚠️ **Les constantes de tenue de route ont été laissées telles quelles
+DÉLIBÉRÉMENT.** `SLOPE_GAIN` 0,55 et `GRIP_ON` 6,5 sont argumentées dans
+leurs propres commentaires par « des pattes, donc ça tient » ; sur un quad
+les mêmes nombres se lisent comme de la suspension à grand débattement et
+des pneus crantés, et la conduite CH79 a été validée sur device. Les
+rouvrir est un lot de FEEL avec une passe device, pas un lot de maillage —
+CH70 est le précédent de ce qui arrive quand on rouvre une constante de
+goût sans mesurer qui s'est appuyé dessus depuis.
