@@ -165,6 +165,7 @@ dans `docs/lots/`, ceci n'en est jamais un résumé.
 | 11 sept 2026 | CH74 (grimper aux arbres uniquement au tap sur l'apex) — `d74a45d` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 | 12 sept 2026 | CH75 (La Comète, troisième manège du parc, sous la caméra de poursuite), CH76 (la Comète reçoit la vue POV) — `7a9051a` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 | 12 sept 2026 | CH77 (terrain navigable hors-chemin, zones 1 et 2) — `20cf6b8` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
+| 12 sept 2026 | CH78 (le ballon sauteur part du plateau de spawn), CH79 (le quad raptor, sixième véhicule), CH80 (le quad raptor reconstruit en ATV) — `54c964a` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 
 ## Vérifier un déploiement SUR LE SERVICE, jamais dans le log CI seul
 
