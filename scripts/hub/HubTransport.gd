@@ -1308,6 +1308,10 @@ func mount_yacht() -> bool:
 		_camera.call("enter_drive", _yacht)
 	if _hud != null:
 		_hud.set_vehicle_mode(true)
+		# CH81: this writer is NOT configured, so it keeps CH43's whole
+		# axis -- read off it rather than restated, so the hint can never
+		# disagree with what the thumb can actually do.
+		_hud.set_reverse_available(touch.allows_reverse)
 		_hud.visible = true
 	WorldSave.note("yacht_rides")
 	yacht_driving_changed.emit(true)
@@ -1356,6 +1360,10 @@ func mount_sailboat() -> bool:
 		_camera.call("enter_drive", _sailboat)
 	if _hud != null:
 		_hud.set_vehicle_mode(true)
+		# CH81: this writer is NOT configured, so it keeps CH43's whole
+		# axis -- read off it rather than restated, so the hint can never
+		# disagree with what the thumb can actually do.
+		_hud.set_reverse_available(touch.allows_reverse)
 		_hud.visible = true
 	sailboat_driving_changed.emit(true)
 	return true
@@ -1410,6 +1418,10 @@ func mount_sled() -> bool:
 		_camera.call("enter_drive", _sled)
 	if _hud != null:
 		_hud.set_vehicle_mode(true)
+		# CH81: this writer is NOT configured, so it keeps CH43's whole
+		# axis -- read off it rather than restated, so the hint can never
+		# disagree with what the thumb can actually do.
+		_hud.set_reverse_available(touch.allows_reverse)
 		_hud.visible = true
 	sled_driving_changed.emit(true)
 	return true
@@ -1464,6 +1476,10 @@ func mount_quad() -> bool:
 		_camera.call("enter_drive", _quad)
 	if _hud != null:
 		_hud.set_vehicle_mode(true)
+		# CH81: this writer is NOT configured, so it keeps CH43's whole
+		# axis -- read off it rather than restated, so the hint can never
+		# disagree with what the thumb can actually do.
+		_hud.set_reverse_available(touch.allows_reverse)
 		_hud.visible = true
 	quad_driving_changed.emit(true)
 	return true

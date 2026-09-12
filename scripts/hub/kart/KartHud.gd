@@ -156,8 +156,11 @@ func _ready() -> void:
 	# that a command nobody is told about is a command that does not exist
 	# -- and the gear is the half a player has no reason to guess at, since
 	# an accelerator that also reverses is not what a pedal does.
-	var hint := _label(box, 16, Color(0.85, 0.80, 0.68))
-	hint.text = "↑  pousser pour foncer      ↓  tirer pour reculer"
+	# CH81: TWO spellings, and the coordinator picks one at mode entry --
+	# see set_reverse_available(). A vehicle whose writer refuses the gear
+	# must not be told on screen that it has one.
+	_axis_hint = _label(box, 16, Color(0.85, 0.80, 0.68))
+	_axis_hint.text = HINT_BOTH if _reverse_available else HINT_UP_ONLY
 	set_times(0, 0, 0, 0, false)
 	_build_race_widgets()
 	if DevTools.enabled():
@@ -441,6 +444,31 @@ func _append_dev_readout(rows: Array) -> void:
 ## either vehicle restores the race widgets and nothing has to remember
 ## which one it was.
 var _vehicle_mode: bool = false
+var _axis_hint: Label = null
+## CH81 -- DOES THE VEHICLE BEING DRIVEN HAVE A REVERSE GEAR.
+##
+## ⚠️ IT IS NOT `_vehicle_mode`, AND IT MUST NOT BE READ OFF IT. The kart
+## is the one mode that is not "vehicle mode", so today the two flags would
+## agree -- which is exactly the shape CLAUDE.md's "un etat partage n'est
+## pas une permission partagee" section is about: the next vehicle to lose
+## its gear, or the next kart mode to keep one, would inherit the wrong
+## answer from a state that never meant this. It is handed in by the
+## coordinator, which reads it off the KartTouchInput it owns.
+var _reverse_available: bool = true
+
+func set_reverse_available(on: bool) -> void:
+	_reverse_available = on
+	if _axis_hint != null:
+		_axis_hint.text = HINT_BOTH if on else HINT_UP_ONLY
+	queue_redraw()
+
+## For a probe: what the HUD currently believes, read back off the node.
+func reverse_available() -> bool:
+	return _reverse_available
+
+## For a probe: the line the player is actually shown.
+func axis_hint_text() -> String:
+	return _axis_hint.text if _axis_hint != null else ""
 
 func set_vehicle_mode(on: bool) -> void:
 	_vehicle_mode = on
@@ -533,6 +561,14 @@ func _process(delta: float) -> void:
 ## of text. Mathieu drove the kart and did not know the command existed.
 ## The gauge below is drawn for the whole drive: empty it is an invitation,
 ## full it is feedback, and it needs no sentence to explain it.
+## CH81 -- THE HINT HAS TWO SPELLINGS, one per licence. CH43's whole
+## argument for naming the down half was CH31's finding that a command
+## nobody is told about is a command that does not exist; the converse is
+## a command that is named and cannot be reached, which is worse -- a
+## player pulls down, nothing happens, and the screen says it should.
+const HINT_BOTH: String = "↑  pousser pour foncer      ↓  tirer pour reculer"
+const HINT_UP_ONLY: String = "↑  pousser pour foncer"
+
 const GAUGE_W: float = 26.0
 const GAUGE_H: float = 260.0
 const GAUGE_MARGIN: float = 34.0
@@ -555,8 +591,14 @@ func _draw() -> void:
 	# the gear -- because a track that stopped at the anchor was drawing the
 	# scheme CH42 shipped and not the one CH43 does.
 	var boost_span: float = _touch_boost_span()
-	var dy: float = clampf(a.y - _ghost_finger.y, -boost_span, boost_span)
-	draw_line(a + Vector2(0.0, boost_span), a + Vector2(0.0, -boost_span),
+	# CH81: without the licence the track STOPS AT THE ANCHOR, for exactly
+	# the reason CH43 gave for running it through -- a track that names a
+	# half the thumb cannot use draws a scheme this vehicle does not have.
+	# `low` is the bottom of the track in the dy convention (positive = up),
+	# so -low is its screen offset, which is how one expression serves both.
+	var low: float = -boost_span if _reverse_available else 0.0
+	var dy: float = clampf(a.y - _ghost_finger.y, low, boost_span)
+	draw_line(a + Vector2(0.0, -low), a + Vector2(0.0, -boost_span),
 		Color(1.0, 1.0, 1.0, 0.14), 6.0)
 	# The marker takes the colour of the half it is in: warm for pace, cool
 	# for the gear. `_reverse` and `_boost` are exclusive at the writer
@@ -570,8 +612,9 @@ func _draw() -> void:
 	# readout. Each fades out as its own half arrives, so it stops nagging.
 	_draw_axis_arrow(a + Vector2(0.0, -boost_span), -1.0, 0.42 * (1.0 - _boost),
 		Color(1.0, 0.72, 0.30))
-	_draw_axis_arrow(a + Vector2(0.0, boost_span), 1.0, 0.42 * (1.0 - _reverse),
-		Color(0.62, 0.82, 1.0))
+	if _reverse_available:
+		_draw_axis_arrow(a + Vector2(0.0, boost_span), 1.0, 0.42 * (1.0 - _reverse),
+			Color(0.62, 0.82, 1.0))
 
 ## One end of the push track. `dir` is -1 up / +1 down, so the head points
 ## away from the anchor on both halves without a second spelling of it.
