@@ -150,6 +150,12 @@ func _ready() -> void:
 	touch.boost_span = KartTouchInput.KART_BOOST_SPAN
 	touch.boost_dead_zone = KartTouchInput.KART_BOOST_DEAD_ZONE
 	touch.boost_release_s = KartTouchInput.KART_BOOST_RELEASE_S
+	# CH81: NO REVERSE GEAR ON THE CIRCUIT. THE one line that scopes
+	# Mathieu's retour to this vehicle -- HubTransport's writer is not
+	# configured here and keeps the gear for the sand yacht, the sailboat,
+	# the sled and the quad. See KartTouchInput.allows_reverse for what it
+	# costs against a fence (measured, and it is not nothing).
+	touch.allows_reverse = false
 	touch.name = "Touch"
 	add_child(touch)
 	_player = add_racer("Keepy", PLAYER_COLOUR, true)
@@ -363,6 +369,10 @@ func _mount() -> bool:
 	if _hud != null:
 		_hud.visible = true
 		_hud.set_results_visible(false)
+		# CH81: the hint and the ghost must not name a half of the axis this
+		# writer refuses. READ OFF THE WRITER, never restated -- a HUD that
+		# advertised an unreachable command is CH31's defect in reverse.
+		_hud.set_reverse_available(touch.allows_reverse)
 		_refresh_hud()
 	driving_changed.emit(true)
 	return true

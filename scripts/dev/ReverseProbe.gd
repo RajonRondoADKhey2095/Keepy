@@ -155,6 +155,10 @@ func _run() -> void:
 	_phase_braking()
 	_phase_arrest()
 	_phase_gesture()
+	# ---- CH81. LAST, after CH43's own phase: PHASE GESTURE is the
+	# regression test on the shared writer and has to be seen to pass on
+	# the tree that took the gear off the kart before the kart is asked.
+	_phase_lockout()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -453,6 +457,17 @@ func _phase_pin() -> void:
 ## PHASE GEAR -- the four vehicles, one assertion each, and the blind
 ## check is the DISPLACEMENT: a negative speed that moves nothing is a
 ## number, not a reverse gear.
+##
+## ⚠️ CH81 -- WHAT THE "kart" ROW HERE IS, AND IS NOT. Since CH81 no player
+## can write `input.reverse` for the kart: HubKarting sets
+## `KartTouchInput.allows_reverse = false` on its own writer. This phase
+## hands the body a KartInput DIRECTLY, so the kart row no longer says
+## anything about the kart's CONTROLS -- it says that VehicleDrive's shared
+## reverse branch still works, which is a live path (three vehicles by
+## thumb, and `input.brake` at a standstill for every KartAiDriver on the
+## grid). It is kept for exactly that regression, and PHASE LOCKOUT is
+## where the kart's controls are gated. Reading this row as "the kart has
+## a reverse" would be the stale-fact defect CLAUDE.md exists to stop.
 
 ## Where each vehicle is put for its gear run: open ground it can drive on,
 ## far from any wall, so the run measures the gear and not a bounce.
@@ -1003,6 +1018,13 @@ func _phase_arrest() -> void:
 ## be answered by reading the file: a `grep` finds the code that IS there,
 ## and what is being asserted is the absence of a behaviour.
 ##
+## ⚠️ CH81 -- THE INSTANCE THIS PHASE DRIVES IS THE DEFAULT ONE, which
+## since CH81 is a statement and not an accident: a bare KartTouchInput
+## carries `allows_reverse = true`, i.e. the configuration HubTransport's
+## sand yacht, sailboat, sled and quad all share. So every assertion below
+## is the regression test on THOSE four, unchanged. The kart's writer is
+## PHASE LOCKOUT's subject.
+##
 ## ⚠️ IT IS SYNCHRONOUS ON PURPOSE. `_physics_process` is where the keyboard
 ## poll lives, and it would overwrite `input.reverse` between two events; no
 ## frame is advanced inside this phase, so every value read is the one the
@@ -1170,3 +1192,226 @@ func _phase_gesture() -> void:
 		"and the left button dragged DOWN writes reverse %.4f -- the desktop has the whole axis, not half of it"
 		% (t.get("input") as KartInput).reverse)
 	t.queue_free()
+
+## =====================================================================
+## PHASE LOCKOUT -- THE KART HAS NO GEAR, AND THE OTHER FOUR STILL DO.
+##
+## Mathieu's retour: on the circuit Keepy must not be able to back up.
+## Everything above this line is CH42/CH43 and still holds -- VehicleDrive's
+## reverse branch is untouched, and so are the four vehicles that reach it
+## with a thumb. What CH81 changed is ONE instance value on ONE writer,
+## `KartTouchInput.allows_reverse`, and this is the only phase that knows
+## it exists.
+##
+## ⚠️ IT ENTERS BY THE PLAYER'S CHANNEL, AT BOTH ENDS. A phase that wrote
+## `input.reverse = 0.0` itself and then asserted the kart does not reverse
+## would be asserting its own assignment; a phase that read `allows_reverse`
+## back off the writer would be reading a variable and calling it a proof
+## (CLAUDE.md: "une sonde qui gate une INTERACTION entre par le canal du
+## joueur", and CH58's forty-three green assertions on a board no tap ever
+## reached). So every number below comes from real InputEvents fed to a
+## real KartTouchInput, and the vehicle they reach is the player's kart on
+## the circuit, driven through the writer's OWN `_physics_process` so the
+## automatic accelerator is the real one and not a literal typed here.
+##
+## ⚠️ AND THE BLIND HALF IS AN A/B ON THE SAME KART. "No negative speed" is
+## an assertion of ABSENCE and passes for free against a bench that cannot
+## produce a negative speed at all. So the identical gesture is played into
+## the identical kart from the identical pose through two writers that
+## differ in exactly one boolean -- the DEFAULT one, which is the
+## configuration HubTransport's four vehicles share, must drive it
+## BACKWARDS, and the kart's must not. The pair is the measurement; either
+## run alone is not. It cuts both ways in one run, too: the kart's writer
+## has to go FORWARD, which is what says the change took the gear and not
+## the axis.
+
+## Two seconds of held thumb. Short on purpose: the assertions are about
+## the SIGN of the speed, and a longer run would put the forward leg into
+## the first corner and the reverse leg behind the grid, where a fence
+## reflection would be doing some of the arithmetic.
+const LOCKOUT_FRAMES: int = 120
+## How far down the screen the thumb is dragged: the kart's full span, so
+## the gesture asks for ALL of whichever half it lands in.
+const LOCKOUT_DRAG_PX: float = KartTouchInput.KART_BOOST_SPAN
+
+## A writer configured the way HubKarting configures its own, or the way
+## HubTransport leaves its default. Built here rather than borrowed from
+## the live nodes so the A/B differs in ONE field: driving the live kart
+## writer against the live yacht writer would also be comparing two boost
+## spans, and a difference with two causes is not a measurement.
+func _lockout_writer(allows_reverse: bool) -> Node:
+	var t: Node = KartTouchInput.new()
+	add_child(t)
+	t.set("boost_span", KartTouchInput.KART_BOOST_SPAN)
+	t.set("boost_dead_zone", KartTouchInput.KART_BOOST_DEAD_ZONE)
+	t.set("boost_release_s", KartTouchInput.KART_BOOST_RELEASE_S)
+	t.set("allows_reverse", allows_reverse)
+	t.set("enabled", true)
+	return t
+
+## Anchor at G_ANCHOR and drag `dy` px UP the screen (negative = down),
+## leaving the thumb DOWN -- the state the run below is measured in.
+func _hold(t: Node, dy: float) -> void:
+	_touch_down(t, G_ANCHOR, 0)
+	_touch_drag(t, G_ANCHOR + Vector2(0.0, -dy), 0)
+
+## The player's kart from the grid pose, driven for `frames` by whatever
+## `t` is writing -- with the writer's own `_physics_process` called each
+## frame, because that is where the automatic throttle lives. Called
+## directly rather than by advancing a real frame: this phase is
+## synchronous like PHASE GESTURE, and the question is what that function
+## DOES, not when the engine gets round to it.
+func _lockout_run(t: Node, frames: int) -> Dictionary:
+	var pose: Dictionary = (_karting.track as KartTrack).start_pose(0)
+	var at: Vector3 = pose["position"]
+	var yaw: float = float(pose["yaw"])
+	_place("kart", at, yaw)
+	var lowest: float = 0.0
+	var highest: float = 0.0
+	for _f in frames:
+		t.call("_physics_process", FIXED_DELTA)
+		_drive("kart", FIXED_DELTA, t.get("input"))
+		lowest = minf(lowest, _speed_of("kart"))
+		highest = maxf(highest, _speed_of("kart"))
+	var moved: Vector3 = _flat("kart") - at
+	return {"lowest": lowest, "highest": highest,
+		"advance": moved.dot(Vector3(sin(yaw), 0.0, cos(yaw)))}
+
+## One poll of a writer's keyboard half with `key` held. `flush_buffered_
+## events` is what makes this synchronous: `parse_input_event` only queues,
+## and a phase that read the key state back without flushing would be
+## reading the state before its own event -- a zero that looks like a
+## refusal.
+func _key_reverse(t: Node, key: Key) -> float:
+	var down := InputEventKey.new()
+	down.keycode = key
+	down.physical_keycode = key
+	down.pressed = true
+	Input.parse_input_event(down)
+	Input.flush_buffered_events()
+	t.call("_physics_process", FIXED_DELTA)
+	var got: float = float((t.get("input") as KartInput).reverse)
+	var up := InputEventKey.new()
+	up.keycode = key
+	up.physical_keycode = key
+	up.pressed = false
+	Input.parse_input_event(up)
+	Input.flush_buffered_events()
+	return got
+
+func _phase_lockout() -> void:
+	print("-- PHASE LOCKOUT: the kart's writer refuses the gear, the shared one keeps it --")
+	var kart_w: Node = _lockout_writer(false)
+	var free_w: Node = _lockout_writer(true)
+	# ---- 1. THE A/B, same kart, same pose, same gesture, one boolean apart.
+	_hold(free_w, -LOCKOUT_DRAG_PX)
+	_hold(kart_w, -LOCKOUT_DRAG_PX)
+	var free_in: KartInput = free_w.get("input")
+	var kart_in: KartInput = kart_w.get("input")
+	print("     thumb held %.0f px DOWN:  shared writer reverse %.4f  |  kart writer reverse %.4f"
+		% [LOCKOUT_DRAG_PX, free_in.reverse, kart_in.reverse])
+	_check(free_in.reverse > 0.99,
+		"blind: the SHARED writer still writes reverse %.4f on that slide -- the instrument can read a gear, and HubTransport's four vehicles keep it"
+		% free_in.reverse)
+	_check(kart_in.reverse == 0.0,
+		"and the KART's writer writes reverse %.4f: the down half is inert on this instance" % kart_in.reverse)
+	var free_run: Dictionary = _lockout_run(free_w, LOCKOUT_FRAMES)
+	var kart_run: Dictionary = _lockout_run(kart_w, LOCKOUT_FRAMES)
+	print("     %d frames of it on the SAME kart from the SAME grid pose:" % LOCKOUT_FRAMES)
+	print("       shared writer: lowest %+8.4f u/s  advance %+8.3f u" % [free_run["lowest"], free_run["advance"]])
+	print("       kart writer:   lowest %+8.4f u/s  advance %+8.3f u" % [kart_run["lowest"], kart_run["advance"]])
+	_check(float(free_run["lowest"]) < -0.5 * KartBody.REVERSE_SPEED
+			and float(free_run["advance"]) < -1.0,
+		"blind: through the shared writer the kart reaches %+.4f u/s and travels %+.3f u BACKWARD -- this bench CAN reverse this kart"
+		% [free_run["lowest"], free_run["advance"]])
+	_check(float(kart_run["lowest"]) >= 0.0,
+		"and through the kart's writer its speed never goes below %+.4f u/s: no reverse, at all"
+		% kart_run["lowest"])
+	_check(float(kart_run["advance"]) > 1.0,
+		"while the SAME held thumb still drives it %+.3f u FORWARD at up to %.4f u/s -- the gear went, the axis did not, and the automatic accelerator is untouched"
+		% [kart_run["advance"], kart_run["highest"]])
+	# ---- 2. THE UP HALF AND THE STEER HALF SURVIVE ON THE KART'S WRITER.
+	var up: Dictionary = _slide(kart_w, LOCKOUT_DRAG_PX)
+	_check(float(up["boost"]) > 0.99 and float(up["reverse"]) == 0.0,
+		"a full slide UP on the kart's writer still buys boost %.4f (reverse %.4f) -- CH31's accelerator is not what changed"
+		% [up["boost"], up["reverse"]])
+	# ⚠️ THE GATED RESET, AND THE RED PASS IS WHAT ASKED FOR IT. The first
+	# version of the block below read a `throttle` that `_lockout_run` had
+	# left at 1.0 a hundred frames earlier -- CH43's own "une assertion sur
+	# une valeur tenue peut relire l'assertion precedente", committed in the
+	# very phase that cites it. Clearing is not enough: the zero is
+	# ASSERTED, because a clear that silently stopped working would put the
+	# stale value straight back.
+	kart_w.set("enabled", false)
+	kart_w.set("enabled", true)
+	var cleared: KartInput = kart_w.get("input")
+	_check(cleared.throttle == 0.0 and cleared.reverse == 0.0 and cleared.steer == 0.0,
+		"blind: the writer is cleared first (throttle %.4f, reverse %.4f, steer %.4f) -- the three lines below cannot pass on a stale value"
+		% [cleared.throttle, cleared.reverse, cleared.steer])
+	# ⚠️ DOWN THE SCREEN IS +y, SO THE OFFSET IS POSITIVE. The first version
+	# wrote -LOCKOUT_DRAG_PX here and therefore drove the UP half while
+	# claiming the down one -- a free green, and the red pass is what found
+	# it (3 reds for 4 predicted). `_slide` takes the dy convention and
+	# negates it itself, which is exactly how the two got mixed up.
+	var diag_at: Vector2 = G_ANCHOR + Vector2(KartTuning.steer_span(), LOCKOUT_DRAG_PX)
+	_touch_down(kart_w, G_ANCHOR, 0)
+	_touch_drag(kart_w, diag_at, 0)
+	var diag: KartInput = kart_w.get("input")
+	_check(absf(diag.steer) > 0.99 and diag.reverse == 0.0,
+		"and a DIAGONAL drag DOWN-and-right still steers %+.4f with reverse %.4f: the refusal is on one half of one axis and not on the drag"
+		% [diag.steer, diag.reverse])
+	kart_w.call("_physics_process", FIXED_DELTA)
+	var held: KartInput = kart_w.get("input")
+	_check(held.throttle == 1.0 and held.reverse == 0.0,
+		"and the automatic accelerator still arrives under that same held thumb (throttle %.4f, reverse %.4f) -- pulling down costs the push and introduces no new state"
+		% [held.throttle, held.reverse])
+	_touch_up(kart_w, diag_at, 0)
+	# ---- 3. THE KEYBOARD HALF OF THE SAME AXIS. Off-web it is what a probe
+	#         and the editor drive, so a disagreement with the thumb would
+	#         be invisible from device and green on a bench.
+	for key in [KEY_DOWN, KEY_S, KEY_SPACE]:
+		var shared: float = _key_reverse(free_w, key)
+		var karted: float = _key_reverse(kart_w, key)
+		print("       key %-6s  shared %.4f  |  kart %.4f" % [OS.get_keycode_string(key), shared, karted])
+		_check(shared > 0.99,
+			"blind: %s still writes reverse %.4f on the shared writer" % [OS.get_keycode_string(key), shared])
+		_check(karted == 0.0,
+			"and reverse %.4f on the kart's -- the keyboard obeys the same one licence as the thumb" % karted)
+	# ---- 4. THE LIVE NODES, and this is the half the A/B above cannot see.
+	#         Everything so far was measured on writers this phase built:
+	#         it proves the mechanism, not that the GAME wired it. CH46's
+	#         seven markers pinned on the world origin were a correct
+	#         mechanism registered on the wrong node.
+	var live_kart: Node = _karting.touch
+	var live_shared: Node = _transport.touch
+	_check(live_kart != null and not bool(live_kart.get("allows_reverse")),
+		"the writer HubKarting actually built (%s) carries allows_reverse = %s"
+		% [live_kart.name, live_kart.get("allows_reverse")])
+	_check(live_shared != null and bool(live_shared.get("allows_reverse")),
+		"and the one HubTransport built (%s) carries %s -- the yacht, the sailboat, the sled and the quad are one writer and it is not this lot's"
+		% [live_shared.name, live_shared.get("allows_reverse")])
+	_check(live_kart != live_shared,
+		"and they are two distinct nodes, which is what makes a per-instance licence possible at all")
+	# ---- 5. THE HUD DOES NOT NAME A COMMAND THE WRITER REFUSES. CH31's
+	#         finding was that an unnamed command does not exist; the
+	#         converse is a named command that cannot be reached, and it is
+	#         worse -- the player pulls down, nothing happens, and the
+	#         screen says it should.
+	var hud: KartHud = _hub.get_node("KartHud") as KartHud
+	_check(hud != null, "the hub's KartHud resolves")
+	if hud != null:
+		hud.set_reverse_available(true)
+		var with_gear: String = hud.axis_hint_text()
+		hud.set_reverse_available(false)
+		var without: String = hud.axis_hint_text()
+		print("       hint with a gear: %s" % with_gear)
+		print("       hint without:     %s" % without)
+		_check(with_gear.contains("reculer"),
+			"blind: told it has a gear the HUD names it -- the instrument can read the line")
+		_check(not without.contains("reculer") and without.contains("foncer"),
+			"and told it has none the line drops the gear and keeps the accelerator")
+		_check(with_gear != without, "and the two lines really differ")
+		# Left in the state the game will set it to on the next mode entry.
+		hud.set_reverse_available(true)
+	kart_w.queue_free()
+	free_w.queue_free()
