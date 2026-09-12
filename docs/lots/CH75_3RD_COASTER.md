@@ -374,6 +374,26 @@ qu'un banc de temps CPU ne se lit pas sur un seul.
 
 ---
 
+## Section 8bis — DÉPLOIEMENT, vérifié SUR LE SERVICE, une seule lecture
+
+Merge palier 1 : `21c1d42..ab33026` sur `staging` (`--no-ff`), arbre du
+commit de merge **byte-identique** à celui de la branche (`91de5c8d` des
+deux côtés, `git diff` vide). Poussé à 00:04:50 UTC, sans demander (le
+palier 1 n'a qu'un gate technique). **`main` n'a pas été touché.**
+
+| marqueur | lecture |
+|---|---|
+| **CI** | run 528, job `completed_at` **00:06:46**, `conclusion: success` ; « Deploy to Vercel [PRODUCTION -- main] » **skipped**, « [STAGING] » success 00:06:45 |
+| **`CACHE_VERSION`** | `1789171576` = **00:06:16 UTC**, à l'intérieur de la fenêtre de l'étape `Export Web build` (00:06:09 → 00:06:17) |
+| **lecture de l'alias** | `x-vercel-cache: **MISS**`, `age: **0**`, `date` 00:08:49 — une vraie lecture, pas une copie de bord |
+
+Une seule lecture, faite après que l'API GitHub ait rendu un
+`completed_at` (jamais un poll en boucle). Le contrôle d'identité
+`index.wasm` (35 376 909 octets) n'a pas été relu cette nuit : le canal
+MCP Vercel rend le corps des réponses et un binaire de 35 Mo n'y passe
+pas ; ce lot ne touche aucun code moteur, et `CACHE_VERSION` dans la
+fenêtre d'export est le discriminateur documenté.
+
 ## Section 9 — CE QUE CE LOT NE PEUT PAS SIGNER (l'appel device de Mathieu)
 
 Une sonde ne juge pas un game feel (CH62). Rien ici ne dit :
