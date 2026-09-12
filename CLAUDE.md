@@ -814,6 +814,49 @@ tenir : sur un quarterpipe, c'est **P6 sur 12**, soit **29 % de la montée**
 stockée ne peut faire, et il n'a pas tort sur la géométrie : il répond à
 une autre question.
 
+### ⚠️ UN GATE QUI EXIGE DES PIÈCES UNIFORMES N'INTERDIT PAS LES CYLINDRES — UNE PIÈCE DE 12 TRIANGLES EST AUSSI UN COIN DE CYLINDRE
+
+Contrepartie CONSTRUCTIVE de la règle CH60 ci-dessus, écrite au CH80.
+Celle-là dit qu'un test dont la validité repose sur une propriété de forme
+devient un tirage au sort sur une autre forme ; celle-ci dit quoi faire
+quand on a besoin de la forme neuve.
+
+`SledBody._hexa` est **huit coins et six quads**, donc douze triangles. On
+le lit comme « une boîte », et ses coins étant libres d'être cisaillés
+(les nez de patins de la luge le sont déjà) c'est aussi un tronc et une
+plaque inclinée. C'est surtout, et personne ne l'avait écrit, un **COIN DE
+CYLINDRE** : centre, trois points de jante, extrudé — huit sommets, six
+faces, **douze triangles**, et convexe pour tout secteur sous 180°. Deux
+segments de jante par coin, donc *n* coins font un cylindre à ***2n***
+côtés.
+
+Ce que ça achète : le test d'enroulement de ce dépôt découpe un maillage
+livré en séries de `PIECE_TRIS` triangles et score chacune contre **son
+propre centre**, ce qui n'est valide que sur une pièce **CONVEXE**
+(`SledProbe` a rendu « 46 triangles sur 60 mal enroulés » sur un maillage
+correct pour l'avoir oublié). Un lot qui a besoin de roues rondes a donc le
+choix entre **affaiblir le test** et **construire dans la classe de formes
+que le test sait juger**. Le second ne coûte rien : le quad CH80 est **68
+pièces de coque + 24 coins de roue, toutes convexes, toutes à 12
+triangles**, roues à douze côtés comprises, et les six assertions de
+maillage sont restées vertes **sans qu'une ligne de sonde bouge**.
+
+**Règle** : quand un gate repose sur une propriété de forme, la première
+question n'est pas « comment relâcher le gate » mais « est-ce que ce que je
+veux dessiner tient dans cette classe ». Une couronne de coins convexes
+couvre le cylindre, le tube, le disque et le tore ; ce qu'elle ne couvre
+pas se DIT.
+
+⚠️ **Et l'indice d'enroulement ne se prend PAS sur le centroïde de la
+pièce.** `SledBody._quad` choisit son ordre en comparant le produit
+vectoriel à une direction SORTANTE qu'on lui donne. Si le bâtisseur
+dérivait cette direction du centroïde, il emploierait **exactement le
+critère du test**, et le test resterait vert sur n'importe quel maillage —
+la tautologie CH62. Les indices sont les **axes propres AUTHORED** de la
+pièce, portés par sa transformation de placement ; le test garde alors un
+témoin indépendant, et son blind check (le même maillage retourné) doit
+sortir à 100 %.
+
 ### ⚠️ LE COMPTEUR DU MOTEUR NE COMPTE QUE L'OPAQUE, ET AU LOD QU'IL A CHOISI
 
 `RenderingServer.viewport_get_render_info(..., PRIMITIVES_IN_FRAME)` n'est
@@ -2273,6 +2316,25 @@ son mât passe pourtant **devant l'anneau et le label** de ce portail : les
 deux sont sur la même ligne de caméra. Un dégagement est une distance au
 SOL ; « qu'est-ce que ça cache » est une question d'IMAGE, et seul un rendu
 y répond.
+
+⚠️ **ET UN POSTE D'OBSERVATION SE VALIDE À LA POSITION DE LA CAMÉRA, PAS À
+CELLE DU SUJET.** Troisième tour du même piège, CH80, et il a coûté un run
+de rendu complet. `HubCamera.OFFSET` met l'objectif **8,9 u au NORD et
+7,6 u au-dessus** du point suivi : une station peut être parfaitement
+dégagée au sol et mettre la **CAMÉRA** dans une couronne d'arbre. Mesuré —
+le poste « plateau ouvert » qu'une sonde utilise pour CONDUIRE (−18 ; 18) a
+rendu **huit azimuts de feuilles** : nœud visible, sujet au centre du
+cadre, `unproject_position` juste, et **pas un pixel du sujet**. Les deux
+corollaires ci-dessus visent ce qui est ENTRE l'objectif et le sujet ;
+celui-ci vise ce qui est **AUTOUR de l'objectif**, et aucun test de
+dégagement pris à la station ne le voit.
+
+**Règle** : un poste de rendu se choisit et se vérifie sur `station +
+HubCamera.OFFSET`, jamais sur la station. Le repli est gratuit — rendre
+depuis l'endroit où le joueur RENCONTRE l'objet (pour un véhicule, son
+park, dégagé par construction). Et une sonde de rendu **asserte qu'elle a
+vu son sujet** (passe d'identification masquée, CH39) : c'est ce qui
+transforme six minutes de diagnostic en une ligne rouge.
 
 ### ⚠️ UNE STRUCTURE POSÉE SUR UN BORD DÉBORDE — ça se répare dans la RÉGION
 
@@ -3954,6 +4016,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH76 | **La Comète reçoit la vue POV, et le patron CH72 devient réutilisable sous une poursuite.** ⚠️ Le POV n'était pas « non câblé » sur la Comète, il était **arithmétiquement MORT** : `_apply_pov()` n'est appelé que depuis la branche HUB, la branche DRIVE sort par `return` — `enter_pov()` posait une tête, portait le blend à 1,000, `is_pov()` rendait `true`, et **personne ne lisait rien** ; la raison CH75 de l'exclusion (« deux écrivains ») était l'inverse de l'état réel (**zéro**). `_apply_pov` scindé en `_pov_idle()` + `_blend_pov(base, base_fov)` — une **BASE passée**, un écrivain, un blend, **une ligne** ajoutée à la branche drive, branche hub inchangée dans son effet, `CoasterRail.gd` pas touché. ⚠️ `pov_pitch_deg` était une table à deux branches pour trois manèges (la Comète héritait des **16,7°** de la tour, code mort que ce lot aurait armé) ; une branche par manège, Comète à **0,0°**. ⚠️ Défaut introduit et attrapé par la sonde : `_on_pov_exited` rendait `fov = _hub_fov` sans condition, peignant le **45 du hub sur le 64 de la Comète** — mesuré **exactement 19,00000**. Coût même run / même banc / même trajet : primitives **85 321 → 85 344** max, **36 558 → 35 329** moyenne, frame **34,7-36,7 → 31,7-32,5 ms** — le POV coûte un peu MOINS que la poursuite. Œil jamais dans un solide (0/1 057), rail le plus proche **0,917 u**, 100 % du bas de l'image résout au sol aux quatre phases. `CometProbe` PHASE P, 24 assertions, tout par `_handle_point` ; E20 **ré-visée et non relâchée** ; un seuil remplacé par un **encadrement** (0,34887 de plancher de banc → 0,00000) ; **quatre verts gratuits trouvés en PRÉDISANT** la troisième passe rouge. Passes rouges **7/6** (l'extra P7 est une trouvaille : la poursuite porte 0,2738° de roulis pendant son propre fondu), **1/1**, **14/14**. Table croisée deux arbres, **154 `.scn`**, `ProbeTimeoutAudit` **101** des deux côtés. | [`CH76_COMET_POV.md`](docs/lots/CH76_COMET_POV.md) | 9 | 446 | 12 sept |
 | CH78 | **Le ballon sauteur part du plateau de spawn — une constante, mesurée.** `BALL_PARK` **4,428 u → 33,956 u**, aucune mécanique touchée. Balayage 0,5 u / 365 disques publiés : cinq contraintes → 13 935 candidats, ⚠️ **la dalle/circuit n'en retranche AUCUN** (dite inactive). ⚠️ **C'est le disque TENANT DANS la région (CH21) qui borne, pas le cône de cadre** — sans lui la réponse est (18, −35), pile sur le bord sud ; avec lui **(−8, −33)**, identique à 0 comme à 1,0 u de marge de cône, donc pas née sur sa limite. ⚠️ **Le park EXPÉDIÉ échouerait lui-même au test de dégagement (−0,363 u)** — dit plutôt que caché. Coût assumé : le ballon n'est plus derrière Keepy et la brume en mange ~42 % à 34 u ; c'est le marqueur de minimap qui le rend trouvable. Tapis rebattu et mesuré (batches −1, instances +3). | [`CH78_BALLON_SAUTEUR.md`](docs/lots/CH78_BALLON_SAUTEUR.md) | 8 | 156 | 12 sept |
 | CH79 | **Le quad raptor : sixième véhicule, première MONTURE, et la séparation des deux gestes continus prouvée dans les deux sens.** Recon bloquant : le karting est **confiné**, mais ⚠️ **la référence libre existait déjà** (yacht/voilier/luge sur `SandYacht.drivable()`), un véhicule conduit **n'utilise pas le routeur piéton**, et `is_afoot()` bascule gratuitement via `ON_CARRIER` — **rien de neuf à valider**. Bâti sur `SurfaceDrive` (le composite que CH35 Q2-B destine au véhicule NEUF), `VehicleDrive`, `KartTouchInput`, `ChaseTuning.vehicle()` : **zéro patron neuf**. Park mesuré (six contraintes, ⚠️ **deux inactives**, le binding est le dégagement de sortie), placeholder **132 triangles**, croisière **dérivée de la marche** et `PACE_RATIO` **dit être du goût** (CH70). ⚠️ **Deux tables de dispatch à défaut `ball_*` désarmées** (forme CH76) et une dette de garde préalable fermée. `QuadProbe` xvfb **75 assertions / 0 rouge** ; **+132 primitives garée = exactement son compte de triangles** ; **43 891 contre 44 858 pour la LUGE** au même poste — ⚠️ **le KART n'est pas comparable et c'en est un résultat** (zone 3, autre scène). ⚠️ **Trois défauts d'instrument** (le banc conduisait la monture DANS LE MUR puis y mesurait sa croisière). **Quatre passes rouges : 2/2, 1/1, 0/0 prédit, 1/1** — la 3a a produit la doctrine ci-dessus. | [`CH79_QUAD_RAPTOR.md`](docs/lots/CH79_QUAD_RAPTOR.md) | 11 | 335 | 12 sept |
+| CH80 | **Le quad raptor est un ATV, pas un dinosaure — maillage reconstruit, zéro mécanique touchée.** CH79 avait lu « quad raptor » comme une MONTURE À QUATRE PATTES ; « Raptor » est le nom d'un quad Yamaha. ⚠️ **Le périmètre annoncé par CH79 a été MESURÉ avant d'être cru** (CH70 : un chiffre recopié est périmé jusqu'à preuve du contraire) : la surface publique lue par le reste du dépôt est 15 symboles statiques + 10 méthodes, aucun collider n'est dérivé du maillage, aucune assise n'est lue sur une patte — et la preuve est que `QuadProbe` PHASE D rend **les mêmes chiffres au dix-millième sur les deux arbres** (croisière 11,5185, 20,57 u en 2,22 s, arrêt en 363 frames) pour un maillage passé de 132 à **1 104 triangles**. ⚠️ **LE GATE DE MAILLAGE N'A PAS ÉTÉ RELÂCHÉ, LA GÉOMÉTRIE A ÉTÉ CONSTRUITE DANS SA CLASSE** : `SledBody._hexa` (8 coins, 6 quads, 12 triangles) est aussi un **COIN DE CYLINDRE**, donc *n* coins font un cylindre à *2n* côtés — **68 pièces de coque + 24 coins de roue, toutes convexes, toutes à 12 triangles**, roues à 12 côtés comme celles de `KartBody`, et les **75 assertions sont restées vertes sans qu'une ligne de sonde bouge**. Les indices d'enroulement sont les **axes authored** et non le centroïde, sinon le test emploierait son propre critère (tautologie CH62) ; son blind check rend **816/816** sur la géométrie neuve. Traits mesurés : voie **1,820 / 2,065 = 0,881** contre le kart à **0,688**, garde au sol **0,260 = 65 % du rayon arrière** (quad réel ~37 %), barre à **+0,39 u au-dessus de la selle** (le volant du kart est à +0,37), museau **0,50 → 0,22 u**, roues arrière plus grosses **et visiblement plus lentes** (−1,163 contre +1,711 rad après 18,277 u). ⚠️ **Les teintes : la réponse évidente a été mesurée et REFUSÉE** — le turquoise CH79 lit **1,23:1** contre `AUTUMN_A`, il ne perd pas du contraste, il DISPARAÎT ; et ce n'est pas un problème de turquoise, la pire bande est à **L 0,313** donc franchir 3,0:1 exige **L ≤ 0,071** et aucune carrosserie n'est aussi sombre. Le plancher est porté comme au CH48 par une pièce d'UN SEUL TON — pneus **5,87:1**, cadre **3,91:1** — qui ceinture toute la moitié basse, et la carrosserie (bleu Raptor, 218° contre l'herbe) est alors libre. ⚠️ **La pose « assis à califourchon » est HORS PÉRIMÈTRE et le lot le dit** : il n'existe aucune pose assise dans ce dépôt, `mount_carrier()` écrit le rider DEBOUT et six véhicules partagent ce code. Coût : **+972 triangles**, delta **+1 104 EXACTEMENT** au spawn comme au poste de PHASE B (l'assertion de câblage), conduite **44 863 contre 45 830 pour la LUGE** au même poste. Passe rouge **3/3 prédits**, fichier restauré byte-identique. ⚠️ **Deux défauts d'INSTRUMENT** : la station de rendu mettait la **CAMÉRA dans un pommier** (dégagée au sol, 8,9 u plus au nord), et un `_gait` en rad/u aurait fait rougir « à l'arrêt ça ne pédale pas » (**0,060 contre un seuil de 0,05**) sur un mécanisme correct — d'où l'odomètre en UNITÉS, qui est de toute façon la primitive dont les deux tailles de roue dérivent. Deux doctrines nouvelles dans `CLAUDE.md`. | [`CH79_QUAD_RAPTOR.md`](docs/lots/CH79_QUAD_RAPTOR.md) | 9 | 245 | 12 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

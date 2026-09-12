@@ -1044,9 +1044,10 @@ func _build_sled() -> void:
 	_sled.build()
 	_sled.place(SLED_PARK, PI / 2.0)
 
-## CH79: a QuadRaptorBody node -- a PROCEDURAL mesh, and a PLACEHOLDER
-## one. The brief says so in as many words: primitive boxes now, a Meshy
-## asset later, and nothing in the mechanics reads the mesh. Parked facing
+## CH79: a QuadRaptorBody node, a PROCEDURAL mesh. ⚠️ CH80 rebuilt that
+## mesh -- CH79 shipped a four-legged animal, and the thing is an ATV --
+## and it cost nothing here, because nothing in the mechanics reads the
+## mesh. This function is CH79's to the character. Parked facing
 ## NORTH (yaw 0 is +Z, the direction a rider looks) so a player who
 ## mounts it is looking back up the plaza at the camera's own axis and
 ## drives away from the lens rather than into it -- CH53's rendered
