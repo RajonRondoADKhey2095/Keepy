@@ -233,10 +233,37 @@ func _layers_in(path: String) -> int:
 ## roll-in) times five profile segments -- written as the arithmetic and
 ## not as 105, because what has to be re-argued the day the door widens
 ## is the ARGUMENT, and the argument is one prism per (sector, segment).
+## CH82: the ledge is ONE box, so its "decomposition" is the box. There
+## is no fidelity question to answer -- which is exactly what makes the
+## point-set equality below worth asserting on it rather than a
+## formality: a ledge whose collider were anything other than the block
+## a player sees would fail it at once.
 const EXPECT_PIECES: Dictionary = {
-	&"funbox": 3, &"rail": 3, &"quarterpipe": 12,
+	&"funbox": 3, &"rail": 3, &"quarterpipe": 12, &"ledge": 1,
 	&"bowl": (SkateparkMesh.BOWL_AZIMUTH - SkateparkMesh.BOWL_GATE_SECTORS) * SkateparkMesh.BOWL_RINGS,
 }
+
+## =====================================================================
+## ⚠️ CH82 -- THE CENSUSES ARE SUMMED FROM THE TABLE, NOT TYPED
+##
+## Four assertions in this file spelled the park's inventory as
+## arithmetic on literals: `solid == 5`, `3 + 3 + 12 + 12 + bowl`,
+## `statics == 5 + fair`, `found.size() == 9 + fair`. Each was right
+## when it was written and each is a SECOND SPELLING of a table that a
+## layout lot moves -- CH70's exact defect, where a probe gating a
+## published figure as a literal had been red on the delivered tree for
+## a whole chantier with nobody reading it.
+##
+## What survives as an independent claim is EXPECT_PIECES: how many
+## convex pieces a KIND decomposes into is a statement about geometry
+## and is argued above, per kind. Summing that over the table follows
+## the layout; the per-kind number does not, and is still what would
+## catch a decomposition that changed.
+static func expected_park_shapes() -> int:
+	var total: int = 0
+	for spec in HubSkatepark.MODULES:
+		total += int(EXPECT_PIECES.get(StringName(spec["kind"]), -1))
+	return total
 
 func _phase_pieces() -> void:
 	print("-- PHASE G: the collision pieces are a second READING of each drawn module --")
@@ -317,7 +344,9 @@ func _phase_pieces() -> void:
 		_check(_same_set(_distinct(union), drawn),
 			"G[%d] %s: the union of the pieces IS the set of distinct drawn vertex positions"
 				% [index, String(kind)])
-	_check(solid == 5, "G: CH69 -- ALL FIVE modules carry pieces (got %d)" % solid)
+	_check(solid == HubSkatepark.MODULES.size(),
+		"G: CH69/CH82 -- EVERY one of the %d modules carries pieces (got %d)"
+			% [HubSkatepark.MODULES.size(), solid])
 	# CH56 restated 468 park triangles and 20 for the funbox. A bench that
 	# cannot restate a number on file has no standing to publish one.
 	var fb := SkateparkMesh.new()
@@ -387,6 +416,8 @@ func _mesh_of(builder: SkateparkMesh, kind: StringName, args: Array) -> ArrayMes
 			return builder.rail(args[0], args[1])
 		HubSkatepark.KIND_FUNBOX:
 			return builder.funbox(args[0], args[1], args[2], args[3])
+		HubSkatepark.KIND_LEDGE:
+			return builder.ledge(args[0], args[1], args[2])
 	return builder.bowl(args[0], args[1], args[2], args[3])
 
 func _flatten(pieces: Array) -> PackedVector3Array:
@@ -457,13 +488,17 @@ func _phase_world() -> void:
 	var body := _transport.board_body()
 	_check(body != null, "the board is a SkateBoardBody")
 	_check(_park.module_nodes().size() == HubSkatepark.MODULES.size(),
-		"all five modules are still drawn (%d)" % _park.module_nodes().size())
+		"all %d modules are still drawn (%d)"
+			% [HubSkatepark.MODULES.size(), _park.module_nodes().size()])
 	# The registry the park PUBLISHES, against the tree it actually built.
 	# Two channels for one fact, which is the only reason to read both.
 	var registered: Array = _park.collider_indices()
 	print("     the park publishes colliders on modules %s" % str(registered))
-	_check(registered == [0, 1, 2, 3, 4],
-		"CH69: every module carries a collider, the bowl included (%s)" % str(registered))
+	var want_registered: Array = []
+	for i in HubSkatepark.MODULES.size():
+		want_registered.append(i)
+	_check(registered == want_registered,
+		"CH69/CH82: every module carries a collider (%s)" % str(registered))
 	var on_tree: Array = []
 	var shapes: int = 0
 	for index in _park.module_count():
@@ -481,8 +516,9 @@ func _phase_world() -> void:
 			"     [%d] %s holds %d shapes (got %d)"
 				% [index, String(kind), want, _park.collider_piece_count_at(index)])
 	print("     %d convex shapes over %d bodies" % [shapes, registered.size()])
-	var want_park: int = 3 + 3 + 12 + 12 + int(EXPECT_PIECES[&"bowl"])
-	_check(shapes == want_park, "%d convex shapes in the park (3 + 3 + 12 + 12 + the bowl's ring), got %d" % [want_park, shapes])
+	var want_park: int = expected_park_shapes()
+	_check(shapes == want_park,
+		"%d convex shapes in the park (EXPECT_PIECES summed over the table), got %d" % [want_park, shapes])
 	# ⚠️ CH69 -- THE BOWL, ASSERTED PRESENT. CH66 asserted it ABSENT here
 	# and said why the assertion stood next to four positives: an absence
 	# passes for free. The positive needs no such company, but it does
@@ -574,9 +610,11 @@ func _phase_world() -> void:
 # body has been taken off the queried layer must produce disagreement on
 # every interior sample.
 
-## Samples per axis. 13 x 9 x 13 = 1521 per module, which is enough to
-## put several samples inside the THINNEST wedge of the smaller
-## quarterpipe (0.0124 u) and cheap enough to run four times.
+## Samples per axis INSIDE the module's own AABB. 13 x 9 x 13 = 1521,
+## which is enough to put several samples inside the THINNEST wedge of
+## the smaller quarterpipe (0.0124 u) and cheap enough to run four
+## times. CH82 adds a one-cell shell around it -- see `_volume_scan` --
+## so the grid actually walked is 15 x 11 x 15 = 2475.
 const VOL_STEPS: Vector3i = Vector3i(13, 9, 13)
 
 func _phase_volume() -> void:
@@ -635,7 +673,27 @@ func _volume_scan(index: int, mask: int) -> Dictionary:
 	var world := PackedVector3Array()
 	for v in faces:
 		world.append(xform * v)
+	# ⚠️ CH82 -- ONE CELL OF AIR ON EVERY SIDE, AND THE INTERIOR SAMPLES
+	# DO NOT MOVE.
+	#
+	# The scan box was the module's own AABB, which is fine for every
+	# shape this park held until a LEDGE arrived: a box FILLS its AABB,
+	# so every sample inside it is inside the solid, both classifiers
+	# voted "in" 1521 times out of 1521, and the instrument guard above
+	# refused to sign -- correctly. An agreement measured by a test that
+	# has never said "outside" is CH40's empty hide-list.
+	#
+	# Grown by exactly one CELL and the step count raised by two, so the
+	# cell SIZE is unchanged and every interior sample lands on the same
+	# world point it has always landed on: box'.size / steps' =
+	# (size + 2 cell) / (steps + 2) = cell. The four modules that were
+	# already scanned therefore keep their verdicts to the sample, and
+	# gain a shell of air that both classifiers must agree is air.
 	var box: AABB = xform * node.mesh.get_aabb()
+	var cell := Vector3(box.size.x / float(VOL_STEPS.x), box.size.y / float(VOL_STEPS.y),
+		box.size.z / float(VOL_STEPS.z))
+	box = AABB(box.position - cell, box.size + cell * 2.0)
+	var steps := VOL_STEPS + Vector3i(2, 2, 2)
 	var n: int = 0
 	var a: int = 0
 	var b: int = 0
@@ -647,20 +705,20 @@ func _volume_scan(index: int, mask: int) -> Dictionary:
 	params.collision_mask = mask
 	await get_tree().physics_frame
 	var space := node.get_world_3d().direct_space_state
-	for ix in VOL_STEPS.x:
-		for iy in VOL_STEPS.y:
+	for ix in steps.x:
+		for iy in steps.y:
 			# One physics frame per row keeps the space state fresh and
 			# keeps a scan of 1521 queries off a single frame.
 			await get_tree().physics_frame
 			space = node.get_world_3d().direct_space_state
-			for iz in VOL_STEPS.z:
+			for iz in steps.z:
 				# ⚠️ OFFSET BY AN IRRATIONAL-ISH FRACTION so no sample lands
 				# on a face, an edge or a vertex. A parity test taken on a
 				# boundary is a coin toss published as a measurement.
 				var p := box.position + Vector3(
-					box.size.x * (float(ix) + 0.3183) / float(VOL_STEPS.x),
-					box.size.y * (float(iy) + 0.2718) / float(VOL_STEPS.y),
-					box.size.z * (float(iz) + 0.4142) / float(VOL_STEPS.z))
+					box.size.x * (float(ix) + 0.3183) / float(steps.x),
+					box.size.y * (float(iy) + 0.2718) / float(steps.y),
+					box.size.z * (float(iz) + 0.4142) / float(steps.z))
 				n += 1
 				var ia: bool = _in_drawn(p, world)
 				params.position = p
@@ -779,15 +837,24 @@ func _phase_inventory() -> void:
 		var fb: StaticBody3D = fair.call("collider_body")
 		fair_bodies = 1
 		fair_shapes = fb.get_child_count()
-	_check(areas == 3 and statics == 5 + fair_bodies and chars == 1 and found.size() == 9 + fair_bodies,
-		"X the hub holds exactly 3 inert portal areas, 5 solid modules, 1 board and %d fair body (%d objects)" % [fair_bodies, found.size()])
+	var want_statics: int = HubSkatepark.MODULES.size() + fair_bodies
+	_check(areas == 3 and statics == want_statics and chars == 1
+			and found.size() == 3 + want_statics + 1,
+		"X the hub holds exactly 3 inert portal areas, %d solid modules, 1 board and %d fair body (%d objects)"
+			% [HubSkatepark.MODULES.size(), fair_bodies, found.size()])
 	# CH69: the three portal cylinders, the board's capsule, the funbox's
 	# 3, the rail's 3, twelve wedges each for the two quarterpipes, and
 	# the bowl's ring -- spelled as its arithmetic, see EXPECT_PIECES.
 	# CH71: plus the fair's published shapes.
-	var want_shapes: int = 1 + 1 + 1 + 1 + 3 + 3 + 12 + 12 + int(EXPECT_PIECES[&"bowl"]) + fair_shapes
-	_check(shapes_total == want_shapes, "X and %d shapes in all (got %d): the bowl brings %d, the fair %d" % [want_shapes, shapes_total, int(EXPECT_PIECES[&"bowl"]), fair_shapes])
-	_check(_park.collider_indices() == [0, 1, 2, 3, 4], "X every module is solid, the bowl included (%s)" % str(_park.collider_indices()))
+	var want_shapes: int = 3 + 1 + expected_park_shapes() + fair_shapes
+	_check(shapes_total == want_shapes,
+		"X and %d shapes in all (got %d): 3 portal cylinders, the board's capsule, %d park hulls, %d fair"
+			% [want_shapes, shapes_total, expected_park_shapes(), fair_shapes])
+	var want_solid: Array = []
+	for i in HubSkatepark.MODULES.size():
+		want_solid.append(i)
+	_check(_park.collider_indices() == want_solid,
+		"X every module is solid, the bowl and the three ledges included (%s)" % str(_park.collider_indices()))
 	# =================================================================
 	# ⚠️ CH69 -- THE SLAB, AND UNTIL THIS LINE NOTHING READ IT.
 	#
@@ -1557,6 +1624,21 @@ func _ride_one(ride: Dictionary) -> void:
 
 func _phase_neutralised() -> void:
 	print("-- PHASE N: RED BEFORE GREEN, at runtime -- take each collider off the layer --")
+	# ⚠️ CH82 -- AND THE GRIND LINES COME OFF FOR THE WHOLE PHASE.
+	#
+	# This phase's claim is "with nothing SOLID there, nothing holds the
+	# board". CH82 gave the board a second way to be held that is not a
+	# solid at all, and it fires here: the small quarterpipe's ride ends
+	# at (5, 50), and the rail's line passes x = 4.664 at z = 50 --
+	# 0.34 u away, inside GRIND_CATCH_R, aligned with the run. The board
+	# was taken onto the rail and `supported` read 108 ticks on a
+	# neutralised module, which is the layout working and is not what
+	# this phase asks about. Taking the lines off for the phase keeps the
+	# question the one it has always been; SkateGrindProbe owns the other
+	# one.
+	var board := _transport.board_body()
+	var lines: Array = board.grind_edges_view()
+	board.set_grind_edges([])
 	for ride in RIDES:
 		var index: int = int(ride["index"])
 		var kind: StringName = _park.module_kind(index)
@@ -1582,6 +1664,9 @@ func _phase_neutralised() -> void:
 		_check(int(back["core_ticks"]) > 0 and float(back["core_max_y"]) > 0.10,
 			"N[%d] and the climb COMES BACK when the layer is restored (max y %s)"
 				% [index, ("n/a" if int(back["core_ticks"]) == 0 else "%.3f" % float(back["core_max_y"]))])
+	board.set_grind_edges(lines)
+	_check(board.grind_edge_count() == lines.size(),
+		"N the board is back on the park's %d grind lines" % board.grind_edge_count())
 
 func _phase_lateral() -> void:
 	print("-- PHASE L: the other half of D1 -- a vertical face BLOCKS --")
@@ -1807,10 +1892,10 @@ func _phase_budget() -> void:
 	for _i in WORLD_AGE:
 		await get_tree().process_frame
 	print("     removed %d collision objects carrying %d shapes from the trial world" % [removed_bodies, removed_shapes])
-	var want_removed: int = 3 + 3 + 12 + 12 + int(EXPECT_PIECES[&"bowl"]) + 1
-	_check(removed_bodies == 5 and removed_shapes == want_removed,
-		"B BLIND CHECK: there were colliders to remove (5 park bodies, %d hulls + the board's capsule = %d shapes; got %d / %d)"
-			% [want_removed - 1, want_removed, removed_bodies, removed_shapes])
+	var want_removed: int = expected_park_shapes() + 1
+	_check(removed_bodies == HubSkatepark.MODULES.size() and removed_shapes == want_removed,
+		"B BLIND CHECK: there were colliders to remove (%d park bodies, %d hulls + the board's capsule = %d shapes; got %d / %d)"
+			% [HubSkatepark.MODULES.size(), want_removed - 1, want_removed, removed_bodies, removed_shapes])
 	for key in ["nodes_scene", "tris_scene", "engine_prims", "engine_calls"]:
 		print("     %-13s WITH %8d (repeat %8d)   WITHOUT %8d (repeat %8d)   delta %d"
 			% [key, int(with.get(key, -1)), int(with_again.get(key, -1)),
