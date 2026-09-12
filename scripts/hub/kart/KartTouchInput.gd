@@ -13,7 +13,9 @@ class_name KartTouchInput
 ##     straightens the wheels;
 ##   * sliding the SAME anchor finger UP the screen asks for more pace and
 ##     sliding it DOWN asks to go backwards -- ONE axis, CH43, and the
-##     second finger CH42 used for the gear no longer exists;
+##     second finger CH42 used for the gear no longer exists. CH81 makes
+##     that DOWN half a per-instance LICENCE (`allows_reverse`): the kart
+##     refuses it, the four vehicles HubTransport drives keep it;
 ##   * the keyboard (arrows / A-D, up / W, down / S) does the same off-web,
 ##     so a probe or the editor can drive without a touchscreen.
 ##
@@ -136,6 +138,49 @@ var boost_dead_zone: float = BOOST_DEAD_ZONE
 ## How long the push takes to bleed away after the finger lifts. 0 = the
 ## V7b behaviour (it dies with the finger).
 var boost_release_s: float = BOOST_RELEASE_S
+
+## ⚠️ CH81 -- WHETHER THE DOWN HALF OF THE AXIS IS A GEAR AT ALL.
+##
+## Mathieu's retour, device in hand: on the CIRCUIT Keepy must not be able
+## to back up. On the quad, the sled, the sand yacht and the sailboat the
+## gear stays exactly as CH42/CH43 shipped it. This is a decision about ONE
+## vehicle and it is NOT a revision of the scheme -- which is why it is an
+## instance value defaulting to TRUE, for precisely the reason `boost_span`
+## above is one: this file has TWO instances. HubKarting opts its kart out;
+## HubTransport's "YachtTouch" -- the single writer those four vehicles all
+## share -- is not configured and therefore keeps the whole axis, as does
+## every probe that constructs a bare instance (YachtTraceProbe, CoveProbe,
+## ReverseProbe PHASE GESTURE). An instance nobody configures is
+## byte-identical to CH43.
+##
+## ⚠️ IT IS A PROPERTY OF THE WRITER AND NOT OF THE BODY, and that is the
+## whole design. VehicleDrive's reverse branch is UNTOUCHED: it still
+## serves three vehicles by thumb, and `input.brake` still reverses any
+## kart on the grid at a standstill, which is the branch KartAiDriver
+## presses. Zeroing KartBody.REVERSE_SPEED instead would have turned the
+## gear into a HOLD-AT-ZERO and reached the opponents' brake with it -- a
+## new blocking state, which is what the brief forbade.
+##
+## ⚠️ AND WHAT THE REFUSED GESTURE DOES IS NOTHING, DELIBERATELY. A thumb
+## below the anchor buys `boost = 0`, which is what `_fraction(0)` buys at
+## the anchor anyway; `throttle` stays at the automatic 1.0. So pulling
+## down on the kart costs the push and nothing else -- no brake, no
+## freewheel, no new state a player can be stuck in.
+##
+## ⚠️ WHAT IT COSTS IS MEASURED AND IT IS NOT NOTHING. The gear was the
+## only way off a fence: KartPinRecon (throwaway, CH81) drove the kart into
+## KartTrack.fence() and held full lock for 10 s with no gear -- nose-on at
+## a standstill, 52 of 52 stations never got 4 u away (farthest excursion
+## 1.431 u on an edge, 0.424 u in a corner), and from a DRIVEN contact left
+## to settle, 3 of 12 states could not steer out, the dead-on one in
+## NEITHER direction (0.352 u in 10 s). The cause is CH42's arithmetic
+## unchanged -- VehicleDrive gains steering on |v_fwd| and the wall eats
+## v_fwd, 0.0128 u/s settled against a STEER_FULL_SPEED of 4.5, so 0.28 %
+## of full lock -- and the kart cannot even stop pushing, its accelerator
+## being automatic. The remaining way out is the HUD's exit button, which
+## ends the race. Reported, not fixed: a steering floor at zero speed is
+## turning physics the brief froze.
+var allows_reverse: bool = true
 
 var input: KartInput = KartInput.new()
 var enabled: bool = false:
@@ -261,6 +306,7 @@ func _steer_from(dx: float) -> float:
 ##
 ##   dy > 0   boost  = fraction of the span, reverse = 0   (V7b/CH31, exact)
 ##   dy < 0   reverse = fraction of the span, boost   = 0   (CH43)
+##   dy < 0   reverse = 0                   , boost   = 0   (CH81, no licence)
 ##
 ## The same span and the same dead zone serve both directions, so the
 ## travel that buys full pace one way buys full gear the other -- which is
@@ -279,7 +325,11 @@ func _apply_axis(dy: float) -> void:
 		input.reverse = 0.0
 	else:
 		input.boost = 0.0
-		input.reverse = _fraction(-dy)
+		# CH81: on a writer without the licence the down half is inert.
+		# Written as an explicit 0.0 rather than left alone: a KartInput is
+		# HELD by contract, so "not writing it" would leave whatever the
+		# last event asked for sitting there.
+		input.reverse = _fraction(-dy) if allows_reverse else 0.0
 
 ## Linear offset -> [0, 1] over the span, past the dead zone. V7b's
 ## `_boost_from` body to the digit; only its name and its callers changed.
@@ -313,5 +363,11 @@ func _physics_process(delta: float) -> void:
 	# CH43: the keyboard was ALREADY one axis -- UP/W and DOWN/S are the two
 	# ends of the same row of keys. Only the guard on the second finger's
 	# index is gone, because there is no second finger to defer to.
-	input.reverse = 1.0 if (Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S)
-		or Input.is_key_pressed(KEY_SPACE)) else 0.0
+	#
+	# CH81: the SAME one licence as the thumb, and it has to be the same
+	# one. A keyboard that could still reverse would be a scheme the phone
+	# does not have -- and it is the keyboard a probe and the editor drive,
+	# so a disagreement between the two would be invisible from device and
+	# green on the bench.
+	input.reverse = 1.0 if (allows_reverse and (Input.is_key_pressed(KEY_DOWN)
+		or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_SPACE))) else 0.0
