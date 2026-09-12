@@ -4020,6 +4020,7 @@ func _setup_transport() -> void:
 	_transport.yacht_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
 	# CH41: and for the sled, on the same terms.
 	_transport.sled_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
+	_transport.quad_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
 	# CH33: same rule, for the sailboat.
 	_transport.sailboat_driving_changed.connect(func(driving: bool): _world_hud.visible = not driving)
 
@@ -4151,6 +4152,12 @@ func _try_mount_ball(position: Vector3) -> bool:
 		return _transport.mount_sailboat()
 	if _mount_kind == HubTransport.VEHICLE_SLED:
 		return _transport.mount_sled()
+	# CH79: the quad raptor, the sled's branch exactly. A MOUNT is a
+	# driven vehicle like the other three, so it goes through the
+	# coordinator and not through KeepyHopper.mount_vehicle() (which is
+	# the hop MODIFIER's door, the ball's).
+	if _mount_kind == HubTransport.VEHICLE_QUAD:
+		return _transport.mount_quad()
 	# CH53 mounted the board on the SAUTILLON's path (mount_vehicle, a
 	# glide). CH57 made it a CARRIER behind the physics switch, and CH64
 	# removed the switch: the carrier contract is the board's only door.

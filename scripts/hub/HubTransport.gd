@@ -57,15 +57,70 @@ const LINES: Array = [
 		"docks": [Vector3(-13.0, 0.0, -33.0), Vector3(52.0, 0.0, -98.0)]},
 ]
 
-## Where the hoppity ball is parked on the plateau: just south of the
-## spawn plaza, between the cabin path and the dock path. MEASURED against
-## the camera, not chosen for clearance alone: at Keepy's own z the frame
-## is only ~7 u wide (half-fov 22.5 deg at 8.9 u), so the first candidate
-## (-6.5, 0.5) -- 2.2 u of clearance, left of the owl -- was simply not in
-## the spawn frame. z = 5.2 is inside the bottom edge (ground visible to
-## z ~ 6.2) and x = 0.5 is centred, so the ball is the first thing behind
-## Keepy on the first frame.
-const BALL_PARK: Vector3 = Vector3(0.5, 0.0, 4.4)
+## Where the hoppity ball is parked on the plateau.
+##
+## ⚠️ CH78 MOVED IT, AND THE MOVE IS THE WHOLE LOT: 4.428 u from the spawn
+## to 33.956 u, on Mathieu's direction that it be parked "plus loin dans
+## la zone 0". Nothing else about the ball changed -- it is the same hop
+## modifier, mounted the same way, re-parked by the same off-screen rule.
+##
+## ITS ORIGINAL REASONING, KEPT because it is what the new site had to
+## satisfy too: at Keepy's own z the frame is only ~7 u wide (half-fov
+## 22.5 deg at 8.9 u), so a park chosen for ground clearance alone is
+## usually not in the spawn frame at all. The shipped (0.5, 4.4) was
+## inside the bottom edge and centred, so the ball was the first thing
+## BEHIND Keepy on the first frame.
+##
+## WHAT THE SWEEP MEASURED (HubParkRecon, 0.5 u grid over the whole
+## walkable bounds, 365 published discs). Five constraints -- region,
+## zone 0, dry, clear of every published disc by KeepyHopper.ARRIVE_EPSILON,
+## off the skatepark slab and the circuit -- keep 13 935 candidates, and
+## the N+1 table says which of them is a lever:
+##
+##   without region ................ 68 466      without dry ....... 17 766
+##   without zone 0 ................ 44 780      without clear ..... 25 179
+##   without slab/circuit .......... 13 935  <-- INACTIVE, and said so
+##
+## ⚠️ THE SLAB/CIRCUIT TERM RETRACTS NOTHING (13 935 with and without):
+## zone 0 already excludes the circuit, and the slab is already a disc in
+## HubSkatepark.footprints(). CLAUDE.md: a constraint that retracts
+## nothing must be called inactive, or it travels from brief to brief as
+## if it cost something.
+##
+## Two more terms then decide the answer, and the SECOND is the binding
+## one:
+##
+##   * the SPAWN FRAME cone (|x| <= 0.414*(8.9 - z)) -- the property the
+##     shipped park was chosen for, kept rather than silently given up;
+##   * the ball's own disc FITTING INSIDE the region with the same margin,
+##     on 16 azimuths. CH21: a prop whose CENTRE is on the border puts
+##     parts of itself past it, and nothing complains -- it just becomes a
+##     thing the player cannot walk round.
+##
+## The fit is what changes the answer, not the cone: furthest framed
+## candidate WITHOUT it is (18, -35) at 39.357 u, sitting exactly on the
+## plateau's south edge; WITH it the answer is this one, and it is the
+## same point whether the cone carries 0 or 1.0 u of margin -- so the cone
+## is not what bounds it and this park is not born on a limit.
+##
+## Measured at the chosen point: 33.956 u from the spawn, 0.560 u clear of
+## the nearest disc (a prop of r 0.26 at (-9.713, -31.58)), and the cone
+## has 9.35 u to spare. It is dead ahead and slightly left on the first
+## frame, on the way south toward the corridor.
+##
+## ⚠️ AND THE SHIPPED PARK WOULD ITSELF FAIL THAT DISC TEST, by 0.363 u
+## against the same kind of small prop. Said out loud because a constraint
+## set that condemns what is already running proves nothing by refusing:
+## the new park is chosen to be BETTER than the old one on that axis, not
+## merely legal by a rule the old one broke.
+##
+## ⚠️ WHAT THE MOVE COSTS, AND IT IS NOT NOTHING: the ball is no longer
+## the first thing behind Keepy, and at 34 u the fog (0.016 exponential)
+## has eaten ~42 % of it. Being inside the frame cone is CONTAINMENT, not
+## legibility. What makes it findable is its minimap marker (CH46,
+## MinimapMarkers.VEHICLE &"hopball"), which is the job a marker exists
+## for; without that marker this move would need a different answer.
+const BALL_PARK: Vector3 = Vector3(-8.0, 0.0, -33.0)
 
 ## CH29 -- FAMILY B, SECOND VEHICLE: the sand yacht ("char a voile"), the
 ## cove's own. Same door as the ball (tap it, walk, climb on).
@@ -165,6 +220,88 @@ const SLED_PARK: Vector3 = Vector3(-49.0, 0.0, 3.0)
 ## that ask this file rather than the vehicle.
 const SLED_SEAT_Y: float = SledBody.SEAT_Y
 const SLED_TAP_RADIUS: float = 1.8
+
+## =====================================================================
+## CH79 -- FAMILY B, SIXTH VEHICLE: the QUAD RAPTOR, and the hub's first
+## MOUNT.
+##
+## It is the SLED's shape end to end, which is a decision and not
+## laziness: CLAUDE.md's brief for the lot says to reuse the continuous
+## control that exists rather than write a cleaner one. Same door (tap it,
+## walk, climb on), same coordinator (this file mounts / drives / exits
+## it, QuadRaptorBody.gd owns its numbers, its body and its wall), same
+## KartTouchInput writer, same chase camera, same HUD, same
+## carrier-then-carried order in _physics_process.
+##
+## WHAT IS NOT THE SLED: where it lives. The sled is parked at the summit
+## of the west ridge because that is where a sled belongs; the mount is
+## parked ON THE SPAWN PLAZA, because a mount is the thing you take to
+## cross the map and the map is crossed from where the player starts.
+##
+## NO PERSISTENCE, and no schema field -- the sailboat's, the sled's and
+## the board's precedent. It is found at QUAD_PARK at every start, however
+## it was left.
+const VEHICLE_QUAD: int = 5
+## ⚠️ MEASURED, NOT CHOSEN (HubParkRecon, 0.5 u grid, 365 published discs,
+## asked of the world CH78 leaves behind -- the ball's disc at its NEW
+## park, because asking it of a world that no longer exists is how a lot
+## ships one prop inside another).
+##
+## SIX constraints keep 7 501 candidates, and the N+1 table names the
+## levers:
+##
+##   without drivable .......  7 501  <-- INACTIVE   without dry ..... 10 773
+##   without zone 0 ......... 28 465                 without clear ... 17 549
+##   without slab/circuit ...  7 501  <-- INACTIVE   without 6 u of
+##                                                     drive-out ..... 12 994
+##
+## ⚠️ TWO OF THE SIX RETRACT NOTHING, and they are said to be inactive
+## rather than carried forward as if they cost something: zone 0 already
+## implies drivable ground and already excludes the circuit and the slab.
+## What actually binds is the disc clearance and the 6 u of drive-out --
+## a parked vehicle that cannot leave is not parked, it is stuck.
+##
+## Then four properties pick the point among those 7 501, and each one is
+## a number rather than a preference:
+##
+##   1. clear of every published disc by KeepyHopper.ARRIVE_EPSILON (the
+##      distance at which a walk ends -- the smallest displacement this
+##      game promises to hit), and its own disc FITS INSIDE the region on
+##      16 azimuths with the same margin (CH21);
+##   2. inside the spawn frame cone with 0.5 u to spare, because a vehicle
+##      the player cannot see from where he starts has to be explained;
+##   3. at least QUAD_FOOTPRINT + HubWorld.KEEPY_CLEARANCE (1.6 + 0.66)
+##      from the spawn point, or Keepy starts the session standing inside
+##      it;
+##   4. at least QUAD_TAP_RADIUS off the plaza's north-south axis, so the
+##      mount disc never straddles the walk out of the plaza and steals
+##      taps meant for the ground.
+##
+## The nearest point that satisfies all four is this one, at 8.276 u from
+## the spawn with 0.517 u of clearance. ⚠️ THE THREE POINTS NEARER THAN IT
+## ((0.5, 1), (-0.5, -1), (-0.5, -2), all inside 2.1 u) FAIL 3, and the two
+## at 3.5 u fail 4 -- so this is the answer to a stated rule and not the
+## first plausible spot.
+##
+## x is POSITIVE and its mirror (-3.5, -7.5) scores identically on every
+## one of the four. The tie is broken by the only fact that distinguishes
+## them: CH78 put the hoppity ball at x = -8, so the two tapped vehicles
+## sit on opposite sides of the plaza axis and a tap near one can never be
+## read as the other.
+##
+## ⚠️ Flat by construction -- the y is 0 and stays 0 here.
+## QuadRaptorBody.place() reads the height off HubSurface, and a y typed
+## into a park position is the second spelling CLAUDE.md keeps paying for.
+const QUAD_PARK: Vector3 = Vector3(3.5, 0.0, -7.5)
+## Saddle top: authored ONCE in QuadRaptorBody, republished here for the
+## readers that ask this file rather than the vehicle.
+const QUAD_SEAT_Y: float = QuadRaptorBody.SEAT_Y
+## Generous on purpose, the dock's reasoning: the animal is 3.6 u long
+## nose to tail and the ground round it is nobody else's target.
+const QUAD_TAP_RADIUS: float = 2.2
+## What the scatter keeps clear around it, and the radius the recon swept
+## with. Bigger than the sled's because the body is.
+const QUAD_FOOTPRINT: float = 1.6
 
 ## =====================================================================
 ## CH53 -- FAMILY B, FIFTH VEHICLE: the skateboard.
@@ -377,6 +514,7 @@ var _ball: Node3D = null
 var _yacht: SandYacht = null
 var _sailboat: SailBoat = null
 var _sled: SledBody = null
+var _quad: QuadRaptorBody = null
 var _board: Node3D = null
 var _keepy: Node3D = null
 var _camera: Camera3D = null
@@ -400,10 +538,12 @@ var _hud: KartHud = null
 var _driving: bool = false
 var _driving_sailboat: bool = false
 var _driving_sled: bool = false
+var _driving_quad: bool = false
 
 signal yacht_driving_changed(driving: bool)
 signal sailboat_driving_changed(driving: bool)
 signal sled_driving_changed(driving: bool)
+signal quad_driving_changed(driving: bool)
 
 func _ready() -> void:
 	for i in LINES.size():
@@ -413,6 +553,7 @@ func _ready() -> void:
 	_build_yacht()
 	_build_sailboat()
 	_build_sled()
+	_build_quad()
 	touch = KartTouchInput.new()
 	touch.name = "YachtTouch"
 	add_child(touch)
@@ -446,6 +587,7 @@ func setup(keepy: Node3D, camera: Camera3D, weather: Node, hud: KartHud = null, 
 		_hud.exit_pressed.connect(exit_yacht)
 		_hud.exit_pressed.connect(exit_sailboat)
 		_hud.exit_pressed.connect(exit_sled)
+		_hud.exit_pressed.connect(exit_quad)
 	if _keepy.has_signal("vehicle_dismounted"):
 		_keepy.connect("vehicle_dismounted", _on_vehicle_dismounted)
 	if _keepy.has_signal("vehicle_mounted"):
@@ -806,7 +948,7 @@ func mount_board() -> bool:
 	var body := board_body()
 	if body == null or _keepy == null:
 		return false
-	if _driving or _driving_sailboat or _driving_sled or _riding_board:
+	if _driving or _driving_sailboat or _driving_sled or _driving_quad or _riding_board:
 		return false
 	body.stop()
 	if not _keepy.call("mount_carrier", body, body.seat(SKATE_LIFT)):
@@ -902,6 +1044,20 @@ func _build_sled() -> void:
 	_sled.build()
 	_sled.place(SLED_PARK, PI / 2.0)
 
+## CH79: a QuadRaptorBody node -- a PROCEDURAL mesh, and a PLACEHOLDER
+## one. The brief says so in as many words: primitive boxes now, a Meshy
+## asset later, and nothing in the mechanics reads the mesh. Parked facing
+## NORTH (yaw 0 is +Z, the direction a rider looks) so a player who
+## mounts it is looking back up the plaza at the camera's own axis and
+## drives away from the lens rather than into it -- CH53's rendered
+## finding about the skateboard's park, applied to a mount.
+func _build_quad() -> void:
+	_quad = QuadRaptorBody.new()
+	_quad.name = "QuadRaptor"
+	add_child(_quad)
+	_quad.build()
+	_quad.place(QUAD_PARK, 0.0)
+
 ## ---- what the scatter and the tap need -----------------------------
 
 ## Ground discs nothing should be sown in: every dock and the ball's park.
@@ -914,6 +1070,7 @@ static func footprints() -> Array:
 	out.append({"position": YACHT_PARK, "radius": YACHT_FOOTPRINT})
 	out.append({"position": SAILBOAT_MOORING, "radius": SAILBOAT_FOOTPRINT})
 	out.append({"position": SKATE_PARK, "radius": SKATE_FOOTPRINT})
+	out.append({"position": QUAD_PARK, "radius": QUAD_FOOTPRINT})
 	return out
 
 ## Every dock, flat, for the path builder.
@@ -1002,6 +1159,11 @@ func vehicle_at(point: Vector3) -> int:
 		return VEHICLE_SAILBOAT
 	if _sled != null and not _driving_sled and flat.distance_to(sled_position()) <= SLED_TAP_RADIUS:
 		return VEHICLE_SLED
+	# CH79: the mount, on the sled's exact terms -- it WITHDRAWS from the
+	# tap for the length of its drive, so a tap made meanwhile falls
+	# through to the ground path and is refused there by ON_CARRIER.
+	if _quad != null and not _driving_quad and flat.distance_to(quad_position()) <= QUAD_TAP_RADIUS:
+		return VEHICLE_QUAD
 	# CH53: the board, last, and on the ball's exact terms -- only the one
 	# he RIDES withdraws, so a tap on it while riding something else means
 	# "swap" and HubWorld drops the first where he stands.
@@ -1051,6 +1213,18 @@ func sled_position() -> Vector3:
 func is_driving_sled() -> bool:
 	return _driving_sled
 
+func quad_node() -> Node3D:
+	return _quad
+
+func quad() -> QuadRaptorBody:
+	return _quad
+
+func quad_position() -> Vector3:
+	return _quad.flat_position()
+
+func is_driving_quad() -> bool:
+	return _driving_quad
+
 func vehicle_position(kind: int) -> Vector3:
 	if kind == VEHICLE_YACHT:
 		return yacht_position()
@@ -1060,6 +1234,8 @@ func vehicle_position(kind: int) -> Vector3:
 		return sled_position()
 	if kind == VEHICLE_SKATE:
 		return board_position()
+	if kind == VEHICLE_QUAD:
+		return quad_position()
 	return ball_position()
 
 func vehicle_tap_radius(kind: int) -> float:
@@ -1071,6 +1247,8 @@ func vehicle_tap_radius(kind: int) -> float:
 		return SLED_TAP_RADIUS
 	if kind == VEHICLE_SKATE:
 		return SKATE_TAP_RADIUS
+	if kind == VEHICLE_QUAD:
+		return QUAD_TAP_RADIUS
 	return BALL_TAP_RADIUS
 
 ## The wind's multiplier on the yacht's pace: 0.85 in snow, 1.0 in the
@@ -1104,7 +1282,14 @@ func _on_vehicle_dismounted() -> void:
 ## yacht somehow sits where it may not drive (a defence in depth over the
 ## build-time refusal: a yacht there could not be driven off it).
 func mount_yacht() -> bool:
-	if _driving or _driving_sailboat or _keepy == null or _yacht == null:
+	# ⚠️ CH79 added `_driving_quad` AND `_driving_sled` to this line. The
+	# sled's was a pre-existing omission (CH41 added the flag to its own
+	# guard and not to the two older ones) and it is INERT -- a sled rider
+	# is ON_CARRIER, and _on_tapped_vehicle refuses on that before it ever
+	# gets here. It is closed anyway rather than left out, because a guard
+	# that names four of five flags reads as the complete table and the
+	# next vehicle inherits the gap.
+	if _driving or _driving_sailboat or _driving_sled or _driving_quad or _keepy == null or _yacht == null:
 		return false
 	if not SandYacht.drivable(yacht_position()):
 		_yacht.place(YACHT_PARK, PI / 2.0)
@@ -1156,7 +1341,8 @@ func exit_yacht() -> void:
 ## drag, not a place it is forbidden to occupy) and minus any WorldSave
 ## write (brief: no persistence for this vehicle).
 func mount_sailboat() -> bool:
-	if _driving or _driving_sailboat or _keepy == null or _sailboat == null:
+	# See mount_yacht() for why `_driving_sled` joins `_driving_quad` here.
+	if _driving or _driving_sailboat or _driving_sled or _driving_quad or _keepy == null or _sailboat == null:
 		return false
 	if not _keepy.call("mount_carrier", _sailboat.deck(), SailBoat.SEAT):
 		return false
@@ -1207,7 +1393,7 @@ func exit_sailboat() -> void:
 ## refuses while any drive flag is up, and _try_mount_ball drops a held
 ## vehicle before it gets here.
 func mount_sled() -> bool:
-	if _driving or _driving_sailboat or _driving_sled or _keepy == null or _sled == null:
+	if _driving or _driving_sailboat or _driving_sled or _driving_quad or _keepy == null or _sled == null:
 		return false
 	if not SledBody.drivable(sled_position()):
 		_sled.place(SLED_PARK, PI / 2.0)
@@ -1254,6 +1440,57 @@ func exit_sled() -> void:
 	# a second spelling of it.
 	_keepy.call("leave_carrier", landing)
 	sled_driving_changed.emit(false)
+
+## CH79: climbs aboard the mount. mount_sled()'s shape exactly, including
+## its drivable-ground refusal (a mount is a LAND vehicle, so one that
+## somehow stood where it may not drive could not be driven off it), and
+## minus any WorldSave write (no persistence, the sled's precedent).
+func mount_quad() -> bool:
+	if _driving or _driving_sailboat or _driving_sled or _driving_quad \
+			or _keepy == null or _quad == null:
+		return false
+	if not QuadRaptorBody.drivable(quad_position()):
+		_quad.place(QUAD_PARK, 0.0)
+		return false
+	if not _keepy.call("mount_carrier", _quad.deck(), QuadRaptorBody.SEAT):
+		return false
+	_driving_quad = true
+	_quad.velocity = Vector3.ZERO
+	touch.enabled = true
+	touch.hold_throttle(MOUNT_HOLD_S)
+	_keepy.call("follow_carrier")
+	if _camera != null and _camera.has_method("enter_drive"):
+		_camera.call("enter_drive", _quad)
+	if _hud != null:
+		_hud.set_vehicle_mode(true)
+		_hud.visible = true
+	quad_driving_changed.emit(true)
+	return true
+
+## The HUD button, for the mount. exit_sled()'s shape, and the landing is
+## taken BESIDE it and clamped to ground it could itself have driven on.
+func exit_quad() -> void:
+	if not _driving_quad:
+		return
+	touch.enabled = false
+	touch.input.reset()
+	_quad.velocity = Vector3.ZERO
+	_driving_quad = false
+	if _camera != null and _camera.has_method("exit_drive"):
+		_camera.call("exit_drive")
+	if _hud != null:
+		_hud.visible = false
+		_hud.set_ghost(Vector2.ZERO, Vector2.ZERO, false)
+		_hud.set_vehicle_mode(false)
+	var at: Vector3 = quad_position()
+	var landing: Vector3 = _step_off(at + _quad.right() * EXIT_SIDE, at)
+	if landing.distance_to(at) < 0.8:
+		landing = _step_off(at - _quad.right() * EXIT_SIDE, at)
+	# The FLAT landing, exactly as the sled hands it over: leave_carrier
+	# reads the height off HubSurface itself, so a y written here would be
+	# a second spelling of it.
+	_keepy.call("leave_carrier", landing)
+	quad_driving_changed.emit(false)
 
 ## A landing point for the step-off: the region's own clamp, refused back
 ## to `fallback` (the vehicle's own position) if it lands where the
@@ -1393,6 +1630,14 @@ func _physics_process(delta: float) -> void:
 		# CH41: no wind and no wet test -- the ground under it is the only
 		# thing this vehicle answers to, and SledBody reads that itself.
 		_sled.drive(delta, touch.input)
+		_keepy.call("follow_carrier")
+		if _hud != null:
+			_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)
+	elif _driving_quad and _quad != null:
+		# CH79: the sled's branch exactly -- no wind and no wet test, the
+		# ground under it is the only thing this vehicle answers to and
+		# QuadRaptorBody reads that itself.
+		_quad.drive(delta, touch.input)
 		_keepy.call("follow_carrier")
 		if _hud != null:
 			_hud.set_ghost(touch.anchor, touch.finger, touch.steering_active)

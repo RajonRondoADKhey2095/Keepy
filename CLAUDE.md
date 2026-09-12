@@ -164,6 +164,7 @@ dans `docs/lots/`, ceci n'en est jamais un résumé.
 | 10 sept 2026 (14:35) | CH65 (le toucher de la planche : rampe de throttle, filtre du doigt, plafond de lacet, poussée sur le nez, grip latérale) — `28adc89` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 | 11 sept 2026 | CH74 (grimper aux arbres uniquement au tap sur l'apex) — `d74a45d` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 | 12 sept 2026 | CH75 (La Comète, troisième manège du parc, sous la caméra de poursuite), CH76 (la Comète reçoit la vue POV) — `7a9051a` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
+| 12 sept 2026 | CH77 (terrain navigable hors-chemin, zones 1 et 2) — `20cf6b8` | Mathieu, après validation device sur `keepy-staging.vercel.app` |
 
 ## Vérifier un déploiement SUR LE SERVICE, jamais dans le log CI seul
 
@@ -1089,6 +1090,35 @@ du même lot (la poussée déplacée sur le nez du véhicule) et que le terme
 soupçonné n'achetait que 19,5 → 8,9. Sans elle, le lot aurait crédité une
 constante d'une correction qu'elle n'a pas faite, et le lot suivant aurait
 été surpris par ce que la retirer coûte.
+
+### ⚠️ QUAND N MÉCANISMES SUFFISENT CHACUN, AUCUNE PASSE ROUGE INDIVIDUELLE NE PEUT ROUGIR — ET CE N'EST PAS « NON GATÉ »
+
+CH73 a écrit qu'« un garde qu'une neutralisation ne parvient pas à faire
+rougir n'est pas gaté ». CH79 a rencontré le cas à **N**, et la règle
+CH73 lue seule y donne exactement la mauvaise conclusion.
+
+La séparation des deux gestes continus du hub — conduire un véhicule et
+orbiter la caméra au doigt — est défendue **TROIS fois**, et chaque
+défense **suffit seule** : le shunt de `HubTapInput`, le
+`hub_camera.is_driving()` de `_orbit_licensed`, et son `hopper.is_afoot()`
+(faux sous `ON_CARRIER`). Neutraliser le shunt rend donc **ALL GREEN,
+zéro rouge** — ce qui se lirait « ce shunt n'est pas gaté, retire-le ».
+
+**Il faut DEUX passes, et elles ne disent pas la même chose :**
+
+1. **neutraliser les N ENSEMBLE** prouve que l'assertion PEUT échouer,
+   sans quoi elle est décorative. Mesuré : l'orbite bouge alors de
+   **0,800000000 rad**, le chiffre exact que la branche POSITIVE lit à
+   pied — donc le banc voit bien la grandeur ;
+2. **neutraliser CHACUN SEUL** publie **lesquels sont redondants**. C'est
+   l'information dont un lot futur a besoin AVANT d'en retirer un, et
+   aucune autre mesure ne la donne.
+
+**Corollaire de conception** : une défense redondante n'est pas un
+défaut — mais elle se **NOMME** à chaque site, avec la propriété qui
+l'autorise. Sans ça, le lot qui en retire une ne sait pas qu'il en restait
+deux, et le lot qui retire la dernière ne sait pas qu'elle était la
+dernière.
 
 ### ⚠️ UN SCAN QUI REND « AUCUNE POSITION » NE DIT PAS QUEL LEVIER TIRER — IL FAUT RETIRER LES CONTRAINTES UNE PAR UNE
 
@@ -3922,6 +3952,8 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH68 | Les deux zones « non physiques » n'en font qu'une — RECON PURE, zero code de jeu. Zone 1 identifiee par enumeration, passe masquee au pixel et balayage de 72 azimuts lances DEUX FOIS (physique et triangles de la surface 0) : **6 azimuts fantomes, tous le bol**, 31 ou physique et dessin sont egaux au millimetre, et le « mur gris » du retour device est le DOS du petit quarterpipe, **solide**. Confirme par le canal du joueur avec blind check : la planche **traverse le bol** (0,199 u de l'axe, zero contact) et le meme geste sur un module solide est ARRETE. **Les deux zones sont le meme objet.** Zone 2 : les deux angles du brief mesures — (a) 56 positions sur la dalle, **0 sur 56** avec 1 u de degagement, 4 489 des qu'on lache la dalle ; **(b) REFUTE — retirer la contrainte de retombee laisse 56 avant, 56 apres** ; le bol n'est pas cable | [`CH68_ZONES_NON_PHYSIQUES.md`](docs/lots/CH68_ZONES_NON_PHYSIQUES.md) | 5 | 336 | 10 sept |
 
 | CH76 | **La Comète reçoit la vue POV, et le patron CH72 devient réutilisable sous une poursuite.** ⚠️ Le POV n'était pas « non câblé » sur la Comète, il était **arithmétiquement MORT** : `_apply_pov()` n'est appelé que depuis la branche HUB, la branche DRIVE sort par `return` — `enter_pov()` posait une tête, portait le blend à 1,000, `is_pov()` rendait `true`, et **personne ne lisait rien** ; la raison CH75 de l'exclusion (« deux écrivains ») était l'inverse de l'état réel (**zéro**). `_apply_pov` scindé en `_pov_idle()` + `_blend_pov(base, base_fov)` — une **BASE passée**, un écrivain, un blend, **une ligne** ajoutée à la branche drive, branche hub inchangée dans son effet, `CoasterRail.gd` pas touché. ⚠️ `pov_pitch_deg` était une table à deux branches pour trois manèges (la Comète héritait des **16,7°** de la tour, code mort que ce lot aurait armé) ; une branche par manège, Comète à **0,0°**. ⚠️ Défaut introduit et attrapé par la sonde : `_on_pov_exited` rendait `fov = _hub_fov` sans condition, peignant le **45 du hub sur le 64 de la Comète** — mesuré **exactement 19,00000**. Coût même run / même banc / même trajet : primitives **85 321 → 85 344** max, **36 558 → 35 329** moyenne, frame **34,7-36,7 → 31,7-32,5 ms** — le POV coûte un peu MOINS que la poursuite. Œil jamais dans un solide (0/1 057), rail le plus proche **0,917 u**, 100 % du bas de l'image résout au sol aux quatre phases. `CometProbe` PHASE P, 24 assertions, tout par `_handle_point` ; E20 **ré-visée et non relâchée** ; un seuil remplacé par un **encadrement** (0,34887 de plancher de banc → 0,00000) ; **quatre verts gratuits trouvés en PRÉDISANT** la troisième passe rouge. Passes rouges **7/6** (l'extra P7 est une trouvaille : la poursuite porte 0,2738° de roulis pendant son propre fondu), **1/1**, **14/14**. Table croisée deux arbres, **154 `.scn`**, `ProbeTimeoutAudit` **101** des deux côtés. | [`CH76_COMET_POV.md`](docs/lots/CH76_COMET_POV.md) | 9 | 446 | 12 sept |
+| CH78 | **Le ballon sauteur part du plateau de spawn — une constante, mesurée.** `BALL_PARK` **4,428 u → 33,956 u**, aucune mécanique touchée. Balayage 0,5 u / 365 disques publiés : cinq contraintes → 13 935 candidats, ⚠️ **la dalle/circuit n'en retranche AUCUN** (dite inactive). ⚠️ **C'est le disque TENANT DANS la région (CH21) qui borne, pas le cône de cadre** — sans lui la réponse est (18, −35), pile sur le bord sud ; avec lui **(−8, −33)**, identique à 0 comme à 1,0 u de marge de cône, donc pas née sur sa limite. ⚠️ **Le park EXPÉDIÉ échouerait lui-même au test de dégagement (−0,363 u)** — dit plutôt que caché. Coût assumé : le ballon n'est plus derrière Keepy et la brume en mange ~42 % à 34 u ; c'est le marqueur de minimap qui le rend trouvable. Tapis rebattu et mesuré (batches −1, instances +3). | [`CH78_BALLON_SAUTEUR.md`](docs/lots/CH78_BALLON_SAUTEUR.md) | 8 | 156 | 12 sept |
+| CH79 | **Le quad raptor : sixième véhicule, première MONTURE, et la séparation des deux gestes continus prouvée dans les deux sens.** Recon bloquant : le karting est **confiné**, mais ⚠️ **la référence libre existait déjà** (yacht/voilier/luge sur `SandYacht.drivable()`), un véhicule conduit **n'utilise pas le routeur piéton**, et `is_afoot()` bascule gratuitement via `ON_CARRIER` — **rien de neuf à valider**. Bâti sur `SurfaceDrive` (le composite que CH35 Q2-B destine au véhicule NEUF), `VehicleDrive`, `KartTouchInput`, `ChaseTuning.vehicle()` : **zéro patron neuf**. Park mesuré (six contraintes, ⚠️ **deux inactives**, le binding est le dégagement de sortie), placeholder **132 triangles**, croisière **dérivée de la marche** et `PACE_RATIO` **dit être du goût** (CH70). ⚠️ **Deux tables de dispatch à défaut `ball_*` désarmées** (forme CH76) et une dette de garde préalable fermée. `QuadProbe` xvfb **75 assertions / 0 rouge** ; **+132 primitives garée = exactement son compte de triangles** ; **43 891 contre 44 858 pour la LUGE** au même poste — ⚠️ **le KART n'est pas comparable et c'en est un résultat** (zone 3, autre scène). ⚠️ **Trois défauts d'instrument** (le banc conduisait la monture DANS LE MUR puis y mesurait sa croisière). **Quatre passes rouges : 2/2, 1/1, 0/0 prédit, 1/1** — la 3a a produit la doctrine ci-dessus. | [`CH79_QUAD_RAPTOR.md`](docs/lots/CH79_QUAD_RAPTOR.md) | 11 | 335 | 12 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

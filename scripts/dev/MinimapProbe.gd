@@ -988,10 +988,11 @@ func _phase_clusters() -> void:
 	#   CH46/CH47/CH48 ..... 37  (12 vehicles, 9 NPCs, 15 places, Keepy)
 	#   CH53 ............... 39  (+ the skateboard, + the skatepark site)
 	#   CH71 ............... 40  (+ the funfair's drop tower, a PLACE)
+	#   CH79 ............... 41  (+ the quad raptor, a VEHICLE)
 	#
 	# The assertion it carries is "nothing was REMOVED", so it stays an
 	# EQUALITY: a `>=` would let a removal hide behind the next addition.
-	const MARKER_ROSTER: int = 40
+	const MARKER_ROSTER: int = 41
 	_check(members_total == MARKER_ROSTER,
 		"all %d markers are still on the map -- nothing was removed (%d)"
 			% [MARKER_ROSTER, members_total])

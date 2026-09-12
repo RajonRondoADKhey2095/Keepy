@@ -616,6 +616,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	# neither know nor care that the board exists.
 	if transport != null and transport.is_riding_board():
 		return
+	# CH79: the quad raptor, the FIFTH condition of the same shape -- one
+	# per DRIVEN VEHICLE, which is what the three lines above say.
+	#
+	# ⚠️ IT IS NOT REDUNDANT WITH THE REFUSALS DOWNSTREAM. A mounted rider
+	# is ON_CARRIER, so _on_tapped_vehicle and the ground path would both
+	# refuse him anyway, and `_orbit_licensed` already answers false on
+	# `hub_camera.is_driving()`. Relying on any of those would be exactly
+	# the inherited-guard defect CLAUDE.md records against ON_CARRIER: the
+	# licence to swallow a point belongs to "a vehicle is being piloted",
+	# not to a state another lot may widen. One finger has ONE meaning,
+	# and while the mount is driven that meaning is KartTouchInput's.
+	#
+	# ⚠️ AND THE SLED IS STILL MISSING FROM THIS LIST -- a pre-existing
+	# gap, inert today for the reasons above, reported by CH79 and NOT
+	# closed here: this file is the pedestrian tap path and widening the
+	# change beyond the lot's own vehicle buys risk and no measurement.
+	if transport != null and transport.is_driving_quad():
+		return
 	# =================================================================
 	# CH73 -- THE GESTURE IS READ FIRST, AND THE TAP PATH IS UNCHANGED
 	# BELOW THE SLOP.
