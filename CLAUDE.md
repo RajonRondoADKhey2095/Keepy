@@ -1412,6 +1412,31 @@ réellement bâtie. Une liste d'exclusion est un pari sur l'exhaustivité d'un
 inventaire fait ailleurs, et elle a tort le jour où quelqu'un ajoute le
 douzième nœud — silencieusement, et dans le sens qui invente une régression.
 
+### ⚠️ UNE TABLE DE DISPATCH À DEUX BRANCHES DEVIENT FAUSSE AU TROISIÈME MEMBRE, EN SILENCE — ET ELLE EST INERTE TANT QUE LA PORTE EST FERMÉE
+
+Cousin de « une liste de ce qui n'est pas le sujet est fausse au premier
+nom oublié », côté **DÉFAUT DE TABLE** plutôt que côté exclusion, et le
+second trait est celui qui coûte.
+
+Mesuré au CH76. `HubFunfair.pov_pitch_deg` s'écrivait
+`return 0.0 if ride == RIDE_COASTER else TOWER_POV_PITCH_DEG` — deux
+branches pour **trois** manèges. Le troisième tombait dans le `else` et
+recevait **16,7°**, un tangage mesuré pour une nacelle regardant le hub
+depuis 14 u, sur un manège qui ne regarde rien vers le bas.
+
+⚠️ **Ce n'était pas un défaut expédié : c'était du CODE MORT ARMÉ.** Une
+autre porte (`accepts_rider_tap`) refusait ce manège, donc la ligne n'était
+jamais atteinte. C'est le lot qui **OUVRE** la porte qui la déclenche — et
+il n'a aucune raison naturelle d'aller relire une table qu'il ne modifie
+pas.
+
+**Règle** : un lot qui ouvre une porte doit **grepper tous les `else` dans
+lesquels le nouvel arrivant tombe désormais**, au même titre qu'il relit ce
+qu'il change. Et toute table de dispatch s'écrit **une branche par membre**,
+même quand deux membres partagent une valeur : un quatrième doit avoir à
+répondre pour lui-même au lieu d'hériter en silence de la réponse d'un
+autre.
+
 ### ⚠️ UN FIXTURE QUI DIVERGE DU RÉEL SUR UN AXE NE PROTÈGE PAS DE CET AXE
 
 `SubstituteModel.tscn` imitait un modèle importé par sa STRUCTURE DE NŒUDS
@@ -2002,6 +2027,63 @@ Ce que l'exception exige, et chaque clause a été payée :
   bornée, qu'elle ne roule pas, qu'elle est câblée au vrai canal du doigt,
   que le trajet continue à travers la bascule, et ce que ça coûte. Le FOV,
   le tangage et la nausée sont un appel device.
+
+### ⚠️ UN PATRON DE CAMÉRA ÉCRIT COMME SURIMPRESSION D'UNE POSE N'EST RÉUTILISABLE QUE SI LA POSE DE BASE LUI EST **PASSÉE** — SINON IL EST MORT SOUS LA SECONDE POSE, ET IL NE LE DIT PAS
+
+Écrit au CH76, en donnant à la Comète le POV que les deux autres manèges
+du parc avaient déjà. Le POV du CH72 est une surimpression : il interpole
+entre « ce que la branche vient d'écrire » et la tête du rider. Mais
+`_apply_pov()` n'était appelé que depuis la branche **HUB** de
+`HubCamera._process` ; la branche **DRIVE** sort par `return` sans jamais
+l'appeler.
+
+Conséquence, et c'est la forme de panne la plus trompeuse que ce fichier
+documente : sur un manège dont la caméra par défaut est la poursuite,
+`enter_pov()` pose une tête, le tween porte le blend à **1,000**,
+`is_pov()` rend **true** — et **rien ne lit ni l'une ni l'autre**. Aucune
+erreur, aucun avertissement, et l'image ne bouge pas d'un pixel.
+
+⚠️ **ET LA RAISON ÉCRITE POUR L'EXCLUSION ÉTAIT L'INVERSE DE L'ÉTAT
+RÉEL.** Le CH75 refusait le POV sur la Comète parce qu'« un POV ouvert sur
+un drive en cours ferait **deux écrivains** sur une caméra ». Il n'y en
+avait pas deux : il y en avait **ZÉRO**. Une exclusion justifiée par un
+conflit supposé a masqué une absence de câblage pendant tout un lot, et
+seule la lecture des deux branches de `_process` l'a montrée.
+
+**Règle** : une surimpression se paramètre par sa **BASE**
+(`_blend_pov(base, base_fov)`), jamais par la pose qu'elle suppose ; et
+chaque branche qui écrit une pose l'appelle avec **celle qu'elle vient
+d'écrire**. On garde alors **un** écrivain et **un** blend — ce que
+« deux écrivains » craignait devient impossible au lieu d'être risqué — et
+la transition va de la pose courante aux yeux sans détour par une pose que
+le rider a quittée. La base reste **RECALCULÉE** et jamais relue sur la
+pose vivante, sous peine de fluer vers la surimpression à n'importe quel
+blend (c'est la raison déjà écrite pour le `fov`, et elle vaut aussi fort
+pour le transform).
+
+⚠️ **COROLLAIRE : UN MODE QUI *REND* UNE PROPRIÉTÉ DOIT LA RENDRE À QUI LA
+POSSÈDE MAINTENANT, PAS À QUI LA POSSÉDAIT QUAND IL A ÉTÉ ÉCRIT.** La
+sortie du POV faisait `fov = _hub_fov` **sans condition** — juste tant que
+le POV ne se superposait qu'à la pose fixe, faux dès qu'une poursuite
+tourne : la branche drive possède le `fov` et le réécrit chaque frame, donc
+cette ligne peint le 45 du hub par-dessus le 64 de la Comète. Mesuré et pas
+déduit : la sonde a lu **exactement 19,00000** de dérive sur la frame du
+fondu, et 19,0 est `COASTER_FOV − hub_fov` au chiffre près — un pop de fov
+visible à chaque sortie de POV en cours de trajet. Le garde porte sur le
+**MODE** (`if _drive_target == null`), pas sur le blend : l'autre mode rend
+la même valeur exacte tout seul.
+
+⚠️ **ET LE GATE QUI ATTRAPE ÇA EST UN ENCADREMENT, PAS UN SEUIL.** Comparer
+la valeur vivante à l'attente construite sur les blends **lus après la
+frame** sort ROUGE à **0,349** sur un arbre correct : la valeur est écrite
+dans `_process` et le tween avance ailleurs dans la même frame, donc elle
+porte légitimement le blend de la frame **précédente** (une frame d'un
+fondu sinusoïdal de 0,45 s à travers 58 → 64 vaut un tiers de degré,
+exactement le chiffre lu). Encadrer entre les **deux attentes
+consécutives** supprime la lecture (mesuré 0,00000) et ne laisse **aucun
+nombre à régler** — le vrai défaut tombe 13 degrés hors de l'encadrement.
+C'est « mesurer le plancher » plutôt que « élargir le seuil jusqu'à ce que
+le bruit tienne dessous ».
 
 ### ⚠️ UN RIDE VERTICAL PEUT DÉPASSER LE PLAFOND DU CADRE — LA CAMÉRA MONTE, EN OFFSET BORNÉ SUR LA POSE FIXE
 
@@ -3762,6 +3844,8 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH73 | **La caméra du hub devient orientable au doigt, à pied, et elle reste où on la laisse.** Recon bloquante, et **deux prémisses du brief tombent**. (a) ⚠️ **Il n'existait AUCUN seuil tap/drag dans `HubTapInput`** — ni temps ni pixels : toute release appelait `_handle_point` inconditionnellement, donc un drag envoyait Keepy là où le doigt se **LEVAIT** (le header du fichier dit l'inverse, et il parle de la *press*). Le seuil est **créé**, en lisant `SkateTouchInput.SLOP_PX` (16 px, justifié par son propre commentaire en termes de **pouce et de téléphone**, pas de planche) ; ⚠️ **son jumeau `TAP_MAX_S` est REFUSÉ** — sur la planche un doigt tenu est l'accélérateur et la limite sépare deux gestes réels, dans le hub elle n'inventerait qu'un troisième résultat (presser, attendre, lever, RIEN) sans aucun retour ; mesuré au passage que la constante est en temps **RÉEL**, donc sous llvmpipe (une frame = ~0,14 s) le tap de six frames d'une sonde dure **0,824 s** et une assertion passait **selon la charge machine**. (b) ⚠️ **La dette du double relâchement interfère dans DEUX sens** (gain **doublé** sur téléphone, et un latch effacé au relâchement fait relire un drag comme un tap par le jumeau) : **non corrigée** (hors scope, le filtre `DEVICE_ID_EMULATION` casserait le desktop) mais neutralisée par la FORME et gatée. Mécanique : **rotation rigide du rig entier** autour du point sol — `position = ground + R·OFFSET`, `basis = R·_hub_basis` — d'où trois propriétés **gratuites et gatées** : identité à angle nul (donc cadre livré byte-identique), **distance invariante** (11,7034 u : un zoom devient impossible à ajouter par accident), et le désaccord authored de 6,5° du CH36 **transporté**, donc le cadrage tient à tous les lacets ; **roulis exactement nul par arithmétique** (pire `\|basis.x.y\|` = 0,000000000). `_hub_basis` **toujours jamais écrit** (lecture dérivée). Bornes **mesurées** par balayage au degré : ⚠️ **la couronne est dans le cadre aux 90 pas** (le cadrage est invariant, donc « il sort du cadre » ne borne rien) et **aucun genou** sur la fraction adressable (93,3 % au repos → 40,0 à −40), donc chaque borne est ancrée sur une **propriété re-mesurable** — basse **−23,0°** (dégagement **3,5183 u**, plus du double de la couronne de 1,7 ; tangage encore **11,0°** descendant), haute **+43,0°** (rayon horizontal **1,3249 u** : au zénith un lacet ne déplace la caméra **nulle part** et la commande serait morte). ⚠️ **Le balayage a réfuté le soupçon du lot** : la caméra vers l'horizon coûte **+3,9 %** (74 538 contre 71 764), pas les 123 515 de la pose de conduite — **`far` n'est PAS touché**. `OrbitCameraProbe` (permanente, xvfb + opengl3, **jamais headless**) : **56 assertions, 7 phases, tout par `Input.parse_input_event`**, `orbit_by` appelé nulle part sauf par le moteur. **Sept passes rouges** — 1/1, **1 pour 1 après qu'une première rédaction soit revenue ALL GREEN**, 5 pour 3, 4/4, 4/4, 3/3, 1/1 — dont deux ont trouvé des défauts **DANS LA SONDE** : la passe 1 a rendu **4 rouges pour 1 prédit** (trois instruments dépendaient d'où Keepy se trouvait), et ⚠️ **la passe 2 est revenue ALL GREEN**, révélant que le doublement est neutralisé par l'**INTÉGRATION PAR DELTA** et non par la réclamation de canal — d'où D5 (le même pixel deux fois vaut un pas) et D4 (**un survol n'est pas un geste** : défaut *desktop*, invisible depuis le téléphone que le garde défendait). ⚠️ Une assertion de stabilité est sortie **ROUGE sur du code juste** et n'a pas été faite taire : la pose **ARRIVAIT** (0,67 % d'erreur résiduelle à 1 s) — réécrite pour nommer **vers quoi** elle ne doit pas converger, elle publie **0,00000° de l'orbite laissée contre 114,51° de la pose authored**. Table croisée deux arbres, **154 `.scn`** des deux côtés, `ProbeTimeoutAudit` **99 → 100** (+1, la sonde de recon jetable supprimée). | [`CH73_CAMERA_ORBITABLE.md`](docs/lots/CH73_CAMERA_ORBITABLE.md) | 9 | 412 | 11 sept |
 | CH67 | Zone navigable du hub — `SKATE_LOBE_RADIUS` 28 → 36 sur un balayage MARCHÉ (38 sort à 22,100 s, le chiffre que le lot D avait déjà refusé), pire traversée du hub qui PASSE au lobe (21,817 s, dit et gaté) ; limite rendue lisible par un liseré peint dans le shader du sol, teinte choisie **en luminance** (le béton pâle évident lit 1,18:1 contre l'herbe claire) et gatée au PIXEL contre son propre plancher de bruit ; balançoire et ours sortis du couloir de course sur un scan à quatre contraintes simultanées, les deux constantes de l'ours re-dérivées ; **le bol construit, prouvé, puis retiré sur une mesure** (il passe sous la retombée du grand quarterpipe et rend le double pop que CH66 avait tué) | [`CH67_ZONE_NAVIGABLE.md`](docs/lots/CH67_ZONE_NAVIGABLE.md) | 8 | 392 | 10 sept |
 | CH68 | Les deux zones « non physiques » n'en font qu'une — RECON PURE, zero code de jeu. Zone 1 identifiee par enumeration, passe masquee au pixel et balayage de 72 azimuts lances DEUX FOIS (physique et triangles de la surface 0) : **6 azimuts fantomes, tous le bol**, 31 ou physique et dessin sont egaux au millimetre, et le « mur gris » du retour device est le DOS du petit quarterpipe, **solide**. Confirme par le canal du joueur avec blind check : la planche **traverse le bol** (0,199 u de l'axe, zero contact) et le meme geste sur un module solide est ARRETE. **Les deux zones sont le meme objet.** Zone 2 : les deux angles du brief mesures — (a) 56 positions sur la dalle, **0 sur 56** avec 1 u de degagement, 4 489 des qu'on lache la dalle ; **(b) REFUTE — retirer la contrainte de retombee laisse 56 avant, 56 apres** ; le bol n'est pas cable | [`CH68_ZONES_NON_PHYSIQUES.md`](docs/lots/CH68_ZONES_NON_PHYSIQUES.md) | 5 | 336 | 10 sept |
+
+| CH76 | **La Comète reçoit la vue POV, et le patron CH72 devient réutilisable sous une poursuite.** ⚠️ Le POV n'était pas « non câblé » sur la Comète, il était **arithmétiquement MORT** : `_apply_pov()` n'est appelé que depuis la branche HUB, la branche DRIVE sort par `return` — `enter_pov()` posait une tête, portait le blend à 1,000, `is_pov()` rendait `true`, et **personne ne lisait rien** ; la raison CH75 de l'exclusion (« deux écrivains ») était l'inverse de l'état réel (**zéro**). `_apply_pov` scindé en `_pov_idle()` + `_blend_pov(base, base_fov)` — une **BASE passée**, un écrivain, un blend, **une ligne** ajoutée à la branche drive, branche hub inchangée dans son effet, `CoasterRail.gd` pas touché. ⚠️ `pov_pitch_deg` était une table à deux branches pour trois manèges (la Comète héritait des **16,7°** de la tour, code mort que ce lot aurait armé) ; une branche par manège, Comète à **0,0°**. ⚠️ Défaut introduit et attrapé par la sonde : `_on_pov_exited` rendait `fov = _hub_fov` sans condition, peignant le **45 du hub sur le 64 de la Comète** — mesuré **exactement 19,00000**. Coût même run / même banc / même trajet : primitives **85 321 → 85 344** max, **36 558 → 35 329** moyenne, frame **34,7-36,7 → 31,7-32,5 ms** — le POV coûte un peu MOINS que la poursuite. Œil jamais dans un solide (0/1 057), rail le plus proche **0,917 u**, 100 % du bas de l'image résout au sol aux quatre phases. `CometProbe` PHASE P, 24 assertions, tout par `_handle_point` ; E20 **ré-visée et non relâchée** ; un seuil remplacé par un **encadrement** (0,34887 de plancher de banc → 0,00000) ; **quatre verts gratuits trouvés en PRÉDISANT** la troisième passe rouge. Passes rouges **7/6** (l'extra P7 est une trouvaille : la poursuite porte 0,2738° de roulis pendant son propre fondu), **1/1**, **14/14**. Table croisée deux arbres, **154 `.scn`**, `ProbeTimeoutAudit` **101** des deux côtés. | [`CH76_COMET_POV.md`](docs/lots/CH76_COMET_POV.md) | 8 | 413 | 12 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,
