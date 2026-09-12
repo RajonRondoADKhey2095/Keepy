@@ -3281,6 +3281,55 @@ seul un balayage le voit. Corollaires payés dans le même lot :
 * et **un balayage qui refuse est un RÉSULTAT** : ce qui est livrable
   est alors la table, pas le changement.
 
+### ⚠️ RETIRER UN FILET DE RATTRAPAGE SE MESURE SUR LA SCÈNE OÙ IL SERT, PAS SUR CELLE OÙ IL A ÉTÉ DIAGNOSTIQUÉ
+
+Complément de CH70 (« un paramètre de goût cesse d'en être un dès qu'un
+autre lot s'appuie dessus »), côté **CAPACITÉ** plutôt que côté valeur : là
+où CH70 dit de balayer la plage d'une constante avant de la bouger, celui-ci
+dit quoi mesurer quand un lot **RETIRE un mécanisme entier** — et il ajoute
+que le chiffre qui a justifié ce mécanisme a pu être pris **ailleurs**.
+
+CH42 avait installé la marche arrière comme un **FILET** : le gain de
+braquage de `VehicleDrive` est proportionnel à `|v_fwd|`, un mur mange
+`v_fwd`, donc reculer est la seule commande qui rende de l'autorité de
+braquage. Ce diagnostic a été mesuré sur la **LUGE** contre les murs de
+`HubRegion`, qui **REFUSENT le pas et EFFACENT la cible**. Le kart ne vit
+pas derrière ce mur-là : sa seule frontière dure est `KartTrack.fence()`,
+un `Rect2` dont `VehicleDrive` **CLAMPE** la position et **RÉFLÉCHIT** la
+composante entrante à `fence_bounce`. Deux mécanismes différents — et
+personne n'avait jamais mesuré le second.
+
+Mesuré au CH81, **avant** de retirer quoi que ce soit :
+
+| état du kart contre sa barrière | sans marche arrière | avec |
+|---|---|---|
+| nez au mur à l'arrêt, 26 stations × 2 braquages | **52 sur 52 n'atteignent jamais 4 u en 10 s** (excursion max **1,431 u** sur un bord, **0,424 u** dans un coin) | 84-87 frames |
+| contact **PILOTÉ**, lu à la frame du choc | 2 sur 12 | — |
+| contact piloté puis **LAISSÉ SE STABILISER** | **3 sur 12**, dont le cas plein-axe dans **LES DEUX SENS** (0,352 u en 10 s) | 84-197 frames |
+
+**Les trois lignes ne disent pas la même chose, et c'est le résultat.** La
+réflexion de la barrière rend souvent un contact **piloté** échappable — ce
+que le mur du hub ne fait jamais — mais elle ne peut rien pour un véhicule
+**ARRÊTÉ** contre elle, et celui-là est l'état qu'un joueur atteint : la
+vitesse stabilisée vaut **0,0128 u/s** contre un `STEER_FULL_SPEED` de 4,5,
+soit **0,28 %** de plein braquage, et l'accélérateur du kart étant
+**AUTOMATIQUE** il n'existe aucun geste pour cesser de pousser dans le mur.
+
+**Règle** : un lot qui retire une capacité publie ce que cette capacité
+retenait, **mesuré sur la scène et le véhicule concernés**, et il ne recopie
+pas le chiffre du lot qui l'a installée — un modèle partagé (ici
+`VehicleDrive`) ne rend pas deux scènes comparables. Et la mesure se prend
+aux **TROIS temps** de l'état (le choc, la stabilisation, l'arrêt) : une
+seule lecture aurait rendu 2/12 et conclu à un coût négligeable.
+
+⚠️ **Et une passe rouge ne remplace pas cette mesure.** Les quatre
+neutralisations du CH81 sortent aux comptes prédits et ne disent
+strictement **rien** du blocage : elles prouvent que le garde est câblé, pas
+ce que le garde **coûte**. C'est la forme du CH62 (« une sonde ne peut pas
+juger un game feel ») un cran plus loin — un banc ne peut pas juger une
+**IMPASSE**, parce qu'une impasse n'est pas une assertion fausse, c'est une
+assertion que personne n'a écrite.
+
 ### ⚠️ UN FOOTPRINT TESTÉ AVANT LES TIRAGES REBAT LE TAPIS ; TESTÉ APRÈS, IL NE TOUCHE QUE CE QU'IL COUVRE
 
 Écrit au CH71, et ça précise le « irréductible » de CH53. Le CH53 avait
@@ -4017,6 +4066,7 @@ couvre déjà, ou une règle de conception qui vaut pour tout lot futur.
 | CH78 | **Le ballon sauteur part du plateau de spawn — une constante, mesurée.** `BALL_PARK` **4,428 u → 33,956 u**, aucune mécanique touchée. Balayage 0,5 u / 365 disques publiés : cinq contraintes → 13 935 candidats, ⚠️ **la dalle/circuit n'en retranche AUCUN** (dite inactive). ⚠️ **C'est le disque TENANT DANS la région (CH21) qui borne, pas le cône de cadre** — sans lui la réponse est (18, −35), pile sur le bord sud ; avec lui **(−8, −33)**, identique à 0 comme à 1,0 u de marge de cône, donc pas née sur sa limite. ⚠️ **Le park EXPÉDIÉ échouerait lui-même au test de dégagement (−0,363 u)** — dit plutôt que caché. Coût assumé : le ballon n'est plus derrière Keepy et la brume en mange ~42 % à 34 u ; c'est le marqueur de minimap qui le rend trouvable. Tapis rebattu et mesuré (batches −1, instances +3). | [`CH78_BALLON_SAUTEUR.md`](docs/lots/CH78_BALLON_SAUTEUR.md) | 8 | 156 | 12 sept |
 | CH79 | **Le quad raptor : sixième véhicule, première MONTURE, et la séparation des deux gestes continus prouvée dans les deux sens.** Recon bloquant : le karting est **confiné**, mais ⚠️ **la référence libre existait déjà** (yacht/voilier/luge sur `SandYacht.drivable()`), un véhicule conduit **n'utilise pas le routeur piéton**, et `is_afoot()` bascule gratuitement via `ON_CARRIER` — **rien de neuf à valider**. Bâti sur `SurfaceDrive` (le composite que CH35 Q2-B destine au véhicule NEUF), `VehicleDrive`, `KartTouchInput`, `ChaseTuning.vehicle()` : **zéro patron neuf**. Park mesuré (six contraintes, ⚠️ **deux inactives**, le binding est le dégagement de sortie), placeholder **132 triangles**, croisière **dérivée de la marche** et `PACE_RATIO` **dit être du goût** (CH70). ⚠️ **Deux tables de dispatch à défaut `ball_*` désarmées** (forme CH76) et une dette de garde préalable fermée. `QuadProbe` xvfb **75 assertions / 0 rouge** ; **+132 primitives garée = exactement son compte de triangles** ; **43 891 contre 44 858 pour la LUGE** au même poste — ⚠️ **le KART n'est pas comparable et c'en est un résultat** (zone 3, autre scène). ⚠️ **Trois défauts d'instrument** (le banc conduisait la monture DANS LE MUR puis y mesurait sa croisière). **Quatre passes rouges : 2/2, 1/1, 0/0 prédit, 1/1** — la 3a a produit la doctrine ci-dessus. | [`CH79_QUAD_RAPTOR.md`](docs/lots/CH79_QUAD_RAPTOR.md) | 11 | 335 | 12 sept |
 | CH80 | **Le quad raptor est un ATV, pas un dinosaure — maillage reconstruit, zéro mécanique touchée.** CH79 avait lu « quad raptor » comme une MONTURE À QUATRE PATTES ; « Raptor » est le nom d'un quad Yamaha. ⚠️ **Le périmètre annoncé par CH79 a été MESURÉ avant d'être cru** (CH70 : un chiffre recopié est périmé jusqu'à preuve du contraire) : la surface publique lue par le reste du dépôt est 15 symboles statiques + 10 méthodes, aucun collider n'est dérivé du maillage, aucune assise n'est lue sur une patte — et la preuve est que `QuadProbe` PHASE D rend **les mêmes chiffres au dix-millième sur les deux arbres** (croisière 11,5185, 20,57 u en 2,22 s, arrêt en 363 frames) pour un maillage passé de 132 à **1 104 triangles**. ⚠️ **LE GATE DE MAILLAGE N'A PAS ÉTÉ RELÂCHÉ, LA GÉOMÉTRIE A ÉTÉ CONSTRUITE DANS SA CLASSE** : `SledBody._hexa` (8 coins, 6 quads, 12 triangles) est aussi un **COIN DE CYLINDRE**, donc *n* coins font un cylindre à *2n* côtés — **68 pièces de coque + 24 coins de roue, toutes convexes, toutes à 12 triangles**, roues à 12 côtés comme celles de `KartBody`, et les **75 assertions sont restées vertes sans qu'une ligne de sonde bouge**. Les indices d'enroulement sont les **axes authored** et non le centroïde, sinon le test emploierait son propre critère (tautologie CH62) ; son blind check rend **816/816** sur la géométrie neuve. Traits mesurés : voie **1,820 / 2,065 = 0,881** contre le kart à **0,688**, garde au sol **0,260 = 65 % du rayon arrière** (quad réel ~37 %), barre à **+0,39 u au-dessus de la selle** (le volant du kart est à +0,37), museau **0,50 → 0,22 u**, roues arrière plus grosses **et visiblement plus lentes** (−1,163 contre +1,711 rad après 18,277 u). ⚠️ **Les teintes : la réponse évidente a été mesurée et REFUSÉE** — le turquoise CH79 lit **1,23:1** contre `AUTUMN_A`, il ne perd pas du contraste, il DISPARAÎT ; et ce n'est pas un problème de turquoise, la pire bande est à **L 0,313** donc franchir 3,0:1 exige **L ≤ 0,071** et aucune carrosserie n'est aussi sombre. Le plancher est porté comme au CH48 par une pièce d'UN SEUL TON — pneus **5,87:1**, cadre **3,91:1** — qui ceinture toute la moitié basse, et la carrosserie (bleu Raptor, 218° contre l'herbe) est alors libre. ⚠️ **La pose « assis à califourchon » est HORS PÉRIMÈTRE et le lot le dit** : il n'existe aucune pose assise dans ce dépôt, `mount_carrier()` écrit le rider DEBOUT et six véhicules partagent ce code. Coût : **+972 triangles**, delta **+1 104 EXACTEMENT** au spawn comme au poste de PHASE B (l'assertion de câblage), conduite **44 863 contre 45 830 pour la LUGE** au même poste. Passe rouge **3/3 prédits**, fichier restauré byte-identique. ⚠️ **Deux défauts d'INSTRUMENT** : la station de rendu mettait la **CAMÉRA dans un pommier** (dégagée au sol, 8,9 u plus au nord), et un `_gait` en rad/u aurait fait rougir « à l'arrêt ça ne pédale pas » (**0,060 contre un seuil de 0,05**) sur un mécanisme correct — d'où l'odomètre en UNITÉS, qui est de toute façon la primitive dont les deux tailles de roue dérivent. Deux doctrines nouvelles dans `CLAUDE.md`. | [`CH79_QUAD_RAPTOR.md`](docs/lots/CH79_QUAD_RAPTOR.md) | 9 | 245 | 12 sept |
+| CH81 | **Le kart perd la marche arrière, et lui seul — et le filet a été MESURÉ avant d'être retiré.** La situation est **(b)** : `KartTouchInput` a deux instances, celle du kart et **une seule pour le char à voile, le voilier, la luge et le quad**, donc le retrait est une **quatrième valeur d'instance** (`allows_reverse`, défaut TRUE, moule de `boost_span`) plus **une ligne** dans `HubKarting` — jamais un branchement « si c'est un kart » dans `VehicleDrive`, et jamais `REVERSE_SPEED = 0` (qui aurait fait un maintien-à-zéro et atteint `input.brake`, la branche des trois adversaires). ⚠️ **Ce que le rapport retenait, mesuré sur LA BONNE SCÈNE** : la barrière du kart CLAMPE et RÉFLÉCHIT là où le mur du hub REFUSE le pas — **52/52 stations bloquées 10 s nez au mur à l'arrêt**, 2/12 au contact piloté, **3/12 après stabilisation dont le plein-axe dans LES DEUX SENS**, pour **0,28 % de plein braquage** et **aucun geste pour cesser de pousser** (accélérateur automatique). Signalé, non corrigé, décision Mathieu. Garde lu à trois canaux (pouce, clavier, HUD), aucun redondant ; `ReverseProbe` **129 → 151 / 0 rouge** avec A/B sur le même kart à un booléen d'écart ; **quatre passes rouges dont une a trouvé un vert gratuit DANS la sonde** (un drag « bas » écrit vers le haut, et un `throttle` tenu relu cent frames plus tard) ; traces kart et char **byte-identiques** ; et **un rouge préexistant de `KartProbe` sur `staging`** (panneau chrono à 414 pour un `PANEL_WIDTH` de 380) que ce lot rend vert **par accident**, sans le corriger. Une doctrine nouvelle. | [`CH43_GESTE_UNIQUE.md`](docs/lots/CH43_GESTE_UNIQUE.md) | 8 | — | 12 sept |
 
 **Archive** — chantiers clos, sans objet ou historiques. **Déplacés
 intégralement, jamais condensés** : une approche abandonnée garde sa mesure,

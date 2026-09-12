@@ -253,3 +253,291 @@ octets, md5 `af4a8fc2925d992348eb30deeeb54360` ; `index.js` md5
 `4e08904b1b7107858246af44b602067b` — les constantes d'identité que
 `CLAUDE.md` publie pour un lot qui ne touche pas le code moteur. **Zéro** ligne
 `Storing File: res://build/`.
+
+---
+
+# CH81 — Le kart perd la marche arrière, et lui seul
+
+> Base `origin/staging` au commit `54c964a` (fin CH80), arbre
+> `221122a53b98`. Garde de concurrence par **ARBRE** avant la première
+> lecture : `origin/main` est en avance d'un seul commit de doc sur
+> `staging` (`CLAUDE.md` + `docs/lots/INDEX.md`, la promotion CH78+79+80),
+> `origin/staging` est ancêtre de la base ; la branche distante la plus
+> récente est `quad-raptor-mesh-rebuild` (12 sept 09:33), déjà mergée dans
+> `staging` — **aucune session concurrente**.
+>
+> Retour de Mathieu : sur le circuit, Keepy ne doit plus pouvoir reculer.
+> **Aucun autre véhicule n'est concerné.** Ce lot ne rediscute pas le geste
+> unique de CH43 et ne touche ni la physique de virage, ni l'accélération
+> avant, ni le tracé.
+
+## CH81-0 — La recon, et la situation réelle du code : (b), pas (a)
+
+Le brief demandait de trancher entre « entièrement local au kart » et
+« partiellement partagé » **avant** de choisir l'approche. La réponse est
+**(b), et à trois niveaux** :
+
+| niveau | ce qui est partagé |
+|---|---|
+| l'**écrivain** `KartTouchInput` | **DEUX instances** : celle de `HubKarting` (le kart) et **`"YachtTouch"` de `HubTransport`, qui écrit pour le char à voile, le voilier, la luge ET le quad** — un seul nœud pour quatre véhicules |
+| le **champ** `KartInput.reverse` | écrit par cet écrivain, et par personne d'autre ; `KartAiDriver` appelle `set_all` à quatre arguments, donc `reverse` retombe sur son défaut 0 |
+| le **consommateur** `VehicleDrive` | une branche `elif input.reverse > 0.0`, une instance par véhicule avec ses propres `reverse_speed` / `reverse_accel` (CH42 : « les quatre véhicules nomment leur propre rampe ») |
+
+**Un branchement en dur « si c'est un kart » au milieu de `VehicleDrive`
+était donc exclu, et le fichier partagé dit déjà quoi faire à sa place** :
+`KartTouchInput` porte depuis CH31 des **valeurs d'instance** (`boost_span`,
+`boost_dead_zone`, `boost_release_s`) et son en-tête dit pourquoi — « THESE
+ARE INSTANCE VALUES, NOT CONSTANTS, AND THAT IS LOAD-BEARING ». Le lot ajoute
+une quatrième valeur d'instance dans exactement le même moule.
+
+⚠️ **L'autre voie a été écartée sur son mécanisme, pas par préférence.**
+Mettre `KartBody.REVERSE_SPEED` à 0 aurait transformé le rapport en
+**MAINTIEN-À-ZÉRO** et aurait atteint `input.brake` — la branche que
+`KartAiDriver` presse avant chaque virage, et qui recule elle aussi sous
+`REVERSE_ENGAGE_SPEED`. C'est-à-dire un nouvel état bloquant sur les trois
+adversaires, ce que le brief interdit explicitement.
+
+## CH81-1 — Ce qui est livré : une valeur d'instance, une ligne de câblage
+
+```
+KartTouchInput.allows_reverse : bool = true     # défaut = CH43 intact
+HubKarting._ready()           : touch.allows_reverse = false
+```
+
+Le défaut **TRUE** est la moitié qui compte : l'instance de `HubTransport`
+n'est pas configurée, donc les quatre véhicules gardent l'axe entier **sans
+une ligne de leur côté**, et toute sonde qui construit une instance nue
+(`YachtTraceProbe`, `CoveProbe`, `ReverseProbe` PHASE GESTURE) est
+byte-identique à CH43.
+
+Le garde est lu à **trois endroits, chacun un canal distinct et aucun
+redondant** (la passe rouge le prouve, § CH81-4) :
+
+1. `_apply_axis` — le pouce ;
+2. le sondage clavier de `_physics_process` — DOWN / S / SPACE, ce qu'un
+   probe et l'éditeur pilotent hors-web ; une divergence avec le pouce
+   serait invisible depuis le device et verte sur le banc ;
+3. `KartHud.set_reverse_available()` — la ligne d'aide et le ghost.
+
+⚠️ **Le HUD est lui aussi partagé** (`HubTransport.setup()` reçoit « the
+kart's HUD in its vehicle mode »), et sa ligne d'aide annonçait
+« ↓ tirer pour reculer » **dans les deux modes**. Elle a désormais deux
+orthographes et le coordinateur en choisit une **en lisant l'écrivain qu'il
+possède** — jamais en la redisant. Le ghost suit : la piste verticale
+**s'arrête à l'ancre** au lieu de la traverser (c'est l'argument de CH43
+retourné : une piste qui nomme une moitié que le pouce ne peut pas
+atteindre dessine un schéma que ce véhicule n'a pas) et la flèche du bas
+n'est pas dessinée.
+
+⚠️ **`_reverse_available` n'est PAS `_vehicle_mode`, et ne doit pas être lu
+sur lui.** Le kart est le seul mode qui ne soit pas « vehicle mode », donc
+aujourd'hui les deux drapeaux seraient d'accord — c'est exactement la forme
+que la section « un état partagé n'est pas une permission partagée » de
+`CLAUDE.md` décrit, et le prochain véhicule à perdre son rapport hériterait
+de la mauvaise réponse.
+
+## CH81-2 — Ce que le geste refusé fait : RIEN, et c'est mesuré
+
+Le brief demandait, en cas de doute, de signaler les options plutôt que
+d'en choisir une. Il n'y a pas de doute : le défaut du brief est déjà ce
+que le code produit sans qu'on ajoute rien.
+
+Un pouce sous l'ancre achète `boost = 0` — ce que `_fraction(0)` achète à
+l'ancre de toute façon — et `throttle` reste à l'accélérateur automatique
+**1,0**. Mesuré à travers le vrai canal (`ReverseProbe` PHASE LOCKOUT) : un
+drag diagonal bas-et-à-droite maintenu donne `steer +1,0000`,
+`reverse 0,0000`, `throttle 1,0000`. **Aucun frein, aucune roue libre,
+aucun nouvel état.**
+
+## CH81-3 — LE COÛT, MESURÉ AVANT DE RETIRER QUOI QUE CE SOIT
+
+Le point 5 du brief demandait de signaler si la marche arrière servait de
+filet de rattrapage. **Elle servait, et le chiffre est brutal.**
+
+CH42 avait diagnostiqué le blocage sur la **LUGE**, contre les murs de
+`HubRegion` qui refusent le pas. Le kart n'a pas ce mur : sa seule frontière
+dure est `KartTrack.fence()` (x [−48,5 ; 48,5], z [−198,5 ; −135,5]), un
+`Rect2` dont `VehicleDrive` **clampe** la position et **réfléchit** la
+composante entrante à `FENCE_BOUNCE = 0,35`. Personne n'avait jamais mesuré
+celui-là — `ReverseProbe` PHASE PIN / PHASE ESCAPE ne pilotent que la luge.
+Le circuit ne porte par ailleurs **aucun collider** : hors piste n'est pas
+un mur, c'est un plafond de vitesse (5,5 u/s) et moins de grip, et deux
+karts sont séparés positionnellement chaque frame par `HubKarting._collide`.
+
+Sonde **jetable** `KartPinRecon` (supprimée avant commit, `ProbeTimeoutAudit`
+revenu à 103), scorée sur la **PREMIÈRE frame** à 4 u du départ — la leçon
+CH42 : un braquage tenu dessine un cercle et un cercle finit où il commence.
+
+| état du kart contre sa barrière | sans rapport | avec |
+|---|---|---|
+| **nez au mur à l'arrêt**, 26 stations (4 bords échantillonnés + 4 coins) × 2 braquages | **52 sur 52 n'atteignent jamais 4 u en 10 s** — excursion maximale **1,431 u** sur un bord, **0,424 u** dans un coin | 84–87 frames |
+| **contact PILOTÉ**, lu à la frame du choc, 6 incidences × 2 braquages | 2 sur 12 | — |
+| **contact piloté puis LAISSÉ SE STABILISER** (300 frames plein gaz) | **3 sur 12**, dont le cas **plein-axe dans LES DEUX SENS** (0,352 u en 10 s) | 84–197 frames |
+| témoin : le même plein braquage **en terrain libre** | 55 frames (0,92 s), 9,55 u | — |
+
+**Les trois lignes ne disent pas la même chose, et c'est le résultat.** La
+réflexion de la barrière rend souvent un contact **piloté** échappable — ce
+que le mur du hub ne fait jamais ; à 30° d'incidence et au-delà les deux
+braquages libèrent le kart en 55 à 326 frames. Mais elle ne peut rien pour
+un véhicule **ARRÊTÉ** contre elle : à 0° d'incidence la vitesse stabilisée
+vaut **−0,0271 u/s**, le `|v_fwd|` moyen sur la fenêtre de blocage
+**0,0128 u/s** contre un `STEER_FULL_SPEED` de 4,5, soit **0,28 % de plein
+braquage** — et **l'accélérateur du kart étant AUTOMATIQUE, il n'existe
+aucun geste pour cesser de pousser dans le mur**.
+
+**La seule sortie restante est le bouton « ⤓ Descendre » du HUD**, qui est
+toujours présent et rend le corps à pied — donc ce n'est pas un blocage de
+l'application, c'est un **blocage de la course**. Signalé et **non corrigé** :
+un plancher de braquage à vitesse nulle serait de la physique de virage, que
+le brief gèle. **Décision à Mathieu** (§ NEXT STEPS du rapport).
+
+⚠️ **Deux défauts d'INSTRUMENT dans cette recon, chacun avec l'allure d'un
+résultat.** (1) La première PHASE ARRIVAL a rapporté « escaped: yes »
+**12 fois sur 12** : elle roulait 120 frames vers un mur à 30 u avec un
+plafond hors-piste de 5,5 u/s, soit **9 u** de trajet — chaque « arrivée »
+tournait en terrain libre, 21 u avant la barrière. Le chiffre qui le disait
+était imprimé à côté (`|v_fwd|` 3,9 à 12,3 u/s, c'est-à-dire un kart qui
+roule librement) et personne ne l'a lu. C'est la règle CH69 « une grandeur
+qui n'a de sens qu'APRÈS un événement passe gratuitement quand il n'a pas eu
+lieu » : le contact est devenu un **événement ASSERTÉ** (la course continue
+jusqu'à ce que le clamp écrive la coordonnée) et une station qui n'atteint
+jamais le mur est imprimée `NOT REACHED` et comptée dans aucune colonne.
+(2) La deuxième version mesurait la frame du choc et rendait 2/12, un coût
+qu'on aurait appelé négligeable ; c'est la troisième lecture — l'arrêt — qui
+donne le vrai chiffre.
+
+## CH81-4 — Passes rouge-avant-vert : quatre, aucun garde redondant
+
+| neutralisation | rouges prédits | obtenus | autres |
+|---|---|---|---|
+| **A** — `touch.allows_reverse = false` retiré de `HubKarting` (le câblage vivant) | 1 (le nœud vivant) | **1** | aucun |
+| **B** — le garde de `_apply_axis` (le pouce) | 4 | **3** | ⚠️ **un rouge MANQUANT — et c'était un défaut de la sonde**, voir ci-dessous |
+| **B′** — le même, après correction de la sonde | 4 | **5** | l'extra est la moitié `reverse` de l'assertion d'accélérateur, écrite en conjonction — prévisible, sous-comptée |
+| **C** — le garde du sondage clavier | 3 | **3** | aucun |
+| **D** — la bascule de la ligne d'aide du HUD | 2 | **2** | aucun |
+
+**Aucune des quatre neutralisations ne recouvre une autre** : les trois
+gardes gardent trois canaux distincts (pouce, clavier, écran) et le
+quatrième est le câblage. C'est l'information que la règle CH79 demande de
+publier **avant** qu'un lot futur en retire un.
+
+⚠️ **LA PASSE B A TROUVÉ UN DÉFAUT DANS MA PROPRE SONDE, et c'est la
+trouvaille du lot.** L'assertion « un drag diagonal bas-et-à-droite steer
+encore et n'écrit pas de rapport » écrivait `-LOCKOUT_DRAG_PX` en y. Or
+**vers le bas de l'écran est +y** : `_slide(t, dy)` prend la convention dy
+(positif = haut) et la négationne lui-même, et les deux se sont mélangées.
+L'assertion pilotait donc la moitié **ACCÉLÉRATEUR** en prétendant piloter
+la moitié rapport — un **vert gratuit**, verte sur l'arbre livré comme sur
+l'arbre neutralisé, avec un libellé qui mentait. Corrigée, elle rougit.
+
+⚠️ **Et la même correction a fermé un second vert gratuit, du type que CH43
+documente lui-même.** L'assertion `throttle == 1.0` relisait un 1,0 que
+`_lockout_run` avait laissé **cent frames plus tôt** — « une assertion sur
+une valeur tenue peut relire l'assertion précédente », commis dans la phase
+même qui cite la règle. Elle porte désormais une **remise à zéro GATÉE**
+(l'écrivain est vidé et le zéro est **asserté** avant le geste qui doit
+l'écrire), puis appelle `_physics_process` explicitement.
+
+## CH81-5 — La sonde : PHASE LOCKOUT, 22 assertions, tout par le canal du doigt
+
+`ReverseProbe` passe de **129 à 151 assertions, 0 rouge**, et **aucune
+assertion préexistante ne change de verdict** — les onze phases de
+CH42/CH43 sont rejouées vertes sur l'arbre qui retire le rapport avant que
+le rapport ne soit examiné, ce qui est l'ordre dans lequel `_run()` les
+appelle.
+
+Ce que PHASE LOCKOUT gate, et par quel canal :
+
+* **l'A/B, même kart, même pose de grille, même geste, UN booléen d'écart.**
+  « Aucune vitesse négative » est une assertion d'ABSENCE et passe
+  gratuitement contre un banc incapable d'en produire une, donc le geste
+  identique est joué dans le kart identique à travers deux écrivains :
+  l'écrivain **PARTAGÉ** (la configuration des quatre véhicules) le mène à
+  **−3,5000 u/s et −6,008 u en arrière**, celui du kart à **+0,0000 u/s au
+  plus bas et +15,679 u en AVANT** à 12,2598 u/s. La paire est la mesure ;
+  aucune des deux moitiés seule n'en est une. Et elle coupe dans les deux
+  sens d'un seul run : le kart doit avancer, ce qui dit que le rapport est
+  parti et pas l'axe.
+* **la moitié haute et la moitié latérale survivent** sur l'écrivain du
+  kart (boost 1,0000, steer +1,0000).
+* **le clavier** : DOWN / S / SPACE écrivent 1,0000 sur l'écrivain partagé
+  et 0,0000 sur celui du kart. `Input.flush_buffered_events()` est ce qui
+  rend la lecture synchrone — `parse_input_event` ne fait que mettre en
+  file, et lire l'état sans flusher aurait rendu un zéro qui ressemble à un
+  refus.
+* **les nœuds VIVANTS**, que l'A/B ne peut pas voir : tout le reste est
+  mesuré sur des écrivains que la phase construit, ce qui prouve le
+  mécanisme et non que le JEU l'a câblé (CH46 : sept marqueurs épinglés sur
+  l'origine du monde étaient un mécanisme correct enregistré sur le mauvais
+  nœud). `_karting.touch` (`"Touch"`) porte **false**, `_transport.touch`
+  (`"YachtTouch"`) porte **true**, et ce sont **deux nœuds distincts**.
+* **le HUD ne nomme pas une commande que l'écrivain refuse** : la ligne
+  passe de « ↑ pousser pour foncer      ↓ tirer pour reculer » à
+  « ↑ pousser pour foncer », avec un blind check dans l'autre sens.
+
+⚠️ **PHASE GEAR garde sa ligne « kart », et son en-tête dit maintenant ce
+qu'elle est.** Cette phase tend un `KartInput` **directement** au corps :
+depuis ce lot elle ne dit plus rien des **commandes** du kart, elle dit que
+la branche partagée de `VehicleDrive` marche toujours — ce qui est un chemin
+vivant (trois véhicules au pouce, et `input.brake` à l'arrêt pour chaque
+`KartAiDriver` de la grille). Elle est gardée pour exactement cette
+régression. La lire comme « le kart a une marche arrière » serait le défaut
+de fait périmé que `CLAUDE.md` existe pour empêcher.
+
+## CH81-6 — Table croisée sur deux arbres
+
+154 `.scn` importés des **deux** côtés (le chiffre CH80).
+
+| sonde | driver | branche | `origin/staging` | verdict |
+|---|---|---|---|---|
+| `ReverseProbe` | headless | **151 ok / 0** | 129 ok / 0 | +22 assertions, aucune préexistante retournée |
+| `KartTraceProbe` | headless | md5 `b6e1fa9c5e68` | md5 `b6e1fa9c5e68` | **byte-identique** — la conduite du kart est la même |
+| `YachtTraceProbe` | headless | md5 `ceedfc85431c` | md5 `ceedfc85431c` | **byte-identique** — et sa trace EXERCE le rapport (0 → 1,0 à la frame 380) |
+| `QuadProbe` | xvfb + opengl3 | 75 ok / 0 | (voir rapport) | le chiffre CH80 |
+| `SledProbe` | xvfb + opengl3 | 72 ok / 1 | (voir rapport) | le rouge est le compteur de primitives |
+| `SailBoatProbe` | headless | 42 ok / 0 | 42 ok / 0 | PASS |
+| `CoveProbe` | headless | 178 / **2 FAIL** | 178 / **2 FAIL** | **parité exacte, mêmes deux lignes** — préexistant |
+| `KartProbe` | headless | 150 / 0 PASS | 150 / **1 FAIL** | **un rouge PRÉEXISTANT sur `staging`**, et ce lot le rend vert par accident — § CH81-7 |
+| `ProbeTimeoutAudit` | headless | **103 scènes, PASSED** | **103 scènes, PASSED** | parité exacte — la sonde jetable est bien supprimée |
+
+## CH81-7 — ⚠️ UN ROUGE PRÉEXISTANT SUR `staging`, QUE CE LOT REND VERT PAR ACCIDENT
+
+`KartProbe` sort **150 / 1 FAIL sur `origin/staging`** et **150 / 0 PASS sur
+la branche**. Une divergence dans ce sens-là — la référence rouge, la
+branche verte — se lit comme une bonne nouvelle, et c'est exactement pour ça
+qu'elle a été retournée contre elle-même avant d'être crue : **deux runs de
+chaque arbre, seuls, rien d'autre en charge**, et les quatre chiffres sont
+identiques au dixième. Ce n'est donc pas de la charge machine.
+
+L'assertion est `chrono panel centred (|centre − width/2| < 2 px)` :
+
+| | base | branche |
+|---|---|---|
+| `_panel` | position (770, 150), **taille (414, 464)** | position (770, 150), **taille (380, 464)** |
+| centre lu | **977,0** | **960,0** (= 1920 / 2, exactement centré) |
+
+Le mécanisme, mesuré et non déduit : `_panel` est un `PanelContainer` ancré
+`PRESET_CENTER_TOP`, posé à `−PANEL_WIDTH * 0.5` avec
+`custom_minimum_size.x = PANEL_WIDTH = 380`. **Il n'est donc centré que si
+son contenu ne dépasse pas 380 px** ; au-delà il grandit vers la DROITE
+depuis sa position, et se décentre de `(largeur − 380) / 2`. Or l'enfant le
+plus large de ce panneau est la **ligne d'aide de l'axe**, et la version
+longue de CH43 (« ↑ pousser pour foncer      ↓ tirer pour reculer ») la
+porte à **414**, soit **17 px** de décentrage. La version courte du kart
+retombe à 380 et le panneau est centré.
+
+Trois conséquences, et il faut les trois :
+
+1. **C'est un défaut de CH43, pas de ce lot.** Le texte long est arrivé avec
+   le geste unique et a décentré le panneau ; `KartProbe` est rouge sur
+   `staging` depuis, et la table croisée de CH43 ne l'incluait pas.
+2. **Ce lot ne le CORRIGE pas, il l'ESQUIVE sur un seul mode.** En mode
+   véhicule (char à voile, voilier, luge, quad) la ligne reste longue, donc
+   le panneau fait toujours 414 et reste décentré de 17 px. `KartProbe` ne
+   teste que le mode kart, donc son vert ne dit rien de ce cas-là.
+3. **Il n'est pas corrigé ici, et c'est un choix de périmètre.** Le HUD est
+   partagé par cinq véhicules et validé device ; élargir `PANEL_WIDTH` ou
+   changer l'ancrage déplacerait le panneau des quatre autres, ce que le
+   brief gèle. Un vert obtenu par accident est rapporté comme un accident —
+   ce qui est la seule chose qui empêche le prochain lot de croire que le
+   centrage est réglé.
