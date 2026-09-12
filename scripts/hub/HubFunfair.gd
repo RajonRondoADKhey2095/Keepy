@@ -1090,8 +1090,23 @@ static func stand_point(ride: int) -> Vector3:
 ## rise/run tip -- 16.7 deg -- and measured the eye reaching ground at
 ## 55 u from 14.0 with 0.0 to 1.4 % of the frame sky. Level, the picture
 ## would be horizon; this is the angle that was actually measured, kept.
+## ⚠️ CH76: AND LEVEL ON THE COMET, WHICH THIS FUNCTION USED TO ANSWER
+## WRONG BY DEFAULT. Written as `RIDE_COASTER ? 0 : tower`, it handed
+## the Comet the TOWER's 16.7 deg -- a number measured for a gondola
+## looking down at the hub from 14 u, on a ride that does not look down
+## at anything. It was dead code while `accepts_rider_tap` refused the
+## Comet; opening that door is what would have sprung it, so the test is
+## now one branch per ride and a fourth ride has to answer for itself.
+##
+## The Comet takes the COASTER's answer, and for the coaster's reason:
+## the rail supplies all the motion, and a pitch fighting it is the one
+## term that makes people ill. Measured on the ridden cart rather than
+## assumed -- CometProbe PHASE P reads the eye's own pitch and what the
+## level view contains at each phase of the run.
 static func pov_pitch_deg(ride: int) -> float:
-	return 0.0 if ride == RIDE_COASTER else TOWER_POV_PITCH_DEG
+	if ride == RIDE_COASTER or ride == RIDE_COMET:
+		return 0.0
+	return TOWER_POV_PITCH_DEG
 const TOWER_POV_PITCH_DEG: float = 16.7
 
 ## CH72 -- how far the fixed camera must rise for the tower ride to stay
@@ -1168,13 +1183,23 @@ var _rider_tap_frame: int = -1000
 func accepts_rider_tap(origin: Vector3, direction: Vector3) -> bool:
 	if not is_riding() or _keepy == null:
 		return false
-	# CH75: no POV on the Comet. Its camera is the CHASE (HubCamera's
-	# drive mode), and a POV opened over a running drive would be two
-	# writers on one camera. Under the chase there is no fixed pixel that
-	# means "him" either (CH64's reasoning). The tap falls through to the
-	# ground path and is dropped by ON_CARRIER like every other.
-	if _comet_phase != CometPhase.IDLE:
-		return false
+	# ⚠️ CH76: THE COMET IS NO LONGER EXCLUDED, AND THE REASON IT WAS IS
+	# THE REASON IT NEED NOT BE. CH75 refused here because "a POV opened
+	# over a running drive would be two writers on one camera" -- true of
+	# a POV that was a second POSE, and the CH72 overlay never was one.
+	# HubCamera._blend_pov now takes the pose the frame has ALREADY
+	# written as its base, so from the chase the POV fades out of the
+	# chase pose: one writer, one blend, no detour through a ground-level
+	# frame the rider is 14 u above.
+	#
+	# The other half of CH75's note stands and is what makes the door
+	# safe: under the chase there is no fixed pixel that means "him". So
+	# the way OUT is a tap ANYWHERE, which is exactly what the `_pov_on()`
+	# line below already grants -- CH64's board precedent, unchanged. The
+	# way IN is a tap on the RAY through his body, and under this chase
+	# that is a reliable gesture rather than a lucky one: the pose is
+	# aimed AT the cart every frame (ChaseTuning.coaster's `look_target`),
+	# so the rider sits near the middle of the picture for the whole ride.
 	if Engine.get_process_frames() - _rider_tap_frame < RIDER_TAP_DEBOUNCE_FRAMES:
 		return false
 	if _pov_on():
