@@ -64,6 +64,9 @@ extends Node
 ##   D  D5: the Comet's posts are live on the fair's body; blind on the deck
 ##   E  the CH71 coaster then the Comet, both through the tap channel:
 ##      the profile, the camera, the doors, the taps, the facing
+##   P  CH76: the POV on the Comet, a second ride in the same run, held
+##      from the station to the run-out -- the pose, the two doors, what
+##      the eye passes through and what it costs against the chase
 ##   G  budget: shown vs hidden at the Comet's stations; the chase's cost
 ##   H  pixels: the Comet is SEEN from its stations
 
@@ -100,6 +103,20 @@ const CAMERA_SOLID_MARGIN: float = 0.3
 ## and between a turn ended on the flat (~145) and one ended on the
 ## crest (502, measured). The CAMERA is gated on its own cap, E23.
 const CART_YAW_LIMIT_DEG: float = 200.0
+## CH76 -- the POV's own clearances, and they are NOT the chase's.
+##
+## The eye rides 1.89 u over the rail top (CART_SEAT 0.34 + the head
+## anchor's 1.55), so the cart's own rail is a permanent floor under
+## every reading: a rail nearer than this means ANOTHER part of the loop
+## came through the rider's face, which is the one thing a POV can do
+## that a chase 6.2 u overhead cannot. The number is the near plane plus
+## a rail radius plus a hand -- PHASE P prints the worst it measured
+## next to it, so the margin is read rather than trusted.
+const EYE_RAIL_CLEAR: float = 0.60
+const EYE_SOLID_MARGIN: float = 0.10
+## How near a rail has to come to be worth calling "structure in the
+## picture": inside this, in frame, and in front of the eye.
+const EYE_NEAR_FIELD: float = 8.0
 
 var _fails: int = 0
 var _hub: Node = null
@@ -183,6 +200,7 @@ func _run() -> void:
 	await _phase_c()
 	await _phase_d()
 	await _phase_e()
+	await _phase_p()
 	await _phase_g()
 	await _phase_h()
 	print("=== %s -- %d red ===" % ["ALL GREEN" if _fails == 0 else "FAILED", _fails])
@@ -271,6 +289,18 @@ func _facing() -> Vector3:
 func _camera_yaw() -> float:
 	var b: Basis = _camera.global_transform.basis
 	return atan2(-b.z.x, -b.z.z)
+
+## Which sample is the nearest, for a reading that has to NAME what came
+## close rather than only how close it came.
+func _nearest_sample(samples: PackedVector3Array, p: Vector3) -> Vector3:
+	var best: float = INF
+	var out: Vector3 = Vector3.ZERO
+	for q in samples:
+		var d: float = q.distance_to(p)
+		if d < best:
+			best = d
+			out = q
+	return out
 
 func _nearest(samples: PackedVector3Array, p: Vector3) -> float:
 	var best: float = INF
@@ -683,10 +713,21 @@ func _phase_e() -> void:
 	var prims_max: int = 0
 	var prims_sum: int = 0
 	var prims_n: int = 0
+	# CH76 -- REAL wall time per frame, so the POV's cost in PHASE P has a
+	# same-run, same-bench, same-trip number to be read against. Sampled
+	# only across a SINGLE elapsed frame: the mid-ride tap block below
+	# awaits twice inside one iteration, and a three-frame gap read as one
+	# is the mistake E23 already paid for on the yaw.
+	var us_max: int = 0
+	var us_sum: int = 0
+	var us_n: int = 0
+	var us_last: int = Time.get_ticks_usec()
+	var us_last_frame: int = Engine.get_process_frames()
 	var tapped_mid: bool = false
 	var withdrawn: bool = false
 	var tap_dropped: bool = false
-	var rider_tap_refused: bool = false
+	var rider_tap_answers: bool = false
+	var rider_tap_off_body: bool = false
 	var pov_opened: bool = false
 	var order_ok: bool = true
 	var expected_next: int = HubFunfair.CometPhase.DEPART
@@ -773,6 +814,14 @@ func _phase_e() -> void:
 			prims_max = maxi(prims_max, pr)
 			prims_sum += pr
 			prims_n += 1
+			var us_now: int = Time.get_ticks_usec()
+			if now_frame - us_last_frame == 1:
+				var dt: int = us_now - us_last
+				us_max = maxi(us_max, dt)
+				us_sum += dt
+				us_n += 1
+			us_last = us_now
+			us_last_frame = now_frame
 		if not tapped_mid and ph == HubFunfair.CometPhase.COAST and s > _fair.comet_crest_s() + 3.0:
 			tapped_mid = true
 			withdrawn = _fair.accepts_tap(_flat(rest)) == -1
@@ -780,12 +829,21 @@ func _phase_e() -> void:
 			_tap_world(BARE_GROUND)
 			await get_tree().process_frame
 			tap_dropped = _keepy.is_on_carrier() and not _keepy.is_hopping() and _fair.comet_phase() == HubFunfair.CometPhase.COAST
-			# A tap on the RIDER mid-drop: no POV under the chase, and
-			# nothing else happens either.
+			# ⚠️ CH76 RE-VISED THIS, IT DID NOT RELAX IT. CH75 gated that
+			# the rider's channel was SHUT on the Comet; this lot opens it,
+			# so the old assertion is false on the delivered tree and the
+			# property that survives is the one underneath: the channel must
+			# answer for HIM and for nobody else.
+			#
+			# ⚠️ AND THE TOGGLE IS NOT DISPATCHED HERE. It is dispatched in
+			# PHASE P, on a ride of its own, because a POV opened mid-drop
+			# would put every chase reading BELOW this line -- the primitive
+			# counter, E10's crown, E11's clearances, E23's yaw -- under the
+			# wrong camera and this phase would stop describing the chase.
 			var origin: Vector3 = _camera.global_position
 			var dir: Vector3 = (_keepy.global_position + Vector3.UP * CROWN * 0.5 - origin).normalized()
-			rider_tap_refused = not _fair.accepts_rider_tap(origin, dir)
-			_tap_world(_keepy.global_position + Vector3.UP * CROWN * 0.5)
+			rider_tap_answers = _fair.accepts_rider_tap(origin, dir)
+			rider_tap_off_body = not _fair.accepts_rider_tap(origin, (BARE_GROUND - origin).normalized())
 			await get_tree().process_frame
 			pov_opened = bool(_camera.call("is_pov"))
 	var settle: int = await _settle_walk(300)
@@ -800,6 +858,13 @@ func _phase_e() -> void:
 	print("     yaw rates: camera %.1f deg/s worst, cart %.1f deg/s worst at s %.2f (cap %.0f); facing worst %.2f deg; follow %.5f; settle %d" % [
 		cam_yaw_worst, cart_yaw_worst, cart_yaw_at, rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX), face_worst, follow_worst, settle])
 	print("     chase primitives: max %d, mean %d over %d frames" % [prims_max, (prims_sum / maxi(prims_n, 1)), prims_n])
+	# ⚠️ A SANDBOX NUMBER, AND IT SAYS SO. llvmpipe is a software
+	# rasteriser; this is not the phone's frame time and no reading of it
+	# is. What it IS good for is the RATIO against PHASE P's, measured on
+	# the same bench over the same trip in the same run -- that ratio is
+	# the honest half of "does the POV cost more than the chase".
+	print("     chase frame time (SANDBOX llvmpipe, not device): mean %.2f ms, worst %.2f ms over %d single-frame samples" % [
+		(float(us_sum) / maxf(float(us_n), 1.0)) / 1000.0, float(us_max) / 1000.0, us_n])
 	print("     phases (first frame): %s" % str(phases))
 	_check(v_max >= 15.0 and v_max <= 18.5, "E5 the top speed %.2f u/s is the drop the design says (15..18.5)" % v_max)
 	_check(v_valley > 0.0 and absf(v_valley - _fair.comet_predicted_valley_speed()) < 0.03 * _fair.comet_predicted_valley_speed(),
@@ -819,7 +884,9 @@ func _phase_e() -> void:
 	_check(not bool(_camera.call("is_driving")) and absf(_camera.fov - hub_fov) < 0.01 and absf(_camera.far - hub_far) < 0.01,
 		"E18 the chase was released and the hub pose is back (fov %.1f, far %.0f)" % [_camera.fov, _camera.far])
 	_check(tap_dropped, "E19 a tap on bare ground mid-drop was dropped by state: still aboard, not hopping, still coasting")
-	_check(rider_tap_refused and not pov_opened, "E20 a tap on the rider mid-drop opens no POV under the chase")
+	_check(rider_tap_answers and rider_tap_off_body and not pov_opened,
+		"E20 mid-drop the rider's channel answers for HIM (%s) and for nobody else (%s), and nothing opened a POV on its own" % [
+			str(rider_tap_answers), str(rider_tap_off_body)])
 	_check(follow_worst < 0.001, "E21 he was carried by the cart, not alongside it (worst %.5f u)" % follow_worst)
 	_check(face_worst < 20.0, "E22 he faced the way the cart goes, every frame (worst %.2f deg)" % face_worst)
 	_check(cam_yaw_worst <= rad_to_deg(HubCamera.COASTER_YAW_RATE_MAX) + 2.0, "E23 the chase never yawed faster than its cap (%.1f deg/s)" % cam_yaw_worst)
@@ -827,6 +894,320 @@ func _phase_e() -> void:
 	_check(_fair.accepts_tap(_flat(rest)) == HubFunfair.RIDE_COMET, "E25 and the station answers again once the ride is over")
 	var energy_seat: float = y_max - HubFunfair.CART_SEAT.y
 	_check(absf(energy_seat - _fair.comet_peak_rail_y()) < 0.12, "E26 he was carried over the crest (max y %.3f, rail %.3f)" % [y_max, _fair.comet_peak_rail_y()])
+	print("")
+
+# =====================================================================
+# PHASE P -- CH76: THE POV ON THE COMET, AND WHAT IT COSTS
+#
+# ⚠️ ENTERED BY THE PLAYER'S OWN CHANNEL, NEVER BY `enter_pov`.
+# CLAUDE.md's eighteenth false signal is a probe that drove a prop by its
+# API while no tap ever reached it: "une sonde qui gate une INTERACTION
+# entre par le canal du joueur". Every toggle below goes through
+# `HubTapInput._handle_point` from a real screen point, and the ride is
+# boarded the same way. This file never calls `enter_pov` or `exit_pov`.
+#
+# ⚠️ AND IT IS A SECOND RIDE, ON PURPOSE. One trip cannot be both
+# cameras over its whole length, and the brief's question -- what does
+# the POV cost against the chase, over the LIFT, the crest, the drop and
+# the camelback -- is a comparison of two whole trips. PHASE E rides it
+# under the chase and prints its primitives and its frame time; this
+# phase rides it again, in the same run, on the same bench, through the
+# same channel, and prints the same two quantities. Neither is a device
+# number (llvmpipe is a software rasteriser); the RATIO between them is
+# what the two runs buy.
+#
+# ⚠️ THE DOOR TEST GOES IN THE LIFT, NOT THE DROP, AND THAT IS MEASURED.
+# Leaving and re-entering the POV costs 2 x POV_BLEND_S = 54 frames of
+# blend. The drop (COAST) is 133 frames on this loop; spending 40 % of
+# the one section the ride exists for on a blend would leave the cost
+# measurement describing a transition rather than a view. The chain lift
+# is 738 frames and every one of them is the same picture.
+
+## A tap at a FRACTION of the container, for the points that have no
+## world position -- the top of the screen, where a level eye aims at
+## the sky and `HubSurface.intersect_ray` answers null.
+func _tap_screen(fx: float, fy: float) -> void:
+	var container := _hub.get_node("WorldViewport") as SubViewportContainer
+	var rect := container.get_global_rect()
+	_tap._handle_point(rect.position + Vector2(rect.size.x * fx, rect.size.y * fy))
+
+## How much of the picture's lower half still resolves to a point on the
+## ground: five rays down the vertical centre line, at 55 % to 95 %.
+##
+## ⚠️ CH73'S INSTRUMENT, AND THE SINGLE CENTRE RAY WOULD HAVE BEEN A
+## CONSTANT. `pov_pitch_deg(RIDE_COMET)` is 0.0, so `_pov_wanted` aims
+## the eye EXACTLY level and the centre ray is parallel to the plane:
+## `intersect_ray` answers null on every frame of the ride, by
+## arithmetic rather than by measurement. Sampling DOWN the frame asks
+## the question that has an answer -- how much of what he sees is world.
+func _ground_fraction() -> float:
+	var hit: int = 0
+	for i in 5:
+		var local := Vector2(float(_sub.size.x) * 0.5, float(_sub.size.y) * (0.55 + 0.10 * float(i)))
+		if HubSurface.intersect_ray(_camera.project_ray_origin(local), _camera.project_ray_normal(local)) != null:
+			hit += 1
+	return float(hit) / 5.0
+
+## The fov the two published blends say the camera should be at, from the
+## accessors and nothing else. Read against the LIVE `fov` while the POV
+## fades: a base read back off the live value instead of recomputed would
+## creep toward POV_FOV at any blend, and this is what would catch it.
+func _fov_expected() -> float:
+	var tuning: Variant = _camera.call("drive_tuning")
+	var drive_fov: float = float(tuning.fov) if tuning != null else float(_camera.call("hub_fov"))
+	var base: float = lerpf(float(_camera.call("hub_fov")), drive_fov, float(_camera.call("drive_blend")))
+	return lerpf(base, HubCamera.POV_FOV, float(_camera.call("pov_blend")))
+
+func _phase_p() -> void:
+	print("-- PHASE P: the POV on the Comet, through the tap channel --")
+	# P0 / P1, the blind controls FIRST: he is on his feet, so a tap on
+	# his own body is an ordinary walk and nothing swaps.
+	await _station(COMET_TAP_FROM)
+	_check(not bool(_camera.call("is_pov")), "P0 (blind) no POV before any of this")
+	_tap_world(_keepy.global_position + Vector3.UP * (CROWN * 0.5))
+	await get_tree().process_frame
+	_check(not bool(_camera.call("is_pov")), "P1 (blind) a tap on his body while NOT riding opens no POV")
+	await _settle_walk()
+	# Board, through the tap channel.
+	_finished_rides.clear()
+	await _station(COMET_TAP_FROM)
+	var hub_fov: float = float(_camera.call("hub_fov"))
+	_tap_world(_flat(HubFunfair.COMET_POINTS[0]))
+	await get_tree().process_frame
+	await _settle_walk()
+	for _i in 3:
+		await get_tree().process_frame
+	if not _keepy.is_on_carrier():
+		_check(false, "P2 he boarded the Comet a second time (he did not -- the rest of PHASE P cannot run)")
+		return
+	_check(_fair.comet_phase() != HubFunfair.CometPhase.IDLE, "P2 he is aboard the Comet and it has departed")
+	# P3 -- THE DOOR CH75 REFUSED. This is the assertion whose sign this
+	# lot flips: E20 gates that the channel is shut on the shipped tree,
+	# and the tree cannot satisfy both.
+	var body: Vector3 = _keepy.global_position + Vector3.UP * (CROWN * 0.5)
+	var origin: Vector3 = _camera.global_position
+	var dir: Vector3 = (body - origin).normalized()
+	_check(_fair.accepts_rider_tap(origin, dir), "P3 a tap on the RAY through the rider now means him, under the chase")
+	# P4 -- ONE GESTURE, TWO DISPATCHES, ONE TOGGLE (the finger arrives
+	# twice; FunfairProbe M3's reasoning, on this ride).
+	_tap_world(body)
+	_tap_world(body)
+	for _i in int(HubCamera.POV_BLEND_S * 60.0) + 20:
+		await get_tree().process_frame
+	_check(bool(_camera.call("is_pov")) and float(_camera.call("pov_blend")) > 0.9,
+		"P4 one gesture (dispatched TWICE) entered the POV once and STAYED (blend %.3f)" % float(_camera.call("pov_blend")))
+	# P5 -- AND THE CHASE IS STILL THE DRIVE UNDERNEATH. This is the
+	# whole of the lot's shape in one reading: the POV did not replace
+	# the chase with a second pose, it blends over the one the drive
+	# branch writes, so `is_driving()` is still true and `far` is still
+	# the drive's.
+	_check(bool(_camera.call("is_driving")), "P5 the chase is still the drive underneath -- the POV is a blend over it, not a second pose")
+	# P6..P9 -- the pose IS his head, read off the LIVE camera.
+	var head: Node3D = _keepy.head_anchor()
+	var at_head: float = _camera.global_position.distance_to(head.global_position)
+	var right: Vector3 = _camera.global_transform.basis.x
+	var roll: float = rad_to_deg(asin(clampf(right.y, -1.0, 1.0)))
+	var look: Vector3 = -_camera.global_transform.basis.z
+	var pitch: float = rad_to_deg(asin(clampf(-look.y, -1.0, 1.0)))
+	print("     POV: %.4f u from the head, roll %.4f deg, pitch %.2f deg (the Comet asks %.1f), fov %.1f (drive blend %.3f)" % [
+		at_head, roll, pitch, HubFunfair.pov_pitch_deg(HubFunfair.RIDE_COMET), _camera.fov, float(_camera.call("drive_blend"))])
+	_check(at_head < 0.02, "P6 the camera sits ON the head anchor (%.4f u) -- under a CHASE, which is what CH72's overlay could not do" % at_head)
+	_check(absf(roll) < 0.01, "P7 and it does not roll (%.4f deg) -- the term that makes a POV sickening" % roll)
+	_check(absf(pitch - HubFunfair.pov_pitch_deg(HubFunfair.RIDE_COMET)) < 1.0,
+		"P8 it looks level, the %.1f deg the Comet asks for (%.2f) -- NOT the tower's %.1f" % [
+			HubFunfair.pov_pitch_deg(HubFunfair.RIDE_COMET), pitch, HubFunfair.TOWER_POV_PITCH_DEG])
+	_check(absf(_camera.fov - HubCamera.POV_FOV) < 0.5, "P9 and it is at the POV fov (%.1f)" % _camera.fov)
+	# =================================================================
+	# THE DOORS, in the chain lift where there is room for two blends.
+	var phase_at_door: int = _fair.comet_phase()
+	# P10 -- OUT BY A TAP ON THE TOP OF THE SCREEN. THE PATRON-ECHELLE
+	# GATE, and on this ride it is not a formality: the eye is LEVEL, so
+	# the whole upper half of the picture aims at or above the horizon,
+	# where `HubSurface.intersect_ray` answers null and `_handle_point`
+	# gives up three lines later. This tap is the only way out.
+	# ⚠️ A BRACKET, NOT A THRESHOLD, AND THE BENCH'S OWN FLOOR IS WHY.
+	# The first draft compared `fov` to the expectation built from the
+	# blends READ AFTER the frame, and went red at 0.34887 on a correct
+	# tree: `fov` is written inside `_process` and the tween steps
+	# elsewhere in the same frame, so the live value legitimately holds
+	# the PREVIOUS frame's blend. One frame of a sine-eased 0.45 s fade
+	# across 58 -> 64 is about a third of a degree, which is exactly what
+	# was measured -- an instrument skew, not a defect, and CLAUDE.md is
+	# explicit that the answer is to measure the floor rather than widen
+	# a threshold until the noise fits under it. Bracketed between the two
+	# consecutive expectations the skew cannot produce a reading at all,
+	# and there is no number to tune: the defect this exists for reads
+	# 13 degrees OUTSIDE the bracket (the hub's 45 against a chase whose
+	# expectation never leaves 58..64), against an epsilon of 0.01.
+	var fov_drift: float = 0.0
+	var head_recede: bool = true
+	var last_gap: float = -1.0
+	var exp_prev: float = _fov_expected()
+	_tap_screen(0.5, 0.06)
+	for _i in int(HubCamera.POV_BLEND_S * 60.0) + 20:
+		await get_tree().process_frame
+		var exp_now: float = _fov_expected()
+		var lo: float = minf(exp_prev, exp_now)
+		var hi: float = maxf(exp_prev, exp_now)
+		fov_drift = maxf(fov_drift, maxf(lo - _camera.fov, _camera.fov - hi))
+		exp_prev = exp_now
+		# P12's evidence: the eye RECEDES from the head as the blend
+		# falls. Under a base read back off the live pose it would creep
+		# toward the POV instead and stay put.
+		var gap: float = _camera.global_position.distance_to(head.global_position)
+		if last_gap >= 0.0 and float(_camera.call("pov_blend")) > 0.0 and gap < last_gap - 0.001:
+			head_recede = false
+		last_gap = gap
+	_check(not bool(_camera.call("is_pov")), "P10 a tap on the TOP of the screen -- where a level eye aims at no ground -- swapped back to the chase")
+	_check(_keepy.is_on_carrier() and not _keepy.is_hopping() and _fair.comet_phase() != HubFunfair.CometPhase.IDLE,
+		"P11 and it did not walk him off the ride, which is still running")
+	# ⚠️ TWO ASSERTIONS, NOT ONE. The first draft asked both halves at
+	# once and went red at 19.00000; a red that names two properties sends
+	# the next reader to diagnose whichever he guesses. Split, the fov half
+	# named the defect on its own (CH72's unconditional `fov = _hub_fov`
+	# in `_on_pov_exited`, painting the hub's 45 over the chase's 64) while
+	# the recede half stayed green, which is what said the base was already
+	# recomputed correctly.
+	_check(fov_drift < 0.01,
+		"P12 the fade held INSIDE the bracket its two published blends allow, every frame -- worst excursion %.5f (a hub fov slammed over the chase reads about 13)" % fov_drift)
+	_check(head_recede,
+		"P12b and the eye RECEDED from the head as the blend fell -- the base is recomputed, not read back off the pose this function wrote")
+	# P13 -- back in, for the rest of the ride.
+	_tap_world(_keepy.global_position + Vector3.UP * (CROWN * 0.5))
+	for _i in int(HubCamera.POV_BLEND_S * 60.0) + 20:
+		await get_tree().process_frame
+	_check(bool(_camera.call("is_pov")), "P13 back into the POV for the rest of the trip")
+	# =================================================================
+	# THE RIDE, IN THE POV, TO THE RUN-OUT.
+	var frames: int = 0
+	var held: int = 0
+	var eye_solid: int = 0
+	var eye_rail_worst: float = INF
+	var eye_rail_at: float = 0.0
+	var eye_rail_phase: int = -1
+	var eye_rail_which: String = "-"
+	var eye_rail_where: Vector3 = Vector3.ZERO
+	var roll_worst: float = 0.0
+	var pitch_worst: float = 0.0
+	var head_worst: float = 0.0
+	var prims_max: int = 0
+	var prims_sum: int = 0
+	var prims_n: int = 0
+	var us_max: int = 0
+	var us_sum: int = 0
+	var us_n: int = 0
+	var us_last: int = Time.get_ticks_usec()
+	var us_last_frame: int = Engine.get_process_frames()
+	var still_pov: bool = true
+	var phases_seen := {}
+	# Per-phase readings of what the level eye actually contains.
+	var ground_sum := {}
+	var ground_n := {}
+	var rail_in_view := {}
+	var stride: int = 4
+	while _keepy.is_on_carrier() and frames < 60 * 90:
+		await get_tree().process_frame
+		if not _keepy.is_on_carrier():
+			break
+		frames += 1
+		var ph: int = _fair.comet_phase()
+		phases_seen[ph] = true
+		if not bool(_camera.call("is_pov")):
+			still_pov = false
+		if float(_camera.call("pov_blend")) < 0.999:
+			continue
+		held += 1
+		var eye: Vector3 = _camera.global_position
+		head_worst = maxf(head_worst, eye.distance_to(head.global_position))
+		var rgt: Vector3 = _camera.global_transform.basis.x
+		roll_worst = maxf(roll_worst, absf(rad_to_deg(asin(clampf(rgt.y, -1.0, 1.0)))))
+		var lk: Vector3 = -_camera.global_transform.basis.z
+		pitch_worst = maxf(pitch_worst, absf(rad_to_deg(asin(clampf(-lk.y, -1.0, 1.0)))))
+		if _inside_solid(eye, EYE_SOLID_MARGIN):
+			eye_solid += 1
+			if eye_solid <= 4:
+				print("     EYE inside a solid: %s s %.2f phase %d" % [eye, _fair.comet_s(), ph])
+		var d_comet: float = _nearest(_comet_samples, eye)
+		var d_ch71: float = _nearest(_ch71_samples, eye)
+		var d_rail: float = minf(d_comet, d_ch71)
+		if d_rail < eye_rail_worst:
+			eye_rail_worst = d_rail
+			eye_rail_at = _fair.comet_s()
+			eye_rail_phase = ph
+			# WHICH rail, and where it is: "a rail came near" and "the rail
+			# he is riding came near" are not the same reading, and the eye
+			# rides 1.89 u over its own, so anything under that is another
+			# piece of structure.
+			eye_rail_which = "the Comet" if d_comet <= d_ch71 else "the CH71 loop"
+			eye_rail_where = _nearest_sample(_comet_samples if d_comet <= d_ch71 else _ch71_samples, eye)
+		var g: float = _ground_fraction()
+		ground_sum[ph] = float(ground_sum.get(ph, 0.0)) + g
+		ground_n[ph] = int(ground_n.get(ph, 0)) + 1
+		# Structure IN the picture and near: the POV's answer to the
+		# chase's 61 sightline crossings. A rail in view is not a defect
+		# here -- it is the ride -- so this is PRINTED, never gated.
+		var seen: int = 0
+		var i: int = 0
+		while i < _comet_samples.size():
+			var q: Vector3 = _comet_samples[i]
+			i += stride
+			if q.distance_to(eye) > EYE_NEAR_FIELD:
+				continue
+			if _in_frame(q, 0.0):
+				seen += 1
+		rail_in_view[ph] = maxi(int(rail_in_view.get(ph, 0)), seen)
+		var pr: int = _prims()
+		prims_max = maxi(prims_max, pr)
+		prims_sum += pr
+		prims_n += 1
+		var nf: int = Engine.get_process_frames()
+		var us_now: int = Time.get_ticks_usec()
+		if nf - us_last_frame == 1:
+			var dt: int = us_now - us_last
+			us_max = maxi(us_max, dt)
+			us_sum += dt
+			us_n += 1
+		us_last = us_now
+		us_last_frame = nf
+	var settle: int = await _settle_walk(300)
+	for _i in int(HubCamera.DRIVE_BLEND_S * 60.0) + 20:
+		await get_tree().process_frame
+	print("     POV held %d of %d frames aboard; phases seen %s (the door was opened in phase %d)" % [held, frames, str(phases_seen.keys()), phase_at_door])
+	print("     pose: worst %.4f u off the head, worst roll %.4f deg, worst pitch %.3f deg" % [head_worst, roll_worst, pitch_worst])
+	print("     the eye: inside a solid %d frames; nearest rail %.3f u -- %s at %s, with the rider at s %.2f in phase %d (floor %.2f, near plane %.3f, and the eye rides 1.89 u over its OWN rail)" % [
+		eye_solid, eye_rail_worst, eye_rail_which, str(eye_rail_where), eye_rail_at, eye_rail_phase, EYE_RAIL_CLEAR, _camera.near])
+	for ph in ground_n.keys():
+		print("       phase %d: %d frames, %.0f %% of the lower frame resolves to ground, up to %d rail samples in view within %.0f u" % [
+			ph, int(ground_n[ph]), 100.0 * float(ground_sum[ph]) / float(ground_n[ph]), int(rail_in_view.get(ph, 0)), EYE_NEAR_FIELD])
+	print("     POV primitives: max %d, mean %d over %d frames" % [prims_max, (prims_sum / maxi(prims_n, 1)), prims_n])
+	print("     POV frame time (SANDBOX llvmpipe, not device): mean %.2f ms, worst %.2f ms over %d single-frame samples" % [
+		(float(us_sum) / maxf(float(us_n), 1.0)) / 1000.0, float(us_max) / 1000.0, us_n])
+	_check(held > 600 and still_pov, "P14 the POV was held for the whole rest of the trip (%d of %d frames) and the ride ran ON under it" % [held, frames])
+	_check(phases_seen.has(HubFunfair.CometPhase.COAST) and phases_seen.has(HubFunfair.CometPhase.TRIM) and phases_seen.has(HubFunfair.CometPhase.BRAKE),
+		"P15 and the measured window covers the crest, the drop, the camelback and the run-out")
+	# ⚠️ EVERY ONE OF THESE CARRIES `measured` -- THE BOOLEAN THAT SAYS
+	# THE EVENT HAPPENED. Each is a reading over frames the POV was fully
+	# up, and each has an initialiser that satisfies its own threshold:
+	# `head_worst` and `roll_worst` start at 0.0, `eye_rail_worst` starts
+	# at INF. With no POV held they are not small readings, they are NO
+	# readings -- and all four would print green. CLAUDE.md, CH69: "toute
+	# grandeur qui n'a de sens qu'APRES un evenement se publie avec le
+	# booleen 'l'evenement a eu lieu', et le gate exige les DEUX". Found by
+	# writing out this lot's third red pass before running it: it predicted
+	# four free greens, and they were there.
+	var measured: bool = held > 600
+	_check(measured and head_worst < 0.02, "P16 the eye stayed ON the head anchor for every held frame (%d frames, worst %.4f u)" % [held, head_worst])
+	_check(measured and roll_worst < 0.01, "P17 and it never rolled (%d frames, worst %.4f deg)" % [held, roll_worst])
+	_check(measured and pitch_worst < 1.0, "P18 and it never pitched off the level the Comet asks for (%d frames, worst %.3f deg)" % [held, pitch_worst])
+	_check(measured and eye_solid == 0, "P19 the eye never stood inside a solid of the fair (%d frames held, %d inside)" % [held, eye_solid])
+	_check(measured and eye_rail_worst > EYE_RAIL_CLEAR and is_finite(eye_rail_worst),
+		"P20 and no rail came through the rider's face (%d frames, nearest %.3f u, floor %.2f)" % [held, eye_rail_worst, EYE_RAIL_CLEAR])
+	_check(_finished_rides.count(HubFunfair.RIDE_COMET) == 1 and not _keepy.is_on_carrier() and not _keepy.is_hopping(),
+		"P21 the ride still ended once (BOUNDED) and he stands on the ground (settle %d)" % settle)
+	_check(not bool(_camera.call("is_pov")), "P22 the POV did NOT outlive the ride -- it closed with it")
+	_check(not bool(_camera.call("is_driving")) and absf(_camera.fov - hub_fov) < 0.001,
+		"P23 the chase was released too and the hub fov came back EXACTLY (%.4f vs %.4f)" % [_camera.fov, hub_fov])
+	_check(_fair.accepts_tap(_flat(HubFunfair.COMET_POINTS[0])) == HubFunfair.RIDE_COMET, "P24 and the station answers again")
 	print("")
 
 # =====================================================================
