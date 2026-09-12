@@ -336,9 +336,41 @@ finit quand même (E16 vert : BORNÉ, même à vide). Fichier restauré,
 
 ---
 
-## Section 8 — TABLE CROISÉE ET PASSE ROUGE
+## Section 8 — TABLE CROISÉE SUR DEUX ARBRES
 
-*(rempli après les runs)*
+Référence : worktree `origin/staging` (`21c1d42`) importé à part, **154
+`.scn` des deux côtés** (compté avant de comparer). Chaque sonde rejouée
+**en séquence, un process à la fois**, sous le driver que son en-tête
+exige.
+
+| sonde | driver | référence | branche | verdict |
+|---|---|---|---|---|
+| **FunfairProbe** (CH71 + CH72, 116 assertions) | xvfb | **116 / 0** | **116 / 0** | parité exacte, `diff` des libellés VIDE — la délégation à `CoasterRail` relit 51,165 u / s 17,350 / y 5,027, D3 lit `FIXED_SOLIDS` |
+| ProbeTimeoutAudit | headless | 100 scènes bornées | **101** | + `CometProbe`, la recon jetable supprimée |
+| SkatePhysicsProbe | headless | 161 / 0 | voir 8.1 | — |
+| **CometProbe** (neuve) | xvfb | — | **73 / 0** | passe rouge 8 pour 7 prédits (7.3) |
+
+### 8.1 — SkatePhysicsProbe : un banc de temps CPU dont le plancher a dépassé son signal
+
+PHASE I mesure le coût d'un tick physique avec et sans les corps du hub
+(le corps du parc compris, qui porte désormais 45 boîtes de plus). Premier
+run de branche : **idle 0,1719 ms/tick, plancher 0,1204** → rouge sur le
+budget de 0,10 ; run de référence : idle 0,0234, plancher 0,0433, vert.
+Rejoué seul sur la branche : **idle −0,1273 (négatif) contre un plancher
+de 0,1271**, et cette fois c'est le BLIND CHECK qui rougit (le banc ne
+voit plus la planche ridée au-dessus de son propre bruit). Un coût mesuré
+négatif n'est pas un coût (CLAUDE.md : « un coût mesuré négatif est un
+contrôle faux ») et **un plancher au-dessus du budget est une absence de
+verdict** (CH56) — le tick complet oscillait entre 1,04 et 1,50 ms d'une
+lecture à l'autre sur ce sandbox, contre 1,08-1,14 sur la référence.
+La paire rejouée dos à dos sur machine vide (charge 1,0) : référence
+**idle −0,0375 / plancher 0,1666, ALL GREEN** ; branche **idle −0,0298 /
+plancher 0,0303, ALL GREEN**. Les deux lisent un coût idle NÉGATIF de
+quelques centièmes, c'est-à-dire ZÉRO au bruit près, des deux côtés :
+**45 boîtes statiques de plus dans le même corps ne coûtent rien que ce
+banc sache voir**, et la parité est rétablie. Le premier rouge était le
+sandbox, pas la Comète — et il a fallu trois runs pour le dire, parce
+qu'un banc de temps CPU ne se lit pas sur un seul.
 
 ---
 
