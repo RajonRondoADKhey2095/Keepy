@@ -856,11 +856,29 @@ func _tween_pov(to: float) -> void:
 ## `_ready()` -- `_on_drive_exited`'s discipline, for its reason: a fov
 ## left a hair off is a permanent change to every frame afterwards and no
 ## probe of this mode would ever look at it.
+##
+## ⚠️ CH76 -- BUT ONLY WHEN THE HUB POSE IS WHAT THE POV IS GIVING BACK
+## TO, AND THAT IS A DEFECT THIS LOT INTRODUCED AND A PROBE CAUGHT.
+## Off a chase this line is CH72's, unchanged. Over one it is wrong: the
+## drive branch owns `fov` while a chase runs and rewrites it every
+## frame, so slamming `_hub_fov` here paints the hub's 45 over the
+## Comet's 64 for however long it takes that branch to run again.
+## Measured rather than reasoned about: CometProbe P12 read exactly
+## 19.00000 of drift on the frame the fade-out finished, and 19.0 is
+## COASTER_FOV - the hub fov to the digit. Left in, it would be a visible
+## fov pop every time a rider tapped out of the POV mid-ride.
+##
+## The guard is on the DRIVE, not on the blend: while `_drive_target` is
+## set the drive branch converges the fov to `_hub_fov` on its own as its
+## blend falls, and `_on_drive_exited` does the same exact restore from
+## the same captured value. So the fov is given back exactly in both
+## cases; what changes is WHO gives it back.
 func _on_pov_exited() -> void:
 	_pov_head = null
 	_pov_pitch = 0.0
 	_pov_blend = 0.0
-	fov = _hub_fov
+	if _drive_target == null:
+		fov = _hub_fov
 
 func _pov_wanted() -> Transform3D:
 	var head: Transform3D = _pov_head.global_transform
@@ -895,25 +913,68 @@ func _apply_orbit(weight: float) -> void:
 		return
 	global_transform.basis = global_transform.basis.slerp(_hub_pose_basis(), weight)
 
-## Blends the POV over whatever the hub branch has just written. A NO-OP
+## True while no POV is running AND none is fading out. Every call site
+## returns on this FIRST, before a single term is computed -- CH72's
+## "a NO-OP, not 'nearly' one", kept as one spelling now that two
+## branches ask it.
+func _pov_idle() -> bool:
+	return _pov_head == null and _pov_blend <= 0.0
+
+## Blends the POV over whatever the HUB branch has just written. A NO-OP
 ## while none is running -- not "nearly" one: with `_pov_head` null and
 ## `_pov_blend` 0 nothing below the first line executes, and `fov` in
 ## particular is not written, which is what keeps the plain hub frame
 ## byte-identical to what shipped.
 func _apply_pov() -> void:
-	if _pov_head == null and _pov_blend <= 0.0:
+	if _pov_idle():
+		return
+	_blend_pov(Transform3D(_hub_pose_basis(), global_position),
+		_hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend)
+
+## =====================================================================
+## CH76 -- THE SAME BLEND, OVER WHICHEVER POSE THE BRANCH HAS JUST
+## WRITTEN
+##
+## CH72 wrote the POV as an overlay on the FIXED pose and called it from
+## the hub branch alone. The Comet (CH75) is the first ride whose
+## DEFAULT camera is the chase, and on it the CH72 pattern was not
+## merely unwired but arithmetically DEAD: `enter_pov` would set a head
+## and tween a blend to 1.0 and nothing would ever read either, because
+## the drive branch returns without calling this. That is why CH75 shut
+## the rider's tap channel on the Comet instead of opening a door onto
+## nothing, and it is the whole of what this lot changes.
+##
+## ⚠️ A BASE, NOT A SECOND POSE. There is still ONE writer (`_process`)
+## and ONE blend; what moves is that the pose the POV fades out of is
+## HANDED IN rather than assumed. From the hub it is the hub pose,
+## exactly as it shipped. From the chase it is the chase pose -- so a
+## tap on the Comet fades from over-the-cart straight into the eyes and
+## back, instead of detouring through a ground-level frame the rider is
+## 14 u above. "Two writers on one camera", CH75's stated reason for the
+## exclusion, is what this shape makes impossible rather than what it
+## risks.
+##
+## ⚠️ AND `base` IS RECOMPUTED, NEVER READ BACK OFF THE LIVE POSE. The
+## fov comment below gives the reason; it holds for the transform just
+## as hard, and a base read back from a pose this function had already
+## written would creep to the POV at any blend instead of holding the
+## one it was given. Both call sites satisfy it: the hub branch lerps
+## `global_position` toward `_wanted()` before calling, and the drive
+## branch hands in the `global_transform` it has just assigned from
+## `_hub_position`, `_drive_position` and `_drive_yaw` -- none of which
+## this function writes.
+func _blend_pov(base: Transform3D, base_fov: float) -> void:
+	if _pov_idle():
 		return
 	if _pov_head != null and not is_instance_valid(_pov_head):
 		_on_pov_exited()
 		return
 	if _pov_blend <= 0.0:
 		return
-	var hub_xform := Transform3D(_hub_pose_basis(), global_position)
-	global_transform = hub_xform.interpolate_with(_pov_wanted(), _pov_blend)
+	global_transform = base.interpolate_with(_pov_wanted(), _pov_blend)
 	# The base is RECOMPUTED, never read back off `fov`: lerping the
 	# live value toward POV_FOV every frame would creep it all the way
 	# there at any blend, instead of holding the blend it was given.
-	var base_fov: float = _hub_fov + SkateFeel.fov_gain(_ride_rush) * _ride_blend
 	fov = lerpf(base_fov, POV_FOV, _pov_blend)
 
 ## Puts the camera at its resting offset IMMEDIATELY, with no smoothing.
@@ -1040,6 +1101,10 @@ func _process(delta: float) -> void:
 	var hub_xform := Transform3D(_hub_pose_basis(), _hub_position)
 	global_transform = hub_xform.interpolate_with(drive_xform, _blend)
 	fov = lerpf(_hub_fov, _tuning.fov, _blend)
+	# CH76: and the POV blends over THAT, exactly the way it blends over
+	# the hub pose in the branch above. Inert -- not one line of it runs
+	# -- unless a rider has asked for his own eyes; see `_blend_pov`.
+	_blend_pov(global_transform, fov)
 
 func _wanted() -> Vector3:
 	# The ground UNDER him, not sea level under him: the frame holds its
